@@ -1,0 +1,51 @@
+using System;
+using System.Text.RegularExpressions;
+
+namespace EchoDesk.Utilities
+{
+    /// <summary>
+    /// Markdown 渲染辅助（可选）：将模型返回的 Markdown 文本转换为
+    /// 适合在 WPF TextBlock 中直接显示的纯文本（移除标记符号，保留可读内容）。
+    /// </summary>
+    public static class MarkdownHelper
+    {
+        /// <summary>
+        /// 将 Markdown 源文本转换为纯文本。
+        /// </summary>
+        public static string ToPlainText(string markdown)
+        {
+            if (string.IsNullOrEmpty(markdown)) return markdown ?? "";
+
+            var text = markdown;
+
+            // 代码块 ```lang\n...``` -> 保留代码内容
+            text = Regex.Replace(text, @"```[a-zA-Z0-9_+-]*[ \t]*\r?\n?(.*?)```", "$1", RegexOptions.Singleline);
+            // 行内代码 `code`
+            text = Regex.Replace(text, @"`([^`\n]+)`", "$1");
+            // 图片 ![alt](url) -> [图片: alt]
+            text = Regex.Replace(text, @"!\[([^\]]*)\]\([^)]*\)", "[图片: $1]");
+            // 链接 [text](url) -> text
+            text = Regex.Replace(text, @"\[([^\]]+)\]\([^)]*\)", "$1");
+            // 标题 # ...
+            text = Regex.Replace(text, @"(?m)^\s{0,3}#{1,6}\s+", "");
+            // 粗体 **text** / __text__
+            text = Regex.Replace(text, @"\*\*([^*]+)\*\*", "$1");
+            text = Regex.Replace(text, @"__([^_]+)__", "$1");
+            // 斜体 *text* / _text_
+            text = Regex.Replace(text, @"\*([^*\n]+)\*", "$1");
+            text = Regex.Replace(text, @"(?<!\w)_([^_\n]+)_(?!\w)", "$1");
+            // 删除线 ~~text~~
+            text = Regex.Replace(text, @"~~([^~]+)~~", "$1");
+            // 无序列表
+            text = Regex.Replace(text, @"(?m)^\s{0,3}[-*+]\s+", "• ");
+            // 有序列表（保留编号语义，去掉 Markdown 点号格式差异）
+            text = Regex.Replace(text, @"(?m)^\s{0,3}\d+\.\s+", "  ");
+            // 引用 >
+            text = Regex.Replace(text, @"(?m)^\s{0,3}>\s?", "");
+            // 分隔线 ---
+            text = Regex.Replace(text, @"(?m)^\s*([-*_])\s*(\1\s*){2,}$", "────────────");
+
+            return text.Trim();
+        }
+    }
+}

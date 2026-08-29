@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>EchoDesk</AssemblyName>
+    <RootNamespace>EchoDesk</RootNamespace>
+    <!-- 单文件自包含发布时避免生成多余的 .pdb -->
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <!-- 无第三方包依赖：JSON 通信使用 .NET 内置的 System.Text.Json -->
+
+</Project>

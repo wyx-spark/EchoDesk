@@ -1,0 +1,27 @@
+{
+    "model_path": "Qwen3.5-0.8B-Q4_K_M.gguf",
+    "model_repo": "unsloth/Qwen3.5-0.8B-GGUF",
+    "hf_endpoint": "https://hf-mirror.com",
+    "default_mode": "general",
+    "context_length": 4096,
+    "max_history": 10,
+    "search_default": false,
+    "temperature": 0.7,
+    "max_tokens": 1024,
+    "search_results": 3,
+    "file_max_chars": 10000,
+    "theme": "dark",
+    "warmup": true,
+    "n_threads": 0,
+    "n_batch": 512,
+    "n_gpu_layers": 0,
+    "session_file": "session.json",
+    "models": {
+        "qwen": {
+            "path": "Qwen3.5-0.8B-Q4_K_M.gguf",
+            "repo": "unsloth/Qwen3.5-0.8B-GGUF",
+            "context_length": 4096,
+            "temperature": 0.7
+        }
+    }
+}
