@@ -97,10 +97,15 @@
 
 - `.doc` / `.ppt`（旧版二进制）需要本机安装 WPS/Office；否则请另存为 `.docx` / `.pptx`。
 - 扫描件 PDF 无文本层，v0.2.0 未内置 OCR。
-- 自动化对 Shadow DOM 的穿透是简化实现，复杂页面可能需要调整选择器。
+- 自动化驱动的是**本机已安装的 Microsoft Edge**（`channel=msedge`）；程序未内置 Chromium，
+  若 Edge 不可用会给出含 `playwright install chromium` 指引的提示。
+- 自动化单文件下载上限 200MB，超过则跳过该文件并记录。
+- 自动化对 Shadow DOM 的穿透是简化实现；实测 Playwright 的 CSS 引擎本身已能穿透
+  open shadow root，复杂页面仍可能需要调整选择器。
 - 自动化的定时触发依赖后端 `schedule` 线程（程序需保持运行）；
   开机自启需用户自行把快捷方式放入系统「启动」文件夹。
 - 技能市场安装**依赖不自动 pip 安装**，只提示用户手动处理（安全优先）。
+- 技能市场当前 topic `echodesk-plugin` 下尚无仓库，市场会显示空结果（附说明）。
 - 技能运行期加载器（把技能命令挂到 `/` 指令表）接口已定义，运行期接线在后续版本完成。
 - 自动更新与代码签名：构建脚本已预留 `-Sign` 钩子，但仓库内不含证书；
   自签名证书仍可能触发 SmartScreen 提示。
