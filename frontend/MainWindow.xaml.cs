@@ -29,6 +29,8 @@ public partial class MainWindow : Window
     private DispatcherTimer? _exitTimer;
     private int _exitCountdown;
     private readonly SnippetManager _snippets = new();
+    // 本地界面状态（窗口大小/位置/字号/主题、已拒绝的询问），存于程序目录 ui_state.json
+    private readonly AppSettings _settings = AppSettings.Load();
     // 下载/预热等实时进度在对话框中的"活"消息（内容块），复用更新避免刷屏
     private TextBlock? _liveStatusContent;
 
@@ -86,32 +88,151 @@ public partial class MainWindow : Window
         {
             // 等待后端完成模型加载 + 会话恢复 + 预热后就绪
             await _backend.StartAsync();
-            _backend.StderrReceived -= Backend_StderrReceived;
-            SetControlsEnabled(true);
-            StatusText.Text = "已就绪";
-            string welcome = $"✨ 欢迎使用 EchoDesk {_backend.Version} — Powered by {_backend.Studio}";
-            if (_backend.RestoredCount > 0)
-                welcome += $"\n📂 已自动恢复上次会话（{_backend.RestoredCount} 轮）";
-            AddMessage("system", welcome);
-            // 展示恢复的历史消息，让用户能查看之前的对话内容
-            foreach (var (role, content) in _backend.RestoredHistory)
-            {
-                if (role == "user")
-                    AddMessage("user", content);
-                else if (role == "assistant")
-                    AddMessage("assistant", content);
-                else
-                    AddMessage("system", content);
-            }
-            MessageScrollViewer.ScrollToBottom();
-            InputBox.Focus();
-            _ = UpdateContextAsync(); // 显示初始上下文占用
+        }
+        catch (NeedDownloadException ex)
+        {
+            // 本地缺少模型：先征询用户，同意才下载
+            if (!await ConfirmStartupDownloadAsync(ex))
+                return; // 用户拒绝：后端已退出，界面保留提示
         }
         catch (Exception ex)
         {
             StatusText.Text = "后端启动失败";
             AddMessage("system", $"❌ 后端启动失败: {ex.Message}");
             SetControlsEnabled(false); // 保持禁用
+            return;
+        }
+
+        _backend.StderrReceived -= Backend_StderrReceived;
+        SetControlsEnabled(true);
+        StatusText.Text = "已就绪";
+        string welcome = $"✨ 欢迎使用 EchoDesk {_backend.Version} — Powered by {_backend.Studio}";
+        if (_backend.RestoredCount > 0)
+            welcome += $"\n📂 已自动恢复上次会话（{_backend.RestoredCount} 轮）";
+        AddMessage("system", welcome);
+        // 展示恢复的历史消息，让用户能查看之前的对话内容
+        foreach (var (role, content) in _backend.RestoredHistory)
+        {
+            if (role == "user")
+                AddMessage("user", content);
+            else if (role == "assistant")
+                AddMessage("assistant", content);
+            else
+                AddMessage("system", content);
+        }
+        MessageScrollViewer.ScrollToBottom();
+        InputBox.Focus();
+        _ = UpdateContextAsync(); // 显示初始上下文占用
+        CheckStartupShortcut();   // 启动时检测程序目录下的启动快捷方式
+    }
+
+    /// <summary>本地缺少模型时弹确认框；用户同意则下载并等待后端就绪，返回是否继续启动。</summary>
+    private async Task<bool> ConfirmStartupDownloadAsync(NeedDownloadException ex)
+    {
+        string size = ex.Size > 0 ? $"（约 {ex.Size / 1048576.0:0} MB）" : "（大小未知）";
+        AddMessage("system", $"📦 本地未找到所需模型：{ex.Model}{size}\n来源仓库：{ex.Repo}");
+        StatusText.Text = "等待确认下载";
+
+        var result = MessageBox.Show(
+            $"本地未找到所需模型：\n\n{ex.Model}{size}\n来源仓库：{ex.Repo}\n\n" +
+            "是否现在下载？下载需要联网，模型较大时可能耗时较长。\n" +
+            "选择「否」将退出程序（也可稍后手动把模型文件放入 models/ 目录）。",
+            "需要下载模型",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (result != MessageBoxResult.Yes)
+        {
+            AddMessage("system", "❌ 已取消下载模型，后端已退出。\n可手动把模型文件放入 models/ 目录后重新启动 EchoDesk。");
+            StatusText.Text = "未下载模型";
+            SetControlsEnabled(false);
+            _backend?.Stop();
+            return false;
+        }
+
+        AddMessage("system", "⏳ 正在下载模型，进度在下方对话框实时显示...");
+        StatusText.Text = "正在下载模型……";
+        try
+        {
+            await _backend!.DownloadModelAndWaitReadyAsync(
+                ex.Model,
+                delta =>
+                {
+                    UpdateLiveStatus(delta);
+                    StatusText.Text = SimplifyStatus(delta);
+                },
+                message => AddMessage("system", message));
+            return true;
+        }
+        catch (Exception e)
+        {
+            AddMessage("system", $"❌ 模型下载失败: {e.Message}");
+            StatusText.Text = "模型下载失败";
+            SetControlsEnabled(false);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 启动时检测程序目录下的启动快捷方式：不存在则询问是否创建；
+    /// 已失效（移动文件夹/改名后目标丢失）则提示重新创建；用户拒绝后记录状态不再重复询问。
+    /// </summary>
+    private void CheckStartupShortcut()
+    {
+        try
+        {
+            if (ShortcutService.IsValid())
+                return;
+
+            if (ShortcutService.Exists())
+            {
+                var recreate = MessageBox.Show(
+                    $"检测到程序目录下的启动快捷方式已失效：\n{ShortcutService.ShortcutPath}\n\n" +
+                    "（通常是因为程序文件夹被移动或改名）\n\n是否重新创建？",
+                    "快捷方式已失效",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (recreate == MessageBoxResult.Yes)
+                    ReportShortcutCreated();
+                return;
+            }
+
+            if (_settings.ShortcutPromptDeclined)
+                return;  // 用户之前已拒绝，不再询问
+
+            var create = MessageBox.Show(
+                "未在程序目录下检测到启动快捷方式。\n\n" +
+                $"是否创建「{ShortcutService.ShortcutFileName}」？\n" +
+                "创建后在程序文件夹内双击它即可启动 EchoDesk，无需分辨哪个可执行文件是入口。",
+                "创建启动快捷方式",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (create == MessageBoxResult.Yes)
+            {
+                ReportShortcutCreated();
+            }
+            else
+            {
+                _settings.ShortcutPromptDeclined = true;
+                _settings.Save();
+                AddMessage("system", "ℹ️ 已跳过创建启动快捷方式（后续不再询问，可手动创建）。");
+            }
+        }
+        catch (Exception ex)
+        {
+            AddMessage("system", $"⚠️ 快捷方式处理失败: {ex.Message}");
+        }
+    }
+
+    private void ReportShortcutCreated()
+    {
+        try
+        {
+            string path = ShortcutService.Create();
+            AddMessage("system", $"✅ 已创建启动快捷方式：{path}");
+        }
+        catch (Exception ex)
+        {
+            AddMessage("system", $"❌ 创建快捷方式失败: {ex.Message}");
         }
     }
 

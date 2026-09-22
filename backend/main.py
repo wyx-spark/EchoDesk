@@ -5,7 +5,10 @@
   {"action": "chat_stream", "message": "..."}  -> 多行流式响应：{"type":"delta",...}... {"type":"done",...}
   {"action": "stop"}                           -> 中断当前流式生成
   {"action": "file", "path": "..."}            -> 一行响应
-  {"action": "model_download", "name": "..."}  -> 下载模型并热切换，返回一行响应
+  {"action": "model_download", "name": "..."}  -> 下载模型并热切换：delta 进度 + done
+
+启动前若本地缺少模型：先输出 {"type":"need_download", model, size, repo} 征询用户，
+用户同意（收到 action=model_download）才下载；拒绝或 stdin 关闭则后端直接退出。
 
 流式生成在后台线程执行，主循环继续读取 stdin，从而支持 "stop" 中断。
 启动时先完成模型加载、会话恢复与预热（warmup），再输出 {"type":"ready",...} 就绪声明；
@@ -18,7 +21,7 @@ import os
 import queue
 import sys
 import threading
-from typing import Any, Dict, Iterator
+from typing import Any, Dict, Iterator, Optional
 
 from version import APP_NAME, APP_VERSION, STUDIO
 
@@ -114,9 +117,9 @@ def _write(response: Dict[str, Any]) -> None:
 class Backend:
     """后端服务：负责模型加载、会话恢复、预热与请求分发。"""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, model_path: str) -> None:
         self.config = config
-        self.llm = self._load_model(config)
+        self.llm = self._build_engine(config, model_path)
         self.conv = ConversationManager(config.max_history, config.default_mode)
         self.search = SearchEngine(config.search_results)
         self.summarizer = DocumentSummarizer(
@@ -131,50 +134,16 @@ class Backend:
 
     def _make_summary_engine(self, model_path: str):
         """为 summarize.model 指定的专用摘要模型创建引擎（按该模型训练窗口开窗）。"""
-        n_ctx = self.config.context_for_model(model_path, resolve_context_window(model_path, 0))
-        return LLMEngine(
-            model_path, n_ctx,
-            n_threads=self.config.n_threads or os.cpu_count() or 4,
-            n_batch=self.config.n_batch, n_gpu_layers=self.config.n_gpu_layers,
-        )
+        return self._build_engine(self.config, model_path)
 
     @staticmethod
-    def _load_model(config: Config) -> LLMEngine:
-        """检查本地模型，缺失时自动下载，然后加载（含线程/GPU 自动配置）。
+    def _build_engine(config: Config, model_path: str) -> LLMEngine:
+        """按"所选模型"的上下文窗口创建推理引擎。
 
-        下载进度打到 stderr（不受 _suppress_stdout 影响），前端连接阶段实时显示。
-        上下文窗口按"所选模型"决定：取配置值、模型训练窗口与配置上限三者的最小值。
+        窗口取配置值、模型训练窗口（GGUF 元数据）与 config.max_context 三者的最小值；
+        加载时由 LLMEngine 输出窗口大小与 KV Cache 占用日志。
         """
-        model_path = check_model(config.model_path)
-        if not model_path:
-            log.warning("模型未找到，开始下载 %s ...", config.model_path)
-
-            # 用模糊匹配解析仓库里真实存在的文件名（避免文件名对不上导致 "cannot locate on the Hub"）
-            try:
-                target, _size = find_best_model(config.model_repo, config.model_path, hf_endpoint=config.hf_endpoint)
-            except Exception as e:
-                raise RuntimeError(f"无法查询仓库 {config.model_repo}（{e}）。请联网或把模型文件放入 models/ 目录。") from e
-
-            def _progress(done: int, total: int) -> None:
-                pct = int(done * 100 / total) if total > 0 else 0
-                print(
-                    f"📥 正在下载 {target} ... {pct}% "
-                    f"({done / 1048576:.1f} MB / {total / 1048576:.1f} MB)",
-                    file=sys.stderr, flush=True,
-                )
-
-            model_path = download_model(
-                target, config.model_repo,
-                hf_endpoint=config.hf_endpoint, on_progress=_progress,
-            )
-            # 下载的是仓库真实文件名，同步配置以免下次仍用不存在的名字
-            if target != config.model_path:
-                config.model_path = target
-                for prof in config.models.values():
-                    if prof.get("repo") == config.model_repo:
-                        prof["path"] = target
         n_threads = config.n_threads or os.cpu_count() or 4
-        # 按模型决定上下文窗口，并在重载/加载时输出窗口大小与 KV Cache 占用
         train_ctx = resolve_context_window(model_path, 0)
         n_ctx = config.context_for_model(model_path, train_ctx)
         log.info(
@@ -513,11 +482,128 @@ class Backend:
                 response[key] = value
 
 
-def main() -> None:
+class ModelMissing(Exception):
+    """本地缺少模型：携带仓库中最匹配的文件名与体积，交由前端征询用户后再下载。"""
+
+    def __init__(self, filename: str, size: Optional[int] = None, repo: str = "") -> None:
+        self.filename = filename
+        self.size = size
+        self.repo = repo
+        super().__init__(f"本地缺少模型 {filename}")
+
+
+def _download_with_progress(config: Config, name: str) -> Optional[str]:
+    """下载模型并把进度以 delta 行输出（前端在对话框中实时显示）；失败返回 None。
+
+    进度按整数百分比去重，避免刷屏。
+    """
+    last = {"pct": -1}
+
+    def _progress(done: int, total: int) -> None:
+        pct = int(done * 100 / total) if total > 0 else 0
+        if pct == last["pct"]:
+            return
+        last["pct"] = pct
+        _write({
+            "type": "delta",
+            "content": f"📥 正在下载 {name} ... {pct}% ({done / 1048576:.1f} MB / {total / 1048576:.1f} MB)",
+        })
+
     try:
-        config = Config.load()
+        path = download_model(
+            name, config.model_repo,
+            hf_endpoint=config.hf_endpoint, on_progress=_progress,
+        )
+    except Exception as e:
+        log.exception("模型下载失败")
+        _write({"type": "error", "content": f"❌ 模型下载失败: {e}"})
+        return None
+
+    # 下载的是仓库真实文件名，同步配置以免下次仍用不存在的名字
+    if name != config.model_path:
+        config.model_path = name
+        for prof in config.models.values():
+            if prof.get("repo") == config.model_repo:
+                prof["path"] = name
+        try:
+            config.save()
+        except Exception:
+            log.warning("配置保存失败（不影响本次运行）", exc_info=True)
+    _write({"type": "done", "content": f"✅ 模型已下载: {name}，正在加载并预热…"})
+    return path
+
+
+def _await_download_decision(config: Config, fallback_name: str) -> Optional[str]:
+    """模型缺失时等待前端答复。
+
+    收到 ``model_download`` → 下载并返回模型路径；收到 ``exit`` 或 stdin 关闭 → 返回 None
+    （调用方据此让后端退出，前端显示提示）。
+    """
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("\ufeff"):
+            line = line.lstrip("\ufeff").strip()
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError:
+            log.warning("收到非法 JSON: %r", line)
+            continue
+        action = request.get("action")
+        if action == "model_download":
+            name = str(request.get("name") or "").strip() or fallback_name
+            log.info("用户已同意下载模型: %s", name)
+            return _download_with_progress(config, name)
+        if action in ("exit", "quit"):
+            return None
+        _write({
+            "type": "system",
+            "content": "⏳ 正在等待是否下载模型的确认（发送 model_download 开始下载，exit 退出）",
+        })
+    return None
+
+
+def main() -> None:
+    config = Config.load()
+
+    # 本地模型缺失时不再直接下载，而是先征询用户（前端弹确认对话框）
+    model_path = check_model(config.model_path)
+    if not model_path:
+        log.warning("本地未找到模型 %s，请求前端征询用户", config.model_path)
+        try:
+            target, size = find_best_model(config.model_repo, config.model_path, hf_endpoint=config.hf_endpoint)
+        except Exception as e:
+            log.exception("查询模型仓库失败")
+            _write({
+                "type": "system",
+                "content": (
+                    f"后端初始化失败: 本地缺少模型 {config.model_path}，"
+                    f"且无法查询仓库 {config.model_repo}（{e}）。\n"
+                    "请联网后重试，或手动把模型文件放入 models/ 目录。"
+                ),
+            })
+            return
+        _write({
+            "type": "need_download",
+            "model": target,
+            "size": int(size or 0),
+            "repo": config.model_repo,
+            "current": config.model_path,
+            "content": (
+                f"本地未找到模型 {config.model_path}。\n"
+                f"仓库 {config.model_repo} 中最匹配的是 {target}"
+                + (f"（约 {size / 1048576:.0f} MB）" if size else "（大小未知）")
+            ),
+        })
+        model_path = _await_download_decision(config, target)
+        if not model_path:
+            log.info("用户未同意下载模型，后端退出")
+            return
+
+    try:
         with _suppress_stdout():
-            backend = Backend(config)
+            backend = Backend(config, model_path)
             restored = backend.restore_session()
             backend.warmup()
     except Exception as e:

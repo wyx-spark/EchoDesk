@@ -5,6 +5,27 @@ using System.Text.Json;
 
 namespace EchoDesk.Services;
 
+/// <summary>后端报告本地缺少模型（need_download）：前端据此弹确认框，用户同意后再下载。</summary>
+public sealed class NeedDownloadException : Exception
+{
+    public NeedDownloadException(string model, long size, string repo, string detail)
+        : base(detail.Length > 0 ? detail : $"本地缺少模型 {model}")
+    {
+        Model = model;
+        Size = size;
+        Repo = repo;
+    }
+
+    /// <summary>仓库中最匹配的模型文件名（用户同意后原样回传）。</summary>
+    public string Model { get; }
+
+    /// <summary>文件大小（字节，0 表示未知）。</summary>
+    public long Size { get; }
+
+    /// <summary>模型仓库 ID。</summary>
+    public string Repo { get; }
+}
+
 /// <summary>
 /// 管理 EchoBackend.exe 子进程，通过 stdin/stdout 以 JSON 行协议通信。
 /// 启动时等待后端就绪声明（含预热完成），支持流式响应读取。
@@ -176,27 +197,95 @@ public sealed class BackendService : IDisposable
             string type = root.TryGetProperty("type", out JsonElement t) ? t.GetString() ?? "" : "";
             if (type == "ready")
             {
-                Version = root.TryGetProperty("version", out JsonElement v) ? v.GetString() : null;
-                Studio = root.TryGetProperty("studio", out JsonElement s) ? s.GetString() : null;
-                RestoredCount = root.TryGetProperty("restored", out JsonElement r) ? r.GetInt32() : 0;
-                if (root.TryGetProperty("history", out JsonElement hist) && hist.ValueKind == JsonValueKind.Array)
-                {
-                    RestoredHistory.Clear();
-                    foreach (JsonElement m in hist.EnumerateArray())
-                    {
-                        string role = m.TryGetProperty("role", out JsonElement rl) ? rl.GetString() ?? "" : "";
-                        string content = m.TryGetProperty("content", out JsonElement ct) ? ct.GetString() ?? "" : "";
-                        if (role.Length > 0)
-                            RestoredHistory.Add((role, content));
-                    }
-                }
+                ApplyReady(root);
                 return;
             }
+            // 本地缺少模型：交给界面弹确认框，用户同意后再下载
+            if (type == "need_download")
+                throw BuildNeedDownload(root);
             // 初始化失败等系统消息：直接抛出，让前端展示具体原因
             if (type == "system")
             {
                 string content = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
                 throw new InvalidOperationException(content);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 用户同意下载模型后：发送 model_download，读取下载进度（onDelta）与提示（onMessage），
+    /// 直到后端完成下载、加载与预热并发出 ready 声明。
+    /// </summary>
+    public async Task DownloadModelAndWaitReadyAsync(
+        string name, Action<string> onDelta, Action<string>? onMessage = null)
+    {
+        if (_writer is null || _reader is null)
+            throw new InvalidOperationException("后端尚未启动。");
+
+        await _writer.WriteLineAsync(JsonSerializer.Serialize(new { action = "model_download", name }));
+        await _writer.FlushAsync();
+
+        while (true)
+        {
+            string? line = await _reader.ReadLineAsync();
+            if (line is null)
+                throw new InvalidOperationException("后端在下载模型期间退出。");
+            if (!line.TrimStart().StartsWith('{'))
+                continue;
+
+            using JsonDocument doc = JsonDocument.Parse(line);
+            JsonElement root = doc.RootElement;
+            string type = root.TryGetProperty("type", out JsonElement t) ? t.GetString() ?? "" : "";
+            string content = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+            switch (type)
+            {
+                case "delta":
+                    onDelta?.Invoke(content);
+                    break;
+                case "done":
+                    onMessage?.Invoke(content);
+                    break;  // 下载完成，继续等 ready
+                case "ready":
+                    ApplyReady(root);
+                    return;
+                case "need_download":
+                    throw BuildNeedDownload(root);
+                case "error":
+                    throw new InvalidOperationException(content);
+                case "system":
+                    onMessage?.Invoke(content);
+                    break;
+                default:
+                    Debug.WriteLine($"[backend:msg] {line}");
+                    break;
+            }
+        }
+    }
+
+    private static NeedDownloadException BuildNeedDownload(JsonElement root)
+    {
+        string model = root.TryGetProperty("model", out JsonElement m) ? m.GetString() ?? "" : "";
+        long size = root.TryGetProperty("size", out JsonElement s) && s.ValueKind == JsonValueKind.Number
+            ? s.GetInt64() : 0;
+        string repo = root.TryGetProperty("repo", out JsonElement r) ? r.GetString() ?? "" : "";
+        string detail = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+        return new NeedDownloadException(model, size, repo, detail);
+    }
+
+    private void ApplyReady(JsonElement root)
+    {
+        Version = root.TryGetProperty("version", out JsonElement v) ? v.GetString() : null;
+        Studio = root.TryGetProperty("studio", out JsonElement s) ? s.GetString() : null;
+        RestoredCount = root.TryGetProperty("restored", out JsonElement r) ? r.GetInt32() : 0;
+        if (root.TryGetProperty("history", out JsonElement hist) && hist.ValueKind == JsonValueKind.Array)
+        {
+            RestoredHistory.Clear();
+            foreach (JsonElement m in hist.EnumerateArray())
+            {
+                string role = m.TryGetProperty("role", out JsonElement rl) ? rl.GetString() ?? "" : "";
+                string content = m.TryGetProperty("content", out JsonElement ct) ? ct.GetString() ?? "" : "";
+                if (role.Length > 0)
+                    RestoredHistory.Add((role, content));
             }
         }
     }
