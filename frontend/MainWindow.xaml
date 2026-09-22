@@ -1,7 +1,7 @@
 <Window x:Class="EchoDesk.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="EchoDesk v0.1.0 — Powered by Void Entropia Studio"
+        Title="EchoDesk v0.2.0 — Powered by Void Entropia Studio"
         Height="620" Width="860"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowBackground}">
@@ -24,15 +24,29 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="📡 EchoDesk" FontSize="20" FontWeight="Bold"
                            Foreground="{DynamicResource AccentBrush}"/>
-                <TextBlock Grid.Column="1" Text="v0.1.0" FontSize="10" Margin="4,0,0,0"
+                <TextBlock Grid.Column="1" Text="v0.2.0" FontSize="10" Margin="4,0,0,0"
                            VerticalAlignment="Bottom" Foreground="{DynamicResource SubTextBrush}"/>
             </Grid>
             <TextBlock Text="Powered by Void Entropia Studio" FontSize="11" Margin="14,8,0,0"
                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>
-            <TextBlock x:Name="StatusText" Text="正在启动后端..." Margin="22,0,0,0"
+            <!-- 状态栏：运行状态 / 模型 / 模式 / 搜索 / 自动化 / 市场连接状态 -->
+            <TextBlock x:Name="StatusText" Text="正在启动后端..." Margin="18,0,0,0"
                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>
-            <TextBlock x:Name="ModeText" Text="模式: general" Margin="20,0,0,0"
+            <TextBlock x:Name="ModelText" Text="模型: ---" Margin="14,0,0,0" MaxWidth="190"
+                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                       Foreground="{DynamicResource SubTextBrush}"
+                       ToolTip="当前加载的本地模型"/>
+            <TextBlock x:Name="ModeText" Text="模式: general" Margin="12,0,0,0"
                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>
+            <TextBlock x:Name="SearchText" Text="搜索: 关" Margin="12,0,0,0"
+                       VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"
+                       ToolTip="联网搜索开关（/search on|off）"/>
+            <TextBlock x:Name="AutoText" Text="自动化: 关" Margin="12,0,0,0"
+                       VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"
+                       ToolTip="浏览器自动化状态"/>
+            <TextBlock x:Name="MarketText" Text="市场: 未连接" Margin="12,0,0,0"
+                       VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"
+                       ToolTip="技能市场连接状态"/>
         </StackPanel>
 
         <!-- 消息列表（支持 Ctrl+滚轮调节字号） -->
@@ -135,12 +149,21 @@
             </Grid>
         </Border>
 
-        <!-- 底部提示（固定高度区） -->
+        <!-- 底部提示（固定高度区）：通知提示与操作提示共用一行 -->
         <StackPanel Grid.Row="4" Margin="0,3,0,0" HorizontalAlignment="Center">
             <TextBlock x:Name="CommandBarHint" Visibility="Collapsed" FontSize="12"
                        Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"
                        Text="💡 检测到指令格式：点击左下角「转移到命令输入框」按钮"/>
-            <TextBlock Text="💡 拖拽文件可上传 · 输入“/”可转移指令 · Ctrl+Enter 发送 · Enter/Shift+Enter 换行"
+            <!-- 通知条：下载完成 / 自动化完成 / 错误提示，短暂显示后自动隐藏 -->
+            <Border x:Name="ToastBorder" Visibility="Collapsed" CornerRadius="10" Padding="12,4"
+                    HorizontalAlignment="Center" Margin="0,2,0,0"
+                    Background="{DynamicResource InputBackground}"
+                    BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
+                <TextBlock x:Name="ToastText" FontSize="12" TextTrimming="CharacterEllipsis"
+                           MaxWidth="760" Foreground="{DynamicResource AccentBrush}"/>
+            </Border>
+            <TextBlock x:Name="HintText"
+                       Text="💡 拖拽文件可上传 · Ctrl+Enter 发送 · Esc 停止 · Ctrl+L 清空 · Ctrl+滚轮 字号"
                        FontSize="12" Foreground="{DynamicResource SubTextBrush}"
                        HorizontalAlignment="Center" Margin="0,2,0,0"/>
         </StackPanel>

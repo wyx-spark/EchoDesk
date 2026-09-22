@@ -21,6 +21,9 @@ public sealed class AppSettings
     /// <summary>用户已拒绝创建启动快捷方式（不再重复询问）。</summary>
     public bool ShortcutPromptDeclined { get; set; }
 
+    /// <summary>是否已完成首次启动引导（只展示一次）。</summary>
+    public bool FirstRunDone { get; set; }
+
     // ---------- 窗口状态记忆 ----------
     public double WindowWidth { get; set; }
     public double WindowHeight { get; set; }

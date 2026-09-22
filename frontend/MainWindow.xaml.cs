@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -32,12 +33,14 @@ public partial class MainWindow : Window
     // 本地界面状态（窗口大小/位置/字号/主题、已拒绝的询问），存于程序目录 ui_state.json
     private readonly AppSettings _settings = AppSettings.Load();
     // 下载/预热等实时进度在对话框中的"活"消息（内容块），复用更新避免刷屏
-    private TextBlock? _liveStatusContent;
+    private TextBox? _liveStatusContent;
 
     // 流式 Markdown 实时渲染：节流计时器，边生成边把累积文本渲染进 RichTextBox
     private DispatcherTimer? _mdTimer;
     private RichTextBox? _mdTarget;
     private string _mdPending = "";
+    // 底部通知条计时器（下载完成/自动化完成/错误提示）
+    private DispatcherTimer? _toastTimer;
 
     // 聊天输入框中的指令前缀（"/" + 连续英文字母，允许只有一个 "/"）
     private static readonly Regex CommandPrefixRegex = new(@"^/[A-Za-z]*(?: [A-Za-z]+)*", RegexOptions.Compiled);
@@ -47,7 +50,8 @@ public partial class MainWindow : Window
     {
         new("/help", "", "显示此指令介绍：完整指令列表、用法与作用", "显示全部指令及用法", false),
         new("/mode", "<编号|缩写|全称>", "切换对话模式（general/summary/translate/code/contract/creative）；/mode list 查看全部模式及编号；切换时自动套用温度预设", "切换对话模式", true),
-        new("/file", "<路径>", "上传本地文件并加入上下文；支持 Office/TXT/PDF，加密 Office 文档在装有 WPS 的机器上自动解密；提问时提及文件即自动注入内容", "上传文件加入上下文", true),
+        new("/file", "<路径>", "上传本地文件并加入上下文；支持 Office/TXT/PDF，加密 Office 文档在装有 WPS 的机器上自动解密；提问时提及文件即自动注入内容。长文档超出上下文窗口时自动分段摘要后注入，不截断丢信息", "上传文件加入上下文", true),
+        new("/summarize", "", "对当前已加载的长文档手动触发全文分段摘要（逐段摘要后合并），摘要进度实时显示在对话框中", "手动触发全文摘要", false),
         new("/search", "on|off", "开启/关闭联网搜索（DuckDuckGo）；开启后提问前会先搜索网络参考信息（需联网）", "开启/关闭联网搜索", true),
         new("/model", "[名称|别名|list]", "查看模型信息（架构/量化/上下文/GPU），或切换本地模型；支持档案别名与前缀匹配；缺失时征询后下载", "查看/切换本地模型", true),
         new("/clearcache", "", "清空推理 KV 缓存（模式/提示词/历史变化时系统会自动清理）", "清空推理 KV 缓存", false),
@@ -75,6 +79,13 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        RestoreWindowState();
+        // 主题与字号来自上次会话（ui_state.json）
+        if (!_settings.DarkMode)
+            ApplyTheme(false);
+        _fontSize = Math.Clamp(_settings.FontSize, 10, 24);
+        UpdateAllMessageFontSize();
+
         _backend = new BackendService();
         // 后端连接完成前禁用全部控件，并提示连接状态
         SetControlsEnabled(false);
@@ -123,7 +134,143 @@ public partial class MainWindow : Window
         MessageScrollViewer.ScrollToBottom();
         InputBox.Focus();
         _ = UpdateContextAsync(); // 显示初始上下文占用
+        _ = RefreshStatusBarAsync(); // 状态栏：模型 / 模式 / 搜索状态
+        ShowFirstRunGuideIfNeeded();
         CheckStartupShortcut();   // 启动时检测程序目录下的启动快捷方式
+    }
+
+    // ---------- 窗口状态记忆（大小/位置/最大化，兼容多显示器与高 DPI） ----------
+
+    /// <summary>恢复上次的窗口大小、位置与最大化状态；位置已不可见时回退居中。</summary>
+    private void RestoreWindowState()
+    {
+        if (_settings.WindowWidth >= 400 && _settings.WindowHeight >= 320)
+        {
+            Width = _settings.WindowWidth;
+            Height = _settings.WindowHeight;
+        }
+        if (!double.IsNaN(_settings.WindowLeft) && !double.IsNaN(_settings.WindowTop)
+            && IsRectVisible(_settings.WindowLeft, _settings.WindowTop, Width, Height))
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = _settings.WindowLeft;
+            Top = _settings.WindowTop;
+        }
+        if (_settings.WindowMaximized)
+            WindowState = WindowState.Maximized;
+    }
+
+    /// <summary>窗口矩形是否与虚拟屏幕（含所有显示器）相交，避免还原到已拔掉的显示器上。</summary>
+    private static bool IsRectVisible(double left, double top, double width, double height)
+    {
+        var virtualScreen = new Rect(
+            SystemParameters.VirtualScreenLeft,
+            SystemParameters.VirtualScreenTop,
+            SystemParameters.VirtualScreenWidth,
+            SystemParameters.VirtualScreenHeight);
+        var window = new Rect(left, top, width, height);
+        // 至少露出一部分标题栏才认为可见
+        return virtualScreen.IntersectsWith(window)
+            && window.Left + window.Width > virtualScreen.Left + 40
+            && window.Top + window.Height > virtualScreen.Top + 20;
+    }
+
+    /// <summary>关闭时保存窗口状态（最大化时记录还原后的尺寸，下次还原才不会撑满屏）。</summary>
+    private void SaveWindowState()
+    {
+        Rect bounds = WindowState == WindowState.Normal
+            ? new Rect(Left, Top, Width, Height)
+            : RestoreBounds;
+        if (bounds.Width >= 400 && bounds.Height >= 320)
+        {
+            _settings.WindowWidth = bounds.Width;
+            _settings.WindowHeight = bounds.Height;
+            _settings.WindowLeft = bounds.Left;
+            _settings.WindowTop = bounds.Top;
+        }
+        _settings.WindowMaximized = WindowState == WindowState.Maximized;
+        _settings.FontSize = _fontSize;
+        _settings.DarkMode = _isDark;
+        _settings.Save();
+    }
+
+    // ---------- 状态栏（模型 / 模式 / 搜索 / 自动化 / 市场） ----------
+
+    /// <summary>向后端查询 /status 并刷新状态栏的模型、模式与搜索状态。</summary>
+    private async Task RefreshStatusBarAsync()
+    {
+        if (_backend is null)
+            return;
+        try
+        {
+            string json = await _backend.SendRequestAsync(new { action = "chat", message = "/status" });
+            using JsonDocument doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("content", out JsonElement content))
+                ApplyStatusText(content.GetString() ?? "");
+        }
+        catch
+        {
+            // 后端忙碌/异常时忽略，后续交互会再次刷新
+        }
+    }
+
+    /// <summary>解析 /status 输出，刷新状态栏各段。</summary>
+    private void ApplyStatusText(string status)
+    {
+        foreach (string raw in status.Split('\n'))
+        {
+            string line = raw.Trim();
+            if (line.StartsWith("🧠 模型:", StringComparison.Ordinal))
+            {
+                ModelText.Text = $"模型: {Shorten(line["🧠 模型:".Length..].Trim())}";
+                ModelText.ToolTip = line["🧠 模型:".Length..].Trim();
+            }
+            else if (line.StartsWith("🛠️", StringComparison.Ordinal) && line.Contains("模式:"))
+            {
+                ModeText.Text = $"模式: {line[(line.IndexOf("模式:", StringComparison.Ordinal) + 3)..].Trim()}";
+            }
+            else if (line.Contains("联网搜索:"))
+            {
+                bool on = line.Contains("开启");
+                SearchText.Text = on ? "搜索: 开" : "搜索: 关";
+            }
+        }
+    }
+
+    /// <summary>状态栏模型名过长时截断显示。</summary>
+    private static string Shorten(string name)
+    {
+        string trimmed = name.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase) ? name[..^5] : name;
+        return trimmed.Length <= 26 ? trimmed : trimmed[..25] + "…";
+    }
+
+    /// <summary>刷新自动化状态段（自动化引擎接入后调用）。</summary>
+    private void SetAutomationStatus(bool running, bool enabled = true)
+    {
+        AutoText.Text = !enabled ? "自动化: 未启用" : running ? "自动化: 运行中" : "自动化: 关";
+    }
+
+    /// <summary>刷新技能市场连接状态段（市场接入后调用）。</summary>
+    private void SetMarketStatus(string text) => MarketText.Text = $"市场: {text}";
+
+    // ---------- 首次启动引导 ----------
+
+    /// <summary>首次启动时展示欢迎与上手引导（模型下载、快捷方式、常用操作）。</summary>
+    private void ShowFirstRunGuideIfNeeded()
+    {
+        if (_settings.FirstRunDone)
+            return;
+        _settings.FirstRunDone = true;
+        _settings.Save();
+        AddMessage("system",
+            "🎉 首次使用引导\n" +
+            "1️⃣ 模型：首次启动若本地缺少模型，会询问是否下载；也可手动把 .gguf 放到 models/ 目录。\n" +
+            "2️⃣ 启动方式：可在程序目录创建「EchoDesk 启动」快捷方式，双击即可运行（已按你的选择处理）。\n" +
+            "3️⃣ 长文档：上传合同等长文件时，超出上下文窗口会自动分段摘要后再回答，不会截断丢信息。\n" +
+            "4️⃣ 常用指令：输入 /help 查看全部指令；输入 / 会弹出指令列表。\n" +
+            "5️⃣ 复制内容：每条消息右下角有「复制 / Markdown / 代码」按钮，也可拖选文本后按 Ctrl+C。\n" +
+            "6️⃣ 快捷键：Ctrl+Enter 发送 · Esc 停止 · Ctrl+L 清空 · Ctrl+O 上传 · Ctrl+Shift+C 复制全部 · Ctrl+滚轮 调字号");
+        Toast("🎉 欢迎首次使用 EchoDesk，已显示上手引导");
     }
 
     /// <summary>本地缺少模型时弹确认框；用户同意则下载并等待后端就绪，返回是否继续启动。</summary>
@@ -161,11 +308,14 @@ public partial class MainWindow : Window
                     StatusText.Text = SimplifyStatus(delta);
                 },
                 message => AddMessage("system", message));
+            Toast($"✅ 模型已就绪：{ex.Model}");
+            _ = RefreshStatusBarAsync();
             return true;
         }
         catch (Exception e)
         {
             AddMessage("system", $"❌ 模型下载失败: {e.Message}");
+            Toast($"❌ 模型下载失败：{e.Message}", error: true);
             StatusText.Text = "模型下载失败";
             SetControlsEnabled(false);
             return false;
@@ -255,7 +405,8 @@ public partial class MainWindow : Window
     {
         if (_liveStatusContent is null)
         {
-            var panel = NewMessagePanel("system", text, out _liveStatusContent);
+            var panel = NewMessagePanel("system", text, out FrameworkElement block);
+            _liveStatusContent = (TextBox)block;
             MessagePanel.Children.Add(panel);
         }
         else
@@ -299,8 +450,105 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _exitTimer?.Stop();
+        _toastTimer?.Stop();
+        SaveWindowState();
         _backend?.Dispose();
         base.OnClosed(e);
+    }
+
+    // ---------- 快捷键（窗口级） ----------
+
+    /// <summary>
+    /// 快捷键：Ctrl+Enter 发送 · Esc 停止生成 · Ctrl+L 清空 · Ctrl+O 上传 ·
+    /// Ctrl+Shift+C 复制全部 · Ctrl+加/减/0 调字号 · Ctrl+T 深浅色。
+    /// （换行由输入框的 Enter / Shift+Enter 直接处理，无需拦截）
+    /// </summary>
+    protected override void OnPreviewKeyDown(KeyEventArgs e)
+    {
+        bool ctrl = Keyboard.Modifiers == ModifierKeys.Control;
+        bool ctrlShift = Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift);
+
+        if (ctrlShift && e.Key == Key.C)
+        {
+            e.Handled = true;
+            CopyAllMessages();
+            return;
+        }
+        if (ctrl)
+        {
+            switch (e.Key)
+            {
+                case Key.L:
+                    e.Handled = true;
+                    _ = RunLocalCommandAsync("/clear");
+                    return;
+                case Key.O:
+                    e.Handled = true;
+                    UploadButton_Click(this, new RoutedEventArgs());
+                    return;
+                case Key.T:
+                    e.Handled = true;
+                    HandleDarkMode("/darkmode");
+                    return;
+                case Key.OemPlus:
+                case Key.Add:
+                    e.Handled = true;
+                    AdjustFontSize(1);
+                    return;
+                case Key.OemMinus:
+                case Key.Subtract:
+                    e.Handled = true;
+                    AdjustFontSize(-1);
+                    return;
+                case Key.D0:
+                case Key.NumPad0:
+                    e.Handled = true;
+                    AdjustFontSize(14 - _fontSize); // 恢复默认字号
+                    return;
+            }
+        }
+        if (e.Key == Key.Escape)
+        {
+            if (CommandPalette.IsOpen || SnippetPalette.IsOpen)
+            {
+                CloseAllPalettes();
+                e.Handled = true;
+                return;
+            }
+            if (_stopMode)
+            {
+                e.Handled = true;
+                _ = TriggerStopAsync();
+            }
+            return;
+        }
+        base.OnPreviewKeyDown(e);
+    }
+
+    /// <summary>执行指令输入框之外的本地指令（含前端自行处理的 /snippet、/darkmode）。</summary>
+    private async Task RunLocalCommandAsync(string command)
+    {
+        if (_isProcessing || _backend is null || command.Length == 0)
+            return;
+        SetProcessing(true);
+        AddMessage("user", command);
+        try
+        {
+            if (command.StartsWith("/snippet", StringComparison.OrdinalIgnoreCase))
+                HandleSnippetCommand(command);
+            else if (command.StartsWith("/darkmode", StringComparison.OrdinalIgnoreCase))
+                HandleDarkMode(command);
+            else
+                HandleChatResponse(await _backend.SendRequestAsync(new { action = "chat", message = command }));
+        }
+        catch (Exception ex)
+        {
+            AddMessage("system", $"❌ 请求失败: {ex.Message}");
+        }
+        finally
+        {
+            SetProcessing(false);
+        }
     }
 
     // ---------- 发送消息（对话输入栏） ----------
@@ -381,17 +629,9 @@ public partial class MainWindow : Window
     private async Task SendStreamAsync(string message)
     {
         // 从一开始就使用 RichTextBox，流式过程中即按 Markdown 实时渲染
-        var panel = NewMessagePanel("assistant", "", out TextBlock contentBlock);
+        var panel = NewMessagePanel("assistant", "", out FrameworkElement contentBlock);
         panel.Children.Remove(contentBlock);
-        var rich = new RichTextBox
-        {
-            IsReadOnly = true,
-            BorderThickness = new Thickness(0),
-            Background = Brushes.Transparent,
-            FontSize = _fontSize,
-            Tag = "content",
-            IsDocumentEnabled = true,
-        };
+        var rich = CreateRichContent();
         panel.Children.Insert(1, rich);
         MessagePanel.Children.Add(panel);
 
@@ -418,6 +658,7 @@ public partial class MainWindow : Window
             if (_stopRequested && full.Length == 0)
                 sb.Append("\n⏹（已停止生成）");
             FinalizeMarkdownRender(sb.ToString()); // 结束：完整渲染一次
+            AddMessageActions(panel, sb.ToString(), sb.ToString()); // 生成结束后提供复制操作条
         }
         finally
         {
@@ -908,6 +1149,11 @@ public partial class MainWindow : Window
             AddMessage("system", content);
             if (content.StartsWith(ModePrefix, StringComparison.Ordinal))
                 ModeText.Text = $"模式: {content[ModePrefix.Length..].Trim()}";
+            // 搜索开关变化即时反映到状态栏
+            if (content.Contains("搜索已开启", StringComparison.Ordinal))
+                SearchText.Text = "搜索: 开";
+            else if (content.Contains("搜索已关闭", StringComparison.Ordinal))
+                SearchText.Text = "搜索: 关";
         }
 
         // /model 需要下载：征得用户同意后发送下载动作
@@ -944,10 +1190,13 @@ public partial class MainWindow : Window
                     StatusText.Text = SimplifyStatus(delta);
                 });
             AddMessage("system", final);
+            Toast($"✅ 模型下载完成：{modelName}");
+            _ = RefreshStatusBarAsync();
         }
         catch (Exception ex)
         {
             AddMessage("system", $"❌ 模型操作失败: {ex.Message}");
+            Toast($"❌ 模型下载失败：{ex.Message}", error: true);
             StatusText.Text = "就绪";
         }
         StatusText.Text = "就绪";
@@ -1039,6 +1288,8 @@ public partial class MainWindow : Window
     private void ApplyTheme(bool dark)
     {
         _isDark = dark;
+        _settings.DarkMode = dark;
+        _settings.Save();  // 主题即时生效并记住选择
         var dictionaries = Application.Current.Resources.MergedDictionaries;
         var theme = dictionaries.FirstOrDefault(
             d => d.Source?.OriginalString?.Contains("Theme.", StringComparison.Ordinal) == true);
@@ -1049,17 +1300,25 @@ public partial class MainWindow : Window
         };
     }
 
-    // ---------- 字号调节（Ctrl+滚轮） ----------
+    // ---------- 字号调节（Ctrl+滚轮 / Ctrl+加号减号） ----------
 
     private void MessageScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
         if (Keyboard.Modifiers == ModifierKeys.Control)
         {
-            _fontSize = Math.Clamp(_fontSize + (e.Delta > 0 ? 0.5 : -0.5), 10, 24);
-            UpdateAllMessageFontSize();
-            StatusText.Text = $"字号 {_fontSize:0.#}";
+            AdjustFontSize(e.Delta > 0 ? 0.5 : -0.5);
             e.Handled = true;
         }
+    }
+
+    /// <summary>调整全局字号并同步到所有消息控件（纯文本 / Markdown / 时间戳以外的内容）。</summary>
+    private void AdjustFontSize(double delta)
+    {
+        _fontSize = Math.Clamp(_fontSize + delta, 10, 24);
+        UpdateAllMessageFontSize();
+        StatusText.Text = $"字号 {_fontSize:0.#}";
+        _settings.FontSize = _fontSize;
+        _settings.Save();
     }
 
     private void UpdateAllMessageFontSize()
@@ -1072,10 +1331,18 @@ public partial class MainWindow : Window
             {
                 if (inner is not FrameworkElement fe || !Equals(fe.Tag, "content"))
                     continue;
-                if (fe is TextBlock text)
-                    text.FontSize = _fontSize;
-                else if (fe is RichTextBox rich)
-                    rich.FontSize = _fontSize; // FlowDocument 未显式设字号的 Run 会继承
+                switch (fe)
+                {
+                    case TextBox box:          // 用户/系统消息（纯文本，可选中复制）
+                        box.FontSize = _fontSize;
+                        break;
+                    case RichTextBox rich:     // 助手消息（Markdown；未显式设字号的 Run 会继承）
+                        rich.FontSize = _fontSize;
+                        break;
+                    case TextBlock text:
+                        text.FontSize = _fontSize;
+                        break;
+                }
             }
         }
     }
@@ -1089,8 +1356,50 @@ public partial class MainWindow : Window
         StatusText.Text = processing ? "正在处理..." : "就绪";
     }
 
-    /// <summary>创建消息面板：右上角时间戳 + 内容（Tag="content" 便于统一调字号）。</summary>
-    private StackPanel NewMessagePanel(string role, string text, out TextBlock content)
+    /// <summary>创建可选中/可复制的纯文本内容控件（只读 TextBox：支持拖选与 Ctrl+C）。</summary>
+    private TextBox CreatePlainContent(string text, Brush foreground)
+    {
+        return new TextBox
+        {
+            Text = text,
+            IsReadOnly = true,
+            IsReadOnlyCaretVisible = false,
+            BorderThickness = new Thickness(0),
+            Background = Brushes.Transparent,
+            Padding = new Thickness(0),
+            Margin = new Thickness(0),
+            TextWrapping = TextWrapping.Wrap,
+            // 禁用内部滚动：让滚轮事件冒泡给外层消息列表，滚动体验与整页一致
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            FontSize = _fontSize,
+            Tag = "content",
+            Foreground = foreground,
+            Cursor = Cursors.IBeam,
+            ToolTip = "可拖选文本，Ctrl+C 复制",
+        };
+    }
+
+    /// <summary>创建助手消息用的只读 RichTextBox（Markdown 渲染 + 可选中复制）。</summary>
+    private RichTextBox CreateRichContent()
+    {
+        return new RichTextBox
+        {
+            IsReadOnly = true,
+            BorderThickness = new Thickness(0),
+            Background = Brushes.Transparent,
+            Padding = new Thickness(0),
+            Margin = new Thickness(0),
+            FontSize = _fontSize,
+            Tag = "content",
+            IsDocumentEnabled = true,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        };
+    }
+
+    /// <summary>创建消息面板：右上角时间戳 + 内容（Tag="content" 便于统一调字号）+ 复制操作条。</summary>
+    private StackPanel NewMessagePanel(string role, string text, out FrameworkElement content)
     {
         (string icon, string brushKey) = role switch
         {
@@ -1107,42 +1416,154 @@ public partial class MainWindow : Window
             Foreground = (Brush)(TryFindResource("SubTextBrush") ?? Brushes.Gray),
             HorizontalAlignment = HorizontalAlignment.Right,
         };
-        content = new TextBlock
-        {
-            Text = icon + text,
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = _fontSize,
-            Tag = "content",
-            Foreground = brush,
-        };
+        content = CreatePlainContent(icon + text, brush);
         var panel = new StackPanel { Margin = new Thickness(5) };
         panel.Children.Add(time);
         panel.Children.Add(content);
         return panel;
     }
 
+    /// <summary>在消息面板底部追加复制操作条（复制 / Markdown / 代码 / 全选）。</summary>
+    private void AddMessageActions(StackPanel panel, string plainText, string? markdown = null)
+    {
+        var bar = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 2, 0, 0),
+        };
+
+        string plain = plainText;
+        bar.Children.Add(MakeActionButton("📋 复制", "复制为纯文本", () => CopyToClipboard(plain, "已复制为纯文本")));
+
+        if (markdown is not null)
+        {
+            string md = markdown;
+            bar.Children.Add(MakeActionButton("⧉ Markdown", "复制原始 Markdown 源码", () => CopyToClipboard(md, "已复制 Markdown 源码")));
+
+            string code = MarkdownHelper.ExtractCodeBlocks(md);
+            if (code.Length > 0)
+                bar.Children.Add(MakeActionButton("</> 代码", "复制全部代码块", () => CopyToClipboard(code, "已复制代码块")));
+        }
+
+        var target = panel.Children.OfType<FrameworkElement>().FirstOrDefault(e => Equals(e.Tag, "content"));
+        bar.Children.Add(MakeActionButton("全选", "选中本条消息全部文本", () => SelectAll(target)));
+        panel.Children.Add(bar);
+    }
+
+    private static Button MakeActionButton(string caption, string tooltip, Action onClick)
+    {
+        var button = new Button
+        {
+            Content = caption,
+            FontSize = 10,
+            Padding = new Thickness(6, 1, 6, 1),
+            Margin = new Thickness(4, 0, 0, 0),
+            MinWidth = 0,
+            Cursor = Cursors.Hand,
+            ToolTip = tooltip,
+            Style = Application.Current.TryFindResource("RoundButton") as Style,
+        };
+        button.Click += (_, _) => onClick();
+        return button;
+    }
+
+    /// <summary>把文本写入剪贴板（剪贴板被占用时重试，失败给出提示）。</summary>
+    private void CopyToClipboard(string text, string successMessage)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            Toast("⚠️ 没有可复制的内容");
+            return;
+        }
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                Clipboard.SetText(text);
+                Toast($"✅ {successMessage}（{text.Length} 字符）");
+                return;
+            }
+            catch (Exception)
+            {
+                System.Threading.Thread.Sleep(60);  // 剪贴板被其他程序短暂占用
+            }
+        }
+        Toast("❌ 复制失败：剪贴板被其他程序占用，请重试");
+    }
+
+    /// <summary>取出消息控件中的纯文本（TextBox 取 Text，RichTextBox 取文档文本）。</summary>
+    private static string ReadContentText(FrameworkElement? element) => element switch
+    {
+        TextBox box => box.Text,
+        RichTextBox rich => new TextRange(rich.Document.ContentStart, rich.Document.ContentEnd).Text.TrimEnd('\r', '\n'),
+        _ => "",
+    };
+
+    private static void SelectAll(FrameworkElement? element)
+    {
+        switch (element)
+        {
+            case TextBox box:
+                box.Focus();
+                box.SelectAll();
+                break;
+            case RichTextBox rich:
+                rich.Focus();
+                rich.SelectAll();
+                break;
+        }
+    }
+
+    /// <summary>把全部对话复制为纯文本（快捷键 Ctrl+Shift+C）。</summary>
+    private void CopyAllMessages()
+    {
+        var sb = new StringBuilder();
+        foreach (var child in MessagePanel.Children)
+        {
+            if (child is not StackPanel panel)
+                continue;
+            var content = panel.Children.OfType<FrameworkElement>().FirstOrDefault(e => Equals(e.Tag, "content"));
+            string text = ReadContentText(content);
+            if (text.Length > 0)
+                sb.AppendLine(text).AppendLine();
+        }
+        CopyToClipboard(sb.ToString().TrimEnd(), "已复制全部对话");
+    }
+
+    /// <summary>底部通知条：短暂显示后自动隐藏（下载完成/自动化完成/错误提示等）。</summary>
+    private void Toast(string message, bool error = false)
+    {
+        ToastText.Text = message;
+        ToastText.Foreground = (Brush)(TryFindResource(error ? "SystemBrush" : "AccentBrush") ?? Brushes.Gray);
+        ToastBorder.Visibility = Visibility.Visible;
+        HintText.Visibility = Visibility.Collapsed;
+        _toastTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
+        _toastTimer.Stop();
+        _toastTimer.Tick += (_, _) =>
+        {
+            _toastTimer!.Stop();
+            ToastBorder.Visibility = Visibility.Collapsed;
+            HintText.Visibility = Visibility.Visible;
+        };
+        _toastTimer.Start();
+    }
+
     private void AddMessage(string role, string content)
     {
-        var panel = NewMessagePanel(role, role == "assistant" ? "" : content, out TextBlock contentBlock);
+        var panel = NewMessagePanel(role, role == "assistant" ? "" : content, out FrameworkElement contentBlock);
         if (role == "assistant")
             ReplaceWithMarkdown(panel, contentBlock, content); // 助手消息渲染为 Markdown
+        AddMessageActions(panel, content, role == "assistant" ? content : null);
         MessagePanel.Children.Add(panel);
         MessageScrollViewer.ScrollToBottom();
     }
 
-    /// <summary>把消息面板中的流式文本块替换为渲染好的 Markdown（只读 RichTextBox）。</summary>
-    private void ReplaceWithMarkdown(StackPanel panel, TextBlock contentBlock, string markdown)
+    /// <summary>把消息面板中的纯文本块替换为渲染好的 Markdown（只读 RichTextBox）。</summary>
+    private void ReplaceWithMarkdown(StackPanel panel, FrameworkElement contentBlock, string markdown)
     {
         panel.Children.Remove(contentBlock);
-        var richText = new RichTextBox
-        {
-            IsReadOnly = true,
-            BorderThickness = new Thickness(0),
-            Background = Brushes.Transparent,
-            FontSize = _fontSize,
-            Tag = "content",
-            IsDocumentEnabled = true,
-        };
+        var richText = CreateRichContent();
         richText.Document = MarkdownRenderer.Build(markdown);
         panel.Children.Insert(1, richText);
     }

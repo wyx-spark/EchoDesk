@@ -47,5 +47,30 @@ namespace EchoDesk.Utilities
 
             return text.Trim();
         }
+
+        /// <summary>
+        /// 提取 Markdown 中的全部代码块内容（``` 围栏），用空行分隔；
+        /// 没有围栏代码块时返回空串。供消息的「复制代码」按钮使用。
+        /// </summary>
+        public static string ExtractCodeBlocks(string markdown)
+        {
+            if (string.IsNullOrEmpty(markdown)) return "";
+
+            var blocks = new System.Collections.Generic.List<string>();
+            foreach (Match m in Regex.Matches(markdown, @"```[a-zA-Z0-9_+#.-]*[ \t]*\r?\n(.*?)```", RegexOptions.Singleline))
+            {
+                string code = m.Groups[1].Value.TrimEnd('\r', '\n');
+                if (code.Length > 0)
+                    blocks.Add(code);
+            }
+            return string.Join("\n\n", blocks);
+        }
+
+        /// <summary>Markdown 中围栏代码块的数量。</summary>
+        public static int CountCodeBlocks(string markdown)
+        {
+            if (string.IsNullOrEmpty(markdown)) return 0;
+            return Regex.Matches(markdown, @"```[a-zA-Z0-9_+#.-]*[ \t]*\r?\n(.*?)```", RegexOptions.Singleline).Count;
+        }
     }
 }
