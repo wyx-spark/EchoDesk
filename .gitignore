@@ -1,0 +1,34 @@
+# ---------- 构建产物 ----------
+build/
+dist/
+out/
+frontend/bin/
+frontend/obj/
+publish/
+*.pdb
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+backend_crash.log
+
+# ---------- 模型与缓存（体积过大，不入库） ----------
+*.gguf
+models/*.gguf
+.cache/
+backend/.cache/
+
+# ---------- 运行时用户数据 ----------
+session.json
+config.user.json
+automation_log.jsonl
+
+# ---------- IDE / 编辑器 ----------
+.idea/
+.vs/
+*.user
+*.suo
+*.swp

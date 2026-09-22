@@ -3,13 +3,36 @@
     "model_repo": "unsloth/Qwen3.5-0.8B-GGUF",
     "hf_endpoint": "https://hf-mirror.com",
     "default_mode": "general",
-    "context_length": 4096,
+    "context_length": 8192,
+    "max_context": 32768,
+    "auto_context": true,
+    "model_context_windows": {
+        "qwen3.5-0.8b": 32768,
+        "qwen3-0.6b": 32768,
+        "qwen3": 40960,
+        "qwen2.5": 32768,
+        "llama-3": 8192,
+        "llama3": 8192,
+        "gemma": 8192,
+        "phi-3": 4096
+    },
+    "summarize": {
+        "enabled": true,
+        "trigger_ratio": 0.5,
+        "chunk_chars": 3000,
+        "overlap_chars": 200,
+        "max_summary_tokens": 400,
+        "merge_max_tokens": 800,
+        "model": "",
+        "min_chars": 4000,
+        "keep_pointer": true
+    },
     "max_history": 10,
     "search_default": false,
     "temperature": 0.7,
     "max_tokens": 1024,
     "search_results": 3,
-    "file_max_chars": 10000,
+    "file_max_chars": 200000,
     "theme": "dark",
     "warmup": true,
     "n_threads": 0,
@@ -20,8 +43,10 @@
         "qwen": {
             "path": "Qwen3.5-0.8B-Q4_K_M.gguf",
             "repo": "unsloth/Qwen3.5-0.8B-GGUF",
-            "context_length": 4096,
+            "context_length": 8192,
             "temperature": 0.7
         }
-    }
+    },
+    "speed_hint": true,
+    "speed_min_tps": 3.0
 }

@@ -1,9 +1,8 @@
-# EchoDesk 后端依赖（Python 3.9+）
-llama-cpp-python>=0.3.0
-pyxtxt[pdf,docx]   # 常规文档解析，不装 all 减小体积
+--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+llama-cpp-python
+pyxtxt[pdf,docx]
 duckduckgo-search
 pydantic>=2.0
 huggingface_hub
-pywin32            # WPS COM 调用
-# 构建工具
+pywin32
 pyinstaller>=6.0

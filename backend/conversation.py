@@ -64,6 +64,8 @@ class ConversationManager:
         self.history: List[dict] = []
         self.file_name = ""
         self.file_content = ""
+        self.file_summary = ""          # 长文档分段摘要（有值时优先注入摘要而非全文）
+        self.file_summary_meta: Dict = {}  # 摘要元信息：段数、原文字符数、原文指针等
         self.undo_stack: List[dict] = []
         self.custom_prompt = ""
         self.summary = ""  # 早期对话的自动摘要（长会话压缩产物）
@@ -122,6 +124,8 @@ class ConversationManager:
         self.undo_stack.clear()
         self.file_name = ""
         self.file_content = ""
+        self.file_summary = ""
+        self.file_summary_meta = {}
         self.summary = ""
 
     def export_markdown(self) -> str:
@@ -144,6 +148,17 @@ class ConversationManager:
     def set_file(self, filepath: str, content: str) -> None:
         self.file_name = filepath
         self.file_content = content
+        # 换文件时清掉旧摘要，避免张冠李戴
+        self.file_summary = ""
+        self.file_summary_meta = {}
+
+    def set_file_summary(self, summary: str, meta: Optional[Dict] = None) -> None:
+        """记录长文档分段摘要与其元信息（段数/原文字符数/原文指针）。"""
+        self.file_summary = summary or ""
+        self.file_summary_meta = meta or {}
+
+    def has_file(self) -> bool:
+        return bool(self.file_content)
 
     # ---------- Prompt 构建 ----------
 
@@ -167,13 +182,23 @@ class ConversationManager:
             prompt += f"\n\n【早期对话摘要】\n{self.summary}"
         if self.file_content:
             # 只保留文件名指针，完整内容在用户提问与文件相关时随问题注入
-            prompt += f"\n\n【已上传文件】: {self.file_name}\n（如需基于文件内容回答，请在问题中提及）"
+            pointer = f"\n\n【已上传文件】: {self.file_name}\n（如需基于文件内容回答，请在问题中提及）"
+            if self.file_summary:
+                meta = self.file_summary_meta or {}
+                chunks = meta.get("chunks")
+                chars = meta.get("origin_chars")
+                detail = ""
+                if chunks and chars:
+                    detail = f"（原文 {chars} 字符，已分 {chunks} 段摘要）"
+                pointer += f"\n【长文档摘要已就绪】{detail} 该文档过长，提问时将注入分段摘要而非全文。"
+            prompt += pointer
         return prompt
 
     def build_messages(self, user_query: str, search_context: str = "", include_file: bool = False) -> List[dict]:
         """构造发送给模型的完整消息列表（系统提示 + 历史 + 当前问题）。
 
-        include_file=True 且已上传文件时，把文件全文注入到当前问题之前。
+        include_file=True 且已上传文件时，把文件内容注入到当前问题之前：
+        有分段摘要则注入摘要（含原文指针），否则注入全文。
         """
         messages: List[dict] = [{"role": "system", "content": self.get_system_prompt()}]
         for msg in self.history:
@@ -181,7 +206,9 @@ class ConversationManager:
 
         user_content = f"参考以下网络信息：\n{search_context}\n\n问题：{user_query}" if search_context else user_query
         if include_file and self.file_content:
-            user_content = f"【文件内容】\n{self.file_content}\n\n{user_content}"
+            body = self.file_summary or self.file_content
+            label = "文件内容（长文档摘要）" if self.file_summary else "文件内容"
+            user_content = f"【{label}】\n{body}\n\n{user_content}"
         messages.append({"role": "user", "content": user_content})
         return messages
 
@@ -196,6 +223,8 @@ class ConversationManager:
             "model_path": model_path,
             "file_name": self.file_name,
             "file_content": self.file_content,
+            "file_summary": self.file_summary,
+            "file_summary_meta": self.file_summary_meta,
             "history": self.history,
         }
         with open(path, "w", encoding="utf-8") as f:
@@ -217,6 +246,8 @@ class ConversationManager:
             self.summary = data.get("summary", "")
             self.file_name = data.get("file_name", "")
             self.file_content = data.get("file_content", "")
+            self.file_summary = data.get("file_summary", "")
+            self.file_summary_meta = data.get("file_summary_meta", {}) or {}
             self.history = data.get("history", [])
             return bool(self.history), str(data.get("model_path", ""))
         except Exception:

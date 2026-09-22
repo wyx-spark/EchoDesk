@@ -7,6 +7,7 @@ from config import Config
 from conversation import ConversationManager, MODE_TEMPERATURES
 from download_utils import find_best_model
 from file_parser import parse_file_with_wps
+from gguf_meta import resolve_context_window
 from version import APP_NAME, APP_VERSION, STUDIO
 
 HELP_TEXT = f"""\
@@ -27,6 +28,13 @@ HELP_TEXT = f"""\
   作用：把文件内容加入上下文，模型将基于文件回答。
   支持 Office（doc/docx/xls/xlsx/ppt/pptx）、TXT、PDF 等；
   加密 Office 文档在装有 WPS 的机器上可自动解密，否则回退通用解析。
+  长文档（估算 token 超过上下文窗口的 50%）会自动先分段摘要再注入，
+  而不是直接截断，摘要中保留原文指针便于回查。
+
+/summarize — 手动触发全文摘要
+  用法：/summarize
+  作用：对当前已加载的文件强制做一次分段摘要（逐段摘要后合并），
+       用摘要替代全文注入上下文，适合合同等超长文档；摘要进度在对话框中实时显示。
 
 /search on|off — 联网搜索开关
   用法：/search on
@@ -99,11 +107,23 @@ Response = Tuple[str, Optional[dict]]
 class CommandHandler:
     """负责 '/' 指令的解析与分发。"""
 
-    def __init__(self, conv_mgr: ConversationManager, search_engine, llm_engine, config: Config) -> None:
+    def __init__(
+        self,
+        conv_mgr: ConversationManager,
+        search_engine,
+        llm_engine,
+        config: Config,
+        summarizer=None,
+        file_loader: Optional[Callable[[str], str]] = None,
+        summarize_file: Optional[Callable[..., str]] = None,
+    ) -> None:
         self.conv_mgr = conv_mgr
         self.search_engine = search_engine
         self.llm_engine = llm_engine
         self.config = config
+        self.summarizer = summarizer
+        self.file_loader = file_loader
+        self.summarize_file = summarize_file
         self.search_enabled = config.search_default
         self.temperature = config.temperature
         self.temp_manual = False  # 用户手动 /temp 后，切换模式不再套用温度预设
@@ -115,6 +135,7 @@ class CommandHandler:
             "/help": lambda _: (HELP_TEXT, None),
             "/mode": self._mode,
             "/file": self._file,
+            "/summarize": self._summarize,
             "/search": self._search,
             "/model": self._model,
             "/clearcache": self._clearcache,
@@ -170,11 +191,26 @@ class CommandHandler:
         filepath = args[0]
         if not os.path.exists(filepath):
             return f"文件不存在: {filepath}", None
+        # 统一走后端的加载入口：过长文档自动分段摘要后再注入
+        if self.file_loader is not None:
+            return self.file_loader(filepath), None
         content = parse_file_with_wps(filepath, self.config.file_max_chars)
         if content.startswith(("WPS读取失败", "解析失败", "文件内容为空", "不支持的文件类型")):
             return f"❌ 读取失败: {content}", None
         self.conv_mgr.set_file(filepath, content)
         return f"✅ 已加载文件: {os.path.basename(filepath)} ({len(content)} 字符)", None
+
+    def _summarize(self, args: list) -> Response:
+        """手动触发全文摘要（长文档注入前先分段摘要）。"""
+        if self.summarize_file is None:
+            return "❌ 当前不支持手动摘要", None
+        if not self.conv_mgr.file_content:
+            return "❌ 当前没有已加载的文件，请先用 /file 上传", None
+        name = os.path.basename(self.conv_mgr.file_name or "")
+        try:
+            return self.summarize_file(True, name, "手动"), None
+        except Exception as e:
+            return f"❌ 摘要失败: {e}", None
 
     def _search(self, args: list) -> Response:
         if not args:
@@ -242,14 +278,21 @@ class CommandHandler:
 
     def _model_info(self) -> str:
         info = self.llm_engine.model_info()
+        train = self.llm_engine.n_ctx_train
         lines = [
             f"🧠 当前模型: {self.config.model_path}",
             f"🏗️  架构: {info.get('general.architecture', '未知')} · 量化: {info.get('general.file_type', '未知')}",
-            f"🪟 上下文: {self.llm_engine.n_ctx} tokens",
+            f"🪟 上下文: {self.llm_engine.n_ctx} tokens"
+            + (f"（模型训练窗口 {train}，上限 max_context={self.config.max_context}）" if train else
+               f"（上限 max_context={self.config.max_context}）"),
+            f"💾 KV Cache 估算: {self.llm_engine.kv_cache_text()}（fp16，随上下文长度线性增长）",
             f"🧵 线程: {self.llm_engine.n_threads} · batch {self.llm_engine.n_batch}",
             f"🎮 GPU 层: {self.llm_engine.n_gpu_layers}（0=纯 CPU）",
             f"📁 本地模型: {len(self._local_ggufs())} 个",
         ]
+        if self.conv_mgr.file_content:
+            summarized = "已分段摘要" if self.conv_mgr.file_summary else "按原文注入"
+            lines.append(f"📄 已加载文件: {os.path.basename(self.conv_mgr.file_name)}（{summarized}）")
         if self.config.models:
             lines.append("🗂️  档案别名: " + ", ".join(self.config.models.keys()))
         lines.append("（/model list 查看本地模型；/model <别名|文件名|前缀> 切换；缺失时征询下载）")
@@ -272,16 +315,22 @@ class CommandHandler:
         return "\n".join(lines)
 
     def _apply_model(self, path: str, display: str, profile: Optional[dict]) -> Response:
-        """切换并重新加载模型；档案可携带独立 context_length / temperature。"""
-        n_ctx = int(profile["context_length"]) if profile and profile.get("context_length") else None
+        """切换并重新加载模型；档案可携带独立 context_length / temperature。
+
+        上下文窗口按新模型的训练窗口与 config.max_context 收敛，防止超限。
+        """
+        requested = int(profile["context_length"]) if profile and profile.get("context_length") else None
+        train = resolve_context_window(path, 0)
+        n_ctx = self.config.context_for_model(path, train, requested)
         try:
             self.llm_engine.reload(path, n_ctx)
         except Exception as e:
             return f"❌ 模型加载失败: {e}", None
         self.config.model_path = display if not os.path.isabs(display) else os.path.basename(display)
-        extra = ""
-        if n_ctx:
-            extra += f"（上下文 {n_ctx}）"
+        extra = f"（上下文 {n_ctx}"
+        if train and n_ctx < train:
+            extra += f"，模型训练窗口 {train}"
+        extra += f"，KV Cache 约 {self.llm_engine.kv_cache_text()}）"
         if profile and profile.get("temperature") is not None and not self.temp_manual:
             self.temperature = float(profile["temperature"])
             extra += f"（温度预设 {self.temperature}）"
@@ -327,7 +376,7 @@ class CommandHandler:
             msgs = self.conv_mgr.build_messages("")
             used = sum(self.llm_engine.count_tokens(m["content"]) for m in msgs)
             limit = int(self.llm_engine.n_ctx * 0.8)
-            ctx_line = f"📏 上下文: 约 {used}/{limit} tokens（80% 自动摘要线）"
+            ctx_line = f"📏 上下文: 约 {used}/{limit} tokens（{self.llm_engine.n_ctx} 窗口的 80% 自动摘要线）"
         except Exception:
             ctx_line = "📏 上下文: 未知"
         lines = [
@@ -337,11 +386,13 @@ class CommandHandler:
             f"🛠️  模式: {self.conv_mgr.get_mode()}",
             f"🌡️  温度: {self.temperature}{'（手动）' if self.temp_manual else '（模式预设）'}",
             f"⚙️  线程: {getattr(self.llm_engine, 'n_threads', '?')} · batch {getattr(self.llm_engine, 'n_batch', 512)} · GPU 层 {getattr(self.llm_engine, 'n_gpu_layers', 0)}",
+            f"💾 KV Cache: 约 {self.llm_engine.kv_cache_text()}",
             ctx_line,
             f"🔍 联网搜索: {'开启' if self.search_enabled else '关闭'}",
             f"💬 对话轮数: {len(self.conv_mgr.history) // 2}",
             f"📝 早期摘要: {'有' if self.conv_mgr.summary else '无'}",
-            f"📄 文件: {os.path.basename(self.conv_mgr.file_name) if self.conv_mgr.file_name else '无'}",
+            f"📄 文件: {os.path.basename(self.conv_mgr.file_name) if self.conv_mgr.file_name else '无'}"
+            + (f"（已分段摘要 {self.conv_mgr.file_summary_meta.get('chunks', '?')} 段）" if self.conv_mgr.file_summary else ""),
         ]
         return "\n".join(lines), None
 

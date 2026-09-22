@@ -57,8 +57,10 @@ with _suppress_stdout():
     from conversation import ConversationManager, FILE_INTENT, REPEAT_INTENT
     from download_utils import check_model, download_model, find_best_model
     from file_parser import parse_file_with_wps
+    from gguf_meta import resolve_context_window
     from llm_engine import LLMEngine
     from search_engine import SearchEngine
+    from summarizer import DocumentSummarizer
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("EchoDesk")
@@ -117,15 +119,31 @@ class Backend:
         self.llm = self._load_model(config)
         self.conv = ConversationManager(config.max_history, config.default_mode)
         self.search = SearchEngine(config.search_results)
-        self.commands = CommandHandler(self.conv, self.search, self.llm, config)
+        self.summarizer = DocumentSummarizer(
+            self.llm, config.summarize, engine_factory=self._make_summary_engine,
+        )
+        self.commands = CommandHandler(
+            self.conv, self.search, self.llm, config, summarizer=self.summarizer,
+            file_loader=self.load_file_into_context, summarize_file=self.summarize_current_file,
+        )
         self.stream_active = False
         self.stop_event = threading.Event()
+
+    def _make_summary_engine(self, model_path: str):
+        """为 summarize.model 指定的专用摘要模型创建引擎（按该模型训练窗口开窗）。"""
+        n_ctx = self.config.context_for_model(model_path, resolve_context_window(model_path, 0))
+        return LLMEngine(
+            model_path, n_ctx,
+            n_threads=self.config.n_threads or os.cpu_count() or 4,
+            n_batch=self.config.n_batch, n_gpu_layers=self.config.n_gpu_layers,
+        )
 
     @staticmethod
     def _load_model(config: Config) -> LLMEngine:
         """检查本地模型，缺失时自动下载，然后加载（含线程/GPU 自动配置）。
 
         下载进度打到 stderr（不受 _suppress_stdout 影响），前端连接阶段实时显示。
+        上下文窗口按"所选模型"决定：取配置值、模型训练窗口与配置上限三者的最小值。
         """
         model_path = check_model(config.model_path)
         if not model_path:
@@ -156,12 +174,15 @@ class Backend:
                     if prof.get("repo") == config.model_repo:
                         prof["path"] = target
         n_threads = config.n_threads or os.cpu_count() or 4
+        # 按模型决定上下文窗口，并在重载/加载时输出窗口大小与 KV Cache 占用
+        train_ctx = resolve_context_window(model_path, 0)
+        n_ctx = config.context_for_model(model_path, train_ctx)
         log.info(
-            "加载模型: %s (ctx=%d, threads=%d, batch=%d, gpu_layers=%d)",
-            model_path, config.context_length, n_threads, config.n_batch, config.n_gpu_layers,
+            "加载模型: %s (ctx=%d, 训练窗口=%s, threads=%d, batch=%d, gpu_layers=%d)",
+            model_path, n_ctx, train_ctx or "未知", n_threads, config.n_batch, config.n_gpu_layers,
         )
         return LLMEngine(
-            model_path, config.context_length,
+            model_path, n_ctx,
             n_threads=n_threads, n_batch=config.n_batch, n_gpu_layers=config.n_gpu_layers,
         )
 
@@ -215,7 +236,7 @@ class Backend:
         try:
             messages = [{"role": "system", "content": self.conv.get_system_prompt()}] + self.conv.history
             response["used"] = self._estimate_tokens(messages)
-            response["limit"] = int(self.config.context_length * 0.8)
+            response["limit"] = int(self.llm.n_ctx * 0.8)
         except Exception:
             pass
 
@@ -246,6 +267,12 @@ class Backend:
             self.conv.add_message("assistant", full)
             self._compact_history()
             done: Dict[str, Any] = {"type": "done", "content": full, "stopped": self.stop_event.is_set()}
+            # 扩展上下文后速度明显下降时给出提示（窗口越大 KV Cache 越大、越慢）
+            if self.config.speed_hint and not self.stop_event.is_set():
+                hint = self.llm.speed_hint(self.config.speed_min_tps)
+                if hint:
+                    done["content"] = f"{full}\n\n{hint}" if full else hint
+                    _write({"type": "delta", "content": f"\n\n{hint}"})
             self._attach_context(done)  # 附带当前上下文占用，供前端刷新
             yield done
         except Exception as e:
@@ -287,11 +314,63 @@ class Backend:
     def _handle_file(self, filepath: str) -> Dict[str, Any]:
         if not filepath:
             return {"type": "system", "content": "请提供文件路径"}
+        return {"type": "system", "content": self.load_file_into_context(filepath)}
+
+    def load_file_into_context(self, filepath: str) -> str:
+        """解析文件并入上下文；全文超出窗口一定比例时自动分段摘要后注入。
+
+        返回给用户看的反馈文本（成功或失败都会说明原因）。
+        """
         content = parse_file_with_wps(filepath, self.config.file_max_chars)
         if content.startswith(("WPS读取失败", "解析失败", "文件内容为空", "不支持的文件类型")):
-            return {"type": "system", "content": f"❌ {content}"}
+            return f"❌ {content}"
         self.conv.set_file(filepath, content)
-        return {"type": "system", "content": f"✅ 已加载文件: {os.path.basename(filepath)} ({len(content)} 字符)"}
+        name = os.path.basename(filepath)
+        try:
+            tokens = self.llm.count_tokens(content)
+        except Exception:
+            tokens = len(content) // 2
+        if self.summarizer.should_use_summary(content, self.llm.n_ctx):
+            log.info(
+                "文件 %s 约 %d tokens，超过窗口 %d 的 %.0f%%：转入分段摘要",
+                name, tokens, self.llm.n_ctx, self.config.summarize.trigger_ratio * 100,
+            )
+            head = (
+                f"📄 已加载 {name}：约 {tokens} tokens，超过窗口 {self.llm.n_ctx} 的 "
+                f"{self.config.summarize.trigger_ratio:.0%}，将先分段摘要再注入（避免直接截断丢信息）。\n"
+            )
+            return head + self.summarize_current_file(force=True, source_name=name, trigger="自动")
+        return f"✅ 已加载文件: {name} ({len(content)} 字符，约 {tokens} tokens)"
+
+    def summarize_current_file(self, force: bool = True, source_name: str = "", trigger: str = "手动") -> str:
+        """对当前已加载文件做分段摘要并替换注入内容（供自动触发与 /summarize 调用）。"""
+        if not self.conv.file_content:
+            return "❌ 当前没有已加载的文件，请先用 /file 上传"
+        name = source_name or os.path.basename(self.conv.file_name or "")
+
+        def _progress(index: int, total: int, label: str) -> None:
+            # 进度打到 stderr：前端在对话框里实时显示，长文档摘要不会"卡住无反应"
+            print(f"📝 {label} ({index}/{total})", file=sys.stderr, flush=True)
+
+        result = self.summarizer.summarize(
+            self.conv.file_content, source_name=name, force=force, on_progress=_progress,
+        )
+        if not result.summarized:
+            return f"ℹ️ 文件较短（{result.origin_chars} 字符），无需分段摘要，已按原文注入。"
+        self.conv.set_file_summary(
+            result.text,
+            {"chunks": result.chunk_count, "origin_chars": result.origin_chars, "pointer": result.pointer},
+        )
+        self.llm.clear_cache()  # 注入内容结构变化，旧 KV 缓存失效
+        summary_tokens = self.llm.count_tokens(result.text)
+        pointer = result.pointer
+        shown = pointer[:160] + ("…" if len(pointer) > 160 else "")
+        return (
+            f"✅ {trigger}分段摘要完成: {name}\n"
+            f"• 原文 {result.origin_chars} 字符 → {result.chunk_count} 段，摘要约 {summary_tokens} tokens\n"
+            f"• 已用摘要替代全文注入上下文（提问时自动带上）\n"
+            f"• 已保留原文指针：{shown}"
+        )
 
     def _handle_model_download(self, name: str) -> Dict[str, Any]:
         """用户已同意后下载模型并热切换。"""
@@ -373,7 +452,7 @@ class Backend:
         conv = self.conv
         if not conv.history:
             return
-        limit = int(self.config.context_length * 0.8)
+        limit = int(self.llm.n_ctx * 0.8)
         try:
             current = [{"role": "system", "content": conv.get_system_prompt()}] + conv.history
             total = self._estimate_tokens(current)

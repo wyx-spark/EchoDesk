@@ -35,7 +35,10 @@ def parse_file_with_wps(filepath: str, max_chars: int = 10000) -> str:
 
 
 def _truncate(text: str, max_chars: int) -> str:
-    return text[:max_chars] + "\n...[内容过长，已截断]" if len(text) > max_chars else text
+    """按字符数截断；max_chars <= 0 表示不限制（长文档交给分段摘要处理）。"""
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n...[内容过长，已截断]"
 
 
 def _read_office_with_wps(filepath: str, max_chars: int) -> str:
