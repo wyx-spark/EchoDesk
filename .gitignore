@@ -32,3 +32,6 @@ automation_log.jsonl
 *.user
 *.suo
 *.swp
+
+# ---------- 第三方命令行工具（由 tools\fetch_tools.bat 按需下载） ----------
+tools/rcedit-*.exe
