@@ -45,7 +45,9 @@ COMMENTS = "Powered by Void Entropia Studio"
 #       (3) 其依赖链含 GPL/LGPL 组件，对外分发会产生著佐权义务。
 # 改用 backend/file_parser.py 中的轻量解析器（python-docx/openpyxl/python-pptx/
 # pymupdf/xlrd，均为 MIT/BSD 或可选商业许可），行为更可预测、体积更小。
-PACKAGES = ["llama_cpp", "pydantic", "huggingface_hub", "duckduckgo_search", "win32com"]
+# 说明：playwright 必须整包收集——它自带 Node 驱动（driver/ 约 102MB，含 node.exe
+# 与 playwright-core），自动化功能依赖该驱动启动本机 Edge，缺文件会在运行时才报错。
+PACKAGES = ["llama_cpp", "pydantic", "huggingface_hub", "duckduckgo_search", "win32com", "playwright"]
 
 # 明确排除用不到的重型依赖：EchoDesk 只解析 Office/TXT/PDF，
 # 不需要 OCR / 深度学习 / 音频图像处理栈。排除后体积大幅下降，
@@ -133,7 +135,7 @@ a = Analysis(
     pathex=[SPECPATH],
     binaries=binaries,
     datas=datas,
-    hiddenimports=hiddenimports + ["llama_cpp", "win32com"],
+    hiddenimports=hiddenimports + ["llama_cpp", "win32com", "playwright", "schedule"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

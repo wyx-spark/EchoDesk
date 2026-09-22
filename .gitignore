@@ -21,10 +21,24 @@ models/*.gguf
 .cache/
 backend/.cache/
 
-# ---------- 运行时用户数据 ----------
+# ---------- 运行时用户数据（后端在工作目录里生成的文件） ----------
 session.json
 config.user.json
+ui_state.json
+snippets.json
+backend_crash.log
+# 自动化
 automation_log.jsonl
+automation_processed.json
+automation_results/
+browser_state.json
+# 技能市场
+market_cache.json
+skills_registry.json
+skills/
+# 开发时留下的临时脚本/产物
+_tmp_*.py
+*.tmp
 
 # ---------- IDE / 编辑器 ----------
 .idea/
