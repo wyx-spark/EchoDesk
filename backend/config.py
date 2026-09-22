@@ -9,7 +9,7 @@ import os
 import sys
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # 上下文窗口的硬性下限（低于此值无法正常对话）
 MIN_CONTEXT = 512
@@ -51,6 +51,114 @@ class SummarizeConfig(BaseModel):
     keep_pointer: bool = True
 
 
+class AutomationConfig(BaseModel):
+    """浏览器自动化配置（任务四）。
+
+    安全约定：``enabled`` 只有在 ``safety_accepted`` 为真时才允许为真
+    （在 _check_safety 校验器里强制），并且记录协议版本与同意时间以便审计。
+    """
+
+    enabled: bool = False
+    # ---------- 安全协议 ----------
+    safety_accepted: bool = False
+    safety_version: str = "1.0"
+    safety_accepted_at: str = ""
+    # ---------- 任务列表页 ----------
+    task_list_url: str = ""
+    task_list_selector: str = ""      # CSS 或 XPath（以 //、(、xpath= 开头判为 XPath）
+    task_row_selector: str = ""       # 可选：行容器选择器
+    next_page_selector: str = ""      # 可选：下一页按钮
+    # ---------- 任务详情页 ----------
+    task_detail_file_selector: str = ""
+    file_extensions: List[str] = Field(
+        default_factory=lambda: ["pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "txt"]
+    )
+    # ---------- 任务指令与生成 ----------
+    instruction: str = "摘取合同的主要信息并生成财务审核意见"
+    llm_temperature: float = Field(default=0.3, ge=0.0, le=1.0)
+    llm_max_tokens: int = Field(default=512, ge=64, le=4096)
+    # ---------- 运行参数 ----------
+    max_tasks: int = Field(default=20, ge=1, le=500)
+    page_timeout_ms: int = Field(default=30000, ge=3000, le=300000)
+    wait_network_idle: bool = True
+    retries: int = Field(default=1, ge=0, le=5)
+    download_dir: str = ""            # 空 = 系统临时目录下 echodesk_downloads
+    # ---------- 去重与登录态 ----------
+    dedupe: bool = True
+    processed_file: str = "automation_processed.json"
+    login_state_file: str = "browser_state.json"
+    manual_login_wait_seconds: int = Field(default=180, ge=0, le=3600)
+    # ---------- 浏览器 ----------
+    headless: bool = False            # 固定有头模式：用户可见浏览器操作过程
+    browser_channel: str = "msedge"
+    # ---------- 结果与审计 ----------
+    save_results: bool = True
+    results_dir: str = "automation_results"
+    audit_log_file: str = "automation_log.jsonl"
+    # ---------- 定时触发（4.4） ----------
+    schedule_enabled: bool = False
+    schedule_times: List[str] = Field(default_factory=lambda: ["09:00"])
+    start_with_windows: bool = False
+
+    @field_validator("file_extensions", "schedule_times", mode="before")
+    @classmethod
+    def _split_list(cls, value):
+        """前端表单里这两项以逗号分隔的字符串提交，这里统一拆成列表。"""
+        if isinstance(value, str):
+            items = [item.strip() for item in value.replace("，", ",").split(",")]
+            return [item for item in items if item]
+        return value
+
+    @field_validator("file_extensions")
+    @classmethod
+    def _normalize_ext(cls, value: List[str]) -> List[str]:
+        """后缀统一为小写、去掉前导点，便于大小写不敏感比较。"""
+        return [str(item).strip().lstrip(".").lower() for item in value if str(item).strip()]
+
+    @field_validator("schedule_times")
+    @classmethod
+    def _normalize_times(cls, value: List[str]) -> List[str]:
+        """校验 HH:MM 格式并补零为两位小时，非法项直接剔除（避免定时器崩溃）。"""
+        import re as _re
+        result = []
+        for item in value:
+            text = str(item).strip()
+            match = _re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", text)
+            if match:
+                result.append(f"{int(match.group(1)):02d}:{match.group(2)}")
+        return result
+
+    @model_validator(mode="after")
+    def _check_safety(self) -> "AutomationConfig":
+        """安全协议是自动化的前置条件：未勾选时强制关闭开关。"""
+        if self.enabled and not self.safety_accepted:
+            print(
+                "⚠️ 自动化开关需要先勾选安全协议，已自动关闭（automation.enabled=False）",
+                file=sys.stderr, flush=True,
+            )
+            self.enabled = False
+        if self.headless:
+            # 任务书 4.5：仅使用有头模式，用户可见浏览器操作；这里强制纠正
+            print("⚠️ 自动化仅支持有头模式，已忽略 headless=True", file=sys.stderr, flush=True)
+            self.headless = False
+        return self
+
+
+class MarketplaceConfig(BaseModel):
+    """技能/插件市场配置（任务五 5.6）。"""
+
+    enabled: bool = True
+    github_token: str = ""                                  # 可选：提高 GitHub API 限额
+    cache_ttl_hours: int = Field(default=6, ge=1, le=168)
+    skill_topic: str = "echodesk-plugin"                    # 统一 topic，不混用其它标签
+    auto_update_check: bool = True
+    cache_file: str = "market_cache.json"
+    per_page: int = Field(default=20, ge=1, le=100)
+    install_dir: str = "skills"
+    registry_file: str = "skills_registry.json"
+    api_base: str = "https://api.github.com"
+
+
 class Config(BaseModel):
     """应用配置，字段与 config.json 一一对应。"""
 
@@ -68,6 +176,10 @@ class Config(BaseModel):
     model_context_windows: Dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_MODEL_CONTEXT_WINDOWS))
     # 长文档分段摘要
     summarize: SummarizeConfig = Field(default_factory=SummarizeConfig)
+    # 浏览器自动化（任务四）
+    automation: AutomationConfig = Field(default_factory=AutomationConfig)
+    # 技能/插件市场（任务五）
+    marketplace: MarketplaceConfig = Field(default_factory=MarketplaceConfig)
     max_history: int = 10
     search_default: bool = False
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)

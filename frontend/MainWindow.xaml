@@ -103,6 +103,7 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
                     <!-- 左侧：命令输入框开关按钮（加号旋转变叉号，固定宽度防跳动） -->
@@ -132,17 +133,21 @@
                         </StackPanel>
                     </Button>
 
-                    <!-- 右侧：上下文占用（按钮样式，随内容自动调宽，点击刷新）+ 上传 + 发送 -->
+                    <!-- 右侧：上下文占用（按钮样式，随内容自动调宽，点击刷新）+ 设置 + 上传 + 发送 -->
                     <Button x:Name="ContextButton" Grid.Column="3" Height="30" MinWidth="130" Padding="14,0"
                             HorizontalAlignment="Left"
                             Style="{StaticResource RoundButton}"
                             Click="ContextButton_Click" ToolTip="点击刷新上下文占用">
                         <TextBlock x:Name="ContextText" Text="上下文：---/---" FontSize="11"/>
                     </Button>
-                    <Button x:Name="UploadButton" Grid.Column="4" Width="34" Height="34"
+                    <Button x:Name="SettingsButton" Grid.Column="4" Width="34" Height="34"
+                            Style="{StaticResource RoundButton}" Content="⚙"
+                            Click="SettingsButton_Click"
+                            ToolTip="设置（Ctrl+, 打开设置 · Ctrl+M 打开技能市场）"/>
+                    <Button x:Name="UploadButton" Grid.Column="5" Width="34" Height="34"
                             Style="{StaticResource RoundButton}" Content="📎"
-                            Click="UploadButton_Click" ToolTip="上传文件"/>
-                    <Button x:Name="SendButton" Grid.Column="5" Width="40" Height="40"
+                            Click="UploadButton_Click" ToolTip="上传文件 (Ctrl+O)"/>
+                    <Button x:Name="SendButton" Grid.Column="6" Width="40" Height="40"
                             Style="{StaticResource RoundButton}" Content="➤" FontSize="16"
                             Click="SendButton_Click" ToolTip="发送 (Ctrl+Enter)"/>
                 </Grid>

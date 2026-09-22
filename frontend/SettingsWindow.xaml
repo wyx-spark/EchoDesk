@@ -1,0 +1,285 @@
+<Window x:Class="EchoDesk.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="EchoDesk 设置"
+        Height="660" Width="780" MinHeight="520" MinWidth="680"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource WindowBackground}">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TabControl Grid.Row="0">
+
+            <!-- ================= 常规 ================= -->
+            <TabItem Header="常规">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="14,12">
+                        <TextBlock Text="外观与默认行为" FontSize="15" FontWeight="Bold"
+                                   Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10"/>
+
+                        <CheckBox x:Name="DarkModeCheck" Content="深色模式（即时生效）" Margin="0,4"
+                                  Checked="DarkModeCheck_Changed" Unchecked="DarkModeCheck_Changed"/>
+
+                        <TextBlock Text="字体大小" Margin="0,14,0,4" Foreground="{DynamicResource SubTextBrush}"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Slider x:Name="FontSizeSlider" Width="320" Minimum="10" Maximum="24"
+                                    TickFrequency="1" IsSnapToTickEnabled="True"
+                                    VerticalAlignment="Center"
+                                    ValueChanged="FontSizeSlider_ValueChanged"/>
+                            <TextBlock x:Name="FontSizeLabel" Margin="12,0,0,0" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource SubTextBrush}"/>
+                        </StackPanel>
+
+                        <TextBlock Text="默认对话模式（下次启动生效，也可用 /mode 即时切换）"
+                                   Margin="0,14,0,4" Foreground="{DynamicResource SubTextBrush}"/>
+                        <ComboBox x:Name="DefaultModeCombo" Width="260" HorizontalAlignment="Left"/>
+
+                        <Border Margin="0,18,0,0" CornerRadius="8" Padding="12,10"
+                                Background="{DynamicResource InputBackground}"
+                                BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock Text="📌 界面与数据位置" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock x:Name="PathsText" FontSize="11" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource SubTextBrush}"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ================= 自动化 ================= -->
+            <TabItem Header="自动化">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="14,12">
+
+                        <!-- 安全协议：开启自动化开关的前置条件 -->
+                        <Border CornerRadius="8" Padding="12,10"
+                                Background="{DynamicResource InputBackground}"
+                                BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock Text="🔒 安全协议（开启自动化前必须阅读并勾选）"
+                                           FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock x:Name="SafetyText" TextWrapping="Wrap" FontSize="12"
+                                           Foreground="{DynamicResource SubTextBrush}"/>
+                                <CheckBox x:Name="SafetyCheck" Margin="0,10,0,0"
+                                          Content="我已阅读并理解上述安全协议，自愿承担使用责任"
+                                          Checked="SafetyCheck_Changed" Unchecked="SafetyCheck_Changed"/>
+                            </StackPanel>
+                        </Border>
+
+                        <CheckBox x:Name="AutomationEnabledCheck" Margin="0,12,0,0" IsEnabled="False"
+                                  Content="启用自动化功能（运行前仍会要求安全协议已勾选）"/>
+
+                        <TextBlock Text="任务列表网址" Margin="0,14,0,4" Foreground="{DynamicResource SubTextBrush}"/>
+                        <TextBox x:Name="TaskUrlBox" Padding="6,4" TextWrapping="NoWrap"/>
+
+                        <TextBlock Text="任务列表元素位置（CSS 选择器或 XPath，XPath 以 // 或 xpath= 开头）"
+                                   Margin="0,12,0,4" Foreground="{DynamicResource SubTextBrush}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="TaskSelectorBox" Grid.Column="0" Padding="6,4"/>
+                            <Button x:Name="TestSelectorButton" Grid.Column="1" Margin="8,0,0,0"
+                                    Padding="12,4" Content="测试选择器"
+                                    Style="{StaticResource RoundButton}"
+                                    Click="TestSelectorButton_Click"
+                                    ToolTip="打开浏览器访问该网址，预览选择器匹配到的元素"/>
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="任务行容器（可选）" Foreground="{DynamicResource SubTextBrush}"/>
+                                <TextBox x:Name="TaskRowBox" Padding="6,4" Margin="0,4,0,0"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="下一页按钮（可选，用于分页）" Foreground="{DynamicResource SubTextBrush}"/>
+                                <TextBox x:Name="NextPageBox" Padding="6,4" Margin="0,4,0,0"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="任务详情页文件元素位置" Margin="0,12,0,4"
+                                   Foreground="{DynamicResource SubTextBrush}"/>
+                        <TextBox x:Name="FileSelectorBox" Padding="6,4"/>
+
+                        <TextBlock Text="需要预览的文件后缀（逗号分隔）" Margin="0,12,0,4"
+                                   Foreground="{DynamicResource SubTextBrush}"/>
+                        <TextBox x:Name="ExtensionsBox" Padding="6,4"/>
+
+                        <TextBlock Text="任务指令（与文件内容拼接后交给本地模型）"
+                                   Margin="0,12,0,4" Foreground="{DynamicResource SubTextBrush}"/>
+                        <TextBox x:Name="InstructionBox" Padding="6,4" Height="58"
+                                 AcceptsReturn="True" TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"/>
+
+                        <TextBlock Text="运行参数" FontWeight="Bold" Margin="0,16,0,6"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="16"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="16"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="最多任务数" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource SubTextBrush}"/>
+                            <TextBox x:Name="MaxTasksBox" Grid.Column="1" Width="70" Margin="6,0,0,0" Padding="6,4"/>
+                            <TextBlock Grid.Column="3" Text="页面超时(ms)" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource SubTextBrush}"/>
+                            <TextBox x:Name="TimeoutBox" Grid.Column="4" Width="90" Margin="6,0,0,0" Padding="6,4"/>
+                            <TextBlock Grid.Column="6" Text="重试次数" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource SubTextBrush}"/>
+                            <TextBox x:Name="RetriesBox" Grid.Column="7" Width="50" Margin="6,0,0,0" Padding="6,4"/>
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <CheckBox x:Name="DedupeCheck" Content="任务去重（跳过已处理过的任务）"
+                                      VerticalAlignment="Center"/>
+                            <CheckBox x:Name="SaveResultsCheck" Content="保存结果到本地文件" Margin="20,0,0,0"
+                                      VerticalAlignment="Center"/>
+                        </StackPanel>
+
+                        <TextBlock Text="定时触发" FontWeight="Bold" Margin="0,16,0,6"/>
+                        <StackPanel Orientation="Horizontal">
+                            <CheckBox x:Name="ScheduleCheck" Content="启用定时" VerticalAlignment="Center"/>
+                            <TextBlock Text="每天执行时刻（HH:MM，逗号分隔）" Margin="16,0,8,0"
+                                       VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>
+                            <TextBox x:Name="ScheduleTimesBox" Width="180" Padding="6,4"/>
+                        </StackPanel>
+                        <TextBlock Text="说明：定时任务要求程序保持运行（后端后台线程调度）；开机自启需在系统「启动」文件夹中放入快捷方式。"
+                                   FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource SubTextBrush}"/>
+
+                        <!-- 运行控制 -->
+                        <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
+                            <Button x:Name="RunOnceButton" Padding="14,6" Content="▶ 立即运行一次"
+                                    Style="{StaticResource RoundButton}" Click="RunOnceButton_Click"/>
+                            <Button x:Name="StopAutomationButton" Padding="14,6" Margin="10,0,0,0"
+                                    Content="⏹ 停止自动化" IsEnabled="False"
+                                    Style="{StaticResource RoundButton}" Click="StopAutomationButton_Click"/>
+                            <TextBlock x:Name="AutomationStatusText" Margin="16,0,0,0" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource SubTextBrush}" Text="状态：空闲"/>
+                        </StackPanel>
+
+                        <TextBlock Text="运行日志" Margin="0,12,0,4" Foreground="{DynamicResource SubTextBrush}"/>
+                        <TextBox x:Name="AutomationLogBox" Height="150" Padding="6,4" IsReadOnly="True"
+                                 AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas"
+                                 FontSize="11" VerticalScrollBarVisibility="Auto"
+                                 Background="{DynamicResource InputBackground}"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ================= 技能市场 ================= -->
+            <TabItem Header="技能市场">
+                <Grid Margin="14,12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="🔌 技能市场（来自 GitHub topic: echodesk-plugin）"
+                               FontSize="15" FontWeight="Bold"
+                               Foreground="{DynamicResource AccentBrush}"/>
+
+                    <Grid Grid.Row="1" Margin="0,12,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="MarketSearchBox" Grid.Column="0" Padding="6,4"
+                                 TextChanged="MarketSearchBox_TextChanged"
+                                 ToolTip="输入关键词搜索技能（输入后 300ms 自动搜索）"/>
+                        <ComboBox x:Name="MarketSortCombo" Grid.Column="1" Width="130" Margin="8,0,0,0"
+                                  SelectionChanged="MarketSortCombo_SelectionChanged"/>
+                        <Button x:Name="MarketRefreshButton" Grid.Column="2" Margin="8,0,0,0" Padding="12,4"
+                                Content="刷新" Style="{StaticResource RoundButton}"
+                                Click="MarketRefreshButton_Click"/>
+                        <Button x:Name="MarketInstalledButton" Grid.Column="3" Margin="8,0,0,0" Padding="12,4"
+                                Content="已安装" Style="{StaticResource RoundButton}"
+                                Click="MarketInstalledButton_Click"
+                                ToolTip="查看本机已安装的技能"/>
+                    </Grid>
+
+                    <Border Grid.Row="2" CornerRadius="8"
+                            Background="{DynamicResource InputBackground}"
+                            BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
+                        <Grid>
+                            <ListBox x:Name="MarketList" Background="Transparent" BorderThickness="0"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     MouseDoubleClick="MarketList_MouseDoubleClick">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="6,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="Bold"
+                                                               Foreground="{DynamicResource AccentBrush}"/>
+                                                    <TextBlock Text="{Binding Badge}" Margin="8,0,0,0" FontSize="11"
+                                                               Foreground="{DynamicResource SubTextBrush}"/>
+                                                    <TextBlock Text="{Binding Stars}" Margin="8,0,0,0" FontSize="11"
+                                                               Foreground="{DynamicResource SubTextBrush}"/>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding Description}" FontSize="11"
+                                                           TextWrapping="Wrap" MaxWidth="520"
+                                                           Foreground="{DynamicResource SubTextBrush}"/>
+                                                <TextBlock Text="{Binding Meta}" FontSize="10"
+                                                           Foreground="{DynamicResource SubTextBrush}"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                                        VerticalAlignment="Center">
+                                                <Button Content="详情" Padding="10,3" FontSize="11"
+                                                        Style="{StaticResource RoundButton}"
+                                                        Click="MarketDetail_Click" Tag="{Binding}"/>
+                                                <Button Content="{Binding ActionText}" Padding="10,3" FontSize="11"
+                                                        Margin="6,0,0,0" IsEnabled="{Binding CanAct}"
+                                                        Style="{StaticResource RoundButton}"
+                                                        Click="MarketInstall_Click" Tag="{Binding}"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <TextBlock x:Name="MarketEmptyText" Text="输入关键词开始搜索，或点「刷新」浏览全部技能"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource SubTextBrush}" TextWrapping="Wrap"
+                                       MaxWidth="480" TextAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock x:Name="MarketStatusText" Grid.Row="3" Margin="0,8,0,0" FontSize="11"
+                               TextWrapping="Wrap" Foreground="{DynamicResource SubTextBrush}"/>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <!-- 底部按钮 -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <TextBlock x:Name="SaveHintText" VerticalAlignment="Center" Margin="0,0,14,0"
+                       Foreground="{DynamicResource SubTextBrush}"/>
+            <Button x:Name="SaveButton" Padding="16,6" Content="保存设置"
+                    Style="{StaticResource RoundButton}" Click="SaveButton_Click"/>
+            <Button Padding="16,6" Margin="10,0,0,0" Content="关闭"
+                    Style="{StaticResource RoundButton}" Click="CloseButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

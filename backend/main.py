@@ -50,7 +50,7 @@ def _suppress_stdout():
 
 
 with _suppress_stdout():
-    from config import Config
+    from config import AutomationConfig, Config
     # 在 import huggingface_hub 相关模块前，就把 HF 端点切换到镜像，
     # 否则 huggingface_hub 默认连 huggingface.co（国内不可达），下载/查询都会超时。
     _cfg = Config.load()
@@ -129,8 +129,40 @@ class Backend:
             self.conv, self.search, self.llm, config, summarizer=self.summarizer,
             file_loader=self.load_file_into_context, summarize_file=self.summarize_current_file,
         )
+        # 浏览器自动化引擎（Playwright）：惰性创建，未使用时不加载
+        self._automation = None
+        # 技能市场：同样惰性创建
+        self._market = None
         self.stream_active = False
         self.stop_event = threading.Event()
+
+    def market(self):
+        """按需创建技能市场（避免未使用市场时也加载网络相关依赖）。"""
+        if self._market is None:
+            from marketplace import Marketplace
+
+            self._market = Marketplace(self.config.marketplace)
+        else:
+            self._market.cfg = self.config.marketplace
+        return self._market
+
+    def automation(self):
+        """按需创建自动化引擎（避免未使用自动化时也加载 Playwright）。"""
+        if self._automation is None:
+            from automation import AutomationEngine
+
+            self._automation = AutomationEngine(self.config.automation, llm_engine=self.llm)
+            # 上次进程被强杀时可能残留下载临时文件，这里清理一次
+            # （与 PRIVACY.md 中"程序异常退出时残留的临时目录会在下次启动时清理"一致）。
+            try:
+                removed = self._automation.cleanup_temp()
+                if removed:
+                    log.info("已清理上次残留的自动化临时文件: %d 项", removed)
+            except Exception:
+                log.warning("启动清理自动化临时目录失败", exc_info=True)
+        else:
+            self._automation.cfg = self.config.automation
+        return self._automation
 
     def _make_summary_engine(self, model_path: str):
         """为 summarize.model 指定的专用摘要模型创建引擎（按该模型训练窗口开窗）。"""
@@ -192,7 +224,181 @@ class Backend:
             return self._handle_model_download(request.get("name", ""))
         if action == "context":
             return self._handle_context()
+        if action == "automation_config":
+            return self._handle_automation_config(request)
+        if action == "automation_config_set":
+            return self._handle_automation_config_set(request)
+        if action == "automation_test":
+            return self._handle_automation_test(request)
+        if action == "automation_status":
+            status = self.automation().status()
+            # 是否"已启用"由配置决定（安全协议未勾选时 enabled 一定为 False）
+            status["enabled"] = bool(
+                self.config.automation.enabled and self.config.automation.safety_accepted
+            )
+            return {"type": "system", "content": "", "automation": status}
+        if action == "market_search":
+            return self._handle_market_search(request)
+        if action == "market_detail":
+            return self._handle_market_detail(request)
+        if action == "market_install":
+            return self._handle_market_install(request)
+        if action == "market_uninstall":
+            return self._handle_market_uninstall(request)
+        if action == "market_installed":
+            return self._handle_market_installed()
+        if action == "market_status":
+            return self._handle_market_status()
         return {"type": "system", "content": "未知动作"}
+
+    # ---------- 技能市场（任务五） ----------
+
+    def _market_error(self, e: Exception, verb: str) -> Dict[str, Any]:
+        log.exception("技能市场%s失败", verb)
+        return {"type": "system", "content": f"❌ 技能市场{verb}失败: {e}"}
+
+    def _handle_market_search(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """搜索技能：关键词 + 排序 + 页码（缓存命中时直接返回快照）。"""
+        try:
+            keyword = str(request.get("keyword") or "").strip()
+            sort = str(request.get("sort") or "best").strip().lower()
+            if sort not in ("best", "stars", "updated"):
+                sort = "best"
+            try:
+                page = max(1, int(request.get("page") or 1))
+            except (TypeError, ValueError):
+                page = 1
+            result = self.market().search(keyword, sort, page)
+        except Exception as e:
+            return self._market_error(e, "搜索")
+        return {"type": "system", "content": result.get("message", ""), "market": result}
+
+    def _handle_market_detail(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """技能详情：完整 skill.json、README 摘要、版本、依赖与入口文件。"""
+        repo = str(request.get("repo") or "").strip()
+        if not repo:
+            return {"type": "system", "content": "❌ 缺少仓库名"}
+        try:
+            detail = self.market().detail(repo)
+        except Exception as e:
+            return self._market_error(e, "详情获取")
+        return {"type": "system", "content": "", "detail": detail}
+
+    def _handle_market_install(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """安装技能（用户已在前端确认）。"""
+        repo = str(request.get("repo") or "").strip()
+        if not repo:
+            return {"type": "system", "content": "❌ 缺少仓库名"}
+        try:
+            result = self.market().install(repo)
+        except Exception as e:
+            return self._market_error(e, "安装")
+        ok = bool(result.get("ok"))
+        icon = "✅" if ok else "❌"
+        return {"type": "system", "content": f"{icon} {result.get('message', '')}"}
+
+    def _handle_market_uninstall(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """卸载技能：移除注册表条目并删除技能目录，再回读确认。"""
+        skill_id = str(request.get("id") or request.get("repo") or "").strip()
+        if not skill_id:
+            return {"type": "system", "content": "❌ 缺少技能标识"}
+        try:
+            result = self.market().uninstall(skill_id)
+        except Exception as e:
+            return self._market_error(e, "卸载")
+        ok = bool(result.get("ok"))
+        icon = "✅" if ok else "❌"
+        return {"type": "system", "content": f"{icon} {result.get('message', '')}"}
+
+    def _handle_market_installed(self) -> Dict[str, Any]:
+        try:
+            items = self.market().installed()
+        except Exception as e:
+            return self._market_error(e, "读取已安装列表")
+        return {"type": "system", "content": "", "installed": items}
+
+    def _handle_market_status(self) -> Dict[str, Any]:
+        """市场连接状态（供主窗口状态栏显示）。"""
+        try:
+            state = self.market().status()
+        except Exception as e:
+            return self._market_error(e, "状态查询")
+        return {"type": "system", "content": "", "market_status": state}
+
+    # ---------- 自动化配置与测试（任务四） ----------
+
+    @staticmethod
+    def _automation_payload(cfg) -> Dict[str, Any]:
+        """把自动化配置转成前端表单需要的扁平结构。"""
+        return cfg.model_dump()
+
+    def _handle_automation_config(self, _request: Dict[str, Any]) -> Dict[str, Any]:
+        """读取自动化配置（设置窗口打开时调用）。"""
+        return {
+            "type": "system",
+            "content": "自动化配置",
+            "automation": self._automation_payload(self.config.automation),
+        }
+
+    def _handle_automation_config_set(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """更新自动化配置并写回配置文件。
+
+        安全协议：勾选（safety_accepted=True）时记录协议版本与同意时间；
+        未勾选时 AutomationConfig 校验器会强制把 enabled 置为 False。
+        """
+        import datetime
+
+        patch = request.get("automation") or {}
+        if not isinstance(patch, dict):
+            return {"type": "system", "content": "❌ 自动化配置格式不正确"}
+        data = self.config.automation.model_dump()
+        data.update({k: v for k, v in patch.items() if k in data})
+        # 勾选安全协议时记录版本与时间；取消勾选则清空同意时间并关闭开关
+        if patch.get("safety_accepted") and not self.config.automation.safety_accepted:
+            data["safety_accepted_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+            data["safety_version"] = data.get("safety_version") or "1.0"
+        elif patch.get("safety_accepted") is False:
+            data["safety_accepted_at"] = ""
+            data["enabled"] = False
+        try:
+            self.config.automation = AutomationConfig(**data)
+        except Exception as e:
+            return {"type": "system", "content": f"❌ 自动化配置无效: {e}"}
+        self.config.save()
+        cfg = self.config.automation
+        note = ""
+        if cfg.enabled and cfg.safety_accepted:
+            note = f"（安全协议 v{cfg.safety_version}，同意时间 {cfg.safety_accepted_at}）"
+        return {
+            "type": "system",
+            "content": f"✅ 自动化配置已保存{note}",
+            "automation": self._automation_payload(cfg),
+        }
+
+    def _handle_automation_test(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """测试选择器：打开浏览器访问指定网址，预览选择器匹配结果。"""
+        url = str(request.get("url") or self.config.automation.task_list_url or "").strip()
+        selector = str(request.get("selector") or self.config.automation.task_list_selector or "").strip()
+        if not url or not selector:
+            return {"type": "system", "content": "❌ 请先填写任务列表网址与元素位置再测试"}
+        try:
+            result = self.automation().test_selector(url, selector)
+        except Exception as e:
+            log.exception("测试选择器失败")
+            return {"type": "system", "content": f"❌ 测试选择器失败: {e}"}
+        if not result.get("ok"):
+            return {"type": "system", "content": f"❌ 测试失败: {result.get('error') or '未匹配到元素'}"}
+
+        lines = [f"✅ 选择器测试通过：匹配到 {result['count']} 个元素（{result.get('kind', 'css')}）"]
+        for index, sample in enumerate(result.get("samples", []), 1):
+            href = ""
+            hrefs = result.get("hrefs") or []
+            if index - 1 < len(hrefs) and hrefs[index - 1]:
+                href = f" → {hrefs[index - 1]}"
+            lines.append(f"  {index}. {sample}{href}")
+        if result["count"] > len(result.get("samples", [])):
+            lines.append(f"  …（仅预览前 {len(result.get('samples', []))} 个）")
+        return {"type": "system", "content": "\n".join(lines)}
 
     def _handle_context(self) -> Dict[str, Any]:
         """返回当前上下文占用（used/limit，供前端工具栏实时显示）。"""
@@ -211,8 +417,12 @@ class Backend:
 
     def stream(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
         """流式对话：逐个产出 delta 行，最后产出 done 行（支持 stop 中断）。"""
-        if request.get("action") == "model_download":
+        action = request.get("action")
+        if action == "model_download":
             yield from self._stream_model_download(request.get("name", ""))
+            return
+        if action == "automation_run":
+            yield from self._stream_automation()
             return
 
         user_msg = request.get("message", "")
@@ -279,6 +489,34 @@ class Backend:
         except Exception as e:
             log.exception("推理失败")
             return {"type": "system", "content": f"推理失败: {e}"}
+
+    def _stream_automation(self) -> Iterator[Dict[str, Any]]:
+        """跑一次浏览器自动化，把引擎的进度事件原样转发给前端。
+
+        停止：前端发送 action=stop 会置位 stop_event，引擎在各循环处尽早退出。
+        """
+        engine = self.automation()
+        try:
+            for event in engine.run(stop_event=self.stop_event):
+                # 结束时把结果也写进对话历史，便于后续提问引用
+                if event.get("type") == "done":
+                    summary = str(event.get("content") or "")
+                    if summary:
+                        self.conv.add_message("user", "（自动化任务执行结果）")
+                        self.conv.add_message("assistant", summary)
+                        self._compact_history()
+                yield event
+        except Exception as e:
+            log.exception("自动化执行失败")
+            yield {"type": "error", "content": f"❌ 自动化执行失败: {e}"}
+        finally:
+            # 兜底清理下载临时目录（引擎按任务清理文件，这里连同本轮的空目录一并清掉）
+            try:
+                removed = engine.cleanup_temp()
+                if removed:
+                    log.info("自动化临时文件清理: %d 项", removed)
+            except Exception:
+                log.warning("自动化临时目录清理失败", exc_info=True)
 
     def _handle_file(self, filepath: str) -> Dict[str, Any]:
         if not filepath:
@@ -648,18 +886,21 @@ def main() -> None:
                 _write({"type": "system", "content": "⏳ 上一条回复仍在生成，请先停止（⏹ 按钮或 /stop）或等待完成"})
                 continue
 
-        if action == "chat_stream":
-            backend.stop_event.clear()
-            backend.stream_active = True
-            threading.Thread(target=_stream_worker, args=(request,), daemon=True).start()
-        elif action == "model_download":
-            # 流式下载：进度实时输出，结束后热切换模型
+        if action in ("chat_stream", "model_download", "automation_run"):
+            # 三种长任务都走流式线程：进度实时输出，stop 可中断。
+            # automation_run 还会置位 stop_event 让 Playwright 循环尽早退出。
+            if action == "automation_run" and backend.stream_active:
+                _write({"type": "system", "content": "⏳ 自动化任务正在运行，请先停止后再启动"})
+                continue
             backend.stop_event.clear()
             backend.stream_active = True
             threading.Thread(target=_stream_worker, args=(request,), daemon=True).start()
         elif action == "stop":
             if backend.stream_active:
                 backend.stop_event.set()
+                # 自动化引擎另有自己的停止入口，一并通知，确保浏览器及时关闭
+                if backend._automation is not None:
+                    backend._automation.stop()
                 _write({"type": "system", "content": "⏹ 已发送停止请求"})
             else:
                 _write({"type": "system", "content": "当前没有正在生成的内容"})

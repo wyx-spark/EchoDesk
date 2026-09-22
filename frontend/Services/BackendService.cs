@@ -38,6 +38,9 @@ public sealed class BackendService : IDisposable
     private StreamReader? _stdErrReader;
     private bool _stopping;
     private readonly string _backendPath;
+    // 请求闸门：stdout 是单条共享流，主窗口与设置窗口并发请求会互相读错响应，
+    // 因此所有「写请求 + 读响应」的调用串行化。（stop 只写不读，不经过闸门）
+    private readonly SemaphoreSlim _requestGate = new(1, 1);
 
     public BackendService(string? backendPath = null) => _backendPath = backendPath ?? ResolveBackendPath();
 
@@ -129,9 +132,17 @@ public sealed class BackendService : IDisposable
         if (!IsRunning)
             throw new InvalidOperationException("后端进程已退出。");
 
-        await _writer.WriteLineAsync(JsonSerializer.Serialize(request));
-        await _writer.FlushAsync();
-        return await ReadUntilJsonAsync();
+        await _requestGate.WaitAsync();
+        try
+        {
+            await _writer.WriteLineAsync(JsonSerializer.Serialize(request));
+            await _writer.FlushAsync();
+            return await ReadUntilJsonAsync();
+        }
+        finally
+        {
+            _requestGate.Release();
+        }
     }
 
     /// <summary>只写不读地发送一个请求（用于 stop 等不期待响应的动作，避免与流式读取竞争）。</summary>
@@ -160,43 +171,51 @@ public sealed class BackendService : IDisposable
         if (!IsRunning)
             throw new InvalidOperationException("后端进程已退出。");
 
-        await _writer.WriteLineAsync(JsonSerializer.Serialize(request));
-        await _writer.FlushAsync();
-
-        var full = new StringBuilder();
-        while (true)
+        await _requestGate.WaitAsync();
+        try
         {
-            string? line = await _reader.ReadLineAsync();
-            if (line is null)
-                throw new InvalidOperationException("后端没有返回响应（进程可能已退出）。");
-            if (!line.TrimStart().StartsWith('{'))
-            {
-                Debug.WriteLine($"[backend:ignored] {line}");
-                continue;
-            }
+            await _writer.WriteLineAsync(JsonSerializer.Serialize(request));
+            await _writer.FlushAsync();
 
-            using JsonDocument doc = JsonDocument.Parse(line);
-            JsonElement root = doc.RootElement;
-            string type = root.TryGetProperty("type", out JsonElement t) ? t.GetString() ?? "" : "";
-            string content = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
-            switch (type)
+            var full = new StringBuilder();
+            while (true)
             {
-                case "delta":
-                    full.Append(content);
-                    onDelta?.Invoke(content);
-                    break;
-                case "done":
-                    if (onContext is not null
-                        && root.TryGetProperty("used", out JsonElement usedEl)
-                        && root.TryGetProperty("limit", out JsonElement limitEl))
-                        onContext(usedEl.GetInt32(), limitEl.GetInt32());
-                    return content.Length > 0 ? content : full.ToString();
-                case "error":
-                    throw new InvalidOperationException(content);
-                default:
-                    Debug.WriteLine($"[backend:msg] {line}");
-                    break;
+                string? line = await _reader.ReadLineAsync();
+                if (line is null)
+                    throw new InvalidOperationException("后端没有返回响应（进程可能已退出）。");
+                if (!line.TrimStart().StartsWith('{'))
+                {
+                    Debug.WriteLine($"[backend:ignored] {line}");
+                    continue;
+                }
+
+                using JsonDocument doc = JsonDocument.Parse(line);
+                JsonElement root = doc.RootElement;
+                string type = root.TryGetProperty("type", out JsonElement t) ? t.GetString() ?? "" : "";
+                string content = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+                switch (type)
+                {
+                    case "delta":
+                        full.Append(content);
+                        onDelta?.Invoke(content);
+                        break;
+                    case "done":
+                        if (onContext is not null
+                            && root.TryGetProperty("used", out JsonElement usedEl)
+                            && root.TryGetProperty("limit", out JsonElement limitEl))
+                            onContext(usedEl.GetInt32(), limitEl.GetInt32());
+                        return content.Length > 0 ? content : full.ToString();
+                    case "error":
+                        throw new InvalidOperationException(content);
+                    default:
+                        Debug.WriteLine($"[backend:msg] {line}");
+                        break;
+                }
             }
+        }
+        finally
+        {
+            _requestGate.Release();
         }
     }
 

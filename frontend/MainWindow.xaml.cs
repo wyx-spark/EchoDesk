@@ -41,6 +41,8 @@ public partial class MainWindow : Window
     private string _mdPending = "";
     // 底部通知条计时器（下载完成/自动化完成/错误提示）
     private DispatcherTimer? _toastTimer;
+    // 设置窗口（单实例：再次点击时激活已有窗口）
+    private SettingsWindow? _settingsWindow;
 
     // 聊天输入框中的指令前缀（"/" + 连续英文字母，允许只有一个 "/"）
     private static readonly Regex CommandPrefixRegex = new(@"^/[A-Za-z]*(?: [A-Za-z]+)*", RegexOptions.Compiled);
@@ -196,7 +198,7 @@ public partial class MainWindow : Window
 
     // ---------- 状态栏（模型 / 模式 / 搜索 / 自动化 / 市场） ----------
 
-    /// <summary>向后端查询 /status 并刷新状态栏的模型、模式与搜索状态。</summary>
+    /// <summary>向后端查询 /status 与自动化/市场状态并刷新状态栏。</summary>
     private async Task RefreshStatusBarAsync()
     {
         if (_backend is null)
@@ -211,6 +213,51 @@ public partial class MainWindow : Window
         catch
         {
             // 后端忙碌/异常时忽略，后续交互会再次刷新
+            return;
+        }
+        await RefreshAutomationStatusAsync();
+        await RefreshMarketStatusAsync();
+    }
+
+    /// <summary>刷新状态栏的自动化状态段。</summary>
+    private async Task RefreshAutomationStatusAsync()
+    {
+        if (_backend is null)
+            return;
+        try
+        {
+            string json = await _backend.SendRequestAsync(new { action = "automation_status" });
+            using JsonDocument doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("automation", out JsonElement st))
+                return;
+            bool running = st.TryGetProperty("running", out JsonElement r) && r.ValueKind == JsonValueKind.True;
+            bool enabled = st.TryGetProperty("enabled", out JsonElement en) && en.ValueKind == JsonValueKind.True;
+            AutoText.Text = running ? "自动化: 运行中" : enabled ? "自动化: 已启用" : "自动化: 关";
+        }
+        catch
+        {
+            // 忽略
+        }
+    }
+
+    /// <summary>刷新状态栏的技能市场连接状态段。</summary>
+    private async Task RefreshMarketStatusAsync()
+    {
+        if (_backend is null)
+            return;
+        try
+        {
+            string json = await _backend.SendRequestAsync(new { action = "market_status" });
+            using JsonDocument doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("market_status", out JsonElement st))
+                return;
+            bool enabled = st.TryGetProperty("enabled", out JsonElement en) && en.ValueKind == JsonValueKind.True;
+            string state = st.TryGetProperty("state", out JsonElement s) ? s.GetString() ?? "" : "";
+            SetMarketStatus(!enabled ? "未启用" : state.Length > 0 ? state : "就绪");
+        }
+        catch
+        {
+            // 忽略
         }
     }
 
@@ -490,6 +537,14 @@ public partial class MainWindow : Window
                     e.Handled = true;
                     HandleDarkMode("/darkmode");
                     return;
+                case Key.OemComma:   // Ctrl+, 打开设置
+                    e.Handled = true;
+                    OpenSettings();
+                    return;
+                case Key.M:          // Ctrl+M 打开设置并切到技能市场
+                    e.Handled = true;
+                    OpenSettings(openMarket: true);
+                    return;
                 case Key.OemPlus:
                 case Key.Add:
                     e.Handled = true;
@@ -524,6 +579,37 @@ public partial class MainWindow : Window
         }
         base.OnPreviewKeyDown(e);
     }
+
+    // ---------- 设置窗口 ----------
+
+    /// <summary>打开设置窗口（单实例），主题与字号变化即时同步回主窗口。</summary>
+    private void OpenSettings(bool openMarket = false)
+    {
+        if (_backend is null)
+            return;
+        if (_settingsWindow is { IsLoaded: true })
+        {
+            _settingsWindow.Activate();
+            if (openMarket)
+                _settingsWindow.ShowMarketTab();
+            return;
+        }
+        _settingsWindow = new SettingsWindow(
+            _backend, _isDark, _fontSize,
+            onThemeChanged: dark => ApplyTheme(dark),
+            onFontSizeChanged: size => AdjustFontSize(size - _fontSize));
+        _settingsWindow.Closed += (_, _) =>
+        {
+            _settingsWindow = null;
+            _ = RefreshStatusBarAsync();  // 设置可能改了模式/自动化状态
+        };
+        _settingsWindow.Owner = this;
+        _settingsWindow.Show();
+        if (openMarket)
+            _settingsWindow.ShowMarketTab();
+    }
+
+    private void SettingsButton_Click(object sender, RoutedEventArgs e) => OpenSettings();
 
     /// <summary>执行指令输入框之外的本地指令（含前端自行处理的 /snippet、/darkmode）。</summary>
     private async Task RunLocalCommandAsync(string command)
