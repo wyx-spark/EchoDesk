@@ -1,8 +1,30 @@
+# EchoDesk 后端依赖（Python 3.13）
+#
+# 说明：v0.2.0 起不再依赖 pyxtxt。原因：
+#   1) 其 estrattori 子包用 os.listdir 自动导入同目录全部解析器，打包时必须整目录
+#      收集，否则启动即报 FileNotFoundError；整目录收集又会连带引入
+#      easyocr/torch/torchvision/scipy/cv2/skimage/numba，后端体积膨胀到近 1GB；
+#   2) 其依赖链含 AGPL（PyMuPDF 之外）与 GPL/LGPL 组件（extract-msg、pcodedmp、
+#      RTFDE、python-bidi、pygame、pynput），对外分发会产生著佐权义务。
+# 现改为按格式直接使用轻量、宽松许可的解析库（见 backend/file_parser.py）。
+
 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
-llama-cpp-python
-pyxtxt[pdf,docx]
-duckduckgo-search
-pydantic>=2.0
-huggingface_hub
-pywin32
+llama-cpp-python          # 本地推理（llama.cpp）
+pydantic>=2.0             # 配置模型与校验
+huggingface_hub           # 模型仓库查询与下载
+duckduckgo-search         # 联网搜索（可选功能）
+pywin32                   # WPS/Office COM 调用（读取加密文档）
+
+# ---------- 文件解析（替代 pyxtxt） ----------
+python-docx               # .docx（MIT）
+openpyxl                  # .xlsx/.xlsm（MIT）
+python-pptx               # .pptx（MIT）
+pymupdf                   # .pdf（AGPL-3.0 或 Artifex 商业许可，见 docs/THIRD_PARTY_LICENSES.md）
+xlrd                      # .xls（BSD）
+
+# ---------- 自动化（任务四） ----------
+playwright                # 驱动本机 Microsoft Edge（Apache-2.0）
+schedule                  # 定时触发（MIT）
+
+# ---------- 构建工具 ----------
 pyinstaller>=6.0

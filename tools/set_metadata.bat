@@ -8,6 +8,13 @@ rem         默认发布目录: publish\EchoDesk-v0.2.0
 rem
 rem  执行时机: 编译构建完成之后、打包发布之前（见 tools\build_release.ps1）
 rem
+rem  【重要】本脚本只处理前端 EchoDesk.exe，不处理后端 EchoDeskBackend.exe。
+rem  原因：PyInstaller 会把 PKG 归档追加在 PE 映像之后，而 rcedit 重写资源时会
+rem  重建 PE 映像并丢掉这段追加数据，导致后端启动即报
+rem  「Could not load PyInstaller's embedded PKG archive」。
+rem  因此后端的版本资源与图标改由 backend\EchoBackend.spec 的 version / icon
+rem  参数在追加归档之前写入，字段与下表完全一致。
+rem
 rem  设置的字段:
 rem    CompanyName       Void Entropia Studio
 rem    LegalCopyright    Copyright (C) Void Entropia Studio
@@ -48,9 +55,8 @@ echo 正在写入版本资源与图标: %TARGET%
 set "COUNT=0"
 
 call :apply "%TARGET%\EchoDesk.exe"
-call :apply "%TARGET%\backend\EchoDeskBackend.exe"
 
-echo 完成，共处理 %COUNT% 个可执行文件。
+echo 完成，共处理 %COUNT% 个可执行文件（后端由 PyInstaller version/icon 参数写入）。
 exit /b 0
 
 :apply

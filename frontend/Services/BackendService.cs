@@ -39,7 +39,38 @@ public sealed class BackendService : IDisposable
     private bool _stopping;
     private readonly string _backendPath;
 
-    public BackendService(string backendPath = "EchoBackend.exe") => _backendPath = backendPath;
+    public BackendService(string? backendPath = null) => _backendPath = backendPath ?? ResolveBackendPath();
+
+    /// <summary>后端可执行文件完整路径（发布布局为 程序目录\backend\EchoDeskBackend.exe）。</summary>
+    public string BackendPath => _backendPath;
+
+    /// <summary>后端工作目录：config.json、session.json、models/ 都在该目录下。</summary>
+    public string? BackendDirectory => Path.GetDirectoryName(_backendPath);
+
+    /// <summary>
+    /// 定位后端可执行文件。发布布局下后端位于 <c>backend\</c> 子文件夹（PyInstaller onedir），
+    /// 开发时可用环境变量 <c>ECHODESK_BACKEND</c> 指定路径。
+    /// </summary>
+    public static string ResolveBackendPath()
+    {
+        string? overridePath = Environment.GetEnvironmentVariable("ECHODESK_BACKEND");
+        if (!string.IsNullOrEmpty(overridePath) && File.Exists(overridePath))
+            return overridePath;
+
+        string dir = AppContext.BaseDirectory;
+        string[] candidates =
+        {
+            Path.Combine(dir, "backend", "EchoDeskBackend.exe"),  // v0.2.0 发布布局
+            Path.Combine(dir, "EchoDeskBackend.exe"),             // 后端与前端同目录
+            Path.Combine(dir, "EchoBackend.exe"),                 // 兼容 v0.1.0 布局
+        };
+        foreach (string candidate in candidates)
+        {
+            if (File.Exists(candidate))
+                return candidate;
+        }
+        return candidates[0];  // 都找不到时返回期望路径，便于报错信息指明位置
+    }
 
     /// <summary>后端声明中的版本号（如 v0.1.0）。</summary>
     public string? Version { get; private set; }
@@ -67,6 +98,9 @@ public sealed class BackendService : IDisposable
         var startInfo = new ProcessStartInfo
         {
             FileName = _backendPath,
+            // 工作目录设为后端所在目录：配置、会话与 models/ 都相对它解析，
+            // 这样无论从哪个目录启动前端都能找到模型。
+            WorkingDirectory = BackendDirectory ?? AppContext.BaseDirectory,
             UseShellExecute = false,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
