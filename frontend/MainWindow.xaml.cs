@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
@@ -87,6 +88,7 @@ public partial class MainWindow : Window
             ApplyTheme(false);
         _fontSize = Math.Clamp(_settings.FontSize, 10, 24);
         UpdateAllMessageFontSize();
+        ApplyStatusStripState();   // 优化五：按上次的选择展开/折叠轻量状态区
 
         _backend = new BackendService();
         // 后端连接完成前禁用全部控件，并提示连接状态
@@ -196,7 +198,7 @@ public partial class MainWindow : Window
         _settings.Save();
     }
 
-    // ---------- 状态栏（模型 / 模式 / 搜索 / 自动化 / 市场） ----------
+    // ---------- 状态栏（顶部关键状态 + 输入框下方轻量状态区） ----------
 
     /// <summary>向后端查询 /status 与自动化/市场状态并刷新状态栏。</summary>
     private async Task RefreshStatusBarAsync()
@@ -219,7 +221,7 @@ public partial class MainWindow : Window
         await RefreshMarketStatusAsync();
     }
 
-    /// <summary>刷新状态栏的自动化状态段。</summary>
+    /// <summary>刷新状态区的自动化状态段（优化五：图标 + 简短短语）。</summary>
     private async Task RefreshAutomationStatusAsync()
     {
         if (_backend is null)
@@ -232,7 +234,7 @@ public partial class MainWindow : Window
                 return;
             bool running = st.TryGetProperty("running", out JsonElement r) && r.ValueKind == JsonValueKind.True;
             bool enabled = st.TryGetProperty("enabled", out JsonElement en) && en.ValueKind == JsonValueKind.True;
-            AutoText.Text = running ? "自动化: 运行中" : enabled ? "自动化: 已启用" : "自动化: 关";
+            SetAutomationStatus(running, enabled);
         }
         catch
         {
@@ -240,7 +242,7 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>刷新状态栏的技能市场连接状态段。</summary>
+    /// <summary>刷新状态区的技能市场连接段。</summary>
     private async Task RefreshMarketStatusAsync()
     {
         if (_backend is null)
@@ -261,7 +263,7 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>解析 /status 输出，刷新状态栏各段。</summary>
+    /// <summary>解析 /status 输出，刷新顶部关键状态与状态区的搜索段。</summary>
     private void ApplyStatusText(string status)
     {
         foreach (string raw in status.Split('\n'))
@@ -269,19 +271,45 @@ public partial class MainWindow : Window
             string line = raw.Trim();
             if (line.StartsWith("🧠 模型:", StringComparison.Ordinal))
             {
-                ModelText.Text = $"模型: {Shorten(line["🧠 模型:".Length..].Trim())}";
-                ModelText.ToolTip = line["🧠 模型:".Length..].Trim();
+                ModelText.Text = $"🧠 模型: {Shorten(line["🧠 模型:".Length..].Trim())}";
+                ModelChip.ToolTip = $"当前模型：{line["🧠 模型:".Length..].Trim()}\n点击打开模型选择栏";
             }
             else if (line.StartsWith("🛠️", StringComparison.Ordinal) && line.Contains("模式:"))
             {
-                ModeText.Text = $"模式: {line[(line.IndexOf("模式:", StringComparison.Ordinal) + 3)..].Trim()}";
+                string mode = line[(line.IndexOf("模式:", StringComparison.Ordinal) + 3)..].Trim();
+                ModeText.Text = $"🛠️ 模式: {mode}";
+                ModeChip.ToolTip = $"当前对话模式：{mode}\n点击打开设置修改默认模式";
             }
             else if (line.Contains("联网搜索:"))
             {
                 bool on = line.Contains("开启");
-                SearchText.Text = on ? "搜索: 开" : "搜索: 关";
+                SetSearchStatus(on);
+            }
+            else if (line.Contains("KV Cache:"))
+            {
+                int mark = line.IndexOf("KV Cache:", StringComparison.Ordinal);
+                string kv = line[(mark + "KV Cache:".Length)..].Trim().TrimStart('约').Trim();
+                SetKvCacheStatus(kv.Trim('）', '（'));
             }
         }
+    }
+
+    /// <summary>状态区：搜索开关（优化五）。</summary>
+    private void SetSearchStatus(bool on)
+    {
+        SearchText.Text = on ? "🔍 搜索：开" : "🔍 搜索：关";
+        StripSearchButton.ToolTip = on
+            ? "联网搜索已开启：提问前会先搜索网络参考信息。点击关闭"
+            : "联网搜索已关闭。点击开启（/search on）";
+    }
+
+    /// <summary>状态区：KV Cache 估算（优化五）。</summary>
+    private void SetKvCacheStatus(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || text == "---")
+            return;
+        StripKvText.Text = $"💾 KV: {text}";
+        StripKvButton.ToolTip = $"KV Cache 估算约 {text}（fp16，随上下文窗口线性增长）\n点击打开「设置 → 模型」";
     }
 
     /// <summary>状态栏模型名过长时截断显示。</summary>
@@ -291,14 +319,76 @@ public partial class MainWindow : Window
         return trimmed.Length <= 26 ? trimmed : trimmed[..25] + "…";
     }
 
-    /// <summary>刷新自动化状态段（自动化引擎接入后调用）。</summary>
+    /// <summary>刷新状态区的自动化状态段（优化五：图标 + 简短短语）。</summary>
     private void SetAutomationStatus(bool running, bool enabled = true)
     {
-        AutoText.Text = !enabled ? "自动化: 未启用" : running ? "自动化: 运行中" : "自动化: 关";
+        AutoText.Text = !enabled ? "⚙️ 自动化：未启用" : running ? "⚙️ 自动化：运行中" : "⚙️ 自动化：关";
+        StripAutomationButton.ToolTip = running
+            ? "自动化正在运行（浏览器已打开）。点击打开「设置 → 自动化」查看日志或停止"
+            : enabled
+                ? "自动化已启用，当前空闲。点击打开「设置 → 自动化」"
+                : "自动化未启用（需先勾选安全协议）。点击打开「设置 → 自动化」";
     }
 
-    /// <summary>刷新技能市场连接状态段（市场接入后调用）。</summary>
-    private void SetMarketStatus(string text) => MarketText.Text = $"市场: {text}";
+    /// <summary>刷新状态区的技能市场连接段（优化五）。</summary>
+    private void SetMarketStatus(string text)
+    {
+        MarketText.Text = $"🌐 市场：{text}";
+        StripMarketButton.ToolTip = $"技能市场：{text}\n点击打开「设置 → 技能市场」";
+    }
+
+    // ---------- 轻量状态区：点击跳转 / 折叠（优化五） ----------
+
+    private void ModelChip_Click(object sender, RoutedEventArgs e) => OpenSettings(tab: "模型");
+
+    private void ModeChip_Click(object sender, RoutedEventArgs e) => OpenSettings(tab: "常规");
+
+    /// <summary>搜索项直接切换开关（搜索没有独立的设置页，切换即"对应设置"）。</summary>
+    private async void StripSearchButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_backend is null)
+            return;
+        try
+        {
+            string json = await _backend.SendRequestAsync(new { action = "chat", message = "/search toggle" });
+            using JsonDocument doc = JsonDocument.Parse(json);
+            string content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+            HandleChatResponse(json);
+            Toast(content.Length > 0 ? content : "已切换联网搜索");
+        }
+        catch (Exception ex)
+        {
+            Toast($"切换搜索失败：{ex.Message}", error: true);
+        }
+    }
+
+    private void StripAutomationButton_Click(object sender, RoutedEventArgs e) => OpenSettings(tab: "自动化");
+
+    private void StripMarketButton_Click(object sender, RoutedEventArgs e) => OpenSettings(tab: "技能市场");
+
+    private void StripContextButton_Click(object sender, RoutedEventArgs e) => _ = UpdateContextAsync();
+
+    private void StripKvButton_Click(object sender, RoutedEventArgs e) => OpenSettings(tab: "模型");
+
+    /// <summary>折叠/展开轻量状态区（状态记在 ui_state.json，下次启动沿用）。</summary>
+    private void StripToggleButton_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.StatusStripCollapsed = !_settings.StatusStripCollapsed;
+        _settings.Save();
+        ApplyStatusStripState();
+    }
+
+    /// <summary>按 ui_state.json 应用状态区的折叠状态。</summary>
+    private void ApplyStatusStripState()
+    {
+        bool collapsed = _settings.StatusStripCollapsed;
+        StatusStripItems.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        StripToggleText.Text = collapsed ? "▸" : "▾";
+        StripToggleButton.ToolTip = collapsed
+            ? "展开状态区（搜索 / 自动化 / 市场 / 上下文 / KV Cache）"
+            : "折叠状态区";
+        AutomationProperties.SetName(StripToggleButton, collapsed ? "展开状态区" : "折叠状态区");
+    }
 
     // ---------- 首次启动引导 ----------
 
@@ -327,7 +417,7 @@ public partial class MainWindow : Window
         AddMessage("system", $"📦 本地未找到所需模型：{ex.Model}{size}\n来源仓库：{ex.Repo}");
         StatusText.Text = "等待确认下载";
 
-        var result = MessageBox.Show(
+        var result = MessageBox.Show(this,
             $"本地未找到所需模型：\n\n{ex.Model}{size}\n来源仓库：{ex.Repo}\n\n" +
             "是否现在下载？下载需要联网，模型较大时可能耗时较长。\n" +
             "选择「否」将退出程序（也可稍后手动把模型文件放入 models/ 目录）。",
@@ -382,7 +472,7 @@ public partial class MainWindow : Window
 
             if (ShortcutService.Exists())
             {
-                var recreate = MessageBox.Show(
+                var recreate = MessageBox.Show(this,
                     $"检测到程序目录下的启动快捷方式已失效：\n{ShortcutService.ShortcutPath}\n\n" +
                     "（通常是因为程序文件夹被移动或改名）\n\n是否重新创建？",
                     "快捷方式已失效",
@@ -396,7 +486,7 @@ public partial class MainWindow : Window
             if (_settings.ShortcutPromptDeclined)
                 return;  // 用户之前已拒绝，不再询问
 
-            var create = MessageBox.Show(
+            var create = MessageBox.Show(this,
                 "未在程序目录下检测到启动快捷方式。\n\n" +
                 $"是否创建「{ShortcutService.ShortcutFileName}」？\n" +
                 "创建后在程序文件夹内双击它即可启动 EchoDesk，无需分辨哪个可执行文件是入口。",
@@ -588,15 +678,16 @@ public partial class MainWindow : Window
     /// 万一构造异常（历史缺陷：FontSizeSlider 回调空引用），也只记录日志并提示，
     /// 不再让整个进程被终止。
     /// </summary>
-    private void OpenSettings(bool openMarket = false)
+    private void OpenSettings(bool openMarket = false, string? tab = null)
     {
         if (_backend is null)
             return;
+        string target = tab ?? (openMarket ? "技能市场" : "");
         if (_settingsWindow is { IsLoaded: true })
         {
             _settingsWindow.Activate();
-            if (openMarket)
-                _settingsWindow.ShowMarketTab();
+            if (target.Length > 0)
+                _settingsWindow.ShowTab(target, refreshMarket: target == "技能市场");
             return;
         }
         try
@@ -622,8 +713,8 @@ public partial class MainWindow : Window
             Toast($"打开设置窗口失败：{ex.Message}");
             return;
         }
-        if (openMarket)
-            _settingsWindow.ShowMarketTab();
+        if (target.Length > 0)
+            _settingsWindow.ShowTab(target, refreshMarket: target == "技能市场");
     }
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => OpenSettings();
@@ -1150,8 +1241,21 @@ public partial class MainWindow : Window
     /// <summary>从响应中读取附带的上文占用并刷新显示（/clear、/undo 后实时减少）。</summary>
     private void UpdateContextFromResponse(JsonElement root)
     {
-        if (root.TryGetProperty("used", out JsonElement usedEl) && root.TryGetProperty("limit", out JsonElement limitEl))
-            ContextText.Text = FormatContext(usedEl.GetInt32(), limitEl.GetInt32());
+        if (root.TryGetProperty("used", out JsonElement usedEl) && root.TryGetProperty("limit", out JsonElement limitEl)
+            && usedEl.ValueKind == JsonValueKind.Number && limitEl.ValueKind == JsonValueKind.Number)
+        {
+            int used = usedEl.GetInt32();
+            int limit = limitEl.GetInt32();
+            ContextText.Text = FormatContext(used, limit);
+            // 优化五：轻量状态区显示占用百分比（图标 + 简短短语）
+            int percent = limit > 0 ? (int)Math.Round(used * 100.0 / limit) : 0;
+            StripContextText.Text = $"📊 上下文 {Math.Clamp(percent, 0, 100)}%";
+            StripContextButton.ToolTip = $"上下文占用 {used:N0} / {limit:N0} tokens（{percent}%）\n点击刷新";
+        }
+        if (root.TryGetProperty("kv_cache_text", out JsonElement kv) && kv.ValueKind == JsonValueKind.String)
+            SetKvCacheStatus(kv.GetString() ?? "");
+        if (root.TryGetProperty("search", out JsonElement se) && se.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            SetSearchStatus(se.GetBoolean());
     }
 
     /// <summary>数字格式化：>=1000 显示 k，>=1000000 显示 m。</summary>
@@ -1334,12 +1438,16 @@ public partial class MainWindow : Window
         {
             AddMessage("system", content);
             if (content.StartsWith(ModePrefix, StringComparison.Ordinal))
-                ModeText.Text = $"模式: {content[ModePrefix.Length..].Trim()}";
-            // 搜索开关变化即时反映到状态栏
+            {
+                string mode = content[ModePrefix.Length..].Trim();
+                ModeText.Text = $"🛠️ 模式: {mode}";
+                ModeChip.ToolTip = $"当前对话模式：{mode}\n点击打开设置修改默认模式";
+            }
+            // 搜索开关变化即时反映到状态区（优化五：统一为「图标 + 短语」格式）
             if (content.Contains("搜索已开启", StringComparison.Ordinal))
-                SearchText.Text = "搜索: 开";
+                SetSearchStatus(true);
             else if (content.Contains("搜索已关闭", StringComparison.Ordinal))
-                SearchText.Text = "搜索: 关";
+                SetSearchStatus(false);
         }
 
         // /model 需要下载：征得用户同意后发送下载动作
@@ -1353,6 +1461,7 @@ public partial class MainWindow : Window
     private async Task ConfirmModelDownloadAsync(string modelName)
     {
         var result = MessageBox.Show(
+            this,
             $"确定要下载模型 '{modelName}' 吗？\n下载需要联网且可能耗时较长。",
             "确认下载模型",
             MessageBoxButton.YesNo,

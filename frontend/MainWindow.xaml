@@ -11,11 +11,14 @@
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <!-- 输入框下方的轻量状态区（优化五）：可折叠，收起时只留一个切换按钮 -->
+            <RowDefinition Height="Auto"/>
             <!-- 底部提示区固定高度：弹出提示时不引起输入区上下移动 -->
             <RowDefinition Height="42"/>
         </Grid.RowDefinitions>
 
-        <!-- 标题栏：版本号置于项目名右下角小字，再右侧为署名与状态 -->
+        <!-- 标题栏（优化五：只保留最关键的运行状态 / 模型 / 模式，
+             搜索、自动化、市场、上下文等次要信息移到输入框下方的轻量状态区） -->
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -29,24 +32,26 @@
             </Grid>
             <TextBlock Text="Powered by Void Entropia Studio" FontSize="11" Margin="14,8,0,0"
                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>
-            <!-- 状态栏：运行状态 / 模型 / 模式 / 搜索 / 自动化 / 市场连接状态 -->
+            <!-- 关键状态：运行状态 / 模型 / 模式。
+                 注意：这里给状态文本用 HelpText 说明含义，不能用 AutomationProperties.Name 覆盖，
+                 否则屏幕阅读器读到的是"运行状态"而不是"已就绪"，反而丢失信息。 -->
             <TextBlock x:Name="StatusText" Text="正在启动后端..." Margin="18,0,0,0"
-                       VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>
-            <TextBlock x:Name="ModelText" Text="模型: ---" Margin="14,0,0,0" MaxWidth="190"
-                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
-                       Foreground="{DynamicResource SubTextBrush}"
-                       ToolTip="当前加载的本地模型"/>
-            <TextBlock x:Name="ModeText" Text="模式: general" Margin="12,0,0,0"
-                       VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>
-            <TextBlock x:Name="SearchText" Text="搜索: 关" Margin="12,0,0,0"
-                       VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"
-                       ToolTip="联网搜索开关（/search on|off）"/>
-            <TextBlock x:Name="AutoText" Text="自动化: 关" Margin="12,0,0,0"
-                       VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"
-                       ToolTip="浏览器自动化状态"/>
-            <TextBlock x:Name="MarketText" Text="市场: 未连接" Margin="12,0,0,0"
-                       VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"
-                       ToolTip="技能市场连接状态"/>
+                       VerticalAlignment="Center" FontWeight="Bold"
+                       AutomationProperties.HelpText="运行状态：正在启动后端 / 已就绪 / 处理中 / 后端已退出"
+                       Foreground="{DynamicResource SubTextBrush}"/>
+            <Button x:Name="ModelChip" Margin="14,0,0,0" Padding="8,2" VerticalAlignment="Center"
+                    Style="{StaticResource RoundButton}" Click="ModelChip_Click"
+                    ToolTip="点击打开模型选择栏（设置 → 模型）"
+                    AutomationProperties.HelpText="当前加载的模型，点击打开模型设置">
+                <TextBlock x:Name="ModelText" Text="🧠 模型: ---" FontSize="11" MaxWidth="200"
+                           TextTrimming="CharacterEllipsis"/>
+            </Button>
+            <Button x:Name="ModeChip" Margin="8,0,0,0" Padding="8,2" VerticalAlignment="Center"
+                    Style="{StaticResource RoundButton}" Click="ModeChip_Click"
+                    ToolTip="点击打开设置修改默认对话模式"
+                    AutomationProperties.HelpText="当前对话模式，点击打开设置">
+                <TextBlock x:Name="ModeText" Text="🛠️ 模式: general" FontSize="11"/>
+            </Button>
         </StackPanel>
 
         <!-- 消息列表（支持 Ctrl+滚轮调节字号） -->
@@ -154,8 +159,62 @@
             </Grid>
         </Border>
 
+        <!-- 轻量状态区（优化五）：图标 + 简短短语，点击任一项跳到对应设置/动作；
+             右侧按钮可折叠收起，避免长期占用垂直空间 -->
+        <Border x:Name="StatusStrip" Grid.Row="4" Margin="0,4,0,0" CornerRadius="8"
+                Background="{DynamicResource InputBackground}"
+                BorderBrush="{DynamicResource InputBorder}" BorderThickness="1"
+                Padding="8,3"
+                AutomationProperties.Name="轻量状态区"
+                AutomationProperties.HelpText="显示搜索、自动化、技能市场连接、上下文占用与 KV Cache 估算；点击可跳转到对应设置">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel x:Name="StatusStripItems" Grid.Column="0" Orientation="Horizontal">
+                    <Button x:Name="StripSearchButton" Padding="6,1" Margin="0,0,4,0"
+                            Style="{StaticResource RoundButton}" Click="StripSearchButton_Click"
+                            ToolTip="联网搜索开关：点击直接切换（/search on|off）"
+                            AutomationProperties.HelpText="联网搜索开关，点击直接切换">
+                        <TextBlock x:Name="SearchText" Text="🔍 搜索：关" FontSize="11"/>
+                    </Button>
+                    <Button x:Name="StripAutomationButton" Padding="6,1" Margin="0,0,4,0"
+                            Style="{StaticResource RoundButton}" Click="StripAutomationButton_Click"
+                            ToolTip="自动化开关：点击打开「设置 → 自动化」"
+                            AutomationProperties.HelpText="自动化开关状态，点击打开设置">
+                        <TextBlock x:Name="AutoText" Text="⚙️ 自动化：关" FontSize="11"/>
+                    </Button>
+                    <Button x:Name="StripMarketButton" Padding="6,1" Margin="0,0,4,0"
+                            Style="{StaticResource RoundButton}" Click="StripMarketButton_Click"
+                            ToolTip="技能市场连接状态：点击打开「设置 → 技能市场」"
+                            AutomationProperties.HelpText="技能市场连接状态，点击打开设置">
+                        <TextBlock x:Name="MarketText" Text="🌐 市场：未连接" FontSize="11"/>
+                    </Button>
+                    <Button x:Name="StripContextButton" Padding="6,1" Margin="0,0,4,0"
+                            Style="{StaticResource RoundButton}" Click="StripContextButton_Click"
+                            ToolTip="上下文占用：点击刷新"
+                            AutomationProperties.HelpText="当前上下文占用百分比，点击刷新">
+                        <TextBlock x:Name="StripContextText" Text="📊 上下文 0%" FontSize="11"/>
+                    </Button>
+                    <Button x:Name="StripKvButton" Padding="6,1"
+                            Style="{StaticResource RoundButton}" Click="StripKvButton_Click"
+                            ToolTip="KV Cache 估算：点击打开「设置 → 模型」"
+                            AutomationProperties.HelpText="KV Cache 内存占用估算，点击打开模型设置">
+                        <TextBlock x:Name="StripKvText" Text="💾 KV: ---" FontSize="11"/>
+                    </Button>
+                </StackPanel>
+                <Button x:Name="StripToggleButton" Grid.Column="1" Padding="6,1" Margin="6,0,0,0"
+                        Style="{StaticResource RoundButton}" Click="StripToggleButton_Click"
+                        ToolTip="折叠/展开状态区"
+                        AutomationProperties.HelpText="折叠或展开状态区">
+                    <TextBlock x:Name="StripToggleText" Text="▾" FontSize="11"/>
+                </Button>
+            </Grid>
+        </Border>
+
         <!-- 底部提示（固定高度区）：通知提示与操作提示共用一行 -->
-        <StackPanel Grid.Row="4" Margin="0,3,0,0" HorizontalAlignment="Center">
+        <StackPanel Grid.Row="5" Margin="0,3,0,0" HorizontalAlignment="Center">
             <TextBlock x:Name="CommandBarHint" Visibility="Collapsed" FontSize="12"
                        Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"
                        Text="💡 检测到指令格式：点击左下角「转移到命令输入框」按钮"/>

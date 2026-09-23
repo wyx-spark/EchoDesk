@@ -136,12 +136,15 @@ if ($null -ne $saveButton) {
         $tabs = $win2.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCond)
         $headers = @(); foreach ($t in $tabs) { $headers += $t.Current.Name }
         Write-Output "[probe] Tab 页：$($headers -join ' / ')"
-        foreach ($need in @('常规', '自动化', '技能市场')) {
+        foreach ($need in @('常规', '模型', '自动化', '技能市场')) {
             if ($headers -notcontains $need) { Fail "缺少 Tab：$need" }
         }
         $perTab = @{
             '常规'     = @('DarkModeCheck', 'FontSizeSlider', 'DefaultModeCombo', 'ConfirmDestructiveCheck')
-            '自动化'   = @('TaskUrlBox', 'TaskSelectorBox', 'SafetyCheck', 'RunOnceButton', 'AutomationLogBox')
+'模型'     = @('HubSourceCombo', 'HubSearchBox', 'HubSortCombo', 'HubQuantCombo', 'HubResultList',
+                          'HubRegistryList', 'HubStatusText')
+            '自动化'   = @('TaskUrlBox', 'TaskSelectorBox', 'SafetyCheck', 'RunOnceButton', 'AutomationLogBox',
+                          'TaskNameBox', 'ResultsRootNameBox', 'ResultsLocationBox', 'OpenResultsButton')
             '技能市场' = @('MarketSearchBox', 'MarketSortCombo', 'MarketList')
         }
         foreach ($tabName in $perTab.Keys) {
@@ -151,6 +154,66 @@ if ($null -ne $saveButton) {
             }
         }
         [void](Select-Tab $win2 '常规')
+    }
+}
+
+# ---------- 3b. 状态栏分层（优化五）----------
+$top = @{}
+foreach ($id in @('StatusText', 'ModelText', 'ModeText', 'ModelChip', 'ModeChip')) {
+    $top[$id] = Find-AnyById $proc.Id $id
+    if ($null -eq $top[$id]) { Fail "顶部状态栏缺少 $id" }
+}
+# 顶部只保留关键信息：搜索/自动化/市场必须移出顶部
+foreach ($id in @('StripSearchButton', 'StripAutomationButton', 'StripMarketButton',
+                  'StripContextButton', 'StripKvButton', 'StripToggleButton')) {
+    if ($null -eq (Find-AnyById $proc.Id $id)) { Fail "轻量状态区缺少 $id" }
+}
+$txt = @{}
+foreach ($id in @('SearchText', 'AutoText', 'MarketText', 'StripContextText', 'StripKvText')) {
+    $el = Find-AnyById $proc.Id $id
+    $txt[$id] = if ($null -ne $el) { $el.Current.Name } else { "" }
+}
+Write-Output "[probe] 轻量状态区文本：$($txt.Values -join ' | ')"
+if ($txt['SearchText'] -notlike '*搜索*') { Fail "状态区搜索项文本异常：$($txt['SearchText'])" }
+if ($txt['AutoText'] -notlike '*自动化*') { Fail "状态区自动化项文本异常：$($txt['AutoText'])" }
+if ($txt['MarketText'] -notlike '*市场*') { Fail "状态区市场项文本异常：$($txt['MarketText'])" }
+if ($txt['StripContextText'] -notlike '*上下文*%*') { Fail "状态区上下文项应显示百分比：$($txt['StripContextText'])" }
+if ($txt['StripKvText'] -notlike '💾*') { Fail "状态区 KV Cache 项文本异常：$($txt['StripKvText'])" }
+if ($txt['SearchText'] -notlike '🔍*' -or $txt['AutoText'] -notlike '⚙️*' -or $txt['MarketText'] -notlike '🌐*') {
+    Fail "状态区应使用图标 + 简短短语"
+} else { Ok "轻量状态区为图标+简短短语，且含上下文百分比" }
+
+# 折叠/展开：折叠后各项应从可视树消失，再点一次恢复
+$toggle = Find-AnyById $proc.Id 'StripToggleButton'
+if ($null -ne $toggle) {
+    Invoke-El $toggle
+    Start-Sleep -Milliseconds 600
+    $hidden = $null -eq (Find-AnyById $proc.Id 'StripSearchButton')
+    Invoke-El (Find-AnyById $proc.Id 'StripToggleButton')
+    Start-Sleep -Milliseconds 600
+    $shown = $null -ne (Find-AnyById $proc.Id 'StripSearchButton')
+    if ($hidden -and $shown) { Ok "轻量状态区可折叠且可恢复" } else { Fail "折叠/展开行为异常（hidden=$hidden shown=$shown）" }
+}
+
+# 点击「自动化」项应打开设置并切到自动化 Tab
+$autoChip = Find-AnyById $proc.Id 'StripAutomationButton'
+if ($null -ne $autoChip) {
+    Invoke-El $autoChip
+    Start-Sleep -Milliseconds 900
+    $win3 = Get-OwnerWindow (Find-AnyById $proc.Id 'Tabs')
+    if ($null -eq $win3) { Fail '点击状态区自动化项未打开设置窗口' }
+    else {
+        $tabCond2 = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::TabItem)
+        $sel = ''
+        foreach ($t in $win3.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCond2)) {
+            if ($t.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected) {
+                $sel = $t.Current.Name
+            }
+        }
+        if ($sel -eq '自动化') { Ok '点击状态区「自动化」跳转到设置→自动化' }
+        else { Fail "点击状态区自动化项应切到自动化 Tab，实际 '$sel'" }
     }
 }
 

@@ -215,8 +215,9 @@ class CommandHandler:
     def _search(self, args: list) -> Response:
         if not args:
             return f"搜索状态: {'开启' if self.search_enabled else '关闭'}", None
-        if args[0] in ("on", "off"):
-            self.search_enabled = args[0] == "on"
+        # toggle：供输入框下方的状态区一键切换（优化五），等价于 on/off 的取反
+        if args[0] in ("on", "off", "toggle"):
+            self.search_enabled = (not self.search_enabled) if args[0] == "toggle" else (args[0] == "on")
             self.config.search_default = self.search_enabled
             self.config.save()
             return f"🔍 搜索已{'开启' if self.search_enabled else '关闭'}", None
