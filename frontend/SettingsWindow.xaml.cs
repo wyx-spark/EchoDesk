@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
@@ -283,6 +284,11 @@ public partial class SettingsWindow : Window
         RetriesBox.Text = GetInt(el, "retries", 1).ToString();
         DedupeCheck.IsChecked = GetBool(el, "dedupe");
         SaveResultsCheck.IsChecked = GetBool(el, "save_results");
+        // 新增三：批量处理结果目录
+        TaskNameBox.Text = GetString(el, "task_name");
+        ResultsRootNameBox.Text = GetString(el, "results_root_name");
+        ResultsLocationBox.Text = GetString(el, "results_location");
+        UpdateResultsPreview();
         ScheduleCheck.IsChecked = GetBool(el, "schedule_enabled");
         ScheduleTimesBox.Text = string.Join(", ", GetStringList(el, "schedule_times"));
         SyncSafetyUi();
@@ -400,6 +406,10 @@ public partial class SettingsWindow : Window
             ["retries"] = ParseInt(RetriesBox.Text, 1),
             ["dedupe"] = DedupeCheck.IsChecked == true,
             ["save_results"] = SaveResultsCheck.IsChecked == true,
+            // 新增三：结果目录（顶层文件夹名 / 保存位置 / 任务名称）
+            ["task_name"] = TaskNameBox.Text.Trim(),
+            ["results_root_name"] = ResultsRootNameBox.Text.Trim(),
+            ["results_location"] = ResultsLocationBox.Text.Trim(),
             ["schedule_enabled"] = ScheduleCheck.IsChecked == true,
             ["schedule_times"] = ScheduleTimesBox.Text.Trim(),
         };
@@ -422,6 +432,67 @@ public partial class SettingsWindow : Window
 
     private static int ParseInt(string text, int fallback) =>
         int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value) ? value : fallback;
+
+    // ---------- 自动化：批量处理结果目录（新增三） ----------
+
+    /// <summary>保存位置留空时显示"程序根目录"，并预览完整目录结构。</summary>
+    private void UpdateResultsPreview()
+    {
+        if (ResultsPreviewText is null)
+            return;
+        string location = ResultsLocationBox?.Text.Trim() ?? "";
+        string rootName = ResultsRootNameBox?.Text.Trim() ?? "";
+        if (rootName.Length == 0)
+            rootName = "批量处理结果";
+        string task = TaskNameBox?.Text.Trim() ?? "";
+        if (task.Length == 0)
+            task = "自动化任务";
+        string baseDir = location.Length == 0 ? "程序根目录" : location;
+        ResultsPreviewText.Text =
+            $"目录结构：{baseDir}\\{rootName}\\{DateTime.Now:yyyy-MM-dd}\\{task}\\" +
+            "（同名任务自动加 -1、-2；内含「结果.txt」与下载的原始文件）";
+    }
+
+    private void ResultsOption_TextChanged(object sender, TextChangedEventArgs e) => UpdateResultsPreview();
+
+    /// <summary>在资源管理器中打开结果根目录（不存在时先创建）。</summary>
+    private async void OpenResultsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // 让后端按自己的规则解析"程序根目录"，避免前端猜路径
+            string json = await _backend.SendRequestAsync(new { action = "automation_status" });
+            using JsonDocument doc = JsonDocument.Parse(json);
+            string root = doc.RootElement.TryGetProperty("automation", out JsonElement st)
+                ? GetString(st, "results_root")
+                : "";
+            if (root.Length == 0)
+            {
+                SaveHintText.Text = "⚠️ 未取到结果目录，请先保存设置";
+                return;
+            }
+            Directory.CreateDirectory(root);
+            Process.Start(new ProcessStartInfo { FileName = root, UseShellExecute = true });
+            SaveHintText.Text = $"已打开：{root}";
+        }
+        catch (Exception ex)
+        {
+            SaveHintText.Text = $"❌ 打开结果目录失败：{ex.Message}";
+        }
+    }
+
+    private void BrowseResultsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "选择批量处理结果的保存位置",
+        };
+        if (dialog.ShowDialog(this) == true)
+        {
+            ResultsLocationBox.Text = dialog.FolderName;
+            UpdateResultsPreview();
+        }
+    }
 
     // ---------- 自动化：测试选择器 ----------
 

@@ -56,6 +56,21 @@ try:  # pragma: no cover - 环境相关
 except Exception:  # noqa: BLE001
     _parse_file_with_wps = None  # type: ignore[assignment]
 
+# 新增三：结果文件必须是纯文本，因此模型输出统一经 markdown_to_plain 落盘
+try:  # pragma: no cover - 环境相关
+    from plaintext import markdown_to_plain as _markdown_to_plain
+except Exception:  # noqa: BLE001
+    def _markdown_to_plain(text: str) -> str:  # type: ignore[misc]
+        """plaintext 模块不可用时的退化实现（仅去围栏，避免整轮结果写不出来）。"""
+        return str(text or "")
+
+# 新增三：默认结果位置 = 程序根目录
+try:  # pragma: no cover - 环境相关
+    from config import program_root as _program_root
+except Exception:  # noqa: BLE001
+    def _program_root() -> str:  # type: ignore[misc]
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # Playwright 同样做容错导入：未安装时由 validate()/run() 给出明确提示，而不是启动即崩
 try:  # pragma: no cover - 环境相关
     from playwright.sync_api import TimeoutError as _PWTimeoutError
@@ -145,6 +160,11 @@ def _now_iso() -> str:
 def _stamp() -> str:
     """文件名用的紧凑时间戳。"""
     return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def _today() -> str:
+    """结果目录用的日期（YYYY-MM-DD，任务书 新增三）。"""
+    return datetime.now().strftime("%Y-%m-%d")
 
 
 def _clip(text: Any, limit: int) -> str:
@@ -282,9 +302,10 @@ class _TaskOutcome:
 
     status: str = "failed"          # ok | failed
     summary: str = ""               # 模型输出正文（仅用于回传前端/写结果文件，不入日志）
-    files: List[str] = field(default_factory=list)   # 仅文件名
+    files: List[str] = field(default_factory=list)   # 落地到任务目录后的文件名
     error: str = ""
-    result_path: str = ""           # 结果 markdown 落盘路径
+    result_path: str = ""           # 结果文件落盘路径（结果.txt）
+    screenshot: str = ""            # 失败截图路径（任务书 新增三：截图留在任务目录内）
 
 
 # ---------- 主引擎 ----------
@@ -310,6 +331,10 @@ class AutomationEngine:
         self._last_error = ""
         self._processed_count = 0
         self._result_count = 0
+        # 本轮结果目录与结果块（新增三：结果.txt 为纯文本，每条任务完成即重写落盘）
+        self._run_task_dir = ""
+        self._report_header = ""
+        self._report_blocks: List[str] = []
         # 最近一次选择器解析失败的原因（用于把"选择器写错"和"页面里没有元素"区分开）
         self._selector_error = ""
 
@@ -356,15 +381,108 @@ class AutomationEngine:
         return out
 
     @property
+    def results_root(self) -> str:
+        """结果根目录：``保存位置 / 顶层文件夹名``（新增三）。
+
+        保存位置留空表示程序根目录；顶层文件夹名默认「批量处理结果」。
+        """
+        raw = str(getattr(self.cfg, "results_location", "") or "").strip()
+        base = os.path.abspath(os.path.expanduser(raw)) if raw else _program_root()
+        name = _safe_filename(str(getattr(self.cfg, "results_root_name", "") or "批量处理结果"), "批量处理结果")
+        return os.path.join(base, name)
+
+    @property
+    def task_name(self) -> str:
+        """本次运行的任务名称（第三层目录名）。"""
+        return _safe_filename(str(getattr(self.cfg, "task_name", "") or "自动化任务"), "自动化任务")[:60]
+
+    @property
+    def results_dir(self) -> str:
+        """本轮结果目录：``结果根目录/日期/任务名``；尚未开始运行时退化为结果根目录。"""
+        if self._run_task_dir:
+            return self._run_task_dir
+        return os.path.join(self.results_root, _today())
+
+    def _prepare_task_dir(self) -> str:
+        """按 ``结果根目录/YYYY-MM-DD/任务名`` 创建本轮结果目录。
+
+        同一日期下同名任务自动追加序号（``-1``、``-2``…）避免覆盖；
+        同一天多次运行的结果合并到同一日期目录下。
+        """
+        day_dir = os.path.join(self.results_root, _today())
+        os.makedirs(day_dir, exist_ok=True)
+        base = self.task_name
+        candidate = os.path.join(day_dir, base)
+        suffix = 0
+        while os.path.exists(candidate):
+            suffix += 1
+            candidate = os.path.join(day_dir, f"{base}-{suffix}")
+        os.makedirs(candidate, exist_ok=True)
+        return candidate
+
+    @property
+    def report_path(self) -> str:
+        """本轮结果文件路径（固定命名 ``结果.txt``，纯文本无 Markdown）。"""
+        return os.path.join(self.results_dir, "结果.txt")
+
+    def _build_report_header(self) -> str:
+        """结果文件的文件头：一眼看清这批结果属于哪次运行。"""
+        return "\n".join(
+            [
+                "EchoDesk 批量处理结果",
+                "=" * 40,
+                f"任务名称：{self.task_name}",
+                f"运行日期：{_today()}",
+                f"开始时间：{_now_iso()}",
+                f"任务列表：{self.task_list_url}",
+                f"任务指令：{str(getattr(self.cfg, 'instruction', '') or '')}",
+                f"结果目录：{self.results_dir}",
+            ]
+        )
+
+    def _write_report(self, blocks: Sequence[str], header: str) -> str:
+        """把结果写入 ``结果.txt``（纯文本）。
+
+        采用「每次重写整份」的方式：单条任务完成后立即落盘，
+        即使中途崩溃或按停止，已处理任务的结果也不会丢。
+        """
+        if not bool(getattr(self.cfg, "save_results", True)):
+            return ""
+        try:
+            os.makedirs(self.results_dir, exist_ok=True)
+            body = "\n\n".join(block for block in blocks if block.strip())
+            content = header.rstrip() + "\n\n" + body + "\n" if body else header.rstrip() + "\n"
+            with open(self.report_path, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            return self.report_path
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("写入结果文件失败：%s", _redact(exc, 200))
+            return ""
+
+    def _move_into_task_dir(self, paths: Sequence[str]) -> List[str]:
+        """把本轮下载的原始文件移动到任务目录（重名自动加序号），返回落地文件名列表。"""
+        moved: List[str] = []
+        try:
+            os.makedirs(self.results_dir, exist_ok=True)
+        except Exception:  # noqa: BLE001
+            return moved
+        for path in paths:
+            try:
+                if not os.path.isfile(path):
+                    continue
+                name = _safe_filename(os.path.basename(path), "file")
+                target = _unique_path(self.results_dir, name)
+                shutil.move(path, target)
+                moved.append(os.path.basename(target))
+            except Exception as exc:  # noqa: BLE001
+                self.logger.debug("保留下载文件失败：%s", _redact(exc, 150))
+        return moved
+
+    @property
     def download_dir(self) -> str:
         raw = str(getattr(self.cfg, "download_dir", "") or "").strip()
         if not raw:
             raw = os.path.join(tempfile.gettempdir(), "echodesk_downloads")
-        return os.path.abspath(os.path.expanduser(raw))
-
-    @property
-    def results_dir(self) -> str:
-        raw = str(getattr(self.cfg, "results_dir", "automation_results") or "automation_results").strip()
         return os.path.abspath(os.path.expanduser(raw))
 
     @property
@@ -1028,39 +1146,76 @@ class AutomationEngine:
             raise AutomationError("模型返回为空。")
         return str(text).strip()
 
-    def _save_result(self, title: str, url: str, files: Sequence[str], summary: str) -> str:
-        """把单个任务的结果写成 ``results_dir/任务名_时间戳.md``，返回路径（失败返回空串）。"""
+    def _save_result(
+        self,
+        title: str,
+        url: str,
+        files: Sequence[str],
+        summary: str,
+        index: int = 0,
+        total: int = 0,
+    ) -> str:
+        """记录单个任务的成功结果并刷新 ``结果.txt``，返回结果文件路径。
+
+        任务书 新增三：结果文件固定命名 ``结果.txt``，且必须是**纯文本**
+        （记事本无 Markdown 渲染能力），因此这里用 ``markdown_to_plain`` 剥离标记。
+        """
         if not bool(getattr(self.cfg, "save_results", True)):
             return ""
-        try:
-            os.makedirs(self.results_dir, exist_ok=True)
-            safe = _safe_filename(title or "task", "task")[:60]
-            path = _unique_path(self.results_dir, f"{safe}_{_stamp()}.md")
-            lines = [
-                f"# {title or '任务'}",
-                "",
-                f"- 任务链接：{url}",
-                f"- 处理时间：{_now_iso()}",
-                f"- 附件：{('、'.join(files) if files else '无')}",
-                "",
-                "## 审核意见",
-                "",
-                summary,
-                "",
-            ]
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write("\n".join(lines))
-            return path
-        except Exception as exc:  # noqa: BLE001
-            self.logger.warning("保存结果文件失败：%s", _redact(exc, 200))
+        prefix = f"[{index}/{total}] " if index and total else ""
+        block = [
+            f"{prefix}{title or '任务'}",
+            "-" * max(8, min(len(f"{prefix}{title or '任务'}"), 40)),
+            f"任务链接：{url}",
+            f"处理时间：{_now_iso()}",
+            f"附件：{'、'.join(files) if files else '无'}",
+            "",
+            "审核意见：",
+            _markdown_to_plain(summary).strip(),
+        ]
+        self._report_blocks.append("\n".join(block))
+        return self._write_report(self._report_blocks, self._report_header)
+
+    def _save_failure(
+        self,
+        title: str,
+        url: str,
+        files: Sequence[str],
+        error: str,
+        index: int = 0,
+        total: int = 0,
+        screenshot: str = "",
+    ) -> str:
+        """把失败任务的信息（含失败截图文件名）写入 ``结果.txt``（任务书 新增三）。"""
+        if not bool(getattr(self.cfg, "save_results", True)):
             return ""
+        prefix = f"[{index}/{total}] " if index and total else ""
+        head = f"{prefix}{title or '任务'}（失败）"
+        lines = [
+            head,
+            "-" * max(8, min(len(head), 40)),
+            f"任务链接：{url}",
+            f"处理时间：{_now_iso()}",
+            f"附件：{'、'.join(files) if files else '无'}",
+            f"失败原因：{error or '未知错误'}",
+        ]
+        if screenshot:
+            lines.append(f"失败截图：{os.path.basename(screenshot)}")
+        self._report_blocks.append("\n".join(lines))
+        return self._write_report(self._report_blocks, self._report_header)
+
+    def _save_summary_block(self, header: str) -> str:
+        """把本轮汇总写入结果文件末尾。"""
+        if not bool(getattr(self.cfg, "save_results", True)):
+            return ""
+        self._report_blocks.append(_markdown_to_plain(header).strip())
+        return self._write_report(self._report_blocks, self._report_header)
 
     def _screenshot(self, page: Any, index: int) -> str:
-        """失败截图到 ``results_dir/errors/``，返回路径（失败返回空串）。"""
+        """失败截图保存到本轮任务目录内（任务书 新增三），返回路径（失败返回空串）。"""
         try:
-            directory = os.path.join(self.results_dir, "errors")
-            os.makedirs(directory, exist_ok=True)
-            path = os.path.join(directory, f"task{index}_{_stamp()}.png")
+            os.makedirs(self.results_dir, exist_ok=True)
+            path = _unique_path(self.results_dir, f"失败截图_任务{index}_{_stamp()}.png")
             try:
                 page.screenshot(path=path, full_page=True, timeout=10000)
             except Exception:  # noqa: BLE001
@@ -1156,6 +1311,10 @@ class AutomationEngine:
                 "processed_count": int(self._processed_count),
                 "results": int(self._result_count),
                 "last_error": self._last_error,
+                # 新增三：结果目录信息，供设置窗口与状态栏展示
+                "results_root": self.results_root,
+                "results_dir": self.results_dir,
+                "report_path": self.report_path if self._run_task_dir else "",
             }
 
     def cleanup_temp(self) -> int:
@@ -1247,8 +1406,16 @@ class AutomationEngine:
         try:
             os.makedirs(self.download_dir, exist_ok=True)
             run_tmp = tempfile.mkdtemp(prefix="run_", dir=self.download_dir)
+            # ---- 新增三：本轮结果目录 = 结果根目录/日期/任务名（同名自动加序号）----
+            self._report_blocks = []
             if bool(getattr(self.cfg, "save_results", True)):
-                os.makedirs(self.results_dir, exist_ok=True)
+                self._run_task_dir = self._prepare_task_dir()
+                self._report_header = self._build_report_header()
+                self._write_report(self._report_blocks, self._report_header)
+                yield self._event("delta", f"结果将保存到：{self.results_dir}")
+            else:
+                self._run_task_dir = ""
+                self._report_header = ""
             self._audit("run_start", url=self.task_list_url, result="start",
                         max_tasks=getattr(self.cfg, "max_tasks", 20))
             yield self._event("delta", f"开始自动化：准备打开任务列表 {self.task_list_url}")
@@ -1314,6 +1481,7 @@ class AutomationEngine:
             if total_tasks == 0:
                 if stopped():
                     # 运行刚开始就被要求停止：正常收尾，不算错误
+                    self._save_summary_block("已按请求停止，本轮没有处理任何任务。")
                     yield self._event(
                         "done",
                         "已按请求停止，本轮没有处理任何任务。",
@@ -1327,6 +1495,8 @@ class AutomationEngine:
                 if self._selector_error:
                     message = f"任务列表元素位置无法使用：{self._selector_error}"
                 self._last_error = message
+                # 失败信息也写进 结果.txt，避免"结果目录是空的、不知道发生了什么"
+                self._save_summary_block(f"本轮未处理任何任务。\n原因：{message}")
                 self._audit("run_end", url=self.task_list_url, result="failed", error=message, **counters)
                 yield self._event("error", message)
                 return
@@ -1383,7 +1553,7 @@ class AutomationEngine:
                         outcome.summary,
                     ]
                     if outcome.result_path:
-                        block.append(f"（结果已保存：{outcome.result_path}）")
+                        block.append(f"（已写入结果文件：{os.path.basename(outcome.result_path)}）")
                     text = "\n".join(block)
                     results.append(text)
                     yield self._event("delta", f"第 {index}/{total_tasks} 个任务完成。\n" + _clip(text, 2000))
@@ -1391,6 +1561,11 @@ class AutomationEngine:
                 else:
                     counters["failed"] += 1
                     reason = outcome.error or "未知错误"
+                    # 失败信息同样写入 结果.txt，并保留失败截图（任务书 新增三）
+                    self._save_failure(
+                        title, entry.href, outcome.files, reason,
+                        index=index, total=total_tasks, screenshot=outcome.screenshot,
+                    )
                     yield self._event(
                         "delta",
                         f"第 {index}/{total_tasks} 个任务失败（已跳过，继续下一个）：{_clip(reason, 300)}",
@@ -1415,8 +1590,9 @@ class AutomationEngine:
             )
             if stopped():
                 header = "已按请求停止。" + header
-            if bool(getattr(self.cfg, "save_results", True)) and counters["ok"]:
+            if bool(getattr(self.cfg, "save_results", True)):
                 header += f"\n结果目录：{self.results_dir}"
+                self._save_summary_block(header)
             body = "\n\n".join(results) if results else "（本轮没有生成结果）"
             content = header + "\n\n" + _clip(body, 6000)
             self._audit(
@@ -1507,10 +1683,12 @@ class AutomationEngine:
     ) -> Iterator[Dict[str, Any]]:
         """处理单个任务（生成器，返回值通过 ``yield from`` 拿到）。
 
-        返回值：``_TaskOutcome``。任务下载的临时文件在 ``finally`` 里立刻删除。
+        返回值：``_TaskOutcome``。下载的原始文件在成功/失败时都会被移入本轮任务目录
+        （新增三：结果目录内保存原始文件与 结果.txt），临时文件目录只用于中转。
         """
         title = entry.text or f"任务{index}"
         files_saved: List[str] = []
+        moved_paths: Set[str] = set()   # 已移入结果目录的文件（finally 不再删除）
         names: List[str] = []
         errors: List[str] = []
         pages_before = list(getattr(context, "pages", []) or [])
@@ -1581,17 +1759,30 @@ class AutomationEngine:
             summary = self._generate(documents)
             if errors:
                 summary += "\n\n【提示】以下文件未能读取，未纳入审核：" + "；".join(errors)
-            result_path = self._save_result(title, entry.href, names, summary)
+            # 新增三：把本轮下载的原始文件移入任务目录（不再随临时目录一起删除）
+            kept = self._move_into_task_dir(files_saved)
+            moved_paths.update(files_saved)
+            for name in kept:
+                if name not in names:
+                    names.append(name)
+            if kept:
+                yield self._event("delta", f"第 {index}/{total} 个任务：原始文件已保存到结果目录（{len(kept)} 个）。")
+            result_path = self._save_result(title, entry.href, names, summary, index=index, total=total)
             return _TaskOutcome("ok", summary, names, "", result_path)
         except Exception as exc:  # noqa: BLE001
             shot = self._screenshot(page, index)
-            reason = _redact(exc, 250)
-            if shot:
-                reason += f"（失败截图：{shot}）"
-            return _TaskOutcome("failed", "", names, reason)
+            # 新增三：失败时也保留下载到的原始文件与失败截图
+            kept = self._move_into_task_dir(files_saved)
+            moved_paths.update(files_saved)
+            for name in kept:
+                if name not in names:
+                    names.append(name)
+            return _TaskOutcome("failed", "", names, _redact(exc, 250), "", shot)
         finally:
-            # 每个任务处理完立即清理本任务的临时文件
+            # 只清理"没能移入结果目录"的临时文件（已保留的文件不能删）
             for path in files_saved:
+                if path in moved_paths:
+                    continue
                 try:
                     if os.path.isfile(path):
                         os.remove(path)

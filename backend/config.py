@@ -14,6 +14,19 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # 上下文窗口的硬性下限（低于此值无法正常对话）
 MIN_CONTEXT = 512
 
+
+def program_root() -> str:
+    """程序根目录（新增三：批量处理结果的默认位置）。
+
+    * PyInstaller 打包后：后端 exe 位于 ``程序目录\\backend\\``，因此取 exe 所在目录的上一级；
+    * 源码运行：取 ``backend/`` 的上一级（仓库根目录）。
+
+    这样"默认程序根目录"在两种运行方式下都指向用户直觉上的那个目录。
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.dirname(os.path.abspath(sys.executable)))
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # 已知模型的训练上下文窗口（文件名关键词 → tokens）。
 # 用于在无需加载模型时也能按"所选模型"决定窗口大小；运行时还会用 GGUF 元数据校准。
 DEFAULT_MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
@@ -93,7 +106,10 @@ class AutomationConfig(BaseModel):
     browser_channel: str = "msedge"
     # ---------- 结果与审计 ----------
     save_results: bool = True
-    results_dir: str = "automation_results"
+    # 批量处理结果目录（新增三）：结果根目录\YYYY-MM-DD\任务名\（同名自动加 -1、-2）
+    results_root_name: str = "批量处理结果"   # 顶层文件夹名，可由用户自定义
+    results_location: str = ""               # 空 = 程序根目录；可指定其他位置
+    task_name: str = "自动化任务"             # 第三层目录名：本次运行的任务名称
     audit_log_file: str = "automation_log.jsonl"
     # ---------- 定时触发（4.4） ----------
     schedule_enabled: bool = False
@@ -144,6 +160,25 @@ class AutomationConfig(BaseModel):
         return self
 
 
+class ModelHubConfig(BaseModel):
+    """模型选择栏配置（任务书 新增四）。
+
+    数据源可在「自动 / 镜像 / 官方」之间切换；``hf_token`` 仅在下载 Gated 模型时需要，
+    建议放在 config.user.json（已被 .gitignore 忽略）而不是基础配置里。
+    """
+
+    enabled: bool = True
+    # auto：优先镜像站（国内通常更快），不可达时回退官方站
+    source: str = "auto"                    # auto | mirror | official
+    hf_token: str = ""                      # Gated 模型所需，留空则读 HF_TOKEN 环境变量
+    models_dir: str = "models"              # 模型库目录（相对后端工作目录）
+    registry_file: str = "models_registry.json"
+    # 下载完整后比对大小；拿得到 sha256 且文件 ≤2GB 时再比对哈希
+    verify_sha256: bool = True
+    download_retries: int = Field(default=3, ge=1, le=10)
+    search_limit: int = Field(default=20, ge=1, le=100)
+
+
 class MarketplaceConfig(BaseModel):
     """技能/插件市场配置（任务五 5.6）。"""
 
@@ -180,6 +215,8 @@ class Config(BaseModel):
     automation: AutomationConfig = Field(default_factory=AutomationConfig)
     # 技能/插件市场（任务五）
     marketplace: MarketplaceConfig = Field(default_factory=MarketplaceConfig)
+    # 模型选择栏（新增四）
+    model_hub: ModelHubConfig = Field(default_factory=ModelHubConfig)
     max_history: int = 10
     search_default: bool = False
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)

@@ -80,6 +80,34 @@ def test_config() -> None:
     check("摘要触发比例默认 0.5", abs(cfg.summarize.trigger_ratio - 0.5) < 1e-9)
     check("默认上下文窗口 8192", cfg.context_length == 8192, f"得到 {cfg.context_length}")
 
+    # 新增三：批量处理结果目录的配置默认值与程序根目录解析
+    check("结果顶层文件夹默认「批量处理结果」", auto.results_root_name == "批量处理结果",
+          f"得到 {auto.results_root_name}")
+    check("结果保存位置默认为空（= 程序根目录）", auto.results_location == "", f"得到 {auto.results_location}")
+    check("任务名称有默认值", bool(auto.task_name), f"得到 {auto.task_name}")
+    check("program_root() 指向存在的目录", os.path.isdir(config.program_root()),
+          f"得到 {config.program_root()}")
+
+
+# --------------------------------------------- 1b. 结果文件纯文本化（新增三）
+
+def test_plaintext() -> None:
+    section("Markdown → 纯文本")
+    import plaintext
+
+    md = (
+        "# 标题\n\n**金额** 12,345 元。\n\n"
+        "| 项目 | 金额 |\n|------|------|\n| 货款 | 10000 |\n\n- 要点一\n"
+    )
+    out = plaintext.markdown_to_plain(md)
+    check("剥离 # 标题标记", not any(l.lstrip().startswith("#") for l in out.splitlines()))
+    check("剥离 ** 粗体标记", "**" not in out)
+    check("剥离表格竖线", "|" not in out)
+    check("保留正文内容", "12,345 元" in out and "要点一" in out)
+    check("结果不含 Markdown 标记", plaintext.contains_markdown(out) is False)
+    check("能识别输入含 Markdown", plaintext.contains_markdown(md) is True)
+    check("空输入返回空串", plaintext.markdown_to_plain("") == "")
+
 
 # ------------------------------------------------------- 2. GGUF 元数据
 
@@ -294,7 +322,7 @@ def test_marketplace() -> None:
 
 
 def main() -> int:
-    tests = [test_config, test_gguf, test_summarizer, test_conversation,
+    tests = [test_config, test_plaintext, test_gguf, test_summarizer, test_conversation,
              test_automation, test_marketplace]
     for fn in tests:
         try:

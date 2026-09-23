@@ -155,8 +155,50 @@
                                       VerticalAlignment="Center"/>
                         </StackPanel>
 
-                        <TextBlock Text="定时触发" FontWeight="Bold" Margin="0,16,0,6"/>
-                        <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="批量处理结果保存" FontWeight="Bold" Margin="0,16,0,6"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="任务名称" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource SubTextBrush}"/>
+                            <TextBox x:Name="TaskNameBox" Grid.Column="1" Margin="6,0,0,0" Padding="6,4" TextChanged="ResultsOption_TextChanged"
+                                     ToolTip="结果的第三层目录名；同名任务会自动追加序号避免覆盖"/>
+                        </Grid>
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="顶层文件夹名" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource SubTextBrush}"/>
+                            <TextBox x:Name="ResultsRootNameBox" Grid.Column="1" Margin="6,0,0,0" Padding="6,4" TextChanged="ResultsOption_TextChanged"
+                                     ToolTip="结果根目录下的第一层文件夹名，默认「批量处理结果」"/>
+                            <Button x:Name="OpenResultsButton" Grid.Column="2" Margin="8,0,0,0" Padding="12,4"
+                                    Content="打开结果目录" Style="{StaticResource RoundButton}"
+                                    Click="OpenResultsButton_Click"
+                                    ToolTip="在文件资源管理器中打开结果根目录"/>
+                        </Grid>
+                        <TextBlock Text="保存位置（留空 = 程序根目录）" Margin="0,10,0,4"
+                                   Foreground="{DynamicResource SubTextBrush}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="ResultsLocationBox" Grid.Column="0" Padding="6,4" TextChanged="ResultsOption_TextChanged"
+                                     ToolTip="可为绝对路径（如 D:\合同结果）或相对于程序根目录的路径"/>
+                            <Button x:Name="BrowseResultsButton" Grid.Column="1" Margin="8,0,0,0" Padding="12,4"
+                                    Content="浏览…" Style="{StaticResource RoundButton}"
+                                    Click="BrowseResultsButton_Click"/>
+                        </Grid>
+                        <TextBlock x:Name="ResultsPreviewText" FontSize="11" Margin="0,4,0,0"
+                                   TextWrapping="Wrap" Foreground="{DynamicResource SubTextBrush}"
+                                   Text="目录结构：结果根目录 / YYYY-MM-DD / 任务名称 / 结果.txt + 原始文件"/>
+
+                        <TextBlock Text="定时触发" FontWeight="Bold" Margin="0,16,0,6"/>                        <StackPanel Orientation="Horizontal">
                             <CheckBox x:Name="ScheduleCheck" Content="启用定时" VerticalAlignment="Center"/>
                             <TextBlock Text="每天执行时刻（HH:MM，逗号分隔）" Margin="16,0,8,0"
                                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>

@@ -62,7 +62,9 @@
         "headless": false,
         "browser_channel": "msedge",
         "save_results": true,
-        "results_dir": "automation_results",
+        "results_root_name": "批量处理结果",
+        "results_location": "",
+        "task_name": "自动化任务",
         "audit_log_file": "automation_log.jsonl",
         "schedule_enabled": false,
         "schedule_times": [
@@ -81,6 +83,16 @@
         "install_dir": "skills",
         "registry_file": "skills_registry.json",
         "api_base": "https://api.github.com"
+    },
+    "model_hub": {
+        "enabled": true,
+        "source": "auto",
+        "hf_token": "",
+        "models_dir": "models",
+        "registry_file": "models_registry.json",
+        "verify_sha256": true,
+        "download_retries": 3,
+        "search_limit": 20
     },
     "max_history": 10,
     "search_default": false,
