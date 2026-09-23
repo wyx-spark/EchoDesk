@@ -55,6 +55,248 @@
                 </ScrollViewer>
             </TabItem>
 
+            <!-- ================= 模型（新增四） ================= -->
+            <TabItem Header="模型">
+                <Grid Margin="14,12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="🧠 模型选择栏（Hugging Face GGUF 模型）"
+                               FontSize="15" FontWeight="Bold"
+                               Foreground="{DynamicResource AccentBrush}"/>
+
+                    <!-- 数据源 + Token -->
+                    <Grid Grid.Row="1" Margin="0,10,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="数据源" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource SubTextBrush}"/>
+                        <ComboBox x:Name="HubSourceCombo" Grid.Column="1" Width="170" Margin="6,0,0,0"
+                                  SelectionChanged="HubSourceCombo_SelectionChanged"
+                                  ToolTip="自动：优先镜像站，不可达时回退官方站"/>
+                        <TextBlock Grid.Column="2" Text="Token" VerticalAlignment="Center" Margin="14,0,0,0"
+                                   Foreground="{DynamicResource SubTextBrush}"/>
+                        <PasswordBox x:Name="HubTokenBox" Grid.Column="3" Margin="6,0,0,0" Padding="6,4"
+                                     ToolTip="下载需授权的 Gated 模型时填写；留空则读环境变量 HF_TOKEN"/>
+                        <Button x:Name="HubSaveTokenButton" Grid.Column="4" Margin="8,0,0,0" Padding="12,4"
+                                Content="保存 Token" Style="{StaticResource RoundButton}"
+                                Click="HubSaveTokenButton_Click"/>
+                        <Button x:Name="HubOpenDirButton" Grid.Column="5" Margin="8,0,0,0" Padding="12,4"
+                                Content="模型目录" Style="{StaticResource RoundButton}"
+                                Click="HubOpenDirButton_Click"
+                                ToolTip="在文件资源管理器中打开本地模型库目录"/>
+                    </Grid>
+
+                    <!-- 搜索行 -->
+                    <Grid Grid.Row="2" Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="HubSearchBox" Grid.Column="0" Padding="6,4"
+                                 TextChanged="HubSearchBox_TextChanged"
+                                 ToolTip="按模型名称/作者搜索（输入后 400ms 自动搜索）"/>
+                        <ComboBox x:Name="HubSortCombo" Grid.Column="1" Width="130" Margin="8,0,0,0"
+                                  SelectionChanged="HubFilter_Changed"/>
+                        <ComboBox x:Name="HubQuantCombo" Grid.Column="2" Width="110" Margin="8,0,0,0"
+                                  SelectionChanged="HubFilter_Changed" IsEditable="True"
+                                  ToolTip="按量化格式筛选（如 Q4_K_M，可留空）"/>
+                        <TextBox x:Name="HubMinDownloadsBox" Grid.Column="3" Width="90" Margin="8,0,0,0"
+                                  Padding="6,4" ToolTip="最低下载量（留空或 0 表示不限制）"/>
+                        <Button x:Name="HubSearchButton" Grid.Column="4" Margin="8,0,0,0" Padding="12,4"
+                                Content="搜索" Style="{StaticResource RoundButton}"
+                                Click="HubSearchButton_Click"/>
+                    </Grid>
+
+                    <!-- 结果列表 + 详情面板 -->
+                    <Border Grid.Row="3" CornerRadius="8"
+                            Background="{DynamicResource InputBackground}"
+                            BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- 详情面板：默认隐藏，点「详情」后展示可用量化文件 -->
+                            <Border x:Name="HubDetailPanel" Grid.Row="0" Visibility="Collapsed"
+                                    Background="{DynamicResource WindowBackground}"
+                                    BorderBrush="{DynamicResource InputBorder}" BorderThickness="0,0,0,1"
+                                    Padding="10,8">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Grid Grid.Row="0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="HubDetailTitle" Grid.Column="0" FontWeight="Bold"
+                                                   TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource AccentBrush}"/>
+                                        <Button Grid.Column="1" Content="关闭详情" Padding="10,3" FontSize="11"
+                                                Style="{StaticResource RoundButton}" Click="HubCloseDetail_Click"/>
+                                    </Grid>
+                                    <ListBox x:Name="HubFileList" Grid.Row="1" MaxHeight="150" Margin="0,6,0,0"
+                                             Background="Transparent" BorderThickness="0"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="2,3">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="{Binding FileName}" FontSize="12"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Grid.Column="1" Text="{Binding SizeText}" FontSize="11"
+                                                               MinWidth="80" Margin="8,0,0,0"
+                                                               Foreground="{DynamicResource SubTextBrush}"/>
+                                                    <Button Grid.Column="2" Content="{Binding ActionText}"
+                                                            Padding="10,3" FontSize="11" Margin="8,0,0,0"
+                                                            IsEnabled="{Binding CanAct}"
+                                                            Style="{StaticResource RoundButton}"
+                                                            Click="HubDownload_Click" Tag="{Binding}"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </Grid>
+                            </Border>
+
+                            <Grid Grid.Row="1">
+                                <ListBox x:Name="HubResultList" Background="Transparent" BorderThickness="0"
+                                         Margin="2"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                         MouseDoubleClick="HubResultList_MouseDoubleClick">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="6,5">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding Name}" FontWeight="Bold"
+                                                                   Foreground="{DynamicResource AccentBrush}"/>
+                                                        <TextBlock Text="{Binding Badge}" Margin="8,0,0,0" FontSize="11"
+                                                                   Foreground="{DynamicResource SubTextBrush}"/>
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding Meta}" FontSize="10"
+                                                               TextWrapping="Wrap" MaxWidth="540"
+                                                               Foreground="{DynamicResource SubTextBrush}"/>
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                                            VerticalAlignment="Center">
+                                                    <Button Content="详情" Padding="10,3" FontSize="11"
+                                                            Style="{StaticResource RoundButton}"
+                                                            Click="HubDetail_Click" Tag="{Binding}"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <TextBlock x:Name="HubEmptyText"
+                                           Text="输入关键词搜索，或直接点「搜索」浏览热门 GGUF 模型"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource SubTextBrush}"
+                                           TextWrapping="Wrap" MaxWidth="460" TextAlignment="Center"/>
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <!-- 下载进度 + 模型 Tab 状态行 -->
+                    <StackPanel Grid.Row="4" Margin="0,8,0,0">
+                        <ProgressBar x:Name="HubProgressBar" Height="8" Minimum="0" Maximum="100"
+                                     Visibility="Collapsed"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                            <TextBlock x:Name="HubProgressText" FontSize="11" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource SubTextBrush}" TextWrapping="Wrap"
+                                       MaxWidth="520"/>
+                            <Button x:Name="HubCancelButton" Content="取消下载" Padding="10,3" FontSize="11"
+                                    Margin="10,0,0,0" Visibility="Collapsed"
+                                    Style="{StaticResource RoundButton}" Click="HubCancelButton_Click"/>
+                        </StackPanel>
+                        <TextBlock x:Name="HubStatusText" Margin="0,4,0,0" FontSize="11"
+                                   TextWrapping="Wrap" Foreground="{DynamicResource SubTextBrush}"
+                                   Text="尚未搜索。点「搜索」浏览热门 GGUF 模型，或在详情中选择量化版本下载。"/>
+                    </StackPanel>
+
+                    <!-- 模型库 -->
+                    <Grid Grid.Row="5" Margin="0,10,0,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="HubRegistryTitle" Grid.Column="0" FontWeight="Bold"
+                                       VerticalAlignment="Center" Text="📚 本地模型库"/>
+                            <Button x:Name="HubRegistryRefreshButton" Grid.Column="1" Padding="12,3" FontSize="11"
+                                    Content="刷新模型库" Style="{StaticResource RoundButton}"
+                                    Click="HubRegistryRefreshButton_Click"/>
+                        </Grid>
+                        <Border Grid.Row="1" Margin="0,6,0,0" CornerRadius="8" MaxHeight="150"
+                                Background="{DynamicResource InputBackground}"
+                                BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
+                            <ListBox x:Name="HubRegistryList" Background="Transparent" BorderThickness="0"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="6,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="Bold"/>
+                                                    <TextBlock Text="{Binding CurrentBadge}" Margin="8,0,0,0"
+                                                               FontSize="11"
+                                                               Foreground="{DynamicResource AccentBrush}"/>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding Meta}" FontSize="10"
+                                                           Foreground="{DynamicResource SubTextBrush}"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="{Binding SizeText}" FontSize="11"
+                                                       MinWidth="80" Margin="8,0,0,0" VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource SubTextBrush}"/>
+                                            <Button Grid.Column="2" Content="删除" Padding="10,3" FontSize="11"
+                                                    Margin="8,0,0,0" IsEnabled="{Binding CanDelete}"
+                                                    Style="{StaticResource RoundButton}"
+                                                    Click="HubDelete_Click" Tag="{Binding}"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
             <!-- ================= 自动化 ================= -->
             <TabItem Header="自动化">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">

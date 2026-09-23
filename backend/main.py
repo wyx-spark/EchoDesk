@@ -133,8 +133,20 @@ class Backend:
         self._automation = None
         # 技能市场：同样惰性创建
         self._market = None
+        # 模型选择栏（新增四）：惰性创建
+        self._model_hub = None
         self.stream_active = False
         self.stop_event = threading.Event()
+
+    def model_hub(self):
+        """按需创建模型中心（新增四）。"""
+        if self._model_hub is None:
+            from model_hub import ModelHub
+
+            self._model_hub = ModelHub(self.config.model_hub)
+        else:
+            self._model_hub.cfg = self.config.model_hub
+        return self._model_hub
 
     def market(self):
         """按需创建技能市场（避免未使用市场时也加载网络相关依赖）。"""
@@ -203,6 +215,13 @@ class Backend:
             except Exception:
                 log.warning("会话保存失败", exc_info=True)
 
+    def touch_model_usage(self) -> None:
+        """记录当前模型的"最后使用时间"（新增四：模型库列表要显示该信息）。"""
+        try:
+            self.model_hub().touch(os.path.basename(self.config.model_path or ""))
+        except Exception:
+            log.debug("更新模型最后使用时间失败", exc_info=True)
+
     def warmup(self) -> None:
         """用当前系统提示词做一次极小推理，预热 KV 缓存，缩短首次回复延迟。"""
         if not self.config.warmup:
@@ -249,7 +268,95 @@ class Backend:
             return self._handle_market_installed()
         if action == "market_status":
             return self._handle_market_status()
+        # ---------- 模型选择栏（新增四） ----------
+        if action == "model_hub_search":
+            return self._handle_model_hub_search(request)
+        if action == "model_hub_detail":
+            return self._handle_model_hub_detail(request)
+        if action == "model_hub_registry":
+            return self._handle_model_hub_registry()
+        if action == "model_hub_uninstall":
+            return self._handle_model_hub_uninstall(request)
+        if action == "model_hub_status":
+            return self._handle_model_hub_status()
+        if action == "model_hub_config_set":
+            return self._handle_model_hub_config_set(request)
         return {"type": "system", "content": "未知动作"}
+
+    # ---------- 模型选择栏（新增四） ----------
+
+    def _model_hub_error(self, e: Exception, verb: str) -> Dict[str, Any]:
+        log.exception("模型中心%s失败", verb)
+        return {"type": "system", "content": f"❌ 模型中心{verb}失败: {e}"}
+
+    def _handle_model_hub_search(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """搜索可下载的 GGUF 模型（镜像/官方双源，自动回退）。"""
+        try:
+            result = self.model_hub().search(
+                keyword=str(request.get("keyword") or ""),
+                sort=str(request.get("sort") or "downloads"),
+                page=int(request.get("page") or 1),
+                limit=int(request.get("limit") or self.config.model_hub.search_limit),
+                source=request.get("source"),
+                min_downloads=int(request.get("min_downloads") or 0),
+                quant=str(request.get("quant") or ""),
+            )
+        except Exception as e:
+            return self._model_hub_error(e, "搜索")
+        return {"type": "system", "content": result.get("message", ""), "model_hub": result}
+
+    def _handle_model_hub_detail(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """模型详情：所有可用的 GGUF 量化文件与大小。"""
+        try:
+            detail = self.model_hub().detail(str(request.get("repo") or ""), request.get("source"))
+        except Exception as e:
+            return self._model_hub_error(e, "读取详情")
+        return {"type": "system", "content": "", "detail": detail}
+
+    def _handle_model_hub_registry(self) -> Dict[str, Any]:
+        """模型库列表（含当前正在使用的模型标记）。"""
+        try:
+            data = self.model_hub().registry(current_model=self.config.model_path)
+        except Exception as e:
+            return self._model_hub_error(e, "读取模型库")
+        return {"type": "system", "content": "", "registry": data}
+
+    def _handle_model_hub_uninstall(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """删除模型文件（前端已确认）。"""
+        try:
+            result = self.model_hub().uninstall(
+                str(request.get("name") or ""), current_model=self.config.model_path
+            )
+        except Exception as e:
+            return self._model_hub_error(e, "删除模型")
+        return {"type": "system", "content": f"✅ {result.get('message', '')}"}
+
+    def _handle_model_hub_status(self) -> Dict[str, Any]:
+        """模型中心状态（供状态栏与设置窗口显示当前数据源）。"""
+        try:
+            state = self.model_hub().status()
+        except Exception as e:
+            return self._model_hub_error(e, "读取状态")
+        return {"type": "system", "content": "", "model_hub_status": state}
+
+    def _handle_model_hub_config_set(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """保存模型选择栏配置（数据源 / Token / 模型库目录）。"""
+        patch = request.get("model_hub") or {}
+        if not isinstance(patch, dict):
+            return {"type": "system", "content": "❌ model_hub 必须是对象"}
+        changed: List[str] = []
+        for key in ("enabled", "source", "hf_token", "models_dir", "registry_file", "verify_sha256"):
+            if key in patch:
+                setattr(self.config.model_hub, key, patch[key])
+                changed.append(key)
+        try:
+            self.config.save()
+        except Exception as e:
+            return {"type": "system", "content": f"❌ 配置保存失败: {e}"}
+        # 数据源等信息变化后重建实例，避免缓存旧设置
+        self._model_hub = None
+        note = "已保存：" + ("、".join(changed) if changed else "无变化")
+        return {"type": "system", "content": f"✅ {note}", "model_hub": self.model_hub().status()}
 
     # ---------- 技能市场（任务五） ----------
 
@@ -407,11 +514,28 @@ class Backend:
         return response
 
     def _attach_context(self, response: Dict[str, Any]) -> None:
-        """把当前上下文占用附加到响应上，前端据此实时刷新（/clear、/undo 后自然减少）。"""
+        """把当前上下文占用附加到响应上，前端据此实时刷新（/clear、/undo 后自然减少）。
+
+        优化五：额外给出 KV Cache 估算与上下文窗口，供输入框下方的轻量状态区显示
+        （前端不必再去解析 /status 里的中文文本）。
+        """
         try:
             messages = [{"role": "system", "content": self.conv.get_system_prompt()}] + self.conv.history
             response["used"] = self._estimate_tokens(messages)
             response["limit"] = int(self.llm.n_ctx * 0.8)
+            response["n_ctx"] = int(self.llm.n_ctx)
+            try:
+                response["kv_cache_text"] = self.llm.kv_cache_text()
+            except Exception:
+                response["kv_cache_text"] = ""
+            try:
+                response["model"] = os.path.basename(self.config.model_path or "")
+            except Exception:
+                response["model"] = ""
+            try:
+                response["search"] = bool(self.commands.search_enabled)
+            except Exception:
+                response["search"] = False
         except Exception:
             pass
 
@@ -423,6 +547,9 @@ class Backend:
             return
         if action == "automation_run":
             yield from self._stream_automation()
+            return
+        if action == "model_hub_download":
+            yield from self._stream_model_hub_download(request)
             return
 
         user_msg = request.get("message", "")
@@ -517,6 +644,95 @@ class Backend:
                     log.info("自动化临时文件清理: %d 项", removed)
             except Exception:
                 log.warning("自动化临时目录清理失败", exc_info=True)
+
+    def _stream_model_hub_download(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+        """下载模型库中选定的 GGUF 文件（新增四）。
+
+        进度以 delta 行输出（百分比 + 速度 + 剩余时间），前端实时显示；
+        前端发送 action=stop 可取消，取消时保留 ``.part`` 断点，下次继续。
+        """
+        repo = str(request.get("repo") or "").strip()
+        filename = str(request.get("filename") or "").strip()
+        try:
+            expected = int(request.get("size") or 0)
+        except (TypeError, ValueError):
+            expected = 0
+        source = request.get("source")
+        hub = self.model_hub()
+
+        # 下载前的最后一次人工确认信息（大小与预计磁盘占用）
+        yield {
+            "type": "delta",
+            "content": f"📥 准备从 {repo} 下载 {filename}"
+                       + (f"（{expected / 1048576:.1f} MB）" if expected else ""),
+        }
+        self.stop_event.clear()
+
+        # 下载在子线程里进行（urllib 阻塞），主线程轮询进度缓存并把变化推给前端
+        latest: Dict[str, str] = {"line": ""}
+
+        def _progress(info: Dict[str, Any]) -> None:
+            """字节级进度 → 一行人类可读文本（速度与剩余时间，任务书要求）。"""
+            if "retry" in info:
+                latest["line"] = (
+                    f"↻ 第 {info.get('attempt')}/{info.get('retries')} 次重试：{info.get('error')}"
+                )
+                return
+            done = int(info.get("done") or 0)
+            total = int(info.get("total") or 0)
+            speed = float(info.get("speed") or 0)
+            eta = int(info.get("eta") or 0)
+            pct = float(info.get("percent") or 0)
+            line = f"📥 {pct:5.1f}%  {done / 1048576:.1f}/{total / 1048576:.1f} MB"
+            if speed > 0:
+                line += f"  {speed / 1048576:.2f} MB/s"
+            if eta > 0:
+                line += f"  剩余 {eta // 60:02d}:{eta % 60:02d}"
+            latest["line"] = line
+
+        result: Dict[str, Any] = {}
+        done_flag = threading.Event()
+
+        def _worker() -> None:
+            try:
+                result.update(hub.download(
+                    repo, filename, expected_size=expected, source=source,
+                    on_progress=_progress,
+                    should_stop=lambda: self.stop_event.is_set(),
+                    retries=int(getattr(self.config.model_hub, "download_retries", 3) or 3),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                result.update({"ok": False, "message": f"下载失败：{exc}", "path": ""})
+            finally:
+                done_flag.set()
+
+        try:
+            thread = threading.Thread(target=_worker, daemon=True)
+            thread.start()
+            reported = ""
+            while not done_flag.wait(0.4):
+                if latest["line"] and latest["line"] != reported:
+                    reported = latest["line"]
+                    yield {"type": "delta", "content": reported}
+                if self.stop_event.is_set():
+                    yield {"type": "delta", "content": "⏹ 已请求取消下载，正在收尾（已保留断点）…"}
+            if latest["line"] and latest["line"] != reported:
+                yield {"type": "delta", "content": latest["line"]}
+            thread.join(timeout=10)
+
+            if result.get("ok"):
+                path = str(result.get("path") or "")
+                self.conv.add_message("user", f"（下载模型 {filename}）")
+                self.conv.add_message("assistant", f"模型已下载并加入模型库：{os.path.basename(path)}")
+                self._compact_history()
+                yield {"type": "done", "content": f"✅ {result.get('message', '下载完成')}", "model": path}
+            else:
+                icon = "⏹" if result.get("cancelled") else "❌"
+                yield {"type": "done", "content": f"{icon} {result.get('message', '下载未完成')}",
+                       "cancelled": bool(result.get("cancelled"))}
+        except Exception as e:
+            log.exception("模型下载失败")
+            yield {"type": "error", "content": f"❌ 模型下载失败: {e}"}
 
     def _handle_file(self, filepath: str) -> Dict[str, Any]:
         if not filepath:
@@ -844,6 +1060,7 @@ def main() -> None:
             backend = Backend(config, model_path)
             restored = backend.restore_session()
             backend.warmup()
+            backend.touch_model_usage()   # 新增四：记录模型最后使用时间
     except Exception as e:
         log.exception("后端初始化失败")
         # 向 stdout 输出一条错误响应，前端首条请求即可读到
@@ -886,9 +1103,9 @@ def main() -> None:
                 _write({"type": "system", "content": "⏳ 上一条回复仍在生成，请先停止（⏹ 按钮或 /stop）或等待完成"})
                 continue
 
-        if action in ("chat_stream", "model_download", "automation_run"):
-            # 三种长任务都走流式线程：进度实时输出，stop 可中断。
-            # automation_run 还会置位 stop_event 让 Playwright 循环尽早退出。
+        if action in ("chat_stream", "model_download", "automation_run", "model_hub_download"):
+            # 四种长任务都走流式线程：进度实时输出，stop 可中断。
+            # automation_run / model_hub_download 还会检查 stop_event 尽早退出。
             if action == "automation_run" and backend.stream_active:
                 _write({"type": "system", "content": "⏳ 自动化任务正在运行，请先停止后再启动"})
                 continue

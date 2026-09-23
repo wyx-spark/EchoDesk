@@ -28,11 +28,49 @@ public sealed class MarketItem
     public bool CanAct => Installed || Verified;
 }
 
+/// <summary>模型选择栏：搜索结果项（新增四）。</summary>
+public sealed class HubModelItem
+{
+    public string Repo { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string Badge { get; init; } = "";
+    public string Meta { get; init; } = "";
+    public bool Gated { get; init; }
+}
+
+/// <summary>模型选择栏：仓库内的 GGUF 文件项（新增四）。</summary>
+public sealed class HubFileItem
+{
+    public string Repo { get; init; } = "";
+    public string FileName { get; init; } = "";
+    public long Size { get; init; }
+    public string SizeText { get; init; } = "";
+    public string Quantization { get; init; } = "";
+    public bool Installed { get; init; }
+
+    /// <summary>已下载完成的文件显示为「已下载」，按钮置灰，避免重复下载。</summary>
+    public string ActionText => Installed ? "已下载" : "下载";
+    public bool CanAct => !Installed;
+}
+
+/// <summary>模型选择栏：本地模型库条目（新增四）。</summary>
+public sealed class HubRegistryItem
+{
+    public string Name { get; init; } = "";
+    public string SizeText { get; init; } = "";
+    public string Meta { get; init; } = "";
+    public string CurrentBadge { get; init; } = "";
+    public bool InUse { get; init; }
+
+    /// <summary>正在使用的模型不允许删除（后端也会再拦一次）。</summary>
+    public bool CanDelete => !InUse;
+}
+
 /// <summary>
-/// EchoDesk 设置窗口：常规 / 自动化 / 技能市场 三个 Tab。
+/// EchoDesk 设置窗口：常规 / 模型 / 自动化 / 技能市场 四个 Tab。
 ///
 /// 与后端通过既有 JSON 行协议通信（automation_config、automation_config_set、
-/// automation_test、automation_run、market_* 等动作）。主题与字号变化通过回调
+/// automation_test、automation_run、market_*、model_hub_* 等动作）。主题与字号变化通过回调
 /// 通知主窗口即时生效。
 /// </summary>
 public partial class SettingsWindow : Window
@@ -79,6 +117,14 @@ public partial class SettingsWindow : Window
     private bool _automationRunning;
     private int _marketPage = 1;
 
+    // ---------- 模型选择栏状态（新增四） ----------
+    private readonly List<HubModelItem> _hubItems = new();
+    private readonly List<HubFileItem> _hubFiles = new();
+    private readonly List<HubRegistryItem> _hubRegistry = new();
+    private readonly DispatcherTimer _hubDebounce;
+    private bool _downloading;
+    private bool _suppressHubFilterEvents;
+
     public SettingsWindow(
         BackendService backend,
         AppSettings uiState,
@@ -118,6 +164,29 @@ public partial class SettingsWindow : Window
             _searchDebounce.Stop();
             _marketPage = 1;
             _ = SearchMarketAsync();
+        };
+
+        // 模型选择栏：搜索防抖 + 排序/量化筛选项（构造期间静默，避免触发请求）
+        _suppressHubFilterEvents = true;
+        HubSortCombo.Items.Add(new ComboBoxItem { Content = "下载量最多", Tag = "downloads" });
+        HubSortCombo.Items.Add(new ComboBoxItem { Content = "最近更新", Tag = "updated" });
+        HubSortCombo.Items.Add(new ComboBoxItem { Content = "点赞最多", Tag = "likes" });
+        HubSortCombo.Items.Add(new ComboBoxItem { Content = "名称", Tag = "name" });
+        HubSortCombo.SelectedIndex = 0;
+        foreach (string quant in new[] { "", "Q4_K_M", "Q4_0", "Q5_K_M", "Q8_0", "Q2_K", "F16" })
+            HubQuantCombo.Items.Add(quant);
+        HubQuantCombo.SelectedIndex = 0;
+        HubSourceCombo.Items.Add(new ComboBoxItem { Content = "自动（推荐）", Tag = "auto" });
+        HubSourceCombo.Items.Add(new ComboBoxItem { Content = "镜像源 hf-mirror.com", Tag = "mirror" });
+        HubSourceCombo.Items.Add(new ComboBoxItem { Content = "官方源 huggingface.co", Tag = "official" });
+        HubSourceCombo.SelectedIndex = 0;
+        _suppressHubFilterEvents = false;
+
+        _hubDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _hubDebounce.Tick += (_, _) =>
+        {
+            _hubDebounce.Stop();
+            _ = SearchHubAsync();
         };
 
         // 先让窗口完成构建与绘制，再异步取数据：窗口打开时间与后端无关（要求 < 500ms）。
@@ -210,6 +279,439 @@ public partial class SettingsWindow : Window
         _loading = false;
         MarketStatusText.Text = "技能市场：点「刷新」浏览 topic 为 echodesk-plugin 的技能，或输入关键词搜索。";
         SetLoadState("✅ 配置已载入");
+        await LoadHubAsync();
+    }
+
+    // ---------- 模型选择栏（新增四） ----------
+
+    /// <summary>初始化模型 Tab：读数据源状态 + 加载本地模型库（不自动发起网络搜索）。</summary>
+    private async Task LoadHubAsync()
+    {
+        string? statusJson = await RequestWithRetryAsync(
+            new { action = "model_hub_status" }, "读取模型中心状态", TimeSpan.FromSeconds(60));
+        if (statusJson is not null)
+        {
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(statusJson);
+                if (doc.RootElement.TryGetProperty("model_hub_status", out JsonElement st))
+                {
+                    HubStatusText.Text = $"数据源：{GetString(st, "source_note")}";
+                    SelectHubSource(GetString(st, "source_setting"));
+                    HubRegistryTitle.Text = $"📚 本地模型库（{GetInt(st, "count", 0)} 个 · {GetString(st, "total_size_human")}）";
+                    if (GetBool(st, "token_configured"))
+                        HubTokenBox.ToolTip = "已配置 Token（留空表示不修改）";
+                }
+            }
+            catch (JsonException)
+            {
+                // 忽略解析失败，模型库仍可单独刷新
+            }
+        }
+        await RefreshHubRegistryAsync();
+    }
+
+    private void SelectHubSource(string key)
+    {
+        for (int i = 0; i < HubSourceCombo.Items.Count; i++)
+        {
+            if (HubSourceCombo.Items[i] is ComboBoxItem item && Equals(item.Tag, key))
+            {
+                _suppressHubFilterEvents = true;
+                HubSourceCombo.SelectedIndex = i;
+                _suppressHubFilterEvents = false;
+                return;
+            }
+        }
+    }
+
+    private string CurrentHubSource() =>
+        (HubSourceCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "auto";
+
+    private void HubSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!_uiReady || _loading)
+            return;
+        _hubDebounce.Stop();
+        _hubDebounce.Start();
+    }
+
+    private void HubFilter_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_uiReady || _loading || _suppressHubFilterEvents)
+            return;
+        _ = SearchHubAsync();
+    }
+
+    private void HubSearchButton_Click(object sender, RoutedEventArgs e) => _ = SearchHubAsync();
+
+    /// <summary>搜索可下载模型：镜像/官方双源，结果里明确显示当前使用的是哪个源。</summary>
+    private async Task SearchHubAsync()
+    {
+        HubSearchButton.IsEnabled = false;
+        HubStatusText.Text = "正在搜索模型…";
+        try
+        {
+            string sort = (HubSortCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "downloads";
+            string quant = (HubQuantCombo.Text ?? "").Trim();
+            int minDownloads = int.TryParse(HubMinDownloadsBox.Text.Trim(), out int md) ? md : 0;
+            string json = await _backend.SendRequestAsync(new
+            {
+                action = "model_hub_search",
+                keyword = HubSearchBox.Text.Trim(),
+                sort,
+                quant,
+                min_downloads = minDownloads,
+                source = CurrentHubSource(),
+            }, idleTimeout: TimeSpan.FromSeconds(90));
+            using JsonDocument doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("model_hub", out JsonElement hub))
+            {
+                HubStatusText.Text = "⚠️ 模型中心不可用（后端未返回数据）";
+                return;
+            }
+            RenderHubResult(hub);
+        }
+        catch (Exception ex)
+        {
+            HubStatusText.Text = $"❌ 搜索失败：{ex.Message}";
+        }
+        finally
+        {
+            HubSearchButton.IsEnabled = true;
+        }
+    }
+
+    private void RenderHubResult(JsonElement hub)
+    {
+        _hubItems.Clear();
+        if (hub.TryGetProperty("items", out JsonElement items) && items.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in items.EnumerateArray())
+            {
+                int downloads = GetInt(item, "downloads", 0);
+                int likes = GetInt(item, "likes", 0);
+                bool gated = GetBool(item, "gated");
+                bool installed = GetBool(item, "installed");
+                _hubItems.Add(new HubModelItem
+                {
+                    Repo = GetString(item, "repo"),
+                    Name = GetString(item, "name"),
+                    Gated = gated,
+                    Badge = installed ? "● 已下载" : (gated ? "🔒 需登录" : ""),
+                    Meta = string.Join(" · ", new[]
+                    {
+                        GetString(item, "author"),
+                        $"⬇ {downloads:N0}",
+                        $"⭐ {likes}",
+                        GetString(item, "updated_at").Length > 0 ? $"更新于 {GetString(item, "updated_at")}" : "",
+                    }.Where(x => x.Length > 0)),
+                });
+            }
+        }
+        HubResultList.ItemsSource = null;
+        HubResultList.ItemsSource = _hubItems;
+        HubEmptyText.Visibility = _hubItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        string note = GetString(hub, "source_note");
+        bool offline = GetBool(hub, "offline");
+        HubStatusText.Text = (_hubItems.Count == 0
+            ? "结果为空。可换关键词（模型需为 GGUF 格式）。"
+            : $"共 {_hubItems.Count} 个结果。") + (note.Length > 0 ? $" 数据源：{note}" : "");
+        if (offline)
+            HubStatusText.Text = "⚠️ 数据源不可用：请检查网络，" + HubStatusText.Text;
+    }
+
+    private void HubResultList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (HubResultList.SelectedItem is HubModelItem item)
+            _ = ShowHubDetailAsync(item);
+    }
+
+    private void HubDetail_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.Tag is HubModelItem item)
+            _ = ShowHubDetailAsync(item);
+    }
+
+    /// <summary>展开详情面板：列出该仓库所有 GGUF 量化版本与大小（含预计磁盘占用）。</summary>
+    private async Task ShowHubDetailAsync(HubModelItem item)
+    {
+        HubStatusText.Text = $"正在读取 {item.Repo} 的可用文件…";
+        try
+        {
+            string json = await _backend.SendRequestAsync(
+                new { action = "model_hub_detail", repo = item.Repo, source = CurrentHubSource() },
+                idleTimeout: TimeSpan.FromSeconds(90));
+            using JsonDocument doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("detail", out JsonElement detail))
+            {
+                HubStatusText.Text = "⚠️ 无法获取模型详情";
+                return;
+            }
+            _hubFiles.Clear();
+            if (detail.TryGetProperty("files", out JsonElement files) && files.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement f in files.EnumerateArray())
+                {
+                    _hubFiles.Add(new HubFileItem
+                    {
+                        Repo = item.Repo,
+                        FileName = GetString(f, "filename"),
+                        Size = f.TryGetProperty("size", out JsonElement sz) && sz.ValueKind == JsonValueKind.Number
+                            ? sz.GetInt64() : 0,
+                        SizeText = GetString(f, "size_human"),
+                        Quantization = GetString(f, "quantization"),
+                        Installed = GetBool(f, "installed"),
+                    });
+                }
+            }
+            HubFileList.ItemsSource = null;
+            HubFileList.ItemsSource = _hubFiles;
+            string license = GetString(detail, "license");
+            HubDetailTitle.Text = $"{item.Repo} — 可用 GGUF 文件 {_hubFiles.Count} 个"
+                + (license.Length > 0 ? $"（许可：{license}）" : "")
+                + (GetBool(detail, "gated") ? "　🔒 需要 Token" : "");
+            HubDetailPanel.Visibility = Visibility.Visible;
+            HubStatusText.Text = "选定量化版本后点「下载」，会先显示文件大小与预计磁盘占用。";
+        }
+        catch (Exception ex)
+        {
+            HubStatusText.Text = $"❌ 获取详情失败：{ex.Message}";
+        }
+    }
+
+    private void HubCloseDetail_Click(object sender, RoutedEventArgs e)
+    {
+        HubDetailPanel.Visibility = Visibility.Collapsed;
+        _hubFiles.Clear();
+        HubFileList.ItemsSource = null;
+    }
+
+    private void HubDownload_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.Tag is not HubFileItem file)
+            return;
+        _ = DownloadHubFileAsync(file);
+    }
+
+    /// <summary>下载选定量化版本：确认大小后流式下载，实时显示百分比/速度/剩余时间，可取消。</summary>
+    private async Task DownloadHubFileAsync(HubFileItem file)
+    {
+        if (_downloading)
+        {
+            HubStatusText.Text = "⏳ 已有下载在进行中，请等待完成或先取消。";
+            return;
+        }
+        double gb = file.Size / 1073741824.0;
+        var confirm = MessageBox.Show(this,
+            $"即将下载模型文件：\n\n" +
+            $"仓库：{file.Repo}\n文件：{file.FileName}\n" +
+            $"量化：{file.Quantization}\n大小：{file.SizeText}\n" +
+            $"预计磁盘占用：{file.SizeText}（下载完成后同时占用这么多空间）\n\n" +
+            "下载完成后会自动登记到本地模型库，可用 /model list 查看并切换。是否继续？",
+            "确认下载模型", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes)
+            return;
+
+        _downloading = true;
+        HubProgressBar.Visibility = Visibility.Visible;
+        HubProgressBar.Value = 0;
+        HubCancelButton.Visibility = Visibility.Visible;
+        HubProgressText.Text = "正在建立连接…";
+        _hubFiles.Clear();
+        HubFileList.ItemsSource = null;
+        HubDetailPanel.Visibility = Visibility.Collapsed;
+
+        try
+        {
+            // 不使用 CancellationToken 中断读取：stdout 是单条共享流，中途放弃读取会让
+            // 后续响应错位。取消改为向后端发 stop（后端在下载循环里检查并保留断点）。
+            string final = await _backend.SendStreamRequestAsync(
+                new { action = "model_hub_download", repo = file.Repo, filename = file.FileName, size = file.Size, source = CurrentHubSource() },
+                delta =>
+                {
+                    HubProgressText.Text = delta.Trim();
+                    int mark = delta.IndexOf('%');
+                    if (mark > 2 && double.TryParse(delta[..mark].Replace("📥", "").Trim(), out double pct))
+                        HubProgressBar.Value = Math.Clamp(pct, 0, 100);
+                });
+            HubStatusText.Text = final;
+            HubProgressBar.Value = 100;
+        }
+        catch (Exception ex)
+        {
+            HubStatusText.Text = $"❌ 下载失败：{ex.Message}";
+        }
+        finally
+        {
+            _downloading = false;
+            HubCancelButton.Visibility = Visibility.Collapsed;
+            await RefreshHubRegistryAsync();
+        }
+    }
+
+    private async void HubCancelButton_Click(object sender, RoutedEventArgs e)
+    {
+        HubCancelButton.IsEnabled = false;
+        HubProgressText.Text = "⏹ 已请求取消下载…";
+        try
+        {
+            await _backend.SendFireAndForgetAsync(new { action = "stop" });
+        }
+        catch (Exception ex)
+        {
+            HubStatusText.Text = $"❌ 取消请求失败：{ex.Message}";
+        }
+        finally
+        {
+            HubCancelButton.IsEnabled = true;
+        }
+    }
+
+    private void HubRegistryRefreshButton_Click(object sender, RoutedEventArgs e) => _ = RefreshHubRegistryAsync();
+
+    /// <summary>刷新本地模型库：显示已下载模型、占用空间、最后使用时间与当前使用状态。</summary>
+    private async Task RefreshHubRegistryAsync()
+    {
+        try
+        {
+            string json = await _backend.SendRequestAsync(new { action = "model_hub_registry" });
+            using JsonDocument doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("registry", out JsonElement reg))
+                return;
+            _hubRegistry.Clear();
+            if (reg.TryGetProperty("models", out JsonElement models) && models.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement m in models.EnumerateArray())
+                {
+                    bool current = GetBool(m, "current");
+                    string downloaded = GetString(m, "downloaded_at").Replace('T', ' ');
+                    string used = GetString(m, "last_used").Replace('T', ' ');
+                    _hubRegistry.Add(new HubRegistryItem
+                    {
+                        Name = GetString(m, "name"),
+                        SizeText = GetString(m, "size_human"),
+                        InUse = current,
+                        CurrentBadge = current ? "▶ 正在使用" : "",
+                        Meta = string.Join(" · ", new[]
+                        {
+                            GetString(m, "quantization"),
+                            GetString(m, "repo").Length > 0 ? GetString(m, "repo") : "本地文件",
+                            downloaded.Length > 0 ? $"下载于 {downloaded}" : "",
+                            used.Length > 0 ? $"最后使用 {used}" : "尚未使用",
+                        }.Where(x => x.Length > 0)),
+                    });
+                }
+            }
+            HubRegistryList.ItemsSource = null;
+            HubRegistryList.ItemsSource = _hubRegistry;
+            HubRegistryTitle.Text = $"📚 本地模型库（{GetInt(reg, "count", _hubRegistry.Count)} 个 · "
+                + $"{GetString(reg, "total_size_human")}）";
+        }
+        catch (Exception ex)
+        {
+            HubStatusText.Text = $"❌ 读取模型库失败：{ex.Message}";
+        }
+    }
+
+    private async void HubDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.Tag is not HubRegistryItem item)
+            return;
+        if (item.InUse)
+        {
+            HubStatusText.Text = "该模型正在使用中，请先用 /model 切换到其它模型再删除。";
+            return;
+        }
+        var confirm = MessageBox.Show(this,
+            $"确定删除模型「{item.Name}」吗？\n\n" +
+            $"将删除文件（{item.SizeText}）并从模型库移除，此操作不可撤销。\n" +
+            "若之后还需要，必须重新下载。",
+            "删除模型", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes)
+            return;
+        try
+        {
+            string json = await _backend.SendRequestAsync(
+                new { action = "model_hub_uninstall", name = item.Name },
+                idleTimeout: TimeSpan.FromSeconds(60));
+            using JsonDocument doc = JsonDocument.Parse(json);
+            HubStatusText.Text = doc.RootElement.TryGetProperty("content", out JsonElement c)
+                ? c.GetString() ?? "已删除" : "已删除";
+        }
+        catch (Exception ex)
+        {
+            HubStatusText.Text = $"❌ 删除失败：{ex.Message}";
+        }
+        await RefreshHubRegistryAsync();
+        await SearchHubAsync();   // 刷新「已下载」徽标
+    }
+
+    private void HubSourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_uiReady || _loading || _suppressHubFilterEvents)
+            return;
+        _ = SaveHubConfigAsync();
+    }
+
+    private async void HubSaveTokenButton_Click(object sender, RoutedEventArgs e)
+    {
+        HubSaveTokenButton.IsEnabled = false;
+        try
+        {
+            await SaveHubConfigAsync(includeToken: true);
+            HubTokenBox.Clear();
+        }
+        finally
+        {
+            HubSaveTokenButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>保存数据源 / Token 到后端配置（Token 只在填写时才覆盖，避免误清空）。</summary>
+    private async Task SaveHubConfigAsync(bool includeToken = false)
+    {
+        var patch = new Dictionary<string, object?> { ["source"] = CurrentHubSource() };
+        string token = HubTokenBox.Password.Trim();
+        if (includeToken && token.Length > 0)
+            patch["hf_token"] = token;
+        try
+        {
+            string json = await _backend.SendRequestAsync(
+                new { action = "model_hub_config_set", model_hub = patch });
+            using JsonDocument doc = JsonDocument.Parse(json);
+            string content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+            HubStatusText.Text = content.Length > 0 ? content : "已保存";
+            if (doc.RootElement.TryGetProperty("model_hub", out JsonElement st))
+                HubStatusText.Text += $"　数据源：{GetString(st, "source_note")}";
+        }
+        catch (Exception ex)
+        {
+            HubStatusText.Text = $"❌ 保存失败：{ex.Message}";
+        }
+    }
+
+    private async void HubOpenDirButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            string json = await _backend.SendRequestAsync(new { action = "model_hub_status" });
+            using JsonDocument doc = JsonDocument.Parse(json);
+            string dir = doc.RootElement.TryGetProperty("model_hub_status", out JsonElement st)
+                ? GetString(st, "models_dir") : "";
+            if (dir.Length == 0)
+            {
+                HubStatusText.Text = "⚠️ 未取到模型目录";
+                return;
+            }
+            Directory.CreateDirectory(dir);
+            Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
+            HubStatusText.Text = $"已打开模型目录：{dir}";
+        }
+        catch (Exception ex)
+        {
+            HubStatusText.Text = $"❌ 打开模型目录失败：{ex.Message}";
+        }
     }
 
     /// <summary>
