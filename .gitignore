@@ -27,11 +27,17 @@ config.user.json
 ui_state.json
 snippets.json
 backend_crash.log
+# 前端崩溃日志（v0.2.0 修复一：全局异常兜底会写这个文件）
+frontend_crash.log
 # 自动化
 automation_log.jsonl
 automation_processed.json
 automation_results/
 browser_state.json
+# 批量处理结果目录（新增三；默认生成在程序根目录，也可能被指到仓库内）
+批量处理结果/
+# 模型选择栏（新增四）
+models_registry.json
 # 技能市场
 market_cache.json
 skills_registry.json

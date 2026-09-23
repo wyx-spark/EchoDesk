@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     EchoDesk 发布构建脚本：产出「单文件夹、多文件、单入口」的发布物。
 
@@ -280,9 +280,12 @@ Powered by Void Entropia Studio
   EchoDesk.exe        界面主程序（多文件发布，依赖 DLL 同目录，启动更快）
   EchoDesk.ico        程序图标
   backend\            后端：模型推理、文件解析、对话管理
-    config.json       配置（模型、上下文长度、分段摘要、自动化、技能市场等）
+    config.json       配置（模型、上下文长度、分段摘要、自动化、技能市场、模型中心等）
     models\           本地模型目录（.gguf 放这里）
+    models_registry.json  模型库记录（由「设置 → 模型」下载的模型自动登记；首次使用时生成）
     session.json      上次会话（自动保存/恢复）
+    批量处理结果\      自动化结果（保存位置留空时的默认位置，按 日期\任务名\ 分层的纯文本结果）
+  docs\               文档（用户手册、FAQ、隐私政策、许可协议、变更日志、v0.2.0 研发与修复记录）
   ui_state.json       界面状态：窗口位置与大小、字号、主题
   snippets.json       常用语模板
   使用说明.txt        本文件
@@ -308,6 +311,16 @@ Powered by Void Entropia Studio
 "@
 Set-Content -Path (Join-Path $Out "使用说明.txt") -Value $readme -Encoding UTF8
 Write-Ok "使用说明.txt"
+
+# 文档随发布包一同提供（任务书要求：修复/研发记录需纳入发布物）
+$DocsOut = Join-Path $Out "docs"
+New-Item -ItemType Directory -Path $DocsOut -Force | Out-Null
+$docCount = 0
+foreach ($doc in Get-ChildItem (Join-Path $Root "docs") -Filter *.md -File -ErrorAction SilentlyContinue) {
+    Copy-Item $doc.FullName $DocsOut -Force
+    $docCount++
+}
+Write-Ok "docs\（$docCount 个文档）"
 
 # ---------- 7. 写入版本资源与图标 ----------
 if (Test-Path $Rcedit) {
