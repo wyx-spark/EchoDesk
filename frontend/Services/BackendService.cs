@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 
 namespace EchoDesk.Services;
 
@@ -27,8 +28,30 @@ public sealed class NeedDownloadException : Exception
 }
 
 /// <summary>
+/// 后端正忙：请求在闸门外等待超过阈值（通常是主窗口正在流式生成或自动化运行中）。
+/// 属于「可重试」状态，界面应提示而不是无限等待。
+/// </summary>
+public sealed class BackendBusyException : Exception
+{
+    public BackendBusyException(string message) : base(message) { }
+}
+
+/// <summary>后端在阈值内没有返回响应（进程卡住或任务异常漫长）。</summary>
+public sealed class BackendTimeoutException : Exception
+{
+    public BackendTimeoutException(string message) : base(message) { }
+}
+
+/// <summary>
 /// 管理 EchoBackend.exe 子进程，通过 stdin/stdout 以 JSON 行协议通信。
-/// 启动时等待后端就绪声明（含预热完成），支持流式响应读取。
+///
+/// 通信模型（v0.2.0 修复一重构）：
+/// <list type="bullet">
+/// <item>stdout 由唯一的「泵」线程持续读取并投递到队列，请求方从队列取行，
+/// 因此可以安全地设置超时——超时不会留下悬挂的读取操作（否则会读错下一条响应的归属）。</item>
+/// <item>「写请求 + 读响应」仍由请求闸门串行化（stdout 是单条共享流）。</item>
+/// <item>闸门等待与响应等待都有阈值：超时抛出可识别的异常，界面给出提示而非无限等待。</item>
+/// </list>
 /// </summary>
 public sealed class BackendService : IDisposable
 {
@@ -36,13 +59,30 @@ public sealed class BackendService : IDisposable
     private StreamWriter? _writer;
     private StreamReader? _reader;
     private StreamReader? _stdErrReader;
+    private CancellationTokenSource? _pumpCts;
+    private Task? _pumpTask;
     private bool _stopping;
-    private readonly string _backendPath;
+
+    // stdout 行队列：单写（泵）多读（闸门保证同时只有一个读取方）
+    private readonly Channel<string> _lines = Channel.CreateUnbounded<string>(
+        new UnboundedChannelOptions { SingleWriter = true, SingleReader = false });
+
     // 请求闸门：stdout 是单条共享流，主窗口与设置窗口并发请求会互相读错响应，
     // 因此所有「写请求 + 读响应」的调用串行化。（stop 只写不读，不经过闸门）
     private readonly SemaphoreSlim _requestGate = new(1, 1);
 
+    /// <summary>默认等待闸门释放的阈值：超过即认为后端忙，提示用户稍后重试。</summary>
+    public static readonly TimeSpan DefaultQueueTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>默认等待响应的阈值（空闲超时：每收到一行即重新计时）。</summary>
+    public static readonly TimeSpan DefaultIdleTimeout = TimeSpan.FromMinutes(10);
+
+    /// <summary>重任务（解析大文件、分段摘要、模型下载）的响应阈值。</summary>
+    public static readonly TimeSpan HeavyIdleTimeout = TimeSpan.FromMinutes(45);
+
     public BackendService(string? backendPath = null) => _backendPath = backendPath ?? ResolveBackendPath();
+
+    private readonly string _backendPath;
 
     /// <summary>后端可执行文件完整路径（发布布局为 程序目录\backend\EchoDeskBackend.exe）。</summary>
     public string BackendPath => _backendPath;
@@ -96,7 +136,7 @@ public sealed class BackendService : IDisposable
     public bool IsRunning => _process is { HasExited: false };
 
     /// <summary>启动后端子进程，并等待其完成初始化（模型加载 + 预热）后就绪。</summary>
-    public async Task StartAsync()
+    public async Task StartAsync(CancellationToken cancellationToken = default)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -119,25 +159,57 @@ public sealed class BackendService : IDisposable
         var utf8 = new UTF8Encoding(false);
         _reader = new StreamReader(_process.StandardOutput.BaseStream, utf8, detectEncodingFromByteOrderMarks: false);
         _stdErrReader = new StreamReader(_process.StandardError.BaseStream, utf8, detectEncodingFromByteOrderMarks: false);
+
+        // 唯一读取者：把 stdout 的每一行投递到队列
+        _pumpCts = new CancellationTokenSource();
+        _pumpTask = Task.Run(() => PumpAsync(_pumpCts.Token));
         // 后台收集 stderr，便于排查后端问题
         _ = Task.Run(ReadErrorsAsync);
-        await WaitForReadyAsync();
+
+        await WaitForReadyAsync(cancellationToken);
+    }
+
+    /// <summary>stdout 泵：持续读取并投递，进程结束或停止时关闭队列。</summary>
+    private async Task PumpAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (true)
+            {
+                string? line = await _reader!.ReadLineAsync(cancellationToken);
+                if (line is null)
+                    break;
+                _lines.Writer.TryWrite(line);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException)
+        {
+            // 进程结束/主动停止导致的读取中断属正常现象
+        }
+        finally
+        {
+            _lines.Writer.TryComplete();
+        }
     }
 
     /// <summary>发送一个 JSON 请求，返回后端响应的 JSON 文本（跳过偶发的非 JSON 诊断行）。</summary>
-    public async Task<string> SendRequestAsync(object request)
-    {
-        if (_writer is null || _reader is null)
-            throw new InvalidOperationException("后端尚未启动。");
-        if (!IsRunning)
-            throw new InvalidOperationException("后端进程已退出。");
+    public Task<string> SendRequestAsync(
+        object request,
+        TimeSpan? queueTimeout = null,
+        TimeSpan? idleTimeout = null,
+        CancellationToken cancellationToken = default)
+        => SendRequestCoreAsync(request, queueTimeout, idleTimeout, cancellationToken);
 
-        await _requestGate.WaitAsync();
+    private async Task<string> SendRequestCoreAsync(
+        object request, TimeSpan? queueTimeout, TimeSpan? idleTimeout, CancellationToken cancellationToken)
+    {
+        EnsureRunning();
+        await AcquireGateAsync(queueTimeout, cancellationToken);
         try
         {
-            await _writer.WriteLineAsync(JsonSerializer.Serialize(request));
+            await _writer!.WriteLineAsync(JsonSerializer.Serialize(request));
             await _writer.FlushAsync();
-            return await ReadUntilJsonAsync();
+            return await ReadUntilJsonAsync(idleTimeout ?? DefaultIdleTimeout, cancellationToken);
         }
         finally
         {
@@ -157,30 +229,30 @@ public sealed class BackendService : IDisposable
     }
 
     /// <summary>
-    /// 发送流式请求：每个 delta 片段通过 onDelta 回调（UI 线程）增量展示，
-    /// 返回完整回复文本。
+    /// 发送流式请求：每个 delta 片段通过 onDelta 回调增量展示，返回完整回复文本；
+    /// onContext 在 done 行携带 used/limit 时回调（用于刷新上下文占用）。
+    /// 流式请求可以被 cancellationToken 取消（界面「停止」按钮），默认不设空闲超时
+    /// ——自动化可能因等待人工输入（验证码）长时间没有新片段。
     /// </summary>
-    /// <summary>
-    /// 发送流式请求：每个 delta 片段通过 onDelta 回调（UI 线程）增量展示，
-    /// 返回完整回复文本；onContext 在 done 行携带 used/limit 时回调（用于刷新上下文占用）。
-    /// </summary>
-    public async Task<string> SendStreamRequestAsync(object request, Action<string> onDelta, Action<int, int>? onContext = null)
+    public async Task<string> SendStreamRequestAsync(
+        object request,
+        Action<string> onDelta,
+        Action<int, int>? onContext = null,
+        TimeSpan? queueTimeout = null,
+        TimeSpan? idleTimeout = null,
+        CancellationToken cancellationToken = default)
     {
-        if (_writer is null || _reader is null)
-            throw new InvalidOperationException("后端尚未启动。");
-        if (!IsRunning)
-            throw new InvalidOperationException("后端进程已退出。");
-
-        await _requestGate.WaitAsync();
+        EnsureRunning();
+        await AcquireGateAsync(queueTimeout, cancellationToken);
         try
         {
-            await _writer.WriteLineAsync(JsonSerializer.Serialize(request));
+            await _writer!.WriteLineAsync(JsonSerializer.Serialize(request));
             await _writer.FlushAsync();
 
             var full = new StringBuilder();
             while (true)
             {
-                string? line = await _reader.ReadLineAsync();
+                string? line = await ReadLineAsync(idleTimeout, cancellationToken);
                 if (line is null)
                     throw new InvalidOperationException("后端没有返回响应（进程可能已退出）。");
                 if (!line.TrimStart().StartsWith('{'))
@@ -202,7 +274,9 @@ public sealed class BackendService : IDisposable
                     case "done":
                         if (onContext is not null
                             && root.TryGetProperty("used", out JsonElement usedEl)
-                            && root.TryGetProperty("limit", out JsonElement limitEl))
+                            && root.TryGetProperty("limit", out JsonElement limitEl)
+                            && usedEl.ValueKind == JsonValueKind.Number
+                            && limitEl.ValueKind == JsonValueKind.Number)
                             onContext(usedEl.GetInt32(), limitEl.GetInt32());
                         return content.Length > 0 ? content : full.ToString();
                     case "error":
@@ -219,11 +293,64 @@ public sealed class BackendService : IDisposable
         }
     }
 
-    private async Task<string> ReadUntilJsonAsync()
+    private void EnsureRunning()
+    {
+        if (_writer is null || _reader is null)
+            throw new InvalidOperationException("后端尚未启动。");
+        if (!IsRunning)
+            throw new InvalidOperationException("后端进程已退出。");
+    }
+
+    /// <summary>获取请求闸门；超过阈值仍未释放则抛出 <see cref="BackendBusyException"/>。</summary>
+    private async Task AcquireGateAsync(TimeSpan? queueTimeout, CancellationToken cancellationToken)
+    {
+        TimeSpan wait = queueTimeout ?? DefaultQueueTimeout;
+        if (wait <= TimeSpan.Zero)
+        {
+            await _requestGate.WaitAsync(cancellationToken);
+            return;
+        }
+        if (!await _requestGate.WaitAsync(wait, cancellationToken))
+            throw new BackendBusyException("后端正忙（可能正在生成回复或运行自动化），请稍后重试。");
+    }
+
+    /// <summary>从队列取一行；超过空闲阈值抛出 <see cref="BackendTimeoutException"/>，队列关闭返回 null。</summary>
+    private async Task<string?> ReadLineAsync(TimeSpan? idleTimeout, CancellationToken cancellationToken)
+    {
+        if (idleTimeout is null)
+        {
+            try
+            {
+                return await _lines.Reader.ReadAsync(cancellationToken);
+            }
+            catch (ChannelClosedException)
+            {
+                return null;
+            }
+        }
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        linked.CancelAfter(idleTimeout.Value);
+        try
+        {
+            return await _lines.Reader.ReadAsync(linked.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new BackendTimeoutException(
+                $"后端在 {idleTimeout.Value.TotalMinutes:0.#} 分钟内没有响应，已中断等待。可稍后重试，或查看 backend_crash.log。");
+        }
+        catch (ChannelClosedException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<string> ReadUntilJsonAsync(TimeSpan? idleTimeout, CancellationToken cancellationToken)
     {
         while (true)
         {
-            string? line = await _reader!.ReadLineAsync();
+            string? line = await ReadLineAsync(idleTimeout, cancellationToken);
             if (line is null)
                 throw new InvalidOperationException("后端没有返回响应（进程可能已退出）。");
             if (!line.TrimStart().StartsWith('{'))
@@ -235,11 +362,11 @@ public sealed class BackendService : IDisposable
         }
     }
 
-    private async Task WaitForReadyAsync()
+    private async Task WaitForReadyAsync(CancellationToken cancellationToken)
     {
         while (true)
         {
-            string? line = await _reader!.ReadLineAsync();
+            string? line = await ReadLineAsync(HeavyIdleTimeout, cancellationToken);
             if (line is null)
                 throw new InvalidOperationException("后端未完成启动即退出。");
             if (!line.TrimStart().StartsWith('{'))
@@ -280,7 +407,8 @@ public sealed class BackendService : IDisposable
 
         while (true)
         {
-            string? line = await _reader.ReadLineAsync();
+            // 下载大模型可能长时间没有新进度行（慢速网络），阈值给足
+            string? line = await ReadLineAsync(HeavyIdleTimeout, CancellationToken.None);
             if (line is null)
                 throw new InvalidOperationException("后端在下载模型期间退出。");
             if (!line.TrimStart().StartsWith('{'))
@@ -383,6 +511,13 @@ public sealed class BackendService : IDisposable
         _stopping = true;
         try
         {
+            _pumpCts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        try
+        {
             _writer?.Close();
         }
         catch (IOException)
@@ -406,6 +541,10 @@ public sealed class BackendService : IDisposable
         _reader = null;
         _stdErrReader?.Dispose();
         _stdErrReader = null;
+        _pumpCts?.Dispose();
+        _pumpCts = null;
+        _pumpTask = null;
+        _lines.Writer.TryComplete();
     }
 
     public void Dispose() => Stop();

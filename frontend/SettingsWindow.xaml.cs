@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -56,10 +57,22 @@ public partial class SettingsWindow : Window
     };
 
     private readonly BackendService _backend;
+    private readonly AppSettings _uiState;
     private readonly Action<bool>? _onThemeChanged;
     private readonly Action<double>? _onFontSizeChanged;
     private readonly List<MarketItem> _marketItems = new();
     private readonly DispatcherTimer _searchDebounce;
+    // 窗口关闭时取消所有在途请求，避免回调落到已销毁的控件上
+    private readonly CancellationTokenSource _closing = new();
+
+    /// <summary>
+    /// InitializeComponent() 是否已完成。
+    /// 崩溃修复（v0.2.0 修复一）：XAML 解析 <c>Slider Minimum</c> 时会把 Value 从 0 强制为
+    /// 最小值并触发 ValueChanged，而那时 FontSizeLabel 等控件尚未创建。此前的处理器直接访问
+    /// 控件导致 NullReferenceException，整个前端进程被终止（表现为「设置窗口卡死」）。
+    /// 所有由 XAML 挂接的处理器都必须先检查该标志。
+    /// </summary>
+    private bool _uiReady;
 
     private bool _loading = true;
     private bool _automationRunning;
@@ -67,6 +80,7 @@ public partial class SettingsWindow : Window
 
     public SettingsWindow(
         BackendService backend,
+        AppSettings uiState,
         bool isDark,
         double fontSize,
         Action<bool>? onThemeChanged,
@@ -74,6 +88,7 @@ public partial class SettingsWindow : Window
     {
         InitializeComponent();
         _backend = backend;
+        _uiState = uiState;
         _onThemeChanged = onThemeChanged;
         _onFontSizeChanged = onFontSizeChanged;
 
@@ -83,6 +98,7 @@ public partial class SettingsWindow : Window
             DefaultModeCombo.Items.Add(new ComboBoxItem { Content = label, Tag = key });
 
         DarkModeCheck.IsChecked = isDark;
+        ConfirmDestructiveCheck.IsChecked = _uiState.ConfirmDestructiveCommands;
         FontSizeSlider.Value = fontSize;
         FontSizeLabel.Text = $"{fontSize:0.#} pt";
         PathsText.Text =
@@ -103,32 +119,152 @@ public partial class SettingsWindow : Window
             _ = SearchMarketAsync();
         };
 
-        Loaded += SettingsWindow_Loaded;
+        // 先让窗口完成构建与绘制，再异步取数据：窗口打开时间与后端无关（要求 < 500ms）。
+        _uiReady = true;
+        ContentRendered += SettingsWindow_ContentRendered;
+        Closed += (_, _) =>
+        {
+            _searchDebounce.Stop();
+            try
+            {
+                _closing.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        };
     }
 
     // ---------- 加载 ----------
 
-    private async void SettingsWindow_Loaded(object sender, RoutedEventArgs e)
+    /// <summary>窗口首次绘制完成后再加载数据：保证「打开即见、可交互、再填内容」。</summary>
+    private async void SettingsWindow_ContentRendered(object? sender, EventArgs e)
     {
-        await LoadAutomationConfigAsync();
-        await LoadDefaultModeAsync();
-        _loading = false;
-        MarketStatusText.Text = "技能市场：点「刷新」浏览 topic 为 echodesk-plugin 的技能，或输入关键词搜索。";
-    }
-
-    private async Task LoadAutomationConfigAsync()
-    {
+        ContentRendered -= SettingsWindow_ContentRendered;  // 只执行一次
         try
         {
-            string json = await _backend.SendRequestAsync(new { action = "automation_config" });
-            using JsonDocument doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("automation", out JsonElement el))
-                ApplyAutomation(el);
+            // 让出一次消息循环，确保窗口先真正显示出来
+            await Dispatcher.Yield(DispatcherPriority.Background);
+            await LoadInitialAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // 窗口已关闭
         }
         catch (Exception ex)
         {
-            MarketStatusText.Text = $"⚠️ 读取自动化配置失败：{ex.Message}";
+            SetLoadState($"⚠️ 初始化失败：{ex.Message}");
+            App.Log("SettingsWindow.LoadInitial", ex);
         }
+    }
+
+    private async Task LoadInitialAsync()
+    {
+        SetLoadState("正在读取配置…");
+
+        string? configJson = await RequestWithRetryAsync(
+            new { action = "automation_config" }, "读取自动化配置", TimeSpan.FromSeconds(90));
+        if (configJson is not null)
+        {
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(configJson);
+                if (doc.RootElement.TryGetProperty("automation", out JsonElement el))
+                    ApplyAutomation(el);
+            }
+            catch (JsonException ex)
+            {
+                SetLoadState($"⚠️ 自动化配置解析失败：{ex.Message}");
+            }
+        }
+
+        string? modeJson = await RequestWithRetryAsync(
+            new { action = "chat", message = "/mode" }, "读取当前对话模式", TimeSpan.FromSeconds(60));
+        if (modeJson is not null)
+        {
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(modeJson);
+                string content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+                // 形如「当前模式: general（/mode list 查看全部）」
+                bool matched = false;
+                foreach (var (key, _) in Modes)
+                {
+                    if (content.Contains($": {key}", StringComparison.OrdinalIgnoreCase))
+                    {
+                        SelectMode(key);
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched)
+                    SelectMode("general");
+            }
+            catch (JsonException)
+            {
+                SelectMode("general");
+            }
+        }
+
+        _loading = false;
+        MarketStatusText.Text = "技能市场：点「刷新」浏览 topic 为 echodesk-plugin 的技能，或输入关键词搜索。";
+        SetLoadState("✅ 配置已载入");
+    }
+
+    /// <summary>
+    /// 底部加载状态文本：始终保留一行，加载中显示进度、完成后显示结果。
+    /// 这样「数据加载期间可交互」在界面上是可见的，而不是空着一片让人以为卡死。
+    /// </summary>
+    private void SetLoadState(string text)
+    {
+        if (LoadStateText is null)
+            return;
+        LoadStateText.Text = text;
+    }
+
+    /// <summary>
+    /// 带「后端忙」重试的请求：设置窗口可能在主窗口流式生成或自动化运行期间打开，
+    /// 此时请求闸门会被长时间占用。这里显示等待状态并重试，而不是卡住或直接报错。
+    /// 任何请求都有阈值，不会无限等待。
+    /// </summary>
+    private async Task<string?> RequestWithRetryAsync(
+        object request, string label, TimeSpan total, TimeSpan? idleTimeout = null)
+    {
+        var clock = Stopwatch.StartNew();
+        int waits = 0;
+        while (!_closing.IsCancellationRequested && clock.Elapsed < total)
+        {
+            try
+            {
+                return await _backend.SendRequestAsync(
+                    request, idleTimeout: idleTimeout, cancellationToken: _closing.Token);
+            }
+            catch (BackendBusyException)
+            {
+                waits++;
+                SetLoadState($"⏳ {label}：后端正在忙（第 {waits} 次等待，最长 {total.TotalSeconds:0} 秒）…");
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2), _closing.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return null;
+                }
+            }
+            catch (BackendTimeoutException ex)
+            {
+                SetLoadState($"⚠️ {label}超时：{ex.Message}");
+                return null;
+            }
+            catch (OperationCanceledException)
+            {
+                return null;  // 窗口已关闭
+            }
+        }
+        if (!_closing.IsCancellationRequested)
+            SetLoadState($"⚠️ {label}未完成（后端长时间忙碌）。窗口可正常使用，稍后点「保存设置」会重试。");
+        return null;
     }
 
     private void ApplyAutomation(JsonElement el)
@@ -153,29 +289,6 @@ public partial class SettingsWindow : Window
         SyncScheduleTimer();
     }
 
-    private async Task LoadDefaultModeAsync()
-    {
-        try
-        {
-            string json = await _backend.SendRequestAsync(new { action = "chat", message = "/mode" });
-            using JsonDocument doc = JsonDocument.Parse(json);
-            string content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
-            // 形如「当前模式: general（/mode list 查看全部）」
-            foreach (var (key, _) in Modes)
-            {
-                if (content.Contains($": {key}", StringComparison.OrdinalIgnoreCase))
-                {
-                    SelectMode(key);
-                    return;
-                }
-            }
-        }
-        catch
-        {
-            SelectMode("general");
-        }
-    }
-
     private void SelectMode(string key)
     {
         for (int i = 0; i < DefaultModeCombo.Items.Count; i++)
@@ -192,22 +305,43 @@ public partial class SettingsWindow : Window
 
     private void DarkModeCheck_Changed(object sender, RoutedEventArgs e)
     {
-        if (_loading)
+        if (!_uiReady || _loading)
             return;
         _onThemeChanged?.Invoke(DarkModeCheck.IsChecked == true);
     }
 
     private void FontSizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
+        // XAML 解析 Minimum="10" 时 Value 会从 0 被强制为 10 并触发本回调，
+        // 而此时 FontSizeLabel 尚未由 InitializeComponent 创建 → 必须判空。
+        if (FontSizeLabel is null)
+            return;
         FontSizeLabel.Text = $"{e.NewValue:0.#} pt";
-        if (_loading)
+        if (!_uiReady || _loading)
             return;
         _onFontSizeChanged?.Invoke(e.NewValue);
     }
 
+    /// <summary>危险指令确认开关：立即写入 ui_state.json 并即时生效（主窗口每次执行前读取）。</summary>
+    private void ConfirmDestructiveCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_uiReady)
+            return;
+        _uiState.ConfirmDestructiveCommands = ConfirmDestructiveCheck.IsChecked == true;
+        _uiState.Save();
+        SaveHintText.Text = _uiState.ConfirmDestructiveCommands
+            ? "已开启指令执行确认"
+            : "已关闭指令执行确认（有副作用指令将直接执行）";
+    }
+
     // ---------- 自动化：安全协议联动 ----------
 
-    private void SafetyCheck_Changed(object sender, RoutedEventArgs e) => SyncSafetyUi();
+    private void SafetyCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_uiReady)
+            return;
+        SyncSafetyUi();
+    }
 
     /// <summary>安全协议未勾选时禁用自动化开关并给出说明（与后端的强制校验一致）。</summary>
     private void SyncSafetyUi()
@@ -386,7 +520,7 @@ public partial class SettingsWindow : Window
 
     private void MarketSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (_loading)
+        if (!_uiReady || _loading)
             return;
         _searchDebounce.Stop();
         _searchDebounce.Start();  // 防抖 300ms
@@ -394,7 +528,7 @@ public partial class SettingsWindow : Window
 
     private void MarketSortCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loading)
+        if (!_uiReady || _loading)
             return;
         _marketPage = 1;
         _ = SearchMarketAsync();
@@ -639,19 +773,26 @@ public partial class SettingsWindow : Window
     private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
 
     /// <summary>供主窗口 Ctrl+M 调用：切到技能市场 Tab 并刷新一次列表。</summary>
-    public void ShowMarketTab()
+    public void ShowMarketTab() => ShowTab("技能市场", refreshMarket: true);
+
+    /// <summary>
+    /// 切到指定标题的 Tab（供主窗口状态区点击跳转）。refreshMarket 为真时顺带刷新市场列表。
+    /// </summary>
+    public void ShowTab(string header, bool refreshMarket = false)
     {
-        for (int i = 0; i < ((TabControl)((Grid)Content).Children[0]).Items.Count; i++)
+        for (int i = 0; i < Tabs.Items.Count; i++)
         {
-            if (((TabControl)((Grid)Content).Children[0]).Items[i] is TabItem tab
-                && Equals(tab.Header, "技能市场"))
+            if (Tabs.Items[i] is TabItem tab && Equals(tab.Header, header))
             {
-                ((TabControl)((Grid)Content).Children[0]).SelectedIndex = i;
+                Tabs.SelectedIndex = i;
                 break;
             }
         }
-        _marketPage = 1;
-        _ = SearchMarketAsync();
+        if (refreshMarket)
+        {
+            _marketPage = 1;
+            _ = SearchMarketAsync();
+        }
     }
 
     // ---------- JSON 读取辅助 ----------

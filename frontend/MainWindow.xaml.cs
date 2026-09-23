@@ -582,7 +582,12 @@ public partial class MainWindow : Window
 
     // ---------- 设置窗口 ----------
 
-    /// <summary>打开设置窗口（单实例），主题与字号变化即时同步回主窗口。</summary>
+    /// <summary>
+    /// 打开设置窗口（单实例），主题与字号变化即时同步回主窗口。
+    /// 构造与显示一律在主线程同步完成且不做任何后端等待，因此窗口「打开即见」；
+    /// 万一构造异常（历史缺陷：FontSizeSlider 回调空引用），也只记录日志并提示，
+    /// 不再让整个进程被终止。
+    /// </summary>
     private void OpenSettings(bool openMarket = false)
     {
         if (_backend is null)
@@ -594,27 +599,79 @@ public partial class MainWindow : Window
                 _settingsWindow.ShowMarketTab();
             return;
         }
-        _settingsWindow = new SettingsWindow(
-            _backend, _isDark, _fontSize,
-            onThemeChanged: dark => ApplyTheme(dark),
-            onFontSizeChanged: size => AdjustFontSize(size - _fontSize));
-        _settingsWindow.Closed += (_, _) =>
+        try
+        {
+            var window = new SettingsWindow(
+                _backend, _settings, _isDark, _fontSize,
+                onThemeChanged: dark => ApplyTheme(dark),
+                onFontSizeChanged: size => AdjustFontSize(size - _fontSize));
+            _settingsWindow = window;
+            window.Closed += (_, _) =>
+            {
+                _settingsWindow = null;
+                _ = RefreshStatusBarAsync();  // 设置可能改了模式/自动化状态
+            };
+            window.Owner = this;
+            window.Show();
+        }
+        catch (Exception ex)
         {
             _settingsWindow = null;
-            _ = RefreshStatusBarAsync();  // 设置可能改了模式/自动化状态
-        };
-        _settingsWindow.Owner = this;
-        _settingsWindow.Show();
+            App.Log("MainWindow.OpenSettings", ex);
+            AddMessage("system", $"❌ 打开设置窗口失败：{ex.Message}");
+            Toast($"打开设置窗口失败：{ex.Message}");
+            return;
+        }
         if (openMarket)
             _settingsWindow.ShowMarketTab();
     }
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => OpenSettings();
 
+    // ---------- 危险指令确认（修复二） ----------
+
+    /// <summary>
+    /// 有副作用且不可逆的指令。执行前会二次确认（可在设置「常规」中关闭）。
+    /// <c>/exit</c> 不在其中：它本身已有 10 秒可中断的倒计时与感谢提示，等价于内置确认。
+    /// </summary>
+    private static readonly HashSet<string> DestructiveCommands =
+        new(StringComparer.OrdinalIgnoreCase) { "/clear", "/clearcache" };
+
+    /// <summary>判断一串输入是否以危险指令开头。</summary>
+    private static string? DestructiveCommandOf(string command)
+    {
+        string head = command.Trim();
+        int space = head.IndexOf(' ');
+        if (space > 0)
+            head = head[..space];
+        return DestructiveCommands.Contains(head) ? head : null;
+    }
+
+    /// <summary>危险指令执行前的确认对话框；返回 false 表示用户取消。</summary>
+    private bool ConfirmDestructive(string command)
+    {
+        string? key = DestructiveCommandOf(command);
+        if (key is null || !_settings.ConfirmDestructiveCommands)
+            return true;
+        string detail = key.ToLowerInvariant() switch
+        {
+            "/clearcache" => "将清空推理 KV 缓存：不会删除任何文件，只是下次回复需要重新计算上下文（略慢）。",
+            "/clear" => "将清空当前全部对话历史与已加载的文件上下文，此操作不可撤销。",
+            _ => "",
+        };
+        MessageBoxResult result = MessageBox.Show(
+            this,
+            $"确认执行 {key} ？\n\n{detail}\n\n（可在「设置 → 常规」中关闭该确认）",
+            "确认执行指令", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        return result == MessageBoxResult.Yes;
+    }
+
     /// <summary>执行指令输入框之外的本地指令（含前端自行处理的 /snippet、/darkmode）。</summary>
     private async Task RunLocalCommandAsync(string command)
     {
         if (_isProcessing || _backend is null || command.Length == 0)
+            return;
+        if (!ConfirmDestructive(command))
             return;
         SetProcessing(true);
         AddMessage("user", command);
@@ -680,6 +737,8 @@ public partial class MainWindow : Window
         string message = InputBox.Text.Trim();
         if (message.Length == 0)
             return;
+        if (!ConfirmDestructive(message))
+            return;   // 用户取消：保留输入框内容不动
 
         InputBox.Text = "";
         SetProcessing(true);
@@ -836,6 +895,8 @@ public partial class MainWindow : Window
             string command = CommandInputBox.Text.Trim();
             if (command.Length > 0)
             {
+                if (!ConfirmDestructive(command))
+                    return;   // 取消执行时保留输入，便于用户修改
                 CommandInputBox.Text = "";
                 await SendCommandAsync(command);
             }
@@ -844,6 +905,9 @@ public partial class MainWindow : Window
 
     private void CommandInputBox_TextChanged(object sender, TextChangedEventArgs e)
     {
+        // 防御：XAML 解析期若该框带初值会先于 CommandPlaceholder 创建而触发本回调
+        if (CommandPlaceholder is null)
+            return;
         CommandPlaceholder.Visibility = CommandInputBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateCommandPalette(CommandInputBox);
     }
@@ -880,16 +944,40 @@ public partial class MainWindow : Window
 
     // ---------- 指令选择栏 ----------
 
+    /// <summary>
+    /// 过滤并**排序**指令候选（修复二）。
+    ///
+    /// 此前只做前缀过滤、保持声明顺序，导致输入 <c>/clear</c> 时首项是 <c>/clearcache</c>，
+    /// 直接按 Enter 会执行错误且有副作用的指令。排序规则：
+    /// <list type="number">
+    /// <item>与输入**完全一致**的命令排最前；</item>
+    /// <item>其余按命令名长度升序（长度越短表示已输入前缀占该命令的比例越高、越具体）；</item>
+    /// <item>最后按指令表的原有顺序，保证结果稳定可预期。</item>
+    /// </list>
+    /// </summary>
+    internal static List<CommandItem> RankCommands(string text)
+    {
+        string query = text.Trim();
+        string key = query.Length > 1 ? query[1..] : "";
+        return Commands
+            .Select((command, index) => (Command: command, Index: index))
+            .Where(x => query.Length > 0
+                        && query.StartsWith('/')
+                        && (key.Length == 0
+                            || x.Command.Command.StartsWith("/" + key, StringComparison.OrdinalIgnoreCase)))
+            .OrderByDescending(x => string.Equals(x.Command.Command, query, StringComparison.OrdinalIgnoreCase))
+            .ThenBy(x => x.Command.Command.Length)
+            .ThenBy(x => x.Index)
+            .Select(x => x.Command)
+            .ToList();
+    }
+
     private void UpdateCommandPalette(TextBox source)
     {
         string text = source.Text;
-        if (text.Length >= 1 && text.StartsWith('/'))
+        if (text.Length > 0 && text.StartsWith('/'))
         {
-            // 只输入 "/" 时显示全部指令；继续输入则按前缀过滤
-            string query = text.Length > 1 ? text[1..] : "";
-            var filtered = Commands
-                .Where(c => query.Length == 0 || c.Command.StartsWith("/" + query, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            List<CommandItem> filtered = RankCommands(text);
             if (filtered.Count > 0)
             {
                 _paletteSource = source;
@@ -923,12 +1011,21 @@ public partial class MainWindow : Window
                 CloseCommandPalette();
                 return true;
             case Key.Enter:
-                if (CommandList.SelectedItem is CommandItem item)
+                if (CommandList.SelectedItem is not CommandItem item)
+                    return false; // 无选中项 → 回落为正常发送
+                string typed = (_paletteSource?.Text ?? "").Trim();
+                bool exact = string.Equals(item.Command, typed, StringComparison.OrdinalIgnoreCase);
+                // 若候选不唯一且首项并非精确匹配，先补全而不执行：
+                // 匹配项多时（如 /s）应让用户看清完整指令与参数格式后再决定，
+                // 而不是盲目执行列表里的第一项。
+                if (!exact && CommandList.Items.Count > 1)
                 {
-                    ExecuteCommandItem(item);
+                    ExecuteCommandItem(item, completeOnly: true);
+                    Toast($"已补全为 {item.Command}，确认无误后再按 Enter 执行");
                     return true;
                 }
-                return false; // 无选中项 → 回落为正常发送
+                ExecuteCommandItem(item);
+                return true;
         }
         return false;
     }
@@ -950,10 +1047,13 @@ public partial class MainWindow : Window
         if (target == InputBox)
         {
             InputBox.Text = item.Command;
-            _ = SendMessageAsync();
+            _ = SendMessageAsync();   // 确认环节在 SendMessageAsync 内统一处理
         }
         else
         {
+            // 危险指令在此确认：取消时保留输入框内容，便于用户修改
+            if (!ConfirmDestructive(item.Command))
+                return;
             CommandInputBox.Text = "";
             _ = SendCommandAsync(item.Command);
         }
@@ -1656,4 +1756,11 @@ public partial class MainWindow : Window
 }
 
 /// <summary>指令选择栏中的一条指令：Command 指令名，Format 参数格式，Description 完整介绍（/help），Short 精简介绍（指令栏）。</summary>
-public sealed record CommandItem(string Command, string Format, string Description, string Short, bool NeedsArgs);
+public sealed record CommandItem(string Command, string Format, string Description, string Short, bool NeedsArgs)
+{
+    /// <summary>
+    /// 指令列表里展示的完整用法（命令名 + 参数格式）。
+    /// 修复二：明确显示参数格式，避免把 /clear 与 /clearcache 之类的相近指令看混。
+    /// </summary>
+    public string Usage => Format.Length > 0 ? $"用法：{Command} {Format}" : $"用法：{Command}（无参数）";
+}

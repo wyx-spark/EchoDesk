@@ -11,7 +11,7 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TabControl Grid.Row="0">
+        <TabControl Grid.Row="0" x:Name="Tabs">
 
             <!-- ================= 常规 ================= -->
             <TabItem Header="常规">
@@ -25,7 +25,7 @@
 
                         <TextBlock Text="字体大小" Margin="0,14,0,4" Foreground="{DynamicResource SubTextBrush}"/>
                         <StackPanel Orientation="Horizontal">
-                            <Slider x:Name="FontSizeSlider" Width="320" Minimum="10" Maximum="24"
+                            <Slider x:Name="FontSizeSlider" Width="320" Minimum="10" Maximum="24" Value="14"
                                     TickFrequency="1" IsSnapToTickEnabled="True"
                                     VerticalAlignment="Center"
                                     ValueChanged="FontSizeSlider_ValueChanged"/>
@@ -36,6 +36,11 @@
                         <TextBlock Text="默认对话模式（下次启动生效，也可用 /mode 即时切换）"
                                    Margin="0,14,0,4" Foreground="{DynamicResource SubTextBrush}"/>
                         <ComboBox x:Name="DefaultModeCombo" Width="260" HorizontalAlignment="Left"/>
+
+                        <CheckBox x:Name="ConfirmDestructiveCheck" Margin="0,14,0,0"
+                                  Content="执行 /clear、/clearcache 等有副作用的指令前先确认（建议保持开启）"
+                                  Checked="ConfirmDestructiveCheck_Changed" Unchecked="ConfirmDestructiveCheck_Changed"
+                                  ToolTip="关闭后这两条指令会直接执行，误输入的代价不可逆"/>
 
                         <Border Margin="0,18,0,0" CornerRadius="8" Padding="12,10"
                                 Background="{DynamicResource InputBackground}"
@@ -272,14 +277,23 @@
             </TabItem>
         </TabControl>
 
-        <!-- 底部按钮 -->
-        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-            <TextBlock x:Name="SaveHintText" VerticalAlignment="Center" Margin="0,0,14,0"
-                       Foreground="{DynamicResource SubTextBrush}"/>
-            <Button x:Name="SaveButton" Padding="16,6" Content="保存设置"
-                    Style="{StaticResource RoundButton}" Click="SaveButton_Click"/>
-            <Button Padding="16,6" Margin="10,0,0,0" Content="关闭"
-                    Style="{StaticResource RoundButton}" Click="CloseButton_Click"/>
-        </StackPanel>
+        <!-- 底部按钮 + 加载状态（加载状态只提示、不禁用界面，避免"看起来卡死"） -->
+        <Grid Grid.Row="1" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="LoadStateText" Grid.Column="0" VerticalAlignment="Center"
+                       Margin="0,0,12,0" TextWrapping="Wrap" FontSize="11"
+                       Text="正在读取配置…" Foreground="{DynamicResource SubTextBrush}"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                <TextBlock x:Name="SaveHintText" VerticalAlignment="Center" Margin="0,0,14,0"
+                           Foreground="{DynamicResource SubTextBrush}"/>
+                <Button x:Name="SaveButton" Padding="16,6" Content="保存设置"
+                        Style="{StaticResource RoundButton}" Click="SaveButton_Click"/>
+                <Button Padding="16,6" Margin="10,0,0,0" Content="关闭"
+                        Style="{StaticResource RoundButton}" Click="CloseButton_Click"/>
+            </StackPanel>
+        </Grid>
     </Grid>
 </Window>

@@ -35,6 +35,15 @@ public sealed class AppSettings
     public double FontSize { get; set; } = 14;
     public bool DarkMode { get; set; } = true;
 
+    /// <summary>
+    /// 执行有副作用且不可逆的指令（<c>/clear</c>、<c>/clearcache</c>）前是否二次确认。
+    /// 默认开启：避免「输入 /clear 却执行了 /clearcache」这类误操作造成数据损失。
+    /// </summary>
+    public bool ConfirmDestructiveCommands { get; set; } = true;
+
+    /// <summary>输入框下方轻量状态区是否收起（默认展开）。</summary>
+    public bool StatusStripCollapsed { get; set; }
+
     private static string FilePath
     {
         get

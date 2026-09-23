@@ -212,24 +212,21 @@
                     <ListBox x:Name="CommandList" Background="Transparent" BorderThickness="0"
                              MaxHeight="240" ScrollViewer.VerticalScrollBarVisibility="Auto"
                              PreviewMouseLeftButtonUp="CommandList_PreviewMouseLeftButtonUp">
+                        <!-- 每项都暴露可被屏幕阅读器读到的完整命令名，同时作为自动化测试的稳定锚点 -->
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="AutomationProperties.Name" Value="{Binding Command}"/>
+                                <Setter Property="AutomationProperties.HelpText" Value="{Binding Description}"/>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Margin="4,2">
                                     <TextBlock Text="{Binding Command}" FontWeight="Bold"
                                                Foreground="{DynamicResource AccentBrush}"/>
-                                    <TextBlock Text="{Binding Format}" FontSize="11"
-                                               Foreground="{DynamicResource SubTextBrush}">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Visibility" Value="Visible"/>
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding Format}" Value="">
-                                                        <Setter Property="Visibility" Value="Collapsed"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
+                                    <!-- 明确显示完整名称与参数格式，避免把 /clear 与 /clearcache 看混 -->
+                                    <TextBlock Text="{Binding Usage}" FontSize="11"
+                                               Foreground="{DynamicResource SubTextBrush}"/>
                                     <TextBlock Text="{Binding Short}" FontSize="11"
                                                Foreground="{DynamicResource SubTextBrush}"
                                                TextWrapping="Wrap" Margin="0,1,0,0"/>
@@ -237,8 +234,9 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                    <TextBlock Text="↑↓ 选择 · Tab 补全 · Enter 执行 · Esc 关闭" FontSize="11"
-                               Foreground="{DynamicResource SubTextBrush}" Margin="6,2,6,4"/>
+                    <TextBlock Text="↑↓ 选择 · Tab 补全 · Enter 执行（候选不唯一时先补全命令名再确认）· Esc 关闭"
+                               FontSize="11" Foreground="{DynamicResource SubTextBrush}" Margin="6,2,6,4"
+                               TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>
         </Popup>
