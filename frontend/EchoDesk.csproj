@@ -15,11 +15,11 @@
 
   <!-- 版本与版权信息（rcedit 会在打包前进一步写入 Win32 版本资源，两者保持一致） -->
   <PropertyGroup>
-    <Version>0.2.0</Version>
-    <AssemblyVersion>0.2.0.0</AssemblyVersion>
-    <FileVersion>0.2.0.0</FileVersion>
-    <!-- 固定为 0.2.0.0，避免 ProductVersion 带 "+commit" 后缀 -->
-    <InformationalVersion>0.2.0.0</InformationalVersion>
+    <Version>0.2.1</Version>
+    <AssemblyVersion>0.2.1.0</AssemblyVersion>
+    <FileVersion>0.2.1.0</FileVersion>
+    <!-- 固定为 0.2.1.0，避免 ProductVersion 带 "+commit" 后缀 -->
+    <InformationalVersion>0.2.1.0</InformationalVersion>
     <Product>EchoDesk</Product>
     <Company>Void Entropia Studio</Company>
     <Copyright>Copyright (C) Void Entropia Studio</Copyright>
@@ -31,5 +31,19 @@
   </PropertyGroup>
 
   <!-- 无第三方包依赖：JSON 通信使用 .NET 内置的 System.Text.Json -->
+
+  <!--
+    界面语言包（任务书 任务三）。
+    发布到程序根目录的 lang\ui\ 子目录（后端语言包在 lang\，两者互不覆盖），而不是嵌进程序集，这样：
+      * 翻译者/社区可以直接往 lang\ui\ 里加 <locale>.json 贡献新语言，无需重新编译；
+      * 语言包按需加载（只读当前语言与回退链），不会全部驻留内存（任务书 3.9）。
+    语言包只有几 KB，对体积没有影响。
+  -->
+  <ItemGroup>
+    <Content Include="Resources\Lang\*.json">
+      <Link>lang\ui\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 
 </Project>

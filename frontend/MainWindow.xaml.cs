@@ -16,8 +16,8 @@ namespace EchoDesk;
 
 public partial class MainWindow : Window
 {
-    private const string ModePrefix = "✅ 已切换模式为: ";
-    private const string ThanksMessage = "👋 感谢使用 Void Entropia Studio 出品的 EchoDesk，欢迎您下次使用！";
+    /// <summary>退出前的感谢语（界面语言可切换，因此用属性而不是 const）。</summary>
+    private static string ThanksMessage => Loc.T("main.thanks");
 
     private BackendService? _backend;
     private bool _isProcessing;
@@ -49,7 +49,10 @@ public partial class MainWindow : Window
     private static readonly Regex CommandPrefixRegex = new(@"^/[A-Za-z]*(?: [A-Za-z]+)*", RegexOptions.Compiled);
 
     // 指令数据（/help 第一行展示 /help 自身；Format 为参数格式，Description 用于完整帮助）
-    private static readonly CommandItem[] Commands =
+    // 说明（v0.2.1 任务三）：这张表是**后端不可用时的本地回退**。正常情况下
+    // 指令面板的数据来自后端的 {"action":"commands"}，因此技能指令会自动出现在
+    // 候选列表里，且命令说明随界面语言切换（任务书 2.6）。
+    private static readonly CommandItem[] FallbackCommands =
     {
         new("/help", "", "显示此指令介绍：完整指令列表、用法与作用", "显示全部指令及用法", false),
         new("/mode", "<编号|缩写|全称>", "切换对话模式（general/summary/translate/code/contract/creative）；/mode list 查看全部模式及编号；切换时自动套用温度预设", "切换对话模式", true),
@@ -71,11 +74,79 @@ public partial class MainWindow : Window
         new("/exit", "", "退出程序：显示感谢语后 10 秒自动关闭", "退出程序", false),
     };
 
+    /// <summary>当前生效的指令表（后端返回的本地化列表，或本地回退）。</summary>
+    private static List<CommandItem> Commands = FallbackCommands.ToList();
+
+    /// <summary>把后端 {"action":"commands"} 返回的本地化指令元数据换成当前指令表。</summary>
+    internal static void ApplyCommandsFromBackend(JsonElement array)
+    {
+        if (array.ValueKind != JsonValueKind.Array)
+            return;
+        var items = new List<CommandItem>();
+        foreach (JsonElement element in array.EnumerateArray())
+        {
+            string name = element.TryGetProperty("name", out JsonElement n) ? n.GetString() ?? "" : "";
+            if (name.Length == 0)
+                continue;
+            string usage = element.TryGetProperty("usage", out JsonElement u) ? u.GetString() ?? name : name;
+            string desc = element.TryGetProperty("desc", out JsonElement d) ? d.GetString() ?? "" : "";
+            string label = element.TryGetProperty("label", out JsonElement l) ? l.GetString() ?? "" : "";
+            bool destructive = element.TryGetProperty("destructive", out JsonElement x)
+                               && x.ValueKind == JsonValueKind.True;
+            string source = element.TryGetProperty("source", out JsonElement s) ? s.GetString() ?? "" : "";
+            // 用法去掉命令名，只留参数格式（后端 usage 形如 "/mode <编号|缩写|全称>"）
+            string format = usage.StartsWith(name, StringComparison.OrdinalIgnoreCase)
+                ? usage[name.Length..].Trim()
+                : usage.Trim();
+            string shortText = desc.Split('\n')[0];
+            if (shortText.Length > 40)
+                shortText = shortText[..40] + "…";
+            if (source == "skill" && label.Length > 0)
+                shortText = $"🧩 {label}";
+            items.Add(new CommandItem(name, format, desc, shortText, format.Length > 0, destructive));
+        }
+        if (items.Count > 0)
+            Commands = items;
+    }
+
     public MainWindow()
     {
         InitializeComponent();
         AllowDrop = true; // 允许文件拖拽
+        // 多语言（任务三）：先按当前语言回填 XAML 里声明的 Loc.Key，再订阅切换事件
+        Loc.Apply(this);
+        Title = Loc.T("main.title", "EchoDesk {0} — Powered by {1}", AppVersion, StudioName);
+        VersionText.Text = AppVersion;
+        Loc.LanguageChanged += (_, _) => ApplyLanguage();
         Loaded += MainWindow_Loaded;
+    }
+
+    /// <summary>当前程序版本（vX.Y.Z）：从程序集版本号推导，避免与窗口文案两处硬编码。</summary>
+    internal static string AppVersion
+    {
+        get
+        {
+            Version? version = typeof(MainWindow).Assembly.GetName().Version;
+            return version is null ? "v0.2.1" : $"v{version.Major}.{version.Minor}.{version.Build}";
+        }
+    }
+
+    private const string StudioName = "Void Entropia Studio";
+
+    /// <summary>切换语言后重跑一遍文本回填，并刷新动态状态文本（无需重启）。</summary>
+    internal void ApplyLanguage()
+    {
+        Loc.Apply(this);
+        Title = Loc.T("main.title", "EchoDesk {0} — Powered by {1}", AppVersion, StudioName);
+        if (!_isProcessing)
+            StatusText.Text = Loc.T("main.status.ready");
+        ApplyStatusStripState();
+        CommandButtonText.Text = _commandRowOpen
+            ? Loc.T("main.command.close") : Loc.T("main.command.open");
+        SnippetButtonText.Text = SnippetPalette.IsOpen
+            ? Loc.T("main.snippet.close") : Loc.T("main.snippet.open");
+        if (_backend is not null)
+            _ = RefreshStatusBarAsync();
     }
 
     // ---------- 生命周期 ----------
@@ -93,8 +164,8 @@ public partial class MainWindow : Window
         _backend = new BackendService();
         // 后端连接完成前禁用全部控件，并提示连接状态
         SetControlsEnabled(false);
-        StatusText.Text = "正在连接后端...";
-        AddMessage("system", "⏳ 正在连接后端，请稍候...");
+        StatusText.Text = Loc.T("main.status.starting");
+        AddMessage("system", Loc.T("main.connecting", "⏳ 正在连接后端，请稍候..."));
         // 实时显示后端起模型下载等 stderr 进度
         _backend.StderrReceived += Backend_StderrReceived;
         // 后端异常退出时在对话框提示，避免用户只看上方状态栏
@@ -112,18 +183,21 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            StatusText.Text = "后端启动失败";
-            AddMessage("system", $"❌ 后端启动失败: {ex.Message}");
+            StatusText.Text = Loc.T("main.status.startFailed", "后端启动失败");
+            AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
             SetControlsEnabled(false); // 保持禁用
             return;
         }
 
         _backend.StderrReceived -= Backend_StderrReceived;
         SetControlsEnabled(true);
-        StatusText.Text = "已就绪";
-        string welcome = $"✨ 欢迎使用 EchoDesk {_backend.Version} — Powered by {_backend.Studio}";
+        StatusText.Text = Loc.T("main.status.ready");
+        Title = Loc.T("main.title", "EchoDesk {0} — Powered by {1}", _backend.Version, _backend.Studio);
+        string welcome = Loc.T("main.welcome", "✨ 欢迎使用 EchoDesk {0} — Powered by {1}",
+                               _backend.Version, _backend.Studio);
         if (_backend.RestoredCount > 0)
-            welcome += $"\n📂 已自动恢复上次会话（{_backend.RestoredCount} 轮）";
+            welcome += "\n" + Loc.T("main.welcomeRestored", "📂 已自动恢复上次会话（{0} 轮）",
+                                     _backend.RestoredCount);
         AddMessage("system", welcome);
         // 展示恢复的历史消息，让用户能查看之前的对话内容
         foreach (var (role, content) in _backend.RestoredHistory)
@@ -139,8 +213,83 @@ public partial class MainWindow : Window
         InputBox.Focus();
         _ = UpdateContextAsync(); // 显示初始上下文占用
         _ = RefreshStatusBarAsync(); // 状态栏：模型 / 模式 / 搜索状态
+        _ = RefreshCommandsAsync();  // 任务三：指令面板数据源改为后端（含技能指令、随语言切换）
+        _ = CheckUpdateAsync();      // 任务五 方案 A：只检查与提示，不自动下载替换
         ShowFirstRunGuideIfNeeded();
         CheckStartupShortcut();   // 启动时检测程序目录下的启动快捷方式
+    }
+
+    /// <summary>
+    /// 从后端取本地化的指令元数据（含技能注册的指令），刷新指令面板。
+    /// 内置的那份静态表只在后端不可用时兜底，因此换语言或装插件后指令列表自动跟着变。
+    /// </summary>
+    private async Task RefreshCommandsAsync()
+    {
+        if (_backend is null)
+            return;
+        try
+        {
+            string json = await _backend.SendRequestAsync(new { action = "commands" });
+            using JsonDocument doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("commands", out JsonElement commands))
+                ApplyCommandsFromBackend(commands);
+        }
+        catch
+        {
+            // 后端忙碌/异常时保留现有指令表
+        }
+    }
+
+    private string _updateUrl = "";
+
+    /// <summary>
+    /// 检查新版本（任务书 任务五 · 方案 A：只检查与提示）。
+    /// 发现新版本时状态区出现一个可点条目，点击用系统浏览器打开 Releases 页面；
+    /// 全程不下载、不替换文件，失败也不影响使用（只记一条日志）。
+    /// </summary>
+    private async Task CheckUpdateAsync()
+    {
+        if (_backend is null)
+            return;
+        try
+        {
+            string json = await _backend.SendRequestAsync(new { action = "update_check" });
+            using JsonDocument doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("update", out JsonElement update))
+                return;
+            string status = update.TryGetProperty("status", out JsonElement st) ? st.GetString() ?? "" : "";
+            if (!string.Equals(status, "available", StringComparison.Ordinal))
+                return;
+            _updateUrl = update.TryGetProperty("url", out JsonElement url) ? url.GetString() ?? "" : "";
+            string latest = update.TryGetProperty("latest", out JsonElement l) ? l.GetString() ?? "" : "";
+            if (StripUpdateButton is null || _updateUrl.Length == 0)
+                return;
+            StripUpdateText.Text = Loc.T("main.update.notice", "🎉 发现新版本 {0}（当前 {1}）", latest, AppVersion);
+            StripUpdateButton.ToolTip = Loc.T("main.update.tip", "点击打开下载页面") + "\n" + _updateUrl;
+            StripUpdateButton.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex)
+        {
+            App.Log("MainWindow.CheckUpdate", ex);
+        }
+    }
+
+    private void StripUpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updateUrl.Length == 0)
+            return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = _updateUrl,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            Toast(Loc.T("main.update.checkFailed", "检查更新失败：{0}", ex.Message), error: true);
+        }
     }
 
     // ---------- 窗口状态记忆（大小/位置/最大化，兼容多显示器与高 DPI） ----------
@@ -207,10 +356,11 @@ public partial class MainWindow : Window
             return;
         try
         {
-            string json = await _backend.SendRequestAsync(new { action = "chat", message = "/status" });
+            // 任务三：改读机器可读字段（model/mode/search/kv_cache_text），
+            // 不再解析 /status 的中文文本——否则界面换成英文后状态栏会失效。
+            string json = await _backend.SendRequestAsync(new { action = "context" });
             using JsonDocument doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("content", out JsonElement content))
-                ApplyStatusText(content.GetString() ?? "");
+            ApplyStatusFields(doc.RootElement);
         }
         catch
         {
@@ -255,7 +405,9 @@ public partial class MainWindow : Window
                 return;
             bool enabled = st.TryGetProperty("enabled", out JsonElement en) && en.ValueKind == JsonValueKind.True;
             string state = st.TryGetProperty("state", out JsonElement s) ? s.GetString() ?? "" : "";
-            SetMarketStatus(!enabled ? "未启用" : state.Length > 0 ? state : "就绪");
+            SetMarketStatus(!enabled
+                ? Loc.T("settings.market.state.disabled")
+                : state.Length > 0 ? TranslateMarketState(state) : Loc.T("settings.market.state.ready"));
         }
         catch
         {
@@ -263,44 +415,48 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>解析 /status 输出，刷新顶部关键状态与状态区的搜索段。</summary>
-    private void ApplyStatusText(string status)
+    /// <summary>按后端返回的字段刷新顶部关键状态与状态区（与界面语言无关）。</summary>
+    private void ApplyStatusFields(JsonElement root)
     {
-        foreach (string raw in status.Split('\n'))
+        if (root.TryGetProperty("model", out JsonElement modelEl) && modelEl.ValueKind == JsonValueKind.String)
         {
-            string line = raw.Trim();
-            if (line.StartsWith("🧠 模型:", StringComparison.Ordinal))
+            string model = modelEl.GetString() ?? "";
+            if (model.Length > 0)
             {
-                ModelText.Text = $"🧠 模型: {Shorten(line["🧠 模型:".Length..].Trim())}";
-                ModelChip.ToolTip = $"当前模型：{line["🧠 模型:".Length..].Trim()}\n点击打开模型选择栏";
-            }
-            else if (line.StartsWith("🛠️", StringComparison.Ordinal) && line.Contains("模式:"))
-            {
-                string mode = line[(line.IndexOf("模式:", StringComparison.Ordinal) + 3)..].Trim();
-                ModeText.Text = $"🛠️ 模式: {mode}";
-                ModeChip.ToolTip = $"当前对话模式：{mode}\n点击打开设置修改默认模式";
-            }
-            else if (line.Contains("联网搜索:"))
-            {
-                bool on = line.Contains("开启");
-                SetSearchStatus(on);
-            }
-            else if (line.Contains("KV Cache:"))
-            {
-                int mark = line.IndexOf("KV Cache:", StringComparison.Ordinal);
-                string kv = line[(mark + "KV Cache:".Length)..].Trim().TrimStart('约').Trim();
-                SetKvCacheStatus(kv.Trim('）', '（'));
+                ModelText.Text = Loc.T("main.model.chip", "🧠 模型: {0}", Shorten(model));
+                ModelChip.ToolTip = Loc.T("main.model.tip", "当前模型：{0}", model);
             }
         }
+        if (root.TryGetProperty("mode", out JsonElement modeEl) && modeEl.ValueKind == JsonValueKind.String)
+        {
+            string mode = modeEl.GetString() ?? "";
+            if (mode.Length > 0)
+                SetModeStatus(mode);
+        }
+        if (root.TryGetProperty("search", out JsonElement searchEl)
+            && searchEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            SetSearchStatus(searchEl.GetBoolean());
+        }
+        if (root.TryGetProperty("kv_cache_text", out JsonElement kvEl) && kvEl.ValueKind == JsonValueKind.String)
+            SetKvCacheStatus(kvEl.GetString() ?? "");
+    }
+
+    /// <summary>更新顶部"模式"胶囊（/mode 切换后调用）。</summary>
+    private void SetModeStatus(string mode)
+    {
+        ModeText.Text = Loc.T("main.mode.chip", "🛠️ 模式: {0}", mode);
+        ModeChip.ToolTip = Loc.T("main.mode.tip", "当前对话模式：{0}", mode);
     }
 
     /// <summary>状态区：搜索开关（优化五）。</summary>
     private void SetSearchStatus(bool on)
     {
-        SearchText.Text = on ? "🔍 搜索：开" : "🔍 搜索：关";
+        string state = on ? Loc.T("main.strip.on") : Loc.T("main.strip.off");
+        SearchText.Text = Loc.T("main.strip.search", "🔍 搜索：{0}", state);
         StripSearchButton.ToolTip = on
-            ? "联网搜索已开启：提问前会先搜索网络参考信息。点击关闭"
-            : "联网搜索已关闭。点击开启（/search on）";
+            ? Loc.T("main.strip.searchOnTip", "联网搜索已开启：提问前会先搜索网络参考信息。点击关闭")
+            : Loc.T("main.strip.searchOffTip", "联网搜索已关闭。点击开启（/search on）");
     }
 
     /// <summary>状态区：KV Cache 估算（优化五）。</summary>
@@ -308,8 +464,9 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(text) || text == "---")
             return;
-        StripKvText.Text = $"💾 KV: {text}";
-        StripKvButton.ToolTip = $"KV Cache 估算约 {text}（fp16，随上下文窗口线性增长）\n点击打开「设置 → 模型」";
+        StripKvText.Text = Loc.T("main.strip.kv", "💾 KV: {0}", text);
+        StripKvButton.ToolTip = Loc.T("main.strip.kvValueTip",
+            "KV Cache 估算约 {0}（fp16，随上下文窗口线性增长）\n点击打开「设置 → 模型」", text);
     }
 
     /// <summary>状态栏模型名过长时截断显示。</summary>
@@ -322,19 +479,34 @@ public partial class MainWindow : Window
     /// <summary>刷新状态区的自动化状态段（优化五：图标 + 简短短语）。</summary>
     private void SetAutomationStatus(bool running, bool enabled = true)
     {
-        AutoText.Text = !enabled ? "⚙️ 自动化：未启用" : running ? "⚙️ 自动化：运行中" : "⚙️ 自动化：关";
+        string state = !enabled ? Loc.T("main.automation.disabled", "未启用")
+            : running ? Loc.T("main.automation.running", "运行中")
+            : Loc.T("main.strip.off");
+        AutoText.Text = Loc.T("main.strip.automation", "⚙️ 自动化：{0}", state);
         StripAutomationButton.ToolTip = running
-            ? "自动化正在运行（浏览器已打开）。点击打开「设置 → 自动化」查看日志或停止"
+            ? Loc.T("main.strip.autoRunningTip", "自动化正在运行（浏览器已打开）。点击打开「设置 → 自动化」查看日志或停止")
             : enabled
-                ? "自动化已启用，当前空闲。点击打开「设置 → 自动化」"
-                : "自动化未启用（需先勾选安全协议）。点击打开「设置 → 自动化」";
+                ? Loc.T("main.strip.autoIdleTip", "自动化已启用，当前空闲。点击打开「设置 → 自动化」")
+                : Loc.T("main.strip.autoDisabledTip", "自动化未启用（需先勾选安全协议）。点击打开「设置 → 自动化」");
     }
+
+    /// <summary>把后端返回的市场状态串（中文常量）映射成当前界面语言的文案。</summary>
+    private static string TranslateMarketState(string state) => state switch
+    {
+        "已禁用" => Loc.T("settings.market.state.disabled"),
+        "未同步" => Loc.T("settings.market.state.unsynced"),
+        "已就绪" => Loc.T("settings.market.state.ready"),
+        "缓存已过期" => Loc.T("settings.market.state.stale"),
+        "已同步（当前无匹配技能）" => Loc.T("settings.market.state.syncedEmpty", "已同步（当前无匹配技能）"),
+        _ => state,
+    };
 
     /// <summary>刷新状态区的技能市场连接段（优化五）。</summary>
     private void SetMarketStatus(string text)
     {
-        MarketText.Text = $"🌐 市场：{text}";
-        StripMarketButton.ToolTip = $"技能市场：{text}\n点击打开「设置 → 技能市场」";
+        MarketText.Text = Loc.T("main.strip.market", "🌐 市场：{0}", text);
+        StripMarketButton.ToolTip = Loc.T("main.strip.marketValueTip",
+            "技能市场：{0}\n点击打开「设置 → 技能市场」", text);
     }
 
     // ---------- 轻量状态区：点击跳转 / 折叠（优化五） ----------
@@ -383,11 +555,15 @@ public partial class MainWindow : Window
     {
         bool collapsed = _settings.StatusStripCollapsed;
         StatusStripItems.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
-        StripToggleText.Text = collapsed ? "▸" : "▾";
+        StripToggleText.Text = collapsed
+            ? Loc.T("main.strip.toggleExpand", "▸")
+            : Loc.T("main.strip.toggleCollapse", "▾");
         StripToggleButton.ToolTip = collapsed
-            ? "展开状态区（搜索 / 自动化 / 市场 / 上下文 / KV Cache）"
-            : "折叠状态区";
-        AutomationProperties.SetName(StripToggleButton, collapsed ? "展开状态区" : "折叠状态区");
+            ? Loc.T("main.strip.expandTip", "展开状态区（搜索 / 自动化 / 市场 / 上下文 / KV Cache）")
+            : Loc.T("main.strip.collapseTip", "折叠状态区");
+        AutomationProperties.SetName(StripToggleButton, collapsed
+            ? Loc.T("main.strip.expandTip", "展开状态区")
+            : Loc.T("main.strip.collapseTip", "折叠状态区"));
     }
 
     // ---------- 首次启动引导 ----------
@@ -746,14 +922,16 @@ public partial class MainWindow : Window
             return true;
         string detail = key.ToLowerInvariant() switch
         {
-            "/clearcache" => "将清空推理 KV 缓存：不会删除任何文件，只是下次回复需要重新计算上下文（略慢）。",
-            "/clear" => "将清空当前全部对话历史与已加载的文件上下文，此操作不可撤销。",
+            "/clearcache" => Loc.T("main.dialog.cacheText"),
+            "/clear" => Loc.T("main.dialog.clearText"),
             _ => "",
         };
         MessageBoxResult result = MessageBox.Show(
             this,
-            $"确认执行 {key} ？\n\n{detail}\n\n（可在「设置 → 常规」中关闭该确认）",
-            "确认执行指令", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            Loc.T("main.dialog.destructiveText",
+                  "确认执行 {0} ？\n\n{1}\n\n（可在「设置 → 常规」中关闭该确认）", key, detail),
+            Loc.T("main.dialog.destructiveTitle"), MessageBoxButton.YesNo,
+            MessageBoxImage.Warning, MessageBoxResult.No);
         return result == MessageBoxResult.Yes;
     }
 
@@ -1188,7 +1366,9 @@ public partial class MainWindow : Window
     /// <summary>命令按钮右侧文字：识别到指令→"转移到命令输入框"；否则按开合状态显示"打开/关闭命令输入框"。</summary>
     private void UpdateCommandButtonText()
     {
-        CommandButtonText.Text = _commandLike ? "转移到命令输入框" : (_commandRowOpen ? "关闭命令输入框" : "打开命令输入框");
+        CommandButtonText.Text = _commandLike
+            ? Loc.T("main.command.move", "转移到命令输入框")
+            : (_commandRowOpen ? Loc.T("main.command.close") : Loc.T("main.command.open"));
     }
 
     // ---------- 指令输入行（默认隐藏） ----------
@@ -1249,8 +1429,9 @@ public partial class MainWindow : Window
             ContextText.Text = FormatContext(used, limit);
             // 优化五：轻量状态区显示占用百分比（图标 + 简短短语）
             int percent = limit > 0 ? (int)Math.Round(used * 100.0 / limit) : 0;
-            StripContextText.Text = $"📊 上下文 {Math.Clamp(percent, 0, 100)}%";
-            StripContextButton.ToolTip = $"上下文占用 {used:N0} / {limit:N0} tokens（{percent}%）\n点击刷新";
+            StripContextText.Text = Loc.T("main.context.strip", "📊 上下文 {0}%", Math.Clamp(percent, 0, 100));
+            StripContextButton.ToolTip = Loc.T("main.context.tip",
+                "上下文占用 {0:N0} / {1:N0} tokens（{2}%）\n点击刷新", used, limit, percent);
         }
         if (root.TryGetProperty("kv_cache_text", out JsonElement kv) && kv.ValueKind == JsonValueKind.String)
             SetKvCacheStatus(kv.GetString() ?? "");
@@ -1265,7 +1446,10 @@ public partial class MainWindow : Window
         : n.ToString();
 
     private static string FormatContext(int used, int limit) =>
-        limit > 0 ? $"上下文：{FormatTokens(used)}/{FormatTokens(limit)}" : "上下文：---/---";
+        limit > 0
+            ? Loc.T("main.context.button", "上下文：{0}/{1}", FormatTokens(used), FormatTokens(limit))
+            : Loc.T("main.context.button", "上下文：{0}/{1}",
+                    Loc.T("main.context.unknown"), Loc.T("main.context.unknown"));
 
     /// <summary>向后端请求当前上下文占用并更新工具栏显示。</summary>
     private async Task UpdateContextAsync()
@@ -1320,7 +1504,8 @@ public partial class MainWindow : Window
     /// <summary>常用语按钮右侧文字：按选择框开合状态显示"打开/关闭常用语选择框"。</summary>
     private void UpdateSnippetButtonText()
     {
-        SnippetButtonText.Text = SnippetPalette.IsOpen ? "关闭常用语选择框" : "打开常用语选择框";
+        SnippetButtonText.Text = SnippetPalette.IsOpen
+            ? Loc.T("main.snippet.close") : Loc.T("main.snippet.open");
     }
 
     private void SnippetList_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -1401,12 +1586,15 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>后端不可用时的本地 /help 回退渲染（文案同样走语言包）。</summary>
     private void ShowHelpLocally()
     {
         var sb = new StringBuilder();
-        sb.AppendLine("📖 EchoDesk v0.1.0 完整指令介绍 — Powered by Void Entropia Studio");
+        sb.AppendLine(Loc.T("main.help.header", "📖 EchoDesk {0} 完整指令介绍 — Powered by {1}",
+                            _backend?.Version ?? AppVersion,
+                            StudioName));
         sb.AppendLine();
-        foreach (var c in Commands)
+        foreach (CommandItem c in Commands)
         {
             string usage = c.Format.Length > 0 ? $"{c.Command} {c.Format}" : c.Command;
             sb.AppendLine($"🔹 {usage}");
@@ -1435,20 +1623,11 @@ public partial class MainWindow : Window
         if (type == "assistant")
             AddMessage("assistant", content);
         else
-        {
             AddMessage("system", content);
-            if (content.StartsWith(ModePrefix, StringComparison.Ordinal))
-            {
-                string mode = content[ModePrefix.Length..].Trim();
-                ModeText.Text = $"🛠️ 模式: {mode}";
-                ModeChip.ToolTip = $"当前对话模式：{mode}\n点击打开设置修改默认模式";
-            }
-            // 搜索开关变化即时反映到状态区（优化五：统一为「图标 + 短语」格式）
-            if (content.Contains("搜索已开启", StringComparison.Ordinal))
-                SetSearchStatus(true);
-            else if (content.Contains("搜索已关闭", StringComparison.Ordinal))
-                SetSearchStatus(false);
-        }
+
+        // 任务三：模式与搜索状态改读响应里的字段，不再靠中文字符串匹配
+        // （否则把界面切成英文后这两个状态就永远不更新了）
+        ApplyStatusFields(root);
 
         // /model 需要下载：征得用户同意后发送下载动作
         if (action == "confirm_model" && root.TryGetProperty("model", out JsonElement modelEl))
@@ -1502,12 +1681,12 @@ public partial class MainWindow : Window
     private void BeginExitCountdown(string thanksMessage)
     {
         AddMessage("system", thanksMessage);
-        StatusText.Text = "正在退出...";
+        StatusText.Text = Loc.T("main.status.exiting", "正在退出...");
         SetControlsEnabled(false);
         CloseAllPalettes();
 
         _exitCountdown = 10;
-        StatusText.Text = $"程序将在 {_exitCountdown} 秒后自动关闭";
+        StatusText.Text = Loc.T("main.status.exitCountdown", "程序将在 {0} 秒后自动关闭", _exitCountdown);
         _exitTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _exitTimer.Tick += (_, _) =>
         {
@@ -1519,7 +1698,7 @@ public partial class MainWindow : Window
             }
             else
             {
-                StatusText.Text = $"程序将在 {_exitCountdown} 秒后自动关闭";
+                StatusText.Text = Loc.T("main.status.exitCountdown", "程序将在 {0} 秒后自动关闭", _exitCountdown);
             }
         };
         _exitTimer.Start();
@@ -1532,7 +1711,7 @@ public partial class MainWindow : Window
         CloseAllPalettes();
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
-            Title = "选择要上传的文件",
+            Title = Loc.T("main.upload.chooseTitle", "选择要上传的文件"),
             Filter = "支持的文件 (*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt;*.pdf)|*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt;*.pdf|所有文件 (*.*)|*.*",
         };
         if (dialog.ShowDialog() == true)
@@ -1865,11 +2044,17 @@ public partial class MainWindow : Window
 }
 
 /// <summary>指令选择栏中的一条指令：Command 指令名，Format 参数格式，Description 完整介绍（/help），Short 精简介绍（指令栏）。</summary>
-public sealed record CommandItem(string Command, string Format, string Description, string Short, bool NeedsArgs)
+public sealed record CommandItem(string Command, string Format, string Description, string Short, bool NeedsArgs,
+                                 bool Destructive = false)
 {
     /// <summary>
     /// 指令列表里展示的完整用法（命令名 + 参数格式）。
     /// 修复二：明确显示参数格式，避免把 /clear 与 /clearcache 之类的相近指令看混。
     /// </summary>
-    public string Usage => Format.Length > 0 ? $"用法：{Command} {Format}" : $"用法：{Command}（无参数）";
+    public string Usage => Format.Length > 0
+        ? Loc.T("main.help.usage", "用法：{0}", $"{Command} {Format}")
+        : $"{Loc.T("main.help.usage", "用法：{0}", Command)} {Loc.T("main.help.noArgs", "（无参数）")}";
+
+    /// <summary>有副作用且不可逆（/clear、/clearcache）：执行前二次确认（修复二）。</summary>
+    public bool HasSideEffects => Destructive;
 }

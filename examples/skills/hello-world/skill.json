@@ -1,0 +1,30 @@
+{
+  "id": "hello-world",
+  "name": "Hello World 示例插件",
+  "version": "1.0.0",
+  "description": "EchoDesk 官方示例插件：演示命令注册、面板、多语言与自动化钩子。",
+  "author": "Void Entropia Studio",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/VoidEntropiaStudio/EchoDesk",
+  "echodesk": {
+    "bundle": "echodesk_hello",
+    "entry": "echodesk_hello/__init__.py",
+    "api_version": "1",
+    "min_version": "0.2.1"
+  },
+  "capabilities": {
+    "commands": ["/hello"],
+    "ui_panels": ["hello-panel"],
+    "automation_hooks": ["after_task"],
+    "file_parsers": [],
+    "permissions": {
+      "network": false,
+      "filesystem": ["skill_dir"]
+    }
+  },
+  "lang": {
+    "default": "zh-Hans",
+    "available": ["zh-Hans", "en"]
+  },
+  "dependencies": {}
+}

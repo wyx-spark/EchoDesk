@@ -19,9 +19,11 @@ import json
 import logging
 import os
 import queue
+import shutil
 import sys
 import threading
-from typing import Any, Dict, Iterator, Optional
+import time
+from typing import Any, Dict, Iterator, List, Optional
 
 from version import APP_NAME, APP_VERSION, STUDIO
 
@@ -64,6 +66,10 @@ with _suppress_stdout():
     from llm_engine import LLMEngine
     from search_engine import SearchEngine
     from summarizer import DocumentSummarizer
+
+# 多语言（任务三）：必须在 Config.load 之后导入，避免 i18n 反向依赖 config 时成环
+from i18n import get as _i18n
+from i18n import t as _t
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("EchoDesk")
@@ -135,8 +141,35 @@ class Backend:
         self._market = None
         # 模型选择栏（新增四）：惰性创建
         self._model_hub = None
+        # 技能运行期加载器（任务二）：同样惰性创建，第一次用到时才扫描目录
+        self._skills = None
         self.stream_active = False
         self.stop_event = threading.Event()
+
+    def skills(self):
+        """按需创建技能加载器，并把它接到指令表 / 文件解析 / 自动化钩子上（任务二 2.2）。"""
+        if self._skills is None:
+            from skills_runtime import SkillLoader
+
+            self._skills = SkillLoader(self.config.marketplace, self.commands, logger=log)
+            try:
+                from file_parser import skill_parser_extensions
+
+                self.commands.skill_parsers_provider = skill_parser_extensions
+            except Exception:
+                self.commands.skill_parsers_provider = None
+        else:
+            self._skills.cfg = self.config.marketplace
+            self._skills.commands = self.commands
+        return self._skills
+
+    def load_skills(self) -> dict:
+        """启动时/重载时加载全部插件；任何失败都被隔离，不影响后端启动。"""
+        try:
+            return self.skills().load_all()
+        except Exception as e:  # noqa: BLE001
+            log.exception("技能加载失败（已忽略，后端继续启动）")
+            return {"total": 0, "loaded": 0, "failed": 0, "skipped": 0, "error": str(e)}
 
     def model_hub(self):
         """按需创建模型中心（新增四）。"""
@@ -164,6 +197,11 @@ class Backend:
             from automation import AutomationEngine
 
             self._automation = AutomationEngine(self.config.automation, llm_engine=self.llm)
+            # 技能自动化钩子（任务二 2.3）：把插件的 after_task / after_download 等挂上来
+            try:
+                self._automation.hook_dispatcher = self.skills().fire_hook
+            except Exception:
+                log.warning("注入技能自动化钩子失败（自动化仍可正常使用）", exc_info=True)
             # 上次进程被强杀时可能残留下载临时文件，这里清理一次
             # （与 PRIVACY.md 中"程序异常退出时残留的临时目录会在下次启动时清理"一致）。
             try:
@@ -249,6 +287,18 @@ class Backend:
             return self._handle_automation_config_set(request)
         if action == "automation_test":
             return self._handle_automation_test(request)
+        if action == "automation_wizard_step":
+            return self._handle_automation_wizard_step(request)
+        if action == "automation_config_export":
+            return self._handle_automation_config_export(request)
+        if action == "automation_config_import":
+            return self._handle_automation_config_import(request)
+        if action == "automation_templates":
+            return {"type": "system", "content": "", "templates": self._automation_templates()}
+        if action == "automation_save_template":
+            return self._handle_automation_save_template(request)
+        if action == "automation_field_help":
+            return {"type": "system", "content": "", "help": self._automation_field_help()}
         if action == "automation_status":
             status = self.automation().status()
             # 是否"已启用"由配置决定（安全协议未勾选时 enabled 一定为 False）
@@ -281,13 +331,246 @@ class Backend:
             return self._handle_model_hub_status()
         if action == "model_hub_config_set":
             return self._handle_model_hub_config_set(request)
-        return {"type": "system", "content": "未知动作"}
+        # ---------- 多语言（任务三 3.4） ----------
+        if action == "set_language":
+            return self._handle_set_language(request)
+        if action == "language":
+            return self._handle_language()
+        # ---------- 指令面板数据源（任务二 2.6） ----------
+        if action == "commands":
+            return {"type": "system", "content": "", "commands": self.commands.all_commands()}
+        # ---------- 技能与本地插件（任务二 / 任务二·补） ----------
+        if action == "skills_list":
+            return {"type": "system", "content": "", "skills": self.skills().status()}
+        if action == "skills_reload":
+            return self._handle_skills_reload(request)
+        if action == "skills_set_dev_mode":
+            return self._handle_skills_dev_mode(request)
+        if action == "skills_log":
+            return {"type": "system", "content": "", "log": self.skills().read_log(
+                int(request.get("lines") or 200))}
+        if action == "skills_clear_log":
+            return {"type": "system", "content": "", "ok": self.skills().clear_log()}
+        if action == "skills_export_log":
+            return self._handle_skills_export_log(request)
+        if action == "skills_scaffold":
+            return self._handle_skills_scaffold(request)
+        if action == "skills_install_folder":
+            return self._handle_skills_install_folder(request)
+        if action == "skills_uninstall":
+            return self._handle_skills_uninstall(request)
+        if action == "skills_export_zip":
+            return self._handle_skills_export_zip(request)
+        if action == "skills_publish_check":
+            return self._handle_skills_publish_check(request)
+        if action == "skills_trust":
+            return self._handle_skills_trust(request)
+        if action == "skills_manifest_get":
+            return {"type": "system", "content": "", "manifest": self.skills().local_manifest()}
+        if action == "skills_manifest_set":
+            return self._handle_skills_manifest_set(request)
+        if action == "skills_panel_render":
+            return {"type": "system", "content": "", "panel_result": self.skills().panel_render(
+                str(request.get("skill_id") or ""), str(request.get("panel_id") or ""))}
+        if action == "skills_panel_action":
+            return self._handle_skills_panel_action(request)
+        if action == "skills_examples":
+            return self._handle_skills_examples(request)
+        # ---------- 自动更新（任务五 方案 A：只检查与提示） ----------
+        if action == "update_check":
+            return self._handle_update_check(request)
+        return {"type": "system", "content": _t("sys.unknown_action")}
+
+    # ---------- 多语言（任务三 3.4） ----------
+
+    def _handle_set_language(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """切换后端语言：影响系统消息、错误提示与指令帮助。
+
+        选择结果由前端写入 ui_state.json（任务书 3.4 持久化要求），
+        后端只在本次运行内生效，避免为了切语言去改写 config.json。
+        """
+        locale = str(request.get("locale") or "auto")
+        effective = _i18n().set_locale(locale)
+        log.info("界面语言切换为 %s（请求 %s）", effective, locale)
+        info = _i18n().info()
+        # 语言变化后指令帮助与技能面板标题都要跟着变
+        return {"type": "system", "content": _t("sys.language_switched", locale=effective),
+                "i18n": info, "commands": self.commands.all_commands()}
+
+    def _handle_language(self) -> Dict[str, Any]:
+        return {"type": "system", "content": "", "i18n": _i18n().info()}
+
+    # ---------- 技能与本地插件（任务二 / 任务二·补） ----------
+
+    def _handle_skills_reload(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """热重载插件（任务书 2B.5）：无需重启即可看到 skills_dev/ 里的改动。"""
+        try:
+            summary = self.skills().reload_all()
+        except Exception as e:  # noqa: BLE001
+            log.exception("重载插件失败")
+            return {"type": "system", "content": _t("err.skill_failed", error=e)}
+        text = _t("skill.reload_summary", loaded=summary.get("loaded", 0),
+                  total=summary.get("total", 0), failed=summary.get("failed", 0))
+        return {"type": "system", "content": text, "skills": self.skills().status(),
+                "commands": self.commands.all_commands(), "summary": summary}
+
+    def _handle_skills_dev_mode(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        enabled = bool(request.get("enabled"))
+        self.config.marketplace.dev_mode = enabled
+        try:
+            self.config.save()
+        except Exception:
+            log.warning("保存开发者模式开关失败", exc_info=True)
+        self.skills()._dev_mode_cache = None
+        return {"type": "system",
+                "content": _t("skill.dev_mode_on" if enabled else "skill.dev_mode_off"),
+                "skills": self.skills().status()}
+
+    def _handle_skills_export_log(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        dest = str(request.get("path") or "").strip()
+        if not dest:
+            dest = os.path.join(os.path.expanduser("~"), "Desktop", "skills_dev.log")
+        try:
+            path = self.skills().export_log(dest)
+        except Exception as e:  # noqa: BLE001
+            return {"type": "system", "content": _t("err.skill_failed", error=e)}
+        return {"type": "system", "content": _t("skill.log_exported", path=path)}
+
+    def _handle_skills_scaffold(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """新建本地插件骨架（任务书 2B.6 新建插件向导）。"""
+        result = self.skills().scaffold(
+            str(request.get("id") or ""), str(request.get("name") or ""),
+            str(request.get("author") or ""), str(request.get("target") or ""),
+        )
+        if not result.get("ok"):
+            return {"type": "system", "content": f"❌ {result.get('message', '')}"}
+        summary = self.skills().reload_all()
+        return {"type": "system", "content": f"✅ {result.get('message', '')}",
+                "scaffold": result, "skills": self.skills().status(),
+                "commands": self.commands.all_commands(), "summary": summary}
+
+    def _handle_skills_install_folder(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        result = self.skills().install_from_folder(
+            str(request.get("path") or ""), dev=bool(request.get("dev")))
+        if not result.get("ok"):
+            return {"type": "system", "content": f"❌ {result.get('message', '')}"}
+        self.skills().reload_all()
+        return {"type": "system", "content": f"✅ {result.get('message', '')}",
+                "install": result, "skills": self.skills().status(),
+                "commands": self.commands.all_commands()}
+
+    def _handle_skills_uninstall(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        result = self.skills().uninstall(str(request.get("id") or ""),
+                                        delete_files=bool(request.get("delete_files", True)))
+        if not result.get("ok"):
+            return {"type": "system", "content": f"❌ {result.get('message', '')}"}
+        return {"type": "system", "content": f"✅ {result.get('message', '')}",
+                "skills": self.skills().status(), "commands": self.commands.all_commands()}
+
+    def _handle_skills_export_zip(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        result = self.skills().export_zip(str(request.get("id") or ""), str(request.get("path") or ""))
+        if not result.get("ok"):
+            return {"type": "system", "content": f"❌ {result.get('message', '')}"}
+        return {"type": "system", "content": f"✅ {result.get('message', '')}", "export": result}
+
+    def _handle_skills_publish_check(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        result = self.skills().publish_checklist(str(request.get("id") or ""))
+        return {"type": "system", "content": "", "publish_check": result}
+
+    def _handle_skills_trust(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """记录/撤销对本地插件的信任（任务书 2B.9 首次加载确认框）。"""
+        skill_id = str(request.get("id") or "")
+        trusted = bool(request.get("trusted", True))
+        ok = self.skills().trust_plugin(skill_id, trusted)
+        if not trusted:
+            self.skills().unload(skill_id)
+        return {"type": "system", "content": "" if ok else "❌ 信任状态写入失败",
+                "skills": self.skills().status(), "commands": self.commands.all_commands()}
+
+    def _handle_skills_manifest_set(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """写入本地插件清单（任务书 2B.3 / 2B.10 插件清单编辑）。"""
+        payload = request.get("manifest")
+        if not isinstance(payload, dict):
+            return {"type": "system", "content": "❌ 清单内容不合法"}
+        ok = self.skills().save_local_manifest(payload)
+        if not ok:
+            return {"type": "system", "content": _t("skill.manifest_save_failed",
+                                                    path=self.skills().local_manifest_file)}
+        self.skills().reload_all()
+        return {"type": "system", "content": _t("skill.manifest_saved"),
+                "manifest": self.skills().local_manifest(), "skills": self.skills().status(),
+                "commands": self.commands.all_commands()}
+
+    def _handle_skills_panel_action(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        result = self.skills().panel_action(
+            str(request.get("skill_id") or ""), str(request.get("panel_id") or ""),
+            str(request.get("panel_action") or ""),
+            request.get("values") if isinstance(request.get("values"), dict) else {},
+        )
+        return {"type": "system", "content": result.get("text") or result.get("message") or "",
+                "panel_result": result}
+
+    def _handle_skills_examples(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """把随包附带的示例插件复制到 skills_dev/（任务书 2.5 示例技能）。"""
+        loader = self.skills()
+        src_root = loader.examples_dir()
+        if not os.path.isdir(src_root):
+            return {"type": "system", "content": _t("skill.examples_missing", path=src_root)}
+        names = [d for d in sorted(os.listdir(src_root))
+                 if os.path.isdir(os.path.join(src_root, d)) and not d.startswith(".")]
+        only = str(request.get("id") or "").strip()
+        if only:
+            names = [n for n in names if n == only]
+        copied: List[str] = []
+        errors: List[str] = []
+        os.makedirs(loader.dev_dir, exist_ok=True)
+        for name in names:
+            dest = os.path.join(loader.dev_dir, name)
+            try:
+                if os.path.exists(dest):
+                    shutil.rmtree(dest, ignore_errors=True)
+                shutil.copytree(os.path.join(src_root, name), dest,
+                                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+                copied.append(name)
+            except OSError as e:
+                errors.append(f"{name}: {e}")
+        if copied:
+            loader.reload_all()
+        if not copied and errors:
+            return {"type": "system", "content": "❌ 复制示例插件失败: " + "; ".join(errors)}
+        text = _t("skill.examples_copied", names=", ".join(copied), dir=loader.dev_dir)
+        if errors:
+            text += " ⚠️ " + "; ".join(errors)
+        return {"type": "system", "content": text, "copied": copied,
+                "skills": loader.status(), "commands": self.commands.all_commands()}
+
+    # ---------- 自动更新（任务五 方案 A） ----------
+
+    def _handle_update_check(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """检查 GitHub Releases 是否有新版本；只提示，不下载、不替换。"""
+        try:
+            from update_check import check_for_update
+
+            result = check_for_update(self.config.update, force=bool(request.get("force")))
+        except Exception as e:  # noqa: BLE001
+            log.exception("检查更新失败")
+            return {"type": "system", "content": _t("update.check_failed", error=e),
+                    "update": {"ok": False, "error": str(e)}}
+        # 记录本次检查时间，避免每次启动都请求 GitHub（任务书 5.2 企业环境友好）
+        if result.get("checked_at"):
+            self.config.update.last_check = result["checked_at"]
+            self.config.update.last_seen_version = result.get("latest") or ""
+            try:
+                self.config.save()
+            except Exception:
+                log.debug("保存更新检查时间失败", exc_info=True)
+        return {"type": "system", "content": result.get("message", ""), "update": result}
 
     # ---------- 模型选择栏（新增四） ----------
 
     def _model_hub_error(self, e: Exception, verb: str) -> Dict[str, Any]:
         log.exception("模型中心%s失败", verb)
-        return {"type": "system", "content": f"❌ 模型中心{verb}失败: {e}"}
+        return {"type": "system", "content": _t("err.hub_failed", verb=verb, error=e)}
 
     def _handle_model_hub_search(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """搜索可下载的 GGUF 模型（镜像/官方双源，自动回退）。"""
@@ -362,7 +645,7 @@ class Backend:
 
     def _market_error(self, e: Exception, verb: str) -> Dict[str, Any]:
         log.exception("技能市场%s失败", verb)
-        return {"type": "system", "content": f"❌ 技能市场{verb}失败: {e}"}
+        return {"type": "system", "content": _t("err.market_failed", verb=verb, error=e)}
 
     def _handle_market_search(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """搜索技能：关键词 + 排序 + 页码（缓存命中时直接返回快照）。"""
@@ -482,6 +765,221 @@ class Backend:
             "automation": self._automation_payload(cfg),
         }
 
+    # ---------- 自动化配置向导、模板与导入导出（v0.2.1 任务四） ----------
+
+    #: 需要出现在「填写帮助」里的字段（顺序即界面顺序）
+    AUTOMATION_FIELDS = (
+        ("task_list_url", "step1", True),
+        ("task_list_selector", "step1", True),
+        ("task_row_selector", "step1", False),
+        ("next_page_selector", "step1", False),
+        ("task_detail_file_selector", "step2", True),
+        ("file_extensions", "step2", True),
+        ("instruction", "step3", True),
+        ("task_name", "step4", False),
+        ("results_root_name", "step4", False),
+        ("results_location", "step4", False),
+        ("max_tasks", "step5", False),
+        ("page_timeout_ms", "step5", False),
+        ("retries", "step5", False),
+        ("dedupe", "step5", False),
+        ("manual_login_wait_seconds", "step5", False),
+        ("llm_temperature", "step5", False),
+        ("llm_max_tokens", "step5", False),
+        ("save_results", "step5", False),
+        ("wait_network_idle", "step5", False),
+        ("audit_log_file", "step5", False),
+        ("download_dir", "step5", False),
+        ("browser_channel", "step5", False),
+        ("schedule_enabled", "step5", False),
+        ("schedule_times", "step5", False),
+        ("start_with_windows", "step5", False),
+        ("safety_accepted", "step5", True),
+        ("enabled", "step5", False),
+    )
+
+    #: 预置模板（任务书 4.4）；内容取自语言包，可多语言
+    AUTOMATION_TEMPLATES = ("contract", "invoice", "report", "table")
+
+    @staticmethod
+    def _automation_field_help() -> List[Dict[str, Any]]:
+        """字段级帮助（任务书 4.3）：标签、通俗说明、示例、是否必填、所在步骤。"""
+        items: List[Dict[str, Any]] = []
+        for name, step, required in Backend.AUTOMATION_FIELDS:
+            key = f"automation.help.{name}"
+            items.append({
+                "field": name,
+                "step": step,
+                "step_title": _t(f"automation.help.{step}_title"),
+                "required": bool(required),
+                "label": _t(f"{key}.label"),
+                "help": _t(f"{key}.help"),
+                "example": _t(f"{key}.example"),
+            })
+        return items
+
+    @staticmethod
+    def _automation_templates() -> List[Dict[str, Any]]:
+        """预置模板（任务书 4.4）+ 用户自定义模板（存在 config.user.json 旁）。"""
+        items: List[Dict[str, Any]] = []
+        for name in Backend.AUTOMATION_TEMPLATES:
+            items.append({
+                "id": name,
+                "label": _t(f"automation.template.{name}.label"),
+                "instruction": _t(f"automation.template.{name}.instruction"),
+                "extensions": _t(f"automation.template.{name}.extensions"),
+                "builtin": True,
+            })
+        for name, values in Backend._load_custom_templates().items():
+            items.append({
+                "id": name,
+                "label": values.get("label") or name,
+                "instruction": values.get("instruction") or "",
+                "extensions": values.get("extensions") or "",
+                "builtin": False,
+            })
+        return items
+
+    @staticmethod
+    def _custom_template_path() -> str:
+        return os.path.join(os.getcwd(), "automation_templates.json")
+
+    @staticmethod
+    def _load_custom_templates() -> Dict[str, Dict[str, str]]:
+        try:
+            with open(Backend._custom_template_path(), "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return {}
+        out: Dict[str, Dict[str, str]] = {}
+        for name, values in (data.get("templates") or {}).items():
+            if isinstance(values, dict):
+                out[str(name)] = {k: str(v) for k, v in values.items()}
+        return out
+
+    def _handle_automation_save_template(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """把当前配置存成自定义模板（任务书 4.4 末句）。"""
+        name = str(request.get("name") or "").strip()
+        if not name:
+            return {"type": "system", "content": "❌ 请提供模板名称"}
+        values = request.get("template")
+        if not isinstance(values, dict):
+            return {"type": "system", "content": "❌ 模板内容不合法"}
+        data = {"schema": 1, "templates": self._load_custom_templates()}
+        data["templates"][name] = {
+            "label": str(values.get("label") or name),
+            "instruction": str(values.get("instruction") or ""),
+            "extensions": str(values.get("extensions") or ""),
+        }
+        try:
+            with open(self._custom_template_path(), "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+        except OSError as e:
+            return {"type": "system", "content": f"❌ 保存模板失败: {e}"}
+        return {"type": "system", "content": _t("automation.template.custom_saved", name=name),
+                "templates": self._automation_templates()}
+
+    def _handle_automation_wizard_step(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """测试选择器向导的单步（任务书 4.5）：第 1~4 步。
+
+        第 4 步（试运行）需要几分钟，走流式通道 ``automation_wizard``；
+        这里处理 1~3 步这类"单次同步"的检查。
+        """
+        try:
+            step = int(request.get("step") or 1)
+        except (TypeError, ValueError):
+            step = 1
+        if step == 4:
+            return {"type": "system", "content": "❌ 第 4 步请使用流式向导（automation_wizard）"}
+        try:
+            result = self.automation().wizard_step(step)
+        except Exception as e:  # noqa: BLE001
+            log.exception("测试向导第 %s 步失败", step)
+            return {"type": "system", "content": f"❌ 第 {step} 步失败: {e}"}
+        return {"type": "system", "content": result.get("detail", ""), "wizard": result}
+
+    def _exportable_automation(self) -> Dict[str, Any]:
+        """导出自动化配置（任务书 4.7）：排除登录态、Token 等敏感信息。"""
+        data = self.config.automation.model_dump()
+        # 登录态文件内容是会话 Cookie，绝不导出；路径本身也不导出，避免跨机覆盖
+        data.pop("login_state_file", None)
+        data.pop("processed_file", None)
+        data.pop("download_dir", None)
+        return data
+
+    def _handle_automation_config_export(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        dest = str(request.get("path") or "").strip()
+        if not dest:
+            dest = os.path.join(os.path.expanduser("~"), "Desktop", "echodesk-automation.echodesk-auto")
+        if not dest.lower().endswith(".echodesk-auto"):
+            dest += ".echodesk-auto"
+        payload = {
+            "format": "echodesk-automation",
+            "schema": 1,
+            "app_version": APP_VERSION,
+            "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "language": _i18n().locale,
+            "note": ("EchoDesk 自动化配置导出文件。已排除登录态、处理记录与临时目录，"
+                     "可安全地在同组织的多台电脑之间复用。"),
+            "automation": self._exportable_automation(),
+        }
+        try:
+            with open(dest, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+        except OSError as e:
+            return {"type": "system", "content": f"❌ 导出失败: {e}"}
+        return {"type": "system", "content": f"✅ 自动化配置已导出到 {dest}", "path": dest}
+
+    def _handle_automation_config_import(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """导入自动化配置（任务书 4.7）。
+
+        导入的语言与当前界面语言不同时给出提示，但**不阻断**导入。
+        """
+        path = str(request.get("path") or "").strip()
+        if not path or not os.path.isfile(path):
+            return {"type": "system", "content": f"❌ 找不到文件: {path}"}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception as e:  # noqa: BLE001
+            return {"type": "system", "content": f"❌ 读取失败: {e}"}
+        if not isinstance(payload, dict) or payload.get("format") != "echodesk-automation":
+            return {"type": "system", "content": "❌ 这不是 EchoDesk 自动化配置文件（缺少 format 标记）"}
+        incoming = payload.get("automation")
+        if not isinstance(incoming, dict):
+            return {"type": "system", "content": "❌ 文件里没有 automation 配置段"}
+
+        # 安全协议与开关不从文件里继承：必须由本机用户亲自勾选（安全默认）
+        incoming.pop("safety_accepted", None)
+        incoming.pop("safety_accepted_at", None)
+        incoming.pop("enabled", None)
+
+        data = self.config.automation.model_dump()
+        applied = {k: v for k, v in incoming.items() if k in data}
+        data.update(applied)
+        data["safety_accepted"] = False
+        data["enabled"] = False
+        try:
+            self.config.automation = AutomationConfig(**data)
+        except Exception as e:  # noqa: BLE001
+            return {"type": "system", "content": f"❌ 配置无效，未导入: {e}"}
+        self.config.save()
+
+        source_lang = str(payload.get("language") or "")
+        note = ""
+        if source_lang and source_lang != _i18n().locale:
+            note = (_t("automation.import_lang_notice", source=source_lang, current=_i18n().locale))
+        return {
+            "type": "system",
+            "content": (_t("automation.import_ok", count=len(applied))
+                        + ("\n" + note if note else "")
+                        + "\n" + _t("automation.import_safety_reset")),
+            "automation": self._automation_payload(self.config.automation),
+            "imported_fields": sorted(applied),
+        }
+
     def _handle_automation_test(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """测试选择器：打开浏览器访问指定网址，预览选择器匹配结果。"""
         url = str(request.get("url") or self.config.automation.task_list_url or "").strip()
@@ -536,6 +1034,16 @@ class Backend:
                 response["search"] = bool(self.commands.search_enabled)
             except Exception:
                 response["search"] = False
+            # v0.2.1 任务三：模式也做成机器可读字段。前端此前靠匹配
+            # "✅ 已切换模式为: " 这个中文前缀来判断，切到英文界面后就失效了。
+            try:
+                response["mode"] = self.conv.get_mode()
+            except Exception:
+                response["mode"] = ""
+            try:
+                response["temperature"] = float(self.commands.temperature)
+            except Exception:
+                response["temperature"] = None
         except Exception:
             pass
 
@@ -550,6 +1058,12 @@ class Backend:
             return
         if action == "model_hub_download":
             yield from self._stream_model_hub_download(request)
+            return
+        if action == "automation_pick":
+            yield from self._stream_automation_pick(request)
+            return
+        if action == "automation_wizard":
+            yield from self._stream_automation_wizard(request)
             return
 
         user_msg = request.get("message", "")
@@ -583,7 +1097,7 @@ class Backend:
             yield done
         except Exception as e:
             log.exception("流式推理失败")
-            yield {"type": "error", "content": f"推理失败: {e}"}
+            yield {"type": "error", "content": _t("sys.inference_failed", error=e)}
 
     # ---------- 具体动作 ----------
 
@@ -598,7 +1112,7 @@ class Backend:
         # 意图短路：用户问"我刚才说了什么"时直接引用最近输入，避免小模型混淆视角
         last_user = self.conv.last_user_message()
         if last_user and REPEAT_INTENT.search(user_msg):
-            answer = f"您刚才说的是：\n{last_user}"
+            answer = _t("sys.repeat_intent", text=last_user)
             self.conv.add_message("user", user_msg)
             self.conv.add_message("assistant", answer)
             self._compact_history()
@@ -615,7 +1129,7 @@ class Backend:
             return {"type": "assistant", "content": response}
         except Exception as e:
             log.exception("推理失败")
-            return {"type": "system", "content": f"推理失败: {e}"}
+            return {"type": "system", "content": _t("sys.inference_failed", error=e)}
 
     def _stream_automation(self) -> Iterator[Dict[str, Any]]:
         """跑一次浏览器自动化，把引擎的进度事件原样转发给前端。
@@ -644,6 +1158,75 @@ class Backend:
                     log.info("自动化临时文件清理: %d 项", removed)
             except Exception:
                 log.warning("自动化临时目录清理失败", exc_info=True)
+
+    def _stream_automation_pick(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+        """可视化选取选择器（任务书 4.2）：在真实页面上点一下元素即生成选择器。
+
+        之所以走流式通道：用户可能要在页面上登录、点几下，耗时以分钟计，
+        前端需要实时进度、并且能随时停止（关掉浏览器窗口）。
+        """
+        target = str(request.get("target") or "task_list")
+        url = str(request.get("url") or self.config.automation.task_list_url or "").strip()
+        try:
+            timeout_seconds = int(request.get("timeout") or 300)
+        except (TypeError, ValueError):
+            timeout_seconds = 300
+        engine = self.automation()
+        try:
+            for event in engine.pick_selector(url, target, timeout_seconds=timeout_seconds,
+                                             stop_event=self.stop_event):
+                if event.get("type") == "done" and event.get("selector"):
+                    self._apply_picked_selector(target, str(event["selector"]))
+                yield event
+        except Exception as e:  # noqa: BLE001
+            log.exception("可视化选取失败")
+            yield {"type": "error", "content": f"❌ 可视化选取失败: {e}"}
+
+    def _apply_picked_selector(self, target: str, selector: str) -> None:
+        """把选取结果写入配置（前端只负责展示，落盘由后端统一做，避免双写）。"""
+        field = {
+            "task_list": "task_list_selector",
+            "task_row": "task_row_selector",
+            "next_page": "next_page_selector",
+            "task_detail_file": "task_detail_file_selector",
+        }.get(target)
+        if not field:
+            return
+        data = self.config.automation.model_dump()
+        data[field] = selector
+        try:
+            self.config.automation = AutomationConfig(**data)
+            self.config.save()
+            log.info("可视化选取已写入 %s = %s", field, selector)
+        except Exception:
+            log.warning("保存可视化选取结果失败", exc_info=True)
+
+    def _stream_automation_wizard(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+        """测试选择器向导（任务书 4.5）：第 4 步需要跑一次真实任务，因此走流式。
+
+        第 1~3 步由 ``automation_wizard_step`` 同步处理；这里只在 step=4 时使用。
+        """
+        try:
+            step = int(request.get("step") or 4)
+        except (TypeError, ValueError):
+            step = 4
+        engine = self.automation()
+        try:
+            yield {"type": "delta", "content": _t("automation.wizard_step_start", step=step)}
+            if step == 4:
+                for event in engine.run(stop_event=self.stop_event, limit=1, dry_run=True):
+                    yield event
+            else:
+                result = engine.wizard_step(step)
+                yield {"type": "done", "content": result.get("detail", ""), "wizard": result}
+        except Exception as e:  # noqa: BLE001
+            log.exception("测试向导执行失败")
+            yield {"type": "error", "content": f"❌ 测试向导第 {step} 步失败: {e}"}
+        finally:
+            try:
+                engine.cleanup_temp()
+            except Exception:
+                pass
 
     def _stream_model_hub_download(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
         """下载模型库中选定的 GGUF 文件（新增四）。
@@ -1024,18 +1607,15 @@ def main() -> None:
     # 本地模型缺失时不再直接下载，而是先征询用户（前端弹确认对话框）
     model_path = check_model(config.model_path)
     if not model_path:
-        log.warning("本地未找到模型 %s，请求前端征询用户", config.model_path)
+        log.warning("%s", _t("sys.log_missing_model", model=config.model_path))
         try:
             target, size = find_best_model(config.model_repo, config.model_path, hf_endpoint=config.hf_endpoint)
         except Exception as e:
             log.exception("查询模型仓库失败")
             _write({
                 "type": "system",
-                "content": (
-                    f"后端初始化失败: 本地缺少模型 {config.model_path}，"
-                    f"且无法查询仓库 {config.model_repo}（{e}）。\n"
-                    "请联网后重试，或手动把模型文件放入 models/ 目录。"
-                ),
+                "content": _t("sys.model_missing_no_repo", model=config.model_path,
+                              repo=config.model_repo, error=e),
             })
             return
         _write({
@@ -1044,15 +1624,16 @@ def main() -> None:
             "size": int(size or 0),
             "repo": config.model_repo,
             "current": config.model_path,
-            "content": (
-                f"本地未找到模型 {config.model_path}。\n"
-                f"仓库 {config.model_repo} 中最匹配的是 {target}"
-                + (f"（约 {size / 1048576:.0f} MB）" if size else "（大小未知）")
+            "content": _t(
+                "sys.model_missing_ask", model=config.model_path, repo=config.model_repo,
+                target=target,
+                size=(_t("sys.model_missing_size", mb=f"{size / 1048576:.0f}")
+                      if size else _t("sys.model_missing_unknown_size")),
             ),
         })
         model_path = _await_download_decision(config, target)
         if not model_path:
-            log.info("用户未同意下载模型，后端退出")
+            log.info("%s", _t("sys.model_declined"))
             return
 
     try:
@@ -1064,13 +1645,27 @@ def main() -> None:
     except Exception as e:
         log.exception("后端初始化失败")
         # 向 stdout 输出一条错误响应，前端首条请求即可读到
-        print(json.dumps({"type": "system", "content": f"后端初始化失败: {e}"}, ensure_ascii=False), flush=True)
+        print(json.dumps({"type": "system", "content": _t("sys.backend_init_failed", error=e)},
+                         ensure_ascii=False), flush=True)
         return
+
+    # v0.2.1 任务二：加载已安装技能与本地插件（发现/导入/注册命令）。
+    # 放在预热之后：技能加载失败不会拖慢或阻塞主程序启动，且异常已被隔离。
+    try:
+        skill_summary = backend.load_skills()
+        if skill_summary.get("total"):
+            log.info("技能加载完成：%s", skill_summary)
+    except Exception:
+        log.exception("技能加载阶段异常（已忽略）")
+        skill_summary = {}
 
     log.info("%s %s 就绪 — Powered by %s", APP_NAME, APP_VERSION, STUDIO)
     # 就绪声明：预热等准备工作全部完成后才输出，前端据此放行输入；附带恢复的历史消息供前端展示
     _write({"type": "ready", "version": APP_VERSION, "studio": STUDIO, "restored": restored,
-            "history": backend.conv.history})
+            "history": backend.conv.history,
+            "locale": _i18n().locale, "i18n": _i18n().info(),
+            "commands": backend.commands.all_commands(),
+            "skills": backend.skills().status()})
 
     def _stream_worker(request: Dict[str, Any]) -> None:
         try:
@@ -1100,14 +1695,15 @@ def main() -> None:
         if backend.stream_active and action != "stop":
             is_command = isinstance(request.get("message"), str) and request.get("message", "").startswith("/")
             if not is_command:
-                _write({"type": "system", "content": "⏳ 上一条回复仍在生成，请先停止（⏹ 按钮或 /stop）或等待完成"})
+                _write({"type": "system", "content": _t("sys.busy")})
                 continue
 
-        if action in ("chat_stream", "model_download", "automation_run", "model_hub_download"):
-            # 四种长任务都走流式线程：进度实时输出，stop 可中断。
-            # automation_run / model_hub_download 还会检查 stop_event 尽早退出。
-            if action == "automation_run" and backend.stream_active:
-                _write({"type": "system", "content": "⏳ 自动化任务正在运行，请先停止后再启动"})
+        if action in ("chat_stream", "model_download", "automation_run", "model_hub_download",
+                      "automation_pick", "automation_wizard"):
+            # 六种长任务都走流式线程：进度实时输出，stop 可中断。
+            # automation_* 还会检查 stop_event 尽早退出并关闭浏览器。
+            if action in ("automation_run", "automation_pick", "automation_wizard") and backend.stream_active:
+                _write({"type": "system", "content": _t("sys.automation_running")})
                 continue
             backend.stop_event.clear()
             backend.stream_active = True
@@ -1118,16 +1714,16 @@ def main() -> None:
                 # 自动化引擎另有自己的停止入口，一并通知，确保浏览器及时关闭
                 if backend._automation is not None:
                     backend._automation.stop()
-                _write({"type": "system", "content": "⏹ 已发送停止请求"})
+                _write({"type": "system", "content": _t("sys.stop_sent")})
             else:
-                _write({"type": "system", "content": "当前没有正在生成的内容"})
+                _write({"type": "system", "content": _t("sys.stop_none")})
         else:
             response = backend.handle(request)
             backend._attach_context(response)  # 附带上下文占用，/clear、/undo 后实时减少
             _write(response)
             backend.save_session()
             if response.get("action") == "exit":
-                log.info("收到退出指令，进程退出")
+                log.info("%s", _t("sys.exit_ack"))
                 return
 
 

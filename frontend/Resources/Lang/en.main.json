@@ -1,0 +1,72 @@
+{
+  "_meta": {
+    "locale": "en",
+    "module": "main",
+    "note": "Additional main-window strings (module fragment): merged with en.json, keys here win. Task book 3.5 asks for language packs split by module so several people can collaborate."
+  },
+  "main": {
+    "connecting": "⏳ Connecting to the backend, please wait…",
+    "welcome": "✨ Welcome to EchoDesk {0} — Powered by {1}",
+    "welcomeRestored": "📂 Previous session restored automatically ({0} turns)",
+    "status": {
+      "startFailed": "Backend failed to start",
+      "exiting": "Closing…",
+      "exitCountdown": "The program closes in {0} seconds",
+      "help": "Run state: starting the backend / ready / working / backend exited"
+    },
+    "model": {
+      "clickTip": "Click to open the model picker (Settings → Model)",
+      "help": "The model currently loaded; click to open the model settings"
+    },
+    "mode": {
+      "clickTip": "Click to change the default conversation mode in Settings",
+      "help": "The current conversation mode; click to open Settings"
+    },
+    "automation": {
+      "disabled": "off",
+      "running": "running"
+    },
+    "command": {
+      "move": "Move into the command box"
+    },
+    "upload": {
+      "chooseTitle": "Choose a file to upload",
+      "filter": "Supported files"
+    },
+    "strip": {
+      "searchOnTip": "Web search is on: each question searches the web first. Click to turn it off",
+      "searchOffTip": "Web search is off. Click to turn it on (/search on)",
+      "kvValueTip": "KV cache estimate about {0} (fp16, grows with the context window)\nClick to open Settings → Model",
+      "autoRunningTip": "Automation is running (the browser is open). Click to open Settings → Automation to watch or stop it",
+      "autoIdleTip": "Automation is enabled and idle. Click to open Settings → Automation",
+      "autoDisabledTip": "Automation is off (accept the safety protocol first). Click to open Settings → Automation",
+      "marketValueTip": "Skill marketplace: {0}\nClick to open Settings → Marketplace",
+      "expandTip": "Expand the status strip (search / automation / marketplace / context / KV cache)",
+      "collapseTip": "Collapse the status strip",
+      "searchHelp": "Web search toggle; click to switch it directly",
+      "autoHelp": "Automation state; click to open Settings",
+      "marketHelp": "Skill marketplace connection; click to open Settings",
+      "contextTip": "Context usage: click to refresh",
+      "contextHelp": "Current context usage percentage; click to refresh",
+      "kvHelp": "KV cache memory estimate; click to open the model settings"
+    },
+    "snippet": {
+      "empty": "(no snippets yet — add one with /snippet add <name> <text>)"
+    },
+    "message": {
+      "copy": "Copy",
+      "copyMarkdown": "Markdown",
+      "copyCode": "Code",
+      "user": "You",
+      "assistant": "Assistant",
+      "system": "System"
+    }
+  },
+  "settings": {
+    "market": {
+      "state": {
+        "syncedEmpty": "synced (no matching skills yet)"
+      }
+    }
+  }
+}

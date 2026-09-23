@@ -42,13 +42,39 @@ s = p.slides.add_slide(p.slide_layouts[5])
 s.shapes.title.text = "第一页标题"
 p.save(os.path.join(T, "c.pptx"))
 
-import pymupdf
+def _write_minimal_pdf(path, text):
+    """用裸 PDF 语法生成一个带文本层的单页 PDF。
 
-doc = pymupdf.open()
-pg = doc.new_page()
-pg.insert_text((72, 72), "PDF hello contract 12345")
-doc.save(os.path.join(T, "d.pdf"))
-doc.close()
+    v0.2.1（任务书 1.3）把 PDF 解析从 PyMuPDF 换成了 pypdf，而 pypdf 只能读不能写，
+    因此这里不再依赖任何 PDF 库来造样本：直接拼出最小可用的 PDF（含 xref 表），
+    这样测试既验证了 pypdf 的文本提取，也不再要求安装 AGPL 的 PyMuPDF。
+    """
+    content = f"BT /F1 12 Tf 20 100 Td ({text}) Tj ET".encode("latin-1")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] "
+         b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"),
+        b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for index, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += f"{index} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref_at = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n".encode()
+    out += b"0000000000 65535 f \n"
+    for offset in offsets:
+        out += f"{offset:010d} 00000 n \n".encode()
+    out += (f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_at}\n%%EOF\n").encode()
+    with open(path, "wb") as f:
+        f.write(bytes(out))
+
+
+_write_minimal_pdf(os.path.join(T, "d.pdf"), "PDF hello contract 12345")
 
 with open(os.path.join(T, "e.txt"), "w", encoding="utf-8") as f:
     f.write("纯文本内容 · 中文测试")

@@ -26,7 +26,7 @@ import tempfile
 from PyInstaller.utils.hooks import collect_all
 
 # ---------- 可执行文件元数据（与 tools\set_metadata.bat 保持一致） ----------
-APP_VERSION = "0.2.0.0"
+APP_VERSION = "0.2.1.0"
 COMPANY = "Void Entropia Studio"
 PRODUCT = "EchoDesk"
 EXE_NAME = "EchoDeskBackend.exe"
@@ -44,7 +44,9 @@ COMMENTS = "Powered by Void Entropia Studio"
 #           后端体积从约 140MB 膨胀到近 1GB；
 #       (3) 其依赖链含 GPL/LGPL 组件，对外分发会产生著佐权义务。
 # 改用 backend/file_parser.py 中的轻量解析器（python-docx/openpyxl/python-pptx/
-# pymupdf/xlrd，均为 MIT/BSD 或可选商业许可），行为更可预测、体积更小。
+# pypdf/xlrd，均为 MIT/BSD），行为更可预测、体积更小。
+# v0.2.1（任务书 1.3）：.pdf 解析由 pymupdf（AGPL-3.0）换成 pypdf（BSD-3-Clause），
+# 既消除对外分发时的著佐权义务，又把该依赖的安装体积从 52.9MB 降到约 1.4MB。
 # 说明：playwright 必须整包收集——它自带 Node 驱动（driver/ 约 102MB，含 node.exe
 # 与 playwright-core），自动化功能依赖该驱动启动本机 Edge，缺文件会在运行时才报错。
 PACKAGES = ["llama_cpp", "pydantic", "huggingface_hub", "duckduckgo_search", "win32com", "playwright"]
@@ -54,6 +56,8 @@ PACKAGES = ["llama_cpp", "pydantic", "huggingface_hub", "duckduckgo_search", "wi
 # 同时减少随包分发的第三方组件数量（降低开源合规与杀毒误报风险）。
 EXCLUDES = [
     "tkinter", "pyxtxt",
+    # v0.2.1：确保 AGPL 的 PyMuPDF 不会因任何间接 import 被误打包
+    "pymupdf", "fitz",
     "torch", "torchvision", "torchaudio", "tensorflow", "tensorflow_intel", "keras",
     "easyocr", "cv2", "skimage", "numba", "llvmlite", "scipy", "shapely",
     "pygame", "pynput", "imageio", "matplotlib", "sympy", "networkx", "pandas",
@@ -74,6 +78,16 @@ for pkg in PACKAGES:
 
 # 配置文件随包内置（onedir 下即位于 exe 同级目录，用户可直接编辑）
 datas.append((os.path.join(SPECPATH, "config.json"), "."))
+
+# 后端语言包（v0.2.1 任务三）：<locale>.json 与模块分片 <locale>.<模块>.json。
+# 打包进 _internal/lang/，运行时由 backend/i18n.py 按"程序目录 lang/ → exe 目录 lang/
+# → _MEIPASS/lang/ → 源码目录 lang/"的顺序查找，因此用户也可以把新的语言包直接
+# 丢到程序目录的 lang/ 下生效，无需重新打包。
+_LANG_DIR = os.path.join(SPECPATH, "lang")
+if os.path.isdir(_LANG_DIR):
+    for _name in sorted(os.listdir(_LANG_DIR)):
+        if _name.lower().endswith(".json"):
+            datas.append((os.path.join(_LANG_DIR, _name), "lang"))
 
 # 项目图标（frontend 用同一个 ico，保证前后端图标一致）
 ICON_PATH = os.path.normpath(os.path.join(SPECPATH, "..", "assets", "EchoDesk.ico"))
@@ -135,7 +149,7 @@ a = Analysis(
     pathex=[SPECPATH],
     binaries=binaries,
     datas=datas,
-    hiddenimports=hiddenimports + ["llama_cpp", "win32com", "playwright", "schedule"],
+    hiddenimports=hiddenimports + ["llama_cpp", "win32com", "playwright", "schedule", "pypdf"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

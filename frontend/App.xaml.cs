@@ -21,7 +21,8 @@ namespace EchoDesk
         private const int MaxHandledUnhandled = 5;
 
         protected override void OnStartup(StartupEventArgs e)
-        {            // 说明（v0.2.0 修复一）：此前前端没有任何全局异常处理，设置窗口构造中的
+        {
+            // 说明（v0.2.0 修复一）：此前前端没有任何全局异常处理，设置窗口构造中的
             // NullReferenceException 会直接终止进程——用户看到的是「界面无响应，只能从
             // 任务管理器结束」，且不留任何线索。这里记录异常并尽量让程序继续可用。
             DispatcherUnhandledException += OnDispatcherUnhandledException;
@@ -32,6 +33,16 @@ namespace EchoDesk
                 Log("TaskScheduler.UnobservedTaskException", args.Exception);
                 args.SetObserved();
             };
+            // 多语言（v0.2.1 任务三）：必须在任何窗口创建之前初始化，
+            // 否则 MainWindow 构造时读到的还是默认语言。
+            try
+            {
+                EchoDesk.Services.Loc.Initialize(Services.AppSettings.Load().Language);
+            }
+            catch (Exception ex)
+            {
+                Log("App.Loc.Initialize", ex);   // 语言包损坏不应阻止启动
+            }
             base.OnStartup(e);
         }
 
@@ -59,7 +70,8 @@ namespace EchoDesk
 
         /// <summary>把异常（含内部异常与堆栈）追加写入前端崩溃日志。</summary>
         internal static void Log(string tag, Exception? ex)
-        {            try
+        {
+            try
             {
                 var sb = new StringBuilder();
                 sb.AppendLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {tag}");

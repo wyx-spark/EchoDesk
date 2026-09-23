@@ -139,7 +139,12 @@ public partial class SettingsWindow : Window
         _onThemeChanged = onThemeChanged;
         _onFontSizeChanged = onFontSizeChanged;
 
-        SafetyText.Text = SafetyBody;
+        // 多语言（任务三）：先回填 XAML 静态文案，再订阅切换事件（切换后即时刷新）
+        Loc.Apply(this);
+        Title = Loc.T("settings.title");
+        Loc.LanguageChanged += (_, _) => ApplyLanguage();
+
+        SafetyText.Text = Loc.T("settings.automation.safetyBody", DefaultSafetyBody);
 
         foreach (var (key, label) in Modes)
             DefaultModeCombo.Items.Add(new ComboBoxItem { Content = label, Tag = key });
@@ -149,14 +154,16 @@ public partial class SettingsWindow : Window
         FontSizeSlider.Value = fontSize;
         FontSizeLabel.Text = $"{fontSize:0.#} pt";
         PathsText.Text =
-            $"程序目录：{ShortcutService.ProgramDirectory}\n" +
-            "后端目录（配置 / models / 会话 / 自动化日志）：程序目录\\backend\n" +
-            "技能安装目录：程序目录\\backend\\skills";
+            $"{Loc.T("settings.general.pathProgram", "程序目录")}: {ShortcutService.ProgramDirectory}\n" +
+            $"{Loc.T("settings.general.pathBackend", "后端目录（配置 / models / 会话 / 自动化日志）")}: " +
+            $"{ShortcutService.ProgramDirectory}\\backend\n" +
+            $"{Loc.T("settings.general.pathSkills", "插件目录")}: {ShortcutService.ProgramDirectory}\\backend\\skills";
 
         MarketSortCombo.Items.Add(new ComboBoxItem { Content = "最佳匹配", Tag = "best" });
         MarketSortCombo.Items.Add(new ComboBoxItem { Content = "Star 最多", Tag = "stars" });
         MarketSortCombo.Items.Add(new ComboBoxItem { Content = "最近更新", Tag = "updated" });
         MarketSortCombo.SelectedIndex = 0;
+        TemplateCombo.DisplayMemberPath = "Label";   // 模板项是 TemplateItem 对象
 
         _searchDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
         _searchDebounce.Tick += (_, _) =>
@@ -190,6 +197,10 @@ public partial class SettingsWindow : Window
         };
 
         // 先让窗口完成构建与绘制，再异步取数据：窗口打开时间与后端无关（要求 < 500ms）。
+        // v0.2.1 新增界面（语言 / 插件 / 开发者）在这里初始化：全部是纯本地操作，
+        // 不访问后端，因此不影响"打开即见"的时间指标。
+        InitLanguageUi();
+        InitSkillsUi();
         _uiReady = true;
         ContentRendered += SettingsWindow_ContentRendered;
         Closed += (_, _) =>
@@ -249,26 +260,16 @@ public partial class SettingsWindow : Window
         }
 
         string? modeJson = await RequestWithRetryAsync(
-            new { action = "chat", message = "/mode" }, "读取当前对话模式", TimeSpan.FromSeconds(60));
+            new { action = "context" }, "读取当前对话模式", TimeSpan.FromSeconds(60));
         if (modeJson is not null)
         {
             try
             {
                 using JsonDocument doc = JsonDocument.Parse(modeJson);
-                string content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
-                // 形如「当前模式: general（/mode list 查看全部）」
-                bool matched = false;
-                foreach (var (key, _) in Modes)
-                {
-                    if (content.Contains($": {key}", StringComparison.OrdinalIgnoreCase))
-                    {
-                        SelectMode(key);
-                        matched = true;
-                        break;
-                    }
-                }
-                if (!matched)
-                    SelectMode("general");
+                // 任务三：模式改读机器可读字段。此前靠匹配 /mode 的中文输出
+                // （"当前模式: general"），界面切成英文后就再也选不中默认模式了。
+                string mode = GetString(doc.RootElement, "mode");
+                SelectMode(mode.Length > 0 ? mode : "general");
             }
             catch (JsonException)
             {
@@ -276,9 +277,16 @@ public partial class SettingsWindow : Window
             }
         }
 
+        // v0.2.1：字段级帮助与模板库（任务四），以及插件状态（任务二）
+        await LoadAutomationHelpAsync();
+        ApplyFieldHelpTooltips();
+        await LoadSkillsAsync();
+        await LoadManifestAsync();
+
         _loading = false;
-        MarketStatusText.Text = "技能市场：点「刷新」浏览 topic 为 echodesk-plugin 的技能，或输入关键词搜索。";
-        SetLoadState("✅ 配置已载入");
+        MarketStatusText.Text = Loc.T("settings.market.tip",
+            "技能市场：点「刷新」浏览 topic 为 echodesk-plugin 的技能，或输入关键词搜索。");
+        SetLoadState(Loc.T("settings.loadState.loaded", "✅ 配置已载入"));
         await LoadHubAsync();
     }
 
@@ -1113,7 +1121,15 @@ public partial class SettingsWindow : Window
         _ = SearchMarketAsync();
     }
 
-    private void MarketInstalledButton_Click(object sender, RoutedEventArgs e) => _ = ShowInstalledAsync();
+    /// <summary>
+    /// 「市场 → 已安装」按钮：v0.2.1 起切到独立的「已安装」Tab（展示加载状态、命令、
+    /// 来源、错误详情与卸载/导出等操作），而不是只在状态栏里列一串 ID。
+    /// </summary>
+    private void MarketInstalledButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowTab(Loc.T("settings.tab.installed"));
+        _ = LoadSkillsAsync();
+    }
 
     private async Task SearchMarketAsync()
     {
@@ -1346,20 +1362,25 @@ public partial class SettingsWindow : Window
     private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
 
     /// <summary>供主窗口 Ctrl+M 调用：切到技能市场 Tab 并刷新一次列表。</summary>
-    public void ShowMarketTab() => ShowTab("技能市场", refreshMarket: true);
+    public void ShowMarketTab() => ShowTab(Loc.T("settings.tab.market"), refreshMarket: true);
 
     /// <summary>
     /// 切到指定标题的 Tab（供主窗口状态区点击跳转）。refreshMarket 为真时顺带刷新市场列表。
+    ///
+    /// v0.2.1：调用方传的可能是本地化后的标题，也可能传中文原名（主窗口里的
+    /// 「设置 → 模型」之类提示）；两种都认，避免界面语言一变跳转就失效。
     /// </summary>
     public void ShowTab(string header, bool refreshMarket = false)
     {
         for (int i = 0; i < Tabs.Items.Count; i++)
         {
-            if (Tabs.Items[i] is TabItem tab && Equals(tab.Header, header))
-            {
-                Tabs.SelectedIndex = i;
-                break;
-            }
+            if (Tabs.Items[i] is not TabItem tab)
+                continue;
+            string current = tab.Header?.ToString() ?? "";
+            if (!Equals(current, header) && !Equals(HeaderKeyOf(i), header))
+                continue;
+            Tabs.SelectedIndex = i;
+            break;
         }
         if (refreshMarket)
         {
@@ -1367,6 +1388,18 @@ public partial class SettingsWindow : Window
             _ = SearchMarketAsync();
         }
     }
+
+    /// <summary>第 i 个 Tab 在语言包里的键（用于跨语言查找 Tab）。</summary>
+    private static string HeaderKeyOf(int index) => index switch
+    {
+        0 => "settings.tab.general",
+        1 => "settings.tab.model",
+        2 => "settings.tab.automation",
+        3 => "settings.tab.installed",
+        4 => "settings.tab.market",
+        5 => "settings.tab.developer",
+        _ => "",
+    };
 
     // ---------- JSON 读取辅助 ----------
 

@@ -1,107 +1,121 @@
-"""指令解析：处理以 '/' 开头的用户指令。"""
+"""指令解析：处理以 '/' 开头的用户指令。
+
+v0.2.1（任务书 任务三 3.4 / 3.7）：所有面向用户的文案改为从语言包取用
+（``backend/lang/<locale>.json``），并按"当前语言 → en → zh-Hans → 键名"回退。
+
+v0.2.1（任务书 任务二 2.2）：指令表支持运行期注册外部指令（技能/本地插件），
+行为与内置指令完全一致；``COMMAND_SPEC`` 同时是 /help 与前端指令面板的数据源，
+因此技能指令会自动出现在输入框的候选列表里。
+"""
 import os
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from config import Config
 from conversation import ConversationManager, MODE_TEMPERATURES
 from download_utils import find_best_model
-from file_parser import parse_file_with_wps
+from file_parser import is_parse_error, localize_error, parse_file_with_wps
 from gguf_meta import resolve_context_window
+from i18n import get as _i18n
+from i18n import t as _t
 from version import APP_NAME, APP_VERSION, STUDIO
-
-HELP_TEXT = f"""\
-📖 EchoDesk {APP_VERSION} 完整指令介绍（Powered by {STUDIO}）
-
-/help — 显示此指令介绍
-  用法：/help
-  作用：展示全部指令的用法与作用，即本帮助。
-
-/mode <编号|缩写|全称> — 切换对话模式
-  用法：/mode 2 或 /mode s 或 /mode summary；/mode list 查看全部
-  作用：切换 AI 回答风格。模式有：
-    general 通用助手 / summary 摘要专家 / translate 翻译专家 /
-    code 编程专家 / contract 合同审查 / creative 创意写作
-
-/file <路径> — 上传文件
-  用法：/file C:\\文档\\合同.docx
-  作用：把文件内容加入上下文，模型将基于文件回答。
-  支持 Office（doc/docx/xls/xlsx/ppt/pptx）、TXT、PDF 等；
-  加密 Office 文档在装有 WPS 的机器上可自动解密，否则回退通用解析。
-  长文档（估算 token 超过上下文窗口的 50%）会自动先分段摘要再注入，
-  而不是直接截断，摘要中保留原文指针便于回查。
-
-/summarize — 手动触发全文摘要
-  用法：/summarize
-  作用：对当前已加载的文件强制做一次分段摘要（逐段摘要后合并），
-       用摘要替代全文注入上下文，适合合同等超长文档；摘要进度在对话框中实时显示。
-
-/search on|off — 联网搜索开关
-  用法：/search on
-  作用：开启后每次提问会先搜索网络参考信息再回答（需要联网）。
-
-/model [名称|别名|list] — 查看或切换模型
-  用法：/model             查看当前模型信息（架构/量化/上下文/GPU 等）
-       /model list         列出 models/ 目录与配置档案中的模型
-       /model 模型名.gguf   切换本地模型（支持前缀模糊匹配）
-       /model 别名         切换 config.models 档案中的模型（自动套用其上下文/温度）
-  本地缺失时从仓库匹配最接近的文件，并在你确认后才开始下载（可能耗时较长）。
-
-/clearcache — 清空 KV 缓存
-  用法：/clearcache
-  作用：清空推理引擎的 KV 缓存与输入历史；模式/提示词/历史变化时系统会自动清理，
-        手动清理可用于排查异常输出。
-
-/prompt <文本>|reset — 自定义系统提示词
-  用法：/prompt 你是我的法律顾问；/prompt reset 清除
-  作用：覆盖当前模式的默认提示词，临时改变助手角色。
-
-/temp <0.0~1.0>|reset — 调整生成温度
-  用法：/temp 0.9；/temp reset 恢复模式预设
-  作用：温度越高回答越发散，越低越保守。
-  提示：切换模式时会自动套用该模式的温度预设（code 0.2 / translate 0.3 /
-       contract 0.3 / summary 0.4 / general 0.7 / creative 0.9），
-       手动设置后以手动值为准，/temp reset 恢复预设。
-
-/stop — 停止当前生成
-  用法：/stop（或前端 ⏹ 停止 按钮）
-  作用：中断正在进行的流式回复。
-
-/snippet <add|remove|list> — 常用语（前端管理）
-  用法：/snippet list；/snippet add 名称 文本；/snippet remove 名称
-  作用：管理对话输入框可一键插入的常用语模板（由前端保存在 snippets.json）。
-
-/darkmode on|off — 切换主题
-  用法：/darkmode on
-  作用：切换深色/浅色界面主题（由前端即时渲染）。
-
-/status — 查看当前状态
-  用法：/status
-  作用：显示模型、模式、温度、搜索状态、对话轮数与已加载文件。
-
-/clear — 清空对话
-  用法：/clear
-  作用：清空历史记录与文件上下文，重新开始。
-
-/undo — 撤回
-  用法：/undo
-  作用：撤回最近一轮问答（各一条）。
-
-/save <文件名> — 导出对话
-  用法：/save 会议记录
-  作用：把当前对话导出为 Markdown 文件（自动补 .md 后缀）。
-
-/about — 关于
-  用法：/about
-  作用：显示版本号与出品方信息。
-
-/exit — 退出程序
-  用法：/exit
-  作用：显示感谢语后，前端将在 10 秒内自动关闭程序。
-"""
 
 # 返回：反馈文本 + 附加动作（dict，如 {"action": "exit"} / {"action": "confirm_model", ...}）
 Response = Tuple[str, Optional[dict]]
+
+
+def t(key: str, **kwargs: Any) -> str:
+    """本模块内取文案的快捷方式。"""
+    return _t(key, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# 指令元数据（顺序 = /help 与前端指令面板的展示顺序）
+# ---------------------------------------------------------------------------
+# 字段说明：
+#   name        指令名（同时决定语言包键 cmd.items.<name>）
+#   category    分组，前端据此排序/分组
+#   destructive 有副作用且不可逆，前端执行前二次确认（v0.2.0 修复二）
+#   hidden      不在 /help 与指令面板中展示（如别名）
+COMMAND_SPEC: List[Dict[str, Any]] = [
+    {"name": "/help", "category": "core"},
+    {"name": "/status", "category": "core"},
+    {"name": "/about", "category": "core"},
+    {"name": "/mode", "category": "chat"},
+    {"name": "/search", "category": "chat"},
+    {"name": "/prompt", "category": "chat"},
+    {"name": "/temp", "category": "chat"},
+    {"name": "/stop", "category": "chat"},
+    {"name": "/file", "category": "file"},
+    {"name": "/summarize", "category": "file"},
+    {"name": "/save", "category": "file"},
+    {"name": "/model", "category": "model"},
+    {"name": "/clearcache", "category": "model", "destructive": True},
+    {"name": "/clear", "category": "core", "destructive": True},
+    {"name": "/undo", "category": "core"},
+    {"name": "/darkmode", "category": "ui"},
+    {"name": "/snippet", "category": "ui"},
+    {"name": "/exit", "category": "core"},
+]
+
+#: 别名 → 主指令名（不单独展示）
+COMMAND_ALIASES: Dict[str, str] = {"/quit": "/exit"}
+
+
+def describe_commands(extra: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    """返回本地化后的指令元数据列表（前端指令面板 / 帮助的数据源）。
+
+    内置指令在前、技能指令在后；每项包含 name / usage / desc / detail /
+    category / source / destructive，可直接序列化给前端。
+    """
+    items: List[Dict[str, Any]] = []
+    for spec in COMMAND_SPEC:
+        name = spec["name"]
+        key = f"cmd.items.{name}"
+        items.append({
+            "name": name,
+            "label": t(f"{key}.name"),
+            "usage": t(f"{key}.usage"),
+            "desc": t(f"{key}.desc"),
+            "detail": t(f"{key}.detail") if _i18n().has(f"{key}.detail") else "",
+            "category": spec.get("category", "core"),
+            "source": "builtin",
+            "destructive": bool(spec.get("destructive")),
+        })
+    for item in extra or []:
+        items.append(item)
+    return items
+
+
+def help_text(extra: Optional[List[Dict[str, Any]]] = None) -> str:
+    """构建 /help 的完整文案（含技能指令，任务书任务二 2.6）。"""
+    lines: List[str] = [t("cmd.help.header", version=APP_VERSION, studio=STUDIO), ""]
+    for item in describe_commands(extra):
+        lines.append(f"{item['usage']} — {item.get('label') or item['name']}")
+        lines.append(f"  {t('cmd.help.usage_label')}{item['usage']}")
+        desc = item.get("desc") or ""
+        if desc:
+            first, _, rest = desc.partition("\n")
+            lines.append(f"  {t('cmd.help.desc_label')}{first}")
+            if rest:
+                lines.append(rest)
+        detail = item.get("detail") or ""
+        if detail:
+            lines.append(detail)
+        lines.append("")
+
+    skills = [i for i in (extra or []) if i.get("source") != "builtin"]
+    if skills:
+        lines.append(t("cmd.help.skill_section"))
+        for item in skills:
+            lines.append(f"  {item['usage']} — {item['name']}（{item.get('skill_name') or item.get('skill_id', '')}）")
+        lines.append("")
+        lines.append(t("cmd.help.skill_footer"))
+        lines.append("")
+
+    lines.append(t("cmd.help.footer"))
+    return "\n".join(lines)
+
 
 
 class CommandHandler:
@@ -128,11 +142,13 @@ class CommandHandler:
         self.temperature = config.temperature
         self.temp_manual = False  # 用户手动 /temp 后，切换模式不再套用温度预设
         self.context_length = config.context_length
+        # 技能/本地插件注册的外部指令：{"/hello": {...}}（任务二 2.2）
+        self._external: Dict[str, Dict[str, Any]] = {}
 
         self._handlers: Dict[str, Callable[[list], Response]] = {
             "/exit": lambda _: self._exit(),
             "/quit": lambda _: self._exit(),
-            "/help": lambda _: (HELP_TEXT, None),
+            "/help": self._help,
             "/mode": self._mode,
             "/file": self._file,
             "/summarize": self._summarize,
@@ -150,28 +166,146 @@ class CommandHandler:
             "/save": self._save,
             "/temp": self._temp,
         }
+        # 由 main 注入：返回技能已接管的文件扩展名（/model、/status 里展示）
+        self.skill_parsers_provider: Optional[Callable[[], Dict[str, str]]] = None
+
+    # ---------- 运行期指令注册（任务二 2.2 / 2.4） ----------
+
+    def register_command(
+        self,
+        name: str,
+        handler: Callable[[list], Any],
+        *,
+        skill_id: str = "",
+        skill_name: str = "",
+        label: str = "",
+        usage: str = "",
+        description: str = "",
+        destructive: bool = False,
+    ) -> bool:
+        """注册一个外部指令（技能/本地插件）。
+
+        * 指令名统一小写、必须以 ``/`` 开头；
+        * **不能覆盖内置指令**（返回 False），保证主程序行为可预测；
+        * 处理函数的异常由 ``handle`` 统一捕获，不会影响主程序（2.4 异常隔离）。
+        """
+        key = str(name or "").strip().lower()
+        if not key:
+            return False
+        if not key.startswith("/"):
+            key = "/" + key
+        if key in self._handlers:
+            return False
+        self._external[key] = {
+            "handler": handler,
+            "skill_id": skill_id,
+            "skill_name": skill_name or skill_id,
+            "label": label,
+            "usage": usage or key,
+            "description": description,
+            "destructive": destructive,
+        }
+        return True
+
+    def unregister_command(self, name: str) -> bool:
+        key = str(name or "").strip().lower()
+        if key and not key.startswith("/"):
+            key = "/" + key
+        return self._external.pop(key, None) is not None
+
+    def unregister_skill_commands(self, skill_id: str) -> int:
+        """卸载某个技能注册的全部指令，返回移除数量（2.4 卸载热重载）。"""
+        doomed = [k for k, v in self._external.items() if v.get("skill_id") == skill_id]
+        for key in doomed:
+            self._external.pop(key, None)
+        return len(doomed)
+
+    def external_commands(self) -> List[Dict[str, Any]]:
+        """技能指令的元数据（供 /help 与前端指令面板）。"""
+        items: List[Dict[str, Any]] = []
+        for key, meta in self._external.items():
+            items.append({
+                "name": key,
+                "label": meta.get("label") or key,
+                "usage": meta.get("usage") or key,
+                "desc": meta.get("description") or "",
+                "detail": "",
+                "category": "skill",
+                "source": "skill",
+                "skill_id": meta.get("skill_id", ""),
+                "skill_name": meta.get("skill_name", ""),
+                "destructive": bool(meta.get("destructive")),
+            })
+        return items
+
+    def all_commands(self) -> List[Dict[str, Any]]:
+        """内置 + 技能指令的完整元数据（前端指令面板用）。
+
+        技能指令在 ``register_command`` 时就进了 ``_external``，
+        因此这里不需要再去问加载器，避免了双重数据源不一致的风险。
+        """
+        return describe_commands(self.external_commands())
 
     def handle(self, cmd_line: str) -> Response:
         """解析并执行指令，返回 (反馈文本, 附加动作)。"""
         parts = cmd_line.strip().split()
         if not parts:
             return "", None
-        handler = self._handlers.get(parts[0].lower())
-        if handler is None:
-            return f"未知指令: {parts[0]}（输入 /help 查看全部指令）", None
-        return handler(parts[1:])
+        name = parts[0].lower()
+        handler = self._handlers.get(name)
+        if handler is not None:
+            return handler(parts[1:])
+
+        # 技能/本地插件指令：异常必须被隔离（任务二 2.4）
+        external = self._external.get(name)
+        if external is not None:
+            try:
+                result = external["handler"](parts[1:])
+            except Exception as e:  # noqa: BLE001
+                import traceback
+
+                traceback.print_exc()
+                skill = external.get("skill_name") or external.get("skill_id") or "?"
+                return t("cmd.disabled", skill=skill, name=name, reason=f"{type(e).__name__}: {e}"), None
+            return self._coerce_external(name, result)
+
+        return t("cmd.unknown", name=parts[0]), None
+
+    @staticmethod
+    def _coerce_external(name: str, result: Any) -> Response:
+        """把技能处理函数的返回值统一成 (文本, 动作)。
+
+        技能可以返回：
+          * 字符串 → 文本反馈；
+          * ``(文本, 动作dict)`` → 与内置指令一致；
+          * 含 ``text`` 键的 dict → 文本 + 其它键作为动作。
+        """
+        if isinstance(result, tuple) and len(result) == 2:
+            text, action = result
+            return ("" if text is None else str(text)), (action if isinstance(action, dict) else None)
+        if isinstance(result, dict):
+            text = result.get("text") or result.get("content") or ""
+            action = {k: v for k, v in result.items() if k not in ("text", "content")}
+            return (str(text), action or None)
+        if result is None:
+            return "", None
+        return str(result), None
 
     # ---------- 指令实现 ----------
 
+    def _help(self, _args: list) -> Response:
+        # 技能指令也要出现在 /help 里（任务书 2.6）
+        return help_text(self.external_commands()), None
+
     @staticmethod
     def _exit() -> Response:
-        return "👋 退出程序，再见！", {"action": "exit"}
+        return t("cmd.resp.exit"), {"action": "exit"}
 
     def _mode(self, args: list) -> Response:
         if not args:
-            return f"当前模式: {self.conv_mgr.get_mode()}（/mode list 查看全部）", None
+            return t("cmd.resp.mode_current", mode=self.conv_mgr.get_mode()), None
         if args[0].lower() == "list":
-            return f"可用模式（编号 / 缩写 / 全称均可切换）：\n{self.conv_mgr.mode_menu()}", None
+            return t("cmd.resp.mode_list", menu=self.conv_mgr.mode_menu()), None
         if self.conv_mgr.set_mode(args[0]):
             mode = self.conv_mgr.get_mode()
             self.config.default_mode = mode
@@ -181,47 +315,48 @@ class CommandHandler:
             preset = MODE_TEMPERATURES.get(mode)
             if not self.temp_manual and preset is not None:
                 self.temperature = preset
-                return f"✅ 已切换模式为: {mode}（温度预设 {preset}）", None
-            return f"✅ 已切换模式为: {mode}", None
-        return f"❌ 未知模式: {args[0]}（/mode list 查看）", None
+                return t("cmd.resp.mode_set_preset", mode=mode, preset=preset), None
+            return t("cmd.resp.mode_set", mode=mode), None
+        return t("cmd.resp.mode_unknown", name=args[0]), None
 
     def _file(self, args: list) -> Response:
         if not args:
-            return "请提供文件路径，例如: /file C:\\dir\\文档.docx", None
+            return t("cmd.resp.file_need_path"), None
         filepath = args[0]
         if not os.path.exists(filepath):
-            return f"文件不存在: {filepath}", None
+            return t("cmd.resp.file_missing", path=filepath), None
         # 统一走后端的加载入口：过长文档自动分段摘要后再注入
         if self.file_loader is not None:
             return self.file_loader(filepath), None
         content = parse_file_with_wps(filepath, self.config.file_max_chars)
-        if content.startswith(("WPS读取失败", "解析失败", "文件内容为空", "不支持的文件类型")):
-            return f"❌ 读取失败: {content}", None
+        if is_parse_error(content):
+            return t("cmd.resp.file_load_failed", content=localize_error(content)), None
         self.conv_mgr.set_file(filepath, content)
-        return f"✅ 已加载文件: {os.path.basename(filepath)} ({len(content)} 字符)", None
+        return t("cmd.resp.file_loaded", name=os.path.basename(filepath), chars=len(content)), None
 
     def _summarize(self, args: list) -> Response:
         """手动触发全文摘要（长文档注入前先分段摘要）。"""
         if self.summarize_file is None:
-            return "❌ 当前不支持手动摘要", None
+            return t("cmd.resp.summarize_unsupported"), None
         if not self.conv_mgr.file_content:
-            return "❌ 当前没有已加载的文件，请先用 /file 上传", None
+            return t("cmd.resp.summarize_no_file"), None
         name = os.path.basename(self.conv_mgr.file_name or "")
         try:
-            return self.summarize_file(True, name, "手动"), None
+            return self.summarize_file(True, name, t("cmd.resp.summarize_trigger")), None
         except Exception as e:
-            return f"❌ 摘要失败: {e}", None
+            return t("cmd.resp.summarize_failed", error=e), None
 
     def _search(self, args: list) -> Response:
         if not args:
-            return f"搜索状态: {'开启' if self.search_enabled else '关闭'}", None
+            state = t("cmd.status.search_on") if self.search_enabled else t("cmd.status.search_off")
+            return t("cmd.resp.search_status", state=state), None
         # toggle：供输入框下方的状态区一键切换（优化五），等价于 on/off 的取反
         if args[0] in ("on", "off", "toggle"):
             self.search_enabled = (not self.search_enabled) if args[0] == "toggle" else (args[0] == "on")
             self.config.search_default = self.search_enabled
             self.config.save()
-            return f"🔍 搜索已{'开启' if self.search_enabled else '关闭'}", None
-        return "用法: /search on/off", None
+            return t("cmd.resp.search_on" if self.search_enabled else "cmd.resp.search_off"), None
+        return t("cmd.resp.search_usage"), None
 
     def _model(self, args: list) -> Response:
         """查看/切换模型：支持档案别名、本地文件、前缀匹配与下载征询。"""
@@ -239,7 +374,7 @@ class CommandHandler:
             resolved = path if os.path.exists(path) else os.path.join("models", path)
             if os.path.exists(resolved):
                 return self._apply_model(resolved, path, profile)
-            return f"❌ 档案 '{name}' 指向的文件不存在: {path}", None
+            return t("cmd.resp.model_profile_missing", name=name, path=path), None
 
         # 2) 本地严格匹配（绝对路径或 models/ 下）
         candidates = []
@@ -255,20 +390,18 @@ class CommandHandler:
         if len(matches) == 1:
             return self._apply_model(os.path.join("models", matches[0]), matches[0], None)
         if len(matches) > 1:
-            return "❓ 本地有多个匹配：\n" + "\n".join(f"  {f}" for f in matches) + "\n请指定完整文件名", None
+            return t("cmd.resp.model_ambiguous", items="\n".join(f"  {f}" for f in matches)), None
 
         # 4) 本地缺失 → 查询仓库（需要网络），征得同意后下载
         try:
             best, size = find_best_model(self.config.model_repo, name, hf_endpoint=self.config.hf_endpoint)
         except Exception as e:
-            return f"❌ 本地没有模型 '{name}'，且无法查询仓库（{e}）。\n请把模型文件放入 models/ 目录后重试。", None
+            return t("cmd.resp.model_query_failed", name=name, error=e), None
 
-        size_mb = f"{size / 1024 / 1024:.0f} MB" if size else "未知大小"
+        size_mb = f"{size / 1024 / 1024:.0f} MB" if size else t("cmd.resp.model_size_unknown")
         return (
-            f"模型 '{name}' 未在本地找到。\n"
-            f"仓库 {self.config.model_repo} 中最匹配的是:\n"
-            f"  {best}（约 {size_mb}）\n"
-            f"⚠️ 下载需要联网且可能耗时较长，是否确认下载？",
+            t("cmd.resp.model_confirm", name=name, repo=self.config.model_repo,
+              best=best, size=size_mb),
             {"action": "confirm_model", "model": best},
         )
 
@@ -280,39 +413,54 @@ class CommandHandler:
     def _model_info(self) -> str:
         info = self.llm_engine.model_info()
         train = self.llm_engine.n_ctx_train
+        unknown = t("cmd.status.unknown")
         lines = [
-            f"🧠 当前模型: {self.config.model_path}",
-            f"🏗️  架构: {info.get('general.architecture', '未知')} · 量化: {info.get('general.file_type', '未知')}",
-            f"🪟 上下文: {self.llm_engine.n_ctx} tokens"
-            + (f"（模型训练窗口 {train}，上限 max_context={self.config.max_context}）" if train else
-               f"（上限 max_context={self.config.max_context}）"),
-            f"💾 KV Cache 估算: {self.llm_engine.kv_cache_text()}（fp16，随上下文长度线性增长）",
-            f"🧵 线程: {self.llm_engine.n_threads} · batch {self.llm_engine.n_batch}",
-            f"🎮 GPU 层: {self.llm_engine.n_gpu_layers}（0=纯 CPU）",
-            f"📁 本地模型: {len(self._local_ggufs())} 个",
+            t("cmd.model_info.current", model=self.config.model_path),
+            t("cmd.model_info.arch",
+              arch=info.get("general.architecture", unknown),
+              quant=info.get("general.file_type", unknown)),
+            t("cmd.model_info.context", n_ctx=self.llm_engine.n_ctx)
+            + (t("cmd.model_info.context_train", train=train, max=self.config.max_context) if train
+               else t("cmd.model_info.context_limit", max=self.config.max_context)),
+            t("cmd.model_info.kv", kv=self.llm_engine.kv_cache_text()),
+            t("cmd.model_info.threads", threads=self.llm_engine.n_threads, batch=self.llm_engine.n_batch),
+            t("cmd.model_info.gpu", gpu=self.llm_engine.n_gpu_layers),
+            t("cmd.model_info.locals", count=len(self._local_ggufs())),
         ]
         if self.conv_mgr.file_content:
-            summarized = "已分段摘要" if self.conv_mgr.file_summary else "按原文注入"
-            lines.append(f"📄 已加载文件: {os.path.basename(self.conv_mgr.file_name)}（{summarized}）")
+            key = "cmd.model_info.file_summarized" if self.conv_mgr.file_summary else "cmd.model_info.file_raw"
+            lines.append(t(key, name=os.path.basename(self.conv_mgr.file_name)))
         if self.config.models:
-            lines.append("🗂️  档案别名: " + ", ".join(self.config.models.keys()))
-        lines.append("（/model list 查看本地模型；/model <别名|文件名|前缀> 切换；缺失时征询下载）")
+            lines.append(t("cmd.model_info.profiles", names=", ".join(self.config.models.keys())))
+        if self.skill_parsers_provider is not None:
+            try:
+                owned = self.skill_parsers_provider() or {}
+            except Exception:
+                owned = {}
+            if owned:
+                detail = ", ".join(f"{ext} ← {sid}" for ext, sid in sorted(owned.items()))
+                lines.append(t("cmd.model_info.skill_formats", formats=detail))
+        lines.append(t("cmd.model_info.hint"))
         return "\n".join(lines)
 
     def _model_list(self) -> str:
-        lines = [f"🧠 当前模型: {self.config.model_path}", "", "📁 models/ 目录:"]
+        lines = [
+            t("cmd.model_info.list_header", model=self.config.model_path),
+            "",
+            t("cmd.model_info.list_dir"),
+        ]
         local = self._local_ggufs()
         if local:
             lines += [f"  {f}" for f in local]
         else:
-            lines.append("  （空）")
+            lines.append(t("cmd.model_info.list_empty"))
         if self.config.models:
             lines.append("")
-            lines.append("🗂️  档案（config.models）:")
+            lines.append(t("cmd.model_info.list_profiles"))
             for alias, p in self.config.models.items():
-                lines.append(f"  {alias} → {p.get('path', '?')}")
+                lines.append(t("cmd.model_info.list_profile_item", alias=alias, path=p.get("path", "?")))
         lines.append("")
-        lines.append("用法: /model <别名|文件名|前缀> 切换；缺失时从仓库匹配并征询下载")
+        lines.append(t("cmd.model_info.list_footer"))
         return "\n".join(lines)
 
     def _apply_model(self, path: str, display: str, profile: Optional[dict]) -> Response:
@@ -326,50 +474,53 @@ class CommandHandler:
         try:
             self.llm_engine.reload(path, n_ctx)
         except Exception as e:
-            return f"❌ 模型加载失败: {e}", None
+            return t("cmd.resp.model_apply_failed", error=e), None
         self.config.model_path = display if not os.path.isabs(display) else os.path.basename(display)
-        extra = f"（上下文 {n_ctx}"
-        if train and n_ctx < train:
-            extra += f"，模型训练窗口 {train}"
-        extra += f"，KV Cache 约 {self.llm_engine.kv_cache_text()}）"
+        extra = t(
+            "cmd.resp.model_applied_ctx",
+            n_ctx=n_ctx,
+            train=(t("cmd.resp.model_applied_train", train=train) if train and n_ctx < train else ""),
+            kv=self.llm_engine.kv_cache_text(),
+        )
         if profile and profile.get("temperature") is not None and not self.temp_manual:
             self.temperature = float(profile["temperature"])
-            extra += f"（温度预设 {self.temperature}）"
+            extra += t("cmd.resp.model_applied_temp", temp=self.temperature)
         self.config.save()
-        return f"✅ 已切换模型: {self.config.model_path}{extra}", None
+        return t("cmd.resp.model_applied", model=self.config.model_path) + extra, None
 
     def _clearcache(self, _args: list) -> Response:
         ok = self.llm_engine.clear_cache()
-        return ("✅ 已清空 KV 缓存" if ok else "⚠️ 清空缓存失败（引擎不支持）"), None
+        return t("cmd.resp.cache_cleared" if ok else "cmd.resp.cache_clear_unsupported"), None
 
     def _prompt(self, args: list) -> Response:
         if not args:
-            return f"当前自定义提示词:\n{self.conv_mgr.custom_prompt or '（未设置，使用模式默认提示词）'}", None
+            return t("cmd.resp.prompt_current",
+                     text=self.conv_mgr.custom_prompt or t("cmd.resp.prompt_unset")), None
         if args[0].lower() == "reset":
             self.conv_mgr.set_custom_prompt("")
             self.llm_engine.clear_cache()
-            return "🗑️ 已清除自定义提示词", None
+            return t("cmd.resp.prompt_reset"), None
         text = " ".join(args)
         self.conv_mgr.set_custom_prompt(text)
         self.llm_engine.clear_cache()
-        return f"✅ 已设置自定义提示词（{len(text)} 字）", None
+        return t("cmd.resp.prompt_set", chars=len(text)), None
 
     @staticmethod
     def _darkmode(args: list) -> Response:
         if not args:
-            return "用法: /darkmode on/off（主题由前端渲染）", None
-        mode = "深色" if args[0].lower() == "on" else "浅色" if args[0].lower() == "off" else None
-        if mode is None:
-            return "用法: /darkmode on/off", None
-        return f"🎨 已请求切换为{mode}模式", None
+            return t("cmd.resp.darkmode_usage"), None
+        key = {"on": "cmd.resp.darkmode_on", "off": "cmd.resp.darkmode_off"}.get(args[0].lower())
+        if key is None:
+            return t("cmd.resp.darkmode_usage"), None
+        return t(key), None
 
     @staticmethod
     def _stop(_args: list) -> Response:
-        return "⏹ 已收到停止指令（流式生成由协议 action=stop 中断，前端 ⏹ 按钮等效）", None
+        return t("cmd.resp.stop_ack"), None
 
     @staticmethod
     def _snippet(_args: list) -> Response:
-        return "常用语由前端管理：请在应用内使用 /snippet add 名称 文本 / remove 名称 / list", None
+        return t("cmd.resp.snippet_hint"), None
 
     def _status(self, _args: list) -> Response:
         # 估算当前上下文占用（系统提示 + 历史）
@@ -377,23 +528,35 @@ class CommandHandler:
             msgs = self.conv_mgr.build_messages("")
             used = sum(self.llm_engine.count_tokens(m["content"]) for m in msgs)
             limit = int(self.llm_engine.n_ctx * 0.8)
-            ctx_line = f"📏 上下文: 约 {used}/{limit} tokens（{self.llm_engine.n_ctx} 窗口的 80% 自动摘要线）"
+            ctx_line = t("cmd.status.context", used=used, limit=limit, n_ctx=self.llm_engine.n_ctx)
         except Exception:
-            ctx_line = "📏 上下文: 未知"
+            ctx_line = t("cmd.status.context_unknown")
+        unknown = t("cmd.status.unknown")
+        manual_tag = t("cmd.resp.temp_manual_tag") if self.temp_manual else t("cmd.resp.temp_preset_tag")
+        file_line = t("cmd.status.file", name=(
+            os.path.basename(self.conv_mgr.file_name) if self.conv_mgr.file_name
+            else t("cmd.status.file_none")))
+        if self.conv_mgr.file_summary:
+            file_line += t("cmd.status.file_summarized",
+                           chunks=self.conv_mgr.file_summary_meta.get("chunks", "?"))
         lines = [
-            f"🏷️  {APP_NAME} {APP_VERSION} — Powered by {STUDIO}",
-            f"🧠 模型: {self.config.model_path}",
-            f"🏗️  架构: {self.llm_engine.model_info().get('general.architecture', '未知')}",
-            f"🛠️  模式: {self.conv_mgr.get_mode()}",
-            f"🌡️  温度: {self.temperature}{'（手动）' if self.temp_manual else '（模式预设）'}",
-            f"⚙️  线程: {getattr(self.llm_engine, 'n_threads', '?')} · batch {getattr(self.llm_engine, 'n_batch', 512)} · GPU 层 {getattr(self.llm_engine, 'n_gpu_layers', 0)}",
-            f"💾 KV Cache: 约 {self.llm_engine.kv_cache_text()}",
+            t("cmd.status.header", app=APP_NAME, version=APP_VERSION, studio=STUDIO),
+            t("cmd.status.model", model=self.config.model_path),
+            t("cmd.status.arch", arch=self.llm_engine.model_info().get("general.architecture", unknown)),
+            t("cmd.status.mode", mode=self.conv_mgr.get_mode()),
+            t("cmd.status.temperature", temp=self.temperature, manual=manual_tag),
+            t("cmd.status.threads",
+              threads=getattr(self.llm_engine, "n_threads", "?"),
+              batch=getattr(self.llm_engine, "n_batch", 512),
+              gpu=getattr(self.llm_engine, "n_gpu_layers", 0)),
+            t("cmd.status.kv", kv=self.llm_engine.kv_cache_text()),
             ctx_line,
-            f"🔍 联网搜索: {'开启' if self.search_enabled else '关闭'}",
-            f"💬 对话轮数: {len(self.conv_mgr.history) // 2}",
-            f"📝 早期摘要: {'有' if self.conv_mgr.summary else '无'}",
-            f"📄 文件: {os.path.basename(self.conv_mgr.file_name) if self.conv_mgr.file_name else '无'}"
-            + (f"（已分段摘要 {self.conv_mgr.file_summary_meta.get('chunks', '?')} 段）" if self.conv_mgr.file_summary else ""),
+            t("cmd.status.search", state=(
+                t("cmd.status.search_on") if self.search_enabled else t("cmd.status.search_off"))),
+            t("cmd.status.turns", turns=len(self.conv_mgr.history) // 2),
+            t("cmd.status.summary", state=(
+                t("cmd.status.summary_yes") if self.conv_mgr.summary else t("cmd.status.summary_no"))),
+            file_line,
         ]
         return "\n".join(lines), None
 
@@ -402,49 +565,50 @@ class CommandHandler:
         return (
             f"✨ {APP_NAME} {APP_VERSION}\n"
             f"Powered by {STUDIO}\n"
-            f"本地 AI 桌面助手：Python 后端 + C# WPF 前端，全离线推理。",
+            + t("app.about"),
             None,
         )
 
     def _clear(self, _args: list) -> Response:
         self.conv_mgr.clear()
         self.llm_engine.clear_cache()
-        return "🗑️ 对话已清空", None
+        return t("cmd.resp.clear_done"), None
 
     def _undo(self, _args: list) -> Response:
         if self.conv_mgr.undo():
             self.llm_engine.clear_cache()
-            return "↩️ 已撤回", None
-        return "没有可撤回的消息", None
+            return t("cmd.resp.undo_done"), None
+        return t("cmd.resp.undo_none"), None
 
     def _save(self, args: list) -> Response:
         if not args:
-            return "请提供文件名，例如: /save 对话记录", None
+            return t("cmd.resp.save_need_name"), None
         filename = args[0] if args[0].endswith(".md") else args[0] + ".md"
         try:
             Path(filename).write_text(self.conv_mgr.export_markdown(), encoding="utf-8")
-            return f"✅ 已保存到 {filename}", None
+            return t("cmd.resp.save_done", path=filename), None
         except OSError as e:
-            return f"❌ 保存失败: {e}", None
+            return t("cmd.resp.save_failed", error=e), None
 
     def _temp(self, args: list) -> Response:
         if not args:
-            return f"当前温度: {self.temperature}{'（手动）' if self.temp_manual else '（模式预设）'}\n（/temp reset 恢复为模式预设）", None
+            manual = t("cmd.resp.temp_manual_tag") if self.temp_manual else t("cmd.resp.temp_preset_tag")
+            return t("cmd.resp.temp_current", temp=self.temperature, manual=manual), None
         if args[0].lower() == "reset":
             self.temp_manual = False
             preset = MODE_TEMPERATURES.get(self.conv_mgr.get_mode(), self.config.temperature)
             self.temperature = preset
             self.config.temperature = preset
             self.config.save()
-            return f"✅ 温度已恢复为模式预设: {preset}", None
+            return t("cmd.resp.temp_reset", temp=preset), None
         try:
             value = float(args[0])
         except ValueError:
-            return "请输入有效的数字", None
+            return t("cmd.resp.temp_invalid"), None
         if not 0.0 <= value <= 1.0:
-            return "温度值应在 0.0~1.0 之间", None
+            return t("cmd.resp.temp_range"), None
         self.temp_manual = True
         self.temperature = value
         self.config.temperature = value
         self.config.save()
-        return f"✅ 温度已设为: {value}（手动）", None
+        return t("cmd.resp.temp_set", temp=value), None

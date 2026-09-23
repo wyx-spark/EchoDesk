@@ -15,17 +15,28 @@ from importlib.metadata import distributions
 from typing import Dict, List, Tuple
 
 # 后端实际依赖的顶层包（与 backend/requirements.txt 对应，含传递依赖）
+#
+# v0.2.1（任务书 1.3）变更：
+#   * 移除 pymupdf —— 它是 AGPL-3.0，对外分发会产生著佐权义务，已换成 BSD 的 pypdf；
+#   * pyxtxt 在 v0.2.0 就已移除（其依赖链含 GPL/LGPL：extract-msg、pcodedmp、
+#     RTFDE、python-bidi、pygame、pynput），这里不再列出；
+#   * 新增 pypdf 与文件解析相关包（python-docx / openpyxl / python-pptx / xlrd），
+#     它们此前虽被使用但漏登记在清单里。
 ROOT_PACKAGES = [
     "llama-cpp-python",
-    "pyxtxt",
     "duckduckgo-search",
     "pydantic",
     "huggingface_hub",
+    "requests",
     "pywin32",
     "pyinstaller",
     "playwright",
     "schedule",
-    "pymupdf",
+    "pypdf",
+    "python-docx",
+    "openpyxl",
+    "python-pptx",
+    "xlrd",
     "tqdm",
 ]
 
@@ -45,8 +56,9 @@ RISKY = {
 EXCEPTIONS = {
     "pyinstaller": "GPLv2 + 官方特别例外：明确允许用 PyInstaller 打包并分发专有程序，"
                    "打包产物本身不受 GPL 约束（构建工具，不随产物以库形式使用）",
-    "pymupdf": "AGPL-3.0 或 Artifex 商业许可二选一；由 pyxtxt 解析 PDF 时引入，"
-               "随发布物分发会产生 AGPL 义务（对外分发需提供对应源码，或购买商业许可）",
+    "pypdf": "BSD-3-Clause（纯 Python，无原生扩展）。v0.2.1 起取代 AGPL 的 PyMuPDF "
+             "用于 PDF 文本提取，消除对外分发时的著佐权义务，同时把该依赖的安装体积"
+             "从 52.9MB 降到约 1.4MB（见 docs/v0.2.1-研发记录.md）。",
     "extract-msg": "GPL-3.0；由 pyxtxt 解析邮件类文档时可能被引入，"
                    "若被打进发布物则整体分发需遵循 GPL",
     "pcodedmp": "GPL-3.0；extract-msg 的依赖",
@@ -97,6 +109,12 @@ def main() -> None:
         "本文件列出 EchoDesk 分发时随附的第三方组件及其许可证，用于开源合规审查。",
         f"扫描到的 Python 发行包共 {len(rows)} 个（含传递依赖）。",
         "",
+        "> **v0.2.1 合规变更（任务书 1.3）**：对外开源发布前，PDF 解析已从 **PyMuPDF**",
+        "> （AGPL-3.0 或 Artifex 商业许可）换成 **pypdf**（BSD-3-Clause，纯 Python）。",
+        "> 项目本体采用 **Apache-2.0**，与 AGPL 不兼容；替换后发布物中不再含 AGPL 组件，",
+        "> 剩余的唯一 GPL 组件是构建工具 PyInstaller（GPLv2 带官方例外，允许打包分发专有程序）。",
+        "> 同步收益：该依赖的安装体积从 52.9MB 降到约 1.4MB。",
+        "",
         "## 一、后端直接依赖",
         "",
         "| 组件 | 版本 | 许可证 | 说明 |",
@@ -130,15 +148,16 @@ def main() -> None:
         "### 合规结论与建议",
         "",
         "- **自用 / 组织内部使用**：不构成「对外分发」，上述著佐权义务不触发，当前依赖可直接使用。",
-        "- **对外分发（含免费公开）**：需要处理 pyxtxt 依赖链中的 AGPL/GPL 组件。可选做法：",
-        "  1. 随发布物一并提供对应组件的完整源码（AGPL/GPL 允许，但需注明修改与获取方式）；",
-        "  2. 或替换文件解析实现，绕开这些组件——PDF 用 `pypdf`/`pdfminer.six`（BSD/MIT）、",
-        "     Word 用 `python-docx`（MIT）、Excel 用 `openpyxl`（MIT）、PPTX 用 `python-pptx`（MIT）、",
-        "     TXT/CSV 直接读取，这几类均为宽松许可，可闭源分发；",
-        "  3. 或购买 PyMuPDF 商业许可（Artifex）以解除 AGPL 约束（仅解决 PDF 一路）。",
-        "- **PyInstaller 无需担心**：其 GPLv2 带官方例外，明确允许打包分发专有程序。",
-        "- 发布物体积优化顺带也能降低该风险：若用 `--exclude-module` 排除未被用到的",
-        "  解析分支（如邮件/RTF），可减少随包分发的 GPL 组件数量。",
+        "- **对外分发（含免费公开）**：v0.2.1 起发布物中已无 AGPL/GPL 运行时组件。",
+        "  历史情况：v0.2.0 及更早版本的 PDF 解析用的是 AGPL 的 PyMuPDF，",
+        "  v0.2.1 换成了 BSD 的 `pypdf`，因此**同一个 Apache-2.0 许可即可覆盖整个发布物**。",
+        "- **文件解析全部为宽松许可**：PDF 用 `pypdf`（BSD-3），Word 用 `python-docx`（MIT）、",
+        "  Excel 用 `openpyxl`（MIT）/`xlrd`（BSD），PPTX 用 `python-pptx`（MIT），",
+        "  TXT/CSV 直接读取——均可闭源或开源分发。",
+        "- **PyInstaller 无需担心**：其 GPLv2 带官方例外，明确允许打包分发专有程序，",
+        "  且它只用于构建、不以库的形式随产物使用。",
+        "- **技能（插件）由第三方提供**：用户自行安装的技能可能有各自的许可证，",
+        "  EchoDesk 不以任何方式再分发技能代码；设置窗口会展示技能声明的许可证供用户判断。",
         "",
     ]
 
@@ -168,8 +187,10 @@ def main() -> None:
         "---",
         "",
         "生成方式：`python tools/gen_licenses.py`（读取本机已安装发行包的元数据）。",
-        "复核建议：正式发布前用 `pip-licenses --format=markdown` 或 Syft 生成 SBOM 再核对一次；",
-        "若引入 AGPL 组件（如 PyMuPDF），需评估以网络服务方式提供时的源码开放义务。",
+        "复核建议：正式发布前用 `pip-licenses --format=markdown` 或 Syft 生成 SBOM 再核对一次。",
+        "注意：本脚本读的是**本机环境**，若开发环境里残留已废弃的包（例如为了对照而没卸掉的",
+        "`pymupdf`），它会出现在清单里。发布前请在干净的 venv（只装 backend/requirements.txt）",
+        "里重新生成，或手工删除这些行。",
         "",
     ]
 

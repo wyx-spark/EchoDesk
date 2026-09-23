@@ -337,6 +337,20 @@ class AutomationEngine:
         self._report_blocks: List[str] = []
         # 最近一次选择器解析失败的原因（用于把"选择器写错"和"页面里没有元素"区分开）
         self._selector_error = ""
+        # 技能自动化钩子分发器（v0.2.1 任务二 2.3）：由 main 注入 SkillLoader.fire_hook
+        self.hook_dispatcher: Optional[Callable[[str, Dict[str, Any]], Any]] = None
+        # 是否处于测试向导的试运行（不写结果文件与处理记录）
+        self._dry_run = False
+
+    def _fire(self, stage: str, **context: Any) -> List[Dict[str, Any]]:
+        """触发技能挂接的自动化钩子；钩子出错只记日志，绝不中断自动化本身。"""
+        if self.hook_dispatcher is None:
+            return []
+        try:
+            return list(self.hook_dispatcher(stage, context) or [])
+        except Exception:  # noqa: BLE001
+            self.logger.warning("自动化钩子 %s 分发失败", stage, exc_info=True)
+            return []
 
     # ---------- 配置读取（全部容错） ----------
 
@@ -446,7 +460,7 @@ class AutomationEngine:
         采用「每次重写整份」的方式：单条任务完成后立即落盘，
         即使中途崩溃或按停止，已处理任务的结果也不会丢。
         """
-        if not bool(getattr(self.cfg, "save_results", True)):
+        if not bool(getattr(self.cfg, "save_results", True)) or self._dry_run:
             return ""
         try:
             os.makedirs(self.results_dir, exist_ok=True)
@@ -1160,7 +1174,7 @@ class AutomationEngine:
         任务书 新增三：结果文件固定命名 ``结果.txt``，且必须是**纯文本**
         （记事本无 Markdown 渲染能力），因此这里用 ``markdown_to_plain`` 剥离标记。
         """
-        if not bool(getattr(self.cfg, "save_results", True)):
+        if not bool(getattr(self.cfg, "save_results", True)) or self._dry_run:
             return ""
         prefix = f"[{index}/{total}] " if index and total else ""
         block = [
@@ -1187,7 +1201,7 @@ class AutomationEngine:
         screenshot: str = "",
     ) -> str:
         """把失败任务的信息（含失败截图文件名）写入 ``结果.txt``（任务书 新增三）。"""
-        if not bool(getattr(self.cfg, "save_results", True)):
+        if not bool(getattr(self.cfg, "save_results", True)) or self._dry_run:
             return ""
         prefix = f"[{index}/{total}] " if index and total else ""
         head = f"{prefix}{title or '任务'}（失败）"
@@ -1206,7 +1220,7 @@ class AutomationEngine:
 
     def _save_summary_block(self, header: str) -> str:
         """把本轮汇总写入结果文件末尾。"""
-        if not bool(getattr(self.cfg, "save_results", True)):
+        if not bool(getattr(self.cfg, "save_results", True)) or self._dry_run:
             return ""
         self._report_blocks.append(_markdown_to_plain(header).strip())
         return self._write_report(self._report_blocks, self._report_header)
@@ -1287,7 +1301,538 @@ class AutomationEngine:
                 pass
         return result
 
-    # ---------- 停止 / 状态 / 清理 ----------
+    # ---------- 可视化选取（v0.2.1 任务书 4.2） ----------
+
+    #: 注入页面的拾取脚本。悬停高亮并实时预览选择器，点击即确定，Esc 取消。
+    PICKER_JS = r"""
+(() => {
+  if (window.__echodeskPickerInstalled) {
+    window.__echodeskPick = {picked: null, cancelled: false, hover: null};
+    return 'reinstalled';
+  }
+  window.__echodeskPickerInstalled = true;
+  const state = window.__echodeskPick = {picked: null, cancelled: false, hover: null};
+
+  const overlay = document.createElement('div');
+  overlay.setAttribute('data-echodesk', 'overlay');
+  overlay.style.cssText = 'position:fixed;z-index:2147483646;pointer-events:none;'
+    + 'border:2px solid #ff5c5c;background:rgba(255,92,92,0.14);box-sizing:border-box;';
+  const tip = document.createElement('div');
+  tip.setAttribute('data-echodesk', 'tip');
+  tip.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;background:#1f2430;'
+    + 'color:#fff;font:12px/1.6 Consolas,monospace;padding:3px 8px;border-radius:4px;'
+    + 'max-width:80vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
+    + 'box-shadow:0 2px 8px rgba(0,0,0,.35);';
+  const banner = document.createElement('div');
+  banner.setAttribute('data-echodesk', 'banner');
+  banner.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:2147483647;'
+    + 'background:#2b6cb0;color:#fff;font:13px/2 sans-serif;padding:0 12px;text-align:center;'
+    + 'pointer-events:none;';
+  banner.textContent = 'EchoDesk 可视化选取：把鼠标移到要抓取的元素上并点击；按 Esc 取消';
+  const add = () => {
+    document.documentElement.appendChild(overlay);
+    document.documentElement.appendChild(tip);
+    document.documentElement.appendChild(banner);
+  };
+  const cleanup = () => {
+    [overlay, tip, banner].forEach(n => { try { n.remove(); } catch (e) {} });
+  };
+  add();
+
+  function esc(s) {
+    if (window.CSS && CSS.escape) return CSS.escape(s);
+    return String(s).replace(/[^a-zA-Z0-9_-]/g, ch => '\\' + ch);
+  }
+  function unique(sel) {
+    try { return document.querySelectorAll(sel).length === 1; } catch (e) { return false; }
+  }
+  function selectorFor(el) {
+    if (!el || el.nodeType !== 1) return '';
+    if (el.id && unique('#' + esc(el.id))) return '#' + esc(el.id);
+    const attrs = el.attributes || [];
+    for (let i = 0; i < attrs.length; i++) {
+      const a = attrs[i];
+      if (a.name.indexOf('data-') === 0 && a.value) {
+        const sel = el.tagName.toLowerCase() + '[' + a.name + '="' + a.value.replace(/"/g, '\\"') + '"]';
+        if (unique(sel)) return sel;
+      }
+    }
+    const parts = [];
+    let node = el;
+    while (node && node.nodeType === 1 && node !== document.documentElement) {
+      if (node.id && unique('#' + esc(node.id))) { parts.unshift('#' + esc(node.id)); break; }
+      let part = node.tagName.toLowerCase();
+      const parent = node.parentElement;
+      if (parent) {
+        const same = Array.prototype.filter.call(parent.children, c => c.tagName === node.tagName);
+        if (same.length > 1) part += ':nth-of-type(' + (same.indexOf(node) + 1) + ')';
+      }
+      if (node.classList && node.classList.length) part += '.' + esc(node.classList[0]);
+      parts.unshift(part);
+      const candidate = parts.join(' > ');
+      if (unique(candidate)) return candidate;
+      node = parent;
+    }
+    return parts.join(' > ');
+  }
+  function label(el) {
+    const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 50);
+    return el.tagName.toLowerCase() + (text ? ' 「' + text + '」' : '');
+  }
+
+  let current = null;
+  document.addEventListener('mousemove', e => {
+    const el = e.target;
+    if (!el || el.nodeType !== 1) return;
+    if (el.hasAttribute && el.hasAttribute('data-echodesk')) return;
+    if (el === current) return;
+    current = el;
+    const r = el.getBoundingClientRect();
+    overlay.style.left = r.left + 'px';
+    overlay.style.top = r.top + 'px';
+    overlay.style.width = r.width + 'px';
+    overlay.style.height = r.height + 'px';
+    const sel = selectorFor(el);
+    let count = 0;
+    try { count = document.querySelectorAll(sel).length; } catch (err) { count = -1; }
+    state.hover = {selector: sel, count: count, tag: el.tagName.toLowerCase()};
+    tip.textContent = sel + '　匹配 ' + count + ' 个　' + label(el);
+    tip.style.left = Math.max(4, Math.min(r.left, window.innerWidth - 420)) + 'px';
+    tip.style.top = Math.max(30, Math.min(r.bottom + 6, window.innerHeight - 28)) + 'px';
+  }, true);
+
+  document.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    const el = e.target;
+    if (!el || el.nodeType !== 1) return;
+    const sel = selectorFor(el);
+    let count = 0;
+    try { count = document.querySelectorAll(sel).length; } catch (err) { count = 0; }
+    state.picked = {
+      selector: sel,
+      count: count,
+      tag: el.tagName.toLowerCase(),
+      text: (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300),
+      href: (el.getAttribute && (el.getAttribute('href') || '')) || ''
+    };
+    cleanup();
+  }, true);
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { state.cancelled = true; cleanup(); }
+  }, true);
+  return 'installed';
+})();
+"""
+
+    def pick_selector(
+        self,
+        url: str,
+        target: str = "task_list",
+        *,
+        timeout_seconds: int = 300,
+        stop_event: Any = None,
+    ) -> Iterator[Dict[str, Any]]:
+        """可视化选取选择器（任务书 4.2）：在真实页面上点一下元素，生成 CSS 选择器。
+
+        为什么用 Playwright 驱动本机 Edge 而不是内嵌 WebView2（对任务书的偏差，已记入
+        docs/v0.2.1-研发记录.md）：
+
+        * WebView2 需要额外引入 SDK 与系统运行时，与"尽量减小打包体积"的全局要求冲突；
+        * 任务书要求"登录态与自动化共享（复用 browser_state.json）"——
+          WebView2 有自己的用户数据目录，做不到；Playwright 这套直接用同一份
+          ``browser_state.json``，登录态天然一致；
+        * 自动化本来就用 Playwright 启动 Edge，复用同一引擎不增加任何新依赖，
+          且选择器在同一个渲染引擎下生成与验证，结果更可靠。
+
+        ``target`` 取值：``task_list``（任务列表元素）/ ``task_row``（任务行容器）/
+        ``next_page``（下一页按钮）/ ``task_detail_file``（详情页附件）。
+        后者会先用任务列表选择器点进第一个任务，再开始拾取。
+        """
+        yield self._event("delta", "正在启动浏览器（有头模式，稍后请在页面上点击目标元素）…")
+        if _sync_playwright is None:
+            yield self._event("error", "未安装 playwright，无法使用可视化选取。")
+            return
+        url = (url or "").strip() or self.task_list_url
+        if not url:
+            yield self._event("error", "请先填写任务列表网址。")
+            return
+
+        playwright = browser = context = page = None
+        try:
+            playwright = _sync_playwright().start()
+            browser, note = self._launch(playwright)
+            if note:
+                yield self._event("delta", note)
+            context = self._new_context(browser)   # 复用 browser_state.json 的登录态
+            page = context.new_page()
+            page.set_default_timeout(self.page_timeout_ms)
+            yield self._event("delta", f"正在打开 {url} …")
+            self._goto(page, url)
+            self._wait_loaded(page)
+
+            if target == "task_detail_file":
+                selector = str(getattr(self.cfg, "task_list_selector", "") or "").strip()
+                if not selector:
+                    yield self._event("error", "详情页附件选取需要先配置「任务列表元素位置」，否则无法进入任务详情。")
+                    return
+                yield self._event("delta", "正在用任务列表选择器进入第一个任务…")
+                entries = self._collect_links(page, selector,
+                                             str(getattr(self.cfg, "task_row_selector", "") or ""))
+                if not entries:
+                    yield self._event("error", "任务列表选择器没有匹配到任何任务，无法进入详情页。"
+                                               "请先用「可视化选取」配置任务列表元素位置。")
+                    return
+                first = entries[0]
+                if not first.href:
+                    yield self._event("error", f"第一个任务「{_clip(first.text, 40)}」没有可用链接。")
+                    return
+                self._goto(page, first.href)
+                self._wait_loaded(page)
+                yield self._event("delta", f"已进入详情页：{_clip(first.text, 40)}")
+
+            try:
+                page.bring_to_front()
+            except Exception:  # noqa: BLE001
+                pass
+            page.evaluate(self.PICKER_JS)
+            yield self._event(
+                "delta",
+                f"请在弹出的 Edge 窗口里点击目标元素（{_target_label(target)}）。"
+                f"页面顶部有蓝色提示条，悬停时会显示选择器预览；按 Esc 取消。",
+            )
+
+            deadline = time.time() + max(10, int(timeout_seconds))
+            picked: Optional[Dict[str, Any]] = None
+            cancelled = False
+            while time.time() < deadline:
+                if stop_event is not None and getattr(stop_event, "is_set", lambda: False)():
+                    cancelled = True
+                    break
+                if self._stop.is_set():
+                    cancelled = True
+                    break
+                try:
+                    state = page.evaluate(
+                        "() => { const s = window.__echodeskPick; if (!s) return null;"
+                        " return s.picked ? {picked: s.picked} : (s.cancelled ? {cancelled: true} : null); }"
+                    )
+                except Exception:  # noqa: BLE001 —— 页面被关掉/跳转时视为取消
+                    state = {"cancelled": True}
+                if isinstance(state, dict):
+                    if state.get("picked"):
+                        picked = state["picked"]
+                        break
+                    if state.get("cancelled"):
+                        cancelled = True
+                        break
+                time.sleep(0.3)
+
+            if picked is None:
+                reason = "已取消" if cancelled else f"等待超时（{timeout_seconds} 秒）"
+                yield self._event("error", f"可视化选取{reason}，未修改配置。")
+                return
+
+            selector = str(picked.get("selector") or "").strip()
+            count = int(picked.get("count") or 0)
+            yield self._event(
+                "done",
+                f"✅ 已生成选择器：{selector}\n匹配 {count} 个元素"
+                + (f"\n元素文本：{_clip(picked.get('text'), 120)}" if picked.get("text") else ""),
+                selector=selector,
+                count=count,
+                target=target,
+                text=str(picked.get("text") or "")[:300],
+                href=str(picked.get("href") or ""),
+            )
+        except Exception as exc:  # noqa: BLE001
+            message = f"可视化选取失败：{_redact(exc, 300)}"
+            self.logger.warning("可视化选取失败：%s", _redact(exc, 200))
+            yield self._event("error", message)
+        finally:
+            try:
+                if context is not None:
+                    self._save_storage_state(context)   # 把新登录态写回 browser_state.json
+            except Exception:  # noqa: BLE001
+                pass
+            for closer in (lambda: browser.close() if browser else None,
+                           lambda: playwright.stop() if playwright else None):
+                try:
+                    closer()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    # ---------- 分步测试向导（v0.2.1 任务书 4.5） ----------
+
+    def test_element(self, url: str, selector: str, *, click: bool = False) -> Dict[str, Any]:
+        """测试任意元素选择器（不限于链接），可选点击一次并观察页面是否跳转。
+
+        返回 ``{"ok", "count", "visible", "samples", "clicked", "new_url", "changed", "error"}``。
+        """
+        result: Dict[str, Any] = {
+            "ok": False, "count": 0, "visible": 0, "samples": [], "clicked": False,
+            "new_url": "", "changed": False, "error": "", "kind": _selector_kind(selector),
+        }
+        selector = (selector or "").strip()
+        if not selector:
+            result["error"] = "选择器为空。"
+            return result
+        if not (url or "").strip():
+            result["error"] = "网址为空。"
+            return result
+        if _sync_playwright is None:
+            result["error"] = "未安装 playwright。"
+            return result
+
+        playwright = browser = None
+        try:
+            playwright = _sync_playwright().start()
+            browser, _ = self._launch(playwright)
+            context = self._new_context(browser)
+            page = context.new_page()
+            page.set_default_timeout(self.page_timeout_ms)
+            self._goto(page, url.strip())
+            self._wait_loaded(page)
+            locator = page.locator(_normalize_selector(selector))
+            try:
+                count = locator.count()
+            except Exception as exc:  # noqa: BLE001
+                result["error"] = f"选择器语法错误：{_redact(exc, 250)}"
+                return result
+            result["count"] = int(count)
+            before_url = page.url
+            for index in range(min(count, 5)):
+                item = locator.nth(index)
+                try:
+                    text = (item.inner_text(timeout=2000) or "").strip().replace("\n", " ")
+                    if text:
+                        result["samples"].append(_clip(text, 120))
+                    if item.is_visible():
+                        result["visible"] += 1
+                except Exception:  # noqa: BLE001
+                    continue
+            if click and count > 0:
+                try:
+                    locator.first.click(timeout=min(self.page_timeout_ms, 15000))
+                    result["clicked"] = True
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=8000)
+                    except Exception:  # noqa: BLE001
+                        time.sleep(1.0)
+                    result["new_url"] = page.url
+                    result["changed"] = page.url != before_url
+                except Exception as exc:  # noqa: BLE001
+                    result["error"] = f"点击失败：{_redact(exc, 200)}"
+            result["ok"] = True
+            if count == 0:
+                result["error"] = self._selector_error or "页面已打开，但没有匹配到元素。"
+        except Exception as exc:  # noqa: BLE001
+            result["error"] = _redact(exc, 300)
+            self.logger.warning("元素测试失败：%s", _redact(exc, 200))
+        finally:
+            try:
+                if browser is not None:
+                    browser.close()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                if playwright is not None:
+                    playwright.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        return result
+
+    def wizard_step(self, step: int, **kwargs: Any) -> Dict[str, Any]:
+        """测试选择器向导的单个步骤（任务书 4.5）。
+
+        step 1 任务列表元素 / 2 下一页按钮 / 3 详情页附件 / 4 试运行一个任务。
+        每一步都给出可读的成功/失败原因与修正建议。
+        """
+        cfg = self.cfg
+        url = str(getattr(cfg, "task_list_url", "") or "").strip()
+        out: Dict[str, Any] = {"step": int(step), "ok": False, "title": "", "detail": "",
+                               "samples": [], "suggestions": [], "data": {}}
+
+        if int(step) == 1:
+            selector = str(getattr(cfg, "task_list_selector", "") or "").strip()
+            row = str(getattr(cfg, "task_row_selector", "") or "").strip()
+            out["title"] = "第一步：测试任务列表元素位置"
+            if not url:
+                out["detail"] = "还没有填写「任务列表网址」。"
+                out["suggestions"] = ["填上列出全部任务的页面地址，从浏览器地址栏复制即可。"]
+                return out
+            if not selector:
+                out["detail"] = "还没有填写「任务列表元素位置」。"
+                out["suggestions"] = ["点右边的「🎯 可视化选取」，然后在页面上点一下任务名称。"]
+                return out
+            res = self.test_selector(url, selector)
+            out["data"] = res
+            out["samples"] = res.get("samples") or []
+            if res.get("ok") and res.get("count"):
+                out["ok"] = True
+                out["detail"] = f"匹配到 {res['count']} 个任务链接，例如：{'、'.join(out['samples'][:3]) or '（无文本）'}"
+                if row:
+                    row_res = self.test_element(url, row)
+                    out["data"]["row"] = row_res
+                    if row_res.get("count"):
+                        out["detail"] += f"\n任务行容器匹配到 {row_res['count']} 行。"
+                    else:
+                        out["detail"] += "\n⚠️ 任务行容器没有匹配到元素；不确定就把它留空。"
+                        out["suggestions"].append("任务行容器是可选项，不确定请留空。")
+            elif res.get("ok"):
+                out["detail"] = "页面已打开，但这个选择器没有匹配到任何元素。"
+                out["suggestions"] = [
+                    "确认这一页确实显示了任务列表（有些系统要先登录）。",
+                    "用「🎯 可视化选取」重新点一次任务名称。",
+                    "若列表在分页/懒加载里，先滚动到任务出现再选取。",
+                ]
+            else:
+                out["detail"] = f"测试失败：{res.get('error') or '未知原因'}"
+                out["suggestions"] = ["检查网址能否在浏览器里正常打开。", "检查选择器是否被误改。"]
+            return out
+
+        if int(step) == 2:
+            selector = str(getattr(cfg, "next_page_selector", "") or "").strip()
+            out["title"] = "第二步：测试下一页按钮"
+            if not selector:
+                out["ok"] = True
+                out["detail"] = "没有配置「下一页按钮」——如果任务列表只有一页，这一步可以直接跳过。"
+                return out
+            if not url:
+                out["detail"] = "还没有填写「任务列表网址」。"
+                return out
+            res = self.test_element(url, selector, click=True)
+            out["data"] = res
+            if res.get("count") and res.get("clicked"):
+                out["ok"] = True
+                out["detail"] = (f"找到并点击了「下一页」按钮，页面{'已跳转' if res.get('changed') else '未跳转'}。"
+                                 f"\n点击后地址：{res.get('new_url') or '（未变化）'}")
+                if not res.get("changed"):
+                    out["suggestions"] = [
+                        "如果这一页确实是最后一页，未跳转是正常的。",
+                        "如果不是最后一页，可能是按钮由 JavaScript 处理：试试换成更精确的选择器。",
+                    ]
+            elif res.get("count"):
+                out["detail"] = f"匹配到 {res['count']} 个元素，但点击没有成功：{res.get('error') or '未知原因'}"
+            else:
+                out["detail"] = "没有匹配到「下一页」按钮。"
+                out["suggestions"] = ["用「🎯 可视化选取」在列表页底部点一下「下一页」。",
+                                      "若按钮文字是「>」或「下一页 ›」，注意选的是可点击的那个元素。"]
+            return out
+
+        if int(step) == 3:
+            selector = str(getattr(cfg, "task_detail_file_selector", "") or "").strip()
+            out["title"] = "第三步：测试任务详情页附件位置"
+            if not selector:
+                out["detail"] = "还没有填写「任务详情页文件元素位置」。"
+                out["suggestions"] = ["点「🎯 可视化选取」并选择「详情页附件」，程序会自动进入第一个任务再让你点。"]
+                return out
+            list_selector = str(getattr(cfg, "task_list_selector", "") or "").strip()
+            if not url or not list_selector:
+                out["detail"] = "需要先配置好「任务列表网址」与「任务列表元素位置」，否则进不去任务详情页。"
+                return out
+            playwright = browser = None
+            try:
+                playwright = _sync_playwright().start()
+                browser, _ = self._launch(playwright)
+                context = self._new_context(browser)
+                page = context.new_page()
+                page.set_default_timeout(self.page_timeout_ms)
+                self._goto(page, url)
+                self._wait_loaded(page)
+                entries = self._collect_links(
+                    page, list_selector, str(getattr(cfg, "task_row_selector", "") or ""))
+                if not entries or not entries[0].href:
+                    out["detail"] = "任务列表选择器没有匹配到可用任务，无法进入详情页。"
+                    out["suggestions"] = ["先让第一步测试通过。"]
+                    return out
+                self._goto(page, entries[0].href)
+                self._wait_loaded(page)
+                locator = page.locator(_normalize_selector(selector))
+                count = locator.count()
+                samples: List[str] = []
+                exts = set(self.file_extensions)
+                matched_ext = 0
+                for index in range(min(count, 8)):
+                    try:
+                        text = (locator.nth(index).inner_text(timeout=2000) or "").strip().replace("\n", " ")
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if text:
+                        samples.append(_clip(text, 120))
+                    ext = _extension_of(locator.nth(index).get_attribute("href") or "")
+                    if not ext:
+                        ext = _extension_of(text)
+                    if ext and ext.lstrip(".").lower() in exts:
+                        matched_ext += 1
+                out["samples"] = samples
+                out["data"] = {"count": int(count), "matched_extensions": matched_ext,
+                               "task": _clip(entries[0].text, 60), "task_url": entries[0].href}
+                if count:
+                    out["ok"] = True
+                    out["detail"] = (f"在任务「{_clip(entries[0].text, 40)}」的详情页里匹配到 {count} 个附件元素，"
+                                     f"其中 {matched_ext} 个的后缀在「需要预览的文件后缀」内。")
+                    if matched_ext == 0:
+                        out["suggestions"] = [
+                            f"当前允许的后缀：{'、'.join(sorted(exts)) or '（空）'}；"
+                            "如果附件是其它格式，请在配置里补上。",
+                        ]
+                else:
+                    out["detail"] = "在任务详情页里没有匹配到附件元素。"
+                    out["suggestions"] = ["用「🎯 可视化选取」选择「详情页附件」重新点一次。",
+                                          "确认第一个任务确实带附件。"]
+            except Exception as exc:  # noqa: BLE001
+                out["detail"] = f"测试失败：{_redact(exc, 300)}"
+            finally:
+                for closer in (lambda: browser.close() if browser else None,
+                               lambda: playwright.stop() if playwright else None):
+                    try:
+                        closer()
+                    except Exception:  # noqa: BLE001
+                        pass
+            return out
+
+        if int(step) == 4:
+            out["title"] = "第四步：试运行一个任务（不写结果文件）"
+            errors = self.validate()
+            if errors:
+                out["detail"] = "配置还没通过校验：\n- " + "\n- ".join(errors)
+                out["suggestions"] = ["按上面的提示补齐配置后再试运行。"]
+                return out
+            collected: List[str] = []
+            result_status = "unknown"
+            for event in self.run(limit=1, dry_run=True, **kwargs):
+                kind = event.get("type")
+                if kind == "delta":
+                    collected.append(str(event.get("content") or ""))
+                elif kind == "done":
+                    result_status = "ok"
+                    collected.append(str(event.get("content") or ""))
+                elif kind == "error":
+                    result_status = "error"
+                    collected.append(str(event.get("content") or ""))
+            out["ok"] = result_status == "ok"
+            out["detail"] = _clip("\n".join(line for line in collected if line), 4000)
+            out["data"] = {"log": collected, "status": result_status}
+            if not out["ok"]:
+                out["suggestions"] = ["根据上面的报错检查选择器与登录状态。",
+                                      "确认这台电脑上能用手动方式完成同样的下载。"]
+            else:
+                out["suggestions"] = ["确认无误后，勾选安全协议并打开自动化总开关即可开始批量处理。"]
+            return out
+
+        out["detail"] = f"未知的向导步骤：{step}"
+        return out
+
+    def _target_label(target: str) -> str:
+        """可视化选取时给用户看的目标名称（任务书 4.2 的四种选取目标）。"""
+        return {
+            "task_list": "任务列表里的任务链接",
+            "task_row": "任务所在的那一整行",
+            "next_page": "「下一页」按钮",
+            "task_detail_file": "任务详情页里的附件名称",
+        }.get(target, "目标元素")
 
     def stop(self) -> None:
         """请求停止（线程安全）：置位内部事件，并同步外部传入的 stop_event。
@@ -1346,11 +1891,17 @@ class AutomationEngine:
 
     # ---------- 主流程 ----------
 
-    def run(self, stop_event: Any = None, on_progress: Optional[Callable[[Dict[str, Any]], None]] = None) -> Iterator[dict]:
-        """执行自动化主流程（生成器），逐个产出进度事件。"""
-        yield from self._run_impl(stop_event, on_progress)
+    def run(self, stop_event: Any = None, on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+            limit: int = 0, dry_run: bool = False) -> Iterator[dict]:
+        """执行自动化主流程（生成器），逐个产出进度事件。
 
-    def _run_impl(self, stop_event: Any, on_progress: Optional[Callable[[Dict[str, Any]], None]]) -> Iterator[Dict[str, Any]]:
+        ``limit`` 覆盖配置里的 ``max_tasks``（0 = 用配置值）；
+        ``dry_run`` 为真时只试运行（不写结果文件、不写处理记录），供测试向导第四步使用。
+        """
+        yield from self._run_impl(stop_event, on_progress, limit=limit, dry_run=dry_run)
+
+    def _run_impl(self, stop_event: Any, on_progress: Optional[Callable[[Dict[str, Any]], None]],
+                  limit: int = 0, dry_run: bool = False) -> Iterator[Dict[str, Any]]:
         """``run()`` 的实际实现：所有 yield 都在这里，便于 ``finally`` 统一清理。"""
         self._progress_cb = on_progress
         self._active_stop = stop_event
@@ -1407,8 +1958,10 @@ class AutomationEngine:
             os.makedirs(self.download_dir, exist_ok=True)
             run_tmp = tempfile.mkdtemp(prefix="run_", dir=self.download_dir)
             # ---- 新增三：本轮结果目录 = 结果根目录/日期/任务名（同名自动加序号）----
+            # 试运行（dry_run）只走流程，不建目录、不写结果文件、不记处理记录。
             self._report_blocks = []
-            if bool(getattr(self.cfg, "save_results", True)):
+            self._dry_run = bool(dry_run)
+            if bool(getattr(self.cfg, "save_results", True)) and not dry_run:
                 self._run_task_dir = self._prepare_task_dir()
                 self._report_header = self._build_report_header()
                 self._write_report(self._report_blocks, self._report_header)
@@ -1416,8 +1969,10 @@ class AutomationEngine:
             else:
                 self._run_task_dir = ""
                 self._report_header = ""
+                if dry_run:
+                    yield self._event("delta", "试运行模式：只处理一个任务，不写结果文件、不记入处理记录。")
             self._audit("run_start", url=self.task_list_url, result="start",
-                        max_tasks=getattr(self.cfg, "max_tasks", 20))
+                        max_tasks=limit or getattr(self.cfg, "max_tasks", 20))
             yield self._event("delta", f"开始自动化：准备打开任务列表 {self.task_list_url}")
 
             # ---- 启动浏览器 ----
@@ -1446,7 +2001,7 @@ class AutomationEngine:
             task_selector = str(getattr(self.cfg, "task_list_selector", "") or "")
             row_selector = str(getattr(self.cfg, "task_row_selector", "") or "")
             next_selector = str(getattr(self.cfg, "next_page_selector", "") or "")
-            max_tasks = max(1, int(getattr(self.cfg, "max_tasks", 20) or 20))
+            max_tasks = max(1, int(limit or getattr(self.cfg, "max_tasks", 20) or 20))
             pending: List[_LinkEntry] = []
             seen_keys: Set[str] = set()
 
@@ -1517,6 +2072,9 @@ class AutomationEngine:
 
                 task_tmp = ""
                 outcome = _TaskOutcome(status="failed", error="未执行")
+                # 技能钩子：任务开始前（v0.2.1 任务二 2.3）
+                self._fire("before_task", task=title, url=entry.href, index=index,
+                           total=total_tasks, run_dir=self._run_task_dir)
                 try:
                     task_tmp = tempfile.mkdtemp(prefix=f"t{index}_", dir=run_tmp)
                     attempts = max(0, int(getattr(self.cfg, "retries", 1) or 0)) + 1
@@ -1573,6 +2131,11 @@ class AutomationEngine:
                     self._audit("task", url=entry.href, files=outcome.files, result="failed", error=reason)
 
                 # ---- 回到任务列表，准备下一个任务（链接已在收集阶段缓存，无需重新分页定位）----
+                # 技能钩子：单个任务处理结束后
+                self._fire("after_task", task=title, url=entry.href, index=index,
+                           total=total_tasks, status=outcome.status, files=list(outcome.files),
+                           summary=outcome.summary, error=outcome.error,
+                           result_path=outcome.result_path, run_dir=self._run_task_dir)
                 if index < total_tasks and not stopped():
                     try:
                         self._goto(page, self.task_list_url)
@@ -1580,7 +2143,7 @@ class AutomationEngine:
                     except Exception as exc:  # noqa: BLE001
                         self.logger.debug("返回任务列表失败：%s", _redact(exc, 150))
 
-            if bool(getattr(self.cfg, "dedupe", True)):
+            if bool(getattr(self.cfg, "dedupe", True)) and not dry_run:
                 self._save_processed(processed_urls)
 
             # ---- 汇总 ----
@@ -1590,7 +2153,7 @@ class AutomationEngine:
             )
             if stopped():
                 header = "已按请求停止。" + header
-            if bool(getattr(self.cfg, "save_results", True)):
+            if bool(getattr(self.cfg, "save_results", True)) and not dry_run:
                 header += f"\n结果目录：{self.results_dir}"
                 self._save_summary_block(header)
             body = "\n\n".join(results) if results else "（本轮没有生成结果）"
@@ -1752,13 +2315,23 @@ class AutomationEngine:
                 documents.append((name, text))
 
             if not documents:
+                # 技能钩子：文件下载完成（即使全部失败也通知，便于技能统计）
+                self._fire("after_download", task=title, index=index, total=total,
+                           files=list(names), errors=list(errors), run_dir=self._run_task_dir)
                 return _TaskOutcome("failed", "", names, "；".join(errors) or "没有可用的文件内容")
+
+            # 技能钩子：文件下载后（任务书 2.3 的 after_download 阶段）
+            self._fire("after_download", task=title, index=index, total=total,
+                       files=list(names), errors=list(errors), run_dir=self._run_task_dir)
 
             # ---- 生成审核意见 ----
             yield self._event("delta", f"第 {index}/{total} 个任务：正在生成审核意见…")
             summary = self._generate(documents)
             if errors:
                 summary += "\n\n【提示】以下文件未能读取，未纳入审核：" + "；".join(errors)
+            # 技能钩子：摘要生成后（任务书 2.3 的 after_summary 阶段）
+            self._fire("after_summary", task=title, index=index, total=total,
+                       files=list(names), summary=summary, run_dir=self._run_task_dir)
             # 新增三：把本轮下载的原始文件移入任务目录（不再随临时目录一起删除）
             kept = self._move_into_task_dir(files_saved)
             moved_paths.update(files_saved)

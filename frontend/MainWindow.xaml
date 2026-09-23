@@ -1,7 +1,8 @@
 <Window x:Class="EchoDesk.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="EchoDesk v0.2.0 — Powered by Void Entropia Studio"
+        xmlns:svc="clr-namespace:EchoDesk.Services"
+        Title="EchoDesk"
         Height="620" Width="860"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowBackground}">
@@ -26,30 +27,32 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="📡 EchoDesk" FontSize="20" FontWeight="Bold"
+                           svc:Loc.Key="main.brand"
                            Foreground="{DynamicResource AccentBrush}"/>
-                <TextBlock Grid.Column="1" Text="v0.2.0" FontSize="10" Margin="4,0,0,0"
+                <TextBlock Grid.Column="1" x:Name="VersionText" Text="v0.2.1" FontSize="10" Margin="4,0,0,0"
                            VerticalAlignment="Bottom" Foreground="{DynamicResource SubTextBrush}"/>
             </Grid>
             <TextBlock Text="Powered by Void Entropia Studio" FontSize="11" Margin="14,8,0,0"
+                       svc:Loc.Key="main.powered"
                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>
             <!-- 关键状态：运行状态 / 模型 / 模式。
                  注意：这里给状态文本用 HelpText 说明含义，不能用 AutomationProperties.Name 覆盖，
                  否则屏幕阅读器读到的是"运行状态"而不是"已就绪"，反而丢失信息。 -->
             <TextBlock x:Name="StatusText" Text="正在启动后端..." Margin="18,0,0,0"
                        VerticalAlignment="Center" FontWeight="Bold"
-                       AutomationProperties.HelpText="运行状态：正在启动后端 / 已就绪 / 处理中 / 后端已退出"
+                       svc:Loc.HelpKey="main.status.help"
                        Foreground="{DynamicResource SubTextBrush}"/>
             <Button x:Name="ModelChip" Margin="14,0,0,0" Padding="8,2" VerticalAlignment="Center"
                     Style="{StaticResource RoundButton}" Click="ModelChip_Click"
-                    ToolTip="点击打开模型选择栏（设置 → 模型）"
-                    AutomationProperties.HelpText="当前加载的模型，点击打开模型设置">
+                    svc:Loc.TipKey="main.model.clickTip"
+                    svc:Loc.HelpKey="main.model.help">
                 <TextBlock x:Name="ModelText" Text="🧠 模型: ---" FontSize="11" MaxWidth="200"
                            TextTrimming="CharacterEllipsis"/>
             </Button>
             <Button x:Name="ModeChip" Margin="8,0,0,0" Padding="8,2" VerticalAlignment="Center"
                     Style="{StaticResource RoundButton}" Click="ModeChip_Click"
-                    ToolTip="点击打开设置修改默认对话模式"
-                    AutomationProperties.HelpText="当前对话模式，点击打开设置">
+                    svc:Loc.TipKey="main.mode.clickTip"
+                    svc:Loc.HelpKey="main.mode.help">
                 <TextBlock x:Name="ModeText" Text="🛠️ 模式: general" FontSize="11"/>
             </Button>
         </StackPanel>
@@ -73,6 +76,7 @@
                          TextChanged="CommandInputBox_TextChanged"/>
                 <TextBlock x:Name="CommandPlaceholder"
                            Text="在此处输入以“/”开头的指令 · 了解用法输入 /help"
+                           svc:Loc.Key="main.command.placeholder"
                            FontSize="12" Foreground="{DynamicResource SubTextBrush}"
                            Margin="14,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
             </Grid>
@@ -114,7 +118,7 @@
                     <!-- 左侧：命令输入框开关按钮（加号旋转变叉号，固定宽度防跳动） -->
                     <Button x:Name="CommandButton" Grid.Column="0" Width="170" Height="34"
                             Style="{StaticResource RoundButton}"
-                            Click="CommandButton_Click" ToolTip="命令输入框">
+                            Click="CommandButton_Click" svc:Loc.TipKey="main.command.tip">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock x:Name="CommandIconText" Text="+" FontSize="18" FontWeight="Bold"
                                        RenderTransformOrigin="0.5,0.5" VerticalAlignment="Center">
@@ -130,7 +134,7 @@
                     <!-- 常用语按钮（同款开关文字，固定宽度） -->
                     <Button x:Name="SnippetButton" Grid.Column="1" Width="170" Height="34" Margin="6,2,2,2"
                             Style="{StaticResource RoundButton}"
-                            Click="SnippetButton_Click" ToolTip="常用语选择框">
+                            Click="SnippetButton_Click" svc:Loc.TipKey="main.snippet.tip">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="📋" FontSize="14" VerticalAlignment="Center"/>
                             <TextBlock x:Name="SnippetButtonText" Text="打开常用语选择框" FontSize="12"
@@ -148,13 +152,13 @@
                     <Button x:Name="SettingsButton" Grid.Column="4" Width="34" Height="34"
                             Style="{StaticResource RoundButton}" Content="⚙"
                             Click="SettingsButton_Click"
-                            ToolTip="设置（Ctrl+, 打开设置 · Ctrl+M 打开技能市场）"/>
+                            svc:Loc.TipKey="main.button.settingsTip"/>
                     <Button x:Name="UploadButton" Grid.Column="5" Width="34" Height="34"
                             Style="{StaticResource RoundButton}" Content="📎"
-                            Click="UploadButton_Click" ToolTip="上传文件 (Ctrl+O)"/>
+                            Click="UploadButton_Click" svc:Loc.TipKey="main.button.uploadTip"/>
                     <Button x:Name="SendButton" Grid.Column="6" Width="40" Height="40"
                             Style="{StaticResource RoundButton}" Content="➤" FontSize="16"
-                            Click="SendButton_Click" ToolTip="发送 (Ctrl+Enter)"/>
+                            Click="SendButton_Click" svc:Loc.TipKey="main.button.sendTip"/>
                 </Grid>
             </Grid>
         </Border>
@@ -165,8 +169,7 @@
                 Background="{DynamicResource InputBackground}"
                 BorderBrush="{DynamicResource InputBorder}" BorderThickness="1"
                 Padding="8,3"
-                AutomationProperties.Name="轻量状态区"
-                AutomationProperties.HelpText="显示搜索、自动化、技能市场连接、上下文占用与 KV Cache 估算；点击可跳转到对应设置">
+                svc:Loc.HelpKey="main.strip.help">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -175,39 +178,45 @@
                 <StackPanel x:Name="StatusStripItems" Grid.Column="0" Orientation="Horizontal">
                     <Button x:Name="StripSearchButton" Padding="6,1" Margin="0,0,4,0"
                             Style="{StaticResource RoundButton}" Click="StripSearchButton_Click"
-                            ToolTip="联网搜索开关：点击直接切换（/search on|off）"
-                            AutomationProperties.HelpText="联网搜索开关，点击直接切换">
+                            svc:Loc.TipKey="main.strip.searchTip"
+                            svc:Loc.HelpKey="main.strip.searchHelp">
                         <TextBlock x:Name="SearchText" Text="🔍 搜索：关" FontSize="11"/>
                     </Button>
                     <Button x:Name="StripAutomationButton" Padding="6,1" Margin="0,0,4,0"
                             Style="{StaticResource RoundButton}" Click="StripAutomationButton_Click"
-                            ToolTip="自动化开关：点击打开「设置 → 自动化」"
-                            AutomationProperties.HelpText="自动化开关状态，点击打开设置">
+                            svc:Loc.TipKey="main.strip.automationTip"
+                            svc:Loc.HelpKey="main.strip.autoHelp">
                         <TextBlock x:Name="AutoText" Text="⚙️ 自动化：关" FontSize="11"/>
                     </Button>
                     <Button x:Name="StripMarketButton" Padding="6,1" Margin="0,0,4,0"
                             Style="{StaticResource RoundButton}" Click="StripMarketButton_Click"
-                            ToolTip="技能市场连接状态：点击打开「设置 → 技能市场」"
-                            AutomationProperties.HelpText="技能市场连接状态，点击打开设置">
+                            svc:Loc.TipKey="main.strip.marketTip"
+                            svc:Loc.HelpKey="main.strip.marketHelp">
                         <TextBlock x:Name="MarketText" Text="🌐 市场：未连接" FontSize="11"/>
                     </Button>
                     <Button x:Name="StripContextButton" Padding="6,1" Margin="0,0,4,0"
                             Style="{StaticResource RoundButton}" Click="StripContextButton_Click"
-                            ToolTip="上下文占用：点击刷新"
-                            AutomationProperties.HelpText="当前上下文占用百分比，点击刷新">
+                            svc:Loc.TipKey="main.strip.contextTip"
+                            svc:Loc.HelpKey="main.strip.contextHelp">
                         <TextBlock x:Name="StripContextText" Text="📊 上下文 0%" FontSize="11"/>
                     </Button>
                     <Button x:Name="StripKvButton" Padding="6,1"
                             Style="{StaticResource RoundButton}" Click="StripKvButton_Click"
-                            ToolTip="KV Cache 估算：点击打开「设置 → 模型」"
-                            AutomationProperties.HelpText="KV Cache 内存占用估算，点击打开模型设置">
+                            svc:Loc.TipKey="main.strip.kvTip"
+                            svc:Loc.HelpKey="main.strip.kvHelp">
                         <TextBlock x:Name="StripKvText" Text="💾 KV: ---" FontSize="11"/>
+                    </Button>
+                    <!-- 自动更新提示（v0.2.1 任务五 · 方案 A）：只有真的发现新版本时才出现；
+                         点击打开 GitHub Releases 页面，不自动下载、不自动替换。 -->
+                    <Button x:Name="StripUpdateButton" Padding="6,1" Margin="6,0,0,0"
+                            Visibility="Collapsed"
+                            Style="{StaticResource RoundButton}" Click="StripUpdateButton_Click">
+                        <TextBlock x:Name="StripUpdateText" Text="🎉 新版本" FontSize="11"/>
                     </Button>
                 </StackPanel>
                 <Button x:Name="StripToggleButton" Grid.Column="1" Padding="6,1" Margin="6,0,0,0"
                         Style="{StaticResource RoundButton}" Click="StripToggleButton_Click"
-                        ToolTip="折叠/展开状态区"
-                        AutomationProperties.HelpText="折叠或展开状态区">
+                        svc:Loc.TipKey="main.strip.toggleTip">
                     <TextBlock x:Name="StripToggleText" Text="▾" FontSize="11"/>
                 </Button>
             </Grid>
@@ -217,7 +226,8 @@
         <StackPanel Grid.Row="5" Margin="0,3,0,0" HorizontalAlignment="Center">
             <TextBlock x:Name="CommandBarHint" Visibility="Collapsed" FontSize="12"
                        Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"
-                       Text="💡 检测到指令格式：点击左下角「转移到命令输入框」按钮"/>
+                       Text="💡 检测到指令格式：点击左下角「转移到命令输入框」按钮"
+                       svc:Loc.Key="main.command.hint"/>
             <!-- 通知条：下载完成 / 自动化完成 / 错误提示，短暂显示后自动隐藏 -->
             <Border x:Name="ToastBorder" Visibility="Collapsed" CornerRadius="10" Padding="12,4"
                     HorizontalAlignment="Center" Margin="0,2,0,0"
@@ -228,6 +238,7 @@
             </Border>
             <TextBlock x:Name="HintText"
                        Text="💡 拖拽文件可上传 · Ctrl+Enter 发送 · Esc 停止 · Ctrl+L 清空 · Ctrl+滚轮 字号"
+                       svc:Loc.Key="main.hint"
                        FontSize="12" Foreground="{DynamicResource SubTextBrush}"
                        HorizontalAlignment="Center" Margin="0,2,0,0"/>
         </StackPanel>
@@ -255,6 +266,7 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
                     <TextBlock Text="/snippet add 名称 文本 可新增 · 空列表时先添加" FontSize="11"
+                               svc:Loc.Key="main.snippet.hint"
                                Foreground="{DynamicResource SubTextBrush}" Margin="6,2,6,4"/>
                 </StackPanel>
             </Border>
@@ -295,6 +307,7 @@
                     </ListBox>
                     <TextBlock Text="↑↓ 选择 · Tab 补全 · Enter 执行（候选不唯一时先补全命令名再确认）· Esc 关闭"
                                FontSize="11" Foreground="{DynamicResource SubTextBrush}" Margin="6,2,6,4"
+                               svc:Loc.Key="main.paletteHint"
                                TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>

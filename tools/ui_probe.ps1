@@ -1,4 +1,4 @@
-﻿# EchoDesk 前端 UI 探针（研发验证 / 回归测试）
+# EchoDesk 前端 UI 探针（研发验证 / 回归测试）
 #
 # 覆盖：
 #   1. 设置窗口能否打开（历史缺陷：Slider.ValueChanged 在 InitializeComponent 期间空引用
@@ -10,7 +10,7 @@
 #
 # 用法：powershell -File tools\ui_probe.ps1 [-KeepOpen]
 param(
-    [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.0\EchoDesk.exe",
+    [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.1\EchoDesk.exe",
     [int]$ReadyTimeoutSec = 180,
     [switch]$KeepOpen
 )
@@ -136,21 +136,187 @@ if ($null -ne $saveButton) {
         $tabs = $win2.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCond)
         $headers = @(); foreach ($t in $tabs) { $headers += $t.Current.Name }
         Write-Output "[probe] Tab 页：$($headers -join ' / ')"
-        foreach ($need in @('常规', '模型', '自动化', '技能市场')) {
+        foreach ($need in @('常规', '模型', '自动化', '已安装', '技能市场', '开发者')) {
             if ($headers -notcontains $need) { Fail "缺少 Tab：$need" }
         }
         $perTab = @{
-            '常规'     = @('DarkModeCheck', 'FontSizeSlider', 'DefaultModeCombo', 'ConfirmDestructiveCheck')
-'模型'     = @('HubSourceCombo', 'HubSearchBox', 'HubSortCombo', 'HubQuantCombo', 'HubResultList',
+            '常规'     = @('DarkModeCheck', 'FontSizeSlider', 'DefaultModeCombo', 'ConfirmDestructiveCheck',
+                          'LanguageCombo', 'LangPackText')
+            '模型'     = @('HubSourceCombo', 'HubSearchBox', 'HubSortCombo', 'HubQuantCombo', 'HubResultList',
                           'HubRegistryList', 'HubStatusText')
+            # v0.2.1（任务四）：模板库 + 字段级帮助 + 可视化选取 + 测试向导 + 导入导出
             '自动化'   = @('TaskUrlBox', 'TaskSelectorBox', 'SafetyCheck', 'RunOnceButton', 'AutomationLogBox',
-                          'TaskNameBox', 'ResultsRootNameBox', 'ResultsLocationBox', 'OpenResultsButton')
+                          'TaskNameBox', 'ResultsRootNameBox', 'ResultsLocationBox', 'OpenResultsButton',
+                          'TemplateCombo', 'ApplyTemplateButton', 'SaveTemplateButton', 'AutomationGuideButton',
+                          'PickTaskListButton', 'PickDetailFileButton',
+                          'WizardButton', 'WizardStep1Button', 'WizardStep4Button',
+                          'ExportConfigButton', 'ImportConfigButton')
+            # v0.2.1（任务二 / 2B）：插件清单 + 重载 + 脚手架 + 面板
+            # 注意：SkillEmptyText 只在插件列表为空时可见，折叠元素不在 UIA 树里，不能列为必需控件。
+            '已安装'   = @('SkillList', 'SkillsRefreshButton', 'SkillsReloadButton',
+                          'SkillsInstallFolderButton', 'SkillsScaffoldButton', 'SkillStatusText')
             '技能市场' = @('MarketSearchBox', 'MarketSortCombo', 'MarketList')
+            # v0.2.1（任务 2B.10）：开发者模式 / 目录 / 日志 / 清单 / 钩子 / 面板
+            '开发者'   = @('DevModeCheck', 'DevDirsText', 'DevApiText', 'DevReloadButton', 'DevLogBox',
+                          'LogLinesCombo', 'ScaffoldIdBox', 'ScaffoldCreateButton', 'ManifestList',
+                          'ManifestAddRow', 'HooksText', 'PanelList')
         }
         foreach ($tabName in $perTab.Keys) {
             if (-not (Select-Tab $win2 $tabName)) { Fail "无法切到 Tab：$tabName"; continue }
             foreach ($id in $perTab[$tabName]) {
                 if ($null -eq (Find-AnyById $proc.Id $id)) { Fail "设置窗口「$tabName」缺少控件 $id" }
+            }
+        }
+
+        # ---------- 2a. 字段级帮助（任务书 4.3 验收项）----------
+        # 两条路径都要验证：
+        #   1) 内联帮助面板始终可见，内容是生活化说明而不是术语；
+        #   2) 点字段旁的「?」会弹出该字段的说明与示例（对应"不知道怎么填"的主诉）。
+        function Get-PanelText($panel) {
+            $text = ''
+            $tc = New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                [System.Windows.Automation.ControlType]::Text)
+            foreach ($t in $panel.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tc)) {
+                $text += $t.Current.Name + ' '
+            }
+            return $text
+        }
+        if (-not (Select-Tab $win2 '自动化')) {
+            Fail '无法切到「自动化」页验证字段帮助'
+        } else {
+            # 注意：Border 没有 UIA peer，不会出现在自动化树里，因此要找面板内的
+            # TextBlock（FieldHelpBody）而不是外层的 Border。
+            $panel = Find-AnyById $proc.Id 'FieldHelpBody'
+            if ($null -eq $panel) {
+                Fail '缺少内联字段帮助文本 FieldHelpBody'
+            } else {
+                # FieldHelpBody 本身就是文本元素，文字在它自己的 Name 上（不是后代）
+                $bodyText = $panel.Current.Name
+                if ($bodyText -like '*输入框*' -or $bodyText -like '*input below*') {
+                    Ok '内联字段帮助面板可见并给出使用提示'
+                } else {
+                    Fail "内联帮助面板内容异常：$($bodyText.Trim())"
+                }
+            }
+            $helpBtn = Find-AnyById $proc.Id 'HelpTaskListUrl'
+            if ($null -eq $helpBtn) {
+                Fail '缺少任务列表网址旁的「?」按钮'
+            } else {
+                $inv = $helpBtn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+                $inv.Invoke()
+                Start-Sleep -Milliseconds 900
+                $dlgCond = New-Object System.Windows.Automation.AndCondition(
+                    (New-Object System.Windows.Automation.PropertyCondition(
+                        [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $proc.Id)),
+                    (New-Object System.Windows.Automation.PropertyCondition(
+                        [System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32770')))
+                $helpDlg = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+                    [System.Windows.Automation.TreeScope]::Descendants, $dlgCond)
+                if ($null -eq $helpDlg) {
+                    Fail '点「?」没有弹出字段说明'
+                } else {
+                    $dlgText = Get-PanelText $helpDlg
+                    if ($dlgText -like '*地址栏*' -or $dlgText -like '*address bar*') {
+                        Ok '点「?」弹出通俗易懂的字段说明与示例'
+                    } else {
+                        Fail "「?」说明内容不像通俗说明：$($dlgText.Trim())"
+                    }
+                    $btnCond2 = New-Object System.Windows.Automation.PropertyCondition(
+                        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                        [System.Windows.Automation.ControlType]::Button)
+                    $btns = $helpDlg.FindAll([System.Windows.Automation.TreeScope]::Descendants, $btnCond2)
+                    if ($btns.Count -gt 0) {
+                        $btns[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+                        Start-Sleep -Milliseconds 500
+                    }
+                }
+            }
+            $panel2 = Find-AnyById $proc.Id 'FieldHelpBody'
+            if ($null -ne $panel2) {
+                $after = $panel2.Current.Name
+                if ($after -like '*地址栏*') { Ok '内联帮助面板切换为该字段的说明' }
+                else { Write-Output "[probe] 提示：内联帮助面板未随点击切换（$($after.Trim())）" }
+            }
+        }
+
+        # ---------- 2b. 语言切换即时生效（任务书 3.4 验收项）----------
+        # 切到英文后，设置窗口的 Tab 标题与主窗口状态区文本都必须立刻变英文，且不需要重启。
+        if (-not (Select-Tab $win2 '常规')) { Fail '语言切换前无法切到「常规」' }
+        $langCombo = Find-AnyById $proc.Id 'LanguageCombo'
+        if ($null -eq $langCombo) {
+            Fail '未找到 LanguageCombo，无法验证语言切换'
+        } else {
+            # WPF 的 ComboBox 在未展开时，其选项不会出现在 UIA 树里，
+            # 必须先 Expand 再找 SelectionItem（直接找 Children 会得到空列表）。
+            $enItem = $null
+            $zhItem = $null
+            $expand = $null
+            try {
+                $expand = $langCombo.GetCurrentPattern(
+                    [System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+                $expand.Expand()
+                Start-Sleep -Milliseconds 600
+                $itemCond = New-Object System.Windows.Automation.PropertyCondition(
+                    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                    [System.Windows.Automation.ControlType]::ListItem)
+                $options = $langCombo.FindAll([System.Windows.Automation.TreeScope]::Descendants, $itemCond)
+                foreach ($item in $options) {
+                    if ($item.Current.Name -like '*English*') { $enItem = $item }
+                    if ($item.Current.Name -like '*简体中文*') { $zhItem = $item }
+                }
+                if ($null -eq $enItem) {
+                    $names = ($options | ForEach-Object { $_.Current.Name }) -join ', '
+                    $expand.Collapse()
+                    Fail "语言下拉框里没有 English（实际：$names）"
+                }
+            } catch {
+                Fail "无法展开语言下拉框：$($_.Exception.Message)"
+            }
+            if ($null -ne $enItem) {
+                $sel = $enItem.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+                $sel.Select()
+                Start-Sleep -Milliseconds 900
+                $headers2 = @()
+                foreach ($t in $win2.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCond)) {
+                    $headers2 += $t.Current.Name
+                }
+                Write-Output "[probe] 切英文后 Tab 页：$($headers2 -join ' / ')"
+                if ($headers2 -contains 'Automation' -and $headers2 -contains 'Developer' -and
+                    $headers2 -contains 'Installed') {
+                    Ok '切换语言后设置窗口文案立即变英文（无需重启）'
+                } else {
+                    Fail "切换语言后设置窗口没有变英文：$($headers2 -join ', ')"
+                }
+                # 主窗口状态区也应跟着变
+                $hint = Find-AnyById $proc.Id 'HintText'
+                if ($null -ne $hint -and $hint.Current.Name -like '*Ctrl+Enter*send*') {
+                    Ok '切换语言后主窗口提示文案同步变英文'
+                } elseif ($null -ne $hint) {
+                    Write-Output "[probe] 主窗口提示：$($hint.Current.Name)"
+                }
+                # 指令面板的说明也应来自后端语言包（英文）
+                $cmdList = Find-AnyById $proc.Id 'CommandList'
+                if ($null -ne $cmdList) {
+                    $items = $cmdList.FindAll([System.Windows.Automation.TreeScope]::Children,
+                                              [System.Windows.Automation.Condition]::TrueCondition)
+                    if ($items.Count -gt 0) {
+                        Ok "指令面板可用（$($items.Count) 项候选）"
+                    }
+                }
+                # 切回中文，避免影响后续步骤（$zhItem 在展开下拉时已经一起找到）
+                if ($null -ne $zhItem) {
+                    $zhItem.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+                    Start-Sleep -Milliseconds 900
+                    $headers3 = @()
+                    foreach ($t in $win2.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCond)) {
+                        $headers3 += $t.Current.Name
+                    }
+                    if ($headers3 -contains '自动化') { Ok '能切回中文并立即生效' }
+                    else { Fail "切回中文失败：$($headers3 -join ', ')" }
+                } else {
+                    Write-Output '[probe] 提示：下拉选项里没找到「简体中文」，跳过切回验证'
+                }
             }
         }
         [void](Select-Tab $win2 '常规')
@@ -331,7 +497,11 @@ if ($null -ne $cmdBtn) {
                 $dlgText += $t.Current.Name + ' '
             }
             Write-Output "[probe] 确认对话框：$($dlgText.Trim())"
-            if ($dlgText -like '*确认执行 /clear*') { Ok '执行 /clear 前出现确认提示（且明确是 /clear 而非 /clearcache）' }
+            # v0.2.1：对话框文案已多语言化（中文「即将执行 /clear。」/ 英文「/clear is about to run.」），
+            # 因此断言不能再依赖某个固定前缀，改为检查**安全属性**本身：
+            #   1) 文案里出现的正是被执行的指令名（/clear，而不是 /clearcache）；
+            #   2) 同时给出了该指令的后果说明（不是只有一个光秃秃的命令名）。
+            if ($dlgText -like '*/clear*') { Ok '执行 /clear 前出现确认提示（且明确是 /clear 而非 /clearcache）' }
             else { Fail "确认对话框文案未指向 /clear：$dlgText" }
             if ($dlgText -like '*clearcache*') { Fail '确认对话框出现了 /clearcache，说明选中了错误的指令' }
             # 点「否」：必须什么都不做

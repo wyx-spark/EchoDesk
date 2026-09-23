@@ -1,0 +1,34 @@
+{
+  "_meta": {
+    "locale": "zh-Hans",
+    "note": "Hello World 示例插件自己的语言包。键名与代码里的 api.lang('...') 一一对应。"
+  },
+  "hello": {
+    "default_name": "世界",
+    "reply": "你好，{name}！这是来自插件「{skill}」的问候。\n当前界面语言：{locale}；EchoDesk 版本：{version}。"
+  },
+  "cmd": {
+    "hello": {
+      "label": "问候一下",
+      "description": "示例指令：返回一句问候，演示参数处理与多语言。"
+    }
+  },
+  "panel": {
+    "title": "Hello 示例面板",
+    "description": "由插件声明的面板，前端用原生控件渲染。把插件目录里的语言包改一改就能看到多语言效果。",
+    "name": {
+      "label": "你的名字",
+      "help": "填一个名字，点下面的按钮试试。"
+    },
+    "remember": {
+      "label": "记住这个名字",
+      "help": "勾选后会把名字写进插件自己的 config.json（与主配置隔离）。"
+    },
+    "greet": {
+      "label": "打个招呼"
+    },
+    "result": "面板收到名字：{name}",
+    "none_yet": "（还没有）",
+    "render": "上次打招呼的名字：{last}\n数据目录：{dir}"
+  }
+}

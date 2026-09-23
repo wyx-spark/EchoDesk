@@ -1,0 +1,194 @@
+{
+  "_meta": {
+    "locale": "en",
+    "module": "automation",
+    "version": "1.0.0",
+    "note": "Field labels, plain-language help and preset templates for the automation configuration (task book 4.3 / 4.4 / 4.6). Help text avoids jargon; only where precision is required does it mention the developer-tools route."
+  },
+
+  "automation": {
+    "help": {
+      "required": "required",
+      "optional": "optional",
+      "example": "Example",
+      "step1_title": "Step 1: the task list page",
+      "step2_title": "Step 2: the task detail page",
+      "step3_title": "Step 3: what the AI should do",
+      "step4_title": "Step 4: where the results go",
+      "step5_title": "Step 5: run settings",
+      "paste_selector": "Right-click the task link → Inspect → right-click the highlighted code → Copy → Copy selector → paste it here.",
+
+      "task_list_url": {
+        "label": "Task list URL",
+        "help": "The page address that shows all your tasks. Copy it from the browser address bar and paste it here.",
+        "example": "https://oa.example.com/task/list"
+      },
+      "task_list_selector": {
+        "label": "Task link position",
+        "help": "Where the task links you want the program to click are on the page. Click the 🎯 Pick on page button on the right, then click a task name in the page. If you must type it manually: right-click the task link → Inspect → right-click the highlighted code → Copy → Copy selector → paste it here.",
+        "example": "table.task-list a.title"
+      },
+      "task_row_selector": {
+        "label": "Task row container (optional)",
+        "help": "If one task occupies a whole row on the page (for example a table row), put that row's position here so the program can locate it more accurately. Leave it empty if you are not sure.",
+        "example": "table.task-list tr"
+      },
+      "next_page_selector": {
+        "label": "Next page button (optional)",
+        "help": "If the task list has several pages, put the position of the Next page button here and the program will turn pages by itself. Leave it empty when there is only one page.",
+        "example": "a.next-page"
+      },
+      "task_detail_file_selector": {
+        "label": "Attachment position on the detail page",
+        "help": "After you open a task you can see the download links for its attachments. Click 🎯 Pick on page and choose “attachment on the detail page”: the program first opens the first task automatically, then you click the attachment name.",
+        "example": "div.attachments a"
+      },
+      "file_extensions": {
+        "label": "File types to process",
+        "help": "Tells the program which file types to handle. Typical: pdf, docx for contracts; xlsx for spreadsheets. Tick the boxes or type the list.",
+        "example": "pdf, docx"
+      },
+      "instruction": {
+        "label": "Task instruction",
+        "help": "Tells the AI what to do with the files. Write in plain words what to extract and what kind of opinion to produce.",
+        "example": "Extract the contract amount, payment method and terms, penalty ratio, both parties and the signing date; flag anything out of policy"
+      },
+      "task_name": {
+        "label": "Result folder name (optional)",
+        "help": "The name used for the result folder. It defaults to the task name and usually needs no change.",
+        "example": "Contract review"
+      },
+      "results_root_name": {
+        "label": "Result root folder name",
+        "help": "The folder that holds the batch results. It is called 批量处理结果 by default and sits in the program folder.",
+        "example": "批量处理结果"
+      },
+      "results_location": {
+        "label": "Where to save results (optional)",
+        "help": "Fill this in if you want results on another drive or on a shared folder. Leave it empty to use the program folder.",
+        "example": "D:\\contract-review-results"
+      },
+      "max_tasks": {
+        "label": "Maximum tasks per run",
+        "help": "How many tasks one run should handle at most, so a single run cannot get out of hand.",
+        "example": "20"
+      },
+      "page_timeout_ms": {
+        "label": "Page timeout (milliseconds)",
+        "help": "How long to wait for a page to open at most. Increase it if your intranet system is slow.",
+        "example": "30000"
+      },
+      "retries": {
+        "label": "Retries on failure",
+        "help": "How many times a failed task is retried automatically.",
+        "example": "1"
+      },
+      "dedupe": {
+        "label": "Skip tasks already processed",
+        "help": "When ticked, tasks you already processed are skipped next time so no work is repeated.",
+        "example": ""
+      },
+      "manual_login_wait_seconds": {
+        "label": "Wait for manual verification (seconds)",
+        "help": "When a CAPTCHA appears or a login is needed the program pauses and waits for you, at most this long.",
+        "example": "180"
+      },
+      "llm_temperature": {
+        "label": "Generation temperature",
+        "help": "Higher makes answers more varied, lower makes them more conservative. Around 0.3 suits review work.",
+        "example": "0.3"
+      },
+      "llm_max_tokens": {
+        "label": "Maximum length per opinion (tokens)",
+        "help": "How long each review opinion may be. Longer output is slower.",
+        "example": "512"
+      },
+      "download_dir": {
+        "label": "Temporary download folder (optional)",
+        "help": "Attachments are downloaded here first and deleted after processing. Leave empty to use the system temp folder.",
+        "example": ""
+      },
+      "audit_log_file": {
+        "label": "Audit log file",
+        "help": "One record is appended to this file per task so the run can be traced afterwards.",
+        "example": "automation_log.jsonl"
+      },
+      "browser_channel": {
+        "label": "Browser to use",
+        "help": "Which browser the automation opens pages with. Microsoft Edge installed on the machine is the default.",
+        "example": "msedge"
+      },
+      "save_results": {
+        "label": "Save result files",
+        "help": "Clear this to do a dry run only — no result file is written.",
+        "example": ""
+      },
+      "wait_network_idle": {
+        "label": "Wait for the page to finish loading",
+        "help": "When ticked the program waits until network requests stop before acting: steadier, a little slower.",
+        "example": ""
+      },
+      "schedule_enabled": {
+        "label": "Run on a schedule",
+        "help": "Turn this on to run automatically at fixed times every day.",
+        "example": ""
+      },
+      "schedule_times": {
+        "label": "Scheduled times",
+        "help": "The times of day to run automatically; separate several times with commas.",
+        "example": "09:00, 18:00"
+      },
+      "start_with_windows": {
+        "label": "Start with Windows",
+        "help": "Launch EchoDesk automatically after signing in to Windows.",
+        "example": ""
+      },
+      "enabled": {
+        "label": "Automation master switch",
+        "help": "Can only be switched on after you accept the safety protocol below.",
+        "example": ""
+      },
+      "safety_accepted": {
+        "label": "I have read and accept the safety protocol",
+        "help": "Automation acts as you on web pages, reads attachments and hands their content to the local model. Please confirm you are authorised to do this.",
+        "example": ""
+      }
+    },
+
+    "template": {
+      "contract": {
+        "label": "Contract financial review",
+        "instruction": "Extract the contract amount, payment method and terms, penalty ratio, both parties and the signing date; flag anything out of policy",
+        "extensions": "pdf, docx"
+      },
+      "invoice": {
+        "label": "Invoice data extraction",
+        "instruction": "Extract the invoice number, issue date, amount, tax, buyer, seller and line items",
+        "extensions": "pdf, ofd"
+      },
+      "report": {
+        "label": "Report key points",
+        "instruction": "Summarize the core conclusions, key figures and recommended actions",
+        "extensions": "pdf, docx, pptx"
+      },
+      "table": {
+        "label": "Spreadsheet cross-check",
+        "instruction": "Check whether amounts add up to the totals and flag abnormal rows",
+        "extensions": "xlsx, xls"
+      },
+      "custom_saved": "✅ Saved as custom template \"{name}\"",
+      "custom_applied": "✅ Template \"{name}\" applied",
+      "custom_missing": "Template \"{name}\" not found"
+    },
+
+    "import_ok": "✅ Automation configuration imported ({count} fields)",
+    "import_lang_notice": "Note: this configuration was authored with the interface language \"{source}\" while you are using \"{current}\". Values are imported as-is, so please check whether the selectors and instructions need adjusting.",
+    "import_safety_reset": "For safety the imported file does not carry over the safety protocol or the automation master switch; accept them on this machine before running.",
+    "wizard_step_start": "Running wizard step {step}…",
+
+    "guide": {
+      "title": "Automation configuration guide",
+      "hint": "The full document is at docs/en/AUTOMATION_GUIDE.md inside the release package."
+    }
+  }
+}

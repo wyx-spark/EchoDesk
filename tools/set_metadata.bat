@@ -4,7 +4,7 @@ rem ============================================================================
 rem  EchoDesk 可执行文件元数据与图标统一设置（rcedit）
 rem
 rem  用法:  tools\set_metadata.bat [发布目录]
-rem         默认发布目录: publish\EchoDesk-v0.2.0
+rem         默认发布目录: publish\EchoDesk-v0.2.1
 rem
 rem  执行时机: 编译构建完成之后、打包发布之前（见 tools\build_release.ps1）
 rem
@@ -23,8 +23,8 @@ rem    ProductName       EchoDesk
 rem    OriginalFilename  对应可执行文件名
 rem    InternalName      对应可执行文件名
 rem    Comments          Powered by Void Entropia Studio
-rem    FileVersion       0.2.0.0
-rem    ProductVersion    0.2.0.0
+rem    FileVersion       0.2.1.0
+rem    ProductVersion    0.2.1.0
 rem    图标              assets\EchoDesk.ico（16/32/48/64/128/256 六尺寸）
 rem ============================================================================
 setlocal
@@ -37,7 +37,7 @@ popd
 set "RCEDIT=%ROOT%\tools\rcedit-x64.exe"
 set "ICON=%ROOT%\assets\EchoDesk.ico"
 
-set "VERSION=0.2.0.0"
+set "VERSION=0.2.1.0"
 set "COMPANY=Void Entropia Studio"
 set "COPYRIGHT=Copyright (C) Void Entropia Studio"
 set "DESC=EchoDesk - Local AI Desktop Assistant"
@@ -45,7 +45,7 @@ set "PRODUCT=EchoDesk"
 set "COMMENTS=Powered by Void Entropia Studio"
 
 set "TARGET=%~1"
-if "%TARGET%"=="" set "TARGET=%ROOT%\publish\EchoDesk-v0.2.0"
+if "%TARGET%"=="" set "TARGET=%ROOT%\publish\EchoDesk-v0.2.1"
 
 if not exist "%RCEDIT%" goto :no_rcedit
 if not exist "%ICON%" goto :no_icon

@@ -1,0 +1,30 @@
+{
+  "id": "ofd-reader",
+  "name": "OFD 文档读取",
+  "version": "1.0.0",
+  "description": "EchoDesk 官方示例插件：为 .ofd（国产版式文档 / 电子发票常用格式）增加文本提取能力。",
+  "author": "Void Entropia Studio",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/VoidEntropiaStudio/EchoDesk",
+  "echodesk": {
+    "bundle": "echodesk_ofd",
+    "entry": "echodesk_ofd/__init__.py",
+    "api_version": "1",
+    "min_version": "0.2.1"
+  },
+  "capabilities": {
+    "commands": ["/ofd"],
+    "ui_panels": [],
+    "automation_hooks": [],
+    "file_parsers": ["ofd"],
+    "permissions": {
+      "network": false,
+      "filesystem": ["skill_dir", "user_selected_file"]
+    }
+  },
+  "lang": {
+    "default": "zh-Hans",
+    "available": ["zh-Hans", "en"]
+  },
+  "dependencies": {}
+}

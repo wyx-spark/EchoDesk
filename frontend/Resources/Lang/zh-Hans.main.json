@@ -1,0 +1,72 @@
+{
+  "_meta": {
+    "locale": "zh-Hans",
+    "module": "main",
+    "note": "主窗口追加文案（模块分片）：与 zh-Hans.json 合并，同名键以本文件为准。任务书 3.5 要求语言包可按模块拆分，便于多人协作。"
+  },
+  "main": {
+    "connecting": "⏳ 正在连接后端，请稍候...",
+    "welcome": "✨ 欢迎使用 EchoDesk {0} — Powered by {1}",
+    "welcomeRestored": "📂 已自动恢复上次会话（{0} 轮）",
+    "status": {
+      "startFailed": "后端启动失败",
+      "exiting": "正在退出...",
+      "exitCountdown": "程序将在 {0} 秒后自动关闭",
+      "help": "运行状态：正在启动后端 / 已就绪 / 处理中 / 后端已退出"
+    },
+    "model": {
+      "clickTip": "点击打开模型选择栏（设置 → 模型）",
+      "help": "当前加载的模型，点击打开模型设置"
+    },
+    "mode": {
+      "clickTip": "点击打开设置修改默认对话模式",
+      "help": "当前对话模式，点击打开设置"
+    },
+    "automation": {
+      "disabled": "未启用",
+      "running": "运行中"
+    },
+    "command": {
+      "move": "转移到命令输入框"
+    },
+    "upload": {
+      "chooseTitle": "选择要上传的文件",
+      "filter": "支持的文件"
+    },
+    "strip": {
+      "searchOnTip": "联网搜索已开启：提问前会先搜索网络参考信息。点击关闭",
+      "searchOffTip": "联网搜索已关闭。点击开启（/search on）",
+      "kvValueTip": "KV Cache 估算约 {0}（fp16，随上下文窗口线性增长）\n点击打开「设置 → 模型」",
+      "autoRunningTip": "自动化正在运行（浏览器已打开）。点击打开「设置 → 自动化」查看日志或停止",
+      "autoIdleTip": "自动化已启用，当前空闲。点击打开「设置 → 自动化」",
+      "autoDisabledTip": "自动化未启用（需先勾选安全协议）。点击打开「设置 → 自动化」",
+      "marketValueTip": "技能市场：{0}\n点击打开「设置 → 技能市场」",
+      "expandTip": "展开状态区（搜索 / 自动化 / 市场 / 上下文 / KV Cache）",
+      "collapseTip": "折叠状态区",
+      "searchHelp": "联网搜索开关，点击直接切换",
+      "autoHelp": "自动化开关状态，点击打开设置",
+      "marketHelp": "技能市场连接状态，点击打开设置",
+      "contextTip": "上下文占用：点击刷新",
+      "contextHelp": "当前上下文占用百分比，点击刷新",
+      "kvHelp": "KV Cache 内存占用估算，点击打开模型设置"
+    },
+    "snippet": {
+      "empty": "（还没有常用语，输入 /snippet add 名称 文本 添加）"
+    },
+    "message": {
+      "copy": "复制",
+      "copyMarkdown": "Markdown",
+      "copyCode": "代码",
+      "user": "我",
+      "assistant": "助手",
+      "system": "系统"
+    }
+  },
+  "settings": {
+    "market": {
+      "state": {
+        "syncedEmpty": "已同步（当前无匹配技能）"
+      }
+    }
+  }
+}

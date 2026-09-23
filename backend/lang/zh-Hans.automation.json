@@ -1,0 +1,194 @@
+{
+  "_meta": {
+    "locale": "zh-Hans",
+    "module": "automation",
+    "version": "1.0.0",
+    "note": "自动化配置的字段标签、填写帮助与预置模板（任务书 4.3 / 4.4 / 4.6）。说明一律用生活化语言，避免技术术语；只有必须精确的地方才给专业做法。"
+  },
+
+  "automation": {
+    "help": {
+      "required": "必填",
+      "optional": "可选",
+      "example": "示例",
+      "step1_title": "第 1 步：任务列表页",
+      "step2_title": "第 2 步：任务详情页",
+      "step3_title": "第 3 步：让 AI 做什么",
+      "step4_title": "第 4 步：结果放在哪里",
+      "step5_title": "第 5 步：运行参数",
+      "paste_selector": "在任务链接上右键 → 检查 → 在右侧代码上右键 → 复制 → 复制选择器 → 粘贴到这里。",
+
+      "task_list_url": {
+        "label": "任务列表网址",
+        "help": "打开后能看到所有任务的页面地址。从浏览器地址栏复制粘贴即可。",
+        "example": "https://oa.example.com/task/list"
+      },
+      "task_list_selector": {
+        "label": "任务列表元素位置",
+        "help": "你想让程序点击的「任务链接」在页面上的位置。点右边的「🎯 可视化选取」按钮，然后在页面上直接点一下任务名称即可。如果必须手动填：在任务链接上右键 → 检查 → 在右侧代码上右键 → 复制 → 复制选择器 → 粘贴到这里。",
+        "example": "table.task-list a.title"
+      },
+      "task_row_selector": {
+        "label": "任务行容器（可选）",
+        "help": "如果一个任务在页面上是一整行（比如表格的一行），可以填这一行的位置，让程序更准确地定位。不确定就留空。",
+        "example": "table.task-list tr"
+      },
+      "next_page_selector": {
+        "label": "下一页按钮（可选）",
+        "help": "如果任务列表有很多页，填「下一页」按钮的位置，程序会自动翻页。只有一页就留空。",
+        "example": "a.next-page"
+      },
+      "task_detail_file_selector": {
+        "label": "任务详情页文件元素位置",
+        "help": "点进任务后，能看到附件的下载链接。点「🎯 可视化选取」并选择「详情页附件」，程序会先自动进入第一个任务，然后你在附件名称上点一下即可。",
+        "example": "div.attachments a"
+      },
+      "file_extensions": {
+        "label": "需要预览的文件后缀",
+        "help": "告诉程序只处理哪些类型的文件。常用：合同用 pdf, docx；表格用 xlsx。可以勾选，也可以直接填。",
+        "example": "pdf, docx"
+      },
+      "instruction": {
+        "label": "任务指令",
+        "help": "告诉 AI 要对文件做什么。用大白话写清楚要提取什么、要生成什么意见。",
+        "example": "提取合同金额、付款方式与期限、违约金比例、双方主体、签署日期；标注超限风险"
+      },
+      "task_name": {
+        "label": "任务名称来源（可选）",
+        "help": "结果文件夹用什么名字。默认用任务名称，一般不用改。",
+        "example": "合同审查"
+      },
+      "results_root_name": {
+        "label": "结果根目录名称",
+        "help": "批量结果放在哪个文件夹里。默认叫「批量处理结果」，放在程序目录下。",
+        "example": "批量处理结果"
+      },
+      "results_location": {
+        "label": "结果保存位置（可选）",
+        "help": "想把结果放到别的盘或共享目录时填这里。留空就用程序目录。",
+        "example": "D:\\合同审核结果"
+      },
+      "max_tasks": {
+        "label": "每轮最多处理几个任务",
+        "help": "一次运行最多处理多少个任务，避免一次跑太多。",
+        "example": "20"
+      },
+      "page_timeout_ms": {
+        "label": "页面等待超时（毫秒）",
+        "help": "打开网页最多等多久。内网系统比较慢时可以调大。",
+        "example": "30000"
+      },
+      "retries": {
+        "label": "失败重试次数",
+        "help": "某个任务失败后自动重试几次。",
+        "example": "1"
+      },
+      "dedupe": {
+        "label": "跳过已处理过的任务",
+        "help": "勾选后，处理过的任务下次会自动跳过，避免重复劳动。",
+        "example": ""
+      },
+      "manual_login_wait_seconds": {
+        "label": "人工验证等待时间（秒）",
+        "help": "遇到验证码或需要登录时，程序会停下来等你操作，最多等这么久。",
+        "example": "180"
+      },
+      "llm_temperature": {
+        "label": "生成温度",
+        "help": "越高回答越发散，越低越保守。审核类任务建议 0.3 左右。",
+        "example": "0.3"
+      },
+      "llm_max_tokens": {
+        "label": "单条意见最大长度（tokens）",
+        "help": "每条审核意见最多写多长。写太长会变慢。",
+        "example": "512"
+      },
+      "download_dir": {
+        "label": "下载临时目录（可选）",
+        "help": "附件先下载到这里，处理完就删。留空用系统临时目录。",
+        "example": ""
+      },
+      "audit_log_file": {
+        "label": "审计日志文件",
+        "help": "每个任务都会往这个文件写一条记录，方便事后追溯。",
+        "example": "automation_log.jsonl"
+      },
+      "browser_channel": {
+        "label": "使用的浏览器",
+        "help": "自动化用哪个浏览器打开页面。默认用系统里的 Microsoft Edge。",
+        "example": "msedge"
+      },
+      "save_results": {
+        "label": "保存结果文件",
+        "help": "取消勾选就只做试运行，不写任何结果文件。",
+        "example": ""
+      },
+      "wait_network_idle": {
+        "label": "等待页面完全加载",
+        "help": "勾选后，程序会等页面网络请求都停下来再操作，更稳但稍慢。",
+        "example": ""
+      },
+      "schedule_enabled": {
+        "label": "定时自动运行",
+        "help": "打开后可以设置每天几点自动跑一次。",
+        "example": ""
+      },
+      "schedule_times": {
+        "label": "定时时间点",
+        "help": "每天在哪些时间点自动运行，多个时间用逗号隔开。",
+        "example": "09:00, 18:00"
+      },
+      "start_with_windows": {
+        "label": "开机自动启动",
+        "help": "开机后自动启动 EchoDesk。",
+        "example": ""
+      },
+      "enabled": {
+        "label": "自动化总开关",
+        "help": "必须勾选下面的安全协议之后才能打开。",
+        "example": ""
+      },
+      "safety_accepted": {
+        "label": "我已阅读并同意安全协议",
+        "help": "自动化会以你的身份操作网页、读取附件并把内容交给本地模型，请确认你已获得相应授权。",
+        "example": ""
+      }
+    },
+
+    "template": {
+      "contract": {
+        "label": "合同财务审核",
+        "instruction": "提取合同金额、付款方式与期限、违约金比例、双方主体、签署日期；标注超限风险",
+        "extensions": "pdf, docx"
+      },
+      "invoice": {
+        "label": "发票信息提取",
+        "instruction": "提取发票号、开票日期、金额、税额、购买方、销售方、商品明细",
+        "extensions": "pdf, ofd"
+      },
+      "report": {
+        "label": "报告要点汇总",
+        "instruction": "汇总核心结论、关键数据、建议事项",
+        "extensions": "pdf, docx, pptx"
+      },
+      "table": {
+        "label": "表格数据核对",
+        "instruction": "核对金额与合计是否一致，标注异常行",
+        "extensions": "xlsx, xls"
+      },
+      "custom_saved": "✅ 已保存为自定义模板「{name}」",
+      "custom_applied": "✅ 已套用模板「{name}」",
+      "custom_missing": "未找到模板「{name}」"
+    },
+
+    "import_ok": "✅ 已导入自动化配置（{count} 个字段）",
+    "import_lang_notice": "提示：这份配置是在「{source}」环境下填写的，当前界面语言是「{current}」，字段内容会原样导入，请自行确认选择器与指令是否需要调整。",
+    "import_safety_reset": "出于安全考虑，导入时不会继承「安全协议」与「自动化总开关」，请在本机重新勾选后再运行。",
+    "wizard_step_start": "正在执行测试向导第 {step} 步…",
+
+    "guide": {
+      "title": "自动化配置填写帮助",
+      "hint": "也可以查看完整文档：docs/zh-Hans/AUTOMATION_GUIDE.md（发布包内 docs 目录）"
+    }
+  }
+}

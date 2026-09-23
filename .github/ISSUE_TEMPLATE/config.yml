@@ -1,0 +1,18 @@
+# 空白 Issue 关闭：所有反馈请走结构化模板，避免缺少版本/日志导致无法定位问题。
+# Blank issues are disabled on purpose: templates collect the version and logs needed to help.
+#
+# 维护者注意 / Maintainer note:
+#   仓库地址取自 backend\config.py 的 update.repo 默认值（VoidEntropiaStudio/EchoDesk）。
+#   发布前请替换为真实仓库地址，并在仓库 Settings → Features 中开启 Discussions，
+#   否则“提问与讨论”链接会 404。
+#   If the project moves, update these URLs and enable
+#   Discussions in Settings → Features.
+blank_issues_enabled: false
+
+contact_links:
+  - name: 提问与讨论（问答 / 技能分享 / 翻译协作）/ Q&A, skill sharing, translation coordination
+    url: https://github.com/VoidEntropiaStudio/EchoDesk/discussions
+    about: 使用问题、技能与插件分享、翻译协作请到 Discussions；确实可复现的缺陷再开 Issue。/ Questions, skill sharing and translation coordination belong in Discussions; open an issue for reproducible defects.
+  - name: 安全漏洞报告（请勿公开提交）/ Security vulnerability report (do not file publicly)
+    url: https://github.com/VoidEntropiaStudio/EchoDesk/blob/main/SECURITY.md
+    about: 可被利用的安全漏洞请按 SECURITY.md 私下报告，不要在 Issue 中公开细节。/ Report exploitable vulnerabilities privately as described in SECURITY.md.

@@ -82,7 +82,12 @@
         "per_page": 20,
         "install_dir": "skills",
         "registry_file": "skills_registry.json",
-        "api_base": "https://api.github.com"
+        "api_base": "https://api.github.com",
+        "dev_dir": "skills_dev",
+        "local_manifest": "skills_local.json",
+        "dev_mode": false,
+        "dev_log_file": "skills_dev.log",
+        "require_verified": true
     },
     "model_hub": {
         "enabled": true,
@@ -94,6 +99,17 @@
         "download_retries": 3,
         "search_limit": 20
     },
+    "update": {
+        "enabled": true,
+        "repo": "VoidEntropiaStudio/EchoDesk",
+        "api_base": "https://api.github.com",
+        "check_on_startup": true,
+        "check_interval_hours": 24,
+        "include_prerelease": false,
+        "last_check": "",
+        "last_seen_version": ""
+    },
+    "language": "auto",
     "max_history": 10,
     "search_default": false,
     "temperature": 0.7,

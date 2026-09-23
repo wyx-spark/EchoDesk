@@ -1,0 +1,215 @@
+name: Release
+
+# 任务书 1.4「发布：打标签时自动构建发布物并上传到 GitHub Releases
+#            （不含模型的必需，含模型的可选）」。
+#
+# 构建命令全部来自仓库真实的 tools\build_release.ps1（PyInstaller onedir + dotnet publish
+# 多文件 + 资源收集 + rcedit 元数据 + 快捷方式），CI 不另造一套构建流程。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（手触发时必填，例如 0.2.1）"
+        required: true
+        type: string
+      include_models:
+        description: "构建含模型的离线包（约 1GB，默认关闭）"
+        required: false
+        type: boolean
+        default: false
+
+# softprops/action-gh-release 需要写 Release/标签的权限；不使用任何自定义密钥，
+# 只用 Actions 自动提供的 secrets.GITHUB_TOKEN。
+permissions:
+  contents: write
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      # frontend/EchoDesk.csproj 目标框架为 net10.0-windows，需要 .NET 10 SDK。
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install backend dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          # 后端打包（PyInstaller）与运行期依赖都在这里：pyinstaller 用于 backend\EchoBackend.spec，
+          # llama-cpp-python 由 requirements.txt 的 --extra-index-url 提供 CPU 预编译 wheel。
+          python -m pip install -r backend/requirements.txt
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $version = ""
+          if ("${{ github.event_name }}" -eq "push") {
+              # 标签推送：v0.2.1 → 0.2.1
+              $version = "${{ github.ref_name }}".TrimStart("v")
+          }
+          else {
+              $version = "${{ inputs.version }}".Trim()
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+') {
+              throw "无法确定版本号（得到 '$version'）。标签推送请使用 vX.Y.Z；手动触发请填写 version 输入。"
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "本次发布版本: v$version"
+
+      - name: Build release package
+        shell: pwsh
+        env:
+          # workflow_dispatch 的布尔输入；标签推送时未提供，按 false（不含模型）处理。
+          INCLUDE_MODELS: ${{ inputs.include_models || 'false' }}
+        run: |
+          # 直接调用真实构建脚本（产物目录 publish\EchoDesk-v<版本>）。
+          # 说明：
+          #   * 脚本第 0 步会在缺少 tools\rcedit-x64.exe 时自动调用 tools\fetch_tools.bat 下载，
+          #     下载失败只警告并跳过版本资源写入，不影响构建成功；
+          #   * -IncludeModels 只在上面输入为真时追加：含模型包体积很大（约 1GB），
+          #     GitHub 托管的 runner 上没有 .gguf（models\ 与 HF 缓存都不随仓库提交），
+          #     该路径实际用于**自托管 runner**（机器上已缓存模型）或外部离线打包场景；
+          #     托管 runner 上脚本会提示「未找到可复制的 .gguf 模型」，产出的仍是不含模型的包。
+          # 具名参数用哈希表 splat（数组 splat 会把 "-Version" 当成第一个位置参数的值）
+          $buildArgs = @{ Version = "${{ steps.version.outputs.version }}" }
+          if ($env:INCLUDE_MODELS -eq "true") {
+              Write-Host "包含模型：追加 -IncludeModels"
+              $buildArgs["IncludeModels"] = $true
+          }
+          & ./tools/build_release.ps1 @buildArgs
+
+      - name: Verify package contents
+        id: package
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $out = "publish\EchoDesk-v$version"
+          $required = @(
+              (Join-Path $out "EchoDesk.exe"),
+              (Join-Path $out "backend\EchoDeskBackend.exe"),
+              (Join-Path $out "EchoDesk 启动.lnk"),
+              (Join-Path $out "使用说明.txt")
+          )
+          foreach ($item in $required) {
+              if (-not (Test-Path -LiteralPath $item)) {
+                  throw "发布物缺少必需文件: $item"
+              }
+          }
+          $files = Get-ChildItem -LiteralPath $out -Recurse -File
+          $mb = [math]::Round(($files | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
+          $hasModels = @(Get-ChildItem -LiteralPath (Join-Path $out "backend\models") -Filter *.gguf -File -ErrorAction SilentlyContinue).Count -gt 0
+          Write-Host "发布物: $out（$($files.Count) 个文件，$mb MB，含模型: $hasModels）"
+          "path=$out" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "mb=$mb" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "has_models=$hasModels" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Zip release package
+        id: zip
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $out = "${{ steps.package.outputs.path }}"
+          $suffix = "win-x64"
+          if ("${{ steps.package.outputs.has_models }}" -eq "True") { $suffix = "win-x64-with-models" }
+          $zip = "EchoDesk-v$version-$suffix.zip"
+          if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+          # 压缩包内直接是发布物内容（解压即可双击「EchoDesk 启动.lnk」）。
+          # Compress-Archive 是 PowerShell 自带能力，不引入额外压缩工具；
+          # 注意 Zip 格式单文件上限 2GB——含模型包若超过该限制需改用 7z 分卷。
+          Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip -CompressionLevel Optimal
+          $zipMb = [math]::Round((Get-Item -LiteralPath $zip).Length / 1MB, 1)
+          Write-Host "压缩包: $zip（$zipMb MB）"
+          "file=$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "mb=$zipMb" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EchoDesk-release-package
+          path: ${{ steps.zip.outputs.file }}
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Write release notes
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $template = ".github/release_notes_template.md"
+          if (-not (Test-Path -LiteralPath $template)) {
+              throw "缺少发布说明模板: $template"
+          }
+          $notes = Get-Content -LiteralPath $template -Raw -Encoding UTF8
+
+          # 下载包清单
+          $packageList = "- ``${{ steps.zip.outputs.file }}``（${{ steps.package.outputs.mb }} MB 解压后 / ${{ steps.zip.outputs.mb }} MB 压缩包）"
+          if ("${{ steps.package.outputs.has_models }}" -eq "True") {
+              $packageList += "`n- 含模型离线包：解压后可直接离线使用，无需再下载模型。"
+          }
+          else {
+              $packageList += "`n- 不含模型：首次启动会询问是否下载模型（约 508MB，需联网）。"
+          }
+
+          # 更新日志节选：从 docs/CHANGELOG.md 抓取 "## v<版本>" 到下一个 "## " 之间的小节
+          $excerpt = ""
+          $changelog = "docs\CHANGELOG.md"
+          if (Test-Path -LiteralPath $changelog) {
+              $lines = Get-Content -LiteralPath $changelog -Encoding UTF8
+              $capture = $false
+              $buffer = New-Object System.Collections.ArrayList
+              foreach ($line in $lines) {
+                  if ($line -match '^##\s') {
+                      if ($capture) { break }
+                      if ($line -match [regex]::Escape("v$version")) { $capture = $true; continue }
+                  }
+                  if ($capture) { [void]$buffer.Add($line) }
+              }
+              $excerpt = ($buffer -join "`n").Trim()
+          }
+          if ([string]::IsNullOrWhiteSpace($excerpt)) {
+              $excerpt = "（未在 ``docs/CHANGELOG.md`` 中找到 ``v$version`` 小节，请维护者在本节手动补写本版变更。）"
+          }
+
+          $notes = $notes.Replace("{{VERSION}}", "v$version")
+          $notes = $notes.Replace("{{TAG}}", "${{ steps.version.outputs.tag }}")
+          $notes = $notes.Replace("{{DATE}}", (Get-Date -Format "yyyy-MM-dd"))
+          $notes = $notes.Replace("{{PACKAGE_LIST}}", $packageList)
+          $notes = $notes.Replace("{{CHANGELOG_EXCERPT}}", $excerpt)
+
+          Set-Content -LiteralPath "release_notes.md" -Value $notes -Encoding UTF8
+          Write-Host "已生成 release_notes.md（$([math]::Round((Get-Item release_notes.md).Length / 1KB, 1)) KB）"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: EchoDesk v${{ steps.version.outputs.version }}
+          body_path: release_notes.md
+          files: |
+            ${{ steps.zip.outputs.file }}
+            docs/CHANGELOG.md
+          fail_on_unmatched_files: true
+          # 想让维护者先审正文再发布，把下面两行改为 draft: true / prerelease: true
+          draft: false
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}

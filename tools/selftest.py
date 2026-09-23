@@ -119,11 +119,15 @@ def test_gguf() -> None:
     check("文件不存在时返回空字典", meta == {})
 
     # 找一个真实模型文件（开发机或发布物里都可能存在）
-    candidates = [
-        os.path.join(BACKEND, "models", "Qwen3.5-0.8B-Q4_K_M.gguf"),
-        os.path.join(BACKEND, "..", "publish", "EchoDesk-v0.2.0", "backend", "models",
-                     "Qwen3.5-0.8B-Q4_K_M.gguf"),
-    ]
+    # 说明：v0.2.1 起发布目录名带上版本号，这里按 glob 找最新的那个，
+    # 免得每次发版都要改测试。
+    candidates = [os.path.join(BACKEND, "models", "Qwen3.5-0.8B-Q4_K_M.gguf")]
+    publish = os.path.join(BACKEND, "..", "publish")
+    if os.path.isdir(publish):
+        for name in sorted(os.listdir(publish), reverse=True):
+            if name.startswith("EchoDesk-v"):
+                candidates.append(os.path.join(publish, name, "backend", "models",
+                                               "Qwen3.5-0.8B-Q4_K_M.gguf"))
     model = next((p for p in candidates if os.path.exists(p)), None)
     if not model:
         check("真实模型元数据解析（未找到模型文件，跳过）", True, "skipped")
@@ -321,9 +325,34 @@ def test_marketplace() -> None:
               f"得到 {normalize('owner/name')!r}")
 
 
+def test_imports() -> None:
+    """真实导入每一个后端模块。
+
+    v0.2.1 增加：`ast.parse` 只检查语法，**不执行**模块级代码。发布构建里曾经因此
+    漏掉一个 `NameError: name 'List' is not defined`——函数注解在没有
+    `from __future__ import annotations` 时于**定义时**求值，语法检查发现不了，
+    但打包后的后端一启动就崩。这里逐个真正 import 一遍，把这类问题挡在发版之前。
+    """
+    import importlib
+
+    modules = [
+        "i18n", "update_check", "config", "command_handler", "conversation",
+        "file_parser", "gguf_meta", "plaintext", "skills_runtime", "summarizer",
+        "download_utils", "search_engine", "llm_engine", "model_hub", "marketplace",
+        "automation", "main", "version",
+    ]
+    failures = []
+    for name in modules:
+        try:
+            importlib.import_module(name)
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"{name}: {type(exc).__name__}: {exc}")
+    check(f"全部 {len(modules)} 个后端模块可导入", not failures, "; ".join(failures))
+
+
 def main() -> int:
-    tests = [test_config, test_plaintext, test_gguf, test_summarizer, test_conversation,
-             test_automation, test_marketplace]
+    tests = [test_imports, test_config, test_plaintext, test_gguf, test_summarizer,
+             test_conversation, test_automation, test_marketplace]
     for fn in tests:
         try:
             fn()

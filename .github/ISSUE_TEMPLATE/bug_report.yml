@@ -1,0 +1,166 @@
+name: 缺陷报告 / Bug report
+description: 报告一个可复现的问题（程序异常、功能与预期不符、崩溃等）。/ Report a reproducible problem.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请尽量填全信息，缺少版本与日志的问题通常无法定位。
+        Thanks for the report! Version and logs are usually required to diagnose anything.
+
+        **提交前请先确认 / Before submitting**
+        - 已在 `docs/zh-Hans/FAQ.md`（或 `docs/en/FAQ.md`）与现有 Issue 中搜索过同类问题。
+          Searched `docs/zh-Hans/FAQ.md` (or `docs/en/FAQ.md`) and existing issues first.
+        - 日志中的 Token、密码、真实业务数据已做脱敏处理。 / Logs are redacted.
+        - 安全问题（可被利用的漏洞）请勿在此提交，改按 `SECURITY.md` 私下报告。
+          Please do not report exploitable security issues here; follow `SECURITY.md` instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: EchoDesk 版本 / Version
+      description: |
+        在哪里看：设置窗口「关于」页，或发布包文件夹名（如 `EchoDesk-v0.2.1`），或 `backend\version.py` 中的版本号。
+        Where to find it: the About page in Settings, or the package folder name.
+      placeholder: "例如 0.2.1（v0.2.1 便携版）"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows 版本 / Windows version
+      description: |
+        `Win+R` 输入 `winver` 可看到完整版本号；同时说明是 x64 还是 ARM64、是否在虚拟机/远程桌面中运行。
+        Run `winver` for the full build number; also mention x64/ARM64 and VM/RDP if applicable.
+      placeholder: "例如 Windows 11 23H2 (22631.4460) x64"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: 安装方式 / Installation method
+      description: 你从哪里启动的 EchoDesk？/ How did you start EchoDesk?
+      options:
+        - 便携版解压包（双击「EchoDesk 启动.lnk」）/ Portable package (launcher .lnk)
+        - 便携版但直接双击 EchoDesk.exe / Portable, ran EchoDesk.exe directly
+        - 安装版 setup.exe / Installer package
+        - 源码运行（后端 python backend\main.py + 前端 dotnet run）/ From source
+        - 其他（请在下方说明）/ Other (explain below)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: model_source
+    attributes:
+      label: 模型来源 / Model source
+      description: 当前使用的本地模型是怎么来的？/ How was the current model obtained?
+      options:
+        - 首次启动时让程序自动下载 / Downloaded by EchoDesk on first run
+        - 自己下载后放进 backend\models\ / Placed a .gguf into backend\models\ manually
+        - 没有模型（问题出现在下载模型之前）/ No model yet
+        - 不确定 / Not sure
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      description: |
+        请按顺序写清每一步操作（点了哪里、输入了什么）。能稳定复现的步骤最为重要。
+        List every step in order (what you clicked, what you typed). Deterministic steps matter most.
+      placeholder: |
+        1. 启动 EchoDesk，等待模型加载完成
+        2. 上传 /path/合同.docx
+        3. 输入「这份合同有哪些违约风险」并 Ctrl+Enter
+        4. 约 10 秒后出现……
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果 / Expected behaviour
+      description: 你认为应该发生什么？/ What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果 / Actual behaviour
+      description: |
+        实际发生了什么？请把界面上出现的完整报错文字原样粘过来（不要只写「报错了」）。
+        What actually happened? Paste the exact error text shown in the UI.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / Logs
+      description: |
+        请附上相关日志内容（脱敏后）。日志位置：
+        - 前端崩溃日志：程序目录下的 `frontend_crash.log`（即 EchoDesk.exe 所在文件夹）
+        - 后端崩溃日志：打包版在 `backend\backend_crash.log`；源码运行在工作目录下的 `backend_crash.log`
+        - 自动化审计日志：`backend\automation_log.jsonl`（只在与自动化相关时提供）
+        - 提示：这三个文件在正常运行时是空的或不存在，**只有在真正崩过之后才会有内容**。
+        Attach relevant, redacted logs. Locations:
+        - Frontend crash log: `frontend_crash.log` in the program folder (next to EchoDesk.exe)
+        - Backend crash log: `backend\backend_crash.log` for packaged builds; `backend_crash.log` in the working directory when run from source
+        - Automation audit log: `backend\automation_log.jsonl` (automation issues only)
+        Note: these files stay empty (or absent) unless something actually crashed.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: status_output
+    attributes:
+      label: /status 输出 / `/status` output
+      description: |
+        在输入框执行 `/status`，把输出（模型、模式、上下文占用、KV Cache 估算）粘在这里。
+        Run `/status` and paste the output (model, mode, context usage, KV cache estimate).
+      render: text
+    validations:
+      required: false
+
+  - type: dropdown
+    id: fresh_config
+    attributes:
+      label: 用全新 config.json 是否仍能复现 / Does it still happen with a fresh config.json?
+      description: |
+        方法：关闭程序 → 备份 `backend\config.json` → 删除它（下次启动会重建为默认值）→ 重启程序再试一次。
+        How: close EchoDesk, back up `backend\config.json`, delete it (it is recreated with defaults), then retry.
+      options:
+        - 是，用全新 config.json 仍然复现 / Yes, still reproduces
+        - 否，用全新 config.json 就正常了 / No, it works with a fresh config
+        - 没试过 / Not tried yet
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: 相关配置 / Relevant configuration
+      description: |
+        与问题相关的配置片段（**请删除 `marketplace.github_token` 等任何真实凭据**）。
+        The config fragment relevant to the issue (**remove any real token/secret first**).
+      render: json
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认 / Before you submit
+      options:
+        - label: 我已附上必要的日志文件（frontend_crash.log / backend_crash.log 等），或说明为什么没有。/ I attached the necessary log files (or explained why not).
+          required: true
+        - label: 我已确认所附日志与截图中不含 Token、密码、真实客户数据等敏感信息。/ I confirmed the attached logs and screenshots contain no tokens, passwords, or real customer data.
+          required: true
+        - label: 我已搜索过现有 Issue，确认没有重复报告。/ I searched existing issues and this is not a duplicate.
+          required: true

@@ -1,0 +1,17 @@
+{
+  "_meta": {
+    "locale": "zh-Hans",
+    "note": ".ofd 读取插件自己的语言包。"
+  },
+  "cmd": {
+    "ofd": {
+      "label": "读取 OFD 文档",
+      "description": "示例指令：把 .ofd 文件的内容取出来，验证文件解析扩展是否生效。"
+    }
+  },
+  "ofd": {
+    "usage": "用法：/ofd <文件路径>",
+    "failed": "❌ 读取失败：{error}",
+    "ok": "✅ 已读取 {name}（{chars} 字符）\n\n预览：\n{preview}"
+  }
+}

@@ -41,7 +41,9 @@ models_registry.json
 # 技能市场
 market_cache.json
 skills_registry.json
-skills/
+# 已安装技能目录（运行时）：必须写全路径。只写 skills/ 会连
+# examples/skills/（示例插件，需要入库）一起忽略掉——v0.2.1 实际踩到过。
+backend/skills/
 # 开发时留下的临时脚本/产物
 _tmp_*.py
 *.tmp
@@ -55,3 +57,18 @@ _tmp_*.py
 
 # ---------- 第三方命令行工具（由 tools\fetch_tools.bat 按需下载） ----------
 tools/rcedit-*.exe
+
+# ---------- v0.2.1 新增 ----------
+# 开发中的本地插件（放进去即被识别，但不是仓库内容；示例插件在 examples/skills/ 入库）
+backend/skills_dev/
+# 本地插件清单（含本机路径与信任状态，因人而异）
+skills_local.json
+# 插件开发日志
+skills_dev.log
+# 自定义自动化模板（用户自己攒的，不入库）
+automation_templates.json
+# 用户外置语言包目录（程序根目录下的 lang\，仅本机临时语言包不入库；
+# 必须写 /lang/ 而不是 lang/，否则会把 backend/lang/ 里的内置语言包一起忽略）
+/lang/
+# 自动化配置导出件
+*.echodesk-auto

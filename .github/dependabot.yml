@@ -1,0 +1,64 @@
+# Dependabot 依赖更新（任务书 7.2 社区运营基础的一部分）。
+# 每周检查一次：后端 pip（backend/）、前端 NuGet（frontend/）、GitHub Actions（仓库根）。
+#
+# 说明：
+#   * 前端目前没有第三方 NuGet 包（frontend/EchoDesk.csproj 只依赖 WPF 框架，
+#     JSON 通信用内置的 System.Text.Json），但保留该生态的配置，
+#     以便日后引入包时自动开始接收更新。
+#   * 更新 PR 会被 CI（backend-tests / frontend-build / docs-check）检查；
+#     体积相关改动请看 CI 的 size-check 摘要。
+#   * llama-cpp-python 由 --extra-index-url 提供 CPU wheel，Dependabot 无法判断兼容性，
+#     其升级 PR 需要人工确认后合并。
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - backend
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # 文件解析相关依赖一起升级，便于一次性跑 tools/test_file_parsers.py 验证
+      parsers:
+        patterns:
+          - "python-docx"
+          - "openpyxl"
+          - "python-pptx"
+          - "pymupdf"
+          - "pypdf"
+          - "xlrd"
+
+  - package-ecosystem: nuget
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - frontend
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "chore(ci)"

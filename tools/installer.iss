@@ -2,7 +2,7 @@
 ;  EchoDesk 安装版打包脚本（Inno Setup 6）
 ;
 ;  与便携版的关系：
-;    * 便携版 = tools\build_release.ps1 直接产出的 EchoDesk-v0.2.0 文件夹，
+;    * 便携版 = tools\build_release.ps1 直接产出的 EchoDesk-v0.2.1 文件夹，
 ;      绿色免安装、可放在 U 盘，删除文件夹即卸载（不写注册表）。
 ;    * 安装版 = 用本脚本把同一个文件夹打包成单个 setup.exe，供不熟悉文件
 ;      目录的用户使用：自动创建开始菜单与桌面快捷方式、提供卸载入口。
@@ -11,7 +11,7 @@
 ;  用法：
 ;    1) 先执行 tools\build_release.ps1 产出发布文件夹；
 ;    2) 用 Inno Setup 6 编译本脚本：
-;         iscc tools\installer.iss /DMyAppVersion=0.2.0
+;         iscc tools\installer.iss /DMyAppVersion=0.2.1
 ;
 ;  说明：
 ;    * 未做代码签名时，安装包与其中的 exe 都会触发 SmartScreen 提示，
@@ -20,7 +20,7 @@
 ; ============================================================================
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.0"
+  #define MyAppVersion "0.2.1"
 #endif
 
 #define MyAppName "EchoDesk"

@@ -21,7 +21,7 @@ import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_BACKEND = os.path.join(ROOT, "publish", "EchoDesk-v0.2.0", "backend", "EchoDeskBackend.exe")
+DEFAULT_BACKEND = os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "backend", "EchoDeskBackend.exe")
 
 CHECKS = []
 

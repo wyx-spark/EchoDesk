@@ -36,6 +36,15 @@ public sealed class AppSettings
     public bool DarkMode { get; set; } = true;
 
     /// <summary>
+    /// 界面语言（任务书 3.4 持久化）：<c>auto</c> 表示按系统区域自动选择，
+    /// 也可以写 <c>zh-Hans</c> / <c>en</c> 等具体语言标签。
+    /// </summary>
+    public string Language { get; set; } = "auto";
+
+    /// <summary>开发者模式（任务书 2B.5）：开启详细日志与热重载；检测到 skills_dev 中有插件时自动生效。</summary>
+    public bool DeveloperMode { get; set; }
+
+    /// <summary>
     /// 执行有副作用且不可逆的指令（<c>/clear</c>、<c>/clearcache</c>）前是否二次确认。
     /// 默认开启：避免「输入 /clear 却执行了 /clearcache」这类误操作造成数据损失。
     /// </summary>

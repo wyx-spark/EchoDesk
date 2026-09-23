@@ -14,12 +14,63 @@
   .docx  python-docx（MIT）      .doc  仅 WPS COM（含加密文档）
   .xlsx  openpyxl（MIT）         .xls  xlrd（BSD）+ WPS COM
   .pptx  python-pptx（MIT）      .ppt  仅 WPS COM
-  .pdf   pymupdf（AGPL/商业）    .txt/.md/.csv 等 直接读取（自动识别编码）
+  .pdf   pypdf（BSD-3-Clause）   .txt/.md/.csv 等 直接读取（自动识别编码）
+
+v0.2.1 变更（任务书 1.3 合规与体积）：
+  PDF 解析从 PyMuPDF 换成 pypdf。PyMuPDF 是 **AGPL-3.0**（或 Artifex 商业许可），
+  对外开源分发会产生著佐权义务，与 Apache-2.0 项目许可不兼容；pypdf 是 BSD-3-Clause、
+  纯 Python、无原生扩展。已安装体积从 52.9MB 降到约 1.4MB（见 docs/v0.2.1-研发记录.md）。
+  代价：pypdf 不解析扫描件（本来也需要 OCR，不在支持范围内），复杂排版的
+  阅读顺序还原能力弱于 MuPDF；对"取出正文文字交给模型"这一用途足够。
+
+新增（v0.2.1 任务二 2.3）：技能可声明额外的文件扩展名解析器。未识别的扩展名会先询问
+  已加载技能，再回落到"不支持的文件类型"。
 """
 import os
-from typing import Dict
+from typing import Callable, Dict, Optional
 
 import win32com.client as win32
+
+# 技能注册的扩展名解析器：{".ofd": (技能id, 处理函数(filepath) -> str)}
+_SKILL_PARSERS: Dict[str, "tuple[str, Callable[[str], str]]"] = {}
+
+
+def register_skill_parser(ext: str, handler: Callable[[str], str], skill_id: str = "") -> bool:
+    """注册技能提供的扩展名解析器（任务二 2.3 文件解析扩展）。
+
+    ``ext`` 可带或不带前导点；内置解析器已覆盖的扩展名不会被技能覆盖，
+    以保证主程序行为可预测（返回 False 表示未注册）。
+    """
+    key = str(ext or "").strip().lower()
+    if not key:
+        return False
+    if not key.startswith("."):
+        key = "." + key
+    if key in _WPS_PROGIDS or key in _TEXT_EXTS or key in _BUILTIN_EXTS:
+        return False
+    _SKILL_PARSERS[key] = (skill_id, handler)
+    return True
+
+
+def unregister_skill_parser(ext: str) -> bool:
+    """注销技能解析器（卸载技能时调用）。"""
+    key = str(ext or "").strip().lower()
+    if key and not key.startswith("."):
+        key = "." + key
+    return _SKILL_PARSERS.pop(key, None) is not None
+
+
+def unregister_skill_parsers(skill_id: str) -> int:
+    """注销某个技能注册的全部解析器，返回移除数量。"""
+    doomed = [k for k, (sid, _) in _SKILL_PARSERS.items() if sid == skill_id]
+    for key in doomed:
+        _SKILL_PARSERS.pop(key, None)
+    return len(doomed)
+
+
+def skill_parser_extensions() -> Dict[str, str]:
+    """返回 {扩展名: 技能id}，供设置界面展示"已接管的格式"。"""
+    return {ext: sid for ext, (sid, _handler) in _SKILL_PARSERS.items()}
 
 # Office 扩展名 → WPS COM ProgID
 _WPS_PROGIDS: Dict[str, str] = {
@@ -39,6 +90,40 @@ _TEXT_EXTS = {
 
 # 需要 WPS COM 才能读取的旧版二进制格式（没有 WPS 时给出明确提示）
 _LEGACY_ONLY_WPS = {".doc", ".ppt"}
+
+# 内置解析器直接支持的扩展名（技能不得覆盖这些，保证主程序行为可预测）
+_BUILTIN_EXTS = {".docx", ".xlsx", ".xlsm", ".xls", ".pptx", ".pdf"}
+
+# ---------------------------------------------------------------------------
+# 解析失败标记（多语言说明，v0.2.1）
+# ---------------------------------------------------------------------------
+# 解析器用这几个中文前缀作为**机器可读的失败标记**（与界面语言无关，因此不会
+# 因为切换语言而失效）；展示给用户前请调用 localize_error() 转成当前语言。
+_ERROR_MARKERS = ("WPS读取失败", "解析失败", "文件内容为空", "不支持的文件类型")
+
+
+def is_parse_error(text: str) -> bool:
+    """判断解析器返回的是不是失败提示（机器标记，见上）。"""
+    return bool(text) and text.startswith(_ERROR_MARKERS)
+
+
+def localize_error(text: str) -> str:
+    """把解析失败标记翻译成当前界面语言；无法识别时原样返回。"""
+    from i18n import t as _t
+
+    raw = str(text or "")
+    if raw.startswith("WPS读取失败: "):
+        return _t("file.wps_failed", error=raw[len("WPS读取失败: "):])
+    if raw.startswith("WPS读取失败，且 "):
+        # 旧版二进制格式、缺少 WPS 的提示：整段保留细节，只翻译前缀
+        return _t("file.parse_failed", error=raw)
+    if raw.startswith("解析失败: "):
+        return _t("file.parse_failed", error=raw[len("解析失败: "):])
+    if raw.startswith("不支持的文件类型: "):
+        return _t("file.unsupported", ext=raw[len("不支持的文件类型: "):])
+    if raw.startswith("文件内容为空"):
+        return _t("file.empty")
+    return raw
 
 _ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "utf-16", "big5", "latin-1")
 
@@ -120,6 +205,13 @@ def _parse_builtin(filepath: str, ext: str) -> str:
             text = _read_pptx(filepath)
         elif ext == ".pdf":
             text = _read_pdf(filepath)
+        elif ext in _SKILL_PARSERS:
+            # 任务二 2.3：未知扩展名先询问已加载技能提供的解析器
+            skill_id, handler = _SKILL_PARSERS[ext]
+            try:
+                text = handler(filepath)
+            except Exception as e:
+                return f"解析失败: 技能「{skill_id}」的 {ext} 解析器出错（{type(e).__name__}: {e}）"
         else:
             return f"不支持的文件类型: {ext or '(无扩展名)'}"
     except ImportError as e:
@@ -217,19 +309,26 @@ def _read_pptx(filepath: str) -> str:
 
 
 def _read_pdf(filepath: str) -> str:
-    """PDF：用 PyMuPDF 提取文本层（扫描件无文本层时返回空）。"""
-    try:
-        import pymupdf as fitz  # PyMuPDF 1.24+ 推荐写法
-    except ImportError:
-        import fitz  # 兼容旧版本
+    """PDF：用 pypdf 提取文本层（BSD-3-Clause，替代 AGPL 的 PyMuPDF）。
 
-    doc = fitz.open(filepath)
-    try:
-        parts = []
-        for index, page in enumerate(doc, 1):
-            text = page.get_text().strip()
-            if text:
-                parts.append(f"【第 {index} 页】\n{text}")
-        return "\n\n".join(parts)
-    finally:
-        doc.close()
+    扫描件没有文本层，提取结果为空 —— 这种情况需要 OCR，不在支持范围内，
+    调用方会得到"文件内容为空"，由上层提示用户改用 WPS/OCR 另存后重试。
+    """
+    from pypdf import PdfReader
+
+    reader = PdfReader(filepath)
+    if getattr(reader, "is_encrypted", False):
+        # 空口令加密（只设了权限密码）可以先解密；真正的用户口令无法处理
+        try:
+            reader.decrypt("")
+        except Exception as e:
+            return f"解析失败: PDF 已加密，无法读取（{e}）"
+    parts = []
+    for index, page in enumerate(reader.pages, 1):
+        try:
+            text = (page.extract_text() or "").strip()
+        except Exception as e:  # 单页损坏不应让整份文档失败
+            text = f"[第 {index} 页提取失败: {e}]"
+        if text:
+            parts.append(f"【第 {index} 页】\n{text}")
+    return "\n\n".join(parts)

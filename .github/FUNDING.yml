@@ -1,0 +1,25 @@
+# 赞助渠道配置（可选）。
+# Funding configuration (optional).
+#
+# 目前 EchoDesk 没有开通任何赞助渠道，因此这里**全部注释掉**——保留文件是为了
+# 自定义模板生效（内容为空的 FUNDING.yml 不会在仓库页显示 Sponsor 按钮），
+# 也避免误填一个并不存在的收款账号对外造成误导。
+# EchoDesk currently has no funding channel, so every entry stays commented out:
+# nothing is claimed that does not exist.
+#
+# 维护者若要开通，取消对应行的注释并填入真实账号即可（每个平台一行/一项）。
+# To enable later, uncomment and fill in the real account:
+#
+# github: [your-github-username]
+# patreon: your-patreon-name
+# open_collective: your-collective
+# ko_fi: your-kofi-name
+# tidelift: npm/your-package
+# community_bridge: your-project
+# liberapay: your-name
+# issuehunt: your-name
+# lfx_crowdfunding: your-project
+# polar: your-name
+# buy_me_a_coffee: your-name
+# thanks_dev: u/gh/your-name
+# custom: ["https://example.com/donate"]

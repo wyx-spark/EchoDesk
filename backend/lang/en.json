@@ -1,0 +1,327 @@
+{
+  "_meta": {
+    "locale": "en",
+    "name": "English",
+    "version": "1.0.0",
+    "note": "EchoDesk backend language pack (English). Keys are semantic and grouped by module. Keys starting with _ or // are translator notes and are ignored by the program.",
+    "placeholders": "Names in curly braces are placeholders and must be kept (their order may change)."
+  },
+
+  "app": {
+    "about": "Local AI desktop assistant: Python backend + C# WPF frontend, fully offline inference."
+  },
+
+  "cmd": {
+    "unknown": "Unknown command: {name} (type /help for the full command list)",
+    "disabled": "The command {name} from skill \"{skill}\" is unavailable: {reason}",
+    "help": {
+      "header": "📖 EchoDesk {version} — complete command reference (Powered by {studio})",
+      "usage_label": "Usage: ",
+      "desc_label": "What it does: ",
+      "source_builtin": "built-in",
+      "source_skill": "skill",
+      "skill_section": "🧩 Skill commands (provided by loaded skills; also listed by /help)",
+      "skill_footer": "Skill commands come from plugins loaded out of skills/ and skills_dev/. See the Installed / Developer pages in Settings for load status and error details.",
+      "footer": "Tip: commands are case-insensitive. Typing / opens the suggestion list; use Tab or ↑↓ to pick one.",
+      "mode_hint": "Run /mode list to see all modes."
+    },
+    "items": {
+      "/help": {
+        "name": "Show this command reference",
+        "usage": "/help",
+        "desc": "Lists the usage and purpose of every command, i.e. this help."
+      },
+      "/mode": {
+        "name": "Switch conversation mode",
+        "usage": "/mode <number|abbreviation|full name>",
+        "desc": "Switches the AI answering style; run /mode list to see them all.",
+        "detail": "    Modes:\n      general / summary / translate /\n      code / contract / creative"
+      },
+      "/file": {
+        "name": "Upload a file",
+        "usage": "/file <path>",
+        "desc": "Adds the file contents to the context so the model can answer from it.",
+        "detail": "    Supports Office (doc/docx/xls/xlsx/ppt/pptx), TXT, PDF and more.\n    Encrypted Office documents are decrypted automatically on machines with WPS\n    installed; otherwise a generic parser is used as a fallback.\n    Long documents (estimated tokens above 50% of the context window) are\n    summarized chunk by chunk first instead of being truncated, and the summary\n    keeps pointers back to the original text.\n    Loaded skills may declare additional file extensions (see the format list on\n    the Installed page in Settings)."
+      },
+      "/summarize": {
+        "name": "Summarize the loaded document now",
+        "usage": "/summarize",
+        "desc": "Forces a chunked summary (summarize each chunk, then merge) of the loaded file and\n       injects the summary instead of the full text — useful for very long contracts.\n       Progress is shown live in the conversation."
+      },
+      "/search": {
+        "name": "Toggle web search",
+        "usage": "/search on|off",
+        "desc": "When on, each question first searches the web for reference material (needs network)."
+      },
+      "/model": {
+        "name": "Inspect or switch models",
+        "usage": "/model [name|alias|list]",
+        "desc": "Inspect or switch the local model.",
+        "detail": "    Usage: /model             show current model info (architecture, quantization, context, GPU…)\n        /model list         list models in the models/ folder and in the config profiles\n        /model model.gguf   switch to a local model (prefix matching supported)\n        /model alias        switch to a model profile from config.models (applies its context/temperature)\n    If the model is missing locally, the closest file in the repository is offered and\ndownloading only starts after you confirm (it can take a long time)."
+      },
+      "/clearcache": {
+        "name": "Clear the KV cache",
+        "usage": "/clearcache",
+        "desc": "Clears the inference engine's KV cache and input history. The system clears it\n       automatically when mode/prompt/history change; clearing manually helps when\n       diagnosing odd output."
+      },
+      "/prompt": {
+        "name": "Set a custom system prompt",
+        "usage": "/prompt <text>|reset",
+        "desc": "Overrides the current mode's default prompt to temporarily change the assistant's role."
+      },
+      "/temp": {
+        "name": "Adjust generation temperature",
+        "usage": "/temp <0.0~1.0>|reset",
+        "desc": "Higher temperature means more varied answers, lower means more conservative.",
+        "detail": "    Note: switching mode applies that mode's temperature preset (code 0.2 / translate 0.3 /\n        contract 0.3 / summary 0.4 / general 0.7 / creative 0.9).\n        Once set manually the manual value wins; /temp reset restores the preset."
+      },
+      "/stop": {
+        "name": "Stop the current generation",
+        "usage": "/stop",
+        "desc": "Interrupts the streaming reply in progress.",
+        "detail": "    (Equivalent to the ⏹ Stop button in the front end.)"
+      },
+      "/snippet": {
+        "name": "Snippets (managed by the front end)",
+        "usage": "/snippet <add|remove|list>",
+        "desc": "Manages the snippet templates that can be inserted into the input box with one click\n       (stored by the front end in snippets.json)."
+      },
+      "/darkmode": {
+        "name": "Switch theme",
+        "usage": "/darkmode on|off",
+        "desc": "Switches between the dark and light interface theme (rendered immediately by the front end)."
+      },
+      "/status": {
+        "name": "Show current status",
+        "usage": "/status",
+        "desc": "Shows model, mode, temperature, search state, turn count and the loaded file."
+      },
+      "/clear": {
+        "name": "Clear the conversation",
+        "usage": "/clear",
+        "desc": "Clears the history and the file context and starts over."
+      },
+      "/undo": {
+        "name": "Undo",
+        "usage": "/undo",
+        "desc": "Removes the most recent question and answer (one message each)."
+      },
+      "/save": {
+        "name": "Export the conversation",
+        "usage": "/save <file name>",
+        "desc": "Exports the current conversation to a Markdown file (.md is appended automatically)."
+      },
+      "/about": {
+        "name": "About",
+        "usage": "/about",
+        "desc": "Shows the version number and publisher information."
+      },
+      "/exit": {
+        "name": "Quit",
+        "usage": "/exit",
+        "desc": "Shows a farewell message; the front end closes the program within 10 seconds."
+      }
+    },
+    "resp": {
+      "exit": "👋 Closing EchoDesk. Goodbye!",
+      "mode_current": "Current mode: {mode} (run /mode list to see all)",
+      "mode_list": "Available modes (number / abbreviation / full name all work):\n{menu}",
+      "mode_set_preset": "✅ Switched to mode: {mode} (temperature preset {preset})",
+      "mode_set": "✅ Switched to mode: {mode}",
+      "mode_unknown": "❌ Unknown mode: {name} (run /mode list)",
+      "file_need_path": "Please provide a file path, for example: /file C:\\docs\\contract.docx",
+      "file_missing": "File not found: {path}",
+      "file_load_failed": "❌ Failed to read: {content}",
+      "file_loaded": "✅ Loaded file: {name} ({chars} characters)",
+      "summarize_unsupported": "❌ Manual summarization is not available",
+      "summarize_no_file": "❌ No file is loaded; upload one with /file first",
+      "summarize_trigger": "manual",
+      "summarize_failed": "❌ Summarization failed: {error}",
+      "search_status": "Search state: {state}",
+      "search_on": "🔍 Web search turned on",
+      "search_off": "🔍 Web search turned off",
+      "search_usage": "Usage: /search on/off",
+      "model_need_name": "Please provide a model name, for example: /model Qwen3.5-0.8B-Q4_K_M.gguf",
+      "model_profile_missing": "❌ The profile '{name}' points to a file that does not exist: {path}",
+      "model_ambiguous": "❓ Several local matches:\n{items}\nPlease specify the full file name",
+      "model_query_failed": "❌ Model '{name}' is not available locally and the repository cannot be queried ({error}).\nPut the model file into the models/ folder and try again.",
+      "model_confirm": "Model '{name}' was not found locally.\nThe closest match in repository {repo} is:\n  {best} (about {size})\n⚠️ Downloading needs a network connection and may take a long time. Download it?",
+      "model_size_unknown": "unknown size",
+      "model_apply_failed": "❌ Failed to load the model: {error}",
+      "model_applied": "✅ Switched to model: {model}",
+      "model_applied_ctx": " (context {n_ctx}{train}, KV cache about {kv})",
+      "model_applied_train": ", model training window {train}",
+      "model_applied_temp": " (temperature preset {temp})",
+      "cache_cleared": "✅ KV cache cleared",
+      "cache_clear_unsupported": "⚠️ Failed to clear the cache (the engine does not support it)",
+      "prompt_current": "Current custom prompt:\n{text}",
+      "prompt_unset": "(not set — the mode's default prompt is used)",
+      "prompt_reset": "🗑️ Custom prompt cleared",
+      "prompt_set": "✅ Custom prompt set ({chars} characters)",
+      "darkmode_usage": "Usage: /darkmode on/off (the theme is rendered by the front end)",
+      "darkmode_on": "🎨 Dark mode requested",
+      "darkmode_off": "🎨 Light mode requested",
+      "stop_ack": "⏹ Stop requested (streaming generation is interrupted by the action=stop protocol message; the ⏹ button is equivalent)",
+      "snippet_hint": "Snippets are managed by the front end: use /snippet add <name> <text>, /snippet remove <name> or /snippet list inside the app",
+      "clear_done": "🗑️ Conversation cleared",
+      "undo_none": "Nothing to undo",
+      "undo_done": "↩️ Undone",
+      "save_need_name": "Please provide a file name, for example: /save meeting-notes",
+      "save_done": "✅ Saved to {path}",
+      "save_failed": "❌ Save failed: {error}",
+      "temp_current": "Current temperature: {temp}{manual}\n(/temp reset restores the mode preset)",
+      "temp_manual_tag": " (manual)",
+      "temp_preset_tag": " (mode preset)",
+      "temp_reset": "✅ Temperature restored to the mode preset: {temp}",
+      "temp_invalid": "Please enter a valid number",
+      "temp_range": "Temperature must be between 0.0 and 1.0",
+      "temp_set": "✅ Temperature set to: {temp} (manual)"
+    },
+    "status": {
+      "header": "🏷️  {app} {version} — Powered by {studio}",
+      "model": "🧠 Model: {model}",
+      "arch": "🏗️  Architecture: {arch}",
+      "mode": "🛠️  Mode: {mode}",
+      "temperature": "🌡️  Temperature: {temp}",
+      "threads": "⚙️  Threads: {threads} · batch {batch} · GPU layers {gpu}",
+      "kv": "💾 KV cache: about {kv}",
+      "unknown": "unknown",
+      "context": "📏 Context: about {used}/{limit} tokens (auto-summarize line at 80% of the {n_ctx} window)",
+      "context_unknown": "📏 Context: unknown",
+      "search_on": "on",
+      "search_off": "off",
+      "search": "🔍 Web search: {state}",
+      "turns": "💬 Conversation turns: {turns}",
+      "summary_yes": "yes",
+      "summary_no": "no",
+      "summary": "📝 Earlier summary: {state}",
+      "file_none": "none",
+      "file": "📄 File: {name}",
+      "file_summarized": " (summarized in {chunks} chunks)"
+    },
+    "model_info": {
+      "current": "🧠 Current model: {model}",
+      "arch": "🏗️  Architecture: {arch} · quantization: {quant}",
+      "context": "🪟 Context: {n_ctx} tokens",
+      "context_train": " (model training window {train}, cap max_context={max})",
+      "context_limit": " (cap max_context={max})",
+      "kv": "💾 KV cache estimate: {kv} (fp16, grows linearly with context length)",
+      "threads": "🧵 Threads: {threads} · batch {batch}",
+      "gpu": "🎮 GPU layers: {gpu} (0 = CPU only)",
+      "locals": "📁 Local models: {count}",
+      "file_summarized": "📄 Loaded file: {name} (summarized in chunks)",
+      "file_raw": "📄 Loaded file: {name} (injected as full text)",
+      "profiles": "🗂️  Profiles: {names}",
+      "skill_formats": "🧩 Formats added by skills: {formats}",
+      "hint": "(/model list shows local models; /model <alias|file name|prefix> switches; if missing you are asked before downloading)",
+      "list_header": "🧠 Current model: {model}",
+      "list_dir": "📁 models/ folder:",
+      "list_empty": "  (empty)",
+      "list_profiles": "🗂️  Profiles (config.models):",
+      "list_profile_item": "  {alias} → {path}",
+      "list_footer": "Usage: /model <alias|file name|prefix> to switch; when missing the closest repository match is offered for download"
+    }
+  },
+
+  "sys": {
+    "ready": "Backend ready",
+    "unknown_action": "Unknown action",
+    "busy": "⏳ The previous reply is still being generated. Stop it first (⏹ button or /stop) or wait for it to finish",
+    "automation_running": "⏳ An automation task is already running. Stop it before starting another one",
+    "stop_sent": "⏹ Stop request sent",
+    "stop_none": "Nothing is currently being generated",
+    "exit_ack": "Exit command received, quitting",
+    "backend_init_failed": "Backend initialization failed: {error}",
+    "inference_failed": "Inference failed: {error}",
+    "model_missing_no_repo": "Backend initialization failed: model {model} is missing locally and repository {repo} cannot be queried ({error}).\nCheck your network, or copy the model file into the models/ folder manually.",
+    "model_missing_ask": "Model {model} was not found locally.\nThe closest match in repository {repo} is {target}{size}",
+    "model_missing_size": " (about {mb} MB)",
+    "model_missing_unknown_size": " (size unknown)",
+    "model_declined": "The user declined the model download; the backend is exiting",
+    "repeat_intent": "You just said:\n{text}",
+    "log_missing_model": "Model {model} is missing locally; asking the front end to confirm with the user",
+    "language_switched": "🌐 Interface language switched to {locale}"
+  },
+
+  "file": {
+    "wps_failed": "WPS read failed: {error}",
+    "legacy_needs_wps": "WPS read failed and {ext} is a legacy binary format that the built-in parser does not support.\nInstall WPS/Office and try again, or save the file as {ext}x first.\nWPS: {wps}",
+    "both_failed": "WPS read failed and the built-in parser failed too.\nWPS: {wps}\nParser: {builtin}",
+    "truncated": "\n...[content too long, truncated]",
+    "unsupported": "Unsupported file type: {ext}",
+    "no_ext": "(no extension)",
+    "missing_dep": "Parsing failed: missing parser dependency ({error})",
+    "parse_failed": "Parsing failed: {error}",
+    "empty": "The file is empty",
+    "pdf_encrypted": "Parsing failed: the PDF is encrypted and cannot be read ({error})",
+    "pdf_page_failed": "[extraction failed on page {page}: {error}]",
+    "skill_parser_failed": "Parsing failed: the {ext} parser provided by skill \"{skill}\" raised an error ({kind}: {error})"
+  },
+
+  "err": {
+    "hub_failed": "❌ Model hub {verb} failed: {error}",
+    "market_failed": "❌ Skill marketplace {verb} failed: {error}",
+    "automation_failed": "❌ Automation run failed: {error}",
+    "download_failed": "❌ Download failed: {error}",
+    "need_model": "❌ No model file name given",
+    "skill_failed": "❌ Skill operation failed: {error}"
+  },
+
+  "market": {
+    "state": {
+      "disabled": "disabled",
+      "unsynced": "not synced",
+      "synced_empty": "synced (no matching skills yet)",
+      "ready": "ready",
+      "stale": "cache expired",
+      "unknown": "unknown"
+    }
+  },
+
+  "hub": {
+    "source_mirror": "mirror",
+    "source_official": "official"
+  },
+
+  "automation": {
+    "disabled": "Automation is not enabled",
+    "safety_required": "The automation switch requires the safety protocol to be accepted first; it has been turned off automatically",
+    "headless_ignored": "Automation only supports headed mode; headless=True was ignored",
+    "no_url": "Please fill in the task list URL first",
+    "no_selector": "Please fill in the task list element selector first",
+    "missing_playwright": "Playwright is not installed, so browser automation is unavailable. Run: pip install playwright"
+  },
+
+  "update": {
+    "up_to_date": "✅ You are on the latest version ({version})",
+    "available": "🎉 New version {latest} available (you have {current})",
+    "available_hint": "Release notes and downloads: {url}",
+    "check_failed": "⚠️ Update check failed: {error}",
+    "disabled": "Automatic update checks are disabled in the configuration",
+    "prerelease_skipped": "The newest version {version} is a pre-release and was skipped per configuration",
+    "repo_unset": "No update repository is configured (update.repo is empty); check skipped",
+    "not_due": "Skipped: less than {hours} hours since the last check (check manually from Settings)",
+    "rate_limited": "⚠️ Update check failed: GitHub API rate limit reached, try again later",
+    "repo_missing": "⚠️ Update check failed: repository {repo} does not exist or has no published releases",
+    "ahead": "Your version {current} is newer than the latest release {latest} (development or pre-release build)"
+  },
+
+  "skill": {
+    "loaded": "Loaded {count} skill(s)",
+    "load_failed": "Skill {id} failed to load: {error}",
+    "unloaded": "Unloaded skill {id}",
+    "api_incompatible": "Skill {id} declares API version {want} but this build supports {have}; skipped",
+    "not_verified": "Skill {id} is not verified (not present in an accepted registry); skipped in normal mode",
+    "bundle_missing": "skill.json of skill {id} has no echodesk.bundle field; skipped",
+    "dev_overridden": "Plugin {id}: the development copy ({dev}) is loaded and overrides the installed version ({installed})",
+    "disabled_by_manifest": "Plugin {id} is marked as disabled in the local plugin manifest; skipped",
+    "reload_summary": "🔄 Plugins reloaded: {loaded} of {total} loaded ({failed} failed)",
+    "dev_mode_on": "🔧 Developer mode enabled: relaxed validation, verbose log written to skills_dev.log",
+    "dev_mode_off": "🔧 Developer mode disabled",
+    "log_exported": "✅ Plugin log exported to {path}",
+    "manifest_saved": "✅ Local plugin manifest saved and reloaded",
+    "manifest_save_failed": "❌ Could not write the manifest: {path} is not writable",
+    "examples_missing": "❌ Example plugin folder not found: {path}",
+    "examples_copied": "✅ Example plugins copied to {dir}: {names}"
+  }
+}

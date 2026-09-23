@@ -1,0 +1,131 @@
+name: 翻译贡献 / Translation contribution
+description: 认领或提交一个语言的界面、后端提示或文档翻译。/ Claim or submit a translation for UI, backend messages, or docs.
+title: "[Translation] "
+labels: ["translation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢参与本地化！本 Issue 既可以用来**认领**一个语言，也可以提交已完成的翻译。
+        Thanks for helping localize EchoDesk! Use this issue either to claim a language or to submit a finished translation.
+
+        翻译需要改动三个语言包位置（按需选择，不必一次做完）：
+        Three places hold translations (pick what you can do):
+
+        - 前端界面文本 / Frontend UI: `frontend/Resources/Lang/<locale>.json`
+        - 后端系统消息与错误提示 / Backend messages and errors: `backend/lang/<locale>.json`
+        - 文档 / Documentation: `docs/<locale>/`（如 `docs/ja/`）
+
+        提交前请先运行完整性检查工具（任务 3.5 提供）：
+        Run the completeness checker before submitting:
+        `python tools/check_lang.py --locale <locale>`
+
+        语言优先级见研发任务书 3.2：P0 简体中文 / 英语，P1 繁体中文 / 日语，
+        P2 韩语 / 德语 / 法语，P3 西班牙语 / 葡萄牙语（巴西）。
+        Priority: P0 zh-Hans/en, P1 zh-Hant/ja, P2 ko/de/fr, P3 es/pt-BR.
+
+  - type: dropdown
+    id: locale
+    attributes:
+      label: 目标语言 / Target locale
+      description: |
+        使用 BCP-47 风格的语言目录名（与语言包文件名一致，如 `zh-Hant`、`pt-BR`）。
+        Use the BCP-47 style locale id, matching the language pack file name.
+      options:
+        - zh-Hant（繁体中文 / Traditional Chinese）
+        - ja（日语 / Japanese）
+        - ko（韩语 / Korean）
+        - de（德语 / German）
+        - fr（法语 / French）
+        - es（西班牙语 / Spanish）
+        - pt-BR（葡萄牙语（巴西）/ Brazilian Portuguese）
+        - 其他语言（请在下方说明 / Other, explain below）
+    validations:
+      required: true
+
+  - type: input
+    id: locale_code
+    attributes:
+      label: 语言代码 / Locale code
+      description: 若上一题选了「其他语言」，请填写准确的 locale 代码（将作为文件名与目录名）。/ Fill in when "Other" was selected.
+      placeholder: "例如 it（意大利语）、ru（俄语）"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: packs
+    attributes:
+      label: 本次涉及的翻译包 / Packs covered by this contribution
+      description: 至少要选一项；只做其中一项也完全可以，其余可留给其他贡献者。/ Pick at least one; partial contributions are welcome.
+      options:
+        - label: 前端界面（`frontend/Resources/Lang/<locale>.json`）/ Frontend UI pack
+          required: false
+        - label: 后端提示（`backend/lang/<locale>.json`）/ Backend message pack
+          required: false
+        - label: 文档（`docs/<locale>/`：用户手册、FAQ、技能开发指南、自动化配置填写指南）/ Documentation
+          required: false
+
+  - type: input
+    id: coverage
+    attributes:
+      label: 完成度 / Coverage
+      description: |
+        已完成的比例（以 `python tools/check_lang.py --locale <locale>` 的输出为准；
+        文档按章节数估算即可）。未完成的部分会按 `en → zh-Hans → 键名` 回退，
+        不会导致界面报错，因此可以分批提交。
+        Based on the checker output (estimate by section count for docs). Missing keys fall back
+        to `en → zh-Hans → key name`, so partial work is safe to merge.
+      placeholder: "例如：前端 100%、后端 100%、文档 3/5 篇"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: native
+    attributes:
+      label: 母语者确认 / Native speaker confirmation
+      description: |
+        母语水平说明有助于维护者判断是否需要二次校对；非母语但高水平的翻译同样欢迎。
+        Helps maintainers decide whether a second review is needed; fluent non-natives are welcome too.
+      options:
+        - 我是该语言的母语者 / I am a native speaker
+        - 我不是母语者，但可达到专业水平 / Not native, but professional level
+        - 我是母语者，但希望有人复核专业术语 / Native, but would like terminology review
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: 翻译范围与说明 / Scope and notes
+      description: |
+        说明你翻译了哪些文件/模块，以及需要注意的术语选择（例如 Automation 统一译作什么）。
+        也请列出你不确定的条目，方便维护者或其他人复核。
+        List the files/modules covered, terminology decisions, and anything you are unsure about.
+      placeholder: |
+        例如：翻译了 frontend/Resources/Lang/ja.json 全部键；
+        Automation 统一译为「自動化」；"结果.txt" 等文件名保持不变。
+    validations:
+      required: true
+
+  - type: textarea
+    id: glossary
+    attributes:
+      label: 术语表（可选）/ Glossary (optional)
+      description: |
+        你确定的关键术语对照（原文 → 译文）。维护者会把它并入术语表，供后续贡献者复用。
+        Key term mapping (source → target), so later contributors can reuse it.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认 / Before you submit
+      options:
+        - label: 我已在本地运行 `python tools/check_lang.py --locale <locale>`，且没有缺失键报错（或已在下文说明剩余缺失）。/ I ran the checker locally with no missing-key errors left unexplained.
+          required: true
+        - label: 我保持了语言包的键名、占位符（如 `{count}`）、代码与文件路径不变，只翻译了面向用户的文本。/ Key names, placeholders, code and file paths are unchanged; only user-facing text was translated.
+          required: true
+        - label: 我确认这些译文是我自己撰写的，或来源许可是允许的（未直接搬运有版权的译文）。/ The translation is my own work or comes from a compatible source.
+          required: true

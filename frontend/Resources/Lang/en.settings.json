@@ -1,0 +1,79 @@
+{
+  "_meta": {
+    "locale": "en",
+    "module": "settings",
+    "note": "Additional settings-window strings (module fragment): merged with en.json, keys here win."
+  },
+  "mode": {
+    "general": "1. general — general assistant",
+    "summary": "2. summary — summarization expert",
+    "translate": "3. translate — translation expert",
+    "code": "4. code — coding expert",
+    "contract": "5. contract — contract review",
+    "creative": "6. creative — creative writing"
+  },
+  "settings": {
+    "general": {
+      "sectionLanguagePack": "Language packs",
+      "defaultMode": "Default conversation mode (applies on the next start; /mode switches it immediately)",
+      "langCurrent": "Current language",
+      "langAvailable": "Available languages",
+      "langNone": "(no language pack found)",
+      "langDir": "Language pack folder",
+      "langReloaded": "✅ Language packs reloaded",
+      "pathProgram": "Program folder",
+      "pathBackend": "Backend folder (config / models / session / automation log)",
+      "pathSkills": "Plugin folder"
+    },
+    "model": {
+      "sortName": "Name",
+      "sourceAuto": "Automatic (recommended)",
+      "sourceMirror": "Mirror hf-mirror.com",
+      "sourceOfficial": "Official huggingface.co"
+    },
+    "market": {
+      "sortBest": "Best match",
+      "sortStars": "Most stars",
+      "sortUpdated": "Recently updated",
+      "tip": "Marketplace: click Refresh to browse skills tagged echodesk-plugin, or type a keyword to search."
+    },
+    "automation": {
+      "safetyBody": "1. Automation runs only on this machine and uses a visible browser, so you can watch it at any time;\n2. EchoDesk never uploads task contents, downloaded files or generated results to any server;\n3. Downloaded attachments are kept in the result folder for your review — check them for sensitive data before sharing;\n4. You must confirm that this automation complies with your organisation's rules and the terms of service of the target site;\n5. Consequences of misuse are borne by the user; Void Entropia Studio accepts no liability.",
+      "helpPlaceholderTitle": "❓ Field guide",
+      "helpPlaceholderBody": "Put the cursor into any input below (or click the ? next to a field) and this panel explains that field in plain words, with an example. The full guide is at docs\\<locale>\\AUTOMATION_GUIDE.md in the release package.",
+      "guideTitle": "Automation configuration guide",
+      "runOnce": "▶ Run once now",
+      "stopRun": "⏹ Stop automation",
+      "pickDetailTip": "Opens the first task automatically, then you click the attachment name on the detail page",
+      "label": {
+        "taskListUrl": "Task list URL",
+        "taskListSelector": "Task link position",
+        "taskRowSelector": "Task row container (optional)",
+        "nextPageSelector": "Next page button (optional, for paging)",
+        "taskDetailFileSelector": "Attachment position on the detail page",
+        "fileExtensions": "File types to process (comma separated)",
+        "instruction": "Task instruction (concatenated with the file content for the local model)",
+        "taskName": "Result folder name",
+        "enabled": "Enable automation (the safety protocol is still required before each run)"
+      }
+    },
+    "developer": {
+      "modeShort": "Only validation strictness is relaxed — never the permission boundary.",
+      "topicLabel": "Marketplace topic",
+      "repoLabel": "Suggested repository name",
+      "exportLog": "Export log",
+      "clearLog": "🗑 Clear log",
+      "reload": "🔄 Reload local plugins",
+      "logLines": "Show last",
+      "logLinesUnit": "lines",
+      "sectionScaffold": "New local plugin",
+      "sectionManifest": "Local plugin manifest (skills_local.json)",
+      "sectionHooks": "Attached automation hooks",
+      "sectionPanels": "Plugin panels",
+      "manifestAdd": "➕ Add a row",
+      "manifestSave": "Save manifest and reload",
+      "manifestOpenRaw": "Edit the JSON file directly",
+      "installExamples": "📦 Install example plugins"
+    }
+  }
+}

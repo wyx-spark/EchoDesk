@@ -1,0 +1,200 @@
+name: 技能提交 / Skill submission
+description: 提交一个 EchoDesk 技能（插件）供审核与收录。/ Submit an EchoDesk skill (plugin) for review and listing.
+title: "[Skill] "
+labels: ["skill"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先通读技能开发指南，并确认仓库结构合规：
+        Read the skill development guide first and make sure the repository is well-formed:
+
+        - 中文：`docs/zh-Hans/SKILL_GUIDE.md`
+        - English: `docs/en/SKILL_GUIDE.md`
+
+        要点：仓库根目录必须有 `skill.json`（含 `echodesk.bundle`），且仓库已打 topic
+        `echodesk-plugin`——**EchoDesk 只检索这个 topic**，用别的标签搜不到。
+        Key points: the repository root must contain `skill.json` with `echodesk.bundle`,
+        and the repository must carry the GitHub topic `echodesk-plugin`, which is the only
+        topic EchoDesk searches.
+        <!-- 链接目标 docs/zh-Hans/SKILL_GUIDE.md 与 docs/en/SKILL_GUIDE.md 由任务 3.8 提供 -->
+
+  - type: input
+    id: repo
+    attributes:
+      label: 仓库地址 / Repository URL
+      description: 技能源码所在的公开仓库（必须是公开仓库）。/ Public repository that hosts the skill.
+      placeholder: "https://github.com/your-name/echodesk-skill-contract-audit"
+    validations:
+      required: true
+
+  - type: input
+    id: skill_id
+    attributes:
+      label: 技能 ID / Skill ID
+      description: |
+        `skill.json` 中的 `id` 字段（安装目录名由它生成，会被安全化为 `[A-Za-z0-9._-]`）。
+        The `id` field in `skill.json` (used as the install directory name).
+      placeholder: "例如 contract-audit"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / Version
+      description: |
+        `skill.json` 中的语义化版本号，以及兼容的最低 EchoDesk 版本（`echodesk.min_version`）。
+        Semver plus the minimum compatible EchoDesk version.
+      placeholder: "例如 1.0.0（要求 EchoDesk >= 0.2.0）"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: topic_confirm
+    attributes:
+      label: topic 确认 / Topic confirmation
+      options:
+        - label: |
+            我已在该仓库的 About → Topics 中设置 topic **`echodesk-plugin`**（拼写完全一致）。
+            I have set the GitHub topic **`echodesk-plugin`** on this repository (exact spelling).
+          required: true
+        - label: |
+            仓库根目录已存在 `skill.json`，且其中包含 `echodesk.bundle` 字段。
+            The repository root has a `skill.json` containing the `echodesk.bundle` field.
+          required: true
+
+  - type: textarea
+    id: capabilities
+    attributes:
+      label: 声明的能力 / Declared capabilities
+      description: |
+        粘贴 `skill.json` 中的 `capabilities` 段（只声明真正使用的能力；多余权限会被审核拒绝）。
+        Paste the `capabilities` block from `skill.json` (declare only what you actually use).
+      placeholder: |
+        {
+          "commands": ["/audit"],
+          "ui_panels": [],
+          "automation_hooks": ["after_task"],
+          "file_parsers": [".ofd"]
+        }
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 声明的依赖 / Declared dependencies
+      description: |
+        `skill.json` 的 `dependencies` 段。EchoDesk **不会自动安装依赖**，只会在安装提示里列出，
+        因此请在 README 里写清用户需要手动执行的命令。
+        EchoDesk never installs dependencies automatically; document the manual commands in your README.
+      placeholder: |
+        { "pip": ["python-docx>=1.0"], "npm": [] }
+      render: json
+    validations:
+      required: true
+
+  - type: input
+    id: license
+    attributes:
+      label: 许可证 / License
+      description: |
+        `skill.json` 的 `license` 字段与仓库中的 LICENSE 文件（缺失会在安装提示里提醒用户）。
+        The `license` field plus a LICENSE file in the repository.
+      placeholder: "例如 MIT"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: 是否联网 / Network access
+      description: |
+        技能是否会主动发起网络请求？若会，必须在 README 中显著说明并写清数据去向。
+        If yes, your README must prominently document it and where the data goes.
+      options:
+        - 完全不联网 / No network access at all
+        - 会联网，且已在 README 中说明目标域名与发送内容 / Yes, documented in README
+        - 会联网，但只在用户显式触发时 / Yes, only on explicit user action
+    validations:
+      required: true
+
+  - type: textarea
+    id: network_detail
+    attributes:
+      label: 联网细节 / Network details
+      description: |
+        若上一题选了会联网：请求哪些域名、发送什么数据、是否可关闭。
+        If the skill uses the network: which hosts, what data is sent, and can it be disabled?
+      placeholder: |
+        例如：仅向 api.example.com 发送用户选中的文件 ID，不含文件内容；可在技能配置中关闭。
+    validations:
+      required: false
+
+  - type: dropdown
+    id: file_access
+    attributes:
+      label: 是否读取用户文件 / User file access
+      description: |
+        技能是否会读取用户本机文件？（用户目录扫描、`session.json`、`snippets.json` 等）
+        Does the skill read local user files (home directory scans, session.json, snippets.json, ...)?
+      options:
+        - 不读取任何用户文件 / Reads no user files
+        - 只读取用户显式上传/选中的文件 / Only files the user explicitly provides
+        - 会读取配置或用户目录中的其他文件（请在下方说明）/ Reads other files (explain below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: file_access_detail
+    attributes:
+      label: 文件访问细节 / File access details
+      description: 读取哪些路径、用途是什么。/ Which paths, and why.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: security
+    attributes:
+      label: 安全要求自查（审核重点）/ Security requirements self-check (review focus)
+      description: |
+        逐条对照 `docs/zh-Hans/SKILL_GUIDE.md`（English: `docs/en/SKILL_GUIDE.md`）
+        第四章 4.3「安全要求（审核重点）」。任一条不满足请勿勾选，并在下方说明。
+        From section 4.3 of the skill guide; do not tick a box you cannot satisfy.
+      options:
+        - label: 不申请不必要的权限：`capabilities` 只声明真正使用的能力。/ No unnecessary permissions; `capabilities` lists only what is used.
+          required: true
+        - label: 不联网（除非功能必需）；若联网，已在 README 中显著说明并说明数据去向。/ No network access unless required, and documented in the README with data destinations.
+          required: true
+        - label: 不读取用户隐私：不扫描用户目录，不读取 `session.json` / `snippets.json` 之外的用户文件。/ Does not scan user directories or read user files beyond session/snippets.
+          required: true
+        - label: 不写注册表、不安装系统服务、不修改系统设置。/ No registry writes, no services, no system setting changes.
+          required: true
+        - label: 不含混淆代码；`prepare` 脚本（若有）的行为与声明完全一致。/ No obfuscated code; any `prepare` script matches its declaration.
+          required: true
+        - label: 不把 Token/密码写入日志或文件；需要凭据时由用户显式配置。/ Never writes tokens or passwords to logs/files; credentials are configured explicitly by the user.
+          required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充说明 / Additional notes
+      description: |
+        技能做什么、给谁用、有什么已知限制。若技能会注册 `/` 指令或 UI 面板，请在此列出。
+        What the skill does, who it is for, known limitations; list any commands or UI panels it registers.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: ack
+    attributes:
+      label: 确认 / Acknowledgement
+      options:
+        - label: |
+            我理解技能以本地用户权限运行，EchoDesk 不对第三方技能的安全性负责，
+            我已在 README 中如实声明依赖与权限。
+            I understand skills run with the local user's permissions and that EchoDesk is not
+            responsible for third-party skill safety; dependencies and permissions are declared honestly.
+          required: true

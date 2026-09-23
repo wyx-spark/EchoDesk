@@ -1,0 +1,98 @@
+EchoDesk
+Copyright 2026 Void Entropia Studio
+
+This product includes software developed by third parties. The components listed
+below are the main ones shipped inside the EchoDesk distribution; the complete,
+tool-generated inventory (every Python distribution and its license, including
+transitive dependencies) is `docs/THIRD_PARTY_LICENSES.md`, which is produced by
+`python tools/gen_licenses.py`.
+
+--------------------------------------------------------------------------------
+EchoDesk itself
+--------------------------------------------------------------------------------
+
+EchoDesk is licensed under the Apache License, Version 2.0 (see `LICENSE`).
+
+--------------------------------------------------------------------------------
+Local inference
+--------------------------------------------------------------------------------
+
+* llama-cpp-python - MIT License
+  Python bindings used to run local GGUF models.
+* llama.cpp (bundled natively inside llama-cpp-python as llama.dll and the
+  ggml libraries) - MIT License
+
+--------------------------------------------------------------------------------
+Backend runtime (Python 3.13)
+--------------------------------------------------------------------------------
+
+* pydantic - MIT License
+* huggingface_hub - Apache License 2.0
+* duckduckgo-search - MIT License
+* pywin32 - Python Software Foundation License (PSF)
+* schedule - MIT License
+
+--------------------------------------------------------------------------------
+Document parsing
+--------------------------------------------------------------------------------
+
+* python-docx - MIT License (.docx)
+* openpyxl - MIT License (.xlsx, .xlsm)
+* python-pptx - MIT License (.pptx)
+* pypdf - BSD 3-Clause License (.pdf)
+* xlrd - BSD License (.xls)
+
+Note: PDF text extraction used PyMuPDF (AGPL-3.0 or an Artifex commercial
+license) up to v0.2.0. In v0.2.1 it was replaced by pypdf (BSD-3-Clause), so the
+distributed product no longer contains an AGPL-licensed component.
+
+--------------------------------------------------------------------------------
+Browser automation
+--------------------------------------------------------------------------------
+
+* Playwright for Python - Apache License 2.0
+* Playwright driver (bundled Node.js driver, including playwright-core) -
+  Apache License 2.0
+
+Microsoft Edge is NOT redistributed with EchoDesk: the automation feature drives
+the copy of Microsoft Edge already installed on the user's machine.
+
+--------------------------------------------------------------------------------
+Frontend (C# WPF, .NET)
+--------------------------------------------------------------------------------
+
+* .NET runtime and WPF assemblies, published self-contained - MIT License
+  (Microsoft .NET)
+
+The frontend references no third-party NuGet packages; JSON communication with
+the backend uses the built-in System.Text.Json.
+
+--------------------------------------------------------------------------------
+Build tooling (not part of the shipped runtime)
+--------------------------------------------------------------------------------
+
+* PyInstaller - GNU General Public License v2.0 with the official special
+  exception
+  PyInstaller is used as a build tool to package the Python backend. Its
+  exception explicitly permits packaging and distributing programs that are not
+  themselves GPL-licensed; PyInstaller is not linked into or used as a library
+  by the resulting product.
+
+--------------------------------------------------------------------------------
+Local models
+--------------------------------------------------------------------------------
+
+EchoDesk does not include large language model weights. Models are downloaded or
+supplied by the user and remain under the license chosen by their publisher
+(for the default model repository, see `backend/config.json`).
+
+--------------------------------------------------------------------------------
+Compliance notes
+--------------------------------------------------------------------------------
+
+* The authoritative list of bundled components and licenses is
+  `docs/THIRD_PARTY_LICENSES.md`; regenerate and re-review it before every
+  release (`python tools/gen_licenses.py`).
+* Third-party components remain governed by their own licenses. Nothing in the
+  Apache License 2.0 for EchoDesk changes the rights or obligations you have
+  under those licenses.

@@ -192,6 +192,35 @@ class MarketplaceConfig(BaseModel):
     install_dir: str = "skills"
     registry_file: str = "skills_registry.json"
     api_base: str = "https://api.github.com"
+    # ---------- 本地插件接口（任务二·补 2B） ----------
+    # 开发中的插件目录：放进去即被识别，加载更宽松，不写入正式注册表
+    dev_dir: str = "skills_dev"
+    # 显式本地插件清单（可指定任意路径、别名、启用状态、加载顺序、备注）
+    local_manifest: str = "skills_local.json"
+    # 开发模式：详细日志 + 热重载；检测到 dev_dir 中有插件时自动生效
+    dev_mode: bool = False
+    # 开发日志（开发者 Tab 内嵌展示最后 N 行）
+    dev_log_file: str = "skills_dev.log"
+    # 正式加载只接受注册表中 verified=true 的技能（任务二 2.4 加载白名单）
+    require_verified: bool = True
+
+
+class UpdateConfig(BaseModel):
+    """自动更新（任务书 任务五 方案 A：只检查与提示，不自动下载替换）。
+
+    方案 B/C（自动下载替换、增量清单）本版不实现，理由见 docs/v0.2.1-研发记录.md。
+    """
+
+    enabled: bool = True
+    # owner/name；开源发布后由维护者改为真实仓库。留空则跳过检查。
+    repo: str = "VoidEntropiaStudio/EchoDesk"
+    api_base: str = "https://api.github.com"
+    check_on_startup: bool = True
+    check_interval_hours: int = Field(default=24, ge=1, le=720)
+    include_prerelease: bool = False
+    # 企业环境可关掉自动检查（任务书 5.2「允许通过配置禁用自动检查」）
+    last_check: str = ""
+    last_seen_version: str = ""
 
 
 class Config(BaseModel):
@@ -217,6 +246,11 @@ class Config(BaseModel):
     marketplace: MarketplaceConfig = Field(default_factory=MarketplaceConfig)
     # 模型选择栏（新增四）
     model_hub: ModelHubConfig = Field(default_factory=ModelHubConfig)
+    # 自动更新（任务五 方案 A）
+    update: UpdateConfig = Field(default_factory=UpdateConfig)
+    # 界面语言（任务三 3.4）：auto = 首次启动按系统区域自动选择；
+    # 也可写 "zh-Hans" / "en" / "zh-Hant" / "ja" …；前端 ui_state.json 同名字段优先。
+    language: str = "auto"
     max_history: int = 10
     search_default: bool = False
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)

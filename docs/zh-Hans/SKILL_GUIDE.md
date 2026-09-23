@@ -1,6 +1,8 @@
 # EchoDesk 技能开发指南（v0.2.0）
 
 本指南说明如何编写、提交与发布一个 EchoDesk 技能（插件），以及审核流程与发布规范。
+English version: [`docs/en/SKILL_GUIDE.md`](../en/SKILL_GUIDE.md)。
+提交技能请使用仓库的「技能提交 / Skill submission」Issue 模板。
 
 ---
 

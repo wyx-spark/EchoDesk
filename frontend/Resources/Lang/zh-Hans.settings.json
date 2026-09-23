@@ -1,0 +1,79 @@
+{
+  "_meta": {
+    "locale": "zh-Hans",
+    "module": "settings",
+    "note": "设置窗口追加文案（模块分片）：与 zh-Hans.json 合并，同名键以本文件为准。"
+  },
+  "mode": {
+    "general": "1. general — 通用助手",
+    "summary": "2. summary — 摘要专家",
+    "translate": "3. translate — 翻译专家",
+    "code": "4. code — 编程专家",
+    "contract": "5. contract — 合同审查",
+    "creative": "6. creative — 创意写作"
+  },
+  "settings": {
+    "general": {
+      "sectionLanguagePack": "语言包",
+      "defaultMode": "默认对话模式（下次启动生效，也可用 /mode 即时切换）",
+      "langCurrent": "当前语言",
+      "langAvailable": "可用语言",
+      "langNone": "（未找到语言包）",
+      "langDir": "语言包目录",
+      "langReloaded": "✅ 语言包已重新加载",
+      "pathProgram": "程序目录",
+      "pathBackend": "后端目录（配置 / models / 会话 / 自动化日志）",
+      "pathSkills": "插件目录"
+    },
+    "model": {
+      "sortName": "名称",
+      "sourceAuto": "自动（推荐）",
+      "sourceMirror": "镜像源 hf-mirror.com",
+      "sourceOfficial": "官方源 huggingface.co"
+    },
+    "market": {
+      "sortBest": "最佳匹配",
+      "sortStars": "Star 最多",
+      "sortUpdated": "最近更新",
+      "tip": "技能市场：点「刷新」浏览 topic 为 echodesk-plugin 的技能，或输入关键词搜索。"
+    },
+    "automation": {
+      "safetyBody": "1. 自动化功能仅在本机运行，操作过程使用有头浏览器，你可随时观察；\n2. EchoDesk 不会把任务内容、下载文件或生成结果上传到任何服务器；\n3. 已下载的附件会保留在结果目录中，便于你复核，请在共享前自行确认敏感信息；\n4. 你需要自行确认该自动化操作符合所在组织的规章制度与目标网站的服务条款；\n5. 因违规使用导致的后果由使用者自行承担，Void Entropia Studio 不承担责任。",
+      "helpPlaceholderTitle": "❓ 字段说明",
+      "helpPlaceholderBody": "把光标放进下面任意一个输入框（或点字段旁的「?」），这里会显示该字段的通俗说明与示例值。完整指南见发布包 docs\\<locale>\\AUTOMATION_GUIDE.md。",
+      "guideTitle": "自动化配置填写帮助",
+      "runOnce": "▶ 立即运行一次",
+      "stopRun": "⏹ 停止自动化",
+      "pickDetailTip": "先自动进入第一个任务，再在详情页上点一下附件名称",
+      "label": {
+        "taskListUrl": "任务列表网址",
+        "taskListSelector": "任务列表元素位置",
+        "taskRowSelector": "任务行容器（可选）",
+        "nextPageSelector": "下一页按钮（可选，用于分页）",
+        "taskDetailFileSelector": "任务详情页文件元素位置",
+        "fileExtensions": "需要预览的文件后缀（逗号分隔）",
+        "instruction": "任务指令（与文件内容拼接后交给本地模型）",
+        "taskName": "任务名称",
+        "enabled": "启用自动化功能（运行前仍会要求安全协议已勾选）"
+      }
+    },
+    "developer": {
+      "modeShort": "放宽的是验证严格度，不是权限边界。",
+      "topicLabel": "市场 topic",
+      "repoLabel": "建议仓库名",
+      "exportLog": "导出日志",
+      "clearLog": "🗑 清空日志",
+      "reload": "🔄 重载本地插件",
+      "logLines": "显示最后",
+      "logLinesUnit": "行",
+      "sectionScaffold": "新建本地插件",
+      "sectionManifest": "本地插件清单（skills_local.json）",
+      "sectionHooks": "已挂接的自动化钩子",
+      "sectionPanels": "插件面板",
+      "manifestAdd": "➕ 添加一行",
+      "manifestSave": "保存清单并重载",
+      "manifestOpenRaw": "直接编辑 JSON 文件",
+      "installExamples": "📦 安装示例插件"
+    }
+  }
+}

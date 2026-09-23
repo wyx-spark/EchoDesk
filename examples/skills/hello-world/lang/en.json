@@ -1,0 +1,34 @@
+{
+  "_meta": {
+    "locale": "en",
+    "note": "Language pack of the Hello World example plugin. Keys match the api.lang('...') calls in the code."
+  },
+  "hello": {
+    "default_name": "world",
+    "reply": "Hello, {name}! Greetings from the plugin \"{skill}\".\nInterface language: {locale}; EchoDesk version: {version}."
+  },
+  "cmd": {
+    "hello": {
+      "label": "Say hello",
+      "description": "Example command: returns a greeting to demonstrate argument handling and localization."
+    }
+  },
+  "panel": {
+    "title": "Hello example panel",
+    "description": "A panel declared by the plugin and rendered with native controls. Edit the language packs in the plugin folder to see localization working.",
+    "name": {
+      "label": "Your name",
+      "help": "Type a name and press the button below."
+    },
+    "remember": {
+      "label": "Remember this name",
+      "help": "When ticked the name is stored in the plugin's own config.json, isolated from the main configuration."
+    },
+    "greet": {
+      "label": "Say hello"
+    },
+    "result": "The panel received the name: {name}",
+    "none_yet": "(nothing yet)",
+    "render": "Last greeted name: {last}\nData folder: {dir}"
+  }
+}

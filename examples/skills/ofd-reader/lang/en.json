@@ -1,0 +1,17 @@
+{
+  "_meta": {
+    "locale": "en",
+    "note": "Language pack of the .ofd reader plugin."
+  },
+  "cmd": {
+    "ofd": {
+      "label": "Read an OFD document",
+      "description": "Example command: extracts the text of a .ofd file to verify the file-parser extension."
+    }
+  },
+  "ofd": {
+    "usage": "Usage: /ofd <file path>",
+    "failed": "❌ Could not read the file: {error}",
+    "ok": "✅ Read {name} ({chars} characters)\n\nPreview:\n{preview}"
+  }
+}
