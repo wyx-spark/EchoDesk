@@ -15,6 +15,7 @@ English documentation: [`docs/en/README.md`](../en/README.md)。
 | [`FAQ.md`](FAQ.md) | 常见问题与故障排除：启动、模型、文件解析、自动化、技能市场、界面 | 遇到问题时先看这里 |
 | [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md) | **自动化配置填写指南**：字段总览、逐项填写说明、合同审核完整示例、测试选择器流程、常见错误排查、预置模板、导入导出 | 想用浏览器批量处理网页任务的用户 |
 | [`SKILL_GUIDE.md`](SKILL_GUIDE.md) | 技能（插件）开发指南：清单规范、发布到市场、安全要求与审核流程 | 技能开发者 |
+| [`COMPLIANCE.md`](COMPLIANCE.md) | **企业环境适配与合规说明**：代理、证书、防火墙域名白名单、组策略/受限环境、审计与留痕 | IT 管理员、合规与安全审查人员 |
 
 ## 其他语言
 
@@ -31,6 +32,8 @@ English documentation: [`docs/en/README.md`](../en/README.md)。
 - [`../PRIVACY.md`](../PRIVACY.md) —— 隐私说明：联网行为、数据存放位置与清理方式
 - [`../EULA.md`](../EULA.md) —— 最终用户许可协议
 - [`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md) —— 第三方组件与许可证清单
+- [`../SBOM.json`](../SBOM.json) —— 软件物料清单（SPDX 风格，由 `python tools/gen_sbom.py` 生成）
+- [`../SECURITY.md`](../SECURITY.md) —— 安全策略：支持版本、私有报告渠道、响应时限、安全设计与受理范围（中文）
 - [`../v0.2.0-研发记录.md`](../v0.2.0-研发记录.md) / [`../v0.2.0-修复记录.md`](../v0.2.0-修复记录.md) —— 历史版本研发与修复记录
 
 ## 项目级文档（仓库根目录）

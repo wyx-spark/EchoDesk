@@ -24,7 +24,10 @@ public sealed class MarketItem
     public string HtmlUrl { get; init; } = "";
     public bool Verified { get; init; }
     public bool Installed { get; init; }
-    public string ActionText => Installed ? "卸载" : (Verified ? "安装" : "未验证");
+    public string ActionText => Installed
+        ? Loc.T("settings.button.uninstall", "卸载")
+        : (Verified ? Loc.T("settings.button.install", "安装")
+                    : Loc.T("settings.market.unverified", "未验证"));
     public bool CanAct => Installed || Verified;
 }
 
@@ -49,7 +52,9 @@ public sealed class HubFileItem
     public bool Installed { get; init; }
 
     /// <summary>已下载完成的文件显示为「已下载」，按钮置灰，避免重复下载。</summary>
-    public string ActionText => Installed ? "已下载" : "下载";
+    public string ActionText => Installed
+        ? Loc.T("settings.model.actionDownloaded", "已下载")
+        : Loc.T("settings.model.actionDownload", "下载");
     public bool CanAct => !Installed;
 }
 
@@ -78,26 +83,18 @@ public partial class SettingsWindow : Window
     /// <summary>安全协议文本（版本号在协议变更时必须递增，并会记入审计日志）。</summary>
     private const string SafetyVersion = "1.0";
 
-    private const string SafetyBody =
-        "1. 自动化功能仅在本机运行，操作过程使用有头浏览器，你可随时观察；\n" +
-        "2. EchoDesk 不会把任务内容、下载文件或生成结果上传到任何服务器；\n" +
-        "3. 所有下载文件保存在系统临时目录，处理完成后立即删除；\n" +
-        "4. 你需要自行确认该自动化操作符合所在组织的规章制度与目标网站的服务条款；\n" +
-        "5. 因违规使用导致的后果由使用者自行承担，Void Entropia Studio 不承担责任。";
+    // 任务三：安全协议正文已收编进语言包（键 settings.automation.safetyBody），
+    // 由 DefaultSafetyBody 提供中文兜底，界面文本不再硬编码在这里。
 
-    private static readonly (string Key, string Label)[] Modes =
+    /// <summary>可选的默认对话模式键；显示名由语言包的 mode.&lt;key&gt; 提供。</summary>
+    private static readonly string[] Modes =
     {
-        ("general", "1. general — 通用助手"),
-        ("summary", "2. summary — 摘要专家"),
-        ("translate", "3. translate — 翻译专家"),
-        ("code", "4. code — 编程专家"),
-        ("contract", "5. contract — 合同审查"),
-        ("creative", "6. creative — 创意写作"),
+        "general", "summary", "translate", "code", "contract", "creative",
     };
 
     private readonly BackendService _backend;
     private readonly AppSettings _uiState;
-    private readonly Action<bool>? _onThemeChanged;
+    private readonly Action<AppTheme>? _onThemeChanged;
     private readonly Action<double>? _onFontSizeChanged;
     private readonly List<MarketItem> _marketItems = new();
     private readonly DispatcherTimer _searchDebounce;
@@ -116,6 +113,9 @@ public partial class SettingsWindow : Window
     private bool _loading = true;
     private bool _automationRunning;
     private int _marketPage = 1;
+    // 主题/emoji 下拉框的程序化选中不应触发"用户改了设置"的回调
+    private bool _themeSyncing;
+    private bool _emojiSyncing;
 
     // ---------- 模型选择栏状态（新增四） ----------
     private readonly List<HubModelItem> _hubItems = new();
@@ -128,9 +128,8 @@ public partial class SettingsWindow : Window
     public SettingsWindow(
         BackendService backend,
         AppSettings uiState,
-        bool isDark,
         double fontSize,
-        Action<bool>? onThemeChanged,
+        Action<AppTheme>? onThemeChanged,
         Action<double>? onFontSizeChanged)
     {
         InitializeComponent();
@@ -144,24 +143,22 @@ public partial class SettingsWindow : Window
         Title = Loc.T("settings.title");
         Loc.LanguageChanged += (_, _) => ApplyLanguage();
 
-        SafetyText.Text = Loc.T("settings.automation.safetyBody", DefaultSafetyBody);
+        SafetyText.Text = DefaultSafetyBody;
 
-        foreach (var (key, label) in Modes)
-            DefaultModeCombo.Items.Add(new ComboBoxItem { Content = label, Tag = key });
+        foreach (string key in Modes)
+            DefaultModeCombo.Items.Add(new ComboBoxItem { Content = Loc.T("mode." + key, key), Tag = key });
 
-        DarkModeCheck.IsChecked = isDark;
+        // 主题（修复二）：三态下拉框 + emoji 显示策略（修复六），两者都即时生效
+        InitThemeControls();
+        InitEmojiControls();
         ConfirmDestructiveCheck.IsChecked = _uiState.ConfirmDestructiveCommands;
         FontSizeSlider.Value = fontSize;
         FontSizeLabel.Text = $"{fontSize:0.#} pt";
-        PathsText.Text =
-            $"{Loc.T("settings.general.pathProgram", "程序目录")}: {ShortcutService.ProgramDirectory}\n" +
-            $"{Loc.T("settings.general.pathBackend", "后端目录（配置 / models / 会话 / 自动化日志）")}: " +
-            $"{ShortcutService.ProgramDirectory}\\backend\n" +
-            $"{Loc.T("settings.general.pathSkills", "插件目录")}: {ShortcutService.ProgramDirectory}\\backend\\skills";
+        PathsText.Text = DescribePaths();
 
-        MarketSortCombo.Items.Add(new ComboBoxItem { Content = "最佳匹配", Tag = "best" });
-        MarketSortCombo.Items.Add(new ComboBoxItem { Content = "Star 最多", Tag = "stars" });
-        MarketSortCombo.Items.Add(new ComboBoxItem { Content = "最近更新", Tag = "updated" });
+        MarketSortCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.market.sortBest", "最佳匹配"), Tag = "best" });
+        MarketSortCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.market.sortStars", "Star 最多"), Tag = "stars" });
+        MarketSortCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.market.sortUpdated", "最近更新"), Tag = "updated" });
         MarketSortCombo.SelectedIndex = 0;
         TemplateCombo.DisplayMemberPath = "Label";   // 模板项是 TemplateItem 对象
 
@@ -175,17 +172,17 @@ public partial class SettingsWindow : Window
 
         // 模型选择栏：搜索防抖 + 排序/量化筛选项（构造期间静默，避免触发请求）
         _suppressHubFilterEvents = true;
-        HubSortCombo.Items.Add(new ComboBoxItem { Content = "下载量最多", Tag = "downloads" });
-        HubSortCombo.Items.Add(new ComboBoxItem { Content = "最近更新", Tag = "updated" });
-        HubSortCombo.Items.Add(new ComboBoxItem { Content = "点赞最多", Tag = "likes" });
-        HubSortCombo.Items.Add(new ComboBoxItem { Content = "名称", Tag = "name" });
+        HubSortCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sortDownloads", "下载量最多"), Tag = "downloads" });
+        HubSortCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sortUpdated", "最近更新"), Tag = "updated" });
+        HubSortCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sortLikes", "点赞最多"), Tag = "likes" });
+        HubSortCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sortName", "名称"), Tag = "name" });
         HubSortCombo.SelectedIndex = 0;
         foreach (string quant in new[] { "", "Q4_K_M", "Q4_0", "Q5_K_M", "Q8_0", "Q2_K", "F16" })
             HubQuantCombo.Items.Add(quant);
         HubQuantCombo.SelectedIndex = 0;
-        HubSourceCombo.Items.Add(new ComboBoxItem { Content = "自动（推荐）", Tag = "auto" });
-        HubSourceCombo.Items.Add(new ComboBoxItem { Content = "镜像源 hf-mirror.com", Tag = "mirror" });
-        HubSourceCombo.Items.Add(new ComboBoxItem { Content = "官方源 huggingface.co", Tag = "official" });
+        HubSourceCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sourceAuto", "自动（推荐）"), Tag = "auto" });
+        HubSourceCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sourceMirror", "镜像源 hf-mirror.com"), Tag = "mirror" });
+        HubSourceCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sourceOfficial", "官方源 huggingface.co"), Tag = "official" });
         HubSourceCombo.SelectedIndex = 0;
         _suppressHubFilterEvents = false;
 
@@ -234,17 +231,18 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            SetLoadState($"⚠️ 初始化失败：{ex.Message}");
+            SetLoadState(Loc.T("settings.loadState.initFailed", "⚠️ 初始化失败：{0}", ex.Message));
             App.Log("SettingsWindow.LoadInitial", ex);
         }
     }
 
     private async Task LoadInitialAsync()
     {
-        SetLoadState("正在读取配置…");
+        SetLoadState(Loc.T("settings.loadState.reading", "正在读取配置…"));
 
         string? configJson = await RequestWithRetryAsync(
-            new { action = "automation_config" }, "读取自动化配置", TimeSpan.FromSeconds(90));
+            new { action = "automation_config" },
+            Loc.T("settings.automation.labelReadingConfig", "读取自动化配置"), TimeSpan.FromSeconds(90));
         if (configJson is not null)
         {
             try
@@ -255,12 +253,14 @@ public partial class SettingsWindow : Window
             }
             catch (JsonException ex)
             {
-                SetLoadState($"⚠️ 自动化配置解析失败：{ex.Message}");
+                SetLoadState(Loc.T("settings.loadState.parseFailed",
+                    "⚠️ 自动化配置解析失败：{0}", ex.Message));
             }
         }
 
         string? modeJson = await RequestWithRetryAsync(
-            new { action = "context" }, "读取当前对话模式", TimeSpan.FromSeconds(60));
+            new { action = "context" },
+            Loc.T("settings.general.labelReadingMode", "读取当前对话模式"), TimeSpan.FromSeconds(60));
         if (modeJson is not null)
         {
             try
@@ -296,7 +296,8 @@ public partial class SettingsWindow : Window
     private async Task LoadHubAsync()
     {
         string? statusJson = await RequestWithRetryAsync(
-            new { action = "model_hub_status" }, "读取模型中心状态", TimeSpan.FromSeconds(60));
+            new { action = "model_hub_status" },
+            Loc.T("settings.model.labelReadingHubStatus", "读取模型中心状态"), TimeSpan.FromSeconds(60));
         if (statusJson is not null)
         {
             try
@@ -304,11 +305,14 @@ public partial class SettingsWindow : Window
                 using JsonDocument doc = JsonDocument.Parse(statusJson);
                 if (doc.RootElement.TryGetProperty("model_hub_status", out JsonElement st))
                 {
-                    HubStatusText.Text = $"数据源：{GetString(st, "source_note")}";
+                    HubStatusText.Text = Loc.T("settings.model.statusSource",
+                        "数据源：{0}", GetString(st, "source_note"));
                     SelectHubSource(GetString(st, "source_setting"));
-                    HubRegistryTitle.Text = $"📚 本地模型库（{GetInt(st, "count", 0)} 个 · {GetString(st, "total_size_human")}）";
+                    HubRegistryTitle.Text = Loc.T("settings.model.registryTitle", "📚 本地模型库（{0} 个 · {1}）",
+                        GetInt(st, "count", 0), GetString(st, "total_size_human"));
                     if (GetBool(st, "token_configured"))
-                        HubTokenBox.ToolTip = "已配置 Token（留空表示不修改）";
+                        HubTokenBox.ToolTip = Loc.T("settings.model.tokenConfigured",
+                            "已配置 Token（留空表示不修改）");
                 }
             }
             catch (JsonException)
@@ -357,7 +361,7 @@ public partial class SettingsWindow : Window
     private async Task SearchHubAsync()
     {
         HubSearchButton.IsEnabled = false;
-        HubStatusText.Text = "正在搜索模型…";
+        HubStatusText.Text = Loc.T("settings.model.searching", "正在搜索模型…");
         try
         {
             string sort = (HubSortCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "downloads";
@@ -375,14 +379,15 @@ public partial class SettingsWindow : Window
             using JsonDocument doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("model_hub", out JsonElement hub))
             {
-                HubStatusText.Text = "⚠️ 模型中心不可用（后端未返回数据）";
+                HubStatusText.Text = Loc.T("settings.model.hubUnavailable",
+                    "⚠️ 模型中心不可用（后端未返回数据）");
                 return;
             }
             RenderHubResult(hub);
         }
         catch (Exception ex)
         {
-            HubStatusText.Text = $"❌ 搜索失败：{ex.Message}";
+            HubStatusText.Text = Loc.T("settings.model.searchFailed", "❌ 搜索失败：{0}", ex.Message);
         }
         finally
         {
@@ -406,13 +411,16 @@ public partial class SettingsWindow : Window
                     Repo = GetString(item, "repo"),
                     Name = GetString(item, "name"),
                     Gated = gated,
-                    Badge = installed ? "● 已下载" : (gated ? "🔒 需登录" : ""),
+                    Badge = installed ? Loc.T("settings.model.badgeDownloaded", "● 已下载")
+                                      : (gated ? Loc.T("settings.model.badgeGated", "🔒 需登录") : ""),
                     Meta = string.Join(" · ", new[]
                     {
                         GetString(item, "author"),
                         $"⬇ {downloads:N0}",
                         $"⭐ {likes}",
-                        GetString(item, "updated_at").Length > 0 ? $"更新于 {GetString(item, "updated_at")}" : "",
+                        GetString(item, "updated_at").Length > 0
+                            ? Loc.T("settings.model.updatedAt", "更新于 {0}", GetString(item, "updated_at"))
+                            : "",
                     }.Where(x => x.Length > 0)),
                 });
             }
@@ -423,10 +431,12 @@ public partial class SettingsWindow : Window
         string note = GetString(hub, "source_note");
         bool offline = GetBool(hub, "offline");
         HubStatusText.Text = (_hubItems.Count == 0
-            ? "结果为空。可换关键词（模型需为 GGUF 格式）。"
-            : $"共 {_hubItems.Count} 个结果。") + (note.Length > 0 ? $" 数据源：{note}" : "");
+            ? Loc.T("settings.model.searchEmpty", "结果为空。可换关键词（模型需为 GGUF 格式）。")
+            : Loc.T("settings.model.resultCount", "共 {0} 个结果。", _hubItems.Count))
+            + (note.Length > 0 ? " " + Loc.T("settings.model.statusSource", "数据源：{0}", note) : "");
         if (offline)
-            HubStatusText.Text = "⚠️ 数据源不可用：请检查网络，" + HubStatusText.Text;
+            HubStatusText.Text = Loc.T("settings.model.sourceOffline", "⚠️ 数据源不可用：请检查网络，")
+                + HubStatusText.Text;
     }
 
     private void HubResultList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -444,7 +454,7 @@ public partial class SettingsWindow : Window
     /// <summary>展开详情面板：列出该仓库所有 GGUF 量化版本与大小（含预计磁盘占用）。</summary>
     private async Task ShowHubDetailAsync(HubModelItem item)
     {
-        HubStatusText.Text = $"正在读取 {item.Repo} 的可用文件…";
+        HubStatusText.Text = Loc.T("settings.model.readingFiles", "正在读取 {0} 的可用文件…", item.Repo);
         try
         {
             string json = await _backend.SendRequestAsync(
@@ -453,7 +463,7 @@ public partial class SettingsWindow : Window
             using JsonDocument doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("detail", out JsonElement detail))
             {
-                HubStatusText.Text = "⚠️ 无法获取模型详情";
+                HubStatusText.Text = Loc.T("settings.model.detailUnavailable", "⚠️ 无法获取模型详情");
                 return;
             }
             _hubFiles.Clear();
@@ -476,15 +486,17 @@ public partial class SettingsWindow : Window
             HubFileList.ItemsSource = null;
             HubFileList.ItemsSource = _hubFiles;
             string license = GetString(detail, "license");
-            HubDetailTitle.Text = $"{item.Repo} — 可用 GGUF 文件 {_hubFiles.Count} 个"
-                + (license.Length > 0 ? $"（许可：{license}）" : "")
-                + (GetBool(detail, "gated") ? "　🔒 需要 Token" : "");
+            HubDetailTitle.Text =
+                Loc.T("settings.model.detailHeader", "{0} — 可用 GGUF 文件 {1} 个", item.Repo, _hubFiles.Count)
+                + (license.Length > 0 ? Loc.T("settings.model.detailLicense", "（许可：{0}）", license) : "")
+                + (GetBool(detail, "gated") ? "　" + Loc.T("settings.model.detailGated", "🔒 需要 Token") : "");
             HubDetailPanel.Visibility = Visibility.Visible;
-            HubStatusText.Text = "选定量化版本后点「下载」，会先显示文件大小与预计磁盘占用。";
+            HubStatusText.Text = Loc.T("settings.model.detailHint",
+                "选定量化版本后点「下载」，会先显示文件大小与预计磁盘占用。");
         }
         catch (Exception ex)
         {
-            HubStatusText.Text = $"❌ 获取详情失败：{ex.Message}";
+            HubStatusText.Text = Loc.T("settings.model.fetchDetailFailed", "❌ 获取详情失败：{0}", ex.Message);
         }
     }
 
@@ -507,17 +519,17 @@ public partial class SettingsWindow : Window
     {
         if (_downloading)
         {
-            HubStatusText.Text = "⏳ 已有下载在进行中，请等待完成或先取消。";
+            HubStatusText.Text = Loc.T("settings.model.downloadBusy",
+                "⏳ 已有下载在进行中，请等待完成或先取消。");
             return;
         }
         double gb = file.Size / 1073741824.0;
         var confirm = MessageBox.Show(this,
-            $"即将下载模型文件：\n\n" +
-            $"仓库：{file.Repo}\n文件：{file.FileName}\n" +
-            $"量化：{file.Quantization}\n大小：{file.SizeText}\n" +
-            $"预计磁盘占用：{file.SizeText}（下载完成后同时占用这么多空间）\n\n" +
-            "下载完成后会自动登记到本地模型库，可用 /model list 查看并切换。是否继续？",
-            "确认下载模型", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            Loc.T("settings.model.downloadConfirmText",
+                "即将下载模型文件：\n\n仓库：{0}\n文件：{1}\n量化：{2}\n大小：{3}\n预计磁盘占用：{3}（下载完成后同时占用这么多空间）\n\n下载完成后会自动登记到本地模型库，可用 /model list 查看并切换。是否继续？",
+                file.Repo, file.FileName, file.Quantization, file.SizeText),
+            Loc.T("settings.model.downloadConfirmTitle", "确认下载模型"),
+            MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (confirm != MessageBoxResult.Yes)
             return;
 
@@ -525,7 +537,7 @@ public partial class SettingsWindow : Window
         HubProgressBar.Visibility = Visibility.Visible;
         HubProgressBar.Value = 0;
         HubCancelButton.Visibility = Visibility.Visible;
-        HubProgressText.Text = "正在建立连接…";
+        HubProgressText.Text = Loc.T("settings.model.connecting", "正在建立连接…");
         _hubFiles.Clear();
         HubFileList.ItemsSource = null;
         HubDetailPanel.Visibility = Visibility.Collapsed;
@@ -548,7 +560,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            HubStatusText.Text = $"❌ 下载失败：{ex.Message}";
+            HubStatusText.Text = Loc.T("settings.model.downloadFailed", "❌ 下载失败：{0}", ex.Message);
         }
         finally
         {
@@ -561,14 +573,14 @@ public partial class SettingsWindow : Window
     private async void HubCancelButton_Click(object sender, RoutedEventArgs e)
     {
         HubCancelButton.IsEnabled = false;
-        HubProgressText.Text = "⏹ 已请求取消下载…";
+        HubProgressText.Text = Loc.T("settings.model.cancelRequested", "⏹ 已请求取消下载…");
         try
         {
             await _backend.SendFireAndForgetAsync(new { action = "stop" });
         }
         catch (Exception ex)
         {
-            HubStatusText.Text = $"❌ 取消请求失败：{ex.Message}";
+            HubStatusText.Text = Loc.T("settings.model.cancelFailed", "❌ 取消请求失败：{0}", ex.Message);
         }
         finally
         {
@@ -600,25 +612,29 @@ public partial class SettingsWindow : Window
                         Name = GetString(m, "name"),
                         SizeText = GetString(m, "size_human"),
                         InUse = current,
-                        CurrentBadge = current ? "▶ 正在使用" : "",
+                        CurrentBadge = current ? Loc.T("settings.model.badgeInUse", "▶ 正在使用") : "",
                         Meta = string.Join(" · ", new[]
                         {
                             GetString(m, "quantization"),
-                            GetString(m, "repo").Length > 0 ? GetString(m, "repo") : "本地文件",
-                            downloaded.Length > 0 ? $"下载于 {downloaded}" : "",
-                            used.Length > 0 ? $"最后使用 {used}" : "尚未使用",
+                            GetString(m, "repo").Length > 0
+                                ? GetString(m, "repo") : Loc.T("settings.model.localFile", "本地文件"),
+                            downloaded.Length > 0
+                                ? Loc.T("settings.model.downloadedAt", "下载于 {0}", downloaded) : "",
+                            used.Length > 0
+                                ? Loc.T("settings.model.lastUsed", "最后使用 {0}", used)
+                                : Loc.T("settings.model.neverUsed", "尚未使用"),
                         }.Where(x => x.Length > 0)),
                     });
                 }
             }
             HubRegistryList.ItemsSource = null;
             HubRegistryList.ItemsSource = _hubRegistry;
-            HubRegistryTitle.Text = $"📚 本地模型库（{GetInt(reg, "count", _hubRegistry.Count)} 个 · "
-                + $"{GetString(reg, "total_size_human")}）";
+            HubRegistryTitle.Text = Loc.T("settings.model.registryTitle", "📚 本地模型库（{0} 个 · {1}）",
+                GetInt(reg, "count", _hubRegistry.Count), GetString(reg, "total_size_human"));
         }
         catch (Exception ex)
         {
-            HubStatusText.Text = $"❌ 读取模型库失败：{ex.Message}";
+            HubStatusText.Text = Loc.T("settings.model.registryLoadFailed", "❌ 读取模型库失败：{0}", ex.Message);
         }
     }
 
@@ -628,14 +644,16 @@ public partial class SettingsWindow : Window
             return;
         if (item.InUse)
         {
-            HubStatusText.Text = "该模型正在使用中，请先用 /model 切换到其它模型再删除。";
+            HubStatusText.Text = Loc.T("settings.model.inUseCannotDelete",
+                "该模型正在使用中，请先用 /model 切换到其它模型再删除。");
             return;
         }
         var confirm = MessageBox.Show(this,
-            $"确定删除模型「{item.Name}」吗？\n\n" +
-            $"将删除文件（{item.SizeText}）并从模型库移除，此操作不可撤销。\n" +
-            "若之后还需要，必须重新下载。",
-            "删除模型", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            Loc.T("settings.model.deleteConfirmText",
+                "确定删除模型「{0}」吗？\n\n将删除文件（{1}）并从模型库移除，此操作不可撤销。\n若之后还需要，必须重新下载。",
+                item.Name, item.SizeText),
+            Loc.T("settings.model.deleteConfirmTitle", "删除模型"),
+            MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes)
             return;
         try
@@ -645,11 +663,12 @@ public partial class SettingsWindow : Window
                 idleTimeout: TimeSpan.FromSeconds(60));
             using JsonDocument doc = JsonDocument.Parse(json);
             HubStatusText.Text = doc.RootElement.TryGetProperty("content", out JsonElement c)
-                ? c.GetString() ?? "已删除" : "已删除";
+                ? c.GetString() ?? Loc.T("settings.model.deleted", "已删除")
+                : Loc.T("settings.model.deleted", "已删除");
         }
         catch (Exception ex)
         {
-            HubStatusText.Text = $"❌ 删除失败：{ex.Message}";
+            HubStatusText.Text = Loc.T("settings.model.deleteFailed", "❌ 删除失败：{0}", ex.Message);
         }
         await RefreshHubRegistryAsync();
         await SearchHubAsync();   // 刷新「已下载」徽标
@@ -689,13 +708,14 @@ public partial class SettingsWindow : Window
                 new { action = "model_hub_config_set", model_hub = patch });
             using JsonDocument doc = JsonDocument.Parse(json);
             string content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
-            HubStatusText.Text = content.Length > 0 ? content : "已保存";
+            HubStatusText.Text = content.Length > 0 ? content : Loc.T("settings.model.saved", "已保存");
             if (doc.RootElement.TryGetProperty("model_hub", out JsonElement st))
-                HubStatusText.Text += $"　数据源：{GetString(st, "source_note")}";
+                HubStatusText.Text += "　" + Loc.T("settings.model.statusSource", "数据源：{0}",
+                    GetString(st, "source_note"));
         }
         catch (Exception ex)
         {
-            HubStatusText.Text = $"❌ 保存失败：{ex.Message}";
+            HubStatusText.Text = Loc.T("settings.model.saveFailed", "❌ 保存失败：{0}", ex.Message);
         }
     }
 
@@ -709,16 +729,16 @@ public partial class SettingsWindow : Window
                 ? GetString(st, "models_dir") : "";
             if (dir.Length == 0)
             {
-                HubStatusText.Text = "⚠️ 未取到模型目录";
+                HubStatusText.Text = Loc.T("settings.model.dirMissing", "⚠️ 未取到模型目录");
                 return;
             }
             Directory.CreateDirectory(dir);
             Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
-            HubStatusText.Text = $"已打开模型目录：{dir}";
+            HubStatusText.Text = Loc.T("settings.model.dirOpened", "已打开模型目录：{0}", dir);
         }
         catch (Exception ex)
         {
-            HubStatusText.Text = $"❌ 打开模型目录失败：{ex.Message}";
+            HubStatusText.Text = Loc.T("settings.model.dirOpenFailed", "❌ 打开模型目录失败：{0}", ex.Message);
         }
     }
 
@@ -753,7 +773,9 @@ public partial class SettingsWindow : Window
             catch (BackendBusyException)
             {
                 waits++;
-                SetLoadState($"⏳ {label}：后端正在忙（第 {waits} 次等待，最长 {total.TotalSeconds:0} 秒）…");
+                SetLoadState(Loc.T("settings.loadState.backendBusy",
+                    "⏳ {0}：后端正在忙（第 {1} 次等待，最长 {2} 秒）…",
+                    label, waits, $"{total.TotalSeconds:0}"));
                 try
                 {
                     await Task.Delay(TimeSpan.FromSeconds(2), _closing.Token);
@@ -765,7 +787,7 @@ public partial class SettingsWindow : Window
             }
             catch (BackendTimeoutException ex)
             {
-                SetLoadState($"⚠️ {label}超时：{ex.Message}");
+                SetLoadState(Loc.T("settings.loadState.timeout", "⚠️ {0}超时：{1}", label, ex.Message));
                 return null;
             }
             catch (OperationCanceledException)
@@ -774,7 +796,8 @@ public partial class SettingsWindow : Window
             }
         }
         if (!_closing.IsCancellationRequested)
-            SetLoadState($"⚠️ {label}未完成（后端长时间忙碌）。窗口可正常使用，稍后点「保存设置」会重试。");
+            SetLoadState(Loc.T("settings.loadState.incomplete",
+                "⚠️ {0}未完成（后端长时间忙碌）。窗口可正常使用，稍后点「保存设置」会重试。", label));
         return null;
     }
 
@@ -819,11 +842,155 @@ public partial class SettingsWindow : Window
 
     // ---------- 常规 ----------
 
-    private void DarkModeCheck_Changed(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 主题下拉框（修复二）：跟随系统 / 浅色 / 深色。
+    ///
+    /// 每项都带 Tag（AppTheme 名），因此语言切换后重建列表也能保持选中项。
+    /// </summary>
+    private void InitThemeControls()
     {
-        if (!_uiReady || _loading)
+        if (ThemeCombo is null)
             return;
-        _onThemeChanged?.Invoke(DarkModeCheck.IsChecked == true);
+        _themeSyncing = true;
+        ThemeCombo.Items.Clear();
+        foreach (AppTheme theme in new[] { AppTheme.System, AppTheme.Light, AppTheme.Dark })
+        {
+            ThemeCombo.Items.Add(new ComboBoxItem
+            {
+                Content = Loc.T(ThemeLabelKey(theme)),
+                Tag = ThemeService.Serialize(theme),
+            });
+        }
+        ThemeCombo.SelectedIndex = (int)ThemeService.Selected;
+        _themeSyncing = false;
+        UpdateThemeStatus();
+    }
+
+    private static string ThemeLabelKey(AppTheme theme) => theme switch
+    {
+        AppTheme.Dark => "settings.general.themeDark",
+        AppTheme.Light => "settings.general.themeLight",
+        _ => "settings.general.themeSystem",
+    };
+
+    /// <summary>把当前主题状态显示出来：选"跟随系统"时明确告知实际生效的是哪一种。</summary>
+    private void UpdateThemeStatus()
+    {
+        if (ThemeStatusText is null)
+            return;
+        string effective = Loc.T(ThemeLabelKey(ThemeService.Effective));
+        ThemeStatusText.Text = ThemeService.Selected == AppTheme.System
+            ? Loc.T("settings.general.themeFollowing", "当前跟随系统：{0}", effective)
+            : Loc.T("settings.general.themeEffective", "当前生效：{0}", effective);
+    }
+
+    private void ThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ThemeCombo?.SelectedItem is not ComboBoxItem item)
+            return;
+        if (_themeSyncing || !_uiReady)
+            return;
+        AppTheme theme = ThemeService.Parse(item.Tag?.ToString());
+        _onThemeChanged?.Invoke(theme);   // 主窗口负责应用并持久化
+        UpdateThemeStatus();
+    }
+
+    /// <summary>emoji 显示策略下拉框（修复六）。</summary>
+    private void InitEmojiControls()
+    {
+        if (EmojiCombo is null)
+            return;
+        _emojiSyncing = true;
+        EmojiCombo.Items.Clear();
+        EmojiCombo.Items.Add(new ComboBoxItem
+        {
+            Content = Loc.T("settings.general.emojiAuto", "自动（按本机字体）"),
+            Tag = "auto",
+        });
+        EmojiCombo.Items.Add(new ComboBoxItem
+        {
+            Content = Loc.T("settings.general.emojiAlways", "始终显示 emoji"),
+            Tag = "always",
+        });
+        EmojiCombo.Items.Add(new ComboBoxItem
+        {
+            Content = Loc.T("settings.general.emojiNever", "不使用 emoji（纯文本符号）"),
+            Tag = "never",
+        });
+        EmojiCombo.SelectedIndex = _uiState.EmojiMode switch
+        {
+            "always" => 1,
+            "never" => 2,
+            _ => 0,
+        };
+        _emojiSyncing = false;
+        UpdateEmojiStatus();
+    }
+
+    private void UpdateEmojiStatus()
+    {
+        if (EmojiStatusText is null)
+            return;
+        bool fontPresent = Emoji.Available;
+        EmojiStatusText.Text = fontPresent
+            ? (Emoji.Enabled
+                ? Loc.T("settings.general.emojiOn", "本机支持 emoji，当前正常显示")
+                : Loc.T("settings.general.emojiForcedOff", "已按你的选择改用纯文本符号"))
+            : Loc.T("settings.general.emojiFontMissing",
+                    "本机缺少 emoji 字体，界面自动使用纯文本符号（[OK] / [!]）");
+    }
+
+    private void EmojiCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (EmojiCombo?.SelectedItem is not ComboBoxItem item)
+            return;
+        if (_emojiSyncing || !_uiReady)
+            return;
+        _uiState.EmojiMode = item.Tag?.ToString() ?? "auto";
+        _uiState.Save();
+        Emoji.Configure(_uiState.EmojiMode);
+        UpdateEmojiStatus();
+        // 立刻用新策略重刷界面文案（emoji 可能被换成 ASCII 标记，需要重新取一次语言包）
+        Loc.Reapply();
+    }
+
+    /// <summary>
+    /// 主题变化后重刷本窗口里"代码生成"的内容。
+    ///
+    /// XAML 里用 DynamicResource 的部分会自动跟随，无需处理；这里只补
+    /// 代码构建的控件（插件面板、卡片列表、下拉框项）与状态文本。
+    /// </summary>
+    public void ApplyThemeResources()
+    {
+        InitThemeControls();
+        UpdateEmojiStatus();
+        // 卡片状态色/插件面板等由代码生成的画刷不跟随 DynamicResource，需要重建
+        RenderSkillCards();
+        RenderPanels();
+        // 语言包文本里的 emoji 依赖 Emoji.Enabled，主题切换时一并重取（代价很低）
+        Loc.Apply(this);
+    }
+
+    /// <summary>界面/数据位置说明（修复七：外层目录与 app/ 的分工要写清楚）。</summary>
+    private string DescribePaths()
+    {
+        string program = ShortcutService.ProgramDirectory;
+        string data = ShortcutService.UserDataDirectory;
+        var lines = new List<string>
+        {
+            $"{Loc.T("settings.general.pathProgram", "程序目录")}: {program}",
+            $"{Loc.T("settings.general.pathBackend", "后端目录（配置 / models / 会话 / 自动化日志）")}: " +
+            $"{Path.Combine(program, "backend")}",
+            $"{Loc.T("settings.general.pathSkills", "插件目录")}: " +
+            $"{Path.Combine(program, "backend", "skills")}",
+            $"{Loc.T("settings.general.pathUserData", "用户数据目录（界面状态 / 常用语 / 批量处理结果）")}: {data}",
+        };
+        if (!string.Equals(program, data, StringComparison.OrdinalIgnoreCase))
+        {
+            lines.Add(Loc.T("settings.general.pathPortableNote",
+                "提示：本程序按便携版布局运行，程序本体在 app\\ 下，ui_state.json、常用语与「批量处理结果」都在外层目录，便于备份与迁移。"));
+        }
+        return string.Join("\n", lines);
     }
 
     private void FontSizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -846,8 +1013,8 @@ public partial class SettingsWindow : Window
         _uiState.ConfirmDestructiveCommands = ConfirmDestructiveCheck.IsChecked == true;
         _uiState.Save();
         SaveHintText.Text = _uiState.ConfirmDestructiveCommands
-            ? "已开启指令执行确认"
-            : "已关闭指令执行确认（有副作用指令将直接执行）";
+            ? Loc.T("settings.general.confirmOn", "已开启指令执行确认")
+            : Loc.T("settings.general.confirmOff", "已关闭指令执行确认（有副作用指令将直接执行）");
     }
 
     // ---------- 自动化：安全协议联动 ----------
@@ -867,11 +1034,13 @@ public partial class SettingsWindow : Window
         if (!accepted)
         {
             AutomationEnabledCheck.IsChecked = false;
-            AutomationEnabledCheck.Content = "启用自动化功能（请先勾选上方安全协议）";
+            AutomationEnabledCheck.Content = Loc.T("settings.automation.enabledNeedsSafety",
+                "启用自动化功能（请先勾选上方安全协议）");
         }
         else
         {
-            AutomationEnabledCheck.Content = "启用自动化功能（运行前仍会要求安全协议已勾选）";
+            AutomationEnabledCheck.Content = Loc.T("settings.automation.label.enabled",
+                "启用自动化功能（运行前仍会要求安全协议已勾选）");
         }
     }
 
@@ -931,12 +1100,12 @@ public partial class SettingsWindow : Window
             string content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
             if (doc.RootElement.TryGetProperty("automation", out JsonElement el))
                 ApplyAutomation(el);
-            SaveHintText.Text = content.Length > 0 ? content : "已保存";
+            SaveHintText.Text = content.Length > 0 ? content : Loc.T("settings.automation.saved", "已保存");
             AppendLog(SaveHintText.Text);
         }
         catch (Exception ex)
         {
-            SaveHintText.Text = $"❌ 保存失败：{ex.Message}";
+            SaveHintText.Text = Loc.T("settings.automation.saveFailed", "❌ 保存失败：{0}", ex.Message);
         }
     }
 
@@ -953,14 +1122,15 @@ public partial class SettingsWindow : Window
         string location = ResultsLocationBox?.Text.Trim() ?? "";
         string rootName = ResultsRootNameBox?.Text.Trim() ?? "";
         if (rootName.Length == 0)
-            rootName = "批量处理结果";
+            rootName = Loc.T("settings.automation.defaultResultsRoot", "批量处理结果");
         string task = TaskNameBox?.Text.Trim() ?? "";
         if (task.Length == 0)
-            task = "自动化任务";
-        string baseDir = location.Length == 0 ? "程序根目录" : location;
-        ResultsPreviewText.Text =
-            $"目录结构：{baseDir}\\{rootName}\\{DateTime.Now:yyyy-MM-dd}\\{task}\\" +
-            "（同名任务自动加 -1、-2；内含「结果.txt」与下载的原始文件）";
+            task = Loc.T("settings.automation.defaultTaskName", "自动化任务");
+        string baseDir = location.Length == 0
+            ? Loc.T("settings.automation.programRoot", "程序根目录") : location;
+        ResultsPreviewText.Text = Loc.T("settings.automation.resultsPreview",
+            "目录结构：{0}\\{1}\\{2}\\{3}\\（同名任务自动加 -1、-2；内含「结果.txt」与下载的原始文件）",
+            baseDir, rootName, $"{DateTime.Now:yyyy-MM-dd}", task);
     }
 
     private void ResultsOption_TextChanged(object sender, TextChangedEventArgs e) => UpdateResultsPreview();
@@ -978,16 +1148,18 @@ public partial class SettingsWindow : Window
                 : "";
             if (root.Length == 0)
             {
-                SaveHintText.Text = "⚠️ 未取到结果目录，请先保存设置";
+                SaveHintText.Text = Loc.T("settings.automation.resultsDirMissing",
+                    "⚠️ 未取到结果目录，请先保存设置");
                 return;
             }
             Directory.CreateDirectory(root);
             Process.Start(new ProcessStartInfo { FileName = root, UseShellExecute = true });
-            SaveHintText.Text = $"已打开：{root}";
+            SaveHintText.Text = Loc.T("settings.automation.opened", "已打开：{0}", root);
         }
         catch (Exception ex)
         {
-            SaveHintText.Text = $"❌ 打开结果目录失败：{ex.Message}";
+            SaveHintText.Text = Loc.T("settings.automation.resultsDirOpenFailed",
+                "❌ 打开结果目录失败：{0}", ex.Message);
         }
     }
 
@@ -995,7 +1167,7 @@ public partial class SettingsWindow : Window
     {
         var dialog = new Microsoft.Win32.OpenFolderDialog
         {
-            Title = "选择批量处理结果的保存位置",
+            Title = Loc.T("settings.automation.resultsLocationPrompt", "选择批量处理结果的保存位置"),
         };
         if (dialog.ShowDialog(this) == true)
         {
@@ -1012,12 +1184,13 @@ public partial class SettingsWindow : Window
         string selector = TaskSelectorBox.Text.Trim();
         if (url.Length == 0 || selector.Length == 0)
         {
-            AppendLog("❌ 请先填写任务列表网址与元素位置");
+            AppendLog(Loc.T("settings.automation.needUrlAndSelector", "❌ 请先填写任务列表网址与元素位置"));
             return;
         }
         TestSelectorButton.IsEnabled = false;
-        AppendLog($"🔍 正在测试选择器：{selector}");
-        AutomationStatusText.Text = "状态：测试选择器中（浏览器已打开）";
+        AppendLog(Loc.T("settings.automation.testingSelector", "🔍 正在测试选择器：{0}", selector));
+        AutomationStatusText.Text = Loc.T("settings.automation.stateTesting",
+            "状态：测试选择器中（浏览器已打开）");
         try
         {
             string json = await _backend.SendRequestAsync(new { action = "automation_test", url, selector });
@@ -1027,12 +1200,12 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            AppendLog($"❌ 测试失败：{ex.Message}");
+            AppendLog(Loc.T("settings.automation.testFailed", "❌ 测试失败：{0}", ex.Message));
         }
         finally
         {
             TestSelectorButton.IsEnabled = true;
-            AutomationStatusText.Text = "状态：空闲";
+            AutomationStatusText.Text = Loc.T("settings.automation.stateIdle", "状态：空闲");
         }
     }
 
@@ -1044,7 +1217,9 @@ public partial class SettingsWindow : Window
             return;
         if (SafetyCheck.IsChecked != true)
         {
-            MessageBox.Show(this, "请先阅读并勾选安全协议，再运行自动化。", "需要同意安全协议",
+            MessageBox.Show(this,
+                Loc.T("settings.automation.safetyRequiredText", "请先阅读并勾选安全协议，再运行自动化。"),
+                Loc.T("settings.automation.safetyRequiredTitle", "需要同意安全协议"),
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -1052,20 +1227,20 @@ public partial class SettingsWindow : Window
         _automationRunning = true;
         RunOnceButton.IsEnabled = false;
         StopAutomationButton.IsEnabled = true;
-        AutomationStatusText.Text = "状态：运行中（浏览器已打开）";
-        AppendLog($"▶ 开始运行自动化 — {DateTime.Now:HH:mm:ss}");
+        AutomationStatusText.Text = Loc.T("settings.automation.stateRunning", "状态：运行中（浏览器已打开）");
+        AppendLog(Loc.T("settings.automation.runStarted", "▶ 开始运行自动化 — {0}", $"{DateTime.Now:HH:mm:ss}"));
         try
         {
             string final = await _backend.SendStreamRequestAsync(
                 new { action = "automation_run" },
                 delta => AppendLog(delta));
             AppendLog($"✅ {final}");
-            AutomationStatusText.Text = "状态：已完成";
+            AutomationStatusText.Text = Loc.T("settings.automation.stateDone", "状态：已完成");
         }
         catch (Exception ex)
         {
-            AppendLog($"❌ 自动化失败：{ex.Message}");
-            AutomationStatusText.Text = "状态：失败";
+            AppendLog(Loc.T("settings.automation.runFailed", "❌ 自动化失败：{0}", ex.Message));
+            AutomationStatusText.Text = Loc.T("settings.automation.stateFailed", "状态：失败");
         }
         finally
         {
@@ -1078,14 +1253,14 @@ public partial class SettingsWindow : Window
     private async void StopAutomationButton_Click(object sender, RoutedEventArgs e)
     {
         StopAutomationButton.IsEnabled = false;
-        AppendLog("⏹ 已请求停止自动化，等待当前步骤收尾…");
+        AppendLog(Loc.T("settings.automation.stopRequested", "⏹ 已请求停止自动化，等待当前步骤收尾…"));
         try
         {
             await _backend.SendFireAndForgetAsync(new { action = "stop" });
         }
         catch (Exception ex)
         {
-            AppendLog($"❌ 停止请求失败：{ex.Message}");
+            AppendLog(Loc.T("settings.automation.stopFailed", "❌ 停止请求失败：{0}", ex.Message));
         }
     }
 
@@ -1135,7 +1310,9 @@ public partial class SettingsWindow : Window
     {
         string keyword = MarketSearchBox.Text.Trim();
         string sort = (MarketSortCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "best";
-        MarketStatusText.Text = keyword.Length == 0 ? "正在获取技能列表…" : $"正在搜索「{keyword}」…";
+        MarketStatusText.Text = keyword.Length == 0
+            ? Loc.T("settings.market.loadingList", "正在获取技能列表…")
+            : Loc.T("settings.market.searching", "正在搜索「{0}」…", keyword);
         MarketRefreshButton.IsEnabled = false;
         try
         {
@@ -1149,14 +1326,15 @@ public partial class SettingsWindow : Window
             using JsonDocument doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("market", out JsonElement market))
             {
-                MarketStatusText.Text = "⚠️ 技能市场不可用（后端未返回数据）";
+                MarketStatusText.Text = Loc.T("settings.market.unavailable",
+                    "⚠️ 技能市场不可用（后端未返回数据）");
                 return;
             }
             RenderMarket(market);
         }
         catch (Exception ex)
         {
-            MarketStatusText.Text = $"❌ 技能市场请求失败：{ex.Message}";
+            MarketStatusText.Text = Loc.T("settings.market.requestFailed", "❌ 技能市场请求失败：{0}", ex.Message);
         }
         finally
         {
@@ -1185,12 +1363,14 @@ public partial class SettingsWindow : Window
                     FullName = item.TryGetProperty("full_name", out JsonElement fn) ? fn.GetString() ?? "" : "",
                     Name = item.TryGetProperty("name", out JsonElement n) ? n.GetString() ?? "" : "",
                     Description = Shorten(item.TryGetProperty("description", out JsonElement d) ? d.GetString() ?? "" : "", 200),
-                    Badge = installed ? "● 已安装" : (verified ? "✔ 已验证" : "⚠ 未验证"),
+                    Badge = installed ? Loc.T("settings.market.badgeInstalled", "● 已安装")
+                                      : (verified ? Loc.T("settings.market.badgeVerified", "✔ 已验证")
+                                                  : Loc.T("settings.market.badgeUnverified", "⚠ 未验证")),
                     Stars = $"⭐ {stars}",
                     Meta = string.Join(" · ", new[]
                     {
                         version.Length > 0 ? $"v{version}" : "",
-                        pushed.Length > 0 ? $"更新于 {pushed}" : "",
+                        pushed.Length > 0 ? Loc.T("settings.market.updatedAt", "更新于 {0}", pushed) : "",
                         license,
                     }.Where(x => x.Length > 0)),
                     Version = version,
@@ -1207,11 +1387,13 @@ public partial class SettingsWindow : Window
         int total = market.TryGetProperty("total_count", out JsonElement tc) && tc.ValueKind == JsonValueKind.Number ? tc.GetInt32() : _marketItems.Count;
         MarketEmptyText.Visibility = _marketItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         MarketEmptyText.Text = _marketItems.Count == 0
-            ? "没有匹配的技能。\n可换关键词（技能仓库需带 GitHub topic「echodesk-plugin」）。"
+            ? Loc.T("settings.market.emptyResult",
+                "没有匹配的技能。\n可换关键词（技能仓库需带 GitHub topic「echodesk-plugin」）。")
             : "";
         MarketStatusText.Text = _marketItems.Count == 0
-            ? "结果为空。"
-            : $"共 {total} 个结果，本页 {_marketItems.Count} 个" + (offline ? "（离线：展示本地缓存快照）" : "");
+            ? Loc.T("settings.market.emptyStatus", "结果为空。")
+            : Loc.T("settings.market.resultCount", "共 {0} 个结果，本页 {1} 个", total, _marketItems.Count)
+              + (offline ? Loc.T("settings.market.offlineNote", "（离线：展示本地缓存快照）") : "");
     }
 
     private static string Shorten(string text, int max) =>
@@ -1225,7 +1407,7 @@ public partial class SettingsWindow : Window
             using JsonDocument doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("installed", out JsonElement list) || list.ValueKind != JsonValueKind.Array)
             {
-                MarketStatusText.Text = "⚠️ 无法读取已安装技能列表";
+                MarketStatusText.Text = Loc.T("settings.market.installedListFailed", "⚠️ 无法读取已安装技能列表");
                 return;
             }
             var sb = new StringBuilder();
@@ -1237,11 +1419,14 @@ public partial class SettingsWindow : Window
                 sb.AppendLine($"• {id}{(version.Length > 0 ? $" v{version}" : "")}");
                 count++;
             }
-            MarketStatusText.Text = count == 0 ? "本机尚未安装任何技能。" : $"已安装 {count} 个技能：\n{sb}";
+            MarketStatusText.Text = count == 0
+                ? Loc.T("settings.market.noInstalled", "本机尚未安装任何技能。")
+                : Loc.T("settings.market.installedCount", "已安装 {0} 个技能：\n{1}", count, sb);
         }
         catch (Exception ex)
         {
-            MarketStatusText.Text = $"❌ 读取已安装列表失败：{ex.Message}";
+            MarketStatusText.Text = Loc.T("settings.market.installedListLoadFailed",
+                "❌ 读取已安装列表失败：{0}", ex.Message);
         }
     }
 
@@ -1260,31 +1445,33 @@ public partial class SettingsWindow : Window
             using JsonDocument doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("detail", out JsonElement detail))
             {
-                MarketStatusText.Text = "⚠️ 无法获取技能详情";
+                MarketStatusText.Text = Loc.T("settings.market.detailUnavailable", "⚠️ 无法获取技能详情");
                 return;
             }
             var sb = new StringBuilder();
-            sb.AppendLine($"技能：{item.FullName}");
-            AppendDetail(sb, "版本", detail, "version");
-            AppendDetail(sb, "来源", detail, "html_url");
-            AppendDetail(sb, "入口文件", detail, "entry");
-            AppendDetail(sb, "包含 prepare 脚本", detail, "has_prepare");
+            sb.AppendLine(Loc.T("settings.market.detailSkill", "技能：{0}", item.FullName));
+            AppendDetail(sb, Loc.T("settings.market.detailVersion", "版本"), detail, "version");
+            AppendDetail(sb, Loc.T("settings.market.detailSource", "来源"), detail, "html_url");
+            AppendDetail(sb, Loc.T("settings.market.detailEntry", "入口文件"), detail, "entry");
+            AppendDetail(sb, Loc.T("settings.market.detailHasPrepare", "包含 prepare 脚本"), detail, "has_prepare");
             if (detail.TryGetProperty("dependencies", out JsonElement deps) && deps.ValueKind == JsonValueKind.Array)
             {
                 var list = deps.EnumerateArray().Select(x => x.ToString()).ToList();
-                sb.AppendLine($"依赖：{(list.Count == 0 ? "无" : string.Join(", ", list))}");
+                sb.AppendLine(Loc.T("settings.market.detailDependencies", "依赖：{0}",
+                    list.Count == 0 ? Loc.T("settings.market.detailNone", "无") : string.Join(", ", list)));
             }
             if (detail.TryGetProperty("readme_excerpt", out JsonElement readme))
             {
                 sb.AppendLine();
-                sb.AppendLine("README 摘要：");
+                sb.AppendLine(Loc.T("settings.market.detailReadme", "README 摘要："));
                 sb.AppendLine(Shorten(readme.GetString() ?? "", 800));
             }
-            MessageBox.Show(this, sb.ToString(), "技能详情", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, sb.ToString(), Loc.T("settings.market.detailDialogTitle", "技能详情"),
+                MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            MarketStatusText.Text = $"❌ 获取详情失败：{ex.Message}";
+            MarketStatusText.Text = Loc.T("settings.market.detailFailed", "❌ 获取详情失败：{0}", ex.Message);
         }
     }
 
@@ -1295,12 +1482,12 @@ public partial class SettingsWindow : Window
         string value = el.ValueKind switch
         {
             JsonValueKind.String => el.GetString() ?? "",
-            JsonValueKind.True => "是",
-            JsonValueKind.False => "否",
+            JsonValueKind.True => Loc.T("main.dialog.yes", "是"),
+            JsonValueKind.False => Loc.T("main.dialog.no", "否"),
             _ => el.ToString(),
         };
         if (value.Length > 0)
-            sb.AppendLine($"{label}：{value}");
+            sb.AppendLine(Loc.T("settings.market.detailLine", "{0}：{1}", label, value));
     }
 
     private void MarketInstall_Click(object sender, RoutedEventArgs e)
@@ -1315,41 +1502,48 @@ public partial class SettingsWindow : Window
         if (item.Installed)
         {
             var confirm = MessageBox.Show(this,
-                $"确定卸载技能「{item.Name}」吗？\n（将删除其安装目录并从技能清单移除）",
-                "卸载技能", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                Loc.T("settings.market.uninstallConfirm",
+                    "确定卸载技能「{0}」吗？\n（将删除其安装目录并从技能清单移除）", item.Name),
+                Loc.T("settings.market.uninstallTitle", "卸载技能"),
+                MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (confirm != MessageBoxResult.Yes)
                 return;
-            await CallMarketAsync(new { action = "market_uninstall", repo = item.FullName }, "卸载");
+            await CallMarketAsync(new { action = "market_uninstall", repo = item.FullName },
+                Loc.T("settings.button.uninstall", "卸载"));
             return;
         }
 
         var first = MessageBox.Show(this,
-            $"即将从 GitHub 安装第三方技能：\n\n" +
-            $"技能：{item.Name}\n仓库：{item.FullName}\n版本：{(item.Version.Length > 0 ? item.Version : "未知")}\n" +
-            $"来源：{item.HtmlUrl}\n\n" +
-            "⚠️ 安全提示：第三方技能以你的本地账户权限运行，EchoDesk 不对其安全性负责。\n" +
-            "安装前会读取并展示其 skill.json 以了解权限与依赖。是否继续？",
-            "安装第三方技能", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            Loc.T("settings.market.installConfirmText",
+                "即将从 GitHub 安装第三方技能：\n\n技能：{0}\n仓库：{1}\n版本：{2}\n来源：{3}\n\n⚠️ 安全提示：第三方技能以你的本地账户权限运行，EchoDesk 不对其安全性负责。\n安装前会读取并展示其 skill.json 以了解权限与依赖。是否继续？",
+                item.Name, item.FullName,
+                item.Version.Length > 0 ? item.Version : Loc.T("settings.market.state.unknown", "未知"),
+                item.HtmlUrl),
+            Loc.T("settings.market.installConfirmTitle", "安装第三方技能"),
+            MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (first != MessageBoxResult.Yes)
             return;
 
-        await CallMarketAsync(new { action = "market_install", repo = item.FullName }, "安装");
+        await CallMarketAsync(new { action = "market_install", repo = item.FullName },
+            Loc.T("settings.button.install", "安装"));
     }
 
     private async Task CallMarketAsync(object request, string verb)
     {
-        MarketStatusText.Text = $"正在{verb}…（下载源码并校验 skill.json）";
+        MarketStatusText.Text = Loc.T("settings.market.callRunning",
+            "正在{0}…（下载源码并校验 skill.json）", verb);
         try
         {
             string json = await _backend.SendRequestAsync(request);
             using JsonDocument doc = JsonDocument.Parse(json);
             string content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
-            MarketStatusText.Text = content.Length > 0 ? content : $"{verb}完成";
+            MarketStatusText.Text = content.Length > 0 ? content
+                : Loc.T("settings.market.callDone", "{0}完成", verb);
             await SearchMarketAsync();  // 刷新「已安装」徽标
         }
         catch (Exception ex)
         {
-            MarketStatusText.Text = $"❌ {verb}失败：{ex.Message}";
+            MarketStatusText.Text = Loc.T("settings.market.callFailed", "❌ {0}失败：{1}", verb, ex.Message);
         }
     }
 

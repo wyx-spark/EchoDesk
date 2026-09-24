@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using EchoDesk.Services;
 
 namespace EchoDesk.Utilities;
 
@@ -8,6 +9,10 @@ namespace EchoDesk.Utilities;
 ///
 /// 只用于「给模板起个名字」这类一次性输入，因此刻意做成代码构建的窗口，
 /// 不引入任何第三方控件库（任务书全局要求：不为一个小功能增加打包体积）。
+///
+/// 多语言：按钮文案走 `main.dialog.ok` / `main.dialog.cancel`；
+/// 窗口标题与提示语由调用方传入（调用方负责用 Loc.T 取好），
+/// 因为这里只是一个通用容器，不该替调用方决定文案归属。
 /// </summary>
 public static class InputDialog
 {
@@ -23,6 +28,11 @@ public static class InputDialog
             ResizeMode = ResizeMode.NoResize,
             ShowInTaskbar = false,
         };
+        // 主题与字体：代码构建的窗口不会自动继承 Window 的隐式样式，
+        // 必须显式绑定，否则深色主题下这里会是一块白底（修复二）。
+        window.SetResourceReference(Window.BackgroundProperty, "WindowBackground");
+        window.SetResourceReference(Window.ForegroundProperty, "TextForeground");
+        window.SetResourceReference(Window.FontFamilyProperty, "UiFontFamily");
         if (owner is not null)
             window.Owner = owner;
 
@@ -43,7 +53,12 @@ public static class InputDialog
             Margin = new Thickness(0, 14, 0, 0),
         };
         string? result = null;
-        var ok = new Button { Content = "确定", Padding = new Thickness(16, 5, 16, 5), IsDefault = true };
+        var ok = new Button
+        {
+            Content = Loc.T("main.dialog.ok", "确定"),
+            Padding = new Thickness(16, 5, 16, 5),
+            IsDefault = true,
+        };
         ok.Click += (_, _) =>
         {
             result = box.Text;
@@ -51,7 +66,7 @@ public static class InputDialog
         };
         var cancel = new Button
         {
-            Content = "取消",
+            Content = Loc.T("main.dialog.cancel", "取消"),
             Padding = new Thickness(16, 5, 16, 5),
             Margin = new Thickness(8, 0, 0, 0),
             IsCancel = true,

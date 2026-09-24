@@ -135,20 +135,41 @@ def placeholders(text):
     return sorted(set(_PLACEHOLDER.findall(text)))
 
 
-def scaffold(locale, packs):
-    """为新语言生成模板：结构照抄源语言，值留空并带上源文本作为参考。"""
-    source = packs.get(SOURCE_LOCALE, {})
-    if not source:
-        print(f"✗ 找不到源语言 {SOURCE_LOCALE} 的语言包，无法生成模板")
-        return 1
+BACKEND_SCAFFOLD_MODULES = (
+    # 后端语言包的顶层分组（键的第一个点分段）。新增分组时必须同步加进来，
+    # 否则 --scaffold 生成的模板会**静默漏掉**这一组，翻译者根本看不到它们。
+    # 例：修复四新增了 capability.*（模型能力提示与推荐理由）、task.*（任务模板）、
+    # mode.* / export.*（对话模式说明与导出文档标题），漏了就会少 50 条。
+    "app", "cmd", "sys", "file", "err", "market", "hub",
+    "automation", "update", "skill",
+    "capability", "task", "mode", "export",
+)
+
+
+def scaffold(locale, sources):
+    """为新语言生成模板：结构照抄源语言，值留空并带上源文本作为参考。
+
+    ``sources`` 必须是 **按目录分开的源语言包** ``{目录: {键: 文案}}``，
+    不能是一份合并过的包 —— 后端与前端语言包的 locale 名字相同（都是 `zh-Hans`），
+    合并时后加载的会覆盖先加载的，于是后端模板会从**前端**的键里筛，
+    结果只剩 6 条（几乎为空）。这个坑在修复轮次里实测到过：
+    `--scaffold ja` 生成的后端模板只有 6 条待翻译，等于社区拿不到可用的后端模板。
+
+    前端语言包整份照搬（没有分组过滤）；后端按 :data:`BACKEND_SCAFFOLD_MODULES`
+    筛选——因为后端源语言包里混了一些"翻译者不该碰"的键（见 check 的说明）。
+    """
     for directory in (BACKEND_LANG, FRONTEND_LANG):
         if not os.path.isdir(directory):
             continue
+        source = sources.get(directory, {})
+        if not source:
+            print(f"  ✗ 找不到 {directory} 的源语言 {SOURCE_LOCALE} 语言包，跳过")
+            continue
         out = {}
         for key, text in source.items():
-            if directory == BACKEND_LANG and not key.split(".")[0] in (
-                    "app", "cmd", "sys", "file", "err", "market", "hub",
-                    "automation", "update", "skill"):
+            if key.startswith("_"):
+                continue          # _meta 之类的元信息键不需要翻译
+            if directory == BACKEND_LANG and key.split(".")[0] not in BACKEND_SCAFFOLD_MODULES:
                 continue
             out[key] = {
                 "text": "",
@@ -237,6 +258,45 @@ def check(locales, quiet):
         print(f"\n提示：源语言包里有 {len(unused)} 条未被代码直接引用的键")
         print("（动态拼接的键、技能示例里的键或保留键都可能出现在这里，仅供参考）")
 
+    # 本地化文档同步（任务书修复三：docs/<locale>/ 下至少 README、用户手册、FAQ、
+    # 自动化指南四份）。语言包完整但文档缺一份，英文用户仍然看不懂怎么用。
+    print("\n-- 本地化文档（docs/<locale>/）")
+    docs_root = os.path.join(ROOT, "docs")
+    if not os.path.isdir(docs_root):
+        print("   docs/ 不存在，跳过")
+    else:
+        required_docs = ("README.md", "USER_GUIDE.md", "FAQ.md", "AUTOMATION_GUIDE.md")
+        locale_dirs = {}
+        for name in sorted(os.listdir(docs_root)):
+            path = os.path.join(docs_root, name)
+            if not os.path.isdir(path):
+                continue
+            files = sorted(f for f in os.listdir(path) if f.endswith(".md"))
+            if files:
+                locale_dirs[name] = files
+        if not locale_dirs:
+            print("   未找到按语言分的文档目录")
+        for locale, files in locale_dirs.items():
+            missing = [name for name in required_docs if name not in files]
+            if missing:
+                problems += len(missing)
+                print(f"   ✗ docs/{locale}/ 缺少：{', '.join(missing)}")
+            else:
+                print(f"   ✓ docs/{locale}/ 四份必需文档齐全")
+        # 各语言目录之间必须一一对应（避免"中文更新了英文没跟上"）
+        if len(locale_dirs) > 1:
+            names = list(locale_dirs)
+            baseline = set(locale_dirs[names[0]])
+            for locale in names[1:]:
+                only_first = sorted(baseline - set(locale_dirs[locale]))
+                only_this = sorted(set(locale_dirs[locale]) - baseline)
+                if only_first or only_this:
+                    problems += len(only_first) + len(only_this)
+                    print(f"   ✗ docs/{locale}/ 与 docs/{names[0]}/ 文档清单不一致："
+                          f"缺少 {only_first or '无'}，多出 {only_this or '无'}")
+                else:
+                    print(f"   ✓ docs/{locale}/ 与 docs/{names[0]}/ 一一对应（{len(baseline)} 份）")
+
     print()
     if problems:
         print(f"✗ 发现问题 {problems} 处")
@@ -257,12 +317,18 @@ def main():
     except Exception:
         pass
 
+    if args.scaffold:
+        # 模板生成必须**按目录分别取源语言包**：后端与前端语言包的 locale 名字相同
+        # （都是 zh-Hans），合并成一份会让后加载的前端包覆盖后端包，
+        # 于是后端模板从前端的键里筛，只剩 6 条 —— 实测踩到过。
+        sources = {}
+        for directory in (BACKEND_LANG, FRONTEND_LANG):
+            sources[directory] = load_dir(directory).get(SOURCE_LOCALE, {})
+        return scaffold(args.scaffold, sources)
+
     packs = {}
     for directory in (BACKEND_LANG, FRONTEND_LANG):
         packs.update(load_dir(directory))
-
-    if args.scaffold:
-        return scaffold(args.scaffold, packs)
     return check(args.locale, args.quiet)
 
 

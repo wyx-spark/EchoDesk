@@ -10,7 +10,7 @@
 #
 # 用法：powershell -File tools\ui_probe.ps1 [-KeepOpen]
 param(
-    [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.1\EchoDesk.exe",
+    [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.1\app\EchoDesk.exe",
     [int]$ReadyTimeoutSec = 180,
     [switch]$KeepOpen
 )
@@ -21,6 +21,9 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -Namespace Win32 -Name Fg -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr hWnd);
 [DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+[DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out RECT lpRect);
+[StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 '@
 
 $failures = New-Object System.Collections.ArrayList
@@ -54,11 +57,17 @@ function Get-OwnerWindow($el) {
 
 $exePath = (Resolve-Path -LiteralPath $Exe).Path
 $appDir = Split-Path -Parent $exePath
+# 修复七：程序本体在 app\ 下；崩溃日志仍写在 exe 同目录（ProgramDirectory）
 $crashLog = Join-Path $appDir 'frontend_crash.log'
 if (Test-Path $crashLog) { Remove-Item $crashLog -Force }   # 每轮从干净状态开始
+# 便携版布局下外层目录（用户数据/快捷方式所在），工作目录必须设成它，
+# 否则批量处理结果与 ui_state.json 会落到 app\ 里，与发布布局不一致。
+$userDataDir = $appDir
+if ((Split-Path -Leaf $appDir) -eq 'app') { $userDataDir = Split-Path -Parent $appDir }
 
 Write-Output "[probe] exe = $exePath"
-$proc = Start-Process -FilePath $exePath -PassThru
+Write-Output "[probe] 工作目录 = $userDataDir"
+$proc = Start-Process -FilePath $exePath -WorkingDirectory $userDataDir -PassThru
 Write-Output "[probe] pid = $($proc.Id)"
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
@@ -140,8 +149,8 @@ if ($null -ne $saveButton) {
             if ($headers -notcontains $need) { Fail "缺少 Tab：$need" }
         }
         $perTab = @{
-            '常规'     = @('DarkModeCheck', 'FontSizeSlider', 'DefaultModeCombo', 'ConfirmDestructiveCheck',
-                          'LanguageCombo', 'LangPackText')
+            '常规'     = @('ThemeCombo', 'FontSizeSlider', 'DefaultModeCombo', 'ConfirmDestructiveCheck',
+                          'LanguageCombo', 'LangPackText', 'EmojiCombo', 'ThemeStatusText', 'EmojiStatusText')
             '模型'     = @('HubSourceCombo', 'HubSearchBox', 'HubSortCombo', 'HubQuantCombo', 'HubResultList',
                           'HubRegistryList', 'HubStatusText')
             # v0.2.1（任务四）：模板库 + 字段级帮助 + 可视化选取 + 测试向导 + 导入导出
@@ -157,7 +166,8 @@ if ($null -ne $saveButton) {
                           'SkillsInstallFolderButton', 'SkillsScaffoldButton', 'SkillStatusText')
             '技能市场' = @('MarketSearchBox', 'MarketSortCombo', 'MarketList')
             # v0.2.1（任务 2B.10）：开发者模式 / 目录 / 日志 / 清单 / 钩子 / 面板
-            '开发者'   = @('DevModeCheck', 'DevDirsText', 'DevApiText', 'DevReloadButton', 'DevLogBox',
+            '开发者'   = @('DevModeCheck', 'DevModeStatusText', 'DevPluginListText', 'DevDirsText',
+                          'DevApiText', 'DevReloadButton', 'DevLogBox',
                           'LogLinesCombo', 'ScaffoldIdBox', 'ScaffoldCreateButton', 'ManifestList',
                           'ManifestAddRow', 'HooksText', 'PanelList')
         }
@@ -166,6 +176,39 @@ if ($null -ne $saveButton) {
             foreach ($id in $perTab[$tabName]) {
                 if ($null -eq (Find-AnyById $proc.Id $id)) { Fail "设置窗口「$tabName」缺少控件 $id" }
             }
+        }
+
+        # ---------- 2z. 修复二 / 修复四：主题选择与能力信息（新增验收）----------
+        # 修复二的静态色板由 tools\check_theme.py 校验、真实渲染由 tools\check_ui_pixels.ps1
+        # 校验，这里只验证"界面上真的能选主题"（三态：跟随系统/浅色/深色）。
+        if (Select-Tab $win2 '常规') {
+            $themeCombo = Find-AnyById $proc.Id 'ThemeCombo'
+            if ($null -eq $themeCombo) {
+                Fail '缺少主题下拉框 ThemeCombo'
+            } else {
+                $itemCond = New-Object System.Windows.Automation.PropertyCondition(
+                    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                    [System.Windows.Automation.ControlType]::ListItem)
+                $expand = $themeCombo.GetCurrentPattern(
+                    [System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+                $expand.Expand()
+                Start-Sleep -Milliseconds 400
+                # WPF ComboBox 的列表项在展开前不在自动化树里，必须先 Expand 再取
+                $items = $themeCombo.FindAll([System.Windows.Automation.TreeScope]::Descendants, $itemCond)
+                $names = @(); foreach ($it in $items) { $names += $it.Current.Name }
+                $expand.Collapse()
+                if ($names.Count -ge 3) {
+                    Ok "主题三态可选：$($names -join ' / ')"
+                } else {
+                    Fail "主题下拉框项不足（应为 跟随系统/浅色/深色）：$($names -join ' / ')"
+                }
+            }
+        }
+        if (Select-Tab $win2 '模型') {
+            # 能力信息由后端 ready/capability 接口提供，界面只负责展示；
+            # 后端未就绪时允许为空，因此这里只做"控件存在性"检查（已在上面的 perTab 里做过）。
+            $cap = Find-AnyById $proc.Id 'HubStatusText'
+            if ($null -ne $cap) { Ok '模型页能力信息控件就位' }
         }
 
         # ---------- 2a. 字段级帮助（任务书 4.3 验收项）----------
@@ -331,11 +374,14 @@ foreach ($id in @('StatusText', 'ModelText', 'ModeText', 'ModelChip', 'ModeChip'
 }
 # 顶部只保留关键信息：搜索/自动化/市场必须移出顶部
 foreach ($id in @('StripSearchButton', 'StripAutomationButton', 'StripMarketButton',
-                  'StripContextButton', 'StripKvButton', 'StripToggleButton')) {
+                  'StripContextButton', 'StripKvButton', 'StripToggleButton',
+                  # 修复四：能力信息与"手动压缩上下文"入口也在轻量状态区
+                  'StripCapabilityButton', 'StripCompactButton')) {
     if ($null -eq (Find-AnyById $proc.Id $id)) { Fail "轻量状态区缺少 $id" }
 }
 $txt = @{}
-foreach ($id in @('SearchText', 'AutoText', 'MarketText', 'StripContextText', 'StripKvText')) {
+foreach ($id in @('SearchText', 'AutoText', 'MarketText', 'StripContextText', 'StripKvText',
+                  'StripCapabilityText', 'StripCompactText')) {
     $el = Find-AnyById $proc.Id $id
     $txt[$id] = if ($null -ne $el) { $el.Current.Name } else { "" }
 }
@@ -345,6 +391,11 @@ if ($txt['AutoText'] -notlike '*自动化*') { Fail "状态区自动化项文本
 if ($txt['MarketText'] -notlike '*市场*') { Fail "状态区市场项文本异常：$($txt['MarketText'])" }
 if ($txt['StripContextText'] -notlike '*上下文*%*') { Fail "状态区上下文项应显示百分比：$($txt['StripContextText'])" }
 if ($txt['StripKvText'] -notlike '💾*') { Fail "状态区 KV Cache 项文本异常：$($txt['StripKvText'])" }
+# 修复四：能力项要显示出"参数量/量化/窗口/速度"里的至少一项（后端就绪后必然有）
+if ($txt['StripCapabilityText'] -like '*---*' -or [string]::IsNullOrWhiteSpace($txt['StripCapabilityText'])) {
+    Fail "状态区能力项未填充（应显示参数量/量化/窗口/速度）：$($txt['StripCapabilityText'])"
+}
+if ($txt['StripCompactText'] -notlike '*压缩*') { Fail "状态区压缩上下文按钮文本异常：$($txt['StripCompactText'])" }
 if ($txt['SearchText'] -notlike '🔍*' -or $txt['AutoText'] -notlike '⚙️*' -or $txt['MarketText'] -notlike '🌐*') {
     Fail "状态区应使用图标 + 简短短语"
 } else { Ok "轻量状态区为图标+简短短语，且含上下文百分比" }
@@ -359,6 +410,62 @@ if ($null -ne $toggle) {
     Start-Sleep -Milliseconds 600
     $shown = $null -ne (Find-AnyById $proc.Id 'StripSearchButton')
     if ($hidden -and $shown) { Ok "轻量状态区可折叠且可恢复" } else { Fail "折叠/展开行为异常（hidden=$hidden shown=$shown）" }
+}
+
+# ---------- 3c. 状态区在窄窗口下不被裁切（实测缺陷：右边看不到）----------
+# 现象：状态项加多后（修复四的模型能力/压缩上下文/能力提示），单行横排会在可用宽度
+# 不足时把右侧项目裁掉，而且折叠按钮在右列，被裁的项还会被它压住 —— 既看不到也点不到。
+# 修复是把状态项容器从 StackPanel 换成 WrapPanel（换行而不是裁切）。
+# 这里把主窗口缩到 700px 复现该场景并断言：所有可见状态项都必须落在窗口内、且不与折叠按钮重叠。
+function Get-Win32Rect($el) {
+    $hwnd = [System.IntPtr](Get-OwnerWindow $el).Current.NativeWindowHandle
+    $r = New-Object Win32.Fg+RECT
+    [void][Win32.Fg]::GetWindowRect($hwnd, [ref]$r)
+    return @{ Handle = $hwnd; Rect = $r }
+}
+$stripIds = @('StripSearchButton', 'StripAutomationButton', 'StripMarketButton',
+              'StripContextButton', 'StripKvButton', 'StripCapabilityButton',
+              'StripCompactButton', 'StripToggleButton')
+$before = Get-Win32Rect $main
+$w0 = $before.Rect.Right - $before.Rect.Left
+$h0 = $before.Rect.Bottom - $before.Rect.Top
+try {
+    [void][Win32.Fg]::MoveWindow($before.Handle, $before.Rect.Left, $before.Rect.Top, 700, ($h0), $true)
+    Start-Sleep -Milliseconds 1200
+
+    $win = $before.Rect
+    [void][Win32.Fg]::GetWindowRect($before.Handle, [ref]$win)
+    $winRect = $win
+    $toggleEl = Find-AnyById $proc.Id 'StripToggleButton'
+    $toggleRect = if ($null -ne $toggleEl) { $toggleEl.Current.BoundingRectangle } else { $null }
+
+    $clippedNow = @()
+    $texts = @()
+    foreach ($id in $stripIds) {
+        $el = Find-AnyById $proc.Id $id
+        if ($null -eq $el) { continue }
+        $r = $el.Current.BoundingRectangle
+        if ($r.Width -le 0) { continue }
+        if ($el.Current.IsOffscreen) { $clippedNow += "$id(off-screen)"; continue }
+        if ($r.Right -gt ($winRect.Right - 2)) {
+            $clippedNow += ("{0}(超出 {1:N0}px)" -f $id, ($r.Right - $winRect.Right))
+            continue
+        }
+        if ($null -ne $toggleRect -and $id -ne 'StripToggleButton') {
+            $overlapX = [math]::Min($r.Right, $toggleRect.Right) - [math]::Max($r.Left, $toggleRect.Left)
+            $overlapY = [math]::Min($r.Bottom, $toggleRect.Bottom) - [math]::Max($r.Top, $toggleRect.Top)
+            if ($overlapX -gt 2 -and $overlapY -gt 2) { $clippedNow += "$id(与折叠按钮重叠)" }
+        }
+    }
+    if ($clippedNow.Count -gt 0) {
+        Fail "窄窗口(700px)下状态项被裁切/遮挡：$($clippedNow -join '、')"
+    } else {
+        Ok "窄窗口(700px)下所有状态项都在窗口内且不与折叠按钮重叠"
+    }
+} finally {
+    # 恢复原尺寸，避免影响后续检查
+    [void][Win32.Fg]::MoveWindow($before.Handle, $before.Rect.Left, $before.Rect.Top, $w0, $h0, $true)
+    Start-Sleep -Milliseconds 800
 }
 
 # 点击「自动化」项应打开设置并切到自动化 Tab

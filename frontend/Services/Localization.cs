@@ -167,6 +167,8 @@ public sealed class Loc
         var seen = new List<string>();
         foreach (string dir in new[]
                  {
+                     // 修复七：用户数据目录（便携版外层）优先，用户往这里丢语言包即可生效
+                     Path.Combine(ShortcutService.UserDataDirectory, "lang", "ui"),
                      // 界面语言包放在 lang\ui\：后端语言包在 lang\，文件名同为 <locale>.json，
                      // 放同一目录会互相覆盖（v0.2.1 开发中实际踩到过这个坑）。
                      Path.Combine(ShortcutService.ProgramDirectory, "lang", "ui"),
@@ -288,6 +290,12 @@ public sealed class Loc
     /// <summary>重新读取语言包（翻译者改完文件不必重启）。</summary>
     public static string Reload() => SetLocale(Requested, persist: false);
 
+    /// <summary>
+    /// 不改语言、只重跑一遍文本回填。
+    /// 用于"文本内容本身没变，但渲染策略变了"的场景 —— 目前是 emoji 降级开关（修复六）。
+    /// </summary>
+    public static void Reapply() => LanguageChanged?.Invoke(null, EventArgs.Empty);
+
     // ---------------------------------------------------------------
     // 取文案
     // ---------------------------------------------------------------
@@ -300,7 +308,7 @@ public sealed class Loc
         foreach (string locale in new[] { Locale }.Concat(FallbackChain.Where(x => x != Locale)))
         {
             if (LoadPack(locale).TryGetValue(key, out string? value) && !string.IsNullOrEmpty(value))
-                return value;
+                return Emoji.Prefer(value);   // 修复六：不支持 emoji 的环境降级为 ASCII 标记
         }
         return key;
     }

@@ -77,11 +77,11 @@ When a CAPTCHA or two-factor verification appears, the run **pauses and waits fo
 | Save result files `save_results` | Optional | Clear it to do a dry run only — no result file is written | `true` |
 | Result folder name `task_name` | Optional | The name of the third-level result folder, i.e. what this batch is called | `自动化任务` ("automation task") |
 | Result root folder name `results_root_name` | Optional | The first-level folder inside the results root | `批量处理结果` ("batch results") |
-| Where to save results `results_location` | Optional | Put results on another drive or a shared folder; empty = the program folder | empty (= program folder) |
+| Where to save results `results_location` | Optional | Put results on another drive or a shared folder; empty = the user data folder (the portable **outer** folder `EchoDesk-v0.2.1\`, not `app\`; set the `ECHODESK_DATA` environment variable to move it) | empty (= the user data folder) |
 | Run on a schedule `schedule_enabled` | Optional | Runs a batch automatically at fixed times every day | `false` |
 | Scheduled times `schedule_times` | Optional | The times of day, separated by commas | `09:00` |
 
-### 2.3 Advanced fields (only editable in `backend\config.json`)
+### 2.3 Advanced fields (only editable in `app\backend\config.json`)
 
 These fields have no input box in the Settings window yet. **Close EchoDesk before editing**, then save and
 restart for the change to take effect (the file is UTF-8; Notepad or VS Code both work).
@@ -98,7 +98,7 @@ restart for the change to take effect (the file is UTF-8; Notepad or VS Code bot
 | `headless` | Read-only | Automation **only supports a visible browser**; writing `true` is corrected back to `false` with a warning | `false` |
 | `browser_channel` | Optional | Which browser opens the pages; the system Edge is the default | `msedge` |
 | `audit_log_file` | Optional | Audit log file: one JSON record per task | `automation_log.jsonl` |
-| `start_with_windows` | Optional | Launch EchoDesk automatically at sign-in (scheduled runs need the program running) | `false` |
+| `start_with_windows` | **Not implemented** | The program does not read this field yet, so setting it to `true` does not start EchoDesk at sign-in; to start with Windows, copy `EchoDesk-v0.2.1.lnk` into the system Startup folder (`Win+R` → `shell:startup`) | `false` |
 | `safety_version` / `safety_accepted_at` | Read-only | Safety protocol version and when you accepted it; recorded automatically for auditing | `1.0` / empty |
 
 ---
@@ -174,7 +174,7 @@ restart for the change to take effect (the file is UTF-8; Notepad or VS Code bot
 | Field | In plain words | Example |
 | --- | --- | --- |
 | Result root folder name | What the first-level folder under the results root is called | `批量处理结果` |
-| Where to save results | Fill this in to put results on another drive or a shared folder; empty means the program folder | `D:\contract-review-results` |
+| Where to save results | Fill this in to put results on another drive or a shared folder; empty means the user data folder (the portable **outer** folder, i.e. the one holding the shortcut) | `D:\contract-review-results` |
 
 The window previews the full structure live, for example:
 `Result root / YYYY-MM-DD / task name / 结果.txt + original files`.
@@ -194,7 +194,9 @@ Click "Open results folder" to open the results root in File Explorer; click "Br
 
 - **In plain words**: turn on "Run on a schedule" and fill in the times of day to run, separated by commas, for example `09:00, 18:30`.
 - **Note**: scheduled runs are driven by a background thread, so **EchoDesk must stay running**; invalid times (such as `25:00`) are dropped automatically.
-- To start EchoDesk with Windows, put the "EchoDesk 启动.lnk" shortcut into the system Startup folder (`Win+R` → `shell:startup`), or set `start_with_windows` to `true` in `backend\config.json`.
+- To start EchoDesk with Windows, put the "EchoDesk-v0.2.1.lnk" shortcut into the system Startup folder
+  (`Win+R` → `shell:startup`). The `start_with_windows` config field is **not implemented**: the program does
+  not read it, so setting it to `true` has no effect.
 
 ### 3.12 Safety protocol and the automation master switch
 
@@ -222,13 +224,13 @@ into a financial review opinion.
 | Task instruction | `Extract the contract amount, payment method and terms, penalty ratio, both parties and the signing date; flag anything out of policy` |
 | Result folder name | `Contract review` |
 | Result root folder name | `批量处理结果` |
-| Where to save results | Empty (= the program folder); use `D:\contract-review-results` to put it on drive D |
+| Where to save results | Empty (= the user data folder, i.e. the portable outer folder); use `D:\contract-review-results` to put it on drive D |
 | Maximum tasks / page timeout / retries | `20` / `30000` / `1` |
 | Skip tasks already processed, Save result files | both ticked |
 
 ### 4.2 The equivalent `config.json` fragment
 
-The real structure inside `backend\config.json` (the `automation` section; you can edit it directly, but close
+The real structure inside `app\backend\config.json` (the `automation` section; you can edit it directly, but close
 EchoDesk first):
 
 ```json
@@ -276,10 +278,11 @@ example to `batch-results` — but keep it free of characters Windows forbids in
 
 ### 4.3 What the results folder looks like afterwards
 
-With "Where to save results" left empty, the results land in the program folder:
+With "Where to save results" left empty, the results land in the **user data folder** — in a portable install
+that is the outer `EchoDesk-v0.2.1\` folder (the one holding the shortcut), **not** `app\`:
 
 ```
-<program folder>\
+<outer folder>\
 └── 批量处理结果\                        ← result root folder name (customisable)
     └── 2026-09-23\                     ← the run date (several runs on one day share this level)
         └── Contract review\            ← the result folder name (duplicates get -1, -2)
@@ -300,7 +303,7 @@ EchoDesk 批量处理结果
 开始时间：2026-09-23T09:12:03
 任务列表：https://oa.example.com/task/list
 任务指令：Extract the contract amount, payment method and terms, penalty ratio, both parties and the signing date; flag anything out of policy
-结果目录：<program folder>\批量处理结果\2026-09-23\Contract review
+结果目录：<outer folder>\批量处理结果\2026-09-23\Contract review
 
 [1/3] 年度采购合同
 --------------------------
@@ -398,9 +401,9 @@ step-by-step wizard; each step tells you plainly whether it succeeded and what t
 | The attachment downloaded but parsing returns nothing | A scanned PDF has no text layer, or the file is damaged | Scanned files need OCR (not built in); save them as a text-copyable format with WPS/Office first, or handle that task by hand |
 | Parsing `.doc` / `.ppt` fails or asks for WPS | Legacy binary formats (and encrypted documents) are read through COM, and WPS/Office is not installed | Install WPS or Microsoft Office, or save the file as `.docx` / `.pptx` first |
 | The model is too slow, or reports "the model returned an empty result" | The task instruction is too long, `llm_max_tokens` is too large, or a long attachment triggered chunked summarisation | Trim the instruction to four to six items; set `llm_max_tokens` to 384–512; switch to a smaller quantised model (such as Q4_K_M) |
-| The results folder is not created, or writing fails | "Where to save results" points at a path that does not exist or is not writable (network drive, protected system folder) | Leave "Where to save results" empty to use the program folder, or pick a writable local folder such as `D:\contract-review-results`; check free disk space |
-| The scheduled run never fired | EchoDesk was not running (the schedule is driven by a background thread), the time format was invalid and dropped, or "Run on a schedule" is off | Keep EchoDesk running; put "EchoDesk 启动.lnk" into `shell:startup` for auto-start; write times as two-digit hours such as `09:00` |
-| You want to see what a task actually did (audit trail) | You need to check afterwards who processed which files and when | Open the audit log `backend\automation_log.jsonl`: one JSON record per task (see section 9) |
+| The results folder is not created, or writing fails | "Where to save results" points at a path that does not exist or is not writable (network drive, protected system folder) | Leave "Where to save results" empty to use the user data folder (the portable outer folder), or pick a writable local folder such as `D:\contract-review-results`; check free disk space |
+| The scheduled run never fired | EchoDesk was not running (the schedule is driven by a background thread), the time format was invalid and dropped, or "Run on a schedule" is off | Keep EchoDesk running; put "EchoDesk-v0.2.1.lnk" into `shell:startup` for auto-start; write times as two-digit hours such as `09:00` |
+| You want to see what a task actually did (audit trail) | You need to check afterwards who processed which files and when | Open the audit log `app\backend\automation_log.jsonl`: one JSON record per task (see section 9) |
 | "no local model is loaded, cannot generate a summary or review opinion" | No local model is selected or downloaded yet | Select one in the main window with `/model list` and `/model <file name>` |
 | "playwright is not installed, run pip install playwright first" | Running from source without the dependencies (the packaged build includes them) | For a source checkout run `pip install -r backend\requirements.txt` and restart |
 
@@ -465,14 +468,17 @@ the export feature in section 8.
 - **Everything stays visible**: automation **only runs with a visible browser window** and never in a silent
   headless mode; when a CAPTCHA or two-factor verification appears the run pauses for you and stops the batch
   when the wait times out.
-- **Audit log**: by default `backend\automation_log.jsonl`, **one JSON record per task**, with the fields
+- **Audit log**: by default `app\backend\automation_log.jsonl`, **one JSON record per task**, with the fields
   time, event type (`run_start` / `task` / `run_end` / `manual_required`), task URL, **file names only**
   (never file contents), result (`ok` / `failed` / `skipped`), the (truncated) failure reason, and the safety
   protocol version plus the time you accepted it. Tokens and passwords inside the log are redacted
   automatically; document text, model output and cookies are never written.
 - **Where results are written**: only into the results root you configured
   (`results root\date\task name\`), keeping the original attachments, `结果.txt` and failure screenshots in that
-  folder. Temporary copies used during processing are cleaned up afterwards.
+  folder. Temporary copies used during processing are cleaned up afterwards. With "Where to save results" left
+  empty, that root is the **user data folder** (the portable outer `EchoDesk-v0.2.1\` folder, not `app\`); set
+  the `ECHODESK_DATA` environment variable to move all user data (`ui_state.json`, `snippets.json`,
+  `批量处理结果\`) elsewhere.
 - **Deduplication record**: `processed_file` (default `automation_processed.json`) stores only hashes of task
   URLs so processed tasks can be skipped next time; it holds no page content.
 

@@ -61,8 +61,8 @@ EchoDesk 是一款 Windows 桌面应用，把整套 AI 能力都留在你自己�
    [Releases 页面](https://github.com/VoidEntropiaStudio/EchoDesk/releases) 下载（发布归档上线后），
    也可以自己构建（见[方案 B](#方案-b--从源码构建)），产物位于 `publish\EchoDesk-v0.2.1\`。
 2. 解压到任意位置——桌面、其他磁盘、甚至 U 盘都可以。
-3. 双击 **`EchoDesk 启动.lnk`**。这是唯一需要的入口；`EchoDesk.exe` 是界面主程序，
-   `backend\EchoDeskBackend.exe` 由界面自动拉起，**请不要单独运行后端**。
+3. 双击 **`EchoDesk-v0.2.1.lnk`**。这是唯一需要的入口；`app\EchoDesk.exe` 是界面主程序，
+   `app\backend\EchoDeskBackend.exe` 由界面自动拉起，**请不要单独运行后端**。
 4. 首次启动时回答下面的模型下载询问，然后即可开始使用。
    常用首批指令：`/help`、`/file <路径>`、`/model list`、`/status`。
 
@@ -119,22 +119,34 @@ EchoDesk **不自带**模型权重，也**不会静默下载**任何东西：
    Hugging Face 端点——默认 `https://hf-mirror.com`；可在 `backend\config.json` 中修改
    `hf_endpoint` / `model_repo` / `model_path`，改为官方 `https://huggingface.co` 或内部镜像。
 3. 选择**是**会下载模型并继续启动；选择**否**则程序退出，你也可以自行把任意 `.gguf`
-   文件放进 `backend\models\` 后重新启动——这条路径完全不需要联网。
+   文件放进 `app\backend\models\` 后重新启动——这条路径完全不需要联网。
 4. 若文件夹内没有启动快捷方式，EchoDesk 会询问一次是否创建，然后显示一次上手引导。
-   个人设置可写入 `backend\config.user.json`，它优先于 `config.json`，且不会进版本库。
+   个人设置可写入 `app\backend\config.user.json`，它优先于 `config.json`，且不会进版本库。
 
 ### 发布文件夹里有什么
 
+便携版把**程序**和**你的数据**分开放：你要改的、要备份的、要跟着文件夹搬走的东西都在外层，
+程序本体统一收进 `app\`。
+
 | 路径 | 内容 |
 | --- | --- |
-| `EchoDesk 启动.lnk` | 唯一入口（指向 `EchoDesk.exe`，工作目录为本文件夹）。 |
-| `EchoDesk.exe` | WPF 前端；.NET 依赖以 DLL 形式放在同目录。 |
-| `backend\EchoDeskBackend.exe` | 打包后的 Python 后端（PyInstaller onedir），依赖在 `backend\_internal\`。 |
-| `backend\config.json` | 全部配置：模型、上下文窗口、分段摘要、自动化、技能市场、模型中心。 |
-| `backend\models\` | 本地 `.gguf` 模型目录。 |
-| `backend\session.json` | 对话记录（自动保存与恢复）。 |
-| `docs\` | 随发布物提供的文档（用户手册、FAQ、隐私政策、EULA、变更日志）。 |
-| `ui_state.json`、`snippets.json` | 窗口状态、字号、主题与常用语。 |
+| `EchoDesk-v0.2.1.lnk` | 唯一入口（指向 `app\EchoDesk.exe`，工作目录为本文件夹）。 |
+| `批量处理结果\` | 自动化结果（按 `日期\任务名\` 分层的纯文本报告与下载的原始文件）。 |
+| `ui_state.json`、`snippets.json` | 窗口状态、字号、主题、语言与常用语。 |
+| `lang\` | 后端语言包（系统消息、错误提示、指令帮助）。丢一个新的 `<locale>.json` 进去即可加语言。 |
+| `examples\skills\` | 示例插件源码（Hello World 与 OFD 读取）。 |
+| `docs\` | 随发布物提供的文档（`docs\zh-Hans\`、`docs\en\`，以及隐私政策、EULA、第三方许可证）。 |
+| `LICENSE`、`NOTICE`、`SECURITY.md` | 许可证、署名与安全策略。 |
+| `app\EchoDesk.exe` | WPF 前端；.NET 依赖以 DLL 形式放在同目录。 |
+| `app\lang\ui\` | 界面语言包（按钮、标签、对话框文案）。 |
+| `app\backend\EchoDeskBackend.exe` | 打包后的 Python 后端（PyInstaller onedir），依赖在 `app\backend\_internal\`。 |
+| `app\backend\config.json` | 全部配置：模型、上下文窗口、分段摘要、自动化、技能市场、模型中心。 |
+| `app\backend\models\` | 本地 `.gguf` 模型目录。 |
+| `app\backend\session.json` | 对话记录（自动保存与恢复）。 |
+
+把整个文件夹搬到别处后，双击 `app\EchoDesk.exe` 一次，程序会提示并重建快捷方式
+（工作目录也会一并修正）。若要让用户数据放到别的位置（例如受管机器上程序目录只读），
+设置环境变量 `ECHODESK_DATA` 指向目标目录即可。
 
 ## 截图与演示
 

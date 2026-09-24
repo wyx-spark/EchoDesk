@@ -1,6 +1,6 @@
 # EchoDesk 常见问题与故障排除（FAQ）
 
-适用版本：v0.2.0
+适用版本：v0.2.1
 English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 
 ---
@@ -9,12 +9,16 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 
 | 我想做的事 | 怎么做 |
 | --- | --- |
-| 启动程序 | 双击程序文件夹内的「EchoDesk 启动.lnk」 |
+| 启动程序 | 双击程序文件夹内的「EchoDesk-v0.2.1.lnk」 |
 | 查看全部指令 | 在输入框输入 `/help` |
 | 让 AI 读一份文档 | 把文件拖进窗口，或 `/file C:\路径\合同.docx` |
 | 超长文档（合同/报告） | 直接上传即可：超出上下文窗口会自动分段摘要；也可 `/summarize` 手动触发 |
 | 换个模型 | `/model list` 看本地模型，`/model 名称` 切换 |
-| 看当前状态 | `/status`（模型、模式、温度、上下文占用、KV Cache 估算） |
+| 让回答更稳 | `/task list` 选一个任务型提示词模板（摘要归纳、合同条款审查、结构化抽取、翻译、代码排错、推理判断） |
+| 切换生成参数档位 | `/preset light`、`/preset balanced`、`/preset quality` 三档一键切换 |
+| 上下文快满了 | `/compact` 立刻压缩上下文腾出空间（也可点状态区的「🗜 压缩上下文」） |
+| 主题跟随系统 | `/darkmode auto`，或在设置窗口「常规」页选「跟随系统」 |
+| 看当前状态 | `/status`（模型、模式、温度、上下文占用、KV Cache 估算与模型能力） |
 | 复制某条回复 | 该条消息右下角「📋 复制 / ⧉ Markdown / </> 代码」 |
 | 复制全部对话 | `Ctrl+Shift+C` |
 | 打开设置 | 点工具栏 ⚙ 或按 `Ctrl+,` |
@@ -23,25 +27,29 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 
 **快捷键一览**：`Ctrl+Enter` 发送 · `Enter`/`Shift+Enter` 换行 · `Esc` 停止生成/关闭弹层 ·
 `Ctrl+L` 清空对话 · `Ctrl+O` 上传文件 · `Ctrl+Shift+C` 复制全部对话 ·
-`Ctrl+加/减/0` 调整字号 · `Ctrl+T` 切换深浅色 · `Ctrl+,` 设置 · `Ctrl+M` 技能市场。
+`Ctrl+加/减/0` 调整字号 · `Ctrl+T` 切换浅色/深色 · `Ctrl+,` 设置 · `Ctrl+M` 技能市场。
+
+**提问太简单会被追问**：像「这个怎么办」这类既没有明确对象、又没有文件上下文的提问，
+程序会先追问你要问的对象、期望的输出形式与约束条件，而不是硬答（已经聊了几轮或上传了文件时不会再追问）。
+不想被追问可在 `app\backend\config.json` 里把 `clarify_vague` 改为 `false`。
 
 ---
 
 ## 二、启动与模型
 
 ### 双击快捷方式没反应 / 提示"后端启动失败"
-1. 先看 `backend\backend_crash.log`（后端每次启动都会创建该文件，**有内容**才代表崩过，
+1. 先看 `app\backend\backend_crash.log`（后端每次启动都会创建该文件，**有内容**才代表崩过，
    空文件是正常的）——里面会有完整的 Python 堆栈。
 2. 把日志内容反馈给我们即可定位。
 
 ### 提示"本地未找到所需模型"
 这是**预期行为**（v0.2.0 起不再静默下载）：
 - 点「是」→ 自动从配置的镜像下载（默认 `hf-mirror.com`，约 508MB）；
-- 点「否」→ 程序退出，你可以手动下载 `.gguf` 放进 `backend\models\` 后重启；
-- 也可以改 `backend\config.json` 的 `model_repo` / `model_path` / `hf_endpoint` 指向自己的模型。
+- 点「否」→ 程序退出，你可以手动下载 `.gguf` 放进 `app\backend\models\` 后重启；
+- 也可以改 `app\backend\config.json` 的 `model_repo` / `model_path` / `hf_endpoint` 指向自己的模型。
 
 ### 想换模型但不想下载
-1. 把 `.gguf` 文件放进 `backend\models\`；
+1. 把 `.gguf` 文件放进 `app\backend\models\`；
 2. `/model list` 确认已识别；
 3. `/model 文件名或前缀` 切换。
    若在 `config.json` 的 `models` 里配好档案（别名 → path/repo/context_length/temperature），
@@ -52,6 +60,11 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 - 生成速度低于约 3 字/秒时，回复末尾会自动给出提示（可在 `config.json` 里关掉 `speed_hint`）。
 - 可调小 `config.json` 的 `context_length`（默认 8192），或调大 `n_threads`，
   或换更小的量化模型（如 Q4_K_M）。
+
+### 想让 EchoDesk 开机自动启动
+把「EchoDesk-v0.2.1.lnk」复制到系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）即可。
+配置项 `automation.start_with_windows` **尚未实现**：程序目前不会读取它，写成 `true` 也不会开机自启，
+请用上面的快捷方式办法（定时自动化要求程序在运行）。
 
 ---
 
@@ -74,6 +87,12 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 提问时请**提及文件**（例如「根据这份合同…」「文档里第 3 条是什么」）。
 为了省上下文，未提及时只注入文件名指针，不注入内容。
 
+### 同一份文件再上传一次，还要重新摘要吗
+不用。**分段摘要结果会被缓存**（按「文件指纹 + 摘要参数」做键），同一文件第二次上传直接复用，
+不重新计算；文件内容改动（大小或修改时间变化）后缓存自动失效。
+想清空缓存，删除 `app\backend\summary_cache.json` 即可（可读 JSON，也可直接查看）；
+不想用缓存可在 `app\backend\config.json` 里把 `summary_cache` 改为 `false`。
+
 ---
 
 ## 四、自动化（浏览器）
@@ -84,7 +103,7 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 
 ### 开启自动化时提示需要勾选安全协议
 这是设计如此：**安全协议未勾选时自动化开关会被后端强制关闭**，
-并且协议版本与你的同意时间会记入 `backend\automation_log.jsonl` 以便审计。
+并且协议版本与你的同意时间会记入 `app\backend\automation_log.jsonl` 以便审计。
 
 ### 填了网址但"测试选择器"匹配不到元素
 1. 先用浏览器 F12 确认选择器能选中目标（CSS 直接粘贴，XPath 以 `//` 开头）；
@@ -113,10 +132,12 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 
 下载过程中的临时副本保存在系统临时目录的专用子目录，处理完即清理。
 若把「保存结果到本地文件」关掉，就不写 `结果.txt` 与截图，只把结果输出到日志。
+「保存位置」留空时，结果根目录在**便携版外层**（`EchoDesk-v0.2.1\批量处理结果\`），不在 `app\` 里；
+想让用户数据整体换位置（含 `ui_state.json`、`snippets.json`），可以设置环境变量 `ECHODESK_DATA`。
 保存位置、顶层文件夹名与任务名称的填法见 [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md)。
 
 ### 登录态
-第一次需要手动登录一次；程序会把 Cookie/localStorage 存进 `backend\browser_state.json`，
+第一次需要手动登录一次；程序会把 Cookie/localStorage 存进 `app\backend\browser_state.json`，
 下次自动复用。删除该文件即可退出所有登录态。
 
 ---
@@ -130,7 +151,7 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 
 ### 提示"离线：展示本地缓存快照"
 GitHub 匿名 API 限流（每小时 60 次）或网络不可达。解决办法：
-- 在 `backend\config.json` 的 `marketplace.github_token` 填入一个 GitHub Token（可把限额提高到 5000 次/小时）；
+- 在 `app\backend\config.json` 的 `marketplace.github_token` 填入一个 GitHub Token（可把限额提高到 5000 次/小时）；
 - 或稍后重试；程序会继续使用本地缓存，不会因此报错。
 
 ### 安装按钮是灰的
@@ -139,25 +160,50 @@ GitHub 匿名 API 限流（每小时 60 次）或网络不可达。解决办法�
 
 ### 安装会执行第三方代码吗
 **不会自动执行 `prepare` 脚本**。安装流程只做：下载源码 → 校验 `skill.json` →
-复制到 `backend\skills\` → 登记到 `backend\skills_registry.json`。
+复制到 `app\backend\skills\` → 登记到 `app\backend\skills_registry.json`。
 若技能声明了 `prepare` 脚本或依赖，会在提示里列出，由你自己决定是否手动处理。
 即使将来执行 prepare，也会先移除所有名称含 `KEY`/`SECRET`/`TOKEN`/`PASSWORD` 的环境变量。
 
 ### 卸载不干净
 卸载会：移除注册表条目 → 删除技能目录 → 回读注册表确认。若仍有残留，
-可手动删除 `backend\skills\<技能id>` 并编辑 `skills_registry.json`。
+可手动删除 `app\backend\skills\<技能id>` 并编辑 `app\backend\skills_registry.json`。
+
+### 第一次放进第三方本地插件，会一直弹确认框吗
+不会。首次加载**第三方本地插件**（放在 `app\backend\skills_dev\`）只会弹**一次汇总确认框**：
+可以逐个勾选、或点「全部启用」「全部禁用」；选择会被记住，之后不再询问（拒绝过的也不会再问）。
+随包示例插件（`examples\skills\`）默认启用、不询问。
+设置窗口「开发者」页的**开发者模式开关双向可用**：关掉就是关掉，重启后保持关闭，
+并会卸载开发插件、清空开发日志 `app\backend\skills_dev.log`。
 
 ---
 
 ## 六、界面
 
 ### 窗口大小/位置/主题/字号会记住吗
-会，存在程序目录的 `ui_state.json`。窗口若被还原到已拔掉的显示器上，
-程序会自动回退到屏幕内。删除该文件即可重置（含"首次引导已读"标记）。
+会，存在便携版**外层**的 `ui_state.json`（窗口位置与大小、字号、主题三态、emoji 显示策略、
+界面语言等）。窗口若被还原到已拔掉的显示器上，程序会自动回退到屏幕内。
+删除该文件即可重置（含"首次引导已读"标记）。
+
+### 主题只有"深色开关"吗
+不是，现在是**三态**：跟随系统 / 浅色 / 深色，在设置窗口「常规」页选择。
+选「跟随系统」时跟随 Windows 的应用模式，你在系统里切换浅色/深色，界面会立刻跟着变。
+快捷键 `Ctrl+T` 在浅色与深色之间切换，`/darkmode on|off|auto` 也可以直接指定。
+
+### 界面出现 `[OK]` / `[!]` 这样的纯文本标记，是坏了吗
+不是。设置窗口「常规」页的 **emoji 显示**同样有三态：自动 / 始终显示 / 不使用。
+选「自动」时，如果本机缺少 emoji 字体（精简版系统或被组策略裁掉字体的环境），
+界面会自动改用纯文本标记而不是显示方块；想恢复彩色图标可装回 emoji 字体后重启。
+
+### 状态区里的「⚠️ 能力提示 N」是什么
+它是**模型能力边界**的提示按钮：只有真的触到边界时（可用窗口明显小于训练窗口、
+实测生成速度过低、KV Cache 估算超过本机内存的一半等）才会出现，点开逐条列出原因与可采取的动作
+（例如调小 `context_length`、调大 `n_threads`、换更小的量化模型）。
+状态区同时还会显示模型能力项（参数量 · 量化 · 可用窗口 · 实测生成速度），点它可以打开
+「设置 → 模型」看完整能力与推荐配置。
 
 ### 消息里的滚轮滚不动
 已禁用消息控件内部滚动，滚轮统一滚动整个对话列表。`Ctrl+滚轮` 调节字号。
 
 ### 想反馈问题
-请附上：`backend\backend_crash.log`（若有内容）、`backend\config.json`、
+请附上：`app\backend\backend_crash.log`（若有内容）、`app\backend\config.json`、
 `/status` 的输出，以及能复现问题的操作步骤。

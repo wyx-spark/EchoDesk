@@ -45,7 +45,12 @@ set "PRODUCT=EchoDesk"
 set "COMMENTS=Powered by Void Entropia Studio"
 
 set "TARGET=%~1"
-if "%TARGET%"=="" set "TARGET=%ROOT%\publish\EchoDesk-v0.2.1"
+if "%TARGET%"=="" set "TARGET=%ROOT%\publish\EchoDesk-v0.2.1\app"
+
+rem 修复七：程序本体在 app\ 下，若调用方传的是发布根目录则自动下探一层
+if exist "%TARGET%\EchoDesk.exe" goto :target_ok
+if exist "%TARGET%\app\EchoDesk.exe" set "TARGET=%TARGET%\app"
+:target_ok
 
 if not exist "%RCEDIT%" goto :no_rcedit
 if not exist "%ICON%" goto :no_icon

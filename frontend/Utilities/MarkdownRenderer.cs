@@ -11,19 +11,50 @@ namespace EchoDesk.Utilities;
 /// <summary>
 /// 轻量 Markdown → WPF FlowDocument 渲染器（支持标题/加粗/斜体/行内代码/代码块/
 /// 列表/引用/链接/删除线/分隔线/表格），供 RichTextBox 只读展示模型输出。
+///
+/// 修复二：这里的颜色**不再硬编码**。<c>Paragraph</c>/<c>Run</c>/<c>Span</c>/<c>Hyperlink</c>/
+/// <c>Table</c>/<c>TableCell</c> 都是 <c>FrameworkContentElement</c>，支持
+/// <c>SetResourceReference</c>，因此直接绑定到色板键即可随主题切换自动重绘——
+/// 不需要在主题切换时重建文档（原文 Markdown 并未保留，重建本来也做不到）。
 /// </summary>
 public static class MarkdownRenderer
 {
-    private static readonly Brush CodeBg = new SolidColorBrush(Color.FromRgb(0x2b, 0x2b, 0x2b));
-    private static readonly Brush CodeFg = new SolidColorBrush(Color.FromRgb(0xe6, 0xe6, 0xe6));
-    private static readonly Brush QuoteFg = new SolidColorBrush(Color.FromRgb(0x8a, 0x8a, 0x8a));
-    private static readonly Brush BorderBrush = new SolidColorBrush(Color.FromRgb(0x9a, 0x9a, 0x9a));
+    /// <summary>字体键：正文用 UiFontFamily（含 emoji 回退链），代码用 MonoFontFamily。</summary>
+    private const string UiFontKey = "UiFontFamily";
+    private const string MonoFontKey = "MonoFontFamily";
+
+    /// <summary>把内容元素的属性绑定到色板键（修复二：随主题切换自动更新）。</summary>
+    private static T Themed<T>(T element, DependencyProperty property, string key)
+        where T : FrameworkContentElement
+    {
+        element.SetResourceReference(property, key);
+        return element;
+    }
+
+    /// <summary>取字体家族的取值快照（字体家族不随主题变化，无需动态绑定）。</summary>
+    private static FontFamily FontFor(string key, string fallback)
+        => Application.Current?.TryFindResource(key) as FontFamily ?? new FontFamily(fallback);
 
     public static FlowDocument Build(string markdown)
     {
-        var doc = new FlowDocument { PagePadding = new Thickness(2), FontFamily = new FontFamily("Segoe UI") };
+        var doc = new FlowDocument { PagePadding = new Thickness(2) };
+        Themed(doc, FlowDocument.FontFamilyProperty, UiFontKey);
         AppendBlocks(doc, markdown ?? "");
         return doc;
+    }
+
+    /// <summary>
+    /// 主题切换后的兜底刷新。
+    ///
+    /// 正常情况下不需要做任何事（上面全部用了资源引用），保留此入口是为了
+    /// 兼容"文档在修复前构建、元素上写死了画刷"的极端情况——直接按当前色板重刷一遍。
+    /// </summary>
+    public static void RebindTheme(DependencyObject root)
+    {
+        // 资源引用已在 Build 时建立，主题字典替换后 WPF 会自动重新求值；
+        // 这里只触发一次布局重算，确保复用中的消息区立即重绘（避免滚动时才刷新）。
+        if (root is FrameworkElement element)
+            element.InvalidateVisual();
     }
 
     /// <summary>核心解析：把 markdown 文本逐块解析进 doc。供顶层与“误包进代码块的表格”复用。</summary>
@@ -94,15 +125,16 @@ public static class MarkdownRenderer
             if (t.StartsWith("---") || t.StartsWith("***") || t.StartsWith("___"))
             {
                 Flush(doc, ref para);
-                doc.Blocks.Add(new Paragraph(new Run("──────────"))
-                { Foreground = QuoteFg, Margin = new Thickness(0, 4, 0, 8) });
+                doc.Blocks.Add(Themed(new Paragraph(new Run("──────────"))
+                { Margin = new Thickness(0, 4, 0, 8) }, TextElement.ForegroundProperty, "QuoteForeground"));
                 i++;
                 continue;
             }
             if (t.StartsWith(">"))
             {
                 Flush(doc, ref para);
-                var q = new Paragraph { Margin = new Thickness(12, 0, 0, 4), Foreground = QuoteFg, FontStyle = FontStyles.Italic };
+                var q = Themed(new Paragraph { Margin = new Thickness(12, 0, 0, 4), FontStyle = FontStyles.Italic },
+                               TextElement.ForegroundProperty, "QuoteForeground");
                 AddInlines(q, t[1..].Trim());
                 doc.Blocks.Add(q);
                 i++;
@@ -225,10 +257,10 @@ public static class MarkdownRenderer
         var table = new Table
         {
             CellSpacing = 0,
-            BorderBrush = BorderBrush,
             BorderThickness = new Thickness(1),
             Margin = new Thickness(0, 4, 0, 8),
         };
+        Themed(table, Block.BorderBrushProperty, "SeparatorBrush");
         var rg = new TableRowGroup();
         table.RowGroups.Add(rg);
 
@@ -248,9 +280,9 @@ public static class MarkdownRenderer
                         run.FontWeight = FontWeights.Bold;
                 var cell = new TableCell(p)
                 {
-                    BorderBrush = BorderBrush,
                     BorderThickness = new Thickness(0.5),
                 };
+                Themed(cell, Block.BorderBrushProperty, "SeparatorBrush");
                 tr.Cells.Add(cell);
             }
             rg.Rows.Add(tr);
@@ -270,10 +302,10 @@ public static class MarkdownRenderer
         var p = new Paragraph
         {
             Margin = new Thickness(8, 2, 8, 8),
-            Background = CodeBg,
-            Foreground = CodeFg,
-            FontFamily = new FontFamily("Consolas"),
+            FontFamily = FontFor(MonoFontKey, "Consolas, Segoe UI Emoji"),
         };
+        Themed(p, TextElement.BackgroundProperty, "CodeBackground");
+        Themed(p, TextElement.ForegroundProperty, "CodeForeground");
         var text = code.TrimEnd('\n');
         p.Inlines.Add(new Run(text.Length == 0 ? " " : text));
         return p;
@@ -307,6 +339,7 @@ public static class MarkdownRenderer
                         string label = text.Substring(i + 1, close - i - 1);
                         string url = text.Substring(close + 2, end - close - 2);
                         var link = new Hyperlink { NavigateUri = new Uri(url, UriKind.RelativeOrAbsolute) };
+                        Themed(link, TextElement.ForegroundProperty, "LinkBrush");
                         link.RequestNavigate += (_, ea) =>
                         {
                             try { Process.Start(new ProcessStartInfo(ea.Uri.IsAbsoluteUri ? ea.Uri.AbsoluteUri : ea.Uri.OriginalString) { UseShellExecute = true }); }
@@ -331,7 +364,10 @@ public static class MarkdownRenderer
                     if (open == "`")
                     {
                         // 行内代码：直接成块，不解析内部 Markdown
-                        col.Add(new Run(inner) { FontFamily = new FontFamily("Consolas"), Background = CodeBg, Foreground = CodeFg });
+                        var codeRun = new Run(inner) { FontFamily = FontFor(MonoFontKey, "Consolas, Segoe UI Emoji") };
+                        Themed(codeRun, TextElement.BackgroundProperty, "CodeBackground");
+                        Themed(codeRun, TextElement.ForegroundProperty, "CodeForeground");
+                        col.Add(codeRun);
                     }
                     else
                     {

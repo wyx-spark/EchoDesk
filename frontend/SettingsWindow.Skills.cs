@@ -95,6 +95,9 @@ public partial class SettingsWindow
     private readonly List<string> _templateIds = new();
     private bool _devModeSyncing;
     private int _logLineCount = 200;
+    // 修复一：批量确认框的一次性标志（防重入 + 同一窗口只问一次）
+    private bool _trustDialogOpen;
+    private bool _trustDialogHandled;
 
     // ======================= 语言（任务三 3.4） =======================
 
@@ -183,14 +186,12 @@ public partial class SettingsWindow
     {
         Loc.Apply(this);
         Title = Loc.T("settings.title");
-        SafetyText.Text = Loc.T("settings.automation.safetyBody", DefaultSafetyBody);
+        SafetyText.Text = DefaultSafetyBody;
         RefreshModeCombo();
         PopulateSortCombos();
-        PathsText.Text =
-            $"{Loc.T("settings.general.pathProgram", "程序目录")}: {ShortcutService.ProgramDirectory}\n" +
-            $"{Loc.T("settings.general.pathBackend", "后端目录（配置 / models / 会话 / 自动化日志）")}: " +
-            $"{ShortcutService.ProgramDirectory}\\backend\n" +
-            $"{Loc.T("settings.general.pathSkills", "插件目录")}: {ShortcutService.ProgramDirectory}\\backend\\skills";
+        InitThemeControls();     // 主题项的名称也是语言包文本
+        InitEmojiControls();     // emoji 策略项同理
+        PathsText.Text = DescribePaths();
         UpdateResultsPreview();
         RenderSkillCards();
         RenderManifestRows();
@@ -200,12 +201,9 @@ public partial class SettingsWindow
         UpdateFieldHelpPanel(null);
     }
 
-    private string DefaultSafetyBody =>
-        "1. 自动化功能仅在本机运行，操作过程使用有头浏览器，你可随时观察；\n" +
-        "2. EchoDesk 不会把任务内容、下载文件或生成结果上传到任何服务器；\n" +
-        "3. 已下载的附件会保留在结果目录中，便于你复核，请在共享前自行确认敏感信息；\n" +
-        "4. 你需要自行确认该自动化操作符合所在组织的规章制度与目标网站的服务条款；\n" +
-        "5. 因违规使用导致的后果由使用者自行承担，Void Entropia Studio 不承担责任。";
+    /// <summary>安全协议正文：正式文本来自语言包，这里给中文兜底（键缺失时使用）。</summary>
+    private string DefaultSafetyBody => Loc.T("settings.automation.safetyBody",
+        "1. 自动化功能仅在本机运行，操作过程使用有头浏览器，你可随时观察；\n2. EchoDesk 不会把任务内容、下载文件或生成结果上传到任何服务器；\n3. 已下载的附件会保留在结果目录中，便于你复核，请在共享前自行确认敏感信息；\n4. 你需要自行确认该自动化操作符合所在组织的规章制度与目标网站的服务条款；\n5. 因违规使用导致的后果由使用者自行承担，Void Entropia Studio 不承担责任。");
 
     private void RefreshModeCombo()
     {
@@ -213,11 +211,11 @@ public partial class SettingsWindow
             return;
         string? current = (DefaultModeCombo.SelectedItem as ComboBoxItem)?.Tag as string;
         DefaultModeCombo.Items.Clear();
-        foreach ((string key, string _) in Modes)
+        foreach (string key in Modes)
         {
             DefaultModeCombo.Items.Add(new ComboBoxItem
             {
-                Content = $"{Loc.T("mode." + key, key)}",
+                Content = Loc.T("mode." + key, key),
                 Tag = key,
             });
         }
@@ -270,7 +268,8 @@ public partial class SettingsWindow
         try
         {
             string? helpJson = await RequestWithRetryAsync(
-                new { action = "automation_field_help" }, "读取填写帮助", TimeSpan.FromSeconds(60));
+                new { action = "automation_field_help" },
+                Loc.T("settings.automation.labelReadingFieldHelp", "读取填写帮助"), TimeSpan.FromSeconds(60));
             if (helpJson is not null)
             {
                 using JsonDocument doc = JsonDocument.Parse(helpJson);
@@ -294,7 +293,8 @@ public partial class SettingsWindow
         try
         {
             string? tplJson = await RequestWithRetryAsync(
-                new { action = "automation_templates" }, "读取配置模板", TimeSpan.FromSeconds(60));
+                new { action = "automation_templates" },
+                Loc.T("settings.automation.labelReadingTemplates", "读取配置模板"), TimeSpan.FromSeconds(60));
             if (tplJson is not null)
             {
                 using JsonDocument doc = JsonDocument.Parse(tplJson);
@@ -367,8 +367,7 @@ public partial class SettingsWindow
         {
             FieldHelpTitle.Text = Loc.T("settings.automation.helpPlaceholderTitle", "❓ 字段说明");
             FieldHelpBody.Text = Loc.T("settings.automation.helpPlaceholderBody",
-                "把光标放进下面任意一个输入框（或点字段旁的「?」），这里会显示该字段的通俗说明与示例值。"
-                + "完整指南见发布包 docs\\<locale>\\AUTOMATION_GUIDE.md。");
+                "把光标放进下面任意一个输入框（或点字段旁的「?」），这里会显示该字段的通俗说明与示例值。完整指南见发布包 docs\\<locale>\\AUTOMATION_GUIDE.md。");
             FieldHelpExample.Text = "";
             return;
         }
@@ -415,7 +414,8 @@ public partial class SettingsWindow
             }
             string required = GetBool(help, "required")
                 ? Loc.T("automation.help.required", "必填") : Loc.T("automation.help.optional", "可选");
-            sb.AppendLine($"【{GetString(help, "label")}】（{required}）");
+            sb.AppendLine(Loc.T("settings.automation.guideItem", "【{0}】（{1}）",
+                GetString(help, "label"), required));
             sb.AppendLine("  " + GetString(help, "help"));
             string example = GetString(help, "example");
             if (example.Length > 0)
@@ -591,7 +591,8 @@ public partial class SettingsWindow
             foreach (string item in suggestions)
                 sb.AppendLine("· " + item);
         }
-        SetLoadState($"{head}（{Loc.T("settings.automation.wizardStep" + step, "第 " + step + " 步")}）");
+        SetLoadState(Loc.T("settings.automation.wizardStepHead", "{0}（{1}）", head,
+            Loc.T("settings.automation.wizardStep" + step, "第 " + step + " 步")));
         MessageBox.Show(this, sb.ToString(),
             Loc.T("settings.automation.wizardStep" + step, "第 " + step + " 步"),
             MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
@@ -604,7 +605,8 @@ public partial class SettingsWindow
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
             Title = Loc.T("settings.automation.exportConfig"),
-            Filter = "EchoDesk 自动化配置 (*.echodesk-auto)|*.echodesk-auto",
+            Filter = Loc.T("settings.automation.configFilterDesc", "EchoDesk 自动化配置")
+                + " (*.echodesk-auto)|*.echodesk-auto",
             FileName = "echodesk-automation.echodesk-auto",
         };
         if (dialog.ShowDialog() != true)
@@ -627,7 +629,9 @@ public partial class SettingsWindow
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = Loc.T("settings.automation.importConfig"),
-            Filter = "EchoDesk 自动化配置 (*.echodesk-auto;*.json)|*.echodesk-auto;*.json|所有文件 (*.*)|*.*",
+            Filter = Loc.T("settings.automation.configFilterDesc", "EchoDesk 自动化配置")
+                + " (*.echodesk-auto;*.json)|*.echodesk-auto;*.json|"
+                + Loc.T("settings.automation.allFilesFilterDesc", "所有文件") + " (*.*)|*.*",
         };
         if (dialog.ShowDialog() != true)
             return;
@@ -662,7 +666,7 @@ public partial class SettingsWindow
         try
         {
             string? json = await RequestWithRetryAsync(new { action = "skills_list" },
-                "读取插件列表", TimeSpan.FromSeconds(60));
+                Loc.T("settings.installed.labelReadingSkills", "读取插件列表"), TimeSpan.FromSeconds(60));
             if (json is null)
                 return;
             using JsonDocument doc = JsonDocument.Parse(json);
@@ -710,13 +714,17 @@ public partial class SettingsWindow
                     "local" => Loc.T("settings.installed.sourceLocal"),
                     _ => Loc.T("settings.installed.sourceMarket"),
                 };
-                (string statusText, Brush brush) = !enabled
-                    ? (Loc.T("settings.installed.statusDisabled"), Brushes.Gray)
+                // 修复二：状态颜色也走色板（原来是写死的 Gray/IndianRed/MediumSeaGreen，
+                // 在深色背景上几乎糊在一起）。切换主题时 RenderSkillCards 会重建卡片，
+                // 因此这里取"当前色板的值"是安全的。
+                (string statusText, string brushKey) = !enabled
+                    ? (Loc.T("settings.installed.statusDisabled"), "DisabledTextBrush")
                     : error.Length > 0
-                        ? (Loc.T("settings.installed.statusFailed"), Brushes.IndianRed)
+                        ? (Loc.T("settings.installed.statusFailed"), "ErrorBrush")
                         : loaded
-                            ? (Loc.T("settings.installed.statusLoaded"), Brushes.MediumSeaGreen)
-                            : (Loc.T("settings.installed.statusNotLoaded"), Brushes.Gray);
+                            ? (Loc.T("settings.installed.statusLoaded"), "SuccessBrush")
+                            : (Loc.T("settings.installed.statusNotLoaded"), "SubTextBrush");
+                Brush brush = ThemeService.Brush(brushKey);
 
                 var caps = new List<string>();
                 string commands = string.Join(", ", GetStringList(item, "commands"));
@@ -777,26 +785,79 @@ public partial class SettingsWindow
         }
     }
 
-    /// <summary>首次加载未知来源的本地插件时弹确认框（任务书 2B.9）。</summary>
+    /// <summary>
+    /// 首次加载未知来源的本地插件时弹**一次**汇总确认框（任务书 2B.9 + 修复一）。
+    ///
+    /// 修复前是"每发现一个未确认插件就弹一次 MessageBox"，并且每次答复都会触发
+    /// 重新加载 → 继续弹下一个，N 个插件就是 N 次弹窗。现在改成一次性列出全部，
+    /// 勾选后统一写盘（后端 skills_trust_bulk），此后再也不问。
+    /// </summary>
     private void CheckTrustPending()
     {
+        if (_trustDialogOpen)
+            return;   // 防止重入（加载回包 + 语言切换等都会走到这里）
         if (_skillStatus is not JsonElement status
             || !status.TryGetProperty("skills", out JsonElement arr) || arr.ValueKind != JsonValueKind.Array)
             return;
+        if (_trustDialogHandled)
+            return;   // 本次窗口会话里已经问过，不再重复弹
+
+        var pending = new List<TrustItem>();
         foreach (JsonElement item in arr.EnumerateArray())
         {
             if (!GetBool(item, "trust_pending"))
                 continue;
-            string id = GetString(item, "id");
-            string path = GetString(item, "path");
-            MessageBoxResult result = MessageBox.Show(this,
-                Loc.T("settings.installed.trustText",
-                    "插件「{0}」来自本地路径：\n{1}\n\n它将以你的账户权限运行。只在你信任这个插件时才继续。",
-                    id, path),
-                Loc.T("settings.installed.trustTitle"),
-                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
-            _ = SendSkillsAsync(new { action = "skills_trust", id, trusted = result == MessageBoxResult.Yes });
-            break;   // 一次只问一个，避免连环弹窗
+            var caps = new List<string>();
+            foreach (string key in new[] { "commands", "parsers", "hooks", "panels" })
+            {
+                string joined = string.Join(", ", GetStringList(item, key));
+                if (joined.Length > 0)
+                    caps.Add($"{key}: {joined}");
+            }
+            var permissions = new Dictionary<string, object?>();
+            if (item.TryGetProperty("permissions", out JsonElement perms)
+                && perms.ValueKind == JsonValueKind.Object)
+            {
+                foreach (JsonProperty property in perms.EnumerateObject())
+                    permissions[property.Name] = property.Value.ToString();
+            }
+            pending.Add(new TrustItem
+            {
+                Id = GetString(item, "id"),
+                Name = GetString(item, "name"),
+                Path = GetString(item, "path"),
+                Source = GetString(item, "source"),
+                Capabilities = caps,
+                Permissions = permissions,
+                Enabled = true,
+            });
+        }
+        if (pending.Count == 0)
+            return;
+
+        _trustDialogHandled = true;
+        _trustDialogOpen = true;
+        try
+        {
+            var dialog = new TrustDialog(pending, this);
+            dialog.ShowDialog();
+            if (dialog.Decisions.Count > 0)
+            {
+                // 一次性提交全部决定：启用=写入 trusted，禁用=写入 denied（下次不再问）
+                var decisions = dialog.Decisions
+                    .Select(pair => new { id = pair.Key, trusted = pair.Value })
+                    .ToList();
+                _ = SendSkillsAsync(new { action = "skills_trust_bulk", decisions });
+            }
+            else
+            {
+                // 用户直接关掉对话框：不写任何记录，下次打开设置窗口时会再问一次
+                _trustDialogHandled = false;
+            }
+        }
+        finally
+        {
+            _trustDialogOpen = false;
         }
     }
 
@@ -912,9 +973,12 @@ public partial class SettingsWindow
             if (!doc.RootElement.TryGetProperty("publish_check", out JsonElement check))
                 return;
             var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"{Loc.T("settings.installed.publishResult")}：{GetString(check, "message")}");
-            sb.AppendLine($"{Loc.T("settings.developer.topicLabel", "市场 topic")}：{GetString(check, "topic")}");
-            sb.AppendLine($"{Loc.T("settings.developer.repoLabel", "建议仓库名")}：{GetString(check, "repo_name")}");
+            sb.AppendLine(Loc.T("settings.installed.publishLine", "{0}：{1}",
+                Loc.T("settings.installed.publishResult"), GetString(check, "message")));
+            sb.AppendLine(Loc.T("settings.installed.publishLine", "{0}：{1}",
+                Loc.T("settings.developer.topicLabel", "市场 topic"), GetString(check, "topic")));
+            sb.AppendLine(Loc.T("settings.installed.publishLine", "{0}：{1}",
+                Loc.T("settings.developer.repoLabel", "建议仓库名"), GetString(check, "repo_name")));
             sb.AppendLine();
             if (check.TryGetProperty("checks", out JsonElement checks) && checks.ValueKind == JsonValueKind.Array)
             {
@@ -951,13 +1015,59 @@ public partial class SettingsWindow
 
     // ======================= 开发者 Tab（任务 2B.10） =======================
 
+    /// <summary>开发者模式开关（修复一：双向可用，状态与生效插件都显示出来）。</summary>
     private void SyncDevModeCheck()
     {
         if (DevModeCheck is null || _skillStatus is not JsonElement status)
             return;
+        bool devMode = GetBool(status, "dev_mode");
+        bool explicitSet = GetBool(status, "dev_mode_explicit");
+        bool detected = GetBool(status, "dev_detected");
+        int devCount = GetInt(status, "dev_count", 0);
         _devModeSyncing = true;
-        DevModeCheck.IsChecked = GetBool(status, "dev_mode");
+        DevModeCheck.IsChecked = devMode;
         _devModeSyncing = false;
+
+        if (DevModeStatusText is not null)
+        {
+            string how = explicitSet
+                ? Loc.T("settings.developer.modeExplicit", "由你的设置决定")
+                : Loc.T("settings.developer.modeAuto", "自动：检测到 skills_dev 中有 {0} 个插件", devCount);
+            DevModeStatusText.Text =
+                (devMode ? Loc.T("settings.developer.modeOn", "开发者模式：已开启")
+                         : Loc.T("settings.developer.modeOff", "开发者模式：已关闭"))
+                + $" · {how}";
+        }
+        RenderDevPluginList();
+    }
+
+    /// <summary>
+    /// 开发者 Tab 里的"当前已启用的开发插件"清单（修复一"状态可见"）。
+    /// 关闭开发者模式后这里会变成空，用户即可确认"确实关掉了"。
+    /// </summary>
+    private void RenderDevPluginList()
+    {
+        if (DevPluginListText is null)
+            return;
+        if (_skillStatus is not JsonElement status)
+            return;
+        var ids = GetStringList(status, "dev_enabled");
+        if (ids.Count == 0)
+        {
+            bool detected = GetBool(status, "dev_detected");
+            DevPluginListText.Text = detected
+                ? Loc.T("settings.developer.pluginsDisabled",
+                        "skills_dev 目录中有插件，但开发者模式已关闭，当前未加载")
+                : Loc.T("settings.developer.pluginsEmpty", "当前没有已启用的开发插件");
+            return;
+        }
+        var lines = new List<string>
+        {
+            Loc.T("settings.developer.pluginsHeader", "已启用的开发插件（{0} 个）：", ids.Count),
+        };
+        foreach (string id in ids)
+            lines.Add($"  • {id}");
+        DevPluginListText.Text = string.Join("\n", lines);
     }
 
     private void RenderDevDirs()
@@ -1131,6 +1241,13 @@ public partial class SettingsWindow
     private sealed record PanelActionTag(string SkillId, string PanelId, string ActionKey,
                                          Dictionary<string, string> Values);
 
+    /// <summary>
+    /// 开发者模式开关（修复一）。
+    ///
+    /// 关键改动：写入配置时后端会同时把 <c>dev_mode_explicit</c> 置为 True，
+    /// 这样"关闭"就是真的关闭 —— 否则只要 <c>skills_dev/</c> 里还有插件，
+    /// 后端就会按"目录里有插件"自动把模式重新打开（原缺陷）。
+    /// </summary>
     private void DevModeCheck_Changed(object sender, RoutedEventArgs e)
     {
         if (!_uiReady || _devModeSyncing)
@@ -1138,6 +1255,9 @@ public partial class SettingsWindow
         bool enabled = DevModeCheck.IsChecked == true;
         _uiState.DeveloperMode = enabled;
         _uiState.Save();
+        SetLoadState(enabled
+            ? Loc.T("settings.developer.modeEnabling", "正在开启开发者模式…")
+            : Loc.T("settings.developer.modeDisabling", "正在关闭开发者模式并卸载开发插件…"));
         _ = SendSkillsAsync(new { action = "skills_set_dev_mode", enabled });
     }
 
@@ -1155,7 +1275,8 @@ public partial class SettingsWindow
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
             Title = Loc.T("settings.developer.exportLog"),
-            Filter = "日志 (*.log)|*.log|文本 (*.txt)|*.txt",
+            Filter = Loc.T("settings.developer.logFilterDesc", "日志") + " (*.log)|*.log|"
+                + Loc.T("settings.developer.textFilterDesc", "文本") + " (*.txt)|*.txt",
             FileName = "skills_dev.log",
         };
         if (dialog.ShowDialog() != true)
@@ -1196,7 +1317,7 @@ public partial class SettingsWindow
         }
         catch (Exception ex)
         {
-            DevLogBox.Text = $"（读取日志失败：{ex.Message}）";
+            DevLogBox.Text = Loc.T("settings.developer.logLoadFailed", "（读取日志失败：{0}）", ex.Message);
         }
     }
 

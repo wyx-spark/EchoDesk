@@ -64,8 +64,8 @@ No cloud account. No API key. No telemetry.
    (once a release archive has been published) or by building it yourself
    (see [Option B](#option-b--build-from-source)); the build lands in `publish\EchoDesk-v0.2.1\`.
 2. Unzip it anywhere — desktop, another drive, even a USB stick.
-3. Double-click **`EchoDesk 启动.lnk`**. That shortcut is the only entry point you need;
-   `EchoDesk.exe` is the UI and `backend\EchoDeskBackend.exe` is started automatically —
+3. Double-click **`EchoDesk-v0.2.1.lnk`**. That shortcut is the only entry point you need;
+   `app\EchoDesk.exe` is the UI and `app\backend\EchoDeskBackend.exe` is started automatically —
    never launch the backend by hand.
 4. On first launch, answer the model question described below, then start typing.
    Useful first commands: `/help`, `/file <path>`, `/model list`, `/status`.
@@ -126,23 +126,34 @@ EchoDesk does **not** ship model weights and never downloads anything silently:
    at the official `https://huggingface.co` or an internal mirror by editing `hf_endpoint` /
    `model_repo` / `model_path` in `backend\config.json`.
 3. **Yes** downloads the model and continues starting up. **No** exits the program; copy any
-   `.gguf` file into `backend\models\` and start again instead — that path needs no network.
+   `.gguf` file into `app\backend\models\` and start again instead — that path needs no network.
 4. If no launcher shortcut exists in the folder, EchoDesk asks once whether to create one, and
    then shows a short first-run guide. Per-machine settings can be kept out of version control by
-   putting them in `backend\config.user.json`, which takes precedence over `config.json`.
+   putting them in `app\backend\config.user.json`, which takes precedence over `config.json`.
 
 ### What is inside the portable folder
 
+The portable build separates the program from your data: everything you may want to edit, back up
+or move lives in the outer folder, while the program itself sits in `app\`.
+
 | Path | Contents |
 | --- | --- |
-| `EchoDesk 启动.lnk` | The only entry point (targets `EchoDesk.exe`, working directory = this folder). |
-| `EchoDesk.exe` | WPF frontend; its .NET dependencies are DLLs next to it. |
-| `backend\EchoDeskBackend.exe` | Packaged Python backend (PyInstaller onedir), dependencies in `backend\_internal\`. |
-| `backend\config.json` | All configuration: model, context window, summarization, automation, marketplace, model hub. |
-| `backend\models\` | Local `.gguf` models. |
-| `backend\session.json` | Conversation history (auto-saved and restored). |
-| `docs\` | Documentation shipped with the release (user guide, FAQ, privacy policy, EULA, changelog). |
-| `ui_state.json`, `snippets.json` | Window state, font size, theme and reusable snippets. |
+| `EchoDesk-v0.2.1.lnk` | The only entry point (targets `app\EchoDesk.exe`, working directory = this folder). |
+| `批量处理结果\` | Automation output (`date\task\` folders with plain-text reports and downloaded files). |
+| `ui_state.json`, `snippets.json` | Window state, font size, theme, language and reusable snippets. |
+| `lang\` | Backend language packs (system messages, errors, command help). Drop in a new `<locale>.json` to add a language. |
+| `examples\skills\` | Example plugin sources (Hello World and an OFD reader). |
+| `docs\` | Documentation shipped with the release (`docs\zh-Hans\`, `docs\en\`), plus privacy policy, EULA and third-party licences. |
+| `LICENSE`, `NOTICE`, `SECURITY.md` | Licence, attribution and security policy. |
+| `app\EchoDesk.exe` | WPF frontend; its .NET dependencies are DLLs next to it. |
+| `app\lang\ui\` | UI language packs (labels, buttons, dialogs). |
+| `app\backend\EchoDeskBackend.exe` | Packaged Python backend (PyInstaller onedir), dependencies in `app\backend\_internal\`. |
+| `app\backend\config.json` | All configuration: model, context window, summarization, automation, marketplace, model hub. |
+| `app\backend\models\` | Local `.gguf` models. |
+| `app\backend\session.json` | Conversation history (auto-saved and restored). |
+
+Set the `ECHODESK_DATA` environment variable to move the outer data folder somewhere else (useful
+on managed machines where the program folder itself is read-only).
 
 ## Screenshots and demo
 

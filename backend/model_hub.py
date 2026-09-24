@@ -26,6 +26,10 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+# 多语言（任务三）：i18n 反向依赖 config 是惰性的（只在取文案时读 program_root），
+# 本模块又不导入 config，因此这里直接导入不会成环。
+from i18n import t as _t
+
 __all__ = ["ModelHub", "ModelHubError", "MIRROR_ENDPOINT", "OFFICIAL_ENDPOINT", "guess_quantization"]
 
 log = logging.getLogger("EchoDesk.ModelHub")
@@ -56,13 +60,13 @@ def guess_quantization(filename: str) -> str:
     matches = _QUANT_RE.findall(base)
     if matches:
         return matches[-1].upper()
-    return "未知"
+    return _t("hub.unknown")
 
 
 def _human(size: Optional[int]) -> str:
     """字节数转人类可读（1 位小数）。"""
     if not size:
-        return "未知"
+        return _t("hub.unknown")
     value = float(size)
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if value < 1024 or unit == "TB":
@@ -145,19 +149,20 @@ class ModelHub:
             choice = self.source_setting
 
         if choice == "mirror":
-            return {"key": "mirror", "base": MIRROR_ENDPOINT, "note": "使用镜像源 hf-mirror.com（手动指定）"}
+            return {"key": "mirror", "base": MIRROR_ENDPOINT, "note": _t("hub.source.note_mirror_manual")}
         if choice == "official":
-            return {"key": "official", "base": OFFICIAL_ENDPOINT, "note": "使用官方源 huggingface.co（手动指定）"}
+            return {"key": "official", "base": OFFICIAL_ENDPOINT,
+                    "note": _t("hub.source.note_official_manual")}
 
         mirror_ok = self._probe(MIRROR_ENDPOINT)
         if mirror_ok:
             return {"key": "mirror", "base": MIRROR_ENDPOINT,
-                    "note": "自动选择：镜像源 hf-mirror.com（可达）"}
+                    "note": _t("hub.source.note_mirror_auto")}
         if self._probe(OFFICIAL_ENDPOINT):
             return {"key": "official", "base": OFFICIAL_ENDPOINT,
-                    "note": "自动选择：镜像源不可达，已回退官方源 huggingface.co"}
+                    "note": _t("hub.source.note_official_fallback")}
         return {"key": "mirror", "base": MIRROR_ENDPOINT,
-                "note": "⚠️ 镜像源与官方源均不可达，请检查网络或代理设置"}
+                "note": _t("hub.source.note_all_unreachable")}
 
     # ---------- 搜索 ----------
 
@@ -197,7 +202,7 @@ class ModelHub:
             raw = self._get_json(url)
         except Exception as exc:  # noqa: BLE001
             other = OFFICIAL_ENDPOINT if base == MIRROR_ENDPOINT else MIRROR_ENDPOINT
-            other_name = "官方源 huggingface.co" if other == OFFICIAL_ENDPOINT else "镜像源 hf-mirror.com"
+            other_name = _t("hub.source.official") if other == OFFICIAL_ENDPOINT else _t("hub.source.mirror")
             fallback: Any = None
             try:
                 fallback = self._get_json(url.replace(base, other, 1))
@@ -207,11 +212,11 @@ class ModelHub:
                 return {
                     "items": [], "total": 0, "page": page,
                     "source": resolved["key"], "source_note": resolved["note"],
-                    "offline": True, "message": f"❌ 两个数据源都无法访问：{exc}",
+                    "offline": True, "message": _t("hub.search.offline", error=exc),
                 }
             raw = fallback
             resolved = {"key": "official" if other == OFFICIAL_ENDPOINT else "mirror", "base": other,
-                        "note": f"⚠️ 原数据源请求失败，已回退 {other_name}"}
+                        "note": _t("hub.source.note_fallback_other", name=other_name)}
 
         if not isinstance(raw, list):
             raw = []
@@ -250,7 +255,8 @@ class ModelHub:
             "source": resolved["key"],
             "source_note": resolved["note"],
             "offline": False,
-            "message": f"共 {len(items)} 个结果（数据源：{resolved['note']}）" if items else "没有匹配的 GGUF 模型。",
+            "message": (_t("hub.search.count", count=len(items), note=resolved["note"]) if items
+                        else _t("hub.search.empty")),
         }
 
     # ---------- 详情 ----------
@@ -259,16 +265,16 @@ class ModelHub:
         """模型详情：可用 GGUF 文件清单（不同量化版本）与各自大小。"""
         repo = (repo or "").strip().strip("/")
         if not repo:
-            raise ModelHubError("缺少模型仓库名。")
+            raise ModelHubError(_t("hub.error.missing_repo"))
         resolved = self.resolve_source(source)
         base = resolved["base"]
         url = f"{base}/api/models/{repo}?blobs=true"
         try:
             info = self._get_json(url, timeout=25)
         except Exception as exc:  # noqa: BLE001
-            raise ModelHubError(f"获取模型详情失败：{exc}") from exc
+            raise ModelHubError(_t("hub.error.detail_failed", error=exc)) from exc
         if not isinstance(info, dict):
-            raise ModelHubError("模型详情返回格式异常。")
+            raise ModelHubError(_t("hub.error.detail_bad_format"))
 
         files: List[Dict[str, Any]] = []
         for sibling in info.get("siblings") or []:
@@ -340,7 +346,7 @@ class ModelHub:
         repo = (repo or "").strip().strip("/")
         filename = os.path.basename((filename or "").strip())
         if not repo or not filename:
-            raise ModelHubError("缺少模型仓库或文件名。")
+            raise ModelHubError(_t("hub.error.missing_repo_or_file"))
 
         self._ensure_dirs()
         dest = os.path.join(self.models_dir, filename)
@@ -350,12 +356,13 @@ class ModelHub:
         verify = bool(getattr(self.cfg, "verify_sha256", True)) if verify_sha256 is None else bool(verify_sha256)
 
         if os.path.isfile(dest) and expected_size and os.path.getsize(dest) == expected_size:
-            return {"ok": True, "path": dest, "message": f"模型已存在：{filename}", "skipped": True}
+            return {"ok": True, "path": dest, "message": _t("hub.download.exists", filename=filename),
+                    "skipped": True}
 
         last_error = ""
         for attempt in range(1, max(1, retries) + 1):
             if should_stop and should_stop():
-                return {"ok": False, "path": "", "message": "已取消下载。", "cancelled": True,
+                return {"ok": False, "path": "", "message": _t("hub.download.cancelled"), "cancelled": True,
                         "partial": partial}
             try:
                 result = self._download_once(
@@ -367,7 +374,7 @@ class ModelHub:
                 self._register(dest, repo, resolved["key"], source_note=resolved["note"])
                 return result
             except _Cancelled:
-                return {"ok": False, "path": "", "message": "已取消下载（已保留断点，可继续）。",
+                return {"ok": False, "path": "", "message": _t("hub.download.cancelled_resumable"),
                         "cancelled": True, "partial": partial}
             except _NeedToken as exc:
                 return {"ok": False, "path": "", "message": str(exc), "need_token": True}
@@ -378,7 +385,8 @@ class ModelHub:
                     if on_progress:
                         on_progress({"retry": attempt, "retries": retries, "error": last_error})
                     time.sleep(min(2 * attempt, 6))
-        return {"ok": False, "path": "", "message": f"下载失败（已重试 {retries} 次）：{last_error}"}
+        return {"ok": False, "path": "", "message": _t("hub.download.failed", retries=retries,
+                                                       error=last_error)}
 
     def _download_once(
         self,
@@ -405,12 +413,10 @@ class ModelHub:
             response = urllib.request.urlopen(request, timeout=60)
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
-                raise _NeedToken(
-                    "该模型需要登录授权（Gated Model）。请在「设置 → 模型」中填写 Hugging Face Token 后重试。"
-                ) from exc
+                raise _NeedToken(_t("hub.download.need_token")) from exc
             if exc.code == 416 and resume_at:      # 断点已完整
                 os.replace(partial, dest)
-                return {"ok": True, "path": dest, "message": "已使用本地已下载完成的文件。"}
+                return {"ok": True, "path": dest, "message": _t("hub.download.reused_local")}
             raise
 
         with response:
@@ -455,7 +461,7 @@ class ModelHub:
         size = os.path.getsize(partial)
         if expected_size and size != expected_size:
             raise ModelHubError(
-                f"下载不完整（{_human(size)} / {_human(expected_size)}），已保留断点，重试可继续。"
+                _t("hub.download.incomplete", done=_human(size), total=_human(expected_size))
             )
         os.replace(partial, dest)
         if on_progress:
@@ -464,21 +470,22 @@ class ModelHub:
             "ok": True,
             "path": dest,
             "size": size,
-            "message": f"已下载并加入模型库：{os.path.basename(dest)}（{_human(size)}）",
+            "message": _t("hub.download.done", name=os.path.basename(dest), size=_human(size)),
         }
 
     def _verify(self, path: str, expected_size: int, expected_sha: str) -> None:
         """完整性校验：比对文件大小；有 sha256 且文件不超过 2GB 时再比对哈希。"""
         size = os.path.getsize(path)
         if expected_size and size != expected_size:
-            raise ModelHubError(f"校验失败：文件大小为 {_human(size)}，应为 {_human(expected_size)}")
+            raise ModelHubError(_t("hub.verify.size_mismatch", actual=_human(size),
+                                   expected=_human(expected_size)))
         if expected_sha and size <= 2 * 1024 ** 3:
             digest = hashlib.sha256()
             with open(path, "rb") as fh:
                 for block in iter(lambda: fh.read(1024 * 1024), b""):
                     digest.update(block)
             if digest.hexdigest().lower() != expected_sha.lower():
-                raise ModelHubError("校验失败：文件 sha256 与仓库记录不一致，已保留文件但未登记入库")
+                raise ModelHubError(_t("hub.verify.sha_mismatch"))
 
     # ---------- 模型库 ----------
 
@@ -613,9 +620,9 @@ class ModelHub:
         """删除模型文件并从模型库移除（前端会先确认）。"""
         base = os.path.basename(str(name or "").strip())
         if not base:
-            raise ModelHubError("缺少模型文件名。")
+            raise ModelHubError(_t("hub.uninstall.missing_name"))
         if current_model and os.path.basename(current_model) == base:
-            raise ModelHubError("该模型正在使用中，请先用 /model 切换到其它模型再删除。")
+            raise ModelHubError(_t("hub.uninstall.in_use"))
         path = os.path.join(self.models_dir, base)
         removed = False
         if os.path.isfile(path):
@@ -623,7 +630,7 @@ class ModelHub:
                 os.remove(path)
                 removed = True
             except OSError as exc:
-                raise ModelHubError(f"删除文件失败：{exc}") from exc
+                raise ModelHubError(_t("hub.uninstall.remove_failed", error=exc)) from exc
         with self._lock:
             data = self._load_registry()
             before = len(data["models"])
@@ -631,9 +638,10 @@ class ModelHub:
                               if os.path.basename(str(m.get("name", ""))) != base]
             self._save_registry(data)
         if not removed and before == len(data["models"]):
-            raise ModelHubError(f"模型库里没有 {base}。")
+            raise ModelHubError(_t("hub.uninstall.not_in_registry", name=base))
         return {"ok": True, "name": base, "removed_file": removed,
-                "message": f"已删除 {base}" + ("并更新模型库。" if removed else "（文件不存在，已清理记录）。")}
+                "message": (_t("hub.uninstall.done_removed", name=base) if removed
+                            else _t("hub.uninstall.done_cleaned", name=base))}
 
     def _is_installed_repo(self, repo: str) -> bool:
         """该仓库是否已有模型落盘（用于列表上的「已下载」标记）。"""

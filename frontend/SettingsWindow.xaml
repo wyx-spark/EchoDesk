@@ -22,9 +22,29 @@
                                    Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10"
                                    svc:Loc.Key="settings.general.sectionAppearance"/>
 
-                        <CheckBox x:Name="DarkModeCheck" Content="深色模式（即时生效）" Margin="0,4"
-                                  Checked="DarkModeCheck_Changed" Unchecked="DarkModeCheck_Changed"
-                                  svc:Loc.Key="settings.general.theme"/>
+                        <TextBlock Text="界面主题" Margin="0,4,0,4" Foreground="{DynamicResource SubTextBrush}"
+                                   svc:Loc.Key="settings.general.themeLabel"/>
+                        <StackPanel Orientation="Horizontal">
+                            <ComboBox x:Name="ThemeCombo" Width="200" HorizontalAlignment="Left"
+                                      SelectionChanged="ThemeCombo_SelectionChanged"
+                                      svc:Loc.HelpKey="settings.general.themeHelp"/>
+                            <TextBlock x:Name="ThemeStatusText" Margin="12,0,0,0" VerticalAlignment="Center"
+                                       FontSize="11" Foreground="{DynamicResource SubTextBrush}"/>
+                        </StackPanel>
+                        <TextBlock Text="主题与 emoji 显示即时生效，无需重启"
+                                   FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource SubTextBrush}"
+                                   svc:Loc.Key="settings.general.themeNote"/>
+
+                        <TextBlock Text="emoji 显示" Margin="0,12,0,4" Foreground="{DynamicResource SubTextBrush}"
+                                   svc:Loc.Key="settings.general.emojiLabel"/>
+                        <StackPanel Orientation="Horizontal">
+                            <ComboBox x:Name="EmojiCombo" Width="200" HorizontalAlignment="Left"
+                                      SelectionChanged="EmojiCombo_SelectionChanged"
+                                      svc:Loc.HelpKey="settings.general.emojiHelp"/>
+                            <TextBlock x:Name="EmojiStatusText" Margin="12,0,0,0" VerticalAlignment="Center"
+                                       FontSize="11" Foreground="{DynamicResource SubTextBrush}"/>
+                        </StackPanel>
 
                         <TextBlock Text="字体大小" Margin="0,14,0,4" Foreground="{DynamicResource SubTextBrush}"
                                    svc:Loc.Key="settings.general.fontSize"/>
@@ -455,9 +475,11 @@
                                     <Button Content="?" Padding="5,0" Margin="6,0,0,0" FontSize="10" Height="18"
                                             Style="{StaticResource RoundButton}" Tag="task_row_selector"
                                             Click="FieldHelp_Click" ToolTip="查看填写说明"/>
-                                    <Button Content="🎯" Padding="6,0" Margin="6,0,0,0" FontSize="10" Height="18"
+                                    <Button Padding="6,0" Margin="6,0,0,0" Height="18"
                                             Style="{StaticResource RoundButton}" Tag="task_row"
-                                            Click="PickSelectorButton_Click" ToolTip="可视化选取这一行"/>
+                                            Click="PickSelectorButton_Click" ToolTip="可视化选取这一行">
+                                        <TextBlock Style="{StaticResource IconText}" Text="🎯" FontSize="10"/>
+                                    </Button>
                                 </StackPanel>
                                 <TextBox x:Name="TaskRowBox" Padding="6,4" Margin="0,4,0,0"
                                          GotKeyboardFocus="AutomationField_GotFocus" Tag="task_row_selector"/>
@@ -469,9 +491,11 @@
                                     <Button Content="?" Padding="5,0" Margin="6,0,0,0" FontSize="10" Height="18"
                                             Style="{StaticResource RoundButton}" Tag="next_page_selector"
                                             Click="FieldHelp_Click" ToolTip="查看填写说明"/>
-                                    <Button Content="🎯" Padding="6,0" Margin="6,0,0,0" FontSize="10" Height="18"
+                                    <Button Padding="6,0" Margin="6,0,0,0" Height="18"
                                             Style="{StaticResource RoundButton}" Tag="next_page"
-                                            Click="PickSelectorButton_Click" ToolTip="可视化选取下一页按钮"/>
+                                            Click="PickSelectorButton_Click" ToolTip="可视化选取下一页按钮">
+                                        <TextBlock Style="{StaticResource IconText}" Text="🎯" FontSize="10"/>
+                                    </Button>
                                 </StackPanel>
                                 <TextBox x:Name="NextPageBox" Padding="6,4" Margin="0,4,0,0"
                                          GotKeyboardFocus="AutomationField_GotFocus" Tag="next_page_selector"/>
@@ -831,7 +855,7 @@
                                                                    Visibility="{Binding OverrodeVisibility}"/>
                                                         <TextBlock Text="{Binding Error}" FontSize="11"
                                                                    Margin="0,3,0,0" TextWrapping="Wrap"
-                                                                   Foreground="#e06c6c"
+                                                                   Foreground="{DynamicResource ErrorBrush}"
                                                                    Visibility="{Binding ErrorVisibility}"/>
                                                         <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                                                             <Button Content="错误详情" Padding="8,2" FontSize="11"
@@ -896,6 +920,14 @@
                                    FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"
                                    svc:Loc.Key="settings.developer.modeShort"/>
+                        <!-- 修复一：开关的当前状态 + 由谁决定，一句话说清"为什么是开/关" -->
+                        <TextBlock x:Name="DevModeStatusText" FontSize="11" Margin="0,8,0,0"
+                                   TextWrapping="Wrap" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextForeground}"/>
+                        <!-- 修复一：已启用的开发插件清单（关闭后应为空，便于用户确认确实关掉了） -->
+                        <TextBlock x:Name="DevPluginListText" FontSize="11" Margin="0,4,0,0"
+                                   TextWrapping="Wrap"
+                                   Foreground="{DynamicResource SubTextBrush}"/>
                         <TextBlock x:Name="DevApiText" FontSize="11" Margin="0,6,0,0"
                                    Foreground="{DynamicResource SubTextBrush}"/>
 

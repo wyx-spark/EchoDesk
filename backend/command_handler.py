@@ -42,6 +42,9 @@ COMMAND_SPEC: List[Dict[str, Any]] = [
     {"name": "/status", "category": "core"},
     {"name": "/about", "category": "core"},
     {"name": "/mode", "category": "chat"},
+    {"name": "/task", "category": "chat"},
+    {"name": "/preset", "category": "chat"},
+    {"name": "/compact", "category": "chat"},
     {"name": "/search", "category": "chat"},
     {"name": "/prompt", "category": "chat"},
     {"name": "/temp", "category": "chat"},
@@ -150,6 +153,9 @@ class CommandHandler:
             "/quit": lambda _: self._exit(),
             "/help": self._help,
             "/mode": self._mode,
+            "/task": self._task,
+            "/preset": self._preset,
+            "/compact": self._compact,
             "/file": self._file,
             "/summarize": self._summarize,
             "/search": self._search,
@@ -168,6 +174,16 @@ class CommandHandler:
         }
         # 由 main 注入：返回技能已接管的文件扩展名（/model、/status 里展示）
         self.skill_parsers_provider: Optional[Callable[[], Dict[str, str]]] = None
+        # 由 main 注入：手动压缩上下文（修复四 基础要求）。
+        # 压缩需要模型参与（把早期对话总结成摘要），而 LLM 的调用与历史管理都在
+        # main 里，因此这里只留一个回调，避免把 main 的逻辑抄一份进来。
+        self.compact_provider: Optional[Callable[[bool], Dict[str, Any]]] = None
+        # 由 main 注入：模型能力画像（修复四 方向六/七，/status 与 /preset 都要用）
+        self.profile_provider: Optional[Callable[[], Dict[str, Any]]] = None
+        # 由 main 注入：清空分段摘要缓存并返回清掉的条目数（/clearcache 用）
+        self.cache_clear_provider: Optional[Callable[[], int]] = None
+        # 当前生效的任务模板 id（修复四 方向一）；空串表示未启用
+        self.task_template = ""
 
     # ---------- 运行期指令注册（任务二 2.2 / 2.4） ----------
 
@@ -489,8 +505,24 @@ class CommandHandler:
         return t("cmd.resp.model_applied", model=self.config.model_path) + extra, None
 
     def _clearcache(self, _args: list) -> Response:
+        """清 KV 缓存**以及**分段摘要缓存（修复四的 SummaryCache）。
+
+        摘要缓存的文档字符串一直写着"/clearcache 也会清它"，但此前只调了
+        `llm_engine.clear_cache()`（KV 缓存），两处说法矛盾。按"清缓存就该清干净"
+        实现，而不是把注释改小 —— 用户敲 /clearcache 的意图就是把缓存倒掉。
+        """
         ok = self.llm_engine.clear_cache()
-        return t("cmd.resp.cache_cleared" if ok else "cmd.resp.cache_clear_unsupported"), None
+        cleared = 0
+        if self.cache_clear_provider is not None:
+            try:
+                cleared = int(self.cache_clear_provider() or 0)
+            except Exception:  # noqa: BLE001 - 摘要缓存清理失败不影响 KV 缓存清理结果
+                cleared = 0
+        if not ok:
+            return t("cmd.resp.cache_clear_unsupported"), None
+        if cleared:
+            return t("cmd.resp.cache_cleared_with_summaries", count=cleared), None
+        return t("cmd.resp.cache_cleared"), None
 
     def _prompt(self, args: list) -> Response:
         if not args:
@@ -521,6 +553,90 @@ class CommandHandler:
     @staticmethod
     def _snippet(_args: list) -> Response:
         return t("cmd.resp.snippet_hint"), None
+
+    # ---------- 修复四：任务模板 / 生成预设 / 手动压缩上下文 ----------
+
+    def _task(self, args: list) -> Response:
+        """``/task``：任务型提示词模板（方向一）。
+
+        * 无参数或 ``list``：列出全部模板及其适用场景；
+        * ``<id|标签>``：套用模板（写入自定义提示词，优先级高于模式提示词）；
+        * ``off`` / ``reset``：取消模板，回到模式提示词。
+        """
+        import prompts as prompt_lib
+
+        name = " ".join(args).strip() if args else ""
+        if not name or name.lower() in ("list", "?", "help"):
+            current = self.task_template or t("cmd.resp.task_none")
+            return (t("cmd.resp.task_list_header", current=current) + "\n"
+                    + prompt_lib.menu_text() + "\n\n"
+                    + t("cmd.resp.task_usage")), None
+
+        if name.lower() in ("off", "reset", "none", "clear"):
+            self.task_template = ""
+            self.conv_mgr.set_custom_prompt("")
+            return t("cmd.resp.task_cleared"), None
+
+        text = prompt_lib.build_system_prompt(name)
+        if not text:
+            return t("cmd.resp.task_not_found", name=name, ids=", ".join(prompt_lib.template_ids())), None
+        template = prompt_lib.get_template(name) or {}
+        self.task_template = str(template.get("label") or name)
+        self.conv_mgr.set_custom_prompt(text)
+        return (t("cmd.resp.task_applied", name=self.task_template)
+                + "\n" + t("cmd.resp.task_hint")), None
+
+    def _preset(self, args: list) -> Response:
+        """``/preset``：轻量 / 均衡 / 高质量三档生成参数（方向六）。
+
+        会同时设置 temperature / top_p / repeat_penalty / max_tokens，并记入配置，
+        因此重启后仍然生效；用户随后用 ``/temp`` 手动改温度时以手动值为准。
+        """
+        import model_profile as profile_lib
+
+        name = " ".join(args).strip().lower() if args else ""
+        if not name or name in ("list", "?", "help"):
+            lines = [t("cmd.resp.preset_list_header", current=self.config.preset or "balanced")]
+            for item in profile_lib.preset_menu():
+                lines.append(f"  /preset {item['id']}  — {item['label']}：{item['note']}")
+            return "\n".join(lines), None
+
+        preset = profile_lib.apply_preset(name)
+        if preset is None:
+            return t("cmd.resp.preset_not_found", name=name,
+                     ids=", ".join(p["id"] for p in profile_lib.preset_menu())), None
+        self.config.preset = name
+        self.config.temperature = float(preset["temperature"])
+        self.config.top_p = float(preset["top_p"])
+        self.config.repeat_penalty = float(preset["repeat_penalty"])
+        self.config.max_tokens = int(preset["max_tokens"])
+        self.temperature = float(preset["temperature"])
+        self.temp_manual = False   # 回到"预设说了算"，这样切模式时温度也会跟着模式走
+        self.llm_engine.clear_cache()
+        return (t("cmd.resp.preset_applied", name=preset["label"], temp=preset["temperature"],
+                  top_p=preset["top_p"], penalty=preset["repeat_penalty"],
+                  max_tokens=preset["max_tokens"])
+                + "\n" + str(preset["note"])), None
+
+    def _compact(self, args: list) -> Response:
+        """``/compact``：手动压缩上下文（修复四 基础要求）。
+
+        与自动压缩的区别：自动压缩只在超过 80% 时触发，用户想在还有余量时
+        提前"腾地方"（例如准备上传一个大文件）就得手动触发。
+        """
+        if self.compact_provider is None:
+            return t("cmd.resp.compact_unavailable"), None
+        force = not args or str(args[0]).lower() not in ("auto", "off")
+        try:
+            result = self.compact_provider(force) or {}
+        except Exception as e:  # noqa: BLE001 - 压缩失败不能让指令崩溃
+            return t("cmd.resp.compact_failed", error=e), None
+        if not result.get("compressed"):
+            return t("cmd.resp.compact_skipped",
+                     used=result.get("used", "?"), limit=result.get("limit", "?")), None
+        return t("cmd.resp.compact_done",
+                 dropped=result.get("dropped", 0), kept=result.get("kept", 0),
+                 before=result.get("used_before", "?"), after=result.get("used_after", "?")), None
 
     def _status(self, _args: list) -> Response:
         # 估算当前上下文占用（系统提示 + 历史）
@@ -558,16 +674,86 @@ class CommandHandler:
                 t("cmd.status.summary_yes") if self.conv_mgr.summary else t("cmd.status.summary_no"))),
             file_line,
         ]
+        # 修复四（方向七：能力透明化）：把模型能力画像拼进 /status。
+        # 这些字段以前散在日志里，用户看不到"模型有多大、窗口实际开了多少、跑得多快"。
+        lines.extend(self._capability_lines())
         return "\n".join(lines), None
+
+    def _capability_lines(self) -> List[str]:
+        """模型能力段落（参数量 / 量化 / 训练窗口 / 实际窗口 / KV Cache / 速度 / 提示）。"""
+        if self.profile_provider is None:
+            return []
+        try:
+            profile = self.profile_provider() or {}
+        except Exception:  # noqa: BLE001 - 能力画像失败不应影响 /status
+            return []
+        if not profile:
+            return []
+        lines = [
+            "",
+            t("cmd.status.capability_header"),
+            t("cmd.status.parameters", value=profile.get("parameters_text") or "未知",
+              source=profile.get("parameters_source") or "未知"),
+            t("cmd.status.quantization", value=profile.get("quantization") or "未知",
+              source=profile.get("quantization_source") or "未知"),
+            t("cmd.status.window_detail",
+              train=profile.get("train_context") or "未知",
+              usable=profile.get("usable_context") or "未知"),
+            t("cmd.status.speed", value=profile.get("speed_text") or "尚未统计"),
+            t("cmd.status.hardware",
+              ram=(f"{profile['ram_gb']} GB" if profile.get("ram_gb") else "未知"),
+              cores=profile.get("cpu_cores") or "未知"),
+            t("cmd.status.context_mode", mode=self.config.context_mode),
+            t("cmd.status.preset", preset=self.config.preset or "balanced"),
+        ]
+        if self.task_template:
+            lines.append(t("cmd.status.task_template", name=self.task_template))
+        notes = profile.get("warnings") or []
+        if notes:
+            lines.append(t("cmd.status.capability_notes"))
+            lines.extend(f"  • {note}" for note in notes)
+        return lines
 
     @staticmethod
     def _about(_args: list) -> Response:
-        return (
-            f"✨ {APP_NAME} {APP_VERSION}\n"
-            f"Powered by {STUDIO}\n"
-            + t("app.about"),
-            None,
-        )
+        """``/about``：版本号、出品方与合规文档（任务书修复五要求"关于页面展示许可证链接"）。
+
+        许可证与隐私文档**随发布包一起分发**（外层根目录的 LICENSE/NOTICE 与 docs\\ 下的
+        PRIVACY/EULA/THIRD_PARTY_LICENSES/SBOM），因此这里给出**本机实际路径**，
+        用户点不动链接时也能自己在文件管理器里找到；同时给出仓库地址供在线查阅。
+        """
+        from config import program_dir, program_root
+
+        try:
+            data_root = program_root()
+            program = program_dir()
+        except Exception:  # noqa: BLE001 - 路径解析失败不影响 /about
+            data_root = program = ""
+        lines = [
+            f"✨ {APP_NAME} {APP_VERSION}",
+            f"Powered by {STUDIO}",
+            t("app.about"),
+            "",
+            t("app.about.legal_header"),
+        ]
+        candidates = [
+            ("LICENSE", os.path.join(data_root, "LICENSE") if data_root else ""),
+            ("NOTICE", os.path.join(data_root, "NOTICE") if data_root else ""),
+            ("PRIVACY.md", os.path.join(data_root, "docs", "PRIVACY.md") if data_root else ""),
+            ("EULA.md", os.path.join(data_root, "docs", "EULA.md") if data_root else ""),
+            ("THIRD_PARTY_LICENSES.md",
+             os.path.join(data_root, "docs", "THIRD_PARTY_LICENSES.md") if data_root else ""),
+            ("SBOM.json", os.path.join(data_root, "docs", "SBOM.json") if data_root else ""),
+        ]
+        for label, path in candidates:
+            if path and os.path.isfile(path):
+                lines.append(f"  • {label}: {path}")
+            else:
+                lines.append("  • " + t("app.about.legal_missing", name=label))
+        if program:
+            lines.append(t("app.about.program_dir", path=program))
+        lines.append(t("app.about.repo"))
+        return "\n".join(lines), None
 
     def _clear(self, _args: list) -> Response:
         self.conv_mgr.clear()

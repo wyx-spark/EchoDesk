@@ -20,6 +20,14 @@
   （Bug / 功能请求 / **技能提交** / **翻译贡献**）、PR 模板、Dependabot 配置。
 - 文档按语言重组：`docs/zh-Hans/`（用户手册、FAQ、技能开发指南、自动化填写指南）、
   `docs/en/`（同上一套英文版）。
+- **合规文档与物料清单补齐**：`docs/PRIVACY.md` 逐项列明 5 个联网功能（域名、发送内容、
+  不发送内容、数据去向、保留时长、关闭方式）、数据出境说明与"彻底禁网"清单；
+  `docs/EULA.md` 补齐责任限制、第三方开源许可声明、自动化与技能的责任归属、
+  联系方式与协议变更方式；新增 `docs/SECURITY.md`（中文安全策略，与根目录 `SECURITY.md`
+  同一套承诺）与 `docs/zh-Hans/COMPLIANCE.md`、`docs/en/COMPLIANCE.md`
+  （企业环境适配：代理、证书、防火墙域名白名单、组策略与受限环境、审计留痕）；
+  新增 `docs/SBOM.json`（SPDX 2.3 风格物料清单）及生成/核对工具 `tools/gen_sbom.py`
+  （纯标准库，`--check` 可在 CI 中作为不一致的失败条件）。
 
 **多语言（简体中文 + 英语）**
 - 后端 `backend/i18n.py`、前端 `frontend/Services/Localization.cs`：语言包加载、
@@ -97,6 +105,101 @@
 - 打包脚本的文档收集改为递归：`docs/zh-Hans/`、`docs/en/` 下的本地化文档现在会进发布包。
 - 修正安全协议与 PRIVACY/USER_GUIDE/FAQ 中关于"下载文件被删除"的过时描述。
 
+### 修复（v0.2.1 修复任务书，P0/P1 共七项）
+
+> 完整排查过程、决策理由与逐项验证证据见 [`v0.2.1-修复记录.md`](v0.2.1-修复记录.md)。
+
+**P0 · 开发者模式弹窗循环与无法关闭**
+- 逐个弹窗改为**一次性汇总确认框**（新窗口 `frontend/Utilities/TrustDialog.cs`）：列出每个待确认
+  插件的来源、路径、声明能力与权限，支持逐个勾选 / 全部启用 / 全部禁用；后端新增
+  `skills_trust_bulk` 动作一次接收全部决定。
+- `skills_local.json` 新增 `denied` 列表（schema 1 → 2，旧文件兼容）：**用户明确拒绝过的插件
+  不再重复询问**，也不再加载（原实现只记 trusted，点"否"等于没答，于是永远问下去）。
+- 修复**"一旦开启就关不掉"**：新增 `dev_mode_explicit` 配置。用户显式设置过开关后，
+  开发者模式完全以配置为准，不再被"`skills_dev/` 里有插件就自动启用"的逻辑覆盖。
+- 关闭开发者模式时**真的卸载** dev/local 插件（新增 `SkillLoader.unload_dev()`）并从指令表移除，
+  同时停止热重载、清空开发日志。
+- **内置示例插件静默**：`builtin_ids()` 按随包 `examples/skills/` 目录判定，示例插件默认启用且
+  不弹确认框；第三方插件仍需确认（不采用"插件自报 official"的做法，那等于把确认框变成摆设）。
+- 开发者 Tab 新增"当前状态 + 由谁决定 + 已启用的开发插件清单"，关闭后清单为空，一眼可确认。
+- 回归测试：新增 `tools/test_dev_mode.py`（46 项）。
+
+**P0 · 深色模式失效与对比度不足**
+- 修复**深色模式永远出不来**：`MainWindow_Loaded` 原来只在"配置为浅色"时才应用主题，
+  配置为深色时 `App.xaml` 里的浅色字典原样留着。现在启动无条件经 `ThemeService.Apply()` 应用。
+- 主题状态收敛到新的 `frontend/Services/ThemeService.cs`：三态（**跟随系统** / 浅色 / 深色），
+  跟随系统通过 `SystemEvents.UserPreferenceChanged` + 注册表 `AppsUseLightTheme` 实现，
+  设置窗口的复选框换成 `ThemeCombo` 并显示"当前实际生效的是哪一种"。
+- 语义色板从 10 个键扩到 **47 个键**（背景/表面/文字/强调/状态/按钮四态/选中/页签/滚动条/浮层/
+  角色/Markdown），深浅两套键名完全一致；为 `ComboBox`、`ListBox(Item)`、`TabControl(TabItem)`、
+  `CheckBox`、`RadioButton`、`ScrollBar`、`ToolTip`、`ContextMenu`、`ProgressBar`、`RichTextBox`
+  补齐控件模板，全部用 `{DynamicResource}`。
+- 修复**"切换后残留旧色"**：原来代码用 `TryFindResource` 取的是**取值快照**，已渲染的消息保留旧色；
+  改为 `SetResourceReference`（资源引用），`MarkdownRenderer` 的 `FlowDocument` 画刷同样改为资源引用，
+  无需重建文档即可跟随主题。
+- 对比度按 WCAG 2.1 复核并修正：输入框/按钮边框 1.53:1 → 3.13:1（浅色）、1.52:1 → 3.6:1（深色）；
+  滚动条滑块 1.76:1 → 3.11:1；`Brushes.IndianRed`/`MediumSeaGreen`/`#e06c6c` 三处硬编码颜色改走色板。
+- 新增 `tools/check_theme.py`（色板一致性 + **43 组强制对比度** + 禁止硬编码色值 + 校验所有资源引用存在）
+  与 `tools/check_ui_pixels.ps1`（**真实渲染**校验：启动程序、按主题截图、量主窗口平均亮度与
+  逐控件局部对比度；实测深色 0.076 / 浅色 0.850，文字最差 6.24:1 / 5.99:1）。
+
+**P0 · 发布目录结构**
+- 改为**便携版三层结构**：程序本体全部收进 `app\`，外层只留快捷方式、用户数据、结果目录、
+  语言包、示例与文档；构建脚本末尾新增断言，外层出现任何 exe/dll/pdb 即构建失败。
+- 新增 `ShortcutService.UserDataDirectory`（环境变量 `ECHODESK_DATA` → 父目录名为 `app` 且可写 → 程序目录）
+  与后端 `config.user_data_root()`（判定顺序保持一致）；`ui_state.json`、`snippets.json`、
+  `批量处理结果\` 全部落在**外层**。
+- 快捷方式改名 `EchoDesk-v0.2.1.lnk` 放外层，`WorkingDirectory` = 外层；失效判定新增"工作目录不对"
+  这一情况。语言包搜索链同时纳入外层与 `app\`，用户丢一个新的 `lang\ui\<locale>.json` 即可加语言，
+  升级不覆盖。
+- 构建脚本新增 `-ReuseBackendFrom`（只改前端时复用既有后端跳过 PyInstaller），并在其指向本次输出
+  目录时直接报错。`tools/installer.iss` 同步对齐安装版结构。
+
+**P0 · Emoji 显示为方块**
+- 根因实测确认：`Segoe UI` / `Consolas` / `Microsoft YaHei UI` 对项目在用的 emoji **覆盖率为 0/20**，
+  而字体链里根本没有 emoji 字体。新增三条带回退链的字体资源 `UiFontFamily` / `MonoFontFamily` /
+  `IconFontFamily`（含 `Segoe UI Emoji` 与 `Segoe UI Symbol`），`MarkdownRenderer` 同步改用。
+- 新增后端 `backend/emoji.py`（启动即切 UTF-8、按编码与控制台代码页判断能否输出 emoji、
+  不能则降级为 `[OK]`/`[!]`，支持 `--no-emoji` 与 `ECHODESK_NO_EMOJI`）与前端
+  `frontend/Services/Emoji.cs`（同表降级；设置窗口新增"使用 emoji"三态选项）；
+  未覆盖的 emoji 一律降级为 `?`，**绝不显示方块**。
+- 新增 `tools/check_emoji.ps1`（扫出在用的 61 个 emoji，逐个查三条字体链的字形覆盖率并集，
+  并校验前后端 ASCII 降级表覆盖完整）。
+
+**P1 · 双语翻译不完整**
+- 界面与后端用户可见文本全面收编进语言包（主窗口、设置窗口六个 Tab、自动化、技能市场、
+  模型中心、开发者 Tab、对话框、系统消息、错误提示）；补充**术语表**统一关键译法；
+  含变量的文本一律改为占位符。
+- 前端与后端语言包同步扩充（键数见修复记录 §10），`tools/check_lang.py` 的"缺键"与
+  "占位符不一致"检查作为 CI 门禁；`docs/<locale>/` 四份文档齐备。
+
+**P1 · 模型能力辅助与上下文管理**
+- 新增 `backend/model_profile.py`：参数量（元数据/文件名推断，**标注来源**）、量化格式
+  （`general.file_type` 数字枚举 → `Q4_K_M` 等可读名）、训练窗口、实际可用窗口、KV Cache 估算、
+  实测生成速度；五种**可操作的**能力提示；按内存/核数的硬件推荐（附推荐依据）。
+- 新增 `backend/prompts.py`：6 个任务型提示词模板（摘要/合同审查/结构化抽取/翻译/代码排错/分步推理），
+  每个都含具体角色、输出格式约束、思维链引导与少样本示例；`/task` 套用。
+- 新增 `/preset light|balanced|quality` 三档生成参数（温度/top_p/重复惩罚/回复长度），
+  `llm_engine` 相应支持 `top_p` 与 `repeat_penalty`。
+- **上下文管理增强**：状态区新增 `🗜 压缩上下文` 按钮（`/compact` 同源），新增 `context_mode`
+  滑动窗口模式，分段摘要参数（`chunk_chars`/`overlap_chars`/`max_summary_tokens`/…）可运行期调整。
+- 状态区新增模型能力项（参数量 · 量化 · 可用窗口 · 实测速度，实时刷新）与能力提示按钮；
+  模糊提问改为**追问**而不是硬答（可关闭）。
+- 新增 `SummaryCache`：分段摘要按"文件指纹 + 摘要参数"缓存，同一文件二次上传不重算；
+  文件改动后自动失效。
+- 回归测试：新增 `tools/test_capability.py`（58 项）。
+
+**P1 · 合规发布事宜**
+- `docs/PRIVACY.md` 扩写为"本机/联网"约定 + 5 个联网功能逐项表（目标域名、发送什么、不发送什么、
+  数据去向、保留多久、如何关闭）+ **数据出境与跨境传输专节** + 企业"彻底禁网"清单。
+- `docs/EULA.md` 补齐许可授予（Apache-2.0 优先条款）、使用限制、第三方组件声明、自动化与技能
+  责任归属、独立的责任限制条款、适用法律、联系方式与协议变更方式；并纠正 pyxtxt/AGPL 等过时表述。
+- 新增 `docs/SECURITY.md`（支持版本、报告渠道、**响应时间承诺**、不受理范围、安全设计说明与
+  已知限制），根目录 `SECURITY.md` 与之对齐；新增 `docs/zh-Hans/COMPLIANCE.md` 与
+  `docs/en/COMPLIANCE.md`（代理、证书、防火墙最小放行清单、组策略/受限环境、审计留痕）。
+- 新增 `tools/gen_sbom.py`（纯标准库）与 `docs/SBOM.json`（SPDX 2.3，52 个包）；
+  `--check` 可对照 `THIRD_PARTY_LICENSES.md` 报差异，已实际发现并记录清单缺登记项。
+
 ### 已知限制
 
 - 自动化、技能市场、模型中心的**逐条进度与深层诊断消息**仍为中文（界面与指令帮助已全部
@@ -106,6 +209,21 @@
 - 示例技能尚未真正发布到 GitHub marketplace（需要仓库凭据）。
 - 自动更新只到"检查与提示"，不含自动下载替换与增量更新。
 - 释放标记（发布物内置的 `docs/`）中的部分截图仍为占位说明。
+- `docs/THIRD_PARTY_LICENSES.md` 与其生成脚本的口径待复核：清单缺少 `playwright`、
+  `schedule` 及其依赖 `pyee`、`greenlet`（四项都在 `backend/requirements.txt` 里直接声明
+  或由其引入），且 16 个包的版本号与开发机现状不一致。
+  发布前请在**装全 `backend/requirements.txt` 的干净 venv** 里重跑
+  `python tools/gen_licenses.py` 重新生成清单，再用 `python tools/gen_sbom.py --check` 核对。
+- 修复版遗留（详见 [`v0.2.1-修复记录.md`](v0.2.1-修复记录.md) §11）：
+  - **未在 Windows 10 上实测**（Emoji 与主题结论基于字形覆盖率与色板数值，非系统版本）。
+  - **安装版（Inno Setup）未实际编译验证**：本机无 Inno Setup 6，`tools/installer.iss` 已按
+    便携版结构对齐，但未产出过 `setup.exe`。
+  - **自动化安全协议未落地独立审计日志**（协议文本与勾选状态存在配置里，没有不可篡改流水）。
+  - `model_hub.enabled` 与 `automation.start_with_windows` 两个配置项**未被代码读取**，
+    不要把前者当禁网开关；开机自启请把快捷方式放进 `shell:startup`。
+  - 向量检索（本地 RAG）**本版未做**：向量库依赖与全局体积要求冲突，建议下版先做零依赖的
+    关键词检索方案验证收益。
+  - `docs/` 下 `DEVELOPER.md`、`PRIVACY.md`、`EULA.md` 与研发/修复记录仍只有中文。
 
 ---
 

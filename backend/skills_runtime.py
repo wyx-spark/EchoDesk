@@ -43,6 +43,10 @@ from version import APP_VERSION
 #: 当前支持的技能 API 版本（主版本号相同即兼容）
 SKILL_API_VERSION = "1"
 
+#: 本地插件清单（skills_local.json）的当前 schema 版本。
+#: 1 → 2 只是新增了 denied 列表，旧文件仍可读（缺字段当空处理）。
+MANIFEST_SCHEMA = 2
+
 #: 自动化钩子可挂接的阶段（任务书 2.3）
 HOOK_STAGES: Tuple[str, ...] = ("before_task", "after_download", "after_summary", "after_task")
 
@@ -451,6 +455,19 @@ class SkillRecord:
     def dev(self) -> bool:
         return self.source == "dev"
 
+    def capabilities(self) -> List[str]:
+        """本插件实际注册到的能力（供批量确认框展示"它能做什么"）。"""
+        labels = []
+        if self.commands:
+            labels.append("commands")
+        if self.parsers:
+            labels.append("file_parsers")
+        if self.hooks:
+            labels.append("hooks")
+        if self.panels:
+            labels.append("ui_panels")
+        return labels
+
     @property
     def name(self) -> str:
         return self.manifest.get("name") or self.id
@@ -543,12 +560,35 @@ class SkillLoader:
 
     @property
     def dev_mode(self) -> bool:
-        """开发者模式：配置显式开启，或 ``skills_dev/`` 下确实存在插件。"""
-        if bool(getattr(self.cfg, "dev_mode", False)):
+        """开发者模式是否生效。
+
+        修复一：开关必须**双向可用**。原实现是"配置开启 **或** skills_dev 里有插件"
+        就返回 True，于是只要目录里有插件（随包附带的示例插件就在那里），
+        用户在界面上关掉开关后状态立刻又变回"开启"，表现为"关不掉"。
+
+        现在分两种情况：
+        * 用户显式设置过（``dev_mode_explicit``）→ 完全以配置为准，关就真的关；
+        * 从未设置过 → 沿用"目录里有插件就自动启用"的开箱即用行为，
+          并把自动判定的结果暴露为 :attr:`dev_detected` 供界面说明。
+        """
+        configured = bool(getattr(self.cfg, "dev_mode", False))
+        if bool(getattr(self.cfg, "dev_mode_explicit", False)):
+            return configured
+        if configured:
             return True
+        return self.dev_detected
+
+    @property
+    def dev_detected(self) -> bool:
+        """``skills_dev/`` 下是否存在插件（只看磁盘，不看开关）。"""
         if self._dev_mode_cache is None:
             self._dev_mode_cache = bool(self._scan_dev_dirs())
         return self._dev_mode_cache
+
+    @property
+    def dev_mode_explicit(self) -> bool:
+        """用户是否显式设置过开关（供界面显示"按目录自动启用"还是"按你的选择"）。"""
+        return bool(getattr(self.cfg, "dev_mode_explicit", False))
 
     # ---------- 日志 ----------
 
@@ -600,7 +640,7 @@ class SkillLoader:
     def local_manifest(self) -> Dict[str, Any]:
         data = _read_json(self.local_manifest_file, None)
         if not isinstance(data, dict):
-            data = {"schema": 1, "plugins": [], "trusted": []}
+            data = {"schema": MANIFEST_SCHEMA, "plugins": [], "trusted": [], "denied": []}
         plugins = data.get("plugins")
         if not isinstance(plugins, list):
             plugins = []
@@ -625,15 +665,27 @@ class SkillLoader:
         trusted = data.get("trusted")
         if not isinstance(trusted, list):
             trusted = []
-        return {"schema": 1, "plugins": cleaned, "trusted": [str(x) for x in trusted]}
+        # 修复一：还要记住"用户明确拒绝过"的插件，否则下次启动会反复追问同一件事。
+        # schema 1 的旧文件没有 denied 字段，读成空列表即可（等价于"尚未答复"）。
+        denied = data.get("denied")
+        if not isinstance(denied, list):
+            denied = []
+        return {
+            "schema": MANIFEST_SCHEMA,
+            "plugins": cleaned,
+            "trusted": [str(x) for x in trusted],
+            "denied": [str(x) for x in denied],
+        }
 
     def save_local_manifest(self, data: Dict[str, Any]) -> bool:
         payload = {
-            "schema": 1,
+            "schema": MANIFEST_SCHEMA,
             "note": ("本地插件清单：可指定任意路径的插件、启用/禁用、加载顺序与备注。"
-                     "相对路径以程序目录为基准。EchoDesk 不会自动修改 path 指向的目录内容。"),
+                     "相对路径以程序目录为基准。EchoDesk 不会自动修改 path 指向的目录内容。"
+                     "trusted/denied 记录用户在批量确认框里的选择，用于避免重复询问。"),
             "plugins": list(data.get("plugins") or []),
             "trusted": list(data.get("trusted") or []),
+            "denied": list(data.get("denied") or []),
         }
         ok = _write_json(self.local_manifest_file, payload)
         if ok:
@@ -652,15 +704,30 @@ class SkillLoader:
             data = self.local_manifest()
         return skill_id in set(data.get("trusted") or [])
 
+    def is_reviewed(self, skill_id: str, data: Optional[Dict[str, Any]] = None) -> bool:
+        """用户是否已经就该插件做过选择（信任或拒绝）——已答复过的不再询问。"""
+        if data is None:
+            data = self.local_manifest()
+        return (skill_id in set(data.get("trusted") or [])
+                or skill_id in set(data.get("denied") or []))
+
     def trust_plugin(self, skill_id: str, trusted: bool = True) -> bool:
-        """记录"信任该本地插件"（首次加载时的确认框结果，任务书 2B.9）。"""
+        """记录用户对某个本地插件的选择（任务书 2B.9 + 修复一"记忆选择"）。
+
+        ``trusted=True`` 记入 trusted 并移出 denied；``trusted=False`` 反之。
+        两个列表都持久化到 ``skills_local.json``，因此**下次启动不再重复询问**。
+        """
         data = self.local_manifest()
         trusted_ids = set(data.get("trusted") or [])
+        denied_ids = set(data.get("denied") or [])
         if trusted:
             trusted_ids.add(skill_id)
+            denied_ids.discard(skill_id)
         else:
+            denied_ids.add(skill_id)
             trusted_ids.discard(skill_id)
         data["trusted"] = sorted(trusted_ids)
+        data["denied"] = sorted(denied_ids)
         return self.save_local_manifest(data)
 
     def resolve_plugin_path(self, raw: str) -> str:
@@ -692,6 +759,68 @@ class SkillLoader:
             )
         except OSError:
             return []
+
+    # ---------- 随包示例插件（修复一"内置插件静默"） ----------
+
+    def builtin_ids(self) -> set:
+        """随包附带的官方示例插件 ID 集合。
+
+        判定依据是**随包 examples 目录里实际存在的插件目录名**，而不是插件自己在
+        skill.json 里声明的标记 —— 后者任何人都能伪造，用它来决定"跳过信任确认"
+        等于把确认框变成摆设。用户手工放进 ``skills_dev/`` 的插件不在这个集合里，
+        因此一定会出现在批量确认框中（同名覆盖官方示例的情况除外，那种情况界面会
+        标成"已覆盖"，用户仍然看得到）。
+        """
+        root = self.examples_dir()
+        ids = set()
+        try:
+            for name in os.listdir(root):
+                path = os.path.join(root, name)
+                if not os.path.isdir(path) or name.startswith("."):
+                    continue
+                manifest = _read_json(os.path.join(path, "skill.json"), None)
+                if isinstance(manifest, dict):
+                    parsed = parse_manifest(manifest)
+                    ids.add(sanitize_id(parsed["id"] or parsed["name"] or name))
+                else:
+                    ids.add(sanitize_id(name))
+        except OSError:
+            pass
+        return ids
+
+    def is_builtin(self, skill_id: str) -> bool:
+        """是否随包示例插件（这类插件默认启用且不弹确认框）。"""
+        return skill_id in self.builtin_ids()
+
+    def pending_review(self) -> List[Dict[str, Any]]:
+        """待用户确认的本地插件清单（修复一：一次性汇总确认框的数据来源）。
+
+        只包含"需要询问且用户还没答复过"的插件：
+        * 来源是 ``dev`` / ``local``（第三方路径）;
+        * 不是随包示例插件;
+        * 既不在 trusted 也不在 denied 里（答复过就不再问）。
+        """
+        data = self.local_manifest()
+        trusted = set(data.get("trusted") or [])
+        denied = set(data.get("denied") or [])
+        builtin = self.builtin_ids()
+        pending: List[Dict[str, Any]] = []
+        with self._lock:
+            records = list(self.records.values())
+        # records 可能还没建立（首次 discover 之前），此时按磁盘扫描兜底
+        if records:
+            for rec in records:
+                if rec.source not in ("dev", "local"):
+                    continue
+                if rec.id in trusted or rec.id in denied or rec.id in builtin:
+                    continue
+                pending.append({
+                    "id": rec.id, "name": rec.name, "path": rec.path,
+                    "source": rec.source, "builtin": False,
+                    "permissions": dict(rec.manifest.get("permissions") or {}),
+                    "capabilities": sorted(rec.capabilities()),
+                })
+        return pending
 
     def _scan_install_dir(self) -> List[str]:
         try:
@@ -738,10 +867,22 @@ class SkillLoader:
         manifest_data = self.local_manifest()
         self._manifest_cache = manifest_data
         trusted = set(manifest_data.get("trusted") or [])
+        denied = set(manifest_data.get("denied") or [])
+        builtin = self.builtin_ids()
         verified_repos = self._verified_ids()
         registry = self._load_registry()
         registry_ids = {str(e.get("id")) for e in registry.get("skills") or []}
         require_verified = bool(getattr(self.cfg, "require_verified", True))
+
+        def review_needed(skill_id: str) -> bool:
+            """是否需要弹确认框（修复一）。
+
+            随包示例插件静默通过；用户已答复过（信任或拒绝）的也不再询问；
+            被明确拒绝的插件由调用方负责不加载。
+            """
+            if skill_id in builtin or skill_id in trusted or skill_id in denied:
+                return False
+            return True
 
         by_id: Dict[str, SkillRecord] = {}
         order_counter = 0
@@ -753,12 +894,12 @@ class SkillLoader:
             if not isinstance(manifest_raw, dict):
                 # 没有 skill.json：开发目录给出告警记录，其它来源直接跳过
                 if source == "dev":
-                    rec = SkillRecord(sanitize_id(os.path.basename(path)), path, source,
-                                      parse_manifest({}), self.log)
+                    missing_id = sanitize_id(os.path.basename(path))
+                    rec = SkillRecord(missing_id, path, source, parse_manifest({}), self.log)
                     rec.error = _t("skill.bundle_missing", id=os.path.basename(path))
-                    rec.enabled = enabled
+                    rec.enabled = enabled and missing_id not in denied
                     rec.alias, rec.note, rec.order = alias, note, order
-                    rec.trust_pending = sanitize_id(os.path.basename(path)) not in trusted
+                    rec.trust_pending = review_needed(missing_id)
                     self._logwrite("WARNING", f"开发插件 {path} 缺少 skill.json，未加载")
                     by_id.setdefault(rec.id, rec)
                     return rec
@@ -768,7 +909,8 @@ class SkillLoader:
             skill_id = sanitize_id(manifest["id"] or manifest["name"] or os.path.basename(path))
             rec = SkillRecord(skill_id, path, source, manifest, self.log)
             rec.alias, rec.note, rec.order = alias, note, order
-            rec.enabled = enabled
+            # 用户明确拒绝过的本地插件不再加载（修复一：禁用要真的生效）
+            rec.enabled = enabled and skill_id not in denied
             order_counter += 1
             if not rec.order:
                 rec.order = order_counter
@@ -785,7 +927,7 @@ class SkillLoader:
                 elif repo and repo not in verified_repos and repo in self._cache_repos():
                     rec.verified = False
                     self._logwrite("WARNING", f"{skill_id}: 仓库 {repo} 在市场验证缓存中标记为未通过，已跳过")
-            rec.trust_pending = source in ("dev", "local") and skill_id not in trusted
+            rec.trust_pending = source in ("dev", "local") and review_needed(skill_id)
 
             # 解析入口
             entry = manifest["entry"] or manifest["bundle"]
@@ -1051,6 +1193,30 @@ class SkillLoader:
         summary["scope"] = "all"
         return summary
 
+    def unload_dev(self) -> List[str]:
+        """卸载全部来自开发目录/本地清单的插件，并把它们的指令从指令表撤掉。
+
+        修复一：关闭开发者模式时必须真的把这些插件从内存与指令表里清出去
+        （只改开关不卸载的话，``/hello`` 之类仍然可用，用户会觉得"没关掉"）。
+        返回被卸载的插件 ID 列表。
+        """
+        with self._lock:
+            targets = [r.id for r in self.records.values() if r.source in ("dev", "local")]
+        removed: List[str] = []
+        for skill_id in targets:
+            try:
+                if self.unload(skill_id):
+                    removed.append(skill_id)
+            except Exception:  # noqa: BLE001 - 单个插件卸载失败不应阻断其余
+                self._logwrite("WARNING", f"卸载开发插件 {skill_id} 失败", sys.exc_info()[1])
+        with self._lock:
+            for skill_id in targets:
+                self.records.pop(skill_id, None)
+        if removed:
+            self._logwrite("INFO", f"开发者模式关闭：已卸载 {len(removed)} 个开发插件 "
+                                   f"({', '.join(removed)})")
+        return removed
+
     # ---------- 与主程序接线 ----------
 
     def register_skill_command(self, rec: SkillRecord, name: str, handler: Callable[..., Any], *,
@@ -1159,8 +1325,16 @@ class SkillLoader:
         from file_parser import skill_parser_extensions
 
         records = sorted(self.records.values(), key=lambda r: (r.order, r.id))
+        enabled_dev = [r.id for r in records if r.enabled and r.source in ("dev", "local") and r.loaded]
         return {
             "dev_mode": self.dev_mode,
+            # 修复一：把"开关是谁定的"也告诉界面，用户才能看懂为什么开关是这个状态
+            "dev_mode_explicit": self.dev_mode_explicit,
+            "dev_detected": self.dev_detected,
+            "dev_enabled": enabled_dev,
+            "dev_count": len(self._scan_dev_dirs()),
+            "trust_pending_ids": [r.id for r in records if r.trust_pending],
+            "builtin_ids": sorted(self.builtin_ids()),
             "dirs": {
                 "dev": self.dev_dir,
                 "installed": self.install_dir,

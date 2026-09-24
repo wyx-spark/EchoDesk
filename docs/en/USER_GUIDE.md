@@ -1,4 +1,4 @@
-# EchoDesk User Guide (v0.2.0)
+# EchoDesk User Guide (v0.2.1)
 
 A hands-on manual for real-world use. For a quick start and troubleshooting, see
 [`FAQ.md`](FAQ.md); for field-by-field instructions on the automation settings, see
@@ -10,14 +10,18 @@ Chinese version: [`docs/zh-Hans/USER_GUIDE.md`](../zh-Hans/USER_GUIDE.md).
 ## 1. Installation and startup
 
 ### Portable version (recommended)
-1. Put the whole `EchoDesk-v0.2.0` folder anywhere you like (desktop, D: drive or USB stick all work);
-2. Double-click **"EchoDesk 启动.lnk"** inside that folder — this is the only entry point, so you never have
-   to work out the difference between `EchoDesk.exe` and `backend\EchoDeskBackend.exe`
+1. Put the whole `EchoDesk-v0.2.1` folder anywhere you like (desktop, D: drive or USB stick all work);
+2. Double-click **"EchoDesk-v0.2.1.lnk"** inside that folder — this is the only entry point, so you never have
+   to work out the difference between `app\EchoDesk.exe` and `app\backend\EchoDeskBackend.exe`
    (the latter is launched automatically by the UI; never run it on its own);
 3. The first launch handles three things in turn:
-   - If there is no model in `backend\models\` → it asks whether to download one (about 508 MB, internet required);
+   - If there is no model in `app\backend\models\` → it asks whether to download one (about 508 MB, internet required);
    - If the folder has no shortcut → it asks whether to create one;
    - It shows the onboarding guide once.
+
+**Two layers**: the outer folder (`EchoDesk-v0.2.1\`) holds only the shortcut, your user data and the docs,
+while **the program itself lives entirely in `app\`** — no exe/dll ever shows up in the outer folder, and
+uninstalling simply means deleting the whole folder.
 
 ### Installed version
 Install with the `setup.exe` produced from `tools\installer.iss`, then start it from the Start menu or a
@@ -26,20 +30,32 @@ system's "Apps and features".
 
 ### Directory layout and the locations you need to know
 
+The paths below are relative to the portable **outer** folder (`EchoDesk-v0.2.1\`). **`app\` is the program
+itself and is not meant for your own files; the outer folder is your data directory**, so back up and clean up
+from there.
+
 | Location | Contents | Can I delete it? |
 | --- | --- | --- |
-| `backend\config.json` | All configuration (model, window, summarization, automation, marketplace) | Yes (recreated with default values) |
-| `backend\models\*.gguf` | Local models | Yes (the next launch offers to download them again) |
-| `backend\session.json` | The previous conversation (restored automatically) | Yes (clears the history) |
-| `backend\browser_state.json` | Automation login state (cookies) | Yes (signs you out everywhere) |
-| `backend\automation_log.jsonl` | Automation audit log | Yes (archiving it first is recommended) |
-| `backend\skills\` + `skills_registry.json` | Installed skills | Uninstall them from the marketplace instead |
+| `app\backend\config.json` | All configuration (model, window, summarization, automation, marketplace) | Yes (recreated with default values) |
+| `app\backend\models\*.gguf` | Local models | Yes (the next launch offers to download them again) |
+| `app\backend\session.json` | The previous conversation (restored automatically) | Yes (clears the history) |
+| `app\backend\browser_state.json` | Automation login state (cookies) | Yes (signs you out everywhere) |
+| `app\backend\automation_log.jsonl` | Automation audit log | Yes (archiving it first is recommended) |
+| `app\backend\skills\` + `app\backend\skills_registry.json` | Installed skills | Uninstall them from the marketplace instead |
+| `app\backend\summary_cache.json` | Chunked-summary cache for long documents (readable JSON) | Yes (recomputed on the next upload) |
+| `批量处理结果\` | Automation results (layered as `date\task name\`) | Yes (archiving them first is recommended) |
+| `lang\` + `app\lang\ui\` | Backend / UI language packs (add your own languages here) | Better not (deleting them falls back to the built-in text) |
 | `ui_state.json` | Window position/size, font size, theme | Yes (resets the interface state) |
 | `snippets.json` | Canned phrases | Yes |
 | `使用说明.txt` | Structural notes for users | Yes |
 
 **Backup**: if you want to keep your conversation history and settings, just copy the three files
-`backend\session.json`, `backend\config.json` and `snippets.json`.
+`app\backend\session.json`, `app\backend\config.json` and `snippets.json`.
+
+**Where your data lives**: `ui_state.json`, `snippets.json` and `批量处理结果\` all sit in the portable
+**outer** folder (not inside `app\`). To put them somewhere else instead (a USB stick or a user folder, say),
+set the `ECHODESK_DATA` environment variable to the target directory before starting; the program writes user
+data there.
 
 ---
 
@@ -65,12 +81,36 @@ system's "Apps and features".
 /prompt 你是财务顾问    temporarily change the assistant's role
 /search on            turn on web search (searches the web before answering; internet required)
 /model list           list the local models / /model 别名 to switch
-/status               show the model, window, context usage and KV Cache estimate
+/task list            task-oriented prompt templates (summary, contract review, extraction, translation, code debugging, reasoning)
+/preset light         generation presets in three steps: light / balanced / quality
+/compact              compress the context right away to free up room
+/darkmode auto        theme: on = dark, off = light, auto = follow the system
+/status               show the model, window, context usage, KV Cache estimate and model capability (size / quantization / measured speed)
+/about                version, publisher and the local paths of the compliance documents
 /save 会议纪要         export the conversation as Markdown
 /undo                 undo the most recent question-and-answer round
 /clear                clear the conversation and the file context
 /exit                 quit (10-second countdown)
 ```
+
+### Getting more out of a small local model
+
+- **Task templates**: `/task list` shows six templates — summary (`summary`), contract review (`contract`),
+  structured extraction (`extract`), translation (`translate`), code explanation and debugging (`code`) and
+  step-by-step reasoning (`reason`). Apply one with `/task contract` (a prefix is enough, e.g. `/task con`),
+  and clear it with `/task off`. A template and `/prompt` both write into the custom prompt, so whichever you
+  set last wins.
+- **Generation presets**: `/preset list` shows them; `light` (shortest, fastest replies), `balanced` (the
+  default) and `quality` (longest replies) switch the temperature, top_p, repeat penalty and reply-length cap
+  in one step. The choice is written into the configuration and survives a restart; if you later change the
+  temperature by hand with `/temp`, your manual value wins.
+- **Compressing the context**: `/compact` turns earlier conversation into a summary right away to free up room
+  (with `context_mode` set to `slide` it discards the oldest history instead); you no longer have to wait for
+  the automatic trigger above 80%.
+- **Being asked a follow-up question is normal**: when a question is too vague and there is neither a file
+  context nor any history (just "what about this?"), the program asks you to clarify the object, the expected
+  output form and any constraints instead of guessing at an answer. To switch that off, set `clarify_vague` to
+  `false` in `app\backend\config.json`.
 
 ---
 
@@ -88,12 +128,17 @@ losing information because it does not fit in the context window.
 4. If the summary is too coarse and you need the details:
    - use `/summarize` to generate the summary again;
    - or split the contract into chapters and upload them one by one;
-   - or temporarily raise `context_length` in `backend\config.json` (the larger it is, the slower it runs and
+   - or temporarily raise `context_length` in `app\backend\config.json` (the larger it is, the slower it runs and
      the more memory it uses; `/status` shows the KV Cache estimate);
 5. To keep your conclusions on record: `/save 合同审查意见`.
 
 **Reading the status line**: "context: about X/Y tokens" under `/status` shows current usage and the automatic
 summarization threshold (80% of the window).
+
+**Summaries are cached**: uploading the same document a second time reuses the previous chunked summary
+instead of recomputing it, and the cache expires automatically once the file changes. The cache lives in
+`app\backend\summary_cache.json` (readable JSON — delete it to clear it), and you can switch caching off with
+`summary_cache: false` in `app\backend\config.json`.
 
 ---
 
@@ -121,7 +166,7 @@ before you start a run**.
 ### 4.2 Safety agreement
 The automation switch only becomes available once you tick "I have read and understood the safety agreement
 above" (the backend enforces this). The agreement version and the time you accepted it are recorded in
-`backend\automation_log.jsonl`.
+`app\backend\automation_log.jsonl`.
 
 ### 4.3 Running
 - Click "▶ Run once now";
@@ -138,11 +183,11 @@ above" (the backend enforces this). The agreement version and the time you accep
 ### 4.4 Scheduling
 Tick "Enable schedule" and enter the times of day it should run (for example `09:00, 18:30`).
 Scheduled tasks are fired by a backend thread while the program is running. If you want them to run at
-startup, copy "EchoDesk 启动.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
+startup, copy "EchoDesk-v0.2.1.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
 
 ### 4.5 Login state
 The first time, you need to log in manually once in the browser; the program stores the login state in
-`backend\browser_state.json` and reuses it from then on. Delete that file to sign out of everything.
+`app\backend\browser_state.json` and reuses it from then on. Delete that file to sign out of everything.
 
 ---
 
@@ -167,6 +212,20 @@ Where skills come from: **discovery is limited to the GitHub topic `echodesk-plu
 Getting no results usually means that no repository carries that topic at the moment, not that the program is
 broken (see the FAQ for details).
 
+### Local plugins and developer mode
+
+The **developer mode switch** on the "Developer" page of the Settings window works in both directions: off
+means off, and it stays off after a restart.
+
+- Turning developer mode off **unloads the development plugins** and removes them from the command list, and
+  clears the development log `app\backend\skills_dev.log`;
+- The first time **third-party local plugins** are loaded (they live in `app\backend\skills_dev\`) you get
+  **one** summary confirmation dialog: it lists each plugin's source, path, declared capabilities and
+  permissions, and lets you **tick them one by one, enable all or disable all**. Your choices are remembered,
+  so a plugin you refused is never asked about again;
+- **Bundled example plugins** (Hello World and the OFD reader under `examples\skills\`) are enabled by default
+  and are never asked about.
+
 ---
 
 ## 6. Networking and privacy at a glance
@@ -182,6 +241,11 @@ broken (see the FAQ for details).
 Beyond the above there is **no telemetry, no tracking and no crash reporting** of any kind.
 See `docs/PRIVACY.md` for details.
 
+**Compliance documents**: `/about` shows the version, the publisher and the **actual local paths** of these
+files — `LICENSE` and `NOTICE` in the outer folder, plus `docs\PRIVACY.md`, `docs\EULA.md`,
+`docs\THIRD_PARTY_LICENSES.md` and `docs\SBOM.json`. The full set also includes `docs\SECURITY.md`,
+`docs\zh-Hans\COMPLIANCE.md` and `docs\en\COMPLIANCE.md`.
+
 ---
 
 ## 7. Keyboard and productivity
@@ -195,9 +259,28 @@ See `docs/PRIVACY.md` for details.
 | `Ctrl+O` | Upload a file |
 | `Ctrl+Shift+C` | Copy the whole conversation |
 | `Ctrl+滚轮` / `Ctrl+加/减/0` | Adjust font size / reset |
-| `Ctrl+T` | Toggle light and dark theme |
+| `Ctrl+T` | Switch between the light and dark themes (the three-way choice lives in Settings) |
 | `Ctrl+,` | Open Settings |
 | `Ctrl+M` | Open the skill marketplace |
+
+**Theme (three-way)**: the "General" page of the Settings window offers **Follow the system / Light / Dark**.
+"Follow the system" tracks the Windows app mode, so the interface changes the moment you switch light/dark in
+Windows. `Ctrl+T` flips between light and dark, and `/darkmode on|off|auto` sets it directly.
+
+**Emoji display (three-way)**: the same "General" page offers **Auto / Always / Never**. With "Auto", if this
+machine has no emoji font the interface falls back to plain-text markers (`[OK]` / `[!]`) instead of showing
+empty boxes.
+
+**Status strip**: the row under the input box refreshes live — web search, automation, the skill marketplace,
+context usage, the KV Cache estimate, and the **model capability item** (size · quantization · usable window ·
+measured generation speed):
+
+- Clicking the capability item opens "Settings → Model" with the full capability details and the recommended
+  configuration;
+- The capability-hint button appears only when a model capability limit is actually hit (a small usable window,
+  very slow generation, a KV Cache estimate above half of the machine's memory, and so on); opening it lists
+  each reason together with the action you can take;
+- "🗜 Compress context" is the same as running `/compact` once.
 
 **Command palette**: typing `/` brings up the command list; use `↑↓` to select, `Tab` to complete and `Enter`
 to run. The "+" in the bottom-left corner moves the `/xxx` in the input box onto its own command input line.

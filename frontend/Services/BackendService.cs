@@ -10,7 +10,7 @@ namespace EchoDesk.Services;
 public sealed class NeedDownloadException : Exception
 {
     public NeedDownloadException(string model, long size, string repo, string detail)
-        : base(detail.Length > 0 ? detail : $"本地缺少模型 {model}")
+        : base(detail.Length > 0 ? detail : Loc.T("main.error.modelMissingDetail", "本地缺少模型 {0}", model))
     {
         Model = model;
         Size = size;
@@ -84,14 +84,20 @@ public sealed class BackendService : IDisposable
 
     private readonly string _backendPath;
 
-    /// <summary>后端可执行文件完整路径（发布布局为 程序目录\backend\EchoDeskBackend.exe）。</summary>
+    /// <summary>后端可执行文件完整路径（发布布局为 app\backend\EchoDeskBackend.exe）。</summary>
     public string BackendPath => _backendPath;
 
-    /// <summary>后端工作目录：config.json、session.json、models/ 都在该目录下。</summary>
+    /// <summary>
+    /// 后端工作目录：config.json、session.json、models/、skills_dev/ 都在该目录下
+    /// （即 app\backend\）。注意**用户数据不在**这里 —— `ui_state.json`、常用语与
+    /// 「批量处理结果」在外层目录，见 ShortcutService.UserDataDirectory（修复七）。
+    /// </summary>
     public string? BackendDirectory => Path.GetDirectoryName(_backendPath);
 
     /// <summary>
-    /// 定位后端可执行文件。发布布局下后端位于 <c>backend\</c> 子文件夹（PyInstaller onedir），
+    /// 定位后端可执行文件。发布布局下后端位于 <c>app\backend\</c> 子文件夹（PyInstaller onedir），
+    /// 而 <see cref="AppContext.BaseDirectory"/> 就是前端 exe 所在的 <c>app\</c>，
+    /// 因此下面的相对拼接在两种布局（扁平/便携版三层）下都成立。
     /// 开发时可用环境变量 <c>ECHODESK_BACKEND</c> 指定路径。
     /// </summary>
     public static string ResolveBackendPath()
@@ -150,7 +156,7 @@ public sealed class BackendService : IDisposable
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
-        _process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动后端进程。");
+        _process = Process.Start(startInfo) ?? throw new InvalidOperationException(Loc.T("main.error.startProcessFailed", "无法启动后端进程。"));
         _process.EnableRaisingEvents = true;
         _process.Exited += Process_Exited;
         _writer = _process.StandardInput;
@@ -221,9 +227,9 @@ public sealed class BackendService : IDisposable
     public async Task SendFireAndForgetAsync(object request)
     {
         if (_writer is null)
-            throw new InvalidOperationException("后端尚未启动。");
+            throw new InvalidOperationException(Loc.T("main.error.notStarted", "后端尚未启动。"));
         if (!IsRunning)
-            throw new InvalidOperationException("后端进程已退出。");
+            throw new InvalidOperationException(Loc.T("main.error.backendExited"));
         await _writer.WriteLineAsync(JsonSerializer.Serialize(request));
         await _writer.FlushAsync();
     }
@@ -254,7 +260,7 @@ public sealed class BackendService : IDisposable
             {
                 string? line = await ReadLineAsync(idleTimeout, cancellationToken);
                 if (line is null)
-                    throw new InvalidOperationException("后端没有返回响应（进程可能已退出）。");
+                    throw new InvalidOperationException(Loc.T("main.error.noResponse"));
                 if (!line.TrimStart().StartsWith('{'))
                 {
                     Debug.WriteLine($"[backend:ignored] {line}");
@@ -296,9 +302,9 @@ public sealed class BackendService : IDisposable
     private void EnsureRunning()
     {
         if (_writer is null || _reader is null)
-            throw new InvalidOperationException("后端尚未启动。");
+            throw new InvalidOperationException(Loc.T("main.error.notStarted", "后端尚未启动。"));
         if (!IsRunning)
-            throw new InvalidOperationException("后端进程已退出。");
+            throw new InvalidOperationException(Loc.T("main.error.backendExited"));
     }
 
     /// <summary>获取请求闸门；超过阈值仍未释放则抛出 <see cref="BackendBusyException"/>。</summary>
@@ -311,7 +317,7 @@ public sealed class BackendService : IDisposable
             return;
         }
         if (!await _requestGate.WaitAsync(wait, cancellationToken))
-            throw new BackendBusyException("后端正忙（可能正在生成回复或运行自动化），请稍后重试。");
+            throw new BackendBusyException(Loc.T("main.error.busy"));
     }
 
     /// <summary>从队列取一行；超过空闲阈值抛出 <see cref="BackendTimeoutException"/>，队列关闭返回 null。</summary>
@@ -338,7 +344,7 @@ public sealed class BackendService : IDisposable
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             throw new BackendTimeoutException(
-                $"后端在 {idleTimeout.Value.TotalMinutes:0.#} 分钟内没有响应，已中断等待。可稍后重试，或查看 backend_crash.log。");
+                Loc.T("main.error.idleTimeout", "后端在 {0:0.#} 分钟内没有响应，已中断等待。可稍后重试，或查看 backend_crash.log。", idleTimeout.Value.TotalMinutes));
         }
         catch (ChannelClosedException)
         {
@@ -352,7 +358,7 @@ public sealed class BackendService : IDisposable
         {
             string? line = await ReadLineAsync(idleTimeout, cancellationToken);
             if (line is null)
-                throw new InvalidOperationException("后端没有返回响应（进程可能已退出）。");
+                throw new InvalidOperationException(Loc.T("main.error.noResponse"));
             if (!line.TrimStart().StartsWith('{'))
             {
                 Debug.WriteLine($"[backend:ignored] {line}");
@@ -368,7 +374,7 @@ public sealed class BackendService : IDisposable
         {
             string? line = await ReadLineAsync(HeavyIdleTimeout, cancellationToken);
             if (line is null)
-                throw new InvalidOperationException("后端未完成启动即退出。");
+                throw new InvalidOperationException(Loc.T("main.error.exitedDuringStartup", "后端未完成启动即退出。"));
             if (!line.TrimStart().StartsWith('{'))
                 continue;
 
@@ -400,7 +406,7 @@ public sealed class BackendService : IDisposable
         string name, Action<string> onDelta, Action<string>? onMessage = null)
     {
         if (_writer is null || _reader is null)
-            throw new InvalidOperationException("后端尚未启动。");
+            throw new InvalidOperationException(Loc.T("main.error.notStarted", "后端尚未启动。"));
 
         await _writer.WriteLineAsync(JsonSerializer.Serialize(new { action = "model_download", name }));
         await _writer.FlushAsync();
@@ -410,7 +416,7 @@ public sealed class BackendService : IDisposable
             // 下载大模型可能长时间没有新进度行（慢速网络），阈值给足
             string? line = await ReadLineAsync(HeavyIdleTimeout, CancellationToken.None);
             if (line is null)
-                throw new InvalidOperationException("后端在下载模型期间退出。");
+                throw new InvalidOperationException(Loc.T("main.error.exitedDuringDownload", "后端在下载模型期间退出。"));
             if (!line.TrimStart().StartsWith('{'))
                 continue;
 

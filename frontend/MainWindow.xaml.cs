@@ -21,7 +21,6 @@ public partial class MainWindow : Window
 
     private BackendService? _backend;
     private bool _isProcessing;
-    private bool _isDark;
     private bool _stopRequested;
     private bool _stopMode;          // 发送按钮当前处于"停止"模式（流式生成中）
     private bool _commandLike;       // 聊天输入框出现指令格式（"/"+英文字母）
@@ -42,6 +41,8 @@ public partial class MainWindow : Window
     private string _mdPending = "";
     // 底部通知条计时器（下载完成/自动化完成/错误提示）
     private DispatcherTimer? _toastTimer;
+    // 修复四：最近一次能力提示清单（点状态区的提示按钮时逐条展示）
+    private List<string> _capabilityWarnings = new();
     // 设置窗口（单实例：再次点击时激活已有窗口）
     private SettingsWindow? _settingsWindow;
 
@@ -56,6 +57,9 @@ public partial class MainWindow : Window
     {
         new("/help", "", "显示此指令介绍：完整指令列表、用法与作用", "显示全部指令及用法", false),
         new("/mode", "<编号|缩写|全称>", "切换对话模式（general/summary/translate/code/contract/creative）；/mode list 查看全部模式及编号；切换时自动套用温度预设", "切换对话模式", true),
+        new("/task", "[list|<模板名>|off]", "套用任务型提示词模板（摘要、合同审查、结构化抽取、翻译、代码排错、分步推理）；小模型按结构化提示词作答明显更稳，/task list 查看全部", "套用任务提示词模板", true),
+        new("/preset", "[list|light|balanced|quality]", "一键切换轻量/均衡/高质量三档生成参数（温度、top_p、重复惩罚、回复长度）", "切换生成参数预设", true),
+        new("/compact", "", "立刻压缩上下文：把较早的对话转成摘要（或按滑动窗口模式丢弃）腾出空间，不必等自动触发", "压缩上下文", false),
         new("/file", "<路径>", "上传本地文件并加入上下文；支持 Office/TXT/PDF，加密 Office 文档在装有 WPS 的机器上自动解密；提问时提及文件即自动注入内容。长文档超出上下文窗口时自动分段摘要后注入，不截断丢信息", "上传文件加入上下文", true),
         new("/summarize", "", "对当前已加载的长文档手动触发全文分段摘要（逐段摘要后合并），摘要进度实时显示在对话框中", "手动触发全文摘要", false),
         new("/search", "on|off", "开启/关闭联网搜索（DuckDuckGo）；开启后提问前会先搜索网络参考信息（需联网）", "开启/关闭联网搜索", true),
@@ -66,7 +70,7 @@ public partial class MainWindow : Window
         new("/darkmode", "on|off", "切换深色/浅色界面主题（即时渲染，无需重启）", "切换深/浅色主题", true),
         new("/stop", "", "停止当前正在生成中的回复（也可点 ⏹ 停止 按钮）", "停止当前生成", false),
         new("/snippet", "add|remove|list …", "管理常用语模板：/snippet add 名称 文本 · remove 名称 · list", "管理常用语模板", true),
-        new("/status", "", "查看当前状态：模型/架构、模式、温度、线程、GPU、上下文占用、搜索、对话轮数与文件", "查看当前状态与占用", false),
+        new("/status", "", "查看当前状态：模型/架构、模式、温度、线程、GPU、上下文占用、搜索、对话轮数与文件；以及模型能力（参数量/量化/训练窗口/实测速度）与能力提示", "查看当前状态与能力", false),
         new("/clear", "", "清空对话历史与文件上下文，重新开始", "清空对话重新开始", false),
         new("/undo", "", "撤回最近一轮问答（各一条）", "撤回最近一轮问答", false),
         new("/save", "<文件名>", "把对话历史导出为 Markdown 文件（自动补 .md 后缀）", "导出对话为 Markdown", true),
@@ -155,8 +159,14 @@ public partial class MainWindow : Window
     {
         RestoreWindowState();
         // 主题与字号来自上次会话（ui_state.json）
-        if (!_settings.DarkMode)
-            ApplyTheme(false);
+        // 修复二：这里原来只在"配置为浅色"时调 ApplyTheme，导致配置为深色时
+        // 启动界面仍是 App.xaml 合并进去的浅色字典，深色永远出不来。
+        // 现在无条件交给 ThemeService 应用一次（含"跟随系统"的解析）。
+        ThemeService.Apply(ThemeService.Parse(_settings.Theme), notify: false);
+        ThemeService.HookSystemChanges();
+        ThemeService.Changed += OnThemeChanged;
+        // 修复六：按本机字体与用户偏好决定是否输出 emoji 图标
+        Emoji.Configure(_settings.EmojiMode);
         _fontSize = Math.Clamp(_settings.FontSize, 10, 24);
         UpdateAllMessageFontSize();
         ApplyStatusStripState();   // 优化五：按上次的选择展开/折叠轻量状态区
@@ -343,7 +353,9 @@ public partial class MainWindow : Window
         }
         _settings.WindowMaximized = WindowState == WindowState.Maximized;
         _settings.FontSize = _fontSize;
-        _settings.DarkMode = _isDark;
+        // 主题由 ThemeService 负责持久化（修复二）：这里不再回写 DarkMode，
+        // 否则会把"跟随系统"覆盖成固定值。
+        _settings.Theme = ThemeService.Serialize(ThemeService.Selected);
         _settings.Save();
     }
 
@@ -440,6 +452,85 @@ public partial class MainWindow : Window
         }
         if (root.TryGetProperty("kv_cache_text", out JsonElement kvEl) && kvEl.ValueKind == JsonValueKind.String)
             SetKvCacheStatus(kvEl.GetString() ?? "");
+        // 修复四（方向七）：模型能力与实测速度也进状态区
+        if (root.TryGetProperty("capability", out JsonElement capEl) && capEl.ValueKind == JsonValueKind.Object)
+            SetCapabilityStatus(capEl);
+    }
+
+    /// <summary>
+    /// 状态区：模型能力（修复四 方向七）。
+    ///
+    /// 显示"参数量 · 量化 · 可用窗口 · 实测速度"四项——这是用户判断
+    /// "这个模型能不能干这件事"所需要的最小信息集。四项都缺时保持占位文本，
+    /// 不显示空白（空白会让人以为界面坏了）。
+    /// </summary>
+    private void SetCapabilityStatus(JsonElement capability)
+    {
+        string parameters = GetStringField(capability, "parameters_text");
+        string quantization = GetStringField(capability, "quantization");
+        int usable = GetIntField(capability, "usable_context");
+        double tps = GetDoubleField(capability, "last_tps");
+
+        var parts = new List<string>();
+        if (parameters.Length > 0)
+            parts.Add(parameters);
+        if (quantization.Length > 0)
+            parts.Add(quantization);
+        if (usable > 0)
+            parts.Add($"{usable / 1024}k");
+        if (tps > 0)
+            parts.Add(Loc.T("main.strip.capabilityTps", "{0:0.#} 字/秒", tps));
+        if (parts.Count == 0)
+            return;
+        StripCapabilityText.Text = Loc.T("main.strip.capability", "🧠 {0}", string.Join(" · ", parts));
+
+        var tips = new List<string>
+        {
+            Loc.T("main.strip.capabilityDetail", "参数量 {0} · 量化 {1} · 可用窗口 {2} tokens",
+                parameters.Length > 0 ? parameters : Loc.T("main.value.unknown", "未知"),
+                quantization.Length > 0 ? quantization : Loc.T("main.value.unknown", "未知"),
+                usable > 0 ? usable.ToString() : Loc.T("main.value.unknown", "未知")),
+        };
+        if (tps > 0)
+            tips.Add(Loc.T("main.strip.capabilitySpeed", "最近一次生成速度 {0:0.#} 字/秒", tps));
+        tips.Add(Loc.T("main.strip.capabilityClick", "点击打开「设置 → 模型」查看完整能力与推荐配置"));
+        StripCapabilityButton.ToolTip = string.Join("\n", tips);
+
+        // 能力提示按钮：有告警才出现（文档过长 / 显存不足 / 速度过低）
+        List<string> warnings = GetStringListField(capability, "warnings");
+        _capabilityWarnings = warnings;
+        StripWarnButton.Visibility = warnings.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (warnings.Count > 0)
+        {
+            StripWarnText.Text = Loc.T("main.strip.warn", "⚠️ 能力提示 {0}", warnings.Count);
+            StripWarnButton.ToolTip = string.Join("\n", warnings.Select(w => "• " + w));
+        }
+    }
+
+    private static string GetStringField(JsonElement node, string name)
+        => node.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.String
+            ? el.GetString() ?? "" : "";
+
+    private static int GetIntField(JsonElement node, string name)
+        => node.TryGetProperty(name, out JsonElement el)
+           && el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out int value) ? value : 0;
+
+    private static double GetDoubleField(JsonElement node, string name)
+        => node.TryGetProperty(name, out JsonElement el)
+           && el.ValueKind == JsonValueKind.Number && el.TryGetDouble(out double value) ? value : 0;
+
+    private static List<string> GetStringListField(JsonElement node, string name)
+    {
+        var list = new List<string>();
+        if (node.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in el.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String)
+                    list.Add(item.GetString() ?? "");
+            }
+        }
+        return list.Where(x => x.Length > 0).ToList();
     }
 
     /// <summary>更新顶部"模式"胶囊（/mode 切换后调用）。</summary>
@@ -526,11 +617,13 @@ public partial class MainWindow : Window
             using JsonDocument doc = JsonDocument.Parse(json);
             string content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
             HandleChatResponse(json);
-            Toast(content.Length > 0 ? content : "已切换联网搜索");
+            Toast(content.Length > 0
+                ? content
+                : Loc.T("main.strip.searchToggled", "已切换联网搜索"));
         }
         catch (Exception ex)
         {
-            Toast($"切换搜索失败：{ex.Message}", error: true);
+            Toast(Loc.T("main.strip.searchToggleFailed", "切换搜索失败：{0}", ex.Message), error: true);
         }
     }
 
@@ -541,6 +634,77 @@ public partial class MainWindow : Window
     private void StripContextButton_Click(object sender, RoutedEventArgs e) => _ = UpdateContextAsync();
 
     private void StripKvButton_Click(object sender, RoutedEventArgs e) => OpenSettings(tab: "模型");
+
+    // ---------- 修复四：能力提示与手动压缩上下文 ----------
+
+    private void StripCapabilityButton_Click(object sender, RoutedEventArgs e) => OpenSettings(tab: "模型");
+
+    /// <summary>能力提示按钮：把完整告警逐条讲清楚（状态区只放得下一个数字）。</summary>
+    private void StripWarnButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_capabilityWarnings.Count == 0)
+            return;
+        MessageBox.Show(this,
+            string.Join("\n\n", _capabilityWarnings.Select((w, i) => $"{i + 1}. {w}")),
+            Loc.T("main.strip.warnTitle", "模型能力提示"),
+            MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    /// <summary>
+    /// 手动压缩上下文（修复四 基础要求）。
+    ///
+    /// 走 `context_compress` 动作而不是让用户自己等自动触发：准备上传大文件、
+    /// 或者上下文已经 70% 时，用户需要一个"立刻腾地方"的按钮。
+    /// </summary>
+    private async void StripCompactButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_backend is null)
+            return;
+        StripCompactButton.IsEnabled = false;
+        StripCompactText.Text = Loc.T("main.strip.compacting", "🗜 压缩中…");
+        try
+        {
+            string json = await _backend.SendRequestAsync(
+                new { action = "context_compress", force = true },
+                idleTimeout: BackendService.HeavyIdleTimeout);
+            using JsonDocument doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("context", out JsonElement context))
+                ApplyStatusFields(context);
+            string message = Loc.T("main.strip.compactNone", "上下文无需压缩");
+            if (doc.RootElement.TryGetProperty("compress", out JsonElement compress)
+                && compress.ValueKind == JsonValueKind.Object)
+            {
+                bool compressed = compress.TryGetProperty("compressed", out JsonElement c)
+                                  && c.ValueKind == JsonValueKind.True;
+                if (compressed)
+                {
+                    int dropped = GetIntField(compress, "dropped");
+                    int before = GetIntField(compress, "used_before");
+                    int after = GetIntField(compress, "used_after");
+                    message = after > 0
+                        ? Loc.T("main.strip.compactDone", "已压缩：移出 {0} 条（{1} → {2} tokens）",
+                                dropped, before, after)
+                        : Loc.T("main.strip.compactDoneShort", "已压缩：移出 {0} 条较早消息", dropped);
+                }
+            }
+            AddMessage("system", Loc.T("main.strip.compactResult", "🗜 {0}", message));
+            Toast(message);
+        }
+        catch (BackendBusyException)
+        {
+            Toast(Loc.T("main.error.busy"), error: true);
+        }
+        catch (Exception ex)
+        {
+            App.Log("MainWindow.StripCompact", ex);
+            Toast(Loc.T("main.strip.compactFailed", "❌ 压缩上下文失败：{0}", ex.Message), error: true);
+        }
+        finally
+        {
+            StripCompactText.Text = Loc.T("main.strip.compact", "🗜 压缩上下文");
+            StripCompactButton.IsEnabled = true;
+        }
+    }
 
     /// <summary>折叠/展开轻量状态区（状态记在 ui_state.json，下次启动沿用）。</summary>
     private void StripToggleButton_Click(object sender, RoutedEventArgs e)
@@ -575,42 +739,49 @@ public partial class MainWindow : Window
             return;
         _settings.FirstRunDone = true;
         _settings.Save();
-        AddMessage("system",
+        AddMessage("system", Loc.T("main.guide.firstRun",
             "🎉 首次使用引导\n" +
             "1️⃣ 模型：首次启动若本地缺少模型，会询问是否下载；也可手动把 .gguf 放到 models/ 目录。\n" +
             "2️⃣ 启动方式：可在程序目录创建「EchoDesk 启动」快捷方式，双击即可运行（已按你的选择处理）。\n" +
             "3️⃣ 长文档：上传合同等长文件时，超出上下文窗口会自动分段摘要后再回答，不会截断丢信息。\n" +
             "4️⃣ 常用指令：输入 /help 查看全部指令；输入 / 会弹出指令列表。\n" +
             "5️⃣ 复制内容：每条消息右下角有「复制 / Markdown / 代码」按钮，也可拖选文本后按 Ctrl+C。\n" +
-            "6️⃣ 快捷键：Ctrl+Enter 发送 · Esc 停止 · Ctrl+L 清空 · Ctrl+O 上传 · Ctrl+Shift+C 复制全部 · Ctrl+滚轮 调字号");
-        Toast("🎉 欢迎首次使用 EchoDesk，已显示上手引导");
+            "6️⃣ 快捷键：Ctrl+Enter 发送 · Esc 停止 · Ctrl+L 清空 · Ctrl+O 上传 · Ctrl+Shift+C 复制全部 · Ctrl+滚轮 调字号"));
+        Toast(Loc.T("main.guide.toast", "🎉 欢迎首次使用 EchoDesk，已显示上手引导"));
     }
 
     /// <summary>本地缺少模型时弹确认框；用户同意则下载并等待后端就绪，返回是否继续启动。</summary>
     private async Task<bool> ConfirmStartupDownloadAsync(NeedDownloadException ex)
     {
-        string size = ex.Size > 0 ? $"（约 {ex.Size / 1048576.0:0} MB）" : "（大小未知）";
-        AddMessage("system", $"📦 本地未找到所需模型：{ex.Model}{size}\n来源仓库：{ex.Repo}");
-        StatusText.Text = "等待确认下载";
+        string size = ex.Size > 0
+            ? Loc.T("main.model.sizeApprox", "（约 {0} MB）", (ex.Size / 1048576.0).ToString("0"))
+            : Loc.T("main.model.sizeUnknown", "（大小未知）");
+        AddMessage("system", Loc.T("main.model.missingChat",
+            "📦 本地未找到所需模型：{0}{1}\n来源仓库：{2}", ex.Model, size, ex.Repo));
+        StatusText.Text = Loc.T("main.status.waitingDownload", "等待确认下载");
 
         var result = MessageBox.Show(this,
-            $"本地未找到所需模型：\n\n{ex.Model}{size}\n来源仓库：{ex.Repo}\n\n" +
-            "是否现在下载？下载需要联网，模型较大时可能耗时较长。\n" +
-            "选择「否」将退出程序（也可稍后手动把模型文件放入 models/ 目录）。",
-            "需要下载模型",
+            Loc.T("main.dialog.startupDownloadText",
+                "本地未找到所需模型：\n\n{0}{1}\n来源仓库：{2}\n\n" +
+                "是否现在下载？下载需要联网，模型较大时可能耗时较长。\n" +
+                "选择「否」将退出程序（也可稍后手动把模型文件放入 models/ 目录）。",
+                ex.Model, size, ex.Repo),
+            Loc.T("main.dialog.modelDownloadTitle"),
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
         if (result != MessageBoxResult.Yes)
         {
-            AddMessage("system", "❌ 已取消下载模型，后端已退出。\n可手动把模型文件放入 models/ 目录后重新启动 EchoDesk。");
-            StatusText.Text = "未下载模型";
+            AddMessage("system", Loc.T("main.model.downloadCancelled",
+                "❌ 已取消下载模型，后端已退出。\n可手动把模型文件放入 models/ 目录后重新启动 EchoDesk。"));
+            StatusText.Text = Loc.T("main.status.downloadCancelled", "未下载模型");
             SetControlsEnabled(false);
             _backend?.Stop();
             return false;
         }
 
-        AddMessage("system", "⏳ 正在下载模型，进度在下方对话框实时显示...");
-        StatusText.Text = "正在下载模型……";
+        AddMessage("system", Loc.T("main.model.downloadingHint",
+            "⏳ 正在下载模型，进度在下方对话框实时显示..."));
+        StatusText.Text = Loc.T("main.status.downloadingModel", "正在下载模型……");
         try
         {
             await _backend!.DownloadModelAndWaitReadyAsync(
@@ -621,23 +792,24 @@ public partial class MainWindow : Window
                     StatusText.Text = SimplifyStatus(delta);
                 },
                 message => AddMessage("system", message));
-            Toast($"✅ 模型已就绪：{ex.Model}");
+            Toast(Loc.T("main.model.ready", "✅ 模型已就绪：{0}", ex.Model));
             _ = RefreshStatusBarAsync();
             return true;
         }
         catch (Exception e)
         {
-            AddMessage("system", $"❌ 模型下载失败: {e.Message}");
-            Toast($"❌ 模型下载失败：{e.Message}", error: true);
-            StatusText.Text = "模型下载失败";
+            AddMessage("system", Loc.T("main.model.downloadFailed", "❌ 模型下载失败：{0}", e.Message));
+            Toast(Loc.T("main.model.downloadFailed", "❌ 模型下载失败：{0}", e.Message), error: true);
+            StatusText.Text = Loc.T("main.status.modelDownloadFailed", "模型下载失败");
             SetControlsEnabled(false);
             return false;
         }
     }
 
     /// <summary>
-    /// 启动时检测程序目录下的启动快捷方式：不存在则询问是否创建；
-    /// 已失效（移动文件夹/改名后目标丢失）则提示重新创建；用户拒绝后记录状态不再重复询问。
+    /// 启动时检测外层目录下的启动快捷方式：不存在则询问是否创建；
+    /// 已失效（移动文件夹/改名后目标丢失或工作目录不对）则提示重新创建；
+    /// 用户拒绝后记录状态不再重复询问。
     /// </summary>
     private void CheckStartupShortcut()
     {
@@ -649,9 +821,11 @@ public partial class MainWindow : Window
             if (ShortcutService.Exists())
             {
                 var recreate = MessageBox.Show(this,
-                    $"检测到程序目录下的启动快捷方式已失效：\n{ShortcutService.ShortcutPath}\n\n" +
-                    "（通常是因为程序文件夹被移动或改名）\n\n是否重新创建？",
-                    "快捷方式已失效",
+                    Loc.T("main.shortcut.broken",
+                        "检测到启动快捷方式已失效：\n{0}\n\n" +
+                        "（通常是因为程序文件夹被移动或改名）\n\n是否重新创建？",
+                        ShortcutService.ShortcutPath),
+                    Loc.T("main.shortcut.brokenTitle", "快捷方式已失效"),
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Warning);
                 if (recreate == MessageBoxResult.Yes)
@@ -663,10 +837,12 @@ public partial class MainWindow : Window
                 return;  // 用户之前已拒绝，不再询问
 
             var create = MessageBox.Show(this,
-                "未在程序目录下检测到启动快捷方式。\n\n" +
-                $"是否创建「{ShortcutService.ShortcutFileName}」？\n" +
-                "创建后在程序文件夹内双击它即可启动 EchoDesk，无需分辨哪个可执行文件是入口。",
-                "创建启动快捷方式",
+                Loc.T("main.shortcut.missing",
+                    "未在程序文件夹内检测到启动快捷方式。\n\n" +
+                    "是否创建「{0}」？\n" +
+                    "创建后双击它即可启动 EchoDesk，无需分辨哪个可执行文件是入口。",
+                    ShortcutService.ShortcutFileName),
+                Loc.T("main.shortcut.missingTitle", "创建启动快捷方式"),
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question);
             if (create == MessageBoxResult.Yes)
@@ -677,12 +853,13 @@ public partial class MainWindow : Window
             {
                 _settings.ShortcutPromptDeclined = true;
                 _settings.Save();
-                AddMessage("system", "ℹ️ 已跳过创建启动快捷方式（后续不再询问，可手动创建）。");
+                AddMessage("system", Loc.T("main.shortcut.skipped",
+                    "ℹ️ 已跳过创建启动快捷方式（后续不再询问，可手动创建）。"));
             }
         }
         catch (Exception ex)
         {
-            AddMessage("system", $"⚠️ 快捷方式处理失败: {ex.Message}");
+            AddMessage("system", Loc.T("main.shortcut.failed", "⚠️ 快捷方式处理失败: {0}", ex.Message));
         }
     }
 
@@ -691,11 +868,11 @@ public partial class MainWindow : Window
         try
         {
             string path = ShortcutService.Create();
-            AddMessage("system", $"✅ 已创建启动快捷方式：{path}");
+            AddMessage("system", Loc.T("main.shortcut.created", "✅ 已创建启动快捷方式：{0}", path));
         }
         catch (Exception ex)
         {
-            AddMessage("system", $"❌ 创建快捷方式失败: {ex.Message}");
+            AddMessage("system", Loc.T("main.shortcut.createFailed", "❌ 创建快捷方式失败: {0}", ex.Message));
         }
     }
 
@@ -732,9 +909,9 @@ public partial class MainWindow : Window
     /// <summary>把详细进度行简化为状态栏短文本。</summary>
     private static string SimplifyStatus(string line)
     {
-        if (line.Contains("预热")) return "正在预热模型……";
-        if (line.Contains("下载")) return "正在下载模型……";
-        if (line.Contains("加载")) return "正在加载模型……";
+        if (line.Contains("预热")) return Loc.T("main.status.preheating", "正在预热模型……");
+        if (line.Contains("下载")) return Loc.T("main.status.downloadingModel", "正在下载模型……");
+        if (line.Contains("加载")) return Loc.T("main.status.loadingModel", "正在加载模型……");
         return line;
     }
 
@@ -743,8 +920,10 @@ public partial class MainWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
-            StatusText.Text = "后端已退出";
-            AddMessage("system", $"⚠️ 后端进程意外退出（退出码 {exitCode}）。请检查程序所在目录的 backend_crash.log，或重启 EchoDesk。");
+            StatusText.Text = Loc.T("main.status.exited", "后端已退出");
+            AddMessage("system", Loc.T("main.error.backendCrashed",
+                "⚠️ 后端进程意外退出（退出码 {0}）。请检查程序所在目录的 backend_crash.log，或重启 EchoDesk。",
+                exitCode));
         });
     }
 
@@ -869,8 +1048,8 @@ public partial class MainWindow : Window
         try
         {
             var window = new SettingsWindow(
-                _backend, _settings, _isDark, _fontSize,
-                onThemeChanged: dark => ApplyTheme(dark),
+                _backend, _settings, _fontSize,
+                onThemeChanged: theme => ApplyTheme(theme),
                 onFontSizeChanged: size => AdjustFontSize(size - _fontSize));
             _settingsWindow = window;
             window.Closed += (_, _) =>
@@ -885,8 +1064,8 @@ public partial class MainWindow : Window
         {
             _settingsWindow = null;
             App.Log("MainWindow.OpenSettings", ex);
-            AddMessage("system", $"❌ 打开设置窗口失败：{ex.Message}");
-            Toast($"打开设置窗口失败：{ex.Message}");
+            AddMessage("system", Loc.T("main.error.settingsOpenFailed", "❌ 打开设置窗口失败：{0}", ex.Message));
+            Toast(Loc.T("main.error.settingsOpenFailedToast", "打开设置窗口失败：{0}", ex.Message));
             return;
         }
         if (target.Length > 0)
@@ -955,7 +1134,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            AddMessage("system", $"❌ 请求失败: {ex.Message}");
+            AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
         }
         finally
         {
@@ -1030,7 +1209,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            AddMessage("system", $"❌ 请求失败: {ex.Message}");
+            AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
         }
         finally
         {
@@ -1055,7 +1234,7 @@ public partial class MainWindow : Window
         _stopRequested = false;
         _stopMode = true;
         SendButton.Content = "⏹";
-        SendButton.ToolTip = "停止生成";
+        SendButton.ToolTip = Loc.T("main.button.stopTip", "停止生成 (Esc)");
         SendButton.IsEnabled = true; // 流式期间按钮变为"停止"，必须可点击
 
         try
@@ -1070,7 +1249,7 @@ public partial class MainWindow : Window
                 },
                 onContext: (used, limit) => ContextText.Text = FormatContext(used, limit));
             if (_stopRequested && full.Length == 0)
-                sb.Append("\n⏹（已停止生成）");
+                sb.Append(Loc.T("main.message.stopped", "\n⏹（已停止生成）"));
             FinalizeMarkdownRender(sb.ToString()); // 结束：完整渲染一次
             AddMessageActions(panel, sb.ToString(), sb.ToString()); // 生成结束后提供复制操作条
         }
@@ -1079,7 +1258,7 @@ public partial class MainWindow : Window
             StopMarkdownTimer();
             _stopMode = false;
             SendButton.Content = "➤";
-            SendButton.ToolTip = "发送 (Ctrl+Enter)";
+            SendButton.ToolTip = Loc.T("main.button.sendTip", "发送 (Ctrl+Enter)");
             SendButton.IsEnabled = true;
         }
     }
@@ -1131,7 +1310,7 @@ public partial class MainWindow : Window
         _stopRequested = true;
         _stopMode = false;
         SendButton.IsEnabled = false;
-        StatusText.Text = "正在停止...";
+        StatusText.Text = Loc.T("main.status.stopping", "正在停止...");
         try
         {
             // fire-and-forget：不读取响应，避免与流式读取竞争 stdout
@@ -1139,7 +1318,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            AddMessage("system", $"❌ 停止请求失败: {ex.Message}");
+            AddMessage("system", Loc.T("main.error.stopFailed", "❌ 停止请求失败: {0}", ex.Message));
         }
     }
 
@@ -1202,7 +1381,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            AddMessage("system", $"❌ 请求失败: {ex.Message}");
+            AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
         }
         finally
         {
@@ -1290,7 +1469,8 @@ public partial class MainWindow : Window
                 if (!exact && CommandList.Items.Count > 1)
                 {
                     ExecuteCommandItem(item, completeOnly: true);
-                    Toast($"已补全为 {item.Command}，确认无误后再按 Enter 执行");
+                    Toast(Loc.T("main.command.completed",
+                        "已补全为 {0}，确认无误后再按 Enter 执行", item.Command));
                     return true;
                 }
                 ExecuteCommandItem(item);
@@ -1486,7 +1666,8 @@ public partial class MainWindow : Window
         SnippetList.ItemsSource = _snippets.Items;
         if (_snippets.Items.Count == 0)
         {
-            AddMessage("system", "📋 暂无常用语，可先打开命令输入框输入 /snippet add 名称 文本 新增");
+            AddMessage("system", Loc.T("main.snippet.emptyHint",
+                "📋 暂无常用语，可先打开命令输入框输入 /snippet add 名称 文本 新增"));
             return;
         }
         // 显示在输入区域上方：命令输入行可见时锚定命令行，否则锚定输入区域容器
@@ -1527,7 +1708,8 @@ public partial class MainWindow : Window
         var parts = message.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length < 2)
         {
-            AddMessage("system", "用法: /snippet list | add 名称 文本 | remove 名称");
+            AddMessage("system", Loc.T("main.snippet.usage",
+                "用法: /snippet list | add 名称 文本 | remove 名称"));
             return;
         }
         switch (parts[1].ToLowerInvariant())
@@ -1535,38 +1717,40 @@ public partial class MainWindow : Window
             case "list":
                 if (_snippets.Items.Count == 0)
                 {
-                    AddMessage("system", "📋 暂无常用语，可用 /snippet add 名称 文本 新增");
+                    AddMessage("system", Loc.T("main.snippet.emptyShort",
+                        "📋 暂无常用语，可用 /snippet add 名称 文本 新增"));
                     return;
                 }
-                var sb = new StringBuilder("📋 常用语：\n");
+                var sb = new StringBuilder(Loc.T("main.snippet.listHeader", "📋 常用语：\n"));
                 foreach (var s in _snippets.Items)
-                    sb.AppendLine($"🔹 {s.Name}：{s.Text}");
+                    sb.AppendLine(Loc.T("main.snippet.listItem", "🔹 {0}：{1}", s.Name, s.Text));
                 AddMessage("system", sb.ToString().TrimEnd());
                 break;
             case "add":
                 if (parts.Length < 4)
                 {
-                    AddMessage("system", "用法: /snippet add 名称 文本...");
+                    AddMessage("system", Loc.T("main.snippet.usageAdd", "用法: /snippet add 名称 文本..."));
                     return;
                 }
                 string name = parts[2];
                 string text = string.Join(' ', parts.Skip(3));
                 AddMessage("system", _snippets.Add(name, text)
-                    ? $"✅ 已新增常用语「{name}」"
-                    : $"❌ 常用语「{name}」已存在（可先 remove 再添加）");
+                    ? Loc.T("main.snippet.added", "✅ 已新增常用语「{0}」", name)
+                    : Loc.T("main.snippet.exists", "❌ 常用语「{0}」已存在（可先 remove 再添加）", name));
                 break;
             case "remove":
                 if (parts.Length < 3)
                 {
-                    AddMessage("system", "用法: /snippet remove 名称");
+                    AddMessage("system", Loc.T("main.snippet.usageRemove", "用法: /snippet remove 名称"));
                     return;
                 }
                 AddMessage("system", _snippets.Remove(parts[2])
-                    ? $"🗑️ 已删除常用语「{parts[2]}」"
-                    : $"❌ 未找到常用语「{parts[2]}」");
+                    ? Loc.T("main.snippet.removed", "🗑️ 已删除常用语「{0}」", parts[2])
+                    : Loc.T("main.snippet.notFound", "❌ 未找到常用语「{0}」", parts[2]));
                 break;
             default:
-                AddMessage("system", "用法: /snippet list | add 名称 文本 | remove 名称");
+                AddMessage("system", Loc.T("main.snippet.usage",
+                    "用法: /snippet list | add 名称 文本 | remove 名称"));
                 break;
         }
     }
@@ -1609,7 +1793,9 @@ public partial class MainWindow : Window
         using JsonDocument doc = JsonDocument.Parse(responseJson);
         JsonElement root = doc.RootElement;
         string type = root.TryGetProperty("type", out JsonElement t) ? t.GetString() ?? "system" : "system";
-        string content = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "无响应" : "无响应";
+        string content = root.TryGetProperty("content", out JsonElement c)
+            ? c.GetString() ?? Loc.T("main.error.noResponse", "无响应")
+            : Loc.T("main.error.noResponse", "无响应");
         string action = root.TryGetProperty("action", out JsonElement a) ? a.GetString() ?? "" : "";
 
         // /exit：先致谢并倒计时 10 秒，然后自动关闭
@@ -1641,18 +1827,21 @@ public partial class MainWindow : Window
     {
         var result = MessageBox.Show(
             this,
-            $"确定要下载模型 '{modelName}' 吗？\n下载需要联网且可能耗时较长。",
-            "确认下载模型",
+            Loc.T("main.dialog.modelDownloadText",
+                "{0}\n\n是否现在下载？下载需要联网且可能耗时较长。",
+                Loc.T("main.model.downloadQuestion", "确定要下载模型 '{0}' 吗？", modelName)),
+            Loc.T("main.dialog.modelDownloadTitle"),
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
         if (result != MessageBoxResult.Yes)
         {
-            AddMessage("system", "已取消下载");
+            AddMessage("system", Loc.T("main.model.cancelledUser", "已取消下载"));
             return;
         }
 
-        AddMessage("system", $"⏳ 正在下载并加载模型 '{modelName}'，请稍候...");
-        StatusText.Text = "正在下载模型……";
+        AddMessage("system", Loc.T("main.model.downloadingNamed",
+            "⏳ 正在下载并加载模型 '{0}'，请稍候...", modelName));
+        StatusText.Text = Loc.T("main.status.downloadingModel", "正在下载模型……");
         try
         {
             // 流式下载：完整进度进对话框，状态栏只显示简化状态
@@ -1664,16 +1853,16 @@ public partial class MainWindow : Window
                     StatusText.Text = SimplifyStatus(delta);
                 });
             AddMessage("system", final);
-            Toast($"✅ 模型下载完成：{modelName}");
+            Toast(Loc.T("main.model.downloadDone", "✅ 模型下载完成：{0}", modelName));
             _ = RefreshStatusBarAsync();
         }
         catch (Exception ex)
         {
-            AddMessage("system", $"❌ 模型操作失败: {ex.Message}");
-            Toast($"❌ 模型下载失败：{ex.Message}", error: true);
-            StatusText.Text = "就绪";
+            AddMessage("system", Loc.T("main.model.operationFailed", "❌ 模型操作失败: {0}", ex.Message));
+            Toast(Loc.T("main.model.downloadFailed", "❌ 模型下载失败：{0}", ex.Message), error: true);
+            StatusText.Text = Loc.T("main.status.ready");
         }
-        StatusText.Text = "就绪";
+        StatusText.Text = Loc.T("main.status.ready");
     }
 
     // ---------- 退出倒计时 ----------
@@ -1712,7 +1901,9 @@ public partial class MainWindow : Window
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = Loc.T("main.upload.chooseTitle", "选择要上传的文件"),
-            Filter = "支持的文件 (*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt;*.pdf)|*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt;*.pdf|所有文件 (*.*)|*.*",
+            Filter = Loc.T("main.upload.filter", "支持的文件")
+                     + " (*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt;*.pdf)|*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt;*.pdf|"
+                     + Loc.T("main.upload.filterAll", "所有文件") + " (*.*)|*.*",
         };
         if (dialog.ShowDialog() == true)
             await UploadFileAsync(dialog.FileName);
@@ -1730,48 +1921,70 @@ public partial class MainWindow : Window
     {
         if (_backend is null)
             return;
-        AddMessage("system", $"📤 正在上传文件: {System.IO.Path.GetFileName(filePath)} ...");
+        AddMessage("system", Loc.T("main.upload.uploading",
+            "📤 正在上传文件: {0} ...", System.IO.Path.GetFileName(filePath)));
         try
         {
             string json = await _backend.SendRequestAsync(new { action = "file", path = filePath });
             using JsonDocument doc = JsonDocument.Parse(json);
             if (doc.RootElement.TryGetProperty("content", out JsonElement content))
-                AddMessage("system", content.GetString() ?? "上传完成");
+                AddMessage("system", content.GetString() ?? Loc.T("main.upload.done", "上传完成"));
         }
         catch (Exception ex)
         {
-            AddMessage("system", $"❌ 上传失败: {ex.Message}");
+            AddMessage("system", Loc.T("main.upload.failed", "❌ 上传失败: {0}", ex.Message));
         }
     }
 
     // ---------- 主题切换 ----------
 
+    /// <summary>
+    /// <c>/darkmode [on|off|auto]</c>：切换浅色 / 深色 / 跟随系统（修复二）。
+    /// 无参数时在浅色与深色之间翻转（保持老用户的操作习惯）。
+    /// </summary>
     private void HandleDarkMode(string message)
     {
         string arg = message["/darkmode".Length..].Trim().ToLowerInvariant();
-        bool dark = arg switch
+        AppTheme target = arg switch
         {
-            "on" => true,
-            "off" => false,
-            _ => !_isDark, // 无参数时切换
+            "on" or "dark" => AppTheme.Dark,
+            "off" or "light" => AppTheme.Light,
+            "auto" or "system" => AppTheme.System,
+            // 无参数时切换：跟随系统状态下先落到"与当前相反"的固定主题
+            _ => ThemeService.IsDark ? AppTheme.Light : AppTheme.Dark,
         };
-        ApplyTheme(dark);
-        AddMessage("system", dark ? "🌙 已切换深色模式" : "☀️ 已切换浅色模式");
+        ApplyTheme(target);
+        AddMessage("system", target switch
+        {
+            AppTheme.Dark => Loc.T("main.theme.dark", "🌙 已切换深色模式"),
+            AppTheme.Light => Loc.T("main.theme.light", "☀️ 已切换浅色模式"),
+            _ => Loc.T("main.theme.system", "🖥️ 已切换为跟随系统主题"),
+        });
     }
 
-    private void ApplyTheme(bool dark)
+    /// <summary>应用主题并持久化（修复二：主题状态只有 ThemeService 一个来源）。</summary>
+    private void ApplyTheme(AppTheme theme)
     {
-        _isDark = dark;
-        _settings.DarkMode = dark;
-        _settings.Save();  // 主题即时生效并记住选择
-        var dictionaries = Application.Current.Resources.MergedDictionaries;
-        var theme = dictionaries.FirstOrDefault(
-            d => d.Source?.OriginalString?.Contains("Theme.", StringComparison.Ordinal) == true);
-        int index = theme is null ? 0 : dictionaries.IndexOf(theme);
-        dictionaries[index] = new ResourceDictionary
+        ThemeService.Apply(theme);
+        _settings.Theme = ThemeService.Serialize(theme);
+        _settings.Save();   // 主题即时生效并记住选择
+    }
+
+    /// <summary>
+    /// 主题变化后的界面刷新。用 <c>DynamicResource</c> 绑定的控件会自行更新，
+    /// 这里只处理一类必须代码干预的内容：已渲染的 Markdown 文档
+    /// （FlowDocument 的画刷是在构建时写进 Run/Paragraph 的）。
+    /// </summary>
+    private void OnThemeChanged(AppTheme theme)
+    {
+        _settings.Theme = ThemeService.Serialize(ThemeService.Selected);
+        _settings.Save();
+        foreach (var child in MessagePanel.Children)
         {
-            Source = new Uri($"Resources/Theme.{(dark ? "Dark" : "Light")}.xaml", UriKind.Relative),
-        };
+            if (child is Panel panel)
+                MarkdownRenderer.RebindTheme(panel);
+        }
+        _settingsWindow?.ApplyThemeResources();
     }
 
     // ---------- 字号调节（Ctrl+滚轮 / Ctrl+加号减号） ----------
@@ -1790,7 +2003,7 @@ public partial class MainWindow : Window
     {
         _fontSize = Math.Clamp(_fontSize + delta, 10, 24);
         UpdateAllMessageFontSize();
-        StatusText.Text = $"字号 {_fontSize:0.#}";
+        StatusText.Text = Loc.T("main.status.fontSize", "字号 {0}", _fontSize.ToString("0.#"));
         _settings.FontSize = _fontSize;
         _settings.Save();
     }
@@ -1827,13 +2040,17 @@ public partial class MainWindow : Window
     {
         _isProcessing = processing;
         SendButton.IsEnabled = !processing;
-        StatusText.Text = processing ? "正在处理..." : "就绪";
+        StatusText.Text = processing
+            ? Loc.T("main.status.processing", "处理中")
+            : Loc.T("main.status.ready");
     }
 
     /// <summary>创建可选中/可复制的纯文本内容控件（只读 TextBox：支持拖选与 Ctrl+C）。</summary>
-    private TextBox CreatePlainContent(string text, Brush foreground)
+    /// <param name="text">初始文本。</param>
+    /// <param name="brushKey">前景色对应的色板键（修复二：传键而不是画刷，切主题才能跟随）。</param>
+    private TextBox CreatePlainContent(string text, string brushKey)
     {
-        return new TextBox
+        var box = new TextBox
         {
             Text = text,
             IsReadOnly = true,
@@ -1848,10 +2065,11 @@ public partial class MainWindow : Window
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             FontSize = _fontSize,
             Tag = "content",
-            Foreground = foreground,
             Cursor = Cursors.IBeam,
-            ToolTip = "可拖选文本，Ctrl+C 复制",
+            ToolTip = Loc.T("main.message.selectTip"),
         };
+        ThemeService.Bind(box, TextBox.ForegroundProperty, brushKey);
+        return box;
     }
 
     /// <summary>创建助手消息用的只读 RichTextBox（Markdown 渲染 + 可选中复制）。</summary>
@@ -1881,16 +2099,16 @@ public partial class MainWindow : Window
             "assistant" => ("🤖 ", "AssistantBrush"),
             _ => ("ℹ️ ", "SystemBrush"),
         };
-        var brush = (Brush)(TryFindResource(brushKey) ?? Brushes.Gray);
 
         var time = new TextBlock
         {
             Text = DateTime.Now.ToString("HH:mm:ss"),
             FontSize = 10,
-            Foreground = (Brush)(TryFindResource("SubTextBrush") ?? Brushes.Gray),
             HorizontalAlignment = HorizontalAlignment.Right,
         };
-        content = CreatePlainContent(icon + text, brush);
+        // 用资源引用而不是 TryFindResource 取值快照：否则切主题后旧消息保持旧色
+        ThemeService.Bind(time, TextBlock.ForegroundProperty, "SubTextBrush");
+        content = CreatePlainContent(icon + text, brushKey);
         var panel = new StackPanel { Margin = new Thickness(5) };
         panel.Children.Add(time);
         panel.Children.Add(content);
@@ -1908,20 +2126,27 @@ public partial class MainWindow : Window
         };
 
         string plain = plainText;
-        bar.Children.Add(MakeActionButton("📋 复制", "复制为纯文本", () => CopyToClipboard(plain, "已复制为纯文本")));
+        bar.Children.Add(MakeActionButton("📋 " + Loc.T("main.message.copy", "复制"),
+            Loc.T("main.message.copyPlainTip", "复制为纯文本"),
+            () => CopyToClipboard(plain, Loc.T("main.message.copiedPlain", "已复制为纯文本"))));
 
         if (markdown is not null)
         {
             string md = markdown;
-            bar.Children.Add(MakeActionButton("⧉ Markdown", "复制原始 Markdown 源码", () => CopyToClipboard(md, "已复制 Markdown 源码")));
+            bar.Children.Add(MakeActionButton("⧉ " + Loc.T("main.message.copyMarkdown", "Markdown"),
+                Loc.T("main.message.copyMarkdownTip", "复制原始 Markdown 源码"),
+                () => CopyToClipboard(md, Loc.T("main.message.copiedMarkdown", "已复制 Markdown 源码"))));
 
             string code = MarkdownHelper.ExtractCodeBlocks(md);
             if (code.Length > 0)
-                bar.Children.Add(MakeActionButton("</> 代码", "复制全部代码块", () => CopyToClipboard(code, "已复制代码块")));
+                bar.Children.Add(MakeActionButton("</> " + Loc.T("main.message.copyCode", "代码"),
+                    Loc.T("main.message.copyCodeTip", "复制全部代码块"),
+                    () => CopyToClipboard(code, Loc.T("main.message.copiedCode", "已复制代码块"))));
         }
 
         var target = panel.Children.OfType<FrameworkElement>().FirstOrDefault(e => Equals(e.Tag, "content"));
-        bar.Children.Add(MakeActionButton("全选", "选中本条消息全部文本", () => SelectAll(target)));
+        bar.Children.Add(MakeActionButton(Loc.T("main.message.selectAll", "全选"),
+            Loc.T("main.message.selectAllTip", "选中本条消息全部文本"), () => SelectAll(target)));
         panel.Children.Add(bar);
     }
 
@@ -1947,7 +2172,7 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrEmpty(text))
         {
-            Toast("⚠️ 没有可复制的内容");
+            Toast(Loc.T("main.message.nothingToCopy", "⚠️ 没有可复制的内容"));
             return;
         }
         for (int attempt = 0; attempt < 3; attempt++)
@@ -1955,7 +2180,7 @@ public partial class MainWindow : Window
             try
             {
                 Clipboard.SetText(text);
-                Toast($"✅ {successMessage}（{text.Length} 字符）");
+                Toast(Loc.T("main.toast.copiedCount", "✅ {0}（{1} 字符）", successMessage, text.Length));
                 return;
             }
             catch (Exception)
@@ -1963,7 +2188,7 @@ public partial class MainWindow : Window
                 System.Threading.Thread.Sleep(60);  // 剪贴板被其他程序短暂占用
             }
         }
-        Toast("❌ 复制失败：剪贴板被其他程序占用，请重试");
+        Toast(Loc.T("main.error.clipboardBusy", "❌ 复制失败：剪贴板被其他程序占用，请重试"));
     }
 
     /// <summary>取出消息控件中的纯文本（TextBox 取 Text，RichTextBox 取文档文本）。</summary>
@@ -2002,14 +2227,15 @@ public partial class MainWindow : Window
             if (text.Length > 0)
                 sb.AppendLine(text).AppendLine();
         }
-        CopyToClipboard(sb.ToString().TrimEnd(), "已复制全部对话");
+        CopyToClipboard(sb.ToString().TrimEnd(), Loc.T("main.message.copiedAll", "已复制全部对话"));
     }
 
     /// <summary>底部通知条：短暂显示后自动隐藏（下载完成/自动化完成/错误提示等）。</summary>
     private void Toast(string message, bool error = false)
     {
-        ToastText.Text = message;
-        ToastText.Foreground = (Brush)(TryFindResource(error ? "SystemBrush" : "AccentBrush") ?? Brushes.Gray);
+        // 修复六：emoji 不可用时统一降级为 ASCII 标记，避免出现方块
+        ToastText.Text = Emoji.Prefer(message);
+        ThemeService.Bind(ToastText, TextBlock.ForegroundProperty, error ? "ErrorBrush" : "AccentBrush");
         ToastBorder.Visibility = Visibility.Visible;
         HintText.Visibility = Visibility.Collapsed;
         _toastTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
@@ -2025,6 +2251,8 @@ public partial class MainWindow : Window
 
     private void AddMessage(string role, string content)
     {
+        // 修复六：消息内容里的 emoji 也走同一套降级（后端返回的 system 消息同样带上它）
+        content = Emoji.Prefer(content);
         var panel = NewMessagePanel(role, role == "assistant" ? "" : content, out FrameworkElement contentBlock);
         if (role == "assistant")
             ReplaceWithMarkdown(panel, contentBlock, content); // 助手消息渲染为 Markdown

@@ -15,17 +15,48 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 MIN_CONTEXT = 512
 
 
+def program_dir() -> str:
+    """程序本体所在目录（打包后即 exe 所在目录；便携版布局下为 ``...\\app``）。"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def user_data_root() -> str:
+    """用户数据根目录（修复七）。
+
+    发布物采用便携版三层结构：``EchoDesk-v0.2.1\\app\\backend\\EchoDeskBackend.exe``，
+    其中 ``app\\`` 是程序本体，外层才是用户能看到、能备份的目录
+    （快捷方式、``ui_state.json``、``snippets.json``、``批量处理结果\\``）。
+
+    判定顺序（与前端 ``ShortcutService.UserDataDirectory`` 保持一致）：
+    1. 环境变量 ``ECHODESK_DATA``；
+    2. 后端目录的父目录名为 ``app`` → 再上一层（便携版布局）；
+    3. 后端目录的父目录（源码运行 = 仓库根；单层部署 = 程序目录）。
+    """
+    override = (os.environ.get("ECHODESK_DATA") or "").strip()
+    if override:
+        try:
+            return os.path.abspath(os.path.expanduser(override))
+        except Exception:  # noqa: BLE001 - 环境变量异常时退回自动判定
+            pass
+    if getattr(sys, "frozen", False):
+        backend_dir = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        backend_dir = os.path.dirname(os.path.abspath(__file__))
+    parent = os.path.dirname(backend_dir)
+    if os.path.basename(parent).lower() == "app":
+        return os.path.dirname(parent)
+    return parent
+
+
 def program_root() -> str:
     """程序根目录（新增三：批量处理结果的默认位置）。
 
-    * PyInstaller 打包后：后端 exe 位于 ``程序目录\\backend\\``，因此取 exe 所在目录的上一级；
-    * 源码运行：取 ``backend/`` 的上一级（仓库根目录）。
-
-    这样"默认程序根目录"在两种运行方式下都指向用户直觉上的那个目录。
+    保留函数名以兼容既有调用方；实现改为走 :func:`user_data_root`，
+    这样"保存位置留空"的结果目录会落在便携版外层，而不是埋进 ``app\\``。
     """
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(os.path.dirname(os.path.abspath(sys.executable)))
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return user_data_root()
 
 # 已知模型的训练上下文窗口（文件名关键词 → tokens）。
 # 用于在无需加载模型时也能按"所选模型"决定窗口大小；运行时还会用 GGUF 元数据校准。
@@ -197,8 +228,13 @@ class MarketplaceConfig(BaseModel):
     dev_dir: str = "skills_dev"
     # 显式本地插件清单（可指定任意路径、别名、启用状态、加载顺序、备注）
     local_manifest: str = "skills_local.json"
-    # 开发模式：详细日志 + 热重载；检测到 dev_dir 中有插件时自动生效
+    # 开发模式：详细日志 + 热重载
     dev_mode: bool = False
+    # 修复一：开发者模式开关是否由用户显式设置过。
+    # False 时按"skills_dev/ 里有插件就自动启用"处理（首次开箱即用），
+    # True 时完全以 dev_mode 为准 —— 否则"关掉开关"会因为目录里确实有插件而被
+    # 自动重新打开，表现为"开发者模式一旦开启就关不掉"。
+    dev_mode_explicit: bool = False
     # 开发日志（开发者 Tab 内嵌展示最后 N 行）
     dev_log_file: str = "skills_dev.log"
     # 正式加载只接受注册表中 verified=true 的技能（任务二 2.4 加载白名单）
@@ -256,6 +292,20 @@ class Config(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     max_tokens: int = 1024
     search_results: int = 3
+    # ---------- 修复四：生成参数预设与上下文管理 ----------
+    # 当前预设档位：light / balanced / quality（/preset 切换，决定下面三项的取值）
+    preset: str = "balanced"
+    # top_p 与重复惩罚：小模型"复读"和"跑题"主要由这两项控制
+    top_p: float = Field(default=0.9, ge=0.0, le=1.0)
+    repeat_penalty: float = Field(default=1.1, ge=0.5, le=2.0)
+    # 上下文超限时的处理方式：
+    #   summarize —— 把早期对话交给模型压缩成摘要（默认，信息保留最好）
+    #   slide     —— 直接丢弃最早的历史（滑动窗口，最快，不做额外推理）
+    context_mode: str = "summarize"
+    # 是否缓存长文档分段摘要（同一文件二次上传不重算，方向八）
+    summary_cache: bool = True
+    # 提问过于模糊时先追问而不是硬答（方向七）；关掉即回到"无论如何都作答"
+    clarify_vague: bool = True
     # 文件解析字符上限；0 表示不限制（长文档交由分段摘要处理，避免直接截断丢信息）
     file_max_chars: int = 200000
     theme: str = "dark"

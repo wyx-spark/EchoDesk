@@ -1,14 +1,81 @@
+<!--
+  EchoDesk 深色语义色板（修复二）
+
+  与 Theme.Light.xaml 键名一一对应，取值按 WCAG AA 对比度要求挑选：
+  正文文字 ≥ 4.5:1，次要文字 ≥ 4.5:1（本项目把时间戳也算正文），
+  按钮四态文字 ≥ 4.5:1（禁用在浅色下最容易不达标，已单独取值）。
+  校验脚本：tools/check_theme.py
+-->
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <!-- 深色主题 -->
-    <SolidColorBrush x:Key="WindowBackground" Color="#1E1E1E"/>
-    <SolidColorBrush x:Key="TextForeground" Color="#E8E8E8"/>
-    <SolidColorBrush x:Key="AccentBrush" Color="#8A7DFF"/>
-    <SolidColorBrush x:Key="SubTextBrush" Color="#9E9E9E"/>
-    <SolidColorBrush x:Key="InputBackground" Color="#2D2D30"/>
-    <SolidColorBrush x:Key="InputBorder" Color="#3F3F46"/>
-    <SolidColorBrush x:Key="ButtonBackground" Color="#3F3F46"/>
+
+    <!-- ============ 背景与表面 ============ -->
+    <SolidColorBrush x:Key="WindowBackground" Color="#1E1E22"/>
+    <SolidColorBrush x:Key="SurfaceBrush" Color="#25252B"/>
+    <SolidColorBrush x:Key="SurfaceAltBrush" Color="#2C2C33"/>
+    <SolidColorBrush x:Key="InputBackground" Color="#26262B"/>
+    <!-- 边框按 WCAG 1.4.11 取 3:1（对 #1E1E22 为 3.6:1） -->
+    <SolidColorBrush x:Key="InputBorder" Color="#74747F"/>
+    <SolidColorBrush x:Key="FocusBorder" Color="#8A9DFF"/>
+    <SolidColorBrush x:Key="SeparatorBrush" Color="#45454F"/>
+
+    <!-- ============ 文字 ============ -->
+    <SolidColorBrush x:Key="TextForeground" Color="#EDEDF0"/>
+    <SolidColorBrush x:Key="SubTextBrush" Color="#A8A8B3"/>
+    <SolidColorBrush x:Key="DisabledTextBrush" Color="#9A9AA4"/>
+    <SolidColorBrush x:Key="InverseTextBrush" Color="#101014"/>
+
+    <!-- ============ 强调色 ============ -->
+    <SolidColorBrush x:Key="AccentBrush" Color="#8A9DFF"/>
+    <SolidColorBrush x:Key="AccentForegroundBrush" Color="#101014"/>
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="#A6B4FF"/>
+    <SolidColorBrush x:Key="AccentPressedBrush" Color="#6E80E0"/>
+    <SolidColorBrush x:Key="LinkBrush" Color="#7FB2FF"/>
+
+    <!-- ============ 状态语义色 ============ -->
+    <SolidColorBrush x:Key="SuccessBrush" Color="#5FD07F"/>
+    <SolidColorBrush x:Key="WarningBrush" Color="#F0C063"/>
+    <SolidColorBrush x:Key="ErrorBrush" Color="#FF8A8A"/>
+    <SolidColorBrush x:Key="InfoBrush" Color="#7FB2FF"/>
+
+    <!-- ============ 按钮（正常 / 悬停 / 按下 / 禁用 四态） ============ -->
+    <SolidColorBrush x:Key="ButtonBackground" Color="#33333A"/>
+    <SolidColorBrush x:Key="ButtonHoverBackground" Color="#3E3E47"/>
+    <SolidColorBrush x:Key="ButtonPressedBackground" Color="#4A4A55"/>
+    <SolidColorBrush x:Key="ButtonDisabledBackground" Color="#2A2A2F"/>
+    <SolidColorBrush x:Key="ButtonBorder" Color="#74747F"/>
+    <SolidColorBrush x:Key="ButtonForeground" Color="#EDEDF0"/>
+    <SolidColorBrush x:Key="ButtonDisabledForeground" Color="#9A9AA4"/>
+
+    <!-- ============ 选中与列表 ============ -->
+    <SolidColorBrush x:Key="SelectionBackground" Color="#2F4B7C"/>
+    <SolidColorBrush x:Key="SelectionForeground" Color="#EDEDF0"/>
+    <SolidColorBrush x:Key="RowHoverBackground" Color="#2C2C33"/>
+
+    <!-- ============ 页签 ============ -->
+    <SolidColorBrush x:Key="TabActiveBackground" Color="#33333A"/>
+    <SolidColorBrush x:Key="TabInactiveBackground" Color="#25252B"/>
+
+    <!-- ============ 滚动条 ============ -->
+    <SolidColorBrush x:Key="ScrollBarThumbBrush" Color="#6E6E7A"/>
+    <SolidColorBrush x:Key="ScrollBarTrackBrush" Color="#232328"/>
+
+    <!-- ============ 浮层（菜单 / 提示气泡） ============ -->
+    <SolidColorBrush x:Key="MenuBackground" Color="#2C2C33"/>
+    <SolidColorBrush x:Key="MenuForeground" Color="#EDEDF0"/>
+    <SolidColorBrush x:Key="MenuHighlightBackground" Color="#2F4B7C"/>
+    <SolidColorBrush x:Key="TooltipBackground" Color="#2C2C33"/>
+    <SolidColorBrush x:Key="TooltipForeground" Color="#EDEDF0"/>
+    <SolidColorBrush x:Key="TooltipBorder" Color="#43434C"/>
+
+    <!-- ============ 对话区角色标识 ============ -->
     <SolidColorBrush x:Key="UserBrush" Color="#4FC3F7"/>
     <SolidColorBrush x:Key="AssistantBrush" Color="#66BB6A"/>
     <SolidColorBrush x:Key="SystemBrush" Color="#B0B0B0"/>
+
+    <!-- ============ 消息内 Markdown ============ -->
+    <SolidColorBrush x:Key="CodeBackground" Color="#2A2A31"/>
+    <SolidColorBrush x:Key="CodeForeground" Color="#E6E6E6"/>
+    <SolidColorBrush x:Key="QuoteForeground" Color="#A8A8B3"/>
+    <SolidColorBrush x:Key="MessageBorderBrush" Color="#34343C"/>
 </ResourceDictionary>

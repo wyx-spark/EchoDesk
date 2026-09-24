@@ -126,14 +126,23 @@ class LLMEngine:
         messages: List[dict],
         temperature: float = 0.7,
         max_tokens: int = 1024,
+        top_p: Optional[float] = None,
+        repeat_penalty: Optional[float] = None,
     ) -> str:
         """执行一次非流式对话补全，返回助手回复全文。"""
-        response = self.llm.create_chat_completion(
-            messages=messages,
-            stream=False,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        kwargs: Dict[str, object] = {
+            "messages": messages,
+            "stream": False,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        # 修复四（方向六）：预设档位需要 top_p / 重复惩罚，缺省时不传，
+        # 让 llama.cpp 用它自己的默认值（与旧行为保持一致）。
+        if top_p is not None:
+            kwargs["top_p"] = float(top_p)
+        if repeat_penalty is not None:
+            kwargs["repeat_penalty"] = float(repeat_penalty)
+        response = self.llm.create_chat_completion(**kwargs)
         return response["choices"][0]["message"]["content"]
 
     def chat_stream(
@@ -142,6 +151,8 @@ class LLMEngine:
         temperature: float = 0.7,
         max_tokens: int = 1024,
         stop_event: Optional[threading.Event] = None,
+        top_p: Optional[float] = None,
+        repeat_penalty: Optional[float] = None,
     ) -> Iterator[str]:
         """执行流式对话补全，逐个产出增量文本片段；stop_event 置位时提前结束。
 
@@ -149,12 +160,17 @@ class LLMEngine:
         """
         started = time.perf_counter()
         produced = 0
-        stream = self.llm.create_chat_completion(
-            messages=messages,
-            stream=True,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        kwargs: Dict[str, object] = {
+            "messages": messages,
+            "stream": True,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if top_p is not None:
+            kwargs["top_p"] = float(top_p)
+        if repeat_penalty is not None:
+            kwargs["repeat_penalty"] = float(repeat_penalty)
+        stream = self.llm.create_chat_completion(**kwargs)
         try:
             for chunk in stream:
                 if stop_event is not None and stop_event.is_set():

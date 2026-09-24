@@ -12,26 +12,53 @@
       "startFailed": "后端启动失败",
       "exiting": "正在退出...",
       "exitCountdown": "程序将在 {0} 秒后自动关闭",
-      "help": "运行状态：正在启动后端 / 已就绪 / 处理中 / 后端已退出"
+      "help": "运行状态：正在启动后端 / 已就绪 / 处理中 / 后端已退出",
+      "waitingDownload": "等待确认下载",
+      "downloadCancelled": "未下载模型",
+      "downloadingModel": "正在下载模型……",
+      "modelDownloadFailed": "模型下载失败",
+      "preheating": "正在预热模型……",
+      "loadingModel": "正在加载模型……",
+      "stopping": "正在停止...",
+      "fontSize": "字号 {0}"
     },
     "model": {
       "clickTip": "点击打开模型选择栏（设置 → 模型）",
-      "help": "当前加载的模型，点击打开模型设置"
+      "help": "当前加载的模型，点击打开模型设置",
+      "sizeApprox": "（约 {0} MB）",
+      "sizeUnknown": "（大小未知）",
+      "missingChat": "📦 本地未找到所需模型：{0}{1}\n来源仓库：{2}",
+      "downloadQuestion": "确定要下载模型 '{0}' 吗？",
+      "downloadingHint": "⏳ 正在下载模型，进度在下方对话框实时显示...",
+      "downloadingNamed": "⏳ 正在下载并加载模型 '{0}'，请稍候...",
+      "downloadCancelled": "❌ 已取消下载模型，后端已退出。\n可手动把模型文件放入 models/ 目录后重新启动 EchoDesk。",
+      "cancelledUser": "已取消下载",
+      "ready": "✅ 模型已就绪：{0}",
+      "downloadDone": "✅ 模型下载完成：{0}",
+      "downloadFailed": "❌ 模型下载失败：{0}",
+      "operationFailed": "❌ 模型操作失败: {0}",
+      "placeholder": "🧠 模型: ---"
     },
     "mode": {
       "clickTip": "点击打开设置修改默认对话模式",
-      "help": "当前对话模式，点击打开设置"
+      "help": "当前对话模式，点击打开设置",
+      "placeholder": "🛠️ 模式: general"
     },
     "automation": {
       "disabled": "未启用",
       "running": "运行中"
     },
     "command": {
-      "move": "转移到命令输入框"
+      "move": "转移到命令输入框",
+      "completed": "已补全为 {0}，确认无误后再按 Enter 执行"
     },
     "upload": {
       "chooseTitle": "选择要上传的文件",
-      "filter": "支持的文件"
+      "filter": "支持的文件",
+      "uploading": "📤 正在上传文件: {0} ...",
+      "done": "上传完成",
+      "failed": "❌ 上传失败: {0}",
+      "filterAll": "所有文件"
     },
     "strip": {
       "searchOnTip": "联网搜索已开启：提问前会先搜索网络参考信息。点击关闭",
@@ -48,10 +75,47 @@
       "marketHelp": "技能市场连接状态，点击打开设置",
       "contextTip": "上下文占用：点击刷新",
       "contextHelp": "当前上下文占用百分比，点击刷新",
-      "kvHelp": "KV Cache 内存占用估算，点击打开模型设置"
+      "kvHelp": "KV Cache 内存占用估算，点击打开模型设置",
+      "capability": "🧠 {0}",
+      "capabilityTip": "模型能力：参数量 · 量化 · 可用窗口 · 实测生成速度",
+      "capabilityHelp": "显示当前模型的参数量、量化格式、实际可用上下文窗口与最近一次实测生成速度。点击打开设置窗口的模型页查看完整能力与推荐配置。",
+      "capabilityDetail": "参数量 {0} · 量化 {1} · 可用窗口 {2} tokens",
+      "capabilitySpeed": "最近一次生成速度 {0:0.#} 字/秒",
+      "capabilityClick": "点击打开「设置 → 模型」查看完整能力与推荐配置",
+      "compact": "🗜 压缩上下文",
+      "compacting": "🗜 压缩中…",
+      "compactTip": "立刻压缩上下文，腾出空间给新内容",
+      "compactHelp": "把较早的对话压缩成摘要（或在滑动窗口模式下直接移出上下文），不需要等上下文占到 80% 才自动触发。适合准备上传大文件之前先腾地方。",
+      "compactNone": "上下文无需压缩",
+      "compactDone": "已压缩：移出 {0} 条（{1} → {2} tokens）",
+      "compactDoneShort": "已压缩：移出 {0} 条较早消息",
+      "compactResult": "🗜 {0}",
+      "compactFailed": "❌ 压缩上下文失败：{0}",
+      "warn": "⚠️ 能力提示 {0}",
+      "warnTip": "有 {0} 条能力提示，点击查看详情",
+      "warnTitle": "模型能力提示",
+      "searchToggled": "已切换联网搜索",
+      "searchToggleFailed": "切换搜索失败：{0}",
+      "capabilityTps": "{0:0.#} 字/秒",
+      "searchIdle": "🔍 搜索：关",
+      "autoIdle": "⚙️ 自动化：关",
+      "marketIdle": "🌐 市场：未连接",
+      "contextIdle": "📊 上下文 0%",
+      "warnIdle": "⚠️ 能力提示"
     },
     "snippet": {
-      "empty": "（还没有常用语，输入 /snippet add 名称 文本 添加）"
+      "empty": "（还没有常用语，输入 /snippet add 名称 文本 添加）",
+      "emptyHint": "📋 暂无常用语，可先打开命令输入框输入 /snippet add 名称 文本 新增",
+      "emptyShort": "📋 暂无常用语，可用 /snippet add 名称 文本 新增",
+      "usage": "用法: /snippet list | add 名称 文本 | remove 名称",
+      "usageAdd": "用法: /snippet add 名称 文本...",
+      "usageRemove": "用法: /snippet remove 名称",
+      "listHeader": "📋 常用语：\n",
+      "listItem": "🔹 {0}：{1}",
+      "added": "✅ 已新增常用语「{0}」",
+      "exists": "❌ 常用语「{0}」已存在（可先 remove 再添加）",
+      "removed": "🗑️ 已删除常用语「{0}」",
+      "notFound": "❌ 未找到常用语「{0}」"
     },
     "message": {
       "copy": "复制",
@@ -59,7 +123,69 @@
       "copyCode": "代码",
       "user": "我",
       "assistant": "助手",
-      "system": "系统"
+      "system": "系统",
+      "selectTip": "可拖选文本，Ctrl+C 复制",
+      "stopped": "\n⏹（已停止生成）",
+      "copyPlainTip": "复制为纯文本",
+      "copyMarkdownTip": "复制原始 Markdown 源码",
+      "copyCodeTip": "复制全部代码块",
+      "selectAll": "全选",
+      "selectAllTip": "选中本条消息全部文本",
+      "copiedPlain": "已复制为纯文本",
+      "copiedMarkdown": "已复制 Markdown 源码",
+      "copiedCode": "已复制代码块",
+      "copiedAll": "已复制全部对话",
+      "nothingToCopy": "⚠️ 没有可复制的内容"
+    },
+    "theme": {
+      "dark": "🌙 已切换深色模式",
+      "light": "☀️ 已切换浅色模式",
+      "system": "🖥️ 已切换为跟随系统主题"
+    },
+    "shortcut": {
+      "brokenTitle": "快捷方式已失效",
+      "broken": "检测到启动快捷方式已失效：\n{0}\n\n（通常是因为程序文件夹被移动或改名）\n\n是否重新创建？",
+      "missingTitle": "创建启动快捷方式",
+      "missing": "未在程序文件夹内检测到启动快捷方式。\n\n是否创建「{0}」？\n创建后双击它即可启动 EchoDesk，无需分辨哪个可执行文件是入口。",
+      "skipped": "ℹ️ 已跳过创建启动快捷方式（后续不再询问，可手动创建）。",
+      "created": "✅ 已创建启动快捷方式：{0}",
+      "createFailed": "❌ 创建快捷方式失败: {0}",
+      "failed": "⚠️ 快捷方式处理失败: {0}"
+    },
+    "guide": {
+      "firstRun": "🎉 首次使用引导\n1️⃣ 模型：首次启动若本地缺少模型，会询问是否下载；也可手动把 .gguf 放到 models/ 目录。\n2️⃣ 启动方式：可在程序目录创建「EchoDesk 启动」快捷方式，双击即可运行（已按你的选择处理）。\n3️⃣ 长文档：上传合同等长文件时，超出上下文窗口会自动分段摘要后再回答，不会截断丢信息。\n4️⃣ 常用指令：输入 /help 查看全部指令；输入 / 会弹出指令列表。\n5️⃣ 复制内容：每条消息右下角有「复制 / Markdown / 代码」按钮，也可拖选文本后按 Ctrl+C。\n6️⃣ 快捷键：Ctrl+Enter 发送 · Esc 停止 · Ctrl+L 清空 · Ctrl+O 上传 · Ctrl+Shift+C 复制全部 · Ctrl+滚轮 调字号",
+      "toast": "🎉 欢迎首次使用 EchoDesk，已显示上手引导"
+    },
+    "value": {
+      "unknown": "未知"
+    },
+    "dialog": {
+      "startupDownloadText": "本地未找到所需模型：\n\n{0}{1}\n来源仓库：{2}\n\n是否现在下载？下载需要联网，模型较大时可能耗时较长。\n选择「否」将退出程序（也可稍后手动把模型文件放入 models/ 目录）。",
+      "ok": "确定",
+      "cancel": "取消"
+    },
+    "error": {
+      "backendCrashed": "⚠️ 后端进程意外退出（退出码 {0}）。请检查程序所在目录的 backend_crash.log，或重启 EchoDesk。",
+      "noResponse": "无响应",
+      "settingsOpenFailed": "❌ 打开设置窗口失败：{0}",
+      "settingsOpenFailedToast": "打开设置窗口失败：{0}",
+      "clipboardBusy": "❌ 复制失败：剪贴板被其他程序占用，请重试",
+      "startProcessFailed": "无法启动后端进程。",
+      "notStarted": "后端尚未启动。",
+      "exitedDuringStartup": "后端未完成启动即退出。",
+      "exitedDuringDownload": "后端在下载模型期间退出。",
+      "idleTimeout": "后端在 {0:0.#} 分钟内没有响应，已中断等待。可稍后重试，或查看 app\\backend\\backend_crash.log。",
+      "modelMissingDetail": "本地缺少模型 {0}"
+    },
+    "toast": {
+      "copiedCount": "✅ {0}（{1} 字符）"
+    },
+    "context": {
+      "buttonIdle": "上下文：---/---",
+      "buttonTip": "点击刷新上下文占用"
+    },
+    "update": {
+      "idle": "🎉 新版本"
     }
   },
   "settings": {

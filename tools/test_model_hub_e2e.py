@@ -21,7 +21,26 @@ import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_BACKEND = os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "backend", "EchoDeskBackend.exe")
+
+
+def _resolve_backend() -> str:
+    """定位打包后的后端 exe：新布局（便携版三层）优先，其次兼容旧的扁平布局。
+
+    修复七把程序本体收进了 app\\，这个脚本当时留在旧路径上，表现为"找不到后端"
+    而不是"测试失败"。同 test_backend_e2e.py 的处理保持一致。
+    """
+    candidates = [
+        os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "app", "backend", "EchoDeskBackend.exe"),
+        os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "backend", "EchoDeskBackend.exe"),
+        os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "EchoDeskBackend.exe"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return candidates[0]
+
+
+DEFAULT_BACKEND = _resolve_backend()
 
 CHECKS = []
 

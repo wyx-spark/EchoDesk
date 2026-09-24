@@ -1,4 +1,4 @@
-# EchoDesk 用户手册（v0.2.0）
+# EchoDesk 用户手册（v0.2.1）
 
 面向实际使用场景的操作手册。快速上手与故障排除见 `docs/zh-Hans/FAQ.md`；
 自动化字段的逐项填写说明见 [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md)。
@@ -9,14 +9,17 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 ## 一、安装与启动
 
 ### 便携版（推荐）
-1. 把整个 `EchoDesk-v0.2.0` 文件夹放到任意位置（桌面、D 盘、U 盘均可）；
-2. 双击文件夹内的**「EchoDesk 启动.lnk」**——这是唯一入口，
-   不需要分辨 `EchoDesk.exe` 与 `backend\EchoDeskBackend.exe` 的区别
+1. 把整个 `EchoDesk-v0.2.1` 文件夹放到任意位置（桌面、D 盘、U 盘均可）；
+2. 双击文件夹内的**「EchoDesk-v0.2.1.lnk」**——这是唯一入口，
+   不需要分辨 `app\EchoDesk.exe` 与 `app\backend\EchoDeskBackend.exe` 的区别
    （后者由界面自动拉起，请勿单独运行）；
 3. 首次启动会依次处理三件事：
-   - 若 `backend\models\` 里没有模型 → 询问是否下载（约 508MB，需联网）；
+   - 若 `app\backend\models\` 里没有模型 → 询问是否下载（约 508MB，需联网）；
    - 若文件夹内没有快捷方式 → 询问是否创建；
    - 显示一次上手引导。
+
+**两层结构**：外层（`EchoDesk-v0.2.1\`）只放快捷方式、用户数据与文档，**程序本体全部在 `app\` 里**
+——外层不出现任何 exe/dll，要卸载时删掉整个文件夹即可。
 
 ### 安装版
 用 `tools\installer.iss` 生成的 `setup.exe` 安装后，从开始菜单或桌面快捷方式启动，
@@ -24,20 +27,30 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 
 ### 目录结构与你需要知道的位置
 
+下表里的路径都相对便携版**外层**目录（`EchoDesk-v0.2.1\`）。**`app\` 里是程序本体，不要往里放自己的东西；
+外层才是你的数据目录**，备份与清理都以外层为准。
+
 | 位置 | 内容 | 能不能删 |
 | --- | --- | --- |
-| `backend\config.json` | 全部配置（模型、窗口、摘要、自动化、市场） | 可删（会重建为默认值） |
-| `backend\models\*.gguf` | 本地模型 | 可删（下次启动会询问重新下载） |
-| `backend\session.json` | 上次对话（自动恢复） | 可删（清空历史） |
-| `backend\browser_state.json` | 自动化的登录态（Cookie） | 可删（退出所有登录） |
-| `backend\automation_log.jsonl` | 自动化审计日志 | 可删（建议先归档） |
-| `backend\skills\` + `skills_registry.json` | 已安装技能 | 建议用市场卸载 |
+| `app\backend\config.json` | 全部配置（模型、窗口、摘要、自动化、市场） | 可删（会重建为默认值） |
+| `app\backend\models\*.gguf` | 本地模型 | 可删（下次启动会询问重新下载） |
+| `app\backend\session.json` | 上次对话（自动恢复） | 可删（清空历史） |
+| `app\backend\browser_state.json` | 自动化的登录态（Cookie） | 可删（退出所有登录） |
+| `app\backend\automation_log.jsonl` | 自动化审计日志 | 可删（建议先归档） |
+| `app\backend\skills\` + `app\backend\skills_registry.json` | 已安装技能 | 建议用市场卸载 |
+| `app\backend\summary_cache.json` | 长文档分段摘要缓存（可读 JSON） | 可删（下次上传重新计算） |
+| `批量处理结果\` | 自动化结果（按 `日期\任务名\` 分层） | 可删（建议先归档） |
+| `lang\` + `app\lang\ui\` | 后端 / 界面语言包（可自行新增语言） | 不建议删（删掉会退回内置文案） |
 | `ui_state.json` | 窗口位置/大小、字号、主题 | 可删（重置界面状态） |
 | `snippets.json` | 常用语 | 可删 |
 | `使用说明.txt` | 面向用户的结构说明 | 可删 |
 
-**备份**：需要保留对话记录与设置时，复制 `backend\session.json`、
-`backend\config.json`、`snippets.json` 三个文件即可。
+**备份**：需要保留对话记录与设置时，复制 `app\backend\session.json`、
+`app\backend\config.json`、`snippets.json` 三个文件即可。
+
+**数据位置**：`ui_state.json`、`snippets.json` 与 `批量处理结果\` 都在便携版**外层**目录（不在 `app\` 里）。
+想让它们落到别的位置（例如 U 盘或用户目录），可以在启动前设置环境变量 `ECHODESK_DATA`
+指向目标目录，程序会把用户数据写到那里。
 
 ---
 
@@ -63,12 +76,32 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 /prompt 你是财务顾问    临时改变助手角色
 /search on            开启联网搜索（提问前先搜网络，需联网）
 /model list           查看本地模型 / /model 别名 切换
-/status               查看模型、窗口、上下文占用与 KV Cache 估算
+/task list            任务型提示词模板（摘要归纳 / 合同条款审查 / 结构化抽取 / 翻译 / 代码排错 / 推理判断）
+/preset light         生成参数三档预设：light（轻量）/ balanced（均衡）/ quality（高质量）
+/compact              立刻压缩上下文，腾出空间
+/darkmode auto        主题：on 深色 / off 浅色 / auto 跟随系统
+/status               查看模型、窗口、上下文占用、KV Cache 估算与模型能力（参数量/量化/实测速度）
+/about                版本号、出品方与合规文档的本机路径
 /save 会议纪要         导出对话为 Markdown
 /undo                 撤回最近一轮问答
 /clear                清空对话与文件上下文
 /exit                 退出（10 秒倒计时）
 ```
+
+### 让本地小模型答得更稳
+
+- **任务模板**：`/task list` 列出 6 个模板——摘要归纳（`summary`）、合同条款审查（`contract`）、
+  结构化抽取（`extract`）、翻译（`translate`）、代码解释与排错（`code`）、推理判断（`reason`）。
+  用 `/task contract` 套用（可以只写前缀，如 `/task con`），`/task off` 取消。
+  模板与 `/prompt` 都写在自定义提示词里，后设置的会覆盖前一个。
+- **生成预设**：`/preset list` 查看；`light`（轻量，回复短、最快）/ `balanced`（均衡，默认）/
+  `quality`（高质量，回复最长）会一键切换温度、top_p、重复惩罚与回复长度上限。切换结果记入配置，
+  重启后仍然生效；之后再手动用 `/temp` 改温度时以手动值为准。
+- **压缩上下文**：`/compact` 立刻把较早的对话压成摘要腾出空间（配置项 `context_mode` 设为
+  `slide` 时改为直接丢弃最早的历史），不必等占用超过 80% 才自动触发。
+- **被追问是正常的**：提问过于模糊、且既没有文件上下文也没有历史时（例如只发「这个怎么办」），
+  程序会先追问你要问的对象、期望的输出形式与约束条件，而不是硬答。
+  不想被追问可在 `app\backend\config.json` 里把 `clarify_vague` 改为 `false`。
 
 ---
 
@@ -83,11 +116,15 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 4. 若摘要粒度不够、想看细节：
    - 用 `/summarize` 重新生成一次摘要；
    - 或把合同按章节拆成几份分别上传；
-   - 或临时调大 `backend\config.json` 的 `context_length`（越大越慢、内存占用越高，
+   - 或临时调大 `app\backend\config.json` 的 `context_length`（越大越慢、内存占用越高，
      `/status` 会显示 KV Cache 估算）；
 5. 想把结论存档：`/save 合同审查意见`。
 
 **判读状态**：`/status` 里的「上下文: 约 X/Y tokens」显示当前占用与自动摘要线（窗口的 80%）。
+
+**摘要会缓存**：同一份文件第二次上传会直接复用上次的分段摘要，不重新计算；文件内容改动后缓存自动失效。
+缓存写在 `app\backend\summary_cache.json`（可读 JSON，直接删除即可清空），
+不想用缓存可在 `app\backend\config.json` 里把 `summary_cache` 改为 `false`。
 
 ---
 
@@ -112,7 +149,7 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 
 ### 4.2 安全协议
 勾选「我已阅读并理解上述安全协议」后，自动化开关才可用（后端会强制校验）。
-协议版本与你的同意时间会记入 `backend\automation_log.jsonl`。
+协议版本与你的同意时间会记入 `app\backend\automation_log.jsonl`。
 
 ### 4.3 运行
 - 点「▶ 立即运行一次」；
@@ -126,11 +163,11 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 ### 4.4 定时
 勾选「启用定时」并填写每天的执行时刻（如 `09:00, 18:30`）。
 定时任务由后端线程在程序运行期间触发；若希望开机自动执行，
-请把「EchoDesk 启动.lnk」复制到系统「启动」文件夹（`Win+R` → `shell:startup`）。
+请把「EchoDesk-v0.2.1.lnk」复制到系统「启动」文件夹（`Win+R` → `shell:startup`）。
 
 ### 4.5 登录态
 第一次需要你在浏览器里手动登录一次，程序会把登录态存到
-`backend\browser_state.json`，之后自动复用。删除该文件即可退出所有登录。
+`app\backend\browser_state.json`，之后自动复用。删除该文件即可退出所有登录。
 
 ---
 
@@ -151,6 +188,16 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 技能来源：**只从 GitHub topic `echodesk-plugin` 发现**。
 搜不到结果通常是该 topic 下暂时没有仓库，而不是程序故障（详见 FAQ）。
 
+### 本地插件与开发者模式
+
+设置窗口「开发者」页的**开发者模式开关双向可用**：关掉就是关掉，重启后仍保持关闭。
+
+- 关闭开发者模式会**卸载开发插件**并从指令表移除，同时清空开发日志 `app\backend\skills_dev.log`；
+- 首次加载**第三方本地插件**（放在 `app\backend\skills_dev\`）会弹出**一次**汇总确认框：
+  逐项列出插件的来源、路径与声明的能力、权限，可以**逐个勾选 / 全部启用 / 全部禁用**；
+  你的选择会被记住，拒绝过的插件下次不再询问；
+- **随包示例插件**（`examples\skills\` 下的 Hello World 与 OFD 读取）默认启用，不弹确认框。
+
 ---
 
 ## 六、联网与隐私速查
@@ -165,6 +212,11 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 
 除以上之外，**没有任何遥测、埋点或崩溃上报**。详见 `docs/PRIVACY.md`。
 
+**合规文档**：输入 `/about` 会显示版本号、出品方，以及这些文件的**本机实际路径**——
+外层根目录的 `LICENSE`、`NOTICE`，与 `docs\PRIVACY.md`、`docs\EULA.md`、
+`docs\THIRD_PARTY_LICENSES.md`、`docs\SBOM.json`。完整合规文档还包括 `docs\SECURITY.md`、
+`docs\zh-Hans\COMPLIANCE.md` 与 `docs\en\COMPLIANCE.md`。
+
 ---
 
 ## 七、键盘与效率
@@ -178,9 +230,24 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 | `Ctrl+O` | 上传文件 |
 | `Ctrl+Shift+C` | 复制全部对话 |
 | `Ctrl+滚轮` / `Ctrl+加/减/0` | 调字号 / 重置 |
-| `Ctrl+T` | 切换深浅色 |
+| `Ctrl+T` | 切换浅色 / 深色（三态在设置窗口「常规」页） |
 | `Ctrl+,` | 打开设置 |
 | `Ctrl+M` | 打开技能市场 |
+
+**主题（三态）**：设置窗口「常规」页可选**跟随系统 / 浅色 / 深色**。选「跟随系统」时跟随 Windows 的
+应用模式，你在系统里切换浅色/深色时界面会立刻跟着变。快捷键 `Ctrl+T` 在浅色与深色之间切换，
+也可以直接用 `/darkmode on|off|auto` 指定。
+
+**emoji 显示（三态）**：设置窗口「常规」页可选**自动 / 始终显示 / 不使用**。选「自动」时，
+本机缺少 emoji 字体的话界面会自动改用纯文本标记（`[OK]` / `[!]`），而不是显示方块。
+
+**状态区**：输入框下方一行实时刷新——搜索开关、自动化、技能市场、上下文占用、KV Cache 估算，
+以及**模型能力项**（参数量 · 量化 · 可用窗口 · 实测生成速度）：
+
+- 点「🧠 模型…」打开「设置 → 模型」查看完整能力与推荐配置；
+- 模型能力边界被触到时（窗口偏小、生成速度过低、KV Cache 超过本机内存的一半等）才会出现
+  「⚠️ 能力提示 N」按钮，点开逐条列出原因与可采取的动作；
+- 点「🗜 压缩上下文」等同于执行一次 `/compact`。
 
 **指令面板**：输入 `/` 会弹出指令列表，`↑↓` 选择、`Tab` 补全、`Enter` 执行。
 左下角「+」可把输入框里的 `/xxx` 转移到独立的指令输入行。

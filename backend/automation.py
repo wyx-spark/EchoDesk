@@ -71,6 +71,9 @@ except Exception:  # noqa: BLE001
     def _program_root() -> str:  # type: ignore[misc]
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# 多语言（任务三）：必须在 config 之后导入，避免 i18n 反向依赖 config 时成环
+from i18n import t as _t
+
 # Playwright 同样做容错导入：未安装时由 validate()/run() 给出明确提示，而不是启动即崩
 try:  # pragma: no cover - 环境相关
     from playwright.sync_api import TimeoutError as _PWTimeoutError
@@ -222,6 +225,25 @@ def _safe_filename(name: str, fallback: str = "download") -> str:
         stem, ext = os.path.splitext(s)
         s = stem[: 120 - len(ext)] + ext
     return s or fallback
+
+
+def _target_label(target: str) -> str:
+    """可视化选取时给用户看的目标名称（任务书 4.2 的四种选取目标）。
+
+    **必须是模块级函数**（2026-09 修复）：它原先定义在 ``AutomationEngine`` 的类体里，
+    而调用点（``_stream_pick``）写的是裸名字 ``_target_label(target)`` ——
+    Python 的方法体不会把类作用域纳入 LEGB 查找，裸名字只会找到模块全局，
+    于是每次可视化选取都会 ``NameError``，被外层 ``except`` 兜住后用户看到的
+    是"可视化选取失败：name '_target_label' is not defined"，
+    本该显示的"请在弹出的 Edge 窗口里点击目标元素"永远出不来。
+    它是纯函数、不依赖 ``self``，放在模块级最自然，也顺便杜绝此类作用域问题。
+    """
+    return {
+        "task_list": _t("automation.target.task_list"),
+        "task_row": _t("automation.target.task_row"),
+        "next_page": _t("automation.target.next_page"),
+        "task_detail_file": _t("automation.target.task_detail_file"),
+    }.get(target, _t("automation.target.default"))
 
 
 def _unique_path(directory: str, name: str) -> str:
@@ -443,14 +465,15 @@ class AutomationEngine:
         """结果文件的文件头：一眼看清这批结果属于哪次运行。"""
         return "\n".join(
             [
-                "EchoDesk 批量处理结果",
+                _t("automation.report.title"),
                 "=" * 40,
-                f"任务名称：{self.task_name}",
-                f"运行日期：{_today()}",
-                f"开始时间：{_now_iso()}",
-                f"任务列表：{self.task_list_url}",
-                f"任务指令：{str(getattr(self.cfg, 'instruction', '') or '')}",
-                f"结果目录：{self.results_dir}",
+                _t("automation.report.task_name", name=self.task_name),
+                _t("automation.report.date", date=_today()),
+                _t("automation.report.started_at", time=_now_iso()),
+                _t("automation.report.task_list_url", url=self.task_list_url),
+                _t("automation.report.instruction",
+                   instruction=str(getattr(self.cfg, "instruction", "") or "")),
+                _t("automation.report.results_dir", path=self.results_dir),
             ]
         )
 
@@ -520,32 +543,33 @@ class AutomationEngine:
         """返回配置校验错误列表（空列表 = 可以运行）。"""
         errors: List[str] = []
         if not self.safety_accepted:
-            errors.append("尚未勾选安全协议（automation.safety_accepted=false），自动化不可运行。")
+            errors.append(_t("automation.validate.safety_not_accepted"))
         if not self.enabled:
-            errors.append("自动化总开关未开启（automation.enabled=false）。")
+            errors.append(_t("automation.validate.disabled"))
         if _sync_playwright is None:
-            errors.append("未安装 playwright，请先执行 pip install playwright && playwright install chromium。")
+            errors.append(_t("automation.validate.no_playwright"))
 
         url = self.task_list_url
         if not url:
-            errors.append("任务列表网址为空（automation.task_list_url）。")
+            errors.append(_t("automation.validate.no_url"))
         else:
             scheme = (urlparse(url).scheme or "").lower()
             if scheme not in ("http", "https", "file"):
-                errors.append(f"任务列表网址协议不受支持：{scheme or '(空)'}（仅支持 http/https/file）。")
+                errors.append(_t("automation.validate.bad_scheme",
+                                 scheme=scheme or _t("automation.value.empty_paren")))
         if not str(getattr(self.cfg, "task_list_selector", "") or "").strip():
-            errors.append("任务列表元素位置为空（automation.task_list_selector）。")
+            errors.append(_t("automation.validate.no_list_selector"))
         if not str(getattr(self.cfg, "task_detail_file_selector", "") or "").strip():
-            errors.append("任务详情页文件元素位置为空（automation.task_detail_file_selector）。")
+            errors.append(_t("automation.validate.no_detail_selector"))
         if not self.file_extensions:
-            errors.append("未配置需要预览/下载的文件后缀（automation.file_extensions）。")
+            errors.append(_t("automation.validate.no_extensions"))
         try:
             if int(getattr(self.cfg, "max_tasks", 20) or 0) < 1:
-                errors.append("最多处理任务数必须大于 0（automation.max_tasks）。")
+                errors.append(_t("automation.validate.max_tasks_zero"))
         except Exception:  # noqa: BLE001
-            errors.append("最多处理任务数不是合法整数（automation.max_tasks）。")
+            errors.append(_t("automation.validate.max_tasks_invalid"))
         if self.llm is None or not hasattr(self.llm, "chat_complete"):
-            errors.append("未加载本地模型，无法生成摘要与审核意见（请先加载模型）。")
+            errors.append(_t("automation.validate.no_model"))
         return errors
 
     # ---------- 审计与去重 ----------
@@ -647,17 +671,17 @@ class AutomationEngine:
                 browser = playwright.chromium.launch(channel=channel, headless=False)
                 return browser, ""
             except Exception as exc:  # noqa: BLE001
-                note = f"浏览器通道 {channel} 启动失败（{_redact(exc, 120)}），已回退到默认 Chromium。"
+                note = _t("automation.browser.channel_fallback", channel=channel,
+                          error=_redact(exc, 120))
                 self.logger.warning(note)
         try:
             browser = playwright.chromium.launch(headless=False)
             return browser, note
         except Exception as exc:  # noqa: BLE001
-            detail = f"{note}默认 Chromium 也启动失败：{_redact(exc, 200)}"
+            detail = _t("automation.browser.chromium_also_failed",
+                        note=note, error=_redact(exc, 200))
             raise AutomationError(
-                f"无法启动浏览器：{detail}。"
-                "请确认已安装 Microsoft Edge（automation.browser_channel=msedge），"
-                "或执行 playwright install chromium 安装内置浏览器。"
+                _t("automation.browser.launch_failed", detail=detail)
             ) from exc
 
     def _new_context(self, browser: Any) -> Any:
@@ -713,7 +737,8 @@ class AutomationEngine:
         except _PWTimeoutError:
             self.logger.warning("页面加载超时（继续处理）：%s", _redact(url, 200))
         except Exception as exc:  # noqa: BLE001
-            raise AutomationError(f"打开页面失败：{_redact(exc, 200)}") from exc
+            raise AutomationError(_t("automation.browser.goto_failed",
+                                     error=_redact(exc, 200))) from exc
 
     @staticmethod
     def _handle_text(handle: Any) -> str:
@@ -813,13 +838,13 @@ class AutomationEngine:
                 rows: List[Any] = frame.locator(norm_row).all() if norm_row else []
                 scopes: List[Any] = rows if rows else [frame]
             except Exception as exc:  # noqa: BLE001
-                self._record_selector_error("行容器", norm_row, exc)
+                self._record_selector_error(_t("automation.selector.what_row"), norm_row, exc)
                 continue
             for scope in scopes:
                 try:
                     handles = scope.locator(norm).all()
                 except Exception as exc:  # noqa: BLE001 - 语法错误在这里暴露
-                    self._record_selector_error("元素", norm, exc)
+                    self._record_selector_error(_t("automation.selector.what_element"), norm, exc)
                     continue
                 base = ""
                 try:
@@ -904,7 +929,7 @@ class AutomationEngine:
             limit = 180
         yield self._event(
             "delta",
-            f"检测到验证码/二次验证，请在弹出的浏览器窗口中手动完成，程序将等待最多 {limit} 秒…",
+            _t("automation.captcha.waiting", limit=limit),
         )
         self._audit("manual_required", url=self.task_list_url, result="waiting", error="captcha_or_mfa")
         deadline = time.monotonic() + limit
@@ -916,9 +941,9 @@ class AutomationEngine:
             except Exception:  # noqa: BLE001
                 time.sleep(2)
             if not self._captcha_present(page):
-                yield self._event("delta", "人工验证已完成，继续执行。")
+                yield self._event("delta", _t("automation.captcha.done"))
                 return True
-        yield self._event("delta", f"等待人工验证超过 {limit} 秒，本任务记为失败并继续下一个。")
+        yield self._event("delta", _t("automation.captcha.timeout", limit=limit))
         return False
 
     # ---------- 下载与解析 ----------
@@ -937,7 +962,8 @@ class AutomationEngine:
                 os.remove(path)
             except OSError:
                 pass
-            raise _FileTooLarge(f"文件超过 {MAX_FILE_BYTES // (1024 * 1024)}MB（{size} 字节），已跳过")
+            raise _FileTooLarge(_t("automation.file.too_large_with_size",
+                                   mb=MAX_FILE_BYTES // (1024 * 1024), size=size))
         return path
 
     @staticmethod
@@ -959,7 +985,8 @@ class AutomationEngine:
         """记录选择器解析/查询失败（只保留第一次，供用户提示用）。"""
         if getattr(self, "_selector_error", ""):
             return
-        self._selector_error = f"{what}选择器 {selector} 无法解析：{_redact(exc, 200)}"
+        self._selector_error = _t("automation.selector.unparsable", what=what, selector=selector,
+                                  error=_redact(exc, 200))
         self.logger.warning("选择器查询失败：%s", _redact(self._selector_error, 200))
 
     @staticmethod
@@ -1013,28 +1040,28 @@ class AutomationEngine:
     def _fetch_by_request(self, context: Any, url: str, dest_dir: str, hint: str = "") -> Tuple[Optional[str], str]:
         """兜底下载：用上下文自带请求客户端直接取文件（共享 Cookie）。"""
         if not url:
-            return None, "链接为空，无法直接请求"
+            return None, _t("automation.fetch.empty_link")
         try:
             response = context.request.get(url, timeout=self.page_timeout_ms)
         except Exception as exc:  # noqa: BLE001
-            return None, f"直接请求失败：{_redact(exc, 150)}"
+            return None, _t("automation.fetch.request_failed", error=_redact(exc, 150))
         try:
             if not response.ok:
-                return None, f"直接请求失败：HTTP {response.status}"
+                return None, _t("automation.fetch.http_error", status=response.status)
             body = response.body()
         except Exception as exc:  # noqa: BLE001
-            return None, f"读取响应失败：{_redact(exc, 150)}"
+            return None, _t("automation.fetch.read_failed", error=_redact(exc, 150))
         if body is None:
-            return None, "响应为空"
+            return None, _t("automation.fetch.empty_body")
         if len(body) > MAX_FILE_BYTES:
-            return None, f"文件超过 {MAX_FILE_BYTES // (1024 * 1024)}MB，已跳过"
+            return None, _t("automation.file.too_large", mb=MAX_FILE_BYTES // (1024 * 1024))
         name = self._name_from_response(response, url, hint)
         path = _unique_path(dest_dir, name)
         try:
             with open(path, "wb") as fh:
                 fh.write(body)
         except Exception as exc:  # noqa: BLE001
-            return None, f"写临时文件失败：{_redact(exc, 150)}"
+            return None, _t("automation.fetch.temp_write_failed", error=_redact(exc, 150))
         return path, ""
 
     def _download_entry(self, context: Any, page: Any, entry: _LinkEntry, dest_dir: str) -> Tuple[Optional[str], str]:
@@ -1048,16 +1075,16 @@ class AutomationEngine:
         if url and (urlparse(url).scheme or "").lower() == "file":
             source = _local_path_from_url(url)
             if not source or not os.path.isfile(source):
-                return None, f"本地文件不存在：{_redact(source or url, 150)}"
+                return None, _t("automation.file.local_missing", source=_redact(source or url, 150))
             dest = _unique_path(dest_dir, _safe_filename(os.path.basename(source), "download"))
             try:
                 shutil.copy2(source, dest)
             except Exception as exc:  # noqa: BLE001
-                return None, f"复制本地文件失败：{_redact(exc, 150)}"
+                return None, _t("automation.file.local_copy_failed", error=_redact(exc, 150))
             try:
                 if os.path.getsize(dest) > MAX_FILE_BYTES:
                     os.remove(dest)
-                    return None, f"文件超过 {MAX_FILE_BYTES // (1024 * 1024)}MB，已跳过"
+                    return None, _t("automation.file.too_large", mb=MAX_FILE_BYTES // (1024 * 1024))
             except OSError:
                 pass
             return dest, ""
@@ -1100,7 +1127,8 @@ class AutomationEngine:
         # 4) 最后兜底：直接请求链接本身
         if url and (urlparse(url).scheme or "").lower() in ("http", "https"):
             return self._fetch_by_request(context, url, dest_dir, hint)
-        return None, f"下载失败：{click_error or '未能触发下载'}"
+        return None, _t("automation.file.download_failed",
+                        error=click_error or _t("automation.file.no_download_triggered"))
 
     def _parse_downloaded(self, path: str) -> Tuple[str, str]:
         """解析下载的文件，返回 (正文, 错误说明)；错误串绝不返回给 LLM。"""
@@ -1110,13 +1138,13 @@ class AutomationEngine:
                 from file_parser import parse_file_with_wps as parser  # noqa: WPS433
                 _parse_file_with_wps = parser
             except Exception as exc:  # noqa: BLE001
-                return "", f"文件解析模块不可用：{_redact(exc, 150)}"
+                return "", _t("automation.parse.module_unavailable", error=_redact(exc, 150))
         try:
             text = _parse_file_with_wps(path, 0)
         except Exception as exc:  # noqa: BLE001
-            return "", f"解析异常：{_redact(exc, 150)}"
+            return "", _t("automation.parse.exception", error=_redact(exc, 150))
         if _is_parse_error(text):
-            return "", f"解析失败：{_redact(text, 150)}"
+            return "", _t("automation.parse.failed", error=_redact(text, 150))
         return str(text), ""
 
     # ---------- LLM 与结果落盘 ----------
@@ -1144,7 +1172,7 @@ class AutomationEngine:
     def _generate(self, docs: Sequence[Tuple[str, str]]) -> str:
         """调用本地模型生成摘要与审核意见。"""
         if self.llm is None or not hasattr(self.llm, "chat_complete"):
-            raise AutomationError("未加载本地模型，无法生成审核意见。")
+            raise AutomationError(_t("automation.llm.not_loaded"))
         messages = self._build_messages(docs)
         temperature = float(getattr(self.cfg, "llm_temperature", 0.3) or 0.3)
         max_tokens = int(getattr(self.cfg, "llm_max_tokens", 512) or 512)
@@ -1155,9 +1183,10 @@ class AutomationEngine:
                 # 兼容只接受 messages 的实现/测试替身
                 text = self.llm.chat_complete(messages)
         except Exception as exc:  # noqa: BLE001
-            raise AutomationError(f"模型生成失败：{_redact(exc, 200)}") from exc
+            raise AutomationError(_t("automation.llm.generate_failed",
+                                     error=_redact(exc, 200))) from exc
         if not text or not str(text).strip():
-            raise AutomationError("模型返回为空。")
+            raise AutomationError(_t("automation.llm.empty_reply"))
         return str(text).strip()
 
     def _save_result(
@@ -1177,14 +1206,17 @@ class AutomationEngine:
         if not bool(getattr(self.cfg, "save_results", True)) or self._dry_run:
             return ""
         prefix = f"[{index}/{total}] " if index and total else ""
+        untitled = _t("automation.result.untitled_task")
+        head = f"{prefix}{title or untitled}"
         block = [
-            f"{prefix}{title or '任务'}",
-            "-" * max(8, min(len(f"{prefix}{title or '任务'}"), 40)),
-            f"任务链接：{url}",
-            f"处理时间：{_now_iso()}",
-            f"附件：{'、'.join(files) if files else '无'}",
+            head,
+            "-" * max(8, min(len(head), 40)),
+            _t("automation.result.task_url", url=url),
+            _t("automation.result.processed_at", time=_now_iso()),
+            _t("automation.result.attachments",
+               files=_t("automation.list_sep").join(files) if files else _t("automation.list_none")),
             "",
-            "审核意见：",
+            _t("automation.result.review_opinion"),
             _markdown_to_plain(summary).strip(),
         ]
         self._report_blocks.append("\n".join(block))
@@ -1204,17 +1236,22 @@ class AutomationEngine:
         if not bool(getattr(self.cfg, "save_results", True)) or self._dry_run:
             return ""
         prefix = f"[{index}/{total}] " if index and total else ""
-        head = f"{prefix}{title or '任务'}（失败）"
+        untitled = _t("automation.result.untitled_task")
+        failed_suffix = _t("automation.result.failed_suffix")
+        head = f"{prefix}{title or untitled}{failed_suffix}"
         lines = [
             head,
             "-" * max(8, min(len(head), 40)),
-            f"任务链接：{url}",
-            f"处理时间：{_now_iso()}",
-            f"附件：{'、'.join(files) if files else '无'}",
-            f"失败原因：{error or '未知错误'}",
+            _t("automation.result.task_url", url=url),
+            _t("automation.result.processed_at", time=_now_iso()),
+            _t("automation.result.attachments",
+               files=_t("automation.list_sep").join(files) if files else _t("automation.list_none")),
+            _t("automation.result.failure_reason",
+               error=error or _t("automation.result.unknown_error")),
         ]
         if screenshot:
-            lines.append(f"失败截图：{os.path.basename(screenshot)}")
+            lines.append(_t("automation.result.failure_screenshot",
+                            name=os.path.basename(screenshot)))
         self._report_blocks.append("\n".join(lines))
         return self._write_report(self._report_blocks, self._report_header)
 
@@ -1251,13 +1288,13 @@ class AutomationEngine:
         result: Dict[str, Any] = {"ok": False, "count": 0, "samples": [], "hrefs": [], "error": "", "kind": kind}
         selector = (selector or "").strip()
         if not selector:
-            result["error"] = "选择器为空。"
+            result["error"] = _t("automation.test.empty_selector")
             return result
         if not (url or "").strip():
-            result["error"] = "网址为空。"
+            result["error"] = _t("automation.test.empty_url")
             return result
         if _sync_playwright is None:
-            result["error"] = "未安装 playwright。"
+            result["error"] = _t("automation.test.no_playwright")
             return result
 
         browser = playwright = None
@@ -1274,7 +1311,7 @@ class AutomationEngine:
                 page.locator(_normalize_selector(selector)).count()
             except Exception as exc:  # noqa: BLE001
                 result["ok"] = False
-                result["error"] = f"选择器语法错误：{_redact(exc, 250)}"
+                result["error"] = _t("automation.test.syntax_error", error=_redact(exc, 250))
                 return result
             entries = self._collect_links(page, selector)
             take = max(0, int(limit)) if str(limit).lstrip("-").isdigit() else 5
@@ -1283,7 +1320,7 @@ class AutomationEngine:
             result["hrefs"] = [entry.href or "" for entry in entries[:take]]
             result["ok"] = True
             if not entries:
-                result["error"] = self._selector_error or "页面已打开，但没有匹配到元素。"
+                result["error"] = self._selector_error or _t("automation.test.no_match")
         except Exception as exc:  # noqa: BLE001
             result["ok"] = False
             result["error"] = _redact(exc, 300)
@@ -1450,13 +1487,13 @@ class AutomationEngine:
         ``next_page``（下一页按钮）/ ``task_detail_file``（详情页附件）。
         后者会先用任务列表选择器点进第一个任务，再开始拾取。
         """
-        yield self._event("delta", "正在启动浏览器（有头模式，稍后请在页面上点击目标元素）…")
+        yield self._event("delta", _t("automation.pick.starting"))
         if _sync_playwright is None:
-            yield self._event("error", "未安装 playwright，无法使用可视化选取。")
+            yield self._event("error", _t("automation.pick.no_playwright"))
             return
         url = (url or "").strip() or self.task_list_url
         if not url:
-            yield self._event("error", "请先填写任务列表网址。")
+            yield self._event("error", _t("automation.pick.no_url"))
             return
 
         playwright = browser = context = page = None
@@ -1468,29 +1505,30 @@ class AutomationEngine:
             context = self._new_context(browser)   # 复用 browser_state.json 的登录态
             page = context.new_page()
             page.set_default_timeout(self.page_timeout_ms)
-            yield self._event("delta", f"正在打开 {url} …")
+            yield self._event("delta", _t("automation.pick.opening", url=url))
             self._goto(page, url)
             self._wait_loaded(page)
 
             if target == "task_detail_file":
                 selector = str(getattr(self.cfg, "task_list_selector", "") or "").strip()
                 if not selector:
-                    yield self._event("error", "详情页附件选取需要先配置「任务列表元素位置」，否则无法进入任务详情。")
+                    yield self._event("error", _t("automation.pick.detail_needs_list_selector"))
                     return
-                yield self._event("delta", "正在用任务列表选择器进入第一个任务…")
+                yield self._event("delta", _t("automation.pick.entering_first_task"))
                 entries = self._collect_links(page, selector,
                                              str(getattr(self.cfg, "task_row_selector", "") or ""))
                 if not entries:
-                    yield self._event("error", "任务列表选择器没有匹配到任何任务，无法进入详情页。"
-                                               "请先用「可视化选取」配置任务列表元素位置。")
+                    yield self._event("error", _t("automation.pick.no_task_matched"))
                     return
                 first = entries[0]
                 if not first.href:
-                    yield self._event("error", f"第一个任务「{_clip(first.text, 40)}」没有可用链接。")
+                    yield self._event("error", _t("automation.pick.first_task_no_link",
+                                                  title=_clip(first.text, 40)))
                     return
                 self._goto(page, first.href)
                 self._wait_loaded(page)
-                yield self._event("delta", f"已进入详情页：{_clip(first.text, 40)}")
+                yield self._event("delta", _t("automation.pick.entered_detail",
+                                              title=_clip(first.text, 40)))
 
             try:
                 page.bring_to_front()
@@ -1499,8 +1537,7 @@ class AutomationEngine:
             page.evaluate(self.PICKER_JS)
             yield self._event(
                 "delta",
-                f"请在弹出的 Edge 窗口里点击目标元素（{_target_label(target)}）。"
-                f"页面顶部有蓝色提示条，悬停时会显示选择器预览；按 Esc 取消。",
+                _t("automation.pick.prompt", target=_target_label(target)),
             )
 
             deadline = time.time() + max(10, int(timeout_seconds))
@@ -1530,16 +1567,18 @@ class AutomationEngine:
                 time.sleep(0.3)
 
             if picked is None:
-                reason = "已取消" if cancelled else f"等待超时（{timeout_seconds} 秒）"
-                yield self._event("error", f"可视化选取{reason}，未修改配置。")
+                reason = (_t("automation.pick.cancelled") if cancelled
+                          else _t("automation.pick.timeout_reason", seconds=timeout_seconds))
+                yield self._event("error", _t("automation.pick.aborted", reason=reason))
                 return
 
             selector = str(picked.get("selector") or "").strip()
             count = int(picked.get("count") or 0)
             yield self._event(
                 "done",
-                f"✅ 已生成选择器：{selector}\n匹配 {count} 个元素"
-                + (f"\n元素文本：{_clip(picked.get('text'), 120)}" if picked.get("text") else ""),
+                _t("automation.pick.generated", selector=selector, count=count)
+                + (_t("automation.pick.element_text",
+                       text=_clip(picked.get("text"), 120)) if picked.get("text") else ""),
                 selector=selector,
                 count=count,
                 target=target,
@@ -1547,7 +1586,7 @@ class AutomationEngine:
                 href=str(picked.get("href") or ""),
             )
         except Exception as exc:  # noqa: BLE001
-            message = f"可视化选取失败：{_redact(exc, 300)}"
+            message = _t("automation.pick.failed", error=_redact(exc, 300))
             self.logger.warning("可视化选取失败：%s", _redact(exc, 200))
             yield self._event("error", message)
         finally:
@@ -1576,13 +1615,13 @@ class AutomationEngine:
         }
         selector = (selector or "").strip()
         if not selector:
-            result["error"] = "选择器为空。"
+            result["error"] = _t("automation.test.empty_selector")
             return result
         if not (url or "").strip():
-            result["error"] = "网址为空。"
+            result["error"] = _t("automation.test.empty_url")
             return result
         if _sync_playwright is None:
-            result["error"] = "未安装 playwright。"
+            result["error"] = _t("automation.test.no_playwright")
             return result
 
         playwright = browser = None
@@ -1598,7 +1637,7 @@ class AutomationEngine:
             try:
                 count = locator.count()
             except Exception as exc:  # noqa: BLE001
-                result["error"] = f"选择器语法错误：{_redact(exc, 250)}"
+                result["error"] = _t("automation.test.syntax_error", error=_redact(exc, 250))
                 return result
             result["count"] = int(count)
             before_url = page.url
@@ -1623,10 +1662,10 @@ class AutomationEngine:
                     result["new_url"] = page.url
                     result["changed"] = page.url != before_url
                 except Exception as exc:  # noqa: BLE001
-                    result["error"] = f"点击失败：{_redact(exc, 200)}"
+                    result["error"] = _t("automation.test.click_failed", error=_redact(exc, 200))
             result["ok"] = True
             if count == 0:
-                result["error"] = self._selector_error or "页面已打开，但没有匹配到元素。"
+                result["error"] = self._selector_error or _t("automation.test.no_match")
         except Exception as exc:  # noqa: BLE001
             result["error"] = _redact(exc, 300)
             self.logger.warning("元素测试失败：%s", _redact(exc, 200))
@@ -1657,80 +1696,92 @@ class AutomationEngine:
         if int(step) == 1:
             selector = str(getattr(cfg, "task_list_selector", "") or "").strip()
             row = str(getattr(cfg, "task_row_selector", "") or "").strip()
-            out["title"] = "第一步：测试任务列表元素位置"
+            out["title"] = _t("automation.wizard.step1_title")
             if not url:
-                out["detail"] = "还没有填写「任务列表网址」。"
-                out["suggestions"] = ["填上列出全部任务的页面地址，从浏览器地址栏复制即可。"]
+                out["detail"] = _t("automation.wizard.no_url")
+                out["suggestions"] = [_t("automation.wizard.step1.no_url_tip")]
                 return out
             if not selector:
-                out["detail"] = "还没有填写「任务列表元素位置」。"
-                out["suggestions"] = ["点右边的「🎯 可视化选取」，然后在页面上点一下任务名称。"]
+                out["detail"] = _t("automation.wizard.no_list_selector")
+                out["suggestions"] = [_t("automation.wizard.step1.no_selector_tip")]
                 return out
             res = self.test_selector(url, selector)
             out["data"] = res
             out["samples"] = res.get("samples") or []
             if res.get("ok") and res.get("count"):
                 out["ok"] = True
-                out["detail"] = f"匹配到 {res['count']} 个任务链接，例如：{'、'.join(out['samples'][:3]) or '（无文本）'}"
+                samples = _t("automation.list_sep").join(out["samples"][:3]) or _t("automation.value.no_text")
+                out["detail"] = _t("automation.wizard.step1.matched",
+                                   count=res["count"], samples=samples)
                 if row:
                     row_res = self.test_element(url, row)
                     out["data"]["row"] = row_res
                     if row_res.get("count"):
-                        out["detail"] += f"\n任务行容器匹配到 {row_res['count']} 行。"
+                        out["detail"] += _t("automation.wizard.step1.row_matched",
+                                            count=row_res["count"])
                     else:
-                        out["detail"] += "\n⚠️ 任务行容器没有匹配到元素；不确定就把它留空。"
-                        out["suggestions"].append("任务行容器是可选项，不确定请留空。")
+                        out["detail"] += _t("automation.wizard.step1.row_no_match")
+                        out["suggestions"].append(_t("automation.wizard.step1.row_optional_tip"))
             elif res.get("ok"):
-                out["detail"] = "页面已打开，但这个选择器没有匹配到任何元素。"
+                out["detail"] = _t("automation.wizard.step1.no_element")
                 out["suggestions"] = [
-                    "确认这一页确实显示了任务列表（有些系统要先登录）。",
-                    "用「🎯 可视化选取」重新点一次任务名称。",
-                    "若列表在分页/懒加载里，先滚动到任务出现再选取。",
+                    _t("automation.wizard.step1.suggest1"),
+                    _t("automation.wizard.step1.suggest2"),
+                    _t("automation.wizard.step1.suggest3"),
                 ]
             else:
-                out["detail"] = f"测试失败：{res.get('error') or '未知原因'}"
-                out["suggestions"] = ["检查网址能否在浏览器里正常打开。", "检查选择器是否被误改。"]
+                out["detail"] = _t("automation.wizard.test_failed",
+                                   error=res.get("error") or _t("automation.value.unknown_reason"))
+                out["suggestions"] = [_t("automation.wizard.step1.fail_tip1"),
+                                      _t("automation.wizard.step1.fail_tip2")]
             return out
 
         if int(step) == 2:
             selector = str(getattr(cfg, "next_page_selector", "") or "").strip()
-            out["title"] = "第二步：测试下一页按钮"
+            out["title"] = _t("automation.wizard.step2_title")
             if not selector:
                 out["ok"] = True
-                out["detail"] = "没有配置「下一页按钮」——如果任务列表只有一页，这一步可以直接跳过。"
+                out["detail"] = _t("automation.wizard.step2.not_configured")
                 return out
             if not url:
-                out["detail"] = "还没有填写「任务列表网址」。"
+                out["detail"] = _t("automation.wizard.no_url")
                 return out
             res = self.test_element(url, selector, click=True)
             out["data"] = res
             if res.get("count") and res.get("clicked"):
                 out["ok"] = True
-                out["detail"] = (f"找到并点击了「下一页」按钮，页面{'已跳转' if res.get('changed') else '未跳转'}。"
-                                 f"\n点击后地址：{res.get('new_url') or '（未变化）'}")
+                out["detail"] = (
+                    _t("automation.wizard.step2.clicked",
+                       state=(_t("automation.wizard.step2.navigated") if res.get("changed")
+                              else _t("automation.wizard.step2.not_navigated")))
+                    + _t("automation.wizard.step2.new_url",
+                         url=res.get("new_url") or _t("automation.value.unchanged"))
+                )
                 if not res.get("changed"):
                     out["suggestions"] = [
-                        "如果这一页确实是最后一页，未跳转是正常的。",
-                        "如果不是最后一页，可能是按钮由 JavaScript 处理：试试换成更精确的选择器。",
+                        _t("automation.wizard.step2.last_page_tip"),
+                        _t("automation.wizard.step2.js_tip"),
                     ]
             elif res.get("count"):
-                out["detail"] = f"匹配到 {res['count']} 个元素，但点击没有成功：{res.get('error') or '未知原因'}"
+                out["detail"] = _t("automation.wizard.step2.click_failed",
+                                   count=res["count"],
+                                   error=res.get("error") or _t("automation.value.unknown_reason"))
             else:
-                out["detail"] = "没有匹配到「下一页」按钮。"
-                out["suggestions"] = ["用「🎯 可视化选取」在列表页底部点一下「下一页」。",
-                                      "若按钮文字是「>」或「下一页 ›」，注意选的是可点击的那个元素。"]
+                out["detail"] = _t("automation.wizard.step2.no_match")
+                out["suggestions"] = [_t("automation.wizard.step2.no_match_tip1"),
+                                      _t("automation.wizard.step2.no_match_tip2")]
             return out
 
         if int(step) == 3:
             selector = str(getattr(cfg, "task_detail_file_selector", "") or "").strip()
-            out["title"] = "第三步：测试任务详情页附件位置"
+            out["title"] = _t("automation.wizard.step3_title")
             if not selector:
-                out["detail"] = "还没有填写「任务详情页文件元素位置」。"
-                out["suggestions"] = ["点「🎯 可视化选取」并选择「详情页附件」，程序会自动进入第一个任务再让你点。"]
+                out["detail"] = _t("automation.wizard.no_detail_selector")
+                out["suggestions"] = [_t("automation.wizard.step3.no_selector_tip")]
                 return out
             list_selector = str(getattr(cfg, "task_list_selector", "") or "").strip()
             if not url or not list_selector:
-                out["detail"] = "需要先配置好「任务列表网址」与「任务列表元素位置」，否则进不去任务详情页。"
+                out["detail"] = _t("automation.wizard.step3.needs_prereq")
                 return out
             playwright = browser = None
             try:
@@ -1744,8 +1795,8 @@ class AutomationEngine:
                 entries = self._collect_links(
                     page, list_selector, str(getattr(cfg, "task_row_selector", "") or ""))
                 if not entries or not entries[0].href:
-                    out["detail"] = "任务列表选择器没有匹配到可用任务，无法进入详情页。"
-                    out["suggestions"] = ["先让第一步测试通过。"]
+                    out["detail"] = _t("automation.wizard.step3.no_usable_task")
+                    out["suggestions"] = [_t("automation.wizard.step3.let_step1_pass")]
                     return out
                 self._goto(page, entries[0].href)
                 self._wait_loaded(page)
@@ -1771,19 +1822,21 @@ class AutomationEngine:
                                "task": _clip(entries[0].text, 60), "task_url": entries[0].href}
                 if count:
                     out["ok"] = True
-                    out["detail"] = (f"在任务「{_clip(entries[0].text, 40)}」的详情页里匹配到 {count} 个附件元素，"
-                                     f"其中 {matched_ext} 个的后缀在「需要预览的文件后缀」内。")
+                    out["detail"] = _t("automation.wizard.step3.matched",
+                                       title=_clip(entries[0].text, 40), count=count,
+                                       matched=matched_ext)
                     if matched_ext == 0:
                         out["suggestions"] = [
-                            f"当前允许的后缀：{'、'.join(sorted(exts)) or '（空）'}；"
-                            "如果附件是其它格式，请在配置里补上。",
+                            _t("automation.wizard.step3.extensions",
+                               extensions=(_t("automation.list_sep").join(sorted(exts))
+                                           or _t("automation.value.empty_paren"))),
                         ]
                 else:
-                    out["detail"] = "在任务详情页里没有匹配到附件元素。"
-                    out["suggestions"] = ["用「🎯 可视化选取」选择「详情页附件」重新点一次。",
-                                          "确认第一个任务确实带附件。"]
+                    out["detail"] = _t("automation.wizard.step3.no_match")
+                    out["suggestions"] = [_t("automation.wizard.step3.no_match_tip1"),
+                                          _t("automation.wizard.step3.no_match_tip2")]
             except Exception as exc:  # noqa: BLE001
-                out["detail"] = f"测试失败：{_redact(exc, 300)}"
+                out["detail"] = _t("automation.wizard.test_failed", error=_redact(exc, 300))
             finally:
                 for closer in (lambda: browser.close() if browser else None,
                                lambda: playwright.stop() if playwright else None):
@@ -1794,11 +1847,12 @@ class AutomationEngine:
             return out
 
         if int(step) == 4:
-            out["title"] = "第四步：试运行一个任务（不写结果文件）"
+            out["title"] = _t("automation.wizard.step4_title")
             errors = self.validate()
             if errors:
-                out["detail"] = "配置还没通过校验：\n- " + "\n- ".join(errors)
-                out["suggestions"] = ["按上面的提示补齐配置后再试运行。"]
+                out["detail"] = _t("automation.wizard.validate_failed",
+                                   errors="\n- ".join(errors))
+                out["suggestions"] = [_t("automation.wizard.step4.fix_then_retry")]
                 return out
             collected: List[str] = []
             result_status = "unknown"
@@ -1816,23 +1870,14 @@ class AutomationEngine:
             out["detail"] = _clip("\n".join(line for line in collected if line), 4000)
             out["data"] = {"log": collected, "status": result_status}
             if not out["ok"]:
-                out["suggestions"] = ["根据上面的报错检查选择器与登录状态。",
-                                      "确认这台电脑上能用手动方式完成同样的下载。"]
+                out["suggestions"] = [_t("automation.wizard.step4.fail_tip1"),
+                                      _t("automation.wizard.step4.fail_tip2")]
             else:
-                out["suggestions"] = ["确认无误后，勾选安全协议并打开自动化总开关即可开始批量处理。"]
+                out["suggestions"] = [_t("automation.wizard.step4.ok_tip")]
             return out
 
-        out["detail"] = f"未知的向导步骤：{step}"
+        out["detail"] = _t("automation.wizard.unknown_step", step=step)
         return out
-
-    def _target_label(target: str) -> str:
-        """可视化选取时给用户看的目标名称（任务书 4.2 的四种选取目标）。"""
-        return {
-            "task_list": "任务列表里的任务链接",
-            "task_row": "任务所在的那一整行",
-            "next_page": "「下一页」按钮",
-            "task_detail_file": "任务详情页里的附件名称",
-        }.get(target, "目标元素")
 
     def stop(self) -> None:
         """请求停止（线程安全）：置位内部事件，并同步外部传入的 stop_event。
@@ -1918,26 +1963,26 @@ class AutomationEngine:
 
         # ---- 安全协议前置检查（必须在启动浏览器之前）----
         if not self.enabled:
-            message = "自动化总开关未开启（automation.enabled=false），未启动浏览器。"
+            message = _t("automation.run.disabled")
             if not self.safety_accepted:
-                message = "尚未勾选安全协议，自动化已拒绝执行，未启动浏览器。"
+                message = _t("automation.run.safety_not_accepted")
             self._last_error = message
             yield self._event("error", message)
             return
         if not self.safety_accepted:
-            message = "安全协议未勾选（automation.safety_accepted=false），自动化已拒绝执行，未启动浏览器。"
+            message = _t("automation.run.safety_required")
             self._last_error = message
             yield self._event("error", message)
             return
         if self._running:
-            message = "已有自动化任务在运行中，请等待其结束或先点击停止。"
+            message = _t("automation.run.already_running")
             self._last_error = message
             yield self._event("error", message)
             return
 
         errors = self.validate()
         if errors:
-            message = "配置校验未通过：\n- " + "\n- ".join(errors)
+            message = _t("automation.run.validate_failed", errors="\n- ".join(errors))
             self._last_error = message
             yield self._event("error", message)
             return
@@ -1965,18 +2010,18 @@ class AutomationEngine:
                 self._run_task_dir = self._prepare_task_dir()
                 self._report_header = self._build_report_header()
                 self._write_report(self._report_blocks, self._report_header)
-                yield self._event("delta", f"结果将保存到：{self.results_dir}")
+                yield self._event("delta", _t("automation.run.results_saved_to", path=self.results_dir))
             else:
                 self._run_task_dir = ""
                 self._report_header = ""
                 if dry_run:
-                    yield self._event("delta", "试运行模式：只处理一个任务，不写结果文件、不记入处理记录。")
+                    yield self._event("delta", _t("automation.run.dry_run"))
             self._audit("run_start", url=self.task_list_url, result="start",
                         max_tasks=limit or getattr(self.cfg, "max_tasks", 20))
-            yield self._event("delta", f"开始自动化：准备打开任务列表 {self.task_list_url}")
+            yield self._event("delta", _t("automation.run.starting", url=self.task_list_url))
 
             # ---- 启动浏览器 ----
-            yield self._event("delta", "正在启动浏览器（有头模式，请勿手动关闭窗口）…")
+            yield self._event("delta", _t("automation.run.launching_browser"))
             playwright = _sync_playwright().start()
             browser, note = self._launch(playwright)
             if note:
@@ -1990,11 +2035,11 @@ class AutomationEngine:
                 pass
 
             # ---- 打开任务列表 ----
-            yield self._event("delta", "正在打开任务列表页…")
+            yield self._event("delta", _t("automation.run.opening_task_list"))
             self._goto(page, self.task_list_url)
             manual_ok = yield from self._wait_manual(page, stopped)
             if not manual_ok:
-                yield self._event("delta", "任务列表页需要人工验证但未完成，本次运行结束。")
+                yield self._event("delta", _t("automation.run.manual_not_done"))
             self._wait_loaded(page)
 
             # ---- 收集任务链接（含分页）----
@@ -2018,14 +2063,15 @@ class AutomationEngine:
                     new_count += 1
                 yield self._event(
                     "delta",
-                    f"第 {page_index} 页找到 {len(entries)} 个任务链接（新增 {new_count} 个，累计 {len(pending)} 个）。",
+                    _t("automation.run.page_found", page=page_index, count=len(entries),
+                       new=new_count, total=len(pending)),
                 )
                 if len(pending) >= max_tasks:
                     break
                 if not next_selector.strip():
                     break
                 if not self._click_next_page(page, next_selector):
-                    yield self._event("delta", "没有可用的下一页，任务收集结束。")
+                    yield self._event("delta", _t("automation.run.no_next_page"))
                     break
                 self._wait_loaded(page)
                 manual_ok = yield from self._wait_manual(page, stopped)
@@ -2036,42 +2082,47 @@ class AutomationEngine:
             if total_tasks == 0:
                 if stopped():
                     # 运行刚开始就被要求停止：正常收尾，不算错误
-                    self._save_summary_block("已按请求停止，本轮没有处理任何任务。")
+                    stop_text = _t("automation.run.stopped_no_task")
+                    self._save_summary_block(stop_text)
                     yield self._event(
                         "done",
-                        "已按请求停止，本轮没有处理任何任务。",
+                        stop_text,
                         processed=0,
                         skipped=0,
                         failed=0,
                         results=[],
                     )
                     return
-                message = "未在任务列表页找到任何任务链接（请检查任务列表元素位置）。"
+                message = _t("automation.run.no_task_found")
                 if self._selector_error:
-                    message = f"任务列表元素位置无法使用：{self._selector_error}"
+                    message = _t("automation.run.list_selector_unusable", error=self._selector_error)
                 self._last_error = message
                 # 失败信息也写进 结果.txt，避免"结果目录是空的、不知道发生了什么"
-                self._save_summary_block(f"本轮未处理任何任务。\n原因：{message}")
+                self._save_summary_block(_t("automation.run.summary_no_task", reason=message))
                 self._audit("run_end", url=self.task_list_url, result="failed", error=message, **counters)
                 yield self._event("error", message)
                 return
-            yield self._event("delta", f"共找到 {len(pending)} 个任务，本轮最多处理 {total_tasks} 个。")
+            yield self._event("delta", _t("automation.run.tasks_found", count=len(pending),
+                                          total=total_tasks))
 
             # ---- 逐个处理任务 ----
             for index, entry in enumerate(pending[:total_tasks], 1):
                 if stopped():
-                    yield self._event("delta", "已收到停止请求，剩余任务不再处理。")
+                    yield self._event("delta", _t("automation.run.stop_requested"))
                     break
-                title = entry.text or f"任务{index}"
+                title = entry.text or _t("automation.task.fallback_title", index=index)
                 url_key = self._url_key(entry.href)
                 if bool(getattr(self.cfg, "dedupe", True)) and url_key in processed_urls:
                     counters["skipped"] += 1
-                    yield self._event("delta", f"第 {index}/{total_tasks} 个任务：{_clip(title, 40)}——已处理过，跳过。")
-                    self._audit("task", url=entry.href, result="skipped", error="已在处理记录中")
+                    yield self._event("delta", _t("automation.task.already_processed",
+                                                  index=index, total=total_tasks,
+                                                  title=_clip(title, 40)))
+                    self._audit("task", url=entry.href, result="skipped",
+                                error=_t("automation.audit.already_processed"))
                     continue
 
                 task_tmp = ""
-                outcome = _TaskOutcome(status="failed", error="未执行")
+                outcome = _TaskOutcome(status="failed", error=_t("automation.task.not_executed"))
                 # 技能钩子：任务开始前（v0.2.1 任务二 2.3）
                 self._fire("before_task", task=title, url=entry.href, index=index,
                            total=total_tasks, run_dir=self._run_task_dir)
@@ -2084,7 +2135,8 @@ class AutomationEngine:
                         if attempt > 1:
                             yield self._event(
                                 "delta",
-                                f"第 {index}/{total_tasks} 个任务：第 {attempt}/{attempts} 次尝试…",
+                                _t("automation.task.retry", index=index, total=total_tasks,
+                                   attempt=attempt, attempts=attempts),
                             )
                         outcome = yield from self._process_one(
                             context, page, entry, index, total_tasks, task_tmp, stopped
@@ -2092,7 +2144,9 @@ class AutomationEngine:
                         if outcome.status == "ok":
                             break
                 except Exception as exc:  # noqa: BLE001 - 单个任务异常不得中断整轮
-                    outcome = _TaskOutcome(status="failed", error=f"任务处理异常：{_redact(exc, 200)}")
+                    outcome = _TaskOutcome(status="failed",
+                                           error=_t("automation.task.exception",
+                                                    error=_redact(exc, 200)))
                 finally:
                     if task_tmp:
                         shutil.rmtree(task_tmp, ignore_errors=True)
@@ -2105,20 +2159,24 @@ class AutomationEngine:
                         self._result_count += 1
                     block = [
                         f"[{index}/{total_tasks}] {title}",
-                        f"链接：{entry.href}",
-                        f"文件：{'、'.join(outcome.files) if outcome.files else '无'}",
-                        "审核意见：",
+                        _t("automation.task.link", url=entry.href),
+                        _t("automation.result.attachments",
+                           files=(_t("automation.list_sep").join(outcome.files) if outcome.files
+                                  else _t("automation.list_none"))),
+                        _t("automation.result.review_opinion"),
                         outcome.summary,
                     ]
                     if outcome.result_path:
-                        block.append(f"（已写入结果文件：{os.path.basename(outcome.result_path)}）")
+                        block.append(_t("automation.task.written_to_report",
+                                        name=os.path.basename(outcome.result_path)))
                     text = "\n".join(block)
                     results.append(text)
-                    yield self._event("delta", f"第 {index}/{total_tasks} 个任务完成。\n" + _clip(text, 2000))
+                    yield self._event("delta", _t("automation.task.done", index=index,
+                                                  total=total_tasks, text=_clip(text, 2000)))
                     self._audit("task", url=entry.href, files=outcome.files, result="ok")
                 else:
                     counters["failed"] += 1
-                    reason = outcome.error or "未知错误"
+                    reason = outcome.error or _t("automation.result.unknown_error")
                     # 失败信息同样写入 结果.txt，并保留失败截图（任务书 新增三）
                     self._save_failure(
                         title, entry.href, outcome.files, reason,
@@ -2126,7 +2184,8 @@ class AutomationEngine:
                     )
                     yield self._event(
                         "delta",
-                        f"第 {index}/{total_tasks} 个任务失败（已跳过，继续下一个）：{_clip(reason, 300)}",
+                        _t("automation.task.failed", index=index, total=total_tasks,
+                           reason=_clip(reason, 300)),
                     )
                     self._audit("task", url=entry.href, files=outcome.files, result="failed", error=reason)
 
@@ -2147,20 +2206,20 @@ class AutomationEngine:
                 self._save_processed(processed_urls)
 
             # ---- 汇总 ----
-            header = (
-                f"自动化完成：成功 {counters['ok']} 个，跳过 {counters['skipped']} 个，"
-                f"失败 {counters['failed']} 个（共发现 {len(pending)} 个任务，处理上限 {total_tasks} 个）。"
-            )
+            header = _t("automation.run.summary_header", ok=counters["ok"],
+                        skipped=counters["skipped"], failed=counters["failed"],
+                        found=len(pending), limit=total_tasks)
             if stopped():
-                header = "已按请求停止。" + header
+                header = _t("automation.run.summary_stopped_prefix") + header
             if bool(getattr(self.cfg, "save_results", True)) and not dry_run:
-                header += f"\n结果目录：{self.results_dir}"
+                header += _t("automation.run.summary_results_dir", path=self.results_dir)
                 self._save_summary_block(header)
-            body = "\n\n".join(results) if results else "（本轮没有生成结果）"
+            body = "\n\n".join(results) if results else _t("automation.run.no_results")
             content = header + "\n\n" + _clip(body, 6000)
             self._audit(
                 "run_end", url=self.task_list_url, result="ok" if counters["failed"] == 0 else "failed",
-                error="" if counters["failed"] == 0 else f"{counters['failed']} 个任务失败",
+                error=("" if counters["failed"] == 0
+                       else _t("automation.audit.tasks_failed", count=counters["failed"])),
                 processed=counters["ok"], skipped=counters["skipped"], failed=counters["failed"],
             )
             yield self._event(
@@ -2177,7 +2236,7 @@ class AutomationEngine:
             self._audit("run_end", url=self.task_list_url, result="failed", error=message, **counters)
             yield self._event("error", message)
         except Exception as exc:  # noqa: BLE001
-            message = f"自动化运行异常：{_redact(exc, 300)}"
+            message = _t("automation.run.unexpected", error=_redact(exc, 300))
             self._last_error = message
             self.logger.exception("自动化运行异常")
             self._audit("run_end", url=self.task_list_url, result="failed", error=message, **counters)
@@ -2249,7 +2308,7 @@ class AutomationEngine:
         返回值：``_TaskOutcome``。下载的原始文件在成功/失败时都会被移入本轮任务目录
         （新增三：结果目录内保存原始文件与 结果.txt），临时文件目录只用于中转。
         """
-        title = entry.text or f"任务{index}"
+        title = entry.text or _t("automation.task.fallback_title", index=index)
         files_saved: List[str] = []
         moved_paths: Set[str] = set()   # 已移入结果目录的文件（finally 不再删除）
         names: List[str] = []
@@ -2257,14 +2316,17 @@ class AutomationEngine:
         pages_before = list(getattr(context, "pages", []) or [])
         try:
             if not entry.href:
-                return _TaskOutcome("failed", "", [], "任务链接为空，无法打开详情页。")
-            yield self._event("delta", f"第 {index}/{total} 个任务：{_clip(title, 40)}——正在打开详情页…")
+                return _TaskOutcome("failed", "", [], _t("automation.task.empty_link"))
+            yield self._event("delta", _t("automation.task.opening_detail", index=index,
+                                          total=total, title=_clip(title, 40)))
             self._goto(page, entry.href)
             if not (yield from self._wait_manual(page, stop_fn)):
-                return _TaskOutcome("failed", "", [], f"等待人工验证超时（{getattr(self.cfg, 'manual_login_wait_seconds', 180)} 秒）")
+                return _TaskOutcome("failed", "", [], _t(
+                    "automation.task.manual_timeout",
+                    seconds=getattr(self.cfg, "manual_login_wait_seconds", 180)))
             self._wait_loaded(page)
             if stop_fn():
-                return _TaskOutcome("failed", "", [], "已停止")
+                return _TaskOutcome("failed", "", [], _t("automation.task.stopped"))
 
             # ---- 定位附件链接并按后缀过滤 ----
             file_selector = str(getattr(self.cfg, "task_detail_file_selector", "") or "")
@@ -2281,27 +2343,34 @@ class AutomationEngine:
                 if len(matched) >= _MAX_FILES_PER_TASK:
                     break
             if skipped_ext:
-                yield self._event("delta", f"第 {index}/{total} 个任务：已忽略 {skipped_ext} 个后缀不符合要求的文件。")
+                yield self._event("delta", _t("automation.task.ignored_extensions",
+                                              index=index, total=total, count=skipped_ext))
             if not matched:
-                reason = "详情页没有符合后缀要求的文件链接"
+                reason = _t("automation.task.no_matching_files")
                 if self._selector_error:
-                    reason = f"任务详情页文件元素位置无法使用：{self._selector_error}"
+                    reason = _t("automation.task.detail_selector_unusable",
+                                error=self._selector_error)
                 return _TaskOutcome("failed", "", [], reason)
 
             # ---- 逐个下载并解析 ----
             documents: List[Tuple[str, str]] = []
             for order, candidate in enumerate(matched, 1):
                 if stop_fn():
-                    return _TaskOutcome("failed", "", names, "已停止")
-                label = _clip(candidate.text or candidate.href, 60) or f"文件{order}"
+                    return _TaskOutcome("failed", "", names, _t("automation.task.stopped"))
+                label = (_clip(candidate.text or candidate.href, 60)
+                         or _t("automation.task.fallback_file", order=order))
                 yield self._event(
                     "delta",
-                    f"第 {index}/{total} 个任务：正在下载 {label}（{order}/{len(matched)}）…",
+                    _t("automation.task.downloading", index=index, total=total, label=label,
+                       order=order, count=len(matched)),
                 )
                 path, err = self._download_entry(context, page, candidate, task_tmp)
                 if err or not path:
-                    errors.append(f"{label}：{err or '下载失败'}")
-                    yield self._event("delta", f"第 {index}/{total} 个任务：{label} 跳过（{_clip(err, 120)}）")
+                    errors.append(_t("automation.task.file_error", label=label,
+                                     error=err or _t("automation.file.download_failed_short")))
+                    yield self._event("delta", _t("automation.task.file_skipped", index=index,
+                                                  total=total, label=label,
+                                                  error=_clip(err, 120)))
                     continue
                 files_saved.append(path)
                 name = os.path.basename(path)
@@ -2309,8 +2378,10 @@ class AutomationEngine:
                 text, parse_err = self._parse_downloaded(path)
                 if parse_err:
                     # 解析错误串绝不交给 LLM；该文件记为失败，其余文件继续
-                    errors.append(f"{name}：{parse_err}")
-                    yield self._event("delta", f"第 {index}/{total} 个任务：{name} {_clip(parse_err, 120)}")
+                    errors.append(_t("automation.task.file_error", label=name, error=parse_err))
+                    yield self._event("delta", _t("automation.task.file_parse_failed",
+                                                  index=index, total=total, name=name,
+                                                  error=_clip(parse_err, 120)))
                     continue
                 documents.append((name, text))
 
@@ -2318,17 +2389,20 @@ class AutomationEngine:
                 # 技能钩子：文件下载完成（即使全部失败也通知，便于技能统计）
                 self._fire("after_download", task=title, index=index, total=total,
                            files=list(names), errors=list(errors), run_dir=self._run_task_dir)
-                return _TaskOutcome("failed", "", names, "；".join(errors) or "没有可用的文件内容")
+                return _TaskOutcome("failed", "", names,
+                                    _t("automation.list_sep_semicolon").join(errors)
+                                    or _t("automation.task.no_usable_content"))
 
             # 技能钩子：文件下载后（任务书 2.3 的 after_download 阶段）
             self._fire("after_download", task=title, index=index, total=total,
                        files=list(names), errors=list(errors), run_dir=self._run_task_dir)
 
             # ---- 生成审核意见 ----
-            yield self._event("delta", f"第 {index}/{total} 个任务：正在生成审核意见…")
+            yield self._event("delta", _t("automation.task.generating", index=index, total=total))
             summary = self._generate(documents)
             if errors:
-                summary += "\n\n【提示】以下文件未能读取，未纳入审核：" + "；".join(errors)
+                summary += _t("automation.task.unreadable_notice",
+                              errors=_t("automation.list_sep_semicolon").join(errors))
             # 技能钩子：摘要生成后（任务书 2.3 的 after_summary 阶段）
             self._fire("after_summary", task=title, index=index, total=total,
                        files=list(names), summary=summary, run_dir=self._run_task_dir)
@@ -2339,7 +2413,8 @@ class AutomationEngine:
                 if name not in names:
                     names.append(name)
             if kept:
-                yield self._event("delta", f"第 {index}/{total} 个任务：原始文件已保存到结果目录（{len(kept)} 个）。")
+                yield self._event("delta", _t("automation.task.files_kept", index=index,
+                                              total=total, count=len(kept)))
             result_path = self._save_result(title, entry.href, names, summary, index=index, total=total)
             return _TaskOutcome("ok", summary, names, "", result_path)
         except Exception as exc:  # noqa: BLE001

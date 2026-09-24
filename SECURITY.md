@@ -1,5 +1,9 @@
 # Security Policy
 
+> **Chinese version:** the same policy, including the accepted scope and the security design notes,
+> is available at [`docs/SECURITY.md`](docs/SECURITY.md). The two documents describe one policy and
+> must stay consistent; if they ever disagree, this English file prevails — please open an issue.
+
 EchoDesk is a fully local desktop application: it runs inference, file parsing and browser
 automation on the user's own machine, and it has no server component and no telemetry. That
 shapes both the threat model and the way we want vulnerabilities reported.
@@ -27,6 +31,12 @@ older build, expect the first question to be whether it still reproduces on the 
 2. **Fallback: email.** If you cannot use GitHub advisories, write to
    `security@example.com` — **maintainer note: this address is a placeholder; replace it with a
    monitored mailbox before publishing the repository.**
+
+No PGP/GPG key, `security.txt` or `.well-known/` directory is published yet, so this policy does not
+list a key fingerprint. If you need to send encrypted material, say so in the private advisory and we
+will arrange a verifiable key or another mutually acceptable channel. The email fallback is plain
+SMTP and is **not** guaranteed to be end-to-end encrypted; please do not put full exploit code or
+real confidential data in the first message.
 
 Please do not include exploit details in public issues, discussions or pull requests. If you have
 already disclosed something publicly by accident, tell us anyway; we will still work on a fix.
@@ -61,9 +71,9 @@ path is more useful.
 
 | Stage | Commitment |
 | --- | --- |
-| Acknowledgement of your report | Within **5 business days** |
+| Acknowledgement of your report | Within **3 business days** |
 | Initial triage: severity assessment, affected versions, whether we can reproduce it | Within **10 business days** of acknowledgement |
-| Fix or mitigation plan communicated | Depends on severity; we will tell you the expected timeline after triage |
+| Fix released, or an explicit mitigation communicated | Within **30 days** of acknowledgement; if that is genuinely not possible, we will give you a concrete fix timeline and an interim mitigation within those 30 days |
 | Credit in the advisory | Offered by default, unless you prefer to stay anonymous |
 
 This is a small project maintained in spare time, so these are commitments about *communication*,

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using EchoDesk.Services;
 
 namespace EchoDesk.Utilities;
 
@@ -11,7 +12,8 @@ public sealed class Snippet
 }
 
 /// <summary>
-/// 管理用户自定义常用语（snippets.json 存放在 exe 同目录）。
+/// 管理用户自定义常用语（<c>snippets.json</c>，修复七后存放在用户数据目录，
+/// 便携版布局下即外层目录，与 <c>app\</c> 里的程序文件分开）。
 /// </summary>
 public sealed class SnippetManager
 {
@@ -20,8 +22,7 @@ public sealed class SnippetManager
 
     public SnippetManager()
     {
-        string dir = Path.GetDirectoryName(Environment.ProcessPath) ?? ".";
-        _path = Path.Combine(dir, "snippets.json");
+        _path = Path.Combine(ShortcutService.UserDataDirectory, "snippets.json");
         Load();
     }
 

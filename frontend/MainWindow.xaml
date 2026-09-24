@@ -47,13 +47,15 @@
                     svc:Loc.TipKey="main.model.clickTip"
                     svc:Loc.HelpKey="main.model.help">
                 <TextBlock x:Name="ModelText" Text="🧠 模型: ---" FontSize="11" MaxWidth="200"
+                           svc:Loc.Key="main.model.placeholder"
                            TextTrimming="CharacterEllipsis"/>
             </Button>
             <Button x:Name="ModeChip" Margin="8,0,0,0" Padding="8,2" VerticalAlignment="Center"
                     Style="{StaticResource RoundButton}" Click="ModeChip_Click"
                     svc:Loc.TipKey="main.mode.clickTip"
                     svc:Loc.HelpKey="main.mode.help">
-                <TextBlock x:Name="ModeText" Text="🛠️ 模式: general" FontSize="11"/>
+                <TextBlock x:Name="ModeText" Text="🛠️ 模式: general" FontSize="11"
+                           svc:Loc.Key="main.mode.placeholder"/>
             </Button>
         </StackPanel>
 
@@ -127,6 +129,7 @@
                                 </TextBlock.RenderTransform>
                             </TextBlock>
                             <TextBlock x:Name="CommandButtonText" Text="打开命令输入框" FontSize="12"
+                                       svc:Loc.Key="main.command.open"
                                        Margin="8,0,0,0" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
@@ -138,6 +141,7 @@
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="📋" FontSize="14" VerticalAlignment="Center"/>
                             <TextBlock x:Name="SnippetButtonText" Text="打开常用语选择框" FontSize="12"
+                                       svc:Loc.Key="main.snippet.open"
                                        Margin="8,0,0,0" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
@@ -146,19 +150,31 @@
                     <Button x:Name="ContextButton" Grid.Column="3" Height="30" MinWidth="130" Padding="14,0"
                             HorizontalAlignment="Left"
                             Style="{StaticResource RoundButton}"
-                            Click="ContextButton_Click" ToolTip="点击刷新上下文占用">
-                        <TextBlock x:Name="ContextText" Text="上下文：---/---" FontSize="11"/>
+                            Click="ContextButton_Click" ToolTip="点击刷新上下文占用"
+                            svc:Loc.TipKey="main.context.buttonTip">
+                        <TextBlock x:Name="ContextText" Text="上下文：---/---" FontSize="11"
+                                   svc:Loc.Key="main.context.buttonIdle"/>
                     </Button>
+                    <!-- 图标按钮：图标内容必须是 TextBlock + IconText 样式。
+                         只给 Button 设 FontFamily 没用——模板生成的 TextBlock 会被
+                         Styles.xaml 里的隐式 TextBlock 样式抢走字体，图标仍是彩色 emoji，
+                         而在浅色按钮上彩色 emoji 的对比度只有 2.4:1（实测看不清）。 -->
                     <Button x:Name="SettingsButton" Grid.Column="4" Width="34" Height="34"
-                            Style="{StaticResource RoundButton}" Content="⚙"
+                            Style="{StaticResource RoundButton}"
                             Click="SettingsButton_Click"
-                            svc:Loc.TipKey="main.button.settingsTip"/>
+                            svc:Loc.TipKey="main.button.settingsTip">
+                        <TextBlock Style="{StaticResource IconText}" Text="⚙"/>
+                    </Button>
                     <Button x:Name="UploadButton" Grid.Column="5" Width="34" Height="34"
-                            Style="{StaticResource RoundButton}" Content="📎"
-                            Click="UploadButton_Click" svc:Loc.TipKey="main.button.uploadTip"/>
+                            Style="{StaticResource RoundButton}"
+                            Click="UploadButton_Click" svc:Loc.TipKey="main.button.uploadTip">
+                        <TextBlock Style="{StaticResource IconText}" Text="📎"/>
+                    </Button>
                     <Button x:Name="SendButton" Grid.Column="6" Width="40" Height="40"
-                            Style="{StaticResource RoundButton}" Content="➤" FontSize="16"
-                            Click="SendButton_Click" svc:Loc.TipKey="main.button.sendTip"/>
+                            Style="{StaticResource RoundButton}"
+                            Click="SendButton_Click" svc:Loc.TipKey="main.button.sendTip">
+                        <TextBlock Style="{StaticResource IconText}" Text="➤" FontSize="16"/>
+                    </Button>
                 </Grid>
             </Grid>
         </Border>
@@ -175,45 +191,81 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <StackPanel x:Name="StatusStripItems" Grid.Column="0" Orientation="Horizontal">
+                <!-- 必须是 WrapPanel 而不是 StackPanel：
+                     状态项随功能增加（修复四又加了"模型能力""压缩上下文""能力提示"三项），
+                     单行横排时超出可用宽度的项会被裁掉 —— 而折叠按钮在右列，
+                     被裁的项还会被它压住，用户既看不到也点不到（实测 700px 宽下
+                     "压缩上下文"超出 28px、"能力提示"超出 117px）。
+                     换成 WrapPanel 后空间不够就换行，所有项永远可见可点。 -->
+                <WrapPanel x:Name="StatusStripItems" Grid.Column="0" Orientation="Horizontal">
                     <Button x:Name="StripSearchButton" Padding="6,1" Margin="0,0,4,0"
                             Style="{StaticResource RoundButton}" Click="StripSearchButton_Click"
                             svc:Loc.TipKey="main.strip.searchTip"
                             svc:Loc.HelpKey="main.strip.searchHelp">
-                        <TextBlock x:Name="SearchText" Text="🔍 搜索：关" FontSize="11"/>
+                        <TextBlock x:Name="SearchText" Text="🔍 搜索：关" FontSize="11"
+                                   svc:Loc.Key="main.strip.searchIdle"/>
                     </Button>
                     <Button x:Name="StripAutomationButton" Padding="6,1" Margin="0,0,4,0"
                             Style="{StaticResource RoundButton}" Click="StripAutomationButton_Click"
                             svc:Loc.TipKey="main.strip.automationTip"
                             svc:Loc.HelpKey="main.strip.autoHelp">
-                        <TextBlock x:Name="AutoText" Text="⚙️ 自动化：关" FontSize="11"/>
+                        <TextBlock x:Name="AutoText" Text="⚙️ 自动化：关" FontSize="11"
+                                   svc:Loc.Key="main.strip.autoIdle"/>
                     </Button>
                     <Button x:Name="StripMarketButton" Padding="6,1" Margin="0,0,4,0"
                             Style="{StaticResource RoundButton}" Click="StripMarketButton_Click"
                             svc:Loc.TipKey="main.strip.marketTip"
                             svc:Loc.HelpKey="main.strip.marketHelp">
-                        <TextBlock x:Name="MarketText" Text="🌐 市场：未连接" FontSize="11"/>
+                        <TextBlock x:Name="MarketText" Text="🌐 市场：未连接" FontSize="11"
+                                   svc:Loc.Key="main.strip.marketIdle"/>
                     </Button>
                     <Button x:Name="StripContextButton" Padding="6,1" Margin="0,0,4,0"
                             Style="{StaticResource RoundButton}" Click="StripContextButton_Click"
                             svc:Loc.TipKey="main.strip.contextTip"
                             svc:Loc.HelpKey="main.strip.contextHelp">
-                        <TextBlock x:Name="StripContextText" Text="📊 上下文 0%" FontSize="11"/>
+                        <TextBlock x:Name="StripContextText" Text="📊 上下文 0%" FontSize="11"
+                                   svc:Loc.Key="main.strip.contextIdle"/>
                     </Button>
-                    <Button x:Name="StripKvButton" Padding="6,1"
+                    <Button x:Name="StripKvButton" Padding="6,1" Margin="0,0,4,0"
                             Style="{StaticResource RoundButton}" Click="StripKvButton_Click"
                             svc:Loc.TipKey="main.strip.kvTip"
                             svc:Loc.HelpKey="main.strip.kvHelp">
                         <TextBlock x:Name="StripKvText" Text="💾 KV: ---" FontSize="11"/>
+                    </Button>
+                    <!-- 修复四（方向七：能力透明化）：模型参数量 / 量化 / 窗口 / 实测生成速度。
+                         点一下打开设置窗口的模型 Tab 看完整能力与推荐配置。 -->
+                    <Button x:Name="StripCapabilityButton" Padding="6,1" Margin="0,0,4,0"
+                            Style="{StaticResource RoundButton}" Click="StripCapabilityButton_Click"
+                            svc:Loc.TipKey="main.strip.capabilityTip"
+                            svc:Loc.HelpKey="main.strip.capabilityHelp">
+                        <TextBlock x:Name="StripCapabilityText" Text="🧠 模型: ---" FontSize="11"
+                                   svc:Loc.Key="main.model.placeholder"/>
+                    </Button>
+                    <!-- 修复四（基础要求：手动压缩上下文按钮）：上下文快满时不用等自动触发 -->
+                    <Button x:Name="StripCompactButton" Padding="6,1" Margin="0,0,4,0"
+                            Style="{StaticResource RoundButton}" Click="StripCompactButton_Click"
+                            svc:Loc.TipKey="main.strip.compactTip"
+                            svc:Loc.HelpKey="main.strip.compactHelp">
+                        <TextBlock x:Name="StripCompactText" Text="🗜 压缩上下文" FontSize="11"
+                                   svc:Loc.Key="main.strip.compact"/>
+                    </Button>
+                    <!-- 能力提示：模型能力边界被触到时才出现（文档过长 / 速度过低 / 显存不足） -->
+                    <Button x:Name="StripWarnButton" Padding="6,1" Margin="0,0,4,0"
+                            Visibility="Collapsed"
+                            Style="{StaticResource RoundButton}" Click="StripWarnButton_Click"
+                            svc:Loc.TipKey="main.strip.warnTip">
+                        <TextBlock x:Name="StripWarnText" Text="⚠️ 能力提示" FontSize="11"
+                                   svc:Loc.Key="main.strip.warnIdle"/>
                     </Button>
                     <!-- 自动更新提示（v0.2.1 任务五 · 方案 A）：只有真的发现新版本时才出现；
                          点击打开 GitHub Releases 页面，不自动下载、不自动替换。 -->
                     <Button x:Name="StripUpdateButton" Padding="6,1" Margin="6,0,0,0"
                             Visibility="Collapsed"
                             Style="{StaticResource RoundButton}" Click="StripUpdateButton_Click">
-                        <TextBlock x:Name="StripUpdateText" Text="🎉 新版本" FontSize="11"/>
+                        <TextBlock x:Name="StripUpdateText" Text="🎉 新版本" FontSize="11"
+                                   svc:Loc.Key="main.update.idle"/>
                     </Button>
-                </StackPanel>
+                </WrapPanel>
                 <Button x:Name="StripToggleButton" Grid.Column="1" Padding="6,1" Margin="6,0,0,0"
                         Style="{StaticResource RoundButton}" Click="StripToggleButton_Click"
                         svc:Loc.TipKey="main.strip.toggleTip">

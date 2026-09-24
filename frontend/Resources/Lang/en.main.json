@@ -12,26 +12,53 @@
       "startFailed": "Backend failed to start",
       "exiting": "Closing…",
       "exitCountdown": "The program closes in {0} seconds",
-      "help": "Run state: starting the backend / ready / working / backend exited"
+      "help": "Run state: starting the backend / ready / working / backend exited",
+      "waitingDownload": "Waiting for confirmation",
+      "downloadCancelled": "Model not downloaded",
+      "downloadingModel": "Downloading the model…",
+      "modelDownloadFailed": "Model download failed",
+      "preheating": "Warming up the model…",
+      "loadingModel": "Loading the model…",
+      "stopping": "Stopping…",
+      "fontSize": "Font size {0}"
     },
     "model": {
       "clickTip": "Click to open the model picker (Settings → Model)",
-      "help": "The model currently loaded; click to open the model settings"
+      "help": "The model currently loaded; click to open the model settings",
+      "sizeApprox": " (about {0} MB)",
+      "sizeUnknown": "(size unknown)",
+      "missingChat": "📦 The required model was not found locally: {0}{1}\nSource repository: {2}",
+      "downloadQuestion": "Download the model '{0}'?",
+      "downloadingHint": "⏳ Downloading the model; progress is shown live in the dialog below…",
+      "downloadingNamed": "⏳ Downloading and loading the model '{0}', please wait…",
+      "downloadCancelled": "❌ Model download cancelled and the backend has exited.\nYou can place the model file into the models/ folder and start EchoDesk again.",
+      "cancelledUser": "Download cancelled",
+      "ready": "✅ Model ready: {0}",
+      "downloadDone": "✅ Model downloaded: {0}",
+      "downloadFailed": "❌ Model download failed: {0}",
+      "operationFailed": "❌ Model operation failed: {0}",
+      "placeholder": "🧠 Model: ---"
     },
     "mode": {
       "clickTip": "Click to change the default conversation mode in Settings",
-      "help": "The current conversation mode; click to open Settings"
+      "help": "The current conversation mode; click to open Settings",
+      "placeholder": "🛠️ Mode: general"
     },
     "automation": {
       "disabled": "off",
       "running": "running"
     },
     "command": {
-      "move": "Move into the command box"
+      "move": "Move into the command box",
+      "completed": "Completed to {0}; check it and press Enter to run"
     },
     "upload": {
       "chooseTitle": "Choose a file to upload",
-      "filter": "Supported files"
+      "filter": "Supported files",
+      "uploading": "📤 Uploading file: {0} …",
+      "done": "Upload complete",
+      "failed": "❌ Upload failed: {0}",
+      "filterAll": "All files"
     },
     "strip": {
       "searchOnTip": "Web search is on: each question searches the web first. Click to turn it off",
@@ -48,10 +75,47 @@
       "marketHelp": "Skill marketplace connection; click to open Settings",
       "contextTip": "Context usage: click to refresh",
       "contextHelp": "Current context usage percentage; click to refresh",
-      "kvHelp": "KV cache memory estimate; click to open the model settings"
+      "kvHelp": "KV cache memory estimate; click to open the model settings",
+      "capability": "🧠 {0}",
+      "capabilityTip": "Model capability: parameters · quantization · usable window · measured speed",
+      "capabilityHelp": "Shows the parameter count, quantization format, usable context window and last measured generation speed of the current model. Click to open the Model tab for the full capability report and recommendations.",
+      "capabilityDetail": "Parameters {0} · quantization {1} · usable window {2} tokens",
+      "capabilitySpeed": "Last measured generation speed {0:0.#} chars/s",
+      "capabilityClick": "Click to open Settings → Model for the full capability report and recommendations",
+      "compact": "🗜 Compact context",
+      "compacting": "🗜 Compacting…",
+      "compactTip": "Compact the context now to free room for new content",
+      "compactHelp": "Compresses older turns into a summary (or drops them in sliding-window mode) without waiting for the automatic 80% trigger. Useful before uploading a large document.",
+      "compactNone": "Nothing to compact",
+      "compactDone": "Compacted: {0} message(s) moved out ({1} → {2} tokens)",
+      "compactDoneShort": "Compacted: {0} older message(s) moved out",
+      "compactResult": "🗜 {0}",
+      "compactFailed": "❌ Context compaction failed: {0}",
+      "warn": "⚠️ Capability notes {0}",
+      "warnTip": "{0} capability note(s) — click to see details",
+      "warnTitle": "Model capability notes",
+      "searchToggled": "Web search toggled",
+      "searchToggleFailed": "Failed to toggle web search: {0}",
+      "capabilityTps": "{0:0.#} chars/s",
+      "searchIdle": "🔍 Search: off",
+      "autoIdle": "⚙️ Automation: off",
+      "marketIdle": "🌐 Market: not connected",
+      "contextIdle": "📊 Context 0%",
+      "warnIdle": "⚠️ Capability notes"
     },
     "snippet": {
-      "empty": "(no snippets yet — add one with /snippet add <name> <text>)"
+      "empty": "(no snippets yet — add one with /snippet add <name> <text>)",
+      "emptyHint": "📋 No snippets yet — open the command box and run /snippet add <name> <text>",
+      "emptyShort": "📋 No snippets yet — add one with /snippet add <name> <text>",
+      "usage": "Usage: /snippet list | add <name> <text> | remove <name>",
+      "usageAdd": "Usage: /snippet add <name> <text>...",
+      "usageRemove": "Usage: /snippet remove <name>",
+      "listHeader": "📋 Snippets:\n",
+      "listItem": "🔹 {0}: {1}",
+      "added": "✅ Snippet “{0}” added",
+      "exists": "❌ Snippet “{0}” already exists (remove it first, then add)",
+      "removed": "🗑️ Snippet “{0}” deleted",
+      "notFound": "❌ Snippet “{0}” not found"
     },
     "message": {
       "copy": "Copy",
@@ -59,7 +123,69 @@
       "copyCode": "Code",
       "user": "You",
       "assistant": "Assistant",
-      "system": "System"
+      "system": "System",
+      "selectTip": "Drag to select, Ctrl+C to copy",
+      "stopped": "\n⏹ (generation stopped)",
+      "copyPlainTip": "Copy as plain text",
+      "copyMarkdownTip": "Copy the raw Markdown source",
+      "copyCodeTip": "Copy all code blocks",
+      "selectAll": "Select all",
+      "selectAllTip": "Select all the text in this message",
+      "copiedPlain": "Copied as plain text",
+      "copiedMarkdown": "Copied the Markdown source",
+      "copiedCode": "Copied the code blocks",
+      "copiedAll": "Copied the whole conversation",
+      "nothingToCopy": "⚠️ Nothing to copy"
+    },
+    "theme": {
+      "dark": "🌙 Dark theme enabled",
+      "light": "☀️ Light theme enabled",
+      "system": "🖥️ Theme now follows the system"
+    },
+    "shortcut": {
+      "brokenTitle": "Shortcut is broken",
+      "broken": "The startup shortcut is no longer valid:\n{0}\n\n(This usually happens after moving or renaming the program folder.)\n\nRecreate it?",
+      "missingTitle": "Create startup shortcut",
+      "missing": "No startup shortcut was found in the program folder.\n\nCreate \"{0}\"?\nAfter that you can just double-click it to start EchoDesk — no need to work out which executable is the entry point.",
+      "skipped": "ℹ️ Skipped creating the startup shortcut (won't ask again; you can create one manually).",
+      "created": "✅ Startup shortcut created: {0}",
+      "createFailed": "❌ Failed to create the shortcut: {0}",
+      "failed": "⚠️ Shortcut handling failed: {0}"
+    },
+    "guide": {
+      "firstRun": "🎉 Getting started\n1️⃣ Model: on the first launch, if the model is missing locally you will be asked whether to download it; you can also drop a .gguf file into the models/ folder yourself.\n2️⃣ Launching: you can create an “EchoDesk” shortcut in the program folder and start the app by double-clicking it (already handled according to your earlier choice).\n3️⃣ Long documents: when a long file such as a contract exceeds the context window it is summarised in chunks before answering, so nothing is truncated away.\n4️⃣ Commands: type /help for the full command list; typing / opens the command picker.\n5️⃣ Copying: every message has Copy / Markdown / Code buttons at the bottom right; you can also select text and press Ctrl+C.\n6️⃣ Shortcuts: Ctrl+Enter to send · Esc to stop · Ctrl+L to clear · Ctrl+O to upload · Ctrl+Shift+C to copy everything · Ctrl+wheel to resize text",
+      "toast": "🎉 Welcome to EchoDesk — the getting-started guide is shown"
+    },
+    "value": {
+      "unknown": "unknown"
+    },
+    "dialog": {
+      "startupDownloadText": "The required model was not found locally:\n\n{0}{1}\nSource repository: {2}\n\nDownload it now? This needs a network connection and can take a long time for a large model.\nChoosing “No” exits the program (you can also place the model file into the models/ folder later).",
+      "ok": "OK",
+      "cancel": "Cancel"
+    },
+    "error": {
+      "backendCrashed": "⚠️ The backend process exited unexpectedly (exit code {0}). Check backend_crash.log in the program folder, or restart EchoDesk.",
+      "noResponse": "No response",
+      "settingsOpenFailed": "❌ Failed to open the settings window: {0}",
+      "settingsOpenFailedToast": "Failed to open the settings window: {0}",
+      "clipboardBusy": "❌ Copy failed: the clipboard is in use by another program — please try again",
+      "startProcessFailed": "Could not start the backend process.",
+      "notStarted": "The backend has not been started yet.",
+      "exitedDuringStartup": "The backend exited before finishing startup.",
+      "exitedDuringDownload": "The backend exited while downloading the model.",
+      "idleTimeout": "The backend did not respond within {0:0.#} minutes, so the wait was aborted. Try again later, or check app\\backend\\backend_crash.log.",
+      "modelMissingDetail": "Local model {0} is missing"
+    },
+    "toast": {
+      "copiedCount": "✅ {0} ({1} characters)"
+    },
+    "context": {
+      "buttonIdle": "Context: ---/---",
+      "buttonTip": "Click to refresh the context usage"
+    },
+    "update": {
+      "idle": "🎉 New version"
     }
   },
   "settings": {

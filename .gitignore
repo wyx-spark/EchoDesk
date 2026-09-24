@@ -72,3 +72,10 @@ automation_templates.json
 /lang/
 # 自动化配置导出件
 *.echodesk-auto
+
+# ---------- 修复四新增 ----------
+# 分段摘要缓存（按文件指纹缓存摘要结果，随使用生成；用户可自行删除）
+summary_cache.json
+backend/summary_cache.json
+# 开发期产物（像素校验截图、语言包补丁 JSON 等）
+artifacts/

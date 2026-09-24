@@ -5,7 +5,17 @@ import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
+# 多语言（任务三）：界面文本（模式菜单、导出 Markdown 的标题行）走语言包。
+# i18n 只依赖标准库（config 在 i18n 内部惰性导入），可直接在这里导入。
+from i18n import t as _t
+
 # 各模式对应的系统提示词（插入顺序即编号顺序：1..N）
+#
+# 多语言说明：这些句子是**发给模型的提示词正文**，不是界面文本，因此刻意保持
+# 中文、不进语言包——本项目 get_system_prompt() 里要求「请始终使用简体中文回复」，
+# 提示词正文译成英文会让"中文界面 + 英文提示词"的组合失效，而且这些措辞是针对
+# 小模型跑偏专门设计的，翻译会削弱效果。界面上要显示的模式**说明**另见语言包的
+# mode.desc.<模式>（由 mode_menu() 使用）。
 MODES: Dict[str, str] = {
     "general": "你是一个通用AI助手，可以回答各种问题。",
     "summary": "你是一个专业的摘要专家，擅长简洁准确地总结文本、会议记录、文章等。请提供清晰、有层次的摘要。",
@@ -89,11 +99,17 @@ class ConversationManager:
 
     @staticmethod
     def mode_menu() -> str:
-        """生成带编号、缩写与温度预设的模式清单文本。"""
+        """生成带编号、缩写与温度预设的模式清单文本。
+
+        模式**说明**取自语言包（``mode.desc.<模式>``），它是界面文本；
+        MODES 里的系统提示词正文是发给模型的内容，按设计保持中文（见文件头）。
+        """
         lines = []
-        for idx, (name, desc) in enumerate(MODES.items(), 1):
+        for idx, name in enumerate(MODES, 1):
             temp = MODE_TEMPERATURES[name]
-            lines.append(f"{idx}. {name} ({MODE_SHORT_NAMES[name]}) — {desc}（温度 {temp}）")
+            lines.append(_t("mode.menu_item", index=idx, id=name,
+                            short=MODE_SHORT_NAMES[name],
+                            desc=_t(f"mode.desc.{name}"), temp=temp))
         return "\n".join(lines)
 
     # ---------- 历史记录 ----------
@@ -129,10 +145,10 @@ class ConversationManager:
         self.summary = ""
 
     def export_markdown(self) -> str:
-        """将对话历史导出为 Markdown 文本。"""
-        lines = ["# EchoDesk 对话记录", f"- 模式：{self.mode}", ""]
+        """将对话历史导出为 Markdown 文本（标题行随界面语言切换）。"""
+        lines = [_t("export.title"), _t("export.mode", mode=self.mode), ""]
         for msg in self.history:
-            icon = "👤 用户" if msg["role"] == "user" else "🤖 助手"
+            icon = _t("export.user") if msg["role"] == "user" else _t("export.assistant")
             lines.append(f"**{icon}** ({msg['timestamp']})")
             lines.append(msg["content"])
             lines.append("")
@@ -163,6 +179,14 @@ class ConversationManager:
     # ---------- Prompt 构建 ----------
 
     def get_system_prompt(self) -> str:
+        """拼出当前生效的系统提示词。
+
+        多语言说明：下面所有中文字符串（``[自定义指令]`` / ``对话规则`` /
+        ``请始终使用简体中文回复`` / ``【早期对话摘要】`` / ``【已上传文件】`` 等）
+        都是**发给模型阅读的提示词内容**，不是界面文本，故刻意不进语言包；
+        它们与 MODES 的正文一起构成"始终用简体中文作答"的完整约束，
+        单独翻译其中几句会让提示词自相矛盾。界面上的模式说明见 ``mode_menu()``。
+        """
         if self.custom_prompt:
             # 自定义指令优先：以更强的措辞包裹，帮助小模型严格遵守
             prompt = (
@@ -199,6 +223,9 @@ class ConversationManager:
 
         include_file=True 且已上传文件时，把文件内容注入到当前问题之前：
         有分段摘要则注入摘要（含原文指针），否则注入全文。
+
+        这里拼接的 ``【{label}】`` / ``参考以下网络信息：`` 同属提示词内容，
+        按文件头说明保持中文、不进语言包。
         """
         messages: List[dict] = [{"role": "system", "content": self.get_system_prompt()}]
         for msg in self.history:

@@ -71,6 +71,10 @@ with _suppress_stdout():
 from i18n import get as _i18n
 from i18n import t as _t
 
+# Emoji 降级（修复六）与目录布局（修复七）
+import emoji as emoji_mod
+from config import program_dir, program_root as user_data_root
+
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("EchoDesk")
 
@@ -114,6 +118,28 @@ sys.excepthook = _excepthook
 _io_lock = threading.Lock()
 
 
+def _preset_list() -> List[Dict[str, Any]]:
+    """生成参数预设清单（修复四 方向六）。"""
+    from model_profile import preset_menu
+
+    return preset_menu()
+
+
+def _task_template_list() -> List[Dict[str, Any]]:
+    """任务型提示词模板清单（修复四 方向一）。"""
+    from prompts import public_list
+
+    return public_list()
+
+
+def _recommendation() -> Dict[str, Any]:
+    """按本机硬件推荐模型规模与生成参数（修复四 方向六）。"""
+    from model_profile import _read_machine_memory, recommend_config
+
+    ram, cores = _read_machine_memory()
+    return recommend_config(ram, cores)
+
+
 def _write(response: Dict[str, Any]) -> None:
     with _io_lock:
         sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
@@ -143,8 +169,69 @@ class Backend:
         self._model_hub = None
         # 技能运行期加载器（任务二）：同样惰性创建，第一次用到时才扫描目录
         self._skills = None
+        # 修复四：分段摘要缓存（方向八）与"手动压缩上下文"回调接线
+        self._summary_cache = None
+        self._capability_cache = None
+        self._capability_key = None
+        self.commands.compact_provider = self.compact_context
+        self.commands.profile_provider = self.model_capability
+        self.commands.cache_clear_provider = self.clear_summary_cache
         self.stream_active = False
         self.stop_event = threading.Event()
+
+    def clear_summary_cache(self) -> int:
+        """清空分段摘要缓存并返回清掉的条目数（供 /clearcache 与动作接口使用）。"""
+        cache = self.summary_cache()
+        return cache.clear() if cache is not None else 0
+
+    # ---------- 修复四：模型能力画像 / 摘要缓存 ----------
+
+    def capability(self):
+        """当前模型的能力画像（修复四 方向六/七）。
+
+        缓存按「模型路径 + 上下文窗口 + 线程数 + GPU 层数」做键：模型切换、
+        重载、改窗口之后键会变，缓存自动失效。这样比在每个重载点手写
+        invalidate 更不容易漏（漏一处就会显示上一个模型的参数量）。
+        """
+        from model_profile import build_profile
+
+        key = (
+            str(getattr(self.llm, "model_path", "")),
+            int(getattr(self.llm, "n_ctx", 0) or 0),
+            int(getattr(self.llm, "n_threads", 0) or 0),
+            int(getattr(self.llm, "n_gpu_layers", 0) or 0),
+        )
+        cached = getattr(self, "_capability_cache", None)
+        if cached is not None and getattr(self, "_capability_key", None) == key:
+            return cached
+        profile = build_profile(self.llm, self.config)
+        self._capability_cache = profile
+        self._capability_key = key
+        return profile
+
+    def invalidate_capability(self) -> None:
+        """让能力画像缓存立即失效（一般不需要手动调，缓存键会自己变）。"""
+        self._capability_cache = None
+        self._capability_key = None
+
+    def model_capability(self) -> Dict[str, Any]:
+        """机器可读的能力画像（供 /status 与前端状态区使用）。"""
+        try:
+            return self.capability().public()
+        except Exception:
+            log.debug("能力画像生成失败", exc_info=True)
+            return {}
+
+    def summary_cache(self):
+        """分段摘要缓存（惰性创建；config.summary_cache=False 时返回 None）。"""
+        if not bool(getattr(self.config, "summary_cache", True)):
+            return None
+        if self._summary_cache is None:
+            from model_profile import SummaryCache
+
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "summary_cache.json")
+            self._summary_cache = SummaryCache(path)
+        return self._summary_cache
 
     def skills(self):
         """按需创建技能加载器，并把它接到指令表 / 文件解析 / 自动化钩子上（任务二 2.2）。"""
@@ -339,6 +426,45 @@ class Backend:
         # ---------- 指令面板数据源（任务二 2.6） ----------
         if action == "commands":
             return {"type": "system", "content": "", "commands": self.commands.all_commands()}
+        # ---------- 修复四：模型能力与上下文管理 ----------
+        if action == "capability":
+            return {"type": "system", "content": "", "capability": self.model_capability(),
+                    "presets": _preset_list(),
+                    "task_templates": _task_template_list(),
+                    "recommendation": _recommendation(),
+                    "summary_cache": (self.summary_cache().stats() if self.summary_cache() else {}),
+                    "context": self._context_snapshot(),
+                    "settings": {
+                        "preset": self.config.preset,
+                        "context_mode": self.config.context_mode,
+                        "temperature": float(self.commands.temperature),
+                        "top_p": float(getattr(self.config, "top_p", 0.9)),
+                        "repeat_penalty": float(getattr(self.config, "repeat_penalty", 1.1)),
+                        "max_tokens": int(getattr(self.config, "max_tokens", 1024)),
+                        "clarify_vague": bool(getattr(self.config, "clarify_vague", True)),
+                        "summary_cache": bool(getattr(self.config, "summary_cache", True)),
+                        "summarize": {
+                            "chunk_chars": self.config.summarize.chunk_chars,
+                            "overlap_chars": self.config.summarize.overlap_chars,
+                            "max_summary_tokens": self.config.summarize.max_summary_tokens,
+                            "merge_max_tokens": self.config.summarize.merge_max_tokens,
+                            "trigger_ratio": self.config.summarize.trigger_ratio,
+                            "min_chars": self.config.summarize.min_chars,
+                            "keep_pointer": self.config.summarize.keep_pointer,
+                            "enabled": self.config.summarize.enabled,
+                        },
+                    }}
+        if action == "context_compress":
+            result = self.compact_context(force=bool(request.get("force", True)))
+            return {"type": "system", "content": "", "compress": result,
+                    "context": self._context_snapshot()}
+        if action == "capability_settings":
+            return self._handle_capability_settings(request)
+        if action == "summary_cache_clear":
+            cache = self.summary_cache()
+            cleared = cache.clear() if cache else 0
+            return {"type": "system", "content": "", "cleared": cleared,
+                    "summary_cache": (cache.stats() if cache else {})}
         # ---------- 技能与本地插件（任务二 / 任务二·补） ----------
         if action == "skills_list":
             return {"type": "system", "content": "", "skills": self.skills().status()}
@@ -365,6 +491,13 @@ class Backend:
             return self._handle_skills_publish_check(request)
         if action == "skills_trust":
             return self._handle_skills_trust(request)
+        if action == "skills_trust_bulk":
+            return self._handle_skills_trust_bulk(request)
+        if action == "skills_pending_review":
+            # 修复一：批量确认框的数据源（只列"该问且还没答复过"的插件）
+            return {"type": "system", "content": "",
+                    "pending": self.skills().pending_review(),
+                    "skills": self.skills().status()}
         if action == "skills_manifest_get":
             return {"type": "system", "content": "", "manifest": self.skills().local_manifest()}
         if action == "skills_manifest_set":
@@ -415,16 +548,83 @@ class Backend:
                 "commands": self.commands.all_commands(), "summary": summary}
 
     def _handle_skills_dev_mode(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """开发者模式开关（修复一：必须双向可用）。
+
+        关闭时要做四件事，缺一件用户就会觉得"没关掉"：
+        1. 记下"用户显式设置过"，否则 dev_mode 属性会因 ``skills_dev/`` 里仍有插件
+           而自动重新变成 True（这是原来"一旦开启就关不掉"的根因）；
+        2. 卸载已加载的开发插件，并把它们的指令从指令表移除；
+        3. 停止热重载（``dev_mode`` 为 False 后 dev 目录不再参与发现）；
+        4. 清理开发日志。
+        """
         enabled = bool(request.get("enabled"))
         self.config.marketplace.dev_mode = enabled
+        self.config.marketplace.dev_mode_explicit = True
         try:
             self.config.save()
         except Exception:
             log.warning("保存开发者模式开关失败", exc_info=True)
-        self.skills()._dev_mode_cache = None
+        loader = self.skills()
+        loader._dev_mode_cache = None
+        unloaded: List[str] = []
+        cleared = False
+        if enabled:
+            # 开启时重新发现，让 skills_dev/ 里的插件立刻生效
+            loader.reload_all()
+            content = _t("skill.dev_mode_on")
+        else:
+            unloaded = loader.unload_dev()
+            cleared = loader.clear_log()
+            content = _t("skill.dev_mode_off")
+            if unloaded:
+                content += "\n" + _t("skill.dev_mode_unloaded", count=len(unloaded),
+                                     ids=", ".join(unloaded))
+        commands = self.commands.all_commands()
+        return {"type": "system", "content": content,
+                "skills": loader.status(), "commands": commands,
+                "dev_mode": enabled, "unloaded": unloaded,
+                "log_cleared": cleared}
+
+    def _handle_skills_trust_bulk(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """批量记录本地插件的信任选择（修复一：一次汇总确认，不再逐个弹窗）。
+
+        请求体：``{"decisions": [{"id": "...", "trusted": true|false}, ...]}``
+        也接受 ``{"ids": [...], "trusted": true}`` 的简写形式（"全部启用/全部禁用"）。
+        """
+        raw = request.get("decisions")
+        decisions: List[Dict[str, Any]] = []
+        if isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                skill_id = str(item.get("id") or "").strip()
+                if not skill_id:
+                    continue
+                decisions.append({"id": skill_id, "trusted": bool(item.get("trusted", True))})
+        elif isinstance(request.get("ids"), list):
+            trusted = bool(request.get("trusted", True))
+            decisions = [{"id": str(x), "trusted": trusted}
+                         for x in request["ids"] if str(x).strip()]
+        if not decisions:
+            return {"type": "system", "content": _t("skill.trust_nothing"),
+                    "skills": self.skills().status()}
+
+        loader = self.skills()
+        for decision in decisions:
+            loader.trust_plugin(decision["id"], decision["trusted"])
+        # 拒绝的插件要立刻卸载；新信任的插件要立刻加载
+        for decision in decisions:
+            if not decision["trusted"]:
+                try:
+                    loader.unload(decision["id"])
+                except Exception:  # noqa: BLE001
+                    log.warning("卸载被拒绝的插件 %s 失败", decision["id"], exc_info=True)
+        loader.reload_all()
+        approved = sum(1 for d in decisions if d["trusted"])
         return {"type": "system",
-                "content": _t("skill.dev_mode_on" if enabled else "skill.dev_mode_off"),
-                "skills": self.skills().status()}
+                "content": _t("skill.trust_saved", approved=approved,
+                              denied=len(decisions) - approved),
+                "skills": loader.status(), "commands": self.commands.all_commands()}
 
     def _handle_skills_export_log(self, request: Dict[str, Any]) -> Dict[str, Any]:
         dest = str(request.get("path") or "").strip()
@@ -484,14 +684,14 @@ class Backend:
         ok = self.skills().trust_plugin(skill_id, trusted)
         if not trusted:
             self.skills().unload(skill_id)
-        return {"type": "system", "content": "" if ok else "❌ 信任状态写入失败",
+        return {"type": "system", "content": "" if ok else _t("sys.trust_write_failed"),
                 "skills": self.skills().status(), "commands": self.commands.all_commands()}
 
     def _handle_skills_manifest_set(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """写入本地插件清单（任务书 2B.3 / 2B.10 插件清单编辑）。"""
         payload = request.get("manifest")
         if not isinstance(payload, dict):
-            return {"type": "system", "content": "❌ 清单内容不合法"}
+            return {"type": "system", "content": _t("sys.skill_manifest_invalid")}
         ok = self.skills().save_local_manifest(payload)
         if not ok:
             return {"type": "system", "content": _t("skill.manifest_save_failed",
@@ -537,7 +737,8 @@ class Backend:
         if copied:
             loader.reload_all()
         if not copied and errors:
-            return {"type": "system", "content": "❌ 复制示例插件失败: " + "; ".join(errors)}
+            return {"type": "system", "content": _t("sys.skill_examples_copy_failed",
+                                                    error="; ".join(errors))}
         text = _t("skill.examples_copied", names=", ".join(copied), dir=loader.dev_dir)
         if errors:
             text += " ⚠️ " + "; ".join(errors)
@@ -585,7 +786,7 @@ class Backend:
                 quant=str(request.get("quant") or ""),
             )
         except Exception as e:
-            return self._model_hub_error(e, "搜索")
+            return self._model_hub_error(e, _t("sys.verb_search"))
         return {"type": "system", "content": result.get("message", ""), "model_hub": result}
 
     def _handle_model_hub_detail(self, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -593,7 +794,7 @@ class Backend:
         try:
             detail = self.model_hub().detail(str(request.get("repo") or ""), request.get("source"))
         except Exception as e:
-            return self._model_hub_error(e, "读取详情")
+            return self._model_hub_error(e, _t("sys.verb_read_detail"))
         return {"type": "system", "content": "", "detail": detail}
 
     def _handle_model_hub_registry(self) -> Dict[str, Any]:
@@ -601,7 +802,7 @@ class Backend:
         try:
             data = self.model_hub().registry(current_model=self.config.model_path)
         except Exception as e:
-            return self._model_hub_error(e, "读取模型库")
+            return self._model_hub_error(e, _t("sys.verb_read_registry"))
         return {"type": "system", "content": "", "registry": data}
 
     def _handle_model_hub_uninstall(self, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -611,7 +812,7 @@ class Backend:
                 str(request.get("name") or ""), current_model=self.config.model_path
             )
         except Exception as e:
-            return self._model_hub_error(e, "删除模型")
+            return self._model_hub_error(e, _t("sys.verb_uninstall_model"))
         return {"type": "system", "content": f"✅ {result.get('message', '')}"}
 
     def _handle_model_hub_status(self) -> Dict[str, Any]:
@@ -619,14 +820,14 @@ class Backend:
         try:
             state = self.model_hub().status()
         except Exception as e:
-            return self._model_hub_error(e, "读取状态")
+            return self._model_hub_error(e, _t("sys.verb_read_status"))
         return {"type": "system", "content": "", "model_hub_status": state}
 
     def _handle_model_hub_config_set(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """保存模型选择栏配置（数据源 / Token / 模型库目录）。"""
         patch = request.get("model_hub") or {}
         if not isinstance(patch, dict):
-            return {"type": "system", "content": "❌ model_hub 必须是对象"}
+            return {"type": "system", "content": _t("sys.model_hub_must_be_object")}
         changed: List[str] = []
         for key in ("enabled", "source", "hf_token", "models_dir", "registry_file", "verify_sha256"):
             if key in patch:
@@ -635,11 +836,14 @@ class Backend:
         try:
             self.config.save()
         except Exception as e:
-            return {"type": "system", "content": f"❌ 配置保存失败: {e}"}
+            return {"type": "system", "content": _t("sys.config_save_failed", error=e)}
         # 数据源等信息变化后重建实例，避免缓存旧设置
         self._model_hub = None
-        note = "已保存：" + ("、".join(changed) if changed else "无变化")
-        return {"type": "system", "content": f"✅ {note}", "model_hub": self.model_hub().status()}
+        if changed:
+            note = _t("sys.model_hub_saved", fields=_t("sys.list_sep").join(changed))
+        else:
+            note = _t("sys.model_hub_no_change")
+        return {"type": "system", "content": note, "model_hub": self.model_hub().status()}
 
     # ---------- 技能市场（任务五） ----------
 
@@ -660,29 +864,29 @@ class Backend:
                 page = 1
             result = self.market().search(keyword, sort, page)
         except Exception as e:
-            return self._market_error(e, "搜索")
+            return self._market_error(e, _t("sys.verb_search"))
         return {"type": "system", "content": result.get("message", ""), "market": result}
 
     def _handle_market_detail(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """技能详情：完整 skill.json、README 摘要、版本、依赖与入口文件。"""
         repo = str(request.get("repo") or "").strip()
         if not repo:
-            return {"type": "system", "content": "❌ 缺少仓库名"}
+            return {"type": "system", "content": _t("sys.market_missing_repo")}
         try:
             detail = self.market().detail(repo)
         except Exception as e:
-            return self._market_error(e, "详情获取")
+            return self._market_error(e, _t("sys.verb_get_detail"))
         return {"type": "system", "content": "", "detail": detail}
 
     def _handle_market_install(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """安装技能（用户已在前端确认）。"""
         repo = str(request.get("repo") or "").strip()
         if not repo:
-            return {"type": "system", "content": "❌ 缺少仓库名"}
+            return {"type": "system", "content": _t("sys.market_missing_repo")}
         try:
             result = self.market().install(repo)
         except Exception as e:
-            return self._market_error(e, "安装")
+            return self._market_error(e, _t("sys.verb_install"))
         ok = bool(result.get("ok"))
         icon = "✅" if ok else "❌"
         return {"type": "system", "content": f"{icon} {result.get('message', '')}"}
@@ -691,11 +895,11 @@ class Backend:
         """卸载技能：移除注册表条目并删除技能目录，再回读确认。"""
         skill_id = str(request.get("id") or request.get("repo") or "").strip()
         if not skill_id:
-            return {"type": "system", "content": "❌ 缺少技能标识"}
+            return {"type": "system", "content": _t("sys.market_missing_skill_id")}
         try:
             result = self.market().uninstall(skill_id)
         except Exception as e:
-            return self._market_error(e, "卸载")
+            return self._market_error(e, _t("sys.verb_uninstall"))
         ok = bool(result.get("ok"))
         icon = "✅" if ok else "❌"
         return {"type": "system", "content": f"{icon} {result.get('message', '')}"}
@@ -704,7 +908,7 @@ class Backend:
         try:
             items = self.market().installed()
         except Exception as e:
-            return self._market_error(e, "读取已安装列表")
+            return self._market_error(e, _t("sys.verb_read_installed"))
         return {"type": "system", "content": "", "installed": items}
 
     def _handle_market_status(self) -> Dict[str, Any]:
@@ -712,7 +916,7 @@ class Backend:
         try:
             state = self.market().status()
         except Exception as e:
-            return self._market_error(e, "状态查询")
+            return self._market_error(e, _t("sys.verb_query_status"))
         return {"type": "system", "content": "", "market_status": state}
 
     # ---------- 自动化配置与测试（任务四） ----------
@@ -726,7 +930,7 @@ class Backend:
         """读取自动化配置（设置窗口打开时调用）。"""
         return {
             "type": "system",
-            "content": "自动化配置",
+            "content": _t("sys.automation_config_title"),
             "automation": self._automation_payload(self.config.automation),
         }
 
@@ -740,7 +944,7 @@ class Backend:
 
         patch = request.get("automation") or {}
         if not isinstance(patch, dict):
-            return {"type": "system", "content": "❌ 自动化配置格式不正确"}
+            return {"type": "system", "content": _t("sys.automation_bad_format")}
         data = self.config.automation.model_dump()
         data.update({k: v for k, v in patch.items() if k in data})
         # 勾选安全协议时记录版本与时间；取消勾选则清空同意时间并关闭开关
@@ -753,15 +957,16 @@ class Backend:
         try:
             self.config.automation = AutomationConfig(**data)
         except Exception as e:
-            return {"type": "system", "content": f"❌ 自动化配置无效: {e}"}
+            return {"type": "system", "content": _t("sys.automation_config_invalid", error=e)}
         self.config.save()
         cfg = self.config.automation
         note = ""
         if cfg.enabled and cfg.safety_accepted:
-            note = f"（安全协议 v{cfg.safety_version}，同意时间 {cfg.safety_accepted_at}）"
+            note = _t("sys.automation_safety_note", safety_version=cfg.safety_version,
+                      accepted_at=cfg.safety_accepted_at)
         return {
             "type": "system",
-            "content": f"✅ 自动化配置已保存{note}",
+            "content": _t("sys.automation_config_saved", note=note),
             "automation": self._automation_payload(cfg),
         }
 
@@ -861,10 +1066,10 @@ class Backend:
         """把当前配置存成自定义模板（任务书 4.4 末句）。"""
         name = str(request.get("name") or "").strip()
         if not name:
-            return {"type": "system", "content": "❌ 请提供模板名称"}
+            return {"type": "system", "content": _t("sys.automation_template_need_name")}
         values = request.get("template")
         if not isinstance(values, dict):
-            return {"type": "system", "content": "❌ 模板内容不合法"}
+            return {"type": "system", "content": _t("sys.automation_template_bad_content")}
         data = {"schema": 1, "templates": self._load_custom_templates()}
         data["templates"][name] = {
             "label": str(values.get("label") or name),
@@ -876,7 +1081,7 @@ class Backend:
                 json.dump(data, f, indent=2, ensure_ascii=False)
                 f.write("\n")
         except OSError as e:
-            return {"type": "system", "content": f"❌ 保存模板失败: {e}"}
+            return {"type": "system", "content": _t("sys.automation_template_save_failed", error=e)}
         return {"type": "system", "content": _t("automation.template.custom_saved", name=name),
                 "templates": self._automation_templates()}
 
@@ -891,12 +1096,13 @@ class Backend:
         except (TypeError, ValueError):
             step = 1
         if step == 4:
-            return {"type": "system", "content": "❌ 第 4 步请使用流式向导（automation_wizard）"}
+            return {"type": "system", "content": _t("sys.automation_wizard_step4_stream")}
         try:
             result = self.automation().wizard_step(step)
         except Exception as e:  # noqa: BLE001
             log.exception("测试向导第 %s 步失败", step)
-            return {"type": "system", "content": f"❌ 第 {step} 步失败: {e}"}
+            return {"type": "system", "content": _t("sys.automation_wizard_step_failed",
+                                                    step=step, error=e)}
         return {"type": "system", "content": result.get("detail", ""), "wizard": result}
 
     def _exportable_automation(self) -> Dict[str, Any]:
@@ -920,8 +1126,7 @@ class Backend:
             "app_version": APP_VERSION,
             "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "language": _i18n().locale,
-            "note": ("EchoDesk 自动化配置导出文件。已排除登录态、处理记录与临时目录，"
-                     "可安全地在同组织的多台电脑之间复用。"),
+            "note": _t("sys.automation_export_note"),
             "automation": self._exportable_automation(),
         }
         try:
@@ -929,8 +1134,8 @@ class Backend:
                 json.dump(payload, f, indent=2, ensure_ascii=False)
                 f.write("\n")
         except OSError as e:
-            return {"type": "system", "content": f"❌ 导出失败: {e}"}
-        return {"type": "system", "content": f"✅ 自动化配置已导出到 {dest}", "path": dest}
+            return {"type": "system", "content": _t("sys.automation_export_failed", error=e)}
+        return {"type": "system", "content": _t("sys.automation_export_done", path=dest), "path": dest}
 
     def _handle_automation_config_import(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """导入自动化配置（任务书 4.7）。
@@ -939,17 +1144,17 @@ class Backend:
         """
         path = str(request.get("path") or "").strip()
         if not path or not os.path.isfile(path):
-            return {"type": "system", "content": f"❌ 找不到文件: {path}"}
+            return {"type": "system", "content": _t("sys.automation_import_no_file", path=path)}
         try:
             with open(path, "r", encoding="utf-8") as f:
                 payload = json.load(f)
         except Exception as e:  # noqa: BLE001
-            return {"type": "system", "content": f"❌ 读取失败: {e}"}
+            return {"type": "system", "content": _t("sys.automation_import_read_failed", error=e)}
         if not isinstance(payload, dict) or payload.get("format") != "echodesk-automation":
-            return {"type": "system", "content": "❌ 这不是 EchoDesk 自动化配置文件（缺少 format 标记）"}
+            return {"type": "system", "content": _t("sys.automation_import_bad_format")}
         incoming = payload.get("automation")
         if not isinstance(incoming, dict):
-            return {"type": "system", "content": "❌ 文件里没有 automation 配置段"}
+            return {"type": "system", "content": _t("sys.automation_import_no_section")}
 
         # 安全协议与开关不从文件里继承：必须由本机用户亲自勾选（安全默认）
         incoming.pop("safety_accepted", None)
@@ -964,7 +1169,7 @@ class Backend:
         try:
             self.config.automation = AutomationConfig(**data)
         except Exception as e:  # noqa: BLE001
-            return {"type": "system", "content": f"❌ 配置无效，未导入: {e}"}
+            return {"type": "system", "content": _t("sys.automation_import_invalid", error=e)}
         self.config.save()
 
         source_lang = str(payload.get("language") or "")
@@ -985,16 +1190,19 @@ class Backend:
         url = str(request.get("url") or self.config.automation.task_list_url or "").strip()
         selector = str(request.get("selector") or self.config.automation.task_list_selector or "").strip()
         if not url or not selector:
-            return {"type": "system", "content": "❌ 请先填写任务列表网址与元素位置再测试"}
+            return {"type": "system", "content": _t("sys.automation_test_need_fields")}
         try:
             result = self.automation().test_selector(url, selector)
         except Exception as e:
             log.exception("测试选择器失败")
-            return {"type": "system", "content": f"❌ 测试选择器失败: {e}"}
+            return {"type": "system", "content": _t("sys.automation_test_failed", error=e)}
         if not result.get("ok"):
-            return {"type": "system", "content": f"❌ 测试失败: {result.get('error') or '未匹配到元素'}"}
+            return {"type": "system", "content": _t(
+                "sys.automation_test_error",
+                error=result.get("error") or _t("sys.automation_test_unmatched"))}
 
-        lines = [f"✅ 选择器测试通过：匹配到 {result['count']} 个元素（{result.get('kind', 'css')}）"]
+        lines = [_t("sys.automation_selector_ok", count=result["count"],
+                    kind=result.get("kind", "css"))]
         for index, sample in enumerate(result.get("samples", []), 1):
             href = ""
             hrefs = result.get("hrefs") or []
@@ -1002,7 +1210,8 @@ class Backend:
                 href = f" → {hrefs[index - 1]}"
             lines.append(f"  {index}. {sample}{href}")
         if result["count"] > len(result.get("samples", [])):
-            lines.append(f"  …（仅预览前 {len(result.get('samples', []))} 个）")
+            lines.append(_t("sys.automation_preview_only",
+                            count=len(result.get("samples", []))))
         return {"type": "system", "content": "\n".join(lines)}
 
     def _handle_context(self) -> Dict[str, Any]:
@@ -1044,8 +1253,125 @@ class Backend:
                 response["temperature"] = float(self.commands.temperature)
             except Exception:
                 response["temperature"] = None
+            # 修复四（方向七：能力透明化）：把"模型能跑多快、窗口开了多少、
+            # 有没有触到能力边界"一并带上，前端状态区据此实时显示，
+            # 用户不必去翻 /status 的中文文本。
+            profile = self.model_capability()
+            if profile:
+                response["capability"] = {
+                    "parameters_text": profile.get("parameters_text", ""),
+                    "quantization": profile.get("quantization", ""),
+                    "train_context": profile.get("train_context", 0),
+                    "usable_context": profile.get("usable_context", 0),
+                    "kv_cache_text": profile.get("kv_cache_text", ""),
+                    "last_tps": profile.get("last_tps", 0.0),
+                    "last_tokens": profile.get("last_tokens", 0),
+                    "warnings": profile.get("warnings", []),
+                }
+            response["preset"] = str(getattr(self.config, "preset", "") or "")
+            response["context_mode"] = str(getattr(self.config, "context_mode", "summarize") or "summarize")
         except Exception:
             pass
+
+    def _context_snapshot(self) -> Dict[str, Any]:
+        """单独取一份上下文快照（不含 type 字段），供能力接口复用。"""
+        snapshot: Dict[str, Any] = {"type": "context"}
+        self._attach_context(snapshot)
+        snapshot.pop("type", None)
+        return snapshot
+
+    def _handle_capability_settings(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """运行期调整能力相关设置（修复四：预设 / 滑动窗口 / 分段摘要参数）。
+
+        只接受白名单字段并逐个做范围校验：这些都是会直接影响推理结果的参数，
+        放任前端传什么就写什么，很容易做出一个"看起来很行但跑不动"的配置。
+        """
+        changed: List[str] = []
+        cfg = self.config
+
+        preset = str(request.get("preset") or "").strip().lower()
+        if preset:
+            from model_profile import apply_preset
+
+            values = apply_preset(preset)
+            if values is None:
+                return {"type": "system", "content": _t("sys.preset_not_found", name=preset)}
+            cfg.preset = preset
+            cfg.temperature = float(values["temperature"])
+            cfg.top_p = float(values["top_p"])
+            cfg.repeat_penalty = float(values["repeat_penalty"])
+            cfg.max_tokens = int(values["max_tokens"])
+            self.commands.temperature = cfg.temperature
+            self.commands.temp_manual = False
+            changed.append("preset")
+
+        mode = str(request.get("context_mode") or "").strip().lower()
+        if mode:
+            if mode not in ("summarize", "slide"):
+                return {"type": "system", "content": _t("sys.context_mode_invalid", mode=mode)}
+            cfg.context_mode = mode
+            changed.append("context_mode")
+
+        for key, low, high in (("temperature", 0.0, 1.0), ("top_p", 0.0, 1.0),
+                               ("repeat_penalty", 0.5, 2.0)):
+            if key in request and request.get(key) is not None:
+                try:
+                    value = float(request[key])
+                except (TypeError, ValueError):
+                    continue
+                setattr(cfg, key, max(low, min(high, value)))
+                if key == "temperature":
+                    self.commands.temperature = cfg.temperature
+                    self.commands.temp_manual = True
+                changed.append(key)
+
+        if request.get("max_tokens") is not None:
+            try:
+                cfg.max_tokens = max(64, min(8192, int(request["max_tokens"])))
+                changed.append("max_tokens")
+            except (TypeError, ValueError):
+                pass
+
+        for flag in ("clarify_vague", "summary_cache"):
+            if flag in request:
+                setattr(cfg, flag, bool(request[flag]))
+                if flag == "summary_cache":
+                    self._summary_cache = None   # 开关切换后重新按需创建
+                changed.append(flag)
+
+        summarize = request.get("summarize")
+        if isinstance(summarize, dict):
+            for key, low, high in (("chunk_chars", 200, 20000),
+                                   ("overlap_chars", 0, 4000),
+                                   ("max_summary_tokens", 32, 2048),
+                                   ("merge_max_tokens", 64, 8192)):
+                if key in summarize:
+                    try:
+                        setattr(cfg.summarize, key, max(low, min(high, int(summarize[key]))))
+                        changed.append(f"summarize.{key}")
+                    except (TypeError, ValueError):
+                        pass
+            if "trigger_ratio" in summarize:
+                try:
+                    cfg.summarize.trigger_ratio = max(0.05, min(0.95, float(summarize["trigger_ratio"])))
+                    changed.append("summarize.trigger_ratio")
+                except (TypeError, ValueError):
+                    pass
+            for key in ("enabled", "keep_pointer"):
+                if key in summarize:
+                    setattr(cfg.summarize, key, bool(summarize[key]))
+                    changed.append(f"summarize.{key}")
+
+        if not changed:
+            return {"type": "system", "content": _t("sys.nothing_changed")}
+        try:
+            cfg.save()
+        except Exception:
+            log.warning("保存能力设置失败", exc_info=True)
+        return {"type": "system",
+                "content": _t("sys.capability_settings_saved", fields=", ".join(changed)),
+                "changed": changed, "capability": self.model_capability(),
+                "context": self._context_snapshot()}
 
     def stream(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
         """流式对话：逐个产出 delta 行，最后产出 done 行（支持 stop 中断）。"""
@@ -1077,7 +1403,13 @@ class Backend:
 
         parts: list = []
         try:
-            for delta in self.llm.chat_stream(messages, temperature=self.commands.temperature, stop_event=self.stop_event):
+            for delta in self.llm.chat_stream(
+                    messages,
+                    temperature=self.commands.temperature,
+                    max_tokens=int(getattr(self.config, "max_tokens", 1024) or 1024),
+                    stop_event=self.stop_event,
+                    top_p=float(getattr(self.config, "top_p", 0.9) or 0.9),
+                    repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1)):
                 if self.stop_event.is_set():
                     break
                 parts.append(delta)
@@ -1118,15 +1450,34 @@ class Backend:
             self._compact_history()
             return {"type": "assistant", "content": answer}
 
+        # 修复四（方向七）：提问过于模糊时先追问，而不是硬答。
+        # 只在"没有文件上下文、也没有历史"时触发：已经有上下文的情况下
+        # "这个怎么办"往往指的是上文内容，追问反而多余。
+        from prompts import clarification_prompt, is_vague_question
+
+        if (bool(getattr(self.config, "clarify_vague", True))
+                and not self.conv.history and not self.conv.file_content
+                and is_vague_question(user_msg)):
+            answer = clarification_prompt(user_msg)
+            return {"type": "assistant", "content": answer, "clarify": True}
+
         search_context = self._search_if_enabled(user_msg)
         include_file = bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)
         messages = self.conv.build_messages(user_msg, search_context, include_file=include_file)
         try:
-            response = self.llm.chat_complete(messages, temperature=self.commands.temperature)
+            response = self.llm.chat_complete(
+                messages,
+                temperature=self.commands.temperature,
+                max_tokens=int(getattr(self.config, "max_tokens", 1024) or 1024),
+                top_p=float(getattr(self.config, "top_p", 0.9) or 0.9),
+                repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1),
+            )
             self.conv.add_message("user", user_msg)
             self.conv.add_message("assistant", response)
             self._compact_history()
-            return {"type": "assistant", "content": response}
+            result: Dict[str, Any] = {"type": "assistant", "content": response}
+            self._attach_context(result)
+            return result
         except Exception as e:
             log.exception("推理失败")
             return {"type": "system", "content": _t("sys.inference_failed", error=e)}
@@ -1143,13 +1494,13 @@ class Backend:
                 if event.get("type") == "done":
                     summary = str(event.get("content") or "")
                     if summary:
-                        self.conv.add_message("user", "（自动化任务执行结果）")
+                        self.conv.add_message("user", _t("sys.automation_result_marker"))
                         self.conv.add_message("assistant", summary)
                         self._compact_history()
                 yield event
         except Exception as e:
             log.exception("自动化执行失败")
-            yield {"type": "error", "content": f"❌ 自动化执行失败: {e}"}
+            yield {"type": "error", "content": _t("sys.automation_run_failed", error=e)}
         finally:
             # 兜底清理下载临时目录（引擎按任务清理文件，这里连同本轮的空目录一并清掉）
             try:
@@ -1180,7 +1531,7 @@ class Backend:
                 yield event
         except Exception as e:  # noqa: BLE001
             log.exception("可视化选取失败")
-            yield {"type": "error", "content": f"❌ 可视化选取失败: {e}"}
+            yield {"type": "error", "content": _t("sys.automation_pick_failed", error=e)}
 
     def _apply_picked_selector(self, target: str, selector: str) -> None:
         """把选取结果写入配置（前端只负责展示，落盘由后端统一做，避免双写）。"""
@@ -1221,7 +1572,8 @@ class Backend:
                 yield {"type": "done", "content": result.get("detail", ""), "wizard": result}
         except Exception as e:  # noqa: BLE001
             log.exception("测试向导执行失败")
-            yield {"type": "error", "content": f"❌ 测试向导第 {step} 步失败: {e}"}
+            yield {"type": "error", "content": _t("sys.automation_wizard_run_failed",
+                                                  step=step, error=e)}
         finally:
             try:
                 engine.cleanup_temp()
@@ -1246,8 +1598,9 @@ class Backend:
         # 下载前的最后一次人工确认信息（大小与预计磁盘占用）
         yield {
             "type": "delta",
-            "content": f"📥 准备从 {repo} 下载 {filename}"
-                       + (f"（{expected / 1048576:.1f} MB）" if expected else ""),
+            "content": _t("sys.hub_download_prepare", repo=repo, filename=filename,
+                          size=(_t("sys.hub_download_size", mb=f"{expected / 1048576:.1f}")
+                                if expected else "")),
         }
         self.stop_event.clear()
 
@@ -1257,9 +1610,8 @@ class Backend:
         def _progress(info: Dict[str, Any]) -> None:
             """字节级进度 → 一行人类可读文本（速度与剩余时间，任务书要求）。"""
             if "retry" in info:
-                latest["line"] = (
-                    f"↻ 第 {info.get('attempt')}/{info.get('retries')} 次重试：{info.get('error')}"
-                )
+                latest["line"] = _t("sys.hub_download_retry", attempt=info.get("attempt"),
+                                    retries=info.get("retries"), error=info.get("error"))
                 return
             done = int(info.get("done") or 0)
             total = int(info.get("total") or 0)
@@ -1270,7 +1622,7 @@ class Backend:
             if speed > 0:
                 line += f"  {speed / 1048576:.2f} MB/s"
             if eta > 0:
-                line += f"  剩余 {eta // 60:02d}:{eta % 60:02d}"
+                line += _t("sys.hub_download_eta", time=f"{eta // 60:02d}:{eta % 60:02d}")
             latest["line"] = line
 
         result: Dict[str, Any] = {}
@@ -1285,7 +1637,8 @@ class Backend:
                     retries=int(getattr(self.config.model_hub, "download_retries", 3) or 3),
                 ))
             except Exception as exc:  # noqa: BLE001
-                result.update({"ok": False, "message": f"下载失败：{exc}", "path": ""})
+                result.update({"ok": False,
+                               "message": _t("sys.hub_download_failed", error=exc), "path": ""})
             finally:
                 done_flag.set()
 
@@ -1298,28 +1651,32 @@ class Backend:
                     reported = latest["line"]
                     yield {"type": "delta", "content": reported}
                 if self.stop_event.is_set():
-                    yield {"type": "delta", "content": "⏹ 已请求取消下载，正在收尾（已保留断点）…"}
+                    yield {"type": "delta", "content": _t("sys.hub_download_cancelling")}
             if latest["line"] and latest["line"] != reported:
                 yield {"type": "delta", "content": latest["line"]}
             thread.join(timeout=10)
 
             if result.get("ok"):
                 path = str(result.get("path") or "")
-                self.conv.add_message("user", f"（下载模型 {filename}）")
-                self.conv.add_message("assistant", f"模型已下载并加入模型库：{os.path.basename(path)}")
+                self.conv.add_message("user", _t("sys.model_download_user_marker", filename=filename))
+                self.conv.add_message("assistant", _t("sys.model_downloaded_to_library",
+                                                     name=os.path.basename(path)))
                 self._compact_history()
-                yield {"type": "done", "content": f"✅ {result.get('message', '下载完成')}", "model": path}
+                yield {"type": "done",
+                       "content": f"✅ {result.get('message') or _t('sys.download_done')}",
+                       "model": path}
             else:
                 icon = "⏹" if result.get("cancelled") else "❌"
-                yield {"type": "done", "content": f"{icon} {result.get('message', '下载未完成')}",
+                yield {"type": "done",
+                       "content": f"{icon} {result.get('message') or _t('sys.download_incomplete')}",
                        "cancelled": bool(result.get("cancelled"))}
         except Exception as e:
             log.exception("模型下载失败")
-            yield {"type": "error", "content": f"❌ 模型下载失败: {e}"}
+            yield {"type": "error", "content": _t("sys.download_failed", error=e)}
 
     def _handle_file(self, filepath: str) -> Dict[str, Any]:
         if not filepath:
-            return {"type": "system", "content": "请提供文件路径"}
+            return {"type": "system", "content": _t("sys.file_need_path")}
         return {"type": "system", "content": self.load_file_into_context(filepath)}
 
     def load_file_into_context(self, filepath: str) -> str:
@@ -1341,58 +1698,102 @@ class Backend:
                 "文件 %s 约 %d tokens，超过窗口 %d 的 %.0f%%：转入分段摘要",
                 name, tokens, self.llm.n_ctx, self.config.summarize.trigger_ratio * 100,
             )
-            head = (
-                f"📄 已加载 {name}：约 {tokens} tokens，超过窗口 {self.llm.n_ctx} 的 "
-                f"{self.config.summarize.trigger_ratio:.0%}，将先分段摘要再注入（避免直接截断丢信息）。\n"
-            )
-            return head + self.summarize_current_file(force=True, source_name=name, trigger="自动")
-        return f"✅ 已加载文件: {name} ({len(content)} 字符，约 {tokens} tokens)"
+            head = _t("sys.file_auto_summary_head", name=name, tokens=tokens,
+                      n_ctx=self.llm.n_ctx,
+                      ratio=f"{self.config.summarize.trigger_ratio:.0%}") + "\n"
+            return head + self.summarize_current_file(
+                force=True, source_name=name, trigger=_t("sys.summarize_trigger_auto"))
+        return _t("sys.file_loaded", name=name, chars=len(content), tokens=tokens)
 
-    def summarize_current_file(self, force: bool = True, source_name: str = "", trigger: str = "手动") -> str:
-        """对当前已加载文件做分段摘要并替换注入内容（供自动触发与 /summarize 调用）。"""
+    def summarize_current_file(self, force: bool = True, source_name: str = "",
+                               trigger: str = "") -> str:
+        """对当前已加载文件做分段摘要并替换注入内容（供自动触发与 /summarize 调用）。
+
+        修复四（方向八：缓存与复用）：摘要结果按"文件指纹 + 摘要参数"缓存，
+        同一文件二次上传/二次摘要直接命中缓存，不再重复跑 map-reduce
+        （长文档一次摘要是几十次模型调用，重复计算代价很高）。
+
+        ``trigger``（"自动"/"手动"）是**界面文本**：默认值留空，进来后按当前语言
+        解析（不能在形参默认值里写 ``_t(...)``——那是导入时求值，会固化语言）。
+        """
+        trigger = trigger or _t("sys.summarize_trigger_manual")
         if not self.conv.file_content:
-            return "❌ 当前没有已加载的文件，请先用 /file 上传"
+            return _t("cmd.resp.summarize_no_file")
         name = source_name or os.path.basename(self.conv.file_name or "")
+
+        # 命中缓存：直接把上次的摘要装回上下文（跳过全部模型调用）
+        cache = self.summary_cache()
+        cache_key_path = self.conv.file_name or name
+        params = {
+            "chunk_chars": self.config.summarize.chunk_chars,
+            "overlap_chars": self.config.summarize.overlap_chars,
+            "max_summary_tokens": self.config.summarize.max_summary_tokens,
+            "merge_max_tokens": self.config.summarize.merge_max_tokens,
+        }
+        if cache is not None and os.path.isfile(cache_key_path):
+            hit = cache.get(cache_key_path, params)
+            if hit and hit.get("text"):
+                self.conv.set_file_summary(str(hit["text"]), {
+                    "chunks": hit.get("chunk_count") or 0,
+                    "origin_chars": hit.get("origin_chars") or 0,
+                    "pointer": "",
+                    "cached": True,
+                    "hits": hit.get("hits") or 0,
+                })
+                self.llm.clear_cache()
+                log.info("分段摘要命中缓存：%s（第 %s 次复用）", name, hit.get("hits"))
+                return (
+                    _t("sys.summary_cache_hit", trigger=trigger, name=name) + "\n"
+                    + _t("sys.summary_cache_hit_detail", chars=hit.get('origin_chars') or 0,
+                         chunks=hit.get('chunk_count') or 0) + "\n"
+                    + _t("sys.summary_cache_hit_note")
+                )
 
         def _progress(index: int, total: int, label: str) -> None:
             # 进度打到 stderr：前端在对话框里实时显示，长文档摘要不会"卡住无反应"
-            print(f"📝 {label} ({index}/{total})", file=sys.stderr, flush=True)
+            print(emoji_mod.prefer(f"📝 {label} ({index}/{total})"), file=sys.stderr, flush=True)
 
         result = self.summarizer.summarize(
             self.conv.file_content, source_name=name, force=force, on_progress=_progress,
         )
         if not result.summarized:
-            return f"ℹ️ 文件较短（{result.origin_chars} 字符），无需分段摘要，已按原文注入。"
+            return _t("sys.summary_too_short", chars=result.origin_chars)
         self.conv.set_file_summary(
             result.text,
             {"chunks": result.chunk_count, "origin_chars": result.origin_chars, "pointer": result.pointer},
         )
+        # 写入缓存：下次同一文件（内容与参数都没变）直接复用
+        if cache is not None and os.path.isfile(cache_key_path):
+            cache.put(cache_key_path, params, result.text,
+                      chunk_count=result.chunk_count, origin_chars=result.origin_chars)
+            cache.save()
         self.llm.clear_cache()  # 注入内容结构变化，旧 KV 缓存失效
         summary_tokens = self.llm.count_tokens(result.text)
         pointer = result.pointer
         shown = pointer[:160] + ("…" if len(pointer) > 160 else "")
         return (
-            f"✅ {trigger}分段摘要完成: {name}\n"
-            f"• 原文 {result.origin_chars} 字符 → {result.chunk_count} 段，摘要约 {summary_tokens} tokens\n"
-            f"• 已用摘要替代全文注入上下文（提问时自动带上）\n"
-            f"• 已保留原文指针：{shown}"
+            _t("sys.summary_done", trigger=trigger, name=name) + "\n"
+            + _t("sys.summary_done_stats", chars=result.origin_chars,
+                 chunks=result.chunk_count, tokens=summary_tokens) + "\n"
+            + _t("sys.summary_done_note") + "\n"
+            + _t("sys.summary_done_pointer", pointer=shown)
         )
 
     def _handle_model_download(self, name: str) -> Dict[str, Any]:
         """用户已同意后下载模型并热切换。"""
         if not name:
-            return {"type": "system", "content": "缺少模型名称"}
+            return {"type": "system", "content": _t("sys.model_need_name")}
         try:
             path = download_model(name, self.config.model_repo, hf_endpoint=self.config.hf_endpoint)
         except Exception as e:
-            return {"type": "system", "content": f"❌ 模型下载失败: {e}"}
+            return {"type": "system", "content": _t("sys.download_failed", error=e)}
         try:
             self.llm.reload(path)
         except Exception as e:
-            return {"type": "system", "content": f"❌ 下载完成但加载失败: {e}"}
+            return {"type": "system", "content": _t("sys.model_load_after_download_failed", error=e)}
         self.config.model_path = name
         self.config.save()
-        return {"type": "system", "content": f"✅ 模型已下载并加载: {name}"}
+        return {"type": "system", "content": _t("sys.model_downloaded_and_loaded", name=name)}
 
     def _stream_model_download(self, name: str) -> Iterator[Dict[str, Any]]:
         """流式下载模型：后台线程下载，逐条 yield 进度，最后 yield done/error。
@@ -1400,7 +1801,7 @@ class Backend:
         进度来自 download_model 的 on_progress 回调（字节 → 百分比）。
         """
         if not name:
-            yield {"type": "error", "content": "缺少模型名称"}
+            yield {"type": "error", "content": _t("sys.model_need_name")}
             return
         q: queue.Queue = queue.Queue()
 
@@ -1422,22 +1823,24 @@ class Backend:
             if kind == "progress":
                 total = b
                 pct = int(a * 100 / total) if total > 0 else 0
-                yield {"type": "delta", "content": f"📥 正在下载 '{name}'... {pct}% ({self._fmt_mb(a)} / {self._fmt_mb(total)})"}
+                yield {"type": "delta", "content": _t(
+                    "sys.model_downloading_progress", name=name, pct=pct,
+                    done=self._fmt_mb(a), total=self._fmt_mb(total))}
             elif kind == "path":
                 break
             else:  # error
-                yield {"type": "error", "content": f"❌ 模型下载失败: {a}"}
+                yield {"type": "error", "content": _t("sys.download_failed", error=a)}
                 return
 
         # 下载完成 → 加载并热切换
         try:
             self.llm.reload(a)
         except Exception as e:
-            yield {"type": "error", "content": f"❌ 下载完成但加载失败: {e}"}
+            yield {"type": "error", "content": _t("sys.model_load_after_download_failed", error=e)}
             return
         self.config.model_path = name
         self.config.save()
-        yield {"type": "done", "content": f"✅ 模型已下载并加载: {name}"}
+        yield {"type": "done", "content": _t("sys.model_downloaded_and_loaded", name=name)}
 
     def _estimate_tokens(self, messages) -> int:
         """用模型分词器估算消息 token 数；失败时按字符数粗略估算。"""
@@ -1451,21 +1854,35 @@ class Backend:
         """把字节数格式化为可读的 MB 字符串，用于下载进度展示。"""
         return f"{n / 1048576:.1f} MB"
 
-    def _compact_history(self) -> None:
-        """上下文长度管理：当上下文超过模型 context_length 的 80% 时，
-        保留最近约 20% 的上下文原样，把更早的历史交给模型压缩为摘要。
+    def _compact_history(self, force: bool = False) -> Dict[str, Any]:
+        """上下文长度管理：把"装不下"的历史搬出上下文。
+
+        两种模式（修复四 基础要求"滑动窗口模式"）：
+
+        * ``summarize``（默认）：更早的历史交给模型压成 150 字摘要，信息保留最好；
+        * ``slide``：直接丢弃最早的历史（滑动窗口），不做额外推理，最快，
+          但被丢掉的内容不会以摘要形式留下。
+
+        ``force=True`` 时忽略 80% 阈值直接压缩（``/compact`` 手动触发用）。
+        返回一份统计给调用方（指令回执 / 前端状态显示）。
         """
         conv = self.conv
-        if not conv.history:
-            return
         limit = int(self.llm.n_ctx * 0.8)
+        result: Dict[str, Any] = {"compressed": False, "limit": limit}
+        if not conv.history:
+            result["reason"] = "empty"
+            return result
         try:
             current = [{"role": "system", "content": conv.get_system_prompt()}] + conv.history
             total = self._estimate_tokens(current)
         except Exception:
-            return
-        if total <= limit:
-            return
+            result["reason"] = "estimate_failed"
+            return result
+        result["used"] = total
+        result["used_before"] = total
+        if total <= limit and not force:
+            result["reason"] = "under_limit"
+            return result
 
         # 从历史末尾向前累计，保留最新约 20% 上下文原样
         keep_tokens = max(1, int(limit * 0.2))
@@ -1477,31 +1894,63 @@ class Backend:
             if acc >= keep_tokens:
                 break
         if keep_count >= len(conv.history):
-            return  # 最新内容已占满，无法压缩（如单轮超大消息）
+            result["reason"] = "nothing_to_drop"
+            return result
         dropped = conv.history[: len(conv.history) - keep_count]
         conv.history = conv.history[len(dropped):]
+        result.update(compressed=True, dropped=len(dropped), kept=keep_count)
 
-        text = "\n".join(
-            f"{'用户' if m['role'] == 'user' else '助手'}: {m['content'][:300]}" for m in dropped
-        )[:4000]
-        summary = ""
+        mode = str(getattr(self.config, "context_mode", "summarize") or "summarize").lower()
+        if mode == "slide":
+            # 滑动窗口：不做摘要，只是把最早的历史移出上下文
+            log.info("上下文 %d/%d tokens：滑动窗口丢弃最早 %d 条（未生成摘要）",
+                     total, limit, len(dropped))
+            result["mode"] = "slide"
+            result["summary_chars"] = 0
+        else:
+            text = "\n".join(
+                f"{'用户' if m['role'] == 'user' else '助手'}: {m['content'][:300]}" for m in dropped
+            )[:4000]
+            summary = ""
+            try:
+                summary = self.llm.chat_complete(
+                    [
+                        {"role": "system", "content": "你是对话压缩器。请用不超过150字的要点总结这段对话，保留用户的需求、关键决定和背景信息。"},
+                        {"role": "user", "content": text},
+                    ],
+                    temperature=0.3,
+                    max_tokens=180,
+                ).strip()
+            except Exception:
+                log.warning("历史压缩失败，已直接裁剪", exc_info=True)
+            if summary:
+                conv.summary = f"{conv.summary}\n{summary}".strip()
+            result["mode"] = "summarize"
+            result["summary_chars"] = len(summary)
+            log.info(
+                "上下文 %d/%d tokens 超限：保留最新 %d 条，压缩 %d 条为摘要（%d 字）",
+                total, limit, keep_count, len(dropped), len(summary),
+            )
         try:
-            summary = self.llm.chat_complete(
-                [
-                    {"role": "system", "content": "你是对话压缩器。请用不超过150字的要点总结这段对话，保留用户的需求、关键决定和背景信息。"},
-                    {"role": "user", "content": text},
-                ],
-                temperature=0.3,
-                max_tokens=180,
-            ).strip()
+            result["used_after"] = self._estimate_tokens(
+                [{"role": "system", "content": conv.get_system_prompt()}] + conv.history)
         except Exception:
-            log.warning("历史压缩失败，已直接裁剪", exc_info=True)
-        if summary:
-            conv.summary = f"{conv.summary}\n{summary}".strip()
-        log.info(
-            "上下文 %d/%d tokens 超限：保留最新 %d 条，压缩 %d 条为摘要（%d 字）",
-            total, limit, keep_count, len(dropped), len(summary),
-        )
+            result["used_after"] = None
+        return result
+
+    def compact_context(self, force: bool = True) -> Dict[str, Any]:
+        """对外暴露的手动压缩入口（``/compact`` 与前端按钮共用）。
+
+        压缩后清掉 KV 缓存：历史变了，缓存不再对应，
+        不清的话下一次生成会带着错误的注意力前缀。
+        """
+        result = self._compact_history(force=force)
+        if result.get("compressed"):
+            try:
+                self.llm.clear_cache()
+            except Exception:
+                log.debug("压缩后清 KV 缓存失败", exc_info=True)
+        return result
 
     def _search_if_enabled(self, query: str) -> str:
         if not self.commands.search_enabled:
@@ -1543,7 +1992,8 @@ def _download_with_progress(config: Config, name: str) -> Optional[str]:
         last["pct"] = pct
         _write({
             "type": "delta",
-            "content": f"📥 正在下载 {name} ... {pct}% ({done / 1048576:.1f} MB / {total / 1048576:.1f} MB)",
+            "content": _t("sys.download_progress", name=name, pct=pct,
+                          done=f"{done / 1048576:.1f}", total=f"{total / 1048576:.1f}"),
         })
 
     try:
@@ -1553,7 +2003,7 @@ def _download_with_progress(config: Config, name: str) -> Optional[str]:
         )
     except Exception as e:
         log.exception("模型下载失败")
-        _write({"type": "error", "content": f"❌ 模型下载失败: {e}"})
+        _write({"type": "error", "content": _t("sys.download_failed", error=e)})
         return None
 
     # 下载的是仓库真实文件名，同步配置以免下次仍用不存在的名字
@@ -1566,7 +2016,7 @@ def _download_with_progress(config: Config, name: str) -> Optional[str]:
             config.save()
         except Exception:
             log.warning("配置保存失败（不影响本次运行）", exc_info=True)
-    _write({"type": "done", "content": f"✅ 模型已下载: {name}，正在加载并预热…"})
+    _write({"type": "done", "content": _t("sys.model_download_done_loading", name=name)})
     return path
 
 
@@ -1596,12 +2046,19 @@ def _await_download_decision(config: Config, fallback_name: str) -> Optional[str
             return None
         _write({
             "type": "system",
-            "content": "⏳ 正在等待是否下载模型的确认（发送 model_download 开始下载，exit 退出）",
+            "content": _t("sys.await_download_confirm"),
         })
     return None
 
 
 def main() -> None:
+    # 修复六：先把输出流切到 UTF-8 并判断能否安全输出 emoji。
+    # 必须在任何输出之前执行——控制台代码页不是 UTF-8 时 emoji 会变成 "??"，
+    # 那时再降级就已经晚了（日志/进度消息是边跑边打的）。
+    emoji_mod.configure_streams()
+    if "--no-emoji" in sys.argv:
+        emoji_mod.set_enabled(False)
+
     config = Config.load()
 
     # 本地模型缺失时不再直接下载，而是先征询用户（前端弹确认对话框）
@@ -1665,7 +2122,10 @@ def main() -> None:
             "history": backend.conv.history,
             "locale": _i18n().locale, "i18n": _i18n().info(),
             "commands": backend.commands.all_commands(),
-            "skills": backend.skills().status()})
+            "skills": backend.skills().status(),
+            # 修复六 / 修复七：告知前端 emoji 是否可用、数据目录在哪（合规与支持排查都要用）
+            "emoji": emoji_mod.enabled(),
+            "paths": {"program": program_dir(), "data": user_data_root()}})
 
     def _stream_worker(request: Dict[str, Any]) -> None:
         try:

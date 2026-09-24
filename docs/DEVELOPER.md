@@ -7,31 +7,41 @@
 ## 一、总体架构
 
 ```
-┌─────────────────────────── EchoDesk.exe（C# WPF，net10.0-windows）───────────────────────────┐
+┌─────────────────────────── app\EchoDesk.exe（C# WPF，net10.0-windows）───────────────────────┐
 │  MainWindow            对话主界面：消息列表、输入区、状态栏、通知条、快捷键                     │
-│  SettingsWindow        设置窗口：常规 / 自动化 / 技能市场                                     │
+│  SettingsWindow        设置窗口：常规 / 模型 / 自动化 / 已安装 / 技能市场 / 开发者              │
 │  SettingsWindow.xaml.cs→ 通过 BackendService 与后端通信                                       │
 │  Services/BackendService.cs     子进程管理 + JSON 行协议客户端（含请求闸门，串行化 stdout 读取）│
-│  Services/ShortcutService.cs    启动快捷方式检测/创建（WScript.Shell COM）                     │
-│  Services/AppSettings.cs        ui_state.json：窗口状态、字号、主题、一次性询问标记             │
-│  Utilities/MarkdownRenderer.cs  Markdown → FlowDocument 渲染（标题/表格/代码块/嵌套行内样式）  │
+│  Services/ShortcutService.cs    目录布局（程序目录 / 用户数据目录）+ 启动快捷方式检测/创建        │
+│  Services/ThemeService.cs       主题三态（跟随系统/浅色/深色）与色板切换（修复二）               │
+│  Services/Localization.cs       多语言：语言包加载、回退链、Loc.Key 附加属性回填                 │
+│  Services/Emoji.cs              emoji 降级（不支持的环境换成 ASCII 标记，修复六）                │
+│  Services/AppSettings.cs        ui_state.json：窗口状态、字号、主题、语言、emoji 策略           │
+│  Utilities/MarkdownRenderer.cs  Markdown → FlowDocument 渲染（画刷走色板资源引用）             │
+│  Utilities/TrustDialog.cs       本地插件批量信任确认框（修复一）                                │
 │  Utilities/SnippetManager.cs    常用语模板（snippets.json）                                   │
 └───────────────────────────────┬──────────────────────────────────────────────────────────────┘
                                 │  stdin/stdout：每行一个 JSON（UTF-8，无 BOM）
 ┌───────────────────────────────┴──────────────────────────────────────────────────────────────┐
-│                    backend\EchoDeskBackend.exe（Python 3.13 + PyInstaller onedir）             │
+│                    app\backend\EchoDeskBackend.exe（Python 3.13 + PyInstaller onedir）          │
 │  main.py          主循环：读 stdin → 分发；长任务在后台线程产出流式响应（支持 stop 中断）      │
 │  config.py        配置模型（pydantic）：窗口上限校验、分段摘要、自动化、技能市场               │
+│  model_profile.py 模型能力画像（参数量/量化/窗口/KV/速度）、能力提示、硬件推荐、摘要缓存（修复四）│
+│  prompts.py       任务型提示词模板（角色/输出格式/思维链/少样本）与模糊提问检测（修复四）        │
+│  emoji.py         emoji 输出能力检测与 ASCII 降级（修复六）                                    │
+│  i18n.py          多语言：语言包加载、回退链、占位符容错、外置语言包优先                         │
 │  llm_engine.py    llama.cpp 封装：窗口/训练窗口日志、KV Cache 估算、流式生成与速度统计         │
 │  gguf_meta.py     轻量解析 GGUF 元数据（不加载模型即可取训练窗口、层数、KV 头数）              │
 │  summarizer.py    长文档 map-reduce 分段摘要（分段/重叠/逐段摘要/递归归并/原文指针）           │
 │  conversation.py  对话历史、模式、文件上下文、会话持久化                                       │
-│  command_handler.py  / 指令解析与分发                                                         │
+│  command_handler.py  / 指令解析与分发（含技能注册的外部指令）                                  │
 │  file_parser.py   文件解析：WPS COM 优先（可读加密文档）→ 内置轻量解析器                        │
+│  skills_runtime.py 技能运行期加载器：发现/优先级/信任/卸载/面板/钩子（任务二）                  │
 │  download_utils.py 模型仓库查询与下载（hf-mirror 镜像）                                       │
 │  search_engine.py  DuckDuckGo 联网搜索                                                        │
 │  automation.py    Playwright 驱动 Edge 的浏览器自动化（有头模式）                              │
 │  marketplace.py   GitHub topic 技能市场：搜索/详情/安装/卸载（缓存 + 离线降级）                │
+│  update_check.py  自动更新检查（方案 A：只检查与提示，不下载替换）                             │
 └───────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 

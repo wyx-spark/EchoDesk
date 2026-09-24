@@ -100,6 +100,26 @@ jobs:
         run: python tools/test_i18n.py
         # 多语言机制（任务三）：回退链、按需加载、模块分片、外置语言包优先、损坏容错。
 
+      - name: Run developer-mode test
+        shell: pwsh
+        run: python tools/test_dev_mode.py
+        # 开发者模式（修复一）：开关双向可用、内置插件静默、批量确认清单、
+        # 「答复过就不再问」、关闭时真的卸载开发插件。全部在临时目录里跑。
+
+      - name: Run capability test
+        shell: pwsh
+        run: python tools/test_capability.py
+        # 模型能力辅助（修复四）：参数量/量化解析与来源标注、能力提示、硬件推荐、
+        # 生成预设、任务提示词模板、模糊提问检测、分段摘要缓存。不加载模型。
+
+      - name: Check backend imports
+        shell: pwsh
+        run: python -c "import sys; sys.path.insert(0, 'backend'); import main; print('import ok')"
+        # 真实导入一次全部后端模块。历史事故：打包后因函数返回注解里缺 typing.List
+        # 导致 NameError 启动即崩，而 ast.parse 语法检查完全查不出来——
+        # 只有真正 import 才能发现这类"定义期求值"的错误。selftest.py 里也有同样的检查，
+        # 这里再单独跑一条是为了让 CI 日志里一眼能定位到这类失败。
+
       # 故意不在 CI 运行的两项（都需要本机运行环境，属人工/发布前验证）：
       #   * tools/test_automation_e2e.py —— 需要真实的 Microsoft Edge（playwright channel=msedge）
       #     并会自动打开**有头**浏览器窗口（config.AutomationConfig 强制 headless=False），
@@ -282,4 +302,47 @@ jobs:
               exit 0
           }
           python tools/check_lang.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  # -------------------------------------------------------------------------
+  # 主题与 emoji：两项都是"数值/字形层面可自动判定"的检查（修复二 / 修复六）
+  #
+  # 为什么不放像素校验（tools/check_ui_pixels.ps1）：它要真的启动窗口并截图，
+  # 需要交互式桌面，属发布前人工验证。而下面两项是它的"静态前置条件"——
+  # 色板不达标或字体链缺字形时，像素校验必然也好不了。
+  # -------------------------------------------------------------------------
+  theme-check:
+    name: Theme palette and contrast
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Check theme palette / WCAG contrast / hardcoded colors
+        shell: pwsh
+        run: |
+          # tools/check_theme.py（修复二）：
+          #   1) 浅色/深色两套色板键名必须完全一致（缺键会导致切主题后残留默认色）；
+          #   2) 43 组"文字/背景"对比度按 WCAG 2.1 公式复核，正文 ≥4.5:1、控件边界 ≥3:1；
+          #   3) 界面代码里不许有硬编码色值，所有 {DynamicResource} 引用必须存在。
+          # 纯标准库实现，不需要装后端依赖。
+          python tools/check_theme.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check emoji glyph coverage
+        shell: pwsh
+        run: |
+          # tools/check_emoji.ps1（修复六）：
+          #   1) 扫出源码/语言包里实际用到的全部 emoji；
+          #   2) 用 WPF 的 GlyphTypeface 查字体链（UiFontFamily / MonoFontFamily /
+          #      IconFontFamily）能否覆盖每一个字形——"Segoe UI 对 emoji 覆盖率为 0"
+          #      这个根因就是靠它定位的；
+          #   3) 校验前后端 ASCII 降级表是否覆盖全部在用 emoji（否则降级会变成 '?'）。
+          # Windows runner 自带 WPF 与 Segoe UI Emoji，因此可在 CI 稳定运行。
+          & ./tools/check_emoji.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

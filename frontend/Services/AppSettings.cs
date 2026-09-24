@@ -15,7 +15,8 @@ public sealed class AppSettings
     private static readonly JsonSerializerOptions Options = new()
     {
         WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.Never,
+        // 旧字段（DarkMode）迁移后置空，不再写回文件；其余字段照常写出
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
     /// <summary>用户已拒绝创建启动快捷方式（不再重复询问）。</summary>
@@ -33,7 +34,23 @@ public sealed class AppSettings
 
     // ---------- 界面偏好 ----------
     public double FontSize { get; set; } = 14;
-    public bool DarkMode { get; set; } = true;
+
+    /// <summary>
+    /// 主题（修复二）：<c>auto</c>（跟随系统）/ <c>light</c> / <c>dark</c>。
+    /// </summary>
+    public string Theme { get; set; } = ThemeService.Serialize(AppTheme.System);
+
+    /// <summary>
+    /// 旧版深色开关（v0.2.1 及以前）。保留字段仅为了**读旧文件**：
+    /// 老版本写过 <c>DarkMode</c> 的用户已经表达过偏好，迁移时不能丢。
+    /// 新版本一律以 <see cref="Theme"/> 为准，本字段不再写回。
+    /// </summary>
+    public bool? DarkMode { get; set; }
+
+    /// <summary>
+    /// emoji 输出策略（修复六）：<c>auto</c>（按本机字体自动判断）/ <c>always</c> / <c>never</c>。
+    /// </summary>
+    public string EmojiMode { get; set; } = "auto";
 
     /// <summary>
     /// 界面语言（任务书 3.4 持久化）：<c>auto</c> 表示按系统区域自动选择，
@@ -57,7 +74,9 @@ public sealed class AppSettings
     {
         get
         {
-            string dir = ShortcutService.ProgramDirectory;
+            // 修复七：界面状态放在用户数据目录（便携版布局下即外层目录），
+            // 与 app\ 里的程序文件分开，便于用户查找与备份。
+            string dir = ShortcutService.UserDataDirectory;
             return Path.Combine(dir, "ui_state.json");
         }
     }
@@ -71,12 +90,30 @@ public sealed class AppSettings
             if (!File.Exists(path))
                 return new AppSettings();
             string json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<AppSettings>(json, Options) ?? new AppSettings();
+            AppSettings settings = JsonSerializer.Deserialize<AppSettings>(json, Options) ?? new AppSettings();
+            settings.MigrateLegacyTheme(json);
+            return settings;
         }
         catch
         {
             return new AppSettings();  // 状态文件损坏不应影响启动
         }
+    }
+
+    /// <summary>
+    /// 迁移 v0.2.1 及更早版本的 <c>DarkMode</c> 布尔开关到新的三态 <see cref="Theme"/>。
+    ///
+    /// 只在"旧文件里没有 Theme 字段"时迁移——用户在新版本里选过主题就以新字段为准。
+    /// 旧版本默认写 <c>dark</c>，若一律当成用户偏好会把所有老用户的界面从浅色翻成深色，
+    /// 但反过来直接丢弃会让"确实手动切过深色"的用户设置丢失，故按"旧字段存在即视为偏好"处理
+    /// （打包时不会附带 ui_state.json，因此全新安装一律走"跟随系统"）。
+    /// </summary>
+    private void MigrateLegacyTheme(string json)
+    {
+        if (json.Contains("\"Theme\"", StringComparison.Ordinal))
+            return;
+        if (DarkMode is bool legacy)
+            Theme = ThemeService.Serialize(legacy ? AppTheme.Dark : AppTheme.Light);
     }
 
     /// <summary>写回本地界面状态（失败静默，不打断使用）。</summary>

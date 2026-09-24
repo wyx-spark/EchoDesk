@@ -85,6 +85,10 @@ try:  # pragma: no cover - urllib3 随 requests 一起安装，缺失时退化�
 except Exception:  # noqa: BLE001
     _Retry = None  # type: ignore[assignment]
 
+# 多语言（任务三）：照 main.py 的约定，i18n 只在本文件自己的导入区引用，
+# 且 i18n 反向依赖 config 是惰性的（取文案时才读 program_root），不会成环。
+from i18n import t as _t
+
 
 __all__ = ["MarketplaceError", "Marketplace", "MAX_TARBALL_BYTES"]
 
@@ -576,23 +580,21 @@ class Marketplace:
                 allow_redirects=True,
             )
         except requests.exceptions.Timeout as exc:
-            raise MarketplaceError(f"请求超时（{self._short(url)}），网络较慢或不可用") from exc
+            raise MarketplaceError(_t("market.net.timeout", url=self._short(url))) from exc
         except requests.exceptions.SSLError as exc:
-            raise MarketplaceError(f"TLS 校验失败（{self._short(url)}），请检查代理或证书设置") from exc
+            raise MarketplaceError(_t("market.net.tls", url=self._short(url))) from exc
         except requests.exceptions.RequestException as exc:
-            raise MarketplaceError(f"网络不可用（{type(exc).__name__}）") from exc
+            raise MarketplaceError(_t("market.net.unavailable", kind=type(exc).__name__)) from exc
 
         status = resp.status_code
         if status in (403, 429) and self._is_rate_limited(resp, status):
-            raise MarketplaceError(
-                "GitHub API 限流（匿名请求每小时 60 次，可在设置中配置 GitHub Token 提升限额）"
-            )
+            raise MarketplaceError(_t("market.net.rate_limited"))
         if status == 401:
-            raise MarketplaceError("GitHub Token 无效或权限不足（HTTP 401），请检查设置中的 Token")
+            raise MarketplaceError(_t("market.net.token_invalid"))
         if status == 403:
-            raise MarketplaceError("GitHub 拒绝访问（HTTP 403），可能是 Token 权限不足或被限流")
+            raise MarketplaceError(_t("market.net.forbidden"))
         if status >= 500:
-            raise MarketplaceError(f"GitHub 服务暂时不可用（HTTP {status}）")
+            raise MarketplaceError(_t("market.net.server_error", status=status))
         return resp
 
     @staticmethod
@@ -673,7 +675,7 @@ class Marketplace:
             "last_pushed_at": str(cache.get("last_pushed_at") or ""),
             "items": items,
             "verified": verified,
-            "note": "EchoDesk 技能市场缓存，可安全删除；删除后下次打开市场会重新拉取。",
+            "note": _t("market.cache.note"),
         }
         return _write_json(self.cache_file, payload)
 
@@ -760,15 +762,15 @@ class Marketplace:
         url = f"{self.api_base}/search/repositories"
         resp = self._request(url, params=params)
         if resp.status_code == 422:
-            raise MarketplaceError("GitHub 搜索条件被拒绝（HTTP 422），请调整关键词后重试")
+            raise MarketplaceError(_t("market.net.search_rejected"))
         if resp.status_code != 200:
-            raise MarketplaceError(f"GitHub 搜索失败（HTTP {resp.status_code}）")
+            raise MarketplaceError(_t("market.net.search_failed", status=resp.status_code))
         try:
             data = resp.json()
         except ValueError as exc:
-            raise MarketplaceError("GitHub 返回的内容不是合法 JSON，已忽略本次结果") from exc
+            raise MarketplaceError(_t("market.net.bad_json")) from exc
         if not isinstance(data, dict):
-            raise MarketplaceError("GitHub 返回结构异常，已忽略本次结果")
+            raise MarketplaceError(_t("market.net.bad_shape"))
         raw_items = data.get("items")
         items = [self._map_repo(r) for r in raw_items] if isinstance(raw_items, list) else []
         items = [i for i in items if i]
@@ -819,7 +821,7 @@ class Marketplace:
     def _refresh(self) -> Tuple[bool, str, bool]:
         """刷新缓存。
 
-        返回 ``(是否成功, message, offline)``；失败时 message 已是可展示的中文原因。
+        返回 ``(是否成功, message, offline)``；失败时 message 已是可直接展示的原因。
         刷新策略见模块顶部 docstring：首次全量 100 条，之后 ``pushed:>=`` 增量合并。
         """
         cache = self._load_cache()
@@ -828,7 +830,7 @@ class Marketplace:
             if not old_items:
                 raw_items, _total = self._github_search("", "updated", 1, INITIAL_FETCH_PER_PAGE)
                 fresh_items = raw_items
-                mode = "首次全量同步"
+                mode = _t("market.refresh.mode_initial")
             else:
                 since_date = str(cache.get("last_pushed_at") or "")[:10]
                 if since_date:
@@ -842,21 +844,21 @@ class Marketplace:
                             "", "updated", 1, INITIAL_FETCH_PER_PAGE
                         )
                         fresh_items = raw_items
-                        mode = "全量刷新（增量结果超过单页上限）"
+                        mode = _t("market.refresh.mode_full_overflow")
                     else:
-                        mode = f"增量刷新（pushed:>={since_date}）"
+                        mode = _t("market.refresh.mode_incremental", since=since_date)
                 else:
                     raw_items, _total = self._github_search(
                         "", "updated", 1, INITIAL_FETCH_PER_PAGE
                     )
                     fresh_items = raw_items
-                    mode = "全量刷新"
+                    mode = _t("market.refresh.mode_full")
         except MarketplaceError as exc:
             # 网络/限流：不改动 synced_at，直接降级
             return False, str(exc), True
         except Exception as exc:  # noqa: BLE001 - 兜底，绝不让刷新把界面打崩
             self.log.warning("刷新市场缓存时发生未预期错误：%s", exc, exc_info=True)
-            return False, f"刷新市场列表时发生未预期错误（{type(exc).__name__}）", True
+            return False, _t("market.refresh.unexpected", kind=type(exc).__name__), True
 
         merged = self._merge_items(old_items, fresh_items)
         last_pushed = cache.get("last_pushed_at") or ""
@@ -884,24 +886,24 @@ class Marketplace:
                     item["version"] = str(info["version"])
             self._save_cache(cache)
 
-        mode_text = f"{mode}完成，共 {len(merged)} 个技能仓库"
+        mode_text = _t("market.refresh.done", mode=mode, count=len(merged))
         return True, mode_text, False
 
     def _ensure_fresh(self) -> Tuple[bool, str, bool]:
         """确保缓存可用；返回 ``(成功拿到可用缓存, message, offline)``。"""
         cache = self._load_cache()
         if self._cache_is_fresh(cache):
-            return True, "缓存", False
+            return True, _t("market.cache.hit"), False
         if not self.auto_update_check:
             # 配置关闭了自动更新检查：只读缓存，不联网
             if cache.get("items"):
-                return True, "缓存（已关闭自动更新检查，未联网刷新）", True
-            return False, "已关闭自动更新检查且本地缓存为空", True
+                return True, _t("market.cache.offline_disabled"), True
+            return False, _t("market.cache.disabled_empty"), True
         with self._refresh_lock:
             cache = self._load_cache()
             if self._cache_is_fresh(cache):
                 # 其它线程刚刷新过
-                return True, "缓存", False
+                return True, _t("market.cache.hit"), False
             return self._refresh()
 
     # ------------------------------------------------------------------
@@ -926,9 +928,9 @@ class Marketplace:
                     return parsed, "", False
                 return None, str(parsed), False
             if resp.status_code == 404:
-                last_error = "仓库根目录没有 skill.json（HTTP 404）"
+                last_error = _t("market.skill.not_found_404")
             else:
-                last_error = f"读取 skill.json 失败（HTTP {resp.status_code}）"
+                last_error = _t("market.skill.read_failed", status=resp.status_code)
         except MarketplaceError as exc:
             transient = True
             last_error = str(exc)
@@ -943,24 +945,24 @@ class Marketplace:
                     return parsed, "", False
                 return None, str(parsed), False
             if resp.status_code == 404:
-                return None, "仓库中不存在 skill.json，无法确认为 EchoDesk 技能", False
-            return None, f"读取 skill.json 失败（HTTP {resp.status_code}）", transient
+                return None, _t("market.skill.missing_in_repo"), False
+            return None, _t("market.skill.read_failed", status=resp.status_code), transient
         except MarketplaceError as exc:
-            return None, str(exc) or last_error or "读取 skill.json 失败", True
+            return None, str(exc) or last_error or _t("market.skill.read_failed_plain"), True
 
     @staticmethod
     def _parse_skill_text(content: bytes) -> Any:
-        """解析 skill.json 字节内容：成功返回 dict，失败返回中文错误说明字符串。"""
+        """解析 skill.json 字节内容：成功返回 dict，失败返回可直接展示的错误说明字符串。"""
         try:
             text = content.decode("utf-8-sig", errors="replace")
         except Exception:  # noqa: BLE001
-            return "skill.json 编码无法识别"
+            return _t("market.skill.bad_encoding")
         try:
             data = json.loads(text)
         except ValueError:
-            return "skill.json 不是合法 JSON"
+            return _t("market.skill.bad_json")
         if not isinstance(data, dict):
-            return "skill.json 顶层必须是对象"
+            return _t("market.skill.not_object")
         return data
 
     def _verify_one(self, repo: str) -> Optional[Dict[str, Any]]:
@@ -976,7 +978,7 @@ class Marketplace:
                 "has_bundle": False,
                 "version": "",
                 "license": "",
-                "note": error or "未找到 skill.json",
+                "note": error or _t("market.skill.no_skill_json"),
             }
         bundle = _bundle_declared(skill)
         verified = bool(bundle)
@@ -989,7 +991,7 @@ class Marketplace:
             "bundle": bundle,
             "entry": _extract_entry(skill),
             "prepare": bool(skill.get("prepare")),
-            "note": "" if verified else "skill.json 缺少 echodesk.bundle 字段",
+            "note": "" if verified else _t("market.skill.missing_bundle"),
         }
 
     def _verify_repos(self, repos: Iterable[str], deadline: float = VERIFY_DEADLINE_REFRESH) -> Dict[str, Any]:
@@ -1099,18 +1101,16 @@ class Marketplace:
         """校验并规整 ``owner/name``；拒绝 URL、其它主机与目录穿越写法。"""
         raw = str(repo or "").strip().strip("/")
         if not raw:
-            raise MarketplaceError("未提供仓库名，请使用 owner/name 形式（如 someone/echodesk-demo-skill）")
+            raise MarketplaceError(_t("market.repo.missing"))
         if "://" in raw or raw.startswith("git@") or "@" in raw or ":" in raw:
-            raise MarketplaceError(
-                f"不接受 URL 或其它主机来源：{raw}。请只使用 GitHub 的 owner/name 形式"
-            )
+            raise MarketplaceError(_t("market.repo.url_rejected", raw=raw))
         if raw.lower().endswith(".git"):
             raw = raw[:-4]
         if not REPO_FULL_NAME_RE.match(raw) or raw.count("/") != 1 or len(raw) > 200:
-            raise MarketplaceError(f"仓库名格式不正确：{raw}。正确格式形如 owner/name")
+            raise MarketplaceError(_t("market.repo.bad_format", raw=raw))
         owner, name = raw.split("/", 1)
         if owner in (".", "..") or name in (".", ".."):
-            raise MarketplaceError(f"仓库名格式不正确：{raw}。不接受相对路径写法")
+            raise MarketplaceError(_t("market.repo.relative_rejected", raw=raw))
         return raw
 
     # ------------------------------------------------------------------
@@ -1154,7 +1154,7 @@ class Marketplace:
         payload = {
             "schema": 1,
             "skills": list(registry.get("skills") or []),
-            "note": "EchoDesk 已安装技能注册表；请勿手工编辑，卸载请使用技能市场。",
+            "note": _t("market.registry.note"),
         }
         return _write_json(self.registry_file, payload)
 
@@ -1191,7 +1191,7 @@ class Marketplace:
         kw = str(keyword or "").strip()
 
         if not self.enabled:
-            return self._result([], page_num, per_page, 0, False, "技能市场已在设置中禁用，未执行搜索。")
+            return self._result([], page_num, per_page, 0, False, _t("market.search.disabled"))
 
         try:
             if kw:
@@ -1203,7 +1203,7 @@ class Marketplace:
             self.log.warning("搜索市场时发生未预期错误：%s", exc, exc_info=True)
             return self._degraded_result(
                 sort_key, page_num, per_page,
-                f"搜索时发生未预期错误（{type(exc).__name__}）", kw,
+                _t("market.search.unexpected", kind=type(exc).__name__), kw,
             )
 
     def _search_online(self, keyword: str, sort_key: str, page: int, per_page: int) -> dict:
@@ -1228,7 +1228,8 @@ class Marketplace:
         public_items = self._to_public(items, self._verification_snapshot())
 
         total_pages = (total + per_page - 1) // per_page if total > 0 else 0
-        message = f"在线搜索「{keyword}」匹配 {total} 个仓库" if total else "在线搜索未匹配到仓库，可换个关键词试试。"
+        message = (_t("market.search.hit", keyword=keyword, total=total) if total
+                   else _t("market.search.no_match"))
         return self._result(public_items, page, per_page, total, False, message, total_pages)
 
     def _search_cached(self, sort_key: str, page: int, per_page: int) -> dict:
@@ -1241,10 +1242,10 @@ class Marketplace:
         if not ok and not items:
             return self._result(
                 [], page, per_page, 0, True,
-                f"{message}，且本地缓存为空，暂无可展示的技能。",
+                _t("market.search.empty_cache", reason=message),
             )
         if not ok:
-            message = f"{message}，已展示本地缓存快照。"
+            message = _t("market.search.cache_snapshot", reason=message)
 
         sorted_items = _sort_items(items, sort_key)
         total = len(sorted_items)
@@ -1289,7 +1290,7 @@ class Marketplace:
             if not items:
                 return self._result(
                     [], page, per_page, 0, True,
-                    f"{reason}，且本地缓存为空，暂无可展示的技能。",
+                    _t("market.search.empty_cache", reason=reason),
                 )
             sorted_items = _sort_items(items, sort_key)
             total = len(sorted_items)
@@ -1297,13 +1298,15 @@ class Marketplace:
             page_items = sorted_items[start:start + per_page]
             total_pages = (total + per_page - 1) // per_page if total > 0 else 0
             if keyword:
-                message = f"{reason}，已改为在本地缓存中按关键词「{keyword}」筛选（命中 {total} 条）。"
+                message = _t("market.search.cache_filtered", reason=reason, keyword=keyword,
+                             total=total)
             else:
-                message = f"{reason}，已展示本地缓存快照（共 {total} 条）。"
+                message = _t("market.search.cache_snapshot_count", reason=reason, total=total)
             return self._result(self._to_public(page_items, verified), page, per_page, total, True, message, total_pages)
         except Exception as exc:  # noqa: BLE001
             self.log.warning("降级读取缓存失败：%s", exc)
-            return self._result([], page, per_page, 0, True, f"{reason}，且本地缓存不可用。")
+            return self._result([], page, per_page, 0, True,
+                                _t("market.search.cache_unavailable", reason=reason))
 
     def _to_public(self, items: Sequence[Dict[str, Any]], verified_map: Dict[str, Any]) -> List[Dict[str, Any]]:
         """把内部条目转换成前端绑定的固定字段（键名不能改）。"""
@@ -1396,14 +1399,14 @@ class Marketplace:
             if transient:
                 # 网络/限流导致读不到：属于降级，明确告知
                 offline = True
-                message = f"未能读取 skill.json：{error}。以下信息可能不完整，请稍后重试。"
+                message = _t("market.detail.skill_read_failed", error=error)
             else:
                 # 网络正常，只是这个仓库确实没有 skill.json：不算离线
-                message = f"该仓库未提供可用的 skill.json（{error}），不是有效的 EchoDesk 技能包。"
+                message = _t("market.detail.no_valid_skill", error=error)
         elif not bundle:
-            message = "该仓库包含 skill.json，但缺少 echodesk.bundle 字段，标记为未验证。"
+            message = _t("market.detail.no_bundle")
         else:
-            message = "读取成功。"
+            message = _t("market.detail.ok")
 
         if not license_text:
             # 仓库元数据里可能带许可证；只在 skill.json 没写时才查，省一次 API 调用
@@ -1441,7 +1444,7 @@ class Marketplace:
         """从 GitHub 源码安装技能。
 
         返回 ``{"ok", "id", "version", "path", "message"}``；任何失败都以 ``ok=False``
-        加中文 message 返回，不抛异常。
+        加可直接展示的 message 返回，不抛异常。
         """
         result = {"ok": False, "id": "", "version": "", "path": "", "message": ""}
 
@@ -1451,7 +1454,7 @@ class Marketplace:
             return dict(result)
 
         if not self.enabled:
-            return _fail("技能市场已在设置中禁用，安装已取消。")
+            return _fail(_t("market.install.disabled"))
 
         try:
             full_name = self._normalize_repo(repo)
@@ -1460,10 +1463,10 @@ class Marketplace:
 
         tmp_dir = ""
         try:
-            self._emit(on_progress, f"正在读取 {full_name} 的 skill.json …")
+            self._emit(on_progress, _t("market.install.reading", repo=full_name))
             skill, error, transient = self._fetch_skill_json(full_name)
             if skill is None:
-                return _fail(f"无法读取 {full_name} 的 skill.json：{error}。安装已中止。")
+                return _fail(_t("market.install.skill_read_failed", repo=full_name, error=error))
 
             sources = _publish_sources(skill)
             bundle = _bundle_declared(skill)
@@ -1471,50 +1474,45 @@ class Marketplace:
             source_notes: List[str] = []
             if sources:
                 source_kind = "npm" if "npm" in sources else "pypi"
-                detail_text = "、".join(f"{k} 包 {v}" for k, v in sources.items())
+                detail_text = _t("market.list_sep").join(
+                    _t("market.install.publish_pkg", kind=k, version=v) for k, v in sources.items()
+                )
                 source_notes.append(
-                    f"该技能声明了 {detail_text} 发布源（已记录来源类型：{source_kind}）；"
-                    f"出于安全考虑，实际落盘仍以 GitHub 源码 tarball 为准，不执行 npm/pip 网络安装。"
+                    _t("market.install.publish_source", detail=detail_text, kind=source_kind)
                 )
             if not bundle:
                 if sources:
                     return _fail(
-                        f"{full_name} 只声明了 {'、'.join(sources)} 发布源，仓库根目录没有包含 "
-                        f"echodesk.bundle 的 skill.json。出于安全考虑不会执行 npm/pip 网络安装，安装已中止。"
+                        _t("market.install.only_publish_source", repo=full_name,
+                           sources=_t("market.list_sep").join(sources))
                     )
-                return _fail(
-                    f"{full_name} 的 skill.json 缺少 echodesk.bundle 字段，未通过验证，安装已中止。"
-                )
+                return _fail(_t("market.install.no_bundle", repo=full_name))
 
             with self._io_lock:
                 pre_verified = bool(
                     (self._load_cache().get("verified") or {}).get(full_name, {}).get("verified")
                 )
             if not pre_verified:
-                source_notes.append("提示：该仓库此前未通过预验证，请自行确认来源可信。")
+                source_notes.append(_t("market.install.not_preverified"))
 
             tmp_dir = tempfile.mkdtemp(prefix="echodesk-market-")
-            self._emit(on_progress, "正在下载源码压缩包 …")
+            self._emit(on_progress, _t("market.install.downloading"))
             tar_path, sha256, size = self._download_tarball(full_name, tmp_dir, on_progress)
 
-            self._emit(on_progress, "正在校验并解压源码包 …")
+            self._emit(on_progress, _t("market.install.verifying"))
             extract_dir = os.path.join(tmp_dir, "src")
             os.makedirs(extract_dir, exist_ok=True)
             self._safe_extract(tar_path, extract_dir)
 
             skill_root = self._locate_skill_root(extract_dir)
             if not skill_root:
-                return _fail(
-                    f"源码包解压后未找到 skill.json，无法确认这是有效的 EchoDesk 技能，安装已中止。"
-                )
+                return _fail(_t("market.install.no_skill_in_archive"))
             root_skill = _read_json(os.path.join(skill_root, "skill.json"), None)
             if not isinstance(root_skill, dict):
-                return _fail("源码包中的 skill.json 不是合法 JSON，安装已中止。")
+                return _fail(_t("market.install.archive_bad_json"))
             root_bundle = _bundle_declared(root_skill)
             if not root_bundle:
-                return _fail(
-                    "源码包中的 skill.json 缺少 echodesk.bundle 字段，未通过校验，安装已中止。"
-                )
+                return _fail(_t("market.install.archive_no_bundle"))
 
             skill_name = str(root_skill.get("name") or root_skill.get("id") or full_name.split("/")[-1])
             skill_id = _safe_filename(root_skill.get("id") or root_skill.get("name") or full_name.split("/")[-1])
@@ -1528,8 +1526,8 @@ class Marketplace:
             os.makedirs(self.install_dir, exist_ok=True)
             dest = os.path.join(self.install_dir, skill_id)
             if not _is_within(dest, self.install_dir):
-                return _fail(f"技能 id「{skill_id}」解析出的目标路径越界，已拒绝安装。")
-            self._emit(on_progress, f"正在安装到 {dest} …")
+                return _fail(_t("market.install.id_escape", id=skill_id))
+            self._emit(on_progress, _t("market.install.installing_to", path=dest))
             if os.path.exists(dest):
                 shutil.rmtree(dest, ignore_errors=True)
             shutil.copytree(
@@ -1562,46 +1560,44 @@ class Marketplace:
             # ---- 安装后校验 ----
             notes: List[str] = []
             if not saved:
-                notes.append(f"警告：注册表 {self.registry_file} 写入失败，技能可能未正确注册。")
+                notes.append(_t("market.install.registry_write_failed", path=self.registry_file))
             else:
                 reread = self._load_registry()
                 found = next((e for e in reread.get("skills") or [] if e.get("id") == skill_id), None)
                 if not found:
-                    notes.append("警告：注册表回读未找到刚安装的技能条目，请检查注册表文件权限。")
+                    notes.append(_t("market.install.registry_reread_missing"))
                 else:
                     reread_skill = _read_json(os.path.join(dest, "skill.json"), None)
                     if not isinstance(reread_skill, dict):
-                        notes.append("警告：安装后回读 skill.json 失败。")
+                        notes.append(_t("market.install.reread_skill_failed"))
                     else:
                         reread_name = str(reread_skill.get("name") or reread_skill.get("id") or "")
                         if reread_name and reread_name != skill_name:
-                            notes.append(
-                                f"警告：回读的技能名称「{reread_name}」与预期「{skill_name}」不一致。"
-                            )
+                            notes.append(_t("market.install.name_mismatch", actual=reread_name,
+                                            expected=skill_name))
 
             importable, import_note = self._check_entry(dest, _extract_entry(root_skill))
             if not importable:
-                notes.append(f"警告：{import_note}")
+                notes.append(_t("market.install.warning_prefix", note=import_note))
             else:
                 self.log.debug("入口检查：%s", import_note)
 
             # ---- 依赖、prepare、许可证、版本兼容提示（均不自动执行） ----
             if dependencies:
-                preview = "、".join(dependencies[:10])
-                more = f" 等 {len(dependencies)} 项" if len(dependencies) > 10 else ""
-                notes.append(
-                    f"待安装依赖：{preview}{more}。出于安全考虑未自动执行 pip 安装，"
-                    f"请确认来源可信后手动安装。"
-                )
+                preview = _t("market.list_sep").join(dependencies[:10])
+                more = (_t("market.install.deps_more", count=len(dependencies))
+                        if len(dependencies) > 10 else "")
+                notes.append(_t("market.install.deps_pending", preview=preview, more=more))
             if has_prepare:
                 # prepare 脚本一律不执行；真要在用户确认后执行时，必须使用清洗过的环境变量
                 removed = len(os.environ) - len(self._sanitized_env())
                 notes.append(
-                    "该技能包含 prepare 脚本，出于安全考虑未自动执行"
-                    + (f"（执行前将移除 {removed} 个含密钥的环境变量）。" if removed else "。")
+                    _t("market.install.prepare_skipped")
+                    + (_t("market.install.prepare_env_note", count=removed) if removed
+                       else _t("market.install.prepare_env_note_plain"))
                 )
             if not license_text:
-                notes.append("该技能的 skill.json 未声明许可证，请自行确认授权范围。")
+                notes.append(_t("market.install.no_license"))
 
             min_required = _min_version_required(root_skill)
             if min_required:
@@ -1609,15 +1605,16 @@ class Marketplace:
                 have = _version_tuple(_APP_VERSION)
                 if need and have and need > have:
                     # 按模块 docstring 的说明：只提示不阻止，用户明确点击后仍允许安装
-                    notes.append(
-                        f"该技能要求 EchoDesk >= {min_required}，当前版本 {_APP_VERSION}，可能不完全兼容（已按你的确认安装）。"
-                    )
+                    notes.append(_t("market.install.min_version", required=min_required,
+                                    current=_APP_VERSION))
 
-            self._emit(on_progress, f"技能「{skill_name}」安装完成。")
-            message_parts = [f"技能「{skill_name}」安装成功，版本 {version or '未声明'}，位置 {dest}。"]
+            self._emit(on_progress, _t("market.install.done_emit", name=skill_name))
+            message_parts = [_t("market.install.success", name=skill_name,
+                                version=version or _t("market.install.version_undeclared"),
+                                path=dest)]
             message_parts.extend(source_notes)
             message_parts.extend(notes)
-            message_parts.append(f"来源 {full_name}，源码包 sha256 {sha256[:16]}…（已记入注册表）。")
+            message_parts.append(_t("market.install.origin", repo=full_name, sha256=sha256[:16]))
             result.update({
                 "ok": True,
                 "id": skill_id,
@@ -1628,9 +1625,9 @@ class Marketplace:
             return dict(result)
         except MarketplaceError as exc:
             return _fail(str(exc))
-        except Exception as exc:  # noqa: BLE001 - 兜底：安装失败也要给中文说明
+        except Exception as exc:  # noqa: BLE001 - 兜底：安装失败也要给可展示的说明
             self.log.warning("安装 %s 时发生未预期错误：%s", repo, exc, exc_info=True)
-            return _fail(f"安装过程中发生未预期错误（{type(exc).__name__}: {exc}），已中止并清理临时文件。")
+            return _fail(_t("market.install.unexpected", kind=type(exc).__name__, error=exc))
         finally:
             # 任务书 5.3：临时文件在 finally 中清理，无论成功失败都不留残留
             if tmp_dir and os.path.isdir(tmp_dir):
@@ -1651,15 +1648,15 @@ class Marketplace:
         try:
             resp = self._request(url, streaming=True, timeout=max(self.timeout, 20.0))
         except MarketplaceError as exc:
-            raise MarketplaceError(f"下载源码包失败：{exc}") from exc
+            raise MarketplaceError(_t("market.tarball.download_failed", error=exc)) from exc
         if resp.status_code != 200:
-            raise MarketplaceError(f"下载源码包失败（HTTP {resp.status_code}），仓库可能不存在或不可访问")
+            raise MarketplaceError(_t("market.tarball.http_error", status=resp.status_code))
 
         declared = resp.headers.get("Content-Length")
         try:
             if declared and int(declared) > MAX_TARBALL_BYTES:
                 raise MarketplaceError(
-                    f"源码包体积 {int(declared) // 1024 // 1024}MB 超过 50MB 上限，已拒绝下载"
+                    _t("market.tarball.too_large_bytes", mb=int(declared) // 1024 // 1024)
                 )
         except ValueError:
             pass
@@ -1674,24 +1671,25 @@ class Marketplace:
                         continue
                     size += len(chunk)
                     if size > MAX_TARBALL_BYTES:
-                        raise MarketplaceError("源码包体积超过 50MB 上限，已中止下载")
+                        raise MarketplaceError(_t("market.tarball.too_large"))
                     digest.update(chunk)
                     fh.write(chunk)
                     pct = int(size * 100 / MAX_TARBALL_BYTES)
                     if pct // 10 != last_pct // 10:
                         last_pct = pct
-                        self._emit(on_progress, f"下载中 … 已接收 {size // 1024}KB")
+                        self._emit(on_progress, _t("market.tarball.progress", kb=size // 1024))
         except MarketplaceError:
             raise
         except requests.exceptions.RequestException as exc:
-            raise MarketplaceError(f"下载源码包时网络中断（{type(exc).__name__}）") from exc
+            raise MarketplaceError(_t("market.tarball.network_interrupted",
+                                      kind=type(exc).__name__)) from exc
         except OSError as exc:
-            raise MarketplaceError(f"写入临时文件失败：{exc}") from exc
+            raise MarketplaceError(_t("market.tarball.write_failed", error=exc)) from exc
         finally:
             resp.close()
 
         if size == 0:
-            raise MarketplaceError("下载到的源码包为空，安装已中止")
+            raise MarketplaceError(_t("market.tarball.empty"))
         return path, digest.hexdigest(), size
 
     @staticmethod
@@ -1710,27 +1708,27 @@ class Marketplace:
                     if not name or name == ".":
                         continue
                     if name.startswith("/") or re.match(r"^[A-Za-z]:", name):
-                        raise MarketplaceError(f"源码包包含绝对路径成员（{name}），已拒绝解压")
+                        raise MarketplaceError(_t("market.extract.abs_member", name=name))
                     if name.startswith("~"):
-                        raise MarketplaceError(f"源码包包含可疑路径成员（{name}），已拒绝解压")
+                        raise MarketplaceError(_t("market.extract.suspicious_member", name=name))
                     parts = [p for p in name.split("/") if p not in ("", ".")]
                     if any(p == ".." for p in parts):
-                        raise MarketplaceError(f"源码包包含向上跳转的成员（{name}），已拒绝解压")
+                        raise MarketplaceError(_t("market.extract.parent_member", name=name))
                     target = os.path.realpath(os.path.join(dest_real, *parts)) if parts else dest_real
                     if not _is_within(target, dest_real):
-                        raise MarketplaceError(f"源码包成员路径越界（{name}），已拒绝解压")
+                        raise MarketplaceError(_t("market.extract.escape_member", name=name))
                     if member.isdev() or member.isfifo():
-                        raise MarketplaceError(f"源码包包含设备/管道文件（{name}），已拒绝解压")
+                        raise MarketplaceError(_t("market.extract.device_member", name=name))
                     if member.issym() or member.islnk():
                         link = str(member.linkname or "").replace("\\", "/")
                         if link.startswith("/") or re.match(r"^[A-Za-z]:", link):
-                            raise MarketplaceError(f"源码包包含绝对路径链接（{name} -> {link}），已拒绝解压")
+                            raise MarketplaceError(_t("market.extract.abs_link", name=name, link=link))
                         link_parts = [p for p in f"{os.path.dirname(name)}/{link}".split("/") if p not in ("", ".")]
                         if any(p == ".." for p in link_parts):
                             resolved = os.path.realpath(os.path.join(dest_real, os.path.dirname(name), link))
                             if not _is_within(resolved, dest_real):
                                 raise MarketplaceError(
-                                    f"源码包包含指向包外的链接（{name} -> {link}），已拒绝解压"
+                                    _t("market.extract.escape_link", name=name, link=link)
                                 )
                 try:
                     tar.extractall(path=dest, filter="data")
@@ -1739,9 +1737,9 @@ class Marketplace:
         except MarketplaceError:
             raise
         except tarfile.TarError as exc:
-            raise MarketplaceError(f"源码包解压失败（压缩包可能损坏）：{exc}") from exc
+            raise MarketplaceError(_t("market.extract.corrupt", error=exc)) from exc
         except OSError as exc:
-            raise MarketplaceError(f"源码包解压失败（磁盘或权限问题）：{exc}") from exc
+            raise MarketplaceError(_t("market.extract.io_failed", error=exc)) from exc
 
     @staticmethod
     def _locate_skill_root(base: str) -> str:
@@ -1776,27 +1774,27 @@ class Marketplace:
         * 入口是包目录 → 确认目录里存在 ``__init__.py``。
         """
         if not entry:
-            return False, "技能未声明入口文件（echodesk.bundle），已跳过入口检查。"
+            return False, _t("market.entry.undeclared")
         rel = str(entry).replace("\\", "/").lstrip("/")
         parts = [p for p in rel.split("/") if p not in ("", ".")]
         target = os.path.join(install_path, *parts) if parts else install_path
         if not _is_within(target, install_path):
-            return False, f"入口路径越界（{entry}），已拒绝。"
+            return False, _t("market.entry.escape", entry=entry)
         if os.path.isdir(target):
             if os.path.isfile(os.path.join(target, "__init__.py")):
-                return True, f"入口包目录 {entry} 存在且包含 __init__.py。"
-            return False, f"入口包目录 {entry} 缺少 __init__.py。"
+                return True, _t("market.entry.package_ok", entry=entry)
+            return False, _t("market.entry.package_no_init", entry=entry)
         if not os.path.isfile(target):
-            return False, f"入口文件 {entry} 在安装目录中不存在。"
+            return False, _t("market.entry.file_missing", entry=entry)
         try:
             spec = importlib.util.spec_from_file_location(
                 f"_echodesk_entry_check_{_safe_filename(os.path.basename(target))}", target
             )
         except Exception as exc:  # noqa: BLE001
-            return False, f"入口文件 {entry} 无法构建加载器（{type(exc).__name__}）。"
+            return False, _t("market.entry.loader_failed", entry=entry, kind=type(exc).__name__)
         if spec is None or spec.loader is None:
-            return False, f"入口文件 {entry} 无法构建加载器，可能不是可导入的 Python 文件。"
-        return True, f"入口文件 {entry} 可加载。"
+            return False, _t("market.entry.not_importable", entry=entry)
+        return True, _t("market.entry.loadable", entry=entry)
 
     # ------------------------------------------------------------------
     # 公开接口 4：uninstall
@@ -1806,7 +1804,7 @@ class Marketplace:
         """卸载技能：移除注册表条目 → 删除安装目录 → 回读确认无残留。"""
         raw_id = str(skill_id or "").strip()
         if not raw_id:
-            return {"ok": False, "message": "未提供技能 ID，无法卸载。"}
+            return {"ok": False, "message": _t("market.uninstall.missing_id")}
 
         key = _safe_filename(raw_id, "")
         with self._io_lock:
@@ -1821,7 +1819,7 @@ class Marketplace:
             if not matched:
                 return {
                     "ok": False,
-                    "message": f"注册表中未找到技能「{raw_id}」，无需卸载。",
+                    "message": _t("market.uninstall.not_found", id=raw_id),
                 }
             matched_ids = {str(e.get("id")) for e in matched}
             registry["skills"] = [e for e in entries if str(e.get("id")) not in matched_ids]
@@ -1849,27 +1847,31 @@ class Marketplace:
         if residual:
             return {
                 "ok": False,
-                "message": f"卸载未完成：注册表 {self.registry_file} 中仍残留 {len(residual)} 条记录，请检查文件权限。",
+                "message": _t("market.uninstall.residual", path=self.registry_file,
+                              count=len(residual)),
             }
         if not saved:
             return {
                 "ok": False,
-                "message": f"卸载失败：注册表 {self.registry_file} 写入失败（可能被占用或只读）。",
+                "message": _t("market.uninstall.registry_write_failed", path=self.registry_file),
             }
         leftover = [p for p in removed_dirs if os.path.isdir(p)]
         if leftover:
             return {
                 "ok": False,
-                "message": f"注册表已清理，但安装目录删除失败（可能被占用）：{'、'.join(leftover)}。请关闭占用后重试。",
+                "message": _t("market.uninstall.dir_remove_failed",
+                              dirs=_t("market.list_sep").join(leftover)),
             }
 
-        names = "、".join(sorted(matched_ids))
-        message = f"已卸载技能「{names}」：注册表条目已移除"
+        names = _t("market.list_sep").join(sorted(matched_ids))
+        message = _t("market.uninstall.done", names=names)
         if removed_dirs:
-            message += f"，安装目录已删除（{'、'.join(removed_dirs)}）"
+            message += _t("market.uninstall.dir_removed",
+                          dirs=_t("market.list_sep").join(removed_dirs))
         if blocked_dirs:
-            message += f"；注意：{'、'.join(blocked_dirs)} 不在技能安装目录内，出于安全考虑未删除，请手工确认。"
-        message += "。仓库验证缓存保留，下次在市场里仍会显示其验证状态。"
+            message += _t("market.uninstall.dir_blocked",
+                          dirs=_t("market.list_sep").join(blocked_dirs))
+        message += _t("market.uninstall.cache_kept")
         self.log.info("已卸载技能：%s", names)
         return {"ok": True, "message": message}
 
@@ -1908,8 +1910,8 @@ class Marketplace:
     def status(self) -> dict:
         """返回市场状态：``{"enabled", "state", "cached", "synced_at"}``。
 
-        ``state`` 取值（中文，可直接展示）：已禁用 / 未同步 / 已同步（当前无匹配技能）/
-        已就绪 / 缓存已过期 / 未知。
+        ``state`` 取值取自语言包 ``market.state.*``（已禁用 / 未同步 /
+        已同步（当前无匹配技能）/ 已就绪 / 缓存已过期 / 未知），可直接展示。
         本方法只读本地文件，不发网络请求，保证设置界面打开时立刻有结果。
         """
         try:
@@ -1918,16 +1920,16 @@ class Marketplace:
             cached = len(cache.get("items") or [])
             synced_at = str(cache.get("synced_at") or "")
             if not self.enabled:
-                state = "已禁用"
+                state = _t("market.state.disabled")
             elif not synced_at:
-                state = "未同步"
+                state = _t("market.state.unsynced")
             elif cached <= 0:
                 # 同步成功但 topic 下没有任何仓库：与"从未同步"是两种不同状态
-                state = "已同步（当前无匹配技能）"
+                state = _t("market.state.synced_empty")
             elif self._cache_is_fresh(cache):
-                state = "已就绪"
+                state = _t("market.state.ready")
             else:
-                state = "缓存已过期"
+                state = _t("market.state.stale")
             return {
                 "enabled": bool(self.enabled),
                 "state": state,
@@ -1936,4 +1938,5 @@ class Marketplace:
             }
         except Exception as exc:  # noqa: BLE001
             self.log.warning("读取市场状态失败：%s", exc)
-            return {"enabled": bool(self.enabled), "state": "未知", "cached": 0, "synced_at": ""}
+            return {"enabled": bool(self.enabled), "state": _t("market.state.unknown"),
+                    "cached": 0, "synced_at": ""}
