@@ -1,13 +1,13 @@
-"""自动化端到端测试：批量处理结果目录结构 + 纯文本 结果.txt（新增三）。
+"""自动化端到端测试：results目录结构 + 纯文本 result.txt（新增三）。
 
 用一个本地静态站点（file:// 页面 + 本地 txt 文件）跑完整的自动化链路：
 收集任务链接 → 打开详情页 → 下载文件 → 解析 → （假模型）生成审核意见 →
 落地到「结果根目录/YYYY-MM-DD/任务名/」，并校验：
 
 * 结果目录三层结构正确，同名任务自动追加序号；
-* ``结果.txt`` 为纯文本（不含 #、**、| 等 Markdown 标记）；
+* ``result.txt`` 为纯文本（不含 #、**、| 等 Markdown 标记）；
 * 下载的原始文件保存在任务目录内；
-* 失败任务的错误信息写入 结果.txt，且失败截图保留在任务目录内。
+* 失败任务的错误信息写入 result.txt，且失败截图保留在任务目录内。
 
 需要本机装有 Edge（msedge 通道）与 playwright。
 运行：python tools/test_automation_e2e.py
@@ -125,7 +125,7 @@ def main():
             file_extensions=["txt"],
             instruction="摘取合同的主要信息并生成财务审核意见",
             max_tasks=5, dedupe=False, save_results=True,
-            results_location=results_root, results_root_name="批量处理结果",
+            results_location=results_root, results_root_name="results",
             task_name="合同审查",
             download_dir=os.path.join(tmp, "dl"),
             page_timeout_ms=15000,
@@ -149,9 +149,9 @@ def main():
 
         # ---- 目录结构 ----
         day = datetime.now().strftime("%Y-%m-%d")
-        task_dir = os.path.join(results_root, "批量处理结果", day, "合同审查")
-        check("结果根目录为「保存位置/批量处理结果」",
-              os.path.isdir(os.path.join(results_root, "批量处理结果")),
+        task_dir = os.path.join(results_root, "results", day, "合同审查")
+        check("结果根目录为「保存位置/results」",
+              os.path.isdir(os.path.join(results_root, "results")),
               str(os.listdir(results_root) if os.path.isdir(results_root) else "缺失"))
         check("第二层为运行日期 YYYY-MM-DD", os.path.isdir(os.path.dirname(task_dir)),
               os.path.dirname(task_dir))
@@ -159,13 +159,13 @@ def main():
 
         names = sorted(os.listdir(task_dir)) if os.path.isdir(task_dir) else []
         print(f"   任务目录内容：{names}")
-        check("任务目录内有 结果.txt", "结果.txt" in names, str(names))
+        check("任务目录内有 result.txt", "result.txt" in names, str(names))
         check("任务目录内保存了下载的原始文件",
-              sum(1 for n in names if n.lower().endswith(".txt") and n != "结果.txt") >= 3, str(names))
+              sum(1 for n in names if n.lower().endswith(".txt") and n != "result.txt") >= 3, str(names))
         check("任务目录内没有 Markdown 结果文件", not any(n.endswith(".md") for n in names), str(names))
 
         report = ""
-        report_path = os.path.join(task_dir, "结果.txt")
+        report_path = os.path.join(task_dir, "result.txt")
         if os.path.isfile(report_path):
             with open(report_path, encoding="utf-8") as fh:
                 report = fh.read()
@@ -186,7 +186,7 @@ def main():
         engine2 = AutomationEngine(cfg, llm_engine=FakeLLM())
         for _ in engine2.run():
             pass
-        siblings = sorted(os.listdir(os.path.join(results_root, "批量处理结果", day)))
+        siblings = sorted(os.listdir(os.path.join(results_root, "results", day)))
         check("同名任务第二次运行追加 -1", "合同审查-1" in siblings, str(siblings))
         check("同名任务两次运行合并在同一日期目录", len(siblings) == 2, str(siblings))
     except Exception:

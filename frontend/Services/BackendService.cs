@@ -90,7 +90,7 @@ public sealed class BackendService : IDisposable
     /// <summary>
     /// 后端工作目录：config.json、session.json、models/、skills_dev/ 都在该目录下
     /// （即 app\backend\）。注意**用户数据不在**这里 —— `ui_state.json`、常用语与
-    /// 「批量处理结果」在外层目录，见 ShortcutService.UserDataDirectory（修复七）。
+    /// 「results」在外层目录，见 ShortcutService.UserDataDirectory（修复七）。
     /// </summary>
     public string? BackendDirectory => Path.GetDirectoryName(_backendPath);
 

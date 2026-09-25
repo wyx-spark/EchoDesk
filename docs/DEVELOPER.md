@@ -259,4 +259,4 @@ python tools\gen_licenses.py          # 重新生成第三方许可证清单
   前端在 `BackendService` 加对应方法。长任务请走 `stream()`，复用 stop 中断与进度上报。
 - **新增文件格式**：`file_parser.py` 加 `_read_xxx` 并在 `_parse_builtin` 分发，
   同时把扩展名加进 `_TEXT_EXTS` 或新分支，并更新前端文件对话框的 Filter。
-- **技能开发规范**：见 `docs/SKILL_GUIDE.md`。
+- **技能开发规范**：见 `docs/zh-Hans/SKILL_GUIDE.md`（中文）与 `docs/en/SKILL_GUIDE.md`（英文）。

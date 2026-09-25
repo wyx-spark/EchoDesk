@@ -11,9 +11,13 @@ Chinese version: [`docs/zh-Hans/USER_GUIDE.md`](../zh-Hans/USER_GUIDE.md).
 
 ### Portable version (recommended)
 1. Put the whole `EchoDesk-v0.2.1` folder anywhere you like (desktop, D: drive or USB stick all work);
-2. Double-click **"EchoDesk-v0.2.1.lnk"** inside that folder — this is the only entry point, so you never have
+2. Double-click **"Start-EchoDesk-v0.2.1.lnk"** inside that folder — this is the only entry point, so you never have
    to work out the difference between `app\EchoDesk.exe` and `app\backend\EchoDeskBackend.exe`
-   (the latter is launched automatically by the UI; never run it on its own);
+   (the latter is launched automatically by the UI; never run it on its own).
+   The self-extracting installer creates that shortcut for you; in the plain zip there is none
+   (a shortcut stores an absolute path, so one created on the maintainer's machine would be dead
+   on yours) — run `install-complete.bat` once, or launch `app\EchoDesk.exe` and accept the
+   offer to create a shortcut;
 3. The first launch handles three things in turn:
    - If there is no model in `app\backend\models\` → it asks whether to download one (about 508 MB, internet required);
    - If the folder has no shortcut → it asks whether to create one;
@@ -43,16 +47,16 @@ from there.
 | `app\backend\automation_log.jsonl` | Automation audit log | Yes (archiving it first is recommended) |
 | `app\backend\skills\` + `app\backend\skills_registry.json` | Installed skills | Uninstall them from the marketplace instead |
 | `app\backend\summary_cache.json` | Chunked-summary cache for long documents (readable JSON) | Yes (recomputed on the next upload) |
-| `批量处理结果\` | Automation results (layered as `date\task name\`) | Yes (archiving them first is recommended) |
+| `results\` | Automation results (layered as `date\task name\`) | Yes (archiving them first is recommended) |
 | `lang\` + `app\lang\ui\` | Backend / UI language packs (add your own languages here) | Better not (deleting them falls back to the built-in text) |
 | `ui_state.json` | Window position/size, font size, theme | Yes (resets the interface state) |
 | `snippets.json` | Canned phrases | Yes |
-| `使用说明.txt` | Structural notes for users | Yes |
+| `USAGE.txt` | Structural notes for users | Yes |
 
 **Backup**: if you want to keep your conversation history and settings, just copy the three files
 `app\backend\session.json`, `app\backend\config.json` and `snippets.json`.
 
-**Where your data lives**: `ui_state.json`, `snippets.json` and `批量处理结果\` all sit in the portable
+**Where your data lives**: `ui_state.json`, `snippets.json` and `results\` all sit in the portable
 **outer** folder (not inside `app\`). To put them somewhere else instead (a USB stick or a user folder, say),
 set the `ECHODESK_DATA` environment variable to the target directory before starting; the program writes user
 data there.
@@ -183,7 +187,7 @@ above" (the backend enforces this). The agreement version and the time you accep
 ### 4.4 Scheduling
 Tick "Enable schedule" and enter the times of day it should run (for example `09:00, 18:30`).
 Scheduled tasks are fired by a backend thread while the program is running. If you want them to run at
-startup, copy "EchoDesk-v0.2.1.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
+startup, copy "Start-EchoDesk-v0.2.1.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
 
 ### 4.5 Login state
 The first time, you need to log in manually once in the browser; the program stores the login state in

@@ -1,168 +1,30 @@
-# EchoDesk 安全策略（中文版）
+# Security policy — where to read it / 安全策略在哪里
 
-本文件是仓库根目录 [`../SECURITY.md`](../SECURITY.md)（英文）的中文对应版本，
-两者描述同一套策略，**内容不矛盾**；如两处表述有差异，以根目录英文版为准并请提 Issue 告知。
+This file is a **pointer**, not a copy. The policy itself lives in one place only, so that the
+repository cannot end up with several versions that drift apart. The security-design notes and the
+accepted / unaccepted scope that used to live here are now in both root files below — nothing was
+dropped.
 
-EchoDesk 是一款**纯本地**桌面应用：模型推理、文件解析与浏览器自动化都在用户自己的机器上运行，
-**没有服务器端组件、没有遥测、不监听任何端口**。这既决定了威胁模型，也决定了我们希望漏洞怎样被报告。
+本文件只是一个**指针**，不是副本。策略正文只保留在一处，避免仓库里出现多份逐渐失同步的版本。
+此前放在本文件里的安全设计说明与受理/不受理范围，现已完整收录在下面两个根目录文件中，没有删减。
 
-**请不要为安全问题开公开 Issue。** 请私下报告，以便在细节公开之前准备好修复版本。
+## The policy itself / 策略正文
 
-相关文档：[`PRIVACY.md`](PRIVACY.md)（联网行为与数据处理）、
-[`EULA.md`](EULA.md)（许可协议）、[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)、
-[`SBOM.json`](SBOM.json)。
+| Language | File | Notes |
+| --- | --- | --- |
+| English | [`../SECURITY.md`](../SECURITY.md) | **Authoritative version.** 正式版本。 |
+| 简体中文 | [`../SECURITY.zh-Hans.md`](../SECURITY.zh-Hans.md) | Reference translation. 参考译本。 |
 
----
+The two root files are identical in clause coverage and differ only in language. If they ever
+disagree, the English version at [`../SECURITY.md`](../SECURITY.md) prevails.
 
-## 一、支持的版本范围
+两个根目录文件条款覆盖一致，仅语言不同。如两者有歧义，**以英文版 [`../SECURITY.md`](../SECURITY.md) 为准**。
 
-| 版本 | 是否提供安全修复 |
+## Related reading / 相关阅读
+
+| Document | 说明 |
 | --- | --- |
-| **0.2.x**（当前维护线，含 v0.2.0、v0.2.1 及后续补丁版本） | **是** —— 安全修复只在这里发布 |
-| 0.1.x | 否 —— 请升级到最新的 0.2.x |
-| 更早版本、自行修改过的构建、第三方重新打包的版本 | 否 |
-
-维护线中**只有最新发布版**会收到修复。若你报告的问题针对较旧的构建，
-我们的第一个问题通常会是"在当前最新版上还能复现吗"。
-
-## 二、如何报告漏洞
-
-1. **首选：GitHub 私有安全公告。** 打开仓库的
-   [Security → Advisories](https://github.com/VoidEntropiaStudio/EchoDesk/security/advisories/new)
-   页面，选择 "Report a vulnerability"。报告内容、讨论与补丁在公告发布前都保持私有。
-2. **兜底：邮件。** 无法使用 GitHub 公告时，请写信到 `security@example.com`
-   —— **维护者注意：该地址是占位值，发布仓库前必须替换为真实受监控的邮箱。**
-
-### 加密方式
-
-- 通过 GitHub 私有安全公告报告时，全程走 **HTTPS/TLS**，且仅维护者可见——这是目前**推荐的加密渠道**。
-- **PGP / GPG 公钥：暂未提供。** 仓库中当前不包含 PGP 公钥、`security.txt` 或
-  `.well-known/` 目录，因此本文件**不给出**任何公钥指纹或指纹链接（给出不存在的指纹比不给更危险）。
-  如你需要加密传输附件，请在私有公告里说明，我们会先提供一个可验证的公钥或改用其他双方认可的渠道。
-- 邮件渠道（`security@example.com`）为普通 SMTP，**不保证端到端加密**；
-  请勿在首封邮件里附带完整的利用代码或真实机密数据。
-
-请不要在公开 Issue、讨论区或 Pull Request 中披露利用细节。如果你已经不小心公开了信息，
-也请告诉我们，我们仍会尽力修复。
-
-### 报告里请包含
-
-一份能让我们复现的报告，价值十倍于只描述现象的报告：
-
-- **版本**：`/status` 的输出或发布文件夹名（例如 `v0.2.1`），以及你用的是便携版还是自行构建。
-- **操作系统**：Windows 版本、内部版本号，以及是否安装了 WPS Office / Microsoft Office 与 Microsoft Edge。
-- **复现步骤**：精确、最小、有序。自动化相关问题请附上相关配置（网址模式、选择器、文件后缀），
-  并把机密值打码。
-- **影响**：攻击者能得到什么——本地代码执行、读取预期范围之外的文件、联网、凭证泄露等。
-- **日志**：两类崩溃日志在出错时都会被追加写入：
-  - `frontend_crash.log` —— 由 WPF 前端写入，位于**程序目录**（`EchoDesk.exe` 旁边）。
-  - `backend_crash.log` —— 由 Python 后端写入，位于**后端目录**（`EchoDeskBackend.exe` 旁边，
-    便携版为 `app\backend\`）。
-  - `automation_log.jsonl` —— 自动化审计日志（默认在后端工作目录），对自动化类报告很有用。
-    它按设计已脱敏（只记文件名，不含文档正文、Token 或 Cookie），附上之前请自己先过一遍。
-  必要时也请附上 `config.json` 的内容，但请删除个人路径与任何 Token。
-
-请勿附上真实的机密文档。一个能触发同样代码路径的最小合成文件更有用。
-
-## 三、响应时间承诺
-
-| 阶段 | 承诺 |
-| --- | --- |
-| 确认收到你的报告 | **3 个工作日内** |
-| 初步定级（严重程度、受影响版本、能否复现） | 确认后 **10 个工作日内** |
-| 修复发布，或给出明确的缓解方案 | **30 天内**（自确认收到报告起）；若确需更长时间，我们会在 30 天内给出**具体的修复时间表与临时缓解措施** |
-| 公告中致谢 | 默认署名；你要求匿名时保持匿名 |
-
-本项目由小团队在业余时间维护，因此以上承诺针对的是**沟通节奏**，而不是"修复日期保证"。
-如果你在上述窗口内没有收到回复，请补一封追问邮件——邮件过滤和假期确实会发生。
-
-## 四、不在受理范围内的报告
-
-以下内容不属于本项目的安全漏洞，请勿作为安全报告提交（部分可以走普通 Issue）：
-
-1. **需要物理接触**的报告：需要拿到已登录的机器、插入设备或读取本机磁盘才能利用的问题。
-2. **已停止维护的版本**（0.1.x 及更早），以及自行修改、重新打包、二次分发的构建。
-3. **第三方依赖自身的漏洞**：请**报告给上游**（例如 llama.cpp、PyInstaller、Playwright、
-   `requests`、`pypdf`、Python 标准库等）。
-   你可以同时抄送我们，我们会在下一版升级依赖；但修复责任与时间表在上游。
-   当前依赖清单见 [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) 与 [`SBOM.json`](SBOM.json)。
-4. **已在机器上运行的恶意软件**、以及 Microsoft Edge / WPS Office / Microsoft Office /
-   操作系统本身的漏洞（请报给对应厂商）。
-5. **模型输出的准确性与安全性**：这是质量问题，属于普通 Issue，不是安全漏洞。
-6. **社会工程**：例如"用户被欺骗后手动下载了恶意模型文件并放进 `models\`"这类
-   完全依赖用户主动执行的操作。
-7. **第三方站点行为**：镜像站或官方站返回了与你预期不同的模型文件属于配置与信任问题
-   （下载源可配置，且你可自行校验哈希）；"EchoDesk 把文件写到了自己目录之外"才是漏洞。
-8. **缺少应用内安全加固功能本身**（例如"没有插件沙箱"）：如果它只是一个已知限制，
-   请作为功能请求提出；若它导致越权访问、读写越界或数据外泄，则**是**漏洞，请报告。
-
-## 五、安全设计说明（现状与已知限制）
-
-本节描述 EchoDesk 当前实际实现的安全边界，**包括未实现的部分**，以便报告者判断哪些行为是设计如此。
-
-### 5.1 进程与网络边界
-
-- **不监听任何端口**：前端与后端之间用标准输入输出（stdio）按行 JSON 通信，
-  因此没有本地 HTTP 服务、没有鉴权面、也不会触发防火墙入站提示。
-- **不写注册表、不装服务**：便携版删除目录即卸载。
-  唯一的注册表访问是**只读**读取 `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`
-  下的 `AppsUseLightTheme`，用于"跟随系统主题"；不写入、不创建键。
-- **联网只发生在后端**：前端（.NET WPF）自身不发起任何网络请求。
-  会联网的五个功能及其域名清单见 [`PRIVACY.md`](PRIVACY.md) 第二节。
-
-### 5.2 技能（插件）
-
-- **以用户权限运行**：技能代码由后端进程**在进程内**加载执行。
-  它拥有与 EchoDesk 后端相同的权限（即你的 Windows 账户权限），
-  可以读写你有权限访问的文件、发起网络请求。
-- **首次加载需用户确认**：本地插件首次被发现时，界面会弹出**批量确认框**，
-  展示该插件声明的能力（命令、UI 面板、钩子等）供你审查；
-  你的选择记入本地插件清单（trusted / denied），避免重复询问。
-  随包示例插件默认启用且不弹确认框；**同名覆盖**示例插件的作者无法借此跳过确认。
-- **密钥清洗**：调用/准备第三方技能相关子进程时，环境变量副本中被**临时移除**
-  所有名称包含 `KEY`、`SECRET`、`TOKEN`、`PASSWORD`、`PASSWD`、`CREDENTIAL` 的变量，
-  避免把你的 API Key、云凭证、访问令牌一并交给第三方代码。
-- **`prepare` 脚本不自动执行**：技能声明的 `prepare` 脚本**不会**被自动运行；
-  当前实现只在结果里提示它存在，以及"执行时会用清洗后的环境变量"。
-- **安装来源固定**：市场安装只从 `codeload.github.com` 下载源码 tarball（单包上限 50MB，
-  边下边计数、记录 sha256），**不执行** npm / pip 网络安装。
-- **已知限制（有意未实现，作为攻击面据实告知）**：
-  - **没有进程级沙箱**：技能与主程序同进程运行，权限声明是**事前告知与审查信息**，
-    不是运行时强制隔离；也没有 CPU、内存或执行时长限额。
-  - 因此"只运行你信任的技能"是当前的唯一有效防线；
-    越权的技能（能逃出预期范围、读取未声明的文件、静默联网、绕过清单校验或密钥清洗）
-    是**有效且重要**的漏洞报告。
-
-### 5.3 自动化浏览器
-
-- 自动化驱动**本机已安装的 Microsoft Edge**（有头模式，你可随时观察），
-  登录态保存在后端目录的 `browser_state.json`。
-- 首次启用必须勾选**安全协议**（多语言文本，键 `settings.automation.safetyBody`）；
-  未同意时配置层会强制把总开关关掉，协议版本与同意时间记入审计日志。
-- 目标网址协议限 `http` / `https` / `file`，且**必须由用户显式配置**，程序无内置站点。
-- 下载文件先落系统临时目录，任务完成后清理；留存原件与 `结果.txt` 放在用户数据目录的
-  `批量处理结果\` 下（供审计）。
-- 若出现"自动化访问了用户未配置的站点/文件""下载文件在任务后仍残留""审计日志记录了敏感数据"
-  "Cookie 或凭证泄露"，都属于受理范围。EchoDesk 自身从不上传运行数据。
-
-### 5.4 模型下载
-
-- 下载源可配置：默认第三方镜像 `hf-mirror.com`，可切到官方 `huggingface.co`。
-- 可选完整性校验：下载完成后比对文件大小；能拿到 sha256 且文件不超过 2GB 时再比对哈希
-  （`model_hub.verify_sha256`，默认开启）。
-- 受理范围包括：完整性校验缺失或可被绕过、恶意仓库/模型文件导致代码执行或路径穿越、
-  以及**文件被写到 EchoDesk 自己的目录之外**。
-
-### 5.5 其他仍在受理范围内的方向
-
-本地权限问题、文件解析或技能安装中的路径穿越、
-随包分发的原生推理库（llama.cpp）的内存安全问题（这类问题上报上游可能更有效，
-但也请告诉我们），以及**任何在用户未开启已记录的联网功能时把用户内容送出机器的代码路径**。
-
-## 六、披露流程
-
-我们倾向于**协同披露**：修复可用后，我们会发布 GitHub Security Advisory，
-说明问题、受影响版本与缓解方式，并默认致谢报告者（除非其要求匿名）。
-请给我们一个合理的窗口——**至少等到修复版发布**——再自行公开细节。
-
-非安全问题请使用 [`.github/`](../.github/) 下的 Issue 模板，并附上同样的环境与日志信息。
+| [`PRIVACY.md`](PRIVACY.md) | Networked behaviour and data handling / 联网行为与数据处理 |
+| [`EULA.md`](EULA.md) | End-user licence agreement / 最终用户许可协议 |
+| [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) | Third-party licences / 第三方许可证清单 |
+| [`SBOM.json`](SBOM.json) | Software bill of materials / 软件物料清单 |

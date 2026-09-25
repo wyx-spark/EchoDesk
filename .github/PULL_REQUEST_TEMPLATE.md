@@ -47,7 +47,7 @@ Closes #
   其他可按改动范围选择：
     python tools/test_file_parsers.py     # 文件解析（会现场生成 docx/xlsx/pptx/pdf/txt/csv）
     python tools/test_plaintext.py        # 结果文件的纯文本化
-    python tools/test_results_dir.py      # 批量处理结果目录结构
+    python tools/test_results_dir.py      # results目录结构
   PowerShell 脚本改动请同时验证 Windows PowerShell 5.1 下可运行：
     powershell -ExecutionPolicy Bypass -File tools\<脚本>.ps1
   文档改动请运行链接检查：
@@ -82,8 +82,8 @@ $ python tools/test_plaintext.py
 
 ## 文档与变更日志 / Documentation and changelog
 
-- [ ] 已更新 `docs/CHANGELOG.md` 的「未发布 / Unreleased」小节（用户可见的改动必须记录）
-      / Updated the Unreleased section of `docs/CHANGELOG.md` (required for user-visible changes)
+- [ ] 已更新 `CHANGELOG.md` 的「未发布 / Unreleased」小节（用户可见的改动必须记录）
+      / Updated the Unreleased section of `CHANGELOG.md` (required for user-visible changes)
 - [ ] 相关文档已同步更新（`docs/zh-Hans/`、`docs/en/` 对应文件；多语言文档需保持内容一致）
       / Matching docs updated in both `docs/zh-Hans/` and `docs/en/`
 - [ ] 不涉及文档改动 / No documentation change needed

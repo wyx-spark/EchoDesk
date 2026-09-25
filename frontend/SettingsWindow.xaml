@@ -580,7 +580,7 @@
                                       VerticalAlignment="Center"/>
                         </StackPanel>
 
-                        <TextBlock Text="批量处理结果保存" FontWeight="Bold" Margin="0,16,0,6"/>
+                        <TextBlock Text="结果保存" FontWeight="Bold" Margin="0,16,0,6"/>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
@@ -602,7 +602,7 @@
                             <TextBlock Grid.Column="0" Text="顶层文件夹名" VerticalAlignment="Center"
                                        Foreground="{DynamicResource SubTextBrush}"/>
                             <TextBox x:Name="ResultsRootNameBox" Grid.Column="1" Margin="6,0,0,0" Padding="6,4" TextChanged="ResultsOption_TextChanged"
-                                     ToolTip="结果根目录下的第一层文件夹名，默认「批量处理结果」"/>
+                                     ToolTip="结果根目录下的第一层文件夹名，默认「results」"/>
                             <Button x:Name="OpenResultsButton" Grid.Column="2" Margin="8,0,0,0" Padding="12,4"
                                     Content="打开结果目录" Style="{StaticResource RoundButton}"
                                     Click="OpenResultsButton_Click"
@@ -623,7 +623,7 @@
                         </Grid>
                         <TextBlock x:Name="ResultsPreviewText" FontSize="11" Margin="0,4,0,0"
                                    TextWrapping="Wrap" Foreground="{DynamicResource SubTextBrush}"
-                                   Text="目录结构：结果根目录 / YYYY-MM-DD / 任务名称 / 结果.txt + 原始文件"/>
+                                   Text="目录结构：结果根目录 / YYYY-MM-DD / 任务名称 / result.txt + 原始文件"/>
 
                         <TextBlock Text="定时触发" FontWeight="Bold" Margin="0,16,0,6"/>                        <StackPanel Orientation="Horizontal">
                             <CheckBox x:Name="ScheduleCheck" Content="启用定时" VerticalAlignment="Center"/>

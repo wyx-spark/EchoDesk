@@ -60,9 +60,14 @@ EchoDesk 是一款 Windows 桌面应用，把整套 AI 能力都留在你自己�
 1. 获取发布文件夹：可以从本仓库的
    [Releases 页面](https://github.com/VoidEntropiaStudio/EchoDesk/releases) 下载（发布归档上线后），
    也可以自己构建（见[方案 B](#方案-b--从源码构建)），产物位于 `publish\EchoDesk-v0.2.1\`。
-2. 解压到任意位置——桌面、其他磁盘、甚至 U 盘都可以。
-3. 双击 **`EchoDesk-v0.2.1.lnk`**。这是唯一需要的入口；`app\EchoDesk.exe` 是界面主程序，
-   `app\backend\EchoDeskBackend.exe` 由界面自动拉起，**请不要单独运行后端**。
+2. 解压到任意位置——桌面、其他磁盘、甚至 U 盘都可以。（自解压安装包会解压到你选的
+   文件夹，并自动执行解压后的收尾步骤。）
+3. 双击 **`Start-EchoDesk-v0.2.1.lnk`**。这个快捷方式由自解压安装包在解压完成后自动创建，
+   指向的是**你自己机器上的**这份程序。如果你下载的是普通 zip 解压版，请先运行一次
+   解压目录里的 `install-complete.bat` 创建它，或直接双击 `app\EchoDesk.exe`
+   （程序首次运行也会询问是否创建快捷方式）。这是唯一需要的入口；
+   `app\EchoDesk.exe` 是界面主程序，`app\backend\EchoDeskBackend.exe` 由界面自动拉起，
+   **请不要单独运行后端**。
 4. 首次启动时回答下面的模型下载询问，然后即可开始使用。
    常用首批指令：`/help`、`/file <路径>`、`/model list`、`/status`。
 
@@ -130,8 +135,8 @@ EchoDesk **不自带**模型权重，也**不会静默下载**任何东西：
 
 | 路径 | 内容 |
 | --- | --- |
-| `EchoDesk-v0.2.1.lnk` | 唯一入口（指向 `app\EchoDesk.exe`，工作目录为本文件夹）。 |
-| `批量处理结果\` | 自动化结果（按 `日期\任务名\` 分层的纯文本报告与下载的原始文件）。 |
+| `Start-EchoDesk-v0.2.1.lnk` | 唯一入口（指向 `app\EchoDesk.exe`，工作目录为本文件夹）。 |
+| `results\` | 自动化结果（按 `日期\任务名\` 分层的纯文本报告与下载的原始文件）。 |
 | `ui_state.json`、`snippets.json` | 窗口状态、字号、主题、语言与常用语。 |
 | `lang\` | 后端语言包（系统消息、错误提示、指令帮助）。丢一个新的 `<locale>.json` 进去即可加语言。 |
 | `examples\skills\` | 示例插件源码（Hello World 与 OFD 读取）。 |
@@ -150,17 +155,14 @@ EchoDesk **不自带**模型权重，也**不会静默下载**任何东西：
 
 ## 截图与演示
 
-本仓库目前**尚未提交任何截图**：现有的图片资源只有 `assets/EchoDesk.ico`（程序图标）与
-`assets/EchoDesk.png`。下表是一份待拍摄清单：按表拍摄后把图片放进 `assets/screenshots/`，
-再把对应行替换成指向建议文件名的图片引用即可。
+**v0.2.1 发布物不包含截图**。目前随包提供的图片资源只有 `assets/EchoDesk.ico`（程序图标）与
+`assets/EchoDesk.png`（Logo）；本 README 里没有任何指向不存在图片的链接。
 
-| 序号 | 拍什么 | 建议文件名 |
-| --- | --- | --- |
-| 1 | 主界面：正在讨论一份文档，并显示上下文 / KV Cache 状态行 | `assets/screenshots/main-window.png` |
-| 2 | 长文档分段摘要进行中（分段计数 + 原文指针） | `assets/screenshots/long-document.png` |
-| 3 | 设置 → 自动化 Tab：字段级帮助与「测试选择器」的结果 | `assets/screenshots/automation-settings.png` |
-| 4 | 自动化运行时有头的 Edge 窗口，旁边是 EchoDesk 的实时进度日志 | `assets/screenshots/automation-run.png` |
-| 5 | 技能市场（`Ctrl+M`）的已验证 / 未验证 / 已安装状态，以及同一窗口的简体中文界面 | `assets/screenshots/marketplace.png` |
+界面预览图——主界面、长文档分段摘要、带「测试选择器」的自动化页、有头模式的自动化运行，
+以及双语界面下的技能市场——将在后续版本中放进 `assets/screenshots/`，届时本节会直接嵌入这些图片。
+
+在那之前，想尽快看到界面，直接运行便携版即可：无需安装、无需云端账号，本地对话也不需要联网
+（见[快速上手](#快速上手)）。
 
 ## 多语言
 
@@ -212,36 +214,44 @@ EchoDesk 的本地化是设计目标，并且写成了公开文档：
   不含文档正文、模型输出、Token、Cookie 或密码。
 - **数据由你掌控**：随时删除 `backend\session.json`、`snippets.json`、`ui_state.json`、
   `backend\models\*.gguf` 或 `backend\browser_state.json`，即可清除历史、偏好、模型或
-  已保存的浏览器登录态。逐项说明见 [docs/PRIVACY.md](docs/PRIVACY.md)，
-  使用条款见 [docs/EULA.md](docs/EULA.md)——其中也说明了本地小模型输出可能有误，
+  已保存的浏览器登录态。逐项说明见 [docs/PRIVACY.zh-Hans.md](docs/PRIVACY.zh-Hans.md)，
+  使用条款见 [docs/EULA.zh-Hans.md](docs/EULA.zh-Hans.md)——其中也说明了本地小模型输出可能有误，
   不构成专业意见。
 
 ## 文档
 
 | 文档 | 内容 |
 | --- | --- |
-| [docs/USER_GUIDE.md](docs/zh-Hans/USER_GUIDE.md) | 用户手册：安装启动、日常问答、长合同、批量自动化、技能。 |
-| [docs/FAQ.md](docs/zh-Hans/FAQ.md) | 快速上手与故障排除：启动、模型、文件、自动化、技能市场。 |
+| [docs/zh-Hans/USER_GUIDE.md](docs/zh-Hans/USER_GUIDE.md) | 用户手册：安装启动、日常问答、长合同、批量自动化、技能。 |
+| [docs/zh-Hans/FAQ.md](docs/zh-Hans/FAQ.md) | 快速上手与故障排除：启动、模型、文件、自动化、技能市场。 |
+| [docs/zh-Hans/AUTOMATION_GUIDE.md](docs/zh-Hans/AUTOMATION_GUIDE.md) | 自动化配置逐字段填写指南与「测试选择器」。 |
 | [docs/DEVELOPER.md](docs/DEVELOPER.md) | 架构、JSON 协议、模块职责、配置参考、构建与发布。 |
-| [docs/SKILL_GUIDE.md](docs/zh-Hans/SKILL_GUIDE.md) | 如何编写、提交与发布技能。 |
-| [docs/PRIVACY.md](docs/PRIVACY.md) | 哪些在本机运行、哪些可能联网、日志脱敏规则。 |
-| [docs/EULA.md](docs/EULA.md) | 发布物的最终用户许可协议。 |
-| [docs/THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md) | 第三方组件与许可证完整清单。 |
-| [docs/CHANGELOG.md](docs/CHANGELOG.md) | 各版本的功能变更、修复与已知限制。 |
+| [docs/zh-Hans/SKILL_GUIDE.md](docs/zh-Hans/SKILL_GUIDE.md) | 如何编写、提交与发布技能。 |
+| [docs/PRIVACY.zh-Hans.md](docs/PRIVACY.zh-Hans.md) | 哪些在本机运行、哪些可能联网、日志脱敏规则。 |
+| [docs/EULA.zh-Hans.md](docs/EULA.zh-Hans.md) | 发布物的最终用户许可协议。 |
+| [docs/THIRD_PARTY_LICENSES.zh-Hans.md](docs/THIRD_PARTY_LICENSES.zh-Hans.md) | 第三方组件与许可证完整清单。 |
+| [CHANGELOG.md](CHANGELOG.md) | 各版本的功能变更、修复与已知限制。 |
 | [NOTICE](NOTICE) | 随包分发的主要第三方组件署名。 |
 
-## 参与贡献、安全与社区
+本地化文档按两种内置语言各提供一套：`docs/zh-Hans/`（简体中文，即上表所链接的版本）与
+`docs/en/`（英语，同一套指南）。
 
-欢迎各种形式的贡献——缺陷报告、代码修复、技能、翻译与文档都算。
+## 获取帮助与参与贡献
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) —— 开发环境、代码风格、提交信息规范、PR 流程，
-  以及翻译贡献流程与技能贡献流程。
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) —— 社区行为准则。
-- [SECURITY.md](SECURITY.md) —— 支持的版本、如何私下报告安全漏洞、报告需包含什么、
-  以及我们的响应时间承诺。**安全问题请不要开公开 Issue。**
-- 缺陷报告、功能请求、技能提交与翻译协作的 Issue 模板位于 [`.github/`](.github/)。
-  提交 Issue 时请附上版本号、操作系统、可复现步骤与相关日志（日志位置见
-  [SECURITY.md](SECURITY.md)）。
+欢迎各种形式的贡献——缺陷报告、代码修复、技能、翻译与文档都算。所有公开渠道都在 GitHub 上：
+本项目**不提供**支持邮箱、电话号码或邮寄地址。
+
+- **反馈问题或提功能请求** —— 请开 GitHub Issue：
+  <https://github.com/VoidEntropiaStudio/EchoDesk/issues>。
+  缺陷报告、功能请求、技能提交与翻译协作各有对应模板；请附上版本号、操作系统、可复现步骤
+  与相关日志。
+- **提问、分享技能、协作翻译** —— 请到
+  [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions) 发帖。
+- **提交改动** —— 请开 Pull Request；[CONTRIBUTING.md](CONTRIBUTING.md) 里有开发环境、
+  代码风格、提交信息规范与评审流程。日志位置见 [SECURITY.zh-Hans.md](SECURITY.zh-Hans.md)。
+- **安全漏洞** —— **请不要开公开 Issue**，按 [SECURITY.zh-Hans.md](SECURITY.zh-Hans.md) 的私有渠道报告
+  （支持的版本、报告需包含什么、响应时间承诺也在那里）。
+- **社区行为** —— [CODE_OF_CONDUCT.zh-Hans.md](CODE_OF_CONDUCT.zh-Hans.md)。
 
 ## 许可证
 
@@ -249,6 +259,6 @@ EchoDesk 采用 **Apache License 2.0** 发布，全文见 [LICENSE](LICENSE)。�
 专利授权，允许商用与企业内部使用、修改与再分发，这也是它优于更简短宽松许可证的原因。
 
 - 随包分发的主要第三方组件署名：[NOTICE](NOTICE)。
-- 完整的组件与许可证清单：[docs/THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md)。
+- 完整的组件与许可证清单：[docs/THIRD_PARTY_LICENSES.zh-Hans.md](docs/THIRD_PARTY_LICENSES.zh-Hans.md)。
 - 模型权重**不属于**本项目，仍归其发布方的许可证管辖；下载模型前请自行确认其条款。
 - Copyright 2026 Void Entropia Studio。

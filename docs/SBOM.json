@@ -5,7 +5,7 @@
   "name": "EchoDesk-v0.2.1",
   "documentNamespace": "https://github.com/VoidEntropiaStudio/EchoDesk/spdx/v0.2.1",
   "creationInfo": {
-    "created": "2026-09-24T14:07:21Z",
+    "created": "2026-09-25T13:28:46Z",
     "creators": [
       "Tool: gen_sbom.py",
       "Organization: Void Entropia Studio"
@@ -49,9 +49,9 @@
       "homepage": "https://github.com/annotated-types/annotated-types"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-anyio-4.14.2",
+      "SPDXID": "SPDXRef-Package-pypi-anyio-4.15.1",
       "name": "anyio",
-      "versionInfo": "4.14.2",
+      "versionInfo": "4.15.1",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -59,7 +59,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/anyio@4.14.2"
+          "referenceLocator": "pkg:pypi/anyio@4.15.1"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
@@ -83,9 +83,26 @@
       "homepage": "https://github.com/certifi/python-certifi"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-charset-normalizer-3.4.9",
+      "SPDXID": "SPDXRef-Package-pypi-cffi-2.1.1",
+      "name": "cffi",
+      "versionInfo": "2.1.1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "MIT-0",
+      "licenseDeclared": "MIT-0",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:pypi/cffi@2.1.1"
+        }
+      ],
+      "comment": "Python distribution installed in the build environment (importlib.metadata).",
+      "homepage": "https://cffi.readthedocs.io/"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pypi-charset-normalizer-3.5.1",
       "name": "charset-normalizer",
-      "versionInfo": "3.4.9",
+      "versionInfo": "3.5.1",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -93,16 +110,16 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/charset-normalizer@3.4.9"
+          "referenceLocator": "pkg:pypi/charset-normalizer@3.5.1"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://github.com/jawah/charset_normalizer/blob/master/CHANGELOG.md"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-click-8.4.2",
+      "SPDXID": "SPDXRef-Package-pypi-click-8.5.0",
       "name": "click",
-      "versionInfo": "8.4.2",
+      "versionInfo": "8.5.0",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "BSD-3-Clause",
       "licenseDeclared": "BSD-3-Clause",
@@ -110,7 +127,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/click@8.4.2"
+          "referenceLocator": "pkg:pypi/click@8.5.0"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
@@ -132,6 +149,23 @@
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://github.com/tartley/colorama"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pypi-cryptography-50.0.1",
+      "name": "cryptography",
+      "versionInfo": "50.0.1",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "Apache-2.0 OR BSD-3-Clause",
+      "licenseDeclared": "Apache-2.0 OR BSD-3-Clause",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:pypi/cryptography@50.0.1"
+        }
+      ],
+      "comment": "Python distribution installed in the build environment (importlib.metadata).",
+      "homepage": "https://cryptography.io/en/latest/changelog/"
     },
     {
       "SPDXID": "SPDXRef-Package-pypi-diskcache-5.6.3",
@@ -185,9 +219,9 @@
       "homepage": "https://foss.heptapod.net/openpyxl/et_xmlfile"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-filelock-3.32.3",
+      "SPDXID": "SPDXRef-Package-pypi-filelock-4.0.3",
       "name": "filelock",
-      "versionInfo": "3.32.3",
+      "versionInfo": "4.0.3",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -195,16 +229,16 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/filelock@3.32.3"
+          "referenceLocator": "pkg:pypi/filelock@4.0.3"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://py-filelock.readthedocs.io"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-fsspec-2026.7.0",
+      "SPDXID": "SPDXRef-Package-pypi-fsspec-2026.9.0",
       "name": "fsspec",
-      "versionInfo": "2026.7.0",
+      "versionInfo": "2026.9.0",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "BSD-3-Clause",
       "licenseDeclared": "BSD-3-Clause",
@@ -212,7 +246,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/fsspec@2026.7.0"
+          "referenceLocator": "pkg:pypi/fsspec@2026.9.0"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
@@ -270,9 +304,9 @@
       "homepage": "https://huggingface.co/docs/hub/xet/index"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-httpcore-1.0.9",
-      "name": "httpcore",
-      "versionInfo": "1.0.9",
+      "SPDXID": "SPDXRef-Package-pypi-httpcore2-2.13.1",
+      "name": "httpcore2",
+      "versionInfo": "2.13.1",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "BSD-3-Clause",
       "licenseDeclared": "BSD-3-Clause",
@@ -280,16 +314,16 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/httpcore@1.0.9"
+          "referenceLocator": "pkg:pypi/httpcore2@2.13.1"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "https://www.encode.io/httpcore"
+      "homepage": "https://github.com/pydantic/httpx2/blob/main/src/httpcore2/CHANGELOG.md"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-httpx-0.28.1",
-      "name": "httpx",
-      "versionInfo": "0.28.1",
+      "SPDXID": "SPDXRef-Package-pypi-httpx2-2.13.1",
+      "name": "httpx2",
+      "versionInfo": "2.13.1",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "BSD-3-Clause",
       "licenseDeclared": "BSD-3-Clause",
@@ -297,16 +331,16 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/httpx@0.28.1"
+          "referenceLocator": "pkg:pypi/httpx2@2.13.1"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "https://github.com/encode/httpx/blob/master/CHANGELOG.md"
+      "homepage": "https://github.com/pydantic/httpx2/blob/main/src/httpx2/CHANGELOG.md"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-huggingface-hub-1.27.0",
+      "SPDXID": "SPDXRef-Package-pypi-huggingface-hub-2.0.0",
       "name": "huggingface_hub",
-      "versionInfo": "1.27.0",
+      "versionInfo": "2.0.0",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "Apache-2.0",
@@ -314,16 +348,16 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/huggingface-hub@1.27.0"
+          "referenceLocator": "pkg:pypi/huggingface-hub@2.0.0"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://github.com/huggingface/huggingface_hub"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-idna-3.18",
+      "SPDXID": "SPDXRef-Package-pypi-idna-3.20",
       "name": "idna",
-      "versionInfo": "3.18",
+      "versionInfo": "3.20",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "BSD-3-Clause",
       "licenseDeclared": "BSD-3-Clause",
@@ -331,7 +365,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/idna@3.18"
+          "referenceLocator": "pkg:pypi/idna@3.20"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
@@ -372,9 +406,9 @@
       "homepage": "https://github.com/abetlen/llama-cpp-python"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-lxml-6.1.1",
+      "SPDXID": "SPDXRef-Package-pypi-lxml-6.1.3",
       "name": "lxml",
-      "versionInfo": "6.1.1",
+      "versionInfo": "6.1.3",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "BSD-3-Clause",
       "licenseDeclared": "BSD-3-Clause",
@@ -382,7 +416,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/lxml@6.1.1"
+          "referenceLocator": "pkg:pypi/lxml@6.1.3"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
@@ -406,9 +440,9 @@
       "homepage": "https://palletsprojects.com/donate"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-numpy-2.5.2",
+      "SPDXID": "SPDXRef-Package-pypi-numpy-2.5.3",
       "name": "numpy",
-      "versionInfo": "2.5.2",
+      "versionInfo": "2.5.3",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
       "licenseDeclared": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
@@ -416,7 +450,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/numpy@2.5.2"
+          "referenceLocator": "pkg:pypi/numpy@2.5.3"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
@@ -525,9 +559,9 @@
       "homepage": "https://github.com/Microsoft/playwright-python"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-primp-1.3.1",
+      "SPDXID": "SPDXRef-Package-pypi-primp-2.0.1",
       "name": "primp",
-      "versionInfo": "1.3.1",
+      "versionInfo": "2.0.1",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "MIT License",
       "licenseDeclared": "MIT License",
@@ -535,16 +569,33 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/primp@1.3.1"
+          "referenceLocator": "pkg:pypi/primp@2.0.1"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://github.com/deedy5/primp"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-pydantic-2.13.4",
+      "SPDXID": "SPDXRef-Package-pypi-pycparser-3.0",
+      "name": "pycparser",
+      "versionInfo": "3.0",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:pypi/pycparser@3.0"
+        }
+      ],
+      "comment": "Python distribution installed in the build environment (importlib.metadata).",
+      "homepage": "https://github.com/eliben/pycparser"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pypi-pydantic-2.13.5",
       "name": "pydantic",
-      "versionInfo": "2.13.4",
+      "versionInfo": "2.13.5",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -552,16 +603,16 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/pydantic@2.13.4"
+          "referenceLocator": "pkg:pypi/pydantic@2.13.5"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://github.com/pydantic/pydantic"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-pydantic-core-2.46.4",
+      "SPDXID": "SPDXRef-Package-pypi-pydantic-core-2.46.5",
       "name": "pydantic_core",
-      "versionInfo": "2.46.4",
+      "versionInfo": "2.46.5",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -569,7 +620,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/pydantic-core@2.46.4"
+          "referenceLocator": "pkg:pypi/pydantic-core@2.46.5"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
@@ -593,9 +644,9 @@
       "homepage": "https://github.com/jfhbrook/pyee"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-pyinstaller-6.22.1",
+      "SPDXID": "SPDXRef-Package-pypi-pyinstaller-6.22.3",
       "name": "pyinstaller",
-      "versionInfo": "6.22.1",
+      "versionInfo": "6.22.3",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "GNU General Public License v2 (GPLv2)",
       "licenseDeclared": "GNU General Public License v2 (GPLv2)",
@@ -603,16 +654,16 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/pyinstaller@6.22.1"
+          "referenceLocator": "pkg:pypi/pyinstaller@6.22.3"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://pyinstaller.org"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-pyinstaller-hooks-contrib-2026.6",
+      "SPDXID": "SPDXRef-Package-pypi-pyinstaller-hooks-contrib-2026.7",
       "name": "pyinstaller-hooks-contrib",
-      "versionInfo": "2026.6",
+      "versionInfo": "2026.7",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "Apache Software License",
       "licenseDeclared": "Apache Software License",
@@ -620,7 +671,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/pyinstaller-hooks-contrib@2026.6"
+          "referenceLocator": "pkg:pypi/pyinstaller-hooks-contrib@2026.7"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
@@ -659,23 +710,6 @@
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://github.com/python-openxml/python-docx/blob/master/HISTORY.rst"
-    },
-    {
-      "SPDXID": "SPDXRef-Package-pypi-python-magic-bin-0.4.14",
-      "name": "python-magic-bin",
-      "versionInfo": "0.4.14",
-      "downloadLocation": "NOASSERTION",
-      "licenseConcluded": "MIT",
-      "licenseDeclared": "MIT",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/python-magic-bin@0.4.14"
-        }
-      ],
-      "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "http://github.com/julian-r/python-magic"
     },
     {
       "SPDXID": "SPDXRef-Package-pypi-python-pptx-1.0.2",
@@ -797,9 +831,9 @@
       "homepage": "https://github.com/pypa/setuptools"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-tqdm-4.70.0",
+      "SPDXID": "SPDXRef-Package-pypi-tqdm-4.70.1",
       "name": "tqdm",
-      "versionInfo": "4.70.0",
+      "versionInfo": "4.70.1",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "MPL-2.0 AND MIT",
       "licenseDeclared": "MPL-2.0 AND MIT",
@@ -807,11 +841,28 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/tqdm@4.70.0"
+          "referenceLocator": "pkg:pypi/tqdm@4.70.1"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://tqdm.github.io"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pypi-truststore-0.10.4",
+      "name": "truststore",
+      "versionInfo": "0.10.4",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:pypi/truststore@0.10.4"
+        }
+      ],
+      "comment": "Python distribution installed in the build environment (importlib.metadata).",
+      "homepage": "https://truststore.readthedocs.io"
     },
     {
       "SPDXID": "SPDXRef-Package-pypi-typing-inspection-0.4.4",
@@ -848,9 +899,9 @@
       "homepage": "https://github.com/python/typing_extensions/issues"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-urllib3-2.7.0",
+      "SPDXID": "SPDXRef-Package-pypi-urllib3-2.8.0",
       "name": "urllib3",
-      "versionInfo": "2.7.0",
+      "versionInfo": "2.8.0",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -858,7 +909,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/urllib3@2.7.0"
+          "referenceLocator": "pkg:pypi/urllib3@2.8.0"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",

@@ -6,7 +6,7 @@ Audience: IT administrators and compliance reviewers deploying the EchoDesk desk
 (portable or installed) in a managed enterprise environment
 
 Related documents: [`../PRIVACY.md`](../PRIVACY.md) (itemized network behaviour), [`../EULA.md`](../EULA.md) (license terms),
-[`../SECURITY.md`](../SECURITY.md) (security policy), [`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md),
+[`../SECURITY.md`](../../SECURITY.md) (security policy), [`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md),
 [`../SBOM.json`](../SBOM.json).
 中文版 / Chinese version: [`../zh-Hans/COMPLIANCE.md`](../zh-Hans/COMPLIANCE.md).
 
@@ -183,10 +183,12 @@ The portable release uses this three-level layout by default:
 
 ```text
 EchoDesk-v0.2.1\
-├── EchoDesk-v0.2.1.lnk          ← launcher shortcut (working directory = user data directory)
+├── install-complete.bat         ← post-extraction step (creates the shortcut below)
+├── Start-EchoDesk-v0.2.1.lnk          ← launcher shortcut, created on YOUR machine by the above
+│                                  (working directory = user data directory)
 ├── ui_state.json                ← UI state
 ├── snippets.json                ← snippets
-├── 批量处理结果\                 ← automation output (batch results; user data directory)
+├── results\                 ← automation output (batch results; user data directory)
 └── app\                         ← the program itself
     ├── EchoDesk.exe
     └── backend\
@@ -258,7 +260,7 @@ Set the following to **absolute paths** (all of them accept a `C:\...` form) to 
 1. Launch the program by double-clicking `app\EchoDesk.exe` directly (this always works and does not depend on the
    shortcut).
 2. At startup the program checks the outer shortcut:
-   - shortcut **missing** → it asks "create `EchoDesk-v<version>.lnk`?"; answer yes to create it;
+   - shortcut **missing** → it asks "create `Start-EchoDesk-v<version>.lnk`?"; answer yes to create it;
    - shortcut **broken** (target lost or working directory wrong after the folder was moved or renamed) → it asks
      whether to recreate it; answer yes to rebuild.
    The rebuilt shortcut has target = the current `EchoDesk.exe` and **working directory = the user data directory**
@@ -270,10 +272,10 @@ Set the following to **absolute paths** (all of them accept a `C:\...` form) to 
 
 ## 6. Auditing and retained evidence
 
-### 6.1 The results file `结果.txt` (results.txt)
+### 6.1 The results file `result.txt` (results.txt)
 
-- Location: `<automation.results_location>\<automation.results_root_name>\YYYY-MM-DD\<task name>\结果.txt`
-  (by default "user data directory\批量处理结果\date\task name\", with `-1`, `-2` suffixes for same-named runs on
+- Location: `<automation.results_location>\<automation.results_root_name>\YYYY-MM-DD\<task name>\result.txt`
+  (by default "user data directory\results\date\task name\", with `-1`, `-2` suffixes for same-named runs on
   the same day).
 - Contents: **plain text, with no Markdown markup**. The header lists the task name, run date, start time, task list
   URL, task instruction and the results folder; the body holds one result block per task (review opinions and so on),
@@ -312,9 +314,9 @@ Set the following to **absolute paths** (all of them accept a `C:\...` form) to 
 
 - Apart from the temporary staging folders, the program **never deletes** these files automatically; the retention
   policy is yours to define.
-- When audit evidence must be retained, **archive** `automation_log.jsonl` and the `批量处理结果\` folder before
+- When audit evidence must be retained, **archive** `automation_log.jsonl` and the `results\` folder before
   cleaning anything up.
-- Suggested cleanup: delete historical date folders under `批量处理结果\` once the retention period expires; delete
+- Suggested cleanup: delete historical date folders under `results\` once the retention period expires; delete
   `browser_state.json` and `session.json` when a machine is handed over or retired.
 
 ## 7. One-page quick reference
@@ -327,5 +329,5 @@ Set the following to **absolute paths** (all of them accept a `C:\...` form) to 
 | Fully offline | firewall denies outbound by default + pre-placed offline models + all networked features off (policy B) |
 | Put user data on a managed drive | `ECHODESK_DATA` plus the absolute-path settings in the 5.4 table |
 | Read-only program folder | copy the release to a writable location and run it there; or move artifacts out per 5.4 (`config.json` must stay writable) |
-| Post-incident review | `automation_log.jsonl` (who/when/what ran) + `批量处理结果\...\结果.txt` (what was done and how it turned out) |
+| Post-incident review | `automation_log.jsonl` (who/when/what ran) + `results\...\result.txt` (what was done and how it turned out) |
 | Shortcut lost | run `app\EchoDesk.exe` directly and accept the rebuild prompt (delete `ui_state.json` first if it stopped asking) |

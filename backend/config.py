@@ -27,7 +27,7 @@ def user_data_root() -> str:
 
     发布物采用便携版三层结构：``EchoDesk-v0.2.1\\app\\backend\\EchoDeskBackend.exe``，
     其中 ``app\\`` 是程序本体，外层才是用户能看到、能备份的目录
-    （快捷方式、``ui_state.json``、``snippets.json``、``批量处理结果\\``）。
+    （快捷方式、``ui_state.json``、``snippets.json``、``results\\``）。
 
     判定顺序（与前端 ``ShortcutService.UserDataDirectory`` 保持一致）：
     1. 环境变量 ``ECHODESK_DATA``；
@@ -51,7 +51,7 @@ def user_data_root() -> str:
 
 
 def program_root() -> str:
-    """程序根目录（新增三：批量处理结果的默认位置）。
+    """程序根目录（新增三：results的默认位置）。
 
     保留函数名以兼容既有调用方；实现改为走 :func:`user_data_root`，
     这样"保存位置留空"的结果目录会落在便携版外层，而不是埋进 ``app\\``。
@@ -137,10 +137,14 @@ class AutomationConfig(BaseModel):
     browser_channel: str = "msedge"
     # ---------- 结果与审计 ----------
     save_results: bool = True
-    # 批量处理结果目录（新增三）：结果根目录\YYYY-MM-DD\任务名\（同名自动加 -1、-2）
-    results_root_name: str = "批量处理结果"   # 顶层文件夹名，可由用户自定义
+    # 结果目录（新增三）：结果根目录\YYYY-MM-DD\任务名\（同名自动加 -1、-2）
+    # v0.2.1 发布任务书「全局要求一」：程序自动生成的目录名一律英文，
+    # 因此 results_root_name 的默认值由「批量处理结果」改为 results，
+    # task_name 的默认值由「自动化任务」改为 auto-task（结果文件名同理，
+    # 见 automation.py 的 report_path）。
+    results_root_name: str = "results"       # 顶层文件夹名，可由用户自定义
     results_location: str = ""               # 空 = 程序根目录；可指定其他位置
-    task_name: str = "自动化任务"             # 第三层目录名：本次运行的任务名称
+    task_name: str = "auto-task"             # 第三层目录名：本次运行的任务名称
     audit_log_file: str = "automation_log.jsonl"
     # ---------- 定时触发（4.4） ----------
     schedule_enabled: bool = False

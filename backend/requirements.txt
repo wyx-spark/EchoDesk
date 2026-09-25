@@ -15,6 +15,26 @@ huggingface_hub           # 模型仓库查询与下载
 duckduckgo-search         # 联网搜索（可选功能）
 pywin32                   # WPS/Office COM 调用（读取加密文档）
 
+# ---------- 直接被 import 的传递依赖（v0.2.1 发布任务书「任务五」干净环境收口时发现） ----------
+# 下面是后端**自己直接 import** 的包。此前它们只作为别处的传递依赖存在：
+# 开发机与打包机上恰好都装了，所以问题被掩盖；但按本文件从零建环境时
+# `backend/marketplace.py` 会 ImportError（requests、urllib3），
+# download_utils.py 也会（tqdm）。直接 import 的包必须直接声明，
+# 否则依赖关系是"运气"而不是"约束"。由 tools/check_requirements.py 门禁。
+requests                  # 技能市场 HTTP（Apache-2.0）
+urllib3                   # 重试策略 ThreadLocal 连接池（MIT）
+tqdm                      # 模型下载进度条（MPL-2.0 AND MIT）
+# v0.2.1 发布复核新增：**被 pypdf 可选使用、但本项目的功能依赖它**。
+#   * backend/file_parser.py 对"只设了权限密码（空口令）"的 PDF 会调 reader.decrypt("")；
+#     pypdf 的加密提供者优先用 cryptography，缺失时退回到只支持 RC4 的纯 Python 实现，
+#     AES 加密的这类 PDF 就解不开 —— 属用户可见的功能差异。
+#   * 为什么必须显式声明：PyInstaller 是按**打包机环境**分析的，开发机装了
+#     cryptography（来自 msoffcrypto-tool，一个与发布物无关的旧包），
+#     于是它被**打进发布物却没出现在 `docs/THIRD_PARTY_LICENSES.md` / `docs/SBOM.json` 里**
+#     —— 对外分发时就是"未声明的第三方组件"。声明后干净环境与发布物口径一致。
+#     （`tools/check_bundled_packages.py` 专门比对这件事。）
+cryptography              # 加密 PDF 读取（pypdf 的可选加密提供者；Apache-2.0 OR BSD-3-Clause）
+
 # ---------- 文件解析（替代 pyxtxt） ----------
 python-docx               # .docx（MIT）
 openpyxl                  # .xlsx/.xlsm（MIT）

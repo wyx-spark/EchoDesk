@@ -1,169 +1,230 @@
-# EchoDesk 最终用户许可协议（EULA）
+# EchoDesk End User License Agreement (EULA)
 
-版本：v0.2.1
-版权：Copyright (C) Void Entropia Studio
-出品方：Void Entropia Studio（下称"本工作室"）
-项目本体许可：**Apache License 2.0**（详见仓库根目录 [`../LICENSE`](../LICENSE) 与 [`../NOTICE`](../NOTICE)）
+> **Chinese version:** a reference translation of this agreement is available at
+> [`EULA.zh-Hans.md`](EULA.zh-Hans.md). If the two ever disagree, this English version prevails.
 
-请在使用 EchoDesk（下称"本软件"）前阅读本协议。下载、安装或使用本软件，
-即表示你已阅读、理解并同意本协议全部条款。若不同意，请勿使用并删除本软件。
+Version: v0.2.1
+Copyright: Copyright (C) Void Entropia Studio
+Publisher: Void Entropia Studio, Online only (hereinafter "the Studio")
+License for the project itself: **Apache License 2.0** (see [`../LICENSE`](../LICENSE) and [`../NOTICE`](../NOTICE) in the repository root)
 
-相关文档：[`PRIVACY.md`](PRIVACY.md)（隐私政策：联网行为与数据处理）、
-[`SECURITY.md`](SECURITY.md)（安全策略与漏洞报告）、
-[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)（第三方组件与许可证清单）、
-[`SBOM.json`](SBOM.json)（软件物料清单）、
-[`zh-Hans/COMPLIANCE.md`](zh-Hans/COMPLIANCE.md) / [`en/COMPLIANCE.md`](en/COMPLIANCE.md)（企业环境适配与合规）。
+Please read this agreement before using EchoDesk (hereinafter "the Software"). By downloading,
+installing or using the Software you confirm that you have read, understood and agreed to all its
+terms. If you do not agree, do not use the Software and delete it.
+
+Related documents: [`PRIVACY.md`](PRIVACY.md) (Privacy Policy: network behaviour and data
+processing), [`SECURITY.md`](../SECURITY.md) (security policy and vulnerability reporting),
+[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) (list of third-party components and their
+Licenses), [`SBOM.json`](SBOM.json) (software bill of materials),
+[`zh-Hans/COMPLIANCE.md`](zh-Hans/COMPLIANCE.md) / [`en/COMPLIANCE.md`](en/COMPLIANCE.md)
+(enterprise-environment adaptation and compliance).
 
 ---
 
-## 一、许可授予
+## 1. Grant of License
 
-1. 本软件以 **Apache License 2.0** 开源发布。依该许可证，你获得全球范围、非独占、
-   免许可费的著作权许可，可以**使用、复制、修改、合并、发布、分发、再许可和销售**本软件的副本，
-   但须遵守 Apache-2.0 的条件（其中最重要的是保留版权、许可与免责声明，并在修改过的文件中
-   标注你做了修改；若发布物含 [`../NOTICE`](../NOTICE) 署名文件，你的分发须一并保留其内容）。
-2. 本工作室在此另行确认一项便于终端用户的许可：你可以在你自己拥有或合法控制的设备上
-   安装、运行本软件，可以为备份目的复制本软件，也可以在未修改、未拆分、保留全部权利声明的前提下
-   向他人分享本软件的完整副本。
-3. 本协议**不限制、不缩减** Apache-2.0 已经授予你的任何权利。若本协议某一条款与
-   Apache-2.0 冲突，**以 Apache-2.0 为准**。
+1. The Software is released as open source under the **Apache License 2.0**. Under that License you
+   are granted a worldwide, non-exclusive, royalty-free copyright License to **use, reproduce,
+   modify, merge, publish, distribute, sublicense and sell** copies of the Software, subject to the
+   conditions of Apache-2.0 (the most important of which are that you retain the copyright, License
+   and disclaimer notices and state in modified files that you changed them; and if the
+   distribution includes the [`../NOTICE`](../NOTICE) attribution file, your distribution must
+   retain its contents as well).
+2. The Studio additionally confirms here a License granted for the convenience of end users: you may
+   install and run the Software on devices that you own or lawfully control, you may copy the
+   Software for backup purposes, and you may share a complete copy of the Software with others,
+   provided it is unmodified, undivided and retains all rights notices.
+3. This agreement **does not restrict or reduce** any right already granted to you by Apache-2.0. If
+   any term of this agreement conflicts with Apache-2.0, **Apache-2.0 prevails**.
 
-## 二、使用限制
+## 2. Usage Restrictions
 
-1. 你不得移除或篡改本软件中的版权、商标、版本资源等权利标识（Apache-2.0 要求的分发条件之一）。
-2. 你不得将本软件或其衍生作品冒充为由你独立开发的产品，也不得使用本工作室的名称或商标
-   为非本工作室的版本背书。
-3. 你不得将本软件的自动化功能用于违反目标网站服务条款、侵犯他人权益或违反法律法规的用途。
-4. 关于反向工程：Apache-2.0 本身就授予你阅读、修改与再分发的权利，
-   因此**本协议不对源代码做任何反向工程限制**。仅就随发布物提供的第三方二进制组件
-   （例如内嵌的原生推理库）而言，若其许可证另有约定，从其约定。
+1. You must not remove or alter the rights notices in the Software, such as copyright, trademark and
+   version resources (this is one of the distribution conditions required by Apache-2.0).
+2. You must not pass off the Software or a derivative work of it as a product developed
+   independently by you, nor use the Studio's name or trademarks to endorse any version that is not
+   the Studio's.
+3. You must not use the Software's automation features for purposes that violate the terms of
+   service of the target website, infringe the rights or interests of others, or breach laws or
+   regulations.
+4. On reverse engineering: Apache-2.0 itself grants you the right to read, modify and redistribute
+   the source code, and therefore **this agreement imposes no reverse-engineering restriction on the
+   source code**. As to the third-party binary components provided with the distribution (for
+   example an embedded native inference library), if their own Licenses provide otherwise, those
+   Licenses govern.
 
-## 三、第三方组件与开源许可
+## 3. Third-Party Components and Open-Source Licenses
 
-1. 本软件包含第三方开源组件。**完整清单、版本与许可证**见
-   [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)，机器可读版本见
-   [`SBOM.json`](SBOM.json)（SPDX 风格物料清单，可用 `python tools/gen_sbom.py` 重新生成）。
-2. 第三方组件按其各自许可证授权，**本协议不改变你依这些许可证享有的权利**，
-   也不免除你依这些许可证应承担的义务。
-3. 当前发布物（v0.2.1）的许可证状况：
-   - 发布物中**不含 AGPL 组件**。PDF 文本提取自 v0.2.1 起由 AGPL-3.0 的 PyMuPDF
-     换成 **BSD-3-Clause** 的 `pypdf`；文件解析链路（Word/Excel/PPT/PDF/TXT）其余组件
-     均为 MIT / BSD 类宽松许可。
-   - 发布物中**唯一的 GPL 组件是构建工具 PyInstaller**（GPLv2 并附带官方"打包产物例外"）：
-     该例外明确允许用它打包并分发专有程序，且它只用于构建、不以库的形式随产物使用，
-     因此**不要求你的发布物开源**。
-   - 前端为自包含 .NET 部署，随包分发的是 Microsoft .NET / WPF 运行时程序集（MIT），
-     未引用任何第三方 NuGet 包。
-4. **历史版本提示**：v0.2.0 及更早版本的发布物包含 AGPL-3.0 的 PyMuPDF。
-   若你打算对外分发这些**旧版本**，请自行评估 AGPL 的著佐权义务，或改用 v0.2.1 及以后版本。
-5. **自用与组织内部使用**不构成"对外分发"，上述著佐权义务不触发。
+1. The Software contains third-party open-source components. **The complete list, versions and
+   Licenses** are in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md), and a machine-readable
+   version is in [`SBOM.json`](SBOM.json) (an SPDX-style bill of materials, which can be
+   regenerated with `python tools/gen_sbom.py`).
+2. Third-party components are licensed under their own respective Licenses. **This agreement does
+   not change the rights you enjoy under those Licenses**, nor does it release you from the
+   obligations you owe under them.
+3. License status of the current release (v0.2.1):
+   - The distribution contains **no AGPL components**. As of v0.2.1, PDF text extraction uses
+     **BSD-3-Clause** `pypdf` instead of AGPL-3.0 PyMuPDF; the remaining components of the file
+     parsing chain (Word/Excel/PPT/PDF/TXT) are all MIT / BSD-style permissive Licenses.
+   - The **only GPL component in the distribution is the build tool PyInstaller** (GPLv2 together
+     with the official "bundled product exception"): that exception expressly permits using it to
+     bundle and distribute proprietary programs, and it is used only for building, not as a library
+     within the product, and therefore **your distribution is not required to be open-sourced**.
+   - The front end is a self-contained .NET deployment; what ships with it are Microsoft .NET / WPF
+     runtime assemblies (MIT), and no third-party NuGet package is referenced.
+4. **Note on historical versions**: the distributions of v0.2.0 and earlier contain AGPL-3.0
+   PyMuPDF. If you intend to distribute those **older versions** externally, assess the AGPL
+   copyleft obligations yourself, or move to v0.2.1 or later.
+5. **Personal use and use within an organisation** do not constitute "external distribution", and
+   the copyleft obligations above are not triggered.
 
-## 四、本地模型
+## 4. Local Models
 
-1. 本软件本身**不含**大语言模型权重。模型由你自行下载或提供，模型文件的许可证
-   由模型发布方另行约定（例如 Qwen 系列遵循其各自的模型许可）。
-2. 你需自行确认所使用模型的许可允许你的使用场景；模型下载源（`hf-mirror.com` 或
-   `huggingface.co`）的可用性、内容与合规性由该站点负责，本工作室不作保证。
-3. 模型文件默认保存在本机程序目录下，除你主动触发下载外不会产生网络请求
-   （逐项说明见 [`PRIVACY.md`](PRIVACY.md) 第 2.1 节）。
+1. The Software itself **contains no** large language model weights. Models are downloaded or
+   supplied by you, and the License for a model file is agreed separately by the model's publisher
+   (for example the Qwen series follows its own respective model License).
+2. You must confirm for yourself that the License of the model you use permits your use case; the
+   availability, content and compliance of the model download sources (`hf-mirror.com` or
+   `huggingface.co`) are the responsibility of those sites, and the Studio gives no warranty
+   regarding them.
+3. Model files are by default stored under the local program directory, and no network request is
+   made unless you actively trigger a download (for the item-by-item description see section 2.1 of
+   [`PRIVACY.md`](PRIVACY.md)).
 
-## 五、联网功能与你的选择
+## 5. Network Features and Your Choices
 
-本软件默认只在本地运行；**模型下载、联网搜索、技能市场、自动更新检查、浏览器自动化**
-这五项功能会访问网络，全部需要你主动开启，且每一项都可以关闭。
-每项功能发送什么、不发送什么、数据去向、保留多久以及如何关闭，见
-[`PRIVACY.md`](PRIVACY.md) 第二节。企业环境一次性关停全部联网的做法见
-[`zh-Hans/COMPLIANCE.md`](zh-Hans/COMPLIANCE.md) / [`en/COMPLIANCE.md`](en/COMPLIANCE.md)。
+By default the Software runs only locally; **model download, web search, the skill marketplace,
+update checks and browser automation** are the five features that access the network, all of which
+require you to enable them actively, and each of which can be turned off. What each feature sends,
+what it does not send, where the data goes, how long it is retained and how to turn it off are
+described in section 2 of [`PRIVACY.md`](PRIVACY.md). For how to disable all network access at once
+in an enterprise environment, see [`zh-Hans/COMPLIANCE.md`](zh-Hans/COMPLIANCE.md) /
+[`en/COMPLIANCE.md`](en/COMPLIANCE.md).
 
-若你所在组织禁止业务数据出境，请在开启**联网搜索**（关键词出境）与**技能市场**
-（仓库名出境）前先取得授权；对话与文档内容本身不出境。
+If your organisation prohibits business data from leaving the jurisdiction, obtain authorisation
+before enabling **web search** (search keywords leave the jurisdiction) and the **skill
+marketplace** (repository names leave the jurisdiction); conversations and document contents
+themselves do not leave the jurisdiction.
 
-## 六、自动化功能的责任归属与安全约定
+## 6. Responsibility for Automation Features and Safety Rules
 
-1. 启用自动化前，**必须主动勾选安全协议**。该协议文本已多语言化
-   （语言包键 `settings.automation.safetyBody`），协议版本与你的同意时间会记入本机审计日志，
-   便于事后追溯。协议明确：
-   - 自动化**仅在本地运行**，使用有头浏览器，操作过程你可随时观察；
-   - EchoDesk **不上传**你的任务内容、下载文件或生成结果；
-   - 所有下载文件先落在本机临时目录，任务处理完成后清理；需要留存的原件与结果保存在
-     `批量处理结果\` 目录，由你自行管理与删除；
-   - 你需确保操作符合所在组织的规定；
-   - 因违规使用导致的后果由使用者自行承担。
-2. **责任归属**：自动化功能是"按你的配置代你操作浏览器"的工具。**你必须自行确认**：
-   - 目标网站的**服务条款**允许此类自动化访问（包括访问频率、抓取范围与账号使用方式）；
-   - **你所在组织的规章制度**（信息安全、数据分级、外部网站访问、留痕与审批要求）允许该操作；
-   - 下载、解析与处理这些文件符合**数据保护与保密**要求；
-   - 你在自动化浏览器中的登录态（`browser_state.json`）被妥善保管，不在共享机器上长期留存。
-3. 因你配置或运行的自动化任务引发的任何争议、封禁、数据泄露或合规后果，
-   **由使用者自行承担**，Void Entropia Studio 不承担责任。
+1. Before enabling automation you **must actively tick the safety protocol**. The text of that
+   protocol has been localised (language-pack key `settings.automation.safetyBody`), and the
+   protocol version together with the time of your consent is recorded in the local audit log so
+   that it can be traced afterwards. The protocol states expressly:
+   - automation **runs only locally**, uses a headed browser, and you can observe the process at any
+     time;
+   - EchoDesk **does not upload** your task content, downloaded files or generated results;
+   - all downloaded files first land in the local temporary directory and are cleaned up once task
+     processing is complete; originals and results that need to be kept are stored in the `results\`
+     directory, which you manage and delete yourself;
+   - you must ensure that the operation complies with the rules of your organisation;
+   - consequences arising from non-compliant use are borne by the user.
+2. **Responsibility**: the automation feature is a tool that "operates the browser on your behalf
+   according to your configuration". **You must confirm for yourself**:
+   - that the target website's **terms of service** permit this kind of automated access (including
+     access frequency, scraping scope and the manner in which accounts are used);
+   - that **your organisation's rules and regulations** (information security, data classification,
+     access to external websites, record-keeping and approval requirements) permit the operation;
+   - that downloading, parsing and processing these files meets **data protection and
+     confidentiality** requirements;
+   - that your login state in the automated browser (`browser_state.json`) is properly safeguarded
+     and is not left on a shared machine for long periods.
+3. Any dispute, ban, data breach or compliance consequence arising from an automation task that you
+   configure or run is **borne by the user**, and Void Entropia Studio accepts no liability.
 
-## 七、技能（插件）的责任归属
+## 7. Responsibility for Skills (Plug-ins)
 
-1. 技能由第三方提供。EchoDesk **不以任何方式再分发**技能代码，也不对其功能、质量或安全性负责；
-   技能自身的许可证由其作者声明，设置窗口会展示该声明供你判断。
-2. 技能代码在 EchoDesk 后端进程内、**以你的 Windows 账户权限**执行。
-   首次加载本地插件时程序会弹出确认框展示其声明能力，但这属于**事前告知**，
-   不构成运行时隔离或沙箱。
-3. 因此，**只安装你信任或已复核过的技能**；安装前请阅读其权限声明、README 与许可证。
-   技能导致的数据泄露、文件损坏或合规问题由该技能作者与使用者承担。
+1. Skills are provided by third parties. EchoDesk **does not redistribute** skill code in any way,
+   and is not responsible for its functionality, quality or security; a skill's own License is
+   declared by its author, and the settings window displays that declaration for you to judge.
+2. Skill code executes inside the EchoDesk backend process and **with the permissions of your
+   Windows account**. When a local plug-in is loaded for the first time, the program pops up a
+   confirmation dialog showing its declared capabilities, but this is **advance notice** and does
+   not constitute runtime isolation or a sandbox.
+3. Therefore, **install only skills that you trust or have reviewed**; before installing, read their
+   permission statements, README and License. Data breaches, file corruption or compliance problems
+   caused by a skill are borne by that skill's author and the user.
 
-## 八、免责声明
+## 8. Disclaimer of Warranty
 
-1. 本软件按"现状"提供，不附带任何明示或默示的担保，包括但不限于适销性、
-   特定用途适用性与不侵权担保。Apache-2.0 第 7 条同样规定本软件按"现状"提供。
-2. 本软件基于本地小参数量模型生成内容，**输出可能存在错误、遗漏或不准确**，
-   不构成法律、财务、医疗或其他专业意见。涉及重要决策时请自行核实。
-3. 自动化功能会代替你操作浏览器并下载文件；其责任归属与需要你自行确认的事项见第六节，
-   技能（插件）相关的责任归属见第七节。
-4. 本软件不提供任何形式的在线服务承诺：模型下载源、搜索源、GitHub API 的可用性、
-   限流与内容均由第三方决定，其变更或中断不属于本软件的缺陷。
+1. The Software is provided "as is", without any express or implied warranty, including but not
+   limited to warranties of merchantability, fitness for a particular purpose and non-infringement.
+   Section 7 of Apache-2.0 likewise provides that the software is supplied "as is".
+2. The Software generates content with a small local-parameter model, and **its output may contain
+   errors, omissions or inaccuracies**; it does not constitute legal, financial, medical or other
+   professional advice. Verify matters yourself when important decisions are involved.
+3. The automation features operate the browser and download files on your behalf; the allocation of
+   responsibility for them and the matters you must confirm yourself are set out in section 6, and
+   responsibility in relation to skills (plug-ins) is set out in section 7.
+4. The Software promises no online service of any kind: the availability, rate limits and content
+   of model download sources, search sources and the GitHub API are all determined by third
+   parties, and changes to or interruptions of them are not defects of the Software.
 
-## 九、责任限制
+## 9. Limitation of Liability
 
-1. 在适用法律允许的最大范围内，对于因使用或无法使用本软件而产生的任何
-   直接、间接、附带、特殊、惩罚性或后果性损失（包括但不限于利润损失、业务中断、
-   数据丢失、文件损坏、第三方索赔），**本工作室不承担责任**。
-2. 在适用法律不允许完全排除责任的情形下，本工作室的累计赔偿责任以**你为本软件实际支付的
-   金额**为上限（本软件免费提供时，该上限为 0）。
-3. 本条不排除依法不可排除的责任（例如故意或重大过失造成的责任），
-   也不限制 Apache-2.0 第 7、8 条所允许的免责范围之外你依法享有的权利。
+1. To the maximum extent permitted by applicable law, **the Studio accepts no liability** for any
+   direct, indirect, incidental, special, punitive or consequential loss arising from the use of or
+   inability to use the Software (including but not limited to loss of profit, business
+   interruption, loss of data, file corruption, or third-party claims).
+2. Where applicable law does not permit liability to be excluded entirely, the Studio's aggregate
+   liability is capped at **the amount you actually paid for the Software** (where the Software is
+   provided free of charge, that cap is 0).
+3. This section does not exclude liability that cannot be excluded by law (for example liability
+   arising from intent or gross negligence), nor does it limit rights you enjoy under law beyond the
+   scope of the exclusions permitted by sections 7 and 8 of Apache-2.0.
 
-## 十、终止
+## 10. Termination
 
-你若违反本协议（尤其是第二节的使用限制），本协议项下授予你的额外许可自动终止，
-你应停止使用并删除本软件全部副本。Apache-2.0 授予你的权利不因本协议终止而终止，
-其终止条件以 Apache-2.0 自身规定为准。
+If you breach this agreement (in particular the usage restrictions in section 2), the additional
+License granted to you under this agreement terminates automatically, and you must stop using the
+Software and delete all copies of it. The rights granted to you by Apache-2.0 do not terminate
+because this agreement terminates; the conditions for their termination are governed by Apache-2.0
+itself.
 
-## 十一、适用法律与争议解决
+## 11. Governing Law and Dispute Resolution
 
-1. 本协议的解释适用**本工作室所在地**的法律（不含冲突法规则）。
-2. 因本协议产生的争议，双方应先友好协商；协商不成时，提交本工作室所在地有管辖权的法院解决。
-3. 若某条款被认定无效或不可执行，其余条款仍然有效；该无效条款应在最小必要范围内
-   以最接近其原意的有效条款替代。
+1. This agreement is interpreted under the laws of **the place where the Studio is established**
+   (excluding conflict-of-law rules).
+2. Disputes arising from this agreement shall first be settled through friendly negotiation between
+   the parties; if negotiation fails, they shall be submitted to a court with jurisdiction at the
+   place where the Studio is established.
+3. If a term is held invalid or unenforceable, the remaining terms remain in force; that invalid
+   term shall be replaced, to the minimum extent necessary, by a valid term closest to its original
+   meaning.
 
-## 十二、联系方式
+## 12. Contact
 
-- **安全漏洞**：请走 [`SECURITY.md`](SECURITY.md) 中的私有报告渠道，**不要**开公开 Issue。
-  邮件兜底地址为 `security@example.com`
-  （**占位值：维护者需在发布前替换为真实受监控邮箱**）。
-- **一般问题、许可与合规咨询**：通过项目仓库
-  `https://github.com/VoidEntropiaStudio/EchoDesk` 的 Issues 提交；
-  使用问题可先查 [`zh-Hans/FAQ.md`](zh-Hans/FAQ.md) / [`en/FAQ.md`](en/FAQ.md)。
-- 本工作室**未提供**电话支持或即时通讯支持渠道。
+- **Security vulnerabilities**: use the private reporting channel in [`SECURITY.md`](../SECURITY.md)
+  and do **not** open a public Issue. The private advisory form is
+  `https://github.com/VoidEntropiaStudio/EchoDesk/security/advisories/new`. The fallback email
+  address is `VoidEntropiaStudio@users.noreply.github.com`.
+- **General questions and licensing and compliance enquiries (including questions about the terms
+  of this agreement and legal notices)**: submit them through GitHub Issues at
+  `https://github.com/VoidEntropiaStudio/EchoDesk/issues`; for discussion use GitHub Discussions at
+  `https://github.com/VoidEntropiaStudio/EchoDesk/discussions`; for usage questions you can first
+  check [`zh-Hans/FAQ.md`](zh-Hans/FAQ.md) / [`en/FAQ.md`](en/FAQ.md).
+- The Studio **does not provide** telephone support or instant-messaging support channels.
 
-## 十三、协议变更
+## 13. Changes to This Agreement
 
-1. 本协议随版本更新。任何变更都会写在新版本的 `docs/EULA.md` 中，并在
-   [`CHANGELOG.md`](CHANGELOG.md) 的对应版本条目里说明变更要点。
-2. 变更**不溯及既往**：你继续使用的新版本适用其随附版本的协议；
-   若你不同意变更后的条款，请停止使用该新版本（已按旧版本条款取得的权利不受影响）。
-3. 本文件顶部标注的"版本"即本协议的版本，与本软件版本号一致。
+1. This agreement is updated with each version. Any change will be written into the `docs/EULA.md`
+   of the new version, and its key points described in the corresponding version entry of
+   [`CHANGELOG.md`](../CHANGELOG.md).
+2. Changes are **not retroactive**: continued use of a new version is subject to the agreement
+   shipped with that version; if you do not agree to the changed terms, stop using that new version
+   (rights already acquired under the terms of the previous version are unaffected).
+3. The "version" stated at the top of this file is the version of this agreement and is consistent
+   with the version number of the Software.
 
-## 十四、其他
+## 14. Miscellaneous
 
-1. 本软件为绿色便携版时，删除程序文件夹即完成卸载（不写注册表、不装服务）；
-   安装版请使用卸载程序。
-2. 卸载后残留的会话、常用语、自动化结果等数据位于程序目录与用户数据目录，
-   删除对应文件即可清除（清单见 [`PRIVACY.md`](PRIVACY.md) 第七节）。
-3. 本协议与 [`PRIVACY.md`](PRIVACY.md) 如有表述冲突，涉及**数据处理**的事项以
-   [`PRIVACY.md`](PRIVACY.md) 为准；涉及**许可授权**的事项以 [`../LICENSE`](../LICENSE)（Apache-2.0）为准。
+1. Where the Software is a green portable build, deleting the program folder completes
+   uninstallation (no registry entries are written and no service is installed); for the installed
+   build, use the uninstaller.
+2. Data left behind after uninstallation — sessions, frequently used phrases, automation results and
+   so on — resides in the program directory and the user data directory, and can be cleared by
+   deleting the corresponding files (see section 7 of [`PRIVACY.md`](PRIVACY.md) for the list).
+3. If this agreement and [`PRIVACY.md`](PRIVACY.md) conflict in their wording, matters concerning
+   **data processing** are governed by [`PRIVACY.md`](PRIVACY.md), and matters concerning
+   **License grants** are governed by [`../LICENSE`](../LICENSE) (Apache-2.0).

@@ -9,7 +9,7 @@ Chinese version: [`docs/zh-Hans/FAQ.md`](../zh-Hans/FAQ.md).
 
 | What I want to do | How to do it |
 | --- | --- |
-| Start the program | Double-click "EchoDesk-v0.2.1.lnk" inside the program folder |
+| Start the program | Double-click "Start-EchoDesk-v0.2.1.lnk" inside the program folder (the self-extracting installer creates it; zip users run `install-complete.bat` once) |
 | See every command | Type `/help` in the input box |
 | Have the AI read a document | Drag the file into the window, or use `/file C:\路径\合同.docx` |
 | Very long documents (contracts/reports) | Just upload it: anything beyond the context window is summarized in chunks automatically; you can also trigger it by hand with `/summarize` |
@@ -67,7 +67,7 @@ This is **expected behaviour** (since v0.2.0 the program no longer downloads sil
   quantized model (such as Q4_K_M).
 
 ### How do I make EchoDesk start with Windows
-Copy "EchoDesk-v0.2.1.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
+Copy "Start-EchoDesk-v0.2.1.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
 The `automation.start_with_windows` setting is **not implemented yet**: the program does not read it, so
 setting it to `true` will not start EchoDesk at sign-in — use the shortcut above instead (scheduled automation
 requires the program to be running).
@@ -137,18 +137,18 @@ The original file downloaded for each task is **moved into that task's result di
 review opinion that was generated:
 
 ```
-批量处理结果\2026-09-23\合同审查\     ← the top-level folder name, date and task name are all configurable
+results\2026-09-23\合同审查\     ← the top-level folder name, date and task name are all configurable
 ├─ 合同正文.pdf                       ← the original file downloaded in this run (duplicate names get a number appended)
-├─ 结果.txt                           ← extract + review opinion (plain text, no Markdown markup)
-└─ 失败截图_任务2_20260923_101010.png  ← generated only when a task fails
+├─ result.txt                           ← extract + review opinion (plain text, no Markdown markup)
+└─ failure-screenshot-task2-20260923_101010.png  ← generated only when a task fails
 ```
 
 The temporary copies used during downloading are kept in a dedicated subdirectory of the system temporary
 directory and are cleaned up as soon as processing finishes.
-If you turn off "Save results to local files", no `结果.txt` and no screenshots are written, and the results go
+If you turn off "Save results to local files", no `result.txt` and no screenshots are written, and the results go
 to the log only.
 With "Where to save results" left empty the results root sits in the portable **outer** folder
-(`EchoDesk-v0.2.1\批量处理结果\`), not inside `app\`; to move all user data (including `ui_state.json` and
+(`EchoDesk-v0.2.1\results\`), not inside `app\`; to move all user data (including `ui_state.json` and
 `snippets.json`), set the `ECHODESK_DATA` environment variable.
 For how to set the save location, the top-level folder name and the task name, see
 [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md).
@@ -234,3 +234,23 @@ Use `Ctrl+滚轮` to adjust the font size.
 ### I want to report a problem
 Please include: `app\backend\backend_crash.log` (if it has content), `app\backend\config.json`, the output of
 `/status`, and the steps that reproduce the problem.
+
+---
+
+## 7. Still have a question?
+
+If this FAQ did not answer it, ask on GitHub. The project publishes **no support email address,
+no phone number and no postal address** — GitHub is the only channel, and a report filed there
+reaches the maintainers directly:
+
+- **Questions, ideas, skill sharing and translation coordination** → post in
+  [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions).
+- **A reproducible problem that is not covered above** → **open an Issue**:
+  <https://github.com/VoidEntropiaStudio/EchoDesk/issues>. Include what
+  [I want to report a problem](#i-want-to-report-a-problem) lists: the version, your Windows
+  build, `app\backend\backend_crash.log` (if it has content), `app\backend\config.json`, the
+  output of `/status`, and the exact steps that reproduce it.
+- **A security vulnerability** → do **not** open a public issue; follow the private reporting
+  process in [`SECURITY.md`](../../SECURITY.md).
+- **A change to the code, the documentation or a translation** → open a pull request, see
+  [`CONTRIBUTING.md`](../../CONTRIBUTING.md).

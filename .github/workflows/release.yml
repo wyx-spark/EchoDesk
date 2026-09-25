@@ -77,6 +77,43 @@ jobs:
           "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "本次发布版本: v$version"
 
+      - name: Prepare SFX toolchain
+        shell: pwsh
+        run: |
+          # 发布任务书「任务一/三」的前提是 publish\ 下已有 7zS.sfx 与 rcedit-x64.exe。
+          # 这两个都是第三方二进制，不入库（publish\ 本身也在 .gitignore 里），
+          # 所以 CI 上必须先准备好，否则 -MakeSfx 的可行性检查会正确地中止打包。
+          New-Item -ItemType Directory -Force -Path publish | Out-Null
+
+          # rcedit：复用仓库自带的下载脚本（默认下到 tools\），再放一份到 publish\ 供打包脚本取用
+          if (-not (Test-Path "publish\rcedit-x64.exe")) {
+              & cmd /c "tools\fetch_tools.bat"
+              if (Test-Path "tools\rcedit-x64.exe") {
+                  Copy-Item "tools\rcedit-x64.exe" "publish\rcedit-x64.exe" -Force
+              }
+          }
+          if (-not (Test-Path "publish\rcedit-x64.exe")) {
+              throw "rcedit 不可用：自解压包无法写入版本资源与图标。"
+          }
+
+          # 7zS.sfx：来自 7-Zip Extra 包。用官方的独立解压器 7zr.exe 解出来
+          # （runner 上未必装了 7-Zip，而 .7z 无法用 Expand-Archive 解）。
+          if (-not (Test-Path "publish\7zS.sfx")) {
+              $sevenZipVersion = "2501"
+              curl.exe -sS -L --max-time 300 -o "$env:TEMP\7zr.exe" "https://www.7-zip.org/a/7zr.exe"
+              if (-not (Test-Path "$env:TEMP\7zr.exe")) { throw "下载 7zr.exe 失败" }
+              curl.exe -sS -L --max-time 300 -o "$env:TEMP\7z-extra.7z" `
+                  "https://www.7-zip.org/a/7z$sevenZipVersion-extra.7z"
+              if (-not (Test-Path "$env:TEMP\7z-extra.7z")) { throw "下载 7-Zip Extra 失败" }
+              & "$env:TEMP\7zr.exe" x -y "-o$env:TEMP\7z-extra" "$env:TEMP\7z-extra.7z"
+              if ($LASTEXITCODE -ne 0) { throw "解压 7-Zip Extra 失败（退出码 $LASTEXITCODE）" }
+              $sfx = Get-ChildItem "$env:TEMP\7z-extra" -Recurse -Filter "7zS.sfx" -File |
+                     Select-Object -First 1
+              if (-not $sfx) { throw "在 7-Zip Extra 里找不到 7zS.sfx" }
+              Copy-Item $sfx.FullName "publish\7zS.sfx" -Force
+          }
+          Write-Host "SFX 工具链就位: $(Get-Item 'publish\7zS.sfx').Length 字节 + $(Get-Item 'publish\rcedit-x64.exe').Length 字节"
+
       - name: Build release package
         shell: pwsh
         env:
@@ -92,7 +129,10 @@ jobs:
           #     该路径实际用于**自托管 runner**（机器上已缓存模型）或外部离线打包场景；
           #     托管 runner 上脚本会提示「未找到可复制的 .gguf 模型」，产出的仍是不含模型的包。
           # 具名参数用哈希表 splat（数组 splat 会把 "-Version" 当成第一个位置参数的值）
-          $buildArgs = @{ Version = "${{ steps.version.outputs.version }}" }
+          # -MakeSfx：发布任务书「任务四」要求构建脚本末尾收口出两份自解压绿化安装包
+          # （含模型 / 不含模型）与 SHA256SUMS.txt。SFX 模块与 rcedit 由工作流此前的
+          # 步骤放到 publish\ 下（7zS.sfx 是 7-Zip Extra 的模块，仓库不提交二进制）。
+          $buildArgs = @{ Version = "${{ steps.version.outputs.version }}"; MakeSfx = $true }
           if ($env:INCLUDE_MODELS -eq "true") {
               Write-Host "包含模型：追加 -IncludeModels"
               $buildArgs["IncludeModels"] = $true
@@ -111,19 +151,52 @@ jobs:
               (Join-Path $out "app\EchoDesk.exe"),
               (Join-Path $out "app\EchoDesk.ico"),
               (Join-Path $out "app\backend\EchoDeskBackend.exe"),
-              (Join-Path $out "EchoDesk-v$version.lnk"),
-              (Join-Path $out "使用说明.txt"),
+              (Join-Path $out "USAGE.txt"),
+              (Join-Path $out "install-complete.bat"),
+              (Join-Path $out "README.md"),
+              (Join-Path $out "README.zh-Hans.md"),
+              (Join-Path $out "CHANGELOG.md"),
               (Join-Path $out "LICENSE"),
+              (Join-Path $out "LICENSE.zh-Hans.md"),
               (Join-Path $out "NOTICE"),
+              (Join-Path $out "NOTICE.zh-Hans.md"),
+              (Join-Path $out "SECURITY.md"),
+              (Join-Path $out "SECURITY.zh-Hans.md"),
+              (Join-Path $out "config.example.json"),
+              (Join-Path $out "install-complete.bat"),
+              (Join-Path $out "results"),
               (Join-Path $out "docs\PRIVACY.md"),
+              (Join-Path $out "docs\PRIVACY.zh-Hans.md"),
               (Join-Path $out "docs\EULA.md"),
+              (Join-Path $out "docs\EULA.zh-Hans.md"),
               (Join-Path $out "docs\THIRD_PARTY_LICENSES.md"),
+              (Join-Path $out "docs\THIRD_PARTY_LICENSES.zh-Hans.md"),
               (Join-Path $out "docs\SBOM.json")
           )
           foreach ($item in $required) {
               if (-not (Test-Path -LiteralPath $item)) {
                   throw "发布物缺少必需文件: $item"
               }
+          }
+          # 过程文档（研发/修复/发布记录）不得进包（发布任务书「全局要求五」）
+          $records = @(Get-ChildItem -LiteralPath $out -Recurse -File |
+                       Where-Object { $_.Name -match '^(v?0\.\d+\.\d+)-(研发记录|修复记录|发布记录)\.md$' })
+          if ($records.Count -gt 0) {
+              throw "发布物内含过程文档（应为空）: $($records[0].Name)"
+          }
+          # 文件名/目录名必须全英文（发布任务书「全局要求一」）
+          $cjk = [regex]'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]'
+          $cnNames = @(Get-ChildItem -LiteralPath $out -Recurse -Force |
+                       Where-Object { $cjk.IsMatch($_.Name) })
+          if ($cnNames.Count -gt 0) {
+              throw "发布物内含非 ASCII 文件名/目录名: $($cnNames[0].Name)"
+          }
+          # 不得预置 .lnk：快捷方式里是绝对路径，在 CI 上生成会把 runner 的路径
+          # 带进发布物（任务书「全局要求五」禁止个人绝对路径）。
+          # 快捷方式由 install-complete.bat 在用户机器上创建。
+          $links = @(Get-ChildItem -LiteralPath $out -Recurse -File -Filter *.lnk)
+          if ($links.Count -gt 0) {
+              throw "发布物内含预置快捷方式（会泄露构建机绝对路径）: $($links[0].Name)"
           }
           # 外层不得出现程序文件（修复七的硬要求）
           $stray = @(Get-ChildItem -LiteralPath $out -Recurse -File -Include *.exe, *.dll |
@@ -149,7 +222,8 @@ jobs:
           if ("${{ steps.package.outputs.has_models }}" -eq "True") { $suffix = "win-x64-with-models" }
           $zip = "EchoDesk-v$version-$suffix.zip"
           if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
-          # 压缩包内直接是发布物内容（解压即可双击 `EchoDesk-v<版本>.lnk`）。
+          # 压缩包内直接是发布物内容（解压后运行一次 install-complete.bat 创建快捷方式，
+          # 或直接启动 app\EchoDesk.exe）。
           # Compress-Archive 是 PowerShell 自带能力，不引入额外压缩工具；
           # 注意 Zip 格式单文件上限 2GB——含模型包若超过该限制需改用 7z 分卷。
           Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip -CompressionLevel Optimal
@@ -176,18 +250,34 @@ jobs:
           }
           $notes = Get-Content -LiteralPath $template -Raw -Encoding UTF8
 
-          # 下载包清单
-          $packageList = "- ``${{ steps.zip.outputs.file }}``（${{ steps.package.outputs.mb }} MB 解压后 / ${{ steps.zip.outputs.mb }} MB 压缩包）"
-          if ("${{ steps.package.outputs.has_models }}" -eq "True") {
-              $packageList += "`n- 含模型离线包：解压后可直接离线使用，无需再下载模型。"
-          }
-          else {
-              $packageList += "`n- 不含模型：首次启动会询问是否下载模型（约 508MB，需联网）。"
+          # 下载包清单：自解压绿化安装包（含/不含模型）+ 便携版压缩包。
+          # 自解压包是发布任务书「交付物」的主件；zip 作为"免安装解压版"补充。
+          $packageList = @(
+              "- ``EchoDesk-v$version-Setup.exe`` —— 自解压绿化安装包（**含模型**，离线可用）",
+              "- ``EchoDesk-v$version-NoModel-Setup.exe`` —— 自解压绿化安装包（不含模型，首次启动询问下载）",
+              "- ``${{ steps.zip.outputs.file }}``（${{ steps.package.outputs.mb }} MB 解压后 / ${{ steps.zip.outputs.mb }} MB 压缩包）—— 免安装解压版",
+              "",
+              "自解压包双击即可：选择一个空文件夹解压，解压完成后会自动创建 ``Start-EchoDesk-v$version.lnk`` 并提示完成。",
+              "绿色便携，删除文件夹即卸载，不写注册表。"
+          ) -join "`n"
+          if ("${{ steps.package.outputs.has_models }}" -ne "True") {
+              $packageList += "`n`n> 本次构建的安装包**不含模型**；首次启动会询问是否下载（约 508MB，需联网），也可以自行把 `.gguf` 放进 `app\backend\models\`。"
           }
 
-          # 更新日志节选：从 docs/CHANGELOG.md 抓取 "## v<版本>" 到下一个 "## " 之间的小节
+          # 校验哈希清单（发布任务书「任务七」要求 Release Notes 含校验哈希）
+          $shaList = ""
+          $shaFile = "publish\SHA256SUMS.txt"
+          if (Test-Path -LiteralPath $shaFile) {
+              $shaList = (Get-Content -LiteralPath $shaFile -Encoding UTF8 |
+                          Where-Object { $_.Trim() }) -join "`n"
+          }
+          else {
+              $shaList = "（未找到 ``SHA256SUMS.txt``，请以 Release 附件中的该文件为准。）"
+          }
+
+          # 更新日志节选：从 CHANGELOG.md 抓取 "## v<版本>" 到下一个 "## " 之间的小节
           $excerpt = ""
-          $changelog = "docs\CHANGELOG.md"
+          $changelog = "CHANGELOG.md"
           if (Test-Path -LiteralPath $changelog) {
               $lines = Get-Content -LiteralPath $changelog -Encoding UTF8
               $capture = $false
@@ -202,13 +292,14 @@ jobs:
               $excerpt = ($buffer -join "`n").Trim()
           }
           if ([string]::IsNullOrWhiteSpace($excerpt)) {
-              $excerpt = "（未在 ``docs/CHANGELOG.md`` 中找到 ``v$version`` 小节，请维护者在本节手动补写本版变更。）"
+              $excerpt = "（未在 ``CHANGELOG.md`` 中找到 ``v$version`` 小节，请维护者在本节手动补写本版变更。）"
           }
 
           $notes = $notes.Replace("{{VERSION}}", "v$version")
           $notes = $notes.Replace("{{TAG}}", "${{ steps.version.outputs.tag }}")
           $notes = $notes.Replace("{{DATE}}", (Get-Date -Format "yyyy-MM-dd"))
           $notes = $notes.Replace("{{PACKAGE_LIST}}", $packageList)
+          $notes = $notes.Replace("{{SHA256_LIST}}", $shaList)
           $notes = $notes.Replace("{{CHANGELOG_EXCERPT}}", $excerpt)
 
           Set-Content -LiteralPath "release_notes.md" -Value $notes -Encoding UTF8
@@ -222,9 +313,16 @@ jobs:
           body_path: release_notes.md
           files: |
             ${{ steps.zip.outputs.file }}
-            docs/CHANGELOG.md
+            publish/EchoDesk-v${{ steps.version.outputs.version }}-Setup.exe
+            publish/EchoDesk-v${{ steps.version.outputs.version }}-NoModel-Setup.exe
+            publish/SHA256SUMS.txt
+            docs/SBOM.json
+            docs/THIRD_PARTY_LICENSES.md
+            docs/THIRD_PARTY_LICENSES.zh-Hans.md
+            CHANGELOG.md
           fail_on_unmatched_files: true
-          # 想让维护者先审正文再发布，把下面两行改为 draft: true / prerelease: true
-          draft: false
+          # 任务书「任务七」要求 Release 先存为草稿：工作流只产出草稿，
+          # 由维护者审阅正文与附件后再手动 Publish。
+          draft: true
           prerelease: false
           token: ${{ secrets.GITHUB_TOKEN }}

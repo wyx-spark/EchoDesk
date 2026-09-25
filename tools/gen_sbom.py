@@ -18,10 +18,18 @@
 extract-msg / pcodedmp / pygame / pynput，或 easyocr / torch 这类大件），
 它们**不随发布物分发**，写进 SBOM 会让审计方以为发布物里有 GPL/AGPL 组件。
 ``--scope env`` 可生成"整机环境清单"，用于排查。
-闭包计算忽略环境标记（例如 ``; python_version < "3.11"``）与 extras，
-得到的是**保守超集**，宁可多列也不漏列。
+闭包计算会评估 ``Requires-Dist`` 上的环境标记（例如 ``; python_version < "3.11"``
+或 ``; sys_platform == "darwin"``），只保留**当前解释器/平台真的会安装**的依赖；
+extras 一律不计（默认安装不含 extra）。
+为什么不评估标记（v0.2.1 之前的做法）：带标记的依赖在 Windows + CPython 3.13 上
+根本不会被安装，把它们算进闭包会让 [3] 节的 B 类永远非空，
+``--check`` 在干净环境里也永远失败，门禁因此失去意义
+（实测踩到 exceptiongroup / tomli / importlib-metadata / macholib / httpx2-jsfetch 五个）。
+评估标记需要 ``packaging``；环境里没有它时退化为"不评估标记"的保守超集，
+并在输出里明确标注，不会静默改变语义。
 
 设计约束：**只用标准库**（不引入任何新的第三方依赖）。
+``packaging`` 是**可选**导入——没有它脚本照常工作，只是闭包退化为保守超集。
 
 用法：
     python tools/gen_sbom.py              # 生成 docs/SBOM.json，打印摘要与差异；退出码 0
@@ -54,6 +62,13 @@ import time
 import xml.etree.ElementTree as ET
 from importlib.metadata import distributions
 from typing import Dict, List, Optional, Sequence, Set, Tuple
+
+# 可选导入：只在评估 Requires-Dist 的环境标记时用到。
+# 没有它脚本依然可用（退化为"不评估标记"的保守超集），因此不写进 requirements。
+try:  # pragma: no cover - 取决于环境
+    from packaging.requirements import Requirement as _PkgRequirement
+except Exception:  # noqa: BLE001
+    _PkgRequirement = None
 
 # ---------------------------------------------------------------------------
 # 路径与常量
@@ -104,6 +119,30 @@ def _requirement_name(requirement: str) -> str:
     """从 ``name>=1.0; marker`` 这类依赖串里取出包名（归一化）。"""
     match = _REQ_NAME.match((requirement or "").strip())
     return _norm(match.group(1)) if match else ""
+
+
+def _requirement_applies(requirement: str) -> bool:
+    """该 ``Requires-Dist`` 是否适用于**当前解释器 / 平台**。
+
+    返回 False 表示这条依赖在当前环境下不会被安装（标记不成立），
+    例如 ``exceptiongroup; python_version < "3.11"``、
+    ``macholib; sys_platform == "darwin"``。
+    extras 一律当作不适用（``extra == "..."`` 在 ``extra=""`` 下即为假）。
+
+    没有 ``packaging`` 或解析失败时**保守地返回 True**（宁可多列也不漏列）。
+    """
+    if _PkgRequirement is None:
+        return True
+    try:
+        parsed = _PkgRequirement((requirement or "").strip())
+    except Exception:  # noqa: BLE001 - 解析不了就保守处理
+        return True
+    if parsed.marker is None:
+        return True
+    try:
+        return bool(parsed.marker.evaluate({"extra": ""}))
+    except Exception:  # noqa: BLE001
+        return True
 
 
 def _spdx_id(kind: str, name: str, version: str, used: Set[str]) -> str:
@@ -258,6 +297,10 @@ def collect_installed() -> Tuple[List[dict], Dict[str, dict], Dict[str, List[str
         deps: List[str] = []
         for requirement in dist.requires or []:
             if "extra ==" in requirement:         # 可选 extra，默认不安装
+                continue
+            if not _requirement_applies(requirement):
+                # 环境标记不成立：当前平台不会安装它，因此不属于发布闭包
+                # （否则例外如 `macholib; sys_platform == "darwin"` 会被算进来）
                 continue
             dependency = _requirement_name(requirement)
             if dependency:

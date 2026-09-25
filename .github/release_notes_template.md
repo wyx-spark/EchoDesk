@@ -6,17 +6,18 @@
     {{TAG}}              标签名，例如 v0.2.1
     {{DATE}}             生成日期
     {{PACKAGE_LIST}}     本次实际构建出来的下载包清单（含体积）
-    {{CHANGELOG_EXCERPT}} docs/CHANGELOG.md 中对应版本小节
+    {{SHA256_LIST}}      SHA256SUMS.txt 的内容（校验哈希）
+    {{CHANGELOG_EXCERPT}} CHANGELOG.md 中对应版本小节
 
   维护者：发布前请核对「已知限制 / 系统要求 / 支持的语言」三节是否仍与
-  README.md、docs/CHANGELOG.md 一致；若希望人工润色正文，
-  可先把 release.yml 里的 draft 改为 true，在草稿里改完再点发布。
+  README.md、CHANGELOG.md 一致。release.yml 已把 Release 默认存为**草稿**
+  （发布任务书「任务七」要求），请审阅正文与附件后再手动 Publish。
 -->
 
 # EchoDesk {{VERSION}}
 
 > 发布标签 `{{TAG}}` · 生成于 {{DATE}}
-> 本说明由 `.github/workflows/release.yml` 套用模板生成，变更内容节选自 `docs/CHANGELOG.md`。
+> 本说明由 `.github/workflows/release.yml` 套用模板生成，变更内容节选自 `CHANGELOG.md`。
 
 ## 下载 / Downloads
 
@@ -26,7 +27,17 @@
 
 {{CHANGELOG_EXCERPT}}
 
-完整变更日志见随包附带的 `docs/CHANGELOG.md`。
+完整变更日志见随包附带的 `CHANGELOG.md`。
+
+## 校验哈希 / Checksums
+
+下载后请核对 SHA256；下面的清单同时也是 Release 附件 `SHA256SUMS.txt` 的内容。
+
+```text
+{{SHA256_LIST}}
+```
+
+Windows 上核对：`certutil -hashfile <文件名> SHA256`。
 
 ## 已知限制 / Known limitations
 
@@ -36,6 +47,9 @@
 - **未做代码签名**：发布包默认不签名（构建脚本的 `-Sign` 需自备证书），Windows SmartScreen 可能首次提示未知发布者。
 - **模型不随包分发（不含模型的包）**：首次启动会询问是否下载模型（约 508MB），也可以自行把 `.gguf` 放到 `backend\models\`。
 - **自动化对目标站点的兼容性有限**：页面改版、验证码、二次验证需要人工介入；建议先用设置窗口里的「测试选择器」向导验证再批量运行。
+- **界面截图暂缺**：v0.2.1 未随包提供截图，文档中写的是"在屏幕上该看什么"；界面预览会在后续版本放入 `assets/screenshots/`。
+- **自解压包解压时不询问覆盖**：7-Zip 官方精简 SFX 模块没有覆盖询问能力（已用二进制内嵌字符串核实），同名文件会被直接覆盖；解压前会弹窗提前告知，解压后的安装脚本在覆盖已有快捷方式前会询问。
+- **结果目录名在本版改为 `results\`**（原 `批量处理结果\`），程序不会自动迁移旧目录 —— 见下方升级指引第 3 步。
 
 ## 系统要求 / System requirements
 
@@ -44,22 +58,30 @@
 | 操作系统 | Windows 10 x64（1809 及以上）或 Windows 11 x64；便携版无需安装 |
 | 运行时 | 无需另装 .NET：前端为 `win-x64` 自包含发布（net10.0-windows） |
 | CPU / 内存 | 4 核 CPU、8GB 内存可运行（推荐 16GB）；纯 CPU 推理，无独立显卡也可用 |
-| 磁盘 | 不含模型约 500MB；含模型的离线包额外约 1GB |
+| 磁盘 | 自解压包解压后：不含模型约 500MB、含模型约 890MB；另需留出模型下载空间 |
 | 浏览器 | 使用浏览器自动化时需本机安装 Microsoft Edge（Playwright 以 `channel=msedge` 驱动） |
 | Office | 解析 `.doc`/`.ppt` 旧格式或加密文档时需本机安装 WPS 或 Microsoft Office |
 | 网络 | 全本地推理，可完全离线使用；仅「下载模型 / 联网搜索 / 技能市场 / 模型中心」需要联网 |
 
 ## 升级指引 / Upgrade instructions
 
-**便携版（推荐）**
+**便携版 / 自解压包（推荐）**
 
-1. 下载上面的压缩包并解压到**新目录**（不要覆盖旧目录，便于回退）；
+1. 把自解压包解压到**新目录**（不要覆盖旧目录，便于回退），或使用 zip 免安装解压版；
 2. 从旧目录复制这些用户数据到新目录的对应位置：
-   - `backend\config.json`（配置）、`backend\session.json`（会话）、`snippets.json`（常用语）、`ui_state.json`（界面状态）
-   - `backend\models\*.gguf`（已下载的模型，避免重新下载）
-   - `backend\skills\` 与 `backend\skills_registry.json`（已安装技能）
-   - 如需保留自动化登录态：`backend\browser_state.json`（含 Cookie，请自行判断是否跨机复制）
-3. 双击新目录内的「EchoDesk 启动.lnk」启动；确认无误后再删除旧目录。
+   - `app\backend\config.json`（配置）、`app\backend\session.json`（会话）、`snippets.json`（常用语）、`ui_state.json`（界面状态）
+   - `app\backend\models\*.gguf`（已下载的模型，避免重新下载）
+   - `app\backend\skills\` 与 `app\backend\skills_registry.json`（已安装技能）
+   - 如需保留自动化登录态：`app\backend\browser_state.json`（含 Cookie，请自行判断是否跨机复制）
+3. **结果目录改名**：v0.2.1 起自动化结果目录由 `批量处理结果\` 改为 `results\`，程序不会自动迁移。
+   请把旧目录**改名**为 `results\`（或把旧目录内容移入新的 `results\`），让历史结果仍在同一个地方。
+   不迁移也不会丢数据，只是新旧结果分处两个目录。
+4. 双击新目录内的 `Start-EchoDesk-v{{VERSION}}.lnk` 启动；确认无误后再删除旧目录。
+   **自解压安装包**会在解压完成后自动创建这个快捷方式（它调用 `install-complete.bat`）；
+   **zip 免安装解压版**里没有预置快捷方式 —— 因为 .lnk 记的是绝对路径，预置的快捷方式
+   在别人机器上必然是死链。zip 用户请先运行一次解压目录里的 `install-complete.bat`
+   创建属于自己路径的快捷方式，或直接双击 `app\EchoDesk.exe`
+   （程序首次运行也会询问是否创建快捷方式）。
 
 **安装版**：直接用新版安装包覆盖安装即可，配置与模型都保留在安装目录内。
 
@@ -69,8 +91,18 @@
 
 - 界面与提示：**简体中文（zh-Hans）**、**English（en）**；缺失的键会按 `en → zh-Hans → 键名` 顺序回退。
 - 文档：`docs/zh-Hans/`、`docs/en/`（用户手册、FAQ、技能开发指南、自动化配置填写指南）。
+- 合规文档（LICENSE、NOTICE、SECURITY、PRIVACY、EULA、THIRD_PARTY_LICENSES、CODE_OF_CONDUCT）：
+  **英文为默认版 + `.zh-Hans.md` 中文参考译本**，如有歧义以英文版为准。
 - 其他语言（繁体中文、日语、韩语、德语、法语等）按社区贡献逐步补充，欢迎通过 Issue 模板「翻译贡献 / Translation」认领。
 
 ---
 
-问题反馈 / Feedback：优先使用仓库的 Issue 模板（附版本、日志与复现步骤），安全问题请按 `SECURITY.md` 私下报告。
+## 反馈渠道 / Feedback
+
+- **问题与功能请求**：请开 [GitHub Issue](https://github.com/VoidEntropiaStudio/EchoDesk/issues)，
+  并附上版本号、Windows 版本、复现步骤与相关日志（`app\backend\backend_crash.log`）。
+- **提问、交流技能与协作翻译**：[GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions)。
+- **安全漏洞**：**请勿开公开 Issue**，请按仓库根目录 [`SECURITY.md`](https://github.com/VoidEntropiaStudio/EchoDesk/blob/master/SECURITY.md)
+  的私有渠道报告（Security 标签页 → Report a vulnerability；兜底为 GitHub noreply 邮箱）。
+
+本项目**不提供**支持邮箱、电话号码或邮寄地址 —— 以上 GitHub 渠道是全部公开联系方式。

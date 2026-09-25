@@ -103,7 +103,7 @@ body:
         List the files/modules covered, terminology decisions, and anything you are unsure about.
       placeholder: |
         例如：翻译了 frontend/Resources/Lang/ja.json 全部键；
-        Automation 统一译为「自動化」；"结果.txt" 等文件名保持不变。
+        Automation 统一译为「自動化」；"result.txt" 等文件名保持不变。
     validations:
       required: true
 

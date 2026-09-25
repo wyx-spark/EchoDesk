@@ -9,7 +9,7 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 
 | 我想做的事 | 怎么做 |
 | --- | --- |
-| 启动程序 | 双击程序文件夹内的「EchoDesk-v0.2.1.lnk」 |
+| 启动程序 | 双击程序文件夹内的「Start-EchoDesk-v0.2.1.lnk」（自解压安装包会自动创建它；zip 解压版请先运行一次 `install-complete.bat`） |
 | 查看全部指令 | 在输入框输入 `/help` |
 | 让 AI 读一份文档 | 把文件拖进窗口，或 `/file C:\路径\合同.docx` |
 | 超长文档（合同/报告） | 直接上传即可：超出上下文窗口会自动分段摘要；也可 `/summarize` 手动触发 |
@@ -62,7 +62,7 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
   或换更小的量化模型（如 Q4_K_M）。
 
 ### 想让 EchoDesk 开机自动启动
-把「EchoDesk-v0.2.1.lnk」复制到系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）即可。
+把「Start-EchoDesk-v0.2.1.lnk」复制到系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）即可。
 配置项 `automation.start_with_windows` **尚未实现**：程序目前不会读取它，写成 `true` 也不会开机自启，
 请用上面的快捷方式办法（定时自动化要求程序在运行）。
 
@@ -124,15 +124,15 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 每个任务下载的原始文件会**移动到该任务的结果目录**里，与生成的审核意见放在一起：
 
 ```
-批量处理结果\2026-09-23\合同审查\     ← 顶层文件夹名、日期、任务名称都可配置
+results\2026-09-23\合同审查\     ← 顶层文件夹名、日期、任务名称都可配置
 ├─ 合同正文.pdf                       ← 该轮下载的原始文件（重名自动加序号）
-├─ 结果.txt                           ← 摘录 + 审核意见（纯文本，无 Markdown 标记）
-└─ 失败截图_任务2_20260923_101010.png  ← 仅在任务失败时生成
+├─ result.txt                           ← 摘录 + 审核意见（纯文本，无 Markdown 标记）
+└─ failure-screenshot-task2-20260923_101010.png  ← 仅在任务失败时生成
 ```
 
 下载过程中的临时副本保存在系统临时目录的专用子目录，处理完即清理。
-若把「保存结果到本地文件」关掉，就不写 `结果.txt` 与截图，只把结果输出到日志。
-「保存位置」留空时，结果根目录在**便携版外层**（`EchoDesk-v0.2.1\批量处理结果\`），不在 `app\` 里；
+若把「保存结果到本地文件」关掉，就不写 `result.txt` 与截图，只把结果输出到日志。
+「保存位置」留空时，结果根目录在**便携版外层**（`EchoDesk-v0.2.1\results\`），不在 `app\` 里；
 想让用户数据整体换位置（含 `ui_state.json`、`snippets.json`），可以设置环境变量 `ECHODESK_DATA`。
 保存位置、顶层文件夹名与任务名称的填法见 [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md)。
 
@@ -207,3 +207,20 @@ GitHub 匿名 API 限流（每小时 60 次）或网络不可达。解决办法�
 ### 想反馈问题
 请附上：`app\backend\backend_crash.log`（若有内容）、`app\backend\config.json`、
 `/status` 的输出，以及能复现问题的操作步骤。
+
+---
+
+## 七、还是没解决？
+
+如果这份 FAQ 没能回答你的问题，请到 GitHub 上提问。本项目**不提供**支持邮箱、电话号码或
+邮寄地址——GitHub 是唯一渠道，写在那里的问题会直接送到维护者手上：
+
+- **提问、交流想法、分享技能、协作翻译** → 在
+  [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions) 发帖。
+- **上面没覆盖到的可复现问题** → 请**开 Issue**：
+  <https://github.com/VoidEntropiaStudio/EchoDesk/issues>。请附上
+  [想反馈问题](#想反馈问题) 里列出的内容：版本号、Windows 版本、
+  `app\backend\backend_crash.log`（若有内容）、`app\backend\config.json`、
+  `/status` 的输出，以及能复现问题的操作步骤。
+- **安全漏洞** → **请不要开公开 Issue**，按 [`SECURITY.zh-Hans.md`](../../SECURITY.zh-Hans.md) 的私有渠道报告。
+- **想改代码、文档或翻译** → 请开 Pull Request，见 [`CONTRIBUTING.md`](../../CONTRIBUTING.md)。

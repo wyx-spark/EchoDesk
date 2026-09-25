@@ -817,7 +817,7 @@ public partial class SettingsWindow : Window
         RetriesBox.Text = GetInt(el, "retries", 1).ToString();
         DedupeCheck.IsChecked = GetBool(el, "dedupe");
         SaveResultsCheck.IsChecked = GetBool(el, "save_results");
-        // 新增三：批量处理结果目录
+        // 新增三：results目录
         TaskNameBox.Text = GetString(el, "task_name");
         ResultsRootNameBox.Text = GetString(el, "results_root_name");
         ResultsLocationBox.Text = GetString(el, "results_location");
@@ -983,12 +983,12 @@ public partial class SettingsWindow : Window
             $"{Path.Combine(program, "backend")}",
             $"{Loc.T("settings.general.pathSkills", "插件目录")}: " +
             $"{Path.Combine(program, "backend", "skills")}",
-            $"{Loc.T("settings.general.pathUserData", "用户数据目录（界面状态 / 常用语 / 批量处理结果）")}: {data}",
+            $"{Loc.T("settings.general.pathUserData", "用户数据目录（界面状态 / 常用语 / results）")}: {data}",
         };
         if (!string.Equals(program, data, StringComparison.OrdinalIgnoreCase))
         {
             lines.Add(Loc.T("settings.general.pathPortableNote",
-                "提示：本程序按便携版布局运行，程序本体在 app\\ 下，ui_state.json、常用语与「批量处理结果」都在外层目录，便于备份与迁移。"));
+                "提示：本程序按便携版布局运行，程序本体在 app\\ 下，ui_state.json、常用语与「results」都在外层目录，便于备份与迁移。"));
         }
         return string.Join("\n", lines);
     }
@@ -1112,7 +1112,7 @@ public partial class SettingsWindow : Window
     private static int ParseInt(string text, int fallback) =>
         int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value) ? value : fallback;
 
-    // ---------- 自动化：批量处理结果目录（新增三） ----------
+    // ---------- 自动化：results目录（新增三） ----------
 
     /// <summary>保存位置留空时显示"程序根目录"，并预览完整目录结构。</summary>
     private void UpdateResultsPreview()
@@ -1122,14 +1122,14 @@ public partial class SettingsWindow : Window
         string location = ResultsLocationBox?.Text.Trim() ?? "";
         string rootName = ResultsRootNameBox?.Text.Trim() ?? "";
         if (rootName.Length == 0)
-            rootName = Loc.T("settings.automation.defaultResultsRoot", "批量处理结果");
+            rootName = Loc.T("settings.automation.defaultResultsRoot", "results");
         string task = TaskNameBox?.Text.Trim() ?? "";
         if (task.Length == 0)
-            task = Loc.T("settings.automation.defaultTaskName", "自动化任务");
+            task = Loc.T("settings.automation.defaultTaskName", "auto-task");
         string baseDir = location.Length == 0
             ? Loc.T("settings.automation.programRoot", "程序根目录") : location;
         ResultsPreviewText.Text = Loc.T("settings.automation.resultsPreview",
-            "目录结构：{0}\\{1}\\{2}\\{3}\\（同名任务自动加 -1、-2；内含「结果.txt」与下载的原始文件）",
+            "目录结构：{0}\\{1}\\{2}\\{3}\\（同名任务自动加 -1、-2；内含「result.txt」与下载的原始文件）",
             baseDir, rootName, $"{DateTime.Now:yyyy-MM-dd}", task);
     }
 
@@ -1167,7 +1167,7 @@ public partial class SettingsWindow : Window
     {
         var dialog = new Microsoft.Win32.OpenFolderDialog
         {
-            Title = Loc.T("settings.automation.resultsLocationPrompt", "选择批量处理结果的保存位置"),
+            Title = Loc.T("settings.automation.resultsLocationPrompt", "选择results的保存位置"),
         };
         if (dialog.ShowDialog(this) == true)
         {

@@ -34,8 +34,11 @@ automation_log.jsonl
 automation_processed.json
 automation_results/
 browser_state.json
-# 批量处理结果目录（新增三；默认生成在程序根目录，也可能被指到仓库内）
+# 结果目录（新增三；默认生成在程序根目录，也可能被指到仓库内）
+# v0.2.1 发布任务书「全局要求一」：目录名由「批量处理结果」改为英文 results，
+# 只锚定仓库根，避免误伤将来任何名为 results 的子目录；旧名保留一行兼容旧用户。
 批量处理结果/
+/results/
 # 模型选择栏（新增四）
 models_registry.json
 # 技能市场
@@ -79,3 +82,9 @@ summary_cache.json
 backend/summary_cache.json
 # 开发期产物（像素校验截图、语言包补丁 JSON 等）
 artifacts/
+
+# ---------- 发布任务书「全局要求五」 ----------
+# 任务书与提示词文件（prompts\ 下的 *.md，以及散落在根目录的同类文件）不入库：
+# 发布任务书明确把「提示词文件：prompts/ 目录及散落的提示词、任务书 md」
+# 列为不该有的内容。它们留在工作区供开发时查阅即可。
+/prompts/

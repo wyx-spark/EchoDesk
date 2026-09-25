@@ -11,6 +11,7 @@
 用法：python tools/gen_licenses.py
 """
 import os
+import re
 from importlib.metadata import distributions
 from typing import Dict, List, Tuple
 
@@ -43,6 +44,43 @@ ROOT_PACKAGES = [
 OUT_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "docs", "THIRD_PARTY_LICENSES.md"
 )
+REQUIREMENTS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "backend", "requirements.txt"
+)
+
+
+def _norm(name: str) -> str:
+    """依赖名归一化（PEP 503）：比较 `llama-cpp-python` 与 `llama_cpp_python` 时必需。
+
+    为什么必须有它：ROOT_PACKAGES 里写的是发行名（连字符），
+    而 importlib.metadata 报的是 `Name` 字段，很多包用下划线
+    （llama_cpp_python / duckduckgo_search）。此前用 `name.lower()` 直接比字符串，
+    导致这两个包**明明是直接依赖，却在「一、后端直接依赖」表里被漏掉** ——
+    合规清单少列直接依赖，比多列更危险（实测由发布复核发现）。
+    """
+    return name.strip().lower().replace("_", "-").replace(".", "-")
+
+
+def declared_direct() -> List[str]:
+    """从 backend/requirements.txt 读出**直接声明**的依赖名。
+
+    清单的「直接依赖」一节必须由这个文件驱动，而不是靠一份手抄的列表：
+    手抄列表会随着 requirements.txt 增删而悄悄过期（本轮就漏了 requests/urllib3/tqdm）。
+    """
+    names: List[str] = []
+    try:
+        with open(REQUIREMENTS_PATH, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.split("#", 1)[0].strip()
+                if not line or line.startswith("-"):
+                    continue
+                name = re.split(r"[<>=!\[;]", line, maxsplit=1)[0].strip()
+                if name and _norm(name) not in {_norm(n) for n in names}:
+                    names.append(name)
+    except OSError as exc:  # noqa: BLE001 - 读不到就退化为 ROOT_PACKAGES
+        print(f"（无法读取 {REQUIREMENTS_PATH}: {exc}，回退到内置 ROOT_PACKAGES）")
+    return names
+
 
 # 需要人工关注的高风险许可证（会影响分发方式）
 RISKY = {
@@ -120,13 +158,32 @@ def main() -> None:
         "| 组件 | 版本 | 许可证 | 说明 |",
         "| --- | --- | --- | --- |",
     ]
+    # 直接依赖集合 = backend/requirements.txt 里声明的（权威来源）+ 内置 ROOT_PACKAGES 的并集。
+    # 两边都留：requirements.txt 是"实际声明了什么"，ROOT_PACKAGES 里还有构建期/历史条目，
+    # 合并后既不会漏报（本轮修的就是漏报），也不会因为某次改动把条目删掉而静默变少。
+    direct = {_norm(n) for n in declared_direct()} | {_norm(n) for n in ROOT_PACKAGES}
+    listed = 0
     for dist in distributions():
         name = (dist.metadata.get("Name") or "").strip()
-        if name.lower() not in {p.lower() for p in ROOT_PACKAGES}:
+        if _norm(name) not in direct:
             continue
         lic = _license_of(dist)
         note = RISKY.get(lic.split()[0].upper(), "") if lic else ""
         lines.append(f"| {name} | {dist.version} | {lic} | {note} |")
+        listed += 1
+    # 声明了但当前环境里没装的直接依赖要显式暴露：清单缺条目比多条目危险得多
+    installed = {_norm((d.metadata.get("Name") or "").strip()) for d in distributions()}
+    absent = sorted(n for n in direct if n and n not in installed)
+    if absent:
+        lines.append("")
+        lines.append(
+            "> ⚠️ 以下直接依赖在当前扫描环境里未安装，因此无法给出许可证："
+            + "、".join(f"`{n}`" for n in absent)
+            + "。请在装全 `backend/requirements.txt` 的环境里重新生成本清单。"
+        )
+    print(f"「一、后端直接依赖」列出 {listed} 个（requirements.txt 声明 {len(declared_direct())} 个）")
+    if absent:
+        print(f"⚠️ 未安装的直接依赖 {len(absent)} 个: {absent}")
 
     lines += [
         "",

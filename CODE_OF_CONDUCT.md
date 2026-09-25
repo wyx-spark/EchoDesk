@@ -1,9 +1,8 @@
 # Contributor Covenant Code of Conduct
 
-> **Maintainer note (delete this block before publishing the repository):** the enforcement
-> contact below is an obvious placeholder, `conduct@example.com`. Replace it with a real,
-> monitored address (and, if you prefer, a contact form or a private reporting channel) before
-> the first public release. Until then this document cannot actually be enforced.
+> A Chinese reference translation of this document is available at
+> [`CODE_OF_CONDUCT.zh-Hans.md`](CODE_OF_CONDUCT.zh-Hans.md); if the two ever disagree, this
+> English version prevails.
 
 ## Our Pledge
 
@@ -64,9 +63,12 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at
-conduct@example.com.
-All complaints will be reviewed and investigated promptly and fairly.
+reported to the community leaders responsible for enforcement through GitHub.
+For a report that must stay private, please use this repository's
+**Security → Report a vulnerability** form, which opens a confidential advisory
+that only the maintainers can read. For anything that does not need privacy, open
+a **GitHub Issue** or start a **GitHub Discussion**. All complaints will be
+reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the
 reporter of any incident.

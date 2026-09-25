@@ -8,18 +8,21 @@
 # nothing is claimed that does not exist.
 #
 # 维护者若要开通，取消对应行的注释并填入真实账号即可（每个平台一行/一项）。
-# To enable later, uncomment and fill in the real account:
+# To enable later, uncomment the line for that platform and fill in the real account.
+# 平台项只接受账号名，不接受 URL；`custom:` 只接受 URL，因此这里**不设置**该项，
+# 以免发布物里留下一个并不存在的捐赠链接。
+# Each entry takes a bare account name, not a URL. `custom:` takes URLs only, so that
+# key is deliberately absent: no placeholder donation link can ship by accident.
 #
-# github: [your-github-username]
-# patreon: your-patreon-name
-# open_collective: your-collective
-# ko_fi: your-kofi-name
-# tidelift: npm/your-package
-# community_bridge: your-project
-# liberapay: your-name
-# issuehunt: your-name
-# lfx_crowdfunding: your-project
-# polar: your-name
-# buy_me_a_coffee: your-name
-# thanks_dev: u/gh/your-name
-# custom: ["https://example.com/donate"]
+# github: [<org-or-user>]
+# patreon: <account>
+# open_collective: <collective>
+# ko_fi: <account>
+# tidelift: <npm-package>
+# community_bridge: <project>
+# liberapay: <account>
+# issuehunt: <account>
+# lfx_crowdfunding: <project>
+# polar: <account>
+# buy_me_a_coffee: <account>
+# thanks_dev: <u/gh/account>

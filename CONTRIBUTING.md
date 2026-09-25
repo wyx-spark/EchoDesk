@@ -23,8 +23,9 @@ By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 | I want to... | Start here |
 | --- | --- |
-| Report a bug | Open a bug report issue (see below); include version, OS, steps and logs. |
-| Request a feature | Open a feature request issue describing the scenario and the workflow you want. |
+| Report a bug | Open a [bug report issue](https://github.com/VoidEntropiaStudio/EchoDesk/issues) (see [Filing an issue](#filing-an-issue)); include version, OS, steps and logs. |
+| Request a feature | Open a [feature request issue](https://github.com/VoidEntropiaStudio/EchoDesk/issues) describing the scenario and the workflow you want. |
+| Ask a question or discuss an idea | Start a thread in [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions) — Q&A, skill sharing and translation coordination all live there. |
 | Fix or improve code | Read [Development environment](#development-environment), then open a pull request. |
 | Translate the UI, messages or docs | Follow [Contributing a translation](#contributing-a-translation). |
 | Publish a skill | Follow [Contributing a skill](#contributing-a-skill). |
@@ -32,9 +33,20 @@ By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Filing an issue
 
-Issue templates live in [`.github/`](.github/) — pick the one that matches your report
-(bug, feature request, skill submission, translation). A good report lets a maintainer
-reproduce the problem without guessing, so include:
+All public feedback goes through this repository on GitHub. The project publishes **no support
+email address, no phone number and no postal address**, so GitHub is the only channel — nothing
+gets lost in a private inbox:
+
+- **Bugs and other reproducible problems** → open an issue at
+  <https://github.com/VoidEntropiaStudio/EchoDesk/issues>.
+- **Questions, ideas, skill sharing and translation coordination** → start a thread in
+  [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions).
+- **Code, documentation or translation changes** → open a pull request, see
+  [Branch and pull-request flow](#branch-and-pull-request-flow).
+
+Issue templates live in [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) — pick the one that
+matches your report (bug, feature request, skill submission, translation). A good report lets a
+maintainer reproduce the problem without guessing, so include:
 
 - **Version**: the version shown by `/status` or in the release folder name
   (for example `v0.2.1`).
@@ -124,7 +136,7 @@ python tools\test_file_parsers.py    # smoke test for every supported file forma
 
 # Additional suites, depending on what you touched
 python tools\test_plaintext.py       # Markdown -> plain-text conversion (result files)
-python tools\test_results_dir.py     # automation result folder layout and 结果.txt
+python tools\test_results_dir.py     # automation result folder layout and result.txt
 python tools\test_automation_e2e.py  # end-to-end automation against a local static site (needs Edge + Playwright)
 python tools\test_model_hub_e2e.py   # model-hub protocol against the packaged backend
 powershell -File tools\ui_probe.ps1  # WPF UI probe: settings window opens fast, no crash log
@@ -258,8 +270,8 @@ A skill is a folder with a `skill.json` manifest plus an entry package — no ch
 itself are needed, which makes skills the easiest way to extend the app:
 
 1. Read the skill development guide: [docs/zh-Hans/SKILL_GUIDE.md](docs/zh-Hans/SKILL_GUIDE.md)
-   (Chinese) and [docs/en/SKILL_GUIDE.md](docs/en/SKILL_GUIDE.md) (English). The original
-   [docs/SKILL_GUIDE.md](docs/zh-Hans/SKILL_GUIDE.md) also documents the manifest and review rules.
+   (Chinese) and [docs/en/SKILL_GUIDE.md](docs/en/SKILL_GUIDE.md) (English). Both versions cover
+   the manifest format, the capability declarations and the review rules.
 2. Declare only the capabilities you actually use (`commands`, `ui_panels`, `automation_hooks`,
    `file_parsers`), state your license, and keep the manifest honest about network access.
 3. Test locally before publishing: run the skill from the local plugin path, verify that its
@@ -283,7 +295,7 @@ The following must never be committed (`.gitignore` already covers most of them)
 
 - Model files (`*.gguf`) and the `publish/`, `build/`, `dist/` output trees.
 - User data: `session.json`, `snippets.json`, `ui_state.json`, `browser_state.json`,
-  `automation_log.jsonl`, `automation_results/`, `批量处理结果/`, `skills/`,
+  `automation_log.jsonl`, `results/`, `skills/`,
   `skills_registry.json`, `models_registry.json`, `market_cache.json`.
 - Crash logs (`frontend_crash.log`, `backend_crash.log`).
 - Any file containing a token, password or personal path — including a real GitHub token in

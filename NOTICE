@@ -1,6 +1,10 @@
 EchoDesk
 Copyright 2026 Void Entropia Studio
 
+A Chinese reference translation of this document is available at
+[`NOTICE.zh-Hans.md`](NOTICE.zh-Hans.md); if the two ever disagree, this English
+version prevails.
+
 This product includes software developed by third parties. The components listed
 below are the main ones shipped inside the EchoDesk distribution; the complete,
 tool-generated inventory (every Python distribution and its license, including

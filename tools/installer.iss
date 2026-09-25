@@ -10,14 +10,14 @@
 ;
 ;  【修复七】安装版目录结构与便携版保持一致：
 ;    {app}\                  ← 外层：用户数据、结果目录、文档
-;      EchoDesk-v0.2.1.lnk   （安装版用开始菜单/桌面快捷方式代替）
-;      批量处理结果\
+;      Start-EchoDesk-v0.2.1.lnk   （安装版用开始菜单/桌面快捷方式代替）
+;      results\
 ;      ui_state.json / snippets.json
 ;      docs\ lang\ examples\ LICENSE NOTICE
 ;      app\                  ← 程序本体
 ;        EchoDesk.exe
 ;        backend\EchoDeskBackend.exe ...
-;  快捷方式的工作目录一律设为 {app}（外层），这样批量处理结果生成在 {app}\批量处理结果\。
+;  快捷方式的工作目录一律设为 {app}（外层），这样results生成在 {app}\results\。
 ;
 ;  用法：
 ;    1) 先执行 tools\build_release.ps1 产出发布文件夹；
@@ -36,14 +36,19 @@
 
 #define MyAppName "EchoDesk"
 #define MyAppPublisher "Void Entropia Studio"
-#define MyAppURL "https://github.com/"
+; 任务书「全局要求三」：公开反馈指向 GitHub Issues 与 Discussions，无实体地址
+#define MyAppURL "https://github.com/VoidEntropiaStudio/EchoDesk"
 ; 修复七：程序本体在 app\ 子目录，外层是用户数据目录
 #define MyAppExeSubDir "app"
 #define MyAppExeName "EchoDesk.exe"
 #define MySourceDir "..\publish\EchoDesk-v" + MyAppVersion
 
 [Setup]
-AppId={{8E1D6F42-2C1B-4C6E-9F3A-ECHODESK00001}
+; AppId 必须是合法 GUID：原值 {8E1D6F42-2C1B-4C6E-9F3A-ECHODESK00001} 里含有
+; 非十六进制字符（H/O/S/K），只是"看起来像 GUID"。安装版从未实际编译发布过，
+; 因此现在改成真 GUID 不会影响任何已安装用户；一旦对外发布就**不要**再改，
+; 否则升级会被当成另一个产品。
+AppId={{BBF9A096-EC89-4770-815F-40AF1FDC0AD1}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}

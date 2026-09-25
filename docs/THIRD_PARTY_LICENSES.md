@@ -1,7 +1,7 @@
 # EchoDesk 第三方组件与许可证清单
 
 本文件列出 EchoDesk 分发时随附的第三方组件及其许可证，用于开源合规审查。
-扫描到的 Python 发行包共 48 个（含传递依赖）。
+扫描到的 Python 发行包共 55 个（含传递依赖）。
 
 > **v0.2.1 合规变更（任务书 1.3）**：对外开源发布前，PDF 解析已从 **PyMuPDF**
 > （AGPL-3.0 或 Artifex 商业许可）换成 **pypdf**（BSD-3-Clause，纯 Python）。
@@ -13,8 +13,12 @@
 
 | 组件 | 版本 | 许可证 | 说明 |
 | --- | --- | --- | --- |
-| huggingface_hub | 1.32.0 | Apache-2.0 |  |
+| cryptography | 50.0.1 | Apache-2.0 OR BSD-3-Clause |  |
+| duckduckgo_search | 8.1.1 | MIT License |  |
+| huggingface_hub | 2.0.0 | Apache-2.0 |  |
+| llama_cpp_python | 0.3.35 | MIT |  |
 | openpyxl | 3.1.5 | MIT |  |
+| playwright | 1.63.0 | Apache-2.0 |  |
 | pydantic | 2.13.5 | MIT |  |
 | pyinstaller | 6.22.3 | GNU General Public License v2 (GPLv2) |  |
 | pypdf | 6.19.0 | BSD-3-Clause |  |
@@ -22,7 +26,9 @@
 | python-pptx | 1.0.2 | MIT |  |
 | pywin32 | 312 | PSF |  |
 | requests | 2.34.2 | Apache-2.0 |  |
+| schedule | 1.2.2 | MIT License |  |
 | tqdm | 4.70.1 | MPL-2.0 AND MIT |  |
+| urllib3 | 2.8.0 | MIT |  |
 | xlrd | 2.0.2 | BSD |  |
 
 ## 二、高风险许可证提示
@@ -64,19 +70,22 @@
 | annotated-types | 0.8.0 | MIT |
 | anyio | 4.15.1 | MIT |
 | certifi | 2026.7.22 | MPL-2.0 |
+| cffi | 2.1.1 | MIT-0 |
 | charset-normalizer | 3.5.1 | MIT |
 | click | 8.5.0 | BSD-3-Clause |
 | colorama | 0.4.6 | BSD License |
+| cryptography | 50.0.1 | Apache-2.0 OR BSD-3-Clause |
 | diskcache | 5.6.3 | Apache 2.0 |
 | duckduckgo_search | 8.1.1 | MIT License |
 | et_xmlfile | 2.0.0 | MIT |
-| filelock | 4.0.1 | MIT |
+| filelock | 4.0.3 | MIT |
 | fsspec | 2026.9.0 | BSD-3-Clause |
+| greenlet | 3.5.6 | MIT AND PSF-2.0 |
 | h11 | 0.16.0 | MIT |
 | hf-xet | 1.6.0 | Apache-2.0 |
-| httpcore | 1.0.9 | BSD-3-Clause |
-| httpx | 0.28.1 | BSD-3-Clause |
-| huggingface_hub | 1.32.0 | Apache-2.0 |
+| httpcore2 | 2.13.1 | BSD-3-Clause |
+| httpx2 | 2.13.1 | BSD-3-Clause |
+| huggingface_hub | 2.0.0 | Apache-2.0 |
 | idna | 3.20 | BSD-3-Clause |
 | Jinja2 | 3.1.6 | BSD License |
 | llama_cpp_python | 0.3.35 | MIT |
@@ -88,21 +97,25 @@
 | pefile | 2024.8.26 | MIT |
 | pillow | 12.3.0 | MIT-CMU |
 | pip | 26.2.1 | MIT |
+| playwright | 1.63.0 | Apache-2.0 |
 | primp | 2.0.1 | MIT License |
+| pycparser | 3.0 | BSD-3-Clause |
 | pydantic | 2.13.5 | MIT |
 | pydantic_core | 2.46.5 | MIT |
+| pyee | 13.0.1 | MIT |
 | pyinstaller | 6.22.3 | GNU General Public License v2 (GPLv2) |
 | pyinstaller-hooks-contrib | 2026.7 | Apache Software License |
 | pypdf | 6.19.0 | BSD-3-Clause |
 | python-docx | 1.2.0 | MIT |
-| python-magic-bin | 0.4.14 | MIT |
 | python-pptx | 1.0.2 | MIT |
 | pywin32 | 312 | PSF |
 | pywin32-ctypes | 0.2.3 | BSD-3-Clause |
 | PyYAML | 6.0.3 | MIT |
 | requests | 2.34.2 | Apache-2.0 |
+| schedule | 1.2.2 | MIT License |
 | setuptools | 84.0.0 | MIT |
 | tqdm | 4.70.1 | MPL-2.0 AND MIT |
+| truststore | 0.10.4 | MIT |
 | typing-inspection | 0.4.4 | MIT |
 | typing_extensions | 4.16.0 | PSF-2.0 |
 | urllib3 | 2.8.0 | MIT |

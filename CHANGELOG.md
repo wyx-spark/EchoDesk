@@ -8,7 +8,89 @@
 ## v0.2.1
 
 > 面向**开源发布**的第一个版本。完整实现方案、关键决策、与任务书的偏差、
-> 未完成项与体积记录见 [`v0.2.1-研发记录.md`](v0.2.1-研发记录.md)。
+> 未完成项与体积记录见内部研发记录（`v0.2.1-研发记录.md`，**不随发布物分发**）。
+
+### 发布准备（发布任务书）
+
+**交付物**
+- 新增两份自解压绿化安装包：`EchoDesk-v0.2.1-Setup.exe`（含模型）与
+  `EchoDesk-v0.2.1-NoModel-Setup.exe`（不含模型），由 `7zS.sfx` + `config.txt` + `payload.7z`
+  拼接而成，解压后自动执行 `install-complete.bat` 创建启动快捷方式，并用 `rcedit`
+  写入九个版本资源字段与图标（`FileVersion`/`ProductVersion` = `0.2.1.0`）。
+- 新增 `SHA256SUMS.txt`（安装包与合规资产的 SHA256 清单）、`USAGE.txt`（结构与操作说明，
+  中英双语）、`config.example.json`（后端默认配置副本）、`install-complete.bat`。
+- 构建脚本新增 `-MakeSfx` 开关：一条命令产出完整交付物（`tools/make_sfx.ps1` 承担实际打包）。
+
+**命名规范：程序生成的名字也改成英文**（面向全球用户）
+- `使用说明.txt` → `USAGE.txt`；结果目录 `批量处理结果\` → `results\`；
+  结果文件 `结果.txt` → `result.txt`；默认任务目录名 `自动化任务` → `auto-task`；
+  失败截图 `失败截图_任务N_时间.png` → `failure-screenshot-taskN-时间.png`；
+  快捷方式 `EchoDesk-v0.2.1.lnk` → `Start-EchoDesk-v0.2.1.lnk`（与自解压安装包一致）。
+- **发布物不再预置 `.lnk` 快捷方式**：Windows 快捷方式里存的是**绝对路径**，
+  在构建机上生成的 `.lnk` 会带上维护者的本机路径（`C:\Users\<用户名>\...`），
+  既违反任务书「全局要求五」（个人绝对路径绝对禁止），在用户机器上又必然是死链。
+  现在快捷方式由 `install-complete.bat` 在目标机器上创建：自解压安装包解压后**自动**
+  执行它；使用 zip 免安装解压版的用户需手动运行一次（或直接启动 `app\EchoDesk.exe`，
+  程序首次运行会询问是否创建快捷方式）。
+- **升级注意**：结果目录名是用户数据，改名后**不会自动迁移**旧目录。升级前请把
+  旧的 `批量处理结果\` 手动改名为 `results\`（或把旧目录内容移入新目录），
+  否则新版本会在新名字下重新开始，历史结果仍留在旧目录里（数据不会丢，只是分两处）。
+
+**合规文档双语化（7 对）**
+- `LICENSE` / `NOTICE` / `SECURITY.md` / `CODE_OF_CONDUCT.md` / `docs/PRIVACY.md` /
+  `docs/EULA.md` / `docs/THIRD_PARTY_LICENSES.md` 全部改为「英文为默认名 + `.zh-Hans.md`
+  中文参考译本」，中文版文首注明「如与英文版有歧义，以英文版为准」。
+- `docs/PRIVACY.md`、`docs/EULA.md`、`docs/THIRD_PARTY_LICENSES.md` 原先正文是中文，
+  本次改为英文为默认版、中文移入 `.zh-Hans.md`；安全性策略正本移到仓库根目录，
+  `docs/SECURITY.md` 改为短指针。
+- `CHANGELOG.md` 移到**仓库根目录**（GitHub 直接识别），docs\ 下不再保留副本。
+
+**反馈渠道统一**
+- 公开反馈统一指向 GitHub Issues 与 Discussions；安全漏洞指向仓库 Security 标签页的
+  私密公告入口（首选）与 GitHub noreply 邮箱（兜底）。清除了全部占位邮箱
+  （`security@example.com`、`conduct@example.com`）与示例捐赠 URL。
+- 新增门禁 `tools/check_feedback.ps1`：校验上述渠道存在、并扫描个人邮箱、
+  实体地址、个人绝对路径、凭证明文与 AGPL 残留。
+
+**合规收口发现并修掉的问题（干净 venv 复核）**
+- **`backend/requirements.txt` 漏声明 3 个直接 import 的包**：`requests`、`urllib3`
+  （`marketplace.py`）与 `tqdm`（`download_utils.py`）。它们在开发机/打包机上恰好作为
+  传递依赖存在，所以一直被掩盖；按本文件从零建环境会 ImportError。
+  新增 `tools/check_requirements.py`（AST 取导入 + 实测 import）作为门禁。
+- **发布物含未声明的第三方组件**：`cryptography` 被 PyInstaller 打进后端
+  （来自开发机上与本项目无关的 `msoffcrypto-tool`），却不在许可证清单与 SBOM 里。
+  它**确实被功能需要**（`file_parser.py` 对空口令加密 PDF 调 `reader.decrypt("")`，
+  pypdf 的 AES 支持依赖它），因此选择**显式声明**而不是排除。
+- 同时发现 `chardet`、`bidi`（均为 LGPL）与 `tzdata` 只是被依赖里的**可选 import**
+  带进包，本项目用不到，已加入 `backend/EchoBackend.spec` 的 `EXCLUDES`
+  （发布物因此不再含这两个 LGPL 组件，也少了约 2MB）。
+  新增 `tools/check_bundled_packages.py` 比对「干净 venv 声明的包」与
+  「`_internal` 里实际存在的模块」，防止这类偏差再次悄悄出现。
+- **`tools/gen_licenses.py` 的名称归一化缺陷**：用 `name.lower()` 直接比较发行名，
+  而 `llama-cpp-python`/`duckduckgo-search` 的元数据名是下划线形式，导致这两个
+  **直接依赖被漏出「后端直接依赖」表**。已改为按 requirements.txt 驱动 + PEP 503 归一化。
+- **`tools/gen_sbom.py` 的闭包不计环境标记**：`macholib`、`tomli`、`exceptiongroup`
+  等跨平台标记依赖会被算进发布闭包，使 `--check` 在干净环境里永远失败（门禁失效）。
+  已改为按当前解释器评估 `Requires-Dist` 标记（`packaging` 为可选依赖，缺失时退化并提示）。
+- 收紧 `backend/EchoBackend.spec` 的 `EXCLUDES` 说明与文档：经二进制内嵌字符串核对，
+  `publish\7zS.sfx` 只支持 `Title`/`BeginPrompt`/`Progress`/`RunProgram`/`Directory`/
+  `ExecuteFile`/`ExecuteParameters`，**没有** `OverwriteMode` 等第三方改版才有的键。
+
+**构建流程修复**
+- **`tools/build_release.ps1` 失败仍返回退出码 0**：脚本内部抛错时不会设置退出码，
+  `& tools\build_release.ps1 -MakeSfx` 曾出现"自解压包一个都没生成却报告成功"。
+  已加顶层 `trap`（统一非 0 退出）与 `-MakeSfx` 后的交付物存在性断言。
+- 发布物不再包含研发/修复记录等过程文档（`-Recurse` 复制时按名字排除 + 结构断言）。
+- 发布文档不再含"截图占位/待拍"这类未完成表述（v0.2.1 不随包提供截图）。
+
+**新增/更新的自动检查**
+- `tools/make_sfx.ps1`（可行性与检查 + payload + 拼接 + rcedit + SHA256 全流程，可独立运行）、
+  `tools/check_feedback.ps1`、`tools/check_requirements.py`、
+  `tools/check_bundled_packages.py`。
+- `tools/verify_release.ps1` 结构断言扩展到 34 项必备文件 + 全英文命名 + 无过程文档 +
+  无运行期残留 + 自解压包哈希/版本资源/可解压性 + 两项发布门禁。
+- CI 新增 `release-gates` 作业（反馈渠道、依赖声明、SBOM 一致性、发布脚本语法）；
+  发布工作流改为产出两份自解压包并附上 SBOM 与许可证清单，Release 默认存为**草稿**。
 
 ### 新增
 
@@ -107,7 +189,7 @@
 
 ### 修复（v0.2.1 修复任务书，P0/P1 共七项）
 
-> 完整排查过程、决策理由与逐项验证证据见 [`v0.2.1-修复记录.md`](v0.2.1-修复记录.md)。
+> 完整排查过程、决策理由与逐项验证证据见内部修复记录（`v0.2.1-修复记录.md`，**不随发布物分发**）。
 
 **P0 · 开发者模式弹窗循环与无法关闭**
 - 逐个弹窗改为**一次性汇总确认框**（新窗口 `frontend/Utilities/TrustDialog.cs`）：列出每个待确认
@@ -148,7 +230,7 @@
   语言包、示例与文档；构建脚本末尾新增断言，外层出现任何 exe/dll/pdb 即构建失败。
 - 新增 `ShortcutService.UserDataDirectory`（环境变量 `ECHODESK_DATA` → 父目录名为 `app` 且可写 → 程序目录）
   与后端 `config.user_data_root()`（判定顺序保持一致）；`ui_state.json`、`snippets.json`、
-  `批量处理结果\` 全部落在**外层**。
+  `results\` 全部落在**外层**。
 - 快捷方式改名 `EchoDesk-v0.2.1.lnk` 放外层，`WorkingDirectory` = 外层；失效判定新增"工作目录不对"
   这一情况。语言包搜索链同时纳入外层与 `app\`，用户丢一个新的 `lang\ui\<locale>.json` 即可加语言，
   升级不覆盖。
@@ -208,13 +290,15 @@
   模板生成工具已就绪，待社区贡献。
 - 示例技能尚未真正发布到 GitHub marketplace（需要仓库凭据）。
 - 自动更新只到"检查与提示"，不含自动下载替换与增量更新。
-- 释放标记（发布物内置的 `docs/`）中的部分截图仍为占位说明。
-- `docs/THIRD_PARTY_LICENSES.md` 与其生成脚本的口径待复核：清单缺少 `playwright`、
-  `schedule` 及其依赖 `pyee`、`greenlet`（四项都在 `backend/requirements.txt` 里直接声明
-  或由其引入），且 16 个包的版本号与开发机现状不一致。
-  发布前请在**装全 `backend/requirements.txt` 的干净 venv** 里重跑
-  `python tools/gen_licenses.py` 重新生成清单，再用 `python tools/gen_sbom.py --check` 核对。
-- 修复版遗留（详见 [`v0.2.1-修复记录.md`](v0.2.1-修复记录.md) §11）：
+- **v0.2.1 不随包提供界面截图**：README 与文档不再留"待拍截图"的占位指引，
+  改为说明"后续版本会放入 `assets/screenshots/`"。
+- `docs/THIRD_PARTY_LICENSES.md` 与 `docs/SBOM.json` 现已**在只装
+  `backend/requirements.txt` 的干净 venv 里重新生成并逐项核对一致**
+  （55 个发行包、0 处差异；见上文「合规收口发现并修掉的问题」）。
+  剩余注意点是**生成基线依赖环境**：清单口径是"干净 venv 的实际安装结果"，
+  下次发布仍须在干净环境里重跑 `python tools/gen_licenses.py` 与
+  `python tools/gen_sbom.py --check`（CI 的 `release-gates` 作业已自动执行后者）。
+- 修复版遗留（详见内部修复记录 `v0.2.1-修复记录.md` §11，**不随发布物分发**）：
   - **未在 Windows 10 上实测**（Emoji 与主题结论基于字形覆盖率与色板数值，非系统版本）。
   - **安装版（Inno Setup）未实际编译验证**：本机无 Inno Setup 6，`tools/installer.iss` 已按
     便携版结构对齐，但未产出过 `setup.exe`。
@@ -223,7 +307,14 @@
     不要把前者当禁网开关；开机自启请把快捷方式放进 `shell:startup`。
   - 向量检索（本地 RAG）**本版未做**：向量库依赖与全局体积要求冲突，建议下版先做零依赖的
     关键词检索方案验证收益。
-  - `docs/` 下 `DEVELOPER.md`、`PRIVACY.md`、`EULA.md` 与研发/修复记录仍只有中文。
+  - `docs/DEVELOPER.md` 仍只有中文（`PRIVACY.md`/`EULA.md` 已完成双语化）。
+  - **结果目录改名不自动迁移**（`批量处理结果\` → `results\`）：升级用户需手动改名，
+    见上文「命名规范：程序生成的名字也改成英文」的升级注意。
+  - **自解压包未做代码签名**：`-Sign` 需要证书，本版两份 `Setup.exe` 均未签名，
+    首次运行会有 SmartScreen 提示。
+  - **`7zS.sfx` 没有覆盖询问**：7-Zip 官方精简 SFX 模块不支持 `OverwriteMode`
+    （已用二进制内嵌字符串核对），解压时同名文件会被直接覆盖；已在 `BeginPrompt`
+    里提前明确告知，并在 `install-complete.bat` 创建快捷方式前询问是否覆盖。
 
 ---
 
@@ -318,7 +409,7 @@
 ### 修复与补强（v0.2.0 修复任务书）
 
 > 对应根目录 `指示.md` 的五项任务，**不升版本号**，仍为 v0.2.0 / `0.2.0.0`。
-> 完整实现方案、关键决策、偏差与未完成项见 `docs\v0.2.0-修复记录.md`。
+> 完整实现方案、关键决策、偏差与未完成项见内部修复记录（`v0.2.0-修复记录.md`，**不随发布物分发**）。
 
 **修复一：设置窗口卡死（P0 致命）**
 - 真实根因并非死锁，而是 `SettingsWindow.xaml` 的滑块
@@ -351,15 +442,15 @@
 - 实测：`/clear`→首项 `/clear`，`/c`→`/clear`，`/cl`→`/clear`，`/sum`→`/summarize`；
   在 `/cl` 上按 Enter 只补全为 `/clear `；`/clear` 确认框明确指向 `/clear`。
 
-**新增三：批量处理结果目录（P1）**
-- 结果按 `程序根目录\批量处理结果\YYYY-MM-DD\任务名\` 分层保存（顶层名与保存位置可自定义，
+**新增三：results目录（P1）**
+- 结果按 `程序根目录\results\YYYY-MM-DD\任务名\` 分层保存（顶层名与保存位置可自定义，
   顶层留空 = 程序根目录）；同日多次运行合并到同一日期目录，同名任务自动追加 `-1`、`-2`。
-- 任务目录内保存**该轮下载的原始文件**（重名自动加序号）与 `结果.txt`；
-  失败任务的失败原因与失败截图文件名同样写入 `结果.txt`，截图保存在任务目录内。
-- `结果.txt` 为**纯文本、无任何 Markdown 标记**（记事本无渲染能力）：新增
+- 任务目录内保存**该轮下载的原始文件**（重名自动加序号）与 `result.txt`；
+  失败任务的失败原因与失败截图文件名同样写入 `result.txt`，截图保存在任务目录内。
+- `result.txt` 为**纯文本、无任何 Markdown 标记**（记事本无渲染能力）：新增
   `backend\plaintext.py` 做 Markdown → 纯文本转换，标题转下划线、表格转**按显示宽度对齐**
   的纯文本（中日韩按 2 列计）、列表保留 `-`/数字、链接转 `文字（地址）`、代码块缩进。
-- 每条任务完成/失败即整份重写 `结果.txt`，中途崩溃或停止也不丢已处理结果。
+- 每条任务完成/失败即整份重写 `result.txt`，中途崩溃或停止也不丢已处理结果。
 - 新增自测：`tools\test_plaintext.py`（20 项）、`tools\test_results_dir.py`（26 项）、
   `tools\test_automation_e2e.py`（真实 Playwright/Edge 全链路 21 项，实测跑出三层目录、
   纯文本结果、原始文件保留、同名 `-1`）。
@@ -410,9 +501,9 @@
 - 自动更新与代码签名：构建脚本已预留 `-Sign` 钩子，但仓库内不含证书；
   自签名证书仍可能触发 SmartScreen 提示。
 - `tools\build_release.ps1` 需在 PowerShell 5.1+ 运行；中文提示依赖脚本为 UTF-8 with BOM。
-- 本次修复任务书的偏差与未完成项集中记录在 `docs\v0.2.0-修复记录.md` 第七节，摘要：
+- 本次修复任务书的偏差与未完成项集中记录在内部修复记录（`v0.2.0-修复记录.md`，**不随发布物分发**）第七节，摘要：
   `/exit` 未纳入危险指令确认（已有可中断倒计时）；结果目录的"任务名称"为运行批次名、
-  一轮一份聚合 `结果.txt`；模型列表不显示文件大小（改由详情给出精确值）；
+  一轮一份聚合 `result.txt`；模型列表不显示文件大小（改由详情给出精确值）；
   模型选择栏同一时刻只允许一个下载；未实现结果目录再分子目录与 Windows DPAPI 加密 Token。
 
 ---

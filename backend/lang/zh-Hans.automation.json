@@ -60,8 +60,8 @@
       },
       "results_root_name": {
         "label": "结果根目录名称",
-        "help": "批量结果放在哪个文件夹里。默认叫「批量处理结果」，放在程序目录下。",
-        "example": "批量处理结果"
+        "help": "批量结果放在哪个文件夹里。默认叫「results」，放在程序目录下。",
+        "example": "results"
       },
       "results_location": {
         "label": "结果保存位置（可选）",

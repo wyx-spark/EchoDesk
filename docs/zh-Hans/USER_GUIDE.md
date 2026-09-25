@@ -10,9 +10,12 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 
 ### 便携版（推荐）
 1. 把整个 `EchoDesk-v0.2.1` 文件夹放到任意位置（桌面、D 盘、U 盘均可）；
-2. 双击文件夹内的**「EchoDesk-v0.2.1.lnk」**——这是唯一入口，
+2. 双击文件夹内的**「Start-EchoDesk-v0.2.1.lnk」**——这是唯一入口，
    不需要分辨 `app\EchoDesk.exe` 与 `app\backend\EchoDeskBackend.exe` 的区别
-   （后者由界面自动拉起，请勿单独运行）；
+   （后者由界面自动拉起，请勿单独运行）。
+   这个快捷方式由自解压安装包在解压后自动创建；普通 zip 解压版里没有预置快捷方式
+   （快捷方式记的是绝对路径，在别人机器上生成的必然是死链）——请先运行一次
+   `install-complete.bat`，或直接双击 `app\EchoDesk.exe` 并接受"创建快捷方式"的询问；
 3. 首次启动会依次处理三件事：
    - 若 `app\backend\models\` 里没有模型 → 询问是否下载（约 508MB，需联网）；
    - 若文件夹内没有快捷方式 → 询问是否创建；
@@ -39,16 +42,16 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 | `app\backend\automation_log.jsonl` | 自动化审计日志 | 可删（建议先归档） |
 | `app\backend\skills\` + `app\backend\skills_registry.json` | 已安装技能 | 建议用市场卸载 |
 | `app\backend\summary_cache.json` | 长文档分段摘要缓存（可读 JSON） | 可删（下次上传重新计算） |
-| `批量处理结果\` | 自动化结果（按 `日期\任务名\` 分层） | 可删（建议先归档） |
+| `results\` | 自动化结果（按 `日期\任务名\` 分层） | 可删（建议先归档） |
 | `lang\` + `app\lang\ui\` | 后端 / 界面语言包（可自行新增语言） | 不建议删（删掉会退回内置文案） |
 | `ui_state.json` | 窗口位置/大小、字号、主题 | 可删（重置界面状态） |
 | `snippets.json` | 常用语 | 可删 |
-| `使用说明.txt` | 面向用户的结构说明 | 可删 |
+| `USAGE.txt` | 面向用户的结构说明 | 可删 |
 
 **备份**：需要保留对话记录与设置时，复制 `app\backend\session.json`、
 `app\backend\config.json`、`snippets.json` 三个文件即可。
 
-**数据位置**：`ui_state.json`、`snippets.json` 与 `批量处理结果\` 都在便携版**外层**目录（不在 `app\` 里）。
+**数据位置**：`ui_state.json`、`snippets.json` 与 `results\` 都在便携版**外层**目录（不在 `app\` 里）。
 想让它们落到别的位置（例如 U 盘或用户目录），可以在启动前设置环境变量 `ECHODESK_DATA`
 指向目标目录，程序会把用户数据写到那里。
 
@@ -163,7 +166,7 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 ### 4.4 定时
 勾选「启用定时」并填写每天的执行时刻（如 `09:00, 18:30`）。
 定时任务由后端线程在程序运行期间触发；若希望开机自动执行，
-请把「EchoDesk-v0.2.1.lnk」复制到系统「启动」文件夹（`Win+R` → `shell:startup`）。
+请把「Start-EchoDesk-v0.2.1.lnk」复制到系统「启动」文件夹（`Win+R` → `shell:startup`）。
 
 ### 4.5 登录态
 第一次需要你在浏览器里手动登录一次，程序会把登录态存到

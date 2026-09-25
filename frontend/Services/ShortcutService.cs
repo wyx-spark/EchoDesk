@@ -10,8 +10,8 @@ namespace EchoDesk.Services;
 /// 发布物采用"便携版三层结构"：
 /// <code>
 /// EchoDesk-v0.2.1/
-/// ├── EchoDesk-v0.2.1.lnk      ← 快捷方式在外层
-/// ├── ui_state.json / snippets.json / 批量处理结果/   ← 用户数据在外层
+/// ├── Start-EchoDesk-v0.2.1.lnk      ← 快捷方式在外层
+/// ├── ui_state.json / snippets.json / results/   ← 用户数据在外层
 /// └── app/                      ← 程序本体（exe、dll、lang、backend/）
 ///     └── EchoDesk.exe
 /// </code>
@@ -19,7 +19,7 @@ namespace EchoDesk.Services;
 /// 于是需要区分两个目录：
 /// <list type="bullet">
 /// <item><see cref="ProgramDirectory"/>：exe 所在目录（<c>app\</c>），放程序文件；</item>
-/// <item><see cref="UserDataDirectory"/>：外层目录，放快捷方式、用户数据与批量处理结果。</item>
+/// <item><see cref="UserDataDirectory"/>：外层目录，放快捷方式、用户数据与results。</item>
 /// </list>
 ///
 /// 快捷方式通过 Windows Script Host 的 <c>WScript.Shell</c> COM 接口创建，
@@ -36,15 +36,15 @@ public static class ShortcutService
     /// <summary>用户可用环境变量指定数据目录（企业环境把数据放到受管盘时用）。</summary>
     public const string DataDirectoryEnvironmentVariable = "ECHODESK_DATA";
 
-    /// <summary>启动快捷方式文件名：<c>EchoDesk-v0.2.1.lnk</c>（带版本号，多个版本可共存）。</summary>
+    /// <summary>启动快捷方式文件名：<c>Start-EchoDesk-v0.2.1.lnk</c>（带版本号，多个版本可共存）。</summary>
     public static string ShortcutFileName
     {
         get
         {
             Version? version = typeof(ShortcutService).Assembly.GetName().Version;
             return version is null
-                ? "EchoDesk.lnk"
-                : $"EchoDesk-v{version.Major}.{version.Minor}.{version.Build}.lnk";
+                ? "Start-EchoDesk.lnk"
+                : $"Start-EchoDesk-v{version.Major}.{version.Minor}.{version.Build}.lnk";
         }
     }
 
@@ -62,7 +62,7 @@ public static class ShortcutService
 
     /// <summary>
     /// 用户数据目录：快捷方式、<c>ui_state.json</c>、<c>snippets.json</c> 与
-    /// 「批量处理结果」都放这里（便携版布局下是外层目录）。
+    /// 「results」都放这里（便携版布局下是外层目录）。
     ///
     /// 判定顺序（不依赖"当前工作目录"，避免用户从别处启动时把数据写到奇怪的位置）：
     /// 1. 环境变量 <c>ECHODESK_DATA</c>；
@@ -228,7 +228,7 @@ public static class ShortcutService
     /// 在用户数据目录（便携版外层）创建/覆盖启动快捷方式，返回快捷方式完整路径。
     ///
     /// 工作目录固定设为用户数据目录：这样双击快捷方式启动时进程的当前目录就是外层，
-    /// <c>批量处理结果/</c> 等相对路径产物自然落在外面，不会埋进 <c>app\</c>。
+    /// <c>results/</c> 等相对路径产物自然落在外面，不会埋进 <c>app\</c>。
     /// </summary>
     public static string Create()
     {

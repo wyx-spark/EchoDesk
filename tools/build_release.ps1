@@ -8,33 +8,41 @@
       2. 构建后端：PyInstaller onedir → app\backend\EchoDeskBackend.exe + app\backend\_internal\；
       3. 构建前端：dotnet publish 多文件（非单文件）→ app\ 下平铺依赖 DLL；
       4. 收集图标、配置、语言包、模型与文档；
-      5. 生成使用说明；
+      5. 生成 USAGE.txt（面向用户的结构与操作说明，中英双语）；
       6. rcedit 写入前端版本资源与图标（后端由 spec 的 version/icon 写入，原因见 spec 注释）；
       7. 可选代码签名（-Sign）；
-      8. 创建外层快捷方式 EchoDesk-v<版本>.lnk（WScript.Shell COM）。
+      8. **不**在发布物里预置 .lnk：快捷方式由 install-complete.bat 在目标机器上创建
+         （原因见第 9 节：.lnk 是绝对路径，预置会把构建机的个人路径带出去）；
+      9. 可选 -MakeSfx：继续调用 tools\make_sfx.ps1 产出自解压安装包与 SHA256SUMS.txt。
 
-    发布物结构（修复七：应用本体隔离到 app\，外层只留快捷方式、用户数据与文档）：
+    发布物结构（修复七：应用本体隔离到 app\，外层只留快捷方式、用户数据与文档；
+    发布任务书「全局要求一」要求文件名/目录名全为英文）：
       publish\EchoDesk-v0.2.1\
-      ├─ EchoDesk-v0.2.1.lnk     唯一入口（TargetPath=app\EchoDesk.exe，工作目录=本层）
-      ├─ 批量处理结果\            自动化结果（相对工作目录生成，按 日期\任务名\ 分层）
-      ├─ ui_state.json           界面状态（首次运行时生成）
-      ├─ snippets.json           常用语（首次运行时生成）
-      ├─ 使用说明.txt
-      ├─ docs\                   文档（含 zh-Hans\ 与 en\）
-      ├─ LICENSE / NOTICE / 合规文档
-      ├─ lang\                   后端语言包（可替换/新增，无需重新打包）
-      ├─ examples\skills\        示例插件源码
-      └─ app\                    程序本体（外层不出现任何 exe/dll）
+      ├─ (无 .lnk —— 快捷方式由 install-complete.bat 在目标机器上创建)
+      ├─ results\                    自动化结果（相对工作目录生成，按 日期\任务名\ 分层）
+      ├─ ui_state.json               界面状态（首次运行时生成）
+      ├─ snippets.json               常用语（首次运行时生成）
+      ├─ USAGE.txt                   结构与操作说明（中英双语）
+      ├─ README.md / README.zh-Hans.md
+      ├─ CHANGELOG.md                版本变更记录（正本，仓库里也在根目录）
+      ├─ config.example.json         配置示例（用户可比对/复制）
+      ├─ install-complete.bat        自解压包解压后自动执行（建快捷方式）
+      ├─ LICENSE / LICENSE.zh-Hans.md / NOTICE / NOTICE.zh-Hans.md
+      ├─ SECURITY.md / SECURITY.zh-Hans.md
+      ├─ docs\                       文档（含 zh-Hans\ 与 en\；**不含**研发/修复记录）
+      ├─ lang\                       后端语言包（可替换/新增，无需重新打包）
+      ├─ examples\skills\            示例插件源码
+      └─ app\                        程序本体（外层不出现任何 exe/dll）
          ├─ EchoDesk.exe
          ├─ EchoDesk.ico
-         ├─ *.dll / *.json      前端依赖
-         ├─ lang\ui\            界面语言包
-         └─ backend\            后端（PyInstaller onedir）
+         ├─ *.dll / *.json          前端依赖
+         ├─ lang\ui\                界面语言包
+         └─ backend\                后端（PyInstaller onedir）
             ├─ EchoDeskBackend.exe
             ├─ _internal\
             ├─ config.json
             ├─ models\
-            └─ skills_dev\       随包示例插件
+            └─ skills_dev\          随包示例插件
 
     为什么用户数据在外层：便携版最常见的用法是整个文件夹拷来拷去，
     把「用户能改、需要备份」的东西（状态、常用语、结果、语言包、文档）放在外层，
@@ -71,8 +79,16 @@
 .PARAMETER Sign
     构建完成后用 signtool 签名（需 -CertThumbprint 或已配置默认证书）。
 
+.PARAMETER MakeSfx
+    在流程末尾继续产出**自解压绿化安装包**（发布任务书「任务四」）：
+    依次完成重命名收口、双语合规文档补齐、反馈渠道检查、调试内容清理、
+    打包 payload + 拼接两份自解压包 + rcedit 写资源 + 计算 SHA256SUMS.txt。
+    实际动作由 tools\make_sfx.ps1 承担（可独立运行、独立做可行性检查），
+    这里只负责按顺序调用，保证"一条命令出完整交付物"。
+
 .EXAMPLE
     & tools\build_release.ps1 -IncludeModels -MigrateFrom publish\EchoDesk-v0.2.0
+    & tools\build_release.ps1 -SkipBackend -SkipFrontend -IncludeModels -MakeSfx
 #>
 [CmdletBinding()]
 param(
@@ -82,23 +98,38 @@ param(
     [switch]$SkipBackend,
     [switch]$SkipFrontend,
     [switch]$SkipClean,
-    [switch]$NoShortcut,
     [switch]$KeepAllCultures,
     [string]$ReuseBackendFrom = "",
     [switch]$KeepSession,
     [switch]$Sign,
     [string]$CertThumbprint = "",
-    [string]$TimestampUrl = "http://timestamp.digicert.com"
+    [string]$TimestampUrl = "http://timestamp.digicert.com",
+    [switch]$MakeSfx
 )
 
 $ErrorActionPreference = "Stop"
+
+<#
+    顶层 trap：任何终止性错误都转成"非 0 退出码"。
+    为什么必须加（v0.2.1 发布时实测踩到）：脚本内部抛错时，若调用方是用
+    `& .\tools\build_release.ps1 -IncludeModels -MakeSfx` 直接调用的，
+    **脚本并不会设置退出码** —— 外层看到的是 $LASTEXITCODE=0，
+    于是"打包失败"被当成"构建成功"（自解压包一个都没生成，却报告成功）。
+    现在统一在这里收口：打印原因并以 1 退出。
+#>
+trap {
+    Write-Host ""
+    Write-Host "!! 发布构建失败：$($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "   （位置：$($_.InvocationInfo.PositionMessage -replace "`r?`n", ' ')）" -ForegroundColor DarkGray
+    exit 1
+}
 
 $Root = Split-Path -Parent $PSScriptRoot
 $Out = Join-Path $Root "publish\EchoDesk-v$Version"
 # 修复七：程序本体统一放进 app\，外层只留快捷方式/用户数据/文档
 $AppOut = Join-Path $Out "app"
 $BackendOut = Join-Path $AppOut "backend"
-$ShortcutName = "EchoDesk-v$Version.lnk"
+$ShortcutName = "Start-EchoDesk-v$Version.lnk"
 
 function Write-Step([string]$text) { Write-Host "==> $text" -ForegroundColor Cyan }
 function Write-Ok([string]$text) { Write-Host "    $text" -ForegroundColor Green }
@@ -324,7 +355,18 @@ if ($IncludeModels) {
             }
         }
     }
-    if ($copied -eq 0) { Write-Warn2 "未找到可复制的 .gguf 模型，首次启动时将询问是否下载" }
+    if ($copied -eq 0) {
+        # 区分两种情况 —— 原来的措辞只有"未找到可复制的 .gguf 模型"，
+        # 在 -SkipClean 复用已有产物时（模型本来就在 models\ 里）会打出
+        # "未找到模型"的警告，让人以为模型丢了（实测被误导过一次）。
+        $already = @(Get-ChildItem $ModelDir -Filter *.gguf -File -ErrorAction SilentlyContinue)
+        if ($already.Count -gt 0) {
+            Write-Ok "模型已在位，无需复制（$($already.Count) 个：$((($already | ForEach-Object { $_.Name }) -join ', '))）"
+        }
+        else {
+            Write-Warn2 "未找到可复制的 .gguf 模型（已查找：backend\models、models\、deploy\models、-MigrateFrom、HF 缓存），首次启动时将询问是否下载"
+        }
+    }
 }
 else {
     Write-Warn2 "未复制模型（未指定 -IncludeModels）；首次启动会询问是否下载模型"
@@ -359,42 +401,158 @@ if ($MigrateFrom) {
     }
 }
 
-# ---------- 6. 说明文件 ----------
-Write-Step "生成发布说明"
-$readme = @"
-EchoDesk v$Version — 本地 AI 桌面助手
+# ---------- 6. 用户说明（USAGE.txt，中英双语） ----------
+# 发布任务书「全局要求四」要求根目录必备 USAGE.txt（面向普通用户的结构与操作说明），
+# 「全局要求一」要求文件名英文（原为 使用说明.txt）。
+# 正文英文在前、中文在后：面向全球用户先给英文，中文用户往下看同一份内容。
+Write-Step "生成 USAGE.txt（结构与操作说明，中英双语）"
+$buildTime = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+$usage = @"
+EchoDesk v$Version - Local AI Desktop Assistant
 Powered by Void Entropia Studio
+================================================================
+
+[HOW TO START]
+  Double-click "$ShortcutName" in this folder. That shortcut is the
+  only entry point you need. If it is not there yet, run
+  "install-complete.bat" once (the self-extracting installer does this for
+  you automatically); it creates the shortcut for *your* paths, not someone
+  else's.
+  Do not go hunting inside app\: app\EchoDesk.exe is the UI process, and
+  app\backend\EchoDeskBackend.exe is started by it - do not run the
+  backend on its own.
+
+[WHAT IS IN THIS FOLDER]
+  (The program itself is tucked into app\, so everything you can safely
+   touch or back up sits out here at the top level.)
+
+  $ShortcutName    the only entry point (working directory = this folder;
+                           created by install-complete.bat on *your* machine)
+  USAGE.txt                this file
+  results\                 automation output (date\task\ folders holding a
+                           plain-text result.txt plus the downloaded files)
+  ui_state.json            UI state: window position/size, font size, theme, language
+  snippets.json            your reusable prompt templates
+  config.example.json      a copy of the default backend configuration
+  install-complete.bat     creates the shortcut after the self-extracting
+                           package unpacks (safe to run again)
+  README.md / README.zh-Hans.md
+  CHANGELOG.md             what changed in each version
+  LICENSE / LICENSE.zh-Hans.md / NOTICE / NOTICE.zh-Hans.md
+  SECURITY.md / SECURITY.zh-Hans.md
+  docs\                    documentation (user guide, FAQ, automation guide,
+                           privacy policy, EULA, compliance, SBOM)
+  docs\en\                 English documentation
+  docs\zh-Hans\            Chinese documentation
+  docs\DEVELOPER.md        architecture, protocol, extension points
+  lang\                    backend language packs (system messages, errors, /help)
+  examples\skills\         example skill sources (Hello World and OFD reader)
+  app\                     the program itself (please leave it alone)
+    EchoDesk.exe             the UI process
+    EchoDesk.ico             program icon
+    lang\ui\                 UI language packs (buttons/labels/dialog text)
+    backend\                 backend: inference, file parsing, conversations
+      config.json            configuration (model, context length, summarisation,
+                             automation, skill marketplace, model hub, ...)
+      models\                local models (.gguf files go here)
+      session.json           last session (saved/restored automatically)
+      skills_dev\            bundled example skills
+      models_registry.json   model library record (created on first use)
+
+[ADDING A NEW LANGUAGE]
+  UI text:      drop <language-tag>.json into app\lang\ui\ (for example ja.json),
+                modelled on app\lang\ui\zh-Hans.json; restart, then pick it in Settings.
+  System text:  drop <language-tag>.json into lang\, modelled on the existing zh-Hans.json.
+  Both folders are yours to replace; upgrading the program does not overwrite lang\.
+
+[FIRST LAUNCH]
+  * If app\backend\models\ is empty the program asks whether to download a model
+    (about 508 MB); you can also drop a .gguf file in there yourself and restart.
+  * It asks whether to create a launcher shortcut in this folder (one is already
+    included, so you can just use it).
+
+[COMMON COMMANDS]
+  /help            list every command
+  /file <path>     attach a file (long documents are summarised in chunks, not truncated)
+  /summarize       summarise the current long document on demand
+  /model           list or switch local models
+  /status          model capability, mode, context usage and KV-cache estimate
+  /task            start from a task template
+  /preset          switch generation presets (precise / balanced / creative)
+  /compact         compress the conversation context
+  /darkmode auto   follow the system theme (or on/off to pin light/dark)
+  Ctrl+Enter send - Esc stop - Ctrl+L clear - Ctrl+O attach - Ctrl+T toggle theme
+  Ctrl+wheel font size - Ctrl+Shift+C copy the whole conversation
+  Each message has Copy / Markdown / Code buttons in its bottom-right corner.
+
+[AFTER MOVING THE FOLDER]
+  The shortcut stores an absolute path. After moving the whole folder, run
+  app\EchoDesk.exe once: the program offers to rebuild the shortcut (and fixes
+  the working directory automatically).
+
+[UNINSTALL]
+  EchoDesk is a portable app: just delete the whole folder. Nothing is written
+  to the registry.
+
+[VERIFY YOUR DOWNLOAD]
+  Compare the SHA256 of the package you downloaded against SHA256SUMS.txt,
+  which ships alongside the release; it lists the package and the other
+  release assets.
+
+[FEEDBACK]
+  Problems and feature requests: https://github.com/VoidEntropiaStudio/EchoDesk/issues
+  Questions and discussion:      https://github.com/VoidEntropiaStudio/EchoDesk/discussions
+  Security vulnerabilities:      report privately - do not open a public issue;
+                                see SECURITY.md for the private channel
+
+Build time: $buildTime
+
+================================================================
+中文说明（同一份内容的中文版）
+================================================================
 
 【怎么启动】
-  双击本文件夹内的「$ShortcutName」即可。
+  双击本文件夹内的「$ShortcutName」即可，这是唯一需要的入口。
+  若还没有这个快捷方式，先运行一次 install-complete.bat 创建它
+  （自解压安装包会在解压后自动执行这一步）；它创建的是指向**你自己机器上
+  真实路径**的快捷方式。
   不用去 app\ 里找可执行文件：app\EchoDesk.exe 是界面主程序，
   app\backend\EchoDeskBackend.exe 由界面自动拉起，请不要单独运行。
 
-【文件夹里都有什么】（修复七：程序收进 app\，外层只放你能改、要备份的东西）
-  $ShortcutName   唯一启动入口（工作目录就是本文件夹）
-  使用说明.txt      本文件
-  批量处理结果\     自动化结果（按 日期\任务名\ 分层的纯文本结果 + 下载的原始文件）
-  ui_state.json     界面状态：窗口位置与大小、字号、主题、语言
-  snippets.json     常用语模板
-  docs\             文档（用户手册、FAQ、自动化指南、隐私政策、许可协议、变更日志、研发记录）
-  docs\zh-Hans\     中文文档
-  docs\en\          英文文档
-  LICENSE / NOTICE  许可证与署名
-  lang\             后端语言包（系统消息、错误提示、指令帮助）
-  examples\skills\  示例插件源码（Hello World 与 OFD 读取）
-  app\              程序本体（请勿随意改动）
-    EchoDesk.exe        界面主程序
-    EchoDesk.ico        程序图标
-    lang\ui\            界面语言包（按钮/标签/对话框文案）
-    backend\            后端：模型推理、文件解析、对话管理
-      config.json       配置（模型、上下文长度、分段摘要、自动化、技能市场、模型中心等）
-      models\           本地模型目录（.gguf 放这里）
-      session.json      上次会话（自动保存/恢复）
-      skills_dev\       随包示例插件
+【文件夹里都有什么】
+  （程序本体收进 app\，外层只放你能改、需要备份的东西）
+
+  $ShortcutName   唯一启动入口（工作目录就是本文件夹；由 install-complete.bat
+                     在你的机器上创建）
+  USAGE.txt          本文件
+  results\           自动化结果（按 日期\任务名\ 分层的纯文本 result.txt + 下载的原始文件）
+  ui_state.json      界面状态：窗口位置与大小、字号、主题、语言
+  snippets.json      常用语模板
+  config.example.json  后端默认配置的副本（可用于比对或恢复默认）
+  install-complete.bat 自解压包解压后自动执行，负责创建快捷方式（可重复运行）
+  README.md / README.zh-Hans.md
+  CHANGELOG.md       各版本变更记录
+  LICENSE / LICENSE.zh-Hans.md / NOTICE / NOTICE.zh-Hans.md
+  SECURITY.md / SECURITY.zh-Hans.md
+  docs\              文档（用户手册、FAQ、自动化指南、隐私政策、许可协议、合规文档、SBOM）
+  docs\zh-Hans\      中文文档
+  docs\en\           英文文档
+  docs\DEVELOPER.md  架构、协议与扩展点
+  lang\              后端语言包（系统消息、错误提示、指令帮助）
+  examples\skills\   示例插件源码（Hello World 与 OFD 读取）
+  app\               程序本体（请勿随意改动）
+    EchoDesk.exe       界面主程序
+    EchoDesk.ico       程序图标
+    lang\ui\           界面语言包（按钮/标签/对话框文案）
+    backend\           后端：模型推理、文件解析、对话管理
+      config.json      配置（模型、上下文长度、分段摘要、自动化、技能市场、模型中心等）
+      models\          本地模型目录（.gguf 放这里）
+      session.json     上次会话（自动保存/恢复）
+      skills_dev\      随包示例插件
       models_registry.json  模型库记录（首次使用时生成）
 
 【语言包怎么加新语言】
-  界面文案：在 lang\ui\ 下放一份 <语言标签>.json（如 ja.json），
+  界面文案：在 app\lang\ui\ 下放一份 <语言标签>.json（如 ja.json），
             可参照 app\lang\ui\zh-Hans.json 的结构；重启后在设置里即可选择。
   系统消息：在 lang\ 下放一份 <语言标签>.json，参照已有的 zh-Hans.json。
   两个目录都可以被你自己替换，升级程序不会覆盖外层 lang\。
@@ -410,6 +568,9 @@ Powered by Void Entropia Studio
   /summarize       对当前长文档手动触发全文摘要
   /model           查看/切换本地模型
   /status          查看模型能力、模式、上下文占用与 KV Cache 估算
+  /task            从任务模板开始
+  /preset          切换生成预设（精确 / 均衡 / 创意）
+  /compact         压缩对话上下文
   /darkmode auto   主题跟随系统（也可 on/off 固定深浅色）
   Ctrl+Enter 发送 · Esc 停止 · Ctrl+L 清空 · Ctrl+O 上传 · Ctrl+T 切换主题
   Ctrl+滚轮 调字号 · Ctrl+Shift+C 复制全部对话
@@ -422,47 +583,209 @@ Powered by Void Entropia Studio
 【卸载】
   本程序为绿色便携版：直接删除整个文件夹即可，不写注册表。
 
-构建时间：$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-"@
-Set-Content -Path (Join-Path $Out "使用说明.txt") -Value $readme -Encoding UTF8
-Write-Ok "使用说明.txt"
+【校验下载是否完整】
+  把下载到的安装包 SHA256 与随发布提供的 SHA256SUMS.txt 对照即可，
+  该文件同时列出了安装包与其它发布资产。
 
-# 合规文档随发布包一同提供（任务书修复五要求）：
-# 根目录放 LICENSE / NOTICE（最容易找到的位置），其余合规文档随 docs\ 一起发。
-foreach ($legal in @("LICENSE", "NOTICE", "SECURITY.md")) {
+【反馈】
+  问题与功能请求：https://github.com/VoidEntropiaStudio/EchoDesk/issues
+  提问与讨论：    https://github.com/VoidEntropiaStudio/EchoDesk/discussions
+  安全漏洞：      请私下报告，不要开公开 Issue —— 见 SECURITY.md
+
+构建时间：$buildTime
+"@
+# .txt 写成 UTF-8 **带 BOM**：Windows 10 的记事本遇到无 BOM 的 UTF-8 会按 ANSI 解码，
+# 中文会变乱码。被程序解析的 config.txt 才必须无 BOM（见 tools\make_sfx.ps1 的说明）。
+$utf8Bom = New-Object System.Text.UTF8Encoding($true)
+[System.IO.File]::WriteAllText((Join-Path $Out "USAGE.txt"), $usage, $utf8Bom)
+Write-Ok "USAGE.txt（结构与操作说明，英文 + 中文）"
+
+# 合规文档随发布包一同提供（任务书「全局要求二 / 全局要求四」）：
+# 外层放英文默认版 + 对应的 .zh-Hans.md 中文译本，成对出现，用户与法务可直接取用。
+# README 与 CHANGELOG 也在必备清单里；docs\ 下的同名文档由第 6c 步整份复制。
+foreach ($legal in @(
+        "LICENSE", "LICENSE.zh-Hans.md",
+        "NOTICE", "NOTICE.zh-Hans.md",
+        "SECURITY.md", "SECURITY.zh-Hans.md",
+        "README.md", "README.zh-Hans.md",
+        "CHANGELOG.md"
+    )) {
     $src = Join-Path $Root $legal
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $Out $legal) -Force
-        Write-Ok $legal
+    }
+    else {
+        Write-Warn2 "缺少 $legal（任务书「全局要求四」要求根目录必备），发布物会缺这份文件"
     }
 }
+Write-Ok "外层合规与说明文档（LICENSE/NOTICE/SECURITY/README/CHANGELOG，各含中英两份）"
 
-# 文档随发布包一同提供（任务书要求：研发记录需纳入发布物）。
-# v0.2.1 起 docs\ 下有按语言分的子目录（docs\zh-Hans、docs\en），因此必须 -Recurse。
+# 配置示例：后端默认配置的副本。
+# 为什么原样复制而不是加分节注释：config.json 会被 pydantic 直接解析，
+# 往示例里塞自定义字段会让人误以为"这些键是合法的"，照抄回去反而报错。
+$cfgSrc = Join-Path $Root "backend\config.json"
+if (Test-Path $cfgSrc) {
+    Copy-Item $cfgSrc (Join-Path $Out "config.example.json") -Force
+    Write-Ok "config.example.json（后端默认配置的副本）"
+}
+
+# ---------- 6b. 安装脚本（任务二） ----------
+# 自解压包（任务一）解压完成后由 SFX 的 RunProgram 执行它：在解压目录创建
+# Start-EchoDesk-v<版本>.lnk，指向 app\EchoDesk.exe，工作目录 = 解压目录，
+# 图标用 app\EchoDesk.ico（缺失时退回 exe 自带图标）。
+Write-Step "生成 install-complete.bat（自解压包解压后自动执行）"
+<#
+    这里用**单引号** here-string（@' ... '@），不做任何变量展开。
+    为什么（v0.2.1 实测踩到）：批处理里有一行 PowerShell 单行命令，
+    里面有 `$s` / `$l` 这些变量；如果写成双引号 here-string，
+    PowerShell 会把它们当成本脚本的变量展开成空串 ——
+    生成的批处理里变成 ` = New-Object -ComObject WScript.Shell;  = .CreateShortcut(...)`，
+    语法直接坏掉，解压后创建快捷方式必然失败，而构建过程一路"成功"。
+    版本号因此改成显式占位符 __VERSION__，写出前再替换。
+#>
+$installBat = @'
+@echo off
+rem ===========================================================================
+rem  EchoDesk v__VERSION__ - post-extraction installer
+rem  自解压包解压完成后自动运行：在解压目录创建启动快捷方式。
+rem  可安全重复运行：已存在同名快捷方式时会先询问是否覆盖。
+rem
+rem  为什么用 chcp 65001 + UTF-8(无 BOM)：本文件含中文提示，cmd 默认代码页
+rem  会把它们显示成乱码；同时文件**不能带 BOM**，否则 cmd 会把它当成命令报错。
+rem ===========================================================================
+setlocal EnableExtensions
+chcp 65001 >nul 2>nul
+
+set "HERE=%~dp0"
+if "%HERE:~-1%"=="\" set "HERE=%HERE:~0,-1%"
+
+set "APP=%HERE%\app\EchoDesk.exe"
+set "ICON=%HERE%\app\EchoDesk.ico"
+set "LNK=%HERE%\Start-EchoDesk-v__VERSION__.lnk"
+
+echo.
+echo  EchoDesk v__VERSION__ - Local AI Desktop Assistant
+echo  ====================================================
+echo.
+
+if not exist "%APP%" goto :no_app
+if exist "%LNK%" goto :ask_overwrite
+
+:create
+set "ICONARG=%ICON%"
+if not exist "%ICON%" set "ICONARG="
+rem 任务二：图标不存在时退回程序自带图标（IconLocation 留空 = 用 exe 内嵌图标）
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$s = New-Object -ComObject WScript.Shell; $l = $s.CreateShortcut('%LNK%'); $l.TargetPath = '%APP%'; $l.WorkingDirectory = '%HERE%'; $l.Description = 'EchoDesk - Local AI Desktop Assistant'; $l.WindowStyle = 1; if ('%ICONARG%' -ne '') { $l.IconLocation = '%ICONARG%,0' }; $l.Save()"
+if errorlevel 1 goto :failed
+
+echo  [OK] Shortcut created / 已创建快捷方式：
+echo       %LNK%
+echo.
+echo  Double-click it to start EchoDesk. / 双击它即可启动 EchoDesk。
+echo  Working directory / 工作目录：%HERE%
+echo  (results\ and ui_state.json are created here, not inside app\)
+echo  (results\ 与 ui_state.json 会生成在这里，而不是 app\ 里面)
+echo.
+echo  Documentation / 文档：docs\  ^|  USAGE.txt
+echo.
+goto :done
+
+:ask_overwrite
+echo  A shortcut with this name already exists / 同名快捷方式已存在：
+echo    %LNK%
+echo.
+set "ANSWER="
+set /p "ANSWER=Overwrite it? 覆盖它？[Y/N] "
+if /i "%ANSWER%"=="Y" goto :create
+if /i "%ANSWER%"=="YES" goto :create
+echo  [SKIP] Kept the existing shortcut / 已保留原有快捷方式。
+echo.
+goto :done
+
+:no_app
+echo  [ERROR] Not found / 未找到主程序：
+echo    %APP%
+echo.
+echo  The package may not have been extracted completely. Please extract the
+echo  whole archive into one folder and run this script again.
+echo  自解压包可能没有完整解压。请把整个压缩包解压到同一个文件夹后重新运行本脚本。
+echo.
+goto :done
+
+:failed
+echo  [ERROR] Failed to create the shortcut / 创建快捷方式失败。
+echo  You can create it by hand: right-drag app\EchoDesk.exe into this folder
+echo  and choose "Create shortcuts here".
+echo  也可以手动创建：右键把 app\EchoDesk.exe 拖到本文件夹，选"在此创建快捷方式"。
+echo.
+
+:done
+echo  ------------------------------------------------------------
+pause
+endlocal
+exit /b 0
+'@
+# 占位符替换成真实版本号；替换后断言不再有残留占位符
+if ($installBat -notmatch '__VERSION__') { throw "install-complete.bat 模板缺少 __VERSION__ 占位符" }
+$installBat = $installBat.Replace('__VERSION__', $Version)
+if ($installBat -match '__VERSION__') { throw "install-complete.bat 仍有未替换的占位符" }
+# 生成结果必须含 PowerShell 变量（防"$ 被吃掉"这类回归）
+foreach ($needle in @('$s = New-Object', '$l = $s.CreateShortcut', '$l.TargetPath', '$l.Save()')) {
+    if ($installBat -notlike "*$needle*") {
+        throw "install-complete.bat 里的 PowerShell 片段缺少 '$needle'（here-string 是否又写成双引号了？）"
+    }
+}
+# 批处理必须是 UTF-8 **无 BOM**（带 BOM 时 cmd 会把 BOM 当命令，首行报错）。
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$batPath = Join-Path $Out "install-complete.bat"
+[System.IO.File]::WriteAllText($batPath, $installBat, $utf8NoBom)
+$batBytes = [System.IO.File]::ReadAllBytes($batPath)
+if ($batBytes.Length -ge 3 -and $batBytes[0] -eq 0xEF -and $batBytes[1] -eq 0xBB -and $batBytes[2] -eq 0xBF) {
+    throw "install-complete.bat 带 BOM，cmd 会在首行报错。"
+}
+Write-Ok "install-complete.bat（UTF-8 无 BOM，$($batBytes.Length) 字节，PowerShell 片段写入校验通过）"
+
+# ---------- 6c. 文档 ----------
+# 文档随发布包一同提供。v0.2.1 起 docs\ 下有按语言分的子目录
+# （docs\zh-Hans、docs\en），因此必须 -Recurse。
 #
-# 这里**复制 docs\ 下的全部文件**，不只是 *.md：修复五新增的 sbom 是 JSON
-# （`docs\SBOM.json`），早期版本用 `-Filter *.md` 把它漏在仓库里没进包，
-# 而 release.yml 与 `tools/verify_release.ps1` 都断言它必须存在 —— 属实测发现的打包缺陷。
-# 另外 docs\ 里将来可能出现图片等非 md 资源，整份复制可以避免重犯。
+# 这里**复制 docs\ 下的全部文件**，不只是 *.md：修复五新增的 SBOM 是 JSON
+# （docs\SBOM.json），早期版本用 `-Filter *.md` 把它漏在仓库里没进包，
+# 而 release.yml 与 tools\verify_release.ps1 都断言它必须存在 —— 属实测发现的打包缺陷。
+#
+# 但**过程文档必须排除**：发布任务书「全局要求五」明确把
+# 「研发记录、修复记录、发布记录等过程文档」列为不该有的内容。
+# v0.2.1 之前这些记录是"顺便进包"的（原注释还写着"研发记录需纳入发布物"），
+# 与任务书冲突，已改为排除 + 断言（见第 9b 步的结构校验）。
 $DocsOut = Join-Path $Out "docs"
 New-Item -ItemType Directory -Path $DocsOut -Force | Out-Null
+$DevRecordRe = '^(v?0\.\d+\.\d+)-(研发记录|修复记录|发布记录|研发过程)\.md$'
 $docCount = 0
 $docOther = 0
+$docSkipped = @()
 $DocsRoot = Join-Path $Root "docs"
 foreach ($doc in Get-ChildItem $DocsRoot -File -Recurse -ErrorAction SilentlyContinue) {
+    if ($doc.Name -match $DevRecordRe) {
+        $docSkipped += $doc.FullName.Substring($DocsRoot.Length).TrimStart('\')
+        continue
+    }
     $rel = $doc.FullName.Substring($DocsRoot.Length).TrimStart('\')
     $dest = Join-Path $DocsOut (Split-Path $rel -Parent)
     if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
     Copy-Item $doc.FullName $dest -Force
     if ($doc.Extension -eq ".md") { $docCount++ } else { $docOther++; Write-Ok "docs\$rel" }
 }
+if ($docSkipped.Count -gt 0) {
+    Write-Ok "已排除过程文档 $($docSkipped.Count) 份（任务书「全局要求五」）: $($docSkipped -join ', ')"
+}
 Write-Ok "docs\（$docCount 个 Markdown + $docOther 个其他文件，含按语言的子目录）"
 
-# 批量处理结果目录：先建好空目录，让"结果会生成在哪"一目了然
+# results\：先建好空目录，让"结果会生成在哪"一目了然
 # （后端 automation.results_root 以工作目录/程序根目录为基准解析，指向的正是这里）
-$ResultsOut = Join-Path $Out "批量处理结果"
+$ResultsOut = Join-Path $Out "results"
 New-Item -ItemType Directory -Path $ResultsOut -Force | Out-Null
-Write-Ok "批量处理结果\（自动化结果的默认位置）"
+Write-Ok "results\（自动化结果的默认位置）"
 
 # ---------- 6b. 清理运行期残留 ----------
 # 交付物应当只含"程序 + 资源"，不含任何"跑过一次"的痕迹：
@@ -557,31 +880,41 @@ if ($Sign) {
     }
 }
 
-# ---------- 9. 创建外层入口快捷方式 ----------
-if (-not $NoShortcut) {
-    Write-Step "创建启动快捷方式（外层 → app\EchoDesk.exe）"
-    $target = Join-Path $AppOut "EchoDesk.exe"
-    $link = Join-Path $Out $ShortcutName
-    if (-not (Test-Path $target)) { Write-Warn2 "未找到主程序，跳过快捷方式" }
-    else {
-        $shell = New-Object -ComObject WScript.Shell
-        $sc = $shell.CreateShortcut($link)
-        $sc.TargetPath = $target
-        # 工作目录设为外层：进程的当前目录即外层，批量处理结果等相对路径产物不会埋进 app\
-        $sc.WorkingDirectory = $Out
-        $sc.Description = "EchoDesk - Local AI Desktop Assistant"
-        $sc.WindowStyle = 1
-        $iconInApp = Join-Path $AppOut "EchoDesk.ico"
-        if (Test-Path $iconInApp) { $sc.IconLocation = "$iconInApp,0" }
-        elseif (Test-Path $Icon) { $sc.IconLocation = "$Icon,0" }
-        $sc.Save()
-        Write-Ok "$ShortcutName → app\EchoDesk.exe（工作目录=外层 $Out）"
-    }
+# ---------- 9. 启动入口：由 install-complete.bat 在解压/部署后创建 ----------
+<#
+    这里**故意不在发布目录里预先生成 .lnk**（v0.2.1 发布复核时的修正）。
+    原因（两条，都是硬性的）：
+      1) Windows 快捷方式是**绝对路径**。在构建机上生成的 .lnk 里记的是
+         `C:\Users\<维护者>\Desktop\...\publish\EchoDesk-v0.2.1\app\EchoDesk.exe`，
+         随发布物分发出去既**泄露构建机的个人绝对路径**（发布任务书「全局要求五」
+         把"个人绝对路径"列为绝对禁止项），在用户机器上又必然是一个死链接。
+         实测：这一项连 `check_feedback.ps1` 都没拦到 —— 它扫的是文本文件，
+         而 .lnk 是二进制、还在 .gitignore 覆盖的 publish\ 里。
+      2) 发布任务书「任务二」本来就把"创建 Start-EchoDesk-v<版本>.lnk"
+         定为 `install-complete.bat` 的职责：自解压包解压后会自动执行它，
+         用户拿到的就是**指向自己机器上真实路径**的快捷方式。
+
+    zip 免安装解压版的用户需要手动运行一次 install-complete.bat（或直接启动
+    app\EchoDesk.exe，程序首次运行会询问是否创建快捷方式）—— USAGE.txt 与
+    发布说明里都写明了这一步。
+#>
+Write-Step "启动入口（不在发布物里预置 .lnk，改由 install-complete.bat 创建）"
+$preexistingLinks = @(Get-ChildItem $Out -Recurse -File -Filter *.lnk -ErrorAction SilentlyContinue)
+if ($preexistingLinks.Count -gt 0) {
+    throw ("发布物里出现了预置快捷方式（会把构建机的绝对路径带出去，任务书禁止个人绝对路径）: " +
+        (($preexistingLinks | ForEach-Object { $_.FullName }) -join ', '))
 }
+Write-Ok "发布目录内无 .lnk（快捷方式由 install-complete.bat 在目标机器上创建）"
 
 # ---------- 9b. 结构校验 ----------
 # 修复七的验收条件之一："外层除快捷方式、结果目录、用户数据外，不出现程序文件"。
 # 这里直接断言，避免以后有人不小心把 dotnet publish 的输出目录改回外层。
+#
+# v0.2.1 发布任务书又加了三条硬约束，一并在这里拦住（构建期就失败，
+# 比打包完再被 make_sfx 的可行性检查挡下来更早、更好定位）：
+#   * 全局要求一：发布物内文件名/目录名全英文；
+#   * 全局要求五：不得有过程文档（研发/修复/发布记录）与运行期残留；
+#   * 全局要求四：根目录必备文件齐全。
 Write-Step "校验发布目录结构"
 $strayRootExe = @(Get-ChildItem $Out -File -Include *.exe, *.dll, *.pdb)
 $strayDeep = @(Get-ChildItem $Out -Recurse -File -Include *.exe, *.dll |
@@ -594,6 +927,66 @@ if (-not $SkipFrontend -and -not (Test-Path (Join-Path $AppOut "EchoDesk.exe")))
     throw "未找到 app\EchoDesk.exe"
 }
 Write-Ok "外层无 exe/dll · 程序本体位于 app\"
+
+# 全局要求一：全英文命名（中/日/韩字符一律不允许出现在文件或目录名里）
+$cjkRe = [regex]'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]'
+$cnNames = @(Get-ChildItem $Out -Recurse -Force -ErrorAction SilentlyContinue |
+    Where-Object { $cjkRe.IsMatch($_.Name) } |
+    ForEach-Object { $_.FullName.Substring($Out.Length).TrimStart('\') })
+if ($cnNames.Count -gt 0) {
+    throw "发布物内出现非 ASCII 文件名/目录名（任务书「全局要求一」要求全英文）: $($cnNames -join ', ')"
+}
+Write-Ok "全英文命名（文件与目录名均无中文/日文/韩文）"
+
+# 全局要求五：过程文档与运行期残留不得进包
+$devRecords = @(Get-ChildItem $Out -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '^(v?0\.\d+\.\d+)-(研发记录|修复记录|发布记录|研发过程)\.md$' })
+if ($devRecords.Count -gt 0) {
+    throw "发布物内出现过程文档（任务书「全局要求五」）: $(($devRecords | ForEach-Object { $_.Name }) -join ', ')"
+}
+$runtimeLeftovers = @(Get-ChildItem $Out -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -in @('session.json', 'ui_state.json', 'snippets.json', 'browser_state.json',
+            'backend_crash.log', 'frontend_crash.log', 'automation_log.jsonl', 'skills_local.json',
+            'summary_cache.json', 'market_cache.json', 'skills_dev.log', 'automation_templates.json') } |
+    Where-Object {
+        # session.json 是例外：交付物里带一份"空会话"是设计（后端首次启动会用它），
+        # 但内容必须真的空 —— 不能带任何会话历史或文件正文（e2e 跑过之后最容易留下）。
+        if ($_.Name -ne 'session.json') { return $true }
+        $txt = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+        if (-not $txt) { return $false }
+        $historyEmpty = [regex]::IsMatch($txt, '"history"\s*:\s*\[\s*\]')
+        $fileEmpty = [regex]::IsMatch($txt, '"file_content"\s*:\s*"\s*"')
+        return (-not ($historyEmpty -and $fileEmpty))
+    })
+if ($runtimeLeftovers.Count -gt 0) {
+    throw "发布物内出现运行期残留（任务书「全局要求五」）: $(($runtimeLeftovers | ForEach-Object { $_.Name }) -join ', ')"
+}
+Write-Ok "无过程文档 · 无运行期残留（会话为空会话）"
+
+# 全局要求四：根目录必备文件齐全
+$mustHave = @(
+    "README.md", "README.zh-Hans.md",
+    "LICENSE", "LICENSE.zh-Hans.md",
+    "NOTICE", "NOTICE.zh-Hans.md",
+    "SECURITY.md", "SECURITY.zh-Hans.md",
+    "CHANGELOG.md", "USAGE.txt",
+    "config.example.json", "install-complete.bat",
+    "docs\PRIVACY.md", "docs\PRIVACY.zh-Hans.md",
+    "docs\EULA.md", "docs\EULA.zh-Hans.md",
+    "docs\SECURITY.md",
+    "docs\THIRD_PARTY_LICENSES.md", "docs\THIRD_PARTY_LICENSES.zh-Hans.md",
+    "docs\SBOM.json", "docs\DEVELOPER.md",
+    "docs\en\COMPLIANCE.md", "docs\zh-Hans\COMPLIANCE.md",
+    "docs\en\README.md", "docs\en\USER_GUIDE.md", "docs\en\FAQ.md", "docs\en\AUTOMATION_GUIDE.md",
+    "docs\zh-Hans\README.md", "docs\zh-Hans\USER_GUIDE.md", "docs\zh-Hans\FAQ.md",
+    "docs\zh-Hans\AUTOMATION_GUIDE.md",
+    "lang", "examples\skills", "results"
+)
+$missing = @($mustHave | Where-Object { -not (Test-Path (Join-Path $Out $_)) })
+if ($missing.Count -gt 0) {
+    throw "发布物缺少任务书「全局要求四」要求的必备文件: $($missing -join ', ')"
+}
+Write-Ok "必备文件齐全（$($mustHave.Count) 项，含双语合规文档与 docs\ 下全部文档）"
 
 # ---------- 10. 汇总 ----------
 Write-Step "发布完成"
@@ -609,4 +1002,64 @@ else { "不含模型（首次启动会询问下载）" }
 Write-Ok "发布目录: $Out"
 Write-Ok "外层文件 $topFiles 个 · app\ 内 $appFiles 个 · backend 内 $backFiles 个 · 合计 $([math]::Round($total / 1MB, 1)) MB"
 Write-Ok $modelText
-Write-Ok "入口: $ShortcutName"
+Write-Ok "入口: install-complete.bat 在目标机器上创建 $ShortcutName"
+
+# ---------- 11. 自解压安装包（发布任务书「任务四」） ----------
+# 任务书要求构建脚本用一个开关把"打包"这一段收口，八步依次为：
+#   1. 按「全局要求一」重命名中文文件/目录为英文；      -> 本脚本第 6/6c 步已按英文名生成，
+#                                                        第 9b 步断言无中文名（有问题就失败）
+#   2. 按「全局要求二」补齐双语合规文档；                -> 第 6 步成对复制 + 第 9b 步断言
+#   3. 按「全局要求三」替换反馈渠道为 GitHub Issues/Security Advisory；
+#                                                        -> tools\check_feedback.ps1 门禁
+#   4. 按「全局要求五」清理调试内容与运行期数据；        -> 第 6b 步清理 + 第 9b 步断言
+#   5. 打包 payload；6. 拼接两份自解压包；7. rcedit 写资源；8. 计算 SHA256SUMS.txt
+#                                                        -> 全部由 tools\make_sfx.ps1 承担
+# 把 5–8 放在独立脚本里，是为了让"只改元数据、只想重打安装包"时能单独跑
+# （make_sfx.ps1 自己做一遍可行性检查，不依赖本脚本已经跑过第 9b 步）。
+if ($MakeSfx) {
+    Write-Step "打包自解压安装包（-MakeSfx）"
+
+    # 第 3 步：反馈渠道门禁。放在打包前，因为它检查的是**源码与文档**，
+    # 一旦不合格，打出来的包也是错的。
+    #
+    # 这里直接以脚本方式调用（`& script`）而不是再起一个 powershell.exe：
+    #   * 少一层进程，出错时异常直接在本脚本里抛出，位置与调用栈都是真的；
+    #   * 不必把路径塞进命令行（本仓库路径含中文与空格，多一层转义就多一处坑）；
+    #   * 两个脚本都用 throw 报错，$ErrorActionPreference=Stop 下会自然终止构建。
+    $feedbackCheck = Join-Path $PSScriptRoot "check_feedback.ps1"
+    if (Test-Path $feedbackCheck) {
+        & $feedbackCheck
+        Write-Ok "反馈渠道检查通过（GitHub Issues / Discussions / Security Advisory，无个人邮箱与实体地址）"
+    }
+    else {
+        Write-Warn2 "未找到 tools\check_feedback.ps1，跳过反馈渠道检查"
+    }
+
+    # 第 5–8 步
+    $makeSfxScript = Join-Path $PSScriptRoot "make_sfx.ps1"
+    if (-not (Test-Path $makeSfxScript)) { throw "未找到 $makeSfxScript" }
+    & $makeSfxScript -Version $Version
+
+    # 后置断言：这一步必须真的产出交付物。
+    # 之前只打印"未生成: xxx"就继续，导致"打包没跑成"仍以成功结束（实测踩到）。
+    Write-Step "-MakeSfx 完成"
+    $deliverables = @(
+        (Join-Path $Root "publish\EchoDesk-v$Version-Setup.exe"),
+        (Join-Path $Root "publish\EchoDesk-v$Version-NoModel-Setup.exe"),
+        (Join-Path $Root "publish\SHA256SUMS.txt")
+    )
+    $missingDeliverables = @($deliverables | Where-Object { -not (Test-Path $_) })
+    foreach ($f in $deliverables) {
+        if (Test-Path $f) {
+            Write-Ok "$(Split-Path -Leaf $f)  $([math]::Round((Get-Item $f).Length / 1MB, 2)) MB"
+        }
+    }
+    if ($missingDeliverables.Count -gt 0) {
+        throw "任务书要求的交付物未生成: $(($missingDeliverables | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')"
+    }
+}
+else {
+    Write-Host ""
+    Write-Warn2 "未生成自解压安装包。要产出交付物（两份 Setup.exe + SHA256SUMS.txt），加 -MakeSfx："
+    Write-Warn2 "  & tools\build_release.ps1 -IncludeModels -MakeSfx"
+}

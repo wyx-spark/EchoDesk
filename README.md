@@ -63,8 +63,13 @@ No cloud account. No API key. No telemetry.
    [Releases page](https://github.com/VoidEntropiaStudio/EchoDesk/releases) of this repository
    (once a release archive has been published) or by building it yourself
    (see [Option B](#option-b--build-from-source)); the build lands in `publish\EchoDesk-v0.2.1\`.
-2. Unzip it anywhere — desktop, another drive, even a USB stick.
-3. Double-click **`EchoDesk-v0.2.1.lnk`**. That shortcut is the only entry point you need;
+2. Unzip it anywhere — desktop, another drive, even a USB stick. (The self-extracting
+   installer unpacks into the folder you pick and runs the post-install step for you.)
+3. Double-click **`Start-EchoDesk-v0.2.1.lnk`**. The self-extracting installer creates that
+   shortcut right after unpacking, pointing at *your* copy of the program. If you downloaded
+   the plain zip instead, run `install-complete.bat` once to create it, or just launch
+   `app\EchoDesk.exe` — the app offers to create a shortcut on first run.
+   That shortcut is the only entry point you need;
    `app\EchoDesk.exe` is the UI and `app\backend\EchoDeskBackend.exe` is started automatically —
    never launch the backend by hand.
 4. On first launch, answer the model question described below, then start typing.
@@ -138,8 +143,8 @@ or move lives in the outer folder, while the program itself sits in `app\`.
 
 | Path | Contents |
 | --- | --- |
-| `EchoDesk-v0.2.1.lnk` | The only entry point (targets `app\EchoDesk.exe`, working directory = this folder). |
-| `批量处理结果\` | Automation output (`date\task\` folders with plain-text reports and downloaded files). |
+| `Start-EchoDesk-v0.2.1.lnk` | The only entry point (targets `app\EchoDesk.exe`, working directory = this folder). |
+| `results\` | Automation output (`date\task\` folders with plain-text reports and downloaded files). |
 | `ui_state.json`, `snippets.json` | Window state, font size, theme, language and reusable snippets. |
 | `lang\` | Backend language packs (system messages, errors, command help). Drop in a new `<locale>.json` to add a language. |
 | `examples\skills\` | Example plugin sources (Hello World and an OFD reader). |
@@ -157,18 +162,17 @@ on managed machines where the program folder itself is read-only).
 
 ## Screenshots and demo
 
-No screenshots are committed to this repository yet. The only image assets that exist today are
-`assets/EchoDesk.ico` (application icon) and `assets/EchoDesk.png`. The table below is a
-placeholder checklist: capture these shots, drop the files into `assets/screenshots/`, and replace
-each row with an image reference pointing at the suggested file name.
+Screenshots are **not part of the v0.2.1 release**. The only image assets that ship today are
+`assets/EchoDesk.ico` (the application icon) and `assets/EchoDesk.png` (the logo). Nothing in
+this README links to an image that does not exist yet.
 
-| # | What to capture | Suggested file |
-| --- | --- | --- |
-| 1 | Main window with a document under discussion and the context/KV-cache status line visible | `assets/screenshots/main-window.png` |
-| 2 | Long-document summarization in progress (chunk counter plus source pointers) | `assets/screenshots/long-document.png` |
-| 3 | Settings → Automation tab, showing field-level help and the selector test result | `assets/screenshots/automation-settings.png` |
-| 4 | Headed Edge window driven by an automation run, next to EchoDesk's live progress log | `assets/screenshots/automation-run.png` |
-| 5 | Skill marketplace (`Ctrl+M`) with verified / unverified / installed states, and the same window in Simplified Chinese | `assets/screenshots/marketplace.png` |
+Interface previews — the main window, long-document summarization, the automation tab with the
+selector test, a headed automation run and the skill marketplace in both languages — will be
+added to `assets/screenshots/` in a future update, and this section will embed them then.
+
+Until they arrive, the quickest way to see the interface is to run the portable build: it needs
+no installation, no cloud account and no network for local chat (see
+[Quick start](#quick-start)).
 
 ## Languages
 
@@ -236,29 +240,39 @@ EchoDesk is local by design, and the policy is written down rather than implied:
 
 | Document | Contents |
 | --- | --- |
-| [docs/USER_GUIDE.md](docs/zh-Hans/USER_GUIDE.md) | End-user manual: install, daily use, long contracts, batch automation, skills. |
-| [docs/FAQ.md](docs/zh-Hans/FAQ.md) | Quick answers and troubleshooting for startup, models, files, automation and the marketplace. |
+| [docs/en/USER_GUIDE.md](docs/en/USER_GUIDE.md) | End-user manual: install, daily use, long contracts, batch automation, skills. |
+| [docs/en/FAQ.md](docs/en/FAQ.md) | Quick answers and troubleshooting for startup, models, files, automation and the marketplace. |
+| [docs/en/AUTOMATION_GUIDE.md](docs/en/AUTOMATION_GUIDE.md) | Field-by-field automation configuration and the selector test. |
 | [docs/DEVELOPER.md](docs/DEVELOPER.md) | Architecture, JSON protocol, module responsibilities, config reference, build and release. |
-| [docs/SKILL_GUIDE.md](docs/zh-Hans/SKILL_GUIDE.md) | How to write, submit and publish a skill. |
+| [docs/en/SKILL_GUIDE.md](docs/en/SKILL_GUIDE.md) | How to write, submit and publish a skill. |
 | [docs/PRIVACY.md](docs/PRIVACY.md) | What runs locally, what may go online, log redaction rules. |
 | [docs/EULA.md](docs/EULA.md) | End-user license terms for the distributed build. |
 | [docs/THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md) | Complete third-party component and license inventory. |
-| [docs/CHANGELOG.md](docs/CHANGELOG.md) | Feature, fix and known-limitation history per version. |
+| [CHANGELOG.md](CHANGELOG.md) | Feature, fix and known-limitation history per version. |
 | [NOTICE](NOTICE) | Attribution notice for the main bundled third-party components. |
 
-## Contributing, security and community
+Localized documents exist in both shipped languages: `docs/en/` (English, linked above) and
+`docs/zh-Hans/` (Simplified Chinese, the same set of guides).
+
+## Getting help and contributing
 
 Contributions are welcome — bug reports, fixes, skills, translations and documentation alike.
+Every public channel is on GitHub; the project publishes **no support email address, no phone
+number and no postal address**.
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) — development environment, code style, commit conventions,
-  pull-request flow, the translation workflow and the skill-contribution workflow.
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — the behaviour we expect in this community.
-- [SECURITY.md](SECURITY.md) — supported versions, how to report a vulnerability privately,
-  what to include, and our response-time commitment. Please do not open public issues for
-  security problems.
-- Issue templates for bug reports, feature requests, skill submissions and translation help live
-  in [`.github/`](.github/); when in doubt, open an issue and include your version, operating
-  system, exact steps and the relevant log (see [SECURITY.md](SECURITY.md) for log locations).
+- **Report a problem or request a feature** — report problems by opening a GitHub Issue:
+  <https://github.com/VoidEntropiaStudio/EchoDesk/issues>. Bug reports, feature requests, skill
+  submissions and translation help each have a template; include your version, operating system,
+  exact steps and the relevant log.
+- **Ask a question, share a skill, coordinate a translation** — start a thread in
+  [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions).
+- **Send a change** — open a pull request; [CONTRIBUTING.md](CONTRIBUTING.md) covers the
+  development environment, code style, commit conventions and the review flow. See
+  [SECURITY.md](SECURITY.md) for log locations.
+- **Security problems** — please do **not** open a public issue; follow the private reporting
+  process in [SECURITY.md](SECURITY.md) instead (supported versions, what to include and our
+  response-time commitment are documented there too).
+- **Community behaviour** — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## License
 

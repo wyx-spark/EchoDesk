@@ -80,8 +80,8 @@ def test_config() -> None:
     check("摘要触发比例默认 0.5", abs(cfg.summarize.trigger_ratio - 0.5) < 1e-9)
     check("默认上下文窗口 8192", cfg.context_length == 8192, f"得到 {cfg.context_length}")
 
-    # 新增三：批量处理结果目录的配置默认值与程序根目录解析
-    check("结果顶层文件夹默认「批量处理结果」", auto.results_root_name == "批量处理结果",
+    # 新增三：results目录的配置默认值与程序根目录解析
+    check("结果顶层文件夹默认「results」", auto.results_root_name == "results",
           f"得到 {auto.results_root_name}")
     check("结果保存位置默认为空（= 程序根目录）", auto.results_location == "", f"得到 {auto.results_location}")
     check("任务名称有默认值", bool(auto.task_name), f"得到 {auto.task_name}")

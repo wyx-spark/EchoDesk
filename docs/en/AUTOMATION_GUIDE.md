@@ -46,7 +46,12 @@ When a CAPTCHA or two-factor verification appears, the run **pauses and waits fo
 4. Tick the **safety protocol**, then switch on the **automation master switch**;
 5. Click **"▶ Run once now"** and watch the first one or two tasks to confirm the results folder contains what you expect.
 
-> 📷 Screenshot placeholder: the whole Automation tab of the Settings window, showing the safety protocol box, the positions of the fields, the "Test selectors" button on the right, and the "▶ Run once now / ⏹ Stop automation / run log" area at the bottom.
+> 📷 On screen: the whole Automation tab of the Settings window — the safety protocol box, the
+> positions of the fields, the "Test selectors" button on the right, and the
+> "▶ Run once now / ⏹ Stop automation / run log" area at the bottom.> 📷 **No screenshots ship with v0.2.1.** The interface previews below will be added to
+> `assets/screenshots/` in a future update. The description here tells you what to look at
+> on screen in the meantime.
+
 
 ---
 
@@ -75,8 +80,8 @@ When a CAPTCHA or two-factor verification appears, the run **pauses and waits fo
 | Retries on failure `retries` | Optional | How many times a failed task is retried automatically | `1` (0–5) |
 | Skip tasks already processed `dedupe` | Optional | When ticked, tasks you already processed are skipped next time | `true` |
 | Save result files `save_results` | Optional | Clear it to do a dry run only — no result file is written | `true` |
-| Result folder name `task_name` | Optional | The name of the third-level result folder, i.e. what this batch is called | `自动化任务` ("automation task") |
-| Result root folder name `results_root_name` | Optional | The first-level folder inside the results root | `批量处理结果` ("batch results") |
+| Result folder name `task_name` | Optional | The name of the third-level result folder, i.e. what this batch is called | `auto-task` |
+| Result root folder name `results_root_name` | Optional | The first-level folder inside the results root | `results` |
 | Where to save results `results_location` | Optional | Put results on another drive or a shared folder; empty = the user data folder (the portable **outer** folder `EchoDesk-v0.2.1\`, not `app\`; set the `ECHODESK_DATA` environment variable to move it) | empty (= the user data folder) |
 | Run on a schedule `schedule_enabled` | Optional | Runs a batch automatically at fixed times every day | `false` |
 | Scheduled times `schedule_times` | Optional | The times of day, separated by commas | `09:00` |
@@ -98,7 +103,7 @@ restart for the change to take effect (the file is UTF-8; Notepad or VS Code bot
 | `headless` | Read-only | Automation **only supports a visible browser**; writing `true` is corrected back to `false` with a warning | `false` |
 | `browser_channel` | Optional | Which browser opens the pages; the system Edge is the default | `msedge` |
 | `audit_log_file` | Optional | Audit log file: one JSON record per task | `automation_log.jsonl` |
-| `start_with_windows` | **Not implemented** | The program does not read this field yet, so setting it to `true` does not start EchoDesk at sign-in; to start with Windows, copy `EchoDesk-v0.2.1.lnk` into the system Startup folder (`Win+R` → `shell:startup`) | `false` |
+| `start_with_windows` | **Not implemented** | The program does not read this field yet, so setting it to `true` does not start EchoDesk at sign-in; to start with Windows, copy `Start-EchoDesk-v0.2.1.lnk` into the system Startup folder (`Win+R` → `shell:startup`) | `false` |
 | `safety_version` / `safety_accepted_at` | Read-only | Safety protocol version and when you accepted it; recorded automatically for auditing | `1.0` / empty |
 
 ---
@@ -125,7 +130,10 @@ restart for the change to take effect (the file is UTF-8; Notepad or VS Code bot
   - CSS selectors (recommended): write them directly, e.g. `a.task-link`, `td.title > a`;
   - XPath: start with `//`, `(` or `xpath=`, e.g. `//a[@class='task']`.
 
-> 📷 Screenshot placeholder: picking the task name with "🎯 Pick on page" on the task list page — capture the red highlight box around the hovered element, the selector preview tooltip following the cursor, and the blue banner at the top reading "move the mouse onto the element to capture and click; press Esc to cancel".
+> 📷 On screen: picking the task name with "🎯 Pick on page" on the task list page — a red
+> highlight box around the hovered element, a selector preview tooltip following the cursor,
+> and a blue banner at the top reading "move the mouse onto the element to capture and click;
+> press Esc to cancel".
 
 ### 3.3 Task row container (optional)
 
@@ -167,17 +175,17 @@ restart for the change to take effect (the file is UTF-8; Notepad or VS Code bot
 - **In plain words**: the name used for the result folder. It defaults to the task name and usually needs no change.
 - **Example**: `Contract review`
 - **What it does**: whatever you type becomes the third-level folder name. **Duplicate names on the same day get a number** (`合同审查`, `合同审查-1`, `合同审查-2`), so an earlier batch is never overwritten.
-- **Left empty**: the default name `自动化任务` is used.
+- **Left empty**: the default name `auto-task` is used.
 
 ### 3.9 Where the results go
 
 | Field | In plain words | Example |
 | --- | --- | --- |
-| Result root folder name | What the first-level folder under the results root is called | `批量处理结果` |
+| Result root folder name | What the first-level folder under the results root is called | `results` |
 | Where to save results | Fill this in to put results on another drive or a shared folder; empty means the user data folder (the portable **outer** folder, i.e. the one holding the shortcut) | `D:\contract-review-results` |
 
 The window previews the full structure live, for example:
-`Result root / YYYY-MM-DD / task name / 结果.txt + original files`.
+`Result root / YYYY-MM-DD / task name / result.txt + original files`.
 Click "Open results folder" to open the results root in File Explorer; click "Browse…" to pick a folder as the results location.
 
 ### 3.10 Run settings
@@ -194,7 +202,7 @@ Click "Open results folder" to open the results root in File Explorer; click "Br
 
 - **In plain words**: turn on "Run on a schedule" and fill in the times of day to run, separated by commas, for example `09:00, 18:30`.
 - **Note**: scheduled runs are driven by a background thread, so **EchoDesk must stay running**; invalid times (such as `25:00`) are dropped automatically.
-- To start EchoDesk with Windows, put the "EchoDesk-v0.2.1.lnk" shortcut into the system Startup folder
+- To start EchoDesk with Windows, put the "Start-EchoDesk-v0.2.1.lnk" shortcut into the system Startup folder
   (`Win+R` → `shell:startup`). The `start_with_windows` config field is **not implemented**: the program does
   not read it, so setting it to `true` has no effect.
 
@@ -223,7 +231,7 @@ into a financial review opinion.
 | File types to process | `pdf, docx` |
 | Task instruction | `Extract the contract amount, payment method and terms, penalty ratio, both parties and the signing date; flag anything out of policy` |
 | Result folder name | `Contract review` |
-| Result root folder name | `批量处理结果` |
+| Result root folder name | `results` |
 | Where to save results | Empty (= the user data folder, i.e. the portable outer folder); use `D:\contract-review-results` to put it on drive D |
 | Maximum tasks / page timeout / retries | `20` / `30000` / `1` |
 | Skip tasks already processed, Save result files | both ticked |
@@ -261,7 +269,7 @@ EchoDesk first):
     "headless": false,
     "browser_channel": "msedge",
     "save_results": true,
-    "results_root_name": "批量处理结果",
+    "results_root_name": "results",
     "results_location": "",
     "task_name": "Contract review",
     "audit_log_file": "automation_log.jsonl",
@@ -272,9 +280,12 @@ EchoDesk first):
 }
 ```
 
-A note on folder names: the default value of `results_root_name` is the Chinese word `批量处理结果`
-("batch results") so that Chinese and English installs produce the same paths. You may rename it — for
-example to `batch-results` — but keep it free of characters Windows forbids in file names.
+A note on folder names: the default value of `results_root_name` is `results`, an ASCII name, so that
+every language of install produces the same on-disk paths and no encoding trouble can arise from the
+folder name. (Before v0.2.1 this default was the Chinese word `批量处理结果`; the name was changed so
+that all names the program creates are English — see the release notes for the migration impact.)
+You may rename it — for example to `batch-results` — but keep it free of characters Windows forbids
+in file names.
 
 ### 4.3 What the results folder looks like afterwards
 
@@ -283,27 +294,27 @@ that is the outer `EchoDesk-v0.2.1\` folder (the one holding the shortcut), **no
 
 ```
 <outer folder>\
-└── 批量处理结果\                        ← result root folder name (customisable)
+└── results\                        ← result root folder name (customisable)
     └── 2026-09-23\                     ← the run date (several runs on one day share this level)
         └── Contract review\            ← the result folder name (duplicates get -1, -2)
             ├── 年度采购合同.pdf           ← the original attachments that were downloaded
             ├── 补充协议.docx
-            ├── 结果.txt                  ← every task of this run (plain text)
-            └── 失败截图_任务2_20260923_101010.png   ← only when a task failed
+            ├── result.txt                  ← every task of this run (plain text)
+            └── failure-screenshot-task2-20260923_101010.png   ← only when a task failed
 ```
 
-`结果.txt` ("results.txt") is **plain text** — Notepad shows it directly, with no `#`, `**` or `|` markers.
+`result.txt` is **plain text** — Notepad shows it directly, with no `#`, `**` or `|` markers.
 It looks roughly like this:
 
 ```text
-EchoDesk 批量处理结果
+EchoDesk results
 ========================================
 任务名称：Contract review
 运行日期：2026-09-23
 开始时间：2026-09-23T09:12:03
 任务列表：https://oa.example.com/task/list
 任务指令：Extract the contract amount, payment method and terms, penalty ratio, both parties and the signing date; flag anything out of policy
-结果目录：<outer folder>\批量处理结果\2026-09-23\Contract review
+结果目录：<outer folder>\results\2026-09-23\Contract review
 
 [1/3] 年度采购合同
 --------------------------
@@ -319,7 +330,7 @@ EchoDesk 批量处理结果
 任务链接：https://oa.example.com/task/detail/1025
 附件：服务协议.pdf
 失败原因：详情页没有符合后缀要求的文件链接
-失败截图：失败截图_任务2_20260923_101010.png
+失败截图：failure-screenshot-task2-20260923_101010.png
 
 自动化完成：成功 1 个，跳过 0 个，失败 1 个（共发现 3 个任务，处理上限 20 个）。
 ```
@@ -329,7 +340,8 @@ The report header and the per-task lines are produced by the backend, so they st
 `失败原因:` = "failure reason", `自动化完成:` = "automation finished"). Only the file names and the
 instruction text come from your own configuration.
 
-> 📷 Screenshot placeholder: File Explorer showing the three-level "批量处理结果\date\task name" folders, making clear that the original attachments and `结果.txt` sit in the same folder.
+> 📷 On screen: File Explorer with the three-level "results\date\task name" folders — the
+> original attachments and `result.txt` sit in the same folder.
 
 ---
 
@@ -383,7 +395,8 @@ step-by-step wizard; each step tells you plainly whether it succeeded and what t
 - Then switch on "Enable automation" (while the protocol is unticked the switch cannot be turned on, or is turned back off automatically);
 - Finally click "▶ Run once now" — for the first round, set **Maximum tasks per run to 3–5** and scale up only after you are satisfied.
 
-> 📷 Screenshot placeholder: step 1 of the "Test selectors" wizard succeeding — capture the green success message, the match count and the sample task names, plus the "Next step" button.
+> 📷 On screen: step 1 of the "Test selectors" wizard succeeding — a green success message, the
+> match count, the sample task names, and the "Next step" button.
 
 ---
 
@@ -402,7 +415,7 @@ step-by-step wizard; each step tells you plainly whether it succeeded and what t
 | Parsing `.doc` / `.ppt` fails or asks for WPS | Legacy binary formats (and encrypted documents) are read through COM, and WPS/Office is not installed | Install WPS or Microsoft Office, or save the file as `.docx` / `.pptx` first |
 | The model is too slow, or reports "the model returned an empty result" | The task instruction is too long, `llm_max_tokens` is too large, or a long attachment triggered chunked summarisation | Trim the instruction to four to six items; set `llm_max_tokens` to 384–512; switch to a smaller quantised model (such as Q4_K_M) |
 | The results folder is not created, or writing fails | "Where to save results" points at a path that does not exist or is not writable (network drive, protected system folder) | Leave "Where to save results" empty to use the user data folder (the portable outer folder), or pick a writable local folder such as `D:\contract-review-results`; check free disk space |
-| The scheduled run never fired | EchoDesk was not running (the schedule is driven by a background thread), the time format was invalid and dropped, or "Run on a schedule" is off | Keep EchoDesk running; put "EchoDesk-v0.2.1.lnk" into `shell:startup` for auto-start; write times as two-digit hours such as `09:00` |
+| The scheduled run never fired | EchoDesk was not running (the schedule is driven by a background thread), the time format was invalid and dropped, or "Run on a schedule" is off | Keep EchoDesk running; put "Start-EchoDesk-v0.2.1.lnk" into `shell:startup` for auto-start; write times as two-digit hours such as `09:00` |
 | You want to see what a task actually did (audit trail) | You need to check afterwards who processed which files and when | Open the audit log `app\backend\automation_log.jsonl`: one JSON record per task (see section 9) |
 | "no local model is loaded, cannot generate a summary or review opinion" | No local model is selected or downloaded yet | Select one in the main window with `/model list` and `/model <file name>` |
 | "playwright is not installed, run pip install playwright first" | Running from source without the dependencies (the packaged build includes them) | For a source checkout run `pip install -r backend\requirements.txt` and restart |
@@ -474,11 +487,11 @@ the export feature in section 8.
   protocol version plus the time you accepted it. Tokens and passwords inside the log are redacted
   automatically; document text, model output and cookies are never written.
 - **Where results are written**: only into the results root you configured
-  (`results root\date\task name\`), keeping the original attachments, `结果.txt` and failure screenshots in that
+  (`results root\date\task name\`), keeping the original attachments, `result.txt` and failure screenshots in that
   folder. Temporary copies used during processing are cleaned up afterwards. With "Where to save results" left
   empty, that root is the **user data folder** (the portable outer `EchoDesk-v0.2.1\` folder, not `app\`); set
   the `ECHODESK_DATA` environment variable to move all user data (`ui_state.json`, `snippets.json`,
-  `批量处理结果\`) elsewhere.
+  `results\`) elsewhere.
 - **Deduplication record**: `processed_file` (default `automation_processed.json`) stores only hashes of task
   URLs so processed tasks can be skipped next time; it holds no page content.
 

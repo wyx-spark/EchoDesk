@@ -61,7 +61,7 @@ $appDir = Split-Path -Parent $exePath
 $crashLog = Join-Path $appDir 'frontend_crash.log'
 if (Test-Path $crashLog) { Remove-Item $crashLog -Force }   # 每轮从干净状态开始
 # 便携版布局下外层目录（用户数据/快捷方式所在），工作目录必须设成它，
-# 否则批量处理结果与 ui_state.json 会落到 app\ 里，与发布布局不一致。
+# 否则results与 ui_state.json 会落到 app\ 里，与发布布局不一致。
 $userDataDir = $appDir
 if ((Split-Path -Leaf $appDir) -eq 'app') { $userDataDir = Split-Path -Parent $appDir }
 

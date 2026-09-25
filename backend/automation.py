@@ -326,7 +326,7 @@ class _TaskOutcome:
     summary: str = ""               # 模型输出正文（仅用于回传前端/写结果文件，不入日志）
     files: List[str] = field(default_factory=list)   # 落地到任务目录后的文件名
     error: str = ""
-    result_path: str = ""           # 结果文件落盘路径（结果.txt）
+    result_path: str = ""           # 结果文件落盘路径（result.txt）
     screenshot: str = ""            # 失败截图路径（任务书 新增三：截图留在任务目录内）
 
 
@@ -353,7 +353,7 @@ class AutomationEngine:
         self._last_error = ""
         self._processed_count = 0
         self._result_count = 0
-        # 本轮结果目录与结果块（新增三：结果.txt 为纯文本，每条任务完成即重写落盘）
+        # 本轮结果目录与结果块（新增三：result.txt 为纯文本，每条任务完成即重写落盘）
         self._run_task_dir = ""
         self._report_header = ""
         self._report_blocks: List[str] = []
@@ -420,17 +420,17 @@ class AutomationEngine:
     def results_root(self) -> str:
         """结果根目录：``保存位置 / 顶层文件夹名``（新增三）。
 
-        保存位置留空表示程序根目录；顶层文件夹名默认「批量处理结果」。
+        保存位置留空表示程序根目录；顶层文件夹名默认「results」。
         """
         raw = str(getattr(self.cfg, "results_location", "") or "").strip()
         base = os.path.abspath(os.path.expanduser(raw)) if raw else _program_root()
-        name = _safe_filename(str(getattr(self.cfg, "results_root_name", "") or "批量处理结果"), "批量处理结果")
+        name = _safe_filename(str(getattr(self.cfg, "results_root_name", "") or "results"), "results")
         return os.path.join(base, name)
 
     @property
     def task_name(self) -> str:
         """本次运行的任务名称（第三层目录名）。"""
-        return _safe_filename(str(getattr(self.cfg, "task_name", "") or "自动化任务"), "自动化任务")[:60]
+        return _safe_filename(str(getattr(self.cfg, "task_name", "") or "auto-task"), "auto-task")[:60]
 
     @property
     def results_dir(self) -> str:
@@ -458,8 +458,8 @@ class AutomationEngine:
 
     @property
     def report_path(self) -> str:
-        """本轮结果文件路径（固定命名 ``结果.txt``，纯文本无 Markdown）。"""
-        return os.path.join(self.results_dir, "结果.txt")
+        """本轮结果文件路径（固定命名 ``result.txt``，纯文本无 Markdown）。"""
+        return os.path.join(self.results_dir, "result.txt")
 
     def _build_report_header(self) -> str:
         """结果文件的文件头：一眼看清这批结果属于哪次运行。"""
@@ -478,7 +478,7 @@ class AutomationEngine:
         )
 
     def _write_report(self, blocks: Sequence[str], header: str) -> str:
-        """把结果写入 ``结果.txt``（纯文本）。
+        """把结果写入 ``result.txt``（纯文本）。
 
         采用「每次重写整份」的方式：单条任务完成后立即落盘，
         即使中途崩溃或按停止，已处理任务的结果也不会丢。
@@ -1198,9 +1198,9 @@ class AutomationEngine:
         index: int = 0,
         total: int = 0,
     ) -> str:
-        """记录单个任务的成功结果并刷新 ``结果.txt``，返回结果文件路径。
+        """记录单个任务的成功结果并刷新 ``result.txt``，返回结果文件路径。
 
-        任务书 新增三：结果文件固定命名 ``结果.txt``，且必须是**纯文本**
+        任务书 新增三：结果文件固定命名 ``result.txt``，且必须是**纯文本**
         （记事本无 Markdown 渲染能力），因此这里用 ``markdown_to_plain`` 剥离标记。
         """
         if not bool(getattr(self.cfg, "save_results", True)) or self._dry_run:
@@ -1232,7 +1232,7 @@ class AutomationEngine:
         total: int = 0,
         screenshot: str = "",
     ) -> str:
-        """把失败任务的信息（含失败截图文件名）写入 ``结果.txt``（任务书 新增三）。"""
+        """把失败任务的信息（含失败截图文件名）写入 ``result.txt``（任务书 新增三）。"""
         if not bool(getattr(self.cfg, "save_results", True)) or self._dry_run:
             return ""
         prefix = f"[{index}/{total}] " if index and total else ""
@@ -1266,7 +1266,9 @@ class AutomationEngine:
         """失败截图保存到本轮任务目录内（任务书 新增三），返回路径（失败返回空串）。"""
         try:
             os.makedirs(self.results_dir, exist_ok=True)
-            path = _unique_path(self.results_dir, f"失败截图_任务{index}_{_stamp()}.png")
+            # 发布任务书「全局要求一」：程序生成的文件名一律英文
+            # （原为 `失败截图_任务{index}_{stamp}.png`）。
+            path = _unique_path(self.results_dir, f"failure-screenshot-task{index}-{_stamp()}.png")
             try:
                 page.screenshot(path=path, full_page=True, timeout=10000)
             except Exception:  # noqa: BLE001
@@ -2097,7 +2099,7 @@ class AutomationEngine:
                 if self._selector_error:
                     message = _t("automation.run.list_selector_unusable", error=self._selector_error)
                 self._last_error = message
-                # 失败信息也写进 结果.txt，避免"结果目录是空的、不知道发生了什么"
+                # 失败信息也写进 result.txt，避免"结果目录是空的、不知道发生了什么"
                 self._save_summary_block(_t("automation.run.summary_no_task", reason=message))
                 self._audit("run_end", url=self.task_list_url, result="failed", error=message, **counters)
                 yield self._event("error", message)
@@ -2177,7 +2179,7 @@ class AutomationEngine:
                 else:
                     counters["failed"] += 1
                     reason = outcome.error or _t("automation.result.unknown_error")
-                    # 失败信息同样写入 结果.txt，并保留失败截图（任务书 新增三）
+                    # 失败信息同样写入 result.txt，并保留失败截图（任务书 新增三）
                     self._save_failure(
                         title, entry.href, outcome.files, reason,
                         index=index, total=total_tasks, screenshot=outcome.screenshot,
@@ -2306,7 +2308,7 @@ class AutomationEngine:
         """处理单个任务（生成器，返回值通过 ``yield from`` 拿到）。
 
         返回值：``_TaskOutcome``。下载的原始文件在成功/失败时都会被移入本轮任务目录
-        （新增三：结果目录内保存原始文件与 结果.txt），临时文件目录只用于中转。
+        （新增三：结果目录内保存原始文件与 result.txt），临时文件目录只用于中转。
         """
         title = entry.text or _t("automation.task.fallback_title", index=index)
         files_saved: List[str] = []

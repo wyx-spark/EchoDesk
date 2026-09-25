@@ -4,8 +4,8 @@
 出品方：Void Entropia Studio
 适用对象：在受管企业环境中部署 EchoDesk 桌面版（便携版或安装版）的 IT 管理员与合规审查人员
 
-相关文档：[`../PRIVACY.md`](../PRIVACY.md)（联网行为逐项说明）、[`../EULA.md`](../EULA.md)（许可协议）、
-[`../SECURITY.md`](../SECURITY.md)（安全策略）、[`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md)、
+相关文档：[`../PRIVACY.md`](../PRIVACY.zh-Hans.md)（联网行为逐项说明）、[`../EULA.md`](../EULA.zh-Hans.md)（许可协议）、
+[`../SECURITY.md`](../../SECURITY.zh-Hans.md)（安全策略）、[`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.zh-Hans.md)、
 [`../SBOM.json`](../SBOM.json)。
 English version: [`../en/COMPLIANCE.md`](../en/COMPLIANCE.md)。
 
@@ -15,7 +15,7 @@ English version: [`../en/COMPLIANCE.md`](../en/COMPLIANCE.md)。
 
 1. 本文件面向"**企业/组织内受管环境**"的适配问题：代理、证书、防火墙、组策略与审计留痕。
    个人用户无需阅读，日常使用请看 [`USER_GUIDE.md`](USER_GUIDE.md) 与 [`FAQ.md`](FAQ.md)。
-2. 前提事实（与 [`../PRIVACY.md`](../PRIVACY.md) 一致）：EchoDesk 是纯本地应用，
+2. 前提事实（与 [`../PRIVACY.md`](../PRIVACY.zh-Hans.md) 一致）：EchoDesk 是纯本地应用，
    **没有服务器端、没有遥测、不监听端口**；只有五个功能会联网，且都可以关闭。
 3. 全局配置文件是后端目录下的 `config.json`；同目录可放 `config.user.json`
    作为**用户覆盖层**（字段优先，程序不会改写它），企业下发的策略建议放在 `config.user.json`。
@@ -68,7 +68,7 @@ $env:NO_PROXY    = "localhost,127.0.0.1,.corp.example"
 2. 配置：`/search off`、`"marketplace": {"enabled": false}`、`"update": {"enabled": false}`、
    `"automation": {"enabled": false}`。
 3. 模型：手工预置 `.gguf` 到模型目录，不从界面触发下载（**模型下载没有"一键禁网"配置项**，
-   见 [`../PRIVACY.md`](../PRIVACY.md) 第 2.1 节的说明）。
+   见 [`../PRIVACY.md`](../PRIVACY.zh-Hans.md) 第 2.1 节的说明）。
 
 ## 三、证书（Certificates）
 
@@ -176,10 +176,12 @@ $env:NO_PROXY    = "localhost,127.0.0.1,.corp.example"
 
 ```text
 EchoDesk-v0.2.1\
-├── EchoDesk-v0.2.1.lnk          ← 启动快捷方式（工作目录 = 用户数据目录）
+├── install-complete.bat         ← 解压后的收尾脚本（负责创建下面这个快捷方式）
+├── Start-EchoDesk-v0.2.1.lnk          ← 启动快捷方式，由上面那个脚本在**你的机器上**创建
+│                                  （工作目录 = 用户数据目录）
 ├── ui_state.json                ← 界面状态
 ├── snippets.json                ← 常用语
-├── 批量处理结果\                 ← 自动化产物（用户数据目录）
+├── results\                 ← 自动化产物（用户数据目录）
 └── app\                         ← 程序本体
     ├── EchoDesk.exe
     └── backend\
@@ -214,7 +216,7 @@ EchoDesk-v0.2.1\
 ```
 
 - 生效范围：前端（`ui_state.json`、`snippets.json`）与后端由 `user_data_root()` 推导的位置——
-  主要是**批量处理结果的默认根目录**。它**不会**把 `app\backend\` 下的产物搬走（见 5.2）。
+  主要是**results的默认根目录**。它**不会**把 `app\backend\` 下的产物搬走（见 5.2）。
 - 若 `ECHODESK_DATA` 指向的位置不可写：前端会忽略该变量并回落自动判定；
   后端会直接采用该路径，随后的写入失败会以错误形式暴露（不会静默改写到别处）。
 - 建议与 5.4 的表配合使用：`ECHODESK_DATA` 管"用户数据目录"，表里的配置项管"后端产物"。
@@ -243,9 +245,9 @@ EchoDesk-v0.2.1\
 
 1. 直接双击 `app\EchoDesk.exe` 启动程序（这一步永远可用，不依赖快捷方式）。
 2. 程序在启动时会检测外层快捷方式：
-   - 快捷方式**不存在** → 弹出"是否创建「EchoDesk-v<版本>.lnk」"，点"是"即创建；
+   - 快捷方式**不存在** → 弹出"是否创建「Start-EchoDesk-v<版本>.lnk」"，点"是"即创建；
    - 快捷方式**已失效**（移动/改名文件夹后目标丢失或工作目录不对）→ 弹出"是否重新创建"，点"是"即重建。
-   重建后的快捷方式：目标 = 当前 `EchoDesk.exe`，**工作目录 = 用户数据目录**（这是"批量处理结果"落在外层的关键）。
+   重建后的快捷方式：目标 = 当前 `EchoDesk.exe`，**工作目录 = 用户数据目录**（这是"results"落在外层的关键）。
 3. 如果之前点过"否"（跳过创建），程序不再主动询问：删除用户数据目录下的 `ui_state.json`
    即可重置该标记（该文件同时保存界面状态，删除只影响界面偏好）。
 4. 也可以手工新建快捷方式：目标填 `<发布目录>\app\EchoDesk.exe`，
@@ -253,10 +255,10 @@ EchoDesk-v0.2.1\
 
 ## 六、审计与留痕
 
-### 6.1 结果文件 `结果.txt`
+### 6.1 结果文件 `result.txt`
 
-- 位置：`<automation.results_location>\<automation.results_root_name>\YYYY-MM-DD\任务名\结果.txt`
-  （默认即"用户数据目录\批量处理结果\日期\任务名\"，同名任务自动加 `-1`、`-2` 后缀）。
+- 位置：`<automation.results_location>\<automation.results_root_name>\YYYY-MM-DD\任务名\result.txt`
+  （默认即"用户数据目录\results\日期\任务名\"，同名任务自动加 `-1`、`-2` 后缀）。
 - 内容：**纯文本、不含 Markdown 标记**。文件头列出任务名称、运行日期、开始时间、
   任务列表网址、任务指令与结果目录；正文是每条任务的结果块（审核意见等），
   失败任务会写入失败原因与失败截图文件名。
@@ -290,8 +292,8 @@ EchoDesk-v0.2.1\
 ### 6.4 留存与清理
 
 - 上述文件（除临时中转目录外）程序**不会自动删除**，留存策略由企业自行制定。
-- 需要留存审计证据时，请**先归档** `automation_log.jsonl` 与 `批量处理结果\`，再清理。
-- 清理建议：按留存期限删除 `批量处理结果\` 下的历史日期目录；
+- 需要留存审计证据时，请**先归档** `automation_log.jsonl` 与 `results\`，再清理。
+- 清理建议：按留存期限删除 `results\` 下的历史日期目录；
   交接或回收设备时删除 `browser_state.json` 与 `session.json`。
 
 ## 七、一页速查清单
@@ -304,5 +306,5 @@ EchoDesk-v0.2.1\
 | 完全离线 | 防火墙默认拒绝出站 + 离线预置模型 + 关全部联网功能（策略 B） |
 | 用户数据放到受管盘 | `ECHODESK_DATA` + 5.4 表的绝对路径配置 |
 | 程序目录只读 | 把发布目录复制到可写位置运行；或按 5.4 外移产物（`config.json` 仍需可写） |
-| 事后审计 | `automation_log.jsonl`（谁/何时/跑了什么）+ `批量处理结果\...\结果.txt`（做了什么/结果如何） |
+| 事后审计 | `automation_log.jsonl`（谁/何时/跑了什么）+ `results\...\result.txt`（做了什么/结果如何） |
 | 快捷方式丢失 | 直接跑 `app\EchoDesk.exe`，按提示重建（必要时先删 `ui_state.json`） |

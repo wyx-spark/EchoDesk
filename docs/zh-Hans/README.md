@@ -23,26 +23,29 @@ English documentation: [`docs/en/README.md`](../en/README.md)。
 | --- | --- |
 | English (en) | [`docs/en/README.md`](../en/README.md) |
 
-## 全语言共用文档（仓库 `docs/` 根目录）
+## 全语言共用文档
 
-这些文档目前只有中文版本，位于 `docs/` 下：
+这些文档不按语言分目录：每份都是「英文默认版 + `.zh-Hans.md` 中文参考译本」，
+如有歧义**以英文版为准**。
 
-- [`../CHANGELOG.md`](../CHANGELOG.md) —— 变更日志（各版本新增、变更、修复与已知限制）
+- [`../../CHANGELOG.md`](../../CHANGELOG.md) —— 变更日志（各版本新增、变更、修复与已知限制）。放在**仓库根目录**，便于 GitHub 直接识别
 - [`../DEVELOPER.md`](../DEVELOPER.md) —— 开发者文档：架构、模块划分、JSON 行协议、扩展点
-- [`../PRIVACY.md`](../PRIVACY.md) —— 隐私说明：联网行为、数据存放位置与清理方式
-- [`../EULA.md`](../EULA.md) —— 最终用户许可协议
-- [`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md) —— 第三方组件与许可证清单
+- [`../PRIVACY.zh-Hans.md`](../PRIVACY.zh-Hans.md) —— 隐私说明：联网行为、数据存放位置与清理方式（英文版 [`../PRIVACY.md`](../PRIVACY.md)）
+- [`../EULA.zh-Hans.md`](../EULA.zh-Hans.md) —— 最终用户许可协议（英文版 [`../EULA.md`](../EULA.md)）
+- [`../THIRD_PARTY_LICENSES.zh-Hans.md`](../THIRD_PARTY_LICENSES.zh-Hans.md) —— 第三方组件与许可证清单（英文版 [`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md)）
 - [`../SBOM.json`](../SBOM.json) —— 软件物料清单（SPDX 风格，由 `python tools/gen_sbom.py` 生成）
-- [`../SECURITY.md`](../SECURITY.md) —— 安全策略：支持版本、私有报告渠道、响应时限、安全设计与受理范围（中文）
-- [`../v0.2.0-研发记录.md`](../v0.2.0-研发记录.md) / [`../v0.2.0-修复记录.md`](../v0.2.0-修复记录.md) —— 历史版本研发与修复记录
+- [`../../SECURITY.zh-Hans.md`](../../SECURITY.zh-Hans.md) —— 安全策略：支持版本、私有报告渠道、响应时限、安全设计与受理范围（英文版 [`../../SECURITY.md`](../../SECURITY.md)）
+
+`docs/SECURITY.md` 只是指向根目录正式策略的短指针。欢迎补充这些共用文档的其他语言译本，
+见下文的翻译章节。
 
 ## 项目级文档（仓库根目录）
 
 - [`../../README.zh-Hans.md`](../../README.zh-Hans.md) —— 中文项目说明与快速上手
 - [`../../README.md`](../../README.md) —— 英文项目说明（GitHub 首页展示）
 - [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) —— 如何提交 Issue、贡献代码与**贡献翻译**
-- [`../../SECURITY.md`](../../SECURITY.md) —— 如何私下报告安全漏洞
-- [`../../CODE_OF_CONDUCT.md`](../../CODE_OF_CONDUCT.md) —— 社区行为准则
+- [`../../SECURITY.md`](../../SECURITY.zh-Hans.md) —— 如何私下报告安全漏洞
+- [`../../CODE_OF_CONDUCT.md`](../../CODE_OF_CONDUCT.zh-Hans.md) —— 社区行为准则
 
 ---
 

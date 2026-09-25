@@ -107,30 +107,63 @@ if (-not (Test-Path -LiteralPath $BackendExe)) {
 Push-Location $Root
 try {
     # ---------- 1. 目录结构与元数据 ----------
-    Invoke-Check "发布目录结构（修复七）" {
+    Invoke-Check "发布目录结构（修复七 + 发布任务书全局要求一/四/五）" {
         $bad = @(Get-ChildItem $Out -Recurse -File -Include *.exe, *.dll, *.pdb |
                  Where-Object { $_.FullName -notlike "$AppOut*" })
         if ($bad.Count -gt 0) { throw "外层出现程序文件: $($bad[0].FullName)" }
-        foreach ($need in @("app\EchoDesk.exe", "app\EchoDesk.ico", "app\backend\EchoDeskBackend.exe",
-                            "app\lang\ui", "lang", "examples\skills", "docs",
-                            "EchoDesk-v$Version.lnk", "使用说明.txt",
-                            # 修复五：合规文件必须随包分发（外层的许可证 + docs 下的合规文档）
-                            "LICENSE", "NOTICE",
-                            "docs\PRIVACY.md", "docs\EULA.md", "docs\SECURITY.md",
-                            "docs\THIRD_PARTY_LICENSES.md", "docs\SBOM.json",
-                            "docs\zh-Hans\COMPLIANCE.md", "docs\en\COMPLIANCE.md")) {
-            if (-not (Test-Path -LiteralPath (Join-Path $Out $need))) { throw "缺少 $need" }
+
+        # 必备文件（任务书「全局要求四」：根目录 + docs\ + 发布物额外必备）
+        $need = @(
+            "app\EchoDesk.exe", "app\EchoDesk.ico", "app\backend\EchoDeskBackend.exe",
+            "app\lang\ui", "lang", "examples\skills", "results", "docs",
+            "USAGE.txt", "install-complete.bat",
+            "README.md", "README.zh-Hans.md", "CHANGELOG.md",
+            "LICENSE", "LICENSE.zh-Hans.md", "NOTICE", "NOTICE.zh-Hans.md",
+            "SECURITY.md", "SECURITY.zh-Hans.md",
+            "config.example.json", "install-complete.bat",
+            "docs\PRIVACY.md", "docs\PRIVACY.zh-Hans.md",
+            "docs\EULA.md", "docs\EULA.zh-Hans.md", "docs\SECURITY.md",
+            "docs\THIRD_PARTY_LICENSES.md", "docs\THIRD_PARTY_LICENSES.zh-Hans.md",
+            "docs\SBOM.json", "docs\DEVELOPER.md",
+            "docs\zh-Hans\COMPLIANCE.md", "docs\en\COMPLIANCE.md",
+            "docs\zh-Hans\README.md", "docs\en\README.md",
+            "docs\zh-Hans\USER_GUIDE.md", "docs\en\USER_GUIDE.md",
+            "docs\zh-Hans\FAQ.md", "docs\en\FAQ.md",
+            "docs\zh-Hans\AUTOMATION_GUIDE.md", "docs\en\AUTOMATION_GUIDE.md"
+        )
+        foreach ($n in $need) {
+            if (-not (Test-Path -LiteralPath (Join-Path $Out $n))) { throw "缺少 $n" }
         }
-        $link = Join-Path $Out "EchoDesk-v$Version.lnk"
-        if (-not (Test-Path -LiteralPath $link)) { throw "缺少快捷方式 $link" }
-        $shell = New-Object -ComObject WScript.Shell
-        $sc = $shell.CreateShortcut($link)
-        $wantTarget = (Join-Path $AppOut "EchoDesk.exe")
-        if ($sc.TargetPath -ne $wantTarget) { throw "快捷方式目标不对: $($sc.TargetPath)" }
-        if ($sc.WorkingDirectory.TrimEnd('\') -ne $Out.TrimEnd('\')) {
-            throw "快捷方式工作目录不是外层: $($sc.WorkingDirectory)"
+
+        # 发布物里**不应该**有预置快捷方式：.lnk 记的是绝对路径，在构建机上生成
+        # 就会把维护者的个人路径（C:\Users\<用户名>\...）带进发布物，
+        # 而任务书「全局要求五」把个人绝对路径列为绝对禁止项。
+        # 快捷方式由 install-complete.bat 在目标机器上创建（见第 12 节的功能验证）。
+        $links = @(Get-ChildItem $Out -Recurse -File -Filter *.lnk -ErrorAction SilentlyContinue)
+        if ($links.Count -gt 0) {
+            throw "发布物内出现预置 .lnk（会泄露构建机绝对路径）: $($links[0].FullName)"
         }
-        "结构/入口/工作目录正确"
+        "结构正确（必备文件 $($need.Count) 项）· 无预置 .lnk"
+    }
+
+    Invoke-Check "全英文命名 + 无过程文档 + 无运行期残留" {
+        $cjk = [regex]'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]'
+        $cn = @(Get-ChildItem $Out -Recurse -Force -ErrorAction SilentlyContinue |
+                Where-Object { $cjk.IsMatch($_.Name) } |
+                ForEach-Object { $_.Name })
+        if ($cn.Count -gt 0) { throw "出现非 ASCII 文件名/目录名: $($cn[0])" }
+
+        $rec = @(Get-ChildItem $Out -Recurse -File -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -match '^(v?0\.\d+\.\d+)-(研发记录|修复记录|发布记录|研发过程)\.md$' })
+        if ($rec.Count -gt 0) { throw "发布物内含过程文档（任务书全局要求五）: $($rec[0].Name)" }
+
+        $leftover = @(Get-ChildItem $Out -Recurse -File -ErrorAction SilentlyContinue |
+                      Where-Object { $_.Name -in @('ui_state.json', 'snippets.json', 'browser_state.json',
+                              'backend_crash.log', 'frontend_crash.log', 'automation_log.jsonl',
+                              'skills_local.json', 'summary_cache.json', 'market_cache.json',
+                              'skills_dev.log', 'automation_templates.json', 'models_registry.json') })
+        if ($leftover.Count -gt 0) { throw "运行期残留: $($leftover[0].Name)" }
+        "无中文名/无过程文档/无运行期残留"
     }
 
     Invoke-Check "版本资源 = 0.2.1.0" {
@@ -139,7 +172,175 @@ try {
         if ($front -ne "0.2.1.0" -or $back -ne "0.2.1.0") {
             throw "版本不符：前端=$front 后端=$back"
         }
-        "前端=$front 后端=$back"
+        "$front / $back"
+    }
+
+    # ---------- 1b. 自解压交付物（发布任务书 任务一/二/三 + 任务六自检） ----------
+    # 这些只在跑过 -MakeSfx 之后存在；没跑就明确跳过（而不是静默通过）。
+    $PublishDir = Join-Path $Root "publish"
+    $SetupWith = Join-Path $PublishDir "EchoDesk-v$Version-Setup.exe"
+    $SetupNo = Join-Path $PublishDir "EchoDesk-v$Version-NoModel-Setup.exe"
+    $Sums = Join-Path $PublishDir "SHA256SUMS.txt"
+
+    if (-not (Test-Path $SetupWith)) {
+        Write-Host "[SKIP] 自解压包检查（未跑 -MakeSfx，缺 $SetupWith）" -ForegroundColor Yellow
+    }
+    else {
+        Invoke-Check "自解压包：SHA256 与 SHA256SUMS.txt 一致" {
+            if (-not (Test-Path $Sums)) { throw "缺少 SHA256SUMS.txt" }
+            $changed = @()
+            $checked = 0
+            foreach ($line in Get-Content -LiteralPath $Sums -Encoding UTF8) {
+                if ($line.Trim().Length -eq 0) { continue }
+                $parts = $line -split '\s+', 2
+                if ($parts.Count -lt 2) { throw "SHA256SUMS.txt 行格式不对: $line" }
+                $want = $parts[0].Trim().ToLower()
+                $name = $parts[1].Trim()
+                # 清单里的资产可能在本机两个位置（publish\ 或 docs\），依次找
+                $cand = @((Join-Path $PublishDir $name), (Join-Path $Root $name),
+                          (Join-Path $Root "docs\$name")) | Where-Object { Test-Path $_ } | Select-Object -First 1
+                if (-not $cand) { throw "清单里的资产找不到: $name" }
+                $got = (Get-FileHash -LiteralPath $cand -Algorithm SHA256).Hash.ToLower()
+                $checked++
+                if ($got -ne $want) { $changed += $name }
+            }
+            if ($changed.Count -gt 0) { throw "哈希不一致: $($changed -join ', ')" }
+            "校验 $checked 个资产，全部与清单一致"
+        }
+
+        Invoke-Check "自解压包：rcedit 九个字段与图标" {
+            $rcedit = Join-Path $PublishDir "rcedit-x64.exe"
+            if (-not (Test-Path $rcedit)) { $rcedit = Join-Path $Root "tools\rcedit-x64.exe" }
+            foreach ($exe in @($SetupWith, $SetupNo)) {
+                if (-not (Test-Path $exe)) { continue }
+                $vi = (Get-Item $exe).VersionInfo
+                $checks = @{
+                    FileVersion    = "$Version.0"
+                    ProductVersion = "$Version.0"
+                    CompanyName    = "Void Entropia Studio"
+                    LegalCopyright = "Copyright (C) Void Entropia Studio"
+                    ProductName    = "EchoDesk"
+                    InternalName   = "EchoDeskSetup"
+                    Comments       = "Powered by Void Entropia Studio"
+                }
+                foreach ($k in $checks.Keys) {
+                    if ("$($vi.$k)".Trim() -ne $checks[$k]) {
+                        throw "$(Split-Path -Leaf $exe) 的 $k = '$($vi.$k)'，期望 '$($checks[$k])'"
+                    }
+                }
+                if ("$($vi.FileDescription)" -notlike "EchoDesk v$Version Portable Setup*") {
+                    throw "$(Split-Path -Leaf $exe) 的 FileDescription 不对: $($vi.FileDescription)"
+                }
+                if ("$($vi.OriginalFilename)" -ne (Split-Path -Leaf $exe)) {
+                    throw "$(Split-Path -Leaf $exe) 的 OriginalFilename 不对: $($vi.OriginalFilename)"
+                }
+                # 图标：真的从 PE 里取一次关联图标，确认资源存在（不是只看 rcedit 没报错）
+                Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+                $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
+                if ($null -eq $ico) { throw "$(Split-Path -Leaf $exe) 取不到关联图标" }
+                $ico.Dispose()
+            }
+            "八个字符串字段 + 两个版本字段 + 图标（实测可取）已写入"
+        }
+
+        Invoke-Check "自解压包：内含 install-complete.bat 且能解压" {
+            $sevenZip = @(
+                (Join-Path $Root "tools\7z.exe"),
+                (Join-Path ${env:ProgramFiles} "7-Zip\7z.exe")
+            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $sevenZip) { throw "未找到 7z.exe，无法核对自解压包内容" }
+            $tmp = Join-Path $env:TEMP ("echodesk_sfx_check_" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+            New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+            try {
+                $prev = $ErrorActionPreference
+                $ErrorActionPreference = "Continue"
+                & $sevenZip x -y "-o$tmp" $SetupNo *> $null
+                $code = $LASTEXITCODE
+                $ErrorActionPreference = $prev
+                if ($code -ne 0) { throw "解压不含模型版失败（退出码 $code）" }
+                foreach ($n in @("install-complete.bat", "USAGE.txt", "app\EchoDesk.exe",
+                                 "app\backend\EchoDeskBackend.exe", "docs\SBOM.json")) {
+                    if (-not (Test-Path -LiteralPath (Join-Path $tmp $n))) { throw "解压后缺少 $n" }
+                }
+                # 不含模型版必须真的不含模型
+                $m = @(Get-ChildItem (Join-Path $tmp "app\backend\models") -Filter *.gguf -File -ErrorAction SilentlyContinue)
+                if ($m.Count -gt 0) { throw "不含模型版里仍有 $($m.Count) 个 .gguf" }
+                "解压目录结构正确，且不含模型版确无 .gguf"
+            }
+            finally {
+                Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        Invoke-Check "自解压包：安装脚本真的能创建快捷方式" {
+            # 任务二的功能验证：解压 → 运行 install-complete.bat → 快捷方式必须真的出现，
+            # 且 TargetPath / WorkingDirectory / 图标都对。
+            # 为什么必须真跑一次：v0.2.1 实测踩到过"生成的批处理里 PowerShell 变量被
+            # here-string 吃掉"，语法坏掉、创建必然失败，而构建与静态检查全都报成功。
+            # 静态断言（文件里有某段文字）挡不住这类问题，只有真跑才挡得住。
+            $sevenZip = @(
+                (Join-Path $Root "tools\7z.exe"),
+                (Join-Path ${env:ProgramFiles} "7-Zip\7z.exe")
+            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $sevenZip) { throw "未找到 7z.exe" }
+            $tmp = Join-Path $env:TEMP ("echodesk_install_check_" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+            New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+            try {
+                $prev = $ErrorActionPreference
+                $ErrorActionPreference = "Continue"
+                & $sevenZip x -y "-o$tmp" $SetupNo *> $null
+                $ErrorActionPreference = $prev
+                if ($LASTEXITCODE -ne 0) { throw "解压失败" }
+
+                $bat = Join-Path $tmp "install-complete.bat"
+                if (-not (Test-Path $bat)) { throw "缺少 install-complete.bat" }
+                # 用 < nul 喂掉末尾的 pause；只关注脚本是否真的建出快捷方式
+                $out = & cmd /c "`"$bat`" < nul" 2>&1 | Out-String
+                $lnk = Join-Path $tmp "Start-EchoDesk-v$Version.lnk"
+                if (-not (Test-Path -LiteralPath $lnk)) {
+                    throw "install-complete.bat 未创建快捷方式。输出尾部：`n" +
+                    (($out -split "`n" | Select-Object -Last 6) -join "`n")
+                }
+                $shell = New-Object -ComObject WScript.Shell
+                $sc = $shell.CreateShortcut($lnk)
+                $wantTarget = (Join-Path $tmp "app\EchoDesk.exe")
+                if ($sc.TargetPath -ne $wantTarget) {
+                    throw "快捷方式目标不对：$($sc.TargetPath)（期望 $wantTarget）"
+                }
+                if ($sc.WorkingDirectory.TrimEnd('\') -ne $tmp.TrimEnd('\')) {
+                    throw "快捷方式工作目录不对：$($sc.WorkingDirectory)（期望 $tmp）"
+                }
+                if ($sc.IconLocation -and $sc.IconLocation -notlike "*EchoDesk.ico*") {
+                    throw "快捷方式图标不对：$($sc.IconLocation)"
+                }
+                "install-complete.bat 实测建出快捷方式，目标/工作目录/图标正确"
+            }
+            finally {
+                Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # ---------- 1c. 发布门禁（任务书 任务四 第 1–4 步的自动化部分） ----------
+    Invoke-Check "反馈渠道与内容洁净度门禁" {
+        Invoke-Native "反馈渠道门禁" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
+                                                  "-File", "tools\check_feedback.ps1")
+        "通过"
+    }
+
+    Invoke-Check "依赖声明完整性（干净环境可导入）" {
+        Invoke-Python "依赖自检" "tools\check_requirements.py"
+        "通过"
+    }
+
+    Invoke-Check "发布物与合规清单口径一致（打包模块比对）" {
+        # tools/check_bundled_packages.py：比对「干净 venv 声明的发行包」与
+        # 「app\backend\_internal 里实际存在的顶层模块」。PyInstaller 按打包机环境
+        # 分析，依赖里的可选 import 会被一并打进包 —— v0.2.1 就是这样混进了
+        # cryptography（已改为显式声明）与 chardet/bidi（LGPL，已排除）。
+        # 没有这项检查，这类"未声明组件"下次还会悄悄回来。
+        Invoke-Python "打包模块比对" "tools\check_bundled_packages.py"
+        "通过"
     }
 
     # ---------- 2. 后端测试 ----------

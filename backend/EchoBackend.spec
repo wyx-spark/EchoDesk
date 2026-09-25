@@ -62,6 +62,24 @@ EXCLUDES = [
     "easyocr", "cv2", "skimage", "numba", "llvmlite", "scipy", "shapely",
     "pygame", "pynput", "imageio", "matplotlib", "sympy", "networkx", "pandas",
     "IPython", "notebook", "jupyter", "jupyter_client", "jupyter_core",
+    # ---------- v0.2.1 发布复核新增：被"可选 import"带进来的未声明组件 ----------
+    # 背景：PyInstaller 按**打包机环境**分析，依赖里 `try: import X / except
+    # ImportError` 形式的可选依赖只要打包机装了就会被打进发布物。
+    # 用 tools\check_bundled_packages.py 比对「干净 venv 声明的包」与
+    # 「_internal 里实际存在的顶层模块」时抓到下面三个 ——
+    # 它们**都不在 backend\requirements.txt 里**，也就是说发布物含未声明组件。
+    #
+    # chardet：requests 的可选编码探测伙伴（requests\packages.py 懒加载）。
+    #   requests 优先用 charset_normalizer（已声明并会随包分发），chardet 属冗余；
+    #   而 chardet 是 LGPL，能不打就不打。
+    # bidi / arabic_reshaper：pypdf 的可选 RTL 支持
+    #   （pypdf\generic\_appearance_stream.py 里 `try: import arabic_reshaper` 守卫）。
+    #   只在生成"从右到左文字的表单外观流"时用到，本项目只调 extract_text()，
+    #   用不到；python-bidi 是 LGPL。已验证干净 venv（无二者）里
+    #   `from pypdf import PdfReader` 正常，属于纯可选。
+    # tzdata / tzlocal：tzlocal（开发机残留，来自与本项目无关的包）的依赖，
+    #   纯时区数据；干净环境里 pydantic 只在 `timezone` extra 下才需要 tzdata。
+    "chardet", "bidi", "arabic_reshaper", "tzdata", "tzlocal",
 ]
 
 datas = []

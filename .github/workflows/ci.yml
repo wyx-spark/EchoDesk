@@ -69,7 +69,7 @@ jobs:
       #                               分段摘要 / 对话管理 / 自动化 / 技能市场
       #   * tools/test_file_parsers.py —— 在 %TEMP% 现场生成 docx/xlsx/pptx/pdf/txt/csv 再逐个解析
       #   * tools/test_plaintext.py —— Markdown → 纯文本（结果文件落盘格式）
-      #   * tools/test_results_dir.py —— 批量处理结果目录结构与「结果.txt 必须是纯文本」
+      #   * tools/test_results_dir.py —— results目录结构与「result.txt 必须是纯文本」
       - name: Run backend selftest
         shell: pwsh
         run: python tools/selftest.py
@@ -346,3 +346,95 @@ jobs:
           # Windows runner 自带 WPF 与 Segoe UI Emoji，因此可在 CI 稳定运行。
           & ./tools/check_emoji.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  # -------------------------------------------------------------------------
+  # 发布门禁（v0.2.1 发布任务书「全局要求三 / 全局要求五」）
+  #
+  # 三项都是"发布物一旦不合格就不能发"的硬约束，且都能在 CI 上自动判定：
+  #   * 反馈渠道与内容洁净度（无个人邮箱/实体地址/个人路径/AGPL 残留/凭证明文）
+  #   * requirements.txt 是否覆盖后端全部直接 import（干净环境可导入）
+  #   * SBOM 与第三方许可证清单是否一致（含环境标记的传递闭包）
+  # 这三项以前靠人工核对，v0.2.1 发布时各自都真的发现过问题
+  # （缺 requests/urllib3/tqdm 声明、许可证清单漏列直接依赖、pymupdf 残留扫描误报），
+  # 所以固化成门禁。
+  # -------------------------------------------------------------------------
+  release-gates:
+    name: Release readiness gates
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install backend dependencies
+        shell: pwsh
+        run: |
+          # 与干净发布环境一致：只装 backend/requirements.txt。
+          # 依赖自检要看的就是"只装这个文件时后端能否全部导入"。
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+
+      - name: Check feedback channels and forbidden content
+        shell: pwsh
+        run: |
+          # tools/check_feedback.ps1（发布任务书「全局要求三 / 五」）：
+          #   1) 要求的文档里必须给出 GitHub Issues / Discussions 链接；
+          #   2) 安全文档必须给出 Security Advisory 私有入口 + noreply 兜底地址，
+          #      并写明"不要在公开 Issue 中披露"；
+          #   3) 全仓库不得出现个人邮箱、实体地址、个人绝对路径、凭证明文；
+          #   4) 依赖声明与代码里不得有 pymupdf/fitz 残留，spec 必须把它们列入 excludes。
+          & ./tools/check_feedback.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check dependency declaration completeness
+        shell: pwsh
+        run: |
+          # tools/check_requirements.py：用 AST 取后端自身代码的第三方顶层导入，
+          # 与 backend/requirements.txt 对账，并实测能否 import。
+          # 为什么需要它：requests/urllib3/tqdm 曾被"传递依赖恰好装着"掩盖，
+          # 在按 requirements.txt 从零建的环境里会 ImportError。
+          python tools/check_requirements.py --venv (Get-Command python).Source
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check SBOM matches the license manifest
+        shell: pwsh
+        run: |
+          # tools/gen_sbom.py --check：SBOM 与 docs/THIRD_PARTY_LICENSES.md 双向核对，
+          # 闭包按当前解释器评估环境标记（否则 macholib/tomli 这类跨平台标记依赖
+          # 会让门禁永远失败）。
+          python tools/gen_sbom.py --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check bundled modules against the declared packages
+        shell: pwsh
+        run: |
+          # tools/check_bundled_packages.py：比对「干净 venv 声明的发行包」与
+          # 「发布物 _internal 里实际存在的顶层模块」。CI 上没有发布物时该脚本
+          # 会明确报告"未找到 _internal"并以 2 退出（不是静默通过），
+          # 因此这里先构建后端产物再跑；为控制 CI 时长，只在后端构建已缓存时执行。
+          if (-not (Test-Path "publish\EchoDesk-v0.2.1\app\backend\_internal")) {
+              Write-Host "本作业未构建发布物（无 _internal），跳过打包模块比对 —— 该检查在 verify_release.ps1 中覆盖。"
+              exit 0
+          }
+          python tools/check_bundled_packages.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check release scripts parse
+        shell: pwsh
+        run: |
+          # 发布脚本平时不在 CI 路径上（要 7zS.sfx 与 rcedit 才能真跑），
+          # 所以至少做语法解析，避免带着语法错误进发布流程。
+          foreach ($f in @("tools/build_release.ps1", "tools/make_sfx.ps1",
+                           "tools/check_feedback.ps1", "tools/verify_release.ps1")) {
+              $err = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  (Resolve-Path $f).Path, [ref]$null, [ref]$err) | Out-Null
+              if ($err -and $err.Count -gt 0) {
+                  throw "$f 有 $($err.Count) 处语法错误：$($err[0].Message)（行 $($err[0].Extent.StartLineNumber)）"
+              }
+              Write-Host "$f 语法 OK"
+          }
