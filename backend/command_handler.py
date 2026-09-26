@@ -531,11 +531,21 @@ class CommandHandler:
         if args[0].lower() == "reset":
             self.conv_mgr.set_custom_prompt("")
             self.llm_engine.clear_cache()
+            # 自定义指令被清掉后，任务层（若已套用）会重新生效，要说清楚
+            if self.conv_mgr.task_prompt:
+                return (t("cmd.resp.prompt_reset")
+                        + "\n" + t("cmd.resp.prompt_reset_restores_task",
+                                   name=self.task_template or t("cmd.resp.task_none"))), None
             return t("cmd.resp.prompt_reset"), None
         text = " ".join(args)
         self.conv_mgr.set_custom_prompt(text)
         self.llm_engine.clear_cache()
-        return t("cmd.resp.prompt_set", chars=len(text)), None
+        reply = t("cmd.resp.prompt_set", chars=len(text))
+        # 自定义指令优先级最高：它会盖住模式提示词与任务层，必须明说
+        if self.conv_mgr.task_prompt:
+            reply += "\n" + t("cmd.resp.prompt_overrides_task",
+                              name=self.task_template or t("cmd.resp.task_none"))
+        return reply, None
 
     @staticmethod
     def _darkmode(args: list) -> Response:
@@ -560,8 +570,13 @@ class CommandHandler:
         """``/task``：任务型提示词模板（方向一）。
 
         * 无参数或 ``list``：列出全部模板及其适用场景；
-        * ``<id|标签>``：套用模板（写入自定义提示词，优先级高于模式提示词）；
-        * ``off`` / ``reset``：取消模板，回到模式提示词。
+        * ``<id|标签>``：套用模板，写入**任务层**——叠加在当前模式提示词之上；
+        * ``off`` / ``reset``：只取消任务层（**不动** ``/prompt`` 设的自定义指令）。
+
+        v0.2.1 提示词优化前的行为：模板被写进 ``custom_prompt``，于是它**替换**掉了
+        模式提示词（与 ``prompts.py`` 里"附加在系统提示词后面，不替换对话模式"的
+        说明矛盾），并且 ``/task off`` 会把用户用 ``/prompt`` 设的指令一起清掉。
+        现在任务层与自定义指令分开存放，两处问题都消除。
         """
         import prompts as prompt_lib
 
@@ -574,7 +589,12 @@ class CommandHandler:
 
         if name.lower() in ("off", "reset", "none", "clear"):
             self.task_template = ""
-            self.conv_mgr.set_custom_prompt("")
+            self.conv_mgr.set_task_prompt("")
+            self.llm_engine.clear_cache()  # 系统提示词变了，KV 缓存必须失效
+            # 自定义指令仍在生效时说明清楚，避免用户以为"取消了却没变化"
+            if self.conv_mgr.custom_prompt:
+                return (t("cmd.resp.task_cleared")
+                        + "\n" + t("cmd.resp.task_cleared_keeps_prompt")), None
             return t("cmd.resp.task_cleared"), None
 
         text = prompt_lib.build_system_prompt(name)
@@ -582,9 +602,13 @@ class CommandHandler:
             return t("cmd.resp.task_not_found", name=name, ids=", ".join(prompt_lib.template_ids())), None
         template = prompt_lib.get_template(name) or {}
         self.task_template = str(template.get("label") or name)
-        self.conv_mgr.set_custom_prompt(text)
-        return (t("cmd.resp.task_applied", name=self.task_template)
-                + "\n" + t("cmd.resp.task_hint")), None
+        self.conv_mgr.set_task_prompt(text)
+        self.llm_engine.clear_cache()  # 同上：提示词变化后旧缓存不再适用
+        reply = t("cmd.resp.task_applied", name=self.task_template) + "\n" + t("cmd.resp.task_hint")
+        # 自定义指令优先级最高，会盖住任务层：必须明说，否则用户会以为套用没生效
+        if self.conv_mgr.custom_prompt:
+            reply += "\n" + t("cmd.resp.task_overridden_by_prompt")
+        return reply, None
 
     def _preset(self, args: list) -> Response:
         """``/preset``：轻量 / 均衡 / 高质量三档生成参数（方向六）。
@@ -708,6 +732,9 @@ class CommandHandler:
         ]
         if self.task_template:
             lines.append(t("cmd.status.task_template", name=self.task_template))
+        # 自定义指令会盖住模式块与任务层，属于"当前实际生效的是什么"的关键信息
+        if self.conv_mgr.custom_prompt:
+            lines.append(t("cmd.status.custom_prompt", chars=len(self.conv_mgr.custom_prompt)))
         notes = profile.get("warnings") or []
         if notes:
             lines.append(t("cmd.status.capability_notes"))

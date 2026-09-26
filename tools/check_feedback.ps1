@@ -39,15 +39,25 @@ function Pass([string]$text) { $script:Passes += $text; if (-not $Quiet) { Write
 function Fail([string]$text) { $script:Failures += $text; Write-Host "  [FAIL] $text" -ForegroundColor Red }
 
 <#
-    取仓库内被跟踪的文本文件（排除 prompts\ 任务书、publish\ 产物、
-    二进制与历史过程文档）。历史记录里的旧邮箱是"当时的事实"，
-    本门禁检查的是**当前对外文档**。
+    取仓库内的文本文件：**已跟踪文件 + 工作区新增（未跟踪但未被忽略）文件**。
+
+    为什么必须包含未跟踪文件（v0.2.1 实测踩到）：原实现只用 `git ls-files`，
+    于是"新增文件与改动在同一次提交里"的情况永远没被本地门禁检查过 ——
+    本地一路绿、**提交之后才红**。门禁拦不住还没提交的东西，就等于拦不住新问题。
+
+    排除项：prompts\ 任务书、publish\ 产物、artifacts\ 开发期产物、二进制，
+    以及历史过程文档（其中的旧邮箱/旧路径是"当时的事实"，本门禁检查的是
+    **当前对外文档**）。
 #>
 function Get-TextFiles {
     # core.quotePath=false 必须加：默认情况下 git 会把非 ASCII 路径转义成
     # "docs/v0.2.1-\344\277\256..." 这种形式，[IO.Path]::GetExtension 会直接抛
     # Illegal characters in path（实测踩到，脚本在扫描阶段就崩）。
-    $files = & git -C $Root -c core.quotePath=false ls-files
+    $tracked = & git -C $Root -c core.quotePath=false ls-files
+    # --exclude-standard：遵守 .gitignore / .git/info/exclude，
+    # 只补上"该入库但还没入库"的新文件（publish\ 与 artifacts\ 因此天然被排除）。
+    $untracked = & git -C $Root -c core.quotePath=false ls-files --others --exclude-standard
+    $files = @($tracked) + @($untracked)
     foreach ($f in $files) {
         $rel = $f -replace '/', '\'
         if ($rel -like "prompts\*") { continue }
@@ -77,6 +87,7 @@ function Search-Pattern([string[]]$Files, [string]$Pattern, [string]$What) {
 }
 
 Write-Host "==> 反馈渠道与「不该有的」门禁检查" -ForegroundColor Cyan
+Write-Host "    扫描范围：已跟踪文件 + 工作区新增（未跟踪但未被忽略）文件" -ForegroundColor DarkGray
 
 $files = @(Get-TextFiles)
 Write-Host "    扫描被跟踪的文本文件 $($files.Count) 个" -ForegroundColor DarkGray
@@ -163,7 +174,7 @@ $MAIL_RE = [regex]'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}'
 $allMail = Search-Pattern $files $MAIL_RE.ToString() ""
 $badMail = @()
 foreach ($h in $allMail) {
-    if ($h.File -match '^docs\\v0\.2\.\d-(研发记录|修复记录)') { continue }
+    if ($h.File -match '^(docs|records)\\v0\.2\.\d-.*记录') { continue }
     foreach ($m in $MAIL_RE.Matches($h.Text)) {
         $addr = $m.Value
         # 前面就是 `//` 或 `:` → 说明这是 URL 里的 user:pass@host
@@ -214,7 +225,7 @@ else { foreach ($h in $addrHits) { Fail "疑似实体地址: $($h.File):$($h.Lin
 # 4. 无个人绝对路径（C:\Users\<真实用户名>）
 # ---------------------------------------------------------------------------
 $pathHits = @(Search-Pattern $files '(?i)C:\\Users\\(?!Public\b|Default\b|All Users\b|<)[A-Za-z0-9._\-]+' "")
-$pathHits = @($pathHits | Where-Object { $_.File -notmatch '^docs\\v0\.2\.\d-(研发记录|修复记录)' })
+$pathHits = @($pathHits | Where-Object { $_.File -notmatch '^(docs|records)\\v0\.2\.\d-.*记录' })
 if ($pathHits.Count -eq 0) { Pass "未发现个人绝对路径（C:\Users\<用户名>）" }
 else { foreach ($h in $pathHits) { Fail "个人绝对路径残留: $($h.File):$($h.Line) — $($h.Text)" } }
 
@@ -282,7 +293,7 @@ $secretPatterns = @(
 $secretHits = @()
 foreach ($p in $secretPatterns) { $secretHits += Search-Pattern $files $p "" }
 $secretHits = @($secretHits | Where-Object {
-        $_.File -notmatch '^docs\\v0\.2\.\d-(研发记录|修复记录)' -and
+        $_.File -notmatch '^(docs|records)\\v0\.2\.\d-.*记录' -and
         $_.File -notmatch '^backend\\lang\\' -and
         $_.File -notmatch 'placeholder|例如|e\.g\.|<'
     })

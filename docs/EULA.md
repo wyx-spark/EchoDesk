@@ -228,3 +228,12 @@ itself.
 3. If this agreement and [`PRIVACY.md`](PRIVACY.md) conflict in their wording, matters concerning
    **data processing** are governed by [`PRIVACY.md`](PRIVACY.md), and matters concerning
    **License grants** are governed by [`../LICENSE`](../LICENSE) (Apache-2.0).
+4. **Reading protected documents.** Where the Software reads Office documents through a locally
+   installed WPS installation — including documents protected by an enterprise document-encryption
+   system — the behaviour, prerequisites and responsibility boundaries are described in
+   [`ENCRYPTED_DOCUMENTS.md`](ENCRYPTED_DOCUMENTS.md) (Chinese:
+   [`ENCRYPTED_DOCUMENTS.zh-Hans.md`](ENCRYPTED_DOCUMENTS.zh-Hans.md)), which forms part of the
+   description of the Software's behaviour under this agreement. The Software does not crack, break
+   or bypass any encryption mechanism, and **you are responsible** for confirming that your
+   organisation's rules permit protected documents to be read programmatically on this machine and
+   that the account you use lawfully holds access rights to the document.

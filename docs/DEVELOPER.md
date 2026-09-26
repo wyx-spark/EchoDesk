@@ -49,6 +49,34 @@
 不占端口、不触发防火墙提示、无需处理鉴权；代价是需要自己保证消息边界（按行 JSON）
 与并发安全（后端用 `_io_lock` 保护 stdout，前端用请求闸门串行化读取）。
 
+### 1.1 系统提示词的层次与长度预算（v0.2.1 提示词优化）
+
+系统提示词按下面的顺序拼装（见 `conversation.py` 的 `MODES` / `_CORE_RULES` /
+`_REPLY_LANGUAGE` 与 `get_system_prompt()`）：
+
+| 层 | 内容 | 谁写的 | 与其它层的关系 |
+| --- | --- | --- | --- |
+| 1 | **自定义指令** | 用户 `/prompt <文本>` | 优先级最高：**替换**第 2、3 层 |
+| 2 | **模式块** | `conversation.MODES`（6 个模式） | 场景与语气；被第 1 层替换 |
+| 3 | **任务层** | `prompts.TASK_TEMPLATES`（`/task`） | **叠加**在第 2 层之后；冲突时以它为准（模板末尾有 `[优先级]` 行） |
+| 4 | **共享主干** | `conversation._CORE_RULES` | 视角 / 边界 / 输出纪律，任何组合下都生效 |
+| 5 | **语言指令** | `conversation._REPLY_LANGUAGE` | 跟随**界面语言**（`i18n` 当前 locale） |
+| 6 | 会话上下文 | `【早期对话摘要】` / `【已上传文件】` | 由 `summary` 与文件状态决定 |
+
+**六要素**：每个模式块自带「角色 / 输出格式 / 思维链 / 少样本示例 / 语气」五项，
+第六项「边界」（不知道就说不知道、不编造出处、信息不足先问清最关键的一点）放在
+共享主干里——它跟场景无关，写 6 遍既白占上下文，也会在改动时漏掉几处。
+
+**长度预算与依据**（由 `tools/test_capability.py` 第 9 节断言守住）：
+单个模式块 ≤ 480 字符（实测 209~313），模式块 + 共享主干 + 语言指令 ≤ 700 字符
+（实测 417~521）。默认上下文 8192 token，中文约 1 字符/token 量级，700 字符约占 8.5%，
+余量留给文件摘要与对话历史；0.8B 级模型对冗长提示词尤其敏感，所以宁可把规则共享也不铺陈。
+
+**语言分工**：提示词**正文**保持中文、不进语言包（正文译成英文会削弱针对小模型跑偏
+设计的措辞）；**回复语言**由第 5 层跟随界面语言决定——中文界面要求简体中文，
+英文界面要求英文，未内置的语言要求"跟随提问语言"。`automation.py` 的审核意见提示词
+写死简体中文是**独立的业务决策**（审核意见写入 `results\` 留痕），注释里已注明。
+
 ---
 
 ## 二、通信协议
@@ -226,21 +254,39 @@ python tools\make_icon.py
 # 2) 下载构建工具（rcedit，不入库）
 cmd /c tools\fetch_tools.bat
 
-# 3) 一键发布（前端多文件 + 后端 onedir + 元数据 + 单入口快捷方式）
+# 3) 一键发布（前端多文件 + 后端 onedir + 元数据 + 安装程序 + SHA256SUMS）
+& tools\build_release.ps1 -IncludeModels -MakeInstaller
+
+# 从上一版迁移模型/配置时
 & tools\build_release.ps1 -IncludeModels -MigrateFrom publish\EchoDesk-v0.1.0
 
 # 只重打包某一端
 & tools\build_release.ps1 -SkipBackend      # 只重建前端
 & tools\build_release.ps1 -SkipFrontend     # 只重建后端
 & tools\build_release.ps1 -SkipClean -SkipBackend -SkipFrontend   # 只重跑资源收集/元数据
+
+# 只重打两份安装程序（已构建过发布目录时）
+& tools\make_installer.ps1
 ```
 
-**构建脚本的两个坑（已在代码中注释）**：
+**安装程序（Inno Setup 6）**：两份交付物 `EchoDesk-v<版本>-Setup.exe`（含模型）与
+`EchoDesk-v<版本>-NoModel-Setup.exe`（不含模型）由 `tools\installer.iss` 编译，
+实际调用者是 `tools\make_installer.ps1`（可行性检查 + 编译 + 完整性断言 + 可选签名 + SHA256）。
+默认安装位置是**安装程序自己所在的文件夹**（`[Code] GetDefaultDir` 返回
+`ExtractFileDir(ExpandConstant('{srcexe}'))`），向导里仍可改；
+快捷方式由 `[Icons]` 段创建，工作目录固定为 `{app}`（外层），这样 `results\` 与用户数据
+生成在外层而非 `app\` 里。需要 Inno Setup 6（脚本会自动探测，或用 `-ISCC` 指定）。
+
+**构建脚本的三个坑（已在代码中注释）**：
 1. `rcedit 不能作用于 PyInstaller 产物`——PyInstaller 把 PKG 归档追加在 PE 映像之后，
    rcedit 重建 PE 会丢掉这段数据，后端启动即报
    `Could not load PyInstaller's embedded PKG archive`。
    因此后端元数据用 spec 的 `version`/`icon` 参数在追加归档前写入，rcedit 只处理前端 exe。
-2. PowerShell 在 `ErrorActionPreference=Stop` 下会把原生命令的 stderr 当作终止性错误，
+2. **`rcedit` 同样不能作用于最终的 Inno Setup 安装包**——Inno 把安装数据追加在 PE 映像之后
+   （实测：最小安装包 PE 末段结束于 893,952 字节、文件总长 2,097,164 字节），
+   rcedit 会把这 1.2 MB 追加数据整段丢掉，产出运行即失败的 893,952 字节空壳。
+   安装程序的版本资源请用 `[Setup] VersionInfo*` 指令（`signtool` 则是安全的）。
+3. PowerShell 在 `ErrorActionPreference=Stop` 下会把原生命令的 stderr 当作终止性错误，
    导致 PyInstaller/dotnet 只打警告就中断构建——统一用 `Invoke-Native` 包装。
 
 **测试**：

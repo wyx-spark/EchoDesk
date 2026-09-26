@@ -11,14 +11,18 @@
       5. 生成 USAGE.txt（面向用户的结构与操作说明，中英双语）；
       6. rcedit 写入前端版本资源与图标（后端由 spec 的 version/icon 写入，原因见 spec 注释）；
       7. 可选代码签名（-Sign）；
-      8. **不**在发布物里预置 .lnk：快捷方式由 install-complete.bat 在目标机器上创建
+      8. **不**在发布物里预置 .lnk：快捷方式由安装程序的 [Icons] 段在目标机器上创建
          （原因见第 9 节：.lnk 是绝对路径，预置会把构建机的个人路径带出去）；
-      9. 可选 -MakeSfx：继续调用 tools\make_sfx.ps1 产出自解压安装包与 SHA256SUMS.txt。
+      9. 可选 -MakeInstaller：继续调用 tools\make_installer.ps1，用 **Inno Setup** 编译出
+         两份安装程序（含模型 / 不含模型）并计算 SHA256SUMS.txt。
+         旧名 -MakeSfx 仍可作为别名使用：7-Zip 自解压包方案已整体废弃，
+         原因是官方 SFX 模块不支持 InstallPath、会把内容解压到 %TEMP% 后清理，
+         详见 tools\make_installer.ps1 头部说明。
 
     发布物结构（修复七：应用本体隔离到 app\，外层只留快捷方式、用户数据与文档；
     发布任务书「全局要求一」要求文件名/目录名全为英文）：
       publish\EchoDesk-v0.2.1\
-      ├─ (无 .lnk —— 快捷方式由 install-complete.bat 在目标机器上创建)
+      ├─ (无 .lnk —— 快捷方式由安装程序在目标机器上创建)
       ├─ results\                    自动化结果（相对工作目录生成，按 日期\任务名\ 分层）
       ├─ ui_state.json               界面状态（首次运行时生成）
       ├─ snippets.json               常用语（首次运行时生成）
@@ -26,10 +30,10 @@
       ├─ README.md / README.zh-Hans.md
       ├─ CHANGELOG.md                版本变更记录（正本，仓库里也在根目录）
       ├─ config.example.json         配置示例（用户可比对/复制）
-      ├─ install-complete.bat        自解压包解压后自动执行（建快捷方式）
+      ├─ install-complete.bat        给 zip 免安装用户手动建快捷方式（安装程序自带快捷方式）
       ├─ LICENSE / LICENSE.zh-Hans.md / NOTICE / NOTICE.zh-Hans.md
       ├─ SECURITY.md / SECURITY.zh-Hans.md
-      ├─ docs\                       文档（含 zh-Hans\ 与 en\；**不含**研发/修复记录）
+      ├─ docs\                       文档（含 zh-Hans\ 与 en\；过程记录已整体移到仓库 records\，不进包）
       ├─ lang\                       后端语言包（可替换/新增，无需重新打包）
       ├─ examples\skills\            示例插件源码
       └─ app\                        程序本体（外层不出现任何 exe/dll）
@@ -79,12 +83,22 @@
 .PARAMETER Sign
     构建完成后用 signtool 签名（需 -CertThumbprint 或已配置默认证书）。
 
-.PARAMETER MakeSfx
-    在流程末尾继续产出**自解压绿化安装包**（发布任务书「任务四」）：
-    依次完成重命名收口、双语合规文档补齐、反馈渠道检查、调试内容清理、
-    打包 payload + 拼接两份自解压包 + rcedit 写资源 + 计算 SHA256SUMS.txt。
-    实际动作由 tools\make_sfx.ps1 承担（可独立运行、独立做可行性检查），
+.PARAMETER MakeInstaller
+    在流程末尾继续产出**两份安装程序**（发布任务书「任务四」）：
+    依次完成重命名收口、双语合规文档补齐、反馈渠道检查、调试内容清理，
+    再用 Inno Setup 编译出含模型 / 不含模型两份 Setup.exe，并计算 SHA256SUMS.txt。
+    实际动作由 tools\make_installer.ps1 承担（可独立运行、独立做可行性检查），
     这里只负责按顺序调用，保证"一条命令出完整交付物"。
+
+.PARAMETER MakeSfx
+    **已废弃的别名**，等价于 -MakeInstaller。
+
+    v0.2.1 之前交付的"自解压安装包"是 `7zS.sfx + config.txt + payload.7z` 拼出来的。
+    实测发现：官方 7-Zip SFX 模块只支持 7 个配置键、**没有 InstallPath**，
+    默认行为是解压到 `%TEMP%\7zNNNNNN` 并在执行 RunProgram 后删掉该目录，
+    用户双击后全盘搜不到文件；仓库里的 `publish\7zSD.sfx` 也只是官方 9.20 的
+    `7zS.sfx` 改名（版本资源 InternalName=7zS.sfx），换名字解决不了问题。
+    方案已整体换成 Inno Setup。保留这个参数名只为不破坏既有文档/脚本里的老命令。
 
 .EXAMPLE
     & tools\build_release.ps1 -IncludeModels -MigrateFrom publish\EchoDesk-v0.2.0
@@ -104,6 +118,7 @@ param(
     [switch]$Sign,
     [string]$CertThumbprint = "",
     [string]$TimestampUrl = "http://timestamp.digicert.com",
+    [switch]$MakeInstaller,
     [switch]$MakeSfx
 )
 
@@ -413,11 +428,13 @@ Powered by Void Entropia Studio
 ================================================================
 
 [HOW TO START]
-  Double-click "$ShortcutName" in this folder. That shortcut is the
-  only entry point you need. If it is not there yet, run
-  "install-complete.bat" once (the self-extracting installer does this for
-  you automatically); it creates the shortcut for *your* paths, not someone
-  else's.
+  Installed with the Setup program? Launch EchoDesk from the Start Menu
+  shortcut (or the desktop shortcut if you ticked that box); its working
+  directory is this folder, which is where your data lives.
+  Using the portable zip instead? Double-click "$ShortcutName" in this
+  folder - that shortcut is the only entry point you need. If it is not
+  there yet, run "install-complete.bat" once to create it; it points at
+  *your* paths, not someone else's.
   Do not go hunting inside app\: app\EchoDesk.exe is the UI process, and
   app\backend\EchoDeskBackend.exe is started by it - do not run the
   backend on its own.
@@ -426,7 +443,7 @@ Powered by Void Entropia Studio
   (The program itself is tucked into app\, so everything you can safely
    touch or back up sits out here at the top level.)
 
-  $ShortcutName    the only entry point (working directory = this folder;
+  $ShortcutName    portable-zip entry point (working directory = this folder;
                            created by install-complete.bat on *your* machine)
   USAGE.txt                this file
   results\                 automation output (date\task\ folders holding a
@@ -434,8 +451,8 @@ Powered by Void Entropia Studio
   ui_state.json            UI state: window position/size, font size, theme, language
   snippets.json            your reusable prompt templates
   config.example.json      a copy of the default backend configuration
-  install-complete.bat     creates the shortcut after the self-extracting
-                           package unpacks (safe to run again)
+  install-complete.bat     creates the shortcut in this folder (portable-zip
+                           users run it once; safe to run again)
   README.md / README.zh-Hans.md
   CHANGELOG.md             what changed in each version
   LICENSE / LICENSE.zh-Hans.md / NOTICE / NOTICE.zh-Hans.md
@@ -468,8 +485,9 @@ Powered by Void Entropia Studio
 [FIRST LAUNCH]
   * If app\backend\models\ is empty the program asks whether to download a model
     (about 508 MB); you can also drop a .gguf file in there yourself and restart.
-  * It asks whether to create a launcher shortcut in this folder (one is already
-    included, so you can just use it).
+  * It asks whether to create a launcher shortcut in this folder; the installer
+    already gave you a Start Menu / desktop shortcut, and portable-zip users can
+    just say yes here instead of running install-complete.bat.
 
 [COMMON COMMANDS]
   /help            list every command
@@ -512,24 +530,25 @@ Build time: $buildTime
 ================================================================
 
 【怎么启动】
-  双击本文件夹内的「$ShortcutName」即可，这是唯一需要的入口。
-  若还没有这个快捷方式，先运行一次 install-complete.bat 创建它
-  （自解压安装包会在解压后自动执行这一步）；它创建的是指向**你自己机器上
-  真实路径**的快捷方式。
+  用安装程序装的：从开始菜单快捷方式启动（勾了桌面图标就用桌面那个）；
+  它的工作目录就是本文件夹，你的数据都生成在这里。
+  用 zip 免安装版的：双击本文件夹内的「$ShortcutName」即可，这是唯一需要的入口。
+  若还没有这个快捷方式，先运行一次 install-complete.bat 创建它；它创建的是
+  指向**你自己机器上真实路径**的快捷方式。
   不用去 app\ 里找可执行文件：app\EchoDesk.exe 是界面主程序，
   app\backend\EchoDeskBackend.exe 由界面自动拉起，请不要单独运行。
 
 【文件夹里都有什么】
   （程序本体收进 app\，外层只放你能改、需要备份的东西）
 
-  $ShortcutName   唯一启动入口（工作目录就是本文件夹；由 install-complete.bat
+  $ShortcutName   zip 免安装版的启动入口（工作目录就是本文件夹；由 install-complete.bat
                      在你的机器上创建）
   USAGE.txt          本文件
   results\           自动化结果（按 日期\任务名\ 分层的纯文本 result.txt + 下载的原始文件）
   ui_state.json      界面状态：窗口位置与大小、字号、主题、语言
   snippets.json      常用语模板
   config.example.json  后端默认配置的副本（可用于比对或恢复默认）
-  install-complete.bat 自解压包解压后自动执行，负责创建快捷方式（可重复运行）
+  install-complete.bat 在本文件夹创建快捷方式（zip 免安装版用户跑一次；可重复运行）
   README.md / README.zh-Hans.md
   CHANGELOG.md       各版本变更记录
   LICENSE / LICENSE.zh-Hans.md / NOTICE / NOTICE.zh-Hans.md
@@ -560,7 +579,8 @@ Build time: $buildTime
 【首次启动】
   * 若 app\backend\models\ 里没有模型，程序会询问是否下载（约 508MB）；
     也可以自己把 .gguf 文件放进 app\backend\models\ 后重启。
-  * 会询问是否在本文件夹创建启动快捷方式（已附带一个，可直接用）。
+  * 会询问是否在本文件夹创建启动快捷方式；安装程序已给你开始菜单/桌面快捷方式，
+    zip 免安装版用户在这里选"是"即可，不必再手动跑 install-complete.bat。
 
 【常用操作】
   /help            查看全部指令
@@ -595,7 +615,8 @@ Build time: $buildTime
 构建时间：$buildTime
 "@
 # .txt 写成 UTF-8 **带 BOM**：Windows 10 的记事本遇到无 BOM 的 UTF-8 会按 ANSI 解码，
-# 中文会变乱码。被程序解析的 config.txt 才必须无 BOM（见 tools\make_sfx.ps1 的说明）。
+# 中文会变乱码。被程序/工具解析的文件才必须无 BOM：install-complete.bat（第 6b 步有断言）
+# 与 tools\installer.iss 都是无 BOM，改动时别把 BOM 带进去。
 $utf8Bom = New-Object System.Text.UTF8Encoding($true)
 [System.IO.File]::WriteAllText((Join-Path $Out "USAGE.txt"), $usage, $utf8Bom)
 Write-Ok "USAGE.txt（结构与操作说明，英文 + 中文）"
@@ -630,10 +651,11 @@ if (Test-Path $cfgSrc) {
 }
 
 # ---------- 6b. 安装脚本（任务二） ----------
-# 自解压包（任务一）解压完成后由 SFX 的 RunProgram 执行它：在解压目录创建
-# Start-EchoDesk-v<版本>.lnk，指向 app\EchoDesk.exe，工作目录 = 解压目录，
-# 图标用 app\EchoDesk.ico（缺失时退回 exe 自带图标）。
-Write-Step "生成 install-complete.bat（自解压包解压后自动执行）"
+# 本脚本**不再由安装程序自动执行**：安装程序用 Inno Setup 的 [Icons] 段直接创建
+# 开始菜单/桌面快捷方式（工作目录 = 安装目录）。这里保留它给 **zip 免安装版**用户：
+# 在解压目录里创建 Start-EchoDesk-v<版本>.lnk，指向 app\EchoDesk.exe，
+# 工作目录 = 解压目录，图标用 app\EchoDesk.ico（缺失时退回 exe 自带图标）。
+Write-Step "生成 install-complete.bat（给 zip 免安装版手动建快捷方式）"
 <#
     这里用**单引号** here-string（@' ... '@），不做任何变量展开。
     为什么（v0.2.1 实测踩到）：批处理里有一行 PowerShell 单行命令，
@@ -646,8 +668,9 @@ Write-Step "生成 install-complete.bat（自解压包解压后自动执行）"
 $installBat = @'
 @echo off
 rem ===========================================================================
-rem  EchoDesk v__VERSION__ - post-extraction installer
-rem  自解压包解压完成后自动运行：在解压目录创建启动快捷方式。
+rem  EchoDesk v__VERSION__ - portable shortcut helper
+rem  给 zip 免安装版用户用：在当前文件夹创建启动快捷方式。
+rem  （用安装程序装的不用跑这个 —— 安装程序会直接创建开始菜单/桌面快捷方式。）
 rem  可安全重复运行：已存在同名快捷方式时会先询问是否覆盖。
 rem
 rem  为什么用 chcp 65001 + UTF-8(无 BOM)：本文件含中文提示，cmd 默认代码页
@@ -709,7 +732,7 @@ echo    %APP%
 echo.
 echo  The package may not have been extracted completely. Please extract the
 echo  whole archive into one folder and run this script again.
-echo  自解压包可能没有完整解压。请把整个压缩包解压到同一个文件夹后重新运行本脚本。
+echo  程序文件可能没有完整解压。请把整个压缩包解压到同一个文件夹后重新运行本脚本。
 echo.
 goto :done
 
@@ -760,7 +783,7 @@ Write-Ok "install-complete.bat（UTF-8 无 BOM，$($batBytes.Length) 字节，Po
 # 与任务书冲突，已改为排除 + 断言（见第 9b 步的结构校验）。
 $DocsOut = Join-Path $Out "docs"
 New-Item -ItemType Directory -Path $DocsOut -Force | Out-Null
-$DevRecordRe = '^(v?0\.\d+\.\d+)-(研发记录|修复记录|发布记录|研发过程)\.md$'
+$DevRecordRe = '^(v?0\.\d+\.\d+)-.*记录\.md$'
 $docCount = 0
 $docOther = 0
 $docSkipped = @()
@@ -832,6 +855,9 @@ if ((Test-Path $SessionFile) -and -not $KeepSession) {
         $fresh = [ordered]@{
             mode             = if ($old.mode) { $old.mode } else { "general" }
             custom_prompt    = if ($null -ne $old.custom_prompt) { $old.custom_prompt } else { "" }
+            # 任务层（/task）不随空会话模板交付：它是"上一轮对话的选择"，
+            # 新用户首次启动应当是纯模式提示词。
+            task_prompt      = ""
             summary          = ""
             model_path       = if ($old.model_path) { $old.model_path } else { "" }
             file_name        = ""
@@ -841,7 +867,7 @@ if ((Test-Path $SessionFile) -and -not $KeepSession) {
             history          = @()
         }
         ($fresh | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $SessionFile -Encoding UTF8
-        Write-Ok "session.json 已重置为空会话（保留 mode/model_path/custom_prompt；-KeepSession 可跳过）"
+        Write-Ok "session.json 已重置为空会话（保留 mode/model_path/custom_prompt，清空任务层；-KeepSession 可跳过）"
     }
     catch {
         Remove-Item -LiteralPath $SessionFile -Force -ErrorAction SilentlyContinue
@@ -891,10 +917,12 @@ if ($Sign) {
          实测：这一项连 `check_feedback.ps1` 都没拦到 —— 它扫的是文本文件，
          而 .lnk 是二进制、还在 .gitignore 覆盖的 publish\ 里。
       2) 发布任务书「任务二」本来就把"创建 Start-EchoDesk-v<版本>.lnk"
-         定为 `install-complete.bat` 的职责：自解压包解压后会自动执行它，
-         用户拿到的就是**指向自己机器上真实路径**的快捷方式。
+         定为 `install-complete.bat` 的职责；安装程序则用 Inno Setup 的
+         [Icons] 段在目标机器上创建开始菜单/桌面快捷方式，
+         用户拿到的都是**指向自己机器上真实路径**的快捷方式。
 
-    zip 免安装解压版的用户需要手动运行一次 install-complete.bat（或直接启动
+    安装程序用户：快捷方式由安装程序创建，不需要这一步。
+    zip 免安装解压版用户：需要手动运行一次 install-complete.bat（或直接启动
     app\EchoDesk.exe，程序首次运行会询问是否创建快捷方式）—— USAGE.txt 与
     发布说明里都写明了这一步。
 #>
@@ -911,7 +939,7 @@ Write-Ok "发布目录内无 .lnk（快捷方式由 install-complete.bat 在目�
 # 这里直接断言，避免以后有人不小心把 dotnet publish 的输出目录改回外层。
 #
 # v0.2.1 发布任务书又加了三条硬约束，一并在这里拦住（构建期就失败，
-# 比打包完再被 make_sfx 的可行性检查挡下来更早、更好定位）：
+# 比打包完再被 make_installer 的可行性检查挡下来更早、更好定位）：
 #   * 全局要求一：发布物内文件名/目录名全英文；
 #   * 全局要求五：不得有过程文档（研发/修复/发布记录）与运行期残留；
 #   * 全局要求四：根目录必备文件齐全。
@@ -940,7 +968,7 @@ Write-Ok "全英文命名（文件与目录名均无中文/日文/韩文）"
 
 # 全局要求五：过程文档与运行期残留不得进包
 $devRecords = @(Get-ChildItem $Out -Recurse -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -match '^(v?0\.\d+\.\d+)-(研发记录|修复记录|发布记录|研发过程)\.md$' })
+    Where-Object { $_.Name -match '^(v?0\.\d+\.\d+)-.*记录\.md$' })
 if ($devRecords.Count -gt 0) {
     throw "发布物内出现过程文档（任务书「全局要求五」）: $(($devRecords | ForEach-Object { $_.Name }) -join ', ')"
 }
@@ -973,6 +1001,7 @@ $mustHave = @(
     "config.example.json", "install-complete.bat",
     "docs\PRIVACY.md", "docs\PRIVACY.zh-Hans.md",
     "docs\EULA.md", "docs\EULA.zh-Hans.md",
+    "docs\ENCRYPTED_DOCUMENTS.md", "docs\ENCRYPTED_DOCUMENTS.zh-Hans.md",
     "docs\SECURITY.md",
     "docs\THIRD_PARTY_LICENSES.md", "docs\THIRD_PARTY_LICENSES.zh-Hans.md",
     "docs\SBOM.json", "docs\DEVELOPER.md",
@@ -1004,7 +1033,7 @@ Write-Ok "外层文件 $topFiles 个 · app\ 内 $appFiles 个 · backend 内 $b
 Write-Ok $modelText
 Write-Ok "入口: install-complete.bat 在目标机器上创建 $ShortcutName"
 
-# ---------- 11. 自解压安装包（发布任务书「任务四」） ----------
+# ---------- 11. 安装程序（发布任务书「任务四」） ----------
 # 任务书要求构建脚本用一个开关把"打包"这一段收口，八步依次为：
 #   1. 按「全局要求一」重命名中文文件/目录为英文；      -> 本脚本第 6/6c 步已按英文名生成，
 #                                                        第 9b 步断言无中文名（有问题就失败）
@@ -1012,12 +1041,20 @@ Write-Ok "入口: install-complete.bat 在目标机器上创建 $ShortcutName"
 #   3. 按「全局要求三」替换反馈渠道为 GitHub Issues/Security Advisory；
 #                                                        -> tools\check_feedback.ps1 门禁
 #   4. 按「全局要求五」清理调试内容与运行期数据；        -> 第 6b 步清理 + 第 9b 步断言
-#   5. 打包 payload；6. 拼接两份自解压包；7. rcedit 写资源；8. 计算 SHA256SUMS.txt
-#                                                        -> 全部由 tools\make_sfx.ps1 承担
-# 把 5–8 放在独立脚本里，是为了让"只改元数据、只想重打安装包"时能单独跑
-# （make_sfx.ps1 自己做一遍可行性检查，不依赖本脚本已经跑过第 9b 步）。
-if ($MakeSfx) {
-    Write-Step "打包自解压安装包（-MakeSfx）"
+#   5. 编译含模型版安装程序；6. 编译不含模型版；7. 写版本资源；8. 计算 SHA256SUMS.txt
+#                                                        -> 全部由 tools\make_installer.ps1 承担
+#   注意第 7 步已经不是"外挂 rcedit"：版本资源由 Inno Setup 的 [Setup] VersionInfo*
+#   指令在编译时写入。**绝不能对最终 Setup.exe 跑 rcedit** —— 会重建 PE 映像并丢掉
+#   Inno 追加在映像之后的安装数据（实测：2 MB 的包被削到 893,952 字节且运行即失败）。
+# 把 5–8 放在独立脚本里，是为了让"只改安装脚本、只想重打安装程序"时能单独跑
+# （make_installer.ps1 自己做一遍可行性检查，不依赖本脚本已经跑过第 9b 步）。
+if ($MakeSfx -and -not $MakeInstaller) {
+    Write-Warn2 "-MakeSfx 已更名为 -MakeInstaller（旧名保留为别名）"
+    Write-Warn2 "  原因：7-Zip 自解压包方案已废弃，改用 Inno Setup 编译安装程序。"
+    $MakeInstaller = $true
+}
+if ($MakeInstaller) {
+    Write-Step "编译安装程序（-MakeInstaller，Inno Setup）"
 
     # 第 3 步：反馈渠道门禁。放在打包前，因为它检查的是**源码与文档**，
     # 一旦不合格，打出来的包也是错的。
@@ -1036,13 +1073,30 @@ if ($MakeSfx) {
     }
 
     # 第 5–8 步
-    $makeSfxScript = Join-Path $PSScriptRoot "make_sfx.ps1"
-    if (-not (Test-Path $makeSfxScript)) { throw "未找到 $makeSfxScript" }
-    & $makeSfxScript -Version $Version
+    $makeInstallerScript = Join-Path $PSScriptRoot "make_installer.ps1"
+    if (-not (Test-Path $makeInstallerScript)) { throw "未找到 $makeInstallerScript" }
+    # 签名参数透传：安装程序在第 7 步（本脚本的 -Sign）之后才生成，
+    # 所以安装程序必须在这里自己签，否则交付物是未签名的。
+    #
+    # 必须用**哈希表** splat，不能用数组 splat —— 数组 splat 是按位置传参，
+    # `@("-Version", $Version)` 会把 "-Version" 当成第一个位置参数的值
+    # （实测踩到：make_installer.ps1 收到 ReleaseDir="0.2.1" 并报"发布目录不存在"）。
+    $installerArgs = @{ Version = $Version }
+    if ($Sign) {
+        $installerArgs["Sign"] = $true
+        if ($CertThumbprint) { $installerArgs["CertThumbprint"] = $CertThumbprint }
+        $installerArgs["TimestampUrl"] = $TimestampUrl
+    }
+    $installerStarted = Get-Date
+    & $makeInstallerScript @installerArgs
 
     # 后置断言：这一步必须真的产出交付物。
     # 之前只打印"未生成: xxx"就继续，导致"打包没跑成"仍以成功结束（实测踩到）。
-    Write-Step "-MakeSfx 完成"
+    #
+    # 两个断言缺一不可：只看"文件存在"是不够的 —— 旧的产物（例如被废弃的
+    # 7-Zip 自解压包）留在 publish\ 里，就能让存在性断言误判成成功（实测踩到）。
+    # 所以还要求文件是**本次构建重新生成**的（时间戳晚于打包开始时刻）。
+    Write-Step "-MakeInstaller 完成"
     $deliverables = @(
         (Join-Path $Root "publish\EchoDesk-v$Version-Setup.exe"),
         (Join-Path $Root "publish\EchoDesk-v$Version-NoModel-Setup.exe"),
@@ -1057,9 +1111,15 @@ if ($MakeSfx) {
     if ($missingDeliverables.Count -gt 0) {
         throw "任务书要求的交付物未生成: $(($missingDeliverables | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')"
     }
+    $stale = @($deliverables | Where-Object { (Get-Item $_).LastWriteTime -lt $installerStarted })
+    if ($stale.Count -gt 0) {
+        throw ("交付物不是本次构建生成的（时间戳早于本次打包开始）：" +
+            "$(($stale | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')。" +
+            "很可能是打包步骤失败却留下了旧文件 —— 请查看上方 make_installer.ps1 的报错。")
+    }
 }
 else {
     Write-Host ""
-    Write-Warn2 "未生成自解压安装包。要产出交付物（两份 Setup.exe + SHA256SUMS.txt），加 -MakeSfx："
-    Write-Warn2 "  & tools\build_release.ps1 -IncludeModels -MakeSfx"
+    Write-Warn2 "未生成安装程序。要产出交付物（两份 Setup.exe + SHA256SUMS.txt），加 -MakeInstaller："
+    Write-Warn2 "  & tools\build_release.ps1 -IncludeModels -MakeInstaller"
 }

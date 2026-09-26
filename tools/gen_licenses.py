@@ -96,7 +96,7 @@ EXCEPTIONS = {
                    "打包产物本身不受 GPL 约束（构建工具，不随产物以库形式使用）",
     "pypdf": "BSD-3-Clause（纯 Python，无原生扩展）。v0.2.1 起取代 AGPL 的 PyMuPDF "
              "用于 PDF 文本提取，消除对外分发时的著佐权义务，同时把该依赖的安装体积"
-             "从 52.9MB 降到约 1.4MB（见 docs/v0.2.1-研发记录.md）。",
+             "从 52.9MB 降到约 1.4MB（见 records/v0.2.1-研发记录.md）。",
     "extract-msg": "GPL-3.0；由 pyxtxt 解析邮件类文档时可能被引入，"
                    "若被打进发布物则整体分发需遵循 GPL",
     "pcodedmp": "GPL-3.0；extract-msg 的依赖",

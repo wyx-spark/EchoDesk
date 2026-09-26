@@ -5,7 +5,8 @@
 适用对象：在受管企业环境中部署 EchoDesk 桌面版（便携版或安装版）的 IT 管理员与合规审查人员
 
 相关文档：[`../PRIVACY.md`](../PRIVACY.zh-Hans.md)（联网行为逐项说明）、[`../EULA.md`](../EULA.zh-Hans.md)（许可协议）、
-[`../SECURITY.md`](../../SECURITY.zh-Hans.md)（安全策略）、[`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.zh-Hans.md)、
+[`../SECURITY.md`](../../SECURITY.zh-Hans.md)（安全策略）、[`../ENCRYPTED_DOCUMENTS.md`](../ENCRYPTED_DOCUMENTS.zh-Hans.md)（加密文档读取）、
+[`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.zh-Hans.md)、
 [`../SBOM.json`](../SBOM.json)。
 English version: [`../en/COMPLIANCE.md`](../en/COMPLIANCE.md)。
 
@@ -296,7 +297,31 @@ EchoDesk-v0.2.1\
 - 清理建议：按留存期限删除 `results\` 下的历史日期目录；
   交接或回收设备时删除 `browser_state.json` 与 `session.json`。
 
-## 七、一页速查清单
+## 七、加密文档读取的合规说明
+
+部分组织会用文档加密系统保护 Office 文档（例如 Cobra DocGuard）。本节是合规口径，
+完整的行为说明（前提条件、责任归属、什么落盘什么不落盘）见
+[`../ENCRYPTED_DOCUMENTS.zh-Hans.md`](../ENCRYPTED_DOCUMENTS.zh-Hans.md)
+（英文版：[`../ENCRYPTED_DOCUMENTS.md`](../ENCRYPTED_DOCUMENTS.md)）。
+
+- **不接触加密驱动、不修改加密策略、不持有密钥。** EchoDesk 不安装、不注册、不补丁、不卸载
+  加密客户端，也不读取属于它的密钥与授权材料。
+- **它只是调用 WPS。** 受保护文档能否打开，完全由本机已安装的加密客户端、以及组织授予当前
+  Windows 账户的访问权限决定。在加密系统看来，发起请求的就是员工手动操作时用的那个
+  已授权办公软件，没有区别。
+- **加密系统的审计日志会记录 WPS 的文件访问**，与手动打开不作区分。企业现有的审批、复核与
+  可追溯流程继续适用 —— 不需要额外监控，也不存在"没被记录"的新路径。
+- **不改变企业现有的数据防泄漏边界。** 它既不放宽也不收紧"哪些文件可以打开"：不引入特权通道、
+  不引入独立凭据、也没有自己的隐藏接口。
+- **未安装企业加密客户端的电脑上**，受保护文档无法解密：EchoDesk 读到的是密文，通用解析器
+  无法解析，程序提示解析失败。文件在该机器上仍是密文，无法被打开。
+- **这条路径读到的明文只在内存中处理。** 不写磁盘、不写日志（日志只记文件名）、不发往任何
+  网络位置；程序退出后随之释放。
+- **部署侧的控制手段。** 若策略上不允许这条路径，只要**不在这台机器上安装 WPS** 即可：
+  EchoDesk 就没有内存解密这条通道，会回退通用解析器，受保护文档解析失败。这是预期行为，
+  也完全可以沿用现有的软件分发规则来落实。
+
+## 八、一页速查清单
 
 | 需求 | 做法 |
 | --- | --- |
@@ -308,3 +333,5 @@ EchoDesk-v0.2.1\
 | 程序目录只读 | 把发布目录复制到可写位置运行；或按 5.4 外移产物（`config.json` 仍需可写） |
 | 事后审计 | `automation_log.jsonl`（谁/何时/跑了什么）+ `results\...\result.txt`（做了什么/结果如何） |
 | 快捷方式丢失 | 直接跑 `app\EchoDesk.exe`，按提示重建（必要时先删 `ui_state.json`） |
+| 读取企业加密系统保护的文档 | 装上 WPS 与对应的加密客户端、给账户授予访问权限；读取过程经 WPS，与手动打开完全一致 —— 见 [`../ENCRYPTED_DOCUMENTS.zh-Hans.md`](../ENCRYPTED_DOCUMENTS.zh-Hans.md) |
+| 完全禁止这条路径 | 不在该机器上安装 WPS，受保护文档即解析失败（预期行为） |

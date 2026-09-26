@@ -13,25 +13,51 @@
 ### 发布准备（发布任务书）
 
 **交付物**
-- 新增两份自解压绿化安装包：`EchoDesk-v0.2.1-Setup.exe`（含模型）与
-  `EchoDesk-v0.2.1-NoModel-Setup.exe`（不含模型），由 `7zS.sfx` + `config.txt` + `payload.7z`
-  拼接而成，解压后自动执行 `install-complete.bat` 创建启动快捷方式，并用 `rcedit`
-  写入九个版本资源字段与图标（`FileVersion`/`ProductVersion` = `0.2.1.0`）。
+- 新增两份**安装程序**：`EchoDesk-v0.2.1-Setup.exe`（含模型）与
+  `EchoDesk-v0.2.1-NoModel-Setup.exe`（不含模型），由 **Inno Setup 6** 编译
+  （`tools/installer.iss` + `tools/make_installer.ps1`）。
+  **默认安装到安装程序自己所在的文件夹**（向导里有路径选择页，可改到别处），
+  装完由 `[Icons]` 段创建开始菜单快捷方式（可勾选桌面快捷方式）并登记卸载入口；
+  安装后的目录结构与便携版完全一致。版本资源由 `[Setup] VersionInfo*` 指令在编译时写入
+  （`FileVersion`/`ProductVersion` = `0.2.1.0`）。
 - 新增 `SHA256SUMS.txt`（安装包与合规资产的 SHA256 清单）、`USAGE.txt`（结构与操作说明，
-  中英双语）、`config.example.json`（后端默认配置副本）、`install-complete.bat`。
-- 构建脚本新增 `-MakeSfx` 开关：一条命令产出完整交付物（`tools/make_sfx.ps1` 承担实际打包）。
+  中英双语）、`config.example.json`（后端默认配置副本）、`install-complete.bat`
+  （**改为仅供 zip 免安装版**手动创建快捷方式；安装程序不再调用它）。
+- 构建脚本新增 `-MakeInstaller` 开关：一条命令产出完整交付物
+  （`tools/make_installer.ps1` 承担实际打包）。旧名 `-MakeSfx` 保留为别名。
+
+**安装方式：从 7-Zip 自解压包改为 Inno Setup（实测结论，勿回退）**
+- **放弃 `7zS.sfx` / `7zSD.sfx` 自解压方案**。虚拟机实测：用户双击自解压包后提示解压完成，
+  却在全盘搜不到 EchoDesk 文件 —— 因为官方 7-Zip SFX 模块**只支持 7 个配置键**
+  （`Title`/`BeginPrompt`/`Progress`/`RunProgram`/`Directory`/`ExecuteFile`/`ExecuteParameters`），
+  **不支持 `InstallPath`**，且默认行为就是"解压到 `%TEMP%\7zNNNNNN`，执行 `RunProgram` 后
+  删掉该目录"。这些结论是用二进制内嵌字符串在 ASCII 与 UTF-16 两种编码下核对过的。
+- 仓库里的 `publish\7zSD.sfx` 与官方 9.20 的 `7zS.sfx` **是同一个文件**
+  （版本资源 `InternalName=7zS.sfx`、`OriginalFilename=7zS.sfx.exe`、
+  `Copyright (c) 1999-2010 Igor Pavlov`、`FileVersion 9.20`）——**改名并不能得到 `InstallPath`**。
+  因此不再依赖任何 `.sfx` 文件：`tools/make_sfx.ps1` 与 `tools/check_sfx_deliverables.ps1` 已删除。
+- **绝不对最终的 `Setup.exe` 跑 `rcedit`**（实测会直接毁掉安装包）：Inno Setup 把安装数据
+  **追加在 PE 映像之后**（最小安装包实测：PE 最后一段结束于 893,952 字节，文件总长
+  2,097,164 字节），而 `rcedit` 重建 PE 映像时会丢弃追加数据 —— 文件被削到 893,952 字节，
+  运行时报错且什么都不安装。这与本版发布准备阶段踩过的
+  「603.8 MB 自解压包被 rcedit 削成 176 KB 空壳」是**同一个机制**。
+  版本资源改用 Inno 自己的 `VersionInfo*` 指令写入；`signtool` 是安全的（签名追加在文件末尾）。
+- 安装程序里 `[Files]` 的 `Excludes` 语义经过 7 组对照实测：模式按**相对 `Source` 目录的路径**
+  匹配（不是含源目录前缀的完整路径），`app\backend\models\*` 与 `*\models\*` 都能命中，
+  但写成 `*\app\backend\models\*` 会命中失败。不含模型版同时用 `*.gguf` 兜底，
+  使"一个 `.gguf` 都没有"这条断言是结构性成立的。
 
 **命名规范：程序生成的名字也改成英文**（面向全球用户）
 - `使用说明.txt` → `USAGE.txt`；结果目录 `批量处理结果\` → `results\`；
   结果文件 `结果.txt` → `result.txt`；默认任务目录名 `自动化任务` → `auto-task`；
   失败截图 `失败截图_任务N_时间.png` → `failure-screenshot-taskN-时间.png`；
-  快捷方式 `EchoDesk-v0.2.1.lnk` → `Start-EchoDesk-v0.2.1.lnk`（与自解压安装包一致）。
+  快捷方式 `EchoDesk-v0.2.1.lnk` → `Start-EchoDesk-v0.2.1.lnk`（zip 免安装版沿用此名）。
 - **发布物不再预置 `.lnk` 快捷方式**：Windows 快捷方式里存的是**绝对路径**，
   在构建机上生成的 `.lnk` 会带上维护者的本机路径（`C:\Users\<用户名>\...`），
   既违反任务书「全局要求五」（个人绝对路径绝对禁止），在用户机器上又必然是死链。
-  现在快捷方式由 `install-complete.bat` 在目标机器上创建：自解压安装包解压后**自动**
-  执行它；使用 zip 免安装解压版的用户需手动运行一次（或直接启动 `app\EchoDesk.exe`，
-  程序首次运行会询问是否创建快捷方式）。
+  现在快捷方式一律在**目标机器上**创建：安装程序用 `[Icons]` 段直接创建开始菜单/桌面
+  快捷方式；zip 免安装解压版的用户手动运行一次 `install-complete.bat`（或直接启动
+  `app\EchoDesk.exe`，程序首次运行会询问是否创建快捷方式）。
 - **升级注意**：结果目录名是用户数据，改名后**不会自动迁移**旧目录。升级前请把
   旧的 `批量处理结果\` 手动改名为 `results\`（或把旧目录内容移入新目录），
   否则新版本会在新名字下重新开始，历史结果仍留在旧目录里（数据不会丢，只是分两处）。
@@ -72,25 +98,100 @@
 - **`tools/gen_sbom.py` 的闭包不计环境标记**：`macholib`、`tomli`、`exceptiongroup`
   等跨平台标记依赖会被算进发布闭包，使 `--check` 在干净环境里永远失败（门禁失效）。
   已改为按当前解释器评估 `Requires-Dist` 标记（`packaging` 为可选依赖，缺失时退化并提示）。
-- 收紧 `backend/EchoBackend.spec` 的 `EXCLUDES` 说明与文档：经二进制内嵌字符串核对，
-  `publish\7zS.sfx` 只支持 `Title`/`BeginPrompt`/`Progress`/`RunProgram`/`Directory`/
-  `ExecuteFile`/`ExecuteParameters`，**没有** `OverwriteMode` 等第三方改版才有的键。
+- 收紧 `backend/EchoBackend.spec` 的 `EXCLUDES` 说明与文档（v0.2.1 期间发现
+  `publish\7zS.sfx` 不支持 `OverwriteMode` 等第三方改版才有的键；那个自解压方案后来已整体废弃，
+  见上文「安装方式：从 7-Zip 自解压包改为 Inno Setup」）。
 
 **构建流程修复**
 - **`tools/build_release.ps1` 失败仍返回退出码 0**：脚本内部抛错时不会设置退出码，
-  `& tools\build_release.ps1 -MakeSfx` 曾出现"自解压包一个都没生成却报告成功"。
-  已加顶层 `trap`（统一非 0 退出）与 `-MakeSfx` 后的交付物存在性断言。
+  `& tools\build_release.ps1 -MakeInstaller` 曾出现"安装包一个都没生成却报告成功"。
+  已加顶层 `trap`（统一非 0 退出）与打包后的交付物断言。
+  该断言后来又加固过一次：只看"文件存在"不够 —— 被废弃的旧安装包留在 `publish\` 里
+  就能让它误判成成功，所以现在还要求交付物是**本次构建重新生成**的（时间戳晚于打包开始时刻），
+  并且打包脚本会在编译前先删掉同名旧产物。
 - 发布物不再包含研发/修复记录等过程文档（`-Recurse` 复制时按名字排除 + 结构断言）。
 - 发布文档不再含"截图占位/待拍"这类未完成表述（v0.2.1 不随包提供截图）。
 
 **新增/更新的自动检查**
-- `tools/make_sfx.ps1`（可行性与检查 + payload + 拼接 + rcedit + SHA256 全流程，可独立运行）、
+- `tools/make_installer.ps1`（Inno Setup 可行性检查 + ISCC 编译两份安装程序 + 完整性断言
+  + 可选签名 + SHA256 全流程，可独立运行）、`tools/installer.iss`、
+  `tools/check_installer_deliverables.ps1`（**真装真卸**验收）、
   `tools/check_feedback.ps1`、`tools/check_requirements.py`、
   `tools/check_bundled_packages.py`。
-- `tools/verify_release.ps1` 结构断言扩展到 34 项必备文件 + 全英文命名 + 无过程文档 +
-  无运行期残留 + 自解压包哈希/版本资源/可解压性 + 两项发布门禁。
+- `tools/verify_release.ps1` 结构断言扩展到 36 项必备文件 + 全英文命名 + 无过程文档 +
+  无运行期残留 + 安装程序哈希/版本资源/**追加数据完整性** + 真装真卸 + 两项发布门禁。
+- `tools/check_lang.py` 新增**共用双语文档结构检查**：docs 下成对文档的二级章节数量、
+  章节编号序列（兼容 `## 3.` 与 `## 三、` 两种编号方式）、以及两版文首的互相声明。
+- `tools/check_feedback.ps1` 的扫描范围从"仅已跟踪文件"扩展到
+  **已跟踪 + 工作区新增（未跟踪但未被忽略）文件**。原实现下"新增文件与改动在同一次提交里"
+  永远不会被本地门禁检查到 —— 本地一路绿、提交之后才红（v0.2.1 实测踩到）。
+  同时把发布记录加入历史过程文档的排除名单。
 - CI 新增 `release-gates` 作业（反馈渠道、依赖声明、SBOM 一致性、发布脚本语法）；
-  发布工作流改为产出两份自解压包并附上 SBOM 与许可证清单，Release 默认存为**草稿**。
+  发布工作流改为准备 **Inno Setup 6**（不再下载 `7zS.sfx`）并产出两份安装程序，
+  附上 SBOM 与许可证清单，Release 默认存为**草稿**。
+
+**新增：加密文档读取的行为与合规说明（双语）**
+- 新增 `docs/ENCRYPTED_DOCUMENTS.md`（英文默认版）与
+  `docs/ENCRYPTED_DOCUMENTS.zh-Hans.md`（中文译本），共 7 章：行为说明、前提条件、
+  不绕过的声明、责任归属、不落盘的承诺、非授权环境的行为、与手动操作的一致性。
+  面向"用企业文档加密系统（如 Cobra DocGuard）保护 Office 文档"的组织，
+  说明 EchoDesk 只是**经本机已授权的 WPS** 在内存中读取，不接触加密驱动、
+  不修改加密策略、不持有密钥，且读取行为在加密系统看来与员工手动打开完全一致。
+- `docs/en/COMPLIANCE.md` 与 `docs/zh-Hans/COMPLIANCE.md` 新增专节
+  「加密文档读取的合规说明 / Compliance notes on encrypted document reading」，
+  并与新文档相互引用；一节速查清单同步增加两行（如何启用、如何彻底禁止这条路径）。
+- `README.md` / `README.zh-Hans.md` / `docs/en/README.md` / `docs/zh-Hans/README.md` /
+  `docs/EULA.md` / `docs/EULA.zh-Hans.md` 均已接入该文档的链接与引用。
+
+### 提示词优化（系统提示词重写）
+
+**模式提示词从一句话升级为六要素完整提示词**
+- `backend/conversation.py` 的 6 个模式（general / summary / translate / code / contract /
+  creative）原先各只有一句话（平均 30 字符）。审计确认**全部缺失 4~6 个设计维度**
+  （角色具体化 / 输出格式 / 思维链引导 / 少样本示例 / 边界声明 / 语气匹配），其中 5 个模式
+  连角色都很笼统（"专家""助手"）。现已重写为带标签的结构——【角色】【输出格式】【思维】
+  【示例】【语气】——第六项"边界"与视角澄清、输出纪律一起放进**共享主干** `_CORE_RULES`：
+  与场景无关的规则共享一份，既不白占上下文，也不会改一处漏五处。
+- **长度受控且有断言守住**：单个模式块 ≤ 480 字符（实测 209~313），模式块 + 共享主干 +
+  语言指令 ≤ 700 字符（实测 417~521），约占默认 8192 token 上下文的 8.5%，
+  余量留给文件摘要与对话历史。
+- **实测效果**（同一模型 `Qwen3.5-0.8B`、同一份采购合同、同一问题、同一生成参数，
+  **只换系统提示词**）：旧提示词写出 500 token 的议论文、触顶被截断，并编造了原文没有的
+  "缺乏惩罚性赔偿"要求；新提示词按「原文摘录 → 风险点 → 修改建议」逐条输出、明确指出
+  "未约定验收期限"这一真实缺失、对不确定处写"需人工确认"，421 token 自然收尾。
+
+**任务模板改为"叠加"而不是"替换"模式（修掉两个机制缺陷）**
+- `/task` 套用的模板原先写进 `custom_prompt`，而 `get_system_prompt()` 里自定义提示词优先、
+  会跳过模式提示词——于是模板**替换**了模式，与 `prompts.py` 自称"附加在系统提示词后面、
+  不替换对话模式"的说明直接矛盾。现在模板写入新的**任务层**
+  （`ConversationManager.task_prompt`）并叠加在模式之上；两层冲突时由模板末尾新增的
+  `[优先级]` 行确定性裁决，而不是留给模型猜。
+- `/task off` 原先会顺手把用户用 `/prompt` 设的自定义指令一起清掉；现在只清任务层，
+  并在自定义指令仍生效时明确提示。`/task` 与 `/prompt` 相互覆盖时也会互相提示，
+  不再出现"敲了命令却看不出发生了什么"。
+- `/prompt` 包装语里原有的"不要反问"与模糊提问检测、`reason` 模板的"信息不足先追问"
+  直接矛盾，已改为保留例外："信息不足时应先问清最关键的一点"。
+
+**回复语言改为跟随界面语言**（此前写死简体中文）
+- 界面切成 English 的用户此前仍然只收到中文回复——界面双语了，产出没有。现在由
+  `_REPLY_LANGUAGE` 按 `i18n` 当前语言决定：中文界面要求简体中文（并排除繁体字），
+  英文界面要求英文；社区新增语言包则要求"跟随提问语言"，**无需改代码**。
+- **提示词正文保持中文、不进语言包**（沿用既有约定，理由不变）；本次把"正文语言"与
+  "回复语言"是两件事这一点在代码注释与文档里讲清楚了。
+- `automation.py` 的审核意见提示词仍写死简体中文——那是**业务决策**（审核意见写入
+  `results\` 长期留痕），注释里已注明，避免下次被当成不一致误改。
+
+**其它涉及提示词的模块同步更新**
+- `summarizer.py`：分段摘要与归并提示词补齐输出格式/思维/语气，并新增"不同段落对同一事项
+  表述不一致时两者都保留并标注"；注释说明这段提示词**按分段数放大上下文占用**，故刻意保持简短。
+- `automation.py`：审核意见提示词补齐六要素，新增"没有可用的附件内容时直接说明无法审核"。
+- 语言包 `mode.desc.*`（`/mode list` 显示）原先**就是**模式提示词原文，现改为面向用户的
+  短句并与提示词正文脱钩（否则列表里会打出整段提示词）；新增 5 个提示类键，中英双语齐备。
+- 文档：`USER_GUIDE`（中英）改写 `/task` 段落、新增"回答语言"与"模式提示词完整性"两条；
+  `FAQ`（中英）新增"改回答语言""自定义助手角色"两行；`DEVELOPER` 新增 §1.1
+  「系统提示词的层次与长度预算」（6 层结构表 + 长度依据 + 语言分工）。
+- 测试：`tools/test_capability.py` 新增第 9 节 **39 项**断言（结构 / 长度 / 一致性 / 语言），
+  该套件由 66 项增至 **105 项**，全部通过。
 
 ### 新增
 
@@ -300,8 +401,11 @@
   `python tools/gen_sbom.py --check`（CI 的 `release-gates` 作业已自动执行后者）。
 - 修复版遗留（详见内部修复记录 `v0.2.1-修复记录.md` §11，**不随发布物分发**）：
   - **未在 Windows 10 上实测**（Emoji 与主题结论基于字形覆盖率与色板数值，非系统版本）。
-  - **安装版（Inno Setup）未实际编译验证**：本机无 Inno Setup 6，`tools/installer.iss` 已按
-    便携版结构对齐，但未产出过 `setup.exe`。
+  - ~~**安装版（Inno Setup）未实际编译验证**：本机无 Inno Setup 6，`tools/installer.iss`
+    已按便携版结构对齐，但未产出过 `setup.exe`。~~ → **本版已解决**：安装方式整体改为
+    Inno Setup 6 编译两份安装程序（`tools/installer.iss` + `tools/make_installer.ps1`），
+    并新增 `tools/check_installer_deliverables.ps1` 做"真装真卸"验收；
+    详见上文「安装方式：从 7-Zip 自解压包改为 Inno Setup」。
   - **自动化安全协议未落地独立审计日志**（协议文本与勾选状态存在配置里，没有不可篡改流水）。
   - `model_hub.enabled` 与 `automation.start_with_windows` 两个配置项**未被代码读取**，
     不要把前者当禁网开关；开机自启请把快捷方式放进 `shell:startup`。
@@ -310,11 +414,16 @@
   - `docs/DEVELOPER.md` 仍只有中文（`PRIVACY.md`/`EULA.md` 已完成双语化）。
   - **结果目录改名不自动迁移**（`批量处理结果\` → `results\`）：升级用户需手动改名，
     见上文「命名规范：程序生成的名字也改成英文」的升级注意。
-  - **自解压包未做代码签名**：`-Sign` 需要证书，本版两份 `Setup.exe` 均未签名，
-    首次运行会有 SmartScreen 提示。
-  - **`7zS.sfx` 没有覆盖询问**：7-Zip 官方精简 SFX 模块不支持 `OverwriteMode`
-    （已用二进制内嵌字符串核对），解压时同名文件会被直接覆盖；已在 `BeginPrompt`
-    里提前明确告知，并在 `install-complete.bat` 创建快捷方式前询问是否覆盖。
+  - **安装程序未做代码签名**：`-Sign` 需要证书，本版两份 `Setup.exe` 均未签名，
+    首次运行会有 SmartScreen 提示（`tools\make_installer.ps1 -Sign -CertThumbprint <指纹>`
+    已就绪）。
+  - **安装程序界面目前只有英文**：Inno Setup 6.7 自带的 `Languages\` 目录里没有
+    `ChineseSimplified.isl`（官方把它列为需单独下载的第三方翻译）。`tools\installer.iss`
+    已用 ISPP 的 `FileExists` 做条件包含 —— 把该 `.isl` 放进 Inno Setup 的 `Languages\`
+    目录即自动启用中文界面，无需改代码。
+  - **安装程序需要 Inno Setup 6 才能重新编译**：`tools\make_installer.ps1` 会自动探测
+    （注册表 → 常见安装位置 → `%LOCALAPPDATA%\Programs` → PATH），也可用 `-ISCC` 指定。
+    发布工作流在 CI 上用 Chocolatey 安装。
 
 ---
 

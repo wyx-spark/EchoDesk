@@ -55,19 +55,24 @@ EchoDesk 是一款 Windows 桌面应用，把整套 AI 能力都留在你自己�
 
 ## 快速上手
 
-### 方案 A —— 直接使用便携发布物（推荐，无需安装任何运行时）
+### 方案 A —— 安装或解压发布物（推荐，无需安装任何运行时）
 
-1. 获取发布文件夹：可以从本仓库的
+1. 获取发布物：可以从本仓库的
    [Releases 页面](https://github.com/VoidEntropiaStudio/EchoDesk/releases) 下载（发布归档上线后），
    也可以自己构建（见[方案 B](#方案-b--从源码构建)），产物位于 `publish\EchoDesk-v0.2.1\`。
-2. 解压到任意位置——桌面、其他磁盘、甚至 U 盘都可以。（自解压安装包会解压到你选的
-   文件夹，并自动执行解压后的收尾步骤。）
-3. 双击 **`Start-EchoDesk-v0.2.1.lnk`**。这个快捷方式由自解压安装包在解压完成后自动创建，
-   指向的是**你自己机器上的**这份程序。如果你下载的是普通 zip 解压版，请先运行一次
-   解压目录里的 `install-complete.bat` 创建它，或直接双击 `app\EchoDesk.exe`
-   （程序首次运行也会询问是否创建快捷方式）。这是唯一需要的入口；
-   `app\EchoDesk.exe` 是界面主程序，`app\backend\EchoDeskBackend.exe` 由界面自动拉起，
-   **请不要单独运行后端**。
+2. 安装或解压：
+   - **安装程序** —— 双击 `EchoDesk-v0.2.1-Setup.exe`（`-NoModel-` 那份是同一个程序、
+     只是不带内置模型）。默认装到**安装程序自己所在的文件夹**，向导里可以改到别处。
+     它会创建开始菜单快捷方式、勾选后创建桌面快捷方式，并登记卸载入口（之后可在
+     「应用和功能」里卸载）。装出来的目录结构与便携版完全一致：程序本体在 `app\`，
+     用户数据与 `results\` 留在安装目录。
+   - **zip 免安装版** —— 解压到任意位置：桌面、其他磁盘、甚至 U 盘都可以。不会往该文件夹
+     以外写任何东西，删除文件夹即卸载。
+3. 启动 EchoDesk：用**开始菜单快捷方式**（安装程序装的），或双击文件夹里的
+   **`Start-EchoDesk-v0.2.1.lnk`**（zip 免安装版；若没有这个快捷方式，先运行一次
+   `install-complete.bat`）。两种方式创建的快捷方式都指向**你自己机器上的**这份程序。
+   无论走哪条路，这个快捷方式都是唯一需要的入口；`app\EchoDesk.exe` 是界面主程序，
+   `app\backend\EchoDeskBackend.exe` 由界面自动拉起，**请不要单独运行后端**。
 4. 首次启动时回答下面的模型下载询问，然后即可开始使用。
    常用首批指令：`/help`、`/file <路径>`、`/model list`、`/status`。
 
@@ -229,6 +234,7 @@ EchoDesk 的本地化是设计目标，并且写成了公开文档：
 | [docs/zh-Hans/SKILL_GUIDE.md](docs/zh-Hans/SKILL_GUIDE.md) | 如何编写、提交与发布技能。 |
 | [docs/PRIVACY.zh-Hans.md](docs/PRIVACY.zh-Hans.md) | 哪些在本机运行、哪些可能联网、日志脱敏规则。 |
 | [docs/EULA.zh-Hans.md](docs/EULA.zh-Hans.md) | 发布物的最终用户许可协议。 |
+| [docs/ENCRYPTED_DOCUMENTS.zh-Hans.md](docs/ENCRYPTED_DOCUMENTS.zh-Hans.md) | EchoDesk 读取企业加密系统保护的文档时怎么工作：前提条件、不绕过的声明、责任归属、哪些内容只在内存中。 |
 | [docs/THIRD_PARTY_LICENSES.zh-Hans.md](docs/THIRD_PARTY_LICENSES.zh-Hans.md) | 第三方组件与许可证完整清单。 |
 | [CHANGELOG.md](CHANGELOG.md) | 各版本的功能变更、修复与已知限制。 |
 | [NOTICE](NOTICE) | 随包分发的主要第三方组件署名。 |

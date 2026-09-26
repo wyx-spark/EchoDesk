@@ -36,8 +36,8 @@
       "/mode": {
         "name": "切换对话模式",
         "usage": "/mode <编号|缩写|全称>",
-        "desc": "切换 AI 回答风格；/mode list 查看全部。",
-        "detail": "    模式有：\n      general 通用助手 / summary 摘要专家 / translate 翻译专家 /\n      code 编程专家 / contract 合同审查 / creative 创意写作"
+        "desc": "切换 AI 回答风格；每个模式都有完整的角色/输出格式/推理步骤/示例，/mode list 查看全部。",
+        "detail": "    模式有：\n      general 通用问答 / summary 摘要归纳 / translate 中英互译 /\n      code 代码与排错 / contract 合同条款审查 / creative 创意写作\n    每个模式都写明角色、输出格式、推理步骤、一组输入输出示例与语气，\n    并共享同一段边界要求（不知道就说不知道、不编造出处）。\n    /mode list 可看到每个模式的说明与温度预设。"
       },
       "/file": {
         "name": "上传文件",
@@ -69,7 +69,7 @@
       "/prompt": {
         "name": "自定义系统提示词",
         "usage": "/prompt <文本>|reset",
-        "desc": "覆盖当前模式的默认提示词，临时改变助手角色。"
+        "desc": "覆盖当前模式的默认提示词，临时改变助手角色（优先级最高：同时盖住模式与 /task 任务模板）。"
       },
       "/temp": {
         "name": "调整生成温度",
@@ -160,6 +160,8 @@
       "prompt_unset": "（未设置，使用模式默认提示词）",
       "prompt_reset": "🗑️ 已清除自定义提示词",
       "prompt_set": "✅ 已设置自定义提示词（{chars} 字）",
+      "prompt_overrides_task": "注意：自定义提示词优先级最高，已盖住当前任务模板「{name}」；要恢复模板请先 /prompt reset。",
+      "prompt_reset_restores_task": "任务模板「{name}」已重新生效。",
       "darkmode_usage": "用法: /darkmode on/off（主题由前端渲染）",
       "darkmode_on": "🎨 已请求切换为深色模式",
       "darkmode_off": "🎨 已请求切换为浅色模式",
@@ -225,10 +227,12 @@
     },
     "resp.task_list_header": "任务模板（当前：{current}）：",
     "resp.task_none": "未启用",
-    "resp.task_usage": "用法：/task <模板名> 套用；/task off 取消。模板会覆盖模式提示词，改用 /mode 或 /prompt reset 可恢复。",
+    "resp.task_usage": "用法：/task <模板名> 套用；/task off 取消。模板与当前对话模式**叠加**生效（模式管场景与语气，模板管本轮输出格式）；想让自定义提示词接管一切，用 /prompt <文本>，优先级最高。",
     "resp.task_applied": "✅ 已套用任务模板：{name}",
-    "resp.task_hint": "提示：模板里已写明角色、输出格式与推理要求，直接提问即可；想换回普通模式用 /task off。",
-    "resp.task_cleared": "✅ 已取消任务模板，恢复模式提示词",
+    "resp.task_hint": "提示：模板已写明角色、输出格式与推理要求，与当前模式叠加生效，直接提问即可；取消用 /task off。",
+    "resp.task_cleared": "✅ 已取消任务模板，恢复纯模式提示词",
+    "resp.task_cleared_keeps_prompt": "（自定义提示词仍未清除，当前仍以它为准；要一并清除用 /prompt reset）",
+    "resp.task_overridden_by_prompt": "注意：当前有自定义提示词（/prompt），优先级更高，会盖住这个模板；想让它生效请先 /prompt reset。",
     "resp.task_not_found": "❌ 未找到任务模板「{name}」。可用：{ids}",
     "resp.preset_list_header": "生成预设（当前：{current}）：",
     "resp.preset_applied": "✅ 已切换到预设「{name}」：温度 {temp}，top_p {top_p}，重复惩罚 {penalty}，单次回复上限 {max_tokens} tokens",
@@ -246,10 +250,11 @@
     "status.context_mode": "上下文策略: {mode}（summarize=压缩为摘要，slide=滑动窗口丢弃最早）",
     "status.preset": "生成预设: {preset}",
     "status.task_template": "任务模板: {name}",
+    "status.custom_prompt": "自定义提示词: 已设置（{chars} 字，优先级最高，盖住模式与任务模板）",
     "status.capability_notes": "能力提示：",
     "items./task.name": "任务模板",
     "items./task.usage": "/task [list|<模板名>|off]",
-    "items./task.desc": "套用任务型提示词模板（摘要、合同审查、结构化抽取、翻译、代码排错、分步推理），小模型按结构化提示词作答明显更稳；/task list 查看全部模板，/task off 取消",
+    "items./task.desc": "套用任务型提示词模板（摘要、合同审查、结构化抽取、翻译、代码排错、分步推理）：与当前模式**叠加**生效（模式管场景与语气，模板管本轮输出格式，冲突以模板为准）；/task list 查看全部模板，/task off 取消",
     "items./preset.name": "生成预设",
     "items./preset.usage": "/preset [list|light|balanced|quality]",
     "items./preset.desc": "一键切换轻量/均衡/高质量三档生成参数（温度、top_p、重复惩罚、回复长度），适合不确定该调哪个参数的用户",
@@ -801,12 +806,13 @@
   },
   "mode": {
     "menu_item": "{index}. {id} ({short}) — {desc}（温度 {temp}）",
-    "desc.general": "你是一个通用AI助手，可以回答各种问题。",
-    "desc.summary": "你是一个专业的摘要专家，擅长简洁准确地总结文本、会议记录、文章等。请提供清晰、有层次的摘要。",
-    "desc.translate": "你是一个翻译专家，精通多国语言。请根据用户要求进行准确流畅的翻译。",
-    "desc.code": "你是一个编程专家，擅长多种编程语言。请提供代码、解释、调试建议等。",
-    "desc.contract": "你是一个专业的合同审查与摘要助手。请根据用户需求，结合提供的文件内容进行回答。",
-    "desc.creative": "你是一个创意写作助手，擅长生成故事、诗歌、剧本等创意内容。"
+    "_note": "这里是**面向用户的模式说明**（/mode list 显示），是短句；各模式发给模型的**提示词正文**在 backend/conversation.py 的 MODES 里，两者刻意不再共用同一段文字 —— 正文按设计保持中文、不进语言包（见该文件头部说明）。",
+    "desc.general": "通用问答：什么都能聊，回答简洁、直给结论。",
+    "desc.summary": "长文档与会议记录压缩成结论加要点，数字、日期、金额原样保留。",
+    "desc.translate": "中英互译：只输出译文，保留段落结构与术语一致。",
+    "desc.code": "代码解释与排错：先结论，再给最小修改片段，最后给验证方法。",
+    "desc.contract": "合同条款审查：只关注钱、时间、责任三类风险，逐条摘录原文。",
+    "desc.creative": "故事、诗歌、文案与剧本，敢于给有辨识度的写法。"
   },
   "task": {
     "menu_item": "  /task {id}  — {label}：{note}",

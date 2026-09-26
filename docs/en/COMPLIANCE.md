@@ -6,7 +6,8 @@ Audience: IT administrators and compliance reviewers deploying the EchoDesk desk
 (portable or installed) in a managed enterprise environment
 
 Related documents: [`../PRIVACY.md`](../PRIVACY.md) (itemized network behaviour), [`../EULA.md`](../EULA.md) (license terms),
-[`../SECURITY.md`](../../SECURITY.md) (security policy), [`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md),
+[`../SECURITY.md`](../../SECURITY.md) (security policy), [`../ENCRYPTED_DOCUMENTS.md`](../ENCRYPTED_DOCUMENTS.md) (reading encrypted documents),
+[`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md),
 [`../SBOM.json`](../SBOM.json).
 中文版 / Chinese version: [`../zh-Hans/COMPLIANCE.md`](../zh-Hans/COMPLIANCE.md).
 
@@ -319,7 +320,40 @@ Set the following to **absolute paths** (all of them accept a `C:\...` form) to 
 - Suggested cleanup: delete historical date folders under `results\` once the retention period expires; delete
   `browser_state.json` and `session.json` when a machine is handed over or retired.
 
-## 7. One-page quick reference
+## 7. Compliance notes on encrypted document reading
+
+Some organisations protect Office documents with a document-encryption system (for example Cobra
+DocGuard). This section is the compliance summary; the full behaviour statement — prerequisites,
+responsibility, what is stored where — is
+[`../ENCRYPTED_DOCUMENTS.md`](../ENCRYPTED_DOCUMENTS.md) (Chinese:
+[`../ENCRYPTED_DOCUMENTS.zh-Hans.md`](../ENCRYPTED_DOCUMENTS.zh-Hans.md)).
+
+- **EchoDesk does not touch the encryption driver, does not modify encryption policy and holds no
+  keys.** It does not install, register, patch or unload the encryption client, and it reads no key
+  or licence material belonging to it.
+- **It only calls WPS.** Whether a protected file can be opened is decided entirely by the encryption
+  client already installed on the machine, together with the access rights your organisation has
+  granted the current Windows account. From the encryption system's point of view the requesting
+  application is the same authorised office application an employee would use by hand.
+- **The encryption system's audit log records the file access by WPS**, making no distinction between
+  a manual open and a read initiated by EchoDesk. Your existing review, approval and traceability
+  processes therefore continue to apply unchanged — there is nothing extra to monitor and nothing
+  extra that goes unrecorded.
+- **EchoDesk does not change your existing data-loss-prevention boundary.** It neither widens nor
+  narrows what may be opened: it introduces no privileged route, no separate credential and no hidden
+  interface of its own.
+- **On a machine without the enterprise encryption client**, a protected file cannot be decrypted:
+  what EchoDesk reads is ciphertext, the generic parser cannot interpret it, and the program reports
+  a parsing failure. The file remains ciphertext on that machine and cannot be opened there.
+- **Plaintext read through this path stays in memory.** It is not written to disk, not written to
+  logs (logs record file names only) and not sent to any network location; it is released when the
+  program exits.
+- **Deployment control.** If your policy forbids this path, do not install WPS on the machine:
+  EchoDesk then has no in-memory decryption route at all, falls back to the generic parser, and
+  protected files fail to parse. That is the intended behaviour, and it can be enforced with the same
+  software-distribution rules you already use.
+
+## 8. One-page quick reference
 
 | Requirement | How to do it |
 | --- | --- |
@@ -331,3 +365,5 @@ Set the following to **absolute paths** (all of them accept a `C:\...` form) to 
 | Read-only program folder | copy the release to a writable location and run it there; or move artifacts out per 5.4 (`config.json` must stay writable) |
 | Post-incident review | `automation_log.jsonl` (who/when/what ran) + `results\...\result.txt` (what was done and how it turned out) |
 | Shortcut lost | run `app\EchoDesk.exe` directly and accept the rebuild prompt (delete `ui_state.json` first if it stopped asking) |
+| Read a document protected by the enterprise encryption system | install WPS plus the matching encryption client and grant the account access rights; the read then goes through WPS exactly like a manual open — see [`../ENCRYPTED_DOCUMENTS.md`](../ENCRYPTED_DOCUMENTS.md) |
+| Forbid that path entirely | do not install WPS on the machine; protected files then fail to parse (intended) |

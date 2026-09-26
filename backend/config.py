@@ -248,7 +248,7 @@ class MarketplaceConfig(BaseModel):
 class UpdateConfig(BaseModel):
     """自动更新（任务书 任务五 方案 A：只检查与提示，不自动下载替换）。
 
-    方案 B/C（自动下载替换、增量清单）本版不实现，理由见 docs/v0.2.1-研发记录.md。
+    方案 B/C（自动下载替换、增量清单）本版不实现，理由见 records/v0.2.1-研发记录.md。
     """
 
     enabled: bool = True
