@@ -57,19 +57,25 @@ No cloud account. No API key. No telemetry.
 
 ## Quick start
 
-### Option A — run the portable build (recommended, nothing to install)
+### Option A — install or unpack a release build (recommended, nothing to build)
 
-1. Get the release folder, either from the
+1. Get the release from the
    [Releases page](https://github.com/VoidEntropiaStudio/EchoDesk/releases) of this repository
-   (once a release archive has been published) or by building it yourself
+   (once a release has been published) or by building it yourself
    (see [Option B](#option-b--build-from-source)); the build lands in `publish\EchoDesk-v0.2.1\`.
-2. Unzip it anywhere — desktop, another drive, even a USB stick. (The self-extracting
-   installer unpacks into the folder you pick and runs the post-install step for you.)
-3. Double-click **`Start-EchoDesk-v0.2.1.lnk`**. The self-extracting installer creates that
-   shortcut right after unpacking, pointing at *your* copy of the program. If you downloaded
-   the plain zip instead, run `install-complete.bat` once to create it, or just launch
-   `app\EchoDesk.exe` — the app offers to create a shortcut on first run.
-   That shortcut is the only entry point you need;
+2. Install it or unpack it:
+   - **Installer** — double-click `EchoDesk-v0.2.1-Setup.exe` (the `-NoModel-` build is the same
+     program without the bundled model). By default it installs into the folder the installer itself
+     sits in; the wizard lets you pick another folder. It creates the Start Menu shortcut, a desktop
+     shortcut if you tick that box, and an uninstall entry, so you can remove it from *Apps &
+     features* later. The layout it produces is identical to the portable build: the program lives in
+     `app\`, your data and `results\` stay in the install folder.
+   - **Portable zip** — unzip anywhere: desktop, another drive, even a USB stick. Nothing is written
+     outside that folder, and deleting the folder uninstalls it.
+3. Start EchoDesk: use the **Start Menu shortcut** (installer), or double-click
+   **`Start-EchoDesk-v0.2.1.lnk`** inside the folder (portable zip — run `install-complete.bat`
+   once if that shortcut is missing). Either shortcut points at *your* copy of the program.
+   Whichever route you took, that shortcut is the only entry point you need;
    `app\EchoDesk.exe` is the UI and `app\backend\EchoDeskBackend.exe` is started automatically —
    never launch the backend by hand.
 4. On first launch, answer the model question described below, then start typing.
@@ -247,6 +253,7 @@ EchoDesk is local by design, and the policy is written down rather than implied:
 | [docs/en/SKILL_GUIDE.md](docs/en/SKILL_GUIDE.md) | How to write, submit and publish a skill. |
 | [docs/PRIVACY.md](docs/PRIVACY.md) | What runs locally, what may go online, log redaction rules. |
 | [docs/EULA.md](docs/EULA.md) | End-user license terms for the distributed build. |
+| [docs/ENCRYPTED_DOCUMENTS.md](docs/ENCRYPTED_DOCUMENTS.md) | How EchoDesk reads documents protected by an enterprise encryption system: prerequisites, the no-circumvention statement, where responsibility lies, and what stays in memory. |
 | [docs/THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md) | Complete third-party component and license inventory. |
 | [CHANGELOG.md](CHANGELOG.md) | Feature, fix and known-limitation history per version. |
 | [NOTICE](NOTICE) | Attribution notice for the main bundled third-party components. |

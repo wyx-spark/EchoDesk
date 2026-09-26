@@ -9,12 +9,14 @@ Chinese version: [`docs/zh-Hans/FAQ.md`](../zh-Hans/FAQ.md).
 
 | What I want to do | How to do it |
 | --- | --- |
-| Start the program | Double-click "Start-EchoDesk-v0.2.1.lnk" inside the program folder (the self-extracting installer creates it; zip users run `install-complete.bat` once) |
+| Start the program | Use the Start Menu (or desktop) shortcut created by the installer; for the portable zip, double-click "Start-EchoDesk-v0.2.1.lnk" inside the program folder (run `install-complete.bat` once if it is missing) |
 | See every command | Type `/help` in the input box |
 | Have the AI read a document | Drag the file into the window, or use `/file C:\路径\合同.docx` |
 | Very long documents (contracts/reports) | Just upload it: anything beyond the context window is summarized in chunks automatically; you can also trigger it by hand with `/summarize` |
 | Use a different model | `/model list` to see the local models, `/model 名称` to switch |
-| Get more reliable answers | `/task list` picks a task-oriented prompt template (summary, contract review, structured extraction, translation, code debugging, step-by-step reasoning) |
+| Get more reliable answers | `/task list` picks a task-oriented prompt template (layered on top of the current mode: the mode sets the scene and tone, the template sets this task's output format) — then state the object and the output you expect |
+| Change the reply language | It follows the **interface language**: a Chinese interface replies in Chinese, an English one in English (switch the interface language in Settings) |
+| Set a custom assistant role | `/prompt you are a financial adviser` (highest priority — it overrides the mode and any task template; `/prompt reset` restores them) |
 | Switch the generation preset | `/preset light`, `/preset balanced` or `/preset quality` in one step |
 | The context is almost full | `/compact` compresses the context right away (or click "🗜 Compress context" in the status strip) |
 | Follow the system theme | `/darkmode auto`, or pick "Follow the system" on the "General" page in Settings |

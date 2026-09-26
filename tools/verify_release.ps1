@@ -154,7 +154,7 @@ try {
         if ($cn.Count -gt 0) { throw "出现非 ASCII 文件名/目录名: $($cn[0])" }
 
         $rec = @(Get-ChildItem $Out -Recurse -File -ErrorAction SilentlyContinue |
-                 Where-Object { $_.Name -match '^(v?0\.\d+\.\d+)-(研发记录|修复记录|发布记录|研发过程)\.md$' })
+                 Where-Object { $_.Name -match '^(v?0\.\d+\.\d+)-.*记录\.md$' })
         if ($rec.Count -gt 0) { throw "发布物内含过程文档（任务书全局要求五）: $($rec[0].Name)" }
 
         $leftover = @(Get-ChildItem $Out -Recurse -File -ErrorAction SilentlyContinue |
@@ -175,18 +175,18 @@ try {
         "$front / $back"
     }
 
-    # ---------- 1b. 自解压交付物（发布任务书 任务一/二/三 + 任务六自检） ----------
-    # 这些只在跑过 -MakeSfx 之后存在；没跑就明确跳过（而不是静默通过）。
+    # ---------- 1b. 安装程序交付物（Inno Setup） ----------
+    # 这些只在跑过 -MakeInstaller 之后存在；没跑就明确跳过（而不是静默通过）。
     $PublishDir = Join-Path $Root "publish"
     $SetupWith = Join-Path $PublishDir "EchoDesk-v$Version-Setup.exe"
     $SetupNo = Join-Path $PublishDir "EchoDesk-v$Version-NoModel-Setup.exe"
     $Sums = Join-Path $PublishDir "SHA256SUMS.txt"
 
     if (-not (Test-Path $SetupWith)) {
-        Write-Host "[SKIP] 自解压包检查（未跑 -MakeSfx，缺 $SetupWith）" -ForegroundColor Yellow
+        Write-Host "[SKIP] 安装程序检查（未跑 -MakeInstaller，缺 $SetupWith）" -ForegroundColor Yellow
     }
     else {
-        Invoke-Check "自解压包：SHA256 与 SHA256SUMS.txt 一致" {
+        Invoke-Check "安装程序：SHA256 与 SHA256SUMS.txt 一致" {
             if (-not (Test-Path $Sums)) { throw "缺少 SHA256SUMS.txt" }
             $changed = @()
             $checked = 0
@@ -208,116 +208,110 @@ try {
             "校验 $checked 个资产，全部与清单一致"
         }
 
-        Invoke-Check "自解压包：rcedit 九个字段与图标" {
-            $rcedit = Join-Path $PublishDir "rcedit-x64.exe"
-            if (-not (Test-Path $rcedit)) { $rcedit = Join-Path $Root "tools\rcedit-x64.exe" }
+        Invoke-Check "安装程序：版本资源与图标（Inno 编译器写入）" {
+            <#
+                这里**故意不调用 rcedit**。版本资源由 tools\installer.iss 的
+                [Setup] VersionInfo* 指令在编译时写入 —— 对最终 Setup.exe 跑 rcedit
+                会重建 PE 映像并丢掉 Inno 追加在映像之后的安装数据
+                （实测：2 MB 的安装包被削到 893,952 字节，运行时报错且什么都不安装）。
+                Inno 没有 InternalName / Comments 指令，所以只校验它能设置的字段。
+            #>
             foreach ($exe in @($SetupWith, $SetupNo)) {
                 if (-not (Test-Path $exe)) { continue }
                 $vi = (Get-Item $exe).VersionInfo
                 $checks = @{
-                    FileVersion    = "$Version.0"
-                    ProductVersion = "$Version.0"
-                    CompanyName    = "Void Entropia Studio"
-                    LegalCopyright = "Copyright (C) Void Entropia Studio"
-                    ProductName    = "EchoDesk"
-                    InternalName   = "EchoDeskSetup"
-                    Comments       = "Powered by Void Entropia Studio"
+                    # 版本号用 Raw（数值口径）：Inno 会把 FileVersion 字符串末尾的 ".0" 省掉，
+                    # 例如 VersionInfoVersion=0.2.1.0 → 读回 FileVersion='0.2.1'，Raw 仍是 0.2.1.0。
+                    FileVersionRaw    = "$Version.0"
+                    ProductVersionRaw = "$Version.0"
+                    CompanyName       = "Void Entropia Studio"
+                    LegalCopyright    = "Copyright (C) Void Entropia Studio"
+                    ProductName       = "EchoDesk"
+                    OriginalFilename  = (Split-Path -Leaf $exe)
                 }
                 foreach ($k in $checks.Keys) {
-                    if ("$($vi.$k)".Trim() -ne $checks[$k]) {
+                    # 归一化后比较：Inno Setup 编译时会把版权串里的 "(C)" 写成 "©"
+                    # （实测），按原样比对会因这个已知的等价改写而误报失败。
+                    $got = (("$($vi.$k)").Trim() -replace '\(C\)', '©')
+                    $want = (("$($checks[$k])").Trim() -replace '\(C\)', '©')
+                    if ($got -ne $want) {
                         throw "$(Split-Path -Leaf $exe) 的 $k = '$($vi.$k)'，期望 '$($checks[$k])'"
                     }
                 }
                 if ("$($vi.FileDescription)" -notlike "EchoDesk v$Version Portable Setup*") {
                     throw "$(Split-Path -Leaf $exe) 的 FileDescription 不对: $($vi.FileDescription)"
                 }
-                if ("$($vi.OriginalFilename)" -ne (Split-Path -Leaf $exe)) {
-                    throw "$(Split-Path -Leaf $exe) 的 OriginalFilename 不对: $($vi.OriginalFilename)"
-                }
-                # 图标：真的从 PE 里取一次关联图标，确认资源存在（不是只看 rcedit 没报错）
+                # 图标：真的从 PE 里取一次关联图标，确认资源存在
                 Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
                 $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
                 if ($null -eq $ico) { throw "$(Split-Path -Leaf $exe) 取不到关联图标" }
                 $ico.Dispose()
             }
-            "八个字符串字段 + 两个版本字段 + 图标（实测可取）已写入"
+            "6 个字段 + FileDescription + 图标（实测可取）已写入，版本号按 Raw 核对"
         }
 
-        Invoke-Check "自解压包：内含 install-complete.bat 且能解压" {
-            $sevenZip = @(
-                (Join-Path $Root "tools\7z.exe"),
-                (Join-Path ${env:ProgramFiles} "7-Zip\7z.exe")
-            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-            if (-not $sevenZip) { throw "未找到 7z.exe，无法核对自解压包内容" }
-            $tmp = Join-Path $env:TEMP ("echodesk_sfx_check_" + [guid]::NewGuid().ToString("N").Substring(0, 8))
-            New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-            try {
-                $prev = $ErrorActionPreference
-                $ErrorActionPreference = "Continue"
-                & $sevenZip x -y "-o$tmp" $SetupNo *> $null
-                $code = $LASTEXITCODE
-                $ErrorActionPreference = $prev
-                if ($code -ne 0) { throw "解压不含模型版失败（退出码 $code）" }
-                foreach ($n in @("install-complete.bat", "USAGE.txt", "app\EchoDesk.exe",
-                                 "app\backend\EchoDeskBackend.exe", "docs\SBOM.json")) {
-                    if (-not (Test-Path -LiteralPath (Join-Path $tmp $n))) { throw "解压后缺少 $n" }
+        Invoke-Check "安装程序：安装数据仍追加在 PE 映像之后（未被 rcedit 削壳）" {
+            <#
+                Inno Setup 把安装数据**追加在 PE 映像之后**。若某次改动让
+                "文件长度 - 最后一个段的结束偏移" 变成 0，说明 PE 被重建过，
+                安装包已经是个空壳 —— 这条断言就是用来兜住这种回归的。
+            #>
+            $out = @()
+            foreach ($exe in @($SetupWith, $SetupNo)) {
+                if (-not (Test-Path $exe)) { continue }
+                $len = (Get-Item -LiteralPath $exe).Length
+                $fs = [System.IO.File]::OpenRead($exe)
+                try {
+                    $br = New-Object System.IO.BinaryReader($fs)
+                    $fs.Seek(0x3C, [System.IO.SeekOrigin]::Begin) | Out-Null
+                    $e = $br.ReadInt32()
+                    $fs.Seek($e + 6, [System.IO.SeekOrigin]::Begin) | Out-Null
+                    $numSec = $br.ReadUInt16()
+                    $fs.Seek($e + 20, [System.IO.SeekOrigin]::Begin) | Out-Null
+                    $optSize = $br.ReadUInt16()
+                    $fs.Seek($e + 24 + $optSize, [System.IO.SeekOrigin]::Begin) | Out-Null
+                    $maxEnd = [int64]0
+                    for ($i = 0; $i -lt $numSec; $i++) {
+                        $null = $br.ReadBytes(8); $null = $br.ReadUInt32(); $null = $br.ReadUInt32()
+                        $rawSize = $br.ReadUInt32(); $rawPtr = $br.ReadUInt32(); $null = $br.ReadBytes(16)
+                        $end = [int64]$rawPtr + [int64]$rawSize
+                        if ($end -gt $maxEnd) { $maxEnd = $end }
+                    }
                 }
-                # 不含模型版必须真的不含模型
-                $m = @(Get-ChildItem (Join-Path $tmp "app\backend\models") -Filter *.gguf -File -ErrorAction SilentlyContinue)
-                if ($m.Count -gt 0) { throw "不含模型版里仍有 $($m.Count) 个 .gguf" }
-                "解压目录结构正确，且不含模型版确无 .gguf"
+                finally { $fs.Dispose() }
+                $appended = $len - $maxEnd
+                if ($appended -le 0) {
+                    throw ("$(Split-Path -Leaf $exe) 不含追加数据（PE 末段结束于 $maxEnd，文件长 $len）—— " +
+                        "PE 被重建过，安装包是空壳。最常见原因是对最终 Setup.exe 跑了 rcedit。")
+                }
+                if ($appended -lt 1MB) {
+                    throw "$(Split-Path -Leaf $exe) 的追加数据只有 $([math]::Round($appended / 1KB, 1)) KB，明显不完整"
+                }
+                $out += "$(Split-Path -Leaf $exe) $([math]::Round($appended / 1MB, 1)) MB"
             }
-            finally {
-                Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
-            }
+            $out -join ' · '
         }
 
-        Invoke-Check "自解压包：安装脚本真的能创建快捷方式" {
-            # 任务二的功能验证：解压 → 运行 install-complete.bat → 快捷方式必须真的出现，
-            # 且 TargetPath / WorkingDirectory / 图标都对。
-            # 为什么必须真跑一次：v0.2.1 实测踩到过"生成的批处理里 PowerShell 变量被
-            # here-string 吃掉"，语法坏掉、创建必然失败，而构建与静态检查全都报成功。
-            # 静态断言（文件里有某段文字）挡不住这类问题，只有真跑才挡得住。
-            $sevenZip = @(
-                (Join-Path $Root "tools\7z.exe"),
-                (Join-Path ${env:ProgramFiles} "7-Zip\7z.exe")
-            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-            if (-not $sevenZip) { throw "未找到 7z.exe" }
-            $tmp = Join-Path $env:TEMP ("echodesk_install_check_" + [guid]::NewGuid().ToString("N").Substring(0, 8))
-            New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-            try {
-                $prev = $ErrorActionPreference
-                $ErrorActionPreference = "Continue"
-                & $sevenZip x -y "-o$tmp" $SetupNo *> $null
-                $ErrorActionPreference = $prev
-                if ($LASTEXITCODE -ne 0) { throw "解压失败" }
+        Invoke-Check "安装程序：真装真卸（默认装到自身所在目录 / 结构 / 快捷方式 / %TEMP% / 卸载）" {
+            <#
+                这一项真的把两份安装程序各装一遍、再各卸一遍。验收内容：
+                  * **不传 /DIR**，验证"默认装到安装程序自己所在的目录" —— 这是本方案的
+                    核心行为，也正是虚拟机实测暴露的旧问题（用户双击后全盘找不到文件）；
+                  * 安装后当前目录出现 app\ docs\ lang\ examples\ results\ 等结构；
+                  * 不含模型版确无 .gguf；含模型版模型在位且大小一致；
+                  * 开始菜单快捷方式指向 {app}\app\EchoDesk.exe，工作目录 = {app}（外层，
+                    保证 results\ 与用户数据生成在外层）；
+                  * 安装后 %TEMP% 下无 EchoDesk 残留；
+                  * 卸载后 app\ results\ 与快捷方式全部清掉，不留孤儿安装记录。
 
-                $bat = Join-Path $tmp "install-complete.bat"
-                if (-not (Test-Path $bat)) { throw "缺少 install-complete.bat" }
-                # 用 < nul 喂掉末尾的 pause；只关注脚本是否真的建出快捷方式
-                $out = & cmd /c "`"$bat`" < nul" 2>&1 | Out-String
-                $lnk = Join-Path $tmp "Start-EchoDesk-v$Version.lnk"
-                if (-not (Test-Path -LiteralPath $lnk)) {
-                    throw "install-complete.bat 未创建快捷方式。输出尾部：`n" +
-                    (($out -split "`n" | Select-Object -Last 6) -join "`n")
-                }
-                $shell = New-Object -ComObject WScript.Shell
-                $sc = $shell.CreateShortcut($lnk)
-                $wantTarget = (Join-Path $tmp "app\EchoDesk.exe")
-                if ($sc.TargetPath -ne $wantTarget) {
-                    throw "快捷方式目标不对：$($sc.TargetPath)（期望 $wantTarget）"
-                }
-                if ($sc.WorkingDirectory.TrimEnd('\') -ne $tmp.TrimEnd('\')) {
-                    throw "快捷方式工作目录不对：$($sc.WorkingDirectory)（期望 $tmp）"
-                }
-                if ($sc.IconLocation -and $sc.IconLocation -notlike "*EchoDesk.ico*") {
-                    throw "快捷方式图标不对：$($sc.IconLocation)"
-                }
-                "install-complete.bat 实测建出快捷方式，目标/工作目录/图标正确"
-            }
-            finally {
-                Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
-            }
+                实现放在 tools\check_installer_deliverables.ps1，可独立运行：
+                  powershell -NoProfile -ExecutionPolicy Bypass -File tools\check_installer_deliverables.ps1
+            #>
+            $checker = Join-Path $Root "tools\check_installer_deliverables.ps1"
+            if (-not (Test-Path $checker)) { throw "未找到 $checker" }
+            Invoke-Native "交付物验收" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
+                                                      "-File", "tools\check_installer_deliverables.ps1")
+            "两份安装程序均已真实安装并卸载：默认目录/结构/快捷方式/%TEMP%/卸载全部通过"
         }
     }
 

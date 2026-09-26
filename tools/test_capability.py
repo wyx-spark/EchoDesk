@@ -5,6 +5,7 @@
   * 能力提示（KV 超内存、窗口过小、纯 CPU 大模型、速度过低）；
   * 硬件推荐与三档生成预设；
   * 任务型提示词模板（方向一）与模糊提问检测（方向七）；
+  * **系统提示词的结构、长度上限与一致性**（v0.2.1 提示词优化，见第 9 节）；
   * 分段摘要缓存（方向八）的命中/失效/清理；
   * 手动压缩上下文（/compact 与 context_compress 动作）与滑动窗口模式。
 
@@ -23,6 +24,7 @@ BACKEND = os.path.join(ROOT, "backend")
 if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
 
+import conversation as conv        # noqa: E402
 import i18n                         # noqa: E402
 import model_profile as mp          # noqa: E402
 import prompts as prompt_lib        # noqa: E402
@@ -249,6 +251,65 @@ finally:
     i18n.set_locale("zh-Hans")
 check("切回中文后能力提示恢复中文",
       any(_HAN.search(n) for n in mp.capability_warnings(profile2, FakeConfig())))
+
+print("=== 9. 系统提示词：六要素结构、长度上限与一致性（v0.2.1 提示词优化）===")
+# 审计口径：模式块必须自带「角色 / 输出格式 / 思维 / 示例 / 语气」五要素，
+# 全局性的「边界」写在共享主干 _CORE_RULES 里（理由见 conversation.py 文件头：
+# 与场景无关的规则共享一份，既不白占上下文，也不会改一处漏五处）。
+_MODE_DIMS = ("【角色】", "【输出格式】", "【思维】", "【示例】", "【语气】")
+_MODE_MAX = 480      # 单个模式块字符上限
+_PROMPT_MAX = 700    # 模式块 + 共享主干 + 语言指令 的字符上限
+
+for _mode, _block in conv.MODES.items():
+    _missing = [d for d in _MODE_DIMS if d not in _block]
+    check(f"模式 {_mode}：五要素齐备", not _missing, str(_missing))
+    check(f"模式 {_mode}：长度 ≤ {_MODE_MAX} 字符", len(_block) <= _MODE_MAX, f"{len(_block)} 字符")
+
+for _mode in conv.MODES:
+    _sp = conv.ConversationManager(default_mode=_mode).get_system_prompt()
+    check(f"模式 {_mode}：系统提示词 ≤ {_PROMPT_MAX} 字符", len(_sp) <= _PROMPT_MAX, f"{len(_sp)} 字符")
+    check(f"模式 {_mode}：含共享主干的边界要求", "不知道就说不知道" in _sp)
+
+check("共享主干含视角澄清（'用户'指提问的人）", "「用户」指正在提问的人" in conv._CORE_RULES)
+check("模式与温度预设一一对应", set(conv.MODES) == set(conv.MODE_TEMPERATURES),
+      str(sorted(set(conv.MODES) ^ set(conv.MODE_TEMPERATURES))))
+
+# 一致性（v0.2.1 修掉的真问题）：/prompt 的包装语原先写死「不要反问」，
+# 而模糊提问检测与 reason 模板都要求"信息不足先追问"——两条指令互相打架。
+_custom = conv.ConversationManager()
+_custom.set_custom_prompt("只回答一个字。")
+_custom_prompt = _custom.get_system_prompt()
+check("自定义指令包装语不再无条件禁止追问",
+      not any(x in _custom_prompt for x in ("不要反问", "禁止追问", "不许问")), _custom_prompt[-120:])
+check("自定义指令保留了「信息不足先问清」的例外",
+      "应先问清最关键的一点" in _custom_prompt)
+check("自定义指令会替换模式块（符合 /prompt 的既有约定）", "【角色】" not in _custom_prompt)
+
+# 模式层 + 任务层叠加：冲突必须由提示词里的裁决行确定，而不是留给模型猜
+_layered = conv.ConversationManager(default_mode="contract")
+_layered.set_task_prompt(prompt_lib.build_system_prompt("contract"))
+_layered_prompt = _layered.get_system_prompt()
+check("模式层与任务层可同时存在（叠加而非替换）",
+      "【角色】" in _layered_prompt and "[任务模式]" in _layered_prompt)
+check("模式层排在任务层之前",
+      _layered_prompt.index("【角色】") < _layered_prompt.index("[任务模式]"))
+check("两层冲突时有优先级裁决行", "[优先级]" in _layered_prompt)
+check("叠加后不出现无条件拒绝追问的措辞",
+      not any(x in _layered_prompt for x in ("不要反问", "禁止追问", "不许问")))
+
+# 回复语言跟随界面语言，且整段提示词里只能出现一次（出现两次就是自相矛盾）
+i18n.set_locale("zh-Hans")
+_zh_prompt = conv.ConversationManager().get_system_prompt()
+check("中文界面要求简体中文回复", "请始终使用简体中文回复" in _zh_prompt)
+i18n.set_locale("en")
+_en_prompt = conv.ConversationManager().get_system_prompt()
+check("英文界面要求英文回复", "Always reply in English." in _en_prompt)
+check("英文界面下不再残留中文回复指令", "请始终使用简体中文回复" not in _en_prompt)
+check("回复语言指令只出现一次", _en_prompt.count("Always reply in English.") == 1)
+check("提示词正文仍为中文（刻意不进语言包）", bool(_HAN.search(_en_prompt)))
+check("未知语言回退为「跟随提问语言」",
+      conv._REPLY_LANGUAGE.get("ja", conv._REPLY_LANGUAGE_FALLBACK) == conv._REPLY_LANGUAGE_FALLBACK)
+i18n.set_locale("zh-Hans")
 
 print()
 print("=" * 60)

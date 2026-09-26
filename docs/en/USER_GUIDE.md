@@ -9,15 +9,27 @@ Chinese version: [`docs/zh-Hans/USER_GUIDE.md`](../zh-Hans/USER_GUIDE.md).
 
 ## 1. Installation and startup
 
-### Portable version (recommended)
-1. Put the whole `EchoDesk-v0.2.1` folder anywhere you like (desktop, D: drive or USB stick all work);
+### Installed version (recommended)
+1. Double-click `EchoDesk-v0.2.1-Setup.exe` (the `-NoModel-` build is the same program without the bundled
+   model). It needs no administrator rights.
+2. **By default it installs into the folder the installer itself sits in** — so a copy of the installer
+   dropped into `D:\Tools\EchoDesk\` installs into `D:\Tools\EchoDesk\`. The wizard shows the path page, so
+   change it there if you would rather install somewhere else.
+3. The wizard creates the Start Menu shortcut, and a desktop shortcut if you tick that box, then offers to
+   launch the program. Uninstall later through the system's "Apps and features" (or the Start Menu entry).
+
+The installed layout is **exactly the same** as the portable build: the program lives in `app\`, and your
+data and `results\` stay in the install folder.
+
+### Portable version (plain zip)
+1. Unzip the whole `EchoDesk-v0.2.1` folder anywhere you like (desktop, D: drive or USB stick all work) —
+   nothing is written outside it, and deleting the folder uninstalls it;
 2. Double-click **"Start-EchoDesk-v0.2.1.lnk"** inside that folder — this is the only entry point, so you never have
    to work out the difference between `app\EchoDesk.exe` and `app\backend\EchoDeskBackend.exe`
    (the latter is launched automatically by the UI; never run it on its own).
-   The self-extracting installer creates that shortcut for you; in the plain zip there is none
-   (a shortcut stores an absolute path, so one created on the maintainer's machine would be dead
-   on yours) — run `install-complete.bat` once, or launch `app\EchoDesk.exe` and accept the
-   offer to create a shortcut;
+   The zip contains no shortcut (a shortcut stores an absolute path, so one created on the maintainer's
+   machine would be dead on yours) — run `install-complete.bat` once, or launch `app\EchoDesk.exe` and
+   accept the offer to create a shortcut;
 3. The first launch handles three things in turn:
    - If there is no model in `app\backend\models\` → it asks whether to download one (about 508 MB, internet required);
    - If the folder has no shortcut → it asks whether to create one;
@@ -26,11 +38,6 @@ Chinese version: [`docs/zh-Hans/USER_GUIDE.md`](../zh-Hans/USER_GUIDE.md).
 **Two layers**: the outer folder (`EchoDesk-v0.2.1\`) holds only the shortcut, your user data and the docs,
 while **the program itself lives entirely in `app\`** — no exe/dll ever shows up in the outer folder, and
 uninstalling simply means deleting the whole folder.
-
-### Installed version
-Install with the `setup.exe` produced from `tools\installer.iss`, then start it from the Start menu or a
-desktop shortcut. The behaviour is exactly the same as the portable version; uninstall it through the
-system's "Apps and features".
 
 ### Directory layout and the locations you need to know
 
@@ -102,8 +109,18 @@ data there.
 - **Task templates**: `/task list` shows six templates — summary (`summary`), contract review (`contract`),
   structured extraction (`extract`), translation (`translate`), code explanation and debugging (`code`) and
   step-by-step reasoning (`reason`). Apply one with `/task contract` (a prefix is enough, e.g. `/task con`),
-  and clear it with `/task off`. A template and `/prompt` both write into the custom prompt, so whichever you
-  set last wins.
+  and clear it with `/task off`. A template is **layered on top of the current mode**: the mode sets the scene
+  and tone, the template sets this task's output format, and where they differ the template wins (the prompt
+  states that precedence explicitly). `/prompt <text>` has the highest priority and overrides both — run
+  `/prompt reset` to let the template take effect again. `/task off` clears only the template and leaves your
+  custom prompt alone.
+- **Reply language**: it follows the interface language. A Chinese interface asks for Simplified Chinese, an
+  English interface asks for English; if you add another language pack, the model replies in whatever language
+  you write in. The prompt text itself stays Chinese, which does not affect this.
+- **Every mode carries a complete prompt**: each of the six modes states its role, output format, reasoning
+  steps, one input/output example and its tone, and they all share the same "boundaries and output discipline"
+  block (say you do not know instead of inventing, ask one clarifying question when the request is too thin,
+  never fabricate sources).
 - **Generation presets**: `/preset list` shows them; `light` (shortest, fastest replies), `balanced` (the
   default) and `quality` (longest replies) switch the temperature, top_p, repeat penalty and reply-length cap
   in one step. The choice is written into the configuration and survives a restart; if you later change the

@@ -77,15 +77,22 @@ jobs:
           "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "本次发布版本: v$version"
 
-      - name: Prepare SFX toolchain
+      - name: Prepare toolchain (rcedit + Inno Setup)
         shell: pwsh
         run: |
-          # 发布任务书「任务一/三」的前提是 publish\ 下已有 7zS.sfx 与 rcedit-x64.exe。
-          # 这两个都是第三方二进制，不入库（publish\ 本身也在 .gitignore 里），
-          # 所以 CI 上必须先准备好，否则 -MakeSfx 的可行性检查会正确地中止打包。
+          # 打包需要两个第三方工具，都不入库（publish\ 在 .gitignore 里）：
+          #   * rcedit（publish\rcedit-x64.exe）—— 只用于**前端** app\EchoDesk.exe 的
+          #     版本资源与图标。后端由 PyInstaller spec 的 version/icon 参数写入。
+          #     绝不能作用于 PyInstaller 产物，也**绝不能作用于最终的 Inno Setup
+          #     安装包**：rcedit 会重建 PE 映像并丢弃追加在映像之后的数据
+          #     （Inno 的安装数据就追加在那里），实测会把安装包削成无法运行的空壳。
+          #   * Inno Setup 6（ISCC.exe）—— 由 tools\make_installer.ps1 调用，编译两份安装程序。
+          # 旧方案需要的 7zS.sfx 已不再需要：7-Zip 自解压包方案整体废弃
+          # （官方 SFX 模块不支持 InstallPath，会把内容解压到 %TEMP% 后清理），
+          # 详细结论见 tools\make_installer.ps1 头部说明。
           New-Item -ItemType Directory -Force -Path publish | Out-Null
 
-          # rcedit：复用仓库自带的下载脚本（默认下到 tools\），再放一份到 publish\ 供打包脚本取用
+          # rcedit：复用仓库自带的下载脚本（默认下到 tools\），再放一份到 publish\ 供构建脚本取用
           if (-not (Test-Path "publish\rcedit-x64.exe")) {
               & cmd /c "tools\fetch_tools.bat"
               if (Test-Path "tools\rcedit-x64.exe") {
@@ -93,26 +100,27 @@ jobs:
               }
           }
           if (-not (Test-Path "publish\rcedit-x64.exe")) {
-              throw "rcedit 不可用：自解压包无法写入版本资源与图标。"
+              throw "rcedit 不可用：前端 exe 无法写入版本资源与图标。"
           }
 
-          # 7zS.sfx：来自 7-Zip Extra 包。用官方的独立解压器 7zr.exe 解出来
-          # （runner 上未必装了 7-Zip，而 .7z 无法用 Expand-Archive 解）。
-          if (-not (Test-Path "publish\7zS.sfx")) {
-              $sevenZipVersion = "2501"
-              curl.exe -sS -L --max-time 300 -o "$env:TEMP\7zr.exe" "https://www.7-zip.org/a/7zr.exe"
-              if (-not (Test-Path "$env:TEMP\7zr.exe")) { throw "下载 7zr.exe 失败" }
-              curl.exe -sS -L --max-time 300 -o "$env:TEMP\7z-extra.7z" `
-                  "https://www.7-zip.org/a/7z$sevenZipVersion-extra.7z"
-              if (-not (Test-Path "$env:TEMP\7z-extra.7z")) { throw "下载 7-Zip Extra 失败" }
-              & "$env:TEMP\7zr.exe" x -y "-o$env:TEMP\7z-extra" "$env:TEMP\7z-extra.7z"
-              if ($LASTEXITCODE -ne 0) { throw "解压 7-Zip Extra 失败（退出码 $LASTEXITCODE）" }
-              $sfx = Get-ChildItem "$env:TEMP\7z-extra" -Recurse -Filter "7zS.sfx" -File |
-                     Select-Object -First 1
-              if (-not $sfx) { throw "在 7-Zip Extra 里找不到 7zS.sfx" }
-              Copy-Item $sfx.FullName "publish\7zS.sfx" -Force
+          # Inno Setup 6：托管 runner 上通常没有预装，用 Chocolatey 装。
+          # make_installer.ps1 会自动探测（注册表 → Program Files → %LOCALAPPDATA%\Programs → PATH），
+          # 这里只负责保证它确实在机器上。
+          function Find-Iscc {
+              $cands = @()
+              foreach ($base in @(${env:ProgramFiles(x86)}, ${env:ProgramFiles}, (Join-Path $env:LOCALAPPDATA "Programs"))) {
+                  if ($base) { $cands += (Join-Path $base "Inno Setup 6\ISCC.exe") }
+              }
+              return ($cands | Where-Object { Test-Path $_ } | Select-Object -First 1)
           }
-          Write-Host "SFX 工具链就位: $(Get-Item 'publish\7zS.sfx').Length 字节 + $(Get-Item 'publish\rcedit-x64.exe').Length 字节"
+          $iscc = Find-Iscc
+          if (-not $iscc) {
+              Write-Host "未找到 ISCC.exe，尝试用 Chocolatey 安装 Inno Setup 6 ..."
+              choco install innosetup -y --no-progress
+              $iscc = Find-Iscc
+          }
+          if (-not $iscc) { throw "Inno Setup 6（ISCC.exe）不可用，无法编译安装程序。" }
+          Write-Host "工具链就位: rcedit $(Test-Path 'publish\rcedit-x64.exe') · ISCC $iscc"
 
       - name: Build release package
         shell: pwsh
@@ -129,10 +137,11 @@ jobs:
           #     该路径实际用于**自托管 runner**（机器上已缓存模型）或外部离线打包场景；
           #     托管 runner 上脚本会提示「未找到可复制的 .gguf 模型」，产出的仍是不含模型的包。
           # 具名参数用哈希表 splat（数组 splat 会把 "-Version" 当成第一个位置参数的值）
-          # -MakeSfx：发布任务书「任务四」要求构建脚本末尾收口出两份自解压绿化安装包
-          # （含模型 / 不含模型）与 SHA256SUMS.txt。SFX 模块与 rcedit 由工作流此前的
-          # 步骤放到 publish\ 下（7zS.sfx 是 7-Zip Extra 的模块，仓库不提交二进制）。
-          $buildArgs = @{ Version = "${{ steps.version.outputs.version }}"; MakeSfx = $true }
+          # -MakeInstaller：发布任务书「任务四」要求构建脚本末尾收口出两份安装程序
+          # （含模型 / 不含模型）与 SHA256SUMS.txt。安装程序由 Inno Setup 6 编译
+          # （ISCC.exe 由上一个步骤准备好），rcedit 只用于前端 exe。
+          # 旧名 -MakeSfx 仍可用，但它只是别名：7-Zip 自解压包方案已废弃。
+          $buildArgs = @{ Version = "${{ steps.version.outputs.version }}"; MakeInstaller = $true }
           if ($env:INCLUDE_MODELS -eq "true") {
               Write-Host "包含模型：追加 -IncludeModels"
               $buildArgs["IncludeModels"] = $true
@@ -250,15 +259,16 @@ jobs:
           }
           $notes = Get-Content -LiteralPath $template -Raw -Encoding UTF8
 
-          # 下载包清单：自解压绿化安装包（含/不含模型）+ 便携版压缩包。
-          # 自解压包是发布任务书「交付物」的主件；zip 作为"免安装解压版"补充。
+          # 下载包清单：安装程序（含/不含模型）+ 便携版压缩包。
+          # 安装程序是发布任务书「交付物」的主件；zip 作为"免安装解压版"补充。
           $packageList = @(
-              "- ``EchoDesk-v$version-Setup.exe`` —— 自解压绿化安装包（**含模型**，离线可用）",
-              "- ``EchoDesk-v$version-NoModel-Setup.exe`` —— 自解压绿化安装包（不含模型，首次启动询问下载）",
+              "- ``EchoDesk-v$version-Setup.exe`` —— 安装程序（**含模型**，离线可用）",
+              "- ``EchoDesk-v$version-NoModel-Setup.exe`` —— 安装程序（不含模型，首次启动询问下载）",
               "- ``${{ steps.zip.outputs.file }}``（${{ steps.package.outputs.mb }} MB 解压后 / ${{ steps.zip.outputs.mb }} MB 压缩包）—— 免安装解压版",
               "",
-              "自解压包双击即可：选择一个空文件夹解压，解压完成后会自动创建 ``Start-EchoDesk-v$version.lnk`` 并提示完成。",
-              "绿色便携，删除文件夹即卸载，不写注册表。"
+              "安装程序双击即可：**默认装到安装程序自己所在的文件夹**（可以在向导里改到别处），",
+              "装完自动创建开始菜单快捷方式（勾选后也建桌面快捷方式），卸载走「应用和功能」。",
+              "安装结果与便携版目录结构一致：程序本体在 ``app\``，用户数据与 ``results\`` 在外层。"
           ) -join "`n"
           if ("${{ steps.package.outputs.has_models }}" -ne "True") {
               $packageList += "`n`n> 本次构建的安装包**不含模型**；首次启动会询问是否下载（约 508MB，需联网），也可以自行把 `.gguf` 放进 `app\backend\models\`。"

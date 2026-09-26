@@ -124,7 +124,7 @@ def main() -> int:
 
     if not os.path.isfile(args.venv):
         print(f"未找到干净 venv 解释器：{args.venv}")
-        print("请先建一个只装 backend/requirements.txt 的 venv（见 docs/v0.2.1-发布记录.md）。")
+        print("请先建一个只装 backend/requirements.txt 的 venv（见 records/v0.2.1-发布记录.md）。")
         return 2
     if not os.path.isdir(args.internal):
         print(f"未找到 _internal 目录：{args.internal}")

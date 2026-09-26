@@ -34,6 +34,113 @@ FRONTEND_LANG = os.path.join(ROOT, "frontend", "Resources", "Lang")
 #: 源语言（所有键的权威来源）
 SOURCE_LOCALE = "zh-Hans"
 
+#: 中文数字 → 整数。用来比较"两版文档的章节编号序列"：
+#: 英文版常写 `## 3. Title`，中文版可能写 `## 三、标题`，编号体系不同但顺序必须一致。
+CN_NUMERALS = {
+    "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+    "十一": 11, "十二": 12, "十三": 13, "十四": 14, "十五": 15, "十六": 16, "十七": 17,
+    "十八": 18, "十九": 19, "二十": 20,
+}
+
+#: 共用双语文档里，中文译本必须出现的"以英文版为准"声明片段
+ZH_PREVAILS_MARKER = "以英文版为准"
+
+#: 声明检查的**已知偏差**白名单（结构检查对它们照旧强制执行）。
+#:
+#: docs/THIRD_PARTY_LICENSES.md 由 tools/gen_licenses.py 生成，正文是**中文**，
+#: 但按本仓库约定它应当是"英文默认版 + .zh-Hans.md 中文译本"。所以
+#: 「英文版给出中文译本的路径」这条在它身上必然不成立 —— 它是中文写的中文版，
+#: 而那个 .zh-Hans.md 只是按文件名约定另外写的中文译本，两者内容基本重合。
+#: 彻底修法是让生成器输出英文默认版（要把整份清单与说明翻译一遍，属独立任务）。
+#: 这里降级为警告，而不是用一条当前无法满足的规则把整条发布门禁卡死。
+DECLARATION_WARNINGS = {"THIRD_PARTY_LICENSES.md"}
+
+
+def heading_ordinal(line):
+    """从 '## 3. Foo' / '## 三、标题' 里取出章节序号；取不到返回 None。
+
+    只认二级标题（`## `），且要求编号后紧跟 `.` 或 `、` —— 这样
+    '## In this document' 这类无编号标题会返回 None，由调用方退化为"只比数量"。
+    """
+    match = re.match(r'^##\s*([0-9]+|[一二三四五六七八九十]+)\s*[.、]', line.strip())
+    if not match:
+        return None
+    token = match.group(1)
+    if token.isdigit():
+        return int(token)
+    return CN_NUMERALS.get(token)
+
+
+def check_bilingual_pairs(docs_root):
+    """检查 docs/ 下成对共用的双语文档（X.md + X.zh-Hans.md）结构是否对齐。
+
+    为什么需要这个检查（v0.2.1 新增 ENCRYPTED_DOCUMENTS 时定下的规则）：
+    "译文翻得对不对"脚本判断不了，但"结构有没有漂移"脚本完全判断得了 ——
+    两版的章节数量或编号顺序一旦错位，读者按编号互相对照就会对不上，
+    而这种漂移恰恰是后续增删章节时最容易发生的。
+    另外还校验两版文首的互相声明（中文版"以英文版为准"、英文版给出中文版路径），
+    这是本仓库所有共用双语文档的统一约定。
+
+    返回 (问题数, 输出行列表)。
+    """
+    problems = 0
+    lines = []
+    pairs = []
+    for name in sorted(os.listdir(docs_root)):
+        if not name.endswith(".md") or name.endswith(".zh-Hans.md"):
+            continue
+        zh_name = name[:-3] + ".zh-Hans.md"
+        if os.path.isfile(os.path.join(docs_root, zh_name)):
+            pairs.append((name, zh_name))
+    if not pairs:
+        lines.append("   未找到成对的双语文档")
+        return problems, lines
+
+    for en_name, zh_name in pairs:
+        with io.open(os.path.join(docs_root, en_name), encoding="utf-8") as handle:
+            en_text = handle.read()
+        with io.open(os.path.join(docs_root, zh_name), encoding="utf-8") as handle:
+            zh_text = handle.read()
+        en_headings = [line for line in en_text.splitlines() if line.startswith("## ")]
+        zh_headings = [line for line in zh_text.splitlines() if line.startswith("## ")]
+
+        ok = True
+        if len(en_headings) != len(zh_headings):
+            problems += 1
+            ok = False
+            lines.append(f"   ✗ {en_name} 与 {zh_name} 的二级章节数量不一致："
+                         f"{len(en_headings)} vs {len(zh_headings)}")
+        else:
+            en_ordinals = [heading_ordinal(line) for line in en_headings]
+            zh_ordinals = [heading_ordinal(line) for line in zh_headings]
+            # 只有在两侧**每一章**都带可识别编号时才比编号序列；
+            # 否则（例如 PRIVACY.md 有 'In this document' 这类无编号标题）只比数量。
+            if all(o is not None for o in en_ordinals) and all(o is not None for o in zh_ordinals):
+                if en_ordinals != zh_ordinals:
+                    problems += 1
+                    ok = False
+                    lines.append(f"   ✗ {en_name} 与 {zh_name} 的章节编号序列不一致："
+                                 f"{en_ordinals} vs {zh_ordinals}")
+
+        declaration_msg = ""
+        if ZH_PREVAILS_MARKER not in zh_text:
+            declaration_msg = f"{zh_name} 缺少「{ZH_PREVAILS_MARKER}」声明"
+        elif zh_name not in en_text:
+            declaration_msg = f"{en_name} 未给出中文译本的路径（找不到 {zh_name}）"
+
+        if declaration_msg:
+            if en_name in DECLARATION_WARNINGS:
+                lines.append(f"   ! {en_name}：{declaration_msg}"
+                             f"（已知偏差，见 DECLARATION_WARNINGS 注释）")
+            else:
+                problems += 1
+                ok = False
+                lines.append(f"   ✗ {declaration_msg}")
+
+        if ok:
+            lines.append(f"   ✓ {en_name} ↔ {zh_name}（{len(en_headings)} 章，编号与声明一致）")
+    return problems, lines
+
 #: 代码里会被扫描的键引用形式
 BACKEND_KEY_PATTERNS = (
     re.compile(r'\bt\(\s*"([A-Za-z0-9_./-]+)"'),
@@ -296,6 +403,14 @@ def check(locales, quiet):
                           f"缺少 {only_first or '无'}，多出 {only_this or '无'}")
                 else:
                     print(f"   ✓ docs/{locale}/ 与 docs/{names[0]}/ 一一对应（{len(baseline)} 份）")
+
+        # 共用双语文档（docs/ 根目录的 X.md + X.zh-Hans.md）结构对齐检查：
+        # 章节数量、章节编号序列、以及两版文首的互相声明。
+        print("\n-- 共用双语文档结构（docs/*.md + *.zh-Hans.md）")
+        pair_problems, pair_lines = check_bilingual_pairs(docs_root)
+        problems += pair_problems
+        for line in pair_lines:
+            print(line)
 
     print()
     if problems:

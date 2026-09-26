@@ -19,7 +19,7 @@
 v0.2.1 变更（任务书 1.3 合规与体积）：
   PDF 解析从 PyMuPDF 换成 pypdf。PyMuPDF 是 **AGPL-3.0**（或 Artifex 商业许可），
   对外开源分发会产生著佐权义务，与 Apache-2.0 项目许可不兼容；pypdf 是 BSD-3-Clause、
-  纯 Python、无原生扩展。已安装体积从 52.9MB 降到约 1.4MB（见 docs/v0.2.1-研发记录.md）。
+  纯 Python、无原生扩展。已安装体积从 52.9MB 降到约 1.4MB（见 records/v0.2.1-研发记录.md）。
   代价：pypdf 不解析扫描件（本来也需要 OCR，不在支持范围内），复杂排版的
   阅读顺序还原能力弱于 MuPDF；对"取出正文文字交给模型"这一用途足够。
 

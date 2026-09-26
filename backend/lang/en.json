@@ -36,8 +36,8 @@
       "/mode": {
         "name": "Switch conversation mode",
         "usage": "/mode <number|abbreviation|full name>",
-        "desc": "Switches the AI answering style; run /mode list to see them all.",
-        "detail": "    Modes:\n      general / summary / translate /\n      code / contract / creative"
+        "desc": "Switches the AI answering style; every mode carries a full role, output format, reasoning steps and an example — run /mode list to see them all.",
+        "detail": "    Modes:\n      general / summary / translate /\n      code / contract / creative\n    Each mode states its role, output format, reasoning steps, one input/output example and its tone,\n    and they all share the same boundaries block (say you do not know, never fabricate sources).\n    /mode list shows each mode's description and temperature preset."
       },
       "/file": {
         "name": "Upload a file",
@@ -69,7 +69,7 @@
       "/prompt": {
         "name": "Set a custom system prompt",
         "usage": "/prompt <text>|reset",
-        "desc": "Overrides the current mode's default prompt to temporarily change the assistant's role."
+        "desc": "Overrides the current mode's default prompt to temporarily change the assistant's role (highest priority: it also overrides any /task template)."
       },
       "/temp": {
         "name": "Adjust generation temperature",
@@ -160,6 +160,8 @@
       "prompt_unset": "(not set — the mode's default prompt is used)",
       "prompt_reset": "🗑️ Custom prompt cleared",
       "prompt_set": "✅ Custom prompt set ({chars} characters)",
+      "prompt_overrides_task": "Note: the custom prompt has the highest priority, so it now overrides task template \"{name}\". Run /prompt reset to let the template take effect again.",
+      "prompt_reset_restores_task": "Task template \"{name}\" is in effect again.",
       "darkmode_usage": "Usage: /darkmode on/off (the theme is rendered by the front end)",
       "darkmode_on": "🎨 Dark mode requested",
       "darkmode_off": "🎨 Light mode requested",
@@ -225,10 +227,12 @@
     },
     "resp.task_list_header": "Task templates (current: {current}):",
     "resp.task_none": "none",
-    "resp.task_usage": "Usage: /task <name> to apply, /task off to clear. A template overrides the mode prompt; use /mode or /prompt reset to restore it.",
+    "resp.task_usage": "Usage: /task <name> to apply, /task off to clear. A template is **layered on top of** the current mode (the mode sets the scene and tone, the template sets this task's output format). To let a custom prompt take over completely, use /prompt <text> — it has the highest priority.",
     "resp.task_applied": "✅ Task template applied: {name}",
-    "resp.task_hint": "The template already sets the role, output format and reasoning rules — just ask your question. Use /task off to go back to normal mode.",
-    "resp.task_cleared": "✅ Task template cleared; the mode prompt is back in effect",
+    "resp.task_hint": "The template sets the role, output format and reasoning rules and works together with the current mode — just ask your question. Clear it with /task off.",
+    "resp.task_cleared": "✅ Task template cleared; the plain mode prompt is back in effect",
+    "resp.task_cleared_keeps_prompt": "(Your custom prompt is still set and still takes precedence; use /prompt reset to clear it too)",
+    "resp.task_overridden_by_prompt": "Note: a custom prompt is set and has higher priority, so it overrides this template. Run /prompt reset first if you want the template to apply.",
     "resp.task_not_found": "❌ No task template named \"{name}\". Available: {ids}",
     "resp.preset_list_header": "Generation presets (current: {current}):",
     "resp.preset_applied": "✅ Preset \"{name}\" applied: temperature {temp}, top_p {top_p}, repetition penalty {penalty}, max {max_tokens} tokens per reply",
@@ -246,10 +250,11 @@
     "status.context_mode": "Context strategy: {mode} (summarize = compress into a summary, slide = drop the oldest)",
     "status.preset": "Generation preset: {preset}",
     "status.task_template": "Task template: {name}",
+    "status.custom_prompt": "Custom prompt: set ({chars} characters; highest priority — overrides mode and task template)",
     "status.capability_notes": "Capability notes:",
     "items./task.name": "Task template",
     "items./task.usage": "/task [list|<name>|off]",
-    "items./task.desc": "Apply a task-oriented prompt template (summary, contract review, extraction, translation, code debugging, step-by-step reasoning). Small models follow structured prompts far more reliably. Use /task list to see all, /task off to clear.",
+    "items./task.desc": "Apply a task-oriented prompt template (summary, contract review, extraction, translation, code debugging, step-by-step reasoning). It is **layered on top of** the current mode (the mode sets the scene and tone, the template sets this task's output format, and the template wins on conflict). Use /task list to see all, /task off to clear.",
     "items./preset.name": "Generation preset",
     "items./preset.usage": "/preset [list|light|balanced|quality]",
     "items./preset.desc": "Switch between the light, balanced and quality generation presets (temperature, top_p, repetition penalty, reply length) without tuning individual parameters.",
@@ -801,12 +806,13 @@
   },
   "mode": {
     "menu_item": "{index}. {id} ({short}) — {desc} (temperature {temp})",
-    "desc.general": "General-purpose assistant that can answer any question.",
-    "desc.summary": "Summarization expert: concise and accurate summaries of text, meeting notes and articles, with a clear structure.",
-    "desc.translate": "Translation expert, fluent in many languages; accurate and natural translations on request.",
-    "desc.code": "Programming expert: code, explanations and debugging advice in many languages.",
-    "desc.contract": "Contract review and summarization assistant: answers using the content of the uploaded files.",
-    "desc.creative": "Creative writing assistant: stories, poems, scripts and other creative content."
+    "_note": "These are the **user-facing mode descriptions** shown by /mode list (short sentences). The **prompt text** sent to the model for each mode lives in the MODES table in backend/conversation.py and deliberately stays Chinese and out of the language packs — see the header comment of that file.",
+    "desc.general": "General Q&A: anything goes, concise answers that lead with the conclusion.",
+    "desc.summary": "Compresses long documents and meeting notes into a conclusion plus key points, keeping numbers, dates and amounts verbatim.",
+    "desc.translate": "Chinese-English translation: output only the translation, preserving paragraph structure and consistent terminology.",
+    "desc.code": "Code explanation and debugging: conclusion first, then a minimal patch, then how to verify it.",
+    "desc.contract": "Contract clause review: money, timing and liability risks only, each with a verbatim quote from the original.",
+    "desc.creative": "Stories, poems, copy and scripts, with a willingness to try a distinctive angle."
   },
   "task": {
     "menu_item": "  /task {id}  — {label}: {note}",

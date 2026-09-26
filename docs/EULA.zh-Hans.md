@@ -176,3 +176,9 @@
    删除对应文件即可清除（清单见 [`PRIVACY.md`](PRIVACY.md) 第七节）。
 3. 本协议与 [`PRIVACY.md`](PRIVACY.md) 如有表述冲突，涉及**数据处理**的事项以
    [`PRIVACY.md`](PRIVACY.md) 为准；涉及**许可授权**的事项以 [`../LICENSE`](../LICENSE)（Apache-2.0）为准。
+4. **读取受保护文档。** 本软件通过本机已安装的 WPS 读取 Office 文档时（包括受企业加密系统
+   保护的文档），其行为、前提条件与责任边界见
+   [`ENCRYPTED_DOCUMENTS.zh-Hans.md`](ENCRYPTED_DOCUMENTS.zh-Hans.md)
+   （英文版 [`ENCRYPTED_DOCUMENTS.md`](ENCRYPTED_DOCUMENTS.md)），该文档构成本协议下对
+   本软件行为的说明的一部分。本软件不破解、不绕过任何加密机制；**你需自行确认**所在组织的
+   规章制度允许在本机以程序化方式读取受保护文档，且你使用的账户对该文档拥有合法访问权限。

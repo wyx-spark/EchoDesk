@@ -32,6 +32,7 @@ English documentation: [`docs/en/README.md`](../en/README.md)。
 - [`../DEVELOPER.md`](../DEVELOPER.md) —— 开发者文档：架构、模块划分、JSON 行协议、扩展点
 - [`../PRIVACY.zh-Hans.md`](../PRIVACY.zh-Hans.md) —— 隐私说明：联网行为、数据存放位置与清理方式（英文版 [`../PRIVACY.md`](../PRIVACY.md)）
 - [`../EULA.zh-Hans.md`](../EULA.zh-Hans.md) —— 最终用户许可协议（英文版 [`../EULA.md`](../EULA.md)）
+- [`../ENCRYPTED_DOCUMENTS.zh-Hans.md`](../ENCRYPTED_DOCUMENTS.zh-Hans.md) —— 读取企业加密系统保护的文档：前提条件、不绕过的声明、责任归属、哪些内容只在内存中（英文版 [`../ENCRYPTED_DOCUMENTS.md`](../ENCRYPTED_DOCUMENTS.md)）
 - [`../THIRD_PARTY_LICENSES.zh-Hans.md`](../THIRD_PARTY_LICENSES.zh-Hans.md) —— 第三方组件与许可证清单（英文版 [`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md)）
 - [`../SBOM.json`](../SBOM.json) —— 软件物料清单（SPDX 风格，由 `python tools/gen_sbom.py` 生成）
 - [`../../SECURITY.zh-Hans.md`](../../SECURITY.zh-Hans.md) —— 安全策略：支持版本、私有报告渠道、响应时限、安全设计与受理范围（英文版 [`../../SECURITY.md`](../../SECURITY.md)）

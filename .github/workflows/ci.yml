@@ -426,9 +426,10 @@ jobs:
       - name: Check release scripts parse
         shell: pwsh
         run: |
-          # 发布脚本平时不在 CI 路径上（要 7zS.sfx 与 rcedit 才能真跑），
+          # 发布脚本平时不在 CI 路径上（要 Inno Setup 与 rcedit 才能真跑），
           # 所以至少做语法解析，避免带着语法错误进发布流程。
-          foreach ($f in @("tools/build_release.ps1", "tools/make_sfx.ps1",
+          foreach ($f in @("tools/build_release.ps1", "tools/make_installer.ps1",
+                           "tools/check_installer_deliverables.ps1",
                            "tools/check_feedback.ps1", "tools/verify_release.ps1")) {
               $err = $null
               [System.Management.Automation.Language.Parser]::ParseFile(
