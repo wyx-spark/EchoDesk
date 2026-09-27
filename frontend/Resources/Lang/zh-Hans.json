@@ -213,6 +213,7 @@
       "pickTaskRow": "任务所在的那一整行",
       "pickNextPage": "「下一页」按钮",
       "pickDetailFile": "任务详情页里的附件名称",
+      "pickLoginCheck": "登录后才出现的元素（例如右上角的用户名）",
       "pickDone": "✅ 已填入选择器：{0}",
       "templates": "配置模板",
       "templateTip": "选一个模板一键填入常用配置，再按实际网站微调。",

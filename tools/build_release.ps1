@@ -28,7 +28,10 @@
       ├─ snippets.json               常用语（首次运行时生成）
       ├─ USAGE.txt                   结构与操作说明（中英双语）
       ├─ README.md / README.zh-Hans.md
-      ├─ CHANGELOG.md                版本变更记录（正本，仓库里也在根目录）
+      ├─ CHANGELOG.md                版本变更记录（英文正本）
+├─ CHANGELOG.zh-Hans.md        同上，中文译本
+├─ CONTRIBUTING.md             贡献指南（英文正本）
+├─ CONTRIBUTING.zh-Hans.md     同上，中文译本
       ├─ config.example.json         配置示例（用户可比对/复制）
       ├─ install-complete.bat        给 zip 免安装用户手动建快捷方式（安装程序自带快捷方式）
       ├─ LICENSE / LICENSE.zh-Hans.md / NOTICE / NOTICE.zh-Hans.md
@@ -454,14 +457,18 @@ Powered by Void Entropia Studio
   install-complete.bat     creates the shortcut in this folder (portable-zip
                            users run it once; safe to run again)
   README.md / README.zh-Hans.md
-  CHANGELOG.md             what changed in each version
+  CHANGELOG.md / CHANGELOG.zh-Hans.md
+                           what changed in each version (English + Chinese)
   LICENSE / LICENSE.zh-Hans.md / NOTICE / NOTICE.zh-Hans.md
   SECURITY.md / SECURITY.zh-Hans.md
+  CONTRIBUTING.md / CONTRIBUTING.zh-Hans.md
+                           how to report issues, contribute and translate
   docs\                    documentation (user guide, FAQ, automation guide,
                            privacy policy, EULA, compliance, SBOM)
   docs\en\                 English documentation
   docs\zh-Hans\            Chinese documentation
-  docs\DEVELOPER.md        architecture, protocol, extension points
+  docs\DEVELOPER.md        architecture, protocol, extension points (pointer;
+                           the full text lives in docs\en\ and docs\zh-Hans\)
   lang\                    backend language packs (system messages, errors, /help)
   examples\skills\         example skill sources (Hello World and OFD reader)
   app\                     the program itself (please leave it alone)
@@ -550,13 +557,16 @@ Build time: $buildTime
   config.example.json  后端默认配置的副本（可用于比对或恢复默认）
   install-complete.bat 在本文件夹创建快捷方式（zip 免安装版用户跑一次；可重复运行）
   README.md / README.zh-Hans.md
-  CHANGELOG.md       各版本变更记录
+  CHANGELOG.md / CHANGELOG.zh-Hans.md
+                     各版本变更记录（英文正本 + 中文译本）
   LICENSE / LICENSE.zh-Hans.md / NOTICE / NOTICE.zh-Hans.md
   SECURITY.md / SECURITY.zh-Hans.md
+  CONTRIBUTING.md / CONTRIBUTING.zh-Hans.md
+                     如何提交 Issue、贡献代码与贡献翻译
   docs\              文档（用户手册、FAQ、自动化指南、隐私政策、许可协议、合规文档、SBOM）
   docs\zh-Hans\      中文文档
   docs\en\           英文文档
-  docs\DEVELOPER.md  架构、协议与扩展点
+  docs\DEVELOPER.md  架构、协议与扩展点（指针；正文在 docs\en\ 与 docs\zh-Hans\ 下）
   lang\              后端语言包（系统消息、错误提示、指令帮助）
   examples\skills\   示例插件源码（Hello World 与 OFD 读取）
   app\               程序本体（请勿随意改动）
@@ -629,7 +639,8 @@ foreach ($legal in @(
         "NOTICE", "NOTICE.zh-Hans.md",
         "SECURITY.md", "SECURITY.zh-Hans.md",
         "README.md", "README.zh-Hans.md",
-        "CHANGELOG.md"
+        "CHANGELOG.md", "CHANGELOG.zh-Hans.md",
+        "CONTRIBUTING.md", "CONTRIBUTING.zh-Hans.md"
     )) {
     $src = Join-Path $Root $legal
     if (Test-Path $src) {
@@ -639,7 +650,7 @@ foreach ($legal in @(
         Write-Warn2 "缺少 $legal（任务书「全局要求四」要求根目录必备），发布物会缺这份文件"
     }
 }
-Write-Ok "外层合规与说明文档（LICENSE/NOTICE/SECURITY/README/CHANGELOG，各含中英两份）"
+Write-Ok "外层合规与说明文档（LICENSE/NOTICE/SECURITY/README/CHANGELOG/CONTRIBUTING，各含中英两份）"
 
 # 配置示例：后端默认配置的副本。
 # 为什么原样复制而不是加分节注释：config.json 会被 pydantic 直接解析，
@@ -997,7 +1008,8 @@ $mustHave = @(
     "LICENSE", "LICENSE.zh-Hans.md",
     "NOTICE", "NOTICE.zh-Hans.md",
     "SECURITY.md", "SECURITY.zh-Hans.md",
-    "CHANGELOG.md", "USAGE.txt",
+    "CHANGELOG.md", "CHANGELOG.zh-Hans.md", "USAGE.txt",
+    "CONTRIBUTING.md", "CONTRIBUTING.zh-Hans.md",
     "config.example.json", "install-complete.bat",
     "docs\PRIVACY.md", "docs\PRIVACY.zh-Hans.md",
     "docs\EULA.md", "docs\EULA.zh-Hans.md",
@@ -1005,6 +1017,7 @@ $mustHave = @(
     "docs\SECURITY.md",
     "docs\THIRD_PARTY_LICENSES.md", "docs\THIRD_PARTY_LICENSES.zh-Hans.md",
     "docs\SBOM.json", "docs\DEVELOPER.md",
+    "docs\en\DEVELOPER.md", "docs\zh-Hans\DEVELOPER.md",
     "docs\en\COMPLIANCE.md", "docs\zh-Hans\COMPLIANCE.md",
     "docs\en\README.md", "docs\en\USER_GUIDE.md", "docs\en\FAQ.md", "docs\en\AUTOMATION_GUIDE.md",
     "docs\zh-Hans\README.md", "docs\zh-Hans\USER_GUIDE.md", "docs\zh-Hans\FAQ.md",

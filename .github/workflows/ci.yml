@@ -120,10 +120,13 @@ jobs:
         # 只有真正 import 才能发现这类"定义期求值"的错误。selftest.py 里也有同样的检查，
         # 这里再单独跑一条是为了让 CI 日志里一眼能定位到这类失败。
 
-      # 故意不在 CI 运行的两项（都需要本机运行环境，属人工/发布前验证）：
+      # 故意不在 CI 运行的四项（都需要本机运行环境，属人工/发布前验证）：
       #   * tools/test_automation_e2e.py —— 需要真实的 Microsoft Edge（playwright channel=msedge）
       #     并会自动打开**有头**浏览器窗口（config.AutomationConfig 强制 headless=False），
       #     在无人值守的 runner 上不稳定；发布前在装有 Edge 的机器上手动执行。
+      #   * tools/test_automation_login.py —— 同上（它自己起一个回环 HTTP 站点，验证登录态复用、
+      #     href 五类值的提取与伪链接点击回退、可视化选取的非链接拦截与预览确认）；
+      #     同样需要真实的有头 Edge，发布前在装有 Edge 的机器上手动执行。
       #   * tools/test_model_hub_e2e.py —— 需要**已打包的后端 exe**
       #     （默认找 publish\EchoDesk-v<版本>\backend\EchoDeskBackend.exe）并联网访问
       #     HuggingFace 镜像/官方的搜索接口；既慢又依赖外部服务可用性，

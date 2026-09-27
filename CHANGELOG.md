@@ -1,626 +1,953 @@
-# EchoDesk 变更日志
+# EchoDesk Changelog
 
-本文件记录各版本的功能变更、修复与已知限制。
-版本号遵循 `MAJOR.MINOR.PATCH`；文件版本资源统一为 `X.Y.Z.0`。
+> A Chinese reference translation of this file is available at
+> [`CHANGELOG.zh-Hans.md`](CHANGELOG.zh-Hans.md); if the two ever disagree, this English version prevails.
+
+This file records the feature changes, fixes, and known limitations of each version.
+Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly `X.Y.Z.0`.
 
 ---
 
 ## v0.2.1
 
-> 面向**开源发布**的第一个版本。完整实现方案、关键决策、与任务书的偏差、
-> 未完成项与体积记录见内部研发记录（`v0.2.1-研发记录.md`，**不随发布物分发**）。
+> The first version aimed at **open-source publication**. For the complete implementation plan, key decisions,
+> deviations from the task specification, unfinished items, and size records, see the internal development
+> record (`v0.2.1-研发记录.md`, **not distributed with the release**).
 
-### 发布准备（发布任务书）
+### Automation improvements (login state reuse / href extraction / visual selection semantics)
 
-**交付物**
-- 新增两份**安装程序**：`EchoDesk-v0.2.1-Setup.exe`（含模型）与
-  `EchoDesk-v0.2.1-NoModel-Setup.exe`（不含模型），由 **Inno Setup 6** 编译
-  （`tools/installer.iss` + `tools/make_installer.ps1`）。
-  **默认安装到安装程序自己所在的文件夹**（向导里有路径选择页，可改到别处），
-  装完由 `[Icons]` 段创建开始菜单快捷方式（可勾选桌面快捷方式）并登记卸载入口；
-  安装后的目录结构与便携版完全一致。版本资源由 `[Setup] VersionInfo*` 指令在编译时写入
-  （`FileVersion`/`ProductVersion` = `0.2.1.0`）。
-- 新增 `SHA256SUMS.txt`（安装包与合规资产的 SHA256 清单）、`USAGE.txt`（结构与操作说明，
-  中英双语）、`config.example.json`（后端默认配置副本）、`install-complete.bat`
-  （**改为仅供 zip 免安装版**手动创建快捷方式；安装程序不再调用它）。
-- 构建脚本新增 `-MakeInstaller` 开关：一条命令产出完整交付物
-  （`tools/make_installer.ps1` 承担实际打包）。旧名 `-MakeSfx` 保留为别名。
+**Login state reuse (automation improvement task one)**
+- Automation now uses Playwright's **persistent user data directory** (`launch_persistent_context`):
+  after logging in once, cookies / localStorage are persisted to disk by the browser itself, so
+  **later runs no longer require logging in again**.
+  The data directory is dedicated to automation (`login_state_dir`, default `browser_profile`)
+  and is not shared with the everyday browser — a browser does not allow two instances to share the
+  same user data dir.
+- **First-run guidance**: when the session is judged not logged in, automation pauses and prompts for
+  manual login, then continues automatically once you have finished logging in; on first use the prompt
+  states "first use requires you to log in manually".
+- **Login state detection**: prefers the "element that only appears after login" (`login_check_selector`,
+  which can be picked with visual selection), and falls back to login page URL keywords
+  (`login_url_keywords`) when it is not configured; when neither has information it
+  **does not guess and does not block**.
+- **No forced run when not logged in**: when the session is still not logged in after waiting the full
+  `manual_login_wait_seconds`, it explicitly reports "no login state detected" and ends the round,
+  instead of letting every task fail once.
+- **Clearing login state**: the settings window adds "🗑 Clear automation login state", which deletes the
+  data directory (and the old `browser_state.json` backup) so that the next run guides login again;
+  it is refused while automation is running.
+- **Shared across sites**: one data directory can serve multiple target sites (the browser stores cookies
+  per domain).
+- **Smooth upgrade for existing users**: `browser_state.json` is still imported once into the new
+  directory on first use, so no re-login is needed.
+- **Audit**: new `login_state_used` / `login_required` / `login_completed` / `login_timeout` /
+  `login_state_cleared` / `login_state_migrated` events record only paths, results, and counts,
+  **never cookie contents**.
+- Not implemented (advanced option documented only): connecting with CDP to a browser already started in
+  debug mode (`connect_over_cdp`).
 
-**安装方式：从 7-Zip 自解压包改为 Inno Setup（实测结论，勿回退）**
-- **放弃 `7zS.sfx` / `7zSD.sfx` 自解压方案**。虚拟机实测：用户双击自解压包后提示解压完成，
-  却在全盘搜不到 EchoDesk 文件 —— 因为官方 7-Zip SFX 模块**只支持 7 个配置键**
-  （`Title`/`BeginPrompt`/`Progress`/`RunProgram`/`Directory`/`ExecuteFile`/`ExecuteParameters`），
-  **不支持 `InstallPath`**，且默认行为就是"解压到 `%TEMP%\7zNNNNNN`，执行 `RunProgram` 后
-  删掉该目录"。这些结论是用二进制内嵌字符串在 ASCII 与 UTF-16 两种编码下核对过的。
-- 仓库里的 `publish\7zSD.sfx` 与官方 9.20 的 `7zS.sfx` **是同一个文件**
-  （版本资源 `InternalName=7zS.sfx`、`OriginalFilename=7zS.sfx.exe`、
-  `Copyright (c) 1999-2010 Igor Pavlov`、`FileVersion 9.20`）——**改名并不能得到 `InstallPath`**。
-  因此不再依赖任何 `.sfx` 文件：`tools/make_sfx.ps1` 与 `tools/check_sfx_deliverables.ps1` 已删除。
-- **绝不对最终的 `Setup.exe` 跑 `rcedit`**（实测会直接毁掉安装包）：Inno Setup 把安装数据
-  **追加在 PE 映像之后**（最小安装包实测：PE 最后一段结束于 893,952 字节，文件总长
-  2,097,164 字节），而 `rcedit` 重建 PE 映像时会丢弃追加数据 —— 文件被削到 893,952 字节，
-  运行时报错且什么都不安装。这与本版发布准备阶段踩过的
-  「603.8 MB 自解压包被 rcedit 削成 176 KB 空壳」是**同一个机制**。
-  版本资源改用 Inno 自己的 `VersionInfo*` 指令写入；`signtool` 是安全的（签名追加在文件末尾）。
-- 安装程序里 `[Files]` 的 `Excludes` 语义经过 7 组对照实测：模式按**相对 `Source` 目录的路径**
-  匹配（不是含源目录前缀的完整路径），`app\backend\models\*` 与 `*\models\*` 都能命中，
-  但写成 `*\app\backend\models\*` 会命中失败。不含模型版同时用 `*.gguf` 兜底，
-  使"一个 `.gguf` 都没有"这条断言是结构性成立的。
+**Correct flow for href extraction (automation improvement task two)**
+- Makes explicit that "a selector is only responsible for **locating the element**; reading attributes is
+  a separate step", and implements a four-step flow:
+  locate → read `href` (with `data-href` / `data-url` fallbacks) → `urljoin` relative paths into
+  absolute addresses → fall back for special cases.
+- Handling of the five kinds of values: relative paths are completed, absolute addresses are used as is,
+  and `javascript:` pseudo-links / `#` in-page anchors / empty href are all
+  **changed to clicking the element to trigger navigation** (catching either a new tab or a navigation in
+  the current page), instead of failing outright.
+- **Deduplication defect fixed**: deduplication used to be keyed on `href`, so dozens of tasks with
+  `href="javascript:void(0)"` on one page were collapsed into 1; now only elements for which a URL was
+  obtained are deduplicated by URL.
+- The extracted `href` values and the resulting verdict are emitted with progress events to make
+  troubleshooting easier.
 
-**命名规范：程序生成的名字也改成英文**（面向全球用户）
-- `使用说明.txt` → `USAGE.txt`；结果目录 `批量处理结果\` → `results\`；
-  结果文件 `结果.txt` → `result.txt`；默认任务目录名 `自动化任务` → `auto-task`；
-  失败截图 `失败截图_任务N_时间.png` → `failure-screenshot-taskN-时间.png`；
-  快捷方式 `EchoDesk-v0.2.1.lnk` → `Start-EchoDesk-v0.2.1.lnk`（zip 免安装版沿用此名）。
-- **发布物不再预置 `.lnk` 快捷方式**：Windows 快捷方式里存的是**绝对路径**，
-  在构建机上生成的 `.lnk` 会带上维护者的本机路径（`C:\Users\<用户名>\...`），
-  既违反任务书「全局要求五」（个人绝对路径绝对禁止），在用户机器上又必然是死链。
-  现在快捷方式一律在**目标机器上**创建：安装程序用 `[Icons]` 段直接创建开始菜单/桌面
-  快捷方式；zip 免安装解压版的用户手动运行一次 `install-complete.bat`（或直接启动
-  `app\EchoDesk.exe`，程序首次运行会询问是否创建快捷方式）。
-- **升级注意**：结果目录名是用户数据，改名后**不会自动迁移**旧目录。升级前请把
-  旧的 `批量处理结果\` 手动改名为 `results\`（或把旧目录内容移入新目录），
-  否则新版本会在新名字下重新开始，历史结果仍留在旧目录里（数据不会丢，只是分两处）。
+**Semantics of visual selection (automation improvement task three)**
+- **Preview after selection**: a confirmation dialog appears as soon as selection completes, listing
+  "the program will extract the following URLs from these elements: …", and the configuration is written
+  only after confirmation; cancelling discards the selection (the configuration is unchanged).
+- **Non-link element detection**: when an element from which no URL can be read, such as a button / `<div>`,
+  is selected, it explicitly reports
+  "what you selected is not a link (<button>), so no URL can be extracted; please select again",
+  **and it does not corrupt the configuration**;
+  if the selected container contains links, the message states how many links the container has and
+  suggests selecting a link element inside the container instead.
+- **Empty href / pseudo-link notice**: the preview states "no URL could be extracted (JavaScript
+  pseudo-link); the program will click the element to trigger navigation instead".
+- **Selection semantics map to program logic**: each of the four selection positions has an explicit
+  purpose (navigation target / row container / click only / download), and
+  **only the two positions that must be links** reject non-link elements.
+- A notice is shown when only 1 element matches (selectors produced by visual selection are
+  "exact to that one element"), guiding the user to generalize the selector or to select a whole row in
+  the "task row container".
+- The banner text at the top of the page is no longer hard-coded Chinese and follows the interface language.
 
-**合规文档双语化（7 对）**
+**Settings interface and language packs**
+- The "Automation" page of the settings window gains a "Login state" section: data directory,
+  login check element (with visual selection), login page keywords, the
+  "🗑 Clear automation login state" button, and a login state status line (showing only
+  path/size/time, **never cookies**).
+- New `tools/test_automation_login.py`: runs a real browser against a local loopback HTTP site, covering
+  the five tests required by the task specification
+  (login state reuse, not-logged-in detection, the five kinds of href values, non-link elements,
+  selection preview), with all 52 assertions passing.
+
+### Release preparation (release task specification)
+
+**Deliverables**
+- Two new **installers**: `EchoDesk-v0.2.1-Setup.exe` (with models) and
+  `EchoDesk-v0.2.1-NoModel-Setup.exe` (without models), compiled by **Inno Setup 6**
+  (`tools/installer.iss` + `tools/make_installer.ps1`).
+  **By default it installs into the folder where the installer itself resides** (the wizard has a path
+  selection page, so it can be changed elsewhere); after installation the `[Icons]` section creates the
+  Start menu shortcut (a desktop shortcut can be checked) and registers the uninstall entry;
+  the installed directory structure is exactly the same as the portable version. Version resources are
+  written at compile time by the `[Setup] VersionInfo*` directives
+  (`FileVersion`/`ProductVersion` = `0.2.1.0`).
+- New `SHA256SUMS.txt` (SHA256 list of the installers and compliance assets), `USAGE.txt` (structure and
+  usage instructions, bilingual Chinese/English), `config.example.json` (copy of the backend default
+  configuration), `install-complete.bat`
+  (**changed to be for the zip portable version only**, creating shortcuts manually; the installer no
+  longer calls it).
+- The build script gains a `-MakeInstaller` switch: one command produces the complete deliverable set
+  (`tools/make_installer.ps1` performs the actual packaging). The old name `-MakeSfx` is kept as an alias.
+
+**Installation method: changed from a 7-Zip self-extracting package to Inno Setup (measured conclusion, do not revert)**
+- **The `7zS.sfx` / `7zSD.sfx` self-extracting approach is dropped.** Measured in a VM: after the user
+  double-clicks the self-extracting package it reports extraction complete, yet no EchoDesk file can be
+  found anywhere on the disk — because the official 7-Zip SFX module **supports only 7 configuration keys**
+  (`Title`/`BeginPrompt`/`Progress`/`RunProgram`/`Directory`/`ExecuteFile`/`ExecuteParameters`),
+  **does not support `InstallPath`**, and its default behaviour is exactly "extract to `%TEMP%\7zNNNNNN`,
+  run `RunProgram`, then delete that directory". These conclusions were verified by checking the
+  strings embedded in the binary in both ASCII and UTF-16 encodings.
+- `publish\7zSD.sfx` in the repository and the official 9.20 `7zS.sfx` **are the same file**
+  (version resources `InternalName=7zS.sfx`, `OriginalFilename=7zS.sfx.exe`,
+  `Copyright (c) 1999-2010 Igor Pavlov`, `FileVersion 9.20`) — **renaming does not get you `InstallPath`**.
+  So no `.sfx` file is relied upon any more: `tools/make_sfx.ps1` and `tools/check_sfx_deliverables.ps1`
+  have been deleted.
+- **Never run `rcedit` on the final `Setup.exe`** (measured to destroy the installer outright): Inno Setup
+  **appends the installation data after the PE image** (measured on the smallest installer: the last PE
+  section ends at 893,952 bytes while the file is 2,097,164 bytes long), and when `rcedit` rebuilds the PE
+  image it discards the appended data — the file is truncated to 893,952 bytes, errors at runtime, and
+  installs nothing. This is **the same mechanism** as the
+  "603.8 MB self-extracting package truncated by rcedit into a 176 KB empty shell" hit during this
+  version's release preparation. Version resources are instead written with Inno's own `VersionInfo*`
+  directives; `signtool` is safe (signatures are appended at the end of the file).
+- The `Excludes` semantics of `[Files]` in the installer were measured against 7 control groups: patterns
+  match **paths relative to the `Source` directory** (not full paths including the source directory
+  prefix), and both `app\backend\models\*` and `*\models\*` match, while writing
+  `*\app\backend\models\*` fails to match. The no-model build also uses `*.gguf` as a backstop, making
+  the assertion "there is not a single `.gguf`" structurally guaranteed.
+
+**Naming conventions: program-generated names are English too** (aimed at a global user base)
+- `使用说明.txt` → `USAGE.txt`; the results directory `批量处理结果\` → `results\`;
+  the result file `结果.txt` → `result.txt`; the default task directory name `自动化任务` → `auto-task`;
+  failure screenshots `失败截图_任务N_时间.png` → `failure-screenshot-taskN-时间.png`;
+  the shortcut `EchoDesk-v0.2.1.lnk` → `Start-EchoDesk-v0.2.1.lnk` (the zip portable version keeps this name).
+- **Releases no longer ship a pre-made `.lnk` shortcut**: a Windows shortcut stores an **absolute path**,
+  and a `.lnk` generated on the build machine carries the maintainer's local path
+  (`C:\Users\<user name>\...`), which both violates "global requirement five" of the task specification
+  (personal absolute paths are strictly forbidden) and is inevitably a dead link on the user's machine.
+  Shortcuts are now always created **on the target machine**: the installer creates the Start menu/desktop
+  shortcuts directly with the `[Icons]` section; users of the zip portable version run
+  `install-complete.bat` once by hand (or start `app\EchoDesk.exe` directly, in which case the program
+  asks on first run whether to create a shortcut).
+- **Upgrade note**: the results directory name is user data, so renaming it **does not migrate** the old
+  directory automatically. Before upgrading, rename the old `批量处理结果\` to `results\` by hand
+  (or move the old directory's contents into the new directory),
+  otherwise the new version starts fresh under the new name while historical results stay in the old
+  directory (no data is lost, it is simply in two places).
+
+**Compliance documentation bilingualized (7 pairs)**
 - `LICENSE` / `NOTICE` / `SECURITY.md` / `CODE_OF_CONDUCT.md` / `docs/PRIVACY.md` /
-  `docs/EULA.md` / `docs/THIRD_PARTY_LICENSES.md` 全部改为「英文为默认名 + `.zh-Hans.md`
-  中文参考译本」，中文版文首注明「如与英文版有歧义，以英文版为准」。
-- `docs/PRIVACY.md`、`docs/EULA.md`、`docs/THIRD_PARTY_LICENSES.md` 原先正文是中文，
-  本次改为英文为默认版、中文移入 `.zh-Hans.md`；安全性策略正本移到仓库根目录，
-  `docs/SECURITY.md` 改为短指针。
-- `CHANGELOG.md` 移到**仓库根目录**（GitHub 直接识别），docs\ 下不再保留副本。
+  `docs/EULA.md` / `docs/THIRD_PARTY_LICENSES.md` are all changed to "English as the default name plus a
+  `.zh-Hans.md` Chinese reference translation", and the Chinese versions note at the top that "in case of
+  ambiguity with the English version, the English version prevails".
+- The body text of `docs/PRIVACY.md`, `docs/EULA.md`, and `docs/THIRD_PARTY_LICENSES.md` was originally
+  Chinese; this change makes English the default version and moves the Chinese into `.zh-Hans.md`;
+  the authoritative security policy moves to the repository root, and
+  `docs/SECURITY.md` becomes a short pointer.
+- `CHANGELOG.md` moves to the **repository root** (recognized directly by GitHub); no copy is kept under
+  docs\.
 
-**反馈渠道统一**
-- 公开反馈统一指向 GitHub Issues 与 Discussions；安全漏洞指向仓库 Security 标签页的
-  私密公告入口（首选）与 GitHub noreply 邮箱（兜底）。清除了全部占位邮箱
-  （`security@example.com`、`conduct@example.com`）与示例捐赠 URL。
-- 新增门禁 `tools/check_feedback.ps1`：校验上述渠道存在、并扫描个人邮箱、
-  实体地址、个人绝对路径、凭证明文与 AGPL 残留。
+**Unified feedback channels**
+- Public feedback uniformly points to GitHub Issues and Discussions; security vulnerabilities point to the
+  private advisory entry on the repository's Security tab
+  (preferred) and to a GitHub noreply address (fallback). All placeholder addresses
+  (`security@example.com`, `conduct@example.com`) and the example donation URL have been removed.
+- New gate `tools/check_feedback.ps1`: verifies that the above channels exist, and scans for personal
+  email addresses, physical addresses, personal absolute paths, plaintext credentials, and AGPL remnants.
 
-**合规收口发现并修掉的问题（干净 venv 复核）**
-- **`backend/requirements.txt` 漏声明 3 个直接 import 的包**：`requests`、`urllib3`
-  （`marketplace.py`）与 `tqdm`（`download_utils.py`）。它们在开发机/打包机上恰好作为
-  传递依赖存在，所以一直被掩盖；按本文件从零建环境会 ImportError。
-  新增 `tools/check_requirements.py`（AST 取导入 + 实测 import）作为门禁。
-- **发布物含未声明的第三方组件**：`cryptography` 被 PyInstaller 打进后端
-  （来自开发机上与本项目无关的 `msoffcrypto-tool`），却不在许可证清单与 SBOM 里。
-  它**确实被功能需要**（`file_parser.py` 对空口令加密 PDF 调 `reader.decrypt("")`，
-  pypdf 的 AES 支持依赖它），因此选择**显式声明**而不是排除。
-- 同时发现 `chardet`、`bidi`（均为 LGPL）与 `tzdata` 只是被依赖里的**可选 import**
-  带进包，本项目用不到，已加入 `backend/EchoBackend.spec` 的 `EXCLUDES`
-  （发布物因此不再含这两个 LGPL 组件，也少了约 2MB）。
-  新增 `tools/check_bundled_packages.py` 比对「干净 venv 声明的包」与
-  「`_internal` 里实际存在的模块」，防止这类偏差再次悄悄出现。
-- **`tools/gen_licenses.py` 的名称归一化缺陷**：用 `name.lower()` 直接比较发行名，
-  而 `llama-cpp-python`/`duckduckgo-search` 的元数据名是下划线形式，导致这两个
-  **直接依赖被漏出「后端直接依赖」表**。已改为按 requirements.txt 驱动 + PEP 503 归一化。
-- **`tools/gen_sbom.py` 的闭包不计环境标记**：`macholib`、`tomli`、`exceptiongroup`
-  等跨平台标记依赖会被算进发布闭包，使 `--check` 在干净环境里永远失败（门禁失效）。
-  已改为按当前解释器评估 `Requires-Dist` 标记（`packaging` 为可选依赖，缺失时退化并提示）。
-- 收紧 `backend/EchoBackend.spec` 的 `EXCLUDES` 说明与文档（v0.2.1 期间发现
-  `publish\7zS.sfx` 不支持 `OverwriteMode` 等第三方改版才有的键；那个自解压方案后来已整体废弃，
-  见上文「安装方式：从 7-Zip 自解压包改为 Inno Setup」）。
+**Issues found and fixed during the compliance wrap-up (re-verified in a clean venv)**
+- **`backend/requirements.txt` failed to declare 3 directly imported packages**: `requests`, `urllib3`
+  (`marketplace.py`), and `tqdm` (`download_utils.py`). On the development and packaging machines they
+  happened to exist as transitive dependencies, so the problem stayed hidden; building an environment from
+  scratch per this file raises ImportError.
+  New `tools/check_requirements.py` (imports extracted via AST + a real import test) serves as the gate.
+- **The release contained an undeclared third-party component**: `cryptography` was bundled into the
+  backend by PyInstaller (coming from `msoffcrypto-tool`, unrelated to this project, on the development
+  machine) yet was absent from the license list and the SBOM.
+  It **is genuinely required by features** (`file_parser.py` calls `reader.decrypt("")` for encrypted PDFs
+  with an empty password, and pypdf's AES support depends on it), so the choice was to
+  **declare it explicitly** rather than exclude it.
+- It was also found that `chardet`, `bidi` (both LGPL), and `tzdata` were pulled into the bundle only by
+  **optional imports** in dependencies and are unused by this project, so they were added to `EXCLUDES`
+  in `backend/EchoBackend.spec`
+  (the release therefore no longer contains those two LGPL components and is about 2MB smaller).
+  New `tools/check_bundled_packages.py` compares "the packages declared in a clean venv" with
+  "the modules actually present in `_internal`", to keep this kind of drift from creeping back in unnoticed.
+- **Name normalization defect in `tools/gen_licenses.py`**: distribution names were compared directly with
+  `name.lower()`, while the metadata names of `llama-cpp-python`/`duckduckgo-search` use underscores, which
+  left those two
+  **direct dependencies out of the "backend direct dependencies" table**. It now runs off requirements.txt
+  plus PEP 503 normalization.
+- **`tools/gen_sbom.py` ignored environment markers in the closure**: cross-platform marker dependencies
+  such as `macholib`, `tomli`, and `exceptiongroup` were counted into the release closure, making
+  `--check` fail forever in a clean environment (a dead gate).
+  It now evaluates `Requires-Dist` markers against the current interpreter (`packaging` is an optional
+  dependency, and when it is missing it degrades with a notice).
+- Tightened the `EXCLUDES` comments and documentation in `backend/EchoBackend.spec` (during v0.2.1 it was
+  found that `publish\7zS.sfx` does not support keys such as `OverwriteMode` that exist only in
+  third-party builds; that self-extracting approach was later dropped entirely,
+  see "Installation method: changed from a 7-Zip self-extracting package to Inno Setup" above).
 
-**构建流程修复**
-- **`tools/build_release.ps1` 失败仍返回退出码 0**：脚本内部抛错时不会设置退出码，
-  `& tools\build_release.ps1 -MakeInstaller` 曾出现"安装包一个都没生成却报告成功"。
-  已加顶层 `trap`（统一非 0 退出）与打包后的交付物断言。
-  该断言后来又加固过一次：只看"文件存在"不够 —— 被废弃的旧安装包留在 `publish\` 里
-  就能让它误判成成功，所以现在还要求交付物是**本次构建重新生成**的（时间戳晚于打包开始时刻），
-  并且打包脚本会在编译前先删掉同名旧产物。
-- 发布物不再包含研发/修复记录等过程文档（`-Recurse` 复制时按名字排除 + 结构断言）。
-- 发布文档不再含"截图占位/待拍"这类未完成表述（v0.2.1 不随包提供截图）。
+**Build pipeline fixes**
+- **`tools/build_release.ps1` returned exit code 0 even on failure**: an internal throw did not set an exit
+  code, and `& tools\build_release.ps1 -MakeInstaller` once reported success while "not a single installer
+  was produced".
+  A top-level `trap` (uniform non-zero exit) and post-packaging deliverable assertions were added.
+  The assertion was later hardened once more: checking only "the file exists" is not enough — a discarded
+  old installer left in `publish\` could make it pass by mistake, so a deliverable must now be
+  **regenerated by this build** (timestamp later than the start of packaging),
+  and the packaging script deletes old artifacts with the same name before compiling.
+- Releases no longer contain process documents such as development/fix records (excluded by name during the
+  `-Recurse` copy plus a structural assertion).
+- Release documentation no longer contains unfinished phrasings such as "screenshot placeholder / to be
+  captured" (v0.2.1 ships no screenshots).
 
-**新增/更新的自动检查**
-- `tools/make_installer.ps1`（Inno Setup 可行性检查 + ISCC 编译两份安装程序 + 完整性断言
-  + 可选签名 + SHA256 全流程，可独立运行）、`tools/installer.iss`、
-  `tools/check_installer_deliverables.ps1`（**真装真卸**验收）、
-  `tools/check_feedback.ps1`、`tools/check_requirements.py`、
-  `tools/check_bundled_packages.py`。
-- `tools/verify_release.ps1` 结构断言扩展到 36 项必备文件 + 全英文命名 + 无过程文档 +
-  无运行期残留 + 安装程序哈希/版本资源/**追加数据完整性** + 真装真卸 + 两项发布门禁。
-- `tools/check_lang.py` 新增**共用双语文档结构检查**：docs 下成对文档的二级章节数量、
-  章节编号序列（兼容 `## 3.` 与 `## 三、` 两种编号方式）、以及两版文首的互相声明。
-- `tools/check_feedback.ps1` 的扫描范围从"仅已跟踪文件"扩展到
-  **已跟踪 + 工作区新增（未跟踪但未被忽略）文件**。原实现下"新增文件与改动在同一次提交里"
-  永远不会被本地门禁检查到 —— 本地一路绿、提交之后才红（v0.2.1 实测踩到）。
-  同时把发布记录加入历史过程文档的排除名单。
-- CI 新增 `release-gates` 作业（反馈渠道、依赖声明、SBOM 一致性、发布脚本语法）；
-  发布工作流改为准备 **Inno Setup 6**（不再下载 `7zS.sfx`）并产出两份安装程序，
-  附上 SBOM 与许可证清单，Release 默认存为**草稿**。
+**New/updated automated checks**
+- `tools/make_installer.ps1` (Inno Setup availability check + ISCC compilation of both installers
+  + integrity assertions
+  + optional signing + the full SHA256 flow, runnable standalone), `tools/installer.iss`,
+  `tools/check_installer_deliverables.ps1` (**real install and uninstall** acceptance),
+  `tools/check_feedback.ps1`, `tools/check_requirements.py`,
+  `tools/check_bundled_packages.py`.
+- The structural assertions in `tools/verify_release.ps1` expand to 36 required files + all-English naming
+  + no process documents +
+  no runtime leftovers + installer hashes/version resources/**appended data integrity** + real install and
+  uninstall + two release gates.
+- `tools/check_lang.py` gains a **shared bilingual document structure check**: the number of second-level
+  sections in paired documents under docs,
+  the section numbering sequence (supporting both `## 3.` and `## 三、` numbering styles), and the mutual
+  declarations at the top of both versions.
+- The scan scope of `tools/check_feedback.ps1` expands from "tracked files only" to
+  **tracked files plus newly added workspace files (untracked but not ignored)**. Under the old
+  implementation, "new files and changes in the same commit" could never be caught by the local gate —
+  green all the way locally, red only after committing (hit in practice during v0.2.1).
+  The release record was also added to the exclusion list for historical process documents.
+- CI gains a `release-gates` job (feedback channels, dependency declarations, SBOM consistency, release
+  script syntax);
+  the release workflow now prepares **Inno Setup 6** (no longer downloads `7zS.sfx`) and produces both
+  installers,
+  attaches the SBOM and license list, and saves the Release as a **draft** by default.
 
-**新增：加密文档读取的行为与合规说明（双语）**
-- 新增 `docs/ENCRYPTED_DOCUMENTS.md`（英文默认版）与
-  `docs/ENCRYPTED_DOCUMENTS.zh-Hans.md`（中文译本），共 7 章：行为说明、前提条件、
-  不绕过的声明、责任归属、不落盘的承诺、非授权环境的行为、与手动操作的一致性。
-  面向"用企业文档加密系统（如 Cobra DocGuard）保护 Office 文档"的组织，
-  说明 EchoDesk 只是**经本机已授权的 WPS** 在内存中读取，不接触加密驱动、
-  不修改加密策略、不持有密钥，且读取行为在加密系统看来与员工手动打开完全一致。
-- `docs/en/COMPLIANCE.md` 与 `docs/zh-Hans/COMPLIANCE.md` 新增专节
-  「加密文档读取的合规说明 / Compliance notes on encrypted document reading」，
-  并与新文档相互引用；一节速查清单同步增加两行（如何启用、如何彻底禁止这条路径）。
+**New: behaviour and compliance notes on reading encrypted documents (bilingual)**
+- New `docs/ENCRYPTED_DOCUMENTS.md` (English default) and
+  `docs/ENCRYPTED_DOCUMENTS.zh-Hans.md` (Chinese translation), with 7 chapters: behaviour, prerequisites,
+  a statement that nothing is bypassed, attribution of responsibility, a no-persistence commitment,
+  behaviour in unauthorized environments, and consistency with manual operation.
+  Aimed at organizations that "protect Office documents with an enterprise document encryption system
+  (such as Cobra DocGuard)", it explains that EchoDesk only reads **in memory through the locally
+  authorized WPS**, does not touch encryption drivers,
+  does not modify encryption policy, holds no keys, and that from the encryption system's point of view the
+  read is identical to an employee opening the file manually.
+- `docs/en/COMPLIANCE.md` and `docs/zh-Hans/COMPLIANCE.md` gain a dedicated section
+  "加密文档读取的合规说明 / Compliance notes on encrypted document reading",
+  and cross-reference the new document; a one-section quick-reference checklist gains two rows in step
+  (how to enable it, how to forbid this path entirely).
 - `README.md` / `README.zh-Hans.md` / `docs/en/README.md` / `docs/zh-Hans/README.md` /
-  `docs/EULA.md` / `docs/EULA.zh-Hans.md` 均已接入该文档的链接与引用。
+  `docs/EULA.md` / `docs/EULA.zh-Hans.md` have all been wired up with links to and references to that document.
 
-### 提示词优化（系统提示词重写）
+### Prompt optimization (system prompt rewrite)
 
-**模式提示词从一句话升级为六要素完整提示词**
-- `backend/conversation.py` 的 6 个模式（general / summary / translate / code / contract /
-  creative）原先各只有一句话（平均 30 字符）。审计确认**全部缺失 4~6 个设计维度**
-  （角色具体化 / 输出格式 / 思维链引导 / 少样本示例 / 边界声明 / 语气匹配），其中 5 个模式
-  连角色都很笼统（"专家""助手"）。现已重写为带标签的结构——【角色】【输出格式】【思维】
-  【示例】【语气】——第六项"边界"与视角澄清、输出纪律一起放进**共享主干** `_CORE_RULES`：
-  与场景无关的规则共享一份，既不白占上下文，也不会改一处漏五处。
-- **长度受控且有断言守住**：单个模式块 ≤ 480 字符（实测 209~313），模式块 + 共享主干 +
-  语言指令 ≤ 700 字符（实测 417~521），约占默认 8192 token 上下文的 8.5%，
-  余量留给文件摘要与对话历史。
-- **实测效果**（同一模型 `Qwen3.5-0.8B`、同一份采购合同、同一问题、同一生成参数，
-  **只换系统提示词**）：旧提示词写出 500 token 的议论文、触顶被截断，并编造了原文没有的
-  "缺乏惩罚性赔偿"要求；新提示词按「原文摘录 → 风险点 → 修改建议」逐条输出、明确指出
-  "未约定验收期限"这一真实缺失、对不确定处写"需人工确认"，421 token 自然收尾。
+**Mode prompts upgraded from one sentence to complete six-element prompts**
+- The 6 modes in `backend/conversation.py` (general / summary / translate / code / contract /
+  creative) previously had one sentence each (30 characters on average). The audit confirmed that
+  **all of them were missing 4–6 design dimensions**
+  (role specificity / output format / chain-of-thought guidance / few-shot examples / boundary statements /
+  tone matching), and 5 of the modes
+  were vague even about the role ("expert", "assistant"). They are now rewritten as a labelled
+  structure — [Role] [Output format] [Thinking]
+  [Examples] [Tone] — with the sixth element, "boundaries", placed together with perspective clarification
+  and output discipline in the **shared backbone** `_CORE_RULES`:
+  rules unrelated to the scenario are shared in one copy, so they neither waste context nor leave five
+  places unupdated when one is changed.
+- **Length is bounded and guarded by assertions**: a single mode block ≤ 480 characters (measured 209–313),
+  mode block + shared backbone + language instruction ≤ 700 characters (measured 417–521), roughly 8.5% of
+  the default 8192-token context,
+  leaving headroom for file summaries and conversation history.
+- **Measured results** (same model `Qwen3.5-0.8B`, same procurement contract, same question, same generation
+  parameters,
+  **with only the system prompt changed**): the old prompt produced a 500-token essay, hit the cap and was
+  truncated, and invented a
+  "lack of punitive damages" requirement that was not in the source; the new prompt outputs item by item in
+  the order "source excerpt → risk point → suggested revision", explicitly points out
+  the genuine omission that "no acceptance deadline was agreed", writes "requires manual confirmation"
+  where it is uncertain, and finishes naturally at 421 tokens.
 
-**任务模板改为"叠加"而不是"替换"模式（修掉两个机制缺陷）**
-- `/task` 套用的模板原先写进 `custom_prompt`，而 `get_system_prompt()` 里自定义提示词优先、
-  会跳过模式提示词——于是模板**替换**了模式，与 `prompts.py` 自称"附加在系统提示词后面、
-  不替换对话模式"的说明直接矛盾。现在模板写入新的**任务层**
-  （`ConversationManager.task_prompt`）并叠加在模式之上；两层冲突时由模板末尾新增的
-  `[优先级]` 行确定性裁决，而不是留给模型猜。
-- `/task off` 原先会顺手把用户用 `/prompt` 设的自定义指令一起清掉；现在只清任务层，
-  并在自定义指令仍生效时明确提示。`/task` 与 `/prompt` 相互覆盖时也会互相提示，
-  不再出现"敲了命令却看不出发生了什么"。
-- `/prompt` 包装语里原有的"不要反问"与模糊提问检测、`reason` 模板的"信息不足先追问"
-  直接矛盾，已改为保留例外："信息不足时应先问清最关键的一点"。
+**Task templates now stack on the mode rather than replacing it (two mechanism defects fixed)**
+- Templates applied by `/task` were previously written into `custom_prompt`, and since a custom prompt takes
+  precedence in `get_system_prompt()` it skipped the mode prompt — so the template **replaced** the mode,
+  directly contradicting the statement in `prompts.py` that it is "appended after the system prompt and
+  does not replace the conversation mode". Templates now write into a new **task layer**
+  (`ConversationManager.task_prompt`) and stack on top of the mode; when the two layers conflict, a newly
+  added `[优先级]` line at the end of the template settles it deterministically, instead of leaving it to
+  the model to guess.
+- `/task off` previously also wiped the custom instruction the user had set with `/prompt`; it now clears
+  only the task layer,
+  and explicitly notes when a custom instruction is still in effect. When `/task` and `/prompt` override
+  each other, each now says so as well,
+  so "you typed a command but cannot tell what happened" no longer occurs.
+- The pre-existing "do not ask back" wording in the `/prompt` wrapper directly contradicted vague-question
+  detection and the `reason` template's "ask a follow-up first when information is insufficient", so it was
+  changed to keep an exception: "when information is insufficient, first ask about the single most critical
+  point".
 
-**回复语言改为跟随界面语言**（此前写死简体中文）
-- 界面切成 English 的用户此前仍然只收到中文回复——界面双语了，产出没有。现在由
-  `_REPLY_LANGUAGE` 按 `i18n` 当前语言决定：中文界面要求简体中文（并排除繁体字），
-  英文界面要求英文；社区新增语言包则要求"跟随提问语言"，**无需改代码**。
-- **提示词正文保持中文、不进语言包**（沿用既有约定，理由不变）；本次把"正文语言"与
-  "回复语言"是两件事这一点在代码注释与文档里讲清楚了。
-- `automation.py` 的审核意见提示词仍写死简体中文——那是**业务决策**（审核意见写入
-  `results\` 长期留痕），注释里已注明，避免下次被当成不一致误改。
+**Reply language now follows the interface language** (previously hard-coded to Simplified Chinese)
+- Users who switched the interface to English previously still received Chinese replies only — the
+  interface was bilingual, the output was not. This is now decided by
+  `_REPLY_LANGUAGE` from the current `i18n` language: a Chinese interface requires Simplified Chinese
+  (and rules out Traditional characters),
+  an English interface requires English, and a community-added language pack requires "follow the language
+  of the question", **with no code change needed**.
+- **Prompt bodies stay in Chinese and do not go into language packs** (following the existing convention,
+  for unchanged reasons); this change makes it clear in code comments and documentation that "body
+  language" and
+  "reply language" are two different things.
+- The review-comment prompt in `automation.py` is still hard-coded to Simplified Chinese — that is a
+  **business decision** (review comments are written into
+  `results\` as a long-term record), and it is noted in a comment so that it is not mistaken for an
+  inconsistency and changed by mistake next time.
 
-**其它涉及提示词的模块同步更新**
-- `summarizer.py`：分段摘要与归并提示词补齐输出格式/思维/语气，并新增"不同段落对同一事项
-  表述不一致时两者都保留并标注"；注释说明这段提示词**按分段数放大上下文占用**，故刻意保持简短。
-- `automation.py`：审核意见提示词补齐六要素，新增"没有可用的附件内容时直接说明无法审核"。
-- 语言包 `mode.desc.*`（`/mode list` 显示）原先**就是**模式提示词原文，现改为面向用户的
-  短句并与提示词正文脱钩（否则列表里会打出整段提示词）；新增 5 个提示类键，中英双语齐备。
-- 文档：`USER_GUIDE`（中英）改写 `/task` 段落、新增"回答语言"与"模式提示词完整性"两条；
-  `FAQ`（中英）新增"改回答语言""自定义助手角色"两行；`DEVELOPER` 新增 §1.1
-  「系统提示词的层次与长度预算」（6 层结构表 + 长度依据 + 语言分工）。
-- 测试：`tools/test_capability.py` 新增第 9 节 **39 项**断言（结构 / 长度 / 一致性 / 语言），
-  该套件由 66 项增至 **105 项**，全部通过。
+**Other modules that touch prompts updated in step**
+- `summarizer.py`: the chunked summary and merge prompts now include output format/thinking/tone, and add
+  "when different chunks describe the same matter inconsistently, keep both and label them"; a comment
+  notes that this prompt **scales its context usage with the number of chunks**, so it is deliberately kept
+  short.
+- `automation.py`: the review-comment prompt now covers all six elements and adds "when there is no usable
+  attachment content, state directly that the review cannot be performed".
+- The language pack keys `mode.desc.*` (shown by `/mode list`) previously **were** the raw mode prompts;
+  they are now short user-facing sentences decoupled from the prompt bodies (otherwise the whole prompt
+  would be printed in the list); 5 new hint-type keys were added, complete in both Chinese and English.
+- Documentation: `USER_GUIDE` (Chinese and English) rewrites the `/task` section and adds two entries,
+  "answer language" and "mode prompt completeness";
+  `FAQ` (Chinese and English) adds two rows, "changing the answer language" and "custom assistant role";
+  `DEVELOPER` adds §1.1
+  "System prompt layers and length budget" (a 6-layer structure table + the length rationale + the language
+  division of labour).
+- Tests: `tools/test_capability.py` adds a ninth section with **39** assertions (structure / length /
+  consistency / language),
+  taking the suite from 66 to **105** items, all passing.
 
-### 新增
+### Added
 
-**开源化**
-- 新增 `LICENSE`（**Apache-2.0**）、`NOTICE`、`README.md`（英文主）、`README.zh-Hans.md`、
-  `CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`（Contributor Covenant 2.1）、`SECURITY.md`。
-- 新增 `.github/`：`workflows/ci.yml`（后端测试 / 前端构建 / 体积检查 / 文档检查 / 语言包检查）、
-  `workflows/release.yml`（打标签自动出包并创建 Release）、4 类 Issue 模板
-  （Bug / 功能请求 / **技能提交** / **翻译贡献**）、PR 模板、Dependabot 配置。
-- 文档按语言重组：`docs/zh-Hans/`（用户手册、FAQ、技能开发指南、自动化填写指南）、
-  `docs/en/`（同上一套英文版）。
-- **合规文档与物料清单补齐**：`docs/PRIVACY.md` 逐项列明 5 个联网功能（域名、发送内容、
-  不发送内容、数据去向、保留时长、关闭方式）、数据出境说明与"彻底禁网"清单；
-  `docs/EULA.md` 补齐责任限制、第三方开源许可声明、自动化与技能的责任归属、
-  联系方式与协议变更方式；新增 `docs/SECURITY.md`（中文安全策略，与根目录 `SECURITY.md`
-  同一套承诺）与 `docs/zh-Hans/COMPLIANCE.md`、`docs/en/COMPLIANCE.md`
-  （企业环境适配：代理、证书、防火墙域名白名单、组策略与受限环境、审计留痕）；
-  新增 `docs/SBOM.json`（SPDX 2.3 风格物料清单）及生成/核对工具 `tools/gen_sbom.py`
-  （纯标准库，`--check` 可在 CI 中作为不一致的失败条件）。
+**Open-sourcing**
+- New `LICENSE` (**Apache-2.0**), `NOTICE`, `README.md` (English primary), `README.zh-Hans.md`,
+  `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), `SECURITY.md`.
+- New `.github/`: `workflows/ci.yml` (backend tests / frontend build / size check / documentation check /
+  language pack check),
+  `workflows/release.yml` (tagging automatically builds packages and creates a Release), 4 issue templates
+  (bug / feature request / **skill submission** / **translation contribution**), a PR template, and
+  Dependabot configuration.
+- Documentation reorganized by language: `docs/zh-Hans/` (user guide, FAQ, skill development guide,
+  automation filling guide),
+  `docs/en/` (the same set in English).
+- **Compliance documentation and bill of materials completed**: `docs/PRIVACY.md` itemizes the 5 network
+  features (domain, what is sent,
+  what is not sent, where data goes, retention period, how to disable), notes on data leaving the machine,
+  and a "network fully disabled" checklist;
+  `docs/EULA.md` completes the limitation of liability, third-party open-source license notices,
+  attribution of responsibility for automation and skills,
+  contact details, and how the agreement is changed; new `docs/SECURITY.md` (the Chinese security policy,
+  carrying the same commitments as the root `SECURITY.md`) and `docs/zh-Hans/COMPLIANCE.md`,
+  `docs/en/COMPLIANCE.md`
+  (enterprise environment adaptation: proxies, certificates, firewall domain allowlists, group policy and
+  restricted environments, audit trails);
+  new `docs/SBOM.json` (SPDX 2.3-style bill of materials) and generation/verification tool
+  `tools/gen_sbom.py`
+  (standard library only; `--check` can serve as an inconsistency failure condition in CI).
 
-**多语言（简体中文 + 英语）**
-- 后端 `backend/i18n.py`、前端 `frontend/Services/Localization.cs`：语言包加载、
-  **回退链**（当前语言 → en → zh-Hans → 键名本身）、按需加载、模块分片
-  （`<locale>.<模块>.json`）。
-- 设置窗口「常规」页新增**界面语言**下拉：切换后界面、错误提示、指令帮助立即生效，
-  **无需重启**；选择结果记入 `ui_state.json`；首次启动按系统区域自动选择。
-- 语言包**外置**在程序目录的 `lang\`：社区可以直接丢一个新的 `*.json` 贡献语言，无需重新编译。
-- 指令帮助与指令面板改为共用后端的本地化指令元数据（`{"action":"commands"}`），
-  技能注册的指令会自动出现在候选列表里。
-- 新增工具：`tools/check_lang.py`（键与**占位符**一致性检查、`--scaffold` 生成新语言模板）、
-  `tools/extract_strings.py`（盘点尚未收编的界面文本、生成模板）。
+**Multilingual (Simplified Chinese + English)**
+- Backend `backend/i18n.py`, frontend `frontend/Services/Localization.cs`: language pack loading,
+  a **fallback chain** (current language → en → zh-Hans → the key name itself), on-demand loading, and
+  module sharding
+  (`<locale>.<module>.json`).
+- The "General" page of the settings window gains an **interface language** dropdown: after switching, the
+  interface, error messages, and command help take effect immediately,
+  **with no restart**; the choice is recorded in `ui_state.json`; on first launch it is selected
+  automatically from the system locale.
+- Language packs are **external**, in `lang\` under the program directory: the community can drop in a new
+  `*.json` to contribute a language, with no recompilation.
+- Command help and the command panel now share the backend's localized command metadata
+  (`{"action":"commands"}`),
+  and commands registered by skills appear automatically in the candidate list.
+- New tools: `tools/check_lang.py` (key and **placeholder** consistency checking, `--scaffold` to generate
+  a new language template),
+  `tools/extract_strings.py` (inventories interface text not yet collected and generates templates).
 
-**技能运行期加载器与本地插件接口**
-- 新增 `backend/skills_runtime.py`：**装上就能用**——技能的命令真正挂到 `/` 指令表，
-  行为与内置指令一致；导入/注册/执行三层异常隔离；卸载时清理模块缓存、`sys.path`、
-  命令与解析器与钩子。
-- 技能 API 六类能力：命令注册、UI 面板（声明式，前端用原生控件渲染）、
-  自动化钩子（`before_task` / `after_download` / `after_summary` / `after_task`）、
-  文件解析扩展、技能私有配置、技能自带语言包。
-- 本地插件接口：`backend/skills_dev/`（开发，不写注册表）+ `backend/skills/`（正式安装）
-  + `skills_local.json`（任意路径、别名、启用禁用、加载顺序、信任状态）；
-  优先级 `skills_dev` > 清单 > `skills`，冲突时明确提示"当前加载的是开发版本，已覆盖已安装版本"。
-- 设置窗口新增「**已安装**」页（插件清单、加载状态、命令/格式/钩子/面板、来源标签
-  `🏪 市场`/`📁 本地`/`🔧 开发`、错误详情、打开目录、导出 zip、发布自检、卸载）
-  与「**开发者**」页（开发者模式开关、插件目录、热重载、日志查看/导出/清空、
-  新建插件向导、本地插件清单可视化编辑、已挂接钩子、插件面板）。
-- 安全：执行技能前**临时移除**名称含 KEY/SECRET/TOKEN/PASSWORD 的环境变量；
-  正式加载走 `skills_registry.json` 白名单；首次加载未知来源本地插件弹确认框；
-  界面展示技能声明的权限。
-- 新增两个官方示例插件：`examples/skills/hello-world/`（命令 + 面板 + 钩子 + 双语）、
-  `examples/skills/ofd-reader/`（`.ofd` 文件解析扩展，零第三方依赖）。
+**Skill runtime loader and local plugin interface**
+- New `backend/skills_runtime.py`: **install it and it works** — a skill's commands are genuinely attached
+  to the `/` command table,
+  behaving the same as built-in commands; import/registration/execution are isolated against exceptions at
+  three layers; uninstalling clears the module cache, `sys.path`,
+  commands, parsers, and hooks.
+- Six kinds of capability in the skill API: command registration, UI panels (declarative, rendered by the
+  frontend with native controls),
+  automation hooks (`before_task` / `after_download` / `after_summary` / `after_task`),
+  file parser extensions, skill-private configuration, and language packs bundled with the skill.
+- Local plugin interface: `backend/skills_dev/` (development, does not write to the registry) plus
+  `backend/skills/` (formal installation)
+  plus `skills_local.json` (arbitrary paths, aliases, enabled/disabled, load order, trust state);
+  priority is `skills_dev` > manifest > `skills`, and on conflict it explicitly reports "the development
+  version is currently loaded; it has overridden the installed version".
+- The settings window gains an "**Installed**" page (plugin list, load state, commands/formats/hooks/panels,
+  source labels
+  `🏪 Marketplace`/`📁 Installed`/`🔧 Developer`, error details, open directory, export zip, pre-publish self-check, uninstall)
+  and a "**Developer**" page (developer mode switch, plugin directories, hot reload,
+  log view/export/clear, new plugin wizard, visual editing of the local plugin manifest, attached hooks,
+  plugin panels).
+- Security: environment variables whose names contain KEY/SECRET/TOKEN/PASSWORD are **temporarily removed**
+  before executing a skill;
+  formal loading goes through the `skills_registry.json` whitelist; loading a local plugin of unknown origin
+  for the first time raises a confirmation dialog;
+  the interface displays the permissions a skill declares.
+- Two official example plugins added: `examples/skills/hello-world/` (command + panel + hooks + bilingual),
+  `examples/skills/ofd-reader/` (`.ofd` file parser extension, zero third-party dependencies).
 
-**自动化配置向导与填写帮助**
-- **🎯 可视化选取**：打开浏览器，在页面上直接点一下目标元素即自动生成 CSS 选择器并回填；
-  悬停高亮并实时显示选择器与匹配数量；支持任务列表元素 / 任务行容器 / 下一页按钮 /
-  详情页附件四种目标（详情页会先自动进入第一个任务）；登录态与自动化共用
-  `browser_state.json`；按 Esc 取消。
-- **字段级帮助**：27 个字段的通俗说明与示例全部来自语言包；核心字段旁有「?」按钮
-  （悬停看说明、点击看详情），文本框获得焦点时下方内联显示说明；「📖 填写帮助」
-  可一次看完全部字段。
-- **配置模板库**：合同财务审核 / 发票信息提取 / 报告要点汇总 / 表格数据核对四个预置模板，
-  一键填入；支持「存为自定义模板」。
-- **四步测试向导**：任务列表元素 → 下一页按钮（真的点一次并报告是否跳转）→
-  详情页附件（统计后缀命中数）→ **试运行一个任务**（不写结果文件、不记处理记录）；
-  每步给出失败原因与修正建议。
-- **配置导出/导入**（`.echodesk-auto`）：导出排除登录态与临时目录；
-  导入不继承安全协议与总开关（必须本机亲自勾选）；语言不同时提示但不阻断。
-- 新增文档 `docs/zh-Hans/AUTOMATION_GUIDE.md` 与 `docs/en/AUTOMATION_GUIDE.md`
-  （字段总览、逐字段说明、完整示例、向导流程、15 行排查表、模板说明、导入导出、安全与审计）。
+**Automation configuration wizard and filling help**
+- **🎯 Visual selection**: opens a browser where one click on the target element generates a CSS selector
+  automatically and fills it back in;
+  hovering highlights and shows the selector and match count in real time; four targets are supported —
+  task list element / task row container /
+  next page button / detail page attachments (for detail pages it first enters the first task
+  automatically); login state and automation share
+  `browser_state.json`; press Esc to cancel.
+- **Field-level help**: plain-language explanations and examples for all 27 fields come from the language
+  pack; core fields have a "?" button beside them
+  (hover for the explanation, click for details), and focusing a text box shows the explanation inline
+  below it; "📖 Filling help"
+  shows every field at once.
+- **Configuration template library**: four presets — contract financial review / invoice information
+  extraction / report key point summary / tabular data verification — filled in with one click;
+  "save as custom template" is supported.
+- **Four-step test wizard**: task list element → next page button (actually clicked once, reporting whether
+  navigation occurs) →
+  detail page attachments (counting suffix matches) → **trial run of one task** (writes no result file and
+  records no processing history);
+  each step gives the reason for failure and a suggested fix.
+- **Configuration export/import** (`.echodesk-auto`): export excludes the login state and temporary
+  directories;
+  import does not inherit the safety protocol and master switch (they must be checked on this machine in
+  person); a language mismatch produces a notice but does not block.
+- New documentation `docs/zh-Hans/AUTOMATION_GUIDE.md` and `docs/en/AUTOMATION_GUIDE.md`
+  (field overview, field-by-field reference, complete example, wizard flow, 15-row troubleshooting table,
+  template descriptions, import/export, security and audit).
 
-**自动更新（方案 A：只检查与提示）**
-- 新增 `backend/update_check.py`：检查 GitHub Releases 并做语义化版本比较；
-  发现新版本时状态区出现可点提示条，点击用系统浏览器打开下载页。
-  **不下载、不替换任何文件、不静默安装**；尊重系统代理与证书；可通过配置整体禁用；
-  默认 24 小时内不重复检查；只用标准库 `urllib` + `json`，未引入新依赖。
+**Automatic updates (option A: check and notify only)**
+- New `backend/update_check.py`: checks GitHub Releases and performs a semantic version comparison;
+  when a new version is found, a clickable notice bar appears in the status area, and clicking it opens the
+  download page in the system browser.
+  It **does not download, does not replace any file, and does not install silently**; it respects the system
+  proxy and certificates; it can be disabled entirely through configuration;
+  by default it does not check again within 24 hours; it uses only the standard library `urllib` + `json`
+  and introduces no new dependencies.
 
-### 变更
+### Changed
 
-- **移除 AGPL 依赖**：PDF 解析从 **PyMuPDF**（AGPL-3.0/商业双许可）换成 **pypdf**
-  （BSD-3-Clause，纯 Python）。项目本体为 Apache-2.0，与 AGPL 不兼容；替换后发布物中
-  不再含 AGPL 组件，剩余唯一 GPL 组件是构建工具 PyInstaller（GPLv2 带官方例外）。
-  同步收益：该依赖的安装体积从 **52.9MB 降到约 1.4MB**。
-- 状态栏的搜索/模式状态改由后端响应的**机器可读字段**驱动（此前靠匹配中文文本，
-  切到英文界面后会失效）。
-- 安全协议正文更新：第 3 条从"下载文件处理完成后立即删除"改为
-  "**已下载的附件会保留在结果目录中**便于复核"——与 v0.2.0 新增三的结果目录设计一致。
-- 设置窗口「技能市场 → 已安装」按钮改为跳到独立的「已安装」页。
-- 版本号 `0.2.0` → `0.2.1`（前后端 exe 文件版本统一为 `0.2.1.0`）。
+- **AGPL dependency removed**: PDF parsing switches from **PyMuPDF** (AGPL-3.0/commercial dual license) to
+  **pypdf**
+  (BSD-3-Clause, pure Python). The project itself is Apache-2.0, which is incompatible with AGPL; after the
+  replacement the release
+  no longer contains any AGPL component, and the only remaining GPL component is the build tool PyInstaller
+  (GPLv2 with the official exception).
+  A side benefit: the installed size of that dependency drops from **52.9MB to about 1.4MB**.
+- The search/mode status in the status bar is now driven by **machine-readable fields** in the backend
+  response (it previously relied on matching Chinese text,
+  which broke after switching to the English interface).
+- The safety protocol text was updated: item 3 changes from "downloaded files are deleted immediately after
+  processing" to
+  "**downloaded attachments are kept in the results directory** for review" — consistent with the results
+  directory design added in v0.2.0 (addition three).
+- The "Skill marketplace → Installed" button in the settings window now jumps to the standalone "Installed"
+  page.
+- Version number `0.2.0` → `0.2.1` (the frontend and backend exe file versions are unified as `0.2.1.0`).
 
-### 修复
+### Fixed
 
-- `tools/test_file_parsers.py` 不再依赖 PyMuPDF 造 PDF 样本（改用裸 PDF 语法手工生成
-  含 xref 表的单页 PDF），使该测试在只装 `backend/requirements.txt` 的干净环境里也能通过。
-- 打包脚本的文档收集改为递归：`docs/zh-Hans/`、`docs/en/` 下的本地化文档现在会进发布包。
-- 修正安全协议与 PRIVACY/USER_GUIDE/FAQ 中关于"下载文件被删除"的过时描述。
+- `tools/test_file_parsers.py` no longer depends on PyMuPDF to create PDF samples (it now hand-generates a
+  single-page PDF with an xref table using bare PDF syntax),
+  so the test also passes in a clean environment with only `backend/requirements.txt` installed.
+- Documentation collection in the packaging script is now recursive: localized documents under
+  `docs/zh-Hans/`, `docs/en/` now make it into the release package.
+- Corrected outdated descriptions about "downloaded files being deleted" in the safety protocol and in
+  PRIVACY/USER_GUIDE/FAQ.
 
-### 修复（v0.2.1 修复任务书，P0/P1 共七项）
+### Fixed (v0.2.1 fix task specification, seven items across P0/P1)
 
-> 完整排查过程、决策理由与逐项验证证据见内部修复记录（`v0.2.1-修复记录.md`，**不随发布物分发**）。
+> The complete investigation process, decision rationale, and per-item verification evidence are in the
+> internal fix record (`v0.2.1-修复记录.md`, **not distributed with the release**).
 
-**P0 · 开发者模式弹窗循环与无法关闭**
-- 逐个弹窗改为**一次性汇总确认框**（新窗口 `frontend/Utilities/TrustDialog.cs`）：列出每个待确认
-  插件的来源、路径、声明能力与权限，支持逐个勾选 / 全部启用 / 全部禁用；后端新增
-  `skills_trust_bulk` 动作一次接收全部决定。
-- `skills_local.json` 新增 `denied` 列表（schema 1 → 2，旧文件兼容）：**用户明确拒绝过的插件
-  不再重复询问**，也不再加载（原实现只记 trusted，点"否"等于没答，于是永远问下去）。
-- 修复**"一旦开启就关不掉"**：新增 `dev_mode_explicit` 配置。用户显式设置过开关后，
-  开发者模式完全以配置为准，不再被"`skills_dev/` 里有插件就自动启用"的逻辑覆盖。
-- 关闭开发者模式时**真的卸载** dev/local 插件（新增 `SkillLoader.unload_dev()`）并从指令表移除，
-  同时停止热重载、清空开发日志。
-- **内置示例插件静默**：`builtin_ids()` 按随包 `examples/skills/` 目录判定，示例插件默认启用且
-  不弹确认框；第三方插件仍需确认（不采用"插件自报 official"的做法，那等于把确认框变成摆设）。
-- 开发者 Tab 新增"当前状态 + 由谁决定 + 已启用的开发插件清单"，关闭后清单为空，一眼可确认。
-- 回归测试：新增 `tools/test_dev_mode.py`（46 项）。
+**P0 · Developer mode dialog loop and inability to turn it off**
+- The per-plugin dialogs are replaced by a **one-shot summary confirmation dialog** (new window
+  `frontend/Utilities/TrustDialog.cs`): it lists each plugin awaiting confirmation with its origin, path,
+  declared capabilities, and permissions,
+  and supports checking them individually / enabling all / disabling all; the backend gains a
+  `skills_trust_bulk` action that receives all decisions at once.
+- `skills_local.json` gains a `denied` list (schema 1 → 2, compatible with old files): **plugins the user
+  explicitly declined are no longer asked about again**,
+  and are no longer loaded either (the old implementation recorded only trusted, so clicking "no" counted
+  as no answer, and it asked forever).
+- **"Once turned on it cannot be turned off" fixed**: a new `dev_mode_explicit` configuration. Once the
+  user has explicitly set the switch,
+  developer mode follows the configuration entirely and is no longer overridden by the logic that
+  "automatically enables it when `skills_dev/` contains plugins".
+- Turning developer mode off now **really unloads** dev/local plugins (new `SkillLoader.unload_dev()`) and
+  removes them from the command table,
+  while also stopping hot reload and clearing the development log.
+- **Built-in example plugins are silent**: `builtin_ids()` determines them from the `examples/skills/`
+  directory shipped with the package; example plugins are enabled by default and
+  raise no confirmation dialog; third-party plugins still require confirmation (the approach of letting a
+  plugin declare itself "official" is not used, as that would reduce the dialog to an empty gesture).
+- The Developer tab gains "current state + who decided it + the list of enabled development plugins"; after
+  switching off, the list is empty, so it can be confirmed at a glance.
+- Regression tests: new `tools/test_dev_mode.py` (46 items).
 
-**P0 · 深色模式失效与对比度不足**
-- 修复**深色模式永远出不来**：`MainWindow_Loaded` 原来只在"配置为浅色"时才应用主题，
-  配置为深色时 `App.xaml` 里的浅色字典原样留着。现在启动无条件经 `ThemeService.Apply()` 应用。
-- 主题状态收敛到新的 `frontend/Services/ThemeService.cs`：三态（**跟随系统** / 浅色 / 深色），
-  跟随系统通过 `SystemEvents.UserPreferenceChanged` + 注册表 `AppsUseLightTheme` 实现，
-  设置窗口的复选框换成 `ThemeCombo` 并显示"当前实际生效的是哪一种"。
-- 语义色板从 10 个键扩到 **47 个键**（背景/表面/文字/强调/状态/按钮四态/选中/页签/滚动条/浮层/
-  角色/Markdown），深浅两套键名完全一致；为 `ComboBox`、`ListBox(Item)`、`TabControl(TabItem)`、
-  `CheckBox`、`RadioButton`、`ScrollBar`、`ToolTip`、`ContextMenu`、`ProgressBar`、`RichTextBox`
-  补齐控件模板，全部用 `{DynamicResource}`。
-- 修复**"切换后残留旧色"**：原来代码用 `TryFindResource` 取的是**取值快照**，已渲染的消息保留旧色；
-  改为 `SetResourceReference`（资源引用），`MarkdownRenderer` 的 `FlowDocument` 画刷同样改为资源引用，
-  无需重建文档即可跟随主题。
-- 对比度按 WCAG 2.1 复核并修正：输入框/按钮边框 1.53:1 → 3.13:1（浅色）、1.52:1 → 3.6:1（深色）；
-  滚动条滑块 1.76:1 → 3.11:1；`Brushes.IndianRed`/`MediumSeaGreen`/`#e06c6c` 三处硬编码颜色改走色板。
-- 新增 `tools/check_theme.py`（色板一致性 + **43 组强制对比度** + 禁止硬编码色值 + 校验所有资源引用存在）
-  与 `tools/check_ui_pixels.ps1`（**真实渲染**校验：启动程序、按主题截图、量主窗口平均亮度与
-  逐控件局部对比度；实测深色 0.076 / 浅色 0.850，文字最差 6.24:1 / 5.99:1）。
+**P0 · Dark mode not working and insufficient contrast**
+- **Dark mode never appearing fixed**: `MainWindow_Loaded` previously applied a theme only when the
+  configuration was light,
+  so with a dark configuration the light dictionary in `App.xaml` was left in place. Startup now applies the
+  theme unconditionally through `ThemeService.Apply()`.
+- Theme state is consolidated into the new `frontend/Services/ThemeService.cs`: three states
+  (**follow system** / light / dark),
+  with follow-system implemented via `SystemEvents.UserPreferenceChanged` plus the registry
+  `AppsUseLightTheme`; the settings window's checkbox is replaced by `ThemeCombo`, which shows "which one is
+  actually in effect right now".
+- The semantic palette expands from 10 keys to **47 keys** (background/surface/text/accent/status/button four
+  states/selection/tab/scrollbar/overlay/
+  role/Markdown), with the light and dark key names entirely identical; control templates were completed
+  for `ComboBox`, `ListBox(Item)`, `TabControl(TabItem)`,
+  `CheckBox`, `RadioButton`, `ScrollBar`, `ToolTip`, `ContextMenu`, `ProgressBar`, `RichTextBox`,
+  all using `{DynamicResource}`.
+- **"Stale colours left after switching" fixed**: the old code used `TryFindResource`, which takes a
+  **value snapshot**, so already-rendered messages kept the old colours;
+  it now uses `SetResourceReference` (a resource reference), and the `FlowDocument` brushes in
+  `MarkdownRenderer` were likewise changed to resource references,
+  so the theme is followed without rebuilding the document.
+- Contrast was reviewed and corrected per WCAG 2.1: input box/button borders 1.53:1 → 3.13:1 (light),
+  1.52:1 → 3.6:1 (dark);
+  scrollbar thumb 1.76:1 → 3.11:1; three hard-coded colours `Brushes.IndianRed`/`MediumSeaGreen`/`#e06c6c`
+  were moved to the palette.
+- New `tools/check_theme.py` (palette consistency + **43 forced contrast pairs** + ban on hard-coded colour
+  values + verification that all resource references exist)
+  and `tools/check_ui_pixels.ps1` (**real rendering** verification: launches the program, screenshots per
+  theme, measures the main window's average brightness and
+  per-control local contrast; measured 0.076 dark / 0.850 light, worst text 6.24:1 / 5.99:1).
 
-**P0 · 发布目录结构**
-- 改为**便携版三层结构**：程序本体全部收进 `app\`，外层只留快捷方式、用户数据、结果目录、
-  语言包、示例与文档；构建脚本末尾新增断言，外层出现任何 exe/dll/pdb 即构建失败。
-- 新增 `ShortcutService.UserDataDirectory`（环境变量 `ECHODESK_DATA` → 父目录名为 `app` 且可写 → 程序目录）
-  与后端 `config.user_data_root()`（判定顺序保持一致）；`ui_state.json`、`snippets.json`、
-  `results\` 全部落在**外层**。
-- 快捷方式改名 `EchoDesk-v0.2.1.lnk` 放外层，`WorkingDirectory` = 外层；失效判定新增"工作目录不对"
-  这一情况。语言包搜索链同时纳入外层与 `app\`，用户丢一个新的 `lang\ui\<locale>.json` 即可加语言，
-  升级不覆盖。
-- 构建脚本新增 `-ReuseBackendFrom`（只改前端时复用既有后端跳过 PyInstaller），并在其指向本次输出
-  目录时直接报错。`tools/installer.iss` 同步对齐安装版结构。
+**P0 · Release directory structure**
+- Changed to a **three-layer portable structure**: the program proper is entirely under `app\`, with only
+  shortcuts, user data, the results directory,
+  language packs, examples, and documentation left outside; an assertion added at the end of the build
+  script fails the build if any exe/dll/pdb appears in the outer layer.
+- New `ShortcutService.UserDataDirectory` (environment variable `ECHODESK_DATA` → parent directory named
+  `app` and writable → program directory)
+  and backend `config.user_data_root()` (keeping the same decision order); `ui_state.json`, `snippets.json`,
+  `results\` all land in the **outer layer**.
+- The shortcut is renamed `EchoDesk-v0.2.1.lnk` and placed in the outer layer, with `WorkingDirectory` = the
+  outer layer; the broken-shortcut check gains "the working directory is wrong"
+  as a further case. The language pack search chain now includes both the outer layer and `app\`, so a user
+  can add a language by dropping in a new `lang\ui\<locale>.json`,
+  and upgrades do not overwrite it.
+- The build script gains `-ReuseBackendFrom` (reuse an existing backend and skip PyInstaller when only the
+  frontend changed), and errors out immediately when it points at this build's output
+  directory. `tools/installer.iss` is aligned with the installed structure in step.
 
-**P0 · Emoji 显示为方块**
-- 根因实测确认：`Segoe UI` / `Consolas` / `Microsoft YaHei UI` 对项目在用的 emoji **覆盖率为 0/20**，
-  而字体链里根本没有 emoji 字体。新增三条带回退链的字体资源 `UiFontFamily` / `MonoFontFamily` /
-  `IconFontFamily`（含 `Segoe UI Emoji` 与 `Segoe UI Symbol`），`MarkdownRenderer` 同步改用。
-- 新增后端 `backend/emoji.py`（启动即切 UTF-8、按编码与控制台代码页判断能否输出 emoji、
-  不能则降级为 `[OK]`/`[!]`，支持 `--no-emoji` 与 `ECHODESK_NO_EMOJI`）与前端
-  `frontend/Services/Emoji.cs`（同表降级；设置窗口新增"使用 emoji"三态选项）；
-  未覆盖的 emoji 一律降级为 `?`，**绝不显示方块**。
-- 新增 `tools/check_emoji.ps1`（扫出在用的 61 个 emoji，逐个查三条字体链的字形覆盖率并集，
-  并校验前后端 ASCII 降级表覆盖完整）。
+**P0 · Emoji displayed as boxes**
+- Root cause confirmed by measurement: `Segoe UI` / `Consolas` / `Microsoft YaHei UI` have
+  **0/20 coverage** of the emoji used in the project,
+  and the font chain contained no emoji font at all. Three font resources with fallback chains were added,
+  `UiFontFamily` / `MonoFontFamily` /
+  `IconFontFamily` (including `Segoe UI Emoji` and `Segoe UI Symbol`), and `MarkdownRenderer` was switched
+  over in step.
+- New backend `backend/emoji.py` (switches to UTF-8 at startup, decides from the encoding and console code
+  page whether emoji can be output,
+  and degrades to `[OK]`/`[!]` when they cannot, with `--no-emoji` and `ECHODESK_NO_EMOJI` supported) and
+  frontend
+  `frontend/Services/Emoji.cs` (the same table for degradation; the settings window gains a three-state
+  "use emoji" option);
+  any uncovered emoji degrades to `?`, and **a box is never displayed**.
+- New `tools/check_emoji.ps1` (scans the 61 emoji in use, checks each against the union of glyph coverage
+  across the three font chains,
+  and verifies that the frontend and backend ASCII degradation tables are complete).
 
-**P1 · 双语翻译不完整**
-- 界面与后端用户可见文本全面收编进语言包（主窗口、设置窗口六个 Tab、自动化、技能市场、
-  模型中心、开发者 Tab、对话框、系统消息、错误提示）；补充**术语表**统一关键译法；
-  含变量的文本一律改为占位符。
-- 前端与后端语言包同步扩充（键数见修复记录 §10），`tools/check_lang.py` 的"缺键"与
-  "占位符不一致"检查作为 CI 门禁；`docs/<locale>/` 四份文档齐备。
+**P1 · Bilingual translation incomplete**
+- User-visible text in the interface and backend was comprehensively collected into the language pack (main
+  window, the settings window's six tabs, automation, skill marketplace,
+  model hub, developer tab, dialogs, system messages, error messages); a **glossary** was added to unify key
+  translations;
+  text containing variables was uniformly changed to placeholders.
+- The frontend and backend language packs were expanded in step (key counts in §10 of the fix record), with
+  `tools/check_lang.py`'s "missing key" and
+  "placeholder mismatch" checks as CI gates; the four documents under `docs/<locale>/` are complete.
 
-**P1 · 模型能力辅助与上下文管理**
-- 新增 `backend/model_profile.py`：参数量（元数据/文件名推断，**标注来源**）、量化格式
-  （`general.file_type` 数字枚举 → `Q4_K_M` 等可读名）、训练窗口、实际可用窗口、KV Cache 估算、
-  实测生成速度；五种**可操作的**能力提示；按内存/核数的硬件推荐（附推荐依据）。
-- 新增 `backend/prompts.py`：6 个任务型提示词模板（摘要/合同审查/结构化抽取/翻译/代码排错/分步推理），
-  每个都含具体角色、输出格式约束、思维链引导与少样本示例；`/task` 套用。
-- 新增 `/preset light|balanced|quality` 三档生成参数（温度/top_p/重复惩罚/回复长度），
-  `llm_engine` 相应支持 `top_p` 与 `repeat_penalty`。
-- **上下文管理增强**：状态区新增 `🗜 压缩上下文` 按钮（`/compact` 同源），新增 `context_mode`
-  滑动窗口模式，分段摘要参数（`chunk_chars`/`overlap_chars`/`max_summary_tokens`/…）可运行期调整。
-- 状态区新增模型能力项（参数量 · 量化 · 可用窗口 · 实测速度，实时刷新）与能力提示按钮；
-  模糊提问改为**追问**而不是硬答（可关闭）。
-- 新增 `SummaryCache`：分段摘要按"文件指纹 + 摘要参数"缓存，同一文件二次上传不重算；
-  文件改动后自动失效。
-- 回归测试：新增 `tools/test_capability.py`（58 项）。
+**P1 · Model capability assistance and context management**
+- New `backend/model_profile.py`: parameter count (inferred from metadata/file name, **with the source
+  labelled**), quantization format
+  (`general.file_type` numeric enum → readable names such as `Q4_K_M`), training window, actually usable
+  window, KV Cache estimate,
+  measured generation speed; five **actionable** capability hints; hardware recommendations based on
+  memory/core count (with the rationale attached).
+- New `backend/prompts.py`: 6 task-oriented prompt templates (summary / contract review / structured
+  extraction / translation / code troubleshooting / step-by-step reasoning),
+  each containing a specific role, output format constraints, chain-of-thought guidance, and few-shot
+  examples; applied with `/task`.
+- New `/preset light|balanced|quality` with three generation parameter tiers (temperature/top-p/repetition
+  penalty/reply length),
+  with `llm_engine` supporting `top_p` and `repeat_penalty` accordingly.
+- **Context management enhanced**: the status area gains a `🗜 Compact context` button (sharing its source with
+  `/compact`), a new `context_mode`
+  sliding window mode, and chunked summary parameters (`chunk_chars`/`overlap_chars`/`max_summary_tokens`/…)
+  that can be adjusted at runtime.
+- The status area gains model capability items (parameter count · quantization · usable window · measured
+  speed, refreshed live) and a capability hint button;
+  a vague question now triggers **a follow-up question** rather than a forced answer (can be disabled).
+- New `SummaryCache`: chunked summaries are cached by "file fingerprint + summary parameters", so a second
+  upload of the same file does not recompute them;
+  the cache is invalidated automatically after the file changes.
+- Regression tests: new `tools/test_capability.py` (58 items).
 
-**P1 · 合规发布事宜**
-- `docs/PRIVACY.md` 扩写为"本机/联网"约定 + 5 个联网功能逐项表（目标域名、发送什么、不发送什么、
-  数据去向、保留多久、如何关闭）+ **数据出境与跨境传输专节** + 企业"彻底禁网"清单。
-- `docs/EULA.md` 补齐许可授予（Apache-2.0 优先条款）、使用限制、第三方组件声明、自动化与技能
-  责任归属、独立的责任限制条款、适用法律、联系方式与协议变更方式；并纠正 pyxtxt/AGPL 等过时表述。
-- 新增 `docs/SECURITY.md`（支持版本、报告渠道、**响应时间承诺**、不受理范围、安全设计说明与
-  已知限制），根目录 `SECURITY.md` 与之对齐；新增 `docs/zh-Hans/COMPLIANCE.md` 与
-  `docs/en/COMPLIANCE.md`（代理、证书、防火墙最小放行清单、组策略/受限环境、审计留痕）。
-- 新增 `tools/gen_sbom.py`（纯标准库）与 `docs/SBOM.json`（SPDX 2.3，52 个包）；
-  `--check` 可对照 `THIRD_PARTY_LICENSES.md` 报差异，已实际发现并记录清单缺登记项。
+**P1 · Compliance release matters**
+- `docs/PRIVACY.md` was expanded into a "local/networked" convention plus an itemized table of the 5 network
+  features (target domain, what is sent, what is not sent,
+  where data goes, how long it is kept, how to disable it) plus **a dedicated section on data leaving the
+  machine and cross-border transfer** plus an enterprise "network fully disabled" checklist.
+- `docs/EULA.md` now includes the license grant (with the Apache-2.0 precedence clause), usage restrictions,
+  third-party component notices, attribution of responsibility for automation and skills,
+  a standalone limitation of liability clause, governing law, contact details, and how the agreement is
+  changed; outdated wording such as pyxtxt/AGPL was corrected.
+- New `docs/SECURITY.md` (supported versions, reporting channels, **a response time commitment**,
+  out-of-scope items, security design notes, and
+  known limitations), with the root `SECURITY.md` aligned to it; new `docs/zh-Hans/COMPLIANCE.md` and
+  `docs/en/COMPLIANCE.md` (proxies, certificates, minimal firewall allowlist, group policy/restricted
+  environments, audit trails).
+- New `tools/gen_sbom.py` (standard library only) and `docs/SBOM.json` (SPDX 2.3, 52 packages);
+  `--check` can report discrepancies against `THIRD_PARTY_LICENSES.md`, and it has actually found and
+  recorded missing entries in the list.
 
-### 已知限制
+### Known limitations
 
-- 自动化、技能市场、模型中心的**逐条进度与深层诊断消息**仍为中文（界面与指令帮助已全部
-  双语）。可用 `python tools/extract_strings.py` 复现待收编清单。
-- 只提供**简体中文与英语**语言包；`zh-Hant`/`ja`/`ko`/`de`/`fr`/`es`/`pt-BR` 的机制与
-  模板生成工具已就绪，待社区贡献。
-- 示例技能尚未真正发布到 GitHub marketplace（需要仓库凭据）。
-- 自动更新只到"检查与提示"，不含自动下载替换与增量更新。
-- **v0.2.1 不随包提供界面截图**：README 与文档不再留"待拍截图"的占位指引，
-  改为说明"后续版本会放入 `assets/screenshots/`"。
-- `docs/THIRD_PARTY_LICENSES.md` 与 `docs/SBOM.json` 现已**在只装
-  `backend/requirements.txt` 的干净 venv 里重新生成并逐项核对一致**
-  （55 个发行包、0 处差异；见上文「合规收口发现并修掉的问题」）。
-  剩余注意点是**生成基线依赖环境**：清单口径是"干净 venv 的实际安装结果"，
-  下次发布仍须在干净环境里重跑 `python tools/gen_licenses.py` 与
-  `python tools/gen_sbom.py --check`（CI 的 `release-gates` 作业已自动执行后者）。
-- 修复版遗留（详见内部修复记录 `v0.2.1-修复记录.md` §11，**不随发布物分发**）：
-  - **未在 Windows 10 上实测**（Emoji 与主题结论基于字形覆盖率与色板数值，非系统版本）。
-  - ~~**安装版（Inno Setup）未实际编译验证**：本机无 Inno Setup 6，`tools/installer.iss`
-    已按便携版结构对齐，但未产出过 `setup.exe`。~~ → **本版已解决**：安装方式整体改为
-    Inno Setup 6 编译两份安装程序（`tools/installer.iss` + `tools/make_installer.ps1`），
-    并新增 `tools/check_installer_deliverables.ps1` 做"真装真卸"验收；
-    详见上文「安装方式：从 7-Zip 自解压包改为 Inno Setup」。
-  - **自动化安全协议未落地独立审计日志**（协议文本与勾选状态存在配置里，没有不可篡改流水）。
-  - `model_hub.enabled` 与 `automation.start_with_windows` 两个配置项**未被代码读取**，
-    不要把前者当禁网开关；开机自启请把快捷方式放进 `shell:startup`。
-  - 向量检索（本地 RAG）**本版未做**：向量库依赖与全局体积要求冲突，建议下版先做零依赖的
-    关键词检索方案验证收益。
-  - `docs/DEVELOPER.md` 仍只有中文（`PRIVACY.md`/`EULA.md` 已完成双语化）。
-  - **结果目录改名不自动迁移**（`批量处理结果\` → `results\`）：升级用户需手动改名，
-    见上文「命名规范：程序生成的名字也改成英文」的升级注意。
-  - **安装程序未做代码签名**：`-Sign` 需要证书，本版两份 `Setup.exe` 均未签名，
-    首次运行会有 SmartScreen 提示（`tools\make_installer.ps1 -Sign -CertThumbprint <指纹>`
-    已就绪）。
-  - **安装程序界面目前只有英文**：Inno Setup 6.7 自带的 `Languages\` 目录里没有
-    `ChineseSimplified.isl`（官方把它列为需单独下载的第三方翻译）。`tools\installer.iss`
-    已用 ISPP 的 `FileExists` 做条件包含 —— 把该 `.isl` 放进 Inno Setup 的 `Languages\`
-    目录即自动启用中文界面，无需改代码。
-  - **安装程序需要 Inno Setup 6 才能重新编译**：`tools\make_installer.ps1` 会自动探测
-    （注册表 → 常见安装位置 → `%LOCALAPPDATA%\Programs` → PATH），也可用 `-ISCC` 指定。
-    发布工作流在 CI 上用 Chocolatey 安装。
+- The **per-item progress and deep diagnostic messages** of automation, the skill marketplace, and the model
+  hub are still in Chinese (the interface and command help are fully
+  bilingual). The list of text still to be collected can be reproduced with
+  `python tools/extract_strings.py`.
+- Only **Simplified Chinese and English** language packs are provided; the mechanism and
+  template generation tooling for `zh-Hant`/`ja`/`ko`/`de`/`fr`/`es`/`pt-BR` are ready and await community
+  contributions.
+- The example skills have not yet actually been published to the GitHub marketplace (repository credentials
+  are needed).
+- Automatic updates go only as far as "check and notify", and do not include automatic download-and-replace
+  or incremental updates.
+- **v0.2.1 ships no interface screenshots**: the README and documentation no longer keep "screenshots to be
+  captured" placeholder guidance,
+  and instead state that "later versions will place them in `assets/screenshots/`".
+- `docs/THIRD_PARTY_LICENSES.md` and `docs/SBOM.json` have now been **regenerated in a clean venv with only
+  `backend/requirements.txt` installed and checked item by item as consistent**
+  (55 distributions, 0 discrepancies; see "Issues found and fixed during the compliance wrap-up" above).
+  The remaining caveat is that the **generation baseline depends on the environment**: the list is defined
+  as "the actual installation result of a clean venv",
+  so the next release must still re-run `python tools/gen_licenses.py` and
+  `python tools/gen_sbom.py --check` in a clean environment (the CI `release-gates` job already runs the
+  latter automatically).
+- Left over in the fixed build (see §11 of the internal fix record `v0.2.1-修复记录.md`, **not distributed
+  with the release**):
+  - **Not tested on Windows 10** (the emoji and theme conclusions are based on glyph coverage and palette
+    values, not on the system version).
+  - ~~**The installed build (Inno Setup) was not actually compiled and verified**: there is no Inno Setup 6
+    on this machine, `tools/installer.iss`
+    has been aligned with the portable structure, but no `setup.exe` was ever produced.~~ → **Resolved in
+    this version**: the installation method was changed throughout to
+    compiling both installers with Inno Setup 6 (`tools/installer.iss` + `tools/make_installer.ps1`),
+    and `tools/check_installer_deliverables.ps1` was added for "real install and uninstall" acceptance;
+    see "Installation method: changed from a 7-Zip self-extracting package to Inno Setup" above.
+  - **The automation safety protocol has no separate audit log** (the protocol text and checkbox state live
+    in the configuration; there is no tamper-proof trail).
+  - The two configuration items `model_hub.enabled` and `automation.start_with_windows` **are not read by the
+    code**,
+    so do not treat the former as a network kill switch; for start-on-boot, put the shortcut in
+    `shell:startup`.
+  - Vector retrieval (local RAG) is **not done in this version**: vector database dependencies conflict with
+    the global size requirement, and it is suggested that the next version first
+    validate the benefit with a zero-dependency keyword retrieval approach.
+  - `docs/DEVELOPER.md` is still Chinese only (`PRIVACY.md`/`EULA.md` have been bilingualized).
+  - **The results directory rename does not migrate automatically** (`批量处理结果\` → `results\`):
+    upgrading users must rename it by hand,
+    see the upgrade note under "Naming conventions: program-generated names are English too" above.
+  - **The installers are not code-signed**: `-Sign` requires a certificate, and neither `Setup.exe` in this
+    version is signed, so the first run shows a SmartScreen prompt
+    (`tools\make_installer.ps1 -Sign -CertThumbprint <thumbprint>`
+    is ready).
+  - **The installer interface is currently English only**: the `Languages\` directory shipped with Inno Setup
+    6.7 has no
+    `ChineseSimplified.isl` (the official project lists it as a third-party translation that must be
+    downloaded separately). `tools\installer.iss`
+    already uses ISPP's `FileExists` for conditional inclusion — putting that `.isl` into Inno Setup's
+    `Languages\`
+    directory enables the Chinese interface automatically, with no code change.
+  - **Recompiling the installers requires Inno Setup 6**: `tools\make_installer.ps1` detects it
+    automatically
+    (registry → common install locations → `%LOCALAPPDATA%\Programs` → PATH), and `-ISCC` can be used to
+    point at it.
+    The release workflow installs it with Chocolatey in CI.
 
 ---
 
 ## v0.2.0
 
-### 新增
+### Additions
 
-**上下文与长文档**
-- 默认上下文窗口 4096 → **8192**，新增 `max_context` 上限校验（防止配置超限）；
-  实际窗口按「配置值、模型训练窗口、上限」三者最小值自动收敛。
-- 新增 `gguf_meta.py`：不加载模型即可读取 GGUF 元数据，取得模型训练窗口、
-  层数、KV 注意力头数，并估算 **KV Cache 内存占用**（fp16）。
-- 模型加载/重载时输出窗口大小与 KV Cache 估算日志。
-- 新增 `summarizer.py`：长文档 **map-reduce 分段摘要**——按段长切分并保留重叠、
-  切点落在段落/句号边界、逐段摘要后按预算递归归并、输出保留**原文指针**
-  （源文件 + 各段字符区间）。超长文档从此不再被直接截断。
-- 新增 `/summarize` 指令（手动触发全文摘要）；摘要进度实时显示在对话框中。
-- 生成速度低于阈值时给出提示，并说明可通过调小窗口/增加线程改善。
-- `file_max_chars` 10000 → 200000（0 = 不限），配合分段摘要处理长文档。
+**Context and long documents**
+- The default context window goes from 4096 to **8192**, and a `max_context` ceiling check is added (so a
+  configuration cannot exceed the limit); the effective window settles automatically on the smallest of the
+  three values "configured value, model training window, ceiling".
+- New `gguf_meta.py`: reads GGUF metadata without loading the model, obtaining the model training window, the
+  layer count and the number of KV attention heads, and estimating the **KV Cache memory footprint** (fp16).
+- Loading/reloading a model now logs the window size and the KV Cache estimate.
+- New `summarizer.py`: **map-reduce chunked summarization** for long documents — it splits by chunk length while
+  keeping overlap, puts the split points on paragraph/period boundaries, summarizes each chunk and then merges
+  recursively under a budget, and keeps an **original-text pointer** in the output (source file + character range
+  of each chunk). Documents that are too long are no longer truncated outright.
+- New `/summarize` command (triggers a full-text summary by hand); summary progress is shown live in the chat
+  area.
+- A notice appears when the generation speed falls below a threshold, explaining that a smaller window / more
+  threads can improve it.
+- `file_max_chars` goes from 10000 to 200000 (0 = unlimited), which together with chunked summarization lets long
+  documents through.
 
-**模型下载与启动体验**
-- **下载模型前先征询用户**：后端输出 `need_download`（含文件名与体积），
-  前端弹确认框；同意才下载，拒绝则后端退出并给出后续指引。
-- **启动时检测启动快捷方式**：不存在则询问创建（WScript.Shell COM 创建，
-  指向主程序、工作目录为程序目录、使用 EchoDesk 图标）；用户拒绝后不再重复询问；
-  移动文件夹导致快捷方式失效时提示重新创建。
+**Model download and startup experience**
+- **The user is asked before a model is downloaded**: the backend emits `need_download` (with the file name and
+  size) and the frontend raises a confirmation dialog; the download only happens on agreement, and on refusal
+  the backend exits and gives follow-up instructions.
+- **The launcher shortcut is checked at startup**: if it does not exist the program asks whether to create one
+  (created through WScript.Shell COM, pointing at the main program, with the program directory as the working
+  directory and the EchoDesk icon); once the user has declined it never asks again, and when moving the folder
+  has broken the shortcut it offers to create it again.
 
-**界面与可访问性**
-- 消息内容全部**可选中复制**：纯文本消息改为只读文本框，助手消息保留 Markdown 渲染。
-- 每条消息右下角新增复制操作条：复制 / Markdown / 代码（有代码块时）/ 全选。
-- 新增快捷键：`Esc` 停止、`Ctrl+L` 清空、`Ctrl+O` 上传、`Ctrl+Shift+C` 复制全部、
-  `Ctrl+加/减/0` 字号、`Ctrl+T` 主题、`Ctrl+,` 设置、`Ctrl+M` 技能市场。
-- **窗口状态记忆**（大小/位置/最大化）与主题、字号持久化到 `ui_state.json`；
-  多显示器与高 DPI 下不会还原到屏幕外。
-- 状态栏新增模型、搜索、自动化、市场连接状态；新增底部通知条（下载完成/失败等）。
-- 首次启动引导（欢迎页 + 模型下载/快捷方式/长文档/复制与快捷键说明）。
-- 禁用消息控件内部滚动，滚轮统一滚动对话列表。
+**Interface and accessibility**
+- All message content can be **selected and copied**: plain-text messages become read-only text boxes, and
+  assistant messages keep Markdown rendering.
+- Every message gains a copy action strip in its bottom-right corner: Copy / Markdown / Code (when there are code
+  blocks) / Select all.
+- New shortcuts: `Esc` stop, `Ctrl+L` clear, `Ctrl+O` upload, `Ctrl+Shift+C` copy everything,
+  `Ctrl+plus/minus/0` font size, `Ctrl+T` theme, `Ctrl+,` Settings, `Ctrl+M` skill marketplace.
+- **Window state is remembered** (size/position/maximized), and the theme and font size are persisted to
+  `ui_state.json`; with multiple monitors and high DPI it never restores off-screen.
+- The status bar gains model, web search, automation and marketplace connection states, plus a bottom
+  notification strip (download finished/failed and so on).
+- First-run onboarding (welcome page + model download/shortcut/long documents/copying and shortcuts).
+- Scrolling inside message controls is disabled, so the wheel always scrolls the conversation list.
 
-**发布工程**
-- 发布物改为**单文件夹、多文件、单入口**：前端多文件发布（依赖 DLL 同目录，启动更快），
-  后端 PyInstaller **onedir**（依赖集中在 `backend\_internal`），
-  统一命名 `EchoDesk.exe` / `EchoDeskBackend.exe`，根目录只保留一个可执行文件。
-- 新增 `tools\build_release.ps1` 一键发布脚本与 `tools\installer.iss`（Inno Setup 安装版模板）；
-  构建脚本自动创建唯一入口快捷方式「EchoDesk 启动.lnk」。
-- 新增 rcedit 元数据写入（`tools\set_metadata.bat`）与六尺寸图标生成
-  （`tools\make_icon.py`：深靛蓝→深紫渐变 + 暖陶土回声纹，16/32/48/64/128/256）。
-- **后端体积 976MB → 178MB**：移除 pyxtxt 依赖（见「变更」）。
+**Release engineering**
+- The release output becomes a **single folder, multiple files and a single entry point**: the frontend ships as
+  multiple files (dependency DLLs sit in the same directory, which starts faster) and the backend uses
+  PyInstaller **onedir** (dependencies collected in `backend\_internal`); both are named `EchoDesk.exe` /
+  `EchoDeskBackend.exe`, and only one executable is left in the root directory.
+- New `tools\build_release.ps1` one-click release script and `tools\installer.iss` (Inno Setup installer
+  template); the build script automatically creates the single entry shortcut "EchoDesk 启动.lnk".
+- New rcedit metadata writing (`tools\set_metadata.bat`) and six-size icon generation
+  (`tools\make_icon.py`: deep indigo → deep purple gradient + warm terracotta echo pattern, 16/32/48/64/128/256).
+- **Backend size 976MB → 178MB**: the pyxtxt dependency is removed (see "Changes").
 
-### 变更
+### Changes
 
-- **文件解析不再依赖 pyxtxt**：改为按格式直接解析（python-docx / openpyxl /
-  python-pptx / PyMuPDF / xlrd + 多编码文本探测）。原因见
-  `docs/THIRD_PARTY_LICENSES.md`：pyxtxt 的解析器子包必须整目录打包，
-  会连带引入 easyocr→torch 等约 800MB 依赖，且其依赖链含 GPL/LGPL 组件。
-- 后端元数据改由 PyInstaller 的 `version`/`icon` 在打包时写入
-  （rcedit 会破坏 PyInstaller 追加的 PKG 归档）；rcedit 仍用于前端 exe。
-- 前端与后端通信增加**请求闸门**，主窗口与设置窗口并发请求不再互相读错响应。
+- **File parsing no longer depends on pyxtxt**: each format is parsed directly instead (python-docx / openpyxl /
+  python-pptx / PyMuPDF / xlrd, plus multi-encoding text detection). The reason is documented in
+  `docs/THIRD_PARTY_LICENSES.md`: pyxtxt's parser subpackage has to be packaged as a whole directory, which drags
+  in easyocr→torch and roughly 800MB of further dependencies, and its dependency chain contains GPL/LGPL
+  components.
+- Backend metadata is now written at packaging time by PyInstaller's `version`/`icon` (rcedit would break the PKG
+  archive PyInstaller appends); rcedit is still used for the frontend exe.
+- Frontend–backend communication gains a **request gate**, so concurrent requests from the main window and the
+  Settings window no longer read each other's responses.
 
-### 新增功能模块
+### New feature modules
 
-- **自动化（浏览器）**：`automation.py` + 设置窗口「自动化」Tab。
-  Playwright 驱动本机 Microsoft Edge，**有头模式**运行；按选择器抓取任务列表、
-  逐个进入详情页、按后缀筛选并下载文件、调用本地模型生成摘要与审核意见、
-  结果展示/落盘、临时文件即用即删。支持验证码/MFA 暂停等待人工处理、
-  任务去重、分页、失败截图与跳过、审计日志（脱敏）。
-  **安全协议未勾选时开关强制关闭**；协议版本与同意时间记入审计日志。
-- **技能市场**：`marketplace.py` + 设置窗口「技能市场」Tab。
-  按 GitHub topic `echodesk-plugin` 搜索（Star/最近更新/最佳匹配排序）、
-  本地缓存 + TTL + 离线降级、`skill.json` 验证（未验证置灰）、
-  详情查看、安装（tarball 校验 + 注册表登记 + 安装后回读校验）、卸载。
-  **不自动执行第三方 prepare 脚本**，只提示。
+- **Automation (browser)**: `automation.py` + the "Automation" tab of the Settings window. Playwright drives the
+  Microsoft Edge installed on this machine and runs **headed**; it scrapes the task list by selector, opens each
+  detail page in turn, filters and downloads files by extension, hands them to the local model to produce a
+  summary and a review opinion, shows and writes out the results, and deletes the temporary files as soon as it
+  is done with them. It supports pausing on a CAPTCHA/MFA to wait for manual handling, task deduplication,
+  paging, failure screenshots and skipping, and an audit log (redacted). **The switch is forced off while the
+  safety protocol is unticked**; the protocol version and the time of consent are written to the audit log.
+- **Skill marketplace**: `marketplace.py` + the "Skill marketplace" tab of the Settings window. It searches by
+  the GitHub topic `echodesk-plugin` (sorted by stars / recently updated / best match), keeps a local cache with
+  TTL and offline fallback, validates `skill.json` (unverified entries are greyed out), shows details, and
+  installs (tarball verification + registry registration + read-back verification after install) and uninstalls.
+  **Third-party prepare scripts are never run automatically**, only reported.
 
-### 文档与合规
+### Documentation and compliance
 
-- 新增 `docs/PRIVACY.md`（隐私政策：逐项说明哪些功能本机运行、哪些会联网）、
-  `docs/EULA.md`（最终用户许可协议）、
-  `docs/THIRD_PARTY_LICENSES.md`（自动生成的许可证清单 + 合规结论）、
-  `docs/FAQ.md`（快速上手 + 故障排除）、`docs/DEVELOPER.md`（架构与协议）、
-  `docs/SKILL_GUIDE.md`（技能开发指南）。
-- 新增 `tools\gen_licenses.py`（扫描已安装发行包生成许可证清单）。
+- New `docs/PRIVACY.md` (privacy policy: an item-by-item account of which features run locally and which go
+  online), `docs/EULA.md` (end user license agreement), `docs/THIRD_PARTY_LICENSES.md` (auto-generated license
+  inventory + compliance conclusion), `docs/FAQ.md` (quick start + troubleshooting), `docs/DEVELOPER.md`
+  (architecture and protocol), `docs/SKILL_GUIDE.md` (skill development guide).
+- New `tools\gen_licenses.py` (scans the installed distribution packages to generate the license inventory).
 
-### 修复
+### Fixes
 
-- **后端在英文 locale 的 Windows 上静默退出**：Python 默认用 cp1252 编码 stdout，
-  协议含中文/emoji 时抛 `UnicodeEncodeError` 直接崩溃。已强制 stdout/stderr 为 UTF-8
-  并使用 `errors="replace"` 兜底；前端显式以 UTF-8 读取。这是 v0.1.0 在两台
-  非开发机上"后端进程过会儿就自动退出"的真实原因。
-- 新增崩溃日志 `backend\backend_crash.log`（`faulthandler` + `sys.excepthook`），
-  异常不再静默退出。
-- 下载/预热进度与后端异常退出提示改为同时显示在对话框中（不再只出现在状态栏）。
+- **The backend exited silently on Windows with an English locale**: Python encodes stdout as cp1252 by default,
+  so a protocol containing Chinese/emoji raised `UnicodeEncodeError` and crashed outright. stdout and stderr are
+  now forced to UTF-8 with `errors="replace"` as a fallback, and the frontend reads explicitly as UTF-8. This is
+  the real reason v0.1.0 showed "the backend process just exits by itself after a while" on two machines that
+  were not development machines.
+- New crash log `backend\backend_crash.log` (`faulthandler` + `sys.excepthook`), so exceptions no longer exit
+  silently.
+- Download/warm-up progress and backend abnormal-exit notices are now shown in the chat area as well (they no
+  longer appear only in the status bar).
 
-### 修复与补强（v0.2.0 修复任务书）
+### Fixes and hardening (v0.2.0 fix task list)
 
-> 对应根目录 `指示.md` 的五项任务，**不升版本号**，仍为 v0.2.0 / `0.2.0.0`。
-> 完整实现方案、关键决策、偏差与未完成项见内部修复记录（`v0.2.0-修复记录.md`，**不随发布物分发**）。
+> Corresponds to the five tasks in `指示.md` in the repository root; the **version number is not raised** and
+> stays at v0.2.0 / `0.2.0.0`. The full implementation plan, key decisions, deviations and unfinished items are in
+> the internal fix record (`v0.2.0-修复记录.md`, **not distributed with the release**).
 
-**修复一：设置窗口卡死（P0 致命）**
-- 真实根因并非死锁，而是 `SettingsWindow.xaml` 的滑块
-  `<Slider Minimum="10" .../>` 在 **XAML 解析期**把 `Value` 从 0 强制抬到 10 并触发
-  `ValueChanged`，此时 `FontSizeLabel` 尚未创建 → `FontSizeSlider_ValueChanged` 抛
-  `NullReferenceException`；当时没有任何全局异常处理器，UI 线程未处理异常直接终止进程
-  （WER 转储 29MB），表现就是"界面无响应，只能从任务管理器结束"，且不留线索。
-- 修复：新增 `_uiReady` 门闩（`InitializeComponent` 完成前所有 XAML 挂接的处理器直接返回）、
-  滑块回调判空、XAML 补默认值。
-- 新增**全局异常兜底**：`DispatcherUnhandledException` / `AppDomain` / `TaskScheduler`
-  统一写入程序目录 `frontend_crash.log`，并提示后让程序继续可用。
-- **通信层重构**：stdout 改为唯一泵线程投递到队列，请求方从队列取行——
-  这样设置超时才**不会留下悬挂读取**（原先"放弃读取"会吃掉下一条响应）。
-  请求闸门等待默认 15 秒超时，响应空闲超时默认 10 分钟（重任务 45 分钟）。
-- 设置窗口改为"打开即见"：构造/显示不做任何后端等待，数据在 `ContentRendered` 后异步加载，
-  底部常驻加载状态；遇到后端忙自动重试并显示等待提示；关闭窗口取消在途请求。
-- 启动期三个 `MessageBox` 补上 owner，避免对话框出现在主窗口后方造成"看不到提示、界面像卡住"。
-- 实测：设置窗口 **207ms** 打开（要求 <500ms），Responding 全程 True，
-  主/设置窗口交替操作互不阻塞，无崩溃日志。
+**Fix 1: the Settings window hung (P0, fatal)**
+- The real root cause was not a deadlock but the slider `<Slider Minimum="10" .../>` in `SettingsWindow.xaml`,
+  which forced `Value` from 0 up to 10 during **XAML parsing** and fired `ValueChanged` while `FontSizeLabel` had
+  not been created yet → `FontSizeSlider_ValueChanged` threw `NullReferenceException`; there was no global
+  exception handler at the time, so the unhandled exception on the UI thread terminated the process outright (a
+  29MB WER dump). What you saw was "the interface is unresponsive, the only way out is Task Manager", and it left
+  no clue behind.
+- Fix: a new `_uiReady` latch (every handler attached from XAML returns immediately until `InitializeComponent`
+  has finished), null checks in the slider callback, and default values added in the XAML.
+- New **global exception safety net**: `DispatcherUnhandledException` / `AppDomain` / `TaskScheduler` all write
+  to `frontend_crash.log` in the program directory and then show a notice, leaving the program usable.
+- **The communication layer is rewritten**: stdout is now delivered to a queue by a single pump thread, and the
+  requesting side takes lines from that queue — so a settings timeout **cannot leave a dangling read** behind
+  (the old "give up reading" would swallow the next response). The request gate waits with a default timeout of
+  15 seconds, and the response idle timeout defaults to 10 minutes (45 minutes for heavy tasks).
+- The Settings window now appears the moment it is opened: constructing and showing it waits on the backend for
+  nothing, the data loads asynchronously after `ContentRendered`, and a loading state stays at the bottom; when
+  the backend is busy it retries automatically and shows a waiting notice; closing the window cancels in-flight
+  requests.
+- The three `MessageBox` calls at startup now get an owner, so a dialog no longer ends up behind the main window
+  and looks like "no notice visible, the interface seems stuck".
+- Measured: the Settings window opens in **207ms** (requirement <500ms), Responding is True throughout,
+  alternating operations in the main and Settings windows do not block each other, and there are no crash logs.
 
-**修复二：命令栏 Enter 误执行（P0 数据风险）**
-- 原先指令列表只做前缀过滤且保持声明顺序，输入 `/clear` 时首项是 `/clearcache`，
-  直接按 Enter 会清空 KV 缓存。
-- 新增排序规则：**完全一致优先 → 命令名长度升序（前缀占比更高者更具体）→ 指令表原有顺序**。
-- 候选**多于一个且首项非精确匹配**时，Enter **只补全命令名**并提示，由用户确认后再执行。
-- 指令列表显示**完整名称与参数格式**（`用法：/model <名称|别名|list>`），
-  列表项补齐可访问性名称。
-- 新增**危险指令二次确认**：`/clear`、`/clearcache` 执行前提示后果，
-  取消时保留输入；可在「设置 → 常规」关闭（默认开启）。
-- 实测：`/clear`→首项 `/clear`，`/c`→`/clear`，`/cl`→`/clear`，`/sum`→`/summarize`；
-  在 `/cl` 上按 Enter 只补全为 `/clear `；`/clear` 确认框明确指向 `/clear`。
+**Fix 2: Enter in the command bar ran the wrong command (P0, data risk)**
+- The command list only did prefix filtering and kept the declaration order, so typing `/clear` put
+  `/clearcache` first and pressing Enter straight away cleared the KV cache.
+- New ordering rules: **exact match first → command names in ascending length (a longer matching prefix is more
+  specific) → the original order of the command table**.
+- When there is **more than one candidate and the first entry is not an exact match**, Enter **only completes the
+  command name** and shows a notice, and the user runs it after confirming.
+- The command list shows the **full name and the argument format** (`usage: /model <name|alias|list>`), and the
+  list items now carry accessibility names.
+- New **second confirmation for dangerous commands**: `/clear` and `/clearcache` explain the consequences before
+  running, and cancelling keeps the input; this can be switched off in "Settings → General" (on by default).
+- Measured: `/clear`→first entry `/clear`, `/c`→`/clear`, `/cl`→`/clear`, `/sum`→`/summarize`; pressing Enter on
+  `/cl` only completes it to `/clear `; and the `/clear` confirmation box points unambiguously at `/clear`.
 
-**新增三：results目录（P1）**
-- 结果按 `程序根目录\results\YYYY-MM-DD\任务名\` 分层保存（顶层名与保存位置可自定义，
-  顶层留空 = 程序根目录）；同日多次运行合并到同一日期目录，同名任务自动追加 `-1`、`-2`。
-- 任务目录内保存**该轮下载的原始文件**（重名自动加序号）与 `result.txt`；
-  失败任务的失败原因与失败截图文件名同样写入 `result.txt`，截图保存在任务目录内。
-- `result.txt` 为**纯文本、无任何 Markdown 标记**（记事本无渲染能力）：新增
-  `backend\plaintext.py` 做 Markdown → 纯文本转换，标题转下划线、表格转**按显示宽度对齐**
-  的纯文本（中日韩按 2 列计）、列表保留 `-`/数字、链接转 `文字（地址）`、代码块缩进。
-- 每条任务完成/失败即整份重写 `result.txt`，中途崩溃或停止也不丢已处理结果。
-- 新增自测：`tools\test_plaintext.py`（20 项）、`tools\test_results_dir.py`（26 项）、
-  `tools\test_automation_e2e.py`（真实 Playwright/Edge 全链路 21 项，实测跑出三层目录、
-  纯文本结果、原始文件保留、同名 `-1`）。
+**Addition 3: the results directory (P1)**
+- Results are saved in layers as `program root\results\YYYY-MM-DD\task name\` (the top-level name and the save
+  location are both configurable, and an empty top level means the program root directory); several runs on the
+  same day merge into one date directory, and same-named tasks get `-1`, `-2` appended automatically.
+- A task directory holds **the original files downloaded in that run** (duplicate names get a sequence number
+  appended automatically) and `result.txt`; the failure reason and the failure screenshot file name of a failed
+  task go into `result.txt` as well, and the screenshot stays inside the task directory.
+- `result.txt` is **plain text with no Markdown markup of any kind** (Notepad cannot render it): new
+  `backend\plaintext.py` converts Markdown to plain text — headings become underlines, tables become plain text
+  **aligned by display width** (CJK counts as 2 columns), lists keep their `-`/numbers, links become
+  `text (address)`, and code blocks are indented.
+- `result.txt` is rewritten in full as each task finishes or fails, so a crash or a stop midway still loses none
+  of the results already processed.
+- New self-tests: `tools\test_plaintext.py` (20 items), `tools\test_results_dir.py` (26 items) and
+  `tools\test_automation_e2e.py` (21 items over the full chain with the real Playwright/Edge, which in practice
+  produced the three-level directory, the plain-text result, the retained original files and the duplicate-name
+  `-1`).
 
-**新增四：模型选择栏（P1）**
-- 设置窗口新增「模型」Tab：连接 **hf-mirror.com（镜像）** 与 **huggingface.co（官方）**，
-  支持自动探测与不可达回退，并始终明确显示当前使用的源。
-- 支持搜索（名称/作者/标签，400ms 防抖）、按下载量/更新时间/点赞/名称排序、
-  最低下载量与量化格式筛选；结果显示作者、下载量、更新时间与「已下载/需登录」徽标。
-- 详情面板列出该仓库**全部 GGUF 量化版本与精确大小**、量化格式、sha256、许可证与是否已下载。
-- 下载前确认文件大小与预计磁盘占用；下载中显示百分比、速度、剩余时间并支持取消；
-  支持**断点续传**（`.part` + Range）、失败重试、**大小/哈希完整性校验**、
-  Gated 模型 401/403 时提示配置 Token。
-- 下载完成自动登记 `backend\models_registry.json`（模型名/路径/仓库/量化/大小/下载时间/来源），
-  并按 `models\` 目录核对（手动放入的 `.gguf` 也会登记）。
-- 模型库列表显示量化、来源、磁盘占用、下载时间与**最后使用时间**；
-  当前使用中的模型标记「正在使用」且禁止删除；删除前二次确认。
-- 与 `/model` 协作：下载目录就是 `/model` 使用的 `models\`，`/model list` 能直接识别；
-  模型库反向标记当前加载的模型。
-- 新增 `tools\test_model_hub_e2e.py`（驱动打包后端走真实仪表协议，19 项全通过）。
+**Addition 4: the model selection bar (P1)**
+- The Settings window gains a "Model" tab: it connects to **hf-mirror.com (mirror)** and **huggingface.co
+  (official)**, supports automatic probing with fallback when one is unreachable, and always states clearly which
+  source is in use.
+- It supports search (name/author/tag, 400ms debounce), sorting by downloads/update time/likes/name, and
+  filtering by minimum downloads and quantization format; results show the author, download count, update time
+  and an "already downloaded / sign-in required" badge.
+- The detail pane lists **every GGUF quantization of that repository with its exact size**, the quantization
+  format, sha256, the license and whether it has been downloaded.
+- Before downloading it confirms the file size and the expected disk usage; during a download it shows the
+  percentage, speed and time remaining and allows cancelling; it supports **resuming** (`.part` + Range),
+  retrying after a failure and **size/hash integrity verification**, and for a gated model returning 401/403 it
+  prompts you to configure a Token.
+- A finished download is registered automatically in `backend\models_registry.json` (model name/path/repository/
+  quantization/size/download time/source) and reconciled against the `models\` directory (a `.gguf` you dropped
+  in by hand is registered too).
+- The model library list shows the quantization, source, disk usage, download time and **last used time**; the
+  model currently in use is marked "in use" and cannot be deleted, and deletion asks for confirmation first.
+- It cooperates with `/model`: the download directory is the same `models\` that `/model` uses, so `/model list`
+  recognises it directly, and the model library marks the currently loaded model in return.
+- New `tools\test_model_hub_e2e.py` (drives the packaged backend over the real instrument protocol; all 19 items
+  pass).
 
-**优化五：状态栏信息分层（P2）**
-- 顶部状态栏**只保留**运行状态、当前模型、当前模式（模型与模式变为可点击胶囊，
-  分别跳到设置→模型 / 设置→常规）；搜索、自动化、市场三段移出顶部。
-- **输入框下方**新增一行轻量状态区：🔍 搜索 · ⚙️ 自动化 · 🌐 市场 ·
-  📊 上下文百分比 · 💾 KV Cache 估算，全部"图标 + 简短短语"。
-- 点击任一项跳转到对应设置（搜索项直接切换开关，为此 `/search` 新增 `toggle`）；
-  右侧 `▾/▸` 可折叠，状态记入 `ui_state.json` 下次启动沿用。
-- 可访问性：各项带 HelpText；**不再**用 `AutomationProperties.Name` 覆盖状态文本
-  （否则屏幕阅读器只能读到"运行状态"而丢掉"已就绪"）。
-- 后端 `context` 响应新增 `n_ctx` / `kv_cache_text` / `model` / `search` 字段，
-  前端不必解析中文状态文本。
+**Improvement 5: layering the status bar information (P2)**
+- The top status bar **keeps only** the run state, the current model and the current mode (the model and the mode
+  become clickable capsules that jump to Settings → Model / Settings → General respectively); the web search,
+  automation and marketplace sections move out of the top bar.
+- **Under the input box** there is a new lightweight status strip: 🔍 Search · ⚙️ Automation · 🌐 Marketplace ·
+  📊 Context percentage · 💾 KV Cache estimate, all of them "icon + short phrase".
+- Clicking any item jumps to the matching setting (the search item toggles the switch directly, which is why
+  `/search` gains `toggle`); the `▾/▸` on the right collapses it, and the state is written to `ui_state.json` and
+  reused on the next launch.
+- Accessibility: every item carries HelpText; `AutomationProperties.Name` is **no longer** used to override the
+  state text (otherwise a screen reader could only read "run state" and would lose "ready").
+- The backend `context` response gains `n_ctx` / `kv_cache_text` / `model` / `search` fields, so the frontend no
+  longer has to parse Chinese status text.
 
-### 已知限制
+### Known limitations
 
-- `.doc` / `.ppt`（旧版二进制）需要本机安装 WPS/Office；否则请另存为 `.docx` / `.pptx`。
-- 扫描件 PDF 无文本层，v0.2.0 未内置 OCR。
-- 自动化驱动的是**本机已安装的 Microsoft Edge**（`channel=msedge`）；程序未内置 Chromium，
-  若 Edge 不可用会给出含 `playwright install chromium` 指引的提示。
-- 自动化单文件下载上限 200MB，超过则跳过该文件并记录。
-- 自动化对 Shadow DOM 的穿透是简化实现；实测 Playwright 的 CSS 引擎本身已能穿透
-  open shadow root，复杂页面仍可能需要调整选择器。
-- 自动化的定时触发依赖后端 `schedule` 线程（程序需保持运行）；
-  开机自启需用户自行把快捷方式放入系统「启动」文件夹。
-- 技能市场安装**依赖不自动 pip 安装**，只提示用户手动处理（安全优先）。
-- 技能市场当前 topic `echodesk-plugin` 下尚无仓库，市场会显示空结果（附说明）。
-- 技能运行期加载器（把技能命令挂到 `/` 指令表）接口已定义，运行期接线在后续版本完成。
-- 自动更新与代码签名：构建脚本已预留 `-Sign` 钩子，但仓库内不含证书；
-  自签名证书仍可能触发 SmartScreen 提示。
-- `tools\build_release.ps1` 需在 PowerShell 5.1+ 运行；中文提示依赖脚本为 UTF-8 with BOM。
-- 本次修复任务书的偏差与未完成项集中记录在内部修复记录（`v0.2.0-修复记录.md`，**不随发布物分发**）第七节，摘要：
-  `/exit` 未纳入危险指令确认（已有可中断倒计时）；结果目录的"任务名称"为运行批次名、
-  一轮一份聚合 `result.txt`；模型列表不显示文件大小（改由详情给出精确值）；
-  模型选择栏同一时刻只允许一个下载；未实现结果目录再分子目录与 Windows DPAPI 加密 Token。
+- `.doc` / `.ppt` (legacy binary formats) need WPS/Office installed on this machine; otherwise save them as
+  `.docx` / `.pptx` first.
+- Scanned PDFs have no text layer, and v0.2.0 has no built-in OCR.
+- Automation drives the **Microsoft Edge installed on this machine** (`channel=msedge`); the program does not
+  bundle Chromium, and if Edge is unavailable it shows a notice containing `playwright install chromium`
+  guidance.
+- Automation downloads at most 200MB per file; anything above that is skipped and recorded.
+- Automation's piercing of the Shadow DOM is a simplified implementation; in practice Playwright's CSS engine
+  already pierces open shadow roots by itself, and complex pages may still need selector adjustments.
+- Automation's scheduled triggering relies on the backend `schedule` thread (the program has to stay running);
+  starting automatically at boot means putting the shortcut into the system "Startup" folder yourself.
+- **Skill marketplace installation does not pip-install dependencies automatically**; it only tells the user to
+  handle them by hand (security first).
+- The topic `echodesk-plugin` currently has no repositories under it, so the marketplace shows an empty result
+  (with an explanation).
+- The skill runtime loader (which attaches skill commands to the `/` command list) has its interface defined, but
+  the runtime wiring is left for a later version.
+- Auto-update and code signing: the build script already reserves a `-Sign` hook, but the repository contains no
+  certificate; a self-signed certificate may still trigger a SmartScreen prompt.
+- `tools\build_release.ps1` has to run on PowerShell 5.1+; its Chinese messages depend on the script being
+  UTF-8 with BOM.
+- The deviations and unfinished items of this fix task list are all recorded in section 7 of the internal fix
+  record (`v0.2.0-修复记录.md`, **not distributed with the release**), in summary: `/exit` was not included in the
+  dangerous-command confirmation (it already has an interruptible countdown); the "task name" of the results
+  directory is the run batch name, with one aggregated `result.txt` per run; the model list does not show file
+  sizes (the detail pane gives the exact value instead); the model selection bar allows only one download at a
+  time; and neither further subdirectories under the results directory nor Windows DPAPI-encrypted tokens were
+  implemented.
 
 ---
 
 ## v0.1.0
 
-- 首个版本：Python 后端（llama.cpp 本地推理）+ C# WPF 前端（JSON 行协议）。
-- 对话模式、温度预设、联网搜索、文件上传（Office/TXT/PDF）、
-  会话持久化、常用语、Markdown 渲染、深浅色主题、字号调节。
-- 指令集：`/help` `/mode` `/file` `/search` `/model` `/clearcache` `/prompt` `/temp`
-  `/darkmode` `/stop` `/snippet` `/status` `/clear` `/undo` `/save` `/about` `/exit`。
+- First release: Python backend (local inference with llama.cpp) + C# WPF frontend (JSON line protocol).
+- Conversation modes, temperature presets, web search, file upload (Office/TXT/PDF), session persistence, canned
+  phrases, Markdown rendering, light and dark themes, font size adjustment.
+- Command set: `/help` `/mode` `/file` `/search` `/model` `/clearcache` `/prompt` `/temp`
+  `/darkmode` `/stop` `/snippet` `/status` `/clear` `/undo` `/save` `/about` `/exit`.

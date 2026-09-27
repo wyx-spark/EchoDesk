@@ -117,7 +117,9 @@ try {
             "app\EchoDesk.exe", "app\EchoDesk.ico", "app\backend\EchoDeskBackend.exe",
             "app\lang\ui", "lang", "examples\skills", "results", "docs",
             "USAGE.txt", "install-complete.bat",
-            "README.md", "README.zh-Hans.md", "CHANGELOG.md",
+            "README.md", "README.zh-Hans.md",
+            "CHANGELOG.md", "CHANGELOG.zh-Hans.md",
+            "CONTRIBUTING.md", "CONTRIBUTING.zh-Hans.md",
             "LICENSE", "LICENSE.zh-Hans.md", "NOTICE", "NOTICE.zh-Hans.md",
             "SECURITY.md", "SECURITY.zh-Hans.md",
             "config.example.json", "install-complete.bat",
@@ -125,6 +127,7 @@ try {
             "docs\EULA.md", "docs\EULA.zh-Hans.md", "docs\SECURITY.md",
             "docs\THIRD_PARTY_LICENSES.md", "docs\THIRD_PARTY_LICENSES.zh-Hans.md",
             "docs\SBOM.json", "docs\DEVELOPER.md",
+            "docs\en\DEVELOPER.md", "docs\zh-Hans\DEVELOPER.md",
             "docs\zh-Hans\COMPLIANCE.md", "docs\en\COMPLIANCE.md",
             "docs\zh-Hans\README.md", "docs\en\README.md",
             "docs\zh-Hans\USER_GUIDE.md", "docs\en\USER_GUIDE.md",
@@ -385,6 +388,9 @@ try {
     }
     else {
         Invoke-Check "自动化端到端（真实 Edge）" { Invoke-Python "自动化端到端" "tools\test_automation_e2e.py"; "通过" }
+        # v0.2.1 自动化优化：登录态复用 / href 提取 / 可视化选取语义。
+        # 它自己起一个回环 HTTP 站点并在真实浏览器里跑，同样需要 -SkipE2E 之外的机器。
+        Invoke-Check "自动化登录态与链接提取（真实 Edge）" { Invoke-Python "自动化登录态" "tools\test_automation_login.py"; "通过" }
         Invoke-Check "模型中心端到端（联网）" { Invoke-Python "模型中心端到端" "tools\test_model_hub_e2e.py"; "通过" }
     }
 }

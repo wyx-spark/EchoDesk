@@ -227,6 +227,7 @@ function Test-InstallerRound([string]$Exe, [string]$Label, [bool]$ExpectModels) 
             "app\backend\_internal", "docs\SBOM.json", "docs\ENCRYPTED_DOCUMENTS.md",
             "docs\ENCRYPTED_DOCUMENTS.zh-Hans.md", "lang", "examples\skills", "results",
             "install-complete.bat", "USAGE.txt", "README.md", "CHANGELOG.md",
+            "CHANGELOG.zh-Hans.md", "CONTRIBUTING.zh-Hans.md", "docs\en\DEVELOPER.md",
             "LICENSE", "LICENSE.zh-Hans.md", "SECURITY.zh-Hans.md",
             "config.example.json", "docs\PRIVACY.zh-Hans.md",
             "docs\THIRD_PARTY_LICENSES.zh-Hans.md")) {

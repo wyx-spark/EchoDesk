@@ -213,6 +213,7 @@
       "pickTaskRow": "The whole row that holds one task",
       "pickNextPage": "The “Next page” button",
       "pickDetailFile": "The attachment name on the task detail page",
+      "pickLoginCheck": "An element that appears only after signing in (for example the user name in the corner)",
       "pickDone": "✅ Selector filled in: {0}",
       "templates": "Configuration templates",
       "templateTip": "Pick a template to fill in a typical configuration, then adjust it to your site.",

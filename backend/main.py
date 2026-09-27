@@ -374,6 +374,10 @@ class Backend:
             return self._handle_automation_config_set(request)
         if action == "automation_test":
             return self._handle_automation_test(request)
+        if action == "automation_login_state":
+            return self._handle_automation_login_state(request)
+        if action == "automation_clear_login":
+            return self._handle_automation_clear_login(request)
         if action == "automation_wizard_step":
             return self._handle_automation_wizard_step(request)
         if action == "automation_config_export":
@@ -926,6 +930,43 @@ class Backend:
         """把自动化配置转成前端表单需要的扁平结构。"""
         return cfg.model_dump()
 
+    def _automation_login_payload(self) -> Dict[str, Any]:
+        """登录态现状（v0.2.1 自动化优化 任务一）：只给路径/大小/时间，不含 Cookie 内容。"""
+        try:
+            return self.automation().login_state_status()
+        except Exception as exc:  # noqa: BLE001
+            return {"exists": False, "profile_dir": "", "size_bytes": 0, "modified": "",
+                    "legacy_state_file": "", "legacy_exists": False,
+                    "login_check_selector": "", "url_keywords": [], "runnable": True,
+                    "error": str(exc)[:200]}
+
+    def _handle_automation_login_state(self, _request: Dict[str, Any]) -> Dict[str, Any]:
+        """读取自动化登录态信息（设置窗口与"清除登录态"按钮共用）。"""
+        return {
+            "type": "system",
+            "content": "",
+            "login_state": self._automation_login_payload(),
+        }
+
+    def _handle_automation_clear_login(self, _request: Dict[str, Any]) -> Dict[str, Any]:
+        """清除自动化登录态（删除持久化数据目录），下次运行重新引导登录。"""
+        if self.automation().running:
+            return {"type": "system", "content": _t("sys.automation_clear_login_running"),
+                    "login_state": self._automation_login_payload()}
+        result = self.automation().clear_login_state()
+        if result.get("ok"):
+            content = _t("sys.automation_clear_login_done",
+                         files=int(result.get("removed_files") or 0),
+                         path=str(result.get("profile_dir") or ""))
+            if result.get("legacy_removed"):
+                content += "\n" + _t("sys.automation_clear_login_legacy")
+        else:
+            content = _t("sys.automation_clear_login_failed",
+                         error=str(result.get("error") or _t("automation.value.unknown_reason")))
+        return {"type": "system", "content": content,
+                "login_state": self._automation_login_payload(),
+                "cleared": bool(result.get("ok"))}
+
     def _handle_automation_config(self, _request: Dict[str, Any]) -> Dict[str, Any]:
         """读取自动化配置（设置窗口打开时调用）。"""
         return {
@@ -984,6 +1025,11 @@ class Backend:
         ("task_name", "step4", False),
         ("results_root_name", "step4", False),
         ("results_location", "step4", False),
+        # 登录态（v0.2.1 自动化优化 任务一）：归在第 5 步「运行参数」里，
+        # 因为它们都是"怎么跑"的设置，而且大多数用户不需要改（默认值即可）。
+        ("login_state_dir", "step5", False),
+        ("login_check_selector", "step5", False),
+        ("login_url_keywords", "step5", False),
         ("max_tasks", "step5", False),
         ("page_timeout_ms", "step5", False),
         ("retries", "step5", False),

@@ -130,7 +130,20 @@ class AutomationConfig(BaseModel):
     # ---------- 去重与登录态 ----------
     dedupe: bool = True
     processed_file: str = "automation_processed.json"
+    # 登录态（v0.2.1 自动化优化 任务一）：主机制改为 Playwright 的**持久化用户数据目录**
+    # （``launch_persistent_context``），Cookie / localStorage / 会话都由浏览器自己写进
+    # ``login_state_dir`` 指向的目录，下次启动自动复用。
+    #
+    # ``login_state_file`` 因此退化为"迁移与备份用的 storage_state 文件"：首次使用新目录
+    # 时若它存在，会把里面的 Cookie 导入一次（老用户不用重新登录）；每次会话结束仍会
+    # 导出一次，便于用户备份或换机迁移。两个文件都**只在本机**，不含任何上传行为。
     login_state_file: str = "browser_state.json"
+    login_state_dir: str = ""          # 空 = 与 login_state_file 同级的 browser_profile 目录
+    # 登录态判定：优先用"登录后才出现的元素"（最可靠）；没配就用 URL 关键词兜底。
+    login_check_selector: str = ""
+    login_url_keywords: List[str] = Field(
+        default_factory=lambda: ["login", "signin", "sign-in", "logon", "sso", "passport", "cas", "auth"]
+    )
     manual_login_wait_seconds: int = Field(default=180, ge=0, le=3600)
     # ---------- 浏览器 ----------
     headless: bool = False            # 固定有头模式：用户可见浏览器操作过程
@@ -151,10 +164,10 @@ class AutomationConfig(BaseModel):
     schedule_times: List[str] = Field(default_factory=lambda: ["09:00"])
     start_with_windows: bool = False
 
-    @field_validator("file_extensions", "schedule_times", mode="before")
+    @field_validator("file_extensions", "schedule_times", "login_url_keywords", mode="before")
     @classmethod
     def _split_list(cls, value):
-        """前端表单里这两项以逗号分隔的字符串提交，这里统一拆成列表。"""
+        """前端表单里这几项以逗号分隔的字符串提交，这里统一拆成列表。"""
         if isinstance(value, str):
             items = [item.strip() for item in value.replace("，", ",").split(",")]
             return [item for item in items if item]
@@ -165,6 +178,17 @@ class AutomationConfig(BaseModel):
     def _normalize_ext(cls, value: List[str]) -> List[str]:
         """后缀统一为小写、去掉前导点，便于大小写不敏感比较。"""
         return [str(item).strip().lstrip(".").lower() for item in value if str(item).strip()]
+
+    @field_validator("login_url_keywords")
+    @classmethod
+    def _normalize_keywords(cls, value: List[str]) -> List[str]:
+        """登录页 URL 关键词统一小写、去重（URL 匹配本身不区分大小写）。"""
+        out: List[str] = []
+        for item in value:
+            word = str(item).strip().lower()
+            if word and word not in out:
+                out.append(word)
+        return out
 
     @field_validator("schedule_times")
     @classmethod
