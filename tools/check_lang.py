@@ -55,6 +55,119 @@ ZH_PREVAILS_MARKER = "以英文版为准"
 #: 这里降级为警告，而不是用一条当前无法满足的规则把整条发布门禁卡死。
 DECLARATION_WARNINGS = {"THIRD_PARTY_LICENSES.md"}
 
+#: 需要在双语版之间**逐行核对数据表**的文档：英文默认版文件名 → 表头里必须出现的列名。
+#:
+#: 为什么只针对这一份、而不对所有共用双语文档一刀切：
+#: 另外三对（EULA / PRIVACY / ENCRYPTED_DOCUMENTS）的表格单元格是**叙述文字**，
+#: 译文与英文版本就不该逐字相同，逐行比对必然误报。
+#: 而许可证清单的表格是**数据** —— 包名、版本号、许可证标识符都不随语言变化，
+#: 逐行必须一致：少一行、或版本号写错，清单描述的组件就与实际分发的对不上了。
+#:
+#: 这个洞是 v0.2.1 收口时实测踩出来的：英文默认版已是 55 个包 / 17 条直接依赖，
+#: 中文译本还停在 52 个 / 13 条 —— 缺 cffi / cryptography / pycparser 三行明细，
+#: 直接依赖表还缺 cryptography / duckduckgo_search / llama_cpp_python / urllib3 四行。
+#: 而当时这里只比章节结构（两份都是 5 个二级标题），行数差异一路放行。
+DATA_TABLE_PAIRS = {"THIRD_PARTY_LICENSES.md": ("包名", "组件")}
+
+
+def md_tables(text):
+    """把 Markdown 文本切成一串表格：返回 ``[(表头单元格列表, [数据行单元格列表]), ...]``。
+
+    只认连续以 ``|`` 开头的行，并用"整行都是 ``-``/``:``/空格"识别分隔行。
+    """
+    tables = []
+    current = None
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("|"):
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if current is None:
+                current = (cells, [])
+                continue
+            if all(set(cell) <= set("-: ") for cell in cells):
+                continue                      # |---|---| 分隔行
+            current[1].append(cells)
+        elif current is not None:
+            tables.append(current)
+            current = None
+    if current is not None:
+        tables.append(current)
+    return tables
+
+
+def check_data_tables(en_name, en_text, zh_name, zh_text, header_words):
+    """逐行核对双语版之间的数据表，返回 ``(问题数, 输出行列表)``。
+
+    只比对"表头里出现了 ``header_words`` 之一"的表格（见 ``DATA_TABLE_PAIRS``）。
+    **按表分别比对**，不把所有表合成一个集合 —— 许可证清单里有"直接依赖"与
+    "全部发行包明细"两张表，包名大量重叠，合并后某张表整段缺失会被另一张表掩盖
+    （实测：直接依赖表缺的 cryptography / duckduckgo_search / llama_cpp_python /
+    urllib3 四行，因为明细表里有同名行而没被发现）。
+    行首单元格（包名）比较时做 PEP 503 归一化 —— ``llama_cpp_python``
+    与 ``llama-cpp-python`` 是同一个包，不该因为写法不同就报差异。
+    """
+
+    def collect(text):
+        tables = {}
+        for header, data in md_tables(text):
+            if not any(any(word in cell for word in header_words) for cell in header):
+                continue
+            signature = " | ".join(cell.lower() for cell in header)
+            rows = tables.setdefault(signature, {})
+            for cells in data:
+                if not cells or not cells[0]:
+                    continue
+                rows[cells[0].lower().replace("_", "-").replace(".", "-")] = cells
+        return tables
+
+    en_tables = collect(en_text)
+    zh_tables = collect(zh_text)
+    problems = 0
+    lines = []
+    total_rows = 0
+
+    for signature in sorted(set(en_tables) | set(zh_tables)):
+        en_rows = en_tables.get(signature, {})
+        zh_rows = zh_tables.get(signature, {})
+        total_rows += len(en_rows)
+        label = f"数据表「{signature}」"
+
+        only_en = sorted(set(en_rows) - set(zh_rows))
+        only_zh = sorted(set(zh_rows) - set(en_rows))
+        if only_en or only_zh:
+            problems += 1
+            # 报原始写法（表格里的包名），而不是内部用的归一化键，
+            # 否则 `duckduckgo_search` 会被打印成 `duckduckgo-search`，读者对不上表格。
+            def shown(key):
+                return (en_rows.get(key) or zh_rows.get(key))[0]
+
+            detail = []
+            if only_en:
+                detail.append(f"{zh_name} 缺 {len(only_en)} 行"
+                              f"（{', '.join(shown(key) for key in only_en)}）")
+            if only_zh:
+                detail.append(f"{zh_name} 多出 {len(only_zh)} 行"
+                              f"（{', '.join(shown(key) for key in only_zh)}）")
+            lines.append(f"   ✗ {en_name} 与 {zh_name} 的{label}行不一致：{'；'.join(detail)}")
+
+        changed = [
+            (en_rows[key][0], en_rows[key][1:], zh_rows[key][1:])
+            for key in sorted(set(en_rows) & set(zh_rows))
+            if [cell.lower() for cell in en_rows[key][1:]]
+            != [cell.lower() for cell in zh_rows[key][1:]]
+        ]
+        if changed:
+            problems += 1
+            lines.append(f"   ✗ {en_name} 与 {zh_name} 的{label}有 {len(changed)} 行内容不一致：")
+            for name, en_cells, zh_cells in changed[:10]:
+                lines.append(f"     - {name}: {en_name} 「{' | '.join(en_cells)}」 / "
+                             f"{zh_name} 「{' | '.join(zh_cells)}」")
+
+    if not problems:
+        lines.append(f"   ✓ {en_name} ↔ {zh_name} 的数据表逐行一致"
+                     f"（{len(en_tables)} 张表 / {total_rows} 行）")
+    return problems, lines
+
 
 def heading_ordinal(line):
     """从 '## 3. Foo' / '## 三、标题' 里取出章节序号；取不到返回 None。
@@ -80,6 +193,8 @@ def check_bilingual_pairs(docs_root):
     而这种漂移恰恰是后续增删章节时最容易发生的。
     另外还校验两版文首的互相声明（中文版"以英文版为准"、英文版给出中文版路径），
     这是本仓库所有共用双语文档的统一约定。
+    对 ``DATA_TABLE_PAIRS`` 里列出的文档，还会逐行核对两版的**数据表**
+    （内容不随语言变化，因此必须完全一致）。
 
     返回 (问题数, 输出行列表)。
     """
@@ -137,8 +252,17 @@ def check_bilingual_pairs(docs_root):
                 ok = False
                 lines.append(f"   ✗ {declaration_msg}")
 
+        table_info = []
+        if en_name in DATA_TABLE_PAIRS:
+            table_problems, table_info = check_data_tables(
+                en_name, en_text, zh_name, zh_text, DATA_TABLE_PAIRS[en_name])
+            if table_problems:
+                problems += table_problems
+                ok = False
+
         if ok:
             lines.append(f"   ✓ {en_name} ↔ {zh_name}（{len(en_headings)} 章，编号与声明一致）")
+        lines.extend(table_info)
     return problems, lines
 
 #: 代码里会被扫描的键引用形式

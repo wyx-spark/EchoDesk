@@ -5,7 +5,7 @@
   "name": "EchoDesk-v0.2.1",
   "documentNamespace": "https://github.com/VoidEntropiaStudio/EchoDesk/spdx/v0.2.1",
   "creationInfo": {
-    "created": "2026-09-25T13:28:46Z",
+    "created": "2026-09-27T13:12:19Z",
     "creators": [
       "Tool: gen_sbom.py",
       "Organization: Void Entropia Studio"
@@ -219,9 +219,9 @@
       "homepage": "https://foss.heptapod.net/openpyxl/et_xmlfile"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-filelock-4.0.3",
+      "SPDXID": "SPDXRef-Package-pypi-filelock-4.0.4",
       "name": "filelock",
-      "versionInfo": "4.0.3",
+      "versionInfo": "4.0.4",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -229,7 +229,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/filelock@4.0.3"
+          "referenceLocator": "pkg:pypi/filelock@4.0.4"
         }
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",

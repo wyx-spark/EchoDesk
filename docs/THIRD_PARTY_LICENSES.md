@@ -78,7 +78,7 @@
 | diskcache | 5.6.3 | Apache 2.0 |
 | duckduckgo_search | 8.1.1 | MIT License |
 | et_xmlfile | 2.0.0 | MIT |
-| filelock | 4.0.3 | MIT |
+| filelock | 4.0.4 | MIT |
 | fsspec | 2026.9.0 | BSD-3-Clause |
 | greenlet | 3.5.6 | MIT AND PSF-2.0 |
 | h11 | 0.16.0 | MIT |
