@@ -5,7 +5,9 @@
 .DESCRIPTION
     流程（与任务书「任务三」对应）：
       1. 清空输出目录（可用 -SkipClean 保留，便于只重跑资源收集）；
-      2. 构建后端：PyInstaller onedir → app\backend\EchoDeskBackend.exe + app\backend\_internal\；
+      2. 构建后端：**干净 venv 的** PyInstaller onedir →
+         app\backend\EchoDeskBackend.exe + app\backend\_internal\
+         （见 -CleanVenv；刻意不用 PATH 上的 pyinstaller，原因见该参数说明）；
       3. 构建前端：dotnet publish 多文件（非单文件）→ app\ 下平铺依赖 DLL；
       4. 收集图标、配置、语言包、模型与文档；
       5. 生成 USAGE.txt（面向用户的结构与操作说明，中英双语）；
@@ -70,6 +72,24 @@
 .PARAMETER SkipBackend / SkipFrontend / SkipClean
     跳过对应步骤；-SkipClean 用于在已有产物上只重跑资源收集与元数据。
 
+.PARAMETER CleanVenv
+    后端构建所用的「干净 venv」目录，默认 `artifacts\clean-venv`。
+
+    **这个参数是本脚本最容易踩的坑，别改成 PATH 上的 pyinstaller。**
+    PyInstaller 是按**运行它的那个环境**分析依赖并收集 `.dist-info` 的，所以
+    "发布物里到底是哪个版本的库"取决于用的是哪个解释器。开发机的全局 Python
+    混着大量开发期残留与旧版包（v0.2.1 实测 132 个发行包），用它打包会打出
+    huggingface_hub 1.27.0 / numpy 2.5.2 / pydantic 2.13.4 的后端，
+    而 `docs\SBOM.json` 与 `docs\THIRD_PARTY_LICENSES.md` 是按干净 venv
+    （2.0.0 / 2.5.3 / 2.13.5）生成的 —— 对外就是"声明了从未随包分发的版本号"，
+    属发布任务书「不该有的一样不能有」+ 合规清单失真。
+
+    因此这里解析到 `<CleanVenv>\Scripts\pyinstaller.exe` 并**写死使用**，
+    刻意**不提供回退到 PATH 的分支**：找不到就直接失败，宁可让构建停下来，
+    也不要再悄悄打出一个与合规清单口径不一致的包。
+    门禁：`tools\check_bundled_packages.py` 会逐项比对发布物 `.dist-info` 的版本
+    与清单声明的版本，漂移会在那里当场被拦住。
+
 .PARAMETER ReuseBackendFrom
     复用既有发布目录里的后端（<该目录>\app\backend 或 <该目录>\backend），
     跳过耗时的 PyInstaller 步骤。用于**只改前端**时的快速迭代与布局自检
@@ -115,6 +135,7 @@ param(
     [switch]$SkipBackend,
     [switch]$SkipFrontend,
     [switch]$SkipClean,
+    [string]$CleanVenv = "artifacts\clean-venv",
     [switch]$KeepAllCultures,
     [string]$ReuseBackendFrom = "",
     [switch]$KeepSession,
@@ -232,13 +253,45 @@ if ($ReuseSrc) {
 }
 elseif (-not $SkipBackend) {
     Write-Step "构建后端（PyInstaller onedir，耗时较长）"
+
+    # ---- 只用干净 venv 的 PyInstaller，**绝不回退到 PATH**（根因修复，见 -CleanVenv） ----
+    # v0.2.1 发布前实测：这里原先写的是 `Invoke-Native "pyinstaller" ...`，
+    # 于是解析到 C:\...\Programs\Python\Python313\Scripts\pyinstaller.exe（全局开发环境），
+    # 打出的后端里 11 个 .dist-info 有 5 个版本与合规清单不符（click / cryptography /
+    # huggingface_hub / numpy / pydantic）。改成显式路径，并让"找不到"成为终止性错误。
+    $VenvRoot = if ([System.IO.Path]::IsPathRooted($CleanVenv)) {
+        $CleanVenv
+    } else {
+        Join-Path $Root $CleanVenv
+    }
+    $PyInstallerExe = Join-Path $VenvRoot "Scripts\pyinstaller.exe"
+    if (-not (Test-Path $PyInstallerExe)) {
+        throw ("未找到干净 venv 的 PyInstaller：$PyInstallerExe`n" +
+               "        后端必须用干净 venv 构建（原因见 -CleanVenv 说明）。" +
+               "这里刻意不提供回退到 PATH 的分支：`n" +
+               "        回退正是'发布物库版本取决于 PATH 恰好指向谁'这起合规缺陷的根因。`n" +
+               "        请先创建干净环境：`n" +
+               "          python -m venv $CleanVenv`n" +
+               "          & `"$CleanVenv\Scripts\python.exe`" -m pip install -r backend\requirements.txt")
+    }
+    $pyiVersion = ""
+    $prevEap = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $pyiVersion = (& $PyInstallerExe --version 2>&1 | Select-Object -First 1)
+    }
+    finally {
+        $ErrorActionPreference = $prevEap
+    }
+    Write-Ok "后端构建器：$PyInstallerExe（PyInstaller $pyiVersion）"
+
     $stage = Join-Path $env:TEMP "echodesk_backend_stage"
     $work = Join-Path $env:TEMP "echodesk_backend_work"
     Remove-Item $stage, $work -Recurse -Force -ErrorAction SilentlyContinue
 
     Push-Location $Root
     try {
-        Invoke-Native "pyinstaller" @("--noconfirm", "--distpath", $stage, "--workpath", $work, "backend\EchoBackend.spec") "后端构建"
+        Invoke-Native $PyInstallerExe @("--noconfirm", "--distpath", $stage, "--workpath", $work, "backend\EchoBackend.spec") "后端构建"
     }
     finally {
         Pop-Location

@@ -16,12 +16,24 @@
      「顶层模块名 → 发行包名」映射；
   2. 扫 `_internal` 下的顶层项（目录/扩展模块），过滤掉标准库与 PyInstaller 运行时；
   3. 输出三张清单：能对应到清单包的、对应不到的（可疑/未声明）、以及清单里有但没打进去的。
+  4. **版本比对（v0.2.1 发布前新增）**：`_internal` 里带 `.dist-info` 的发行包，
+     其版本必须与干净 venv（= SBOM / 许可证清单的口径）**逐项一致**。
 
-注意：**纯 Python 模块在 PyInstaller 里进的是 PYZ 归档，不会以顶层文件形式出现在
-`_internal` 中**。所以"声明了但没有对应顶层模块"那一节天然会有很多条目，
-它只用于人工扫一眼有没有意外，不是失败条件。
+为什么必须有第 4 条（这是真实的合规缺陷，不是假想）：
+模块名比对只能发现"多打进了一个组件"，**发现不了"版本不对"**。v0.2.1 实测
+`tools\build_release.ps1` 调的是 PATH 上的 `pyinstaller`，解析到全局开发环境，
+于是打出的是 click 8.4.2 / cryptography 50.0.0 / huggingface_hub 1.27.0 /
+numpy 2.5.2 / pydantic 2.13.4 的后端，而清单与 `docs/SBOM.json` 按干净 venv
+声明的是 8.5.0 / 50.0.1 / 2.0.0 / 2.5.3 / 2.13.5 ——
+**顶层模块名一个不差，本脚本的"对应不到"一直是 0**，缺陷却真实存在：
+随发布物分发的 SBOM 声明了从未随包分发的版本号。现在版本不一致是一条失败条件。
 
-退出码：0 = 无"对应不到的"项；1 = 存在未声明组件（需要人工判断是否可接受）；2 = 前提缺失。
+注意比对是**单向**的：`.dist-info` 只有一部分发行包会留在 `_internal` 里
+（纯 Python 包进 PYZ，元数据目录不一定被收集，本发布物 22 个可对应模块里只有 11 个
+带 `.dist-info`），所以只要求"**发布物里出现的每一个 `.dist-info` 都要与清单对得上**"，
+不要求清单里的每个包都能在发布物里找到 `.dist-info`。覆盖率会打印出来。
+
+退出码：0 = 无"对应不到的"且版本全部一致；1 = 存在未声明组件或版本不一致；2 = 前提缺失。
 
 用法：
     python tools/check_bundled_packages.py
@@ -116,6 +128,47 @@ def top_level_entries(internal: str) -> list[str]:
     return sorted(set(names))
 
 
+def dist_info_versions(internal: str) -> dict[str, str]:
+    """{归一化发行包名: 版本}，来自 `_internal` 下的 ``*.dist-info`` 目录名。
+
+    PyInstaller 收集到元数据目录时写成 ``<名字>-<版本>.dist-info``；名字里的连字符
+    在 wheel 命名规则下被转成下划线（``llama_cpp_python-0.3.35.dist-info``），
+    所以统一归一化后再与清单比较。版本取**最后一个**连字符之后的部分，
+    这样 ``pywin32-ctypes-0.2.3`` 这类自带连字符的包名也能正确切开。
+    """
+    found: dict[str, str] = {}
+    for entry in os.listdir(internal):
+        if not entry.endswith(".dist-info"):
+            continue
+        stem = entry[: -len(".dist-info")]
+        name, _, version = stem.rpartition("-")
+        if not name or not version:
+            continue
+        found[name.lower().replace("_", "-")] = version
+    return found
+
+
+def compare_versions(internal: str, manifest: dict[str, str]):
+    """比对发布物 `.dist-info` 的版本与清单（干净 venv）声明的版本。
+
+    返回 ``(一致项, 版本不一致项, 清单未声明项)``，每项为 ``(名字, 发布物版本, 清单版本)``。
+    只做单向检查：发布物里出现的每一个 `.dist-info` 都必须与清单对得上；
+    清单里有、但发布物没留下 `.dist-info` 的包不算问题（纯 Python 包进 PYZ）。
+    """
+    artifact = dist_info_versions(internal)
+    agree, mismatch, undeclared = [], [], []
+    for name in sorted(artifact):
+        got = artifact[name]
+        want = manifest.get(name)
+        if want is None:
+            undeclared.append((name, got, ""))
+        elif want.strip() != got.strip():
+            mismatch.append((name, got, want))
+        else:
+            agree.append((name, got, want))
+    return agree, mismatch, undeclared
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--venv", default=DEFAULT_VENV, help="干净 venv 的 python.exe")
@@ -169,6 +222,33 @@ def main() -> int:
     else:
         print("发布物内的顶层模块全部能对应到已声明的发行包。")
 
+    # ---- 版本比对：模块名对得上，不代表版本对得上（见文件头第 4 条的说明） ----
+    agree, mismatch, undeclared = compare_versions(args.internal, manifest)
+    compared = len(agree) + len(mismatch) + len(undeclared)
+    print()
+    print("== 版本比对（发布物 _internal 的 .dist-info vs 干净 venv 清单）")
+    coverage = 100.0 * compared / len(manifest) if manifest else 0.0
+    print(f"   发布物内带 .dist-info 的发行包：{compared} 个"
+          f"（清单共 {len(manifest)} 个，覆盖 {coverage:.0f}%）")
+    for name, got, _want in agree:
+        print(f"   ✓ {name} {got}")
+    if mismatch:
+        print(f"   ✗ 版本不一致：{len(mismatch)} 个 —— 发布物里的版本没有被清单声明：")
+        for name, got, want in mismatch:
+            print(f"     ! {name}: 发布物 {got} / 清单 {want}")
+    if undeclared:
+        print(f"   ✗ 发布物里有清单未声明的组件：{len(undeclared)} 个")
+        for name, got, _want in undeclared:
+            print(f"     ! {name} {got}")
+    if mismatch or undeclared:
+        print()
+        print("   处理办法：用**干净 venv 的 PyInstaller** 重新构建发布物 ——")
+        print("     tools\\build_release.ps1 已写死使用 -CleanVenv（默认 artifacts\\clean-venv），")
+        print("     不再依赖 PATH 上的 pyinstaller；这正是本类缺陷的根因。")
+        print("     若差异来自清单本身，则在干净 venv 里重跑 gen_licenses.py / gen_sbom.py。")
+    elif compared:
+        print(f"   ✓ 发布物内每个 .dist-info 的版本都与清单声明一致（{compared} 项）")
+
     # 清单里有、但发布物里没有对应顶层模块的包：多数是纯数据包（如 certifi 的 cacert.pem）
     # 或元包，属正常；这里只列名字，方便人工扫一眼有没有"声明了却没打进去"的意外。
     print()
@@ -176,7 +256,7 @@ def main() -> int:
     for n in not_bundled:
         print(f"   · {n}")
 
-    return 1 if unmapped else 0
+    return 1 if (unmapped or mismatch or undeclared) else 0
 
 
 if __name__ == "__main__":

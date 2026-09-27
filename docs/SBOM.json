@@ -5,7 +5,7 @@
   "name": "EchoDesk-v0.2.1",
   "documentNamespace": "https://github.com/VoidEntropiaStudio/EchoDesk/spdx/v0.2.1",
   "creationInfo": {
-    "created": "2026-09-27T13:12:19Z",
+    "created": "2026-09-27T13:24:52Z",
     "creators": [
       "Tool: gen_sbom.py",
       "Organization: Void Entropia Studio"
