@@ -250,6 +250,9 @@ public partial class SettingsWindow : Window
                 using JsonDocument doc = JsonDocument.Parse(configJson);
                 if (doc.RootElement.TryGetProperty("automation", out JsonElement el))
                     ApplyAutomation(el);
+                // 登录态信息单独一个请求：自动化配置里没有它（它是运行时状态而
+                // 不是配置项），且读取它需要检查文件系统，失败也不影响配置展示。
+                await RefreshLoginStateAsync();
             }
             catch (JsonException ex)
             {
@@ -824,6 +827,10 @@ public partial class SettingsWindow : Window
         UpdateResultsPreview();
         ScheduleCheck.IsChecked = GetBool(el, "schedule_enabled");
         ScheduleTimesBox.Text = string.Join(", ", GetStringList(el, "schedule_times"));
+        // 登录态（v0.2.1 自动化优化 任务一）
+        LoginStateDirBox.Text = GetString(el, "login_state_dir");
+        LoginCheckSelectorBox.Text = GetString(el, "login_check_selector");
+        LoginKeywordsBox.Text = string.Join(", ", GetStringList(el, "login_url_keywords"));
         SyncSafetyUi();
         SyncScheduleTimer();
     }
@@ -1091,6 +1098,10 @@ public partial class SettingsWindow : Window
             ["results_location"] = ResultsLocationBox.Text.Trim(),
             ["schedule_enabled"] = ScheduleCheck.IsChecked == true,
             ["schedule_times"] = ScheduleTimesBox.Text.Trim(),
+            // 登录态（v0.2.1 自动化优化 任务一）：数据目录 / 登录检测元素 / URL 关键词
+            ["login_state_dir"] = LoginStateDirBox.Text.Trim(),
+            ["login_check_selector"] = LoginCheckSelectorBox.Text.Trim(),
+            ["login_url_keywords"] = LoginKeywordsBox.Text.Trim(),
         };
 
         try
@@ -1177,6 +1188,82 @@ public partial class SettingsWindow : Window
     }
 
     // ---------- 自动化：测试选择器 ----------
+
+    /// <summary>
+    /// 刷新自动化登录态显示（v0.2.1 自动化优化 任务一）。
+    ///
+    /// 只显示"数据目录在哪、占多大、最后改动时间"，**不显示任何 Cookie 内容**——
+    /// 界面上不该出现凭据，也不该给用户"程序在读我的密码"的错觉。
+    /// </summary>
+    private async Task RefreshLoginStateAsync()
+    {
+        if (LoginStateText is null)
+            return;
+        try
+        {
+            string json = await _backend.SendRequestAsync(new { action = "automation_login_state" });
+            using JsonDocument doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("login_state", out JsonElement st))
+                return;
+            ApplyLoginState(st);
+        }
+        catch (Exception ex)
+        {
+            LoginStateText.Text = Loc.T("settings.automation.loginStateFailed", "登录态：读取失败（{0}）", ex.Message);
+        }
+    }
+
+    private void ApplyLoginState(JsonElement st)
+    {
+        if (LoginStateText is null)
+            return;
+        bool exists = GetBool(st, "exists");
+        string dir = GetString(st, "profile_dir");
+        long size = st.TryGetProperty("size_bytes", out JsonElement sz) && sz.TryGetInt64(out long v) ? v : 0;
+        string modified = GetString(st, "modified");
+        bool legacy = GetBool(st, "legacy_exists");
+        string detail = exists
+            ? Loc.T("settings.automation.loginStateSaved",
+                "登录态：已保存（{0}，约 {1} MB{2}）", dir, (size / 1048576.0).ToString("0.0"),
+                modified.Length > 0 ? Loc.T("settings.automation.loginStateModified", "，最后更新 {0}", modified) : "")
+            : Loc.T("settings.automation.loginStateEmpty",
+                "登录态：尚未保存（{0} 不存在）。第一次运行自动化时会在浏览器里引导你手动登录。", dir);
+        if (legacy)
+            detail += Loc.T("settings.automation.loginStateLegacy", "　旧备份文件 browser_state.json 仍在。");
+        LoginStateText.Text = detail;
+    }
+
+    /// <summary>清除自动化登录态（任务一）：删掉持久化数据目录，下次运行重新引导登录。</summary>
+    private async void ClearLoginStateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(this,
+                Loc.T("settings.automation.clearLoginConfirm",
+                    "确定要清除自动化的登录状态吗？\n\n清除后，下次运行需要重新在弹出的浏览器窗口里手动登录一次。\n（不会影响你日常使用的浏览器，也不会删除结果文件。）"),
+                Loc.T("settings.automation.clearLogin", "清除自动化登录态"),
+                MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
+            return;
+
+        ClearLoginStateButton.IsEnabled = false;
+        try
+        {
+            string json = await _backend.SendRequestAsync(new { action = "automation_clear_login" },
+                idleTimeout: TimeSpan.FromMinutes(2), cancellationToken: _closing.Token);
+            using JsonDocument doc = JsonDocument.Parse(json);
+            string content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+            AppendLog(content);
+            SetLoadState(content);
+            if (doc.RootElement.TryGetProperty("login_state", out JsonElement st))
+                ApplyLoginState(st);
+        }
+        catch (Exception ex)
+        {
+            AppendLog(Loc.T("settings.automation.clearLoginFailed", "❌ 清除登录态失败：{0}", ex.Message));
+        }
+        finally
+        {
+            ClearLoginStateButton.IsEnabled = true;
+        }
+    }
 
     private async void TestSelectorButton_Click(object sender, RoutedEventArgs e)
     {

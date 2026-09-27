@@ -505,10 +505,24 @@ public partial class SettingsWindow
                     "task_row" => TaskRowBox,
                     "next_page" => NextPageBox,
                     "task_detail_file" => FileSelectorBox,
+                    "login_check" => LoginCheckSelectorBox,
                     _ => TaskSelectorBox,
                 };
+                // 任务三：选取后预览 —— 把"程序将从这些元素提取以下网址：…"摆给用户看，
+                // 让他确认选的是对的位置。这是"选取语义与程序逻辑对应"的界面落点：
+                // 用户看到的预览就是程序接下来真正会用的地址列表。
+                string previewText = BuildPickPreview(doc.RootElement);
+                if (previewText.Length > 0 && !ConfirmPickPreview(previewText))
+                {
+                    SetLoadState(Loc.T("settings.automation.pickDiscarded",
+                        "↩️ 已放弃这次选取（未修改配置），请重新点击目标元素。"));
+                    return;
+                }
                 targetBox.Text = selector;
                 SetLoadState(Loc.T("settings.automation.pickDone", "✅ 已填入选择器：{0}", selector));
+                // 登录检测元素改变后，登录态描述里的"判据"也要跟着变
+                if (target == "login_check")
+                    await RefreshLoginStateAsync();
             }
             else
             {
@@ -524,6 +538,55 @@ public partial class SettingsWindow
             button.Content = original;
             button.IsEnabled = true;
         }
+    }
+
+    /// <summary>把后端回传的选取预览拼成给用户确认的文本（任务三）。</summary>
+    private string BuildPickPreview(JsonElement root)
+    {
+        if (!root.TryGetProperty("preview", out JsonElement preview) || preview.ValueKind != JsonValueKind.Object)
+            return "";
+        var lines = new List<string>();
+        string message = GetString(preview, "message");
+        if (message.Length > 0)
+            lines.Add(message);
+        if (preview.TryGetProperty("samples", out JsonElement samples) && samples.ValueKind == JsonValueKind.Array)
+        {
+            var names = new List<string>();
+            foreach (JsonElement item in samples.EnumerateArray())
+            {
+                string text = item.ToString();
+                if (text.Length > 0)
+                    names.Add(text);
+            }
+            if (names.Count > 0)
+                lines.Add(Loc.T("settings.automation.pickPreviewSamples", "\n元素示例：{0}", string.Join(" / ", names)));
+        }
+        if (preview.TryGetProperty("warnings", out JsonElement warnings) && warnings.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in warnings.EnumerateArray())
+            {
+                string text = item.ToString();
+                if (text.Length > 0)
+                    lines.Add("⚠️ " + text);
+            }
+        }
+        return string.Join("\n", lines).Trim();
+    }
+
+    /// <summary>
+    /// 预览确认框：确认 = 采用这次选取；取消 = 不改配置（要求用户重新选）。
+    /// 默认按钮是"取消"——被误选的选择器写进配置后，后续每一步都会失败，
+    /// 让"确认"需要一次明确的点击比让"取消"更需要点击更安全。
+    /// </summary>
+    private bool ConfirmPickPreview(string previewText)
+    {
+        return MessageBox.Show(this,
+            Loc.T("settings.automation.pickPreviewConfirm",
+                "程序将从这些元素提取以下网址，请确认位置选对了：\n\n{0}\n\n点「确定」采用这次选取，点「取消」重新选。",
+                previewText),
+            Loc.T("settings.automation.pickPreviewTitle", "确认选取结果"),
+            MessageBoxButton.OKCancel, MessageBoxImage.Question,
+            MessageBoxResult.Cancel) == MessageBoxResult.OK;
     }
 
     // ======================= 测试向导（任务四 4.5） =======================

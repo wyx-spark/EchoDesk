@@ -188,7 +188,7 @@ to run.
 **Q: Which capabilities can a skill hook into?**
 A: `capabilities` can currently declare commands, UI panels, automation hooks and file-parser
 extensions. For how these extension points are wired up, see the "Extension Points" section of
-`docs/DEVELOPER.md`;
+`docs/en/DEVELOPER.md`;
 what v0.2.0 fully implements is **discovery / verification / installation / uninstallation / registry**,
 while the runtime loader (which actually hooks skill commands into the `/` command table) has its
 interface defined and will be wired up in a later release.

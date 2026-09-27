@@ -118,6 +118,21 @@
         "help": "Which browser the automation opens pages with. Microsoft Edge installed on the machine is the default.",
         "example": "msedge"
       },
+      "login_state_dir": {
+        "label": "Sign-in state data directory (optional)",
+        "help": "Automation keeps its sign-in state in a separate browser data directory that is never shared with your everyday browser (a browser refuses to let two instances use the same directory). Sign in manually once in the browser that opens on the first run; after that the state is reused automatically. Empty = browser_profile inside the program directory. Several target sites can share one directory.",
+        "example": ""
+      },
+      "login_check_selector": {
+        "label": "Element that appears only after signing in (optional)",
+        "help": "The most reliable way to answer “am I signed in right now”: give an element that exists only after signing in (for example the user name in the corner). With it configured, the program pauses and asks you to sign in instead of failing through every task. Use “Pick visually” to click it on the page.",
+        "example": ".user-name"
+      },
+      "login_url_keywords": {
+        "label": "Sign-in page URL keywords (comma separated)",
+        "help": "Fallback used when no element is configured above: if the address contains one of these words, the program assumes it was redirected to a sign-in page.",
+        "example": "login, signin, sso"
+      },
       "save_results": {
         "label": "Save result files",
         "help": "Clear this to do a dry run only — no result file is written.",

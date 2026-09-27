@@ -279,7 +279,7 @@ files — `LICENSE` and `NOTICE` in the outer folder, plus `docs\PRIVACY.md`, `d
 | `Ctrl+L` | Clear the conversation |
 | `Ctrl+O` | Upload a file |
 | `Ctrl+Shift+C` | Copy the whole conversation |
-| `Ctrl+滚轮` / `Ctrl+加/减/0` | Adjust font size / reset |
+| `Ctrl+mouse wheel` / `Ctrl+plus/minus/0` | Adjust font size / reset |
 | `Ctrl+T` | Switch between the light and dark themes (the three-way choice lives in Settings) |
 | `Ctrl+,` | Open Settings |
 | `Ctrl+M` | Open the skill marketplace |

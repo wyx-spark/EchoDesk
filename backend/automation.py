@@ -239,6 +239,20 @@ def _safe_filename(name: str, fallback: str = "download") -> str:
     return s or fallback
 
 
+def _drive(gen: Iterator[Any]) -> Any:
+    """把一个"靠 ``return`` 传值、靠 ``yield`` 报进度"的生成器跑完，取出返回值。
+
+    有些跳转逻辑写成生成器是为了上报进度事件（``_click_into``），但它的调用方
+    ``wizard_step`` 是**同步**方法、没有进度通道。与其在同步方法里写
+    ``while True: next(...)`` + ``StopIteration`` 样板，不如收成这个小工具。
+    """
+    try:
+        while True:
+            next(gen)
+    except StopIteration as stop:
+        return stop.value
+
+
 def _target_label(target: str) -> str:
     """可视化选取时给用户看的目标名称（任务书 4.2 的四种选取目标）。
 
@@ -255,6 +269,7 @@ def _target_label(target: str) -> str:
         "task_row": _t("automation.target.task_row"),
         "next_page": _t("automation.target.next_page"),
         "task_detail_file": _t("automation.target.task_detail_file"),
+        "login_check": _t("automation.target.login_check"),
     }.get(target, _t("automation.target.default"))
 
 
@@ -317,6 +332,72 @@ def _is_parse_error(text: str) -> bool:
 
 
 @dataclass
+class _HrefInfo:
+    """一次 href 提取的完整结果（v0.2.1 自动化优化 任务二）。
+
+    ``kind`` 取值（判定顺序即优先级）：
+
+    * ``absolute``   —— 本身就是绝对地址，直接可用；
+    * ``relative``   —— 相对路径，已用当前页面地址补全为绝对 URL；
+    * ``javascript`` —— ``javascript:`` 之类的伪链接，**不能**用来导航；
+    * ``fragment``   —— 空片段（``#``）或页内锚点，不是任务/附件地址；
+    * ``empty``      —— href 属性为空（含"元素根本不是链接"的情况）；
+    * ``other``      —— 有值但协议不可直接导航（如 ``mailto:``、``tel:``）。
+
+    ``click_only`` 为真表示：**不要用 url 导航，改为点击元素触发跳转**。
+    任务书「任务二 特殊情况回退」要求程序自动完成这个回退，而不是直接失败。
+    """
+
+    raw: str = ""
+    url: str = ""
+    kind: str = "empty"
+
+    @property
+    def click_only(self) -> bool:
+        return self.kind in ("javascript", "fragment", "empty", "other")
+
+
+#: 伪链接前缀：这些值在 ``<a href>`` 里表示"由 JavaScript 处理点击"
+_PSEUDO_HREF_PREFIXES = ("javascript:", "vbscript:", "about:blank")
+
+#: 能直接交给浏览器导航的协议白名单；不在名单里的一律走点击回退
+_NAVIGABLE_SCHEMES = ("http", "https", "file", "ftp")
+
+
+def _classify_href(raw: Any, base_url: str) -> _HrefInfo:
+    """规范化 href 属性值：绝对 URL 直接用，相对路径拼 origin，伪链接标记为只能点击。
+
+    背景（任务书「任务二」）：XPath / CSS 选择器只负责**定位元素**，不负责读取属性。
+    正确的流程是「定位 → 读取属性 → 规范化 → 特殊情况回退」，本函数负责后两步。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return _HrefInfo("", "", "empty")
+    low = text.lower()
+    if low.startswith(_PSEUDO_HREF_PREFIXES):
+        return _HrefInfo(text, "", "javascript")
+    if text.startswith("#"):
+        # 任务书只列了裸 ``#``；这里把 ``#xxx`` 一并归入片段链接：页内锚点同样不是
+        # "任务详情页 / 附件地址"，导航过去只会停在列表页自身（这属于对任务书的扩展，
+        # 已记入 records/v0.2.1-自动化优化记录.md）。
+        return _HrefInfo(text, "", "fragment")
+    scheme = ""
+    try:
+        scheme = (urlparse(text).scheme or "").lower()
+    except Exception:  # noqa: BLE001
+        scheme = ""
+    if scheme and scheme not in _NAVIGABLE_SCHEMES:
+        return _HrefInfo(text, "", "other")
+    try:
+        absolute = urljoin(base_url or "", text)
+    except Exception:  # noqa: BLE001
+        absolute = text
+    if not absolute:
+        return _HrefInfo(text, "", "empty")
+    return _HrefInfo(text, absolute, "absolute" if scheme else "relative")
+
+
+@dataclass
 class _LinkEntry:
     """页面上的一个链接（任务链接或附件链接）。"""
 
@@ -324,10 +405,23 @@ class _LinkEntry:
     href: str = ""
     handle: Any = None      # ElementHandle；None 表示来自 Shadow DOM 穿透，不可点击
     frame: Any = None
+    href_raw: str = ""            # href 属性的原始值（未补全），用于日志与用户提示
+    href_kind: str = "absolute"   # 见 _HrefInfo.kind
+    click_only: bool = False      # True = 不能用 href 导航，必须点击元素
 
     @property
     def key(self) -> str:
+        """去重键：有 URL 用 URL；没有 URL（伪链接）时只有文本可用。
+
+        注意：**伪链接不去重**（见 ``_collect_links``）——一页里 10 个任务的
+        ``href="javascript:void(0)"`` 长得完全一样，按 href 去重会只剩 1 个任务。
+        """
         return self.href or self.text
+
+    @property
+    def address(self) -> str:
+        """给用户看的地址：伪链接显示原始值，便于解释"为什么改成点击"。"""
+        return self.href or self.href_raw
 
 
 @dataclass
@@ -343,6 +437,48 @@ class _TaskOutcome:
 
 
 # ---------- 主引擎 ----------
+
+
+class _BrowserSession:
+    """一次浏览器会话：持久化上下文 + （可能为 None 的）浏览器实例 + Playwright 句柄。
+
+    v0.2.1 自动化优化 任务一把登录态机制换成了 ``launch_persistent_context``，
+    它**返回的是上下文而不是浏览器**（且 Python 侧 ``context.browser`` 恒为 None），
+    于是"启动 → 新建上下文 → 关闭"这三个动作必须一起管。以前每个调用点都自己写
+    ``browser.close()``，换机制时要改 6 处，容易漏；收成一个对象后只改这里。
+    """
+
+    def __init__(self, playwright: Any, context: Any, browser: Any = None, note: str = "",
+                 profile_dir: str = "", first_run: bool = False) -> None:
+        self.playwright = playwright
+        self.context = context
+        self.browser = browser
+        self.note = note
+        self.profile_dir = profile_dir
+        self.first_run = first_run    # 本次是否是"首次使用这个数据目录"（需要引导登录）
+
+    @property
+    def pages(self) -> List[Any]:
+        return list(getattr(self.context, "pages", []) or [])
+
+    def new_page(self) -> Any:
+        return self.context.new_page()
+
+    def close(self) -> None:
+        """关闭上下文（持久化上下文会连带关掉浏览器），再停 Playwright。
+
+        顺序不能反：先 ``context.close()`` 才能保证 Cookie / localStorage 落盘，
+        否则下次启动拿不到这次刚登录的会话。
+        """
+        for closer in (
+            lambda: self.context.close() if self.context is not None else None,
+            lambda: self.browser.close() if self.browser is not None else None,
+            lambda: self.playwright.stop() if self.playwright is not None else None,
+        ):
+            try:
+                closer()
+            except Exception:  # noqa: BLE001 - 关闭失败不能影响主流程
+                pass
 
 
 class AutomationEngine:
@@ -407,6 +543,12 @@ class AutomationEngine:
     @property
     def task_list_url(self) -> str:
         return str(getattr(self.cfg, "task_list_url", "") or "").strip()
+
+    @property
+    def running(self) -> bool:
+        """是否正在运行（清除登录态等破坏性操作要先看它）。"""
+        with self._lock:
+            return bool(self._running)
 
     @property
     def page_timeout_ms(self) -> int:
@@ -674,46 +816,197 @@ class AutomationEngine:
                 self.logger.debug("on_progress 回调异常：%s", _redact(exc, 120))
         return event
 
-    def _launch(self, playwright: Any) -> Tuple[Any, str]:
-        """启动有头浏览器；返回 (browser, 提示文本)。通道失败时回退默认 Chromium。"""
+    @property
+    def profile_dir(self) -> str:
+        """自动化专用的**持久化用户数据目录**（v0.2.1 自动化优化 任务一）。
+
+        位置：``automation.login_state_dir``；留空时取 ``browser_state.json`` 同级的
+        ``browser_profile``。任务书要求"独立数据目录，不与用户日常浏览器共用"——
+        浏览器不允许两个实例共用同一个 user data dir，共用会直接启动失败。
+        """
+        raw = str(getattr(self.cfg, "login_state_dir", "") or "").strip()
+        if raw:
+            return os.path.abspath(os.path.expanduser(raw))
+        state = self.login_state_file
+        base = os.path.dirname(state) if state else ""
+        return os.path.join(base or os.getcwd(), "browser_profile")
+
+    @property
+    def login_url_keywords(self) -> List[str]:
+        """判定"这是登录页"的 URL 关键词（小写）。"""
+        raw = getattr(self.cfg, "login_url_keywords", None) or []
+        if isinstance(raw, str):
+            raw = raw.replace("，", ",").split(",")
+        out: List[str] = []
+        for item in raw:
+            word = str(item).strip().lower()
+            if word and word not in out:
+                out.append(word)
+        return out
+
+    def profile_ready(self) -> bool:
+        """数据目录是否已经存在（= 至少启动过一次，可能已有登录态）。"""
+        try:
+            return os.path.isdir(self.profile_dir)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def login_state_status(self) -> Dict[str, Any]:
+        """登录态现状（给设置界面显示，不含任何 Cookie 内容）。"""
+        profile = self.profile_dir
+        exists = os.path.isdir(profile)
+        size = 0
+        modified = ""
+        if exists:
+            try:
+                for current, _dirs, files in os.walk(profile):
+                    for name in files:
+                        try:
+                            size += os.path.getsize(os.path.join(current, name))
+                        except OSError:
+                            continue
+                modified = datetime.fromtimestamp(os.path.getmtime(profile)).strftime("%Y-%m-%d %H:%M")
+            except Exception:  # noqa: BLE001
+                pass
+        state_file = self.login_state_file
+        return {
+            "profile_dir": profile,
+            "exists": exists,
+            "size_bytes": size,
+            "modified": modified,
+            "legacy_state_file": state_file,
+            "legacy_exists": bool(state_file) and os.path.isfile(state_file),
+            "login_check_selector": str(getattr(self.cfg, "login_check_selector", "") or ""),
+            "url_keywords": self.login_url_keywords,
+            "runnable": not self.running,
+        }
+
+    def clear_login_state(self) -> Dict[str, Any]:
+        """清除自动化登录态：删除持久化数据目录（下次运行需重新登录）。
+
+        任务书「任务一 清除登录态」与「任务四 审计日志记录清除事件」。
+        返回 ``{"ok", "profile_dir", "removed_files", "legacy_removed", "error"}``。
+        删除失败（例如浏览器还开着、文件被占用）会如实返回错误而不是假装成功。
+        """
+        result: Dict[str, Any] = {
+            "ok": False, "profile_dir": self.profile_dir, "removed_files": 0,
+            "legacy_removed": False, "error": "",
+        }
+        if self.running:
+            result["error"] = "running"
+            return result
+        profile = self.profile_dir
+        if os.path.isdir(profile):
+            count = 0
+            try:
+                for _current, _dirs, files in os.walk(profile):
+                    count += len(files)
+            except Exception:  # noqa: BLE001
+                count = 0
+            try:
+                shutil.rmtree(profile)
+            except Exception as exc:  # noqa: BLE001
+                result["error"] = _redact(exc, 200)
+                self.logger.warning("清除自动化登录态失败：%s", _redact(exc, 200))
+                return result
+            result["removed_files"] = count
+        # 旧机制的 storage_state 备份文件里也有 Cookie，一并清掉才算"清除登录态"
+        state_file = self.login_state_file
+        if state_file and os.path.isfile(state_file):
+            try:
+                os.remove(state_file)
+                result["legacy_removed"] = True
+            except Exception as exc:  # noqa: BLE001
+                result["error"] = _redact(exc, 200)
+        result["ok"] = not os.path.isdir(profile)
+        self._audit("login_state_cleared", result="ok" if result["ok"] else "failed",
+                    error=result["error"], files_removed=int(result["removed_files"]),
+                    legacy_removed=bool(result["legacy_removed"]))
+        return result
+
+    def _open_session(self) -> "_BrowserSession":
+        """启动有头浏览器并打开**持久化上下文**（登录态由浏览器自己保存与复用）。
+
+        通道（``browser_channel``，默认 msedge）失败时回退默认 Chromium；两条路都失败
+        才抛 AutomationError。``note`` 里带可读的回退说明，由调用方转成进度事件。
+        """
+        if _sync_playwright is None:
+            raise AutomationError(_t("automation.validate.no_playwright"))
+        profile = self.profile_dir
+        first_run = not os.path.isdir(profile)
+        try:
+            os.makedirs(profile, exist_ok=True)
+        except Exception as exc:  # noqa: BLE001
+            raise AutomationError(
+                _t("automation.browser.profile_dir_failed", path=profile, error=_redact(exc, 150))
+            ) from exc
+
+        playwright = _sync_playwright().start()
         channel = str(getattr(self.cfg, "browser_channel", "msedge") or "").strip()
+        kwargs: Dict[str, Any] = {
+            "user_data_dir": profile,
+            "headless": False,          # 固定有头：用户要能看见并手动登录
+            "viewport": {"width": 1440, "height": 900},
+            "accept_downloads": True,
+        }
         note = ""
+        context = None
         if channel:
             try:
-                browser = playwright.chromium.launch(channel=channel, headless=False)
-                return browser, ""
+                context = playwright.chromium.launch_persistent_context(channel=channel, **kwargs)
             except Exception as exc:  # noqa: BLE001
                 note = _t("automation.browser.channel_fallback", channel=channel,
                           error=_redact(exc, 120))
                 self.logger.warning(note)
-        try:
-            browser = playwright.chromium.launch(headless=False)
-            return browser, note
-        except Exception as exc:  # noqa: BLE001
-            detail = _t("automation.browser.chromium_also_failed",
-                        note=note, error=_redact(exc, 200))
-            raise AutomationError(
-                _t("automation.browser.launch_failed", detail=detail)
-            ) from exc
+        if context is None:
+            try:
+                context = playwright.chromium.launch_persistent_context(**kwargs)
+            except Exception as exc:  # noqa: BLE001
+                try:
+                    playwright.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+                detail = _t("automation.browser.chromium_also_failed",
+                            note=note, error=_redact(exc, 200))
+                raise AutomationError(
+                    _t("automation.browser.launch_failed", detail=detail)
+                ) from exc
 
-    def _new_context(self, browser: Any) -> Any:
-        """创建上下文：1440x900、允许下载、尽量恢复上次登录态。"""
-        kwargs: Dict[str, Any] = {
-            "viewport": {"width": 1440, "height": 900},
-            "accept_downloads": True,
-        }
-        state_file = self.login_state_file
-        if state_file and os.path.isfile(state_file):
-            kwargs["storage_state"] = state_file
+        # 首次使用该目录：把旧机制留下的 browser_state.json 里的 Cookie 导入一次，
+        # 老用户升级后不必重新登录（只导入，不删除源文件）。
+        migrated = self._migrate_legacy_state(context) if first_run else 0
+        if migrated:
+            note = (note + _t("automation.login.migrated", count=migrated)).strip()
+        return _BrowserSession(playwright, context, getattr(context, "browser", None),
+                               note, profile_dir=profile, first_run=first_run)
+
+    def _migrate_legacy_state(self, context: Any) -> int:
+        """把 ``browser_state.json`` 的 Cookie 导入新数据目录，返回导入条数。
+
+        一次性迁移，失败只记日志：这是兼容路径，不能因为老文件损坏就挡住启动。
+        """
+        path = self.login_state_file
+        if not path or not os.path.isfile(path):
+            return 0
         try:
-            return browser.new_context(**kwargs)
-        except Exception as exc:  # noqa: BLE001 - 登录态文件损坏时丢弃它重试
-            self.logger.warning("恢复登录态失败，改为全新会话：%s", _redact(exc, 200))
-            kwargs.pop("storage_state", None)
-            return browser.new_context(**kwargs)
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            cookies = data.get("cookies") if isinstance(data, dict) else None
+            if not cookies:
+                return 0
+            context.add_cookies(cookies)
+            self._audit("login_state_migrated", result="ok", cookies=len(cookies))
+            return len(cookies)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("迁移旧登录态失败（忽略）：%s", _redact(exc, 200))
+            return 0
 
     def _save_storage_state(self, context: Any) -> None:
-        """持久化 Cookie/localStorage，供下次运行复用登录态。"""
+        """导出 storage_state 到 ``browser_state.json``（备份/迁移用，不是主机制）。
+
+        主机制是持久化数据目录，浏览器自己落盘；这里额外导出一份纯 JSON，方便用户
+        备份或换机搬走。**只写本机文件，没有任何上传行为。**
+        """
         path = self.login_state_file
         if not path or context is None:
             return
@@ -764,8 +1057,20 @@ class AutomationEngine:
                 continue
         return ""
 
-    def _handle_href(self, handle: Any, base_url: str) -> str:
-        """取元素链接并补全为绝对地址（相对链接用 urljoin）。"""
+    @staticmethod
+    def _read_href(handle: Any, base_url: str) -> _HrefInfo:
+        """任务二第 2~3 步：对**已定位到的元素**读取地址并规范化为绝对 URL。
+
+        读取顺序与网页实际写法对齐（前一个取不到才试下一个）：
+
+        1. ``href`` 属性 —— 标准写法；
+        2. JS 求值 ``el.getAttribute('href') || el.href || data-href || data-url``
+           —— 覆盖"用 ``<div data-href>`` / ``<li data-url>`` 承载地址"的站点；
+        3. 都没有 → ``kind="empty"``，调用方据此走点击回退。
+
+        选择器只负责第 1 步（定位），属性读取必须单独做——这正是任务书要纠正的
+        "概念混淆"。
+        """
         raw = ""
         try:
             raw = handle.get_attribute("href") or ""
@@ -779,13 +1084,7 @@ class AutomationEngine:
                 ) or ""
             except Exception:  # noqa: BLE001
                 raw = ""
-        raw = str(raw).strip()
-        if not raw:
-            return ""
-        try:
-            return urljoin(base_url or "", raw)
-        except Exception:  # noqa: BLE001
-            return raw
+        return _classify_href(raw, base_url)
 
     _SHADOW_JS = """
     (sel) => {
@@ -805,7 +1104,7 @@ class AutomationEngine:
       walk(document);
       return out.map((m) => ({
         text: (m.innerText || m.textContent || '').trim(),
-        href: m.getAttribute('href') || m.href || ''
+        href: m.getAttribute('href') || m.href || m.getAttribute('data-href') || m.getAttribute('data-url') || ''
       }));
     }
     """
@@ -829,11 +1128,15 @@ class AutomationEngine:
         return results
 
     def _collect_links(self, page: Any, selector: str, row_selector: str = "") -> List[_LinkEntry]:
-        """定位链接元素：主文档 → 同源 iframe → Shadow DOM 简单穿透；按 href 去重。
+        """定位链接元素：主文档 → 同源 iframe → Shadow DOM 简单穿透。
 
         ``row_selector`` 非空时先定位行容器，再在行内查找目标链接（分页/行级定位场景）。
         选择器语法错误会被记录到 ``self._selector_error``，便于把"找不到元素"和
         "选择器写错了"区分开（两者对用户的处置方式完全不同）。
+
+        去重规则（任务二修正）：**只有拿到 URL 的元素才按 URL 去重**。伪链接
+        （``javascript:void(0)`` / ``#`` / 空 href）在一页里可能出现几十次且值完全相同，
+        按 href 去重会把整页任务压成 1 个。
         """
         selector = (selector or "").strip()
         if not selector:
@@ -864,12 +1167,16 @@ class AutomationEngine:
                 except Exception:  # noqa: BLE001
                     base = ""
                 for handle in handles:
+                    info = self._read_href(handle, base)
                     found.append(
                         _LinkEntry(
                             text=_clip(self._handle_text(handle), 200),
-                            href=self._handle_href(handle, base),
+                            href=info.url,
                             handle=handle,
                             frame=frame,
+                            href_raw=info.raw,
+                            href_kind=info.kind,
+                            click_only=info.click_only,
                         )
                     )
             if found:
@@ -887,22 +1194,24 @@ class AutomationEngine:
                     except Exception:  # noqa: BLE001
                         base = ""
                     for item in items:
-                        href = item.get("href") or ""
-                        try:
-                            href = urljoin(base, href) if href else ""
-                        except Exception:  # noqa: BLE001
-                            pass
-                        entries.append(_LinkEntry(text=_clip(item.get("text"), 200), href=href, handle=None, frame=frame))
+                        info = _classify_href(item.get("href") or "", base)
+                        entries.append(_LinkEntry(
+                            text=_clip(item.get("text"), 200), href=info.url, handle=None,
+                            frame=frame, href_raw=info.raw, href_kind=info.kind,
+                            click_only=info.click_only,
+                        ))
                     break
 
-        # 3) 去重（保留首次出现顺序）
+        # 3) 去重（保留首次出现顺序；无 URL 的伪链接一律保留，见 docstring）
         unique: List[_LinkEntry] = []
         seen: Set[str] = set()
         for entry in entries:
-            key = entry.key
-            if not key or key in seen:
+            if not entry.href:
+                unique.append(entry)
                 continue
-            seen.add(key)
+            if entry.href in seen:
+                continue
+            seen.add(entry.href)
             unique.append(entry)
         return unique
 
@@ -956,6 +1265,99 @@ class AutomationEngine:
                 yield self._event("delta", _t("automation.captcha.done"))
                 return True
         yield self._event("delta", _t("automation.captcha.timeout", limit=limit))
+        return False
+
+    # ---------- 登录态（v0.2.1 自动化优化 任务一 / 任务四） ----------
+
+    def _login_present(self, page: Any) -> Optional[bool]:
+        """判断当前页面是否处于**已登录**状态。
+
+        返回 ``True`` 已登录 / ``False`` 未登录 / ``None`` 无法判断（不阻塞流程）。
+        判定优先级（最可靠的排在最前）：
+
+        1. 配置了「登录后才出现的元素」（``automation.login_check_selector``）时，
+           该元素存在 = 已登录，不存在 = 未登录；这是唯一能真正判定"登录了没有"的方法；
+        2. 没配元素时退化用 URL 关键词（默认含 login / signin / sso / cas 等）：
+           URL 命中关键词 = 未登录（被跳到登录页了）；
+        3. 两者都没有信息时返回 ``None``——**不猜测、不阻塞**，只记一条审计。
+
+        任务书要求"提供一种方式判断当前是否已登录……若检测到未登录，暂停自动化并提示
+        用户手动登录"，第 1 条就是那个"方式"，第 2 条是开箱即用的兜底。
+        """
+        selector = str(getattr(self.cfg, "login_check_selector", "") or "").strip()
+        if selector:
+            norm = _normalize_selector(selector)
+            for frame in list(getattr(page, "frames", []) or []):
+                try:
+                    if frame.locator(norm).count() > 0:
+                        return True
+                except Exception:  # noqa: BLE001 - 选择器写错/跨域帧都当作"没找到"
+                    continue
+            return False
+        url = ""
+        try:
+            url = str(getattr(page, "url", "") or "")
+        except Exception:  # noqa: BLE001
+            url = ""
+        low = url.lower()
+        if low and any(word in low for word in self.login_url_keywords):
+            return False
+        return None
+
+    def _wait_login(
+        self, page: Any, stop_fn: Callable[[], bool], *, first_run: bool = False,
+    ) -> Iterator[Dict[str, Any]]:
+        """检测到未登录时暂停，等用户手动登录；超时返回 False。
+
+        与 ``_wait_manual``（验证码）分开：判据不同（登录态检测 vs 验证码特征），
+        提示语也不同。登录完成后浏览器会自动把 Cookie 写进持久化数据目录，
+        程序不需要额外动作——这正是方案 A 的核心。
+
+        作为生成器使用：``ok = yield from self._wait_login(page, stop_fn)``。
+        """
+        state = self._login_present(page)
+        if state is True:
+            self._audit("login_state_used", url=self.task_list_url, result="ok",
+                        profile=self.profile_dir)
+            return True
+        if state is None:
+            # 无法判断（没配检测元素、URL 也不像登录页）：不打扰用户，只留痕
+            self._audit("login_state_used", url=self.task_list_url, result="unknown",
+                        profile=self.profile_dir)
+            return True
+
+        try:
+            limit = max(0, int(getattr(self.cfg, "manual_login_wait_seconds", 180) or 0))
+        except Exception:  # noqa: BLE001
+            limit = 180
+        yield self._event(
+            "delta",
+            _t("automation.login.first_run" if first_run else "automation.login.required",
+               limit=limit),
+        )
+        self._audit("login_required", url=self.task_list_url, result="waiting",
+                    first_run=bool(first_run), profile=self.profile_dir)
+        deadline = time.monotonic() + limit
+        while time.monotonic() < deadline:
+            if stop_fn():
+                return False
+            try:
+                page.wait_for_timeout(2000)
+            except Exception:  # noqa: BLE001
+                time.sleep(2)
+            if self._login_present(page) is not False:
+                yield self._event("delta", _t("automation.login.done"))
+                # 登录成功：立刻把会话落盘，避免用户随后强退导致这次登录白做
+                try:
+                    self._save_storage_state(page.context)
+                except Exception:  # noqa: BLE001
+                    pass
+                self._audit("login_completed", url=self.task_list_url, result="ok",
+                            profile=self.profile_dir)
+                return True
+        yield self._event("delta", _t("automation.login.timeout", limit=limit))
+        self._audit("login_timeout", url=self.task_list_url, result="failed",
+                    profile=self.profile_dir)
         return False
 
     # ---------- 下载与解析 ----------
@@ -1031,6 +1433,65 @@ class AutomationEngine:
             page.close()
         except Exception as exc:  # noqa: BLE001
             self.logger.debug("关闭标签页失败：%s", _redact(exc, 120))
+
+    # ---------- 链接跳转：href 不可用时回退到点击（任务二第 4 步） ----------
+
+    def _click_into(
+        self,
+        context: Any,
+        page: Any,
+        entry: _LinkEntry,
+        pages_before: Sequence[Any],
+    ) -> Iterator[Dict[str, Any]]:
+        """点击元素触发跳转，返回跳转后的页面对象（失败返回 None）。
+
+        任务书「任务二 特殊情况回退」：href 是 ``javascript:void(0)`` / ``#`` / 空时，
+        不能用 href 导航，必须回退到点击。点击后有两种可能，都要接住：
+
+        1. **新标签页**（带 ``target="_blank"`` 或 JS ``window.open``）；
+        2. **当前页跳转**（``location.href = ...``）。
+
+        作为生成器使用：``target = yield from self._click_into(...)``。
+        """
+        if entry.handle is None:
+            yield self._event("delta", _t("automation.link.no_clickable_handle",
+                                          raw=_clip(entry.href_raw, 60)))
+            return None
+        before_url = ""
+        try:
+            before_url = str(getattr(page, "url", "") or "")
+        except Exception:  # noqa: BLE001
+            before_url = ""
+        yield self._event("delta", _t("automation.link.click_fallback",
+                                      raw=_clip(entry.href_raw, 60) or entry.href_kind))
+        try:
+            self._click(entry.handle)
+        except Exception as exc:  # noqa: BLE001
+            yield self._event("delta", _t("automation.link.click_failed",
+                                          error=_redact(exc, 150)))
+            return None
+
+        # 1) 新标签页
+        for candidate in self._new_pages(context, pages_before):
+            yield self._event("delta", _t("automation.link.opened_new_tab"))
+            return candidate
+
+        # 2) 当前页跳转：给页面一点时间走完导航，再比对地址
+        try:
+            page.wait_for_load_state("domcontentloaded",
+                                     timeout=min(self.page_timeout_ms, 8000))
+        except Exception:  # noqa: BLE001
+            pass
+        self._wait_loaded(page)
+        try:
+            if str(getattr(page, "url", "") or "") != before_url:
+                yield self._event("delta", _t("automation.link.navigated_in_place",
+                                              url=_clip(page.url, 150)))
+                return page
+        except Exception:  # noqa: BLE001
+            pass
+        yield self._event("delta", _t("automation.link.click_no_navigation"))
+        return None
 
     def _name_from_response(self, response: Any, url: str, hint: str = "") -> str:
         """从响应头/URL 推断文件名。"""
@@ -1296,10 +1757,12 @@ class AutomationEngine:
         """在真实页面里测试选择器，返回匹配数量、样本文本与链接。
 
         无论成功失败都会关闭浏览器；返回结构固定为
-        ``{"ok", "count", "samples", "hrefs", "error", "kind"}``。
+        ``{"ok", "count", "samples", "hrefs", "error", "kind"}``，
+        并额外给出 ``href_kinds``（每个样本的链接类型，供"为什么读不到网址"的判断）。
         """
         kind = _selector_kind(selector)
-        result: Dict[str, Any] = {"ok": False, "count": 0, "samples": [], "hrefs": [], "error": "", "kind": kind}
+        result: Dict[str, Any] = {"ok": False, "count": 0, "samples": [], "hrefs": [],
+                                  "href_kinds": [], "error": "", "kind": kind}
         selector = (selector or "").strip()
         if not selector:
             result["error"] = _t("automation.test.empty_selector")
@@ -1311,12 +1774,10 @@ class AutomationEngine:
             result["error"] = _t("automation.test.no_playwright")
             return result
 
-        browser = playwright = None
+        session: Optional[_BrowserSession] = None
         try:
-            playwright = _sync_playwright().start()
-            browser, _ = self._launch(playwright)
-            context = self._new_context(browser)
-            page = context.new_page()
+            session = self._open_session()
+            page = session.new_page()
             page.set_default_timeout(self.page_timeout_ms)
             self._goto(page, url.strip())
             self._wait_loaded(page)
@@ -1332,6 +1793,7 @@ class AutomationEngine:
             result["count"] = len(entries)
             result["samples"] = [_clip(entry.text, 120) for entry in entries[:take]]
             result["hrefs"] = [entry.href or "" for entry in entries[:take]]
+            result["href_kinds"] = [entry.href_kind for entry in entries[:take]]
             result["ok"] = True
             if not entries:
                 result["error"] = self._selector_error or _t("automation.test.no_match")
@@ -1340,25 +1802,25 @@ class AutomationEngine:
             result["error"] = _redact(exc, 300)
             self.logger.warning("选择器测试失败：%s", _redact(exc, 200))
         finally:
-            try:
-                if browser is not None:
-                    browser.close()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                if playwright is not None:
-                    playwright.stop()
-            except Exception:  # noqa: BLE001
-                pass
+            if session is not None:
+                session.close()
         return result
 
     # ---------- 可视化选取（v0.2.1 任务书 4.2） ----------
 
     #: 注入页面的拾取脚本。悬停高亮并实时预览选择器，点击即确定，Esc 取消。
+    #:
+    #: 参数 ``bannerText`` 是页面顶部提示条的文案（由后端按界面语言传入，脚本里不再
+    #: 硬编码中文——任务三要求提示语与程序逻辑一致，硬编码会让英文界面出现中文提示）。
+    #: 返回值里除了选择器，还带上"这是不是链接元素"的判定依据：
+    #: ``isLink`` / ``hasHref`` / ``linksInside``，后端据此给出"你选中的不是链接"的提示。
     PICKER_JS = r"""
-(() => {
+(bannerText) => {
+  const TEXT = bannerText || 'EchoDesk picker: hover and click the target element; press Esc to cancel';
+  const existing = document.querySelector('[data-echodesk="banner"]');
   if (window.__echodeskPickerInstalled) {
     window.__echodeskPick = {picked: null, cancelled: false, hover: null};
+    if (existing) existing.textContent = TEXT;
     return 'reinstalled';
   }
   window.__echodeskPickerInstalled = true;
@@ -1379,7 +1841,7 @@ class AutomationEngine:
   banner.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:2147483647;'
     + 'background:#2b6cb0;color:#fff;font:13px/2 sans-serif;padding:0 12px;text-align:center;'
     + 'pointer-events:none;';
-  banner.textContent = 'EchoDesk 可视化选取：把鼠标移到要抓取的元素上并点击；按 Esc 取消';
+  banner.textContent = TEXT;
   const add = () => {
     document.documentElement.appendChild(overlay);
     document.documentElement.appendChild(tip);
@@ -1460,12 +1922,21 @@ class AutomationEngine:
     const sel = selectorFor(el);
     let count = 0;
     try { count = document.querySelectorAll(sel).length; } catch (err) { count = 0; }
+    // 任务三：把"这个元素是不是链接"的判定依据一并回传，后端据此给提示。
+    const tag = el.tagName.toLowerCase();
+    const hrefAttr = (el.getAttribute && (el.getAttribute('href')
+      || el.getAttribute('data-href') || el.getAttribute('data-url'))) || '';
+    let linksInside = 0;
+    try { linksInside = el.querySelectorAll ? el.querySelectorAll('a').length : 0; } catch (err) { linksInside = 0; }
     state.picked = {
       selector: sel,
       count: count,
-      tag: el.tagName.toLowerCase(),
+      tag: tag,
+      isLink: tag === 'a',
+      hasHref: !!hrefAttr,
+      linksInside: linksInside,
       text: (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300),
-      href: (el.getAttribute && (el.getAttribute('href') || '')) || ''
+      href: hrefAttr
     };
     cleanup();
   }, true);
@@ -1474,8 +1945,117 @@ class AutomationEngine:
     if (e.key === 'Escape') { state.cancelled = true; cleanup(); }
   }, true);
   return 'installed';
-})();
+}
 """
+
+    #: 四个可视化选取目标的**用途**语义（任务三：选取语义与程序逻辑对应）。
+    #: ``requires_link`` 为真表示这个位置必须能读到网址（href），
+    #: 为假表示它是容器或按钮，程序在后续步骤里会对它做别的处理。
+    _PICK_PURPOSE: Dict[str, Tuple[str, bool]] = {
+        "task_list": ("jump", True),          # 读 href 作为跳转目标
+        "task_row": ("row", False),           # 行容器：在行内再找链接
+        "next_page": ("click", False),        # 按钮：只点击
+        "task_detail_file": ("download", True),   # 读 href 下载
+        "login_check": ("presence", False),   # 只判断"在不在"，不读网址
+    }
+
+    def _preview_pick(
+        self, page: Any, selector: str, target: str, picked: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """任务三：把"选取结果"翻译成"程序接下来会怎么做"，供用户确认。
+
+        做三件事：
+
+        1. **选取后预览** —— 用选择器回到页面里真实查一遍，列出"程序将从这些元素提取
+           以下网址：…"，让用户确认选对了位置（而不是只回一个选择器字符串）；
+        2. **非链接元素识别** —— 用户可能点到按钮、``<div>``、``<li>`` 这类没有 href 的
+           元素；对"必须能读网址"的位置直接拦下并提示重新选择（否则配置会被悄悄写坏）；
+        3. **空 href / JavaScript 伪链接提示** —— 这类元素提取不到网址，程序会改为点击
+           触发；这里明确告诉用户，避免他以为程序"没读到链接就是坏了"。
+
+        返回值同时进 ``done`` 事件，前端据此弹确认框。
+        """
+        purpose, requires_link = self._PICK_PURPOSE.get(target, ("jump", True))
+        preview: Dict[str, Any] = {
+            "target": target, "purpose": purpose, "requires_link": requires_link,
+            "matches": 0, "links": 0, "click_only": 0, "hrefs": [], "samples": [],
+            "warnings": [], "blocking": "", "kind_labels": [],
+        }
+        try:
+            entries = self._collect_links(page, selector)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("选取预览失败：%s", _redact(exc, 150))
+            entries = []
+
+        preview["matches"] = len(entries)
+        with_href = [e for e in entries if e.href]
+        without = [e for e in entries if not e.href]
+        preview["links"] = len(with_href)
+        preview["click_only"] = len(without)
+        preview["hrefs"] = [e.href for e in with_href[:5]]
+        preview["samples"] = [
+            (_clip(e.text, 60) or e.address or _t("automation.value.no_text"))
+            for e in entries[:5]
+        ]
+        kinds: List[str] = []
+        for entry in without:
+            label = _t(f"automation.link.kind.{entry.href_kind}")
+            if label not in kinds:
+                kinds.append(label)
+        preview["kind_labels"] = kinds
+
+        # ---- 非链接元素识别（只对"必须能读网址"的位置拦） ----
+        is_link = bool(picked.get("isLink"))
+        has_href_attr = bool(picked.get("hasHref"))
+        links_inside = 0
+        try:
+            links_inside = int(picked.get("linksInside") or 0)
+        except Exception:  # noqa: BLE001
+            links_inside = 0
+        tag = str(picked.get("tag") or "").lower() or "?"
+        if requires_link and not is_link and not has_href_attr and preview["links"] == 0:
+            if links_inside > 0:
+                preview["blocking"] = _t("automation.link.not_a_link_container",
+                                         tag=tag, count=links_inside)
+            else:
+                preview["blocking"] = _t("automation.link.not_a_link", tag=tag)
+            preview["warnings"].append(preview["blocking"])
+            return preview
+
+        # ---- 预览文案 ----
+        lines: List[str] = []
+        if purpose == "click":
+            lines.append(_t("automation.link.preview_click_target"))
+        elif purpose == "row":
+            lines.append(_t("automation.link.preview_row_target"))
+        elif purpose == "presence":
+            lines.append(_t("automation.link.preview_presence_target",
+                            count=preview["matches"]))
+        else:
+            lines.append(_t("automation.link.preview_title"))
+            if with_href:
+                for index, entry in enumerate(with_href[:5], 1):
+                    lines.append(_t("automation.link.preview_item", index=index,
+                                    url=_clip(entry.href, 120)))
+                if len(with_href) > 5:
+                    lines.append(_t("automation.link.preview_more", count=len(with_href)))
+            else:
+                lines.append(_t("automation.link.preview_none"))
+        if without and purpose in ("jump", "download"):
+            notice = _t("automation.link.click_only_notice",
+                        kinds=_t("automation.list_sep").join(kinds)
+                        or _t("automation.value.empty_paren"))
+            lines.append("\n" + notice)
+            preview["warnings"].append(notice)
+        # 只匹配到 1 个元素时提醒一句：可视化选取生成的是"精确到这一个"的选择器，
+        # 而任务列表/附件位置通常需要匹配多条。这里不拦截（单个任务站点是合法用法），
+        # 但必须让用户在确认框里看得见——否则他会以为程序"只处理了第一条"是 bug。
+        if purpose in ("jump", "download") and preview["matches"] == 1:
+            single = _t("automation.link.preview_single_match")
+            lines.append("\n" + single)
+            preview["warnings"].append(single)
+        preview["message"] = "".join(lines)
+        return preview
 
     def pick_selector(
         self,
@@ -1491,9 +2071,9 @@ class AutomationEngine:
         records/v0.2.1-研发记录.md）：
 
         * WebView2 需要额外引入 SDK 与系统运行时，与"尽量减小打包体积"的全局要求冲突；
-        * 任务书要求"登录态与自动化共享（复用 browser_state.json）"——
-          WebView2 有自己的用户数据目录，做不到；Playwright 这套直接用同一份
-          ``browser_state.json``，登录态天然一致；
+        * 任务书要求"登录态与自动化共享"——WebView2 有自己的用户数据目录，做不到；
+          Playwright 这套与自动化共用同一个持久化数据目录，登录态天然一致
+          （v0.2.1 自动化优化后不再依赖 ``browser_state.json``，见 ``_open_session``）；
         * 自动化本来就用 Playwright 启动 Edge，复用同一引擎不增加任何新依赖，
           且选择器在同一个渲染引擎下生成与验证，结果更可靠。
 
@@ -1510,18 +2090,23 @@ class AutomationEngine:
             yield self._event("error", _t("automation.pick.no_url"))
             return
 
-        playwright = browser = context = page = None
+        session: Optional[_BrowserSession] = None
+        page = None
         try:
-            playwright = _sync_playwright().start()
-            browser, note = self._launch(playwright)
-            if note:
-                yield self._event("delta", note)
-            context = self._new_context(browser)   # 复用 browser_state.json 的登录态
-            page = context.new_page()
+            session = self._open_session()      # 与自动化共用持久化登录态
+            if session.note:
+                yield self._event("delta", session.note)
+            page = session.new_page()
             page.set_default_timeout(self.page_timeout_ms)
             yield self._event("delta", _t("automation.pick.opening", url=url))
             self._goto(page, url)
             self._wait_loaded(page)
+            # 任务四：可视化选取同样要能识别"没登录"——用户在这里登录一次，
+            # 登录态就进了持久化目录，后续自动化与再次选取都直接复用。
+            if not (yield from self._wait_login(page, lambda: self._stop.is_set(),
+                                                first_run=session.first_run)):
+                yield self._event("error", _t("automation.pick.login_required"))
+                return
 
             if target == "task_detail_file":
                 selector = str(getattr(self.cfg, "task_list_selector", "") or "").strip()
@@ -1536,11 +2121,22 @@ class AutomationEngine:
                     return
                 first = entries[0]
                 if not first.href:
-                    yield self._event("error", _t("automation.pick.first_task_no_link",
-                                                  title=_clip(first.text, 40)))
-                    return
-                self._goto(page, first.href)
-                self._wait_loaded(page)
+                    # 任务二：伪链接的第一个任务也能进——回退到点击
+                    if first.click_only and first.handle is not None:
+                        detail = yield from self._click_into(page.context, page, first,
+                                                             session.pages)
+                        if detail is None:
+                            yield self._event("error", _t("automation.pick.first_task_no_link",
+                                                          title=_clip(first.text, 40)))
+                            return
+                        page = detail
+                    else:
+                        yield self._event("error", _t("automation.pick.first_task_no_link",
+                                                      title=_clip(first.text, 40)))
+                        return
+                else:
+                    self._goto(page, first.href)
+                    self._wait_loaded(page)
                 yield self._event("delta", _t("automation.pick.entered_detail",
                                               title=_clip(first.text, 40)))
 
@@ -1548,7 +2144,7 @@ class AutomationEngine:
                 page.bring_to_front()
             except Exception:  # noqa: BLE001
                 pass
-            page.evaluate(self.PICKER_JS)
+            page.evaluate(self.PICKER_JS, _t("automation.pick.banner"))
             yield self._event(
                 "delta",
                 _t("automation.pick.prompt", target=_target_label(target)),
@@ -1588,16 +2184,32 @@ class AutomationEngine:
 
             selector = str(picked.get("selector") or "").strip()
             count = int(picked.get("count") or 0)
+            # ---- 任务三：选取后预览 + 非链接元素识别 + 伪链接提示 ----
+            preview = self._preview_pick(page, selector, target, picked)
+            if preview.get("blocking"):
+                # 位置选错了（点到容器/按钮）：不改配置，直接请用户重选
+                self._audit("pick_rejected", url=url, result="not_a_link",
+                            error=preview["blocking"], target=target)
+                yield self._event("error", preview["blocking"], preview=preview,
+                                  selector="", target=target)
+                return
+            message = (_t("automation.pick.generated", selector=selector, count=count)
+                       + (_t("automation.pick.element_text",
+                              text=_clip(picked.get("text"), 120)) if picked.get("text") else "")
+                       + "\n" + str(preview.get("message") or ""))
+            self._audit("pick_done", url=url, result="ok", target=target,
+                        matches=int(preview.get("matches") or 0),
+                        links=int(preview.get("links") or 0),
+                        click_only=int(preview.get("click_only") or 0))
             yield self._event(
                 "done",
-                _t("automation.pick.generated", selector=selector, count=count)
-                + (_t("automation.pick.element_text",
-                       text=_clip(picked.get("text"), 120)) if picked.get("text") else ""),
+                message,
                 selector=selector,
                 count=count,
                 target=target,
                 text=str(picked.get("text") or "")[:300],
                 href=str(picked.get("href") or ""),
+                preview=preview,
             )
         except Exception as exc:  # noqa: BLE001
             message = _t("automation.pick.failed", error=_redact(exc, 300))
@@ -1605,16 +2217,12 @@ class AutomationEngine:
             yield self._event("error", message)
         finally:
             try:
-                if context is not None:
-                    self._save_storage_state(context)   # 把新登录态写回 browser_state.json
+                if session is not None and session.context is not None:
+                    self._save_storage_state(session.context)   # 导出备份（主机制是数据目录）
             except Exception:  # noqa: BLE001
                 pass
-            for closer in (lambda: browser.close() if browser else None,
-                           lambda: playwright.stop() if playwright else None):
-                try:
-                    closer()
-                except Exception:  # noqa: BLE001
-                    pass
+            if session is not None:
+                session.close()
 
     # ---------- 分步测试向导（v0.2.1 任务书 4.5） ----------
 
@@ -1638,12 +2246,10 @@ class AutomationEngine:
             result["error"] = _t("automation.test.no_playwright")
             return result
 
-        playwright = browser = None
+        session: Optional[_BrowserSession] = None
         try:
-            playwright = _sync_playwright().start()
-            browser, _ = self._launch(playwright)
-            context = self._new_context(browser)
-            page = context.new_page()
+            session = self._open_session()
+            page = session.new_page()
             page.set_default_timeout(self.page_timeout_ms)
             self._goto(page, url.strip())
             self._wait_loaded(page)
@@ -1684,16 +2290,8 @@ class AutomationEngine:
             result["error"] = _redact(exc, 300)
             self.logger.warning("元素测试失败：%s", _redact(exc, 200))
         finally:
-            try:
-                if browser is not None:
-                    browser.close()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                if playwright is not None:
-                    playwright.stop()
-            except Exception:  # noqa: BLE001
-                pass
+            if session is not None:
+                session.close()
         return result
 
     def wizard_step(self, step: int, **kwargs: Any) -> Dict[str, Any]:
@@ -1797,28 +2395,42 @@ class AutomationEngine:
             if not url or not list_selector:
                 out["detail"] = _t("automation.wizard.step3.needs_prereq")
                 return out
-            playwright = browser = None
+            session: Optional[_BrowserSession] = None
             try:
-                playwright = _sync_playwright().start()
-                browser, _ = self._launch(playwright)
-                context = self._new_context(browser)
-                page = context.new_page()
+                session = self._open_session()
+                page = session.new_page()
                 page.set_default_timeout(self.page_timeout_ms)
                 self._goto(page, url)
                 self._wait_loaded(page)
                 entries = self._collect_links(
                     page, list_selector, str(getattr(cfg, "task_row_selector", "") or ""))
-                if not entries or not entries[0].href:
+                if not entries:
                     out["detail"] = _t("automation.wizard.step3.no_usable_task")
                     out["suggestions"] = [_t("automation.wizard.step3.let_step1_pass")]
                     return out
-                self._goto(page, entries[0].href)
-                self._wait_loaded(page)
+                if entries[0].href:
+                    self._goto(page, entries[0].href)
+                    self._wait_loaded(page)
+                elif entries[0].click_only and entries[0].handle is not None:
+                    # 任务二回退：第一个任务是伪链接时走点击（进度事件在这里无人接收，
+                    # 因为 wizard_step 是同步 API；点击失败的结果由下面的提示语体现）
+                    detail = _drive(self._click_into(page.context, page, entries[0],
+                                                     session.pages))
+                    if detail is None:
+                        out["detail"] = _t("automation.wizard.step3.no_usable_task")
+                        out["suggestions"] = [_t("automation.wizard.step3.let_step1_pass")]
+                        return out
+                    page = detail
+                else:
+                    out["detail"] = _t("automation.wizard.step3.no_usable_task")
+                    out["suggestions"] = [_t("automation.wizard.step3.let_step1_pass")]
+                    return out
                 locator = page.locator(_normalize_selector(selector))
                 count = locator.count()
                 samples: List[str] = []
                 exts = set(self.file_extensions)
                 matched_ext = 0
+                link_entries = self._collect_links(page, selector)
                 for index in range(min(count, 8)):
                     try:
                         text = (locator.nth(index).inner_text(timeout=2000) or "").strip().replace("\n", " ")
@@ -1826,19 +2438,29 @@ class AutomationEngine:
                         continue
                     if text:
                         samples.append(_clip(text, 120))
-                    ext = _extension_of(locator.nth(index).get_attribute("href") or "")
-                    if not ext:
-                        ext = _extension_of(text)
+                    # 任务二：统一用 _classify_href 判定后缀，避免 javascript:# 之类的
+                    # 伪链接被 urljoin 拼成"看起来像地址"的东西后误判后缀
+                    info = _classify_href(
+                        (locator.nth(index).get_attribute("href") or ""), page.url)
+                    ext = _extension_of(info.url) or _extension_of(text)
                     if ext and ext.lstrip(".").lower() in exts:
                         matched_ext += 1
+                click_only = sum(1 for e in link_entries if e.click_only)
                 out["samples"] = samples
                 out["data"] = {"count": int(count), "matched_extensions": matched_ext,
-                               "task": _clip(entries[0].text, 60), "task_url": entries[0].href}
+                               "task": _clip(entries[0].text, 60),
+                               "task_url": entries[0].href or entries[0].href_raw,
+                               "click_only": click_only}
                 if count:
                     out["ok"] = True
                     out["detail"] = _t("automation.wizard.step3.matched",
                                        title=_clip(entries[0].text, 40), count=count,
                                        matched=matched_ext)
+                    if click_only:
+                        # 任务三：伪链接要明确告诉用户"后续会改成点击"
+                        out["detail"] += "\n" + _t(
+                            "automation.link.click_only_notice",
+                            kinds=_t("automation.link.kind.javascript"))
                     if matched_ext == 0:
                         out["suggestions"] = [
                             _t("automation.wizard.step3.extensions",
@@ -1852,12 +2474,8 @@ class AutomationEngine:
             except Exception as exc:  # noqa: BLE001
                 out["detail"] = _t("automation.wizard.test_failed", error=_redact(exc, 300))
             finally:
-                for closer in (lambda: browser.close() if browser else None,
-                               lambda: playwright.stop() if playwright else None):
-                    try:
-                        closer()
-                    except Exception:  # noqa: BLE001
-                        pass
+                if session is not None:
+                    session.close()
             return out
 
         if int(step) == 4:
@@ -2011,7 +2629,8 @@ class AutomationEngine:
         results: List[str] = []
         processed_urls = self._load_processed() if bool(getattr(self.cfg, "dedupe", True)) else set()
         run_tmp = ""
-        browser = context = page = playwright = None
+        session: Optional[_BrowserSession] = None
+        page = None
         total_tasks = 0
         try:
             os.makedirs(self.download_dir, exist_ok=True)
@@ -2034,14 +2653,12 @@ class AutomationEngine:
                         max_tasks=limit or getattr(self.cfg, "max_tasks", 20))
             yield self._event("delta", _t("automation.run.starting", url=self.task_list_url))
 
-            # ---- 启动浏览器 ----
+            # ---- 启动浏览器（持久化上下文：登录态自动复用，v0.2.1 任务一） ----
             yield self._event("delta", _t("automation.run.launching_browser"))
-            playwright = _sync_playwright().start()
-            browser, note = self._launch(playwright)
-            if note:
-                yield self._event("delta", note)
-            context = self._new_context(browser)
-            page = context.new_page()
+            session = self._open_session()
+            if session.note:
+                yield self._event("delta", session.note)
+            page = session.new_page()
             page.set_default_timeout(self.page_timeout_ms)
             try:
                 page.set_default_navigation_timeout(self.page_timeout_ms)
@@ -2055,6 +2672,18 @@ class AutomationEngine:
             if not manual_ok:
                 yield self._event("delta", _t("automation.run.manual_not_done"))
             self._wait_loaded(page)
+            # ---- 登录态检测（任务四）：未登录则暂停等用户登录，超时中止本轮 ----
+            # 这里用 return 而不是"继续跑"：没登录的话后面每一个任务都会失败，
+            # 跑完再报 20 条失败对用户毫无帮助（任务书要求"暂停并提示用户手动登录"）。
+            if not (yield from self._wait_login(page, stopped, first_run=session.first_run)):
+                message = _t("automation.run.login_not_done",
+                             seconds=getattr(self.cfg, "manual_login_wait_seconds", 180))
+                self._last_error = message
+                self._save_summary_block(_t("automation.run.summary_no_task", reason=message))
+                self._audit("run_end", url=self.task_list_url, result="failed", error=message,
+                            **counters)
+                yield self._event("error", message)
+                return
 
             # ---- 收集任务链接（含分页）----
             task_selector = str(getattr(self.cfg, "task_list_selector", "") or "")
@@ -2067,12 +2696,16 @@ class AutomationEngine:
             for page_index in range(1, _MAX_PAGES + 1):
                 if stopped():
                     break
-                entries = [e for e in self._collect_links(page, task_selector, row_selector) if e.href]
+                # 任务二：伪链接（无 href）也要收进来——它们由点击回退处理，
+                # 以前用 `if e.href` 过滤会把整页"javascript:void(0)"的任务全部丢掉。
+                entries = [e for e in self._collect_links(page, task_selector, row_selector)
+                           if e.href or e.handle is not None]
                 new_count = 0
                 for entry in entries:
-                    if entry.href in seen_keys:
-                        continue
-                    seen_keys.add(entry.href)
+                    if entry.href:
+                        if entry.href in seen_keys:
+                            continue
+                        seen_keys.add(entry.href)
                     pending.append(entry)
                     new_count += 1
                 yield self._event(
@@ -2153,7 +2786,7 @@ class AutomationEngine:
                                    attempt=attempt, attempts=attempts),
                             )
                         outcome = yield from self._process_one(
-                            context, page, entry, index, total_tasks, task_tmp, stopped
+                            session.context, page, entry, index, total_tasks, task_tmp, stopped
                         )
                         if outcome.status == "ok":
                             break
@@ -2256,27 +2889,15 @@ class AutomationEngine:
             self._audit("run_end", url=self.task_list_url, result="failed", error=message, **counters)
             yield self._event("error", message)
         finally:
-            # 统一清理：登录态落盘 → 关闭上下文/浏览器 → 停 Playwright → 删本轮临时目录
+            # 统一清理：导出登录态备份 → 关闭持久化上下文（浏览器随之关闭）→ 停 Playwright
+            #                          → 删本轮临时目录
             try:
-                if context is not None:
-                    self._save_storage_state(context)
+                if session is not None and session.context is not None:
+                    self._save_storage_state(session.context)
             except Exception:  # noqa: BLE001
                 pass
-            try:
-                if context is not None:
-                    context.close()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                if browser is not None:
-                    browser.close()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                if playwright is not None:
-                    playwright.stop()
-            except Exception:  # noqa: BLE001
-                pass
+            if session is not None:
+                session.close()
             if run_tmp:
                 shutil.rmtree(run_tmp, ignore_errors=True)
             with self._lock:
@@ -2328,37 +2949,57 @@ class AutomationEngine:
         names: List[str] = []
         errors: List[str] = []
         pages_before = list(getattr(context, "pages", []) or [])
+        detail_page = page            # 伪链接走点击时，详情页可能是新标签页
         try:
-            if not entry.href:
-                return _TaskOutcome("failed", "", [], _t("automation.task.empty_link"))
             yield self._event("delta", _t("automation.task.opening_detail", index=index,
                                           total=total, title=_clip(title, 40)))
-            self._goto(page, entry.href)
-            if not (yield from self._wait_manual(page, stop_fn)):
+            if entry.href:
+                # 任务二第 3 步：规范化后的绝对地址直接导航
+                self._goto(page, entry.href)
+            elif entry.click_only and entry.handle is not None:
+                # 任务二第 4 步：伪链接（javascript: / # / 空 href）改为点击触发
+                opened = yield from self._click_into(context, page, entry, pages_before)
+                if opened is None:
+                    return _TaskOutcome("failed", "", [], _t(
+                        "automation.task.no_navigable_link", kind=entry.href_kind,
+                        raw=_clip(entry.href_raw, 60)))
+                detail_page = opened
+            else:
+                return _TaskOutcome("failed", "", [], _t("automation.task.empty_link"))
+            if not (yield from self._wait_manual(detail_page, stop_fn)):
                 return _TaskOutcome("failed", "", [], _t(
                     "automation.task.manual_timeout",
                     seconds=getattr(self.cfg, "manual_login_wait_seconds", 180)))
-            self._wait_loaded(page)
+            self._wait_loaded(detail_page)
             if stop_fn():
                 return _TaskOutcome("failed", "", [], _t("automation.task.stopped"))
 
             # ---- 定位附件链接并按后缀过滤 ----
             file_selector = str(getattr(self.cfg, "task_detail_file_selector", "") or "")
-            entries = [e for e in self._collect_links(page, file_selector) if e.href or e.handle is not None]
+            entries = [e for e in self._collect_links(detail_page, file_selector)
+                       if e.href or e.handle is not None]
             allowed = self.file_extensions
             matched: List[_LinkEntry] = []
             skipped_ext = 0
+            click_only_files = 0
             for candidate in entries:
                 ext = _extension_of(candidate.href) or _extension_of(candidate.text)
                 if allowed and ext not in allowed:
                     skipped_ext += 1
                     continue
+                if candidate.click_only:
+                    click_only_files += 1
                 matched.append(candidate)
                 if len(matched) >= _MAX_FILES_PER_TASK:
                     break
             if skipped_ext:
                 yield self._event("delta", _t("automation.task.ignored_extensions",
                                               index=index, total=total, count=skipped_ext))
+            if click_only_files:
+                # 任务三：明确告诉用户"这些附件读不到网址，改为点击下载"
+                yield self._event("delta", _t("automation.task.click_only_files",
+                                              index=index, total=total,
+                                              count=click_only_files))
             if not matched:
                 reason = _t("automation.task.no_matching_files")
                 if self._selector_error:
@@ -2371,14 +3012,14 @@ class AutomationEngine:
             for order, candidate in enumerate(matched, 1):
                 if stop_fn():
                     return _TaskOutcome("failed", "", names, _t("automation.task.stopped"))
-                label = (_clip(candidate.text or candidate.href, 60)
+                label = (_clip(candidate.text or candidate.address, 60)
                          or _t("automation.task.fallback_file", order=order))
                 yield self._event(
                     "delta",
                     _t("automation.task.downloading", index=index, total=total, label=label,
                        order=order, count=len(matched)),
                 )
-                path, err = self._download_entry(context, page, candidate, task_tmp)
+                path, err = self._download_entry(context, detail_page, candidate, task_tmp)
                 if err or not path:
                     errors.append(_t("automation.task.file_error", label=label,
                                      error=err or _t("automation.file.download_failed_short")))
@@ -2429,10 +3070,11 @@ class AutomationEngine:
             if kept:
                 yield self._event("delta", _t("automation.task.files_kept", index=index,
                                               total=total, count=len(kept)))
-            result_path = self._save_result(title, entry.href, names, summary, index=index, total=total)
+            result_path = self._save_result(title, entry.address, names, summary,
+                                            index=index, total=total)
             return _TaskOutcome("ok", summary, names, "", result_path)
         except Exception as exc:  # noqa: BLE001
-            shot = self._screenshot(page, index)
+            shot = self._screenshot(detail_page, index)
             # 新增三：失败时也保留下载到的原始文件与失败截图
             kept = self._move_into_task_dir(files_saved)
             moved_paths.update(files_saved)

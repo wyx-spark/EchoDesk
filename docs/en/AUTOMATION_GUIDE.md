@@ -29,8 +29,12 @@ If the attachments are legacy `.doc` / `.ppt` files, or the documents are encryp
 
 After you click "▶ Run once now", the program:
 
-1. **Opens the browser with a visible window** (you can watch the whole time) and visits the task list URL you entered;
-2. Finds every task link using "Task link position", and turns pages automatically using "Next page button" (if you filled it in);
+1. **Opens the browser with a visible window** (you can watch the whole time) and visits the task list URL you
+   entered; the **sign-in state is reused automatically** — sign in once in that browser window and later runs
+   never ask again (see section 10);
+2. Finds every task link using "Task link position" (relative paths are completed into absolute addresses, while
+   pseudo-links such as `javascript:` / `#` / an empty href switch to a click automatically — see section 11),
+   and turns pages automatically using "Next page button" (if you filled it in);
 3. Opens each task in turn, finds the attachments using "Attachment position on the detail page", and downloads only files whose extension is listed in "File types to process";
 4. Parses the attachments locally and hands their content, together with the "Task instruction", to the local model to produce a review;
 5. Keeps the original attachments and the result (written into the results folder) and moves on to the next task;
@@ -85,6 +89,9 @@ When a CAPTCHA or two-factor verification appears, the run **pauses and waits fo
 | Where to save results `results_location` | Optional | Put results on another drive or a shared folder; empty = the user data folder (the portable **outer** folder `EchoDesk-v0.2.1\`, not `app\`; set the `ECHODESK_DATA` environment variable to move it) | empty (= the user data folder) |
 | Run on a schedule `schedule_enabled` | Optional | Runs a batch automatically at fixed times every day | `false` |
 | Scheduled times `schedule_times` | Optional | The times of day, separated by commas | `09:00` |
+| Sign-in state data directory `login_state_dir` | Optional | The separate directory automation uses to store the sign-in state in the browser (never shared with your everyday browser); empty = `browser_profile` inside the program folder. Several target sites can share one | empty |
+| Element that appears only after signing in `login_check_selector` | Optional | The most reliable way to decide whether you are signed in: an element that exists only once you are. Use "🎯 Pick visually" to click it | empty |
+| Sign-in page URL keywords `login_url_keywords` | Optional | The fallback used when the field above is empty: if the address contains one of these words, the program assumes it was redirected to a sign-in page | `login, signin, sign-in, logon, sso, passport, cas, auth` |
 
 ### 2.3 Advanced fields (only editable in `app\backend\config.json`)
 
@@ -98,7 +105,7 @@ restart for the change to take effect (the file is UTF-8; Notepad or VS Code bot
 | `wait_network_idle` | Optional | Waits until network requests stop before acting: steadier, a little slower | `true` |
 | `download_dir` | Optional | Attachments are downloaded into this temporary folder and cleaned up afterwards | empty (= `echodesk_downloads` under the system temp folder) |
 | `processed_file` | Optional | Where the processed-task record lives (used by "Skip tasks already processed") | `automation_processed.json` |
-| `login_state_file` | Optional | Where the login state is stored (cookies / localStorage) | `browser_state.json` |
+| `login_state_file` | Optional | The **backup / migration** file for the sign-in state (cookies / localStorage). The primary mechanism is the browser's own data directory; this JSON file is also used to import cookies once when upgrading from an older version | `browser_state.json` |
 | `manual_login_wait_seconds` | Optional | How long the run waits for you when a CAPTCHA or login appears | `180` (0–3600) |
 | `headless` | Read-only | Automation **only supports a visible browser**; writing `true` is corrected back to `false` with a warning | `false` |
 | `browser_channel` | Optional | Which browser opens the pages; the system Edge is the default | `msedge` |
@@ -211,6 +218,18 @@ Click "Open results folder" to open the results root in File Explorer; click "Br
 - The safety protocol comes first: tick "I have read and understood the safety protocol above and accept responsibility for using it";
 - While it is unticked the master switch is **forced off** by the backend, with a message in the log;
 - The protocol version and the time you accepted it are written to the audit log for later tracing.
+
+### 3.13 Sign-in state fields (data directory / detection element / page keywords)
+
+All three live under **Settings window → Automation → Sign-in state**, and most users **never have to change
+them** (the defaults work). Their full description — plus "what the program does when you are not signed in",
+"how to clear the sign-in state" and "how several sites share it" — is in **section 10**. In one line each:
+
+- **Data directory**: where automation stores the sign-in state on its own; sign in once and later runs reuse it;
+  leave it empty;
+- **Element that appears only after signing in**: fill it in for a smarter "am I signed in?" answer (the user
+  name in the corner, for example); "🎯 Pick visually" fills it in for you;
+- **Sign-in page URL keywords**: the fallback used when the field above is empty; usually left alone.
 
 ---
 
@@ -497,11 +516,155 @@ the export feature in section 8.
 
 ---
 
-## 10. Related documents
+## 10. Sign-in state: sign in once, reuse it afterwards
+
+Having to sign in again on every run makes automation unusable for non-technical users. Automation therefore
+keeps your sign-in state in a **browser data directory of its own** and picks it up again on the next run.
+
+### 10.1 What the program does
+
+| Step | What the program does | What you do |
+| --- | --- | --- |
+| Data directory | Reserved for automation; `browser_profile` by default (next to `browser_state.json`). Change it under "Sign-in state → Data directory" or via `login_state_dir` | Nothing, normally |
+| First run | Opens the browser with a visible window and visits the task list page; when it decides you are not signed in it **pauses** and tells you to sign in | Sign in normally in the browser window that opened |
+| After signing in | The browser writes cookies / localStorage into the data directory by itself; once the program detects the signed-in state it **carries on automatically** — no restart needed | Nothing |
+| Later runs | Reuses the sign-in state in that directory; it **never asks you to sign in again** | Nothing |
+| Sign-in expires | It is treated as "not signed in" again, so the program pauses for you once more | Sign in once again |
+
+The data directory is **never shared with your everyday browser**: a browser refuses to let two instances use
+the same user data directory, so automation must have its own copy.
+
+### 10.2 How the program decides whether you are signed in
+
+From most to least reliable:
+
+1. **An element that appears only after signing in** (`login_check_selector`) — the most reliable option. Give an
+   element that exists only once you are signed in (for example the user name in the corner); if the program
+   cannot find it, it treats you as signed out. Use "🎯 Pick visually" to click it on the page.
+   Pick an element that **only appears after signing in** — not something present on the sign-in page too
+   (a page frame or a footer, for example).
+2. **Sign-in page URL keywords** (`login_url_keywords`, default
+   `login, signin, sign-in, logon, sso, passport, cas, auth`) — the fallback: if the current address contains one
+   of these words, the program assumes it was redirected to a sign-in page.
+3. When neither source has any information, the program **does not guess and does not interrupt you**; it only
+   writes an "undetermined" line to the audit log.
+
+### 10.3 What happens when the program detects that you are not signed in
+
+- It pauses and shows: `You are not signed in: please sign in manually in the browser window. The program waits
+  up to N seconds and continues automatically once you are signed in.` (on a first run the wording mentions
+  that the first run needs a manual sign-in);
+- After you sign in successfully the program shows `Sign-in detected; continuing.` and carries on by itself;
+- If `manual_login_wait_seconds` (180 by default) elapses without a signed-in state, the program reports
+  `No signed-in state was detected (waited N seconds), so this run stops here` and ends the run — it does
+  **not** let every task fail one after another. That is deliberate: without a sign-in every task would fail,
+  and a pile of failures afterwards helps nobody.
+
+### 10.4 Clearing the sign-in state
+
+Settings window → "Sign-in state" → "🗑 Clear automation sign-in state": deletes the data directory (and the old
+`browser_state.json` backup), so the next run guides you through signing in once again.
+
+- It cannot be cleared while automation is running (the program asks you to stop first) — the browser is holding
+  those files;
+- Your everyday browser is unaffected, and no result file is deleted;
+- Use this step when you want to switch to a different account.
+
+### 10.5 Several target sites
+
+**One data directory can serve them all**: the browser stores cookies per domain, so site A's sign-in state never
+leaks into site B and there is no need to configure each site separately.
+
+### 10.6 Privacy and auditing
+
+- The data directory and the `browser_state.json` backup **stay on this machine**; the program never uploads
+  them;
+- `browser_state.json` is still exported (and is also used to import cookies once when upgrading from an older
+  version, so existing users do not have to sign in again), which makes backup and machine migration easy;
+- The audit log records **events only**: `login_state_used` (a stored sign-in state was reused),
+  `login_required` (paused for you to sign in), `login_completed`, `login_timeout`, `login_state_cleared`
+  (cleared) and `login_state_migrated` (imported). Those records hold a path, a result and counts —
+  **never any cookie content**.
+
+### 10.7 Advanced option (not implemented in this version)
+
+Connecting over CDP to a browser you started in debug mode (`connect_over_cdp`): the upside is that it uses your
+everyday browser instance, so the sign-in state is simply there; the downside is that you must start the browser
+in debug mode yourself every time. This version **does not implement it**; it is described here only.
+
+---
+
+## 11. How the program gets a URL out of an element (href extraction)
+
+### 11.1 First, a common misunderstanding
+
+"Task link position" and "Attachment position on the detail page" hold **selectors**, and a selector has exactly
+one job: **find the element**. It does not read attributes. The correct flow has four steps:
+
+1. **Locate** — use the selector to find the `<a>` element;
+2. **Read the attribute** — read `href` from that element (the program also tries `data-href` and `data-url` in
+   turn, for sites that carry the address on `<div data-href="...">`);
+3. **Normalise** — join a relative path (such as `detail.html?id=1`) with the current page origin to get an
+   absolute address;
+4. **Fall back for special cases** — a pseudo-link cannot be used to navigate, so the program **clicks the
+   element** instead.
+
+### 11.2 How the five kinds of href are handled
+
+| What the page contains | What the program does |
+| --- | --- |
+| Relative path `href="detail.html?id=1"` | Completes it to an absolute address and opens it |
+| Absolute address `href="https://…/detail.html?id=2"` | Opens it as-is |
+| `href="javascript:void(0)"` | No address can be extracted → **clicks this element** to trigger navigation |
+| `href="#"` (or `#section`) | An in-page anchor is not a task or attachment address → **clicks instead** |
+| No `href` attribute at all | **Clicks instead** |
+
+In other words **a pseudo-link never makes the program fail** — it switches to a click automatically. Whether the
+target page then opens in the current tab or in a new one, the program catches it and carries on. Every case is
+explained in the interface while it happens, for example
+`This element has no address that can be opened directly (javascript:void(0)); clicking it instead to navigate…`.
+
+### 11.3 Visual picking tells you what you actually picked
+
+After you click an element with "🎯 Pick visually", the program does not just hand you a selector string:
+
+1. **It previews first**: a dialog lists "The program will extract the following addresses from these
+   elements: …" so you confirm the right position before it is written into the configuration (press Cancel and
+   the selection is discarded, leaving the configuration untouched);
+2. **It recognises non-link elements**: if you clicked a button or a `<div>` that carries no address, it says so
+   explicitly — `What you picked is not a link (<button>), so no address can be extracted. Please pick again.` —
+   and it **does not damage the configuration**. If the element you clicked is a container that holds links, the
+   message goes further: `What you picked is a container <div> that holds N link(s); the container itself is not
+   a link … Please click one of the links inside it instead.`;
+3. **It flags pseudo-links**: if you picked a JavaScript pseudo-link or an empty href, the preview explains that
+   `no address can be extracted (JavaScript pseudo-link); the program will click them instead to trigger
+   navigation`;
+4. **It warns when only one element matched**: visual picking produces a selector that is exact for the one
+   element you clicked. If that position is meant to hold several (several tasks in a task list, several
+   attachments on a detail page), the preview tells you to make the selector more general (turn
+   `li:nth-of-type(1) > a.task` into `a.task`, for example) or to pick a whole row under "Task row container".
+
+### 11.4 What each of the four picking positions means
+
+| Picking position | What the program uses it for | Must it be a link? |
+| --- | --- | --- |
+| Task link position | Reads `href` as the **navigation target** to open each task | Yes (a pseudo-link switches to a click automatically) |
+| Task row container (optional) | Locates a whole row first, then looks for task links **inside** it | No, it is a container by definition |
+| Next page button (optional) | Only **clicks** it to page forward; no address is read | No, a button is not a link |
+| Attachment position on the detail page | Reads `href` to **download** the attachment | Yes (a pseudo-link switches to a click automatically) |
+
+That "what you picked is not a link" guard only applies to the two positions that **must** be links; when you
+pick "Task row container" or "Next page button", picking a container or a button is perfectly normal.
+
+---
+
+## 12. Related documents
 
 - [`USER_GUIDE.md`](USER_GUIDE.md) — user guide: installation, Q&A, long documents, automation overview
 - [`FAQ.md`](FAQ.md) — frequently asked questions: startup, models, file parsing, automation, marketplace
 - [`SKILL_GUIDE.md`](SKILL_GUIDE.md) — developing and submitting skills (plugins)
-- [`../DEVELOPER.md`](../DEVELOPER.md) — developer documentation: how the automation module works and its extension points (Chinese)
-- [`../PRIVACY.md`](../PRIVACY.md) — privacy statement: network behaviour and data cleanup (Chinese)
+- [`../DEVELOPER.md`](../DEVELOPER.md) — developer documentation: how the automation module works and its
+  extension points (English and Simplified Chinese)
+- [`../PRIVACY.md`](../PRIVACY.md) — privacy statement: network behaviour and data cleanup (English; Chinese
+  translation at [`../PRIVACY.zh-Hans.md`](../PRIVACY.zh-Hans.md))
 - Chinese: [`../zh-Hans/AUTOMATION_GUIDE.md`](../zh-Hans/AUTOMATION_GUIDE.md)

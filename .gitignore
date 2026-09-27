@@ -34,6 +34,9 @@ automation_log.jsonl
 automation_processed.json
 automation_results/
 browser_state.json
+# 自动化的持久化浏览器数据目录（v0.2.1 自动化优化 任务一：登录态存在这里）。
+# 它可能出现在仓库根（开发时程序根目录就是仓库根），含 Cookie，绝不能入库。
+browser_profile/
 # 结果目录（新增三；默认生成在程序根目录，也可能被指到仓库内）
 # v0.2.1 发布任务书「全局要求一」：目录名由「批量处理结果」改为英文 results，
 # 只锚定仓库根，避免误伤将来任何名为 results 的子目录；旧名保留一行兼容旧用户。

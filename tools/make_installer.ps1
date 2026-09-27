@@ -248,7 +248,10 @@ foreach ($part in @("Setup.e32", "SetupLdr.e32", "Default.isl")) {
 # --- 1.2 发布物内容已就绪 ---
 $requiredAtRoot = @(
     "app", "docs", "lang", "examples", "results", "config.example.json", "USAGE.txt",
-    "README.md", "README.zh-Hans.md", "CHANGELOG.md", "LICENSE", "LICENSE.zh-Hans.md",
+    "README.md", "README.zh-Hans.md",
+    "CHANGELOG.md", "CHANGELOG.zh-Hans.md",
+    "CONTRIBUTING.md", "CONTRIBUTING.zh-Hans.md",
+    "LICENSE", "LICENSE.zh-Hans.md",
     "NOTICE", "NOTICE.zh-Hans.md", "SECURITY.md", "SECURITY.zh-Hans.md",
     "install-complete.bat"
 )

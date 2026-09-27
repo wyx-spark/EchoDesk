@@ -635,6 +635,71 @@
                                    FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"/>
 
+                        <!-- 登录态（v0.2.1 自动化优化 任务一）：持久化数据目录 + 登录检测 + 清除 -->
+                        <TextBlock Text="登录态" FontWeight="Bold" Margin="0,16,0,6"
+                                   svc:Loc.Key="settings.automation.loginSection"/>
+                        <TextBlock FontSize="11" Margin="0,0,0,4" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource SubTextBrush}"
+                                   Text="自动化使用一个独立的浏览器数据目录保存登录状态（Cookie 等），不与你的日常浏览器共用。第一次运行时程序会打开浏览器让你手动登录，之后自动复用，不用每次重新登录。"
+                                   svc:Loc.Key="settings.automation.loginHint"/>
+                        <TextBlock x:Name="LoginStateText" FontSize="11" Margin="0,0,0,4" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource SubTextBrush}"
+                                   Text="登录态：正在读取…"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <TextBlock Text="数据目录（留空 = 程序目录下的 browser_profile）"
+                                       VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"
+                                       svc:Loc.Key="settings.automation.label.loginStateDir"/>
+                            <Button Content="?" Padding="5,0" Margin="6,0,0,0" FontSize="10" Height="18"
+                                    Style="{StaticResource RoundButton}" Tag="login_state_dir"
+                                    Click="FieldHelp_Click" ToolTip="查看填写说明"/>
+                        </StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="LoginStateDirBox" Grid.Column="0" Padding="6,4"
+                                     GotKeyboardFocus="AutomationField_GotFocus" Tag="login_state_dir"/>
+                            <Button x:Name="ClearLoginStateButton" Grid.Column="1" Padding="12,4" Margin="8,0,0,0"
+                                    Content="🗑 清除自动化登录态" Style="{StaticResource RoundButton}"
+                                    Click="ClearLoginStateButton_Click"
+                                    svc:Loc.Key="settings.automation.clearLogin"
+                                    svc:Loc.TipKey="settings.automation.clearLoginTip"/>
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
+                            <TextBlock Text="登录后才出现的元素（可选，用于判断是否已登录）"
+                                       VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"
+                                       svc:Loc.Key="settings.automation.label.loginCheckSelector"/>
+                            <Button Content="?" Padding="5,0" Margin="6,0,0,0" FontSize="10" Height="18"
+                                    Style="{StaticResource RoundButton}" Tag="login_check_selector"
+                                    Click="FieldHelp_Click" ToolTip="查看填写说明"/>
+                        </StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="LoginCheckSelectorBox" Grid.Column="0" Padding="6,4"
+                                     GotKeyboardFocus="AutomationField_GotFocus" Tag="login_check_selector"/>
+                            <Button Grid.Column="1" Padding="12,4" Margin="8,0,0,0"
+                                    Content="🎯 可视化选取" Style="{StaticResource RoundButton}"
+                                    Tag="login_check" Click="PickSelectorButton_Click"
+                                    svc:Loc.Key="settings.automation.pick"
+                                    svc:Loc.TipKey="settings.automation.pickLoginTip"/>
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
+                            <TextBlock Text="登录页网址关键词（逗号分隔，兜底判断）"
+                                       VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"
+                                       svc:Loc.Key="settings.automation.label.loginKeywords"/>
+                        </StackPanel>
+                        <TextBox x:Name="LoginKeywordsBox" Padding="6,4"
+                                 GotKeyboardFocus="AutomationField_GotFocus" Tag="login_url_keywords"
+                                 ToolTip="地址里出现这些词就认为跳到了登录页，例如 login, signin, sso"/>
+                        <TextBlock FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource SubTextBrush}"
+                                   Text="多个目标站点可以共用同一个数据目录（浏览器按域名分别保存 Cookie），无需为每个站点单独配置。"
+                                   svc:Loc.Key="settings.automation.loginMultiSite"/>
+
                         <!-- 运行控制 -->
                         <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
                             <Button x:Name="RunOnceButton" Padding="14,6" Content="▶ 立即运行一次"

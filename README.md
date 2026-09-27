@@ -249,13 +249,14 @@ EchoDesk is local by design, and the policy is written down rather than implied:
 | [docs/en/USER_GUIDE.md](docs/en/USER_GUIDE.md) | End-user manual: install, daily use, long contracts, batch automation, skills. |
 | [docs/en/FAQ.md](docs/en/FAQ.md) | Quick answers and troubleshooting for startup, models, files, automation and the marketplace. |
 | [docs/en/AUTOMATION_GUIDE.md](docs/en/AUTOMATION_GUIDE.md) | Field-by-field automation configuration and the selector test. |
-| [docs/DEVELOPER.md](docs/DEVELOPER.md) | Architecture, JSON protocol, module responsibilities, config reference, build and release. |
+| [docs/DEVELOPER.md](docs/DEVELOPER.md) | Architecture, JSON protocol, module responsibilities, config reference, build and release. A pointer: the full text is [`docs/en/DEVELOPER.md`](docs/en/DEVELOPER.md) (English) and [`docs/zh-Hans/DEVELOPER.md`](docs/zh-Hans/DEVELOPER.md) (Simplified Chinese). |
 | [docs/en/SKILL_GUIDE.md](docs/en/SKILL_GUIDE.md) | How to write, submit and publish a skill. |
 | [docs/PRIVACY.md](docs/PRIVACY.md) | What runs locally, what may go online, log redaction rules. |
 | [docs/EULA.md](docs/EULA.md) | End-user license terms for the distributed build. |
 | [docs/ENCRYPTED_DOCUMENTS.md](docs/ENCRYPTED_DOCUMENTS.md) | How EchoDesk reads documents protected by an enterprise encryption system: prerequisites, the no-circumvention statement, where responsibility lies, and what stays in memory. |
 | [docs/THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md) | Complete third-party component and license inventory. |
-| [CHANGELOG.md](CHANGELOG.md) | Feature, fix and known-limitation history per version. |
+| [CHANGELOG.md](CHANGELOG.md) | Feature, fix and known-limitation history per version (English; Chinese at [CHANGELOG.zh-Hans.md](CHANGELOG.zh-Hans.md)). |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to file issues, contribute code, and contribute translations (English; Chinese at [CONTRIBUTING.zh-Hans.md](CONTRIBUTING.zh-Hans.md)). |
 | [NOTICE](NOTICE) | Attribution notice for the main bundled third-party components. |
 
 Localized documents exist in both shipped languages: `docs/en/` (English, linked above) and

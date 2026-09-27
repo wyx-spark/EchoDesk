@@ -1,5 +1,8 @@
 # Contributing to EchoDesk
 
+> A Chinese reference translation of this document is available at
+> [`CONTRIBUTING.zh-Hans.md`](CONTRIBUTING.zh-Hans.md); if the two ever disagree, this English version prevails.
+
 Thanks for taking the time to help. EchoDesk is a local-first AI desktop assistant for
 Windows, and every kind of contribution is useful: bug reports, fixes, documentation,
 translations and new skills.

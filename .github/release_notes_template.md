@@ -49,7 +49,8 @@ Windows 上核对：`certutil -hashfile <文件名> SHA256`。
 - **模型不随包分发（不含模型的包）**：首次启动会询问是否下载模型（约 508MB），也可以自行把 `.gguf` 放到 `backend\models\`。
 - **自动化对目标站点的兼容性有限**：页面改版、验证码、二次验证需要人工介入；建议先用设置窗口里的「测试选择器」向导验证再批量运行。
 - **界面截图暂缺**：v0.2.1 未随包提供截图，文档中写的是"在屏幕上该看什么"；界面预览会在后续版本放入 `assets/screenshots/`。
-- **结果目录名在本版改为 `results\`**（原 `批量处理结果\`），程序不会自动迁移旧目录 —— 见下方升级指引第 3 步。
+- **结果目录名在本版改为 `results\`**（原 `批量处理结果\`），程序不会自动迁移旧目录 —— 见下方升级指引第 4 步。
+- **自动化登录态改为独立数据目录**：登录状态存在 `app\backend\browser_profile\`（可在「设置 → 自动化 → 登录态」里改），不再只依赖 `browser_state.json`；升级后首次运行仍会自动导入旧 Cookie，通常不用重新登录。
 
 ## 系统要求 / System requirements
 
@@ -74,7 +75,8 @@ Windows 上核对：`certutil -hashfile <文件名> SHA256`。
    - `app\backend\config.json`（配置）、`app\backend\session.json`（会话）、`snippets.json`（常用语）、`ui_state.json`（界面状态）
    - `app\backend\models\*.gguf`（已下载的模型，避免重新下载）
    - `app\backend\skills\` 与 `app\backend\skills_registry.json`（已安装技能）
-   - 如需保留自动化登录态：`app\backend\browser_state.json`（含 Cookie，请自行判断是否跨机复制）
+   - 如需保留自动化登录态：`app\backend\browser_profile\`（v0.2.1 起登录态存在这里）
+     与 `app\backend\browser_state.json`（旧版与备份文件，含 Cookie，请自行判断是否跨机复制）
 4. **结果目录改名**：v0.2.1 起自动化结果目录由 `批量处理结果\` 改为 `results\`，程序不会自动迁移。
    请把旧目录**改名**为 `results\`（或把旧目录内容移入新的 `results\`），让历史结果仍在同一个地方。
    不迁移也不会丢数据，只是新旧结果分处两个目录。
@@ -109,3 +111,130 @@ Windows 上核对：`certutil -hashfile <文件名> SHA256`。
   的私有渠道报告（Security 标签页 → Report a vulnerability；兜底为 GitHub noreply 邮箱）。
 
 本项目**不提供**支持邮箱、电话号码或邮寄地址 —— 以上 GitHub 渠道是全部公开联系方式。
+
+---
+
+<!--
+  EchoDesk release notes template (applied by .github/workflows/release.yml as the Release body when a release is tagged).
+
+  Placeholders (the workflow does plain-text substitution; all of them must stay):
+    {{VERSION}}           version number, for example 0.2.1
+    {{TAG}}               tag name, for example v0.2.1
+    {{DATE}}              generation date
+    {{PACKAGE_LIST}}      the download packages actually built in this run (with sizes)
+    {{SHA256_LIST}}      the contents of SHA256SUMS.txt (checksum hashes)
+    {{CHANGELOG_EXCERPT}} the matching version section in CHANGELOG.md
+
+  Maintainers: before releasing, check that the "Known limitations / System requirements /
+  Supported languages" sections still match README.md and CHANGELOG.md. release.yml saves the
+  Release as a **draft** by default (required by "task seven" of the release brief); review the
+  body and the attachments, then publish it by hand.
+-->
+
+# EchoDesk {{VERSION}}
+
+> Release tag `{{TAG}}` · generated on {{DATE}}
+> These notes are produced by `.github/workflows/release.yml` from this template; the changes section is excerpted from `CHANGELOG.md`.
+
+## Downloads
+
+{{PACKAGE_LIST}}
+
+## What's changed
+
+{{CHANGELOG_EXCERPT}}
+
+The full changelog is in the `CHANGELOG.md` that ships with the package.
+
+## Checksums
+
+Check the SHA256 after downloading; the list below is also the contents of the `SHA256SUMS.txt` release asset.
+
+```text
+{{SHA256_LIST}}
+```
+
+On Windows, check with `certutil -hashfile <file name> SHA256`.
+
+## Known limitations
+
+- **Scanned PDFs yield no text**: a PDF with no text layer (a scan) parses to an empty result and needs OCR; this version has no built-in OCR, so save it from WPS/Office in a format whose text can be copied first.
+- **Browser automation is headed only**: the browser window stays visible while it runs (a deliberate safety design), so it is not suited to unattended Windows service sessions; scheduled tasks need the program itself to be running.
+- **Legacy binary formats need a local Office suite**: `.doc` / `.ppt` files and encrypted documents are read through WPS/Office COM, so without WPS or Microsoft Office installed only newer formats such as `.docx` / `.pptx` can be handled.
+- **The installer is not code-signed**: release packages are unsigned by default (the build script's `-Sign` needs a certificate of your own), so Windows SmartScreen may warn about an unknown publisher the first time.
+- **The installer interface is English only for now**: Inno Setup's own language directory has no Simplified Chinese language file (upstream lists it as a third-party translation to download separately); put `ChineseSimplified.isl` into Inno Setup's `Languages\` directory and the Chinese interface is enabled automatically.
+- **Models are not distributed with the packages that omit them**: the first start asks whether to download the model (about 508MB), and you can also put a `.gguf` file into `backend\models\` yourself.
+- **Automation copes only so far with a target site**: page redesigns, captchas and two-factor verification need a human; verify with the "Test selectors" wizard in the Settings window before running in bulk.
+- **No interface screenshots yet**: v0.2.1 ships without screenshots, so the documents describe "what to look at on screen"; interface previews will go into `assets/screenshots/` in a later version.
+- **The results folder is renamed in this version to `results\`** (it was `批量处理结果\`), and the program does not migrate the old folder automatically — see step 4 of the upgrade instructions below.
+- **Automation sign-in state moved to a data directory of its own**: the sign-in state is stored in `app\backend\browser_profile\` (change it under "Settings → Automation → Sign-in state") instead of relying on `browser_state.json` alone; after upgrading, the first run still imports the old cookies automatically, so you normally do not sign in again.
+
+## System requirements
+
+| Item | Requirement |
+| --- | --- |
+| Operating system | Windows 10 x64 (1809 or later) or Windows 11 x64; the portable build needs no installation |
+| Runtime | No separate .NET install: the front end is published self-contained for `win-x64` (net10.0-windows) |
+| CPU / memory | A 4-core CPU and 8GB of memory will run it (16GB recommended); inference is CPU-only, so no discrete graphics card is needed |
+| Disk | After installing or unzipping: about 500MB without models, about 890MB with models; leave room for the model download as well |
+| Browser | Browser automation needs Microsoft Edge installed on the machine (Playwright drives it with `channel=msedge`) |
+| Office | Parsing the legacy `.doc`/`.ppt` formats or encrypted documents needs WPS or Microsoft Office installed on the machine |
+| Network | All inference is local and works fully offline; only "download models / web search / skill marketplace / model hub" need a network connection |
+
+## Upgrade instructions
+
+**Installer (recommended)**
+
+1. Double-click `EchoDesk-v{{VERSION}}-Setup.exe` (or `-NoModel-Setup.exe`). **It installs into the
+   folder the installer itself sits in by default**; the wizard has a path page, so you can move it
+   elsewhere;
+2. After installing, start it from the Start menu shortcut (use the desktop one if you ticked that
+   box); uninstall through *Apps & features*;
+3. To keep the configuration and models from the old version, copy the following user data from the
+   old directory into the matching place in the **new installation directory**:
+   - `app\backend\config.json` (configuration), `app\backend\session.json` (sessions), `snippets.json` (snippets), `ui_state.json` (interface state)
+   - `app\backend\models\*.gguf` (models already downloaded, so you do not download them again)
+   - `app\backend\skills\` and `app\backend\skills_registry.json` (installed skills)
+   - To keep the automation sign-in state: `app\backend\browser_profile\` (where the sign-in state lives
+     from v0.2.1 on) and `app\backend\browser_state.json` (the older file and the backup; both contain
+     cookies, so decide for yourself whether copying them to another machine is appropriate)
+4. **The results folder is renamed**: from v0.2.1 the automation results folder changed from `批量处理结果\`
+   to `results\`, and the program does not migrate it automatically. Rename the old folder to `results\`
+   (or move its contents into the new `results\`), so that past results stay in the same place.
+   Not migrating loses no data; old and new results simply sit in two different folders.
+
+**Portable / no-install zip**
+
+1. Unzip into a **new directory** (do not overwrite the old one, so you can roll back);
+2. Follow steps 3 and 4 above to copy your user data and rename the results folder;
+3. Run `install-complete.bat` in the new directory once to create shortcuts (the zip contains no
+   ready-made shortcuts — a `.lnk` records an absolute path, so a shipped shortcut would always be a
+   dead link on someone else's machine), or double-click `app\EchoDesk.exe` directly (the program
+   also asks whether to create shortcuts on its first run);
+4. Double-click `Start-EchoDesk-v{{VERSION}}.lnk` to start it; delete the old directory once you are
+   satisfied.
+
+**Rolling back**: start from the old directory again, or copy the user data above back to the old version (configuration keys are backward compatible, but fields added by the new version are ignored by the old one).
+
+## Supported languages
+
+- Interface and messages: **Simplified Chinese (zh-Hans)** and **English (en)**; a missing key falls back in the order `en → zh-Hans → key name`.
+- Documentation: `docs/zh-Hans/`, `docs/en/` (user guide, FAQ, skill development guide, automation configuration guide).
+- Compliance documents (LICENSE, NOTICE, SECURITY, PRIVACY, EULA, THIRD_PARTY_LICENSES, CODE_OF_CONDUCT):
+  **English is the default version plus a `.zh-Hans.md` Chinese reference translation**; where they differ, the English version decides.
+- Other languages (Traditional Chinese, Japanese, Korean, German, French and so on) are added as the community contributes; claim one through the "Translation" issue template.
+
+---
+
+## Feedback
+
+- **Bugs and feature requests**: open a [GitHub issue](https://github.com/VoidEntropiaStudio/EchoDesk/issues)
+  and include the version number, your Windows version, the steps to reproduce and the relevant log
+  (`app\backend\backend_crash.log`).
+- **Questions, skill talk and translation help**: [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions).
+- **Security vulnerabilities**: **do not open a public issue**; report through the private channel
+  described in [`SECURITY.md`](https://github.com/VoidEntropiaStudio/EchoDesk/blob/master/SECURITY.md)
+  at the repository root (Security tab → Report a vulnerability; the fallback is a GitHub noreply
+  email address).
+
+This project **does not provide** a support email address, phone number or postal address — the GitHub channels above are the complete set of public contact points.
