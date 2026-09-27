@@ -196,6 +196,64 @@ Check "安装程序版本资源与图标" {
 
 # ---------- 4/5/6/7/9. 真装、真验、真卸 ----------
 <#
+    断言：安装后的后端里每个 `.dist-info` 的版本，都必须与**随包分发的**
+    `docs\SBOM.json` 所声明的一致。
+
+    为什么必须"真装一遍再比"，而不能只比仓库里的 `docs\SBOM.json`：
+    这份 SBOM 是随安装包交给用户的**合规声明**，它描述的对象必须是"安装包里实际装了什么"。
+    比工作区里的文件证明不了这一点 —— 中间还隔着 make_installer.ps1 的拷贝与 Inno 的压缩，
+    所以这里读的是**安装目录里的那一份** SBOM，比对的是**安装目录里的** `_internal`。
+
+    这条检查对应 v0.2.1 的真实缺陷：`build_release.ps1` 曾调用 PATH 上的 `pyinstaller`
+    （解析到全局开发环境），于是打出 click 8.4.2 / cryptography 50.0.0 /
+    huggingface_hub 1.27.0 / numpy 2.5.2 / pydantic 2.13.4 / tqdm 4.70.0 的后端，
+    而 SBOM 按干净 venv 声明的是 8.5.0 / 50.0.1 / 2.0.0 / 2.5.3 / 2.13.5 / 4.70.1，
+    **6 处不符**。当时所有既有检查都是绿的：模块名对得上、文件都在、脚本退出码 0。
+#>
+function Assert-PayloadMatchesSbom([string]$CaseDir) {
+    $internal = Join-Path $CaseDir "app\backend\_internal"
+    $sbomPath = Join-Path $CaseDir "docs\SBOM.json"
+    if (-not (Test-Path -LiteralPath $sbomPath)) { throw "安装目录里没有 docs\SBOM.json，无法核对" }
+    $sbom = Get-Content -LiteralPath $sbomPath -Raw -Encoding UTF8 | ConvertFrom-Json
+
+    $declared = @{}
+    foreach ($p in $sbom.packages) {
+        if ($p.SPDXID -notlike "SPDXRef-Package-pypi-*") { continue }
+        $declared[$p.name.ToLower().Replace("_", "-").Replace(".", "-")] = $p.versionInfo
+    }
+    if ($declared.Count -eq 0) { throw "随包 SBOM 里没有任何 Python 包条目，无法核对" }
+
+    $compared = 0
+    $mismatch = @()
+    $undeclared = @()
+    $distInfos = @(Get-ChildItem -LiteralPath $internal -Directory -Filter "*.dist-info" -ErrorAction SilentlyContinue)
+    foreach ($d in $distInfos) {
+        $stem = $d.Name.Substring(0, $d.Name.Length - ".dist-info".Length)
+        # 取**最后一个**连字符：pywin32-ctypes 这类自带连字符的包名也要能正确切开
+        $idx = $stem.LastIndexOf("-")
+        if ($idx -lt 1) { continue }
+        $name = $stem.Substring(0, $idx).ToLower().Replace("_", "-").Replace(".", "-")
+        $version = $stem.Substring($idx + 1)
+        if (-not $declared.ContainsKey($name)) {
+            $undeclared += "$name $version"
+            continue
+        }
+        if ($declared[$name] -ne $version) {
+            $mismatch += "$name（发布物 $version / SBOM $($declared[$name])）"
+        }
+        $compared++
+    }
+    if ($undeclared.Count -gt 0) { throw "发布物里有随包 SBOM 未声明的组件：$($undeclared -join '；')" }
+    if ($mismatch.Count -gt 0) {
+        throw ("发布物里的库版本与随包 SBOM 声明不一致 —— 后端大概不是用干净 venv 打的" +
+            "（见 tools\build_release.ps1 的 -CleanVenv）：`n      " + ($mismatch -join "`n      "))
+    }
+    if ($compared -eq 0) { throw "在 $internal 里没有找到任何 *.dist-info，版本比对无法成立" }
+    if ($compared -lt 5) { throw "只比对到 $compared 个 .dist-info，明显偏少，_internal 可能不完整" }
+    return "$compared 个 .dist-info 与随包 SBOM 逐项一致"
+}
+
+<#
     顺序很重要：两个变体**共用同一个 AppId**（同一个产品的两种载荷），
     所以必须"装一个 → 验一个 → 卸一个"，不能同时装着两个。
     每一轮都不传 /DIR，验证默认目录行为。
@@ -237,6 +295,10 @@ function Test-InstallerRound([string]$Exe, [string]$Label, [bool]$ExpectModels) 
         throw "默认安装目录（安装程序所在目录）里缺少：$($missing -join ', ')"
     }
 
+    # 4/5-a-2：安装后的库版本必须与**随包分发的** docs\SBOM.json 逐项一致。
+    # 放在这里是因为此时安装目录还在盘上（本轮末尾会卸载）。
+    $sbomVerdict = Assert-PayloadMatchesSbom $caseDir
+
     # 4/5-b：模型是否按预期在位
     $modelSrc = @(Get-ChildItem (Join-Path $ReleaseDir "app\backend\models") -Filter *.gguf -File -ErrorAction SilentlyContinue)
     $modelDst = @(Get-ChildItem (Join-Path $caseDir "app\backend\models") -Filter *.gguf -File -ErrorAction SilentlyContinue)
@@ -268,7 +330,7 @@ function Test-InstallerRound([string]$Exe, [string]$Label, [bool]$ExpectModels) 
     $tempAfter = @(Get-TempEchoDeskResidue)
     if ($tempAfter.Count -gt 0) { throw "%TEMP% 下有 EchoDesk 残留: $($tempAfter -join ', ')" }
 
-    $summary = "装到 $caseDir；快捷方式 → app\EchoDesk.exe（工作目录 = 安装目录）；%TEMP% 无残留"
+    $summary = "装到 $caseDir；快捷方式 → app\EchoDesk.exe（工作目录 = 安装目录）；%TEMP% 无残留；$sbomVerdict"
 
     # 9：卸载。**必须在本轮就卸掉**：两个变体共用同一个 AppId（同一产品的两种载荷），
     # 留着不卸会让下一轮变成"覆盖已有安装"，卸载注册项也会指向错的目录，
