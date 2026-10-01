@@ -64,7 +64,22 @@ checkpoint **never produces thinking content**: its chat template gates the reas
   turned red at once.
 - New protocol actions: `model_profiles` (list; reads local files only, never the network) and
   `model_profile_apply` (switch). Covered by 15 new assertions in `tools/test_no_model.py`, plus a GUI
-  assertion in `tools/ui_probe.ps1` that the tier data really reaches the window.
+  assertion in `tools/ui_probe.ps1` that the tier data really reaches the window — and, because the first
+  version of this feature shipped broken (next paragraph), a second GUI assertion that **clicking a tier
+  which is not downloaded yet really reaches the download confirmation dialog**.
+- **Fixed: clicking a not-yet-downloaded tier always answered "⚠️ could not read model details".** The new
+  code read the response key `hub_detail`, while `_handle_model_hub_detail` returns `detail` — the backend had
+  been sending the complete file list all along. Backend protocol tests and the end-to-end suite could not
+  catch it (each side looks correct in isolation), so `tools/selftest.py` now cross-checks every `model_*`
+  response key that the front end reads against the JSON keys `backend/main.py` actually returns; verified by
+  injecting the original bug, where the new check goes red and names the file and the key.
+- The same path no longer swallows the backend's real reason when a detail lookup fails, and it pins the
+  lookup to the `auto` data source (mirror first, official as fallback) instead of following whatever the
+  settings window currently shows: a user whose source was left on "official" would otherwise see every tier
+  download fail on networks where `huggingface.co` is unreachable (measured: 21 s timeout versus 0.8 s
+  through the mirror).
+- Tier chips displayed `Q4K_M` instead of `Q4_K_M`: WPF renders a `Button`'s string content through
+  `AccessText`, where `_` marks the access key and is swallowed. The label is now carried by a `TextBlock`.
 
 **Fixed in the same round**
 - `download_utils.find_best_model` gave every candidate containing `q4_k_m` an unconditional +0.3 bonus, so an

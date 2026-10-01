@@ -380,7 +380,12 @@ public partial class SettingsWindow : Window
             using JsonDocument doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("detail", out JsonElement detail))
             {
-                HubStatusText.Text = Loc.T("settings.model.detailUnavailable", "⚠️ 无法获取模型详情");
+                string reason = GetString(doc.RootElement, "content");
+                HubStatusText.Text = (reason.Length > 0
+                        ? reason
+                        : Loc.T("settings.model.detailUnavailable", "⚠️ 无法获取模型详情"))
+                    + " " + Loc.T("settings.model.detailFailedHint",
+                        "（若反复失败：把「数据源」切回「自动」，或到「模型市场」里手动挑一个量化版本下载。）");
                 return;
             }
             _hubFiles.Clear();

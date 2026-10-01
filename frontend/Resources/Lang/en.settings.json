@@ -71,6 +71,7 @@
       "profileNoRepo": "❌ This tier declares no repository (models.{0}.repo in config.json); download it manually from the model market.",
       "profileFileMissing": "⚠️ {1} was not found in {0}. Pick a quantization in the model market, or fix the tier declaration in config.json.",
       "profileLoadFailed": "❌ Failed to read the model tiers: {0}",
+      "detailFailedHint": "(If this keeps failing: set the data source back to \"Auto\", or pick a quantization manually in the model market.)",
       "tokenConfigured": "A token is already configured (leave empty to keep it)",
       "searching": "Searching models…",
       "hubUnavailable": "⚠️ The model hub is unavailable (the backend returned no data)",

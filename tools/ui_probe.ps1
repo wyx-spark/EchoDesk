@@ -369,6 +369,70 @@ if ($null -ne $saveButton) {
                     Fail "模型档位状态行没有填充（应含「当前使用」）：$statusText"
                 }
             }
+
+            # 点一个"未下载"的档位胶囊，必须走到"确认下载"对话框。
+            # 这一条抓的是一个**真实缺陷**：下载分支读响应里的键名写错了
+            # （读 hub_detail，后端返回的是 detail），于是后端明明返回了文件清单，
+            # 界面却每次都报"无法获取模型详情"。只断言"状态行有字"是抓不到的 ——
+            # 必须真的点一次，看到它把"仓库 + 文件名 + 大小"填进确认对话框。
+            $chipCond = New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                [System.Windows.Automation.ControlType]::Button)
+            $chip = $null
+            foreach ($b in [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
+                    [System.Windows.Automation.TreeScope]::Descendants, $chipCond)) {
+                if ($b.Current.ProcessId -ne $proc.Id) { continue }
+                if ($b.Current.Name -like '*未下载*') { $chip = $b; break }
+            }
+            if ($null -eq $chip) {
+                Write-Output '[probe] 提示：没有找到"未下载"档位的胶囊（发布目录里没有模型时才会出现），跳过该检查'
+            } else {
+                Write-Output "[probe] 点击未下载档位胶囊：$($chip.Current.Name)"
+                # 量化名里的下划线必须原样显示（WPF Button 的字符串内容会把 "_" 当访问键吃掉，
+                # 表现为 "Q4_K_M" 显示成 "Q4K_M" —— 实测踩到，改用 TextBlock 承载内容修掉）
+                if ($chip.Current.Name -like '*_*') {
+                    Ok "档位胶囊原样显示量化名（含下划线）：$($chip.Current.Name)"
+                } else {
+                    Fail "档位胶囊的量化名丢了下划线（WPF 把 '_' 当访问键）：$($chip.Current.Name)"
+                }
+                Invoke-El $chip
+                # 等确认下载的对话框出现（要等一次联网取详情，给它 60 秒）
+                $dlg = $null
+                $swDl = [System.Diagnostics.Stopwatch]::StartNew()
+                $wantCond = New-Object System.Windows.Automation.AndCondition(
+                    (New-Object System.Windows.Automation.PropertyCondition(
+                        [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $proc.Id)),
+                    (New-Object System.Windows.Automation.PropertyCondition(
+                        [System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32770')))
+                while ($swDl.Elapsed.TotalSeconds -lt 60) {
+                    $cand = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+                        [System.Windows.Automation.TreeScope]::Descendants, $wantCond)
+                    if ($null -ne $cand) { $dlg = $cand; break }
+                    Start-Sleep -Milliseconds 400
+                }
+                if ($null -eq $dlg) {
+                    $now = Find-AnyById $proc.Id 'ProfileStatusText'
+                    Fail ("点未下载档位后没有出现确认下载对话框（状态行：'{0}'）" -f ($now.Current.Name))
+                } else {
+                    $txt = ''
+                    $tc = New-Object System.Windows.Automation.PropertyCondition(
+                        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                        [System.Windows.Automation.ControlType]::Text)
+                    foreach ($t in $dlg.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tc)) {
+                        $txt += $t.Current.Name + ' '
+                    }
+                    if ($txt -like '*Qwen3-1.7B*' -and $txt -like '*.gguf*') {
+                        Ok "未下载档位能取到详情并弹出确认下载：$(($txt -replace '\s+', ' ').Trim().Substring(0, [Math]::Min(110, $txt.Length)))"
+                    } else {
+                        Fail "确认下载对话框内容不对（应含仓库与文件名）：$txt"
+                    }
+                    # 点「否」：不留下载、也不动磁盘
+                    foreach ($b in $dlg.FindAll([System.Windows.Automation.TreeScope]::Descendants, $chipCond)) {
+                        if ($b.Current.Name -match '^(否|No|取消|Cancel)') { Invoke-El $b; break }
+                    }
+                    Start-Sleep -Milliseconds 500
+                }
+            }
         }
 
         # ---------- 2a. 字段级帮助（任务书 4.3 验收项）----------

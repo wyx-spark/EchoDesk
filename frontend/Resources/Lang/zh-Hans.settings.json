@@ -71,6 +71,7 @@
       "profileNoRepo": "❌ 该档位没有登记仓库（config.json 的 models.{0}.repo），请到模型市场里手动下载。",
       "profileFileMissing": "⚠️ 仓库 {0} 里没有找到 {1}。请到「模型市场」里挑一个量化版本下载，或改 config.json 里的档位声明。",
       "profileLoadFailed": "❌ 读取模型档位失败：{0}",
+      "detailFailedHint": "（若反复失败：把「数据源」切回「自动」，或到「模型市场」里手动挑一个量化版本下载。）",
       "tokenConfigured": "已配置 Token（留空表示不修改）",
       "searching": "正在搜索模型…",
       "hubUnavailable": "⚠️ 模型中心不可用（后端未返回数据）",
