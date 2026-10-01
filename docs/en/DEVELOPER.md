@@ -100,27 +100,43 @@ comments.
   silently — this was a real failure in v0.1.0).
 - Direction: frontend → backend (stdin), one request object per line; backend → frontend (stdout), one
   response object per line.
-- Every response carries a `type` field: `ready` / `system` / `assistant` / `delta` / `done` / `error` / `need_download` / `context`.
+- Every response carries a `type` field: `ready` / `system` / `assistant` / `delta` / `done` / `error` / `need_download` / `summary_progress` / `context`.
 - Lines that are not JSON (diagnostics a third-party library printed to stdout by mistake) are ignored by
   the frontend.
 
 ### 2.2 Startup handshake
 
-The backend prints this only after **model loading + session restore + warm-up have all finished**:
+The backend prints `ready` only after **session restore + warm-up have finished**:
 
 ```json
-{"type":"ready","version":"v0.2.0","studio":"Void Entropia Studio","restored":3,"history":[{"role":"user","content":"..."}]}
+{"type":"ready","version":"v0.2.1","studio":"Void Entropia Studio","restored":3,
+ "model_ready":true,"model_state":{"ready":true,"model":"Qwen3.5-0.8B-Q4_K_M.gguf","models_dir":"...","n_ctx":8192,"guide":""},
+ "model_missing":{},"history":[{"role":"user","content":"..."}]}
 ```
 
-The frontend releases input only once it reads `ready`. If the local model is missing before startup:
+**`model_ready` tells "the backend is up" apart from "inference is available"** (v0.2.1). Since v0.2.1 a
+missing model **does not stop the backend**: it starts with an empty engine, keeps serving every request
+that does not need inference, and answers inference requests with guidance. The frontend keeps its input
+enabled, shows "no model" in the status bar, and switches back automatically once a model is hot-loaded.
+
+When the model is missing, one **non-blocking** notice is emitted *before* `ready`:
 
 ```json
-{"type":"need_download","model":"Qwen3.5-0.8B-Q4_K_M.gguf","size":532517120,"repo":"unsloth/Qwen3.5-0.8B-GGUF","current":"...","content":"..."}
+{"type":"need_download","blocking":false,"model":"Qwen3.5-0.8B-Q4_K_M.gguf","size":532517120,
+ "repo":"unsloth/Qwen3.5-0.8B-GGUF","current":"Qwen3.5-0.8B-Q4_K_M.gguf",
+ "target":"Qwen3.5-0.8B-Q4_K_M.gguf","models_dir":"...","content":"..."}
 ```
 
-The frontend shows a confirmation dialog; on agreement it sends `model_download` (the backend downloads →
-continues initialisation → finally prints `ready`), and on refusal or on stdin closing the backend exits
-straight away.
+`blocking: false` is the whole point: this is a **notice**, not a question. The old behaviour (the backend
+blocked reading stdin for an answer, and exited when the user declined or closed stdin) has been removed —
+`action=exit` from the frontend is now the only way to quit. Behaviour without a model:
+
+| category | requests | behaviour without a model |
+| --- | --- | --- |
+| inference | `chat`, `chat_stream` | guidance text, never a crash |
+| needs a model | segmented summarisation, `automation_run` | guidance up front (automation does not even open the browser) |
+| does not need a model | file parsing, skill market, settings read/write, model market search/download, session history | work normally |
+| status | `context`, `model_state` | `model_ready: false` + the real reason |
 
 ### 2.3 Request actions at a glance
 
@@ -132,6 +148,10 @@ straight away.
 | `file` | upload and parse a file (segmented summarisation automatically when too long) | one `system` line |
 | `context` | query context usage | one `context` line + `used`/`limit` |
 | `model_download` | download a model and hot-swap to it | several `delta` progress lines + `done` |
+| `file_stream` | load a file, streaming segmented-summarisation progress | `delta` + several `summary_progress` lines + `done` |
+| `model_state` | machine-readable model state | `system` + `model_state` |
+| `model_scan` | rescan the models folder (registers hand-copied `.gguf`; auto-loads if there is exactly one) | `system` + `model_scan` + `model_state` |
+| `model_load` | hot-load a model by file name (no restart) | `system` + `model_load` + `model_state` |
 | `automation_config` | read the automation configuration | `system` + an `automation` object |
 | `automation_config_set` | save the automation configuration | `system` + the normalised `automation` |
 | `automation_test` | test selectors (open a browser to preview the matches) | one `system` line (with the match count and samples) |
@@ -154,6 +174,37 @@ straight away.
 {"type":"delta","content":"声音在传播"}
 {"type":"done","content":"回声是……","used":138,"limit":6553}
 ```
+
+### 2.5 Segmented summarisation progress (`summary_progress`)
+
+`file_stream` (and any streaming request that ends up summarising a long document) emits structured
+progress lines alongside the text:
+
+```json
+{"type":"summary_progress","phase":"map","status":"running","index":3,"total":12,
+ "chars":3000,"tokens":184,"elapsed":42.1,"chunk_elapsed":11.4,"tps":16.1,"slow":false,
+ "stream":true,"ok_chunks":2,"partial_chunks":0,"failed_chunks":0,"timeout_chunks":0,
+ "skipped_chunks":0,"slow_chunks":0,"content":"… 第 3/12 段处理中：已生成 184 字符，该段已用 11 秒"}
+```
+
+- `phase`: `prepare` / `map` / `reduce` / `done` / `aborted` / `failed`;
+- `status`: `start` / `running` / `ok` / `failed` / `timeout` / `skipped` / `retry`;
+- `content` is the localised one-line rendering (the backend resolves it from the language pack);
+  everything else is structured, so the UI can drive a progress bar without parsing text;
+- `tokens` is the number of characters produced so far in the current segment, which is how the UI can tell
+  "still producing output" from "silent";
+- `slow: true` means the segment passed `summarize.slow_chunk_seconds` — **slow is not broken** and the run
+  continues;
+- `stream: false` means the engine has no streaming API, so heartbeats and intra-segment interruption are
+  only possible between segments (the UI says so rather than pretending otherwise);
+- aborting (`action=stop`) returns `phase: aborted`, keeps the full text in context and injects **no**
+  half-finished summary;
+- every failure (call exception, timeout, all segments failing) has its own status, and a run that fell back
+  for some segments reports that in the final `done` text.
+
+`summarizer.py` deliberately emits structure only — no UI text — so the algorithm does not depend on the
+interface language. The engine call is made through `engine.chat_stream` when available, which is what makes
+heartbeats, per-segment timeouts and mid-segment interruption possible at all.
 
 ---
 

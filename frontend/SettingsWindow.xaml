@@ -255,6 +255,10 @@
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel Grid.Column="0">
                                                     <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding Tag}" Margin="0,0,4,0"
+                                                                   FontSize="12" FontWeight="Bold"
+                                                                   Foreground="{DynamicResource AccentBrush}"
+                                                                   VerticalAlignment="Center"/>
                                                         <TextBlock Text="{Binding Name}" FontWeight="Bold"
                                                                    Foreground="{DynamicResource AccentBrush}"/>
                                                         <TextBlock Text="{Binding Badge}" Margin="8,0,0,0" FontSize="11"
@@ -313,9 +317,15 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock x:Name="HubRegistryTitle" Grid.Column="0" FontWeight="Bold"
                                        VerticalAlignment="Center" Text="📚 本地模型库"/>
-                            <Button x:Name="HubRegistryRefreshButton" Grid.Column="1" Padding="12,3" FontSize="11"
-                                    Content="刷新模型库" Style="{StaticResource RoundButton}"
-                                    Click="HubRegistryRefreshButton_Click"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <!-- 任务二：手工放入 .gguf 后的入口（扫描到即可加载，无需重启程序） -->
+                                <Button x:Name="HubRescanButton" Padding="12,3" FontSize="11" Margin="0,0,8,0"
+                                        Content="重新扫描模型文件夹" Style="{StaticResource RoundButton}"
+                                        Click="HubRescanButton_Click"/>
+                                <Button x:Name="HubRegistryRefreshButton" Padding="12,3" FontSize="11"
+                                        Content="刷新模型库" Style="{StaticResource RoundButton}"
+                                        Click="HubRegistryRefreshButton_Click"/>
+                            </StackPanel>
                         </Grid>
                         <Border Grid.Row="1" Margin="0,6,0,0" CornerRadius="8" MaxHeight="150"
                                 Background="{DynamicResource InputBackground}"
@@ -327,6 +337,7 @@
                                         <Grid Margin="6,4">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
@@ -343,7 +354,12 @@
                                             <TextBlock Grid.Column="1" Text="{Binding SizeText}" FontSize="11"
                                                        MinWidth="80" Margin="8,0,0,0" VerticalAlignment="Center"
                                                        Foreground="{DynamicResource SubTextBrush}"/>
-                                            <Button Grid.Column="2" Content="删除" Padding="10,3" FontSize="11"
+                                            <!-- 任务五：热加载入口（无需重启程序） -->
+                                            <Button Grid.Column="2" Content="{Binding LoadText}" Padding="10,3"
+                                                    FontSize="11" Margin="8,0,0,0" IsEnabled="{Binding CanLoad}"
+                                                    Style="{StaticResource RoundButton}"
+                                                    Click="HubLoad_Click" Tag="{Binding}"/>
+                                            <Button Grid.Column="3" Content="删除" Padding="10,3" FontSize="11"
                                                     Margin="8,0,0,0" IsEnabled="{Binding CanDelete}"
                                                     Style="{StaticResource RoundButton}"
                                                     Click="HubDelete_Click" Tag="{Binding}"/>

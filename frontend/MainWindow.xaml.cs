@@ -185,12 +185,6 @@ public partial class MainWindow : Window
             // 等待后端完成模型加载 + 会话恢复 + 预热后就绪
             await _backend.StartAsync();
         }
-        catch (NeedDownloadException ex)
-        {
-            // 本地缺少模型：先征询用户，同意才下载
-            if (!await ConfirmStartupDownloadAsync(ex))
-                return; // 用户拒绝：后端已退出，界面保留提示
-        }
         catch (Exception ex)
         {
             StatusText.Text = Loc.T("main.status.startFailed", "后端启动失败");
@@ -199,9 +193,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 任务六：模型状态一变（下载完成/热加载）就自动切换界面，无需重启前端
+        _backend.ModelReadyChanged += Backend_ModelReadyChanged;
         _backend.StderrReceived -= Backend_StderrReceived;
+        // 任务一/任务六：无模型时**不再**禁用控件、也不再退出 ——
+        // 文件解析、设置读写、模型市场、会话历史都要能用，只有推理走引导。
         SetControlsEnabled(true);
-        StatusText.Text = Loc.T("main.status.ready");
+        if (_backend.ModelReady)
+            StatusText.Text = Loc.T("main.status.ready");
+        else
+            EnterNoModelMode();
         Title = Loc.T("main.title", "EchoDesk {0} — Powered by {1}", _backend.Version, _backend.Studio);
         string welcome = Loc.T("main.welcome", "✨ 欢迎使用 EchoDesk {0} — Powered by {1}",
                                _backend.Version, _backend.Studio);
@@ -430,7 +431,17 @@ public partial class MainWindow : Window
     /// <summary>按后端返回的字段刷新顶部关键状态与状态区（与界面语言无关）。</summary>
     private void ApplyStatusFields(JsonElement root)
     {
-        if (root.TryGetProperty("model", out JsonElement modelEl) && modelEl.ValueKind == JsonValueKind.String)
+        // 任务六：无模型时状态栏必须明确显示"无模型"，而不是留空或显示一个并不存在
+        // 的模型名（config 里仍有默认文件名，但那个文件并没有被加载）。
+        bool modelReady = !(root.TryGetProperty("model_ready", out JsonElement readyEl)
+                            && readyEl.ValueKind == JsonValueKind.False);
+        if (!modelReady)
+        {
+            ModelText.Text = Loc.T("main.model.noModel", "🧠 模型: 无模型");
+            ModelChip.ToolTip = Loc.T("main.model.noModelTip",
+                "当前没有可用的本地模型。点击打开「设置 → 模型」下载或加载模型。");
+        }
+        else if (root.TryGetProperty("model", out JsonElement modelEl) && modelEl.ValueKind == JsonValueKind.String)
         {
             string model = modelEl.GetString() ?? "";
             if (model.Length > 0)
@@ -750,59 +761,60 @@ public partial class MainWindow : Window
         Toast(Loc.T("main.guide.toast", "🎉 欢迎首次使用 EchoDesk，已显示上手引导"));
     }
 
-    /// <summary>本地缺少模型时弹确认框；用户同意则下载并等待后端就绪，返回是否继续启动。</summary>
-    private async Task<bool> ConfirmStartupDownloadAsync(NeedDownloadException ex)
+    /// <summary>
+    /// 进入"无模型"界面状态（v0.2.1 综合优化 任务六）。
+    ///
+    /// 关键点：**不禁用任何控件、不退出**。文件解析、设置读写、模型市场、会话历史
+    /// 都不依赖模型，必须照常可用；只有推理会返回引导。旧行为在这里会弹一个
+    /// "下载否则退出"的二选一，用户拒绝后整个应用不可用 —— 那正是本轮要拆掉的墙角。
+    /// 引导里会给出模型文件夹的**真实路径**，并提示可以点模型状态条直接进模型市场。
+    /// </summary>
+    private void EnterNoModelMode()
     {
-        string size = ex.Size > 0
-            ? Loc.T("main.model.sizeApprox", "（约 {0} MB）", (ex.Size / 1048576.0).ToString("0"))
-            : Loc.T("main.model.sizeUnknown", "（大小未知）");
-        AddMessage("system", Loc.T("main.model.missingChat",
-            "📦 本地未找到所需模型：{0}{1}\n来源仓库：{2}", ex.Model, size, ex.Repo));
-        StatusText.Text = Loc.T("main.status.waitingDownload", "等待确认下载");
-
-        var result = MessageBox.Show(this,
-            Loc.T("main.dialog.startupDownloadText",
-                "本地未找到所需模型：\n\n{0}{1}\n来源仓库：{2}\n\n" +
-                "是否现在下载？下载需要联网，模型较大时可能耗时较长。\n" +
-                "选择「否」将退出程序（也可稍后手动把模型文件放入 models/ 目录）。",
-                ex.Model, size, ex.Repo),
-            Loc.T("main.dialog.modelDownloadTitle"),
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-        if (result != MessageBoxResult.Yes)
+        StatusText.Text = Loc.T("main.status.noModel", "无模型（仍可使用文件解析与设置）");
+        ModelText.Text = Loc.T("main.model.noModel", "🧠 模型: 无模型");
+        ModelChip.ToolTip = Loc.T("main.model.noModelTip",
+            "当前没有可用的本地模型。点击打开「设置 → 模型」下载或加载模型。");
+        string guide = _backend?.ModelGuide ?? "";
+        if (guide.Length == 0)
         {
-            AddMessage("system", Loc.T("main.model.downloadCancelled",
-                "❌ 已取消下载模型，后端已退出。\n可手动把模型文件放入 models/ 目录后重新启动 EchoDesk。"));
-            StatusText.Text = Loc.T("main.status.downloadCancelled", "未下载模型");
-            SetControlsEnabled(false);
-            _backend?.Stop();
-            return false;
+            guide = Loc.T("main.noModel.guideFallback",
+                "⚠️ 当前没有可用的本地模型，推理不可用（文件解析、设置、模型市场仍可正常使用）。\n" +
+                "可以点顶部的模型状态条打开「设置 → 模型 → 模型市场」下载，或把 .gguf 文件放进：\n{0}",
+                _backend?.ModelsDir ?? "");
         }
+        AddMessage("system", guide);
+        Toast(Loc.T("main.noModel.toast",
+            "⚠️ 未检测到本地模型：下载或手动放入后会自动加载，无需重启"));
+    }
 
-        AddMessage("system", Loc.T("main.model.downloadingHint",
-            "⏳ 正在下载模型，进度在下方对话框实时显示..."));
-        StatusText.Text = Loc.T("main.status.downloadingModel", "正在下载模型……");
+    /// <summary>
+    /// 模型可用状态变化时的界面切换（任务六）：下载完成/热加载成功后自动转为正常状态，
+    /// 模型被删除或加载失败则回到"无模型"引导 —— 全程不需要重启前端。
+    /// </summary>
+    private void Backend_ModelReadyChanged(bool ready)
+    {
         try
         {
-            await _backend!.DownloadModelAndWaitReadyAsync(
-                ex.Model,
-                delta =>
+            Dispatcher.Invoke(() =>
+            {
+                if (ready)
                 {
-                    UpdateLiveStatus(delta);
-                    StatusText.Text = SimplifyStatus(delta);
-                },
-                message => AddMessage("system", message));
-            Toast(Loc.T("main.model.ready", "✅ 模型已就绪：{0}", ex.Model));
-            _ = RefreshStatusBarAsync();
-            return true;
+                    StatusText.Text = Loc.T("main.status.ready");
+                    AddMessage("system", Loc.T("main.model.hotLoaded",
+                        "✅ 模型已就绪，现在可以正常对话了。"));
+                    Toast(Loc.T("main.model.hotLoaded", "✅ 模型已就绪，现在可以正常对话了。"));
+                }
+                else
+                {
+                    EnterNoModelMode();
+                }
+                _ = RefreshStatusBarAsync();
+            });
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            AddMessage("system", Loc.T("main.model.downloadFailed", "❌ 模型下载失败：{0}", e.Message));
-            Toast(Loc.T("main.model.downloadFailed", "❌ 模型下载失败：{0}", e.Message), error: true);
-            StatusText.Text = Loc.T("main.status.modelDownloadFailed", "模型下载失败");
-            SetControlsEnabled(false);
-            return false;
+            App.Log("MainWindow.Backend_ModelReadyChanged", ex);
         }
     }
 
@@ -1923,16 +1935,59 @@ public partial class MainWindow : Window
             return;
         AddMessage("system", Loc.T("main.upload.uploading",
             "📤 正在上传文件: {0} ...", System.IO.Path.GetFileName(filePath)));
+
+        // 任务四：分段摘要的过程反馈。进度**就地更新同一条消息**（而不是每段新增一条），
+        // 长文档十几段才不会把对话框刷满；用户不查日志文件也能看到第几段、耗时、阶段。
+        var progressPanel = NewMessagePanel("system",
+            Loc.T("main.summary.preparing", "📝 正在解析文档并准备分段摘要…"), out FrameworkElement progressContent);
+        var progressTarget = progressContent as TextBox;
+        MessagePanel.Children.Add(progressPanel);
+        MessageScrollViewer.ScrollToBottom();
+
+        // 摘要期间把发送按钮变成"停止"（与流式对话一致）：用户可随时中止，后端会真的停下
+        bool previousStopMode = _stopMode;
+        _stopRequested = false;
+        _stopMode = true;
+        SendButton.Content = "⏹";
+        SendButton.ToolTip = Loc.T("main.button.stopSummaryTip", "中止分段摘要 (Esc)");
+        SendButton.IsEnabled = true;
         try
         {
-            string json = await _backend.SendRequestAsync(new { action = "file", path = filePath });
-            using JsonDocument doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("content", out JsonElement content))
-                AddMessage("system", content.GetString() ?? Loc.T("main.upload.done", "上传完成"));
+            string final = await _backend.SendStreamRequestAsync(
+                new { action = "file_stream", path = filePath },
+                delta =>
+                {
+                    if (progressTarget is not null)
+                    {
+                        progressTarget.Text = Emoji.Prefer(delta);
+                        MessageScrollViewer.ScrollToBottom();
+                    }
+                },
+                onContext: (used, limit) => ContextText.Text = FormatContext(used, limit),
+                onEvent: (type, root) =>
+                {
+                    // 只有 summary_progress 需要在这里渲染：它是结构化进度（阶段/段号/耗时/慢）
+                    if (type != "summary_progress" || progressTarget is null)
+                        return;
+                    string text = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+                    if (text.Length == 0)
+                        return;
+                    progressTarget.Text = Emoji.Prefer(text);
+                    MessageScrollViewer.ScrollToBottom();
+                });
+            if (final.Length > 0)
+                AddMessage("system", final);
         }
         catch (Exception ex)
         {
             AddMessage("system", Loc.T("main.upload.failed", "❌ 上传失败: {0}", ex.Message));
+        }
+        finally
+        {
+            _stopMode = previousStopMode;
+            SendButton.Content = "➤";
+            SendButton.ToolTip = Loc.T("main.button.sendTip", "发送 (Ctrl+Enter)");
+            SendButton.IsEnabled = true;
         }
     }
 

@@ -45,12 +45,30 @@ uploaded a file). To switch it off, set `clarify_vague` to `false` in `app\backe
    **with content** means it has crashed; an empty file is normal): it holds the full Python stack trace.
 2. Send us the log contents and we can pin down the cause.
 
-### "The required model was not found locally"
-This is **expected behaviour** (since v0.2.0 the program no longer downloads silently):
-- Click "Yes" → it downloads automatically from the configured mirror (default `hf-mirror.com`, about 508 MB);
-- Click "No" → the program exits; you can download a `.gguf` yourself, drop it into `app\backend\models\` and
-  restart;
-- You can also point `model_repo` / `model_path` / `hf_endpoint` in `app\backend\config.json` at your own model.
+### "The required model was not found locally" / no model at all
+Since v0.2.1 the app **keeps running** in this case — nothing exits, nothing blocks, nothing is downloaded
+behind your back. The status bar shows "no model", the chat shows guidance, and everything that does not
+need inference keeps working (file parsing, settings, skill market, model market, session history).
+Three ways to get a model, none of which needs a restart:
+1. **Settings → Model → Model market**, search and download. The list shows **all** GGUF repositories
+   (nothing is filtered out by hardware); entries that suit this machine are marked "(Recommended)" and the
+   repository of the model named in `config.json` is pinned to the top. The download hot-loads the model.
+2. **Copy a `.gguf` into `app\backend\models\`** and click *Rescan models folder*; if exactly one model is
+   found it is loaded automatically.
+3. **Click *Load*** next to an already-downloaded model in the local model library.
+You can also point `model_repo` / `model_path` / `hf_endpoint` in `app\backend\config.json` at your own model.
+
+### The model market list used to hide models — what changed?
+Nothing is hidden any more. The list is merged from three sources (remote search results, the configured
+default model, and locally downloaded models) and de-duplicated by repository. Hardware detection is only
+used to **mark** entries that fit your machine, never to filter them out. The default model's repository is
+always present and always first — previously the list was one page of download-ranked remote results, so the
+default model could be missing entirely.
+
+### Loading a model failed
+The app stays in the no-model state and shows the reason (corrupt file, unsupported format, not enough
+memory). Try a smaller quantization, or check that the `.gguf` really is a complete GGUF file. Nothing needs
+restarting: fix the file and click *Load* (or *Rescan models folder*) again.
 
 ### I want a different model but do not want to download one
 1. Put the `.gguf` file into `app\backend\models\`;
@@ -97,6 +115,18 @@ chunks before injecting it, and **a summary loses detail**. In that case:
 When you ask, **mention the file** (for example "According to this contract…" or "What is clause 3 in the
 document?"). To save context, when the file is not mentioned only a filename pointer is injected, not its
 contents.
+
+### How do I know chunked summarization is still working and not stuck?
+Since v0.2.1 the chat shows live progress while a long document is being summarized: the phase (splitting /
+summarizing / merging), which segment of how many is running, how long the whole run and the current
+segment have taken, and how much text the current segment has produced so far. Because each segment is
+generated in streaming mode, a status update arrives at least every few seconds — a long silence is not
+expected, and a segment that is merely slow is labelled as slow rather than reported as an error.
+The stop button aborts the run immediately; the original text stays in context and **no half-finished
+summary is injected**, so you can retry with `/summarize`. If a segment really fails, that segment falls
+back to a raw excerpt of the original text and the result says so.
+Timeouts are configurable in `config.json` under `summarize`: `chunk_timeout_seconds` (0 = unlimited) and
+`chunk_timeout_action` = `skip` / `retry` / `abort`.
 
 ### If I upload the same document again, is it summarized all over again
 No. **Chunked summaries are cached** (keyed by the file fingerprint plus the summarization parameters), so a

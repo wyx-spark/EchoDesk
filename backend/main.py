@@ -5,14 +5,21 @@
   {"action": "chat_stream", "message": "..."}  -> 多行流式响应：{"type":"delta",...}... {"type":"done",...}
   {"action": "stop"}                           -> 中断当前流式生成
   {"action": "file", "path": "..."}            -> 一行响应
+  {"action": "file_stream", "path": "..."}     -> 流式：summary_progress 进度行 + done（任务四）
   {"action": "model_download", "name": "..."}  -> 下载模型并热切换：delta 进度 + done
+  {"action": "model_scan"}                     -> 重新扫描模型文件夹
+  {"action": "model_load", "name": "..."}      -> 热加载指定模型（不重启进程）
 
-启动前若本地缺少模型：先输出 {"type":"need_download", model, size, repo} 征询用户，
-用户同意（收到 action=model_download）才下载；拒绝或 stdin 关闭则后端直接退出。
+**无模型就绪（v0.2.1 综合优化 任务一）**：
+启动时若本地缺少模型，后端**不再阻塞等待、也不再退出**，而是以"无模型就绪"状态继续运行：
+初始化一个 ``llm`` 留空的 Backend，主循环照常服务。行为边界见 :meth:`Backend.model_state`：
+推理类请求返回引导文案（不崩溃），文件解析 / 技能市场 / 设置读写 / 模型市场搜索与下载 /
+会话历史查看等不依赖模型的功能**照常可用**。用户在设置里下载模型、或把 ``.gguf`` 手动放进
+模型文件夹后，后端**原地热加载**（同一个引擎对象，无需重启进程）。
 
-流式生成在后台线程执行，主循环继续读取 stdin，从而支持 "stop" 中断。
-启动时先完成模型加载、会话恢复与预热（warmup），再输出 {"type":"ready",...} 就绪声明；
-前端只有读到就绪声明后才会允许用户输入。
+启动顺序：``need_download``（**非阻塞**，仅告知缺哪个模型，带 ``blocking: false``）→
+``ready``（带 ``model_ready: false`` 与 ``model_missing`` 详情）。旧行为"用户拒绝即退出"
+已移除：退出只由用户主动触发（前端发 ``exit``）。
 """
 import contextlib
 import json
@@ -63,7 +70,7 @@ with _suppress_stdout():
     from download_utils import check_model, download_model, find_best_model
     from file_parser import parse_file_with_wps
     from gguf_meta import resolve_context_window
-    from llm_engine import LLMEngine
+    from llm_engine import LazyLLMEngine, LLMEngine, NoModelError
     from search_engine import SearchEngine
     from summarizer import DocumentSummarizer
 
@@ -149,8 +156,12 @@ def _write(response: Dict[str, Any]) -> None:
 class Backend:
     """后端服务：负责模型加载、会话恢复、预热与请求分发。"""
 
-    def __init__(self, config: Config, model_path: str) -> None:
+    def __init__(self, config: Config, model_path: str = "") -> None:
         self.config = config
+        # 引擎：给了模型就是真引擎；没给就是一个"空着、可原地加载"的引擎（任务一）。
+        # 刻意**保持同一个对象**（见 llm_engine.LazyLLMEngine 的说明）：热加载后
+        # command_handler / summarizer 里的引用不用重新接线，也就不会出现
+        # "加载成功了但还在用旧对象"这种静默错误。
         self.llm = self._build_engine(config, model_path)
         self.conv = ConversationManager(config.max_history, config.default_mode)
         self.search = SearchEngine(config.search_results)
@@ -183,6 +194,107 @@ class Backend:
         """清空分段摘要缓存并返回清掉的条目数（供 /clearcache 与动作接口使用）。"""
         cache = self.summary_cache()
         return cache.clear() if cache is not None else 0
+
+    # ---------- 无模型就绪 / 热加载（v0.2.1 综合优化 任务一、二、五） ----------
+
+    @property
+    def model_ready(self) -> bool:
+        """当前是否有可用模型（推理类功能的前提）。"""
+        return bool(getattr(self.llm, "ready", True))
+
+    def models_dir(self) -> str:
+        """模型文件夹的实际路径（引导文案里必须给真实路径，不能用占位符）。"""
+        try:
+            return self.model_hub().models_dir
+        except Exception:
+            return os.path.abspath("models")
+
+    def model_state(self) -> Dict[str, Any]:
+        """机器可读的模型状态，供前端区分"后端已就绪"与"推理可用"（任务一）。
+
+        ``ready=false`` 时前端应保持界面可交互、把状态栏显示为"无模型"，
+        并按 ``guide`` 引导用户去模型市场或手动放置模型文件。
+        """
+        ready = self.model_ready
+        return {
+            "ready": ready,
+            "model": os.path.basename(str(getattr(self.llm, "model_path", "") or "")),
+            "models_dir": self.models_dir(),
+            "n_ctx": int(getattr(self.llm, "n_ctx", 0) or 0),
+            "guide": "" if ready else self.guide_text(),
+        }
+
+    def guide_text(self) -> str:
+        """无模型时的引导文案：说明现状 + 三条可行路径 + 模型文件夹真实路径（任务二）。"""
+        return _t("sys.no_model_guide", dir=self.models_dir())
+
+    def load_model(self, name_or_path: str = "") -> Dict[str, Any]:
+        """热加载模型（任务五）：下载完成、扫描到新模型、用户手动切换都走这里。
+
+        返回 ``{ok, name, error, state}``。失败时**保持无模型状态**并把原因如实带回
+        （文件损坏 / 格式不支持 / 内存不足），用户可以直接重试，不用重启进程。
+        """
+        want = str(name_or_path or "").strip()
+        if not want:
+            want = os.path.basename(str(getattr(self.config, "model_path", "") or ""))
+        if not want:
+            return {"ok": False, "name": "", "error": _t("sys.no_model_name_given"),
+                    "state": self.model_state()}
+        path = want if os.path.isabs(want) else os.path.join(self.models_dir(), os.path.basename(want))
+        if not os.path.isfile(path):
+            return {"ok": False, "name": os.path.basename(want),
+                    "error": _t("sys.model_file_missing", name=os.path.basename(want),
+                                dir=self.models_dir()),
+                    "state": self.model_state()}
+        try:
+            train_ctx = resolve_context_window(path, 0)
+            n_ctx = self.config.context_for_model(path, train_ctx)
+            self.llm.load(path, n_ctx)
+        except Exception as e:  # noqa: BLE001 - 损坏/不支持/内存不足都在这里
+            log.exception("热加载模型失败: %s", os.path.basename(path))
+            return {"ok": False, "name": os.path.basename(path),
+                    "error": _t("sys.model_load_failed", name=os.path.basename(path), error=e),
+                    "state": self.model_state()}
+        name = os.path.basename(path)
+        self.config.model_path = name
+        try:
+            self.config.save()
+        except Exception:
+            log.warning("配置保存失败（不影响本次运行）", exc_info=True)
+        self.touch_model_usage()
+        # 换模型后旧 KV 缓存与历史摘要都不再适用
+        self.llm.clear_cache()
+        try:
+            self.warmup()
+        except Exception:
+            log.warning("热加载后的预热失败（不影响使用）", exc_info=True)
+        log.info("模型热加载完成: %s（ctx=%d）", name, int(getattr(self.llm, "n_ctx", 0) or 0))
+        return {"ok": True, "name": name, "error": "", "state": self.model_state()}
+
+    def scan_models(self, auto_load: bool = True) -> Dict[str, Any]:
+        """重新扫描模型文件夹（任务二：手动放置 ``.gguf`` 后能被识别）。
+
+        扫描结果来自 ``model_hub.registry()``（它会把手工放进目录的文件一并登记）。
+        只有一个模型时自动加载并提示；多个模型时只回报清单，由用户选择。
+        """
+        hub = self.model_hub()
+        info = hub.registry(current_model=str(getattr(self.llm, "model_path", "") or ""))
+        models = [m for m in info.get("models", []) if m.get("exists")]
+        loaded = ""
+        error = ""
+        if auto_load and not self.model_ready and len(models) == 1:
+            result = self.load_model(str(models[0].get("name") or ""))
+            loaded = result.get("name", "") if result.get("ok") else ""
+            error = str(result.get("error") or "")
+        return {
+            "count": len(models),
+            "models": [{"name": m.get("name"), "size_human": m.get("size_human"),
+                        "quantization": m.get("quantization")} for m in models],
+            "models_dir": info.get("models_dir", self.models_dir()),
+            "auto_loaded": loaded,
+            "error": error,
+            "state": self.model_state(),
+        }
 
     # ---------- 修复四：模型能力画像 / 摘要缓存 ----------
 
@@ -263,7 +375,7 @@ class Backend:
         if self._model_hub is None:
             from model_hub import ModelHub
 
-            self._model_hub = ModelHub(self.config.model_hub)
+            self._model_hub = ModelHub(self.config.model_hub, app_config=self.config)
         else:
             self._model_hub.cfg = self.config.model_hub
         return self._model_hub
@@ -306,21 +418,32 @@ class Backend:
         return self._build_engine(self.config, model_path)
 
     @staticmethod
-    def _build_engine(config: Config, model_path: str) -> LLMEngine:
+    def _build_engine(config: Config, model_path: str):
         """按"所选模型"的上下文窗口创建推理引擎。
 
         窗口取配置值、模型训练窗口（GGUF 元数据）与 config.max_context 三者的最小值；
         加载时由 LLMEngine 输出窗口大小与 KV Cache 占用日志。
+
+        ``model_path`` 为空时返回 :class:`LazyLLMEngine`（空引擎）：这是"无模型就绪"
+        的载体，后端照常启动，等模型到位后由 :meth:`Backend.load_model` **原地加载**
+        （任务一 / 任务五）。
         """
         n_threads = config.n_threads or os.cpu_count() or 4
-        train_ctx = resolve_context_window(model_path, 0)
-        n_ctx = config.context_for_model(model_path, train_ctx)
+        path = str(model_path or "").strip()
+        if not path:
+            log.info("未找到可用模型：进入无模型就绪状态（推理类请求将返回引导，其余功能正常）")
+            return LazyLLMEngine(
+                int(config.context_length or 8192), n_threads=n_threads,
+                n_batch=config.n_batch, n_gpu_layers=config.n_gpu_layers,
+            )
+        train_ctx = resolve_context_window(path, 0)
+        n_ctx = config.context_for_model(path, train_ctx)
         log.info(
             "加载模型: %s (ctx=%d, 训练窗口=%s, threads=%d, batch=%d, gpu_layers=%d)",
-            model_path, n_ctx, train_ctx or "未知", n_threads, config.n_batch, config.n_gpu_layers,
+            path, n_ctx, train_ctx or "未知", n_threads, config.n_batch, config.n_gpu_layers,
         )
         return LLMEngine(
-            model_path, n_ctx,
+            path, n_ctx,
             n_threads=n_threads, n_batch=config.n_batch, n_gpu_layers=config.n_gpu_layers,
         )
 
@@ -348,8 +471,15 @@ class Backend:
             log.debug("更新模型最后使用时间失败", exc_info=True)
 
     def warmup(self) -> None:
-        """用当前系统提示词做一次极小推理，预热 KV 缓存，缩短首次回复延迟。"""
+        """用当前系统提示词做一次极小推理，预热 KV 缓存，缩短首次回复延迟。
+
+        无模型时直接跳过：预热的意义是"第一次回复更快"，没有模型就无从谈起，
+        不能让它把启动流程拖住（任务一：缺失模型时后端必须照常就绪）。
+        """
         if not self.config.warmup:
+            return
+        if not self.model_ready:
+            log.info("无模型，跳过预热")
             return
         log.info("模型预热中...")
         self.llm.chat_complete(self.conv.build_messages("ping"), max_tokens=1)
@@ -422,6 +552,13 @@ class Backend:
             return self._handle_model_hub_status()
         if action == "model_hub_config_set":
             return self._handle_model_hub_config_set(request)
+        # ---------- 无模型就绪 / 热加载（v0.2.1 综合优化 任务一、二、五） ----------
+        if action == "model_state":
+            return {"type": "system", "content": "", "model_state": self.model_state()}
+        if action == "model_scan":
+            return self._handle_model_scan(request)
+        if action == "model_load":
+            return self._handle_model_load(request)
         # ---------- 多语言（任务三 3.4） ----------
         if action == "set_language":
             return self._handle_set_language(request)
@@ -802,11 +939,18 @@ class Backend:
         return {"type": "system", "content": "", "detail": detail}
 
     def _handle_model_hub_registry(self) -> Dict[str, Any]:
-        """模型库列表（含当前正在使用的模型标记）。"""
+        """模型库列表（含当前正在使用的模型标记）。
+
+        "当前使用中"取**引擎里实际加载的**模型，而不是配置里写的名字：
+        无模型就绪状态下配置里仍有默认文件名，但那个文件并不存在、也没被加载，
+        按配置标会显示出一个"正在使用中"的假象（任务一：状态要反映真实情况）。
+        """
+        current = str(getattr(self.llm, "model_path", "") or "")
         try:
-            data = self.model_hub().registry(current_model=self.config.model_path)
+            data = self.model_hub().registry(current_model=current)
         except Exception as e:
             return self._model_hub_error(e, _t("sys.verb_read_registry"))
+        data["model_ready"] = self.model_ready
         return {"type": "system", "content": "", "registry": data}
 
     def _handle_model_hub_uninstall(self, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -848,6 +992,40 @@ class Backend:
         else:
             note = _t("sys.model_hub_no_change")
         return {"type": "system", "content": note, "model_hub": self.model_hub().status()}
+
+    # ---------- 无模型就绪 / 重新扫描 / 热加载（v0.2.1 综合优化 任务二、五） ----------
+
+    def _handle_model_scan(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """重新扫描模型文件夹：手工放进 ``.gguf`` 后能被识别并按需热加载。"""
+        try:
+            result = self.scan_models(auto_load=bool(request.get("auto_load", True)))
+        except Exception as e:  # noqa: BLE001
+            log.exception("扫描模型文件夹失败")
+            return {"type": "system", "content": _t("sys.model_scan_failed", error=e),
+                    "model_state": self.model_state()}
+        if result.get("auto_loaded"):
+            content = _t("sys.model_scan_auto_loaded", name=result["auto_loaded"])
+        elif result.get("count") == 0:
+            content = _t("sys.model_scan_empty", dir=result.get("models_dir", self.models_dir()))
+        elif not self.model_ready:
+            content = _t("sys.model_scan_found", count=result["count"],
+                         dir=result.get("models_dir", self.models_dir()))
+        else:
+            content = _t("sys.model_scan_ok", count=result["count"])
+        if result.get("error"):
+            content += " ⚠️ " + str(result["error"])
+        return {"type": "system", "content": content, "model_scan": result,
+                "model_state": result.get("state", self.model_state())}
+
+    def _handle_model_load(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """热加载指定模型（不重启进程）。失败时保持无模型状态并给出原因。"""
+        result = self.load_model(str(request.get("name") or ""))
+        if result.get("ok"):
+            content = _t("sys.model_hot_loaded", name=result.get("name", ""))
+        else:
+            content = _t("sys.model_hot_load_failed", error=result.get("error", ""))
+        return {"type": "system", "content": content, "model_load": result,
+                "model_state": result.get("state", self.model_state())}
 
     # ---------- 技能市场（任务五） ----------
 
@@ -1285,6 +1463,9 @@ class Backend:
                 response["model"] = os.path.basename(self.config.model_path or "")
             except Exception:
                 response["model"] = ""
+            # 任务一：机器可读的"推理是否可用"。前端据此显示"无模型"并把推理入口
+            # 变成引导，而不是等用户提交后才报错。不带它前端就只能猜。
+            response["model_ready"] = self.model_ready
             try:
                 response["search"] = bool(self.commands.search_enabled)
             except Exception:
@@ -1434,6 +1615,9 @@ class Backend:
         if action == "automation_pick":
             yield from self._stream_automation_pick(request)
             return
+        if action == "file_stream":
+            yield from self._stream_file(str(request.get("path") or ""))
+            return
         if action == "automation_wizard":
             yield from self._stream_automation_wizard(request)
             return
@@ -1441,6 +1625,18 @@ class Backend:
         user_msg = request.get("message", "")
         if user_msg.startswith("/"):
             yield self._handle_chat(user_msg)
+            return
+
+        # 任务一：无模型时给出引导，而不是抛异常/让前端看到"推理失败"
+        if not self.model_ready:
+            guide = self.guide_text()
+            self.conv.add_message("user", user_msg)
+            self.conv.add_message("assistant", guide)
+            yield {"type": "assistant", "content": guide, "model_ready": False, "guide": True}
+            done: Dict[str, Any] = {"type": "done", "content": guide,
+                                    "model_ready": False, "guide": True}
+            self._attach_context(done)
+            yield done
             return
 
         search_context = self._search_if_enabled(user_msg)
@@ -1486,6 +1682,14 @@ class Backend:
             if action:
                 self._merge_action(response, action)
             return response
+
+        # 任务一：无模型时不走推理，直接给引导（并记进历史，用户切回来后能看到上下文）
+        if not self.model_ready:
+            guide = self.guide_text()
+            self.conv.add_message("user", user_msg)
+            self.conv.add_message("assistant", guide)
+            self._compact_history()
+            return {"type": "assistant", "content": guide, "model_ready": False, "guide": True}
 
         # 意图短路：用户问"我刚才说了什么"时直接引用最近输入，避免小模型混淆视角
         last_user = self.conv.last_user_message()
@@ -1533,6 +1737,14 @@ class Backend:
 
         停止：前端发送 action=stop 会置位 stop_event，引擎在各循环处尽早退出。
         """
+        # 任务一的功能边界：自动化里"生成摘要/审核意见"那一步依赖模型，
+        # 无模型时先给引导，别让整轮任务跑到一半才失败（既浪费时间又留下半份结果）。
+        if not self.model_ready:
+            yield {"type": "error",
+                   "content": _t("sys.automation_need_model",
+                                 guide=_t("sys.no_model_guide", dir=self.models_dir())),
+                   "model_ready": False}
+            return
         engine = self.automation()
         try:
             for event in engine.run(stop_event=self.stop_event):
@@ -1708,9 +1920,20 @@ class Backend:
                 self.conv.add_message("assistant", _t("sys.model_downloaded_to_library",
                                                      name=os.path.basename(path)))
                 self._compact_history()
-                yield {"type": "done",
-                       "content": f"✅ {result.get('message') or _t('sys.download_done')}",
-                       "model": path}
+                # 任务五：下载完成后**就地热加载**，用户不必重启进程/前端。
+                # 失败（损坏、格式不支持、内存不足）时保持无模型状态并给出原因与重试路径。
+                yield {"type": "delta", "content": _t("sys.model_hot_loading",
+                                                      name=os.path.basename(path))}
+                load = self.load_model(os.path.basename(path))
+                if load.get("ok"):
+                    content = (f"✅ {result.get('message') or _t('sys.download_done')} · "
+                               + _t("sys.model_hot_loaded", name=load.get("name", "")))
+                else:
+                    content = (f"⚠️ {result.get('message') or _t('sys.download_done')} · "
+                               + _t("sys.model_hot_load_failed", error=load.get("error", "")))
+                yield {"type": "done", "content": content,
+                       "model": path if load.get("ok") else "",
+                       "model_load": load, "model_state": self.model_state()}
             else:
                 icon = "⏹" if result.get("cancelled") else "❌"
                 yield {"type": "done",
@@ -1725,10 +1948,11 @@ class Backend:
             return {"type": "system", "content": _t("sys.file_need_path")}
         return {"type": "system", "content": self.load_file_into_context(filepath)}
 
-    def load_file_into_context(self, filepath: str) -> str:
+    def load_file_into_context(self, filepath: str, progress_sink=None) -> str:
         """解析文件并入上下文；全文超出窗口一定比例时自动分段摘要后注入。
 
         返回给用户看的反馈文本（成功或失败都会说明原因）。
+        ``progress_sink`` 透传给分段摘要（任务四：流式入口据此实时报进度）。
         """
         content = parse_file_with_wps(filepath, self.config.file_max_chars)
         if content.startswith(("WPS读取失败", "解析失败", "文件内容为空", "不支持的文件类型")):
@@ -1744,15 +1968,22 @@ class Backend:
                 "文件 %s 约 %d tokens，超过窗口 %d 的 %.0f%%：转入分段摘要",
                 name, tokens, self.llm.n_ctx, self.config.summarize.trigger_ratio * 100,
             )
+            # 任务一：文件解析**不依赖模型**，必须照常完成；只有"分段摘要"这一步需要模型。
+            # 所以这里保留已解析的全文，只把摘要这一步换成引导（而不是整个加载失败）。
+            if not self.model_ready:
+                return _t("sys.file_loaded_no_model", name=name, chars=len(content),
+                          tokens=tokens,
+                          guide=_t("sys.no_model_guide", dir=self.models_dir()))
             head = _t("sys.file_auto_summary_head", name=name, tokens=tokens,
                       n_ctx=self.llm.n_ctx,
                       ratio=f"{self.config.summarize.trigger_ratio:.0%}") + "\n"
             return head + self.summarize_current_file(
-                force=True, source_name=name, trigger=_t("sys.summarize_trigger_auto"))
+                force=True, source_name=name, trigger=_t("sys.summarize_trigger_auto"),
+                progress_sink=progress_sink)
         return _t("sys.file_loaded", name=name, chars=len(content), tokens=tokens)
 
     def summarize_current_file(self, force: bool = True, source_name: str = "",
-                               trigger: str = "") -> str:
+                               trigger: str = "", progress_sink=None) -> str:
         """对当前已加载文件做分段摘要并替换注入内容（供自动触发与 /summarize 调用）。
 
         修复四（方向八：缓存与复用）：摘要结果按"文件指纹 + 摘要参数"缓存，
@@ -1761,10 +1992,18 @@ class Backend:
 
         ``trigger``（"自动"/"手动"）是**界面文本**：默认值留空，进来后按当前语言
         解析（不能在形参默认值里写 ``_t(...)``——那是导入时求值，会固化语言）。
+
+        ``progress_sink``（任务四）：传入一个可调用对象时，摘要过程中的结构化进度
+        事件会交给它（流式入口据此实时推给前端）；不传则退回"打到 stderr"的旧行为，
+        这样非流式调用（``/summarize``、自动触发）不会往协议里插异步行。
         """
         trigger = trigger or _t("sys.summarize_trigger_manual")
         if not self.conv.file_content:
             return _t("cmd.resp.summarize_no_file")
+        # 任务一：无模型时摘要无从谈起，给引导而不是抛异常
+        if not self.model_ready:
+            return _t("sys.summarize_need_model",
+                      guide=_t("sys.no_model_guide", dir=self.models_dir()))
         name = source_name or os.path.basename(self.conv.file_name or "")
 
         # 命中缓存：直接把上次的摘要装回上下文（跳过全部模型调用）
@@ -1795,18 +2034,38 @@ class Backend:
                     + _t("sys.summary_cache_hit_note")
                 )
 
-        def _progress(index: int, total: int, label: str) -> None:
-            # 进度打到 stderr：前端在对话框里实时显示，长文档摘要不会"卡住无反应"
-            print(emoji_mod.prefer(f"📝 {label} ({index}/{total})"), file=sys.stderr, flush=True)
+        def _progress(event: Dict[str, Any]) -> None:
+            """摘要进度（任务四）：有 sink 就交给流式入口实时推给前端，
+            没有就退回打到 stderr 的旧行为（不往协议里插异步行）。"""
+            if progress_sink is not None:
+                try:
+                    progress_sink(event)
+                except Exception:
+                    log.debug("进度转发失败（已忽略）", exc_info=True)
+                return
+            label = self._summary_progress_text(event)
+            if label:
+                print(emoji_mod.prefer(f"📝 {label}"), file=sys.stderr, flush=True)
 
         result = self.summarizer.summarize(
             self.conv.file_content, source_name=name, force=force, on_progress=_progress,
+            should_stop=lambda: self.stop_event.is_set(),
         )
+        # 任务四：把"慢"与"坏"分开报。中止/失败都不注入半份摘要，并保留重试路径。
+        if result.aborted:
+            return _t("sys.summary_aborted", name=name, done=len(result.segments),
+                      total=result.chunk_count, elapsed=f"{result.elapsed:.0f}")
         if not result.summarized:
+            if result.status == "failed":
+                log.error("分段摘要失败: %s（%s）", name, result.error)
+                return _t("sys.summary_failed", name=name, chunks=result.chunk_count,
+                          failed=result.failed_chunks, timeout=result.timeout_chunks,
+                          elapsed=f"{result.elapsed:.0f}")
             return _t("sys.summary_too_short", chars=result.origin_chars)
         self.conv.set_file_summary(
             result.text,
-            {"chunks": result.chunk_count, "origin_chars": result.origin_chars, "pointer": result.pointer},
+            {"chunks": result.chunk_count, "origin_chars": result.origin_chars,
+             "pointer": result.pointer, "status": result.status},
         )
         # 写入缓存：下次同一文件（内容与参数都没变）直接复用
         if cache is not None and os.path.isfile(cache_key_path):
@@ -1817,13 +2076,138 @@ class Backend:
         summary_tokens = self.llm.count_tokens(result.text)
         pointer = result.pointer
         shown = pointer[:160] + ("…" if len(pointer) > 160 else "")
-        return (
+        text = (
             _t("sys.summary_done", trigger=trigger, name=name) + "\n"
             + _t("sys.summary_done_stats", chars=result.origin_chars,
                  chunks=result.chunk_count, tokens=summary_tokens) + "\n"
             + _t("sys.summary_done_note") + "\n"
             + _t("sys.summary_done_pointer", pointer=shown)
         )
+        # 有段落走兜底时如实说明，不假装一切正常（任务四：真故障要给错误信息）
+        if result.status == "partial":
+            text += "\n" + _t("sys.summary_partial_notice",
+                              ok=result.ok_chunks + result.partial_chunks,
+                              total=result.chunk_count,
+                              failed=result.failed_chunks, timeout=result.timeout_chunks,
+                              skipped=result.skipped_chunks, slow=result.slow_chunks)
+        elif result.slow_chunks:
+            text += "\n" + _t("sys.summary_slow_notice", slow=result.slow_chunks,
+                              total=result.chunk_count, elapsed=f"{result.elapsed:.0f}")
+        return text
+
+    def _summary_progress_text(self, event: Dict[str, Any]) -> str:
+        """把摘要进度事件转成一行人类可读文案（任务四：结构化数据 → 界面文本）。
+
+        文案统一在这里按语言包解析：``summarizer.py`` 只产结构化字段，不含界面文案，
+        这样摘要算法不必关心当前界面语言，也不会把语言固化在导入时。
+        """
+        phase = str(event.get("phase") or "")
+        status = str(event.get("status") or "")
+        index = int(event.get("index") or 0)
+        total = int(event.get("total") or 0)
+        elapsed = float(event.get("elapsed") or 0.0)
+        chunk_elapsed = float(event.get("chunk_elapsed") or 0.0)
+        if phase == "prepare":
+            return _t("summary.progress.prepare", chunks=total, chars=int(event.get("chars") or 0))
+        if phase == "map":
+            if status == "start":
+                return _t("summary.progress.chunk_start", index=index, total=total,
+                          chars=int(event.get("chars") or 0))
+            if status == "running":
+                base = _t("summary.progress.chunk_running", index=index, total=total,
+                          produced=int(event.get("tokens") or 0),
+                          seconds=f"{chunk_elapsed:.0f}")
+                if event.get("slow"):
+                    base += " " + _t("summary.progress.chunk_slow",
+                                     seconds=f"{chunk_elapsed:.0f}")
+                return base
+            if status == "ok":
+                return _t("summary.progress.chunk_ok", index=index, total=total,
+                          chars=int(event.get("summary_chars") or 0),
+                          seconds=f"{chunk_elapsed:.0f}")
+            if status == "retry":
+                return _t("summary.progress.chunk_retry", index=index, total=total)
+            if status == "timeout":
+                return _t("summary.progress.chunk_timeout", index=index, total=total)
+            if status == "failed":
+                return _t("summary.progress.chunk_failed", index=index, total=total)
+        if phase == "reduce":
+            return _t("summary.progress.reduce", index=index, total=total,
+                      seconds=f"{elapsed:.0f}")
+        if phase == "done":
+            return _t("summary.progress.done", chunks=total, chars=int(event.get("summary_chars") or 0),
+                      seconds=f"{elapsed:.0f}")
+        if phase == "aborted":
+            return _t("summary.progress.aborted", index=index, total=total)
+        if phase == "failed":
+            return _t("summary.progress.failed", total=total)
+        return ""
+
+    def _stream_file(self, filepath: str) -> Iterator[Dict[str, Any]]:
+        """流式加载文件（任务四）：解析 → 必要时分段摘要 → 边跑边报进度。
+
+        为什么要有流式入口：非流式的 ``file`` 动作在整个摘要期间**没有一行输出**，
+        小块模型 + 纯 CPU 下一段要跑几十秒，用户在界面上看到的就是"卡住了"。
+        这里把摘要放到子线程，主线程轮询进度队列并逐行推给前端（与模型下载同一套做法），
+        同时 ``stop`` 动作能通过 ``self.stop_event`` 真正打断它。
+        """
+        if not filepath:
+            yield {"type": "error", "content": _t("sys.file_need_path")}
+            return
+        self.stop_event.clear()
+        progress: queue.Queue = queue.Queue()
+        outcome: Dict[str, Any] = {}
+        done_flag = threading.Event()
+
+        def _sink(event: Dict[str, Any]) -> None:
+            progress.put(event)
+
+        def _worker() -> None:
+            try:
+                outcome["text"] = self.load_file_into_context(filepath, progress_sink=_sink)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("流式加载文件失败")
+                outcome["text"] = _t("sys.file_load_failed", error=exc)
+            finally:
+                done_flag.set()
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        yield {"type": "delta", "content": _t("sys.file_stream_start",
+                                              name=os.path.basename(filepath))}
+        while not done_flag.wait(0.3):
+            drained = False
+            while True:
+                try:
+                    event = progress.get_nowait()
+                except queue.Empty:
+                    break
+                drained = True
+                payload = dict(event)
+                payload["type"] = "summary_progress"
+                payload["content"] = self._summary_progress_text(event)
+                yield payload
+            if self.stop_event.is_set():
+                yield {"type": "delta", "content": _t("sys.summary_stopping")}
+                drained = True
+            _ = drained
+        # 收尾：把队列里剩下的事件推完（避免最后一条进度被丢掉）
+        while True:
+            try:
+                event = progress.get_nowait()
+            except queue.Empty:
+                break
+            payload = dict(event)
+            payload["type"] = "summary_progress"
+            payload["content"] = self._summary_progress_text(event)
+            yield payload
+        thread.join(timeout=5)
+        text = str(outcome.get("text") or "")
+        done: Dict[str, Any] = {"type": "done", "content": text,
+                                "aborted": bool(self.stop_event.is_set()),
+                                "model_ready": self.model_ready}
+        self._attach_context(done)
+        yield done
 
     def _handle_model_download(self, name: str) -> Dict[str, Any]:
         """用户已同意后下载模型并热切换。"""
@@ -2024,77 +2408,19 @@ class ModelMissing(Exception):
         super().__init__(f"本地缺少模型 {filename}")
 
 
-def _download_with_progress(config: Config, name: str) -> Optional[str]:
-    """下载模型并把进度以 delta 行输出（前端在对话框中实时显示）；失败返回 None。
-
-    进度按整数百分比去重，避免刷屏。
-    """
-    last = {"pct": -1}
-
-    def _progress(done: int, total: int) -> None:
-        pct = int(done * 100 / total) if total > 0 else 0
-        if pct == last["pct"]:
-            return
-        last["pct"] = pct
-        _write({
-            "type": "delta",
-            "content": _t("sys.download_progress", name=name, pct=pct,
-                          done=f"{done / 1048576:.1f}", total=f"{total / 1048576:.1f}"),
-        })
-
-    try:
-        path = download_model(
-            name, config.model_repo,
-            hf_endpoint=config.hf_endpoint, on_progress=_progress,
-        )
-    except Exception as e:
-        log.exception("模型下载失败")
-        _write({"type": "error", "content": _t("sys.download_failed", error=e)})
-        return None
-
-    # 下载的是仓库真实文件名，同步配置以免下次仍用不存在的名字
-    if name != config.model_path:
-        config.model_path = name
-        for prof in config.models.values():
-            if prof.get("repo") == config.model_repo:
-                prof["path"] = name
-        try:
-            config.save()
-        except Exception:
-            log.warning("配置保存失败（不影响本次运行）", exc_info=True)
-    _write({"type": "done", "content": _t("sys.model_download_done_loading", name=name)})
-    return path
-
-
-def _await_download_decision(config: Config, fallback_name: str) -> Optional[str]:
-    """模型缺失时等待前端答复。
-
-    收到 ``model_download`` → 下载并返回模型路径；收到 ``exit`` 或 stdin 关闭 → 返回 None
-    （调用方据此让后端退出，前端显示提示）。
-    """
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("\ufeff"):
-            line = line.lstrip("\ufeff").strip()
-        try:
-            request = json.loads(line)
-        except json.JSONDecodeError:
-            log.warning("收到非法 JSON: %r", line)
-            continue
-        action = request.get("action")
-        if action == "model_download":
-            name = str(request.get("name") or "").strip() or fallback_name
-            log.info("用户已同意下载模型: %s", name)
-            return _download_with_progress(config, name)
-        if action in ("exit", "quit"):
-            return None
-        _write({
-            "type": "system",
-            "content": _t("sys.await_download_confirm"),
-        })
-    return None
+# ---------------------------------------------------------------------------
+# 旧行为已移除（v0.2.1 综合优化 任务一）：这里曾有两个函数
+#   * `_await_download_decision()` —— 缺模型时**阻塞**读 stdin 等用户答复，
+#     收到 `exit` 或 stdin 关闭就返回 None，调用方随之结束进程；
+#   * `_download_with_progress()` —— 上面那个函数专用的一次性下载器
+#     （模型市场已经有更完整的下载实现 `_stream_model_hub_download`：
+#     断点续传、重试、速度/剩余时间、取消、SHA256 校验）。
+# 它们合起来构成"要么立即下载，要么整个应用不可用"的墙角，正是本轮要拆掉的东西。
+# 现在缺模型走"无模型就绪"：后端照常运行，引导用户在模型市场下载或手动放置 .gguf，
+# 到位后原地热加载。退出只由用户主动触发（前端发 `exit`，主循环里处理）。
+# 对应的语言键 `sys.await_download_confirm` / `sys.model_declined` /
+# `sys.model_missing_no_repo` 也一并删除，避免留下"描述已废弃行为"的文案。
+# ---------------------------------------------------------------------------
 
 
 def main() -> None:
@@ -2107,41 +2433,16 @@ def main() -> None:
 
     config = Config.load()
 
-    # 本地模型缺失时不再直接下载，而是先征询用户（前端弹确认对话框）
+    # 任务一：模型缺失**不再征询后退出**，而是以"无模型就绪"状态继续跑。
+    # 这里只做一次"模型在不在"的判断；缺模型时先把 Backend 建起来（引擎留空），
+    # 稍后在 ready 之前发一条**非阻塞**的 need_download 告知前端。
     model_path = check_model(config.model_path)
     if not model_path:
         log.warning("%s", _t("sys.log_missing_model", model=config.model_path))
-        try:
-            target, size = find_best_model(config.model_repo, config.model_path, hf_endpoint=config.hf_endpoint)
-        except Exception as e:
-            log.exception("查询模型仓库失败")
-            _write({
-                "type": "system",
-                "content": _t("sys.model_missing_no_repo", model=config.model_path,
-                              repo=config.model_repo, error=e),
-            })
-            return
-        _write({
-            "type": "need_download",
-            "model": target,
-            "size": int(size or 0),
-            "repo": config.model_repo,
-            "current": config.model_path,
-            "content": _t(
-                "sys.model_missing_ask", model=config.model_path, repo=config.model_repo,
-                target=target,
-                size=(_t("sys.model_missing_size", mb=f"{size / 1048576:.0f}")
-                      if size else _t("sys.model_missing_unknown_size")),
-            ),
-        })
-        model_path = _await_download_decision(config, target)
-        if not model_path:
-            log.info("%s", _t("sys.model_declined"))
-            return
 
     try:
         with _suppress_stdout():
-            backend = Backend(config, model_path)
+            backend = Backend(config, model_path or "")
             restored = backend.restore_session()
             backend.warmup()
             backend.touch_model_usage()   # 新增四：记录模型最后使用时间
@@ -2162,6 +2463,47 @@ def main() -> None:
         log.exception("技能加载阶段异常（已忽略）")
         skill_summary = {}
 
+    # 任务一：缺模型时告知前端（**非阻塞**）——前端据此显示引导，而不是弹"是否下载、
+    # 拒绝就退出"的强制选择。放在 ready 之前，前端渲染就绪状态时一次就能拿到全部信息。
+    model_missing: Dict[str, Any] = {}
+    if not backend.model_ready:
+        target, size, repo_error = "", 0, ""
+        try:
+            target, size = find_best_model(config.model_repo, config.model_path,
+                                           hf_endpoint=config.hf_endpoint)
+        except Exception as e:  # noqa: BLE001
+            # 查仓库失败（离线/镜像不可达）不影响无模型启动：引导里仍给出模型市场与
+            # 手动放置两条路径，只是没有"预计体积"可显示。
+            log.warning("查询模型仓库失败（不影响无模型启动）: %s", e)
+            repo_error = str(e)
+        model_missing = {
+            "model": config.model_path,
+            "repo": config.model_repo,
+            "target": target or config.model_path,
+            "size": int(size or 0),
+            "models_dir": backend.models_dir(),
+            "error": repo_error,
+        }
+        _write({
+            "type": "need_download",
+            # blocking=False：**新语义**。旧行为是"后端停下等答复，拒绝即退出"；
+            # 现在它只是一条告知，后端已就绪并继续服务（见模块头部的说明）。
+            "blocking": False,
+            "model": config.model_path,
+            "size": int(size or 0),
+            "repo": config.model_repo,
+            "current": config.model_path,
+            "target": target or config.model_path,
+            "models_dir": backend.models_dir(),
+            "content": _t(
+                "sys.model_missing_ask", model=config.model_path, repo=config.model_repo,
+                target=target or config.model_path,
+                size=(_t("sys.model_missing_size", mb=f"{size / 1048576:.0f}")
+                      if size else _t("sys.model_missing_unknown_size")),
+                dir=backend.models_dir(),
+            ),
+        })
+
     log.info("%s %s 就绪 — Powered by %s", APP_NAME, APP_VERSION, STUDIO)
     # 就绪声明：预热等准备工作全部完成后才输出，前端据此放行输入；附带恢复的历史消息供前端展示
     _write({"type": "ready", "version": APP_VERSION, "studio": STUDIO, "restored": restored,
@@ -2169,6 +2511,10 @@ def main() -> None:
             "locale": _i18n().locale, "i18n": _i18n().info(),
             "commands": backend.commands.all_commands(),
             "skills": backend.skills().status(),
+            # 任务一：明确区分"后端已就绪"与"推理可用"
+            "model_ready": backend.model_ready,
+            "model_state": backend.model_state(),
+            "model_missing": model_missing,
             # 修复六 / 修复七：告知前端 emoji 是否可用、数据目录在哪（合规与支持排查都要用）
             "emoji": emoji_mod.enabled(),
             "paths": {"program": program_dir(), "data": user_data_root()}})
@@ -2205,9 +2551,10 @@ def main() -> None:
                 continue
 
         if action in ("chat_stream", "model_download", "automation_run", "model_hub_download",
-                      "automation_pick", "automation_wizard"):
-            # 六种长任务都走流式线程：进度实时输出，stop 可中断。
-            # automation_* 还会检查 stop_event 尽早退出并关闭浏览器。
+                      "automation_pick", "automation_wizard", "file_stream"):
+            # 七种长任务都走流式线程：进度实时输出，stop 可中断。
+            # automation_* 还会检查 stop_event 尽早退出并关闭浏览器；
+            # file_stream（任务四）在分段摘要期间持续报进度，stop 能真正打断生成。
             if action in ("automation_run", "automation_pick", "automation_wizard") and backend.stream_active:
                 _write({"type": "system", "content": _t("sys.automation_running")})
                 continue
@@ -2223,6 +2570,13 @@ def main() -> None:
                 _write({"type": "system", "content": _t("sys.stop_sent")})
             else:
                 _write({"type": "system", "content": _t("sys.stop_none")})
+        elif action in ("exit", "quit"):
+            # 任务一：退出只由用户主动触发。旧行为里"拒绝下载模型"也会走到这里，
+            # 现在缺模型时后端照常运行，这条路只剩前端"退出"按钮会用到。
+            log.info("收到退出请求，保存会话后退出")
+            backend.save_session()
+            _write({"type": "system", "content": _t("sys.exit_ack")})
+            return
         else:
             response = backend.handle(request)
             backend._attach_context(response)  # 附带上下文占用，/clear、/undo 后实时减少

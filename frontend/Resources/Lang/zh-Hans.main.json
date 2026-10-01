@@ -20,7 +20,8 @@
       "preheating": "正在预热模型……",
       "loadingModel": "正在加载模型……",
       "stopping": "正在停止...",
-      "fontSize": "字号 {0}"
+      "fontSize": "字号 {0}",
+      "noModel": "无模型（仍可使用文件解析与设置）"
     },
     "model": {
       "clickTip": "点击打开模型选择栏（设置 → 模型）",
@@ -37,7 +38,10 @@
       "downloadDone": "✅ 模型下载完成：{0}",
       "downloadFailed": "❌ 模型下载失败：{0}",
       "operationFailed": "❌ 模型操作失败: {0}",
-      "placeholder": "🧠 模型: ---"
+      "placeholder": "🧠 模型: ---",
+      "noModel": "🧠 模型: 无模型",
+      "noModelTip": "当前没有可用的本地模型。点击打开「设置 → 模型」下载或加载模型。",
+      "hotLoaded": "✅ 模型已就绪，现在可以正常对话了。"
     },
     "mode": {
       "clickTip": "点击打开设置修改默认对话模式",
@@ -186,6 +190,16 @@
     },
     "update": {
       "idle": "🎉 新版本"
+    },
+    "noModel": {
+      "guideFallback": "⚠️ 当前没有可用的本地模型，推理不可用（文件解析、设置、模型市场仍可正常使用）。\n可以点顶部的模型状态条打开「设置 → 模型 → 模型市场」下载，或把 .gguf 文件放进：\n{0}",
+      "toast": "⚠️ 未检测到本地模型：下载或手动放入后会自动加载，无需重启"
+    },
+    "summary": {
+      "preparing": "📝 正在解析文档并准备分段摘要…"
+    },
+    "button": {
+      "stopSummaryTip": "中止分段摘要 (Esc)"
     }
   },
   "settings": {

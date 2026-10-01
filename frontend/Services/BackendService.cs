@@ -133,6 +133,29 @@ public sealed class BackendService : IDisposable
     /// <summary>启动时恢复的会话历史（role/content），供界面展示。</summary>
     public List<(string Role, string Content)> RestoredHistory { get; } = new();
 
+    /// <summary>
+    /// 推理是否可用（v0.2.1 综合优化 任务一）。
+    ///
+    /// "后端已就绪"和"能推理"是**两件事**：模型缺失时后端照样就绪并服务，
+    /// 只是推理类功能返回引导。默认 true，只有后端明确说 false 才进入无模型模式。
+    /// </summary>
+    public bool ModelReady { get; private set; } = true;
+
+    /// <summary>模型文件夹的真实路径（引导文案里要给用户看，便于手动放置 .gguf）。</summary>
+    public string ModelsDir { get; private set; } = "";
+
+    /// <summary>无模型时后端给出的引导文案（含三条可行路径与模型文件夹路径）。</summary>
+    public string ModelGuide { get; private set; } = "";
+
+    /// <summary>当前加载的模型文件名（引擎里实际加载的那个）。</summary>
+    public string LoadedModel { get; private set; } = "";
+
+    /// <summary>
+    /// 模型可用状态发生变化（无模型 → 已加载，或反之）。
+    /// 界面据此把状态栏与推理入口在"引导"与"正常"之间自动切换，无需重启前端（任务六）。
+    /// </summary>
+    public event Action<bool>? ModelReadyChanged;
+
     /// <summary>后端 stderr 输出的每一行（后台线程触发，供界面显示启动/下载进度）。</summary>
     public event Action<string>? StderrReceived;
 
@@ -215,7 +238,19 @@ public sealed class BackendService : IDisposable
         {
             await _writer!.WriteLineAsync(JsonSerializer.Serialize(request));
             await _writer.FlushAsync();
-            return await ReadUntilJsonAsync(idleTimeout ?? DefaultIdleTimeout, cancellationToken);
+            string line = await ReadUntilJsonAsync(idleTimeout ?? DefaultIdleTimeout, cancellationToken);
+            // 非流式响应里也可能带模型状态（model_state / model_ready）：
+            // 例如 model_scan、model_load 之后界面要立刻切到"有模型"（任务六）。
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(line);
+                ApplyModelState(doc.RootElement);
+            }
+            catch (JsonException)
+            {
+                // 响应不是合法 JSON 时交给调用方按原样处理
+            }
+            return line;
         }
         finally
         {
@@ -237,6 +272,10 @@ public sealed class BackendService : IDisposable
     /// <summary>
     /// 发送流式请求：每个 delta 片段通过 onDelta 回调增量展示，返回完整回复文本；
     /// onContext 在 done 行携带 used/limit 时回调（用于刷新上下文占用）。
+    /// onEvent（v0.2.1 综合优化 任务四）：每一条应答都以 (type, root) 交给调用方，
+    /// 用于处理 delta 之外的**结构化进度**（`summary_progress` 等）。
+    /// **注意**：`root` 只在这个回调期间有效（JsonDocument 随后即释放），
+    /// 需要留用请当场取出值，不要保存 JsonElement。
     /// 流式请求可以被 cancellationToken 取消（界面「停止」按钮），默认不设空闲超时
     /// ——自动化可能因等待人工输入（验证码）长时间没有新片段。
     /// </summary>
@@ -246,7 +285,8 @@ public sealed class BackendService : IDisposable
         Action<int, int>? onContext = null,
         TimeSpan? queueTimeout = null,
         TimeSpan? idleTimeout = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action<string, JsonElement>? onEvent = null)
     {
         EnsureRunning();
         await AcquireGateAsync(queueTimeout, cancellationToken);
@@ -271,6 +311,7 @@ public sealed class BackendService : IDisposable
                 JsonElement root = doc.RootElement;
                 string type = root.TryGetProperty("type", out JsonElement t) ? t.GetString() ?? "" : "";
                 string content = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+                ApplyModelState(root);
                 switch (type)
                 {
                     case "delta":
@@ -288,7 +329,7 @@ public sealed class BackendService : IDisposable
                     case "error":
                         throw new InvalidOperationException(content);
                     default:
-                        Debug.WriteLine($"[backend:msg] {line}");
+                        onEvent?.Invoke(type, root);
                         break;
                 }
             }
@@ -386,9 +427,14 @@ public sealed class BackendService : IDisposable
                 ApplyReady(root);
                 return;
             }
-            // 本地缺少模型：交给界面弹确认框，用户同意后再下载
+            // 本地缺少模型：**不再**抛异常让界面弹"是否下载、否则退出"。
+            // 任务一：后端已进入"无模型就绪"，这里只把它记下来（引导文案随 ready 一起用），
+            // 然后继续等 ready —— 后端不会因为缺模型而退出，前端也不该把这个当成启动失败。
             if (type == "need_download")
-                throw BuildNeedDownload(root);
+            {
+                ApplyNeedDownload(root);
+                continue;
+            }
             // 初始化失败等系统消息：直接抛出，让前端展示具体原因
             if (type == "system")
             {
@@ -424,6 +470,7 @@ public sealed class BackendService : IDisposable
             JsonElement root = doc.RootElement;
             string type = root.TryGetProperty("type", out JsonElement t) ? t.GetString() ?? "" : "";
             string content = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+            ApplyModelState(root);   // 下载完成后的 done 带 model_state，界面据此切到"有模型"
             switch (type)
             {
                 case "delta":
@@ -459,11 +506,64 @@ public sealed class BackendService : IDisposable
         return new NeedDownloadException(model, size, repo, detail);
     }
 
+    /// <summary>
+    /// 记录"缺模型"这条告知（任务一）：只更新引导信息，**不打断启动流程**。
+    /// 旧行为把 `need_download` 当成可抛出异常，用户一拒绝就整个应用不可用 —— 那正是要拆掉的墙角。
+    /// </summary>
+    private void ApplyNeedDownload(JsonElement root)
+    {
+        ModelReady = false;
+        if (root.TryGetProperty("content", out JsonElement c) && c.GetString() is { Length: > 0 } text)
+            ModelGuide = text;
+        if (root.TryGetProperty("models_dir", out JsonElement d) && d.GetString() is { Length: > 0 } dir)
+            ModelsDir = dir;
+    }
+
+    /// <summary>
+    /// 从任意响应里更新模型状态（任务六：下载完成/热加载后前端自动切换，无需重启）。
+    /// 认两类字段：`model_ready`（布尔）与 `model_state`（对象）。
+    /// </summary>
+    public void ApplyModelState(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+            return;
+        string previousModel = LoadedModel;
+        bool previousReady = ModelReady;
+        if (root.TryGetProperty("model_state", out JsonElement state) && state.ValueKind == JsonValueKind.Object)
+        {
+            if (state.TryGetProperty("ready", out JsonElement r) && r.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                ModelReady = r.ValueKind == JsonValueKind.True;
+            if (state.TryGetProperty("models_dir", out JsonElement d) && d.GetString() is { Length: > 0 } dir)
+                ModelsDir = dir;
+            if (state.TryGetProperty("guide", out JsonElement g) && g.GetString() is { Length: > 0 } guide)
+                ModelGuide = guide;
+            if (state.TryGetProperty("model", out JsonElement m) && m.GetString() is { } name)
+                LoadedModel = name;
+        }
+        else if (root.TryGetProperty("model_ready", out JsonElement mr)
+                 && mr.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            ModelReady = mr.ValueKind == JsonValueKind.True;
+        }
+
+        if (ModelReady != previousReady || LoadedModel != previousModel)
+            ModelReadyChanged?.Invoke(ModelReady);
+    }
+
     private void ApplyReady(JsonElement root)
     {
         Version = root.TryGetProperty("version", out JsonElement v) ? v.GetString() : null;
         Studio = root.TryGetProperty("studio", out JsonElement s) ? s.GetString() : null;
         RestoredCount = root.TryGetProperty("restored", out JsonElement r) ? r.GetInt32() : 0;
+        // 任务一：就绪声明里明确区分"后端已就绪"与"推理可用"
+        ApplyModelState(root);
+        if (root.TryGetProperty("model_missing", out JsonElement missing)
+            && missing.ValueKind == JsonValueKind.Object
+            && missing.TryGetProperty("models_dir", out JsonElement md)
+            && md.GetString() is { Length: > 0 } missingDir && ModelsDir.Length == 0)
+        {
+            ModelsDir = missingDir;
+        }
         if (root.TryGetProperty("history", out JsonElement hist) && hist.ValueKind == JsonValueKind.Array)
         {
             RestoredHistory.Clear();

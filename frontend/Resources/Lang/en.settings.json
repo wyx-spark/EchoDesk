@@ -95,7 +95,18 @@
       "actionDownload": "Download",
       "actionDownloaded": "Downloaded",
       "saved": "Saved",
-      "saveFailed": "❌ Save failed: {0}"
+      "saveFailed": "❌ Save failed: {0}",
+      "tagRecommended": "(Recommended)",
+      "tagDefault": "(Default)",
+      "noteDefault": "Default model (the one configured in config.json)",
+      "noteLocal": "Already downloaded locally",
+      "resultCountAll": "{0} result(s) in total (all models are shown; nothing is hidden by hardware).",
+      "recommendBasis": "Recommended for this machine: {0}-class quantization (RAM {1} GB / {2} cores).",
+      "rescanning": "Scanning the models folder…",
+      "rescanFailed": "❌ Scan failed: {0}",
+      "actionLoad": "Load",
+      "loadingModel": "Loading model {0}…",
+      "loadModelFailed": "❌ Load failed: {0}"
     },
     "market": {
       "sortBest": "Best match",

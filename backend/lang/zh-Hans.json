@@ -273,11 +273,9 @@
     "exit_ack": "收到退出指令，进程退出",
     "backend_init_failed": "后端初始化失败: {error}",
     "inference_failed": "推理失败: {error}",
-    "model_missing_no_repo": "后端初始化失败: 本地缺少模型 {model}，且无法查询仓库 {repo}（{error}）。\n请联网后重试，或手动把模型文件放入 models/ 目录。",
-    "model_missing_ask": "本地未找到模型 {model}。\n仓库 {repo} 中最匹配的是 {target}{size}",
+    "model_missing_ask": "本地缺少模型：{model}（仓库 {repo}）。\n需要的文件是 {target}，大小约 {size}。\n\n后端**不会**因此退出：可以打开「设置 → 模型 → 模型市场」下载，或手动把 .gguf 放进模型文件夹。\n模型文件夹：{dir}",
     "model_missing_size": "（约 {mb} MB）",
     "model_missing_unknown_size": "（大小未知）",
-    "model_declined": "用户未同意下载模型，后端退出",
     "repeat_intent": "您刚才说的是：\n{text}",
     "log_missing_model": "本地未找到模型 {model}，请求前端征询用户",
     "language_switched": "🌐 界面语言已切换为 {locale}",
@@ -367,7 +365,28 @@
     "model_downloading_progress": "📥 正在下载 '{name}'... {pct}% ({done} / {total})",
     "download_progress": "📥 正在下载 {name} ... {pct}% ({done} MB / {total} MB)",
     "model_download_done_loading": "✅ 模型已下载: {name}，正在加载并预热…",
-    "await_download_confirm": "⏳ 正在等待是否下载模型的确认（发送 model_download 开始下载，exit 退出）"
+    "no_model_guide": "⚠️ 当前没有可用的本地模型，推理功能暂不可用（文件解析、设置读写、模型市场等仍然可用）。\n\n三种解决方式：\n1. 打开「设置 → 模型 → 模型市场」，搜索并下载一个模型（带「(推荐)」标记的是按本机硬件挑的）；\n2. 手动把 .gguf 文件放进模型文件夹，然后点「重新扫描模型文件夹」；\n3. 若本地已有模型，直接在「本地模型库」里点「加载」。\n\n模型文件夹：{dir}",
+    "no_model_name_given": "没有指定要加载的模型文件名。请在「本地模型库」中选择一个模型，或先点「重新扫描模型文件夹」。",
+    "model_file_missing": "找不到模型文件 {name}（模型文件夹：{dir}）。请确认文件名，或把 .gguf 放进该文件夹后重新扫描。",
+    "model_load_failed": "模型 {name} 加载失败：{error}\n文件可能损坏、格式不受支持，或内存不足。可换一个小一点的量化版本重试，当前仍处于无模型状态。",
+    "model_hot_loading": "⏳ 正在加载模型 {name}（不需要重启程序）…",
+    "model_hot_loaded": "✅ 模型已热加载：{name}。现在可以正常对话了。",
+    "model_hot_load_failed": "⚠️ 热加载失败：{error}\n程序仍处于无模型状态，可以换个模型文件重试，或用「重新扫描模型文件夹」。",
+    "model_scan_failed": "扫描模型文件夹失败：{error}",
+    "model_scan_auto_loaded": "扫描完成：只找到 1 个模型，已自动加载 {name}。",
+    "model_scan_empty": "扫描完成：模型文件夹里没有任何 .gguf 文件。（{dir}）可以点「模型市场」下载，或手动把模型文件放进去。",
+    "model_scan_found": "扫描完成：找到 {count} 个模型（{dir}）。请在「本地模型库」里选择一个加载。",
+    "model_scan_ok": "扫描完成：模型库共 {count} 个模型。",
+    "summarize_need_model": "分段摘要需要模型支持，当前没有可用模型，无法摘要。\n\n{guide}",
+    "automation_need_model": "批量任务最后要用模型生成审核意见，当前没有可用模型，先不启动浏览器。\n\n{guide}",
+    "file_loaded_no_model": "📄 已解析文件 {name}（{chars} 字符，约 {tokens} tokens）并保留在上下文中。\n该文档较长，本来需要分段摘要，但当前没有可用模型，因此暂不摘要、也不会截断原文。\n\n{guide}",
+    "file_stream_start": "📄 正在解析文件 {name}…",
+    "file_load_failed": "读取文件失败：{error}",
+    "summary_stopping": "⏹ 正在中止分段摘要…",
+    "summary_aborted": "⏹ 分段摘要已中止（{name}）：完成 {done}/{total} 段，耗时 {elapsed} 秒。\n原文仍完整保留在上下文中，未注入半份摘要。可以重新触发 /summarize 再来一次。",
+    "summary_failed": "❌ 分段摘要失败（{name}）：{chunks} 段全部未产出摘要（调用失败 {failed} 段、超时 {timeout} 段），耗时 {elapsed} 秒。\n可能原因：模型未正确加载、内存不足、或摘要模型不可用。可先解决模型问题再重试 /summarize。",
+    "summary_partial_notice": "⚠️ 本次摘要并不完整：{total} 段中 {ok} 段由模型正常产出，调用失败 {failed} 段、超时 {timeout} 段、跳过 {skipped} 段、偏慢 {slow} 段；失败的段用原文截断兜底，未丢失该段内容。",
+    "summary_slow_notice": "⏱️ 有 {slow}/{total} 段单段耗时超过阈值，整篇耗时 {elapsed} 秒。当前模型或机器偏慢时属正常，可换更小的量化模型，或在设置里调小 chunk_chars。"
   },
   "file": {
     "wps_failed": "WPS读取失败: {error}",
@@ -550,7 +569,9 @@
     "uninstall.remove_failed": "删除文件失败：{error}",
     "uninstall.not_in_registry": "模型库里没有 {name}。",
     "uninstall.done_removed": "已删除 {name}并更新模型库。",
-    "uninstall.done_cleaned": "已删除 {name}（文件不存在，已清理记录）。"
+    "uninstall.done_cleaned": "已删除 {name}（文件不存在，已清理记录）。",
+    "note.default_model": "默认模型（config.json 里配置的那个）",
+    "note.local_model": "本地已下载"
   },
   "automation": {
     "disabled": "自动化未启用",
@@ -874,5 +895,19 @@
     "mode": "- 模式：{mode}",
     "user": "👤 用户",
     "assistant": "🤖 助手"
+  },
+  "summary": {
+    "progress.prepare": "📝 准备分段摘要：共 {chunks} 段，原文 {chars} 字符。",
+    "progress.chunk_start": "📝 第 {index}/{total} 段开始（{chars} 字符）…",
+    "progress.chunk_running": "… 第 {index}/{total} 段处理中：已生成 {produced} 字符，该段已用 {seconds} 秒",
+    "progress.chunk_slow": "（该段已超过预期耗时 {seconds} 秒，慢不等于卡死，仍在正常产出）",
+    "progress.chunk_ok": "✅ 第 {index}/{total} 段完成：摘要 {chars} 字符，用时 {seconds} 秒。",
+    "progress.chunk_retry": "🔁 第 {index}/{total} 段超时，按配置重试一次…",
+    "progress.chunk_timeout": "⏱️ 第 {index}/{total} 段超时：改用该段原文截断兜底后继续。",
+    "progress.chunk_failed": "❌ 第 {index}/{total} 段摘要调用失败：改用该段原文截断兜底后继续。",
+    "progress.reduce": "🧩 正在合并各段摘要（第 {index}/{total} 组），已用 {seconds} 秒…",
+    "progress.done": "🎉 分段摘要完成：{chunks} 段，摘要 {chars} 字符，总耗时 {seconds} 秒。",
+    "progress.aborted": "⏹ 分段摘要已中止：完成 {index}/{total} 段。",
+    "progress.failed": "❌ 分段摘要失败：{total} 段全部未产出摘要。"
   }
 }

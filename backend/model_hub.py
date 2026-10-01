@@ -78,11 +78,21 @@ def _human(size: Optional[int]) -> str:
 class ModelHub:
     """模型中心：搜索 / 详情 / 下载 / 模型库管理。"""
 
-    def __init__(self, cfg: Any, logger: Optional[logging.Logger] = None) -> None:
+    def __init__(self, cfg: Any, logger: Optional[logging.Logger] = None,
+                 app_config: Any = None) -> None:
+        """
+        ``cfg``        ：``config.model_hub``（数据源、模型目录、Token 等）；
+        ``app_config`` ：顶层 ``Config``，**只读**用于取默认模型（``model_path`` /
+                         ``model_repo``）。分成两个参数是因为"默认模型是谁"属于应用级
+                         配置，不属于模型中心自己的配置；没有它就无法把默认模型钉进列表，
+                         也就答不上"默认模型为什么在列表里看不到"这个问题（任务三）。
+        """
         self.cfg = cfg
+        self.app_config = app_config
         self.logger = logger or log
         self._lock = __import__("threading").Lock()
         self._source_cache: Dict[str, Any] = {}
+        self._last_basis: Dict[str, Any] = {}
 
     # ---------- 配置读取 ----------
 
@@ -178,7 +188,21 @@ class ModelHub:
     ) -> Dict[str, Any]:
         """按名称/作者/标签搜索 GGUF 模型。
 
-        返回 ``{items, total, source, source_note, offline, message, page}``。
+        返回 ``{items, total, source, source_note, offline, message, page, ...}``。
+
+        **任务三（v0.2.1 综合优化）：不再按硬件过滤隐藏任何模型。**
+        列表由三个来源合并去重，用户看到的是完整可选范围：
+
+        1. **远端仓库搜索**（主来源）：Hugging Face / 镜像站的 ``filter=gguf`` 结果；
+        2. **默认模型**：``config.json`` 的 ``model_path`` + ``model_repo`` 对应的仓库，
+           无论它有没有出现在远端结果里都**钉在最前面** —— 这正是任务书要排查的那个
+           "默认模型在列表里显示不出来"的坑（根因见 :meth:`default_repo`）；
+        3. **本地已下载**：模型库里已落盘模型所属的仓库（远端搜不到时也会出现在列表里，
+           标记为 ``source=local``，避免"我明明下载了却搜不到"）。
+
+        去重按 ``repo``：远端结果优先（它有下载量等元数据），本地/默认来源只补缺。
+        硬件推荐只**加标记**（``recommended`` / ``param_b`` / ``recommend_reasons``），
+        不删条目；排序上把默认模型与推荐项排到前面，其余保持请求的排序。
         """
         resolved = self.resolve_source(source)
         base = resolved["base"]
@@ -209,10 +233,20 @@ class ModelHub:
             except Exception:  # noqa: BLE001
                 fallback = None
             if fallback is None:
+                # 远端不可达也要给出可用内容：默认模型 + 本地已下载仍然列出来，
+                # 用户至少能看到"我本地有什么、默认该下哪个"，而不是一片空白（任务三的列表源）。
+                offline_items = self._local_and_default_items()
+                offline_basis = self._mark_recommended(offline_items)
+                offline_items.sort(key=lambda it: (0 if it.get("is_default") else
+                                                   (1 if it.get("recommended") else 2)))
                 return {
-                    "items": [], "total": 0, "page": page,
+                    "items": offline_items, "total": len(offline_items), "page": page,
                     "source": resolved["key"], "source_note": resolved["note"],
-                    "offline": True, "message": _t("hub.search.offline", error=exc),
+                    "offline": True, "source_items": {"remote": 0, "merged": len(offline_items)},
+                    # 离线也要给推荐依据：界面上的"(推荐)"标记与"为什么推荐"是同一份数据，
+                    # 少了它标记就成了没来由的（实测：离线分支漏了它，界面无法解释推荐原因）。
+                    "recommend_basis": offline_basis,
+                    "message": _t("hub.search.offline", error=exc),
                 }
             raw = fallback
             resolved = {"key": "official" if other == OFFICIAL_ENDPOINT else "mirror", "base": other,
@@ -222,6 +256,7 @@ class ModelHub:
             raw = []
 
         items: List[Dict[str, Any]] = []
+        seen: set = set()
         for entry in raw:
             if not isinstance(entry, dict):
                 continue
@@ -235,6 +270,7 @@ class ModelHub:
             if quant and quant.lower() not in quant_guess.lower() and quant.lower() not in model_id.lower():
                 continue
             gated = entry.get("gated")
+            seen.add(model_id)
             items.append({
                 "repo": model_id,
                 "name": model_id.split("/")[-1],
@@ -246,7 +282,21 @@ class ModelHub:
                 "gated": bool(gated) and gated is not False,
                 "tags": [str(t) for t in (entry.get("tags") or [])][:12],
                 "installed": self._is_installed_repo(model_id),
+                "origin": "remote",
             })
+
+        remote_count = len(items)
+        # 来源 2/3：默认模型 + 本地已下载（只补缺，不重复）
+        for extra in self._local_and_default_items():
+            if str(extra.get("repo") or "") in seen:
+                continue
+            seen.add(str(extra.get("repo") or ""))
+            items.append(extra)
+
+        self._mark_recommended(items)
+        # 排序：默认模型最前，其次推荐项，最后保持原有顺序（任务书允许"推荐排前或加标记"，
+        # 这里两者都做——标记负责"能不能看出来"，排序负责"第一眼看到能跑的"）。
+        items.sort(key=lambda it: (0 if it.get("is_default") else (1 if it.get("recommended") else 2)))
 
         return {
             "items": items,
@@ -255,9 +305,152 @@ class ModelHub:
             "source": resolved["key"],
             "source_note": resolved["note"],
             "offline": False,
+            "source_items": {"remote": remote_count, "merged": len(items) - remote_count},
+            "recommend_basis": self.recommend_basis(),
             "message": (_t("hub.search.count", count=len(items), note=resolved["note"]) if items
                         else _t("hub.search.empty")),
         }
+
+    # ---------- 任务三：默认模型 / 本地模型 / 硬件推荐 ----------
+
+    def default_repo(self) -> str:
+        """默认模型所属仓库（``config.model_repo``）。
+
+        **根因记录（任务书要求排查"默认模型在列表里显示不出来"）**：
+        模型的"市场列表"列的是**仓库**（例如 ``unsloth/Qwen3.5-0.8B-GGUF``），
+        而默认值是 ``config.model_path`` 里的**文件名**（``Qwen3.5-0.8B-Q4_K_M.gguf``）。
+        列表此前完全由"按下载量排序的一页远端搜索结果"构成，**没有任何逻辑保证
+        默认模型所在的那个仓库会出现**：仓库名不含关键词时搜不到，下载量排在几十名
+        开外时第一页也看不到，而"按硬件过滤推荐"的开关一开更是直接被筛掉。
+        修法不是去调过滤条件，而是**把默认模型的仓库钉进列表**（见 :meth:`_local_and_default_items`）：
+        它与搜索条件无关，永远出现在第一位。这样"推荐了这个但列表里没有"的矛盾从
+        结构上就不可能发生。
+        """
+        cfg = self.app_config
+        repo = str(getattr(cfg, "model_repo", "") or "").strip() if cfg is not None else ""
+        return repo
+
+    def _local_and_default_items(self) -> List[Dict[str, Any]]:
+        """构造"默认模型"与"本地已下载"两个补充来源的条目（不含远端元数据）。"""
+        items: List[Dict[str, Any]] = []
+        default_repo = self.default_repo()
+        default_name = ""
+        cfg = self.app_config
+        if cfg is not None:
+            default_name = os.path.basename(str(getattr(cfg, "model_path", "") or ""))
+        if default_repo or default_name:
+            repo = default_repo or default_name
+            local_path = os.path.join(self.models_dir, default_name) if default_name else ""
+            items.append({
+                "repo": repo,
+                "name": repo.split("/")[-1] or default_name,
+                "author": repo.split("/")[0] if "/" in repo else "",
+                "downloads": 0, "likes": 0, "updated_at": "",
+                "quantization": guess_quantization(default_name or repo),
+                "gated": False, "tags": [],
+                "installed": bool(local_path) and os.path.isfile(local_path),
+                "origin": "local" if (local_path and os.path.isfile(local_path)) else "default",
+                "is_default": True,
+                "note_key": "hub.note.default_model",
+            })
+        # 本地已下载（含手工放进 models/ 的文件，registry 会把它们登记进来）
+        try:
+            entries = self.registry().get("models", [])
+        except Exception:  # noqa: BLE001
+            entries = []
+        for entry in entries:
+            repo = str(entry.get("repo") or "").strip()
+            if not repo or repo == default_repo:
+                continue
+            items.append({
+                "repo": repo,
+                "name": repo.split("/")[-1],
+                "author": repo.split("/")[0] if "/" in repo else "",
+                "downloads": 0, "likes": 0, "updated_at": "",
+                "quantization": str(entry.get("quantization") or ""),
+                "gated": False, "tags": [],
+                "installed": True,
+                "origin": "local",
+                "note_key": "hub.note.local_model",
+            })
+        return items
+
+    @staticmethod
+    def _param_billions(text: str) -> float:
+        """从 ``Qwen3.5-0.8B-GGUF`` 这类名字里取出参数规模（十亿）；取不到返回 0。
+
+        正则要求数字后紧跟 ``b``/``B`` 且再后面不是字母，因此量化标签
+        （``Q4_K_M`` / ``F16`` / ``IQ2_XS``）不会被误当成参数量。
+        """
+        match = re.search(r"(\d+(?:\.\d+)?)\s*[bB](?![A-Za-z])", os.path.basename(text or ""))
+        if not match:
+            return 0.0
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return 0.0
+
+    def recommend_basis(self) -> Dict[str, Any]:
+        """本机硬件推荐依据（内存 / 核数 → 建议参数规模）。
+
+        复用既有的硬件探测与推荐实现（``model_profile``），不另起一套规则，
+        因此"设置→模型"里显示的推荐配置与市场里的推荐标记是同一个来源。
+        """
+        try:
+            from model_profile import _read_machine_memory, recommend_config
+
+            ram, cores = _read_machine_memory()
+            advice = recommend_config(ram, cores)
+            return {
+                "ram_gb": advice.get("ram_gb"),
+                "cpu_cores": advice.get("cpu_cores"),
+                "params": advice.get("params"),
+                "quantization": advice.get("quantization"),
+                "max_params_b": self._param_billions(str(advice.get("params") or "")),
+                "reasons": advice.get("reasons") or [],
+            }
+        except Exception:  # noqa: BLE001
+            self.logger.debug("硬件推荐探测失败（只按默认模型标记）", exc_info=True)
+            return {"max_params_b": 0.0, "reasons": []}
+
+    def _mark_recommended(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """按硬件推荐与"是否默认模型"给条目加标记（**只加标记，绝不删条目**）。
+
+        返回本次使用的推荐依据（含 `recommended_count`），供调用方一并回传给界面：
+        "为什么这条是推荐的"必须能回答，否则标记就是个没来由的装饰。
+        """
+        basis = self.recommend_basis()
+        max_b = float(basis.get("max_params_b") or 0.0)
+        default_repo = self.default_repo()
+        for item in items:
+            repo = str(item.get("repo") or "")
+            size_b = self._param_billions(repo)
+            reasons: List[str] = []
+            if item.get("is_default"):
+                reasons.append("default")
+            if repo and default_repo and repo == default_repo and "default" not in reasons:
+                reasons.append("default")
+                item["is_default"] = True
+            if max_b and size_b and size_b <= max_b + 1e-9:
+                reasons.append("fit")
+            item["param_b"] = size_b
+            item["recommended"] = bool(reasons)
+            item["recommend_reasons"] = reasons
+        basis["recommended_count"] = sum(1 for it in items if it.get("recommended"))
+        self._last_basis = basis
+        return basis
+
+    def scan(self) -> Dict[str, Any]:
+        """重新扫描模型文件夹（任务二/五）：返回与模型库一致的清单。
+
+        ``registry()`` 会把手工放进目录的 ``.gguf`` 一并登记，因此"扫描"真正的动作
+        就是重新读一次目录（外加清掉记录里已不存在的条目）。
+        """
+        self._ensure_dirs()
+        info = self.registry()
+        return {"models_dir": self.models_dir, "count": info.get("count", 0),
+                "models": info.get("models", []),
+                "total_size_human": info.get("total_size_human", "0 B")}
 
     # ---------- 详情 ----------
 

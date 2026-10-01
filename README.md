@@ -126,19 +126,31 @@ The backend can also be started on its own (`python backend\main.py`): it speaks
 protocol over stdin/stdout, documented in [docs/DEVELOPER.md](docs/DEVELOPER.md). Place a `.gguf`
 model in `backend\models\` (source runs) or in the packaged backend's `models\` folder.
 
-### First launch: the model download question
+### First launch: no model yet? The app still runs
 
 EchoDesk does **not** ship model weights and never downloads anything silently:
 
 1. On start, the backend checks for the model named in `backend\config.json`
    (default `Qwen3.5-0.8B-Q4_K_M.gguf`, about 508 MB).
-2. If the file is missing, it reports `need_download` and the UI asks whether to download it from
-   the configured Hugging Face endpoint — `https://hf-mirror.com` by default, which you can point
-   at the official `https://huggingface.co` or an internal mirror by editing `hf_endpoint` /
-   `model_repo` / `model_path` in `backend\config.json`.
-3. **Yes** downloads the model and continues starting up. **No** exits the program; copy any
-   `.gguf` file into `app\backend\models\` and start again instead — that path needs no network.
-4. If no launcher shortcut exists in the folder, EchoDesk asks once whether to create one, and
+2. If the file is missing, the backend **keeps running** in a "no model yet" state: it reports
+   `need_download` (with `blocking: false`) and a `ready` message carrying `model_ready: false`
+   plus guidance. The UI stays interactive — you can browse settings, parse files and open the
+   model market. Nothing is downloaded without your explicit action.
+3. Three ways to get a model, none of which requires restarting the app:
+   * **Model market** — Settings → Model → Model market. It lists **all** GGUF repositories
+     (nothing is hidden by hardware filtering); entries that fit this machine are marked
+     `(Recommended)` and the repository of the configured default model is pinned first.
+   * **Manual copy** — drop any `.gguf` file into `app\backend\models\` and click
+     *Rescan models folder*; if exactly one model is found it is loaded automatically.
+   * **Load** — click *Load* next to an already-downloaded model in the local model library.
+4. A download or a load **hot-loads the model**: the status bar switches from "no model" to the
+   model name and inference starts working, with no restart of the backend or the UI. If loading
+   fails (corrupt file, unsupported format, not enough memory) the app stays in the no-model
+   state, shows the reason and lets you retry.
+5. Downloading uses the configured Hugging Face endpoint — `https://hf-mirror.com` by default,
+   which you can point at the official `https://huggingface.co` or an internal mirror by editing
+   `hf_endpoint` / `model_repo` / `model_path` in `backend\config.json`.
+6. If no launcher shortcut exists in the folder, EchoDesk asks once whether to create one, and
    then shows a short first-run guide. Per-machine settings can be kept out of version control by
    putting them in `app\backend\config.user.json`, which takes precedence over `config.json`.
 

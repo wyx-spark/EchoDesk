@@ -543,8 +543,22 @@ Powered by Void Entropia Studio
   Both folders are yours to replace; upgrading the program does not overwrite lang\.
 
 [FIRST LAUNCH]
-  * If app\backend\models\ is empty the program asks whether to download a model
-    (about 508 MB); you can also drop a .gguf file in there yourself and restart.
+  * If app\backend\models\ is empty the program does NOT exit and does NOT block: it
+    starts in a "no model yet" state, shows guidance, and stays usable (file parsing,
+    settings and the model market all work; only inference returns the guidance).
+  * Three ways to get a model, none of which requires restarting the program:
+      1) Settings -> Model -> Model market. The list shows EVERY GGUF repository
+         (nothing is hidden by hardware filtering); entries that fit this machine are
+         marked "(Recommended)" and the configured default model's repo is pinned first.
+      2) Drop a .gguf file into app\backend\models\ and click "Rescan models folder"
+         (if exactly one model is found it is loaded automatically).
+      3) Click "Load" next to an already-downloaded model in the local model library.
+  * A download or a load hot-loads the model: the status bar stops saying "no model"
+    and inference works immediately. If loading fails (corrupt file, unsupported
+    format, not enough memory) the app stays in the no-model state and says why.
+  * Long documents are summarised in segments, and the progress (segment i of N,
+    elapsed time, current phase, whether a segment is merely slow) is shown live in
+    the chat; the stop button aborts it and the raw text is kept, not half-summarised.
   * It asks whether to create a launcher shortcut in this folder; the installer
     already gave you a Start Menu / desktop shortcut, and portable-zip users can
     just say yes here instead of running install-complete.bat.
@@ -640,8 +654,18 @@ Build time: $buildTime
   两个目录都可以被你自己替换，升级程序不会覆盖外层 lang\。
 
 【首次启动】
-  * 若 app\backend\models\ 里没有模型，程序会询问是否下载（约 508MB）；
-    也可以自己把 .gguf 文件放进 app\backend\models\ 后重启。
+  * 若 app\backend\models\ 里没有模型，程序**不会退出、也不会卡住**：它以"尚无模型"状态
+    启动，给出引导并保持可用（文件解析、设置、模型市场都正常，只有推理会返回引导）。
+  * 三种拿到模型的方式，都不需要重启程序：
+      1) 设置 → 模型 → 模型市场。列表显示**全部** GGUF 仓库（不按硬件过滤隐藏），
+         适合本机的条目标有「(推荐)」，当前默认模型对应的仓库固定在列表最前。
+      2) 把 .gguf 文件放进 app\backend\models\，点「重新扫描模型文件夹」
+         （只扫描到一个模型时会自动加载）。
+      3) 在「本地模型库」里点已下载模型旁的「加载」。
+  * 下载完成或加载成功后**热加载**：状态栏不再显示"无模型"，推理立即可用。
+    加载失败（文件损坏 / 格式不支持 / 内存不足）时保持无模型状态并说明原因。
+  * 长文档会分段摘要，进度（第几段/共几段、已耗时、当前阶段、是否只是偏慢）在对话框里
+    实时显示；点停止可中止，原文保留、不会注入半份摘要。
   * 会询问是否在本文件夹创建启动快捷方式；安装程序已给你开始菜单/桌面快捷方式，
     zip 免安装版用户在这里选"是"即可，不必再手动跑 install-complete.bat。
 

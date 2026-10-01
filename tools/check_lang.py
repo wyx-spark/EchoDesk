@@ -371,9 +371,11 @@ BACKEND_SCAFFOLD_MODULES = (
     # 否则 --scaffold 生成的模板会**静默漏掉**这一组，翻译者根本看不到它们。
     # 例：修复四新增了 capability.*（模型能力提示与推荐理由）、task.*（任务模板）、
     # mode.* / export.*（对话模式说明与导出文档标题），漏了就会少 50 条。
+    # v0.2.1 综合优化又新增了 summary.*（长文档分段摘要的进度与故障提示，
+    # 任务四），同样的道理必须同步加进来，否则新语言模板会整组缺失。
     "app", "cmd", "sys", "file", "err", "market", "hub",
     "automation", "update", "skill",
-    "capability", "task", "mode", "export",
+    "capability", "task", "mode", "export", "summary",
 )
 
 

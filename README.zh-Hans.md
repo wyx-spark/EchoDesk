@@ -119,18 +119,28 @@ dotnet run --project frontend\EchoDesk.csproj
 协议，详见 [docs/DEVELOPER.md](docs/DEVELOPER.md)。把 `.gguf` 模型放进 `backend\models\`
 （源码运行）或打包后端的 `models\` 文件夹即可。
 
-### 首次启动：是否下载模型的询问
+### 首次启动：还没有模型？程序照样能用
 
 EchoDesk **不自带**模型权重，也**不会静默下载**任何东西：
 
 1. 启动时后端检查 `backend\config.json` 中指定的模型（默认为 `Qwen3.5-0.8B-Q4_K_M.gguf`，
    约 508 MB）。
-2. 若本地缺少该文件，后端上报 `need_download`，界面询问是否下载。下载地址取自配置的
-   Hugging Face 端点——默认 `https://hf-mirror.com`；可在 `backend\config.json` 中修改
-   `hf_endpoint` / `model_repo` / `model_path`，改为官方 `https://huggingface.co` 或内部镜像。
-3. 选择**是**会下载模型并继续启动；选择**否**则程序退出，你也可以自行把任意 `.gguf`
-   文件放进 `app\backend\models\` 后重新启动——这条路径完全不需要联网。
-4. 若文件夹内没有启动快捷方式，EchoDesk 会询问一次是否创建，然后显示一次上手引导。
+2. 若本地缺少该文件，后端会**继续运行**在"尚无模型"状态：上报 `need_download`
+   （带 `blocking: false`）与 `ready`（带 `model_ready: false`）并在其中给出引导。
+   界面保持可交互——可以进设置、解析文件、打开模型市场；**不会**在你没明确操作前下载任何东西。
+3. 三种拿到模型的方式，**都不需要重启程序**：
+   * **模型市场**：设置 → 模型 → 模型市场。列表显示**全部** GGUF 仓库（不按硬件过滤隐藏），
+     适合本机的条目标有「(推荐)」，当前默认模型对应的仓库固定在列表最前。
+   * **手动放置**：把任意 `.gguf` 文件放进 `app\backend\models\`，点「重新扫描模型文件夹」；
+     若只扫描到一个模型会自动加载。
+   * **直接加载**：在「本地模型库」里点已下载模型旁的「加载」。
+4. 下载完成或加载成功后**热加载**模型：状态栏从"无模型"切换为模型名，推理立即可用，
+   后端与前端都不需要重启。加载失败（文件损坏 / 格式不支持 / 内存不足）时保持无模型状态、
+   给出原因，并可重试。
+5. 下载地址取自配置的 Hugging Face 端点——默认 `https://hf-mirror.com`；可在
+   `backend\config.json` 中修改 `hf_endpoint` / `model_repo` / `model_path`，
+   改为官方 `https://huggingface.co` 或内部镜像。
+6. 若文件夹内没有启动快捷方式，EchoDesk 会询问一次是否创建，然后显示一次上手引导。
    个人设置可写入 `app\backend\config.user.json`，它优先于 `config.json`，且不会进版本库。
 
 ### 发布文件夹里有什么

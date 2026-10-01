@@ -31,7 +31,7 @@ public sealed class MarketItem
     public bool CanAct => Installed || Verified;
 }
 
-/// <summary>模型选择栏：搜索结果项（新增四）。</summary>
+/// <summary>模型选择栏：搜索结果项（新增四；任务三加了推荐/默认标记）。</summary>
 public sealed class HubModelItem
 {
     public string Repo { get; init; } = "";
@@ -39,6 +39,19 @@ public sealed class HubModelItem
     public string Badge { get; init; } = "";
     public string Meta { get; init; } = "";
     public bool Gated { get; init; }
+
+    /// <summary>
+    /// 推荐/默认标记文本（v0.2.1 综合优化 任务三）。任务书要求"在名称前加标记"且
+    /// 走语言包：中文界面是「(推荐)」、英文界面是「(Recommended)」，这里由后端给
+    /// 布尔字段、前端按当前语言渲染，**不硬编码**在任何一个语言里。
+    /// </summary>
+    public string Tag { get; init; } = "";
+
+    /// <summary>是否本机推荐（后端按内存/核数判定，且一定是列表里的条目）。</summary>
+    public bool Recommended { get; init; }
+
+    /// <summary>是否 config.json 里配置的默认模型所在的仓库。</summary>
+    public bool IsDefault { get; init; }
 }
 
 /// <summary>模型选择栏：仓库内的 GGUF 文件项（新增四）。</summary>
@@ -58,7 +71,7 @@ public sealed class HubFileItem
     public bool CanAct => !Installed;
 }
 
-/// <summary>模型选择栏：本地模型库条目（新增四）。</summary>
+/// <summary>模型选择栏：本地模型库条目（新增四；任务五加了「加载」入口）。</summary>
 public sealed class HubRegistryItem
 {
     public string Name { get; init; } = "";
@@ -66,9 +79,15 @@ public sealed class HubRegistryItem
     public string Meta { get; init; } = "";
     public string CurrentBadge { get; init; } = "";
     public bool InUse { get; init; }
+    /// <summary>该文件在磁盘上是否真的存在（记录里可能有已删除的条目）。</summary>
+    public bool Exists { get; init; } = true;
 
     /// <summary>正在使用的模型不允许删除（后端也会再拦一次）。</summary>
     public bool CanDelete => !InUse;
+
+    /// <summary>已在使用中的模型不需要再点「加载」；文件不存在时也点不了。</summary>
+    public bool CanLoad => Exists && !InUse;
+    public string LoadText => Loc.T("settings.model.actionLoad", "加载");
 }
 
 /// <summary>
@@ -409,21 +428,39 @@ public partial class SettingsWindow : Window
                 int likes = GetInt(item, "likes", 0);
                 bool gated = GetBool(item, "gated");
                 bool installed = GetBool(item, "installed");
+                bool recommended = GetBool(item, "recommended");
+                bool isDefault = GetBool(item, "is_default");
+                // 任务三：标记文本按**当前语言**拼；"默认"优先于"推荐"显示
+                // （默认模型本身也一定是推荐项，但"默认"是更强的信息）。
+                string tag = isDefault
+                    ? Loc.T("settings.model.tagDefault", "(默认)")
+                    : (recommended ? Loc.T("settings.model.tagRecommended", "(推荐)") : "");
                 _hubItems.Add(new HubModelItem
                 {
                     Repo = GetString(item, "repo"),
                     Name = GetString(item, "name"),
                     Gated = gated,
+                    Recommended = recommended,
+                    IsDefault = isDefault,
+                    Tag = tag,
                     Badge = installed ? Loc.T("settings.model.badgeDownloaded", "● 已下载")
                                       : (gated ? Loc.T("settings.model.badgeGated", "🔒 需登录") : ""),
                     Meta = string.Join(" · ", new[]
                     {
                         GetString(item, "author"),
-                        $"⬇ {downloads:N0}",
-                        $"⭐ {likes}",
+                        // 远端条目才有下载量等元数据；默认/本地来源没有，别显示成 0
+                        downloads > 0 ? $"⬇ {downloads:N0}" : "",
+                        likes > 0 ? $"⭐ {likes}" : "",
                         GetString(item, "updated_at").Length > 0
                             ? Loc.T("settings.model.updatedAt", "更新于 {0}", GetString(item, "updated_at"))
                             : "",
+                        GetString(item, "note_key") switch
+                        {
+                            "hub.note.default_model" => Loc.T("settings.model.noteDefault",
+                                "默认模型（config.json 里配置的那个）"),
+                            "hub.note.local_model" => Loc.T("settings.model.noteLocal", "本地已下载"),
+                            _ => "",
+                        },
                     }.Where(x => x.Length > 0)),
                 });
             }
@@ -435,8 +472,21 @@ public partial class SettingsWindow : Window
         bool offline = GetBool(hub, "offline");
         HubStatusText.Text = (_hubItems.Count == 0
             ? Loc.T("settings.model.searchEmpty", "结果为空。可换关键词（模型需为 GGUF 格式）。")
-            : Loc.T("settings.model.resultCount", "共 {0} 个结果。", _hubItems.Count))
+            : Loc.T("settings.model.resultCountAll",
+                "共 {0} 个结果（显示全部模型，不按硬件过滤）。", _hubItems.Count))
             + (note.Length > 0 ? " " + Loc.T("settings.model.statusSource", "数据源：{0}", note) : "");
+        // 任务三：把"为什么推荐"说清楚 —— 标记与依据是同一份数据，不是凭空贴上去的
+        if (hub.TryGetProperty("recommend_basis", out JsonElement basis)
+            && basis.ValueKind == JsonValueKind.Object)
+        {
+            string paramsText = GetString(basis, "params");
+            if (paramsText.Length > 0)
+            {
+                HubStatusText.Text += " " + Loc.T("settings.model.recommendBasis",
+                    "本机推荐：{0} 级量化（内存 {1} GB / {2} 核）。",
+                    paramsText, GetInt(basis, "ram_gb", 0), GetInt(basis, "cpu_cores", 0));
+            }
+        }
         if (offline)
             HubStatusText.Text = Loc.T("settings.model.sourceOffline", "⚠️ 数据源不可用：请检查网络，")
                 + HubStatusText.Text;
@@ -615,6 +665,7 @@ public partial class SettingsWindow : Window
                         Name = GetString(m, "name"),
                         SizeText = GetString(m, "size_human"),
                         InUse = current,
+                        Exists = m.TryGetProperty("exists", out JsonElement ex) ? ex.ValueKind == JsonValueKind.True : true,
                         CurrentBadge = current ? Loc.T("settings.model.badgeInUse", "▶ 正在使用") : "",
                         Meta = string.Join(" · ", new[]
                         {
@@ -641,9 +692,58 @@ public partial class SettingsWindow : Window
         }
     }
 
-    private async void HubDelete_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 「重新扫描模型文件夹」（任务二）：手工把 .gguf 放进目录后不必重启程序，
+    /// 扫描到之后即可加载；只有一个模型时后端会**自动加载**并在提示里说明。
+    /// </summary>
+    private async void HubRescanButton_Click(object sender, RoutedEventArgs e)
+    {
+        HubRescanButton.IsEnabled = false;
+        HubStatusText.Text = Loc.T("settings.model.rescanning", "正在扫描模型文件夹…");
+        try
+        {
+            string json = await _backend.SendRequestAsync(
+                new { action = "model_scan" }, idleTimeout: TimeSpan.FromSeconds(180));
+            using JsonDocument doc = JsonDocument.Parse(json);
+            HubStatusText.Text = GetString(doc.RootElement, "content");
+            await RefreshHubRegistryAsync();
+        }
+        catch (Exception ex)
+        {
+            HubStatusText.Text = Loc.T("settings.model.rescanFailed", "❌ 扫描失败：{0}", ex.Message);
+        }
+        finally
+        {
+            HubRescanButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// 「加载」：热加载该模型（任务五）。成功后它就是当前模型，**不需要重启程序或前端**；
+    /// 失败（文件损坏/格式不支持/内存不足）时保持原状态并把原因显示出来，可以重试。
+    /// </summary>
+    private async void HubLoad_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as Button)?.Tag is not HubRegistryItem item)
+            return;
+        HubStatusText.Text = Loc.T("settings.model.loadingModel", "正在加载模型 {0}…", item.Name);
+        try
+        {
+            string json = await _backend.SendRequestAsync(
+                new { action = "model_load", name = item.Name },
+                idleTimeout: TimeSpan.FromMinutes(10));
+            using JsonDocument doc = JsonDocument.Parse(json);
+            HubStatusText.Text = GetString(doc.RootElement, "content");
+            await RefreshHubRegistryAsync();
+        }
+        catch (Exception ex)
+        {
+            HubStatusText.Text = Loc.T("settings.model.loadModelFailed", "❌ 加载失败：{0}", ex.Message);
+        }
+    }
+
+    private async void HubDelete_Click(object sender, RoutedEventArgs e)
+    {        if ((sender as Button)?.Tag is not HubRegistryItem item)
             return;
         if (item.InUse)
         {
