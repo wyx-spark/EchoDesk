@@ -128,19 +128,55 @@ def main():
         check("状态含模型库目录与规模", bool(status.get("models_dir")) and "count" in status, str(status)[:200])
 
         # ---- 搜索 ----
-        backend.send({"action": "model_hub_search", "keyword": "qwen2.5 0.5b gguf", "limit": 5})
-        resp = backend.read_until({"system", "error"}, timeout=120)
+        # v0.2.1 模型市场优化后：一次调用取回**该关键词的全部结果**（受安全上限约束），
+        # 并在本地做筛选/排序/分页，返回第 1 页。
+        backend.send({"action": "model_hub_search", "keyword": "qwen2.5 0.5b gguf"})
+        resp = backend.read_until({"system", "error"}, timeout=300)
         hub = resp.get("model_hub") or {}
         items = hub.get("items") or []
-        print(f"   搜索：{len(items)} 个结果 | 源：{hub.get('source_note')}")
+        print(f"   搜索：已加载 {hub.get('loaded')} 条，第 {hub.get('page', 1)} 页显示 {len(items)} 个结果 "
+              f"| 源：{hub.get('source_note')}")
         for it in items[:3]:
             print(f"     - {it['repo']}（⬇{it['downloads']}，更新于 {it['updated_at']}）")
         check("搜索返回结果", len(items) > 0, str(hub)[:200])
         check("搜索未离线失败", hub.get("offline") is False, str(hub.get("message")))
-        check("每条结果含仓库/作者/下载量/更新时间",
-              all(it.get("repo") and it.get("author") and "downloads" in it and it.get("updated_at")
-                  for it in items), str(items[:1]))
+        # 远端结果必须带下载量与更新时间；本地/默认来源没有远端元数据，
+        # 要求它们也有更新时间就是在要求接口返回它根本没有的字段（旧断言如此，一直是红的）。
+        remote_items = [it for it in items if it.get("origin") == "remote"]
+        check("每条远端结果含仓库/作者/下载量/更新时间",
+              remote_items and all(it.get("repo") and it.get("author") and "downloads" in it
+                                   and it.get("updated_at") for it in remote_items),
+              str(remote_items[:1]))
+        check("非远端来源的条目带来源标注（而不是显示成 0 次下载）",
+              all(it.get("origin") == "remote" or it.get("note_key")
+                  for it in items), str(items[:2]))
         check("搜索结果标注了数据源", bool(hub.get("source_note")), str(hub.get("source_note")))
+        check("下载量口径标注为历史总下载量或已混合标注",
+              hub.get("downloads_metric") in ("all_time", "mixed"),
+              str(hub.get("downloads_metric")))
+        check("返回分页查询块（第 1 页 20 条）",
+              (hub.get("query") or {}).get("page_size") == 20
+              and "pages" in (hub.get("query") or {}), str(hub.get("query"))[:200])
+        check("默认模型单独钉住、不混在分页数据集里",
+              isinstance(hub.get("pinned"), list)
+              and all(it["repo"] not in {p["repo"] for p in hub.get("pinned") or []}
+                      for it in items), str(hub.get("pinned"))[:200])
+
+        # ---- 本地查询：翻页 / 排序 / 筛选（不重新请求远端）----
+        backend.send({"action": "model_hub_query", "page": 1, "page_size": 20})
+        query = (backend.read_until({"system", "error"}).get("hub_query") or {})
+        check("本地查询返回三层数字",
+              all(k in query for k in ("filtered", "loaded", "pages")), str(query)[:200])
+        backend.send({"action": "model_hub_query", "page": 9999, "page_size": 20})
+        clamped = (backend.read_until({"system", "error"}).get("hub_query") or {})
+        check("越界页码被夹到最后一页并标记",
+              clamped.get("page") == clamped.get("pages") and clamped.get("page_corrected") is True,
+              str(clamped)[:200])
+        backend.send({"action": "model_hub_query", "page": 1, "sort": "likes"})
+        by_likes = (backend.read_until({"system", "error"}).get("hub_query") or {})
+        likes = [it.get("likes") or 0 for it in by_likes.get("items") or []]
+        check("本地按点赞排序生效",
+              all(likes[i] >= likes[i + 1] for i in range(len(likes) - 1)), str(likes))
 
         # ---- 详情 ----
         repo = items[0]["repo"] if items else "Qwen/Qwen2.5-0.5B-Instruct-GGUF"

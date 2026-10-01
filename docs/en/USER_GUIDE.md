@@ -77,14 +77,43 @@ exits, nothing blocks, and nothing is downloaded without you asking:
 2. Everything that does not need inference still works: file parsing, settings, the skill market, the model
    market and your session history. Asking a question returns the guidance instead of an error.
 3. Get a model in any of three ways — **none of them requires restarting the program**:
-   * **Settings → Model → Model market** → search and download. The list shows all GGUF repositories
-     (nothing is hidden by hardware filtering); entries that suit this machine are marked "(Recommended)"
-     and the repository of the model named in `config.json` is pinned first.
+   * **Settings → Model → Model market** → search and download. See "How to use the model market" below.
    * Copy a `.gguf` file into `app\backend\models\`, then click **Rescan models folder**. If exactly one
      model is found it is loaded automatically.
    * Click **Load** next to an already-downloaded model in the local model library.
 4. When the model is loaded the status bar switches from "no model" to the model name and you can chat
    right away. If loading fails you get the reason and can retry — the app keeps running either way.
+
+### How to use the model market
+
+On the **Settings → Model** tab, type a keyword into the search box and press Enter (or click **🔍 Search**).
+
+* **All results are fetched in one go**: the app pages through the remote source itself until every result for
+  that keyword is loaded (no more "only 20 shown"), showing progress such as "N loaded". If it takes too long,
+  click **⏹ Stop** — whatever has already been fetched is kept.
+* **It cannot run away with you**: each load is bounded by three caps (item count, request count, elapsed
+  time). When one is hit the app tells you "N loaded, more available" and shows a **⤵ Load more** button.
+* **Results are cached**: searching the same keyword again reads the local cache (instant). Use **↻ Refresh**
+  to force a fresh fetch.
+* **The paging bar is fixed below the list** and does not scroll away with the results: ⏮ First / ◀ Prev /
+  Next ▶ / Last ⏭ / jump to page N (Enter to apply, with a hint on invalid input) / 20, 50 or 100 per page.
+* **Local filtering**: typing in the filter box narrows the **already-loaded** results in real time
+  (repository name / description / tags) and **never touches the network**. You can also multi-select
+  parameter size, quantisation format, update time, downloaded state and recommended-only. Within one
+  dimension the selected values are OR-ed; across dimensions they are AND-ed. Filters and sorting survive
+  page changes.
+* **Three numbers, always visible**: the status line reads "A after local filter / B loaded / C in total".
+  When local filtering matches nothing you get a **Search remote again** entry instead of a dead end.
+* **Sorting**: all-time downloads / most likes / recently updated / parameter size. Switching the sort
+  refetches results for that dimension.
+* **Download metric**: the list shows **all-time downloads**, which is *not* the same figure as the
+  "downloads last 30 days" that the Hugging Face website shows by default — the status line states the metric.
+  If an entry has no all-time field, it falls back to "last 30 days" and is labelled individually rather
+  than showing 0.
+* **The default model is pinned at the top**: the repository of the model configured in `config.json` is
+  always shown above the results, labelled with its source, and is **not counted in the paging totals**.
+* **Offline**: when the remote source is unreachable the status line shows "📴 Offline mode" and the last
+  cached results plus locally downloaded models are shown instead.
 
 ### While a long document is being summarised
 

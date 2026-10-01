@@ -98,7 +98,13 @@
         "registry_file": "models_registry.json",
         "verify_sha256": true,
         "download_retries": 3,
-        "search_limit": 20
+        "search_limit": 20,
+        "max_items": 5000,
+        "max_requests": 8,
+        "max_seconds": 90.0,
+        "page_size": 20,
+        "search_cache_dir": "",
+        "search_cache_ttl_hours": 6
     },
     "update": {
         "enabled": true,

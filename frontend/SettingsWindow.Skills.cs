@@ -230,19 +230,33 @@ public partial class SettingsWindow
             ((ComboBoxItem)MarketSortCombo.Items[1]).Content = Loc.T("settings.market.sortStars", "Star 最多");
             ((ComboBoxItem)MarketSortCombo.Items[2]).Content = Loc.T("settings.market.sortUpdated", "最近更新");
         }
+        // 模型市场排序（v0.2.1 模型市场优化）：四个维度与后端 SORT_KEYS 一一对应。
+        // 顺序必须与 InitHubMarketUi() 里 Tag 的顺序一致 —— 这里只改显示文本。
         if (HubSortCombo is not null && HubSortCombo.Items.Count >= 4)
         {
-            ((ComboBoxItem)HubSortCombo.Items[0]).Content = Loc.T("settings.model.sortDownloads", "下载量最多");
-            ((ComboBoxItem)HubSortCombo.Items[1]).Content = Loc.T("settings.model.sortUpdated", "最近更新");
-            ((ComboBoxItem)HubSortCombo.Items[2]).Content = Loc.T("settings.model.sortLikes", "点赞最多");
-            ((ComboBoxItem)HubSortCombo.Items[3]).Content = Loc.T("settings.model.sortName", "名称");
+            ((ComboBoxItem)HubSortCombo.Items[0]).Content = Loc.T("settings.model.sortDownloadsAll", "历史总下载量");
+            ((ComboBoxItem)HubSortCombo.Items[1]).Content = Loc.T("settings.model.sortLikes", "点赞最多");
+            ((ComboBoxItem)HubSortCombo.Items[2]).Content = Loc.T("settings.model.sortUpdated", "最近更新");
+            ((ComboBoxItem)HubSortCombo.Items[3]).Content = Loc.T("settings.model.sortParams", "参数量");
         }
+        if (HubInstalledCombo is not null && HubInstalledCombo.Items.Count >= 3)
+        {
+            ((ComboBoxItem)HubInstalledCombo.Items[0]).Content = Loc.T("settings.model.installedAny", "不限下载状态");
+            ((ComboBoxItem)HubInstalledCombo.Items[1]).Content = Loc.T("settings.model.installedYes", "只看已下载");
+            ((ComboBoxItem)HubInstalledCombo.Items[2]).Content = Loc.T("settings.model.installedNo", "只看未下载");
+        }
+        if (HubRecommendedCheck is not null)
+            HubRecommendedCheck.Content = Loc.T("settings.model.onlyRecommended", "只看推荐");
         if (HubSourceCombo is not null && HubSourceCombo.Items.Count >= 3)
         {
             ((ComboBoxItem)HubSourceCombo.Items[0]).Content = Loc.T("settings.model.sourceAuto", "自动（推荐）");
             ((ComboBoxItem)HubSourceCombo.Items[1]).Content = Loc.T("settings.model.sourceMirror", "镜像源 hf-mirror.com");
             ((ComboBoxItem)HubSourceCombo.Items[2]).Content = Loc.T("settings.model.sourceOfficial", "官方源 huggingface.co");
         }
+        // 分面控件的内容是动态生成的，语言切换后必须整批重建（否则中英混排）；
+        // 列表项与状态行同理，所以再按新语言重排一遍当前页 —— 用的是上一次查询结果的副本，
+        // 不会为了切语言再问一次后端。
+        RelocalizeHubMarket();
     }
 
     private void OpenFolder(string? dir)

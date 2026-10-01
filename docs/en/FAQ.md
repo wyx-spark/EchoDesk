@@ -52,18 +52,38 @@ need inference keeps working (file parsing, settings, skill market, model market
 Three ways to get a model, none of which needs a restart:
 1. **Settings → Model → Model market**, search and download. The list shows **all** GGUF repositories
    (nothing is filtered out by hardware); entries that suit this machine are marked "(Recommended)" and the
-   repository of the model named in `config.json` is pinned to the top. The download hot-loads the model.
+   repository of the model named in `config.json` is pinned **above** the results (shown separately, not
+   counted in the paging totals). The download hot-loads the model.
 2. **Copy a `.gguf` into `app\backend\models\`** and click *Rescan models folder*; if exactly one model is
    found it is loaded automatically.
 3. **Click *Load*** next to an already-downloaded model in the local model library.
 You can also point `model_repo` / `model_path` / `hf_endpoint` in `app\backend\config.json` at your own model.
 
 ### The model market list used to hide models — what changed?
-Nothing is hidden any more. The list is merged from three sources (remote search results, the configured
-default model, and locally downloaded models) and de-duplicated by repository. Hardware detection is only
-used to **mark** entries that fit your machine, never to filter them out. The default model's repository is
-always present and always first — previously the list was one page of download-ranked remote results, so the
-default model could be missing entirely.
+Nothing is hidden any more. Results come from three sources: the remote search, the configured default
+model, and locally downloaded models. Hardware detection is only used to **mark** entries that fit your
+machine, never to filter them out. The default model's repository is pinned **above** the result list with
+its source labelled, so it can no longer be missing entirely.
+
+### Searching GGUF returns tens of thousands of entries — why do I only see some?
+The app pages through the remote source and fetches everything, but a single load is bounded by three caps
+(item count, request count, elapsed time) so that an overly broad keyword cannot swamp the network or your
+memory. When a cap is hit the status line says "N loaded, more available" and a **Load more** button appears
+to continue. Fetched results are cached locally, so searching the same keyword again hits the cache;
+**Refresh** is what goes back to the network.
+
+### The download counts do not match what I see on the Hugging Face website
+The website shows **downloads in the last 30 days** by default; EchoDesk shows **all-time downloads** (and
+sorts by it). They are genuinely different figures — an older model can have a huge all-time total while
+barely being downloaded in the past 30 days. If the API has no all-time field for an entry, the UI falls
+back to "last 30 days" and **labels that entry**, instead of showing 0.
+
+### How filtering interacts with paging
+Local filtering (the filter box plus the multi-select facets for parameter size, quantisation, update time
+and so on) only applies to the results **already fetched** and never touches the network; changing a filter
+resets the page to 1. Filters survive paging and sort switches. Within one facet, multiple selections are
+OR-ed (e.g. "≤1B" or "1–3B"); across facets they are AND-ed. When local filtering matches nothing you get a
+**Search remote again** entry — that is a hint to try another keyword remotely, not a broken app.
 
 ### Loading a model failed
 The app stays in the no-model state and shows the reason (corrupt file, unsupported format, not enough

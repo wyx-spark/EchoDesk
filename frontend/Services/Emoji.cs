@@ -77,6 +77,11 @@ public static class Emoji
         ["🧵"] = "[thread]",
         ["🪟"] = "[window]",
         ["📉"] = "[trend-down]",
+        // 模型市场优化（v0.2.1）：筛选面板标题与"离线模式"提示。
+        // 带变体选择符（VS16）与不带的是两个不同字符串，两个都要列。
+        ["🎛️"] = "[filter]",
+        ["🎛"] = "[filter]",
+        ["📴"] = "[offline]",
     };
 
     /// <summary>emoji 字体文件（Windows 自带）；缺失即认为环境不支持彩色 emoji。</summary>

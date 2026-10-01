@@ -74,6 +74,11 @@ ASCII_MAP: Dict[str, str] = {
     "🧵": "[thread]",
     "🪟": "[window]",
     "📉": "[trend-down]",
+    # 模型市场优化（v0.2.1）新增：筛选面板标题与"离线模式"提示。
+    # 🎛️ 带变体选择符（U+1F39B U+FE0F），两个写法都要列，
+    # 否则带 VS16 的那份在无 emoji 字体下仍会退化成 "?"（check_emoji.ps1 会拦）。
+    "🎛️": "[filter]", "🎛": "[filter]",
+    "📴": "[offline]",
 }
 
 _enabled: Optional[bool] = None

@@ -542,6 +542,8 @@ class Backend:
         # ---------- 模型选择栏（新增四） ----------
         if action == "model_hub_search":
             return self._handle_model_hub_search(request)
+        if action == "model_hub_query":
+            return self._handle_model_hub_query(request)
         if action == "model_hub_detail":
             return self._handle_model_hub_detail(request)
         if action == "model_hub_registry":
@@ -915,20 +917,87 @@ class Backend:
         return {"type": "system", "content": _t("err.hub_failed", verb=verb, error=e)}
 
     def _handle_model_hub_search(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """搜索可下载的 GGUF 模型（镜像/官方双源，自动回退）。"""
+        """搜索可下载的 GGUF 模型（镜像/官方双源，自动回退）。
+
+        v0.2.1 模型市场优化后：**一次调用就把该关键词的全部结果取回来**
+        （受安全上限约束），再在本地做筛选/排序/分页，返回第 ``page`` 页。
+        同步版本；界面走的是带进度反馈的流式版本 ``model_hub_load``。
+        """
         try:
             result = self.model_hub().search(
                 keyword=str(request.get("keyword") or ""),
                 sort=str(request.get("sort") or "downloads"),
                 page=int(request.get("page") or 1),
-                limit=int(request.get("limit") or self.config.model_hub.search_limit),
+                limit=int(request.get("limit") or 0),
+                page_size=int(request.get("page_size") or 0),
                 source=request.get("source"),
                 min_downloads=int(request.get("min_downloads") or 0),
                 quant=str(request.get("quant") or ""),
+                filters=request.get("filters") if isinstance(request.get("filters"), dict) else None,
+                refresh=bool(request.get("refresh")),
+                resume=bool(request.get("resume")),
             )
         except Exception as e:
             return self._model_hub_error(e, _t("sys.verb_search"))
         return {"type": "system", "content": result.get("message", ""), "model_hub": result}
+
+    def _handle_model_hub_query(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """在**已加载的结果集**上做本地筛选/排序/翻页（不重新请求远端）。
+
+        任务书任务三/四/五/六的落点：分页控件、本地实时筛选、结构化筛选器、四种排序
+        都只发这一个动作，因此不会因为"筛选条件改了一下"就重打网络。
+        """
+        try:
+            result = self.model_hub().query_session(request)
+        except Exception as e:
+            return self._model_hub_error(e, _t("sys.verb_read_status"))
+        return {"type": "system", "content": "", "hub_query": result}
+
+    def _stream_model_hub_load(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+        """流式加载模型市场结果：边取边报进度，最后把完整数据集交给界面。
+
+        为什么必须是流式的：任务二要求"加载过程需有进度反馈（如正在加载 500 / 4356），
+        避免用户干等"，而一次取回 5000 条要发 5 页请求、耗时几十秒。
+        进度行用独立 type（``hub_progress``），与既有的 ``summary_progress`` 一样，
+        由前端 onEvent 回调消费，不干扰 delta/done 的既有语义。
+        """
+        hub = self.model_hub()
+        state: Dict[str, Any] = {}
+
+        def on_progress(event: Dict[str, Any]) -> None:
+            state["last"] = event
+            _write({"type": "hub_progress", "hub_progress": event,
+                    "content": _t("hub.load.progress", loaded=event.get("loaded", 0),
+                                  pages=event.get("pages", 0),
+                                  elapsed=event.get("elapsed", 0))})
+
+        try:
+            dataset = hub.load_all(
+                keyword=str(request.get("keyword") or ""),
+                sort=str(request.get("sort") or "downloads"),
+                source=request.get("source"),
+                resume=bool(request.get("resume")),
+                refresh=bool(request.get("refresh")),
+                on_progress=on_progress,
+                should_stop=lambda: self.stop_event.is_set(),
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("模型市场加载失败")
+            dataset = hub.offline_dataset(error=e, keyword=str(request.get("keyword") or ""),
+                                          sort=str(request.get("sort") or "downloads"),
+                                          source=request.get("source"))
+        if not bool(request.get("no_page")):
+            dataset["query"] = hub.query_dataset(
+                dataset,
+                page=request.get("page") or 1,
+                page_size=int(request.get("page_size") or 0) or None,
+                filters=request.get("filters") if isinstance(request.get("filters"), dict) else None,
+            )
+        message = str(dataset.get("message") or "")
+        # 结果集走独立 type：前端 SendStreamRequestAsync 的 done 只回 content，
+        # 结构化数据必须自己占一条消息（与 file_stream 的做法一致）。
+        yield {"type": "hub_result", "model_hub": dataset}
+        yield {"type": "done", "content": message, "model_hub": dataset}
 
     def _handle_model_hub_detail(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """模型详情：所有可用的 GGUF 量化文件与大小。"""
@@ -1611,6 +1680,9 @@ class Backend:
             return
         if action == "model_hub_download":
             yield from self._stream_model_hub_download(request)
+            return
+        if action == "model_hub_load":
+            yield from self._stream_model_hub_load(request)
             return
         if action == "automation_pick":
             yield from self._stream_automation_pick(request)
@@ -2547,14 +2619,18 @@ def main() -> None:
         if backend.stream_active and action != "stop":
             is_command = isinstance(request.get("message"), str) and request.get("message", "").startswith("/")
             if not is_command:
-                _write({"type": "system", "content": _t("sys.busy")})
+                # busy 标记（v0.2.1 模型市场优化）：单条 stdout 是共享流，
+                # 两个线程同时写会交错成坏 JSON，所以长任务期间一律拒绝并发请求。
+                # 带上结构化标记，界面才能说清"是后端忙"而不是"模型中心坏了"。
+                _write({"type": "system", "content": _t("sys.busy"), "busy": True})
                 continue
 
         if action in ("chat_stream", "model_download", "automation_run", "model_hub_download",
-                      "automation_pick", "automation_wizard", "file_stream"):
-            # 七种长任务都走流式线程：进度实时输出，stop 可中断。
+                      "automation_pick", "automation_wizard", "file_stream", "model_hub_load"):
+            # 八个长任务都走流式线程：进度实时输出，stop 可中断。
             # automation_* 还会检查 stop_event 尽早退出并关闭浏览器；
-            # file_stream（任务四）在分段摘要期间持续报进度，stop 能真正打断生成。
+            # file_stream（任务四）在分段摘要期间持续报进度，stop 能真正打断生成；
+            # model_hub_load（模型市场优化 任务二）按页报告"已取回 N 条"。
             if action in ("automation_run", "automation_pick", "automation_wizard") and backend.stream_active:
                 _write({"type": "system", "content": _t("sys.automation_running")})
                 continue

@@ -37,8 +37,19 @@ function Find-AnyById([int]$procId, [string]$id) {
     $b = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
     $and = New-Object System.Windows.Automation.AndCondition($a, $b)
-    return [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
-        [System.Windows.Automation.TreeScope]::Descendants, $and)
+    # 重试 3 次：UIA 客户端在界面忙碌时偶发返回空（实测同一轮里前一批全中找到、
+    # 紧接的一批全找不中、再往后又全找到）。这不是"控件不存在"，不该被当成失败。
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            $found = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+                [System.Windows.Automation.TreeScope]::Descendants, $and)
+            if ($null -ne $found) { return $found }
+        } catch {
+            Write-Output "[probe] 提示：FindFirst($id) 第 $attempt 次异常：$($_.Exception.Message)"
+        }
+        if ($attempt -lt 3) { Start-Sleep -Milliseconds 200 }
+    }
+    return $null
 }
 
 function Invoke-El($el) { $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
@@ -97,14 +108,26 @@ if (-not $ready) { Fail '后端未就绪'; if (-not $KeepOpen) { $proc.Kill() };
 $btn = Find-AnyById $proc.Id 'SettingsButton'
 if ($null -eq $btn) { Fail '未找到 SettingsButton'; if (-not $KeepOpen) { $proc.Kill() }; exit 4 }
 
+# 预热 UIA：第一次 Find-AnyById 要建立跨进程 provider 树，实测冷启动这一下约 2 秒；
+# 不预热的话，这笔一次性开销会被算进"设置窗口打开耗时"，量出来就是 2.3 秒而不是 0.26 秒
+# （同一份 EchoDesk.exe，预热与不预热的差异，见 artifacts 里的诊断记录）。
+# 这里量的是"窗口多久出现"，就不该把 UIA 的冷启动算进去。
+$warm = [System.Diagnostics.Stopwatch]::StartNew()
+$null = Find-AnyById $proc.Id 'StatusText'
+$null = Find-AnyById $proc.Id 'SettingsButton'
+Write-Output "[probe] UIA 预热完成 @ $((Ms $warm))ms"
+
 $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
 Invoke-El $btn
 $saveButton = $null
+$tabsMs = -1
 while ($sw2.Elapsed.TotalSeconds -lt 10) {
     Start-Sleep -Milliseconds 100
+    if ($tabsMs -lt 0 -and $null -ne (Find-AnyById $proc.Id 'Tabs')) { $tabsMs = (Ms $sw2) }
     $saveButton = Find-AnyById $proc.Id 'SaveButton'
     if ($null -ne $saveButton) { break }
 }
+Write-Output "[probe] 设置窗口分级耗时：TabControl @ ${tabsMs}ms，SaveButton @ $((Ms $sw2))ms"
 if ($null -eq $saveButton) {
     Fail "设置窗口 10s 内未出现（responding=$($proc.Responding)）"
 } else {
@@ -151,8 +174,15 @@ if ($null -ne $saveButton) {
         $perTab = @{
             '常规'     = @('ThemeCombo', 'FontSizeSlider', 'DefaultModeCombo', 'ConfirmDestructiveCheck',
                           'LanguageCombo', 'LangPackText', 'EmojiCombo', 'ThemeStatusText', 'EmojiStatusText')
-            '模型'     = @('HubSourceCombo', 'HubSearchBox', 'HubSortCombo', 'HubQuantCombo', 'HubResultList',
-                          'HubRegistryList', 'HubStatusText')
+            # v0.2.1 模型市场优化：搜索/排序/分页/本地筛选。注意只能列**可见**控件 ——
+            # 折叠的 Expander 内容与 Visibility=Collapsed 的按钮不在 UIA 树里，
+            # 因此 HubMoreButton / HubStopButton / HubCancelButton / HubRemoteRetryButton
+            # 以及筛选面板里的控件都放到后面的交互段里展开后再找。
+            '模型'     = @('HubSourceCombo', 'HubSearchBox', 'HubSortCombo', 'HubSearchButton', 'HubRefreshButton',
+                          'HubResultList', 'HubRegistryList', 'HubStatusText', 'HubFilterExpander',
+                          'HubPageInfoText', 'HubTotalText', 'HubFirstPageButton', 'HubPrevPageButton',
+                          'HubNextPageButton', 'HubLastPageButton', 'HubPageBox', 'HubGoPageButton',
+                          'HubPageSizeCombo', 'HubEmptyText')
             # v0.2.1（任务四）：模板库 + 字段级帮助 + 可视化选取 + 测试向导 + 导入导出
             '自动化'   = @('TaskUrlBox', 'TaskSelectorBox', 'SafetyCheck', 'RunOnceButton', 'AutomationLogBox',
                           'TaskNameBox', 'ResultsRootNameBox', 'ResultsLocationBox', 'OpenResultsButton',
@@ -362,6 +392,349 @@ if ($null -ne $saveButton) {
                 }
             }
         }
+
+        # ---------- 2c. 模型市场：加载 / 分页 / 本地筛选（v0.2.1 模型市场优化验收）----------
+        # 任务书的验证方式点名要验："搜索 GGUF 能加载全部结果并正确分页""分页控件在滚动
+        # 结果列表时保持可见""上一页/下一页/跳到首尾/页码跳转与非法输入""本地筛选实时生效、
+        # 状态显示三层数字"。这些只有**在真实界面上点一遍**才算验过，所以在 UIA 上做。
+        #
+        # 断言尽量不依赖中文文案（只匹配数字与元素可见性）：这个脚本是无 BOM 的 UTF-8，
+        # 本机代码页恰好是 65001 才读得对，少用中文字面量就少一份环境依赖。
+        if (-not (Select-Tab $win2 '模型')) {
+            Fail '无法切到「模型」页验证模型市场'
+        } else {
+            function Get-TextById([string]$id) {
+                $el = Find-AnyById $proc.Id $id
+                if ($null -eq $el) { return '' }
+                return $el.Current.Name
+            }
+            # 分页信息形如「第 3 / 250 页」：只取数字，避免依赖中文
+            function Get-PagePair {
+                $t = Get-TextById 'HubPageInfoText'
+                if ($t -match '(\d+)\s*/\s*(\d+)') {
+                    return @{ Current = [int]$Matches[1]; Total = [int]$Matches[2]; Raw = $t }
+                }
+                return @{ Current = -1; Total = -1; Raw = $t }
+            }
+            function Wait-Loaded([int]$seconds) {
+                # 「搜索」按钮在整轮加载期间是禁用的，它重新可用 == 这一轮结束了。
+                # 不看这一点的话，会把上一次查询留下的旧页码当成"已经加载好"
+                # （实测踩到过：第一轮失败后界面停在「第 1 / 1 页」，重试时立刻返回）。
+                $deadline = (Get-Date).AddSeconds($seconds)
+                while ((Get-Date) -lt $deadline) {
+                    $btn = Find-AnyById $proc.Id 'HubSearchButton'
+                    $idle = ($null -eq $btn) -or $btn.Current.IsEnabled
+                    $p = Get-PagePair
+                    if ($idle -and $p.Total -ge 2) { return $p }
+                    Start-Sleep -Milliseconds 500
+                }
+                return (Get-PagePair)
+            }
+            # 状态行里的三层数字：第一个数字是"本地筛选后"的条数
+            function Get-FilteredCount {
+                $t = Get-TextById 'HubStatusText'
+                if ($t -match '(\d+)') { return [int]$Matches[1] }
+                return -1
+            }
+
+            $kw = Find-AnyById $proc.Id 'HubSearchBox'
+            if ($null -eq $kw) {
+                Fail '未找到 HubSearchBox'
+            } else {
+                $kw.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('qwen')
+                Invoke-El (Find-AnyById $proc.Id 'HubSearchButton')
+                $loaded = Wait-Loaded 240
+                if ($loaded.Total -lt 2) {
+                    # 前端可能因为"后端正在处理窗口初始化请求"而拿到 busy 响应；
+                    # 等一会儿再点一次搜索，并把状态行原文留下来（否则只看到 1/1，无从判断）。
+                    Write-Output "[probe] 首次加载只拿到 $($loaded.Raw)，状态行：$(Get-TextById 'HubStatusText')"
+                    Start-Sleep -Seconds 3
+                    Invoke-El (Find-AnyById $proc.Id 'HubSearchButton')
+                    $loaded = Wait-Loaded 240
+                }
+                Write-Output "[probe] 模型市场加载完成：$($loaded.Raw)"
+                if ($loaded.Total -lt 2) {
+                    Fail ("加载后没有分页信息或页数不足（{0}）：无法验证分页；状态行={1}" -f `
+                          $loaded.Raw, (Get-TextById 'HubStatusText'))
+                } else {
+                    Ok "搜索后取回结果并正确分页（$($loaded.Raw)）"
+                    $totalText = Get-TextById 'HubTotalText'
+                    if ($totalText.Length -gt 0) { Ok "显示总条数：$totalText" }
+                    else { Fail '没有显示总条数' }
+                    if ((Get-TextById 'HubStatusText') -like '*Hugging Face*') {
+                        Ok '状态行说明了下载量口径是历史总下载量'
+                    } else {
+                        Fail "状态行未说明下载量口径：$(Get-TextById 'HubStatusText')"
+                    }
+
+                    # --- 边界：第一页时"首页/上一页"必须禁用 ---
+                    $first = Find-AnyById $proc.Id 'HubFirstPageButton'
+                    $prev = Find-AnyById $proc.Id 'HubPrevPageButton'
+                    $next = Find-AnyById $proc.Id 'HubNextPageButton'
+                    $last = Find-AnyById $proc.Id 'HubLastPageButton'
+                    if (-not $first.Current.IsEnabled -and -not $prev.Current.IsEnabled) {
+                        Ok '第 1 页时「首页」「上一页」均禁用'
+                    } else {
+                        Fail '第 1 页时首页/上一页未禁用'
+                    }
+                    if ($next.Current.IsEnabled) { Ok '第 1 页时「下一页」可用' } else { Fail '第 1 页时下一页被禁用' }
+
+                    # --- 分页控件不随结果列表滚动（任务三的布局要求）---
+                    $listEl = Find-AnyById $proc.Id 'HubResultList'
+                    $before = (Find-AnyById $proc.Id 'HubPageInfoText').Current.BoundingRectangle
+                    $scrolled = $false
+                    try {
+                        $sp = $listEl.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+                        if ($sp.Current.VerticallyScrollable) {
+                            $sp.Scroll([System.Windows.Automation.ScrollAmount]::LargeIncrement,
+                                       [System.Windows.Automation.ScrollAmount]::NoAmount)
+                            Start-Sleep -Milliseconds 600
+                            $scrolled = $true
+                        }
+                    } catch { Write-Output "[probe] 提示：结果列表不支持滚动模式（$($_.Exception.Message)）" }
+                    $after = (Find-AnyById $proc.Id 'HubPageInfoText').Current.BoundingRectangle
+                    $moved = [math]::Abs($after.Top - $before.Top) -gt 1
+                    if (-not $moved -and $after.Width -gt 0) {
+                        if ($scrolled) { Ok '滚动结果列表时分页控件位置不变（固定可见）' }
+                        else { Ok '分页控件位置稳定（列表当前无需滚动）' }
+                    } else {
+                        Fail "滚动后分页控件发生了位移（$($before.Top) → $($after.Top)）"
+                    }
+
+                    # --- 下一页 / 末页 / 首页 ---
+                    Invoke-El $next
+                    Start-Sleep -Milliseconds 900
+                    $p2 = Get-PagePair
+                    if ($p2.Current -eq 2) { Ok '「下一页」跳到第 2 页' } else { Fail "下一页后页码异常：$($p2.Raw)" }
+                    if ((Find-AnyById $proc.Id 'HubPrevPageButton').Current.IsEnabled) {
+                        Ok '非首页时「上一页」可用'
+                    } else { Fail '第 2 页时上一页仍禁用' }
+
+                    Invoke-El $last
+                    Start-Sleep -Milliseconds 1200
+                    $pLast = Get-PagePair
+                    if ($pLast.Current -eq $pLast.Total) { Ok "「末页」跳到最后一页（$($pLast.Raw)）" }
+                    else { Fail "末页跳转异常：$($pLast.Raw)" }
+                    if (-not (Find-AnyById $proc.Id 'HubNextPageButton').Current.IsEnabled) {
+                        Ok '最后一页时「下一页」禁用'
+                    } else { Fail '最后一页时下一页仍可用' }
+
+                    Invoke-El (Find-AnyById $proc.Id 'HubFirstPageButton')
+                    Start-Sleep -Milliseconds 900
+                    if ((Get-PagePair).Current -eq 1) { Ok '「首页」回到第 1 页' } else { Fail '首页跳转异常' }
+
+                    # --- 页码跳转：合法、非法、回车 ---
+                    $pageBox = Find-AnyById $proc.Id 'HubPageBox'
+                    $vpBox = $pageBox.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+                    $vpBox.SetValue('3')
+                    Invoke-El (Find-AnyById $proc.Id 'HubGoPageButton')
+                    Start-Sleep -Milliseconds 900
+                    if ((Get-PagePair).Current -eq 3) { Ok '输入页码 3 后点「跳转」到第 3 页' }
+                    else { Fail "页码跳转异常：$((Get-PagePair).Raw)" }
+
+                    $vpBox.SetValue('abc')
+                    Invoke-El (Find-AnyById $proc.Id 'HubGoPageButton')
+                    Start-Sleep -Milliseconds 800
+                    $hint = Get-TextById 'HubPagerHint'
+                    if ((Get-PagePair).Current -eq 3 -and $hint.Length -gt 0) {
+                        Ok "非法页码给出提示且不跳页（提示：$hint）"
+                    } else {
+                        Fail "非法页码处理异常（页码 $((Get-PagePair).Raw)，提示 '$hint'）"
+                    }
+
+                    $vpBox.SetValue('2')
+                    $pageBox.SetFocus()
+                    [void][Win32.Fg]::SetForegroundWindow($proc.MainWindowHandle)
+                    Start-Sleep -Milliseconds 400
+                    $pageBox.SetFocus()
+                    Start-Sleep -Milliseconds 300
+                    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+                    Start-Sleep -Milliseconds 900
+                    if ((Get-PagePair).Current -eq 2) {
+                        Ok '页码框输入后回车即可跳转'
+                    } else {
+                        Write-Output "[probe] 警告：键盘模拟未送达（前台焦点限制），回车跳转未能在本轮自动验证"
+                    }
+
+                    # --- 每页条数切换（真的选一项，不是只看选项名）---
+                    $sizeCombo = Find-AnyById $proc.Id 'HubPageSizeCombo'
+                    $pagesBefore = (Get-PagePair).Total
+                    try {
+                        $expandSize = $sizeCombo.GetCurrentPattern(
+                            [System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+                        $expandSize.Expand()
+                        Start-Sleep -Milliseconds 600
+                        $itemCond2 = New-Object System.Windows.Automation.PropertyCondition(
+                            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                            [System.Windows.Automation.ControlType]::ListItem)
+                        $sizeItems = $sizeCombo.FindAll(
+                            [System.Windows.Automation.TreeScope]::Descendants, $itemCond2)
+                        $names = @(); foreach ($it in $sizeItems) { $names += $it.Current.Name }
+                        if ($names -contains '20' -and $names -contains '50' -and $names -contains '100') {
+                            Ok "每页条数可选 20 / 50 / 100（实际：$($names -join ' / ')）"
+                        } else {
+                            Fail "每页条数选项异常：$($names -join ' / ')"
+                        }
+                        # 选中「50」——同时把结果列表撑到必然可滚，供下面的"分页控件不随滚动"用
+                        $picked = $false
+                        foreach ($it in $sizeItems) {
+                            if ($it.Current.Name -eq '50') {
+                                $it.GetCurrentPattern(
+                                    [System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+                                $picked = $true
+                                break
+                            }
+                        }
+                        Start-Sleep -Milliseconds 1500
+                        if (-not $picked) { Fail '每页条数下拉框里没有 50 这一项' }
+                        # 必须收起来：开着弹出的下拉框时，同一个 Tab 里后面的控件会被它挡住，
+                        # FindFirst(Descendants) 会找不到（实测踩到，纯探针问题）
+                        $expandSize.Collapse()
+                        Start-Sleep -Milliseconds 400
+                    } catch {
+                        Fail "每页条数下拉框操作失败：$($_.Exception.Message)"
+                    }
+                    $pagesAfter = (Get-PagePair).Total
+                    # 每页 20 → 50 时，同样条数下总页数必然变少（20/50 = 0.4）
+                    if ($pagesAfter -gt 0 -and $pagesBefore -gt 0 -and $pagesAfter -lt $pagesBefore) {
+                        Ok "每页条数切换生效（总页数 $pagesBefore → $pagesAfter）"
+                    } else {
+                        Fail "每页条数没有生效（总页数 $pagesBefore → $pagesAfter）"
+                    }
+                    if ((Get-PagePair).Current -eq 1) { Ok '切换每页条数后页码回到第 1 页' }
+                    else { Fail "切换每页条数后页码没有回到第 1 页（$((Get-PagePair).Raw)）" }
+
+                    # --- 结果列表独立滚动 + 分页控件不随列表滚动（任务三的布局要求）---
+                    # 用 ScrollItemPattern.ScrollIntoView 而不是 ScrollPattern.Scroll：
+                    # 后者在本页面板里的 ListBox 上实测不可靠（读出来可滚、真滚却抛异常）。
+                    $listEl2 = Find-AnyById $proc.Id 'HubResultList'
+                    $anchorEl = Find-AnyById $proc.Id 'HubPageInfoText'
+                    $anchorBefore = $anchorEl.Current.BoundingRectangle
+                    $listRect = $listEl2.Current.BoundingRectangle
+                    $independent = $false
+                    try {
+                        $sp2 = $listEl2.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+                        $independent = [bool]$sp2.Current.VerticallyScrollable
+                    } catch { Write-Output "[probe] 提示：读不到结果列表的滚动状态（$($_.Exception.Message)）" }
+                    if ($independent) {
+                        Ok '每页 50 条时结果列表自己可滚动（列表区域独立滚动）'
+                    } else {
+                        Fail '每页 50 条时结果列表报告不可滚动（列表区域没有独立滚动）'
+                    }
+
+                    $scrolled = $false
+                    try {
+                        $itemCond3 = New-Object System.Windows.Automation.PropertyCondition(
+                            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                            [System.Windows.Automation.ControlType]::ListItem)
+                        $visible = $listEl2.FindAll([System.Windows.Automation.TreeScope]::Descendants, $itemCond3)
+                        if ($visible.Count -gt 0) {
+                            $lastVisible = $visible[$visible.Count - 1]
+                            $lastVisible.GetCurrentPattern(
+                                [System.Windows.Automation.ScrollItemPattern]::Pattern).ScrollIntoView()
+                            Start-Sleep -Milliseconds 800
+                            $scrolled = $true
+                        }
+                    } catch { Write-Output "[probe] 提示：ScrollIntoView 失败（$($_.Exception.Message)）" }
+
+                    $anchorAfter = (Find-AnyById $proc.Id 'HubPageInfoText').Current.BoundingRectangle
+                    $anchorMoved = [math]::Abs($anchorAfter.Top - $anchorBefore.Top) -gt 1
+                    if (-not $scrolled) {
+                        Fail '没能滚动结果列表，无法验证"分页控件不随列表滚动"'
+                    } elseif ($anchorMoved) {
+                        Fail "滚动后分页控件发生了位移（$($anchorBefore.Top) → $($anchorAfter.Top)）"
+                    } else {
+                        Ok '滚动结果列表时分页控件位置完全不变（固定可见）'
+                    }
+                    # 结构上分页控件必须在列表**下方**且落在窗口内
+                    if ($anchorBefore.Top -ge ($listRect.Bottom - 2) -and $anchorBefore.Bottom -gt $anchorBefore.Top) {
+                        Ok '分页控件位于结果列表下方且可见'
+                    } else {
+                        Fail "分页控件不在列表下方（列表底 $($listRect.Bottom)，分页顶 $($anchorBefore.Top)）"
+                    }
+
+                    # --- 本地实时筛选与结构化筛选（展开筛选面板）---
+                    $filteredBefore = Get-FilteredCount
+                    $expander = Find-AnyById $proc.Id 'HubFilterExpander'
+                    if ($null -eq $expander) {
+                        Fail '未找到筛选面板 HubFilterExpander'
+                    } else {
+                        $expander.GetCurrentPattern(
+                            [System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+                        Start-Sleep -Milliseconds 700
+                        foreach ($id in @('HubFilterBox', 'HubInstalledCombo', 'HubRecommendedCheck',
+                                          'HubFilterResetButton')) {
+                            if ($null -eq (Find-AnyById $proc.Id $id)) { Fail "筛选面板缺少控件 $id" }
+                        }
+                        # 分面复选框是代码生成的，没有 AutomationId，只能按类型在面板内找
+                        $boxCond = New-Object System.Windows.Automation.PropertyCondition(
+                            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                            [System.Windows.Automation.ControlType]::CheckBox)
+                        $boxes = $expander.FindAll([System.Windows.Automation.TreeScope]::Descendants, $boxCond)
+                        if ($boxes.Count -ge 6) {
+                            Ok "结构化筛选器按分面生成了 $($boxes.Count) 个可选项"
+                        } else {
+                            Fail "结构化筛选器选项过少：$($boxes.Count)"
+                        }
+
+                        # 勾一个可用的参数量档位 → 本地筛选后条数必须变少、且页码回到第 1 页
+                        $clicked = $false
+                        foreach ($b in $boxes) {
+                            if ($b.Current.IsEnabled -and $null -ne $b.Current.Name -and
+                                $b.Current.Name -match 'B') {
+                                $b.GetCurrentPattern(
+                                    [System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+                                $clicked = $true
+                                Write-Output "[probe] 勾选筛选项：$($b.Current.Name)"
+                                break
+                            }
+                        }
+                        Start-Sleep -Milliseconds 1400
+                        $filteredAfter = Get-FilteredCount
+                        if ($clicked -and $filteredAfter -ge 0 -and $filteredAfter -lt $filteredBefore) {
+                            Ok "结构化筛选生效且状态显示三层数字（$filteredBefore → $filteredAfter）"
+                        } else {
+                            Fail "结构化筛选未收窄结果（$filteredBefore → $filteredAfter，clicked=$clicked）"
+                        }
+                        if ((Get-PagePair).Current -eq 1) { Ok '筛选后页码回到第 1 页' }
+                        else { Fail '筛选后页码没有回到第 1 页' }
+
+                        # 本地筛选框：实时过滤 + 筛空后给出"重新搜索远端"的出口
+                        $filterBox = Find-AnyById $proc.Id 'HubFilterBox'
+                        $filterBox.GetCurrentPattern(
+                            [System.Windows.Automation.ValuePattern]::Pattern).SetValue('zzz_no_such_model_zzz')
+                        Start-Sleep -Milliseconds 1600
+                        if ($null -ne (Find-AnyById $proc.Id 'HubRemoteRetryButton')) {
+                            Ok '本地筛选无结果时给出「重新搜索远端」的出口'
+                        } else {
+                            Fail '本地筛选无结果时没有给出重新搜索远端的入口'
+                        }
+
+                        # 重置筛选：条目数恢复，空结果出口消失
+                        Invoke-El (Find-AnyById $proc.Id 'HubFilterResetButton')
+                        Start-Sleep -Milliseconds 1600
+                        if ((Get-FilteredCount) -eq $filteredBefore -and
+                            $null -eq (Find-AnyById $proc.Id 'HubRemoteRetryButton')) {
+                            Ok '「重置筛选」恢复全部结果'
+                        } else {
+                            Fail "重置筛选异常（条数 $((Get-FilteredCount))，期望 $filteredBefore）"
+                        }
+                    }
+
+                    # --- 默认模型钉在列表上方且不计入分页计数 ---
+                    if ($null -ne (Find-AnyById $proc.Id 'HubPinnedName')) {
+                        $pinnedText = Get-TextById 'HubPinnedMeta'
+                        Write-Output "[probe] 默认模型钉住行：$(Get-TextById 'HubPinnedName')｜$pinnedText"
+                        Ok '默认模型单独钉在结果上方并标注来源'
+                    } else {
+                        Write-Output '[probe] 提示：本轮没有配置默认模型，钉住行按设计不显示'
+                    }
+                }
+                $vp2 = $kw.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+                $vp2.SetValue('')
+            }
+        }
+
         [void](Select-Tab $win2 '常规')
     }
 }

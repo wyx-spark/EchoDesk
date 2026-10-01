@@ -573,7 +573,20 @@
     "uninstall.done_removed": "Deleted {name} and updated the model library.",
     "uninstall.done_cleaned": "Deleted {name} (the file was missing; the record was cleaned up).",
     "note.default_model": "Default model (the one configured in config.json)",
-    "note.local_model": "Already downloaded locally"
+    "note.local_model": "Already downloaded locally",
+    "search.count_plain": "{count} results in total.",
+    "downloads.all_time": "All-time downloads",
+    "downloads.fallback": "Downloads in the last 30 days (this entry has no all-time field; falling back and labelling it)",
+    "load.progress": "Loading: {loaded} results so far (page {pages}, {elapsed}s elapsed)…",
+    "load.more": "Loaded {loaded} results and there are more{reason}. Use \"Load more\" to fetch the rest.",
+    "load.done": "All {count} results have been loaded.",
+    "load.cached": "Loaded {loaded} results from the local cache (ready to filter and page through).",
+    "load.aborted": "Loading stopped ({loaded} results were fetched).",
+    "load.error": "Loading was interrupted ({loaded} results fetched): {error}",
+    "load.cap_items": " (the per-run item cap was reached)",
+    "load.cap_requests": " (the per-run request cap was reached)",
+    "load.cap_seconds": " (the per-run time cap was reached)",
+    "query.needs_load": "Search results have not been loaded yet; run a search first."
   },
   "automation": {
     "disabled": "Automation is not enabled",

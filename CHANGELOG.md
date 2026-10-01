@@ -14,6 +14,123 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 > deviations from the task specification, unfinished items, and size records, see the internal development
 > record (`v0.2.1-研发记录.md`, **not distributed with the release**).
 
+### Model market overhaul (load everything, page through it, filter and sort locally)
+
+**The problem**: searching the model market fetched a single remote page (20 entries) plus the default model,
+so a user could see at most 21 of them; searching `GGUF` matches thousands of repositories, the rest were
+unreachable and there was no pager at all. The list also showed "downloads in the last 30 days", which does
+not match what people mean by popularity.
+
+**Download metric changed to all-time downloads (task 1)**
+- Requests now explicitly ask for `expand=downloadsAllTime`; both display and ordering use all-time downloads.
+- The server's `sort=downloads` orders by **the last 30 days** (measured: that column is monotonic while the
+  all-time column is not), and rejects `sort=downloadsAllTime` with HTTP 400. The remote sort therefore only
+  decides *which* entries land in the fetch window; **the displayed order is always re-sorted locally by
+  all-time downloads** — otherwise "sorted by downloads" and "showing all-time downloads" contradict each other.
+- When an entry has no all-time field it **falls back to the 30-day figure and is labelled per entry**
+  (`downloads_source`); the response carries `downloads_metric` and `downloads_fallback_count` and the status
+  line says how many entries fell back. It is never silently shown as 0.
+- The status line states the metric explicitly: all-time downloads, *not* the "last 30 days" figure the
+  Hugging Face website shows.
+
+**All results fetched automatically (task 2)**
+- The first search pages through the remote source until every result for that keyword is loaded (the remote
+  page size is 1000 — measured: any `limit` above 1000 is **silently truncated**), stopping when there is no
+  next page.
+- **Three caps** apply at once: total items (default 5000), request count (default 8) and elapsed time
+  (default 90 s). Hitting one stops the load, reports "N loaded, more available" and shows a **Load more**
+  entry point; an absolute ceiling of 20000 items bounds repeated continuation. Caps are counted **per round**,
+  otherwise the second "Load more" would degrade to fetching exactly one item (hit during testing).
+- **Progress feedback**: new streaming action `model_hub_load` reports `hub_progress` per page (items fetched /
+  pages / elapsed); the UI shows "fetching: N loaded (x s elapsed)" plus a **Stop** button that keeps what was
+  already fetched.
+- **Retries**: a failed page is retried `download_retries` times with exponential backoff; a failing *first*
+  request switches to the other data source first; repeated failure aborts and reports how far it got without
+  discarding the results already received.
+- **Cache**: in-memory session plus an on-disk cache (`<user data dir>/cache/model_hub/`, default TTL 6 hours,
+  configurable). A repeat search for the same keyword hits it directly (measured 15.7 s → 0.24 s); **Refresh**
+  bypasses it.
+
+**Paging (task 3)**
+- 20 entries per page, switchable to 50 or 100.
+- Full control set: first / previous / next / last / jump-to-page (Enter applies) / "page x of y" / total count.
+  Boundaries are correct: first and previous are disabled on page 1, next and last on the final page, an
+  out-of-range page is clamped to the nearest valid page with a hint, and invalid input shows a hint without
+  jumping.
+- **The paging bar is fixed below the list** (its own `Auto` row, with the list in a `*` row), so scrolling the
+  results does not move it (the UI probe scrolls the list with `ScrollPattern` and asserts the bar stays put);
+  in narrow windows it wraps (`WrapPanel`) instead of being clipped.
+
+**Live local filtering (task 4)**
+- Filters the **already-loaded** results in real time and **never re-requests the remote source**: it fires
+  150 ms after typing stops (debounce).
+- Scope: repository name, description, tags. The list endpoint returns no model-card body, so "description" is
+  composed from what the endpoint does give (`pipeline_tag` / `library_name` / tags); the full text still lives
+  in the details panel (the deviation is recorded in the internal record).
+- The status line shows the three numbers: "A after local filter / B loaded / C in total" (truthfully showing
+  "N+" when a cap was hit).
+- When local filtering matches nothing you get a **Search remote again** entry point instead of a dead end that
+  looks like a network failure.
+- Filtering recomputes paging from the filtered set and returns to page 1; filters survive paging and sort changes.
+
+**Structured filters (task 5)**
+- Five dimensions: parameter range (parsed from the repository name), quantisation (parsed from the name/file
+  name), update time (from the API), downloaded state (local scan) and recommended (the existing hardware logic).
+- **Within one dimension multiple selections are OR-ed; across dimensions they are AND-ed.** The task
+  specification says "multi-select, AND between conditions", but AND within a dimension is necessarily empty
+  (a model cannot be in "≤1B" and "20–40B" at the same time), so the standard faceted semantics are used and the
+  choice is written up in the record.
+- Options carry **facet counts** (e.g. "Q4_K_M (123)") computed on the set *after* the keyword filter but
+  *before* the structured filters — otherwise ticking one box would make the others vanish. Zero-count options
+  are hidden.
+- The quantisation filter compares a **language-independent quantisation code** rather than UI text; entries
+  with no quantisation stated go into an "unstated" bucket instead of being silently dropped.
+
+**Sorting (task 6)**
+- Four dimensions: all-time downloads / most likes / recently updated / parameter size. Switching the sort
+  **re-requests the remote source** (each dimension is cached separately, so switching back hits the cache);
+  the displayed order is then recomputed locally, because the server has no parameter-size sort and its
+  download sort is not all-time.
+- Ties always fall back to the repository name so results are reproducible — without that, paging can show the
+  same entry twice.
+
+**Performance and experience (task 7)**
+- 20 per page, so no virtual scrolling is needed; local filter + sort + paging over 5000 entries measures around
+  40 ms.
+- Loading state is visible and non-blocking: progress bar, progress text and a Stop button.
+- Error handling: unreachable remote, failed requests and malformed responses each have their own message plus a
+  retry/continue entry point; a busy backend returns a structured `busy` flag so the UI can say "the backend is
+  busy with another task" instead of "the model market is broken".
+- Offline degradation: when the remote is unreachable the **on-disk cache plus locally downloaded models** are
+  shown, with the status line marked "📴 Offline mode".
+- The default model is **pinned separately above the result list** with its source labelled (the default model
+  repository from `config.json`) and is **not counted in the paging totals** (the specification allows this).
+- A latent performance bug was fixed along the way: `_is_installed_repo` re-read the model registry file for
+  *every* result — 5000 disk reads for 5000 entries. It now computes the "downloaded repositories" set once and
+  caches it (invalidated on download / delete / rescan).
+
+**Localisation and documentation (task 8)**
+- The paging controls, filters, status messages and error messages all go through the language packs, complete in
+  both Chinese and English (80 new front-end keys, 14 new back-end keys), with `tools/check_lang.py` as the gate.
+- `USER_GUIDE` (both languages) gains a full "How to use the model market" section; `FAQ` (both languages) gains
+  three new questions: "why do I only see some of the results", "why do the download counts differ from the
+  website" and "how filtering interacts with paging".
+- `AUTOMATION_GUIDE` is not affected: automation never goes through the model market (recorded as a condition
+  that does not apply).
+
+**Tests**
+- New `tools/test_model_market.py` (134 assertions): a local HTTP stub emulates the HF `api/models` cursor
+  paging, `expand` semantics and the "duplicate expand is 400" behaviour, covering the metric fallback, all three
+  caps, retry and abort, continuation, the on-disk cache and its expiry, offline degradation and default-model
+  pinning, plus the query engine's paging boundaries, sorting, structured filters and three numbers. It then
+  drives the real backend through `model_hub_load` + `model_hub_query`.
+- `tools/ui_probe.ps1` gains a model-market interaction block (2c): clicking the pager buttons in a real window,
+  switching the page size, scrolling the list to prove the paging bar does not move, expanding the filter panel
+  and ticking a facet, forcing an empty result to check the escape hatch, and resetting the filters.
+- The old "every result must have an update time" assertion in `tools/test_model_hub_e2e.py` is now
+  source-aware: remote results must carry downloads and an update time, while local/default entries must carry a
+  source label. The old assertion demanded a field the endpoint never returns and had been red (18/19 measured).
+
 ### Studio name finalised (熵寂工作室 / Void Entropia Studio)
 
 - The Studio's Chinese name is now officially **熵寂工作室**; `VoidEntropiaStudio` remains the
