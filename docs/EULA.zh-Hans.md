@@ -7,8 +7,10 @@
 > disagree, the English version prevails.
 
 版本：v0.2.1
-版权：Copyright (C) Void Entropia Studio
-出品方：Void Entropia Studio, Online only（下称"本工作室"）
+版权：版权所有 (C) 熵寂工作室（VoidEntropiaStudio）
+出品方：熵寂工作室（VoidEntropiaStudio）, Online only（下称"本工作室"）
+> 工作室中文名与英文名的对应关系：**熵寂工作室 = VoidEntropiaStudio**。
+> 本协议中的**法律主体以英文版 [`EULA.md`](EULA.md) 为准**（英文版使用 `Void Entropia Studio`）。
 项目本体许可：**Apache License 2.0**（详见仓库根目录 [`../LICENSE`](../LICENSE) 与 [`../NOTICE`](../NOTICE)）
 
 请在使用 EchoDesk（下称"本软件"）前阅读本协议。下载、安装或使用本软件，
@@ -101,7 +103,7 @@
    - 下载、解析与处理这些文件符合**数据保护与保密**要求；
    - 你在自动化浏览器中的登录态（`browser_state.json`）被妥善保管，不在共享机器上长期留存。
 3. 因你配置或运行的自动化任务引发的任何争议、封禁、数据泄露或合规后果，
-   **由使用者自行承担**，Void Entropia Studio 不承担责任。
+   **由使用者自行承担**，熵寂工作室不承担责任。
 
 ## 七、技能（插件）的责任归属
 

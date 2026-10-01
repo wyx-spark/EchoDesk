@@ -119,7 +119,7 @@ public partial class MainWindow : Window
         AllowDrop = true; // 允许文件拖拽
         // 多语言（任务三）：先按当前语言回填 XAML 里声明的 Loc.Key，再订阅切换事件
         Loc.Apply(this);
-        Title = Loc.T("main.title", "EchoDesk {0} — Powered by {1}", AppVersion, StudioName);
+        Title = Loc.T("main.title", "EchoDesk {0} — Powered by {1}", AppVersion, LocalizedStudio());
         VersionText.Text = AppVersion;
         Loc.LanguageChanged += (_, _) => ApplyLanguage();
         Loaded += MainWindow_Loaded;
@@ -137,11 +137,30 @@ public partial class MainWindow : Window
 
     private const string StudioName = "Void Entropia Studio";
 
+    /// <summary>
+    /// 当前语言下的出品方**简称**（任务书「工作室名称敲定」）。
+    ///
+    /// 为什么不能直接用 <see cref="StudioName"/> 或后端 `ready` 里的 `studio` 字段：
+    /// 那两个都是英文标识（法律主体、GitHub 账号、构建元数据一律保持英文），
+    /// 直接显示会让中文界面出现英文名。显示值一律走语言包，
+    /// 语言包缺失时才回退到英文常量。
+    /// </summary>
+    private static string LocalizedStudio(string? fallback = null) =>
+        Loc.T("main.studioName", fallback ?? StudioName);
+
+    /// <summary>
+    /// 首次出现用的**完整形式**：中文「熵寂工作室（VoidEntropiaStudio）」、
+    /// 英文 "Void Entropia Studio (熵寂工作室)" —— 首次出现就把中英对应关系说清楚，
+    /// 之后各处用简称。
+    /// </summary>
+    private static string LocalizedStudioFull(string? fallback = null) =>
+        Loc.T("main.studioNameFull", fallback ?? StudioName);
+
     /// <summary>切换语言后重跑一遍文本回填，并刷新动态状态文本（无需重启）。</summary>
     internal void ApplyLanguage()
     {
         Loc.Apply(this);
-        Title = Loc.T("main.title", "EchoDesk {0} — Powered by {1}", AppVersion, StudioName);
+        Title = Loc.T("main.title", "EchoDesk {0} — Powered by {1}", AppVersion, LocalizedStudio());
         if (!_isProcessing)
             StatusText.Text = Loc.T("main.status.ready");
         ApplyStatusStripState();
@@ -203,9 +222,9 @@ public partial class MainWindow : Window
             StatusText.Text = Loc.T("main.status.ready");
         else
             EnterNoModelMode();
-        Title = Loc.T("main.title", "EchoDesk {0} — Powered by {1}", _backend.Version, _backend.Studio);
+        Title = Loc.T("main.title", "EchoDesk {0} — Powered by {1}", _backend.Version, LocalizedStudio(_backend.Studio));
         string welcome = Loc.T("main.welcome", "✨ 欢迎使用 EchoDesk {0} — Powered by {1}",
-                               _backend.Version, _backend.Studio);
+                               _backend.Version, LocalizedStudioFull(_backend.Studio));
         if (_backend.RestoredCount > 0)
             welcome += "\n" + Loc.T("main.welcomeRestored", "📂 已自动恢复上次会话（{0} 轮）",
                                      _backend.RestoredCount);
@@ -1788,7 +1807,7 @@ public partial class MainWindow : Window
         var sb = new StringBuilder();
         sb.AppendLine(Loc.T("main.help.header", "📖 EchoDesk {0} 完整指令介绍 — Powered by {1}",
                             _backend?.Version ?? AppVersion,
-                            StudioName));
+                            LocalizedStudio(_backend?.Studio)));
         sb.AppendLine();
         foreach (CommandItem c in Commands)
         {

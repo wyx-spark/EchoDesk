@@ -8,7 +8,9 @@
   "main": {
     "title": "EchoDesk {0} — Powered by {1}",
     "brand": "📡 EchoDesk",
-    "powered": "Powered by Void Entropia Studio",
+    "powered": "Powered by 熵寂工作室",
+    "studioName": "熵寂工作室",
+    "studioNameFull": "熵寂工作室（VoidEntropiaStudio）",
     "status": {
       "starting": "正在启动后端...",
       "ready": "已就绪",
@@ -74,7 +76,7 @@
       "noArgs": "（无参数）",
       "skillSection": "🧩 技能指令（由已加载插件提供）"
     },
-    "thanks": "👋 感谢使用 Void Entropia Studio 出品的 EchoDesk，欢迎您下次使用！",
+    "thanks": "👋 感谢使用熵寂工作室（VoidEntropiaStudio）出品的 EchoDesk，欢迎您下次使用！",
     "exit": {
       "countdown": "{0}\n\n程序将在 {1} 秒后自动关闭（点击「取消」可留在程序中）",
       "title": "正在退出"
@@ -165,7 +167,7 @@
       "stripCollapsed": "默认收起输入框下方的状态区",
       "stripCollapsedHelp": "收起后主界面更紧凑，点击状态区右侧按钮可再次展开。",
       "sectionAbout": "关于",
-      "aboutText": "EchoDesk {0}\n本地 AI 桌面助手 · 全离线推理\nPowered by Void Entropia Studio",
+      "aboutText": "EchoDesk {0}\n本地 AI 桌面助手 · 全离线推理\nPowered by 熵寂工作室（VoidEntropiaStudio）",
       "aboutLicense": "开源许可：Apache-2.0 · 详见发布包 LICENSE 与 NOTICE"
     },
     "model": {

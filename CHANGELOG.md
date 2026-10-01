@@ -14,6 +14,24 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 > deviations from the task specification, unfinished items, and size records, see the internal development
 > record (`v0.2.1-研发记录.md`, **not distributed with the release**).
 
+### Studio name finalised (熵寂工作室 / Void Entropia Studio)
+
+- The Studio's Chinese name is now officially **熵寂工作室**; `VoidEntropiaStudio` remains the
+  English identifier (legal entity, GitHub account, build metadata).
+- **Chinese documents and the Chinese UI use the Chinese name**; English documents and the English
+  UI keep `Void Entropia Studio`. The mapping is expressed through the language packs
+  (`app.studio` / `app.studio_full` on the backend, `main.studioName` / `main.studioNameFull` in the
+  front end), so neither side can display the other language's name by accident.
+- First occurrence uses the full form — `熵寂工作室（VoidEntropiaStudio）` in Chinese,
+  `Void Entropia Studio (熵寂工作室)` in English (`/about`, the welcome message, the about box);
+  later occurrences use the short form.
+- Chinese legal translations (EULA / NOTICE / LICENSE) now state the copyright as
+  `版权所有 (C) 熵寂工作室（VoidEntropiaStudio）` and note that **the legal entity is governed by the
+  English version**.
+- Deliberately **unchanged**: the `CompanyName` / `LegalCopyright` fields written by rcedit, the
+  `studio` field of the `ready` message, `docs/SBOM.json`, the build and packaging scripts, and the
+  GitHub account — all of these stay English.
+
 ### No-model ready state, model market listing, and summarisation feedback
 
 **No-model ready state (optimisation task one)**

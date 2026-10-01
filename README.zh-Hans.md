@@ -277,4 +277,4 @@ EchoDesk 采用 **Apache License 2.0** 发布，全文见 [LICENSE](LICENSE)。�
 - 随包分发的主要第三方组件署名：[NOTICE](NOTICE)。
 - 完整的组件与许可证清单：[docs/THIRD_PARTY_LICENSES.zh-Hans.md](docs/THIRD_PARTY_LICENSES.zh-Hans.md)。
 - 模型权重**不属于**本项目，仍归其发布方的许可证管辖；下载模型前请自行确认其条款。
-- Copyright 2026 Void Entropia Studio。
+- 版权所有 (C) 2026 熵寂工作室（VoidEntropiaStudio）。

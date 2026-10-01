@@ -9,6 +9,8 @@
     "title": "EchoDesk {0} — Powered by {1}",
     "brand": "📡 EchoDesk",
     "powered": "Powered by Void Entropia Studio",
+    "studioName": "Void Entropia Studio",
+    "studioNameFull": "Void Entropia Studio (熵寂工作室)",
     "status": {
       "starting": "Starting backend…",
       "ready": "Ready",

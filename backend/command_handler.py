@@ -18,7 +18,7 @@ from file_parser import is_parse_error, localize_error, parse_file_with_wps
 from gguf_meta import resolve_context_window
 from i18n import get as _i18n
 from i18n import t as _t
-from version import APP_NAME, APP_VERSION, STUDIO
+from version import APP_NAME, APP_VERSION
 
 # 返回：反馈文本 + 附加动作（dict，如 {"action": "exit"} / {"action": "confirm_model", ...}）
 Response = Tuple[str, Optional[dict]]
@@ -92,7 +92,10 @@ def describe_commands(extra: Optional[List[Dict[str, Any]]] = None) -> List[Dict
 
 def help_text(extra: Optional[List[Dict[str, Any]]] = None) -> str:
     """构建 /help 的完整文案（含技能指令，任务书任务二 2.6）。"""
-    lines: List[str] = [t("cmd.help.header", version=APP_VERSION, studio=STUDIO), ""]
+    # 出品方名称走语言包（任务书「工作室名称敲定」）：中文界面显示「熵寂工作室」、
+    # 英文界面显示 "Void Entropia Studio"。**不要**在这里直接用 version.STUDIO ——
+    # 那是英文常量，中文界面会跟着显示英文名（`{studio}` 占位符的值由调用方给）。
+    lines: List[str] = [t("cmd.help.header", version=APP_VERSION, studio=t("app.studio")), ""]
     for item in describe_commands(extra):
         lines.append(f"{item['usage']} — {item.get('label') or item['name']}")
         lines.append(f"  {t('cmd.help.usage_label')}{item['usage']}")
@@ -680,7 +683,7 @@ class CommandHandler:
             file_line += t("cmd.status.file_summarized",
                            chunks=self.conv_mgr.file_summary_meta.get("chunks", "?"))
         lines = [
-            t("cmd.status.header", app=APP_NAME, version=APP_VERSION, studio=STUDIO),
+            t("cmd.status.header", app=APP_NAME, version=APP_VERSION, studio=t("app.studio")),
             t("cmd.status.model", model=self.config.model_path),
             t("cmd.status.arch", arch=self.llm_engine.model_info().get("general.architecture", unknown)),
             t("cmd.status.mode", mode=self.conv_mgr.get_mode()),
@@ -758,7 +761,9 @@ class CommandHandler:
             data_root = program = ""
         lines = [
             f"✨ {APP_NAME} {APP_VERSION}",
-            f"Powered by {STUDIO}",
+            # /about 是"何处出现完整署名"的规范位置，用**首次完整形式**
+            # （中文：熵寂工作室（VoidEntropiaStudio））；其余位置用简称。
+            f"Powered by {t('app.studio_full')}",
             t("app.about"),
             "",
             t("app.about.legal_header"),
