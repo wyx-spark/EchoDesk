@@ -353,8 +353,8 @@ class UpdateConfig(BaseModel):
 class Config(BaseModel):
     """应用配置，字段与 config.json 一一对应。"""
 
-    model_path: str = "Qwen3.5-0.8B-Q4_K_M.gguf"
-    model_repo: str = "unsloth/Qwen3.5-0.8B-GGUF"
+    model_path: str = "Qwen3-0.6B-Q6_K.gguf"
+    model_repo: str = "unsloth/Qwen3-0.6B-GGUF"
     hf_endpoint: str = "https://hf-mirror.com"
     default_mode: str = "general"
     # 请求的上下文窗口：默认 8192（v0.1.0 为 4096，合同类长文档严重不足）

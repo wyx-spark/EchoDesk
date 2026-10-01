@@ -86,7 +86,8 @@ jobs:
           #     绝不能作用于 PyInstaller 产物，也**绝不能作用于最终的 Inno Setup
           #     安装包**：rcedit 会重建 PE 映像并丢弃追加在映像之后的数据
           #     （Inno 的安装数据就追加在那里），实测会把安装包削成无法运行的空壳。
-          #   * Inno Setup 6（ISCC.exe）—— 由 tools\make_installer.ps1 调用，编译两份安装程序。
+          #   * Inno Setup 6（ISCC.exe）—— 由 tools\make_installer.ps1 调用，编译安装程序
+          #     （一份，不含模型）。
           # 旧方案需要的 7zS.sfx 已不再需要：7-Zip 自解压包方案整体废弃
           # （官方 SFX 模块不支持 InstallPath，会把内容解压到 %TEMP% 后清理），
           # 详细结论见 tools\make_installer.ps1 头部说明。
@@ -132,14 +133,14 @@ jobs:
           # 说明：
           #   * 脚本第 0 步会在缺少 tools\rcedit-x64.exe 时自动调用 tools\fetch_tools.bat 下载，
           #     下载失败只警告并跳过版本资源写入，不影响构建成功；
-          #   * -IncludeModels 只在上面输入为真时追加：含模型包体积很大（约 1GB），
-          #     GitHub 托管的 runner 上没有 .gguf（models\ 与 HF 缓存都不随仓库提交），
-          #     该路径实际用于**自托管 runner**（机器上已缓存模型）或外部离线打包场景；
-          #     托管 runner 上脚本会提示「未找到可复制的 .gguf 模型」，产出的仍是不含模型的包。
+          #   * -IncludeModels 只在上面输入为真时追加：把本地 .gguf 复制进**便携发布目录**
+          #     （供自托管 runner 或外部做离线便携版/模型补充包用）。
+          #     **它不会让安装程序含模型** —— 安装程序一律不含模型（见 tools\installer.ps1
+          #     头部说明），GitHub 托管 runner 上本来也没有 .gguf。
           # 具名参数用哈希表 splat（数组 splat 会把 "-Version" 当成第一个位置参数的值）
-          # -MakeInstaller：发布任务书「任务四」要求构建脚本末尾收口出两份安装程序
-          # （含模型 / 不含模型）与 SHA256SUMS.txt。安装程序由 Inno Setup 6 编译
-          # （ISCC.exe 由上一个步骤准备好），rcedit 只用于前端 exe。
+          # -MakeInstaller：发布任务书「任务四」要求构建脚本末尾收口出交付物：
+          # 安装程序 EchoDesk-v<版本>-Setup.exe（**一份，不含模型**）+ SHA256SUMS.txt。
+          # 安装程序由 Inno Setup 6 编译（ISCC.exe 由上一个步骤准备好），rcedit 只用于前端 exe。
           # 旧名 -MakeSfx 仍可用，但它只是别名：7-Zip 自解压包方案已废弃。
           $buildArgs = @{ Version = "${{ steps.version.outputs.version }}"; MakeInstaller = $true }
           if ($env:INCLUDE_MODELS -eq "true") {
@@ -259,20 +260,19 @@ jobs:
           }
           $notes = Get-Content -LiteralPath $template -Raw -Encoding UTF8
 
-          # 下载包清单：安装程序（含/不含模型）+ 便携版压缩包。
+          # 下载包清单：安装程序（一份，不含模型）+ 便携版压缩包。
           # 安装程序是发布任务书「交付物」的主件；zip 作为"免安装解压版"补充。
+          # 离线用户请另发"模型补充包"（把 .gguf 与说明放一起），安装程序本身不含模型。
           $packageList = @(
-              "- ``EchoDesk-v$version-Setup.exe`` —— 安装程序（**含模型**，离线可用）",
-              "- ``EchoDesk-v$version-NoModel-Setup.exe`` —— 安装程序（不含模型，首次启动询问下载）",
+              "- ``EchoDesk-v$version-Setup.exe`` —— 安装程序（不含模型，首次启动询问是否下载）",
               "- ``${{ steps.zip.outputs.file }}``（${{ steps.package.outputs.mb }} MB 解压后 / ${{ steps.zip.outputs.mb }} MB 压缩包）—— 免安装解压版",
               "",
               "安装程序双击即可：**默认装到安装程序自己所在的文件夹**（可以在向导里改到别处），",
               "装完自动创建开始菜单快捷方式（勾选后也建桌面快捷方式），卸载走「应用和功能」。",
-              "安装结果与便携版目录结构一致：程序本体在 ``app\``，用户数据与 ``results\`` 在外层。"
+              "安装结果与便携版目录结构一致：程序本体在 ``app\``，用户数据与 ``results\`` 在外层。",
+              "卸载会把程序运行时生成的文件（会话、模型、缓存、日志等）一并清掉，**``results\`` 原样保留**。"
           ) -join "`n"
-          if ("${{ steps.package.outputs.has_models }}" -ne "True") {
-              $packageList += "`n`n> 本次构建的安装包**不含模型**；首次启动会询问是否下载（约 508MB，需联网），也可以自行把 `.gguf` 放进 `app\backend\models\`。"
-          }
+          $packageList += "`n`n> 安装程序**不含模型**；首次启动会询问是否下载（约 472MB，需联网），也可以自行把 `.gguf` 放进 `app\backend\models\`，或使用配套的模型补充包。"
 
           # 校验哈希清单（发布任务书「任务七」要求 Release Notes 含校验哈希）
           $shaList = ""
@@ -324,7 +324,6 @@ jobs:
           files: |
             ${{ steps.zip.outputs.file }}
             publish/EchoDesk-v${{ steps.version.outputs.version }}-Setup.exe
-            publish/EchoDesk-v${{ steps.version.outputs.version }}-NoModel-Setup.exe
             publish/SHA256SUMS.txt
             docs/SBOM.json
             docs/THIRD_PARTY_LICENSES.md

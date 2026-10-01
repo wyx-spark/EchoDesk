@@ -61,7 +61,7 @@
 | --- | --- |
 | 触发条件 | 首次启动时程序询问"是否下载模型"，你点了**是**；或在模型中心点击下载；或 `/model` 切换触发征询后你确认 |
 | 目标域名 | `hf-mirror.com`（默认镜像站）、`huggingface.co`（官方站，可在配置里切换）；下载链接可能被重定向到该站点的 CDN / 存储域名（形如 `cdn-lfs.<站点域名>`，**具体主机名由上游决定，本项目不作固定承诺**） |
-| **发送什么** | ① 你要下载的**模型仓库名与文件名**（例如 `unsloth/Qwen3.5-0.8B-GGUF`、`Qwen3.5-0.8B-Q4_K_M.gguf`）；② 搜索模型时的**搜索关键词与排序、分页参数**；③ 一个说明自己是 EchoDesk 的 `User-Agent`；④ 若你填了 Hugging Face Token（或设置了环境变量 `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`），请求头里会带 `Authorization: Bearer <你的 Token>`。**注意**：下载链接被重定向到该站点的 CDN 时，标准库 `urllib` 的实现会把该请求头一并带过去；企业若不接受这一点，就**不要填写 Token**（留空时完全不发送该请求头） |
+| **发送什么** | ① 你要下载的**模型仓库名与文件名**（例如 `unsloth/Qwen3-0.6B-GGUF`、`Qwen3-0.6B-Q6_K.gguf`）；② 搜索模型时的**搜索关键词与排序、分页参数**；③ 一个说明自己是 EchoDesk 的 `User-Agent`；④ 若你填了 Hugging Face Token（或设置了环境变量 `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`），请求头里会带 `Authorization: Bearer <你的 Token>`。**注意**：下载链接被重定向到该站点的 CDN 时，标准库 `urllib` 的实现会把该请求头一并带过去；企业若不接受这一点，就**不要填写 Token**（留空时完全不发送该请求头） |
 | **不发送什么** | 你的对话内容、你上传/解析过的文档、你的本地文件路径、你的提问历史、机器唯一标识、任何硬件指纹或统计信息 |
 | 上传数据 | 无（纯下载；除上面的请求头与文件名外不写入任何内容） |
 | 数据去向 | 模型文件**下载到本机**（默认 `app\backend\models\`，可用 `model_hub.models_dir` 改到受管盘）；下载完成后可按大小与 sha256 校验（`model_hub.verify_sha256`，默认开启） |

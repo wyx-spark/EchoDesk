@@ -49,8 +49,8 @@ No cloud account. No API key. No telemetry.
 | Operating system | Windows 10 or Windows 11, 64-bit (x64). |
 | Frontend runtime | None to install. The WPF app (target framework `net10.0-windows`) is published self-contained, so the portable build carries its own runtime. |
 | CPU | Any x64 CPU. Inference runs on CPU by default (`n_gpu_layers: 0` in `backend\config.json`). |
-| Memory | 4 GB minimum; 8 GB or more recommended. The default model file is about 508 MB, and the KV cache for the default 8192-token window is roughly 0.3–0.4 GB on top of it. Larger context windows and larger models need more. |
-| Disk | About 1 GB for the portable folder (roughly 0.9 GB when the model is included, about 0.4 GB without it). Allow 2 GB free while a model is being downloaded. |
+| Memory | 4 GB minimum; 8 GB or more recommended. The default model file is about 472 MB, and the KV cache for the default 8192-token window is roughly 0.3–0.4 GB on top of it. Larger context windows and larger models need more. |
+| Disk | About 1 GB for the portable folder (roughly 0.85 GB when the model is included, about 0.4 GB without it). Allow 2 GB free while a model is being downloaded. |
 | WPS Office or Microsoft Office (optional) | Required for encrypted documents and legacy `.doc` / `.ppt` files, which are read through COM. Without it, use the modern formats listed above. |
 | Microsoft Edge (optional) | Required only for browser automation, which drives the locally installed Edge (`channel = msedge`). EchoDesk does not bundle a browser. |
 | Network | Optional. Everything except model download, web search, the skill marketplace and automation works offline. |
@@ -64,12 +64,14 @@ No cloud account. No API key. No telemetry.
    (once a release has been published) or by building it yourself
    (see [Option B](#option-b--build-from-source)); the build lands in `publish\EchoDesk-v0.2.1\`.
 2. Install it or unpack it:
-   - **Installer** — double-click `EchoDesk-v0.2.1-Setup.exe` (the `-NoModel-` build is the same
-     program without the bundled model). By default it installs into the folder the installer itself
+   - **Installer** — double-click `EchoDesk-v0.2.1-Setup.exe` (the single installer; it does **not**
+     bundle a model, and asks on first launch whether to download one). By default it installs into the
+     folder the installer itself
      sits in; the wizard lets you pick another folder. It creates the Start Menu shortcut, a desktop
      shortcut if you tick that box, and an uninstall entry, so you can remove it from *Apps &
      features* later. The layout it produces is identical to the portable build: the program lives in
-     `app\`, your data and `results\` stay in the install folder.
+     `app\`, your data and `results\` stay in the install folder. Uninstalling also removes the files
+     the program created while running (session, models, caches, logs) but **keeps `results\`**.
    - **Portable zip** — unzip anywhere: desktop, another drive, even a USB stick. Nothing is written
      outside that folder, and deleting the folder uninstalls it.
 3. Start EchoDesk: use the **Start Menu shortcut** (installer), or double-click
@@ -131,7 +133,7 @@ model in `backend\models\` (source runs) or in the packaged backend's `models\` 
 EchoDesk does **not** ship model weights and never downloads anything silently:
 
 1. On start, the backend checks for the model named in `backend\config.json`
-   (default `Qwen3.5-0.8B-Q4_K_M.gguf`, about 508 MB).
+   (default `Qwen3-0.6B-Q6_K.gguf`, about 472 MB).
 2. If the file is missing, the backend **keeps running** in a "no model yet" state: it reports
    `need_download` (with `blocking: false`) and a `ready` message carrying `model_ready: false`
    plus guidance. The UI stays interactive — you can browse settings, parse files and open the

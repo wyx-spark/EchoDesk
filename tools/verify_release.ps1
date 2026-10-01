@@ -182,7 +182,6 @@ try {
     # 这些只在跑过 -MakeInstaller 之后存在；没跑就明确跳过（而不是静默通过）。
     $PublishDir = Join-Path $Root "publish"
     $SetupWith = Join-Path $PublishDir "EchoDesk-v$Version-Setup.exe"
-    $SetupNo = Join-Path $PublishDir "EchoDesk-v$Version-NoModel-Setup.exe"
     $Sums = Join-Path $PublishDir "SHA256SUMS.txt"
 
     if (-not (Test-Path $SetupWith)) {
@@ -219,7 +218,7 @@ try {
                 （实测：2 MB 的安装包被削到 893,952 字节，运行时报错且什么都不安装）。
                 Inno 没有 InternalName / Comments 指令，所以只校验它能设置的字段。
             #>
-            foreach ($exe in @($SetupWith, $SetupNo)) {
+            foreach ($exe in @($SetupWith)) {
                 if (-not (Test-Path $exe)) { continue }
                 $vi = (Get-Item $exe).VersionInfo
                 $checks = @{
@@ -260,7 +259,7 @@ try {
                 安装包已经是个空壳 —— 这条断言就是用来兜住这种回归的。
             #>
             $out = @()
-            foreach ($exe in @($SetupWith, $SetupNo)) {
+            foreach ($exe in @($SetupWith)) {
                 if (-not (Test-Path $exe)) { continue }
                 $len = (Get-Item -LiteralPath $exe).Length
                 $fs = [System.IO.File]::OpenRead($exe)
@@ -295,17 +294,20 @@ try {
             $out -join ' · '
         }
 
-        Invoke-Check "安装程序：真装真卸（默认装到自身所在目录 / 结构 / 快捷方式 / %TEMP% / 卸载）" {
+        Invoke-Check "安装程序：真装真卸（默认装到自身所在目录 / 结构 / 快捷方式 / %TEMP% / 卸载 / 运行期文件清干净且保留 results）" {
             <#
-                这一项真的把两份安装程序各装一遍、再各卸一遍。验收内容：
+                这一项真的把安装程序装一遍、再卸一遍。验收内容：
                   * **不传 /DIR**，验证"默认装到安装程序自己所在的目录" —— 这是本方案的
                     核心行为，也正是虚拟机实测暴露的旧问题（用户双击后全盘找不到文件）；
                   * 安装后当前目录出现 app\ docs\ lang\ examples\ results\ 等结构；
-                  * 不含模型版确无 .gguf；含模型版模型在位且大小一致；
+                  * 安装程序里确无 .gguf（本版只有一份不含模型的安装程序）；
                   * 开始菜单快捷方式指向 {app}\app\EchoDesk.exe，工作目录 = {app}（外层，
                     保证 results\ 与用户数据生成在外层）；
                   * 安装后 %TEMP% 下无 EchoDesk 残留；
-                  * 卸载后 app\ results\ 与快捷方式全部清掉，不留孤儿安装记录。
+                  * 卸载后 app\ docs\ 与快捷方式全部清掉，**运行期新建的文件**
+                    （session.json / models\ / ui_state.json / 缓存 / 日志…）一个不留，
+                    而 **results\ 里的用户结果原样保留**；
+                  * 不留孤儿安装记录。
 
                 实现放在 tools\check_installer_deliverables.ps1，可独立运行：
                   powershell -NoProfile -ExecutionPolicy Bypass -File tools\check_installer_deliverables.ps1
@@ -314,7 +316,7 @@ try {
             if (-not (Test-Path $checker)) { throw "未找到 $checker" }
             Invoke-Native "交付物验收" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
                                                       "-File", "tools\check_installer_deliverables.ps1")
-            "两份安装程序均已真实安装并卸载：默认目录/结构/快捷方式/%TEMP%/卸载全部通过"
+            "安装程序已真实安装并卸载：默认目录/结构/快捷方式/%TEMP%/卸载/运行期文件清理全部通过（results\ 保留）"
         }
     }
 
@@ -381,9 +383,35 @@ try {
         Write-Host "[SKIP] UI 探针 / 像素校验（-SkipGui）" -ForegroundColor Yellow
     }
     else {
-        Invoke-Check "UI 探针（窗口/页签/字段帮助）" {
-            Invoke-Native "ui-probe" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
-                                                   "-File", "tools\ui_probe.ps1")
+        Invoke-Check "UI 探针（窗口/页签/字段帮助/思考区）" {
+            <#
+                发布物**不含模型**（本版安装程序与便携目录都不带 .gguf，见 tools\installer.iss
+                头部说明），而"思考内容分离"那一节需要一个真模型才测得到折叠区。
+                所以这里从开发机的 backend\models 里挑一个模型（优先默认模型）传给探针：
+                ui_probe.ps1 自己有"临时装进被测程序 + 写 config.user.json 覆盖 + 收尾清理"
+                的机制，跑完不会在发布目录里留下残留。
+                找不到模型时照常跑（其余检查不受影响），并明确告警说明思考区测不到。
+            #>
+            $probeModel = ""
+            $devModels = Join-Path $Root "backend\models"
+            if (Test-Path $devModels) {
+                $ggufs = @(Get-ChildItem $devModels -Filter *.gguf -File -ErrorAction SilentlyContinue |
+                    Sort-Object Name)
+                $preferred = @($ggufs | Where-Object { $_.Name -eq "Qwen3-0.6B-Q6_K.gguf" })
+                if ($preferred.Count -gt 0) { $probeModel = $preferred[0].FullName }
+                elseif ($ggufs.Count -gt 0) { $probeModel = $ggufs[0].FullName }
+            }
+            if ($probeModel) {
+                Write-Host "    探针模型: $probeModel" -ForegroundColor DarkGray
+                Invoke-Native "ui-probe" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
+                                                        "-File", "tools\ui_probe.ps1",
+                                                        "-ThinkingModel", $probeModel)
+            }
+            else {
+                Write-Host "    [警告] backend\models 下没有 .gguf：发布物不含模型，思考区检查将跳过" -ForegroundColor Yellow
+                Invoke-Native "ui-probe" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
+                                                        "-File", "tools\ui_probe.ps1")
+            }
             "通过"
         }
         Invoke-Check "像素校验（修复二/六）" {

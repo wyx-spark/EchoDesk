@@ -150,16 +150,23 @@ def test_gguf() -> None:
     check("文件不存在时返回空字典", meta == {})
 
     # 找一个真实模型文件（开发机或发布物里都可能存在）
-    # 说明：v0.2.1 起发布目录名带上版本号，这里按 glob 找最新的那个，
-    # 免得每次发版都要改测试。
-    candidates = [os.path.join(BACKEND, "models", "Qwen3.5-0.8B-Q4_K_M.gguf")]
+    # 说明：不写死文件名 —— 默认模型会换（v0.2.1 就从 Qwen3.5-0.8B 换成了
+    # Qwen3-0.6B），写死等于每次换模型都得改测试。发布目录也从 v0.2.1 起
+    # 把程序本体放进 app\ 子目录，这里一并按当前布局找。
+    dirs = [os.path.join(BACKEND, "models")]
     publish = os.path.join(BACKEND, "..", "publish")
     if os.path.isdir(publish):
         for name in sorted(os.listdir(publish), reverse=True):
             if name.startswith("EchoDesk-v"):
-                candidates.append(os.path.join(publish, name, "backend", "models",
-                                               "Qwen3.5-0.8B-Q4_K_M.gguf"))
-    model = next((p for p in candidates if os.path.exists(p)), None)
+                dirs.append(os.path.join(publish, name, "app", "backend", "models"))
+    model = None
+    for folder in dirs:
+        if not os.path.isdir(folder):
+            continue
+        found = sorted(f for f in os.listdir(folder) if f.lower().endswith(".gguf"))
+        if found:
+            model = os.path.join(folder, found[0])
+            break
     if not model:
         check("真实模型元数据解析（未找到模型文件，跳过）", True, "skipped")
         return
@@ -171,7 +178,7 @@ def test_gguf() -> None:
     info = gguf_meta.describe_model(model, 8192)
     check("架构名可读", isinstance(info.get("architecture"), str) and info["architecture"] != "未知",
           f"得到 {info.get('architecture')}")
-    # 8192 窗口的 KV 占用应远小于 1GB（0.8B 模型）
+    # 8192 窗口的 KV 占用应远小于 1GB（默认模型是 1B 以下的小模型）
     check("KV Cache 估算在合理量级", bool(kv and kv < 1024 ** 3), f"得到 {kv}")
 
 
@@ -356,6 +363,55 @@ def test_marketplace() -> None:
               f"得到 {normalize('owner/name')!r}")
 
 
+def test_model_match() -> None:
+    """仓库内模型文件匹配（download_utils 的纯函数部分，不联网）。
+
+    v0.2.1 默认模型切换时发现：原来的评分给含 ``q4_k_m`` 的候选**无条件加 0.3**，
+    于是显式配置 Q6_K 也会被解析成 Q4_K_M（下错文件、且没有任何提示）。
+    这里的候选列表就是当时实测的真实仓库文件清单，作为回归夹具。
+    """
+    section("模型文件匹配")
+    try:
+        import download_utils as du
+    except ImportError as e:
+        check("导入 download_utils（缺失，跳过）", True, f"skipped: {e}")
+        return
+
+    check("量化代码提取", du.quant_of("Qwen3-0.6B-Q6_K.gguf") == "q6_k",
+          f"得到 {du.quant_of('Qwen3-0.6B-Q6_K.gguf')!r}")
+    check("IQ 量化代码提取", du.quant_of("x-IQ4_XS.gguf") == "iq4_xs",
+          f"得到 {du.quant_of('x-IQ4_XS.gguf')!r}")
+    check("无量化代码时返回空串", du.quant_of("Qwen3-0.6B.gguf") == "",
+          f"得到 {du.quant_of('Qwen3-0.6B.gguf')!r}")
+    # 回归：取主干必须幂等。模型名里的版本号带点（Qwen3.5），用 os.path.splitext
+    # 会按最后一个点切，把量化代码切掉 —— 于是"提示里点名了 Q6_K"被判成未点名。
+    stem = du._stem("Qwen3.5-0.8B-Q6_K.gguf")
+    check("主干提取幂等", du._stem(stem) == stem, f"{stem!r} → {du._stem(stem)!r}")
+    check("不带扩展名也能取出量化", du.quant_of("qwen3.5-0.8b-q6_k") == "q6_k",
+          f"得到 {du.quant_of('qwen3.5-0.8b-q6_k')!r}")
+
+    bartowski = ["Qwen_Qwen3.5-0.8B-Q4_K_M.gguf", "Qwen_Qwen3.5-0.8B-Q6_K.gguf",
+                 "Qwen_Qwen3.5-0.8B-Q8_0.gguf", "mmproj-Qwen_Qwen3.5-0.8B-f16.gguf"]
+    unsloth_06 = ["Qwen3-0.6B-Q4_K_M.gguf", "Qwen3-0.6B-Q5_K_M.gguf",
+                  "Qwen3-0.6B-Q6_K.gguf", "Qwen3-0.6B-Q8_0.gguf"]
+
+    # 回归：显式点名量化时必须给到那个量化（修复前这里会返回 Q4_K_M）
+    picked = du.rank_model_files(bartowski, "Qwen_Qwen3.5-0.8B-Q6_K.gguf")
+    check("显式 Q6_K 提示解析到 Q6_K", picked == "Qwen_Qwen3.5-0.8B-Q6_K.gguf", f"得到 {picked}")
+    picked = du.rank_model_files(bartowski, "Qwen3.5-0.8B-Q6_K.gguf")
+    check("带前缀差异的 Q6_K 提示解析到 Q6_K", picked == "Qwen_Qwen3.5-0.8B-Q6_K.gguf", f"得到 {picked}")
+    picked = du.rank_model_files(unsloth_06, "Qwen3-0.6B-Q6_K.gguf")
+    check("自身默认模型文件解析到自身", picked == "Qwen3-0.6B-Q6_K.gguf", f"得到 {picked}")
+
+    # 未点名量化时，通用档位的偏好仍然保留（历史行为）
+    picked = du.rank_model_files(unsloth_06, "Qwen3-0.6B")
+    check("未点名量化时仍优先 Q4_K_M", picked == "Qwen3-0.6B-Q4_K_M.gguf", f"得到 {picked}")
+
+    # 仓库里没有该量化时退化为最接近的一个（并仍会回报给用户确认）
+    picked = du.rank_model_files(unsloth_06, "Qwen3-0.6B-Q3_K_M.gguf")
+    check("量化不存在时退化为最接近的候选", picked.endswith(".gguf"), f"得到 {picked}")
+
+
 def test_imports() -> None:
     """真实导入每一个后端模块。
 
@@ -383,7 +439,7 @@ def test_imports() -> None:
 
 def main() -> int:
     tests = [test_imports, test_config, test_plaintext, test_gguf, test_summarizer,
-             test_conversation, test_automation, test_marketplace]
+             test_conversation, test_automation, test_marketplace, test_model_match]
     for fn in tests:
         try:
             fn()

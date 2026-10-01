@@ -68,8 +68,8 @@ Windows 上核对：`certutil -hashfile <文件名> SHA256`。
 
 **安装程序（推荐）**
 
-1. 双击 `EchoDesk-v{{VERSION}}-Setup.exe`（或 `-NoModel-Setup.exe`）。**默认装到安装程序自己
-   所在的文件夹**，向导里有路径选择页，可以改到别处；
+1. 双击 `EchoDesk-v{{VERSION}}-Setup.exe`。**默认装到安装程序自己
+   所在的文件夹**，向导里有路径选择页，可以改到别处（安装程序不含模型，首次启动会询问是否下载）；
 2. 装好后从开始菜单快捷方式启动（勾选了桌面图标就用桌面那个）；卸载走系统「应用和功能」；
 3. 想保留旧版的配置与模型时，把下列用户数据从旧目录复制到**新安装目录**的对应位置：
    - `app\backend\config.json`（配置）、`app\backend\session.json`（会话）、`snippets.json`（常用语）、`ui_state.json`（界面状态）
@@ -185,9 +185,9 @@ On Windows, check with `certutil -hashfile <file name> SHA256`.
 
 **Installer (recommended)**
 
-1. Double-click `EchoDesk-v{{VERSION}}-Setup.exe` (or `-NoModel-Setup.exe`). **It installs into the
+1. Double-click `EchoDesk-v{{VERSION}}-Setup.exe`. **It installs into the
    folder the installer itself sits in by default**; the wizard has a path page, so you can move it
-   elsewhere;
+   elsewhere (the installer bundles no model; the first launch asks whether to download one);
 2. After installing, start it from the Start menu shortcut (use the desktop one if you ticked that
    box); uninstall through *Apps & features*;
 3. To keep the configuration and models from the old version, copy the following user data from the

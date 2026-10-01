@@ -335,6 +335,8 @@ public partial class SettingsWindow : Window
             }
         }
         await RefreshHubRegistryAsync();
+        // 模型档位列表（config.models 里登记的 0.6B / 1.7B 等）：纯本地读取，不联网
+        await LoadModelProfilesAsync();
     }
 
     private void SelectHubSource(string key)

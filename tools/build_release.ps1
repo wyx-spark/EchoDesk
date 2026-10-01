@@ -16,7 +16,7 @@
       8. **不**在发布物里预置 .lnk：快捷方式由安装程序的 [Icons] 段在目标机器上创建
          （原因见第 9 节：.lnk 是绝对路径，预置会把构建机的个人路径带出去）；
       9. 可选 -MakeInstaller：继续调用 tools\make_installer.ps1，用 **Inno Setup** 编译出
-         两份安装程序（含模型 / 不含模型）并计算 SHA256SUMS.txt。
+         安装程序（一份，不含模型）并计算 SHA256SUMS.txt。
          旧名 -MakeSfx 仍可作为别名使用：7-Zip 自解压包方案已整体废弃，
          原因是官方 SFX 模块不支持 InstallPath、会把内容解压到 %TEMP% 后清理，
          详见 tools\make_installer.ps1 头部说明。
@@ -107,9 +107,10 @@
     构建完成后用 signtool 签名（需 -CertThumbprint 或已配置默认证书）。
 
 .PARAMETER MakeInstaller
-    在流程末尾继续产出**两份安装程序**（发布任务书「任务四」）：
+    在流程末尾继续产出**安装程序**（发布任务书「任务四」）：
     依次完成重命名收口、双语合规文档补齐、反馈渠道检查、调试内容清理，
-    再用 Inno Setup 编译出含模型 / 不含模型两份 Setup.exe，并计算 SHA256SUMS.txt。
+    再用 Inno Setup 编译出 EchoDesk-v<版本>-Setup.exe（**一份，不含模型**），
+    并计算 SHA256SUMS.txt。
     实际动作由 tools\make_installer.ps1 承担（可独立运行、独立做可行性检查），
     这里只负责按顺序调用，保证"一条命令出完整交付物"。
 
@@ -1131,7 +1132,7 @@ Write-Ok "入口: install-complete.bat 在目标机器上创建 $ShortcutName"
 #   3. 按「全局要求三」替换反馈渠道为 GitHub Issues/Security Advisory；
 #                                                        -> tools\check_feedback.ps1 门禁
 #   4. 按「全局要求五」清理调试内容与运行期数据；        -> 第 6b 步清理 + 第 9b 步断言
-#   5. 编译含模型版安装程序；6. 编译不含模型版；7. 写版本资源；8. 计算 SHA256SUMS.txt
+#   5. 编译安装程序（一份，不含模型）；6. 写版本资源；7. 计算 SHA256SUMS.txt
 #                                                        -> 全部由 tools\make_installer.ps1 承担
 #   注意第 7 步已经不是"外挂 rcedit"：版本资源由 Inno Setup 的 [Setup] VersionInfo*
 #   指令在编译时写入。**绝不能对最终 Setup.exe 跑 rcedit** —— 会重建 PE 映像并丢掉
@@ -1187,9 +1188,9 @@ if ($MakeInstaller) {
     # 7-Zip 自解压包）留在 publish\ 里，就能让存在性断言误判成成功（实测踩到）。
     # 所以还要求文件是**本次构建重新生成**的（时间戳晚于打包开始时刻）。
     Write-Step "-MakeInstaller 完成"
+    # 交付物只有一份 Setup（不含模型），见 tools\make_installer.ps1 头部说明
     $deliverables = @(
         (Join-Path $Root "publish\EchoDesk-v$Version-Setup.exe"),
-        (Join-Path $Root "publish\EchoDesk-v$Version-NoModel-Setup.exe"),
         (Join-Path $Root "publish\SHA256SUMS.txt")
     )
     $missingDeliverables = @($deliverables | Where-Object { -not (Test-Path $_) })
@@ -1210,6 +1211,6 @@ if ($MakeInstaller) {
 }
 else {
     Write-Host ""
-    Write-Warn2 "未生成安装程序。要产出交付物（两份 Setup.exe + SHA256SUMS.txt），加 -MakeInstaller："
-    Write-Warn2 "  & tools\build_release.ps1 -IncludeModels -MakeInstaller"
+    Write-Warn2 "未生成安装程序。要产出交付物（EchoDesk-v$Version-Setup.exe + SHA256SUMS.txt），加 -MakeInstaller："
+    Write-Warn2 "  & tools\build_release.ps1 -MakeInstaller   # 安装程序不含模型，故不需要 -IncludeModels"
 }

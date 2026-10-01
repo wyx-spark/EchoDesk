@@ -2,18 +2,22 @@
 #
 # 这不是"跑一遍完整测试套件"——按任务书「职责范围」，打包环节不做验证执行。
 # 本脚本只核对**安装程序本身**是否合格，而且**真的装一遍、真的卸一遍**：
-#   1. 两份安装程序的 SHA256 与 SHA256SUMS.txt 一致
+#   1. 安装程序的 SHA256 与 SHA256SUMS.txt 一致
 #   2. 安装数据仍追加在 PE 映像之后（防"被 rcedit 削成空壳"）
 #   3. 版本资源（Inno 能设置的 7 个字段）与图标
-#   4. 不含模型版：**不给 /DIR 直接静默安装** → 默认装到安装程序所在目录，
-#      当前目录出现 app\ 等结构，且确无 .gguf
-#   5. 含模型版：同样默认装到所在目录，模型在位且大小一致
+#   4. 安装程序里**没有一个 .gguf**（本版只有一份不含模型的安装程序）
+#   5. **不给 /DIR 直接静默安装** → 默认装到安装程序所在目录，当前目录出现 app\ 等结构
 #   6. 快捷方式指向 {app}\app\EchoDesk.exe，工作目录 = {app}（外层）
 #   7. 安装后 %TEMP% 下无 EchoDesk 相关残留
 #   8. install-complete.bat（给 zip 免安装用户的脚本）真跑一次能建出快捷方式
 #   9. 卸载程序能把这些文件与快捷方式都清掉
+#  10. **卸载必须清干净"运行期新建的文件"**（session.json / models\ / ui_state.json /
+#      各种 *_registry.json / 缓存 / 日志…），但 **results\ 必须原样保留**。
+#      做法：先把这批文件真的造出来（含 results\ 里的一个结果文件），再卸载，逐项断言。
+#  11. installer.iss 的 [UninstallDelete] 清单必须**覆盖**第 10 项那批文件，
+#      并且**不允许出现"整目录删 {app}"**的写法（那会把 results\ 一起删掉）。
 #
-# 为什么第 4/5 项一定要"不给 /DIR"：虚拟机实测的教训是"用户双击后全盘找不到
+# 为什么第 5 项一定要"不给 /DIR"：虚拟机实测的教训是"用户双击后全盘找不到
 # EchoDesk 文件"。默认安装位置是本方案的核心行为，必须按用户真实路径验证，
 # 而不是用 /DIR 指定一个我们觉得对的目录 —— 那等于把要验的东西假设成对的。
 #
@@ -23,10 +27,46 @@ $ErrorActionPreference = 'Continue'
 $Root = Split-Path -Parent $PSScriptRoot
 $Version = "0.2.1"
 $Publish = Join-Path $Root "publish"
-$SetupWith = Join-Path $Publish "EchoDesk-v$Version-Setup.exe"
-$SetupNo = Join-Path $Publish "EchoDesk-v$Version-NoModel-Setup.exe"
+$Setup = Join-Path $Publish "EchoDesk-v$Version-Setup.exe"
 $Sums = Join-Path $Publish "SHA256SUMS.txt"
 $ReleaseDir = Join-Path $Publish "EchoDesk-v$Version"
+
+<#
+    运行期新建的文件清单（相对安装根目录 {app}）。
+    来源：backend\config.py 的默认值（session_file / *_registry.json / cache_file /
+    audit_log_file / processed_file / dev_log_file）、backend\main.py 的崩溃日志与
+    summary_cache.json、model_hub 的缓存目录（{user_data_root}\cache\model_hub）、
+    frontend 的 ui_state.json / snippets.json / Start-*.lnk / frontend_crash.log。
+
+    **这份清单是第 11 项断言的基准**：installer.iss 的 [UninstallDelete] 必须覆盖它。
+    以后程序新增了运行期文件，就先加到这儿 —— 断言会立刻告诉你 iss 漏了哪一项。
+#>
+$RuntimeArtifacts = @(
+    "ui_state.json"
+    "snippets.json"
+    "Start-EchoDesk-v$Version.lnk"
+    "cache\model_hub\search-cache.json"
+    "app\frontend_crash.log"
+    "app\backend\config.user.json"
+    "app\backend\session.json"
+    "app\backend\browser_state.json"
+    "app\backend\models_registry.json"
+    "app\backend\skills_registry.json"
+    "app\backend\skills_local.json"
+    "app\backend\market_cache.json"
+    "app\backend\summary_cache.json"
+    "app\backend\automation_log.jsonl"
+    "app\backend\automation_processed.json"
+    "app\backend\backend_crash.log"
+    "app\backend\skills_dev.log"
+    "app\backend\models\Qwen3-0.6B-Q6_K.gguf"
+    "app\backend\models\.cache\huggingface\blob"
+    "app\backend\skills\my-skill\skill.json"
+    "app\backend\skills_dev\my-dev-skill\skill.json"
+)
+
+#: 卸载后**必须保留**的东西：批量处理结果是用户的业务产出
+$KeepAfterUninstall = @("results\2025-01-01\result.txt")
 
 # 测试目录放在 artifacts\ 下（不入库），**不能**放 %TEMP%：
 # 第 7 项要断言"%TEMP% 里没有 EchoDesk 残留"，把安装目标放进 %TEMP% 就自相矛盾了。
@@ -147,51 +187,50 @@ Check "SHA256 与 SHA256SUMS.txt 一致" {
 
 # ---------- 2. 安装数据仍在（防 rcedit 削壳） ----------
 Check "安装程序含追加的安装数据（PE 未被重建）" {
-    $out = @()
-    foreach ($exe in @($SetupWith, $SetupNo)) {
-        if (-not (Test-Path $exe)) { throw "缺少 $(Split-Path -Leaf $exe)" }
-        $ap = Get-AppendedBytes $exe
-        if ($ap -le 0) {
-            throw ("$(Split-Path -Leaf $exe) 的追加数据为 0 —— PE 被重建过，安装包是空壳。" +
-                "最常见原因是对最终 Setup.exe 跑了 rcedit（会丢弃 PE 映像之后的数据）。")
-        }
-        if ($ap -lt 1MB) { throw "$(Split-Path -Leaf $exe) 的追加数据只有 $([math]::Round($ap / 1KB, 1)) KB，明显不完整" }
-        $out += "$(Split-Path -Leaf $exe) $([math]::Round($ap / 1MB, 1)) MB"
+    if (-not (Test-Path $Setup)) { throw "缺少 $(Split-Path -Leaf $Setup)" }
+    $ap = Get-AppendedBytes $Setup
+    if ($ap -le 0) {
+        throw ("$(Split-Path -Leaf $Setup) 的追加数据为 0 —— PE 被重建过，安装包是空壳。" +
+            "最常见原因是对最终 Setup.exe 跑了 rcedit（会丢弃 PE 映像之后的数据）。")
     }
-    $out -join ' · '
+    if ($ap -lt 1MB) { throw "$(Split-Path -Leaf $Setup) 的追加数据只有 $([math]::Round($ap / 1KB, 1)) KB，明显不完整" }
+    "$(Split-Path -Leaf $Setup) 追加数据 $([math]::Round($ap / 1MB, 1)) MB"
+}
+
+# ---------- 2b. 安装程序里不许有模型 ----------
+Check "安装程序不含模型（无 .gguf）" {
+    $relModels = @(Get-ChildItem (Join-Path $ReleaseDir "app\backend\models") -Filter *.gguf -File -ErrorAction SilentlyContinue)
+    if ($relModels.Count -gt 0) {
+        throw "发布目录里还有 $($relModels.Count) 个 .gguf —— 安装程序会把它打进包（请用不带 -IncludeModels 的构建产物）"
+    }
+    "发布目录无 .gguf，Inno 的 Excludes 也无条件排除模型"
 }
 
 # ---------- 3. 版本资源与图标 ----------
 Check "安装程序版本资源与图标" {
     Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
-    $variants = @(
-        @{ Exe = $SetupWith; Desc = "EchoDesk v$Version Portable Setup" },
-        @{ Exe = $SetupNo; Desc = "EchoDesk v$Version Portable Setup (No Model)" }
-    )
-    $fields = 0
-    foreach ($v in $variants) {
-        $vi = (Get-Item $v.Exe).VersionInfo
-        $expect = @{
-            CompanyName       = "Void Entropia Studio"
-            LegalCopyright    = "Copyright (C) Void Entropia Studio"
-            ProductName       = "EchoDesk"
-            # 用 Raw（数值口径）：Inno 把 FileVersion 的字符串末尾 ".0" 省掉，Raw 才是真值
-            FileVersionRaw    = "$Version.0"
-            ProductVersionRaw = "$Version.0"
-            FileDescription   = $v.Desc
-            OriginalFilename  = (Split-Path -Leaf $v.Exe)
-        }
-        foreach ($k in $expect.Keys) {
-            if ((ConvertTo-Comparable $vi.$k) -ne (ConvertTo-Comparable $expect[$k])) {
-                throw "$(Split-Path -Leaf $v.Exe) 的 $k='$($vi.$k)' 期望 '$($expect[$k])'"
-            }
-            $fields++
-        }
-        $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($v.Exe)
-        if ($null -eq $ico) { throw "$(Split-Path -Leaf $v.Exe) 取不到图标" }
-        $ico.Dispose()
+    $vi = (Get-Item $Setup).VersionInfo
+    $expect = @{
+        CompanyName       = "Void Entropia Studio"
+        LegalCopyright    = "Copyright (C) Void Entropia Studio"
+        ProductName       = "EchoDesk"
+        # 用 Raw（数值口径）：Inno 把 FileVersion 的字符串末尾 ".0" 省掉，Raw 才是真值
+        FileVersionRaw    = "$Version.0"
+        ProductVersionRaw = "$Version.0"
+        FileDescription   = "EchoDesk v$Version Portable Setup"
+        OriginalFilename  = (Split-Path -Leaf $Setup)
     }
-    "两份包共 $fields 个字段全部正确，图标均可从 PE 取出"
+    $fields = 0
+    foreach ($k in $expect.Keys) {
+        if ((ConvertTo-Comparable $vi.$k) -ne (ConvertTo-Comparable $expect[$k])) {
+            throw "$(Split-Path -Leaf $Setup) 的 $k='$($vi.$k)' 期望 '$($expect[$k])'"
+        }
+        $fields++
+    }
+    $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($Setup)
+    if ($null -eq $ico) { throw "$(Split-Path -Leaf $Setup) 取不到图标" }
+    $ico.Dispose()
+    "$fields 个字段全部正确，图标可从 PE 取出"
 }
 
 # ---------- 4/5/6/7/9. 真装、真验、真卸 ----------
@@ -254,11 +293,62 @@ function Assert-PayloadMatchesSbom([string]$CaseDir) {
 }
 
 <#
-    顺序很重要：两个变体**共用同一个 AppId**（同一个产品的两种载荷），
-    所以必须"装一个 → 验一个 → 卸一个"，不能同时装着两个。
+    从 tools\installer.iss 的 [UninstallDelete] 段解析出卸载清单。
+    只取 `Type:` 与 `Name:` 两个字段，把 `{app}\` 前缀去掉得到相对路径。
+
+    为什么要解析源文件而不是"再抄一份清单"：清单抄两份必然漂移 ——
+    改了一边忘了另一边，验收照样全绿，而用户装完卸载仍然留一地文件。
+#>
+function Get-IssUninstallEntries {
+    $iss = Join-Path $PSScriptRoot "installer.iss"
+    if (-not (Test-Path $iss)) { throw "找不到 installer.iss" }
+    $lines = Get-Content -LiteralPath $iss -Encoding UTF8
+    $inSection = $false
+    $entries = @()
+    foreach ($line in $lines) {
+        $t = $line.Trim()
+        if ($t -match '^\[UninstallDelete\]') { $inSection = $true; continue }
+        if ($t -match '^\[') { $inSection = $false; continue }
+        if (-not $inSection) { continue }
+        if ($t -eq '' -or $t.StartsWith(';')) { continue }
+        if ($t -notmatch '^Type:\s*(\w+)\s*;\s*Name:\s*"(.*)"\s*$') { continue }
+        $rel = $Matches[2]
+        # 只认指向安装根目录的条目；{app} 自身（相对路径为空）是"整目录删"，另行拦截
+        if ($rel -notlike '{app}*') { continue }
+        $rest = $rel.Substring(5).TrimStart('\')
+        $entries += [pscustomobject]@{ Type = $Matches[1].ToLower(); Rel = $rest }
+    }
+    return $entries
+}
+
+<#
+    在安装目录里造出"程序运行时会新建的那批文件"，供卸载清理实测使用。
+    内容随意，只要文件/目录真的存在（卸载要删的是路径，不是内容）。
+#>
+function New-RuntimeArtifacts([string]$CaseDir) {
+    $created = @()
+    foreach ($rel in $RuntimeArtifacts) {
+        $full = Join-Path $CaseDir $rel
+        $dir = Split-Path -Parent $full
+        if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        Set-Content -LiteralPath $full -Value "runtime-artifact-test" -Encoding UTF8
+        $created += $rel
+    }
+    foreach ($rel in $KeepAfterUninstall) {
+        $full = Join-Path $CaseDir $rel
+        $dir = Split-Path -Parent $full
+        if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        Set-Content -LiteralPath $full -Value "user-business-output" -Encoding UTF8
+    }
+    return $created.Count
+}
+
+<#
+    顺序说明（此前是两个变体、共用同一个 AppId，所以必须"装一个 → 验一个 → 卸一个"；
+    现在只有一份安装程序，这层约束没了，但流程保持不变：装 → 验 → 造运行期文件 → 卸 → 验残留）。
     每一轮都不传 /DIR，验证默认目录行为。
 #>
-function Test-InstallerRound([string]$Exe, [string]$Label, [bool]$ExpectModels) {
+function Test-InstallerRound([string]$Exe, [string]$Label) {
     $caseDir = Join-Path $TestRoot $Label
     New-Item -ItemType Directory -Path $caseDir -Force | Out-Null
     # 把安装程序放到一个"干净的空目录"里，模拟用户把 Setup.exe 丢进一个文件夹后双击
@@ -299,20 +389,9 @@ function Test-InstallerRound([string]$Exe, [string]$Label, [bool]$ExpectModels) 
     # 放在这里是因为此时安装目录还在盘上（本轮末尾会卸载）。
     $sbomVerdict = Assert-PayloadMatchesSbom $caseDir
 
-    # 4/5-b：模型是否按预期在位
-    $modelSrc = @(Get-ChildItem (Join-Path $ReleaseDir "app\backend\models") -Filter *.gguf -File -ErrorAction SilentlyContinue)
+    # 5-b：安装程序一律不含模型
     $modelDst = @(Get-ChildItem (Join-Path $caseDir "app\backend\models") -Filter *.gguf -File -ErrorAction SilentlyContinue)
-    if ($ExpectModels) {
-        if ($modelDst.Count -eq 0) { throw "含模型版安装后没有 .gguf" }
-        foreach ($m in $modelSrc) {
-            $d = Join-Path $caseDir "app\backend\models\$($m.Name)"
-            if (-not (Test-Path $d)) { throw "缺少模型 $($m.Name)" }
-            if ((Get-Item $d).Length -ne $m.Length) { throw "模型 $($m.Name) 大小不一致" }
-        }
-    }
-    else {
-        if ($modelDst.Count -gt 0) { throw "不含模型版里出现了 $($modelDst.Count) 个 .gguf" }
-    }
+    if ($modelDst.Count -gt 0) { throw "安装程序里出现了 $($modelDst.Count) 个 .gguf（本版安装程序不含模型）" }
 
     # 6：快捷方式（开始菜单）目标与工作目录
     $lnk = Join-Path $StartMenuDir "EchoDesk.lnk"
@@ -332,41 +411,91 @@ function Test-InstallerRound([string]$Exe, [string]$Label, [bool]$ExpectModels) 
 
     $summary = "装到 $caseDir；快捷方式 → app\EchoDesk.exe（工作目录 = 安装目录）；%TEMP% 无残留；$sbomVerdict"
 
-    # 9：卸载。**必须在本轮就卸掉**：两个变体共用同一个 AppId（同一产品的两种载荷），
-    # 留着不卸会让下一轮变成"覆盖已有安装"，卸载注册项也会指向错的目录，
-    # 最终在用户机器上留下孤儿记录。
+    # 10：造出运行期新建的文件（含 results\ 里的一个结果文件），再卸载验残留。
+    # 这一步是"卸载要清干净"这条需求的**实测**部分：不造真文件就只是看着清单好看。
+    $madeCount = New-RuntimeArtifacts $caseDir
+
+    # 9/10：卸载。卸完要同时满足两件事：
+    #   * 运行期文件一个都不剩；
+    #   * results\（用户业务产出）原样保留。
     $unins = Join-Path $caseDir "unins000.exe"
     if (-not (Test-Path $unins)) { throw "安装目录里没有卸载程序（Uninstallable=no？）：$caseDir" }
     $ucode = Invoke-SilentUninstall $caseDir
     if ($ucode -ne 0) { throw "卸载失败（退出码 $ucode）" }
-    foreach ($gone in @("app", "results", "docs")) {
+    foreach ($gone in @("app", "docs")) {
         if (Test-Path (Join-Path $caseDir $gone)) { throw "卸载后 $gone\ 仍在（$caseDir）" }
     }
     if (Test-Path (Join-Path $StartMenuDir "EchoDesk.lnk")) { throw "卸载后开始菜单快捷方式仍在" }
+
+    $staleRuntime = @()
+    foreach ($rel in $RuntimeArtifacts) {
+        if (Test-Path -LiteralPath (Join-Path $caseDir $rel)) { $staleRuntime += $rel }
+    }
+    if ($staleRuntime.Count -gt 0) {
+        throw ("卸载后仍留着 $($staleRuntime.Count) 个运行期文件（应补进 tools\installer.iss 的 [UninstallDelete]）：`n      " +
+            ($staleRuntime -join "`n      "))
+    }
+    $keptMissing = @()
+    foreach ($rel in $KeepAfterUninstall) {
+        if (-not (Test-Path -LiteralPath (Join-Path $caseDir $rel))) { $keptMissing += $rel }
+    }
+    if ($keptMissing.Count -gt 0) {
+        throw "卸载把 results\ 里的用户结果删掉了（必须保留）：$($keptMissing -join ', ')"
+    }
+
+    # 允许剩下的只有：安装程序本身（用户放的）+ results\（保留的用户结果）
     $leftover = @(Get-ChildItem $caseDir -Recurse -File -Force -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -notlike "*Setup.exe" } | ForEach-Object { $_.FullName.Substring($caseDir.Length + 1) })
+        Where-Object {
+            $_.Name -notlike "*Setup.exe" -and
+            $_.FullName.Substring($caseDir.Length + 1) -notlike "results\*"
+        } | ForEach-Object { $_.FullName.Substring($caseDir.Length + 1) })
     if ($leftover.Count -gt 0) { throw "卸载后目录里仍有多余文件: $($leftover -join ', ')" }
 
     return [pscustomobject]@{
         Dir        = $caseDir
         Models     = $modelDst.Count
+        Runtime    = $madeCount
         Target     = $sc.TargetPath
         WorkingDir = $sc.WorkingDirectory
         Summary    = $summary
     }
 }
 
-$roundNo = $null
-$roundWith = $null
-
-Check "不含模型版：默认装到安装程序所在目录、结构齐全、无 .gguf、快捷方式正确、可卸载" {
-    $r = Test-InstallerRound $SetupNo "nomodel" $false
-    $r.Summary
+# ---------- 10b. installer.iss 的卸载清单必须覆盖上面那批运行期文件 ----------
+Check "installer.iss 卸载清单覆盖全部运行期文件，且不整目录删（保 results）" {
+    $entries = @(Get-IssUninstallEntries)
+    if ($entries.Count -eq 0) { throw "installer.iss 的 [UninstallDelete] 没解析出任何条目" }
+    # 护栏：绝不允许"删整个 {app}"——那会连 results\ 一起删掉
+    if (@($entries | Where-Object { $_.Rel -eq '' }).Count -gt 0) {
+        throw "installer.iss 里出现了删除整个安装根目录的写法（Name: `"{app}`"），会把 results\ 一起删掉"
+    }
+    $uncovered = @()
+    foreach ($rel in $RuntimeArtifacts) {
+        $hit = $false
+        foreach ($e in $entries) {
+            # 用 -like 而不是 -eq：iss 里允许通配（例如 "{app}\*.lnk"）。
+            # 第一版这里写的是 -eq，于是"卸载清单没覆盖 Start-*.lnk"误报了一次 ——
+            # 实际卸载是好的（通配在 Inno 里生效），是**检查器**不支持通配。
+            if ($e.Type -eq 'files') {
+                if ($rel -like $e.Rel) { $hit = $true; break }
+            }
+            elseif ($e.Type -eq 'filesandordirs') {
+                # 目录条目：命中"该目录本身"或"它下面的任何东西"
+                if ($rel -like $e.Rel -or $rel -like ($e.Rel + '\*')) { $hit = $true; break }
+            }
+        }
+        if (-not $hit) { $uncovered += $rel }
+    }
+    if ($uncovered.Count -gt 0) {
+        throw ("这些运行期文件没被 [UninstallDelete] 覆盖，卸载后会留在用户机器上：`n      " +
+            ($uncovered -join "`n      "))
+    }
+    "$($entries.Count) 条卸载条目覆盖全部 $($RuntimeArtifacts.Count) 个运行期文件，且无整目录删除"
 }
 
-Check "含模型版：默认装到安装程序所在目录、模型在位且大小一致、可卸载" {
-    $r = Test-InstallerRound $SetupWith "withmodel" $true
-    "$($r.Summary)；模型 $($r.Models) 个且大小一致"
+Check "安装程序：默认装到安装程序所在目录、结构齐全、无模型、快捷方式正确、可卸载且清干净运行期文件（保留 results）" {
+    $r = Test-InstallerRound $Setup "single"
+    "$($r.Summary)；造了 $($r.Runtime) 个运行期文件，卸载后全部清除、results\ 保留"
 }
 
 # ---------- 8. install-complete.bat（zip 免安装用户）真跑一次 ----------

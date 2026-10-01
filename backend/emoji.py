@@ -79,6 +79,9 @@ ASCII_MAP: Dict[str, str] = {
     # 否则带 VS16 的那份在无 emoji 字体下仍会退化成 "?"（check_emoji.ps1 会拦）。
     "🎛️": "[filter]", "🎛": "[filter]",
     "📴": "[offline]",
+    # 模型档位（v0.2.1 默认模型切换一轮）：设置页「🎚️ 模型档位」标题。
+    # 同样带变体选择符（U+1F39A U+FE0F），两种写法都要列。
+    "🎚️": "[tiers]", "🎚": "[tiers]",
 }
 
 _enabled: Optional[bool] = None

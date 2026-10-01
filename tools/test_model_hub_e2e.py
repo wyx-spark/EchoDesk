@@ -103,12 +103,76 @@ class Backend:
             self.proc.kill()
 
 
+def _provide_model(backend_exe: str):
+    """把开发机上的 .gguf **硬链接**进被测后端目录，返回收尾用的清理函数。
+
+    为什么需要（v0.2.1 默认模型切换一轮）：
+      安装程序与便携发布目录**都不含模型**（模型按需下载，见 tools\\installer.iss
+      头部说明），被测后端因此一开始就是"尚无模型"状态 —— `need_download` 先到，
+      `ready` 里 `model_ready: false`。而本测试有一批断言只在"真有模型"时成立：
+      「模型库非空（至少当前模型）」「当前使用的模型被标记」「删除正在使用的模型被拒绝」。
+    做法：
+      * 用**硬链接**（`os.link`）：同卷瞬间完成、不额外占盘、不复制 472 MB
+        （test_no_model.py 上一轮也是这么做的）；
+      * 名字取被测后端 `config.json` 里的 `model_path`，后端启动即自动加载它；
+      * 返回的清理函数负责删掉链接与（若空的）`models` 目录 —— **必须删干净**：
+        发布目录里留着 .gguf 会让下一次 make_installer.ps1 的"不含模型"检查直接失败。
+    """
+    backend_dir = os.path.dirname(backend_exe)
+    models_dir = os.path.join(backend_dir, "models")
+    src_dir = os.path.join(ROOT, "backend", "models")
+    if not os.path.isdir(src_dir):
+        return None
+
+    want = ""
+    try:
+        with open(os.path.join(backend_dir, "config.json"), encoding="utf-8-sig") as fh:
+            want = str(json.load(fh).get("model_path") or "")
+    except Exception:  # noqa: BLE001
+        want = ""
+    names = [n for n in sorted(os.listdir(src_dir)) if n.lower().endswith(".gguf")]
+    if not names:
+        return None
+    name = want if want in names else names[0]
+    src = os.path.join(src_dir, name)
+    if not os.path.isfile(src):
+        return None
+
+    os.makedirs(models_dir, exist_ok=True)
+    dst = os.path.join(models_dir, name)
+
+    def cleanup():
+        try:
+            if os.path.isfile(dst):
+                os.remove(dst)
+            # 只在自己刚刚建的那个空目录上收尾，别把别人放的东西删了
+            if os.path.isdir(models_dir) and not os.listdir(models_dir):
+                os.rmdir(models_dir)
+        except OSError:
+            pass
+
+    if os.path.isfile(dst):
+        return cleanup
+    try:
+        os.link(src, dst)
+        print(f"已硬链接测试模型：{name} → {models_dir}（跑完删除）")
+    except OSError as exc:  # 跨卷等情况退回复制；失败则照旧跑（会得到 need_download）
+        try:
+            import shutil
+            shutil.copy2(src, dst)
+            print(f"已复制测试模型：{name}（硬链接不可用：{exc}）")
+        except OSError:
+            return None
+    return cleanup
+
+
 def main():
     exe = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_BACKEND
     if not os.path.isfile(exe):
         print(f"未找到后端可执行文件：{exe}")
         return 2
     print(f"后端：{exe}")
+    cleanup_model = _provide_model(exe)
     backend = Backend(exe)
     try:
         ready = backend.read_until({"ready", "need_download", "system", "error"}, timeout=300)
@@ -234,6 +298,10 @@ def main():
             for line in tail:
                 print("     " + line[:160])
         backend.close()
+        # 收尾：删掉临时硬链接的测试模型 —— 发布目录里留着 .gguf 会让
+        # make_installer.ps1 的"安装程序不含模型"检查失败（下一轮构建会踩到）
+        if cleanup_model:
+            cleanup_model()
 
     failed = [n for n, ok, _ in CHECKS if not ok]
     print(f"\n{len(CHECKS) - len(failed)}/{len(CHECKS)} 通过")

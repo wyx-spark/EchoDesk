@@ -82,6 +82,10 @@ public static class Emoji
         ["🎛️"] = "[filter]",
         ["🎛"] = "[filter]",
         ["📴"] = "[offline]",
+        // 模型档位（v0.2.1 默认模型切换一轮）：设置页「🎚️ 模型档位」标题。
+        // 同样带变体选择符，两个写法都要列，否则带 VS16 的那份会退化成 "?"。
+        ["🎚️"] = "[tiers]",
+        ["🎚"] = "[tiers]",
     };
 
     /// <summary>emoji 字体文件（Windows 自带）；缺失即认为环境不支持彩色 emoji。</summary>
