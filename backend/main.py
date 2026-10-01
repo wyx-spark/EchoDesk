@@ -86,6 +86,7 @@ with _suppress_stdout():
     from conversation import ConversationManager, FILE_INTENT, REPEAT_INTENT
     from download_utils import check_model, download_model, find_best_model
     from file_parser import parse_file_with_wps
+    from gguf_meta import format_bytes as _format_bytes
     from gguf_meta import resolve_context_window
     from llm_engine import LazyLLMEngine, LLMEngine, NoModelError
     from search_engine import SearchEngine
@@ -162,6 +163,28 @@ def _recommendation() -> Dict[str, Any]:
 
     ram, cores = _read_machine_memory()
     return recommend_config(ram, cores)
+
+
+def _profile_params_text(name: str) -> str:
+    """按文件名推断参数量文本（0.6B / 1.7B）；取不到返回空串。
+
+    复用 `model_profile._fmt_params`（与能力画像同一套格式化规则），
+    避免在这里再写一份"多少算 B、保留几位小数"的判断。
+    """
+    try:
+        from model_profile import _fmt_params, params_from_name
+        return _fmt_params(params_from_name(name))
+    except Exception:  # noqa: BLE001 - 只是展示字段，取不到就不显示
+        return ""
+
+
+def _profile_quant_text(name: str) -> str:
+    """按文件名推断量化文本（Q6_K / Q4_K_M）；取不到返回空串。"""
+    try:
+        from model_hub import guess_quantization
+        return guess_quantization(name)
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _write(response: Dict[str, Any]) -> None:
@@ -251,11 +274,16 @@ class Backend:
         """无模型时的引导文案：说明现状 + 三条可行路径 + 模型文件夹真实路径（任务二）。"""
         return _t("sys.no_model_guide", dir=self.models_dir())
 
-    def load_model(self, name_or_path: str = "") -> Dict[str, Any]:
+    def load_model(self, name_or_path: str = "", *,
+                   profile: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """热加载模型（任务五）：下载完成、扫描到新模型、用户手动切换都走这里。
 
         返回 ``{ok, name, error, state}``。失败时**保持无模型状态**并把原因如实带回
         （文件损坏 / 格式不支持 / 内存不足），用户可以直接重试，不用重启进程。
+
+        ``profile``（可选）：``config.models`` 里那一档的档案，用来套用该档自己的
+        ``context_length`` 与 ``temperature``（设置页的"模型档位"切换走这条路，
+        与命令行 ``/model <别名>`` 的语义一致）。不给就按全局配置开窗。
         """
         want = str(name_or_path or "").strip()
         if not want:
@@ -269,9 +297,15 @@ class Backend:
                     "error": _t("sys.model_file_missing", name=os.path.basename(want),
                                 dir=self.models_dir()),
                     "state": self.model_state()}
+        requested = None
+        if profile and profile.get("context_length"):
+            try:
+                requested = int(profile["context_length"])
+            except (TypeError, ValueError):
+                requested = None
         try:
             train_ctx = resolve_context_window(path, 0)
-            n_ctx = self.config.context_for_model(path, train_ctx)
+            n_ctx = self.config.context_for_model(path, train_ctx, requested)
             self.llm.load(path, n_ctx)
         except Exception as e:  # noqa: BLE001 - 损坏/不支持/内存不足都在这里
             log.exception("热加载模型失败: %s", os.path.basename(path))
@@ -280,6 +314,12 @@ class Backend:
                     "state": self.model_state()}
         name = os.path.basename(path)
         self.config.model_path = name
+        # 档位自带温度时才覆盖（用户手动改过温度也以档案为准：档案就是这一档的推荐值）
+        if profile and profile.get("temperature") is not None:
+            try:
+                self.config.temperature = float(profile["temperature"])
+            except (TypeError, ValueError):
+                pass
         try:
             self.config.save()
         except Exception:
@@ -586,6 +626,11 @@ class Backend:
             return self._handle_model_scan(request)
         if action == "model_load":
             return self._handle_model_load(request)
+        # ---------- 模型档位（多档默认模型的设置页入口） ----------
+        if action == "model_profiles":
+            return {"type": "system", "content": "", "model_profiles": self.profiles_state()}
+        if action == "model_profile_apply":
+            return self._handle_model_profile_apply(request)
         # ---------- 多语言（任务三 3.4） ----------
         if action == "set_language":
             return self._handle_set_language(request)
@@ -1119,6 +1164,79 @@ class Backend:
         else:
             content = _t("sys.model_hot_load_failed", error=result.get("error", ""))
         return {"type": "system", "content": content, "model_load": result,
+                "model_state": result.get("state", self.model_state())}
+
+    # ---------- 模型档位（多档默认模型：设置页里显示与切换） ----------
+
+    def profiles_state(self) -> Dict[str, Any]:
+        """列出 ``config.models`` 里登记的模型档位，并标出"当前使用""是否已下载"。
+
+        为什么需要它（用户需求："两档都作为可选默认显示、可在设置里切换"）：
+        `config.models` 原本只能通过命令行 ``/model <别名>`` 使用，设置界面里看不到，
+        用户没法知道有哪几档、哪一档已经在本地。这里把这份注册表变成结构化数据，
+        由设置页渲染成"档位"列表（含体积/量化/参数量与切换按钮）。
+
+        刻意**不联网**：只读本地文件，未下载的档位就如实标 `installed=false`
+        （要下载请走模型市场，或点档位行上的「下载」——它用的是市场那套流式下载）。
+        """
+        current = os.path.basename(str(getattr(self.config, "model_path", "") or ""))
+        models_dir = self.models_dir()
+        items: List[Dict[str, Any]] = []
+        for alias, profile in (self.config.models or {}).items():
+            raw = profile if isinstance(profile, dict) else {}
+            name = os.path.basename(str(raw.get("path") or alias))
+            full = os.path.join(models_dir, name)
+            exists = os.path.isfile(full)
+            size = os.path.getsize(full) if exists else 0
+            items.append({
+                "alias": alias,
+                "name": name,
+                "repo": str(raw.get("repo") or ""),
+                "installed": exists,
+                "size": size,
+                "size_human": _format_bytes(size) if exists else "",
+                "context_length": int(raw.get("context_length") or 0),
+                "temperature": raw.get("temperature"),
+                # 参数量/量化都按文件名推断：**不加载模型**也能在设置页显示档位差异
+                "params": _profile_params_text(name),
+                "quantization": _profile_quant_text(name),
+                "current": bool(name) and name == current,
+            })
+        return {"current": current, "models_dir": models_dir, "items": items}
+
+    def apply_profile(self, alias: str) -> Dict[str, Any]:
+        """切换到 ``config.models`` 里的某一档（热加载 + 套用该档的窗口与温度）。
+
+        与命令行 ``/model <别名>`` 走同一份语义：找不到别名、文件不在本地、
+        加载失败都**如实返回原因**，界面据此提示（未下载的档位由界面引导去下载）。
+        """
+        alias = str(alias or "").strip()
+        profile = (self.config.models or {}).get(alias)
+        if not isinstance(profile, dict):
+            return {"ok": False, "alias": alias, "installed": False,
+                    "error": _t("sys.profile_unknown", alias=alias),
+                    "state": self.model_state()}
+        name = os.path.basename(str(profile.get("path") or alias))
+        full = name if os.path.isabs(name) else os.path.join(self.models_dir(), name)
+        if not os.path.isfile(full):
+            return {"ok": False, "alias": alias, "name": name, "installed": False,
+                    "repo": str(profile.get("repo") or self.config.model_repo or ""),
+                    "error": _t("sys.profile_not_installed", name=name, dir=self.models_dir()),
+                    "state": self.model_state()}
+        result = self.load_model(full, profile=profile)
+        result["alias"] = alias
+        return result
+
+    def _handle_model_profile_apply(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """设置页的「切换」按钮：换档位并回传新的模型状态。"""
+        alias = str(request.get("alias") or "")
+        result = self.apply_profile(alias)
+        if result.get("ok"):
+            content = _t("sys.profile_applied", alias=alias, name=result.get("name", ""))
+        else:
+            content = _t("sys.profile_apply_failed", error=result.get("error", ""))
+        return {"type": "system", "content": content, "model_profile": result,
+                "model_profiles": self.profiles_state(),
                 "model_state": result.get("state", self.model_state())}
 
     # ---------- 技能市场（任务五） ----------

@@ -10,10 +10,13 @@
 #
 # 用法：powershell -File tools\ui_probe.ps1 [-KeepOpen] [-ThinkingModel <gguf 路径>]
 #
-# -ThinkingModel：给"思考内容分离"那一节用的**推理模型**（会思考的模型）。
-#   给了就地把它临时装进被测程序的 models\ 目录，并写一份 config.user.json 把
+# 思考内容分离那一节需要一个真模型才测得到折叠区。**发布物不含模型**
+# （v0.2.1 起安装程序与便携目录都不带 .gguf），所以跑这一节时要把开发机上的模型
+# 传进来：`-ThinkingModel backend\models\Qwen3-0.6B-Q6_K.gguf`
+# （tools\verify_release.ps1 会自动挑一个并在无模型时告警）。
+# -ThinkingModel：把它临时装进被测程序的 models\ 目录，并写一份 config.user.json 把
 #   model_path 指过去（config.user.json 是后端的覆盖层，优先于 config.json），
-#   跑完在收尾处删掉这两样东西。不给则那一节按"当前模型没有思考内容"跳过。
+#   跑完在收尾处删掉这两样东西。不给就用被测程序自带的模型（有的话）。
 param(
     [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.1\app\EchoDesk.exe",
     [int]$ReadyTimeoutSec = 180,
@@ -82,10 +85,14 @@ if (Test-Path $crashLog) { Remove-Item $crashLog -Force }   # 每轮从干净状
 $userDataDir = $appDir
 if ((Split-Path -Leaf $appDir) -eq 'app') { $userDataDir = Split-Path -Parent $appDir }
 
-# ---------- 0. 思考内容分离：临时换成"会思考的模型" ----------
-# 默认模型 Qwen3.5-0.8B 的对话模板在 enable_thinking 未传入时走 else 分支
-# （塞一个空思考块），因此**不产生思考内容**；要有思考内容必须换一个默认开启思考的
-# 模型。这里用 config.user.json（后端配置覆盖层，优先生效）把 model_path 指过去，
+# ---------- 0. 思考内容分离：把模型临时装进被测程序 ----------
+# 被测程序（发布目录）**不含模型**：v0.2.1 起安装程序与便携目录都不带 .gguf，
+# 所以这一节必须靠 -ThinkingModel 把开发机上的模型传进来（tools\verify_release.ps1
+# 会自动挑一个）。模型本身是会思考的默认模型 Qwen3-0.6B-Q6_K：它的模板在
+# enable_thinking 未传入时**什么都不加**，模型自己吐 <think>…</think>，折叠区才会出现。
+# 旧默认模型（Qwen3.5-0.8B）的模板条件写反、永远走 else 分支塞一个空思考块，
+# 那时也是靠这个参数换模型才测得到。
+# 这里用 config.user.json（后端配置覆盖层，优先生效）把 model_path 指过去，
 # 不动被测程序自带的 config.json，也不删它自带的模型文件。
 $probeModelDir = Join-Path $appDir 'backend\models'
 $probeUserConfig = Join-Path $appDir 'backend\config.user.json'
@@ -155,6 +162,57 @@ while ($sw.Elapsed.TotalSeconds -lt $ReadyTimeoutSec) {
 }
 Write-Output "[probe] 后端就绪=$ready @ $((Ms $sw))ms"
 if (-not $ready) { Fail '后端未就绪'; if (-not $KeepOpen) { try { $proc.Kill() } catch { } }; Remove-ProbeModelOverride; exit 3 }
+
+<#
+    关掉"首次运行"的询问对话框（便携版没有预置 .lnk，程序启动时会问一次是否创建快捷方式；
+    用户拒绝后会记进 ui_state.json，下次不再问）。
+    为什么需要这一步：验收流程要求**跑 GUI 前先清掉发布目录里的运行期残留**（含 ui_state.json），
+    清掉之后这个询问就会重新出现；而下面的 /clear 确认检查是"找到进程里任意一个 #32770 对话框
+    就看文案"，于是会把快捷方式询问当成交互确认对话框，报出"文案未指向 /clear"
+    （实测踩到：一条与产品行为无关的假失败）。
+    这里显式点「否」，顺带把拒绝状态写回 ui_state.json —— 与真实用户点一次的效果一致。
+#>
+function Close-FirstRunDialogs([int]$procId, [int]$waitMs = 4000) {
+    $swDlg = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($swDlg.Elapsed.TotalMilliseconds -lt $waitMs) {
+        $cond = New-Object System.Windows.Automation.AndCondition(
+            (New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $procId)),
+            (New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32770')))
+        $dlg = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+            [System.Windows.Automation.TreeScope]::Descendants, $cond)
+        if ($null -ne $dlg) {
+            $text = ''
+            $tcond = New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                [System.Windows.Automation.ControlType]::Text)
+            foreach ($t in $dlg.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tcond)) {
+                $text += $t.Current.Name + ' '
+            }
+            Write-Output "[probe] 关闭首次运行询问：$($text.Trim())"
+            $btnCond = New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                [System.Windows.Automation.ControlType]::Button)
+            $done = $false
+            foreach ($b in $dlg.FindAll([System.Windows.Automation.TreeScope]::Descendants, $btnCond)) {
+                # 优先点「否」/「No」：不接受创建快捷方式，避免污染用户桌面与程序目录
+                if ($b.Current.Name -match '^(否|No|取消|Cancel)') {
+                    (Invoke-El $b); $done = $true; break
+                }
+            }
+            if (-not $done) {
+                foreach ($b in $dlg.FindAll([System.Windows.Automation.TreeScope]::Descendants, $btnCond)) {
+                    (Invoke-El $b); $done = $true; break
+                }
+            }
+            Start-Sleep -Milliseconds 500
+            if ($done) { return }
+        }
+        Start-Sleep -Milliseconds 300
+    }
+}
+Close-FirstRunDialogs $proc.Id
 
 # ---------- 2. 点击设置：测量打开耗时与响应性 ----------
 $btn = Find-AnyById $proc.Id 'SettingsButton'
@@ -291,6 +349,26 @@ if ($null -ne $saveButton) {
             # 后端未就绪时允许为空，因此这里只做"控件存在性"检查（已在上面的 perTab 里做过）。
             $cap = Find-AnyById $proc.Id 'HubStatusText'
             if ($null -ne $cap) { Ok '模型页能力信息控件就位' }
+
+            # 模型档位（config.models 登记的多档模型）：状态行由后端 model_profiles 填充，
+            # 里面写着"当前使用：<模型文件名>"——它非空就说明档位数据真的走通了界面。
+            # （档位本身是代码生成的一排胶囊按钮，没有稳定的 AutomationId，所以看状态行。）
+            $profileStatus = Find-AnyById $proc.Id 'ProfileStatusText'
+            if ($null -eq $profileStatus) {
+                Fail '模型页缺少「模型档位」状态行 ProfileStatusText'
+            } else {
+                $statusText = ''
+                for ($try = 1; $try -le 10; $try++) {
+                    $statusText = $profileStatus.Current.Name
+                    if ($statusText -like '*当前使用*') { break }
+                    Start-Sleep -Milliseconds 300
+                }
+                if ($statusText -like '*当前使用*') {
+                    Ok "模型档位已渲染：$($statusText)"
+                } else {
+                    Fail "模型档位状态行没有填充（应含「当前使用」）：$statusText"
+                }
+            }
         }
 
         # ---------- 2a. 字段级帮助（任务书 4.3 验收项）----------
@@ -609,24 +687,41 @@ if ($null -ne $saveButton) {
                     }
 
                     # --- 每页条数切换（真的选一项，不是只看选项名）---
-                    $sizeCombo = Find-AnyById $proc.Id 'HubPageSizeCombo'
+                    # 注意：下拉项的枚举在 UIA 里是**偶发为空**的（下拉弹层还没建好、或刚好被别的
+                    # 窗口抢焦点）。实测同一份 exe：一轮里 20/50/100 三个项都在，下一轮一个都读不到
+                    # —— 那是探针侧的抖动，不是"选项没了"。所以这里重试最多 3 次（每次重新取控件
+                    # 再展开），仍然读不到才判失败。
                     $pagesBefore = (Get-PagePair).Total
-                    try {
-                        $expandSize = $sizeCombo.GetCurrentPattern(
-                            [System.Windows.Automation.ExpandCollapsePattern]::Pattern)
-                        $expandSize.Expand()
-                        Start-Sleep -Milliseconds 600
-                        $itemCond2 = New-Object System.Windows.Automation.PropertyCondition(
-                            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-                            [System.Windows.Automation.ControlType]::ListItem)
-                        $sizeItems = $sizeCombo.FindAll(
-                            [System.Windows.Automation.TreeScope]::Descendants, $itemCond2)
-                        $names = @(); foreach ($it in $sizeItems) { $names += $it.Current.Name }
-                        if ($names -contains '20' -and $names -contains '50' -and $names -contains '100') {
-                            Ok "每页条数可选 20 / 50 / 100（实际：$($names -join ' / ')）"
-                        } else {
-                            Fail "每页条数选项异常：$($names -join ' / ')"
+                    $sizeItems = @()
+                    $names = @()
+                    $expandSize = $null
+                    for ($attempt = 1; $attempt -le 3; $attempt++) {
+                        $sizeCombo = Find-AnyById $proc.Id 'HubPageSizeCombo'
+                        if ($null -eq $sizeCombo) { continue }
+                        try {
+                            $expandSize = $sizeCombo.GetCurrentPattern(
+                                [System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+                            $expandSize.Expand()
+                            Start-Sleep -Milliseconds 800
+                            $itemCond2 = New-Object System.Windows.Automation.PropertyCondition(
+                                [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                                [System.Windows.Automation.ControlType]::ListItem)
+                            $sizeItems = @($sizeCombo.FindAll(
+                                [System.Windows.Automation.TreeScope]::Descendants, $itemCond2))
+                            $names = @(); foreach ($it in $sizeItems) { $names += $it.Current.Name }
+                            if ($names.Count -gt 0) { break }
+                            $expandSize.Collapse() | Out-Null
+                        } catch {
+                            Write-Output "[probe] 提示：读取每页条数下拉框第 $attempt 次失败：$($_.Exception.Message)"
                         }
+                        Start-Sleep -Milliseconds 500
+                    }
+                    if ($names -contains '20' -and $names -contains '50' -and $names -contains '100') {
+                        Ok "每页条数可选 20 / 50 / 100（实际：$($names -join ' / ')）"
+                    } else {
+                        Fail "每页条数选项异常：$($names -join ' / ')"
+                    }
+                    try {
                         # 选中「50」——同时把结果列表撑到必然可滚，供下面的"分页控件不随滚动"用
                         $picked = $false
                         foreach ($it in $sizeItems) {
@@ -641,8 +736,10 @@ if ($null -ne $saveButton) {
                         if (-not $picked) { Fail '每页条数下拉框里没有 50 这一项' }
                         # 必须收起来：开着弹出的下拉框时，同一个 Tab 里后面的控件会被它挡住，
                         # FindFirst(Descendants) 会找不到（实测踩到，纯探针问题）
-                        $expandSize.Collapse()
-                        Start-Sleep -Milliseconds 400
+                        if ($null -ne $expandSize) {
+                            $expandSize.Collapse()
+                            Start-Sleep -Milliseconds 400
+                        }
                     } catch {
                         Fail "每页条数下拉框操作失败：$($_.Exception.Message)"
                     }
@@ -1067,7 +1164,8 @@ if ($null -ne $cmdBtn) {
 #   2. 出现过思考内容时必须有一个「思考过程」折叠区，且**默认收起**；
 #   3. 折叠区可以展开、可以再收起（走 UIA 的展开/折叠接口，读屏与键盘用户走的就是这条路）；
 #   4. 折叠区正文里能看到模型的思考文字（不是空壳）。
-# 当前模型不产生思考内容时（例如默认的 Qwen3.5-0.8B），只断言第 1 条并明确跳过 2~4。
+# 当前模型这次不产生思考内容时（例如把 -ThinkingModel 指到了非推理模型上），
+# 只断言第 1 条并明确跳过 2~4。默认模型是推理模型，正常都会跑到 2~4。
 # WPF 的 Expander 同时暴露 ExpandCollapse 与 Toggle 两套模式（不同 .NET 版本实现不一），
 # 所以这里两套都试：先 ExpandCollapse，取不到再退到 Toggle —— 探针不该因为接口差异假失败。
 function Get-RegionExpanded($el) {
@@ -1188,7 +1286,7 @@ if ($null -eq $thinkBox) {
             }
 
             if ($null -eq $region) {
-                Write-Output "[probe] 跳过折叠区检查：当前模型这次没有产生思考内容（默认模型 Qwen3.5-0.8B 即如此）"
+                Write-Output "[probe] 跳过折叠区检查：当前模型这次没有产生思考内容（非推理模型，或被 -ThinkingModel 换成了非推理模型）"
             } else {
                 if ($expandedWhileStreaming) { Ok '流式思考期间折叠区自动展开' }
                 else { Write-Output "[probe] 提示：未捕捉到流式期间的自动展开（生成太快时可能一闪而过）" }

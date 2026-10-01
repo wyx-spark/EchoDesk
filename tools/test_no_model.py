@@ -35,9 +35,29 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKEND_DIR = os.path.join(ROOT, "backend")
 DEFAULT_PYTHON = sys.executable
-#: 打包好的真实模型（存在时用它验证"热加载成功"这条正路；不存在就跳过并说明）
-PACKAGED_MODEL = os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "app", "backend",
-                              "models", "Qwen3.5-0.8B-Q4_K_M.gguf")
+#: 用来验证"热加载成功"这条正路的真实模型。
+#: 来源**不能只写发布目录**：v0.2.1 起的安装程序与便携发布目录都**不含模型**
+#: （模型按需下载，见 tools\installer.iss 头部说明），所以发布目录里永远找不到 .gguf。
+#: 因此优先用开发机的 backend\models，其次才是历史发布目录（老包可能带模型）。
+def _find_real_model() -> str:
+    candidates = [os.path.join(ROOT, "backend", "models", "Qwen3-0.6B-Q6_K.gguf")]
+    dev = os.path.join(ROOT, "backend", "models")
+    if os.path.isdir(dev):
+        candidates += [os.path.join(dev, f) for f in sorted(os.listdir(dev))
+                       if f.lower().endswith(".gguf")]
+    publish = os.path.join(ROOT, "publish")
+    if os.path.isdir(publish):
+        for name in sorted(os.listdir(publish), reverse=True):
+            if name.startswith("EchoDesk-v"):
+                candidates.append(os.path.join(publish, name, "app", "backend",
+                                               "models", "Qwen3-0.6B-Q6_K.gguf"))
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return ""
+
+
+PACKAGED_MODEL = _find_real_model()
 
 PASSED = 0
 SKIPPED = []
@@ -279,7 +299,7 @@ class HubCfg:
     models_dir = "models"; registry_file = "models_registry.json"
     source = "auto"; hf_token = ""
 class AppCfg:
-    model_path = "Qwen3.5-0.8B-Q4_K_M.gguf"; model_repo = "unsloth/Qwen3.5-0.8B-GGUF"
+    model_path = "Qwen3-0.6B-Q6_K.gguf"; model_repo = "unsloth/Qwen3-0.6B-GGUF"
 
 hub = ModelHub(HubCfg(), app_config=AppCfg())
 # 强制远端不可达（把两家都指到本机不监听的端口），验证离线时的列表源合并
@@ -334,12 +354,112 @@ print(json.dumps({
           str(data.get("recommended"))[:200])
     check("推荐项都来自列表本身（推荐与列表同源）",
           data.get("recommended_all_in_list") is True, str(data)[:240])
-    check("默认模型的参数量能被识别（0.8B）",
-          abs(float(data.get("param_of_default") or 0) - 0.8) < 1e-6,
+    check("默认模型的参数量能被识别（0.6B）",
+          abs(float(data.get("param_of_default") or 0) - 0.6) < 1e-6,
           str(data.get("param_of_default")))
     check("给出硬件推荐依据（内存/核数/建议规模）",
           bool((data.get("basis") or {}).get("max_params_b")) or bool((data.get("basis") or {}).get("params")),
           str(data.get("basis"))[:200])
+
+
+def test_profiles(python):
+    """模型档位（config.models）：列表 / 切换 / 未下载 / 未登记四条路径。
+
+    为什么要单独起一个后端实例：档位来自 `config.json` 的 `models` 段，而配置是**启动时**
+    读进内存的，运行中改文件不生效。所以这里另建一个临时工作目录写好自己的 config.json
+    再起后端（与"无模型就绪"那一段用的是同一套最小客户端）。
+
+    这一段同时兜住两个**真实踩到过**的问题：
+      * `Backend.load_model()` 调 `self.llm.load(...)`，而 `load` 原先只在 `LazyLLMEngine`
+        上（无模型状态）；已加载模型时再切档会抛 `AttributeError: 'LLMEngine' object has
+        no attribute 'load'` —— 那正是"用户日常最常做的操作"（从 0.6B 切到 1.7B）；
+      * 未下载的档位必须给出**明确原因 + 仓库名**，界面才能引导用户去下载，
+        而不是一句"加载失败"。
+    """
+    section("模型档位：显示 / 切换 / 未下载 / 未登记")
+    if not PACKAGED_MODEL:
+        skip("模型档位切换", "没有找到可用的 .gguf 模型作为测试素材")
+        return
+    workdir = tempfile.mkdtemp(prefix="echodesk_profiles_")
+    models_dir = os.path.join(workdir, "models")
+    os.makedirs(models_dir, exist_ok=True)
+    installed = os.path.basename(PACKAGED_MODEL)
+    missing = "Qwen3-1.7B-Q4_K_M.gguf"
+    try:
+        os.link(PACKAGED_MODEL, os.path.join(models_dir, installed))
+    except OSError:
+        shutil.copyfile(PACKAGED_MODEL, os.path.join(models_dir, installed))
+    config = {
+        "model_path": installed,
+        "model_repo": "unsloth/Qwen3-0.6B-GGUF",
+        "hf_endpoint": "https://hf-mirror.com",
+        "context_length": 8192, "max_context": 32768, "auto_context": True,
+        "speed_hint": False, "search_default": False, "warmup": False,
+        "session_file": "session.json",
+        "models": {
+            "qwen3-0.6b": {"path": installed, "repo": "unsloth/Qwen3-0.6B-GGUF",
+                           "context_length": 8192, "temperature": 0.7},
+            "qwen3-1.7b": {"path": missing, "repo": "unsloth/Qwen3-1.7B-GGUF",
+                           "context_length": 16384, "temperature": 0.6},
+        },
+    }
+    with open(os.path.join(workdir, "config.json"), "w", encoding="utf-8") as fh:
+        json.dump(config, fh, ensure_ascii=False, indent=2)
+
+    be = None
+    try:
+        be = Backend(python, workdir)
+        ready = be.read_until({"ready", "need_download"}, timeout=300)
+        check("带档位配置的后端能启动并就绪",
+              (ready or {}).get("type") == "ready", str(ready)[:200])
+
+        resp = be.request({"action": "model_profiles"}, timeout=60)
+        data = (resp or {}).get("model_profiles") or {}
+        items = data.get("items") or []
+        by_alias = {i.get("alias"): i for i in items}
+        check("列出全部登记档位（2 档）", len(items) == 2, str(items)[:240])
+        check("已下载档位标 installed=true",
+              (by_alias.get("qwen3-0.6b") or {}).get("installed") is True, str(by_alias)[:240])
+        check("未下载档位标 installed=false",
+              (by_alias.get("qwen3-1.7b") or {}).get("installed") is False, str(by_alias)[:240])
+        check("当前档位被标记", (by_alias.get("qwen3-0.6b") or {}).get("current") is True,
+              str(by_alias)[:240])
+        check("档位带参数量与量化（供界面显示差异）",
+              (by_alias.get("qwen3-0.6b") or {}).get("params") == "600M"
+              and bool((by_alias.get("qwen3-0.6b") or {}).get("quantization")),
+              str(by_alias.get("qwen3-0.6b"))[:200])
+        check("已下载档位带体积文本",
+              bool((by_alias.get("qwen3-0.6b") or {}).get("size_human")), str(by_alias)[:200])
+
+        # 未下载的档位：明确原因 + 仓库（界面据此引导"下载"）
+        resp = be.request({"action": "model_profile_apply", "alias": "qwen3-1.7b"}, timeout=120)
+        prof = (resp or {}).get("model_profile") or {}
+        check("切换未下载档位被拒且标记 installed=false",
+              prof.get("ok") is False and prof.get("installed") is False, str(prof)[:240])
+        check("未下载档位带回仓库名（供一键下载）",
+              prof.get("repo") == "unsloth/Qwen3-1.7B-GGUF", str(prof)[:240])
+        check("未下载档位的提示写明文件名与目录",
+              missing in str((resp or {}).get("content", "")), str((resp or {}).get("content"))[:200])
+
+        # 未登记的别名
+        resp = be.request({"action": "model_profile_apply", "alias": "does-not-exist"}, timeout=60)
+        check("切换未登记别名被拒",
+              ((resp or {}).get("model_profile") or {}).get("ok") is False, str(resp)[:240])
+
+        # 已下载的档位：必须真的切换成功（这一条在修 llm.load 之前是 AttributeError）
+        resp = be.request({"action": "model_profile_apply", "alias": "qwen3-0.6b"}, timeout=600)
+        prof = (resp or {}).get("model_profile") or {}
+        check("切换已下载档位成功", prof.get("ok") is True, str(prof)[:300])
+        check("切换后回传新模型状态（ready=true）",
+              ((prof.get("state") or {}).get("ready")) is True, str(prof.get("state"))[:200])
+        after = ((resp or {}).get("model_profiles") or {}).get("items") or []
+        check("切换后当前档位标记更新",
+              [i.get("alias") for i in after if i.get("current")] == ["qwen3-0.6b"], str(after)[:240])
+        check("切换档位后进程仍存活", be.alive())
+    finally:
+        if be is not None:
+            be.close()
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def main():
@@ -362,6 +482,7 @@ def main():
         shutil.rmtree(workdir, ignore_errors=True)
 
     test_market(python, workdir)
+    test_profiles(python)
 
     print()
     print("=" * 72)

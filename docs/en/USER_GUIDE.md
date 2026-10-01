@@ -10,8 +10,8 @@ Chinese version: [`docs/zh-Hans/USER_GUIDE.md`](../zh-Hans/USER_GUIDE.md).
 ## 1. Installation and startup
 
 ### Installed version (recommended)
-1. Double-click `EchoDesk-v0.2.1-Setup.exe` (the `-NoModel-` build is the same program without the bundled
-   model). It needs no administrator rights.
+1. Double-click `EchoDesk-v0.2.1-Setup.exe` (there is only this one installer; it does **not** bundle a
+   model, and asks on first launch whether to download one). It needs no administrator rights.
 2. **By default it installs into the folder the installer itself sits in** — so a copy of the installer
    dropped into `D:\Tools\EchoDesk\` installs into `D:\Tools\EchoDesk\`. The wizard shows the path page, so
    change it there if you would rather install somewhere else.
@@ -31,7 +31,7 @@ data and `results\` stay in the install folder.
    machine would be dead on yours) — run `install-complete.bat` once, or launch `app\EchoDesk.exe` and
    accept the offer to create a shortcut;
 3. The first launch handles three things in turn:
-   - If there is no model in `app\backend\models\` → it asks whether to download one (about 508 MB, internet required);
+   - If there is no model in `app\backend\models\` → it asks whether to download one (about 472 MB, internet required);
    - If the folder has no shortcut → it asks whether to create one;
    - It shows the onboarding guide once.
 
@@ -76,7 +76,10 @@ exits, nothing blocks, and nothing is downloaded without you asking:
 1. The status bar shows **"no model"** and the chat shows guidance with the real path of the models folder.
 2. Everything that does not need inference still works: file parsing, settings, the skill market, the model
    market and your session history. Asking a question returns the guidance instead of an error.
-3. Get a model in any of three ways — **none of them requires restarting the program**:
+3. Get a model in any of four ways — **none of them requires restarting the program**:
+   * **Settings → Model → Model tiers** → click a chip to **switch** to that tier (the small
+     `Qwen3-0.6B-Q6_K` tier is the default). Clicking a chip you have not downloaded yet downloads it
+     first — the app resolves the file inside that tier's own repository — and then you can switch to it.
    * **Settings → Model → Model market** → search and download. See "How to use the model market" below.
    * Copy a `.gguf` file into `app\backend\models\`, then click **Rescan models folder**. If exactly one
      model is found it is loaded automatically.

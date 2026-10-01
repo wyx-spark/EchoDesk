@@ -98,7 +98,7 @@ English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)。
 
 ```json
 {"type":"ready","version":"v0.2.1","studio":"Void Entropia Studio","restored":3,
- "model_ready":true,"model_state":{"ready":true,"model":"Qwen3.5-0.8B-Q4_K_M.gguf","models_dir":"...","n_ctx":8192,"guide":""},
+ "model_ready":true,"model_state":{"ready":true,"model":"Qwen3-0.6B-Q6_K.gguf","models_dir":"...","n_ctx":8192,"guide":""},
  "model_missing":{},"history":[{"role":"user","content":"..."}]}
 ```
 
@@ -115,9 +115,9 @@ English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)。
 缺模型时会**在 `ready` 之前**发一条**非阻塞**告知：
 
 ```json
-{"type":"need_download","blocking":false,"model":"Qwen3.5-0.8B-Q4_K_M.gguf","size":532517120,
- "repo":"unsloth/Qwen3.5-0.8B-GGUF","current":"Qwen3.5-0.8B-Q4_K_M.gguf",
- "target":"Qwen3.5-0.8B-Q4_K_M.gguf","models_dir":"...","content":"..."}
+{"type":"need_download","blocking":false,"model":"Qwen3-0.6B-Q6_K.gguf","size":495107776,
+ "repo":"unsloth/Qwen3-0.6B-GGUF","current":"Qwen3-0.6B-Q6_K.gguf",
+ "target":"Qwen3-0.6B-Q6_K.gguf","models_dir":"...","content":"..."}
 ```
 
 `blocking: false` 是重点：它是**告知**而不是**询问**。旧行为（后端阻塞读 stdin 等答复，
@@ -300,8 +300,8 @@ Cookie（老用户升级后不必重新登录），每次会话结束再导出�
 
 ```jsonc
 {
-  "model_path": "Qwen3.5-0.8B-Q4_K_M.gguf",
-  "model_repo": "unsloth/Qwen3.5-0.8B-GGUF",
+  "model_path": "Qwen3-0.6B-Q6_K.gguf",
+  "model_repo": "unsloth/Qwen3-0.6B-GGUF",
   "hf_endpoint": "https://hf-mirror.com",   // 国内镜像；留空用官方
   "context_length": 8192,                    // 请求的上下文窗口
   "max_context": 32768,                      // 硬上限（校验用）
@@ -345,12 +345,12 @@ cmd /c tools\fetch_tools.bat
 & tools\build_release.ps1 -SkipFrontend     # 只重建后端
 & tools\build_release.ps1 -SkipClean -SkipBackend -SkipFrontend   # 只重跑资源收集/元数据
 
-# 只重打两份安装程序（已构建过发布目录时）
+# 只重打安装程序（已构建过发布目录时）
 & tools\make_installer.ps1
 ```
 
-**安装程序（Inno Setup 6）**：两份交付物 `EchoDesk-v<版本>-Setup.exe`（含模型）与
-`EchoDesk-v<版本>-NoModel-Setup.exe`（不含模型）由 `tools\installer.iss` 编译，
+**安装程序（Inno Setup 6）**：唯一一份交付物 `EchoDesk-v<版本>-Setup.exe`（**不含模型** ——
+模型按需下载，离线场景另发"模型补充包"）由 `tools\installer.iss` 编译，
 实际调用者是 `tools\make_installer.ps1`（可行性检查 + 编译 + 完整性断言 + 可选签名 + SHA256）。
 默认安装位置是**安装程序自己所在的文件夹**（`[Code] GetDefaultDir` 返回
 `ExtractFileDir(ExpandConstant('{srcexe}'))`），向导里仍可改；

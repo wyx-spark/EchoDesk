@@ -108,6 +108,24 @@ class LLMEngine:
             self.n_ctx = n_ctx
         self.llm = self._create(verbose=False)
 
+    def load(self, model_path: str, n_ctx: Optional[int] = None) -> None:
+        """加载/换到指定模型 —— 与 :meth:`LazyLLMEngine.load` **同名同语义**。
+
+        为什么父类也要有这个方法（本轮实测踩到）：
+        ``Backend.load_model()``（设置页「加载」按钮、模型档位「切换」、下载完成后的自动加载
+        都走它）调用的是 ``self.llm.load(path, n_ctx)``，而 ``load`` 原先**只存在于**
+        ``LazyLLMEngine``（无模型就绪那个子类）上。于是：
+          * 启动时没有模型（发布版默认）→ 引擎是 LazyLLMEngine → 热加载正常；
+          * 一旦**已经加载了模型**再换一个（用户日常最常做的操作：从 0.6B 档切到 1.7B 档）
+            → 引擎是普通 ``LLMEngine`` → ``AttributeError: 'LLMEngine' object has no
+            attribute 'load'``，用户看到的是"加载失败：'LLMEngine' object has no
+            attribute 'load'"这种与真实原因无关的报错。
+        这里给父类补一个同名方法（转发到 :meth:`reload`），让"是否已加载模型"不再决定
+        API 是否存在；``LazyLLMEngine`` 的 ``load`` 有自己的实现（原地建底层对象），
+        语义一致，不需要动。
+        """
+        self.reload(model_path, n_ctx)
+
     # ---------- 模型信息与缓存管理 ----------
 
     def model_info(self) -> Dict[str, str]:

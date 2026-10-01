@@ -1,9 +1,10 @@
 """模型文件检查、下载（支持 Hugging Face 镜像）与仓库内匹配查找。"""
 import difflib
 import os
+import re
 import sys
 from functools import partial
-from typing import Callable, Optional, Tuple
+from typing import Callable, Iterable, Optional, Tuple
 
 from huggingface_hub import HfApi, hf_hub_download
 from tqdm import tqdm
@@ -45,6 +46,67 @@ def check_model(model_name: str, local_dir: str = "./models") -> Optional[str]:
     return None
 
 
+#: 量化代码（``Q4_K_M`` / ``IQ4_XS`` / ``BF16`` …）。用于判断"提示里是否已经点名了量化"。
+_QUANT_RE = re.compile(r"(?:iq|q)\d+(?:_[a-z0-9]+)*|bf16|f16|f32", re.IGNORECASE)
+
+#: 没有点名量化时优先选用的通用档位（历史行为）。
+_PREFERRED_QUANT = "q4_k_m"
+
+
+def _stem(path: str) -> str:
+    """取文件名主干并小写，且**幂等**：``a/b/Qwen3.5-0.8B-Q6_K.gguf`` → ``qwen3.5-0.8b-q6_k``。
+
+    这里刻意只切掉末尾的 ``.gguf``，而不是用 ``os.path.splitext``：后者按**最后一个点**
+    切，而模型名里本来就有点（版本号 ``Qwen3.5``）—— ``splitext("qwen3.5-0.8b-q6_k")``
+    得到的是 ``("qwen3.5-0", ".8b-q6_k")``，量化代码会被切掉，重复调用两次的结果就不一样了
+    （写测试时真踩到：先取过主干再交给 :func:`quant_of`，于是"提示里点名了 Q6_K"被判成
+    "没点名"，通用档位加分又活了回来）。
+    """
+    name = os.path.basename(str(path or "")).lower()
+    return name[: -len(".gguf")] if name.endswith(".gguf") else name
+
+
+def quant_of(name: str) -> str:
+    """取出名字里的量化代码（取最后一个，如 ``qwen3-0.6b-q6_k`` → ``q6_k``）；没有则空串。
+
+    带不带 ``.gguf`` 都可以（见 :func:`_stem` 的幂等说明）。
+    """
+    matches = _QUANT_RE.findall(_stem(name))
+    return matches[-1].lower() if matches else ""
+
+
+def rank_model_files(files: Iterable[str], hint: str) -> str:
+    """在候选文件名里挑出与 hint 最匹配的一个（**纯函数**，不联网，便于单测）。
+
+    评分规则与踩过的坑（v0.2.1 默认模型切换）：
+
+    * 用 ``difflib`` 比较"去掉扩展名、小写"的主干相似度；
+    * **只有当 hint 自己没有点名量化时**，才给含 ``q4_k_m`` 的候选加分 ——
+      这个加分最早是为了"用户只说模型名时给个通用档位"，但它是无条件加的，
+      于是任何仓库里只要有 Q4_K_M，用户的显式选择（例如配了 Q6_K）就会被顶掉：
+      实测 hint=``Qwen3.5-0.8B-Q6_K.gguf`` 对 ``bartowski/Qwen_Qwen3.5-0.8B-GGUF``
+      解析成 ``Qwen_Qwen3.5-0.8B-Q4_K_M.gguf``（552.8 MB）、对
+      ``lmstudio-community/Qwen3.5-0.8B-GGUF`` 解析成 ``Qwen3.5-0.8B-Q4_K_M.gguf``
+      （503.1 MB）—— 配了 Q6_K 却下到 Q4_K_M，而且没有任何提示。
+      现在"提示里写了量化"就等于"用户已经选好了"，加分不再参与。
+    """
+    candidates = [str(f) for f in files if str(f)]
+    if not candidates:
+        raise ValueError("候选文件列表为空")
+
+    hint_stem = _stem(hint)
+    prefer_generic = not quant_of(hint)
+
+    def score(path: str) -> float:
+        stem = _stem(path)
+        value = difflib.SequenceMatcher(None, hint_stem, stem).ratio()
+        if prefer_generic and _PREFERRED_QUANT in stem:
+            value += 0.3
+        return value
+
+    return max(candidates, key=score)
+
+
 def find_best_model(repo_id: str, hint: str, hf_endpoint: Optional[str] = None) -> Tuple[str, Optional[int]]:
     """在仓库中查找与 hint 匹配度最高的 .gguf 文件，返回 (文件名, 大小字节)。"""
     if hf_endpoint:
@@ -54,14 +116,7 @@ def find_best_model(repo_id: str, hint: str, hf_endpoint: Optional[str] = None) 
     if not files:
         raise RuntimeError(f"仓库 {repo_id} 中没有 .gguf 文件")
 
-    def score(path: str) -> float:
-        base = os.path.splitext(os.path.basename(path))[0].lower()
-        s = difflib.SequenceMatcher(None, hint.lower(), base).ratio()
-        if "q4_k_m" in base:
-            s += 0.3  # 优先选择通用的 Q4_K_M 量化
-        return s
-
-    best = max(files, key=score)
+    best = rank_model_files(files, hint)
     size = None
     try:
         infos = api.get_paths_info(repo_id, [best])

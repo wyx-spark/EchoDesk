@@ -3,17 +3,22 @@
     EchoDesk 安装程序构建（Inno Setup 6）—— 取代原来的 7-Zip 自解压包方案。
 
 .DESCRIPTION
-    把已经构建好的发布目录（默认 publish\EchoDesk-v<版本>）打成两份**真正的
-    Windows 安装程序**：
+    把已经构建好的发布目录（默认 publish\EchoDesk-v<版本>）打成**一份**真正的
+    Windows 安装程序：
 
-      EchoDesk-v0.2.1-Setup.exe            含模型（app\backend\models\*.gguf）
-      EchoDesk-v0.2.1-NoModel-Setup.exe    不含模型
+      EchoDesk-v0.2.1-Setup.exe
+
+    【只有一份，且不含模型】（v0.2.1 默认模型切换一轮改动）
+      此前是两份（含模型版 / -NoModel 版）。现在一律只出一份、文件名不带变体后缀，
+      并且**模型永不进包**：离线场景改由单独的"模型补充包"承担，安装程序保持
+      "装完即用、模型按需下载"的单一形态（体积也从 608 MB 量级降到 114 MB 量级）。
+      因此本脚本的可行性检查里，模型那一项是"**必须没有** .gguf"。
 
     流程：
-      0. 可行性检查（12 项）：ISCC / 安装脚本 / 发布物内容 / onedir 后端 /
-         多文件前端 / 模型 / 图标六尺寸 / 双语合规文档 / 无调试残留 / 无中文命名 /
+      0. 可行性检查：ISCC / 安装脚本 / 发布物内容 / onedir 后端 /
+         多文件前端 / 无模型 / 图标六尺寸 / 双语合规文档 / 无调试残留 / 无中文命名 /
          无预置快捷方式 / 中文字体包可用性。**任一不成立即中止**，并打出"怎么修"。
-      1. 用 tools\installer.iss 编译两份（同一个脚本，靠 /DMyIncludeModels 区分）。
+      1. 用 tools\installer.iss 编译（单一变体，无 /DMyIncludeModels）。
       2. 完整性断言 Assert-InstallerIntact：PE 头 + **追加数据仍在** + 版本资源读回
          + 图标可读 + 体积合理。
       3. 可选代码签名（-Sign）。
@@ -62,19 +67,16 @@
 .PARAMETER ISCC
     Inno Setup 命令行编译器路径。默认自动探测（注册表 → 常见安装位置 → PATH）。
 
-.PARAMETER SkipWithModel / SkipNoModel
-    只打其中一份（调试用；正式发布两份都要）。
-
 .PARAMETER AssumeYes
-    跳过"含模型版很大、编译时间较长"之类的确认（自动化环境）。
+    跳过"编译时间较长"之类的确认（自动化环境）。
 
 .PARAMETER Sign / CertThumbprint / TimestampUrl
     编译完成后用 signtool 签名安装程序（需证书；找不到 signtool 只告警不失败）。
 
 .EXAMPLE
     & tools\make_installer.ps1
-    & tools\make_installer.ps1 -Version 0.2.1 -SkipNoModel
-    & tools\make_installer.ps1 -SkipNoModel -Sign -CertThumbprint <指纹>
+    & tools\make_installer.ps1 -Version 0.2.1 -AssumeYes
+    & tools\make_installer.ps1 -Sign -CertThumbprint <指纹>
 #>
 [CmdletBinding()]
 param(
@@ -82,8 +84,6 @@ param(
     [string]$ReleaseDir = "",
     [string]$OutDir = "",
     [string]$ISCC = "",
-    [switch]$SkipWithModel,
-    [switch]$SkipNoModel,
     [switch]$AssumeYes,
     [switch]$Sign,
     [string]$CertThumbprint = "",
@@ -117,8 +117,7 @@ $AppDir = Join-Path $ReleaseDir "app"
 $BackendDir = Join-Path $AppDir "backend"
 $ModelDir = Join-Path $BackendDir "models"
 
-$WithModelExe = Join-Path $OutDir "EchoDesk-v$Version-Setup.exe"
-$NoModelExe = Join-Path $OutDir "EchoDesk-v$Version-NoModel-Setup.exe"
+$SetupExe = Join-Path $OutDir "EchoDesk-v$Version-Setup.exe"
 $SumsFile = Join-Path $OutDir "SHA256SUMS.txt"
 
 $script:Problems = @()
@@ -305,21 +304,21 @@ else {
     }
 }
 
-# --- 1.5 模型文件（含模型版才检查） ---
+# --- 1.5 模型文件：安装程序里**必须没有** ---
+# 本版只有一份不含模型的安装程序（见文件头说明）。发布目录里若还有 .gguf，
+# 说明它是用 -IncludeModels 构建的：那种目录适合做便携版/模型补充包，
+# 但不该拿来编安装程序 —— 这里直接挡住，而不是"顺手把它打进包"。
 $models = @(Get-ChildItem $ModelDir -Filter *.gguf -File -ErrorAction SilentlyContinue)
-if (-not $SkipWithModel) {
-    if ($models.Count -eq 0) {
-        Add-Problem "含模型版要求的模型文件缺失：app\backend\models\*.gguf" @"
-先跑：& tools\build_release.ps1 -IncludeModels
-（模型来源依次为 backend\models、models\、deploy\models、-MigrateFrom 目录
- 以及 Hugging Face 本地缓存快照）
-或只打不含模型版：& tools\make_installer.ps1 -SkipWithModel
+if ($models.Count -eq 0) {
+    Write-Ok "模型    : 无（安装程序不含模型，符合预期）"
+}
+else {
+    $msize = [math]::Round(($models | Measure-Object Length -Sum).Sum / 1MB)
+    Add-Problem "发布目录里带有模型文件（app\backend\models 下 $($models.Count) 个，$msize MB）" @"
+安装程序一律不含模型，请用不带 -IncludeModels 的构建产物：
+  & tools\build_release.ps1        # 然后再跑 make_installer.ps1
+（含模型的目录请另做便携版或"模型补充包"，不要拿来编安装程序）
 "@
-    }
-    else {
-        $msize = [math]::Round(($models | Measure-Object Length -Sum).Sum / 1MB)
-        Write-Ok "模型    : $($models.Count) 个（$msize MB，将打进含模型版）"
-    }
 }
 
 # --- 1.6 图标文件存在且含六尺寸 ---
@@ -629,17 +628,17 @@ function Assert-InstallerIntact([string]$Exe, [string]$ExpectedDescription, [str
 }
 
 # ===========================================================================
-# 3. 编译两份安装程序
+# 3. 编译安装程序（单一份，不含模型）
 # ===========================================================================
 <#
     ISCC 参数：
       /Qp                          安静编译但显示进度（大包压缩要看进度）
       /O<目录>                     覆盖 [Setup] OutputDir
       /DMyAppVersion=<版本>        版本号
-      /DMyIncludeModels=1|0        含模型 / 不含模型
       /DMySourceDir=<绝对路径>      发布目录（绝对路径，避开中文目录相对化问题）
+    变体由 installer.iss 固定为"不含模型"，不再有 /DMyIncludeModels。
 #>
-function New-Installer([string]$Exe, [string]$IncludeModels, [string]$Description, [string]$OriginalName) {
+function New-Installer([string]$Exe, [string]$Description, [string]$OriginalName) {
     # 先删掉同名旧产物：万一编译失败，旧文件不能冒充"本次构建的交付物"。
     # 实测踩到：被废弃的 7-Zip 自解压包留在 publish\ 里，让上层"交付物存在"的
     # 断言误判成成功（603.81 MB / 108.7 MB 那两份其实是旧包）。
@@ -651,29 +650,22 @@ function New-Installer([string]$Exe, [string]$IncludeModels, [string]$Descriptio
         "/Qp",
         "/O$OutDir",
         "/DMyAppVersion=$Version",
-        "/DMyIncludeModels=$IncludeModels",
         "/DMySourceDir=$ReleaseDir",
         $IssPath
     )
-    Invoke-Native $IsccExe $isccArgs "编译 $(Split-Path -Leaf $Exe)（MyIncludeModels=$IncludeModels）"
+    Invoke-Native $IsccExe $isccArgs "编译 $(Split-Path -Leaf $Exe)"
     Assert-InstallerIntact $Exe $Description $OriginalName
     $mb = [math]::Round((Get-Item -LiteralPath $Exe).Length / 1MB, 2)
     Write-Ok "$(Split-Path -Leaf $Exe)：$mb MB"
 }
 
-if (-not $SkipWithModel) {
-    if (-not $AssumeYes) {
-        Write-Step "编译含模型版安装程序（lzma2/max 固实压缩，耗时较长）"
-    }
-    else {
-        Write-Step "编译含模型版安装程序"
-    }
-    New-Installer $WithModelExe "1" "EchoDesk v$Version Portable Setup" (Split-Path -Leaf $WithModelExe)
+if (-not $AssumeYes) {
+    Write-Step "编译安装程序（不含模型，lzma2/max 固实压缩）"
 }
-if (-not $SkipNoModel) {
-    Write-Step "编译不含模型版安装程序"
-    New-Installer $NoModelExe "0" "EchoDesk v$Version Portable Setup (No Model)" (Split-Path -Leaf $NoModelExe)
+else {
+    Write-Step "编译安装程序（不含模型）"
 }
+New-Installer $SetupExe "EchoDesk v$Version Portable Setup" (Split-Path -Leaf $SetupExe)
 
 # ===========================================================================
 # 4. 可选代码签名
@@ -690,7 +682,7 @@ if ($Sign) {
         Write-Warn2 "未找到 signtool.exe（需安装 Windows SDK），跳过签名"
     }
     else {
-        foreach ($exe in @($WithModelExe, $NoModelExe)) {
+        foreach ($exe in @($SetupExe)) {
             if (-not (Test-Path -LiteralPath $exe)) { continue }
             $signArgs = @("sign", "/fd", "sha256", "/tr", $TimestampUrl, "/td", "sha256")
             if ($CertThumbprint) { $signArgs += @("/sha1", $CertThumbprint) } else { $signArgs += @("/a") }
@@ -698,7 +690,7 @@ if ($Sign) {
             Write-Ok "$(Split-Path -Leaf $exe) 已签名"
         }
         # 签名后复核追加数据仍在（防止签名工具被换成会重建 PE 的版本）
-        foreach ($exe in @($WithModelExe, $NoModelExe)) {
+        foreach ($exe in @($SetupExe)) {
             if (-not (Test-Path -LiteralPath $exe)) { continue }
             $pe = Get-PeImageInfo $exe
             if ($pe.Appended -le 0) { throw "签名后 $(Split-Path -Leaf $exe) 的追加数据消失，安装包已损坏。" }
@@ -713,7 +705,7 @@ if ($Sign) {
 Write-Step "计算 SHA256 校验清单"
 $assets = @()
 foreach ($p in @(
-        $WithModelExe, $NoModelExe,
+        $SetupExe,
         (Join-Path $Root "docs\SBOM.json"),
         (Join-Path $Root "docs\THIRD_PARTY_LICENSES.md"),
         (Join-Path $Root "docs\THIRD_PARTY_LICENSES.zh-Hans.md"),
@@ -737,22 +729,20 @@ foreach ($l in $lines) { Write-Host "    $l" -ForegroundColor DarkGray }
 # 6. 合理性检查
 # ===========================================================================
 <#
-    任务书给的两个区间（含模型约 850-900 MB、不含模型约 350-400 MB）是**解压/安装后**
-    的发布目录体积口径，不是安装程序（压缩后）的体积。
-    第一版曾拿"安装包文件大小"去比这两个区间，于是每次都误报；
+    任务书给的区间（不含模型约 350-400 MB）是**解压/安装后**的发布目录体积口径，
+    不是安装程序（压缩后）的体积。
+    第一版曾拿"安装包文件大小"去比这个区间，于是每次都误报；
     更糟的是，它曾把一个**被 rcedit 削成 176 KB 的空壳**报成"0.2 MB 超出区间"，
     措辞让人以为是压缩率问题而不是文件损坏。现在按"安装后体积"比对，
     并把压缩包体积单列；安装包本身的损坏由 Assert-InstallerIntact 负责拦。
+    （含模型版那条 850-900 MB 的区间随"不再出含模型安装程序"一并去掉；
+      发布目录里本来也不该有模型 —— 1.5 已经挡过。）
 #>
 Write-Step "打包合理性检查"
-$releaseWith = (Get-ChildItem $ReleaseDir -Recurse -File | Measure-Object Length -Sum).Sum
-$modelsBytes = (Get-ChildItem $ModelDir -Filter *.gguf -File -ErrorAction SilentlyContinue |
-    Measure-Object Length -Sum).Sum
-$releaseNo = $releaseWith - $modelsBytes
+$releaseBytes = (Get-ChildItem $ReleaseDir -Recurse -File | Measure-Object Length -Sum).Sum
 $warn = 0
 foreach ($t in @(
-        @{ Bytes = $releaseWith; Min = 850; Max = 900; Label = "含模型版（安装后）" },
-        @{ Bytes = $releaseNo; Min = 350; Max = 400; Label = "不含模型版（安装后）" }
+        @{ Bytes = $releaseBytes; Min = 350; Max = 400; Label = "安装后体积" }
     )) {
     $mb = [math]::Round($t.Bytes / 1MB, 1)
     if ($mb -lt $t.Min -or $mb -gt $t.Max) {
@@ -764,24 +754,25 @@ foreach ($t in @(
     }
 }
 foreach ($pair in @(
-        @{ Exe = $WithModelExe; Src = $releaseWith; Label = "含模型版" },
-        @{ Exe = $NoModelExe; Src = $releaseNo; Label = "不含模型版" }
+        @{ Exe = $SetupExe; Src = $releaseBytes; Label = "安装程序" }
     )) {
     if (-not (Test-Path -LiteralPath $pair.Exe)) { continue }
     $exeMb = [math]::Round((Get-Item -LiteralPath $pair.Exe).Length / 1MB, 2)
     $ratio = if ($pair.Src -gt 0) { (Get-Item -LiteralPath $pair.Exe).Length / $pair.Src } else { 0 }
-    Write-Ok "  $($pair.Label)：安装程序 $exeMb MB（压缩率 $([math]::Round($ratio * 100, 1))% of 安装后体积）"
+    Write-Ok "  $($pair.Label)：$exeMb MB（压缩率 $([math]::Round($ratio * 100, 1))% of 安装后体积）"
     # 截断守卫：安装包不可能比安装后体积的一成还小；过小说明内容没进去
     if ($ratio -lt 0.10) {
-        throw "$($pair.Label) 安装程序只有安装后体积的 $([math]::Round($ratio * 100, 1))%，内容疑似未打进包（$($pair.Exe)）。"
+        throw "$($pair.Label) 只有安装后体积的 $([math]::Round($ratio * 100, 1))%，内容疑似未打进包（$($pair.Exe)）。"
     }
 }
-if ($warn -eq 0) { Write-Ok "两份安装程序（安装后）体积均在合理区间内" }
+if ($warn -eq 0) { Write-Ok "安装程序（安装后）体积在合理区间内" }
 
 Write-Host ""
 Write-Host "打包完成。" -ForegroundColor Cyan
 Write-Ok "产物目录: $OutDir"
-foreach ($p in @($WithModelExe, $NoModelExe, $SumsFile)) {
+foreach ($p in @($SetupExe, $SumsFile)) {
     if (Test-Path -LiteralPath $p) { Write-Ok "  $(Split-Path -Leaf $p)  $([math]::Round((Get-Item -LiteralPath $p).Length / 1MB, 2)) MB" }
 }
+Write-Ok "安装程序不含模型（模型由程序按需下载，或用单独的模型补充包）"
 Write-Ok "默认安装位置 = 用户双击的那个安装程序所在目录；安装后可改路径，卸载走 unins000.exe"
+Write-Ok "卸载会清掉运行期文件（会话/模型/缓存/日志等），但 results\ 原样保留"

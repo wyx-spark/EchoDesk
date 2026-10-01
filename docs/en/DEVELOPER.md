@@ -110,7 +110,7 @@ The backend prints `ready` only after **session restore + warm-up have finished*
 
 ```json
 {"type":"ready","version":"v0.2.1","studio":"Void Entropia Studio","restored":3,
- "model_ready":true,"model_state":{"ready":true,"model":"Qwen3.5-0.8B-Q4_K_M.gguf","models_dir":"...","n_ctx":8192,"guide":""},
+ "model_ready":true,"model_state":{"ready":true,"model":"Qwen3-0.6B-Q6_K.gguf","models_dir":"...","n_ctx":8192,"guide":""},
  "model_missing":{},"history":[{"role":"user","content":"..."}]}
 ```
 
@@ -130,9 +130,9 @@ enabled, shows "no model" in the status bar, and switches back automatically onc
 When the model is missing, one **non-blocking** notice is emitted *before* `ready`:
 
 ```json
-{"type":"need_download","blocking":false,"model":"Qwen3.5-0.8B-Q4_K_M.gguf","size":532517120,
- "repo":"unsloth/Qwen3.5-0.8B-GGUF","current":"Qwen3.5-0.8B-Q4_K_M.gguf",
- "target":"Qwen3.5-0.8B-Q4_K_M.gguf","models_dir":"...","content":"..."}
+{"type":"need_download","blocking":false,"model":"Qwen3-0.6B-Q6_K.gguf","size":495107776,
+ "repo":"unsloth/Qwen3-0.6B-GGUF","current":"Qwen3-0.6B-Q6_K.gguf",
+ "target":"Qwen3-0.6B-Q6_K.gguf","models_dir":"...","content":"..."}
 ```
 
 `blocking: false` is the whole point: this is a **notice**, not a question. The old behaviour (the backend
@@ -339,8 +339,8 @@ Safety design:
 
 ```jsonc
 {
-  "model_path": "Qwen3.5-0.8B-Q4_K_M.gguf",
-  "model_repo": "unsloth/Qwen3.5-0.8B-GGUF",
+  "model_path": "Qwen3-0.6B-Q6_K.gguf",
+  "model_repo": "unsloth/Qwen3-0.6B-GGUF",
   "hf_endpoint": "https://hf-mirror.com",   // mainland mirror; leave empty to use the official endpoint
   "context_length": 8192,                   // requested context window
   "max_context": 32768,                     // hard ceiling (used for validation)
@@ -389,8 +389,9 @@ cmd /c tools\fetch_tools.bat
 & tools\make_installer.ps1
 ```
 
-**Installer (Inno Setup 6)**: the two deliverables `EchoDesk-v<version>-Setup.exe` (with models) and
-`EchoDesk-v<version>-NoModel-Setup.exe` (without models) are compiled from `tools\installer.iss`, and the actual
+**Installer (Inno Setup 6)**: the single deliverable `EchoDesk-v<version>-Setup.exe` (**no bundled model** —
+models are downloaded on demand, or shipped separately as a model add-on pack for offline use) is compiled
+from `tools\installer.iss`, and the actual
 caller is `tools\make_installer.ps1` (feasibility check + compile + integrity assertions + optional signing +
 SHA256). The default install location is **the folder the installer itself sits in** (`[Code] GetDefaultDir`
 returns `ExtractFileDir(ExpandConstant('{srcexe}'))`), and it can still be changed in the wizard; shortcuts are

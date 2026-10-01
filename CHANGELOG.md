@@ -14,6 +14,93 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 > deviations from the task specification, unfinished items, and size records, see the internal development
 > record (`v0.2.1-研发记录.md`, **not distributed with the release**).
 
+### Default model switched to Qwen3-0.6B (thinking visible out of the box) + a single, model-free installer
+
+> This section supersedes the earlier statements in this v0.2.1 block that described **two** installers
+> (with models / `-NoModel`) and a default model that produces no thinking content.
+
+**Why the default model changed.** v0.2.1 shipped `Qwen3.5-0.8B-Q4_K_M.gguf` as the default, but that
+checkpoint **never produces thinking content**: its chat template gates the reasoning block on
+`enable_thinking is true` and otherwise emits an **empty, already-closed** think block, and
+`llama-cpp-python` 0.3.35 cannot pass that variable (`create_chat_completion` has 29 fixed parameters and no
+`**kwargs` — read from the installed source). Measured before changing anything (probes; details in
+`records/v0.2.1-默认模型切换记录.md`):
+
+- the template baked into the Q6_K files of both `bartowski/Qwen_Qwen3.5-0.8B-GGUF` and
+  `lmstudio-community/Qwen3.5-0.8B-GGUF` is **identical in that block** to the one already shipped (read
+  straight out of the remote GGUFs' metadata over HTTP range requests, no full download) → swapping the
+  repository or the quantisation **cannot** enable thinking;
+- injecting `enable_thinking=true` at the load layer does start "thinking", but the model **never emits
+  `</think>`** (10,383 characters / 4,096 tokens / 108 s with no closing tag), so the splitter sees a plain
+  answer: no thinking region appears and the answer area fills with meta-commentary;
+- two prompt-level routes failed as well (an explicit tag instruction is ignored; forcing the template
+  branch makes the model loop on the instruction text — 3,573 characters, cut off mid-sentence);
+- `Qwen3-0.6B` emits `<think>…</think>` by itself: against the **real backend**, `tools/test_reasoning.py
+  --model …` separates 419 thinking / 119 answer characters with 0 resets and clean, correct answers.
+
+**Changes**
+- Default model is now `Qwen3-0.6B-Q6_K.gguf` (`unsloth/Qwen3-0.6B-GGUF`, 472 MB), so a default install
+  **shows the "🧠 Thinking" region**; replies are also shorter and much faster (measured 5–9 s per reply on
+  CPU, versus 21–108 s for the forced-thinking 0.8B, whose answers were unusable).
+- Two model profiles are declared under `models`: `qwen3-0.6b` (the default) and `qwen3-1.7b`
+  (`Qwen3-1.7B-Q4_K_M.gguf`, 1056 MB), so `/model qwen3-1.7b` switches tiers without editing files. The
+  larger tier is not bundled — it is downloaded on demand (model market) or supplied by a model add-on pack.
+- Context handling is unchanged: the GGUF metadata (Qwen3-0.6B trains at 40,960 tokens) plus
+  `auto_context` converge the effective window to 8192, and the KV-cache estimate follows the new model.
+
+**Model tiers are visible and switchable in Settings**
+- The `config.models` registry was previously reachable only through `/model <alias>`, so the Settings window
+  never showed which tiers exist or which one is already on disk. Settings → Model now has a
+  **"🎚️ Model tiers"** strip: one chip per registered tier showing its parameter count, quantization,
+  context window and size, with a marker on the tier in use.
+- Clicking a downloaded chip **switches** to that tier (hot-loaded — no restart of the app or the UI, and the
+  tier's own `context_length` / `temperature` are applied). Clicking a tier that is not downloaded yet
+  **downloads** it: the app resolves the file inside that tier's own repository (`models.<alias>.repo`, which
+  until now was a purely decorative field) and then reuses exactly the same streaming download as the model
+  market.
+- Deliberately a **compact single strip** rather than a tall list: the model tab's vertical space is already
+  consumed by the model market (its result list is the `*` row), and a taller block squeezed that list to zero
+  height — caught by the GUI probe, whose "list scrolls", "filter panel" and "pager stays put" assertions all
+  turned red at once.
+- New protocol actions: `model_profiles` (list; reads local files only, never the network) and
+  `model_profile_apply` (switch). Covered by 15 new assertions in `tools/test_no_model.py`, plus a GUI
+  assertion in `tools/ui_probe.ps1` that the tier data really reaches the window.
+
+**Fixed in the same round**
+- `download_utils.find_best_model` gave every candidate containing `q4_k_m` an unconditional +0.3 bonus, so an
+  explicitly configured Q6_K was resolved to Q4_K_M and the wrong file was downloaded silently (measured
+  against both real repositories). The generic-quantisation preference now applies only when the hint itself
+  does not name a quantisation, and file-name stemming is idempotent — using `os.path.splitext` truncated
+  `qwen3.5-0.8b-q6_k` at the dot inside the version number and lost the quantisation code entirely.
+  Regression fixtures use the real repository file lists.
+- **`Backend.load_model()` crashed whenever a model was already loaded**: it calls `self.llm.load(...)`, but
+  `load()` existed only on `LazyLLMEngine` (the no-model engine); the plain `LLMEngine` had just `reload()`.
+  So switching to another model *after* one was loaded — the normal case for the new tier switcher, and
+  equally the existing "Load" button in the local model library — failed with
+  `AttributeError: 'LLMEngine' object has no attribute 'load'`. `LLMEngine` now exposes the same `load()`.
+- **A market search served from the disk cache left the local query dataset empty**: `ModelHub.search()`
+  returns early on a cache hit without registering `self._session`, which is what `model_hub_query`
+  (paging / sorting / filtering / out-of-range page clamping) reads. The list itself displayed fine, so the
+  second time the model market was opened within the cache TTL (6 h) the user saw results but any paging or
+  sort answered "search first". The cache-hit path now registers the dataset too (which also re-connects
+  "load more" after a cache hit).
+
+**One installer, and it never bundles a model**
+- There is now exactly **one** installer, `EchoDesk-v0.2.1-Setup.exe`, and it is always model-free: offline
+  users are served by a separate model add-on pack. The `含模型` / `-NoModel` pair is gone, along with the
+  `/DMyIncludeModels` build switch, the `-SkipWithModel` / `-SkipNoModel` options, the 850–900 MB size
+  window, and the second real install/uninstall round in the acceptance script.
+- The uninstaller now also deletes **everything the program creates while running**: `session.json`,
+  `models\` (downloaded models incl. the HF cache), `ui_state.json`, `snippets.json`, the
+  `*_registry.json` files, the market/summary caches, the automation log and processed list, both crash
+  logs, `config.user.json`, the `cache\` folder, installed and in-development skills, and the
+  `Start-EchoDesk-*.lnk` shortcut. **`results\` is never touched** (it holds the user's batch output), the
+  uninstaller says so up front, and a guard rejects any "delete the whole `{app}`" entry.
+- `tools/check_installer_deliverables.ps1` gained two real checks: it parses the `[UninstallDelete]` list
+  out of `installer.iss` and fails when that list does not cover the runtime-artifact list, and it
+  **creates** those artifacts (plus a file under `results\`) inside the installed copy, uninstalls, and then
+  asserts that every runtime file is gone while `results\` survived.
+
 ### Model market overhaul (load everything, page through it, filter and sort locally)
 
 **The problem**: searching the model market fetched a single remote page (20 entries) plus the default model,
@@ -173,7 +260,8 @@ tell apart from the conclusion.
     opening tag" must therefore mean "everything so far was thinking", or R1's reasoning lands in the answer.
 - Also measured: the shipped default model (Qwen3.5-0.8B) inverts that template condition (`is true`) and the
   binding cannot pass the parameter, so it produces **no thinking at all** — recorded honestly so nobody
-  reads it as "the feature does nothing".
+  reads it as "the feature does nothing". (**Superseded later in this version**: the shipped default is now
+  `Qwen3-0.6B-Q6_K.gguf`, which emits both tags itself — see the default-model section at the top.)
 
 **Application-layer fallback (task 3)**
 - New `backend/reasoning.py`: an incremental tag splitter (`ReasoningSplitter`) that turns one text stream

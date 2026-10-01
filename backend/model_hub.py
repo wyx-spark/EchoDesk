@@ -93,7 +93,7 @@ class ModelHubError(RuntimeError):
 
 
 def guess_quant_code(filename: str) -> str:
-    """从文件名/仓库名推断量化代码（``Qwen3.5-0.8B-Q4_K_M.gguf`` → ``Q4_K_M``）。
+    """从文件名/仓库名推断量化代码（``Qwen3-0.6B-Q6_K.gguf`` → ``Q6_K``）。
 
     取不到时返回**空串**而不是本地化的"未知"：这个值会被当作**筛选键**用
     （见 :mod:`model_query`），把界面文案当数据会让"界面语言一换、筛选条件就失效"。
@@ -446,6 +446,15 @@ class ModelHub:
         if not resume and not refresh:
             cached = self._read_cache(cache_key, allow_expired=False)
             if cached is not None:
+                # **必须把缓存命中的记录也登记为"当前数据集"**（实测踩到的缺陷）：
+                # 只有联网加载的收尾（本函数末尾）才会写 `self._session`，而
+                # `query_session`（model_hub_query：翻页/排序/筛选/越界钳制）读的正是它。
+                # 于是"搜索结果来自磁盘缓存"时，列表本身显示得好好的，用户一点翻页或改
+                # 排序就得到"尚未加载搜索结果，请先搜索" —— 命中缓存是很常见的情况
+                # （TTL 6 小时，第二次打开模型市场就会命中）。
+                # 缓存记录与联网记录结构一致（同一个 `record` 写进去的），直接复用即可，
+                # 顺带把"缓存命中后的继续加载"也接上（`_current_record` 读的就是 `_session`）。
+                self._session = cached
                 return self._dataset(cached, resolved, caps, cache_hit=True,
                                      cache_age=time.time() - float(cached.get("created_at") or 0))
 
@@ -901,8 +910,8 @@ class ModelHub:
         """默认模型所属仓库（``config.model_repo``）。
 
         **根因记录（任务书要求排查"默认模型在列表里显示不出来"）**：
-        模型的"市场列表"列的是**仓库**（例如 ``unsloth/Qwen3.5-0.8B-GGUF``），
-        而默认值是 ``config.model_path`` 里的**文件名**（``Qwen3.5-0.8B-Q4_K_M.gguf``）。
+        模型的"市场列表"列的是**仓库**（例如 ``unsloth/Qwen3-0.6B-GGUF``），
+        而默认值是 ``config.model_path`` 里的**文件名**（``Qwen3-0.6B-Q6_K.gguf``）。
         列表此前完全由"按下载量排序的一页远端搜索结果"构成，**没有任何逻辑保证
         默认模型所在的那个仓库会出现**：仓库名不含关键词时搜不到，下载量排在几十名
         开外时第一页也看不到，而"按硬件过滤推荐"的开关一开更是直接被筛掉。

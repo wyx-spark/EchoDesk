@@ -126,6 +126,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <TextBlock Grid.Row="0" Text="🧠 模型选择栏（Hugging Face GGUF 模型）"
@@ -466,8 +467,28 @@
                                    Text="尚未搜索。点「搜索」浏览热门 GGUF 模型，或在详情中选择量化版本下载。"/>
                     </StackPanel>
 
+                    <!-- 模型档位（多档默认模型）：一行胶囊，点即切换/下载。
+                         刻意做成**紧凑的一行**：模型页本来就被模型市场占满（结果列表是 * 行），
+                         再加一个高列表会把结果列表挤成 0 高度（实测踩到：滚动与筛选断言全红）。 -->
+                    <StackPanel Grid.Row="7" Margin="0,8,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock FontWeight="Bold" VerticalAlignment="Center"
+                                       svc:Loc.Key="settings.model.profileTitle"
+                                       Text="🎚️ 模型档位（可选默认模型）"/>
+                            <Button x:Name="ProfileRefreshButton" Padding="10,2" FontSize="11"
+                                    Margin="8,0,0,0" VerticalAlignment="Center"
+                                    Style="{StaticResource RoundButton}"
+                                    Click="ProfileRefreshButton_Click"
+                                    svc:Loc.Key="settings.model.actionRefreshProfiles"/>
+                        </StackPanel>
+                        <WrapPanel x:Name="ModelProfileChips" Margin="0,5,0,0"/>
+                        <TextBlock x:Name="ProfileStatusText" Margin="0,5,0,0" FontSize="11"
+                                   TextWrapping="Wrap"
+                                   Foreground="{DynamicResource SubTextBrush}"/>
+                    </StackPanel>
+
                     <!-- 模型库 -->
-                    <Grid Grid.Row="7" Margin="0,10,0,0">
+                    <Grid Grid.Row="8" Margin="0,10,0,0">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
