@@ -118,6 +118,95 @@
   远端结果必须有下载量与更新时间，本地/默认来源必须有来源标注 ——
   旧断言要求接口返回它根本没有的字段，一直是红的（实测 18/19）。
 
+### 模型思考内容分离（思考过程与答案分开显示）
+
+**问题**：推理模型（Qwen3 的 thinking 模式、DeepSeek-R1 系列等）会把思考过程写在
+`content` 里，于是用户看到的"回答"开头是一大段 ` thinking…` 的推理过程，
+分不清哪部分是思考、哪部分是结论。
+
+**先确认事实（任务一）**：动代码之前用探针把输出结构量清楚（记录见
+`records/v0.2.1-模型思考内容分离记录.md`）：
+
+- `llama-cpp-python` 0.3.35 的 `create_chat_completion` 参数表是**固定的 29 个**，
+  既没有 `reasoning_format`、也没有 `chat_template_kwargs` / `enable_thinking`；
+  `llama_types.py` 里**根本没有 `reasoning_content` 字段**；流式 delta 只会出现
+  `content` / `role` 两个键。**推理层分流不可用**（任务二据此放弃）。
+- 模型侧形态实测有两种：
+  - Qwen3-0.6B：模板在 `enable_thinking` 未定义时**不加任何前缀**，模型自己吐出
+    `<think>` … `</think>`，起始与结束标签都在生成文本里；
+  - DeepSeek-R1-Distill（unsloth GGUF）：模板在 `add_generation_prompt` 分支里
+    **写死了起始标签**，生成文本只有结束标签 —— 所以"没有起始标签、只有结束标签"
+    必须按"整段都是思考"处理，否则 R1 的思考会全部落进回答区。
+- 附带确认：默认模型 Qwen3.5-0.8B 的模板条件写反了（`enable_thinking is true` 才加
+  起始标签），绑定层又无法传该参数，所以它默认**不产生思考内容** ——
+  这一条如实写进记录，避免用户以为"功能没生效"。
+
+**应用层兜底（任务三）**
+- 新增 `backend/reasoning.py`：增量标签分离器 `ReasoningSplitter`，把同一条文本流切成
+  `reasoning` / `answer` 两条通道，并处理全部边界：标签跨 chunk（逐字符喂也不漏判）、
+  嵌套标签（按深度配对）、多段思考（合并展示）、**未闭合**（剩余内容全归思考并置位
+  `unclosed`）、**孤立结束标签**（此前发到回答区的内容整体改判为思考，发一次 `reset`
+  通知界面把回答区作废）、无标签（普通模型不受影响）。
+- 标签表可配置（`config.json` 的 `reasoning.tags` 追加自定义标签对），内置覆盖
+  `think` / `thinking` / `reasoning` / `thought` / `reflection` / `analysis` 与
+  DeepSeek 的特殊 token 形态；长标签优先匹配（`<thinking>` 不会被 `<think>` 截断）。
+- `LLMEngine.chat_stream` / `chat_complete` 保持**"只给最终回答"**的兼容语义
+  （分段摘要、自动化、上下文压缩因此天然拿不到思考内容），双通道走新增的
+  `chat_stream_split` / `chat_complete_split`。
+
+**协议（任务四的前置）**
+- 流式 delta 行新增 `channel` 字段：`reasoning`（思考）/ `answer`（最终回答）；
+  另有一条 `{"channel":"answer","reset":true}` 用于**作废回答区**。
+- `done` 行新增 `reasoning`（思考全文）与 `reasoning_unclosed`（标签未闭合，
+  通常是长度上限被思考吃完）。不带 `channel` 的 delta 行沿用旧语义（进度/摘要文本）。
+- 修复：回答累积串改以分离器的 `answer_text` 为准 —— 否则孤立结束标签场景下
+  `done.content` 会把思考内容一起带上（单元测试 C2 抓出来的）。
+
+**前端展示（任务四）**
+- 答案上方新增「🧠 思考过程」折叠区（WPF 原生 `Expander`）：默认收起、点标题展开，
+  正文整块放在浅底边框里并用斜体副色显示，与答案一眼可分。
+- 流式生成时先自动展开（看得见模型在实时推理），**答案一开始输出就自动收起**；
+  用户手动展开过就不再打扰；模型没有思考内容时**不创建**折叠区（不留空占位）。
+- 复制按钮与 `Ctrl+Shift+C`（复制全部对话）继续只针对 `Tag="content"` 的答案正文，
+  思考区用 `Tag="reasoning"`，不会被误复制；Ctrl+滚轮调字号同时作用于思考区。
+- 思考把长度上限吃光、答案还没开始时：自动展开思考区，并在答案区说明原因，
+  而不是留一个空白答案区。
+
+**自行判断项（写入记录并解释理由）**
+- **思考内容写进会话历史**（单独 `reasoning` 字段，可配置关闭与截断上限）：
+  任务书任务五要求"重新加载含思考内容的历史会话，确认区分正确"，不持久化就做不到。
+- **思考内容不参与上下文**：思考通常比答案还长，回灌只会白占窗口；DeepSeek 官方接口
+  明确要求不要把 `reasoning_content` 传回下一轮；R1 的 GGUF 模板自己也在丢弃
+  `</think>` 之前的内容。老会话没有该字段照常加载，普通模型的记录不长出新字段。
+- **导出**：`/save` 的对话记录里思考写成 `<details>` 可折叠块并排在对应答案之前。
+
+**多语言与文档（任务六）**
+- 新增文案键：`main.reasoning.title/count/tip/noAnswer`（前端中英各 4 条）、
+  `export.reasoning` / `export.reasoning_truncated`（后端中英各 2 条）。
+
+**测试**
+- 新增 `tools/test_reasoning.py`：**95 项**单元 + 协议断言（分离器边界、引擎双通道、
+  流式协议 channel/reset/done、历史持久化与"思考不进上下文"、语言包键），
+  全部在进程内驱动真后端代码，不联网也不加载模型；`--model <gguf>` 追加真实模型端到端
+  （实测 Qwen3-0.6B：思考 388 字符 / 回答 48 字符，回答区无标签；
+  DeepSeek-R1-Distill-Qwen-1.5B：思考 375 字符 / 回答 127 字符，靠 1 次 `reset` 完成改判 → **104/104**）。
+- 接入发布前门禁 `tools/verify_release.ps1`、CI 与 `CONTRIBUTING`。
+- `tools/ui_probe.ps1` 新增「思考区」检查（`-ThinkingModel <gguf>` 指定一个会思考的模型）：
+  回答区正文里不得出现思考标签、折叠区默认收起、可展开可再收起、展开后能看到思考正文。
+
+**界面探针跑出来的缺陷：配置文件带 BOM 会让后端启动即崩**
+- 现象：给探针临时写 `config.user.json` 时用了 Windows PowerShell 5.1 的
+  `Set-Content -Encoding UTF8`（会写 BOM），后端直接
+  `json.decoder.JSONDecodeError: Unexpected UTF-8 BOM` 退出、整个程序随之关闭，
+  界面上只有一句"后端意外退出"，完全看不出与配置文件有关。
+- 根因：`Config.load` 用普通 `utf-8` 读配置。Windows 记事本保存 UTF-8 同样会带 BOM，
+  也就是说**用户手改一次配置就可能打不开程序**（协议层早就在兼容 stdin 的 BOM，
+  配置文件这一侧漏了）。
+- 修法：配置文件一律按 `utf-8-sig` 读；`config.user.json` 是可选的覆盖层，
+  格式坏掉时**只告警并忽略该覆盖层**，不再让整个后端起不来；会话文件同样按 `utf-8-sig` 读。
+- 回归断言加在 `tools/selftest.py`（带 BOM 的基础配置、带 BOM 的覆盖层、
+  损坏的覆盖层三种情况），**80/80 通过**。
+
 ### 工作室名称敲定（熵寂工作室 / Void Entropia Studio）
 
 - 工作室中文名正式定为 **熵寂工作室**；`VoidEntropiaStudio` 继续作为英文标识

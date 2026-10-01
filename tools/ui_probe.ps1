@@ -8,10 +8,16 @@
 #   4. 指令选择栏的 Enter 排序（精确匹配优先），读取 CommandList 首项的 AutomationId 名称。
 #   5. 是否产生 frontend_crash.log。
 #
-# 用法：powershell -File tools\ui_probe.ps1 [-KeepOpen]
+# 用法：powershell -File tools\ui_probe.ps1 [-KeepOpen] [-ThinkingModel <gguf 路径>]
+#
+# -ThinkingModel：给"思考内容分离"那一节用的**推理模型**（会思考的模型）。
+#   给了就地把它临时装进被测程序的 models\ 目录，并写一份 config.user.json 把
+#   model_path 指过去（config.user.json 是后端的覆盖层，优先于 config.json），
+#   跑完在收尾处删掉这两样东西。不给则那一节按"当前模型没有思考内容"跳过。
 param(
     [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.1\app\EchoDesk.exe",
     [int]$ReadyTimeoutSec = 180,
+    [string]$ThinkingModel = "",
     [switch]$KeepOpen
 )
 
@@ -76,6 +82,52 @@ if (Test-Path $crashLog) { Remove-Item $crashLog -Force }   # 每轮从干净状
 $userDataDir = $appDir
 if ((Split-Path -Leaf $appDir) -eq 'app') { $userDataDir = Split-Path -Parent $appDir }
 
+# ---------- 0. 思考内容分离：临时换成"会思考的模型" ----------
+# 默认模型 Qwen3.5-0.8B 的对话模板在 enable_thinking 未传入时走 else 分支
+# （塞一个空思考块），因此**不产生思考内容**；要有思考内容必须换一个默认开启思考的
+# 模型。这里用 config.user.json（后端配置覆盖层，优先生效）把 model_path 指过去，
+# 不动被测程序自带的 config.json，也不删它自带的模型文件。
+$probeModelDir = Join-Path $appDir 'backend\models'
+$probeUserConfig = Join-Path $appDir 'backend\config.user.json'
+$probeModelName = ''
+$probeModelCopied = $false
+# 提前退出（后端没起来等）时也要撤掉临时覆盖，否则会把被测程序留在"指向临时模型"的状态
+function Remove-ProbeModelOverride {
+    try {
+        if ($script:probeUserConfig -and (Test-Path -LiteralPath $script:probeUserConfig)) {
+            Remove-Item -LiteralPath $script:probeUserConfig -Force
+        }
+        if ($script:probeModelCopied -and $script:probeModelName -ne '') {
+            $stray = Join-Path $script:probeModelDir $script:probeModelName
+            if (Test-Path -LiteralPath $stray) { Remove-Item -LiteralPath $stray -Force }
+            Write-Output "[probe] 已清理临时模型 $script:probeModelName"
+        }
+    } catch {
+        # 清理本身失败不能把探针的失败原因顶掉（$ErrorActionPreference='Stop' 下
+        # 这里的异常会让脚本在打印真正原因前中止 —— 本轮实测踩到过）
+        Write-Output "[probe] 警告：清理临时覆盖失败：$_"
+    }
+}
+if ($ThinkingModel -ne '' -and (Test-Path -LiteralPath $ThinkingModel)) {
+    $probeModelName = Split-Path -Leaf $ThinkingModel
+    $dest = Join-Path $probeModelDir $probeModelName
+    if (-not (Test-Path -LiteralPath $dest)) {
+        Copy-Item -LiteralPath $ThinkingModel -Destination $dest -Force
+        $probeModelCopied = $true
+    }
+    # 必须写成**无 BOM** 的 UTF-8：Windows PowerShell 5.1 的 Set-Content -Encoding UTF8
+    # 会写 BOM，带 BOM 的 JSON 会让后端配置解析失败、启动即崩（本轮实测踩到，
+    # 顺带把"配置文件带 BOM 也要能启动"这条产品级加固做进了 config.py）。
+    # session_file 置空：这一节要断言"最后一个复制按钮复制的是本次回答"，
+    # 恢复历史会往面板里插入旧消息，让"最后一个"变得不确定。
+    $override = "{ `"model_path`": `"$probeModelName`", `"session_file`": `"`" }"
+    [System.IO.File]::WriteAllText($probeUserConfig, $override,
+        (New-Object System.Text.UTF8Encoding($false)))
+    Write-Output "[probe] 思考区检查用模型 = $probeModelName（临时覆盖，收尾时删除）"
+} elseif ($ThinkingModel -ne '') {
+    Write-Output "[probe] 警告：找不到 -ThinkingModel 指定的模型 $ThinkingModel，该节将跳过"
+}
+
 Write-Output "[probe] exe = $exePath"
 Write-Output "[probe] 工作目录 = $userDataDir"
 $proc = Start-Process -FilePath $exePath -WorkingDirectory $userDataDir -PassThru
@@ -87,11 +139,11 @@ $main = $null
 while ($sw.Elapsed.TotalSeconds -lt $ReadyTimeoutSec) {
     Start-Sleep -Milliseconds 400
     $proc.Refresh()
-    if ($proc.HasExited) { Write-Output "[probe] FAIL 进程已退出（退出码 $($proc.ExitCode)）"; exit 2 }
+    if ($proc.HasExited) { Write-Output "[probe] FAIL 进程已退出（退出码 $($proc.ExitCode)）"; Remove-ProbeModelOverride; exit 2 }
     $main = Find-AnyById $proc.Id 'StatusText'
     if ($null -ne $main) { break }
 }
-if ($null -eq $main) { Write-Output "[probe] FAIL 主窗口未出现"; exit 2 }
+if ($null -eq $main) { Write-Output "[probe] FAIL 主窗口未出现"; Remove-ProbeModelOverride; exit 2 }
 Write-Output "[probe] 主窗口出现 @ $((Ms $sw))ms"
 
 $ready = $false
@@ -102,11 +154,11 @@ while ($sw.Elapsed.TotalSeconds -lt $ReadyTimeoutSec) {
     if ($txt -like '*失败*') { Fail "后端启动失败：$txt"; break }
 }
 Write-Output "[probe] 后端就绪=$ready @ $((Ms $sw))ms"
-if (-not $ready) { Fail '后端未就绪'; if (-not $KeepOpen) { $proc.Kill() }; exit 3 }
+if (-not $ready) { Fail '后端未就绪'; if (-not $KeepOpen) { try { $proc.Kill() } catch { } }; Remove-ProbeModelOverride; exit 3 }
 
 # ---------- 2. 点击设置：测量打开耗时与响应性 ----------
 $btn = Find-AnyById $proc.Id 'SettingsButton'
-if ($null -eq $btn) { Fail '未找到 SettingsButton'; if (-not $KeepOpen) { $proc.Kill() }; exit 4 }
+if ($null -eq $btn) { Fail '未找到 SettingsButton'; if (-not $KeepOpen) { try { $proc.Kill() } catch { } }; Remove-ProbeModelOverride; exit 4 }
 
 # 预热 UIA：第一次 Find-AnyById 要建立跨进程 provider 树，实测冷启动这一下约 2 秒；
 # 不预热的话，这笔一次性开销会被算进"设置窗口打开耗时"，量出来就是 2.3 秒而不是 0.26 秒
@@ -1009,6 +1061,180 @@ if ($null -ne $cmdBtn) {
     Write-Output "[probe] 未找到 CommandButton，跳过指令栏测试"
 }
 
+# ---------- 5b. 思考内容分离（模型思考内容分离 任务四/五）----------
+# 断言四件事：
+#   1. 回答区正文里没有思考标签（`<think>` / `</think>` 这类）—— 这是本次修复的核心；
+#   2. 出现过思考内容时必须有一个「思考过程」折叠区，且**默认收起**；
+#   3. 折叠区可以展开、可以再收起（走 UIA 的展开/折叠接口，读屏与键盘用户走的就是这条路）；
+#   4. 折叠区正文里能看到模型的思考文字（不是空壳）。
+# 当前模型不产生思考内容时（例如默认的 Qwen3.5-0.8B），只断言第 1 条并明确跳过 2~4。
+# WPF 的 Expander 同时暴露 ExpandCollapse 与 Toggle 两套模式（不同 .NET 版本实现不一），
+# 所以这里两套都试：先 ExpandCollapse，取不到再退到 Toggle —— 探针不该因为接口差异假失败。
+function Get-RegionExpanded($el) {
+    try {
+        $p = $el.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+        return $p.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Expanded
+    } catch { }
+    try {
+        $p = $el.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+        return $p.Current.ToggleState -eq [System.Windows.Automation.ToggleState]::On
+    } catch { }
+    return $null
+}
+function Set-RegionExpanded($el, [bool]$expand) {
+    try {
+        $p = $el.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+        if ($expand) { $p.Expand() } else { $p.Collapse() }
+        return $true
+    } catch { }
+    try {
+        $p = $el.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+        $on = $p.Current.ToggleState -eq [System.Windows.Automation.ToggleState]::On
+        if ($on -ne $expand) { $p.Toggle() }
+        return $true
+    } catch { }
+    return $false
+}
+
+$thinkBox = Find-AnyById $proc.Id 'InputBox'
+if ($null -eq $thinkBox) {
+    Fail '未找到输入框 InputBox，无法验证思考区'
+} else {
+    try {
+        $vpIn = $thinkBox.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+        $vpIn.SetValue('一个笼子里有鸡和兔共 8 只，脚共 22 只，鸡兔各几只？')
+        Start-Sleep -Milliseconds 400
+        $sendBtn = Find-AnyById $proc.Id 'SendButton'
+        if ($null -eq $sendBtn) { Fail '未找到发送按钮 SendButton' } else {
+            Invoke-El $sendBtn
+            Write-Output "[probe] 已发送测试问题，等待流式回答与思考区…"
+        }
+
+        # 结束判定用"发送按钮从 ⏹ 变回 ➤"这次状态翻转，而不是固定等几秒：
+        # 生成快慢随模型与机器差异很大，等固定时长会误判。
+        $swThink = [System.Diagnostics.Stopwatch]::StartNew()
+        $region = $null
+        $sawBusy = $false
+        $expandedWhileStreaming = $false
+        while ($swThink.Elapsed.TotalSeconds -lt 300) {
+            Start-Sleep -Milliseconds 600
+            $proc.Refresh()
+            if ($proc.HasExited) { Fail '思考区检查期间进程退出'; break }
+            if ($null -eq $region) { $region = Find-AnyById $proc.Id 'ReasoningRegion' }
+            if ($null -ne $region -and -not $expandedWhileStreaming) {
+                if ((Get-RegionExpanded $region) -eq $true) { $expandedWhileStreaming = $true }
+            }
+            $sendNow = Find-AnyById $proc.Id 'SendButton'
+            $busy = ($null -ne $sendNow -and $sendNow.Current.Name -eq '⏹')
+            if ($busy) { $sawBusy = $true }
+            elseif ($sawBusy) { break }   # 忙碌过又还原 = 本轮生成结束
+        }
+        # 读"回答区正文"：优先用**应用自己的复制按钮**给出的文本（走 WPF TextRange.Text，
+        # 就是用户看到的那份），UIA 的 Document/TextPattern 只作参考打印。
+        # 为什么不信 UIA：实测 WPF RichTextBox 每次重设 Document 都会在 UIA 树里留下
+        # 旧文档的 peer，探针读到的最长也只有 2 个字符 —— 那样"回答区里没有思考标签"
+        # 会因为**读不到正文而假通过**（本轮最先就是这么假通过的，已改）。
+        $pidCond = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $proc.Id)
+        function Copy-NewestMessage {
+            $wins = [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
+                [System.Windows.Automation.TreeScope]::Children, $pidCond)
+            $buttons = @()
+            foreach ($win in $wins) {
+                $bCond = New-Object System.Windows.Automation.PropertyCondition(
+                    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                    [System.Windows.Automation.ControlType]::Button)
+                foreach ($b in $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $bCond)) {
+                    if ($b.Current.Name -like '*复制*') { $buttons += $b }
+                }
+            }
+            if ($buttons.Count -eq 0) { return "" }
+            try { Invoke-El $buttons[$buttons.Count - 1] } catch { return "" }
+            Start-Sleep -Milliseconds 900
+            return [string](Get-Clipboard -Raw)
+        }
+        $copied = [string](Copy-NewestMessage)
+        $docText = ''
+        $scroll = Find-AnyById $proc.Id 'MessageScrollViewer'
+        if ($null -ne $scroll) {
+            $docCond = New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                [System.Windows.Automation.ControlType]::Document)
+            $docLens = @()
+            foreach ($d in $scroll.FindAll([System.Windows.Automation.TreeScope]::Descendants, $docCond)) {
+                try {
+                    $t = $d.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).DocumentRange.GetText(-1)
+                } catch { continue }
+                $docLens += $t.Length
+                if ($t.Length -gt $docText.Length) { $docText = $t }
+            }
+            Write-Output "[probe] 消息区 Document 文本长度（仅参考）：$($docLens -join ', ')"
+        }
+        $answerText = $copied
+        Write-Output "[probe] 回答区文本长度=$($answerText.Length)（UIA 读到 $($docText.Length) 字）思考区=$(if ($null -ne $region) {'有'} else {'无'}) 见过忙碌=$sawBusy"
+        if ($answerText.Trim().Length -eq 0) {
+            Fail '思考区检查：没有拿到回答正文（复制按钮不可用或本轮生成失败）'
+        } else {
+            $tagHits = @()
+            foreach ($tag in @(([char]0x3C) + 'think' + ([char]0x3E),
+                               ([char]0x3C) + '/' + 'think' + ([char]0x3E),
+                               ([char]0x3C) + 'thinking' + ([char]0x3E))) {
+                if ($answerText.Contains($tag)) { $tagHits += $tag }
+            }
+            if ($tagHits.Count -gt 0) {
+                Fail "回答区里出现了思考标签：$($tagHits -join ' ')"
+            } else {
+                Ok "回答区只有答案，没有思考标签（正文 $($answerText.Length) 字）"
+            }
+
+            if ($null -eq $region) {
+                Write-Output "[probe] 跳过折叠区检查：当前模型这次没有产生思考内容（默认模型 Qwen3.5-0.8B 即如此）"
+            } else {
+                if ($expandedWhileStreaming) { Ok '流式思考期间折叠区自动展开' }
+                else { Write-Output "[probe] 提示：未捕捉到流式期间的自动展开（生成太快时可能一闪而过）" }
+                # 生成结束后应回到收起状态
+                $expandedAfter = Get-RegionExpanded $region
+                if ($expandedAfter -eq $false) { Ok '生成结束后思考区处于收起状态' }
+                else { Fail "生成结束后思考区应自动收起（当前展开=$expandedAfter）" }
+                # 手动展开 → 再收起
+                Set-RegionExpanded $region $true | Out-Null
+                Start-Sleep -Milliseconds 500
+                if ((Get-RegionExpanded $region) -eq $true) {
+                    Ok '思考区可以手动展开'
+                    # 思考区正文的校验方式：**读标题栏的字数**，而不是读正文控件。
+                    # 理由（实测）：UIA 对 WPF RichTextBox 的 TextPattern 读取不可靠 ——
+                    # 同一个控件在探针里最多只读到 2 个字符，读正文会得出"空思考区"的
+                    # 假结论。标题里的"N 字"由同一份思考文本的长度算出（前端
+                    # main.reasoning.count），正文为空时这里必然是 0 字，所以它既能证明
+                    # "确实有思考内容"，又不受 UIA 文本实现差异影响。
+                    $texts = @()
+                    $textCond = New-Object System.Windows.Automation.PropertyCondition(
+                        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                        [System.Windows.Automation.ControlType]::Text)
+                    foreach ($el in $region.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCond)) {
+                        if ($el.Current.Name) { $texts += $el.Current.Name }
+                    }
+                    Write-Output "[probe] 思考区标题文本：$($texts -join ' | ')"
+                    $countMatch = [regex]::Match(($texts -join ' '), '(\d+)\s*字')
+                    if ($countMatch.Success -and [int]$countMatch.Groups[1].Value -gt 0) {
+                        Ok "思考区显示有 $($countMatch.Groups[1].Value) 字思考内容"
+                    } else {
+                        Fail "思考区没有给出思考字数（读到：$($texts -join ' | ')）"
+                    }
+                } else {
+                    Fail '思考区无法手动展开'
+                }
+                Set-RegionExpanded $region $false | Out-Null
+                Start-Sleep -Milliseconds 400
+                if ((Get-RegionExpanded $region) -eq $false) { Ok '思考区可以再次收起' }
+                else { Fail '思考区无法再次收起' }
+            }
+        }
+    } catch {
+        Fail "思考区检查异常：$_"
+    }
+}
+
 # ---------- 6. 收尾 ----------
 Start-Sleep -Milliseconds 500
 $proc.Refresh()
@@ -1026,10 +1252,15 @@ if ($failures.Count -gt 0) {
     foreach ($f in $failures) { Write-Output "  - $f" }
 }
 
+# 撤掉思考区检查临时加的模型与配置覆盖层（必须放在**进程关闭之后**：
+# 模型文件被后端进程占用时删不掉，本轮实测踩到过）
 if (-not $KeepOpen) {
     try { $proc.CloseMainWindow() | Out-Null } catch { }
     Start-Sleep -Seconds 2
-    $proc.Refresh(); if (-not $proc.HasExited) { $proc.Kill() }
+    $proc.Refresh(); if (-not $proc.HasExited) { try { $proc.Kill() } catch { } }
 }
+Start-Sleep -Milliseconds 800
+Remove-ProbeModelOverride
+
 if ($failures.Count -gt 0) { exit 1 }
 Write-Output "[probe] 全部通过"

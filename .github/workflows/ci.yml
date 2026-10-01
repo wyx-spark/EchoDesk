@@ -112,6 +112,14 @@ jobs:
         # 模型能力辅助（修复四）：参数量/量化解析与来源标注、能力提示、硬件推荐、
         # 生成预设、任务提示词模板、模糊提问检测、分段摘要缓存。不加载模型。
 
+      - name: Run reasoning-split test
+        shell: pwsh
+        run: python tools/test_reasoning.py
+        # 思考内容分离（模型思考内容分离）：标签分离器边界（跨 chunk / 嵌套 / 未闭合 /
+        # 孤立结束标签）、引擎双通道与兼容语义、流式协议 channel/reset/done、
+        # 历史持久化与"思考不进上下文"。全部在进程内驱动真后端代码，
+        # 不联网也不加载模型（真实模型的端到端用 --model 手动跑）。
+
       - name: Check backend imports
         shell: pwsh
         run: python -c "import sys; sys.path.insert(0, 'backend'); import main; print('import ok')"

@@ -191,11 +191,32 @@ function Test-Theme([string]$theme) {
         $win = Wait-MainWindow $proc.Id $ReadyTimeoutSec
         if ($null -eq $win) { Fail "[$theme] 主窗口未就绪"; return }
         Start-Sleep -Seconds 2   # 等欢迎语渲染完
+        # 等后端真正就绪再量：控件在"正在启动后端"期间是**禁用**的，
+        # 往禁用的输入框写测试文本会失败（The operation is not allowed on a nonenabled
+        # element），于是截到的是空输入框 —— 量出来就是"输入框文字 1.05:1"这种
+        # 与配色无关的假失败（本轮实测：浅色主题快了就过、深色主题慢一点就假失败）。
+        $ready = $false
+        $swReady = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($swReady.Elapsed.TotalSeconds -lt $ReadyTimeoutSec) {
+            $st = Find-ById $proc.Id 'StatusText'
+            if ($null -ne $st -and $st.Current.Name -eq '已就绪') { $ready = $true; break }
+            Start-Sleep -Milliseconds 300
+        }
+        if (-not $ready) {
+            Write-Output "[pixels]   [$theme] 警告：后端未在 $ReadyTimeoutSec 秒内就绪，输入框可能仍被禁用（该项可能量不到文字）"
+        }
         # 截图**之前**先把测试文本填进输入框：否则截到的空输入框只有一种颜色，
         # "输入框文字与输入框背景"这一项量不出任何东西（一直是 1:1）。
         $inputEl = Find-ById $proc.Id 'InputBox'
         if ($null -ne $inputEl) {
-            Set-ElementText $inputEl @{ Id = 'InputBox'; Text = '对比度测试 Test 123' }
+            for ($try = 1; $try -le 5; $try++) {
+                Set-ElementText $inputEl @{ Id = 'InputBox'; Text = '对比度测试 Test 123' }
+                try {
+                    $probe = $inputEl.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+                    if ($probe -eq '对比度测试 Test 123') { break }
+                } catch { }
+                Start-Sleep -Milliseconds 600
+            }
         }
         # 截图与坐标必须取"同一时刻"的一对：
         # 状态区换成 WrapPanel 后会随内容换行（能力提示一出现就多一行），

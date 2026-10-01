@@ -123,6 +123,34 @@ has produced. A segment that is merely slow is labelled slow and keeps going; th
 immediately and leaves the original text in context (no half-finished summary is injected), so you can run
 `/summarize` again whenever you like.
 
+### Thinking models: reasoning and answer are shown separately
+
+If you use a **reasoning model** (Qwen3 thinking mode, the DeepSeek-R1 family, and so on), the model thinks
+first and answers afterwards. EchoDesk keeps the two apart:
+
+* the answer area holds **only the final answer** — no more `<think>…</think>` reasoning tags mixed into it;
+* above the answer sits a collapsed **“🧠 Thinking”** region; click its header to expand or collapse it;
+* while streaming, the thinking region **expands automatically** so you can watch the model reason, and it
+  **collapses again as soon as the answer starts**. If you expanded it yourself, it is not forced shut;
+* when the model produced no reasoning this time, no empty region appears at all.
+
+Two rules worth knowing:
+
+1. **Thinking is never sent back as context.** It is display and history only. That saves context window
+   (thinking is often longer than the answer) and matches how these models are meant to be used —
+   DeepSeek-R1's own chat template keeps only what follows `</think>`.
+2. **Thinking is saved with the conversation**, so reopening EchoDesk and restoring the session brings the
+   thinking regions back (collapsed). Set `reasoning.persist` in `config.json` to change that.
+
+Two related notes:
+
+* The copy buttons (📋 / ⧉ / </> and `Ctrl+Shift+C`) copy **only the answer**; thinking is not dragged along.
+  To copy thinking, drag-select inside the expanded region, or use the `/save` export, where thinking is
+  written as a collapsible block.
+* If a model “thinks too long to answer”, the answer area says that **only thinking was produced**. That
+  usually means the generation length limit ran out: switch to the quality preset with `/preset quality`
+  (2048 tokens), raise `max_tokens` in `config.json` (default 1024), or ask a more specific question.
+
 ---
 
 ## 2. Everyday Q&A

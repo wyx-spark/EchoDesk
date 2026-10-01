@@ -3,14 +3,23 @@
 同时负责：
   * 模型加载/重载时输出当前上下文窗口（配置值 + 模型训练窗口）；
   * 按 GGUF 元数据估算 KV Cache 内存占用；
-  * 记录生成速度，供"扩展上下文后变慢"的提示使用。
+  * 记录生成速度，供"扩展上下文后变慢"的提示使用；
+  * **思考内容与最终回答的分流**（v0.2.1 模型思考内容分离 任务二/三）：
+    推理模型（Qwen3 thinking 模式、DeepSeek-R1 等）会把思考过程写在
+    ``content`` 里（标签包裹），而 llama-cpp-python 0.3.x 既没有
+    ``reasoning_format`` 也没有 ``reasoning_content`` 字段（实测见
+    ``records/v0.2.1-模型思考内容分离记录.md``），所以分流在本层用
+    :mod:`reasoning` 的标签分离器完成：``chat_stream_split`` /
+    ``chat_complete_split`` 给出双通道，``chat_stream`` / ``chat_complete``
+    保持"只给最终回答"的兼容语义（摘要、自动化等调用方天然拿不到思考内容）。
 """
 import logging
 import threading
 import time
-from typing import Dict, Iterator, List, Optional
+from typing import Dict, Iterator, List, Optional, Tuple
 
 from gguf_meta import describe_model, estimate_kv_cache_bytes, format_bytes, resolve_context_window
+from reasoning import ANSWER, ReasoningSplitter, normalize_tags, split_text
 
 log = logging.getLogger("EchoDesk.LLM")
 
@@ -37,12 +46,17 @@ class LLMEngine:
         n_threads: Optional[int] = None,
         n_batch: int = 512,
         n_gpu_layers: int = 0,
+        reasoning=None,
     ) -> None:
         self.model_path = model_path
         self.n_ctx = n_ctx
         self.n_threads = n_threads
         self.n_batch = n_batch
         self.n_gpu_layers = n_gpu_layers
+        # 思考内容分离（config.reasoning）：enabled 控制是否分流，tags 是追加标签表。
+        # 传 None（如第三方/测试构造）时按默认开启处理，与旧行为向后兼容。
+        self.reasoning_enabled = bool(getattr(reasoning, "enabled", True))
+        self.reasoning_tags = normalize_tags(getattr(reasoning, "tags", None))
         # 模型训练窗口（GGUF 元数据，不依赖加载）
         self.n_ctx_train = resolve_context_window(model_path, default=0)
         self.kv_cache_bytes = estimate_kv_cache_bytes(model_path, n_ctx)
@@ -132,7 +146,18 @@ class LLMEngine:
 
     # ---------- 对话 ----------
 
-    def chat_complete(
+    def make_splitter(self) -> Optional[ReasoningSplitter]:
+        """造一个思考标签分离器（分离关闭时返回 ``None``）。
+
+        调用方（``main.Backend.stream``）把它传给 :meth:`chat_stream_split`，
+        生成结束后就能从同一个对象上取到 ``reasoning_text`` / ``unclosed``，
+        不必让生成器额外回传状态。
+        """
+        if not self.reasoning_enabled:
+            return None
+        return ReasoningSplitter(self.reasoning_tags)
+
+    def _chat_complete_raw(
         self,
         messages: List[dict],
         temperature: float = 0.7,
@@ -140,7 +165,7 @@ class LLMEngine:
         top_p: Optional[float] = None,
         repeat_penalty: Optional[float] = None,
     ) -> str:
-        """执行一次非流式对话补全，返回助手回复全文。"""
+        """底层非流式补全：返回模型**原样**输出（可能带思考标签）。"""
         kwargs: Dict[str, object] = {
             "messages": messages,
             "stream": False,
@@ -156,7 +181,40 @@ class LLMEngine:
         response = self.llm.create_chat_completion(**kwargs)
         return response["choices"][0]["message"]["content"]
 
-    def chat_stream(
+    def chat_complete_split(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        top_p: Optional[float] = None,
+        repeat_penalty: Optional[float] = None,
+    ) -> Tuple[str, str]:
+        """非流式补全，返回 ``(思考内容, 最终回答)``。"""
+        text = self._chat_complete_raw(messages, temperature, max_tokens, top_p, repeat_penalty)
+        if not self.reasoning_enabled:
+            return "", text or ""
+        thinking, answer = split_text(text or "", self.reasoning_tags)
+        return thinking, answer
+
+    def chat_complete(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        top_p: Optional[float] = None,
+        repeat_penalty: Optional[float] = None,
+    ) -> str:
+        """执行一次非流式对话补全，返回**最终回答**全文。
+
+        思考内容被剥掉（v0.2.1 模型思考内容分离）：摘要、自动化、上下文压缩
+        这些调用方要的是结论，把思考过程喂进去只会白占 token。
+        需要思考内容请用 :meth:`chat_complete_split`。
+        """
+        return self.chat_complete_split(
+            messages, temperature, max_tokens, top_p, repeat_penalty
+        )[1]
+
+    def _chat_stream_raw(
         self,
         messages: List[dict],
         temperature: float = 0.7,
@@ -165,9 +223,10 @@ class LLMEngine:
         top_p: Optional[float] = None,
         repeat_penalty: Optional[float] = None,
     ) -> Iterator[str]:
-        """执行流式对话补全，逐个产出增量文本片段；stop_event 置位时提前结束。
+        """底层流式补全：原样产出片段（含思考标签），并统计生成速度。
 
-        同时统计生成长度与耗时，写入 last_tokens / last_elapsed / last_tps。
+        速度统计刻意把思考内容也算进 ``last_tokens``：思考同样是模型生成的
+        输出，"变慢了"要如实反映，不能因为分流就少算一截。
         """
         started = time.perf_counter()
         produced = 0
@@ -195,6 +254,58 @@ class LLMEngine:
             self.last_elapsed = time.perf_counter() - started
             self.last_tokens = produced
             self.last_tps = (produced / self.last_elapsed) if self.last_elapsed > 0 else 0.0
+
+    def chat_stream_split(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        stop_event: Optional[threading.Event] = None,
+        top_p: Optional[float] = None,
+        repeat_penalty: Optional[float] = None,
+        splitter: Optional[ReasoningSplitter] = None,
+    ) -> Iterator[Tuple[str, str]]:
+        """流式补全，产出 ``(通道, 文本)`` 事件。
+
+        通道取值见 :mod:`reasoning`：``reasoning``（思考）/ ``answer``（回答）/
+        ``reset``（此前发到回答通道的内容其实属于思考，调用方需把回答区作废）。
+
+        边界处理（标签跨 chunk、嵌套、未闭合、孤立结束标签）全部由
+        :class:`reasoning.ReasoningSplitter` 负责，本方法只做接线。
+        """
+        if splitter is None:
+            splitter = self.make_splitter()
+        if splitter is None:
+            # 分离关闭：思考内容不再分流，全部按回答通道直出（旧行为）
+            for piece in self._chat_stream_raw(messages, temperature, max_tokens,
+                                               stop_event, top_p, repeat_penalty):
+                yield (ANSWER, piece)
+            return
+        for piece in self._chat_stream_raw(messages, temperature, max_tokens,
+                                           stop_event, top_p, repeat_penalty):
+            for event in splitter.feed(piece):
+                yield event
+        for event in splitter.close():
+            yield event
+
+    def chat_stream(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        stop_event: Optional[threading.Event] = None,
+        top_p: Optional[float] = None,
+        repeat_penalty: Optional[float] = None,
+    ) -> Iterator[str]:
+        """执行流式对话补全，逐个产出**最终回答**的增量片段。
+
+        思考内容已被剥掉（分段摘要、自动化等调用方拿到的就是干净答案）。
+        需要把思考过程单独展示时用 :meth:`chat_stream_split`。
+        """
+        for channel, text in self.chat_stream_split(
+                messages, temperature, max_tokens, stop_event, top_p, repeat_penalty):
+            if channel == ANSWER:
+                yield text
 
     def speed_hint(self, min_tps: float = 3.0, threshold_tokens: int = 64) -> str:
         """生成速度明显偏慢时返回提示文本（否则返回空串）。
@@ -232,13 +343,16 @@ class LazyLLMEngine(LLMEngine):
 
     def __init__(self, n_ctx: int = 8192, verbose: bool = False,
                  n_threads: Optional[int] = None, n_batch: int = 512,
-                 n_gpu_layers: int = 0) -> None:
+                 n_gpu_layers: int = 0, reasoning=None) -> None:
         # 刻意**不**调用 super().__init__：那条路会立刻 import llama_cpp 并加载模型。
         self.model_path = ""
         self.n_ctx = int(n_ctx or 0)
         self.n_threads = n_threads
         self.n_batch = n_batch
         self.n_gpu_layers = n_gpu_layers
+        # 思考内容分离：未加载模型时也要先记住配置，热加载后立刻生效
+        self.reasoning_enabled = bool(getattr(reasoning, "enabled", True))
+        self.reasoning_tags = normalize_tags(getattr(reasoning, "tags", None))
         self.n_ctx_train = 0
         self.kv_cache_bytes = 0
         self.last_tps: float = 0.0
@@ -312,6 +426,18 @@ class LazyLLMEngine(LLMEngine):
             raise NoModelError("尚未加载模型")
         return super().chat_complete(messages, temperature, max_tokens, top_p, repeat_penalty)
 
+    def chat_complete_split(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        top_p: Optional[float] = None,
+        repeat_penalty: Optional[float] = None,
+    ) -> Tuple[str, str]:
+        if not self.ready:
+            raise NoModelError("尚未加载模型")
+        return super().chat_complete_split(messages, temperature, max_tokens, top_p, repeat_penalty)
+
     def chat_stream(
         self,
         messages: List[dict],
@@ -324,6 +450,21 @@ class LazyLLMEngine(LLMEngine):
         if not self.ready:
             raise NoModelError("尚未加载模型")
         return super().chat_stream(messages, temperature, max_tokens, stop_event, top_p, repeat_penalty)
+
+    def chat_stream_split(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        stop_event: Optional[threading.Event] = None,
+        top_p: Optional[float] = None,
+        repeat_penalty: Optional[float] = None,
+        splitter: Optional[ReasoningSplitter] = None,
+    ) -> Iterator[Tuple[str, str]]:
+        if not self.ready:
+            raise NoModelError("尚未加载模型")
+        return super().chat_stream_split(messages, temperature, max_tokens, stop_event,
+                                         top_p, repeat_penalty, splitter)
 
     def count_tokens(self, text: str) -> int:
         """未加载模型时按"约 2 字符 1 token"粗估。

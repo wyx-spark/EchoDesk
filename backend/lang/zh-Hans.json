@@ -909,7 +909,9 @@
     "title": "# EchoDesk 对话记录",
     "mode": "- 模式：{mode}",
     "user": "👤 用户",
-    "assistant": "🤖 助手"
+    "assistant": "🤖 助手",
+    "reasoning": "🧠 思考过程（点击展开）",
+    "reasoning_truncated": "\n\n…（思考内容过长，导出时按配置截断）"
   },
   "summary": {
     "progress.prepare": "📝 准备分段摘要：共 {chunks} 段，原文 {chars} 字符。",

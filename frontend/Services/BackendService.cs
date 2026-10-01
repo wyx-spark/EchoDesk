@@ -130,8 +130,12 @@ public sealed class BackendService : IDisposable
     /// <summary>启动时自动恢复的会话轮数。</summary>
     public int RestoredCount { get; private set; }
 
-    /// <summary>启动时恢复的会话历史（role/content），供界面展示。</summary>
-    public List<(string Role, string Content)> RestoredHistory { get; } = new();
+    /// <summary>
+    /// 启动时恢复的会话历史（role/content/reasoning），供界面展示。
+    /// v0.2.1 模型思考内容分离：`reasoning` 是该轮助手回复的思考内容（
+    /// 老会话或普通模型没有这个字段，此时为空串），界面据此重建折叠的思考区。
+    /// </summary>
+    public List<(string Role, string Content, string Reasoning)> RestoredHistory { get; } = new();
 
     /// <summary>
     /// 推理是否可用（v0.2.1 综合优化 任务一）。
@@ -273,11 +277,18 @@ public sealed class BackendService : IDisposable
     /// 发送流式请求：每个 delta 片段通过 onDelta 回调增量展示，返回完整回复文本；
     /// onContext 在 done 行携带 used/limit 时回调（用于刷新上下文占用）。
     /// onEvent（v0.2.1 综合优化 任务四）：每一条应答都以 (type, root) 交给调用方，
-    /// 用于处理 delta 之外的**结构化进度**（`summary_progress` 等）。
+    /// 用于处理 delta 之外的**结构化进度**（`summary_progress` 等）。**v0.2.1 模型
+    /// 思考内容分离**：还在 `done` 行前调用一次 `onEvent("done", root)`，调用方据此
+    /// 拿到 `reasoning`（思考全文）、`reasoning_unclosed` 等字段。
     /// **注意**：`root` 只在这个回调期间有效（JsonDocument 随后即释放），
     /// 需要留用请当场取出值，不要保存 JsonElement。
     /// 流式请求可以被 cancellationToken 取消（界面「停止」按钮），默认不设空闲超时
     /// ——自动化可能因等待人工输入（验证码）长时间没有新片段。
+    /// onDeltaChannel（v0.2.1 模型思考内容分离）：带 `channel` 字段的 delta 走这里
+    /// ——`("reasoning", text, false)` 思考内容、`("answer", text, false)` 最终回答、
+    /// `("answer", "", true)` 作废回答区（此前发的内容其实属于思考，调用方需把已
+    /// 累积的回答文本搬到思考区）。没有 `channel` 的旧式 delta（进度/摘要等）仍走
+    /// onDelta，两条路互不干扰。
     /// </summary>
     public async Task<string> SendStreamRequestAsync(
         object request,
@@ -286,7 +297,8 @@ public sealed class BackendService : IDisposable
         TimeSpan? queueTimeout = null,
         TimeSpan? idleTimeout = null,
         CancellationToken cancellationToken = default,
-        Action<string, JsonElement>? onEvent = null)
+        Action<string, JsonElement>? onEvent = null,
+        Action<string, string, bool>? onDeltaChannel = null)
     {
         EnsureRunning();
         await AcquireGateAsync(queueTimeout, cancellationToken);
@@ -315,8 +327,20 @@ public sealed class BackendService : IDisposable
                 switch (type)
                 {
                     case "delta":
-                        full.Append(content);
-                        onDelta?.Invoke(content);
+                        if (root.TryGetProperty("channel", out JsonElement channelEl)
+                            && channelEl.ValueKind == JsonValueKind.String)
+                        {
+                            // 双通道（思考 / 回答）：不累加进 full，done 行会给出权威全文
+                            string channel = channelEl.GetString() ?? "answer";
+                            bool reset = root.TryGetProperty("reset", out JsonElement resetEl)
+                                         && resetEl.ValueKind == JsonValueKind.True;
+                            onDeltaChannel?.Invoke(channel, content, reset);
+                        }
+                        else
+                        {
+                            full.Append(content);
+                            onDelta?.Invoke(content);
+                        }
                         break;
                     case "done":
                         if (onContext is not null
@@ -325,6 +349,8 @@ public sealed class BackendService : IDisposable
                             && usedEl.ValueKind == JsonValueKind.Number
                             && limitEl.ValueKind == JsonValueKind.Number)
                             onContext(usedEl.GetInt32(), limitEl.GetInt32());
+                        // 让调用方在 JsonDocument 释放前取走 done 行的附加字段
+                        onEvent?.Invoke("done", root);
                         return content.Length > 0 ? content : full.ToString();
                     case "error":
                         throw new InvalidOperationException(content);
@@ -571,8 +597,10 @@ public sealed class BackendService : IDisposable
             {
                 string role = m.TryGetProperty("role", out JsonElement rl) ? rl.GetString() ?? "" : "";
                 string content = m.TryGetProperty("content", out JsonElement ct) ? ct.GetString() ?? "" : "";
+                // 思考内容（v0.2.1 模型思考内容分离）：老会话没有这个字段，取不到就是空串
+                string reasoning = m.TryGetProperty("reasoning", out JsonElement rs) ? rs.GetString() ?? "" : "";
                 if (role.Length > 0)
-                    RestoredHistory.Add((role, content));
+                    RestoredHistory.Add((role, content, reasoning));
             }
         }
     }
