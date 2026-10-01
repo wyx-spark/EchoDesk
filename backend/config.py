@@ -264,6 +264,19 @@ class ModelHubConfig(BaseModel):
     download_retries: int = Field(default=3, ge=1, le=10)
     search_limit: int = Field(default=20, ge=1, le=100)
 
+    # ---------- v0.2.1 模型市场优化 ----------
+    # 自动加载全部结果时的安全上限（任务二）：三个闸门任一触发即停并告知
+    # "已加载 N 条，还有更多"。关键词过宽（如空关键词 = 整个模型库）时不至于失控。
+    max_items: int = Field(default=5000, ge=20, le=20000)
+    max_requests: int = Field(default=8, ge=1, le=50)
+    max_seconds: float = Field(default=90.0, ge=5.0, le=600.0)
+    # 本地分页每页条数（任务三：默认 20，界面可选 20/50/100）
+    page_size: int = Field(default=20, ge=5, le=200)
+    # 搜索结果磁盘缓存（任务二）：留空 = <用户数据目录>/cache/model_hub。
+    # 0 表示每次搜索都重新拉取（缓存立即过期）。
+    search_cache_dir: str = ""
+    search_cache_ttl_hours: int = Field(default=6, ge=0, le=168)
+
 
 class MarketplaceConfig(BaseModel):
     """技能/插件市场配置（任务五 5.6）。"""

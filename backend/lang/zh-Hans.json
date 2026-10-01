@@ -573,7 +573,20 @@
     "uninstall.done_removed": "已删除 {name}并更新模型库。",
     "uninstall.done_cleaned": "已删除 {name}（文件不存在，已清理记录）。",
     "note.default_model": "默认模型（config.json 里配置的那个）",
-    "note.local_model": "本地已下载"
+    "note.local_model": "本地已下载",
+    "search.count_plain": "共 {count} 个结果。",
+    "downloads.all_time": "历史总下载量",
+    "downloads.fallback": "最近 30 天下载量（该条目缺少历史总量字段，已回退并标注）",
+    "load.progress": "正在加载：已取回 {loaded} 条（第 {pages} 页，用时 {elapsed} 秒）…",
+    "load.more": "已加载 {loaded} 条，还有更多{reason}。可点「继续加载」取回剩余结果。",
+    "load.done": "已取完全部 {count} 条结果。",
+    "load.cached": "已从本地缓存载入 {loaded} 条结果（可直接筛选与翻页）。",
+    "load.aborted": "已停止加载（已取回 {loaded} 条结果）。",
+    "load.error": "加载中断（已取回 {loaded} 条）：{error}",
+    "load.cap_items": "（已达到单次加载条数上限）",
+    "load.cap_requests": "（已达到单次请求次数上限）",
+    "load.cap_seconds": "（已达到单次加载耗时上限）",
+    "query.needs_load": "尚未加载搜索结果，请先搜索。"
   },
   "automation": {
     "disabled": "自动化未启用",

@@ -121,7 +121,9 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
@@ -158,7 +160,7 @@
                                 ToolTip="在文件资源管理器中打开本地模型库目录"/>
                     </Grid>
 
-                    <!-- 搜索行 -->
+                    <!-- 搜索行（任务二：关键字回车/按钮触发"取全部结果"） -->
                     <Grid Grid.Row="2" Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -166,24 +168,84 @@
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <TextBox x:Name="HubSearchBox" Grid.Column="0" Padding="6,4"
-                                 TextChanged="HubSearchBox_TextChanged"
-                                 ToolTip="按模型名称/作者搜索（输入后 400ms 自动搜索）"/>
-                        <ComboBox x:Name="HubSortCombo" Grid.Column="1" Width="130" Margin="8,0,0,0"
-                                  SelectionChanged="HubFilter_Changed"/>
-                        <ComboBox x:Name="HubQuantCombo" Grid.Column="2" Width="110" Margin="8,0,0,0"
-                                  SelectionChanged="HubFilter_Changed" IsEditable="True"
-                                  ToolTip="按量化格式筛选（如 Q4_K_M，可留空）"/>
-                        <TextBox x:Name="HubMinDownloadsBox" Grid.Column="3" Width="90" Margin="8,0,0,0"
-                                  Padding="6,4" ToolTip="最低下载量（留空或 0 表示不限制）"/>
-                        <Button x:Name="HubSearchButton" Grid.Column="4" Margin="8,0,0,0" Padding="12,4"
-                                Content="搜索" Style="{StaticResource RoundButton}"
-                                Click="HubSearchButton_Click"/>
+                                 KeyDown="HubSearchBox_KeyDown"
+                                 svc:Loc.TipKey="settings.model.tipKeyword"/>
+                        <ComboBox x:Name="HubSortCombo" Grid.Column="1" Width="128" Margin="8,0,0,0"
+                                  SelectionChanged="HubSortChanged" MinWidth="104"
+                                  svc:Loc.TipKey="settings.model.tipSort"/>
+                        <Button x:Name="HubSearchButton" Grid.Column="2" Margin="8,0,0,0" Padding="12,4"
+                                Style="{StaticResource RoundButton}"
+                                Click="HubSearchButton_Click"
+                                svc:Loc.Key="settings.model.actionSearch"
+                                svc:Loc.TipKey="settings.model.tipSearch"/>
+                        <Button x:Name="HubRefreshButton" Grid.Column="3" Margin="6,0,0,0" Padding="12,4"
+                                Style="{StaticResource RoundButton}"
+                                Click="HubRefreshButton_Click"
+                                svc:Loc.Key="settings.model.actionRefresh"
+                                svc:Loc.TipKey="settings.model.tipRefresh"/>
+                        <Button x:Name="HubMoreButton" Grid.Column="4" Margin="6,0,0,0" Padding="12,4"
+                                Style="{StaticResource RoundButton}"
+                                Visibility="Collapsed" Click="HubMoreButton_Click"
+                                svc:Loc.Key="settings.model.actionMore"
+                                svc:Loc.TipKey="settings.model.tipMore"/>
+                        <Button x:Name="HubStopButton" Grid.Column="5" Margin="6,0,0,0" Padding="12,4"
+                                Style="{StaticResource RoundButton}"
+                                Visibility="Collapsed" Click="HubStopButton_Click"
+                                svc:Loc.Key="settings.model.actionStop"
+                                svc:Loc.TipKey="settings.model.tipStop"/>
                     </Grid>
 
-                    <!-- 结果列表 + 详情面板 -->
-                    <Border Grid.Row="3" CornerRadius="8"
+                    <!-- 本地筛选 + 结构化筛选（任务四、五）：改动只重算本地结果，不重新请求远端 -->
+                    <Expander x:Name="HubFilterExpander" Grid.Row="3" Margin="0,0,0,8"
+                              IsExpanded="False">
+                        <Expander.Header>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="🎛️ 本地筛选与排序" FontWeight="Bold"
+                                           svc:Loc.Key="settings.model.filterTitle"/>
+                                <TextBlock x:Name="HubFilterSummary" Margin="6,0,0,0" FontSize="11"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource SubTextBrush}"/>
+                            </StackPanel>
+                        </Expander.Header>
+                        <StackPanel Margin="0,6,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="本地筛选" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource SubTextBrush}"
+                                           svc:Loc.Key="settings.model.localFilterLabel"/>
+                                <TextBox x:Name="HubFilterBox" Width="240" Margin="6,0,0,0" Padding="6,4"
+                                         TextChanged="HubFilterBox_TextChanged"
+                                         svc:Loc.TipKey="settings.model.tipLocalFilter"/>
+                                <TextBlock x:Name="HubFilterHint" Margin="8,0,0,0" FontSize="11"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource SubTextBrush}"/>
+                            </StackPanel>
+
+                            <WrapPanel x:Name="HubParamFacet" Margin="0,6,0,0"/>
+                            <WrapPanel x:Name="HubQuantFacet" Margin="0,4,0,0"/>
+                            <WrapPanel x:Name="HubUpdatedFacet" Margin="0,4,0,0"/>
+                            <WrapPanel x:Name="HubFlagFacet" Margin="0,6,0,0">
+                                <TextBlock x:Name="HubInstalledLabel" Text="下载状态" VerticalAlignment="Center"
+                                           FontSize="11" Margin="0,0,6,0"
+                                           Foreground="{DynamicResource SubTextBrush}"
+                                           svc:Loc.Key="settings.model.facetInstalled"/>
+                                <ComboBox x:Name="HubInstalledCombo" Width="130" Margin="0,0,12,0"
+                                          SelectionChanged="HubFacetCombo_Changed"/>
+                                <CheckBox x:Name="HubRecommendedCheck" VerticalAlignment="Center"
+                                          Content="只看推荐" FontSize="11"
+                                          Checked="HubFacetCheck_Click" Unchecked="HubFacetCheck_Click"/>
+                                <Button x:Name="HubFilterResetButton" Padding="10,3"
+                                        FontSize="11" Margin="12,0,0,0"
+                                        Style="{StaticResource RoundButton}" Click="HubFilterReset_Click"
+                                        svc:Loc.Key="settings.model.actionResetFilter"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Expander>
+
+                    <!-- 结果列表 + 详情面板（列表区域独立滚动） -->
+                    <Border Grid.Row="4" CornerRadius="8"
                             Background="{DynamicResource InputBackground}"
                             BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
                         <Grid>
@@ -210,8 +272,9 @@
                                         <TextBlock x:Name="HubDetailTitle" Grid.Column="0" FontWeight="Bold"
                                                    TextWrapping="Wrap"
                                                    Foreground="{DynamicResource AccentBrush}"/>
-                                        <Button Grid.Column="1" Content="关闭详情" Padding="10,3" FontSize="11"
-                                                Style="{StaticResource RoundButton}" Click="HubCloseDetail_Click"/>
+                                        <Button Grid.Column="1" Padding="10,3" FontSize="11"
+                                                Style="{StaticResource RoundButton}" Click="HubCloseDetail_Click"
+                                                svc:Loc.Key="settings.model.actionCloseDetail"/>
                                     </Grid>
                                     <ListBox x:Name="HubFileList" Grid.Row="1" MaxHeight="150" Margin="0,6,0,0"
                                              Background="Transparent" BorderThickness="0"
@@ -242,62 +305,161 @@
                             </Border>
 
                             <Grid Grid.Row="1">
-                                <ListBox x:Name="HubResultList" Background="Transparent" BorderThickness="0"
-                                         Margin="2"
-                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                         MouseDoubleClick="HubResultList_MouseDoubleClick">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid Margin="6,5">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <StackPanel Grid.Column="0">
-                                                    <StackPanel Orientation="Horizontal">
-                                                        <TextBlock Text="{Binding Tag}" Margin="0,0,4,0"
-                                                                   FontSize="12" FontWeight="Bold"
-                                                                   Foreground="{DynamicResource AccentBrush}"
-                                                                   VerticalAlignment="Center"/>
-                                                        <TextBlock Text="{Binding Name}" FontWeight="Bold"
-                                                                   Foreground="{DynamicResource AccentBrush}"/>
-                                                        <TextBlock Text="{Binding Badge}" Margin="8,0,0,0" FontSize="11"
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+
+                                <!-- 默认模型：钉在最上方、标注来源，**不计入下面的分页条数**（任务七） -->
+                                <Border x:Name="HubPinnedRow" Grid.Row="0" Visibility="Collapsed"
+                                        Margin="6,6,6,0" CornerRadius="6" Padding="8,5"
+                                        Background="{DynamicResource WindowBackground}"
+                                        BorderBrush="{DynamicResource AccentBrush}" BorderThickness="1">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock x:Name="HubPinnedTag" FontSize="11" FontWeight="Bold"
+                                                           Margin="0,0,4,0" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource AccentBrush}"/>
+                                                <TextBlock x:Name="HubPinnedName" FontWeight="Bold"
+                                                           Foreground="{DynamicResource AccentBrush}"/>
+                                            </StackPanel>
+                                            <TextBlock x:Name="HubPinnedMeta" FontSize="10"
+                                                       TextWrapping="Wrap" MaxWidth="520"
+                                                       Foreground="{DynamicResource SubTextBrush}"/>
+                                        </StackPanel>
+                                        <Button x:Name="HubPinnedDetailButton" Grid.Column="1" Padding="10,3"
+                                                FontSize="11" VerticalAlignment="Center"
+                                                Style="{StaticResource RoundButton}"
+                                                Click="HubPinnedDetail_Click"
+                                                svc:Loc.Key="settings.model.actionDetail"/>
+                                    </Grid>
+                                </Border>
+
+                                <Grid Grid.Row="1">
+                                    <ListBox x:Name="HubResultList" Background="Transparent" BorderThickness="0"
+                                             Margin="2"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             MouseDoubleClick="HubResultList_MouseDoubleClick">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="6,5">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Grid.Column="0">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="{Binding Tag}" Margin="0,0,4,0"
+                                                                       FontSize="12" FontWeight="Bold"
+                                                                       Foreground="{DynamicResource AccentBrush}"
+                                                                       VerticalAlignment="Center"/>
+                                                            <TextBlock Text="{Binding Name}" FontWeight="Bold"
+                                                                       Foreground="{DynamicResource AccentBrush}"/>
+                                                            <TextBlock Text="{Binding Badge}" Margin="8,0,0,0" FontSize="11"
+                                                                       Foreground="{DynamicResource SubTextBrush}"/>
+                                                        </StackPanel>
+                                                        <TextBlock Text="{Binding Meta}" FontSize="10"
+                                                                   TextWrapping="Wrap" MaxWidth="540"
                                                                    Foreground="{DynamicResource SubTextBrush}"/>
                                                     </StackPanel>
-                                                    <TextBlock Text="{Binding Meta}" FontSize="10"
-                                                               TextWrapping="Wrap" MaxWidth="540"
-                                                               Foreground="{DynamicResource SubTextBrush}"/>
-                                                </StackPanel>
-                                                <StackPanel Grid.Column="1" Orientation="Horizontal"
-                                                            VerticalAlignment="Center">
-                                                    <Button Content="详情" Padding="10,3" FontSize="11"
-                                                            Style="{StaticResource RoundButton}"
-                                                            Click="HubDetail_Click" Tag="{Binding}"/>
-                                                </StackPanel>
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                                <TextBlock x:Name="HubEmptyText"
-                                           Text="输入关键词搜索，或直接点「搜索」浏览热门 GGUF 模型"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center"
-                                           Foreground="{DynamicResource SubTextBrush}"
-                                           TextWrapping="Wrap" MaxWidth="460" TextAlignment="Center"/>
+                                                    <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                                                VerticalAlignment="Center">
+                                                        <Button Padding="10,3" FontSize="11"
+                                                                Style="{StaticResource RoundButton}"
+                                                                Click="HubDetail_Click" Tag="{Binding}"
+                                                                svc:Loc.Key="settings.model.actionDetail"/>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+
+                                    <!-- 空状态：区分"还没搜"与"本地筛完没结果"（后者给重新搜索远端的出口） -->
+                                    <StackPanel x:Name="HubEmptyPanel"
+                                                HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <TextBlock x:Name="HubEmptyText"
+                                                   Text="输入关键词搜索，或直接点「搜索」浏览热门 GGUF 模型"
+                                                   Foreground="{DynamicResource SubTextBrush}"
+                                                   TextWrapping="Wrap" MaxWidth="460" TextAlignment="Center"/>
+                                        <Button x:Name="HubRemoteRetryButton" Margin="0,8,0,0" Padding="12,4"
+                                                HorizontalAlignment="Center"
+                                                Visibility="Collapsed"
+                                                Style="{StaticResource RoundButton}"
+                                                Click="HubSearchButton_Click"
+                                                svc:Loc.Key="settings.model.researchRemote"/>
+                                    </StackPanel>
+                                </Grid>
                             </Grid>
                         </Grid>
                     </Border>
 
-                    <!-- 下载进度 + 模型 Tab 状态行 -->
-                    <StackPanel Grid.Row="4" Margin="0,8,0,0">
+                    <!-- 分页控件（任务三）：固定在结果列表**下方**，不随列表滚动；窄窗口下自动换行 -->
+                    <Border Grid.Row="5" Margin="0,6,0,0" CornerRadius="8" Padding="8,4"
+                            Background="{DynamicResource InputBackground}"
+                            BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
+                        <WrapPanel x:Name="HubPagerPanel" Orientation="Horizontal">
+                            <TextBlock x:Name="HubPageInfoText" VerticalAlignment="Center" FontSize="11"
+                                       Margin="0,2,0,2" FontWeight="Bold"/>
+                            <TextBlock x:Name="HubTotalText" VerticalAlignment="Center" FontSize="11"
+                                       Margin="10,2,0,2" Foreground="{DynamicResource SubTextBrush}"/>
+                            <Button x:Name="HubFirstPageButton" Padding="8,3" FontSize="11"
+                                    Margin="10,2,0,2" Style="{StaticResource RoundButton}"
+                                    Click="HubFirstPage_Click"
+                                    svc:Loc.Key="settings.model.pageFirst"/>
+                            <Button x:Name="HubPrevPageButton" Padding="8,3" FontSize="11"
+                                    Margin="4,2,0,2" Style="{StaticResource RoundButton}"
+                                    Click="HubPrevPage_Click"
+                                    svc:Loc.Key="settings.model.pagePrev"/>
+                            <TextBlock x:Name="HubJumpLabel" Text="跳至" VerticalAlignment="Center" FontSize="11"
+                                       Margin="10,2,0,2" Foreground="{DynamicResource SubTextBrush}"
+                                       svc:Loc.Key="settings.model.pageJumpLabel"/>
+                            <TextBox x:Name="HubPageBox" Width="52" Padding="4,2" FontSize="11" Margin="4,2,0,2"
+                                     KeyDown="HubPageBox_KeyDown"
+                                     svc:Loc.TipKey="settings.model.tipPageBox"/>
+                            <Button x:Name="HubGoPageButton" Padding="8,3" FontSize="11"
+                                    Margin="4,2,0,2" Style="{StaticResource RoundButton}"
+                                    Click="HubGoPage_Click"
+                                    svc:Loc.Key="settings.model.pageGo"/>
+                            <Button x:Name="HubNextPageButton" Padding="8,3" FontSize="11"
+                                    Margin="10,2,0,2" Style="{StaticResource RoundButton}"
+                                    Click="HubNextPage_Click"
+                                    svc:Loc.Key="settings.model.pageNext"/>
+                            <Button x:Name="HubLastPageButton" Padding="8,3" FontSize="11"
+                                    Margin="4,2,0,2" Style="{StaticResource RoundButton}"
+                                    Click="HubLastPage_Click"
+                                    svc:Loc.Key="settings.model.pageLast"/>
+                            <TextBlock x:Name="HubPageSizeLabel" Text="每页" VerticalAlignment="Center" FontSize="11"
+                                       Margin="12,2,0,2" Foreground="{DynamicResource SubTextBrush}"
+                                       svc:Loc.Key="settings.model.pageSizeLabel"/>
+                            <ComboBox x:Name="HubPageSizeCombo" Width="66" Margin="4,2,0,2" FontSize="11"
+                                      SelectionChanged="HubPageSize_Changed"/>
+                            <!-- 页码相关提示放在分页控件旁边而不是筛选面板里：筛选面板默认折叠，
+                                 页码填错时用户根本看不到提示（UI 探针实测到过）。 -->
+                            <TextBlock x:Name="HubPagerHint" VerticalAlignment="Center" FontSize="11"
+                                       Margin="6,2,0,2" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource SubTextBrush}"/>
+                        </WrapPanel>
+                    </Border>
+
+                    <!-- 加载进度 + 下载进度 + 状态行 -->
+                    <StackPanel Grid.Row="6" Margin="0,8,0,0">
+                        <ProgressBar x:Name="HubLoadProgressBar" Height="4" Minimum="0" Maximum="100"
+                                     Visibility="Collapsed"/>
                         <ProgressBar x:Name="HubProgressBar" Height="8" Minimum="0" Maximum="100"
                                      Visibility="Collapsed"/>
                         <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                             <TextBlock x:Name="HubProgressText" FontSize="11" VerticalAlignment="Center"
                                        Foreground="{DynamicResource SubTextBrush}" TextWrapping="Wrap"
                                        MaxWidth="520"/>
-                            <Button x:Name="HubCancelButton" Content="取消下载" Padding="10,3" FontSize="11"
+                            <Button x:Name="HubCancelButton" Padding="10,3" FontSize="11"
                                     Margin="10,0,0,0" Visibility="Collapsed"
-                                    Style="{StaticResource RoundButton}" Click="HubCancelButton_Click"/>
+                                    Style="{StaticResource RoundButton}" Click="HubCancelButton_Click"
+                                    svc:Loc.Key="settings.model.actionCancelDownload"/>
                         </StackPanel>
                         <TextBlock x:Name="HubStatusText" Margin="0,4,0,0" FontSize="11"
                                    TextWrapping="Wrap" Foreground="{DynamicResource SubTextBrush}"
@@ -305,7 +467,7 @@
                     </StackPanel>
 
                     <!-- 模型库 -->
-                    <Grid Grid.Row="5" Margin="0,10,0,0">
+                    <Grid Grid.Row="7" Margin="0,10,0,0">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
@@ -320,11 +482,13 @@
                             <StackPanel Grid.Column="1" Orientation="Horizontal">
                                 <!-- 任务二：手工放入 .gguf 后的入口（扫描到即可加载，无需重启程序） -->
                                 <Button x:Name="HubRescanButton" Padding="12,3" FontSize="11" Margin="0,0,8,0"
-                                        Content="重新扫描模型文件夹" Style="{StaticResource RoundButton}"
-                                        Click="HubRescanButton_Click"/>
+                                        Style="{StaticResource RoundButton}"
+                                        Click="HubRescanButton_Click"
+                                        svc:Loc.Key="settings.model.actionRescan"/>
                                 <Button x:Name="HubRegistryRefreshButton" Padding="12,3" FontSize="11"
-                                        Content="刷新模型库" Style="{StaticResource RoundButton}"
-                                        Click="HubRegistryRefreshButton_Click"/>
+                                        Style="{StaticResource RoundButton}"
+                                        Click="HubRegistryRefreshButton_Click"
+                                        svc:Loc.Key="settings.model.actionRefreshRegistry"/>
                             </StackPanel>
                         </Grid>
                         <Border Grid.Row="1" Margin="0,6,0,0" CornerRadius="8" MaxHeight="150"
@@ -359,10 +523,11 @@
                                                     FontSize="11" Margin="8,0,0,0" IsEnabled="{Binding CanLoad}"
                                                     Style="{StaticResource RoundButton}"
                                                     Click="HubLoad_Click" Tag="{Binding}"/>
-                                            <Button Grid.Column="3" Content="删除" Padding="10,3" FontSize="11"
+                                            <Button Grid.Column="3" Padding="10,3" FontSize="11"
                                                     Margin="8,0,0,0" IsEnabled="{Binding CanDelete}"
                                                     Style="{StaticResource RoundButton}"
-                                                    Click="HubDelete_Click" Tag="{Binding}"/>
+                                                    Click="HubDelete_Click" Tag="{Binding}"
+                                                    svc:Loc.Key="settings.model.actionDelete"/>
                                         </Grid>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>

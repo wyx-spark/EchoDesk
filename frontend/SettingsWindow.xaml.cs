@@ -31,7 +31,11 @@ public sealed class MarketItem
     public bool CanAct => Installed || Verified;
 }
 
-/// <summary>模型选择栏：搜索结果项（新增四；任务三加了推荐/默认标记）。</summary>
+/// <summary>模型选择栏：搜索结果项（新增四；任务三加了推荐/默认标记）。
+///
+/// v0.2.1 模型市场优化后新增了分页/筛选需要展示的字段：
+/// 下载量口径、参数量、量化代码、更新时间与来源标注。
+/// </summary>
 public sealed class HubModelItem
 {
     public string Repo { get; init; } = "";
@@ -137,10 +141,11 @@ public partial class SettingsWindow : Window
     private bool _emojiSyncing;
 
     // ---------- 模型选择栏状态（新增四） ----------
-    private readonly List<HubModelItem> _hubItems = new();
+    // 市场搜索/筛选/分页的状态与逻辑都在 SettingsWindow.Market.cs
+    // （v0.2.1 模型市场优化：分页控件 + 本地实时筛选 + 结构化筛选器 + 四种排序，
+    //  单开一个 partial 文件才放得下），这里只留下载与本地模型库要用的几个字段。
     private readonly List<HubFileItem> _hubFiles = new();
     private readonly List<HubRegistryItem> _hubRegistry = new();
-    private readonly DispatcherTimer _hubDebounce;
     private bool _downloading;
     private bool _suppressHubFilterEvents;
 
@@ -189,28 +194,14 @@ public partial class SettingsWindow : Window
             _ = SearchMarketAsync();
         };
 
-        // 模型选择栏：搜索防抖 + 排序/量化筛选项（构造期间静默，避免触发请求）
+        // 模型选择栏：排序/数据源下拉项 + 分页与筛选控件（构造期间静默，避免触发请求）
         _suppressHubFilterEvents = true;
-        HubSortCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sortDownloads", "下载量最多"), Tag = "downloads" });
-        HubSortCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sortUpdated", "最近更新"), Tag = "updated" });
-        HubSortCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sortLikes", "点赞最多"), Tag = "likes" });
-        HubSortCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sortName", "名称"), Tag = "name" });
-        HubSortCombo.SelectedIndex = 0;
-        foreach (string quant in new[] { "", "Q4_K_M", "Q4_0", "Q5_K_M", "Q8_0", "Q2_K", "F16" })
-            HubQuantCombo.Items.Add(quant);
-        HubQuantCombo.SelectedIndex = 0;
+        InitHubMarketUi();
         HubSourceCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sourceAuto", "自动（推荐）"), Tag = "auto" });
         HubSourceCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sourceMirror", "镜像源 hf-mirror.com"), Tag = "mirror" });
         HubSourceCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.model.sourceOfficial", "官方源 huggingface.co"), Tag = "official" });
         HubSourceCombo.SelectedIndex = 0;
         _suppressHubFilterEvents = false;
-
-        _hubDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
-        _hubDebounce.Tick += (_, _) =>
-        {
-            _hubDebounce.Stop();
-            _ = SearchHubAsync();
-        };
 
         // 先让窗口完成构建与绘制，再异步取数据：窗口打开时间与后端无关（要求 < 500ms）。
         // v0.2.1 新增界面（语言 / 插件 / 开发者）在这里初始化：全部是纯本地操作，
@@ -222,6 +213,7 @@ public partial class SettingsWindow : Window
         Closed += (_, _) =>
         {
             _searchDebounce.Stop();
+            StopHubTimers();
             try
             {
                 _closing.Cancel();
@@ -361,136 +353,6 @@ public partial class SettingsWindow : Window
 
     private string CurrentHubSource() =>
         (HubSourceCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "auto";
-
-    private void HubSearchBox_TextChanged(object sender, TextChangedEventArgs e)
-    {
-        if (!_uiReady || _loading)
-            return;
-        _hubDebounce.Stop();
-        _hubDebounce.Start();
-    }
-
-    private void HubFilter_Changed(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_uiReady || _loading || _suppressHubFilterEvents)
-            return;
-        _ = SearchHubAsync();
-    }
-
-    private void HubSearchButton_Click(object sender, RoutedEventArgs e) => _ = SearchHubAsync();
-
-    /// <summary>搜索可下载模型：镜像/官方双源，结果里明确显示当前使用的是哪个源。</summary>
-    private async Task SearchHubAsync()
-    {
-        HubSearchButton.IsEnabled = false;
-        HubStatusText.Text = Loc.T("settings.model.searching", "正在搜索模型…");
-        try
-        {
-            string sort = (HubSortCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "downloads";
-            string quant = (HubQuantCombo.Text ?? "").Trim();
-            int minDownloads = int.TryParse(HubMinDownloadsBox.Text.Trim(), out int md) ? md : 0;
-            string json = await _backend.SendRequestAsync(new
-            {
-                action = "model_hub_search",
-                keyword = HubSearchBox.Text.Trim(),
-                sort,
-                quant,
-                min_downloads = minDownloads,
-                source = CurrentHubSource(),
-            }, idleTimeout: TimeSpan.FromSeconds(90));
-            using JsonDocument doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("model_hub", out JsonElement hub))
-            {
-                HubStatusText.Text = Loc.T("settings.model.hubUnavailable",
-                    "⚠️ 模型中心不可用（后端未返回数据）");
-                return;
-            }
-            RenderHubResult(hub);
-        }
-        catch (Exception ex)
-        {
-            HubStatusText.Text = Loc.T("settings.model.searchFailed", "❌ 搜索失败：{0}", ex.Message);
-        }
-        finally
-        {
-            HubSearchButton.IsEnabled = true;
-        }
-    }
-
-    private void RenderHubResult(JsonElement hub)
-    {
-        _hubItems.Clear();
-        if (hub.TryGetProperty("items", out JsonElement items) && items.ValueKind == JsonValueKind.Array)
-        {
-            foreach (JsonElement item in items.EnumerateArray())
-            {
-                int downloads = GetInt(item, "downloads", 0);
-                int likes = GetInt(item, "likes", 0);
-                bool gated = GetBool(item, "gated");
-                bool installed = GetBool(item, "installed");
-                bool recommended = GetBool(item, "recommended");
-                bool isDefault = GetBool(item, "is_default");
-                // 任务三：标记文本按**当前语言**拼；"默认"优先于"推荐"显示
-                // （默认模型本身也一定是推荐项，但"默认"是更强的信息）。
-                string tag = isDefault
-                    ? Loc.T("settings.model.tagDefault", "(默认)")
-                    : (recommended ? Loc.T("settings.model.tagRecommended", "(推荐)") : "");
-                _hubItems.Add(new HubModelItem
-                {
-                    Repo = GetString(item, "repo"),
-                    Name = GetString(item, "name"),
-                    Gated = gated,
-                    Recommended = recommended,
-                    IsDefault = isDefault,
-                    Tag = tag,
-                    Badge = installed ? Loc.T("settings.model.badgeDownloaded", "● 已下载")
-                                      : (gated ? Loc.T("settings.model.badgeGated", "🔒 需登录") : ""),
-                    Meta = string.Join(" · ", new[]
-                    {
-                        GetString(item, "author"),
-                        // 远端条目才有下载量等元数据；默认/本地来源没有，别显示成 0
-                        downloads > 0 ? $"⬇ {downloads:N0}" : "",
-                        likes > 0 ? $"⭐ {likes}" : "",
-                        GetString(item, "updated_at").Length > 0
-                            ? Loc.T("settings.model.updatedAt", "更新于 {0}", GetString(item, "updated_at"))
-                            : "",
-                        GetString(item, "note_key") switch
-                        {
-                            "hub.note.default_model" => Loc.T("settings.model.noteDefault",
-                                "默认模型（config.json 里配置的那个）"),
-                            "hub.note.local_model" => Loc.T("settings.model.noteLocal", "本地已下载"),
-                            _ => "",
-                        },
-                    }.Where(x => x.Length > 0)),
-                });
-            }
-        }
-        HubResultList.ItemsSource = null;
-        HubResultList.ItemsSource = _hubItems;
-        HubEmptyText.Visibility = _hubItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        string note = GetString(hub, "source_note");
-        bool offline = GetBool(hub, "offline");
-        HubStatusText.Text = (_hubItems.Count == 0
-            ? Loc.T("settings.model.searchEmpty", "结果为空。可换关键词（模型需为 GGUF 格式）。")
-            : Loc.T("settings.model.resultCountAll",
-                "共 {0} 个结果（显示全部模型，不按硬件过滤）。", _hubItems.Count))
-            + (note.Length > 0 ? " " + Loc.T("settings.model.statusSource", "数据源：{0}", note) : "");
-        // 任务三：把"为什么推荐"说清楚 —— 标记与依据是同一份数据，不是凭空贴上去的
-        if (hub.TryGetProperty("recommend_basis", out JsonElement basis)
-            && basis.ValueKind == JsonValueKind.Object)
-        {
-            string paramsText = GetString(basis, "params");
-            if (paramsText.Length > 0)
-            {
-                HubStatusText.Text += " " + Loc.T("settings.model.recommendBasis",
-                    "本机推荐：{0} 级量化（内存 {1} GB / {2} 核）。",
-                    paramsText, GetInt(basis, "ram_gb", 0), GetInt(basis, "cpu_cores", 0));
-            }
-        }
-        if (offline)
-            HubStatusText.Text = Loc.T("settings.model.sourceOffline", "⚠️ 数据源不可用：请检查网络，")
-                + HubStatusText.Text;
-    }
 
     private void HubResultList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
@@ -774,7 +636,8 @@ public partial class SettingsWindow : Window
             HubStatusText.Text = Loc.T("settings.model.deleteFailed", "❌ 删除失败：{0}", ex.Message);
         }
         await RefreshHubRegistryAsync();
-        await SearchHubAsync();   // 刷新「已下载」徽标
+        // 刷新列表里的「已下载」徽标：走缓存的数据集重取一次即可（命中缓存时是毫秒级）
+        await ReloadHubForBadgesAsync();
     }
 
     private void HubSourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1790,8 +1653,24 @@ public partial class SettingsWindow : Window
     private static bool GetBool(JsonElement el, string key) =>
         el.TryGetProperty(key, out JsonElement v) && v.ValueKind == JsonValueKind.True;
 
-    private static int GetInt(JsonElement el, string key, int fallback) =>
-        el.TryGetProperty(key, out JsonElement v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : fallback;
+    /// <summary>
+    /// 读一个整数。**不能直接 <c>GetInt32()</c>**：JSON 里的数字只要是小数（例如
+    /// <c>recommend_basis.ram_gb = 31.9</c>）就会抛 FormatException
+    /// （"One of the identified items was in an invalid format"）。
+    /// 这个坑一直在：旧代码只在"搜索结果出来后"才会读到 ram_gb，而当时的 UI 探针从不搜索，
+    /// 所以没人碰到；模型市场优化后每次查询都会渲染推荐依据，一上来就炸。
+    /// 现在按"整数优先、小数四舍五入"处理，调用方不用关心服务端给的是 int 还是 float。
+    /// </summary>
+    private static int GetInt(JsonElement el, string key, int fallback)
+    {
+        if (!el.TryGetProperty(key, out JsonElement v) || v.ValueKind != JsonValueKind.Number)
+            return fallback;
+        if (v.TryGetInt32(out int value))
+            return value;
+        if (v.TryGetDouble(out double number) && !double.IsNaN(number) && !double.IsInfinity(number))
+            return (int)Math.Round(Math.Clamp(number, int.MinValue, int.MaxValue));
+        return fallback;
+    }
 
     private static List<string> GetStringList(JsonElement el, string key)
     {

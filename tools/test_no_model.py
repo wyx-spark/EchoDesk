@@ -288,19 +288,23 @@ M.MIRROR_ENDPOINT = "http://127.0.0.1:9"
 M.OFFICIAL_ENDPOINT = "http://127.0.0.1:9"
 res = hub.search(keyword="", source="mirror")
 items = res["items"]
+pinned = res.get("pinned") or []
 default_repo = hub.default_repo()
 print(json.dumps({
     "offline": res.get("offline"),
     "count": len(items),
+    "pinned_count": len(pinned),
     "repos": [i["repo"] for i in items],
+    "pinned_repos": [i["repo"] for i in pinned],
+    "default_in_pinned": any(i["repo"] == default_repo for i in pinned),
     "default_in_list": any(i["repo"] == default_repo for i in items),
-    "default_first": bool(items) and items[0]["repo"] == default_repo,
-    "recommended": [i["repo"] for i in items if i.get("recommended")],
-    "recommended_all_in_list": all(i["repo"] in [x["repo"] for x in items]
-                                   for i in items if i.get("recommended")),
+    "recommended": [i["repo"] for i in items + pinned if i.get("recommended")],
+    "recommended_all_in_list": all(i["repo"] in [x["repo"] for x in items + pinned]
+                                   for i in items + pinned if i.get("recommended")),
     "basis": res.get("recommend_basis"),
     "source_items": res.get("source_items"),
-    "param_of_default": items[0].get("param_b") if items else None,
+    "param_of_default": pinned[0].get("param_b") if pinned else None,
+    "default_note": pinned[0].get("note_key") if pinned else None,
 }, ensure_ascii=False))
 '''
     proc = subprocess.run([python, "-c", code], cwd=ROOT, capture_output=True,
@@ -314,9 +318,18 @@ print(json.dumps({
         check("ModelHub 列表逻辑输出可解析", False, f"{exc}；stdout={proc.stdout[-200:]}")
         return
 
-    check("远端不可达时仍返回列表（不再是一片空白）", data.get("count", 0) >= 1, str(data)[:200])
-    check("默认模型对应的仓库一定在列表里", data.get("default_in_list") is True, str(data)[:240])
-    check("默认模型排在最前", data.get("default_first") is True, str(data.get("repos"))[:200])
+    check("远端不可达时仍返回列表（不再是一片空白）",
+          data.get("count", 0) + data.get("pinned_count", 0) >= 1, str(data)[:200])
+    # v0.2.1 模型市场优化后，默认模型改为**单独钉住**（pinned）、不进分页数据集：
+    # 任务书要求它"钉在列表最前、明确标注来源、不干扰分页计数"。原来的"排在最前"在
+    # 分页之后不再成立（第一页第一条不等于全局第一条），所以断言改成更强的两条：
+    # 一定被钉住 + 一定不在分页数据集里。
+    check("默认模型对应的仓库一定被钉在结果上方", data.get("default_in_pinned") is True,
+          str(data)[:240])
+    check("默认模型不进分页数据集（不干扰分页计数）",
+          data.get("default_in_list") is False, str(data.get("repos"))[:200])
+    check("钉住的默认模型带来源标注", data.get("default_note") == "hub.note.default_model",
+          str(data.get("default_note")))
     check("默认模型带 recommended 标记", bool(data.get("recommended")),
           str(data.get("recommended"))[:200])
     check("推荐项都来自列表本身（推荐与列表同源）",

@@ -350,6 +350,13 @@ try {
     Invoke-Check "开发者模式（修复一）" { Invoke-Python "开发者模式" "tools\test_dev_mode.py"; "通过" }
     Invoke-Check "模型能力辅助（修复四）" { Invoke-Python "模型能力" "tools\test_capability.py"; "通过" }
     Invoke-Check "后端协议端到端" { Invoke-Python "后端协议端到端" "tools\test_backend_e2e.py"; "通过" }
+    # v0.2.1 模型市场优化：加载器（分页取全/上限/重试/缓存/离线降级）用本机 HTTP 桩验证，
+    # 不依赖真实网络；再驱动**打包后的后端**验证流式加载与本地查询协议。
+    # 这里必须用 --packaged：验证的是"发出去的那份后端"，而不是源码后端。
+    Invoke-Check "模型市场（加载/分页/筛选/排序）" {
+        Invoke-Native "模型市场" "python" @("tools\test_model_market.py", "--packaged")
+        "通过"
+    }
 
     # ---------- 3. 静态检查 ----------
     Invoke-Check "语言包完整性" { Invoke-Python "语言包" "tools\check_lang.py"; "通过" }
