@@ -357,6 +357,10 @@ try {
         Invoke-Native "模型市场" "python" @("tools\test_model_market.py", "--packaged")
         "通过"
     }
+    # v0.2.1 模型思考内容分离：分离器边界 + 引擎双通道 + 流式协议（channel/reset/done）
+    # + 历史持久化，全部在进程内驱动真后端代码，不依赖网络也不依赖模型。
+    # 真实模型的端到端（用 --model 指定）在 CI 里跳过：机器上不一定有推理模型。
+    Invoke-Check "思考内容分离" { Invoke-Python "思考分离" "tools\test_reasoning.py"; "通过" }
 
     # ---------- 3. 静态检查 ----------
     Invoke-Check "语言包完整性" { Invoke-Python "语言包" "tools\check_lang.py"; "通过" }

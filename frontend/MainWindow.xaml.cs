@@ -230,12 +230,12 @@ public partial class MainWindow : Window
                                      _backend.RestoredCount);
         AddMessage("system", welcome);
         // 展示恢复的历史消息，让用户能查看之前的对话内容
-        foreach (var (role, content) in _backend.RestoredHistory)
+        foreach (var (role, content, reasoning) in _backend.RestoredHistory)
         {
             if (role == "user")
                 AddMessage("user", content);
             else if (role == "assistant")
-                AddMessage("assistant", content);
+                AddMessage("assistant", content, reasoning);
             else
                 AddMessage("system", content);
         }
@@ -1260,13 +1260,45 @@ public partial class MainWindow : Window
         MessagePanel.Children.Add(panel);
 
         var sb = new StringBuilder("🤖 ");
+        // 思考内容单独累积（v0.2.1 模型思考内容分离 任务四）：回答区只放最终答案
+        var thinking = new StringBuilder();
+        Expander? thinkRegion = null;
+        TextBlock? thinkCount = null;
+        RichTextBox? thinkBody = null;
+        bool thinkAutoExpanded = false;
+        bool answerStarted = false;
         _mdTarget = rich;
+        // 自动化标识：界面探针（tools\ui_probe.ps1）靠它找到"本次回答正文"与思考区，
+        // 断言回答区里没有思考标签、折叠区可展开可收起。手工创建的元素不会自动获得
+        // x:Name 那样的 AutomationId，必须显式设置。
+        AutomationProperties.SetAutomationId(rich, "AnswerBody");
         RenderInto(rich, sb.ToString()); // 初始只显示图标
         _stopRequested = false;
         _stopMode = true;
         SendButton.Content = "⏹";
         SendButton.ToolTip = Loc.T("main.button.stopTip", "停止生成 (Esc)");
         SendButton.IsEnabled = true; // 流式期间按钮变为"停止"，必须可点击
+
+        // 思考区按需创建：模型没有思考内容时界面上不会出现一个空折叠区（任务四要求）
+        void EnsureThinkRegion()
+        {
+            if (thinkRegion is not null)
+                return;
+            (thinkRegion, thinkCount, thinkBody) = CreateReasoningRegion();
+            thinkRegion.IsExpanded = true;
+            panel.Children.Insert(1, thinkRegion);
+            answerStarted = false;
+        }
+
+        void RefreshThinkRegion()
+        {
+            if (thinkRegion is null)
+                return;
+            if (thinkCount is not null)
+                thinkCount.Text = Loc.T("main.reasoning.count", "· {0} 字", thinking.Length);
+            if (thinkBody is not null)
+                thinkBody.Document = MarkdownRenderer.Build(Emoji.Prefer(thinking.ToString()));
+        }
 
         try
         {
@@ -1278,9 +1310,86 @@ public partial class MainWindow : Window
                     ScheduleMarkdownRender(sb.ToString()); // 节流实时渲染
                     MessageScrollViewer.ScrollToBottom();
                 },
-                onContext: (used, limit) => ContextText.Text = FormatContext(used, limit));
+                onContext: (used, limit) => ContextText.Text = FormatContext(used, limit),
+                onEvent: (type, root) =>
+                {
+                    if (type != "done")
+                        return;
+                    // done 行带权威的思考全文：以它为准重建思考区（流式期间可能只拿到一段）
+                    string finalThinking = root.TryGetProperty("reasoning", out JsonElement rs)
+                        ? rs.GetString() ?? "" : "";
+                    if (finalThinking.Length > 0)
+                    {
+                        EnsureThinkRegion();
+                        thinking.Clear();
+                        thinking.Append(finalThinking);
+                        RefreshThinkRegion();
+                    }
+                    // 思考把长度上限吃光、答案还没开始：展开思考区并说明，别留一个空回答区
+                    if (root.TryGetProperty("reasoning_unclosed", out JsonElement unclosed)
+                        && unclosed.ValueKind == JsonValueKind.True)
+                    {
+                        EnsureThinkRegion();
+                        if (thinkRegion is not null)
+                            thinkRegion.IsExpanded = true;
+                        if (StripAssistantIcon(sb.ToString()).Trim().Length == 0)
+                            sb.Append(Loc.T("main.reasoning.noAnswer",
+                                "\n\n⚠️ 模型只输出了思考内容，没有给出最终答案（通常是长度上限用完了："
+                                + "用 /preset quality 切到高质量档、或调大 config.json 的 max_tokens，"
+                                + "也可以把问题问得更具体）"));
+                    }
+                },
+                onDeltaChannel: (channel, text, reset) =>
+                {
+                    if (channel == "reasoning")
+                    {
+                        EnsureThinkRegion();
+                        if (!thinkAutoExpanded && thinkRegion is not null)
+                        {
+                            // 正在思考：先展开，让用户看得见模型的推理在实时推进
+                            thinkRegion.IsExpanded = true;
+                            thinkAutoExpanded = true;
+                        }
+                        thinking.Append(text);
+                        RefreshThinkRegion();
+                        MessageScrollViewer.ScrollToBottom();
+                        return;
+                    }
+                    if (reset)
+                    {
+                        // 作废回答区：此前发出去的"回答"其实都是思考（模型的起始标签
+                        // 写在提示词里，只有结束标签可见，如 DeepSeek-R1）。
+                        // 把它搬进思考区，回答区从头开始。
+                        EnsureThinkRegion();
+                        string moved = sb.ToString();
+                        thinking.Append(StripAssistantIcon(moved));
+                        RefreshThinkRegion();
+                        sb.Clear();
+                        sb.Append("🤖 ");
+                        answerStarted = false;
+                        return;
+                    }
+                    if (!answerStarted)
+                    {
+                        answerStarted = true;
+                        // 答案开始：思考区自动收起（任务四"回答完成后自动收起"，比"完成后"
+                        // 更早一步；用户手动展开过就不再打扰 —— 这里只在切换那一次收）
+                        if (thinkRegion is not null)
+                            thinkRegion.IsExpanded = false;
+                    }
+                    sb.Append(text);
+                    ScheduleMarkdownRender(sb.ToString());
+                    MessageScrollViewer.ScrollToBottom();
+                });
+            // 以 done 行的权威回答为准重建一次（思考区的孤立标签改判会改变回答区内容）
+            if (full.Length > 0)
+            {
+                sb.Clear();
+                sb.Append("🤖 ").Append(full);
+            }
             if (_stopRequested && full.Length == 0)
                 sb.Append(Loc.T("main.message.stopped", "\n⏹（已停止生成）"));
+            RefreshThinkRegion();
             FinalizeMarkdownRender(sb.ToString()); // 结束：完整渲染一次
             AddMessageActions(panel, sb.ToString(), sb.ToString()); // 生成结束后提供复制操作条
         }
@@ -1293,6 +1402,88 @@ public partial class MainWindow : Window
             SendButton.IsEnabled = true;
         }
     }
+
+    /// <summary>
+    /// 创建"思考过程"折叠区（v0.2.1 模型思考内容分离 任务四）。
+    ///
+    /// 为什么用 WPF 原生 <see cref="Expander"/> 而不是自绘折叠按钮：标题栏自带
+    /// 展开/收起按钮、键盘操作、读屏语义与 Toggle 自动化接口（UI 探针能直接驱动），
+    /// 手写一套等价物只有坏处。视觉区分靠三件事：标题是副色小字、正文整块放在
+    /// 浅底边框里、正文用斜体副色 —— 和回答区（主题正文色、正常字号、无边框）
+    /// 一眼就能分开。
+    ///
+    /// 返回 (折叠区, 字数 TextBlock, 正文 RichTextBox)：流式期间需要就地更新后两者。
+    /// </summary>
+    private (Expander Root, TextBlock Count, RichTextBox Body) CreateReasoningRegion()
+    {
+        var title = new TextBlock
+        {
+            Text = Loc.T("main.reasoning.title", "🧠 思考过程"),
+            FontSize = Math.Max(9, _fontSize - 2),
+        };
+        ThemeService.Bind(title, TextBlock.ForegroundProperty, "SubTextBrush");
+        // 挂语言键：切换语言时 Loc.Apply 会把它重新翻译（动态创建的元素同样在遍历范围内）
+        Loc.SetKey(title, "main.reasoning.title");
+
+        var count = new TextBlock
+        {
+            Margin = new Thickness(6, 0, 0, 0),
+            FontSize = Math.Max(9, _fontSize - 3),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ThemeService.Bind(count, TextBlock.ForegroundProperty, "SubTextBrush");
+
+        var header = new StackPanel { Orientation = Orientation.Horizontal };
+        header.Children.Add(title);
+        header.Children.Add(count);
+
+        var body = CreateRichContent();
+        // Tag 刻意不是 "content"：复制操作条与"复制全部对话"靠 Tag=="content" 找正文，
+        // 让它们继续只拿答案；思考内容仍可用鼠标拖选复制（RichTextBox 可选）。
+        body.Tag = "reasoning";
+        body.FontStyle = FontStyles.Italic;
+        ThemeService.Bind(body, TextBox.ForegroundProperty, "SubTextBrush");
+
+        var border = new Border
+        {
+            Margin = new Thickness(0, 2, 0, 6),
+            Padding = new Thickness(8, 6, 8, 6),
+            CornerRadius = new CornerRadius(4),
+            BorderThickness = new Thickness(1),
+        };
+        ThemeService.Bind(border, Border.BackgroundProperty, "CodeBackground");
+        ThemeService.Bind(border, Border.BorderBrushProperty, "MessageBorderBrush");
+        border.Child = body;
+
+        var region = new Expander
+        {
+            Header = header,
+            Content = border,
+            Margin = new Thickness(0),
+            Tag = "reasoning",
+            IsExpanded = false,   // 默认收起（任务四）：历史回放与生成结束都保持收起
+        };
+        Loc.SetTipKey(region, "main.reasoning.tip");
+        // 界面探针用：按这个 AutomationId 找折叠区，再用 TogglePattern 验展开/收起
+        AutomationProperties.SetAutomationId(region, "ReasoningRegion");
+        return (region, count, body);
+    }
+
+    /// <summary>思考区的字号跟随全局字号（比正文略小：它是辅助信息，不该抢答案的视线）。</summary>
+    private void ScaleReasoningRegion(Expander region)
+    {
+        if (region.Header is StackPanel head)
+        {
+            foreach (TextBlock label in head.Children.OfType<TextBlock>())
+                label.FontSize = Math.Max(9, _fontSize - 2);
+        }
+        if (region.Content is Border border && border.Child is RichTextBox body)
+            body.FontSize = Math.Max(9, _fontSize - 1);
+    }
+
+    /// <summary>去掉回答累积串开头的助手图标（"🤖 "）：判断"有没有答案"与搬运文本时都要用它。</summary>
+    private static string StripAssistantIcon(string text)
+        => text.StartsWith("🤖 ", StringComparison.Ordinal) ? text[3..] : text;
 
     // ---------- 流式 Markdown 实时渲染（节流） ----------
 
@@ -1838,9 +2029,17 @@ public partial class MainWindow : Window
         }
 
         if (type == "assistant")
-            AddMessage("assistant", content);
+        {
+            // 非流式回复同样可能带思考内容（v0.2.1 模型思考内容分离 任务五：
+            // 流式与非流式两条路径都要正确区分展示）
+            string reasoning = root.TryGetProperty("reasoning", out JsonElement rs)
+                ? rs.GetString() ?? "" : "";
+            AddMessage("assistant", content, reasoning);
+        }
         else
+        {
             AddMessage("system", content);
+        }
 
         // 任务三：模式与搜索状态改读响应里的字段，不再靠中文字符串匹配
         // （否则把界面切成英文后这两个状态就永远不更新了）
@@ -2090,7 +2289,15 @@ public partial class MainWindow : Window
                 continue;
             foreach (var inner in panel.Children)
             {
-                if (inner is not FrameworkElement fe || !Equals(fe.Tag, "content"))
+                if (inner is not FrameworkElement fe)
+                    continue;
+                // 思考折叠区（Tag="reasoning"）里的正文与标题也跟随字号
+                if (fe is Expander region && Equals(region.Tag, "reasoning"))
+                {
+                    ScaleReasoningRegion(region);
+                    continue;
+                }
+                if (!Equals(fe.Tag, "content"))
                     continue;
                 switch (fe)
                 {
@@ -2323,13 +2530,24 @@ public partial class MainWindow : Window
         _toastTimer.Start();
     }
 
-    private void AddMessage(string role, string content)
+    private void AddMessage(string role, string content, string reasoning = "")
     {
         // 修复六：消息内容里的 emoji 也走同一套降级（后端返回的 system 消息同样带上它）
         content = Emoji.Prefer(content);
         var panel = NewMessagePanel(role, role == "assistant" ? "" : content, out FrameworkElement contentBlock);
         if (role == "assistant")
+        {
+            // 思考内容折叠展示（v0.2.1 模型思考内容分离 任务四/五）：历史回放与非流式
+            // 回复都走这里，默认收起；没有思考内容时**不创建**折叠区（不留空占位）。
+            if (!string.IsNullOrWhiteSpace(reasoning))
+            {
+                var region = CreateReasoningRegion();
+                region.Body.Document = MarkdownRenderer.Build(Emoji.Prefer(reasoning.Trim()));
+                region.Count.Text = Loc.T("main.reasoning.count", "· {0} 字", reasoning.Trim().Length);
+                panel.Children.Insert(1, region.Root);
+            }
             ReplaceWithMarkdown(panel, contentBlock, content); // 助手消息渲染为 Markdown
+        }
         AddMessageActions(panel, content, role == "assistant" ? content : null);
         MessagePanel.Children.Add(panel);
         MessageScrollViewer.ScrollToBottom();
@@ -2338,10 +2556,15 @@ public partial class MainWindow : Window
     /// <summary>把消息面板中的纯文本块替换为渲染好的 Markdown（只读 RichTextBox）。</summary>
     private void ReplaceWithMarkdown(StackPanel panel, FrameworkElement contentBlock, string markdown)
     {
-        panel.Children.Remove(contentBlock);
+        // 按原位置替换：消息里可能先插了思考折叠区（索引 1），正文必须排在它后面，
+        // 否则答案会跑到思考上面去（任务四要求"回答区域只显示最终答案"且顺序自然）。
+        int index = panel.Children.IndexOf(contentBlock);
+        if (index < 0)
+            index = panel.Children.Count;
+        panel.Children.RemoveAt(index);
         var richText = CreateRichContent();
         richText.Document = MarkdownRenderer.Build(markdown);
-        panel.Children.Insert(1, richText);
+        panel.Children.Insert(Math.Min(index, panel.Children.Count), richText);
     }
 }
 

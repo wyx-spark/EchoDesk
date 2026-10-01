@@ -909,7 +909,9 @@
     "title": "# EchoDesk conversation",
     "mode": "- Mode: {mode}",
     "user": "👤 User",
-    "assistant": "🤖 Assistant"
+    "assistant": "🤖 Assistant",
+    "reasoning": "🧠 Thinking (click to expand)",
+    "reasoning_truncated": "\n\n… (thinking was too long and was truncated, see config)"
   },
   "summary": {
     "progress.prepare": "📝 Preparing segmented summarization: {chunks} segments, {chars} characters.",

@@ -121,6 +121,12 @@
       "removed": "🗑️ 已删除常用语「{0}」",
       "notFound": "❌ 未找到常用语「{0}」"
     },
+    "reasoning": {
+      "title": "🧠 思考过程",
+      "count": "· {0} 字",
+      "tip": "模型的推理过程（思考内容）。点击展开或收起；思考内容不会作为上下文发给模型，也不参与复制回答。",
+      "noAnswer": "\n\n⚠️ 模型只输出了思考内容，没有给出最终答案（通常是长度上限用完了：用 /preset quality 切到高质量档、或调大 config.json 的 max_tokens，也可以把问题问得更具体）"
+    },
     "message": {
       "copy": "复制",
       "copyMarkdown": "Markdown",

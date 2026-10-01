@@ -106,6 +106,12 @@
         "search_cache_dir": "",
         "search_cache_ttl_hours": 6
     },
+    "reasoning": {
+        "enabled": true,
+        "persist": true,
+        "history_max_chars": 8000,
+        "tags": []
+    },
     "update": {
         "enabled": true,
         "repo": "VoidEntropiaStudio/EchoDesk",

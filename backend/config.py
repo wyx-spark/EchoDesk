@@ -278,6 +278,29 @@ class ModelHubConfig(BaseModel):
     search_cache_ttl_hours: int = Field(default=6, ge=0, le=168)
 
 
+class ReasoningConfig(BaseModel):
+    """思考内容分离配置（v0.2.1 模型思考内容分离）。
+
+    为什么配置项只有这几个（决策依据见
+    ``records/v0.2.1-模型思考内容分离记录.md``）：
+
+    * ``enabled`` —— 关掉后退回旧行为（思考标签原样留在回答里）。留这个开关是为了
+      "出问题时能一键回到没改之前"，而不是鼓励关掉；
+    * ``persist`` —— 思考内容是否写进会话历史。默认写：任务书任务五要求
+      "重新加载含思考内容的历史会话，确认区分正确"，不持久化就没法满足；
+    * ``history_max_chars`` —— 历史里每条思考内容的保留上限。思考往往比答案长得多，
+      不设上限时 session.json 会被单个长思考撑大；超限的部分截断并加省略标记；
+    * ``tags`` —— 追加自定义标签对（形如 ``[["[[think]]", "[[/think]]"]]``）。
+      内置已覆盖常见形态（见 ``reasoning.DEFAULT_TAG_NAMES``），这里只做追加，
+      避免一个笔误把内置标签一起弄丢。
+    """
+
+    enabled: bool = True
+    persist: bool = True
+    history_max_chars: int = Field(default=8000, ge=0, le=200000)
+    tags: List[List[str]] = Field(default_factory=list)
+
+
 class MarketplaceConfig(BaseModel):
     """技能/插件市场配置（任务五 5.6）。"""
 
@@ -350,6 +373,8 @@ class Config(BaseModel):
     marketplace: MarketplaceConfig = Field(default_factory=MarketplaceConfig)
     # 模型选择栏（新增四）
     model_hub: ModelHubConfig = Field(default_factory=ModelHubConfig)
+    # 思考内容分离（v0.2.1 模型思考内容分离）
+    reasoning: ReasoningConfig = Field(default_factory=ReasoningConfig)
     # 自动更新（任务五 方案 A）
     update: UpdateConfig = Field(default_factory=UpdateConfig)
     # 界面语言（任务三 3.4）：auto = 首次启动按系统区域自动选择；
@@ -434,19 +459,39 @@ class Config(BaseModel):
 
     @classmethod
     def load(cls, path: str = "config.json") -> "Config":
-        """按优先级查找配置文件，并叠加用户补丁（config.user.json 同目录优先）。"""
+        """按优先级查找配置文件，并叠加用户补丁（config.user.json 同目录优先）。
+
+        **编码**（v0.2.1 模型思考内容分离，界面探针实测出来的缺陷）：一律用
+        ``utf-8-sig`` 读。Windows 上记事本保存 UTF-8 会带 BOM，而普通 ``utf-8``
+        解码会直接抛 ``JSONDecodeError: Unexpected UTF-8 BOM`` —— 后端在启动阶段
+        就崩掉、程序随之退出，用户看到的是"后端意外退出"，完全看不出是配置文件
+        的 BOM 造成的。协议层早就在兼容 stdin 的 BOM（见 main.py 的读取循环），
+        配置文件这一侧同样要兼容。
+
+        **容错**：基础配置读不出来仍然抛异常（没有配置无法工作）；``config.user.json``
+        是**可选覆盖层**，格式坏掉时只告警并忽略它，绝不因此让整个后端起不来 ——
+        用户手改一个可选文件写出语法错误，代价不该是程序打不开。
+        """
         base_path = cls._find(path)
         if base_path is None:
             raise FileNotFoundError(f"找不到配置文件: {path}")
-        with open(base_path, "r", encoding="utf-8") as f:
+        with open(base_path, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
 
         # 用户补丁覆盖层：与基础配置同目录的 config.user.json，字段优先
         user_path = os.path.join(os.path.dirname(base_path), "config.user.json")
         if os.path.exists(user_path):
-            with open(user_path, "r", encoding="utf-8") as f:
-                user = json.load(f)
-            data.update(user)
+            try:
+                with open(user_path, "r", encoding="utf-8-sig") as f:
+                    user = json.load(f)
+                if isinstance(user, dict):
+                    data.update(user)
+                else:
+                    print("⚠️ config.user.json 顶层不是对象，已忽略该覆盖层",
+                          file=sys.stderr, flush=True)
+            except Exception as exc:  # noqa: BLE001 - 覆盖层坏了不能拖垮启动
+                print(f"⚠️ config.user.json 解析失败，已忽略该覆盖层：{exc}",
+                      file=sys.stderr, flush=True)
 
         return cls(**data)
 

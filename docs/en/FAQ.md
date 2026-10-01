@@ -105,6 +105,27 @@ restarting: fix the file and click *Load* (or *Rescan models folder*) again.
   can turn it off with `speed_hint` in `config.json`).
 - You can lower `context_length` in `config.json` (default 8192), raise `n_threads`, or switch to a smaller
   quantized model (such as Q4_K_M).
+- Reasoning models (Qwen3 thinking, DeepSeek-R1) think before they answer, and thinking takes time too: as
+  long as the “🧠 Thinking” region keeps growing, the model is producing output rather than being stuck.
+
+### The model produced a wall of `<think>…</think>` reasoning — how is it separated now?
+That is normal for reasoning models, and EchoDesk already separates the two (thinking/answer split):
+- the answer area shows **only the final answer**; reasoning lives in a collapsed “🧠 Thinking” region above
+  it — click the header to expand or collapse;
+- while streaming the region expands automatically, and it **collapses again when the answer starts**;
+- when the model produced no reasoning, no empty region appears;
+- reasoning **never goes back into context** (it is not sent to the model), but it **is saved with the
+  session**, so it is still there (collapsed) when you reopen EchoDesk;
+- the copy buttons and `Ctrl+Shift+C` copy only the answer; to copy reasoning, drag-select inside the
+  expanded region or use the `/save` export, where it is written as a collapsible block.
+
+### The model only produced thinking and never answered
+The answer area says that only thinking was produced (when the thinking tag was never closed). Nearly always
+the **generation length limit** ran out — thinking used up the token budget before the answer began:
+- switch to the quality preset with `/preset quality` (2048 tokens; `/preset balanced` is 1024);
+- or raise `max_tokens` in `config.json` (default 1024);
+- or ask a more specific question (the vaguer the question, the longer the model thinks);
+- small models (0.5B–1.5B) are not reliable reasoners anyway; a larger quantized model usually pays off more.
 
 ### How do I make EchoDesk start with Windows
 Copy "Start-EchoDesk-v0.2.1.lnk" into the system Startup folder (`Win+R` → `shell:startup`).

@@ -57,6 +57,37 @@ def test_config() -> None:
           cfg_no_auto.context_for_model("llama-3.gguf", 8192) == 16384,
           f"得到 {cfg_no_auto.context_for_model('llama-3.gguf', 8192)}")
 
+    # 配置文件编码与容错（v0.2.1 模型思考内容分离：界面探针实测出来的缺陷）
+    # 现象：Windows 记事本保存的 UTF-8 带 BOM，旧实现用 utf-8 读 → JSONDecodeError
+    # → 后端启动即崩、程序随之退出。这里把它固化成回归断言。
+    import json as _json
+    import os as _os
+    import tempfile as _tempfile
+
+    with _tempfile.TemporaryDirectory() as tmp:
+        base = {"model_path": "bom-model.gguf", "context_length": 4096}
+        base_path = _os.path.join(tmp, "config.json")
+        with open(base_path, "w", encoding="utf-8-sig", newline="\n") as f:
+            _json.dump(base, f, ensure_ascii=False)
+        loaded = config.Config.load(base_path)
+        check("带 BOM 的 config.json 能正常解析", loaded.model_path == "bom-model.gguf",
+              f"得到 {loaded.model_path!r}")
+        check("带 BOM 时其余字段也生效", loaded.context_length == 4096,
+              f"得到 {loaded.context_length}")
+
+        # 覆盖层带 BOM：应当生效而不是被忽略
+        with open(_os.path.join(tmp, "config.user.json"), "w", encoding="utf-8-sig", newline="\n") as f:
+            _json.dump({"model_path": "patched.gguf"}, f)
+        check("带 BOM 的 config.user.json 覆盖层生效",
+              config.Config.load(base_path).model_path == "patched.gguf")
+
+        # 覆盖层写坏：只忽略覆盖层，不能连基础配置一起抛
+        with open(_os.path.join(tmp, "config.user.json"), "w", encoding="utf-8", newline="\n") as f:
+            f.write("{ 这不是 JSON }")
+        fallback = config.Config.load(base_path)
+        check("损坏的 config.user.json 被忽略而不是让启动失败",
+              fallback.model_path == "bom-model.gguf", f"得到 {fallback.model_path!r}")
+
     # 安全协议：未勾选时强制关闭自动化
     auto = config.AutomationConfig(enabled=True, safety_accepted=False)
     check("未勾选安全协议 → 自动化开关被强制关闭", auto.enabled is False, f"得到 {auto.enabled}")

@@ -137,6 +137,7 @@ python tools\test_plaintext.py       # Markdown -> plain-text conversion (result
 python tools\test_results_dir.py     # automation result folder layout and result.txt
 python tools\test_automation_e2e.py  # end-to-end automation against a local static site (needs Edge + Playwright)
 python tools\test_model_hub_e2e.py   # model-hub protocol against the packaged backend
+python tools\test_reasoning.py       # 思考内容分离：标签边界、协议双通道、历史持久化
 powershell -File tools\ui_probe.ps1  # WPF UI probe: settings window opens fast, no crash log
 python tools\gen_licenses.py         # regenerate docs\THIRD_PARTY_LICENSES.md
 ```

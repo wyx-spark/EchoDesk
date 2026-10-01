@@ -152,6 +152,101 @@ problems that only show up under real interaction:
   source-aware: remote results must carry downloads and an update time, while local/default entries must carry a
   source label. The old assertion demanded a field the endpoint never returns and had been red (18/19 measured).
 
+### Thinking content separated from the answer
+
+**The problem**: reasoning models (Qwen3 thinking mode, the DeepSeek-R1 family) write their thinking into
+`content`, so the "answer" a user sees opens with a long stretch of ` thinking…` reasoning — impossible to
+tell apart from the conclusion.
+
+**Facts first (task 1)**: the output structure was measured with probes before any code changed (see
+`records/v0.2.1-模型思考内容分离记录.md`):
+
+- `llama-cpp-python` 0.3.35 has a **fixed 29-parameter `create_chat_completion`**: no `reasoning_format`,
+  no `chat_template_kwargs`, no `enable_thinking`; `llama_types.py` has **no `reasoning_content` field at
+  all**; streamed deltas only ever carry `content` / `role`. **Inference-layer separation is unavailable**
+  (task 2 was dropped on this evidence).
+- Two model-side shapes were measured:
+  - Qwen3-0.6B: with `enable_thinking` undefined the template adds **no prefix**, so the model emits
+    `<think>` … `</think>` itself — both tags are in the generated text;
+  - DeepSeek-R1-Distill (unsloth GGUF): the template **hard-codes the opening tag** in its
+    `add_generation_prompt` branch, so the generated text only has the closing tag — "closing tag without an
+    opening tag" must therefore mean "everything so far was thinking", or R1's reasoning lands in the answer.
+- Also measured: the shipped default model (Qwen3.5-0.8B) inverts that template condition (`is true`) and the
+  binding cannot pass the parameter, so it produces **no thinking at all** — recorded honestly so nobody
+  reads it as "the feature does nothing".
+
+**Application-layer fallback (task 3)**
+- New `backend/reasoning.py`: an incremental tag splitter (`ReasoningSplitter`) that turns one text stream
+  into `reasoning` / `answer` channels and handles every boundary: tags split across chunks (correct even
+  character by character), nested tags (paired by depth), several thinking blocks (merged), an **unclosed**
+  tag (everything left goes to thinking, `unclosed` is set), an **orphan closing tag** (text already sent to
+  the answer channel is reclassified as thinking, with one `reset` telling the UI to discard the answer
+  area), and no tags at all (non-reasoning models are unaffected).
+- The tag table is configurable (`reasoning.tags` appends custom pairs); built-ins cover `think`,
+  `thinking`, `reasoning`, `thought`, `reflection`, `analysis` plus DeepSeek's special-token forms; longer
+  tags win (`<thinking>` is never truncated by `<think>`).
+- `LLMEngine.chat_stream` / `chat_complete` keep their **answer-only** semantics (chunked summarisation,
+  automation and context compaction therefore never see thinking), with the two channels exposed through the
+  new `chat_stream_split` / `chat_complete_split`.
+
+**Protocol**
+- Streamed delta lines gained a `channel` field: `reasoning` or `answer`; plus one
+  `{"channel":"answer","reset":true}` line that invalidates the answer area.
+- The `done` line gained `reasoning` (full thinking) and `reasoning_unclosed` (the tag never closed, usually
+  because thinking used up the token budget). Deltas without `channel` keep their old meaning (progress /
+  summary text).
+- Fixed: the accumulated answer now comes from the splitter's `answer_text`; otherwise `done.content` dragged
+  thinking along in the orphan-tag case (caught by unit test C2).
+
+**Frontend (task 4)**
+- A collapsed “🧠 Thinking” region (a native WPF `Expander`) sits above the answer: click the header to
+  expand, body rendered in italic secondary colour inside a tinted, bordered block so it is unmistakable.
+- While streaming it expands automatically so you can watch the model reason, and it **collapses again the
+  moment the answer starts**; a manual expansion is never overridden. When there is no thinking, **no region
+  is created** (no empty placeholder).
+- The copy buttons and `Ctrl+Shift+C` still target only the answer (`Tag="content"`); the thinking region uses
+  `Tag="reasoning"` so it is never copied by accident. Ctrl+wheel font scaling applies to it too.
+- If thinking ate the whole length limit and no answer started, the region expands and the answer area
+  explains why, instead of leaving a blank bubble.
+
+**Judgement calls (recorded with reasons)**
+- **Thinking is persisted** in session history (its own `reasoning` field, with a configurable off switch and
+  truncation cap): task 5 requires reloading a session that contains thinking and showing it correctly, which
+  is impossible without persisting it.
+- **Thinking never enters the context**: it is usually longer than the answer, DeepSeek's own API forbids
+  sending `reasoning_content` back, and R1's GGUF template itself drops everything before `</think>`. Old
+  sessions without the field still load, and ordinary models never grow the field.
+- **Export**: `/save` writes thinking as a collapsible `<details>` block placed before its answer.
+
+**Localisation and docs (task 6)**
+- New keys: `main.reasoning.title/count/tip/noAnswer` (4 per locale in the frontend) and
+  `export.reasoning` / `export.reasoning_truncated` (2 per locale in the backend).
+
+**Tests**
+- New `tools/test_reasoning.py`: **95** unit + protocol assertions (splitter boundaries, engine channels,
+  streaming protocol channel/reset/done, history persistence, "thinking stays out of context", language
+  keys), all driving the real backend code in-process — no network, no model. `--model <gguf>` adds a
+  real-model end-to-end run (measured: Qwen3-0.6B 388 chars thinking / 48 chars answer with a clean answer
+  area; DeepSeek-R1-Distill-Qwen-1.5B 375 / 127, reclassified by a single `reset` → **104/104**).
+- Wired into the pre-release gate `tools/verify_release.ps1`, CI, and `CONTRIBUTING`.
+- `tools/ui_probe.ps1` gained a "thinking region" check (`-ThinkingModel <gguf>` points it at a model that
+  actually thinks): the answer body must contain no thinking tags, the region starts collapsed, expands and
+  collapses again, and shows real thinking text when expanded.
+
+**Defect found by the UI probe: a BOM in a config file killed the backend at startup**
+- Symptom: writing the probe's temporary `config.user.json` with Windows PowerShell 5.1's
+  `Set-Content -Encoding UTF8` (which emits a BOM) made the backend exit with
+  `json.decoder.JSONDecodeError: Unexpected UTF-8 BOM`, taking the whole app down with a bare
+  "backend exited unexpectedly" and no hint that a config file was involved.
+- Root cause: `Config.load` read config files as plain `utf-8`. Notepad on Windows saves UTF-8 with a BOM
+  too, so **a single hand-edit of the config could make the program unopenable** (the protocol layer already
+  tolerated a BOM on stdin; the config side had been missed).
+- Fix: read config files as `utf-8-sig`; `config.user.json` is an optional overlay, so a malformed one is now
+  **warned about and ignored** instead of taking the backend down; the session file is read as `utf-8-sig`
+  as well.
+- Regression assertions added to `tools/selftest.py` (BOM on the base config, BOM on the overlay, corrupt
+  overlay) — **80/80 passing**.
+
 ### Studio name finalised (熵寂工作室 / Void Entropia Studio)
 
 - The Studio's Chinese name is now officially **熵寂工作室**; `VoidEntropiaStudio` remains the

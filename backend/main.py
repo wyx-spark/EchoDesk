@@ -10,6 +10,20 @@
   {"action": "model_scan"}                     -> 重新扫描模型文件夹
   {"action": "model_load", "name": "..."}      -> 热加载指定模型（不重启进程）
 
+**思考内容通道（v0.2.1 模型思考内容分离 任务三/四）**：
+
+推理模型的思考过程与最终回答走两条通道，回答区只承载最终答案：
+
+* ``{"type":"delta","channel":"reasoning","content":...}`` —— 思考内容增量；
+* ``{"type":"delta","channel":"answer","content":...}`` —— 最终回答增量；
+* ``{"type":"delta","channel":"answer","reset":true}`` —— **作废回答区**：此前发出的
+  "回答"其实是思考内容（模型的起始标签写在提示词里，只有结束标签可见，如
+  DeepSeek-R1），前端应把已累积的回答文本搬到思考区；
+* ``done`` 行额外带 ``reasoning``（思考全文）、``reasoning_unclosed: true``
+  （标签未闭合，通常意味着 token 预算被思考用完、答案还没开始）。
+
+没有 ``channel`` 字段的 delta 行沿用旧语义（进度/摘要等非对话文本），前端按原样处理。
+
 **无模型就绪（v0.2.1 综合优化 任务一）**：
 启动时若本地缺少模型，后端**不再阻塞等待、也不再退出**，而是以"无模型就绪"状态继续运行：
 初始化一个 ``llm`` 留空的 Backend，主循环照常服务。行为边界见 :meth:`Backend.model_state`：
@@ -32,6 +46,9 @@ import threading
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
+from reasoning import ANSWER as _CH_ANSWER
+from reasoning import REASONING as _CH_REASONING
+from reasoning import RESET as _CH_RESET
 from version import APP_NAME, APP_VERSION, STUDIO
 
 # 协议走 stdin/stdout，且内容含中文/emoji。某些机器（英文 locale）下 Python
@@ -164,6 +181,12 @@ class Backend:
         # "加载成功了但还在用旧对象"这种静默错误。
         self.llm = self._build_engine(config, model_path)
         self.conv = ConversationManager(config.max_history, config.default_mode)
+        # 思考内容写入历史的两个开关（v0.2.1 模型思考内容分离）：是否持久化、
+        # 每条保留多少字符。放在这里而不是 ConversationManager 内部，是因为
+        # 这两个值来自 config.json，而会话管理器本身不依赖配置模块。
+        _reasoning_cfg = getattr(config, "reasoning", None)
+        self.conv.persist_reasoning = bool(getattr(_reasoning_cfg, "persist", True))
+        self.conv.reasoning_max_chars = int(getattr(_reasoning_cfg, "history_max_chars", 8000) or 0)
         self.search = SearchEngine(config.search_results)
         self.summarizer = DocumentSummarizer(
             self.llm, config.summarize, engine_factory=self._make_summary_engine,
@@ -435,6 +458,7 @@ class Backend:
             return LazyLLMEngine(
                 int(config.context_length or 8192), n_threads=n_threads,
                 n_batch=config.n_batch, n_gpu_layers=config.n_gpu_layers,
+                reasoning=getattr(config, "reasoning", None),
             )
         train_ctx = resolve_context_window(path, 0)
         n_ctx = config.context_for_model(path, train_ctx)
@@ -445,6 +469,7 @@ class Backend:
         return LLMEngine(
             path, n_ctx,
             n_threads=n_threads, n_batch=config.n_batch, n_gpu_layers=config.n_gpu_layers,
+            reasoning=getattr(config, "reasoning", None),
         )
 
     def restore_session(self) -> int:
@@ -1716,29 +1741,53 @@ class Backend:
         messages = self.conv.build_messages(user_msg, search_context, include_file=include_file)
 
         parts: list = []
+        # 思考内容与回答走两条通道（任务三）：通道名与前端约定见模块头协议说明。
+        splitter = self.llm.make_splitter() if hasattr(self.llm, "make_splitter") else None
         try:
-            for delta in self.llm.chat_stream(
+            for channel, piece in self.llm.chat_stream_split(
                     messages,
                     temperature=self.commands.temperature,
                     max_tokens=int(getattr(self.config, "max_tokens", 1024) or 1024),
                     stop_event=self.stop_event,
                     top_p=float(getattr(self.config, "top_p", 0.9) or 0.9),
-                    repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1)):
+                    repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1),
+                    splitter=splitter):
                 if self.stop_event.is_set():
                     break
-                parts.append(delta)
-                yield {"type": "delta", "content": delta}
-            full = "".join(parts)
+                if channel == _CH_REASONING:
+                    yield {"type": "delta", "channel": _CH_REASONING, "content": piece}
+                elif channel == _CH_RESET:
+                    # 孤立结束标签：此前发到回答区的内容其实都是思考。前端收到
+                    # reset 后把回答区已有的文本"搬"到思考区，不需要后端重发。
+                    yield {"type": "delta", "channel": _CH_ANSWER,
+                           "reset": True, "content": ""}
+                else:
+                    parts.append(piece)
+                    yield {"type": "delta", "channel": _CH_ANSWER, "content": piece}
+            # 用分离器自己的回答累积串作为权威结果：出现孤立结束标签时它已经把
+            # "此前误发到回答区的内容"改判给思考区，这里不能再另存一份累积串
+            # （否则 done.content 会把思考内容一起带上，测试 C2 就是这么抓出来的）。
+            full = splitter.answer_text if splitter is not None else "".join(parts)
+            thinking = splitter.reasoning_text.strip() if splitter is not None else ""
+            # 中断时也要落库：任务书任务五要求"思考过程中止不残留半截内容到回答区"，
+            # 回答区只存回答、思考单独存字段，前端据此清理即可。
             self.conv.add_message("user", user_msg)
-            self.conv.add_message("assistant", full)
+            self.conv.add_message("assistant", full, reasoning=thinking)
             self._compact_history()
-            done: Dict[str, Any] = {"type": "done", "content": full, "stopped": self.stop_event.is_set()}
+            done: Dict[str, Any] = {"type": "done", "content": full,
+                                    "stopped": self.stop_event.is_set()}
+            if thinking:
+                done["reasoning"] = thinking
+            if splitter is not None and splitter.unclosed and not self.stop_event.is_set():
+                # 标签没闭合，且不是用户主动停止（用户停止时前端已经有"已停止生成"提示，
+                # 再报"长度上限用完"就是误导）：通常意味着 token 预算被思考吃光。
+                done["reasoning_unclosed"] = True
             # 扩展上下文后速度明显下降时给出提示（窗口越大 KV Cache 越大、越慢）
             if self.config.speed_hint and not self.stop_event.is_set():
                 hint = self.llm.speed_hint(self.config.speed_min_tps)
                 if hint:
                     done["content"] = f"{full}\n\n{hint}" if full else hint
-                    _write({"type": "delta", "content": f"\n\n{hint}"})
+                    _write({"type": "delta", "channel": _CH_ANSWER, "content": f"\n\n{hint}"})
             self._attach_context(done)  # 附带当前上下文占用，供前端刷新
             yield done
         except Exception as e:
@@ -1787,7 +1836,7 @@ class Backend:
         include_file = bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)
         messages = self.conv.build_messages(user_msg, search_context, include_file=include_file)
         try:
-            response = self.llm.chat_complete(
+            thinking, response = self.llm.chat_complete_split(
                 messages,
                 temperature=self.commands.temperature,
                 max_tokens=int(getattr(self.config, "max_tokens", 1024) or 1024),
@@ -1795,9 +1844,12 @@ class Backend:
                 repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1),
             )
             self.conv.add_message("user", user_msg)
-            self.conv.add_message("assistant", response)
+            self.conv.add_message("assistant", response, reasoning=thinking)
             self._compact_history()
             result: Dict[str, Any] = {"type": "assistant", "content": response}
+            if thinking:
+                # 同一份内容分别给两条通道（任务四）：界面折叠展示思考、只显示答案
+                result["reasoning"] = thinking
             self._attach_context(result)
             return result
         except Exception as e:

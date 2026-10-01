@@ -197,6 +197,12 @@ class ConversationManager:
         self.custom_prompt = ""   # /prompt 的内容：优先级最高，替换模式块与任务层
         self.task_prompt = ""     # /task 套用的任务层正文：叠加在模式块之上
         self.summary = ""  # 早期对话的自动摘要（长会话压缩产物）
+        # ---------- 思考内容（v0.2.1 模型思考内容分离） ----------
+        # 这两个开关由 Backend 按 config.reasoning 注入：
+        #   persist_reasoning=False 时不把思考写进历史（老会话的字段缺失照旧兼容）；
+        #   reasoning_max_chars 限制每条思考的保留长度（0 = 不限制）。
+        self.persist_reasoning = True
+        self.reasoning_max_chars = 8000
 
     # ---------- 模式 ----------
 
@@ -232,11 +238,40 @@ class ConversationManager:
 
     # ---------- 历史记录 ----------
 
-    def add_message(self, role: str, content: str) -> None:
-        self.history.append({"role": role, "content": content, "timestamp": datetime.now().isoformat()})
+    def add_message(self, role: str, content: str, reasoning: str = "") -> None:
+        """追加一条历史记录。
+
+        ``reasoning``（v0.2.1 模型思考内容分离）是**该轮助手回复的思考内容**，
+        单独存字段而不是拼进 ``content``：
+
+        * 任务书任务五要求"重新加载含思考内容的历史会话，确认区分正确" ——
+          不持久化就无从区分，所以默认存进历史；
+        * 但它**不参与** :meth:`build_messages` 构造的上下文（见那里的说明），
+          所以既不会污染回答文本，也不会白占上下文窗口。
+
+        空思考内容不写字段：老会话（没有这个字段）与普通模型的会话保持原样，
+        session.json 也不会因为一堆空字符串而变大。
+        """
+        record: Dict[str, object] = {
+            "role": role,
+            "content": content,
+            "timestamp": datetime.now().isoformat(),
+        }
+        trimmed = self._trim_reasoning(reasoning)
+        if trimmed and self.persist_reasoning:
+            record["reasoning"] = trimmed
+        self.history.append(record)
         # 硬上限保护（正常由后端把超限部分压缩为摘要）
         if len(self.history) > self.max_history * 4:
             self.history = self.history[-self.max_history * 4 :]
+
+    def _trim_reasoning(self, reasoning: str) -> str:
+        """按配置截断思考内容（超长时保留头部并加省略说明）。"""
+        text = (reasoning or "").strip()
+        limit = int(self.reasoning_max_chars or 0)
+        if not text or limit <= 0 or len(text) <= limit:
+            return text
+        return text[:limit] + _t("export.reasoning_truncated")
 
     def last_user_message(self) -> Optional[str]:
         """返回最近一条用户消息（用于"我刚才说了什么"等场景）。"""
@@ -263,11 +298,25 @@ class ConversationManager:
         self.summary = ""
 
     def export_markdown(self) -> str:
-        """将对话历史导出为 Markdown 文本（标题行随界面语言切换）。"""
+        """将对话历史导出为 Markdown 文本（标题行随界面语言切换）。
+
+        思考内容单独作为可折叠块导出（``<details>``，GitHub / VS Code / Typora
+        都能折叠）：导出要"完整"但也要"一眼分得清哪部分是思考"，直接拼在答案
+        前面会让导出件读起来像跑题；丢掉又等于悄悄删了用户看过的内容。
+        """
         lines = [_t("export.title"), _t("export.mode", mode=self.mode), ""]
         for msg in self.history:
             icon = _t("export.user") if msg["role"] == "user" else _t("export.assistant")
             lines.append(f"**{icon}** ({msg['timestamp']})")
+            thinking = str(msg.get("reasoning") or "")
+            if thinking:
+                lines.append("")
+                lines.append(f"<details><summary>{_t('export.reasoning')}</summary>")
+                lines.append("")
+                lines.append(thinking)
+                lines.append("")
+                lines.append("</details>")
+                lines.append("")
             lines.append(msg["content"])
             lines.append("")
         return "\n".join(lines)
@@ -364,9 +413,20 @@ class ConversationManager:
 
         这里拼接的 ``【{label}】`` / ``参考以下网络信息：`` 同属提示词内容，
         按文件头说明保持中文、不进语言包。
+
+        **思考内容刻意不进上下文**（v0.2.1 模型思考内容分离的自行判断项）：
+        历史记录里的 ``reasoning`` 字段只用于界面回放，不拼进 messages。理由有三：
+
+        1. 思考通常比答案还长，重新喂回去会成倍占用上下文窗口，而它对"下一轮
+           该说什么"几乎没有帮助（结论已经在 ``content`` 里了）；
+        2. DeepSeek 官方接口明确要求不要把 ``reasoning_content`` 传回下一轮；
+        3. DeepSeek-R1 蒸馏版的 GGUF 对话模板自己就在做同一件事 ——
+           ``{% if '</think>' in content %}{% set content = content.split('</think>')[-1] %}``
+           （实测见 records/v0.2.1-模型思考内容分离记录.md）：模型侧也只接受答案。
         """
         messages: List[dict] = [{"role": "system", "content": self.get_system_prompt()}]
         for msg in self.history:
+            # 只取 role/content：timestamp 与 reasoning 都不是模型输入
             messages.append({"role": msg["role"], "content": msg["content"]})
 
         user_content = f"参考以下网络信息：\n{search_context}\n\n问题：{user_query}" if search_context else user_query
@@ -400,11 +460,16 @@ class ConversationManager:
         """从 JSON 文件恢复会话。
 
         返回 (成功且有历史, 上次使用的模型路径)。
+
+        用 ``utf-8-sig`` 读：会话文件由本程序写入（无 BOM），但用户手工编辑过之后
+        记事本可能加上 BOM —— 老代码会在这里抛异常并被下面的 ``except`` 吞掉，
+        表现为"历史莫名其妙没了"，而不是给出原因（v0.2.1 模型思考内容分离时
+        顺带加固，与 config.py 的处理保持一致）。
         """
         if not os.path.exists(path):
             return False, ""
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
             if data.get("mode") in MODES:
                 self.mode = data["mode"]

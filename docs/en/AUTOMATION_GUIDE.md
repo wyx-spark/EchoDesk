@@ -176,6 +176,10 @@ restart for the change to take effect (the file is UTF-8; Notepad or VS Code bot
   - four to six items at a time is plenty — asking for too much makes the model lose track;
   - no need for pleasantries such as "please read the attachment"; the file content is appended to your instruction automatically.
 - **Preset templates**: four common templates can be applied directly from the Settings window (see section 7).
+- **Thinking content from reasoning models**: when a thinking model is used (Qwen3 thinking, DeepSeek-R1 and
+  so on), the “generate the review opinion” step takes **only the final answer** — the reasoning trace is
+  never written into task results or `result.txt` (it only appears in the chat with that model). Result files
+  therefore stay clean conclusions.
 
 ### 3.8 Result folder name (optional)
 
