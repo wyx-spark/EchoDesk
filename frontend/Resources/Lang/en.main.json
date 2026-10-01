@@ -20,7 +20,8 @@
       "preheating": "Warming up the model…",
       "loadingModel": "Loading the model…",
       "stopping": "Stopping…",
-      "fontSize": "Font size {0}"
+      "fontSize": "Font size {0}",
+      "noModel": "No model (file parsing and settings still work)"
     },
     "model": {
       "clickTip": "Click to open the model picker (Settings → Model)",
@@ -37,7 +38,10 @@
       "downloadDone": "✅ Model downloaded: {0}",
       "downloadFailed": "❌ Model download failed: {0}",
       "operationFailed": "❌ Model operation failed: {0}",
-      "placeholder": "🧠 Model: ---"
+      "placeholder": "🧠 Model: ---",
+      "noModel": "🧠 Model: none",
+      "noModelTip": "No local model is available. Click to open Settings → Model and download or load one.",
+      "hotLoaded": "✅ The model is ready; you can chat normally now."
     },
     "mode": {
       "clickTip": "Click to change the default conversation mode in Settings",
@@ -186,6 +190,16 @@
     },
     "update": {
       "idle": "🎉 New version"
+    },
+    "noModel": {
+      "guideFallback": "⚠️ No local model is available, so inference is unavailable (file parsing, settings and the model market still work).\nClick the model chip at the top to open Settings → Model → Model market, or copy a .gguf file into:\n{0}",
+      "toast": "⚠️ No local model found: it loads automatically once downloaded or copied in, no restart needed"
+    },
+    "summary": {
+      "preparing": "📝 Parsing the document and preparing segmented summarization…"
+    },
+    "button": {
+      "stopSummaryTip": "Abort segmented summarization (Esc)"
     }
   },
   "settings": {

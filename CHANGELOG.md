@@ -14,6 +14,65 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 > deviations from the task specification, unfinished items, and size records, see the internal development
 > record (`v0.2.1-研发记录.md`, **not distributed with the release**).
 
+### No-model ready state, model market listing, and summarisation feedback
+
+**No-model ready state (optimisation task one)**
+- When the configured model file is missing, the backend **no longer blocks waiting for an answer and no
+  longer exits**: it starts with an empty engine, keeps serving requests, and reports `model_ready: false`
+  in `ready` together with a `model_missing` block and a guidance string.
+- `need_download` is **kept but demoted to a non-blocking notice** (`blocking: false`), emitted once before
+  `ready`. The old "ask, and exit if declined" flow is gone, along with its two helper functions and three
+  now-dead language keys. Quitting is only ever user-initiated (the UI sends `exit`).
+- Behaviour boundary without a model: `chat` / `chat_stream` return the guidance instead of failing;
+  segmented summarisation and batch automation say up front that they need a model; file parsing, settings
+  read/write, the skill market, session history and the model market (search / download / registry) all keep
+  working. Token counting falls back to a character estimate, so context-usage display still works.
+- The `ready` message and every `context` snapshot now carry a machine-readable `model_ready` flag, so the UI
+  can tell "the backend is up" apart from "inference is available".
+
+**Getting a model without restarting (optimisation tasks two and five)**
+- The guidance lists three concrete paths plus the **real** path of the models folder: the model market,
+  copying a `.gguf` file in by hand, or loading an already-downloaded model.
+- New action `model_scan` ("Rescan models folder"): re-reads the models folder, registers `.gguf` files that
+  were copied in by hand, and **auto-loads** the model when exactly one is found.
+- New action `model_load`: hot-loads a model **into the same engine object**, so nothing else holding a
+  reference to the engine needs re-wiring. Failures (corrupt file, unsupported format, out of memory) keep
+  the no-model state, report the reason, and leave the retry path open.
+- Downloading from the market now hot-loads the model when the download finishes; the response carries
+  `model_state`, and the UI switches from "no model" to normal by itself.
+
+**The model market shows everything (optimisation task three)**
+- Root cause of "the default model never appears in the list": the market lists **repositories**, and the
+  list was built purely from one page of download-ranked remote search results, so nothing guaranteed that
+  the repository containing the configured default model would show up (a hardware filter, a search keyword
+  or a page boundary could each hide it). The fix is not a looser filter but **pinning the default model's
+  repository into the list**, independently of the query.
+- The list is now merged from three sources and de-duplicated by repository: remote search results, the
+  default model, and locally downloaded models — so an unreachable mirror still shows something useful
+  instead of an empty list.
+- Hardware recommendation (the existing RAM/CPU probing) now only **adds a mark**: recommended entries carry
+  `recommended` / `param_b` / `recommend_reasons`, and the response carries a shared `recommend_basis`.
+  Nothing is hidden. The UI renders the mark from the language pack — `(推荐)` in Chinese,
+  `(Recommended)` in English.
+- Ordering: the default model first, then recommended entries, then the requested sort order.
+
+**Long-document summarisation feedback (optimisation task four)**
+- Summarisation now emits **structured progress events** after every step (phase, segment index/total,
+  status, elapsed time, characters, generated length, plus running counters), and the UI renders them live
+  in the chat instead of only writing them to stderr where nobody could see them.
+- **Heartbeat**: each segment is generated through the streaming API, so a status line is emitted at least
+  every `heartbeat_seconds` (default 5 s) — long silences are now impossible by design.
+- **Real interruption**: the same token loop checks the stop flag, so pressing stop aborts the current
+  segment immediately instead of after it finishes. Aborting keeps the raw document in context and
+  **does not** inject a half-finished summary.
+- **Timeout**: `chunk_timeout_seconds` (0 = unlimited) with `chunk_timeout_action` =
+  `skip` (default) / `retry` (retry once, then skip) / `abort`.
+- **Slow is not broken**: a segment exceeding `slow_chunk_seconds` is reported as slow (with its elapsed
+  time) and keeps running; real failures (call exceptions, timeouts, every segment failing) get their own
+  error text and recovery advice. A run that had to fall back for some segments says so instead of
+  pretending it was complete.
+- Logs record segment index, character counts, elapsed time and status only — **never the document body**.
+
 ### Automation improvements (login state reuse / href extraction / visual selection semantics)
 
 **Login state reuse (automation improvement task one)**

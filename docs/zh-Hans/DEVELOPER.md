@@ -89,25 +89,40 @@ English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)。
 - 编码：**UTF-8**（后端启动时强制 `sys.stdout/stderr` 为 UTF-8 且 `errors="replace"`，
   避免英文 locale 下 cp1252 编码异常导致进程静默退出——这是 v0.1.0 的一个真实故障）。
 - 方向：前端 → 后端（stdin）每行一个请求对象；后端 → 前端（stdout）每行一个响应对象。
-- 响应统一带 `type` 字段：`ready` / `system` / `assistant` / `delta` / `done` / `error` / `need_download` / `context`。
+- 响应统一带 `type` 字段：`ready` / `system` / `assistant` / `delta` / `done` / `error` / `need_download` / `summary_progress` / `context`。
 - 非 JSON 的行（第三方库误打到 stdout 的诊断信息）前端会忽略。
 
 ### 2.2 启动握手
 
-后端在**模型加载 + 会话恢复 + 预热全部完成**后才输出：
+后端在**会话恢复 + 预热全部完成**后才输出 `ready`：
 
 ```json
-{"type":"ready","version":"v0.2.0","studio":"Void Entropia Studio","restored":3,"history":[{"role":"user","content":"..."}]}
+{"type":"ready","version":"v0.2.1","studio":"Void Entropia Studio","restored":3,
+ "model_ready":true,"model_state":{"ready":true,"model":"Qwen3.5-0.8B-Q4_K_M.gguf","models_dir":"...","n_ctx":8192,"guide":""},
+ "model_missing":{},"history":[{"role":"user","content":"..."}]}
 ```
 
-前端读到 `ready` 才放行输入。启动前若本地缺模型：
+**`model_ready` 用来区分"后端已就绪"与"推理可用"**（v0.2.1）。v0.2.1 起缺模型**不会**让后端停下：
+它以空引擎启动，继续服务所有不依赖推理的请求，推理类请求返回引导。
+前端保持输入可用、状态栏显示「无模型」，模型热加载成功后自动切回正常状态。
+
+缺模型时会**在 `ready` 之前**发一条**非阻塞**告知：
 
 ```json
-{"type":"need_download","model":"Qwen3.5-0.8B-Q4_K_M.gguf","size":532517120,"repo":"unsloth/Qwen3.5-0.8B-GGUF","current":"...","content":"..."}
+{"type":"need_download","blocking":false,"model":"Qwen3.5-0.8B-Q4_K_M.gguf","size":532517120,
+ "repo":"unsloth/Qwen3.5-0.8B-GGUF","current":"Qwen3.5-0.8B-Q4_K_M.gguf",
+ "target":"Qwen3.5-0.8B-Q4_K_M.gguf","models_dir":"...","content":"..."}
 ```
 
-前端弹确认框；同意则发送 `model_download`（后端下载 → 继续初始化 → 最终输出 `ready`），
-拒绝或 stdin 关闭则后端直接退出。
+`blocking: false` 是重点：它是**告知**而不是**询问**。旧行为（后端阻塞读 stdin 等答复，
+用户拒绝或 stdin 关闭就退出）已删除 —— 现在只有前端发 `action=exit` 才会退出。无模型时的边界：
+
+| 类别 | 请求 | 无模型时行为 |
+| --- | --- | --- |
+| 推理 | `chat`、`chat_stream` | 返回引导文案，不崩溃 |
+| 依赖模型 | 分段摘要、`automation_run` | 先给引导（自动化甚至不会打开浏览器） |
+| 不依赖模型 | 文件解析、技能市场、设置读写、模型市场搜索与下载、会话历史 | 正常工作 |
+| 状态查询 | `context`、`model_state` | `model_ready: false` + 真实原因 |
 
 ### 2.3 请求动作一览
 
@@ -119,6 +134,10 @@ English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)。
 | `file` | 上传并解析文件（过长自动分段摘要） | 一行 `system` |
 | `context` | 查询上下文占用 | 一行 `context` + `used`/`limit` |
 | `model_download` | 下载模型并热切换 | 多行 `delta` 进度 + `done` |
+| `file_stream` | 加载文件，流式输出分段摘要进度 | `delta` + 多行 `summary_progress` + `done` |
+| `model_state` | 机器可读的模型状态 | `system` + `model_state` |
+| `model_scan` | 重新扫描模型文件夹（登记手工放入的 `.gguf`；只有一个模型时自动加载） | `system` + `model_scan` + `model_state` |
+| `model_load` | 按文件名热加载模型（无需重启） | `system` + `model_load` + `model_state` |
 | `automation_config` | 读取自动化配置 | `system` + `automation` 对象 |
 | `automation_config_set` | 保存自动化配置 | `system` + 规范化后的 `automation` |
 | `automation_test` | 测试选择器（打开浏览器预览匹配） | 一行 `system`（含匹配数量与样例） |
@@ -141,6 +160,32 @@ English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)。
 {"type":"delta","content":"声音在传播"}
 {"type":"done","content":"回声是……","used":138,"limit":6553}
 ```
+
+### 2.5 分段摘要进度（`summary_progress`）
+
+`file_stream`（以及任何最终会摘要长文档的流式请求）会在文本之外输出结构化的进度行：
+
+```json
+{"type":"summary_progress","phase":"map","status":"running","index":3,"total":12,
+ "chars":3000,"tokens":184,"elapsed":42.1,"chunk_elapsed":11.4,"tps":16.1,"slow":false,
+ "stream":true,"ok_chunks":2,"partial_chunks":0,"failed_chunks":0,"timeout_chunks":0,
+ "skipped_chunks":0,"slow_chunks":0,"content":"… 第 3/12 段处理中：已生成 184 字符，该段已用 11 秒"}
+```
+
+- `phase`：`prepare` / `map` / `reduce` / `done` / `aborted` / `failed`；
+- `status`：`start` / `running` / `ok` / `failed` / `timeout` / `skipped` / `retry`；
+- `content` 是按语言包渲染好的一行文案（后端解析），其余字段都是结构化的，
+  前端要画进度条不必解析文本；
+- `tokens` 是**当前段已生成的字符数**，界面据此区分"还在产出"与"没动静"；
+- `slow: true` 表示该段超过了 `summarize.slow_chunk_seconds` —— **慢不等于坏**，流程继续；
+- `stream: false` 表示引擎没有流式接口，心跳与段内中断只能在段与段之间生效
+  （界面会如实说明，而不是假装能中途打断）；
+- 中止（`action=stop`）返回 `phase: aborted`，原文完整保留在上下文中，**不注入半份摘要**；
+- 每种失败（调用异常、超时、全部段落失败）都有自己的状态；有段落走兜底时，
+  最终 `done` 的文案里会说明。
+
+`summarizer.py` 刻意只抛结构化数据、不含任何界面文案，因此摘要算法不依赖界面语言。
+每段都优先走 `engine.chat_stream`，这正是"心跳、单段超时、段内中断"能够成立的前提。
 
 ---
 

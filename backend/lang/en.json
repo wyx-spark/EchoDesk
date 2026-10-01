@@ -273,11 +273,9 @@
     "exit_ack": "Exit command received, quitting",
     "backend_init_failed": "Backend initialization failed: {error}",
     "inference_failed": "Inference failed: {error}",
-    "model_missing_no_repo": "Backend initialization failed: model {model} is missing locally and repository {repo} cannot be queried ({error}).\nCheck your network, or copy the model file into the models/ folder manually.",
-    "model_missing_ask": "Model {model} was not found locally.\nThe closest match in repository {repo} is {target}{size}",
+    "model_missing_ask": "The local model is missing: {model} (repo {repo}).\nThe file that would be used is {target}, about {size}.\n\nThe backend does NOT exit because of this: open Settings → Model → Model market to download one, or copy a .gguf file into the models folder.\nModels folder: {dir}",
     "model_missing_size": " (about {mb} MB)",
     "model_missing_unknown_size": " (size unknown)",
-    "model_declined": "The user declined the model download; the backend is exiting",
     "repeat_intent": "You just said:\n{text}",
     "log_missing_model": "Model {model} is missing locally; asking the front end to confirm with the user",
     "language_switched": "🌐 Interface language switched to {locale}",
@@ -367,7 +365,28 @@
     "model_downloading_progress": "📥 Downloading '{name}'... {pct}% ({done} / {total})",
     "download_progress": "📥 Downloading {name} ... {pct}% ({done} MB / {total} MB)",
     "model_download_done_loading": "✅ Model downloaded: {name}, loading and warming up…",
-    "await_download_confirm": "⏳ Waiting for confirmation on the model download (send model_download to start, exit to quit)"
+    "no_model_guide": "⚠️ No local model is available right now, so inference is unavailable (file parsing, settings and the model market still work).\n\nThree ways to fix it:\n1. Open Settings → Model → Model market, then search for and download a model (ones marked \"(Recommended)\" are picked for your hardware);\n2. Copy a .gguf file into the models folder manually, then click \"Rescan models folder\";\n3. If you already have a model, click \"Load\" in the local model library.\n\nModels folder: {dir}",
+    "no_model_name_given": "No model file name was given. Pick one in the local model library, or click \"Rescan models folder\" first.",
+    "model_file_missing": "Model file {name} was not found (models folder: {dir}). Check the file name, or put the .gguf file there and rescan.",
+    "model_load_failed": "Failed to load model {name}: {error}\nThe file may be corrupt, unsupported, or there may not be enough memory. Try a smaller quantization; the app stays in the no-model state.",
+    "model_hot_loading": "⏳ Loading model {name} (no restart needed)…",
+    "model_hot_loaded": "✅ Model hot-loaded: {name}. You can chat normally now.",
+    "model_hot_load_failed": "⚠️ Hot-load failed: {error}\nThe app stays in the no-model state; try another model file, or use \"Rescan models folder\".",
+    "model_scan_failed": "Scanning the models folder failed: {error}",
+    "model_scan_auto_loaded": "Scan complete: only one model was found, so {name} was loaded automatically.",
+    "model_scan_empty": "Scan complete: there are no .gguf files in the models folder. ({dir}) Download one from the model market, or copy a model file there manually.",
+    "model_scan_found": "Scan complete: found {count} model(s) in {dir}. Pick one in the local model library to load it.",
+    "model_scan_ok": "Scan complete: the model library now has {count} model(s).",
+    "summarize_need_model": "Segmented summarization needs a model and none is available right now.\n\n{guide}",
+    "automation_need_model": "Batch jobs need a model to generate the final review, and none is available right now, so the browser was not started.\n\n{guide}",
+    "file_loaded_no_model": "📄 File {name} parsed ({chars} characters, about {tokens} tokens) and kept in context.\nThe document is long and would normally be summarized in segments, but no model is available, so it is kept in full and not summarized.\n\n{guide}",
+    "file_stream_start": "📄 Parsing file {name}…",
+    "file_load_failed": "Reading the file failed: {error}",
+    "summary_stopping": "⏹ Aborting segmented summarization…",
+    "summary_aborted": "⏹ Segmented summarization aborted ({name}): {done}/{total} segments done in {elapsed}s.\nThe full text is still in context and no partial summary was injected. Run /summarize again to retry.",
+    "summary_failed": "❌ Segmented summarization failed ({name}): none of the {chunks} segments produced a summary ({failed} call failures, {timeout} timeouts) after {elapsed}s.\nLikely causes: the model is not properly loaded, out of memory, or the summary model is unavailable. Fix that and retry /summarize.",
+    "summary_partial_notice": "⚠️ This summary is incomplete: {ok} of {total} segments came from the model, {failed} failed, {timeout} timed out, {skipped} were skipped and {slow} were slow; failed segments fell back to a raw excerpt so nothing was dropped.",
+    "summary_slow_notice": "⏱️ {slow} of {total} segments exceeded the slow threshold; the whole run took {elapsed}s. This is normal for slow models/machines — try a smaller quantization or lower chunk_chars."
   },
   "file": {
     "wps_failed": "WPS read failed: {error}",
@@ -550,7 +569,9 @@
     "uninstall.remove_failed": "Failed to delete the file: {error}",
     "uninstall.not_in_registry": "The model library has no entry for {name}.",
     "uninstall.done_removed": "Deleted {name} and updated the model library.",
-    "uninstall.done_cleaned": "Deleted {name} (the file was missing; the record was cleaned up)."
+    "uninstall.done_cleaned": "Deleted {name} (the file was missing; the record was cleaned up).",
+    "note.default_model": "Default model (the one configured in config.json)",
+    "note.local_model": "Already downloaded locally"
   },
   "automation": {
     "disabled": "Automation is not enabled",
@@ -874,5 +895,19 @@
     "mode": "- Mode: {mode}",
     "user": "👤 User",
     "assistant": "🤖 Assistant"
+  },
+  "summary": {
+    "progress.prepare": "📝 Preparing segmented summarization: {chunks} segments, {chars} characters.",
+    "progress.chunk_start": "📝 Segment {index}/{total} started ({chars} characters)…",
+    "progress.chunk_running": "… Segment {index}/{total} in progress: {produced} characters produced, {seconds}s elapsed in this segment",
+    "progress.chunk_slow": "(this segment has taken over {seconds}s; slow is not the same as stuck, output is still coming)",
+    "progress.chunk_ok": "✅ Segment {index}/{total} done: {chars} characters summarized in {seconds}s.",
+    "progress.chunk_retry": "🔁 Segment {index}/{total} timed out; retrying once as configured…",
+    "progress.chunk_timeout": "⏱️ Segment {index}/{total} timed out: falling back to a raw excerpt and continuing.",
+    "progress.chunk_failed": "❌ Segment {index}/{total} failed: falling back to a raw excerpt and continuing.",
+    "progress.reduce": "🧩 Merging segment summaries (group {index}/{total}), {seconds}s elapsed…",
+    "progress.done": "🎉 Segmented summarization done: {chunks} segments, {chars} characters summarized, {seconds}s total.",
+    "progress.aborted": "⏹ Segmented summarization aborted: {index}/{total} segments done.",
+    "progress.failed": "❌ Segmented summarization failed: none of the {total} segments produced a summary."
   }
 }

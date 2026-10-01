@@ -76,6 +76,11 @@ class SummarizeConfig(BaseModel):
     """长文档分段摘要（预处理）配置。
 
     文件全文超出窗口一定比例时，先分段生成摘要再合并注入，而不是直接截断。
+
+    v0.2.1 综合优化（任务四）新增：**过程反馈、心跳、超时与中断**。
+    小模型 + 纯 CPU 下长文档摘要可能跑十几分钟，此前只把"第 i/N 段"打到 stderr，
+    前端对话框里什么都看不到，用户无法区分"正在跑"与"已经卡死"。
+    下面这组参数决定"多久没动静算异常"以及"单段太慢怎么办"。
     """
 
     enabled: bool = True
@@ -93,6 +98,28 @@ class SummarizeConfig(BaseModel):
     min_chars: int = Field(default=4000, ge=0)
     # 摘要中保留原文指针（文件名 + 段落区间），便于按需回查原文
     keep_pointer: bool = True
+
+    # ---------- 任务四：过程反馈 ----------
+    # 是否向前端发进度事件（summary_progress）。关掉只影响"看不看得见"，不影响摘要结果；
+    # 无人值守/脚本化调用时可以关掉以减少协议噪音。
+    progress_events: bool = True
+    # 心跳间隔（秒）：单段处理中每隔这么久至少发一次状态，避免长时间无任何输出。
+    # 下限 1 秒是防止有人配成 0 把协议刷爆。
+    heartbeat_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
+    # 单段超过这么多秒仍未完成，就在进度里标记为"异常缓慢"并给出提示
+    # （只提示、不打断：慢不等于故障，任务书要求区分这两种情况）。
+    slow_chunk_seconds: int = Field(default=60, ge=10, le=3600)
+    # 单段超时（秒）；0 = 不限。判定依据是"该段从开始到现在"的墙钟时间。
+    chunk_timeout_seconds: int = Field(default=0, ge=0, le=7200)
+    # 单段超时后的行为：skip（跳过该段并继续，默认）/ retry（重试一次）/ abort（中止整个摘要）
+    chunk_timeout_action: str = "skip"
+
+    @field_validator("chunk_timeout_action")
+    @classmethod
+    def _check_timeout_action(cls, value: str) -> str:
+        """校验超时行为，非法值回落到默认的 skip（配置文件可能被手改坏）。"""
+        text = str(value or "").strip().lower()
+        return text if text in ("skip", "retry", "abort") else "skip"
 
 
 class AutomationConfig(BaseModel):

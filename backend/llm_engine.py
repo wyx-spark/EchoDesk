@@ -15,6 +15,17 @@ from gguf_meta import describe_model, estimate_kv_cache_bytes, format_bytes, res
 log = logging.getLogger("EchoDesk.LLM")
 
 
+class NoModelError(RuntimeError):
+    """当前没有可用模型时，任何真正需要推理的调用都抛它。
+
+    为什么要有一个专门的异常类型（v0.2.1 综合优化 任务一）：
+    无模型就绪状态下，`chat`/`chat_stream`/分段摘要都要给用户**引导**而不是崩溃。
+    有了它，引导逻辑就只需要在少数几个入口 `except NoModelError` 一次，
+    不用在几十处调用点逐个判断"引擎是不是空的"（漏一处就是一个崩溃）。
+    它的 `message` 已经是可直接展示给用户的文案（由调用方传入语言包文本）。
+    """
+
+
 class LLMEngine:
     """基于 llama.cpp 的本地大模型推理引擎。"""
 
@@ -200,3 +211,133 @@ class LLMEngine:
             "窗口越大内存占用越高、速度越慢；可在 config.json 调小 context_length，"
             "或增大 n_threads / 使用更小的量化模型。"
         )
+
+
+class LazyLLMEngine(LLMEngine):
+    """**可先空着、之后原地加载**的推理引擎（v0.2.1 综合优化 任务一/任务五）。
+
+    为什么需要它：模型缺失时后端要"不退出、照常服务"，等用户在模型市场下载完成
+    或手动放入 `.gguf` 之后再**热加载**。做法有两种：
+
+    * 换一个引擎对象 —— 但 `command_handler.llm_engine`、`summarizer.engine`、
+      `Backend.llm` 等处的引用都要跟着重新接线，漏一个就会"看起来加载成功了，
+      实际还在用旧对象"（而且是静默的）；
+    * 保持**同一个对象**，只在内部把模型加载进来 —— 就是这里选的做法。
+
+    所以它是 `LLMEngine` 的子类：未加载时 `self.llm is None`，复用父类全部方法，
+    只把"会真的碰到底层 Llama 对象"的入口改成抛 :class:`NoModelError` 或退化为估算。
+    未加载状态下仍然可用的能力（无模型时必须照常工作，任务书任务一的边界表）：
+    token 粗估（`len(text)//2`）、清缓存、窗口/KV 描述、速度提示。
+    """
+
+    def __init__(self, n_ctx: int = 8192, verbose: bool = False,
+                 n_threads: Optional[int] = None, n_batch: int = 512,
+                 n_gpu_layers: int = 0) -> None:
+        # 刻意**不**调用 super().__init__：那条路会立刻 import llama_cpp 并加载模型。
+        self.model_path = ""
+        self.n_ctx = int(n_ctx or 0)
+        self.n_threads = n_threads
+        self.n_batch = n_batch
+        self.n_gpu_layers = n_gpu_layers
+        self.n_ctx_train = 0
+        self.kv_cache_bytes = 0
+        self.last_tps: float = 0.0
+        self.last_elapsed: float = 0.0
+        self.last_tokens: int = 0
+        self.llm = None
+        log.info("未加载模型：进入无模型就绪状态（可推理功能暂不可用，其余功能正常）")
+
+    # ---------- 状态 ----------
+
+    @property
+    def ready(self) -> bool:
+        """是否已经真的加载了模型。"""
+        return self.llm is not None
+
+    def load(self, model_path: str, n_ctx: Optional[int] = None) -> None:
+        """把模型加载进**当前对象**（热加载入口）。
+
+        失败时保持未加载状态并把异常抛给调用方（任务书任务五：热加载失败要
+        保持无模型状态、给出明确错误、保留重试路径）——因此这里不吞异常，
+        也不半途改动 `self.model_path`：先把底层对象建好，成功后才落字段。
+        """
+        path = str(model_path or "").strip()
+        if not path:
+            raise NoModelError("模型路径为空")
+        from llama_cpp import Llama  # 延迟到真正加载时才 import
+
+        target_ctx = int(n_ctx or self.n_ctx or 8192)
+        train = resolve_context_window(path, default=0)
+        llm = Llama(
+            model_path=path,
+            n_ctx=target_ctx,
+            verbose=False,
+            n_threads=self.n_threads,
+            n_batch=self.n_batch,
+            n_gpu_layers=self.n_gpu_layers,
+        )
+        self.llm = llm
+        self.model_path = path
+        self.n_ctx = target_ctx
+        self.n_ctx_train = train
+        try:
+            self.n_ctx = int(llm.n_ctx())
+        except Exception:
+            pass
+        try:
+            self.n_ctx_train = int(llm.n_ctx_train()) or self.n_ctx_train
+        except Exception:
+            pass
+        self.kv_cache_bytes = estimate_kv_cache_bytes(self.model_path, self.n_ctx)
+        self.log_window()
+
+    def reload(self, model_path: Optional[str] = None, n_ctx: Optional[int] = None) -> None:
+        """重新加载（父类同签名）。未加载时等价于 :meth:`load`。"""
+        target = model_path or self.model_path
+        if not target:
+            raise NoModelError("模型路径为空")
+        self.load(target, n_ctx)
+
+    # ---------- 会碰到底层 Llama 的入口 ----------
+
+    def chat_complete(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        top_p: Optional[float] = None,
+        repeat_penalty: Optional[float] = None,
+    ) -> str:
+        if not self.ready:
+            raise NoModelError("尚未加载模型")
+        return super().chat_complete(messages, temperature, max_tokens, top_p, repeat_penalty)
+
+    def chat_stream(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        stop_event: Optional[threading.Event] = None,
+        top_p: Optional[float] = None,
+        repeat_penalty: Optional[float] = None,
+    ) -> Iterator[str]:
+        if not self.ready:
+            raise NoModelError("尚未加载模型")
+        return super().chat_stream(messages, temperature, max_tokens, stop_event, top_p, repeat_penalty)
+
+    def count_tokens(self, text: str) -> int:
+        """未加载模型时按"约 2 字符 1 token"粗估。
+
+        为什么必须退化而不是抛异常：文件解析、上下文占用显示、分段摘要的触发判断
+        都要用 token 数，而这些都是**无模型时也要能用**的功能（任务一的功能边界表）。
+        精度差一点没关系，它只用于估算与提示。
+        """
+        if not self.ready:
+            return max(0, len(text or "") // 2)
+        return super().count_tokens(text)
+
+    def describe(self) -> Dict[str, object]:
+        if not self.ready:
+            return {"model": "", "n_ctx": self.n_ctx, "n_ctx_train": 0,
+                    "kv_cache_bytes": 0, "ready": False}
+        return super().describe()

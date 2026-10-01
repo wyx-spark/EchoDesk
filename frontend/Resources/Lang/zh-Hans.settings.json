@@ -95,7 +95,18 @@
       "actionDownload": "下载",
       "actionDownloaded": "已下载",
       "saved": "已保存",
-      "saveFailed": "❌ 保存失败：{0}"
+      "saveFailed": "❌ 保存失败：{0}",
+      "tagRecommended": "(推荐)",
+      "tagDefault": "(默认)",
+      "noteDefault": "默认模型（config.json 里配置的那个）",
+      "noteLocal": "本地已下载",
+      "resultCountAll": "共 {0} 个结果（显示全部模型，不按硬件过滤）。",
+      "recommendBasis": "本机推荐：{0} 级量化（内存 {1} GB / {2} 核）。",
+      "rescanning": "正在扫描模型文件夹…",
+      "rescanFailed": "❌ 扫描失败：{0}",
+      "actionLoad": "加载",
+      "loadingModel": "正在加载模型 {0}…",
+      "loadModelFailed": "❌ 加载失败：{0}"
     },
     "market": {
       "sortBest": "最佳匹配",

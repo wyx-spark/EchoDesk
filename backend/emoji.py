@@ -32,6 +32,10 @@ ASCII_MAP: Dict[str, str] = {
     "💾": "[save]", "📥": "[in]", "📤": "[out]", "🚀": "[go]",
     "⚙️": "[cfg]", "⚙": "[cfg]", "🔧": "[cfg]", "🔧️": "[cfg]",
     "📝": "[edit]", "👤": "[user]", "🤖": "[bot]", "ℹ️": "[i]", "ℹ": "[i]",
+    # 🔁：分段摘要"超时重试"那一行用的（v0.2.1 综合优化 任务四）。
+    # 新增 emoji 必须同步补这张表与 frontend\Services\Emoji.cs，否则在无 emoji 字体的
+    # 终端上会退化成 "?"（tools\check_emoji.ps1 就是专门拦这件事的门禁）。
+    "🔁": "[retry]",
     "🔗": "[link]", "🧩": "[plugin]", "🔒": "[lock]", "🔓": "[unlock]",
     "⏹️": "[stop]", "⏹": "[stop]", "▶️": "[run]", "▶": "[run]",
     "↻": "[reload]", "⧉": "[md]", "✓": "[v]", "✗": "[x]",

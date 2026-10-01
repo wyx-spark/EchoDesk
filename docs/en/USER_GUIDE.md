@@ -68,6 +68,32 @@ from there.
 set the `ECHODESK_DATA` environment variable to the target directory before starting; the program writes user
 data there.
 
+### Starting without a model
+
+EchoDesk does not ship model weights. If none is present the app still starts and stays usable — nothing
+exits, nothing blocks, and nothing is downloaded without you asking:
+
+1. The status bar shows **"no model"** and the chat shows guidance with the real path of the models folder.
+2. Everything that does not need inference still works: file parsing, settings, the skill market, the model
+   market and your session history. Asking a question returns the guidance instead of an error.
+3. Get a model in any of three ways — **none of them requires restarting the program**:
+   * **Settings → Model → Model market** → search and download. The list shows all GGUF repositories
+     (nothing is hidden by hardware filtering); entries that suit this machine are marked "(Recommended)"
+     and the repository of the model named in `config.json` is pinned first.
+   * Copy a `.gguf` file into `app\backend\models\`, then click **Rescan models folder**. If exactly one
+     model is found it is loaded automatically.
+   * Click **Load** next to an already-downloaded model in the local model library.
+4. When the model is loaded the status bar switches from "no model" to the model name and you can chat
+   right away. If loading fails you get the reason and can retry — the app keeps running either way.
+
+### While a long document is being summarised
+
+Long documents are summarised in segments. The chat shows live progress instead of going quiet: the current
+phase, which segment of how many is running, how long it has taken, and how much text the current segment
+has produced. A segment that is merely slow is labelled slow and keeps going; the stop button aborts the run
+immediately and leaves the original text in context (no half-finished summary is injected), so you can run
+`/summarize` again whenever you like.
+
 ---
 
 ## 2. Everyday Q&A
