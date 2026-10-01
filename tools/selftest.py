@@ -412,6 +412,52 @@ def test_model_match() -> None:
     check("量化不存在时退化为最接近的候选", picked.endswith(".gguf"), f"得到 {picked}")
 
 
+def test_protocol_keys() -> None:
+    """前后端协议键名交叉核对（v0.2.1 默认模型切换一轮新增）。
+
+    **起因是一个真实缺陷**：设置页「模型档位」的下载分支读响应里的 `hub_detail`，
+    而后端 `_handle_model_hub_detail` 返回的键是 `detail` —— 后端明明把完整文件清单发了过来，
+    前端读错了键，于是**用户每次点档位都显示"无法获取模型详情"**（本轮实测踩到）。
+    后端协议测试与 GUI 探针都发现不了它：两边各自看都是"对的"（后端返回没问题、
+    前端也确实走了"失败"分支）；只有把两边放在一起看才看得出来。
+
+    做法：在 `frontend\**\*.cs` 里找 `action = "<动作>"` 之后**第一次**读的响应键
+    （`TryGetProperty("<键>")`，这是仓库里读响应的统一写法），
+    再要求该键在 `backend\main.py` 里作为 **JSON 键**出现过（`"<键>":`）。
+    只覆盖 `model_` 开头的动作（模型中心/档位这一组），避免对动态构造的嵌套对象误报。
+    """
+    section("前后端协议键名")
+    import glob
+    import re
+
+    main_py = os.path.join(BACKEND, "main.py")
+    if not os.path.isfile(main_py):
+        check("读取 backend/main.py（缺失，跳过）", True, "skipped")
+        return
+    with open(main_py, encoding="utf-8") as fh:
+        backend_src = fh.read()
+    backend_keys = set(re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)":', backend_src))
+
+    pairs = []
+    frontend = os.path.join(os.path.dirname(BACKEND), "frontend")
+    for path in glob.glob(os.path.join(frontend, "**", "*.cs"), recursive=True):
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            src = fh.read()
+        for m in re.finditer(r'action\s*=\s*"(model_[a-z_]+)"', src):
+            tail = src[m.end(): m.end() + 1200]
+            prop = re.search(r'TryGetProperty\("([A-Za-z_][A-Za-z0-9_]*)"', tail)
+            if prop:
+                pairs.append((os.path.basename(path), m.group(1), prop.group(1)))
+
+    check("找到前端读取 model_* 响应键的位置", len(pairs) > 0, f"找到 {len(pairs)} 处")
+    unknown = [f"{f}: {a} → {k}" for f, a, k in pairs if k not in backend_keys]
+    check("前端读的响应键都在后端出现过", not unknown, "；".join(unknown))
+    # 反向锚定：模型详情这一个键必须两边一致（本轮就是这里错的）
+    detail_keys = {k for _, a, k in pairs if a == "model_hub_detail"}
+    check("model_hub_detail 的响应键一致（detail）", detail_keys == {"detail"},
+          f"前端读到 {sorted(detail_keys)}")
+
+
 def test_imports() -> None:
     """真实导入每一个后端模块。
 
@@ -439,7 +485,8 @@ def test_imports() -> None:
 
 def main() -> int:
     tests = [test_imports, test_config, test_plaintext, test_gguf, test_summarizer,
-             test_conversation, test_automation, test_marketplace, test_model_match]
+             test_conversation, test_automation, test_marketplace, test_model_match,
+             test_protocol_keys]
     for fn in tests:
         try:
             fn()

@@ -122,7 +122,11 @@ public partial class SettingsWindow
                 };
                 var chip = new Button
                 {
-                    Content = item.ChipText,
+                    // 内容用 TextBlock 包一层，而不是直接给字符串：
+                    // WPF 的 Button 会用 AccessText 渲染字符串内容，**下划线被当成访问键前缀吃掉** ——
+                    // "Q4_K_M" 会显示成 "Q4K_M"（K 变成访问键）。量化名里下划线是常态，
+                    // 用 TextBlock 承载即可原样显示（GUI 探针实测踩到）。
+                    Content = new TextBlock { Text = item.ChipText },
                     Tag = item,
                     ToolTip = item.ToolTipText,
                     FontSize = 11,
@@ -203,14 +207,26 @@ public partial class SettingsWindow
             "🔍 正在仓库 {0} 里查找 {1} …", item.Repo, item.Name);
         try
         {
+            // **source 固定用 auto**，不跟随界面「数据源」下拉框：档位是随包声明的已知公开仓库，
+            // auto = 镜像优先、官方兜底（resolve_source 的语义），比"用户上次选的源"更可能成功。
+            // 实测教训：界面源若停在「官方」，huggingface.co 在某些网络下直接 21 秒超时。
             string detailJson = await _backend.SendRequestAsync(
-                new { action = "model_hub_detail", repo = item.Repo, source = CurrentHubSource() },
+                new { action = "model_hub_detail", repo = item.Repo, source = "auto" },
                 idleTimeout: TimeSpan.FromSeconds(180));
             using JsonDocument detailDoc = JsonDocument.Parse(detailJson);
-            if (!detailDoc.RootElement.TryGetProperty("hub_detail", out JsonElement detail))
+            // 键名必须是 "detail"（backend/main.py 的 _handle_model_hub_detail 就返回这个键）。
+            // 本方法第一版写的是 "hub_detail"，于是**每次点档位都报"无法获取模型详情"**
+            // —— 后端明明返回了完整文件清单，是前端读错了键（用户实测踩到）。
+            if (!detailDoc.RootElement.TryGetProperty("detail", out JsonElement detail))
             {
-                ProfileStatusText.Text = Loc.T("settings.model.detailUnavailable",
-                    "⚠️ 无法获取模型详情");
+                // 失败时把后端的真实原因显示出来（此前只显示一句笼统的"无法获取模型详情"，
+                // 用户看不出是网络、数据源还是仓库名的问题）。
+                string reason = GetString(detailDoc.RootElement, "content");
+                ProfileStatusText.Text = (reason.Length > 0
+                        ? reason
+                        : Loc.T("settings.model.detailUnavailable", "⚠️ 无法获取模型详情"))
+                    + " " + Loc.T("settings.model.detailFailedHint",
+                        "（若反复失败：把「数据源」切回「自动」，或到「模型市场」里手动挑一个量化版本下载。）");
                 return;
             }
 
