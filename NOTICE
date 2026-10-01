@@ -1,6 +1,12 @@
 EchoDesk
 Copyright 2026 Void Entropia Studio
 
+> The Studio is **Void Entropia Studio (熵寂工作室)**. `Void Entropia Studio` /
+> `VoidEntropiaStudio` is the legal-entity and GitHub account identifier and is used
+> throughout the English documents, build metadata and installers; the Chinese name
+> 熵寂工作室 is used in Chinese documents and the Chinese UI. Where this document and
+> its Chinese translation disagree, this English version prevails.
+
 A Chinese reference translation of this document is available at
 [`NOTICE.zh-Hans.md`](NOTICE.zh-Hans.md); if the two ever disagree, this English
 version prevails.

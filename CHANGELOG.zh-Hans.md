@@ -12,6 +12,20 @@
 > 面向**开源发布**的第一个版本。完整实现方案、关键决策、与任务书的偏差、
 > 未完成项与体积记录见内部研发记录（`v0.2.1-研发记录.md`，**不随发布物分发**）。
 
+### 工作室名称敲定（熵寂工作室 / Void Entropia Studio）
+
+- 工作室中文名正式定为 **熵寂工作室**；`VoidEntropiaStudio` 继续作为英文标识
+  （法律主体、GitHub 账号、构建元数据）。
+- **中文文档与中文界面使用中文名**；英文文档与英文界面保持 `Void Entropia Studio`。
+  对应关系由语言包表达（后端 `app.studio` / `app.studio_full`，前端
+  `main.studioName` / `main.studioNameFull`），因此两侧都不会再误显示另一种语言的名称。
+- 首次出现用完整形式 —— 中文「熵寂工作室（VoidEntropiaStudio）」，
+  英文 `Void Entropia Studio (熵寂工作室)`（`/about`、欢迎语、关于框）；之后各处用简称。
+- 中文法律译本（EULA / NOTICE / LICENSE）的版权声明改为
+  `版权所有 (C) 熵寂工作室（VoidEntropiaStudio）`，并注明**法律主体以英文版为准**。
+- **刻意不改**：rcedit 写入的 `CompanyName` / `LegalCopyright`、`ready` 消息里的 `studio` 字段、
+  `docs/SBOM.json`、构建与打包脚本、GitHub 账号 —— 这些一律保持英文。
+
 ### 无模型就绪、模型市场列表与分段摘要反馈
 
 **无模型就绪（综合优化 任务一）**

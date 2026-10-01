@@ -11,7 +11,9 @@
     "about.legal_header": "合规文档（随程序一起分发，可直接打开对应文件）：",
     "about.legal_missing": "{name} 未随本次分发提供（源码运行时属正常，发布包中应当存在）",
     "about.program_dir": "程序目录：{path}",
-    "about.repo": "项目主页与许可证全文：https://github.com/VoidEntropiaStudio/EchoDesk（Apache-2.0）"
+    "about.repo": "项目主页与许可证全文：https://github.com/VoidEntropiaStudio/EchoDesk（Apache-2.0）",
+    "studio": "熵寂工作室",
+    "studio_full": "熵寂工作室（VoidEntropiaStudio）"
   },
   "cmd": {
     "unknown": "未知指令: {name}（输入 /help 查看全部指令）",

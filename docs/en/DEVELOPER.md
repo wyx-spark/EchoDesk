@@ -114,6 +114,14 @@ The backend prints `ready` only after **session restore + warm-up have finished*
  "model_missing":{},"history":[{"role":"user","content":"..."}]}
 ```
 
+> The `studio` field in the protocol is **always the English `Void Entropia Studio`** (the
+> legal-entity identifier, like the rcedit metadata and the SBOM — it does not follow the UI
+> language). What the Chinese UI shows comes from the language pack
+> (`main.studioName` = 熵寂工作室, `main.studioNameFull` = 熵寂工作室（VoidEntropiaStudio）);
+> the backend's `/help`, `/status` and `/about` use the language-pack keys
+> `app.studio` / `app.studio_full` the same way. In other words: **the name mapping lives in the
+> language packs, while the protocol and build metadata stay English.**
+
 **`model_ready` tells "the backend is up" apart from "inference is available"** (v0.2.1). Since v0.2.1 a
 missing model **does not stop the backend**: it starts with an empty engine, keeps serving every request
 that does not need inference, and answers inference requests with guidance. The frontend keeps its input

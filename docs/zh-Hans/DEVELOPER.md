@@ -102,6 +102,12 @@ English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)。
  "model_missing":{},"history":[{"role":"user","content":"..."}]}
 ```
 
+> **协议里的 `studio` 字段一律是英文 `Void Entropia Studio`**（法律主体标识，同 rcedit 元数据与
+> SBOM，不随界面语言变化）。中文界面显示的出品方名称来自语言包（`main.studioName` =
+> 「熵寂工作室」、`main.studioNameFull` = 「熵寂工作室（VoidEntropiaStudio）」），
+> 后端 `/help`、`/status`、`/about` 用的也是语言包键 `app.studio` / `app.studio_full`。
+> 也就是说：**中英对应关系由语言包表达，协议与元数据保持英文**。
+
 **`model_ready` 用来区分"后端已就绪"与"推理可用"**（v0.2.1）。v0.2.1 起缺模型**不会**让后端停下：
 它以空引擎启动，继续服务所有不依赖推理的请求，推理类请求返回引导。
 前端保持输入可用、状态栏显示「无模型」，模型热加载成功后自动切回正常状态。

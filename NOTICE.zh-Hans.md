@@ -7,7 +7,10 @@
 > the English version prevails. A machine-readable component list is in [`docs/SBOM.json`](docs/SBOM.json).
 
 EchoDesk
-Copyright 2026 Void Entropia Studio
+版权所有 (C) 2026 熵寂工作室（VoidEntropiaStudio）
+
+> 工作室中文名与英文名的对应关系：**熵寂工作室 = VoidEntropiaStudio**；
+> 本声明中的**法律主体以英文版 [`NOTICE`](NOTICE) 为准**（英文版使用 `Void Entropia Studio`）。
 
 本产品包含由第三方开发的软件。下列组件是 EchoDesk 发行版中随附的主要组件；完整、
 由工具自动生成的清单（每一个 Python 发行包及其许可证，包括传递依赖）见

@@ -6,6 +6,10 @@
 Version: v0.2.1
 Copyright: Copyright (C) Void Entropia Studio
 Publisher: Void Entropia Studio, Online only (hereinafter "the Studio")
+> Studio name mapping: **Void Entropia Studio = 熵寂工作室**. `Void Entropia Studio` /
+> `VoidEntropiaStudio` is the legal-entity identifier used in this agreement and in all
+> English documents; the Chinese translation uses 熵寂工作室. The legal entity is
+> governed by **this English version**.
 License for the project itself: **Apache License 2.0** (see [`../LICENSE`](../LICENSE) and [`../NOTICE`](../NOTICE) in the repository root)
 
 Please read this agreement before using EchoDesk (hereinafter "the Software"). By downloading,
