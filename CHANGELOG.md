@@ -109,6 +109,27 @@ not match what people mean by popularity.
   *every* result — 5000 disk reads for 5000 entries. It now computes the "downloaded repositories" set once and
   caches it (invalidated on download / delete / rescan).
 
+**One search is now enough (four defects the real-window probe exposed)**
+
+The UI probe (`tools/ui_probe.ps1`) actually clicks through the model market, which forced out four
+problems that only show up under real interaction:
+
+- **The reason a load failed was swallowed**: the status line only showed the loader's message when
+  "more available" was true, but "loading interrupted (0 fetched): …" is exactly the case where it is
+  false — users saw an empty list with no explanation and had to **click Search or Refresh a second
+  time**. That message is now always shown.
+- **A round that fetched nothing did not retry**: one network hiccup left an empty list. Now, when the
+  round ends in an error and nothing was fetched, it **retries once** after 1.2 s and says
+  "retrying automatically" in the status line. A keyword that simply matches nothing
+  (`stop_reason=none`) is not retried, because retrying would not help.
+- **The facet checkboxes were hooked to the wrong event**: `Click` is not raised by WPF's
+  `ToggleButtonAutomationPeer.Toggle()` (which accessibility tools and UI automation use) — it only
+  calls `OnToggle()`. Mouse clicks worked; assistive-technology clicks did nothing. Now hooked to
+  `Checked`/`Unchecked`.
+- **`GetInt` assumed every JSON number is an integer**: `recommend_basis.ram_gb = 31.7` is fractional,
+  and reading it as `Int32` threw, so **every render of the recommendation basis reported
+  "local filtering failed"**. It now prefers integers and rounds fractions.
+
 **Localisation and documentation (task 8)**
 - The paging controls, filters, status messages and error messages all go through the language packs, complete in
   both Chinese and English (80 new front-end keys, 14 new back-end keys), with `tools/check_lang.py` as the gate.
