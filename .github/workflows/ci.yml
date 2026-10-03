@@ -120,6 +120,21 @@ jobs:
         # 历史持久化与"思考不进上下文"。全部在进程内驱动真后端代码，
         # 不联网也不加载模型（真实模型的端到端用 --model 手动跑）。
 
+      - name: Run extractive-prefilter test
+        shell: pwsh
+        run: python tools/test_extractive.py
+        # 抽取式预筛（优化已知问题-2 任务四）：TextRank 选句 + 稀有度加权 +
+        # 事实密度自适应比例。覆盖切句、特征、相似度图、抽取边界、
+        # 关键事实保留下界、性能上限、摘要器接线（可开关/可统计/异常安全降级）。
+        # 纯统计实现，不联网也不加载模型，全程毫秒级。
+
+      - name: Run search-chain test
+        shell: pwsh
+        run: python tools/test_search.py
+        # 联网搜索链路（优化已知问题-2 任务二）：结构化结果、条数与摘要长度上限、
+        # 编号注入 + 引用指令、失败/空结果明确告知、Backend.search_diagnostics()
+        # 的四个环节可观测性、中英双语文案。用桩 DDGS，不联网。
+
       - name: Check backend imports
         shell: pwsh
         run: python -c "import sys; sys.path.insert(0, 'backend'); import main; print('import ok')"

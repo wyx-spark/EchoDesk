@@ -364,6 +364,16 @@ try {
     # 真实模型的端到端（用 --model 指定）在 CI 里跳过：机器上不一定有推理模型。
     Invoke-Check "思考内容分离" { Invoke-Python "思考分离" "tools\test_reasoning.py"; "通过" }
 
+    # v0.2.1 优化已知问题-2 任务四：抽取式预筛（TextRank 选句 + 稀有度加权）。
+    # 覆盖切句/特征/图/抽取边界/关键事实保留下界/密度自适应/性能上限/
+    # 摘要器接线（可开关、可统计、异常安全降级）/配置项。纯统计，无模型无网络。
+    Invoke-Check "抽取式预筛（任务四）" { Invoke-Python "抽取式预筛" "tools\test_extractive.py"; "通过" }
+
+    # v0.2.1 优化已知问题-2 任务二：联网搜索链路（结构化结果 / 精简上限 /
+    # 编号注入 + 引用指令 / 失败与空结果明确告知 / 四个环节可观测 / 双语文案）。
+    # 用桩 DDGS，不联网。
+    Invoke-Check "联网搜索链路（任务二）" { Invoke-Python "搜索链路" "tools\test_search.py"; "通过" }
+
     # ---------- 3. 静态检查 ----------
     Invoke-Check "语言包完整性" { Invoke-Python "语言包" "tools\check_lang.py"; "通过" }
     Invoke-Check "主题色板与对比度（修复二）" { Invoke-Python "主题" "tools\check_theme.py"; "通过" }

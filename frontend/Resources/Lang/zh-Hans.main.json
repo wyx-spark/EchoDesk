@@ -19,6 +19,8 @@
       "modelDownloadFailed": "模型下载失败",
       "preheating": "正在预热模型……",
       "loadingModel": "正在加载模型……",
+      "prefill": "正在处理输入…",
+      "generating": "正在生成…",
       "stopping": "正在停止...",
       "fontSize": "字号 {0}",
       "noModel": "无模型（仍可使用文件解析与设置）"
@@ -126,6 +128,19 @@
       "count": "· {0} 字",
       "tip": "模型的推理过程（思考内容）。点击展开或收起；思考内容不会作为上下文发给模型，也不参与复制回答。",
       "noAnswer": "\n\n⚠️ 模型只输出了思考内容，没有给出最终答案（通常是长度上限用完了：用 /preset quality 切到高质量档、或调大 config.json 的 max_tokens，也可以把问题问得更具体）"
+    },
+    "metrics": {
+      "tip": "本次生成的运行指标（由后端实测上报）：首 token 延迟、输出速度、token 数、总耗时。带 ≈ 的数字为估算值。",
+      "waitingFirstToken": "⏳ 等待首 token",
+      "ttft": "⚡ 首 token {0}",
+      "tps": "🚀 {0:0.#} token/s",
+      "outputTokens": "{0} tokens",
+      "outputTokensEstimated": "≈{0} tokens",
+      "promptChars": "📥 {0} 字",
+      "chars": "📤 {0} 字",
+      "elapsed": "⏱️ {0}",
+      "stopped": "⏹ 已中止",
+      "failed": "⚠️ 失败"
     },
     "message": {
       "copy": "复制",

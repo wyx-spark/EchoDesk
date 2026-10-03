@@ -70,6 +70,16 @@ public sealed class AppSettings
     /// <summary>输入框下方轻量状态区是否收起（默认展开）。</summary>
     public bool StatusStripCollapsed { get; set; }
 
+    /// <summary>
+    /// 流式输出的界面合并间隔（毫秒，v0.2.1 优化已知问题-2 任务五）。
+    ///
+    /// 后端逐 token 发 delta，若前端每来一个就重排一次界面（重建 Markdown 文档 +
+    /// 滚动到底），几百个 delta 就是几百次全量布局 —— 这正是"生成一半卡住、
+    /// 等会儿冒出来好多"的界面侧原因。按 50ms 合并一次，人眼看不出延迟，
+    /// 布局次数少一个数量级。设为 0 表示不合并（每个 delta 都更新，仅用于排查）。
+    /// </summary>
+    public int StreamThrottleMs { get; set; } = 50;
+
     private static string FilePath
     {
         get

@@ -114,6 +114,16 @@ class SummarizeConfig(BaseModel):
     # 单段超时后的行为：skip（跳过该段并继续，默认）/ retry（重试一次）/ abort（中止整个摘要）
     chunk_timeout_action: str = "skip"
 
+    # ---------- 任务四：抽取式预筛（v0.2.1 优化已知问题-2） ----------
+    # 送给模型之前，先用 TextRank 把每一段压到 extractive_ratio 左右。
+    # 纯统计、不用模型，实测 3000 字符的段约 8 ms（见 artifacts/probe_extractive.py）。
+    extractive: bool = True
+    # 抽取比例。**不是越小越好**：0.18 时实测关键事实（合同金额、日期）大量丢失，
+    # 0.35 时保留率明显提升而压缩比仍有 2.8 倍。详见 records/ 与本字段的实测记录。
+    extractive_ratio: float = Field(default=0.35, ge=0.10, le=0.70)
+    # 低于该字符数的段不做预筛（段本身够短，抽省的时抵不上丢信息的风险）
+    extractive_min_chars: int = Field(default=600, ge=0, le=20000)
+
     @field_validator("chunk_timeout_action")
     @classmethod
     def _check_timeout_action(cls, value: str) -> str:
@@ -415,6 +425,14 @@ class Config(BaseModel):
     # 扩展上下文后生成明显变慢时，在回复末尾给出提示
     speed_hint: bool = True
     speed_min_tps: float = 3.0
+    # ---------- 流式心跳与运行指标（v0.2.1 优化已知问题-2 任务五） ----------
+    # 生成过程中"多久没有新 token 就发一次心跳"。prefill 阶段（首 token 之前）
+    # 纯 CPU 上可能几十秒没有任何输出，界面无法区分"在算"与"卡死"。
+    # 下限 0.5 秒防止有人配成 0 把协议刷爆；0 表示关闭心跳。
+    stream_heartbeat_seconds: float = Field(default=1.5, ge=0.0, le=30.0)
+    # 前端 delta 的合并节流间隔（毫秒）。后端逐 token 发，前端按这个间隔
+    # 合并一次 UI 更新 —— 每 token 都重排一次 RichTextBox 才是卡顿的主因。
+    stream_throttle_ms: int = Field(default=50, ge=0, le=1000)
 
     @model_validator(mode="after")
     def _clamp_context(self) -> "Config":

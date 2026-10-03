@@ -19,6 +19,8 @@
       "modelDownloadFailed": "Model download failed",
       "preheating": "Warming up the model…",
       "loadingModel": "Loading the model…",
+      "prefill": "Processing input…",
+      "generating": "Generating…",
       "stopping": "Stopping…",
       "fontSize": "Font size {0}",
       "noModel": "No model (file parsing and settings still work)"
@@ -126,6 +128,19 @@
       "count": "· {0} chars",
       "tip": "The model's reasoning trace. Click to expand or collapse; thinking is never sent back as context and is not included when copying the answer.",
       "noAnswer": "\n\n⚠️ The model only produced thinking and never reached a final answer (usually the length limit ran out: switch to the quality preset with /preset quality, raise max_tokens in config.json, or ask a more specific question)"
+    },
+    "metrics": {
+      "tip": "Live metrics for this run, measured and reported by the backend: time to first token, output speed, token counts and total elapsed time. Values marked with ≈ are estimates.",
+      "waitingFirstToken": "⏳ Waiting for first token",
+      "ttft": "⚡ First token {0}",
+      "tps": "🚀 {0:0.#} token/s",
+      "outputTokens": "{0} tokens",
+      "outputTokensEstimated": "≈{0} tokens",
+      "promptChars": "📥 {0} chars",
+      "chars": "📤 {0} chars",
+      "elapsed": "⏱️ {0}",
+      "stopped": "⏹ Stopped",
+      "failed": "⚠️ Failed"
     },
     "message": {
       "copy": "Copy",
