@@ -135,6 +135,13 @@ jobs:
         # 编号注入 + 引用指令、失败/空结果明确告知、Backend.search_diagnostics()
         # 的四个环节可观测性、中英双语文案。用桩 DDGS，不联网。
 
+      - name: Run compaction test
+        shell: pwsh
+        run: python tools/test_compaction.py
+        # 上下文压缩策略（优化已知问题-2 任务九）：按 token 比例的触发阈值（可配）、
+        # grace zone（最近 N 轮逐字保留）、摘要提示词与 /compact focus on 自定义重点、
+        # 大块内容单独截断、压缩事件 JSONL 的追加/脱敏/裁剪与事件溯源回放。
+
       - name: Check backend imports
         shell: pwsh
         run: python -c "import sys; sys.path.insert(0, 'backend'); import main; print('import ok')"

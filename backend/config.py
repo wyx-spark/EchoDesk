@@ -72,6 +72,60 @@ DEFAULT_MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
 }
 
 
+class CompactionConfig(BaseModel):
+    """上下文压缩策略（v0.2.1 优化已知问题-2 任务九）。
+
+    对照业界做法（Anthropic / ChatGPT / Gemini CLI / OpenHands）改掉三件事：
+
+    1. **触发时机**：从"硬编码 80%"改为 **按 token 比例可配**（默认 0.70）。
+       选 0.70 而不是 80%：估算本身有误差（无模型时是"字符/2"的粗估），
+       而且压缩完还要留出下一轮提问与回答的空间；Gemini CLI 用的是 50%，
+       Claude 用的是窗口上限附近的一次性触发，0.70 是可配的中间值。
+    2. **grace zone**：最近 N **轮**（一问一答算一轮）逐字保留，只压更早的内容。
+       之前的实现只按 token 预算保留"约 20%"，遇到一条超长消息时可能把
+       刚发生的对话压掉、留下更早的内容 —— 而"最近几轮"恰恰是最相关的。
+    3. **摘要提示词可自定义**：``prompt`` 可换整套口径，``focus`` 可追加重点
+       （``/compact focus on 合同金额``）。
+
+    压缩事件写入 ``log_file``（JSONL，追加式），可追溯、可审计、可回放。
+    """
+
+    # 触发比例：历史 token 数超过 n_ctx × 该值就压缩（0.05~0.95）
+    trigger_ratio: float = Field(default=0.70, ge=0.05, le=0.95)
+    # 逐字保留的轮数（grace zone）；1 轮 = user + assistant 两条消息
+    grace_turns: int = Field(default=3, ge=0, le=50)
+    # 逐字保留的 token 下限（与 grace_turns 取**并集**：两者谁保留得多听谁的）
+    keep_ratio: float = Field(default=0.20, ge=0.0, le=0.8)
+    # 摘要提示词（可整套替换；{focus} 是用户指定重点的插入点）
+    prompt: str = (
+        "你是对话压缩器。请用不超过 150 字的要点总结这段对话，"
+        "必须保留：① 用户的需求与目标；② 已经做出的关键决定；③ 后续还要用到的背景信息"
+        "（人名、金额、日期、编号、路径、参数）。不要复述客套话，不要编造。"
+    )
+    # 摘要输出的 token 上限
+    summary_max_tokens: int = Field(default=200, ge=64, le=1024)
+    # 单条消息喂给压缩器时的截断长度（避免一条超长消息吃光压缩器的窗口）
+    message_chars: int = Field(default=300, ge=50, le=4000)
+    # 喂给压缩器的总长上限
+    input_chars: int = Field(default=4000, ge=200, le=20000)
+    # 工具/文件/搜索这类大块输出在**进历史之前**就单独截断（任务书要求）；
+    # 0 = 不截断（文档很短、上下文很宽裕时可以关掉）
+    tool_output_chars: int = Field(default=2000, ge=0, le=20000)
+    # 压缩事件日志（JSONL，追加式）；空字符串表示不记录
+    log_file: str = "compact_log.jsonl"
+    # 日志里是否记录摘要正文（false = 只记长度与计数，适合涉密环境）
+    log_content: bool = True
+    # 日志最多保留多少条事件（超出裁剪最早的）
+    log_max_events: int = Field(default=5000, ge=100, le=200000)
+
+    @field_validator("prompt")
+    @classmethod
+    def _check_prompt(cls, value: str) -> str:
+        """提示词为空时回落到默认值（配置文件被手改坏也不至于压出空摘要）。"""
+        text = str(value or "").strip()
+        return text or CompactionConfig.model_fields["prompt"].default
+
+
 class SummarizeConfig(BaseModel):
     """长文档分段摘要（预处理）配置。
 
@@ -377,6 +431,8 @@ class Config(BaseModel):
     model_context_windows: Dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_MODEL_CONTEXT_WINDOWS))
     # 长文档分段摘要
     summarize: SummarizeConfig = Field(default_factory=SummarizeConfig)
+    # 上下文压缩（v0.2.1 优化已知问题-2 任务九）
+    compact: CompactionConfig = Field(default_factory=CompactionConfig)
     # 浏览器自动化（任务四）
     automation: AutomationConfig = Field(default_factory=AutomationConfig)
     # 技能/插件市场（任务五）

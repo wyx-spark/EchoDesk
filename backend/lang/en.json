@@ -243,6 +243,8 @@
     "resp.compact_failed": "❌ Context compaction failed: {error}",
     "resp.compact_skipped": "Nothing to compact: {used} / {limit} tokens in use",
     "resp.compact_done": "✅ Context compacted: {dropped} older messages moved out, {kept} most recent kept ({before} → {after} tokens)",
+    "resp.compact_focus": "🔎 This compaction preserved your stated focus: {focus}",
+    "resp.compact_no_drop": "Nothing to compact: the grace zone (most recent turns) already covers the whole history",
     "status.capability_header": "-- Model capability --",
     "status.parameters": "Parameters: {value} ({source})",
     "status.quantization": "Quantization: {value} ({source})",
@@ -261,7 +263,7 @@
     "items./preset.usage": "/preset [list|light|balanced|quality]",
     "items./preset.desc": "Switch between the light, balanced and quality generation presets (temperature, top_p, repetition penalty, reply length) without tuning individual parameters.",
     "items./compact.name": "Compact context",
-    "items./compact.usage": "/compact",
+    "items./compact.usage": "/compact [focus on <what matters>]",
     "items./compact.desc": "Compact the context right away: older turns become a summary (or are dropped in sliding-window mode), freeing room for new content without waiting for the automatic trigger.",
     "resp.cache_cleared_with_summaries": "✅ Cleared the inference KV cache and {count} cached document summar(y/ies)"
   },

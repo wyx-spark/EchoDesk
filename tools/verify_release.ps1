@@ -374,6 +374,11 @@ try {
     # 用桩 DDGS，不联网。
     Invoke-Check "联网搜索链路（任务二）" { Invoke-Python "搜索链路" "tools\test_search.py"; "通过" }
 
+    # v0.2.1 优化已知问题-2 任务九：上下文压缩策略（token 比例触发可配 / grace zone /
+    # 摘要提示词与自定义重点 / 大块内容单独截断 / 压缩事件 JSONL 可追溯可回放 /
+    # 手动触发与 focus 解析）。用桩引擎，不加载模型。
+    Invoke-Check "上下文压缩（任务九）" { Invoke-Python "上下文压缩" "tools\test_compaction.py"; "通过" }
+
     # ---------- 3. 静态检查 ----------
     Invoke-Check "语言包完整性" { Invoke-Python "语言包" "tools\check_lang.py"; "通过" }
     Invoke-Check "主题色板与对比度（修复二）" { Invoke-Python "主题" "tools\check_theme.py"; "通过" }
