@@ -92,6 +92,8 @@ with _suppress_stdout():
     if _cfg.hf_endpoint and not os.environ.get("HF_ENDPOINT"):
         os.environ["HF_ENDPOINT"] = _cfg.hf_endpoint
     from command_handler import CommandHandler
+    from compact_log import EVENT_SKIP, EVENT_SUMMARY, CompactEvent, CompactLog, replay
+    from config import CompactionConfig
     from conversation import ConversationManager, FILE_INTENT, REPEAT_INTENT
     from download_utils import check_model, download_model, find_best_model
     from file_parser import parse_file_with_wps
@@ -250,6 +252,8 @@ class Backend:
         # "为什么没用上"的说明。任务书要求逐环节排查，所以状态要留着可查。
         self._last_search = None
         self._last_search_note = ""
+        # 压缩事件日志（任务九）：惰性创建，见 compact_log()
+        self._compact_log = None
 
     def clear_summary_cache(self) -> int:
         """清空分段摘要缓存并返回清掉的条目数（供 /clearcache 与动作接口使用）。"""
@@ -2578,21 +2582,104 @@ class Backend:
         """把字节数格式化为可读的 MB 字符串，用于下载进度展示。"""
         return f"{n / 1048576:.1f} MB"
 
-    def _compact_history(self, force: bool = False) -> Dict[str, Any]:
+    def _compaction_cfg(self):
+        """取压缩配置（老配置文件没有这一段时回落到默认值）。"""
+        return getattr(self.config, "compact", None) or CompactionConfig()
+
+    def compact_log(self):
+        """压缩事件日志（惰性创建；``log_file`` 为空时返回 None）。"""
+        cfg = self._compaction_cfg()
+        path = str(getattr(cfg, "log_file", "") or "")
+        if not path:
+            return None
+        if getattr(self, "_compact_log", None) is None:
+            if not os.path.isabs(path):
+                path = os.path.join(os.path.dirname(os.path.abspath(__file__)), path)
+            self._compact_log = CompactLog(
+                path,
+                record_content=bool(getattr(cfg, "log_content", True)),
+                max_events=int(getattr(cfg, "log_max_events", 5000) or 5000),
+            )
+        return self._compact_log
+
+    @staticmethod
+    def _turn_start(history: List[dict], turns: int) -> int:
+        """返回"最近 ``turns`` 轮"的起始下标（grace zone 的左边界）。
+
+        轮的定义：一次 user 消息开始，到它的 assistant 回复为止。
+        从末尾往前数 ``turns`` 个 user 消息，它们之前的位置就是要压缩的边界。
+        数不够就返回 0（全部保留，不压缩）。
+        """
+        if turns <= 0:
+            return len(history)
+        seen = 0
+        for index in range(len(history) - 1, -1, -1):
+            if history[index].get("role") == "user":
+                seen += 1
+                if seen >= turns:
+                    return index
+        return 0
+
+    @staticmethod
+    def _truncate_tool_outputs(messages: List[dict], limit: int) -> tuple:
+        """把"大块内容"在进压缩器之前单独截断（任务书任务九·工具输出单独处理）。
+
+        ``limit`` 为 0 时不截断。返回 ``(处理后的消息, 被截断条数, 省下的字符数)``。
+
+        为什么要单独处理：文件解析结果、搜索结果、自动化结果往往是**一条消息
+        几万字符**。不过滤的话压缩器的窗口会被一条消息吃光（旧实现靠
+        ``content[:300]`` 粗暴截断 —— 那等于把这些内容整条丢掉，
+        连"这里曾经有一大段文件内容"都看不出来）。这里保留**头尾+长度说明**：
+        头部是文档标题与摘要、尾部常常是结论与落款，两端比中段更有信息量。
+        """
+        if limit <= 0:
+            return messages, 0, 0
+        result = []
+        truncated = 0
+        saved = 0
+        for msg in messages:
+            content = str(msg.get("content", ""))
+            if len(content) <= limit:
+                result.append(msg)
+                continue
+            head = content[: int(limit * 0.6)]
+            tail = content[-int(limit * 0.3):]
+            body = (f"{head}\n…（此处省略 {len(content) - len(head) - len(tail)} 字符，"
+                    f"原文共 {len(content)} 字符）…\n{tail}")
+            result.append({**msg, "content": body})
+            truncated += 1
+            saved += len(content) - len(body)
+        return result, truncated, saved
+
+    def _compact_history(self, force: bool = False, focus: str = "",
+                         reason: str = "") -> Dict[str, Any]:
         """上下文长度管理：把"装不下"的历史搬出上下文。
 
-        两种模式（修复四 基础要求"滑动窗口模式"）：
+        三个模式（``config.compact`` 与 ``context_mode`` 共同决定）：
 
-        * ``summarize``（默认）：更早的历史交给模型压成 150 字摘要，信息保留最好；
-        * ``slide``：直接丢弃最早的历史（滑动窗口），不做额外推理，最快，
-          但被丢掉的内容不会以摘要形式留下。
+        * ``summarize``（默认）：更早的历史交给模型压成要点摘要，信息保留最好；
+        * ``slide``：直接丢弃最早的历史（滑动窗口），不做额外推理，最快。
 
-        ``force=True`` 时忽略 80% 阈值直接压缩（``/compact`` 手动触发用）。
+        任务九（优化已知问题-2）改掉的三件事：
+
+        1. **触发按 token 比例**（``compact.trigger_ratio``，默认 0.70）而不是
+           硬编码 80%，阈值可配；
+        2. **grace zone**：最近 ``compact.grace_turns`` **轮**逐字保留
+           （与 ``keep_ratio`` 的 token 预算取并集，谁保留得多听谁的），
+           避免"刚发生的一轮被压掉、更早的留着"；
+        3. **摘要提示词可自定义** + ``/compact focus on …`` 指定重点，
+           并把整次压缩作为事件写入 ``compact_log.jsonl``（可追溯/可回放）。
+
+        ``force=True`` 时忽略阈值直接压缩（``/compact`` 手动触发用）。
         返回一份统计给调用方（指令回执 / 前端状态显示）。
         """
         conv = self.conv
-        limit = int(self.llm.n_ctx * 0.8)
-        result: Dict[str, Any] = {"compressed": False, "limit": limit}
+        cfg = self._compaction_cfg()
+        ratio = float(getattr(cfg, "trigger_ratio", 0.70) or 0.70)
+        limit = int(self.llm.n_ctx * ratio)
+        trigger = "manual" if force else "auto"
+        result: Dict[str, Any] = {"compressed": False, "limit": limit,
+                                 "ratio": ratio, "trigger": trigger}
         if not conv.history:
             result["reason"] = "empty"
             return result
@@ -2608,8 +2695,12 @@ class Backend:
             result["reason"] = "under_limit"
             return result
 
-        # 从历史末尾向前累计，保留最新约 20% 上下文原样
-        keep_tokens = max(1, int(limit * 0.2))
+        # ---------- 保留区：grace zone（轮）∪ token 预算，取并集 ----------
+        grace_turns = int(getattr(cfg, "grace_turns", 3) or 0)
+        keep_ratio = float(getattr(cfg, "keep_ratio", 0.20) or 0.0)
+        by_turns = self._turn_start(conv.history, grace_turns)
+
+        keep_tokens = max(1, int(limit * keep_ratio))
         keep_count = 0
         acc = 0
         for msg in reversed(conv.history):
@@ -2617,64 +2708,151 @@ class Backend:
             keep_count += 1
             if acc >= keep_tokens:
                 break
-        if keep_count >= len(conv.history):
+        # 并集：谁保留得多听谁的（grace zone 保"轮"，keep_ratio 保"量"）
+        keep_start = min(by_turns, len(conv.history) - keep_count)
+        if keep_start <= 0 and force and grace_turns > 1:
+            # 手动压缩（/compact 或状态区按钮）被用户明确要求"现在就腾地方"：
+            # 此时若 grace zone 恰好覆盖全部历史，就把它收缩到 1 轮再做一次 ——
+            # 否则"用户点了压缩却什么也没发生"是更糟的体验。自动触发**不做**这个
+            # 让步：自动压缩的背景是"快满了"，而"最近 3 轮就占满"说明该由用户
+            # 自己选（提示他调小 grace_turns），不该由程序擅自压掉刚说过的话。
+            by_turns = self._turn_start(conv.history, 1)
+            keep_start = min(by_turns, len(conv.history) - keep_count)
+            if keep_start > 0:
+                log.info("手动压缩：grace zone 收缩为 1 轮（原 %d 轮覆盖了全部历史）", grace_turns)
+                result["grace_shrunk"] = True
+        result["grace"] = grace_turns
+        result["kept_by_turns"] = len(conv.history) - by_turns
+        if keep_start <= 0:
             result["reason"] = "nothing_to_drop"
+            log.info("上下文 %d/%d tokens 超限，但保留区覆盖了全部历史（grace=%d 轮），"
+                     "本次不压缩", total, limit, grace_turns)
             return result
-        dropped = conv.history[: len(conv.history) - keep_count]
-        conv.history = conv.history[len(dropped):]
-        result.update(compressed=True, dropped=len(dropped), kept=keep_count)
+        dropped = conv.history[:keep_start]
+        conv.history = conv.history[keep_start:]
+        result.update(compressed=True, dropped=len(dropped),
+                      kept=len(conv.history))
 
         mode = str(getattr(self.config, "context_mode", "summarize") or "summarize").lower()
+        event = CompactEvent(
+            kind=EVENT_SKIP, trigger=trigger, mode=mode, limit=limit, ratio=ratio,
+            used_before=total, dropped=len(dropped), kept=len(conv.history),
+            grace=grace_turns,
+            reason=reason or ("manual" if force else "over_limit"),
+        )
         if mode == "slide":
             # 滑动窗口：不做摘要，只是把最早的历史移出上下文
-            log.info("上下文 %d/%d tokens：滑动窗口丢弃最早 %d 条（未生成摘要）",
-                     total, limit, len(dropped))
+            log.info("上下文 %d/%d tokens：滑动窗口丢弃最早 %d 条（未生成摘要，阈值 %.0f%%）",
+                     total, limit, len(dropped), ratio * 100)
             result["mode"] = "slide"
             result["summary_chars"] = 0
         else:
+            # ---------- 大块内容单独截断后再喂压缩器 ----------
+            prepared, truncated, saved = self._truncate_tool_outputs(
+                dropped, int(getattr(cfg, "tool_output_chars", 2000) or 0))
+            event.truncated_outputs = truncated
+            event.saved_chars = saved
+            if truncated:
+                log.info("压缩前单独截断 %d 条大块内容，少喂 %d 字符给压缩器",
+                         truncated, saved)
+
+            message_chars = int(getattr(cfg, "message_chars", 300) or 300)
+            input_chars = int(getattr(cfg, "input_chars", 4000) or 4000)
             text = "\n".join(
-                f"{'用户' if m['role'] == 'user' else '助手'}: {m['content'][:300]}" for m in dropped
-            )[:4000]
+                f"{'用户' if m['role'] == 'user' else '助手'}: "
+                f"{str(m.get('content', ''))[:message_chars]}"
+                for m in prepared
+            )[:input_chars]
+
+            prompt = str(getattr(cfg, "prompt", "") or "").strip()
+            focus_text = str(focus or "").strip()
+            if focus_text:
+                # 用户指定重点：追加在提示词末尾而不是替换它，避免丢掉通用要求
+                prompt = f"{prompt}\n本次特别要求保留的重点：{focus_text}"
+            event.prompt = prompt
+            event.focus = focus_text
+
             summary = ""
             try:
                 summary = self.llm.chat_complete(
                     [
-                        {"role": "system", "content": "你是对话压缩器。请用不超过150字的要点总结这段对话，保留用户的需求、关键决定和背景信息。"},
+                        {"role": "system", "content": prompt},
                         {"role": "user", "content": text},
                     ],
                     temperature=0.3,
-                    max_tokens=180,
+                    max_tokens=int(getattr(cfg, "summary_max_tokens", 200) or 200),
                 ).strip()
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 —— 压缩失败不能让本轮对话崩
                 log.warning("历史压缩失败，已直接裁剪", exc_info=True)
+                event.error = str(exc)[:200]
             if summary:
                 conv.summary = f"{conv.summary}\n{summary}".strip()
             result["mode"] = "summarize"
             result["summary_chars"] = len(summary)
+            result["focus"] = focus_text
+            event.kind = EVENT_SUMMARY
+            event.summary_chars = len(summary)
+            event.summary = summary
             log.info(
-                "上下文 %d/%d tokens 超限：保留最新 %d 条，压缩 %d 条为摘要（%d 字）",
-                total, limit, keep_count, len(dropped), len(summary),
+                "上下文 %d/%d tokens 超限（阈值 %.0f%%）：grace %d 轮 + 预算保留共 %d 条，"
+                "压缩 %d 条为摘要（%d 字）%s",
+                total, limit, ratio * 100, grace_turns, len(conv.history),
+                len(dropped), len(summary),
+                f"，重点={focus_text}" if focus_text else "",
             )
         try:
             result["used_after"] = self._estimate_tokens(
                 [{"role": "system", "content": conv.get_system_prompt()}] + conv.history)
+            event.used_after = result["used_after"]
         except Exception:
             result["used_after"] = None
+        # 事件落盘（失败只告警，不影响压缩结果）
+        journal = self.compact_log()
+        if journal is not None:
+            journal.append(event)
+        result["event"] = event.to_dict()
         return result
 
-    def compact_context(self, force: bool = True) -> Dict[str, Any]:
+    def compact_context(self, force: bool = True, focus: str = "") -> Dict[str, Any]:
         """对外暴露的手动压缩入口（``/compact`` 与前端按钮共用）。
+
+        ``focus`` 是用户指定的重点（``/compact focus on 合同金额``），
+        会追加到摘要提示词里（任务九"支持用户自定义重点"）。
 
         压缩后清掉 KV 缓存：历史变了，缓存不再对应，
         不清的话下一次生成会带着错误的注意力前缀。
         """
-        result = self._compact_history(force=force)
+        result = self._compact_history(force=force, focus=focus,
+                                       reason="focus" if focus else "")
         if result.get("compressed"):
             try:
                 self.llm.clear_cache()
             except Exception:
                 log.debug("压缩后清 KV 缓存失败", exc_info=True)
         return result
+
+    def compaction_diagnostics(self) -> Dict[str, Any]:
+        """压缩链路的可观测快照（任务九"压缩事件可追溯"的查询入口）。
+
+        返回当前生效的阈值/保留策略、日志汇总、以及回放出的当前摘要 ——
+        用户与测试都能据此回答"什么时候压的、压了什么、现在摘要是什么"。
+        """
+        cfg = self._compaction_cfg()
+        journal = self.compact_log()
+        info: Dict[str, Any] = {
+            "trigger_ratio": float(getattr(cfg, "trigger_ratio", 0.70) or 0.70),
+            "grace_turns": int(getattr(cfg, "grace_turns", 3) or 0),
+            "keep_ratio": float(getattr(cfg, "keep_ratio", 0.20) or 0.20),
+            "mode": str(getattr(self.config, "context_mode", "summarize") or "summarize"),
+            "log_file": str(getattr(cfg, "log_file", "") or ""),
+            "summary_chars": len(self.conv.summary or ""),
+        }
+        if journal is not None:
+            info["journal"] = journal.stats()
+            events = journal.events()
+            info["replay_steps"] = len(replay(events))
+            info["last_event"] = (events[-1].to_dict() if events else {})
+        return info
 
     def _search_if_enabled(self, query: str) -> str:
         """按开关执行搜索并返回**可注入上下文**的文本（不可用时为空串）。

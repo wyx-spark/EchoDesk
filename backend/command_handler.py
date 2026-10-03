@@ -646,24 +646,49 @@ class CommandHandler:
                 + "\n" + str(preset["note"])), None
 
     def _compact(self, args: list) -> Response:
-        """``/compact``：手动压缩上下文（修复四 基础要求）。
+        """``/compact [auto|off] [focus on <重点>]``：手动压缩上下文（修复四；任务九扩展）。
 
-        与自动压缩的区别：自动压缩只在超过 80% 时触发，用户想在还有余量时
-        提前"腾地方"（例如准备上传一个大文件）就得手动触发。
+        与自动压缩的区别：自动压缩只在达到 ``compact.trigger_ratio``（默认 70%）时
+        触发，用户想在还有余量时提前"腾地方"（例如准备上传一个大文件）就得手动触发。
+
+        任务九（优化已知问题-2）新增 ``focus on <文字>``：把用户指定的重点
+        （如"合同金额"）追加进摘要提示词，让压缩器优先保住那部分信息。
+        解析刻意宽松：``focus on X`` / ``focus X`` / ``on X`` 都认，
+        且**只在第一个参数是 focus/on 时才当重点**，否则按旧行为压缩。
         """
         if self.compact_provider is None:
             return t("cmd.resp.compact_unavailable"), None
-        force = not args or str(args[0]).lower() not in ("auto", "off")
+
+        force = True
+        focus = ""
+        rest = list(args)
+        if rest and str(rest[0]).lower() in ("auto", "off"):
+            force = False
+            rest = rest[1:]
+        if rest and str(rest[0]).lower() in ("focus", "on", "重点"):
+            rest = rest[1:]
+            if rest and str(rest[0]).lower() == "on":
+                rest = rest[1:]
+            focus = " ".join(str(part) for part in rest).strip()
+
         try:
-            result = self.compact_provider(force) or {}
+            result = self.compact_provider(force, focus) if focus else self.compact_provider(force)
+        except TypeError:
+            # 兼容只接受 force 的旧 provider（第三方/测试替身）
+            result = self.compact_provider(force)
         except Exception as e:  # noqa: BLE001 - 压缩失败不能让指令崩溃
             return t("cmd.resp.compact_failed", error=e), None
+        if not result:
+            result = {}
         if not result.get("compressed"):
             return t("cmd.resp.compact_skipped",
                      used=result.get("used", "?"), limit=result.get("limit", "?")), None
-        return t("cmd.resp.compact_done",
-                 dropped=result.get("dropped", 0), kept=result.get("kept", 0),
-                 before=result.get("used_before", "?"), after=result.get("used_after", "?")), None
+        reply = t("cmd.resp.compact_done",
+                  dropped=result.get("dropped", 0), kept=result.get("kept", 0),
+                  before=result.get("used_before", "?"), after=result.get("used_after", "?"))
+        if focus:
+            reply += "\n" + t("cmd.resp.compact_focus", focus=focus)
+        return reply, None
 
     def _status(self, _args: list) -> Response:
         # 估算当前上下文占用（系统提示 + 历史）

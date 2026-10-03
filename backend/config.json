@@ -30,6 +30,18 @@
         "extractive_ratio": 0.35,
         "extractive_min_chars": 600
     },
+    "compact": {
+        "trigger_ratio": 0.7,
+        "grace_turns": 3,
+        "keep_ratio": 0.2,
+        "summary_max_tokens": 200,
+        "message_chars": 300,
+        "input_chars": 4000,
+        "tool_output_chars": 2000,
+        "log_file": "compact_log.jsonl",
+        "log_content": true,
+        "log_max_events": 5000
+    },
     "automation": {
         "enabled": false,
         "safety_accepted": false,

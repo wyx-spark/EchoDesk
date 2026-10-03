@@ -243,6 +243,8 @@
     "resp.compact_failed": "❌ 压缩上下文失败：{error}",
     "resp.compact_skipped": "无需压缩：当前占用 {used} / 上限 {limit} tokens",
     "resp.compact_done": "✅ 已压缩上下文：移出 {dropped} 条较早的消息，保留最近 {kept} 条（{before} → {after} tokens）",
+    "resp.compact_focus": "🔎 本次压缩按你指定的重点保留信息：{focus}",
+    "resp.compact_no_drop": "无需压缩：保留区（最近若干轮）已经覆盖全部历史",
     "status.capability_header": "── 模型能力 ──",
     "status.parameters": "参数量: {value}（{source}）",
     "status.quantization": "量化格式: {value}（{source}）",
@@ -261,7 +263,7 @@
     "items./preset.usage": "/preset [list|light|balanced|quality]",
     "items./preset.desc": "一键切换轻量/均衡/高质量三档生成参数（温度、top_p、重复惩罚、回复长度），适合不确定该调哪个参数的用户",
     "items./compact.name": "压缩上下文",
-    "items./compact.usage": "/compact",
+    "items./compact.usage": "/compact [focus on <重点>]",
     "items./compact.desc": "立刻压缩上下文：把较早的对话转成摘要（或按设置的滑动窗口模式直接丢弃），腾出空间给新内容；上下文快满时无需等自动触发",
     "resp.cache_cleared_with_summaries": "✅ 已清空推理 KV 缓存与 {count} 条分段摘要缓存"
   },
