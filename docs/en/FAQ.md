@@ -176,6 +176,58 @@ automatically once the file changes (its size or modification time).
 To clear the cache, delete `app\backend\summary_cache.json` (it is readable JSON, so you can inspect it too);
 to stop using it, set `summary_cache` to `false` in `app\backend\config.json`.
 
+### Why is long-document summarization much faster than before
+Since v0.2.1 known-issues round 2, every chunk goes through an **extraction prefilter** before it reaches the
+model: a TextRank pass plus a "rarity" statistic picks the sentences that matter, and the model only sees the
+extracted text. This step **needs no model and takes milliseconds**; measured on a 47 KB document it cut what
+is sent to the model from ~50,000 to ~18,000 characters (64% less), so total summarization time drops clearly.
+
+It is lossy: extraction works on whole sentences, so documents made of many very short clauses (contract
+clauses, for example) can lose some detail. To keep everything, raise `extractive_ratio` in the `summarize`
+section of `config.json` (default 0.35; 1.0 means no extraction) or set `extractive` to `false`.
+The log states how many chunks were prefilted and how many characters were saved
+("抽取式预筛 N/M 段生效，送模型 X → Y 字符").
+
+### Can I upload several files at once
+Yes. The file dialog supports Ctrl/Shift multi-select and rubber-band selection, and you can drop several
+files at once. Each file gets its **own status line** (`⏳ [3/8] contract.docx …` → `✅` or `❌`),
+**one failure does not affect the others**, and a single "loaded N files" line closes the run.
+The limit is 10 files and 60 MB per batch; anything beyond that asks first, and files over the limit are not
+processed (you are told).
+
+At question time **all files are injected** (each with a filename label), capped by `files.total_chars` in
+`config.json` (default 60,000 characters). Files that do not fit are dropped starting with the **oldest**
+upload, and you are told exactly which ones were not injected — nothing is dropped silently.
+`/status` lists the loaded file names; `/file` loads them one by one and `/file` can also remove them.
+
+### "Path does not exist" even though the file is right there
+The path contains a space. Quote it:
+
+```
+/file "C:\My Documents\contract 2026.docx"
+```
+
+(Before v0.2.1 known-issues round 2 a path with spaces was split into several arguments, so it always failed.
+The upload button and drag-and-drop never had this problem.)
+
+### Why is the file name still there after reopening a session but the content is gone
+The session file (`session.json`) **does not store document bodies** (they run from tens of thousands to
+hundreds of thousands of characters — storing them would bloat the session file to tens of MB, and they can
+always be re-parsed from the original file). It stores the file name, size and any chunked summary.
+So after restoring a session, files with a summary can still be answered from; files without one ask you to
+upload them again.
+
+### Web search is on, but the answer shows no trace of search results
+Known-issues round 2 fixed three things here. If you still see nothing, check in this order:
+
+1. **The search returned nothing**: you are now told explicitly (failure and "no results" are distinguished),
+   instead of silently continuing as before.
+2. **The results were not injected**: if the search switch is off (the status strip shows `🔍 搜索：关`),
+   nothing is searched — turn it on with `/search on`.
+3. **The model ignored the results**: injection is now a numbered list with an instruction to cite the number,
+   but a small model may still not comply fully — naming "according to result 1" in your question raises
+   compliance noticeably.
+
 ---
 
 ## 4. Automation (browser)

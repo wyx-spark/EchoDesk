@@ -172,7 +172,8 @@ Two related notes:
 ```
 /help                 all commands
 /mode contract        switch to contract-review mode (also /mode 5 or /mode ct)
-/file D:\合同.docx     upload a file
+/file D:\合同.docx     upload a file (several paths at once are allowed; quote paths containing spaces)
+/file "D:\my contract.docx" "D:\annex 1.xlsx"   load several files in one go
 /summarize            manually trigger a full-text summary for a long uploaded document
 /temp 0.3             adjust the generation temperature
 /prompt 你是财务顾问    temporarily change the assistant's role
@@ -181,6 +182,7 @@ Two related notes:
 /task list            task-oriented prompt templates (summary, contract review, extraction, translation, code debugging, reasoning)
 /preset light         generation presets in three steps: light / balanced / quality
 /compact              compress the context right away to free up room
+/compact focus on 合同金额   compress while keeping the focus you name
 /darkmode auto        theme: on = dark, off = light, auto = follow the system
 /status               show the model, window, context usage, KV Cache estimate and model capability (size / quantization / measured speed)
 /about                version, publisher and the local paths of the compliance documents
@@ -189,6 +191,40 @@ Two related notes:
 /clear                clear the conversation and the file context
 /exit                 quit (10-second countdown)
 ```
+
+### Live metrics in the status strip
+
+While a reply is being generated the status strip shows the measured metrics for that run. They all come from
+the backend; the UI never estimates them:
+
+| Display | Meaning |
+| --- | --- |
+| `⏳ Waiting for first token` | Generation has started but the model is still processing the input (prefill). On CPU this can take tens of seconds |
+| `⚡ First token 0.85s` | Time from sending the request to the first token arriving |
+| `🚀 12.3 token/s` | Generation speed (thinking is counted too — a slowdown is reported honestly) |
+| `📤 128 tokens` | Tokens generated this run (a `≈` prefix means the tokenizer was unavailable and the count is estimated) |
+| `⏱️ 3.40s` | Total elapsed time |
+| `⏹ Stopped` | You stopped this run; the metrics stay until the next question resets them |
+
+With no model loaded the whole block stays hidden (no zeros, no placeholders).
+
+### Uploading several files at once
+
+- **File dialog**: `Ctrl`/`Shift` multi-select or rubber-band selection. **Drag and drop**: several files at
+  once. Both behave the same way.
+- Each file gets its **own status line**: `⏳ [3/8] contract.docx …` → `✅ [3/8] contract.docx (12345 chars)` or
+  `❌ [3/8] … could not be parsed`. **One failure does not affect the others**, and a single
+  "loaded N files" line closes the batch.
+- The limit is 10 files and 60 MB per batch; exceeding it asks first (continuing processes only the first 10).
+- At question time **all files are injected**, each with a `【文件内容 N/M：filename】` label. When the total
+  exceeds `files.total_chars` in `config.json` (default 60,000 characters) injection starts with the **most
+  recently uploaded** file, and the ones that did not fit are named explicitly before the answer — nothing is
+  dropped silently.
+- Uploading the same file name again **replaces** it instead of accumulating; very large files (over 20,000
+  characters by default) have their body spilled to `file_cache\` with only a pointer and summary kept in
+  context.
+- The session file stores names, sizes and summaries but **not bodies**: after reopening a session, files with a
+  summary can still be answered from; files without one prompt you to upload them again.
 
 ### Getting more out of a small local model
 
@@ -213,7 +249,13 @@ Two related notes:
   temperature by hand with `/temp`, your manual value wins.
 - **Compressing the context**: `/compact` turns earlier conversation into a summary right away to free up room
   (with `context_mode` set to `slide` it discards the oldest history instead); you no longer have to wait for
-  the automatic trigger above 80%.
+  the automatic trigger. The automatic threshold and retention policy live in the `compact` section of
+  `config.json`: `trigger_ratio` (default 0.70, i.e. compress at 70% of the window) and `grace_turns`
+  (default 3 — the most recent 3 turns are kept **verbatim**). To name what must survive compaction, use
+  `/compact focus on 合同金额`: the focus is **appended** to the summary requirements rather than replacing
+  them. Every compaction appends an event to `compact_log.jsonl` (trigger, usage before and after, how many
+  messages were dropped, the summary text) so it stays auditable; for sensitive content set
+  `compact.log_content` to `false` and only lengths are recorded.
 - **Being asked a follow-up question is normal**: when a question is too vague and there is neither a file
   context nor any history (just "what about this?"), the program asks you to clarify the object, the expected
   output form and any constraints instead of guessing at an answer. To switch that off, set `clarify_vague` to
