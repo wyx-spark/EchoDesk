@@ -14,6 +14,110 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 > deviations from the task specification, unfinished items, and size records, see the internal development
 > record (`v0.2.1-研发记录.md`, **not distributed with the release**).
 
+### Known-issues round 2: extraction prefilter, streaming heartbeat and live metrics, search chain, compaction, multi-file upload, `$$` formulas
+
+Task specification: `prompts/EchoDesk-v0.2.1优化已知问题-2.md` (17 tasks). Every item was audited against the
+source first and only the unfinished ones were implemented; per-item findings, decisions, deviations and
+everything deliberately left out are in `records/v0.2.1-优化已知问题-2记录.md`.
+
+**Long documents: extraction prefilter (task 4).** New `backend/extractive.py` shrinks every chunk before it
+reaches the model, using TextRank plus a **rarity** term and an information-density-aware ratio. Pure standard
+library (no jieba/numpy), ~8 ms per 3000-character chunk. Measured on a 47 KB document through the real chunking
+path: `50421 → 17880` characters (**2.8× less input**), 136 ms total.
+
+- Plain TextRank points the wrong way here: it picks sentences that *resemble the others*, i.e. boilerplate,
+  while the facts that matter (`1,860,000 元`, `2026 年 3 月 31 日`, `按日 0.3%`) appear exactly once and rank
+  low. At ratio 0.18 the Chinese contract sample kept **0/6** key figures; with the rarity term and ratio 0.35
+  it keeps 3/6 at the same 2.8× compression.
+- Two-pass selection (score-first, then "score per character" backfill) stops one long sentence plus its
+  neighbour from eating the whole budget while a dozen short clauses get nothing.
+- Section titles at the start of a document are never dropped; chunks shorter than 600 characters are left
+  alone; chunks above 12000 characters bypass the prefilter entirely (8000 sentences cost 22.9 s — the
+  prefilter must not be slower than the model).
+- Configurable via `summarize.extractive`, `extractive_ratio`, `extractive_min_chars`.
+
+**Streaming: heartbeat, throttling and live metrics (tasks 5 and 7).** "Generates halfway, stalls, then a burst
+appears" was traced to two layers, and neither was stdout buffering (every line was already flushed):
+
+- `llama_cpp`'s generator **blocks for tens of seconds during prefill** — there is no data to flush, so nothing
+  could ever be sent. `llm_engine._iter_with_heartbeat` now runs the stream on a reader thread with a bounded
+  queue and emits a heartbeat every 1.5 s (`config.stream_heartbeat_seconds`) while the consumer waits.
+- The front end rebuilt the thinking region's `FlowDocument` and scrolled the whole page **on every delta**.
+  Both are now coalesced into a 50 ms tick (`AppSettings.StreamThrottleMs`); only the text accumulation stays
+  per-delta.
+- Stop now also reaches the reader thread (so a stop actually stops generation) and the discard boundary is
+  pinned to the chunk that was in flight when the stop was noticed — content the user already saw is still
+  delivered, content produced after the stop is not.
+- **Live metrics from the backend** (never estimated in the UI): time to first token, output tokens (counted
+  with the real tokenizer, flagged when estimated), token/s, elapsed time and whether the run was stopped. The
+  status strip shows them during generation, keeps the final values afterwards, resets on the next request,
+  shows "waiting for first token" before the first token, marks aborted runs as stopped, and hides the whole
+  block when no model is loaded.
+- Prefill now has its own status text ("processing input…") instead of a single generic "busy".
+
+**Search results are actually used (task 2).** The four stages were checked one by one:
+
+- Failures used to be returned as text (`"搜索失败: …"`), and the caller told success from failure with a
+  string check — so failure text could be injected into the prompt as if it were material. Results are now
+  structured (`SearchResult` / `SearchOutcome` with `ok` / `error` / `results` / `elapsed_ms`).
+- Injection is a numbered list (`[1]`, `[2]`, …) with an explicit instruction to answer from those results and
+  cite the number, plus an escape hatch ("say the results are insufficient instead of guessing"). Defaults:
+  5 results, 400 characters each, 3000 characters total (~1000 tokens, about 12% of an 8192 window).
+- An empty or failed search no longer injects anything and now tells the user which of the two happened
+  (new bilingual `sys.search_failed` / `sys.search_empty`).
+- `Backend.search_diagnostics()` exposes all four stages (triggered / returned / injected / used) for the
+  status strip and for tests.
+
+**Context compaction (task 9).** Trigger is now a configurable **token ratio** (`compact.trigger_ratio`, 0.70;
+was a hard-coded 0.8). Added a **grace zone** of the most recent N turns (`grace_turns`, default 3) kept
+verbatim, unioned with the token budget — previously a single long message could push out the turn that had
+just happened. The summary prompt is customisable and `/compact focus on <what matters>` appends a focus
+instead of replacing the prompt. Large tool/file/search outputs are truncated to head 60% + tail 30% plus a
+length note before being handed to the compressor (the old `content[:300]` threw whole documents away).
+Every compaction writes an event to `compact_log.jsonl` (append-only, redactable, replayable) recording the
+trigger, thresholds, token counts before/after, how many messages were dropped and kept, the focus, the prompt
+used and the summary text; `Backend.compaction_diagnostics()` and `replay()` answer "which sentences came from
+which compaction".
+
+**Multiple files at once (task 8).** The file dialog supports multi-select and drag-and-drop takes every
+dropped path; both feed the same code path. Files are parsed one by one with their own status line
+(`⏳ [i/n] name…` → `✅/❌`), one failure does not affect the others, and a single "loaded N files" summary
+closes the run. Picking more than 10 files or more than 60 MB asks for confirmation first. Each file is given a
+label when injected (`【文件内容 N/M：name】`); the total is capped by `files.total_chars` and injection starts
+with the **most recently uploaded** file, with the files that did not fit named explicitly instead of being
+dropped silently. Files are kept in a registry that can be listed, selected and removed individually, duplicate
+names replace rather than accumulate, and `session.json` stores only names/summaries/sizes (never bodies).
+Oversized bodies are spilled to `file_cache\` with a pointer kept in context. `/file` accepts several paths.
+
+- Fixed while doing this: command arguments were split with `str.split()`, so **any path containing a space was
+  broken** (`/file C:\My Documents\a b.docx` became four arguments). Arguments are now quote-aware:
+  `/file "C:\My Documents\a b.docx"`.
+
+**`$$ … $$` formulas in the front end (delivery requirement).** Block formulas (`$$` on their own line, possibly
+several lines) render as a centred monospace block; inline `$…$` and mid-line `$$…$$` render as inline
+monospace. No LaTeX typesetting: WPF has no native math engine and the alternatives cost a WebView2 dependency
+or a third-party renderer, both out of proportion to "recognise `$$`". The risk here is mistaking **US dollar
+amounts** for formulas, so the test is deliberately conservative (LaTeX characters, function names, Greek
+letters, or a comparison operator between letters/digits); amounts such as `$100`, `$1.5M` and `$1,860,000`,
+any content containing CJK characters, and anything longer than 200 characters stay plain text. Verified with a
+probe that compiles the **real** renderer source (`artifacts/MarkdownProbe/`, 23 assertions): three formula
+shapes, five dollar-amount cases, CJK content, and no regression in headings/code blocks/tables/bold/lists.
+
+**Also verified this round (already working, no changes needed):** thinking content separation (task 1), context
+window adaptation from GGUF metadata — `DeepSeek-R1-Distill-Qwen-1.5B` reports a 131,072-token training window
+and converges the effective window to the minimum of requested/training/limit (task 3), and session history
+storing only final messages rather than streaming chunks (part of task 5).
+
+**Deliberately not in this release** (reasons in the record): conversation-area virtualisation (task 6 — the
+front-end throttling already removes the main cost; virtualising variable-height `RichTextBox` items without
+losing selection, thinking folds, code highlighting and theming needs a dedicated round), tool-call pipeline
+(task 10 — only one call site would actually use it), session JSONL log and crash recovery (task 11 — to be
+designed together with the new `compact_log.jsonl` event format), MCP (task 12), multi-model adapters
+(task 14 — cloud endpoints conflict with the offline privacy promise), sub-agents (task 15 — serial CPU
+inference makes multi-step decomposition slower than it is useful) and the task board (task 16 — needs a task
+queue first).
+
+
 ### Default model switched to Qwen3-0.6B (thinking visible out of the box) + a single, model-free installer
 
 > This section supersedes the earlier statements in this v0.2.1 block that described **two** installers
