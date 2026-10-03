@@ -25,6 +25,8 @@ from typing import Any, Dict, Optional
 ASCII_MAP: Dict[str, str] = {
     "✅": "[OK]", "❌": "[X]", "⚠️": "[!]", "⚠": "[!]",
     "⏳": "[..]", "⏱️": "[time]", "⏱": "[time]",
+    # ⚡：运行指标里的"首 token 延迟"；⏹：中止标记（优化已知问题-2 任务七）
+    "⚡": "[fast]", "⏹": "[stop]",
     "✨": "*", "🌙": "[dark]", "☀️": "[light]", "☀": "[light]",
     "📡": "[net]", "🧠": "[model]", "🛠️": "[mode]", "🛠": "[mode]",
     "📂": "[folder]", "📁": "[folder]", "📄": "[file]", "📋": "[copy]",
