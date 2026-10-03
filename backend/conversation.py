@@ -2,6 +2,7 @@
 import json
 import os
 import re
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -182,6 +183,71 @@ FILE_INTENT = re.compile(
 )
 
 
+# ===========================================================================
+# 多文件上下文（v0.2.1 优化已知问题-2 任务八）
+# ===========================================================================
+#
+# 任务书要求支持一次上传多个文件，并把"多个文件内容如何注入"作为需要明确的点：
+# "全部注入、按相关性选择、或用户指定"。
+#
+# **本实现的决策：全部注入，但总长受 ``config.files.total_chars`` 约束**，
+# 超出时按"后上传的优先"注入并如实告知用户哪些文件没进上下文。
+# 理由：本地小模型没有可靠的"哪份文件相关"判断能力，用模型做相关性筛选要额外
+# 推理且不稳定；而用户一次拖进来的文件通常本来就是同一件事的资料。
+# 与其猜，不如全部给模型 + 明确告知取舍。
+
+#: 单个文件超过这个字符数就**落盘**保存，上下文里只放"文件指针 + 摘要"。
+#: 任务书任务九的"工具输出单独处理"在文件侧的同一条思路：大块内容不该整段
+#: 塞进上下文，但要留下可回查的指针。
+_DISK_THRESHOLD_CHARS = 20000
+
+
+@dataclass
+class FileEntry:
+    """一份已加载文件：内容、摘要与"内容放在哪"。"""
+
+    name: str = ""                       # 文件名（用于展示与上下文指针）
+    path: str = ""                       # 原始路径（可能为空：同名文件去重后沿用首个）
+    content: str = ""                    # 全文（落在磁盘时为空串）
+    summary: str = ""                    # 分段摘要（有值时优先注入摘要）
+    summary_meta: Dict = field(default_factory=dict)
+    chars: int = 0                       # 原文字符数（落盘后仍要能显示体积）
+    stored_at: str = ""                  # 落盘路径（空 = 内容在内存里）
+
+    def inject_body(self) -> str:
+        """注入上下文时用的正文（摘要优先，落盘时给指针）。"""
+        if self.summary:
+            return self.summary
+        if self.content:
+            return self.content
+        if self.stored_at:
+            return (f"（文件正文过大，已保存到 {self.stored_at}；"
+                    f"共 {self.chars} 字符，需要原文时请让用户用 /file 重新上传或直接指定该路径）")
+        return ""
+
+    def to_dict(self) -> Dict:
+        """会话持久化用的字典（**不写正文**：正文落盘或由文件名回指）。"""
+        return {
+            "name": self.name,
+            "path": self.path,
+            "summary": self.summary,
+            "summary_meta": self.summary_meta,
+            "chars": self.chars,
+            "stored_at": self.stored_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "FileEntry":
+        return cls(
+            name=str(data.get("name", "")),
+            path=str(data.get("path", "")),
+            summary=str(data.get("summary", "")),
+            summary_meta=data.get("summary_meta", {}) or {},
+            chars=int(data.get("chars", 0) or 0),
+            stored_at=str(data.get("stored_at", "")),
+        )
+
+
 class ConversationManager:
     """管理多轮对话历史、模式切换、文件上下文、自定义提示词与会话持久化。"""
 
@@ -189,10 +255,13 @@ class ConversationManager:
         self.max_history = max_history
         self.mode = default_mode if default_mode in MODES else "general"
         self.history: List[dict] = []
-        self.file_name = ""
-        self.file_content = ""
-        self.file_summary = ""          # 长文档分段摘要（有值时优先注入摘要而非全文）
-        self.file_summary_meta: Dict = {}  # 摘要元信息：段数、原文字符数、原文指针等
+        # ---------- 多文件（任务八） ----------
+        # files 是**有序**列表（上传顺序），active_index 指向"当前操作的那一份"
+        # （/summarize、/status、上下文指针都以它为准）。
+        # file_name / file_content / file_summary / file_summary_meta 四个老字段
+        # 保留为**只读属性代理**（见下方 property），因此既有调用方与测试不用改。
+        self.files: List[FileEntry] = []
+        self.active_index: int = -1
         self.undo_stack: List[dict] = []
         self.custom_prompt = ""   # /prompt 的内容：优先级最高，替换模式块与任务层
         self.task_prompt = ""     # /task 套用的任务层正文：叠加在模式块之上
@@ -203,6 +272,135 @@ class ConversationManager:
         #   reasoning_max_chars 限制每条思考的保留长度（0 = 不限制）。
         self.persist_reasoning = True
         self.reasoning_max_chars = 8000
+
+    # ---------- 多文件：老字段的兼容代理（任务八） ----------
+    #
+    # 为什么要留这四个属性：`file_name` / `file_content` / `file_summary` /
+    # `file_summary_meta` 在指令、状态显示、摘要触发、会话读写、测试里被引用了
+    # 几十处。改成列表后如果逐一改写调用点，任何一处漏改都是运行时崩溃；
+    # 用属性代理把它们统一映射到"当前活动文件"，语义与单文件时代完全一致，
+    # 新代码走 files 列表即可。
+
+    @property
+    def _active(self) -> Optional[FileEntry]:
+        if 0 <= self.active_index < len(self.files):
+            return self.files[self.active_index]
+        return None
+
+    @property
+    def file_name(self) -> str:
+        entry = self._active
+        return entry.path or entry.name if entry else ""
+
+    @file_name.setter
+    def file_name(self, value: str) -> None:
+        # 兼容直接赋值（老代码/测试）：没有活动文件时补一条空壳，便于逐字段构造
+        if self._active is None:
+            self.files.append(FileEntry(name=os.path.basename(value or ""), path=value or ""))
+            self.active_index = len(self.files) - 1
+        else:
+            self._active.path = value or ""
+            self._active.name = os.path.basename(value or "")
+
+    @property
+    def file_content(self) -> str:
+        entry = self._active
+        return entry.content if entry else ""
+
+    @file_content.setter
+    def file_content(self, value: str) -> None:
+        if self._active is None:
+            self.files.append(FileEntry())
+            self.active_index = len(self.files) - 1
+        self._active.content = value or ""
+        self._active.chars = len(self._active.content)
+
+    @property
+    def file_summary(self) -> str:
+        entry = self._active
+        return entry.summary if entry else ""
+
+    @file_summary.setter
+    def file_summary(self, value: str) -> None:
+        if self._active is None:
+            self.files.append(FileEntry())
+            self.active_index = len(self.files) - 1
+        self._active.summary = value or ""
+
+    @property
+    def file_summary_meta(self) -> Dict:
+        entry = self._active
+        return entry.summary_meta if entry else {}
+
+    @file_summary_meta.setter
+    def file_summary_meta(self, value: Dict) -> None:
+        if self._active is None:
+            self.files.append(FileEntry())
+            self.active_index = len(self.files) - 1
+        self._active.summary_meta = value or {}
+
+    # ---------- 多文件：真正的 API（任务八） ----------
+
+    def add_file(self, filepath: str, content: str) -> FileEntry:
+        """登记一份文件并把**它**设为当前活动文件。
+
+        同名文件（按文件名比较）视为重复上传：**替换**内容而不是追加第二条 ——
+        否则同一份合同拖两次就会在上下文里出现两遍，白占窗口且让模型困惑。
+        替换时保留原有位置，活动指针指过去。
+        """
+        name = os.path.basename(filepath or "") or (filepath or "未命名")
+        entry = FileEntry(name=name, path=filepath or "", content=content or "",
+                          chars=len(content or ""))
+        for index, existing in enumerate(self.files):
+            if existing.name == name:
+                self.files[index] = entry
+                self.active_index = index
+                return entry
+        self.files.append(entry)
+        self.active_index = len(self.files) - 1
+        return entry
+
+    def remove_file(self, index: int) -> bool:
+        """移除第 ``index`` 份文件（任务书要求"用户可单独移除某个文件"）。"""
+        if not (0 <= index < len(self.files)):
+            return False
+        self.files.pop(index)
+        if not self.files:
+            self.active_index = -1
+        elif index < self.active_index:
+            self.active_index -= 1
+        elif index == self.active_index:
+            self.active_index = min(index, len(self.files) - 1)
+        return True
+
+    def remove_file_by_name(self, name: str) -> bool:
+        for index, entry in enumerate(self.files):
+            if entry.name == name:
+                return self.remove_file(index)
+        return False
+
+    def select_file(self, index: int) -> bool:
+        """切换"当前活动文件"（/summarize 等指令作用于它）。"""
+        if 0 <= index < len(self.files):
+            self.active_index = index
+            return True
+        return False
+
+    def file_names(self) -> List[str]:
+        return [entry.name for entry in self.files]
+
+    def total_chars(self) -> int:
+        return sum(entry.chars for entry in self.files)
+
+    def has_file(self) -> bool:
+        """是否至少上传了一份文件（老 API；多文件下等价于 ``bool(self.files)``）。"""
+        return bool(self.files)
+
+    def set_entry_summary(self, entry: FileEntry, summary: str,
+                          meta: Optional[Dict] = None) -> None:
+        """给**指定**文件写摘要（多文件下摘要作用于哪一份必须显式指定）。"""
+        entry.summary = summary or ""
+        entry.summary_meta = meta or {}
 
     # ---------- 模式 ----------
 
@@ -291,10 +489,8 @@ class ConversationManager:
     def clear(self) -> None:
         self.history.clear()
         self.undo_stack.clear()
-        self.file_name = ""
-        self.file_content = ""
-        self.file_summary = ""
-        self.file_summary_meta = {}
+        self.files.clear()
+        self.active_index = -1
         self.summary = ""
 
     def export_markdown(self) -> str:
@@ -339,19 +535,21 @@ class ConversationManager:
     # ---------- 文件上下文 ----------
 
     def set_file(self, filepath: str, content: str) -> None:
-        self.file_name = filepath
-        self.file_content = content
-        # 换文件时清掉旧摘要，避免张冠李戴
-        self.file_summary = ""
-        self.file_summary_meta = {}
+        """登记并激活一份文件（老 API；等价于 :meth:`add_file`）。
+
+        保留它是为了不改既有调用方（``/file``、后端加载路径、测试）。
+        多文件下语义是"再加一份并激活它"，与单文件时代"覆盖当前文件"一致。
+        """
+        self.add_file(filepath, content)
 
     def set_file_summary(self, summary: str, meta: Optional[Dict] = None) -> None:
-        """记录长文档分段摘要与其元信息（段数/原文字符数/原文指针）。"""
-        self.file_summary = summary or ""
-        self.file_summary_meta = meta or {}
-
-    def has_file(self) -> bool:
-        return bool(self.file_content)
+        """记录**当前活动文件**的分段摘要与其元信息（段数/原文字符数/原文指针）。"""
+        entry = self._active
+        if entry is None:
+            self.files.append(FileEntry(name="", path=""))
+            self.active_index = len(self.files) - 1
+            entry = self._active
+        self.set_entry_summary(entry, summary, meta)
 
     # ---------- Prompt 构建 ----------
 
@@ -391,25 +589,49 @@ class ConversationManager:
         prompt += reply_language_instruction()
         if self.summary:
             prompt += f"\n\n【早期对话摘要】\n{self.summary}"
-        if self.file_content:
-            # 只保留文件名指针，完整内容在用户提问与文件相关时随问题注入
-            pointer = f"\n\n【已上传文件】: {self.file_name}\n（如需基于文件内容回答，请在问题中提及）"
-            if self.file_summary:
-                meta = self.file_summary_meta or {}
+        if self.files:
+            # 只保留文件名清单（含"哪一份是当前文件"），完整内容在用户提问与
+            # 文件相关时随问题注入 —— 与单文件时代同一策略，只是清单变成多行。
+            prompt += self._file_pointer()
+        return prompt
+
+    def _file_pointer(self) -> str:
+        """系统提示里的"已上传文件"清单（多文件：逐条列出 + 标注当前文件）。"""
+        if not self.files:
+            return ""
+        if len(self.files) == 1:
+            entry = self.files[0]
+            pointer = f"\n\n【已上传文件】: {entry.path or entry.name}"
+            if entry.summary:
+                meta = entry.summary_meta or {}
                 chunks = meta.get("chunks")
                 chars = meta.get("origin_chars")
-                detail = ""
-                if chunks and chars:
-                    detail = f"（原文 {chars} 字符，已分 {chunks} 段摘要）"
+                detail = f"（原文 {chars} 字符，已分 {chunks} 段摘要）" if chunks and chars else ""
                 pointer += f"\n【长文档摘要已就绪】{detail} 该文档过长，提问时将注入分段摘要而非全文。"
-            prompt += pointer
-        return prompt
+            pointer += "\n（如需基于文件内容回答，请在问题中提及）"
+            return pointer
+        lines = [f"\n\n【已上传文件】共 {len(self.files)} 份（提问时如涉及文件内容会一并注入）："]
+        for index, entry in enumerate(self.files):
+            mark = "（当前文件）" if index == self.active_index else ""
+            tail = ""
+            if entry.summary:
+                tail = "，已生成分段摘要"
+            elif entry.stored_at:
+                tail = "，正文过大已存盘"
+            lines.append(f"{index + 1}. {entry.name}（{entry.chars} 字符{tail}）{mark}")
+        lines.append("（如需基于某一份文件回答，请在问题里点名文件名）")
+        return "\n".join(lines)
 
     def build_messages(self, user_query: str, search_context: str = "", include_file: bool = False) -> List[dict]:
         """构造发送给模型的完整消息列表（系统提示 + 历史 + 当前问题）。
 
         include_file=True 且已上传文件时，把文件内容注入到当前问题之前：
         有分段摘要则注入摘要（含原文指针），否则注入全文。
+
+        **多文件（任务八）**：逐份注入，每份前带文件名标签（``【文件 N/共 M：名字】``），
+        并按 ``config.files.total_chars`` 限制总长；从**后上传的开始装**（用户刚拖进来
+        的通常就是这次要用的），装不下的文件不注入，由调用方按返回的
+        :meth:`last_injection_note` 如实告知用户 —— 静默少注入几份文件比报错更糟。
 
         这里拼接的 ``【{label}】`` / ``参考以下网络信息：`` 同属提示词内容，
         按文件头说明保持中文、不进语言包。
@@ -430,23 +652,71 @@ class ConversationManager:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
         user_content = f"参考以下网络信息：\n{search_context}\n\n问题：{user_query}" if search_context else user_query
-        if include_file and self.file_content:
-            body = self.file_summary or self.file_content
-            label = "文件内容（长文档摘要）" if self.file_summary else "文件内容"
-            user_content = f"【{label}】\n{body}\n\n{user_content}"
+        if include_file and self.files:
+            self._injection_note = ""
+            blocks: List[str] = []
+            budget = int(getattr(self, "files_total_chars", 0) or 0)
+            used = 0
+            skipped: List[str] = []
+            total = len(self.files)
+            # 从后往前装：刚上传的优先进入上下文
+            order = list(range(total - 1, -1, -1))
+            injected: Dict[int, str] = {}
+            for index in order:
+                entry = self.files[index]
+                body = entry.inject_body()
+                if not body:
+                    continue
+                label = ("文件内容（长文档摘要）" if entry.summary else "文件内容")
+                head = f"【{label} {index + 1}/{total}：{entry.name}】" if total > 1 else f"【{label}】"
+                block = f"{head}\n{body}"
+                if budget > 0 and used + len(block) > budget and injected:
+                    skipped.append(entry.name)
+                    continue
+                injected[index] = block
+                used += len(block)
+            for index in sorted(injected):
+                blocks.append(injected[index])
+            if skipped:
+                self._injection_note = _t("sys.files_partial",
+                                          total=total, injected=len(injected),
+                                          skipped="、".join(skipped))
+            elif total > 1:
+                self._injection_note = _t("sys.files_all_injected",
+                                          total=total, chars=used)
+            if blocks:
+                user_content = "\n\n".join(blocks) + "\n\n" + user_content
         messages.append({"role": "user", "content": user_content})
         return messages
+
+    def last_injection_note(self) -> str:
+        """上一次 :meth:`build_messages` 注入多文件时的提示（无则空串）。
+
+        任务书要求"总内容超出窗口时触发分段摘要，或提示用户选择部分文件"——
+        本实现选后者（提示），把取舍如实说出来，而不是悄悄丢掉几份文件。
+        """
+        return str(getattr(self, "_injection_note", "") or "")
 
     # ---------- 会话持久化 ----------
 
     def save_session(self, path: str, model_path: str = "") -> None:
-        """把模式、提示词、摘要、文件、模型与历史保存到 JSON 文件。"""
+        """把模式、提示词、摘要、文件、模型与历史保存到 JSON 文件。
+
+        **多文件（任务八）**：``files`` 写成字典列表（**不写正文**，只写文件名、
+        摘要、体积与落盘路径）。理由：正文动辄几十万字，写进 session.json 会让
+        会话文件膨胀到几十 MB，而它随时可以从原文件重新解析；
+        真正需要持久化的是"用户上传过哪些文件、它们的摘要是什么"。
+        同时保留 ``file_name``/``file_*`` 旧字段（指向当前活动文件），
+        使**旧版本读新会话**或**新版本读旧会话**都不会缺字段。
+        """
         data = {
             "mode": self.mode,
             "custom_prompt": self.custom_prompt,
             "task_prompt": self.task_prompt,
             "summary": self.summary,
             "model_path": model_path,
+            "files": [entry.to_dict() for entry in self.files],
+            "active_file": self.active_index,
             "file_name": self.file_name,
             "file_content": self.file_content,
             "file_summary": self.file_summary,
@@ -465,6 +735,12 @@ class ConversationManager:
         记事本可能加上 BOM —— 老代码会在这里抛异常并被下面的 ``except`` 吞掉，
         表现为"历史莫名其妙没了"，而不是给出原因（v0.2.1 模型思考内容分离时
         顺带加固，与 config.py 的处理保持一致）。
+
+        **多文件兼容（任务八）**：新会话有 ``files`` 列表；旧会话只有
+        ``file_name``/``file_content``/``file_summary`` 三个标量字段 —— 两者都认，
+        旧会话被自动升级成"只有一份文件的列表"。正文不落盘，因此恢复后的文件
+        条目**没有正文**，只有文件名、体积与摘要；用户再次提问涉及文件内容时
+        会按摘要注入（若当时没生成摘要，提示需要重新上传 —— 见 Backend 的说明）。
         """
         if not os.path.exists(path):
             return False, ""
@@ -478,10 +754,30 @@ class ConversationManager:
             # custom_prompt 里）——缺字段时自然取默认空串，老会话仍能正常恢复。
             self.task_prompt = data.get("task_prompt", "")
             self.summary = data.get("summary", "")
-            self.file_name = data.get("file_name", "")
-            self.file_content = data.get("file_content", "")
-            self.file_summary = data.get("file_summary", "")
-            self.file_summary_meta = data.get("file_summary_meta", {}) or {}
+            self.files = []
+            raw_files = data.get("files")
+            if isinstance(raw_files, list) and raw_files:
+                for item in raw_files:
+                    if isinstance(item, dict):
+                        self.files.append(FileEntry.from_dict(item))
+            else:
+                name = str(data.get("file_name", "") or "")
+                if name:
+                    self.files.append(FileEntry(
+                        name=os.path.basename(name), path=name,
+                        summary=str(data.get("file_summary", "") or ""),
+                        summary_meta=data.get("file_summary_meta", {}) or {},
+                        chars=len(str(data.get("file_content", "") or "")),
+                    ))
+            active = data.get("active_file", -1)
+            try:
+                self.active_index = int(active)
+            except Exception:
+                self.active_index = -1
+            if self.files and not (0 <= self.active_index < len(self.files)):
+                self.active_index = 0
+            if not self.files:
+                self.active_index = -1
             self.history = data.get("history", [])
             return bool(self.history), str(data.get("model_path", ""))
         except Exception:

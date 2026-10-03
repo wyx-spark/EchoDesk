@@ -64,7 +64,16 @@
       "uploading": "📤 正在上传文件: {0} ...",
       "done": "上传完成",
       "failed": "❌ 上传失败: {0}",
-      "filterAll": "所有文件"
+      "filterAll": "所有文件",
+      "uploadingMany": "📥 正在上传 {0} 个文件…",
+      "fileStart": "⏳ [{0}/{1}] {2} …",
+      "fileOk": "✅ [{0}/{1}] {2}（{3} 字符）",
+      "fileFailed": "❌ [{0}/{1}] {2} 解析失败",
+      "doneMany": "✅ 已加载 {0} 个文件（失败 {1} 个）",
+      "confirmTitle": "文件较多",
+      "confirmCount": "一次选择了 {0} 个文件（上限 {1} 个）",
+      "confirmSize": "所选文件共 {0}（上限 {1}）",
+      "confirmContinue": "{0}。\n\n继续会只处理前 {1} 个文件，其余忽略。是否继续？"
     },
     "strip": {
       "searchOnTip": "联网搜索已开启：提问前会先搜索网络参考信息。点击关闭",
