@@ -87,6 +87,56 @@ public static class MarkdownRenderer
 
             string t = line.Trim();
 
+            // ---------- 数学公式（v0.2.1 优化已知问题-2 交付要求） ----------
+            // 需求原话是"增加前端对「$$ $$」MD 标识符的识别"。两种形态都处理：
+            //   * 块级：整行（或多行）被 $$ 包起来 → 单独成一个居中式块；
+            //   * 行内：正文里的 $...$ → 行内等宽呈现。
+            // 识别放在代码块/表格之后（``` 与 | 表格优先级更高），但在普通段落之前。
+            if (t.StartsWith("$$"))
+            {
+                // 同行闭合：$$ ... $$
+                int close = t.IndexOf("$$", 2, StringComparison.Ordinal);
+                if (close > 0)
+                {
+                    Flush(doc, ref para);
+                    doc.Blocks.Add(BuildFormulaBlock(t.Substring(2, close - 2)));
+                    i++;
+                    continue;
+                }
+                // 跨行：从本行 $$ 之后开始收，直到出现只含 $$ 或在中间闭合的一行
+                var body = new System.Text.StringBuilder(t.Substring(2));
+                int k = i + 1;
+                bool closed = false;
+                while (k < lines.Length)
+                {
+                    string probe = lines[k];
+                    int end = probe.IndexOf("$$", StringComparison.Ordinal);
+                    if (end >= 0)
+                    {
+                        body.Append('\n').Append(probe.Substring(0, end));
+                        closed = true;
+                        k++;
+                        break;
+                    }
+                    body.Append('\n').Append(probe);
+                    k++;
+                }
+                Flush(doc, ref para);
+                if (closed)
+                {
+                    doc.Blocks.Add(BuildFormulaBlock(body.ToString()));
+                    i = k;
+                }
+                else
+                {
+                    // 流式未写完（只有开头的 $$）：先按文本显示，下一帧再渲染成公式，
+                    // 免得"公式区"在流式过程中反复出现/消失（跳动比晚一点更糟）。
+                    doc.Blocks.Add(BuildFormulaBlock(body.ToString()));
+                    i = k;
+                }
+                continue;
+            }
+
             if (t.StartsWith("```"))
             {
                 Flush(doc, ref para);
@@ -311,6 +361,32 @@ public static class MarkdownRenderer
         return p;
     }
 
+    /// <summary>
+    /// 渲染块级数学公式（<c>$$ ... $$</c>）。
+    ///
+    /// **为什么不引 LaTeX 排版引擎**：WPF 没有原生公式排版，社区方案要么依赖
+    /// WebView2（本项目刻意不引入，见 UI 插件评估），要么依赖第三方渲染库
+    /// （体积与许可证成本都超出"识别 $$"这一条要求）。这里按**等宽 + 居中 +
+    /// 浅底**呈现公式源码：可读、可选中复制、与代码块视觉区分，
+    /// 且对"把 LaTeX 粘到别处继续编辑"这件事最友好。
+    ///
+    /// 与代码块的区别：居中、无边框背景块改为浅底圆角（公式通常比代码短，
+    /// 通栏底色会让页面显得很碎），字号跟随正文。
+    /// </summary>
+    private static Paragraph BuildFormulaBlock(string body)
+    {
+        var p = new Paragraph
+        {
+            Margin = new Thickness(8, 6, 8, 8),
+            TextAlignment = TextAlignment.Center,
+            FontFamily = FontFor(MonoFontKey, "Consolas, Segoe UI Emoji"),
+        };
+        Themed(p, TextElement.ForegroundProperty, "CodeForeground");
+        string text = body.Trim();
+        p.Inlines.Add(new Run(text.Length == 0 ? " " : text));
+        return p;
+    }
+
     /// <summary>递归解析行内 Markdown，支持任意嵌套（粗中嵌斜/码/删/链等）。</summary>
     private static void AddInlines(Paragraph p, string text)
     {
@@ -348,6 +424,57 @@ public static class MarkdownRenderer
                         ParseInlines(link.Inlines, label); // 标签内部支持嵌套
                         col.Add(link);
                         i = end + 1;
+                        continue;
+                    }
+                }
+            }
+
+            // $$ ... $$ 出现在**一行中间**（探针抓出来的场景）：
+            // `结论是 $$E = mc^2$$ 这样。` 这种写法在模型输出里很常见，而块级扫描只认
+            // "行首是 $$"，漏掉它会让定界符原样显示、内容被拆成碎片。
+            // 这里按**行内等宽片段**呈现（不新建居中段落：公式在句子中间时居中会
+            // 把句子劈成两半），块级公式（自己占一行）才走居中样式。
+            if (c == '$' && i + 1 < n && text[i + 1] == '$')
+            {
+                int closeD = text.IndexOf("$$", i + 2, StringComparison.Ordinal);
+                if (closeD >= 0)
+                {
+                    FlushBuf(col, ref buf);
+                    var formula = new Run(text.Substring(i + 2, closeD - i - 2).Trim())
+                    {
+                        FontFamily = FontFor(MonoFontKey, "Consolas, Segoe UI Emoji"),
+                    };
+                    Themed(formula, TextElement.ForegroundProperty, "CodeForeground");
+                    col.Add(new Span(formula));
+                    i = closeD + 2;
+                    continue;
+                }
+            }
+
+            // 行内数学：$...$（任务书交付要求"前端识别 $$ $$"；行内单 $ 一并支持）
+            //
+            // **必须与"美元金额"区分开**：`价格 $100 到 $200` 是最容易被误判成
+            // 公式的输入。三条判据同时成立才当公式：① 两个 $ 之间有内容且不含
+            // 空白包裹的换行；② 内容里**没有**裸数字紧跟货币语境（用"内容含
+            // LaTeX 特征或非纯数字+单位"判断）；③ 两个 $ 之间的长度不超过 200
+            // 字符（公式不会是一整段散文）。误判公式会把整段话变成等宽居中，
+            // 比"公式没渲染"糟得多，所以判据偏保守。
+            if (c == '$' && !(i + 1 < n && text[i + 1] == '$'))
+            {
+                int close = text.IndexOf('$', i + 1);
+                if (close > i + 1 && close - i - 1 <= 200)
+                {
+                    string inner = text.Substring(i + 1, close - i - 1);
+                    if (LooksLikeInlineMath(inner))
+                    {
+                        FlushBuf(col, ref buf);
+                        var math = new Run(inner)
+                        {
+                            FontFamily = FontFor(MonoFontKey, "Consolas, Segoe UI Emoji"),
+                        };
+                        Themed(math, TextElement.ForegroundProperty, "CodeForeground");
+                        col.Add(math);
+                        i = close + 1;
                         continue;
                     }
                 }
@@ -394,6 +521,70 @@ public static class MarkdownRenderer
             col.Add(new Run(buf.ToString()));
             buf.Clear();
         }
+    }
+
+    /// <summary>
+    /// 判断两个 <c>$</c> 之间的内容是否像行内公式（而不是美元金额）。
+    ///
+    /// 保守判据（宁可漏判也不误判，理由见调用点注释）：
+    ///   * 出现 LaTeX 特征字符 <c>\ ^ _ { } = + / ( )</c> 或希腊字母名 → 公式；
+    ///   * 或包含数学函数/命令名（frac / sqrt / sum / int / alpha …）→ 公式；
+    ///   * 纯数字、或"数字+单位/货币符号" → **不是**公式（`$100`、`$1.5M`）；
+    ///   * 含中文 → 不是公式（中文公式极少用 $ 包裹，而"$合同金额$"是误判高发区）。
+    /// </summary>
+    private static bool LooksLikeInlineMath(string inner)
+    {
+        if (string.IsNullOrWhiteSpace(inner))
+            return false;
+        foreach (char ch in inner)
+        {
+            if (ch > 0x2E7F)   // 中日韩等宽字符区：不当公式
+                return false;
+        }
+        if (inner.IndexOfAny(new[] { '\\', '^', '_', '{', '}', '=', '+', '(', ')' }) >= 0)
+            return true;
+        // 比较运算 + 单字母变量：`x > 0`、`n < 10`、`a ≠ b` 这类也是公式。
+        // 判据要求"比较符号两侧紧邻单字母或数字"，这样"$100 > 50$"（金额比较）
+        // 不会被误判成公式 —— 它与纯金额一样属于散文，不是数学排版需求。
+            // 比较运算 + 单字母变量：`x > 0`、`n < 10`、`a ≠ b` 这类也是公式。
+            // 判据要求"比较符号**跳过空白后的**两侧是单字母或数字"，
+            // 这样"$100 > 50$"（金额比较）不会被误判成公式 —— 它与纯金额一样
+            // 属于散文，不是数学排版需求。注意必须跳过空白：`x > 0` 里紧邻 `>`
+            // 的两个字符都是空格，不跳过就永远匹配不上（探针抓出来的）。
+            foreach (char op in new[] { '>', '<' })
+            {
+                int pos = inner.IndexOf(op);
+                if (pos < 0)
+                    continue;
+                int li = pos - 1;
+                while (li >= 0 && inner[li] == ' ')
+                    li--;
+                int ri = pos + 1;
+                while (ri < inner.Length && inner[ri] == ' ')
+                    ri++;
+                if (li < 0 || ri >= inner.Length)
+                    continue;
+                char left = inner[li];
+                char right = inner[ri];
+                if ((char.IsLetter(left) || char.IsDigit(left))
+                    && (char.IsLetter(right) || char.IsDigit(right))
+                    && (char.IsLetter(left) || char.IsLetter(right)))
+                    return true;
+            }
+        string lower = inner.ToLowerInvariant();
+        foreach (string token in new[]
+                 {
+                     "frac", "sqrt", "sum", "int", "prod", "lim", "log", "sin", "cos", "tan",
+                     "alpha", "beta", "gamma", "delta", "theta", "lambda", "sigma", "omega", "pi",
+                     "times", "cdot", "leq", "geq", "neq", "approx", "infty", "partial",
+                 })
+        {
+            if (lower.Contains(token))
+                return true;
+        }
+        // 剩下的情况只有"纯数字/字母表达式"：要求同时含数字与运算符之外，
+        // 一律不当公式（`$100`、`$USD`、`$1,860,000` 都属于这一类）。
+        return false;
     }
 
     /// <summary>判断 text[i] 处是否是一个成对标记开头；是则返回标记串与长度。</summary>
