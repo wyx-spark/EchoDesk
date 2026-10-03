@@ -88,6 +88,37 @@ def test_config() -> None:
         check("损坏的 config.user.json 被忽略而不是让启动失败",
               fallback.model_path == "bom-model.gguf", f"得到 {fallback.model_path!r}")
 
+    # ---------- 随包分发的配置文件必须与配置模型对齐 ----------
+    #
+    # 为什么要断言这一条（v0.2.1 优化已知问题-2 打包时踩到）：新增 `config.files`
+    # 段时只改了 Config 模型，忘了往 backend/config.json 与 deploy/config.json 里
+    # 写默认值 —— 功能靠 pydantic 默认值照常工作，单元测试也全绿，
+    # 但用户打开 config.json 根本看不到这个段，也就无从配置。
+    # 这是"只有对比配置文件与配置模型才能发现"的一类缺陷，所以固化成断言。
+    import json as _json2
+    import os as _os2
+    root = _os2.path.dirname(_os2.path.dirname(_os2.path.abspath(__file__)))
+    model = config.Config()
+    sections = [name for name, field in type(model).model_fields.items()
+                if hasattr(getattr(model, name), "model_fields")]
+    for rel in ("backend/config.json", "deploy/config.json"):
+        path = _os2.path.join(root, rel.replace("/", _os2.sep))
+        if not _os2.path.exists(path):
+            check(f"{rel} 存在", False, path)
+            continue
+        with open(path, "r", encoding="utf-8-sig") as f:
+            data = _json2.load(f)
+        missing = [name for name in sections if name not in data]
+        check(f"{rel} 含全部 {len(sections)} 个配置段", not missing,
+              f"缺少 {missing}")
+        # 段内字段也要在：否则"看得见段、改不了项"，同样等于没有
+        for name in sections:
+            if name not in data or not isinstance(data[name], dict):
+                continue
+            expected = set(getattr(model, name).model_fields)
+            absent = sorted(expected - set(data[name]))
+            check(f"{rel} 的 {name} 段含全部字段", not absent, f"缺少 {absent}")
+
     # 安全协议：未勾选时强制关闭自动化
     auto = config.AutomationConfig(enabled=True, safety_accepted=False)
     check("未勾选安全协议 → 自动化开关被强制关闭", auto.enabled is False, f"得到 {auto.enabled}")

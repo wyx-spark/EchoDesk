@@ -28,12 +28,18 @@
         "keep_pointer": true,
         "extractive": true,
         "extractive_ratio": 0.35,
-        "extractive_min_chars": 600
+        "extractive_min_chars": 600,
+        "progress_events": true,
+        "heartbeat_seconds": 5.0,
+        "slow_chunk_seconds": 60,
+        "chunk_timeout_seconds": 0,
+        "chunk_timeout_action": "skip"
     },
     "compact": {
         "trigger_ratio": 0.7,
         "grace_turns": 3,
         "keep_ratio": 0.2,
+        "prompt": "你是对话压缩器。请用不超过 150 字的要点总结这段对话，必须保留：① 用户的需求与目标；② 已经做出的关键决定；③ 后续还要用到的背景信息（人名、金额、日期、编号、路径、参数）。不要复述客套话，不要编造。",
         "summary_max_tokens": 200,
         "message_chars": 300,
         "input_chars": 4000,
@@ -41,6 +47,11 @@
         "log_file": "compact_log.jsonl",
         "log_content": true,
         "log_max_events": 5000
+    },
+    "files": {
+        "max_count": 10,
+        "total_chars": 60000,
+        "disk_threshold_chars": 20000
     },
     "automation": {
         "enabled": false,
@@ -81,6 +92,18 @@
         "results_location": "",
         "task_name": "auto-task",
         "audit_log_file": "automation_log.jsonl",
+        "login_state_dir": "",
+        "login_check_selector": "",
+        "login_url_keywords": [
+            "login",
+            "signin",
+            "sign-in",
+            "logon",
+            "sso",
+            "passport",
+            "cas",
+            "auth"
+        ],
         "schedule_enabled": false,
         "schedule_times": [
             "09:00"
