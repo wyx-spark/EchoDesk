@@ -22,6 +22,16 @@
 * ``done`` 行额外带 ``reasoning``（思考全文）、``reasoning_unclosed: true``
   （标签未闭合，通常意味着 token 预算被思考用完、答案还没开始）。
 
+**流式心跳与运行指标（v0.2.1 优化已知问题-2 任务五/七）**：
+
+* ``{"type":"progress","channel":"heartbeat","stats":{...},"waiting_first_token":bool}``
+  —— **心跳**：模型还在算但暂时没有新 token（prefill 阶段可能几十秒）。
+  前端据此显示"正在处理输入 / 等待首 token"，而不是让界面看起来像卡死。
+  心跳由引擎的读者线程产生（见 ``llm_engine._iter_with_heartbeat``），
+  间隔取 ``config.stream_heartbeat_seconds``（默认 1.5 秒）。
+* ``done`` 行额外带 ``stats``：后端实测的运行指标（首 token 延迟、输出 token 数、
+  token/s、总耗时、是否估算），供状态区显示。字段定义见 ``llm_engine.StreamStats``。
+
 没有 ``channel`` 字段的 delta 行沿用旧语义（进度/摘要等非对话文本），前端按原样处理。
 
 **无模型就绪（v0.2.1 综合优化 任务一）**：
@@ -50,7 +60,6 @@ from reasoning import ANSWER as _CH_ANSWER
 from reasoning import REASONING as _CH_REASONING
 from reasoning import RESET as _CH_RESET
 from version import APP_NAME, APP_VERSION, STUDIO
-
 # 协议走 stdin/stdout，且内容含中文/emoji。某些机器（英文 locale）下 Python
 # 默认用 cp1252 编码，写中文会抛 UnicodeEncodeError 直接崩溃（“后端进程已退出”）。
 # 统一强制 UTF-8，且用 errors="replace" 兜底，保证任何机器都能正常输出。
@@ -88,7 +97,9 @@ with _suppress_stdout():
     from file_parser import parse_file_with_wps
     from gguf_meta import format_bytes as _format_bytes
     from gguf_meta import resolve_context_window
-    from llm_engine import LazyLLMEngine, LLMEngine, NoModelError
+    from llm_engine import LazyLLMEngine, LLMEngine, NoModelError, StreamStats
+    # 心跳通道标记（任务五）：引擎在 prefill 阶段产出它，见 llm_engine._iter_with_heartbeat
+    from llm_engine import HEARTBEAT as _CH_HEARTBEAT
     from search_engine import SearchEngine
     from summarizer import DocumentSummarizer
 
@@ -235,6 +246,10 @@ class Backend:
         self.commands.cache_clear_provider = self.clear_summary_cache
         self.stream_active = False
         self.stop_event = threading.Event()
+        # 搜索链路可观测状态（优化已知问题-2 任务二）：上一次搜索的结果对象与
+        # "为什么没用上"的说明。任务书要求逐环节排查，所以状态要留着可查。
+        self._last_search = None
+        self._last_search_note = ""
 
     def clear_summary_cache(self) -> int:
         """清空分段摘要缓存并返回清掉的条目数（供 /clearcache 与动作接口使用）。"""
@@ -1857,10 +1872,19 @@ class Backend:
         search_context = self._search_if_enabled(user_msg)
         include_file = bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)
         messages = self.conv.build_messages(user_msg, search_context, include_file=include_file)
+        # 任务二（优化已知问题-2）：搜索开着却没拿到可用结果时，**明确告知用户**，
+        # 而不是静默继续 —— 否则用户会以为"搜索没生效"或"模型忽略了搜索结果"，
+        # 实际是这一层就没拿到东西。这条提示作为回答区的首段前缀发出。
+        search_note = self._search_note()
+        if search_note:
+            yield {"type": "delta", "channel": _CH_ANSWER, "content": search_note + "\n\n"}
 
         parts: list = []
         # 思考内容与回答走两条通道（任务三）：通道名与前端约定见模块头协议说明。
         splitter = self.llm.make_splitter() if hasattr(self.llm, "make_splitter") else None
+        # 运行指标（优化已知问题-2 任务七）：由引擎实测，随心跳与 done 上报。
+        stats = StreamStats()
+        heartbeat = float(getattr(self.config, "stream_heartbeat_seconds", 1.5) or 1.5)
         try:
             for channel, piece in self.llm.chat_stream_split(
                     messages,
@@ -1869,10 +1893,22 @@ class Backend:
                     stop_event=self.stop_event,
                     top_p=float(getattr(self.config, "top_p", 0.9) or 0.9),
                     repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1),
-                    splitter=splitter):
-                if self.stop_event.is_set():
-                    break
-                if channel == _CH_REASONING:
+                    splitter=splitter,
+                    stats=stats,
+                    heartbeat_seconds=heartbeat):
+                # 停止检查放在**产出之后**（优化已知问题-2 任务五）。
+                # 放在循环开头会让"模型已经生成、只差交付"的那一块被丢掉：
+                # 停止信号置位时往往已经有一两块排在引擎的队列里（引擎的读者线程
+                # 比消费者快），丢掉它们会出现"停止前界面上明明显示过的思考内容
+                # 在 done 里却没有"这种不一致 —— 既有回归用例正好断言了这一点。
+                # 放在产出之后：已拿到的内容照常交付，之后立刻停止，不再等模型跑完。
+                if channel == _CH_HEARTBEAT:
+                    # 任务五：prefill 阶段（首 token 之前）可能几十秒没有任何内容。
+                    # 心跳让界面能区分"还在工作"与"卡死了"，并顺带刷新实时指标。
+                    yield {"type": "progress", "channel": _CH_HEARTBEAT,
+                           "stats": stats.to_dict(),
+                           "waiting_first_token": not stats.prefill_done}
+                elif channel == _CH_REASONING:
                     yield {"type": "delta", "channel": _CH_REASONING, "content": piece}
                 elif channel == _CH_RESET:
                     # 孤立结束标签：此前发到回答区的内容其实都是思考。前端收到
@@ -1882,6 +1918,8 @@ class Backend:
                 else:
                     parts.append(piece)
                     yield {"type": "delta", "channel": _CH_ANSWER, "content": piece}
+                if self.stop_event.is_set():
+                    break
             # 用分离器自己的回答累积串作为权威结果：出现孤立结束标签时它已经把
             # "此前误发到回答区的内容"改判给思考区，这里不能再另存一份累积串
             # （否则 done.content 会把思考内容一起带上，测试 C2 就是这么抓出来的）。
@@ -1894,6 +1932,20 @@ class Backend:
             self._compact_history()
             done: Dict[str, Any] = {"type": "done", "content": full,
                                     "stopped": self.stop_event.is_set()}
+            # 运行指标（任务七）：输出 token 数用**模型真分词器**精确数（引擎在
+            # _finish_stats 里只做了兜底粗估，并已把 tokens_estimated 置真）。
+            # 这里拿到的是完整文本（含思考），与"模型实际生成了多少"口径一致。
+            try:
+                counted_text = (thinking + full) if thinking else full
+                tokens, estimated = self.llm.count_output_tokens(counted_text)
+                stats.tokens = tokens
+                stats.tokens_estimated = estimated
+                if stats.elapsed_ms > 0 and tokens:
+                    stats.tps = tokens / (stats.elapsed_ms / 1000.0)
+            except Exception:
+                log.debug("输出 token 计数失败（保留粗估）", exc_info=True)
+            stats.stopped = self.stop_event.is_set()
+            done["stats"] = stats.to_dict()
             if thinking:
                 done["reasoning"] = thinking
             if splitter is not None and splitter.unclosed and not self.stop_event.is_set():
@@ -2625,12 +2677,50 @@ class Backend:
         return result
 
     def _search_if_enabled(self, query: str) -> str:
+        """按开关执行搜索并返回**可注入上下文**的文本（不可用时为空串）。
+
+        优化已知问题-2 任务二：失败与"没搜到"都**如实记录**，并且把不可用的原因
+        记进 ``self._last_search_note``，由 :meth:`_search_note` 转成给用户的一句话
+        —— 旧实现把失败静默成空串，用户完全看不出"搜索其实没生效"，只看得出
+        "回答里没有搜索结果"。
+        """
+        self._last_search_note = ""
         if not self.commands.search_enabled:
             return ""
-        result = self.search.search(query)
-        if result and "未找到" not in result and "搜索失败" not in result:
-            return result
+        outcome = self.search.search(query)
+        if outcome.usable:
+            self._last_search = outcome
+            return outcome.as_context()
+        self._last_search = outcome
+        # 不可用：区分"失败"与"没有结果"，两者要给用户不同的说法
+        if not outcome.ok:
+            self._last_search_note = _t("sys.search_failed", error=outcome.error[:120])
+        else:
+            self._last_search_note = _t("sys.search_empty")
+        log.info("搜索未产生可用结果：ok=%s 条数=%d 原因=%s",
+                 outcome.ok, outcome.count, self._last_search_note)
         return ""
+
+    def _search_note(self) -> str:
+        """取出上一次搜索的"为什么没用上"说明（无则空串）。"""
+        return str(getattr(self, "_last_search_note", "") or "")
+
+    def search_diagnostics(self) -> Dict[str, Any]:
+        """搜索链路的可观测快照（供状态区与测试断言四个环节）。
+
+        任务书要求"逐环节排查"，所以这里把每个环节的结果都暴露出来：
+        是否开启、是否执行、返回条数、注入字符数、失败原因。
+        """
+        outcome = getattr(self, "_last_search", None)
+        return {
+            "enabled": bool(self.commands.search_enabled),
+            "executed": outcome is not None,
+            "ok": bool(outcome.ok) if outcome is not None else False,
+            "results": int(outcome.count) if outcome is not None else 0,
+            "elapsed_ms": int(outcome.elapsed_ms) if outcome is not None else 0,
+            "error": str(outcome.error) if outcome is not None else "",
+            "note": self._search_note(),
+        }
 
     @staticmethod
     def _merge_action(response: Dict[str, Any], action: Dict[str, Any]) -> None:

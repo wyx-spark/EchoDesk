@@ -14,14 +14,72 @@
     保持"只给最终回答"的兼容语义（摘要、自动化等调用方天然拿不到思考内容）。
 """
 import logging
+import queue
 import threading
 import time
+from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Tuple
 
 from gguf_meta import describe_model, estimate_kv_cache_bytes, format_bytes, resolve_context_window
 from reasoning import ANSWER, ReasoningSplitter, normalize_tags, split_text
 
 log = logging.getLogger("EchoDesk.LLM")
+
+#: 流式读取的"无新 token 就发心跳"的默认间隔（秒）。
+#: 任务书任务五：prefill 阶段慢、decode 阶段快，纯 CPU 上首 token 可能要等十几秒，
+#: 界面上"什么都没有"与"卡死了"无法区分。每 1.5 秒发一次心跳即可消除这种歧义，
+#: 又不会把协议刷爆（一次长回复约几百条心跳上限）。
+DEFAULT_HEARTBEAT_SECONDS = 1.5
+
+#: 心跳事件在通道流里的专用标记：``(HEARTBEAT, "")``。
+#: 它**不是**模型输出，:meth:`LLMEngine.chat_stream_split` 只把它当信号转发，
+#: 分离器永远看不到它（否则心跳会被当成"没有标签的正文"喂进回答通道）。
+HEARTBEAT = "heartbeat"
+
+#: 生成器内部用的哨兵：读者线程结束（正常或异常）。
+_EOF = object()
+
+
+@dataclass
+class StreamStats:
+    """一次流式生成的**运行指标**（任务七：状态区实时指标）。
+
+    由引擎在生成过程中维护，``main.Backend`` 在 ``done`` 里原样上报。
+    全部字段都来自后端实测，**不是前端估算**：
+
+    ``first_token_ms``   请求发出到第一个 token 到达的毫秒数（首 token 延迟）；
+    ``elapsed_ms``       从开始生成到结束的总毫秒数（生成中实时刷新）；
+    ``prompt_chars``     送进模型的提示词字符数（输入规模）；
+    ``output_chars``     已产出的字符数（含思考）；
+    ``tokens``           输出 token 数（用模型分词器精确计数）；
+    ``tokens_estimated`` tokens 是否为估算（分词器不可用时为 True）；
+    ``tps``              token/s（tokens / 生成耗时）；
+    ``prefill_done``     是否已经吐出过第一个 token（前端据此显示"等待首 token"）；
+    ``stopped``          是否被用户中止。
+    """
+
+    first_token_ms: int = 0
+    elapsed_ms: int = 0
+    prompt_chars: int = 0
+    output_chars: int = 0
+    tokens: int = 0
+    tokens_estimated: bool = False
+    tps: float = 0.0
+    prefill_done: bool = False
+    stopped: bool = False
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "first_token_ms": int(self.first_token_ms),
+            "elapsed_ms": int(self.elapsed_ms),
+            "prompt_chars": int(self.prompt_chars),
+            "output_chars": int(self.output_chars),
+            "tokens": int(self.tokens),
+            "tokens_estimated": bool(self.tokens_estimated),
+            "tps": round(float(self.tps), 2),
+            "prefill_done": bool(self.prefill_done),
+            "stopped": bool(self.stopped),
+        }
 
 
 class NoModelError(RuntimeError):
@@ -232,6 +290,103 @@ class LLMEngine:
             messages, temperature, max_tokens, top_p, repeat_penalty
         )[1]
 
+    @staticmethod
+    def _iter_with_heartbeat(
+        stream,
+        stop_event: Optional[threading.Event],
+        heartbeat_seconds: float,
+    ) -> Iterator[Tuple[str, Optional[str]]]:
+        """把阻塞的 llama 流式迭代器变成"心跳 + 增量"事件流。
+
+        ## 为什么必须另起线程（任务书任务五的根因之一）
+
+        ``llama_cpp`` 的流式生成器在 **prefill 阶段会阻塞几十秒**（纯 CPU 上
+        3000 字符的提示词实测十几秒才吐第一个 token）。如果消费者直接
+        ``for chunk in stream``，这段时间里**什么都发不出去** —— 无论怎么
+        flush 都没用，因为根本没有数据可 flush。任务书说的"生成一半卡住，
+        等会儿又冒出来好多"，前半段就是这件事。
+
+        做法：读者线程负责产出增量并放入有界队列，消费者用 ``get(timeout=...)``
+        取；超时就产出一次心跳。于是：
+
+        * **永远不会长时间无输出** —— 每 ``heartbeat_seconds`` 至少一次心跳；
+        * **中断及时** —— 消费者发现 stop_event 就返回，不再等模型跑完；
+        * **不攒批** —— 每拿到一个增量立刻产出，不做任何合并缓冲
+          （合并是前端节流的事，后端攒批只会让"逐 token"变成"一批一批"）。
+
+        产出 ``(kind, text)``，``kind`` ∈ ``"delta"`` / ``"heartbeat"``；
+        结束或异常时产出 ``("end", None)``。
+
+        **停止信号必须传进读者线程**（踩过的坑，回归测试抓出来的）：读者线程
+        若一路把流抽干，用户点"停止"之后模型还在继续算、内容还会被消费 ——
+        既浪费 CPU，也让"停止"退化成"停止显示"，还改变了"停止时已发出的内容
+        到哪一段为止"的既有语义（`tools/test_reasoning.py` 的中断用例断言了它）。
+        所以读者线程每取一块**之前**都检查 ``stop_event``，置位就立刻结束，
+        不再向底层要新 token。
+        """
+        pending: "queue.Queue" = queue.Queue(maxsize=256)
+        error_box: List[BaseException] = []
+
+        def stopped() -> bool:
+            return stop_event is not None and stop_event.is_set()
+
+        #: 停止信号**被发现时**，底层已经取到手的那一块的序号。
+        #:
+        #: 为什么要这么细：读者线程比消费者快，停止信号置位时它手上那块已经被
+        #: 底层"生成"出来了（对桩引擎而言就是 ``on_piece`` 已经回调过）。这一块
+        #: 与它之后的都不算"用户已经看到的内容"，必须丢弃；它**之前**的才算，
+        #: 必须照常交付。否则要么丢掉用户看过的思考（回归用例），要么多交付一块
+        #: 用户根本没来得及看到的内容（停止语义变慢）。
+        drop_from: List[int] = []
+
+        def reader() -> None:
+            try:
+                index = 0
+                for chunk in stream:
+                    if stopped():
+                        drop_from.append(index)
+                        break
+                    choice = chunk.get("choices", [{}])[0]
+                    delta = choice.get("delta", {}).get("content") or choice.get("text")
+                    if not delta:
+                        continue
+                    # 有界队列：模型产得比界面消费得快时，这里会短暂阻塞读者线程，
+                    # 从而把内存压住（不然高速模型会把队列撑成内存黑洞）。
+                    pending.put(("delta", delta, index))
+                    index += 1
+            except BaseException as exc:  # noqa: BLE001 —— 原样带回消费者抛
+                error_box.append(exc)
+            finally:
+                pending.put((_EOF, None, -1))
+
+        worker = threading.Thread(target=reader, name="EchoDesk-LLM-Reader", daemon=True)
+        worker.start()
+        # heartbeat_seconds <= 0 表示关闭心跳：此时用无限等待，不做任何超时唤醒
+        wait = max(0.1, float(heartbeat_seconds)) if heartbeat_seconds and heartbeat_seconds > 0 else None
+        while True:
+            try:
+                item = pending.get(timeout=wait) if wait else pending.get()
+            except queue.Empty:
+                if stopped():
+                    # 停止信号置位且队列已空：立刻结束（不再等模型跑完）
+                    return
+                # 没有新 token：这次"沉默"可能是 prefill，也可能是模型在慢慢算。
+                # 心跳只说明"还在工作"，内容由前端决定怎么显示。
+                if error_box:
+                    raise error_box[0]
+                yield ("heartbeat", None)
+                continue
+            kind, text, index = item
+            # 队列里的内容可能已经排到了"停止之后才发现的那一块"：按 drop_from
+            # 截断，把"停止之前就产出的内容"如实交付、把之后的丢掉。
+            if kind == _EOF:
+                if error_box:
+                    raise error_box[0]
+                return
+            if drop_from and index >= drop_from[0]:
+                return
+            yield (kind, text)
+
     def _chat_stream_raw(
         self,
         messages: List[dict],
@@ -240,14 +395,19 @@ class LLMEngine:
         stop_event: Optional[threading.Event] = None,
         top_p: Optional[float] = None,
         repeat_penalty: Optional[float] = None,
-    ) -> Iterator[str]:
+        stats: Optional[StreamStats] = None,
+        heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS,
+    ) -> Iterator[Optional[str]]:
         """底层流式补全：原样产出片段（含思考标签），并统计生成速度。
 
-        速度统计刻意把思考内容也算进 ``last_tokens``：思考同样是模型生成的
-        输出，"变慢了"要如实反映，不能因为分流就少算一截。
+        产出 ``None`` 表示**心跳**（该刷指标了，但没有新内容）；产出字符串表示
+        模型增量。速度统计刻意把思考内容也算进 ``last_tokens``：思考同样是模型
+        生成的输出，"变慢了"要如实反映，不能因为分流就少算一截。
         """
         started = time.perf_counter()
         produced = 0
+        if stats is not None:
+            stats.prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
         kwargs: Dict[str, object] = {
             "messages": messages,
             "stream": True,
@@ -260,18 +420,62 @@ class LLMEngine:
             kwargs["repeat_penalty"] = float(repeat_penalty)
         stream = self.llm.create_chat_completion(**kwargs)
         try:
-            for chunk in stream:
-                if stop_event is not None and stop_event.is_set():
-                    break
-                choice = chunk.get("choices", [{}])[0]
-                delta = choice.get("delta", {}).get("content") or choice.get("text")
-                if delta:
-                    produced += len(delta)
-                    yield delta
+            for kind, text in self._iter_with_heartbeat(stream, stop_event, heartbeat_seconds):
+                if kind == "heartbeat":
+                    # 心跳期间刷新指标（前端靠它显示"已生成 N 字 / 已用 N 秒"）。
+                    # 产出空串只是给上层一个"该刷指标了"的信号，上层按 kind 处理。
+                    if stats is not None:
+                        stats.elapsed_ms = int((time.perf_counter() - started) * 1000)
+                        stats.output_chars = produced
+                    yield None
+                    continue
+                produced += len(text)
+                if stats is not None:
+                    now = time.perf_counter()
+                    if not stats.prefill_done:
+                        # 首 token 延迟：从开始生成（含 prefill）到第一个 token 到达
+                        stats.prefill_done = True
+                        stats.first_token_ms = int((now - started) * 1000)
+                    stats.elapsed_ms = int((now - started) * 1000)
+                    stats.output_chars = produced
+                yield text
         finally:
             self.last_elapsed = time.perf_counter() - started
             self.last_tokens = produced
             self.last_tps = (produced / self.last_elapsed) if self.last_elapsed > 0 else 0.0
+            if stats is not None:
+                stats.elapsed_ms = int(self.last_elapsed * 1000)
+                stats.output_chars = produced
+                stats.stopped = bool(stop_event is not None and stop_event.is_set())
+                self._finish_stats(stats)
+
+    def _finish_stats(self, stats: StreamStats) -> None:
+        """生成结束后把 token 数补上进指标（任务七：token 计数要来自后端）。
+
+        这里只做"能给就给"的尽力而为：引擎不缓存生成正文（可能要几万字），
+        精确的 token 数由 ``main.Backend`` 拿到完整文本后调用
+        :meth:`count_output_tokens` 补算。若调用方没补，就退回
+        "字符 / 2"的粗估，并把 ``tokens_estimated`` 置真 —— 任务书要求
+        "token 计数若为估算需标注"，不能把估算值当精确值报上去。
+        """
+        if stats.tokens > 0:
+            return
+        stats.tokens = max(0, int(stats.output_chars / 2)) if stats.output_chars else 0
+        stats.tokens_estimated = bool(stats.output_chars)
+        if stats.elapsed_ms > 0 and stats.tokens:
+            stats.tps = stats.tokens / (stats.elapsed_ms / 1000.0)
+
+    def count_output_tokens(self, text: str) -> Tuple[int, bool]:
+        """数一段文本的 token 数，返回 ``(token 数, 是否为估算)``。
+
+        供 ``main.Backend`` 在生成结束后补齐精确的输出 token 数。
+        """
+        if not text:
+            return 0, False
+        try:
+            return len(self.llm.tokenize(text.encode("utf-8"))), False
+        except Exception:
+            return max(1, len(text) // 2), True
 
     def chat_stream_split(
         self,
@@ -282,11 +486,14 @@ class LLMEngine:
         top_p: Optional[float] = None,
         repeat_penalty: Optional[float] = None,
         splitter: Optional[ReasoningSplitter] = None,
+        stats: Optional[StreamStats] = None,
+        heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS,
     ) -> Iterator[Tuple[str, str]]:
         """流式补全，产出 ``(通道, 文本)`` 事件。
 
         通道取值见 :mod:`reasoning`：``reasoning``（思考）/ ``answer``（回答）/
-        ``reset``（此前发到回答通道的内容其实属于思考，调用方需把回答区作废）。
+        ``reset``（此前发到回答通道的内容其实属于思考，调用方需把回答区作废），
+        外加 :data:`HEARTBEAT`（后端仍在工作但还没有新内容，见 :meth:`_iter_with_heartbeat`）。
 
         边界处理（标签跨 chunk、嵌套、未闭合、孤立结束标签）全部由
         :class:`reasoning.ReasoningSplitter` 负责，本方法只做接线。
@@ -296,11 +503,21 @@ class LLMEngine:
         if splitter is None:
             # 分离关闭：思考内容不再分流，全部按回答通道直出（旧行为）
             for piece in self._chat_stream_raw(messages, temperature, max_tokens,
-                                               stop_event, top_p, repeat_penalty):
-                yield (ANSWER, piece)
+                                               stop_event, top_p, repeat_penalty,
+                                               stats=stats, heartbeat_seconds=heartbeat_seconds):
+                if piece is None:
+                    yield (HEARTBEAT, "")
+                else:
+                    yield (ANSWER, piece)
             return
         for piece in self._chat_stream_raw(messages, temperature, max_tokens,
-                                           stop_event, top_p, repeat_penalty):
+                                           stop_event, top_p, repeat_penalty,
+                                           stats=stats, heartbeat_seconds=heartbeat_seconds):
+            if piece is None:
+                # 心跳**不喂给分离器**：喂进去会被当成"没有标签的正文"，
+                # 于是 prefill 阶段的心跳会把回答区刷成空段落。
+                yield (HEARTBEAT, "")
+                continue
             for event in splitter.feed(piece):
                 yield event
         for event in splitter.close():
@@ -314,14 +531,18 @@ class LLMEngine:
         stop_event: Optional[threading.Event] = None,
         top_p: Optional[float] = None,
         repeat_penalty: Optional[float] = None,
+        stats: Optional[StreamStats] = None,
+        heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS,
     ) -> Iterator[str]:
         """执行流式对话补全，逐个产出**最终回答**的增量片段。
 
         思考内容已被剥掉（分段摘要、自动化等调用方拿到的就是干净答案）。
         需要把思考过程单独展示时用 :meth:`chat_stream_split`。
+        心跳（:data:`HEARTBEAT`）在这里被丢掉 —— 本方法的调用方只关心文本。
         """
         for channel, text in self.chat_stream_split(
-                messages, temperature, max_tokens, stop_event, top_p, repeat_penalty):
+                messages, temperature, max_tokens, stop_event, top_p, repeat_penalty,
+                stats=stats, heartbeat_seconds=heartbeat_seconds):
             if channel == ANSWER:
                 yield text
 
@@ -464,10 +685,14 @@ class LazyLLMEngine(LLMEngine):
         stop_event: Optional[threading.Event] = None,
         top_p: Optional[float] = None,
         repeat_penalty: Optional[float] = None,
+        stats: Optional[StreamStats] = None,
+        heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS,
     ) -> Iterator[str]:
         if not self.ready:
             raise NoModelError("尚未加载模型")
-        return super().chat_stream(messages, temperature, max_tokens, stop_event, top_p, repeat_penalty)
+        return super().chat_stream(messages, temperature, max_tokens, stop_event, top_p,
+                                   repeat_penalty, stats=stats,
+                                   heartbeat_seconds=heartbeat_seconds)
 
     def chat_stream_split(
         self,
@@ -478,11 +703,14 @@ class LazyLLMEngine(LLMEngine):
         top_p: Optional[float] = None,
         repeat_penalty: Optional[float] = None,
         splitter: Optional[ReasoningSplitter] = None,
+        stats: Optional[StreamStats] = None,
+        heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS,
     ) -> Iterator[Tuple[str, str]]:
         if not self.ready:
             raise NoModelError("尚未加载模型")
         return super().chat_stream_split(messages, temperature, max_tokens, stop_event,
-                                         top_p, repeat_penalty, splitter)
+                                         top_p, repeat_penalty, splitter, stats=stats,
+                                         heartbeat_seconds=heartbeat_seconds)
 
     def count_tokens(self, text: str) -> int:
         """未加载模型时按"约 2 字符 1 token"粗估。
@@ -494,6 +722,12 @@ class LazyLLMEngine(LLMEngine):
         if not self.ready:
             return max(0, len(text or "") // 2)
         return super().count_tokens(text)
+
+    def count_output_tokens(self, text: str) -> Tuple[int, bool]:
+        """未加载模型时按字符粗估，并标注"这是估算"（任务七）。"""
+        if not self.ready:
+            return max(0, len(text or "") // 2), bool(text)
+        return super().count_output_tokens(text)
 
     def describe(self) -> Dict[str, object]:
         if not self.ready:

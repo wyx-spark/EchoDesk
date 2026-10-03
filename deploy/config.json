@@ -25,7 +25,10 @@
         "merge_max_tokens": 800,
         "model": "",
         "min_chars": 4000,
-        "keep_pointer": true
+        "keep_pointer": true,
+        "extractive": true,
+        "extractive_ratio": 0.35,
+        "extractive_min_chars": 600
     },
     "automation": {
         "enabled": false,

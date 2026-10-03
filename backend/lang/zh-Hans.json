@@ -356,6 +356,8 @@
     "summary_cache_hit": "✅ {trigger}分段摘要（缓存命中，未重复计算）: {name}",
     "summary_cache_hit_detail": "• 原文 {chars} 字符 → {chunks} 段",
     "summary_cache_hit_note": "• 同一文件与同一摘要参数的结果已复用；如需强制重算，先删除 backend\\summary_cache.json 或改动分段参数",
+    "search_failed": "⚠️ 联网搜索失败（{error}），本次回答**没有**使用搜索结果。请检查网络，或先用 /search off 关掉搜索开关。",
+    "search_empty": "ℹ️ 联网搜索没有返回可用结果，本次回答**没有**使用搜索结果，将依据模型自身知识作答。",
     "summary_too_short": "ℹ️ 文件较短（{chars} 字符），无需分段摘要，已按原文注入。",
     "summary_done": "✅ {trigger}分段摘要完成: {name}",
     "summary_done_stats": "• 原文 {chars} 字符 → {chunks} 段，摘要约 {tokens} tokens",

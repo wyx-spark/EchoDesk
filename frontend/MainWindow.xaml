@@ -265,6 +265,15 @@
                         <TextBlock x:Name="StripUpdateText" Text="🎉 新版本" FontSize="11"
                                    svc:Loc.Key="main.update.idle"/>
                     </Button>
+                    <!-- 运行指标（v0.2.1 优化已知问题-2 任务七）：首 token 延迟 / 速度 /
+                         token 数 / 总耗时。**全部由后端实测上报**（done.stats 与心跳
+                         progress.stats），前端不做估算；生成中每 500ms 刷新一次。
+                         默认隐藏：没有指标时（如无模型、请求失败清空）整块不占位。 -->
+                    <TextBlock x:Name="MetricsText" FontSize="11" Margin="6,0,0,0"
+                               Visibility="Collapsed" VerticalAlignment="Center"
+                               Opacity="0.85"
+                               svc:Loc.TipKey="main.metrics.tip"
+                               AutomationProperties.AutomationId="RunMetrics"/>
                 </WrapPanel>
                 <Button x:Name="StripToggleButton" Grid.Column="1" Padding="6,1" Margin="6,0,0,0"
                         Style="{StaticResource RoundButton}" Click="StripToggleButton_Click"

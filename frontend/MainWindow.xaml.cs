@@ -39,6 +39,24 @@ public partial class MainWindow : Window
     private DispatcherTimer? _mdTimer;
     private RichTextBox? _mdTarget;
     private string _mdPending = "";
+    // ---------- 流式节流（v0.2.1 优化已知问题-2 任务五） ----------
+    // 后端逐 token 发，前端**每个 delta 都重排一次界面**才是卡顿的主因：
+    // RichTextBox 重建 FlowDocument 与 ScrollToBottom 触发整页测量，几百个
+    // delta 就是几百次全量布局。这里把"滚动到底"与"思考区重渲染"也纳入节流，
+    // 只保留文本累积（Append，O(1)）是每 delta 都做的。
+    private DispatcherTimer? _streamTickTimer;   // 50ms 合并一次滚动与思考区渲染
+    private bool _scrollPending;
+    private string? _thinkPending;               // 思考区待渲染文本（null = 无待办）
+    private TextBlock? _thinkPendingCount;       // 与之配套的字数标签
+    // ---------- 运行指标（任务七） ----------
+    private DispatcherTimer? _metricsTimer;      // 生成中每 500ms 刷新一次指标显示
+    private readonly Dictionary<string, string> _lastStats = new();
+    private string _metricsState = "idle";       // idle / waiting / running / done / failed / stopped / hidden
+    //: 生成开始的本地时刻（秒表用）。后端心跳每 1.5 秒才来一次，
+    //: 秒表若只靠心跳会一顿一顿地跳；token 数/速度仍只认后端上报。
+    private DateTime? _metricsStartUtc;
+    //: 思考区的渲染目标（流式期间由节流器统一重渲染，见 ScheduleThinkRender）
+    private RichTextBox? _thinkBackend;
     // 底部通知条计时器（下载完成/自动化完成/错误提示）
     private DispatcherTimer? _toastTimer;
     // 修复四：最近一次能力提示清单（点状态区的提示按钮时逐条展示）
@@ -1288,6 +1306,7 @@ public partial class MainWindow : Window
             thinkRegion.IsExpanded = true;
             panel.Children.Insert(1, thinkRegion);
             answerStarted = false;
+            _thinkBackend = thinkBody;   // 供节流器统一重渲染（任务五）
         }
 
         void RefreshThinkRegion()
@@ -1300,6 +1319,12 @@ public partial class MainWindow : Window
                 thinkBody.Document = MarkdownRenderer.Build(Emoji.Prefer(thinking.ToString()));
         }
 
+        // 运行指标（任务七）：请求开始时重置，此后由心跳与 done 驱动
+        ResetStreamStats();
+        _metricsStartUtc = DateTime.UtcNow;
+        _metricsState = "waiting";
+        StartMetricsTimer();
+
         try
         {
             string full = await _backend!.SendStreamRequestAsync(
@@ -1308,13 +1333,40 @@ public partial class MainWindow : Window
                 {
                     sb.Append(delta);
                     ScheduleMarkdownRender(sb.ToString()); // 节流实时渲染
-                    MessageScrollViewer.ScrollToBottom();
+                    ScheduleScrollToBottom();              // 滚动同样节流（任务五）
                 },
                 onContext: (used, limit) => ContextText.Text = FormatContext(used, limit),
                 onEvent: (type, root) =>
                 {
+                    // 心跳（任务五）：模型还在算但暂时没有新 token。
+                    // 刷新指标并让状态文案说明"在处理输入"，避免界面看起来像卡死。
+                    if (type == "progress")
+                    {
+                        if (root.TryGetProperty("stats", out JsonElement beat))
+                        {
+                            bool waiting = root.TryGetProperty("waiting_first_token", out JsonElement w)
+                                           && w.ValueKind == JsonValueKind.True;
+                            ApplyStreamStats(beat, waiting ? "waiting" : "running");
+                        }
+                        StatusText.Text = _metricsState == "waiting"
+                            ? Loc.T("main.status.prefill", "正在处理输入…")
+                            : Loc.T("main.status.generating", "正在生成…");
+                        return;
+                    }
+                    if (type == "error")
+                    {
+                        ApplyStreamStats(default, "failed");
+                        return;
+                    }
                     if (type != "done")
                         return;
+                    // done 行带权威的运行指标（任务七）：以它为准（心跳期间的值是中间态）
+                    if (root.TryGetProperty("stats", out JsonElement finalStats))
+                    {
+                        bool stopped = root.TryGetProperty("stopped", out JsonElement st)
+                                       && st.ValueKind == JsonValueKind.True;
+                        ApplyStreamStats(finalStats, stopped ? "stopped" : "done");
+                    }
                     // done 行带权威的思考全文：以它为准重建思考区（流式期间可能只拿到一段）
                     string finalThinking = root.TryGetProperty("reasoning", out JsonElement rs)
                         ? rs.GetString() ?? "" : "";
@@ -1351,8 +1403,10 @@ public partial class MainWindow : Window
                             thinkAutoExpanded = true;
                         }
                         thinking.Append(text);
-                        RefreshThinkRegion();
-                        MessageScrollViewer.ScrollToBottom();
+                        // 思考增量按节流重渲染（任务五）：思考往往比答案还长，
+                        // 每个增量都重建一次 FlowDocument 是纯 CPU 下最明显的卡顿源。
+                        ScheduleThinkRender(thinking.ToString(), thinkCount);
+                        ScheduleScrollToBottom();
                         return;
                     }
                     if (reset)
@@ -1379,7 +1433,7 @@ public partial class MainWindow : Window
                     }
                     sb.Append(text);
                     ScheduleMarkdownRender(sb.ToString());
-                    MessageScrollViewer.ScrollToBottom();
+                    ScheduleScrollToBottom();
                 });
             // 以 done 行的权威回答为准重建一次（思考区的孤立标签改判会改变回答区内容）
             if (full.Length > 0)
@@ -1396,6 +1450,13 @@ public partial class MainWindow : Window
         finally
         {
             StopMarkdownTimer();
+            StopStreamTickTimer();
+            StopMetricsTimer();
+            // 结束态保留最终数值（任务七：生成完成后保留、下次请求开始才重置）；
+            // 中止的轮次标注"已中止"，不清零已产生的指标。
+            if (_metricsState is "running" or "waiting")
+                _metricsState = _stopRequested ? "stopped" : "done";
+            RefreshMetricsDisplay();
             _stopMode = false;
             SendButton.Content = "➤";
             SendButton.ToolTip = Loc.T("main.button.sendTip", "发送 (Ctrl+Enter)");
@@ -1514,6 +1575,226 @@ public partial class MainWindow : Window
             _mdTimer.Stop();
             _mdTimer = null;
         }
+    }
+
+    // ---------- 流式合并更新（任务五）与运行指标（任务七） ----------
+
+    /// <summary>请求把消息区滚到底；同一个节流周期内多次请求只执行一次。</summary>
+    private void ScheduleScrollToBottom()
+    {
+        _scrollPending = true;
+        EnsureStreamTickTimer();
+    }
+
+    /// <summary>请求稍后重渲染思考区（流式期间思考增量很密，逐条重渲染会卡）。</summary>
+    private void ScheduleThinkRender(string text, TextBlock? countLabel)
+    {
+        _thinkPending = text;
+        _thinkPendingCount = countLabel;
+        EnsureStreamTickTimer();
+    }
+
+    /// <summary>
+    /// 50ms 一次的合并更新：把"滚动到底"与"思考区重渲染"从"每 delta 一次"
+    /// 降到"每 50ms 一次"。区间取值理由见 <c>stream_throttle_ms</c> 注释：
+    /// 60 帧下 50ms 约等于每 3 帧一次，人眼已看不出延迟，而布局次数少一个数量级。
+    /// </summary>
+    private void EnsureStreamTickTimer()
+    {
+        if (_streamTickTimer is { IsEnabled: true })
+            return;
+        int interval = _settings.StreamThrottleMs > 0 ? _settings.StreamThrottleMs : 50;
+        _streamTickTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(interval) };
+        _streamTickTimer.Tick += (_, _) => FlushStreamTick();
+        _streamTickTimer.Start();
+    }
+
+    private void FlushStreamTick()
+    {
+        if (_thinkPending != null)
+        {
+            string text = _thinkPending;
+            _thinkPending = null;
+            if (_thinkBackend != null)
+                _thinkBackend.Document = MarkdownRenderer.Build(Emoji.Prefer(text));
+            if (_thinkPendingCount != null)
+                _thinkPendingCount.Text = Loc.T("main.reasoning.count", "· {0} 字", text.Length);
+            _thinkPendingCount = null;
+        }
+        if (_scrollPending)
+        {
+            _scrollPending = false;
+            MessageScrollViewer.ScrollToBottom();
+        }
+        if (!_scrollPending && _thinkPending == null && _streamTickTimer != null)
+        {
+            _streamTickTimer.Stop();
+            _streamTickTimer = null;
+        }
+    }
+
+    private void StopStreamTickTimer()
+    {
+        if (_streamTickTimer != null)
+        {
+            _streamTickTimer.Stop();
+            _streamTickTimer = null;
+        }
+        _scrollPending = false;
+        _thinkPending = null;
+        _thinkPendingCount = null;
+    }
+
+    // ---------- 运行指标（任务七） ----------
+
+    /// <summary>
+    /// 记录后端上报的运行指标并刷新状态区。
+    ///
+    /// 指标**全部来自后端实测**（<c>done.stats</c> / 心跳 <c>progress.stats</c>），
+    /// 前端只做格式化，不做估算 —— 任务书明确要求"不能仅靠前端估算"。
+    /// 无模型时（后端报 model_ready=false）整个指标块隐藏，不显示 0 或占位符。
+    /// </summary>
+    private void ApplyStreamStats(JsonElement stats, string state)
+    {
+        foreach (string key in new[]
+                 {
+                     "first_token_ms", "elapsed_ms", "output_chars", "tokens",
+                     "tokens_estimated", "tps", "prompt_chars", "prefill_done",
+                 })
+        {
+            if (stats.TryGetProperty(key, out JsonElement value))
+                _lastStats[key] = value.ValueKind switch
+                {
+                    JsonValueKind.True => "true",
+                    JsonValueKind.False => "false",
+                    JsonValueKind.Number => value.ToString(),
+                    _ => value.GetString() ?? "",
+                };
+        }
+        _metricsState = state;
+        RefreshMetricsDisplay();
+    }
+
+    /// <summary>下一次请求开始时重置指标（任务七："下次请求开始时重置"）。</summary>
+    private void ResetStreamStats()
+    {
+        _lastStats.Clear();
+        // 无模型时不显示任何指标（任务七："无模型时隐藏无意义的值，不显示 0 或占位符"）
+        _metricsState = _backend is null || !_backend.ModelReady ? "hidden" : "idle";
+        RefreshMetricsDisplay();
+    }
+
+    private static double StatNumber(IReadOnlyDictionary<string, string> stats, string key)
+    {
+        return stats.TryGetValue(key, out string? raw)
+            && double.TryParse(raw, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double value)
+            ? value
+            : -1;
+    }
+
+    /// <summary>把指标渲染到状态区；无意义的项直接不显示（不写 0、不写占位符）。</summary>
+    private void RefreshMetricsDisplay()
+    {
+        if (MetricsText == null)
+            return;
+        // 无模型：整块隐藏（后端会报 model_ready=false，此处由调用方清空）
+        if (_metricsState == "hidden" || _lastStats.Count == 0)
+        {
+            MetricsText.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var parts = new List<string>();
+        // 模型名取自后端上报（BackendService.LoadedModel，随 model_state/model_ready 更新）
+        string model = _backend?.LoadedModel ?? "";
+        if (model.Length > 0)
+            parts.Add($"🧩 {model}");
+
+        if (_metricsState == "waiting")
+        {
+            // 首 token 到达前：显示"等待首 token"而不是 0.0 秒（任务书明确要求）
+            parts.Add(Loc.T("main.metrics.waitingFirstToken", "⏳ 等待首 token"));
+            double waited = StatNumber(_lastStats, "elapsed_ms");
+            if (waited >= 0)
+                parts.Add(Loc.T("main.metrics.elapsed", "⏱️ {0}", FormatSeconds(waited / 1000.0)));
+        }
+        else
+        {
+            double ttft = StatNumber(_lastStats, "first_token_ms");
+            if (ttft >= 0)
+                parts.Add(Loc.T("main.metrics.ttft", "⚡ 首 token {0}", FormatSeconds(ttft / 1000.0)));
+            double tps = StatNumber(_lastStats, "tps");
+            if (tps > 0)
+                parts.Add(Loc.T("main.metrics.tps", "🚀 {0:0.#} token/s", tps));
+            double tokens = StatNumber(_lastStats, "tokens");
+            if (tokens > 0)
+            {
+                bool estimated = _lastStats.TryGetValue("tokens_estimated", out string? est)
+                                 && est == "true";
+                // 估算值必须标注（任务书要求），用 ≈ 与提示文本两种方式同时表达
+                string label = estimated
+                    ? Loc.T("main.metrics.outputTokensEstimated", "≈{0} tokens", (int)tokens)
+                    : Loc.T("main.metrics.outputTokens", "{0} tokens", (int)tokens);
+                parts.Add("📤 " + label);
+            }
+            else if (_metricsState == "running")
+            {
+                double chars = StatNumber(_lastStats, "output_chars");
+                if (chars > 0)
+                    parts.Add(Loc.T("main.metrics.chars", "📤 {0} 字", (int)chars));
+            }
+            double prompt = StatNumber(_lastStats, "prompt_chars");
+            if (prompt > 0 && _metricsState != "done")
+                parts.Add(Loc.T("main.metrics.promptChars", "📥 {0} 字", (int)prompt));
+            double elapsed = StatNumber(_lastStats, "elapsed_ms");
+            if (elapsed >= 0)
+                parts.Add(Loc.T("main.metrics.elapsed", "⏱️ {0}", FormatSeconds(elapsed / 1000.0)));
+            if (_metricsState == "stopped")
+                parts.Add(Loc.T("main.metrics.stopped", "⏹ 已中止"));
+            else if (_metricsState == "failed")
+                parts.Add(Loc.T("main.metrics.failed", "⚠️ 失败"));
+        }
+        MetricsText.Text = string.Join("  ·  ", parts);
+        MetricsText.ToolTip = Loc.T("main.metrics.tip",
+            "本次生成的运行指标（由后端实测上报）：首 token 延迟、输出速度、token 数、总耗时。"
+            + "带 ≈ 的数字为估算值。");
+        MetricsText.Visibility = parts.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static string FormatSeconds(double seconds)
+        => seconds >= 10 ? $"{seconds:0.0}s" : $"{seconds:0.00}s";
+
+    private void StartMetricsTimer()
+    {
+        _metricsTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _metricsTimer.Tick -= MetricsTimerTick;
+        _metricsTimer.Tick += MetricsTimerTick;
+        _metricsTimer.Start();
+    }
+
+    private void MetricsTimerTick(object? sender, EventArgs e)
+    {
+        // 生成中：本地累计"已用时"（后端心跳每 1.5 秒才来一次，秒表要自己走），
+        // token/s 等仍需后端上报，前端不估算。
+        if (_metricsState is "running" or "waiting")
+        {
+            if (_metricsStartUtc != null)
+            {
+                double ms = (DateTime.UtcNow - _metricsStartUtc.Value).TotalMilliseconds;
+                _lastStats["elapsed_ms"] = ((int)ms).ToString();
+            }
+            RefreshMetricsDisplay();
+        }
+        else
+        {
+            _metricsTimer?.Stop();
+        }
+    }
+
+    private void StopMetricsTimer()
+    {
+        _metricsTimer?.Stop();
+        _metricsStartUtc = null;
     }
 
     private static void RenderInto(RichTextBox? target, string text)

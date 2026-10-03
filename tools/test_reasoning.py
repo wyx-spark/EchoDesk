@@ -103,11 +103,16 @@ def answer_after_reset(events):
 
 
 class StubLlama:
-    """脚本化输出：按 ``script`` 逐段吐字，行为与 llama-cpp-python 的流式一致。"""
+    """脚本化输出：按 ``script`` 逐段吐字，行为与 llama-cpp-python 的流式一致。
 
-    def __init__(self, script, on_piece=None):
+    ``prefill_seconds`` 模拟"首 token 之前卡在 prefill"（真实行为：纯 CPU 上
+    3000 字符提示词要十几秒才吐第一个 token），用于验证流式心跳（任务五）。
+    """
+
+    def __init__(self, script, on_piece=None, prefill_seconds=0.0):
         self.script = list(script)
         self.on_piece = on_piece
+        self.prefill_seconds = prefill_seconds
         self.last_messages = None
         self.calls = 0
 
@@ -121,6 +126,8 @@ class StubLlama:
             return {"choices": [{"message": {"content": "".join(self.script)}}]}
 
         def generate():
+            if self.prefill_seconds:
+                time.sleep(self.prefill_seconds)
             for index, piece in enumerate(self.script):
                 if self.on_piece is not None:
                     self.on_piece(index)
@@ -132,8 +139,8 @@ class StubLlama:
 class StubEngine(llm_engine.LLMEngine):
     """真引擎的聊天方法 + 桩 llama_cpp：测的是真接线，不是替身。"""
 
-    def __init__(self, script, reasoning_cfg=None, on_piece=None):
-        self.llm = StubLlama(script, on_piece=on_piece)
+    def __init__(self, script, reasoning_cfg=None, on_piece=None, prefill_seconds=0.0):
+        self.llm = StubLlama(script, on_piece=on_piece, prefill_seconds=prefill_seconds)
         self.script = list(script)
         self.reasoning_enabled = bool(getattr(reasoning_cfg, "enabled", True))
         self.reasoning_tags = R.normalize_tags(getattr(reasoning_cfg, "tags", None))
@@ -156,17 +163,21 @@ class StubEngine(llm_engine.LLMEngine):
         return "0 B"
 
 
-def make_backend(script, reasoning_cfg=None, on_piece=None, model_path=""):
+def make_backend(script, reasoning_cfg=None, on_piece=None, model_path="",
+                 prefill_seconds=0.0, heartbeat_seconds=None):
     """造一个走真代码路径的后端：真 Backend + 桩引擎。"""
     config = Config()
     config.model_path = model_path or "stub.gguf"
     config.speed_hint = False
     config.search_default = False
     config.context_mode = "slide"
+    if heartbeat_seconds is not None:
+        config.stream_heartbeat_seconds = heartbeat_seconds
     if reasoning_cfg is not None:
         config.reasoning = reasoning_cfg
     backend = backend_main.Backend(config)
-    backend.llm = StubEngine(script, reasoning_cfg=reasoning_cfg, on_piece=on_piece)
+    backend.llm = StubEngine(script, reasoning_cfg=reasoning_cfg, on_piece=on_piece,
+                             prefill_seconds=prefill_seconds)
     backend.conv.persist_reasoning = bool(getattr(reasoning_cfg, "persist", True))
     backend.conv.reasoning_max_chars = int(getattr(reasoning_cfg, "history_max_chars", 8000) or 0)
     return backend
@@ -776,6 +787,95 @@ def test_real_model(model_path):
             proc.kill()
 
 
+def test_streaming_heartbeat():
+    """任务五·优化已知问题-2：流式心跳与运行指标。
+
+    任务书要求"逐层排查三个环节"，可机验的是后端这一层：
+
+    * prefill 阶段（首 token 之前）**必须**有输出，否则界面只能显示成卡死；
+    * 每个 delta 都要原样透传，后端不做合并（合并是前端节流的事）；
+    * 心跳不得污染思考/回答通道（喂给分离器会被当成无标签正文）；
+    * `done.stats` 必须是后端实测值，且 token 估算要标注。
+    """
+    section("任务五 · 流式心跳与运行指标（优化已知问题-2）")
+
+    script = [OPEN_THINK, "想一想", CLOSE_THINK, "答案是 42。"]
+    backend = make_backend(script, prefill_seconds=0.6, heartbeat_seconds=0.2)
+    started = time.perf_counter()
+    lines = stream_lines(backend)
+    elapsed = time.perf_counter() - started
+
+    beats = [line for line in lines if line.get("type") == "progress"]
+    check("prefill 阶段产出了心跳行", len(beats) >= 1, f"心跳 {len(beats)} 次")
+    check("心跳行带 channel=heartbeat",
+          all(line.get("channel") == "heartbeat" for line in beats))
+    check("心跳间隔生效（0.6 秒 prefill、0.2 秒间隔 → ≥2 次）", len(beats) >= 2,
+          f"实测 {len(beats)} 次，总耗时 {elapsed:.2f}s")
+    check("心跳带运行指标字段",
+          bool(beats) and isinstance(beats[0].get("stats"), dict)
+          and "elapsed_ms" in beats[0]["stats"],
+          f"{beats[0].get('stats') if beats else None}")
+    check("首 token 之前的心跳标记 waiting_first_token",
+          any(line.get("waiting_first_token") for line in beats),
+          f"{[line.get('waiting_first_token') for line in beats]}")
+
+    # 心跳不得污染两个通道
+    events = delta_channels(lines)
+    check("心跳没有伪装成思考增量",
+          channels([(c, t) for c, t, _ in events], R.REASONING) == "想一想",
+          repr(channels([(c, t) for c, t, _ in events], R.REASONING)))
+    check("心跳没有伪装成回答增量",
+          channels([(c, t) for c, t, _ in events], R.ANSWER) == "答案是 42。",
+          repr(channels([(c, t) for c, t, _ in events], R.ANSWER)))
+    check("心跳行不是 delta 行（前端按 type 分发）",
+          not any(line.get("type") == "delta" and line.get("channel") == "heartbeat"
+                  for line in lines))
+    # 说明：delta 的**条数**由分离器决定，不由后端决定 —— 标签之间的内容会被
+    # 分离器扣住（可能是标签前缀），因此"不攒批"不能靠数条数来断言。
+    # 逐 token 透传由 artifacts/probe_heartbeat.py 的"二、不攒批"直接验证。
+    check("回答内容逐字完整（后端不丢不并）",
+          channels([(c, t) for c, t, _ in events], R.ANSWER) == "答案是 42。")
+
+    # 运行指标
+    done = [line for line in lines if line.get("type") == "done"][-1]
+    check("done 行带 stats", isinstance(done.get("stats"), dict))
+    stats = done.get("stats") or {}
+    for key in ("first_token_ms", "elapsed_ms", "tokens", "tokens_estimated",
+                "tps", "output_chars", "prefill_done", "stopped"):
+        check(f"stats 含 {key}", key in stats, f"实际键 {sorted(stats)}")
+    check("首 token 延迟为正且不晚于总耗时",
+          0 < stats.get("first_token_ms", 0) <= stats.get("elapsed_ms", 0) + 1,
+          f"ttft={stats.get('first_token_ms')} elapsed={stats.get('elapsed_ms')}")
+    check("首 token 延迟覆盖了 prefill（≥600ms）", stats.get("first_token_ms", 0) >= 600,
+          f"{stats.get('first_token_ms')} ms")
+    check("prefill_done 为真", stats.get("prefill_done") is True)
+    check("输出 token 数来自后端（>0）", stats.get("tokens", 0) > 0,
+          f"tokens={stats.get('tokens')}")
+    # 桩 llama 提供了 tokenize，所以后端给到的是**精确值**（不是估算）——
+    # 任务书要求"token 计数若为估算需标注"，反过来精确值也不能被误标成估算。
+    check("有分词器时 token 数不标注为估算",
+          stats.get("tokens_estimated") is False)
+    check("速度为正", stats.get("tps", 0) > 0, f"{stats.get('tps')}")
+
+    # 关闭心跳时不产出 progress 行（0 = 关闭）
+    quiet = make_backend(script, heartbeat_seconds=0.0)
+    quiet_lines = stream_lines(quiet)
+    check("heartbeat_seconds=0 时不发心跳",
+          not any(line.get("type") == "progress" for line in quiet_lines))
+    check("关闭心跳后内容照常完整",
+          channels([(c, t) for c, t, _ in delta_channels(quiet_lines)], R.ANSWER)
+          == "答案是 42。")
+
+    # 中止：指标里要能看出来，前端据此标注"已中止"
+    stopping = make_backend([OPEN_THINK, "长思考", CLOSE_THINK, "答案"], prefill_seconds=0.0)
+    stopping.stop_event.set()
+    stopped_lines = stream_lines(stopping)
+    stopped_done = [line for line in stopped_lines if line.get("type") == "done"]
+    check("中止时 done.stats.stopped 为真",
+          bool(stopped_done) and stopped_done[0].get("stats", {}).get("stopped") is True,
+          f"{stopped_done[0].get('stats') if stopped_done else None}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="思考内容分离测试")
     parser.add_argument("--model", default="", help="真实推理模型（.gguf）路径，给了就追加端到端")
@@ -785,6 +885,7 @@ def main():
     test_engine()
     test_protocol()
     test_history()
+    test_streaming_heartbeat()
     test_lang()
 
     if args.model:

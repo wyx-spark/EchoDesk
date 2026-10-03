@@ -57,6 +57,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
 from config import SummarizeConfig
+from extractive import extract as extractive_pick
 
 log = logging.getLogger("EchoDesk.Summarizer")
 
@@ -113,6 +114,29 @@ class SummaryResult:
     aborted: bool = False           # 用户主动中止
     elapsed: float = 0.0            # 整个流程耗时（秒）
     error: str = ""                 # status=failed 时的简短原因（不含正文）
+    # ---------- 任务四（优化已知问题-2）：抽取式预筛统计 ----------
+    # 让"预筛到底生效没有"可验证：只看最终摘要看不出来，必须有可断言的数字。
+    # 命名口径（**别把这三项混起来**，测试直接断言它们的相对大小）：
+    #   extractive_origin_chars 所有段**原文**字符数之和；
+    #   extractive_input_chars  实际**送进模型**的字符数之和（预筛后）；
+    #   extractive_saved_chars  = origin - input，即预筛省下的字符数。
+    # 未做预筛的段三项都算上（origin == input），因此压缩比
+    # ``origin / input`` 在开关打开前后是可直接对比的。
+    extractive_chunks: int = 0          # 真正发生了预筛的段数
+    extractive_origin_chars: int = 0    # 各段原文字符总和
+    extractive_input_chars: int = 0     # 各段实际送模型的字符总和
+
+    @property
+    def extractive_saved_chars(self) -> int:
+        """预筛省下的字符数（origin - input）。"""
+        return max(0, self.extractive_origin_chars - self.extractive_input_chars)
+
+    @property
+    def extractive_ratio(self) -> float:
+        """实际送模型字数 / 原文字数（1.0 = 没有压缩）。"""
+        if self.extractive_origin_chars <= 0:
+            return 1.0
+        return self.extractive_input_chars / self.extractive_origin_chars
 
     @property
     def pointer(self) -> str:
@@ -223,12 +247,28 @@ class DocumentSummarizer:
         total = len(chunks)
 
         counters = {"ok": 0, "failed": 0, "partial": 0, "timeout": 0, "skipped": 0, "slow": 0}
+        # 预筛统计（任务四）：只看最终摘要看不出预筛有没有生效，必须记数字
+        pf_chunks = 0
+        pf_saved = 0
+        pf_origin = 0
+        pf_input = 0
+
+        def pf() -> Dict[str, int]:
+            """预筛累计量（供进度事件携带；函数形式是为了拿到每轮的最新值）。"""
+            return {
+                "prefilter_chunks": pf_chunks,
+                "prefilter_saved_chars": pf_saved,
+                "prefilter_origin_chars": pf_origin,
+                "prefilter_input_chars": pf_input,
+            }
         # 日志脱敏：只记段数/字符数/耗时，正文一律不进日志
         log.info(
-            "开始分段摘要: %s（%d 字符 → %d 段，段长 %d，重叠 %d，模型 %s，流式 %s）",
+            "开始分段摘要: %s（%d 字符 → %d 段，段长 %d，重叠 %d，模型 %s，流式 %s，预筛 %s）",
             source_name or "(未命名)", origin_chars, total,
             self.cfg.chunk_chars, self.cfg.overlap_chars, self._engine_label(),
             "是" if stream_capable else "否",
+            f"{float(getattr(self.cfg, 'extractive_ratio', 0.35)):.0%}"
+            if bool(getattr(self.cfg, "extractive", True)) else "关",
         )
 
         self._emit(on_progress, {
@@ -247,8 +287,18 @@ class DocumentSummarizer:
             self._emit(on_progress, {
                 "phase": "map", "status": "start", "index": index, "total": total,
                 "chars": len(chunk), "elapsed": time.perf_counter() - started,
-                "chunk_elapsed": 0.0, "stream": stream_capable, **self._counters(counters),
+                "chunk_elapsed": 0.0, "stream": stream_capable, **self._counters(counters, pf()),
             })
+
+            # 抽取式预筛（任务四）：先压字数，再交给模型。毫秒级、不占模型；
+            # 任何异常都退回原文，绝不因为它让整篇摘要失败。
+            model_input, raw_chars, kept_chars = self._prefilter(chunk)
+            pf_origin += raw_chars
+            pf_input += kept_chars
+            if kept_chars < raw_chars:
+                pf_chunks += 1
+                pf_saved += raw_chars - kept_chars
+                log.debug("第 %d/%d 段预筛：%d → %d 字符", index, total, raw_chars, kept_chars)
 
             attempt = 0
             summary = ""
@@ -258,7 +308,7 @@ class DocumentSummarizer:
                 summary, status = self._generate_chunk(
                     chunk=chunk, index=index, total=total, start=start, end=end,
                     engine=engine, on_progress=on_progress, should_stop=should_stop,
-                    run_started=started, counters=counters,
+                    run_started=started, counters=counters, model_input=model_input,
                 )
                 if status == "aborted":
                     aborted = True
@@ -269,7 +319,7 @@ class DocumentSummarizer:
                     self._emit(on_progress, {
                         "phase": "map", "status": "retry", "index": index, "total": total,
                         "chars": len(chunk), "elapsed": time.perf_counter() - started,
-                        "chunk_elapsed": 0.0, "stream": stream_capable, **self._counters(counters),
+                        "chunk_elapsed": 0.0, "stream": stream_capable, **self._counters(counters, pf()),
                     })
                     continue
                 break
@@ -288,7 +338,7 @@ class DocumentSummarizer:
                         "phase": "map", "status": "timeout", "index": index, "total": total,
                         "chars": len(chunk), "elapsed": time.perf_counter() - started,
                         "chunk_elapsed": 0.0, "error": "timeout",
-                        "stream": stream_capable, **self._counters(counters),
+                        "stream": stream_capable, **self._counters(counters, pf()),
                     })
                     break
 
@@ -305,7 +355,7 @@ class DocumentSummarizer:
                     "index": index, "total": total, "chars": len(chunk),
                     "summary_chars": len(hold),
                     "elapsed": time.perf_counter() - started, "chunk_elapsed": 0.0,
-                    "stream": stream_capable, "fallback": True, **self._counters(counters),
+                    "stream": stream_capable, "fallback": True, **self._counters(counters, pf()),
                 })
                 continue
 
@@ -318,7 +368,7 @@ class DocumentSummarizer:
                 "phase": "map", "status": "ok", "index": index, "total": total,
                 "chars": len(chunk), "summary_chars": len(summary),
                 "elapsed": time.perf_counter() - started, "chunk_elapsed": 0.0,
-                "stream": stream_capable, **self._counters(counters),
+                "stream": stream_capable, **self._counters(counters, pf()),
             })
 
         # ---------- 收尾 ----------
@@ -328,7 +378,7 @@ class DocumentSummarizer:
                      source_name or "(未命名)", len(segments), total, elapsed)
             self._emit(on_progress, {
                 "phase": "aborted", "status": "failed", "index": len(segments), "total": total,
-                "elapsed": elapsed, "stream": stream_capable, **self._counters(counters),
+                "elapsed": elapsed, "stream": stream_capable, **self._counters(counters, pf()),
             })
             # 已终止：不产出半份摘要（半份摘要静默进入上下文比失败更危险），
             # 由调用方提示用户可重试；原文件内容仍完整保留在会话里。
@@ -339,6 +389,8 @@ class DocumentSummarizer:
                 partial_chunks=counters["partial"], timeout_chunks=counters["timeout"],
                 skipped_chunks=counters["skipped"], slow_chunks=counters["slow"],
                 elapsed=elapsed, error="aborted",
+                extractive_chunks=pf_chunks, extractive_origin_chars=pf_origin,
+                extractive_input_chars=pf_input,
             )
 
         if counters["ok"] + counters["partial"] == 0:
@@ -349,7 +401,7 @@ class DocumentSummarizer:
             self._emit(on_progress, {
                 "phase": "failed", "status": "failed", "index": 0, "total": total,
                 "elapsed": elapsed, "error": "all_chunks_failed",
-                "stream": stream_capable, **self._counters(counters),
+                "stream": stream_capable, **self._counters(counters, pf()),
             })
             return SummaryResult(
                 text="", chunk_count=total, segments=segments, origin_chars=origin_chars,
@@ -357,12 +409,14 @@ class DocumentSummarizer:
                 failed_chunks=counters["failed"], partial_chunks=counters["partial"],
                 timeout_chunks=counters["timeout"], skipped_chunks=counters["skipped"],
                 slow_chunks=counters["slow"], elapsed=elapsed, error="all_chunks_failed",
+                extractive_chunks=pf_chunks, extractive_origin_chars=pf_origin,
+                extractive_input_chars=pf_input,
             )
 
         self._emit(on_progress, {
             "phase": "reduce", "status": "start", "index": 1, "total": 1,
             "elapsed": time.perf_counter() - started, "stream": stream_capable,
-            **self._counters(counters),
+            **self._counters(counters, pf()),
         })
         merged = self._reduce(
             [s for _, _, s in segments], engine, started=started,
@@ -380,20 +434,56 @@ class DocumentSummarizer:
             partial_chunks=counters["partial"], timeout_chunks=counters["timeout"],
             skipped_chunks=counters["skipped"], slow_chunks=counters["slow"],
             elapsed=elapsed,
+            extractive_chunks=pf_chunks, extractive_origin_chars=pf_origin,
+            extractive_input_chars=pf_input,
         )
         log.info(
             "分段摘要完成: %s（%d/%d 段正常，失败 %d，超时 %d，跳过 %d，慢段 %d，"
-            "摘要 %d 字，占用约 %d tokens，耗时 %.1f 秒）",
+            "摘要 %d 字，占用约 %d tokens，耗时 %.1f 秒）；"
+            "抽取式预筛 %d/%d 段生效，送模型 %d → %d 字符（省 %d，压缩 %.1f 倍）",
             source_name or "(未命名)", counters["ok"] + counters["partial"], total,
             counters["failed"], counters["timeout"], counters["skipped"], counters["slow"],
             len(body), self.engine.count_tokens(body), elapsed,
+            pf_chunks, total, pf_origin, pf_input, pf_saved,
+            (pf_origin / pf_input) if pf_input else 1.0,
         )
         self._emit(on_progress, {
             "phase": "done", "status": "ok", "index": total, "total": total,
             "summary_chars": len(body), "elapsed": elapsed, "stream": stream_capable,
-            **self._counters(counters),
+            **self._counters(counters, pf()),
         })
         return result
+
+    # ---------- 抽取式预筛（任务四·优化已知问题-2） ----------
+
+    def _prefilter(self, chunk: str) -> Tuple[str, int, int]:
+        """对一段原文做抽取式预筛，返回 ``(送模型的文本, 原字符数, 压缩后字符数)``。
+
+        这是任务书任务四里杠杆最大的一条：**减少送给模型的字数**。
+        模型生成速度是瓶颈（纯 CPU 上小模型约 5~10 字/秒），而分段摘要是
+        N 次串行生成；把每段输入压到三分之一，prefill 与输出长度同步下降，
+        而这一步**毫秒级、不占模型**。
+
+        安全兜底（三处，全部只影响性能、不影响正确性）：
+
+        * 关闭开关、段太短、切不出句子 → 原样返回（见 ``extractive.extract``）；
+        * 抽取结果为空或几乎为空 → 原样返回（宁可不省时间，也不能让模型收到空段）；
+        * 抽取抛异常 → 记日志并原样返回（预筛是纯优化，绝不能因为它让整篇摘要失败）。
+        """
+        if not bool(getattr(self.cfg, "extractive", True)):
+            return chunk, len(chunk), len(chunk)
+        try:
+            picked = extractive_pick(
+                chunk,
+                ratio=float(getattr(self.cfg, "extractive_ratio", 0.35) or 0.35),
+                min_chars=int(getattr(self.cfg, "extractive_min_chars", 600) or 0),
+            )
+        except Exception:
+            log.warning("抽取式预筛失败，本段按原文送模型（%d 字符）", len(chunk), exc_info=True)
+            return chunk, len(chunk), len(chunk)
+        if not picked.changed or len(picked.text) < 40:
+            return chunk, len(chunk), len(chunk)
+        return picked.text, len(chunk), len(picked.text)
 
     # ---------- 单段生成（含心跳 / 超时 / 中断） ----------
 
@@ -409,16 +499,27 @@ class DocumentSummarizer:
         should_stop: Optional[Callable[[], bool]],
         run_started: float,
         counters: Dict[str, int],
+        model_input: str = "",
     ) -> Tuple[str, str]:
-        """生成一段摘要，返回 ``(文本, 状态)``；状态 ∈ ok/partial/failed/timeout/aborted。"""
+        """生成一段摘要，返回 ``(文本, 状态)``；状态 ∈ ok/partial/failed/timeout/aborted。
+
+        ``model_input`` 是**经过抽取式预筛**后真正送进模型的文本（默认取 ``chunk``）。
+        注意两件事：
+
+        * 提示里的字符区间 ``start-end`` 始终指**原文**区间 —— 界面上要显示的是
+          "这段来自原文哪一块"，预筛只影响送进去的字数，不改变出处；
+        * 兜底文本用的是 ``chunk``（原文）而不是 ``model_input``：这一段模型没给出
+          结果时，我们宁可回退到原文前若干字符，也不要用"预筛后的残段"冒充摘要。
+        """
+        body = model_input or chunk
         messages = [
             {"role": "system", "content": _CHUNK_SYSTEM},
-            {"role": "user", "content": f"【第 {index}/{total} 段，原文第 {start}-{end} 字符】\n{chunk}"},
+            {"role": "user", "content": f"【第 {index}/{total} 段，原文第 {start}-{end} 字符】\n{body}"},
         ]
         return self._call_model(
             messages=messages, max_tokens=self.cfg.max_summary_tokens, engine=engine,
             on_progress=on_progress, should_stop=should_stop, run_started=run_started,
-            phase="map", index=index, total=total, chars=len(chunk), counters=counters,
+            phase="map", index=index, total=total, chars=len(body), counters=counters,
         )
 
     def _call_model(
@@ -458,7 +559,7 @@ class DocumentSummarizer:
                 "chars": chars, "tokens": produced, "chunk_elapsed": chunk_elapsed,
                 "elapsed": time.perf_counter() - run_started,
                 "tps": (produced / chunk_elapsed) if chunk_elapsed > 0 else 0.0,
-                "slow": is_slow, "stream": True, **self._counters(counters),
+                "slow": is_slow, "stream": True, **self._counters(counters, pf()),
             })
 
         stream_fn = getattr(engine, "chat_stream", None)
@@ -511,7 +612,7 @@ class DocumentSummarizer:
                 "chars": chars, "tokens": len(text), "chunk_elapsed": chunk_elapsed,
                 "elapsed": time.perf_counter() - run_started,
                 "tps": (len(text) / chunk_elapsed) if chunk_elapsed > 0 else 0.0,
-                "slow": True, "stream": False, **self._counters(counters),
+                "slow": True, "stream": False, **self._counters(counters, pf()),
             })
         if should_stop is not None and should_stop():
             return text, "aborted"
@@ -524,9 +625,13 @@ class DocumentSummarizer:
         limit = max(_FALLBACK_MIN_CHARS, int(self.cfg.max_summary_tokens) * 2)
         return chunk[:limit] + ("……" if len(chunk) > limit else "")
 
-    def _counters(self, counters: Dict[str, int]) -> Dict[str, int]:
-        """把累计计数展开成事件字段（键名与 SummaryResult 对齐，便于前端直接读）。"""
-        return {
+    def _counters(self, counters: Dict[str, int], prefilter: Optional[Dict[str, int]] = None) -> Dict[str, int]:
+        """把累计计数展开成事件字段（键名与 SummaryResult 对齐，便于前端直接读）。
+
+        ``prefilter`` 是抽取式预筛的累计量（段数 / 省下的字符 / 原本要送的字符），
+        带上它之后，前端进度提示与测试都能验证"预筛到底有没有生效"。
+        """
+        data = {
             "ok_chunks": counters["ok"],
             "partial_chunks": counters["partial"],
             "failed_chunks": counters["failed"],
@@ -534,6 +639,9 @@ class DocumentSummarizer:
             "skipped_chunks": counters["skipped"],
             "slow_chunks": counters["slow"],
         }
+        if prefilter:
+            data.update(prefilter)
+        return data
 
     def _emit(self, on_progress: Optional[Callable[[Dict], None]], event: Dict) -> None:
         """抛出进度事件；回调自身抛异常不影响摘要流程（进度不能反过来搞挂主流程）。"""
@@ -627,7 +735,7 @@ class DocumentSummarizer:
                 "chars": sum(len(x) for x in group),
                 "elapsed": (time.perf_counter() - started) if started else 0.0,
                 "stream": False,
-                **(self._counters(counters) if counters is not None else {}),
+                **(self._counters(counters, pf()) if counters is not None else {}),
             })
             merged.append(self._summarize_block(
                 "\n".join(f"- {s}" for s in group),
