@@ -230,6 +230,7 @@ class Backend:
         self.commands = CommandHandler(
             self.conv, self.search, self.llm, config, summarizer=self.summarizer,
             file_loader=self.load_file_into_context, summarize_file=self.summarize_current_file,
+            files_loader=self.load_files_into_context,
         )
         # 浏览器自动化引擎（Playwright）：惰性创建，未使用时不加载
         self._automation = None
@@ -577,6 +578,18 @@ class Backend:
         if action == "chat":
             return self._handle_chat(request.get("message", ""))
         if action == "file":
+            # 多文件（任务八）：files 是路径数组；单文件仍走 path（向后兼容）
+            paths = request.get("files")
+            if isinstance(paths, list) and paths:
+                result = self.load_files_into_context([str(p) for p in paths])
+                return {"type": "system", "content": result["text"],
+                        "files": [
+                            {"name": r.get("name", ""), "ok": bool(r.get("ok")),
+                             "chars": int(r.get("chars", 0) or 0),
+                             "message": str(r.get("message", ""))}
+                            for r in result["files"]
+                        ],
+                        "names": result["names"], "failed": result["failed"]}
             return self._handle_file(request.get("path", ""))
         if action == "model_download":
             return self._handle_model_download(request.get("name", ""))
@@ -1850,6 +1863,12 @@ class Backend:
             yield from self._stream_automation_pick(request)
             return
         if action == "file_stream":
+            # 多文件（任务八）：files 数组优先；stage=true 表示"只解析不摘要"
+            paths = request.get("files")
+            if isinstance(paths, list) and paths:
+                yield from self._stream_files([str(p) for p in paths],
+                                              stage=bool(request.get("stage")))
+                return
             yield from self._stream_file(str(request.get("path") or ""))
             return
         if action == "automation_wizard":
@@ -2246,6 +2265,253 @@ class Backend:
             return {"type": "system", "content": _t("sys.file_need_path")}
         return {"type": "system", "content": self.load_file_into_context(filepath)}
 
+    # ---------- 多文件（任务八） ----------
+
+    def _files_cfg(self):
+        """多文件配置（老配置文件没有这一段时回落到默认值）。"""
+        return getattr(self.config, "files", None) or FilesConfig()
+
+    def _disk_store_dir(self) -> str:
+        """大文件正文的落盘目录（``results`` 同级的 ``file_cache``）。
+
+        放在程序目录下而不是临时目录：用户可能要按上下文里的指针去回查原文，
+        临时目录会被系统清理，指针就失效了。
+        """
+        base = os.path.join(user_data_root(), "file_cache")
+        try:
+            os.makedirs(base, exist_ok=True)
+        except Exception:
+            log.warning("无法创建文件缓存目录: %s", base, exc_info=True)
+        return base
+
+    def _store_large_file(self, name: str, content: str) -> str:
+        """把超大文件正文落盘，返回落盘路径（失败时返回空串，调用方按内存处理）。"""
+        try:
+            safe = re.sub(r"[^\w.\-]+", "_", name or "file")[:80] or "file"
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            path = os.path.join(self._disk_store_dir(), f"{stamp}-{safe}.txt")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(content)
+            log.info("大文件正文已落盘: %s（%d 字符）", path, len(content))
+            return path
+        except Exception:
+            log.warning("大文件落盘失败，改为在内存中保留", exc_info=True)
+            return ""
+
+    def load_file_into_context(self, filepath: str, progress_sink=None) -> str:
+        """解析单个文件并入上下文（多文件时是其中一份）。
+
+        返回给用户看的反馈文本（成功或失败都会说明原因）。
+        ``progress_sink`` 透传给分段摘要（任务四：流式入口据此实时报进度）。
+        实际由 :meth:`_load_one_file` 完成，本方法只保留"返回一行文本"的旧语义。
+        """
+        result = self._load_one_file(filepath, progress_sink=progress_sink)
+        return str(result.get("message", ""))
+
+    def _load_one_file(self, filepath: str, progress_sink=None,
+                       allow_summary: bool = True) -> Dict[str, Any]:
+        """解析一份文件、登记到会话并按需分段摘要。
+
+        返回 ``{"ok": bool, "name": str, "message": str, "chars": int, ...}`` ——
+        结构化结果让多文件场景能逐份报告状态（任务书要求"每个文件独立显示状态
+        （成功、失败、进度）""单个失败不影响其他"）。
+
+        ``allow_summary=False`` 时只解析不摘要（多文件分批汇总时用：先把所有文件
+        解析登记完，再决定哪一份需要摘要，避免"第一份就在摘要、后面几份还没进去"）。
+        """
+        name = os.path.basename(filepath) or filepath
+        content = parse_file_with_wps(filepath, self.config.file_max_chars)
+        if content.startswith(("WPS读取失败", "解析失败", "文件内容为空", "不支持的文件类型")):
+            return {"ok": False, "name": name, "chars": 0, "message": f"❌ {content}"}
+        files_cfg = self._files_cfg()
+        entry = self.conv.add_file(filepath, content)
+        try:
+            tokens = self.llm.count_tokens(content)
+        except Exception:
+            tokens = len(content) // 2
+        # 超大文件：正文落盘，上下文只带指针 + 摘要，避免一份文件撑爆会话与窗口
+        threshold = int(getattr(files_cfg, "disk_threshold_chars", 0) or 0)
+        if threshold > 0 and len(content) > threshold:
+            stored = self._store_large_file(name, content)
+            if stored:
+                entry.stored_at = stored
+                entry.content = ""
+                log.info("文件 %s 超过 %d 字符，正文已落盘（%s）", name, threshold, stored)
+        if allow_summary and self.summarizer.should_use_summary(content, self.llm.n_ctx):
+            log.info(
+                "文件 %s 约 %d tokens，超过窗口 %d 的 %.0f%%：转入分段摘要",
+                name, tokens, self.llm.n_ctx, self.config.summarize.trigger_ratio * 100,
+            )
+            # 任务一：文件解析**不依赖模型**，必须照常完成；只有"分段摘要"这一步需要模型。
+            # 所以这里保留已解析的全文，只把摘要这一步换成引导（而不是整个加载失败）。
+            if not self.model_ready:
+                return {"ok": True, "name": name, "chars": len(content), "tokens": tokens,
+                        "needs_summary": True,
+                        "message": _t("sys.file_loaded_no_model", name=name,
+                                      chars=len(content), tokens=tokens,
+                                      guide=_t("sys.no_model_guide", dir=self.models_dir()))}
+            head = _t("sys.file_auto_summary_head", name=name, tokens=tokens,
+                      n_ctx=self.llm.n_ctx,
+                      ratio=f"{self.config.summarize.trigger_ratio:.0%}") + "\n"
+            return {"ok": True, "name": name, "chars": len(content), "tokens": tokens,
+                    "needs_summary": True,
+                    "message": head + self.summarize_entry(
+                        entry, force=True, source_name=name,
+                        trigger=_t("sys.summarize_trigger_auto"),
+                        progress_sink=progress_sink)}
+        return {"ok": True, "name": name, "chars": len(content), "tokens": tokens,
+                "needs_summary": False,
+                "message": _t("sys.file_loaded", name=name, chars=len(content), tokens=tokens)}
+
+    def load_files_into_context(self, paths: List[str], progress_sink=None) -> Dict[str, Any]:
+        """按顺序加载多份文件（任务八），返回结构化汇总。
+
+        **单个失败不影响其他**：逐份独立 try/except，失败的那份只进 ``failed``
+        列表并在汇总里点名。任务书明确要求这一点，所以这里刻意不用"一次失败就
+        整体退出"的短路写法。
+
+        数量上限由 ``config.files.max_count`` 控制，超出的文件**不处理**并在汇总里
+        如实说明（而不是静默丢掉）。
+        """
+        cfg = self._files_cfg()
+        limit = int(getattr(cfg, "max_count", 10) or 10)
+        wanted = [p for p in (paths or []) if str(p).strip()]
+        accepted = wanted[:limit]
+        ignored = wanted[limit:]
+        results: List[Dict[str, Any]] = []
+        for path in accepted:
+            if self.stop_event.is_set():
+                results.append({"ok": False, "name": os.path.basename(path),
+                                "message": _t("sys.file_load_failed", error="stopped")})
+                break
+            try:
+                results.append(self._load_one_file(path, progress_sink=progress_sink))
+            except Exception as exc:  # noqa: BLE001 —— 单份失败不能影响其他
+                log.exception("加载文件失败: %s", path)
+                results.append({"ok": False, "name": os.path.basename(path),
+                                "message": _t("sys.file_load_failed", error=exc)})
+        ok = [r for r in results if r.get("ok")]
+        failed = [r for r in results if not r.get("ok")]
+        parts = [str(r.get("message", "")) for r in results]
+        if ignored:
+            parts.append(_t("sys.files_too_many", limit=limit))
+        if len(accepted) > 1:
+            parts.append(_t("sys.files_loaded_summary", count=len(ok),
+                            total=len(accepted), failed=len(failed),
+                            names="、".join(self.conv.file_names())))
+        return {
+            "ok": len(ok), "failed": len(failed), "files": results,
+            "ignored": ignored, "text": "\n".join(p for p in parts if p),
+            "names": self.conv.file_names(),
+        }
+
+    def _stream_files(self, paths: List[str], stage: bool = False) -> Iterator[Dict[str, Any]]:
+        """流式加载多份文件（任务八）：逐份解析 + 逐份进度 + 逐份结果行。
+
+        与单文件 ``file_stream`` 的区别：这里在**文件之间**也有输出
+        （``file_status`` 行：第 i/n 份、成功/失败、字符数），因此用户能看到
+        "第 3/8 份正在处理"，而不是一个笼统的进度条。
+        ``stage=True`` 时只解析不摘要（前端分两阶段调用：先全部登记，再摘要）。
+        """
+        wanted = [str(p) for p in (paths or []) if str(p).strip()]
+        if not wanted:
+            yield {"type": "error", "content": _t("sys.file_need_path")}
+            return
+        cfg = self._files_cfg()
+        limit = int(getattr(cfg, "max_count", 10) or 10)
+        accepted = wanted[:limit]
+        ignored = wanted[limit:]
+        total = len(accepted)
+        self.stop_event.clear()
+        progress: queue.Queue = queue.Queue()
+        done_flag = threading.Event()
+        collected: List[Dict[str, Any]] = []
+
+        def _worker() -> None:
+            try:
+                for index, path in enumerate(accepted, 1):
+                    if self.stop_event.is_set():
+                        break
+                    name = os.path.basename(path)
+                    progress.put({"__file_start__": True, "index": index, "total": total,
+                                  "name": name})
+                    try:
+                        result = self._load_one_file(
+                            path,
+                            progress_sink=lambda event, i=index, t=total, n=name: progress.put(
+                                {**event, "__file__": {"index": i, "total": t, "name": n}}),
+                            allow_summary=not stage)
+                    except Exception as exc:  # noqa: BLE001 —— 单份失败不影响其他
+                        log.exception("加载文件失败: %s", path)
+                        result = {"ok": False, "name": name,
+                                  "message": _t("sys.file_load_failed", error=exc)}
+                    result["index"] = index
+                    result["total"] = total
+                    result["path"] = path
+                    collected.append(result)
+                    progress.put({"__file_done__": True, "index": index, "total": total,
+                                  "name": name, "result": result})
+            finally:
+                done_flag.set()
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        yield {"type": "delta",
+               "content": _t("sys.files_stream_start", count=total)}
+        while not done_flag.wait(0.3):
+            yield from self._drain_file_progress(progress, collected, total)
+            if self.stop_event.is_set():
+                yield {"type": "delta", "content": _t("sys.summary_stopping")}
+        yield from self._drain_file_progress(progress, collected, total)
+        if ignored:
+            yield {"type": "system", "content": _t("sys.files_too_many", limit=limit)}
+        ok = [r for r in collected if r.get("ok")]
+        failed = [r for r in collected if not r.get("ok")]
+        summary = _t("sys.files_loaded_summary", count=len(ok), total=len(accepted),
+                     failed=len(failed), names="、".join(r.get("name", "") for r in ok))
+        done: Dict[str, Any] = {"type": "done", "content": summary,
+                                "files": [{"name": r.get("name", ""), "ok": bool(r.get("ok")),
+                                           "chars": int(r.get("chars", 0) or 0),
+                                           "message": str(r.get("message", ""))}
+                                          for r in collected],
+                                "names": self.conv.file_names()}
+        self._attach_context(done)
+        yield done
+
+    @staticmethod
+    def _drain_file_progress(progress: "queue.Queue", collected: List[Dict[str, Any]],
+                             total: int) -> Iterator[Dict[str, Any]]:
+        """把进度队列里的内容转成协议行（摘要进度 / 逐份状态）。"""
+        while True:
+            try:
+                event = progress.get_nowait()
+            except queue.Empty:
+                return
+            if event.get("__file_start__"):
+                yield {"type": "file_status", "phase": "start",
+                       "index": event["index"], "total": event["total"],
+                       "name": event["name"],
+                       "content": _t("sys.file_status_start", index=event["index"],
+                                     total=event["total"], name=event["name"])}
+                continue
+            if event.get("__file_done__"):
+                result = event.get("result") or {}
+                yield {"type": "file_status",
+                       "phase": "ok" if result.get("ok") else "failed",
+                       "index": event["index"], "total": event["total"],
+                       "name": event["name"], "ok": bool(result.get("ok")),
+                       "chars": int(result.get("chars", 0) or 0),
+                       "content": str(result.get("message", ""))}
+                continue
+            meta = event.get("__file__") or {}
+            payload = {k: v for k, v in event.items() if not k.startswith("__")}
+            payload["type"] = "summary_progress"
+            if meta:
+                payload["file_index"] = meta.get("index")
+                payload["file_total"] = meta.get("total")
+                payload["file_name"] = meta.get("name")
+            yield payload
+
     def load_file_into_context(self, filepath: str, progress_sink=None) -> str:
         """解析文件并入上下文；全文超出窗口一定比例时自动分段摘要后注入。
 
@@ -2296,17 +2562,39 @@ class Backend:
         这样非流式调用（``/summarize``、自动触发）不会往协议里插异步行。
         """
         trigger = trigger or _t("sys.summarize_trigger_manual")
-        if not self.conv.file_content:
+        entry = self.conv._active
+        if entry is None:
+            return _t("cmd.resp.summarize_no_file")
+        return self.summarize_entry(entry, force=force, source_name=source_name,
+                                    trigger=trigger, progress_sink=progress_sink)
+
+    def summarize_entry(self, entry, force: bool = True, source_name: str = "",
+                        trigger: str = "", progress_sink=None) -> str:
+        """对**指定文件条目**做分段摘要（多文件下必须能指名道姓，任务八）。
+
+        与 ``summarize_current_file`` 的差别只有"作用于哪一份"：
+        后者取当前活动文件，前者由调用方指定条目。
+        """
+        trigger = trigger or _t("sys.summarize_trigger_manual")
+        if entry is None or not (entry.content or entry.stored_at):
             return _t("cmd.resp.summarize_no_file")
         # 任务一：无模型时摘要无从谈起，给引导而不是抛异常
         if not self.model_ready:
             return _t("sys.summarize_need_model",
                       guide=_t("sys.no_model_guide", dir=self.models_dir()))
-        name = source_name or os.path.basename(self.conv.file_name or "")
+        if not entry.content:
+            # 正文已落盘（超大文件）：从磁盘读回来做摘要，而不是报"没有内容"
+            try:
+                with open(entry.stored_at, "r", encoding="utf-8", errors="replace") as handle:
+                    entry.content = handle.read()
+            except Exception:
+                log.warning("读取落盘正文失败: %s", entry.stored_at, exc_info=True)
+                return _t("sys.file_load_failed", error=entry.stored_at)
+        name = source_name or entry.name or os.path.basename(entry.path or "")
 
         # 命中缓存：直接把上次的摘要装回上下文（跳过全部模型调用）
         cache = self.summary_cache()
-        cache_key_path = self.conv.file_name or name
+        cache_key_path = entry.path or name
         params = {
             "chunk_chars": self.config.summarize.chunk_chars,
             "overlap_chars": self.config.summarize.overlap_chars,
@@ -2316,7 +2604,7 @@ class Backend:
         if cache is not None and os.path.isfile(cache_key_path):
             hit = cache.get(cache_key_path, params)
             if hit and hit.get("text"):
-                self.conv.set_file_summary(str(hit["text"]), {
+                self.conv.set_entry_summary(entry, str(hit["text"]), {
                     "chunks": hit.get("chunk_count") or 0,
                     "origin_chars": hit.get("origin_chars") or 0,
                     "pointer": "",
@@ -2346,7 +2634,7 @@ class Backend:
                 print(emoji_mod.prefer(f"📝 {label}"), file=sys.stderr, flush=True)
 
         result = self.summarizer.summarize(
-            self.conv.file_content, source_name=name, force=force, on_progress=_progress,
+            entry.content, source_name=name, force=force, on_progress=_progress,
             should_stop=lambda: self.stop_event.is_set(),
         )
         # 任务四：把"慢"与"坏"分开报。中止/失败都不注入半份摘要，并保留重试路径。
@@ -2360,8 +2648,7 @@ class Backend:
                           failed=result.failed_chunks, timeout=result.timeout_chunks,
                           elapsed=f"{result.elapsed:.0f}")
             return _t("sys.summary_too_short", chars=result.origin_chars)
-        self.conv.set_file_summary(
-            result.text,
+        self.conv.set_entry_summary(entry, result.text,
             {"chunks": result.chunk_count, "origin_chars": result.origin_chars,
              "pointer": result.pointer, "status": result.status},
         )

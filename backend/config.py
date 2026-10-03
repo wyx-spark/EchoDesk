@@ -72,6 +72,26 @@ DEFAULT_MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
 }
 
 
+class FilesConfig(BaseModel):
+    """多文件上传（v0.2.1 优化已知问题-2 任务八）。
+
+    任务书把"文件过多或总大小过大时提示用户并询问是否继续""总内容超出窗口时
+    触发分段摘要，或提示用户选择部分文件"都列为需要明确的点。这里的取值：
+
+    * ``max_count`` 默认 10：一次拖十个文件是常见办公场景（一批合同、一套附件），
+      再多就不是"一次加载"而是"批量导入"，应该用别的入口；
+    * ``total_chars`` 默认 60000：这是**注入上下文**的总长上限（约 3 万 token 量级，
+      实际注入还要过窗口预算），超出时从**后上传的**开始装并如实提示未注入的文件
+      —— 刚拖进来的通常是这次要用的；
+    * ``disk_threshold_chars``：单文件超过它就把正文落盘、上下文里只放指针与摘要，
+      避免一份超大文件把会话与上下文一起撑爆（与任务九的"大块内容单独处理"同源）。
+    """
+
+    max_count: int = Field(default=10, ge=1, le=100)
+    total_chars: int = Field(default=60000, ge=0, le=2000000)
+    disk_threshold_chars: int = Field(default=20000, ge=0, le=2000000)
+
+
 class CompactionConfig(BaseModel):
     """上下文压缩策略（v0.2.1 优化已知问题-2 任务九）。
 
@@ -433,6 +453,8 @@ class Config(BaseModel):
     summarize: SummarizeConfig = Field(default_factory=SummarizeConfig)
     # 上下文压缩（v0.2.1 优化已知问题-2 任务九）
     compact: CompactionConfig = Field(default_factory=CompactionConfig)
+    # 多文件上传（v0.2.1 优化已知问题-2 任务八）
+    files: FilesConfig = Field(default_factory=FilesConfig)
     # 浏览器自动化（任务四）
     automation: AutomationConfig = Field(default_factory=AutomationConfig)
     # 技能/插件市场（任务五）

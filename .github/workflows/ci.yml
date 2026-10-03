@@ -142,6 +142,14 @@ jobs:
         # grace zone（最近 N 轮逐字保留）、摘要提示词与 /compact focus on 自定义重点、
         # 大块内容单独截断、压缩事件 JSONL 的追加/脱敏/裁剪与事件溯源回放。
 
+      - name: Run multi-file upload test
+        shell: pwsh
+        run: python tools/test_multifile.py
+        # 多文件上传（优化已知问题-2 任务八）：文件登记表（可见/可选择/可移除/同名替换）、
+        # 逐份独立状态与单份失败隔离、统一完成汇总、数量与总长上限的如实告知、
+        # 注入预算（后上传优先 + 未注入点名）、会话持久化的新旧格式兼容、
+        # /file 多路径与引号感知分词（顺带修掉"路径含空格就加载失败"的既有缺陷）。
+
       - name: Check backend imports
         shell: pwsh
         run: python -c "import sys; sys.path.insert(0, 'backend'); import main; print('import ok')"

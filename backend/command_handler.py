@@ -8,6 +8,7 @@ v0.2.1（任务书 任务二 2.2）：指令表支持运行期注册外部指令
 因此技能指令会自动出现在输入框的候选列表里。
 """
 import os
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -136,6 +137,7 @@ class CommandHandler:
         summarizer=None,
         file_loader: Optional[Callable[[str], str]] = None,
         summarize_file: Optional[Callable[..., str]] = None,
+        files_loader: Optional[Callable[..., dict]] = None,
     ) -> None:
         self.conv_mgr = conv_mgr
         self.search_engine = search_engine
@@ -144,6 +146,9 @@ class CommandHandler:
         self.summarizer = summarizer
         self.file_loader = file_loader
         self.summarize_file = summarize_file
+        # 多文件入口（任务八）：接收路径列表，返回含 text/files/names 的汇总字典。
+        # 单文件入口（file_loader）保持不变，`/file` 单路径时仍走它 —— 回执逐字一致。
+        self.files_loader = files_loader
         self.search_enabled = config.search_default
         self.temperature = config.temperature
         self.temp_manual = False  # 用户手动 /temp 后，切换模式不再套用温度预设
@@ -265,21 +270,48 @@ class CommandHandler:
         """
         return describe_commands(self.external_commands())
 
+    #: 指令参数的分词：**支持引号包裹**（v0.2.1 优化已知问题-2 任务八）。
+    #:
+    #: 为什么必须支持：`/file C:\My Documents\合同 2026.docx` 这类带空格的路径，
+    #: 用 `str.split()` 会被切成 4 段 —— 单文件时代 `_file` 只取 args[0]，
+    #: 于是"路径含空格就加载失败"，而多文件时代更糟：4 段会被当成 4 个路径，
+    #: 报出"加载了 0 个文件、失败 4 个"。这是打开多文件路径解析时暴露出来的
+    #: 既有缺陷（此前没人报，是因为报错信息指向"文件不存在"，用户以为是自己写错了）。
+    #: 用法：`/file "C:\My Documents\合同 2026.docx"`。
+    _ARG_RE = re.compile(r'"([^"]*)"|\'([^\']*)\'|(\S+)')
+
+    @classmethod
+    def split_args(cls, text: str) -> list:
+        """按引号规则切分参数（双引号与单引号都认，引号内保留空格）。"""
+        args = []
+        for match in cls._ARG_RE.finditer(text or ""):
+            value = match.group(1)
+            if value is None:
+                value = match.group(2)
+            if value is None:
+                value = match.group(3)
+            if value:
+                args.append(value)
+        return args
+
     def handle(self, cmd_line: str) -> Response:
         """解析并执行指令，返回 (反馈文本, 附加动作)。"""
-        parts = cmd_line.strip().split()
-        if not parts:
+        stripped = cmd_line.strip()
+        if not stripped:
             return "", None
-        name = parts[0].lower()
+        # 指令名之后的部分交给引号感知的分词（见 _ARG_RE 的说明）
+        head, _, rest = stripped.partition(" ")
+        name = head.lower()
+        args = self.split_args(rest)
         handler = self._handlers.get(name)
         if handler is not None:
-            return handler(parts[1:])
+            return handler(args)
 
         # 技能/本地插件指令：异常必须被隔离（任务二 2.4）
         external = self._external.get(name)
         if external is not None:
             try:
-                result = external["handler"](parts[1:])
+                result = external["handler"](args)
             except Exception as e:  # noqa: BLE001
                 import traceback
 
@@ -288,7 +320,7 @@ class CommandHandler:
                 return t("cmd.disabled", skill=skill, name=name, reason=f"{type(e).__name__}: {e}"), None
             return self._coerce_external(name, result)
 
-        return t("cmd.unknown", name=parts[0]), None
+        return t("cmd.unknown", name=head), None
 
     @staticmethod
     def _coerce_external(name: str, result: Any) -> Response:
@@ -339,19 +371,54 @@ class CommandHandler:
         return t("cmd.resp.mode_unknown", name=args[0]), None
 
     def _file(self, args: list) -> Response:
+        """``/file <路径> [更多路径…]``：加载一份或多份文件（多文件：任务八）。
+
+        多文件时走 ``files_loader``（后端的批量入口）：逐份独立处理、单份失败不影响
+        其他，并给出"已加载 N 个文件"的汇总；单文件时保持旧语义（回执与老版本一致）。
+        """
         if not args:
             return t("cmd.resp.file_need_path"), None
-        filepath = args[0]
-        if not os.path.exists(filepath):
-            return t("cmd.resp.file_missing", path=filepath), None
-        # 统一走后端的加载入口：过长文档自动分段摘要后再注入
-        if self.file_loader is not None:
-            return self.file_loader(filepath), None
-        content = parse_file_with_wps(filepath, self.config.file_max_chars)
-        if is_parse_error(content):
-            return t("cmd.resp.file_load_failed", content=localize_error(content)), None
-        self.conv_mgr.set_file(filepath, content)
-        return t("cmd.resp.file_loaded", name=os.path.basename(filepath), chars=len(content)), None
+        paths = [str(a) for a in args if str(a).strip()]
+        existing = [p for p in paths if os.path.exists(p)]
+        missing = [p for p in paths if not os.path.exists(p)]
+        if not existing:
+            return t("cmd.resp.file_missing", path=missing[0] if missing else ""), None
+        if len(existing) == 1 and not missing:
+            filepath = existing[0]
+            # 统一走后端的加载入口：过长文档自动分段摘要后再注入
+            if self.file_loader is not None:
+                return self.file_loader(filepath), None
+            content = parse_file_with_wps(filepath, self.config.file_max_chars)
+            if is_parse_error(content):
+                return t("cmd.resp.file_load_failed", content=localize_error(content)), None
+            self.conv_mgr.set_file(filepath, content)
+            return t("cmd.resp.file_loaded", name=os.path.basename(filepath),
+                     chars=len(content)), None
+        # 多文件：交给后端的批量入口（用 getattr 兼容 __new__ 构造的替身/测试对象）
+        files_loader = getattr(self, "files_loader", None)
+        if files_loader is not None:
+            result = files_loader(existing)
+            text = str((result or {}).get("text", ""))
+            if missing:
+                text += "\n" + t("cmd.resp.file_missing", path=missing[0])
+            return text, None
+        # 没有批量入口（第三方/测试替身）：退化成逐份调用单文件入口
+        replies = []
+        for path in existing:
+            if self.file_loader is not None:
+                replies.append(str(self.file_loader(path)))
+                continue
+            content = parse_file_with_wps(path, self.config.file_max_chars)
+            if is_parse_error(content):
+                replies.append(t("cmd.resp.file_load_failed",
+                                 content=localize_error(content)))
+                continue
+            self.conv_mgr.set_file(path, content)
+            replies.append(t("cmd.resp.file_loaded", name=os.path.basename(path),
+                             chars=len(content)))
+        if missing:
+            replies.append(t("cmd.resp.file_missing", path=missing[0]))
+        return "\n".join(replies), None
 
     def _summarize(self, args: list) -> Response:
         """手动触发全文摘要（长文档注入前先分段摘要）。"""

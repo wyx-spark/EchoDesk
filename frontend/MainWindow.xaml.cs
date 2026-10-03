@@ -2404,7 +2404,7 @@ public partial class MainWindow : Window
         _exitTimer.Start();
     }
 
-    // ---------- 文件上传 ----------
+    // ---------- 文件上传（多文件：v0.2.1 优化已知问题-2 任务八） ----------
 
     private async void UploadButton_Click(object sender, RoutedEventArgs e)
     {
@@ -2412,20 +2412,188 @@ public partial class MainWindow : Window
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = Loc.T("main.upload.chooseTitle", "选择要上传的文件"),
+            // 多选（任务八）：Ctrl / Shift 多选或框选；对话框与拖拽两条路径行为一致
+            Multiselect = true,
             Filter = Loc.T("main.upload.filter", "支持的文件")
                      + " (*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt;*.pdf)|*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt;*.pdf|"
                      + Loc.T("main.upload.filterAll", "所有文件") + " (*.*)|*.*",
         };
         if (dialog.ShowDialog() == true)
-            await UploadFileAsync(dialog.FileName);
+            await UploadFilesAsync(dialog.FileNames);
     }
 
     private async void MainWindow_Drop(object sender, DragEventArgs e)
     {
         if (_backend is null || !e.Data.GetDataPresent(DataFormats.FileDrop))
             return;
-        string filePath = ((string[])e.Data.GetData(DataFormats.FileDrop))[0];
-        await UploadFileAsync(filePath);
+        // 多文件拖拽（任务八）：取**全部**路径，不再只取 [0]。
+        // 拖入非文件内容（文本片段、图片位图）时 FileDrop 不存在，上面已经返回，
+        // 行为与单文件时代一致：忽略而不是报错。
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths || paths.Length == 0)
+            return;
+        await UploadFilesAsync(paths);
+    }
+
+    /// <summary>
+    /// 上传一个或多个文件（任务八）。
+    ///
+    /// 与单文件版的差别：**逐份显示状态**（成功 / 失败 / 进度），
+    /// 单个失败不影响其他，全部完成后统一提示"已加载 N 个文件"。
+    /// 数量与总量超限时由后端告知（``sys.files_too_many`` / ``sys.files_partial``），
+    /// 前端只负责如实显示，不自己算一套规则（两边算法不一致会更难排查）。
+    /// </summary>
+    private async Task UploadFilesAsync(IEnumerable<string> paths)
+    {
+        if (_backend is null)
+            return;
+        var list = paths.Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
+        if (list.Count == 0)
+            return;
+        if (list.Count == 1)
+        {
+            await UploadFilesAsyncCore(list);
+            return;
+        }
+        // 文件过多时先问一次（任务书："文件过多或总大小过大时提示用户并询问是否继续"）
+        long totalBytes = 0;
+        foreach (string path in list)
+        {
+            try { totalBytes += new System.IO.FileInfo(path).Length; }
+            catch { /* 取不到大小就不计入总量 */ }
+        }
+        const int maxCount = 10;
+        const long maxBytes = 60L * 1024 * 1024;
+        bool tooMany = list.Count > maxCount;
+        bool tooLarge = totalBytes > maxBytes;
+        if (tooMany || tooLarge)
+        {
+            string reason = tooMany
+                ? Loc.T("main.upload.confirmCount", "一次选择了 {0} 个文件（上限 {1} 个）", list.Count, maxCount)
+                : Loc.T("main.upload.confirmSize", "所选文件共 {0}（上限 {1}）",
+                        FormatBytes(totalBytes), FormatBytes(maxBytes));
+            MessageBoxResult answer = MessageBox.Show(
+                Loc.T("main.upload.confirmContinue",
+                      "{0}。\n\n继续会只处理前 {1} 个文件，其余忽略。是否继续？", reason, maxCount),
+                Loc.T("main.upload.confirmTitle", "文件较多"),
+                MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (answer != MessageBoxResult.Yes)
+                return;
+            list = list.Take(maxCount).ToList();
+        }
+        await UploadFilesAsyncCore(list);
+    }
+
+    private static string FormatBytes(long bytes)
+        => bytes >= 1048576 ? $"{bytes / 1048576.0:0.#} MB" : $"{bytes / 1024.0:0.#} KB";
+
+    private async Task UploadFilesAsyncCore(List<string> paths)
+    {
+        AddMessage("system", Loc.T("main.upload.uploadingMany",
+            "📥 正在上传 {0} 个文件…", paths.Count));
+
+        // 逐份状态就地更新同一条消息（8 个文件不会把对话框刷满）
+        var statusPanel = NewMessagePanel("system",
+            Loc.T("main.summary.preparing", "📝 正在解析文档并准备分段摘要…"),
+            out FrameworkElement statusContent);
+        var statusTarget = statusContent as TextBox;
+        MessagePanel.Children.Add(statusPanel);
+        MessageScrollViewer.ScrollToBottom();
+
+        var lines = new List<string>();
+        int ok = 0, failed = 0;
+        void RenderStatus()
+        {
+            if (statusTarget is null)
+                return;
+            statusTarget.Text = Emoji.Prefer(string.Join("\n", lines));
+            MessageScrollViewer.ScrollToBottom();
+        }
+
+        bool previousStopMode = _stopMode;
+        _stopRequested = false;
+        _stopMode = true;
+        SendButton.Content = "⏹";
+        SendButton.ToolTip = Loc.T("main.button.stopSummaryTip", "中止分段摘要 (Esc)");
+        SendButton.IsEnabled = true;
+        try
+        {
+            string final = await _backend.SendStreamRequestAsync(
+                new { action = "file_stream", files = paths },
+                _ => { },
+                onContext: (used, limit) => ContextText.Text = FormatContext(used, limit),
+                onEvent: (type, root) =>
+                {
+                    // 逐份状态行（任务八）：file_status 只在多文件路径产出
+                    if (type == "file_status")
+                    {
+                        string name = root.TryGetProperty("name", out JsonElement n)
+                            ? n.GetString() ?? "" : "";
+                        string phase = root.TryGetProperty("phase", out JsonElement p)
+                            ? p.GetString() ?? "" : "";
+                        int index = root.TryGetProperty("index", out JsonElement ix) ? ix.GetInt32() : 0;
+                        int total = root.TryGetProperty("total", out JsonElement tl) ? tl.GetInt32() : 0;
+                        if (phase == "start")
+                        {
+                            lines.Add(Loc.T("main.upload.fileStart", "⏳ [{0}/{1}] {2} …",
+                                index, total, name));
+                        }
+                        else
+                        {
+                            bool okFlag = root.TryGetProperty("ok", out JsonElement okEl)
+                                          && okEl.ValueKind == JsonValueKind.True;
+                            if (okFlag)
+                            {
+                                ok++;
+                                int chars = root.TryGetProperty("chars", out JsonElement ch)
+                                    ? ch.GetInt32() : 0;
+                                lines.Add(Loc.T("main.upload.fileOk", "✅ [{0}/{1}] {2}（{3} 字符）",
+                                    index, total, name, chars));
+                            }
+                            else
+                            {
+                                failed++;
+                                lines.Add(Loc.T("main.upload.fileFailed", "❌ [{0}/{1}] {2} 解析失败",
+                                    index, total, name));
+                            }
+                        }
+                        RenderStatus();
+                        return;
+                    }
+                    if (type != "summary_progress" || statusTarget is null)
+                        return;
+                    string text = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+                    if (text.Length == 0)
+                        return;
+                    // 摘要进度：替换最后一行（当前文件的那一条），不追加新行
+                    string prefix = "";
+                    if (root.TryGetProperty("file_index", out JsonElement fi)
+                        && root.TryGetProperty("file_total", out JsonElement ft))
+                    {
+                        prefix = $"[{fi.GetInt32()}/{ft.GetInt32()}] ";
+                    }
+                    if (lines.Count > 0 && lines[^1].StartsWith("⏳", StringComparison.Ordinal))
+                        lines[^1] = prefix + text;
+                    else
+                        lines.Add(prefix + text);
+                    RenderStatus();
+                });
+            if (final.Length > 0)
+                AddMessage("system", final);
+            else if (paths.Count > 1)
+                AddMessage("system", Loc.T("main.upload.doneMany",
+                    "✅ 已加载 {0} 个文件（失败 {1} 个）", ok, failed));
+        }
+        catch (Exception ex)
+        {
+            AddMessage("system", Loc.T("main.upload.failed", "❌ 上传失败: {0}", ex.Message));
+        }
+        finally
+        {
+            _stopMode = previousStopMode;
+            SendButton.Content = "➤";
+            SendButton.ToolTip = Loc.T("main.button.sendTip", "发送 (Ctrl+Enter)");
+            SendButton.IsEnabled = true;
+        }
     }
 
     private async Task UploadFileAsync(string filePath)

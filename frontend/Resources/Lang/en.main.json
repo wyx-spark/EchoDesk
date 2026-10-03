@@ -64,7 +64,16 @@
       "uploading": "📤 Uploading file: {0} …",
       "done": "Upload complete",
       "failed": "❌ Upload failed: {0}",
-      "filterAll": "All files"
+      "filterAll": "All files",
+      "uploadingMany": "📥 Uploading {0} files…",
+      "fileStart": "⏳ [{0}/{1}] {2} …",
+      "fileOk": "✅ [{0}/{1}] {2} ({3} characters)",
+      "fileFailed": "❌ [{0}/{1}] {2} could not be parsed",
+      "doneMany": "✅ Loaded {0} file(s) ({1} failed)",
+      "confirmTitle": "Many files",
+      "confirmCount": "You selected {0} files (limit {1})",
+      "confirmSize": "The selected files total {0} (limit {1})",
+      "confirmContinue": "{0}.\n\nContinuing processes only the first {1} files and ignores the rest. Continue?"
     },
     "strip": {
       "searchOnTip": "Web search is on: each question searches the web first. Click to turn it off",

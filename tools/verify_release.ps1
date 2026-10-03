@@ -379,6 +379,11 @@ try {
     # 手动触发与 focus 解析）。用桩引擎，不加载模型。
     Invoke-Check "上下文压缩（任务九）" { Invoke-Python "上下文压缩" "tools\test_compaction.py"; "通过" }
 
+    # v0.2.1 优化已知问题-2 任务八：多文件上传（登记表/逐份状态/单份失败隔离/
+    # 统一汇总/数量与总量上限/注入预算与如实提示/同名与不支持格式/会话持久化兼容/
+    # /file 多路径与引号感知分词）。用桩引擎，不加载模型。
+    Invoke-Check "多文件上传（任务八）" { Invoke-Python "多文件" "tools\test_multifile.py"; "通过" }
+
     # ---------- 3. 静态检查 ----------
     Invoke-Check "语言包完整性" { Invoke-Python "语言包" "tools\check_lang.py"; "通过" }
     Invoke-Check "主题色板与对比度（修复二）" { Invoke-Python "主题" "tools\check_theme.py"; "通过" }
