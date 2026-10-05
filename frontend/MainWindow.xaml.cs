@@ -74,7 +74,9 @@ public partial class MainWindow : Window
     private static readonly CommandItem[] FallbackCommands =
     {
         new("/help", "", "显示此指令介绍：完整指令列表、用法与作用", "显示全部指令及用法", false),
-        new("/mode", "<编号|缩写|全称>", "切换对话模式（general/summary/translate/code/contract/creative/guide）；/mode list 查看全部模式及编号；切换时自动套用温度预设", "切换对话模式", true),
+        new("/mode", "<编号|缩写|全称>", "切换对话模式：现在是 chat 通用对话（默认）/ contract 条款审查 / agent 智能体（可调用工具）三个模式；摘要、翻译、代码排错、创意写作改用 /task 模板（/task summary、/task translate、/task code、/task creative），旧的 /mode summary 这类写法仍然可用；/mode list 查看全部模式及编号，切换时自动套用温度预设", "切换对话模式", true),
+        new("/agent", "[list|allow <工具>|deny <工具>|steps <1-8>|on|off]", "查看 Agent 能调用哪些工具、哪些已授权，并预授权敏感工具（联网搜索、读本机文件）；/agent allow web_search 授权、/agent steps 5 改进度上限，on/off 等价于切到 agent 模式", "查看 Agent 工具与权限", true),
+        new("/mcp", "[list|enable <名称>|disable <名称>|connect]", "查看 MCP Server 的连接状态与可用工具；enable/disable 启停某个 server（立即生效，无需重启）；connect 会真的拉起外部进程并拉取工具清单", "查看 MCP 服务器与工具", true),
         new("/task", "[list|<模板名>|off]", "套用任务型提示词模板（摘要、合同审查、结构化抽取、翻译、代码排错、分步推理）；小模型按结构化提示词作答明显更稳，/task list 查看全部", "套用任务提示词模板", true),
         new("/preset", "[list|light|balanced|quality]", "一键切换轻量/均衡/高质量三档生成参数（温度、top_p、重复惩罚、回复长度）", "切换生成参数预设", true),
         new("/compact", "", "立刻压缩上下文：把较早的对话转成摘要（或按滑动窗口模式丢弃）腾出空间，不必等自动触发", "压缩上下文", false),
@@ -1319,6 +1321,34 @@ public partial class MainWindow : Window
                 thinkBody.Document = MarkdownRenderer.Build(Emoji.Prefer(thinking.ToString()));
         }
 
+        // Agent 步骤区（能力扩展-1 任务二）：agent_step / tool_call / tool_result 三类事件
+        // 各渲染成**独立的行**，而不是把"调用了什么"拼进回答正文 ——
+        // 拼进正文会被复制、会与答案混在一起，用户也就没法一眼看清模型到底做了什么。
+        // 区块按需创建：普通对话（没有这三类事件）不会多出一块空面板。
+        Border? agentRegion = null;
+        StackPanel? agentRows = null;
+
+        void EnsureAgentRegion()
+        {
+            if (agentRows is not null)
+                return;
+            (agentRegion, agentRows) = CreateAgentTraceRegion();
+            // 插在回答面板**之前**：事件先发生、答案后产出，阅读顺序才是自然的
+            int at = MessagePanel.Children.IndexOf(panel);
+            MessagePanel.Children.Insert(at < 0 ? MessagePanel.Children.Count : at, agentRegion);
+        }
+
+        void AddAgentRow(string text, string brushKey, bool strong = false)
+        {
+            if (string.IsNullOrEmpty(text))
+                return;
+            EnsureAgentRegion();
+            if (agentRows is null)
+                return;
+            AppendAgentTraceRow(agentRows, text, brushKey, strong);
+            ScheduleScrollToBottom();
+        }
+
         // 运行指标（任务七）：请求开始时重置，此后由心跳与 done 驱动
         ResetStreamStats();
         _metricsStartUtc = DateTime.UtcNow;
@@ -1358,6 +1388,73 @@ public partial class MainWindow : Window
                         ApplyStreamStats(default, "failed");
                         return;
                     }
+                    // ---- Agent 步骤行（能力扩展-1 任务二）----
+                    // 三类事件 = 独立的三行；下面每条分支只负责"把这一行写清楚"，
+                    // 不做任何状态机 —— 后端的 AgentLoop 已经是权威的步骤来源。
+                    if (type == "agent_step")
+                    {
+                        string phase = GetStringField(root, "phase");
+                        int stepIndex = GetIntField(root, "index");
+                        int maxSteps = GetIntField(root, "max_steps");
+                        if (phase == "finalize")
+                        {
+                            // 步数用完后的"收敛"补一轮：用户要知道为什么突然出结论了
+                            AddAgentRow(Loc.T("main.agent.finalize", "🧩 正在汇总结论"), "SubTextBrush");
+                        }
+                        else if (phase == "thinking")
+                        {
+                            AddAgentRow(maxSteps > 0
+                                    ? Loc.T("main.agent.step", "📍 第 {0}/{1} 步", stepIndex, maxSteps)
+                                    : Loc.T("main.agent.stepNoMax", "📍 第 {0} 步", stepIndex),
+                                "SubTextBrush");
+                        }
+                        // phase == "answer"：模型已决定直接作答，答案马上就出现在回答区，
+                        // 这里不再多打一行（步骤区只讲"用了什么工具"）
+                        return;
+                    }
+                    if (type == "tool_call")
+                    {
+                        string tool = GetStringField(root, "tool");
+                        string why = GetStringField(root, "why");
+                        string args = root.TryGetProperty("args", out JsonElement argsEl)
+                            ? OneLineText(argsEl.GetRawText(), 120) : "";
+                        var line = new StringBuilder(Loc.T("main.agent.call", "🔧 调用 {0}", tool));
+                        if (args.Length > 0)
+                            line.Append(' ').Append(Loc.T("main.agent.args", "参数 {0}", args));
+                        if (why.Length > 0)
+                            line.Append(' ').Append(Loc.T("main.agent.why", "· 理由：{0}", why));
+                        AddAgentRow(line.ToString(), "InfoBrush");
+                        return;
+                    }
+                    if (type == "tool_result")
+                    {
+                        string tool = GetStringField(root, "tool");
+                        string observation = GetStringField(root, "observation");
+                        int elapsedMs = GetIntField(root, "elapsed_ms");
+                        bool toolOk = root.TryGetProperty("ok", out JsonElement okEl)
+                                      && okEl.ValueKind == JsonValueKind.True;
+                        if (!toolOk && IsAgentDeniedObservation(observation))
+                        {
+                            // 权限不足单独一档、且加重字重：这不是"工具坏了"，而是
+                            // "用户没授权" —— 他要做的就是 /agent allow <工具>
+                            AddAgentRow(Loc.T("main.agent.denied",
+                                "🔒 {0} 未启用（用 /agent allow {1} 授权后可用）", tool, tool),
+                                "WarningBrush", strong: true);
+                        }
+                        else if (!toolOk)
+                        {
+                            AddAgentRow(Loc.T("main.agent.failed", "❌ {0} 失败：{1}",
+                                tool, OneLineText(observation, 200)), "ErrorBrush");
+                        }
+                        else
+                        {
+                            AddAgentRow(Loc.T("main.agent.result", "↩ {0} 返回：{1}",
+                                    tool, OneLineText(observation, 200))
+                                + " " + Loc.T("main.agent.elapsed", "（{0} ms）", elapsedMs),
+                                "SuccessBrush");
+                        }
+                        return;
+                    }
                     if (type != "done")
                         return;
                     // done 行带权威的运行指标（任务七）：以它为准（心跳期间的值是中间态）
@@ -1389,6 +1486,33 @@ public partial class MainWindow : Window
                                 "\n\n⚠️ 模型只输出了思考内容，没有给出最终答案（通常是长度上限用完了："
                                 + "用 /preset quality 切到高质量档、或调大 config.json 的 max_tokens，"
                                 + "也可以把问题问得更具体）"));
+                    }
+                    // Agent 轮的汇总（能力扩展-1 任务二）：步数 / 工具 / 总耗时，以及"步数用完"。
+                    // 判据是"真的跑过 Agent"（steps>0 或步骤区已存在）——
+                    // 否则普通对话也会被塞进一行"共 0 步"，那是噪声。
+                    if (root.TryGetProperty("agent", out JsonElement agentEl))
+                    {
+                        int runSteps = GetIntField(agentEl, "steps");
+                        if (runSteps > 0 || agentRegion is not null)
+                        {
+                            if (agentEl.TryGetProperty("hit_max_steps", out JsonElement hitMaxEl)
+                                && hitMaxEl.ValueKind == JsonValueKind.True)
+                            {
+                                AddAgentRow(Loc.T("main.agent.hitMax",
+                                    "⚠️ 已达步数上限，改为直接给结论"), "WarningBrush");
+                            }
+                            string summary = root.TryGetProperty("stopped", out JsonElement stoppedEl)
+                                             && stoppedEl.ValueKind == JsonValueKind.True
+                                ? Loc.T("main.agent.summaryStopped", "⏹ 已中止：{0} 步 · {1} ms",
+                                    runSteps, GetIntField(agentEl, "elapsed_ms"))
+                                : Loc.T("main.agent.summary",
+                                    "✅ 完成：{0} 步 · {1} ms", runSteps, GetIntField(agentEl, "elapsed_ms"));
+                            List<string> usedTools = GetStringListField(agentEl, "tools");
+                            if (usedTools.Count > 0)
+                                summary += " · " + Loc.T("main.agent.toolsUsed",
+                                    "工具：{0}", string.Join(", ", usedTools));
+                            AddAgentRow(summary, "SubTextBrush");
+                        }
                     }
                 },
                 onDeltaChannel: (channel, text, reset) =>
@@ -1545,6 +1669,114 @@ public partial class MainWindow : Window
     /// <summary>去掉回答累积串开头的助手图标（"🤖 "）：判断"有没有答案"与搬运文本时都要用它。</summary>
     private static string StripAssistantIcon(string text)
         => text.StartsWith("🤖 ", StringComparison.Ordinal) ? text[3..] : text;
+
+    // ---------- Agent 步骤区（能力扩展-1 任务二） ----------
+
+    /// <summary>
+    /// 创建 Agent 步骤区：标题 + 逐行状态（调用了什么工具、参数、返回、耗时）。
+    ///
+    /// 为什么是**逐行 TextBlock**、而不是像多文件上传那样把若干行拼进一条 TextBox：
+    /// 这里必须逐行着色 —— 「🔒 未启用」要和正常调用一眼分开，那正是用户该去
+    /// <c>/agent allow</c> 的信号；拼成一段文本就只能整块一个颜色，信号被稀释掉。
+    /// 视觉与思考区（<see cref="CreateReasoningRegion"/>）一致：浅底 + 边框 + 副色小字，
+    /// 与回答正文一眼可分。
+    ///
+    /// 返回 (根元素, 步骤行容器)：流式期间往后者追加行。
+    /// </summary>
+    private (Border Root, StackPanel Rows) CreateAgentTraceRegion()
+    {
+        var title = new TextBlock
+        {
+            Text = Loc.T("main.agent.title", "🛠️ Agent 步骤"),
+            FontSize = Math.Max(9, _fontSize - 2),
+        };
+        ThemeService.Bind(title, TextBlock.ForegroundProperty, "SubTextBrush");
+        // 挂语言键：切语言时 Loc.Apply 会把它重新翻译（动态创建的元素同样在遍历范围内）
+        Loc.SetKey(title, "main.agent.title");
+
+        var rows = new StackPanel();
+        var body = new StackPanel();
+        body.Children.Add(title);
+        body.Children.Add(rows);
+
+        var border = new Border
+        {
+            Margin = new Thickness(0, 2, 0, 4),
+            Padding = new Thickness(8, 6, 8, 6),
+            CornerRadius = new CornerRadius(4),
+            BorderThickness = new Thickness(1),
+            // Tag 刻意不是 "content"：复制操作条与"复制全部对话"靠 Tag=="content" 找正文，
+            // 步骤行属于**过程信息**，不该混进复制出来的回答里（与思考区同样的取舍）。
+            Tag = "agent-trace",
+            Child = body,
+        };
+        ThemeService.Bind(border, Border.BackgroundProperty, "CodeBackground");
+        ThemeService.Bind(border, Border.BorderBrushProperty, "MessageBorderBrush");
+        Loc.SetTipKey(border, "main.agent.tip");
+        // 动态创建的元素要等下一次 Loc.Apply 才会被回填，所以首屏自己先写一次提示
+        border.ToolTip = Loc.T("main.agent.tip",
+            "模型自己决定的每一步：调用哪个工具、参数是什么、返回了什么、耗时多久。按 Esc 可随时停止。");
+        // 界面探针用：按这个 AutomationId 找 Agent 步骤区
+        AutomationProperties.SetAutomationId(border, "AgentTrace");
+        return (border, rows);
+    }
+
+    /// <summary>往 Agent 步骤区追加一行（放入容器并返回，便于调用方后续微调）。</summary>
+    private TextBlock AppendAgentTraceRow(StackPanel rows, string text, string brushKey, bool strong)
+    {
+        var row = new TextBlock
+        {
+            // 与消息文本一致地做 emoji 降级（本机没有 emoji 字体时换成纯文本标记）
+            Text = Emoji.Prefer(text),
+            FontSize = Math.Max(9, _fontSize - 2),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 1, 0, 1),
+            Tag = "agent-trace",
+            FontWeight = strong ? FontWeights.SemiBold : FontWeights.Normal,
+        };
+        ThemeService.Bind(row, TextBlock.ForegroundProperty, brushKey);
+        rows.Children.Add(row);
+        return row;
+    }
+
+    /// <summary>Agent 步骤区的字号跟随全局字号（与思考区同样处理，Ctrl+滚轮调字号时才不会落下它）。</summary>
+    private void ScaleAgentTrace(Border region)
+    {
+        if (region.Child is not StackPanel body)
+            return;
+        double size = Math.Max(9, _fontSize - 2);
+        foreach (object child in body.Children)
+        {
+            if (child is TextBlock label)                 // 标题
+                label.FontSize = size;
+            else if (child is StackPanel rows)            // 步骤行
+                foreach (TextBlock row in rows.Children.OfType<TextBlock>())
+                    row.FontSize = size;
+        }
+    }
+
+    /// <summary>
+    /// 工具返回「没权限」而不是「执行失败」的判据。
+    ///
+    /// 后端的措辞是固定的两句中文（<c>agent_tools.ToolRegistry.run</c>：敏感工具未授权时
+    /// 「…当前未启用…」，本版不提供的保护类工具「…当前不可用」），而它就是模型看到的
+    /// 原始观察结果、不随界面语言变 —— 所以这里按原文匹配是稳的，
+    /// 反而不能按"界面语言下的失败文案"去匹配。
+    /// </summary>
+    private static bool IsAgentDeniedObservation(string observation)
+        => observation.Contains("未启用", StringComparison.Ordinal)
+           || observation.Contains("当前不可用", StringComparison.Ordinal);
+
+    /// <summary>把多行文本压成一行并截断：步骤行的参数与工具返回常是多行/很长的 JSON。</summary>
+    private static string OneLineText(string text, int max)
+    {
+        if (string.IsNullOrEmpty(text))
+            return "";
+        string flat = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        while (flat.Contains("  ", StringComparison.Ordinal))
+            flat = flat.Replace("  ", " ", StringComparison.Ordinal);
+        return flat.Length <= max ? flat : flat[..max] + "…";
+    }
 
     // ---------- 流式 Markdown 实时渲染（节流） ----------
 
@@ -2734,6 +2966,13 @@ public partial class MainWindow : Window
     {
         foreach (var child in MessagePanel.Children)
         {
+            // Agent 步骤区是消息区里的独立区块（不是消息面板，所以不在内层循环里）：
+            // 它没有 Tag="content"，必须单独跟上字号。
+            if (child is Border traceBorder && Equals(traceBorder.Tag, "agent-trace"))
+            {
+                ScaleAgentTrace(traceBorder);
+                continue;
+            }
             if (child is not Panel panel)
                 continue;
             foreach (var inner in panel.Children)

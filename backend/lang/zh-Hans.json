@@ -38,8 +38,8 @@
       "/mode": {
         "name": "切换对话模式",
         "usage": "/mode <编号|缩写|全称>",
-        "desc": "切换 AI 回答风格；每个模式都有完整的角色/输出格式/详略判断/推理步骤/示例，/mode list 查看全部。",
-        "detail": "    模式有：\n      general 通用问答 / summary 摘要归纳 / translate 中英互译 /\n      code 代码与排错 / contract 合同条款审查 / creative 创意写作 /\n      guide 需求澄清（说不清想要什么时，让它先列几种可能方向）\n    每个模式都写明角色、输出格式、详略判断、推理步骤、一组输入输出示例与语气，\n    并共享同一段通用要求（不知道就说不知道、能一句话答完就一句话、\n    信息不全先给最可能的答案再问、不编造出处）。\n    /mode list 可看到每个模式的说明与温度预设。"
+        "desc": "切换 AI 的回答方式；现在是 3 个模式，需要特定输出格式时再用 /task 套模板，/mode list 查看全部。",
+        "detail": "    模式有：\n      chat 通用对话（默认）/ contract 条款审查 / agent 智能体（可调用工具）\n    每个模式都写明角色、输出格式、详略判断、推理步骤、一组输入输出示例与语气，\n    并共享同一段通用要求（不知道就说不知道、能一句话答完就一句话、\n    信息不全先给最可能的答案再问、不编造出处）。\n    摘要归纳 / 中英互译 / 代码排错 / 创意写作 不再单独占模式位，\n    改用 /task summary、/task translate、/task code、/task creative 调用；\n    旧的 /mode summary 这类写法仍然可用，会自动切模式并套上同名模板。\n    /mode list 可看到每个模式的说明与温度预设。"
       },
       "/file": {
         "name": "上传文件",
@@ -129,7 +129,9 @@
     "resp": {
       "exit": "👋 退出程序，再见！",
       "mode_current": "当前模式: {mode}（/mode list 查看全部）",
-      "mode_list": "可用模式（编号 / 缩写 / 全称均可切换）：\n{menu}",
+      "mode_list": "可用模式（编号 / 缩写 / 全称均可切换）：\n{menu}\n\n{legacy}",
+      "mode_legacy": "旧模式名仍可用，会自动套用对应任务模板（能力没少，只是不再占一个模式位）：{pairs}",
+      "mode_migrated": "（「{old}」已并入其它模式，已自动套用任务模板 /task {template}；用 /task off 可取消）",
       "mode_set_preset": "✅ 已切换模式为: {mode}（温度预设 {preset}）",
       "mode_set": "✅ 已切换模式为: {mode}",
       "mode_unknown": "❌ 未知模式: {name}（/mode list 查看）",
@@ -181,7 +183,20 @@
       "temp_reset": "✅ 温度已恢复为模式预设: {temp}",
       "temp_invalid": "请输入有效的数字",
       "temp_range": "温度值应在 0.0~1.0 之间",
-      "temp_set": "✅ 温度已设为: {temp}（手动）"
+      "temp_set": "✅ 温度已设为: {temp}（手动）",
+      "mcp_usage": "用法：/mcp [list|enable <名称>|disable <名称>|connect]（/mcp list 查看服务器与工具）",
+      "mcp_disabled": "MCP 已在配置里关闭（config.json 的 mcp.enabled）。要启用请把该字段改为 true，或在设置界面里打开。",
+      "mcp_state": "🔌 MCP：共 {count} 个服务器，已发现 {tools} 个工具。",
+      "mcp_server_line": "  {mark} {name}（{state}）：{tools} 个工具",
+      "mcp_unknown_server": "❌ 没有名为「{name}」的 MCP 服务器（/mcp list 查看）。",
+      "mcp_toggled": "✅ MCP 服务器 {name} 已{state}（立即生效）。",
+      "mcp_connected": "✅ 已连接并注册 {count} 个 MCP 工具（用 /agent allow <工具> 逐个授权）。",
+      "mcp_connect_failed": "❌ 连接 MCP 服务器失败：{error}",
+      "mcp_no_tools": "没有发现任何工具",
+      "mcp_hint": "  提示：MCP 工具一律按敏感工具处理，要先在设置里或 /agent allow <工具> 授权；/mcp connect 会真的拉起外部进程。",
+      "mcp_unavailable": "❌ MCP 当前不可用（后端未提供 MCP 接口）",
+      "mcp_no_servers": "当前没有配置 MCP Server。可在设置 → 智能体 → MCP 里添加，或手改 config.json 的 mcp.servers；随包示例见 examples\\mcp\\echo_server.py。",
+      "mode_legacy_number": "⚠️ 编号已经变过：现在 1=chat、2=contract、3=agent。旧编号 {number} 当时指别的模式，请改用 {instead}（或直接用模式名，如 /mode summary）。"
     },
     "status": {
       "header": "🏷️  {app} {version} — Powered by {studio}",
@@ -265,7 +280,25 @@
     "items./compact.name": "压缩上下文",
     "items./compact.usage": "/compact [focus on <重点>]",
     "items./compact.desc": "立刻压缩上下文：把较早的对话转成摘要（或按设置的滑动窗口模式直接丢弃），腾出空间给新内容；上下文快满时无需等自动触发",
-    "resp.cache_cleared_with_summaries": "✅ 已清空推理 KV 缓存与 {count} 条分段摘要缓存"
+    "resp.cache_cleared_with_summaries": "✅ 已清空推理 KV 缓存与 {count} 条分段摘要缓存",
+    "items./agent.name": "Agent 工具与权限",
+    "items./agent.usage": "/agent [list|allow <工具>|deny <工具>|steps <1-8>|on|off]",
+    "items./agent.desc": "查看 Agent 能调用哪些工具、哪些已授权，预授权敏感工具（联网搜索、读本机文件），或调整最大步数；on/off 等价于切到 agent 模式",
+    "items./agent.detail": "    Agent 模式下模型自己决定调用哪个工具、按什么顺序，直到给出结论；\n    每一步（调了什么、参数是什么、返回什么）都显示在对话里，按 Esc 可随时停止。\n\n    工具分两档：\n      ✅ 安全：计算、日期换算、单位换算、在已上传文件里检索/取摘要 —— 默认可用；\n      🔒 敏感：联网搜索、读取本机文件 —— 会把数据带出去或读到本地内容，\n         默认关闭，用 /agent allow web_search 这类命令显式打开。\n    本版**不提供任何写文件或执行命令的工具**（权限最小化）。\n\n    常用：\n      /agent                    查看工具清单与权限状态\n      /agent allow web_search   允许联网搜索（写进 config.json，长期生效）\n      /agent deny web_search    收回权限\n      /agent steps 5            最多调用 5 次工具后强制收敛到结论\n      /agent on                 切到 agent 模式（等价 /mode agent）",
+    "resp.agent_mode": "✅ Agent 已{state}（当前模式：{mode}）",
+    "resp.agent_state": "🤖 Agent 状态：模式 {mode}；最多调用 {steps} 次工具；已启用 {enabled}/{total} 个工具。",
+    "resp.agent_tool_line": "  {mark} {name}（{risk}）：{desc}",
+    "resp.agent_hint": "  用 /agent allow <工具> 授权敏感工具，/agent steps <1-8> 调整步数上限。本版**不提供**写文件或执行命令的工具（权限最小化）。",
+    "resp.agent_usage": "用法：/agent [list|allow <工具>|deny <工具>|steps <1-8>|on|off]（/agent list 查看工具）",
+    "resp.agent_unavailable": "❌ Agent 当前不可用（后端未提供工具接口）",
+    "resp.agent_unknown_tool": "❌ 没有名为「{name}」的工具。可用：{tools}",
+    "resp.agent_permission": "✅ 工具 {tool} 已{state}",
+    "resp.agent_bad_steps": "❌ 步数需要是 1~8 之间的整数",
+    "resp.agent_steps": "✅ 工具调用步数上限已设为 {steps}",
+    "items./mcp.name": "MCP 服务器",
+    "items./mcp.usage": "/mcp [list|enable <名称>|disable <名称>|connect]",
+    "items./mcp.desc": "查看 MCP Server 的连接状态与可用工具；启用/停用某个 server 后**立即生效**（无需重启）；connect 会真的拉起进程并拉取工具清单",
+    "items./mcp.detail": "    MCP（Model Context Protocol）让 Agent 能用上**外部进程**提供的工具\n    （数据库、API、文件系统…）。EchoDesk 自带一个 stdio 客户端，\n    在 config.json 的 mcp.servers 里写一行命令即可接入。\n\n    安全边界：MCP Server 是你自己配的进程，它的行为不受 EchoDesk 控制，\n    所以它的工具**一律按敏感工具处理**，要先 /agent allow 才能调用；\n    默认也**不会**把它需要的密钥环境变量透传给它（要透传就在\n    passthrough_env 里点名）。\n\n    常用：\n      /mcp                     查看状态与工具\n      /mcp enable echo         启用某个 server（写进 config.json）\n      /mcp disable echo        停用（立即生效，无需重启）\n      /mcp connect             立刻连接并拉取工具清单\n\n    示例：examples\\mcp\\echo_server.py（纯标准库，可直接配来验证通路）。"
   },
   "sys": {
     "ready": "后端已就绪",
@@ -392,6 +425,13 @@
     "profile_not_installed": "⚠️ 这一档的模型还没下载：{name}\n请到「设置 → 模型」点该档位的「下载」，或把 .gguf 放进模型文件夹（{dir}）后重试。",
     "profile_applied": "✅ 已切换到模型档位 '{alias}'（{name}）。",
     "profile_apply_failed": "❌ 切换模型档位失败：{error}",
+    "profile_saved": "✅ 已保存模型档位 '{alias}'。",
+    "profile_deleted": "✅ 已删除模型档位 '{alias}'（磁盘上的模型文件没有被删除）。",
+    "profile_alias_required": "❌ 请先给档位起一个别名（别名就是它的名字）。",
+    "profile_alias_invalid": "❌ 别名 '{alias}' 不合法：最多 32 个字符，且不能包含路径分隔符。",
+    "profile_bad_context": "❌ 上下文长度需要是数字（收到 {value}）。",
+    "profile_bad_temperature": "❌ 温度需要是 0~1.5 之间的数字（收到 {value}）。",
+    "profile_in_use": "❌ 档位 '{alias}' 正在使用中，请先切换到其它档位再删除。",
     "model_scan_found": "扫描完成：找到 {count} 个模型（{dir}）。请在「本地模型库」里选择一个加载。",
     "model_scan_ok": "扫描完成：模型库共 {count} 个模型。",
     "summarize_need_model": "分段摘要需要模型支持，当前没有可用模型，无法摘要。\n\n{guide}",
@@ -403,7 +443,15 @@
     "summary_aborted": "⏹ 分段摘要已中止（{name}）：完成 {done}/{total} 段，耗时 {elapsed} 秒。\n原文仍完整保留在上下文中，未注入半份摘要。可以重新触发 /summarize 再来一次。",
     "summary_failed": "❌ 分段摘要失败（{name}）：{chunks} 段全部未产出摘要（调用失败 {failed} 段、超时 {timeout} 段），耗时 {elapsed} 秒。\n可能原因：模型未正确加载、内存不足、或摘要模型不可用。可先解决模型问题再重试 /summarize。",
     "summary_partial_notice": "⚠️ 本次摘要并不完整：{total} 段中 {ok} 段由模型正常产出，调用失败 {failed} 段、超时 {timeout} 段、跳过 {skipped} 段、偏慢 {slow} 段；失败的段用原文截断兜底，未丢失该段内容。",
-    "summary_slow_notice": "⏱️ 有 {slow}/{total} 段单段耗时超过阈值，整篇耗时 {elapsed} 秒。当前模型或机器偏慢时属正常，可换更小的量化模型，或在设置里调小 chunk_chars。"
+    "summary_slow_notice": "⏱️ 有 {slow}/{total} 段单段耗时超过阈值，整篇耗时 {elapsed} 秒。当前模型或机器偏慢时属正常，可换更小的量化模型，或在设置里调小 chunk_chars。",
+    "profile_context_out_of_range": "❌ 上下文长度需要在 {low}~{high} 之间（收到 {value}）。",
+    "profile_temperature_out_of_range": "❌ 温度需要在 {low}~{high} 之间（收到 {value}）。",
+    "skills_reloaded": "   ↻ 已热重载插件：加载 {loaded}/{total} 个（失败 {failed} 个），新指令立即可用。",
+    "skills_reload_failed": "   （安装成功，但热重载失败：{error}；可在「开发者」页点「重载本地插件」重试）",
+    "mcp_unavailable": "❌ MCP 配置不可用（后端未提供 MCP 接口）",
+    "mcp_bad_timeout": "❌ 超时需要是 1~600 之间的秒数。",
+    "mcp_bad_server": "❌ MCP Server 配置不完整（{item}）：name 与 command 都必须填写。",
+    "mcp_no_servers": "当前没有配置 MCP Server。在设置 → 智能体 → MCP，或直接改 config.json 的 mcp.servers。"
   },
   "file": {
     "wps_failed": "WPS读取失败: {error}",
@@ -865,7 +913,13 @@
     "examples_copied": "✅ 已复制示例插件到 {dir}：{names}",
     "dev_mode_unloaded": "已卸载 {count} 个开发插件并从指令表移除：{ids}",
     "trust_nothing": "没有需要确认的插件",
-    "trust_saved": "插件信任设置已保存：启用 {approved} 个，禁用 {denied} 个"
+    "trust_saved": "插件信任设置已保存：启用 {approved} 个，禁用 {denied} 个",
+    "dep_missing": "缺少依赖插件：{deps}",
+    "dep_mismatch": "依赖版本不满足：{deps}",
+    "min_version_too_new": "插件 {id} 要求主程序至少 {want}，当前是 {have}",
+    "command_not_registered": "声明了命令但未注册：{commands}",
+    "command_undeclared": "注册了未声明的命令：{commands}",
+    "reload_dev_scope": "（只重载了开发目录与本地清单里的插件，已安装的正式插件保持原样）"
   },
   "capability": {
     "unknown": "未知",
@@ -897,13 +951,9 @@
   "mode": {
     "menu_item": "{index}. {id} ({short}) — {desc}（温度 {temp}）",
     "_note": "这里是**面向用户的模式说明**（/mode list 显示），是短句；各模式发给模型的**提示词正文**在 backend/conversation.py 的 MODES 里，两者刻意不再共用同一段文字 —— 正文按设计保持中文、不进语言包（见该文件头部说明）。",
-    "desc.general": "通用问答：什么都能聊，回答简洁、直给结论。",
-    "desc.summary": "长文档与会议记录压缩成结论加要点，数字、日期、金额原样保留。",
-    "desc.translate": "中英互译：只输出译文，保留段落结构与术语一致。",
-    "desc.code": "代码解释与排错：先结论，再给最小修改片段，最后给验证方法。",
-    "desc.contract": "合同条款审查：只关注钱、时间、责任三类风险，逐条摘录原文。",
-    "desc.creative": "故事、诗歌、文案与剧本，敢于给有辨识度的写法。",
-    "desc.guide": "需求澄清：把「帮我看看」这类模糊提问拆成 2~3 种可能方向，让你挑一个再作答。"
+    "desc.chat": "通用对话：什么都能聊，回答简洁、直给结论；需要专门格式时用 /task 套模板。",
+    "desc.contract": "条款审查：只关注钱、时间、责任三类风险，逐条摘录原文并提示人工复核。",
+    "desc.agent": "智能体：模型自己决定调用哪些工具（计算、日期、检索文档…）逐步完成任务，每一步都显示在对话里，可随时停止。"
   },
   "task": {
     "menu_item": "  /task {id}  — {label}：{note}",
@@ -924,7 +974,11 @@
     "code.label": "代码解释与排错",
     "code.note": "排错场景给「最小可运行片段」比给完整重写更有帮助。",
     "reason.label": "推理判断（分步）",
-    "reason.note": "小模型直接问结论容易算错，强制分步能明显提升正确率。"
+    "reason.note": "小模型直接问结论容易算错，强制分步能明显提升正确率。",
+    "creative.label": "创意写作",
+    "creative.note": "故事、文案、广告语；会收敛到 2~3 个方向，不无限发散。（原 creative 模式）",
+    "guide.label": "需求澄清",
+    "guide.note": "把「帮我看看」这类模糊提问拆成 2~3 种可能方向让你挑。（原 guide 模式）"
   },
   "export": {
     "title": "# EchoDesk 对话记录",

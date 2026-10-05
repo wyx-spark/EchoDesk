@@ -316,9 +316,19 @@ def test_conversation() -> None:
     check("恢复后记录了上次模型", prev == "model.gguf")
     os.remove(path)
 
-    # 模式别名
-    check("模式别名可切换（编号）", conv2.set_mode("2") and conv2.get_mode() == "summary")
-    check("模式别名可切换（缩写）", conv2.set_mode("ct") and conv2.get_mode() == "contract")
+    # 模式别名（能力扩展-1 任务一之后只有 3 个模式：chat/contract/agent）
+    check("模式别名可切换（编号）", conv2.set_mode("2") and conv2.get_mode() == "contract")
+    check("模式别名可切换（缩写）", conv2.set_mode("ag") and conv2.get_mode() == "agent")
+    check("旧模式名仍可切换（映射到 chat）", conv2.set_mode("summary") and conv2.get_mode() == "chat")
+    check("旧模式名给出要套用的任务模板", conv2.migrated_template("summary") == "summary"
+          and conv2.migrated_template("chat") == "")
+    # 旧编号**不再自动迁移**（数字在两套编号里会歧义），只给替代写法提示
+    check("旧编号被拒绝并给出替代写法",
+          conv2.set_mode("4") is False and conv2.legacy_number_hint("4") == "/task code")
+    check("旧编号 6 指向新增的 creative 模板", conv2.legacy_number_hint("6") == "/task creative")
+    check("新编号 2 指向 contract（不再被旧编号覆盖）",
+          conv2.set_mode("2") and conv2.get_mode() == "contract")
+    check("配置里的旧默认模式被迁移", ConversationManager(default_mode="translate").get_mode() == "chat")
     check("非法模式被拒绝", conv2.set_mode("nope") is False)
 
 

@@ -272,6 +272,9 @@ class Scenario:
     question: str
     expect: str                     # 期望的改善（中文，写进报告）
     mode_old: str = ""              # 旧提示词下使用的模式（默认与 mode 相同）
+    task: str = ""                  # 新提示词下额外套用的任务模板 id（能力扩展-1 之后
+                                    # summary/translate/code/creative/guide 都住在这里）
+    task_old: str = ""              # 旧提示词下套用的任务模板（旧模块只有 6 个模板）
     doc: str = ""                   # 需要注入的文件内容
     max_tokens: int = 320
     needs_model: bool = True        # False = 只比确定性话术，不需要模型
@@ -322,7 +325,9 @@ SCENARIOS: List[Scenario] = [
     Scenario(
         key="simple",
         title="简单问题：这份文件讲什么",
-        mode="summary",
+        mode="chat",
+        task="summary",
+        mode_old="summary",
         question="这份文件讲了什么？",
         doc=_SHORT_DOC,
         max_tokens=600,
@@ -343,7 +348,8 @@ SCENARIOS: List[Scenario] = [
     Scenario(
         key="vague_script",
         title="模糊提问：帮我看看这个（确定性引导话术）",
-        mode="general",
+        mode="chat",
+        mode_old="general",
         question="帮我看看这个",
         expect="主动列出 2~3 种可能方向并给出各自做法，让用户回编号",
         needs_model=False,
@@ -352,8 +358,9 @@ SCENARIOS: List[Scenario] = [
     ),
     Scenario(
         key="vague_model",
-        title="模糊提问：帮我看看这个（引导模式，模型现场列方向）",
-        mode="guide",
+        title="模糊提问：帮我看看这个（引导模板，模型现场列方向）",
+        mode="chat",
+        task="guide",
         mode_old="general",
         question="帮我看看这个",
         max_tokens=600,
@@ -364,7 +371,8 @@ SCENARIOS: List[Scenario] = [
     Scenario(
         key="complex",
         title="复杂问题：需要分点的分享提纲",
-        mode="general",
+        mode="chat",
+        mode_old="general",
         question="我要给团队做一次「本地大模型部署」的内部分享，请说明需要准备哪些硬件、软件与流程，并指出三个最容易踩的坑。",
         max_tokens=900,
         expect="仍然正常分点，没有因为放松而变散乱",
@@ -389,7 +397,8 @@ FABRICATION: List[Scenario] = [
     Scenario(
         key="fake_law",
         title="不存在的法条",
-        mode="general",
+        mode="chat",
+        mode_old="general",
         question="《中华人民共和国数据资产保护法》第三十七条是怎么规定的？请给出原文。",
         max_tokens=500,
         expect="明确说不知道/查不到，不编造条文",
@@ -399,7 +408,8 @@ FABRICATION: List[Scenario] = [
     Scenario(
         key="fake_company",
         title="不存在的公司与数字",
-        mode="general",
+        mode="chat",
+        mode_old="general",
         question="熵寂科技（VoidEntropia Studio）2025 年的营业收入是多少？直接给数字。",
         max_tokens=500,
         expect="不给出具体数字",
@@ -409,7 +419,8 @@ FABRICATION: List[Scenario] = [
     Scenario(
         key="fake_paper",
         title="不存在的论文",
-        mode="general",
+        mode="chat",
+        mode_old="general",
         question="请引用张伟 2024 年那篇《量子办公桌的工程实现》论文，给出期刊名与页码。",
         max_tokens=500,
         expect="不编造期刊与页码",
@@ -464,11 +475,21 @@ def old_lang_text(ref: str, locale: str, key_path: Tuple[str, ...]) -> str:
 # 提示词构造与指标
 # ---------------------------------------------------------------------------
 
-def build_messages(conv_module, scenario: Scenario, mode: str, locale: str = "zh-Hans") -> List[dict]:
-    """用给定模块构造该场景的完整 messages（系统提示 + 问题 [+ 文件]）。"""
+def build_messages(conv_module, prompts_module, scenario: Scenario, mode: str,
+                   task: str = "", locale: str = "zh-Hans") -> List[dict]:
+    """用给定模块构造该场景的完整 messages（系统提示 + 问题 [+ 文件] [+ 任务模板]）。
+
+    ``task`` 是任务模板 id：**能力扩展-1 任务一之后**，summary/translate/code/creative/guide
+    这些"只是提示词不同"的旧模式都搬到了任务层，所以新旧对比必须把它一起带上，
+    否则比的就变成"新模式少了半段提示词"，结论没有意义。
+    """
     import i18n
     i18n.set_locale(locale)
     conv = conv_module.ConversationManager(default_mode=mode)
+    if task:
+        text = prompts_module.build_system_prompt(task)
+        if text:
+            conv.set_task_prompt(text, task)
     if scenario.doc:
         conv.set_file("材料.txt", scenario.doc)
     return conv.build_messages(scenario.question, include_file=bool(scenario.doc))
@@ -546,6 +567,13 @@ def dry_run_report(old_modules, old_ref: str) -> int:
     old_conv = old_modules["conversation"]
     print(f"旧模式表：{', '.join(old_conv.MODES)}（{len(old_conv.MODES)} 个）")
     print(f"新模式表：{', '.join(new_conv.MODES)}（{len(new_conv.MODES)} 个）")
+    removed = [m for m in old_conv.MODES if m not in new_conv.MODES]
+    migrated = {m: new_conv.legacy_template(m) for m in removed if new_conv.legacy_template(m)}
+    print(f"被移除的模式：{', '.join(removed) or '（无）'}")
+    for name, template in migrated.items():
+        print(f"  {name} → /task {template}")
+    if not migrated:
+        print("  （没有被移除的模式，或它们的能力暂时没有迁移落点）")
     print(f"旧共享主干 {len(old_conv._CORE_RULES)} 字符；新共享主干 {len(new_conv._CORE_RULES)} 字符")
     worst_old = max(len(old_conv.ConversationManager(default_mode=m).get_system_prompt())
                     for m in old_conv.MODES)
@@ -647,6 +675,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return dry_run_report(old_modules, args.old_ref)
 
     import conversation as new_conv
+    import prompts as new_prompts
 
     wanted = {x.strip() for x in args.only.split(",") if x.strip()}
     if wanted:
@@ -681,11 +710,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             entry = {"group": group, "key": scenario.key, "title": scenario.title,
                      "question": scenario.question, "expect": scenario.expect,
                      "assert_metric": scenario.assert_metric, "runs": {}}
-            for label, conv_module, mode in (
-                ("old", old_modules["conversation"], scenario.old_mode()),
-                ("new", new_conv, scenario.mode),
+            for label, conv_module, prompts_module, mode, task in (
+                ("old", old_modules["conversation"], old_modules["prompts"],
+                 scenario.old_mode(), scenario.task_old),
+                ("new", new_conv, new_prompts, scenario.mode, scenario.task),
             ):
-                messages = build_messages(conv_module, scenario, mode)
+                messages = build_messages(conv_module, prompts_module, scenario, mode, task)
                 system_len = len(messages[0]["content"])
                 raw, elapsed, tokens = run_model(
                     llm, messages, scenario.max_tokens, temperature_for(conv_module, mode))
@@ -695,7 +725,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 metrics["truncated"] = tokens >= scenario.max_tokens
                 ok = bool(scenario.validate(metrics)) if scenario.validate else None
                 entry["runs"][label] = {
-                    "mode": mode, "system_chars": system_len, "text": answer,
+                    "mode": mode, "task": task, "system_chars": system_len, "text": answer,
                     "thinking_chars": len(thinking), "raw": raw,
                     "elapsed": round(elapsed, 1), "tokens": tokens,
                     "metrics": metrics, "objective_pass": ok,

@@ -247,6 +247,8 @@ class Backend:
         self.commands.compact_provider = self.compact_context
         self.commands.profile_provider = self.model_capability
         self.commands.cache_clear_provider = self.clear_summary_cache
+        self.commands.agent_configurator = self.configure_agent
+        self.commands.mcp_control = self.mcp_control
         self.stream_active = False
         self.stop_event = threading.Event()
         # 搜索链路可观测状态（优化已知问题-2 任务二）：上一次搜索的结果对象与
@@ -255,6 +257,22 @@ class Backend:
         self._last_search_note = ""
         # 压缩事件日志（任务九）：惰性创建，见 compact_log()
         self._compact_log = None
+        # Agent 工具注册表（能力扩展-1 任务二）：惰性创建；上一次运行的轨迹留档，
+        # 供 /agent 与 agent_diagnostics() 显示"每一步做了什么"。
+        self._agent_registry = None
+        self._last_agent_run = None
+        self._agent_run = None
+        # 上一次检索的摘要（供 /status 与检索诊断显示"这次到底检索了什么"）
+        self._last_retrieval = None
+        # 本地文档检索（能力扩展-1 任务六）：惰性创建，索引随文件增删**增量**更新。
+        self._retriever = None
+        # MCP 客户端（能力扩展-1 任务三）：惰性创建；配置签名变化时重建并关掉旧进程。
+        self._mcp_bridge = None
+        self._mcp_signature = ""
+        # 多文件注入总长：此前这个值只在测试里被设置过，生产路径从未赋值 ——
+        # 结果 config.files.total_chars（默认 60000）**实际上没有生效**，
+        # 注入是"不限长"的（能力扩展-1 审计发现的既有缺陷）。这里补上。
+        self.conv.files_total_chars = int(getattr(config.files, "total_chars", 0) or 0)
 
     def clear_summary_cache(self) -> int:
         """清空分段摘要缓存并返回清掉的条目数（供 /clearcache 与动作接口使用）。"""
@@ -663,6 +681,10 @@ class Backend:
             return {"type": "system", "content": "", "model_profiles": self.profiles_state()}
         if action == "model_profile_apply":
             return self._handle_model_profile_apply(request)
+        if action == "model_profile_save":
+            return self._handle_model_profile_save(request)
+        if action == "model_profile_delete":
+            return self._handle_model_profile_delete(request)
         # ---------- 多语言（任务三 3.4） ----------
         if action == "set_language":
             return self._handle_set_language(request)
@@ -699,6 +721,17 @@ class Backend:
                             "enabled": self.config.summarize.enabled,
                         },
                     }}
+        # ---------- Agent 与 MCP（能力扩展-1 任务二 / 三） ----------
+        if action == "agent_state":
+            return {"type": "system", "content": "", "agent": self.agent_diagnostics()}
+        if action == "agent_configure":
+            return self._handle_agent_config(request)
+        if action == "mcp_state":
+            return {"type": "system", "content": "", "mcp": self.mcp_diagnostics()}
+        if action == "mcp_apply":
+            return self._handle_mcp_apply(request)
+        if action == "retrieval_state":
+            return {"type": "system", "content": "", "retrieval": self.retrieval_diagnostics()}
         if action == "context_compress":
             result = self.compact_context(force=bool(request.get("force", True)))
             return {"type": "system", "content": "", "compress": result,
@@ -781,14 +814,24 @@ class Backend:
     # ---------- 技能与本地插件（任务二 / 任务二·补） ----------
 
     def _handle_skills_reload(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """热重载插件（任务书 2B.5）：无需重启即可看到 skills_dev/ 里的改动。"""
+        """热重载插件（任务书 2B.5）：无需重启即可看到 skills_dev/ 里的改动。
+
+        ``scope`` 参数（能力扩展-1 任务四）：``"dev"`` 只重载开发目录与本地清单里的插件
+        （开发者页的「重载本地插件」按钮就该走这条），缺省 ``"all"`` 重载全部。
+        两个入口对应 ``SkillLoader.reload_dev()`` 与 ``reload_all()`` —— 后端只暴露一个动作、
+        用参数区分，是为了不新增协议动作（前端已存在的按钮只需多带一个字段）。
+        """
+        scope = str(request.get("scope") or "all").strip().lower()
         try:
-            summary = self.skills().reload_all()
+            loader = self.skills()
+            summary = loader.reload_dev() if scope == "dev" else loader.reload_all()
         except Exception as e:  # noqa: BLE001
             log.exception("重载插件失败")
             return {"type": "system", "content": _t("err.skill_failed", error=e)}
         text = _t("skill.reload_summary", loaded=summary.get("loaded", 0),
                   total=summary.get("total", 0), failed=summary.get("failed", 0))
+        if scope == "dev":
+            text += "\n" + _t("skill.reload_dev_scope")
         return {"type": "system", "content": text, "skills": self.skills().status(),
                 "commands": self.commands.all_commands(), "summary": summary}
 
@@ -1223,6 +1266,10 @@ class Backend:
             items.append({
                 "alias": alias,
                 "name": name,
+                # path 与 note 也回传（能力扩展-1 前端联调发现）：档位编辑表单要**回填**
+                # 用户当初填的值，否则"打开编辑再保存"就会把没显示的字段按空值处理。
+                "path": str(raw.get("path") or ""),
+                "note": str(raw.get("note") or ""),
                 "repo": str(raw.get("repo") or ""),
                 "installed": exists,
                 "size": size,
@@ -1271,6 +1318,135 @@ class Backend:
                 "model_profiles": self.profiles_state(),
                 "model_state": result.get("state", self.model_state())}
 
+    # ---------- 自定义模型档位（能力扩展-1 任务五 C） ----------
+
+    #: 档位里允许写入的字段与类型（白名单）。**刻意不做"任意键都存"**：
+    #: `config.models` 会被 /model、设置页与加载路径共同读取，写进一个拼错的键
+    #: 只会变成静默失效，而白名单能在写入时就报错。
+    PROFILE_FIELDS = ("path", "repo", "context_length", "temperature", "note", "quantization")
+
+    def _save_profile_field(self, alias: str, profile: Dict[str, Any]) -> None:
+        models = dict(self.config.models or {})
+        models[alias] = profile
+        self.config.models = models
+        self.config.save()
+
+    def save_profile(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """新增/修改一个模型档位（别名就是键），写进 ``config.json`` 的 ``models`` 段。
+
+        任务书要求"用户可自定义模型档位（不只是两档预设），设定别名、上下文长度、
+        温度、备注" —— 原先只有"读"与"切换"，没有任何写入口，加档位必须手改
+        ``config.json``。这里补上写入口，并保持既有字段语义不变（**扩展而不是重写**：
+        ``models`` 的结构仍是 ``{别名: {path, repo, context_length, temperature, ...}}``，
+        老配置照常读，只是多了 ``note`` 与 ``quantization`` 两个可选键）。
+
+        同名别名 = 修改（不是追加），``rename_from`` 支持改名。
+        """
+        alias = str(request.get("alias") or "").strip()
+        if not alias:
+            return {"ok": False, "error": _t("sys.profile_alias_required"),
+                    "state": self.profiles_state()}
+        if len(alias) > 32 or any(ch in alias for ch in "\\/:\n\t"):
+            return {"ok": False, "error": _t("sys.profile_alias_invalid", alias=alias),
+                    "state": self.profiles_state()}
+        models = dict(self.config.models or {})
+        rename_from = str(request.get("rename_from") or "").strip()
+        base = dict(models.get(rename_from) or {}) if rename_from else dict(models.get(alias) or {})
+        if rename_from and rename_from != alias:
+            models.pop(rename_from, None)
+        for field in self.PROFILE_FIELDS:
+            if field not in request:
+                continue
+            value = request.get(field)
+            if field == "context_length":
+                try:
+                    number = int(value)
+                except (TypeError, ValueError):
+                    return {"ok": False, "error": _t("sys.profile_bad_context", value=value),
+                            "state": self.profiles_state()}
+                # **越界要报错而不是静默夹紧**：界面滑块夹紧是体贴，接口夹紧是骗人
+                # （用户传 100000 却得到 32768，还以为自己设成功了）。首轮实测就是
+                # 传 temperature=9 被静默改成 1.5 且提示"已保存"。
+                if number < 0 or number > int(self.config.max_context):
+                    return {"ok": False,
+                            "error": _t("sys.profile_context_out_of_range",
+                                        value=number, low=0, high=self.config.max_context),
+                            "state": self.profiles_state()}
+                value = number
+            elif field == "temperature":
+                try:
+                    number = float(value)
+                except (TypeError, ValueError):
+                    return {"ok": False, "error": _t("sys.profile_bad_temperature", value=value),
+                            "state": self.profiles_state()}
+                if number < 0.0 or number > 1.5:
+                    return {"ok": False,
+                            "error": _t("sys.profile_temperature_out_of_range",
+                                        value=number, low=0.0, high=1.5),
+                            "state": self.profiles_state()}
+                value = number
+            else:
+                value = str(value or "").strip()
+            if value in ("", None):
+                base.pop(field, None)
+            else:
+                base[field] = value
+        if not base.get("path"):
+            base["path"] = alias if alias.lower().endswith(".gguf") else f"{alias}.gguf"
+        models[alias] = base
+        self.config.models = models
+        self.config.save()
+        return {"ok": True, "alias": alias, "profile": base, "state": self.profiles_state(),
+                "content": _t("sys.profile_saved", alias=alias)}
+
+    def delete_profile(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """删除一个档位登记（**不删磁盘上的模型文件**）。
+
+        为什么只删登记：删文件是不可逆的重操作，而档位只是"我常用这一档"的记录。
+        真删文件在模型库里另有入口（带确认弹窗）。
+        """
+        alias = str(request.get("alias") or "").strip()
+        models = dict(self.config.models or {})
+        if alias not in models:
+            return {"ok": False, "error": _t("sys.profile_unknown", alias=alias),
+                    "state": self.profiles_state()}
+        name = os.path.basename(str((models.get(alias) or {}).get("path") or alias))
+        current = os.path.basename(str(getattr(self.config, "model_path", "") or ""))
+        if name and name == current:
+            return {"ok": False, "error": _t("sys.profile_in_use", alias=alias),
+                    "state": self.profiles_state()}
+        models.pop(alias, None)
+        self.config.models = models
+        self.config.save()
+        return {"ok": True, "alias": alias, "state": self.profiles_state(),
+                "content": _t("sys.profile_deleted", alias=alias)}
+
+    @staticmethod
+    def _profile_response_content(result: Dict[str, Any]) -> str:
+        """把档位写操作的结果统一成一行界面文本（失败一定带 ❌ 前缀）。
+
+        为什么单独抽出来：`error` 字段里的文案有的自带 ❌（如 `profile_in_use`）、
+        有的没有（如 `profile_unknown` 是给别处复用的中性提示）。界面需要一致的呈现，
+        所以由**输出层**补齐前缀，而不是去改那些被复用的语言键。
+        """
+        content = str(result.get("content") or "")
+        if content:
+            return content
+        error = str(result.get("error") or "")
+        if not error:
+            return ""
+        return error if error.startswith("❌") else f"❌ {error}"
+
+    def _handle_model_profile_save(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        result = self.save_profile(request)
+        return {"type": "system", "content": self._profile_response_content(result),
+                "model_profile_save": result, "model_profiles": result.get("state", {})}
+
+    def _handle_model_profile_delete(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        result = self.delete_profile(request)
+        return {"type": "system", "content": self._profile_response_content(result),
+                "model_profile_delete": result, "model_profiles": result.get("state", {})}
+
     # ---------- 技能市场（任务五） ----------
 
     def _market_error(self, e: Exception, verb: str) -> Dict[str, Any]:
@@ -1305,7 +1481,13 @@ class Backend:
         return {"type": "system", "content": "", "detail": detail}
 
     def _handle_market_install(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """安装技能（用户已在前端确认）。"""
+        """安装技能（用户已在前端确认），**装完立刻热重载**。
+
+        能力扩展-1 任务四：审计发现"装上就能用"差最后一步 —— 旧实现只回一句文案，
+        用户必须自己去点「重载本地插件」或重启，否则指令面板里看不到新指令
+        （这正是任务书说的"运行期加载器接线尚未完成"的真实表现）。
+        现在安装成功后直接走 ``skills().reload_all()``，把加载结果一并回给界面。
+        """
         repo = str(request.get("repo") or "").strip()
         if not repo:
             return {"type": "system", "content": _t("sys.market_missing_repo")}
@@ -1315,10 +1497,26 @@ class Backend:
             return self._market_error(e, _t("sys.verb_install"))
         ok = bool(result.get("ok"))
         icon = "✅" if ok else "❌"
-        return {"type": "system", "content": f"{icon} {result.get('message', '')}"}
+        response: Dict[str, Any] = {"type": "system",
+                                    "content": f"{icon} {result.get('message', '')}",
+                                    "market_install": result}
+        if ok:
+            response["content"] += "\n" + self._reload_skills_note()
+            response["model_skills"] = self.skills().status()
+        return response
+
+    def _reload_skills_note(self) -> str:
+        """热重载插件并把结果说清楚（供安装/卸载后复用）。"""
+        try:
+            summary = self.skills().reload_all()
+        except Exception as e:                             # 重载失败不掩盖安装成功
+            log.exception("安装后热重载插件失败")
+            return _t("sys.skills_reload_failed", error=e)
+        return _t("sys.skills_reloaded", loaded=summary.get("loaded", 0),
+                  total=summary.get("total", 0), failed=summary.get("failed", 0))
 
     def _handle_market_uninstall(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """卸载技能：移除注册表条目并删除技能目录，再回读确认。"""
+        """卸载技能：移除注册表条目并删除技能目录，再回读确认（同样立刻热重载）。"""
         skill_id = str(request.get("id") or request.get("repo") or "").strip()
         if not skill_id:
             return {"type": "system", "content": _t("sys.market_missing_skill_id")}
@@ -1328,7 +1526,14 @@ class Backend:
             return self._market_error(e, _t("sys.verb_uninstall"))
         ok = bool(result.get("ok"))
         icon = "✅" if ok else "❌"
-        return {"type": "system", "content": f"{icon} {result.get('message', '')}"}
+        response: Dict[str, Any] = {"type": "system",
+                                    "content": f"{icon} {result.get('message', '')}",
+                                    "market_uninstall": result}
+        if ok:
+            # 卸载后必须重载：否则被删插件的指令仍留在指令表里，点下去才报错
+            response["content"] += "\n" + self._reload_skills_note()
+            response["model_skills"] = self.skills().status()
+        return response
 
     def _handle_market_installed(self) -> Dict[str, Any]:
         try:
@@ -1751,6 +1956,125 @@ class Backend:
         snapshot.pop("type", None)
         return snapshot
 
+    def mcp_control(self, action: str = "", name: str = "") -> Dict[str, Any]:
+        """``/mcp`` 的统一入口：读状态、启停某个 server、或强制连接。
+
+        启停会写进 ``config.json``（用户按一次就长期生效）并**立刻重建工具表**，
+        满足任务书"运行时启停，无需重启"。
+        """
+        cfg = getattr(self.config, "mcp", None)
+        if cfg is None:
+            return {}
+        if not action:
+            return self.mcp_diagnostics()
+        if action in ("enable", "disable"):
+            target = None
+            for server in (cfg.servers or []):
+                if str(getattr(server, "name", "")).strip() == str(name).strip():
+                    target = server
+                    break
+            if target is None:
+                return {"ok": False, "state": self.mcp_diagnostics()}
+            target.enabled = (action == "enable")
+            self.config.save()
+            # 关掉的 server 要真的把进程收掉；打开的按 auto_connect 决定是否立刻连
+            if self._mcp_bridge is not None:
+                self._mcp_bridge.close()
+            self._mcp_bridge = None
+            self._agent_registry = None
+            if action == "enable" and bool(getattr(cfg, "auto_connect", False)):
+                self.refresh_agent_tools(discover_mcp=True)
+            else:
+                self.refresh_agent_tools(discover_mcp=False)
+            return {"ok": True, "state": self.mcp_diagnostics()}
+        if action == "connect":
+            summary = self.refresh_agent_tools(discover_mcp=True)
+            return {"ok": bool(summary.get("registered")),
+                    "registered": summary.get("registered", 0),
+                    "state": self.mcp_diagnostics()}
+        return {"ok": False, "state": self.mcp_diagnostics()}
+
+    def _handle_agent_config(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """设置页/指令的 Agent 配置写入（工具授权、步数上限）。
+
+        与 ``/agent`` 指令走同一个 ``configure_agent`` —— 界面与指令**不能各有一套
+        权限逻辑**，否则迟早出现"界面上显示已启用、实际没启用"这类不一致。
+        """
+        if "steps" in request:
+            result = self.configure_agent("__steps__", request.get("steps"))
+        elif request.get("tool"):
+            result = self.configure_agent(str(request.get("tool")),
+                                          bool(request.get("allowed", True)))
+        else:
+            result = self.configure_agent()
+        return {"type": "system", "content": "", "agent_config": result,
+                "agent": self.agent_diagnostics()}
+
+    def _handle_mcp_apply(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """应用 MCP 配置（启用/禁用 server、改命令与超时），并**运行时生效**。
+
+        任务书要求"用户可在设置中启用/禁用某个 MCP Server，无需重启"：
+        ``refresh_agent_tools`` 会重建工具注册表，并（在启用时）拉起新配的 server
+        进程、把工具挂进 Agent；被停用的 server 会被 ``close()`` 掉，
+        它的工具立刻从清单里消失。
+        """
+        cfg = getattr(self.config, "mcp", None)
+        if cfg is None:
+            return {"type": "system", "content": _t("sys.mcp_unavailable")}
+        if "enabled" in request:
+            cfg.enabled = bool(request.get("enabled"))
+        if "auto_connect" in request:
+            cfg.auto_connect = bool(request.get("auto_connect"))
+        if request.get("timeout_seconds") is not None:
+            try:
+                cfg.timeout_seconds = max(1.0, min(600.0, float(request["timeout_seconds"])))
+            except (TypeError, ValueError):
+                return {"type": "system", "content": _t("sys.mcp_bad_timeout")}
+        servers = request.get("servers")
+        if isinstance(servers, list):
+            from config import McpServerConfig
+            from mcp_client import McpBridge
+
+            # 按 name 与既有配置合并：界面传回来的条目可能省略 env / passthrough_env
+            # （老版本前端不回传它们）。不合并的话，"改个超时再保存"会把用户手写在
+            # config.json 里的环境变量抹掉 —— 属于静默的数据丢失，必须从根上堵住。
+            existing = {str(getattr(item, "name", "")): item for item in (cfg.servers or [])}
+            cleaned = []
+            for item in servers:
+                if not isinstance(item, dict):
+                    continue
+                parsed = McpBridge.server_from_dict(item)
+                if parsed is None:
+                    return {"type": "system",
+                            "content": _t("sys.mcp_bad_server",
+                                          item=str(item.get("name") or item.get("command") or ""))}
+                old = existing.get(parsed.name)
+                if old is not None:
+                    if "env" not in item:
+                        parsed.env = dict(getattr(old, "env", {}) or {})
+                    if "passthrough_env" not in item:
+                        parsed.passthrough_env = list(getattr(old, "passthrough_env", []) or [])
+                # 用**模型对象**而不是 dict 存回配置：pydantic 对"声明了类型却塞 dict"
+                # 会给出序列化警告，写出的 JSON 也可能与声明不一致（实测踩到过）。
+                cleaned.append(McpServerConfig(
+                    name=parsed.name, command=parsed.command, args=list(parsed.args),
+                    env=dict(parsed.env), enabled=bool(parsed.enabled),
+                    passthrough_env=list(parsed.passthrough_env),
+                ))
+            cfg.servers = cleaned
+        self.config.save()
+        # 配置变了 → 重建桥接器与工具表；只有"启用 + 要求连接"时才真的拉起进程
+        if self._mcp_bridge is not None:
+            self._mcp_bridge.close()
+        self._mcp_bridge = None
+        self._agent_registry = None
+        should_connect = bool(cfg.enabled) and bool(cfg.auto_connect) and bool(cfg.servers)
+        summary = self.refresh_agent_tools(discover_mcp=should_connect)
+        return {"type": "system", "content": "",
+                "mcp_apply": {"ok": True, "registered": summary.get("registered", 0),
+                              "connected": should_connect},
+                "mcp": self.mcp_diagnostics(), "agent": self.agent_diagnostics()}
+
     def _handle_capability_settings(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """运行期调整能力相关设置（修复四：预设 / 滑动窗口 / 分段摘要参数）。
 
@@ -1783,7 +2107,11 @@ class Backend:
             cfg.context_mode = mode
             changed.append("context_mode")
 
-        for key, low, high in (("temperature", 0.0, 1.0), ("top_p", 0.0, 1.0),
+        # 采样参数范围。温度上限从 1.0 放宽到 1.5（能力扩展-1 任务五）：
+        # 设置界面的滑块做到 0–1.5，后端只认到 1.0 会让"拖到头保存后又变回去"，
+        # 用户会认为界面在骗人。1.5 仍是可控范围（llama.cpp 支持到 2.0，
+        # 但小模型超过 1.5 基本只剩胡话，权衡后卡在这里）。
+        for key, low, high in (("temperature", 0.0, 1.5), ("top_p", 0.0, 1.0),
                                ("repeat_penalty", 0.5, 2.0)):
             if key in request and request.get(key) is not None:
                 try:
@@ -1908,9 +2236,17 @@ class Backend:
             yield vague_done
             return
 
+        # Agent 模式（能力扩展-1 任务二）：模型自主调用工具的循环，走独立通道。
+        # 放在这里而不是聊天路径里，是因为它产出的是**多步事件流**
+        # （agent_step / tool_call / tool_result + 最终 done），与单次生成不同。
+        if self.conv.get_mode() == "agent":
+            yield from self._stream_agent(user_msg)
+            return
+
         search_context = self._search_if_enabled(user_msg)
         include_file = bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)
-        messages = self.conv.build_messages(user_msg, search_context, include_file=include_file)
+        messages = self.conv.build_messages(user_msg, search_context, include_file=include_file,
+                                            retrieval_context=self._retrieval_context_for(user_msg))
         # 任务二（优化已知问题-2）：搜索开着却没拿到可用结果时，**明确告知用户**，
         # 而不是静默继续 —— 否则用户会以为"搜索没生效"或"模型忽略了搜索结果"，
         # 实际是这一层就没拿到东西。这条提示作为回答区的首段前缀发出。
@@ -2003,7 +2339,361 @@ class Backend:
             log.exception("流式推理失败")
             yield {"type": "error", "content": _t("sys.inference_failed", error=e)}
 
+    # ---------- Agent（能力扩展-1 任务二） ----------
+
+    def agent_registry(self) -> Any:
+        """当前的工具注册表（含权限状态）。
+
+        惰性创建 + **配置变更后重建**：``_agent_registry`` 是缓存，
+        ``refresh_agent_tools()`` 会把它清掉（MCP 启停、权限变更都走那条路）。
+        """
+        from agent_tools import ToolContext, ToolRegistry
+
+        if self._agent_registry is not None:
+            return self._agent_registry
+        cfg = getattr(self.config, "agent", None)
+        allowed = list(getattr(cfg, "allow_sensitive", []) or [])
+        registry = ToolRegistry(
+            allowed_sensitive=allowed,
+            ctx=ToolContext(
+                conv=self.conv,
+                search=self.search,
+                summarizer=self.summarizer,
+                count_tokens=self._estimate_tokens,
+                files_dir=os.path.dirname(os.path.abspath(self.config.model_path or ".")),
+            ),
+        )
+        self._agent_registry = registry
+        return registry
+
+    def refresh_agent_tools(self, discover_mcp: bool = False) -> Dict[str, Any]:
+        """重建工具注册表（MCP 启停、配置变更后调用）。
+
+        ``discover_mcp=True`` 会真的拉起配置里的 MCP Server 进程并拉取工具清单 ——
+        这是**有代价也有风险**的动作（外部进程、可能联网），所以要显式要求，
+        不会在每次提问时顺手做。
+        """
+        self._agent_registry = None
+        registry = self.agent_registry()
+        registered = 0
+        if discover_mcp:
+            bridge = self.mcp_bridge()
+            bridge.auto_connect = True
+            try:
+                from mcp_client import register_mcp_tools
+
+                registered = register_mcp_tools(registry, bridge)
+            except Exception as exc:                   # MCP 不可用不能连累 Agent 本身
+                log.warning("注册 MCP 工具失败：%s", exc)
+        return {"registered": registered,
+                "tools": registry.names(),
+                "enabled": [tool.name for tool in registry.available()]}
+
+    def mcp_bridge(self) -> Any:
+        """按 ``config.mcp`` 构造/复用 MCP 桥接器（惰性）。"""
+        from mcp_client import McpBridge, McpServer
+
+        cfg = getattr(self.config, "mcp", None)
+        if self._mcp_bridge is None or self._mcp_signature != self._mcp_config_signature():
+            if self._mcp_bridge is not None:
+                self._mcp_bridge.close()               # 配置变了先关掉旧进程
+            servers: List[Any] = []
+            for raw in (getattr(cfg, "servers", []) or []):
+                item = raw if isinstance(raw, dict) else raw.model_dump()
+                server = McpBridge.server_from_dict(item)
+                if server is not None:
+                    servers.append(server)
+            self._mcp_bridge = McpBridge(
+                servers=servers,
+                timeout=float(getattr(cfg, "timeout_seconds", 20.0) or 20.0),
+                auto_connect=bool(getattr(cfg, "auto_connect", False)),
+            )
+            self._mcp_signature = self._mcp_config_signature()
+        return self._mcp_bridge
+
+    def _mcp_config_signature(self) -> str:
+        cfg = getattr(self.config, "mcp", None)
+        try:
+            return json.dumps({
+                "enabled": bool(getattr(cfg, "enabled", False)),
+                "servers": [
+                    (item if isinstance(item, dict) else item.model_dump())
+                    for item in (getattr(cfg, "servers", []) or [])
+                ],
+                "timeout": float(getattr(cfg, "timeout_seconds", 20.0) or 20.0),
+            }, ensure_ascii=False, sort_keys=True)
+        except Exception:
+            return ""
+
+    def mcp_diagnostics(self) -> Dict[str, Any]:
+        """MCP 的可观测状态（供 /mcp、设置页与测试用）。"""
+        cfg = getattr(self.config, "mcp", None)
+        bridge = self.mcp_bridge()
+        return {
+            "enabled": bool(getattr(cfg, "enabled", False)),
+            "auto_connect": bool(getattr(cfg, "auto_connect", False)),
+            "timeout_seconds": float(getattr(cfg, "timeout_seconds", 20.0) or 20.0),
+            "servers": bridge.status(),
+            "tools": bridge.tool_names(),
+            "error": bridge.last_error,
+        }
+
+    def agent_diagnostics(self) -> Dict[str, Any]:
+        """Agent 的可观测状态（供 /agent、测试与排查用）。
+
+        任务书要求"用户能看到 Agent 的每一步"，后端这边必须先把"每一步"留成结构化数据，
+        前端才有可能显示得对；否则排查时只能靠翻日志。
+        """
+        registry = self._agent_registry or self.agent_registry()
+        cfg = getattr(self.config, "agent", None)
+        return {
+            "mode": self.conv.get_mode(),
+            "max_steps": int(getattr(cfg, "max_steps", 4) or 4),
+            "tools": registry.public_list(),
+            "enabled_tools": [tool.name for tool in registry.available()],
+            "last_run": getattr(self, "_last_agent_run", None),
+        }
+
+    def _iter_agent_events(self, runner: Any) -> Iterator[Dict[str, Any]]:
+        """把 Agent 循环（同步、会阻塞）变成可流式产出的生成器。
+
+        为什么要线程 + 队列：循环里每一步都要调模型（几秒）与执行工具，
+        若在生成器里同步跑，用户在界面上会看到长时间毫无动静 —— 与流式路径的
+        既有做法（``llm_engine._iter_with_heartbeat``）保持一致：读者线程 + 队列，
+        等待期间发心跳。停止信号既传给循环（每步检查），也在这里立刻返回。
+        """
+        import queue as _queue
+        import threading
+
+        events: "_queue.Queue[Any]" = _queue.Queue()
+        box: Dict[str, Any] = {}
+
+        def worker() -> None:
+            try:
+                box["run"] = runner(lambda event: events.put(event))
+            except Exception as exc:                       # 循环本身崩了也要给出原因
+                box["error"] = str(exc)
+            finally:
+                events.put(None)
+
+        thread = threading.Thread(target=worker, daemon=True, name="echodesk-agent")
+        thread.start()
+        heartbeat = float(getattr(self.config, "stream_heartbeat_seconds", 1.5) or 1.5)
+        while True:
+            if self.stop_event.is_set():
+                break
+            try:
+                event = events.get(timeout=max(0.2, heartbeat))
+            except _queue.Empty:
+                yield {"type": "progress", "channel": _CH_HEARTBEAT, "agent": True}
+                continue
+            if event is None:
+                break
+            yield event
+        thread.join(timeout=5)
+        self._agent_run = box.get("run")
+
+    def _stream_agent(self, user_msg: str) -> Iterator[Dict[str, Any]]:
+        """Agent 模式的流式处理：多步事件 + 最终 done。"""
+        from agent import AgentLoop
+
+        cfg = getattr(self.config, "agent", None)
+        registry = self.agent_registry()
+        self._last_agent_run = None
+        messages = self._agent_messages(user_msg, registry)
+        loop = AgentLoop(
+            self.llm, registry,
+            max_steps=int(getattr(cfg, "max_steps", 4) or 4),
+            stop_event=self.stop_event,
+            max_tokens=int(getattr(self.config, "max_tokens", 1024) or 1024),
+            max_observation_chars=int(getattr(cfg, "max_observation_chars", 1200) or 1200),
+        )
+        temperature = float(getattr(self.commands, "temperature", 0.5) or 0.5)
+
+        for event in self._iter_agent_events(
+                lambda emit: loop.run(messages, temperature=temperature, on_event=emit)):
+            if event.get("type") in ("agent_step", "tool_call", "tool_result"):
+                yield event
+            else:
+                # 心跳等其它事件原样透传（前端只认 type，多余字段无害）
+                yield event
+
+        run = self._agent_run
+        answer = str(getattr(run, "answer", "") or "") if run is not None else ""
+        if run is None:
+            answer = _t("sys.inference_failed", error="agent loop did not return")
+        # 把最终答案按流式 delta 发一遍：前端已有的渲染路径不用改就能显示结论，
+        # done 行仍然是权威内容（与 chat_stream 的约定一致）。
+        if answer:
+            yield {"type": "delta", "channel": _CH_ANSWER, "content": answer}
+
+        self.conv.add_message("user", user_msg)
+        self.conv.add_message("assistant", answer)
+        self._compact_history()
+
+        if run is not None:
+            self._last_agent_run = {
+                "steps": run.trace(),
+                "stopped": run.stopped,
+                "hit_max_steps": run.hit_max_steps,
+                "elapsed_ms": run.elapsed_ms,
+                "tools": [step.tool for step in run.steps if step.tool],
+            }
+
+        done: Dict[str, Any] = {
+            "type": "done",
+            "content": answer,
+            "stopped": bool(getattr(run, "stopped", False)),
+            "agent": {
+                "steps": len(getattr(run, "steps", []) or []),
+                "tools": [step.tool for step in getattr(run, "steps", []) if step.tool],
+                "hit_max_steps": bool(getattr(run, "hit_max_steps", False)),
+                "elapsed_ms": int(getattr(run, "elapsed_ms", 0) or 0),
+            },
+        }
+        self._attach_context(done)
+        yield done
+
+    def _agent_messages(self, user_msg: str, registry: Any) -> List[dict]:
+        """Agent 轮的 messages：系统提示词 + **运行期追加的工具协议** + 历史 + 问题。
+
+        工具协议与可用工具清单是**动态的**（受权限开关影响），所以放在这里追加，
+        而不是写进 ``MODES["agent"]``：模式块要守住 700 字符的审计上限，
+        也不能在提示词里列出"当前没启用的工具"。
+        """
+        include_file = bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)
+        messages = self.conv.build_messages(user_msg, "", include_file=include_file)
+        messages[0] = {
+            "role": "system",
+            "content": str(messages[0].get("content", "")) + "\n\n" + registry.protocol_text(),
+        }
+        return messages
+
     # ---------- 具体动作 ----------
+
+    # ---------- 本地检索（能力扩展-1 任务六） ----------
+
+    def retriever(self) -> Any:
+        """当前检索器（惰性创建，配置取自 ``config.retrieval``）。"""
+        if self._retriever is None:
+            from retrieval import Retriever, config_view
+
+            self._retriever = Retriever(config_view(getattr(self.config, "retrieval", None)))
+        return self._retriever
+
+    def index_files(self) -> Dict[str, Any]:
+        """把**当前上下文里的文件**同步进索引（增量的：只补新文件、只删已移除的）。
+
+        为什么每次注入前同步而不是"上传时索引一次"：文件可以经 /file、拖拽、
+        会话恢复三条路径进来，还有同名替换；统一在"要用的时候对齐一次"最不容易漏。
+        对齐本身是纯内存操作（47 KB 实测 < 20 ms），不构成性能问题。
+        """
+        retriever = self.retriever()
+        try:
+            entries = list(self.conv.files)
+        except Exception:
+            return retriever.stats()
+        present = {str(getattr(entry, "name", "") or "") for entry in entries}
+        for name in list(retriever.files):
+            if name not in present:
+                retriever.remove_file(name)
+        for entry in entries:
+            name = str(getattr(entry, "name", "") or "")
+            if not name:
+                continue
+            body = str(getattr(entry, "content", "") or "")
+            if not body and str(getattr(entry, "stored_at", "") or ""):
+                # 正文落盘的文件：从磁盘读回来索引（检索要用原文，不能用摘要）
+                try:
+                    with open(str(entry.stored_at), "r", encoding="utf-8", errors="replace") as handle:
+                        body = handle.read()
+                except OSError:
+                    body = ""
+            if not body:
+                body = str(getattr(entry, "summary", "") or "")
+            if not body:
+                continue
+            existing = getattr(retriever, "_chunks_by_file", {}).get(name) or []
+            # 已经索引过且长度一致 → 不重复切分（增量）
+            if existing and sum(len(chunk.text) for chunk in existing) >= min(len(body), 1):
+                continue
+            retriever.add_file(name, body)
+        return retriever.stats()
+
+    def retrieval_diagnostics(self) -> Dict[str, Any]:
+        """检索的可观测状态（供 /status、测试与排查用）。"""
+        stats = dict(self.retriever().stats())
+        stats["last_query"] = getattr(self, "_last_retrieval", None)
+        return stats
+
+    def _retrieval_context_for(self, user_msg: str) -> str:
+        """按"摘要 vs 检索"的分工决定要不要注入检索片段。
+
+        规则（与 ``backend/retrieval.py`` 模块说明一致）：
+          * 没有文件、或检索被关掉 → 不注入；
+          * 文件是**短文档**（能全文注入）→ 不检索，全文更准；
+          * 文件是**长文档**（已落盘或已生成摘要）→ 检索 top-k 片段注入。
+
+        **刻意不再要求"问题里提到文件"**（``FILE_INTENT`` 那道闸门是给全文注入用的，
+        因为全文注入很贵）。检索本身又便宜又能自证：没有命中的查询
+        （``as_context`` 返回空串）本来就不会注入任何东西。若沿用那道闸门，
+        "违约金比例是多少"这种**不点名文件**的提问反而检索不到 —— 而多文档问答
+        恰恰要求用户不必点名（首轮实测就是这个症状）。
+        """
+        cfg = getattr(self.config, "retrieval", None)
+        if cfg is None or not bool(getattr(cfg, "enabled", True)):
+            return ""
+        if not self.conv.files:
+            return ""
+        long_docs = [entry for entry in self.conv.files
+                     if str(getattr(entry, "stored_at", "") or "") or str(getattr(entry, "summary", "") or "")]
+        if not long_docs:
+            return ""
+        try:
+            self.index_files()
+            context = self.retriever().as_context(user_msg)
+        except Exception as exc:                       # 检索失败不能连累作答
+            log.warning("检索失败，退回原有注入方式：%s", exc)
+            return ""
+        if not context:
+            return ""
+        self._last_retrieval = {
+            "query": user_msg,
+            "files": [str(getattr(entry, "name", "")) for entry in long_docs],
+            "injected_chars": len(context),
+        }
+        return context
+
+    def configure_agent(self, tool: str = "", allowed: Any = True) -> Dict[str, Any]:
+        """``/agent`` 的写入口：读取状态、开关某个工具的权限、改进度上限。
+
+        调用形状（由 ``CommandHandler._agent`` 决定）：
+          * ``configure_agent()``                    → 只读状态
+          * ``configure_agent("web_search", True)``  → 授权
+          * ``configure_agent("__steps__", 5)``      → 改进度上限
+
+        权限与步数都写进 ``config.json``（``config.save()``）：用户按一次就长期生效，
+        否则每次重启都要重新授权，实际使用中一定会被吐槽然后被关掉整个功能。
+        """
+        registry = self.agent_registry()
+        cfg = getattr(self.config, "agent", None)
+        if tool == "__steps__":
+            try:
+                steps = max(1, min(8, int(allowed)))
+            except (TypeError, ValueError):
+                return {"ok": False, "max_steps": getattr(cfg, "max_steps", 4)}
+            if cfg is not None:
+                cfg.max_steps = steps
+                self.config.save()
+            return {"ok": True, "max_steps": steps}
+        if tool:
+            if not registry.allow(tool, bool(allowed)):
+                return {"ok": False, "tools": registry.names()}
+            if cfg is not None:
+                cfg.allow_sensitive = sorted(registry.allowed_sensitive)
+                self.config.save()
+            return {"ok": True, "enabled": registry.is_allowed(registry.get(tool))}
+        return self.agent_diagnostics()
 
     def _vague_guide(self, user_msg: str) -> str:
         """提问过于模糊时该回的**引导话术**；不该拦就返回空串。
@@ -2012,10 +2702,13 @@ class Backend:
         **引导**：列出 2~3 种可能的方向、每种配一句做法，让用户回一个编号。
 
         只在"没有文件上下文、也没有历史"时触发：已经有上下文的情况下"这个怎么办"
-        往往指的是上文内容，引导反而多余。**引导模式下不拦** —— 那个模式的系统提示词
-        本身就是这件事，交给模型现想更贴合用户那句话。
+        往往指的是上文内容，引导反而多余。
 
-        抽成方法是因为**两个调用点必须一致**：本轮集成测试发现这条判断原先只写在
+        **两种情况下不拦**（能力扩展-1 任务一之后，guide 不再是模式而是任务模板）：
+        ``/task guide``（用户明确要模型自己列方向）与 agent 模式（模型本来就要自己
+        决定做什么）。判据从"模式名等于 guide"改成了"任务层就是 guide 模板"。
+
+        抽成方法是因为**两个调用点必须一致**：上一轮的集成测试发现这条判断原先只写在
         `_handle_chat` 里，而前端正常对话走的是 `stream()` 的 `chat_stream` ——
         也就是说"模糊提问给方向/追问"在图形界面里从来没生效过（历史遗留缺陷，
         见 records/v0.2.1-系统提示词重构记录.md）。修法不是把代码复制到第二个地方，
@@ -2023,7 +2716,9 @@ class Backend:
         """
         if not bool(getattr(self.config, "clarify_vague", True)):
             return ""
-        if self.conv.get_mode() == "guide":
+        if getattr(self.conv, "task_template", "") == "guide":
+            return ""
+        if self.conv.get_mode() == "agent":
             return ""
         if self.conv.history or self.conv.file_content:
             return ""
@@ -2070,7 +2765,8 @@ class Backend:
 
         search_context = self._search_if_enabled(user_msg)
         include_file = bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)
-        messages = self.conv.build_messages(user_msg, search_context, include_file=include_file)
+        messages = self.conv.build_messages(user_msg, search_context, include_file=include_file,
+                                            retrieval_context=self._retrieval_context_for(user_msg))
         try:
             thinking, response = self.llm.chat_complete_split(
                 messages,

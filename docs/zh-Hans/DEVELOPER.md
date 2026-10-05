@@ -36,10 +36,14 @@ English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)。
 │  llm_engine.py    llama.cpp 封装：窗口/训练窗口日志、KV Cache 估算、流式生成与速度统计         │
 │  gguf_meta.py     轻量解析 GGUF 元数据（不加载模型即可取训练窗口、层数、KV 头数）              │
 │  summarizer.py    长文档 map-reduce 分段摘要（分段/重叠/逐段摘要/递归归并/原文指针）           │
+│  retrieval.py     本地文档检索：BM25 + 分块、字符区间溯源、增量索引（任务六）                 │
 │  conversation.py  对话历史、模式、文件上下文、会话持久化                                       │
+│  agent.py         Agent 循环：多步工具调用、步数上限、事件流、可中断（能力扩展-1 任务二）     │
+│  agent_tools.py   工具层：Tool/ToolRegistry、内置工具集、权限分级 safe/sensitive/guard        │
 │  command_handler.py  / 指令解析与分发（含技能注册的外部指令）                                  │
 │  file_parser.py   文件解析：WPS COM 优先（可读加密文档）→ 内置轻量解析器                        │
 │  skills_runtime.py 技能运行期加载器：发现/优先级/信任/卸载/面板/钩子（任务二）                  │
+│  mcp_client.py    MCP stdio 客户端与工具桥接（自研零依赖；任务三）                            │
 │  download_utils.py 模型仓库查询与下载（hf-mirror 镜像）                                       │
 │  search_engine.py  DuckDuckGo 联网搜索                                                        │
 │  automation.py    Playwright 驱动 Edge 的浏览器自动化（有头模式）                              │
@@ -60,19 +64,20 @@ English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)。
 | 层 | 内容 | 谁写的 | 与其它层的关系 |
 | --- | --- | --- | --- |
 | 1 | **自定义指令** | 用户 `/prompt <文本>` | 优先级最高：**替换**第 2、3 层 |
-| 2 | **模式块** | `conversation.MODES`（6 个模式） | 场景与语气；被第 1 层替换 |
+| 2 | **模式块** | `conversation.MODES`（3 个模式：chat / contract / agent） | 场景与语气；被第 1 层替换 |
 | 3 | **任务层** | `prompts.TASK_TEMPLATES`（`/task`） | **叠加**在第 2 层之后；冲突时以它为准（模板末尾有 `[优先级]` 行） |
 | 4 | **共享主干** | `conversation._CORE_RULES` | 视角 / 边界 / 输出纪律，任何组合下都生效 |
 | 5 | **语言指令** | `conversation._REPLY_LANGUAGE` | 跟随**界面语言**（`i18n` 当前 locale） |
 | 6 | 会话上下文 | `【早期对话摘要】` / `【已上传文件】` | 由 `summary` 与文件状态决定 |
 
-**六要素**：每个模式块自带「角色 / 输出格式 / 思维链 / 少样本示例 / 语气」五项，
-第六项「边界」（不知道就说不知道、不编造出处、信息不足先问清最关键的一点）放在
-共享主干里——它跟场景无关，写 6 遍既白占上下文，也会在改动时漏掉几处。
+**六要素**：每个模式块自带「角色 / 输出格式 / **详略判断** / 思维链 / 少样本示例 / 语气」六项
+（`contract` 与 `agent` 另有一条该场景特有的「边界」）。与场景无关的通用纪律
+（不知道就说不知道、不编造出处、先给最可能的答案再问、问题含糊时给 2~3 个方向……）
+放在共享主干 `_CORE_RULES` 的七条里——写 3 遍既白占上下文，也会在改动时漏掉几处。
 
 **长度预算与依据**（由 `tools/test_capability.py` 第 9 节断言守住）：
-单个模式块 ≤ 480 字符（实测 209~313），模式块 + 共享主干 + 语言指令 ≤ 700 字符
-（实测 417~521）。默认上下文 8192 token，中文约 1 字符/token 量级，700 字符约占 8.5%，
+单个模式块 ≤ 480 字符（实测 243~335），模式块 + 共享主干 + 语言指令 ≤ 700 字符
+（实测 607~699）。默认上下文 8192 token，中文约 1 字符/token 量级，700 字符约占 8.5%，
 余量留给文件摘要与对话历史；0.8B 级模型对冗长提示词尤其敏感，所以宁可把规则共享也不铺陈。
 
 **语言分工**：提示词**正文**保持中文、不进语言包（正文译成英文会削弱针对小模型跑偏
@@ -155,6 +160,17 @@ English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)。
 | `market_uninstall` | 卸载技能 | 一行 `system` |
 | `market_installed` | 已安装技能列表 | `system` + `installed` 数组 |
 | `market_status` | 市场连接状态 | `system` + `market_status` |
+| `agent_state` | Agent 工具与权限状态（工具清单、是否启用、步数上限） | `system` + `agent` 对象 |
+| `agent_configure` | 写 Agent 配置（敏感工具授权、步数上限） | `system` + `agent_config` + `agent` |
+| `mcp_state` | MCP 服务器状态与已发现的工具 | `system` + `mcp` 对象 |
+| `mcp_apply` | 应用 MCP 配置（启停 server、改命令与超时）并**运行时生效** | `system` + `mcp` |
+| `retrieval_state` | 本地检索的可观测状态（索引文件数、块数、上次查询） | `system` + `retrieval` 对象 |
+| `capability_settings` | 写回推理参数（温度 / top_p / 重复惩罚 / 最大 token / 预设 / 上下文策略 / 两个开关） | `system` + `settings` |
+| `model_profile_save` | 新增或修改一个模型档位（`rename_from` 改名） | `system` + `model_profile_save` + `model_profiles` |
+| `model_profile_delete` | 删除档位登记（**不删磁盘文件**；在用档位拒绝删除） | `system` + `model_profile_delete` + `model_profiles` |
+| `skills_reload` | 热重载插件：开发来源（`skills_dev/`、本地清单）单独重载，已安装插件保持原样 | `system` + `skills` + `commands` |
+| `skills_log` | 读取开发日志 `skills_dev.log` | `system` + `log` |
+| `skills_clear_log` / `skills_export_log` | 清空 / 导出开发日志 | `system` + `ok` / 导出路径 |
 
 ### 2.4 示例
 
@@ -314,6 +330,16 @@ Cookie（老用户升级后不必重新登录），每次会话结束再导出�
   },
   "file_max_chars": 200000,                  // 0 = 不限制
   "speed_hint": true, "speed_min_tps": 3.0,
+  "agent": { "max_steps": 4, "allow_sensitive": [], "max_observation_chars": 1200 },
+  "retrieval": {                             // 本地检索（任务六）；mode 本版只有 keyword
+    "enabled": true, "mode": "keyword", "chunk_chars": 600, "overlap_chars": 100,
+    "top_k": 4, "max_context_chars": 2400, "min_score": 0.0
+  },
+  "mcp": {                                   // MCP stdio 客户端（任务三）；默认关闭、不自动连接
+    "enabled": false, "timeout_seconds": 20.0, "auto_connect": false,
+    "servers": [ { "name": "", "command": "", "args": [], "env": {},
+                   "enabled": true, "passthrough_env": [] } ]
+  },
   "automation": { /* 见 backend/config.json，含安全协议与选择器 */ },
   "marketplace": { "skill_topic": "echodesk-plugin", "cache_ttl_hours": 6, "github_token": "" }
 }
@@ -379,10 +405,111 @@ python tools\gen_licenses.py          # 重新生成第三方许可证清单
 
 ## 六、扩展点
 
+### 6.1 既有扩展点
+
 - **新增指令**：`command_handler.py` 的 `_handlers` 注册 + `HELP_TEXT`，
   前端 `MainWindow.xaml.cs` 的 `Commands` 数组同步（指令面板与 /help 才看得到）。
 - **新增协议动作**：`main.py` 的 `handle()`（一次性）或 `stream()`（流式）里分发；
   前端在 `BackendService` 加对应方法。长任务请走 `stream()`，复用 stop 中断与进度上报。
 - **新增文件格式**：`file_parser.py` 加 `_read_xxx` 并在 `_parse_builtin` 分发，
   同时把扩展名加进 `_TEXT_EXTS` 或新分支，并更新前端文件对话框的 Filter。
-- **技能开发规范**：见 `docs/zh-Hans/SKILL_GUIDE.md`（中文）与 `docs/en/SKILL_GUIDE.md`（英文）。
+
+### 6.2 工具接口（Agent 的一个工具就是一个 `Tool`）
+
+见 `backend/agent_tools.py`：
+
+```python
+Tool(name="calc", description="计算算术表达式", args_hint='{"expr": "表达式"}',
+     risk=RISK_SAFE, run=tool_calc, example='{"tool": "calc", "args": {...}, "why": "..."}')
+```
+
+- **注册与调用**：`ToolRegistry.register(tool)`；`default_tools()` 是内置工具集；
+  `ToolRegistry.run(name, args)` 返回 `(是否成功, 观察结果文本)`，每次调用记进 `registry.calls`
+  （可观测性），`public_list()` 给界面/文档用。
+- **约定：工具不抛异常，失败以文本返回**。`ToolRegistry.run` 会兜住异常，并按
+  `looks_like_failure()` 的统一口径（`_FAILURE_PREFIXES` / `_FAILURE_MARKERS`）把
+  "算不出来""没搜到""MCP 对端报错"识别成失败——否则界面上这些都显示成"成功"，
+  用户看到的是"工具用过了但什么也没有"。
+- **权限分级**：`safe`（纯计算与"只看用户已经放进来的内容"，默认可用）、
+  `sensitive`（会把数据带出去或读本机任意内容，必须在 `config.agent.allow_sensitive`
+  里预授权）、`guard`（有写入副作用的工具，**本版一个都没有**，保留这一档只为统一词表）。
+  判定入口只有 `ToolRegistry.is_allowed()`；未授权**不是静默失败**，而是一条
+  "未启用 + 怎么开"的观察结果，模型据此换办法或直接作答。
+- **需要宿主能力的工具**（会话、搜索、摘要器）走 `ToolContext` 注入，签名是 `(args, ctx)`，
+  由 `_CTX_TOOLS` 一张表列全——刻意**不检查签名**（打包/装饰器环境下容易失效），
+  这张表在注册表构造时就能一眼看全"哪些工具会碰宿主状态"。
+- **提示词里的「工具协议 + 可用工具」**由 `ToolRegistry.protocol_text()` 在**运行时追加**：
+  可用工具随权限变化，而模式块有 700 字符预算，运行期追加既不吃预算，
+  也不会出现"提示词里列了没启用的工具"。
+- **循环**在 `agent.AgentLoop.run()`：事件是 `agent_step` / `tool_call` / `tool_result`，
+  `stop_event` 置位即停（与流式对话**共用同一条中断路径**）；到 `max_steps` 后
+  追加一条"不要再调工具、直接用已有信息给结论"的指令再收敛一次。
+  工具的 JSON 调用格式由 `parse_tool_call()` 解析（纯函数、可单测），
+  对代码块包裹、前后夹解释文字等跑偏写法都做容错。
+
+### 6.3 MCP 集成（stdio-only 的取舍）
+
+- `mcp_client.StdioMcpClient`：自研约 200 行的 JSON-RPC 2.0 客户端，一行一个 JSON 走
+  stdin/stdout，只实现 `initialize` / `tools/list` / `tools/call`（外加
+  `notifications/initialized`）。调用带超时（`mcp.timeout_seconds`，默认 20 秒），
+  外部进程卡死不会拖住主程序。
+- `mcp_client.McpBridge`：把配置里的 server 声明（`McpServer`：`command` / `args` /
+  `env` / `enabled` / `passthrough_env`）变成客户端；`discover()` 拉取工具清单，
+  `call()` 调用工具，`status()` 给界面与 `/mcp` 用。
+- `register_mcp_tools(registry, bridge)`：把发现的工具包装成普通 `Tool` 注册进
+  **同一个** `ToolRegistry`，名字是 `mcp__<server>__<tool>`，`risk` 一律 `sensitive`，
+  参数说明直接用 MCP 自己的 `inputSchema`。于是权限、审计、可见性、可中断全部复用
+  Agent 那一套，不存在第二套规则。
+- **为什么不用官方 `mcp` 包**：它会带进 `anyio` / `httpx` / `sse-starlette` / `starlette`
+  等一串依赖，其中服务端相关的东西对一个"只需要客户端"的功能完全无用，
+  而发布物正卡在 350–400 MB 区间。
+- **代价（如实记录）**：本版**只支持 stdio 传输**，不支持 HTTP/SSE，也不支持
+  resources / prompts / sampling 与 roots。将来换成官方包时，`McpServer` 与
+  `register_mcp_tools` 都不用改 —— 换的只是传输实现，这也是把"协议"与"传输"分开写的原因。
+- **拉起进程是显式动作**：`auto_connect` 默认 `false`，
+  只有 `refresh_agent_tools(discover_mcp=True)`（由 `/mcp connect`、设置页写入触发）
+  才会真的启动外部进程；被停用的 server 会被 `close()` 掉，工具立刻从清单里消失。
+
+### 6.4 检索扩展点
+
+见 `backend/retrieval.py`：
+
+- `Retriever.add_file(name, text)` 只索引那一份（**增量**，已有文件一个字节都不动，
+  同名文件按最新内容替换）；`remove_file(name)` 精确摘除并重建 BM25 统计；
+  `search(query, top_k, files)` 返回 `List[ScoredChunk]`（`files` 用于限定范围）；
+  `as_context(query)` 渲染成带编号与 `文件名（字符 a-b）` 的注入文本，没有命中就返回空串
+  （调用方据此**不注入空块**）。
+- **扩展点只有 `Retriever.search()` 一个方法**：`RetrievalConfig.mode` 已预留
+  `hybrid` / `vector`，只要返回值仍是 `List[ScoredChunk]`，注入、溯源、权限与 `/status`
+  都不用改。现在选这两个取值会退化成 keyword（不报错，避免用户改了配置就起不来）。
+- 分词与分块都在本模块内：中文 2-gram + 英文词 + **数值词元**（数值必须单独抓，
+  否则"违约金比例是多少"这类带数字的关键事实检索不到）；分块不切句、带重叠，
+  区间是**原文的绝对偏移**——溯源的依据，用户要能拿着"字符 210-480"回原文核对。
+- 与分段摘要的分工由 `main.Backend._retrieval_context_for()` 决定：短文档不检索、
+  长文档"摘要给全局 + 检索给细节"。**不要把它改成"所有文件都检索一遍"**：
+  短文档全文注入本来更准，硬检索只会丢信息。
+
+### 6.5 插件依赖与版本校验
+
+见 `backend/skills_runtime.py`：
+
+- `parse_manifest(manifest)["dependencies"]`：归一成 `{插件 id: 版本要求}`。
+  `skill.json` 的 `dependencies` 支持**列表**（`["other"]`、`["other>=1.2"]`）与
+  **字典**（`{"other": ">=1.2"}`）两种写法，由 `_parse_dependencies()` 统一。
+- `version_satisfies(version, spec)`：支持 `>=` / `>` / `<=` / `<` / `==`；
+  `parse_requirement()` 认可选的 `v` 前缀（照抄 GitHub tag 的 `v1.2.0` 很常见，
+  不认它会让校验被静默绕过）；要求为空或无法解析时**一律放行**（宁可宽松也不误伤），
+  比较前把版本段补齐到同样长度（`1.0` 与 `1.0.0` 视为同一个版本）。
+- `SkillLoader._check_dependencies(records)`：在"发现之后、逐个加载之前"统一判定
+  ——依赖可能互相交叉，必须先拿到全部清单。缺依赖、依赖被禁用、版本不满足都会
+  **拒绝加载并写清原因**；被依赖插件没写版本时**只警告放行**（开发期插件常忘写版本）。
+- `echodesk.min_version` 用同一个 `version_satisfies` 校验主程序版本（`APP_VERSION`）。
+- `SkillLoader._verify_declared_commands()` 核对"声明的命令"与"实际注册的命令"，
+  不一致（含"什么都没声明却注册了命令"）写进警告与 `skills_dev.log`。
+- 插件加载、卸载与注册都兜 `BaseException` 而不只是 `Exception`：插件里一句
+  `sys.exit()` / `raise SystemExit` 会穿透 `Exception`，以前会把后端进程一起带走；
+  指令执行路径上的隔离在 `command_handler.py`。
+
+### 6.6 技能开发规范
+
+- 见 `docs/zh-Hans/SKILL_GUIDE.md`（中文）与 `docs/en/SKILL_GUIDE.md`（英文）。

@@ -390,6 +390,15 @@ try {
     # 真模型的对比要几百 MB GGUF 与数分钟，因此不在门禁里跑（见该文件头部说明）。
     Invoke-Check "提示词重构对比（无模型）" { Invoke-Python "提示词对比" "tools\test_prompt_compare.py"; "通过" }
 
+    # v0.2.1 能力扩展-1：Agent 平台（工具接口/工具集/调用循环/最大步数/权限分级/
+    # 可见性/可中断）+ MCP 客户端（真拉起 examples\mcp\echo_server.py 走 stdio JSON-RPC）
+    # + 本地检索（BM25/引用溯源/多文档/增量索引）+ 模型管理写路径（采样参数、自定义档位）。
+    # 四者都不联网、不加载模型；MCP 会起一个本机 python 子进程（标准库脚本）。
+    Invoke-Check "Agent 平台（能力扩展-1 任务二）" { Invoke-Python "Agent" "tools\test_agent.py"; "通过" }
+    Invoke-Check "MCP 客户端（任务三）" { Invoke-Python "MCP" "tools\test_mcp.py"; "通过" }
+    Invoke-Check "本地检索（任务六）" { Invoke-Python "检索" "tools\test_retrieval.py"; "通过" }
+    Invoke-Check "模型管理写路径（任务五）" { Invoke-Python "模型管理" "tools\test_model_admin.py"; "通过" }
+
     # ---------- 3. 静态检查 ----------
     Invoke-Check "语言包完整性" { Invoke-Python "语言包" "tools\check_lang.py"; "通过" }
     Invoke-Check "主题色板与对比度（修复二）" { Invoke-Python "主题" "tools\check_theme.py"; "通过" }

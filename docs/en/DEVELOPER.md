@@ -37,10 +37,14 @@ protocol, the module layout, the build process and how to extend the program.
 │  llm_engine.py                 llama.cpp wrapper: window/training window logging, KV Cache estimation, streaming generation and speed statistics                         │
 │  gguf_meta.py                  lightweight GGUF metadata parsing (read the training window, layer count and KV head count without loading the model)                     │
 │  summarizer.py                 long-document map-reduce segmented summarisation (chunking/overlap/per-chunk summary/recursive merge/source pointers)                     │
+│  retrieval.py                  local document retrieval: BM25 + chunking, character-range traceability, incremental index (task 6)                                       │
 │  conversation.py               conversation history, modes, file context, session persistence                                                                            │
+│  agent.py                      agent loop: multi-step tool calls, step limit, event stream, interruption (task 2)                                                        │
+│  agent_tools.py                tool layer: Tool/ToolRegistry, built-in tool set, permission tiers safe/sensitive/guard                                                   │
 │  command_handler.py            / command parsing and dispatch (including external commands registered by skills)                                                         │
 │  file_parser.py                file parsing: WPS COM first (can read encrypted documents) → built-in lightweight parsers                                                 │
 │  skills_runtime.py             skill runtime loader: discovery/priority/trust/unload/panel/hooks (task 2)                                                                │
+│  mcp_client.py                 MCP stdio client and tool bridge (in-house, no new dependencies; task 3)                                                                  │
 │  download_utils.py             model repository query and download (hf-mirror mirror)                                                                                    │
 │  search_engine.py              DuckDuckGo web search                                                                                                                     │
 │  automation.py                 browser automation driving Edge through Playwright (headed mode)                                                                          │
@@ -62,21 +66,22 @@ The system prompt is assembled in the following order (see `MODES` / `_CORE_RULE
 | Layer | Content | Who writes it | Relation to the other layers |
 | --- | --- | --- | --- |
 | 1 | **Custom instructions** | the user, through `/prompt <text>` | highest priority: **replaces** layers 2 and 3 |
-| 2 | **Mode block** | `conversation.MODES` (6 modes) | scenario and tone; replaced by layer 1 |
+| 2 | **Mode block** | `conversation.MODES` (three modes: chat / contract / agent) | scenario and tone; replaced by layer 1 |
 | 3 | **Task layer** | `prompts.TASK_TEMPLATES` (`/task`) | **stacked** after layer 2; it wins on conflict (the template ends with a `[优先级]` line) |
 | 4 | **Shared core** | `conversation._CORE_RULES` | perspective / boundaries / output discipline, in effect under any combination |
 | 5 | **Language instruction** | `conversation._REPLY_LANGUAGE` | follows the **interface language** (the current `i18n` locale) |
 | 6 | Session context | `【早期对话摘要】` / `【已上传文件】` | determined by `summary` and the file state |
 
-**The six elements**: every mode block carries five items of its own — "role / output format / chain of thought /
-few-shot example / tone" — and the sixth, "boundaries" (if you do not know, say you do not know; do not invent
-sources; when the information is insufficient, ask about the single most important point first), sits in the
-shared core: it has nothing to do with the scenario, so writing it 6 times both wastes context for nothing and
-means a few places get missed whenever it is changed.
+**The six elements**: every mode block carries six items of its own — "role / output format / **how much
+detail to give** / chain of thought / few-shot example / tone" (`contract` and `agent` add one
+scenario-specific "boundaries" item on top). The discipline that has nothing to do with the scenario
+(if you do not know, say you do not know; do not invent sources; give the most likely answer before asking;
+offer 2-3 directions when the question is vague, …) sits in the seven rules of the shared core `_CORE_RULES`:
+writing it 3 times both wastes context for nothing and means a few places get missed whenever it is changed.
 
 **Length budget and rationale** (guarded by the assertions in section 9 of `tools/test_capability.py`):
-a single mode block ≤ 480 characters (measured 209~313), and mode block + shared core + language instruction
-≤ 700 characters (measured 417~521). The default context is 8192 tokens, and Chinese is at the scale of about
+a single mode block ≤ 480 characters (measured 243~335), and mode block + shared core + language instruction
+≤ 700 characters (measured 607~699). The default context is 8192 tokens, and Chinese is at the scale of about
 1 character per token, so 700 characters take roughly 8.5%, leaving the remainder for file summaries and
 conversation history; models in the 0.8B class are especially sensitive to long prompts, so the rules are shared
 rather than padded out.
@@ -171,6 +176,17 @@ blocked reading stdin for an answer, and exited when the user declined or closed
 | `market_uninstall` | uninstall a skill | one `system` line |
 | `market_installed` | list of installed skills | `system` + an `installed` array |
 | `market_status` | market connection status | `system` + `market_status` |
+| `agent_state` | agent tool and permission state (tool list, enabled flags, step limit) | `system` + an `agent` object |
+| `agent_configure` | write agent configuration (sensitive-tool authorisation, step limit) | `system` + `agent_config` + `agent` |
+| `mcp_state` | MCP server status and discovered tools | `system` + an `mcp` object |
+| `mcp_apply` | apply MCP configuration (enable/disable servers, change command and timeout), **effective at runtime** | `system` + `mcp` |
+| `retrieval_state` | observable local-retrieval state (indexed files, chunks, last query) | `system` + a `retrieval` object |
+| `capability_settings` | write inference parameters back (temperature / top_p / repeat penalty / max tokens / preset / context strategy / two switches) | `system` + `settings` |
+| `model_profile_save` | add or edit a model tier (`rename_from` renames it) | `system` + `model_profile_save` + `model_profiles` |
+| `model_profile_delete` | delete a tier registration (**never deletes files on disk**; a tier in use refuses to go) | `system` + `model_profile_delete` + `model_profiles` |
+| `skills_reload` | hot-reload plugins: development sources (`skills_dev/`, the local manifest) reload alone, installed plugins are left untouched | `system` + `skills` + `commands` |
+| `skills_log` | read the development log `skills_dev.log` | `system` + `log` |
+| `skills_clear_log` / `skills_export_log` | clear / export the development log | `system` + `ok` / the export path |
 
 ### 2.4 Example
 
@@ -353,6 +369,16 @@ Safety design:
   },
   "file_max_chars": 200000,                 // 0 = no limit
   "speed_hint": true, "speed_min_tps": 3.0,
+  "agent": { "max_steps": 4, "allow_sensitive": [], "max_observation_chars": 1200 },
+  "retrieval": {                            // local retrieval (task 6); mode is keyword only in this version
+    "enabled": true, "mode": "keyword", "chunk_chars": 600, "overlap_chars": 100,
+    "top_k": 4, "max_context_chars": 2400, "min_score": 0.0
+  },
+  "mcp": {                                  // MCP stdio client (task 3); off by default, never auto-connects
+    "enabled": false, "timeout_seconds": 20.0, "auto_connect": false,
+    "servers": [ { "name": "", "command": "", "args": [], "env": {},
+                   "enabled": true, "passthrough_env": [] } ]
+  },
   "automation": { /* see backend/config.json; includes the safety protocol and the selectors */ },
   "marketplace": { "skill_topic": "echodesk-plugin", "cache_ttl_hours": 6, "github_token": "" }
 }
@@ -422,6 +448,8 @@ python tools\gen_licenses.py          # regenerate the third-party licence list
 
 ## 6. Extension points
 
+### 6.1 Existing extension points
+
 - **New commands**: register in `command_handler.py`'s `_handlers` plus `HELP_TEXT`, and keep the `Commands`
   array in the frontend `MainWindow.xaml.cs` in sync (only then are they visible in the command panel and in
   `/help`).
@@ -430,5 +458,113 @@ python tools\gen_licenses.py          # regenerate the third-party licence list
   interruption and progress reporting.
 - **New file formats**: add a `_read_xxx` in `file_parser.py` and dispatch it in `_parse_builtin`, add the
   extension to `_TEXT_EXTS` or to a new branch, and update the Filter of the frontend file dialog.
-- **Skill development specification**: see `docs/zh-Hans/SKILL_GUIDE.md` (Chinese) and `docs/en/SKILL_GUIDE.md`
-  (English).
+
+### 6.2 The tool interface (one agent tool is one `Tool`)
+
+See `backend/agent_tools.py`:
+
+```python
+Tool(name="calc", description="计算算术表达式", args_hint='{"expr": "表达式"}',
+     risk=RISK_SAFE, run=tool_calc, example='{"tool": "calc", "args": {...}, "why": "..."}')
+```
+
+- **Registering and calling**: `ToolRegistry.register(tool)`; `default_tools()` is the built-in set;
+  `ToolRegistry.run(name, args)` returns `(ok, observation text)` and records every call in `registry.calls`
+  (observability); `public_list()` serves the UI and the docs.
+- **Convention: a tool never raises, it returns its failure as text.** `ToolRegistry.run` catches exceptions
+  anyway, and `looks_like_failure()` applies one shared rule (`_FAILURE_PREFIXES` / `_FAILURE_MARKERS`) so
+  "cannot compute", "nothing found" and "MCP peer error" all count as failures — otherwise the UI shows them
+  as successes and the user sees "the tool ran but produced nothing".
+- **Permission tiers**: `safe` (pure computation and "reading only what the user already put in", on by
+  default), `sensitive` (sends data out or reads arbitrary local content; must be pre-authorised in
+  `config.agent.allow_sensitive`), `guard` (tools with write side effects — **this version has none**; the tier
+  is kept so the vocabulary stays uniform). `ToolRegistry.is_allowed()` is the only decision point, and an
+  unauthorised call is **not a silent failure**: it returns an observation saying "not enabled, here is how to
+  enable it", so the model can switch approach or just answer.
+- **Tools that need host capabilities** (conversation, search, summarizer) are injected through `ToolContext`
+  and take `(args, ctx)`, listed in one table `_CTX_TOOLS` — deliberately **not** signature-checked (that breaks
+  under packaging/decorators), so one glance at the table shows which tools touch host state.
+- **The "tool protocol + available tools" block of the prompt** is appended at runtime by
+  `ToolRegistry.protocol_text()`: the available set changes with permissions, and the mode block has a
+  700-character budget — appending at runtime costs nothing there and never lists a tool that is not enabled.
+- **The loop** lives in `agent.AgentLoop.run()`: its events are `agent_step` / `tool_call` / `tool_result`, and
+  setting `stop_event` stops it (the **same interruption path as streaming chat**). Once `max_steps` is reached
+  it appends one more instruction — "call no more tools, answer from what you have" — and converges.
+  Tool calls are parsed by `parse_tool_call()` (a pure function, unit-testable) which tolerates code fences and
+  surrounding prose.
+
+### 6.3 MCP integration (the stdio-only trade-off)
+
+- `mcp_client.StdioMcpClient`: an in-house ~200-line JSON-RPC 2.0 client speaking one JSON object per line over
+  stdin/stdout, implementing only `initialize` / `tools/list` / `tools/call` (plus
+  `notifications/initialized`). Calls are bounded by a timeout (`mcp.timeout_seconds`, 20 s by default), so a
+  wedged external process cannot stall the program.
+- `mcp_client.McpBridge`: turns the server declarations from the configuration (`McpServer`: `command` /
+  `args` / `env` / `enabled` / `passthrough_env`) into clients; `discover()` fetches the tool list, `call()`
+  invokes a tool and `status()` feeds the UI and `/mcp`.
+- `register_mcp_tools(registry, bridge)`: wraps discovered tools as ordinary `Tool` objects in the **same**
+  `ToolRegistry`, named `mcp__<server>__<tool>`, always with `risk="sensitive"` and with the MCP `inputSchema`
+  as the argument hint. Permissions, auditing, visibility and interruption therefore reuse the agent machinery
+  instead of a second set of rules.
+- **Why not the official `mcp` package**: it pulls in `anyio` / `httpx` / `sse-starlette` / `starlette` and
+  more, most of the server-side parts of which are useless for a client-only feature, while the release is
+  pinned to the 350–400 MB range.
+- **The cost, stated plainly**: this version supports **stdio transport only** — no HTTP/SSE, no
+  resources / prompts / sampling, no roots. Should the official package be adopted later, `McpServer` and
+  `register_mcp_tools` would not change: only the transport implementation would, which is exactly why
+  "protocol" and "transport" are written separately.
+- **Starting a process is explicit**: `auto_connect` defaults to `false`, so only
+  `refresh_agent_tools(discover_mcp=True)` (triggered by `/mcp connect` or a settings write) actually launches
+  an external process; a disabled server is `close()`d and its tools disappear from the list immediately.
+
+### 6.4 Retrieval extension points
+
+See `backend/retrieval.py`:
+
+- `Retriever.add_file(name, text)` indexes only that one file (**incremental** — existing files are untouched
+  byte for byte, and a file with the same name replaces the previous content); `remove_file(name)` removes one
+  file exactly and rebuilds the BM25 statistics; `search(query, top_k, files)` returns
+  `List[ScoredChunk]` (`files` narrows the scope); `as_context(query)` renders text with numbering and
+  `file name (chars a-b)`, returning an empty string when nothing matched (so the caller **injects no empty
+  block**).
+- **The only extension point is `Retriever.search()`**: `RetrievalConfig.mode` already reserves
+  `hybrid` / `vector`, and as long as the return value stays `List[ScoredChunk]`, injection, traceability,
+  permissions and `/status` need no changes. Selecting those two values today degrades to keyword (no error, so
+  a configuration edit can never stop the program from starting).
+- Tokenisation and chunking live in this module: Chinese 2-grams + English words + **numeric tokens**
+  (numbers must be captured whole, otherwise key-fact questions such as "what is the penalty rate" fail to
+  retrieve); chunks never cut a sentence, they overlap, and their ranges are **absolute offsets into the
+  original text** — the basis of traceability, because the user has to be able to check "chars 210-480"
+  against the source.
+- The division of labour with segmented summarisation is decided by
+  `main.Backend._retrieval_context_for()`: short documents are not retrieved, long ones get "summary for the
+  whole picture + retrieval for the detail". **Do not turn this into "retrieve over every file"**: injecting the
+  full text of a short document is simply more accurate, and forced retrieval only loses information.
+
+### 6.5 Plugin dependencies and version validation
+
+See `backend/skills_runtime.py`:
+
+- `parse_manifest(manifest)["dependencies"]` normalises to `{plugin id: version requirement}`. In `skill.json`,
+  `dependencies` may be a **list** (`["other"]`, `["other>=1.2"]`) or a **dict**
+  (`{"other": ">=1.2"}`); `_parse_dependencies()` unifies both.
+- `version_satisfies(version, spec)` supports `>=` / `>` / `<=` / `<` / `==`; `parse_requirement()` accepts an
+  optional `v` prefix (copying a GitHub tag such as `v1.2.0` is common, and not accepting it would let
+  validation be bypassed silently); an empty or unparseable requirement is **always let through** (better
+  lenient than wrongly blocking), and version segments are padded to equal length before comparing
+  (`1.0` and `1.0.0` are the same version).
+- `SkillLoader._check_dependencies(records)` decides once, after discovery and before the per-plugin load,
+  because dependencies can be mutually entangled and every manifest must be known first. A missing dependency,
+  a disabled dependency or an unsatisfied version **refuses to load and states the reason**; a dependency that
+  declares no version is **warned about and let through** (development plugins routinely omit it).
+- `echodesk.min_version` is checked against the program version (`APP_VERSION`) with the same
+  `version_satisfies`.
+- `SkillLoader._verify_declared_commands()` compares the declared commands with the registered ones and writes
+  any mismatch (including "registered commands but declared nothing") to the warnings and to `skills_dev.log`.
+- Loading, unloading and registration catch `BaseException`, not just `Exception`: a plugin's `sys.exit()` or
+  `raise SystemExit` passes straight through `Exception` and used to take the backend process down with it. The
+  same isolation on the command execution path lives in `command_handler.py`.
+
+### 6.6 Skill development specification
+
+- See `docs/zh-Hans/SKILL_GUIDE.md` (Chinese) and `docs/en/SKILL_GUIDE.md` (English).

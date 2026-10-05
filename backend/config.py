@@ -434,13 +434,87 @@ class UpdateConfig(BaseModel):
     last_seen_version: str = ""
 
 
+class McpServerConfig(BaseModel):
+    """一个 MCP Server 的声明（v0.2.1 能力扩展-1 任务三）。
+
+    MCP 是**用户主动配置**的：EchoDesk 不会自动发现、不会自动连接任何地址，
+    也不会替用户决定连哪个 server。这一条同时是隐私承诺的一部分 ——
+    工具可能把数据带出去，所以数据流向由用户选择，主程序只负责拉起他写的命令。
+    """
+
+    name: str = ""
+    command: str = ""
+    args: List[str] = Field(default_factory=list)
+    env: Dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+    #: 允许透传给子进程的父进程环境变量（默认**一个都不透传**，
+    #: 避免把 HF_TOKEN 之类的密钥顺手交给第三方进程）。
+    passthrough_env: List[str] = Field(default_factory=list)
+
+
+class McpConfig(BaseModel):
+    """MCP 客户端配置（stdio 传输，零新依赖；取舍见 ``backend/mcp_client.py``）。"""
+
+    enabled: bool = False
+    #: 单个 server 的一次请求超时（秒）。外部进程可能卡死，必须有上限。
+    timeout_seconds: float = Field(default=20.0, ge=1.0, le=600.0)
+    #: 启动时就连上并拉取工具清单（默认否：拉起外部进程只在用户真要用时发生）。
+    auto_connect: bool = False
+    servers: List[McpServerConfig] = Field(default_factory=list)
+
+
+class RetrievalConfig(BaseModel):
+    """本地文档检索（v0.2.1 能力扩展-1 任务六：RAG 深度）。
+
+    方案：**关键词 BM25 + 段落定位，零新依赖**（理由见 ``backend/retrieval.py``
+    的模块说明：向量库会带来几十到几百 MB 的体积，与"安装后 350–400 MB"冲突，
+    而本工具的文档规模与问题类型用 BM25 足够）。``mode`` 预留了扩展点。
+    """
+
+    enabled: bool = True
+    #: keyword（本版唯一实现）/ hybrid / vector —— 后两个是给未来留的取值，
+    #: 现在选它们会退化成 keyword（不会报错，避免用户改配置就起不来）。
+    mode: str = "keyword"
+    #: 分块长度与重叠。600 字符约 300 token，4 块正好占 8192 窗口的 15% 左右；
+    #: 重叠 100 字符是为了"答案横跨块边界"时不漏（代价是上下文略增）。
+    chunk_chars: int = Field(default=600, ge=120, le=4000)
+    overlap_chars: int = Field(default=100, ge=0, le=1000)
+    #: 一次注入多少段、总长上限。段数多了小模型会看不过来，也挤占窗口。
+    top_k: int = Field(default=4, ge=1, le=12)
+    max_context_chars: int = Field(default=2400, ge=200, le=12000)
+    #: BM25 得分下限（0 = 不设阈值）。用于压掉"只有一个字命中"的弱噪声。
+    min_score: float = Field(default=0.0, ge=0.0, le=100.0)
+
+
+class AgentConfig(BaseModel):
+    """Agent 平台配置（v0.2.1 能力扩展-1 任务二）。
+
+    权限模型（详见 :mod:`agent_tools` 的模块说明）：**有副作用的工具本版一个都不提供**，
+    只把工具分成"纯本地计算/只读已上传内容"（``safe``，默认可用）与"会把数据带出去或
+    读本机任意内容"（``sensitive``，必须显式授权）两类。
+    """
+
+    #: 工具调用步数上限。到顶之后循环会改成"用已有信息给结论"，不会无限调下去。
+    #: 上限 8 是经验值：小模型很少需要更多步，而每多一步都是一次完整的模型调用。
+    max_steps: int = Field(default=4, ge=1, le=8)
+    #: 允许使用的敏感工具名（联网搜索、读任意本地文件）。默认**空** = 全部关闭，
+    #: 用户要在设置里或 /agent allow <工具> 显式打开；这样"数据不出本机"的默认承诺不变。
+    allow_sensitive: List[str] = Field(default_factory=list)
+    #: 单条工具结果注入上下文的上限（字符）。工具结果会回灌进上下文，不设上限时
+    #: 一次读文件就能吃掉半个窗口。
+    max_observation_chars: int = Field(default=1200, ge=200, le=8000)
+
+
 class Config(BaseModel):
     """应用配置，字段与 config.json 一一对应。"""
 
     model_path: str = "Qwen3-0.6B-Q6_K.gguf"
     model_repo: str = "unsloth/Qwen3-0.6B-GGUF"
     hf_endpoint: str = "https://hf-mirror.com"
-    default_mode: str = "general"
+    # 默认对话模式。**模式简化（能力扩展-1 任务一）后只剩 chat/contract/agent**；
+    # 旧值（general/summary/…）仍然能读进来 —— conversation.canonical_mode 会把它们
+    # 迁移成新名字，所以老用户的 config.json 不需要手工改。
+    default_mode: str = "chat"
     # 请求的上下文窗口：默认 8192（v0.1.0 为 4096，合同类长文档严重不足）
     context_length: int = 8192
     # 上下文窗口配置上限：校验用，任何来源的取值都不会超过它
@@ -455,6 +529,12 @@ class Config(BaseModel):
     compact: CompactionConfig = Field(default_factory=CompactionConfig)
     # 多文件上传（v0.2.1 优化已知问题-2 任务八）
     files: FilesConfig = Field(default_factory=FilesConfig)
+    # Agent 平台（v0.2.1 能力扩展-1 任务二）
+    agent: AgentConfig = Field(default_factory=AgentConfig)
+    # 本地文档检索（v0.2.1 能力扩展-1 任务六）
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    # MCP 客户端（v0.2.1 能力扩展-1 任务三）
+    mcp: McpConfig = Field(default_factory=McpConfig)
     # 浏览器自动化（任务四）
     automation: AutomationConfig = Field(default_factory=AutomationConfig)
     # 技能/插件市场（任务五）

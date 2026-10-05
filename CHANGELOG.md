@@ -14,6 +14,93 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 > deviations from the task specification, unfinished items, and size records, see the internal development
 > record (`v0.2.1-研发记录.md`, **not distributed with the release**).
 
+### Capability round 1: fewer modes, an agent platform, MCP, plugin ecosystem, model management, retrieval
+
+Task specification: `prompts/EchoDesk-v0.2.1能力扩展-1.md`. This round closes the four capability gaps that
+stood out against mainstream local-inference clients (LM Studio / Ollama / Open WebUI / AnythingLLM) and tidies
+up two cases of concept sprawl. Audit findings, the trade-off behind each item, deviations from the task
+specification, size impact and unfinished work are in `records/v0.2.1-能力扩展-1记录.md`.
+
+**Conversation modes went from six to three** (task 1): `chat` (general conversation, the default),
+`contract` (clause review) and `agent` (tool-calling agent). The test is whether a user can say at a glance
+which one to use, not which prompt block a task belongs to. No capability was lost — the removed modes simply
+stopped occupying a mode slot:
+
+| Old mode | How to use it now |
+| :--- | :--- |
+| general | it *is* chat (renamed) |
+| summary | `/task summary` |
+| translate | `/task translate` |
+| code | `/task code` |
+| creative | `/task creative` (new template this round) |
+| guide | `/task guide` (new template this round) |
+
+**The old spellings still work**: `/mode summary` switches to chat, applies the matching template, keeps the
+old temperature preset and says what happened — nobody has to relearn anything. **Old numbers are no longer
+migrated automatically**: a number means different things under the two schemes (the old `/mode 2` was
+summary, the new `/mode 2` is contract), so an old number such as `/mode 4` fails with a message naming the
+template to use instead of guessing its way into a state that is neither the old nor the new meaning. Task
+templates went from six to eight (adding `creative` and `guide`).
+
+**Agent platform** (task 2): the new `agent` mode lets the model decide which tool to call, in what order,
+until it reaches a conclusion. First tool set: calculator (AST-whitelist evaluation, **not** `eval`), date
+arithmetic, unit conversion, keyword lookup inside uploaded files, and document summaries. Tools are tiered:
+the ones above are pure local computation over content the user already supplied and are enabled by default;
+tools that send data out or read arbitrary local files (web search, reading files) are **off by default** and
+need `/agent allow <tool>`. **This version ships no tool that writes files or runs commands** (least
+privilege). Every step is visible in the conversation (`📍 step 1/4 → 🔧 calling calc → ↩ result …`), a denied
+tool shows 🔒 and how to authorise it, Esc stops the loop at any time, and hitting the step limit (4 by
+default) converges to "answer with what you have" instead of looping forever. Boundary against automation:
+automation runs a predefined batch flow, the agent decides a single task on its own.
+
+**MCP** (task 3): a **stdio MCP client** that connects to user-configured external MCP servers and exposes
+their tools to the agent. The dependency decision was to **write it ourselves rather than pull in the official
+`mcp` package**: that package drags in anyio/httpx/starlette — all of it server-side — while the release is
+held inside a 350–400 MB budget; the protocol itself is JSON-RPC 2.0 over stdin/stdout, about 200 readable and
+testable lines. `/mcp` shows status and tools, `/mcp enable|disable <name>` takes effect **immediately**
+(no restart), `/mcp connect` starts the process and fetches its tool list, and `examples/mcp/echo_server.py`
+(standard library only) is a runnable example. **The security boundary is stated plainly**: an MCP server is a
+process the user configured, so its tools are **always treated as sensitive** and must be authorised
+explicitly; parent-process environment variables are **not** passed through by default (secrets are not handed
+to third-party processes); EchoDesk never discovers or connects to anything on its own. This version supports
+stdio only (no HTTP/SSE, no resources/prompts).
+
+**Plugin ecosystem** (task 4): the last gap in "install it and it works" is closed — installing from the
+market now **hot-reloads automatically**, so commands work immediately; plugins can declare `dependencies`
+(plugin-to-plugin, with `>=1.2` style requirements) and `echodesk.min_version` (minimum host version), and a
+missing/disabled/version-mismatched dependency or a too-new host requirement **refuses to load and says why**;
+commands declared but not registered (or the reverse) are reported as warnings; "Reload local plugins" now
+reloads **only the development directory and the local manifest** instead of reinstalling everything; and a
+plugin raising `SystemExit` is isolated instead of taking the backend process down.
+
+**Model management** (task 5): the Model page gains an **inference-parameter panel** (temperature 0–1.5,
+top_p, repeat penalty, max tokens as sliders with per-row reset, a generation-preset dropdown, context
+strategy, two toggles; saving re-reads the values that actually took effect); **custom model tiers** can now be
+created, edited, renamed and deleted (alias, path, repo, context length, temperature, note) without hand-editing
+`config.json` — deleting a tier **does not delete the model file**, and a tier in use refuses to be deleted.
+Out-of-range values now **error instead of being silently clamped** (previously `temperature=9` was quietly
+turned into 1.5 while reporting "saved").
+
+**Retrieval (RAG depth)** (task 6): new **local document retrieval** (BM25 keyword search, standard library
+only, no new dependencies). The division of labour is documented and implemented: short documents are **not**
+searched — the full text is injected (most accurate); long documents get **summaries for the whole picture plus
+retrieval for the details**, with the retrieved passages carrying file name and character range, placed before
+the file blocks, and the model is asked to cite `[n]` so the user can check the source. Search spans every
+uploaded file (multi-document Q&A without naming files), and indexing is **incremental**: a new file indexes
+only itself, a same-named file replaces its own entry, and a removed file stops being searchable. **Why no
+vector store**: it plus an embedding model adds tens to hundreds of megabytes against the size budget, and
+changing the chat model invalidates the index — keyword retrieval can also explain *why* it matched.
+
+**Pre-existing defects fixed along the way** (all found by this round's audits and tests):
+
+- `config.files.total_chars` was never assigned on the production path, so the multi-file injection budget
+  (60000 characters by default) never actually applied — injection was effectively unlimited;
+- a plugin command raising `SystemExit` / `sys.exit()` escaped the `except Exception` guard and took the
+  backend process with it (the user saw "the program just vanished when I ran that command");
+- a plugin's `min_version` (minimum host version) was parsed and displayed but **never checked at runtime**;
+- a version requirement written as `v1.2.0` was silently ignored (the pattern did not accept the `v` prefix),
+  which bypassed the new version check entirely.
+
 ### System-prompt reconstruction: from "fill in the template" back to "exercise judgement"
 
 Task specification: `prompts/EchoDesk-v0.2.1系统提示词重构.md`. This round adds no new prompt content; it fixes

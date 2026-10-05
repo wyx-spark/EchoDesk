@@ -107,6 +107,52 @@ class FakeConfigConv(object):
         pass
 
 
+def write_plugin(root, skill_id, *, name="", version="1.0.0", has_version=True,
+                 dependencies=None, commands=None, min_version=None, api_version="1",
+                 register=None):
+    """在临时目录里造一个真实插件（``skill.json`` + ``pkg/__init__.py``）。
+
+    与文件里既有做法一致：手写清单与入口模块，而不用脚手架模板 —— 这样每个用例
+    都能精确控制"声明了什么"（capabilities.commands / dependencies / min_version）
+    与"真正注册了什么"，两者不一致正是本节要测的行为。
+    ``has_version=False`` 用于制造"插件没写 version"的场景；
+    ``min_version=""`` 表示清单里写了这个字段但值为空。
+    """
+    os.makedirs(os.path.join(root, "pkg"), exist_ok=True)
+    manifest = {
+        "id": skill_id,
+        "name": name or skill_id,
+        "description": f"{skill_id} 回归测试用插件",
+        "echodesk": {"bundle": "pkg", "api_version": api_version},
+        "capabilities": {"commands": list(commands or [])},
+    }
+    if has_version:
+        manifest["version"] = version
+    if dependencies is not None:
+        manifest["dependencies"] = dependencies
+    if min_version is not None:
+        manifest["min_version"] = min_version
+    with io.open(os.path.join(root, "skill.json"), "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False)
+    with io.open(os.path.join(root, "pkg", "__init__.py"), "w", encoding="utf-8") as f:
+        f.write(register if register is not None else register_commands())
+    return root
+
+
+def register_commands(*names):
+    """生成一个注册了 ``names`` 的 ``register(api)`` 入口源码。"""
+    lines = ["def register(api):"]
+    for cmd in names:
+        lines.append(f"    api.register_command('{cmd}', lambda a: 'OK-{cmd}', label='{cmd}')")
+    lines.append("    return None")
+    return "\n".join(lines) + "\n"
+
+
+def log_lines_with(text, needle):
+    """日志里同时包含 ``needle`` 的行（用于断言"某插件自己那行"而不是整份日志）。"""
+    return [line for line in (text or "").splitlines() if needle in line]
+
+
 def main():
     workdir = tempfile.mkdtemp(prefix="echodesk-skills-test-")
     saved_cwd = os.getcwd()
@@ -486,6 +532,329 @@ def run_all(workdir):
     examples = loader.examples_dir()
     check("示例插件目录路径可解析", examples.endswith(os.path.join("examples", "skills")),
           examples)
+
+    # ---------------------------------------------------------------
+    section("14. 依赖、版本与声明一致性（能力扩展-1 任务四）")
+    from i18n import get as i18n_get
+    from skills_runtime import _parse_dependencies, parse_requirement, version_satisfies
+    from version import APP_VERSION
+
+    # 错误文本按下文断言，先固定语言（前面的小节切过 en）
+    i18n_get().set_locale("zh-Hans")
+    dev_root = loader.dev_dir
+
+    # --- 14.1 依赖解析与版本比较（纯函数，回退即失败） -------------
+    manifest_list = parse_manifest({
+        "id": "dep-list", "name": "列表写法",
+        "echodesk": {"bundle": "pkg", "api_version": "1"},
+        "dependencies": ["other-plugin>=1.0", "plain-plugin"],
+    })
+    check("dependencies 列表写法归一成 {id: 版本要求}",
+          manifest_list["dependencies"] == {"other-plugin": ">=1.0", "plain-plugin": ""},
+          str(manifest_list["dependencies"]))
+    manifest_dict = parse_manifest({
+        "id": "dep-dict", "name": "字典写法",
+        "echodesk": {"bundle": "pkg", "api_version": "1"},
+        "dependencies": {"other-plugin": ">=1.0"},
+    })
+    check("dependencies 字典写法归一成 {id: 版本要求}",
+          manifest_dict["dependencies"] == {"other-plugin": ">=1.0"},
+          str(manifest_dict["dependencies"]))
+    check("未声明 dependencies 时解析为空字典",
+          parse_manifest({"id": "x"})["dependencies"] == {})
+    check("dependencies 是非法类型时忽略而不是崩溃",
+          _parse_dependencies("other-plugin>=1.0") == {} and _parse_dependencies(None) == {}
+          and _parse_dependencies([]) == {})
+    check("parse_requirement 拆出运算符与版本", parse_requirement(">=1.2") == (">=", "1.2"),
+          str(parse_requirement(">=1.2")))
+    check("parse_requirement 只写版本号时按 >=", parse_requirement("1.2") == (">=", "1.2"),
+          str(parse_requirement("1.2")))
+    check("parse_requirement 认 == 与 <（= / ~ / ^ 一律当 >=）",
+          parse_requirement("==1.0") == ("==", "1.0") and parse_requirement("<2.0") == ("<", "2.0")
+          and parse_requirement("=1.0.0") == (">=", "1.0.0")
+          and parse_requirement("~1.0") == (">=", "1.0"))
+    check("parse_requirement 解析不出数字时返回空（放行）",
+          parse_requirement("随便写") == ("", "") and parse_requirement("") == ("", ""))
+    check("version_satisfies：满足", version_satisfies("1.2.0", ">=1.0"))
+    check("version_satisfies：不满足", not version_satisfies("0.9", ">=1.0"))
+    check("version_satisfies：严格大于/小于",
+          version_satisfies("2.0", ">1.0") and not version_satisfies("1.0", ">1.0")
+          and version_satisfies("1.0", "<2.0") and not version_satisfies("2.5", "<2.0"))
+    check("version_satisfies：== 精确匹配（同长度版本号）",
+          version_satisfies("1.0.0", "==1.0.0") and not version_satisfies("1.0.1", "==1.0.0"))
+    check("version_satisfies：版本读不出数字时宽松放行",
+          version_satisfies("", ">=9.9") and version_satisfies("abc", ">=9.9"))
+    check("version_satisfies：带 v 前缀的版本仍可比较",
+          version_satisfies("v1.0.0", ">=0.5") and not version_satisfies("v0.1.0", ">=0.5"))
+
+    # --- 14.2 依赖存在且版本满足 → 正常加载（列表 / 字典两种写法） ---
+    write_plugin(os.path.join(dev_root, "dep-lib"), "dep-lib", version="1.0.0",
+                 register=register_commands("/dep-lib"))
+    write_plugin(os.path.join(dev_root, "dep-user-list"), "dep-user-list", version="1.0.0",
+                 dependencies=["dep-lib>=1.0"], register=register_commands("/dep-user-list"))
+    write_plugin(os.path.join(dev_root, "dep-user-dict"), "dep-user-dict", version="1.0.0",
+                 dependencies={"dep-lib": ">=1.0"}, register=register_commands("/dep-user-dict"))
+    loader.load_all()
+    dep_rec = loader.records.get("dep-lib")
+    list_rec = loader.records.get("dep-user-list")
+    dict_rec = loader.records.get("dep-user-dict")
+    check("被依赖插件正常加载", bool(dep_rec and dep_rec.loaded),
+          str(dep_rec and dep_rec.error))
+    check("SkillRecord.dependencies 记录了归一后的依赖",
+          bool(list_rec and list_rec.dependencies == {"dep-lib": ">=1.0"}),
+          str(list_rec and list_rec.dependencies))
+    check("列表写法的依赖满足 → 加载",
+          bool(list_rec and list_rec.loaded), str(list_rec and list_rec.error))
+    check("字典写法的依赖满足 → 加载",
+          bool(dict_rec and dict_rec.loaded), str(dict_rec and dict_rec.error))
+    check("有依赖的插件其指令真的可用",
+          loader.commands.handle("/dep-user-list")[0] == "OK-/dep-user-list",
+          repr(loader.commands.handle("/dep-user-list")[0]))
+
+    # --- 14.3 依赖不在清单里 → 不加载 + error + 计入 failed ---
+    baseline = loader.load_all()
+    write_plugin(os.path.join(dev_root, "dep-missing-user"), "dep-missing-user", version="1.0.0",
+                 dependencies=["no-such-plugin>=1.0"],
+                 register=register_commands("/dep-missing-user"))
+    after = loader.load_all()
+    miss_rec = loader.records.get("dep-missing-user")
+    check("依赖的插件不在清单里 → 该插件不加载", bool(miss_rec and not miss_rec.loaded))
+    check("依赖缺失 → error 说明缺少依赖且点名缺谁",
+          bool(miss_rec and "缺少依赖" in miss_rec.error and "no-such-plugin" in miss_rec.error),
+          str(miss_rec and miss_rec.error))
+    check("依赖缺失 → 计入 summary 的 failed",
+          after["failed"] == baseline["failed"] + 1, f"{baseline} → {after}")
+    check("依赖缺失 → 不计入 summary 的 loaded",
+          after["loaded"] == baseline["loaded"], f"{baseline} → {after}")
+    check("依赖缺失的插件指令没有被注册",
+          "未知指令" in loader.commands.handle("/dep-missing-user")[0])
+
+    # --- 14.4 依赖插件被禁用 → 同样不加载 ---
+    disabled_root = os.path.join(workdir, "external-plugins", "dep-disabled")
+    write_plugin(disabled_root, "dep-disabled", version="1.0.0",
+                 register=register_commands("/dep-disabled"))
+    manifest_data = loader.local_manifest()
+    manifest_data["plugins"] = [p for p in manifest_data["plugins"]
+                                if p.get("id") != "dep-disabled"]
+    manifest_data["plugins"].append({"id": "dep-disabled", "path": disabled_root,
+                                     "enabled": False, "source": "local"})
+    loader.save_local_manifest(manifest_data)
+    write_plugin(os.path.join(dev_root, "dep-disabled-user"), "dep-disabled-user",
+                 version="1.0.0", dependencies=["dep-disabled"],
+                 register=register_commands("/dep-disabled-user"))
+    loader.load_all()
+    disabled_rec = loader.records.get("dep-disabled")
+    disabled_user = loader.records.get("dep-disabled-user")
+    check("被禁用的依赖仍在清单里（只是 enabled=false）",
+          bool(disabled_rec and not disabled_rec.enabled))
+    check("依赖被禁用 → 依赖方不加载", bool(disabled_user and not disabled_user.loaded))
+    check("依赖被禁用 → error 说明缺少依赖并注明禁用",
+          bool(disabled_user and "缺少依赖" in disabled_user.error
+               and "禁用" in disabled_user.error), str(disabled_user and disabled_user.error))
+    check("依赖被禁用 → 被禁用的插件自己不计入 failed（是 skipped）",
+          bool(disabled_rec and not disabled_rec.error), str(disabled_rec and disabled_rec.error))
+
+    # --- 14.5 依赖版本不满足 → 不加载；满足 → 加载 ---
+    baseline = loader.load_all()
+    write_plugin(os.path.join(dev_root, "dep-version-user"), "dep-version-user", version="1.0.0",
+                 dependencies={"dep-lib": ">=2.0"},
+                 register=register_commands("/dep-version-user"))
+    write_plugin(os.path.join(dev_root, "dep-version-ok"), "dep-version-ok", version="1.0.0",
+                 dependencies={"dep-lib": "==1.0.0"},
+                 register=register_commands("/dep-version-ok"))
+    after = loader.load_all()
+    ver_rec = loader.records.get("dep-version-user")
+    ver_ok = loader.records.get("dep-version-ok")
+    check("依赖版本不满足（要 >=2.0，实际 1.0.0）→ 不加载",
+          bool(ver_rec and not ver_rec.loaded))
+    check("依赖版本不满足 → error 含版本信息与双方版本号",
+          bool(ver_rec and "版本" in ver_rec.error and ">=2.0" in ver_rec.error
+               and "1.0.0" in ver_rec.error), str(ver_rec and ver_rec.error))
+    check("依赖版本不满足 → 计入 failed、不计入 loaded",
+          after["failed"] == baseline["failed"] + 1 and after["loaded"] == baseline["loaded"] + 1,
+          f"{baseline} → {after}")
+    check("依赖版本满足（==1.0.0）→ 正常加载",
+          bool(ver_ok and ver_ok.loaded), str(ver_ok and ver_ok.error))
+
+    # --- 14.6 被依赖插件没写 version 而依赖方要求了版本 → 宽松放行 + 提示 ---
+    write_plugin(os.path.join(dev_root, "dep-noversion"), "dep-noversion", has_version=False,
+                 register=register_commands("/dep-noversion"))
+    write_plugin(os.path.join(dev_root, "dep-noversion-user"), "dep-noversion-user",
+                 version="1.0.0", dependencies={"dep-noversion": ">=9.9"},
+                 register=register_commands("/dep-noversion-user"))
+    loader.clear_log()
+    loader.load_all()
+    nov_rec = loader.records.get("dep-noversion")
+    nov_user = loader.records.get("dep-noversion-user")
+    check("被依赖插件确实没有版本号", bool(nov_rec and nov_rec.version == ""),
+          str(nov_rec and nov_rec.version))
+    check("被依赖插件没写版本时仍然加载", bool(nov_rec and nov_rec.loaded),
+          str(nov_rec and nov_rec.error))
+    check("依赖方在对方没写版本时宽松放行（即使要求 >=9.9 也加载）",
+          bool(nov_user and nov_user.loaded), str(nov_user and nov_user.error))
+    log_text = loader.read_log(500)
+    check("宽松放行时开发日志有提示（否则用户无从得知版本没校验）",
+          bool(log_lines_with(log_text, "dep-noversion-user")
+               and "未声明版本号" in log_text), repr(log_text[-400:]))
+
+    # --- 14.7 声明了命令但没注册 / 注册了没声明 ---
+    write_plugin(os.path.join(dev_root, "decl-missing-cmd"), "decl-missing-cmd", version="1.0.0",
+                 commands=["/decl-missing"], register=register_commands())
+    write_plugin(os.path.join(dev_root, "decl-extra-cmd"), "decl-extra-cmd", version="1.0.0",
+                 commands=["/decl-extra"],
+                 register=register_commands("/decl-extra", "/decl-extra-ghost"))
+    write_plugin(os.path.join(dev_root, "decl-ok-cmd"), "decl-ok-cmd", version="1.0.0",
+                 commands=["/decl-ok"], register=register_commands("/decl-ok"))
+    loader.clear_log()
+    loader.load_all()
+    miss_cmd = loader.records.get("decl-missing-cmd")
+    extra_cmd = loader.records.get("decl-extra-cmd")
+    ok_cmd = loader.records.get("decl-ok-cmd")
+    check("声明了命令但未注册 → 警告里出现该说法",
+          bool(miss_cmd and any("声明了命令但未注册" in w for w in miss_cmd.warnings)),
+          str(miss_cmd and miss_cmd.warnings))
+    check("声明了命令但未注册 → 警告点名缺失的那条命令",
+          bool(miss_cmd and any("/decl-missing" in w for w in miss_cmd.warnings)),
+          str(miss_cmd and miss_cmd.warnings))
+    check("注册了未声明的命令 → 警告里出现该说法",
+          bool(extra_cmd and any("注册了未声明的命令" in w for w in extra_cmd.warnings)),
+          str(extra_cmd and extra_cmd.warnings))
+    check("注册了未声明的命令 → 警告点名多出来的那条命令",
+          bool(extra_cmd and any("/decl-extra-ghost" in w for w in extra_cmd.warnings)),
+          str(extra_cmd and extra_cmd.warnings))
+    check("声明与注册一致 → 不产生这类警告",
+          bool(ok_cmd and not any(("声明了命令但未注册" in w) or ("注册了未声明的命令" in w)
+                                  for w in ok_cmd.warnings)),
+          str(ok_cmd and ok_cmd.warnings))
+    check("不一致的插件仍然加载成功（只警告不阻断）",
+          bool(miss_cmd and miss_cmd.loaded and extra_cmd and extra_cmd.loaded))
+    log_text = loader.read_log(500)
+    check("命令不一致写入开发日志（skill.command_not_registered / undeclared）",
+          "声明了命令但未注册" in log_text and "注册了未声明的命令" in log_text,
+          repr(log_text[-400:]))
+    check("一致的插件不写这类警告日志",
+          not [line for line in log_lines_with(log_text, "decl-ok-cmd")
+               if "未注册" in line or "未声明" in line],
+          str(log_lines_with(log_text, "decl-ok-cmd")))
+
+    # --- 14.8 min_version 校验（比当前 APP_VERSION 新 → 拒绝加载） ---
+    app_numeric = APP_VERSION.lstrip("vV")
+    baseline = loader.load_all()
+    write_plugin(os.path.join(dev_root, "minv-too-new"), "minv-too-new", version="1.0.0",
+                 min_version="99.0.0", register=register_commands("/minv-too-new"))
+    write_plugin(os.path.join(dev_root, "minv-equal"), "minv-equal", version="1.0.0",
+                 min_version=app_numeric, register=register_commands("/minv-equal"))
+    write_plugin(os.path.join(dev_root, "minv-old"), "minv-old", version="1.0.0",
+                 min_version="0.0.1", register=register_commands("/minv-old"))
+    write_plugin(os.path.join(dev_root, "minv-empty"), "minv-empty", version="1.0.0",
+                 min_version="", register=register_commands("/minv-empty"))
+    after = loader.load_all()
+    too_new = loader.records.get("minv-too-new")
+    check("min_version 比当前 APP_VERSION 新 → 拒绝加载",
+          bool(too_new and not too_new.loaded))
+    check("min_version 过高 → error 说明要求的主程序版本与当前版本",
+          bool(too_new and (("要求主程序" in too_new.error) or (APP_VERSION in too_new.error))
+               and "99.0.0" in too_new.error), str(too_new and too_new.error))
+    check("min_version 过高 → 计入 failed 且不计入 loaded",
+          after["failed"] == baseline["failed"] + 1 and after["loaded"] == baseline["loaded"] + 3,
+          f"{baseline} → {after}")
+    check("min_version 过高的插件指令不可用",
+          "未知指令" in loader.commands.handle("/minv-too-new")[0])
+    equal_rec = loader.records.get("minv-equal")
+    old_rec = loader.records.get("minv-old")
+    empty_rec = loader.records.get("minv-empty")
+    check("min_version 等于当前版本 → 正常加载",
+          bool(equal_rec and equal_rec.loaded), str(equal_rec and equal_rec.error))
+    check("min_version 低于当前版本 → 正常加载",
+          bool(old_rec and old_rec.loaded), str(old_rec and old_rec.error))
+    check("min_version 为空 → 正常加载（不误伤没写版本要求的插件）",
+          bool(empty_rec and empty_rec.loaded), str(empty_rec and empty_rec.error))
+
+    # --- 14.9 reload_dev 只重载开发/本地，reload_all 仍是全部 ---
+    src = os.path.join(workdir, "to-install-reload")
+    write_plugin(src, "reload-installed", version="1.0.0",
+                 register=register_commands("/reload-installed"))
+    installed = loader.install_from_folder(src)
+    check("造一个已安装来源的插件（reload_dev 的对照组）", installed.get("ok"),
+          installed.get("message", ""))
+    loader.load_all()
+    installed_rec = loader.records.get("reload-installed")
+    check("对照组插件来源是 installed", bool(installed_rec and installed_rec.source == "installed"),
+          str(installed_rec and installed_rec.source))
+    check("对照组插件已加载并可用",
+          bool(installed_rec and installed_rec.loaded)
+          and loader.commands.handle("/reload-installed")[0] == "OK-/reload-installed",
+          str(installed_rec and installed_rec.error))
+
+    dev_summary = loader.reload_dev()
+    reloaded = dev_summary.get("reloaded")
+    check("reload_dev 的 scope 是 dev（不是 all）",
+          dev_summary.get("scope") == "dev", str(dev_summary))
+    check("reload_dev 返回被卸载的开发来源插件列表",
+          isinstance(reloaded, list) and "dep-lib" in reloaded, str(reloaded))
+    check("reload_dev 的 reloaded 里不含已安装来源的插件 id",
+          isinstance(reloaded, list) and "reload-installed" not in reloaded, str(reloaded))
+    check("reload_dev 之后开发插件被重新加载",
+          bool(loader.records.get("dep-lib") and loader.records["dep-lib"].loaded))
+    check("reload_dev 之后开发插件指令可用",
+          loader.commands.handle("/dep-user-dict")[0] == "OK-/dep-user-dict",
+          repr(loader.commands.handle("/dep-user-dict")[0]))
+    check("reload_dev 之后已安装插件依然可用",
+          loader.commands.handle("/reload-installed")[0] == "OK-/reload-installed",
+          repr(loader.commands.handle("/reload-installed")[0]))
+
+    all_summary = loader.reload_all()
+    check("reload_all 保持原样：summary 里不带 scope",
+          "scope" not in all_summary, str(sorted(all_summary.keys())))
+    check("reload_all 仍是全部重载（含已安装来源）",
+          "reload-installed" in (all_summary.get("ids") or [])
+          and "dep-lib" in (all_summary.get("ids") or []), str(all_summary.get("ids")))
+    check("reload_all 之后已安装插件指令可用",
+          loader.commands.handle("/reload-installed")[0] == "OK-/reload-installed")
+
+    # --- 14.10 插件 handler 抛 BaseException（SystemExit）不得带走主进程 ---
+    write_plugin(
+        os.path.join(dev_root, "exit-plugin"), "exit-plugin", version="1.0.0",
+        commands=["/exit-plugin", "/exit-plugin-sysexit"],
+        register=("def register(api):\n"
+                  "    import sys\n"
+                  "    def boom(_args):\n"
+                  "        raise SystemExit(3)\n"
+                  "    def quit_hard(_args):\n"
+                  "        sys.exit(7)\n"
+                  "    api.register_command('/exit-plugin', boom, label='退出测试')\n"
+                  "    api.register_command('/exit-plugin-sysexit', quit_hard, label='退出测试2')\n"))
+    loader.load_all()
+    exit_rec = loader.records.get("exit-plugin")
+    check("退出测试插件加载成功（指令已登记）",
+          bool(exit_rec and exit_rec.loaded and "/exit-plugin" in (exit_rec.commands or [])),
+          str(exit_rec and exit_rec.error))
+
+    escaped = None
+    text = ""
+    try:
+        text, _action = loader.commands.handle("/exit-plugin")
+    except BaseException as e:   # noqa: BLE001 —— 逃出来就说明隔离层没拦住
+        escaped = e
+    check("插件 raise SystemExit(3) 时异常不穿透指令层（进程没退出）",
+          escaped is None,
+          f"SystemExit 逃逸出 handle()：{type(escaped).__name__}: {escaped}" if escaped else "")
+    check("SystemExit 被隔离成 cmd.disabled 文案而不是崩溃",
+          "不可用" in text and "SystemExit" in text, repr(text))
+
+    escaped2 = None
+    text2 = ""
+    try:
+        text2, _action2 = loader.commands.handle("/exit-plugin-sysexit")
+    except BaseException as e:   # noqa: BLE001
+        escaped2 = e
+    check("插件 sys.exit(7) 同样被隔离", escaped2 is None,
+          f"SystemExit 逃逸出 handle()：{type(escaped2).__name__}: {escaped2}" if escaped2 else "")
+    check("sys.exit() 也被隔离成 cmd.disabled 文案",
+          "不可用" in text2 and "exit-plugin-sysexit" in text2, repr(text2))
+    check("隔离之后主程序照常工作", "用法" in loader.commands.handle("/help")[0])
+    check("抛 SystemExit 的插件本身仍处于已加载状态",
+          bool(loader.records.get("exit-plugin") and loader.records["exit-plugin"].loaded))
 
 
 if __name__ == "__main__":

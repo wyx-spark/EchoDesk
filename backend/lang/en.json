@@ -38,8 +38,8 @@
       "/mode": {
         "name": "Switch conversation mode",
         "usage": "/mode <number|abbreviation|full name>",
-        "desc": "Switches the AI answering style; every mode carries a full role, output format, detail judgement, reasoning steps and an example — run /mode list to see them all.",
-        "detail": "    Modes:\n      general / summary / translate /\n      code / contract / creative /\n      guide (requirement clarification: have it list the likely meanings first)\n    Each mode states its role, output format, how much detail to give, reasoning steps,\n    one input/output example and its tone, and they all share the same general requirements\n    (say you do not know, one sentence when one sentence is enough, give the most likely\n    answer before asking, never fabricate sources).\n    /mode list shows each mode's description and temperature preset."
+        "desc": "Switches how the AI answers; there are three modes now — use /task when you need a specific output format. Run /mode list to see them all.",
+        "detail": "    Modes:\n      chat (default) / contract (clause review) / agent (can call tools)\n    Each mode states its role, output format, how much detail to give, reasoning steps,\n    one input/output example and its tone, and they all share the same general requirements\n    (say you do not know, one sentence when one sentence is enough, give the most likely\n    answer before asking, never fabricate sources).\n    Summarize / translate / code / creative writing no longer take up a mode slot:\n    call them with /task summary, /task translate, /task code and /task creative.\n    Old spellings such as /mode summary still work — they switch the mode and apply the\n    matching template for you.\n    /mode list shows each mode's description and temperature preset."
       },
       "/file": {
         "name": "Upload a file",
@@ -129,7 +129,9 @@
     "resp": {
       "exit": "👋 Closing EchoDesk. Goodbye!",
       "mode_current": "Current mode: {mode} (run /mode list to see all)",
-      "mode_list": "Available modes (number / abbreviation / full name all work):\n{menu}",
+      "mode_list": "Available modes (number / abbreviation / full name all work):\n{menu}\n\n{legacy}",
+      "mode_legacy": "The old mode names still work and apply the matching task template (no capability is lost; they simply no longer take up a mode slot): {pairs}",
+      "mode_migrated": "(\"{old}\" has been merged into another mode; the task template /task {template} was applied automatically — run /task off to clear it)",
       "mode_set_preset": "✅ Switched to mode: {mode} (temperature preset {preset})",
       "mode_set": "✅ Switched to mode: {mode}",
       "mode_unknown": "❌ Unknown mode: {name} (run /mode list)",
@@ -181,7 +183,20 @@
       "temp_reset": "✅ Temperature restored to the mode preset: {temp}",
       "temp_invalid": "Please enter a valid number",
       "temp_range": "Temperature must be between 0.0 and 1.0",
-      "temp_set": "✅ Temperature set to: {temp} (manual)"
+      "temp_set": "✅ Temperature set to: {temp} (manual)",
+      "mcp_usage": "Usage: /mcp [list|enable <name>|disable <name>|connect] (run /mcp list to see servers and tools)",
+      "mcp_disabled": "MCP is switched off in the configuration (mcp.enabled in config.json). Set it to true, or turn it on in Settings, to use it.",
+      "mcp_state": "🔌 MCP: {count} server(s), {tools} tool(s) discovered.",
+      "mcp_server_line": "  {mark} {name} ({state}): {tools} tool(s)",
+      "mcp_unknown_server": "❌ There is no MCP server named \"{name}\" (run /mcp list).",
+      "mcp_toggled": "✅ MCP server {name} is now {state} (effective immediately).",
+      "mcp_connected": "✅ Connected and registered {count} MCP tool(s) (authorise them one by one with /agent allow <tool>).",
+      "mcp_connect_failed": "❌ Connecting to the MCP server failed: {error}",
+      "mcp_no_tools": "no tools discovered",
+      "mcp_hint": "  Note: MCP tools are always treated as sensitive — authorise them in Settings or with /agent allow <tool>; /mcp connect really starts the external process.",
+      "mcp_unavailable": "❌ MCP is unavailable right now (the backend exposes no MCP interface)",
+      "mcp_no_servers": "No MCP server is configured. Add one under Settings → Agent → MCP, or edit mcp.servers in config.json; a bundled example lives at examples\\mcp\\echo_server.py.",
+      "mode_legacy_number": "⚠️ The numbering changed: it is now 1=chat, 2=contract, 3=agent. The old number {number} meant something else — use {instead} instead (or spell the mode out, e.g. /mode summary)."
     },
     "status": {
       "header": "🏷️  {app} {version} — Powered by {studio}",
@@ -265,7 +280,25 @@
     "items./compact.name": "Compact context",
     "items./compact.usage": "/compact [focus on <what matters>]",
     "items./compact.desc": "Compact the context right away: older turns become a summary (or are dropped in sliding-window mode), freeing room for new content without waiting for the automatic trigger.",
-    "resp.cache_cleared_with_summaries": "✅ Cleared the inference KV cache and {count} cached document summar(y/ies)"
+    "resp.cache_cleared_with_summaries": "✅ Cleared the inference KV cache and {count} cached document summar(y/ies)",
+    "items./agent.name": "Agent tools and permissions",
+    "items./agent.usage": "/agent [list|allow <tool>|deny <tool>|steps <1-8>|on|off]",
+    "items./agent.desc": "See which tools the agent may call and which are authorised, pre-authorise sensitive tools (web search, reading local files), or change the step limit; on/off is the same as switching to agent mode",
+    "items./agent.detail": "    In agent mode the model decides which tool to call and in what order until it reaches a conclusion;\n    every step (which tool, which arguments, what came back) is shown in the conversation, and Esc stops it.\n\n    Tools come in two tiers:\n      ✅ safe: calculator, dates, unit conversion, lookup/summary inside uploaded files — enabled by default;\n      🔒 sensitive: web search and reading arbitrary local files — these send data out or read local\n         content, so they are off by default; enable them with /agent allow web_search.\n    This version ships **no tool that writes files or runs commands** (least privilege).\n\n    Common uses:\n      /agent                    show the tool list and permission state\n      /agent allow web_search   allow web search (written to config.json, persists)\n      /agent deny web_search    revoke it\n      /agent steps 5            force a conclusion after at most 5 tool calls\n      /agent on                 switch to agent mode (same as /mode agent)",
+    "resp.agent_mode": "✅ Agent turned {state} (current mode: {mode})",
+    "resp.agent_state": "🤖 Agent status: mode {mode}; at most {steps} tool calls; {enabled}/{total} tools enabled.",
+    "resp.agent_tool_line": "  {mark} {name} ({risk}): {desc}",
+    "resp.agent_hint": "  Use /agent allow <tool> to authorise a sensitive tool and /agent steps <1-8> to change the step limit. This version ships **no** tool that writes files or runs commands (least privilege).",
+    "resp.agent_usage": "Usage: /agent [list|allow <tool>|deny <tool>|steps <1-8>|on|off] (run /agent list to see the tools)",
+    "resp.agent_unavailable": "❌ The agent is unavailable (the backend exposes no tool interface)",
+    "resp.agent_unknown_tool": "❌ There is no tool named \"{name}\". Available: {tools}",
+    "resp.agent_permission": "✅ Tool {tool} is now {state}",
+    "resp.agent_bad_steps": "❌ The step count must be an integer between 1 and 8",
+    "resp.agent_steps": "✅ The tool-call step limit is now {steps}",
+    "items./mcp.name": "MCP servers",
+    "items./mcp.usage": "/mcp [list|enable <name>|disable <name>|connect]",
+    "items./mcp.desc": "Show MCP server status and the tools they expose; enabling or disabling a server takes effect immediately (no restart); connect actually starts the process and fetches its tool list",
+    "items./mcp.detail": "    MCP (Model Context Protocol) lets the agent use tools provided by **external processes**\n    (databases, APIs, file systems, …). EchoDesk ships a stdio client: declare one\n    command per server under mcp.servers in config.json.\n\n    Security boundary: an MCP server is a process you configured and EchoDesk cannot\n    control what it does, so its tools are **always treated as sensitive** and must be\n    authorised with /agent allow first. Secret environment variables are **not**\n    passed through by default — name them in passthrough_env if you need to.\n\n    Common uses:\n      /mcp                     show status and tools\n      /mcp enable echo         enable a server (written to config.json)\n      /mcp disable echo        disable it (takes effect immediately)\n      /mcp connect             connect now and fetch the tool list\n\n    Example: examples\\mcp\\echo_server.py (standard library only; configure it to\n    verify the plumbing end to end)."
   },
   "sys": {
     "ready": "Backend ready",
@@ -392,6 +425,13 @@
     "profile_not_installed": "⚠️ The model for this tier has not been downloaded yet: {name}\nClick \"Download\" for that tier under Settings → Model, or put the .gguf file into the models folder ({dir}) and retry.",
     "profile_applied": "✅ Switched to model tier '{alias}' ({name}).",
     "profile_apply_failed": "❌ Switching the model tier failed: {error}",
+    "profile_saved": "✅ Saved the model tier '{alias}'.",
+    "profile_deleted": "✅ Deleted the model tier '{alias}' (the model file on disk was not deleted).",
+    "profile_alias_required": "❌ Give the tier an alias first — the alias is its name.",
+    "profile_alias_invalid": "❌ The alias '{alias}' is not valid: at most 32 characters and no path separators.",
+    "profile_bad_context": "❌ The context length must be a number (got {value}).",
+    "profile_bad_temperature": "❌ The temperature must be a number between 0 and 1.5 (got {value}).",
+    "profile_in_use": "❌ The tier '{alias}' is in use; switch to another tier before deleting it.",
     "model_scan_found": "Scan complete: found {count} model(s) in {dir}. Pick one in the local model library to load it.",
     "model_scan_ok": "Scan complete: the model library now has {count} model(s).",
     "summarize_need_model": "Segmented summarization needs a model and none is available right now.\n\n{guide}",
@@ -403,7 +443,15 @@
     "summary_aborted": "⏹ Segmented summarization aborted ({name}): {done}/{total} segments done in {elapsed}s.\nThe full text is still in context and no partial summary was injected. Run /summarize again to retry.",
     "summary_failed": "❌ Segmented summarization failed ({name}): none of the {chunks} segments produced a summary ({failed} call failures, {timeout} timeouts) after {elapsed}s.\nLikely causes: the model is not properly loaded, out of memory, or the summary model is unavailable. Fix that and retry /summarize.",
     "summary_partial_notice": "⚠️ This summary is incomplete: {ok} of {total} segments came from the model, {failed} failed, {timeout} timed out, {skipped} were skipped and {slow} were slow; failed segments fell back to a raw excerpt so nothing was dropped.",
-    "summary_slow_notice": "⏱️ {slow} of {total} segments exceeded the slow threshold; the whole run took {elapsed}s. This is normal for slow models/machines — try a smaller quantization or lower chunk_chars."
+    "summary_slow_notice": "⏱️ {slow} of {total} segments exceeded the slow threshold; the whole run took {elapsed}s. This is normal for slow models/machines — try a smaller quantization or lower chunk_chars.",
+    "profile_context_out_of_range": "❌ The context length must be between {low} and {high} (got {value}).",
+    "profile_temperature_out_of_range": "❌ The temperature must be between {low} and {high} (got {value}).",
+    "skills_reloaded": "   ↻ Plugins hot-reloaded: {loaded}/{total} loaded ({failed} failed); new commands are available now.",
+    "skills_reload_failed": "   (Installed successfully, but the hot reload failed: {error}; retry with the Reload local plugins button on the Developer page.)",
+    "mcp_unavailable": "❌ MCP configuration is unavailable (the backend exposes no MCP interface)",
+    "mcp_bad_timeout": "❌ The timeout must be a number of seconds between 1 and 600.",
+    "mcp_bad_server": "❌ Incomplete MCP server entry ({item}): both name and command are required.",
+    "mcp_no_servers": "No MCP server is configured. Add one under Settings → Agent → MCP, or edit mcp.servers in config.json."
   },
   "file": {
     "wps_failed": "WPS read failed: {error}",
@@ -865,7 +913,13 @@
     "examples_copied": "✅ Example plugins copied to {dir}: {names}",
     "dev_mode_unloaded": "Unloaded {count} development plugin(s) and removed their commands: {ids}",
     "trust_nothing": "No plugin needs confirmation",
-    "trust_saved": "Plugin trust saved: {approved} enabled, {denied} disabled"
+    "trust_saved": "Plugin trust saved: {approved} enabled, {denied} disabled",
+    "dep_missing": "missing plugin dependencies: {deps}",
+    "dep_mismatch": "dependency version not satisfied: {deps}",
+    "min_version_too_new": "Plugin {id} requires EchoDesk {want} or newer; this build is {have}",
+    "command_not_registered": "declared but not registered: {commands}",
+    "command_undeclared": "registered without declaring: {commands}",
+    "reload_dev_scope": "(Only development-directory and local-manifest plugins were reloaded; installed plugins were left untouched.)"
   },
   "capability": {
     "unknown": "Unknown",
@@ -897,13 +951,9 @@
   "mode": {
     "menu_item": "{index}. {id} ({short}) — {desc} (temperature {temp})",
     "_note": "These are the **user-facing mode descriptions** shown by /mode list (short sentences). The **prompt text** sent to the model for each mode lives in the MODES table in backend/conversation.py and deliberately stays Chinese and out of the language packs — see the header comment of that file.",
-    "desc.general": "General Q&A: anything goes, concise answers that lead with the conclusion.",
-    "desc.summary": "Compresses long documents and meeting notes into a conclusion plus key points, keeping numbers, dates and amounts verbatim.",
-    "desc.translate": "Chinese-English translation: output only the translation, preserving paragraph structure and consistent terminology.",
-    "desc.code": "Code explanation and debugging: conclusion first, then a minimal patch, then how to verify it.",
-    "desc.contract": "Contract clause review: money, timing and liability risks only, each with a verbatim quote from the original.",
-    "desc.creative": "Stories, poems, copy and scripts, with a willingness to try a distinctive angle.",
-    "desc.guide": "Requirement clarification: turns a vague ask like \"take a look at this\" into 2-3 possible directions you pick from before it answers."
+    "desc.chat": "General conversation: anything goes, concise answers that lead with the conclusion; use /task when you need a specific output format.",
+    "desc.contract": "Clause review: money, timing and liability risks only, each with a verbatim quote from the source plus a human-review reminder.",
+    "desc.agent": "Agent: the model decides which tools to call (calculator, dates, document lookup, …) and works step by step; every step is shown in the conversation and you can stop it at any time."
   },
   "task": {
     "menu_item": "  /task {id}  — {label}: {note}",
@@ -924,7 +974,11 @@
     "code.label": "Code explanation and debugging",
     "code.note": "For debugging, a minimal runnable snippet helps more than a full rewrite.",
     "reason.label": "Step-by-step reasoning",
-    "reason.note": "Small models often get the answer wrong when asked for a conclusion directly; forcing step-by-step reasoning clearly improves accuracy."
+    "reason.note": "Small models often get the answer wrong when asked for a conclusion directly; forcing step-by-step reasoning clearly improves accuracy.",
+    "creative.label": "Creative writing",
+    "creative.note": "Stories, copy and slogans; it settles on 2-3 directions instead of drifting. (formerly the creative mode)",
+    "guide.label": "Requirement clarification",
+    "guide.note": "Turns a vague ask like \"take a look at this\" into 2-3 possible directions for you to pick from. (formerly the guide mode)"
   },
   "export": {
     "title": "# EchoDesk conversation",

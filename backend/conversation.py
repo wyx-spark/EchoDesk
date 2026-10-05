@@ -11,22 +11,25 @@ from typing import Dict, List, Optional
 from i18n import t as _t
 
 # ===========================================================================
-# 系统提示词（v0.2.1 提示词优化 → v0.2.1 系统提示词重构）
+# 系统提示词（v0.2.1 提示词优化 → 提示词重构 → 能力扩展-1 模式简化）
 #
 # 结构：**模式块 + 共享主干 + 语言指令 +（可选）任务层 +（可选）自定义指令**
 #
-#   1. **模式块**（``MODES``）：每个模式自带六要素——角色 / 输出格式 / **详略判断** /
-#      思维链 / 少样本示例 / 语气，再加该场景特有的边界。第 3 项是
-#      **v0.2.1 系统提示词重构**新加的：上一轮补齐六要素后，约束加码过多，
+#   1. **模式块**（``MODES``）：**3 个**模式，各带六要素——角色 / 输出格式 /
+#      **详略判断** / 思维链 / 少样本示例 / 语气，再加该场景特有的边界。
+#      详略那一项是"提示词重构"轮加的：上一轮补齐六要素后约束加码过多，
 #      模型变成"只按模板办事"（简单问题也列三条、信息不全就拒绝回答）；
-#      详略这一项把"该说多少"的判断权交回模型，格式要求本身不变。
+#      详略把"该说多少"的判断权交回模型。
+#      **模式数量**是"能力扩展-1 任务一"重新定的：从 7 个收敛到 3 个
+#      （chat / contract / agent），理由与迁移方案见下面 MODE_ALIASES 上方的长注释。
 #   2. **共享主干**（``_CORE_RULES``）：所有模式共用的七条通用纪律（视角、边界、
 #      详略、先答后问、摊开推测、引导、输出纪律）。**刻意共享而不是每个模式各写一遍**：
-#      这些与场景无关，写 7 遍既白占上下文（0.8B 模型对冗长提示词更敏感），
-#      又会在改动时留下七处不一致。
+#      这些与场景无关，写 3 遍既白占上下文（0.8B 模型对冗长提示词更敏感），
+#      又会在改动时留下三处不一致。
 #   3. **语言指令**（``_REPLY_LANGUAGE``）：跟随**界面语言**，见下方说明。
 #   4. **任务层**：``/task`` 套用的模板，**叠加**在模式之上而不是替换它
 #      （见 :meth:`ConversationManager.get_system_prompt` 与 ``prompts.build_system_prompt``）。
+#      **被移除的四个模式（summary/translate/code/creative）与 guide 的能力就住在这里。**
 #   5. **自定义指令**：``/prompt`` 的内容，优先级最高，替换模式块与任务层。
 #
 # 多语言说明：下面是**发给模型的提示词正文**，不是界面文本，因此刻意保持中文、
@@ -37,54 +40,21 @@ from i18n import t as _t
 # 取用），它是面向用户的短句，与这里的提示词正文**不再共用同一段文字**。
 #
 # 长度预算（依据见 records/v0.2.1-提示词优化记录.md）：
-#   * 单个模式块 ≤ 480 字符（实测 243~320）；
-#   * 模式块 + 共享主干 + 语言指令 ≤ 700 字符（实测 599~676）。
+#   * 单个模式块 ≤ 480 字符；
+#   * 模式块 + 共享主干 + 语言指令 ≤ 700 字符。
 #   默认上下文 8192 token，中文约 1 字符/token 量级，700 字符约占 8.5%，
 #   余量留给文件摘要与对话历史。上限由 ``tools/test_capability.py`` 断言守住。
-#   **重构时没有放宽这两条上限**：任务书要求"放松的是内容策略不是物理长度"，
-#   所以新增的详略/引导要求是靠压缩原有措辞腾出空间写进去的。
+#   **两次重构都没有放宽这两条上限**：新增内容是靠压缩原有措辞腾出空间的。
 # ===========================================================================
 
 MODES: Dict[str, str] = {
-    "general": (
+    "chat": (
         "【角色】你是通用问答助手，面向中文办公场景，回答简洁、直给结论。\n"
         "【输出格式】纯文本；需要并列信息时才写「1. 2. 3.」，每条不超过两行；不复述我的问题。\n"
         "【详略】能一句话答完就一句话，不要为了显得完整硬凑三条；只有确实需要列举时才分点。\n"
         "【思维】先判断我真正想问什么；一句话有多种理解时，按最可能的一种回答并说明另一种理解是什么。\n"
         "【示例】问：报销单丢了怎么办？→ 先按财务要求补开证明，再走补录流程；具体以你单位制度为准。\n"
         "【语气】平稳、口语化，不堆敬语，不写开场白与自我说明。"
-    ),
-    "summary": (
-        "【角色】你是资深会议记录员，把长材料压缩成不丢关键信息的要点。\n"
-        "【输出格式】先一句话结论；短材料（200 字内）说完就停，不要分点；"
-        "确实需要分点时每条不超过 40 字；纯文本，不加开场白、不复述我的要求。\n"
-        "【详略】长材料才列要点、最多 8 条；短材料一段话答完即可，别为凑格式分点。\n"
-        "【思维】先按「时间—主体—动作—结果」梳理一遍，再写结论与要点。\n"
-        "【示例】3000 字采购合同 → 结论：分三批交付的设备采购，逾期按日 0.3% 计违约金。\n"
-        "【边界】数字、日期、金额、人名必须原样保留；原文没写的一律不补；"
-        "材料太短或信息不足时直接说「内容不足以摘要」。\n"
-        "【语气】客观克制，不评价、不推测对方意图。"
-    ),
-    "translate": (
-        "【角色】你是专业笔译，擅长中英互译，重视术语一致与语气贴合。\n"
-        "【输出格式】只输出译文；保留原文的段落结构与编号；不加解释、不加引号、不复述原文。\n"
-        "【详略】忠实原文优先：除非我明确问，不要解释你为什么这样译，也不要替我补充背景。\n"
-        "【思维】先判断文体（合同／技术文档／口语），统一术语后再落笔。\n"
-        "【示例】The Buyer shall pay within 30 days after acceptance. → 买方应在验收后 30 日内付款。\n"
-        "【边界】专有名词、代码、公式原样保留；无法确定的译法写成「译文（原文）」；"
-        "不擅自增删内容、不改动数字。\n"
-        "【语气】随原文分层：合同严谨、技术中性、口语自然。"
-    ),
-    "code": (
-        "【角色】你是严谨的工程师，回答以「可运行、可验证」为准。\n"
-        "【输出格式】结论在前，其后才是代码与验证方法；代码用带语言标记的代码块。\n"
-        "【详略】问 API 用法、参数含义、报错原因时一两句答完就够；只有确实要改动代码，"
-        "才给最小修改片段和一条验证方法。\n"
-        "【思维】先按「输入→处理→输出」复述代码在做什么，再定位偏差，不要跳到结论。\n"
-        "【示例】for i in range(len(a)): print(a[i+1]) → 索引越界，改为 range(len(a)-1)。\n"
-        "【边界】拿不准的 API、参数或版本差异，写「需要确认」，不要编造；"
-        "不要整文件重写，除非我明确要求。\n"
-        "【语气】直接、不寒暄，不解释常识。"
     ),
     "contract": (
         "【角色】你是审查采购合同条款的财务专员，只关注钱、时间、责任三类风险。\n"
@@ -98,27 +68,17 @@ MODES: Dict[str, str] = {
         "金额、比例、期限照抄不换算。\n"
         "【语气】严谨保守，不夸大。"
     ),
-    "creative": (
-        "【角色】你是创意写作伙伴，擅长故事、诗歌、文案与剧本，敢于给有辨识度的写法。\n"
-        "【输出格式】直接给成稿；不写创作说明，除非我明确问。\n"
-        "【详略】需要多个方案时给 2~3 个就收住，不要一路发散；每个用一句话标出特色。\n"
-        "【思维】先定体裁、视角与情绪基调，再动笔；避开套话与陈词。\n"
-        "【示例】写一句咖啡广告 → 「醒着的理由，不止一个。」\n"
-        "【边界】不抄袭、不套用知名作品的句子；涉及真实人物或事件时只做虚构化处理；"
-        "内容不合适时说明原因并给替代写法，而不是照做。\n"
-        "【语气】放开、有画面感、允许留白，不解释「我为什么这样写」。"
-    ),
-    "guide": (
-        "【角色】你是需求澄清助手：用户说不清自己想要什么时，帮他找到方向。\n"
-        "【输出格式】列出 2~3 种最可能的理解，每种配一句你会怎么处理；"
-        "最后问我选哪一个，不替我决定。\n"
-        "【详略】每种理解只说一句话，不在选定前展开完整方案；我选完再给正式回答。\n"
-        "【思维】先从我的只言片语里提取可能的目标、对象和想要的产出形式，再据此列方向。\n"
-        "【示例】「帮我看看这个」→ 1) 看文件内容有没有问题；2) 看某段文字怎么改；"
-        "3) 看代码为什么报错。你指哪一种？\n"
-        "【边界】方向必须来自我确实提到的线索，不要编造我没说过的事；"
-        "一点线索都没有时，直接问最关键的三个问题。\n"
-        "【语气】耐心、平等，不说「你的问题不清楚」这类指责的话。"
+    "agent": (
+        "【角色】你是能调用工具的智能体：自己决定用哪个工具、按什么顺序，直到把任务做完。\n"
+        "【输出格式】需要外部信息或计算时，按下面「工具协议」输出一行 JSON；"
+        "任务完成时以「最终答案：」开头给结论。\n"
+        "【详略】工具能查到的别凭记忆写；一次只调一个工具，看到结果再决定下一步。\n"
+        "【思维】判断缺什么 → 挑工具 → 看结果 → 不够就换工具或改参数重试 → 收敛到结论。\n"
+        "【示例】要算 3000×7.2 时输出 "
+        '{"tool": "calc", "args": {"expr": "3000*7.2"}, "why": "算金额"}。\n'
+        "【边界】工具缺失、失败或结果为空时如实说明并给出基于已知信息的结论，"
+        "绝不编造工具返回内容。\n"
+        "【语气】每一步一句话说明在做什么，不复述工具结果全文。"
     ),
 }
 
@@ -174,37 +134,132 @@ def reply_language_instruction() -> str:
         locale = "zh-Hans"
     return _REPLY_LANGUAGE.get(locale, _REPLY_LANGUAGE_FALLBACK)
 
-# 模式别名：编号 / 缩写 / 全称均可切换
+# ===========================================================================
+# 对话模式简化（v0.2.1 能力扩展-1 任务一）
+#
+# **三个模式，三种语义**：chat（通用对话）/ contract（条款审查）/ agent（可调工具的智能体）。
+# 判定标准取自任务书：用户要能一眼说清"我现在该用哪个"，而不是"这个任务该配哪段提示词"。
+#
+# 为什么现在是 3 个而不是上一版的 7 个（general/summary/translate/code/contract/creative/guide）：
+#   * summary / translate / code / creative 的差别**只是提示词不同**，不是语义不同——
+#     它们是"同一场对话里的临时任务"，本来就该由 ``/task`` 模板承担（模板本来就是
+#     "本轮输出格式"的层）。这四个模式块的正文没有丢，全部搬进了对应的任务模板。
+#   * guide（引导）同理：它的"列 2~3 种可能方向"已经写进共享主干第 6 条（所有模式通用），
+#     模型驱动的版本搬进 ``/task guide``。
+#   * contract 保留为独立模式：它带专业角色与**硬输出要求**（原文逐字一致、必须提示
+#     人工复核），是"对话语气与边界都不同"的场景，合并会丢能力（任务书明确要求保留）。
+#   * agent 是新增的第三种语义：模型自主决定调用工具（与"预定义流程的批量执行"
+#     的自动化是两件事）。
+#
+# **旧名字仍然可用**（``LEGACY_MODES``）：``/mode summary`` 会切到 chat 并把 summary
+# 模板套上，同时把温度预设也沿用旧值 —— 用户不用改习惯，能力一点没少，只是不再占一个模式位。
+# ===========================================================================
+
+#: 模式别名：编号 / 缩写 / 全称 / **旧模式名**均可切换。
+#:
+#: **编号只认新的 1/2/3**（chat/contract/agent）。上一版的 4/5/6/7 不再映射到任何模式 ——
+#: 它们与新编号在语义上会打架（旧 `/mode 2` 是 summary，新 `/mode 2` 是 contract），
+#: 与其让"同一个数字在两类用户眼里指两件事"，不如明确报错并告诉用户该用哪个模板
+#: （见 `LEGACY_NUMBERS` 与 `command_handler._mode`）。
 MODE_ALIASES: Dict[str, str] = {
-    "1": "general", "g": "general", "general": "general",
-    "2": "summary", "s": "summary", "sum": "summary", "summary": "summary",
-    "3": "translate", "t": "translate", "tr": "translate", "translate": "translate",
-    "4": "code", "c": "code", "code": "code",
-    "5": "contract", "ct": "contract", "contract": "contract",
-    "6": "creative", "cr": "creative", "creative": "creative",
-    # 引导模式（v0.2.1 系统提示词重构新增）：用户说不清想要什么时用。
-    # 别名取 "gd" 而不是 "g"——"g" 已被 general 占用（既有约定，不动）。
-    "7": "guide", "gd": "guide", "guide": "guide",
+    "1": "chat", "c": "chat", "chat": "chat",
+    "2": "contract", "ct": "contract", "contract": "contract",
+    "3": "agent", "ag": "agent", "agent": "agent",
+    # ---- 上一版的模式名：仍然可用，会自动切模式并套上同名模板（见 LEGACY_MODES） ----
+    "general": "chat", "g": "chat",
+    "summary": "chat", "s": "chat", "sum": "chat",
+    "translate": "chat", "t": "chat", "tr": "chat",
+    "code": "chat",
+    "creative": "chat", "cr": "chat",
+    "guide": "chat", "gd": "chat",
+}
+
+#: 旧模式名 → 迁移后要自动套用的任务模板 id（``""`` 表示只切模式、不套模板）。
+#: ``/mode summary`` 因此等于"切到 chat + /task summary"，能力不丢、概念少一个。
+LEGACY_MODES: Dict[str, str] = {
+    "summary": "summary",
+    "translate": "translate",
+    "code": "code",
+    "creative": "creative",
+    "guide": "guide",
+    "general": "",
+}
+
+#: 当前编号（1/2/3）。单独抽出来是为了让"数字属于新编号还是旧编号"这件事**只有一处判据**：
+#: `command_handler._mode` 用它决定"这是新编号（切模式）还是旧编号（报错指路）"。
+MODE_NUMBERS: Dict[str, str] = {"1": "chat", "2": "contract", "3": "agent"}
+
+#: 旧编号 → 旧模式名。**只用来给出有用的报错**，不再用来切模式或套模板：
+#: 上一版 ``/mode 2`` 是 summary、``/mode 6`` 是 creative，而新编号里 ``/mode 2``
+#: 是 contract、``/mode 3`` 是 agent —— 同一个数字在两套编号里指不同东西。
+#: 让数字继续"自动迁移"会出现"我按旧习惯敲 /mode 2，结果进了合同审查模式还套了摘要模板"
+#: 这种既不是旧语义也不是新语义的状态（文档子代理按实测发现过这个组合）。
+#: 所以：数字只认新编号，旧编号直接报错并指路；旧**模式名**（不带歧义）才自动迁移。
+LEGACY_NUMBERS: Dict[str, str] = {
+    "1": "general", "2": "summary", "3": "translate", "4": "code",
+    "5": "contract", "6": "creative", "7": "guide",
+}
+
+#: 旧模式名 → 温度预设。迁移时沿用，避免"合并之后回答风格也变了"。
+LEGACY_TEMPERATURES: Dict[str, float] = {
+    "summary": 0.4, "translate": 0.3, "code": 0.2, "creative": 0.9, "guide": 0.6,
 }
 
 # 每个模式的展示缩写（用于 /mode list）
 MODE_SHORT_NAMES: Dict[str, str] = {
-    "general": "g", "summary": "s", "translate": "t",
-    "code": "c", "contract": "ct", "creative": "cr", "guide": "gd",
+    "chat": "c", "contract": "ct", "agent": "ag",
 }
 
 # 模式 × 温度预设（用户手动 /temp 后以手动值为准）
 MODE_TEMPERATURES: Dict[str, float] = {
-    "general": 0.7,
-    "summary": 0.4,
-    "translate": 0.3,
-    "code": 0.2,
+    "chat": 0.7,
+    # 审查要稳：宁可保守也不要发挥。
     "contract": 0.3,
-    "creative": 0.9,
-    # 引导模式要"猜得开"（列多种可能）但不能太飘（方向必须来自用户线索），
-    # 取中间值；比 creative 低是因为它紧接着要给用户选，飘了就没法选。
-    "guide": 0.6,
+    # 智能体要"会用工具"但别乱调：0.5 比 code(0.2) 敢试、比 creative(0.9) 收得住。
+    "agent": 0.5,
 }
+
+
+def canonical_mode(name: str) -> str:
+    """把任意写法（编号/缩写/全称/旧模式名）解析成正式模式名；无效则回 chat。
+
+    配置里可能存着旧名字（``default_mode: "summary"``），所以**加载路径也走它**，
+    而不是只在 ``/mode`` 里迁移。
+    """
+    key = (name or "").strip().lower()
+    return MODE_ALIASES.get(key, key if key in MODES else "chat")
+
+
+def legacy_template(name: str) -> str:
+    """旧**模式名**对应要套用的任务模板 id；不是旧名字则返回空串。
+
+    刻意**不认旧编号**（见 ``LEGACY_NUMBERS`` 的说明）：编号在两套编号体系里会歧义，
+    由 ``command_handler._mode`` 单独报错指路。
+    """
+    return LEGACY_MODES.get((name or "").strip().lower(), "")
+
+
+def legacy_number_hint(token: str) -> str:
+    """旧编号 → 建议的替代写法（不是旧编号则返回空串）。
+
+    ``/mode 6`` 这样的旧写法会得到"旧编号 6 曾指创意写作，现在请用 /task creative"，
+    而不是默默切到一个语义不同的模式。
+    """
+    key = (token or "").strip().lower()
+    if key not in LEGACY_NUMBERS:
+        return ""
+    old_name = LEGACY_NUMBERS[key]
+    template = LEGACY_MODES.get(old_name, "")
+    if old_name == "general":
+        return "chat"
+    if old_name == "contract":
+        return "contract"
+    return f"/task {template}" if template else ""
+
+
+def legacy_note() -> str:
+    """``/mode list`` 末尾的迁移说明（界面文本，由调用方取语言包渲染）。"""
+    return ", ".join(f"{name}→{template}" for name, template in LEGACY_MODES.items() if template)
 
 # 用户询问"我刚才说了什么"时的意图识别
 REPEAT_INTENT = re.compile(
@@ -288,9 +343,12 @@ class FileEntry:
 class ConversationManager:
     """管理多轮对话历史、模式切换、文件上下文、自定义提示词与会话持久化。"""
 
-    def __init__(self, max_history: int = 10, default_mode: str = "general") -> None:
+    def __init__(self, max_history: int = 10, default_mode: str = "chat") -> None:
         self.max_history = max_history
-        self.mode = default_mode if default_mode in MODES else "general"
+        # 走 canonical_mode 而不是直接比对：**配置与会话里可能存着旧模式名**
+        # （`default_mode: "general"`、会话文件里的 `"mode": "summary"`），
+        # 迁移逻辑只有一份，加载路径与 /mode 命令都用它。
+        self.mode = canonical_mode(default_mode)
         self.history: List[dict] = []
         # ---------- 多文件（任务八） ----------
         # files 是**有序**列表（上传顺序），active_index 指向"当前操作的那一份"
@@ -302,6 +360,7 @@ class ConversationManager:
         self.undo_stack: List[dict] = []
         self.custom_prompt = ""   # /prompt 的内容：优先级最高，替换模式块与任务层
         self.task_prompt = ""     # /task 套用的任务层正文：叠加在模式块之上
+        self.task_template = ""   # 当前任务层的模板 id（供 /status 与引导短路判断）
         self.summary = ""  # 早期对话的自动摘要（长会话压缩产物）
         # ---------- 思考内容（v0.2.1 模型思考内容分离） ----------
         # 这两个开关由 Backend 按 config.reasoning 注入：
@@ -442,12 +501,25 @@ class ConversationManager:
     # ---------- 模式 ----------
 
     def set_mode(self, mode: str) -> bool:
-        """按编号 / 缩写 / 全称切换模式。"""
-        canonical = MODE_ALIASES.get(mode.strip().lower(), mode.strip().lower())
-        if canonical in MODES:
-            self.mode = canonical
-            return True
-        return False
+        """按编号 / 缩写 / 全称切换模式（**旧模式名同样有效**，见 ``LEGACY_MODES``）。"""
+        key = (mode or "").strip().lower()
+        if key not in MODE_ALIASES and key not in MODES:
+            return False
+        self.mode = canonical_mode(key)
+        return True
+
+    def migrated_template(self, mode: str) -> str:
+        """旧模式名需要一并套用的任务模板 id（不是旧名字则返回空串）。
+
+        ``/mode summary`` 的语义 = "切到 chat + 套用 summary 模板"，
+        所以调用方（``command_handler._mode``）用它决定要不要设任务层。
+        """
+        return legacy_template(mode)
+
+    @staticmethod
+    def legacy_number_hint(token: str) -> str:
+        """旧编号的替代写法建议（供 ``/mode 4`` 这类旧写法报错时指路）。"""
+        return legacy_number_hint(token)
 
     def get_mode(self) -> str:
         return self.mode
@@ -458,7 +530,7 @@ class ConversationManager:
 
     @staticmethod
     def mode_menu() -> str:
-        """生成带编号、缩写与温度预设的模式清单文本。
+        """生成带编号、缩写与温度预设的模式清单文本（模式简化后只剩 3 个）。
 
         模式**说明**取自语言包（``mode.desc.<模式>``），它是界面文本；
         MODES 里的系统提示词正文是发给模型的内容，按设计保持中文（见文件头）。
@@ -470,6 +542,13 @@ class ConversationManager:
                             short=MODE_SHORT_NAMES[name],
                             desc=_t(f"mode.desc.{name}"), temp=temp))
         return "\n".join(lines)
+
+    @staticmethod
+    def legacy_mode_note() -> str:
+        """``/mode list`` 末尾的"旧模式名仍可用"提示（界面文本，走语言包）。"""
+        pairs = ", ".join(f"{name} → /task {template}"
+                          for name, template in LEGACY_MODES.items() if template)
+        return _t("cmd.resp.mode_legacy", pairs=pairs)
 
     # ---------- 历史记录 ----------
 
@@ -560,14 +639,19 @@ class ConversationManager:
         """设置 ``/prompt`` 的自定义指令（优先级最高，替换模式块与任务层）。"""
         self.custom_prompt = text.strip()
 
-    def set_task_prompt(self, text: str) -> None:
+    def set_task_prompt(self, text: str, template: str = "") -> None:
         """设置 ``/task`` 的任务层正文（叠加在模式块之后，不替换模式）。
 
         与 ``set_custom_prompt`` 分开存，是为了让 ``/task off`` 只取消任务层、
         不会把用户用 ``/prompt`` 设的自定义指令一起清掉 —— v0.2.1 提示词优化
         之前两者共用 ``custom_prompt``，``/task off`` 会连自定义指令一起清空。
+
+        ``template`` 是模板 id（如 ``"guide"``）：模式简化之后需要知道"当前任务层
+        是哪一份"，才能让 ``/task guide`` 与旧的 guide 模式行为一致（见
+        ``main._vague_guide``：套了 guide 模板时不再插确定性引导话术）。
         """
         self.task_prompt = (text or "").strip()
+        self.task_template = (template or "").strip() if self.task_prompt else ""
 
     # ---------- 文件上下文 ----------
 
@@ -618,7 +702,7 @@ class ConversationManager:
                 f"并说明基于什么假设，再问要不要按其它情况展开。"
             )
         else:
-            prompt = MODES.get(self.mode, MODES["general"])
+            prompt = MODES.get(self.mode, MODES["chat"])
             if self.task_prompt:
                 # 任务层**叠加**而不是替换模式：两层各自负责不同粒度
                 # （模式=场景与语气，任务=本轮的具体输出格式），
@@ -661,7 +745,8 @@ class ConversationManager:
         lines.append("（如需基于某一份文件回答，请在问题里点名文件名）")
         return "\n".join(lines)
 
-    def build_messages(self, user_query: str, search_context: str = "", include_file: bool = False) -> List[dict]:
+    def build_messages(self, user_query: str, search_context: str = "", include_file: bool = False,
+                       retrieval_context: str = "") -> List[dict]:
         """构造发送给模型的完整消息列表（系统提示 + 历史 + 当前问题）。
 
         include_file=True 且已上传文件时，把文件内容注入到当前问题之前：
@@ -671,6 +756,11 @@ class ConversationManager:
         并按 ``config.files.total_chars`` 限制总长；从**后上传的开始装**（用户刚拖进来
         的通常就是这次要用的），装不下的文件不注入，由调用方按返回的
         :meth:`last_injection_note` 如实告知用户 —— 静默少注入几份文件比报错更糟。
+
+        **检索增强（能力扩展-1 任务六）**：``retrieval_context`` 是 ``retrieval.Retriever``
+        产出的"相关片段 + 位置"，排在文件块**之前**。它由调用方（``Backend``）决定要不要
+        传：只有在"启用了检索、且文件是长文档（已落盘或有摘要）"时才传 —— 短文档全文
+        注入本来就更准，检索只会丢信息。这条分工见 ``backend/retrieval.py`` 的模块说明。
 
         这里拼接的 ``【{label}】`` / ``参考以下网络信息：`` 同属提示词内容，
         按文件头说明保持中文、不进语言包。
@@ -725,6 +815,12 @@ class ConversationManager:
                                           total=total, chars=used)
             if blocks:
                 user_content = "\n\n".join(blocks) + "\n\n" + user_content
+        if retrieval_context:
+            # 检索片段排在**所有前置材料的最前面**：模型先看到"定位到的依据"，
+            # 再看整份文件的摘要/全文，最后才是问题 —— 与"引用要能对上"的顺序一致。
+            # （首轮实测把它放在了文件块**之后**，因为文件块是往 user_content 前面
+            # 拼接的；顺序反了会让小模型把检索片段当成附注而忽略引用要求。）
+            user_content = f"{retrieval_context}\n\n{user_content}"
         messages.append({"role": "user", "content": user_content})
         return messages
 

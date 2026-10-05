@@ -138,6 +138,24 @@
       "tip": "模型的推理过程（思考内容）。点击展开或收起；思考内容不会作为上下文发给模型，也不参与复制回答。",
       "noAnswer": "\n\n⚠️ 模型只输出了思考内容，没有给出最终答案（通常是长度上限用完了：用 /preset quality 切到高质量档、或调大 config.json 的 max_tokens，也可以把问题问得更具体）"
     },
+    "agent": {
+      "title": "🛠️ Agent 步骤",
+      "tip": "模型自己决定的每一步：调用哪个工具、参数是什么、返回了什么、耗时多久。按 Esc 可随时停止。",
+      "step": "📍 第 {0}/{1} 步",
+      "stepNoMax": "📍 第 {0} 步",
+      "call": "🔧 调用 {0}",
+      "args": "参数 {0}",
+      "why": "· 理由：{0}",
+      "result": "↩ {0} 返回：{1}",
+      "elapsed": "（{0} ms）",
+      "denied": "🔒 {0} 未启用（用 /agent allow {1} 授权后可用）",
+      "failed": "❌ {0} 失败：{1}",
+      "finalize": "🧩 正在汇总结论",
+      "hitMax": "⚠️ 已达步数上限，改为直接给结论",
+      "summary": "✅ 完成：{0} 步 · {1} ms",
+      "summaryStopped": "⏹ 已中止：{0} 步 · {1} ms",
+      "toolsUsed": "工具：{0}"
+    },
     "metrics": {
       "tip": "本次生成的运行指标（由后端实测上报）：首 token 延迟、输出速度、token 数、总耗时。带 ≈ 的数字为估算值。",
       "waitingFirstToken": "⏳ 等待首 token",

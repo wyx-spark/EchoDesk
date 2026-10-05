@@ -183,7 +183,7 @@ import main as backend_main  # noqa: E402
 from config import Config  # noqa: E402
 
 
-def make_backend(clarify_vague=True, mode="general"):
+def make_backend(clarify_vague=True, mode="chat"):
     """真 Backend + 桩引擎（只替换"模型怎么吐字"）。"""
     config = Config()
     config.model_path = "stub.gguf"
@@ -234,7 +234,7 @@ def _run(backend, message):
     return list(backend.stream({"action": "chat_stream", "message": message}))
 
 
-_general, _seen_general = make_backend(mode="general")
+_general, _seen_general = make_backend(mode="chat")
 _lines = _run(_general, "这个怎么办")
 _text = "".join(str(x.get("content", "")) for x in _lines)
 _marked = any(x.get("clarify") for x in _lines)
@@ -243,14 +243,22 @@ check("引导话术给了可选方向（≥2 个编号条目）", pc.direction_c
 check("引导话术让用户回编号", "编号" in _text, _text[:60])
 check("走了短路就不调用模型", "messages" not in _seen_general)
 
-_guide, _seen_guide = make_backend(mode="guide")
+_guide, _seen_guide = make_backend(mode="chat")
+_guide.conv.set_task_prompt("（引导模板正文）", "guide")
 _guide_lines = _run(_guide, "这个怎么办")
 _guide_text = "".join(str(x.get("content", "")) for x in _guide_lines)
-check("引导模式下不走短路（交给模型现列方向）",
+check("套用 /task guide 后不走短路（交给模型现列方向）",
       not any(x.get("clarify") for x in _guide_lines), _guide_text[:80])
-check("引导模式下模型确实被调用", "messages" in _seen_guide)
+check("套用 /task guide 后模型确实被调用", "messages" in _seen_guide)
 _guide_system = str((_seen_guide.get("messages") or [{}])[0].get("content", ""))
-check("引导模式下模型收到的是引导模式提示词", "需求澄清助手" in _guide_system, _guide_system[:60])
+check("套用 /task guide 后系统提示词里带上了任务层", "引导模板正文" in _guide_system,
+      _guide_system[:80])
+
+_agent, _seen_agent = make_backend(mode="agent")
+_agent_lines = _run(_agent, "这个怎么办")
+check("agent 模式也不走模糊提问短路（模型本来就要自己决定做什么）",
+      not any(x.get("clarify") for x in _agent_lines),
+      "".join(str(x.get("content", "")) for x in _agent_lines)[:80])
 
 _off, _seen_off = make_backend(clarify_vague=False)
 _off_lines = _run(_off, "这个怎么办")
@@ -281,9 +289,10 @@ else:
     check("prompt_compare --dry-run 退出码为 0（新话术达到客观判据）",
           _run.returncode == 0, (_run.stdout or "")[-400:] + (_run.stderr or "")[-200:])
     _out = _run.stdout or ""
-    check("对比报告里出现旧模式表（6 个）与新模式表（7 个）",
-          "6 个）" in _out and "7 个）" in _out, _out[:300])
-    check("对比报告给出「新增模式：guide」", "新增模式：guide" in _out)
+    check("对比报告里出现旧模式表（6 个）与新模式表（3 个）",
+          "6 个）" in _out and "3 个）" in _out, _out[:300])
+    check("对比报告给出「被移除的模式」与迁移映射（能力不丢的证据）",
+          "被移除的模式" in _out and "summary → /task summary" in _out, _out[:400])
     check("对比报告含最长系统提示词的新旧对照", "最长系统提示词" in _out)
     check("对比报告给出客观判据结论", "通过" in _out and "承诺型条目" in _out)
 

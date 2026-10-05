@@ -380,6 +380,20 @@ if (Test-Path $ExampleSrc) {
     Copy-Item (Join-Path $ExampleSrc "*") $ExOut -Recurse -Force
 }
 
+# 示例 MCP 服务器（v0.2.1 能力扩展-1 任务三）：源码在 examples\mcp\（入库）。
+# **必须随包分发**：设置窗口「智能体 → MCP」有一键「＋ 加示例服务器」，
+# 它把 examples\mcp\echo_server.py 填进配置让用户立刻验证通路；
+# 不打包的话这个按钮在发布版里会指向一个不存在的文件
+# （前端子代理在联调时发现：打包脚本此前只复制 examples\skills）。
+$McpSrc = Join-Path $Root "examples\mcp"
+if (Test-Path $McpSrc) {
+    $McpOut = Join-Path $Out "examples\mcp"
+    New-Item -ItemType Directory -Path $McpOut -Force | Out-Null
+    Copy-Item (Join-Path $McpSrc "*") $McpOut -Recurse -Force
+    Get-ChildItem $McpOut -Directory -Recurse -Filter "__pycache__" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Ok "examples\mcp\（示例 MCP 服务器 $((Get-ChildItem $McpOut -File).Count) 个文件）"
+}
+
 # 图标：随程序本体放在 app\（快捷方式通过绝对路径引用它）
 Copy-Item $Icon (Join-Path $AppOut "EchoDesk.ico") -Force
 Write-Ok "app\EchoDesk.ico"

@@ -12,6 +12,8 @@ Chinese version: [`docs/zh-Hans/FAQ.md`](../zh-Hans/FAQ.md).
 | Start the program | Use the Start Menu (or desktop) shortcut created by the installer; for the portable zip, double-click "Start-EchoDesk-v0.2.1.lnk" inside the program folder (run `install-complete.bat` once if it is missing) |
 | See every command | Type `/help` in the input box |
 | Have the AI read a document | Drag the file into the window, or use `/file C:\路径\合同.docx` |
+| Have the AI do arithmetic or look inside uploaded files | switch to agent mode: `/mode agent`, `/mode 3` or `/agent on` — the model picks the tool (see "3. Modes, agent and MCP") |
+| Let the agent search the web | authorise it first: `/agent allow web_search` (sensitive tools are off by default) |
 | Very long documents (contracts/reports) | Just upload it: anything beyond the context window is summarized in chunks automatically; you can also trigger it by hand with `/summarize` |
 | Use a different model | `/model list` to see the local models, `/model 名称` to switch |
 | Get more reliable answers | `/task list` picks a task-oriented prompt template (layered on top of the current mode: the mode sets the scene and tone, the template sets this task's output format) — then state the object and the output you expect |
@@ -35,7 +37,7 @@ Chinese version: [`docs/zh-Hans/FAQ.md`](../zh-Hans/FAQ.md).
 (just "what about this?"), the program lists 2-3 possible meanings with one line each about what it would do,
 and you reply with a number — rather than guessing at an answer or demanding that you spell out the object and
 output form (it does not do this once you have chatted a few rounds or uploaded a file). For directions that
-fit your wording more closely, switch to guidance mode with `/mode guide`. To switch the behaviour off, set
+fit your wording more closely, apply the requirement-clarification template with `/task guide`. To switch the behaviour off, set
 `clarify_vague` to `false` in `app\backend\config.json`.
 
 ---
@@ -100,6 +102,17 @@ restarting: fix the file and click *Load* (or *Rescan models folder*) again.
    then `/model 别名` switches in a single step and applies that profile's context length and temperature
    automatically.
 
+### Will deleting a custom tier delete my model files
+No. **Deleting a tier only removes the registration for that tier; not a single `.gguf` file on disk is
+touched** — a tier is just a note of "this is the one I use often", and deleting files has its own entry point
+(with a confirmation) in the model library. **A tier that is currently in use refuses to be deleted** and asks
+you to switch to another one first.
+
+Tiers can now be added, edited and deleted on the "Model" page of the Settings window (alias, model file name
+or path, repository, context length, temperature, note), so editing `config.json` by hand is no longer needed.
+The inference parameter panel on the same page works the same way: four sliders for temperature, top_p, repeat
+penalty and max generated tokens, plus **Save**, which writes them and reads back the values really in effect.
+
 ### Answers are very slow
 - The larger the context window, the more memory the KV Cache takes and the slower generation becomes.
   `/status` shows the current window and the KV Cache estimate.
@@ -137,7 +150,52 @@ requires the program to be running).
 
 ---
 
-## 3. Files and long documents
+## 3. Modes, agent and MCP
+
+### Why did the six modes lose half of themselves
+Nothing was lost — they simply stopped occupying a mode slot. There are now **three modes**
+(`chat` / `contract` / `agent`), and the merged `summary` / `translate` / `code` / `creative` / `guide`
+live on as `/task` templates (`general` was simply renamed to `chat`).
+
+**The old spellings still work**: `/mode summary` switches to chat and applies `/task summary`, keeping the old
+temperature preset (summary 0.4 / translate 0.3 / code 0.2 / creative 0.9 / guide 0.6), and the reply says
+"merged into another mode, template /task xxx applied automatically"; run `/task off` to drop the template.
+**The old numbers are no longer migrated automatically**: a number means different things under the two
+numbering schemes (the old `/mode 2` was summary, the new one is contract), so an old number such as
+`/mode 4` produces a clear error telling you which template to use instead of guessing. Write the mode name
+(`/mode summary`) for zero ambiguity, or switch first and apply the template (`/mode chat`, then
+`/task code`). The full explanation is in the user guide under "Conversation modes: three modes, and the old
+spellings still work", and the task templates grew from six to eight (adding `creative` and `guide`).
+
+### Why will the agent not search the web
+Because **web search is a sensitive tool and is off by default**: it sends your keywords to the internet, so it
+needs your explicit authorisation — `/agent allow web_search` (written to `config.json`, persists), or the
+checkbox on the Agent page of the Settings window. For the same reason `file_read`, which reads arbitrary local
+text files, is off by default too (`/agent allow file_read`).
+
+An unauthorised tool **never fails silently**: the chat shows 🔒 and how to enable it, and the model answers
+from what it already has. The safe tools (`calc`, `date`, `convert`, and `doc_search`/`doc_summary` over your
+uploaded files) need no authorisation and work out of the box. `/agent list` shows the authorisation state of
+every tool, and `/agent steps <1-8>` changes the step limit (default 4).
+
+### Will MCP send my data out
+**That depends on the server process you configured, not on EchoDesk itself.**
+
+- EchoDesk ships a stdio client and **never discovers or connects to anything automatically**;
+  `mcp.enabled` defaults to `false` and so does `auto_connect`, so with no configuration no external process is
+  ever started.
+- An MCP server is a command you wrote yourself (`command` + `args`), and EchoDesk cannot control what it does,
+  so its tools are **always treated as sensitive** and must be authorised with
+  `/agent allow mcp__<server>__<tool>` first.
+- Parent-process environment variables are **not passed through** by default (secrets are not handed to a
+  third-party process by accident); name the ones you want in that server's `passthrough_env`.
+
+In short: **the "data stays on this machine" promise still holds under the default configuration**; once you
+connect a server of your own, that process defines the data boundary — so only connect servers you trust.
+
+---
+
+## 4. Files and long documents
 
 ### Which formats are supported
 `.docx` `.xlsx` `.xlsm` `.xls` `.pptx` `.pdf` `.txt` `.md` `.csv` and other plain-text-like formats.
@@ -153,6 +211,20 @@ chunks before injecting it, and **a summary loses detail**. In that case:
   chunk), which you can use to narrow the question down;
 - To get answers grounded in the full text, raise `context_length` and `summarize.trigger_ratio` in
   `config.json`, or split the document into several parts and upload them separately.
+
+### Why does a question about a long document show only a few passages instead of the full text
+Because a long document is **never pushed into the context wholesale**; instead the summary gives the whole
+picture and retrieval supplies the detail:
+
+- **short documents (the full text fits the window)**: no retrieval, the full text is injected directly — for
+  short material the full text is the most accurate and retrieval would only lose information;
+- **long documents (spilled to disk or already summarised)**: the summary plus the retrieved passages, placed
+  before the file blocks (`top_k` 4 by default, total length capped at 2400 characters).
+
+Every injected passage carries a position such as `purchase-contract.docx (chars 210-480)`, and the model is
+required to mark its evidence with `[number]`, so you can go back to the original text and check. To see more
+passages raise `retrieval.top_k` and `retrieval.max_context_chars` in `config.json`; to switch retrieval off
+entirely set `retrieval.enabled` to `false`.
 
 ### After uploading, the model says it "cannot see the file"
 When you ask, **mention the file** (for example "According to this contract…" or "What is clause 3 in the
@@ -232,7 +304,7 @@ Known-issues round 2 fixed three things here. If you still see nothing, check in
 
 ---
 
-## 4. Automation (browser)
+## 5. Automation (browser)
 
 ### Which browser can be used
 **Microsoft Edge** must be installed (Playwright drives it through `channel=msedge`, running in headed mode,
@@ -286,7 +358,7 @@ You need to log in manually the first time; the program stores cookies/localStor
 
 ---
 
-## 5. Skill marketplace
+## 6. Skill marketplace
 
 ### No skills found / the list is empty
 A skill in the marketplace must carry the **topic `echodesk-plugin`** on its GitHub repository.
@@ -327,7 +399,7 @@ restart, unloading the development plugins and clearing the development log `app
 
 ---
 
-## 6. Interface
+## 7. Interface
 
 ### Are window size/position/theme/font size remembered?
 Yes, they are stored in `ui_state.json` in the portable **outer** folder (window position and size, font size,
@@ -364,7 +436,7 @@ Please include: `app\backend\backend_crash.log` (if it has content), `app\backen
 
 ---
 
-## 7. Still have a question?
+## 8. Still have a question?
 
 If this FAQ did not answer it, ask on GitHub. The project publishes **no support email address,
 no phone number and no postal address** — GitHub is the only channel, and a report filed there
