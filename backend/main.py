@@ -60,6 +60,9 @@ from reasoning import ANSWER as _CH_ANSWER
 from reasoning import REASONING as _CH_REASONING
 from reasoning import RESET as _CH_RESET
 from version import APP_NAME, APP_VERSION, STUDIO
+# 平台探测与能力边界（任务书 任务三 / 任务五）：只在本模块里做判断，
+# 别处一律通过它问"本平台有没有这个能力"，避免判断散落、前端对不上。
+import platform_support
 # 协议走 stdin/stdout，且内容含中文/emoji。某些机器（英文 locale）下 Python
 # 默认用 cp1252 编码，写中文会抛 UnicodeEncodeError 直接崩溃（“后端进程已退出”）。
 # 统一强制 UTF-8，且用 errors="replace" 兜底，保证任何机器都能正常输出。
@@ -693,6 +696,12 @@ class Backend:
         # ---------- 指令面板数据源（任务二 2.6） ----------
         if action == "commands":
             return {"type": "system", "content": "", "commands": self.commands.all_commands()}
+        # ---------- 跨平台（任务三 / 任务五）：平台与能力边界 ----------
+        # 前端启动时从 ready.platform 拿到同一份报告；这个动作供"能力清单"面板
+        # 与排障时随时再查（例如用户换了机器、插了外置显卡、装了 WPS 之后）。
+        if action == "platform":
+            report = platform_support.report()
+            return {"type": "system", "content": "", "platform": report}
         # ---------- 修复四：模型能力与上下文管理 ----------
         if action == "capability":
             return {"type": "system", "content": "", "capability": self.model_capability(),
@@ -4053,6 +4062,8 @@ def main() -> None:
             "model_missing": model_missing,
             # 修复六 / 修复七：告知前端 emoji 是否可用、数据目录在哪（合规与支持排查都要用）
             "emoji": emoji_mod.enabled(),
+            # 任务三：平台与能力边界 —— 前端据此显示降级横幅，并校验前后端平台判断一致
+            "platform": platform_support.report(),
             "paths": {"program": program_dir(), "data": user_data_root()}})
 
     def _stream_worker(request: Dict[str, Any]) -> None:

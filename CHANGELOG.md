@@ -14,6 +14,60 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 > deviations from the task specification, unfinished items, and size records, see the internal development
 > record (`v0.2.1-研发记录.md`, **not distributed with the release**).
 
+### Cross-platform: Avalonia frontend prototype, platform capability boundaries, cross-platform packaging
+
+Task specification: `prompts/EchoDesk-v0.2.1跨平台.md`. This round removes "Windows-only" as an
+*architectural* property: the backend becomes one codebase shared by all three platforms, a new
+Avalonia frontend joins the WPF one, and the capabilities that genuinely cannot exist off Windows
+are reduced to **two explicit degradation boundaries**, each with an alternative path. The audit,
+prototype results, the reuse-versus-rewrite list, packaging routes and unfinished work are in
+`records/v0.2.1-跨平台记录.md`.
+
+**New cross-platform frontend prototype** (`frontend-avalonia/`, tasks 1 and 2). Its target framework
+is `net10.0` — deliberately without the `-windows` suffix, which is the first hard gate for "can run
+elsewhere". The main window is done: message stream (Markdown rendering, code blocks and tables,
+copy), streaming output with throttled re-rendering, collapsible reasoning, file upload (button and
+drag-and-drop), font zoom, light/dark theming, UI language switching, and a platform capability
+banner. Backend process management and the JSON protocol are **carried over** from the already
+verified WPF implementation (single in-flight request gate, idle timeouts, two-channel streaming);
+only three platform-dependent details changed.
+
+**Backend platform work** (tasks 3 and 5). New `backend/platform_support.py`: platform detection
+(`kind`, `rid`, architecture, interpreter) and a capability list (availability, reason, alternative).
+Both the `ready` handshake and a new `platform` action return that report; the frontend uses it to
+show the degradation banner and to check that the two sides agree about the platform.
+
+| Change | Why |
+| :--- | :--- |
+| Tolerant `win32com` import | A top-level `import win32com` makes the backend die at startup on Linux/macOS |
+| `pywin32` marked `sys_platform == "win32"` in `requirements.txt` | Otherwise `pip install -r` fails on the whole dependency chain off Windows |
+| `EchoBackend.spec` branches per platform (`.exe` name, version resource, `.ico`, `win32com`) | Version resources and `.ico` are Windows-only; elsewhere the build fails or emits invalid resources |
+| Per-platform user data directories (macOS Application Support, Linux XDG) | Off Windows the program directory is often read-only |
+
+**Only two degradation boundaries** (task 5): reading **encrypted** WPS/Office documents (including
+legacy `.doc`/`.xls`, which need COM) and **enterprise intranet automation** (needs a local Edge).
+Both explain why they are unavailable and what to do instead, and neither is reported as a missing
+dependency. Everything else behaves the same on all three platforms. See
+`docs/en/CROSS_PLATFORM.md`.
+
+**Cross-platform packaging** (task 4). New `tools/pack_crossplatform.py`: PyInstaller cannot
+cross-compile, so the script itself is cross-platform — it builds for whatever platform it runs on
+(publish the frontend → freeze the backend → strip debug symbols (native Skia/HarfBuzz `.pdb` files
+account for about 100 MB on Windows) → produce `.tar.gz`/`.zip` → write `SHA256SUMS.txt`,
+`manifest.json` and `SIGNING.txt`). CI gained a three-platform matrix job (build, publish per RID,
+platform test, headless self-test). macOS signing/notarization and the Linux AppImage are **not
+automated** (they need certificates and extra tooling); the commands are written into the artifact
+but never run by the build machine.
+
+**New verification**: `EchoDesk --selftest` (headless: platform detection → launch the backend by
+platform rules → `ready` handshake → `platform`/`capability` round-trip; measured 11/11 on Windows)
+and `tools/test_platform.py` (69 checks; injects a platform through `ECHODESK_FORCE_PLATFORM` to
+exercise the non-Windows degradation paths). Stated plainly: real Linux/macOS *run* evidence has to
+come from the CI matrix — inside this repository there is currently only build-level evidence.
+
+**UI text**: every new string (frontend and backend) is in both language packs (`zh-Hans` and `en`),
+and the two packs stay identical in keys and placeholders (`tools/check_lang.py` gate).
+
 ### Capability round 1: fewer modes, an agent platform, MCP, plugin ecosystem, model management, retrieval
 
 Task specification: `prompts/EchoDesk-v0.2.1能力扩展-1.md`. This round closes the four capability gaps that

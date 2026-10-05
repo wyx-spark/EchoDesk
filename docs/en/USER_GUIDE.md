@@ -156,6 +156,39 @@ Two related notes:
 
 ---
 
+### Running on Linux or macOS
+
+The shipped build targets Windows; Linux and macOS are supported by the cross-platform frontend
+(Avalonia) on top of the same Python backend. **Almost everything behaves the same on all three
+platforms** (chat and streaming, file parsing, local retrieval, Agent, MCP, plugins, model
+management and local inference). Only two capabilities are Windows-only:
+
+* **Reading encrypted WPS/Office documents** (and legacy `.doc`/`.xls`): this needs the WPS COM
+  interface, which does not exist off Windows. The app says so explicitly — "this capability is
+  provided on Windows only" — and lists the alternatives (save an unencrypted or `.docx` copy with
+  WPS on a Windows machine, convert through an MCP server or plugin, or install a skill that
+  registers its own parser for that format). It never disguises this as a generic parse failure,
+  and it never tells you to install a component that would not help.
+* **Enterprise intranet automation** (driving the local Edge): the page is unavailable off Windows,
+  and configuration validation reports the reason as a platform limitation rather than a missing
+  dependency. Alternatives: drive the same flow from an MCP server or skill, or run the automation
+  on a Windows machine and bring the results over.
+
+Other platform differences:
+
+* **Data directory**: on Windows it is the folder outside the program (`app\`), or whatever
+  `ECHODESK_DATA` points at; on macOS `~/Library/Application Support/EchoDesk`; on Linux
+  `$XDG_DATA_HOME/EchoDesk` or `~/.local/share/EchoDesk`.
+* **UI language packs** live in `<data directory>/lang/ui/`; `ECHODESK_LANG_DIR` can point at a
+  different directory for testing translations.
+* The platform banner at the top of the window appears only when something is degraded; the ℹ️
+  button lists every capability for the current platform.
+
+The full platform matrix, packaging routes and verification evidence are in
+`docs/en/CROSS_PLATFORM.md`.
+
+---
+
 ## 2. Everyday Q&A
 
 1. Type your question into the input box at the bottom and press `Ctrl+Enter` to send (`Enter` inserts a newline);

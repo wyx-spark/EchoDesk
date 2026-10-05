@@ -29,7 +29,43 @@ v0.2.1 变更（任务书 1.3 合规与体积）：
 import os
 from typing import Callable, Dict, Optional
 
-import win32com.client as win32
+# pywin32 只在 Windows 上存在。**必须容错导入**：顶层 `import win32com.client` 在
+# Linux/macOS 上会直接 ImportError，把整个后端打死在启动阶段（跨平台化最先踩到的坑）。
+# 导入失败时 win32=None，读 Office 文档的路径降级为"内置解析器 + 明确说明"。
+try:
+    import win32com.client as win32
+    _WIN32_IMPORT_ERROR = ""
+except Exception as _e:  # noqa: BLE001 - 缺依赖属正常降级，不是错误
+    win32 = None
+    _WIN32_IMPORT_ERROR = str(_e)
+
+# 平台判断收口在 platform_support；这里不在模块顶层 import 它是因为
+# file_parser 会被 main.py 在"抑制 stdout"的上下文里导入，延迟到函数内更安全。
+def _platform_is_windows() -> bool:
+    try:
+        import platform_support
+
+        return platform_support.is_windows()
+    except Exception:  # noqa: BLE001
+        return os.name == "nt"
+
+
+def _wps_available() -> bool:
+    """WPS COM 是否可用。优先问 platform_support（它认得 ECHODESK_FORCE_PLATFORM，
+    测试才能在没有 Linux/macOS 机器的前提下验证降级路径）；模块不可用时退回本模块判断。"""
+    try:
+        import platform_support
+
+        return platform_support.wps_com_available()
+    except Exception:  # noqa: BLE001
+        return win32 is not None
+
+
+def _wps_unavailable_reason() -> str:
+    """不可用的原因：分清"平台没有这个能力"与"本机缺 pywin32"——两者的处理办法完全不同。"""
+    if not _platform_is_windows():
+        return "当前平台不支持 WPS COM 接口（该能力仅 Windows 提供）"
+    return f"本机缺少 pywin32（{_WIN32_IMPORT_ERROR}），无法使用 WPS COM 读取"
 
 # 技能注册的扩展名解析器：{".ofd": (技能id, 处理函数(filepath) -> str)}
 _SKILL_PARSERS: Dict[str, "tuple[str, Callable[[str], str]]"] = {}
@@ -143,9 +179,20 @@ def parse_file_with_wps(filepath: str, max_chars: int = 0) -> str:
         if not fallback.startswith(("解析失败", "不支持的文件类型")):
             return fallback
         if ext in _LEGACY_ONLY_WPS:
+            if _platform_is_windows():
+                return (
+                    f"WPS读取失败，且 {ext} 为旧版二进制格式，内置解析器不支持。\n"
+                    f"请安装 WPS/Office 后重试，或先另存为 {ext}x。\nWPS: {wps_result}"
+                )
+            # 非 Windows：旧版二进制格式（.doc/.xls）只有 WPS COM 能读 —— 这是
+            # 任务五里"必须给替代路径"的典型场景，所以文案要给三条可执行的做法。
             return (
-                f"WPS读取失败，且 {ext} 为旧版二进制格式，内置解析器不支持。\n"
-                f"请安装 WPS/Office 后重试，或先另存为 {ext}x。\nWPS: {wps_result}"
+                f"{ext} 是旧版二进制格式，需要 Windows 上的 WPS COM 接口才能读取；"
+                f"当前平台不提供该能力。\n"
+                f"替代做法：① 在 Windows 机器上另存为 {ext}x 后来读；"
+                f"② 用 MCP/插件接入外部转换服务；"
+                f"③ 安装提供该扩展名的技能（技能可注册自己的解析器）。\n"
+                f"WPS: {wps_result}\n解析: {fallback}"
             )
         return f"WPS读取失败，内置解析也失败。\nWPS: {wps_result}\n解析: {fallback}"
     return _parse_builtin(filepath, ext)
@@ -159,7 +206,14 @@ def _truncate(text: str, max_chars: int) -> str:
 
 
 def _read_office_with_wps(filepath: str, max_chars: int) -> str:
-    """通过 WPS COM 读取文档文本（WPS 未安装或打开失败时返回错误字符串）。"""
+    """通过 WPS COM 读取文档文本（WPS 未安装/平台不支持/打开失败时返回错误字符串）。
+
+    返回串始终以 ``WPS读取失败`` 开头 —— 调用方靠这个前缀决定是否回退内置解析器，
+    所以降级路径**不改协议**，只把"为什么没有"写清楚。
+    """
+    if not _wps_available():
+        # 不是"出错"，而是任务五定义的能力边界：文案必须写清原因，让调用方给出替代路径
+        return f"WPS读取失败: {_wps_unavailable_reason()}。"
     app = doc = None
     try:
         progid = _WPS_PROGIDS[os.path.splitext(filepath)[1].lower()]

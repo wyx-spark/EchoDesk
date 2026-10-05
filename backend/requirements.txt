@@ -9,11 +9,18 @@
 # 现改为按格式直接使用轻量、宽松许可的解析库（见 backend/file_parser.py）。
 
 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+# llama-cpp-python：本地推理（llama.cpp）。这个 cpu 索引对三大平台都发布轮子；
+# 若某平台/架构没有轮子，pip 会退回源码编译（需要 cmake 与编译器），
+# 因此跨平台 CI 里把它单独标注为可能耗时较长的一步（见 .github/workflows/ci.yml）。
 llama-cpp-python          # 本地推理（llama.cpp）
 pydantic>=2.0             # 配置模型与校验
 huggingface_hub           # 模型仓库查询与下载
 duckduckgo-search         # 联网搜索（可选功能）
-pywin32                   # WPS/Office COM 调用（读取加密文档）
+# pywin32 只在 Windows 上存在（WPS/Office COM 调用，读取加密文档）。
+# 跨平台化必须加环境标记，否则 `pip install -r requirements.txt` 在 Linux/macOS 上
+# 直接安装失败——整条依赖链都装不上，连"跑起来看看"都做不到。
+# 后端侧已容错导入（file_parser.py 里 win32com 导入失败走通用解析器并给明确文案）。
+pywin32; sys_platform == "win32"
 
 # ---------- 直接被 import 的传递依赖（v0.2.1 发布任务书「任务五」干净环境收口时发现） ----------
 # 下面是后端**自己直接 import** 的包。此前它们只作为别处的传递依赖存在：

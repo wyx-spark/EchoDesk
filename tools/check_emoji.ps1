@@ -165,6 +165,25 @@ if ($unmappedCs.Count -gt 0) {
     Ok "前端 ASCII 降级表覆盖全部在用 emoji"
 }
 
+# 跨平台前端（Avalonia）另有一份 Emoji.cs：同样的表必须同样完整，
+# 否则非 Windows 上关掉 emoji 时会出现方块（WPF 版测不到这一份）。
+$avaCsPath = Join-Path $Root 'frontend-avalonia\EchoDesk.Avalonia\Services\Emoji.cs'
+if (Test-Path $avaCsPath) {
+    $avaCsMapSrc = Get-Content $avaCsPath -Raw -Encoding UTF8
+    $unmappedAva = @()
+    foreach ($cp in $codes) {
+        $ch = [char]::ConvertFromUtf32($cp)
+        if (-not $avaCsMapSrc.Contains($ch)) { $unmappedAva += ('U+{0:X} ({1})' -f $cp, $usage[$cp]) }
+    }
+    if ($unmappedAva.Count -gt 0) {
+        Fail "跨平台前端 Emoji.cs 的 ASCII 降级表缺少 $($unmappedAva.Count) 个 emoji：$((Show-List $unmappedAva))"
+    } else {
+        Ok "跨平台前端（Avalonia）ASCII 降级表覆盖全部在用 emoji"
+    }
+} else {
+    Write-Output "[emoji] 跳过跨平台前端 Emoji.cs（文件不存在）"
+}
+
 if ($Verbose) {
     Write-Output "[emoji] 在用 emoji 明细："
     foreach ($cp in $codes) { Write-Output ("  U+{0:X4}  {1}  ({2})" -f $cp, [char]::ConvertFromUtf32($cp), $usage[$cp]) }

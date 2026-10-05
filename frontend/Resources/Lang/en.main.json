@@ -23,7 +23,11 @@
       "generating": "Generating…",
       "stopping": "Stopping…",
       "fontSize": "Font size {0}",
-      "noModel": "No model (file parsing and settings still work)"
+      "noModel": "Backend is ready, but no model is loaded",
+      "ready": "Ready",
+      "backendMissing": "Backend not started",
+      "backendExited": "Backend has exited",
+      "notReady": "Not ready"
     },
     "model": {
       "clickTip": "Click to open the model picker (Settings → Model)",
@@ -43,7 +47,8 @@
       "placeholder": "🧠 Model: ---",
       "noModel": "🧠 Model: none",
       "noModelTip": "No local model is available. Click to open Settings → Model and download or load one.",
-      "hotLoaded": "✅ The model is ready; you can chat normally now."
+      "hotLoaded": "✅ The model is ready; you can chat normally now.",
+      "none": "🧠 No model"
     },
     "mode": {
       "clickTip": "Click to change the default conversation mode in Settings",
@@ -167,7 +172,8 @@
       "chars": "📤 {0} chars",
       "elapsed": "⏱️ {0}",
       "stopped": "⏹ Stopped",
-      "failed": "⚠️ Failed"
+      "failed": "⚠️ Failed",
+      "reasoningUnclosed": "⚠️ Reasoning was not closed (token budget may have been consumed by reasoning)"
     },
     "message": {
       "copy": "Copy",
@@ -227,7 +233,8 @@
       "exitedDuringStartup": "The backend exited before finishing startup.",
       "exitedDuringDownload": "The backend exited while downloading the model.",
       "idleTimeout": "The backend did not respond within {0:0.#} minutes, so the wait was aborted. Try again later, or check app\\backend\\backend_crash.log.",
-      "modelMissingDetail": "Local model {0} is missing"
+      "modelMissingDetail": "Local model {0} is missing",
+      "notReady": "❌ Backend is not ready: {0}"
     },
     "toast": {
       "copiedCount": "✅ {0} ({1} characters)"
@@ -247,7 +254,25 @@
       "preparing": "📝 Parsing the document and preparing segmented summarization…"
     },
     "button": {
-      "stopSummaryTip": "Abort segmented summarization (Esc)"
+      "stopSummaryTip": "Abort segmented summarization (Esc)",
+      "send": "Send",
+      "stop": "⏹ Stop",
+      "upload": "📎 Upload file"
+    },
+    "platform": {
+      "degraded": "⚠️ {1} capability/capabilities are unavailable on this platform ({0})",
+      "backendMissing": "⚠️ Backend is not running",
+      "mismatch": "⚠️ Frontend and backend disagree about the platform: frontend {0} / backend {1}. Degradation may behave unexpectedly."
+    },
+    "thinking": {
+      "title": "🧠 Reasoning"
+    },
+    "input": {
+      "placeholder": "Type a message — Ctrl+Enter to send · drop a file anywhere to upload"
+    },
+    "capability": {
+      "title": "Capabilities on this platform ({0})",
+      "backend": "Backend capability profile:"
     }
   },
   "settings": {

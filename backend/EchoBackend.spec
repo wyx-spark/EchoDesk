@@ -19,17 +19,29 @@
     pyinstaller --noconfirm --distpath <输出目录> backend/EchoBackend.spec
 产物：<输出目录>/EchoDeskBackend/  （EchoDeskBackend.exe + _internal/）
 发布脚本 tools\\build_release.ps1 会把该目录整理为 <发布根>/backend/。
+
+跨平台（v0.2.1 跨平台 任务四）：本 spec 现在在三个平台上都能用，但有四处必须按平台
+分支，否则非 Windows 上要么打包失败、要么打出带 Windows 假设的产物：
+  * 可执行文件名带不带 .exe；
+  * 版本资源（VSVersionInfo）与 .ico 图标是 **Windows 专属**的东西，
+    PyInstaller 在 Linux/macOS 上不支持，传了会报错或产出无效资源；
+  * `win32com` / `pywin32` 只在 Windows 上存在（collect_all 与 hiddenimports 都要跳过）；
+  * macOS 的图标需要 .icns（本仓库只有 .ico），因此 macOS 上不打图标，
+    GATEKEEPER 签名与 .app 打包由 tools/pack_crossplatform.py 处理。
 """
 import os
+import sys
 import tempfile
 
 from PyInstaller.utils.hooks import collect_all
+
+IS_WINDOWS = sys.platform.startswith("win")
 
 # ---------- 可执行文件元数据（与 tools\set_metadata.bat 保持一致） ----------
 APP_VERSION = "0.2.1.0"
 COMPANY = "Void Entropia Studio"
 PRODUCT = "EchoDesk"
-EXE_NAME = "EchoDeskBackend.exe"
+EXE_NAME = "EchoDeskBackend.exe" if IS_WINDOWS else "EchoDeskBackend"
 DESCRIPTION = "EchoDesk - Local AI Desktop Assistant"
 COPYRIGHT = "Copyright (C) Void Entropia Studio"
 COMMENTS = "Powered by Void Entropia Studio"
@@ -49,7 +61,10 @@ COMMENTS = "Powered by Void Entropia Studio"
 # 既消除对外分发时的著佐权义务，又把该依赖的安装体积从 52.9MB 降到约 1.4MB。
 # 说明：playwright 必须整包收集——它自带 Node 驱动（driver/ 约 102MB，含 node.exe
 # 与 playwright-core），自动化功能依赖该驱动启动本机 Edge，缺文件会在运行时才报错。
-PACKAGES = ["llama_cpp", "pydantic", "huggingface_hub", "duckduckgo_search", "win32com", "playwright"]
+PACKAGES = ["llama_cpp", "pydantic", "huggingface_hub", "duckduckgo_search", "playwright"]
+if IS_WINDOWS:
+    # WPS/Office COM 只在 Windows 上存在（非 Windows 上装了也没有这个包）
+    PACKAGES.append("win32com")
 
 # 明确排除用不到的重型依赖：EchoDesk 只解析 Office/TXT/PDF，
 # 不需要 OCR / 深度学习 / 音频图像处理栈。排除后体积大幅下降，
@@ -160,14 +175,15 @@ def _write_version_file() -> str:
     return path
 
 
-VERSION_FILE = _write_version_file()
+VERSION_FILE = _write_version_file() if IS_WINDOWS else None
 
 a = Analysis(
     [os.path.join(SPECPATH, "main.py")],
     pathex=[SPECPATH],
     binaries=binaries,
     datas=datas,
-    hiddenimports=hiddenimports + ["llama_cpp", "win32com", "playwright", "schedule", "pypdf"],
+    hiddenimports=hiddenimports + ["llama_cpp", "playwright", "schedule", "pypdf"]
+    + (["win32com"] if IS_WINDOWS else []),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -196,7 +212,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     version=VERSION_FILE,
-    icon=ICON_PATH if os.path.exists(ICON_PATH) else None,
+    icon=ICON_PATH if (IS_WINDOWS and os.path.exists(ICON_PATH)) else None,
 )
 
 coll = COLLECT(

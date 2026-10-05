@@ -46,8 +46,8 @@ No cloud account. No API key. No telemetry.
 
 | Component | Requirement |
 | --- | --- |
-| Operating system | Windows 10 or Windows 11, 64-bit (x64). |
-| Frontend runtime | None to install. The WPF app (target framework `net10.0-windows`) is published self-contained, so the portable build carries its own runtime. |
+| Operating system | The shipped build targets Windows 10 / 11 (x64). Linux and macOS are supported by the cross-platform frontend (Avalonia, `frontend-avalonia/`) with a shared Python backend; the capability differences and degradation rules for those platforms are documented in [docs/en/CROSS_PLATFORM.md](docs/en/CROSS_PLATFORM.md). |
+| Frontend runtime | None to install. The Windows frontend is a WPF app (target framework `net10.0-windows`) and the cross-platform frontend is an Avalonia app (target framework `net10.0`); both are published self-contained, so the portable build carries its own runtime. |
 | CPU | Any x64 CPU. Inference runs on CPU by default (`n_gpu_layers: 0` in `backend\config.json`). |
 | Memory | 4 GB minimum; 8 GB or more recommended. The default model file is about 472 MB, and the KV cache for the default 8192-token window is roughly 0.3–0.4 GB on top of it. Larger context windows and larger models need more. |
 | Disk | About 1 GB for the portable folder (roughly 0.85 GB when the model is included, about 0.4 GB without it). Allow 2 GB free while a model is being downloaded. |
@@ -261,6 +261,7 @@ EchoDesk is local by design, and the policy is written down rather than implied:
 | Document | Contents |
 | --- | --- |
 | [docs/en/USER_GUIDE.md](docs/en/USER_GUIDE.md) | End-user manual: install, daily use, long contracts, batch automation, skills. |
+| [docs/en/CROSS_PLATFORM.md](docs/en/CROSS_PLATFORM.md) | Platform support and capability boundaries: the three-platform matrix, the two degradation boundaries with their alternatives, platform reporting, directories and environment variables, packaging and signing, and the verification evidence. |
 | [docs/en/FAQ.md](docs/en/FAQ.md) | Quick answers and troubleshooting for startup, models, files, automation and the marketplace. |
 | [docs/en/AUTOMATION_GUIDE.md](docs/en/AUTOMATION_GUIDE.md) | Field-by-field automation configuration and the selector test. |
 | [docs/DEVELOPER.md](docs/DEVELOPER.md) | Architecture, JSON protocol, module responsibilities, config reference, build and release. A pointer: the full text is [`docs/en/DEVELOPER.md`](docs/en/DEVELOPER.md) (English) and [`docs/zh-Hans/DEVELOPER.md`](docs/zh-Hans/DEVELOPER.md) (Simplified Chinese). |

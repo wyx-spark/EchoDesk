@@ -1,0 +1,59 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="EchoDesk.Avalonia.App"
+             RequestedThemeVariant="Default">
+  <!--
+    Avalonia 的主题机制与 WPF 不同：这里用 FluentTheme 的 RequestedThemeVariant
+    切换深浅色（WPF 版是自己维护两套色板 + DynamicResource）。
+    两者的色板键与对比度要求仍然沿用同一套设计约束（见 tools/check_theme.py），
+    但**实现方式必须重写** —— 这是任务二里"必须重写"的少数几处之一。
+
+    下面的画刷是界面自己用的语义色（消息气泡、代码块、表格线…）。
+    放在 ThemeDictionaries 里，随 RequestedThemeVariant 自动切换，
+    代码侧用 Application.TryFindResource(key) 取（见 MarkdownRenderer.Brush）。
+  -->
+  <Application.Styles>
+    <FluentTheme />
+  </Application.Styles>
+
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+          <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FFFFFFFF" />
+          <SolidColorBrush x:Key="PanelBackgroundBrush" Color="#FFF3F4F6" />
+          <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFFFF" />
+          <SolidColorBrush x:Key="CardBorderBrush" Color="#FFE2E4E8" />
+          <SolidColorBrush x:Key="AccentBrush" Color="#FF2563EB" />
+          <SolidColorBrush x:Key="MutedForegroundBrush" Color="#FF6B7280" />
+          <SolidColorBrush x:Key="UserBubbleBrush" Color="#FFDCEBFF" />
+          <SolidColorBrush x:Key="AssistantBubbleBrush" Color="#FFF7F8FA" />
+          <SolidColorBrush x:Key="SystemBubbleBrush" Color="#FFFFF7E6" />
+          <SolidColorBrush x:Key="WarningBannerBrush" Color="#FFFFF4CE" />
+          <SolidColorBrush x:Key="MarkdownCodeBrush" Color="#14000000" />
+          <SolidColorBrush x:Key="MarkdownRuleBrush" Color="#22000000" />
+          <SolidColorBrush x:Key="MarkdownQuoteBrush" Color="#66000000" />
+          <SolidColorBrush x:Key="MarkdownFormulaBrush" Color="#1400648C" />
+          <SolidColorBrush x:Key="MarkdownLinkBrush" Color="#FF1A73E8" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Dark">
+          <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF1E1F22" />
+          <SolidColorBrush x:Key="PanelBackgroundBrush" Color="#FF26272B" />
+          <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF2B2D31" />
+          <SolidColorBrush x:Key="CardBorderBrush" Color="#FF3A3D42" />
+          <SolidColorBrush x:Key="AccentBrush" Color="#FF60A5FA" />
+          <SolidColorBrush x:Key="MutedForegroundBrush" Color="#FF9AA0A6" />
+          <SolidColorBrush x:Key="UserBubbleBrush" Color="#FF2D3B52" />
+          <SolidColorBrush x:Key="AssistantBubbleBrush" Color="#FF2A2C30" />
+          <SolidColorBrush x:Key="SystemBubbleBrush" Color="#FF3A3420" />
+          <SolidColorBrush x:Key="WarningBannerBrush" Color="#FF3E3520" />
+          <SolidColorBrush x:Key="MarkdownCodeBrush" Color="#22FFFFFF" />
+          <SolidColorBrush x:Key="MarkdownRuleBrush" Color="#33FFFFFF" />
+          <SolidColorBrush x:Key="MarkdownQuoteBrush" Color="#88FFFFFF" />
+          <SolidColorBrush x:Key="MarkdownFormulaBrush" Color="#2200A0FF" />
+          <SolidColorBrush x:Key="MarkdownLinkBrush" Color="#FF8AB4F8" />
+        </ResourceDictionary>
+      </ResourceDictionary.ThemeDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+</Application>
