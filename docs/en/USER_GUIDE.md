@@ -172,6 +172,7 @@ Two related notes:
 ```
 /help                 all commands
 /mode contract        switch to contract-review mode (also /mode 5 or /mode ct)
+/mode guide           guidance mode: have it list the likely meanings when you cannot say what you want (also /mode 7 or /mode gd)
 /file D:\合同.docx     upload a file (several paths at once are allowed; quote paths containing spaces)
 /file "D:\my contract.docx" "D:\annex 1.xlsx"   load several files in one go
 /summarize            manually trigger a full-text summary for a long uploaded document
@@ -239,10 +240,15 @@ With no model loaded the whole block stays hidden (no zeros, no placeholders).
 - **Reply language**: it follows the interface language. A Chinese interface asks for Simplified Chinese, an
   English interface asks for English; if you add another language pack, the model replies in whatever language
   you write in. The prompt text itself stays Chinese, which does not affect this.
-- **Every mode carries a complete prompt**: each of the six modes states its role, output format, reasoning
-  steps, one input/output example and its tone, and they all share the same "boundaries and output discipline"
-  block (say you do not know instead of inventing, ask one clarifying question when the request is too thin,
-  never fabricate sources).
+- **Every mode carries a complete prompt**: each of the seven modes states its role, output format,
+  **how much detail to give**, reasoning steps, one input/output example and its tone, and they all share the
+  same "general requirements" block (say you do not know instead of inventing, answer in one sentence when one
+  sentence is enough, give the most likely answer first and ask afterwards when information is missing, never
+  fabricate sources). The detail item is what lets the model decide how long to be: simple questions do not
+  get forced into a full template, complex ones are still split into points.
+- **Use guidance mode when you cannot say what you want**: `/mode guide` (also `/mode 7` or `/mode gd`) lists
+  2-3 things you might mean, each with one line about what it would do, and you reply with a number (or "none
+  of these") — you do not have to work out how to phrase the request first.
 - **Generation presets**: `/preset list` shows them; `light` (shortest, fastest replies), `balanced` (the
   default) and `quality` (longest replies) switch the temperature, top_p, repeat penalty and reply-length cap
   in one step. The choice is written into the configuration and survives a restart; if you later change the
@@ -256,10 +262,13 @@ With no model loaded the whole block stays hidden (no zeros, no placeholders).
   them. Every compaction appends an event to `compact_log.jsonl` (trigger, usage before and after, how many
   messages were dropped, the summary text) so it stays auditable; for sensitive content set
   `compact.log_content` to `false` and only lengths are recorded.
-- **Being asked a follow-up question is normal**: when a question is too vague and there is neither a file
-  context nor any history (just "what about this?"), the program asks you to clarify the object, the expected
-  output form and any constraints instead of guessing at an answer. To switch that off, set `clarify_vague` to
-  `false` in `app\backend\config.json`.
+- **A vague question gets directions, not a request for material**: for something like "what about this?"
+  with neither a file context nor any history, the program lists 2-3 possible meanings ("something to work on",
+  "a procedure", "an error to diagnose", …) with one line each about what it would do, and you reply with a
+  number — it no longer turns the question back on you by demanding the object, output form and constraints.
+  In guidance mode (`/mode guide`) the model produces those directions itself, so they fit your wording more
+  closely. It does not trigger once you have chatted a few rounds or uploaded a file (there "this" usually
+  refers to the context). To switch it off, set `clarify_vague` to `false` in `app\backend\config.json`.
 
 ---
 

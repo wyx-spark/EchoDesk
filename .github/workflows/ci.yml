@@ -37,6 +37,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 需要完整历史：tools/test_prompt_compare.py 会从 git 里取**旧提示词**
+          # （backend/conversation.py 与 backend/prompts.py 的重构前版本）做新旧对比，
+          # 浅克隆（默认 fetch-depth: 1）取不到那个提交。仓库只有源码，代价可接受。
+          fetch-depth: 0
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v5
@@ -149,6 +154,14 @@ jobs:
         # 逐份独立状态与单份失败隔离、统一完成汇总、数量与总长上限的如实告知、
         # 注入预算（后上传优先 + 未注入点名）、会话持久化的新旧格式兼容、
         # /file 多路径与引号感知分词（顺带修掉"路径含空格就加载失败"的既有缺陷）。
+
+      - name: Run prompt-reconstruction comparison test
+        shell: pwsh
+        run: python tools/test_prompt_compare.py
+        # 系统提示词重构：对比测试的无模型部分——客观指标函数、场景表覆盖、
+        # extract 硬格式不放松，并子进程跑 tools/prompt_compare.py --dry-run
+        # 做新旧提示词对比（旧版从 git 历史取，因此上面 checkout 用了 fetch-depth: 0）。
+        # 真模型的对比不在这里跑（要几百 MB GGUF 与数分钟），属发布前人工验证。
 
       - name: Check backend imports
         shell: pwsh

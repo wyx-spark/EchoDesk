@@ -38,8 +38,8 @@
       "/mode": {
         "name": "Switch conversation mode",
         "usage": "/mode <number|abbreviation|full name>",
-        "desc": "Switches the AI answering style; every mode carries a full role, output format, reasoning steps and an example — run /mode list to see them all.",
-        "detail": "    Modes:\n      general / summary / translate /\n      code / contract / creative\n    Each mode states its role, output format, reasoning steps, one input/output example and its tone,\n    and they all share the same boundaries block (say you do not know, never fabricate sources).\n    /mode list shows each mode's description and temperature preset."
+        "desc": "Switches the AI answering style; every mode carries a full role, output format, detail judgement, reasoning steps and an example — run /mode list to see them all.",
+        "detail": "    Modes:\n      general / summary / translate /\n      code / contract / creative /\n      guide (requirement clarification: have it list the likely meanings first)\n    Each mode states its role, output format, how much detail to give, reasoning steps,\n    one input/output example and its tone, and they all share the same general requirements\n    (say you do not know, one sentence when one sentence is enough, give the most likely\n    answer before asking, never fabricate sources).\n    /mode list shows each mode's description and temperature preset."
       },
       "/file": {
         "name": "Upload a file",
@@ -902,11 +902,17 @@
     "desc.translate": "Chinese-English translation: output only the translation, preserving paragraph structure and consistent terminology.",
     "desc.code": "Code explanation and debugging: conclusion first, then a minimal patch, then how to verify it.",
     "desc.contract": "Contract clause review: money, timing and liability risks only, each with a verbatim quote from the original.",
-    "desc.creative": "Stories, poems, copy and scripts, with a willingness to try a distinctive angle."
+    "desc.creative": "Stories, poems, copy and scripts, with a willingness to try a distinctive angle.",
+    "desc.guide": "Requirement clarification: turns a vague ask like \"take a look at this\" into 2-3 possible directions you pick from before it answers."
   },
   "task": {
     "menu_item": "  /task {id}  — {label}: {note}",
-    "clarify_prompt": "Your question does not have enough information yet. I need to confirm a few things before I can give a useful answer:\n1. What exactly are you working on? (which file / which piece of code / which data)\n2. What output do you expect? (a one-line conclusion / a list / a table / a revised file)\n3. Are there any constraints? (length, deadline, rules that must be followed)\n\nAnswer these three points and I will reply; you can also pick a task template with /task.",
+    "clarify_prompt": "Your question is short, so here are the most likely things you might mean — reply with a number:\n{directions}\n\nIf none of them fit, add one sentence about the situation (what to work on + what result you want) and I will take it from there; you can also pick a task template with /task.",
+    "guide_dir.object": "You have something for me to work on (a file / contract / spreadsheet / code) — send it or its path and I will answer about it",
+    "guide_dir.howto": "You want a procedure or steps — I will give runnable steps without detouring into theory",
+    "guide_dir.diagnose": "Something misbehaves or throws an error — tell me the symptom and the exact message and I will work through the likely causes",
+    "guide_dir.judge": "You want a judgement on whether something is OK — send me the item and I will go through the usual risk points",
+    "guide_dir.write": "You want text written (copy / email / summary / translation) — say the tone and length and I will give 2-3 versions",
     "summary.label": "Summarize",
     "summary.note": "Good for long documents, meeting notes and chat logs. Works even better together with /summarize.",
     "contract.label": "Contract clause review",

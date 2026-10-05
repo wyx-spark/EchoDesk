@@ -173,10 +173,23 @@ check("正常短问题 → 不判模糊", not prompt_lib.is_vague_question("1+1=
 check("较长具体问题 → 不判模糊",
       not prompt_lib.is_vague_question("请帮我审查这份采购合同的付款条款与违约责任"))
 check("空串不判模糊", not prompt_lib.is_vague_question(""))
-# 追问话术整体来自语言包（task.clarify_prompt），这里检查"要求补充三点"这一行为特征，
-# 不再依赖中文全角问号——英文文案用的是半角 "?"，按标点断言会随界面语言失效。
-_clarify = prompt_lib.clarification_prompt("x")
-check("追问话术要求补充三点", all(f"{i}." in _clarify for i in (1, 2, 3)), _clarify[:80])
+# 引导话术（v0.2.1 系统提示词重构）：整体来自语言包（task.clarify_prompt +
+# task.guide_dir.*），这里检查"列方向让用户挑"这一行为特征，不依赖具体措辞。
+# 旧版是"请补充这三点（对象/输出形式/约束）"——它把组织语言的责任推回给用户，
+# 正是任务书现象三要修的东西。
+_clarify = prompt_lib.clarification_prompt("帮我看看这个")
+check("引导话术列出 3 个可选方向", all(f"{i}." in _clarify for i in (1, 2, 3)), _clarify[:80])
+check("引导话术让用户回一个编号", "编号" in _clarify, _clarify[:60])
+check("引导话术不再要求用户补三点信息",
+      "具体对象" not in _clarify and "输出形式" not in _clarify, _clarify[:80])
+check("引导话术的方向可随提问变化（不是一套固定模板）",
+      prompt_lib.guide_direction_ids("这个报错怎么办")[0] == "diagnose"
+      and prompt_lib.guide_direction_ids("帮我看看这份合同")[0] == "object",
+      str(prompt_lib.guide_direction_ids("这个报错怎么办")))
+check("引导方向始终是 3 个且不重复",
+      all(len(set(prompt_lib.guide_direction_ids(q))) == 3 for q in
+          ("帮我看看", "这个报错怎么办", "帮我写一段", "")),
+      str(prompt_lib.guide_direction_ids("帮我看看")))
 
 print("=== 6. 分段摘要缓存（方向八）===")
 tmp = tempfile.mkdtemp(prefix="echodesk-cache-")
@@ -253,16 +266,29 @@ check("切回中文后能力提示恢复中文",
       any(_HAN.search(n) for n in mp.capability_warnings(profile2, FakeConfig())))
 
 print("=== 9. 系统提示词：六要素结构、长度上限与一致性（v0.2.1 提示词优化）===")
-# 审计口径：模式块必须自带「角色 / 输出格式 / 思维 / 示例 / 语气」五要素，
+# 审计口径：模式块必须自带「角色 / 输出格式 / 详略 / 思维 / 示例 / 语气」六要素，
 # 全局性的「边界」写在共享主干 _CORE_RULES 里（理由见 conversation.py 文件头：
 # 与场景无关的规则共享一份，既不白占上下文，也不会改一处漏五处）。
-_MODE_DIMS = ("【角色】", "【输出格式】", "【思维】", "【示例】", "【语气】")
+#
+# 【详略】是 **v0.2.1 系统提示词重构**新增的第 6 个要素：上一轮补齐六要素后
+# 约束加码过多，模型对任何问题都套满格式（任务书现象一）。下面这几条断言
+# 守住"新增了判断详略的说明"，同时守住"长度上限没有因为放松而膨胀"。
+_MODE_DIMS = ("【角色】", "【输出格式】", "【详略】", "【思维】", "【示例】", "【语气】")
 _MODE_MAX = 480      # 单个模式块字符上限
 _PROMPT_MAX = 700    # 模式块 + 共享主干 + 语言指令 的字符上限
 
+
+def _t_mode_desc(locale: str, mode: str) -> str:
+    """取某语言下某模式的界面说明（用完切回 zh-Hans，避免影响后续断言）。"""
+    i18n.set_locale(locale)
+    try:
+        return i18n.t(f"mode.desc.{mode}")
+    finally:
+        i18n.set_locale("zh-Hans")
+
 for _mode, _block in conv.MODES.items():
     _missing = [d for d in _MODE_DIMS if d not in _block]
-    check(f"模式 {_mode}：五要素齐备", not _missing, str(_missing))
+    check(f"模式 {_mode}：六要素齐备", not _missing, str(_missing))
     check(f"模式 {_mode}：长度 ≤ {_MODE_MAX} 字符", len(_block) <= _MODE_MAX, f"{len(_block)} 字符")
 
 for _mode in conv.MODES:
@@ -274,6 +300,55 @@ check("共享主干含视角澄清（'用户'指提问的人）", "「用户」�
 check("模式与温度预设一一对应", set(conv.MODES) == set(conv.MODE_TEMPERATURES),
       str(sorted(set(conv.MODES) ^ set(conv.MODE_TEMPERATURES))))
 
+# --- v0.2.1 系统提示词重构：放松层与"不得改过头"的底线 ---
+check("共享主干含「判断详略」（放松格式约束）",
+      "详略自定" in conv._CORE_RULES and "能一句话答完就一句话" in conv._CORE_RULES)
+check("共享主干含「先答后问」（边界声明不再退化成拒绝作答）",
+      "先答后问" in conv._CORE_RULES and "不要只回「请提供更多信息」" in conv._CORE_RULES)
+check("共享主干含探索性建议（摊开推测）",
+      "摊开推测" in conv._CORE_RULES and "如果是 A，建议 X；如果是 B，建议 Y" in conv._CORE_RULES)
+check("共享主干含引导（含糊提问主动给方向）",
+      "引导" in conv._CORE_RULES and "2~3 种可能的方向" in conv._CORE_RULES)
+check("共享主干仍保留防编造底线", "不编造事实、数据、法条、条款或出处" in conv._CORE_RULES)
+check("模式块里不再有「必须分点」式的无条件格式要求",
+      not any("分点时写" in block for block in conv.MODES.values()))
+
+# 引导模式（本轮新增）：用户说不清想要什么时用它
+check("新增引导模式 guide", "guide" in conv.MODES)
+_guide = conv.MODES.get("guide", "")
+check("引导模式要求列 2~3 种理解", "2~3 种" in _guide)
+check("引导模式不在选定前展开方案", "不替我决定" in _guide or "选定前" in _guide)
+check("引导模式有编号别名与缩写",
+      conv.MODE_ALIASES.get("7") == "guide" and conv.MODE_ALIASES.get("gd") == "guide"
+      and conv.MODE_SHORT_NAMES.get("guide") == "gd")
+check("引导模式可被 set_mode 切换", conv.ConversationManager().set_mode("gd"))
+check("引导模式出现在模式菜单里", "guide" in conv.ConversationManager.mode_menu())
+check("引导模式的语言包说明非空（中英都要）",
+      all(_t_mode_desc(loc, "guide") for loc in ("zh-Hans", "en")),
+      f"{_t_mode_desc('zh-Hans', 'guide')!r} / {_t_mode_desc('en', 'guide')!r}")
+
+# 关键格式硬要求不得因放松而丢失（任务书"防止改过头"）
+check("合同模式仍要求摘录逐字一致", "逐字一致" in conv.MODES["contract"])
+check("合同模式仍要求建议人工复核", "建议人工复核" in conv.MODES["contract"])
+check("合同模式仍禁止臆测", "不要臆测" in conv.MODES["contract"])
+check("翻译模式仍要求数字不得改动", "不改动数字" in conv.MODES["translate"])
+check("摘要模式仍要求数字日期原样保留", "原样保留" in conv.MODES["summary"])
+
+# 任务层同样改成条件式（v0.2.1 系统提示词重构）
+check("任务模板 contract 改为先列常见风险", "先列出这类合同最常见的 3~5 条风险点" in
+      str(prompt_lib.TASK_TEMPLATES["contract"]["format"]))
+check("任务模板 contract 要求提示人工复核", "建议人工复核" in
+      str(prompt_lib.TASK_TEMPLATES["contract"]["format"]))
+check("任务模板 code 改为按复杂度决定详略", "一两句答完即可" in
+      str(prompt_lib.TASK_TEMPLATES["code"]["format"]))
+check("任务模板 summary 改为长短自适应", "200 字以内）时用一段话说清" in
+      str(prompt_lib.TASK_TEMPLATES["summary"]["format"]))
+check("任务模板 reason 不再要求信息不足先追问",
+      "先追问" not in str(prompt_lib.TASK_TEMPLATES["reason"]["cot"])
+      and "先按最可能的情况给出结论" in str(prompt_lib.TASK_TEMPLATES["reason"]["cot"]))
+check("任务模板 translate 不再无条件解释译法", "不要解释你为什么这样译" in
+      str(prompt_lib.TASK_TEMPLATES["translate"]["format"]))
+
 # 一致性（v0.2.1 修掉的真问题）：/prompt 的包装语原先写死「不要反问」，
 # 而模糊提问检测与 reason 模板都要求"信息不足先追问"——两条指令互相打架。
 _custom = conv.ConversationManager()
@@ -281,8 +356,8 @@ _custom.set_custom_prompt("只回答一个字。")
 _custom_prompt = _custom.get_system_prompt()
 check("自定义指令包装语不再无条件禁止追问",
       not any(x in _custom_prompt for x in ("不要反问", "禁止追问", "不许问")), _custom_prompt[-120:])
-check("自定义指令保留了「信息不足先问清」的例外",
-      "应先问清最关键的一点" in _custom_prompt)
+check("自定义指令保留了「信息不足先答后问」的例外",
+      "先给出最可能的答案" in _custom_prompt and "再问要不要按其它情况展开" in _custom_prompt)
 check("自定义指令会替换模式块（符合 /prompt 的既有约定）", "【角色】" not in _custom_prompt)
 
 # 模式层 + 任务层叠加：冲突必须由提示词里的裁决行确定，而不是留给模型猜

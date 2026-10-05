@@ -31,10 +31,12 @@ Chinese version: [`docs/zh-Hans/FAQ.md`](../zh-Hans/FAQ.md).
 `Ctrl+L` clear the conversation · `Ctrl+O` upload a file · `Ctrl+Shift+C` copy the whole conversation ·
 `Ctrl+加/减/0` adjust font size · `Ctrl+T` switch light/dark theme · `Ctrl+,` Settings · `Ctrl+M` skill marketplace.
 
-**Being asked a follow-up question**: for a question with neither a clear object nor any file context
-(just "what about this?"), the program asks you to clarify the object, the expected output form and any
-constraints instead of guessing at an answer (it does not do this once you have chatted a few rounds or
-uploaded a file). To switch it off, set `clarify_vague` to `false` in `app\backend\config.json`.
+**A vague question gets directions first**: for a question with neither a clear object nor any file context
+(just "what about this?"), the program lists 2-3 possible meanings with one line each about what it would do,
+and you reply with a number — rather than guessing at an answer or demanding that you spell out the object and
+output form (it does not do this once you have chatted a few rounds or uploaded a file). For directions that
+fit your wording more closely, switch to guidance mode with `/mode guide`. To switch the behaviour off, set
+`clarify_vague` to `false` in `app\backend\config.json`.
 
 ---
 

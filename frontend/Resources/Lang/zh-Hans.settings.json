@@ -10,7 +10,8 @@
     "translate": "3. translate — 翻译专家",
     "code": "4. code — 编程专家",
     "contract": "5. contract — 合同审查",
-    "creative": "6. creative — 创意写作"
+    "creative": "6. creative — 创意写作",
+    "guide": "7. guide — 需求澄清"
   },
   "settings": {
     "general": {

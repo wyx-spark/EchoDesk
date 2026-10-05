@@ -74,7 +74,7 @@ public partial class MainWindow : Window
     private static readonly CommandItem[] FallbackCommands =
     {
         new("/help", "", "显示此指令介绍：完整指令列表、用法与作用", "显示全部指令及用法", false),
-        new("/mode", "<编号|缩写|全称>", "切换对话模式（general/summary/translate/code/contract/creative）；/mode list 查看全部模式及编号；切换时自动套用温度预设", "切换对话模式", true),
+        new("/mode", "<编号|缩写|全称>", "切换对话模式（general/summary/translate/code/contract/creative/guide）；/mode list 查看全部模式及编号；切换时自动套用温度预设", "切换对话模式", true),
         new("/task", "[list|<模板名>|off]", "套用任务型提示词模板（摘要、合同审查、结构化抽取、翻译、代码排错、分步推理）；小模型按结构化提示词作答明显更稳，/task list 查看全部", "套用任务提示词模板", true),
         new("/preset", "[list|light|balanced|quality]", "一键切换轻量/均衡/高质量三档生成参数（温度、top_p、重复惩罚、回复长度）", "切换生成参数预设", true),
         new("/compact", "", "立刻压缩上下文：把较早的对话转成摘要（或按滑动窗口模式丢弃）腾出空间，不必等自动触发", "压缩上下文", false),
