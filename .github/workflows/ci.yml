@@ -163,6 +163,33 @@ jobs:
         # 做新旧提示词对比（旧版从 git 历史取，因此上面 checkout 用了 fetch-depth: 0）。
         # 真模型的对比不在这里跑（要几百 MB GGUF 与数分钟），属发布前人工验证。
 
+      - name: Run agent platform test
+        shell: pwsh
+        run: python tools/test_agent.py
+        # Agent 平台（能力扩展-1 任务二）：工具接口与工具集（计算/日期/单位换算/文档检索）、
+        # 计算器的 AST 白名单求值（拒绝 __import__ 一类输入）、调用解析容错、最大步数收敛、
+        # 权限分级（敏感工具默认关闭）、事件序列（每一步可见）、停止信号。桩 LLM，不加载模型。
+
+      - name: Run MCP client test
+        shell: pwsh
+        run: python tools/test_mcp.py
+        # MCP 客户端（能力扩展-1 任务三）：真拉起随包示例服务器（examples/mcp/echo_server.py）
+        # 走 stdio JSON-RPC，验证握手/发现/调用/超时/错误处理、默认按敏感工具、环境变量不透传、
+        # 以及后端运行期启停（不需要重启）。不联网；只用本机 python 子进程。
+
+      - name: Run local retrieval test
+        shell: pwsh
+        run: python tools/test_retrieval.py
+        # 本地检索（能力扩展-1 任务六）：分块与区间回溯、BM25 排序与可解释性、
+        # 关键事实命中下界、引用溯源文本形状、增量索引（新增/替换/删除只动那一份）、
+        # 与分段摘要的分工（短文档全文、长文档摘要+检索）。纯标准库，不加载模型。
+
+      - name: Run model administration test
+        shell: pwsh
+        run: python tools/test_model_admin.py
+        # 模型管理写路径（能力扩展-1 任务五）：采样参数可视化/持久化、
+        # 自定义档位（新增/修改/改名/备注/删除）与输入校验（越界要报错而不是静默夹紧）。
+
       - name: Check backend imports
         shell: pwsh
         run: python -c "import sys; sys.path.insert(0, 'backend'); import main; print('import ok')"

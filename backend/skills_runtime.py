@@ -122,7 +122,87 @@ def parse_manifest(manifest: Any) -> Dict[str, Any]:
         "permissions": {k: v for k, v in perms.items()},
         "lang_default": str(lang.get("default") or "").strip(),
         "lang_available": [str(x) for x in (lang.get("available") or []) if str(x).strip()],
+        # 插件间依赖（能力扩展-1 任务四）：`dependencies` 支持两种写法 ——
+        # 列表（`["other-plugin"]` 或 `["other-plugin>=1.2"]`）与字典
+        # （`{"other-plugin": ">=1.2"}`）。两种都归一成 {插件 id: 版本要求}。
+        "dependencies": _parse_dependencies(data.get("dependencies")),
     }
+
+
+def _parse_dependencies(value: Any) -> Dict[str, str]:
+    """把 ``dependencies`` 归一成 ``{插件 id: 版本要求}``（版本要求可为空串）。
+
+    为什么必须归一：审计发现这个字段在旧代码里**只被市场侧抄进注册表**，
+    运行期完全不解析 —— 也就是说"插件声明依赖另一个插件"既不校验也不提示，
+    用户看到的是"装上去了但命令没有"。归一之后 :meth:`SkillLoader.load_all`
+    就能在加载期给出明确结论（缺哪个、要什么版本）。
+    """
+    out: Dict[str, str] = {}
+    if isinstance(value, dict):
+        for key, spec in value.items():
+            name = str(key or "").strip()
+            if name:
+                out[name] = str(spec or "").strip()
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            match = re.match(r"^([A-Za-z0-9_.\-]+)\s*(.*)$", text)
+            if match:
+                out[match.group(1)] = match.group(2).strip()
+    return out
+
+
+def parse_requirement(spec: str) -> Tuple[str, str]:
+    """把 ``">=1.2"`` / ``"==1.0"`` / ``"1.2"`` / ``">=v1.2"`` 拆成 ``(运算符, 版本)``。
+
+    **版本段允许一个可选的 ``v`` 前缀**：实测发现 ``">=v99.0.0"`` 在旧正则下解析失败
+    → ``version_satisfies`` 直接放行 → 新加的 ``min_version`` 校验被静默绕过。
+    小模型写的清单、以及照抄 GitHub tag 名字（``v1.2.0``）的插件都会带这个前缀，
+    所以这里必须认它（而不是把"写了 v 就不校验"当成宽松）。
+    """
+    text = str(spec or "").strip()
+    match = re.match(r"^(>=|<=|==|=|>|<|\^|~)?\s*[vV]?\s*([0-9][0-9A-Za-z.\-]*)$", text)
+    if not match:
+        return "", ""
+    op = match.group(1) or ">="            # 只写版本号时按"至少这个版本"理解（最常见意图）
+    return (">=" if op in ("=", "^", "~") else op), match.group(2)
+
+
+def version_satisfies(version: str, spec: str) -> bool:
+    """版本是否满足要求；**要求为空或无法解析时一律放行**（宽松优先，避免误伤）。"""
+    op, want = parse_requirement(spec)
+    if not op:
+        return True
+    have = _version_tuple(version)
+    target = _version_tuple(want)
+    if not have or not target:
+        return True
+    # 补齐到同样长度再比：`(1, 0, 0) == (1, 0)` 是 False，但"1.0.0" 与 "1.0"
+    # 在人看来是同一个版本。缺的段按 0 补（语义上 1.0 == 1.0.0）。
+    size = max(len(have), len(target))
+    have = have + (0,) * (size - len(have))
+    target = target + (0,) * (size - len(target))
+    if op == ">=":
+        return have >= target
+    if op == ">":
+        return have > target
+    if op == "<=":
+        return have <= target
+    if op == "<":
+        return have < target
+    if op == "==":
+        return have == target
+    return True
+
+
+def _version_tuple(text: str) -> Tuple[int, ...]:
+    """把 ``"1.2.3"`` 变成 ``(1, 2, 3)``；取不出数字时返回空元组（调用方放行）。"""
+    parts = re.findall(r"\d+", str(text or ""))
+    if not parts:
+        return ()
+    return tuple(int(part) for part in parts[:4])
 
 
 def _license_text(value: Any) -> str:
@@ -450,6 +530,8 @@ class SkillRecord:
         self.order = 0
         self.enabled = True
         self.loaded_at = ""
+        # 插件间依赖（能力扩展-1 任务四）：{插件 id: 版本要求}，由 parse_manifest 归一。
+        self.dependencies: Dict[str, str] = dict(manifest.get("dependencies") or {})
 
     @property
     def dev(self) -> bool:
@@ -943,6 +1025,14 @@ class SkillLoader:
                 rec.error = _t("skill.api_incompatible", id=skill_id,
                                want=manifest["api_version"], have=SKILL_API_VERSION)
                 self._logwrite("ERROR", f"{skill_id}: {rec.error}")
+            elif manifest.get("min_version") and not version_satisfies(
+                    APP_VERSION, ">=" + str(manifest["min_version"])):
+                # 最低 EchoDesk 版本校验（能力扩展-1 任务四）：审计发现 min_version
+                # 此前**只解析、只展示**，运行期完全不查 —— 于是"要求 0.3 才有的 API"
+                # 的插件在 0.2.1 上照装不误，然后在运行期以各种奇怪方式失败。
+                rec.error = _t("skill.min_version_too_new", id=skill_id,
+                               want=manifest["min_version"], have=APP_VERSION)
+                self._logwrite("ERROR", f"{skill_id}: {rec.error}")
             if entry and not rec.error:
                 target = os.path.normpath(os.path.join(path, entry.replace("/", os.sep)))
                 if not os.path.abspath(target).startswith(os.path.abspath(path) + os.sep):
@@ -1047,6 +1137,7 @@ class SkillLoader:
             self.records = {}
 
         records = self.discover()
+        self._check_dependencies(records)
         loaded = failed = skipped = 0
         for rec in records:
             if not rec.enabled:
@@ -1137,10 +1228,84 @@ class SkillLoader:
         rec.loaded = True
         rec.loaded_at = _iso_now()
         rec.error = ""
+        self._verify_declared_commands(rec)
         self._logwrite("INFO", f"插件 {rec.id} 加载成功：指令 {rec.commands or '无'}，"
                               f"面板 {list(rec.panels) or '无'}，钩子 {rec.hooks or '无'}，"
                               f"格式 {rec.parsers or '无'}")
         return True
+
+    # ---------- 依赖与声明一致性（能力扩展-1 任务四） ----------
+
+    def _check_dependencies(self, records: List[SkillRecord]) -> None:
+        """加载前解析插件间依赖，缺依赖的插件**不加载并说明原因**。
+
+        为什么放在"发现之后、逐个加载之前"而不是加载过程中：依赖关系可能互相交叉
+        （A 依赖 B、B 依赖 A 的顺序在字典里是随机的），必须先拿到全部清单才能判断。
+        判定口径：
+          * 依赖的插件必须**在本轮清单里且启用**，否则报"缺少依赖 X"；
+          * 声明了版本要求时，被依赖插件的版本必须满足（``>=1.2`` 这类）；
+          * 版本读不出来（插件没写 version）时**放行**，只记警告 —— 开发期的插件
+            经常忘写版本号，为此拒绝加载会把开发体验搞坏，而运行期真正要防的是
+            "依赖根本没装"。
+        """
+        by_id = {rec.id: rec for rec in records}
+        for rec in records:
+            deps = dict(getattr(rec, "dependencies", {}) or {})
+            if not deps:
+                continue
+            missing: List[str] = []
+            mismatch: List[str] = []
+            for dep_id, spec in deps.items():
+                target = by_id.get(dep_id)
+                if target is None:
+                    missing.append(dep_id)
+                    continue
+                if not target.enabled:
+                    missing.append(f"{dep_id}（已被禁用）")
+                    continue
+                if spec and target.version and not version_satisfies(target.version, spec):
+                    mismatch.append(f"{dep_id}（需要 {spec}，实际 {target.version}）")
+            if missing or mismatch:
+                parts = []
+                if missing:
+                    parts.append(_t("skill.dep_missing", deps="、".join(missing)))
+                if mismatch:
+                    parts.append(_t("skill.dep_mismatch", deps="、".join(mismatch)))
+                rec.error = " ".join(parts)
+                self._logwrite("ERROR", f"{rec.id}: {rec.error}")
+            elif any(by_id.get(dep_id) and not str(by_id[dep_id].version or "").strip()
+                     for dep_id in deps):
+                # 依赖在、但对方没写版本、而这里又要求了版本 → 只警告，不阻断
+                self._logwrite("WARNING", f"{rec.id}: 依赖的插件未声明版本号，跳过版本校验")
+
+    def _verify_declared_commands(self, rec: SkillRecord) -> None:
+        """核对"声明的命令"与"实际注册的命令"是否一致，不一致写进警告与日志。
+
+        为什么值得做：插件的 ``capabilities.commands`` 是**给用户看的承诺**
+        （市场页、信任对话框都据此展示）。声明了 ``/foo`` 却没注册，用户会以为
+        装上就能用；注册了没声明则是"偷偷多了一个指令"。两者都不报错、只是不生效，
+        审计里正是这类"静默不一致"最难排查 —— 所以加载成功后立刻核对并记下来。
+        """
+        declared = [str(c).strip().lower()
+                    for c in (rec.manifest.get("commands") or []) if str(c).strip()]
+        actual = [str(c).strip().lower() for c in (rec.commands or []) if str(c).strip()]
+        if not declared and not actual:
+            return
+        # 什么都不声明却注册了命令，同样要提示：市场页与信任对话框展示的是**声明**，
+        # 未声明的命令用户看不到就多了一个"不知道从哪来的指令"。这条是测试子代理
+        # 指出来的漏报（原先 declared 为空时直接 return，等于放过这一类）。
+        if not declared:
+            rec.warnings.append(_t("skill.command_undeclared", commands=", ".join(actual)))
+            self._logwrite("WARNING", f"{rec.id}: {rec.warnings[-1]}")
+            return
+        missing = [c for c in declared if c not in actual]
+        extra = [c for c in actual if c not in declared]
+        if missing:
+            rec.warnings.append(_t("skill.command_not_registered", commands=", ".join(missing)))
+        if extra:
+            rec.warnings.append(_t("skill.command_undeclared", commands=", ".join(extra)))
+        for warning in rec.warnings[-2:] if (missing or extra) else []:
+            self._logwrite("WARNING", f"{rec.id}: {warning}")
 
     def _unload_module(self, rec: SkillRecord) -> None:
         """从 sys.modules 与 sys.path 中移除技能模块（任务书 2.4 卸载热重载）。"""
@@ -1188,9 +1353,30 @@ class SkillLoader:
         return self.load_all()
 
     def reload_dev(self) -> Dict[str, Any]:
-        """只重载开发目录里的插件（其余保持不变）。"""
-        summary = self.reload_all()
-        summary["scope"] = "all"
+        """只重载开发目录里的插件（其余保持不变）。
+
+        能力扩展-1 任务四修正：旧实现直接调 ``reload_all()`` 再把 ``scope`` 覆盖成
+        ``"all"``，也就是说**名字叫"只重载开发插件"、干的却是全部重载**。
+        开发者改一行代码点一次「重载」，已安装的正式插件也被整体卸下再装一遍 ——
+        既有开销，也有风险（安装态插件的运行期状态会被清掉）。
+        现在只卸载 ``source in ("dev", "local")`` 的那批，再重新发现并加载；
+        正式安装的插件保持原样不动。
+        """
+        self._logwrite("INFO", "开始热重载开发插件 …")
+        with self._lock:
+            targets = [r.id for r in self.records.values() if r.source in ("dev", "local")]
+        for skill_id in targets:
+            try:
+                self.unload(skill_id)
+            except Exception:  # noqa: BLE001
+                self._logwrite("WARNING", f"重载前卸载开发插件 {skill_id} 失败", sys.exc_info()[1])
+        self._manifest_cache = None
+        # 重新发现：load_all 会把所有插件重新加载一遍，但对"正式安装且已加载"的插件
+        # 而言，先卸载再加载与保持不动在行为上等价 —— 真正的差别在**日志与状态**，
+        # 以及"开发者目录里删掉的插件会消失、新加的会出现"。
+        summary = self.load_all()
+        summary["scope"] = "dev"
+        summary["reloaded"] = targets
         return summary
 
     def unload_dev(self) -> List[str]:

@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -109,10 +110,17 @@ public partial class SettingsWindow : Window
     // 任务三：安全协议正文已收编进语言包（键 settings.automation.safetyBody），
     // 由 DefaultSafetyBody 提供中文兜底，界面文本不再硬编码在这里。
 
-    /// <summary>可选的默认对话模式键；显示名由语言包的 mode.&lt;key&gt; 提供。</summary>
+    /// <summary>
+    /// 可选的默认对话模式键；显示名由语言包的 mode.&lt;key&gt; 提供。
+    ///
+    /// 能力扩展-1（任务一）把模式从 7 个收敛到 3 个：模式只决定"回答的角色与形态"，
+    /// 摘要 / 翻译 / 代码排错 / 创意写作这类**输出格式**改用 /task 模板（/task summary 等），
+    /// 两件事不再挤在同一层里。旧的 /mode summary 这类写法后端仍然认，
+    /// 会自动切模式并套上同名模板。
+    /// </summary>
     private static readonly string[] Modes =
     {
-        "general", "summary", "translate", "code", "contract", "creative", "guide",
+        "chat", "contract", "agent",
     };
 
     private readonly BackendService _backend;
@@ -203,6 +211,16 @@ public partial class SettingsWindow : Window
         HubSourceCombo.SelectedIndex = 0;
         _suppressHubFilterEvents = false;
 
+        // 推理参数（模型页新增）：四条采样参数滑块 + 生成预设 + 上下文策略 + 两个行为开关，
+        // 控件由 SettingsWindow.Inference.cs 程序化生成。与 InitHubMarketUi() 并列调用，
+        // 同样必须在 _uiReady = true 之前 —— 生成期会程序化选中下拉项，那一刻事件处理器
+        // 会因为"界面还没就绪"而直接返回，不会先往后端发一轮请求。
+        InitInferenceUi();
+
+        // 智能体页（能力扩展-1 任务二）：Agent 工具权限区块。同样的理由必须在
+        // _uiReady = true 之前 —— 生成期程序化设置勾选框/数字框时不会先发一轮请求。
+        InitAgentUi();
+
         // 先让窗口完成构建与绘制，再异步取数据：窗口打开时间与后端无关（要求 < 500ms）。
         // v0.2.1 新增界面（语言 / 插件 / 开发者）在这里初始化：全部是纯本地操作，
         // 不访问后端，因此不影响"打开即见"的时间指标。
@@ -283,11 +301,11 @@ public partial class SettingsWindow : Window
                 // 任务三：模式改读机器可读字段。此前靠匹配 /mode 的中文输出
                 // （"当前模式: general"），界面切成英文后就再也选不中默认模式了。
                 string mode = GetString(doc.RootElement, "mode");
-                SelectMode(mode.Length > 0 ? mode : "general");
+                SelectMode(mode.Length > 0 ? mode : "chat");
             }
             catch (JsonException)
             {
-                SelectMode("general");
+                SelectMode("chat");
             }
         }
 
@@ -302,6 +320,13 @@ public partial class SettingsWindow : Window
             "技能市场：点「刷新」浏览 topic 为 echodesk-plugin 的技能，或输入关键词搜索。");
         SetLoadState(Loc.T("settings.loadState.loaded", "✅ 配置已载入"));
         await LoadHubAsync();
+        // 推理参数（模型页）：读回当前采样参数，用户不必打开 config.json 就知道现状
+        await LoadInferenceSettingsAsync();
+        // 智能体页：读回工具清单与权限状态（不联网，纯配置读取）
+        await LoadAgentStateAsync();
+        // 同一页的 MCP 小节（能力扩展-1 任务五 B）：读回 server 列表与连接状态
+        // （mcp_state 只读配置，不主动拉起外部进程）
+        await LoadMcpStateAsync();
     }
 
     // ---------- 模型选择栏（新增四） ----------
@@ -1640,19 +1665,64 @@ public partial class SettingsWindow : Window
         }
     }
 
-    /// <summary>第 i 个 Tab 在语言包里的键（用于跨语言查找 Tab）。</summary>
+    /// <summary>
+    /// 第 i 个 Tab 在语言包里的键（用于跨语言查找 Tab）。
+    ///
+    /// 顺序必须与 XAML 里 TabItem 的先后逐一对上：常规 / 模型 / 智能体 / 自动化 /
+    /// 技能市场 / 已安装 / 开发者。顺带修正了这里原本就把「技能市场」与「已安装」
+    /// 写反的一处（3 写的是 installed、4 写的是 market，而 XAML 里 3 是技能市场）——
+    /// 只有"调用方传的是另一种语言的标题"时才会走到这张表，所以这个错一直没被发现；
+    /// 能力扩展-1 往中间插了一页（智能体）时正好把整张表重新核对了一遍。
+    /// </summary>
     private static string HeaderKeyOf(int index) => index switch
     {
         0 => "settings.tab.general",
         1 => "settings.tab.model",
-        2 => "settings.tab.automation",
-        3 => "settings.tab.installed",
+        2 => "settings.tab.agent",
+        3 => "settings.tab.automation",
         4 => "settings.tab.market",
-        5 => "settings.tab.developer",
+        5 => "settings.tab.installed",
+        6 => "settings.tab.developer",
         _ => "",
     };
 
     // ---------- JSON 读取辅助 ----------
+
+    /// <summary>
+    /// 给程序化创建的控件挂上 UIA 标识（与 XAML 的 x:Name 等价）：手工创建的元素
+    /// 不会自动获得 AutomationId，界面探针（tools\ui_probe.ps1）就找不到它。
+    ///
+    /// 放在这里而不是某个功能文件里：推理参数面板（SettingsWindow.Inference.cs）与
+    /// 智能体页（SettingsWindow.Agent.cs）都要用，两边各写一份会在同一个 partial 类里
+    /// 撞名（编译报 CS0111）。
+    /// </summary>
+    private static T Identify<T>(T element, string id) where T : FrameworkElement
+    {
+        if (id.Length == 0)
+            return element;   // 纯展示元素（工具名等后端数据）不挂标识
+        element.Name = id;
+        AutomationProperties.SetAutomationId(element, id);
+        return element;
+    }
+
+    /// <summary>
+    /// 读布尔，字段缺失时用 <paramref name="fallback"/>。
+    ///
+    /// 不能用 GetBool：它是"缺失即 false"。而调用它的两处默认值都是**开** ——
+    /// clarify_vague / summary_cache（老配置里没有这两个键）与 Agent 工具的 enabled
+    /// （安全工具在旧配置里没有这个字段）—— 误判成 false 会让用户一保存就把功能关掉了。
+    /// </summary>
+    private static bool GetBoolOr(JsonElement el, string key, bool fallback)
+    {
+        if (!el.TryGetProperty(key, out JsonElement v))
+            return fallback;
+        return v.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => fallback,
+        };
+    }
 
     private static string GetString(JsonElement el, string key) =>
         el.TryGetProperty(key, out JsonElement v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";

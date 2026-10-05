@@ -219,7 +219,9 @@ public partial class SettingsWindow
                 Tag = key,
             });
         }
-        SelectMode(current ?? "general");
+        // 默认落到 chat：能力扩展-1 之后 general 不再是模式名（3 个模式是 chat/contract/agent），
+        // 继续用 "general" 会选不中任何一项，下拉框变成空白。
+        SelectMode(current ?? "chat");
     }
 
     private void PopulateSortCombos()
@@ -973,6 +975,20 @@ public partial class SettingsWindow
     {
         SetLoadState(Loc.T("settings.installed.reload") + "…");
         _ = SendSkillsAsync(new { action = "skills_reload" });
+    }
+
+    /// <summary>
+    /// 开发者页的「🔄 重载本地插件」：**只重载开发插件**（<c>skills_dev/</c> 与本地清单里的
+    /// 插件），已安装的正式插件保持原样。
+    ///
+    /// 为什么与「已安装」页那个同名按钮分开（能力扩展-1 任务五 D）：开发者改一行插件代码
+    /// 就重载一次，全量重载会把市场装的插件也一起重新加载（慢，且可能出现"回到旧版本"的错觉）；
+    /// 后端为此支持了 <c>scope="dev"</c>，缺省仍是 all（「已安装」页照旧走全量）。
+    /// </summary>
+    private void DevReloadButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetLoadState(Loc.T("settings.developer.reloadDev") + "…");
+        _ = SendSkillsAsync(new { action = "skills_reload", scope = "dev" });
     }
 
     private void SkillsInstallFolderButton_Click(object sender, RoutedEventArgs e)

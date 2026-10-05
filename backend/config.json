@@ -2,7 +2,7 @@
     "model_path": "Qwen3-0.6B-Q6_K.gguf",
     "model_repo": "unsloth/Qwen3-0.6B-GGUF",
     "hf_endpoint": "https://hf-mirror.com",
-    "default_mode": "general",
+    "default_mode": "chat",
     "context_length": 8192,
     "max_context": 32768,
     "auto_context": true,
@@ -52,6 +52,26 @@
         "max_count": 10,
         "total_chars": 60000,
         "disk_threshold_chars": 20000
+    },
+    "agent": {
+        "max_steps": 4,
+        "allow_sensitive": [],
+        "max_observation_chars": 1200
+    },
+    "retrieval": {
+        "enabled": true,
+        "mode": "keyword",
+        "chunk_chars": 600,
+        "overlap_chars": 100,
+        "top_k": 4,
+        "max_context_chars": 2400,
+        "min_score": 0.0
+    },
+    "mcp": {
+        "enabled": false,
+        "timeout_seconds": 20.0,
+        "auto_connect": false,
+        "servers": []
     },
     "automation": {
         "enabled": false,

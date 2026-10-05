@@ -127,6 +127,10 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <!-- 推理参数行（Grid.Row="8"）专用的一行高度：控件本身由
+                             SettingsWindow.Inference.cs 程序化生成，这里只给高度，不含内容。
+                             放在末尾是因为 5–9 行全是 Auto，顺序不影响布局，只影响行号。 -->
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <TextBlock Grid.Row="0" Text="🧠 模型选择栏（Hugging Face GGUF 模型）"
@@ -480,15 +484,32 @@
                                     Style="{StaticResource RoundButton}"
                                     Click="ProfileRefreshButton_Click"
                                     svc:Loc.Key="settings.model.actionRefreshProfiles"/>
+                            <!-- 自定义档位（能力扩展-1 任务五 C）：用户不必再手改 config.json 的 models 段。
+                                 胶囊行上的「📝 编辑」「🗑 删除」由 SettingsWindow.Profiles.cs 程序化生成。 -->
+                            <Button x:Name="ProfileNewButton" Padding="10,2" FontSize="11"
+                                    Margin="8,0,0,0" VerticalAlignment="Center"
+                                    Style="{StaticResource RoundButton}"
+                                    Click="ProfileNewButton_Click"
+                                    svc:Loc.Key="settings.profile.add"
+                                    svc:Loc.TipKey="settings.profile.addTip"/>
                         </StackPanel>
                         <WrapPanel x:Name="ModelProfileChips" Margin="0,5,0,0"/>
                         <TextBlock x:Name="ProfileStatusText" Margin="0,5,0,0" FontSize="11"
                                    TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"/>
+                        <!-- 档位编辑表单的内联宿主（默认空：表单由 C# 按需生成并填入） -->
+                        <StackPanel x:Name="ProfileEditorPanel" Margin="0,6,0,0"/>
                     </StackPanel>
 
+                    <!-- 推理参数（采样）：温度 / top_p / 重复惩罚 / 最大生成长度、生成预设、
+                         上下文策略与两个行为开关。让用户不必改 config.json 就能调采样参数。
+                         与「模型档位」同构：XAML 只留宿主面板，控件由
+                         SettingsWindow.Inference.cs 程序化生成（四条滑块行的差别只有
+                         范围/步长/默认值/文案键，写进 XAML 是一大段重复结构）。 -->
+                    <StackPanel x:Name="InferencePanel" Grid.Row="8" Margin="0,8,0,0"/>
+
                     <!-- 模型库 -->
-                    <Grid Grid.Row="8" Margin="0,10,0,0">
+                    <Grid Grid.Row="9" Margin="0,10,0,0">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
@@ -556,6 +577,18 @@
                         </Border>
                     </Grid>
                 </Grid>
+            </TabItem>
+
+            <!-- ================= 智能体（能力扩展-1 任务二） ================= -->
+            <!-- 单独一页而不是塞进「模型」页：模型页的结果列表是 * 行，再插一块
+                 "每个工具一行"的清单会把它挤没。本页自带 ScrollViewer，
+                 工具条数随后端增减都不牵动别的页。 -->
+            <TabItem Header="智能体" svc:Loc.Key="settings.tab.agent">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <!-- Agent 工具权限区块：控件由 SettingsWindow.Agent.cs 程序化生成
+                         （工具清单是后端数据，条数不固定，XAML 里写不出来） -->
+                    <StackPanel x:Name="AgentPanel" Margin="14,12"/>
+                </ScrollViewer>
             </TabItem>
 
             <!-- ================= 自动化 ================= -->
@@ -1230,8 +1263,9 @@
                                    svc:Loc.Key="settings.developer.sectionReload"/>
                         <StackPanel Orientation="Horizontal">
                             <Button x:Name="DevReloadButton" Content="🔄 重载本地插件" Padding="12,4"
-                                    Style="{StaticResource RoundButton}" Click="SkillsReloadButton_Click"
-                                    svc:Loc.Key="settings.developer.reload"/>
+                                    Style="{StaticResource RoundButton}" Click="DevReloadButton_Click"
+                                    svc:Loc.Key="settings.developer.reload"
+                                    svc:Loc.TipKey="settings.developer.reloadDevTip"/>
                             <Button Content="导出日志" Padding="12,4" Margin="8,0,0,0"
                                     Style="{StaticResource RoundButton}" Click="ExportDevLogButton_Click"
                                     svc:Loc.Key="settings.developer.exportLog"/>

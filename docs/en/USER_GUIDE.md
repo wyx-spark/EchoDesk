@@ -47,7 +47,7 @@ from there.
 
 | Location | Contents | Can I delete it? |
 | --- | --- | --- |
-| `app\backend\config.json` | All configuration (model, window, summarization, automation, marketplace) | Yes (recreated with default values) |
+| `app\backend\config.json` | All configuration (model, window, summarization, **local retrieval**, **agent tool permissions**, **MCP**, automation, marketplace) | Yes (recreated with default values) |
 | `app\backend\models\*.gguf` | Local models | Yes (the next launch offers to download them again) |
 | `app\backend\session.json` | The previous conversation (restored automatically) | Yes (clears the history) |
 | `app\backend\browser_state.json` | Automation login state (cookies) | Yes (signs you out everywhere) |
@@ -171,16 +171,20 @@ Two related notes:
 
 ```
 /help                 all commands
-/mode contract        switch to contract-review mode (also /mode 5 or /mode ct)
-/mode guide           guidance mode: have it list the likely meanings when you cannot say what you want (also /mode 7 or /mode gd)
+/mode list            three modes: chat / contract (clause review) / agent (can call tools) — also /mode 1|2|3 or /mode c|ct|ag
+/mode agent           switch to agent mode (also /mode 3, /mode ag or /agent on)
 /file D:\合同.docx     upload a file (several paths at once are allowed; quote paths containing spaces)
 /file "D:\my contract.docx" "D:\annex 1.xlsx"   load several files in one go
 /summarize            manually trigger a full-text summary for a long uploaded document
 /temp 0.3             adjust the generation temperature
 /prompt 你是财务顾问    temporarily change the assistant's role
 /search on            turn on web search (searches the web before answering; internet required)
+/agent list           see which tools the agent may call and which are authorised
+/agent allow web_search   authorise a sensitive tool (written to config.json, persists)
+/agent steps 5        force a conclusion after at most 5 tool calls (1–8, default 4)
+/mcp                  show MCP server status and tools; /mcp connect fetches the tool list now
 /model list           list the local models / /model 别名 to switch
-/task list            task-oriented prompt templates (summary, contract review, extraction, translation, code debugging, reasoning)
+/task list            task-oriented prompt templates (8 in total: summary, contract review, extraction, translation, code debugging, reasoning, creative writing, requirement clarification)
 /preset light         generation presets in three steps: light / balanced / quality
 /compact              compress the context right away to free up room
 /compact focus on 合同金额   compress while keeping the focus you name
@@ -192,6 +196,46 @@ Two related notes:
 /clear                clear the conversation and the file context
 /exit                 quit (10-second countdown)
 ```
+
+### Conversation modes: three modes, and the old spellings still work
+
+There are now **three modes**, numbered 1/2/3 with the short names c/ct/ag:
+
+| Mode | What it is for | Temperature preset |
+| --- | --- | --- |
+| `chat` (default) | general conversation: office Q&A, explanations, writing, translation, … | 0.7 |
+| `contract` | clause review: each item as "verbatim excerpt → risk → suggested change", with a mandatory human-review note on money/liability conclusions | 0.3 |
+| `agent` | an agent that decides which tool to call and in what order until it reaches a conclusion (see "6. Agent: letting the model call tools") | 0.5 |
+
+Every mode still spells out the **six elements** (role / output format / level of detail / reasoning /
+example / tone) and they all share the same general requirements (say you do not know instead of inventing,
+answer in one sentence when one sentence is enough, give the most likely answer first and ask afterwards
+when information is missing, never fabricate sources).
+
+**The modes that were merged away lost no capability — `/task` templates carry them now.** The old
+spellings still work: the program switches to chat and applies the matching template for you, the reply
+says "merged into another mode, template /task xxx applied automatically", and the old temperature preset
+is kept (run `/task off` to drop the template):
+
+| Old spelling | Now equivalent to | Old temperature preset kept |
+| --- | --- | --- |
+| `/mode general` | `chat` (a rename only) | — |
+| `/mode summary` | chat + `/task summary` | 0.4 |
+| `/mode translate` | chat + `/task translate` | 0.3 |
+| `/mode code` | chat + `/task code` | 0.2 |
+| `/mode creative` | chat + `/task creative` | 0.9 |
+| `/mode guide` | chat + `/task guide` | 0.6 |
+| `/mode contract` | unchanged — still its own contract mode | 0.3 |
+
+**The old numbers are no longer migrated automatically — you get a clear error instead**: a number means
+different things under the two numbering schemes (the old `/mode 2` was summary, the new `/mode 2` is
+contract), so numbers such as 4/5/6/7 are not guessed at. The program replies "the numbering changed: it is
+now 1=chat, 2=contract, 3=agent; the old number 4 meant something else, use /task code instead", which keeps
+you out of a state that is neither the old nor the new meaning. **Write the name** (`/mode summary`) or
+switch first and then apply the template (`/mode chat` followed by `/task code`).
+
+The task templates grew from 6 to **8** (`creative` for creative writing and `guide` for requirement
+clarification are new); `/task list` shows them all.
 
 ### Live metrics in the status strip
 
@@ -229,9 +273,10 @@ With no model loaded the whole block stays hidden (no zeros, no placeholders).
 
 ### Getting more out of a small local model
 
-- **Task templates**: `/task list` shows six templates — summary (`summary`), contract review (`contract`),
-  structured extraction (`extract`), translation (`translate`), code explanation and debugging (`code`) and
-  step-by-step reasoning (`reason`). Apply one with `/task contract` (a prefix is enough, e.g. `/task con`),
+- **Task templates**: `/task list` shows eight templates — summary (`summary`), contract review
+  (`contract`), structured extraction (`extract`), translation (`translate`), code explanation and
+  debugging (`code`), step-by-step reasoning (`reason`), creative writing (`creative`) and requirement
+  clarification (`guide`). Apply one with `/task contract` (a prefix is enough, e.g. `/task con`),
   and clear it with `/task off`. A template is **layered on top of the current mode**: the mode sets the scene
   and tone, the template sets this task's output format, and where they differ the template wins (the prompt
   states that precedence explicitly). `/prompt <text>` has the highest priority and overrides both — run
@@ -240,15 +285,16 @@ With no model loaded the whole block stays hidden (no zeros, no placeholders).
 - **Reply language**: it follows the interface language. A Chinese interface asks for Simplified Chinese, an
   English interface asks for English; if you add another language pack, the model replies in whatever language
   you write in. The prompt text itself stays Chinese, which does not affect this.
-- **Every mode carries a complete prompt**: each of the seven modes states its role, output format,
+- **Every mode carries a complete prompt**: each of the three modes states its role, output format,
   **how much detail to give**, reasoning steps, one input/output example and its tone, and they all share the
   same "general requirements" block (say you do not know instead of inventing, answer in one sentence when one
   sentence is enough, give the most likely answer first and ask afterwards when information is missing, never
   fabricate sources). The detail item is what lets the model decide how long to be: simple questions do not
   get forced into a full template, complex ones are still split into points.
-- **Use guidance mode when you cannot say what you want**: `/mode guide` (also `/mode 7` or `/mode gd`) lists
+- **When you cannot say what you want, use the requirement-clarification template**: `/task guide` lists
   2-3 things you might mean, each with one line about what it would do, and you reply with a number (or "none
-  of these") — you do not have to work out how to phrase the request first.
+  of these") — you do not have to work out how to phrase the request first. The old spelling `/mode guide`
+  works too: it now switches to chat and applies this template for you.
 - **Generation presets**: `/preset list` shows them; `light` (shortest, fastest replies), `balanced` (the
   default) and `quality` (longest replies) switch the temperature, top_p, repeat penalty and reply-length cap
   in one step. The choice is written into the configuration and survives a restart; if you later change the
@@ -266,8 +312,8 @@ With no model loaded the whole block stays hidden (no zeros, no placeholders).
   with neither a file context nor any history, the program lists 2-3 possible meanings ("something to work on",
   "a procedure", "an error to diagnose", …) with one line each about what it would do, and you reply with a
   number — it no longer turns the question back on you by demanding the object, output form and constraints.
-  In guidance mode (`/mode guide`) the model produces those directions itself, so they fit your wording more
-  closely. It does not trigger once you have chatted a few rounds or uploaded a file (there "this" usually
+  With the requirement-clarification template (`/task guide`) the model produces those directions itself,
+  so they fit your wording more closely. It does not trigger once you have chatted a few rounds or uploaded a file (there "this" usually
   refers to the context). To switch it off, set `clarify_vague` to `false` in `app\backend\config.json`.
 
 ---
@@ -288,6 +334,9 @@ losing information because it does not fit in the context window.
    - or split the contract into chapters and upload them one by one;
    - or temporarily raise `context_length` in `app\backend\config.json` (the larger it is, the slower it runs and
      the more memory it uses; `/status` shows the KV Cache estimate);
+   - or simply ask about the detail: EchoDesk **retrieves the most relevant passages** (with file name and
+     character range) and injects them alongside the summary, which lands on a specific clause far more often
+     than the summary alone (see "9. Retrieval and citation traceability");
 5. To keep your conclusions on record: `/save 合同审查意见`.
 
 **Reading the status line**: "context: about X/Y tokens" under `/status` shows current usage and the automatic
@@ -386,11 +435,236 @@ means off, and it stays off after a restart.
 
 ---
 
-## 6. Networking and privacy at a glance
+## 6. Agent: letting the model call tools
+
+In **agent mode** you no longer dictate the steps: the model decides which tool to call and in what order
+until it reaches a conclusion. That is the only difference from ordinary conversation — context, history and
+stopping behave exactly the same.
+
+Get there with `/mode agent` (also `/mode 3`, `/mode ag`) or `/agent on` in the chat box; `/agent off`
+switches back. The temperature preset for agent mode is **0.5**.
+
+### 6.1 The tool set: two permission tiers
+
+| Tier | Tool | What it can do | Default |
+| --- | --- | --- | --- |
+| ✅ safe | `calc` | arithmetic with `**`, `%`, parentheses and `sqrt`/`round`/`abs`/`min`/`max`/`log` functions, evaluated through an **AST whitelist, not `eval`** | available |
+| ✅ safe | `date` | today's date, date arithmetic, days between two dates, day of the week | available |
+| ✅ safe | `convert` | length / mass / area / volume / data / time / speed / pressure / temperature conversion | available |
+| ✅ safe | `doc_search` | find relevant passages by keyword inside **your uploaded files** (returns file names and snippets) | available |
+| ✅ safe | `doc_summary` | fetch the summary of an uploaded file | available |
+| 🔒 sensitive | `web_search` | web search (sends the keywords to the internet) | **off** |
+| 🔒 sensitive | `file_read` | read a local **text** file (512 KB per file maximum) | **off** |
+
+- **Sensitive tools must be authorised explicitly**: turn one on with `/agent allow web_search` and revoke it
+  with `/agent deny web_search`. The choice goes into `agent.allow_sensitive` in `config.json` and **persists**
+  (no confirmation on every question); the Agent page of the Settings window offers the same checkboxes.
+- **This version ships no tool that writes files or runs commands** (least privilege).
+- An unauthorised tool is **not a silent failure**: the chat shows 🔒 and how to enable it, and the model
+  carries on with the information it already has.
+- `/agent list` shows the tool list and permission state; `/agent steps 5` changes the step limit to 1–8
+  (default 4).
+
+### 6.2 Every step is visible, and you can stop at any time
+
+The conversation shows each step in order:
+
+```
+📍 Step 1/4
+🔧 Call calc args {"expr": "(128.6*10000)*0.003"}
+↩ calc returned: 3858.0 (3 ms)
+```
+
+Tool results are fed back into the context (each result has a length cap), so the model can look at what came
+back before deciding what to do next. Press `Esc` (or click ⏹) to stop at any time — **the same stop path as
+ordinary conversation**. When the step limit is reached the loop converges automatically: it stops calling
+tools and instead "answers from what it already knows", so you always get a conclusion.
+
+### 6.3 How this differs from automation
+
+| | Automation | Agent |
+| --- | --- | --- |
+| Flow | you configure the selectors and the program runs **the same predefined flow** | the model **decides for itself** which tool to use and in what order |
+| Shape | batch: list page → task by task → download → review opinion | a single task, solved within one question |
+| Driven by | a fixed script (headed Playwright browser) | the model (may differ every time) |
+
+---
+
+## 7. Connecting external tools: MCP
+
+MCP (Model Context Protocol) lets the agent use tools provided by **external processes** (databases, APIs,
+file systems, …). EchoDesk ships its own **stdio MCP client** (no new dependencies): declare one command per
+server in the configuration and it is connected.
+
+### 7.1 Configuring a server
+
+The `mcp` section of `app\backend\config.json`:
+
+```json
+"mcp": {
+  "enabled": false,
+  "timeout_seconds": 20.0,
+  "auto_connect": false,
+  "servers": [
+    {"name": "echo", "command": "python", "args": ["examples/mcp/echo_server.py"], "enabled": true}
+  ]
+}
+```
+
+A bundled example server lives at `examples\mcp\echo_server.py` (standard library only, exposing the two
+tools `echo_text` and `now`) — configure it to verify the plumbing end to end. Once connected, its tools appear
+in `/agent list` under names such as `mcp__echo__echo_text`.
+
+### 7.2 Commands
+
+```
+/mcp                        show status and tools
+/mcp enable echo            enable a server (written to config.json)
+/mcp disable echo           disable it (effective immediately, no restart)
+/mcp connect                connect now and fetch the tool list
+```
+
+The MCP section on the **Agent** page of the Settings window offers the same changes (master switch, connect
+on startup, timeout, per-server enable/disable, add or remove a server, and a "connect and fetch tools"
+button) — it is equivalent to these commands.
+
+### 7.3 Security boundary (essential reading)
+
+- an MCP server is an **external process you configured yourself**, and EchoDesk cannot control what it does;
+- therefore its tools are **always treated as sensitive** and must be authorised with
+  `/agent allow mcp__<server>__<tool>` first;
+- parent-process environment variables are **not passed through** by default (secrets are not handed to a
+  third-party process by accident); name the ones you want in that server's `passthrough_env`;
+- EchoDesk **never discovers or connects to anything automatically**; `auto_connect` defaults to `false`, so
+  the process is only started when you run `/mcp connect` (or set it to `true`).
+
+### 7.4 How this relates to "your data stays on this machine"
+
+This deserves to be stated plainly: **whether MCP touches the network, and where data goes, depends on the
+server process you configured**. EchoDesk itself does not reach out and does not decide who receives your
+data — it just starts the command you wrote and collects the tool results. The "data stays on this machine"
+promise therefore **still holds under the default configuration** (MCP is off and no server is declared); once
+you connect a server of your own, that process defines the data boundary, so only connect servers you trust.
+
+### 7.5 Limits in this version / how it differs from skills
+
+- this version supports **stdio transport only**: no HTTP/SSE, and no resources / prompts / sampling;
+- the difference from **skills**: a skill is "adding a feature to EchoDesk" (it can register commands, panels,
+  hooks and file parsers, and is installed from the skill marketplace), while MCP is "giving the agent a few
+  external tools" (tool calls only, wired up by a command you write yourself).
+
+---
+
+## 8. Model management and inference parameters
+
+### 8.1 The inference parameter panel (Settings → Model)
+
+The Model page now carries an inference parameter panel: four sliders, each with its own "restore default":
+
+| Parameter | Range | Notes |
+| --- | --- | --- |
+| Temperature | 0–1.5 | higher is more exploratory, lower is more conservative |
+| top_p | 0.1–1.0 | candidate range; lower is more focused |
+| Repeat penalty | 1.0–1.5 | higher reduces repetition, too high sounds stiff |
+| Max generated tokens | 64–4096 | length cap for a single reply |
+
+Three more settings sit alongside them: the **generation preset** dropdown (light / balanced / quality,
+effective as soon as you change it), the **context strategy** (segmented summarisation / sliding-window
+discard) and two switches (give directions first for vague questions; cache segmented summaries).
+**Save** writes everything in one go and reads back the values that are really in effect (it does not pretend
+that whatever you dragged is live); **Reload** fetches the current values again.
+
+> The temperature ceiling was raised from 1.0 to 1.5 to match the slider: when dragging to the end and saving
+> silently snapped back to 1.0, the interface looked like it was lying.
+
+### 8.2 Custom model tiers
+
+Model tiers can now be **added, edited and deleted** in the Settings window, so editing `config.json` by hand
+is no longer required: alias, model file name or path, repository, context length, temperature and a note. A
+repeated alias is treated as an edit.
+
+Two guarantees:
+
+- **deleting a tier never deletes the model file on disk** — only the registration for that tier is removed;
+- **a tier that is currently in use refuses to be deleted**, and tells you to switch to another one first.
+
+---
+
+## 9. Retrieval and citation traceability
+
+Long documents now get **local retrieval** (keyword BM25, standard library only, no new dependencies): a
+question no longer has to live on a single summary, because the most relevant passages come along too.
+
+### 9.1 How retrieval and segmented summarisation divide the work
+
+| Situation | Which one | Why |
+| --- | --- | --- |
+| Short document (the full text fits the context) | **inject the full text, do not retrieve** | for short material the full text is the most accurate and retrieval would only lose information |
+| Long document (spilled to disk or summarised) + a specific question | **summary for the whole picture + retrieval for the detail** | the summary says what the material is about, retrieval finds where "the 30 working days clause" is |
+| Long document + a broad question | summary first, retrieval only tops up top-k | a broad question has no keywords to retrieve on, and forcing it would add noise |
+
+In other words: **a summary compresses, retrieval locates** — they complement each other rather than
+replace each other. Retrieved passages are placed before the file blocks, so you can see at a glance which
+passages the answer was based on.
+
+### 9.2 Citation traceability
+
+Every injected passage carries a **position**, like this:
+
+```
+[1] purchase-contract.docx (chars 210-480)
+The buyer shall pay 95% of the contract amount within 30 working days of acceptance…
+```
+
+and the model is explicitly required to mark its evidence with `[number]` (content without evidence must not
+be written as a citation). With the file name and the character range you can go back to the original text and
+check, instead of having to take a sentence on trust.
+
+### 9.3 Multi-document Q&A and incremental indexing
+
+- **You do not have to name the file**: retrieval spans every uploaded file, and you can restrict it to a few
+  of them when you want to.
+- **Incremental indexing**: a newly uploaded file indexes only itself and leaves existing files untouched; a
+  file with the same name replaces the previous content; once a file is removed its content is no longer
+  retrievable.
+
+### 9.4 Configuration
+
+The `retrieval` section of `app\backend\config.json`:
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `enabled` | `true` | master switch for retrieval |
+| `mode` | `keyword` | keyword is the only mode in this version; hybrid / vector are reserved for the future |
+| `chunk_chars` | 600 | chunk length (roughly 300 tokens) |
+| `overlap_chars` | 100 | overlap between chunks, so an answer spanning a chunk boundary is not missed |
+| `top_k` | 4 | how many passages are injected at once |
+| `max_context_chars` | 2400 | total length cap for the injected passages |
+| `min_score` | 0.0 | BM25 score floor (0 = no threshold) |
+
+### 9.5 Why keyword retrieval rather than a vector store
+
+This is a deliberate trade-off:
+
+1. **Size**: a vector store (faiss / hnswlib / chromadb) plus an embedding model would add tens to hundreds of
+   megabytes to the release, which directly conflicts with the "350–400 MB installed" constraint;
+2. **A model change would invalidate the index**: embeddings are tied to the chosen model, so switching chat
+   models would throw the whole index away; a keyword index does not depend on the model at all;
+3. **Explainable and checkable**: a keyword hit can be explained as "because these words appeared", while a
+   vector similarity only yields a number — for "citations can be traced and users can check the original
+   text", keyword traceability is the more trustworthy foundation.
+
+---
+
+## 10. Networking and privacy at a glance
 
 | Feature | Network access | What is sent |
 | --- | --- | --- |
-| Ordinary Q&A, file parsing, long-document summarization | ❌ Fully local | — |
+| Ordinary Q&A, file parsing, long-document summarization, local retrieval | ❌ Fully local | — |
+| Safe agent tools (calculator / dates / unit conversion / lookup and summary inside uploaded files) | ❌ Fully local | — |
+| Sensitive agent tool `web_search` (needs `/agent allow web_search`) | ✅ only callable after authorisation | the keywords of that question → DuckDuckGo |
+| Sensitive agent tool `file_read` (needs `/agent allow file_read`) | ❌ no network, but it reads the text file you name (≤512 KB) | that one file only |
+| MCP (a server you configured) | ❓ depends on that process | decided by the server you configured; EchoDesk only starts it and never reaches out itself |
 | Model download | ✅ Only after you agree | Downloads only; nothing is uploaded |
 | Web search (`/search on`) | ✅ After you turn it on by hand | The keywords of that question → DuckDuckGo |
 | Skill marketplace | ✅ When you open the marketplace | Search keywords → GitHub API |
@@ -406,7 +680,7 @@ files — `LICENSE` and `NOTICE` in the outer folder, plus `docs\PRIVACY.md`, `d
 
 ---
 
-## 7. Keyboard and productivity
+## 11. Keyboard and productivity
 
 | Shortcut | Action |
 | --- | --- |

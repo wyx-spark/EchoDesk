@@ -138,6 +138,24 @@
       "tip": "The model's reasoning trace. Click to expand or collapse; thinking is never sent back as context and is not included when copying the answer.",
       "noAnswer": "\n\n⚠️ The model only produced thinking and never reached a final answer (usually the length limit ran out: switch to the quality preset with /preset quality, raise max_tokens in config.json, or ask a more specific question)"
     },
+    "agent": {
+      "title": "🛠️ Agent steps",
+      "tip": "Every step the model decided on: which tool it called, with what arguments, what came back and how long it took. Press Esc to stop at any time.",
+      "step": "📍 Step {0}/{1}",
+      "stepNoMax": "📍 Step {0}",
+      "call": "🔧 Call {0}",
+      "args": "args {0}",
+      "why": "· why: {0}",
+      "result": "↩ {0} returned: {1}",
+      "elapsed": " ({0} ms)",
+      "denied": "🔒 {0} is not enabled (run /agent allow {1} to allow it)",
+      "failed": "❌ {0} failed: {1}",
+      "finalize": "🧩 Finalising the answer",
+      "hitMax": "⚠️ Step limit reached — answering directly",
+      "summary": "✅ Done: {0} step(s) · {1} ms",
+      "summaryStopped": "⏹ Stopped: {0} step(s) · {1} ms",
+      "toolsUsed": "tools: {0}"
+    },
     "metrics": {
       "tip": "Live metrics for this run, measured and reported by the backend: time to first token, output speed, token counts and total elapsed time. Values marked with ≈ are estimates.",
       "waitingFirstToken": "⏳ Waiting for first token",

@@ -145,6 +145,7 @@
     "tab": {
       "general": "General",
       "model": "Model",
+      "agent": "Agent",
       "automation": "Automation",
       "installed": "Installed",
       "market": "Marketplace",

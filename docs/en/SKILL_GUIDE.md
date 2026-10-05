@@ -10,7 +10,12 @@ To submit a skill, use the repository's "Skill submission" issue template.
 
 A skill is a self-contained local extension package: one directory + a `skill.json` manifest + entry code.
 EchoDesk discovers skills through a GitHub topic, and once the user confirms, installs the skill into
-`backend\skills\<技能id>\` and registers it in `backend\skills_registry.json`.
+**`app\backend\skills\<技能id>\`** (inside `backend\` under the program directory) and registers it in
+`app\backend\skills_registry.json`.
+
+**It works as soon as it is installed**: the runtime loader **hot-reloads automatically** after a successful
+install, so the commands the skill declares appear in the command table and the command panel immediately —
+no restart and no manual "reload local plugins" step.
 
 **Skills run with the privileges of the local user.** EchoDesk is not responsible for the safety of
 third-party skills, so a manifest must declare its dependencies and permissions truthfully: they are
@@ -53,10 +58,8 @@ my-skill/                     ← repository root
     "api_version": "1"                     // skill API version
   },
 
-  "dependencies": {                        // dependency declarations (only reported at install time, never installed automatically)
-    "pip": ["python-docx>=1.0"],
-    "npm": []
-  },
+  "dependencies": ["contract-core>=1.2"],  // **other plugins** this skill needs (list or dict form; validated at load time)
+  "requirements": ["python-docx>=1.0"],    // Python package requirements: reported at install time, never installed automatically
 
   "publish": {                             // optional: other distribution channels
     "npm": "",                             // e.g. "@you/my-skill"
@@ -82,6 +85,37 @@ my-skill/                     ← repository root
 | `id` or `name` | ✅ | Used to derive the installation directory name (sanitized to `[A-Za-z0-9._-]`) |
 | `version` | Recommended | The marketplace shows "unknown" when it is missing |
 | `license` | Recommended | The user is warned in the install prompt when it is missing |
+| `dependencies` | Optional | **Other plugins** this skill needs (list or dict form), validated at load time — see 3.1 |
+| `echodesk.min_version` | Recommended | Oldest compatible program version; anything older refuses to load |
+
+### 3.1 Dependency declarations and version compatibility (load-time semantics)
+
+`dependencies` names **other plugins**, and the two spellings are equivalent (the loader normalises them to
+`{plugin id: version requirement}`):
+
+```jsonc
+"dependencies": ["contract-core", "audit-utils>=1.2"]              // list
+"dependencies": { "contract-core": "", "audit-utils": ">=1.2" }    // dict
+```
+
+Requirements support `>=` / `>` / `<=` / `<` / `==`, may be just a version number (read as "at least this
+version"), and tolerate a `v1.2.0` prefix. The loader decides once, after discovery and before the per-plugin
+load:
+
+| Situation | Result |
+| --- | --- |
+| the dependency is not installed (absent from this round's list) | ❌ refuses to load, reporting the missing dependency |
+| the dependency is installed but disabled | ❌ refuses to load, reporting it as missing (disabled) |
+| the dependency's version does not satisfy the requirement | ❌ refuses to load, reporting "needs X, found Y" |
+| the program version is below `echodesk.min_version` | ❌ refuses to load, asking for a newer EchoDesk |
+| the dependency is present but declares no `version` | ⚠️ warning only, and it loads (development plugins often omit it) |
+
+**Python package requirements** (such as `python-docx`) belong in `requirements` (or a bundled
+`requirements.txt`): EchoDesk only reports them at install time and **never installs them automatically**.
+
+After a successful load the loader also compares `capabilities.commands` with the commands actually
+registered: **declared but not registered**, or **registered but not declared**, both go to the warnings and to
+`app\backend\skills_dev.log` — this kind of silent inconsistency is the hardest thing to track down.
 
 ---
 
@@ -138,20 +172,48 @@ between "verified" and "unverified". The planned review process:
 
 ## 6. Local Development and Debugging
 
-```powershell
-# 1) 把技能源码放进后端技能目录（模拟已安装）
-#    <程序目录>\backend\skills\<技能id>\
-# 2) 手工登记到注册表（或直接用市场安装流程装一次）
-#    <程序目录>\backend\skills_registry.json
+### 6.1 Directories and priority
 
-# 3) 检查清单是否合法（等价于市场的验证逻辑）
+A plugin can come from three sources, **in descending order of priority**:
+
+| Source | Location | Purpose |
+| --- | --- | --- |
+| Development directory | `app\backend\skills_dev\<plugin id>\` | day-to-day development: drop the directory in and it is picked up |
+| Local manifest | `app\backend\skills_local.json` | explicitly registered local plugins (including trust / refusal records) |
+| Installed | `app\backend\skills\<plugin id>\` + `skills_registry.json` | plugins installed from the skill marketplace |
+
+**Development flow**: put the plugin directory into `skills_dev\`, turn on developer mode on the "Developer"
+page of the Settings window, and click **🔄 Reload local plugins** after each code change. A plugin with the
+same id resolves to the copy in the development directory, so you can debug locally without first uninstalling
+the released version.
+
+### 6.2 Hot reload and log-based troubleshooting
+
+- **Automatic hot reload**: after a successful **install or uninstall** from the skill marketplace the backend
+  hot-reloads and reports the result back to the UI — the commands are usable immediately, with no restart and
+  no manual reload.
+- **"Reload local plugins" reloads local sources only**: it unloads and reloads the plugins in `skills_dev/`
+  and in the local manifest, while **installed plugins are left untouched** rather than being taken down and
+  reinstalled wholesale (their runtime state survives too).
+- **Log**: loading, unloading, warnings and errors all go to `app\backend\skills_dev.log`; the "Developer" page
+  of the Settings window lets you **view it (with a configurable last-N-lines limit), 🗑 clear it and export
+  it**. A sensible troubleshooting order is: the log → is the manifest valid → are the dependencies present
+  and are the versions satisfied.
+- **Isolation**: import, registration and command-execution failures affect only that one plugin; a plugin
+  raising `BaseException` (a bare `sys.exit()`, say) is isolated the same way and does not take the backend
+  process down.
+
+### 6.3 Manual validation and registry fields
+
+```powershell
+# 1) check that the manifest is valid (equivalent to the marketplace validation logic)
 python -c "import json;d=json.load(open('skill.json',encoding='utf-8'));print('bundle =',d.get('echodesk',{}).get('bundle'))"
 
-# 4) 检查入口是否可加载
+# 2) check that the entry point can be loaded
 python -c "import importlib.util,pathlib;p=pathlib.Path('echodesk_skill/__init__.py');print('存在' if p.exists() else '缺失')"
 ```
 
-Registry fields for installation and uninstallation:
+Registry fields for installation and uninstallation (`app\backend\skills_registry.json`):
 
 ```jsonc
 {
@@ -181,14 +243,32 @@ A: A card showing "unverified" means the repository root is missing `skill.json`
 `echodesk.bundle` in it.
 
 **Q: What if my skill needs extra dependencies?**
-A: Declare them in `dependencies.pip`. For safety reasons EchoDesk only notifies the user at install
-time and never installs anything automatically, so document in your README the commands the user needs
-to run.
+A: Python package requirements go in `requirements` (or in a bundled `requirements.txt`). For safety reasons
+EchoDesk only notifies the user at install time and never installs anything automatically, so document in your
+README the commands the user needs to run. Dependencies on **other plugins** go in `dependencies`, which the
+loader validates at load time (see 3.1).
 
 **Q: Which capabilities can a skill hook into?**
-A: `capabilities` can currently declare commands, UI panels, automation hooks and file-parser
-extensions. For how these extension points are wired up, see the "Extension Points" section of
-`docs/en/DEVELOPER.md`;
-what v0.2.0 fully implements is **discovery / verification / installation / uninstallation / registry**,
-while the runtime loader (which actually hooks skill commands into the `/` command table) has its
-interface defined and will be wired up in a later release.
+A: `capabilities` can declare commands, UI panels, automation hooks and file-parser extensions.
+**All of these extension points are wired up at runtime**: `backend/skills_runtime.py` imports the entry
+dynamically and calls its `register(api)`, which puts the declared commands into the `/` command table, so they
+are usable as soon as the skill is installed (or reloaded after being dropped into `skills_dev/`). The list of
+extension points and how they are wired up is in the "Extension points" section of `docs/en/DEVELOPER.md`.
+
+**Q: The plugin is installed — why is its command missing?**
+A: Look at `app\backend\skills_dev.log` first. The most common cause is a dependency blocking it: a dependency
+that is not installed or is disabled, an unsatisfied version, or a program version below
+`echodesk.min_version` — each of those **refuses to load and states the reason**. Next, check that
+`capabilities.commands` matches the commands actually registered (a mismatch is warned about); note also that
+plugins in `skills_dev/` are not loaded while developer mode is off.
+
+**Q: What if a plugin's dependency declares no version number?**
+A: It is warned about and let through rather than blocking the load (development plugins routinely omit it).
+What genuinely blocks a load is "the dependency is not installed / is disabled / its version does not
+satisfy the requirement".
+
+**Q: Can a plugin crash the whole program?**
+A: No. Plugin loading, unloading, registration and command execution all catch `BaseException`: raising
+`SystemExit` (a bare `sys.exit()` in a plugin, say) only aborts that step and does not take the backend
+process down. If the backend really did exit, please attach `app\backend\backend_crash.log` and
+`app\backend\skills_dev.log`.

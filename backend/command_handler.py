@@ -44,6 +44,8 @@ COMMAND_SPEC: List[Dict[str, Any]] = [
     {"name": "/about", "category": "core"},
     {"name": "/mode", "category": "chat"},
     {"name": "/task", "category": "chat"},
+    {"name": "/agent", "category": "chat"},
+    {"name": "/mcp", "category": "chat"},
     {"name": "/preset", "category": "chat"},
     {"name": "/compact", "category": "chat"},
     {"name": "/search", "category": "chat"},
@@ -162,6 +164,8 @@ class CommandHandler:
             "/help": self._help,
             "/mode": self._mode,
             "/task": self._task,
+            "/agent": self._agent,
+            "/mcp": self._mcp,
             "/preset": self._preset,
             "/compact": self._compact,
             "/file": self._file,
@@ -190,6 +194,13 @@ class CommandHandler:
         self.profile_provider: Optional[Callable[[], Dict[str, Any]]] = None
         # 由 main 注入：清空分段摘要缓存并返回清掉的条目数（/clearcache 用）
         self.cache_clear_provider: Optional[Callable[[], int]] = None
+        # 由 main 注入：读取 Agent 状态（无参）或调整它（``writer(工具名, 是否允许)``；
+        # 工具名传 ``"__steps__"`` 时第二参是新的步数上限）。Agent 的注册表与配置
+        # 都在 main 手里，这里只留回调，避免把工具清单在两边各维护一份。
+        self.agent_configurator: Optional[Callable[..., Dict[str, Any]]] = None
+        # 由 main 注入：MCP 控制回调。无参 = 读状态；("enable"|"disable", 名称) = 启停；
+        # ("connect",) = 拉起进程并拉取工具清单。同样只留一个入口，避免两边各维护一套。
+        self.mcp_control: Optional[Callable[..., Dict[str, Any]]] = None
         # 当前生效的任务模板 id（修复四 方向一）；空串表示未启用
         self.task_template = ""
 
@@ -312,12 +323,18 @@ class CommandHandler:
         if external is not None:
             try:
                 result = external["handler"](args)
-            except Exception as e:  # noqa: BLE001
+            except BaseException as e:  # noqa: BLE001
+                # 捕获 **BaseException 而不是 Exception**（能力扩展-1 任务四的审计结论）：
+                # 插件里一句 `sys.exit()` 或 `raise SystemExit` 会直接穿透 Exception，
+                # 把后端进程带走 —— 用户看到的是"点了指令程序就没了"。
+                # 隔离层必须比它更宽，这也是本文件其它插件入口（钩子、面板）的既有做法。
+                # KeyboardInterrupt 同样被拦下：后端是无界面进程，Ctrl+C 由主循环处理。
                 import traceback
 
                 traceback.print_exc()
                 skill = external.get("skill_name") or external.get("skill_id") or "?"
-                return t("cmd.disabled", skill=skill, name=name, reason=f"{type(e).__name__}: {e}"), None
+                return t("cmd.disabled", skill=skill, name=name,
+                         reason=f"{type(e).__name__}: {e}"), None
             return self._coerce_external(name, result)
 
         return t("cmd.unknown", name=head), None
@@ -353,22 +370,61 @@ class CommandHandler:
         return t("cmd.resp.exit"), {"action": "exit"}
 
     def _mode(self, args: list) -> Response:
+        """``/mode``：切换对话模式。
+
+        **模式简化（能力扩展-1 任务一）**之后只有 3 个模式，但上一版的模式名与编号
+        仍然可用：``/mode summary`` 会切成 chat 并**自动套用同名的任务模板**，
+        温度也沿用旧预设 —— 用户不用改习惯，"能力不因合并而丢失"这条要求就落在这里。
+        """
+        from conversation import LEGACY_TEMPERATURES
+
         if not args:
             return t("cmd.resp.mode_current", mode=self.conv_mgr.get_mode()), None
         if args[0].lower() == "list":
-            return t("cmd.resp.mode_list", menu=self.conv_mgr.mode_menu()), None
-        if self.conv_mgr.set_mode(args[0]):
-            mode = self.conv_mgr.get_mode()
-            self.config.default_mode = mode
-            self.config.save()
-            self.llm_engine.clear_cache()  # 系统提示词变化，旧 KV 缓存失效
-            # 未手动设置过温度时，自动套用该模式的温度预设
+            return t("cmd.resp.mode_list", menu=self.conv_mgr.mode_menu(),
+                     legacy=self.conv_mgr.legacy_mode_note()), None
+        requested = args[0].strip().lower()
+        # 旧编号（4~7，以及语义变了的 2/3）**不再自动迁移**：数字在两套编号里指不同东西，
+        # 迁移会产生"既不是旧语义也不是新语义"的组合（文档子代理实测到 `/mode 2`
+        # 变成"合同审查模式 + 摘要模板"）。这里直接报错并告诉用户该写什么；
+        # 新编号 1/2/3 照常切模式（判据只有 MODE_NUMBERS 一处）。
+        from conversation import MODE_NUMBERS
+
+        hint = self.conv_mgr.legacy_number_hint(requested)
+        if hint and requested not in MODE_NUMBERS:
+            return t("cmd.resp.mode_legacy_number", number=requested, instead=hint), None
+        if not self.conv_mgr.set_mode(requested):
+            return t("cmd.resp.mode_unknown", name=args[0]), None
+        mode = self.conv_mgr.get_mode()
+        self.config.default_mode = mode
+        self.config.save()
+        self.llm_engine.clear_cache()  # 系统提示词变化，旧 KV 缓存失效
+
+        # 旧模式名 → 自动套上对应任务模板（summary/translate/code/creative/guide）
+        import prompts as prompt_lib
+
+        migrated = self.conv_mgr.migrated_template(requested)
+        if migrated:
+            text = prompt_lib.build_system_prompt(migrated)
+            if text:
+                self.conv_mgr.set_task_prompt(text, migrated)
+                self.task_template = str((prompt_lib.get_template(migrated) or {}).get("label") or migrated)
+
+        # 未手动设置过温度时，自动套用温度预设：优先沿用旧模式名的旧预设
+        preset = LEGACY_TEMPERATURES.get(requested) if migrated else None
+        if preset is None:
             preset = MODE_TEMPERATURES.get(mode)
-            if not self.temp_manual and preset is not None:
-                self.temperature = preset
-                return t("cmd.resp.mode_set_preset", mode=mode, preset=preset), None
-            return t("cmd.resp.mode_set", mode=mode), None
-        return t("cmd.resp.mode_unknown", name=args[0]), None
+        if migrated and not self.temp_manual and preset is not None:
+            self.temperature = preset
+            return (t("cmd.resp.mode_set_preset", mode=mode, preset=preset)
+                    + "\n" + t("cmd.resp.mode_migrated", old=requested, template=migrated)), None
+        if migrated:
+            return (t("cmd.resp.mode_set", mode=mode)
+                    + "\n" + t("cmd.resp.mode_migrated", old=requested, template=migrated)), None
+        if not self.temp_manual and preset is not None:
+            self.temperature = preset
+            return t("cmd.resp.mode_set_preset", mode=mode, preset=preset), None
+        return t("cmd.resp.mode_set", mode=mode), None
 
     def _file(self, args: list) -> Response:
         """``/file <路径> [更多路径…]``：加载一份或多份文件（多文件：任务八）。
@@ -672,13 +728,135 @@ class CommandHandler:
             return t("cmd.resp.task_not_found", name=name, ids=", ".join(prompt_lib.template_ids())), None
         template = prompt_lib.get_template(name) or {}
         self.task_template = str(template.get("label") or name)
-        self.conv_mgr.set_task_prompt(text)
+        # 同时记下 **模板 id**：/task guide 与旧的 guide 模式行为要一致
+        # （见 main._vague_guide：套了 guide 模板时不再插确定性引导话术）。
+        self.conv_mgr.set_task_prompt(text, str(template.get("id") or name))
         self.llm_engine.clear_cache()  # 同上：提示词变化后旧缓存不再适用
         reply = t("cmd.resp.task_applied", name=self.task_template) + "\n" + t("cmd.resp.task_hint")
         # 自定义指令优先级最高，会盖住任务层：必须明说，否则用户会以为套用没生效
         if self.conv_mgr.custom_prompt:
             reply += "\n" + t("cmd.resp.task_overridden_by_prompt")
         return reply, None
+
+    def _agent(self, args: list) -> Response:
+        """``/agent``：查看与调整 Agent 平台（能力扩展-1 任务二）。
+
+        * 无参数 / ``list``：当前模式、步数上限、工具清单（含权限与启用状态）；
+        * ``allow <工具>`` / ``deny <工具>``：**预授权**开关。敏感工具（联网搜索、
+          读本机文件）默认关闭，用户在这里显式打开；写进 config.json 持久生效。
+          这样"每一次调用都弹窗确认"就不需要了 —— 任务书允许"会话级授权"这一档，
+          而它比每次确认更适合本地小模型的快节奏循环。
+        * ``steps <1-8>``：工具调用步数上限。
+        * ``on`` / ``off``：等价于 ``/mode agent`` 与 ``/mode chat``（Agent 是一种
+          交互形态，用模式切换最直观）。
+        """
+        writer = getattr(self, "agent_configurator", None)
+        state = writer() if writer is not None else {}
+        sub = (args[0].strip().lower() if args else "list")
+        rest = args[1:]
+
+        if sub in ("on", "off"):
+            target = "agent" if sub == "on" else "chat"
+            if not self.conv_mgr.set_mode(target):
+                return t("cmd.resp.mode_unknown", name=target), None
+            self.config.default_mode = self.conv_mgr.get_mode()
+            self.config.save()
+            self.llm_engine.clear_cache()
+            return t("cmd.resp.agent_mode", state=sub, mode=self.conv_mgr.get_mode()), None
+
+        if sub in ("allow", "deny") and rest:
+            name = rest[0].strip()
+            if writer is None:
+                return t("cmd.resp.agent_unavailable"), None
+            result = writer(name, sub == "allow")
+            if not result.get("ok"):
+                return t("cmd.resp.agent_unknown_tool", name=name,
+                         tools=", ".join(result.get("tools", []) or [])), None
+            return t("cmd.resp.agent_permission", tool=name,
+                     state=t("cmd.status.search_on") if sub == "allow"
+                     else t("cmd.status.search_off")), None
+
+        if sub in ("steps", "max") and rest:
+            if writer is None:
+                return t("cmd.resp.agent_unavailable"), None
+            try:
+                value = int(rest[0])
+            except (TypeError, ValueError):
+                return t("cmd.resp.agent_bad_steps"), None
+            result = writer("__steps__", value)
+            return t("cmd.resp.agent_steps", steps=result.get("max_steps", "")), None
+
+        if sub not in ("list", "?", "help", ""):
+            return t("cmd.resp.agent_usage"), None
+        if not state:
+            return t("cmd.resp.agent_unavailable"), None
+        lines = [t("cmd.resp.agent_state", mode=state.get("mode", ""),
+                   steps=state.get("max_steps", ""),
+                   enabled=len(state.get("enabled_tools", []) or []) or 0,
+                   total=len(state.get("tools", []) or []) or 0)]
+        for tool in state.get("tools", []) or []:
+            mark = "✅" if tool.get("enabled") else "🔒"
+            lines.append(t("cmd.resp.agent_tool_line", mark=mark, name=tool.get("name", ""),
+                           risk=tool.get("risk", ""), desc=tool.get("description", "")))
+        lines.append(t("cmd.resp.agent_hint"))
+        return "\n".join(lines), None
+
+    def _mcp(self, args: list) -> Response:
+        """``/mcp``：查看与启停 MCP Server（能力扩展-1 任务三）。
+
+        * 无参数 / ``list``：每个 server 的启停状态、连接状态、工具数与错误；
+        * ``enable <名称>`` / ``disable <名称>``：**立即生效**（无需重启）；
+        * ``connect``：真的拉起进程并拉取工具清单（这是有代价的动作，所以不自动做）。
+        权限不在这里管：MCP 工具一律按敏感工具处理，授权走 ``/agent allow``。
+        """
+        control = getattr(self, "mcp_control", None)
+        if control is None:
+            return t("cmd.resp.mcp_unavailable"), None
+        state = control() or {}
+        sub = (args[0].strip().lower() if args else "list")
+        rest = args[1:]
+
+        if sub in ("enable", "disable") and rest:
+            name = rest[0].strip()
+            result = control("enable" if sub == "enable" else "disable", name)
+            if not result.get("ok"):
+                return t("cmd.resp.mcp_unknown_server", name=name), None
+            return t("cmd.resp.mcp_toggled", name=name,
+                     state=t("cmd.status.search_on") if sub == "enable"
+                     else t("cmd.status.search_off")), None
+
+        if sub == "connect":
+            result = control("connect") or {}
+            state = result.get("state") or state
+            if result.get("registered"):
+                return t("cmd.resp.mcp_connected", count=result.get("registered")), None
+            return t("cmd.resp.mcp_connect_failed",
+                     error=state.get("error") or t("cmd.resp.mcp_no_tools")), None
+
+        if sub not in ("list", "?", "help", ""):
+            return t("cmd.resp.mcp_usage"), None
+
+        if not state.get("enabled"):
+            return t("cmd.resp.mcp_disabled"), None
+        servers = state.get("servers") or []
+        if not servers:
+            return t("cmd.resp.mcp_no_servers"), None
+        lines = [t("cmd.resp.mcp_state", count=len(servers),
+                   tools=len(state.get("tools") or []))]
+        for server in servers:
+            mark = "✅" if server.get("connected") else ("⏸" if not server.get("enabled") else "⚠️")
+            detail = t("cmd.resp.mcp_server_line",
+                       mark=mark, name=server.get("name", ""),
+                       state=t("cmd.status.search_on") if server.get("enabled")
+                       else t("cmd.status.search_off"),
+                       tools=server.get("tool_count", 0))
+            lines.append(detail)
+            if server.get("error"):
+                lines.append("    ⚠️ " + str(server.get("error")))
+            for tool in (server.get("tools") or [])[:8]:
+                lines.append("    - " + str(tool))
+        lines.append(t("cmd.resp.mcp_hint"))
+        return "\n".join(lines), None
 
     def _preset(self, args: list) -> Response:
         """``/preset``：轻量 / 均衡 / 高质量三档生成参数（方向六）。

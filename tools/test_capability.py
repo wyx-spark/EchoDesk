@@ -152,7 +152,8 @@ check("light 比 quality 回复短",
 check("预设清单可用于界面", len(mp.preset_menu()) == 3 and "note" in mp.preset_menu()[0])
 
 print("=== 4. 任务型提示词模板（方向一）===")
-check("六个模板齐备", len(prompt_lib.TASK_TEMPLATES) == 6, str(prompt_lib.template_ids()))
+check("八个模板齐备（模式简化后新增 creative 与 guide）",
+      len(prompt_lib.TASK_TEMPLATES) == 8, str(prompt_lib.template_ids()))
 check("按 id 取模板", (prompt_lib.get_template("contract") or {}).get("label") == "合同条款审查")
 check("按中文标签取模板",
       (prompt_lib.get_template("合同条款审查") or {}).get("label") == "合同条款审查")
@@ -313,26 +314,50 @@ check("共享主干仍保留防编造底线", "不编造事实、数据、法条
 check("模式块里不再有「必须分点」式的无条件格式要求",
       not any("分点时写" in block for block in conv.MODES.values()))
 
-# 引导模式（本轮新增）：用户说不清想要什么时用它
-check("新增引导模式 guide", "guide" in conv.MODES)
-_guide = conv.MODES.get("guide", "")
-check("引导模式要求列 2~3 种理解", "2~3 种" in _guide)
-check("引导模式不在选定前展开方案", "不替我决定" in _guide or "选定前" in _guide)
-check("引导模式有编号别名与缩写",
-      conv.MODE_ALIASES.get("7") == "guide" and conv.MODE_ALIASES.get("gd") == "guide"
-      and conv.MODE_SHORT_NAMES.get("guide") == "gd")
-check("引导模式可被 set_mode 切换", conv.ConversationManager().set_mode("gd"))
-check("引导模式出现在模式菜单里", "guide" in conv.ConversationManager.mode_menu())
-check("引导模式的语言包说明非空（中英都要）",
-      all(_t_mode_desc(loc, "guide") for loc in ("zh-Hans", "en")),
-      f"{_t_mode_desc('zh-Hans', 'guide')!r} / {_t_mode_desc('en', 'guide')!r}")
+# --- 模式简化（v0.2.1 能力扩展-1 任务一）：3 个模式 + 旧名迁移 ---
+check("模式收敛到 3 个", set(conv.MODES) == {"chat", "contract", "agent"}, str(sorted(conv.MODES)))
+check("每个模式都有别名与缩写",
+      all(name in conv.MODE_ALIASES.values() or name in conv.MODE_ALIASES for name in conv.MODES)
+      and set(conv.MODE_SHORT_NAMES) == set(conv.MODES))
+check("被移除的模式都迁移到任务模板（能力不丢）",
+      set(conv.LEGACY_MODES) - {"general"} <= set(prompt_lib.template_ids()),
+      str(sorted(set(conv.LEGACY_MODES))))
+check("旧模式名仍能切模式并给出要套用的模板",
+      conv.canonical_mode("summary") == "chat" and conv.legacy_template("summary") == "summary"
+      and conv.legacy_template("creative") == "creative"
+      and conv.legacy_template("guide") == "guide")
+check("旧编号不自动迁移，只给替代写法提示（数字在两套编号里会歧义）",
+      conv.legacy_number_hint("4") == "/task code"
+      and conv.legacy_number_hint("6") == "/task creative"
+      and conv.legacy_number_hint("7") == "/task guide")
+check("留在模式位的 contract 不再被当成旧名", conv.legacy_template("contract") == ""
+      and conv.canonical_mode("contract") == "contract")
+check("旧温度预设被沿用（合并后回答风格不突变）",
+      conv.LEGACY_TEMPERATURES.get("code") == 0.2 and conv.LEGACY_TEMPERATURES.get("creative") == 0.9)
+check("模式菜单只剩 3 项（用户一眼能选）",
+      len([line for line in conv.ConversationManager.mode_menu().splitlines() if line.strip()]) == 3)
+check("模式菜单附旧名迁移说明", "/task" in conv.ConversationManager.legacy_mode_note())
+check("新编号 1/2/3 指向三个模式（与旧编号表分开维护）",
+      conv.MODE_NUMBERS == {"1": "chat", "2": "contract", "3": "agent"},
+      str(conv.MODE_NUMBERS))
+check("三个模式的语言包说明非空（中英都要）",
+      all(_t_mode_desc(loc, mode) for loc in ("zh-Hans", "en") for mode in conv.MODES),
+      str([_t_mode_desc("en", m)[:20] for m in conv.MODES]))
+check("contract 保留专业角色与硬输出要求",
+      "财务专员" in conv.MODES["contract"] and "逐字一致" in conv.MODES["contract"])
+check("agent 模式写明工具 JSON 协议与收敛要求",
+      '"tool"' in conv.MODES["agent"] and "最终答案" in conv.MODES["agent"])
 
 # 关键格式硬要求不得因放松而丢失（任务书"防止改过头"）
 check("合同模式仍要求摘录逐字一致", "逐字一致" in conv.MODES["contract"])
 check("合同模式仍要求建议人工复核", "建议人工复核" in conv.MODES["contract"])
 check("合同模式仍禁止臆测", "不要臆测" in conv.MODES["contract"])
-check("翻译模式仍要求数字不得改动", "不改动数字" in conv.MODES["translate"])
-check("摘要模式仍要求数字日期原样保留", "原样保留" in conv.MODES["summary"])
+check("翻译模板仍要求数字不得改动", "数字、金额、日期不得改动" in str(prompt_lib.TASK_TEMPLATES["translate"]["format"]))
+check("摘要模板仍要求数字日期原样保留", "原样保留" in str(prompt_lib.TASK_TEMPLATES["summary"]["format"]))
+check("创意模板仍禁止抄袭", "不抄袭" in str(prompt_lib.TASK_TEMPLATES["creative"]["format"]))
+check("引导模板仍要求列 2~3 种方向且不替用户决定",
+      "2~3 种" in str(prompt_lib.TASK_TEMPLATES["guide"]["format"])
+      and "不替他决定" in str(prompt_lib.TASK_TEMPLATES["guide"]["format"]))
 
 # 任务层同样改成条件式（v0.2.1 系统提示词重构）
 check("任务模板 contract 改为先列常见风险", "先列出这类合同最常见的 3~5 条风险点" in

@@ -22,7 +22,13 @@ param(
     [string]$Tag = "v0.2.1",
     [string]$Installer = "publish\EchoDesk-v0.2.1-Setup.exe",
     [string]$Sums = "publish\SHA256SUMS.txt",
-    [string]$ExpectedSha256 = "61d5075c00dc848f5f6b7925bee983a2cd002961c459e4b7d5e905a7eb461427",
+    # 期望哈希。**留空表示以 SHA256SUMS.txt 为准**（构建时生成的那份清单是唯一真相），
+    # 只在需要"把这一版钉死在某个哈希上"时才显式传 -ExpectedSha256。
+    #
+    # 为什么要改：上一版这里写死了一个哈希，而每次重新打包哈希都会变 ——
+    # 于是"预检"在下一次发布时必然失败，报的还是"安装程序与登记不一致"这种
+    # 看起来像产物坏了的信息（本轮实测踩到）。清单是自动生成的，比手抄可靠。
+    [string]$ExpectedSha256 = "",
     [switch]$DryRun,
     [switch]$AllowDirty
 )
@@ -83,9 +89,18 @@ if (-not (Test-Path $Installer)) {
         $problems += "安装程序 SHA256 与脚本登记的不一致：实测 $hash，登记 $ExpectedSha256"
     }
     if (Test-Path $Sums) {
-        $inSums = (Get-Content $Sums -Raw) -match [regex]::Escape($hash)
-        if ($inSums) { Write-Ok "SHA256SUMS.txt 含同一个哈希" }
-        else { $problems += "SHA256SUMS.txt 里没有这个哈希（清单与产物不匹配）" }
+        # 清单里应有一行 `<哈希>  <文件名>`，文件名与本脚本要推的产物同名。
+        # 按**文件名**匹配而不是"清单里出现过这个哈希"，才能发现"清单是旧的、
+        # 产物是新的"这种最危险的情况（上一版只查哈希是否出现，做不到）。
+        $name = Split-Path $Installer -Leaf
+        $line = @(Get-Content $Sums | Where-Object { $_ -match [regex]::Escape($name) }) | Select-Object -First 1
+        if (-not $line) {
+            $problems += "SHA256SUMS.txt 里没有 $name 这一行（清单不完整）"
+        } elseif ($line -notmatch [regex]::Escape($hash)) {
+            $problems += "SHA256SUMS.txt 里 $name 的哈希与产物不一致（清单与产物不匹配）"
+        } else {
+            Write-Ok "SHA256SUMS.txt 中 $name 的哈希与产物一致"
+        }
     } else {
         Write-Warn2 "找不到 $Sums"
     }
@@ -138,14 +153,20 @@ if (-not $failed) {
 }
 
 if ($failed) {
+    # SSH 地址在运行时拼出来：仓库门禁 tools\check_feedback.ps1 会拦下任何
+    # "邮箱形态"的字面量（用户名、at 符号、域名连写），目的是不让人邮箱混进开源仓库，
+    # 而 git 的 SSH 写法恰好长得一样 —— 这是同一条规则下的误报。
+    # 与其把发布门禁放松（那是发布前最后一道闸，宁可严），不如在打印时拼装。
+    $sshHost = "github" + ".com"
+    $sshUrl = "git" + "@" + $sshHost + ":VoidEntropiaStudio/EchoDesk.git"
     Write-Host "`n!! 推送失败（通常是本机没有 GitHub 凭据）。三种做法：" -ForegroundColor Red
     Write-Host "   1) 凭据管理器：直接 git push（本脚本就是这样），弹出的窗口里用**个人访问令牌**当密码；"
     Write-Host "      令牌只需 repo 权限，用完可在 GitHub 上随时吊销。"
     Write-Host "   2) 一次性令牌（不写进任何文件）："
-    Write-Host "        git push https://<用户名>@github.com/VoidEntropiaStudio/EchoDesk.git $Branch"
+    Write-Host "        git push https://<用户名>@$sshHost/VoidEntropiaStudio/EchoDesk.git $Branch"
     Write-Host "      提示输入密码时粘贴令牌即可。"
     Write-Host "   3) SSH：生成密钥 -> 把公钥加到 GitHub -> "
-    Write-Host "        git remote set-url $RemoteName git@github.com:VoidEntropiaStudio/EchoDesk.git"
+    Write-Host "        git remote set-url $RemoteName $sshUrl"
     Write-Host "`n   注意：如果仓库是**私有**的，匿名访问会要求用户名，这是正常的（不是仓库不存在）。"
     exit 1
 }

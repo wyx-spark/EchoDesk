@@ -312,6 +312,46 @@ def flatten(node, prefix, out):
         out[prefix] = node
 
 
+def _duplicate_paths(data):
+    """找出"同一路径既是扁平点号键、又由嵌套产生"的键，返回 ``[(路径, 扁平值, 嵌套值)]``。
+
+    为什么必须回到**原始 JSON**：``flatten`` 会把两种写法归并成同一条路径
+    （后写的覆盖先写的），只看拍平结果永远发现不了重复。
+
+    两种重复的严重程度不同，所以分开报：
+      * **两边内容不同** → 真正的问题：改了一份、运行时读另一份，
+        表现为"文案改了却不生效"（v0.2.1 能力扩展-1 实测踩到：`/agent` 的提示句
+        写进了嵌套那份，运行时读扁平那份）。这类会**判失败**；
+      * 两边内容相同 → 只是冗余（历史遗留），不影响行为，只报个数。
+    """
+    found = []
+    if not isinstance(data, dict):
+        return found
+    for section, node in data.items():
+        if not isinstance(node, dict):
+            continue
+        nested = {}
+        stack = [(node, "")]
+        while stack:
+            current, prefix = stack.pop()
+            for key, value in current.items():
+                if not isinstance(key, str) or key.startswith(("_", "//", "$")):
+                    continue
+                # 含点的键是**扁平写法**，不再当路径展开 —— 否则"只有扁平键"
+                # 会被自己匹配成重复（自检时抓到的假阳性）。
+                if "." in key:
+                    continue
+                path = f"{prefix}.{key}" if prefix else key
+                if isinstance(value, dict):
+                    stack.append((value, path))
+                else:
+                    nested[path] = value
+        for key, value in node.items():
+            if isinstance(key, str) and "." in key and key in nested:
+                found.append((f"{section}.{key}", value, nested[key]))
+    return found
+
+
 def load_dir(directory):
     """读取一个语言目录：{locale: {key: text}}（主文件 + 模块分片合并）。"""
     packs = {}
@@ -484,6 +524,43 @@ def check(locales, quiet):
         problems += len(unknown)
     elif not quiet:
         print(f"\n✓ 代码引用的 {len(used)} 个键都能在源语言包里找到")
+
+    # 同一个键是否同时以"嵌套对象"和"扁平点号键"两种形式存在。
+    #
+    # 为什么必须查（v0.2.1 能力扩展-1 实测踩到）：`cmd` 段历史上混用两种写法 ——
+    # 早期是嵌套（`"items": {"/help": {"name": …}}`），后来新增的键是扁平点号
+    # （`"items./task.name": …`）。解析器只认其中一种，于是**改错那一份不会报错、
+    # 只会表现为"文案没变"**：给 `/agent` 补的那句"不提供写文件工具"写进了嵌套那份，
+    # 而运行时读扁平那份，冒烟测试看到旧文案才发现。
+    # 语言包完整性与占位符检查都发现不了它（两种形式各自都"完整"），所以单独查。
+    duplicates = []
+    redundant = 0
+    for directory, label in ((BACKEND_LANG, "后端"), (FRONTEND_LANG, "前端")):
+        if not os.path.isdir(directory):
+            continue
+        for name in sorted(os.listdir(directory)):
+            if not name.lower().endswith(".json"):
+                continue
+            try:
+                with io.open(os.path.join(directory, name), "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+            except Exception:
+                continue
+            for key, flat_value, nested_value in _duplicate_paths(raw):
+                if flat_value == nested_value:
+                    redundant += 1
+                else:
+                    duplicates.append((f"{label}/{name}", key, flat_value, nested_value))
+    if duplicates:
+        print(f"\n-- 同一个键两种写法**内容不一致**（{len(duplicates)} 处）：")
+        for where, key, flat_value, nested_value in duplicates[:10]:
+            print(f"     ! {where}: {key}")
+            print(f"         扁平键（运行时读这条）：{str(flat_value)[:60]!r}")
+            print(f"         嵌套键（改这条不生效）：{str(nested_value)[:60]!r}")
+        problems += len(duplicates)
+    elif not quiet:
+        print(f"\n✓ 没有「同键两写法内容不一致」的情况"
+              f"（有 {redundant} 处内容相同的冗余写法，不影响行为）")
 
     # 源语言自身有没有"定义了但没人用"的键
     unused = sorted(k for k in source_all if k not in used)
