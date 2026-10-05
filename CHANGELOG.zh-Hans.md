@@ -12,6 +12,52 @@
 > 面向**开源发布**的第一个版本。完整实现方案、关键决策、与任务书的偏差、
 > 未完成项与体积记录见内部研发记录（`v0.2.1-研发记录.md`，**不随发布物分发**）。
 
+### 跨平台：Avalonia 前端原型、平台能力边界、跨平台打包
+
+任务书：`prompts/EchoDesk-v0.2.1跨平台.md`。这一轮把"只在 Windows 上能跑"这件事
+从**架构上**改掉：后端变成三平台通用的同一份代码，前端新增 Avalonia 工程；真正做不到的
+能力被收敛成**两条明确的降级边界**，并给出替代做法。逐项审计、原型实测结果、
+复用与重写清单、打包方式与未完成项见 `records/v0.2.1-跨平台记录.md`。
+
+**新增跨平台前端原型**（`frontend-avalonia/`，任务一/任务二）。目标框架是 `net10.0`
+（刻意不带 `-windows`）——这是"能跨平台"的第一道硬门槛。已完成主窗口：
+消息流（Markdown 渲染、代码块与表格、复制）、流式增量输出与节流重渲染、
+思考内容折叠、文件上传（按钮 + 拖拽）、字号缩放、深浅色主题、界面语言切换、
+平台能力横幅。后端进程管理与 JSON 协议是**照搬** WPF 版已验证的实现
+（单请求闸门、空闲超时、流式双通道），只改了三处与平台有关的地方。
+
+**后端平台化**（任务三/任务五）。新增 `backend/platform_support.py`：平台探测
+（`kind`/`rid`/架构/解释器）、能力清单（可用性 + 原因 + 替代做法）。`ready` 握手与
+新增的 `platform` 动作都返回这份报告，前端据此显示降级横幅并校验前后端平台判断是否一致。
+
+| 变化 | 原因 |
+| :--- | :--- |
+| 容错导入 `win32com` | 顶层 `import win32com` 会让后端在 Linux/macOS 上启动即崩 |
+| `requirements.txt` 的 `pywin32` 加 `sys_platform == "win32"` 标记 | 否则 `pip install -r` 在非 Windows 上整条依赖链都装不上 |
+| `EchoBackend.spec` 按平台分支（`.exe` 名、版本资源、`.ico`、`win32com`） | 版本资源与 `.ico` 是 Windows 专属，非 Windows 上会打包失败或产出无效资源 |
+| 用户数据目录按平台惯例（macOS `Application Support`、Linux XDG） | 非 Windows 上程序目录常在只读位置 |
+
+**降级边界只有两条**（任务五）：读取 WPS/Office **加密文档**（含旧版 `.doc`/`.xls`，
+依赖 COM）与企业内网**自动化**（依赖本机 Edge）。两者在非 Windows 上都给出
+"为什么不可用 + 替代做法"，且**不把平台限制说成依赖缺失**。其余能力三平台一致。
+细节见 `docs/zh-Hans/CROSS_PLATFORM.md`。
+
+**跨平台打包**（任务四）。新增 `tools/pack_crossplatform.py`：PyInstaller 不能交叉编译，
+所以脚本本身跨平台——在哪个平台跑就产哪个平台的包（发布前端 → 打包后端 → 清理调试符号
+（Windows 上原生 Skia/HarfBuzz 的 `.pdb` 约占 100 MB）→ 产出 `.tar.gz`/`.zip` →
+写 `SHA256SUMS.txt`/`manifest.json`/`SIGNING.txt`）。CI 新增三平台矩阵任务
+（构建 + 按 RID 发布 + 平台测试 + 无窗口自检）。macOS 的签名与公证、Linux 的 AppImage
+**未自动化**（需要证书与额外工具），命令写在产物里但不由构建机执行。
+
+**新增验证**：`EchoDesk --selftest`（无窗口：平台探测 → 按平台规则拉起后端 →
+`ready` 握手 → `platform`/`capability` 往返，Windows 实测 11/11）；
+`tools/test_platform.py`（69 项，用 `ECHODESK_FORCE_PLATFORM` 注入平台来验证非 Windows
+的降级路径）。如实说明：真实 Linux/macOS 的运行证据需由 CI 矩阵产出，仓库内目前只有
+构建级证据。
+
+**界面文案**：新增的界面与后端文案都已进入两套语言包（`zh-Hans` 与 `en`），
+双语语言包键与占位符保持一致（`tools/check_lang.py` 门禁）。
+
 ### 能力扩展-1：模式简化、Agent 平台、MCP、插件生态、模型管理、RAG 检索
 
 任务书：`prompts/EchoDesk-v0.2.1能力扩展-1.md`。这一轮补齐与主流本地推理客户端

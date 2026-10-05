@@ -190,6 +190,15 @@ jobs:
         # 模型管理写路径（能力扩展-1 任务五）：采样参数可视化/持久化、
         # 自定义档位（新增/修改/改名/备注/删除）与输入校验（越界要报错而不是静默夹紧）。
 
+      - name: Run platform boundary test
+        shell: pwsh
+        run: python tools/test_platform.py
+        # 跨平台能力边界（跨平台 任务三/任务五）：平台探测字段与 RID、能力清单、
+        # Windows 专属能力（WPS COM / 企业内网自动化）的降级原因与替代做法、
+        # 旧版 Office 格式在非 Windows 上的说明文案、自动化 validate 的平台原因、
+        # platform 动作的往返。**在 Linux/macOS runner 上这条会走真实平台分支**
+        # （forced=False），正好补上本机没有的环境；Windows runner 上走注入分支。
+
       - name: Check backend imports
         shell: pwsh
         run: python -c "import sys; sys.path.insert(0, 'backend'); import main; print('import ok')"
@@ -254,6 +263,119 @@ jobs:
         with:
           name: frontend-publish
           path: out/frontend
+          retention-days: 7
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
+  # 跨平台矩阵（v0.2.1 跨平台 任务一 / 任务四）
+  #
+  # 为什么必须有这条：Avalonia 前端的"能跨平台"只有在这里才能被**真正验证** ——
+  # 开发机只有 Windows，`net10.0` 不带 -windows 的工程能编译、能发布出 linux/osx 产物
+  # 这件事，必须在 Linux/macOS 的 runner 上各跑一遍才算证据。
+  #
+  # 这条流水线做四件事：
+  #   1. 在三个平台上**编译** Avalonia 前端（本机 Windows 只能证明 win 那一格）；
+  #   2. 按 RID 发布自包含产物（体积/文件数进日志，供与 Windows 版对比）；
+  #   3. 跑 `python tools/test_platform.py`：在 Linux/macOS 上走的是**真实平台分支**
+  #      （forced=False），补上开发机靠 ECHODESK_FORCE_PLATFORM 注入才能覆盖的那一半；
+  #   4. 跑 `EchoDesk --selftest`：无显示器环境下验证"前端能探测平台 → 按平台规则
+  #      拉起 Python 后端 → ready 握手 → platform/capability 动作往返"。
+  #
+  # 注意：后端依赖里的 pywin32 已加 `sys_platform == "win32"` 标记，非 Windows 上不装；
+  # llama-cpp-python 若在某平台没有轮子会退回源码编译（慢，故该步骤允许失败并给出告警，
+  # 后续自检步骤会因依赖缺失而跳过 —— 跳过会被明确打印，不是静默通过）。
+  # -------------------------------------------------------------------------
+  cross-platform:
+    name: Cross-platform build (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows x64
+            rid: win-x64
+            exe: EchoDesk.exe
+          - os: ubuntu-latest
+            label: Linux x64
+            rid: linux-x64
+            exe: EchoDesk
+          - os: macos-latest
+            label: macOS arm64
+            rid: osx-arm64
+            exe: EchoDesk
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install backend dependencies
+        id: deps
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          "ok=true" >> $env:GITHUB_OUTPUT
+          # 失败时（例如某平台没有 llama-cpp-python 轮子且源码编译超时）不直接红，
+          # 由下一步按 outputs 决定是否跳过依赖后端的自检，并在日志里写明原因。
+
+      - name: Build Avalonia frontend (proves the TFM is platform-neutral)
+        shell: pwsh
+        run: |
+          # 这一步是本任务的核心证据：工程目标是 net10.0（不带 -windows），
+          # 因此它**必须**能在 Linux/macOS 上编译。带上 -windows 的话这里就会失败。
+          dotnet build frontend-avalonia/EchoDesk.Avalonia/EchoDesk.Avalonia.csproj -c Release --nologo
+
+      - name: Publish self-contained frontend for this RID
+        shell: pwsh
+        run: |
+          dotnet publish frontend-avalonia/EchoDesk.Avalonia/EchoDesk.Avalonia.csproj `
+            -c Release -r ${{ matrix.rid }} --self-contained true `
+            -p:PublishSingleFile=false -p:DebugType=none -p:DebugSymbols=false -p:NuGetAudit=false `
+            -o out/avalonia/${{ matrix.rid }}
+          $exe = "out/avalonia/${{ matrix.rid }}/${{ matrix.exe }}"
+          if (-not (Test-Path -LiteralPath $exe)) { throw "发布产物缺失: $exe" }
+          $files = Get-ChildItem -LiteralPath "out/avalonia/${{ matrix.rid }}" -Recurse -File |
+            Measure-Object -Property Length -Sum
+          Write-Host ("跨平台发布产物就绪: {0}（{1} 个文件，{2:N1} MB）" -f `
+            $exe, $files.Count, ($files.Sum / 1MB))
+
+      - name: Run platform boundary test (real platform branch)
+        shell: pwsh
+        run: python tools/test_platform.py
+
+      - name: Run frontend self-test (headless, no display needed)
+        if: steps.deps.outputs.ok == 'true'
+        shell: pwsh
+        run: |
+          # 无窗口模式：只验证"平台探测 + 按平台规则拉起后端 + 协议往返"。
+          # 需要后端依赖已装好（上一步 id=deps）；依赖没装好时这条会被跳过并打印原因。
+          $exe = "out/avalonia/${{ matrix.rid }}/${{ matrix.exe }}"
+          & $exe --selftest
+          if ($LASTEXITCODE -ne 0) { throw "跨平台自检失败（退出码 $LASTEXITCODE）" }
+
+      - name: Report skipped self-test
+        if: steps.deps.outputs.ok != 'true'
+        shell: pwsh
+        run: |
+          Write-Warning "后端依赖未安装成功，跳过头less 自检（不是通过，是没跑）。"
+          Write-Warning "要拿到完整证据，请在某平台补跑：python -m pip install -r backend/requirements.txt"
+
+      - name: Upload cross-platform artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: avalonia-${{ matrix.rid }}
+          path: out/avalonia/${{ matrix.rid }}
           retention-days: 7
           if-no-files-found: error
 

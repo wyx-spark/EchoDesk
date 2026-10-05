@@ -879,7 +879,10 @@
     "wizard.step4.fix_then_retry": "Complete the configuration as prompted above, then try the dry run again.",
     "wizard.step4.fail_tip1": "Use the error above to check the selector and the sign-in state.",
     "wizard.step4.fail_tip2": "Confirm that the same download can be done manually on this computer.",
-    "wizard.step4.ok_tip": "Once everything looks right, accept the safety agreement and turn on the automation master switch to start batch processing."
+    "wizard.step4.ok_tip": "Once everything looks right, accept the safety agreement and turn on the automation master switch to start batch processing.",
+    "validate": {
+      "platform_unsupported": "Enterprise intranet automation is Windows-only: the capability itself does not exist on this platform (this is not a missing dependency). Use MCP/plugins instead, or run it on a Windows machine."
+    }
   },
   "update": {
     "up_to_date": "✅ You are on the latest version ({version})",
@@ -1001,5 +1004,20 @@
     "progress.done": "🎉 Segmented summarization done: {chunks} segments, {chars} characters summarized, {seconds}s total.",
     "progress.aborted": "⏹ Segmented summarization aborted: {index}/{total} segments done.",
     "progress.failed": "❌ Segmented summarization failed: none of the {total} segments produced a summary."
+  },
+  "platform": {
+    "chat": "Chat and streaming (available on all platforms)",
+    "files": "File parsing with the generic parser (available on all platforms)",
+    "retrieval": "Local retrieval / RAG, pure Python (available on all platforms)",
+    "agent": "Agent platform (available on all platforms)",
+    "mcp": "MCP client, self-written stdio JSON-RPC (available on all platforms)",
+    "skills": "Plugins / skills (available on all platforms)",
+    "models": "Local model management and inference (available on all platforms)",
+    "wps_com": "Reading encrypted documents via WPS COM (Windows only)",
+    "wps_com_no_pywin32": "WPS COM requires pywin32, which is not installed here; encrypted documents fall back to the generic parser",
+    "wps_com_alt": "Workaround: password-free encrypted files may still open with the generic parser; otherwise save an unencrypted copy on a Windows machine with WPS installed.",
+    "automation": "Enterprise intranet automation (Windows only, requires local Edge)",
+    "automation_unavailable": "Enterprise intranet automation is Windows-only (it needs a headed local Edge), so this page is unavailable on the current platform",
+    "automation_alt": "Workaround: drive the same flow through an MCP server or a skill that calls an external tool/script, or run the automation on a Windows machine and export its results."
   }
 }

@@ -44,8 +44,8 @@ EchoDesk 是一款 Windows 桌面应用，把整套 AI 能力都留在你自己�
 
 | 项目 | 要求 |
 | --- | --- |
-| 操作系统 | Windows 10 或 Windows 11，64 位（x64）。 |
-| 前端运行时 | 无需额外安装。WPF 程序（目标框架 `net10.0-windows`）以自包含方式发布，便携发布物自带运行时。 |
+| 操作系统 | 正式交付物为 Windows 10 / 11（x64）。Linux 与 macOS 由跨平台前端（Avalonia，`frontend-avalonia/`）支持，后端代码三平台通用；两类平台上的能力差异与降级做法见 [docs/zh-Hans/CROSS_PLATFORM.md](docs/zh-Hans/CROSS_PLATFORM.md)。 |
+| 前端运行时 | 无需额外安装。Windows 前端是 WPF 程序（目标框架 `net10.0-windows`），跨平台前端是 Avalonia 程序（目标框架 `net10.0`），两者都以自包含方式发布，便携发布物自带运行时。 |
 | CPU | 任意 x64 处理器。默认使用 CPU 推理（`backend\config.json` 中 `n_gpu_layers: 0`）。 |
 | 内存 | 最低 4 GB，建议 8 GB 以上。默认模型文件约 472 MB，默认 8192 tokens 窗口的 KV Cache 另需约 0.3–0.4 GB；窗口越大、模型越大，占用越高。 |
 | 磁盘 | 便携文件夹约 1 GB（含模型约 0.85 GB，不含模型约 0.4 GB）。下载模型期间建议保留 2 GB 可用空间。 |
@@ -239,6 +239,7 @@ EchoDesk 的本地化是设计目标，并且写成了公开文档：
 | 文档 | 内容 |
 | --- | --- |
 | [docs/zh-Hans/USER_GUIDE.md](docs/zh-Hans/USER_GUIDE.md) | 用户手册：安装启动、日常问答、长合同、批量自动化、技能。 |
+| [docs/zh-Hans/CROSS_PLATFORM.md](docs/zh-Hans/CROSS_PLATFORM.md) | 跨平台支持与能力边界：三平台能力矩阵、两条降级边界与替代做法、平台探测、目录与环境变量、打包与签名、验证证据。 |
 | [docs/zh-Hans/FAQ.md](docs/zh-Hans/FAQ.md) | 快速上手与故障排除：启动、模型、文件、自动化、技能市场。 |
 | [docs/zh-Hans/AUTOMATION_GUIDE.md](docs/zh-Hans/AUTOMATION_GUIDE.md) | 自动化配置逐字段填写指南与「测试选择器」。 |
 | [docs/DEVELOPER.md](docs/DEVELOPER.md) | 架构、JSON 协议、模块职责、配置参考、构建与发布。 |

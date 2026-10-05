@@ -4,6 +4,11 @@ dist/
 out/
 frontend/bin/
 frontend/obj/
+# 跨平台前端（Avalonia）同样是 .NET 工程，bin/obj 必须忽略：
+# 除了体积，obj 下的 PublishOutputs.*.txt 会记录**打包机的绝对路径**，
+# 被 tools\check_feedback.ps1 的"个人绝对路径残留"检查判为不合格（实测踩到过）。
+frontend-avalonia/**/bin/
+frontend-avalonia/**/obj/
 publish/
 *.pdb
 

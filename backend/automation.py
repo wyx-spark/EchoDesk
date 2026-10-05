@@ -696,6 +696,15 @@ class AutomationEngine:
     def validate(self) -> List[str]:
         """返回配置校验错误列表（空列表 = 可以运行）。"""
         errors: List[str] = []
+        # 平台边界排在最前（任务五）：非 Windows 上"没装 Playwright"不是真正的原因，
+        # 先说平台限制，用户才不会去装一个装了也没用的包。
+        try:
+            import platform_support
+
+            if not platform_support.automation_available():
+                errors.append(_t("automation.validate.platform_unsupported"))
+        except Exception:  # noqa: BLE001 - 平台模块不可用时退回原有校验
+            pass
         if not self.safety_accepted:
             errors.append(_t("automation.validate.safety_not_accepted"))
         if not self.enabled:

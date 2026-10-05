@@ -139,6 +139,33 @@ EchoDesk 不自带模型权重。本地没有模型时程序**照样启动并保
 
 ---
 
+### 在 Linux 或 macOS 上运行
+
+正式交付物是 Windows 版；Linux 与 macOS 由跨平台前端（Avalonia）支持，后端是同一份
+Python 代码。**绝大多数功能三平台一致**（对话与流式输出、文件解析、本地检索、Agent、
+MCP、插件、模型管理与本地推理），只有两项能力是 Windows 专属：
+
+* **读取 WPS/Office 加密文档**（以及旧版 `.doc`/`.xls`）：需要 WPS 的 COM 接口，
+  非 Windows 平台没有这个机制。此时界面会明确说明"该能力仅 Windows 提供"，
+  并给出替代做法（在 Windows 上用 WPS 另存为未加密文件或 `.docx` 后再读、
+  通过 MCP/插件接入外部转换工具、或安装提供该格式解析器的技能）。
+  **不会**把这种情况显示成笼统的"解析失败"，也不会让你去装一个装了也没用的组件。
+* **企业内网自动化**（驱动本机 Edge）：该页面在非 Windows 上不提供，
+  配置校验会说明原因是"平台不支持"而不是"依赖没装"。
+  替代做法是用 MCP/技能调用外部脚本，或在一台 Windows 机器上跑完再把结果拿过来。
+
+其他与平台有关的差异：
+
+* **数据目录**：Windows 用发布物外层目录（或 `ECHODESK_DATA` 指定的位置）；
+  macOS 用 `~/Library/Application Support/EchoDesk`；
+  Linux 用 `$XDG_DATA_HOME/EchoDesk` 或 `~/.local/share/EchoDesk`。
+* **界面语言包**放在 `<数据目录>/lang/ui/`；`ECHODESK_LANG_DIR` 可以临时指定另一个目录。
+* 界面顶部的平台横幅只在**有降级项**时出现，点右上角的 ℹ️ 可以看到本平台的完整能力清单。
+
+完整的平台矩阵、打包方式与验证证据见 `docs/zh-Hans/CROSS_PLATFORM.md`。
+
+---
+
 ## 二、日常问答
 
 1. 在下方输入框输入问题，`Ctrl+Enter` 发送（`Enter` 是换行）；

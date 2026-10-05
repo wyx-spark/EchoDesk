@@ -399,6 +399,13 @@ try {
     Invoke-Check "本地检索（任务六）" { Invoke-Python "检索" "tools\test_retrieval.py"; "通过" }
     Invoke-Check "模型管理写路径（任务五）" { Invoke-Python "模型管理" "tools\test_model_admin.py"; "通过" }
 
+    # v0.2.1 跨平台（任务三 / 任务五）：平台探测（kind/RID/数据目录）、能力清单、
+    # Windows 专属能力的降级文案与替代做法、非 Windows 上读旧版 Office 格式的说明、
+    # 自动化页面按平台禁用、以及 platform 动作的协议往返。
+    # 本机只有 Windows，所以非 Windows 分支靠 ECHODESK_FORCE_PLATFORM 注入验证
+    # （报告里会标记 forced，见 tools\test_platform.py 头部说明）。
+    Invoke-Check "跨平台能力边界（任务三/五）" { Invoke-Python "跨平台" "tools\test_platform.py"; "通过" }
+
     # ---------- 3. 静态检查 ----------
     Invoke-Check "语言包完整性" { Invoke-Python "语言包" "tools\check_lang.py"; "通过" }
     Invoke-Check "主题色板与对比度（修复二）" { Invoke-Python "主题" "tools\check_theme.py"; "通过" }

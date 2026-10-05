@@ -879,7 +879,10 @@
     "wizard.step4.fix_then_retry": "按上面的提示补齐配置后再试运行。",
     "wizard.step4.fail_tip1": "根据上面的报错检查选择器与登录状态。",
     "wizard.step4.fail_tip2": "确认这台电脑上能用手动方式完成同样的下载。",
-    "wizard.step4.ok_tip": "确认无误后，勾选安全协议并打开自动化总开关即可开始批量处理。"
+    "wizard.step4.ok_tip": "确认无误后，勾选安全协议并打开自动化总开关即可开始批量处理。",
+    "validate": {
+      "platform_unsupported": "企业内网自动化仅 Windows 提供：当前平台不提供该能力（不是依赖缺失问题），请改用 MCP/插件替代，或在 Windows 机器上运行。"
+    }
   },
   "update": {
     "up_to_date": "✅ 已是最新版本（{version}）",
@@ -1001,5 +1004,20 @@
     "progress.done": "🎉 分段摘要完成：{chunks} 段，摘要 {chars} 字符，总耗时 {seconds} 秒。",
     "progress.aborted": "⏹ 分段摘要已中止：完成 {index}/{total} 段。",
     "progress.failed": "❌ 分段摘要失败：{total} 段全部未产出摘要。"
+  },
+  "platform": {
+    "chat": "对话与流式输出（全平台可用）",
+    "files": "文件解析（通用解析器，全平台可用）",
+    "retrieval": "本地检索 RAG（纯 Python，全平台可用）",
+    "agent": "Agent 平台（全平台可用）",
+    "mcp": "MCP 客户端（自研 stdio JSON-RPC，全平台可用）",
+    "skills": "插件 / 技能（全平台可用）",
+    "models": "本地模型管理与推理（全平台可用）",
+    "wps_com": "WPS COM 读加密文档（Windows 专属）",
+    "wps_com_no_pywin32": "WPS COM 需要 pywin32（本机未安装），加密文档将改用通用解析器",
+    "wps_com_alt": "替代做法：若是空口令加密，可用通用解析器试读；否则请在装有 WPS 的 Windows 机器上另存为未加密文件后重试。",
+    "automation": "企业内网自动化（Windows 专属，依赖本机 Edge）",
+    "automation_unavailable": "企业内网自动化仅 Windows 提供（需要本机 Edge 的有头模式），当前平台不提供该页面",
+    "automation_alt": "替代做法：用 MCP 或技能接入外部工具/脚本完成同一流程；或在一台 Windows 机器上运行自动化后导出结果。"
   }
 }

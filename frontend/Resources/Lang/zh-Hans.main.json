@@ -23,7 +23,11 @@
       "generating": "正在生成…",
       "stopping": "正在停止...",
       "fontSize": "字号 {0}",
-      "noModel": "无模型（仍可使用文件解析与设置）"
+      "noModel": "后端已就绪，但没有加载模型",
+      "ready": "就绪",
+      "backendMissing": "后端未启动",
+      "backendExited": "后端已退出",
+      "notReady": "未就绪"
     },
     "model": {
       "clickTip": "点击打开模型选择栏（设置 → 模型）",
@@ -43,7 +47,8 @@
       "placeholder": "🧠 模型: ---",
       "noModel": "🧠 模型: 无模型",
       "noModelTip": "当前没有可用的本地模型。点击打开「设置 → 模型」下载或加载模型。",
-      "hotLoaded": "✅ 模型已就绪，现在可以正常对话了。"
+      "hotLoaded": "✅ 模型已就绪，现在可以正常对话了。",
+      "none": "🧠 无模型"
     },
     "mode": {
       "clickTip": "点击打开设置修改默认对话模式",
@@ -167,7 +172,8 @@
       "chars": "📤 {0} 字",
       "elapsed": "⏱️ {0}",
       "stopped": "⏹ 已中止",
-      "failed": "⚠️ 失败"
+      "failed": "⚠️ 失败",
+      "reasoningUnclosed": "⚠️ 思考未闭合（token 预算可能被思考用完）"
     },
     "message": {
       "copy": "复制",
@@ -227,7 +233,8 @@
       "exitedDuringStartup": "后端未完成启动即退出。",
       "exitedDuringDownload": "后端在下载模型期间退出。",
       "idleTimeout": "后端在 {0:0.#} 分钟内没有响应，已中断等待。可稍后重试，或查看 app\\backend\\backend_crash.log。",
-      "modelMissingDetail": "本地缺少模型 {0}"
+      "modelMissingDetail": "本地缺少模型 {0}",
+      "notReady": "❌ 后端没有就绪：{0}"
     },
     "toast": {
       "copiedCount": "✅ {0}（{1} 字符）"
@@ -247,7 +254,25 @@
       "preparing": "📝 正在解析文档并准备分段摘要…"
     },
     "button": {
-      "stopSummaryTip": "中止分段摘要 (Esc)"
+      "stopSummaryTip": "中止分段摘要 (Esc)",
+      "send": "发送",
+      "stop": "⏹ 停止",
+      "upload": "📎 上传文件"
+    },
+    "platform": {
+      "degraded": "⚠️ 当前平台（{0}）有 {1} 项能力不可用",
+      "backendMissing": "⚠️ 后端未启动",
+      "mismatch": "⚠️ 前后端平台判断不一致：前端 {0} / 后端 {1}。降级行为可能不符合预期。"
+    },
+    "thinking": {
+      "title": "🧠 思考过程"
+    },
+    "input": {
+      "placeholder": "输入消息，Ctrl+Enter 发送 · 拖拽文件到窗口即可上传"
+    },
+    "capability": {
+      "title": "本平台能力清单（{0}）",
+      "backend": "后端能力画像："
     }
   },
   "settings": {
