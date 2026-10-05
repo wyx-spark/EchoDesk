@@ -14,6 +14,66 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 > deviations from the task specification, unfinished items, and size records, see the internal development
 > record (`v0.2.1-研发记录.md`, **not distributed with the release**).
 
+### System-prompt reconstruction: from "fill in the template" back to "exercise judgement"
+
+Task specification: `prompts/EchoDesk-v0.2.1系统提示词重构.md`. This round adds no new prompt content; it fixes
+the side effect of the previous round's "six elements": with the constraints piled up, the model lost its
+judgement — it listed three points for any question, refused to answer when information was incomplete, and
+merely asked the user to clarify when they could not express themselves. The diagnosis (traced to the exact
+sentences), the per-mode adjustments, the comparison-test results and the deviations from the task
+specification are in `records/v0.2.1-系统提示词重构记录.md`.
+
+**The shared requirements grew from 3 rules to 7, and all four new ones loosen rather than tighten:**
+
+- **decide the detail level**: one sentence when one sentence is enough, points only when genuinely complex,
+  never pad for the sake of a format;
+- **answer first, ask later** (the old rule 2 with its **order reversed**): when information is incomplete,
+  answer with the most likely reading first, state the assumption, and only then ask whether to expand on
+  other cases — **never reply with just "please provide more information"**;
+- **lay out the speculation**: only when the conclusion really depends on information that was not given,
+  write "if A, then X; if B, then Y" and mark it as a guess;
+- **guide**: for a vague question (such as "take a look at this"), list 2-3 possible directions with one line
+  each about what it would do.
+
+The floor — "say you do not know; never fabricate facts, figures, statutes, clauses or sources" — is untouched.
+
+**Every mode gained a sixth element, "detail level"**, and the format requirements became conditional: the
+summarizer adapts to material length (one paragraph **without** points for anything under ~200 characters,
+points only for long material), code mode answers API-usage questions in a sentence or two, contract review
+lists the usual risks first when no material has been supplied and asks which one applies, and creative mode is
+tightened to 2-3 directions. In other words, the judgement call about how much to say went back to the model.
+**The length caps were not relaxed** (mode block ≤ 480, whole prompt ≤ 700 characters): the new content was
+paid for by compressing existing wording, and the caps are still enforced by assertions.
+
+**New guidance mode** (`/mode guide`, also `/mode 7` or `/mode gd`, temperature preset 0.6): when you cannot
+say what you want, it lists 2-3 things you might mean, one line each about what it would do, and you reply with
+a number. The fallback wording for vague questions changed from "please supply the object, the output form and
+the constraints" to the same list-of-directions idea, and it **picks the directions from your wording** (mention
+an error and "diagnose the symptom" comes first; mention a file and "work on the material" comes first).
+In guidance mode that step is left to the model so the directions fit your wording more closely. The
+machine-readable marker for a vague question is still `clarify: true`; set `Config.clarify_vague` to `false`
+to switch the behaviour off.
+
+**Task templates were relaxed to match, except machine-readable ones**: the `extract` JSON template is marked
+`relax=False` and still ends with "strictly follow the output format above", while the others now end with
+"the format requirements win, but the detail level still follows the complexity of the question — a simple
+question may be answered in one sentence". The `reason` template used to say "ask first when information is
+missing", which is exactly where the refusal behaviour came from; it now says "give the most likely conclusion
+first and label the assumption", with a new `【假设】` (assumptions) field.
+
+**Objective comparison testing** (same model, same question, only the prompt changes):
+`tools/prompt_compare.py` takes the pre-reconstruction prompts from git history and runs old against new, and
+`tools/test_prompt_compare.py` covers the model-free part of it (now part of CI and the release gate). The
+first measurement round found three real defects — the summarizer's "no bullet points for short material" did
+not take effect, contract mode invented "verbatim quotes" when no material had been supplied, and guidance
+mode parroted the example phrase from its own prompt — all three were fixed in the prompts. Whether a reply
+uses points, only asks back, offers directions, quotes the source, or fabricates volume/page/amount figures is
+**judged automatically**; the subjective assessment is labelled as such in the record. Measured on both tiers
+(the bundled 0.6B default and the optional 1.7B), the objective criteria went from **2/9 to 7/9** on 0.6B and
+from **4/9 to 9/9** on 1.7B; the two remaining failures are on 0.6B and fail under both the old and the new
+prompt — **the 0.6B tier cannot be trusted to quote a source it was not given, nor to answer questions about
+statutes**, which is now a documented limitation.
+
 ### Known-issues round 2: extraction prefilter, streaming heartbeat and live metrics, search chain, compaction, multi-file upload, `$$` formulas
 
 Task specification: `prompts/EchoDesk-v0.2.1优化已知问题-2.md` (17 tasks). Every item was audited against the

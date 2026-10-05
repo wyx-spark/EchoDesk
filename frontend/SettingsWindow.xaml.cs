@@ -112,7 +112,7 @@ public partial class SettingsWindow : Window
     /// <summary>可选的默认对话模式键；显示名由语言包的 mode.&lt;key&gt; 提供。</summary>
     private static readonly string[] Modes =
     {
-        "general", "summary", "translate", "code", "contract", "creative",
+        "general", "summary", "translate", "code", "contract", "creative", "guide",
     };
 
     private readonly BackendService _backend;

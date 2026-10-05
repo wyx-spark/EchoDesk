@@ -1892,6 +1892,22 @@ class Backend:
             yield done
             return
 
+        # 模糊提问引导（v0.2.1 系统提示词重构）：与 _handle_chat 用同一个判断，
+        # **必须在流式路径也拦一次** —— 前端正常对话走的是 chat_stream，而这条分支
+        # 此前只写在 _handle_chat（非流式 action 与斜杠指令）里，于是"模糊提问给方向"
+        # 在图形界面里从来没生效过（本轮集成测试抓到的既有缺陷）。
+        vague_guide = self._vague_guide(user_msg)
+        if vague_guide:
+            self.conv.add_message("user", user_msg)
+            self.conv.add_message("assistant", vague_guide)
+            self._compact_history()
+            yield {"type": "delta", "channel": _CH_ANSWER, "content": vague_guide}
+            vague_done: Dict[str, Any] = {"type": "done", "content": vague_guide,
+                                          "clarify": True}
+            self._attach_context(vague_done)
+            yield vague_done
+            return
+
         search_context = self._search_if_enabled(user_msg)
         include_file = bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)
         messages = self.conv.build_messages(user_msg, search_context, include_file=include_file)
@@ -1989,6 +2005,34 @@ class Backend:
 
     # ---------- 具体动作 ----------
 
+    def _vague_guide(self, user_msg: str) -> str:
+        """提问过于模糊时该回的**引导话术**；不该拦就返回空串。
+
+        修复四（方向七）原本的机制是"先追问要材料"，v0.2.1 系统提示词重构把它升级成
+        **引导**：列出 2~3 种可能的方向、每种配一句做法，让用户回一个编号。
+
+        只在"没有文件上下文、也没有历史"时触发：已经有上下文的情况下"这个怎么办"
+        往往指的是上文内容，引导反而多余。**引导模式下不拦** —— 那个模式的系统提示词
+        本身就是这件事，交给模型现想更贴合用户那句话。
+
+        抽成方法是因为**两个调用点必须一致**：本轮集成测试发现这条判断原先只写在
+        `_handle_chat` 里，而前端正常对话走的是 `stream()` 的 `chat_stream` ——
+        也就是说"模糊提问给方向/追问"在图形界面里从来没生效过（历史遗留缺陷，
+        见 records/v0.2.1-系统提示词重构记录.md）。修法不是把代码复制到第二个地方，
+        而是只有这一份。
+        """
+        if not bool(getattr(self.config, "clarify_vague", True)):
+            return ""
+        if self.conv.get_mode() == "guide":
+            return ""
+        if self.conv.history or self.conv.file_content:
+            return ""
+        from prompts import clarification_prompt, is_vague_question
+
+        if not is_vague_question(user_msg):
+            return ""
+        return clarification_prompt(user_msg)
+
     def _handle_chat(self, user_msg: str) -> Dict[str, Any]:
         if user_msg.startswith("/"):
             content, action = self.commands.handle(user_msg)
@@ -2014,16 +2058,15 @@ class Backend:
             self._compact_history()
             return {"type": "assistant", "content": answer}
 
-        # 修复四（方向七）：提问过于模糊时先追问，而不是硬答。
-        # 只在"没有文件上下文、也没有历史"时触发：已经有上下文的情况下
-        # "这个怎么办"往往指的是上文内容，追问反而多余。
-        from prompts import clarification_prompt, is_vague_question
-
-        if (bool(getattr(self.config, "clarify_vague", True))
-                and not self.conv.history and not self.conv.file_content
-                and is_vague_question(user_msg)):
-            answer = clarification_prompt(user_msg)
-            return {"type": "assistant", "content": answer, "clarify": True}
+        # 修复四（方向七）+ v0.2.1 系统提示词重构：提问过模糊时先给**引导**
+        # （列 2~3 种可能方向让用户挑），而不是硬答、也不是反过来要材料。
+        # 判断本体在 _vague_guide 里 —— 流式路径（前端正常对话）与非流式路径共用同一份。
+        guide = self._vague_guide(user_msg)
+        if guide:
+            self.conv.add_message("user", user_msg)
+            self.conv.add_message("assistant", guide)
+            self._compact_history()
+            return {"type": "assistant", "content": guide, "clarify": True}
 
         search_context = self._search_if_enabled(user_msg)
         include_file = bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)

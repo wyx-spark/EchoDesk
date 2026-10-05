@@ -384,6 +384,12 @@ try {
     # /file 多路径与引号感知分词）。用桩引擎，不加载模型。
     Invoke-Check "多文件上传（任务八）" { Invoke-Python "多文件" "tools\test_multifile.py"; "通过" }
 
+    # v0.2.1 系统提示词重构：对比测试的**无模型**部分。客观指标函数（分点识别/
+    # 引导话术判据/防编造判据/摘录重合度）+ 场景表覆盖 + extract 的硬格式不放松，
+    # 并子进程跑 tools\prompt_compare.py --dry-run（从 git 历史取旧提示词做新旧对比）。
+    # 真模型的对比要几百 MB GGUF 与数分钟，因此不在门禁里跑（见该文件头部说明）。
+    Invoke-Check "提示词重构对比（无模型）" { Invoke-Python "提示词对比" "tools\test_prompt_compare.py"; "通过" }
+
     # ---------- 3. 静态检查 ----------
     Invoke-Check "语言包完整性" { Invoke-Python "语言包" "tools\check_lang.py"; "通过" }
     Invoke-Check "主题色板与对比度（修复二）" { Invoke-Python "主题" "tools\check_theme.py"; "通过" }

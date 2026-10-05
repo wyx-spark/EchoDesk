@@ -10,7 +10,8 @@
     "translate": "3. translate — translation expert",
     "code": "4. code — coding expert",
     "contract": "5. contract — contract review",
-    "creative": "6. creative — creative writing"
+    "creative": "6. creative — creative writing",
+    "guide": "7. guide — requirement clarification"
   },
   "settings": {
     "general": {
