@@ -382,6 +382,34 @@ check("打包场景下敏感工具默认不可用，且如实告知",
       _result.get("ok") is False and "未启用" in str(_result.get("observation")),
       str(_result.get("observation"))[:80])
 
+# ---------------- 任务十三：Agent 每一步的思考过程（自测问题修复-1） ----------------
+# 用户报的现象是"Agent 模式下思考过程不显示"。**根因不是没产生，是没分离也没发出去**：
+# Agent 走非流式 chat_complete，返回的原始文本（含 <think> 段落）被整段当作"这一步说了
+# 什么"，而 agent_step 事件里又没有正文，界面自然无从渲染。下面把三件事钉住：
+#   1. 思考要被分离出来、放进 reasoning；
+#   2. 思考要真的发到前端（phase="thought" 事件）；
+#   3. **解析只看正文** —— 思考里写"可以调用 calc 工具"不能被当成真的工具调用。
+_think_backend = make_backend(replies=[
+    "<think>用户问汇率，我先算一下。可以调用 calc 工具。</think>最终答案：按 7.2 折算。",
+])
+_think_lines = list(_think_backend.stream({"action": "chat_stream", "message": "3000 美元是多少人民币"}))
+_thoughts = [line for line in _think_lines
+             if line.get("type") == "agent_step" and line.get("phase") == "thought"]
+check("任务十三：发出了带内容的思考事件", len(_thoughts) == 1, str(len(_thoughts)))
+check("任务十三：思考事件里带 reasoning 正文",
+      bool(_thoughts) and "我先算一下" in str(_thoughts[0].get("reasoning")),
+      str(_thoughts[0].get("reasoning"))[:60] if _thoughts else "")
+check("任务十三：思考里的「调用 calc 工具」没被误判成工具调用",
+      "tool_call" not in [line.get("type") for line in _think_lines],
+      str([line.get("type") for line in _think_lines]))
+check("任务十三：最终答案不含思考内容",
+      "我先算一下" not in str(_think_lines[-1].get("content")),
+      str(_think_lines[-1].get("content"))[:80])
+check("任务十三：诊断里能看到这一步确实有思考",
+      bool(((_think_backend.agent_diagnostics().get("last_run") or {})
+            .get("steps") or [{}])[0].get("has_reasoning")),
+      str(_think_backend.agent_diagnostics().get("last_run"))[:120])
+
 print()
 print("=" * 60)
 print(f"通过 {PASSED} 项，失败 {len(FAILED)} 项")

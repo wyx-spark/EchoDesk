@@ -21,6 +21,13 @@
   ``token=...``/``password=...``/``secret=...``/``key=...`` 的值统一替换为 ``***``。
 * **Shadow DOM 只做简单穿透**：用 ``evaluate`` 遍历 shadowRoot 做 ``querySelectorAll``；
   命中的元素拿不到可点击句柄，因此这类链接只能走"直接请求 URL"的下载兜底路径。
+* **复用用户已经打开的浏览器（任务十七）**：默认先尝试用 CDP 连接用户**自己以调试模式
+  打开**的那个浏览器（调试端口只监听 127.0.0.1），连上后**只操作他当前活动的那一个
+  标签页**，不新建、不关闭、不切换他的其他标签页；连不上时按
+  ``automation.browser_reuse`` 的取值决定"报错"还是"回退到程序新开实例"（回退时进度
+  里会明确告知代价是**需要重新登录**）。页面内跳转一律用 ``element.click()`` 而不是
+  ``page.goto()``：点击沿用当前会话与 Referer，跳出来的页面才不需要重新登录。
+  详细的安全边界见下方 ``CDP_LOOPBACK_HOST`` 那一段注释。
 
 公开接口：``AutomationError`` / ``AutomationEngine``（validate / test_selector / run /
 stop / status / cleanup_temp）。``run()`` 是生成器，逐个产出与 EchoDesk 流式协议一致的
@@ -34,6 +41,8 @@ import logging
 import os
 import re
 import shutil
+import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -93,6 +102,113 @@ log = logging.getLogger("EchoDesk.Automation")
 
 # 单个附件大小上限：超过则跳过并记录（避免误下载超大文件拖垮磁盘与解析器）
 MAX_FILE_BYTES = 200 * 1024 * 1024
+
+# ===========================================================================
+# 浏览器选择（任务十六，自测问题修复-1）
+# ===========================================================================
+#
+# 任务书要求："所有需要浏览器的功能（主要是自动化）应至少支持 Chrome，
+# 进而扩展到更多浏览器"，并给出 `automation.browser` 配置项与 `auto` 语义。
+#
+# **实际能支持到哪一步（任务书要求 DSH 给出清单）**：
+#   * 能：Chromium 系（Edge、Chrome，以及通过 `executable_path` 指定的
+#     Brave / Opera / Vivaldi 等 Chromium 品牌）与 Playwright 自带的 Chromium；
+#     Firefox 由 Playwright 的 `firefox` 引擎驱动。
+#   * 不能：国内一些基于 **IE 内核**（Trident）或深度定制外壳的浏览器
+#     （老版 360 安全浏览器兼容模式、QQ 浏览器 IE 模式、部分政务专用浏览器）
+#     —— Playwright 没有 Trident 驱动，这些浏览器**无法被自动化**。
+#     替代做法：用它们把页面另存/导出为文件后走"本地文档"路径，
+#     或改用 Edge/Chrome 的 IE 模式打开同一站点。
+#
+# `channel` 为空串表示用 Playwright 自带的浏览器（无需用户另装）。
+BROWSER_CHOICES: Dict[str, Dict[str, str]] = {
+    "edge": {"engine": "chromium", "channel": "msedge"},
+    "chrome": {"engine": "chromium", "channel": "chrome"},
+    "chromium": {"engine": "chromium", "channel": ""},
+    "firefox": {"engine": "firefox", "channel": ""},
+}
+
+#: ``auto`` 的候选顺序。**edge 排第一是刻意的**：v0.2.2 之前默认通道就是 msedge，
+#: 保持它在最前，老用户升级后行为不变，chrome/chromium 只是多出来的兜底
+#: （"只增不减"）。Chromium 系排在 Firefox 前面，因为 CDP 复用（任务十七）
+#: 只对 Chromium 系有效。
+AUTO_ORDER = ("edge", "chrome", "chromium", "firefox")
+
+#: 面向用户的浏览器名（提示里写 "Google Chrome" 而不是内部代号 "chrome"）。
+BROWSER_LABELS: Dict[str, str] = {
+    "edge": "Microsoft Edge",
+    "chrome": "Google Chrome",
+    "chromium": "Chromium (Playwright)",
+    "firefox": "Mozilla Firefox",
+}
+
+# ===========================================================================
+# 复用**已经打开**的浏览器（任务十七，自测问题修复-1）
+# ===========================================================================
+#
+# 用户的原话是三个诉求：① 可视化选取与自动化要在**已打开的标签页**上做；
+# ② 任务列表要在已打开的标签页里找，否则又要重新登录；③ 点击链接要**模拟手动点击**，
+# 这样跳出来的页面才不需要重新登录。
+#
+# 为什么"新开一个实例"满足不了这三条：``launch_persistent_context`` 无论怎么配，
+# 得到的都是**另一个浏览器**——即使它把登录态从数据目录里带过来了，用户当前那个窗口
+# 里的登录、筛选、翻页、SPA 路由状态它一概看不见。要真正接管用户手上这一份，
+# 只有 CDP（Chrome DevTools Protocol）一条路：浏览器以调试模式启动后，外部程序可以
+# 连上它并**接管它已有的标签页**（Playwright 的 ``connect_over_cdp``）。
+#
+# **CDP 只对 Chromium 系有效**（Chrome / Edge / Chromium / Brave / Vivaldi…）：
+# Firefox 走的是自己的 marionette 协议、根本没有 CDP 端点，所以配置成 firefox 时
+# 我们不假装能连（见 :func:`cdp_supported`），而是直接走兜底的新实例路径并如实告知。
+# 后续若要支持 Firefox，扩展点在 :meth:`AutomationEngine._connect_reuse_session` ——
+# 那里是"怎么拿到一个可用的 context"的唯一入口，换协议只改那一处。
+#
+# **安全边界（任务书第 6 条要求写进注释）**：
+#   * 调试端口只监听**本机回环地址** 127.0.0.1（:data:`CDP_LOOPBACK_HOST`），程序代启动
+#     浏览器时还额外显式传 ``--remote-debugging-address=127.0.0.1``。CDP 端点等价于
+#     "那台浏览器的完全控制权"（能读页面、能读 Cookie、能执行脚本），暴露到局域网/公网
+#     等于把用户的登录会话交出去，所以这一条不能只靠"默认行为"；
+#   * **只操作用户指定的那一个标签页**：连上之后立刻用 :func:`choose_target_index` 确定
+#     "用户当前活动的那一页"，此后所有操作都只落在这一页上。用户把它关掉时我们**报错**，
+#     绝不"换一页继续干"——那正是任务书要求避免的"误操作其他标签页"；
+#   * **不读取、不导出用户的 Cookie**：复用路径下连 ``storage_state()`` 都不调用
+#     （那是给程序自己的持久化目录做备份用的，用户浏览器的凭据与我们无关）；
+#   * **不关闭用户的浏览器**：复用会话的 ``_BrowserSession.close()`` 只断开连接
+#     （``owns_browser=False``），既不 ``context.close()`` 也不 ``browser.close()``；
+#   * 日志里只记"端口号 / 是否连上 / 目标标签页地址"，不记任何凭据。
+CDP_LOOPBACK_HOST = "127.0.0.1"
+
+#: 默认调试端口。9222 是 Chrome/Edge 的惯用值，也是文档里对用户可见的那个数字。
+CDP_DEFAULT_PORT = 9222
+
+#: 连接调试端口的超时（毫秒）。端口没人监听时是**立刻**失败的（ECONNREFUSED），
+#: 这个超时只是给"端口开着但不响应"的异常情况兜底，所以不需要很长——
+#: 设太大反而会让"没开调试模式"这个最常见的情况白等几十秒。
+CDP_CONNECT_TIMEOUT_MS = 5000
+
+#: 程序代启动"调试模式浏览器"后，等调试端口就绪的最长时间（秒）。
+#: 浏览器冷启动 + 加载用户数据目录在机械盘上可能要好几秒，25 秒是实测后留的余量。
+CDP_READY_TIMEOUT_SECONDS = 25
+
+#: 复用策略（配置项 ``automation.browser_reuse``）的合法取值。
+#: ``auto`` = 先 CDP、连不上就回退新实例（默认，兜底开着但会告知代价）；
+#: ``required`` = 必须 CDP，连不上报错；``off`` = 从不碰 CDP。
+REUSE_MODES = ("auto", "required", "off")
+
+#: 支持 CDP 复用的浏览器取值。**Firefox 不在其中**（协议层不支持，不是没实现）。
+CDP_BROWSER_NAMES = ("edge", "chrome", "chromium")
+
+# 两段式可视化选取的状态（任务十七 E）。名字直接对应界面上看到的东西：
+#   idle    没有进行中的选取（一切从零开始）
+#   waiting **第一步**：页面已经打开/连上，等用户自己登录、导航到目标页面
+#   picking **第二步**：用户点了「开始选取」，脚本已注入，高亮+点击选取中
+# 一轮结束（选到 / 取消 / 页面被关）后**回到 waiting**，这样用户可以重选或换页面再选。
+PICK_STATE_IDLE = "idle"
+PICK_STATE_WAITING = "waiting"
+PICK_STATE_PICKING = "picking"
+
+#: 一轮选取的结局（``last_result``）。空串 = 还没发生过一轮。
+#: ``rejected`` 是"选到了非链接元素"这类被程序拦下的情况：没写配置，请用户重选。
+PICK_RESULTS = ("", "picked", "cancelled", "rejected", "page_closed", "error")
 
 # 判定"这是 XPath 而不是 CSS"的前缀（与配置说明保持一致）
 _XPATH_PREFIXES = ("//", "(", "xpath=")
@@ -331,6 +447,372 @@ def _is_parse_error(text: str) -> bool:
     return str(text).lstrip().startswith(_PARSE_ERROR_PREFIXES)
 
 
+# ---------- 复用已打开的浏览器：可单测的纯逻辑（任务十七） ----------
+#
+# 这一组函数刻意写成**模块级纯函数**：它们承载的是任务十七里最容易出错、也最需要
+# 被断言的三条规则（端口只能回环、Firefox 不能走 CDP、目标标签页怎么挑）。
+# 写成纯函数后 tools/test_browser_reuse.py 可以用假对象直接断言，
+# 不必真的启动浏览器——真浏览器在 CI/没有安装的机器上根本起不来，
+# 而这三条规则恰恰是"不能靠人工看一眼"的那类东西。
+
+
+def _cdp_endpoint(port: Any = CDP_DEFAULT_PORT) -> str:
+    """构造 CDP 调试端点。
+
+    **这里刻意不接受主机参数**：任何调用方都拼不出 ``http://0.0.0.0:9222`` 这种
+    "局域网里谁都能连"的端点。调试端点等于那台浏览器的完全控制权（能读页面、能读
+    Cookie、能执行脚本），所以"只连本机"不是调用方的注意事项，而是**函数签名层面
+    就做不到别的事**——这是任务书第 6 条"确认不会对外暴露"最可靠的实现方式。
+
+    端口非法（配置被手改坏、超出范围）时回落到默认端口，而不是抛异常：
+    一个坏掉的配置不该让整个自动化起不来。
+    """
+    try:
+        value = int(port)
+    except Exception:  # noqa: BLE001
+        value = CDP_DEFAULT_PORT
+    if not 1 <= value <= 65535:
+        value = CDP_DEFAULT_PORT
+    return f"http://{CDP_LOOPBACK_HOST}:{value}"
+
+
+def cdp_supported(browser: str) -> bool:
+    """配置里的浏览器取值能不能走 CDP 复用。
+
+    ``auto`` 返回 True：候选顺序（edge → chrome → chromium → firefox）里 Chromium 系
+    排在前面，能连上就连。
+
+    **``firefox`` 返回 False 不是"还没实现"，而是协议层就不支持**：Firefox 用
+    marionette，没有 CDP 端点，重试多少次都连不上。所以上层必须据此**换一条路径**
+    （走兜底新实例并如实告知"Firefox 不支持复用已打开的浏览器"），
+    而不是拿一个注定失败的连接去试。
+    """
+    name = str(browser or "auto").strip().lower()
+    if name in BROWSER_CHOICES:
+        return BROWSER_CHOICES[name]["engine"] == "chromium"
+    return True
+
+
+def _page_url(page: Any) -> str:
+    """读一个标签页的地址；页面已被关掉或读不到时返回空串（不抛异常）。
+
+    ``is_closed()`` 要先于 ``url`` 读：页面一关，Playwright 侧读取 ``url``
+    会抛 ``TargetClosedError``，而"用户把标签页关了"是复用模式下的**常见情形**
+    （不是异常），必须在正常路径上处理掉。
+    """
+    try:
+        is_closed = getattr(page, "is_closed", None)
+        if callable(is_closed) and is_closed():
+            return ""
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        return str(getattr(page, "url", "") or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def choose_target_index(pages: Sequence[Any], probe: Optional[Callable[[Any], Any]] = None) -> int:
+    """在候选标签页里挑出"用户当前正在用的那一页"，返回下标；挑不出来返回 -1。
+
+    判定顺序（每一级都只在上一级没有结论时才用）：
+
+    1. ``focused``（``document.hasFocus()``）为真 —— 这是**真正的活动标签页**，
+       一个窗口里最多只有一个，所以命中即返回；
+    2. 最后一个 ``visible``（``document.visibilityState === 'visible'``）的页面 ——
+       会有多个窗口各有一个可见页，取最后创建的那个（``context.pages`` 是创建顺序，
+       用户刚打开的那一页在后面）；
+    3. 最后一个可用页面 —— 用户把窗口最小化了、或页面还没渲染出来时也会走到这里。
+
+    为什么需要 2、3 两级而不是只认 ``focused``：``hasFocus()`` 在浏览器**失去系统焦点**
+    时全为假（用户切到了别的程序），此时"最后一个可见页"仍然是他刚在用的那一页。
+
+    浏览器内部页面（``edge://``、``chrome://``、``about:``）与地址读不到的页一律排除：
+    它们不是用户要操作的对象，混进来会让自动化跑在一个空白/设置页上。
+
+    ``probe`` 由调用方注入（生产里是 :meth:`AutomationEngine._describe_page`，
+    测试里是假回调），返回 ``{"url", "visible", "focused"}``；probe 抛异常时按
+    "该页读不出状态"处理（不影响它作为候选，只是拿不到优先权）——这就是给测试留的桩点。
+    """
+    items = list(pages or [])
+    usable: List[int] = []
+    meta: List[Dict[str, bool]] = []
+    for index, page in enumerate(items):
+        info: Dict[str, Any] = {}
+        if probe is not None:
+            try:
+                probed = probe(page)
+                info = dict(probed) if isinstance(probed, dict) else {}
+            except Exception:  # noqa: BLE001 - 探测失败按"读不出"处理
+                info = {}
+        url = str(info.get("url") or "") or _page_url(page)
+        if not url or _is_internal_url(url):
+            continue
+        usable.append(index)
+        meta.append({"visible": bool(info.get("visible")), "focused": bool(info.get("focused"))})
+    if not usable:
+        return -1
+    for position, index in enumerate(usable):
+        if meta[position]["focused"]:
+            return index
+    for position in range(len(usable) - 1, -1, -1):
+        if meta[position]["visible"]:
+            return usable[position]
+    return usable[-1]
+
+
+def _same_site(url_a: str, url_b: str) -> bool:
+    """两个地址是否属于同一个站点（协议 + 主机 + 端口一致）。
+
+    用途只有一个：复用模式下如果用户当前那一页跟配置里的「任务列表网址」不是同一个
+    站点，就**提醒一句**（而不是擅自导航过去——导航会丢掉他页面上的筛选/表单状态，
+    也可能把已登录的页面换成登录页）。两边只要有一边读不出主机名（``file://``、
+    相对地址）就返回 False：本地文件场景没有"站点"概念，提示只会变成噪音。
+    """
+    try:
+        a, b = urlparse(url_a or ""), urlparse(url_b or "")
+    except Exception:  # noqa: BLE001
+        return False
+    if not a.netloc or not b.netloc:
+        return False
+    return (a.scheme.lower(), a.netloc.lower()) == (b.scheme.lower(), b.netloc.lower())
+
+
+def debug_browser_executable(name: str) -> str:
+    """找到某个浏览器的可执行文件路径（用于"用调试模式启动浏览器"）；找不到返回空串。
+
+    **刻意不写"大而全的安装位置探测"**：跨平台的可执行文件位置本来就多（商店版、
+    绿色版、非标准路径、各发行版的包名不同），写全了又长又容易误判。这里只覆盖
+    最常见的位置 + ``PATH``，找不到就把"该敲什么命令"原样告诉用户，
+    让他自己拿命令行启动——这比假装支持、然后报一个底层错误好。
+
+    ``chromium``（Playwright 自带）在这里找不到是正常的：它由 Playwright 管理，
+    真要用"调试模式"跑它，命令行参数是一样的（见 :meth:`AutomationEngine.launch_debug_browser`）。
+    """
+    target = str(name or "").strip().lower()
+    if target not in CDP_BROWSER_NAMES:
+        return ""
+    candidates: List[str] = []
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA", "")
+        if target == "edge":
+            candidates += [
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            ]
+        elif target == "chrome":
+            candidates += [
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                os.path.join(local, r"Google\Chrome\Application\chrome.exe") if local else "",
+            ]
+    elif sys.platform == "darwin":
+        if target == "edge":
+            candidates.append("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge")
+        elif target == "chrome":
+            candidates.append("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    else:
+        candidates += ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]
+        if target == "edge":
+            candidates = ["microsoft-edge", "microsoft-edge-stable"]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if os.path.isabs(candidate):
+            if os.path.isfile(candidate):
+                return candidate
+        else:
+            found = shutil.which(candidate)
+            if found:
+                return found
+    return ""
+
+
+class _PickMachine:
+    """可视化选取的**两段式状态机**（任务书第 4 条）。
+
+    为什么要有它（用户的原话）：「可视化选取要加『开始选取』按钮，点击后才进入选取模式
+    ——因为用户可能需要先登录、先导航到目标页面，再开始选。」
+
+    老流程是"一发起就注入脚本、立刻进入选取模式"，问题很具体：用户还没登录、页面还停在
+    登录页时，他**根本没有东西可点**；选取脚本的悬停高亮与点击拦截还会干扰他登录。
+    所以拆成两段：
+
+        idle ──open──▶ waiting ──begin──▶ picking ──finish/cancel──▶ waiting ──close──▶ idle
+
+    * ``waiting``：页面已打开/连上，程序**什么都不注入**，只显示"请先在浏览器里完成登录、
+      导航到目标页面，准备好了点开始选取"，并显示当前目标页的地址供确认；
+    * ``picking``：脚本已注入，悬停高亮、点击选取、Esc 取消；
+    * 一轮结束（选到 / 取消 / 页面被关）后**回到 waiting**：可重选、可换页面再选；
+    * ``close`` 才真正结束这次选取（断开浏览器连接）。
+
+    **状态放在后端而不是前端**是刻意的（任务书要求"可查询、可断言"）：选取脚本真正注入
+    到了浏览器里，状态必须与那个事实一致；前端只是"反映状态"，刷新界面、切换设置页、
+    甚至重开设置窗口都不会把状态弄丢。前端轮询 ``automation_pick_status`` 拿到的就是
+    这里的快照。
+
+    本类是**纯状态**（不持有任何浏览器对象），便于无浏览器环境下单测；
+    浏览器句柄放在 :attr:`AutomationEngine._pick_session` 里。
+    """
+
+    def __init__(self) -> None:
+        self.state = PICK_STATE_IDLE
+        self.last_result = ""
+        self.target = "task_list"
+        self.url = ""
+        self.title = ""
+        self.selector = ""
+        self.message = ""
+        self.preview: Dict[str, Any] = {}
+        self.rounds = 0            # 已经完成过几轮选取（含取消/失败）
+        self.mode = ""             # reuse / debug / fresh，见 _BrowserSession.mode
+        self.browser = ""          # 面向用户名的浏览器名
+        self.reused = False        # 是否跑在"用户自己开着的浏览器"里
+        self.note = ""             # 需要让用户知道的一句话（例如"已复用当前标签页"）
+        self.started_at = 0.0
+        self.updated_at = ""
+        # 待写回配置的选取结果（target, selector）。由 main.py 取走一次后清空 ——
+        # 这样"轮询到选了新元素"和"把结果写进配置"这两件事不会重复执行。
+        self._pending_apply: Optional[Tuple[str, str]] = None
+
+    # ---- 状态判定 ----
+
+    @property
+    def picking(self) -> bool:
+        return self.state == PICK_STATE_PICKING
+
+    @property
+    def waiting(self) -> bool:
+        return self.state == PICK_STATE_WAITING
+
+    @property
+    def active(self) -> bool:
+        """是否处在"一次选取会话里"（等待准备或选取中）。"""
+        return self.state in (PICK_STATE_WAITING, PICK_STATE_PICKING)
+
+    # ---- 迁移 ----
+
+    def open(self, *, target: str = "task_list", url: str = "", title: str = "",
+             mode: str = "", browser: str = "", reused: bool = False, note: str = "") -> None:
+        """进入第一步「等待准备」。重复调用（还在等待时换页面）是允许的。"""
+        self.state = PICK_STATE_WAITING
+        self.target = str(target or "task_list")
+        self.url = str(url or "")
+        self.title = str(title or "")
+        self.mode = str(mode or "")
+        self.browser = str(browser or "")
+        self.reused = bool(reused)
+        self.note = str(note or "")
+        self.selector = ""
+        self.preview = {}
+        self.message = ""
+        self.last_result = ""
+        self._pending_apply = None
+        self.started_at = time.time()
+        self.updated_at = _now_iso()
+
+    def begin(self) -> None:
+        """第一步 → 第二步（用户点了「开始选取」）。
+
+        只有 ``waiting`` 才允许开始：在 ``idle`` 上开始说明"页面还没打开"，
+        在 ``picking`` 上开始说明"已经选着呢"。两种都不是能猜的情况，
+        所以直接报错并让前端把状态显示出来，而不是"当成新的一轮"把状态弄乱。
+        """
+        if self.state == PICK_STATE_PICKING:
+            raise AutomationError(_t("automation.picker.already_picking"))
+        if self.state != PICK_STATE_WAITING:
+            raise AutomationError(_t("automation.picker.not_ready"))
+        self.state = PICK_STATE_PICKING
+        self.last_result = ""
+        self.updated_at = _now_iso()
+
+    def finish(self, result: str, *, selector: str = "", message: str = "",
+               preview: Optional[Dict[str, Any]] = None) -> None:
+        """一轮结束（选取中 → 等待准备），记录结局，供用户重选。
+
+        结束后**回到 waiting 而不是 idle**：用户重选时不必再走一遍"打开页面"，
+        而他此刻看到的页面正是他想操作的那一页。
+        """
+        if self.state != PICK_STATE_PICKING:
+            return
+        self.state = PICK_STATE_WAITING
+        self.last_result = result if result in PICK_RESULTS else "error"
+        self.selector = str(selector or "")
+        self.message = str(message or "")
+        self.preview = dict(preview or {})
+        self.rounds += 1
+        self.updated_at = _now_iso()
+        if self.last_result == "picked" and self.selector:
+            self._pending_apply = (self.target, self.selector)
+
+    def cancel(self, reason: str = "cancelled", message: str = "") -> None:
+        """取消（Esc / 点「取消选取」）；不在选取中时是空操作。
+
+        Esc 是**页面上**的取消入口：脚本会把 ``cancelled`` 写进页面状态，由轮询收回来
+        后走这里，所以两条取消路径最终落到同一个迁移上（状态机只有一个真相）。
+        """
+        if self.state == PICK_STATE_PICKING:
+            self.finish(reason if reason in PICK_RESULTS else "cancelled", message=message)
+
+    def mark_page_gone(self, message: str = "") -> None:
+        """目标标签页被用户关掉了。
+
+        这是**明确错误**而不是"换一页继续"：任务书要求"不要误操作其他标签页"，
+        而"用户把页面关了"之后最危险的动作就是程序自己找一页替代。
+        等价于取消，但结局记为 ``page_closed``，界面上会说清楚原因。
+        """
+        if self.state == PICK_STATE_PICKING:
+            self.finish("page_closed", message=message)
+        elif self.state == PICK_STATE_WAITING:
+            # 等待准备期间页面被关：没有"进行中的一轮"，但仍要让用户看到原因
+            self.last_result = "page_closed"
+            self.message = str(message or "")
+            self.url = ""
+            self.title = ""
+            self.updated_at = _now_iso()
+
+    def close(self) -> None:
+        """结束这次选取，回到 idle（浏览器连接由调用方断开）。"""
+        self.state = PICK_STATE_IDLE
+        self.url = ""
+        self.title = ""
+        self.note = ""
+        self.mode = ""
+        self.browser = ""
+        self.reused = False
+        self.preview = {}
+        self.updated_at = _now_iso()
+
+    def take_pending_apply(self) -> Optional[Tuple[str, str]]:
+        """取走"待写回配置的选取结果"，只成功返回一次。"""
+        pending = self._pending_apply
+        self._pending_apply = None
+        return pending
+
+    def snapshot(self) -> Dict[str, Any]:
+        """当前状态的**纯数据**快照（不含面向用户的文案，便于单测断言）。"""
+        return {
+            "state": self.state,
+            "stage": 2 if self.picking else (1 if self.waiting else 0),
+            "active": self.active,
+            "picking": self.picking,
+            "last_result": self.last_result,
+            "target": self.target,
+            "url": self.url,
+            "title": self.title,
+            "selector": self.selector,
+            "message": self.message,
+            "preview": dict(self.preview),
+            "rounds": self.rounds,
+            "mode": self.mode,
+            "browser": self.browser,
+            "reused": self.reused,
+            "note": self.note,
+            "started_at": self.started_at,
+            "updated_at": self.updated_at,
+        }
+
+
 @dataclass
 class _HrefInfo:
     """一次 href 提取的完整结果（v0.2.1 自动化优化 任务二）。
@@ -446,16 +928,44 @@ class _BrowserSession:
     它**返回的是上下文而不是浏览器**（且 Python 侧 ``context.browser`` 恒为 None），
     于是"启动 → 新建上下文 → 关闭"这三个动作必须一起管。以前每个调用点都自己写
     ``browser.close()``，换机制时要改 6 处，容易漏；收成一个对象后只改这里。
+
+    **任务十七（自测问题修复-1）新增三档来源（``mode``）与两处关键差别**：
+
+    * ``fresh``  —— 兜底的老办法（``launch_persistent_context`` 开全新实例）。
+      代价是用户必须重新登录一次，界面上会明确说出来。
+    * ``reuse``  —— 连上用户**已经打开**的浏览器（``connect_over_cdp``），目标页是
+      用户当前活动的那一个标签页。这是用户真正想要的那一档。
+    * ``debug``  —— 连上"程序代启动的调试模式浏览器"。它和 ``reuse`` 在技术上完全一样
+      （都是 CDP 端点），差别只在**浏览器进程由谁启动**，因此分别记名以便提示文案不同。
+
+    ``owns_browser`` 是安全边界的一部分：**复用模式下一律为 False**，
+    意味着 ``close()`` 只断开连接、绝不 ``context.close()``/``browser.close()``。
+    这不是洁癖——CDP 连上的上下文就是用户的浏览器本体，关掉它等于替用户关掉
+    他所有窗口和标签页；而按 Chromium 的语义，``context.close()`` 在 CDP 场景下
+    会连带关闭它管理的浏览器。
+
+    ``target_page`` 是"本次操作的那一个标签页"（任务书要求"不要误操作其他标签页"）：
+    一旦确定就记在这里，后续所有动作只认它；它为 None 表示本次是新实例模式、
+    需要调用方自己开一个新标签页（``AutomationEngine._work_page``）。
     """
 
     def __init__(self, playwright: Any, context: Any, browser: Any = None, note: str = "",
-                 profile_dir: str = "", first_run: bool = False) -> None:
+                 profile_dir: str = "", first_run: bool = False, *, mode: str = "fresh",
+                 reused: bool = False, endpoint: str = "", target_page: Any = None,
+                 owns_browser: bool = True) -> None:
         self.playwright = playwright
         self.context = context
         self.browser = browser
         self.note = note
         self.profile_dir = profile_dir
         self.first_run = first_run    # 本次是否是"首次使用这个数据目录"（需要引导登录）
+        self.mode = mode              # fresh | reuse | debug
+        self.reused = bool(reused)    # 是否跑在"用户自己开着的浏览器"里
+        self.endpoint = endpoint      # 调试端点（只用于日志/提示，永远是 127.0.0.1）
+        self.target_page = target_page
+        self.target_url = ""          # 目标标签页确定时的地址（供界面显示与确认）
+        self.target_title = ""
+        self.owns_browser = bool(owns_browser)
 
     @property
     def pages(self) -> List[Any]:
@@ -469,16 +979,25 @@ class _BrowserSession:
 
         顺序不能反：先 ``context.close()`` 才能保证 Cookie / localStorage 落盘，
         否则下次启动拿不到这次刚登录的会话。
+
+        **复用模式（``owns_browser=False``）下只断开连接**：既不关上下文也不关浏览器，
+        用户那个浏览器得原样留在那儿——他的其他标签页、他的登录、他正在填的表单
+        都不该因为我们的自动化跑完而消失。
         """
-        for closer in (
-            lambda: self.context.close() if self.context is not None else None,
-            lambda: self.browser.close() if self.browser is not None else None,
-            lambda: self.playwright.stop() if self.playwright is not None else None,
-        ):
-            try:
-                closer()
-            except Exception:  # noqa: BLE001 - 关闭失败不能影响主流程
-                pass
+        if self.owns_browser:
+            for closer in (
+                lambda: self.context.close() if self.context is not None else None,
+                lambda: self.browser.close() if self.browser is not None else None,
+            ):
+                try:
+                    closer()
+                except Exception:  # noqa: BLE001 - 关闭失败不能影响主流程
+                    pass
+        try:
+            if self.playwright is not None:
+                self.playwright.stop()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 class AutomationEngine:
@@ -511,6 +1030,12 @@ class AutomationEngine:
         self.hook_dispatcher: Optional[Callable[[str, Dict[str, Any]], Any]] = None
         # 是否处于测试向导的试运行（不写结果文件与处理记录）
         self._dry_run = False
+        # 可视化选取的两段式状态机与它自己的浏览器会话（任务十七）：
+        # **独立于自动化运行的会话**——用户可能一边看着运行日志一边选元素，
+        # 两者共用一个 session 字段会互相踢掉对方的浏览器。
+        self._pick_machine = _PickMachine()
+        self._pick_session: Optional["_BrowserSession"] = None
+        self._pick_lock = threading.Lock()
 
     def _fire(self, stage: str, **context: Any) -> List[Dict[str, Any]]:
         """触发技能挂接的自动化钩子；钩子出错只记日志，绝不中断自动化本身。"""
@@ -933,11 +1458,57 @@ class AutomationEngine:
                     legacy_removed=bool(result["legacy_removed"]))
         return result
 
+    def _browser_candidates(self) -> List[str]:
+        """给出这次要**依次尝试**的浏览器列表（任务十六）。
+
+        优先级：用户显式指定的那个 → 旧字段 ``browser_channel`` 指向的那个
+        （尊重既有配置，升级不该把人已经调好的 Edge 换掉）→ :data:`AUTO_ORDER`。
+        """
+        want = str(getattr(self.cfg, "browser", "auto") or "auto").strip().lower()
+        if want in BROWSER_CHOICES:
+            return [want]
+        order: List[str] = []
+        legacy = str(getattr(self.cfg, "browser_channel", "") or "").strip().lower()
+        if legacy:
+            for name, spec in BROWSER_CHOICES.items():
+                if spec["channel"] and spec["channel"].lower() == legacy:
+                    order.append(name)
+        for name in AUTO_ORDER:
+            if name not in order:
+                order.append(name)
+        return order
+
+    def _launch_browser(self, playwright: Any, name: str,
+                        kwargs: Dict[str, Any]) -> Tuple[Any, str]:
+        """按候选名启动一次持久化上下文，返回 ``(context, 错误文本)``。
+
+        **不预检"系统里装没装这个浏览器"**：跨平台的可执行文件探测既啰嗦又容易
+        误判（商店版、绿色版、非标准安装路径都会漏）。直接试着启动、按真实结果
+        决策更可靠，失败原因还能原样带给用户。
+        """
+        spec = BROWSER_CHOICES[name]
+        engine = getattr(playwright, spec["engine"], None)
+        if engine is None:
+            return None, _t("automation.browser.engine_missing", engine=spec["engine"])
+        try:
+            if spec["channel"]:
+                return engine.launch_persistent_context(channel=spec["channel"], **kwargs), ""
+            return engine.launch_persistent_context(**kwargs), ""
+        except Exception as exc:  # noqa: BLE001 —— 没装/损坏/被策略拦截都会在这里
+            return None, _redact(exc, 160)
+
     def _open_session(self) -> "_BrowserSession":
         """启动有头浏览器并打开**持久化上下文**（登录态由浏览器自己保存与复用）。
 
-        通道（``browser_channel``，默认 msedge）失败时回退默认 Chromium；两条路都失败
-        才抛 AutomationError。``note`` 里带可读的回退说明，由调用方转成进度事件。
+        **任务十六（自测问题修复-1）**：不再是"只认一个通道、失败就退默认 Chromium"，
+        而是按 :meth:`_browser_candidates` 给出的候选**依次尝试**（默认
+        ``edge → chrome → chromium → firefox``），第一个能起来的就用它。
+        全部失败时把**每个浏览器各自的失败原因**拼进错误里一起给用户，
+        这样"我没装 Chrome"和"浏览器被安全软件拦住"能区分开，
+        而不是甩一句底层的 playwright 报错。
+
+        ``note`` 里带可读的说明（实际用了哪个浏览器、跳过了哪几个），
+        由调用方转成进度事件。
         """
         if _sync_playwright is None:
             raise AutomationError(_t("automation.validate.no_playwright"))
@@ -951,35 +1522,37 @@ class AutomationEngine:
             ) from exc
 
         playwright = _sync_playwright().start()
-        channel = str(getattr(self.cfg, "browser_channel", "msedge") or "").strip()
         kwargs: Dict[str, Any] = {
             "user_data_dir": profile,
             "headless": False,          # 固定有头：用户要能看见并手动登录
             "viewport": {"width": 1440, "height": 900},
             "accept_downloads": True,
         }
+        candidates = self._browser_candidates()
         note = ""
         context = None
-        if channel:
-            try:
-                context = playwright.chromium.launch_persistent_context(channel=channel, **kwargs)
-            except Exception as exc:  # noqa: BLE001
-                note = _t("automation.browser.channel_fallback", channel=channel,
-                          error=_redact(exc, 120))
-                self.logger.warning(note)
+        used = ""
+        failures: List[str] = []
+        for name in candidates:
+            context, error = self._launch_browser(playwright, name, kwargs)
+            if context is not None:
+                used = name
+                break
+            label = BROWSER_LABELS.get(name, name)
+            failures.append(_t("automation.browser.candidate_failed",
+                               browser=label, error=error))
+            self.logger.warning("浏览器 %s 启动失败：%s", name, error)
         if context is None:
             try:
-                context = playwright.chromium.launch_persistent_context(**kwargs)
-            except Exception as exc:  # noqa: BLE001
-                try:
-                    playwright.stop()
-                except Exception:  # noqa: BLE001
-                    pass
-                detail = _t("automation.browser.chromium_also_failed",
-                            note=note, error=_redact(exc, 200))
-                raise AutomationError(
-                    _t("automation.browser.launch_failed", detail=detail)
-                ) from exc
+                playwright.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            raise AutomationError(
+                _t("automation.browser.launch_failed", detail="；".join(failures))
+            )
+        if len(candidates) > 1:
+            note = _t("automation.browser.using",
+                      browser=BROWSER_LABELS.get(used, used))
 
         # 首次使用该目录：把旧机制留下的 browser_state.json 里的 Cookie 导入一次，
         # 老用户升级后不必重新登录（只导入，不删除源文件）。
@@ -988,6 +1561,431 @@ class AutomationEngine:
             note = (note + _t("automation.login.migrated", count=migrated)).strip()
         return _BrowserSession(playwright, context, getattr(context, "browser", None),
                                note, profile_dir=profile, first_run=first_run)
+
+    # =====================================================================
+    # 复用已打开的浏览器（任务十七，自测问题修复-1）
+    # =====================================================================
+
+    @property
+    def reuse_mode(self) -> str:
+        """复用策略：``auto`` / ``required`` / ``off``（非法值按 ``auto`` 处理）。
+
+        ``auto`` 之所以是默认（用户的决定）：不让功能整体不可用，但代价必须说清楚——
+        回退到新实例时进度里会明说"需要重新登录"（见 :meth:`_open_work_session`）。
+        """
+        raw = str(getattr(self.cfg, "browser_reuse", "auto") or "auto").strip().lower()
+        return raw if raw in REUSE_MODES else "auto"
+
+    @property
+    def cdp_port(self) -> int:
+        """调试端口（非法值回落默认端口，配置被手改坏也不该让功能起不来）。"""
+        try:
+            value = int(getattr(self.cfg, "cdp_port", CDP_DEFAULT_PORT) or CDP_DEFAULT_PORT)
+        except Exception:  # noqa: BLE001
+            value = CDP_DEFAULT_PORT
+        return value if 1 <= value <= 65535 else CDP_DEFAULT_PORT
+
+    @property
+    def cdp_endpoint(self) -> str:
+        """调试端点。**永远是 127.0.0.1**（见 :func:`_cdp_endpoint`）。"""
+        return _cdp_endpoint(self.cdp_port)
+
+    @property
+    def browser_choice(self) -> str:
+        """用户选的浏览器取值（``auto`` / ``edge`` / ``chrome`` / ``chromium`` / ``firefox``）。"""
+        return str(getattr(self.cfg, "browser", "auto") or "auto").strip().lower()
+
+    @property
+    def browser_label(self) -> str:
+        """面向用户的浏览器名（``auto`` 要展开成"依次尝试…"，否则界面上只看到一个 auto）。"""
+        want = self.browser_choice
+        if want == "auto":
+            return _t("automation.picker.browser_auto")
+        return BROWSER_LABELS.get(want, want)
+
+    @property
+    def debug_profile_dir(self) -> str:
+        """程序代启动"调试模式浏览器"时用的数据目录。
+
+        **为什么不复用 ``profile_dir``**：浏览器不允许两个实例共用同一个用户数据目录，
+        而 ``profile_dir`` 是给兜底新实例（``launch_persistent_context``）用的；
+        两者一旦同时开，必有一个起不来，报错还是那种难以理解的
+        "ProcessSingleton / user data directory is already in use"。所以调试实例
+        单独一个目录（同级加 ``_debug``）。
+
+        放在同级是刻意的：用户改了「登录态目录」之后，调试实例的数据目录跟着一起搬，
+        不会出现"登录态设到 D 盘、调试浏览器还在 C 盘"这种莫名其妙的错位。
+        """
+        base = self.profile_dir
+        return base + "_debug"
+
+    def _describe_page(self, page: Any) -> Dict[str, Any]:
+        """读一个标签页的"自我介绍"（地址 / 标题 / 可见 / 是否聚焦）。
+
+        只读这四项——**不读页面内容、不读 Cookie**：挑"用户正在看哪一页"只需要这四项，
+        而多读一眼用户的页面内容就多一分越界的风险（任务书第 6 条）。
+
+        ``evaluate`` 失败（页面正被关掉、正在导航、跨域帧）时返回"读不出来"，
+        由 :func:`choose_target_index` 决定怎么用，**不抛异常**：
+        "用户恰好在这一瞬间关了页面"是正常情形，不该变成一次崩溃。
+        """
+        info: Dict[str, Any] = {"url": _page_url(page), "title": "", "visible": False,
+                                "focused": False}
+        if page is None:
+            return info
+        try:
+            probed = page.evaluate(
+                "() => ({ url: location.href, title: document.title,"
+                " visible: document.visibilityState === 'visible',"
+                " focused: document.hasFocus() })"
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("读取标签页信息失败：%s", _redact(exc, 120))
+            return info
+        if isinstance(probed, dict):
+            for key in ("url", "title", "visible", "focused"):
+                if probed.get(key) is not None:
+                    info[key] = probed[key]
+        return info
+
+    def _connect_reuse_session(self) -> Optional["_BrowserSession"]:
+        """尝试连上**已经以调试模式打开**的浏览器；连不上返回 ``None``（不抛异常）。
+
+        两种情形在这里合流：用户自己用 ``--remote-debugging-port`` 启动的浏览器、
+        以及「用调试模式启动浏览器」由程序代启动的那个 —— 对 Playwright 来说都是
+        "某个 127.0.0.1:9222 上的 CDP 端点"，没有任何区别。
+
+        **连不上不是错误**（用户没开调试模式是常态），所以这里只记一条 debug 日志，
+        把"该不该失败"留给调用方按 ``automation.browser_reuse`` 决定。
+
+        后续要支持 Firefox 之类的非 CDP 浏览器，扩展点就在这里：
+        它是"怎么拿到一个可用的 context"的唯一入口，换协议只改这一处。
+        """
+        if _sync_playwright is None:
+            return None
+        playwright = None
+        try:
+            playwright = _sync_playwright().start()
+            browser = playwright.chromium.connect_over_cdp(
+                self.cdp_endpoint, timeout=CDP_CONNECT_TIMEOUT_MS
+            )
+        except Exception as exc:  # noqa: BLE001 —— 端口没人监听是最常见的情况
+            self.logger.info("未能连接本机调试端口 %s（将按策略处理）：%s",
+                             self.cdp_port, _redact(exc, 160))
+            if playwright is not None:
+                try:
+                    playwright.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+            return None
+        # 连上的浏览器里通常已经有 context（用户开着的那些窗口）；一个都没有时
+        # （刚启动、还没开窗口）才自己新建一个 —— 新建 context 只影响我们这个调试实例，
+        # 不会动用户已有的标签页。
+        context = None
+        contexts = list(getattr(browser, "contexts", []) or [])
+        if contexts:
+            context = contexts[0]
+        else:
+            try:
+                context = browser.new_context()
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning("调试浏览器里没有可用的浏览器上下文：%s", _redact(exc, 150))
+                try:
+                    playwright.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+                return None
+        self.logger.info("已连接本机调试端口 %s（复用已打开的浏览器）", self.cdp_port)
+        # owns_browser=False：**绝不关闭用户的浏览器**（见 _BrowserSession.close）
+        return _BrowserSession(playwright, context, None, mode="reuse", reused=True,
+                               endpoint=self.cdp_endpoint, owns_browser=False)
+
+    def _select_target_page(self, session: "_BrowserSession") -> Optional[Any]:
+        """在会话里挑出本次操作的目标标签页，并把它的地址/标题记进会话。
+
+        挑完就**固定下来**（写进 ``session.target_page``）：任务书要求"限制在用户指定的
+        页面上，不要误操作其他标签页"，而"每次都重新挑一次"正是误操作其他页的根源——
+        用户切一下标签页，程序的下一个动作就会落到新页上。
+        """
+        pages = session.pages
+        index = choose_target_index(pages, self._describe_page)
+        if index < 0:
+            return None
+        page = pages[index]
+        info = self._describe_page(page)
+        session.target_page = page
+        session.target_url = str(info.get("url") or _page_url(page) or "")
+        session.target_title = str(info.get("title") or "")
+        return page
+
+    def _work_page(self, session: "_BrowserSession") -> Any:
+        """取本次操作的目标标签页；复用模式下就是用户的当前标签页。
+
+        复用模式（``target_page`` 已定）**不新建标签页**：用户看到的、登录过的那一页
+        才是要操作的对象。只有兜底新实例（``target_page`` 为 None）才新开一页。
+        """
+        page = session.target_page
+        if page is not None:
+            return page
+        page = session.new_page()
+        session.target_page = page     # 记下来：本轮后续动作都只用这一页
+        session.target_url = _page_url(page)
+        return page
+
+    def _enforce_target_page(self, session: "_BrowserSession") -> Any:
+        """确认目标标签页还活着；被用户关掉时抛错（**不换别的页**）。
+
+        这是任务书"不要误操作其他标签页"的执行点：页面没了就明确报错，
+        让用户自己决定下一步（重新开始选取 / 重新打开页面），
+        而不是由程序在你的一堆标签页里挑一个"看起来差不多"的继续干。
+        """
+        page = session.target_page
+        if page is None:
+            return self._work_page(session)
+        # 只认 is_closed()：**不能拿"地址为空"当被关掉**——“刚新开的空白页”地址本来就是空的，
+        # 那样会把兜底新实例的第一页误判成"用户关了页面"，功能直接不可用。
+        closed = False
+        try:
+            closed = bool(page.is_closed())
+        except Exception:  # noqa: BLE001 - 某些实现没有 is_closed，按"还活着"处理
+            closed = False
+        if closed:
+            raise AutomationError(_t("automation.reuse.target_closed"))
+        return page
+
+    def _refresh_target_info(self, session: "_BrowserSession") -> None:
+        """把目标页当前的地址/标题同步到会话上（供界面显示"我现在在哪一页"）。
+
+        为什么每次都要重读而不是记一次就完：两段式流程里**用户会自己导航**
+        （这正是任务书第 4 条的设计），"准备阶段"显示的地址必须是他此刻真正打开的那一页，
+        否则他会以为程序还在看旧页面、不敢动手。
+        """
+        page = session.target_page
+        if page is None:
+            return
+        info = self._describe_page(page)
+        session.target_url = str(info.get("url") or _page_url(page) or "")
+        session.target_title = str(info.get("title") or "")
+
+    def _prepare_task_list_page(self, page: Any, session: "_BrowserSession",
+                                url: str = "") -> str:
+        """让目标页停在任务列表上；返回一句要告诉用户的话（可为空）。
+
+        规则（任务书：点击链接模拟手动点击、任务列表在已打开的标签页里找）：
+
+        * **复用模式**：用户当前这一页就是他日常用的那一页，**绝不导航**——
+          导航会丢掉他的筛选/表单/SPA 路由状态，还可能把已登录的页面换成登录页
+          （这正是用户抱怨"又要重新登录"的来源）。只有当他那一页还是空白页
+          （``about:blank``，读不出地址）时才 ``goto`` 配置里的任务列表网址，
+          这也是任务书允许的例外："首次打开时仍可 goto"。
+        * **兜底新实例**：老行为，``goto`` 任务列表网址（``url`` 优先于配置）。
+
+        返回的说明用来让用户在界面上确认"程序正在哪一页上干活"。
+        """
+        target_url = (url or "").strip() or self.task_list_url
+        current = _page_url(page)
+        if session.reused and current and not _is_internal_url(current):
+            note = _t("automation.reuse.using_open_tab", url=_clip(current, 150))
+            if target_url and not _same_site(current, target_url):
+                note += _t("automation.reuse.tab_mismatch", want=_clip(target_url, 120))
+            self._refresh_target_info(session)
+            return note
+        if target_url:
+            self._goto(page, target_url)
+        self._refresh_target_info(session)
+        return ""
+
+    def _open_work_session(self) -> "_BrowserSession":
+        """打开一次工作会话：**优先复用用户已打开的浏览器**（任务十七的核心入口）。
+
+        决策顺序**刻意是这样**：
+
+        1. 浏览器选的是 ``firefox`` → 不碰 CDP。Firefox 没有 CDP 端点（协议层不支持），
+           拿一个注定失败的连接去试只会白等 5 秒再报一个看不懂的错；直接走兜底并在
+           note 里说明"Firefox 不支持复用已打开的浏览器"（任务书 F 条）；
+        2. ``browser_reuse=off`` → 用户明确要求别碰他的浏览器，直接兜底；
+        3. 连 ``127.0.0.1:<端口>`` 上的调试浏览器（用户自己开的或程序代启动的都一样）；
+        4. 连不上：``required`` 就报错并给出引导（"请用调试模式启动浏览器"），
+           ``auto`` 就回退到全新实例 —— 但**必须告诉用户代价是重新登录**。
+
+        为什么默认要回退（``auto`` 的语义，也是用户拍板的那条）：不让功能整体不可用。
+        一个新用户第一次点"运行"时，浏览器多半没开调试模式；此时直接报错会让他以为
+        功能坏了，而回退到老办法至少能把活干完，代价只是登录一次——前提是我们
+        **说清楚**。所以回退路径的 note 不是可选的装饰，是这条设计的一部分。
+        """
+        want = self.browser_choice
+        label = self.browser_label
+        mode = self.reuse_mode
+        note = ""
+        if mode != "off" and not cdp_supported(want):
+            # Firefox：不试连接，直接兜底（任务书 F 条明确要求的边界）
+            note = _t("automation.reuse.unsupported_browser", browser=label)
+        elif mode != "off":
+            session = self._connect_reuse_session()
+            if session is not None:
+                page = self._select_target_page(session)
+                if page is not None:
+                    session.note = _t("automation.reuse.connected",
+                                      browser=label, port=self.cdp_port,
+                                      url=_clip(session.target_url, 150))
+                    self._audit("browser_reuse", result="ok", mode="reuse",
+                                port=self.cdp_port, url=session.target_url)
+                    return session
+                # 连上了却没有一个可用的普通页面（全是内部页面）：不能对着
+                # edge://settings 这类页面干活，关掉连接走兜底。
+                self.logger.warning("调试浏览器里没有可用的标签页，改用新实例")
+                note = _t("automation.reuse.no_usable_tab")
+                session.close()
+            elif mode == "required":
+                self._audit("browser_reuse", result="failed", mode="required",
+                            port=self.cdp_port, error="not_connected")
+                raise AutomationError(
+                    _t("automation.reuse.required_failed", port=self.cdp_port,
+                       browser=label)
+                )
+            else:
+                note = _t("automation.reuse.not_connected", port=self.cdp_port)
+        elif mode == "off":
+            note = _t("automation.reuse.disabled")
+
+        # ---- 兜底：老路径（全新实例）----
+        session = self._open_session()
+        note = (note + _t("automation.reuse.fallback_cost")).strip()
+        session.note = (session.note + note).strip()
+        self._audit("browser_reuse", result="fallback", mode=mode,
+                    port=self.cdp_port, browser=want)
+        return session
+
+    # ---------- "用调试模式启动浏览器"入口（任务十七 A.2） ----------
+
+    def debug_browser_command(self) -> Dict[str, Any]:
+        """返回"怎么以调试模式启动浏览器"的命令行（不执行）。
+
+        ``--remote-debugging-address=127.0.0.1`` 是**显式**写上的：Chromium 默认就绑
+        回环，但把安全边界交给"默认行为"是不牢靠的（默认值会变、不同分支的实现也不同），
+        所以宁可多一个参数，让它在我们看得见的这一行里。
+        """
+        want = self.browser_choice
+        if want not in CDP_BROWSER_NAMES:
+            want = "chrome" if want == "auto" else want
+        exe = debug_browser_executable(want)
+        args = [
+            f"--remote-debugging-port={self.cdp_port}",
+            f"--remote-debugging-address={CDP_LOOPBACK_HOST}",
+            f"--user-data-dir={self.debug_profile_dir}",
+        ]
+        return {
+            "browser": want,
+            "label": BROWSER_LABELS.get(want, want),
+            "executable": exe,
+            "args": args,
+            "command": " ".join([exe or BROWSER_LABELS.get(want, want)] + [
+                (f'"{a}"' if " " in a else a) for a in args]),
+            "endpoint": self.cdp_endpoint,
+            "profile_dir": self.debug_profile_dir,
+        }
+
+    def launch_debug_browser(self) -> Dict[str, Any]:
+        """代启动一个带调试端口的浏览器，等端口就绪后返回。
+
+        **这个实例不由程序关闭**（用户的设计决定）：用户可以自己在里面登录、导航，
+        程序只是"连上去用一下"。所以这里既不记 pid 也不在退出时杀进程——
+        他的登录态与标签页要留到他下次自己关掉为止。
+
+        ``--user-data-dir`` 指向自动化专用的 ``*_debug`` 目录而不是用户的日常 profile，
+        有两个原因，都很实际：
+          1. **浏览器不允许两个实例共用同一个用户数据目录**，用日常 profile 的话
+             用户只要开着浏览器，我们这个就起不来；
+          2. Chromium 136 以后**拒绝在默认用户数据目录上开调试端口**（安全策略），
+             硬来会得到一个端口永远不监听、看起来"启动成功了"的假象。
+        """
+        info = self.debug_browser_command()
+        exe = info["executable"]
+        if not exe:
+            return {**info, "ok": False, "message": _t("automation.reuse.debug_no_exe",
+                                                       browser=info["label"])}
+        try:
+            os.makedirs(self.debug_profile_dir, exist_ok=True)
+        except Exception as exc:  # noqa: BLE001
+            return {**info, "ok": False,
+                    "message": _t("automation.browser.profile_dir_failed",
+                                  path=self.debug_profile_dir, error=_redact(exc, 150))}
+        try:
+            creation = 0
+            if os.name == "nt":
+                creation = 0x00000008 | 0x00000200   # DETACHED_PROCESS | NEW_PROCESS_GROUP
+            elif hasattr(os, "setsid"):
+                creation = 0                        # POSIX 用下面 preexec 的 setsid
+            kwargs: Dict[str, Any] = {"close_fds": True}
+            if os.name == "nt":
+                kwargs["creationflags"] = creation
+            else:
+                kwargs["start_new_session"] = True
+            subprocess.Popen([exe] + info["args"], **kwargs)  # noqa: S603 - 参数是固定拼的
+        except Exception as exc:  # noqa: BLE001
+            return {**info, "ok": False, "message": _t("automation.reuse.debug_launch_failed",
+                                                       error=_redact(exc, 200))}
+        ready = self._wait_cdp_ready(CDP_READY_TIMEOUT_SECONDS)
+        self._audit("debug_browser_launch", result="ok" if ready else "timeout",
+                    port=self.cdp_port, browser=info["browser"])
+        return {
+            **info,
+            "ok": ready,
+            "message": (_t("automation.reuse.debug_ready", port=self.cdp_port)
+                        if ready else
+                        _t("automation.reuse.debug_not_ready", port=self.cdp_port)),
+        }
+
+    def _wait_cdp_ready(self, timeout_seconds: int = CDP_READY_TIMEOUT_SECONDS) -> bool:
+        """轮询等待调试端口就绪（**只做 TCP 连通性探测**）。
+
+        为什么不顺便发一个 HTTP 请求确认"这真是 CDP"：那需要构造带正确 Host 头的请求
+        （Chromium 会用 Host 校验挡掉 DNS rebinding），为一个"是否就绪"的判断引入这些
+        细节不划算——端口能连上，紧接着的 ``connect_over_cdp`` 会给出权威结论。
+        """
+        deadline = time.monotonic() + max(1, int(timeout_seconds))
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection((CDP_LOOPBACK_HOST, self.cdp_port), timeout=0.5):
+                    return True
+            except OSError:
+                time.sleep(0.4)
+        return False
+
+    def browser_reuse_payload(self) -> Dict[str, Any]:
+        """给前端的"复用已打开的浏览器"能力状态（**不含任何凭据**）。
+
+        只报告配置、能力与"当前端口上有没有东西"，不报告用户的任何页面内容：
+        前端需要它来显示"这次会不会复用成功"以及给出引导，仅此而已。
+        """
+        want = self.browser_choice
+        mode = self.reuse_mode
+        supported = cdp_supported(want)
+        debug = self.debug_browser_command()
+        return {
+            "browser": want,
+            "browser_label": self.browser_label,
+            "browser_reuse": mode,
+            "cdp_port": self.cdp_port,
+            "endpoint": self.cdp_endpoint,
+            "supported": supported,
+            "available": self._cdp_port_open(),
+            "debug_executable": debug.get("executable", ""),
+            "debug_command": debug.get("command", ""),
+            "debug_profile_dir": self.debug_profile_dir,
+            "profile_dir": self.profile_dir,
+            # 面向用户的说明（后端本地化，前端直接显示）
+            "note": ("" if supported else
+                     _t("automation.reuse.unsupported_browser", browser=self.browser_label)),
+        }
+
+    def _cdp_port_open(self) -> bool:
+        """本机调试端口上是否已经有东西在监听（不做连接、不发请求，只探一下）。"""
+        try:
+            with socket.create_connection((CDP_LOOPBACK_HOST, self.cdp_port), timeout=0.4):
+                return True
+        except OSError:
+            return False
 
     def _migrate_legacy_state(self, context: Any) -> int:
         """把 ``browser_state.json`` 的 Cookie 导入新数据目录，返回导入条数。
@@ -1451,6 +2449,7 @@ class AutomationEngine:
         page: Any,
         entry: _LinkEntry,
         pages_before: Sequence[Any],
+        reason: str = "fallback",
     ) -> Iterator[Dict[str, Any]]:
         """点击元素触发跳转，返回跳转后的页面对象（失败返回 None）。
 
@@ -1459,6 +2458,13 @@ class AutomationEngine:
 
         1. **新标签页**（带 ``target="_blank"`` 或 JS ``window.open``）；
         2. **当前页跳转**（``location.href = ...``）。
+
+        ``reason`` 只影响**给用户看的那句话**（任务十七）：
+
+        * ``fallback``（默认）：这次点击是"没有可用网址"的退路，提示里要点明原因；
+        * ``manual``：这次点击是**刻意的**——任务书要求"点击链接需要模拟手动点击，
+          这样跳转出的页面才无需登录"。此时不该说"没有可直接打开的网址"
+          （那个链接明明有），否则用户会以为程序判断错了。
 
         作为生成器使用：``target = yield from self._click_into(...)``。
         """
@@ -1471,8 +2477,12 @@ class AutomationEngine:
             before_url = str(getattr(page, "url", "") or "")
         except Exception:  # noqa: BLE001
             before_url = ""
-        yield self._event("delta", _t("automation.link.click_fallback",
-                                      raw=_clip(entry.href_raw, 60) or entry.href_kind))
+        if reason == "manual":
+            yield self._event("delta", _t("automation.link.click_manual",
+                                          raw=_clip(entry.href_raw, 60) or _clip(entry.href, 60)))
+        else:
+            yield self._event("delta", _t("automation.link.click_fallback",
+                                          raw=_clip(entry.href_raw, 60) or entry.href_kind))
         try:
             self._click(entry.handle)
         except Exception as exc:  # noqa: BLE001
@@ -1501,6 +2511,116 @@ class AutomationEngine:
             pass
         yield self._event("delta", _t("automation.link.click_no_navigation"))
         return None
+
+    # ---------- 模拟手动点击进入页面（任务十七 C） ----------
+
+    @staticmethod
+    def _handle_alive(handle: Any) -> bool:
+        """句柄指向的元素是否还挂在当前文档上（**快速失败**，不等待超时）。
+
+        为什么必须问这一句：``element.click()`` 在句柄失效时不是立刻报错，
+        而是**重试到超时**（默认 15 秒以上，``_click`` 里还有三级降级，最坏能拖到 30 秒）。
+        每个任务白等半分钟、还只换来一个失败，体验比直接退回导航差得多。
+        ``el.isConnected`` 是同步求值的，句柄一失效就立刻抛"未附着到文档"，
+        毫秒级返回——用它做前置判断，代价可以忽略。
+        """
+        if handle is None:
+            return False
+        try:
+            return bool(handle.evaluate("el => !!(el && el.isConnected)"))
+        except Exception:  # noqa: BLE001 - 句柄失效/上下文销毁都是"不可用"
+            return False
+
+    def _relocate_entry(self, page: Any, entry: _LinkEntry) -> Optional[Any]:
+        """在（可能已经重新载入的）任务列表页上，把这条任务**重新定位**成可点击句柄。
+
+        为什么需要它：``ElementHandle`` 引用的是"某个文档里的那个元素"。每处理完一个任务
+        我们会回到任务列表，页面一旦重新载入，之前收集的那批句柄就全部失效。
+        而任务十七要求"进详情页要模拟手动点击"，点击就必须有一个**活着的**句柄——
+        所以回到列表之后要按"地址相同 / 文本相同"把目标元素重新找回来。
+
+        匹配顺序刻意是**地址优先、文本兜底**：地址是站点给的唯一标识，最可靠；
+        文本可能因为页面上的角标（"（新）"、未读数）而变化，只能当兜底。
+        找不到就返回 None，由调用方退回按地址导航，不硬撑。
+        """
+        selector = str(getattr(self.cfg, "task_list_selector", "") or "").strip()
+        if not selector:
+            return None
+        row_selector = str(getattr(self.cfg, "task_row_selector", "") or "")
+        try:
+            candidates = self._collect_links(page, selector, row_selector)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("重新定位任务元素失败：%s", _redact(exc, 150))
+            return None
+        fallback: Optional[Any] = None
+        for candidate in candidates:
+            if candidate.handle is None:
+                continue
+            if entry.href and candidate.href and candidate.href == entry.href:
+                return candidate.handle
+            if fallback is None and entry.text and candidate.text == entry.text:
+                fallback = candidate.handle
+        return fallback
+
+    def _open_task_detail(
+        self,
+        context: Any,
+        page: Any,
+        entry: _LinkEntry,
+        pages_before: Sequence[Any],
+    ) -> Iterator[Dict[str, Any]]:
+        """进入任务详情页：**优先模拟手动点击**，点不动才退回按地址导航。
+
+        用户的原话是这条需求的由来：「点击链接需要模拟手动点击，这样跳转出的页面才无需登录。」
+        原因是内网系统常见的一类实现：服务端在**跳转时**校验 Referer 或一次性 token，
+        或者前端有路由守卫；直接 ``page.goto(href)`` 会被当成"从外部直接访问"而弹回登录页，
+        而 ``element.click()`` 走的是页面自己的跳转逻辑，会话、Referer、SPA 状态全部沿用。
+
+        也就因此不能简单地"一律点击"：句柄失效（页面重新载入过）时点击是注定失败的，
+        与其让用户白等，不如按地址导航进去——那种情况下"能进去"比"用点击进去"重要。
+        """
+        handle = entry.handle
+        if not self._handle_alive(handle):
+            handle = self._relocate_entry(page, entry)
+        if handle is not None:
+            clicked = _LinkEntry(text=entry.text, href=entry.href, handle=handle,
+                                 frame=entry.frame, href_raw=entry.href_raw,
+                                 href_kind=entry.href_kind, click_only=entry.click_only)
+            opened = yield from self._click_into(context, page, clicked, pages_before,
+                                                 reason="manual")
+            if opened is not None:
+                return opened
+        if entry.href:
+            yield self._event("delta", _t("automation.link.goto_fallback",
+                                          url=_clip(entry.href, 150)))
+            self._goto(page, entry.href)
+            return page
+        return None
+
+    def _back_to_task_list(self, page: Any, task_selector: str) -> bool:
+        """处理完一个任务后回到任务列表；返回是否"看起来回到了"。
+
+        优先用 ``go_back()``（浏览器自己的后退）：它是**同一个会话内的历史导航**，
+        保留 Referer 与 SPA 的前端状态，是"再点一次列表"之外最接近用户手动操作的路径。
+        后退之后用任务选择器验一下是否真的回到了列表——很多站点点任务会新开标签页，
+        此时当前页的"后退"会退到列表**之前**的那一页，必须识别出来并改用地址导航。
+
+        验不出来（没配选择器）就直接按地址导航，保持老行为。
+        """
+        if task_selector.strip():
+            try:
+                page.go_back(wait_until="domcontentloaded", timeout=self.page_timeout_ms)
+                self._wait_loaded(page)
+                if self._collect_links(page, task_selector,
+                                       str(getattr(self.cfg, "task_row_selector", "") or "")):
+                    return True
+            except Exception as exc:  # noqa: BLE001 - 没有历史/超时/被站点拦截都要兜住
+                self.logger.debug("后退回列表失败：%s", _redact(exc, 150))
+        if not self.task_list_url:
+            return False
+        self._goto(page, self.task_list_url)
+        self._wait_loaded(page)
+        return True
 
     def _name_from_response(self, response: Any, url: str, hint: str = "") -> str:
         """从响应头/URL 推断文件名。"""
@@ -1826,12 +2946,13 @@ class AutomationEngine:
     PICKER_JS = r"""
 (bannerText) => {
   const TEXT = bannerText || 'EchoDesk picker: hover and click the target element; press Esc to cancel';
-  const existing = document.querySelector('[data-echodesk="banner"]');
-  if (window.__echodeskPickerInstalled) {
-    window.__echodeskPick = {picked: null, cancelled: false, hover: null};
-    if (existing) existing.textContent = TEXT;
-    return 'reinstalled';
-  }
+  // 任务十七：**每次都完整重装**，不再走"已安装就直接返回"的老路子。
+  // 原因很具体：用户点「取消选取」后我们会把浮层摘掉（见 PICKER_STOP_JS），
+  // 而老代码在这种情况下只重置了状态、不重建节点，于是"取消后再点开始选取"
+  // 会出现"脚本已装好但看不见高亮框"的半死状态。
+  // 重装会重复绑定一组监听器，但它们是幂等的：旧监听器只写自己闭包里那个已被替换的
+  // state 对象、只改已经摘除的节点，不会再影响页面。
+  document.querySelectorAll('[data-echodesk]').forEach(n => { try { n.remove(); } catch (e) {} });
   window.__echodeskPickerInstalled = true;
   const state = window.__echodeskPick = {picked: null, cancelled: false, hover: null};
 
@@ -1956,6 +3077,29 @@ class AutomationEngine:
   return 'installed';
 }
 """
+
+    #: 轮询页面上的拾取结果（任务十七把这段老代码里的内联表达式提出来共用）：
+    #: 两段式流程的"选取中"状态就是靠它把页面里的事实收回到后端状态机上的。
+    PICKER_POLL_JS = (
+        "() => { const s = window.__echodeskPick; if (!s) return null;"
+        " return s.picked ? {picked: s.picked} : (s.cancelled ? {cancelled: true} : null); }"
+    )
+
+    #: 停止/清理拾取脚本（任务十七新增）：把浮层摘掉、把状态标记为取消。
+    #:
+    #: 为什么要把它与 PICKER_JS 分开：取消是**独立的一步**（用户可能按 Esc、也可能在
+    #: 程序里点「取消选取」），而 PICKER_JS 的职责只是"装上"。分开之后，
+    #: "取消 → 再点开始选取"这条路径才干净：先清理、再完整重装。
+    #: ``__echodeskPickerInstalled`` 置回 false 是刻意的 —— 重装时 PICKER_JS 会重建节点，
+    #: 而旧监听器只操作已摘除的节点与已被替换的 state，不会再干扰页面。
+    PICKER_STOP_JS = (
+        "() => { const s = window.__echodeskPick;"
+        " if (s) { s.cancelled = true; s.picked = null; }"
+        " document.querySelectorAll('[data-echodesk]').forEach(n => {"
+        " try { n.remove(); } catch (e) {} });"
+        " window.__echodeskPickerInstalled = false;"
+        " return 'stopped'; }"
+    )
 
     #: 四个可视化选取目标的**用途**语义（任务三：选取语义与程序逻辑对应）。
     #: ``requires_link`` 为真表示这个位置必须能读到网址（href），
@@ -2095,20 +3239,27 @@ class AutomationEngine:
             yield self._event("error", _t("automation.pick.no_playwright"))
             return
         url = (url or "").strip() or self.task_list_url
-        if not url:
-            yield self._event("error", _t("automation.pick.no_url"))
-            return
 
         session: Optional[_BrowserSession] = None
         page = None
         try:
-            session = self._open_session()      # 与自动化共用持久化登录态
+            # 任务十七：与自动化走同一条"复用优先"的会话入口（老 WPF 界面用的就是这条
+            # 一次性流程）。复用时页面就是用户当前那一页，**不再新开标签页、不再导航**。
+            session = self._open_work_session()
             if session.note:
                 yield self._event("delta", session.note)
-            page = session.new_page()
+            page = self._work_page(session)
             page.set_default_timeout(self.page_timeout_ms)
-            yield self._event("delta", _t("automation.pick.opening", url=url))
-            self._goto(page, url)
+            if not url and not session.reused:
+                # 兜底新实例又没有网址：连"打开哪里"都不知道，只能明确报错。
+                # （复用模式不需要网址——用户自己已经把页面开到想选的位置了。）
+                yield self._event("error", _t("automation.pick.no_url"))
+                return
+            note = self._prepare_task_list_page(page, session, url)
+            if note:
+                yield self._event("delta", note)
+            elif not session.reused:
+                yield self._event("delta", _t("automation.pick.opening", url=url))
             self._wait_loaded(page)
             # 任务四：可视化选取同样要能识别"没登录"——用户在这里登录一次，
             # 登录态就进了持久化目录，后续自动化与再次选取都直接复用。
@@ -2129,20 +3280,23 @@ class AutomationEngine:
                     yield self._event("error", _t("automation.pick.no_task_matched"))
                     return
                 first = entries[0]
-                if not first.href:
-                    # 任务二：伪链接的第一个任务也能进——回退到点击
-                    if first.click_only and first.handle is not None:
-                        detail = yield from self._click_into(page.context, page, first,
-                                                             session.pages)
-                        if detail is None:
+                if not first.href or first.handle is not None:
+                    # 任务二：伪链接的第一个任务也能进——回退到点击；
+                    # 任务十七：**有可点句柄时一律点击**（模拟手动点击，跳出来的
+                    # 详情页沿用当前会话，不需要重新登录）。
+                    detail = yield from self._click_into(page.context, page, first,
+                                                         session.pages, reason="manual")
+                    if detail is None:
+                        if first.href:
+                            # 点不动（句柄已失效等）才退回按地址导航
+                            self._goto(page, first.href)
+                            self._wait_loaded(page)
+                        else:
                             yield self._event("error", _t("automation.pick.first_task_no_link",
                                                           title=_clip(first.text, 40)))
                             return
-                        page = detail
                     else:
-                        yield self._event("error", _t("automation.pick.first_task_no_link",
-                                                      title=_clip(first.text, 40)))
-                        return
+                        page = detail
                 else:
                     self._goto(page, first.href)
                     self._wait_loaded(page)
@@ -2170,10 +3324,7 @@ class AutomationEngine:
                     cancelled = True
                     break
                 try:
-                    state = page.evaluate(
-                        "() => { const s = window.__echodeskPick; if (!s) return null;"
-                        " return s.picked ? {picked: s.picked} : (s.cancelled ? {cancelled: true} : null); }"
-                    )
+                    state = page.evaluate(self.PICKER_POLL_JS)
                 except Exception:  # noqa: BLE001 —— 页面被关掉/跳转时视为取消
                     state = {"cancelled": True}
                 if isinstance(state, dict):
@@ -2227,11 +3378,302 @@ class AutomationEngine:
         finally:
             try:
                 if session is not None and session.context is not None:
-                    self._save_storage_state(session.context)   # 导出备份（主机制是数据目录）
+                    # 复用模式下**不导出**登录态：那是用户自己浏览器的凭据，
+                    # 我们没有理由把它复制到程序的数据目录里（任务书第 6 条）。
+                    if not session.reused:
+                        self._save_storage_state(session.context)   # 导出备份（主机制是数据目录）
+            except Exception:  # noqa: BLE001
+                pass
+            # 无论走哪条路径结束，都先把页面上的拾取脚本收干净：留着它会让用户的页面
+            # 一直有"点哪里都被拦下"的副作用（任务十七：取消/超时都要清理）。
+            try:
+                if page is not None and not _is_internal_url(_page_url(page)):
+                    page.evaluate(self.PICKER_STOP_JS)
             except Exception:  # noqa: BLE001
                 pass
             if session is not None:
                 session.close()
+
+    # =====================================================================
+    # 可视化选取：两段式（任务十七 E）
+    # =====================================================================
+    #
+    # 与上面的 ``pick_selector``（老的一次性生成器）并存，不是替代关系：
+    #   * ``pick_selector`` 把"打开页面 → 注入脚本 → 等点击 → 出结果"挤在一次调用里，
+    #     用户在浏览器里准备页面的那段时间**程序只是干等**，也无法告诉他"准备好再点"；
+    #   * 两段式把它拆成"准备好"与"开始选"两步，中间那段时间由用户掌控：
+    #     登录、翻页、点进某个任务，都发生在**注入脚本之前**，不会被打扰。
+    # 老接口保持原签名与返回格式不变（``main.py`` 的 ``_stream_automation_pick``
+    # 依赖 ``event["selector"]``），老界面照旧可用。
+
+    def pick_state(self) -> Dict[str, Any]:
+        """当前可视化选取状态（可查询；前端只反映它）。"""
+        with self._pick_lock:
+            return self._pick_payload()
+
+    def take_pending_apply(self) -> Optional[Tuple[str, str]]:
+        """取走"待写回配置的选取结果"，只成功返回一次（取不到返回 ``None``）。
+
+        为什么要单独一个"取走"动作：前端是**轮询**状态的（每几百毫秒问一次），
+        而"把选择器写进配置"只能发生一次——否则配置文件会被反复重写。
+        把标记放在状态机里、由这里取走，就天然只有第一个问到的请求会拿到它。
+        """
+        with self._pick_lock:
+            return self._pick_machine.take_pending_apply()
+
+    def _pick_payload(self) -> Dict[str, Any]:
+        """把状态机的快照翻译成前端要显示的东西（**文案在后端本地化**）。
+
+        文案为什么由后端给而不是前端硬编码：选取状态是后端的事实（脚本注入到了浏览器里），
+        对应的提示（"准备阶段做什么 / 选取阶段做什么"）必须和这个事实一一对应；
+        放在后端还能一次性拿到中英双语（任务书要求所有面向用户文案走语言包），
+        前端不必为"我到底该显示哪句话"再判断一遍。
+        """
+        snap = self._pick_machine.snapshot()
+        state = snap["state"]
+        last = snap["last_result"]
+        if state == PICK_STATE_PICKING:
+            hint = _t("automation.picker.hint_picking", target=_target_label(snap["target"]))
+            state_label = _t("automation.picker.state_picking")
+        elif state == PICK_STATE_WAITING:
+            hint = _t("automation.picker.hint_waiting")
+            state_label = _t("automation.picker.state_waiting")
+        else:
+            hint = _t("automation.picker.hint_idle")
+            state_label = _t("automation.picker.state_idle")
+        message = snap["message"]
+        if not message and snap["note"]:
+            message = snap["note"]
+        if last == "page_closed" and not message:
+            message = _t("automation.reuse.target_closed")
+        return {
+            **snap,
+            "state_label": state_label,
+            "hint": hint,
+            "last_result_label": (_t(f"automation.picker.result.{last}") if last else ""),
+            "ready_prompt": _t("automation.picker.ready_prompt"),
+            "buttons": {
+                "open": _t("automation.picker.start"),
+                "begin": _t("automation.picker.begin"),
+                "cancel": _t("automation.picker.cancel"),
+                "close": _t("automation.picker.close"),
+                "debug": _t("automation.picker.debug_browser"),
+                "reload": _t("automation.picker.reload_tab"),
+            },
+            "labels": {
+                "section": _t("automation.picker.section"),
+                "target": _t("automation.picker.target_label"),
+                "current": _t("automation.picker.current_label"),
+                "browser": _t("automation.picker.browser_label"),
+                "state": _t("automation.picker.state_label"),
+                "result": _t("automation.picker.result_label"),
+                "reuse": _t("automation.picker.reuse_label"),
+                "cdp_port": _t("automation.picker.port_label"),
+                "hint": _t("automation.picker.hint_label"),
+            },
+            "can_begin": state == PICK_STATE_WAITING,
+            "can_cancel": state == PICK_STATE_PICKING,
+            "can_close": snap["active"],
+        }
+
+    def _pick_live_page(self) -> Any:
+        """取选取会话的目标页；页面没了就报错复位（**绝不换页**）。"""
+        session = self._pick_session
+        if session is None:
+            raise AutomationError(_t("automation.picker.not_ready"))
+        try:
+            return self._enforce_target_page(session)
+        except AutomationError:
+            self._pick_machine.mark_page_gone(_t("automation.reuse.target_closed"))
+            raise
+
+    def pick_open(self, target: str = "task_list", url: str = "") -> Dict[str, Any]:
+        """第一步：打开/连上目标页面，进入「等待准备」。
+
+        打开之后程序**什么也不注入**，只把"当前在哪一页"告诉用户，让他自己完成登录与导航。
+        这正是任务书第 4 条要的两段式：把"准备页面"和"选取元素"分开。
+        """
+        with self._pick_lock:
+            machine = self._pick_machine
+            if machine.picking:
+                # 正在选取时不允许"重开"：那会让页面上已经装好的脚本与状态对不上
+                raise AutomationError(_t("automation.picker.already_picking"))
+            url = (url or "").strip() or self.task_list_url
+            session = self._pick_session
+            note = ""
+            if session is None:
+                session = self._open_work_session()
+                self._pick_session = session
+                page = self._work_page(session)
+                note = session.note
+            else:
+                # 已经在会话里：重新按"用户当前活动的那一页"取一次目标页 ——
+                # 用户在准备阶段自己开了新标签页（例如从任务列表点进了某个页面）
+                # 是常有的事，这一步让他不必先关掉再重开。
+                page = self._select_target_page(session)
+                if page is None:
+                    raise AutomationError(_t("automation.reuse.no_usable_tab"))
+            prepared = self._prepare_task_list_page(page, session, url)
+            if prepared:
+                note = (note + prepared).strip()
+            machine.open(target=str(target or "task_list"),
+                         url=session.target_url or _page_url(page),
+                         title=session.target_title,
+                         mode=session.mode,
+                         browser=self.browser_label,
+                         reused=session.reused,
+                         note=note)
+            self._audit("pick_open", url=session.target_url, result="ok", target=target,
+                        mode=session.mode, reused=bool(session.reused))
+            return self._pick_payload()
+
+    def pick_begin(self) -> Dict[str, Any]:
+        """第二步：用户点了「开始选取」——**这时才注入脚本**。
+
+        注入放在这一步而不是 ``pick_open``，就是为了让用户先登录、先导航：
+        脚本一注入，页面上的点击就会被拦下来用于选取，这正是"准备阶段"不能被打扰的原因。
+        """
+        with self._pick_lock:
+            machine = self._pick_machine
+            machine.begin()          # 非法状态在这里直接抛错（含文案）
+            try:
+                page = self._pick_live_page()
+            except AutomationError:
+                raise
+            try:
+                page.bring_to_front()
+            except Exception:  # noqa: BLE001 - 置前失败不影响选取本身
+                pass
+            try:
+                page.evaluate(self.PICKER_JS, _t("automation.pick.banner"))
+            except Exception as exc:  # noqa: BLE001
+                # 注入失败：状态不能停在"选取中"（用户会以为在等他点，其实什么也点不到）
+                machine.finish("error", message=_t("automation.picker.inject_failed",
+                                                   error=_redact(exc, 200)))
+                raise AutomationError(_t("automation.picker.inject_failed",
+                                         error=_redact(exc, 200))) from exc
+            self._audit("pick_begin", url=machine.url, result="ok", target=machine.target)
+            return self._pick_payload()
+
+    def pick_status(self) -> Dict[str, Any]:
+        """查询状态；**选取中时顺带收一次结果**（前端轮询用）。
+
+        为什么让"查询"承担收结果的职责：程序没有后台线程去盯页面，而结果本身是
+        **页面里的事实**。把收取挂在轮询上，既有明确的心跳（前端每隔几百毫秒问一次），
+        又不需要引入线程与它带来的一堆竞态；用户关掉程序时也不会留下后台线程。
+        """
+        with self._pick_lock:
+            machine = self._pick_machine
+            session = self._pick_session
+            if machine.active and session is not None:
+                try:
+                    # 页面被用户关掉时必须**立刻**反映出来（而不是等他点了「开始选取」
+                    # 才发现），并且绝不换一页继续 —— 任务书"不要误操作其他标签页"。
+                    self._enforce_target_page(session)
+                    # 用户会在准备阶段自己导航，所以每次查询都顺手刷新"当前目标页"，
+                    # 让界面显示的地址始终是他此刻真正打开的那一页。
+                    self._refresh_target_info(session)
+                    if machine.state == PICK_STATE_WAITING:
+                        if session.target_url:
+                            machine.url = session.target_url
+                        if session.target_title:
+                            machine.title = session.target_title
+                except AutomationError as exc:
+                    if machine.state == PICK_STATE_WAITING:
+                        machine.mark_page_gone(str(exc))
+                except Exception as exc:  # noqa: BLE001 - 读不到就保持上一次的值
+                    self.logger.debug("刷新目标页信息失败：%s", _redact(exc, 120))
+            if machine.picking:
+                self._collect_pick_result()
+            return self._pick_payload()
+
+    def _collect_pick_result(self) -> None:
+        """从目标页面上收一次选取结果，并驱动状态迁移。"""
+        machine = self._pick_machine
+        session = self._pick_session
+        page = session.target_page if session is not None else None
+        closed = False
+        try:
+            closed = bool(page.is_closed()) if page is not None else True
+        except Exception:  # noqa: BLE001
+            closed = False
+        if closed:
+            machine.mark_page_gone(_t("automation.reuse.target_closed"))
+            return
+        try:
+            state = page.evaluate(self.PICKER_POLL_JS)
+        except Exception as exc:  # noqa: BLE001 —— 页面被关/跳转走了
+            self.logger.info("读取选取结果失败（按页面已关闭处理）：%s", _redact(exc, 150))
+            machine.mark_page_gone(_t("automation.reuse.target_closed"))
+            return
+        if not isinstance(state, dict):
+            return
+        if state.get("picked"):
+            picked = dict(state["picked"] or {})
+            selector = str(picked.get("selector") or "").strip()
+            preview = self._preview_pick(page, selector, machine.target, picked)
+            if preview.get("blocking"):
+                # 位置选错了（点到容器/按钮）：不改配置，请用户重选（回到等待准备）
+                self._audit("pick_rejected", url=machine.url, result="not_a_link",
+                            error=preview["blocking"], target=machine.target)
+                machine.finish("rejected", message=preview["blocking"], preview=preview)
+                return
+            count = int(picked.get("count") or 0)
+            message = (_t("automation.pick.generated", selector=selector, count=count)
+                       + (_t("automation.pick.element_text",
+                             text=_clip(picked.get("text"), 120)) if picked.get("text") else "")
+                       + "\n" + str(preview.get("message") or ""))
+            self._audit("pick_done", url=machine.url, result="ok", target=machine.target,
+                        matches=int(preview.get("matches") or 0),
+                        links=int(preview.get("links") or 0),
+                        click_only=int(preview.get("click_only") or 0))
+            machine.finish("picked", selector=selector, message=message, preview=preview)
+            return
+        if state.get("cancelled"):
+            machine.finish("cancelled", message=_t("automation.picker.cancelled"))
+
+    def pick_cancel(self) -> Dict[str, Any]:
+        """取消选取（页面按 Esc / 程序里点「取消选取」），回到「等待准备」。
+
+        两条取消路径最终都落到同一个迁移上：页面上按 Esc 由轮询收回来，
+        程序里点按钮则在这里直接处理。**状态机只有一个真相**，不会因为入口不同而分叉。
+        """
+        with self._pick_lock:
+            machine = self._pick_machine
+            if machine.picking:
+                session = self._pick_session
+                page = session.target_page if session is not None else None
+                try:
+                    if page is not None and not page.is_closed():
+                        page.evaluate(self.PICKER_STOP_JS)
+                except Exception:  # noqa: BLE001 - 页面已经没了就没什么可清理的
+                    pass
+                machine.finish("cancelled", message=_t("automation.picker.cancelled"))
+                self._audit("pick_cancel", url=machine.url, result="cancelled",
+                            target=machine.target)
+            return self._pick_payload()
+
+    def pick_close(self) -> Dict[str, Any]:
+        """结束这次选取：清脚本、断开浏览器连接，回到 idle。
+
+        **只断开连接**：复用模式下这个浏览器是用户自己的，程序没有权力关它
+        （见 ``_BrowserSession.close`` 的说明）。
+        """
+        with self._pick_lock:
+            machine = self._pick_machine
+            session = self._pick_session
+            self._pick_session = None
+            if session is not None:
+                page = session.target_page
+                try:
+                    if page is not None and not page.is_closed():
+                        page.evaluate(self.PICKER_STOP_JS)
+                except Exception:  # noqa: BLE001
+                    pass
+                session.close()
+            machine.close()
+            self._audit("pick_close", result="ok")
+            return self._pick_payload()
 
     # ---------- 分步测试向导（v0.2.1 任务书 4.5） ----------
 
@@ -2662,12 +4104,16 @@ class AutomationEngine:
                         max_tasks=limit or getattr(self.cfg, "max_tasks", 20))
             yield self._event("delta", _t("automation.run.starting", url=self.task_list_url))
 
-            # ---- 启动浏览器（持久化上下文：登录态自动复用，v0.2.1 任务一） ----
+            # ---- 启动/接管浏览器 ----
+            #
+            # 任务十七：这里不再写死 `_open_session()`（那永远是新实例），而是走
+            # `_open_work_session()` —— 优先**连上用户已经打开的那个浏览器**，
+            # 连不上才按策略回退到新实例，并在 note 里把代价（要重新登录）说清楚。
             yield self._event("delta", _t("automation.run.launching_browser"))
-            session = self._open_session()
+            session = self._open_work_session()
             if session.note:
                 yield self._event("delta", session.note)
-            page = session.new_page()
+            page = self._work_page(session)
             page.set_default_timeout(self.page_timeout_ms)
             try:
                 page.set_default_navigation_timeout(self.page_timeout_ms)
@@ -2676,7 +4122,11 @@ class AutomationEngine:
 
             # ---- 打开任务列表 ----
             yield self._event("delta", _t("automation.run.opening_task_list"))
-            self._goto(page, self.task_list_url)
+            # 复用模式下这一步**不会导航**（用户当前那一页就是他要处理的那一页），
+            # 只回一句"程序正在哪一页上干活"；只有兜底新实例才 goto 配置里的网址。
+            prepared = self._prepare_task_list_page(page, session)
+            if prepared:
+                yield self._event("delta", prepared)
             manual_ok = yield from self._wait_manual(page, stopped)
             if not manual_ok:
                 yield self._event("delta", _t("automation.run.manual_not_done"))
@@ -2853,8 +4303,10 @@ class AutomationEngine:
                            result_path=outcome.result_path, run_dir=self._run_task_dir)
                 if index < total_tasks and not stopped():
                     try:
-                        self._goto(page, self.task_list_url)
-                        self._wait_loaded(page)
+                        # 任务十七：回列表优先用浏览器自己的"后退"（同会话内的历史导航，
+                        # 保留 Referer 与 SPA 状态），验不出列表时 _back_to_task_list 内部
+                        # 会自动改回按地址导航 —— 老行为是唯一的兜底，不会因此变差。
+                        self._back_to_task_list(page, task_selector)
                     except Exception as exc:  # noqa: BLE001
                         self.logger.debug("返回任务列表失败：%s", _redact(exc, 150))
 
@@ -2962,19 +4414,15 @@ class AutomationEngine:
         try:
             yield self._event("delta", _t("automation.task.opening_detail", index=index,
                                           total=total, title=_clip(title, 40)))
-            if entry.href:
-                # 任务二第 3 步：规范化后的绝对地址直接导航
-                self._goto(page, entry.href)
-            elif entry.click_only and entry.handle is not None:
-                # 任务二第 4 步：伪链接（javascript: / # / 空 href）改为点击触发
-                opened = yield from self._click_into(context, page, entry, pages_before)
-                if opened is None:
-                    return _TaskOutcome("failed", "", [], _t(
-                        "automation.task.no_navigable_link", kind=entry.href_kind,
-                        raw=_clip(entry.href_raw, 60)))
+            # 任务十七 C：**一律优先模拟手动点击**（伪链接本来就必须点击）。
+            # 点不动（句柄已随页面重载失效）时 _open_task_detail 内部会退回按地址导航。
+            opened = yield from self._open_task_detail(context, page, entry, pages_before)
+            if opened is None:
+                return _TaskOutcome("failed", "", [], _t(
+                    "automation.task.no_navigable_link", kind=entry.href_kind,
+                    raw=_clip(entry.href_raw, 60)))
+            if opened is not page:
                 detail_page = opened
-            else:
-                return _TaskOutcome("failed", "", [], _t("automation.task.empty_link"))
             if not (yield from self._wait_manual(detail_page, stop_fn)):
                 return _TaskOutcome("failed", "", [], _t(
                     "automation.task.manual_timeout",

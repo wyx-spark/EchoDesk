@@ -50,6 +50,12 @@ import json
 import logging
 import os
 import queue
+# 任务一/任务十五（自测问题修复-1）：`_store_large_file` 一直在用 `re.sub` 清洗文件名，
+# 但本模块**从来没有 import re** —— 那次调用必然抛 NameError，又被自己的
+# `except Exception` 吞掉、只留一行 warning，于是"大文件正文落盘"这个功能
+# **自始至终没有生效过**：超过 disk_threshold_chars 的文件仍整篇留在会话里，
+# file_cache 目录也从来没被创建过（上下文里给出的落盘指针指向不存在的目录）。
+import re
 import shutil
 import sys
 import threading
@@ -97,7 +103,9 @@ with _suppress_stdout():
     from command_handler import CommandHandler
     from compact_log import EVENT_SKIP, EVENT_SUMMARY, CompactEvent, CompactLog, replay
     from config import CompactionConfig
-    from conversation import ConversationManager, FILE_INTENT, REPEAT_INTENT
+    # 任务一（自测问题修复-1）：不再导入 FILE_INTENT —— 它曾作为"要不要把文件正文
+    # 注入上下文"的闸门，现已取消（详见 _stream_chat 里 include_file 的说明）。
+    from conversation import ConversationManager, REPEAT_INTENT
     from download_utils import check_model, download_model, find_best_model
     from file_parser import parse_file_with_wps
     from gguf_meta import format_bytes as _format_bytes
@@ -105,7 +113,7 @@ with _suppress_stdout():
     from llm_engine import LazyLLMEngine, LLMEngine, NoModelError, StreamStats
     # 心跳通道标记（任务五）：引擎在 prefill 阶段产出它，见 llm_engine._iter_with_heartbeat
     from llm_engine import HEARTBEAT as _CH_HEARTBEAT
-    from search_engine import SearchEngine
+    from search_engine import FAIL_KIND_KEYS, SearchEngine
     from summarizer import DocumentSummarizer
 
 # 多语言（任务三）：必须在 Config.load 之后导入，避免 i18n 反向依赖 config 时成环
@@ -121,8 +129,18 @@ log = logging.getLogger("EchoDesk")
 
 # ---------- 崩溃日志 ----------
 # 进程可能因原生代码崩溃（llama.cpp 的 SIGILL/SIGSEGV）等原因无 Python 回溯地直接退出，
-# 此时把崩溃原因写入 exe 所在目录的 backend_crash.log，便于在别的机器上排查。
+# 此时把崩溃原因写入 backend_crash.log，便于在别的机器上排查。
+#
+# ⚠️ 任务十五（自测问题修复-1）：这些是**进程级**副作用，绝不能在被 import 时执行。
+# 本模块会被 `tools/` 下几乎所有测试与工具脚本 import；原来无条件执行的
+# `sys.excepthook = _excepthook` 会让**任何一个脚本**的未捕获异常都写进
+# backend_crash.log —— 实测该文件里混进了 test_reasoning / test_retrieval /
+# test_search 的异常回溯，真正的后端崩溃反而被这些噪声淹掉，
+# 排查的人会以为"后端又崩了"。现在改为只由程序入口显式安装。
 import faulthandler
+
+_crash = None
+
 
 def _crash_log_path() -> str:
     if getattr(sys, "frozen", False):
@@ -130,15 +148,6 @@ def _crash_log_path() -> str:
     else:
         base = os.getcwd()
     return os.path.join(base, "backend_crash.log")
-
-
-try:
-    _crash = open(_crash_log_path(), "a", encoding="utf-8")
-    faulthandler.enable(_crash)
-    log.info("已启用崩溃日志: %s", _crash_log_path())
-except Exception:
-    faulthandler.enable()
-    _crash = None
 
 
 def _excepthook(etype, value, tb):
@@ -153,7 +162,23 @@ def _excepthook(etype, value, tb):
     traceback.print_exception(etype, value, tb)
 
 
-sys.excepthook = _excepthook
+def install_crash_handlers() -> None:
+    """安装进程级崩溃/异常钩子。
+
+    **只应由程序入口（``__main__``）调用**，理由见本节顶部说明。
+    之所以做成函数而不是留在模块级：打包后的后端入口就是本文件
+    （``EchoBackend.spec`` 的 ``Analysis([... "main.py"])``），
+    走到 ``__main__`` 时会照常安装，行为不变。
+    """
+    global _crash
+    try:
+        _crash = open(_crash_log_path(), "a", encoding="utf-8")
+        faulthandler.enable(_crash)
+        log.info("已启用崩溃日志: %s", _crash_log_path())
+    except Exception:
+        faulthandler.enable()
+        _crash = None
+    sys.excepthook = _excepthook
 
 # stdout 写锁：主循环与流式后台线程共用 stdout
 _io_lock = threading.Lock()
@@ -372,7 +397,9 @@ class Backend:
             self.warmup()
         except Exception:
             log.warning("热加载后的预热失败（不影响使用）", exc_info=True)
-        log.info("模型热加载完成: %s（ctx=%d）", name, int(getattr(self.llm, "n_ctx", 0) or 0))
+        # 任务十四：切模型是用户主动操作，这行会立刻出现在状态栏，必须跟界面语言。
+        log.info("%s", _t("sys.log_model_hot_loaded", name=name,
+                          ctx=int(getattr(self.llm, "n_ctx", 0) or 0)))
         return {"ok": True, "name": name, "error": "", "state": self.model_state()}
 
     def scan_models(self, auto_load: bool = True) -> Dict[str, Any]:
@@ -535,7 +562,7 @@ class Backend:
         n_threads = config.n_threads or os.cpu_count() or 4
         path = str(model_path or "").strip()
         if not path:
-            log.info("未找到可用模型：进入无模型就绪状态（推理类请求将返回引导，其余功能正常）")
+            log.info("%s", _t("sys.log_model_none_state"))
             return LazyLLMEngine(
                 int(config.context_length or 8192), n_threads=n_threads,
                 n_batch=config.n_batch, n_gpu_layers=config.n_gpu_layers,
@@ -584,12 +611,21 @@ class Backend:
         """
         if not self.config.warmup:
             return
+        # 任务十四（自测问题修复-1）：这几行是**用户看得见**的 —— 后端进程的 stderr
+        # 被前端逐行读到状态栏（`MainWindow.axaml.cs` 里 `StderrReceived` → `SetStatus`），
+        # 所以"模型预热中…"这类话在英文界面下也必须说英文。
+        #
+        # 一律写成 `log.info("%s", _t(...))` 而不是 `log.info(_t(...))`：后者会把译文
+        # 本身当成 % 格式串，译文里只要出现一个 `%` 就会抛异常或吞掉后续参数。
+        #
+        # 已知时序约束：语言由前端通过 `set_language` 请求下发，**早于该请求的启动日志**
+        # 只能落到默认语言 —— 这条约束绕不过去（见 records 任务十四一节的说明）。
         if not self.model_ready:
-            log.info("无模型，跳过预热")
+            log.info("%s", _t("sys.log_model_skip_preheat"))
             return
-        log.info("模型预热中...")
+        log.info("%s", _t("sys.log_model_preheating"))
         self.llm.chat_complete(self.conv.build_messages("ping"), max_tokens=1)
-        log.info("模型预热完成")
+        log.info("%s", _t("sys.log_model_preheated"))
 
     # ---------- 请求分发 ----------
 
@@ -645,6 +681,25 @@ class Backend:
                 self.config.automation.enabled and self.config.automation.safety_accepted
             )
             return {"type": "system", "content": "", "automation": status}
+        # ---------- 任务十七：复用已打开的浏览器 + 两段式可视化选取 ----------
+        #
+        # 这几条都是**新增**的分支，没有改动上面任何既有分支的行为：
+        # 老的流式 `automation_pick`（WPF 界面在用）原样保留，可以继续工作。
+        # 之所以走"同步请求 + 前端轮询"而不是流式：两段式里真正耗时的是**用户自己
+        # 准备页面**的那段时间，程序在那段时间什么也不做，一直挂着一个流式连接
+        # 干等用户操作反而更容易被超时误伤。
+        if action == "automation_browser_reuse":
+            return self._handle_automation_browser_reuse(request)
+        if action == "automation_launch_debug_browser":
+            return self._handle_automation_launch_debug_browser(request)
+        if action == "automation_pick_step":
+            return self._handle_automation_pick_step(request)
+        if action in ("automation_pick_open", "automation_pick_begin", "automation_pick_status",
+                      "automation_pick_cancel", "automation_pick_close"):
+            # 五个入口共用一个处理器（状态机在后端，动作只是"推一下"状态机）
+            return self._handle_automation_pick_step(
+                {**request, "step": action.rsplit("_", 1)[-1]}
+            )
         if action == "market_search":
             return self._handle_market_search(request)
         if action == "market_detail":
@@ -1677,6 +1732,10 @@ class Backend:
         ("wait_network_idle", "step5", False),
         ("audit_log_file", "step5", False),
         ("download_dir", "step5", False),
+        # 任务十六（自测问题修复-1）：浏览器选择归在「运行参数」里。
+        # 放在 browser_channel 之前：界面与文档都以新字段为准，
+        # 旧字段只是为了不破坏老配置。
+        ("browser", "step5", False),
         ("browser_channel", "step5", False),
         ("schedule_enabled", "step5", False),
         ("schedule_times", "step5", False),
@@ -1911,6 +1970,14 @@ class Backend:
         try:
             messages = [{"role": "system", "content": self.conv.get_system_prompt()}] + self.conv.history
             response["used"] = self._estimate_tokens(messages)
+            # 任务十（自测问题修复-1）：把两个口径**并列**给出 ——
+            #   ``used``                = 系统提示 + 历史（持久占用的底数；
+            #                             /clear、/compact 后立刻反映变化）；
+            #   ``used_last_request``   = **上一轮真正发给模型的全部内容**，含本轮注入的
+            #                             文件正文、检索片段与搜索结果。
+            # 用户报的"占用远未到 1/3"就是因为原来只有前者；只看它等于漏掉了最大的一块。
+            # 不覆盖 ``used`` 是刻意的：既有的显示与回归断言都基于它，并列给出信息更全。
+            response["used_last_request"] = int(getattr(self, "_last_request_tokens", 0) or 0)
             response["limit"] = int(self.llm.n_ctx * 0.8)
             response["n_ctx"] = int(self.llm.n_ctx)
             try:
@@ -2253,9 +2320,21 @@ class Backend:
             return
 
         search_context = self._search_if_enabled(user_msg)
-        include_file = bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)
+        # 任务一（自测问题修复-1）：**不再拿"问题里提到文件"当闸门**。
+        # 旧写法 `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
+        # 直接造成"上传文件后模型回答没有看到文件内容"：用户问「帮我总结一下」
+        # 「分析一下」「甲方是谁」时一个 FILE_INTENT 关键词都不含，文件正文便一个字
+        # 都没进上下文，模型只看得到系统提示里的文件名，于是据实回答"没有看到内容"。
+        # 检索路径早就得出过同一结论（见 _retrieval_context_for 的说明：那道闸门会让
+        # "违约金比例是多少"这种不点名的提问检索不到），只是全文注入这条路径没跟上。
+        # 旧写法里的 `bool(self.conv.file_content)` 对大文件同样是错的：正文超过
+        # files.disk_threshold_chars 会落盘、entry.content 被清空，闸门随之恒为假。
+        # 现在改成"有文件就注入"，长度仍由 files.total_chars 预算约束。
+        include_file = self.conv.has_file()
         messages = self.conv.build_messages(user_msg, search_context, include_file=include_file,
                                             retrieval_context=self._retrieval_context_for(user_msg))
+        # 任务十（自测问题修复-1）：记下**本轮真正发出去的消息**有多大。
+        self._note_request_size(messages)
         # 任务二（优化已知问题-2）：搜索开着却没拿到可用结果时，**明确告知用户**，
         # 而不是静默继续 —— 否则用户会以为"搜索没生效"或"模型忽略了搜索结果"，
         # 实际是这一层就没拿到东西。这条提示作为回答区的首段前缀发出。
@@ -2570,8 +2649,19 @@ class Backend:
         而不是写进 ``MODES["agent"]``：模式块要守住 700 字符的审计上限，
         也不能在提示词里列出"当前没启用的工具"。
         """
-        include_file = bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)
+        # 任务一（自测问题修复-1）：**不再拿"问题里提到文件"当闸门**。
+        # 旧写法 `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
+        # 直接造成"上传文件后模型回答没有看到文件内容"：用户问「帮我总结一下」
+        # 「分析一下」「甲方是谁」时一个 FILE_INTENT 关键词都不含，文件正文便一个字
+        # 都没进上下文，模型只看得到系统提示里的文件名，于是据实回答"没有看到内容"。
+        # 检索路径早就得出过同一结论（见 _retrieval_context_for 的说明：那道闸门会让
+        # "违约金比例是多少"这种不点名的提问检索不到），只是全文注入这条路径没跟上。
+        # 旧写法里的 `bool(self.conv.file_content)` 对大文件同样是错的：正文超过
+        # files.disk_threshold_chars 会落盘、entry.content 被清空，闸门随之恒为假。
+        # 现在改成"有文件就注入"，长度仍由 files.total_chars 预算约束。
+        include_file = self.conv.has_file()
         messages = self.conv.build_messages(user_msg, "", include_file=include_file)
+        self._note_request_size(messages)
         messages[0] = {
             "role": "system",
             "content": str(messages[0].get("content", "")) + "\n\n" + registry.protocol_text(),
@@ -2643,11 +2733,13 @@ class Backend:
           * 文件是**短文档**（能全文注入）→ 不检索，全文更准；
           * 文件是**长文档**（已落盘或已生成摘要）→ 检索 top-k 片段注入。
 
-        **刻意不再要求"问题里提到文件"**（``FILE_INTENT`` 那道闸门是给全文注入用的，
-        因为全文注入很贵）。检索本身又便宜又能自证：没有命中的查询
+        **刻意不再要求"问题里提到文件"**。检索本身又便宜又能自证：没有命中的查询
         （``as_context`` 返回空串）本来就不会注入任何东西。若沿用那道闸门，
         "违约金比例是多少"这种**不点名文件**的提问反而检索不到 —— 而多文档问答
         恰恰要求用户不必点名（首轮实测就是这个症状）。
+        （任务一补充：全文注入那条路径原先也挂着同一道闸门，那正是"上传文件后模型
+        回答没有看到文件内容"的根因；现已一并取消，见 ``_stream_chat`` 的
+        ``include_file``。）
         """
         cfg = getattr(self.config, "retrieval", None)
         if cfg is None or not bool(getattr(cfg, "enabled", True)):
@@ -2773,9 +2865,23 @@ class Backend:
             return {"type": "assistant", "content": guide, "clarify": True}
 
         search_context = self._search_if_enabled(user_msg)
-        include_file = bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)
+        # 任务一（自测问题修复-1）：**不再拿"问题里提到文件"当闸门**。
+        # 旧写法 `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
+        # 直接造成"上传文件后模型回答没有看到文件内容"：用户问「帮我总结一下」
+        # 「分析一下」「甲方是谁」时一个 FILE_INTENT 关键词都不含，文件正文便一个字
+        # 都没进上下文，模型只看得到系统提示里的文件名，于是据实回答"没有看到内容"。
+        # 检索路径早就得出过同一结论（见 _retrieval_context_for 的说明：那道闸门会让
+        # "违约金比例是多少"这种不点名的提问检索不到），只是全文注入这条路径没跟上。
+        # 旧写法里的 `bool(self.conv.file_content)` 对大文件同样是错的：正文超过
+        # files.disk_threshold_chars 会落盘、entry.content 被清空，闸门随之恒为假。
+        # 现在改成"有文件就注入"，长度仍由 files.total_chars 预算约束。
+        include_file = self.conv.has_file()
         messages = self.conv.build_messages(user_msg, search_context, include_file=include_file,
                                             retrieval_context=self._retrieval_context_for(user_msg))
+        # 任务十（自测问题修复-1）：这一条路径同样要记下"本轮真正发出去多少"。
+        # 它是**非流式**回答路径，漏掉它的话，走这条路时状态区的数字会一直停在上一次
+        # 流式请求的结果上 —— 那正是任务十要消除的那类"显示与真实不符"。
+        self._note_request_size(messages)
         try:
             thinking, response = self.llm.chat_complete_split(
                 messages,
@@ -2872,6 +2978,148 @@ class Backend:
             self.config.automation = AutomationConfig(**data)
             self.config.save()
             log.info("可视化选取已写入 %s = %s", field, selector)
+        except Exception:
+            log.warning("保存可视化选取结果失败", exc_info=True)
+
+    # =====================================================================
+    # 任务十七：复用已打开的浏览器 + 两段式可视化选取（自测问题修复-1）
+    # =====================================================================
+    # 任务十七：复用已打开的浏览器 + 两段式可视化选取（自测问题修复-1）
+    # =====================================================================
+
+    #: 两段式选取里"登录检测元素"的落盘字段。
+    #:
+    #: **必须是类属性、且用 ``self.`` 访问**：方法体里的裸名字走 LEGB，找不到类作用域
+    #: （automation.py 的 ``_target_label`` 就因为这个踩过坑）。既有
+    #: ``_apply_picked_selector`` 的映射表没有 login_check，会**静默丢弃**这个选择器，
+    #: 而配置里确实有 ``login_check_selector`` 这一项，所以在这里补映射。
+    _PICK_EXTRA_FIELDS: Dict[str, str] = {"login_check": "login_check_selector"}
+
+    # 这一组是**新增**的处理器，没有改动任何既有函数的函数体：
+    # 老的流式 ``automation_pick`` / ``_stream_automation_pick`` / ``_apply_picked_selector``
+    # 原样保留，WPF 界面与既有测试继续照旧工作。
+
+    def _automation_browser_payload(self) -> Dict[str, Any]:
+        """把"复用已打开的浏览器"的当前能力状态给前端（不含任何凭据）。"""
+        engine = self.automation()
+        return engine.browser_reuse_payload()
+
+    def _handle_automation_browser_reuse(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """查询/设置"复用已打开的浏览器"（任务十七 A：三档连接方式）。
+
+        ``set`` 非空时按 patch 写配置——**只认白名单里的三个字段**，
+        免得前端顺手把别的配置项也改了。之所以不并入 ``automation_config_set``：
+        那是设置窗口「保存」按钮走的整体保存路径，而这里的三个字段是"用一次就想要
+        立刻生效"的开关（连不上时改一下端口再试），单独一条更直接也更好排查。
+        """
+        patch = request.get("set")
+        if isinstance(patch, dict) and patch:
+            allowed = ("browser", "browser_reuse", "cdp_port")
+            data = self.config.automation.model_dump()
+            for key in allowed:
+                if key in patch:
+                    data[key] = patch[key]
+            try:
+                self.config.automation = AutomationConfig(**data)
+                self.config.save()
+            except Exception as e:  # noqa: BLE001
+                log.warning("保存浏览器复用设置失败", exc_info=True)
+                engine = self.automation()
+                return {"type": "system",
+                        "content": _t("sys.automation_config_invalid", error=e),
+                        "browser_reuse": engine.browser_reuse_payload()}
+        # **必须在写完配置之后再取引擎**：`AutomationEngine.cfg` 指向的是一个配置对象，
+        # 上面那句 `self.config.automation = AutomationConfig(...)` 换掉了那个对象，
+        # 而 `Backend.automation()` 只在被调用时才会把新对象绑给引擎。
+        # 先取引擎的话，这里回给前端的会是**改动前**的旧值（实测踩到过：
+        # 界面点了"必须复用"却仍显示"自动"）。
+        engine = self.automation()
+        return {"type": "system", "content": "",
+                "browser_reuse": engine.browser_reuse_payload()}
+
+    def _handle_automation_launch_debug_browser(self, _request: Dict[str, Any]) -> Dict[str, Any]:
+        """用调试模式启动一个浏览器（任务十七 A.2 的入口）。
+
+        **这个浏览器不由程序关闭**：用户可以自己在里面登录、导航，程序只连上去用一下。
+        """
+        try:
+            result = self.automation().launch_debug_browser()
+        except Exception as e:  # noqa: BLE001
+            log.exception("启动调试模式浏览器失败")
+            return {"type": "system",
+                    "content": _t("automation.reuse.debug_launch_failed", error=e),
+                    "browser_debug": {"ok": False}}
+        return {"type": "system", "content": str(result.get("message") or ""),
+                "browser_debug": result}
+
+    def _handle_automation_pick_step(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """两段式可视化选取的统一入口（open / begin / status / cancel / close）。
+
+        每一步都返回**完整的当前状态**（``pick``），前端只负责照着显示：
+        状态机在后端，刷新界面、切换设置页都不会把它弄丢；也因此"选取中"这个
+        事实（脚本确实注入到了浏览器里）与界面显示永远一致。
+
+        选取成功后由这里把选择器写进配置（复用既有的 ``_apply_picked_selector``，
+        与老流程同一条落盘路径），并且**只写一次**——状态机里的待写标记取走即清空，
+        前端每隔几百毫秒轮询也不会把配置文件反复重写。
+        """
+        engine = self.automation()
+        step = str(request.get("step") or "status").strip().lower()
+        # 局部导入 AutomationError：main.py 顶层是"按需加载 automation"的（见 automation()），
+        # 这里跟随同样的风格，避免为了一个异常类型把 Playwright 提前拉起来。
+        from automation import AutomationError
+
+        if step == "open" and engine.running:
+            # 自动化跑着的时候不允许开始选取：那条运行正在**驱动同一个标签页**
+            # （复用模式下就是用户当前这一页），此时注入选取脚本会与它的点击/导航
+            # 互相干扰，两边都会给出难以理解的失败。宁可先说清楚。
+            return {"type": "system", "content": _t("automation.picker.busy_running"),
+                    "pick": engine.pick_state()}
+
+        try:
+            if step == "open":
+                payload = engine.pick_open(str(request.get("target") or "task_list"),
+                                           str(request.get("url") or ""))
+            elif step == "begin":
+                payload = engine.pick_begin()
+            elif step == "cancel":
+                payload = engine.pick_cancel()
+            elif step == "close":
+                payload = engine.pick_close()
+            else:
+                payload = engine.pick_status()
+        except AutomationError as e:
+            # 状态机拒绝的非法动作（还没打开就开始选、正在选又要开始选）：
+            # 这不是故障，把话说清楚并回传当前状态即可
+            return {"type": "system", "content": str(e), "pick": engine.pick_state()}
+        except Exception as e:  # noqa: BLE001
+            log.exception("可视化选取（两段式）失败")
+            return {"type": "system", "content": _t("sys.automation_pick_failed", error=e),
+                    "pick": engine.pick_state()}
+        pending = engine.take_pending_apply()
+        if pending:
+            target, selector = pending
+            if target in self._PICK_EXTRA_FIELDS:
+                # "登录检测元素"（login_check）不在既有 _apply_picked_selector 的映射表里，
+                # 那条老路径会**静默丢弃**这个选择器的落盘（配置里明明有
+                # automation.login_check_selector 这一项）。_apply_picked_selector 属于
+                # 既有函数、本次不改它的函数体，所以在这里补一条映射后走同一套落盘逻辑。
+                self._save_automation_field(self._PICK_EXTRA_FIELDS[target], selector)
+            else:
+                self._apply_picked_selector(target, selector)
+        content = str(payload.get("message") or payload.get("hint") or "")
+        return {"type": "system", "content": content, "pick": payload}
+
+    def _save_automation_field(self, field: str, value: str) -> None:
+        """把单个自动化配置字段写盘（与 ``_apply_picked_selector`` 同一口径）。"""
+        data = self.config.automation.model_dump()
+        if field not in data:
+            return
+        data[field] = value
+        try:
+            self.config.automation = AutomationConfig(**data)
+            self.config.save()
+            log.info("可视化选取已写入 %s = %s", field, value)
         except Exception:
             log.warning("保存可视化选取结果失败", exc_info=True)
 
@@ -3260,40 +3508,14 @@ class Backend:
                 payload["file_name"] = meta.get("name")
             yield payload
 
-    def load_file_into_context(self, filepath: str, progress_sink=None) -> str:
-        """解析文件并入上下文；全文超出窗口一定比例时自动分段摘要后注入。
-
-        返回给用户看的反馈文本（成功或失败都会说明原因）。
-        ``progress_sink`` 透传给分段摘要（任务四：流式入口据此实时报进度）。
-        """
-        content = parse_file_with_wps(filepath, self.config.file_max_chars)
-        if content.startswith(("WPS读取失败", "解析失败", "文件内容为空", "不支持的文件类型")):
-            return f"❌ {content}"
-        self.conv.set_file(filepath, content)
-        name = os.path.basename(filepath)
-        try:
-            tokens = self.llm.count_tokens(content)
-        except Exception:
-            tokens = len(content) // 2
-        if self.summarizer.should_use_summary(content, self.llm.n_ctx):
-            log.info(
-                "文件 %s 约 %d tokens，超过窗口 %d 的 %.0f%%：转入分段摘要",
-                name, tokens, self.llm.n_ctx, self.config.summarize.trigger_ratio * 100,
-            )
-            # 任务一：文件解析**不依赖模型**，必须照常完成；只有"分段摘要"这一步需要模型。
-            # 所以这里保留已解析的全文，只把摘要这一步换成引导（而不是整个加载失败）。
-            if not self.model_ready:
-                return _t("sys.file_loaded_no_model", name=name, chars=len(content),
-                          tokens=tokens,
-                          guide=_t("sys.no_model_guide", dir=self.models_dir()))
-            head = _t("sys.file_auto_summary_head", name=name, tokens=tokens,
-                      n_ctx=self.llm.n_ctx,
-                      ratio=f"{self.config.summarize.trigger_ratio:.0%}") + "\n"
-            return head + self.summarize_current_file(
-                force=True, source_name=name, trigger=_t("sys.summarize_trigger_auto"),
-                progress_sink=progress_sink)
-        return _t("sys.file_loaded", name=name, chars=len(content), tokens=tokens)
-
+    # 任务一/任务十五（自测问题修复-1）：此处原有一个**重复定义**的旧版
+    # ``load_file_into_context``（单文件时代实现：走 ``conv.set_file``、没有落盘、
+    # 也没有多文件的结构化返回）。Python 同名方法后定义者胜，于是上面那份
+    # **带落盘与多文件登记的新实现反倒成了死代码**，单文件上传路径一直走着旧逻辑：
+    #   * 超过 ``files.disk_threshold_chars`` 的正文不会落盘，整篇留在会话里；
+    #   * 与 ``load_files_into_context``（多文件入口）行为不一致——同一个动作
+    #     走单文件和多文件两条路，落盘/摘要结果不同。
+    # 现已删除旧版，统一由 ``_load_one_file`` 承担（解析 → 登记 → 落盘 → 摘要）。
     def summarize_current_file(self, force: bool = True, source_name: str = "",
                                trigger: str = "", progress_sink=None) -> str:
         """对当前已加载文件做分段摘要并替换注入内容（供自动触发与 /summarize 调用）。
@@ -3612,6 +3834,24 @@ class Backend:
         except Exception:
             return sum(len(m["content"]) for m in messages) // 2
 
+    def _note_request_size(self, messages) -> None:
+        """记下本轮**实际发给模型**的消息有多大（任务十，自测问题修复-1）。
+
+        为什么需要它：状态区的上下文占用原来只算 ``system + history``
+        （见 :meth:`_attach_context`），**完全没算这一轮注入的文件正文、检索片段与
+        搜索结果** —— 而这三块恰恰是大头（文件块上限 60000 字符，比多数会话的历史还长）。
+        于是用户看到的现象就是"占用远未到 1/3"，而它同时又"一会儿多一会儿少"：
+        少的那些轮次只是恰好没注入文件（修复任务一之前，文件注入与否取决于
+        问题里有没有"文件/合同/总结"这类词），多的那些轮次才是真实占用。
+
+        **不去伪造一个"平均值"**：占用本来就会随注入内容变化，这是事实而不是缺陷。
+        正确做法是把"上一轮真实发出去了多少"如实报出来，让用户看到的就是真实的那一个数。
+        """
+        try:
+            self._last_request_tokens = int(self._estimate_tokens(messages))
+        except Exception:
+            self._last_request_tokens = 0
+
     @staticmethod
     def _fmt_mb(n: int) -> str:
         """把字节数格式化为可读的 MB 字符串，用于下载进度展示。"""
@@ -3907,7 +4147,20 @@ class Backend:
         self._last_search = outcome
         # 不可用：区分"失败"与"没有结果"，两者要给用户不同的说法
         if not outcome.ok:
-            self._last_search_note = _t("sys.search_failed", error=outcome.error[:120])
+            # 任务二第 4 条（自测问题修复-1）：把底层异常**翻译成用户能理解的一类**。
+            # 旧写法直接把 outcome.error 塞进提示，用户看到的是
+            # 「联网搜索失败（https://www.bing.com/search ConnectError: error sending
+            #   request for url (…)）」—— 那是给开发者看的话，既没告诉他该怎么办，
+            # 也没区分"网络不通"和"搜索源改版"。现在按类别给面向用户的说法；
+            # 原始错误仍进日志与 search_diagnostics，排查时拿得到。
+            kind = getattr(outcome, "error_kind", "") or "unknown"
+            key = FAIL_KIND_KEYS.get(kind, "sys.search_failed")
+            if key == "sys.search_failed":
+                self._last_search_note = _t(key, error=outcome.error[:120])
+            else:
+                self._last_search_note = _t(key)
+            log.warning("搜索失败（类别=%s 源=%s）：%s",
+                        kind, getattr(outcome, "source", ""), outcome.error)
         else:
             self._last_search_note = _t("sys.search_empty")
         log.info("搜索未产生可用结果：ok=%s 条数=%d 原因=%s",
@@ -3932,6 +4185,11 @@ class Backend:
             "results": int(outcome.count) if outcome is not None else 0,
             "elapsed_ms": int(outcome.elapsed_ms) if outcome is not None else 0,
             "error": str(outcome.error) if outcome is not None else "",
+            # 任务二：把"失败类别"与"实际生效的搜索源"也暴露出来，
+            # 国内网络下"主源永远失败、真正干活的是内建 Bing 源"这件事
+            # 必须能从诊断里看出来，否则排查会一直盯着 duckduckgo 打转。
+            "error_kind": str(getattr(outcome, "error_kind", "")) if outcome is not None else "",
+            "source": str(getattr(outcome, "source", "")) if outcome is not None else "",
             "note": self._search_note(),
         }
 
@@ -4139,4 +4397,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # 进程级崩溃/异常钩子只在真正作为后端进程运行时安装（任务十五）。
+    install_crash_handlers()
     main()

@@ -47,9 +47,13 @@
 """
 from __future__ import annotations
 
+import base64
 import logging
+import time
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from typing import List, Optional
+from urllib.parse import parse_qs, urlparse
 
 log = logging.getLogger("EchoDesk.Search")
 
@@ -102,6 +106,8 @@ class SearchOutcome:
     results: List[SearchResult] = field(default_factory=list)
     ok: bool = False
     error: str = ""            # 失败原因（已脱敏，可直接展示）
+    error_kind: str = ""       # 失败**类别**（任务二第 4 条：给用户能看懂的说法）
+    source: str = ""           # 实际生效的搜索源（"ddgs" / "bing"），供诊断用
     elapsed_ms: int = 0
 
     @property
@@ -136,33 +142,284 @@ class SearchOutcome:
         return "\n".join(lines)
 
 
+# ===========================================================================
+# 失败分类（任务二第 4 条：不要把底层异常栈直接抛给用户）
+# ===========================================================================
+#
+# 旧行为是把 `outcome.error` 原样塞进提示，用户看到的是
+#   「联网搜索失败（https://www.bing.com/search ConnectError: error sending
+#     request for url (https://www.bing.com/search?q=...)）」
+# —— 这是一句**给开发者看**的话，它既没告诉用户"我该怎么办"，也没区分
+# "是你网络不通"和"是搜索源改版了"。这里把它归成有限的几类，
+# 由语言包为每一类给出面向用户的说法。
+
+#: 分类码 → 语言包键（面向用户的一句话）。键必须成对存在于各语言包里，
+#: 由 ``tools/check_lang.py`` 校验完整性。
+FAIL_KIND_KEYS = {
+    "network": "sys.search_failed_network",
+    "timeout": "sys.search_failed_timeout",
+    "certificate": "sys.search_failed_certificate",
+    "rate_limit": "sys.search_failed_rate_limit",
+    "source_changed": "sys.search_failed_source_changed",
+    "no_dependency": "sys.search_failed_no_dependency",
+    "empty": "sys.search_failed",
+    "unknown": "sys.search_failed",
+}
+
+
+def classify_error(text: str) -> str:
+    """把底层异常文本归成 :data:`FAIL_KIND_KEYS` 里的一个类别。
+
+    判断顺序有讲究：先排除"能明确指认"的（证书、超时、限流），再落到
+    笼统的"网络不通"上——否则任何一个带 "connect" 字样的错误都会被
+    归成网络问题，把真实原因盖掉。
+    """
+    t = (text or "").lower()
+    if not t:
+        return "unknown"
+    if "certificate" in t or "ssl" in t or "cert verify" in t or "tls" in t:
+        return "certificate"
+    if "timed out" in t or "timeout" in t:
+        return "timeout"
+    if "429" in t or "403" in t or "too many requests" in t or "rate limit" in t:
+        return "rate_limit"
+    if ("error sending request" in t or "connect" in t or "network" in t
+            or "dns" in t or "resolve" in t or "unreachable" in t
+            or "connection" in t):
+        return "network"
+    if "return none" in t or "no results" in t or "parse" in t or "empty" in t:
+        return "source_changed"
+    return "unknown"
+
+
+# ===========================================================================
+# 内建备用搜索源（任务二第 6 条）
+# ===========================================================================
+#
+# **为什么必须有它**：`duckduckgo_search` **8.1.1** 在国内网络下必然失败，
+# 而这不是用户的操作问题，是"库 + 地区重定向"的固有不兼容。三处证据：
+#
+#   1. 该版本库里把后端**硬编码**成一家：
+#      ``backends = ["bing"]  # temporaly disable html and lite backends``
+#      （原文注释如此）—— 所以报错 URL 是 ``bing.com`` 而不是 duckduckgo.com，
+#      **项目记录里写的"DuckDuckGo"并没有错，错的是这个库自己换到了 Bing**；
+#   2. 它创建 primp 客户端时设了 ``follow_redirects=False``，
+#      而 ``www.bing.com`` 在国内会被 **302** 到 ``cn.bing.com`` ——
+#      库于是永远只拿到 302，判定失败；
+#   3. 实测（2026-10-06，见 records）：
+#      库配置 → ``302 Location: https://cn.bing.com/search?q=test``；
+#      跟随重定向 → ``200``，约 99 KB，含 **10 个** ``li.b_algo`` 结果块。
+#
+# 所以这里内建一个"**跟随重定向 + 自己解析**"的 Bing 源作为兜底。
+# 三个刻意的取舍：
+#   * 用项目**必需依赖** ``requests`` 发请求（不新增依赖）；
+#   * 用**标准库** ``html.parser`` 解析（不依赖 lxml/bs4 —— 它们是
+#     ``duckduckgo_search`` 的间接依赖，而搜索对本项目是**可选功能**，
+#     不能假定它们存在）；
+#   * 只在主源不可用时才启用，不改变能正常联网用户的既有行为。
+
+#: Bing 搜索入口（重定向到 ``cn.bing.com`` 由 requests 跟随）。
+_BING_URL = "https://www.bing.com/search"
+
+#: 带浏览器 UA：Bing 对无 UA / 爬虫 UA 的请求会拒答或重定向到验证页。
+#: 这与 ``model_hub.py`` 里 HF 端点"必须带自己的 UA"是同一类坑。
+_BING_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+
+def _decode_bing_url(href: str) -> str:
+    """还原 Bing 的跳转链接。
+
+    Bing 的结果链接常常是 ``https://www.bing.com/ck/a?u=a1aHR0cHM6Ly8...``，
+    真实地址是 ``u`` 参数里去掉前两个字符后的 **base64url**（缺省 padding）。
+    解不出来时原样返回，至少链接是可点的。
+    """
+    if not href:
+        return ""
+    if href.startswith("https://www.bing.com/ck/a?"):
+        raw = parse_qs(urlparse(href).query).get("u", [""])[0]
+        if raw and len(raw) > 2:
+            body = raw[2:]
+            try:
+                return base64.urlsafe_b64decode(
+                    body + "=" * ((-len(body)) % 4)).decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001 —— 解码失败不该让整次搜索失败
+                return href
+    return href
+
+
+class _BingParser(HTMLParser):
+    """从 Bing 结果页里抽出 ``li.b_algo`` 的标题 / 链接 / 摘要。
+
+    只认这一种结构。Bing 改版会让它"抽不到东西"（表现为没有结果），
+    而不会崩 —— 这是刻意的：搜索失败可以如实告知，崩掉不行。
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.results: List[SearchResult] = []
+        self._in_li = False        # 当前是否在一个 b_algo 里
+        self._depth = 0            # b_algo 内 li 的嵌套深度（结束时归零）
+        self._in_h2 = False
+        self._in_p = False
+        self._href = ""
+        self._title: List[str] = []
+        self._snippet: List[str] = []
+
+    # ---------- 内部 ----------
+
+    def _begin(self) -> None:
+        self._in_li = True
+        self._depth = 0
+        self._in_h2 = False
+        self._in_p = False
+        self._href = ""
+        self._title = []
+        self._snippet = []
+
+    def _finish(self) -> None:
+        self._in_li = False
+        self._in_h2 = False
+        self._in_p = False
+        if self._href:
+            title = " ".join("".join(self._title).split())
+            snippet = " ".join("".join(self._snippet).split())
+            url = _decode_bing_url(self._href)
+            if url and (title or snippet):
+                self.results.append(SearchResult(title=title, snippet=snippet, url=url))
+
+    # ---------- HTMLParser 回调 ----------
+
+    def handle_starttag(self, tag, attrs):
+        attr = dict(attrs)
+        if tag == "li":
+            cls = attr.get("class") or ""
+            if self._in_li:
+                self._depth += 1
+            elif "b_algo" in cls:
+                self._begin()
+            return
+        if not self._in_li:
+            return
+        if tag == "h2":
+            self._in_h2 = True
+        elif tag == "a" and attr.get("href") and not self._href:
+            self._href = attr["href"]
+        elif tag == "p":
+            self._in_p = True
+
+    def handle_endtag(self, tag):
+        if not self._in_li:
+            return
+        if tag == "li":
+            if self._depth == 0:
+                self._finish()
+            else:
+                self._depth -= 1
+        elif tag == "h2":
+            self._in_h2 = False
+        elif tag == "p":
+            self._in_p = False
+
+    def handle_data(self, data):
+        if not self._in_li:
+            return
+        if self._in_h2:
+            self._title.append(data)
+        elif self._in_p:
+            self._snippet.append(data)
+
+
+def search_bing(query: str, max_results: int = 5, timeout: int = 15) -> SearchOutcome:
+    """内建 Bing 源：**跟随重定向**地取结果页，再用标准库解析。
+
+    与 ``duckduckgo_search`` 的唯一实质差别就是"跟随重定向"这一件事，
+    而那正是国内网络下它失败的全部原因（见本节顶部说明）。
+    """
+    outcome = SearchOutcome(query=query, source="bing")
+    started = time.perf_counter()
+    try:
+        import requests
+    except ImportError:  # requests 是必需依赖，正常不会走到这里
+        outcome.error = "requests 未安装"
+        outcome.error_kind = "no_dependency"
+        return outcome
+
+    headers = {
+        "User-Agent": _BING_UA,
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    try:
+        resp = requests.get(_BING_URL, params={"q": query}, headers=headers,
+                            timeout=timeout, allow_redirects=True)
+    except Exception as exc:  # noqa: BLE001
+        outcome.error = f"{type(exc).__name__}: {exc}"
+        outcome.error_kind = classify_error(outcome.error)
+        outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return outcome
+
+    if resp.status_code != 200:
+        outcome.error = f"HTTP {resp.status_code}"
+        outcome.error_kind = ("rate_limit" if resp.status_code in (403, 429)
+                              else "source_changed")
+        outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return outcome
+
+    parser = _BingParser()
+    try:
+        parser.feed(resp.text)
+    except Exception as exc:  # noqa: BLE001 —— 解析失败按"源改版"处理
+        outcome.error = f"解析失败: {exc}"
+        outcome.error_kind = "source_changed"
+        outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return outcome
+
+    outcome.results = parser.results[:max(1, int(max_results or 5))]
+    outcome.ok = True
+    outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
+    log.info("搜索完成（内建 Bing 源）：%r → %d 条结果，%d ms",
+             query[:40], outcome.count, outcome.elapsed_ms)
+    return outcome
+
+
 class SearchEngine:
-    """DuckDuckGo 搜索（``duckduckgo_search``）。
+    """搜索编排：先走 DuckDuckGo 库，失败时回落到内建 Bing 源。
 
     刻意**不在这里做静默降级**：拿不到结果就如实返回 ``ok=False`` 与原因，
     由调用方决定怎么告诉用户（"明确告知用户而非静默继续"，任务书要求）。
     """
 
-    def __init__(self, max_results: int = 5):
+    def __init__(self, max_results: int = 5, fallback_enabled: bool = True):
         self.max_results = max(1, int(max_results or 5))
+        #: 主源失败时是否启用内建 Bing 源（见 :func:`search_bing`）。
+        #: 保留开关是为了**可测性**：测试用桩 DDGS 模拟各种主源情形时，
+        #: 兜底源会真的发起网络请求、把"模拟失败"变成"实际成功"，
+        #: 那样测的就不是被测对象了。产品路径保持默认开启。
+        self.fallback_enabled = bool(fallback_enabled)
 
-    def search(self, query: str) -> SearchOutcome:
-        """执行一次搜索，返回结构化结果（**不抛异常**，失败也在返回值里）。"""
-        import time
+    def _search_ddgs(self, text: str) -> SearchOutcome:
+        """源 1：``duckduckgo_search``（可选依赖）。
 
-        text = (query or "").strip()
-        outcome = SearchOutcome(query=text)
-        if not text:
-            outcome.error = "empty_query"
-            return outcome
+        ⚠️ **8.1.1 起这个库在国内网络下必然失败**，原因写在
+        :func:`search_bing` 的说明里；这里保留它是因为在能直连
+        DuckDuckGo / bing 的地区它仍然是更完整的解析器，不该一刀切删掉。
+        """
+        outcome = SearchOutcome(query=text, source="ddgs")
         started = time.perf_counter()
         try:
             from duckduckgo_search import DDGS
 
             with DDGS() as ddgs:
                 raw = list(ddgs.text(text, max_results=self.max_results))
+        except ImportError:
+            outcome.error = "duckduckgo_search 未安装"
+            outcome.error_kind = "no_dependency"
+            outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
+            return outcome
         except Exception as exc:  # noqa: BLE001 —— 网络/解析/限流都可能失败
             outcome.error = str(exc) or exc.__class__.__name__
+            outcome.error_kind = classify_error(outcome.error)
             outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
             log.warning("搜索失败（%s）：%s", text[:40], outcome.error)
             return outcome
@@ -180,7 +437,57 @@ class SearchEngine:
                 log.debug("搜索结果条目解析失败（已跳过）", exc_info=True)
         outcome.ok = True
         outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
-        log.info("搜索完成：%r → %d 条结果，%d ms", text[:40], outcome.count, outcome.elapsed_ms)
+        log.info("搜索完成（ddgs）：%r → %d 条结果，%d ms",
+                 text[:40], outcome.count, outcome.elapsed_ms)
+        return outcome
+
+    def search(self, query: str) -> SearchOutcome:
+        """执行一次搜索，返回结构化结果（**不抛异常**，失败也在返回值里）。
+
+        两级源（任务二第 6 条"评估备用搜索源"的落地）：
+
+        1. ``duckduckgo_search`` —— 能满足就用它，保持既有行为；
+        2. :func:`search_bing` —— 内建源，跟随重定向后自己解析，
+           用项目**必需依赖** requests 与标准库 html.parser，**不新增依赖**。
+
+        两个都失败时，把**两个源各自的原因**都带回 ``error``，
+        让用户/排查者一眼看出是哪一层不通，而不是只看到一句笼统的失败。
+        """
+        text = (query or "").strip()
+        outcome = SearchOutcome(query=text)
+        if not text:
+            outcome.error = "empty_query"
+            outcome.error_kind = "empty"
+            return outcome
+
+        primary = self._search_ddgs(text)
+        # 判据是 ``ok`` 而不是 ``usable``：主源**连通**时它的答复就该被采信，
+        # 包括"连通但没有结果"（ok=True, count=0）。那是有效信息，不是故障——
+        # 把它当故障去回落到第二个源，会让一次"确实没搜到"的查询白白多跑一次
+        # 网络请求，而且会让"没搜到"和"搜不通"这两种**必须给用户不同说法**的
+        # 情形混成一种（既有回归用例正是断言这两者要分开）。
+        # 另有一层理由：8.1.1 的主源实际打的就是 Bing（backends=["bing"]），
+        # 与兜底源是同一个搜索引擎，主源连通时兜底不会有额外收获。
+        if primary.ok:
+            return primary
+
+        if not self.fallback_enabled:
+            # 兜底被显式关掉（测试路径）：把主源的原因如实带回
+            primary.source = primary.source or "ddgs"
+            primary.error_kind = primary.error_kind or classify_error(primary.error)
+            return primary
+
+        fallback = search_bing(text, self.max_results)
+        if fallback.usable:
+            log.info("主搜索源不可用（%s），已回落到内建 Bing 源：%d 条结果",
+                     primary.error_kind or primary.error, fallback.count)
+            return fallback
+
+        outcome.error = f"{primary.error or '主源无结果'} ｜ 备用源：{fallback.error or '无结果'}"
+        # 分类以**备用源**为准：它才是真正能反映当前网络状况的那一个
+        # （主源在国内是"必然失败"，它的分类对用户没有指导意义）。
+        outcome.error_kind = fallback.error_kind or primary.error_kind or "unknown"
+        log.warning("两个搜索源都失败：%s", outcome.error)
         return outcome
 
     # ---------- 兼容旧接口 ----------

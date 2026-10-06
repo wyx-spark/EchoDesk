@@ -260,17 +260,36 @@ public partial class GeneralPage : UserControl, ISettingsPage
         RefreshComboTexts(ThemeCombo, EmojiCombo, LanguageCombo, DefaultModeCombo);
     }
 
-    /// <summary>重设 ItemsSource 会丢掉选中项，因此这里"重建后按值选回"。</summary>
-    private static void RefreshComboTexts(params ComboBox[] combos)
+    /// <summary>
+    /// 重设 ItemsSource 会丢掉选中项，因此这里"重建后按值选回"。
+    ///
+    /// **重建期间必须打开 _applying 重入闸**：这次刷新只换显示文案、选中值没变，
+    /// 但 `Select()` 会把 SelectedIndex 从 -1 设回原值 —— 在控件看来那是一次**真实的选中变化**，
+    /// 于是上面三个 SelectionChanged 处理器全部被触发。语言那一个最致命：
+    /// SetLanguage → Loc.SetLocale → LanguageChanged → 设置窗口 ApplyTexts →
+    /// 所有页面 ApplyTexts → 又回到这里 —— 一条**同步闭环**。
+    /// 实测：打开设置窗口时 340 圈后栈溢出（6868 行栈，进程直接死），设置窗口永远打不开。
+    /// LoadFrom（:163）与 RefreshAsync（:202）早就用了这个闸，只有"刷新文案"这一处漏了。
+    /// </summary>
+    private void RefreshComboTexts(params ComboBox[] combos)
     {
-        foreach (ComboBox combo in combos)
+        bool previous = _applying;
+        _applying = true;
+        try
         {
-            if (combo.ItemsSource is not IEnumerable<Option> options)
-                continue;
-            string? current = (combo.SelectedItem as Option)?.Value;
-            combo.ItemsSource = null;
-            combo.ItemsSource = new List<Option>(options);
-            Select(combo, current);
+            foreach (ComboBox combo in combos)
+            {
+                if (combo.ItemsSource is not IEnumerable<Option> options)
+                    continue;
+                string? current = (combo.SelectedItem as Option)?.Value;
+                combo.ItemsSource = null;
+                combo.ItemsSource = new List<Option>(options);
+                Select(combo, current);
+            }
+        }
+        finally
+        {
+            _applying = previous;
         }
     }
 }

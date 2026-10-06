@@ -138,6 +138,69 @@
                 AutomationProperties.AutomationId="StopAutomationButton" />
       </StackPanel>
 
+      <!-- ⑨-b 可视化选取与浏览器复用（任务十七，自测问题修复-1）
+（编号跟在⑨"操作"后面：它本身也是一组操作，只是内容多到需要单独一块。）
+
+           这一整块是新增的，对应任务书第 4 条"两段式选取"：先打开/连接页面让用户自己
+           登录与导航（等待准备），再点「开始选取」进入选取模式。按钮文案与状态文案都由
+           后端语言包（automation.picker.*）回传，前端只负责显示与禁用/启用——
+           这样中英双语天然一致，也不会出现"前端写一句、后端写另一句"的漂移。
+
+           控件命名沿用本页现有的 `x:Name` + `AutomationProperties.AutomationId` 同名风格，
+           便于 ui_probe.ps1 之类的界面探针按名字定位。 -->
+      <TextBlock x:Name="PickSectionTitle" FontWeight="Bold" FontSize="14" Margin="0,10,0,0" />
+      <TextBlock x:Name="PickHintText" FontSize="11" TextWrapping="Wrap" Opacity="0.75" />
+
+      <Grid ColumnDefinitions="230,*" RowDefinitions="Auto,Auto,Auto">
+        <TextBlock x:Name="BrowserChoiceLabel" Grid.Row="0" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <ComboBox x:Name="BrowserChoiceBox" Grid.Row="0" Grid.Column="1" Margin="0,4" MinWidth="240"
+                  HorizontalAlignment="Left" AutomationProperties.AutomationId="BrowserChoiceBox" />
+        <TextBlock x:Name="ReuseModeLabel" Grid.Row="1" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <ComboBox x:Name="ReuseModeBox" Grid.Row="1" Grid.Column="1" Margin="0,4" MinWidth="240"
+                  HorizontalAlignment="Left" AutomationProperties.AutomationId="ReuseModeBox" />
+        <TextBlock x:Name="CdpPortLabel" Grid.Row="2" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="CdpPortBox" Grid.Row="2" Grid.Column="1" Width="110" HorizontalAlignment="Left"
+                 Margin="0,4" Padding="6,4" AutomationProperties.AutomationId="CdpPortBox" />
+      </Grid>
+      <TextBlock x:Name="ReuseStateText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
+                 AutomationProperties.AutomationId="ReuseStateText" />
+
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBlock x:Name="PickTargetLabel" VerticalAlignment="Center" FontSize="12" />
+        <ComboBox x:Name="PickTargetBox" Width="200" MinWidth="200"
+                  AutomationProperties.AutomationId="PickTargetBox" />
+        <Button x:Name="PickOpenButton" Padding="12,5"
+                AutomationProperties.AutomationId="PickOpenButton" />
+        <Button x:Name="PickBeginButton" Padding="14,5"
+                AutomationProperties.AutomationId="PickBeginButton" />
+        <Button x:Name="PickCancelButton" Padding="12,5"
+                AutomationProperties.AutomationId="PickCancelButton" />
+        <Button x:Name="PickCloseButton" Padding="12,5"
+                AutomationProperties.AutomationId="PickCloseButton" />
+      </StackPanel>
+
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <Button x:Name="LaunchDebugBrowserButton" Padding="12,5"
+                AutomationProperties.AutomationId="LaunchDebugBrowserButton" />
+        <Button x:Name="PickReloadTabButton" Padding="12,5"
+                AutomationProperties.AutomationId="PickReloadTabButton" />
+      </StackPanel>
+
+      <!-- 等待准备阶段的提示与当前目标页：这两行是任务书第 4 条的核心（用户先看到
+           "在哪里操作"，再决定什么时候开始选） -->
+      <Border Background="{DynamicResource CardBackgroundBrush}"
+              BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+              CornerRadius="6" Padding="10,8">
+        <StackPanel Spacing="4">
+          <TextBlock x:Name="PickReadyPromptText" FontSize="12" TextWrapping="Wrap" FontWeight="SemiBold" />
+          <TextBlock x:Name="PickStateText" FontSize="12" TextWrapping="Wrap" />
+          <TextBlock x:Name="PickTargetUrlText" FontSize="11" TextWrapping="Wrap" Opacity="0.8" />
+          <TextBlock x:Name="PickMessageText" FontSize="11" TextWrapping="Wrap" Opacity="0.9" />
+        </StackPanel>
+      </Border>
+
+      <TextBlock x:Name="PickDebugHintText" FontSize="10" Opacity="0.6" TextWrapping="Wrap" />
+
       <!-- ⑩ 未迁移部分 -->
       <TextBlock x:Name="NotMigratedText" FontSize="11" TextWrapping="Wrap" Opacity="0.7" />
 

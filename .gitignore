@@ -43,6 +43,11 @@ config.user.json
 config.example.json
 ui_state.json
 snippets.json
+# 超大文件正文的落盘目录（backend 的 files.disk_threshold_chars 触发时写入）。
+# The on-disk store for oversized file bodies (written when backend's files.disk_threshold_chars triggers).
+# 它是**运行时产物**，且正文随时可由原文件重新解析；内容含用户文档原文，绝不入库。
+# It is a runtime artifact whose text can always be re-parsed from the originals, and it holds user document text, so it must never be committed.
+file_cache/
 backend_crash.log
 # 前端崩溃日志（v0.2.0 修复一：全局异常兜底会写这个文件）
 # Front end crash log (v0.2.0 fix one: the global exception fallback writes this file)
@@ -58,6 +63,11 @@ browser_state.json
 # 它可能出现在仓库根（开发时程序根目录就是仓库根），含 Cookie，绝不能入库。
 # It can sit at the repository root (during development the program root is the repository root) and holds cookies, so it must never be committed.
 browser_profile/
+# 「用调试模式启动浏览器」（任务十七 / 自测问题修复-1）代启动的调试实例所用的数据目录。
+# The data directory used by the debug instance that "launch browser in debug mode" (task seventeen / self-test fixes) starts.
+# 它与上面那个同理：落在仓库根、含 Cookie，绝不能入库。
+# Same reasoning as the entry above: it lands at the repository root and holds cookies, so it must never be committed.
+browser_profile_debug/
 # 结果目录（新增三；默认生成在程序根目录，也可能被指到仓库内）
 # Results directory (added in fix three; created in the program root by default, but may also be pointed inside the repository)
 # v0.2.1 发布任务书「全局要求一」：目录名由「批量处理结果」改为英文 results，

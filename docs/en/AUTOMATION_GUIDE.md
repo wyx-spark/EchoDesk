@@ -42,7 +42,7 @@ keeps user data in its own place (see 3.9 and 4.3).
 | Requirement | Why | How to check |
 | --- | --- | --- |
 | **Windows** — browser automation is Windows-only (see the warning above; on macOS/Linux the feature is not offered at all) | Automation drives the Edge installation that exists on Windows, and its configuration page is part of the Windows-only UI | On macOS/Linux there is nothing to configure — use the alternatives listed above instead |
-| Microsoft Edge is installed | Automation opens pages with the Edge on your machine (`browser_channel` defaults to `msedge`); headless mode is never used | If Edge opens normally, you are fine |
+| A supported browser is installed | Automation opens pages with a browser on your machine (`browser` defaults to `auto`, trying **Edge → Chrome → bundled Chromium → Firefox** in order and using the first that starts); headless mode is never used | If Edge or Chrome opens normally you are fine; with neither installed, EchoDesk falls back to the Chromium it ships |
 | A local model is downloaded | Producing the review needs the local model; without one you get "no local model is loaded, cannot generate a summary or review opinion" | `/status` in the main window shows the loaded model |
 | Your machine can reach that web system | Including login, permissions, intranet and VPN; automation only clicks for you, it cannot reach anything you cannot reach | Open the task list page once in Edge by hand and confirm you can see the tasks |
 
@@ -138,10 +138,27 @@ platforms works — the file sits at the same relative path everywhere, only the
 | `login_state_file` | Optional | The **backup / migration** file for the sign-in state (cookies / localStorage). The primary mechanism is the browser's own data directory; this JSON file is also used to import cookies once when upgrading from an older version | `browser_state.json` |
 | `manual_login_wait_seconds` | Optional | How long the run waits for you when a CAPTCHA or login appears | `180` (0–3600) |
 | `headless` | Read-only | Automation **only supports a visible browser**; writing `true` is corrected back to `false` with a warning | `false` |
-| `browser_channel` | Optional | Which browser opens the pages; the system Edge is the default | `msedge` |
+| `browser` | Optional | Which browser opens the pages. `auto` (the default) tries Edge → Chrome → bundled Chromium → Firefox in order and uses the first one that starts; or force `edge`, `chrome`, `chromium` (the one EchoDesk ships, nothing to install) or `firefox` | `auto` |
+| `browser_channel` | Optional | **Legacy field**, kept only so existing configurations keep working. When `browser` is `auto` and this was set explicitly, the browser it names is **moved to the front** of the candidate list | `msedge` |
 | `audit_log_file` | Optional | Audit log file: one JSON record per task | `automation_log.jsonl` |
 | `start_with_windows` | **Not implemented** | The program does not read this field yet, so setting it to `true` does not start EchoDesk at sign-in; to start with Windows, copy `Start-EchoDesk-v0.2.2.lnk` into the system Startup folder (`Win+R` → `shell:startup`). That route is Windows-only; macOS and Linux have no built-in auto-start in this version (start it yourself with `./start.sh`, or use your desktop's own login-items / autostart mechanism) | `false` |
 | `safety_version` / `safety_accepted_at` | Read-only | Safety protocol version and when you accepted it; recorded automatically for auditing | `1.0` / empty |
+
+### Which browsers are supported (and which are not)
+
+| Category | Works? | Notes |
+| --- | --- | --- |
+| Chromium family: **Microsoft Edge**, **Google Chrome** | ✅ Yes | Preferred; **reusing the browser you already have open** works only with these |
+| Bundled Chromium (`browser: chromium`) | ✅ Yes | **Nothing to install** — this is the fallback when neither of the above is present |
+| **Mozilla Firefox** (`browser: firefox`) | ✅ Drivable | But it **cannot** reuse a browser you already have open; a new window is started instead (so you sign in again) |
+| Other Chromium brands: Brave, Opera, Vivaldi, … | ⚠️ Not wired up in this version | Support is technically possible but requires pointing the configuration at their executable; this version has no such setting |
+| **Trident (IE) engines and vendor shells** (older 360 Secure Browser in compatibility mode, QQ Browser's IE mode, some government-issued browsers) | ❌ **Not possible** | Playwright has no Trident driver, so these browsers **cannot** be automated at all |
+
+**What to do about the last row**: use that browser to **save or export the page as a file** and take the
+"local document" route instead (upload the file for the model to work on), or open the same system in
+Edge or Chrome — most intranet systems accept either — and automate from there.
+Do not expect "switching browsers" to fix it: that is not a configuration gap, the driver simply does
+not exist.
 
 ---
 

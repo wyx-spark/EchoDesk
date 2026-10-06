@@ -19,6 +19,86 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 > `records/v0.2.2-跨平台-2记录.md`; the file names keep the task-spec number they were written
 > under, **not the release number**).
 
+### Self-test fixes: uploaded files, web search, browser choice, agent reasoning
+
+Task specification: `prompts/EchoDesk-v0.2.2自测问题修复-1.md`. The full record — per-item root
+causes, reproduction evidence, the investigations that were run, what could *not* be reproduced,
+and what is still outstanding — is `records/v0.2.2-自测问题修复记录.md` (internal,
+**not shipped with releases**).
+
+**Uploaded files are now actually given to the model.** Previously the document body was injected
+only when the question happened to contain one of a fixed list of words (file, contract, clause,
+summarise, …). The list contained "摘要一下" but not "总结", so the most natural questions — *"帮我总结一下"*,
+*"分析一下"*, *"甲方是谁"* — put **not one character** of the document into the context, and the model was
+left with nothing but the file name and an instruction telling it to ask the user to name the file.
+The model's answer "I can't see any file content" was, from its point of view, correct. Injection is
+now unconditional whenever a file is loaded, bounded as before by the `files.total_chars` budget.
+The same fix removes a second error in the old check: it tested a field that is *emptied* when an
+oversized document is spilled to disk. A regression assertion is registered in the gate so this
+cannot come back a third time.
+
+**Web search works again, and failures explain themselves.** The `bing.com` URL in the error message
+did not come from this project (the repository contains no reference to it): the bundled
+`duckduckgo-search` 8.1.1 pins its own backend to `backends = ["bing"]` and disables DuckDuckGo's
+html/lite backends, and its HTTP client does not follow redirects — while `www.bing.com` is redirected
+to `cn.bing.com` outside the US. It therefore *always* sees a 302 and reports a failure, which no
+amount of retrying fixes. A built-in second source now follows the redirect and parses the results
+itself (using only the standard library and the project's existing `requests` dependency), and search
+failures are reported as one of a small set of user-facing kinds — network, timeout, certificate,
+rate limit, changed source — instead of a raw Rust error string.
+
+**The browser used by automation is now selectable.** `automation.browser` accepts `auto`, `edge`,
+`chrome`, `chromium` or `firefox`; `auto` tries them in order and uses the first that starts, keeping
+Edge first so that upgrades do not change existing behaviour. When every candidate fails, the error
+lists what each browser reported, instead of surfacing a bare Playwright error.
+
+**Agent steps now show their reasoning.** The Agent loop calls the model without streaming and never
+split the reasoning out of the reply, and its progress events carried no text at all — so nothing was
+renderable. Each step's reasoning is now separated and sent to the front end, and tool-call parsing
+runs on the answer text only (reasoning that happened to mention calling a tool can no longer be
+mistaken for a real call).
+
+**Context usage reports what was really sent.** The figure shown next to the input box counted only
+the system prompt and the conversation history, omitting this turn's injected document text,
+retrieval snippets and search results — by far the largest part. Measured on a 3,200-character
+document, it reported 355 tokens where the request actually carried 1,462. A second figure,
+`used_last_request`, now reports the real number.
+
+**The cross-platform front end could not start at all.** Two defects meant the Avalonia build —
+the one the cross-platform packages ship — crashed on launch and then again on the first message:
+the main window never called its generated `InitializeComponent()`, so every `x:Name` field was
+`null` (the settings window and all seven settings pages *do* call it; only the main window missed
+it), and four places cast the result of `FindResource` straight to a brush, which throws as soon as
+the key resolves to `AvaloniaProperty.UnsetValue` instead of a brush. Both are fixed. A third
+startup problem remains **open** and is recorded rather than papered over: opening the Settings
+window raises a stack overflow inside Avalonia 12.1.3's theme-variant resolution, so that window
+cannot be opened at all in this build.
+
+**The command box placeholder now lines up.** It was a hand-positioned overlay whose margin (16)
+did not match the real text origin (15 = 1px border + 8 margin + 6 padding), so the prompt sat 2px
+off the cursor; and — because the visibility switch from the WPF front end was not carried across —
+it was never hidden, so it stayed on top of whatever you typed. It now uses the text box's own
+placeholder, which the framework positions and hides itself.
+
+**Settings could be saved to the wrong file.** Reading the configuration looks in four locations
+(the working directory first, then the program directory and the packaged locations), but *saving*
+it opened a plain relative path — so it wrote only to whatever the current working directory
+happened to be. When that directory was not where the configuration actually lives, the change
+landed in a **new, stray** `config.json` and the file actually being read was never updated:
+settings appeared to save and then revert on restart. Worse, that stray file is the *first*
+location the reader checks, so launching from that directory later would pick it up instead — the
+configuration appearing to change by itself. It went unnoticed because the packaged front end sets
+the backend's working directory to `app/backend/`, which happens to be where the configuration
+lives; running from source, from a test, or from any other directory exposes it. Saving now targets
+the same file that was read.
+
+**Smaller fixes.** A missing `import re` meant oversized documents were never spilled to disk (the
+feature had never worked; the pointer written into the context pointed at a directory that was never
+created). `file_cache/` is now ignored by Git. The backend crash log is no longer polluted by
+uncaught exceptions from `tools/` scripts, which previously made real backend crashes hard to spot.
+A duplicate definition of `load_file_into_context` was removed — the old single-file version was
+silently overriding the newer multi-file one.
+
 ### Bilingual coverage and three-platform friendliness across the whole repository
 
 Task specification: `prompts/EchoDesk-v0.2.2全面双语与三平台友好.md`. The full audit, the

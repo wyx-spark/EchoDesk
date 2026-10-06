@@ -332,6 +332,243 @@ def test_conversation() -> None:
     check("非法模式被拒绝", conv2.set_mode("nope") is False)
 
 
+# ---------------------------------------------- 4b. 文件上下文注入（任务一）
+
+def test_file_injection() -> None:
+    """任务一（自测问题修复-1）：上传文件后模型必须能读到内容。
+
+    这是任务书标为"重中之重"的一项，而且**同一个症状历史上出现过两次**：
+    检索路径修过一次（`_retrieval_context_for` 的注释里留着"首轮实测就是这个
+    症状"），全文注入这条路径却一直挂着同一道错闸门。所以这里除了行为断言，
+    还直接对 ``backend/main.py`` 的源码形状做断言 —— 防止有人再把闸门装回去。
+    """
+    section("文件上下文注入（任务一）")
+    import tempfile
+
+    main_src = open(os.path.join(os.path.abspath(BACKEND), "main.py"), encoding="utf-8").read()
+    gate_lines = [ln.strip() for ln in main_src.splitlines()
+                  if ln.strip().startswith("include_file = ")]
+    check("include_file 的三处闸门都在", len(gate_lines) == 3, str(gate_lines))
+    check("闸门一律是 has_file()（不再看问题里有没有提到文件）",
+          all(ln == "include_file = self.conv.has_file()" for ln in gate_lines),
+          str(gate_lines))
+    # 只看代码行：解释"为什么取消这道闸门"的注释里必然会出现 FILE_INTENT 字样
+    code_lines = [ln for ln in main_src.splitlines() if not ln.strip().startswith("#")]
+    check("FILE_INTENT 不再参与注入判断",
+          all("FILE_INTENT.search" not in ln for ln in code_lines),
+          str([ln.strip() for ln in code_lines if "FILE_INTENT.search" in ln]))
+    check("re 已导入（_store_large_file 用它清洗文件名）", "import re" in code_lines)
+    check("load_file_into_context 只有一个定义（重复的旧版已删）",
+          main_src.count("def load_file_into_context(") == 1,
+          f"出现 {main_src.count('def load_file_into_context(')} 次")
+
+    # 任务十：**每一处**注入之后都要记下"本轮真正发出去多少"。
+    # 为什么要有这条：这三处的后续代码形状并不一样（两处后面跟着同一行注释、
+    # 第三处后面是 try:），本轮用"替换全部"时就**静默漏掉了第三处**，
+    # 而工具报的是"全部替换成功"。所以这里按行号逐个核对窗口，
+    # 而不是数一下总数是否相等 —— 数总数在这里恰好也会是 3 对 3 而看不出漏。
+    src_lines = main_src.splitlines()
+    gate_rows = [i for i, ln in enumerate(src_lines)
+                 if ln.strip() == "include_file = self.conv.has_file()"]
+    check("三处注入闸门都在", len(gate_rows) == 3, str(gate_rows))
+    no_note = [i + 1 for i in gate_rows
+               if not any("_note_request_size" in ln for ln in src_lines[i:i + 12])]
+    check("每处闸门之后都记了本轮请求大小（任务十）", not no_note, str(no_note))
+
+    # ---------- 行为：真 Backend + 真上传路径 ----------
+    import main as backend_main
+    from config import Config, FilesConfig
+
+    class _StubEngine:
+        n_ctx = 8192
+        n_ctx_train = 40960
+        kv_cache_bytes = 0
+        model_path = "stub.gguf"
+
+        def make_splitter(self):
+            return None
+
+        def count_tokens(self, text):
+            return max(1, len(str(text)) // 2)
+
+        def chat_complete(self, messages, temperature=0.7, max_tokens=1024):
+            return "摘要"
+
+        def chat_stream(self, messages, **kwargs):
+            yield "摘要"
+
+        def clear_cache(self):
+            return True
+
+        def speed_hint(self, *a, **k):
+            return ""
+
+        def kv_cache_text(self):
+            return "0 B"
+
+        @property
+        def ready(self):
+            return True
+
+    def _backend(**overrides):
+        config = Config()
+        config.model_path = "stub.gguf"
+        config.speed_hint = False
+        config.search_default = False
+        config.summary_cache = False
+        if overrides:
+            config.files = FilesConfig(**overrides)
+        backend = backend_main.Backend(config)
+        backend.llm = _StubEngine()
+        return backend
+
+    body = "甲方应于合同签署后三十日内支付价款的百分之五十。"
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "合同.txt")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(body)
+
+        owner = _backend()
+        result = owner._load_one_file(path)
+        check("单文件上传成功", result.get("ok") is True, str(result))
+        check("登记表里有这份文件", owner.conv.has_file() is True)
+
+        # **任务一的核心断言**：用户不点名文件也必须拿到正文 ——
+        # 下面这些问法在修之前一个都拿不到（都不含 FILE_INTENT 的词）。
+        for question in ("帮我总结一下", "这份协议的主要风险是什么", "分析一下",
+                         "甲方是谁", "合同里付款条款怎么写的", "你好"):
+            msgs = owner.conv.build_messages(question, include_file=owner.conv.has_file())
+            content = msgs[-1]["content"]
+            check(f"「{question}」也能拿到文件正文", body in content, content[:120])
+
+        # 系统提示不许再教模型"要用户点名文件"
+        system_prompt = owner.conv.build_messages("问")[0]["content"]
+        check("系统提示不再要求用户点名文件",
+              "请在问题中提及" not in system_prompt, system_prompt[-160:])
+
+        # ---------- 落盘后仍要注入（旧闸门在这里恒为假） ----------
+        big_body = "第一条 甲方应付款。\n" * 40          # 400+ 字符
+        big_path = os.path.join(tmp, "长合同.txt")
+        with open(big_path, "w", encoding="utf-8") as handle:
+            handle.write(big_body)
+        storer = _backend(disk_threshold_chars=100)     # 故意调小，逼出落盘
+        storer._load_one_file(big_path)
+        entry = storer.conv.files[0]
+        check("超过阈值时正文落盘", bool(entry.stored_at), entry.stored_at)
+        check("落盘后内存正文被清空", entry.content == "")
+        # 旧闸门 `bool(self.conv.file_content)` 在这里恒为假 —— 这就是第二个根因
+        check("旧闸门的判据在落盘后确实为假（说明旧写法必错）",
+              bool(storer.conv.file_content) is False)
+        check("新闸门 has_file() 在落盘后仍为真", storer.conv.has_file() is True)
+        stored_msgs = storer.conv.build_messages("帮我总结一下",
+                                                 include_file=storer.conv.has_file())
+        check("落盘文件也会给模型正文指针",
+              entry.stored_at in stored_msgs[-1]["content"],
+              stored_msgs[-1]["content"][:200])
+        # 门禁不留副作用：这条断言真的写了盘（file_cache/），用完即删。
+        if entry.stored_at and os.path.exists(entry.stored_at):
+            os.remove(entry.stored_at)
+
+        # ---------- 反向：没有文件时不许凭空注入 ----------
+        empty = _backend()
+        empty_msgs = empty.conv.build_messages("你好", include_file=empty.conv.has_file())
+        check("没有文件时不注入任何文件块",
+              "【文件内容" not in empty_msgs[-1]["content"])
+        check("没有文件时 has_file() 为假", empty.conv.has_file() is False)
+
+
+def test_crash_log_scope() -> None:
+    """任务十五（自测问题修复-1）：进程级崩溃钩子不得在被 import 时安装。
+
+    ``backend/main.py`` 会被 ``tools/`` 下几乎所有脚本 import。它原来在**模块级**
+    无条件执行 ``sys.excepthook = _excepthook`` 并打开 ``backend_crash.log``，
+    于是任何脚本的未捕获异常都被写进后端崩溃日志（实测该文件里混进了
+    test_reasoning / test_retrieval / test_search 的回溯），真正的后端崩溃被淹掉。
+    """
+    section("崩溃日志作用域（任务十五）")
+    import main as backend_main
+
+    main_src = open(os.path.join(os.path.abspath(BACKEND), "main.py"), encoding="utf-8").read()
+    # 顶格（模块级）不得出现 sys.excepthook 赋值
+    top_level = [ln for ln in main_src.splitlines()
+                 if ln.startswith("sys.excepthook") and "=" in ln]
+    check("模块级不再安装进程异常钩子", not top_level, str(top_level))
+    check("崩溃钩子改为显式安装函数",
+          "def install_crash_handlers()" in main_src)
+    check("程序入口处调用 install_crash_handlers",
+          "install_crash_handlers()" in main_src.split('if __name__ == "__main__":')[-1])
+    check("import main 不打开崩溃日志句柄", backend_main._crash is None,
+          repr(backend_main._crash))
+
+
+def test_config_save_target() -> None:
+    """任务十五（自测问题修复-1）：配置的写入目标与合法性。
+
+    两件事都必须钉住：
+
+    1. **写回被读出来的那一份**。旧实现是 ``open(path, "w")`` —— 只写当前工作目录，
+       而读取用的 ``Config._find()`` 有四个候选位置（cwd → exe 目录 → ``_MEIPASS``
+       → 本文件所在目录）。cwd 与配置真实位置不同时，写入会落进一份**新的孤立文件**，
+       真正被读的那份永不更新（"改了设置存不住"）；而那份孤立文件在 ``_find`` 里
+       又**排第一位**，换个 cwd 启动就被优先读（"配置自己变了"）。
+       它一直没被发现，是因为**打包后前端把后端的工作目录设成了 ``app/backend/``**，
+       cwd 恰好等于配置所在目录 —— 只有源码运行／测试／换目录启动才会暴露。
+
+    2. **非法配置必须被拒绝写入**。pydantic 默认不校验赋值，内存里可能存在违反自身
+       约束的值（实测 ``temperature=1.5`` vs 约束 ``le=1.0``）；而这是"以后每次启动
+       都要读"的文件，写进去就等于**把程序写成起不来**。
+    """
+    section("配置写入目标与合法性（任务十五）")
+    import json
+    import tempfile
+
+    from config import Config
+
+    # 用独特名字，且刻意放在**程序目录**（模拟 _find 能定位到它的真实场景）
+    name = "selftest-config-probe.json"
+    program_side = os.path.join(os.path.abspath(BACKEND), name)
+    with tempfile.TemporaryDirectory() as elsewhere:
+        old_cwd = os.getcwd()
+        stray = os.path.join(elsewhere, name)
+        try:
+            with open(program_side, "w", encoding="utf-8") as handle:
+                json.dump(Config().model_dump(), handle, ensure_ascii=False)
+
+            os.chdir(elsewhere)          # cwd 换到别处：正是会触发旧 bug 的场景
+            cfg = Config.load(name)
+            cfg.temperature = 0.42
+            cfg.save(name)
+            with open(program_side, encoding="utf-8") as handle:
+                saved = json.load(handle)
+            check("save 写回被读的那一份（程序目录），而不是 cwd",
+                  abs(float(saved.get("temperature", -1)) - 0.42) < 1e-6,
+                  str(saved.get("temperature")))
+            check("没有在 cwd 新建孤立配置", not os.path.exists(stray), stray)
+
+            # 非法值：必须被拒绝，且**原文件内容不能被破坏**。
+            # 用 9.9 而不是 1.5 —— 温度上限是 1.5（与 capability_settings 一致），
+            # 1.5 本身是**合法**的；越界判据要用真正越界的值。
+            cfg.temperature = 9.9        # 约束是 le=1.5
+            rejected = False
+            try:
+                cfg.save(name)
+            except ValueError:
+                rejected = True
+            check("非法配置被拒绝写入", rejected)
+            with open(program_side, encoding="utf-8") as handle:
+                after = json.load(handle)
+            check("被拒绝后原文件保持不变（没有被写坏）",
+                  abs(float(after.get("temperature", -1)) - 0.42) < 1e-6,
+                  str(after.get("temperature")))
+        finally:
+            os.chdir(old_cwd)
+            # 门禁不留副作用
+            for leftover in (program_side, stray):
+                if os.path.exists(leftover):
+                    os.remove(leftover)
+        check("门禁没有留下探针文件", not os.path.exists(program_side), program_side)
+
+
 # ----------------------------------------------------------- 5. 自动化
 
 def test_automation() -> None:
@@ -526,8 +763,9 @@ def test_imports() -> None:
 
 def main() -> int:
     tests = [test_imports, test_config, test_plaintext, test_gguf, test_summarizer,
-             test_conversation, test_automation, test_marketplace, test_model_match,
-             test_protocol_keys]
+             test_conversation, test_file_injection, test_crash_log_scope,
+             test_config_save_target, test_automation, test_marketplace,
+             test_model_match, test_protocol_keys]
     for fn in tests:
         try:
             fn()

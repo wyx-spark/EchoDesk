@@ -26,14 +26,14 @@
         "model": "",
         "min_chars": 4000,
         "keep_pointer": true,
-        "extractive": true,
-        "extractive_ratio": 0.35,
-        "extractive_min_chars": 600,
         "progress_events": true,
         "heartbeat_seconds": 5.0,
         "slow_chunk_seconds": 60,
         "chunk_timeout_seconds": 0,
-        "chunk_timeout_action": "skip"
+        "chunk_timeout_action": "skip",
+        "extractive": true,
+        "extractive_ratio": 0.35,
+        "extractive_min_chars": 600
     },
     "compact": {
         "trigger_ratio": 0.7,
@@ -118,7 +118,10 @@
         ],
         "manual_login_wait_seconds": 180,
         "headless": false,
+        "browser": "auto",
         "browser_channel": "msedge",
+        "browser_reuse": "auto",
+        "cdp_port": 9222,
         "save_results": true,
         "results_root_name": "results",
         "results_location": "",
@@ -214,5 +217,7 @@
         }
     },
     "speed_hint": true,
-    "speed_min_tps": 3.0
+    "speed_min_tps": 3.0,
+    "stream_heartbeat_seconds": 1.5,
+    "stream_throttle_ms": 50
 }

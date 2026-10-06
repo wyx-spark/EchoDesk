@@ -5,6 +5,17 @@
 //   automation_config_set  { automation: patch } → { content, automation }
 //   automation_run / stop / automation_status / automation_clear_login
 //
+// **任务十七（自测问题修复-1）新增的四个动作**（都在本页下半部分的"可视化选取"块里）：
+//   automation_browser_reuse          → { browser_reuse: { …能力与配置… } }（可带 set 写回）
+//   automation_launch_debug_browser   → { browser_debug: { ok, command, message } }
+//   automation_pick_open/begin/status/cancel/close
+//                                     → { pick: { state, … } }（两段式状态机，后端持有）
+//
+// 两段式的分工（任务书第 4 条）：**状态机在后端**，前端只做两件事——
+//   ① 按 `pick.state` 决定哪些按钮可用、显示后端回传的文案；
+//   ② 选取中用 DispatcherTimer 轮询 `automation_pick_status`（后端借这次轮询去页面上
+//      收结果）。这样"脚本到底注入了没有"这个事实永远与界面一致，切换设置页也不会丢状态。
+//
 // **平台降级（任务书明确要求）**：自动化依赖本机 Edge 的受控启动，
 // 是 EchoDesk 在非 Windows 上的两条降级边界之一。本页在那些平台上：
 //   ① 顶部横幅说明原因**与替代做法**（不把平台限制说成"没装 Playwright"这类依赖缺失）；
@@ -21,6 +32,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
 using EchoDesk.Avalonia.Services;
 
 namespace EchoDesk.Avalonia.Views.Settings;
@@ -30,9 +42,36 @@ public partial class AutomationPage : UserControl, ISettingsPage
     /// <summary>安全协议版本（与 WPF 版一致；后端据此判断用户接受的是哪一版协议）。</summary>
     private const string SafetyVersion = "1.0";
 
+    /// <summary>选取目标取值（与后端 _PICK_PURPOSE 的键一致；顺序即界面顺序）。</summary>
+    private static readonly string[] PickTargets =
+        { "task_list", "task_row", "next_page", "task_detail_file", "login_check" };
+
+    /// <summary>浏览器取值（与后端 automation.BROWSER_CHOICES / AUTO_ORDER 一致）。</summary>
+    private static readonly string[] BrowserChoices = { "auto", "edge", "chrome", "chromium", "firefox" };
+
+    /// <summary>复用策略取值（与后端 automation.REUSE_MODES 一致）。</summary>
+    private static readonly string[] ReuseModes = { "auto", "required", "off" };
+
     private ISettingsHost? _host;
     private bool _loading;
     private bool _available = true;
+
+    /// <summary>"选取中"的轮询定时器：后端没有后台线程，结果靠这里的心跳收回来。</summary>
+    private readonly DispatcherTimer _pickTimer = new() { Interval = TimeSpan.FromMilliseconds(700) };
+    private bool _pickPolling;
+
+    /// <summary>后端最近一次回传的选取状态原文，用于"复制命令"之类只读展示。</summary>
+    private string _debugCommand = "";
+
+    /// <summary>
+    /// 正在用代码填写下拉框（FillCombo）时为真。
+    ///
+    /// 为什么必须有这个标志：给 ComboBox 设 SelectedIndex 会触发 SelectionChanged，
+    /// 而那个事件是会**写回后端配置**的。界面刚打开时 ApplyTexts 先用默认值填一遍、
+    /// RefreshAsync 再用配置里的真实值填一遍——若不挡住，第一遍那次"默认 auto"
+    /// 会先把用户配置好的浏览器覆盖成 auto，等他看到界面时配置已经被自己改掉了。
+    /// </summary>
+    private bool _fillingCombos;
 
     /// <summary>所有输入控件：非 Windows 上统一禁用（见文件头）。</summary>
     private List<Control> _inputs = new();
@@ -50,6 +89,10 @@ public partial class AutomationPage : UserControl, ISettingsPage
             ScheduleCheck, ScheduleTimesBox,
             LoginStateDirBox, LoginCheckSelectorBox, LoginKeywordsBox,
             ClearLoginStateButton, SaveConfigButton, RunOnceButton,
+            // 任务十七新增的控件也纳入平台降级（非 Windows 上自动化整体不可用）
+            BrowserChoiceBox, ReuseModeBox, CdpPortBox, PickTargetBox,
+            PickOpenButton, PickBeginButton, PickCancelButton, PickCloseButton,
+            LaunchDebugBrowserButton, PickReloadTabButton,
         };
 
         SaveConfigButton.Click += async (_, _) => await SaveAsync();
@@ -61,6 +104,20 @@ public partial class AutomationPage : UserControl, ISettingsPage
         ResultsLocationBox.TextChanged += (_, _) => UpdateResultsPreview();
         ResultsRootNameBox.TextChanged += (_, _) => UpdateResultsPreview();
         TaskNameBox.TextChanged += (_, _) => UpdateResultsPreview();
+
+        // ---- 任务十七：可视化选取与浏览器复用 ----
+        PickOpenButton.Click += async (_, _) => await PickStepAsync("open");
+        PickBeginButton.Click += async (_, _) => await PickStepAsync("begin");
+        PickCancelButton.Click += async (_, _) => await PickStepAsync("cancel");
+        PickCloseButton.Click += async (_, _) => await PickStepAsync("close");
+        PickReloadTabButton.Click += async (_, _) => await PickStepAsync("open");   // 重新取"当前标签页"
+        LaunchDebugBrowserButton.Click += async (_, _) => await LaunchDebugBrowserAsync();
+        // 选了别的浏览器/复用方式就立刻写回后端：这两个开关决定"这次会不会复用成功"，
+        // 等用户去点整个页面的「保存」再生效太绕（页脚保存按钮仍会再同步一次，幂等）。
+        BrowserChoiceBox.SelectionChanged += async (_, _) => await SaveReuseSettingsAsync();
+        ReuseModeBox.SelectionChanged += async (_, _) => await SaveReuseSettingsAsync();
+        CdpPortBox.LostFocus += async (_, _) => await SaveReuseSettingsAsync();
+        _pickTimer.Tick += async (_, _) => await PollPickAsync();
     }
 
     public string TabKey => "settings.tab.automation";
@@ -72,11 +129,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
     public void ApplyTo(AppSettings settings) { }
 
     // -----------------------------------------------------------------
-    private async Task<JsonDocument?> SendAsync(object request)
+    private async Task<JsonDocument?> SendAsync(object request, int timeoutSeconds = 90)
     {
         if (_host is null)
             return null;
-        return await _host.State.Backend.SendAsync(request, idleTimeout: TimeSpan.FromSeconds(90));
+        return await _host.State.Backend.SendAsync(request, idleTimeout: TimeSpan.FromSeconds(timeoutSeconds));
     }
 
     private void SetInputsEnabled(bool enabled)
@@ -84,6 +141,80 @@ public partial class AutomationPage : UserControl, ISettingsPage
         foreach (Control control in _inputs)
             control.IsEnabled = enabled;
     }
+
+    /// <summary>给 ComboBox 填"(取值, 显示名)"并选中某个取值（显示名由语言包提供）。</summary>
+    private void FillCombo(ComboBox box, string[] values, Func<string, string> label, string? current)
+    {
+        _fillingCombos = true;
+        try
+        {
+            box.Items.Clear();
+            int selected = 0;
+            for (int i = 0; i < values.Length; i++)
+            {
+                box.Items.Add(new ComboBoxItem { Content = label(values[i]), Tag = values[i] });
+                if (string.Equals(values[i], current, StringComparison.OrdinalIgnoreCase))
+                    selected = i;
+            }
+            box.SelectedIndex = box.ItemCount > 0 ? selected : -1;
+        }
+        finally
+        {
+            _fillingCombos = false;
+        }
+    }
+
+    private static string ComboValue(ComboBox box) =>
+        (box.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
+
+    private void SelectCombo(ComboBox box, string? value)
+    {
+        _fillingCombos = true;
+        try
+        {
+            for (int i = 0; i < box.ItemCount; i++)
+            {
+                if (box.Items[i] is ComboBoxItem item
+                    && string.Equals(item.Tag as string, value, StringComparison.OrdinalIgnoreCase))
+                {
+                    box.SelectedIndex = i;
+                    return;
+                }
+            }
+        }
+        finally
+        {
+            _fillingCombos = false;
+        }
+    }
+
+    private string BrowserLabel(string name) => name switch
+    {
+        "edge" => "Microsoft Edge",
+        "chrome" => "Google Chrome",
+        "chromium" => "Chromium (Playwright)",
+        "firefox" => "Mozilla Firefox",
+        _ => Loc.T("settings.automation.browserAuto", "自动（依次尝试 Edge → Chrome → Chromium）"),
+    };
+
+    private string ReuseModeLabelText(string mode) => mode switch
+    {
+        "required" => Loc.T("settings.automation.reuseRequired",
+            "必须复用：连不上已打开的浏览器就报错，不新开实例"),
+        "off" => Loc.T("settings.automation.reuseOff",
+            "不复用：永远用程序自己新开的浏览器实例（要重新登录）"),
+        _ => Loc.T("settings.automation.reuseAuto",
+            "自动（默认）：先复用已打开的浏览器，连不上才新开实例并提示需要重新登录"),
+    };
+
+    private string PickTargetLabelText(string target) => target switch
+    {
+        "task_row" => Loc.T("settings.automation.pickTargetRow", "任务行容器"),
+        "next_page" => Loc.T("settings.automation.pickTargetNextPage", "「下一页」按钮"),
+        "task_detail_file" => Loc.T("settings.automation.pickTargetFile", "详情页附件"),
+        "login_check" => Loc.T("settings.automation.pickTargetLogin", "登录后才出现的元素"),
+        _ => Loc.T("settings.automation.pickTargetList", "任务列表元素"),
+    };
 
     public async Task RefreshAsync()
     {
@@ -142,6 +273,10 @@ public partial class AutomationPage : UserControl, ISettingsPage
             LoginStateDirBox.Text = GetString(automation, "login_state_dir");
             LoginCheckSelectorBox.Text = GetString(automation, "login_check_selector");
             LoginKeywordsBox.Text = GetString(automation, "login_url_keywords");
+            // 任务十七：浏览器、复用策略、调试端口（浏览器回退到 auto 以兼容缺字段的旧配置）
+            SelectCombo(BrowserChoiceBox, GetString(automation, "browser") is { Length: > 0 } b ? b : "auto");
+            SelectCombo(ReuseModeBox, GetString(automation, "browser_reuse") is { Length: > 0 } r ? r : "auto");
+            CdpPortBox.Text = GetInt(automation, "cdp_port", 9222).ToString();
         }
         finally
         {
@@ -150,6 +285,9 @@ public partial class AutomationPage : UserControl, ISettingsPage
 
         UpdateResultsPreview();
         AutomationStatusText.Text = Loc.T("settings.automation.stateIdle", "空闲");
+        // 顺便把"复用能力"与"选取状态"读一次：后端持有状态机，界面重新打开时要能恢复显示
+        await RefreshBrowserReuseAsync();
+        await PickStepAsync("status");
     }
 
     /// <summary>保存位置留空时显示"程序根目录"，并预览完整目录（与 WPF 版同一口径）。</summary>
@@ -196,6 +334,10 @@ public partial class AutomationPage : UserControl, ISettingsPage
         ["login_state_dir"] = (LoginStateDirBox.Text ?? "").Trim(),
         ["login_check_selector"] = (LoginCheckSelectorBox.Text ?? "").Trim(),
         ["login_url_keywords"] = (LoginKeywordsBox.Text ?? "").Trim(),
+        // 任务十七：浏览器与复用设置也在同一次保存里同步（与上面几个字段同一口径）
+        ["browser"] = ComboValue(BrowserChoiceBox) is { Length: > 0 } value ? value : "auto",
+        ["browser_reuse"] = ComboValue(ReuseModeBox) is { Length: > 0 } reuse ? reuse : "auto",
+        ["cdp_port"] = ParseInt(CdpPortBox.Text, 9222),
     };
 
     private static int ParseInt(string? text, int fallback) =>
@@ -289,6 +431,234 @@ public partial class AutomationPage : UserControl, ISettingsPage
             ? el.GetInt32()
             : fallback;
 
+    // =================================================================
+    // 任务十七：复用已打开的浏览器 + 两段式可视化选取
+    // =================================================================
+    //
+    // 这一块的**文案几乎都来自后端**（automation.picker.* / automation.reuse.*），
+    // 前端只把 JSON 里的字符串直接摆到界面上。原因有两个：
+    //   ① 状态机在后端，"此刻该显示哪句话"和后端状态是同一件事，分开写一定会漂移；
+    //   ② 任务书要求所有面向用户的文案都走语言包、中英双语齐全 —— 后端语言包一份就够，
+    //      前端不必再维护一遍同样的句子（本工程的语言包目录不在本次改动范围内）。
+
+    /// <summary>读一次"复用能力"（浏览器、端口、是否支持、调试启动命令）。</summary>
+    private async Task RefreshBrowserReuseAsync()
+    {
+        using JsonDocument? doc = await SendAsync(new { action = "automation_browser_reuse" });
+        if (doc is null)
+            return;
+        if (!doc.RootElement.TryGetProperty("browser_reuse", out JsonElement reuse))
+            return;
+        ApplyBrowserReuseState(reuse);
+    }
+
+    private void ApplyBrowserReuseState(JsonElement reuse)
+    {
+        string label = reuse.TryGetProperty("browser_label", out JsonElement lb)
+            ? lb.GetString() ?? "" : "";
+        string mode = reuse.TryGetProperty("browser_reuse", out JsonElement md)
+            ? md.GetString() ?? "" : "auto";
+        bool supported = reuse.TryGetProperty("supported", out JsonElement sp) && sp.ValueKind == JsonValueKind.True;
+        bool available = reuse.TryGetProperty("available", out JsonElement av) && av.ValueKind == JsonValueKind.True;
+        int port = reuse.TryGetProperty("cdp_port", out JsonElement pt) && pt.ValueKind == JsonValueKind.Number
+            ? pt.GetInt32() : 9222;
+        _debugCommand = reuse.TryGetProperty("debug_command", out JsonElement dc)
+            ? dc.GetString() ?? "" : "";
+        string note = reuse.TryGetProperty("note", out JsonElement nt) ? nt.GetString() ?? "" : "";
+
+        // 状态行说清楚三件事：这次会不会复用、靠什么复用、现在能不能复用
+        string state;
+        if (!supported)
+            state = note.Length > 0 ? note
+                : Loc.T("settings.automation.reuseUnsupported",
+                    "当前浏览器不支持复用已打开的浏览器");
+        else if (mode == "off")
+            state = Loc.T("settings.automation.reuseOffState",
+                "已按设置关闭复用：程序会自己新开浏览器实例（需要重新登录）。");
+        else
+            state = available
+                ? Loc.T("settings.automation.reusePortOpen",
+                    "✅ 检测到调试端口 {0} 有浏览器在监听：点「打开 / 连接浏览器」即可直接复用它。", port)
+                : Loc.T("settings.automation.reusePortClosed",
+                    "当前调试端口 {0} 上没有检测到浏览器。点「用调试模式启动浏览器」可以由程序代启动一个；"
+                    + "你自己用命令行启动的浏览器（带 --remote-debugging-port={0}）同样能被连上。", port);
+        ReuseStateText.Text = Loc.T("settings.automation.reuseStateLine",
+            "浏览器：{0} · 复用方式：{1} · 端口 {2}\n{3}", label, ReuseModeLabelText(mode), port, state);
+
+        // 调试启动按钮只在"支持 CDP 且没连上"时才需要；Firefox 上它没有意义（必须禁用而不是
+        // 让人点了报错）—— 这正是任务书 F 条要求说清楚的边界。
+        LaunchDebugBrowserButton.IsEnabled = _available && supported;
+        LaunchDebugBrowserButton.Content = Loc.T("settings.automation.launchDebug", "🚀 用调试模式启动浏览器");
+        PickDebugHintText.Text = supported
+            ? (_debugCommand.Length > 0
+                ? Loc.T("settings.automation.debugCommandHint", "调试启动命令：{0}", _debugCommand)
+                : Loc.T("settings.automation.debugNoExeHint",
+                    "没有找到浏览器的可执行文件：请手动启动浏览器并加上调试参数，或先在上面换一个浏览器。"))
+            : Loc.T("settings.automation.firefoxReuseHint",
+                "Firefox 没有 CDP 调试接口，无法复用已打开的浏览器；想复用请把浏览器改成 Chrome、Edge 或 Chromium。");
+    }
+
+    /// <summary>浏览器/复用方式/端口改动后立刻写回后端（不必等页脚的"保存"）。</summary>
+    private async Task SaveReuseSettingsAsync()
+    {
+        // `_fillingCombos` 这个条件不能少：它挡住"程序自己填下拉框"触发的事件，
+        // 否则界面刚打开时 ApplyTexts 的默认值会先把用户配置好的浏览器覆盖成 auto。
+        if (_host is null || !_available || _loading || _fillingCombos)
+            return;
+        using JsonDocument? doc = await SendAsync(new
+        {
+            action = "automation_browser_reuse",
+            set = new Dictionary<string, object?>
+            {
+                ["browser"] = ComboValue(BrowserChoiceBox) is { Length: > 0 } b ? b : "auto",
+                ["browser_reuse"] = ComboValue(ReuseModeBox) is { Length: > 0 } r ? r : "auto",
+                ["cdp_port"] = ParseInt(CdpPortBox.Text, 9222),
+            },
+        });
+        if (doc is not null && doc.RootElement.TryGetProperty("browser_reuse", out JsonElement reuse))
+            ApplyBrowserReuseState(reuse);
+    }
+
+    private async Task LaunchDebugBrowserAsync()
+    {
+        if (_host is null || !_available)
+            return;
+        ReuseStateText.Text = Loc.T("settings.automation.debugLaunching", "⏳ 正在用调试模式启动浏览器…");
+        // 冷启动 + 加载数据目录要几秒，这里给足超时（后端自己最多等 25 秒）
+        using JsonDocument? doc = await SendAsync(new { action = "automation_launch_debug_browser" },
+            timeoutSeconds: 120);
+        if (doc is null)
+        {
+            ReuseStateText.Text = Loc.T("settings.automation.saveFailed", "❌ 保存失败（后端未响应）");
+            return;
+        }
+        string content = GetString(doc.RootElement, "content");
+        if (content.Length > 0)
+        {
+            ReuseStateText.Text = content;
+            AppendLog(content);
+        }
+        if (doc.RootElement.TryGetProperty("browser_debug", out JsonElement debug))
+        {
+            // 启动完再读一次能力状态：端口就绪后"可以复用"的提示会立刻变绿
+            await RefreshBrowserReuseAsync();
+        }
+    }
+
+    /// <summary>推一下两段式状态机（open / begin / status / cancel / close）。</summary>
+    private async Task PickStepAsync(string step)
+    {
+        if (_host is null || !_available)
+            return;
+        object request = step == "open"
+            ? new { action = "automation_pick_open", step, target = ComboValue(PickTargetBox) is { Length: > 0 } t ? t : "task_list" }
+            : new { action = "automation_pick_step", step };
+        // 打开/连接浏览器可能要几秒（冷启动更久），超时给宽一点；轮询则必须短，
+        // 否则界面会"卡"在一次没必要的等待上。
+        using JsonDocument? doc = await SendAsync(request, timeoutSeconds: step == "open" ? 120 : 30);
+        if (doc is null)
+        {
+            PickMessageText.Text = Loc.T("settings.automation.pickBackendDown", "⚠️ 后端没有响应");
+            StopPickTimer();
+            return;
+        }
+        string content = GetString(doc.RootElement, "content");
+        if (content.Length > 0)
+            AppendLog(content);
+        if (doc.RootElement.TryGetProperty("pick", out JsonElement pick))
+            ApplyPickState(pick);
+        else
+            PickMessageText.Text = content;
+    }
+
+    /// <summary>轮询：后端借这次询问去页面上收一次结果（前端只是心跳）。</summary>
+    private async Task PollPickAsync()
+    {
+        if (_pickPolling)
+            return;
+        _pickPolling = true;
+        try
+        {
+            await PickStepAsync("status");
+        }
+        finally
+        {
+            _pickPolling = false;
+        }
+    }
+
+    private void StartPickTimer()
+    {
+        if (!_pickTimer.IsEnabled)
+            _pickTimer.Start();
+    }
+
+    private void StopPickTimer()
+    {
+        if (_pickTimer.IsEnabled)
+            _pickTimer.Stop();
+    }
+
+    /// <summary>把后端回传的状态渲染到界面：按钮可用性 + 提示 + 当前目标页。</summary>
+    private void ApplyPickState(JsonElement pick)
+    {
+        string state = GetString(pick, "state");
+        bool picking = state == "picking";
+        picking = picking || (pick.TryGetProperty("picking", out JsonElement pk) && pk.ValueKind == JsonValueKind.True);
+        bool active = pick.TryGetProperty("active", out JsonElement ac) && ac.ValueKind == JsonValueKind.True;
+
+        // 按钮文案与标签：优先用后端语言包回传的（中英双语天然一致），拿不到时用本地兜底
+        if (pick.TryGetProperty("buttons", out JsonElement buttons))
+        {
+            PickOpenButton.Content = ComboText(buttons, "open", "打开 / 连接浏览器");
+            PickBeginButton.Content = ComboText(buttons, "begin", "开始选取");
+            PickCancelButton.Content = ComboText(buttons, "cancel", "取消选取");
+            PickCloseButton.Content = ComboText(buttons, "close", "结束选取");
+            PickReloadTabButton.Content = ComboText(buttons, "reload", "重新读取当前标签页");
+            if (buttons.TryGetProperty("debug", out JsonElement dbg) && dbg.ValueKind == JsonValueKind.String)
+                LaunchDebugBrowserButton.Content = dbg.GetString();
+        }
+
+        PickStateText.Text = Loc.T("settings.automation.pickStateLine",
+            "状态：{0}{1}",
+            GetString(pick, "state_label"),
+            GetString(pick, "last_result_label") is { Length: > 0 } r
+                ? Loc.T("settings.automation.pickLastResult", "（上次结果：{0}）", r)
+                : "");
+        PickReadyPromptText.Text = GetString(pick, "ready_prompt");
+        PickHintText.Text = GetString(pick, "hint");
+        string url = GetString(pick, "url");
+        string title = GetString(pick, "title");
+        string browser = GetString(pick, "browser");
+        PickTargetUrlText.Text = url.Length > 0
+            ? Loc.T("settings.automation.pickCurrentPage",
+                "当前目标页：{0}{1}　浏览器：{2}", url,
+                title.Length > 0 ? Loc.T("settings.automation.pickPageTitle", "（{0}）", title) : "",
+                browser)
+            : Loc.T("settings.automation.pickNoPage", "当前还没有目标页。");
+        string message = GetString(pick, "message");
+        PickMessageText.Text = message.Length > 0 ? message : PickMessageText.Text;
+
+        // 两段式的按钮可用性就是状态机的直接映射：等待准备时只能"开始选取"，
+        // 选取中只能"取消选取"——不给用户任何"点错一下就把状态搞乱"的机会。
+        PickOpenButton.IsEnabled = _available && !picking;
+        PickBeginButton.IsEnabled = _available && !picking && active;
+        PickCancelButton.IsEnabled = _available && picking;
+        PickCloseButton.IsEnabled = _available && active;
+        PickReloadTabButton.IsEnabled = _available && !picking;
+        PickTargetBox.IsEnabled = _available && !active;
+
+        if (picking)
+            StartPickTimer();
+        else
+            StopPickTimer();
+    }
+
+    private static string ComboText(JsonElement obj, string name, string fallback) =>
+        obj.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.String
+            ? (el.GetString() is { Length: > 0 } text ? text : fallback)
+            : fallback;
+
     // -----------------------------------------------------------------
     public void ApplyTexts()
     {
@@ -330,6 +700,29 @@ public partial class AutomationPage : UserControl, ISettingsPage
         StopAutomationButton.Content = Loc.T("settings.automation.stopRun", "⏹ 停止");
         NotMigratedText.Text = Loc.T("settings.automation.notMigrated", "");
         RunLogLabel.Text = Loc.T("settings.automation.runLog", "运行日志");
+
+        // ---- 任务十七：可视化选取与浏览器复用 ----
+        // 下拉框的**显示名**是前端本地化的（它们是"字段值"的枚举，不是状态文案）；
+        // 具体状态与提示语由后端回传，见 ApplyPickState。
+        PickSectionTitle.Text = Loc.T("settings.automation.pickSection", "可视化选取（在已打开的浏览器里选）");
+        BrowserChoiceLabel.Text = Loc.T("settings.automation.browserChoice", "浏览器");
+        ReuseModeLabel.Text = Loc.T("settings.automation.reuseMode", "复用已打开的浏览器");
+        CdpPortLabel.Text = Loc.T("settings.automation.cdpPort", "调试端口");
+        PickTargetLabel.Text = Loc.T("settings.automation.pickTarget", "选取目标");
+        string? keepBrowser = ComboValue(BrowserChoiceBox);
+        string? keepReuse = ComboValue(ReuseModeBox);
+        string? keepTarget = ComboValue(PickTargetBox);
+        FillCombo(BrowserChoiceBox, BrowserChoices, BrowserLabel, keepBrowser);
+        FillCombo(ReuseModeBox, ReuseModes, ReuseModeLabelText, keepReuse);
+        FillCombo(PickTargetBox, PickTargets, PickTargetLabelText,
+            keepTarget is { Length: > 0 } ? keepTarget : "task_list");
+        PickHintText.Text = Loc.T("settings.automation.pickHintIdle",
+            "点「打开 / 连接浏览器」开始：程序会连接你已经打开的那个浏览器，只在你当前的那一个标签页上操作。");
+        PickReadyPromptText.Text = Loc.T("settings.automation.pickReadyPrompt",
+            "请在浏览器中完成登录、并导航到你要选取元素的页面。准备好了点「开始选取」。");
+        if (PickStateText.Text is null || PickStateText.Text!.Length == 0)
+            PickStateText.Text = Loc.T("settings.automation.pickStateLine", "状态：{0}{1}",
+                Loc.T("settings.automation.pickStateIdle", "未开始"), "");
         UpdateResultsPreview();
     }
 }

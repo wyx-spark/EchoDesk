@@ -36,7 +36,7 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)（�
 | 准备项 | 说明 | 怎么确认 |
 | --- | --- | --- |
 | **Windows** —— 浏览器自动化仅 Windows 提供（见上方提醒；macOS/Linux 上不提供本功能） | 自动化驱动的是 Windows 上那套 Edge，配置页本身也属于 Windows 专属界面 | macOS/Linux 上没有可配置的东西——请改用上方列出的替代做法 |
-| 本机已安装 Microsoft Edge | 自动化用系统里的 Edge 打开网页（配置项 `browser_channel` 默认为 `msedge`），不使用无头模式 | 能正常打开 Edge 即可 |
+| 本机已安装受支持的浏览器 | 自动化用系统里的浏览器打开网页（配置项 `browser` 默认 `auto`，依次尝试 **Edge → Chrome → 内置 Chromium → Firefox**，用第一个能起来的），不使用无头模式 | 能正常打开 Edge 或 Chrome 即可；两个都没装时程序会自动用自带的 Chromium |
 | 已下载本地模型 | 生成审核意见要用本地模型；没模型时会提示「未加载本地模型，无法生成摘要与审核意见」 | 主窗口 `/status` 能看到已加载的模型 |
 | 本机能正常访问那个网页系统 | 包括登录、权限、内网/VPN；自动化只是替你点鼠标，它访问不了的地方也到不了 | 用 Edge 手动打开一次任务列表页，确认能看到任务 |
 
@@ -125,10 +125,25 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)（�
 | `login_state_file` | 可选 | 登录态的**备份/迁移**文件（Cookie / localStorage）。主机制是浏览器自己的数据目录；这份 JSON 也用于从旧版本一次性导入 Cookie | `browser_state.json` |
 | `manual_login_wait_seconds` | 可选 | 遇到验证码/登录时停下来等你操作，最多等这么久 | `180`（0–3600） |
 | `headless` | 只读 | 自动化**只支持有头模式**（浏览器窗口可见）；写 `true` 会被强制纠正为 `false` 并打印警告 | `false` |
-| `browser_channel` | 可选 | 用哪个浏览器打开页面，默认系统 Edge | `msedge` |
+| `browser` | 可选 | 用哪个浏览器打开页面。取值 `auto`（默认，依次尝试 Edge → Chrome → 内置 Chromium → Firefox，用第一个能起来的）、`edge`、`chrome`、`chromium`（用程序自带的那个，无需另装）、`firefox` | `auto` |
+| `browser_channel` | 可选 | **旧字段**，仅为兼容既有配置保留。当 `browser` 为 `auto` 且这里被显式设置过时，它指向的浏览器会被**提到候选最前面** | `msedge` |
 | `audit_log_file` | 可选 | 审计日志文件：每个任务一行 JSON 记录 | `automation_log.jsonl` |
 | `start_with_windows` | **尚未实现** | 该字段目前不会被程序读取，写 `true` 也不会开机自启；开机自启请把 `Start-EchoDesk-v0.2.2.lnk` 复制到系统「启动」文件夹（`Win+R` → `shell:startup`）。这条路径是 Windows 专属的；macOS 与 Linux 本版没有内置开机自启（自己用 `./start.sh` 启动，或接进桌面环境自带的「登录项」/自启动机制） | `false` |
 | `safety_version` / `safety_accepted_at` | 只读 | 安全协议版本与你同意的时间，由程序自动记录，用于审计 | `1.0` / 空 |
+
+### 支持哪些浏览器（以及哪些做不到）
+
+| 类别 | 能不能用 | 说明 |
+| --- | --- | --- |
+| Chromium 系：**Microsoft Edge**、**Google Chrome** | ✅ 支持 | 优先使用；「复用你已经打开的浏览器」这条能力**也只对它们有效** |
+| 程序自带 Chromium（`browser: chromium`） | ✅ 支持 | **不需要你另装浏览器**；两个都没装时的兜底 |
+| **Mozilla Firefox**（`browser: firefox`） | ✅ 能驱动 | 但**不支持**复用你已经打开的浏览器，会另开一个窗口（也就需要重新登录一次） |
+| 其它 Chromium 品牌：Brave、Opera、Vivaldi 等 | ⚠️ 本版未接 | 技术上可以支持，但需要在配置里指定它们的可执行文件路径，本版还没有这个入口 |
+| **IE 内核（Trident）或自研外壳的国产浏览器**（旧版 360 安全浏览器兼容模式、QQ 浏览器 IE 模式、部分政务专用浏览器） | ❌ **做不到** | Playwright 没有 IE 内核的驱动，这类浏览器**无法**被自动化控制 |
+
+**遇到"做不到"的那一类怎么办**：用它们把页面**另存为 / 导出成文件**，再走「本地文档」那条路
+（上传文件让模型处理）；或者改用 Edge / Chrome 打开同一个系统（很多内网系统两者都能进），再用自动化。
+不要指望"换一个浏览器就支持了" —— 那不是配置问题，是驱动层**根本没有这条能力**。
 
 ---
 

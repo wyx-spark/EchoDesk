@@ -66,12 +66,28 @@ public sealed class AppState
         AppearanceChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>切换语言并落盘。</summary>
+    /// <summary>
+    /// 切换语言并落盘。**重复设置同一个值是空操作**。
+    ///
+    /// 为什么必须有这个幂等闸（实测踩到的坑）：`Loc.SetLocale` 会无条件发 `LanguageChanged`，
+    /// 而设置窗口订阅了它 → 重建全部文案 → 常规页重建下拉项 → 下拉项的 SelectionChanged
+    /// 又回到这里。只要"同值也照做一遍"，这就是一条同步闭环：打开设置窗口时 340 圈后
+    /// 栈溢出（6868 行栈），进程直接死、窗口永远打不开。闭环入口由调用方
+    /// （GeneralPage 的 _applying 重入闸）堵住，这里再堵一层 —— 将来别的页面在程序内部
+    /// 刷新时误触发一次 SelectionChanged，也不会再变成栈溢出。
+    ///
+    /// 幂等判断**刻意放在这一层而不是 Loc.SetLocale 里**：`Loc.Reload()`（重新加载语言包）
+    /// 靠 SetLocale 的通知去重建界面，那种情况"语言没变但语言包变了"也必须通知，
+    /// 放到最底层会把重新加载功能一起废掉。
+    /// </summary>
     public void SetLanguage(string language)
     {
-        Settings.Language = language;
+        string wanted = string.IsNullOrWhiteSpace(language) ? "auto" : language.Trim();
+        if (string.Equals(Settings.Language, wanted, StringComparison.OrdinalIgnoreCase))
+            return;
+        Settings.Language = wanted;
         Settings.Save();
-        Loc.SetLocale(language, persist: false);
+        Loc.SetLocale(wanted, persist: false);
         AppearanceChanged?.Invoke(this, EventArgs.Empty);
     }
 

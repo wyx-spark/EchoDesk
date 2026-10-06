@@ -32,10 +32,12 @@ sys.path.insert(0, BACKEND_DIR)
 from config import Config  # noqa: E402
 from search_engine import (  # noqa: E402
     CONTEXT_CHARS,
+    FAIL_KIND_KEYS,
     SNIPPET_CHARS,
     SearchEngine,
     SearchOutcome,
     SearchResult,
+    classify_error,
 )
 
 PASSED = 0
@@ -90,12 +92,49 @@ class FakeDDGS:
         return list(FakeDDGS.rows)[:max_results]
 
 
+FAKE_BING_ROWS = [
+    {"title": "内建源标题一", "snippet": "内建源摘要一", "url": "https://example.org/fb-1"},
+    {"title": "内建源标题二", "snippet": "内建源摘要二", "url": "https://example.org/fb-2"},
+]
+
+#: 内建 Bing 兜底源的可观测状态（任务二新增）。
+FAKE_BING = {"rows": [], "error": "ConnectError: error sending request for url", "calls": 0}
+
+
+def fake_search_bing(query, max_results=5, timeout=15):
+    """替换 ``search_engine.search_bing``。
+
+    产品路径上，主源失败后会**真的**去请求 Bing；而本文件要测的是"主源失败时
+    后端怎么告知用户"，不能让真实网络参与进来 —— 否则一次成功的联网会让
+    "失败告知"这类断言变成假阳性/假阴性（这正是加兜底源时踩到的）。
+    """
+    FAKE_BING["calls"] += 1
+    outcome = SearchOutcome(query=query, source="bing")
+    if FAKE_BING["error"]:
+        outcome.error = FAKE_BING["error"]
+        outcome.error_kind = classify_error(outcome.error)
+        return outcome
+    outcome.results = [SearchResult(**row) for row in FAKE_BING["rows"]][:max_results]
+    outcome.ok = True
+    return outcome
+
+
+def install_fake_bing(rows=None, error="ConnectError: error sending request for url"):
+    """安装内建源桩。默认让它**失败**，保持"主源失败"的既有测试语义。"""
+    import search_engine
+    search_engine.search_bing = fake_search_bing
+    FAKE_BING["rows"] = list(rows or [])
+    FAKE_BING["error"] = error
+    FAKE_BING["calls"] = 0
+
+
 def install_fake():
     import duckduckgo_search
     duckduckgo_search.DDGS = FakeDDGS
     FakeDDGS.error = None
     FakeDDGS.rows = FAKE_ROWS
     FakeDDGS.calls = 0
+    install_fake_bing()
 
 
 def make_backend(search_enabled=True):
@@ -334,6 +373,95 @@ def test_lang_keys():
         check("i18n 渲染不抛异常", False, str(exc))
 
 
+def test_builtin_fallback():
+    """六、任务二（自测问题修复-1）：内建 Bing 兜底源与失败分类。
+
+    这一组覆盖本轮新增的两件事：
+      * 主源（duckduckgo_search）在国内必然失败时，**内建源要接管**；
+      * 失败要给**面向用户的类别**，而不是把异常栈抛出去。
+    """
+    section("六、内建兜底源与失败分类（任务二）")
+
+    check("产品默认开启兜底源（不能把搜索修成静默不可用）",
+          SearchEngine().fallback_enabled is True)
+
+    # 主源失败 + 兜底成功 → 用兜底的结果
+    install_fake()
+    FakeDDGS.error = "https://www.bing.com/search ConnectError: error sending request for url"
+    install_fake_bing(rows=FAKE_BING_ROWS, error=None)
+    engine = SearchEngine(max_results=5)
+    outcome = engine.search("企业所得税")
+    check("主源失败时兜底源被调用", FAKE_BING["calls"] == 1, f"{FAKE_BING['calls']} 次")
+    check("兜底成功后判为可用", outcome.usable is True, str(outcome))
+    check("结果来自内建源", outcome.source == "bing", outcome.source)
+    check("兜底结果条数正确", outcome.count == 2, str(outcome.count))
+    check("兜底结果进了注入文本", "内建源标题一" in outcome.as_context())
+    FakeDDGS.error = None
+
+    # 主源成功时不碰兜底（不该多发一次网络请求）
+    install_fake()
+    install_fake_bing(rows=FAKE_BING_ROWS, error=None)
+    SearchEngine(max_results=5).search("企业所得税")
+    check("主源成功时不调用兜底源", FAKE_BING["calls"] == 0, f"{FAKE_BING['calls']} 次")
+
+    # 两个源都失败 → 两个原因都带回，类别以备用源为准
+    install_fake()
+    FakeDDGS.error = "some primary failure"
+    install_fake_bing(error="HTTP 429 too many requests")
+    both = SearchEngine(max_results=5).search("企业所得税")
+    check("两个源的原因都写进 error",
+          "some primary failure" in both.error and "429" in both.error, both.error)
+    check("失败类别以备用源为准（rate_limit）", both.error_kind == "rate_limit",
+          both.error_kind)
+    FakeDDGS.error = None
+
+    # 兜底可关闭（测试隔离用；关掉后如实返回主源原因）
+    install_fake()
+    FakeDDGS.error = "Connection timed out"
+    install_fake_bing(rows=FAKE_BING_ROWS, error=None)
+    off = SearchEngine(max_results=5, fallback_enabled=False).search("企业所得税")
+    check("关闭兜底后不调用兜底源", FAKE_BING["calls"] == 0, f"{FAKE_BING['calls']} 次")
+    check("关闭兜底后判为不可用", off.usable is False)
+    check("关闭兜底后带出类别", off.error_kind == "timeout", off.error_kind)
+    FakeDDGS.error = None
+
+    # ---------- 分类器 ----------
+    cases = [
+        ("ConnectError: error sending request for url", "network"),
+        ("SSLError: certificate verify failed", "certificate"),
+        ("HTTP 429 too many requests", "rate_limit"),
+        ("Read timed out", "timeout"),
+        ("return None. params={}", "source_changed"),
+        ("完全没有见过的错误", "unknown"),
+        ("", "unknown"),
+    ]
+    for text, want in cases:
+        got = classify_error(text)
+        check(f"分类 {want}：{text[:38]!r}", got == want, f"得到 {got}")
+
+    # 分类码都必须有对应的语言包键，否则 _t 会回落成原始键名给用户看
+    check("每个分类码都有语言包键",
+          set(FAIL_KIND_KEYS) >= {"network", "timeout", "certificate",
+                                  "rate_limit", "source_changed", "no_dependency",
+                                  "empty", "unknown"},
+          str(sorted(FAIL_KIND_KEYS)))
+
+    import json
+    for locale in ("zh-Hans", "en"):
+        path = os.path.join(BACKEND_DIR, "lang", f"{locale}.json")
+        with open(path, "r", encoding="utf-8-sig") as handle:
+            sys_section = json.load(handle).get("sys", {})
+        # FAIL_KIND_KEYS 里存的是完整键（"sys.xxx"），语言包 sys 段里只有 "xxx"
+        wanted = {key.split(".", 1)[1] for key in FAIL_KIND_KEYS.values()}
+        missing = [key for key in wanted if key not in sys_section]
+        check(f"{locale} 含全部失败分类文案", not missing, str(missing))
+        # 面向用户的分类文案不该再暴露底层异常串（只有兜底的 search_failed 带 {error}）
+        leaked = [key for key in wanted
+                  if key != "search_failed" and key in sys_section
+                  and "{error}" in sys_section[key]]
+        check(f"{locale} 的分类文案不暴露原始错误占位符", not leaked, str(leaked))
+
+
 def main():
     print("联网搜索链路测试（优化已知问题-2 任务二）")
     install_fake()
@@ -343,6 +471,7 @@ def main():
     test_failure_paths()
     test_backend_wiring()
     test_lang_keys()
+    test_builtin_fallback()
 
     print("\n" + "-" * 42)
     print(f"共 {PASSED + len(FAILED)} 项，通过 {PASSED} 项，失败 {len(FAILED)} 项")

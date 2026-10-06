@@ -21,9 +21,10 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from agent_tools import ToolRegistry, extract_final_answer, parse_tool_call
+from reasoning import split_text
 
 #: 单条工具结果最多注入多少字符。工具结果会原样回灌进上下文，不设上限时
 #: 一次 ``file_read`` 就能把 8192 的窗口吃掉一半。
@@ -39,6 +40,9 @@ class AgentStep:
 
     index: int
     text: str = ""              # 模型这一步的原始输出
+    # 任务十三（自测问题修复-1）：这一步的**思考内容**（``<think>`` 之类标签里的部分）。
+    # 与 ``text`` 分开存：``text`` 是"去掉思考后的正文"，工具调用解析与最终答案都只用它。
+    reasoning: str = ""
     tool: str = ""
     args: Dict[str, Any] = field(default_factory=dict)
     why: str = ""
@@ -59,10 +63,15 @@ class AgentRun:
     elapsed_ms: int = 0
 
     def trace(self) -> List[Dict[str, Any]]:
-        """机器可读的步骤轨迹（供 ``agent_diagnostics`` 与测试断言）。"""
+        """机器可读的步骤轨迹（供 ``agent_diagnostics`` 与测试断言）。
+
+        ``reasoning`` 也带上（任务十三）：诊断里要能看出"这一步到底有没有产生思考"，
+        否则"没产生"和"没显示"又分不清了 —— 那正是这次要修的 bug。
+        """
         return [
             {"index": step.index, "tool": step.tool, "args": step.args, "ok": step.ok,
-             "observation": step.observation[:200], "elapsed_ms": step.elapsed_ms}
+             "observation": step.observation[:200], "elapsed_ms": step.elapsed_ms,
+             "has_reasoning": bool(step.reasoning.strip())}
             for step in self.steps
         ]
 
@@ -95,15 +104,31 @@ class AgentLoop:
     def _stopped(self) -> bool:
         return bool(self.stop_event is not None and self.stop_event.is_set())
 
-    def _complete(self, messages: List[dict], temperature: float) -> str:
-        """调用一次模型（非流式）。异常在这里被翻译成空串，由调用方决定怎么收敛。"""
+    def _complete(self, messages: List[dict], temperature: float) -> Tuple[str, str]:
+        """调用一次模型（非流式），返回 ``(思考内容, 正文)``。
+
+        异常在这里被翻译成两个空串，由调用方决定怎么收敛。
+
+        **任务十三（自测问题修复-1）：思考必须在这里分离，有两个独立的理由 ——**
+
+        1. **界面要能看到每一步的思考**。用户报的现象是"Agent 模式下思考过程不显示"。
+           根因不是模型没产生思考，而是这条路径**从来没做过分离**：``chat_complete``
+           把模型原始输出（含 ``<think>`` 段落）整段返回，循环直接拿它当"这一步说了什么"，
+           而发往前端的 ``agent_step`` 事件里又**只有 index/phase、没有正文**，
+           所以界面没有任何可渲染的思考内容。普通对话路径用
+           ``chat_stream_split`` + ``ReasoningSplitter`` 分了两条通道，Agent 这条路没跟上。
+        2. **解析必须只看正文**。``parse_tool_call`` 与 ``extract_final_answer`` 都是
+           对着模型输出做形状匹配的；把思考段落一起喂进去，思考里出现的
+           "我可以调用 file_read…"这种字句**会被误判成真的工具调用**。
+           先分离再解析，顺带消掉这个隐患。
+        """
         try:
             text = self.llm.chat_complete(
                 messages, temperature=temperature, max_tokens=self.max_tokens,
             )
         except Exception:
-            return ""
-        return str(text or "")
+            return "", ""
+        return split_text(str(text or ""))
 
     @staticmethod
     def _clip(text: str, limit: int) -> str:
@@ -143,11 +168,17 @@ class AgentLoop:
                 break
             emit({"type": "agent_step", "index": index, "phase": "thinking",
                   "max_steps": self.max_steps})
-            text = self._complete(convo, temperature)
-            step = AgentStep(index=index, text=text)
+            reasoning, text = self._complete(convo, temperature)
+            step = AgentStep(index=index, text=text, reasoning=reasoning)
             run.steps.append(step)
+            if reasoning:
+                # 任务十三：思考内容单独发一条事件。它必须放在模型返回**之后** ——
+                # 上面那条 thinking 的职责是让界面立刻显示"第 N 步正在思考"，
+                # 避免数秒空白；内容此刻才拿到，所以另发一条带 reasoning 的。
+                emit({"type": "agent_step", "index": index, "phase": "thought",
+                      "max_steps": self.max_steps, "reasoning": reasoning})
             if not text.strip():
-                # 模型这一轮什么都没说：不再硬撑，收敛（模型侧失败或已停止）
+                # 模型这一轮什么都没说（或只输出了思考）：不再硬撑，收敛。
                 run.error = "模型没有返回内容"
                 break
 
@@ -200,7 +231,12 @@ class AgentLoop:
                                      f"信息不足的部分如实说明。"})
             emit({"type": "agent_step", "index": self.max_steps + 1, "phase": "finalize",
                   "max_steps": self.max_steps})
-            final_text = self._complete(convo, temperature)
+            final_reasoning, final_text = self._complete(convo, temperature)
+            # 任务十三：这一步同样可能带思考；把它也发出去，界面上"最后收尾"这一步
+            # 才不会是个没有内容的事件。
+            if final_reasoning:
+                emit({"type": "agent_step", "index": self.max_steps + 1, "phase": "thought",
+                      "max_steps": self.max_steps, "reasoning": final_reasoning})
             run.answer = extract_final_answer(final_text) or final_text.strip()
 
         if not run.answer and not run.stopped:

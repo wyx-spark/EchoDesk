@@ -152,6 +152,14 @@ import main as backend_main  # noqa: E402
 i18n.set_locale("zh-Hans")
 workdir = tempfile.mkdtemp(prefix="echodesk-mcp-")
 os.chdir(workdir)
+# 任务十五（自测问题修复-1）：`Config.save()` 已改为**写回被读出来的那一份**，
+# 而 `Config._find()` 在 cwd 找不到配置文件时会落到**程序目录**的真配置上 ——
+# 那就会把 MCP 服务器等测试数据写进仓库里的 `backend/config.json`（实测踩到：
+# 仓库里凭空多出一个指向 examples/mcp/echo_server.py 的 echo 服务器）。
+# 所以隔离必须靠"**cwd 里真的有一份配置**"实现；旧代码依赖的是"save() 只写 cwd"，
+# 而那条行为已经作为缺陷修掉了。这里用 open() 铺，不用 save()（它正是被测对象）。
+with open(os.path.join(workdir, "config.json"), "w", encoding="utf-8") as _fh:
+    json.dump(cf.Config().model_dump(), _fh, ensure_ascii=False)
 
 
 class StubEngine(backend_main.LLMEngine):

@@ -94,7 +94,12 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
-        AvaloniaXamlLoader.Load(this);
+        // 必须调生成的 InitializeComponent()，**不能**只调 AvaloniaXamlLoader.Load(this)。
+        // 两个都在时以 InitializeComponent 为准：它除了 Load 还会把 x:Name 具名控件
+        // 赋给字段（SettingsWindow 与 7 个设置页一直这么写，只有主窗口漏了）。
+        // 只调 Load 的后果不是"少几个字段"，而是构造到下面第 N 行就 NullReferenceException，
+        // **整个前端起不来**（实测：dotnet build 与 dotnet publish 的产物都如此）。
+        InitializeComponent();
         _state.Initialize();
 
         Width = _state.Settings.WindowWidth;
@@ -271,7 +276,9 @@ public partial class MainWindow : Window
         StopButton.Content = Loc.T("main.button.stop", "⏹ 停止");
         HintText.Text = Loc.T("main.hint", "💡 拖拽文件可上传 · Ctrl+Enter 发送 · Esc 停止 · A-/A+ 或 Ctrl+滚轮 调字号");
         InputBox.PlaceholderText = Loc.T("main.input.placeholder", "输入消息，Ctrl+Enter 发送 · 拖拽文件到窗口即可上传");
-        CommandPlaceholder.Text = Loc.T("main.command.placeholder", "在此处输入以“/”开头的指令 · 了解用法输入 /help");
+        // 指令输入框的提示文字走 TextBox 自带的水印：见 MainWindow.axaml 里 CommandInputRow 的注释
+        // （手工叠 TextBlock 的办法既对不准、也不会自己隐藏）。
+        CommandInputBox.PlaceholderText = Loc.T("main.command.placeholder", "在此处输入以“/”开头的指令 · 了解用法输入 /help");
         SnippetHint.Text = Loc.T("main.snippet.hint", "/snippet add 名称 文本 可新增 · 空列表时先添加");
         PaletteHint.Text = Loc.T("main.paletteHint",
             "↑↓ 选择 · Tab 补全 · Enter 执行（候选不唯一时先补全命令名再确认）· Esc 关闭");
@@ -1549,8 +1556,8 @@ public partial class MainWindow : Window
             Padding = new Thickness(10, 6, 10, 6),
             CornerRadius = new CornerRadius(8),
             BorderThickness = new Thickness(1),
-            Background = (IBrush?)Application.Current?.FindResource("CardBackgroundBrush") ?? Brushes.Transparent,
-            BorderBrush = (IBrush?)Application.Current?.FindResource("CardBorderBrush") ?? Brushes.Gray,
+            Background = ResolveBrush("CardBackgroundBrush", Brushes.Transparent),
+            BorderBrush = ResolveBrush("CardBorderBrush", Brushes.Gray),
             Child = body,
         };
         ToolTip.SetTip(border, Loc.T("main.agent.tip",
@@ -1569,9 +1576,7 @@ public partial class MainWindow : Window
             FontSize = Math.Max(9, _state.Settings.FontSize - 2),
             TextWrapping = TextWrapping.Wrap,
             FontWeight = strong ? FontWeight.SemiBold : FontWeight.Normal,
-            Foreground = (IBrush?)Application.Current?.FindResource(brushKey)
-                         ?? (IBrush?)Application.Current?.FindResource("MutedForegroundBrush")
-                         ?? Brushes.Gray,
+            Foreground = ResolveBrush(brushKey, ResolveBrush("MutedForegroundBrush", Brushes.Gray)),
         };
         rows.Children.Add(row);
     }
@@ -1901,10 +1906,10 @@ public partial class MainWindow : Window
 
         var bubble = new Border
         {
-            Background = (IBrush?)Application.Current?.FindResource(
-                system ? "SystemBubbleBrush" : user ? "UserBubbleBrush" : "AssistantBubbleBrush")
-                ?? Brushes.Transparent,
-            BorderBrush = (IBrush?)Application.Current?.FindResource("CardBorderBrush") ?? Brushes.Gray,
+            Background = ResolveBrush(
+                system ? "SystemBubbleBrush" : user ? "UserBubbleBrush" : "AssistantBubbleBrush",
+                Brushes.Transparent),
+            BorderBrush = ResolveBrush("CardBorderBrush", Brushes.Gray),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(12, 8, 12, 8),
@@ -1919,6 +1924,21 @@ public partial class MainWindow : Window
     }
 
     private void ScrollToBottom() => MessageScroll.ScrollToEnd();
+
+    /// <summary>
+    /// 取界面语义色画刷。**必须用 TryFindResource，不能 <c>(IBrush?)FindResource(key)</c>**：
+    /// 这些画刷放在 App.axaml 的 ThemeDictionaries 里，取不到时 <c>FindResource</c> 返回的是
+    /// <c>AvaloniaProperty.UnsetValue</c>（类型 UnsetValueType），它不是 IBrush —— 强转直接抛
+    /// InvalidCastException。后果不是"少一个颜色"，而是**第一条消息就把整个前端打断**
+    /// （实测：后端不可用时的横幅消息就足以让进程退出）。同一文件里 Toast 早就用了
+    /// TryFindResource，这里跟上，取不到就退回兜底色。
+    /// </summary>
+    private static IBrush ResolveBrush(string key, IBrush fallback)
+    {
+        if (Application.Current is { } app && app.TryFindResource(key, out object? value) && value is IBrush brush)
+            return brush;
+        return fallback;
+    }
 
     private void SetStatus(string text) => StatusText.Text = Emoji.Prefer(text);
 

@@ -111,17 +111,19 @@
             Padding="10,8">
       <Grid RowDefinitions="Auto,Auto,Auto">
 
-        <!-- 指令输入行：默认隐藏，点击「命令输入框」按钮后显示 -->
+        <!-- 指令输入行：默认隐藏，点击「命令输入框」按钮后显示。
+             提示文字用 TextBox 自带的 PlaceholderText，**不要再叠一个 TextBlock 手工对位置**：
+             叠上去那个只能靠 Margin 猜像素 —— 原来猜的是 16，而文字真实起点是
+             Border 1px + Margin 8 + Padding 6 = 15，差 2px 就是自测报的"光标与提示文字不齐"；
+             更糟的是它没有任何人负责隐藏（WPF 版是在 TextChanged 里切 Visibility 的，
+             迁移时漏了），用户一打字提示文字还压在输入内容上。
+             用控件自带的，位置与显隐都由模板保证，也不再有"改了 Padding 忘了改 Margin"的问题。 -->
         <Border x:Name="CommandInputRow" Grid.Row="0" IsVisible="False" CornerRadius="8"
                 Margin="0,0,0,6"
                 Background="{DynamicResource AppBackgroundBrush}"
                 BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
-          <Grid>
-            <TextBox x:Name="CommandInputBox" MinHeight="30" Margin="8,4" Padding="6,0"
-                     AcceptsReturn="False" BorderThickness="0" Background="Transparent" />
-            <TextBlock x:Name="CommandPlaceholder" FontSize="12" Opacity="0.55"
-                       Margin="16,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" />
-          </Grid>
+          <TextBox x:Name="CommandInputBox" MinHeight="30" Margin="8,4" Padding="6,0"
+                   AcceptsReturn="False" BorderThickness="0" Background="Transparent" />
         </Border>
 
         <TextBox x:Name="InputBox" Grid.Row="1" AcceptsReturn="True" TextWrapping="Wrap"

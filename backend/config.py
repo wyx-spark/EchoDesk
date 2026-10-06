@@ -280,7 +280,40 @@ class AutomationConfig(BaseModel):
     manual_login_wait_seconds: int = Field(default=180, ge=0, le=3600)
     # ---------- 浏览器 ----------
     headless: bool = False            # 固定有头模式：用户可见浏览器操作过程
+    # 任务十六（自测问题修复-1）：用户可选的浏览器。
+    #
+    # 取值：``auto`` / ``edge`` / ``chrome`` / ``chromium`` / ``firefox``。
+    #   * ``auto``（默认）：按 ``edge → chrome → chromium`` 依次尝试，
+    #     任何一个能起来就用它。**把 edge 放在第一位是刻意的**——v0.2.2 之前
+    #     默认就是 msedge，这样老用户升级后行为不变，而 chrome/chromium
+    #     只是多了兜底，等于"只增不减"；
+    #   * ``chromium``：Playwright 自带的浏览器（无需用户另装）；
+    #   * ``firefox``：Playwright 的 Firefox。注意 **CDP 复用（任务十七）
+    #     不适用于 Firefox**，选了它就用不了"接管已打开的浏览器"那条路径。
+    #
+    # 具体候选与顺序见 ``automation.BROWSER_CHOICES`` / ``automation.AUTO_ORDER``。
+    browser: str = "auto"
+    # 旧字段，保留兼容：``browser="auto"`` 且这里被用户显式设置过时，
+    # 它指向的浏览器会被**提到候选列表最前面**（尊重用户既有配置）。
     browser_channel: str = "msedge"
+    # 任务十七（自测问题修复-1）：**复用已经打开的浏览器**的策略。
+    #
+    # 取值：
+    #   * ``auto``（默认）：先尝试通过 CDP 连接用户已打开的浏览器；连不上就回退到
+    #     "程序新开一个实例"。**默认开启回退是刻意的**——不让功能整体不可用，
+    #     但回退时会在进度与界面上明确告知"这种方式需要重新登录"；
+    #   * ``required``：必须连上已打开的浏览器，连不上就报错并给出引导
+    #     （用户宁可失败也不愿意在另一个实例里重新登录时选它）；
+    #   * ``off``：从不尝试 CDP，永远用老的新实例模式
+    #     （用户不希望程序碰他正在用的浏览器时选它）。
+    #
+    # 为什么把这个策略放在配置里而不是写死：任务书第 5 条要求由 DSH 决定降级路径，
+    # 但"降级的代价"（重新登录一次）该由用户自己权衡，所以给一个开关而不是替他决定。
+    browser_reuse: str = "auto"
+    # CDP 调试端口。程序代启动"调试模式浏览器"时用它，连接用户自己启动的浏览器时也用它。
+    # **只会连 127.0.0.1**（见 automation._cdp_endpoint）：调试端点等于该浏览器的
+    # 完全控制权，绝不能暴露到局域网。
+    cdp_port: int = 9222
     # ---------- 结果与审计 ----------
     save_results: bool = True
     # 结果目录（新增三）：结果根目录\YYYY-MM-DD\任务名\（同名自动加 -1、-2）
@@ -572,7 +605,20 @@ class Config(BaseModel):
     language: str = "auto"
     max_history: int = 10
     search_default: bool = False
-    temperature: float = Field(default=0.7, ge=0.0, le=1.0)
+    # 温度上限 **1.5**，必须与另外两处保持一致：
+    #   * `main._handle_capability_settings` 里采样参数的夹取范围是 `("temperature", 0.0, 1.5)`；
+    #   * `/temp` 命令的校验同样是 `0.0 ~ 1.5`。
+    #
+    # 任务十五（自测问题修复-1）实测踩到：**能力扩展-1 任务五把上限从 1.0 放宽到 1.5 时，
+    # 漏改了这里的模型约束**（仍是 le=1.0）。后果不是"设置不生效"，而是
+    # **把程序写成起不来**：用户在设置里把温度拖到 1.5 → `capability_settings` 接受并写进
+    # `config.temperature` → `save()` 落盘成 1.5 → **下次启动 `Config.load()` 校验失败，
+    # 后端导入即崩**，只能手改 JSON 才救得回来。
+    #
+    # 之所以现在才暴露：`save()` 原先只写当前工作目录（见 `save()` 的说明），
+    # 那份值写进了孤立文件、没人读；而 `save()` 修好之后它就真的生效了 ——
+    # 新加的"写入前自我校验"把这条潜伏的不一致立刻顶了出来（这正是加它的目的）。
+    temperature: float = Field(default=0.7, ge=0.0, le=1.5)
     max_tokens: int = 1024
     search_results: int = 3
     # ---------- 修复四：生成参数预设与上下文管理 ----------
@@ -694,9 +740,72 @@ class Config(BaseModel):
         return cls(**data)
 
     def save(self, path: str = "config.json") -> None:
-        """将当前配置写回基础配置 JSON 文件（不触碰 config.user.json 覆盖层）。"""
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.model_dump(), f, indent=4, ensure_ascii=False)
+        """把当前配置写回**它被读出来的那个文件**（而不是当前工作目录）。
+
+        任务十五（自测问题修复-1）—— 这是一个**读写不对称**的真缺陷。
+        旧实现是 ``open(path, "w")``：相对路径，**只写当前工作目录，没有任何兜底**；
+        而读取用的 :meth:`_find` 有四个候选位置
+        （cwd → exe 目录 → ``_MEIPASS`` → 本文件所在目录）。只要 cwd 与配置真实
+        所在目录不一致，就会同时造成两件坏事：
+
+        1. **写了却存不住**：写入的是一份**新的、孤立的** ``config.json``，
+           真正被读的那份**永远不会被更新**。用户看到的是"我在设置里改了，
+           重启又变回去了"。
+        2. **配置串台**：那个孤立文件在 :meth:`_find` 里正好**排在第一位**，
+           于是换个 cwd 启动时它反而被优先读取 —— 表现成"配置自己变了/错乱"。
+
+        **为什么一直没被发现**：打包后前端启动后端时会把工作目录设成
+        ``app/backend/``（`BackendService.cs` 的 ``WorkingDirectory``），
+        cwd 恰好等于配置所在目录，旧写法"碰巧是对的"。源码运行、跑测试、
+        以及"用户自己从别的目录运行后端"这三种情况才会暴露 —— 本轮实测全部命中
+        （在仓库根跑一次后端，根目录就多出一份孤立的 ``config.json``）。
+
+        修法：用**与读取完全相同的那套规则**定位真实文件，读写从此指向同一份。
+        **一个候选都不存在时保持旧行为**（写 ``path``，即相对 cwd）—— 这一点是被门禁
+        逼出来的：`tools/test_model_admin.py` 之类会在临时目录里 chdir 之后 `save()`
+        一份**尚不存在**的配置；若此时改写到程序目录，调用方按原路径就找不到文件了。
+        首次运行与测试都属于这一类，**保持旧行为才不制造回归**。
+        """
+        try:
+            target = self._find(path)
+        except OSError:
+            # `_find` 内部会取 `os.getcwd()`，而 cwd 可能已经被删掉
+            # （测试里的 TemporaryDirectory 结束时正是这种状态）—— 退回旧行为。
+            target = None
+        if target is None:
+            target = path
+        data = self.model_dump()
+        # 任务十五（本轮实测踩到）：**写之前必须自我校验**。
+        #
+        # pydantic 默认不校验赋值（``validate_assignment=False``），所以内存里完全可能
+        # 存在一个**违反自身约束**的值。实测：`temperature` 被设成 1.5（约束是
+        # ``le=1.0``）之后保存，配置文件就被写成了非法值 —— 而它是**以后每次启动都
+        # 要读**的文件，于是后端下次导入时直接 `ValidationError`，**程序再也起不来**。
+        #
+        # 这个失败模式比"设置没存上"严重得多：前者用户再点一次就好，后者要用手改
+        # JSON 才能救回来。所以这里宁可让**这次保存失败**（如实抛出并带上原因），
+        # 也不写出一个程序自己都读不了的配置。
+        try:
+            type(self).model_validate(data)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(
+                f"拒绝写入非法配置（写入后程序将无法启动）：{exc}") from exc
+        # **幂等**：内容没有**语义**变化就不重写。两个实际理由：
+        #   1. 后端在某些流程里会 `save()` 一次（模型热加载后写回规范化结果等）。
+        #      如果每次都原样重写，`git` 会一直显示"配置文件被改过"而值其实没变 ——
+        #      排查真实改动时噪声很大（而且会被误判成"谁改了配置"）。
+        #   2. 只读介质上（企业受管盘里的便携版），一次无谓的写入就等于一次报错。
+        # 比较用**解析后的对象**而不是文本：键顺序不同不该算作"变了"
+        # （`model_dump()` 的字段顺序与手写 JSON 的顺序往往不一致，实测就是这样）。
+        if os.path.exists(target):
+            try:
+                with open(target, encoding="utf-8-sig") as f:
+                    if json.load(f) == data:
+                        return
+            except Exception:  # noqa: BLE001 —— 读不动就当作"需要写"
+                pass
+        with open(target, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
 
     @staticmethod
     def _find(path: str) -> str | None:

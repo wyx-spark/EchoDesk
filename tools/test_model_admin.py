@@ -49,8 +49,20 @@ def check(name, condition, detail=""):
 
 
 def make_backend(workdir):
-    """在临时目录里起一个真 Backend（配置读写都落在这个目录，不污染仓库）。"""
+    """在临时目录里起一个真 Backend（配置读写都落在这个目录，不污染仓库）。
+
+    **任务十五（自测问题修复-1）为什么这里多了一步**：`Config.save()` 原先只写
+    当前工作目录，所以"chdir 到临时目录"就足以隔离；但它同时带来了真缺陷
+    （写入落进一份孤立文件、真正被读的那份永不更新），已改为**写回被读出来的那一份**。
+    而在 cwd 找不到配置文件时，`Config._find()` 会落到**程序目录**的真配置上 ——
+    那就会污染仓库。
+
+    所以现在的隔离必须靠"**cwd 里真的存在一份配置**"来实现。这里用 `open()` 直接铺，
+    而不用 `save()`：`save()` 正是被测对象，用它来搭测试环境就成了循环依赖。
+    """
     os.chdir(workdir)
+    with open(os.path.join(workdir, "config.json"), "w", encoding="utf-8") as handle:
+        json.dump(cf.Config().model_dump(), handle, ensure_ascii=False)
     config = cf.Config()
     config.model_path = "Qwen3-0.6B-Q6_K.gguf"
     config.speed_hint = False
