@@ -11,7 +11,7 @@
 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 # llama-cpp-python：本地推理（llama.cpp）。
 #
-# ⚠️ macOS 必须单独处理（v0.2.1 跨平台-2 实测，证据见 records/v0.2.1-跨平台-2记录.md）：
+# ⚠️ macOS 必须单独处理（v0.2.1 跨平台-2 实测，证据见 records/v0.2.2-跨平台-2记录.md）：
 #   上游 cpu 索引发布的 **macOS arm64 轮子是坏的** —— wheel 字节数与上游 digest 完全
 #   一致（也就是说"下完了、也没被篡改"），但包内 `lib/*.dylib` 大面积 CRC/魔数错误，
 #   pip 安装必然失败。实测 0.3.21 / 0.3.30 / 0.3.35 / 0.3.36 的 cpu 索引 macOS arm64

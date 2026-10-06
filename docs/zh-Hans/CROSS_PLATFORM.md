@@ -196,7 +196,7 @@ backend-<rid>/
   脚本**不擅自执行**，而是把命令与缺失步骤写进产物里的 `SIGNING.txt`。
   在拿到证书前，macOS 用户需要右键打开或 `xattr -dr com.apple.quarantine` 解除隔离。
 * **AppImage**：需要 `appimagetool` 与 AppDir 结构，当前以 `.tar.gz` 为准（未完成项见
-  `records/v0.2.1-跨平台记录.md`）。
+  `records/v0.2.2-跨平台记录.md`）。
 
 ## 七、验证证据（如实说明）
 
@@ -233,7 +233,7 @@ CI 矩阵是"已写好、待运行"。**不要把上面第 2~4 层当成"在 Lin
 
 ## 九、未完成项
 
-完整清单见 `records/v0.2.1-跨平台-2记录.md` 的"未完成项"与第十二节，摘要如下：
+完整清单见 `records/v0.2.2-跨平台-2记录.md` 的"未完成项"与第十二节，摘要如下：
 
 * **没有真实 Linux/macOS 运行证据**：三平台产物是在 Windows 上交叉准备的，只有
   结构级、静态二进制级与 Windows 上的协议级证据（见第七节）。

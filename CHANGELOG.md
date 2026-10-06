@@ -15,8 +15,8 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 > commit of that state. Everything described under this heading — the cross-platform frontend
 > migration, the platform-isation of the backend, and the three-platform packaging — is **v0.2.2**.
 > For the complete implementation plan, key decisions, deviations, unfinished items and size records,
-> see the internal development records (`records/v0.2.1-跨平台记录.md` and
-> `records/v0.2.1-跨平台-2记录.md`; the file names keep the task-spec number they were written
+> see the internal development records (`records/v0.2.2-跨平台记录.md` and
+> `records/v0.2.2-跨平台-2记录.md`; the file names keep the task-spec number they were written
 > under, **not the release number**).
 
 ### Bilingual coverage and three-platform friendliness across the whole repository
@@ -108,7 +108,7 @@ runners was corrected — that job is pinned to `windows-latest` and exercises t
 
 Task specification: `prompts/EchoDesk-v0.2.1跨平台-2.md`. The full implementation plan,
 measurements, deviations from the specification and remaining work are in
-`records/v0.2.1-跨平台-2记录.md` (internal, **not shipped with releases**).
+`records/v0.2.2-跨平台-2记录.md` (internal, **not shipped with releases**).
 
 **All Git remote operations now use SSH.** HTTPS pushes to GitHub were repeatedly
 interrupted on the maintainer's machine (`RPC failed; HTTP 408` /
@@ -197,7 +197,7 @@ their own row, with the "not authorised" case distinguished from "the tool faile
 commands get a two-step confirmation — Avalonia has no `MessageBox`, and the project's existing
 "click twice" pattern does not fit an Enter-driven palette, so the second confirmation happens by
 pressing Enter again in the same input box. Sizes and verification counts are in
-`records/v0.2.1-跨平台-2记录.md`.
+`records/v0.2.2-跨平台-2记录.md`.
 
 ### Cross-platform: Avalonia frontend prototype, platform capability boundaries, cross-platform packaging
 
@@ -206,7 +206,7 @@ Task specification: `prompts/EchoDesk-v0.2.1跨平台.md`. This round removes "W
 Avalonia frontend joins the WPF one, and the capabilities that genuinely cannot exist off Windows
 are reduced to **two explicit degradation boundaries**, each with an alternative path. The audit,
 prototype results, the reuse-versus-rewrite list, packaging routes and unfinished work are in
-`records/v0.2.1-跨平台记录.md`.
+`records/v0.2.2-跨平台记录.md`.
 
 **New cross-platform frontend prototype** (`frontend-avalonia/`, tasks 1 and 2). Its target framework
 is `net10.0` — deliberately without the `-windows` suffix, which is the first hard gate for "can run

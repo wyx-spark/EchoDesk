@@ -3,7 +3,7 @@
   <!--
     EchoDesk 跨平台前端（Avalonia）—— 任务一：最小原型。
 
-    这里的关键取舍（见 records/v0.2.1-跨平台记录.md）：
+    这里的关键取舍（见 records/v0.2.2-跨平台记录.md）：
       * **net10.0（不带 -windows 后缀）**：这是"能跨平台"的第一道硬门槛。
         WPF 版的目标框架是 `net10.0-windows`，一旦带上 `-windows` 就无法在
         Linux/macOS 上编译。本工程刻意用不带后缀的 TFM，并且**不引用任何

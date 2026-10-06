@@ -428,7 +428,7 @@ def main() -> int:
     # 为什么 Windows 正式安装包仍走 PyInstaller，而跨平台发布物走 standalone：
     # WPF 前端的启动路径只接受一个 exe（没有"解释器 + main.py"模式），而在 Windows 上
     # standalone 相对 PyInstaller 没有收益（体积相当、还要多一层 PYTHONPATH 注入）。
-    # 详见 records/v0.2.1-跨平台-2记录.md 第四节。
+    # 详见 records/v0.2.2-跨平台-2记录.md 第四节。
     backend_out = os.path.join(app_dir, "backend")
     # standalone 后端产物可能落在两处：本脚本的输出目录（`--out`，默认 dist），
     # 或 tools/pack_backend.py 的默认输出目录（publish）。**两处都找**：
