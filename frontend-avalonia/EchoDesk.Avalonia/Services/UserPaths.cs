@@ -1,8 +1,15 @@
 // 各平台的数据/日志目录约定（任务书 任务三 的"用户数据目录按平台惯例"）。
 //
-// WPF 版靠 ShortcutService.UserDataDirectory（%APPDATA%\EchoDesk）实现，只对 Windows 成立。
-// 跨平台后必须按惯例分开：macOS 用 Application Support、Linux 用 XDG。
+// **与 WPF 版的口径（v0.2.2 修正了一处写错的注释）**：
+// WPF 版走 `ShortcutService.UserDataDirectory`，判定顺序是 `ECHODESK_DATA` → 程序目录名是
+// `app` 取父目录 → 程序目录本身；**它不用 `%APPDATA%`**（全仓库 `frontend/` 里没有任何
+// `APPDATA` 相关代码，此前这里的注释写成"%APPDATA%\EchoDesk"是错的）。
+// 跨平台版多了一段"非便携布局时按平台惯例回退"：macOS 用 Application Support、Linux 用 XDG。
+// 两版在**发布物布局下结果一致**（都落在发布目录外层），差别只在"程序目录不叫 app"的兜底。
+//
 // 全部收口在这里，界面与后端各自只认这些方法，避免到处拼路径。
+// 后端对应实现是 `backend/config.py` 的 `user_data_root()`，两处必须给出同一个答案
+// （v0.2.2 修掉的正是"standalone 布局下两处不一致"的缺陷）。
 using System;
 using System.IO;
 

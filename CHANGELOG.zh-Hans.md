@@ -16,6 +16,76 @@
 > （`records/v0.2.1-跨平台记录.md` 与 `records/v0.2.1-跨平台-2记录.md`；
 > 文件名保留的是撰写时的**任务书编号**，不是发布版本号）。
 
+### 全仓库的双语覆盖与三平台友好
+
+任务书：`prompts/EchoDesk-v0.2.2全面双语与三平台友好.md`。完整审计、分类处理策略、关键决策、
+与任务书的偏差、未完成项见 `records/v0.2.2-全面双语与三平台友好记录.md`；
+逐文件审计表见 `records/v0.2.2-审计清单.md`（两份都是内部文档，**不随发布物分发**）。
+
+**审计了每一个被跟踪文件，而不是无差别翻译。** 新增 `tools/audit_repo.py`：
+按 `git ls-files` 把 252 个文件逐一按类型、双语状态、三平台状态分类并生成审计表。
+它的 `--check` 已成为门禁（注册在 `verify_release.ps1` 与 CI 里）：仓库级与嵌套文档要么成对、
+要么登记为"有意单文件双语"；根目录成对文件必须互相指向；`tools/` 下每个 `.ps1` 都必须在
+`PS1_ALLOWLIST` 里带着理由登记 —— 也就是**必须有人明确判断过它需不需要跨平台等价物**。
+新增一个未经判断的 PowerShell 脚本，门禁直接失败。
+
+**文档。** `deploy/models/README.md`、`examples/skills/hello-world/README.md`、
+`examples/skills/ofd-reader/README.md` 改为「英文默认 + `.zh-Hans.md`」成对。
+命令与搭建类文档（`CONTRIBUTING`、`docs/*/DEVELOPER.md`、`docs/*/COMPLIANCE.md`、
+`docs/*/FAQ.md`、`docs/*/AUTOMATION_GUIDE.md`、`docs/*/SKILL_GUIDE.md`、`docs/*/README.md`）
+现在覆盖三平台的安装、构建、运行、打包、测试、Git 操作与依赖安装，呈现方式是
+**统一语法优先、只在命令真不一样的地方分平台并列**（不用 `<details>` 折叠，也不逐条写三遍）。
+Windows 专属能力依旧写明「仅 Windows」，并保留后端的确切拒绝文案与替代做法：
+WPS/Office COM 读加密文档与旧版 `.doc`/`.xls`、以及 Playwright/Edge 企业内网自动化 ——
+后者的醒目提示现在位于自动化指南正文最前（中英两版都有）。
+原先缺少「以英文版为准」声明的中文版已补齐。
+
+**平台专属资源。** 新增 `tools/gen_platform_icons.py`，由唯一源素材 `assets/EchoDesk.ico`
+派生出三平台图标：`assets/EchoDesk.icns`（用标准库拼的 PNG 内嵌 icns 容器 ——
+`iconutil` 只在 macOS 上存在，而本项目的构建机是 Windows）、
+freedesktop 目录树 `assets/icons/hicolor/*/apps/echodesk.png`，
+外加 `deploy/linux/echodesk.desktop` 与 AppStream 元数据。
+`deploy/linux/README.md` 写清了便携用法与系统级安装、数据目录、以及 CJK/emoji 字体包。
+源素材最大 256×256，因此不生成 512/1024 槽位，也不拿放大图充数。
+
+**配置示例。** `config.example.json` 不再是 `backend/config.json` 的逐字副本：
+`tools/gen_config_example.py` 会注入双语 `_comment` 块（这个文件是什么、`config.user.json`
+如何覆盖、路径该怎么写）与 `_platform_paths` 三平台目录对照表。注入只发生在**副本**上 ——
+会被 pydantic 解析的运行期配置一个字没动。
+
+**顺带修掉的真缺陷（都是"拿任务书去核对代码"时撞出来的）：**
+
+- **前后端在 standalone 布局下算出的用户数据目录不是一个**：`backend/config.py` 把
+  `<发布>/app/backend/app/` 算成 `<发布>/app/backend`，而 Avalonia 前端算的是 `<发布>` ——
+  于是同一个包里 `snippets.json` 写在外层、`session.json`、`results/` 与缓存写在深两层。
+  用户看到的现象是"历史没了"，而不是"路径错了"。现在解析器会逐级向上跳过 `app`/`backend`
+  容器目录，四种真实布局得到同一个答案；`check_standalone_backend.py` 会**对着真实后端**断言这一点，
+  而不是靠读代码确信。
+- **后端工作目录在三平台上不同**，导致模型目录与插件目录的落点漂移：Avalonia 包原来以
+  `cwd=backend/app` 启动，而 WPF 版用 `app\backend\`。现在 Avalonia 的启动与两个 `run-backend.*`
+  启动脚本都统一到包目录，于是 `app/backend/models/` 在三平台上是同一个意思。
+- **一条 CI 门禁自版本号变更后一直静默失效**：`release-gates` 判断的是写死的
+  `publish\EchoDesk-v0.2.1\..._internal`，所以"打包模块比对"再也没跑过，日志只写"跳过"。
+  现在版本号从 `backend/version.py` 读。这是本仓库"写死版本号"缺陷的第三次复发。
+- **`%APPDATA%\EchoDesk` 并不存在**：4 处源码注释与多份文档都这么描述 Windows 数据目录，
+  而代码里没有任何路径写在那里。注释已改正；没有调用方、两个三元分支还完全相同的
+  `PlatformInfo.UserDataDirectoryName` 已删除；文档现在明确写「**它不是 `%APPDATA%`**」。
+- **`docs/*/COMPLIANCE.md` 对安装程序默认目录的描述与实际行为不符**：文档写
+  `{autopf}\EchoDesk` / `%LOCALAPPDATA%\Programs\EchoDesk`，而 `tools/installer.iss` 实际默认装到
+  `ExtractFileDir({srcexe})`（安装程序自己所在的文件夹），且 `AppendDefaultDirName=no`、
+  `PrivilegesRequired=lowest`。中英两版都已改正 —— "装完哪个目录可写"直接决定企业部署是否必须外移产物路径。
+- **跨平台发布物漏了英文 `NOTICE`**（正本没带、只带了中文译本），`SECURITY`、`CONTRIBUTING`、
+  `CODE_OF_CONDUCT` 三对也不在清单里。现在清单是 14 项，并且**缺文件会点名报出来**
+  而不是静默跳过 —— `NOTICE` 当初就是这么漏掉的。
+- `docs/en/FAQ.md` 的"适用版本"还停在 v0.2.1，而中文版写的是 v0.2.2。
+
+**CI。** 新增 `static-gates-linux` 作业，在 `ubuntu-latest` 上跑那些**只用标准库**的门禁
+（语言包、依赖声明、主题、以及新增的审计/资源/配置示例三条），因为大小写敏感、路径分隔符与
+编码问题只在非 Windows 上才暴露。注释与工作流显示名都双语了；
+**作业名刻意保留英文**，以免破坏 GitHub 的必填状态检查匹配；每个仅 Windows 的作业都写明了原因。
+另改正一处陈旧的注释：它声称平台测试会在 Linux/macOS runner 上跑，而该作业固定在 `windows-latest`，
+实际走的是注入分支。
+
 ### Git 统一 SSH、设置窗口骨架与常规页、后端跨平台分发
 
 任务书：`prompts/EchoDesk-v0.2.1跨平台-2.md`。完整的实现方案、实测数据、与任务书的偏差

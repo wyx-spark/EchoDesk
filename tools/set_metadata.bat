@@ -1,5 +1,9 @@
 @echo off
 chcp 65001 >nul
+rem Platform: Windows only -- writes version resources into the frontend exe/dll (rcedit).
+rem 适用平台：仅 Windows。本行放在 chcp 65001 **之后**是刻意的：在代码页切换之前，
+rem cmd.exe 按传统代码页解析 UTF-8 中文会把行尾吃掉（见 tools/fetch_tools.bat 里的说明），
+rem 本轮就是这样把发布构建弄失败的。
 rem ============================================================================
 rem  EchoDesk 可执行文件元数据与图标统一设置（rcedit）
 rem

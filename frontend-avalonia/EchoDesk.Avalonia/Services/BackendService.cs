@@ -261,11 +261,24 @@ public sealed class BackendService : IDisposable
             // 发布目录可能只读；.pyc 又属于"运行期残留"（卸载清单与门禁都要处理它）。
             ["PYTHONDONTWRITEBYTECODE"] = "1",
         };
+        // **工作目录必须是 backend/，不是 backend/app/**（v0.2.2 全面双语与三平台友好 修正）。
+        //
+        // 为什么（实测发现的跨平台不一致）：后端的相对路径都是相对**工作目录**解析的 ——
+        // `models_dir` 默认 "models"（backend/model_hub.py）、`skills_dev`（backend/skills_runtime.py）。
+        // Windows 的 WPF 前端把工作目录设为后端 exe 所在目录（`…\app\backend\`），
+        // 所以模型目录是 `…\app\backend\models\`；而这里原来传的是 `backend/app`，
+        // 于是同一个应用在 Linux/macOS 上把模型目录变成 `…/app/backend/app/models/` ——
+        // 用户按文档放的 .gguf 会"放对了地方却不被识别"。
+        // 统一成 backend/ 之后，三平台的模型目录与插件目录都落在 `app/backend/` 下。
+        //
+        // 注意 `WorkDirectory` 的变化**不影响用户数据根目录**：那个由 `backend/config.py` 的
+        // `user_data_root()` 按 config.py 的位置推导（跳过 app/backend 这些容器目录），
+        // 与进程的工作目录无关。
         return new BackendLaunch
         {
             Executable = python,
-            Args = new[] { "-u", script },
-            WorkDirectory = appDir,
+            Args = new[] { "-u", Path.Combine("app", Path.GetFileName(script)) },
+            WorkDirectory = backendDir,
             IsScriptMode = true,
             ExtraEnvironment = env,
         };

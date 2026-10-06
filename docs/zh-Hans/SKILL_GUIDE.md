@@ -1,8 +1,16 @@
 # EchoDesk 技能开发指南（v0.2.0）
 
 本指南说明如何编写、提交与发布一个 EchoDesk 技能（插件），以及审核流程与发布规范。
-English version: [`docs/en/SKILL_GUIDE.md`](../en/SKILL_GUIDE.md)。
+English version: [`docs/en/SKILL_GUIDE.md`](../en/SKILL_GUIDE.md)（本文为英文版的中文参考译本，如两者有歧义，**以英文版为准**）。
 提交技能请使用仓库的「技能提交 / Skill submission」Issue 模板。
+
+**平台**：技能是纯 Python，在 **Windows、macOS、Linux** 三平台上一样运行，因此本文内容不含平台专属步骤：
+下面路径统一用正斜杠（`app/backend/skills/`）书写——macOS 与 Linux 上就是这样显示的，Windows 上同一条路径
+写作 `app\backend\skills\`，而程序目录就是你安装或解压发布物的那个目录（`EchoDesk-v0.2.2/app/`）。
+确实与平台有关的是两项 EchoDesk 能力，技能可能会碰到：通过 COM 读取 WPS/Office 的**加密文档**
+（含旧版 `.doc` / `.xls`）与企业内网浏览器自动化，这两项**仅 Windows 提供**。如果你的技能本身依赖
+Windows 专属的东西（比如通过 COM 调 WPS），请在 README 里写明（市场卡片会展示它）——EchoDesk 没法让那个
+组件在别的平台上存在。完整矩阵见 [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md)。
 
 ---
 
@@ -10,8 +18,8 @@ English version: [`docs/en/SKILL_GUIDE.md`](../en/SKILL_GUIDE.md)。
 
 技能是一个独立的本地扩展包：一个目录 + 一份 `skill.json` 清单 + 入口代码。
 EchoDesk 通过 GitHub topic 发现技能，用户确认后把它安装到
-**`app\backend\skills\<技能id>\`**（程序目录下的 `backend\` 里），
-并登记到 `app\backend\skills_registry.json`。
+**`app/backend/skills/<技能id>/`**（程序目录下的 `backend/` 里），
+并登记到 `app/backend/skills_registry.json`。
 
 **装完即可用**：安装成功后运行期加载器会**自动热重载**——插件声明的指令立刻出现在指令表与
 指令面板里，不需要重启程序，也不需要手动点「重载本地插件」。
@@ -110,7 +118,7 @@ my-skill/                     ← 仓库根目录
 EchoDesk 安装时只提示、**不会自动安装**。
 
 加载成功后加载器还会核对 `capabilities.commands` 与实际注册的命令：**声明了却没注册**、
-或**注册了却没声明**都会写进警告与 `app\backend\skills_dev.log`——这类"静默不一致"最难排查。
+或**注册了却没声明**都会写进警告与 `app/backend/skills_dev.log`——这类"静默不一致"最难排查。
 
 ---
 
@@ -167,11 +175,11 @@ EchoDesk 安装时只提示、**不会自动安装**。
 
 | 来源 | 位置 | 用途 |
 | --- | --- | --- |
-| 开发目录 | `app\backend\skills_dev\<插件id>\` | 日常开发：放进目录即被识别 |
-| 本地清单 | `app\backend\skills_local.json` | 显式登记本地插件（含信任 / 拒绝记录） |
-| 正式安装 | `app\backend\skills\<插件id>\` + `skills_registry.json` | 从技能市场安装的插件 |
+| 开发目录 | `app/backend/skills_dev/<插件id>/` | 日常开发：放进目录即被识别 |
+| 本地清单 | `app/backend/skills_local.json` | 显式登记本地插件（含信任 / 拒绝记录） |
+| 正式安装 | `app/backend/skills/<插件id>/` + `skills_registry.json` | 从技能市场安装的插件 |
 
-**开发流程**：把插件目录放进 `skills_dev\` → 在设置窗口「开发者」页打开开发者模式 →
+**开发流程**：把插件目录放进 `skills_dev/` → 在设置窗口「开发者」页打开开发者模式 →
 改完代码点「🔄 重载本地插件」。同名插件以开发目录里的那份为准，所以不必先卸载
 已安装的正式版就能本地调试。
 
@@ -181,7 +189,7 @@ EchoDesk 安装时只提示、**不会自动安装**。
   ——装完指令立刻可用，不需要重启或手动重载。
 - **「重载本地插件」只重载本地来源**：它卸载并重新加载 `skills_dev/` 与本地清单里的插件，
   **已安装的正式插件保持原样**，不会被整体卸下再装一遍（运行期状态也不会被清掉）。
-- **日志**：加载、卸载、警告与错误都写进 `app\backend\skills_dev.log`；
+- **日志**：加载、卸载、警告与错误都写进 `app/backend/skills_dev.log`；
   设置窗口「开发者」页可以**查看（可设显示最后 N 行）、🗑 清空、导出日志**。
   排查顺序建议：日志 → 清单是否合法 → 依赖是否装齐、版本是否满足。
 - **隔离**：单个插件的导入、注册与指令执行异常都只影响它自己；插件里抛 `BaseException`
@@ -189,7 +197,12 @@ EchoDesk 安装时只提示、**不会自动安装**。
 
 ### 6.3 手工校验与注册表字段
 
-```powershell
+在技能自己那个目录下执行这两条。它们是**纯 Python**，所以同一行命令在 Windows 的 PowerShell / `cmd`、
+macOS 的「终端」与 Linux 的 shell 里都能用——只有解释器名字可能不同：macOS/Linux 上 `python` 不在 `PATH`
+时改用 `python3`。便携版自带解释器，可以直接调它：macOS/Linux 是 `app/backend/python/bin/python3`，
+Windows 是 `app\backend\python\python.exe`。
+
+```bash
 # 1) 检查清单是否合法（等价于市场的验证逻辑）
 python -c "import json;d=json.load(open('skill.json',encoding='utf-8'));print('bundle =',d.get('echodesk',{}).get('bundle'))"
 
@@ -197,7 +210,7 @@ python -c "import json;d=json.load(open('skill.json',encoding='utf-8'));print('b
 python -c "import importlib.util,pathlib;p=pathlib.Path('echodesk_skill/__init__.py');print('存在' if p.exists() else '缺失')"
 ```
 
-安装 / 卸载的注册表字段（`app\backend\skills_registry.json`）：
+安装 / 卸载的注册表字段（`app/backend/skills_registry.json`）：
 
 ```jsonc
 {
@@ -236,7 +249,7 @@ A：`capabilities` 可以声明命令、UI 面板、自动化钩子与文件解�
   就能立刻使用。扩展点清单与接线方式见 `docs/zh-Hans/DEVELOPER.md` 的「扩展点」一节。
 
 **Q：装上了插件，为什么命令没出现？**
-A：先看 `app\backend\skills_dev.log`。最常见的是被依赖挡下：依赖的插件没装 / 被禁用、
+A：先看 `app/backend/skills_dev.log`。最常见的是被依赖挡下：依赖的插件没装 / 被禁用、
 版本不满足，或主程序版本低于 `echodesk.min_version`——这些都会**拒绝加载并写明原因**。
 其次核对 `capabilities.commands` 与实际注册的命令是否一致（不一致会写警告）；
 另外开发者模式关闭时，`skills_dev/` 里的插件不会加载。
@@ -248,4 +261,4 @@ A：只警告、放行，不阻断加载（开发期的插件经常忘写版本�
 **Q：插件报错会把整个程序弄崩吗？**
 A：不会。插件的加载、卸载、注册与指令执行都兜 `BaseException`：抛 `SystemExit` 之类
 （例如插件里一句 `sys.exit()`）也只中断那一步，不会带走后端进程。
-若确实遇到后端退出，请附 `app\backend\backend_crash.log` 与 `app\backend\skills_dev.log`。
+若确实遇到后端退出，请附 `app/backend/backend_crash.log` 与 `app/backend/skills_dev.log`。

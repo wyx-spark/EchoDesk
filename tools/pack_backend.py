@@ -618,6 +618,10 @@ def launcher_bat() -> str:
         "rem 用途：手动启动/调试后端；前端会直接调用 python\\python.exe，不经这个脚本。\r\n"
         "setlocal\r\n"
         'set "HERE=%~dp0"\r\n'
+        "rem 切到脚本所在目录再启动：后端的相对路径（models/、skills_dev/、results/）\r\n"
+        "rem 都是相对**工作目录**解析的，不 cd 就会跟着调用者的当前位置跑，\r\n"
+        "rem 于是同一个包在不同地方启动会去不同的 models/ 找模型（v0.2.2 修正）。\r\n"
+        'cd /d "%HERE%"\r\n'
         "rem UTF-8 是硬要求：POSIX/中文 Windows 下若用 GBK/ASCII，中文与 emoji 会让 Python 抛 UnicodeEncodeError。\r\n"
         "set \"PYTHONUTF8=1\"\r\n"
         "set \"PYTHONIOENCODING=utf-8\"\r\n"
@@ -635,6 +639,10 @@ def launcher_sh() -> str:
         "# 用途：手动启动/调试后端；前端会直接调用 python/bin/python3，不经这个脚本。\n"
         "set -e\n"
         'HERE=$(cd "$(dirname "$0")" && pwd)\n'
+        "# 切到脚本所在目录再启动：后端的相对路径（models/、skills_dev/、results/）\n"
+        "# 都是相对**工作目录**解析的，不 cd 就会跟着调用者的当前位置跑，\n"
+        "# 于是同一个包在不同地方启动会去不同的 models/ 找模型（v0.2.2 修正）。\n"
+        'cd "$HERE"\n'
         "# UTF-8 是硬要求：POSIX locale 下中文与 emoji 会让 Python 抛 UnicodeEncodeError。\n"
         "PYTHONUTF8=1\n"
         "PYTHONIOENCODING=utf-8\n"

@@ -22,17 +22,37 @@ def program_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def user_data_root() -> str:
-    """用户数据根目录（修复七）。
+#: 发布布局里的"容器目录"名：这些目录只是**装程序**的，用户数据不该落在它们里面。
+#:
+#: 为什么需要它（v0.2.2 全面双语与三平台友好 实测发现的前后端不一致缺陷）：
+#: 原实现只判断"父目录是否叫 app"，在 **standalone 打包（Linux/macOS）**的布局下会算错 ——
+#
+#:   Windows（PyInstaller onedir）：<发布>\app\backend\EchoDeskBackend.exe
+#:     config.py 所在目录 = <发布>\app\backend，父目录 <发布>\app 叫 app → 返回 <发布>  ✅
+#:   Linux/macOS（standalone）：   <发布>/app/backend/app/main.py
+#:     config.py 所在目录 = <发布>/app/backend/app，父目录叫 backend（不是 app）→ 返回 <发布>/app/backend  ❌
+#
+#: 而前端（Avalonia 的 UserPaths）算出来是 <发布>，于是同一个发布物里
+#: **前端把 snippets.json 写到 <发布>/、后端把 session.json 写到 <发布>/app/backend/** —— 两个数据目录。
+#: 修法是"一路向上跳过容器目录"，让两种布局得到同一个答案。
+CONTAINER_DIRS = frozenset({"app", "backend"})
 
-    发布物采用便携版三层结构：``EchoDesk-v0.2.1\\app\\backend\\EchoDeskBackend.exe``，
+
+def user_data_root() -> str:
+    """用户数据根目录（修复七；v0.2.2 修掉 standalone 布局下算错的问题）。
+
+    发布物采用便携版三层结构：``EchoDesk-v0.2.2\\app\\backend\\…``，
     其中 ``app\\`` 是程序本体，外层才是用户能看到、能备份的目录
     （快捷方式、``ui_state.json``、``snippets.json``、``results\\``）。
 
-    判定顺序（与前端 ``ShortcutService.UserDataDirectory`` 保持一致）：
+    判定顺序（与前端 ``UserPaths.DataRoot`` / ``ShortcutService.UserDataDirectory`` 保持一致）：
     1. 环境变量 ``ECHODESK_DATA``；
-    2. 后端目录的父目录名为 ``app`` → 再上一层（便携版布局）；
-    3. 后端目录的父目录（源码运行 = 仓库根；单层部署 = 程序目录）。
+    2. 从后端目录**逐级向上跳过** :data:`CONTAINER_DIRS` 里的目录名（``app`` / ``backend``），
+       第一个不在其中的祖先就是用户数据根；
+    3. 三种真实布局都落在同一处：
+       * 安装/便携（Windows）：``<发布>\\app\\backend`` → ``<发布>``；
+       * standalone（Linux/macOS）：``<发布>/app/backend/app`` → ``<发布>``；
+       * 源码检出：``<仓库>/backend`` → ``<仓库>``（与修复前一致，不改变开发机行为）。
     """
     override = (os.environ.get("ECHODESK_DATA") or "").strip()
     if override:
@@ -41,13 +61,15 @@ def user_data_root() -> str:
         except Exception:  # noqa: BLE001 - 环境变量异常时退回自动判定
             pass
     if getattr(sys, "frozen", False):
-        backend_dir = os.path.dirname(os.path.abspath(sys.executable))
+        current = os.path.dirname(os.path.abspath(sys.executable))
     else:
-        backend_dir = os.path.dirname(os.path.abspath(__file__))
-    parent = os.path.dirname(backend_dir)
-    if os.path.basename(parent).lower() == "app":
-        return os.path.dirname(parent)
-    return parent
+        current = os.path.dirname(os.path.abspath(__file__))
+    while os.path.basename(current).lower() in CONTAINER_DIRS:
+        parent = os.path.dirname(current)
+        if parent == current:   # 已经到文件系统根，不能再往上
+            break
+        current = parent
+    return current
 
 
 def program_root() -> str:

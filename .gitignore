@@ -1,12 +1,16 @@
 # ---------- 构建产物 ----------
+# ---------- Build outputs ----------
 build/
 dist/
 out/
 frontend/bin/
 frontend/obj/
 # 跨平台前端（Avalonia）同样是 .NET 工程，bin/obj 必须忽略：
+# The cross-platform front end (Avalonia) is a .NET project too, so bin/obj must be ignored:
 # 除了体积，obj 下的 PublishOutputs.*.txt 会记录**打包机的绝对路径**，
+# Besides the size, obj\PublishOutputs.*.txt records the **packaging machine's absolute paths**,
 # 被 tools\check_feedback.ps1 的"个人绝对路径残留"检查判为不合格（实测踩到过）。
+# which tools\check_feedback.ps1 fails as a leftover personal path (hit in practice).
 frontend-avalonia/**/bin/
 frontend-avalonia/**/obj/
 publish/
@@ -21,45 +25,66 @@ venv/
 backend_crash.log
 
 # ---------- 模型与缓存（体积过大，不入库） ----------
+# ---------- Models and caches (too large to be committed) ----------
 *.gguf
 models/*.gguf
 .cache/
 backend/.cache/
 
 # ---------- 运行时用户数据（后端在工作目录里生成的文件） ----------
+# ---------- Runtime user data (files the backend creates in the working directory) ----------
 session.json
 config.user.json
+# 配置示例是**生成物**（tools/gen_config_example.py 由 backend/config.json 生成，
+# 内含双语说明与三平台路径对照），权威位置是发布目录里那一份，不入库。
+# The configuration example is generated (tools/gen_config_example.py builds it from
+# backend/config.json with the bilingual notes); the release tree holds the authoritative
+# copy, so the repository does not track one.
+config.example.json
 ui_state.json
 snippets.json
 backend_crash.log
 # 前端崩溃日志（v0.2.0 修复一：全局异常兜底会写这个文件）
+# Front end crash log (v0.2.0 fix one: the global exception fallback writes this file)
 frontend_crash.log
 # 自动化
+# Automation
 automation_log.jsonl
 automation_processed.json
 automation_results/
 browser_state.json
 # 自动化的持久化浏览器数据目录（v0.2.1 自动化优化 任务一：登录态存在这里）。
+# The persisted browser data directory used by automation (v0.2.1 automation task one: sign-in state lives here).
 # 它可能出现在仓库根（开发时程序根目录就是仓库根），含 Cookie，绝不能入库。
+# It can sit at the repository root (during development the program root is the repository root) and holds cookies, so it must never be committed.
 browser_profile/
 # 结果目录（新增三；默认生成在程序根目录，也可能被指到仓库内）
+# Results directory (added in fix three; created in the program root by default, but may also be pointed inside the repository)
 # v0.2.1 发布任务书「全局要求一」：目录名由「批量处理结果」改为英文 results，
+# v0.2.1 release brief, global requirement one: the directory name changed from 批量处理结果 to the English results,
 # 只锚定仓库根，避免误伤将来任何名为 results 的子目录；旧名保留一行兼容旧用户。
+# anchored to the repository root so that no future subdirectory named results is caught by accident; the old name stays for existing users.
 批量处理结果/
 /results/
 # 模型选择栏（新增四）
+# Model picker (added in fix four)
 models_registry.json
 # 技能市场
+# Skill marketplace
 market_cache.json
 skills_registry.json
 # 已安装技能目录（运行时）：必须写全路径。只写 skills/ 会连
+# Installed skills directory (runtime): the full path is required. A bare skills/ would also
 # examples/skills/（示例插件，需要入库）一起忽略掉——v0.2.1 实际踩到过。
+# ignore examples/skills/ (the example plugins, which must be committed) — hit in practice in v0.2.1.
 backend/skills/
 # 开发时留下的临时脚本/产物
+# Temporary scripts and artifacts left behind while developing
 _tmp_*.py
 *.tmp
 
 # ---------- IDE / 编辑器 ----------
+# ---------- IDE / editors ----------
 .idea/
 .vs/
 *.user
@@ -67,32 +92,48 @@ _tmp_*.py
 *.swp
 
 # ---------- 第三方命令行工具（由 tools\fetch_tools.bat 按需下载） ----------
+# ---------- Third-party command line tools (downloaded on demand by tools\fetch_tools.bat) ----------
 tools/rcedit-*.exe
 
 # ---------- v0.2.1 新增 ----------
+# ---------- Added in v0.2.1 ----------
 # 开发中的本地插件（放进去即被识别，但不是仓库内容；示例插件在 examples/skills/ 入库）
+# Local plugins under development (dropping one in makes it recognized, but it is not repository content; example plugins live in examples/skills/)
 backend/skills_dev/
 # 本地插件清单（含本机路径与信任状态，因人而异）
+# Local plugin registry (holds machine-specific paths and trust state, so it differs from machine to machine)
 skills_local.json
 # 插件开发日志
+# Plugin development log
 skills_dev.log
 # 自定义自动化模板（用户自己攒的，不入库）
+# Custom automation templates (built up by the user, never committed)
 automation_templates.json
 # 用户外置语言包目录（程序根目录下的 lang\，仅本机临时语言包不入库；
+# External language pack directory (lang\ under the program root; only machine-local temporary packs stay out of the repository;
 # 必须写 /lang/ 而不是 lang/，否则会把 backend/lang/ 里的内置语言包一起忽略）
+# it must be written as /lang/ and not lang/, otherwise the built-in packs under backend/lang/ would be ignored too)
 /lang/
 # 自动化配置导出件
+# Exported automation configuration
 *.echodesk-auto
 
 # ---------- 修复四新增 ----------
+# ---------- Added in fix four ----------
 # 分段摘要缓存（按文件指纹缓存摘要结果，随使用生成；用户可自行删除）
+# Chunk summary cache (summaries cached by file fingerprint and created as you use the app; users may delete it freely)
 summary_cache.json
 backend/summary_cache.json
 # 开发期产物（像素校验截图、语言包补丁 JSON 等）
+# Development-only artifacts (pixel check screenshots, language pack patch JSON, and so on)
 artifacts/
 
 # ---------- 发布任务书「全局要求五」 ----------
+# ---------- Release brief, global requirement five ----------
 # 任务书与提示词文件（prompts\ 下的 *.md，以及散落在根目录的同类文件）不入库：
+# Task briefs and prompt files (the *.md files under prompts\ plus similar files scattered in the repository root) are not committed:
 # 发布任务书明确把「提示词文件：prompts/ 目录及散落的提示词、任务书 md」
+# the release brief explicitly lists "prompt files: the prompts/ directory, scattered prompts and task brief .md files"
 # 列为不该有的内容。它们留在工作区供开发时查阅即可。
+# as content that must not ship. Leaving them in the working tree for reference while developing is enough.
 /prompts/

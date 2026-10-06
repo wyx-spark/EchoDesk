@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- EchoDesk AppStream 元数据（由 tools/gen_platform_icons.py 生成）。
+     安装：cp 到 /usr/share/metainfo/ ；截图目录是 assets/screenshots/（本版暂无截图）。 -->
+<component type="desktop-application">
+  <id>com.voidentropia.echodesk</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>EchoDesk</name>
+  <summary>Local-only AI desktop assistant</summary>
+  <summary xml:lang="zh_CN">纯本地的 AI 桌面助手</summary>
+  <description>
+    <p>
+      EchoDesk runs a local model on your own machine and keeps conversation history,
+      documents and search results there. It reads Office/TXT/PDF files, runs agent
+      workflows and automation, loads plugins, and speaks MCP — without sending your
+      data to a server.
+    </p>
+    <p xml:lang="zh_CN">
+      EchoDesk 在本机运行模型，对话记录、文档与检索结果都留在本机。可读取 Office/TXT/PDF、
+      运行 Agent 与自动化、加载插件、接入 MCP —— 不把数据发往服务器。
+    </p>
+  </description>
+  <launchable type="desktop-id">echodesk.desktop</launchable>
+  <url type="homepage">https://github.com/VoidEntropiaStudio/EchoDesk</url>
+  <developer id="com.voidentropia">
+    <name>Void Entropia Studio</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.2.2" date="2026-10-06"/>
+  </releases>
+</component>

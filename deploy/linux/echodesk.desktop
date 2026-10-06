@@ -1,0 +1,23 @@
+[Desktop Entry]
+# EchoDesk 桌面条目（v0.2.2 全面双语与三平台友好 任务七）
+# 安装方式见 deploy/linux/README.md；图标来自 assets/icons/hicolor/。
+#
+# 便携用法：把本文件放到 ~/.local/share/applications/，并把 Exec 改成解压目录里的 start.sh 绝对路径，
+#           例如 Exec=/home/<你>/EchoDesk-v0.2.2-linux-x64/start.sh
+# 系统级用法：程序装到 /opt/echodesk/，图标树 cp -r 到 /usr/share/icons/hicolor/，
+#           此时 Exec 写 /opt/echodesk/start.sh 即可（本文件默认就是这种写法）。
+Type=Application
+Version=1.0
+Name=EchoDesk
+GenericName=Local AI desktop assistant
+GenericName[zh_CN]=本地 AI 桌面助手
+Comment=Chat with a local model; files, automation, skills and MCP all stay on this machine.
+Comment[zh_CN]=用本机模型对话；文件、自动化、技能与 MCP 都不出本机。
+Exec=/opt/echodesk/start.sh
+Icon=echodesk
+Terminal=false
+Categories=Utility;Office;
+Keywords=AI;assistant;LLM;local;offline;
+Keywords[zh_CN]=AI;助手;本地;离线;
+StartupNotify=true
+StartupWMClass=EchoDesk

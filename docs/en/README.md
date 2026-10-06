@@ -8,6 +8,51 @@ This folder is the entry point for the English documentation.
 
 ---
 
+## Platforms and installation
+
+EchoDesk runs on **Windows, macOS and Linux**. The Windows build is the complete shipped product; Linux and
+macOS are served by the **cross-platform frontend** on the same Python backend. **Two capabilities are
+Windows-only** — reading WPS/Office **encrypted** documents through COM (legacy `.doc` / `.xls` included) and
+the **enterprise-intranet browser automation**. Both degrade explicitly, naming the platform reason and
+offering alternatives, instead of failing silently: [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md) has the matrix and
+the alternatives. Everything else (chat and streaming, file parsing, retrieval, Agent, MCP, skills, model
+management) behaves the same on all three platforms.
+
+| Platform | What you download | How you start it |
+| --- | --- | --- |
+| Windows | `EchoDesk-v0.2.2-Setup.exe` (installer) or the portable `…-win-x64.zip` | Start Menu / desktop shortcut, or the portable launcher inside the program folder |
+| Linux x86-64 | `EchoDesk-v0.2.2-linux-x64.tar.gz` | `./start.sh` inside the unpacked directory |
+| macOS (Apple silicon) | `EchoDesk-v0.2.2-osx-arm64.tar.gz` | `./start.sh` inside the unpacked directory |
+
+The Linux and macOS builds are self-contained archives with **no installer**: the UI runtime and the backend
+interpreter are both inside, so the target machine needs neither .NET nor Python.
+
+```bash
+# Linux / macOS: verify, extract, start
+sha256sum -c SHA256SUMS.txt                    # macOS: shasum -a 256 -c SHA256SUMS.txt
+tar -xzf EchoDesk-v0.2.2-linux-x64.tar.gz
+cd EchoDesk-v0.2.2-linux-x64 && ./start.sh     # chmod +x start.sh app/EchoDesk first if the bits were lost
+```
+
+User data (conversation history, settings, `results/`) lives in the **user data folder**, which each platform
+resolves its own way:
+
+```
+# Windows — the program folder itself (%APPDATA%\EchoDesk when that is where you installed or unpacked it)
+C:\Users\<user>\EchoDesk-v0.2.2\
+%APPDATA%\EchoDesk\
+
+# macOS
+~/Library/Application Support/EchoDesk/
+
+# Linux (~/.local/share/EchoDesk when XDG_DATA_HOME is unset)
+$XDG_DATA_HOME/EchoDesk/
+```
+
+`ECHODESK_DATA` overrides that location on every platform. Step-by-step installation and startup — including
+the macOS Gatekeeper note and running without a graphical environment — is in
+[`USER_GUIDE.md`](USER_GUIDE.md).
+
 ## Documents in this folder
 
 | Document | What it covers | Who it is for |
@@ -16,6 +61,7 @@ This folder is the entry point for the English documentation.
 | [`FAQ.md`](FAQ.md) | Frequently asked questions and troubleshooting: startup, models, file parsing, automation, marketplace, UI | Check here first when something breaks |
 | [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md) | **Automation configuration guide**: field overview, field-by-field instructions, a complete contract-review example, the selector-test wizard, a troubleshooting table, preset templates, config import/export | Users who want to batch-process web tasks in a browser |
 | [`SKILL_GUIDE.md`](SKILL_GUIDE.md) | Skill (plugin) development guide: manifest rules, publishing to the marketplace, security requirements and review process | Skill developers |
+| [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md) | **Cross-platform support and degradation reference**: what works on Windows / macOS / Linux, the two Windows-only capabilities and their alternatives, data-directory conventions, packaging and verification evidence | Everyone; essential on macOS or Linux |
 | [`COMPLIANCE.md`](COMPLIANCE.md) | **Enterprise deployment and compliance guide**: proxy, certificates, firewall domain allow-list, Group Policy and restricted environments, auditing and retained evidence | IT administrators, compliance and security reviewers |
 
 ## Other languages
@@ -59,8 +105,9 @@ Additional languages are welcome. Documentation for a locale lives in `docs/<loc
 live in `frontend/Resources/Lang/<locale>.json` and `backend/lang/<locale>.json`.
 
 Claim or submit a translation through the "Translation contribution" issue template, and run the
-completeness checker before opening a pull request:
+completeness checker before opening a pull request (the same command line works in PowerShell or `cmd` on
+Windows, in Terminal on macOS and in a Linux shell; use `python3` if `python` is not on `PATH`):
 
-```powershell
+```bash
 python tools/check_lang.py --locale <locale>
 ```

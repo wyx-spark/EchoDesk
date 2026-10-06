@@ -2,10 +2,16 @@
 
 > 本文件是 [`CONTRIBUTING.md`](CONTRIBUTING.md) 的简体中文参考译本。如两者有歧义，**以英文版为准**。
 
-感谢你抽出时间提供帮助。EchoDesk 是一款面向 Windows 的本地优先 AI 桌面助手，
-任何形式的贡献都有价值：缺陷报告、修复、文档、翻译与新的技能。
+感谢你抽出时间提供帮助。EchoDesk 是一款本地优先的 AI 桌面助手，任何形式的贡献都有价值：
+缺陷报告、修复、文档、翻译与新的技能。Windows 是完整的正式交付平台；Linux 与 macOS 由同一套
+Python 后端之上的跨平台（Avalonia）前端提供支持，因此贡献时请把三个平台都考虑进去。
+平台支持矩阵与"哪些能力仅限 Windows"的准确边界见
+[docs/zh-Hans/CROSS_PLATFORM.md](docs/zh-Hans/CROSS_PLATFORM.md)。
 
 参与本项目即表示你同意遵守[行为准则](CODE_OF_CONDUCT.md)。
+
+**本文的命令写法**：优先给三平台通用的写法（`python`、`git`、正斜杠、`~/.ssh`），只在确实有差异时
+展开并标注平台——虚拟环境激活、环境变量、Windows 专属的发布链。你自己写文档时也请遵循同一口径。
 
 - [参与方式](#参与方式)
 - [提交 issue](#提交-issue)
@@ -49,14 +55,20 @@ Issue 模板位于 [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/)——请
 
 - **版本**：`/status` 显示的版本号，或发布文件夹名中的版本号
   （例如 `v0.2.1`）。
-- **环境**：Windows 版本与内部版本号，是否安装了 WPS Office / Microsoft Office 与
-  Microsoft Edge，以及你运行的是便携版还是从源码构建的版本。
+- **环境**：你的操作系统与版本——Windows 的内部版本号，或 macOS / Linux 的发行版与内核版本；
+  是否安装了 WPS Office / Microsoft Office 与 Microsoft Edge（这两项只对"仅限 Windows 的能力"有影响）；
+  以及你运行的是发布版（Windows 安装包，或 Linux/macOS 便携包）还是从源码构建的版本。
 - **准确步骤**：按顺序列出你点击或输入的内容。自动化相关问题请附上
   选择器配置与 URL 模式（涉密内容请脱敏）。
 - **预期行为与实际行为**：你期望发生什么，实际发生了什么。
 - **日志**：日志位置见 [SECURITY.md](SECURITY.md)——两份崩溃日志分别是
-  程序目录下的 `frontend_crash.log` 和 `backend\` 内的 `backend_crash.log`。
+  程序目录下的 `frontend_crash.log` 和 `backend/` 内的 `backend_crash.log`。
   两者都在失败时追加写入，因此文件为空表示「没有记录到崩溃」。
+  用户数据（对话历史、界面状态、`results/`）在**程序旁边**，也就是发布目录的外层，不在 `app/` 里：
+  Windows 上就是程序目录本身；macOS 与 Linux 上，当程序目录不叫 `app` 时前端会回退到
+  `~/Library/Application Support/EchoDesk` 与 `$XDG_DATA_HOME/EchoDesk`（或 `~/.local/share/EchoDesk`）。
+  `ECHODESK_DATA` 可以覆盖以上全部。**它不是 `%APPDATA%`** —— 代码里没有任何一条路径写在那里，
+  那个写法只出现在两处过时注释里，v0.2.2 已改正。
 
 对于任何看起来像安全问题的内容，**不要开公开 issue**——请遵循
 [SECURITY.md](SECURITY.md) 中的私密报告流程。
@@ -86,66 +98,131 @@ git remote set-url origin git@github.com:VoidEntropiaStudio/EchoDesk.git
 需要先准备密钥：`ssh-keygen -t ed25519 -C "本机标签"`，把 `~/.ssh/id_ed25519.pub`
 的**全文**加到 GitHub 的 Settings → SSH and GPG keys；然后 `ssh -T git@github.com`
 应回答 `Hi <用户名>! You've successfully authenticated`。
+这些命令三平台完全一致：Windows 上 `~/.ssh` 就是 `%USERPROFILE%\.ssh`（同一个目录，PowerShell 7
+与 Git Bash 都认 `~`）；macOS/Linux 上私钥不能对同组或其他用户可读，创建后执行一次
+`chmod 600 ~/.ssh/id_ed25519`。
 公司网络挡 22 端口时改用 443，写法见
 [docs/zh-Hans/DEVELOPER.md](docs/zh-Hans/DEVELOPER.md) 的「版本控制与推送（统一 SSH）」。
+完整的密钥/ssh-agent 清单（含各平台路径）见
+[docs/zh-Hans/DEVELOPER.md](docs/zh-Hans/DEVELOPER.md) 第五节。
 
 要求：
 
-- 后端（`backend/`）需要 **Python 3.13**。
-- 一个能构建前端目标框架 `net10.0-windows` 的 **.NET SDK**
-  （见 `frontend/EchoDesk.csproj`）。
-- 自动化相关工作可选：本地安装 **Microsoft Edge**，因为自动化引擎
+- 后端（`backend/`）需要 **Python 3.13**——三个平台用同一个版本。
+- 一个能构建你要改的前端的 **.NET SDK**：
+  - 跨平台（Avalonia）前端的目标框架是 `net10.0`，Windows、macOS、Linux 都能构建
+    （`frontend-avalonia/EchoDesk.Avalonia/EchoDesk.Avalonia.csproj`）；
+  - WPF 前端的目标框架是 `net10.0-windows`，因此只能在 Windows 上构建
+    （`frontend/EchoDesk.csproj`）。
+- 自动化相关工作可选（**仅限 Windows**）：本地安装 **Microsoft Edge**，因为自动化引擎
   通过 Playwright 驱动系统 Edge（`channel = msedge`）。
 
-```powershell
-# Backend: create a virtual environment and install the pinned dependency set
+```bash
+# 后端：建立虚拟环境并安装锁定版本的依赖（三平台命令相同）
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r backend\requirements.txt
+python -m pip install -r backend/requirements.txt
 
-# Frontend
-dotnet build frontend\EchoDesk.csproj -c Release
+# macOS / Linux：激活环境（bash、zsh）
+. .venv/bin/activate
 ```
 
-WPF 前端启动的是**打包好的**后端可执行文件（发布版中为 `backend\EchoDeskBackend.exe`，
-用 PyInstaller 构建时为 `dist\EchoDeskBackend\EchoDeskBackend.exe`）。
+```powershell
+# Windows：激活环境（PowerShell；cmd.exe 里改用 .venv\Scripts\activate.bat）
+.\.venv\Scripts\Activate.ps1
+```
+
+```bash
+# 前端（.NET CLI 本身三平台行为一致）
+dotnet build frontend/EchoDesk.csproj -c Release                                       # WPF，仅 Windows（net10.0-windows）
+dotnet build frontend-avalonia/EchoDesk.Avalonia/EchoDesk.Avalonia.csproj -c Release   # Avalonia，Windows + macOS + Linux（net10.0）
+```
+
+WPF 前端启动的是**打包好的**后端可执行文件（发布版中为 `backend/EchoDeskBackend.exe`，
+用 PyInstaller 构建时为 `dist/EchoDeskBackend/EchoDeskBackend.exe`）。
 `ECHODESK_BACKEND` 可以覆盖该路径，这是前端开发最快的循环方式：
 
 ```powershell
-# Build the backend once (product: dist\EchoDeskBackend\EchoDeskBackend.exe)
-pyinstaller --noconfirm --distpath dist --workpath build\pyi backend\EchoBackend.spec
+# Windows：先构建一次后端（产物：dist\EchoDeskBackend\EchoDeskBackend.exe）
+pyinstaller --noconfirm --distpath dist --workpath build/pyi backend/EchoBackend.spec
 
-# Run the frontend from source against it
+# Windows：用源码里的 WPF 前端连上它
 $env:ECHODESK_BACKEND = "$PWD\dist\EchoDeskBackend\EchoDeskBackend.exe"
-dotnet run --project frontend\EchoDesk.csproj
+dotnet run --project frontend/EchoDesk.csproj
 ```
 
-后端也可以独立运行以便调试协议（`python backend\main.py`）：它从 stdin 每行读取一个
-JSON 请求，并向 stdout 每行写入一个 JSON 响应。动作列表、响应类型与模块映射见
-[docs/DEVELOPER.md](docs/DEVELOPER.md)。
+```bash
+# macOS / Linux：跨平台前端会自己找到 backend/main.py（从 bin/ 逐级向上找到仓库根）
+dotnet run --project frontend-avalonia/EchoDesk.Avalonia/EchoDesk.Avalonia.csproj
 
-只有真正做推理时才需要模型：把 `.gguf` 文件放入 `backend\models\`（源码运行）
-或打包后端的 `models\` 文件夹。其他一切——解析、自动化管线、
+# macOS / Linux：也可以显式指定后端——可执行文件，甚至直接用 .py 入口
+export ECHODESK_BACKEND="$PWD/backend/main.py"
+dotnet run --project frontend-avalonia/EchoDesk.Avalonia/EchoDesk.Avalonia.csproj
+```
+
+后端也可以独立运行以便调试协议（`python backend/main.py`）：它从 stdin 每行读取一个
+JSON 请求，并向 stdout 每行写入一个 JSON 响应。动作列表、响应类型与模块映射见
+[docs/zh-Hans/DEVELOPER.md](docs/zh-Hans/DEVELOPER.md)。
+
+只有真正做推理时才需要模型：把 `.gguf` 文件放入 `backend/models/`（源码运行）
+或打包后端的 `models/` 文件夹（发布物里是 `app/backend/models/`）。其他一切——解析、自动化管线、
 i18n、协议——都可以在没有模型的情况下开发与测试。
 
 ## 构建与打包
 
+Windows 的发布链只能用 PowerShell 与 `cmd`（它调用 Inno Setup、`rcedit` 与 WPF UI 探针）。
+三平台的便携包由纯 Python 工具构建，在任何平台上都能跑，因此 macOS/Linux 贡献者用后者打包：
+
 ```powershell
-# Full portable build -> publish\EchoDesk-v0.2.2\
+# Windows：完整便携构建 -> publish\EchoDesk-v0.2.2\
 & tools\build_release.ps1
 
-& tools\build_release.ps1 -SkipBackend     # only rebuild the WPF frontend
-& tools\build_release.ps1 -SkipFrontend    # only rebuild the packaged Python backend
-& tools\build_release.ps1 -SkipClean -SkipBackend -SkipFrontend   # re-run resource/metadata steps
-& tools\build_release.ps1 -IncludeModels   # include local .gguf models (large offline bundle)
+& tools\build_release.ps1 -SkipBackend     # 只重建 WPF 前端
+& tools\build_release.ps1 -SkipFrontend    # 只重建打包的 Python 后端
+& tools\build_release.ps1 -SkipClean -SkipBackend -SkipFrontend   # 只重跑资源/元数据步骤
+& tools\build_release.ps1 -IncludeModels   # 一并带上本地 .gguf 模型（离线大包）
+& tools\build_release.ps1 -MakeInstaller   # 同时编译 Inno Setup 安装包
+```
+
+```bash
+# macOS / Linux（Windows 同样适用）：跨平台打包，三平台命令完全一致
+python tools/pack_backend.py                        # 三个 RID 的后端（standalone，输出 publish/backend-<rid>/）
+python tools/pack_backend.py --platform linux-x64   # 只产一个 RID（可重复传该参数）
+python tools/pack_crossplatform.py --rid linux-x64  # 前端 + 后端整包 -> dist/EchoDesk-<版本>-<rid>.tar.gz
+python tools/pack_crossplatform.py --rid osx-arm64
+python tools/pack_crossplatform.py --rid win-x64    # Windows 目标产出 .zip
+python tools/pack_crossplatform.py --plan           # 演练：只打印步骤不构建
+python tools/gen_platform_icons.py                  # .icns / Linux hicolor 图标 / .desktop 条目
+```
+
+`tools/pack_crossplatform.py` 会同时在 `publish/backend-<rid>/` 与 `dist/backend-<rid>/` 里找
+standalone 后端，因此按各自默认值依次运行 `pack_backend.py`、`pack_crossplatform.py` 即可。
+macOS 分发还需要代码签名与公证，这需要维护者的 Apple 凭据；打包脚本只打印这些命令，
+并把它们留在产物里的 `SIGNING.txt` 中。
+
+安装刚构建好（或刚下载）的版本，各平台做法不同：
+
+```powershell
+# Windows：运行安装包，或解压便携 zip 后直接启动
+.\publish\EchoDesk-v0.2.2-Setup.exe
+
+.\publish\EchoDesk-v0.2.2\app\EchoDesk.exe
+```
+
+```bash
+# macOS / Linux：发布包就是普通归档，没有安装程序
+tar -xzf dist/EchoDesk-v0.2.2-linux-x64.tar.gz
+chmod +x EchoDesk-v0.2.2-linux-x64/start.sh EchoDesk-v0.2.2-linux-x64/app/EchoDesk   # 仅在可执行位丢失时需要
+cd EchoDesk-v0.2.2-linux-x64 && ./start.sh
 ```
 
 构建中有两点容易出错，脚本里都加了注释：
 
 - `rcedit` **不得**触碰 PyInstaller 的输出（它会重建 PE 映像并破坏追加的
   PKG 归档）；后端改为通过 spec 写入自己的版本资源与图标。
+  这一步是 Windows 专属的，所以下载 `rcedit` 的 `tools/fetch_tools.bat` 没有 macOS/Linux 对应物：
+  跨平台包根本不用 `rcedit`。
 - PowerShell 可能把原生命令的 stderr 当作终止性错误，这曾导致构建在出现
-  警告时中止；`tools\build_release.ps1` 因此封装了原生调用。
+  警告时中止；`tools/build_release.ps1` 因此封装了原生调用。
 
 另请注意**包体积**：EchoDesk 发布的是自包含前端加 PyInstaller 后端，因此新增一个体积大
 ——或会引入庞大传递依赖树——的依赖是实实在在的代价。优先使用标准库，优先选择体积小、
@@ -153,19 +230,28 @@ i18n、协议——都可以在没有模型的情况下开发与测试。
 
 ## 测试
 
-```powershell
-# Required checks for any pull request
-python tools\selftest.py             # backend unit-level self-test (exit code 0 = pass)
-python tools\test_file_parsers.py    # smoke test for every supported file format
+```bash
+# 任何拉取请求都必须跑的检查（Windows、macOS、Linux 通用）
+python tools/selftest.py             # 后端单元级自检（退出码 0 = 通过）
+python tools/test_file_parsers.py    # 所有支持格式的解析冒烟测试
 
-# Additional suites, depending on what you touched
-python tools\test_plaintext.py       # Markdown -> plain-text conversion (result files)
-python tools\test_results_dir.py     # automation result folder layout and result.txt
-python tools\test_automation_e2e.py  # end-to-end automation against a local static site (needs Edge + Playwright)
-python tools\test_model_hub_e2e.py   # model-hub protocol against the packaged backend
-python tools\test_reasoning.py       # 思考内容分离：标签边界、协议双通道、历史持久化
-powershell -File tools\ui_probe.ps1  # WPF UI probe: settings window opens fast, no crash log
-python tools\gen_licenses.py         # regenerate docs\THIRD_PARTY_LICENSES.md
+# 视改动范围追加
+python tools/test_plaintext.py       # Markdown -> 纯文本转换（结果文件）
+python tools/test_results_dir.py     # 自动化结果目录布局与 result.txt
+python tools/test_reasoning.py       # 思考内容分离：标签边界、协议双通道、历史持久化
+python tools/test_model_hub_e2e.py   # 模型中心协议对接打包后的后端
+python tools/test_platform.py        # 平台探测与降级分支（ECHODESK_FORCE_PLATFORM）
+python tools/check_standalone_backend.py       # 打包后的 standalone 后端：结构 + 协议
+python tools/check_crossplatform_release.py    # 打包后的发布包：归档格式、可执行位、校验和
+python tools/gen_licenses.py         # 重新生成 docs/THIRD_PARTY_LICENSES.md
+```
+
+有两项测试只限 Windows，因为它们测的功能本身就只在 Windows 上可用
+（在其他平台上会打印跳过信息，而不是判失败）：
+
+```powershell
+powershell -File tools\ui_probe.ps1  # WPF UI 探针：设置窗口快速打开、不产生崩溃日志
+python tools/test_automation_e2e.py  # 对本地静态站点跑端到端自动化（需要 Edge + Playwright）
 ```
 
 如果某个测试因为你的机器缺少模型、Edge 或打包好的后端而打印跳过信息，
@@ -198,7 +284,10 @@ python tools\gen_licenses.py         # regenerate docs\THIRD_PARTY_LICENSES.md
 **Markdown 与文档**
 
 - 不强制一行写一句话，但请保持表格与围栏代码块整洁。
-- 围栏代码块要带语言标记（`powershell`、`jsonc`、`text`）。
+- 围栏代码块要带语言标记（`bash`、`powershell`、`jsonc`、`text`）。
+- **命令与路径按三平台来写**：优先用三平台通用写法（`python`、`git`、正斜杠、`~/.ssh`、
+  `backend/models/`），只在确有差异时展开并给每个代码块标注平台——`# Windows` / `# macOS / Linux`——
+  不要把每条命令都写三遍。
 - 不使用制表符、不留行尾空格，相对链接使用正斜杠。
 - 不要提交包含真实客户数据、文件路径或凭据的截图。
 
@@ -255,8 +344,8 @@ EchoDesk 的本地化基于语言包，其设计让一份翻译成为自包含�
    `zh-Hans` 是键覆盖率的基准来源；`en` 是第一回退。
 2. **提取待翻译的字符串。** 运行
 
-   ```powershell
-   python tools\extract_strings.py --scaffold <locale>
+   ```bash
+   python tools/extract_strings.py --scaffold <locale>
    ```
 
    它会基于源语言为新语言区域生成脚手架文件。键是语义化的
@@ -266,14 +355,14 @@ EchoDesk 的本地化基于语言包，其设计让一份翻译成为自包含�
    `{count}` / `{path}` 这类占位符；代码会原样替换它们。
 4. 在提交拉取请求前**检查完整性**：
 
-   ```powershell
-   python tools\check_lang.py --locale <locale>
+   ```bash
+   python tools/check_lang.py --locale <locale>
    ```
 
    它会报告缺失的键以及上游已不存在的键。运行时的回退顺序是
    `requested locale → en → zh-Hans → the key itself`，因此缺失的键是可见的而不是
    静默的，但合并时仍应提交完整的语言包。
-5. **在应用中测试。** 把 `backend\config.json` 中的 `language` 设为你的语言区域（或在
+5. **在应用中测试。** 把 `backend/config.json` 中的 `language` 设为你的语言区域（或在
    设置中切换），检查界面是否立即更新、错误消息与 `/help` 是否跟随
    该语言，以及没有字符串溢出所在单元格或按钮——CJK 与德文文本尤其
    需要检查宽度。
@@ -316,14 +405,15 @@ EchoDesk 的本地化基于语言包，其设计让一份翻译成为自包含�
   `automation_log.jsonl`、`results/`、`skills/`、
   `skills_registry.json`、`models_registry.json`、`market_cache.json`。
 - 崩溃日志（`frontend_crash.log`、`backend_crash.log`）。
-- 任何包含 token、密码或个人路径的文件——包括 `backend\config.json` 中的真实 GitHub token
+- 任何包含 token、密码或个人路径的文件——包括 `backend/config.json` 中的真实 GitHub token
   （仓库中 `marketplace.github_token` 必须保持为空；个人取值放在
-  `backend\config.user.json`，该文件已被忽略）。
+  `backend/config.user.json`，该文件已被忽略）。
 - 包含真实文档、客户名称或内部 URL 的截图或日志。
 
 提交拉取请求前，运行 `git status` 确认没有意料之外的文件被暂存。
-保持现有的 `.gitattributes` 换行符规则：`.ps1`/`.bat`/`.cmd` 为 CRLF，
-其他文件为 LF。不要为纯粹的空白改动重新格式化整个文件。
+`git status`、`git add`、`git commit` 在 Windows、macOS、Linux 上行为一致，
+唯一的差别在 `.gitattributes`：`.ps1`/`.bat`/`.cmd` 为 CRLF，其他文件为 LF。
+不要为纯粹的空白改动重新格式化整个文件。
 
 ## 贡献的许可
 
@@ -332,5 +422,5 @@ EchoDesk 以 [Apache License 2.0](LICENSE) 发布，贡献按同一许可接受
 该贡献由你编写，或你有权提交它，并且它不会引入许可与 Apache-2.0 冲突的依赖。
 
 如果你的改动新增、移除或升级依赖，请重新生成清单
-（`python tools\gen_licenses.py`）并在拉取请求中说明，以便
+（`python tools/gen_licenses.py`，三平台同一条命令）并在拉取请求中说明，以便
 [NOTICE](NOTICE) 与 [docs/THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md) 保持准确。

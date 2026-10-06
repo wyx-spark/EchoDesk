@@ -1,9 +1,9 @@
 // 常用语（snippets.json）—— 与 WPF 版 frontend/Utilities/SnippetManager.cs 同一份数据格式。
 //
-// 跨平台版的差别只在**路径**：WPF 版固定用 ShortcutService.UserDataDirectory，
-// 这里走 UserPaths.DataRoot（Windows 是程序目录/%APPDATA%、macOS 是 Application Support、
-// Linux 是 XDG）—— 与后端 config.user_data_root() 的口径一致，
-// 否则用户会在两个地方各看到一份"常用语"。
+// 跨平台版的差别只在**路径**：WPF 版用 ShortcutService.UserDataDirectory，这里走
+// UserPaths.DataRoot —— 两者在发布物布局下结果相同（都是发布目录外层），
+// 且都与后端 `config.user_data_root()` 的口径一致，否则用户会在两个地方各看到一份"常用语"。
+// （v0.2.2 修正了此处把 Windows 写成 `%APPDATA%` 的注释：代码里没有这条路径。）
 using System;
 using System.Collections.Generic;
 using System.IO;

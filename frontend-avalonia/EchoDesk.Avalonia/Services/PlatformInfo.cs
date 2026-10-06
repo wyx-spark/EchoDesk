@@ -63,8 +63,11 @@ public sealed class PlatformInfo
     /// <summary>企业内网自动化（Playwright/Edge）：非 Windows 上不提供（任务五的降级边界）。</summary>
     public bool SupportsAutomation => IsWindows;
 
-    /// <summary>用户数据目录名（遵守各平台惯例：Windows 用 %APPDATA%，macOS 用 Application Support）。</summary>
-    public string UserDataDirectoryName => IsWindows ? "EchoDesk" : "EchoDesk";
+    // 这里原有 `UserDataDirectoryName => IsWindows ? "EchoDesk" : "EchoDesk"` —— 两个分支一模一样，
+    // 而且**全仓库没有任何调用方**（v0.2.2 审计 `git grep` 确认只有它自己的定义行）。
+    // 它的注释还写着"Windows 用 %APPDATA%"，而代码里根本没有这条路径。
+    // 死代码 + 错注释的组合最容易被后来者当真，因此直接删掉：
+    // 用户数据目录由 UserPaths.DataRoot 负责（那个才是唯一实现）。
 
     /// <summary>能力列表：给界面横幅用 —— 哪些能力在本平台**不可用**及替代做法。</summary>
     public IReadOnlyList<(string Capability, bool Available, string Note)> Capabilities()

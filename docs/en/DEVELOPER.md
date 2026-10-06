@@ -1,10 +1,15 @@
 # EchoDesk Developer Documentation
 
 Chinese version: [`docs/zh-Hans/DEVELOPER.md`](../zh-Hans/DEVELOPER.md).
-Related documents: [Automation guide](AUTOMATION_GUIDE.md) · [User guide](USER_GUIDE.md) · [FAQ](FAQ.md) · [Skill development guide](SKILL_GUIDE.md).
+Related documents: [Automation guide](AUTOMATION_GUIDE.md) · [User guide](USER_GUIDE.md) · [FAQ](FAQ.md) · [Skill development guide](SKILL_GUIDE.md) · [Cross-platform reference](CROSS_PLATFORM.md).
 
 This document is for frontend, backend and skill developers. It explains the architecture, the communication
 protocol, the module layout, the build process and how to extend the program.
+
+**How commands are written here**: the cross-platform form comes first (`python`, `git`, forward slashes),
+and only genuine differences are expanded with a platform label (virtual-environment activation,
+environment variables, the Windows-only release chain). Windows, macOS and Linux are all supported; the
+capability matrix is in [CROSS_PLATFORM.md](CROSS_PLATFORM.md).
 
 ---
 
@@ -57,6 +62,23 @@ protocol, the module layout, the build process and how to extend the program.
 it takes no port, triggers no firewall prompt and needs no authentication handling; the cost is that you have to
 guarantee message boundaries yourself (one JSON object per line) and concurrency safety (the backend guards
 stdout with `_io_lock`, and the frontend serialises reads behind a request gate).
+
+**Two frontends, one backend.** The diagram above is the WPF frontend (`frontend/`, target framework
+`net10.0-windows`, Windows only). The cross-platform frontend lives in
+`frontend-avalonia/EchoDesk.Avalonia/` (target framework `net10.0`, Windows + macOS + Linux) and drives the
+same backend over the same protocol. Both are run from a source check-out with the same .NET CLI — only the
+WPF project is Windows-only:
+
+```bash
+# all three platforms: cross-platform (Avalonia) frontend; it finds backend/main.py by walking up from bin/
+dotnet run --project frontend-avalonia/EchoDesk.Avalonia/EchoDesk.Avalonia.csproj
+
+# Windows only: WPF frontend
+dotnet run --project frontend/EchoDesk.csproj
+```
+
+The backend runs on all three platforms (`python backend/main.py`); which capability is available where is
+listed in [CROSS_PLATFORM.md](CROSS_PLATFORM.md) section 2.
 
 ### 1.1 System prompt layers and length budget (v0.2.1 prompt optimisation)
 
@@ -286,6 +308,12 @@ easyocr→torch/torchvision/scipy/cv2/skimage/numba, blowing the backend size up
 dependency chain also contains GPL/LGPL components, and distributing it externally creates copyleft obligations.
 See `docs/THIRD_PARTY_LICENSES.md` for details.
 
+**Platform note.** The COM path is **Windows-only**: `file_parser.py` uses it only where the platform is
+Windows and a WPS/Office automation object is available. On macOS and Linux parsing goes straight to the
+built-in pure-Python parsers, legacy binary `.doc` / `.xls` cannot be read at all, and uploading such a file
+reports the capability as Windows-only **instead of** as a parse failure — see
+[CROSS_PLATFORM.md](CROSS_PLATFORM.md) section 3.1.
+
 ### 3.4 Automation (task 4)
 
 `automation.py` drives the local Edge (`channel="msedge"`) with Playwright's **sync API**, and **forces headed
@@ -332,6 +360,13 @@ Safety design:
   `login_completed` / `login_timeout` / `login_state_cleared` / `login_state_migrated`) record only the path, the
   result and counts, and **never the cookie contents**.
 
+**Platform note.** The whole feature is **Windows-only**: it drives the Microsoft Edge installed on the
+machine, with a visible window and a reusable sign-in state, and its configuration surface is part of the
+Windows UI. On macOS and Linux the capability reports itself unavailable — `Windows-only capability (this is
+not a missing dependency)` — and offers the documented alternatives (an MCP server, a skill, or running the
+automation on a Windows machine and bringing the results over); see [CROSS_PLATFORM.md](CROSS_PLATFORM.md)
+section 3.2.
+
 ### 3.5 Skill market (task 5)
 
 `marketplace.py` has three layers: data source (GitHub Search API + local cache) → service layer
@@ -351,7 +386,7 @@ Safety design:
 
 ---
 
-## 4. Configuration reference (backend\config.json)
+## 4. Configuration reference (backend/config.json)
 
 ```jsonc
 {
@@ -389,18 +424,49 @@ Safety design:
 overwritten. (`config.user.json` is already in `.gitignore`, and is a good place for personal settings such as a
 GitHub Token.)
 
+**Where the file lives — the same relative layout on all three platforms**: `backend/config.json` in a source
+check-out, `app/backend/config.json` in a release bundle (backslashes are only Windows path separators, so the
+`/` form is the one to write in commands and scripts). The **user data directory** — UI state, chat history,
+batch results, UI language packs — sits **next to** the program instead, in the outer folder of the release:
+the program folder itself on Windows, and `~/Library/Application Support/EchoDesk` on macOS or
+`$XDG_DATA_HOME/EchoDesk` (or `~/.local/share/EchoDesk`) on Linux when the program folder is not named `app`.
+`ECHODESK_DATA` overrides it on every platform. It is **not** `%APPDATA%\EchoDesk`: no code path writes there
+(the only occurrences were stale comments, corrected in v0.2.2), and the backend reaches the same answer through
+`config.user_data_root()`, which climbs out of the `app/` and `backend/` container folders.
+Backend artifacts configured with a **relative** path (session file, models, audit log, installed skills) stay
+in the backend working directory — `app/backend/` in a release — and are not moved by `ECHODESK_DATA`; all of
+those settings accept `~` and absolute paths, so an enterprise deployment can point them at a managed drive.
+See [CROSS_PLATFORM.md](CROSS_PLATFORM.md) section 5.
+
 ---
 
 ## 5. Building and releasing
 
-```powershell
-# 1) generate the icon (re-run after changing the colour scheme)
-python tools\make_icon.py
+**Backend dependencies — the same commands on all three platforms** (only activation differs):
 
-# 2) download the build tools (rcedit, not committed to the repository)
+```bash
+# create a virtual environment and install the pinned dependency set
+python -m venv .venv
+python -m pip install -r backend/requirements.txt
+
+# macOS / Linux: activate it (bash, zsh)
+. .venv/bin/activate
+```
+
+```powershell
+# Windows: activate it (PowerShell; in cmd.exe use .venv\Scripts\activate.bat)
+.\.venv\Scripts\Activate.ps1
+```
+
+**Windows only — the shipped release chain.** `tools/build_release.ps1`, `tools/make_installer.ps1`,
+Inno Setup, `rcedit` and the WPF UI probes exist on Windows only, because they build the installer and the
+portable folder Windows users download:
+
+```powershell
+# 1) download the build tools (rcedit, not committed to the repository)
 cmd /c tools\fetch_tools.bat
 
-# 3) one-shot release (multi-file frontend + onedir backend + metadata + installer + SHA256SUMS)
+# 2) one-shot release (multi-file frontend + onedir backend + metadata + installer + SHA256SUMS)
 & tools\build_release.ps1 -IncludeModels -MakeInstaller
 
 # when migrating models/configuration from the previous release
@@ -415,15 +481,47 @@ cmd /c tools\fetch_tools.bat
 & tools\make_installer.ps1
 ```
 
+**All three platforms — icons and portable bundles (no installer involved).** These are plain Python tools,
+so the same commands work on Windows, macOS and Linux, and a Windows build machine can prepare the
+Linux/macOS bundles as well (the standalone backend carries a relocatable prebuilt interpreter instead of
+relying on PyInstaller, which cannot cross-compile):
+
+```bash
+# 1) icon sources (Pillow; re-run after changing the colour scheme)
+python tools/make_icon.py
+
+# 2) standalone backend for every RID, or a single one (repeat the flag for more)
+python tools/pack_backend.py
+python tools/pack_backend.py --platform osx-arm64
+
+# 3) frontend + backend bundle for one target RID (dist/EchoDesk-<version>-<rid>.tar.gz; .zip for win-x64)
+python tools/pack_crossplatform.py --rid linux-x64
+python tools/pack_crossplatform.py --rid osx-arm64 --backend-mode standalone
+
+# dry run first if you only want to see the steps
+python tools/pack_crossplatform.py --plan
+
+# icon and desktop-entry assets for the non-Windows platforms
+python tools/gen_platform_icons.py
+```
+
+There is nothing else to install for a portable bundle: on macOS/Linux it is
+`tar -xzf dist/EchoDesk-<version>-<rid>.tar.gz && cd EchoDesk-<version>-<rid> && ./start.sh`
+(run `chmod +x start.sh app/EchoDesk` first if the executable bit was lost during extraction); on Windows
+unpack the `.zip` and run `启动 EchoDesk.bat` or `app/EchoDesk.exe`. User data does **not** go into the bundle:
+it lands in the per-platform data directory described in section 4, unless `ECHODESK_DATA` says otherwise.
+
 **Installer (Inno Setup 6)**: the single deliverable `EchoDesk-v<version>-Setup.exe` (**no bundled model** —
 models are downloaded on demand, or shipped separately as a model add-on pack for offline use) is compiled
-from `tools\installer.iss`, and the actual
-caller is `tools\make_installer.ps1` (feasibility check + compile + integrity assertions + optional signing +
+from `tools/installer.iss`, and the actual
+caller is `tools/make_installer.ps1` (feasibility check + compile + integrity assertions + optional signing +
 SHA256). The default install location is **the folder the installer itself sits in** (`[Code] GetDefaultDir`
 returns `ExtractFileDir(ExpandConstant('{srcexe}'))`), and it can still be changed in the wizard; shortcuts are
-created by the `[Icons]` section with the working directory fixed to `{app}` (the outer layer), so that `results\`
-and user data are produced in the outer layer rather than inside `app\`. Inno Setup 6 is required (the script
-detects it automatically, or you can point at it with `-ISCC`).
+created by the `[Icons]` section with the working directory fixed to `{app}` (the outer layer), so that `results/`
+and user data are produced in the outer layer rather than inside `app/`. Inno Setup 6 is required (the script
+detects it automatically, or you can point at it with `-ISCC`). The Linux and macOS deliverables are the
+`.tar.gz` bundles from `tools/pack_crossplatform.py`, with no installer at all; macOS additionally needs code
+signing and notarization, which the packaging tool documents in the bundle's `SIGNING.txt` instead of running.
 
 **Three pitfalls in the build script (already commented in the code)**:
 1. **`rcedit` must not be applied to PyInstaller output** — PyInstaller appends the PKG archive after the PE
@@ -438,10 +536,20 @@ detects it automatically, or you can point at it with `-ISCC`).
 3. Under `ErrorActionPreference=Stop`, PowerShell treats a native command's stderr as a terminating error, so
    PyInstaller/dotnet abort the build on a mere warning — wrap them all in `Invoke-Native`.
 
-**Tests**:
+**Tests** — the first group runs on all three platforms, the second needs a Windows desktop:
+
+```bash
+# all three platforms
+python tools/test_file_parsers.py                # smoke test for parsing six formats (exit code 0/1)
+python tools/check_standalone_backend.py         # packaged standalone backend: structure, launchers, protocol
+python tools/check_crossplatform_release.py      # the finished archives: format, executable bits, digests
+python tools/gen_licenses.py                     # regenerate the third-party licence list
+```
+
 ```powershell
-python tools\test_file_parsers.py     # smoke test for parsing six formats (exit code 0/1)
-python tools\gen_licenses.py          # regenerate the third-party licence list
+# Windows only
+powershell -File tools\ui_probe.ps1              # WPF UI probe: settings window opens fast, no crash log
+& tools\verify_release.ps1 -SkipGui              # top-level release gate, minus the interactive-desktop items
 ```
 
 **Version control and pushing (SSH only)**:
@@ -450,38 +558,53 @@ Since v0.2.1 cross-platform-2, every Git remote operation in this repository use
 **SSH, never HTTPS**. HTTPS pushes to GitHub were repeatedly interrupted on the
 maintainer's machine (`RPC failed; HTTP 408` / `Recv failure: Connection was reset`);
 SSH is not affected by the same network path and needs no credentials per push.
-Three places must agree:
+Three places must agree. The Git operations themselves are identical on all three platforms:
 
-```powershell
-# 1) the remote must be SSH (scp form user@host:path)
+```bash
+# the remote must be SSH (scp form user@host:path)
 git remote -v
 git remote set-url origin git@github.com:VoidEntropiaStudio/EchoDesk.git
+```
 
-# 2) one-command push (branch + tag; preflight covers the working tree, the tag
-#    invariant, the installer hash and SSH connectivity)
+The push wrapper and the SSH gate are PowerShell scripts and therefore Windows-only:
+
+```powershell
+# one-command push (branch + tag; the preflight covers the working tree, the tag invariant, the installer hash and SSH connectivity)
 & tools\push_release.ps1 -DryRun     # check only
 & tools\push_release.ps1             # check, then push
 
-# 3) the SSH gate (already part of verify_release.ps1; -TestConnection really dials GitHub)
+# the SSH gate (already part of verify_release.ps1; -TestConnection really dials GitHub)
 & tools\check_git_ssh.ps1 -TestConnection
 ```
 
-`push_release.ps1` **asserts** that the remote is SSH: an HTTPS remote fails the
+On macOS and Linux the same checks are done by hand — `git status`, `git tag vX.Y.Z`, `git push origin master
+--tags` — and the preflight those scripts perform (remote is SSH, tag matches the release, installer hash) is
+what a pull request should state. `push_release.ps1` **asserts** that the remote is SSH: an HTTPS remote fails the
 preflight outright and prints the `git remote set-url` fix, instead of pushing anyway
 and reporting a confusing transport error later. The gate pins all three places
 (remote, script default, documentation examples) so a later edit cannot drift back.
 
-**Key setup and troubleshooting** (on failure the script prints the same list):
+**Key setup and troubleshooting** (on failure the script prints the same list). The paths differ only in
+where the home directory is; the commands are otherwise the same:
+
+```bash
+# macOS / Linux
+ls -l ~/.ssh                                  # id_ed25519 and id_ed25519.pub must exist
+chmod 600 ~/.ssh/id_ed25519                   # ssh refuses a private key that group/others can read
+ssh-add ~/.ssh/id_ed25519                     # hand it to ssh-agent
+ssh -T git@github.com                         # expect: Hi <username>! You've successfully authenticated
+```
 
 ```powershell
-Get-ChildItem $env:USERPROFILE\.ssh          # id_ed25519 and id_ed25519.pub must exist
-ssh-add $env:USERPROFILE\.ssh\id_ed25519     # hand it to ssh-agent
-ssh -T git@github.com                        # expect: Hi <username>! You've successfully authenticated
+# Windows (PowerShell); %USERPROFILE%\.ssh is the same directory as ~/.ssh
+Get-ChildItem $env:USERPROFILE\.ssh           # id_ed25519 and id_ed25519.pub must exist
+ssh-add $env:USERPROFILE\.ssh\id_ed25519      # hand it to ssh-agent
+ssh -T git@github.com                         # expect: Hi <username>! You've successfully authenticated
 ```
 
 Add the **full contents** of `id_ed25519.pub` (the public key, never the private one)
 to GitHub under Settings → SSH and GPG keys. **If your network blocks port 22**, use
-443 by adding this to `~/.ssh/config`:
+443 by adding this to `~/.ssh/config` (`%USERPROFILE%\.ssh\config` on Windows — the same file):
 
 ```
 Host github.com
