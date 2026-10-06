@@ -178,25 +178,38 @@ def check_one(out_dir: str, rid: str) -> None:
     else:
         check_zip(archive, spec)
 
-    # SHA256SUMS.txt 里必须有这个归档，且摘要一致
-    sums = os.path.join(out_dir, "SHA256SUMS.txt")
-    if not os.path.isfile(sums):
-        fail(f"{out_dir} 里没有 SHA256SUMS.txt（下载校验无从谈起）")
+    # 校验清单里必须有这个归档，且摘要一致。
+    #
+    # **为什么是"任一份 `*SHA256SUMS*.txt"而不是固定的 `SHA256SUMS.txt`**（v0.2.2 修正）：
+    # 检查的本意是"下载校验的可信度取决于它"—— 也就是**这些归档的摘要有没有被发布出来**，
+    # 而不是它叫什么文件名。原来写死 `SHA256SUMS.txt` 在构建目录（`dist/`）里成立，
+    # 但把归档冻结进 `publish/archive/<版本>/` 之后，那个位置已经有同名文件
+    # （Windows 发布物 + 合规文档的清单），防覆盖规则会把三平台的清单另存为
+    # `EchoDesk-<版本>-platform-SHA256SUMS.txt` —— 于是本检查会因为**文件名**而不通过，
+    # 而它真正关心的内容其实完全没问题。
+    sums_files = sorted(n for n in os.listdir(out_dir)
+                        if n.endswith(".txt") and "SHA256SUMS" in n.upper())
+    if not sums_files:
+        fail(f"{out_dir} 里没有任何 SHA256SUMS 清单（下载校验无从谈起）")
     else:
         digest = sha256_of(archive)
         recorded = ""
-        with io.open(sums, encoding="utf-8") as handle:
-            for line in handle:
-                parts = line.split()
-                if len(parts) == 2 and parts[1] == name:
-                    recorded = parts[0]
-                    break
+        found_in = ""
+        for sums_name in sums_files:
+            with io.open(os.path.join(out_dir, sums_name), encoding="utf-8") as handle:
+                for line in handle:
+                    parts = line.split()
+                    if len(parts) == 2 and parts[1] == name:
+                        recorded, found_in = parts[0], sums_name
+                        break
+            if recorded:
+                break
         if not recorded:
-            fail(f"SHA256SUMS.txt 里没有 {name}")
+            fail(f"{'/'.join(sums_files)} 里都没有 {name}")
         elif recorded != digest:
-            fail(f"{name} 的摘要与 SHA256SUMS.txt 不一致：记录 {recorded} / 实际 {digest}")
+            fail(f"{name} 的摘要与 {found_in} 不一致：记录 {recorded} / 实际 {digest}")
         else:
-            ok(f"{name} 的 sha256 与 SHA256SUMS.txt 一致（{digest[:16]}…）")
+            ok(f"{name} 的 sha256 与 {found_in} 一致（{digest[:16]}…）")
 
     # 清单：backend_mode 与归档大小/摘要
     manifest_path = os.path.join(out_dir, f"manifest-{rid}.json")

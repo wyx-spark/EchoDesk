@@ -456,9 +456,26 @@ try {
     #   * SIGNING.txt 必须在**归档里**（文档让 macOS 用户去看它 —— 曾出现只写进目录没进归档）。
     $distReady = @(Get-ChildItem -Path "dist" -File -ErrorAction SilentlyContinue |
                    Where-Object { $_.Name -like "EchoDesk-*-*.tar.gz" -or $_.Name -like "EchoDesk-*-*.zip" })
+    # 回退：归档后的三平台发布物不再留在 dist/（冻结进 publish/archive/<版本>/ 后即可删副本），
+    # 那时这里改指归档目录 —— 否则"清理掉可重建的/散落的副本"会让这条门禁再也没得可查。
+    if ($distReady.Count -eq 0) {
+        $archived = Get-ChildItem -Path "publish\archive" -Directory -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -ne "superseded" -and
+                        @(Get-ChildItem -Path $_.FullName -File -ErrorAction SilentlyContinue |
+                          Where-Object { $_.Name -like "*-*.tar.gz" -or $_.Name -like "*-*.zip" }).Count -gt 0 } |
+                    Sort-Object Name -Descending | Select-Object -First 1
+        if ($archived) {
+            $distDir = "publish\archive\$($archived.Name)"
+            Write-Host "  [--]  dist\ 下没有发布物，改查归档目录：$distDir" -ForegroundColor DarkGray
+        }
+        else { $distDir = "dist" }
+    }
+    else { $distDir = "dist" }
+    $distReady = @(Get-ChildItem -Path $distDir -File -ErrorAction SilentlyContinue |
+                   Where-Object { $_.Name -like "*-*.tar.gz" -or $_.Name -like "*-*.zip" })
     if ($distReady.Count -gt 0) {
         Invoke-Check "跨平台完整发布物（归档格式/可执行位/目录顺序/签名说明）" {
-            Invoke-Native "跨平台发布物" "python" @("tools\check_crossplatform_release.py", "--allow-missing")
+            Invoke-Native "跨平台发布物" "python" @("tools\check_crossplatform_release.py", "--dir", $distDir, "--allow-missing")
             "通过"
         }
     }
