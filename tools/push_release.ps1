@@ -26,8 +26,11 @@ param(
     [string]$RemoteName = "origin",
     [string]$RemoteUrl = "git@github.com:VoidEntropiaStudio/EchoDesk.git",
     [string]$Branch = "master",
-    [string]$Tag = "v0.2.1",
-    [string]$Installer = "publish\EchoDesk-v0.2.2-Setup.exe",
+    # 标签留空表示**从 backend\version.py 派生**（v0.2.2 改造）。原来这里写死 "v0.2.1"，
+    # 版本一升，脚本就会去检查/推送一个**过时**的标签，而报错信息是"标签不存在或不是附注标签"——
+    # 看起来像标签坏了，实际是默认值过时了。
+    [string]$Tag = "",
+    [string]$Installer = "",
     [string]$Sums = "publish\SHA256SUMS.txt",
     # 期望哈希。**留空表示以 SHA256SUMS.txt 为准**（构建时生成的那份清单是唯一真相），
     # 只在需要"把这一版钉死在某个哈希上"时才显式传 -ExpectedSha256。
@@ -43,6 +46,15 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
+
+# 版本号 / 标签 / 安装包路径统一从这里派生，避免"改了版本忘了改脚本默认值"。
+$VersionFile = Join-Path $Root "backend\version.py"
+$versionMatch = Select-String -Path $VersionFile -Pattern 'APP_VERSION\s*=\s*["'']([^"'']+)["'']' |
+                Select-Object -First 1
+if (-not $versionMatch) { throw "读不出 APP_VERSION：$VersionFile" }
+$Version = $versionMatch.Matches[0].Groups[1].Value          # 形如 v0.2.2
+if (-not $Tag) { $Tag = $Version }
+if (-not $Installer) { $Installer = "publish\EchoDesk-$Version-Setup.exe" }
 
 function Write-Step([string]$Text) { Write-Host "`n==> $Text" -ForegroundColor Cyan }
 function Write-Ok([string]$Text) { Write-Host "    [OK] $Text" -ForegroundColor Green }
