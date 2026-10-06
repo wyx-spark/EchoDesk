@@ -804,7 +804,12 @@ class Config(BaseModel):
                         return
             except Exception:  # noqa: BLE001 —— 读不动就当作"需要写"
                 pass
-        with open(target, "w", encoding="utf-8") as f:
+        # 显式写 LF（`newline="\n"`）。Windows 上文本模式默认写 CRLF，而仓库的
+        # `.gitattributes` 规定这个文件是 LF —— 于是**每次保存都会让整个文件变成
+        # "被改动"**（git 会警告 "CRLF will be replaced by LF"），
+        # `tools/check_line_endings.py` 门禁也会失败（本轮实测踩到）。
+        # 配置是"程序自己写、也要给人看"的文件，行尾必须稳定。
+        with open(target, "w", encoding="utf-8", newline="\n") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
 
     @staticmethod
