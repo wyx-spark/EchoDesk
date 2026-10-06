@@ -377,7 +377,7 @@ jobs:
           Write-Host "已生成 release_notes.md（$([math]::Round((Get-Item release_notes.md).Length / 1KB, 1)) KB）"
 
       - name: Create GitHub Release / 创建 GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: EchoDesk v${{ steps.version.outputs.version }}
