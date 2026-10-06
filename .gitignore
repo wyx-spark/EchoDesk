@@ -137,3 +137,22 @@ artifacts/
 # 列为不该有的内容。它们留在工作区供开发时查阅即可。
 # as content that must not ship. Leaving them in the working tree for reference while developing is enough.
 /prompts/
+
+# ---------- 科创大赛材料 ----------
+# ---------- Science-innovation competition materials ----------
+# records/2026东城青少年科创大赛/ 是「逐文件代码讲解集」（63 个 MD，一个源文件一份），
+# records/2026东城青少年科创大赛/ is the per-file code walkthrough set (63 MD files, one per source file),
+# 为答辩与日后复习而写。它与 prompts/ 下的任务书同理：属于**参赛与开发过程材料**，不是产品的一部分。
+# written for the defence and for later revision. Like the briefs under prompts/, it is competition and
+# development process material rather than part of the product:
+#   1) 体积：63 个 MD 会给仓库增加可观体积，而它的读者只有作者与答辩人；
+#      size: 63 MD files add noticeable weight to the repository, and its only readers are the author and the defence panel;
+#   2) 归属：它讲的是"某个文件的这一段在干什么"，源码一演进就得重写，属于很快就过期的材料；
+#      ownership: it explains "what this passage of a file does" and must be rewritten as the source evolves, so it expires quickly;
+#   3) 它已在本地存在、随时可查；需要对外留副本时应另存**本机之外**，而不是塞进仓库。
+#      it already exists locally and is always readable; an off-machine copy belongs outside the repository, not inside it.
+# 维护者于 2026-10-06 明确决定：**不提交**。
+# The maintainer decided on 2026-10-06 that it must **not** be committed.
+# （此前一次 git add -A 误把它提交过，已在 7313ac9 撤回。）
+# (It was once committed by accident through git add -A and reverted in 7313ac9.)
+/records/2026东城青少年科创大赛/
