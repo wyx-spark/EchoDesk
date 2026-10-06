@@ -21,9 +21,9 @@ body:
     attributes:
       label: EchoDesk 版本 / Version
       description: |
-        在哪里看：设置窗口「关于」页，或发布包文件夹名（如 `EchoDesk-v0.2.1`），或 `backend\version.py` 中的版本号。
+        在哪里看：设置窗口「关于」页，或发布包文件夹名（如 `EchoDesk-v0.2.2`），或 `backend\version.py` 中的版本号。
         Where to find it: the About page in Settings, or the package folder name.
-      placeholder: "例如 0.2.1（v0.2.1 便携版）"
+      placeholder: "例如 0.2.2（v0.2.2 便携版）"
     validations:
       required: true
 

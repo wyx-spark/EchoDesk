@@ -19,13 +19,25 @@
 #   powershell -File tools\verify_release.ps1
 #   powershell -File tools\verify_release.ps1 -SkipGui -SkipE2E
 param(
-    [string]$Version = "0.2.1",
+    # 默认版本从 backend\version.py 读（v0.2.2 改造）：原来这里写死 "0.2.1"，
+    # 版本一升，门禁就会去一个**不存在**的发布目录找打包好的后端，然后以退出码 2 结束并提示
+    # "请先执行 build_release.ps1" —— 看起来像"还没打包"，实际是"路径过时了"。
+    # 这类"默认值写死版本号"的地方，改一次版本就要全文搜一遍，所以统一改成派生。
+    [string]$Version = "",
     [switch]$SkipGui,          # 跳过需要交互式桌面的两项（UI 探针 / 像素校验）
     [switch]$SkipE2E           # 跳过需要联网或真实 Edge 的端到端项
 )
 
 $ErrorActionPreference = 'Continue'
 $Root = Split-Path -Parent $PSScriptRoot
+if (-not $Version) {
+    $VersionFile = Join-Path $Root "backend\version.py"
+    $match = Select-String -Path $VersionFile -Pattern 'APP_VERSION\s*=\s*["'']([^"'']+)["'']' |
+             Select-Object -First 1
+    if (-not $match) { throw "读不出 APP_VERSION：$VersionFile（用 -Version 显式指定）" }
+    $Version = $match.Matches[0].Groups[1].Value.TrimStart('v')
+    Write-Host "版本号（取自 backend\version.py）：$Version" -ForegroundColor DarkGray
+}
 $Out = Join-Path $Root "publish\EchoDesk-v$Version"
 $AppOut = Join-Path $Out "app"
 $BackendExe = Join-Path $AppOut "backend\EchoDeskBackend.exe"
@@ -327,6 +339,15 @@ try {
         "通过"
     }
 
+    # v0.2.1 跨平台-2（任务书全局约定）：从本轮起所有 Git 远端操作统一 SSH。
+    # 默认不联网（要真连 GitHub 得加 -TestConnection），因此它能在无人值守的
+    # 验证套件里跑；检查的是 remote 形式、推送脚本默认值与文档示例。
+    Invoke-Check "统一 SSH（remote / 推送脚本 / 文档示例）" {
+        Invoke-Native "统一 SSH 门禁" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
+                                                  "-File", "tools\check_git_ssh.ps1")
+        "通过"
+    }
+
     Invoke-Check "依赖声明完整性（干净环境可导入）" {
         Invoke-Python "依赖自检" "tools\check_requirements.py"
         "通过"
@@ -405,6 +426,42 @@ try {
     # 本机只有 Windows，所以非 Windows 分支靠 ECHODESK_FORCE_PLATFORM 注入验证
     # （报告里会标记 forced，见 tools\test_platform.py 头部说明）。
     Invoke-Check "跨平台能力边界（任务三/五）" { Invoke-Python "跨平台" "tools\test_platform.py"; "通过" }
+
+    # v0.2.1 跨平台-2（任务二/任务五）：standalone 后端产物的结构、启动脚本语法与本平台可运行性。
+    # 只在**产物完整**时检查（有 site-packages 说明依赖装完了）；否则跳过并提示 ——
+    # 跨平台产物需要从 GitHub 下载 python-build-standalone，网络不允许时产不出来，
+    # 不该让整轮发布验证因此变红（但产物存在而不完整时**会**失败，那是真问题）。
+    # --allow-missing：只产出了部分平台时，未产出的平台只提示不失败。
+    $standaloneReady = @(Get-ChildItem -Path "publish" -Directory -Filter "backend-*" -ErrorAction SilentlyContinue |
+                         Where-Object { Test-Path (Join-Path $_.FullName "site-packages") })
+    if ($standaloneReady.Count -gt 0) {
+        Invoke-Check "standalone 后端产物（结构/启动脚本/本平台可运行）" {
+            Invoke-Native "standalone 后端" "python" @("tools\check_standalone_backend.py", "--allow-missing")
+            "通过"
+        }
+    }
+    else {
+        Write-Host "  [--]  standalone 后端产物不存在或不完整，跳过（先跑 python tools\pack_backend.py）" -ForegroundColor DarkGray
+    }
+
+    # v0.2.1 跨平台-2（任务四/任务五）：**完整发布物**（前端 + 后端）的归档检查。
+    # 与上一项的差别：上一项查后端产物目录，这一项查最终给用户的归档本身，四项都是
+    # "日志一切正常、用户却用不了"的类型：
+    #   * 归档格式必须匹配目标平台（Linux/macOS 要 tar.gz；zip 不保留 Unix 权限位）；
+    #   * tar.gz 里关键文件必须真有可执行位（打包机是 Windows，拿不到真实权限位）；
+    #   * 归档里每个文件的父目录条目要排在它前面（流式解压才不出错）；
+    #   * SIGNING.txt 必须在**归档里**（文档让 macOS 用户去看它 —— 曾出现只写进目录没进归档）。
+    $distReady = @(Get-ChildItem -Path "dist" -File -ErrorAction SilentlyContinue |
+                   Where-Object { $_.Name -like "EchoDesk-*-*.tar.gz" -or $_.Name -like "EchoDesk-*-*.zip" })
+    if ($distReady.Count -gt 0) {
+        Invoke-Check "跨平台完整发布物（归档格式/可执行位/目录顺序/签名说明）" {
+            Invoke-Native "跨平台发布物" "python" @("tools\check_crossplatform_release.py", "--allow-missing")
+            "通过"
+        }
+    }
+    else {
+        Write-Host "  [--]  跨平台发布物不存在，跳过（先跑 python tools\pack_crossplatform.py，见 docs\CROSS_PLATFORM.md）" -ForegroundColor DarkGray
+    }
 
     # ---------- 3. 静态检查 ----------
     Invoke-Check "语言包完整性" { Invoke-Python "语言包" "tools\check_lang.py"; "通过" }

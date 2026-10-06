@@ -1,16 +1,49 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:svc="clr-namespace:EchoDesk.Avalonia.Services"
         x:Class="EchoDesk.Avalonia.Views.MainWindow"
         Title="EchoDesk"
         Width="1080" Height="760" MinWidth="760" MinHeight="540"
         Background="{DynamicResource AppBackgroundBrush}"
         DragDrop.AllowDrop="True">
   <!--
-    主窗口（任务一原型 / 任务二第一个迁移模块）。
+    主窗口（任务一原型 / 任务二第一个迁移模块，本模块补齐"各功能面板"）。
 
-    布局刻意保持 WPF 版的骨架：顶部横幅（平台降级说明）→ 顶部状态条 → 消息区 → 输入区。
-    这样一来迁移是"逐块替换实现"而不是重新设计界面，用户不会因为换前端而重新学一遍。
+    布局刻意保持 WPF 版的骨架，逐块替换实现而不是重新设计：
+      平台降级横幅 → 无模型引导条 → 标题栏 → 消息区 → 指令输入行 → 输入区
+      → 轻量状态区 → 底部提示（命令提示 / 通知条 / 操作提示）
+
+    功能面板与 WPF 版一一对应：
+      · 指令面板 CommandPalette（输入 "/" 弹出，↑↓/Tab/Enter/Esc）
+      · 常用语面板 SnippetPalette（snippets.json）
+      · 通知条 ToastBorder（6 秒后自动隐藏）
+      · 轻量状态区 StatusStrip（搜索/自动化/市场/上下文/KV/能力/压缩/告警/更新/指标 + 折叠）
+      · Agent 步骤区（代码里动态创建，见 CreateAgentTraceRegion）
   -->
+  <Window.Styles>
+    <!-- 状态区与工具条上的小胶囊按钮：与 WPF 版 RoundButton 的观感对齐 -->
+    <Style Selector="Button.chip">
+      <Setter Property="Padding" Value="7,2" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Background" Value="{DynamicResource CardBackgroundBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource CardBorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Button.chip:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource PanelBackgroundBrush}" />
+    </Style>
+    <Style Selector="TextBlock.brand">
+      <Setter Property="FontSize" Value="20" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+    </Style>
+    <Style Selector="TextBlock.sub">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Opacity" Value="0.7" />
+    </Style>
+  </Window.Styles>
+
   <DockPanel LastChildFill="True">
 
     <!-- ① 平台能力横幅：只在**本平台缺少能力**时显示（任务五的降级文案落点） -->
@@ -32,59 +65,216 @@
       <TextBlock x:Name="GuideText" TextWrapping="Wrap" FontSize="12" />
     </Border>
 
-    <!-- ③ 状态条 -->
+    <!-- ③ 标题栏：品牌 + 版本 + 出品方 + 关键状态（运行状态/模型/模式） -->
     <Border DockPanel.Dock="Top"
             Background="{DynamicResource PanelBackgroundBrush}"
             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="0,0,0,1"
-            Padding="10,6">
-      <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
-        <TextBlock x:Name="PlatformChip" Grid.Column="0" FontSize="12" VerticalAlignment="Center"
-                   Margin="0,0,12,0" Opacity="0.8" />
-        <TextBlock x:Name="ModelChip" Grid.Column="1" FontSize="12" VerticalAlignment="Center"
-                   Margin="0,0,12,0" />
-        <TextBlock x:Name="ContextChip" Grid.Column="2" FontSize="12" VerticalAlignment="Center"
-                   Margin="0,0,12,0" Opacity="0.8" />
-        <TextBlock x:Name="StatusText" Grid.Column="3" FontSize="12" VerticalAlignment="Center"
-                   TextTrimming="CharacterEllipsis" Opacity="0.7" />
-        <Button x:Name="FontDownButton" Grid.Column="4" Content="A-" Padding="7,1" FontSize="12"
-                ToolTip.Tip="缩小字号" />
-        <Button x:Name="FontUpButton" Grid.Column="5" Content="A+" Padding="7,1" FontSize="12"
+            Padding="12,6">
+      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
+        <TextBlock x:Name="BrandText" Grid.Column="0" Text="📡 EchoDesk" Classes="brand"
+                   VerticalAlignment="Bottom" />
+        <TextBlock x:Name="VersionText" Grid.Column="1" Text="v0.2.1" FontSize="10"
+                   Margin="4,0,0,2" VerticalAlignment="Bottom" Opacity="0.6" />
+        <TextBlock x:Name="PoweredText" Grid.Column="2" Text="Powered by Void Entropia Studio"
+                   Classes="sub" Margin="14,0,0,2" VerticalAlignment="Bottom" />
+        <TextBlock x:Name="PlatformChip" Grid.Column="3" FontSize="12" VerticalAlignment="Center"
+                   Margin="14,0,0,0" Opacity="0.8" />
+        <TextBlock x:Name="StatusText" Grid.Column="4" FontSize="12" FontWeight="SemiBold"
+                   VerticalAlignment="Center" Margin="14,0,0,0"
+                   TextTrimming="CharacterEllipsis" />
+        <TextBlock x:Name="ContextChip" Grid.Column="5" FontSize="11" VerticalAlignment="Center"
+                   Margin="14,0,0,0" Opacity="0.7" />
+        <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+          <Button x:Name="ModelChip" Classes="chip">
+            <TextBlock x:Name="ModelText" Text="🧠 模型: ---" FontSize="11" MaxWidth="220"
+                       TextTrimming="CharacterEllipsis" />
+          </Button>
+          <Button x:Name="ModeChip" Classes="chip">
+            <TextBlock x:Name="ModeText" Text="🛠️ 模式: general" FontSize="11" />
+          </Button>
+        </StackPanel>
+        <Button x:Name="FontDownButton" Grid.Column="8" Classes="chip" Content="A-"
+                Margin="10,0,0,0" ToolTip.Tip="缩小字号" />
+        <Button x:Name="FontUpButton" Grid.Column="9" Classes="chip" Content="A+"
                 Margin="4,0,0,0" ToolTip.Tip="放大字号" />
-        <Button x:Name="ThemeButton" Grid.Column="6" Content="🌓" Padding="7,1" FontSize="12"
+        <Button x:Name="ThemeButton" Grid.Column="10" Classes="chip" Content="🌓"
                 Margin="8,0,0,0" ToolTip.Tip="切换深色/浅色主题" />
-        <ComboBox x:Name="LangCombo" Grid.Column="7" FontSize="12" Margin="8,0,0,0"
-                  MinWidth="112" ToolTip.Tip="界面语言" />
-        <Button x:Name="CapabilityButton" Grid.Column="8" Content="ℹ️" Padding="7,1" FontSize="12"
-                Margin="8,0,0,0" ToolTip.Tip="查看本平台能力清单（可用/降级）" />
+        <ComboBox x:Name="LangCombo" Grid.Column="11" FontSize="12" Margin="8,0,0,0"
+                  MinWidth="118" ToolTip.Tip="界面语言" />
       </Grid>
     </Border>
 
-    <!-- ④ 输入区 -->
+    <!-- ④ 输入区（含指令/常用语开关、上下文、设置、上传、发送） -->
     <Border DockPanel.Dock="Bottom"
             Background="{DynamicResource PanelBackgroundBrush}"
             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="0,1,0,0"
             Padding="10,8">
-      <Grid RowDefinitions="Auto,Auto">
-        <TextBox x:Name="InputBox" Grid.Row="0" AcceptsReturn="True" TextWrapping="Wrap"
+      <Grid RowDefinitions="Auto,Auto,Auto">
+
+        <!-- 指令输入行：默认隐藏，点击「命令输入框」按钮后显示 -->
+        <Border x:Name="CommandInputRow" Grid.Row="0" IsVisible="False" CornerRadius="8"
+                Margin="0,0,0,6"
+                Background="{DynamicResource AppBackgroundBrush}"
+                BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+          <Grid>
+            <TextBox x:Name="CommandInputBox" MinHeight="30" Margin="8,4" Padding="6,0"
+                     AcceptsReturn="False" BorderThickness="0" Background="Transparent" />
+            <TextBlock x:Name="CommandPlaceholder" FontSize="12" Opacity="0.55"
+                       Margin="16,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" />
+          </Grid>
+        </Border>
+
+        <TextBox x:Name="InputBox" Grid.Row="1" AcceptsReturn="True" TextWrapping="Wrap"
                  MinHeight="64" MaxHeight="200" FontSize="14"
-                 Watermark="输入消息，Ctrl+Enter 发送 · 拖拽文件到窗口即可上传"
                  PlaceholderText="输入消息，Ctrl+Enter 发送 · 拖拽文件到窗口即可上传" />
-        <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,8,0,0">
-          <Button x:Name="UploadButton" Grid.Column="0" Content="📎 上传文件" FontSize="12" Padding="10,3" />
-          <TextBlock x:Name="HintText" Grid.Column="1" FontSize="11" Opacity="0.6"
-                     VerticalAlignment="Center" Margin="10,0" TextTrimming="CharacterEllipsis" />
-          <Button x:Name="StopButton" Grid.Column="2" Content="⏹ 停止" FontSize="12" Padding="10,3"
-                  IsVisible="False" />
-          <Button x:Name="SendButton" Grid.Column="3" Content="发送" FontSize="13" Padding="18,4"
-                  Margin="8,0,0,0" />
+
+        <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto" Margin="0,8,0,0">
+          <Button x:Name="CommandButton" Grid.Column="0" Classes="chip" Padding="10,4"
+                  ToolTip.Tip="打开/关闭命令输入框">
+            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+              <TextBlock x:Name="CommandIconText" Text="+" FontSize="15" FontWeight="Bold"
+                         VerticalAlignment="Center" />
+              <TextBlock x:Name="CommandButtonText" Text="打开命令输入框" FontSize="12"
+                         VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+          <Button x:Name="SnippetButton" Grid.Column="1" Classes="chip" Padding="10,4"
+                  Margin="6,0,0,0" ToolTip.Tip="打开常用语选择框">
+            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+              <TextBlock Text="📋" FontSize="13" VerticalAlignment="Center" />
+              <TextBlock x:Name="SnippetButtonText" Text="打开常用语选择框" FontSize="12"
+                         VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+          <TextBlock x:Name="HintText" Grid.Column="2" FontSize="11" Opacity="0.6"
+                     VerticalAlignment="Center" Margin="12,0" TextTrimming="CharacterEllipsis" />
+          <Button x:Name="SettingsButton" Grid.Column="3" Classes="chip" Content="⚙"
+                  FontSize="14" Padding="9,3" Margin="6,0,0,0" ToolTip.Tip="打开设置" />
+          <Button x:Name="UploadButton" Grid.Column="4" Classes="chip" Content="📎 上传文件"
+                  Padding="10,3" Margin="6,0,0,0" />
+          <Button x:Name="StopButton" Grid.Column="5" Classes="chip" Content="⏹ 停止"
+                  Padding="10,3" Margin="6,0,0,0" IsVisible="False" />
+          <Button x:Name="SendButton" Grid.Column="6" Content="发送" FontSize="13" Padding="18,4"
+                  Margin="8,0,0,0" CornerRadius="10" />
         </Grid>
       </Grid>
     </Border>
 
-    <!-- ⑤ 消息区 -->
+    <!-- ⑤ 轻量状态区：图标 + 简短短语，点击跳到对应设置/动作；右侧按钮可折叠 -->
+    <Border x:Name="StatusStrip" DockPanel.Dock="Bottom" Margin="10,0,10,4" CornerRadius="8"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+            Padding="8,3">
+      <Grid ColumnDefinitions="*,Auto">
+        <!-- 必须是 WrapPanel 而不是 StackPanel：状态项超出可用宽度时会把右侧的折叠按钮
+             压住，用户既看不到也点不到（WPF 版实测踩到，这里照抄结论）。 -->
+        <WrapPanel x:Name="StatusStripItems" Grid.Column="0" Orientation="Horizontal">
+          <Button x:Name="StripSearchButton" Classes="chip" Margin="0,0,4,0"
+                  ToolTip.Tip="开启/关闭联网搜索">
+            <TextBlock x:Name="SearchText" Text="🔍 搜索：关" FontSize="11" />
+          </Button>
+          <Button x:Name="StripAutomationButton" Classes="chip" Margin="0,0,4,0">
+            <TextBlock x:Name="AutoText" Text="⚙️ 自动化：关" FontSize="11" />
+          </Button>
+          <Button x:Name="StripMarketButton" Classes="chip" Margin="0,0,4,0">
+            <TextBlock x:Name="MarketText" Text="🌐 市场：未连接" FontSize="11" />
+          </Button>
+          <Button x:Name="StripContextButton" Classes="chip" Margin="0,0,4,0">
+            <TextBlock x:Name="StripContextText" Text="📊 上下文 0%" FontSize="11" />
+          </Button>
+          <Button x:Name="StripKvButton" Classes="chip" Margin="0,0,4,0">
+            <TextBlock x:Name="StripKvText" Text="💾 KV: ---" FontSize="11" />
+          </Button>
+          <Button x:Name="StripCapabilityButton" Classes="chip" Margin="0,0,4,0">
+            <TextBlock x:Name="StripCapabilityText" Text="🧠 模型: ---" FontSize="11" />
+          </Button>
+          <Button x:Name="StripCompactButton" Classes="chip" Margin="0,0,4,0">
+            <TextBlock x:Name="StripCompactText" Text="🗜 压缩上下文" FontSize="11" />
+          </Button>
+          <Button x:Name="StripWarnButton" Classes="chip" Margin="0,0,4,0" IsVisible="False">
+            <TextBlock x:Name="StripWarnText" Text="⚠️ 能力提示" FontSize="11" />
+          </Button>
+          <Button x:Name="StripUpdateButton" Classes="chip" Margin="6,0,0,0" IsVisible="False">
+            <TextBlock x:Name="StripUpdateText" Text="🎉 新版本" FontSize="11" />
+          </Button>
+          <TextBlock x:Name="MetricsText" FontSize="11" Margin="6,0,0,0" IsVisible="False"
+                     VerticalAlignment="Center" Opacity="0.85" />
+        </WrapPanel>
+        <Button x:Name="StripToggleButton" Grid.Column="1" Classes="chip" Margin="6,0,0,0"
+                ToolTip.Tip="折叠状态区">
+          <TextBlock x:Name="StripToggleText" Text="▾" FontSize="11" />
+        </Button>
+      </Grid>
+    </Border>
+
+    <!-- ⑥ 底部提示（固定高度区）：命令提示与通知条共用一行 -->
+    <StackPanel DockPanel.Dock="Bottom" Margin="10,0,10,4" HorizontalAlignment="Center">
+      <TextBlock x:Name="CommandBarHint" IsVisible="False" FontSize="12"
+                 Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center" />
+      <Border x:Name="ToastBorder" IsVisible="False" CornerRadius="10" Padding="12,4"
+              HorizontalAlignment="Center" Margin="0,2,0,0"
+              Background="{DynamicResource PanelBackgroundBrush}"
+              BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+        <TextBlock x:Name="ToastText" FontSize="12" TextTrimming="CharacterEllipsis"
+                   MaxWidth="760" Foreground="{DynamicResource AccentBrush}" />
+      </Border>
+    </StackPanel>
+
+    <!-- ⑦ 消息区 -->
     <ScrollViewer x:Name="MessageScroll" VerticalScrollBarVisibility="Auto"
                   HorizontalScrollBarVisibility="Disabled">
       <StackPanel x:Name="MessagePanel" Margin="14" Spacing="12" />
     </ScrollViewer>
+
+    <!-- 常用语选择栏（Popup 不占布局；PlacementTarget 在代码里设，避免依赖名字绑定） -->
+    <Popup x:Name="SnippetPalette" Placement="Top" IsOpen="False" MaxHeight="260">
+      <Border Background="{DynamicResource PanelBackgroundBrush}"
+              BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+              CornerRadius="10" MinWidth="300" MaxWidth="440" Padding="4" Margin="0,0,0,4">
+        <StackPanel>
+          <ListBox x:Name="SnippetList" Background="Transparent" BorderThickness="0"
+                   MaxHeight="220">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="svc:Snippet">
+                <StackPanel Margin="4,2">
+                  <TextBlock Text="{Binding Name}" FontWeight="Bold"
+                             Foreground="{DynamicResource AccentBrush}" />
+                  <TextBlock Text="{Binding Text}" FontSize="11" Opacity="0.7"
+                             TextTrimming="CharacterEllipsis" MaxWidth="360" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBlock x:Name="SnippetHint" FontSize="11" Opacity="0.7" Margin="6,2,6,4"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+    </Popup>
+
+    <!-- 指令选择栏：在指令输入框或聊天输入框输入 "/" 后弹出（PlacementTarget 在代码里设） -->
+    <Popup x:Name="CommandPalette" Placement="Top" IsOpen="False" MaxHeight="300">
+      <Border Background="{DynamicResource PanelBackgroundBrush}"
+              BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+              CornerRadius="10" MinWidth="420" MaxWidth="620" Padding="4" Margin="0,0,0,4">
+        <StackPanel>
+          <ListBox x:Name="CommandList" Background="Transparent" BorderThickness="0"
+                   MaxHeight="240">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="svc:CommandItem">
+                <StackPanel Margin="4,2">
+                  <TextBlock Text="{Binding Command}" FontWeight="Bold"
+                             Foreground="{DynamicResource AccentBrush}" />
+                  <TextBlock Text="{Binding Format}" FontSize="11" Opacity="0.7" />
+                  <TextBlock Text="{Binding Short}" FontSize="11" Opacity="0.7"
+                             TextWrapping="Wrap" Margin="0,1,0,0" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBlock x:Name="PaletteHint" FontSize="11" Opacity="0.7" Margin="6,2,6,4"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+    </Popup>
   </DockPanel>
 </Window>

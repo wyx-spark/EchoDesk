@@ -8,11 +8,111 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 
 ---
 
-## v0.2.1
+## v0.2.2
 
-> The first version aimed at **open-source publication**. For the complete implementation plan, key decisions,
-> deviations from the task specification, unfinished items, and size records, see the internal development
-> record (`v0.2.1-研发记录.md`, **not distributed with the release**).
+> **The cross-platform version.** v0.2.1 was released *before* any of this work: it contains no
+> `frontend-avalonia/` directory and no platform-isation, and its tag (`v0.2.1`) points at the last
+> commit of that state. Everything described under this heading — the cross-platform frontend
+> migration, the platform-isation of the backend, and the three-platform packaging — is **v0.2.2**.
+> For the complete implementation plan, key decisions, deviations, unfinished items and size records,
+> see the internal development records (`records/v0.2.1-跨平台记录.md` and
+> `records/v0.2.1-跨平台-2记录.md`; the file names keep the task-spec number they were written
+> under, **not the release number**).
+
+### Git over SSH only, settings-window shell and General page, cross-platform backend distribution
+
+Task specification: `prompts/EchoDesk-v0.2.1跨平台-2.md`. The full implementation plan,
+measurements, deviations from the specification and remaining work are in
+`records/v0.2.1-跨平台-2记录.md` (internal, **not shipped with releases**).
+
+**All Git remote operations now use SSH.** HTTPS pushes to GitHub were repeatedly
+interrupted on the maintainer's machine (`RPC failed; HTTP 408` /
+`Recv failure: Connection was reset`); SSH is unaffected by that network path.
+`tools/push_release.ps1` now **asserts** that the remote is SSH: an HTTPS remote fails
+the preflight outright and prints the `git remote set-url` fix. Its troubleshooting text
+is entirely SSH-based (connectivity test, keys, public key, port 443) and no longer
+suggests personal access tokens. A new gate, `tools/check_git_ssh.ps1`, pins all three
+places (remote, script default, documentation examples). A genuine conflict was fixed
+along the way: the content gate's email rule treated `git@github.com` as a personal
+email address, which made documenting SSH URLs fail by construction.
+
+**Cross-platform frontend: every settings tab is now migrated** (`frontend-avalonia/`).
+The settings window is built as a shell plus one `UserControl` per tab (the WPF version is a
+1321-line XAML file plus six partial classes, roughly 8000 lines in total), and **all seven
+tabs are done**: General (theme/emoji/font size/UI language apply immediately and persist;
+default mode is synced to the backend via `/mode`), Model (profile chips switch models with
+hot reload and download on demand, plus inference parameters — slider bounds are **widened**
+rather than clamped so that merely opening the page and pressing Save cannot silently rewrite
+a `max_tokens` of 8192 down to 4096), Automation (20 fields, safety protocol, result-folder
+preview; **disabled as a whole on non-Windows platforms with a degradation notice** instead of
+letting people fill in a form that can never run), Skill market (search/sort/install/uninstall,
+keeping the pre-install security notice), Installed (plugin list with in-place confirmed
+uninstall), Developer (developer mode plus the "who decided it" distinction, directories, log,
+plugin scaffolding) and Agent (tool authorisation with risk levels, **defaults come from the
+backend**).
+
+A few sub-features that need a full form or dialog **are not migrated yet** (the model market,
+MCP add/edit/remove, the plugin manifest table, visual element picking and the test wizard).
+Each of those places says explicitly that it is a known gap and offers a workaround (edit
+`config.json` directly, or use the WPF build on Windows) rather than showing an empty panel or
+a button that does nothing. Backend discovery gained a "bundled interpreter" candidate, called
+directly by the frontend (not through the launcher script, which would add a shell layer that
+makes process termination unreliable).
+
+**Cross-platform backend distribution** (`tools/pack_backend.py`). PyInstaller is replaced
+by **python-build-standalone plus a generated launcher**: a Windows build machine can now
+prepare backends for all three platforms, and the target machine just unpacks them — no
+Python installation, no network access (uvbox was rejected because its first run downloads
+dependencies, which contradicts the "data never leaves the machine, works offline" promise).
+Dependencies are fetched with `pip --target` for the target platform, and environment markers
+are evaluated **for that target** (pip evaluates them for the build machine, which in testing
+made it require a Linux build of `pywin32` and fail outright). The Windows installer
+**still uses PyInstaller**: the WPF launcher path has no "interpreter + main.py" mode, and
+standalone brings no benefit on Windows — a deliberate trade-off, not an oversight.
+
+**All three platform backend bundles are now produced and verified.** The earlier attempt in this
+round had stalled: the measured download rate from GitHub Releases was only 40–70 KB/s and the
+network dropped completely mid-run. Three things then made it possible, and each is worth knowing:
+
+* **The macOS wheel for `llama-cpp-python` is broken upstream.** Upstream publishes **only a source
+  distribution on PyPI** — every wheel lives in the author's own GitHub Releases index — and the
+  **macOS arm64 wheels in the `cpu` index are corrupt**: the byte count and the official digest both
+  match, yet `lib/*.dylib` inside the archive is damaged throughout its compressed streams, so
+  `pip install` cannot possibly succeed. Versions measured as corrupt: `cpu` index 0.3.21 / 0.3.30 /
+  0.3.35 / 0.3.36, `metal` index 0.3.31–0.3.36. The `metal` index (the `vX.Y.Z-metal` release tags)
+  has **0.3.30 as the last intact build**, so macOS pins that single wheel **by direct URL** — a
+  direct URL rather than "index plus version" because the two indexes hold a file with the **same
+  name but different contents**. The metal build is also simply more correct on macOS: it enables
+  the Metal (Apple GPU) backend. A new tool, `tools/fetch_wheel.py`, downloads a target-platform
+  wheel with resume **and decompresses every member before accepting it**, which is what caught this
+  — "downloaded completely" is not the same as "installable".
+* **python-build-standalone publishes a stripped variant.** The backend now uses
+  `install_only_stripped` instead of `install_only`. Measured on release 20261003, the interpreter
+  archive shrinks from 71.8 MB to **33.5 MB** on Linux, 45.2 MB to **21.0 MB** on Windows, and
+  24.2 MB to 24.1 MB on macOS. This is pure weight reduction: debug symbols are only needed to debug
+  native crashes with gdb/lldb, while Python's own tracebacks come from the `.py` sources.
+  `--keep-symbols` switches back for native debugging. The three backend bundles shrink
+  accordingly (archives 128.7 → **102.9 MB** / 188.1 → **150.2 MB** / 120.7 → **120.3 MB**).
+* **Dead Tcl/Tk runtime is removed.** With the `tkinter` package already stripped, nothing can load
+  `libtcl9*.so` / `libtk9*.so` / `tcl9/` / `tcl*.dll` any more, so those files are provably
+  unreachable (about 7 MB per platform) — a reachability argument, not a guess.
+
+Two more tools came out of the same problem: `tools/fetch_runtime.py` pre-warms the interpreter
+cache so downloading and packing can be run as separate steps, and `pack_backend.py` reuses a
+verified wheel from `artifacts/wheels/` when a dependency is pinned by URL, instead of asking pip to
+fetch it again over a link that keeps resetting.
+
+**The Avalonia main window now has all its feature panels**: the command palette (typing `/` opens
+ranked candidates, with ↑↓/Tab/Enter/Esc and the rule that an ambiguous match is completed rather
+than executed), the snippet palette backed by `snippets.json`, the toast bar (auto-hides after six
+seconds), the status strip (search / automation / market / context / KV cache / model capability /
+context compaction / capability warnings / update notice / live metrics, with a collapsible state
+that persists), and the Agent step rows (`agent_step` / `tool_call` / `tool_result` each become
+their own row, with the "not authorised" case distinguished from "the tool failed"). Destructive
+commands get a two-step confirmation — Avalonia has no `MessageBox`, and the project's existing
+"click twice" pattern does not fit an Enter-driven palette, so the second confirmation happens by
+pressing Enter again in the same input box. Sizes and verification counts are in
+`records/v0.2.1-跨平台-2记录.md`.
 
 ### Cross-platform: Avalonia frontend prototype, platform capability boundaries, cross-platform packaging
 
@@ -67,6 +167,18 @@ come from the CI matrix — inside this repository there is currently only build
 
 **UI text**: every new string (frontend and backend) is in both language packs (`zh-Hans` and `en`),
 and the two packs stay identical in keys and placeholders (`tools/check_lang.py` gate).
+
+## v0.2.1
+
+> The first version aimed at **open-source publication**. For the complete implementation plan, key decisions,
+> deviations from the task specification, unfinished items, and size records, see the internal development
+> record (`v0.2.1-研发记录.md`, **not distributed with the release**).
+>
+> **This version is pre-cross-platform**: it has no `frontend-avalonia/` directory and no platform
+> abstraction. The cross-platform work that was originally committed under this heading now lives
+> under v0.2.2 above; the tag `v0.2.1` points at the last commit of this state. The installer and
+> release artefacts for this version are rebuilt from that commit — see
+> `records/v0.2.1-发布记录.md` §30.
 
 ### Capability round 1: fewer modes, an agent platform, MCP, plugin ecosystem, model management, retrieval
 

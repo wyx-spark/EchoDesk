@@ -3,7 +3,7 @@
 > **Chinese version:** a reference translation of this policy is available at
 > [`PRIVACY.zh-Hans.md`](PRIVACY.zh-Hans.md). If the two ever disagree, this English version prevails.
 
-Version: v0.2.1
+Version: v0.2.2
 Effective date: the release date of this version
 Publisher: Void Entropia Studio
 Applies to: EchoDesk desktop edition (Python backend `EchoDeskBackend.exe` + .NET WPF frontend `EchoDesk.exe`)

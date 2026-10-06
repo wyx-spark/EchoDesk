@@ -25,7 +25,8 @@
 
 $ErrorActionPreference = 'Continue'
 $Root = Split-Path -Parent $PSScriptRoot
-$Version = "0.2.1"
+# 口径：v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本（见 backend\version.py）。
+$Version = "0.2.2"
 $Publish = Join-Path $Root "publish"
 $Setup = Join-Path $Publish "EchoDesk-v$Version-Setup.exe"
 $Sums = Join-Path $Publish "SHA256SUMS.txt"

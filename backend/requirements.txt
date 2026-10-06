@@ -9,10 +9,23 @@
 # 现改为按格式直接使用轻量、宽松许可的解析库（见 backend/file_parser.py）。
 
 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
-# llama-cpp-python：本地推理（llama.cpp）。这个 cpu 索引对三大平台都发布轮子；
-# 若某平台/架构没有轮子，pip 会退回源码编译（需要 cmake 与编译器），
-# 因此跨平台 CI 里把它单独标注为可能耗时较长的一步（见 .github/workflows/ci.yml）。
-llama-cpp-python          # 本地推理（llama.cpp）
+# llama-cpp-python：本地推理（llama.cpp）。
+#
+# ⚠️ macOS 必须单独处理（v0.2.1 跨平台-2 实测，证据见 records/v0.2.1-跨平台-2记录.md）：
+#   上游 cpu 索引发布的 **macOS arm64 轮子是坏的** —— wheel 字节数与上游 digest 完全
+#   一致（也就是说"下完了、也没被篡改"），但包内 `lib/*.dylib` 大面积 CRC/魔数错误，
+#   pip 安装必然失败。实测 0.3.21 / 0.3.30 / 0.3.35 / 0.3.36 的 cpu 索引 macOS arm64
+#   轮子全部损坏；metal 索引（macOS 专用，对应 `vX.Y.Z-metal` 这些 Release tag）里
+#   0.3.31 及以后同样损坏，**0.3.30 是最后一个完好的**（103 个成员全部可解压）。
+#   因此 macOS 上用**直接 URL 钉死**这一个轮子：
+#     * 直接 URL 而不是"索引 + 版本号"：两个索引里存在**同名但内容不同**的文件，
+#       按索引挑是不确定的；钉 URL 才是确定的。
+#     * 用 metal 而不是 cpu 构建对 macOS 本来也更正确 —— 它启用 Metal（Apple GPU）后端。
+#   Intel Mac（x86_64）不在本轮三平台目标内（目标为 osx-arm64），换机器时把 URL 里的
+#   `macosx_11_0_arm64` 换成 `macosx_10_9_x86_64` 并重新校验完整性即可。
+# Linux / Windows 仍走 cpu 索引的常规解析（这两个平台的轮子实测完好）。
+llama-cpp-python ; sys_platform != "darwin"
+llama-cpp-python @ https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30-metal/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl ; sys_platform == "darwin"
 pydantic>=2.0             # 配置模型与校验
 huggingface_hub           # 模型仓库查询与下载
 duckduckgo-search         # 联网搜索（可选功能）

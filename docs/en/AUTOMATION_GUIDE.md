@@ -86,7 +86,7 @@ When a CAPTCHA or two-factor verification appears, the run **pauses and waits fo
 | Save result files `save_results` | Optional | Clear it to do a dry run only — no result file is written | `true` |
 | Result folder name `task_name` | Optional | The name of the third-level result folder, i.e. what this batch is called | `auto-task` |
 | Result root folder name `results_root_name` | Optional | The first-level folder inside the results root | `results` |
-| Where to save results `results_location` | Optional | Put results on another drive or a shared folder; empty = the user data folder (the portable **outer** folder `EchoDesk-v0.2.1\`, not `app\`; set the `ECHODESK_DATA` environment variable to move it) | empty (= the user data folder) |
+| Where to save results `results_location` | Optional | Put results on another drive or a shared folder; empty = the user data folder (the portable **outer** folder `EchoDesk-v0.2.2\`, not `app\`; set the `ECHODESK_DATA` environment variable to move it) | empty (= the user data folder) |
 | Run on a schedule `schedule_enabled` | Optional | Runs a batch automatically at fixed times every day | `false` |
 | Scheduled times `schedule_times` | Optional | The times of day, separated by commas | `09:00` |
 | Sign-in state data directory `login_state_dir` | Optional | The separate directory automation uses to store the sign-in state in the browser (never shared with your everyday browser); empty = `browser_profile` inside the program folder. Several target sites can share one | empty |
@@ -110,7 +110,7 @@ restart for the change to take effect (the file is UTF-8; Notepad or VS Code bot
 | `headless` | Read-only | Automation **only supports a visible browser**; writing `true` is corrected back to `false` with a warning | `false` |
 | `browser_channel` | Optional | Which browser opens the pages; the system Edge is the default | `msedge` |
 | `audit_log_file` | Optional | Audit log file: one JSON record per task | `automation_log.jsonl` |
-| `start_with_windows` | **Not implemented** | The program does not read this field yet, so setting it to `true` does not start EchoDesk at sign-in; to start with Windows, copy `Start-EchoDesk-v0.2.1.lnk` into the system Startup folder (`Win+R` → `shell:startup`) | `false` |
+| `start_with_windows` | **Not implemented** | The program does not read this field yet, so setting it to `true` does not start EchoDesk at sign-in; to start with Windows, copy `Start-EchoDesk-v0.2.2.lnk` into the system Startup folder (`Win+R` → `shell:startup`) | `false` |
 | `safety_version` / `safety_accepted_at` | Read-only | Safety protocol version and when you accepted it; recorded automatically for auditing | `1.0` / empty |
 
 ---
@@ -213,7 +213,7 @@ Click "Open results folder" to open the results root in File Explorer; click "Br
 
 - **In plain words**: turn on "Run on a schedule" and fill in the times of day to run, separated by commas, for example `09:00, 18:30`.
 - **Note**: scheduled runs are driven by a background thread, so **EchoDesk must stay running**; invalid times (such as `25:00`) are dropped automatically.
-- To start EchoDesk with Windows, put the "Start-EchoDesk-v0.2.1.lnk" shortcut into the system Startup folder
+- To start EchoDesk with Windows, put the "Start-EchoDesk-v0.2.2.lnk" shortcut into the system Startup folder
   (`Win+R` → `shell:startup`). The `start_with_windows` config field is **not implemented**: the program does
   not read it, so setting it to `true` has no effect.
 
@@ -313,7 +313,7 @@ in file names.
 ### 4.3 What the results folder looks like afterwards
 
 With "Where to save results" left empty, the results land in the **user data folder** — in a portable install
-that is the outer `EchoDesk-v0.2.1\` folder (the one holding the shortcut), **not** `app\`:
+that is the outer `EchoDesk-v0.2.2\` folder (the one holding the shortcut), **not** `app\`:
 
 ```
 <outer folder>\
@@ -438,7 +438,7 @@ step-by-step wizard; each step tells you plainly whether it succeeded and what t
 | Parsing `.doc` / `.ppt` fails or asks for WPS | Legacy binary formats (and encrypted documents) are read through COM, and WPS/Office is not installed | Install WPS or Microsoft Office, or save the file as `.docx` / `.pptx` first |
 | The model is too slow, or reports "the model returned an empty result" | The task instruction is too long, `llm_max_tokens` is too large, or a long attachment triggered chunked summarisation | Trim the instruction to four to six items; set `llm_max_tokens` to 384–512; switch to a smaller quantised model (such as Q4_K_M) |
 | The results folder is not created, or writing fails | "Where to save results" points at a path that does not exist or is not writable (network drive, protected system folder) | Leave "Where to save results" empty to use the user data folder (the portable outer folder), or pick a writable local folder such as `D:\contract-review-results`; check free disk space |
-| The scheduled run never fired | EchoDesk was not running (the schedule is driven by a background thread), the time format was invalid and dropped, or "Run on a schedule" is off | Keep EchoDesk running; put "Start-EchoDesk-v0.2.1.lnk" into `shell:startup` for auto-start; write times as two-digit hours such as `09:00` |
+| The scheduled run never fired | EchoDesk was not running (the schedule is driven by a background thread), the time format was invalid and dropped, or "Run on a schedule" is off | Keep EchoDesk running; put "Start-EchoDesk-v0.2.2.lnk" into `shell:startup` for auto-start; write times as two-digit hours such as `09:00` |
 | You want to see what a task actually did (audit trail) | You need to check afterwards who processed which files and when | Open the audit log `app\backend\automation_log.jsonl`: one JSON record per task (see section 9) |
 | "no local model is loaded, cannot generate a summary or review opinion" | No local model is selected or downloaded yet | Select one in the main window with `/model list` and `/model <file name>` |
 | "playwright is not installed, run pip install playwright first" | Running from source without the dependencies (the packaged build includes them) | For a source checkout run `pip install -r backend\requirements.txt` and restart |
@@ -512,7 +512,7 @@ the export feature in section 8.
 - **Where results are written**: only into the results root you configured
   (`results root\date\task name\`), keeping the original attachments, `result.txt` and failure screenshots in that
   folder. Temporary copies used during processing are cleaned up afterwards. With "Where to save results" left
-  empty, that root is the **user data folder** (the portable outer `EchoDesk-v0.2.1\` folder, not `app\`); set
+  empty, that root is the **user data folder** (the portable outer `EchoDesk-v0.2.2\` folder, not `app\`); set
   the `ECHODESK_DATA` environment variable to move all user data (`ui_state.json`, `snippets.json`,
   `results\`) elsewhere.
 - **Deduplication record**: `processed_file` (default `automation_processed.json`) stores only hashes of task

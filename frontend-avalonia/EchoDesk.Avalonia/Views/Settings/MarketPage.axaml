@@ -1,0 +1,51 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="EchoDesk.Avalonia.Views.Settings.MarketPage">
+  <!--
+    技能市场页（v0.2.1 跨平台-2 任务一，第 4 个迁移模块）。
+
+    搜索 → 卡片列表 → 安装/卸载。控件名与 AutomationId 与 WPF 版同名，
+    便于复用 ui_probe.ps1 的既有断言。
+    技能详情复用骨架的右侧「字段帮助」面板显示（WPF 版是弹一个对话框）——
+    这样不必为详情再造一个窗口，而且详情与列表能同屏对照。
+  -->
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16,12,16,10">
+
+    <!-- 搜索条 -->
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto">
+      <TextBox x:Name="MarketSearchBox" Grid.Column="0" Padding="6,4"
+               AutomationProperties.AutomationId="MarketSearchBox" />
+      <ComboBox x:Name="MarketSortCombo" Grid.Column="1" Width="150" Margin="8,0,0,0"
+                AutomationProperties.AutomationId="MarketSortCombo" />
+      <Button x:Name="MarketSearchButton" Grid.Column="2" Margin="8,0,0,0" Padding="14,4"
+              AutomationProperties.AutomationId="MarketSearchButton" />
+      <Button x:Name="MarketRefreshButton" Grid.Column="3" Margin="8,0,0,0" Padding="14,4"
+              AutomationProperties.AutomationId="MarketRefreshButton" />
+    </Grid>
+
+    <TextBlock x:Name="MarketSearchTip" Grid.Row="1" Margin="0,6,0,0" FontSize="11"
+               TextWrapping="Wrap" Opacity="0.7" />
+
+    <!-- 结果列表 -->
+    <ScrollViewer Grid.Row="2" Margin="0,8,0,0" VerticalScrollBarVisibility="Auto">
+      <Grid>
+        <ItemsControl x:Name="MarketList">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel Spacing="8" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+        </ItemsControl>
+        <TextBlock x:Name="MarketEmptyText" HorizontalAlignment="Center" VerticalAlignment="Center"
+                   FontSize="12" Opacity="0.65" TextWrapping="Wrap" TextAlignment="Center"
+                   IsVisible="False" MaxWidth="460"
+                   AutomationProperties.AutomationId="MarketEmptyText" />
+      </Grid>
+    </ScrollViewer>
+
+    <!-- 状态行 -->
+    <TextBlock x:Name="MarketStatusText" Grid.Row="3" Margin="0,8,0,0" FontSize="11"
+               TextWrapping="Wrap" Opacity="0.85"
+               AutomationProperties.AutomationId="MarketStatusText" />
+  </Grid>
+</UserControl>

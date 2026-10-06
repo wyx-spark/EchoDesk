@@ -1,6 +1,6 @@
 # EchoDesk 企业环境适配与合规说明
 
-版本：v0.2.1
+版本：v0.2.2
 出品方：熵寂工作室（VoidEntropiaStudio）
 适用对象：在受管企业环境中部署 EchoDesk 桌面版（便携版或安装版）的 IT 管理员与合规审查人员
 
@@ -176,9 +176,9 @@ $env:NO_PROXY    = "localhost,127.0.0.1,.corp.example"
 便携版默认是这样的三层结构：
 
 ```text
-EchoDesk-v0.2.1\
+EchoDesk-v0.2.2\
 ├── install-complete.bat         ← 解压后的收尾脚本（负责创建下面这个快捷方式）
-├── Start-EchoDesk-v0.2.1.lnk          ← 启动快捷方式，由上面那个脚本在**你的机器上**创建
+├── Start-EchoDesk-v0.2.2.lnk          ← 启动快捷方式，由上面那个脚本在**你的机器上**创建
 │                                  （工作目录 = 用户数据目录）
 ├── ui_state.json                ← 界面状态
 ├── snippets.json                ← 常用语

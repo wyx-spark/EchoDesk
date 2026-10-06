@@ -182,6 +182,22 @@ foreach ($h in $allMail) {
         if ($before -match '//$' -or $before -match '//[^/@]*:$') { continue }
         if ($addr -like "*@users.noreply.github.com") { continue }
         if ($addr -match '@(example\.(com|org|net))$') { continue }
+        # `git@github.com`（如 `ssh -T git@github.com`）同理：github.com 是代码托管
+        # 服务的主机名，不是邮件域名（GitHub 不为用户提供 @github.com 邮箱），
+        # 而 `git` 是固定的 SSH 用户名。它永远不可能是"个人邮箱泄漏"。
+        if ($addr -match '@github\.com$') { continue }
+        # git 的 SSH 地址是 scp 形态（`git@github.com:owner/repo.git`）。其中
+        # `git@github.com` 这一段能被邮箱正则匹配到，但它**不是邮箱**：`@` 后面紧跟
+        # 主机名与**冒号**再接路径，而邮箱不会在域名后直接跟冒号再接非空白内容。
+        #
+        # 为什么必须放行：v0.2.1 跨平台-2 任务书的全局约定要求仓库内所有 git 操作
+        # 示例（clone / remote add / push）统一用 SSH 且不得出现 HTTPS 形式；
+        # 不放行这条，门禁就会与任务书要求直接对撞（此前 push_release.ps1 只能
+        # 在运行时把 URL 拼出来绕过检查，属于把问题藏起来而不是解决）。
+        #
+        # 权衡：`某人@某域名:` 这种"邮箱后紧跟冒号"的写法也会被放行，但常见个人
+        # 邮箱域名另有第 1 步的 BANNED_MAIL_DOMAINS 兜底，仍然拦得住。
+        if ($h.Text.Substring($m.Index + $m.Length) -match '^:\S') { continue }
         $badMail += [pscustomobject]@{ File = $h.File; Line = $h.Line; Text = "$addr  <-- $($h.Text)" }
     }
 }

@@ -4,10 +4,16 @@ EchoDesk is an offline desktop AI assistant: model inference, document parsing a
 run on your own machine. The **Python backend** is platform-neutral; the **frontend** talks to it over a
 JSON-line stdin/stdout protocol, so another toolkit's frontend drives the same backend unchanged.
 
-Windows is the complete, shipped product today; Linux and macOS have a **prototype** frontend. This
-document says what works where, what is Windows-only, what a user on another platform actually sees, and
-how far verification goes. Related reading: `USER_GUIDE.md`, `AUTOMATION_GUIDE.md` (the feature in
-section 3.2), `FAQ.md`, `SKILL_GUIDE.md`. Chinese: `docs/zh-Hans/CROSS_PLATFORM.md`.
+Windows is the complete, shipped product today; Linux and macOS are served by the **cross-platform
+frontend**. This document says what works where, what is Windows-only, what a user on another platform
+actually sees, and how far verification goes. Related reading: `USER_GUIDE.md`, `AUTOMATION_GUIDE.md`
+(the feature in section 3.2), `FAQ.md`, `SKILL_GUIDE.md`. Chinese: `docs/zh-Hans/CROSS_PLATFORM.md`.
+
+> **Version naming**: **v0.2.1 is pre-cross-platform** (no `frontend-avalonia/`, no platform
+> abstraction); **v0.2.2 is the cross-platform version** (frontend migration, platform-isation of the
+> backend, three-platform distribution and packaging). The `v0.2.1` tag points at the last
+> pre-cross-platform commit, and that version's installer and release artefacts are rebuilt from it —
+> see `records/v0.2.1-发布记录.md` §30.
 
 ---
 
@@ -15,20 +21,20 @@ section 3.2), `FAQ.md`, `SKILL_GUIDE.md`. Chinese: `docs/zh-Hans/CROSS_PLATFORM.
 
 | Platform | Status | Frontend | Packaging |
 | --- | --- | --- | --- |
-| **Windows** | Complete shipped product | WPF, in `frontend/` | Inno Setup installer (`publish\EchoDesk-v0.2.1-Setup.exe`) |
-| **Linux** | Prototype frontend | Avalonia, in `frontend-avalonia/`; builds and publishes for `linux-x64` | `.tar.gz` built on Linux |
-| **macOS** | Prototype frontend | Avalonia, in `frontend-avalonia/`; builds and publishes for `osx-arm64` | `.tar.gz` built on macOS, plus signing/notarization |
+| **Windows** | Complete shipped product | WPF, in `frontend/` | Inno Setup installer (`publish\EchoDesk-v0.2.2-Setup.exe`), plus `…-win-x64.zip` from the three-platform bundle |
+| **Linux** | Supported (portable bundle) | Avalonia, in `frontend-avalonia/`; self-contained publish for `linux-x64` | `EchoDesk-v0.2.2-linux-x64.tar.gz` — no installer, no Python needed on the target machine |
+| **macOS** | Supported (portable bundle) | Avalonia, in `frontend-avalonia/`; self-contained publish for `osx-arm64` | `EchoDesk-v0.2.2-osx-arm64.tar.gz`, plus signing/notarization (needs the maintainer's Apple credentials) |
 
-The Avalonia frontend's **main window is prototyped**: chat, streaming output, the thinking fold, file
-upload, and theme / font / language switching all work; the remaining WPF windows (settings, panels) are
-not migrated yet — see section 10. Both frontends launch the same Python backend and speak the same
-protocol to it, and the only platform-aware backend logic is the capability boundary below.
+The Avalonia frontend now covers **the main window and the whole settings window**: the feature panels
+(command palette, snippets, toast, status strip, Agent step rows) and all seven settings tabs are
+migrated — see section 8 for what is still missing. Both frontends launch the same Python backend and
+speak the same protocol to it, and the only platform-aware backend logic is the capability boundary below.
 
 ## 2. Capability matrix
 
 | Capability | Windows | Linux | macOS | Notes |
 | --- | --- | --- | --- | --- |
-| Chat with streaming output | yes | yes | yes | Identical protocol; the Avalonia main window is the prototype surface |
+| Chat with streaming output | yes | yes | yes | Identical protocol; the Avalonia frontend covers the main window and the settings window |
 | File parsing (docx, xlsx, pptx, pdf, txt, csv, md) | yes | yes | yes | Generic pure-Python parsers, no Office installation required |
 | Reading WPS/Office **encrypted** documents via COM | yes | no | no | Needs a local WPS/Office COM automation object — Windows-only by nature |
 | Legacy binary `.doc` / `.xls` reading | yes | no | no | Also needs COM; pure-Python parsers do not cover the old binary formats |
@@ -123,7 +129,7 @@ the backend that is actually answering.
 The data root is resolved in this order; the first rule that applies wins.
 
 1. The `ECHODESK_DATA` environment variable, if set.
-2. If the **program directory is named `app`**, its parent (portable layout `EchoDesk-v0.2.1\app\`).
+2. If the **program directory is named `app`**, its parent (portable layout `EchoDesk-v0.2.2\app\`).
 3. **Windows**: the program directory itself.
 4. **macOS**: `~/Library/Application Support/EchoDesk`.
 5. **Linux**: `$XDG_DATA_HOME/EchoDesk`, or `~/.local/share/EchoDesk` when `XDG_DATA_HOME` is unset.
@@ -147,24 +153,112 @@ a platform so degradation paths can be exercised on a Windows development machin
 
 ## 6. Packaging and release
 
+### 6.0 The backend ships in two forms, each covering a different job (since the cross-platform-2 round)
+
+| Form | Used for | Why |
+| :--- | :--- | :--- |
+| **PyInstaller onedir** | the Windows installer | the WPF launcher path accepts a single executable only (it has no "interpreter + main.py" mode), and on Windows standalone brings no benefit over it |
+| **python-build-standalone** | Linux / macOS and the portable cross-platform bundles | PyInstaller **cannot cross-compile**; standalone is a **relocatable prebuilt interpreter**, so a Windows build machine can prepare backends for all three platforms and the target machine just unpacks them — **no Python installation, no network access** |
+
+The latter is produced by `tools/pack_backend.py`:
+
+```
+backend-<rid>/
+    python/           bundled CPython (the target machine needs no Python)
+    site-packages/    dependencies fetched by cross-platform pip (side by side, injected via PYTHONPATH)
+    app/              backend code
+    run-backend.bat   Windows launcher (for humans starting/debugging it by hand)
+    run-backend.sh    Linux/macOS launcher (exec, so signals and exit codes pass through)
+    manifest.json     platform / Python version / every dependency version / sizes
+```
+
+The points below are conclusions from things that actually went wrong:
+
+* **The frontend does not go through the launcher**, it calls `python/python[.exe] app/main.py`
+  directly. An extra shell layer turns "stop the backend" into "kill the shell while Python
+  keeps running", and the frontend manages the backend as a child process.
+  The launchers still exist — for **humans starting and debugging it by hand**.
+* **Dependencies are not merged into `python/lib/site-packages`** but sit beside the interpreter:
+  that keeps "shipped with the interpreter" and "installed by us" clearly separable, and lets
+  `manifest.json` record each dependency version.
+* **Environment markers are evaluated for the target platform** when fetching dependencies.
+  pip itself evaluates them for the **build machine**, so preparing Linux dependencies made it
+  demand a Linux build of `pywin32` and fail the whole dependency chain.
+* **uvbox was rejected**: its first run downloads dependencies from the network, which
+  contradicts the core promise of "data never leaves the machine, works offline".
+* **`llama-cpp-python` needs a special fetch route on macOS** (measured during the
+  cross-platform-2 round — this one deserves its own entry): upstream publishes **only a source
+  distribution on PyPI**; every wheel lives in the author's own GitHub Releases index. Worse, the
+  **macOS arm64 wheels in the `cpu` index are corrupt** — the byte count and the official digest both
+  match ("fully downloaded, not tampered with"), yet `lib/*.dylib` inside the archive is damaged
+  throughout its compressed streams, so `pip install` cannot succeed. Versions measured as corrupt:
+  `cpu` index 0.3.21 / 0.3.30 / 0.3.35 / 0.3.36, `metal` index 0.3.31–0.3.36; the `metal` index
+  (the `vX.Y.Z-metal` release tags) has **0.3.30 as the last intact build**. macOS therefore
+  **pins that single wheel by direct URL** (see `backend/requirements.txt`) — a direct URL rather
+  than "index plus version" because the two indexes contain a file with the **same name but
+  different contents**, so index selection is non-deterministic. The metal build is also simply the
+  right choice on macOS: it enables the Metal (Apple GPU) backend.
+  Fetch and verify with `tools/fetch_wheel.py` (curl resume plus per-member decompression check,
+  which stops an upstream "downloads fine, cannot install" wheel before it reaches a release).
+* **Size** (measured as disk usage, hard links de-duplicated; all three measured on a Windows
+  build machine): the standalone backend is **295.9 MB unpacked on Windows, 450.9 MB on Linux,
+  352.5 MB on macOS**, and **102.9 / 150.2 / 120.3 MB archived**. Those differences are real
+  rather than an artefact of counting: the Linux standalone interpreter is simply larger.
+  Two decisions brought these figures down a long way from the first attempt:
+  1. **The interpreter archive is `install_only_stripped`, not `install_only`.** Upstream publishes
+     both variants for every platform; the stripped one drops native debug symbols, which are only
+     needed to debug a native crash with gdb/lldb (Python's own tracebacks come from the `.py`
+     sources). Measured, the archive goes from 71.8 MB to **33.5 MB** on Linux and from 45.2 MB to
+     **21.0 MB** on Windows; after packing, `python/` drops from 235.2/125.8 MB to **81.1/33.4 MB**.
+     `--keep-symbols` switches back for native debugging.
+  2. **The unreachable Tcl/Tk runtime is removed**: with the `tkinter` package already stripped,
+     nothing can load `libtcl9*.so` / `libtk9*.so` / `tcl9/` / `tcl*.dll` any more (about 7 MB per
+     platform). That is a reachability argument, not a guess.
+  **Standard-library trimming was deliberately not attempted**: measurement showed the bottleneck is
+  not "too many modules" — before stripping, 136.6 MB of the Linux `python/` is `libpython3.13.so`
+  and 77.2 MB is `bin/python3`, both native binaries, while the standard library's `.py` files add up
+  to a few tens of MB and the parts worth removing (test/idlelib/tkinter/ensurepip/distutils/
+  `__pycache__`) were already gone. Trimming the standard library on the impression that "there are
+  too many modules" would buy little and risk much (a rarely used module removed here only surfaces
+  as an ImportError on the target machine).
+  Verify with `python tools/check_standalone_backend.py` (structure / launcher syntax / runnable on
+  this platform / protocol round trip **plus a real action set**; for a non-host platform it
+  additionally performs a static check that the native dependencies really are valid shared
+  libraries).
+
+
 | Target | Tooling | Output |
 | --- | --- | --- |
-| Windows | Inno Setup, driven by `tools/build_release.ps1` | `publish\EchoDesk-v0.2.1-Setup.exe` |
+| Windows | Inno Setup, driven by `tools/build_release.ps1` | `publish\EchoDesk-v0.2.2-Setup.exe` |
 | Linux | `tools/pack_crossplatform.py` | `.tar.gz` |
 | macOS | `tools/pack_crossplatform.py` + signing/notarization | `.tar.gz` |
 
-**PyInstaller cannot cross-compile**, so a Linux backend binary must be built on Linux and a macOS one on
-macOS; there is no supported way to emit them from Windows. `tools/pack_crossplatform.py` does the
-per-RID work: it publishes the Avalonia frontend for the target RID, wraps the Python backend alongside
-it, strips native `.pdb` files (section 7), produces a `.tar.gz` on Linux/macOS, and writes
-`SHA256SUMS.txt` plus `manifest.json` so a downloaded archive can be verified.
+**PyInstaller cannot cross-compile**, but the *standalone* route does not need to: its interpreter is a
+prebuilt relocatable archive, so `tools/pack_backend.py` can prepare the backends for all three platforms
+from a Windows machine. `tools/pack_crossplatform.py` then does the per-RID work: it publishes the Avalonia
+frontend for the target RID, wraps the backend alongside it (`--backend-mode standalone`), strips native
+`.pdb` files (section 7), writes a top-level `start.sh` (or the Windows `.bat`), produces a `.tar.gz` on
+Linux/macOS, and writes `SHA256SUMS.txt` plus `manifest-<rid>.json` so a downloaded archive can be verified.
+The two packing scripts have different default output directories (`pack_backend.py` uses `publish/`, this
+one uses `dist/`), so it **looks for the standalone backend in both** — running each with its own defaults
+in sequence therefore works.
+
+The release directory is deliberately three layers deep (root / `app/` / program files) so that
+`UserPaths.DataRoot` recognises a portable layout and keeps user data outside the program. The cost is that
+a user who unpacks the archive sees a pile of documents and an `app/` directory, which is why the top-level
+`start.sh` exists: it does one thing — hand over to `app/EchoDesk` via `exec`, passing signals and the exit
+code straight through.
 
 **macOS distribution additionally needs code signing (Developer ID) and notarization with
 `notarytool`.** Those steps need the maintainer's Apple credentials; they are documented but **not
 automated** here, so a macOS archive is release-ready only after a human holding them has run them.
 
-**CI.** A GitHub Actions matrix in `.github/workflows/ci.yml`, job `cross-platform`, builds and publishes
-all three RIDs and runs the headless self-test on each runner — where real Linux/macOS runs happen.
+**CI.** `.github/workflows/ci.yml` has two cross-platform jobs with different jobs to do:
+`cross-platform` builds, publishes and headless-self-tests the Avalonia frontend on the Windows, Ubuntu and
+macOS runners (proving the TFM is platform-neutral); `cross-platform-release` actually **produces the
+complete release artefact for all three platforms**
+(`pack_backend.py` → `check_standalone_backend.py` → `pack_crossplatform.py`), because whether the
+cross-prepared dependencies really start on the target platform can only be verified by running them there.
 
 ## 7. Measured artifact sizes
 
@@ -188,12 +282,16 @@ no WSL, no Docker, no macOS. Everything below follows from that.
 | --- | --- |
 | (a) The Avalonia frontend and the real backend protocol ran for real on Windows, via headless `EchoDesk --selftest` | Platform detection, backend launch by platform rules, the `ready` handshake and the `platform` / `capability` round-trip — **run-level Windows evidence** |
 | (b) Cross-RID builds for `linux-x64` and `osx-arm64` were produced from Windows | That the frontend **compiles and publishes** for those RIDs — **build-level evidence only**, not run-level |
-| (c) `tools/test_platform.py` injects a platform via `ECHODESK_FORCE_PLATFORM` | That the non-Windows **degradation branches** are right: the Windows-only message, the alternatives, the suppressed Windows-specific hint, and the `platform` fields including `degraded` and the data root |
-| (d) The CI matrix runs the real Linux/macOS branches on real Linux/macOS runners | Run-level evidence on those platforms — obtained in CI, not in this repository's local history |
+| (c) `tools/check_standalone_backend.py` inspects the packaged backend | Structure, launcher syntax, and on Windows the interpreter actually runs and answers a **real action set** (`commands`, `capability`, `context`) |
+| (d) The same tool statically checks macOS native dependencies (Mach-O headers of `llama_cpp/lib/*.dylib`) | That a "downloads fine, cannot install" upstream wheel is caught on the build machine — the corrupt macOS wheels in this round were found exactly this way |
+| (e) `tools/check_crossplatform_release.py` inspects the finished archives | That a user can actually unpack and start them: archive format matches the target, executable bits survive, parent directory entries precede their contents, the top-level launcher and `SIGNING.txt` are inside, and the digests agree with `SHA256SUMS.txt` and the manifest |
+| (f) `tools/test_platform.py` injects a platform via `ECHODESK_FORCE_PLATFORM` | That the non-Windows **degradation branches** are right: the Windows-only message, the alternatives, the suppressed Windows-specific hint, and the `platform` fields including `degraded` and the data root |
+| (g) The CI matrix runs the real Linux/macOS branches on real Linux/macOS runners | Run-level evidence on those platforms — obtained in CI, not in this repository's local history |
 
-**No run-level Linux or macOS evidence exists in the repository itself.** Locally there is build-level
-plus injected-platform evidence; CI is where the real runs are obtained. For a non-Windows deployment
-that is the honest summary: the code paths are tested, the binaries build, and CI is where they run.
+**No run-level Linux or macOS evidence exists in the repository itself.** The three-platform backends and
+release bundles were cross-prepared on a Windows build machine and verified structurally, statically (the
+macOS binaries) and — on Windows — at protocol level. Rows (b), (c), (d) and (e) must **not** be read as
+"it was run on Linux/macOS". CI is where the real runs are obtained.
 
 ## 9. Known frontend differences (WPF vs Avalonia)
 
@@ -204,17 +302,31 @@ None of these change capabilities, but all are user-visible, so they are listed 
 - **Font zoom**: zooming re-renders messages instead of changing one document-wide font size.
 - **Theming**: Avalonia uses `FluentTheme` + `ThemeVariant` instead of two hand-maintained palettes.
 - **Copy and selection**: per-message copy/selection is per paragraph.
+- **Destructive-command confirmation**: there is no built-in `MessageBox`, and the project's "click
+  twice" pattern does not fit an Enter-driven palette, so the second confirmation is "press Enter again
+  in the same input box" — behaviourally equivalent, different in form.
+- **Popups and tooltips**: Avalonia's `Popup` has **no** `StaysOpen` property, and `ToolTip` is an
+  attached property (`ToolTip.SetTip(control, text)`).
 
 ## 10. Unfinished and planned work
 
 Listed plainly, with no implied dates:
 
-- migrating the remaining WPF windows (settings, panels) to Avalonia;
-- per-platform PyInstaller builds and release archives produced in CI rather than by hand;
-- macOS code signing and notarization, and a Linux AppImage;
+- **no real Linux/macOS run evidence**: the three-platform artefacts are cross-prepared on Windows and
+  verified structurally, statically and (on Windows) at protocol level;
+- the Windows installer **still uses PyInstaller**: the WPF launcher path accepts a single executable
+  only, and standalone brings no Windows benefit — a deliberate trade-off, not an oversight;
+- macOS code signing and notarization, and a Linux AppImage (the commands are written into
+  `SIGNING.txt` and are never run by the build script);
+- **the build is not reproducible**: three timestamp sources (`USAGE.txt`, rcedit writing `.rsrc`,
+  PyInstaller writing the PE header) mean rebuilding the same commit yields a different hash;
+  `SOURCE_DATE_EPOCH` is not implemented yet;
+- `docs/SBOM.json` and the third-party licence manifest were **not regenerated for v0.2.2** (the
+  dependency closure is structurally unchanged);
 - branding and icons for non-Windows platforms;
 - a real interactive Linux/macOS smoke test by a human or CI runner, not just the headless self-test.
 
 Until those land, the accurate description of Linux and macOS support is what section 1 says: a
-prototyped frontend, a platform-neutral backend, two explicitly-degrading Windows-only capabilities, and
-verification that stops honestly at the boundary described in section 8.
+cross-platform frontend covering the main window and the whole settings window, a platform-neutral
+backend, two explicitly-degrading Windows-only capabilities, and verification that stops honestly at
+the boundary described in section 8.

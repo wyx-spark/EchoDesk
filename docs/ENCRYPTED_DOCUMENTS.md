@@ -3,7 +3,7 @@
 > **Chinese version:** a reference translation of this document is available at
 > [`ENCRYPTED_DOCUMENTS.zh-Hans.md`](ENCRYPTED_DOCUMENTS.zh-Hans.md). If the two ever disagree, this English version prevails.
 
-Version: v0.2.1
+Version: v0.2.2
 Publisher: Void Entropia Studio
 Applies to: reading Office documents (Word / Excel / PowerPoint) with EchoDesk on a machine that has an enterprise document-encryption client installed
 

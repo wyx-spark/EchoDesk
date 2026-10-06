@@ -67,6 +67,33 @@ private reporting process in [SECURITY.md](SECURITY.md).
 
 ## Development environment
 
+### Getting the code (SSH only)
+
+Clone and push over SSH — this repository does not use HTTPS remote URLs:
+
+```bash
+git clone git@github.com:VoidEntropiaStudio/EchoDesk.git
+cd EchoDesk
+```
+
+If you already have a working copy, check that the remote is SSH:
+
+```bash
+git remote -v
+# origin  git@github.com:VoidEntropiaStudio/EchoDesk.git (fetch)
+# origin  git@github.com:VoidEntropiaStudio/EchoDesk.git (push)
+
+# If it shows https://…, switch it with one command:
+git remote set-url origin git@github.com:VoidEntropiaStudio/EchoDesk.git
+```
+
+You need a key first: `ssh-keygen -t ed25519 -C "machine label"`, then add the **full
+contents** of `~/.ssh/id_ed25519.pub` to GitHub under Settings → SSH and GPG keys.
+`ssh -T git@github.com` should then answer
+`Hi <username>! You've successfully authenticated`.
+If your network blocks port 22, use 443 — see
+[docs/en/DEVELOPER.md](docs/en/DEVELOPER.md), section "Version control and pushing (SSH only)".
+
 Requirements:
 
 - **Python 3.13** for the backend (`backend/`).
@@ -109,7 +136,7 @@ i18n, protocol — can be developed and tested without one.
 ## Building and packaging
 
 ```powershell
-# Full portable build -> publish\EchoDesk-v0.2.1\
+# Full portable build -> publish\EchoDesk-v0.2.2\
 & tools\build_release.ps1
 
 & tools\build_release.ps1 -SkipBackend     # only rebuild the WPF frontend

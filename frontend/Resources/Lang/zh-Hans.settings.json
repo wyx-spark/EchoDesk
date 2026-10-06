@@ -43,6 +43,15 @@
       "confirmOff": "已关闭指令执行确认（有副作用指令将直接执行）",
       "labelReadingMode": "读取当前对话模式"
     },
+    "saveHint": {
+      "dirty": "有未保存的改动"
+    },
+    "notMigrated": {
+      "title": "⏳ 这一页还没有迁移到跨平台前端（{0}）",
+      "body": "跨平台前端（Avalonia）目前完成了主窗口与设置窗口的骨架、常规页；其余页签仍只在 WPF 版里可用。这是一个已知的未完成项，不是功能损坏。",
+      "hintWindows": "替代做法：在 Windows 上使用 WPF 版（正式安装包安装的那个），功能是完整的。",
+      "hintOther": "替代做法：本页涉及的配置可以直接编辑 app/backend/config.json，或等待后续版本把该页迁移过来。"
+    },
     "model": {
       "sortName": "名称",
       "sourceAuto": "自动（推荐）",
@@ -58,6 +67,9 @@
       "profileNotDownloaded": "未下载",
       "profileContext": "{0} 上下文",
       "profileHint": "当前使用：{0}　·　点胶囊即可切换（热加载，无需重启）；未下载的档位点一下会先下载。",
+      "profileApplied": "✅ 已切换到 {0}",
+      "profileDownloadStarted": "⬇ 已开始下载 {0}（可在「模型市场」观察进度）",
+      "marketNotMigrated": "⏳ 「模型市场」（搜索、量化筛选、分页、详情、下载进度）还没有迁移到跨平台前端。替代做法：把 .gguf 文件放进 app/backend/models/ 后点「刷新档位」；在 Windows 上也可以用 WPF 版设置页从市场下载。",
       "profileTipCurrent": "当前正在使用这一档",
       "profileTipSwitch": "点一下切换到这一档（热加载，无需重启）",
       "profileTipDownload": "点一下从仓库下载这一档",
@@ -370,7 +382,8 @@
       "readUnavailable": "⚠️ 未能读取 MCP 状态（后端未响应），可点「↻ 重新读取」重试。",
       "readFailed": "❌ 读取 MCP 状态失败：{0}",
       "noData": "后端未返回 mcp 字段（接口不可用？）",
-      "mcpError": "⚠️ MCP：{0}"
+      "mcpError": "⚠️ MCP：{0}",
+      "notMigrated": "⏳ MCP 的增删改（命令、参数、环境变量透传、超时、连接测试）还没有迁移到跨平台前端，这里只显示当前状态。替代做法：编辑 app/backend/config.json 的 mcp 段，或在 Windows 上用 WPF 版设置页。"
     },
     "market": {
       "sortBest": "最佳匹配",
@@ -411,11 +424,47 @@
       "callFailed": "❌ {0}失败：{1}",
       "installConfirmTitle": "安装第三方技能",
       "installConfirmText": "即将从 GitHub 安装第三方技能：\n\n技能：{0}\n仓库：{1}\n版本：{2}\n来源：{3}\n\n⚠️ 安全提示：第三方技能以你的本地账户权限运行，EchoDesk 不对其安全性负责。\n安装前会读取并展示其 skill.json 以了解权限与依赖。是否继续？",
-      "detailLine": "{0}：{1}"
+      "detailLine": "{0}：{1}",
+      "search": "🔍 搜索",
+      "refresh": "🔄 刷新",
+      "detail": "详情",
+      "searchTip": "搜索技能（留空浏览全部）",
+      "installConfirmShort": "确认安装？",
+      "uninstallConfirmShort": "确认卸载？"
     },
     "automation": {
       "safetyBody": "1. 自动化功能仅在本机运行，操作过程使用有头浏览器，你可随时观察；\n2. EchoDesk 不会把任务内容、下载文件或生成结果上传到任何服务器；\n3. 已下载的附件会保留在结果目录中，便于你复核，请在共享前自行确认敏感信息；\n4. 你需要自行确认该自动化操作符合所在组织的规章制度与目标网站的服务条款；\n5. 因违规使用导致的后果由使用者自行承担，熵寂工作室（VoidEntropiaStudio）不承担责任。",
       "helpPlaceholderTitle": "❓ 字段说明",
+      "taskListUrl": "任务列表网址",
+      "taskListSelector": "任务链接选择器",
+      "taskRowSelector": "任务行选择器",
+      "nextPageSelector": "「下一页」选择器",
+      "taskDetailFileSelector": "详情页附件选择器",
+      "fileExtensions": "要下载的文件类型",
+      "instruction": "附加指令",
+      "maxTasks": "单次最多处理任务数",
+      "pageTimeout": "页面超时（毫秒）",
+      "retries": "失败重试次数",
+      "dedupe": "任务去重（跳过处理过的）",
+      "saveResults": "把结果保存到本地",
+      "taskName": "任务名称",
+      "resultsRootName": "结果目录名",
+      "resultsLocation": "保存位置（留空＝程序根目录）",
+      "scheduleEnabled": "启用定时",
+      "scheduleTimes": "定时时间（逗号分隔，如 09:00,18:00）",
+      "loginStateDir": "登录态目录",
+      "loginCheckSelector": "登录检测元素",
+      "loginUrlKeywords": "登录后 URL 关键词",
+      "toggleSafety": "我已阅读并同意上述安全协议",
+      "toggleEnabled": "启用自动化",
+      "saveConfig": "保存自动化配置",
+      "reloadConfig": "🔄 重新读取",
+      "runLog": "运行日志",
+      "notMigrated": "⏳ 可视化选取、测试向导、配置模板与导出/导入还没有迁移到跨平台前端。替代做法：这些字段可以直接编辑 app/backend/config.json 的 automation 段；在 Windows 上也可以用 WPF 版设置页（功能是完整的）。",
+      "platformBannerTitle": "⚠️ 本平台（{0}）不支持自动化",
+      "platformBannerBody": "企业内网自动化需要驱动本机的 Microsoft Edge，目前只在 Windows 上提供。这是平台限制，不是缺少依赖 —— 装任何包都不会让它在 Linux/macOS 上可用。替代做法：在 Windows 机器上运行自动化，把结果目录复制过来使用；其余功能（对话、文档处理、检索、智能体）在本平台一切正常。",
+      "stateSaving": "⏳ 正在保存…",
+      "loginCleared": "🗑 登录态已清除",
       "helpPlaceholderBody": "把光标放进下面任意一个输入框（或点字段旁的「?」），这里会显示该字段的通俗说明与示例值。完整指南见发布包 docs\\<locale>\\AUTOMATION_GUIDE.md。",
       "guideTitle": "自动化配置填写帮助",
       "runOnce": "▶ 立即运行一次",
@@ -487,6 +536,15 @@
     },
     "developer": {
       "modeShort": "放宽的是验证严格度，不是权限边界。",
+      "reloaded": "✅ 本地插件已重载",
+      "logCleared": "🗑 日志已清空",
+      "logEmpty": "（日志为空）",
+      "examplesInstalled": "✅ 示例插件已安装到 skills_dev/",
+      "scaffoldCreate": "➕ 创建",
+      "scaffoldIdRequired": "⚠️ 请先填写插件 ID",
+      "scaffoldRunning": "⏳ 正在创建插件骨架…",
+      "scaffoldFailed": "❌ 创建失败（后端未响应）",
+      "manifestNotMigrated": "⏳ 「本地插件清单」的表格编辑还没有迁移到跨平台前端。替代做法：直接编辑上面列出的 skills_local.json（它支持任意路径、别名、启用状态、加载顺序与信任状态），保存后点「重载本地插件」生效。",
       "topicLabel": "市场 topic",
       "repoLabel": "建议仓库名",
       "exportLog": "导出日志",
@@ -528,7 +586,10 @@
       "sourceLabel": "来源",
       "capabilitiesLabel": "能力",
       "labelReadingSkills": "读取插件列表",
-      "publishLine": "{0}：{1}"
+      "publishLine": "{0}：{1}",
+      "loadedCount": "已加载 {0} 个插件",
+      "uninstall": "卸载",
+      "uninstallConfirmShort": "确认卸载？"
     },
     "loadState": {
       "reading": "正在读取配置…",

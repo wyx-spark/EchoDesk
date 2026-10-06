@@ -63,6 +63,32 @@ Issue 模板位于 [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/)——请
 
 ## 开发环境
 
+### 获取代码（统一使用 SSH）
+
+克隆与推送都用 SSH（本仓库不使用 HTTPS 形式的远端地址）：
+
+```bash
+git clone git@github.com:VoidEntropiaStudio/EchoDesk.git
+cd EchoDesk
+```
+
+已有工作副本时，确认 remote 是 SSH：
+
+```bash
+git remote -v
+# origin  git@github.com:VoidEntropiaStudio/EchoDesk.git (fetch)
+# origin  git@github.com:VoidEntropiaStudio/EchoDesk.git (push)
+
+# 若显示的是 https://…，一条命令改过来：
+git remote set-url origin git@github.com:VoidEntropiaStudio/EchoDesk.git
+```
+
+需要先准备密钥：`ssh-keygen -t ed25519 -C "本机标签"`，把 `~/.ssh/id_ed25519.pub`
+的**全文**加到 GitHub 的 Settings → SSH and GPG keys；然后 `ssh -T git@github.com`
+应回答 `Hi <用户名>! You've successfully authenticated`。
+公司网络挡 22 端口时改用 443，写法见
+[docs/zh-Hans/DEVELOPER.md](docs/zh-Hans/DEVELOPER.md) 的「版本控制与推送（统一 SSH）」。
+
 要求：
 
 - 后端（`backend/`）需要 **Python 3.13**。
@@ -105,7 +131,7 @@ i18n、协议——都可以在没有模型的情况下开发与测试。
 ## 构建与打包
 
 ```powershell
-# Full portable build -> publish\EchoDesk-v0.2.1\
+# Full portable build -> publish\EchoDesk-v0.2.2\
 & tools\build_release.ps1
 
 & tools\build_release.ps1 -SkipBackend     # only rebuild the WPF frontend

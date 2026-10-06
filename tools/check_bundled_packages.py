@@ -50,7 +50,27 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_VENV = os.path.join(ROOT, "artifacts", "clean-venv", "Scripts", "python.exe")
-INTERNAL = os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "app", "backend", "_internal")
+
+
+def app_version() -> str:
+    """从 backend/version.py 读版本号，拼出发布目录名。
+
+    **不写死版本号**（v0.2.2 改造）：原来这里硬编码 `EchoDesk-v0.2.1`，
+    版本一升，门禁就会去一个不存在的目录找 `_internal` —— 而它的失败信息是
+    "未找到 _internal 目录"，看起来像"还没打包"，不像"路径过时了"。
+    gen_sbom.py / pack_backend.py 早就是从 version.py 取版本，这里对齐同一做法。
+    """
+    import io
+    import re
+    path = os.path.join(ROOT, "backend", "version.py")
+    with io.open(path, encoding="utf-8") as handle:
+        match = re.search(r'APP_VERSION\s*=\s*["\']([^"\']+)["\']', handle.read())
+    if not match:
+        raise SystemExit(f"读不出 APP_VERSION：{path}")
+    return match.group(1).lstrip("v")
+
+
+INTERNAL = os.path.join(ROOT, "publish", f"EchoDesk-v{app_version()}", "app", "backend", "_internal")
 
 # PyInstaller 自身的运行时与 Python 标准库（不属第三方发行包）
 PYINSTALLER_RUNTIME = {

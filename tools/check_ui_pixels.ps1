@@ -14,7 +14,8 @@
 #   powershell -File tools\check_ui_pixels.ps1                    # 浅色 + 深色各跑一遍
 #   powershell -File tools\check_ui_pixels.ps1 -Theme dark -KeepShots
 param(
-    [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.1\app\EchoDesk.exe",
+    # 口径：v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本（见 backend\version.py）。
+    [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.2\app\EchoDesk.exe",
     [ValidateSet('light', 'dark', 'both')][string]$Theme = 'both',
     [string]$Out = "$PSScriptRoot\..\artifacts\pixels",
     [int]$ReadyTimeoutSec = 180,

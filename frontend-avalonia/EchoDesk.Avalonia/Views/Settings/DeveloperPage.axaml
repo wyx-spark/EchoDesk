@@ -1,0 +1,94 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="EchoDesk.Avalonia.Views.Settings.DeveloperPage">
+  <!--
+    开发者页（v0.2.1 跨平台-2 任务一，第 5 个迁移模块）。
+
+    覆盖：开发者模式开关与状态、插件目录清单、重载、日志查看、新建本地插件骨架。
+    **「本地插件清单」表格编辑本轮未迁移**（页面底部有明确说明），
+    那部分要一张可编辑表格，属于下一轮的工作。
+    控件名与 AutomationId 与 WPF 版同名，便于复用 ui_probe.ps1 的断言。
+  -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="16" Spacing="12">
+
+      <!-- ① 开发者模式 -->
+      <TextBlock x:Name="DevModeSectionLabel" FontWeight="Bold" FontSize="14" />
+      <CheckBox x:Name="DevModeCheck" FontSize="13"
+                AutomationProperties.AutomationId="DevModeCheck" />
+      <TextBlock x:Name="DevModeShortText" FontSize="11" TextWrapping="Wrap" Opacity="0.65" />
+      <TextBlock x:Name="DevModeStatusText" FontSize="11" TextWrapping="Wrap" FontWeight="SemiBold"
+                 AutomationProperties.AutomationId="DevModeStatusText" />
+      <TextBlock x:Name="DevPluginListText" FontSize="11" TextWrapping="Wrap" Opacity="0.75"
+                 AutomationProperties.AutomationId="DevPluginListText" />
+      <TextBlock x:Name="DevApiText" FontSize="11" Opacity="0.75"
+                 AutomationProperties.AutomationId="DevApiText" />
+
+      <!-- ② 插件目录 -->
+      <TextBlock x:Name="DevDirsSectionLabel" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
+      <Border Background="{DynamicResource CardBackgroundBrush}"
+              BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+              CornerRadius="6" Padding="12,10">
+        <StackPanel Spacing="8">
+          <TextBlock x:Name="DevDirsText" FontSize="11" TextWrapping="Wrap" Opacity="0.8"
+                     AutomationProperties.AutomationId="DevDirsText" />
+          <Button x:Name="InstallExamplesButton" HorizontalAlignment="Left" Padding="12,4" FontSize="11"
+                  AutomationProperties.AutomationId="InstallExamplesButton" />
+        </StackPanel>
+      </Border>
+
+      <!-- ③ 重载与日志 -->
+      <TextBlock x:Name="DevReloadSectionLabel" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <Button x:Name="DevReloadButton" Padding="12,4" FontSize="11"
+                AutomationProperties.AutomationId="DevReloadButton" />
+        <Button x:Name="ClearDevLogButton" Padding="12,4" FontSize="11"
+                AutomationProperties.AutomationId="ClearDevLogButton" />
+        <Button x:Name="RefreshDevLogButton" Padding="12,4" FontSize="11" />
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="6">
+        <TextBlock x:Name="LogLinesLabel" VerticalAlignment="Center" FontSize="11" Opacity="0.75" />
+        <ComboBox x:Name="LogLinesCombo" Width="90"
+                  AutomationProperties.AutomationId="LogLinesCombo" />
+        <TextBlock x:Name="LogLinesUnitText" VerticalAlignment="Center" FontSize="11" Opacity="0.75" />
+      </StackPanel>
+      <!--
+        Avalonia 的 TextBox **没有** ScrollBarVisibility 属性（WPF 的 TextBox 有），
+        实测编译报 AVLN2000。用 ScrollViewer 包一层达到同样效果 ——
+        又一处"WPF 有、Avalonia 没有"的 API 差异（见记录里的坑列表）。
+      -->
+      <ScrollViewer Height="190" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+        <TextBox x:Name="DevLogBox" Padding="6,4" IsReadOnly="True"
+                 AcceptsReturn="True" TextWrapping="NoWrap" FontSize="11"
+                 FontFamily="Consolas,Menlo,monospace"
+                 AutomationProperties.AutomationId="DevLogBox" />
+      </ScrollViewer>
+
+      <!-- ④ 新建本地插件 -->
+      <TextBlock x:Name="ScaffoldSectionLabel" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
+      <TextBlock x:Name="ScaffoldTipText" FontSize="11" TextWrapping="Wrap" Opacity="0.65" />
+      <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*,Auto" RowDefinitions="Auto">
+        <TextBlock x:Name="ScaffoldIdLabel" Grid.Column="0" VerticalAlignment="Center" FontSize="12" />
+        <TextBox x:Name="ScaffoldIdBox" Grid.Column="1" Margin="6,0,10,0" Padding="6,4"
+                 AutomationProperties.AutomationId="ScaffoldIdBox" />
+        <TextBlock x:Name="ScaffoldNameLabel" Grid.Column="2" VerticalAlignment="Center" FontSize="12" />
+        <TextBox x:Name="ScaffoldNameBox" Grid.Column="3" Margin="6,0,10,0" Padding="6,4"
+                 AutomationProperties.AutomationId="ScaffoldNameBox" />
+        <TextBlock x:Name="ScaffoldAuthorLabel" Grid.Column="4" VerticalAlignment="Center" FontSize="12" />
+        <TextBox x:Name="ScaffoldAuthorBox" Grid.Column="5" Margin="6,0,10,0" Padding="6,4"
+                 AutomationProperties.AutomationId="ScaffoldAuthorBox" />
+        <Button x:Name="ScaffoldCreateButton" Grid.Column="6" Padding="12,4"
+                AutomationProperties.AutomationId="ScaffoldCreateButton" />
+      </Grid>
+
+      <!-- ⑤ 未迁移部分：诚实标注，并给出替代做法 -->
+      <TextBlock x:Name="ManifestNoticeText" FontSize="11" TextWrapping="Wrap" Opacity="0.7"
+                 Margin="0,10,0,0" />
+
+      <!-- ⑥ 状态行 -->
+      <TextBlock x:Name="DevStatusText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
+                 AutomationProperties.AutomationId="DevStatusText" />
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

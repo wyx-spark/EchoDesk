@@ -8,7 +8,7 @@
 
 # EchoDesk 隐私政策
 
-版本：v0.2.1
+版本：v0.2.2
 生效日期：随本版本发布之日
 出品方：熵寂工作室（VoidEntropiaStudio）
 适用对象：EchoDesk 桌面版（Python 后端 `EchoDeskBackend.exe` + .NET WPF 前端 `EchoDesk.exe`）

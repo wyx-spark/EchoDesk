@@ -1,0 +1,75 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="EchoDesk.Avalonia.Views.Settings.GeneralPage">
+  <!--
+    常规页（v0.2.1 跨平台-2 任务一，第 2 个迁移模块）。
+
+    内容与 WPF 版 SettingsWindow.xaml 的「常规」页签对齐：主题 / emoji 偏好 / 字号 /
+    界面语言 / 默认模式 / 危险操作确认 / 路径信息。
+    控件名（x:Name）与 AutomationId **刻意与 WPF 版同名**，这样 ui_probe.ps1 的既有
+    断言可以复用，而不是为跨平台前端再写一套探针。
+  -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="16" Spacing="16">
+
+      <!-- ① 主题：切换后立即生效（不等保存），与 WPF 版行为一致 -->
+      <StackPanel Spacing="4">
+        <TextBlock x:Name="ThemeLabel" FontWeight="SemiBold" />
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <ComboBox x:Name="ThemeCombo" Width="220" AutomationProperties.AutomationId="ThemeCombo" />
+          <TextBlock x:Name="ThemeStatusText" VerticalAlignment="Center" FontSize="11" Opacity="0.7"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </StackPanel>
+
+      <!-- ② emoji 偏好：影响是否把 emoji 降级成 ASCII（终端/字体不支持时用） -->
+      <StackPanel Spacing="4">
+        <TextBlock x:Name="EmojiLabel" FontWeight="SemiBold" />
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <ComboBox x:Name="EmojiCombo" Width="220" AutomationProperties.AutomationId="EmojiCombo" />
+          <TextBlock x:Name="EmojiStatusText" VerticalAlignment="Center" FontSize="11" Opacity="0.7"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </StackPanel>
+
+      <!-- ③ 聊天区字号 -->
+      <StackPanel Spacing="4">
+        <TextBlock x:Name="FontSizeLabel" FontWeight="SemiBold" />
+        <StackPanel Orientation="Horizontal" Spacing="12">
+          <Slider x:Name="FontSizeSlider" Width="320" Minimum="10" Maximum="24"
+                  TickFrequency="1" IsSnapToTickEnabled="True"
+                  AutomationProperties.AutomationId="FontSizeSlider" />
+          <TextBlock x:Name="FontSizeValueText" VerticalAlignment="Center" FontSize="12" />
+        </StackPanel>
+      </StackPanel>
+
+      <!-- ④ 界面语言：切换后立即生效并落盘 -->
+      <StackPanel Spacing="4">
+        <TextBlock x:Name="LanguageLabel" FontWeight="SemiBold" />
+        <ComboBox x:Name="LanguageCombo" Width="260" HorizontalAlignment="Left"
+                  AutomationProperties.AutomationId="LanguageCombo" />
+        <TextBlock x:Name="LangPackText" FontSize="11" TextWrapping="Wrap" Opacity="0.7" />
+      </StackPanel>
+
+      <!-- ⑤ 默认模式：**业务设置**，与界面设置分开 —— 它由后端持有（/mode 命令），
+           前端只负责把它发过去，不自己存一份（WPF 版也是这个分工）。 -->
+      <StackPanel Spacing="4">
+        <TextBlock x:Name="DefaultModeLabel" FontWeight="SemiBold" />
+        <ComboBox x:Name="DefaultModeCombo" Width="260" HorizontalAlignment="Left"
+                  AutomationProperties.AutomationId="DefaultModeCombo" />
+        <TextBlock x:Name="DefaultModeHint" FontSize="11" Opacity="0.7" TextWrapping="Wrap" />
+      </StackPanel>
+
+      <!-- ⑥ 危险操作确认（界面设置） -->
+      <CheckBox x:Name="ConfirmDestructiveCheck" FontSize="13"
+                AutomationProperties.AutomationId="ConfirmDestructiveCheck" />
+
+      <!-- ⑦ 路径信息：用户数据目录与语言包目录（排查问题时最常问的两件事） -->
+      <StackPanel Spacing="4">
+        <TextBlock x:Name="PathsLabel" FontWeight="SemiBold" />
+        <TextBlock x:Name="PathsText" FontSize="11" TextWrapping="Wrap" Opacity="0.75" />
+      </StackPanel>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

@@ -17,7 +17,7 @@ body:
     attributes:
       label: EchoDesk 版本 / Version
       description: 设置窗口「关于」页或发布包文件夹名。/ About page in Settings, or the package folder name.
-      placeholder: "例如 0.2.1"
+      placeholder: "例如 0.2.2"
     validations:
       required: true
 

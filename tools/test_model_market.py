@@ -760,9 +760,9 @@ def resolve_backend():
     """
     if "--packaged" in sys.argv:
         candidates = [
-            os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "app", "backend", "EchoDeskBackend.exe"),
-            os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "backend", "EchoDeskBackend.exe"),
-            os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "EchoDeskBackend.exe"),
+            os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "app", "backend", "EchoDeskBackend.exe"),
+            os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "backend", "EchoDeskBackend.exe"),
+            os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "EchoDeskBackend.exe"),
         ]
         for path in candidates:
             if os.path.isfile(path):

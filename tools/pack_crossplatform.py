@@ -21,6 +21,11 @@
     python tools/pack_crossplatform.py --reuse-backend <dir> --reuse-frontend <dir>
     python tools/pack_crossplatform.py --rid linux-x64 --keep-pdb
 
+后端形态（v0.2.1 跨平台-2 任务二/任务四）由 `--backend-mode` 选择：
+    auto（默认）  有 `publish/backend-<rid>/` 就用它（standalone 形态），否则退回 PyInstaller
+    standalone    用 tools/pack_backend.py 的产物（包内解释器，三平台通用）
+    pyinstaller   用 backend/EchoBackend.spec 现场打一个（本平台，Windows 正式交付形态）
+
 产物：dist/EchoDesk-<version>-<rid>/（目录树）
       dist/EchoDesk-<version>-<rid>.tar.gz（Linux/macOS）或 .zip（Windows）
       dist/SHA256SUMS.txt、dist/manifest.json
@@ -125,14 +130,68 @@ def copy_tree(src: str, dst: str) -> None:
     shutil.copytree(src, dst)
 
 
+#: 发布目录里**在目标平台上必须可执行**的相对路径（posix 分隔符，相对发布目录根）。
+#:
+#: 为什么需要一份显式清单（v0.2.1 跨平台-2 实测踩到）：打包机是 Windows，NTFS 上没有
+#: Unix 权限位，`tarfile.add()` 只会把 `st_mode` 记成 0o666/0o777 —— 于是**从 Windows 打出的
+#: Linux/macOS 归档解压后所有文件都没有可执行位**，用户必须先 `chmod +x` 才能启动。
+#: 也就是说"用 tar.gz 就能保留权限"这句话只在**在 Unix 上打包**时成立。
+#: 既然本项目的跨平台包是刻意在 Windows 上交叉准备的，就必须自己写清楚谁该可执行。
+EXECUTABLE_PATHS = (
+    "start.sh",
+    "app/EchoDesk",
+    "app/backend/run-backend.sh",
+    "app/backend/run-backend.bat",
+)
+#: 目录前缀：这些目录下**所有**文件都可执行（standalone Python 的 bin/ 全是可执行文件）。
+EXECUTABLE_PREFIXES = ("app/backend/python/bin/",)
+
+
+def tar_mode(rel_posix: str, is_dir: bool) -> int:
+    """给出该条目在目标平台上的权限位（Windows 打包机上拿不到真实权限，只能按策略给）。"""
+    if is_dir:
+        return 0o755
+    if rel_posix in EXECUTABLE_PATHS:
+        return 0o755
+    if any(rel_posix.startswith(prefix) for prefix in EXECUTABLE_PREFIXES):
+        return 0o755
+    return 0o644
+
+
 def make_archive(tree: str, out_dir: str, fmt: str) -> str:
     name = os.path.basename(tree)
     if fmt == "tar.gz":
         path = os.path.join(out_dir, name + ".tar.gz")
         with tarfile.open(path, "w:gz") as tar:
-            tar.add(tree, arcname=name)
+            # 自己走目录树，而不是一句 `tar.add(tree, arcname=name)`：
+            # 后者会把打包机（Windows）的权限位原样写进去，见 EXECUTABLE_PATHS 的说明。
+            # **顺序必须是"先目录、后文件"**（tar 流式解开时，写到某个路径前它的父目录要已存在，
+            # 否则 rsync/tar -x 之类的工具会报"父目录不存在"）；根目录本身也要作为条目写进去，
+            # 否则顶层文件（README/SIGNING.txt/start.sh…）在归档里没有父目录条目。
+            entries: list[tuple[str, bool]] = [("", True)]
+            for base, dirs, files in os.walk(tree):
+                dirs.sort()
+                for dir_name in dirs:
+                    full = os.path.join(base, dir_name)
+                    entries.append((os.path.relpath(full, tree).replace(os.sep, "/"), True))
+                for file_name in sorted(files):
+                    full = os.path.join(base, file_name)
+                    entries.append((os.path.relpath(full, tree).replace(os.sep, "/"), False))
+            entries.sort(key=lambda item: (item[0].count("/"), item[0]))
+            for rel, is_dir in entries:
+                source = tree if rel == "" else os.path.join(tree, rel.replace("/", os.sep))
+                info = tar.gettarinfo(source, arcname=name if rel == "" else f"{name}/{rel}")
+                info.mode = tar_mode(rel, is_dir)
+                if is_dir:
+                    tar.addfile(info)
+                else:
+                    with open(source, "rb") as handle:
+                        tar.addfile(info, handle)
         return path
     path = os.path.join(out_dir, name + ".zip")
+    # zip 走这条路只在 Windows 目标上用（见 main 里按 RID 选格式）：
+    # zip 也能通过 external_attr 记 Unix 权限，但 Windows 自带的资源管理器解压不看它，
+    # 所以这里不做——Windows 上本来也不需要可执行位。
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
         for base, _dirs, files in os.walk(tree):
             for file_name in files:
@@ -147,6 +206,81 @@ def sha256_of(path: str) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def check_backend_manifest(standalone_dir: str, rid: str) -> None:
+    """自证：目标 RID 必须与后端产物清单里记录的平台一致。
+
+    为什么值得单独查（v0.2.1 跨平台-2 实测）：把"打包机平台"当成"目标平台"用，
+    正是这一轮反复出问题的地方（pip 用打包机的环境标记去要 Linux 版 pywin32、
+    解释器路径按打包机选）。文件存在性检查能挡住大部分情况，但两个平台的产物
+    若恰好同名同结构（比如都是 `python/bin/python3`），它挡不住 ——
+    清单是唯一记录"这份产物到底是给谁打的"的地方。
+    清单不存在时**跳过**而不是失败：`--reuse-backend` 允许复用任意来源的目录。
+    """
+    manifest_path = os.path.join(os.path.dirname(standalone_dir), f"backend-manifest-{rid}.json")
+    if not os.path.isfile(manifest_path):
+        return
+    try:
+        with io.open(manifest_path, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        log(f"警告：后端清单读不出来，跳过平台自证（{os.path.relpath(manifest_path, ROOT)}：{exc}）")
+        return
+    recorded = manifest.get("rid")
+    if recorded and recorded != rid:
+        raise SystemExit(
+            f"后端产物的清单说它是给 {recorded} 打的，但本次要打的是 {rid}。\n"
+            f"  清单：{os.path.relpath(manifest_path, ROOT)}\n"
+            f"  先执行： python tools/pack_backend.py --platform {rid}"
+        )
+    log(f"后端清单平台自证通过：{os.path.relpath(manifest_path, ROOT)}（rid={recorded}，"
+        f"{manifest.get('triple')}）")
+
+
+def write_top_launcher(tree: str, rid: str) -> str:
+    """在发布物**根目录**放一个启动脚本，省得用户自己猜要进 `app/` 找可执行文件。
+
+    为什么需要（v0.2.1 跨平台-2 任务四暴露的可用性问题）：布局刻意是三层
+    （根目录 / `app/` / 程序文件），这样 `UserPaths.DataRoot` 才能认出"这是便携布局、
+    用户数据放外层"。代价是用户解压后看到一堆文档和一个 `app/` 目录 ——
+    没有这个脚本，他得先知道可执行文件藏在 `app/` 里。
+
+    脚本本身只做一件事：把真正的可执行文件**接管本进程**（exec），参数与退出码原样透传。
+    """
+    if rid.startswith("win"):
+        path = os.path.join(tree, "启动 EchoDesk.bat")
+        text = (
+            "@echo off\r\n"
+            "rem EchoDesk 启动脚本。真正的程序在 app\\ 目录里；用户数据（对话记录、设置、\r\n"
+            "rem 语言包）按布局约定放在本目录，不跟着程序文件走。\r\n"
+            "setlocal\r\n"
+            'set "HERE=%~dp0"\r\n'
+            'start "" "%HERE%app\\EchoDesk.exe" %*\r\n'
+        )
+        with io.open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+        return path
+
+    path = os.path.join(tree, "start.sh")
+    text = (
+        "#!/bin/sh\n"
+        "# EchoDesk 启动脚本。真正的程序在 app/ 目录里；用户数据（对话记录、设置、语言包）\n"
+        "# 按布局约定放在本目录，不跟着程序文件走。\n"
+        "set -e\n"
+        'HERE=$(cd "$(dirname "$0")" && pwd)\n'
+        "# exec：让界面进程直接接管本进程，信号（Ctrl-C / 关闭窗口）与退出码都原样透传。\n"
+        'exec "$HERE/app/EchoDesk" "$@"\n'
+    )
+    with io.open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+    try:
+        os.chmod(path, 0o755)
+    except OSError:
+        # 打包机（Windows）上 chmod 无意义；归档格式会尽力保留权限位，
+        # 真丢了也只是"解压后要 chmod +x 一次"，不影响内容正确性。
+        pass
+    return path
 
 
 def signing_notes(rid: str, archive: str) -> str:
@@ -215,8 +349,15 @@ def main() -> int:
     parser.add_argument("--rid", default="", help="目标 RID（默认按当前平台判断）")
     parser.add_argument("--out", default=os.path.join(ROOT, "dist"), help="输出目录")
     parser.add_argument("--plan", action="store_true", help="只打印步骤，不执行")
-    parser.add_argument("--skip-backend", action="store_true", help="跳过 PyInstaller（后端必须已有产物或用 --reuse-backend）")
-    parser.add_argument("--reuse-backend", default="", help="复用既有后端目录（跳过 PyInstaller）")
+    parser.add_argument("--skip-backend", action="store_true", help="跳过后端构建（后端必须已有产物或用 --reuse-backend）")
+    parser.add_argument("--reuse-backend", default="", help="复用既有后端目录（跳过构建）")
+    # v0.2.1 跨平台-2 任务二/任务四：后端可以是两种形态之一，由这里选择。
+    #   pyinstaller —— onedir 可执行文件（Windows 正式交付形态，本机可构建）
+    #   standalone  —— python-build-standalone + 包内解释器（三平台通用，
+    #                  由 tools/pack_backend.py 产出在 publish/backend-<rid>/）
+    #   auto        —— 有 publish/backend-<rid>/ 就用 standalone，否则退回 PyInstaller
+    parser.add_argument("--backend-mode", default="auto", choices=("auto", "pyinstaller", "standalone"),
+                        help="后端形态（默认 auto：优先复用 tools/pack_backend.py 的产物）")
     parser.add_argument("--reuse-frontend", default="", help="复用既有前端发布目录（跳过 dotnet publish）")
     parser.add_argument("--keep-pdb", action="store_true", help="保留 .pdb（默认清理，Windows 上能省下约 100MB）")
     parser.add_argument("--archive", default="auto", choices=("auto", "tar.gz", "zip", "none"))
@@ -234,9 +375,14 @@ def main() -> int:
         log("注意：平台判断来自 ECHODESK_FORCE_PLATFORM 注入 —— 打出来的包是按当前真实平台构建的，"
             "RID 只是命名，别拿它当「在别的平台打过包」的证据。")
 
+    # 归档格式按**目标 RID** 决定，不按打包机平台决定。
+    # 这不只是命名习惯：`tar.gz` 保留 Unix 权限位，而 `zip` 不会 ——
+    # 在 Windows 上给 Linux 打出的 zip，解压后 `start.sh` 与 `app/EchoDesk` 都没有可执行位，
+    # 用户必须先 `chmod +x` 才能启动。原实现用的是 `ps.kind()`（打包机），
+    # 于是三平台全出 zip；这与上面解释器路径那处是**同一个主机/目标混淆**。
     archive_fmt = args.archive
     if archive_fmt == "auto":
-        archive_fmt = "zip" if ps.kind() == "windows" else "tar.gz"
+        archive_fmt = "zip" if rid.startswith("win") else "tar.gz"
 
     if not args.plan and os.path.isdir(tree):
         shutil.rmtree(tree)
@@ -263,8 +409,29 @@ def main() -> int:
              "-p:PublishSingleFile=false", "-p:DebugType=none", "-p:DebugSymbols=false",
              "-p:NuGetAudit=false", "-o", app_dir], dry=args.plan)
 
-    # ---------- 2. 后端（PyInstaller onedir；spec 已按平台分支） ----------
+    # ---------- 2. 后端（两种形态，由 --backend-mode 决定） ----------
+    #
+    # 为什么 Windows 正式安装包仍走 PyInstaller，而跨平台发布物走 standalone：
+    # WPF 前端的启动路径只接受一个 exe（没有"解释器 + main.py"模式），而在 Windows 上
+    # standalone 相对 PyInstaller 没有收益（体积相当、还要多一层 PYTHONPATH 注入）。
+    # 详见 records/v0.2.1-跨平台-2记录.md 第四节。
     backend_out = os.path.join(app_dir, "backend")
+    # standalone 后端产物可能落在两处：本脚本的输出目录（`--out`，默认 dist），
+    # 或 tools/pack_backend.py 的默认输出目录（publish）。**两处都找**：
+    # 两个脚本的默认输出目录本来就不同，只认一处会让"按各自默认值连着跑"直接失败
+    # （实测就是这么撞上的），而报错信息里给出的命令（pack_backend）又恰好写到另一处。
+    standalone_candidates = [
+        os.path.join(args.out, f"backend-{rid}"),
+        os.path.join(ROOT, "publish", f"backend-{rid}"),
+    ]
+    standalone_dir = next((p for p in standalone_candidates if os.path.isdir(p)), standalone_candidates[0])
+    mode = args.backend_mode
+    if mode == "auto":
+        mode = "standalone" if os.path.isdir(standalone_dir) else "pyinstaller"
+        log(f"后端形态：auto → {mode}"
+            + (f"（发现 {os.path.relpath(standalone_dir, ROOT)}）" if mode == "standalone"
+               else "（没有 standalone 产物，退回 PyInstaller）"))
+
     if args.reuse_backend:
         log(f"复用后端目录：{os.path.relpath(args.reuse_backend, ROOT)}")
         if not args.plan:
@@ -272,6 +439,35 @@ def main() -> int:
     elif args.skip_backend:
         log("跳过后端构建（--skip-backend）：发布物里将**没有** backend/，"
             "只适合验证前端打包布局")
+    elif mode == "standalone":
+        # 包内解释器形态：python/ + site-packages/ + app/ + run-backend.{bat,sh}
+        # 前端（Avalonia）会直接调用 backend/python/python[.exe] 跑 backend/app/main.py，
+        # 启动脚本只是给人手动启动用的（见 BackendService.TryBundledStandalone 注释）。
+        if not os.path.isdir(standalone_dir):
+            raise SystemExit(
+                f"找不到 standalone 后端产物：{os.path.relpath(standalone_dir, ROOT)}\n"
+                "  已查找：" + "、".join(os.path.relpath(p, ROOT) for p in standalone_candidates) + "\n"
+                "  先执行： python tools/pack_backend.py --platform " + rid
+            )
+        log(f"使用 standalone 后端：{os.path.relpath(standalone_dir, ROOT)}")
+        if not args.plan:
+            copy_tree(standalone_dir, backend_out)
+            # **解释器路径按目标 RID 决定，不按打包机平台决定**（v0.2.1 跨平台-2 实测踩到）：
+            # 原实现写成 `"python/python.exe" if ps.kind() == "windows" else ...`，
+            # 于是"在 Windows 上为 Linux 打包"会去找 Linux 产物里根本不存在的 python.exe，
+            # 整轮以"产物结构不符"失败。这与 pip 用打包机环境标记是**同一类错误**
+            # （主机 / 目标混淆），所以这里写成一条由 rid 推出的规则，并留一条自证：
+            # 目标 RID 的平台必须与后端 manifest 里记录的平台一致。
+            python_rel = "python/python.exe" if rid.startswith("win") else "python/bin/python3"
+            if not os.path.isfile(os.path.join(backend_out, python_rel)):
+                raise SystemExit(
+                    f"standalone 后端里没有解释器：{python_rel}（产物结构不符）\n"
+                    f"  目标 RID：{rid}　后端目录：{os.path.relpath(backend_out, ROOT)}\n"
+                    "  常见原因：这个后端产物是给**另一个平台**打的（用 --platform 指定 RID 重跑 pack_backend.py）。"
+                )
+            if not os.path.isfile(os.path.join(backend_out, "app", "main.py")):
+                raise SystemExit("standalone 后端里没有 app/main.py（产物结构不符）")
+            check_backend_manifest(standalone_dir, rid)
     else:
         work = os.path.join(args.out, "_pyinstaller-work")
         stage = os.path.join(args.out, "_pyinstaller-dist")
@@ -318,7 +514,20 @@ def main() -> int:
         elif not args.keep_pdb:
             log("没有需要清理的调试符号")
 
-    # ---------- 5. 归档 + 校验和 + 清单 ----------
+    # ---------- 5. 顶层启动脚本 + 签名说明（**都必须在归档之前写**） ----------
+    #
+    # 顺序是有讲究的（v0.2.1 跨平台-2 由新门禁 `check_crossplatform_release.py` 抓出来）：
+    # 最初 `SIGNING.txt` 是在 `make_archive()` **之后**才写进树的，于是三个平台的归档里
+    # 都没有它 —— 而文档明确让 macOS 用户去看 `SIGNING.txt`（Gatekeeper 拦截时怎么办、
+    # 签名与公证还差哪一步）。**"文件写进了产物目录"与"文件进了归档"是两件事**。
+    if not args.plan:
+        launcher = write_top_launcher(tree, rid)
+        log(f"顶层启动脚本：{os.path.relpath(launcher, ROOT)}")
+        with io.open(os.path.join(tree, "SIGNING.txt"), "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(signing_notes(rid, f"EchoDesk-{version}-{rid}"
+                                       + (".zip" if archive_fmt == "zip" else ".tar.gz")))
+
+    # ---------- 6. 归档 + 校验和 + 清单 ----------
     archive_path = ""
     if not args.plan and archive_fmt != "none":
         os.makedirs(args.out, exist_ok=True)
@@ -326,9 +535,6 @@ def main() -> int:
         log(f"归档：{os.path.relpath(archive_path, ROOT)}")
 
     if not args.plan:
-        with io.open(os.path.join(tree, "SIGNING.txt"), "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(signing_notes(rid, os.path.basename(archive_path) or os.path.basename(tree)))
-
         if archive_path:
             digest = sha256_of(archive_path)
             with io.open(os.path.join(args.out, "SHA256SUMS.txt"), "a", encoding="utf-8", newline="\n") as handle:
@@ -348,6 +554,9 @@ def main() -> int:
             "archive_sha256": sha256_of(archive_path) if archive_path else "",
             "pdb_stripped": not args.keep_pdb,
             "backend_included": os.path.isdir(backend_out),
+            # 后端是哪种形态（pyinstaller 的可执行文件 or standalone 的包内解释器）。
+            # 记录它是因为两者的**验证方式不同**：前者直接跑 exe，后者要经解释器 + PYTHONPATH。
+            "backend_mode": mode,
         }
         manifest_path = os.path.join(args.out, f"manifest-{rid}.json")
         with io.open(manifest_path, "w", encoding="utf-8", newline="\n") as handle:

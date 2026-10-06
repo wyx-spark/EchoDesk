@@ -32,11 +32,31 @@ public sealed class AppSettings
     [JsonPropertyName("emoji")]
     public string EmojiPreference { get; set; } = "auto";
 
+    /// <summary>
+    /// 执行有副作用的指令（/clear、/clearcache）前是否二次确认（v0.2.1 跨平台-2 任务一，常规页）。
+    /// 默认开启：避免把 /clear 误输入成 /clearcache 造成数据损失（WPF 版同一默认值）。
+    /// </summary>
+    [JsonPropertyName("confirm_destructive")]
+    public bool ConfirmDestructiveCommands { get; set; } = true;
+
+    /// <summary>设置窗口尺寸（任务一要求"窗口状态记忆"；与主窗口分开存，互不影响）。</summary>
+    [JsonPropertyName("settings_window_width")]
+    public double SettingsWindowWidth { get; set; } = 980;
+    [JsonPropertyName("settings_window_height")]
+    public double SettingsWindowHeight { get; set; } = 720;
+
     [JsonPropertyName("window_width")]
     public double WindowWidth { get; set; } = 1080;
 
     [JsonPropertyName("window_height")]
     public double WindowHeight { get; set; } = 760;
+
+    /// <summary>
+    /// 主窗口"轻量状态区"是否已折叠（v0.2.1 跨平台-2 任务二第二个迁移模块）。
+    /// 与 WPF 版同名同语义：折叠状态要能在下次启动沿用，否则每次开窗都要手动收一次。
+    /// </summary>
+    [JsonPropertyName("status_strip_collapsed")]
+    public bool StatusStripCollapsed { get; set; }
 
     /// <summary>界面语言首选（原型阶段不落盘，仅内存）；null 表示"还没写成功"。</summary>
     [JsonIgnore]

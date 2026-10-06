@@ -30,9 +30,9 @@ def _resolve_backend() -> str:
     而不是"测试失败"。同 test_backend_e2e.py 的处理保持一致。
     """
     candidates = [
-        os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "app", "backend", "EchoDeskBackend.exe"),
-        os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "backend", "EchoDeskBackend.exe"),
-        os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "EchoDeskBackend.exe"),
+        os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "app", "backend", "EchoDeskBackend.exe"),
+        os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "backend", "EchoDeskBackend.exe"),
+        os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "EchoDeskBackend.exe"),
     ]
     for path in candidates:
         if os.path.isfile(path):
