@@ -57,7 +57,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout / 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # 需要完整历史：tools/test_prompt_compare.py 会从 git 里取**旧提示词**
           # Full history is required: tools/test_prompt_compare.py fetches the **old prompts**
@@ -351,7 +351,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout / 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # frontend/EchoDesk.csproj 的目标框架是 net10.0-windows，因此需要 .NET 10 SDK。
       # frontend/EchoDesk.csproj targets net10.0-windows, so the .NET 10 SDK is required.
@@ -454,7 +454,7 @@ jobs:
             exe: EchoDesk
     steps:
       - name: Checkout / 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up .NET SDK / 安装 .NET SDK
         uses: actions/setup-dotnet@v4
@@ -578,7 +578,7 @@ jobs:
             rid: osx-arm64
     steps:
       - name: Checkout / 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up .NET SDK / 安装 .NET SDK
         uses: actions/setup-dotnet@v4
@@ -735,7 +735,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout / 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check docs links / TODO / UTF-8 / 检查文档链接 / TODO / UTF-8
         shell: pwsh
@@ -777,7 +777,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout / 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.13 / 安装 Python 3.13
         uses: actions/setup-python@v5
@@ -809,7 +809,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout / 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.13 / 安装 Python 3.13
         uses: actions/setup-python@v5
@@ -850,7 +850,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout / 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.13 / 安装 Python 3.13
         uses: actions/setup-python@v5
@@ -926,7 +926,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout / 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.13 / 安装 Python 3.13
         uses: actions/setup-python@v5
