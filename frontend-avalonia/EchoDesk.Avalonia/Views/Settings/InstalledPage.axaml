@@ -1,0 +1,47 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="EchoDesk.Avalonia.Views.Settings.InstalledPage">
+  <!--
+    已安装页（v0.2.1 跨平台-2 任务一，第 3 个迁移模块）。
+
+    列出市场安装 / 本地安装 / 开发目录里的全部插件及其加载状态。
+    控件名与 AutomationId 与 WPF 版同名，便于复用 ui_probe 的既有断言。
+  -->
+  <Grid RowDefinitions="Auto,*,Auto" Margin="16,12,16,10">
+
+    <!-- 操作条 -->
+    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
+      <Button x:Name="SkillsRefreshButton" Padding="10,4"
+              AutomationProperties.AutomationId="SkillsRefreshButton" />
+      <Button x:Name="SkillsReloadButton" Padding="10,4"
+              AutomationProperties.AutomationId="SkillsReloadButton" />
+      <Button x:Name="SkillsExamplesButton" Padding="10,4"
+              AutomationProperties.AutomationId="SkillsExamplesButton" />
+    </StackPanel>
+
+    <TextBlock x:Name="InstalledTipText" Grid.Row="0" Margin="0,34,0,0" FontSize="11"
+               TextWrapping="Wrap" Opacity="0.7" />
+
+    <!-- 列表 -->
+    <ScrollViewer Grid.Row="1" Margin="0,8,0,0" VerticalScrollBarVisibility="Auto">
+      <Grid>
+        <ItemsControl x:Name="SkillList">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel Spacing="8" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+        </ItemsControl>
+        <TextBlock x:Name="SkillEmptyText" HorizontalAlignment="Center" VerticalAlignment="Center"
+                   FontSize="12" Opacity="0.65" TextWrapping="Wrap" TextAlignment="Center"
+                   IsVisible="False"
+                   AutomationProperties.AutomationId="SkillEmptyText" />
+      </Grid>
+    </ScrollViewer>
+
+    <!-- 状态行 -->
+    <TextBlock x:Name="SkillStatusText" Grid.Row="2" Margin="0,8,0,0" FontSize="11"
+               TextWrapping="Wrap" Opacity="0.8"
+               AutomationProperties.AutomationId="SkillStatusText" />
+  </Grid>
+</UserControl>

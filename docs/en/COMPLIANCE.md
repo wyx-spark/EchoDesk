@@ -1,6 +1,6 @@
 # EchoDesk Enterprise Deployment and Compliance Guide
 
-Version: v0.2.1
+Version: v0.2.2
 Publisher: Void Entropia Studio
 Audience: IT administrators and compliance reviewers deploying the EchoDesk desktop app
 (portable or installed) in a managed enterprise environment
@@ -183,9 +183,9 @@ Configuration example (`config.user.json`, used as the override layer that the p
 The portable release uses this three-level layout by default:
 
 ```text
-EchoDesk-v0.2.1\
+EchoDesk-v0.2.2\
 ├── install-complete.bat         ← post-extraction step (creates the shortcut below)
-├── Start-EchoDesk-v0.2.1.lnk          ← launcher shortcut, created on YOUR machine by the above
+├── Start-EchoDesk-v0.2.2.lnk          ← launcher shortcut, created on YOUR machine by the above
 │                                  (working directory = user data directory)
 ├── ui_state.json                ← UI state
 ├── snippets.json                ← snippets

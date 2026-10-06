@@ -1,0 +1,156 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="EchoDesk.Avalonia.Views.Settings.AutomationPage">
+  <!--
+    自动化页（v0.2.1 跨平台-2 任务一，第 7 个迁移模块）。
+
+    覆盖：安全协议、总开关、任务与选择器、详情页与文件、运行参数、结果目录、定时、
+    登录态、运行/停止、运行日志。控件名与 AutomationId 与 WPF 版同名。
+
+    **非 Windows 上的处置**（任务书明确要求）：自动化依赖本机 Edge 的受控启动，
+    在 Linux/macOS 上是**已知的两条降级边界之一**。本页在那些平台上：
+      * 顶部显示降级横幅（原因 + 替代做法，不把平台限制说成依赖缺失）；
+      * 全部输入禁用（而不是允许填写却永远跑不起来）；
+      * 后端也会拒绝（平台检查在 `automation.validate` 里，前端只是不让人白填）。
+  -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="16" Spacing="12">
+
+      <!-- ① 平台降级横幅（仅非 Windows 显示） -->
+      <Border x:Name="PlatformBanner" IsVisible="False"
+              Background="{DynamicResource WarningBannerBrush}"
+              BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+              CornerRadius="6" Padding="12,8">
+        <StackPanel Spacing="3">
+          <TextBlock x:Name="PlatformBannerTitle" FontWeight="SemiBold" FontSize="12" TextWrapping="Wrap" />
+          <TextBlock x:Name="PlatformBannerBody" FontSize="11" TextWrapping="Wrap" Opacity="0.85" />
+        </StackPanel>
+      </Border>
+
+      <!-- ② 安全协议 -->
+      <TextBlock x:Name="SafetyTitle" FontWeight="Bold" FontSize="14" />
+      <TextBlock x:Name="SafetyBodyText" FontSize="11" TextWrapping="Wrap" Opacity="0.8" />
+      <CheckBox x:Name="SafetyCheck" FontSize="12"
+                AutomationProperties.AutomationId="SafetyCheck" />
+      <CheckBox x:Name="AutomationEnabledCheck" FontSize="12"
+                AutomationProperties.AutomationId="AutomationEnabledCheck" />
+
+      <!-- ③ 任务与选择器 -->
+      <TextBlock x:Name="BasicSectionTitle" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
+      <Grid ColumnDefinitions="230,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" >
+        <TextBlock x:Name="TaskListUrlLabel" Grid.Row="0" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="TaskUrlBox" Grid.Row="0" Grid.Column="1" Margin="0,4" Padding="6,4"
+                 AutomationProperties.AutomationId="TaskUrlBox" />
+        <TextBlock x:Name="TaskListSelectorLabel" Grid.Row="1" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="TaskSelectorBox" Grid.Row="1" Grid.Column="1" Margin="0,4" Padding="6,4"
+                 AutomationProperties.AutomationId="TaskSelectorBox" />
+        <TextBlock x:Name="TaskRowSelectorLabel" Grid.Row="2" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="TaskRowBox" Grid.Row="2" Grid.Column="1" Margin="0,4" Padding="6,4"
+                 AutomationProperties.AutomationId="TaskRowBox" />
+        <TextBlock x:Name="NextPageSelectorLabel" Grid.Row="3" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="NextPageBox" Grid.Row="3" Grid.Column="1" Margin="0,4" Padding="6,4"
+                 AutomationProperties.AutomationId="NextPageBox" />
+        <TextBlock x:Name="TaskDetailFileSelectorLabel" Grid.Row="4" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="FileSelectorBox" Grid.Row="4" Grid.Column="1" Margin="0,4" Padding="6,4"
+                 AutomationProperties.AutomationId="FileSelectorBox" />
+      </Grid>
+
+      <!-- ④ 详情页与文件 -->
+      <TextBlock x:Name="DetailSectionTitle" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
+      <Grid ColumnDefinitions="230,*" RowDefinitions="Auto,Auto">
+        <TextBlock x:Name="FileExtensionsLabel" Grid.Row="0" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="ExtensionsBox" Grid.Row="0" Grid.Column="1" Margin="0,4" Padding="6,4"
+                 AutomationProperties.AutomationId="ExtensionsBox" />
+        <TextBlock x:Name="InstructionLabel" Grid.Row="1" VerticalAlignment="Top" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="InstructionBox" Grid.Row="1" Grid.Column="1" Margin="0,4" Padding="6,4"
+                 Height="58" AcceptsReturn="True" TextWrapping="Wrap"
+                 AutomationProperties.AutomationId="InstructionBox" />
+      </Grid>
+      <TextBlock x:Name="ExtensionsHintText" FontSize="10" Opacity="0.6" TextWrapping="Wrap" />
+
+      <!-- ⑤ 运行参数 -->
+      <TextBlock x:Name="RunSectionTitle" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
+      <Grid ColumnDefinitions="230,*,230,*" RowDefinitions="Auto,Auto">
+        <TextBlock x:Name="MaxTasksLabel" Grid.Row="0" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="MaxTasksBox" Grid.Row="0" Grid.Column="1" Width="90" HorizontalAlignment="Left"
+                 Margin="0,4,10,4" Padding="6,4" AutomationProperties.AutomationId="MaxTasksBox" />
+        <TextBlock x:Name="PageTimeoutLabel" Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="TimeoutBox" Grid.Row="0" Grid.Column="3" Width="110" HorizontalAlignment="Left"
+                 Margin="0,4" Padding="6,4" AutomationProperties.AutomationId="TimeoutBox" />
+        <TextBlock x:Name="RetriesLabel" Grid.Row="1" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="RetriesBox" Grid.Row="1" Grid.Column="1" Width="90" HorizontalAlignment="Left"
+                 Margin="0,4,10,4" Padding="6,4" AutomationProperties.AutomationId="RetriesBox" />
+        <StackPanel Grid.Row="1" Grid.Column="3" Orientation="Vertical" Spacing="2">
+          <CheckBox x:Name="DedupeCheck" FontSize="12" AutomationProperties.AutomationId="DedupeCheck" />
+          <CheckBox x:Name="SaveResultsCheck" FontSize="12" AutomationProperties.AutomationId="SaveResultsCheck" />
+        </StackPanel>
+      </Grid>
+
+      <!-- ⑥ 结果目录 -->
+      <TextBlock x:Name="ResultSectionTitle" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
+      <Grid ColumnDefinitions="230,*" RowDefinitions="Auto,Auto,Auto">
+        <TextBlock x:Name="TaskNameLabel" Grid.Row="0" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="TaskNameBox" Grid.Row="0" Grid.Column="1" Margin="0,4" Padding="6,4"
+                 AutomationProperties.AutomationId="TaskNameBox" />
+        <TextBlock x:Name="ResultsRootNameLabel" Grid.Row="1" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="ResultsRootNameBox" Grid.Row="1" Grid.Column="1" Margin="0,4" Padding="6,4"
+                 AutomationProperties.AutomationId="ResultsRootNameBox" />
+        <TextBlock x:Name="ResultsLocationLabel" Grid.Row="2" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="ResultsLocationBox" Grid.Row="2" Grid.Column="1" Margin="0,4" Padding="6,4"
+                 AutomationProperties.AutomationId="ResultsLocationBox" />
+      </Grid>
+      <TextBlock x:Name="ResultsPreviewText" FontSize="10" Opacity="0.65" TextWrapping="Wrap" />
+
+      <!-- ⑦ 定时 -->
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <CheckBox x:Name="ScheduleCheck" FontSize="12" VerticalAlignment="Center"
+                  AutomationProperties.AutomationId="ScheduleCheck" />
+        <TextBox x:Name="ScheduleTimesBox" Width="220" Padding="6,4"
+                 AutomationProperties.AutomationId="ScheduleTimesBox" />
+      </StackPanel>
+
+      <!-- ⑧ 登录态 -->
+      <TextBlock x:Name="LoginSectionTitle" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
+      <TextBlock x:Name="LoginHintText" FontSize="11" TextWrapping="Wrap" Opacity="0.7" />
+      <Grid ColumnDefinitions="230,*" RowDefinitions="Auto,Auto,Auto">
+        <TextBlock x:Name="LoginStateDirLabel" Grid.Row="0" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="LoginStateDirBox" Grid.Row="0" Grid.Column="1" Margin="0,4" Padding="6,4"
+                 AutomationProperties.AutomationId="LoginStateDirBox" />
+        <TextBlock x:Name="LoginCheckSelectorLabel" Grid.Row="1" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="LoginCheckSelectorBox" Grid.Row="1" Grid.Column="1" Margin="0,4" Padding="6,4"
+                 AutomationProperties.AutomationId="LoginCheckSelectorBox" />
+        <TextBlock x:Name="LoginUrlKeywordsLabel" Grid.Row="2" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <TextBox x:Name="LoginKeywordsBox" Grid.Row="2" Grid.Column="1" Margin="0,4" Padding="6,4"
+                 AutomationProperties.AutomationId="LoginKeywordsBox" />
+      </Grid>
+      <Button x:Name="ClearLoginStateButton" HorizontalAlignment="Left" Padding="12,4"
+              AutomationProperties.AutomationId="ClearLoginStateButton" />
+
+      <!-- ⑨ 操作 -->
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+        <Button x:Name="SaveConfigButton" Padding="16,6"
+                AutomationProperties.AutomationId="SaveConfigButton" />
+        <Button x:Name="ReloadConfigButton" Padding="12,6"
+                AutomationProperties.AutomationId="ReloadConfigButton" />
+        <Button x:Name="RunOnceButton" Padding="14,6"
+                AutomationProperties.AutomationId="RunOnceButton" />
+        <Button x:Name="StopAutomationButton" Padding="14,6"
+                AutomationProperties.AutomationId="StopAutomationButton" />
+      </StackPanel>
+
+      <!-- ⑩ 未迁移部分 -->
+      <TextBlock x:Name="NotMigratedText" FontSize="11" TextWrapping="Wrap" Opacity="0.7" />
+
+      <!-- ⑪ 日志与状态 -->
+      <TextBlock x:Name="RunLogLabel" FontWeight="Bold" FontSize="13" Margin="0,6,0,0" />
+      <ScrollViewer Height="150" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+        <TextBox x:Name="AutomationLogBox" Padding="6,4" IsReadOnly="True" AcceptsReturn="True"
+                 TextWrapping="NoWrap" FontSize="11" FontFamily="Consolas,Menlo,monospace"
+                 AutomationProperties.AutomationId="AutomationLogBox" />
+      </ScrollViewer>
+      <TextBlock x:Name="AutomationStatusText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
+                 AutomationProperties.AutomationId="AutomationStatusText" />
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

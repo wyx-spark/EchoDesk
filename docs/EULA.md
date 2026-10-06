@@ -3,7 +3,7 @@
 > **Chinese version:** a reference translation of this agreement is available at
 > [`EULA.zh-Hans.md`](EULA.zh-Hans.md). If the two ever disagree, this English version prevails.
 
-Version: v0.2.1
+Version: v0.2.2
 Copyright: Copyright (C) Void Entropia Studio
 Publisher: Void Entropia Studio, Online only (hereinafter "the Studio")
 > Studio name mapping: **Void Entropia Studio = 熵寂工作室**. `Void Entropia Studio` /
@@ -66,7 +66,7 @@ Licenses), [`SBOM.json`](SBOM.json) (software bill of materials),
 2. Third-party components are licensed under their own respective Licenses. **This agreement does
    not change the rights you enjoy under those Licenses**, nor does it release you from the
    obligations you owe under them.
-3. License status of the current release (v0.2.1):
+3. License status of the current release (v0.2.2):
    - The distribution contains **no AGPL components**. As of v0.2.1, PDF text extraction uses
      **BSD-3-Clause** `pypdf` instead of AGPL-3.0 PyMuPDF; the remaining components of the file
      parsing chain (Word/Excel/PPT/PDF/TXT) are all MIT / BSD-style permissive Licenses.

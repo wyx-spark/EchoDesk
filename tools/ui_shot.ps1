@@ -9,7 +9,7 @@
 #   powershell -File tools\ui_shot.ps1 -Exe <path> -Out <dir>
 #   powershell -File tools\ui_shot.ps1 -SkipLaunch          # 只对已在运行的进程截图
 param(
-    [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.1\app\EchoDesk.exe",
+    [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.2\app\EchoDesk.exe",
     [string]$Out = "$PSScriptRoot\..\artifacts\ui-shots",
     [int]$ReadyTimeoutSec = 180,
     [switch]$SkipLaunch

@@ -401,6 +401,52 @@ python tools\test_file_parsers.py     # 六种格式解析冒烟测试（退出�
 python tools\gen_licenses.py          # 重新生成第三方许可证清单
 ```
 
+**版本控制与推送（统一 SSH）**：
+
+从 v0.2.1 跨平台-2 起，本仓库的 Git 远端操作**统一使用 SSH**，不再使用 HTTPS
+（HTTPS 推送到 GitHub 在维护者机器上反复被中断：`RPC failed; HTTP 408` /
+`Recv failure: Connection was reset`；SSH 不受同一网络干扰，也不需要每次输凭据）。
+三处口径：
+
+```powershell
+# 1) remote 必须是 SSH（scp 形态 user@host:path）
+git remote -v
+git remote set-url origin git@github.com:VoidEntropiaStudio/EchoDesk.git
+
+# 2) 一键推送（分支 + 标签；预检覆盖工作区、标签不变式、安装包哈希与 SSH 连通性）
+& tools\push_release.ps1 -DryRun     # 只检查
+& tools\push_release.ps1             # 检查后推送
+
+# 3) 统一 SSH 门禁（已包含在 verify_release.ps1 里；-TestConnection 才真连 GitHub）
+& tools\check_git_ssh.ps1 -TestConnection
+```
+
+`push_release.ps1` 会**断言** remote 是 SSH 形式：发现 HTTPS 直接判预检失败并打印
+`git remote set-url` 的改法，而不是"照样推、失败之后再说"。门禁则把这三处
+（remote、脚本默认值、文档示例）一起钉住，防止下次改动漂回 HTTPS。
+
+**密钥准备与故障排查**（推送失败时脚本末尾也会打印同一份清单）：
+
+```powershell
+Get-ChildItem $env:USERPROFILE\.ssh          # 要有 id_ed25519 与 id_ed25519.pub
+ssh-add $env:USERPROFILE\.ssh\id_ed25519     # 交给 ssh-agent
+ssh -T git@github.com                        # 期望 Hi <用户名>! You've successfully authenticated
+```
+
+公钥（`id_ed25519.pub` 的**全文**，不是私钥）要加到 GitHub 的
+Settings → SSH and GPG keys。**网络挡 22 端口时**改走 443，在 `~/.ssh/config` 里加：
+
+```
+Host github.com
+  HostName ssh.github.com
+  Port 443
+  User git
+```
+
+**网页链接仍是 HTTPS**：Issues / Discussions / Releases / Advisories 这类链接保持
+`https://` 是正确的（SSH 地址在浏览器里打不开）。门禁只检查"git 操作示例"，
+不检查网页链接；`records/` 下的历史记录也不改写（那里记的是当时的事实）。
+
 ---
 
 ## 六、扩展点

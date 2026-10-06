@@ -43,6 +43,15 @@
       "confirmOff": "Command confirmation is OFF (commands with side effects run immediately)",
       "labelReadingMode": "Reading the current conversation mode"
     },
+    "saveHint": {
+      "dirty": "Unsaved changes"
+    },
+    "notMigrated": {
+      "title": "⏳ This page has not been migrated to the cross-platform frontend yet ({0})",
+      "body": "The cross-platform frontend (Avalonia) currently covers the main window plus the settings window shell and the General page; the remaining tabs exist only in the WPF build. This is a known gap, not a broken feature.",
+      "hintWindows": "Workaround: on Windows use the WPF build (the one the installer ships) — it is feature complete.",
+      "hintOther": "Workaround: edit app/backend/config.json directly for the settings this page would expose, or wait for a later release to migrate it."
+    },
     "model": {
       "sortName": "Name",
       "sourceAuto": "Automatic (recommended)",
@@ -58,6 +67,9 @@
       "profileNotDownloaded": "Not downloaded",
       "profileContext": "{0} context",
       "profileHint": "In use: {0}　·　Click a chip to switch (hot-loaded, no restart); a chip that is not downloaded yet downloads first.",
+      "profileApplied": "✅ Switched to {0}",
+      "profileDownloadStarted": "⬇ Download of {0} started (watch progress in the model market)",
+      "marketNotMigrated": "⏳ The model market (search, quantisation filters, paging, details, download progress) has not been migrated to the cross-platform frontend yet. Workaround: drop .gguf files into app/backend/models/ and click “Refresh profiles”; on Windows you can also download from the market with the WPF settings page.",
       "profileTipCurrent": "This tier is in use",
       "profileTipSwitch": "Click to switch to this tier (hot-loaded, no restart)",
       "profileTipDownload": "Click to download this tier from its repository",
@@ -370,7 +382,8 @@
       "readUnavailable": "⚠️ Could not read the MCP state (the backend did not answer); press “↻ Reload” to retry.",
       "readFailed": "❌ Failed to read the MCP state: {0}",
       "noData": "the backend returned no mcp field (is the interface available?)",
-      "mcpError": "⚠️ MCP: {0}"
+      "mcpError": "⚠️ MCP: {0}",
+      "notMigrated": "⏳ Adding, editing and removing MCP servers (command, arguments, environment pass-through, timeout, connection test) has not been migrated to the cross-platform frontend yet — this page only shows the current state. Workaround: edit the mcp section of app/backend/config.json, or use the WPF settings page on Windows."
     },
     "market": {
       "sortBest": "Best match",
@@ -411,11 +424,47 @@
       "callFailed": "❌ {0} failed: {1}",
       "installConfirmTitle": "Install a third-party skill",
       "installConfirmText": "About to install a third-party skill from GitHub:\n\nSkill: {0}\nRepository: {1}\nVersion: {2}\nSource: {3}\n\n⚠️ Security note: third-party skills run with your local account's privileges and EchoDesk is not responsible for their safety.\nBefore installing, its skill.json is read and shown so you can review permissions and dependencies. Continue?",
-      "detailLine": "{0}: {1}"
+      "detailLine": "{0}: {1}",
+      "search": "🔍 Search",
+      "refresh": "🔄 Refresh",
+      "detail": "Details",
+      "searchTip": "Search skills (leave empty to browse all)",
+      "installConfirmShort": "Confirm install?",
+      "uninstallConfirmShort": "Confirm uninstall?"
     },
     "automation": {
       "safetyBody": "1. Automation runs only on this machine and uses a visible browser, so you can watch it at any time;\n2. EchoDesk never uploads task contents, downloaded files or generated results to any server;\n3. Downloaded attachments are kept in the result folder for your review — check them for sensitive data before sharing;\n4. You must confirm that this automation complies with your organisation's rules and the terms of service of the target site;\n5. Consequences of misuse are borne by the user; Void Entropia Studio accepts no liability.",
       "helpPlaceholderTitle": "❓ Field guide",
+      "taskListUrl": "Task list URL",
+      "taskListSelector": "Task link selector",
+      "taskRowSelector": "Task row selector",
+      "nextPageSelector": "“Next page” selector",
+      "taskDetailFileSelector": "Detail page attachment selector",
+      "fileExtensions": "File types to download",
+      "instruction": "Extra instruction",
+      "maxTasks": "Max tasks per run",
+      "pageTimeout": "Page timeout (ms)",
+      "retries": "Retries on failure",
+      "dedupe": "Skip tasks already processed",
+      "saveResults": "Save results locally",
+      "taskName": "Task name",
+      "resultsRootName": "Results folder name",
+      "resultsLocation": "Save location (empty = program root)",
+      "scheduleEnabled": "Enable scheduling",
+      "scheduleTimes": "Schedule times (comma separated, e.g. 09:00,18:00)",
+      "loginStateDir": "Login state folder",
+      "loginCheckSelector": "Logged-in indicator selector",
+      "loginUrlKeywords": "URL keywords after login",
+      "toggleSafety": "I have read and accept the safety protocol above",
+      "toggleEnabled": "Enable automation",
+      "saveConfig": "Save automation settings",
+      "reloadConfig": "🔄 Reload",
+      "runLog": "Run log",
+      "notMigrated": "⏳ Visual element picking, the test wizard, config templates and export/import have not been migrated to the cross-platform frontend yet. Workaround: edit the automation section of app/backend/config.json directly, or use the WPF settings page on Windows (it is feature complete).",
+      "platformBannerTitle": "⚠️ Automation is not available on this platform ({0})",
+      "platformBannerBody": "Intranet automation drives the local Microsoft Edge and is currently provided on Windows only. This is a platform limit, not a missing dependency — installing any package will not make it work on Linux/macOS. Workaround: run the automation on a Windows machine and copy the results folder over; everything else (chat, document handling, retrieval, agent) works normally here.",
+      "stateSaving": "⏳ Saving…",
+      "loginCleared": "🗑 Login state cleared",
       "helpPlaceholderBody": "Put the cursor into any input below (or click the ? next to a field) and this panel explains that field in plain words, with an example. The full guide is at docs\\<locale>\\AUTOMATION_GUIDE.md in the release package.",
       "guideTitle": "Automation configuration guide",
       "runOnce": "▶ Run once now",
@@ -487,6 +536,15 @@
     },
     "developer": {
       "modeShort": "Only validation strictness is relaxed — never the permission boundary.",
+      "reloaded": "✅ Local plugins reloaded",
+      "logCleared": "🗑 Log cleared",
+      "logEmpty": "(the log is empty)",
+      "examplesInstalled": "✅ Example plugins installed into skills_dev/",
+      "scaffoldCreate": "➕ Create",
+      "scaffoldIdRequired": "⚠️ Fill in the plugin ID first",
+      "scaffoldRunning": "⏳ Creating the plugin skeleton…",
+      "scaffoldFailed": "❌ Creation failed (the backend did not respond)",
+      "manifestNotMigrated": "⏳ The editable table for the local plugin manifest has not been migrated to the cross-platform frontend yet. Workaround: edit the skills_local.json file listed above directly (it supports arbitrary paths, aliases, enabled state, load order and trust state), then click “🔄 Reload local plugins”.",
       "topicLabel": "Marketplace topic",
       "repoLabel": "Suggested repository name",
       "exportLog": "Export log",
@@ -528,7 +586,10 @@
       "sourceLabel": "Source",
       "capabilitiesLabel": "Capabilities",
       "labelReadingSkills": "Reading the plugin list",
-      "publishLine": "{0}: {1}"
+      "publishLine": "{0}: {1}",
+      "loadedCount": "{0} plugins loaded",
+      "uninstall": "Uninstall",
+      "uninstallConfirmShort": "Confirm uninstall?"
     },
     "loadState": {
       "reading": "Reading the configuration…",

@@ -1,4 +1,4 @@
-# EchoDesk User Guide (v0.2.1)
+# EchoDesk User Guide (v0.2.2)
 
 A hands-on manual for real-world use. For a quick start and troubleshooting, see
 [`FAQ.md`](FAQ.md); for field-by-field instructions on the automation settings, see
@@ -10,7 +10,7 @@ Chinese version: [`docs/zh-Hans/USER_GUIDE.md`](../zh-Hans/USER_GUIDE.md).
 ## 1. Installation and startup
 
 ### Installed version (recommended)
-1. Double-click `EchoDesk-v0.2.1-Setup.exe` (there is only this one installer; it does **not** bundle a
+1. Double-click `EchoDesk-v0.2.2-Setup.exe` (there is only this one installer; it does **not** bundle a
    model, and asks on first launch whether to download one). It needs no administrator rights.
 2. **By default it installs into the folder the installer itself sits in** — so a copy of the installer
    dropped into `D:\Tools\EchoDesk\` installs into `D:\Tools\EchoDesk\`. The wizard shows the path page, so
@@ -22,9 +22,9 @@ The installed layout is **exactly the same** as the portable build: the program 
 data and `results\` stay in the install folder.
 
 ### Portable version (plain zip)
-1. Unzip the whole `EchoDesk-v0.2.1` folder anywhere you like (desktop, D: drive or USB stick all work) —
+1. Unzip the whole `EchoDesk-v0.2.2` folder anywhere you like (desktop, D: drive or USB stick all work) —
    nothing is written outside it, and deleting the folder uninstalls it;
-2. Double-click **"Start-EchoDesk-v0.2.1.lnk"** inside that folder — this is the only entry point, so you never have
+2. Double-click **"Start-EchoDesk-v0.2.2.lnk"** inside that folder — this is the only entry point, so you never have
    to work out the difference between `app\EchoDesk.exe` and `app\backend\EchoDeskBackend.exe`
    (the latter is launched automatically by the UI; never run it on its own).
    The zip contains no shortcut (a shortcut stores an absolute path, so one created on the maintainer's
@@ -35,13 +35,13 @@ data and `results\` stay in the install folder.
    - If the folder has no shortcut → it asks whether to create one;
    - It shows the onboarding guide once.
 
-**Two layers**: the outer folder (`EchoDesk-v0.2.1\`) holds only the shortcut, your user data and the docs,
+**Two layers**: the outer folder (`EchoDesk-v0.2.2\`) holds only the shortcut, your user data and the docs,
 while **the program itself lives entirely in `app\`** — no exe/dll ever shows up in the outer folder, and
 uninstalling simply means deleting the whole folder.
 
 ### Directory layout and the locations you need to know
 
-The paths below are relative to the portable **outer** folder (`EchoDesk-v0.2.1\`). **`app\` is the program
+The paths below are relative to the portable **outer** folder (`EchoDesk-v0.2.2\`). **`app\` is the program
 itself and is not meant for your own files; the outer folder is your data directory**, so back up and clean up
 from there.
 
@@ -186,6 +186,53 @@ Other platform differences:
 
 The full platform matrix, packaging routes and verification evidence are in
 `docs/en/CROSS_PLATFORM.md`.
+
+#### Installing and starting on Linux / macOS
+
+The Linux and macOS builds are **plain archives with no installer** (self-contained: the UI runtime
+and the backend interpreter are both inside, so the target machine needs neither .NET nor Python):
+
+| Platform | File to download | How to start it |
+| --- | --- | --- |
+| Linux x86-64 | `EchoDesk-<version>-linux-x64.tar.gz` | `./start.sh` |
+| macOS (Apple silicon) | `EchoDesk-<version>-osx-arm64.tar.gz` | `./start.sh` |
+
+Four steps:
+
+1. **Download and verify.** `SHA256SUMS.txt` sits next to the archive; verifying it confirms the
+   download arrived intact — `sha256sum -c SHA256SUMS.txt` on Linux, or
+   `shasum -a 256 -c SHA256SUMS.txt` on macOS.
+2. **Extract**: `tar -xzf EchoDesk-<version>-linux-x64.tar.gz`, which gives you an
+   `EchoDesk-<version>-linux-x64/` directory (the "release directory" below).
+3. **Start it**: `cd` into the release directory and run `./start.sh`. If the executable bit was
+   lost during extraction, run `chmod +x start.sh app/EchoDesk` once first. The script does exactly
+   one thing — hand over to `app/EchoDesk` — so Ctrl-C in the terminal or closing the window ends it
+   cleanly.
+4. **The first start takes a few extra seconds** (the UI starts the backend and the backend
+   initialises). Once the status at the top changes from "connecting to backend" to "ready" or
+   "backend is ready, but no model is loaded", it is up.
+
+What is in the release directory:
+
+* `start.sh` — the entry point (equivalent to running `app/EchoDesk` directly);
+* `app/` — the program itself; `app/backend/` is the backend with its own interpreter.
+  `app/backend/run-backend.sh` starts the backend **on its own** for troubleshooting
+  (day to day you never need it: the UI starts the backend and shuts it down when the window closes);
+* `docs/`, `README*.md`, `EULA*.md` and so on — documentation and licences;
+* your user data (conversation history, settings, language packs, snippets) is **not** here — it
+  lives in the per-platform directory described in the previous section.
+
+Two platform-specific things that can get in the way:
+
+* **macOS Gatekeeper**: this build is **not code-signed or notarised** (that needs the maintainer's
+  Apple developer certificate and account), so the first launch may be blocked. Either right-click
+  `app/EchoDesk` in Finder and choose "Open", or run
+  `xattr -dr com.apple.quarantine app/EchoDesk` in a terminal. `SIGNING.txt` in the release
+  directory spells out what is still missing and which command the maintainer needs to run.
+* **Linux without a graphical environment**: the UI is a GUI program and needs X11 or Wayland. To
+  check on a headless server that the backend runs at all, start it with
+  `app/backend/run-backend.sh` and talk the JSON-lines protocol to it (one JSON request per line,
+  one JSON response per line).
 
 ---
 
@@ -423,7 +470,7 @@ above" (the backend enforces this). The agreement version and the time you accep
 ### 4.4 Scheduling
 Tick "Enable schedule" and enter the times of day it should run (for example `09:00, 18:30`).
 Scheduled tasks are fired by a backend thread while the program is running. If you want them to run at
-startup, copy "Start-EchoDesk-v0.2.1.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
+startup, copy "Start-EchoDesk-v0.2.2.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
 
 ### 4.5 Login state
 The first time, you need to log in manually once in the browser; the program stores the login state in

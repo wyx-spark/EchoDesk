@@ -35,9 +35,9 @@ def _resolve_backend() -> str:
     因此这里对两种布局都做尝试，并在两处都没有时打印实际找过的路径。
     """
     candidates = [
-        os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "app", "backend", "EchoDeskBackend.exe"),
-        os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "backend", "EchoDeskBackend.exe"),
-        os.path.join(ROOT, "publish", "EchoDesk-v0.2.1", "EchoDeskBackend.exe"),
+        os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "app", "backend", "EchoDeskBackend.exe"),
+        os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "backend", "EchoDeskBackend.exe"),
+        os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "EchoDeskBackend.exe"),
     ]
     for path in candidates:
         if os.path.isfile(path):

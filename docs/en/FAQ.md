@@ -9,7 +9,7 @@ Chinese version: [`docs/zh-Hans/FAQ.md`](../zh-Hans/FAQ.md).
 
 | What I want to do | How to do it |
 | --- | --- |
-| Start the program | Use the Start Menu (or desktop) shortcut created by the installer; for the portable zip, double-click "Start-EchoDesk-v0.2.1.lnk" inside the program folder (run `install-complete.bat` once if it is missing) |
+| Start the program | Use the Start Menu (or desktop) shortcut created by the installer; for the portable zip, double-click "Start-EchoDesk-v0.2.2.lnk" inside the program folder (run `install-complete.bat` once if it is missing) |
 | See every command | Type `/help` in the input box |
 | Have the AI read a document | Drag the file into the window, or use `/file C:\路径\合同.docx` |
 | Have the AI do arithmetic or look inside uploaded files | switch to agent mode: `/mode agent`, `/mode 3` or `/agent on` — the model picks the tool (see "3. Modes, agent and MCP") |
@@ -143,7 +143,7 @@ the **generation length limit** ran out — thinking used up the token budget be
 - small models (0.5B–1.5B) are not reliable reasoners anyway; a larger quantized model usually pays off more.
 
 ### How do I make EchoDesk start with Windows
-Copy "Start-EchoDesk-v0.2.1.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
+Copy "Start-EchoDesk-v0.2.2.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
 The `automation.start_with_windows` setting is **not implemented yet**: the program does not read it, so
 setting it to `true` will not start EchoDesk at sign-in — use the shortcut above instead (scheduled automation
 requires the program to be running).
@@ -347,7 +347,7 @@ directory and are cleaned up as soon as processing finishes.
 If you turn off "Save results to local files", no `result.txt` and no screenshots are written, and the results go
 to the log only.
 With "Where to save results" left empty the results root sits in the portable **outer** folder
-(`EchoDesk-v0.2.1\results\`), not inside `app\`; to move all user data (including `ui_state.json` and
+(`EchoDesk-v0.2.2\results\`), not inside `app\`; to move all user data (including `ui_state.json` and
 `snippets.json`), set the `ECHODESK_DATA` environment variable.
 For how to set the save location, the top-level folder name and the task name, see
 [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md).

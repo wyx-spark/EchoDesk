@@ -24,9 +24,11 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <AssemblyName>EchoDesk</AssemblyName>
     <RootNamespace>EchoDesk.Avalonia</RootNamespace>
-    <Version>0.2.1.0</Version>
-    <FileVersion>0.2.1.0</FileVersion>
-    <AssemblyVersion>0.2.1.0</AssemblyVersion>
+    <!-- 版本口径：v0.2.1 = 跨平台之前（没有这个工程）；v0.2.2 = 跨平台版本。
+         见 backend/version.py 的说明。 -->
+    <Version>0.2.2.0</Version>
+    <FileVersion>0.2.2.0</FileVersion>
+    <AssemblyVersion>0.2.2.0</AssemblyVersion>
     <Product>EchoDesk</Product>
     <Company>VoidEntropiaStudio</Company>
     <Copyright>Copyright (c) VoidEntropiaStudio</Copyright>

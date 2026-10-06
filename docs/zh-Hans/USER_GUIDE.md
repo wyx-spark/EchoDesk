@@ -1,4 +1,4 @@
-# EchoDesk 用户手册（v0.2.1）
+# EchoDesk 用户手册（v0.2.2）
 
 面向实际使用场景的操作手册。快速上手与故障排除见 `docs/zh-Hans/FAQ.md`；
 自动化字段的逐项填写说明见 [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md)。
@@ -9,7 +9,7 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 ## 一、安装与启动
 
 ### 安装版（推荐）
-1. 双击 `EchoDesk-v0.2.1-Setup.exe`（只有这一份安装程序，**不含内置模型**，首次启动会询问是否下载）。
+1. 双击 `EchoDesk-v0.2.2-Setup.exe`（只有这一份安装程序，**不含内置模型**，首次启动会询问是否下载）。
    不需要管理员权限。
 2. **默认装到"安装程序自己所在的文件夹"** —— 把安装程序放进 `D:\Tools\EchoDesk\` 再双击，
    就装到 `D:\Tools\EchoDesk\`。向导里有路径选择页，想装到别处在那里改即可。
@@ -19,9 +19,9 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 装出来的目录结构与便携版**完全一致**：程序本体在 `app\`，你的数据与 `results\` 就在安装目录里。
 
 ### 便携版（zip 免安装）
-1. 把整个 `EchoDesk-v0.2.1` 文件夹解压到任意位置（桌面、D 盘、U 盘均可）——
+1. 把整个 `EchoDesk-v0.2.2` 文件夹解压到任意位置（桌面、D 盘、U 盘均可）——
    不会往该文件夹以外写任何东西，删除文件夹即卸载；
-2. 双击文件夹内的**「Start-EchoDesk-v0.2.1.lnk」**——这是唯一入口，
+2. 双击文件夹内的**「Start-EchoDesk-v0.2.2.lnk」**——这是唯一入口，
    不需要分辨 `app\EchoDesk.exe` 与 `app\backend\EchoDeskBackend.exe` 的区别
    （后者由界面自动拉起，请勿单独运行）。
    zip 里没有预置快捷方式（快捷方式记的是绝对路径，在别人机器上生成的必然是死链）——请先运行一次
@@ -31,12 +31,12 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
    - 若文件夹内没有快捷方式 → 询问是否创建；
    - 显示一次上手引导。
 
-**两层结构**：外层（`EchoDesk-v0.2.1\`）只放快捷方式、用户数据与文档，**程序本体全部在 `app\` 里**
+**两层结构**：外层（`EchoDesk-v0.2.2\`）只放快捷方式、用户数据与文档，**程序本体全部在 `app\` 里**
 ——外层不出现任何 exe/dll，要卸载时删掉整个文件夹即可。
 
 ### 目录结构与你需要知道的位置
 
-下表里的路径都相对便携版**外层**目录（`EchoDesk-v0.2.1\`）。**`app\` 里是程序本体，不要往里放自己的东西；
+下表里的路径都相对便携版**外层**目录（`EchoDesk-v0.2.2\`）。**`app\` 里是程序本体，不要往里放自己的东西；
 外层才是你的数据目录**，备份与清理都以外层为准。
 
 | 位置 | 内容 | 能不能删 |
@@ -163,6 +163,47 @@ MCP、插件、模型管理与本地推理），只有两项能力是 Windows �
 * 界面顶部的平台横幅只在**有降级项**时出现，点右上角的 ℹ️ 可以看到本平台的完整能力清单。
 
 完整的平台矩阵、打包方式与验证证据见 `docs/zh-Hans/CROSS_PLATFORM.md`。
+
+#### 在 Linux / macOS 上安装与启动
+
+Linux 与 macOS 的发布物是**免安装的压缩包**（自包含：连着界面运行时和后端解释器一起打包，
+目标机器不需要预装 .NET 或 Python）：
+
+| 平台 | 下载的文件 | 解压后怎么启动 |
+| --- | --- | --- |
+| Linux x86-64 | `EchoDesk-<版本>-linux-x64.tar.gz` | `./start.sh` |
+| macOS（Apple 芯片） | `EchoDesk-<版本>-osx-arm64.tar.gz` | `./start.sh` |
+
+四步：
+
+1. **下载并校验**。`SHA256SUMS.txt` 与压缩包在同一处；校验一下能确认下载过程没有损坏：
+   Linux 用 `sha256sum -c SHA256SUMS.txt`，macOS 用 `shasum -a 256 -c SHA256SUMS.txt`。
+2. **解压**：`tar -xzf EchoDesk-<版本>-linux-x64.tar.gz`，得到一个
+   `EchoDesk-<版本>-linux-x64/` 目录（下面叫"发布目录"）。
+3. **启动**：`cd` 进发布目录后执行 `./start.sh`。若权限位在解压时丢了，
+   先执行一次 `chmod +x start.sh app/EchoDesk`。脚本本身只做一件事：
+   把 `app/EchoDesk` 接管过去，因此你在终端里按 Ctrl-C 或关窗口都能正常结束它。
+4. **首次启动会稍慢**（十几秒）：界面要拉起后端、后端要初始化。看到顶部状态从
+   "正在连接后端"变成"就绪"或"后端已就绪，但没有加载模型"就说明起来了。
+
+发布目录里有什么：
+
+* `start.sh` —— 启动入口（等价于直接跑 `app/EchoDesk`）；
+* `app/` —— 程序本体，`app/backend/` 是自带解释器的后端；
+  `app/backend/run-backend.sh` 可以**单独手动启动后端**，用于排障
+  （日常使用不必手动跑，界面会自己拉起它，并在窗口关闭时收干净）；
+* `docs/`、`README*.md`、`EULA*.md` 等 —— 文档与许可证；
+* 用户数据（对话记录、设置、语言包、常用语）**不在这里**，按上一节的平台惯例存放。
+
+两个平台各自可能遇到的拦路问题：
+
+* **macOS 的 Gatekeeper**：当前发布物**未做代码签名与公证**（需要维护者的 Apple 开发者证书
+  与账号）。首次打开可能被系统拦下。两种做法都行：在访达里右键点 `app/EchoDesk`
+  选「打开」并确认；或者在终端执行 `xattr -dr com.apple.quarantine app/EchoDesk`。
+  发布目录里的 `SIGNING.txt` 写明了这一步还差什么、维护者需要哪条命令。
+* **Linux 上没有图形环境**：界面是 GUI 程序，需要 X11 或 Wayland。纯服务器上想验证后端能不能跑，
+  用 `app/backend/run-backend.sh` 手动启动，按 JSON 行协议与它交互
+  （每行一个 JSON 请求，响应也是一行一个 JSON）。
 
 ---
 
@@ -369,7 +410,7 @@ MCP、插件、模型管理与本地推理），只有两项能力是 Windows �
 ### 4.4 定时
 勾选「启用定时」并填写每天的执行时刻（如 `09:00, 18:30`）。
 定时任务由后端线程在程序运行期间触发；若希望开机自动执行，
-请把「Start-EchoDesk-v0.2.1.lnk」复制到系统「启动」文件夹（`Win+R` → `shell:startup`）。
+请把「Start-EchoDesk-v0.2.2.lnk」复制到系统「启动」文件夹（`Win+R` → `shell:startup`）。
 
 ### 4.5 登录态
 第一次需要你在浏览器里手动登录一次，程序会把登录态存到

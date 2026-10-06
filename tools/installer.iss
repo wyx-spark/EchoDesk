@@ -60,7 +60,10 @@
 ; ============================================================================
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.1"
+  ; 默认版本由 tools\make_installer.ps1 的 -MyAppVersion 覆盖（它从 backend\version.py 取）。
+  ; 这里的字面量只是"不传参直接编译"时的兜底，保持与 version.py 一致：
+  ; v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本。
+  #define MyAppVersion "0.2.2"
 #endif
 
 ; 允许覆盖源目录，便于在不重建发布目录的情况下做脚本语法自检。

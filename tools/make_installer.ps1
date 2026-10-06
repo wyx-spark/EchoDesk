@@ -6,7 +6,7 @@
     把已经构建好的发布目录（默认 publish\EchoDesk-v<版本>）打成**一份**真正的
     Windows 安装程序：
 
-      EchoDesk-v0.2.1-Setup.exe
+      EchoDesk-v0.2.2-Setup.exe
 
     【只有一份，且不含模型】（v0.2.1 默认模型切换一轮改动）
       此前是两份（含模型版 / -NoModel 版）。现在一律只出一份、文件名不带变体后缀，
@@ -80,7 +80,8 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = "0.2.1",
+    # 口径：v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本（见 backend\version.py）。
+    [string]$Version = "0.2.2",
     [string]$ReleaseDir = "",
     [string]$OutDir = "",
     [string]$ISCC = "",

@@ -75,13 +75,19 @@ def imported_top_level() -> dict[str, set[str]]:
 
 
 def declared() -> set[str]:
-    """requirements.txt 里声明的包名（规范化成 import 名）。"""
+    """requirements.txt 里声明的包名（规范化成 import 名）。
+
+    先按 ` @ ` 切掉**直接 URL**（macOS 上 llama-cpp-python 是按 URL 钉死的，
+    见 requirements.txt 的说明）；不切的话这一行会被当成一个叫
+    "llama-cpp-python @ https://…" 的包名，于是 `llama_cpp` 被判成"未声明"。
+    """
     names = set()
     with open(REQUIREMENTS, "r", encoding="utf-8") as fh:
         for line in fh:
             line = line.split("#", 1)[0].strip()
             if not line or line.startswith("-"):
                 continue
+            line = re.split(r"\s@\s", line, maxsplit=1)[0].strip()
             name = re.split(r"[<>=!\[;]", line, maxsplit=1)[0].strip()
             if name:
                 names.add(name)

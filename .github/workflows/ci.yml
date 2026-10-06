@@ -282,8 +282,11 @@ jobs:
   #      拉起 Python 后端 → ready 握手 → platform/capability 动作往返"。
   #
   # 注意：后端依赖里的 pywin32 已加 `sys_platform == "win32"` 标记，非 Windows 上不装；
-  # llama-cpp-python 若在某平台没有轮子会退回源码编译（慢，故该步骤允许失败并给出告警，
-  # 后续自检步骤会因依赖缺失而跳过 —— 跳过会被明确打印，不是静默通过）。
+  # llama-cpp-python 在 macOS 上**按直接 URL 钉死 0.3.30 的 metal 轮子**
+  # （上游 cpu 索引的 macOS arm64 轮子实测全线损坏，见 backend/requirements.txt 的说明），
+  # Linux/Windows 走 cpu 索引的预编译轮子 —— 三个平台都不需要现场编译。
+  # 这条流水线只验证"前端能编译 + 能跑协议"；**完整发布物**由下面的
+  # cross-platform-release 作业产出（v0.2.1 跨平台-2 任务四）。
   # -------------------------------------------------------------------------
   cross-platform:
     name: Cross-platform build (${{ matrix.label }})
@@ -376,6 +379,87 @@ jobs:
         with:
           name: avalonia-${{ matrix.rid }}
           path: out/avalonia/${{ matrix.rid }}
+          retention-days: 7
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
+  # 三平台完整发布物（v0.2.1 跨平台-2 任务四 / 任务五）
+  #
+  # 与上面的 cross-platform 作业的分工：
+  #   * cross-platform          —— 证明「Avalonia 前端的 TFM 是平台中立的、能编译能自检」；
+  #   * cross-platform-release  —— 真的**打出三个平台的完整发布物**（前端 + 包内解释器后端）。
+  #
+  # 为什么后端必须在**目标平台**上构建：standalone 形态虽然不需要编译 Python，
+  # 但 `pip install --platform …` 交叉下载的依赖与解释器归档的**平台契合度**
+  # 只有在目标平台上真跑一次才算验证过。开发机是 Windows，Linux/macOS 这两格
+  # 没有 CI 就永远只是"理论上应该行"。
+  #
+  # 产物：dist/EchoDesk-<版本>-<rid>/ 与 .tar.gz（macOS/Linux）或 .zip（Windows）、
+  #       dist/SHA256SUMS.txt、dist/manifest.json（内含 backend_mode=standalone 与
+  #       实际装上的依赖版本清单 —— 记录真相而不是记录"我们要求了什么"）。
+  # -------------------------------------------------------------------------
+  cross-platform-release:
+    name: Cross-platform release (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows x64
+            rid: win-x64
+          - os: ubuntu-latest
+            label: Linux x64
+            rid: linux-x64
+          - os: macos-latest
+            label: macOS arm64
+            rid: osx-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build standalone backend
+        shell: pwsh
+        run: |
+          # python-build-standalone 解释器 + 目标平台的预编译依赖，产出 publish/backend-<rid>/。
+          # 这一步不做交叉编译：runner 的真实平台就是目标平台。
+          python tools/pack_backend.py --platform ${{ matrix.rid }}
+
+      - name: Verify standalone backend
+        shell: pwsh
+        run: |
+          # 四层校验：结构 / 启动脚本语法 / 解释器真能跑 / 真能走一遍 JSON 行协议
+          # （拉起 app/main.py → 读 ready → 发 platform 动作 → 断言 platform.kind）。
+          # 这是"后端在这个平台上到底能不能起来"的唯一自动化证据。
+          python tools/check_standalone_backend.py --platform ${{ matrix.rid }}
+
+      - name: Package complete release
+        shell: pwsh
+        run: |
+          # 前端（Avalonia 自包含）+ 后端（standalone）合成 dist/EchoDesk-<版本>-<rid>/。
+          # --backend-mode standalone 是**硬指定**：不给它退回 PyInstaller 的机会，
+          # 否则 Windows 那一格会打出一个与 Linux/macOS 结构不同的包。
+          python tools/pack_crossplatform.py --rid ${{ matrix.rid }} --backend-mode standalone
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.rid }}
+          path: |
+            dist/EchoDesk-*-${{ matrix.rid }}.tar.gz
+            dist/EchoDesk-*-${{ matrix.rid }}.zip
+            dist/SHA256SUMS.txt
+            dist/manifest.json
           retention-days: 7
           if-no-files-found: error
 

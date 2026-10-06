@@ -444,6 +444,57 @@ python tools\test_file_parsers.py     # smoke test for parsing six formats (exit
 python tools\gen_licenses.py          # regenerate the third-party licence list
 ```
 
+**Version control and pushing (SSH only)**:
+
+Since v0.2.1 cross-platform-2, every Git remote operation in this repository uses
+**SSH, never HTTPS**. HTTPS pushes to GitHub were repeatedly interrupted on the
+maintainer's machine (`RPC failed; HTTP 408` / `Recv failure: Connection was reset`);
+SSH is not affected by the same network path and needs no credentials per push.
+Three places must agree:
+
+```powershell
+# 1) the remote must be SSH (scp form user@host:path)
+git remote -v
+git remote set-url origin git@github.com:VoidEntropiaStudio/EchoDesk.git
+
+# 2) one-command push (branch + tag; preflight covers the working tree, the tag
+#    invariant, the installer hash and SSH connectivity)
+& tools\push_release.ps1 -DryRun     # check only
+& tools\push_release.ps1             # check, then push
+
+# 3) the SSH gate (already part of verify_release.ps1; -TestConnection really dials GitHub)
+& tools\check_git_ssh.ps1 -TestConnection
+```
+
+`push_release.ps1` **asserts** that the remote is SSH: an HTTPS remote fails the
+preflight outright and prints the `git remote set-url` fix, instead of pushing anyway
+and reporting a confusing transport error later. The gate pins all three places
+(remote, script default, documentation examples) so a later edit cannot drift back.
+
+**Key setup and troubleshooting** (on failure the script prints the same list):
+
+```powershell
+Get-ChildItem $env:USERPROFILE\.ssh          # id_ed25519 and id_ed25519.pub must exist
+ssh-add $env:USERPROFILE\.ssh\id_ed25519     # hand it to ssh-agent
+ssh -T git@github.com                        # expect: Hi <username>! You've successfully authenticated
+```
+
+Add the **full contents** of `id_ed25519.pub` (the public key, never the private one)
+to GitHub under Settings → SSH and GPG keys. **If your network blocks port 22**, use
+443 by adding this to `~/.ssh/config`:
+
+```
+Host github.com
+  HostName ssh.github.com
+  Port 443
+  User git
+```
+
+**Web links stay HTTPS**: Issues / Discussions / Releases / Advisories links must remain
+`https://` (an SSH address cannot be opened in a browser). The gate checks git operation
+examples only, not web links, and it does not rewrite the historical notes under
+`records/`, which record what was true at the time.
+
 ---
 
 ## 6. Extension points

@@ -1,0 +1,66 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="EchoDesk.Avalonia.Views.SettingsWindow"
+        Title="EchoDesk 设置"
+        Width="980" Height="720" MinWidth="760" MinHeight="560"
+        Background="{DynamicResource AppBackgroundBrush}">
+  <!--
+    设置窗口骨架（v0.2.1 跨平台-2 任务一，第 1 个迁移模块）。
+
+    与 WPF 版的对应关系：WPF 的 SettingsWindow 是一个 1321 行的 XAML + 六个分部类；
+    这里改成「骨架 + 每页一个 UserControl」（Views/Settings/*），页签由代码按
+    ISettingsPage 注册。理由见 Views/Settings/ISettingsPage.cs 顶部注释。
+
+    骨架只负责四件事：页签容器、窗口状态记忆、底部状态与保存、主题/语言即时生效。
+  -->
+  <DockPanel LastChildFill="True">
+
+    <!-- 底部：状态行 + 保存/关闭（与 WPF 版同位置、同 AutomationId） -->
+    <Border DockPanel.Dock="Bottom"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="0,1,0,0"
+            Padding="14,10">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+        <TextBlock x:Name="LoadStateText" Grid.Column="0" VerticalAlignment="Center"
+                   FontSize="12" Opacity="0.8"
+                   AutomationProperties.AutomationId="LoadStateText" />
+        <TextBlock x:Name="SaveHintText" Grid.Column="1" VerticalAlignment="Center"
+                   HorizontalAlignment="Right" Margin="12,0" FontSize="12" Opacity="0.7"
+                   TextTrimming="CharacterEllipsis"
+                   AutomationProperties.AutomationId="SaveHintText" />
+        <Button x:Name="SaveButton" Grid.Column="2" Padding="18,6"
+                AutomationProperties.AutomationId="SaveButton" />
+        <Button x:Name="CloseButton" Grid.Column="3" Padding="18,6" Margin="8,0,0,0"
+                AutomationProperties.AutomationId="CloseButton" />
+      </Grid>
+    </Border>
+
+    <!-- 顶部：设置页静态提示（页签名由 TabControl 提供） -->
+    <Grid ColumnDefinitions="*,Auto" RowDefinitions="*">
+
+      <!-- 页签容器：由代码注册 ISettingsPage，未迁移的页签显示明确的"未迁移"说明 -->
+      <TabControl x:Name="Tabs" Grid.Row="0" Grid.Column="0" Padding="6,4,6,0"
+                  AutomationProperties.AutomationId="Tabs" />
+
+      <!-- 字段帮助面板（任务书要求：字段帮助可被探针检查；WPF 版在自动化页用得最多） -->
+      <Border x:Name="FieldHelpPanel" Grid.Row="0" Grid.Column="1" Width="320"
+              IsVisible="False" Margin="0,6,12,12"
+              Background="{DynamicResource CardBackgroundBrush}"
+              BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+              CornerRadius="6" Padding="12,10">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <StackPanel Spacing="6">
+            <TextBlock x:Name="FieldHelpTitle" FontWeight="Bold" FontSize="13"
+                       TextWrapping="Wrap" />
+            <TextBlock x:Name="FieldHelpBody" FontSize="12" TextWrapping="Wrap" Opacity="0.85" />
+            <TextBlock x:Name="FieldHelpExample" FontSize="11" TextWrapping="Wrap"
+                       FontFamily="Consolas,Menlo,monospace" Opacity="0.8" />
+            <Button x:Name="FieldHelpCloseButton" HorizontalAlignment="Left" Padding="10,3"
+                    FontSize="11" />
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+
+    </Grid>
+  </DockPanel>
+</Window>

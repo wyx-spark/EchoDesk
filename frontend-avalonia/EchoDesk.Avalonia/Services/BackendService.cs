@@ -54,6 +54,15 @@ public sealed class BackendLaunch
 
     /// <summary>是否走"解释器 + main.py"路径（未打包的开发/源码运行）。</summary>
     public bool IsScriptMode { get; init; }
+
+    /// <summary>
+    /// 额外的子进程环境变量（v0.2.1 跨平台-2 任务二）。
+    /// 目前只有"包内 standalone Python"用它注入 PYTHONPATH —— 依赖装在
+    /// `backend/site-packages/`，与解释器**并排**而不是合并进解释器的 site-packages，
+    /// 所以必须显式告诉解释器去哪找它们。
+    /// </summary>
+    public IReadOnlyDictionary<string, string> ExtraEnvironment { get; init; }
+        = new Dictionary<string, string>();
 }
 
 /// <summary>启动结果。失败不抛异常 —— 跨平台后"后端缺失"是可预期的正常状态，要能显示给用户。</summary>
@@ -178,6 +187,13 @@ public sealed class BackendService : IDisposable
                 return new BackendLaunch { Executable = candidate, Args = Array.Empty<string>(), WorkDirectory = Path.GetDirectoryName(candidate)! };
         }
 
+        // 包内 standalone Python（v0.2.1 跨平台-2 任务二）：后端随包携带一个可重定位的
+        // CPython，因此**不需要**在目标平台上编译出可执行文件。必须排在"向上找
+        // main.py"之前 —— 发布树里也有 app/ 目录，顺序反了会在开发布局下选错目标。
+        BackendLaunch? bundled = TryBundledStandalone(dir);
+        if (bundled is not null)
+            return bundled;
+
         // 源码运行：找 main.py
         string? scratch = dir;
         for (int depth = 0; depth < 6 && !string.IsNullOrEmpty(scratch); depth++)
@@ -209,6 +225,50 @@ public sealed class BackendService : IDisposable
             scratch = Path.GetDirectoryName(scratch.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         }
         return null;
+    }
+
+    /// <summary>
+    /// 包内 standalone Python 的后端布局（v0.2.1 跨平台-2 任务二，由 tools/pack_backend.py 产出）：
+    ///   <c>backend/python/**</c>        随包携带的 CPython（目标机**无需**安装 Python）
+    ///   <c>backend/site-packages/**</c> pip 交叉下载的依赖（与解释器并排，不合并进去）
+    ///   <c>backend/app/**</c>          后端代码（backend/ 的内容）
+    ///
+    /// 与 PyInstaller 布局（<c>backend/EchoDeskBackend[.exe]</c>）互不干扰：两者都在时
+    /// 优先用可执行文件 —— 那是 Windows 正式交付形态，经过完整验证。
+    ///
+    /// **为什么前端直接调解释器，而不是调 run-backend.bat / run-backend.sh**：
+    /// 中间多一层 shell 会让"停止后端"变成"杀掉 shell，Python 还活着"，
+    /// 而前端是按子进程管理后端的（killed 判定、退出码、stdin/stdout 管道）。
+    /// 启动脚本仍然提供，用途是给人手动启动/调试。
+    /// </summary>
+    private static BackendLaunch? TryBundledStandalone(string dir)
+    {
+        string backendDir = Path.Combine(dir, "backend");
+        string python = PlatformInfo.Current.IsWindows
+            ? Path.Combine(backendDir, "python", "python.exe")
+            : Path.Combine(backendDir, "python", "bin", "python3");
+        string appDir = Path.Combine(backendDir, "app");
+        string script = Path.Combine(appDir, PlatformInfo.Current.BackendScriptName);
+        if (!File.Exists(python) || !File.Exists(script))
+            return null;
+
+        string sitePackages = Path.Combine(backendDir, "site-packages");
+        var env = new Dictionary<string, string>
+        {
+            // 依赖在前、后端代码在后：这样 app/ 里的模块不会意外遮蔽第三方包
+            // （后端目录是扁平的一堆 .py，出现过同名风险的地方要小心）。
+            ["PYTHONPATH"] = sitePackages + Path.PathSeparator + appDir,
+            // 发布目录可能只读；.pyc 又属于"运行期残留"（卸载清单与门禁都要处理它）。
+            ["PYTHONDONTWRITEBYTECODE"] = "1",
+        };
+        return new BackendLaunch
+        {
+            Executable = python,
+            Args = new[] { "-u", script },
+            WorkDirectory = appDir,
+            IsScriptMode = true,
+            ExtraEnvironment = env,
+        };
     }
 
     private static BackendLaunch BuildLaunchFromPath(string path)
@@ -284,6 +344,10 @@ public sealed class BackendService : IDisposable
         };
         foreach (string arg in _launch.Args)
             startInfo.ArgumentList.Add(arg);
+
+        // 包内 standalone Python 的额外环境（PYTHONPATH 等），见 TryBundledStandalone。
+        foreach (var pair in _launch.ExtraEnvironment)
+            startInfo.Environment[pair.Key] = pair.Value;
 
         // Python 侧编码：POSIX/C locale 下 Python 默认用 ASCII 编码 stdout，
         // 中文与 emoji 会直接抛 UnicodeEncodeError 把后端打死（Windows 上无害）。

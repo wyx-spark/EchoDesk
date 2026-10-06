@@ -18,7 +18,7 @@
 #   model_path 指过去（config.user.json 是后端的覆盖层，优先于 config.json），
 #   跑完在收尾处删掉这两样东西。不给就用被测程序自带的模型（有的话）。
 param(
-    [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.1\app\EchoDesk.exe",
+    [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.2\app\EchoDesk.exe",
     [int]$ReadyTimeoutSec = 180,
     [string]$ThinkingModel = "",
     [switch]$KeepOpen

@@ -1,6 +1,6 @@
 # EchoDesk 常见问题与故障排除（FAQ）
 
-适用版本：v0.2.1
+适用版本：v0.2.2
 English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 
 ---
@@ -9,7 +9,7 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 
 | 我想做的事 | 怎么做 |
 | --- | --- |
-| 启动程序 | 安装程序装的：用开始菜单（或桌面）快捷方式；zip 免安装版：双击程序文件夹内的「Start-EchoDesk-v0.2.1.lnk」（没有就先运行一次 `install-complete.bat`） |
+| 启动程序 | 安装程序装的：用开始菜单（或桌面）快捷方式；zip 免安装版：双击程序文件夹内的「Start-EchoDesk-v0.2.2.lnk」（没有就先运行一次 `install-complete.bat`） |
 | 查看全部指令 | 在输入框输入 `/help` |
 | 让 AI 读一份文档 | 把文件拖进窗口，或 `/file C:\路径\合同.docx` |
 | 让 AI 自己算数、查已上传的文件 | 切到智能体模式：`/mode agent`、`/mode 3` 或 `/agent on`，模型会自己决定调哪个工具（见「三、对话模式、Agent 与 MCP」） |
@@ -130,7 +130,7 @@ v0.2.1 起这种情况下程序**照常运行**——不退出、不阻塞、也
 - 小模型（0.5B~1.5B）的思考质量本身不稳定，换个更大的量化版本通常更划算。
 
 ### 想让 EchoDesk 开机自动启动
-把「Start-EchoDesk-v0.2.1.lnk」复制到系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）即可。
+把「Start-EchoDesk-v0.2.2.lnk」复制到系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）即可。
 配置项 `automation.start_with_windows` **尚未实现**：程序目前不会读取它，写成 `true` 也不会开机自启，
 请用上面的快捷方式办法（定时自动化要求程序在运行）。
 
@@ -310,7 +310,7 @@ results\2026-09-23\合同审查\     ← 顶层文件夹名、日期、任务名
 
 下载过程中的临时副本保存在系统临时目录的专用子目录，处理完即清理。
 若把「保存结果到本地文件」关掉，就不写 `result.txt` 与截图，只把结果输出到日志。
-「保存位置」留空时，结果根目录在**便携版外层**（`EchoDesk-v0.2.1\results\`），不在 `app\` 里；
+「保存位置」留空时，结果根目录在**便携版外层**（`EchoDesk-v0.2.2\results\`），不在 `app\` 里；
 想让用户数据整体换位置（含 `ui_state.json`、`snippets.json`），可以设置环境变量 `ECHODESK_DATA`。
 保存位置、顶层文件夹名与任务名称的填法见 [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md)。
 

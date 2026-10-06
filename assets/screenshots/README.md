@@ -1,6 +1,6 @@
 # Screenshots
 
-**v0.2.1 ships without screenshots.** This folder exists so that the convention is unambiguous and
+**v0.2.2 ships without screenshots.** This folder exists so that the convention is unambiguous and
 no document has to link to an image that is not there yet: README and the user guides describe
 *what to look at on screen* instead of embedding pictures.
 
@@ -30,7 +30,7 @@ Because personal data leaks easily through screenshots, they are reviewed like c
 
 # 截图
 
-**v0.2.1 不随包提供截图。** 本目录存在的意义是把约定写明确，让任何文档都不必链接一张还不存在的图片：
+**v0.2.2 不随包提供截图。** 本目录存在的意义是把约定写明确，让任何文档都不必链接一张还不存在的图片：
 README 与用户手册改为说明*屏幕上该看什么*，而不是嵌入图片。
 
 后续版本会在这里放入界面预览，例如：

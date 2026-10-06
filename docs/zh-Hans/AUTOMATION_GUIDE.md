@@ -79,7 +79,7 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)。
 | 保存结果到本地文件 `save_results` | 可选 | 取消勾选就只做试运行，不写任何结果文件 | `true` |
 | 任务名称 `task_name` | 可选 | 结果文件夹第三层的名字（也就是这批任务叫什么） | `auto-task` |
 | 顶层文件夹名 `results_root_name` | 可选 | 结果根目录下的第一层文件夹名 | `results` |
-| 保存位置 `results_location` | 可选 | 结果放到别的盘或共享目录时填；留空 = 用户数据目录（便携版**外层** `EchoDesk-v0.2.1\`，不在 `app\` 里；可用环境变量 `ECHODESK_DATA` 改到别处） | 空（= 用户数据目录） |
+| 保存位置 `results_location` | 可选 | 结果放到别的盘或共享目录时填；留空 = 用户数据目录（便携版**外层** `EchoDesk-v0.2.2\`，不在 `app\` 里；可用环境变量 `ECHODESK_DATA` 改到别处） | 空（= 用户数据目录） |
 | 启用定时 `schedule_enabled` | 可选 | 每天在固定时刻自动跑一轮 | `false` |
 | 每天执行时刻 `schedule_times` | 可选 | 具体时刻，多个用逗号隔开 | `09:00` |
 | 登录态数据目录 `login_state_dir` | 可选 | 自动化向浏览器保存登录状态用的独立目录（不与日常浏览器共用）；留空 = 程序目录下的 `browser_profile`。多个目标站点可共用一个 | 空 |
@@ -103,7 +103,7 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)。
 | `headless` | 只读 | 自动化**只支持有头模式**（浏览器窗口可见）；写 `true` 会被强制纠正为 `false` 并打印警告 | `false` |
 | `browser_channel` | 可选 | 用哪个浏览器打开页面，默认系统 Edge | `msedge` |
 | `audit_log_file` | 可选 | 审计日志文件：每个任务一行 JSON 记录 | `automation_log.jsonl` |
-| `start_with_windows` | **尚未实现** | 该字段目前不会被程序读取，写 `true` 也不会开机自启；开机自启请把 `Start-EchoDesk-v0.2.1.lnk` 复制到系统「启动」文件夹（`Win+R` → `shell:startup`） | `false` |
+| `start_with_windows` | **尚未实现** | 该字段目前不会被程序读取，写 `true` 也不会开机自启；开机自启请把 `Start-EchoDesk-v0.2.2.lnk` 复制到系统「启动」文件夹（`Win+R` → `shell:startup`） | `false` |
 | `safety_version` / `safety_accepted_at` | 只读 | 安全协议版本与你同意的时间，由程序自动记录，用于审计 | `1.0` / 空 |
 
 ---
@@ -203,7 +203,7 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)。
 
 - **通俗说明**：打开「启用定时」后，填每天什么时候自动跑一轮，多个时间用逗号隔开，例如 `09:00, 18:30`。
 - **注意**：定时任务由程序后台线程调度，**要求 EchoDesk 保持运行**；时间格式非法（如 `25:00`）会被自动剔除。
-- 想开机自动启动，只能把「Start-EchoDesk-v0.2.1.lnk」放进系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）。
+- 想开机自动启动，只能把「Start-EchoDesk-v0.2.2.lnk」放进系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）。
   **配置项 `start_with_windows` 尚未实现**：程序不会读取它，改成 `true` 也没有效果。
 
 ### 3.12 安全协议与自动化总开关
@@ -292,7 +292,7 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)。
 
 ### 4.3 跑完之后的结果目录长什么样
 
-保存位置留空时，结果就在**用户数据目录**（便携版里就是外层 `EchoDesk-v0.2.1\`，
+保存位置留空时，结果就在**用户数据目录**（便携版里就是外层 `EchoDesk-v0.2.2\`，
 也就是快捷方式所在的那一层，**不在 `app\` 里**）：
 
 ```
@@ -409,7 +409,7 @@ EchoDesk results
 | 解析 `.doc` / `.ppt` 报错或提示需要 WPS | 旧版二进制格式（及加密文档）通过 COM 读取，本机没装 WPS/Office | 安装 WPS 或 Microsoft Office；或先把文件另存为 `.docx` / `.pptx` 再上传 |
 | 模型太慢，或提示「模型返回为空」 | 「任务指令」太长、`llm_max_tokens` 太大，或附件内容过长触发分段摘要 | 把任务指令压到 4–6 个要点；把 `llm_max_tokens` 调到 384–512；换更小的量化模型（如 Q4_K_M） |
 | 结果目录没有生成 / 提示无法写入 | 「保存位置」填了一个不存在或没有写权限的路径（网络盘、系统受保护目录） | 把「保存位置」留空用用户数据目录（便携版外层），或改成本机可写目录（如 `D:\合同审核结果`）；确认磁盘未满 |
-| 到了定时时间没有自动跑 | 程序没有在运行（定时由程序后台线程调度）；或时间格式非法被剔除；或没打开「启用定时」 | 保持 EchoDesk 运行；把「Start-EchoDesk-v0.2.1.lnk」放进 `shell:startup` 实现开机自启；时间写成 `09:00` 这种两位小时格式 |
+| 到了定时时间没有自动跑 | 程序没有在运行（定时由程序后台线程调度）；或时间格式非法被剔除；或没打开「启用定时」 | 保持 EchoDesk 运行；把「Start-EchoDesk-v0.2.2.lnk」放进 `shell:startup` 实现开机自启；时间写成 `09:00` 这种两位小时格式 |
 | 想看某个任务到底做了什么（审计追溯） | 需要事后核对谁在什么时候处理了哪些文件 | 打开审计日志 `app\backend\automation_log.jsonl`，每个任务一行 JSON 记录（见第九节） |
 | 提示「未加载本地模型，无法生成摘要与审核意见」 | 还没选好/下载好本地模型 | 先在主窗口用 `/model list` 与 `/model 文件名` 选好模型 |
 | 提示「未安装 playwright，请先执行 pip install playwright」 | 源码方式运行且缺少依赖（打包版自带） | 源码运行请执行 `pip install -r backend\requirements.txt` 后重启 |
@@ -473,7 +473,7 @@ EchoDesk results
   文件正文、模型输出、Cookie 一律不写入。
 - **结果落盘位置**：结果只写到你配置的结果根目录（`结果根目录\日期\任务名称\`），
   原始附件、`result.txt`、失败截图都留在该目录内；下载过程中的临时副本处理完即清理。
-  不填「保存位置」时，结果根目录就是**用户数据目录**（便携版外层 `EchoDesk-v0.2.1\`，不在 `app\` 里）；
+  不填「保存位置」时，结果根目录就是**用户数据目录**（便携版外层 `EchoDesk-v0.2.2\`，不在 `app\` 里）；
   想让用户数据整体换位置（含 `ui_state.json`、`snippets.json`、`results\`），
   可在启动前设置环境变量 `ECHODESK_DATA`。
 - **去重记录**：`processed_file`（默认 `automation_processed.json`）里只保存任务链接的哈希，

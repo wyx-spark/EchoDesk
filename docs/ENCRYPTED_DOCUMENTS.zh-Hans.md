@@ -6,7 +6,7 @@
 > This is the Chinese translation of the English [`ENCRYPTED_DOCUMENTS.md`](ENCRYPTED_DOCUMENTS.md).
 > If the two ever disagree, the English version prevails.
 
-版本：v0.2.1
+版本：v0.2.2
 出品方：熵寂工作室（VoidEntropiaStudio）
 适用对象：在已安装企业加密客户端的电脑上，用 EchoDesk 读取 Office 文档（Word / Excel / PowerPoint）的使用者
 

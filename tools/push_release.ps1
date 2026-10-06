@@ -1,26 +1,33 @@
 # 把发布提交与标签推到 GitHub（关联仓库用的一站式脚本）
 #
-# 为什么需要它：`git remote add` + `git push` 这两步必须在**有凭据的机器**上做，
-# 而凭据只属于维护者。这个脚本把"推之前该核对的都核对掉"做成自动检查，
+# **统一使用 SSH**（v0.2.1 跨平台-2 任务书全局约定）：本脚本只走 SSH，
+# 不再支持、也不再提示 HTTPS / PAT 做法。原因：HTTPS 推送到 GitHub 在这台机器上
+# 反复失败（`RPC failed; HTTP 408` / `Recv failure: Connection was reset`），
+# 而 SSH 不受同一网络干扰，且不需要每次输凭据。
+# 脚本会**断言** remote 是 SSH 形式：发现 HTTPS 直接判为预检失败并给出改法，
+# 而不是"照样推、失败了再说"。
+#
+# 为什么需要它：`git remote add` + `git push` 这两步必须在**有私钥的机器**上做，
+# 而私钥只属于维护者。这个脚本把"推之前该核对的都核对掉"做成自动检查，
 # 让维护者只需要执行一条命令，而不是先去翻记录确认标签指向哪个提交、安装程序
 # 是不是这一版、工作区干不干净。
 #
-# 它**不**保存、不读取、不打印任何令牌：认证交给 git 自己的凭据机制
-# （凭据管理器 / SSH 密钥 / 一次性 PAT）。
+# 它**不**保存、不读取、不打印任何密钥，也不调用凭据管理器：认证完全交给
+# ssh-agent 与本机 `~/.ssh` 下的密钥。
 #
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File tools\push_release.ps1 -DryRun     # 只做检查
 #   powershell -ExecutionPolicy Bypass -File tools\push_release.ps1             # 检查后推送
 #   powershell -ExecutionPolicy Bypass -File tools\push_release.ps1 -RemoteName upstream
 #
-# 推送失败（没有凭据）时的三种做法见脚本末尾提示，或 docs\zh-Hans\DEVELOPER.md。
+# 推送失败时的**SSH 排查做法**见脚本末尾提示，或 docs\zh-Hans\DEVELOPER.md。
 [CmdletBinding()]
 param(
     [string]$RemoteName = "origin",
-    [string]$RemoteUrl = "https://github.com/VoidEntropiaStudio/EchoDesk.git",
+    [string]$RemoteUrl = "git@github.com:VoidEntropiaStudio/EchoDesk.git",
     [string]$Branch = "master",
     [string]$Tag = "v0.2.1",
-    [string]$Installer = "publish\EchoDesk-v0.2.1-Setup.exe",
+    [string]$Installer = "publish\EchoDesk-v0.2.2-Setup.exe",
     [string]$Sums = "publish\SHA256SUMS.txt",
     # 期望哈希。**留空表示以 SHA256SUMS.txt 为准**（构建时生成的那份清单是唯一真相），
     # 只在需要"把这一版钉死在某个哈希上"时才显式传 -ExpectedSha256。
@@ -42,6 +49,9 @@ function Write-Ok([string]$Text) { Write-Host "    [OK] $Text" -ForegroundColor 
 function Write-Warn2([string]$Text) { Write-Host "    [!]  $Text" -ForegroundColor Yellow }
 
 $problems = @()
+
+# SSH 目标（v0.2.1 跨平台-2 全局约定：本仓库所有 Git 远端操作统一用 SSH）。
+$SshTarget = "git@github.com"
 
 # ---------- 1. 工作区干净 ----------
 Write-Step "检查工作区"
@@ -106,8 +116,8 @@ if (-not (Test-Path $Installer)) {
     }
 }
 
-# ---------- 4. 远端 ----------
-Write-Step "检查远端 $RemoteName"
+# ---------- 4. 远端（必须 SSH） ----------
+Write-Step "检查远端 $RemoteName（统一 SSH）"
 $remotes = @(git remote)
 if ($remotes -notcontains $RemoteName) {
     if ($DryRun) {
@@ -118,7 +128,60 @@ if ($remotes -notcontains $RemoteName) {
     }
 } else {
     $url = (git remote get-url $RemoteName).Trim()
-    Write-Ok "远端已存在：$RemoteName -> $url"
+    # SSH 在本仓库有两种合法写法：scp 形态 `user@host:path` 与 `ssh://user@host/path`，
+    # 两者都含 `@`。HTTPS 形式（http:// 或 https://）一律判预检失败 —— 这是任务书的
+    # 全局约定，且实测 HTTPS 在这台机器上反复被中断（HTTP 408 / 连接重置）。
+    if ($url -like "http://*" -or $url -like "https://*") {
+        $problems += "远端 $RemoteName 是 HTTPS 形式：$url`n    本仓库统一用 SSH，改法（一条命令）：`n        git remote set-url $RemoteName $RemoteUrl"
+    } elseif ($url -notlike "*@*") {
+        $problems += "远端 $RemoteName 不像 SSH 形式（缺少 user@host）：$url`n    期望：$RemoteUrl"
+    } else {
+        Write-Ok "远端是 SSH：$RemoteName -> $url"
+    }
+}
+
+# ---------- 4b. SSH 连通性 ----------
+Write-Step "检查 SSH 连通性（$SshTarget）"
+# 为什么提前到这里：HTTPS 时代的失败是"推到最后一步才发现链路不通"，一次完整预检全白做；
+# 把连通性提前，失败点就落在"网络 / 密钥"这个真正的原因上，而不是含糊的 push 报错。
+#
+# BatchMode=yes  → 只用密钥，绝不提示口令（否则会静默挂住等人输入）；
+# ConnectTimeout → 连不上就快速失败，不无限等待。
+#
+# 为什么走 `cmd /c` 并把输出重定向进临时文件，而不是 `& ssh ... 2>&1`：
+# Windows PowerShell 5.1 会把**原生命令写到 stderr 的每一行**包装成 NativeCommandError
+# 记录（ssh 成功时也会往 stderr 写 "does not provide shell access"），于是屏幕上出现
+# 红字 "ssh.exe : Hi …" —— 明明是成功，看起来却像失败。`*>` 重定向也不行，错误记录会被
+# 格式化后照样写进文件。交给 cmd 做重定向，PowerShell 就看不到那条 stderr 了。
+# （这与记录里"Python 的 stderr 让退出码看起来是 1"是同一类问题的同一个解法。）
+$sshStdout = [System.IO.Path]::GetTempFileName()
+$sshCmdLine = 'ssh -o BatchMode=yes -o ConnectTimeout=10 -T ' + $SshTarget + ' > "' + $sshStdout + '" 2>&1'
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& cmd /c $sshCmdLine | Out-Null
+$sshCode = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
+$sshOutput = ((Get-Content -LiteralPath $sshStdout -Raw -ErrorAction SilentlyContinue) -replace "`r?`n", " ").Trim()
+Remove-Item -LiteralPath $sshStdout -Force -ErrorAction SilentlyContinue
+# 注意：`ssh -T git@github.com` 成功后**退出码是 1**（GitHub 不提供 shell），
+# 因此判据是输出里的 successfully authenticated，而不是退出码。
+if ($sshOutput -match "successfully authenticated") {
+    Write-Ok "SSH 认证通过：$sshOutput"
+} else {
+    $problems += @"
+SSH 到 $SshTarget 未通过（退出码 $sshCode）：
+        $sshOutput
+    排查顺序：
+        1) 有没有密钥：      Get-ChildItem `$env:USERPROFILE\.ssh
+        2) 公钥加到 GitHub： Settings -> SSH and GPG keys（用 id_ed25519.pub 的内容）
+        3) 手动测一次：      ssh -T $SshTarget
+           期望输出 Hi <用户名>! You've successfully authenticated
+        4) 网络挡 22 端口：  在 `$env:USERPROFILE\.ssh\config 里加
+             Host github.com
+               HostName ssh.github.com
+               Port 443
+               User git
+"@
 }
 
 # ---------- 5. 汇总 ----------
@@ -137,11 +200,12 @@ if ($DryRun) {
 }
 
 # ---------- 6. 推送 ----------
-Write-Step "推送到 $RemoteName"
-# 没有凭据时**立刻失败**，不在这里挂住等人输入：
-#   * GIT_TERMINAL_PROMPT=0 关掉 git 自己的终端提问；
-#   * GCM_INTERACTIVE=never 关掉 Git Credential Manager 的交互（少了这一条，
-#     GCM 会弹窗或长时间阻塞 —— 实测脚本会静默挂住 5 分钟以上，看不出在等什么）。
+Write-Step "推送到 $RemoteName（SSH）"
+# 没有密钥时**立刻失败**，不在这里挂住等人输入：
+#   * GIT_TERMINAL_PROMPT=0 关掉 git/ssh 自己的终端提问（否则会静默挂住，
+#     看不出在等什么口令 —— 实测踩过 5 分钟以上的静默等待）；
+#   * GCM_INTERACTIVE=never 关掉 Git Credential Manager 的交互。改用 SSH 后 GCM 不再
+#     参与认证，这一条只是防止"某处仍配着 HTTPS helper"时弹出凭据窗口。
 $env:GIT_TERMINAL_PROMPT = "0"
 $env:GCM_INTERACTIVE = "never"
 $failed = $false
@@ -153,21 +217,24 @@ if (-not $failed) {
 }
 
 if ($failed) {
-    # SSH 地址在运行时拼出来：仓库门禁 tools\check_feedback.ps1 会拦下任何
-    # "邮箱形态"的字面量（用户名、at 符号、域名连写），目的是不让人邮箱混进开源仓库，
-    # 而 git 的 SSH 写法恰好长得一样 —— 这是同一条规则下的误报。
-    # 与其把发布门禁放松（那是发布前最后一道闸，宁可严），不如在打印时拼装。
-    $sshHost = "github" + ".com"
-    $sshUrl = "git" + "@" + $sshHost + ":VoidEntropiaStudio/EchoDesk.git"
-    Write-Host "`n!! 推送失败（通常是本机没有 GitHub 凭据）。三种做法：" -ForegroundColor Red
-    Write-Host "   1) 凭据管理器：直接 git push（本脚本就是这样），弹出的窗口里用**个人访问令牌**当密码；"
-    Write-Host "      令牌只需 repo 权限，用完可在 GitHub 上随时吊销。"
-    Write-Host "   2) 一次性令牌（不写进任何文件）："
-    Write-Host "        git push https://<用户名>@$sshHost/VoidEntropiaStudio/EchoDesk.git $Branch"
-    Write-Host "      提示输入密码时粘贴令牌即可。"
-    Write-Host "   3) SSH：生成密钥 -> 把公钥加到 GitHub -> "
-    Write-Host "        git remote set-url $RemoteName $sshUrl"
-    Write-Host "`n   注意：如果仓库是**私有**的，匿名访问会要求用户名，这是正常的（不是仓库不存在）。"
+    Write-Host "`n!! 推送失败（SSH 链路问题）。按顺序排查：" -ForegroundColor Red
+    Write-Host "   1) 先测连通性（本脚本第 4b 步已测过；那步是绿的再往下看）："
+    Write-Host "        ssh -T $SshTarget"
+    Write-Host "      期望：Hi <用户名>! You've successfully authenticated"
+    Write-Host "   2) 密钥存在但没被用上："
+    Write-Host "        Get-ChildItem `$env:USERPROFILE\.ssh        # 要有 id_ed25519 与 id_ed25519.pub"
+    Write-Host "        ssh-add `$env:USERPROFILE\.ssh\id_ed25519   # 交给 ssh-agent"
+    Write-Host "   3) 公钥没加到 GitHub：Settings -> SSH and GPG keys -> New SSH key，"
+    Write-Host "      粘贴 id_ed25519.pub 的**全文**（不是私钥）。"
+    Write-Host "   4) 网络挡了 22 端口（公司网/防火墙常见）：改走 443，在 `$env:USERPROFILE\.ssh\config 里加"
+    Write-Host "        Host github.com"
+    Write-Host "          HostName ssh.github.com"
+    Write-Host "          Port 443"
+    Write-Host "          User git"
+    Write-Host "   5) remote 还是 HTTPS（本脚本第 4 步会拦下，但手工推送可能绕过）："
+    Write-Host "        git remote set-url $RemoteName $RemoteUrl"
+    Write-Host "`n   注意：这条路**不再**使用 HTTPS 或个人访问令牌 —— HTTPS 推送在本机反复被中断" -ForegroundColor Yellow
+    Write-Host "   （RPC failed; HTTP 408 / Recv failure: Connection was reset），SSH 是既定做法。" -ForegroundColor Yellow
     exit 1
 }
 
@@ -175,5 +242,5 @@ Write-Ok "已推送分支 $Branch 与标签 $Tag"
 Write-Host "`n建议接下来（在 GitHub 网页上）：" -ForegroundColor Cyan
 Write-Host "   * 确认默认分支是 $Branch（Settings -> Branches）；"
 Write-Host "   * 用 .github\workflows\release.yml 建一个草稿 Release，附件用 publish\ 下的"
-Write-Host "     EchoDesk-v0.2.1-Setup.exe + SBOM.json + THIRD_PARTY_LICENSES(.zh-Hans).md + SHA256SUMS.txt。"
+Write-Host "     EchoDesk-v0.2.2-Setup.exe + SBOM.json + THIRD_PARTY_LICENSES(.zh-Hans).md + SHA256SUMS.txt。"
 exit 0

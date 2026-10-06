@@ -23,7 +23,7 @@
 
     发布物结构（修复七：应用本体隔离到 app\，外层只留快捷方式、用户数据与文档；
     发布任务书「全局要求一」要求文件名/目录名全为英文）：
-      publish\EchoDesk-v0.2.1\
+      publish\EchoDesk-v0.2.2\
       ├─ (无 .lnk —— 快捷方式由安装程序在目标机器上创建)
       ├─ results\                    自动化结果（相对工作目录生成，按 日期\任务名\ 分层）
       ├─ ui_state.json               界面状态（首次运行时生成）
@@ -130,7 +130,9 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = "0.2.1",
+    # 默认版本（决定输出目录名 publish\EchoDesk-v<Version>）。
+    # 口径：v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本。见 backend\version.py 的说明。
+    [string]$Version = "0.2.2",
     [switch]$IncludeModels,
     [string]$MigrateFrom = "",
     [switch]$SkipBackend,
@@ -1014,7 +1016,7 @@ if ($Sign) {
     这里**故意不在发布目录里预先生成 .lnk**（v0.2.1 发布复核时的修正）。
     原因（两条，都是硬性的）：
       1) Windows 快捷方式是**绝对路径**。在构建机上生成的 .lnk 里记的是
-         `C:\Users\<维护者>\Desktop\...\publish\EchoDesk-v0.2.1\app\EchoDesk.exe`，
+         `C:\Users\<维护者>\Desktop\...\publish\EchoDesk-v0.2.2\app\EchoDesk.exe`，
          随发布物分发出去既**泄露构建机的个人绝对路径**（发布任务书「全局要求五」
          把"个人绝对路径"列为绝对禁止项），在用户机器上又必然是一个死链接。
          实测：这一项连 `check_feedback.ps1` 都没拦到 —— 它扫的是文本文件，
