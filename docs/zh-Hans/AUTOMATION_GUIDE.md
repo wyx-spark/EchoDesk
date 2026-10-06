@@ -5,8 +5,27 @@
 
 不需要懂编程，也不需要懂网页。凡是必须说清楚原理的地方，指南里都会给出「点哪里、填什么」的具体做法。
 
-English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)。
+English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)（本文为英文版的中文参考译本，如两者有歧义，**以英文版为准**）。
 相关文档：[用户手册](USER_GUIDE.md) · [常见问题](FAQ.md) · [技能开发指南](SKILL_GUIDE.md)。
+
+> **⚠️ 本功能仅 Windows 可用：macOS 与 Linux 上不提供浏览器自动化。**
+>
+> 自动化通过 Playwright 驱动**本机的 Microsoft Edge**（有头运行、复用登录态），它的配置页也属于
+> Windows 专属界面。**macOS 与 Linux 上完全不提供该功能**：自动化页面不会出现，请求该能力时回答是
+> `Windows-only capability (this is not a missing dependency)`（仅 Windows 提供该能力，不是依赖缺失问题）
+> ——这是刻意的：**不是**装坏了、**不是**少装了一个包，也**不是** `pip install` 能解决的问题。
+>
+> **替代做法**（按大多数人的实际顺序）：用 **MCP Server** 把浏览器操作暴露成智能体可调用的工具；
+> 用**技能**完成同一套流程并按内置自动化的格式返回结果；或者**在一台 Windows 机器上跑完自动化，
+> 把结果目录导出**到你实际工作的机器上。下载之后的环节——解析、检索、审核、报告——全部保持跨平台，
+> 所以在 Windows 上产出的 `results/` 目录拿到哪个平台都能看。
+>
+> 因此本文其余部分说明的是 **Windows** 上的配置界面。真正因平台而不同的路径（首要是结果保存位置）
+> 会三平台并列给出。权威说明见 [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md) 第 3.2 与第 5 节。
+
+**本文里的路径怎么写**：程序目录内部的路径统一用正斜杠（`app/backend/config.json`）——macOS 与 Linux 上
+就是这样显示的，Windows 上同一条路径写作 `app\backend\config.json`。真正因平台而不同的只有**结果根目录**，
+因为各平台把用户数据放在各自约定的位置（见 3.9 与 4.3）。
 
 ---
 
@@ -16,11 +35,15 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)。
 
 | 准备项 | 说明 | 怎么确认 |
 | --- | --- | --- |
+| **Windows** —— 浏览器自动化仅 Windows 提供（见上方提醒；macOS/Linux 上不提供本功能） | 自动化驱动的是 Windows 上那套 Edge，配置页本身也属于 Windows 专属界面 | macOS/Linux 上没有可配置的东西——请改用上方列出的替代做法 |
 | 本机已安装 Microsoft Edge | 自动化用系统里的 Edge 打开网页（配置项 `browser_channel` 默认为 `msedge`），不使用无头模式 | 能正常打开 Edge 即可 |
 | 已下载本地模型 | 生成审核意见要用本地模型；没模型时会提示「未加载本地模型，无法生成摘要与审核意见」 | 主窗口 `/status` 能看到已加载的模型 |
 | 本机能正常访问那个网页系统 | 包括登录、权限、内网/VPN；自动化只是替你点鼠标，它访问不了的地方也到不了 | 用 Edge 手动打开一次任务列表页，确认能看到任务 |
 
 如果任务里的附件是 `.doc` / `.ppt` 这类旧格式，或需要读取加密文档，本机还要装有 **WPS 或 Microsoft Office**（用于 COM 读取）。
+这一项同样是 **Windows 专属**：在没有 COM 接口的平台上，程序会明确提示「该能力仅 Windows 提供」，
+替代做法是在 Windows 机器上用 WPS/Office 另存为未加密文件或 `.docx`、通过 MCP/技能转换，
+或安装一个自带该格式解析器的技能——**不会**让你去装 WPS 再重试，那在那些平台上纯属白费功夫。
 
 ### 1.2 自动化到底做了什么
 
@@ -79,17 +102,18 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)。
 | 保存结果到本地文件 `save_results` | 可选 | 取消勾选就只做试运行，不写任何结果文件 | `true` |
 | 任务名称 `task_name` | 可选 | 结果文件夹第三层的名字（也就是这批任务叫什么） | `auto-task` |
 | 顶层文件夹名 `results_root_name` | 可选 | 结果根目录下的第一层文件夹名 | `results` |
-| 保存位置 `results_location` | 可选 | 结果放到别的盘或共享目录时填；留空 = 用户数据目录（便携版**外层** `EchoDesk-v0.2.2\`，不在 `app\` 里；可用环境变量 `ECHODESK_DATA` 改到别处） | 空（= 用户数据目录） |
+| 保存位置 `results_location` | 可选 | 结果放到别的盘或共享目录时填；留空 = 用户数据目录（Windows 即便携版**外层** `EchoDesk-v0.2.2/`，不在 `app/` 里；macOS 是 `~/Library/Application Support/EchoDesk/`；Linux 是 `$XDG_DATA_HOME/EchoDesk/` 或 `~/.local/share/EchoDesk/`；三平台都可用环境变量 `ECHODESK_DATA` 改到别处） | 空（= 用户数据目录） |
 | 启用定时 `schedule_enabled` | 可选 | 每天在固定时刻自动跑一轮 | `false` |
 | 每天执行时刻 `schedule_times` | 可选 | 具体时刻，多个用逗号隔开 | `09:00` |
 | 登录态数据目录 `login_state_dir` | 可选 | 自动化向浏览器保存登录状态用的独立目录（不与日常浏览器共用）；留空 = 程序目录下的 `browser_profile`。多个目标站点可共用一个 | 空 |
 | 登录后才出现的元素 `login_check_selector` | 可选 | 判断「登录了没有」最可靠的办法：填一个只在登录后存在的元素；可用「🎯 可视化选取」点出来 | 空 |
 | 登录页网址关键词 `login_url_keywords` | 可选 | 没填上一项时的兜底判断：地址里出现这些词就认为跳到登录页了 | `login, signin, sign-in, logon, sso, passport, cas, auth` |
 
-### 2.3 只在 `app\backend\config.json` 里改的高级字段
+### 2.3 只在 `app/backend/config.json` 里改的高级字段
 
 这些字段设置窗口暂时没有对应的输入框。**改之前先关掉 EchoDesk**，改完保存、重新启动即可生效
-（文件是 UTF-8，用记事本或 VS Code 都行）。
+（文件是 UTF-8，三平台上用记事本、VS Code 或任何编辑器都行——文件在各平台上的相对路径相同，
+只是分隔符不同：macOS/Linux 是 `app/backend/config.json`，Windows 是 `app\backend\config.json`）。
 
 | 配置字段 | 是否必填 | 作用 | 默认值 |
 | --- | --- | --- | --- |
@@ -103,7 +127,7 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)。
 | `headless` | 只读 | 自动化**只支持有头模式**（浏览器窗口可见）；写 `true` 会被强制纠正为 `false` 并打印警告 | `false` |
 | `browser_channel` | 可选 | 用哪个浏览器打开页面，默认系统 Edge | `msedge` |
 | `audit_log_file` | 可选 | 审计日志文件：每个任务一行 JSON 记录 | `automation_log.jsonl` |
-| `start_with_windows` | **尚未实现** | 该字段目前不会被程序读取，写 `true` 也不会开机自启；开机自启请把 `Start-EchoDesk-v0.2.2.lnk` 复制到系统「启动」文件夹（`Win+R` → `shell:startup`） | `false` |
+| `start_with_windows` | **尚未实现** | 该字段目前不会被程序读取，写 `true` 也不会开机自启；开机自启请把 `Start-EchoDesk-v0.2.2.lnk` 复制到系统「启动」文件夹（`Win+R` → `shell:startup`）。这条路径是 Windows 专属的；macOS 与 Linux 本版没有内置开机自启（自己用 `./start.sh` 启动，或接进桌面环境自带的「登录项」/自启动机制） | `false` |
 | `safety_version` / `safety_accepted_at` | 只读 | 安全协议版本与你同意的时间，由程序自动记录，用于审计 | `1.0` / 空 |
 
 ---
@@ -183,11 +207,27 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)。
 | 字段 | 通俗说明 | 示例 |
 | --- | --- | --- |
 | 顶层文件夹名 | 结果根目录下的第一层文件夹叫什么 | `results` |
-| 保存位置 | 想把结果放到别的盘或共享目录时填这里，留空就用用户数据目录（便携版**外层**，即快捷方式所在文件夹） | `D:\合同审核结果` |
+| 保存位置 | 想把结果放到别的盘或共享目录时填这里，留空就用用户数据目录（Windows 上即便携版**外层**，也就是快捷方式所在文件夹） | `D:\合同审核结果`（Windows）· `/Users/<用户名>/Documents/合同审核结果`（macOS）· `/home/<用户名>/合同审核结果`（Linux） |
+
+留空时，结果根目录就落在用户数据目录里，而各平台放的位置不同：
+
+```
+# Windows —— 程序目录本身（便携版就是 app/ 所在的外层目录）；
+#            若就装在 %APPDATA%\EchoDesk 下，那它就是 %APPDATA%\EchoDesk
+C:\Users\<用户名>\EchoDesk-v0.2.2\results\
+%APPDATA%\EchoDesk\results\
+
+# macOS
+~/Library/Application Support/EchoDesk/results/
+
+# Linux（未设置 XDG_DATA_HOME 时为 ~/.local/share/EchoDesk/results/）
+$XDG_DATA_HOME/EchoDesk/results/
+```
 
 界面下方会实时预览完整目录结构，例如：
 `目录结构：结果根目录 / YYYY-MM-DD / 任务名称 / result.txt + 原始文件`。
-点「打开结果目录」可以直接用资源管理器打开结果根目录；点「浏览…」可以挑一个文件夹当保存位置。
+点「打开结果目录」会用系统的文件管理器打开结果根目录（Windows 是资源管理器，macOS 是访达，
+Linux 是桌面环境自带的文件管理器）；点「浏览…」可以挑一个文件夹当保存位置。
 
 ### 3.10 运行参数
 
@@ -205,6 +245,9 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)。
 - **注意**：定时任务由程序后台线程调度，**要求 EchoDesk 保持运行**；时间格式非法（如 `25:00`）会被自动剔除。
 - 想开机自动启动，只能把「Start-EchoDesk-v0.2.2.lnk」放进系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）。
   **配置项 `start_with_windows` 尚未实现**：程序不会读取它，改成 `true` 也没有效果。
+- 这条快捷方式路径**从名字到机制都是 Windows 专属**（`.lnk` 文件 + `shell:startup` 文件夹）。
+  macOS 与 Linux 本版没有内置开机自启：自己用 `./start.sh` 启动，或把启动命令接进桌面环境自己的机制
+  （macOS 的「登录项」、Linux 桌面环境的自启动项或 systemd 用户单元）。
 
 ### 3.12 安全协议与自动化总开关
 
@@ -242,13 +285,13 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)。
 | 任务指令 | `提取合同金额、付款方式与期限、违约金比例、双方主体、签署日期；标注超限风险` |
 | 任务名称 | `合同审查` |
 | 顶层文件夹名 | `results` |
-| 保存位置 | 留空（= 用户数据目录，即便携版外层文件夹）；想放 D 盘就填 `D:\合同审核结果` |
+| 保存位置 | 留空（= 用户数据目录，即各平台自己的那个位置）；想放别处：Windows 填 `D:\合同审核结果`，macOS 填 `/Users/<用户名>/Documents/合同审核结果`，Linux 填 `/home/<用户名>/合同审核结果` |
 | 最多任务数 / 页面超时 / 重试次数 | `20` / `30000` / `1` |
 | 任务去重、保存结果到本地文件 | 都勾选 |
 
 ### 4.2 等价的 `config.json` 片段
 
-下面是 `app\backend\config.json` 里真实的结构（节选自 `automation` 段，可以直接照着改；
+下面是 `app/backend/config.json` 里真实的结构（节选自 `automation` 段，可以直接照着改；
 改之前请先关闭 EchoDesk）：
 
 ```json
@@ -290,23 +333,31 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)。
 }
 ```
 
+关于文件夹名：`results_root_name` 的默认值是 `results`，是 ASCII 名称，这样任何语言版本的安装产出的
+磁盘路径都一致，文件夹名也不会带来编码问题。（v0.2.1 之前这个默认值是中文「批量处理结果」；改名是为了
+让程序创建的所有名字都是英文——迁移影响见发布说明。）
+可以改名，例如改成 `batch-results`，但不要用文件系统不允许出现在名字里的字符
+（Windows：`\ / : * ? " < > |` 以及结尾的点和空格；macOS/Linux：`/`），也别让名字以 `-` 开头——
+shell 会把它当成选项而不是名字。
+
 ### 4.3 跑完之后的结果目录长什么样
 
-保存位置留空时，结果就在**用户数据目录**（便携版里就是外层 `EchoDesk-v0.2.2\`，
-也就是快捷方式所在的那一层，**不在 `app\` 里**）：
+保存位置留空时，结果就在**用户数据目录**里——Windows 上是外层 `EchoDesk-v0.2.2/`
+（也就是快捷方式所在的那一层，**不在 `app/` 里**），macOS/Linux 上是 3.9 列出的平台目录：
 
 ```
-<外层目录>\
-└── results\                      ← 顶层文件夹名（可自定义）
-    └── 2026-09-23\                    ← 运行日期（同一天多次运行合并到同一层）
-        └── 合同审查\                   ← 任务名称（重名自动加 -1、-2）
+<用户数据目录>/
+└── results/                      ← 顶层文件夹名（可自定义）
+    └── 2026-09-23/                    ← 运行日期（同一天多次运行合并到同一层）
+        └── 合同审查/                   ← 任务名称（重名自动加 -1、-2）
             ├── 年度采购合同.pdf          ← 下载下来的原始附件（重名自动加序号）
             ├── 补充协议.docx
             ├── result.txt                 ← 本轮全部任务的摘录与审核意见（纯文本）
             └── failure-screenshot-task2-20260923_101010.png   ← 只在任务失败时出现
 ```
 
-`result.txt` 是**纯文本**（记事本能直接看，没有 `#`、`**`、`|` 这类符号），内容大致是：
+目录里的分隔符跟着运行平台走（Windows 是 `\`，macOS/Linux 是 `/`），文件夹名三平台一致。
+`result.txt` 是**纯文本**（文本编辑器能直接看，没有 `#`、`**`、`|` 这类符号），内容大致是：
 
 ```text
 EchoDesk results
@@ -316,7 +367,7 @@ EchoDesk results
 开始时间：2026-09-23T09:12:03
 任务列表：https://oa.example.com/task/list
 任务指令：提取合同金额、付款方式与期限、违约金比例、双方主体、签署日期；标注超限风险
-结果目录：<外层目录>\results\2026-09-23\合同审查
+结果目录：<用户数据目录>/results/2026-09-23/合同审查
 
 [1/3] 年度采购合同
 --------------------------
@@ -337,7 +388,7 @@ EchoDesk results
 自动化完成：成功 1 个，跳过 0 个，失败 1 个（共发现 3 个任务，处理上限 20 个）。
 ```
 
-> 📷 屏幕上该看什么：资源管理器里展开的「results\日期\任务名称」三级目录——原始附件与
+> 📷 屏幕上该看什么：文件管理器里展开的「results/日期/任务名称」三级目录——原始附件与
 > `result.txt` 放在同一个文件夹中。
 
 ---
@@ -406,13 +457,13 @@ EchoDesk results
 | 附件下载超时 / 一直卡在下载 | 内网慢、文件大，或下载走的是新的浏览器标签页 | 把「页面超时(ms)」调大到 `60000`；确认手动点击该附件能正常下载；必要时把「重试次数」设为 `2` |
 | 「详情页没有符合后缀要求的文件链接」 | 附件的扩展名不在「需要预览的文件后缀」里 | 把实际后缀补进该字段（如 `ofd`、`wps`）；用向导第 3 步确认附件确实被匹配到 |
 | 附件下载了但解析结果为空 | 扫描件 PDF 没有文本层，或文件损坏 | 扫描件需要 OCR（本版未内置），先用 WPS/Office 另存为可复制文本的格式；也可把该任务单独手动处理 |
-| 解析 `.doc` / `.ppt` 报错或提示需要 WPS | 旧版二进制格式（及加密文档）通过 COM 读取，本机没装 WPS/Office | 安装 WPS 或 Microsoft Office；或先把文件另存为 `.docx` / `.pptx` 再上传 |
+| 解析 `.doc` / `.ppt` 报错或提示需要 WPS | 旧版二进制格式（及加密文档）通过 COM 读取，本机没装 WPS/Office | 安装 WPS 或 Microsoft Office；或先把文件另存为 `.docx` / `.pptx` 再上传。COM 这条路径和这条建议都是 **Windows 专属**；非 Windows 上该能力会作为"平台不提供"报出（而不是"依赖缺失"）——替代做法见本文开头的提醒 |
 | 模型太慢，或提示「模型返回为空」 | 「任务指令」太长、`llm_max_tokens` 太大，或附件内容过长触发分段摘要 | 把任务指令压到 4–6 个要点；把 `llm_max_tokens` 调到 384–512；换更小的量化模型（如 Q4_K_M） |
-| 结果目录没有生成 / 提示无法写入 | 「保存位置」填了一个不存在或没有写权限的路径（网络盘、系统受保护目录） | 把「保存位置」留空用用户数据目录（便携版外层），或改成本机可写目录（如 `D:\合同审核结果`）；确认磁盘未满 |
-| 到了定时时间没有自动跑 | 程序没有在运行（定时由程序后台线程调度）；或时间格式非法被剔除；或没打开「启用定时」 | 保持 EchoDesk 运行；把「Start-EchoDesk-v0.2.2.lnk」放进 `shell:startup` 实现开机自启；时间写成 `09:00` 这种两位小时格式 |
-| 想看某个任务到底做了什么（审计追溯） | 需要事后核对谁在什么时候处理了哪些文件 | 打开审计日志 `app\backend\automation_log.jsonl`，每个任务一行 JSON 记录（见第九节） |
+| 结果目录没有生成 / 提示无法写入 | 「保存位置」填了一个不存在或没有写权限的路径（网络盘、系统受保护目录） | 把「保存位置」留空用用户数据目录（各平台位置见 3.9），或改成本机可写目录（Windows 如 `D:\合同审核结果`，macOS 如 `/Users/<用户名>/Documents/合同审核结果`，Linux 如 `/home/<用户名>/合同审核结果`）；确认磁盘未满 |
+| 到了定时时间没有自动跑 | 程序没有在运行（定时由程序后台线程调度）；或时间格式非法被剔除；或没打开「启用定时」 | 保持 EchoDesk 运行；Windows 上把「Start-EchoDesk-v0.2.2.lnk」放进 `shell:startup` 实现开机自启（macOS/Linux 需用桌面环境自带的「登录项」/自启动机制，本版没有内置）；时间写成 `09:00` 这种两位小时格式 |
+| 想看某个任务到底做了什么（审计追溯） | 需要事后核对谁在什么时候处理了哪些文件 | 打开审计日志 `app/backend/automation_log.jsonl`，每个任务一行 JSON 记录（见第九节） |
 | 提示「未加载本地模型，无法生成摘要与审核意见」 | 还没选好/下载好本地模型 | 先在主窗口用 `/model list` 与 `/model 文件名` 选好模型 |
-| 提示「未安装 playwright，请先执行 pip install playwright」 | 源码方式运行且缺少依赖（打包版自带） | 源码运行请执行 `pip install -r backend\requirements.txt` 后重启 |
+| 提示「未安装 playwright，请先执行 pip install playwright」 | 源码方式运行且缺少依赖（打包版自带） | 源码运行请执行 `pip install -r backend/requirements.txt` 后重启（macOS/Linux 上 `python`/`pip` 不在 PATH 时用 `python3 -m pip install -r backend/requirements.txt`；路径分隔符在那些平台是 `/`，Windows 是 `\`） |
 
 ---
 
@@ -466,15 +517,17 @@ EchoDesk results
   自动化总开关才可能生效；否则后端会强制把它关回去，并记录提示。
 - **全程可见**：自动化**只使用有头模式**（浏览器窗口始终可见），不使用无头静默运行；
   遇到验证码或二次验证会暂停等你手动处理，超时则停止本轮。
-- **审计日志**：默认写 `app\backend\automation_log.jsonl`，**每个任务一行 JSON 记录**，字段包括
+- **审计日志**：默认写 `app/backend/automation_log.jsonl`，**每个任务一行 JSON 记录**，字段包括
   时间、事件类型（`run_start` / `task` / `run_end` / `manual_required`）、任务链接、
   **仅文件名**（不含文件内容）、结果（`ok` / `failed` / `skipped`）、失败原因（截断）、
   以及安全协议版本与同意时间。日志中的 Token、密码等值会自动脱敏；
   文件正文、模型输出、Cookie 一律不写入。
-- **结果落盘位置**：结果只写到你配置的结果根目录（`结果根目录\日期\任务名称\`），
+- **结果落盘位置**：结果只写到你配置的结果根目录（`结果根目录/日期/任务名称/`），
   原始附件、`result.txt`、失败截图都留在该目录内；下载过程中的临时副本处理完即清理。
-  不填「保存位置」时，结果根目录就是**用户数据目录**（便携版外层 `EchoDesk-v0.2.2\`，不在 `app\` 里）；
-  想让用户数据整体换位置（含 `ui_state.json`、`snippets.json`、`results\`），
+  不填「保存位置」时，结果根目录就是**用户数据目录**——Windows 上是 `app/` 旁边那个外层
+  `EchoDesk-v0.2.2/`，macOS 上是 `~/Library/Application Support/EchoDesk/`，
+  Linux 上是 `$XDG_DATA_HOME/EchoDesk/` 或 `~/.local/share/EchoDesk/`（见 3.9）；
+  想让用户数据整体换位置（含 `ui_state.json`、`snippets.json`、`results/`），
   可在启动前设置环境变量 `ECHODESK_DATA`。
 - **去重记录**：`processed_file`（默认 `automation_processed.json`）里只保存任务链接的哈希，
   用于下次跳过已处理的任务，不含网页内容。

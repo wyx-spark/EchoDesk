@@ -4,14 +4,24 @@ This guide explains how to write, submit and publish an EchoDesk skill (plugin),
 Chinese version: [`docs/zh-Hans/SKILL_GUIDE.md`](../zh-Hans/SKILL_GUIDE.md).
 To submit a skill, use the repository's "Skill submission" issue template.
 
+**Platforms.** A skill is pure Python, so it runs on **Windows, macOS and Linux** alike, and nothing in this
+guide is platform-specific: the paths below are written with forward slashes (`app/backend/skills/`), which is
+how they read on macOS and Linux — on Windows the same path uses backslashes (`app\backend\skills\`), and the
+program folder is wherever you installed or unpacked the bundle (`EchoDesk-v0.2.2/app/`). Two EchoDesk
+capabilities a skill can run into *are* platform-specific: reading WPS/Office **encrypted** documents through
+COM (legacy `.doc` / `.xls` included) and the enterprise-intranet browser automation are **Windows-only**.
+If your skill itself depends on something Windows-only — calling WPS through COM, say — say
+so plainly in the README (the marketplace shows it), because EchoDesk cannot make that component available on
+the other platforms. The full matrix is in [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md).
+
 ---
 
 ## 1. What a Skill Is
 
 A skill is a self-contained local extension package: one directory + a `skill.json` manifest + entry code.
 EchoDesk discovers skills through a GitHub topic, and once the user confirms, installs the skill into
-**`app\backend\skills\<技能id>\`** (inside `backend\` under the program directory) and registers it in
-`app\backend\skills_registry.json`.
+**`app/backend/skills/<技能id>/`** (inside `backend/` under the program directory) and registers it in
+`app/backend/skills_registry.json`.
 
 **It works as soon as it is installed**: the runtime loader **hot-reloads automatically** after a successful
 install, so the commands the skill declares appear in the command table and the command panel immediately —
@@ -115,7 +125,7 @@ load:
 
 After a successful load the loader also compares `capabilities.commands` with the commands actually
 registered: **declared but not registered**, or **registered but not declared**, both go to the warnings and to
-`app\backend\skills_dev.log` — this kind of silent inconsistency is the hardest thing to track down.
+`app/backend/skills_dev.log` — this kind of silent inconsistency is the hardest thing to track down.
 
 ---
 
@@ -178,11 +188,11 @@ A plugin can come from three sources, **in descending order of priority**:
 
 | Source | Location | Purpose |
 | --- | --- | --- |
-| Development directory | `app\backend\skills_dev\<plugin id>\` | day-to-day development: drop the directory in and it is picked up |
-| Local manifest | `app\backend\skills_local.json` | explicitly registered local plugins (including trust / refusal records) |
-| Installed | `app\backend\skills\<plugin id>\` + `skills_registry.json` | plugins installed from the skill marketplace |
+| Development directory | `app/backend/skills_dev/<plugin id>/` | day-to-day development: drop the directory in and it is picked up |
+| Local manifest | `app/backend/skills_local.json` | explicitly registered local plugins (including trust / refusal records) |
+| Installed | `app/backend/skills/<plugin id>/` + `skills_registry.json` | plugins installed from the skill marketplace |
 
-**Development flow**: put the plugin directory into `skills_dev\`, turn on developer mode on the "Developer"
+**Development flow**: put the plugin directory into `skills_dev/`, turn on developer mode on the "Developer"
 page of the Settings window, and click **🔄 Reload local plugins** after each code change. A plugin with the
 same id resolves to the copy in the development directory, so you can debug locally without first uninstalling
 the released version.
@@ -195,7 +205,7 @@ the released version.
 - **"Reload local plugins" reloads local sources only**: it unloads and reloads the plugins in `skills_dev/`
   and in the local manifest, while **installed plugins are left untouched** rather than being taken down and
   reinstalled wholesale (their runtime state survives too).
-- **Log**: loading, unloading, warnings and errors all go to `app\backend\skills_dev.log`; the "Developer" page
+- **Log**: loading, unloading, warnings and errors all go to `app/backend/skills_dev.log`; the "Developer" page
   of the Settings window lets you **view it (with a configurable last-N-lines limit), 🗑 clear it and export
   it**. A sensible troubleshooting order is: the log → is the manifest valid → are the dependencies present
   and are the versions satisfied.
@@ -205,7 +215,13 @@ the released version.
 
 ### 6.3 Manual validation and registry fields
 
-```powershell
+Run these from the skill's own directory. They are **plain Python**, so the same command line works in
+PowerShell or `cmd` on Windows, in Terminal on macOS and in a Linux shell — only the interpreter name can
+differ: use `python3` in place of `python` if your macOS/Linux system has no `python` on `PATH`. A portable
+bundle carries its own interpreter, so there you can call it directly:
+`app/backend/python/bin/python3` on macOS/Linux, `app\backend\python\python.exe` on Windows.
+
+```bash
 # 1) check that the manifest is valid (equivalent to the marketplace validation logic)
 python -c "import json;d=json.load(open('skill.json',encoding='utf-8'));print('bundle =',d.get('echodesk',{}).get('bundle'))"
 
@@ -213,7 +229,7 @@ python -c "import json;d=json.load(open('skill.json',encoding='utf-8'));print('b
 python -c "import importlib.util,pathlib;p=pathlib.Path('echodesk_skill/__init__.py');print('存在' if p.exists() else '缺失')"
 ```
 
-Registry fields for installation and uninstallation (`app\backend\skills_registry.json`):
+Registry fields for installation and uninstallation (`app/backend/skills_registry.json`):
 
 ```jsonc
 {
@@ -256,7 +272,7 @@ are usable as soon as the skill is installed (or reloaded after being dropped in
 extension points and how they are wired up is in the "Extension points" section of `docs/en/DEVELOPER.md`.
 
 **Q: The plugin is installed — why is its command missing?**
-A: Look at `app\backend\skills_dev.log` first. The most common cause is a dependency blocking it: a dependency
+A: Look at `app/backend/skills_dev.log` first. The most common cause is a dependency blocking it: a dependency
 that is not installed or is disabled, an unsatisfied version, or a program version below
 `echodesk.min_version` — each of those **refuses to load and states the reason**. Next, check that
 `capabilities.commands` matches the commands actually registered (a mismatch is warned about); note also that
@@ -270,5 +286,5 @@ satisfy the requirement".
 **Q: Can a plugin crash the whole program?**
 A: No. Plugin loading, unloading, registration and command execution all catch `BaseException`: raising
 `SystemExit` (a bare `sys.exit()` in a plugin, say) only aborts that step and does not take the backend
-process down. If the backend really did exit, please attach `app\backend\backend_crash.log` and
-`app\backend\skills_dev.log`.
+process down. If the backend really did exit, please attach `app/backend/backend_crash.log` and
+`app/backend/skills_dev.log`.

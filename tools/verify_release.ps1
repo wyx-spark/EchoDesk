@@ -1,3 +1,4 @@
+# 适用平台：顶层编排，内含 Windows 专属项（安装包/UI 探针）
 # EchoDesk 发布物验证编排（v0.2.1 修复版）
 #
 # 把"对着最终发布物跑一遍全部检查"固定成一条命令，避免人工漏项。
@@ -80,8 +81,10 @@ function Invoke-Native([string]$Name, [string]$Exe, [string[]]$CmdArgs) {
     return $log
 }
 
-function Invoke-Python([string]$Name, [string]$Script) {
-    return Invoke-Native $Name "python" @($Script)
+function Invoke-Python([string]$Name, [string]$Script, [string[]]$Extra = @()) {
+    # $Extra：给脚本传的附加参数（例如 --check）。加它是为了不必为"带参数跑一个 Python 门禁"
+    # 另写一段 Invoke-Native —— 那种重复写法正是先前各处参数不一致的来源。
+    return Invoke-Native $Name "python" (@($Script) + $Extra)
 }
 
 function Invoke-Check {
@@ -474,6 +477,30 @@ try {
     Invoke-Check "文档链接与编码" {
         Invoke-Native "文档链接" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
                                                "-File", "tools\check_docs_links.ps1")
+        "通过"
+    }
+
+    # v0.2.2 全面双语与三平台友好（任务一/五/七/八）新增的三条门禁。
+    # 三条都是纯标准库 Python，因此**三平台都能跑** —— CI 里也放在 ubuntu 那一格跑了一遍
+    # （见 .github/workflows/ci.yml 的 static-gates-linux），避免"为三平台准备的检查自己只能在 Windows 上跑"。
+    Invoke-Check "双语文档成对性与 .ps1 等价物登记（任务一/四）" {
+        Invoke-Python "双语审计" "tools\audit_repo.py" @("--check")
+        "通过"
+    }
+    Invoke-Check "三平台图标与桌面条目（任务七）" {
+        Invoke-Python "平台资源" "tools\gen_platform_icons.py" @("--check")
+        "通过"
+    }
+    Invoke-Check "配置示例（双语说明 + 三平台路径，任务五 5.1）" {
+        # 发布物里才会有 config.example.json；没构建过时脚本会明确打印"不存在，跳过"并以 0 退出。
+        Invoke-Python "配置示例" "tools\gen_config_example.py" @("--check", "config.example.json")
+        "通过"
+    }
+    Invoke-Check "换行符符合 .gitattributes（CRLF/LF）" {
+        # 这条是拿真实事故换来的（v0.2.2）：`.bat` 必须是 CRLF，否则 cmd.exe 解析 label 与续行会出错，
+        # 而**任何直接改写工作区文件的工具都会绕过 git 的规范化** —— 本轮就是被 Python 的
+        # 文本模式读 + newline="" 写转成 LF，导致发布构建在"元数据写入"这一步失败。
+        Invoke-Python "换行符" "tools\check_line_endings.py" @("--quiet")
         "通过"
     }
 

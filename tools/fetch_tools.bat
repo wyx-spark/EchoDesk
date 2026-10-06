@@ -1,4 +1,17 @@
 @echo off
+chcp 65001 >nul
+rem Platform: Windows only -- downloads the Windows build tools (rcedit, ISCC) into tools/.
+rem 适用平台：仅 Windows
+rem
+rem  **为什么第一行标注用英文**（v0.2.2 全面双语与三平台友好 实测踩的坑）：
+rem  cmd.exe 在 `chcp 65001` 生效**之前**是按传统代码页（简体中文 Windows 上是 GBK）
+rem  解析批处理文本的。把 UTF-8 中文放在代码页切换之前，多字节序列会把行尾吃掉，
+rem  后面的内容被当成命令执行 —— 本轮就是这么把发布构建弄失败的：
+rem      'get' is not recognized as an internal or external command
+rem      !! 发布构建失败：元数据写入 失败（退出码 1）
+rem  因此本文件（原先没有 chcp 行、却带着中文注释）补上了 `chcp 65001 >nul`：
+rem  在它**之后**的中文注释是安全的，之前的不是。门禁 tools/audit_repo.py --check
+rem  会检查"非 ASCII 是否出现在 chcp 之前"。
 rem ============================================================================
 rem  下载 EchoDesk 构建所需的第三方命令行工具（rcedit）
 rem

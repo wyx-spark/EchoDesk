@@ -1,3 +1,4 @@
+# 适用平台：调用 Inno Setup 编译器（Windows 专属工具）
 <#
 .SYNOPSIS
     EchoDesk 安装程序构建（Inno Setup 6）—— 取代原来的 7-Zip 自解压包方案。

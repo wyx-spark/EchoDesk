@@ -17,12 +17,13 @@ body:
         - 文档 / Documentation: `docs/<locale>/`（如 `docs/ja/`）
 
         提交前请先运行完整性检查工具（任务 3.5 提供）：
-        Run the completeness checker before submitting:
+        Run the completeness checker before submitting (provided by task 3.5):
         `python tools/check_lang.py --locale <locale>`
 
         语言优先级见研发任务书 3.2：P0 简体中文 / 英语，P1 繁体中文 / 日语，
         P2 韩语 / 德语 / 法语，P3 西班牙语 / 葡萄牙语（巴西）。
-        Priority: P0 zh-Hans/en, P1 zh-Hant/ja, P2 ko/de/fr, P3 es/pt-BR.
+        Language priorities (development task brief 3.2): P0 zh-Hans/en, P1 zh-Hant/ja,
+        P2 ko/de/fr, P3 es/pt-BR.
 
   - type: dropdown
     id: locale
@@ -48,7 +49,7 @@ body:
     attributes:
       label: 语言代码 / Locale code
       description: 若上一题选了「其他语言」，请填写准确的 locale 代码（将作为文件名与目录名）。/ Fill in when "Other" was selected.
-      placeholder: "例如 it（意大利语）、ru（俄语）"
+      placeholder: "例如 it（意大利语）、ru（俄语）/ e.g. it (Italian), ru (Russian)"
     validations:
       required: false
 
@@ -62,7 +63,7 @@ body:
           required: false
         - label: 后端提示（`backend/lang/<locale>.json`）/ Backend message pack
           required: false
-        - label: 文档（`docs/<locale>/`：用户手册、FAQ、技能开发指南、自动化配置填写指南）/ Documentation
+        - label: 文档（`docs/<locale>/`：用户手册、FAQ、技能开发指南、自动化配置填写指南）/ Documentation (user guide, FAQ, skill development guide, automation configuration guide under `docs/<locale>/`)
           required: false
 
   - type: input
@@ -73,9 +74,10 @@ body:
         已完成的比例（以 `python tools/check_lang.py --locale <locale>` 的输出为准；
         文档按章节数估算即可）。未完成的部分会按 `en → zh-Hans → 键名` 回退，
         不会导致界面报错，因此可以分批提交。
-        Based on the checker output (estimate by section count for docs). Missing keys fall back
-        to `en → zh-Hans → key name`, so partial work is safe to merge.
-      placeholder: "例如：前端 100%、后端 100%、文档 3/5 篇"
+        The share that is done, based on the checker output (estimate docs by section count).
+        Missing keys fall back to `en → zh-Hans → key name`, so nothing breaks in the UI
+        and partial work can be submitted in batches.
+      placeholder: "例如：前端 100%、后端 100%、文档 3/5 篇 / e.g. frontend 100%, backend 100%, docs 3/5"
     validations:
       required: true
 
@@ -104,6 +106,8 @@ body:
       placeholder: |
         例如：翻译了 frontend/Resources/Lang/ja.json 全部键；
         Automation 统一译为「自動化」；"result.txt" 等文件名保持不变。
+        e.g. translated every key in frontend/Resources/Lang/ja.json; "Automation" is
+        always rendered as 「自動化」; file names such as "result.txt" are unchanged.
     validations:
       required: true
 

@@ -1,3 +1,4 @@
+# 适用平台：WPF UI 自动化探针（Windows 专属）
 # EchoDesk 前端 UI 探针（研发验证 / 回归测试）
 #
 # 覆盖：

@@ -1,7 +1,33 @@
 # EchoDesk 常见问题与故障排除（FAQ）
 
 适用版本：v0.2.2
-English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
+English version: [`docs/en/FAQ.md`](../en/FAQ.md)（本文为英文版的中文参考译本，如两者有歧义，**以英文版为准**）。
+
+**平台**：EchoDesk 支持 **Windows、macOS、Linux** 三平台。其中**两项能力是 Windows 专属**——通过 COM 读取
+WPS/Office 的**加密文档**（含旧版 `.doc` / `.xls`），以及企业内网浏览器自动化。其余功能（对话与流式输出、
+文件解析、本地检索、Agent、MCP、技能、模型管理）三平台表现一致。这两处例外在「四、文件与长文档」与
+「五、自动化（浏览器）」里会再说明一次。
+
+**本文里的路径怎么写**：程序目录内部的路径统一用正斜杠（`app/backend/config.json`）——macOS 与 Linux 上
+就是这样显示的，Windows 上同一条路径写作 `app\backend\config.json`。真正因平台而不同的只有**用户数据目录**
+（会话文件、`ui_state.json`、`snippets.json`、`results/`），因为各平台有各自的惯例：
+
+```
+# Windows —— 程序目录本身（便携版就是 app/ 所在的外层目录）；
+#            若就装在 %APPDATA%\EchoDesk 下，那它就是 %APPDATA%\EchoDesk
+C:\Users\<用户名>\EchoDesk-v0.2.2\
+%APPDATA%\EchoDesk\
+
+# macOS
+~/Library/Application Support/EchoDesk/
+
+# Linux（未设置 XDG_DATA_HOME 时为 ~/.local/share/EchoDesk/）
+$XDG_DATA_HOME/EchoDesk/
+```
+
+macOS 与 Linux 上程序本体就是解压出来的压缩包，用 `./start.sh` 启动
+（解压时丢了可执行位就先执行一次 `chmod +x start.sh app/EchoDesk`）；Windows 用安装程序或便携版 zip。
+`ECHODESK_DATA` 在三平台都能覆盖数据目录；完整的安装与启动步骤见 [`USER_GUIDE.md`](USER_GUIDE.md)。
 
 ---
 
@@ -9,9 +35,9 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 
 | 我想做的事 | 怎么做 |
 | --- | --- |
-| 启动程序 | 安装程序装的：用开始菜单（或桌面）快捷方式；zip 免安装版：双击程序文件夹内的「Start-EchoDesk-v0.2.2.lnk」（没有就先运行一次 `install-complete.bat`） |
+| 启动程序 | **Windows**：安装程序装的用开始菜单（或桌面）快捷方式；zip 免安装版双击程序文件夹内的「Start-EchoDesk-v0.2.2.lnk」（没有就先运行一次 `install-complete.bat`）。**macOS / Linux**：发布物是解压即可用的压缩包，`cd` 进解压出来的目录后执行 `./start.sh`（可执行位丢了就先 `chmod +x start.sh app/EchoDesk`） |
 | 查看全部指令 | 在输入框输入 `/help` |
-| 让 AI 读一份文档 | 把文件拖进窗口，或 `/file C:\路径\合同.docx` |
+| 让 AI 读一份文档 | 把文件拖进窗口，或用 `/file <路径>`，例如 `/file "C:\My Documents\采购合同 2026.docx"`（Windows）、`/file "/Users/<用户名>/Documents/采购合同-2026.docx"`（macOS）、`/file "/home/<用户名>/docs/采购合同-2026.docx"`（Linux） |
 | 让 AI 自己算数、查已上传的文件 | 切到智能体模式：`/mode agent`、`/mode 3` 或 `/agent on`，模型会自己决定调哪个工具（见「三、对话模式、Agent 与 MCP」） |
 | 让智能体联网搜索 | 先授权：`/agent allow web_search`（敏感工具默认关闭） |
 | 超长文档（合同/报告） | 直接上传即可：超出上下文窗口会自动分段摘要；也可 `/summarize` 手动触发 |
@@ -36,7 +62,7 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 **提问太模糊时它会先给方向**：像「这个怎么办」这类既没有明确对象、又没有文件上下文的提问，
 程序会列出 2~3 种可能的意思并各给一句做法，你回一个编号即可，而不是硬答、也不是要求你先说清
 对象与输出形式（已经聊了几轮或上传了文件时不会再触发）。想要更贴合你这句话的方向，
-可以套用需求澄清模板 `/task guide`；不想要这一步可在 `app\backend\config.json` 里把
+可以套用需求澄清模板 `/task guide`；不想要这一步可在 `app/backend/config.json` 里把
 `clarify_vague` 改为 `false`。
 
 ---
@@ -44,8 +70,9 @@ English version: [`docs/en/FAQ.md`](../en/FAQ.md)。
 ## 二、启动与模型
 
 ### 双击快捷方式没反应 / 提示"后端启动失败"
-1. 先看 `app\backend\backend_crash.log`（后端每次启动都会创建该文件，**有内容**才代表崩过，
-   空文件是正常的）——里面会有完整的 Python 堆栈。
+1. 先看 `app/backend/backend_crash.log`（后端每次启动都会创建该文件，**有内容**才代表崩过，
+   空文件是正常的）——里面会有完整的 Python 堆栈。macOS/Linux 上同样先看这个文件：
+   那边是用 `./start.sh` 启动的，启动失败时终端里也会打印信息。
 2. 把日志内容反馈给我们即可定位。
 
 ### 提示"本地未找到所需模型" / 一个模型都没有
@@ -55,10 +82,10 @@ v0.2.1 起这种情况下程序**照常运行**——不退出、不阻塞、也
 1. **设置 → 模型 → 模型市场**搜索并下载。列表显示**全部** GGUF 仓库（不按硬件过滤隐藏），
    适合本机的条目标有「(推荐)」，`config.json` 里配置的默认模型所在仓库固定在结果上方
    （单独钉住、不计入分页条数）。下载完成会**热加载**。
-2. **把 `.gguf` 放进 `app\backend\models\`**，点「重新扫描模型文件夹」；
+2. **把 `.gguf` 放进 `app/backend/models/`**，点「重新扫描模型文件夹」；
    只扫描到一个模型时会自动加载。
 3. **在「本地模型库」里点「加载」**，加载已下载的模型。
-也可以改 `app\backend\config.json` 的 `model_repo` / `model_path` / `hf_endpoint` 指向自己的模型。
+也可以改 `app/backend/config.json` 的 `model_repo` / `model_path` / `hf_endpoint` 指向自己的模型。
 
 ### 模型市场以前会隐藏模型，现在改了什么
 现在不再隐藏任何模型。数据来源有三类：远端搜索结果、配置的默认模型、本地已下载模型。
@@ -88,7 +115,7 @@ v0.2.1 起这种情况下程序**照常运行**——不退出、不阻塞、也
 （或「重新扫描模型文件夹」）即可。
 
 ### 想换模型但不想下载
-1. 把 `.gguf` 文件放进 `app\backend\models\`；
+1. 把 `.gguf` 文件放进 `app/backend/models/`；
 2. `/model list` 确认已识别；
 3. `/model 文件名或前缀` 切换。
    若在 `config.json` 的 `models` 里配好档案（别名 → path/repo/context_length/temperature），
@@ -133,6 +160,11 @@ v0.2.1 起这种情况下程序**照常运行**——不退出、不阻塞、也
 把「Start-EchoDesk-v0.2.2.lnk」复制到系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）即可。
 配置项 `automation.start_with_windows` **尚未实现**：程序目前不会读取它，写成 `true` 也不会开机自启，
 请用上面的快捷方式办法（定时自动化要求程序在运行）。
+
+这条路径**从名字到机制都是 Windows 专属**（`.lnk` 快捷方式 + `shell:startup` 文件夹）。
+macOS 与 Linux 上本版**没有内置任何开机自启机制**：需要你自己用 `./start.sh` 启动，
+或接进桌面环境自带的自启动能力（macOS 的「登录项」、Linux 桌面环境的自启动项或 systemd 用户单元）
+——这些入口 EchoDesk 自己不会创建。
 
 ---
 
@@ -182,7 +214,12 @@ v0.2.1 起这种情况下程序**照常运行**——不退出、不阻塞、也
 ### 支持哪些格式
 `.docx` `.xlsx` `.xlsm` `.xls` `.pptx` `.pdf` `.txt` `.md` `.csv` 等纯文本类。
 - `.doc` / `.ppt`（旧版二进制）需要本机装有 WPS/Office（走 COM 读取，顺带能读**加密文档**）；
-  否则请先另存为 `.docx` / `.pptx`。
+  否则请先另存为 `.docx` / `.pptx`。**这条路径仅 Windows 可用**：它依赖的 COM 接口在 macOS/Linux 上
+  不存在，那边会明确提示「该能力仅 Windows 提供」——这是刻意的，**不是**解析失败、**也不是**依赖缺失，
+  更不会让你去装 WPS。替代做法：
+  (a) 在**一台 Windows 机器**上用 WPS/Office 另存为未加密文件或 `.docx`，再把这份副本上传到这里；
+  (b) 通过 **MCP Server** 或**技能**调用外部转换工具，让它返回纯文本；
+  (c) 安装一个**自带该格式解析器的技能**，让这份文档根本不走 Windows 专属那条路。
 - 扫描件 PDF 没有文本层，解析结果会为空——这类文件需要 OCR，v0.2.0 未内置。
 
 ### 为什么长文档的回答没有引用原文细节
@@ -221,8 +258,8 @@ v0.2.1 起长文档摘要会在对话框里实时显示进度：当前阶段（�
 ### 同一份文件再上传一次，还要重新摘要吗
 不用。**分段摘要结果会被缓存**（按「文件指纹 + 摘要参数」做键），同一文件第二次上传直接复用，
 不重新计算；文件内容改动（大小或修改时间变化）后缓存自动失效。
-想清空缓存，删除 `app\backend\summary_cache.json` 即可（可读 JSON，也可直接查看）；
-不想用缓存可在 `app\backend\config.json` 里把 `summary_cache` 改为 `false`。
+想清空缓存，删除 `app/backend/summary_cache.json` 即可（可读 JSON，也可直接查看）；
+不想用缓存可在 `app/backend/config.json` 里把 `summary_cache` 改为 `false`。
 
 ### 长文档摘要为什么比以前快了很多
 v0.2.1 优化已知问题-2 起，每一段在送进模型之前会先做**抽取式预筛**：用 TextRank 加"稀有度"
@@ -250,10 +287,19 @@ v0.2.1 优化已知问题-2 起，每一段在送进模型之前会先做**抽�
 路径里有空格。指令参数需要用引号包起来：
 
 ```
+# Windows
 /file "C:\My Documents\采购合同 2026.docx"
+
+# macOS
+/file "/Users/<用户名>/Documents/采购合同 2026.docx"
+
+# Linux
+/file "/home/<用户名>/docs/采购合同 2026.docx"
 ```
 
-（v0.2.1 优化已知问题-2 之前，含空格的路径会被当成多个参数，所以一直加载失败；
+（加引号这条规则三平台一致。`/file` 会原样使用你写的参数，所以路径要写完整——这里的 `~` **不会**被展开；
+macOS/Linux 上的绝对路径从 `/Users/<用户名>/` 或 `/home/<用户名>/` 开始。
+v0.2.1 优化已知问题-2 之前，含空格的路径会被当成多个参数，所以一直加载失败；
 界面上点"上传文件"按钮或直接拖拽没有这个问题。）
 
 ### 为什么会话重新打开后，文件名还在但没有内容
@@ -275,13 +321,23 @@ v0.2.1 优化已知问题-2 修掉了三件事，如果仍然看不到，可以�
 
 ## 五、自动化（浏览器）
 
+> **⚠️ 浏览器自动化仅 Windows 可用。** 它通过 Playwright 驱动本机的 Edge，有头运行并使用复用的登录态。
+> **macOS 与 Linux 上不提供该功能**：自动化页面不会出现，请求该能力时得到的回答是
+> `Windows-only capability (this is not a missing dependency)`（仅 Windows 提供该能力，不是依赖缺失问题）
+> ——这是刻意的：它不是装坏了，也不是缺个包。替代做法：用 **MCP Server** 或**技能**完成同一套流程，
+> 或**在一台 Windows 机器上跑完之后把结果目录拷过来**。下面各条描述的是 Windows 上的行为，
+> 因为只有那个平台有这套功能。
+
 ### 能用什么浏览器
 必须已安装 **Microsoft Edge**（Playwright 通过 `channel=msedge` 驱动它，有头模式运行，
 你能看到浏览器在操作）。构建脚本会检查 Edge 是否存在。
 
+这里指的是**Windows 上**的 Edge：macOS 与 Linux 上没有可配置的自动化页面，这一节的内容对那两个平台不适用
+（见上面的提醒）。
+
 ### 开启自动化时提示需要勾选安全协议
 这是设计如此：**安全协议未勾选时自动化开关会被后端强制关闭**，
-并且协议版本与你的同意时间会记入 `app\backend\automation_log.jsonl` 以便审计。
+并且协议版本与你的同意时间会记入 `app/backend/automation_log.jsonl` 以便审计。
 
 ### 填了网址但"测试选择器"匹配不到元素
 1. 先用浏览器 F12 确认选择器能选中目标（CSS 直接粘贴，XPath 以 `//` 开头）；
@@ -302,20 +358,36 @@ v0.2.1 优化已知问题-2 修掉了三件事，如果仍然看不到，可以�
 每个任务下载的原始文件会**移动到该任务的结果目录**里，与生成的审核意见放在一起：
 
 ```
-results\2026-09-23\合同审查\     ← 顶层文件夹名、日期、任务名称都可配置
+results/2026-09-23/合同审查/     ← 顶层文件夹名、日期、任务名称都可配置
 ├─ 合同正文.pdf                       ← 该轮下载的原始文件（重名自动加序号）
 ├─ result.txt                           ← 摘录 + 审核意见（纯文本，无 Markdown 标记）
 └─ failure-screenshot-task2-20260923_101010.png  ← 仅在任务失败时生成
 ```
 
+目录里的分隔符跟着运行平台走（Windows 是 `\`，macOS/Linux 是 `/`），文件夹名三平台一致。
+
 下载过程中的临时副本保存在系统临时目录的专用子目录，处理完即清理。
 若把「保存结果到本地文件」关掉，就不写 `result.txt` 与截图，只把结果输出到日志。
-「保存位置」留空时，结果根目录在**便携版外层**（`EchoDesk-v0.2.2\results\`），不在 `app\` 里；
+「保存位置」留空时，结果根目录 = **用户数据目录** + 顶层文件夹名，因此跟着平台走
+（Windows 上就是程序目录所在的**外层**文件夹 `EchoDesk-v0.2.2/`，不在 `app/` 里）：
+
+```
+# Windows
+%APPDATA%\EchoDesk\results\
+C:\Users\<用户名>\EchoDesk-v0.2.2\results\      ← 解压在哪儿，就是那儿的这个目录
+
+# macOS
+~/Library/Application Support/EchoDesk/results/
+
+# Linux（未设置 XDG_DATA_HOME 时为 ~/.local/share/EchoDesk/results/）
+$XDG_DATA_HOME/EchoDesk/results/
+```
+
 想让用户数据整体换位置（含 `ui_state.json`、`snippets.json`），可以设置环境变量 `ECHODESK_DATA`。
 保存位置、顶层文件夹名与任务名称的填法见 [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md)。
 
 ### 登录态
-第一次需要手动登录一次；程序会把 Cookie/localStorage 存进 `app\backend\browser_state.json`，
+第一次需要手动登录一次；程序会把 Cookie/localStorage 存进 `app/backend/browser_state.json`，
 下次自动复用。删除该文件即可退出所有登录态。
 
 ---
@@ -329,7 +401,7 @@ results\2026-09-23\合同审查\     ← 顶层文件夹名、日期、任务名
 
 ### 提示"离线：展示本地缓存快照"
 GitHub 匿名 API 限流（每小时 60 次）或网络不可达。解决办法：
-- 在 `app\backend\config.json` 的 `marketplace.github_token` 填入一个 GitHub Token（可把限额提高到 5000 次/小时）；
+- 在 `app/backend/config.json` 的 `marketplace.github_token` 填入一个 GitHub Token（可把限额提高到 5000 次/小时）；
 - 或稍后重试；程序会继续使用本地缓存，不会因此报错。
 
 ### 安装按钮是灰的
@@ -338,33 +410,36 @@ GitHub 匿名 API 限流（每小时 60 次）或网络不可达。解决办法�
 
 ### 安装会执行第三方代码吗
 **不会自动执行 `prepare` 脚本**。安装流程只做：下载源码 → 校验 `skill.json` →
-复制到 `app\backend\skills\` → 登记到 `app\backend\skills_registry.json`。
+复制到 `app/backend/skills/` → 登记到 `app/backend/skills_registry.json`。
 若技能声明了 `prepare` 脚本或依赖，会在提示里列出，由你自己决定是否手动处理。
 即使将来执行 prepare，也会先移除所有名称含 `KEY`/`SECRET`/`TOKEN`/`PASSWORD` 的环境变量。
 
 ### 卸载不干净
 卸载会：移除注册表条目 → 删除技能目录 → 回读注册表确认。若仍有残留，
-可手动删除 `app\backend\skills\<技能id>` 并编辑 `app\backend\skills_registry.json`。
+可手动删除 `app/backend/skills/<技能id>` 并编辑 `app/backend/skills_registry.json`。
 
 ### 第一次放进第三方本地插件，会一直弹确认框吗
-不会。首次加载**第三方本地插件**（放在 `app\backend\skills_dev\`）只会弹**一次汇总确认框**：
+不会。首次加载**第三方本地插件**（放在 `app/backend/skills_dev/`）只会弹**一次汇总确认框**：
 可以逐个勾选、或点「全部启用」「全部禁用」；选择会被记住，之后不再询问（拒绝过的也不会再问）。
-随包示例插件（`examples\skills\`）默认启用、不询问。
+随包示例插件（`examples/skills/`）默认启用、不询问。
 设置窗口「开发者」页的**开发者模式开关双向可用**：关掉就是关掉，重启后保持关闭，
-并会卸载开发插件、清空开发日志 `app\backend\skills_dev.log`。
+并会卸载开发插件、清空开发日志 `app/backend/skills_dev.log`。
 
 ---
 
 ## 七、界面
 
 ### 窗口大小/位置/主题/字号会记住吗
-会，存在便携版**外层**的 `ui_state.json`（窗口位置与大小、字号、主题三态、emoji 显示策略、
-界面语言等）。窗口若被还原到已拔掉的显示器上，程序会自动回退到屏幕内。
+会，存在**用户数据目录**里的 `ui_state.json`（窗口位置与大小、字号、主题三态、emoji 显示策略、
+界面语言等）。这个目录在 Windows 上就是便携版**外层**文件夹 `EchoDesk-v0.2.2/`，
+macOS 上是 `~/Library/Application Support/EchoDesk/`，Linux 上是 `~/.local/share/EchoDesk/`
+（本文开头有完整说明）。窗口若被还原到已拔掉的显示器上，程序会自动回退到屏幕内。
 删除该文件即可重置（含"首次引导已读"标记）。
 
 ### 主题只有"深色开关"吗
 不是，现在是**三态**：跟随系统 / 浅色 / 深色，在设置窗口「常规」页选择。
-选「跟随系统」时跟随 Windows 的应用模式，你在系统里切换浅色/深色，界面会立刻跟着变。
+选「跟随系统」时跟随操作系统的外观设置（Windows 上就是应用模式，macOS 与 Linux 上是系统的外观/主题设置），
+你在系统里切换浅色/深色，界面会立刻跟着变。
 快捷键 `Ctrl+T` 在浅色与深色之间切换，`/darkmode on|off|auto` 也可以直接指定。
 
 ### 界面出现 `[OK]` / `[!]` 这样的纯文本标记，是坏了吗
@@ -383,8 +458,8 @@ GitHub 匿名 API 限流（每小时 60 次）或网络不可达。解决办法�
 已禁用消息控件内部滚动，滚轮统一滚动整个对话列表。`Ctrl+滚轮` 调节字号。
 
 ### 想反馈问题
-请附上：`app\backend\backend_crash.log`（若有内容）、`app\backend\config.json`、
-`/status` 的输出，以及能复现问题的操作步骤。
+请附上：所在平台（Windows / macOS / Linux）及其版本、`app/backend/backend_crash.log`（若有内容）、
+`app/backend/config.json`、`/status` 的输出，以及能复现问题的操作步骤。
 
 ---
 
@@ -397,8 +472,8 @@ GitHub 匿名 API 限流（每小时 60 次）或网络不可达。解决办法�
   [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions) 发帖。
 - **上面没覆盖到的可复现问题** → 请**开 Issue**：
   <https://github.com/VoidEntropiaStudio/EchoDesk/issues>。请附上
-  [想反馈问题](#想反馈问题) 里列出的内容：版本号、Windows 版本、
-  `app\backend\backend_crash.log`（若有内容）、`app\backend\config.json`、
+  [想反馈问题](#想反馈问题) 里列出的内容：版本号、所在平台（Windows / macOS / Linux）及其版本号、
+  `app/backend/backend_crash.log`（若有内容）、`app/backend/config.json`、
   `/status` 的输出，以及能复现问题的操作步骤。
 - **安全漏洞** → **请不要开公开 Issue**，按 [`SECURITY.zh-Hans.md`](../../SECURITY.zh-Hans.md) 的私有渠道报告。
 - **想改代码、文档或翻译** → 请开 Pull Request，见 [`CONTRIBUTING.md`](../../CONTRIBUTING.md)。

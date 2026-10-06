@@ -1,3 +1,4 @@
+# 适用平台：用 WPF GlyphTypeface 查字体链（Windows 专属能力）
 # EchoDesk Emoji 显示检查（任务书修复六）
 #
 # 修复六的根因是"字体回退链里根本没有 emoji 字体"，靠肉眼很难发现（不同 Windows

@@ -1,10 +1,13 @@
 # 统一换行符：批处理与 PowerShell 脚本必须以 CRLF 落盘，
+# Line endings are unified: batch and PowerShell scripts must land as CRLF,
 # 否则 cmd.exe 解析 label / 续行会出错（tools\set_metadata.bat 曾因此失败）。
+# otherwise cmd.exe mis-parses labels and line continuations (tools\set_metadata.bat once failed this way).
 *.bat  text eol=crlf
 *.cmd  text eol=crlf
 *.ps1  text eol=crlf
 
 # 其余文本文件统一 LF，避免不同平台产生无意义差异
+# Every other text file uses LF, so different platforms do not produce meaningless diffs
 *.py   text eol=lf
 *.cs   text eol=lf
 *.xaml text eol=lf
@@ -15,6 +18,7 @@
 *.spec text eol=lf
 
 # 二进制文件不做任何换行处理
+# Binary files get no line ending handling at all
 *.ico  binary
 *.png  binary
 *.exe  binary

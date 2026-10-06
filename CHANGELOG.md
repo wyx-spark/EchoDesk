@@ -19,6 +19,91 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 > `records/v0.2.1-跨平台-2记录.md`; the file names keep the task-spec number they were written
 > under, **not the release number**).
 
+### Bilingual coverage and three-platform friendliness across the whole repository
+
+Task specification: `prompts/EchoDesk-v0.2.2全面双语与三平台友好.md`. The full audit, the
+per-category strategy, the decisions taken, the deviations from the specification and the
+remaining work are in `records/v0.2.2-全面双语与三平台友好记录.md`; the file-by-file audit
+table is `records/v0.2.2-审计清单.md` (both internal, **not shipped with releases**).
+
+**Every tracked file was audited, not translated indiscriminately.** `tools/audit_repo.py`
+walks `git ls-files` and classifies each of the 252 files by kind, bilingual state and
+three-platform state, and emits the audit table. Its `--check` mode is now a gate (registered
+in `verify_release.ps1` and in CI): repository-level and nested documentation must either be a
+language pair or be registered as deliberately single-file bilingual, paired root files must
+cross-reference each other, and every `tools/*.ps1` must be registered in `PS1_ALLOWLIST`
+with a reason — i.e. someone has explicitly judged whether it needs a cross-platform
+equivalent. Adding a new PowerShell script without that judgement now fails the gate.
+
+**Documentation.** `deploy/models/README.md`, `examples/skills/hello-world/README.md` and
+`examples/skills/ofd-reader/README.md` became English-default + `.zh-Hans.md` pairs. The
+command/setup documentation (`CONTRIBUTING`, `docs/*/DEVELOPER.md`, `docs/*/COMPLIANCE.md`,
+`docs/*/FAQ.md`, `docs/*/AUTOMATION_GUIDE.md`, `docs/*/SKILL_GUIDE.md`, `docs/*/README.md`)
+now covers install, build, run, package, test, Git operations and dependency installation on
+all three platforms, using **portable syntax first and per-platform blocks only where the
+commands genuinely differ** (no `<details>` panels, no triple repetition). Everything that is
+Windows-only is still stated as such, with the exact decline message and the workarounds:
+WPS/Office COM for encrypted and legacy `.doc`/`.xls` files, and the Playwright/Edge
+automation, which is unavailable off Windows and is now flagged at the top of the automation
+guide in both languages. Chinese versions that were missing the "the English version
+prevails" notice now carry it.
+
+**Platform resources.** `tools/gen_platform_icons.py` derives all three platforms' icons from
+the single source `assets/EchoDesk.ico`: `assets/EchoDesk.icns` (a PNG-based icns container
+built with the standard library, because `iconutil` only exists on macOS while this project
+builds on Windows), the freedesktop tree `assets/icons/hicolor/*/apps/echodesk.png`, plus
+`deploy/linux/echodesk.desktop` and AppStream metadata. `deploy/linux/README.md` documents
+portable and system-wide installation, the data directory and the CJK/emoji font packages.
+The source art tops out at 256×256, so no 512/1024 slots are generated and none are faked.
+
+**Configuration example.** `config.example.json` is no longer a byte copy of
+`backend/config.json`: `tools/gen_config_example.py` injects a bilingual `_comment` block (what
+the file is, how `config.user.json` overrides it, how to spell paths) and a `_platform_paths`
+table for the data, results and models directories. The injection happens on the *copy* — the
+runtime configuration, which pydantic parses, is untouched.
+
+**Fixed, found by checking the specification against the code:**
+
+- **The frontend and backend disagreed on the user data directory in the standalone layout.**
+  `backend/config.py` resolved `<release>/app/backend/app/` to `<release>/app/backend` while the
+  Avalonia frontend resolved `<release>` — so one bundle wrote `snippets.json` at the top level
+  and `session.json`, `results/` and caches two levels deeper. Users would see "my history is
+  gone" rather than a path error. The resolver now walks up past the `app`/`backend` container
+  folders, so all three real layouts agree; `check_standalone_backend.py` asserts this against a
+  live backend instead of relying on code review.
+- **The backend working directory differed per platform**, which moved the models and skills
+  directories: the Avalonia bundle ran with `cwd=backend/app` while the WPF build uses
+  `app\backend\`. The Avalonia launch and both `run-backend.*` launchers now use the bundle
+  directory, so `app/backend/models/` means the same thing on all three platforms.
+- **A CI gate had been silently dead since the version bump**: `release-gates` tested for a
+  hard-coded `publish\EchoDesk-v0.2.1\..._internal`, so the packaged-modules comparison never
+  ran again and the log merely said "skipped". The version is now read from `backend/version.py`.
+  This is the third recurrence of the hard-coded-version defect in this repository.
+- **`%APPDATA%\EchoDesk` does not exist.** Four source comments and several documents described
+  the Windows data directory that way; no code path writes there. The comments are corrected,
+  the unused `PlatformInfo.UserDataDirectoryName` (whose two ternary branches were identical and
+  which had no callers) is deleted, and the documents now say plainly that it is *not*
+  `%APPDATA%`.
+- **`docs/*/COMPLIANCE.md` misdescribed the installer's default directory** as
+  `{autopf}\EchoDesk` / `%LOCALAPPDATA%\Programs\EchoDesk`. `tools/installer.iss` actually
+  defaults to `ExtractFileDir({srcexe})` — the folder the Setup program sits in — with
+  `AppendDefaultDirName=no` and `PrivilegesRequired=lowest`. Corrected in both languages,
+  because "which directory is writable after install" decides whether enterprise deployments
+  must relocate the artifact paths.
+- **The cross-platform bundles were missing `NOTICE`** (the English original — only the Chinese
+  translation shipped) along with the `SECURITY`, `CONTRIBUTING` and `CODE_OF_CONDUCT` pairs.
+  The file list is now 14 entries, and a missing entry is reported by name instead of being
+  skipped in silence, which is how `NOTICE` went unnoticed.
+- `docs/en/FAQ.md` still said "Applies to version: v0.2.1" while its Chinese pair said v0.2.2.
+
+**CI.** A new `static-gates-linux` job runs the standard-library-only gates on `ubuntu-latest`
+(language packs, dependency declarations, theme, the new audit/resource/config-example gates),
+because case sensitivity, path separators and encodings only show up off Windows. Comments are
+bilingual and the workflow display name is too; **job names were deliberately left in English**
+so that GitHub required-status-check matching cannot break, and each Windows-only job now
+explains why it is Windows-only. A stale comment claiming the platform test runs on Linux/macOS
+runners was corrected — that job is pinned to `windows-latest` and exercises the injected path.
+
 ### Git over SSH only, settings-window shell and General page, cross-platform backend distribution
 
 Task specification: `prompts/EchoDesk-v0.2.1跨平台-2.md`. The full implementation plan,

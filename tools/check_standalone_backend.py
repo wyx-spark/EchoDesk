@@ -31,6 +31,7 @@ import json
 import os
 import platform
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -199,6 +200,29 @@ class LineReader:
             dropped += 1
 
 
+def check_data_root(report: dict, rid: str) -> None:
+    """断言后端上报的用户数据目录**没有埋进程序目录内部**（不是 `app/`，也不是 `app/backend/`）。
+
+    为什么要单独查这一条（v0.2.2 全面双语与三平台友好 实测发现的真实缺陷）：
+    后端按 `config.py` 的位置推导用户数据根，原来只判断"父目录是否叫 app" ——
+    在 standalone 布局（`<发布>/app/backend/app/config.py`）下会算成 `<发布>/app/backend`，
+    而前端算的是 `<发布>`，于是同一个包把数据写到两个地方（用户表现为"设置没了""历史没了"）。
+    这个检查让"修好了"变成可判定的，而不是靠读代码确信。
+    """
+    root = report.get("user_data_root") if isinstance(report, dict) else None
+    if not root:
+        note(f"{rid} 的 platform 报告没有 user_data_root 字段，跳过数据根校验")
+        return
+    # 校验脚本用临时目录当数据根（ECHODESK_DATA），所以这里能断言的只是"没被埋进 app/ 里"。
+    parts = [p for p in re.split(r"[\\/]+", str(root)) if p]
+    tail = parts[-2:] if len(parts) >= 2 else parts
+    if any(p.lower() in ("app", "backend") for p in tail):
+        fail(f"{rid} 的用户数据根落在程序容器目录内部：{root}"
+             "（应当落在发布物外层；否则前后端的数据目录会分裂）")
+    else:
+        ok(f"{rid} 的用户数据根在程序容器之外：{root}")
+
+
 def check_protocol(python: str, rid: str, tree: str) -> None:
     """协议级验证：真的拉起后端，走一次 `ready` 握手 + `platform` 动作往返。
 
@@ -225,7 +249,11 @@ def check_protocol(python: str, rid: str, tree: str) -> None:
     proc = None
     try:
         try:
-            proc = subprocess.Popen([python, "-u", "main.py"], cwd=app_dir, env=env,
+            # 调用口径与**发布物里的前端一致**（v0.2.2 修正）：
+            # 工作目录 = 后端包根（tree），脚本路径 = app/main.py。
+            # 原来这里是 cwd=app_dir + "main.py"，于是"验证通过"却不代表发布物里那条路径也对 ——
+            # 而两者的差别恰恰会改变 models/、skills_dev/ 这些相对路径的落点。
+            proc = subprocess.Popen([python, "-u", os.path.join("app", "main.py")], cwd=tree, env=env,
                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True,
                                     encoding="utf-8", errors="replace")
@@ -268,6 +296,8 @@ def check_protocol(python: str, rid: str, tree: str) -> None:
             ok(f"{rid} 协议往返正常：platform.kind={kind}（与本机平台一致）")
         else:
             fail(f"{rid} 平台判断不一致：platform.kind={kind}，期望 {expected}")
+
+        check_data_root(report, rid)
 
         check_action_set(proc, reader, rid)
     finally:

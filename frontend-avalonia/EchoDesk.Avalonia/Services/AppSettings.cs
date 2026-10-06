@@ -1,8 +1,13 @@
 // 界面设置（移植自 frontend/Services/AppSettings.cs，任务书 任务三 的"用户数据目录按平台惯例"）。
 //
 // WPF 版把 ui_state.json 写在"程序目录的外层"（修复七：便携版不希望用户数据跟着程序目录跑）。
-// 跨平台版改为交给 UserPaths.DataRoot 决定（Windows %APPDATA%、macOS Application Support、
-// Linux XDG），并保留 ECHODESK_DATA 覆盖 —— 自检/测试就靠它把设置写到临时目录里。
+// 跨平台版改为交给 UserPaths.DataRoot 决定，并保留 ECHODESK_DATA 覆盖 ——
+// 自检/测试就靠它把设置写到临时目录里。
+//
+// **Windows 上不是 %APPDATA%**（v0.2.2 修正了一处写错的注释）：发布物是便携布局，
+// 程序目录叫 `app` → 用户数据根 = 它的父目录（发布目录外层）；只有"程序目录不叫 app"
+// 的兜底分支上，Windows 才是程序目录本身。macOS 回退到 Application Support、
+// Linux 回退到 XDG —— 完整判定顺序见 UserPaths.DataRoot 的注释。
 //
 // 只存"界面自己"的状态：语言、主题、字号、emoji 偏好、窗口尺寸。
 // 模型、检索、Agent 这些**业务**配置留在后端的 config.json，前端不重复存一份，

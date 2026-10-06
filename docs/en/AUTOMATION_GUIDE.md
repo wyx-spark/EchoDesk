@@ -10,6 +10,29 @@ concrete "click here, type this" route.
 Chinese version: [`docs/zh-Hans/AUTOMATION_GUIDE.md`](../zh-Hans/AUTOMATION_GUIDE.md).
 Related documents: [User guide](USER_GUIDE.md) · [FAQ](FAQ.md) · [Skill development guide](SKILL_GUIDE.md).
 
+> **⚠️ Windows-only feature: browser automation is not available on macOS or Linux.**
+>
+> Automation drives the **Microsoft Edge installation on this machine** through Playwright — a visible window
+> and a reused sign-in state — and its configuration page is part of the Windows-only UI. On **macOS and
+> Linux the feature is not offered at all**: the automation page is absent, and requesting the capability is
+> answered with `Windows-only capability (this is not a missing dependency)` — deliberately **not** a broken
+> install, **not** a missing package, and **not** something a `pip install` will fix.
+>
+> **Alternatives**, in the order most users take them: an **MCP server** that exposes the browser work as
+> tools the agent can call; a **skill** that performs the same flow and returns results in the shape the
+> built-in automation would; or **running the automation on a Windows machine and exporting the results
+> folder** to the machine you actually work on. Everything after the download — parsing, retrieval, review and
+> reporting — stays fully portable, so a `results/` folder produced on Windows can be reviewed anywhere.
+>
+> The rest of this guide therefore documents the **Windows** configuration surface. Where a path genuinely
+> differs per platform (the results location, above all), all three are given. Authoritative reference:
+> [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md) §3.2 and §5.
+
+**How paths are written here.** Paths inside the program folder use forward slashes
+(`app/backend/config.json`) — that is exactly how they read on macOS and Linux, and on Windows the same path
+uses backslashes (`app\backend\config.json`). Only the **results root** really differs, because each platform
+keeps user data in its own place (see 3.9 and 4.3).
+
 ---
 
 ## 1. Before you start
@@ -18,12 +41,17 @@ Related documents: [User guide](USER_GUIDE.md) · [FAQ](FAQ.md) · [Skill develo
 
 | Requirement | Why | How to check |
 | --- | --- | --- |
+| **Windows** — browser automation is Windows-only (see the warning above; on macOS/Linux the feature is not offered at all) | Automation drives the Edge installation that exists on Windows, and its configuration page is part of the Windows-only UI | On macOS/Linux there is nothing to configure — use the alternatives listed above instead |
 | Microsoft Edge is installed | Automation opens pages with the Edge on your machine (`browser_channel` defaults to `msedge`); headless mode is never used | If Edge opens normally, you are fine |
 | A local model is downloaded | Producing the review needs the local model; without one you get "no local model is loaded, cannot generate a summary or review opinion" | `/status` in the main window shows the loaded model |
 | Your machine can reach that web system | Including login, permissions, intranet and VPN; automation only clicks for you, it cannot reach anything you cannot reach | Open the task list page once in Edge by hand and confirm you can see the tasks |
 
 If the attachments are legacy `.doc` / `.ppt` files, or the documents are encrypted, the machine also needs
-**WPS or Microsoft Office** installed (used for COM-based reading).
+**WPS or Microsoft Office** installed (used for COM-based reading). That too is **Windows-only**: where the COM
+interface does not exist the file gets an explicit "this capability is provided on Windows only" message, and
+the alternatives are to save an unencrypted or `.docx` copy with WPS/Office on a Windows machine, to convert
+through an MCP server or a skill, or to install a skill that registers its own parser for that format —
+never "install WPS and retry", which on those platforms would be a wild goose chase.
 
 ### 1.2 What automation actually does
 
@@ -86,17 +114,19 @@ When a CAPTCHA or two-factor verification appears, the run **pauses and waits fo
 | Save result files `save_results` | Optional | Clear it to do a dry run only — no result file is written | `true` |
 | Result folder name `task_name` | Optional | The name of the third-level result folder, i.e. what this batch is called | `auto-task` |
 | Result root folder name `results_root_name` | Optional | The first-level folder inside the results root | `results` |
-| Where to save results `results_location` | Optional | Put results on another drive or a shared folder; empty = the user data folder (the portable **outer** folder `EchoDesk-v0.2.2\`, not `app\`; set the `ECHODESK_DATA` environment variable to move it) | empty (= the user data folder) |
+| Where to save results `results_location` | Optional | Put results on another drive or a shared folder; empty = the user data folder (Windows: the portable **outer** folder `EchoDesk-v0.2.2/`, not `app/`; macOS: `~/Library/Application Support/EchoDesk/`; Linux: `$XDG_DATA_HOME/EchoDesk/` or `~/.local/share/EchoDesk/` — set the `ECHODESK_DATA` environment variable to move it on any platform) | empty (= the user data folder) |
 | Run on a schedule `schedule_enabled` | Optional | Runs a batch automatically at fixed times every day | `false` |
 | Scheduled times `schedule_times` | Optional | The times of day, separated by commas | `09:00` |
 | Sign-in state data directory `login_state_dir` | Optional | The separate directory automation uses to store the sign-in state in the browser (never shared with your everyday browser); empty = `browser_profile` inside the program folder. Several target sites can share one | empty |
 | Element that appears only after signing in `login_check_selector` | Optional | The most reliable way to decide whether you are signed in: an element that exists only once you are. Use "🎯 Pick visually" to click it | empty |
 | Sign-in page URL keywords `login_url_keywords` | Optional | The fallback used when the field above is empty: if the address contains one of these words, the program assumes it was redirected to a sign-in page | `login, signin, sign-in, logon, sso, passport, cas, auth` |
 
-### 2.3 Advanced fields (only editable in `app\backend\config.json`)
+### 2.3 Advanced fields (only editable in `app/backend/config.json`)
 
 These fields have no input box in the Settings window yet. **Close EchoDesk before editing**, then save and
-restart for the change to take effect (the file is UTF-8; Notepad or VS Code both work).
+restart for the change to take effect (the file is UTF-8; Notepad, VS Code or any editor on any of the three
+platforms works — the file sits at the same relative path everywhere, only the separators differ:
+`app/backend/config.json` on macOS/Linux, `app\backend\config.json` on Windows).
 
 | Config field | Required? | Purpose | Default |
 | --- | --- | --- | --- |
@@ -110,7 +140,7 @@ restart for the change to take effect (the file is UTF-8; Notepad or VS Code bot
 | `headless` | Read-only | Automation **only supports a visible browser**; writing `true` is corrected back to `false` with a warning | `false` |
 | `browser_channel` | Optional | Which browser opens the pages; the system Edge is the default | `msedge` |
 | `audit_log_file` | Optional | Audit log file: one JSON record per task | `automation_log.jsonl` |
-| `start_with_windows` | **Not implemented** | The program does not read this field yet, so setting it to `true` does not start EchoDesk at sign-in; to start with Windows, copy `Start-EchoDesk-v0.2.2.lnk` into the system Startup folder (`Win+R` → `shell:startup`) | `false` |
+| `start_with_windows` | **Not implemented** | The program does not read this field yet, so setting it to `true` does not start EchoDesk at sign-in; to start with Windows, copy `Start-EchoDesk-v0.2.2.lnk` into the system Startup folder (`Win+R` → `shell:startup`). That route is Windows-only; macOS and Linux have no built-in auto-start in this version (start it yourself with `./start.sh`, or use your desktop's own login-items / autostart mechanism) | `false` |
 | `safety_version` / `safety_accepted_at` | Read-only | Safety protocol version and when you accepted it; recorded automatically for auditing | `1.0` / empty |
 
 ---
@@ -193,11 +223,27 @@ restart for the change to take effect (the file is UTF-8; Notepad or VS Code bot
 | Field | In plain words | Example |
 | --- | --- | --- |
 | Result root folder name | What the first-level folder under the results root is called | `results` |
-| Where to save results | Fill this in to put results on another drive or a shared folder; empty means the user data folder (the portable **outer** folder, i.e. the one holding the shortcut) | `D:\contract-review-results` |
+| Where to save results | Fill this in to put results on another drive or a shared folder; empty means the user data folder (on Windows the portable **outer** folder, i.e. the one holding the shortcut) | `D:\contract-review-results` (Windows) · `/Users/<user>/Documents/contract-review-results` (macOS) · `/home/<user>/contract-review-results` (Linux) |
+
+Leaving it empty puts the results root in the user data folder, which each platform places differently:
+
+```
+# Windows — the program folder itself (portable layout: the outer folder that holds app/);
+# %APPDATA%\EchoDesk when that is where EchoDesk was installed or unpacked
+C:\Users\<user>\EchoDesk-v0.2.2\results\
+%APPDATA%\EchoDesk\results\
+
+# macOS
+~/Library/Application Support/EchoDesk/results/
+
+# Linux (~/.local/share/EchoDesk/results/ when XDG_DATA_HOME is unset)
+$XDG_DATA_HOME/EchoDesk/results/
+```
 
 The window previews the full structure live, for example:
 `Result root / YYYY-MM-DD / task name / result.txt + original files`.
-Click "Open results folder" to open the results root in File Explorer; click "Browse…" to pick a folder as the results location.
+Click "Open results folder" to open the results root in the file manager (File Explorer on Windows, Finder on
+macOS, your desktop's file manager on Linux); click "Browse…" to pick a folder as the results location.
 
 ### 3.10 Run settings
 
@@ -216,6 +262,10 @@ Click "Open results folder" to open the results root in File Explorer; click "Br
 - To start EchoDesk with Windows, put the "Start-EchoDesk-v0.2.2.lnk" shortcut into the system Startup folder
   (`Win+R` → `shell:startup`). The `start_with_windows` config field is **not implemented**: the program does
   not read it, so setting it to `true` has no effect.
+- That shortcut route is **Windows-only by name and by mechanism** (a `.lnk` file and the `shell:startup`
+  folder). macOS and Linux have no built-in auto-start in this version: start the bundle with `./start.sh`
+  yourself, or wire the start command into your desktop's own mechanism (macOS "Login Items", a Linux desktop
+  autostart entry or a systemd user unit).
 
 ### 3.12 Safety protocol and the automation master switch
 
@@ -255,13 +305,13 @@ into a financial review opinion.
 | Task instruction | `Extract the contract amount, payment method and terms, penalty ratio, both parties and the signing date; flag anything out of policy` |
 | Result folder name | `Contract review` |
 | Result root folder name | `results` |
-| Where to save results | Empty (= the user data folder, i.e. the portable outer folder); use `D:\contract-review-results` to put it on drive D |
+| Where to save results | Empty (= the user data folder, i.e. the platform's own location for it); use `D:\contract-review-results` on Windows, `/Users/<user>/Documents/contract-review-results` on macOS or `/home/<user>/contract-review-results` on Linux to put it elsewhere |
 | Maximum tasks / page timeout / retries | `20` / `30000` / `1` |
 | Skip tasks already processed, Save result files | both ticked |
 
 ### 4.2 The equivalent `config.json` fragment
 
-The real structure inside `app\backend\config.json` (the `automation` section; you can edit it directly, but close
+The real structure inside `app/backend/config.json` (the `automation` section; you can edit it directly, but close
 EchoDesk first):
 
 ```json
@@ -307,27 +357,30 @@ A note on folder names: the default value of `results_root_name` is `results`, a
 every language of install produces the same on-disk paths and no encoding trouble can arise from the
 folder name. (Before v0.2.1 this default was the Chinese word `批量处理结果`; the name was changed so
 that all names the program creates are English — see the release notes for the migration impact.)
-You may rename it — for example to `batch-results` — but keep it free of characters Windows forbids
-in file names.
+You may rename it — for example to `batch-results` — but keep it free of characters the file system forbids
+in names (Windows: `\ / : * ? " < > |` and a trailing dot or space; macOS and Linux: `/`), and avoid a
+leading `-`, which shells read as an option rather than a name.
 
 ### 4.3 What the results folder looks like afterwards
 
-With "Where to save results" left empty, the results land in the **user data folder** — in a portable install
-that is the outer `EchoDesk-v0.2.2\` folder (the one holding the shortcut), **not** `app\`:
+With "Where to save results" left empty, the results land in the **user data folder** — on Windows that is
+the outer `EchoDesk-v0.2.2/` folder (the one holding the shortcut), **not** `app/`, and on macOS/Linux it is
+the platform directory listed in 3.9:
 
 ```
-<outer folder>\
-└── results\                        ← result root folder name (customisable)
-    └── 2026-09-23\                     ← the run date (several runs on one day share this level)
-        └── Contract review\            ← the result folder name (duplicates get -1, -2)
+<data folder>/
+└── results/                        ← result root folder name (customisable)
+    └── 2026-09-23/                     ← the run date (several runs on one day share this level)
+        └── Contract review/            ← the result folder name (duplicates get -1, -2)
             ├── 年度采购合同.pdf           ← the original attachments that were downloaded
             ├── 补充协议.docx
             ├── result.txt                  ← every task of this run (plain text)
             └── failure-screenshot-task2-20260923_101010.png   ← only when a task failed
 ```
 
-`result.txt` is **plain text** — Notepad shows it directly, with no `#`, `**` or `|` markers.
-It looks roughly like this:
+Separators inside that tree follow the running platform (`\` on Windows, `/` on macOS and Linux), and the
+folder names are identical on all three. `result.txt` is **plain text** — a text editor shows it directly,
+with no `#`, `**` or `|` markers. It looks roughly like this:
 
 ```text
 EchoDesk results
@@ -337,7 +390,7 @@ EchoDesk results
 开始时间：2026-09-23T09:12:03
 任务列表：https://oa.example.com/task/list
 任务指令：Extract the contract amount, payment method and terms, penalty ratio, both parties and the signing date; flag anything out of policy
-结果目录：<outer folder>\results\2026-09-23\Contract review
+结果目录：<data folder>/results/2026-09-23/Contract review
 
 [1/3] 年度采购合同
 --------------------------
@@ -363,7 +416,7 @@ The report header and the per-task lines are produced by the backend, so they st
 `失败原因:` = "failure reason", `自动化完成:` = "automation finished"). Only the file names and the
 instruction text come from your own configuration.
 
-> 📷 On screen: File Explorer with the three-level "results\date\task name" folders — the
+> 📷 On screen: the file manager with the three-level "results/date/task name" folders — the
 > original attachments and `result.txt` sit in the same folder.
 
 ---
@@ -435,13 +488,13 @@ step-by-step wizard; each step tells you plainly whether it succeeded and what t
 | The attachment download times out or hangs | A slow intranet, a large file, or the download opens a new browser tab | Raise "Page timeout (ms)" to `60000`; confirm the attachment downloads when clicked by hand; try "Retries on failure" = `2` |
 | "the detail page has no file link matching the required extensions" | The attachment extension is not in "File types to process" | Add the real extension (for example `ofd`, `wps`); use wizard step 3 to confirm the attachments are matched at all |
 | The attachment downloaded but parsing returns nothing | A scanned PDF has no text layer, or the file is damaged | Scanned files need OCR (not built in); save them as a text-copyable format with WPS/Office first, or handle that task by hand |
-| Parsing `.doc` / `.ppt` fails or asks for WPS | Legacy binary formats (and encrypted documents) are read through COM, and WPS/Office is not installed | Install WPS or Microsoft Office, or save the file as `.docx` / `.pptx` first |
+| Parsing `.doc` / `.ppt` fails or asks for WPS | Legacy binary formats (and encrypted documents) are read through COM, and WPS/Office is not installed | Install WPS or Microsoft Office, or save the file as `.docx` / `.pptx` first. Both the COM path and this advice are **Windows-only**; off Windows the capability is reported as platform-unavailable (not as a missing dependency) — see the warning at the top of this guide for the alternatives |
 | The model is too slow, or reports "the model returned an empty result" | The task instruction is too long, `llm_max_tokens` is too large, or a long attachment triggered chunked summarisation | Trim the instruction to four to six items; set `llm_max_tokens` to 384–512; switch to a smaller quantised model (such as Q4_K_M) |
-| The results folder is not created, or writing fails | "Where to save results" points at a path that does not exist or is not writable (network drive, protected system folder) | Leave "Where to save results" empty to use the user data folder (the portable outer folder), or pick a writable local folder such as `D:\contract-review-results`; check free disk space |
-| The scheduled run never fired | EchoDesk was not running (the schedule is driven by a background thread), the time format was invalid and dropped, or "Run on a schedule" is off | Keep EchoDesk running; put "Start-EchoDesk-v0.2.2.lnk" into `shell:startup` for auto-start; write times as two-digit hours such as `09:00` |
-| You want to see what a task actually did (audit trail) | You need to check afterwards who processed which files and when | Open the audit log `app\backend\automation_log.jsonl`: one JSON record per task (see section 9) |
+| The results folder is not created, or writing fails | "Where to save results" points at a path that does not exist or is not writable (network drive, protected system folder) | Leave "Where to save results" empty to use the user data folder (the platform-specific location in 3.9), or pick a writable local folder such as `D:\contract-review-results` (Windows), `/Users/<user>/Documents/contract-review-results` (macOS) or `/home/<user>/contract-review-results` (Linux); check free disk space |
+| The scheduled run never fired | EchoDesk was not running (the schedule is driven by a background thread), the time format was invalid and dropped, or "Run on a schedule" is off | Keep EchoDesk running; on Windows put "Start-EchoDesk-v0.2.2.lnk" into `shell:startup` for auto-start (macOS/Linux: your desktop's own login-items or autostart mechanism, since this version ships none); write times as two-digit hours such as `09:00` |
+| You want to see what a task actually did (audit trail) | You need to check afterwards who processed which files and when | Open the audit log `app/backend/automation_log.jsonl`: one JSON record per task (see section 9) |
 | "no local model is loaded, cannot generate a summary or review opinion" | No local model is selected or downloaded yet | Select one in the main window with `/model list` and `/model <file name>` |
-| "playwright is not installed, run pip install playwright first" | Running from source without the dependencies (the packaged build includes them) | For a source checkout run `pip install -r backend\requirements.txt` and restart |
+| "playwright is not installed, run pip install playwright first" | Running from source without the dependencies (the packaged build includes them) | For a source checkout run `pip install -r backend/requirements.txt` and restart (on macOS/Linux use `python3 -m pip install -r backend/requirements.txt` if `python`/`pip` is not on PATH; the separators in the path are `/` on those platforms and `\` on Windows) |
 
 ---
 
@@ -504,17 +557,18 @@ the export feature in section 8.
 - **Everything stays visible**: automation **only runs with a visible browser window** and never in a silent
   headless mode; when a CAPTCHA or two-factor verification appears the run pauses for you and stops the batch
   when the wait times out.
-- **Audit log**: by default `app\backend\automation_log.jsonl`, **one JSON record per task**, with the fields
+- **Audit log**: by default `app/backend/automation_log.jsonl`, **one JSON record per task**, with the fields
   time, event type (`run_start` / `task` / `run_end` / `manual_required`), task URL, **file names only**
   (never file contents), result (`ok` / `failed` / `skipped`), the (truncated) failure reason, and the safety
   protocol version plus the time you accepted it. Tokens and passwords inside the log are redacted
   automatically; document text, model output and cookies are never written.
 - **Where results are written**: only into the results root you configured
-  (`results root\date\task name\`), keeping the original attachments, `result.txt` and failure screenshots in that
+  (`results root/date/task name/`), keeping the original attachments, `result.txt` and failure screenshots in that
   folder. Temporary copies used during processing are cleaned up afterwards. With "Where to save results" left
-  empty, that root is the **user data folder** (the portable outer `EchoDesk-v0.2.2\` folder, not `app\`); set
-  the `ECHODESK_DATA` environment variable to move all user data (`ui_state.json`, `snippets.json`,
-  `results\`) elsewhere.
+  empty, that root is the **user data folder** — on Windows the outer `EchoDesk-v0.2.2/` folder next to `app/`,
+  on macOS `~/Library/Application Support/EchoDesk/`, on Linux `$XDG_DATA_HOME/EchoDesk/` or
+  `~/.local/share/EchoDesk/` (see 3.9); set the `ECHODESK_DATA` environment variable to move all user data
+  (`ui_state.json`, `snippets.json`, `results/`) elsewhere on any platform.
 - **Deduplication record**: `processed_file` (default `automation_processed.json`) stores only hashes of task
   URLs so processed tasks can be skipped next time; it holds no page content.
 

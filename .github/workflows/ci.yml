@@ -1,8 +1,11 @@
-name: CI
+name: CI / 持续集成
 
 # 任务书 1.4「持续集成」：构建 / 测试 / 文档检查 / 体积检查。
+# Task 1.4 "Continuous Integration": build / test / docs check / package size check.
 # 所有测试与构建命令都取自仓库里真实存在的 tools\*.py 与 tools\build_release.ps1，
+# All test and build commands are taken from tools\*.py and tools\build_release.ps1, which really exist in the repo;
 # 没有为了 CI 另造命令；唯一差别是输出目录（CI 用 out\，发布脚本用 publish\）。
+# no commands were invented just for CI; the only difference is the output directory (out\ in CI, publish\ in the release script).
 on:
   push:
     branches: [main, master]
@@ -10,17 +13,27 @@ on:
 
 # ---------------------------------------------------------------------------
 # 全局环境变量
+# Global environment variables
 #
 # PYTHONIOENCODING / PYTHONUTF8：
+# PYTHONIOENCODING / PYTHONUTF8:
 #   tools\selftest.py、tools\test_*.py 都会打印中文（"=== 配置层 ==="、"✅" 等）。
+#   tools\selftest.py and tools\test_*.py both print Chinese text (section banners such as "=== config layer ===", "✅", etc.).
 #   Windows runner 的控制台代码页不是 UTF-8，Python 默认按 ANSI 代码页编码 stdout，
+#   The Windows runner's console code page is not UTF-8, and Python encodes stdout using the ANSI code page by default,
 #   会直接抛 UnicodeEncodeError 让测试「因为输出中文而失败」。这里两处都强制 UTF-8。
+#   which throws UnicodeEncodeError outright and makes the tests "fail because they print Chinese". Both are forced to UTF-8 here.
 #
 # PACKAGE_SIZE_WARN_MB：
+# PACKAGE_SIZE_WARN_MB:
 #   不含模型发布物的体积**警告阈值**（MB）。它只是一个警告闸门：每次构建都把实测
+#   The **warning threshold** (MB) for the size of release artifacts excluding models. It is only a warning gate: every build writes the measured
 #   体积写进构建摘要（$GITHUB_STEP_SUMMARY）并留下记录，超出阈值时输出 ::warning::
+#   size into the build summary ($GITHUB_STEP_SUMMARY) and keeps a record, emitting a ::warning:: annotation when the threshold is
 #   注解但**不让构建失败**（任务书 1.4「超出阈值时警告」）。体积会随依赖、语言包与
+#   exceeded but **not failing the build** (task 1.4 "warn when the threshold is exceeded"). The size naturally fluctuates with dependencies, language packs and the
 #   .NET 运行时版本正常浮动，硬失败会把无关改动卡住；需要收紧时改这个常量即可。
+#   .NET runtime version, so a hard failure would block unrelated changes; just change this constant when it needs to be tightened.
 # ---------------------------------------------------------------------------
 env:
   PYTHONIOENCODING: utf-8
@@ -30,224 +43,339 @@ env:
 jobs:
   # -------------------------------------------------------------------------
   # 后端测试：不需要模型、不需要浏览器，全部在临时目录里跑
+  # Backend tests: no model and no browser needed; everything runs in a temp directory.
+  #
+  # 为什么只在 Windows（runs-on: windows-latest）：这批测试按完整的 backend/requirements.txt 安装，
+  # 其中 pywin32（win32com）与旧版 Office 格式（.doc / .ppt）解析只在 Windows 上可用；
+  # 跨平台那一半由下面的 cross-platform 作业在 Linux/macOS 上跑 tools/test_platform.py 补齐。
+  # Why Windows only (runs-on: windows-latest): these tests install the full backend/requirements.txt, whose
+  # pywin32 (win32com) and legacy Office format (.doc / .ppt) parsing exist on Windows only; the cross-platform
+  # half is covered by the cross-platform job below, which runs tools/test_platform.py on Linux/macOS.
   # -------------------------------------------------------------------------
   backend-tests:
     name: Backend tests (Windows, Python 3.13)
     runs-on: windows-latest
     steps:
-      - name: Checkout
+      - name: Checkout / 检出代码
         uses: actions/checkout@v4
         with:
           # 需要完整历史：tools/test_prompt_compare.py 会从 git 里取**旧提示词**
+          # Full history is required: tools/test_prompt_compare.py fetches the **old prompts**
           # （backend/conversation.py 与 backend/prompts.py 的重构前版本）做新旧对比，
+          # (the pre-refactor versions of backend/conversation.py and backend/prompts.py) from git and compares them with the new ones,
           # 浅克隆（默认 fetch-depth: 1）取不到那个提交。仓库只有源码，代价可接受。
+          # and a shallow clone (the default fetch-depth: 1) cannot reach that commit. The repo holds source code only, so the cost is acceptable.
           fetch-depth: 0
 
-      - name: Set up Python 3.13
+      - name: Set up Python 3.13 / 安装 Python 3.13
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
-      - name: Install backend dependencies
+      - name: Install backend dependencies / 安装后端依赖
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
           # 安装策略（明确声明，便于日后调整）：这里**完整安装** backend/requirements.txt，
+          # Installation policy (stated explicitly so it is easy to adjust later): backend/requirements.txt is installed **in full** here,
           # 而不是只挑测试需要的几项。理由：
+          # rather than only picking the few packages the tests need. Reasons:
           #   1) 只有完整装一遍，才能验证「requirements.txt 声明的依赖确实够测试用」——
+          #   1) Only a full install verifies that "the dependencies declared in requirements.txt really are enough for the tests" --
           #      例如 tools/selftest.py 会 import marketplace，而 marketplace 依赖 requests，
+          #      for example tools/selftest.py imports marketplace, and marketplace depends on requests,
           #      requests 目前是经 huggingface_hub 间接带进来的；只装子集会掩盖这类缺口。
+          #      which currently comes in indirectly via huggingface_hub; installing only a subset would hide gaps like this.
           #   2) tools/test_file_parsers.py 需要 python-docx / openpyxl / python-pptx / xlrd、
+          #   2) tools/test_file_parsers.py needs python-docx / openpyxl / python-pptx / xlrd,
           #      一个 PDF 库，以及 file_parser 顶层就 import 的 pywin32（win32com）。
+          #      a PDF library, and pywin32 (win32com), which file_parser imports at the top level.
           #   3) llama-cpp-python 来自 requirements.txt 里的 --extra-index-url（CPU wheel），
+          #   3) llama-cpp-python comes from the --extra-index-url in requirements.txt (CPU wheel),
           #      不走额外参数，CI 下载的是 CPU 预编译包而不是现场编译。
+          #      with no extra arguments, so CI downloads the prebuilt CPU package instead of compiling on the spot.
           # 代价是这一步偏重（约数十 MB wheel + 两三分钟）；若日后成为瓶颈，
+          # The cost is that this step is heavy (roughly tens of MB of wheels plus two or three minutes); if it becomes a bottleneck later,
           # 可改为只装测试子集：pydantic python-docx openpyxl python-pptx xlrd pypdf pywin32 requests，
+          # it can be changed to installing only the test subset: pydantic python-docx openpyxl python-pptx xlrd pypdf pywin32 requests,
           # 但必须在同一个 PR 里确认四项测试仍全绿。
+          # but the four tests must still be confirmed all-green in the same PR.
           python -m pip install -r backend/requirements.txt
 
       # 以下四项都是「本机自包含」测试：不加载模型、不开浏览器、不动网络。
+      # The four tests below are all "self-contained on this machine": they load no model, open no browser and touch no network.
       # 用法与退出码以各文件头部注释为准（均不接受参数，0 = 全通过，1 = 有失败项）。
+      # Usage and exit codes follow each file's header comment (none take arguments; 0 = all pass, 1 = some items failed).
       #   * tools/selftest.py       —— 配置层 / GGUF 元数据（无模型时该项自动跳过、不算失败）/
+      #   * tools/selftest.py       -- config layer / GGUF metadata (skipped automatically and not counted as a failure when no model is present) /
       #                               分段摘要 / 对话管理 / 自动化 / 技能市场
+      #                               segmented summaries / conversation management / automation / skill marketplace
       #   * tools/test_file_parsers.py —— 在 %TEMP% 现场生成 docx/xlsx/pptx/pdf/txt/csv 再逐个解析
+      #   * tools/test_file_parsers.py -- generates docx/xlsx/pptx/pdf/txt/csv in %TEMP% on the spot and then parses each one
       #   * tools/test_plaintext.py —— Markdown → 纯文本（结果文件落盘格式）
+      #   * tools/test_plaintext.py -- Markdown to plain text (the on-disk format of the result file)
       #   * tools/test_results_dir.py —— results目录结构与「result.txt 必须是纯文本」
-      - name: Run backend selftest
+      #   * tools/test_results_dir.py -- the results directory layout and "result.txt must be plain text"
+      - name: Run backend selftest / 运行后端自检
         shell: pwsh
         run: python tools/selftest.py
 
-      - name: Run file parser smoke test
+      - name: Run file parser smoke test / 运行文件解析冒烟测试
         shell: pwsh
         run: python tools/test_file_parsers.py
         # 该测试自己用裸 PDF 语法现场拼一个最小 PDF（含 xref 表），
+        # This test builds a minimal PDF (including the xref table) on the spot using raw PDF syntax,
         # 不再依赖 PyMuPDF 造样本——v0.2.1 已把 PDF 解析换成 BSD 的 pypdf，
+        # so it no longer relies on PyMuPDF to create samples -- v0.2.1 switched PDF parsing to the BSD-licensed pypdf,
         # 这里也就不会再因为 AGPL 依赖缺失而失败。
+        # and therefore it can no longer fail because of a missing AGPL dependency.
 
-      - name: Run plaintext conversion test
+      - name: Run plaintext conversion test / 运行纯文本转换测试
         shell: pwsh
         run: python tools/test_plaintext.py
 
-      - name: Run results directory test
+      - name: Run results directory test / 运行 results 目录测试
         shell: pwsh
         run: python tools/test_results_dir.py
 
-      - name: Run skills runtime test
+      - name: Run skills runtime test / 运行技能运行时测试
         shell: pwsh
         run: python tools/test_skills_runtime.py
         # 技能加载器与本地插件接口（任务二 / 任务二·补）：全部在临时目录里构造真实插件，
+        # Skill loader and local plugin interface (task two / task two supplement): real plugins are built entirely in a temp directory,
         # 不联网、不启动浏览器，可在 CI 稳定运行。
+        # with no network and no browser started, so it runs reliably in CI.
 
-      - name: Run i18n test
+      - name: Run i18n test / 运行 i18n 测试
         shell: pwsh
         run: python tools/test_i18n.py
         # 多语言机制（任务三）：回退链、按需加载、模块分片、外置语言包优先、损坏容错。
+        # i18n mechanism (task three): fallback chain, on-demand loading, module sharding, external language packs taking priority, corruption tolerance.
 
-      - name: Run developer-mode test
+      - name: Run developer-mode test / 运行开发者模式测试
         shell: pwsh
         run: python tools/test_dev_mode.py
         # 开发者模式（修复一）：开关双向可用、内置插件静默、批量确认清单、
+        # Developer mode (fix one): the toggle works both ways, built-in plugins stay silent, batch confirmation list,
         # 「答复过就不再问」、关闭时真的卸载开发插件。全部在临时目录里跑。
+        # "do not ask again once answered", and development plugins are really unloaded on disable. Everything runs in a temp directory.
 
-      - name: Run capability test
+      - name: Run capability test / 运行模型能力测试
         shell: pwsh
         run: python tools/test_capability.py
         # 模型能力辅助（修复四）：参数量/量化解析与来源标注、能力提示、硬件推荐、
+        # Model capability helpers (fix four): parameter-count/quantization parsing with source labelling, capability hints, hardware recommendations,
         # 生成预设、任务提示词模板、模糊提问检测、分段摘要缓存。不加载模型。
+        # generation presets, task prompt templates, vague-question detection, segmented summary cache. No model is loaded.
 
-      - name: Run reasoning-split test
+      - name: Run reasoning-split test / 运行思考内容分离测试
         shell: pwsh
         run: python tools/test_reasoning.py
         # 思考内容分离（模型思考内容分离）：标签分离器边界（跨 chunk / 嵌套 / 未闭合 /
+        # Reasoning content separation (model reasoning split): tag splitter boundaries (across chunks / nested / unclosed /
         # 孤立结束标签）、引擎双通道与兼容语义、流式协议 channel/reset/done、
+        # orphaned closing tags), engine dual channels and compatibility semantics, streaming protocol channel/reset/done,
         # 历史持久化与"思考不进上下文"。全部在进程内驱动真后端代码，
+        # history persistence and "reasoning does not enter the context". Everything drives real backend code in-process,
         # 不联网也不加载模型（真实模型的端到端用 --model 手动跑）。
+        # with no network and no model loaded (end-to-end runs with a real model are done manually with --model).
 
-      - name: Run extractive-prefilter test
+      - name: Run extractive-prefilter test / 运行抽取式预筛测试
         shell: pwsh
         run: python tools/test_extractive.py
         # 抽取式预筛（优化已知问题-2 任务四）：TextRank 选句 + 稀有度加权 +
+        # Extractive prefilter (optimize known issue-2 task four): TextRank sentence selection + rarity weighting +
         # 事实密度自适应比例。覆盖切句、特征、相似度图、抽取边界、
+        # adaptive ratio based on fact density. Covers sentence splitting, features, the similarity graph, extraction boundaries,
         # 关键事实保留下界、性能上限、摘要器接线（可开关/可统计/异常安全降级）。
+        # the lower bound on key facts retained, the performance ceiling, and summarizer wiring (toggleable/countable/exception-safe degradation).
         # 纯统计实现，不联网也不加载模型，全程毫秒级。
+        # A pure statistical implementation: no network, no model, millisecond-level end to end.
 
-      - name: Run search-chain test
+      - name: Run search-chain test / 运行联网搜索链路测试
         shell: pwsh
         run: python tools/test_search.py
         # 联网搜索链路（优化已知问题-2 任务二）：结构化结果、条数与摘要长度上限、
+        # Web search chain (optimize known issue-2 task two): structured results, limits on the number of entries and summary length,
         # 编号注入 + 引用指令、失败/空结果明确告知、Backend.search_diagnostics()
+        # numbered injection + citation instructions, explicit reporting of failures/empty results, the observability of the
         # 的四个环节可观测性、中英双语文案。用桩 DDGS，不联网。
+        # four stages of Backend.search_diagnostics(), and bilingual Chinese/English copy. Uses a stubbed DDGS, no network.
 
-      - name: Run compaction test
+      - name: Run compaction test / 运行上下文压缩测试
         shell: pwsh
         run: python tools/test_compaction.py
         # 上下文压缩策略（优化已知问题-2 任务九）：按 token 比例的触发阈值（可配）、
+        # Context compaction policy (optimize known issue-2 task nine): a configurable trigger threshold based on token ratio,
         # grace zone（最近 N 轮逐字保留）、摘要提示词与 /compact focus on 自定义重点、
+        # the grace zone (the last N turns kept verbatim), the summary prompt and /compact focus on custom focus areas,
         # 大块内容单独截断、压缩事件 JSONL 的追加/脱敏/裁剪与事件溯源回放。
+        # separate truncation of large blocks, and appending/redacting/trimming the compaction-event JSONL plus event-sourcing replay.
 
-      - name: Run multi-file upload test
+      - name: Run multi-file upload test / 运行多文件上传测试
         shell: pwsh
         run: python tools/test_multifile.py
         # 多文件上传（优化已知问题-2 任务八）：文件登记表（可见/可选择/可移除/同名替换）、
+        # Multi-file upload (optimize known issue-2 task eight): the file registry (visible/selectable/removable/same-name replacement),
         # 逐份独立状态与单份失败隔离、统一完成汇总、数量与总长上限的如实告知、
+        # per-file independent state with single-file failure isolation, a unified completion summary, honest reporting of count and total-length limits,
         # 注入预算（后上传优先 + 未注入点名）、会话持久化的新旧格式兼容、
+        # the injection budget (later uploads first + naming those not injected), session persistence compatible with old and new formats,
         # /file 多路径与引号感知分词（顺带修掉"路径含空格就加载失败"的既有缺陷）。
+        # /file multiple paths and quote-aware tokenization (also fixing the pre-existing defect where a path containing spaces failed to load).
 
-      - name: Run prompt-reconstruction comparison test
+      - name: Run prompt-reconstruction comparison test / 运行系统提示词重构对比测试
         shell: pwsh
         run: python tools/test_prompt_compare.py
         # 系统提示词重构：对比测试的无模型部分——客观指标函数、场景表覆盖、
+        # System prompt refactor: the model-free part of the comparison test -- objective metric functions, scenario-table coverage,
         # extract 硬格式不放松，并子进程跑 tools/prompt_compare.py --dry-run
+        # the extract hard format not being relaxed, plus a subprocess run of tools/prompt_compare.py --dry-run
         # 做新旧提示词对比（旧版从 git 历史取，因此上面 checkout 用了 fetch-depth: 0）。
+        # comparing old and new prompts (the old version is taken from git history, which is why the checkout above uses fetch-depth: 0).
         # 真模型的对比不在这里跑（要几百 MB GGUF 与数分钟），属发布前人工验证。
+        # Comparing with a real model is not run here (it needs hundreds of MB of GGUF and several minutes) and is manual pre-release verification.
 
-      - name: Run agent platform test
+      - name: Run agent platform test / 运行 Agent 平台测试
         shell: pwsh
         run: python tools/test_agent.py
         # Agent 平台（能力扩展-1 任务二）：工具接口与工具集（计算/日期/单位换算/文档检索）、
+        # Agent platform (capability extension-1 task two): the tool interface and tool set (calculation/date/unit conversion/document retrieval),
         # 计算器的 AST 白名单求值（拒绝 __import__ 一类输入）、调用解析容错、最大步数收敛、
+        # the calculator's AST whitelist evaluation (rejecting inputs like __import__), tolerance in call parsing, convergence at the maximum step count,
         # 权限分级（敏感工具默认关闭）、事件序列（每一步可见）、停止信号。桩 LLM，不加载模型。
+        # permission tiers (sensitive tools off by default), the event sequence (every step visible), and the stop signal. Stub LLM, no model loaded.
 
-      - name: Run MCP client test
+      - name: Run MCP client test / 运行 MCP 客户端测试
         shell: pwsh
         run: python tools/test_mcp.py
         # MCP 客户端（能力扩展-1 任务三）：真拉起随包示例服务器（examples/mcp/echo_server.py）
+        # MCP client (capability extension-1 task three): really starts the bundled example server (examples/mcp/echo_server.py)
         # 走 stdio JSON-RPC，验证握手/发现/调用/超时/错误处理、默认按敏感工具、环境变量不透传、
+        # over stdio JSON-RPC, verifying handshake/discovery/call/timeout/error handling, sensitive-by-default tools, environment variables not being passed through,
         # 以及后端运行期启停（不需要重启）。不联网；只用本机 python 子进程。
+        # and starting/stopping the backend at runtime (no restart needed). No network; only local python subprocesses.
 
-      - name: Run local retrieval test
+      - name: Run local retrieval test / 运行本地检索测试
         shell: pwsh
         run: python tools/test_retrieval.py
         # 本地检索（能力扩展-1 任务六）：分块与区间回溯、BM25 排序与可解释性、
+        # Local retrieval (capability extension-1 task six): chunking and span backtracking, BM25 ranking and explainability,
         # 关键事实命中下界、引用溯源文本形状、增量索引（新增/替换/删除只动那一份）、
+        # the lower bound on key-fact hits, the shape of citation-provenance text, incremental indexing (add/replace/delete touches only that one entry),
         # 与分段摘要的分工（短文档全文、长文档摘要+检索）。纯标准库，不加载模型。
+        # and the division of labour with segmented summaries (full text for short documents, summary plus retrieval for long ones). Pure standard library, no model loaded.
 
-      - name: Run model administration test
+      - name: Run model administration test / 运行模型管理测试
         shell: pwsh
         run: python tools/test_model_admin.py
         # 模型管理写路径（能力扩展-1 任务五）：采样参数可视化/持久化、
+        # Model administration write path (capability extension-1 task five): sampling-parameter visualization/persistence,
         # 自定义档位（新增/修改/改名/备注/删除）与输入校验（越界要报错而不是静默夹紧）。
+        # custom presets (add/edit/rename/annotate/delete) and input validation (out-of-range must error rather than silently clamp).
 
-      - name: Run platform boundary test
+      - name: Run platform boundary test / 运行跨平台能力边界测试
         shell: pwsh
         run: python tools/test_platform.py
         # 跨平台能力边界（跨平台 任务三/任务五）：平台探测字段与 RID、能力清单、
+        # Cross-platform capability boundaries (cross-platform tasks three/five): platform detection fields and RID, the capability list,
         # Windows 专属能力（WPS COM / 企业内网自动化）的降级原因与替代做法、
+        # the degradation reasons and workarounds for Windows-only capabilities (WPS COM / corporate intranet automation),
         # 旧版 Office 格式在非 Windows 上的说明文案、自动化 validate 的平台原因、
-        # platform 动作的往返。**在 Linux/macOS runner 上这条会走真实平台分支**
-        # （forced=False），正好补上本机没有的环境；Windows runner 上走注入分支。
+        # the explanatory copy for legacy Office formats on non-Windows, the platform reason from automation validate,
+        # platform 动作的往返。**本作业在 Windows 上跑，所以这里走的是"注入平台"分支**
+        # （test_platform.py 用 ECHODESK_FORCE_PLATFORM 把平台强制成 linux/macos）；
+        # 真正在 Linux/macOS 上走真实平台分支（forced=False）的是下面的 cross-platform 作业。
+        # **修正**：这条注释原文写的是"在 Linux/macOS runner 上会走真实平台分支"，
+        # 而本作业固定 runs-on: windows-latest —— 那句话在这个作业里不可达，属于误导。
+        # and the round trip of the platform action. **This job runs on Windows, so it exercises the
+        # *injected* platform branch** (test_platform.py forces linux/macos via ECHODESK_FORCE_PLATFORM);
+        # the real-platform branch (forced=False) is covered by the cross-platform job below.
+        # **Correction**: this comment used to claim "on Linux/macOS runners this takes the real platform
+        # branch" while this job is pinned to windows-latest — that statement was unreachable here.
 
-      - name: Check backend imports
+      - name: Check backend imports / 检查后端导入
         shell: pwsh
         run: python -c "import sys; sys.path.insert(0, 'backend'); import main; print('import ok')"
         # 真实导入一次全部后端模块。历史事故：打包后因函数返回注解里缺 typing.List
+        # Really import every backend module once. Historical incident: after packaging, a missing typing.List in a function return annotation
         # 导致 NameError 启动即崩，而 ast.parse 语法检查完全查不出来——
+        # caused a NameError crash on startup that ast.parse syntax checking could not detect at all --
         # 只有真正 import 才能发现这类"定义期求值"的错误。selftest.py 里也有同样的检查，
+        # only a real import can find this kind of "evaluated at definition time" error. selftest.py has the same check,
         # 这里再单独跑一条是为了让 CI 日志里一眼能定位到这类失败。
+        # and running one more here is so that this kind of failure can be located at a glance in the CI log.
 
       # 故意不在 CI 运行的四项（都需要本机运行环境，属人工/发布前验证）：
+      # Four tests deliberately not run in CI (all need a local runtime environment; they are manual / pre-release verification):
       #   * tools/test_automation_e2e.py —— 需要真实的 Microsoft Edge（playwright channel=msedge）
+      #   * tools/test_automation_e2e.py -- needs a real Microsoft Edge (playwright channel=msedge)
       #     并会自动打开**有头**浏览器窗口（config.AutomationConfig 强制 headless=False），
+      #     and automatically opens a **headed** browser window (config.AutomationConfig forces headless=False),
       #     在无人值守的 runner 上不稳定；发布前在装有 Edge 的机器上手动执行。
+      #     which is unstable on an unattended runner; run it manually on a machine with Edge before release.
       #   * tools/test_automation_login.py —— 同上（它自己起一个回环 HTTP 站点，验证登录态复用、
+      #   * tools/test_automation_login.py -- same as above (it starts its own loopback HTTP site to verify login-state reuse,
       #     href 五类值的提取与伪链接点击回退、可视化选取的非链接拦截与预览确认）；
+      #     extraction of the five kinds of href values and the pseudo-link click fallback, plus non-link interception and preview confirmation for visual selection);
       #     同样需要真实的有头 Edge，发布前在装有 Edge 的机器上手动执行。
+      #     it likewise needs a real headed Edge, so run it manually on a machine with Edge before release.
       #   * tools/test_model_hub_e2e.py —— 需要**已打包的后端 exe**
+      #   * tools/test_model_hub_e2e.py -- needs the **packaged backend exe**
       #     （默认找 publish\EchoDesk-v<版本>\backend\EchoDeskBackend.exe）并联网访问
+      #     (by default it looks for publish\EchoDesk-v<version>\backend\EchoDeskBackend.exe) and accesses the
       #     HuggingFace 镜像/官方的搜索接口；既慢又依赖外部服务可用性，
+      #     HuggingFace mirror/official search API over the network; it is slow and depends on external service availability,
       #     由 release.yml 之后的发布前检查手动执行。
+      #     so it is run manually by the pre-release check after release.yml.
       #   * tools/ui_probe.ps1 —— 需要交互式桌面（真实窗口与 UI 自动化），
+      #   * tools/ui_probe.ps1 -- needs an interactive desktop (real windows and UI automation),
       #     同样属发布前人工验证。
+      #     and likewise belongs to manual pre-release verification.
 
   # -------------------------------------------------------------------------
   # 前端构建：命令与 tools/build_release.ps1 第 3 步一致
+  # Frontend build: the commands match step 3 of tools/build_release.ps1
+  #
+  # 为什么只在 Windows（runs-on: windows-latest）：frontend/EchoDesk.csproj 的目标框架是
+  # net10.0-windows（WPF），该目标框架只能在 Windows 上发布；跨平台的 Avalonia 前端由
+  # cross-platform 作业在三个平台上各自构建。
+  # Why Windows only (runs-on: windows-latest): frontend/EchoDesk.csproj targets net10.0-windows (WPF),
+  # a target framework that can only be published on Windows; the cross-platform Avalonia front end is
+  # built on all three platforms by the cross-platform job.
   # -------------------------------------------------------------------------
   frontend-build:
     name: Frontend build (Windows, .NET 10)
     runs-on: windows-latest
     steps:
-      - name: Checkout
+      - name: Checkout / 检出代码
         uses: actions/checkout@v4
 
       # frontend/EchoDesk.csproj 的目标框架是 net10.0-windows，因此需要 .NET 10 SDK。
-      - name: Set up .NET SDK
+      # frontend/EchoDesk.csproj targets net10.0-windows, so the .NET 10 SDK is required.
+      - name: Set up .NET SDK / 安装 .NET SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
 
-      - name: Publish frontend
+      - name: Publish frontend / 发布前端
         shell: pwsh
         run: |
           # 与 tools/build_release.ps1 第 160-167 行完全一致的参数（多文件发布、不产 pdb、
+          # Arguments exactly matching lines 160-167 of tools/build_release.ps1 (multi-file publish, no pdb,
           # 关掉 NuGet 审计以免 CI 因审计告警变慢/变红），只把输出目录换成 out\frontend。
+          # NuGet audit disabled so CI does not get slower/red because of audit warnings), with only the output directory changed to out\frontend.
           dotnet publish frontend/EchoDesk.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:DebugType=none -p:DebugSymbols=false -p:NuGetAudit=false -o out/frontend
 
       # 发布脚本第 3b 步还会移除多余 exe、*.pdb 与非中文化的 .NET 框架资源目录，
+      # Step 3b of the release script also removes redundant exes, *.pdb files and non-Chinese .NET framework resource directories,
       # 这里不做（CI 只验证构建可用 + 记录体积），因此 size-check 记录的是
+      # which is not done here (CI only verifies the build works + records the size), so size-check records the size
       # 「发布根目录清理前」的体积，略大于最终发布物——多次构建之间可横向比较。
-      - name: Assert EchoDesk.exe exists
+      # "before cleaning the release root directory", slightly larger than the final artifact -- so builds can be compared against each other.
+      - name: Assert EchoDesk.exe exists / 断言 EchoDesk.exe 存在
         shell: pwsh
         run: |
           $exe = "out/frontend/EchoDesk.exe"
@@ -258,7 +386,7 @@ jobs:
           $mb = [math]::Round($files.Sum / 1MB, 1)
           Write-Host "前端发布产物就绪: $exe（$($files.Count) 个文件，$mb MB）"
 
-      - name: Upload frontend artifact
+      - name: Upload frontend artifact / 上传前端产物
         uses: actions/upload-artifact@v4
         with:
           name: frontend-publish
@@ -268,25 +396,42 @@ jobs:
 
   # -------------------------------------------------------------------------
   # 跨平台矩阵（v0.2.1 跨平台 任务一 / 任务四）
+  # Cross-platform matrix (v0.2.1 cross-platform tasks one / four)
   #
   # 为什么必须有这条：Avalonia 前端的"能跨平台"只有在这里才能被**真正验证** ——
+  # Why this is essential: the Avalonia frontend's "can go cross-platform" claim can only be **truly verified** here --
   # 开发机只有 Windows，`net10.0` 不带 -windows 的工程能编译、能发布出 linux/osx 产物
+  # the dev machine is Windows only, so the fact that a `net10.0` project without -windows compiles and can publish linux/osx artifacts
   # 这件事，必须在 Linux/macOS 的 runner 上各跑一遍才算证据。
+  # only counts as evidence once it has been run once each on Linux and macOS runners.
   #
   # 这条流水线做四件事：
+  # This pipeline does four things:
   #   1. 在三个平台上**编译** Avalonia 前端（本机 Windows 只能证明 win 那一格）；
+  #   1. **Compiles** the Avalonia frontend on three platforms (a local Windows machine can only prove the win cell);
   #   2. 按 RID 发布自包含产物（体积/文件数进日志，供与 Windows 版对比）；
+  #   2. Publishes self-contained artifacts per RID (size/file count go to the log, for comparison with the Windows build);
   #   3. 跑 `python tools/test_platform.py`：在 Linux/macOS 上走的是**真实平台分支**
+  #   3. Runs `python tools/test_platform.py`: on Linux/macOS it takes the **real platform branch**
   #      （forced=False），补上开发机靠 ECHODESK_FORCE_PLATFORM 注入才能覆盖的那一半；
+  #      (forced=False), covering the half that the dev machine can only reach by injecting ECHODESK_FORCE_PLATFORM;
   #   4. 跑 `EchoDesk --selftest`：无显示器环境下验证"前端能探测平台 → 按平台规则
+  #   4. Runs `EchoDesk --selftest`: verifies, with no display, that "the frontend detects the platform -> starts the
   #      拉起 Python 后端 → ready 握手 → platform/capability 动作往返"。
+  #      Python backend by platform rules -> ready handshake -> platform/capability action round trip".
   #
   # 注意：后端依赖里的 pywin32 已加 `sys_platform == "win32"` 标记，非 Windows 上不装；
+  # Note: pywin32 in the backend dependencies is marked with `sys_platform == "win32"` and is not installed on non-Windows;
   # llama-cpp-python 在 macOS 上**按直接 URL 钉死 0.3.30 的 metal 轮子**
+  # on macOS llama-cpp-python **pins the 0.3.30 metal wheel by direct URL**
   # （上游 cpu 索引的 macOS arm64 轮子实测全线损坏，见 backend/requirements.txt 的说明），
+  # (the macOS arm64 wheels in the upstream cpu index were measured to be broken across the board; see the note in backend/requirements.txt),
   # Linux/Windows 走 cpu 索引的预编译轮子 —— 三个平台都不需要现场编译。
+  # while Linux/Windows use prebuilt wheels from the cpu index -- none of the three platforms needs on-the-spot compilation.
   # 这条流水线只验证"前端能编译 + 能跑协议"；**完整发布物**由下面的
+  # This pipeline only verifies "the frontend compiles + the protocol runs"; the **complete release artifacts** are produced by the
   # cross-platform-release 作业产出（v0.2.1 跨平台-2 任务四）。
+  # cross-platform-release job below (v0.2.1 cross-platform-2 task four).
   # -------------------------------------------------------------------------
   cross-platform:
     name: Cross-platform build (${{ matrix.label }})
@@ -308,20 +453,20 @@ jobs:
             rid: osx-arm64
             exe: EchoDesk
     steps:
-      - name: Checkout
+      - name: Checkout / 检出代码
         uses: actions/checkout@v4
 
-      - name: Set up .NET SDK
+      - name: Set up .NET SDK / 安装 .NET SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
 
-      - name: Set up Python 3.13
+      - name: Set up Python 3.13 / 安装 Python 3.13
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      - name: Install backend dependencies
+      - name: Install backend dependencies / 安装后端依赖
         id: deps
         continue-on-error: true
         shell: pwsh
@@ -330,16 +475,20 @@ jobs:
           python -m pip install -r backend/requirements.txt
           "ok=true" >> $env:GITHUB_OUTPUT
           # 失败时（例如某平台没有 llama-cpp-python 轮子且源码编译超时）不直接红，
+          # On failure (for example, a platform has no llama-cpp-python wheel and compiling from source times out) it does not go red directly;
           # 由下一步按 outputs 决定是否跳过依赖后端的自检，并在日志里写明原因。
+          # the next step uses the outputs to decide whether to skip the backend-dependent self-test, and states the reason in the log.
 
-      - name: Build Avalonia frontend (proves the TFM is platform-neutral)
+      - name: Build Avalonia frontend (proves the TFM is platform-neutral) / 构建 Avalonia 前端（证明目标框架平台中立）
         shell: pwsh
         run: |
           # 这一步是本任务的核心证据：工程目标是 net10.0（不带 -windows），
+          # This step is the core evidence for this task: the project targets net10.0 (without -windows),
           # 因此它**必须**能在 Linux/macOS 上编译。带上 -windows 的话这里就会失败。
+          # so it **must** compile on Linux/macOS. With -windows it would fail here.
           dotnet build frontend-avalonia/EchoDesk.Avalonia/EchoDesk.Avalonia.csproj -c Release --nologo
 
-      - name: Publish self-contained frontend for this RID
+      - name: Publish self-contained frontend for this RID / 为当前 RID 发布自包含前端
         shell: pwsh
         run: |
           dotnet publish frontend-avalonia/EchoDesk.Avalonia/EchoDesk.Avalonia.csproj `
@@ -353,28 +502,30 @@ jobs:
           Write-Host ("跨平台发布产物就绪: {0}（{1} 个文件，{2:N1} MB）" -f `
             $exe, $files.Count, ($files.Sum / 1MB))
 
-      - name: Run platform boundary test (real platform branch)
+      - name: Run platform boundary test (real platform branch) / 运行跨平台能力边界测试（真实平台分支）
         shell: pwsh
         run: python tools/test_platform.py
 
-      - name: Run frontend self-test (headless, no display needed)
+      - name: Run frontend self-test (headless, no display needed) / 运行前端自检（无头、无需显示器）
         if: steps.deps.outputs.ok == 'true'
         shell: pwsh
         run: |
           # 无窗口模式：只验证"平台探测 + 按平台规则拉起后端 + 协议往返"。
+          # Headless mode: only verifies "platform detection + starting the backend by platform rules + protocol round trip".
           # 需要后端依赖已装好（上一步 id=deps）；依赖没装好时这条会被跳过并打印原因。
+          # It needs the backend dependencies installed (the step above with id=deps); when they are not, this is skipped and the reason is printed.
           $exe = "out/avalonia/${{ matrix.rid }}/${{ matrix.exe }}"
           & $exe --selftest
           if ($LASTEXITCODE -ne 0) { throw "跨平台自检失败（退出码 $LASTEXITCODE）" }
 
-      - name: Report skipped self-test
+      - name: Report skipped self-test / 报告被跳过的自检
         if: steps.deps.outputs.ok != 'true'
         shell: pwsh
         run: |
           Write-Warning "后端依赖未安装成功，跳过头less 自检（不是通过，是没跑）。"
           Write-Warning "要拿到完整证据，请在某平台补跑：python -m pip install -r backend/requirements.txt"
 
-      - name: Upload cross-platform artifact
+      - name: Upload cross-platform artifact / 上传跨平台产物
         uses: actions/upload-artifact@v4
         with:
           name: avalonia-${{ matrix.rid }}
@@ -384,19 +535,30 @@ jobs:
 
   # -------------------------------------------------------------------------
   # 三平台完整发布物（v0.2.1 跨平台-2 任务四 / 任务五）
+  # Complete release artifacts for three platforms (v0.2.1 cross-platform-2 tasks four / five)
   #
   # 与上面的 cross-platform 作业的分工：
+  # Division of labour with the cross-platform job above:
   #   * cross-platform          —— 证明「Avalonia 前端的 TFM 是平台中立的、能编译能自检」；
+  #   * cross-platform          -- proves "the Avalonia frontend's TFM is platform-neutral and it can compile and self-test";
   #   * cross-platform-release  —— 真的**打出三个平台的完整发布物**（前端 + 包内解释器后端）。
+  #   * cross-platform-release  -- actually **builds complete release artifacts for three platforms** (frontend + bundled-interpreter backend).
   #
   # 为什么后端必须在**目标平台**上构建：standalone 形态虽然不需要编译 Python，
+  # Why the backend must be built on the **target platform**: although the standalone form does not need to compile Python,
   # 但 `pip install --platform …` 交叉下载的依赖与解释器归档的**平台契合度**
+  # the **platform fit** of dependencies cross-downloaded with `pip install --platform ...` and of the interpreter archive
   # 只有在目标平台上真跑一次才算验证过。开发机是 Windows，Linux/macOS 这两格
+  # is only verified by really running once on the target platform. The dev machine is Windows, so without CI the Linux/macOS cells
   # 没有 CI 就永远只是"理论上应该行"。
+  # would forever remain "should work in theory".
   #
   # 产物：dist/EchoDesk-<版本>-<rid>/ 与 .tar.gz（macOS/Linux）或 .zip（Windows）、
+  # Artifacts: dist/EchoDesk-<version>-<rid>/ plus .tar.gz (macOS/Linux) or .zip (Windows),
   #       dist/SHA256SUMS.txt、dist/manifest.json（内含 backend_mode=standalone 与
+  #       dist/SHA256SUMS.txt, dist/manifest.json (containing backend_mode=standalone and
   #       实际装上的依赖版本清单 —— 记录真相而不是记录"我们要求了什么"）。
+  #       the list of dependency versions actually installed -- recording the truth rather than recording "what we asked for").
   # -------------------------------------------------------------------------
   cross-platform-release:
     name: Cross-platform release (${{ matrix.label }})
@@ -415,43 +577,51 @@ jobs:
             label: macOS arm64
             rid: osx-arm64
     steps:
-      - name: Checkout
+      - name: Checkout / 检出代码
         uses: actions/checkout@v4
 
-      - name: Set up .NET SDK
+      - name: Set up .NET SDK / 安装 .NET SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
 
-      - name: Set up Python 3.13
+      - name: Set up Python 3.13 / 安装 Python 3.13
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      - name: Build standalone backend
+      - name: Build standalone backend / 构建 standalone 后端
         shell: pwsh
         run: |
           # python-build-standalone 解释器 + 目标平台的预编译依赖，产出 publish/backend-<rid>/。
+          # The python-build-standalone interpreter plus prebuilt dependencies for the target platform, producing publish/backend-<rid>/.
           # 这一步不做交叉编译：runner 的真实平台就是目标平台。
+          # This step does no cross-compilation: the runner's real platform is the target platform.
           python tools/pack_backend.py --platform ${{ matrix.rid }}
 
-      - name: Verify standalone backend
+      - name: Verify standalone backend / 校验 standalone 后端
         shell: pwsh
         run: |
           # 四层校验：结构 / 启动脚本语法 / 解释器真能跑 / 真能走一遍 JSON 行协议
+          # Four layers of checking: structure / launch-script syntax / the interpreter really runs / it really walks the JSON line protocol
           # （拉起 app/main.py → 读 ready → 发 platform 动作 → 断言 platform.kind）。
+          # (starts app/main.py -> reads ready -> sends a platform action -> asserts platform.kind).
           # 这是"后端在这个平台上到底能不能起来"的唯一自动化证据。
+          # This is the only automated evidence that "the backend really does come up on this platform".
           python tools/check_standalone_backend.py --platform ${{ matrix.rid }}
 
-      - name: Package complete release
+      - name: Package complete release / 打包完整发布物
         shell: pwsh
         run: |
           # 前端（Avalonia 自包含）+ 后端（standalone）合成 dist/EchoDesk-<版本>-<rid>/。
+          # Combines the frontend (self-contained Avalonia) + the backend (standalone) into dist/EchoDesk-<version>-<rid>/.
           # --backend-mode standalone 是**硬指定**：不给它退回 PyInstaller 的机会，
+          # --backend-mode standalone is **forced**: it is not given the chance to fall back to PyInstaller,
           # 否则 Windows 那一格会打出一个与 Linux/macOS 结构不同的包。
+          # otherwise the Windows cell would produce a package with a different structure from Linux/macOS.
           python tools/pack_crossplatform.py --rid ${{ matrix.rid }} --backend-mode standalone
 
-      - name: Upload release artifact
+      - name: Upload release artifact / 上传发布产物
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.rid }}
@@ -465,19 +635,27 @@ jobs:
 
   # -------------------------------------------------------------------------
   # 体积检查：记录发布物体积，超出阈值只警告
+  # Package size check: record the artifact size and only warn when the threshold is exceeded
+  #
+  # 为什么只在 Windows（runs-on: windows-latest）：它测量的是 frontend-build 作业产出的 Windows 前端
+  # （needs: [frontend-build]），而该作业本身只能在 Windows 上跑；三平台发布物的体积记录在
+  # cross-platform 作业的日志里。
+  # Why Windows only (runs-on: windows-latest): it measures the Windows front end produced by the
+  # frontend-build job (needs: [frontend-build]), which itself can only run on Windows; per-platform
+  # artifact sizes are recorded in the log of the cross-platform job.
   # -------------------------------------------------------------------------
   size-check:
     name: Package size report (warning gate)
     needs: [frontend-build]
     runs-on: windows-latest
     steps:
-      - name: Download frontend artifact
+      - name: Download frontend artifact / 下载前端产物
         uses: actions/download-artifact@v4
         with:
           name: frontend-publish
           path: out/frontend
 
-      - name: Record package sizes
+      - name: Record package sizes / 记录发布物体积
         shell: pwsh
         run: |
           $threshold = [double]$env:PACKAGE_SIZE_WARN_MB
@@ -492,15 +670,20 @@ jobs:
           $frontendMb = Get-SizeMb "out/frontend"
           $backendMb = Get-SizeMb "out/backend"
           # 后端由 PyInstaller 打包（backend\EchoBackend.spec），只在 release.yml 里构建：
+          # The backend is packaged by PyInstaller (backend\EchoBackend.spec) and is built only in release.yml:
           # 每次 CI 都跑 PyInstaller 会把构建时间拉长数倍，而「构建脚本可用」这一点
+          # running PyInstaller on every CI run would multiply the build time, while "the build script works" is
           # 由打标签时的 release.yml 负责验证。这里若没有后端产物就只记录前端，
+          # verified by release.yml when tagging. If there is no backend artifact here, only the frontend is recorded,
           # 并在摘要里写明这是**不含后端**的下界。
+          # and the summary states that this is the lower bound **excluding the backend**.
           $hasBackend = $backendMb -ge 0
 
           $totalMb = 0
           if ($hasBackend) { $totalMb = $frontendMb + $backendMb } else { $totalMb = $frontendMb }
 
           # 模型文件单独统计：发布包默认不含模型（首次启动询问是否下载）
+          # Model files are counted separately: the release package does not include models by default (it asks whether to download on first launch)
           $modelMb = 0
           $modelDir = "out/backend/models"
           if (Test-Path -LiteralPath $modelDir) {
@@ -535,7 +718,9 @@ jobs:
 
           if ($totalMb -gt $threshold) {
               # 阈值是「每次构建记录 + 超出告警」的闸门：任务书 1.4 要求体积可控，
+              # The threshold is a "record every build + warn on overrun" gate: task 1.4 requires the size to be under control,
               # 但体积受依赖版本、.NET 运行时与语言包数量影响，直接判失败会误伤正常改动。
+              # but the size is affected by dependency versions, the .NET runtime and the number of language packs, so failing outright would punish normal changes.
               Write-Host "::warning title=不含模型发布物超出体积阈值::$totalMb MB > $threshold MB（仅警告；体积已记入构建摘要，请核对是否引入了不必要的依赖）"
           } else {
               Write-Host "体积在阈值内：$totalMb MB <= $threshold MB"
@@ -543,47 +728,105 @@ jobs:
 
   # -------------------------------------------------------------------------
   # 文档检查：链接有效、无待办标记、编码合法
+  # Documentation check: links valid, no TODO markers, valid encoding
   # -------------------------------------------------------------------------
   docs-check:
     name: Documentation check
     runs-on: windows-latest
     steps:
-      - name: Checkout
+      - name: Checkout / 检出代码
         uses: actions/checkout@v4
 
-      - name: Check docs links / TODO / UTF-8
+      - name: Check docs links / TODO / UTF-8 / 检查文档链接 / TODO / UTF-8
         shell: pwsh
         run: |
           # tools\check_docs_links.ps1：检查 README.md、README.<locale>.md、docs\**\*.md
+          # tools\check_docs_links.ps1: checks README.md, README.<locale>.md, docs\**\*.md
           # 与 CONTRIBUTING/SECURITY/CODE_OF_CONDUCT 里的相对链接（含图片）是否指向真实文件、
+          # and whether the relative links (including images) in CONTRIBUTING/SECURITY/CODE_OF_CONDUCT point to real files,
           # 是否存在字面量 TODO、是否合法 UTF-8。
+          # whether there is a literal TODO, and whether the encoding is valid UTF-8.
           # 脚本本身兼容 Windows PowerShell 5.1，也可以本机手动执行：
+          # The script itself is compatible with Windows PowerShell 5.1 and can also be run manually on a local machine:
           #   powershell -ExecutionPolicy Bypass -File tools\check_docs_links.ps1
           & ./tools/check_docs_links.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   # -------------------------------------------------------------------------
   # 语言包完整性：工具尚未落地时跳过，不让 CI 变红
+  # Language pack completeness: skipped while the tool does not exist yet, so CI does not go red
   # -------------------------------------------------------------------------
-  lang-check:
-    name: Language pack completeness
-    runs-on: windows-latest
+  # ---------------------------------------------------------------------------
+  # Linux 侧静态门禁（v0.2.2 全面双语与三平台友好 任务五 5.2）
+  #
+  # 为什么单开一格：下面几个静态检查作业都固定在 windows-latest 上，而它们跑的工具
+  # **只用标准库、天生跨平台** —— 于是"三平台 CI"在静态检查这一块实际只有一格。
+  # 在 Linux 上再跑一遍的价值不只是"多一格"：
+  #   * 大小写敏感、路径分隔符、换行符、编码这类差异只在非 Windows 文件系统上才暴露；
+  #   * 本仓库有大量中文文件名与中文内容，UTF-8 与 locale 的行为值得在非 Windows 上验证；
+  #   * 新增的门禁（审计 / 平台资源 / 配置示例）本来就是为三平台贡献者准备的，
+  #     如果它们自己只能在 Windows 上跑，就自相矛盾了。
+  #
+  # 只放"确认过只用标准库"的 Python 工具。`check_docs_links.ps1`、`check_feedback.ps1`
+  # 等 PowerShell 门禁**没有**放进来：本机没有 Linux 环境，无法实测 pwsh 7 下的兼容性，
+  # 未经验证就加进 CI 等于赌一把（宁可少一格，也不要一格会无故变红的）。
+  # 这条也记在 records 的未完成项里（把三个纯文本/纯 git 的 .ps1 门禁移植成 .py）。
+  # ---------------------------------------------------------------------------
+  static-gates-linux:
+    name: Static gates (Linux, standard library only)
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout / 检出代码
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
+      - name: Set up Python 3.13 / 安装 Python 3.13
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      - name: Check language packs
+      - name: Run portable gates / 运行跨平台门禁
+        shell: bash
+        run: |
+          set -e
+          # 语言包与双语文档结构
+          python tools/check_lang.py
+          # 依赖声明完整性（后端直接 import 的包都必须声明）
+          python tools/check_requirements.py
+          # 主题色板与对比度
+          python tools/check_theme.py
+          # 双语与三平台友好度审计（成对性、根目录互指、.ps1 等价物登记）
+          python tools/audit_repo.py --check
+          # 三平台图标与桌面条目是否与源素材一致
+          python tools/gen_platform_icons.py --check
+          # 配置示例（CI 里没有构建产物，脚本会明确打印"不存在，跳过"并以 0 退出）
+          python tools/gen_config_example.py --check config.example.json
+          # 换行符必须符合 .gitattributes（`.bat`/`.ps1` 要 CRLF；拿真实构建失败换来的检查）
+          python tools/check_line_endings.py --quiet
+          echo "全部跨平台门禁通过 / all portable gates passed"
+
+  lang-check:
+    name: Language pack completeness
+    runs-on: windows-latest
+    steps:
+      - name: Checkout / 检出代码
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13 / 安装 Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Check language packs / 检查语言包
         shell: pwsh
         run: |
           # tools/check_lang.py 由任务 3.5（翻译工作流）提供：比对
+          # tools/check_lang.py is provided by task 3.5 (the translation workflow): it compares
           # frontend/Resources/Lang/<locale>.json 与 backend/lang/<locale>.json 的键完整性。
+          # the key completeness of frontend/Resources/Lang/<locale>.json and backend/lang/<locale>.json.
           # 守卫：工具不存在时只提示并跳过——否则在工具落地前 CI 会一直红。
+          # Guard: when the tool does not exist it only prints a note and skips -- otherwise CI would stay red until the tool lands.
           # 该工具预期只用标准库（读写 JSON 比对键），因此这里不安装 backend 依赖。
+          # The tool is expected to use only the standard library (reading/writing JSON to compare keys), so backend dependencies are not installed here.
           if (-not (Test-Path -LiteralPath "tools/check_lang.py")) {
               Write-Host "tools/check_lang.py 尚未提供，跳过语言包完整性检查（工具落地后本步骤自动生效）"
               exit 0
@@ -593,128 +836,192 @@ jobs:
 
   # -------------------------------------------------------------------------
   # 主题与 emoji：两项都是"数值/字形层面可自动判定"的检查（修复二 / 修复六）
+  # Theme and emoji: both are checks that "can be decided automatically at the value/glyph level" (fix two / fix six)
   #
   # 为什么不放像素校验（tools/check_ui_pixels.ps1）：它要真的启动窗口并截图，
+  # Why the pixel check (tools/check_ui_pixels.ps1) is not included: it has to really start a window and take a screenshot,
   # 需要交互式桌面，属发布前人工验证。而下面两项是它的"静态前置条件"——
+  # which needs an interactive desktop and is manual pre-release verification. The two below are its "static preconditions" --
   # 色板不达标或字体链缺字形时，像素校验必然也好不了。
+  # if the palette is substandard or the font chain lacks glyphs, the pixel check can hardly be any better.
   # -------------------------------------------------------------------------
   theme-check:
     name: Theme palette and contrast
     runs-on: windows-latest
     steps:
-      - name: Checkout
+      - name: Checkout / 检出代码
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
+      - name: Set up Python 3.13 / 安装 Python 3.13
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      - name: Check theme palette / WCAG contrast / hardcoded colors
+      - name: Check theme palette / WCAG contrast / hardcoded colors / 检查主题色板 / WCAG 对比度 / 硬编码色值
         shell: pwsh
         run: |
           # tools/check_theme.py（修复二）：
+          # tools/check_theme.py (fix two):
           #   1) 浅色/深色两套色板键名必须完全一致（缺键会导致切主题后残留默认色）；
+          #   1) the key names of the light and dark palettes must match exactly (a missing key leaves default colors behind after switching themes);
           #   2) 43 组"文字/背景"对比度按 WCAG 2.1 公式复核，正文 ≥4.5:1、控件边界 ≥3:1；
+          #   2) 43 "text/background" contrast pairs are rechecked with the WCAG 2.1 formula: body text >= 4.5:1, control borders >= 3:1;
           #   3) 界面代码里不许有硬编码色值，所有 {DynamicResource} 引用必须存在。
+          #   3) no hardcoded color values are allowed in UI code, and every {DynamicResource} reference must exist.
           # 纯标准库实现，不需要装后端依赖。
+          # A pure standard-library implementation, so backend dependencies are not needed.
           python tools/check_theme.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Check emoji glyph coverage
+      - name: Check emoji glyph coverage / 检查 emoji 字形覆盖
         shell: pwsh
         run: |
           # tools/check_emoji.ps1（修复六）：
+          # tools/check_emoji.ps1 (fix six):
           #   1) 扫出源码/语言包里实际用到的全部 emoji；
+          #   1) scans out every emoji actually used in the source code and language packs;
           #   2) 用 WPF 的 GlyphTypeface 查字体链（UiFontFamily / MonoFontFamily /
+          #   2) uses WPF's GlyphTypeface to check whether the font chain (UiFontFamily / MonoFontFamily /
           #      IconFontFamily）能否覆盖每一个字形——"Segoe UI 对 emoji 覆盖率为 0"
+          #      IconFontFamily) can cover every glyph -- the root cause "Segoe UI has 0 emoji coverage"
           #      这个根因就是靠它定位的；
+          #      is located precisely with it;
           #   3) 校验前后端 ASCII 降级表是否覆盖全部在用 emoji（否则降级会变成 '?'）。
+          #   3) verifies that the frontend/backend ASCII fallback table covers all emoji in use (otherwise the fallback becomes '?').
           # Windows runner 自带 WPF 与 Segoe UI Emoji，因此可在 CI 稳定运行。
+          # Windows runners ship with WPF and Segoe UI Emoji, so it runs reliably in CI.
           & ./tools/check_emoji.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   # -------------------------------------------------------------------------
   # 发布门禁（v0.2.1 发布任务书「全局要求三 / 全局要求五」）
+  # Release gates (v0.2.1 release task book "global requirement three / global requirement five")
+  #
+  # 为什么只在 Windows（runs-on: windows-latest）：这几项门禁面向 Windows 发布链路 ——
+  # tools\check_feedback.ps1 依赖 Windows PowerShell 环境，检查对象是 PyInstaller 打出的
+  # publish\ 发布物与 Inno Setup / rcedit 发布脚本（含 Windows PowerShell 5.1 兼容性）；
+  # macOS/Linux 发布物由 cross-platform-release 作业各自验证。
+  # Why Windows only (runs-on: windows-latest): these gates target the Windows release channel --
+  # tools\check_feedback.ps1 relies on the Windows PowerShell environment, and the checks cover the
+  # publish\ artifact produced by PyInstaller plus the Inno Setup / rcedit release scripts (including
+  # Windows PowerShell 5.1 compatibility); the macOS/Linux artifacts are verified by cross-platform-release.
   #
   # 三项都是"发布物一旦不合格就不能发"的硬约束，且都能在 CI 上自动判定：
+  # All three are hard constraints of the form "once the artifact is unacceptable it must not ship", and all three can be decided automatically in CI:
   #   * 反馈渠道与内容洁净度（无个人邮箱/实体地址/个人路径/AGPL 残留/凭证明文）
+  #   * feedback channels and content cleanliness (no personal email/physical address/personal path/AGPL leftovers/plaintext credentials)
   #   * requirements.txt 是否覆盖后端全部直接 import（干净环境可导入）
+  #   * whether requirements.txt covers every direct import of the backend (importable in a clean environment)
   #   * SBOM 与第三方许可证清单是否一致（含环境标记的传递闭包）
+  #   * whether the SBOM and the third-party license manifest agree (the transitive closure including environment markers)
   # 这三项以前靠人工核对，v0.2.1 发布时各自都真的发现过问题
+  # These three used to be checked by hand, and each of them really did find problems during the v0.2.1 release
   # （缺 requests/urllib3/tqdm 声明、许可证清单漏列直接依赖、pymupdf 残留扫描误报），
+  # (missing requests/urllib3/tqdm declarations, direct dependencies omitted from the license manifest, false positives in the pymupdf leftover scan),
   # 所以固化成门禁。
+  # so they were frozen into gates.
   # -------------------------------------------------------------------------
   release-gates:
     name: Release readiness gates
     runs-on: windows-latest
     steps:
-      - name: Checkout
+      - name: Checkout / 检出代码
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
+      - name: Set up Python 3.13 / 安装 Python 3.13
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      - name: Install backend dependencies
+      - name: Install backend dependencies / 安装后端依赖
         shell: pwsh
         run: |
           # 与干净发布环境一致：只装 backend/requirements.txt。
+          # Consistent with a clean release environment: only backend/requirements.txt is installed.
           # 依赖自检要看的就是"只装这个文件时后端能否全部导入"。
+          # What the dependency self-check examines is exactly "whether the whole backend imports when only this file is installed".
           python -m pip install --upgrade pip
           python -m pip install -r backend/requirements.txt
 
-      - name: Check feedback channels and forbidden content
+      - name: Check feedback channels and forbidden content / 检查反馈渠道与禁止内容
         shell: pwsh
         run: |
           # tools/check_feedback.ps1（发布任务书「全局要求三 / 五」）：
+          # tools/check_feedback.ps1 (release task book "global requirements three / five"):
           #   1) 要求的文档里必须给出 GitHub Issues / Discussions 链接；
+          #   1) the required documents must give GitHub Issues / Discussions links;
           #   2) 安全文档必须给出 Security Advisory 私有入口 + noreply 兜底地址，
+          #   2) the security document must give the private Security Advisory entry point + a noreply fallback address,
           #      并写明"不要在公开 Issue 中披露"；
+          #      and state "do not disclose in a public Issue";
           #   3) 全仓库不得出现个人邮箱、实体地址、个人绝对路径、凭证明文；
+          #   3) no personal email, physical address, personal absolute path or plaintext credential may appear anywhere in the repo;
           #   4) 依赖声明与代码里不得有 pymupdf/fitz 残留，spec 必须把它们列入 excludes。
+          #   4) no pymupdf/fitz leftovers may remain in the dependency declarations or the code, and the spec must list them in excludes.
           & ./tools/check_feedback.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Check dependency declaration completeness
+      - name: Check dependency declaration completeness / 检查依赖声明完整性
         shell: pwsh
         run: |
           # tools/check_requirements.py：用 AST 取后端自身代码的第三方顶层导入，
+          # tools/check_requirements.py: uses the AST to extract the third-party top-level imports of the backend's own code,
           # 与 backend/requirements.txt 对账，并实测能否 import。
+          # reconciles them against backend/requirements.txt, and actually tests whether they can be imported.
           # 为什么需要它：requests/urllib3/tqdm 曾被"传递依赖恰好装着"掩盖，
+          # Why it is needed: requests/urllib3/tqdm used to be masked by "a transitive dependency happened to install them",
           # 在按 requirements.txt 从零建的环境里会 ImportError。
+          # and they would raise ImportError in an environment built from scratch from requirements.txt.
           python tools/check_requirements.py --venv (Get-Command python).Source
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Check SBOM matches the license manifest
+      - name: Check SBOM matches the license manifest / 检查 SBOM 与许可证清单一致
         shell: pwsh
         run: |
           # tools/gen_sbom.py --check：SBOM 与 docs/THIRD_PARTY_LICENSES.md 双向核对，
+          # tools/gen_sbom.py --check: cross-checks the SBOM against docs/THIRD_PARTY_LICENSES.md in both directions,
           # 闭包按当前解释器评估环境标记（否则 macholib/tomli 这类跨平台标记依赖
+          # with the closure's environment markers evaluated against the current interpreter (otherwise cross-platform marker dependencies like macholib/tomli
           # 会让门禁永远失败）。
+          # would make the gate fail forever).
           python tools/gen_sbom.py --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Check bundled modules against the declared packages
+      - name: Check bundled modules against the declared packages / 检查打包模块与声明的发行包一致
         shell: pwsh
         run: |
           # tools/check_bundled_packages.py：比对「干净 venv 声明的发行包」与
+          # tools/check_bundled_packages.py: compares "the distribution packages declared in a clean venv" with
           # 「发布物 _internal 里实际存在的顶层模块」。CI 上没有发布物时该脚本
+          # "the top-level modules actually present in the artifact's _internal". When there is no artifact in CI, the script
           # 会明确报告"未找到 _internal"并以 2 退出（不是静默通过），
+          # explicitly reports "_internal not found" and exits with 2 (rather than passing silently),
           # 因此这里先构建后端产物再跑；为控制 CI 时长，只在后端构建已缓存时执行。
-          if (-not (Test-Path "publish\EchoDesk-v0.2.1\app\backend\_internal")) {
-              Write-Host "本作业未构建发布物（无 _internal），跳过打包模块比对 —— 该检查在 verify_release.ps1 中覆盖。"
+          # so the backend artifact must be built before running it; to keep CI time in check, it only runs when the backend build is already cached.
+          #
+          # 版本号**必须从 backend/version.py 读**，不能写死（v0.2.2 全面双语与三平台友好 修）：
+          # 原实现硬编码 `publish\EchoDesk-v0.2.1\...`，版本升到 v0.2.2 之后这个判断永远为假，
+          # 于是这条门禁**再也没跑过** —— 而日志里只说"跳过"，看起来像"本作业没构建发布物"，
+          # 完全不像"路径过时了"。这是"默认值/路径写死版本号"这一类缺陷的第三次复发
+          # （前两次：verify_release.ps1 的 $Version、check_bundled_packages.py 的 INTERNAL）。
+          # The version must be read from backend/version.py, never hard-coded: with the old
+          # hard-coded v0.2.1 path this check silently never ran again after the version bump.
+          $version = (Select-String -Path backend/version.py -Pattern 'APP_VERSION\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $internal = "publish\EchoDesk-$version\app\backend\_internal"
+          if (-not (Test-Path $internal)) {
+              Write-Host "本作业未构建发布物（找不到 $internal），跳过打包模块比对 —— 该检查在 verify_release.ps1 中覆盖。"
               exit 0
           }
           python tools/check_bundled_packages.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Check release scripts parse
+      - name: Check release scripts parse / 检查发布脚本可解析
         shell: pwsh
         run: |
           # 发布脚本平时不在 CI 路径上（要 Inno Setup 与 rcedit 才能真跑），
+          # The release scripts are normally not on the CI path (running them for real requires Inno Setup and rcedit),
           # 所以至少做语法解析，避免带着语法错误进发布流程。
+          # so at least parse the syntax, to avoid entering the release flow carrying syntax errors.
           foreach ($f in @("tools/build_release.ps1", "tools/make_installer.ps1",
                            "tools/check_installer_deliverables.ps1",
                            "tools/check_feedback.ps1", "tools/verify_release.ps1")) {

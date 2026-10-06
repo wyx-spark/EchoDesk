@@ -1,3 +1,4 @@
+# 适用平台：Windows 发布链（PyInstaller + rcedit + Inno Setup），三平台各自有别的打包脚本
 <#
 .SYNOPSIS
     EchoDesk 发布构建脚本：产出「便携版三层结构」的发布物。
@@ -603,6 +604,30 @@ Powered by Void Entropia Studio
   EchoDesk is a portable app: just delete the whole folder. Nothing is written
   to the registry.
 
+[OTHER PLATFORMS AND COMMAND EXAMPLES]
+  This folder is the Windows build (WPF frontend + PyInstaller backend). Linux
+  and macOS use the same backend with an Avalonia frontend, shipped as separate
+  bundles on the same release page:
+    Windows  (this one)   EchoDesk-v$Version-Setup.exe  /  EchoDesk-v$Version-win-x64.zip
+    Linux x86-64          EchoDesk-v$Version-linux-x64.tar.gz
+    macOS (Apple silicon) EchoDesk-v$Version-osx-arm64.tar.gz
+  There is no installer on Linux/macOS: unpack the archive, then run the
+  launcher sitting at the top of the bundle.
+
+    # Windows (PowerShell) - you are already in the right place
+    .\app\EchoDesk.exe
+
+    # macOS / Linux - unpack, then start through the bundled launcher
+    tar -xzf EchoDesk-v$Version-linux-x64.tar.gz
+    cd EchoDesk-v$Version-linux-x64
+    ./start.sh
+
+  The data folder differs by platform too; the full table lives in
+  config.example.json under "_platform_paths":
+    Windows               the folder containing this file
+    macOS                 ~/Library/Application Support/EchoDesk
+    Linux                 ~/.local/share/EchoDesk  (or `$XDG_DATA_HOME/EchoDesk)
+
 [VERIFY YOUR DOWNLOAD]
   Compare the SHA256 of the package you downloaded against SHA256SUMS.txt,
   which ships alongside the release; it lists the package and the other
@@ -707,6 +732,27 @@ Build time: $buildTime
 【卸载】
   本程序为绿色便携版：直接删除整个文件夹即可，不写注册表。
 
+【其他平台与命令示例】
+  本文件夹是 **Windows** 版（WPF 前端 + PyInstaller 后端）。Linux 与 macOS 用同一份后端
+  配 Avalonia 前端，在同一发布页上以单独的压缩包提供：
+    Windows（本目录）      EchoDesk-v$Version-Setup.exe  /  EchoDesk-v$Version-win-x64.zip
+    Linux x86-64           EchoDesk-v$Version-linux-x64.tar.gz
+    macOS（Apple 芯片）    EchoDesk-v$Version-osx-arm64.tar.gz
+  Linux/macOS 上没有安装程序：解压后直接运行压缩包顶层的启动脚本即可。
+
+    # Windows（PowerShell）—— 你已经在正确的位置
+    .\app\EchoDesk.exe
+
+    # macOS / Linux —— 解压后通过随包的启动脚本运行
+    tar -xzf EchoDesk-v$Version-linux-x64.tar.gz
+    cd EchoDesk-v$Version-linux-x64
+    ./start.sh
+
+  用户数据目录在三平台上也不一样，完整对照见 config.example.json 里的 "_platform_paths"：
+    Windows               本文件所在的文件夹
+    macOS                 ~/Library/Application Support/EchoDesk
+    Linux                 ~/.local/share/EchoDesk（设了 `$XDG_DATA_HOME 时为 `$XDG_DATA_HOME/EchoDesk）
+
 【校验下载是否完整】
   把下载到的安装包 SHA256 与随发布提供的 SHA256SUMS.txt 对照即可，
   该文件同时列出了安装包与其它发布资产。
@@ -746,13 +792,23 @@ foreach ($legal in @(
 }
 Write-Ok "外层合规与说明文档（LICENSE/NOTICE/SECURITY/README/CHANGELOG/CONTRIBUTING，各含中英两份）"
 
-# 配置示例：后端默认配置的副本。
-# 为什么原样复制而不是加分节注释：config.json 会被 pydantic 直接解析，
-# 往示例里塞自定义字段会让人误以为"这些键是合法的"，照抄回去反而报错。
+# 配置示例：后端默认配置的副本 + 双语说明 + 三平台路径对照。
+#
+# 为什么不再"原样复制"（v0.2.2 全面双语与三平台友好 任务五 5.1）：
+# 用户打开这个文件时看到的是 200 多行没有任何解释的 JSON —— 字段什么意思、改了会不会生效、
+# "用户数据目录"在他自己的平台上到底是哪个路径，全都要去翻文档。
+# 现在改由 tools\gen_config_example.py **生成**：它在副本上注入 `_comment`（双语说明）
+# 与 `_platform_paths`（三平台目录对照）。
+#
+# **注入放在副本上，运行期配置一个字不动**：backend\config.json 会被 pydantic 直接解析，
+# 往里塞自定义键是在赌"模型允许额外字段"，赌输的后果是后端启动即失败。
+# 生成器是 Python，三平台构建走同一条路径、得到同一份结果（Windows 发布链与
+# tools\pack_crossplatform.py 都调用它，口径不会漂移）。
 $cfgSrc = Join-Path $Root "backend\config.json"
 if (Test-Path $cfgSrc) {
-    Copy-Item $cfgSrc (Join-Path $Out "config.example.json") -Force
-    Write-Ok "config.example.json（后端默认配置的副本）"
+    & python (Join-Path $Root "tools\gen_config_example.py") --out (Join-Path $Out "config.example.json")
+    if ($LASTEXITCODE -ne 0) { throw "生成 config.example.json 失败（退出码 $LASTEXITCODE）" }
+    Write-Ok "config.example.json（默认配置副本 + 双语说明 + 三平台路径对照）"
 }
 
 # ---------- 6b. 安装脚本（任务二） ----------

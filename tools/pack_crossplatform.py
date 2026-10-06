@@ -52,14 +52,28 @@ if BACKEND not in sys.path:
 import platform_support as ps  # noqa: E402
 
 #: 打进发布物的顶层文本文件（与 Windows 安装包保持一致的信息面）
+#: 打进发布物**顶层**的文件（与 Windows 发布目录的信息面保持一致）。
+#:
+#: **实测缺陷修正（v0.2.2 全面双语与三平台友好）**：原清单只有 7 项，漏了 `NOTICE`
+#: （英文正本！只带了中文译本 `NOTICE.zh-Hans.md`）、`SECURITY.md` 成对、
+#: `CONTRIBUTING.md` 成对、`CODE_OF_CONDUCT.md` 成对 —— 而 `tools/build_release.ps1`
+#: 的 Windows 发布目录这几样全都有。对外分发时"只给译本不给正本"是**合规问题**，
+#: 不是排版问题（Apache-2.0 要求随分发保留 NOTICE 原文）。
 TOP_LEVEL_FILES = (
     "LICENSE",
     "LICENSE.zh-Hans.md",
+    "NOTICE",
     "NOTICE.zh-Hans.md",
+    "SECURITY.md",
+    "SECURITY.zh-Hans.md",
     "README.md",
     "README.zh-Hans.md",
     "CHANGELOG.md",
     "CHANGELOG.zh-Hans.md",
+    "CONTRIBUTING.md",
+    "CONTRIBUTING.zh-Hans.md",
+    "CODE_OF_CONDUCT.md",
+    "CODE_OF_CONDUCT.zh-Hans.md",
 )
 
 #: 打进发布物的目录（文档与语言包）
@@ -489,14 +503,29 @@ def main() -> int:
 
     # ---------- 3. 文档与语言包（与安装包的信息面一致） ----------
     if not args.plan:
+        missing: list[str] = []
         for name in TOP_LEVEL_FILES:
             src = os.path.join(ROOT, name)
             if os.path.isfile(src):
                 shutil.copy2(src, os.path.join(tree, name))
+            else:
+                missing.append(name)
         for name in TOP_LEVEL_DIRS:
             src = os.path.join(ROOT, name)
             if os.path.isdir(src):
                 copy_tree(src, os.path.join(tree, name))
+        # 缺失要**点名报出来**：这几份是合规与说明文件，"少了一份"必须当场可见，
+        # 否则打包日志一切正常、用户手里却没有 NOTICE 正本（原清单漏 NOTICE 就是这么漏掉的）。
+        if missing:
+            log(f"警告：以下顶层文件在仓库里不存在，未进发布物：{'、'.join(missing)}")
+        else:
+            log(f"顶层文件齐备：{len(TOP_LEVEL_FILES)} 个")
+
+        # 配置示例：**生成**而不是复制（内含双语说明与三平台路径对照，见 tools/gen_config_example.py）。
+        # 生成器是 Python，所以三平台构建都能用同一条路径得到同一份结果。
+        run([sys.executable, os.path.join("tools", "gen_config_example.py"),
+             "--out", os.path.join(tree, "config.example.json")], dry=args.plan)
+
         # 界面语言包放在 lang/ui，后端语言包在 app/backend/_internal/lang（互不覆盖）
         ui_lang = os.path.join(tree, "lang", "ui")
         os.makedirs(ui_lang, exist_ok=True)

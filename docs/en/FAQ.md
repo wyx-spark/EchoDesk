@@ -1,7 +1,36 @@
 # EchoDesk Frequently Asked Questions and Troubleshooting (FAQ)
 
-Applies to version: v0.2.1
+Applies to version: v0.2.2
 Chinese version: [`docs/zh-Hans/FAQ.md`](../zh-Hans/FAQ.md).
+
+**Platforms.** EchoDesk runs on **Windows, macOS and Linux**. Two capabilities are **Windows-only** — reading
+WPS/Office **encrypted** documents through COM (legacy `.doc` / `.xls` included) and the enterprise-intranet
+browser automation. Everything else (chat and streaming, file parsing, retrieval, Agent, MCP, skills, model
+management) behaves the same on all three platforms. Both exceptions are called out again in
+"4. Files and long documents" and "5. Automation (browser)".
+
+**How paths are written here.** Paths inside the program folder use forward slashes
+(`app/backend/config.json`) — that is exactly how they read on macOS and Linux, and on Windows the same path
+uses backslashes (`app\backend\config.json`). Only the **user data folder** (session files, `ui_state.json`,
+`snippets.json`, `results/`) really differs, because each platform has its own convention:
+
+```
+# Windows — the program folder itself (portable layout: the outer folder that holds app/);
+# %APPDATA%\EchoDesk when that is where EchoDesk was installed or unpacked
+C:\Users\<user>\EchoDesk-v0.2.2\
+%APPDATA%\EchoDesk\
+
+# macOS
+~/Library/Application Support/EchoDesk/
+
+# Linux (~/.local/share/EchoDesk/ when XDG_DATA_HOME is unset)
+$XDG_DATA_HOME/EchoDesk/
+```
+
+On macOS and Linux the program itself is a plain unpacked archive started with `./start.sh`
+(`chmod +x start.sh app/EchoDesk` first if your unpacker dropped the executable bit); Windows uses the
+installer or the portable zip. `ECHODESK_DATA` overrides the data folder on every platform, and
+installation/startup in full is in [`USER_GUIDE.md`](USER_GUIDE.md).
 
 ---
 
@@ -9,9 +38,9 @@ Chinese version: [`docs/zh-Hans/FAQ.md`](../zh-Hans/FAQ.md).
 
 | What I want to do | How to do it |
 | --- | --- |
-| Start the program | Use the Start Menu (or desktop) shortcut created by the installer; for the portable zip, double-click "Start-EchoDesk-v0.2.2.lnk" inside the program folder (run `install-complete.bat` once if it is missing) |
+| Start the program | **Windows**: the Start Menu (or desktop) shortcut created by the installer; for the portable zip, double-click "Start-EchoDesk-v0.2.2.lnk" inside the program folder (run `install-complete.bat` once if it is missing). **macOS / Linux**: the bundle is a plain archive — `cd` into the unpacked folder and run `./start.sh` (`chmod +x start.sh app/EchoDesk` first if the executable bit was lost) |
 | See every command | Type `/help` in the input box |
-| Have the AI read a document | Drag the file into the window, or use `/file C:\路径\合同.docx` |
+| Have the AI read a document | Drag the file into the window, or use `/file <path>` — e.g. `/file "C:\My Documents\contract 2026.docx"` (Windows), `/file "/Users/<user>/Documents/contract-2026.docx"` (macOS), `/file "/home/<user>/docs/contract-2026.docx"` (Linux) |
 | Have the AI do arithmetic or look inside uploaded files | switch to agent mode: `/mode agent`, `/mode 3` or `/agent on` — the model picks the tool (see "3. Modes, agent and MCP") |
 | Let the agent search the web | authorise it first: `/agent allow web_search` (sensitive tools are off by default) |
 | Very long documents (contracts/reports) | Just upload it: anything beyond the context window is summarized in chunks automatically; you can also trigger it by hand with `/summarize` |
@@ -38,15 +67,17 @@ Chinese version: [`docs/zh-Hans/FAQ.md`](../zh-Hans/FAQ.md).
 and you reply with a number — rather than guessing at an answer or demanding that you spell out the object and
 output form (it does not do this once you have chatted a few rounds or uploaded a file). For directions that
 fit your wording more closely, apply the requirement-clarification template with `/task guide`. To switch the behaviour off, set
-`clarify_vague` to `false` in `app\backend\config.json`.
+`clarify_vague` to `false` in `app/backend/config.json`.
 
 ---
 
 ## 2. Startup and models
 
 ### Double-clicking the shortcut does nothing / "backend failed to start"
-1. First look at `app\backend\backend_crash.log` (the backend creates this file on every start — only a file
+1. First look at `app/backend/backend_crash.log` (the backend creates this file on every start — only a file
    **with content** means it has crashed; an empty file is normal): it holds the full Python stack trace.
+   The same file is the first place to look on macOS and Linux, where you start the program with `./start.sh`
+   (a failed start also prints to the terminal you launched it from).
 2. Send us the log contents and we can pin down the cause.
 
 ### "The required model was not found locally" / no model at all
@@ -58,10 +89,10 @@ Three ways to get a model, none of which needs a restart:
    (nothing is filtered out by hardware); entries that suit this machine are marked "(Recommended)" and the
    repository of the model named in `config.json` is pinned **above** the results (shown separately, not
    counted in the paging totals). The download hot-loads the model.
-2. **Copy a `.gguf` into `app\backend\models\`** and click *Rescan models folder*; if exactly one model is
+2. **Copy a `.gguf` into `app/backend/models/`** and click *Rescan models folder*; if exactly one model is
    found it is loaded automatically.
 3. **Click *Load*** next to an already-downloaded model in the local model library.
-You can also point `model_repo` / `model_path` / `hf_endpoint` in `app\backend\config.json` at your own model.
+You can also point `model_repo` / `model_path` / `hf_endpoint` in `app/backend/config.json` at your own model.
 
 ### The model market list used to hide models — what changed?
 Nothing is hidden any more. Results come from three sources: the remote search, the configured default
@@ -95,7 +126,7 @@ memory). Try a smaller quantization, or check that the `.gguf` really is a compl
 restarting: fix the file and click *Load* (or *Rescan models folder*) again.
 
 ### I want a different model but do not want to download one
-1. Put the `.gguf` file into `app\backend\models\`;
+1. Put the `.gguf` file into `app/backend/models/`;
 2. Run `/model list` to confirm it has been recognized;
 3. Switch with `/model 文件名或前缀`.
    If you define a profile under `models` in `config.json` (alias → path/repo/context_length/temperature),
@@ -147,6 +178,11 @@ Copy "Start-EchoDesk-v0.2.2.lnk" into the system Startup folder (`Win+R` → `sh
 The `automation.start_with_windows` setting is **not implemented yet**: the program does not read it, so
 setting it to `true` will not start EchoDesk at sign-in — use the shortcut above instead (scheduled automation
 requires the program to be running).
+
+This route is **Windows-only by name and by mechanism** (a `.lnk` shortcut and the `shell:startup` folder).
+On macOS and Linux this version ships no auto-start integration at all: start the bundle with `./start.sh`
+yourself, or wire it into your desktop's own session/autostart mechanism (macOS "Login Items", a Linux
+desktop autostart entry or a systemd user unit) — EchoDesk itself does not create any of those.
 
 ---
 
@@ -201,6 +237,13 @@ connect a server of your own, that process defines the data boundary — so only
 `.docx` `.xlsx` `.xlsm` `.xls` `.pptx` `.pdf` `.txt` `.md` `.csv` and other plain-text-like formats.
 - `.doc` / `.ppt` (legacy binary formats) need WPS/Office installed on the machine (they are read through COM,
   which also lets us read **encrypted documents**); otherwise save them as `.docx` / `.pptx` first.
+  **This path is Windows-only**: the COM interface it needs does not exist on macOS or Linux, where the file
+  gets an explicit "this capability is provided on Windows only" message — deliberately **not** a parse
+  failure and **not** a missing dependency, and you are never told to install WPS. The alternatives:
+  (a) save an unencrypted or `.docx` copy with WPS/Office **on a Windows machine** and upload that copy here;
+  (b) convert through an **MCP server** or **skill** that calls an external converter and returns plain text;
+  (c) install a **skill that registers its own parser** for that extension, so the document never reaches the
+  Windows-only path.
 - Scanned PDFs have no text layer, so parsing returns nothing — those files need OCR, which v0.2.0 does not
   include.
 
@@ -247,8 +290,8 @@ Timeouts are configurable in `config.json` under `summarize`: `chunk_timeout_sec
 No. **Chunked summaries are cached** (keyed by the file fingerprint plus the summarization parameters), so a
 second upload of the same file reuses the previous result instead of recomputing it; the cache expires
 automatically once the file changes (its size or modification time).
-To clear the cache, delete `app\backend\summary_cache.json` (it is readable JSON, so you can inspect it too);
-to stop using it, set `summary_cache` to `false` in `app\backend\config.json`.
+To clear the cache, delete `app/backend/summary_cache.json` (it is readable JSON, so you can inspect it too);
+to stop using it, set `summary_cache` to `false` in `app/backend/config.json`.
 
 ### Why is long-document summarization much faster than before
 Since v0.2.1 known-issues round 2, every chunk goes through an **extraction prefilter** before it reaches the
@@ -278,11 +321,20 @@ upload, and you are told exactly which ones were not injected — nothing is dro
 The path contains a space. Quote it:
 
 ```
+# Windows
 /file "C:\My Documents\contract 2026.docx"
+
+# macOS
+/file "/Users/<user>/Documents/contract 2026.docx"
+
+# Linux
+/file "/home/<user>/docs/contract 2026.docx"
 ```
 
-(Before v0.2.1 known-issues round 2 a path with spaces was split into several arguments, so it always failed.
-The upload button and drag-and-drop never had this problem.)
+(The quoting rule is the same on all three platforms. `/file` uses the argument exactly as written, so write
+the path out in full — `~` is **not** expanded there; on macOS and Linux the absolute path starts at
+`/Users/<user>/` or `/home/<user>/`. Before v0.2.1 known-issues round 2 a path with spaces was split into
+several arguments, so it always failed. The upload button and drag-and-drop never had this problem.)
 
 ### Why is the file name still there after reopening a session but the content is gone
 The session file (`session.json`) **does not store document bodies** (they run from tens of thousands to
@@ -306,13 +358,24 @@ Known-issues round 2 fixed three things here. If you still see nothing, check in
 
 ## 5. Automation (browser)
 
+> **⚠️ Browser automation is Windows-only.** It drives the Edge installation on the machine through Playwright,
+> with a visible window and a reused sign-in state. On **macOS and Linux the feature is unavailable**: the
+> automation page is not offered, and asking for the capability is answered with
+> `Windows-only capability (this is not a missing dependency)` — deliberately not a broken install and not a
+> missing package. Alternatives: drive the same flow through an **MCP server** or a **skill**, or **run the
+> automation on a Windows machine and copy the results folder over**. The answers below describe the Windows
+> behaviour, since that is the only platform where it exists.
+
 ### Which browser can be used
 **Microsoft Edge** must be installed (Playwright drives it through `channel=msedge`, running in headed mode,
 so you can see the browser working). The build script checks whether Edge is present.
 
+This is the **Windows** Edge installation: on macOS and Linux there is no automation page to configure, so
+nothing here applies to those platforms (see the warning above).
+
 ### Turning on automation tells me the safety agreement has to be ticked
 This is by design: **when the safety agreement is not ticked, the backend forces the automation switch off**,
-and the agreement version together with the time you accepted it are recorded in `app\backend\automation_log.jsonl`
+and the agreement version together with the time you accepted it are recorded in `app/backend/automation_log.jsonl`
 for auditing.
 
 ### I entered a URL but "Test selectors" matches no elements
@@ -336,25 +399,43 @@ The original file downloaded for each task is **moved into that task's result di
 review opinion that was generated:
 
 ```
-results\2026-09-23\合同审查\     ← the top-level folder name, date and task name are all configurable
+results/2026-09-23/合同审查/     ← the top-level folder name, date and task name are all configurable
 ├─ 合同正文.pdf                       ← the original file downloaded in this run (duplicate names get a number appended)
 ├─ result.txt                           ← extract + review opinion (plain text, no Markdown markup)
 └─ failure-screenshot-task2-20260923_101010.png  ← generated only when a task fails
 ```
 
+Separators inside the tree follow the running platform (`\` on Windows, `/` on macOS and Linux); the folder
+names are the same everywhere.
+
 The temporary copies used during downloading are kept in a dedicated subdirectory of the system temporary
 directory and are cleaned up as soon as processing finishes.
 If you turn off "Save results to local files", no `result.txt` and no screenshots are written, and the results go
 to the log only.
-With "Where to save results" left empty the results root sits in the portable **outer** folder
-(`EchoDesk-v0.2.2\results\`), not inside `app\`; to move all user data (including `ui_state.json` and
-`snippets.json`), set the `ECHODESK_DATA` environment variable.
+With "Where to save results" left empty the results root is the **user data folder** plus the result root
+folder name, so it follows the platform (Windows keeps it in the program folder — the portable **outer**
+folder `EchoDesk-v0.2.2/`, not inside `app/`):
+
+```
+# Windows
+%APPDATA%\EchoDesk\results\
+C:\Users\<user>\EchoDesk-v0.2.2\results\      ← the same folder when the bundle is unpacked there
+
+# macOS
+~/Library/Application Support/EchoDesk/results/
+
+# Linux (~/.local/share/EchoDesk/results/ when XDG_DATA_HOME is unset)
+$XDG_DATA_HOME/EchoDesk/results/
+```
+
+To move all user data (including `ui_state.json` and `snippets.json`), set the `ECHODESK_DATA` environment
+variable.
 For how to set the save location, the top-level folder name and the task name, see
 [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md).
 
 ### Login state
 You need to log in manually the first time; the program stores cookies/localStorage in
-`app\backend\browser_state.json` and reuses them next time. Delete that file to sign out of every login state.
+`app/backend/browser_state.json` and reuses them next time. Delete that file to sign out of every login state.
 
 ---
 
@@ -367,7 +448,7 @@ You can click "Refresh" first to see the cached snapshot, or search by keyword.
 
 ### "Offline: showing the cached local snapshot"
 The anonymous GitHub API is rate-limited (60 requests per hour), or the network is unreachable. What to do:
-- Put a GitHub token in `marketplace.github_token` in `app\backend\config.json` (this raises the limit to 5000
+- Put a GitHub token in `marketplace.github_token` in `app/backend/config.json` (this raises the limit to 5000
   requests per hour);
 - Or try again later; the program keeps using the local cache and does not error out over it.
 
@@ -378,7 +459,7 @@ not allowed by default.
 
 ### Does installing run third-party code?
 **The `prepare` script is never run automatically.** The install flow only: downloads the source → verifies
-`skill.json` → copies it into `app\backend\skills\` → registers it in `app\backend\skills_registry.json`.
+`skill.json` → copies it into `app/backend/skills/` → registers it in `app/backend/skills_registry.json`.
 If a skill declares a `prepare` script or dependencies, they are listed in the prompt and it is up to you to
 decide whether to handle them by hand.
 Even if prepare is executed in the future, every environment variable whose name contains
@@ -386,31 +467,35 @@ Even if prepare is executed in the future, every environment variable whose name
 
 ### Uninstalling leaves things behind
 Uninstalling will: remove the registry entry → delete the skill directory → read the registry back to confirm.
-If anything is still left over, you can delete `app\backend\skills\<技能id>` by hand and edit
-`app\backend\skills_registry.json`.
+If anything is still left over, you can delete `app/backend/skills/<技能id>` by hand and edit
+`app/backend/skills_registry.json`.
 
 ### Will local plugins keep asking me for confirmation
-No. The first time **third-party local plugins** are loaded (they live in `app\backend\skills_dev\`) you get
+No. The first time **third-party local plugins** are loaded (they live in `app/backend/skills_dev/`) you get
 **one** summary confirmation dialog: tick them one by one, or use "enable all" / "disable all". Your choices
 are remembered, so nothing is asked again — refused plugins included.
-Bundled example plugins (`examples\skills\`) are enabled by default without asking. The **developer mode**
+Bundled example plugins (`examples/skills/`) are enabled by default without asking. The **developer mode**
 switch on the "Developer" page of Settings works in both directions: off means off, and it stays off after a
-restart, unloading the development plugins and clearing the development log `app\backend\skills_dev.log`.
+restart, unloading the development plugins and clearing the development log `app/backend/skills_dev.log`.
 
 ---
 
 ## 7. Interface
 
 ### Are window size/position/theme/font size remembered?
-Yes, they are stored in `ui_state.json` in the portable **outer** folder (window position and size, font size,
-the three-way theme, the emoji display policy, the interface language, ...). If the window is restored onto a
-monitor that has since been unplugged, the program falls back to a position on screen automatically. Delete
-that file to reset everything (this also clears the "onboarding already read" marker).
+Yes, they are stored in `ui_state.json` in the **user data folder** (window position and size, font size,
+the three-way theme, the emoji display policy, the interface language, ...). That folder is the portable
+**outer** one on Windows (`EchoDesk-v0.2.2/`) and the per-platform location listed at the top of this file on
+macOS (`~/Library/Application Support/EchoDesk/`) and Linux (`~/.local/share/EchoDesk/`). If the window is
+restored onto a monitor that has since been unplugged, the program falls back to a position on screen
+automatically. Delete that file to reset everything (this also clears the "onboarding already read" marker).
 
 ### Is the theme just a light/dark switch?
 No — there are **three** choices: Follow the system / Light / Dark, on the "General" page of the Settings
-window. "Follow the system" tracks the Windows app mode, so the interface follows along the moment you switch
-light/dark in Windows. `Ctrl+T` flips between light and dark, and `/darkmode on|off|auto` sets it directly.
+window. "Follow the system" tracks the operating system's appearance setting (the Windows app mode on
+Windows, the system appearance setting on macOS and Linux), so the interface follows along as soon as you
+switch light/dark in the system. `Ctrl+T` flips between light and dark, and `/darkmode on|off|auto` sets it
+directly.
 
 ### The interface shows plain-text markers such as `[OK]` / `[!]` — is something broken?
 No. The **emoji display** setting on the same "General" page also has three choices: Auto / Always / Never.
@@ -431,8 +516,9 @@ Scrolling inside the message control is disabled; the wheel always scrolls the w
 Use `Ctrl+滚轮` to adjust the font size.
 
 ### I want to report a problem
-Please include: `app\backend\backend_crash.log` (if it has content), `app\backend\config.json`, the output of
-`/status`, and the steps that reproduce the problem.
+Please include: your platform (Windows / macOS / Linux) and its version, `app/backend/backend_crash.log`
+(if it has content), `app/backend/config.json`, the output of `/status`, and the steps that reproduce the
+problem.
 
 ---
 
@@ -446,9 +532,9 @@ reaches the maintainers directly:
   [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions).
 - **A reproducible problem that is not covered above** → **open an Issue**:
   <https://github.com/VoidEntropiaStudio/EchoDesk/issues>. Include what
-  [I want to report a problem](#i-want-to-report-a-problem) lists: the version, your Windows
-  build, `app\backend\backend_crash.log` (if it has content), `app\backend\config.json`, the
-  output of `/status`, and the exact steps that reproduce it.
+  [I want to report a problem](#i-want-to-report-a-problem) lists: the version, your platform
+  (Windows / macOS / Linux) and platform build, `app/backend/backend_crash.log` (if it has content),
+  `app/backend/config.json`, the output of `/status`, and the exact steps that reproduce it.
 - **A security vulnerability** → do **not** open a public issue; follow the private reporting
   process in [`SECURITY.md`](../../SECURITY.md).
 - **A change to the code, the documentation or a translation** → open a pull request, see

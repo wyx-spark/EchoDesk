@@ -17,7 +17,7 @@ body:
     attributes:
       label: EchoDesk 版本 / Version
       description: 设置窗口「关于」页或发布包文件夹名。/ About page in Settings, or the package folder name.
-      placeholder: "例如 0.2.2"
+      placeholder: "例如 / e.g. 0.2.2"
     validations:
       required: true
 
@@ -30,6 +30,7 @@ body:
         What is the current experience, and in which concrete scenario does it fall short?
       placeholder: |
         例如：我经常要处理同一种格式的合同，每次都要重新填一遍自动化配置……
+        e.g. I handle contracts in the same format all the time and have to re-enter the automation configuration every time...
     validations:
       required: true
 
@@ -37,7 +38,7 @@ body:
     id: solution
     attributes:
       label: 期望的方案 / Proposed solution
-      description: 你希望 EchoDesk 变成什么样？界面/指令/配置上如何体现？/ What should EchoDesk do instead?
+      description: 你希望 EchoDesk 变成什么样？界面/指令/配置上如何体现？/ What should EchoDesk do instead, and how should it show up in the UI, the commands or the configuration?
     validations:
       required: true
 

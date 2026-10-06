@@ -34,7 +34,7 @@ Closes #
 - [ ] 翻译 / Translation
 - [ ] 技能或插件 / Skill or plugin
 - [ ] 重构或工程（构建、CI、依赖）/ Refactor or engineering (build, CI, dependencies)
-- [ ] 破坏性变更 / Breaking change（请在下方说明影响与迁移方式）
+- [ ] 破坏性变更 / Breaking change（请在下方说明影响与迁移方式 / explain the impact and the migration path below）
 
 ## 测试证据 / Test evidence
 
@@ -43,23 +43,27 @@ Closes #
   Paste the commands you ran and a summary of the results — "tests pass" is not enough.
 
   后端自检（提交前请至少跑这一条，退出码 0 才算通过）：
+  Backend self-test (run at least this one; it passes only with exit code 0):
     python tools/selftest.py
   其他可按改动范围选择：
-    python tools/test_file_parsers.py     # 文件解析（会现场生成 docx/xlsx/pptx/pdf/txt/csv）
-    python tools/test_plaintext.py        # 结果文件的纯文本化
-    python tools/test_results_dir.py      # results目录结构
+  Others, pick by what you changed:
+    python tools/test_file_parsers.py     # 文件解析（会现场生成 docx/xlsx/pptx/pdf/txt/csv）/ file parsing (builds docx/xlsx/pptx/pdf/txt/csv samples on the spot)
+    python tools/test_plaintext.py        # 结果文件的纯文本化 / plain-text conversion of result files
+    python tools/test_results_dir.py      # results目录结构 / the results directory layout
   PowerShell 脚本改动请同时验证 Windows PowerShell 5.1 下可运行：
+  For PowerShell script changes, also verify they run under Windows PowerShell 5.1:
     powershell -ExecutionPolicy Bypass -File tools\<脚本>.ps1
   文档改动请运行链接检查：
+  For documentation changes, run the link check:
     powershell -ExecutionPolicy Bypass -File tools\check_docs_links.ps1
 -->
 
 ```
 $ python tools/selftest.py
-（粘贴结果汇总：共 N 项，通过 N 项，失败 0 项）
+（粘贴结果汇总：共 N 项，通过 N 项，失败 0 项 / paste the summary: N checks, N passed, 0 failed）
 
 $ python tools/test_plaintext.py
-（N/N 通过）
+（N/N 通过 / N/N passed）
 ```
 
 - [ ] 我在本机跑过 `python tools/selftest.py`，结果为全部通过 / I ran `python tools/selftest.py` locally with all checks passing
@@ -69,11 +73,13 @@ $ python tools/test_plaintext.py
 
 <!--
   体积是本项目的持续关注项（任务书全局要求）。请说明你的改动对发布物的影响：
+  Package size is a standing concern for this project (a global requirement of the task brief). Describe what your change does to the release artifacts:
   - 未变化：写「无变化 / No change」
   - 有变化：给出前后数字与来源（新增依赖、语言包、资源文件等）
   - 无法测量（例如纯文档改动）：写「不适用 / N/A」
+  State "no change", give before/after numbers with the cause (a new dependency, a language pack, resource files, ...), or "N/A" for something that cannot be measured, such as a pure documentation change.
   CI 的 size-check 任务会把每次构建的体积记入构建摘要，可作为参考。
-  State "no change", give before/after numbers with the cause, or "N/A".
+  The size-check job in CI writes each build's size into the build summary, which you can use as a reference.
 -->
 
 - [ ] 无变化 / No change

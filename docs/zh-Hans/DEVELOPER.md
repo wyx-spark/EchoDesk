@@ -1,9 +1,13 @@
 # EchoDesk 开发者文档（v0.2.0）
 
-English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)。
-相关文档：[自动化指南](AUTOMATION_GUIDE.md) · [用户手册](USER_GUIDE.md) · [常见问题](FAQ.md) · [技能开发指南](SKILL_GUIDE.md)。
+English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)（本文为英文版的中文参考译本，如两者有歧义，**以英文版为准**）。
+相关文档：[自动化指南](AUTOMATION_GUIDE.md) · [用户手册](USER_GUIDE.md) · [常见问题](FAQ.md) · [技能开发指南](SKILL_GUIDE.md) · [跨平台参考](CROSS_PLATFORM.md)。
 
 本文面向前端/后端/技能开发者，说明架构、通信协议、模块划分、构建流程与扩展方式。
+
+**本文的命令写法**：优先给三平台通用的写法（`python`、`git`、正斜杠），只在确实有差异时展开并标注
+平台（虚拟环境激活、环境变量、Windows 专属的发布链）。Windows、macOS、Linux 三个平台都受支持，
+能力矩阵见 [CROSS_PLATFORM.md](CROSS_PLATFORM.md)。
 
 ---
 
@@ -55,6 +59,21 @@ English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)。
 **为什么是子进程 + stdin/stdout 而不是本地 HTTP 服务**：
 不占端口、不触发防火墙提示、无需处理鉴权；代价是需要自己保证消息边界（按行 JSON）
 与并发安全（后端用 `_io_lock` 保护 stdout，前端用请求闸门串行化读取）。
+
+**两套前端、同一套后端。** 上面的图是 WPF 前端（`frontend/`，目标框架 `net10.0-windows`，仅 Windows）。
+跨平台前端在 `frontend-avalonia/EchoDesk.Avalonia/`（目标框架 `net10.0`，Windows + macOS + Linux），
+用同一套协议驱动同一个后端。两者都用同样的 .NET CLI 从源码检出目录运行——只有 WPF 工程是仅限 Windows 的：
+
+```bash
+# 三平台通用：跨平台（Avalonia）前端；它会从 bin/ 逐级向上找到 backend/main.py
+dotnet run --project frontend-avalonia/EchoDesk.Avalonia/EchoDesk.Avalonia.csproj
+
+# 仅 Windows：WPF 前端
+dotnet run --project frontend/EchoDesk.csproj
+```
+
+后端本身三平台都能跑（`python backend/main.py`）；各平台分别支持哪些能力见
+[CROSS_PLATFORM.md](CROSS_PLATFORM.md) 第 2 节。
 
 ### 1.1 系统提示词的层次与长度预算（v0.2.1 提示词优化）
 
@@ -257,6 +276,11 @@ English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)。
 easyocr→torch/torchvision/scipy/cv2/skimage/numba，后端体积从 ~178MB 膨胀到 976MB；
 其依赖链还含 GPL/LGPL 组件，对外分发会产生著佐权义务。详见 `docs/THIRD_PARTY_LICENSES.md`。
 
+**平台说明。** COM 这条路径**仅限 Windows**：`file_parser.py` 只在平台是 Windows 且能拿到
+WPS/Office 自动化对象时才走它。macOS 与 Linux 上直接走内置的纯 Python 解析器，老式二进制
+`.doc` / `.xls` 完全读不了，上传这类文件时报的是"该能力仅限 Windows"，**而不是**解析失败——
+见 [CROSS_PLATFORM.md](CROSS_PLATFORM.md) 第 3.1 节。
+
 ### 3.4 自动化（任务四）
 
 `automation.py` 用 Playwright 的 **sync API** 驱动本机 Edge（`channel="msedge"`），
@@ -296,6 +320,12 @@ Cookie（老用户升级后不必重新登录），每次会话结束再导出�
   登录态相关事件（`login_state_used` / `login_required` / `login_completed` / `login_timeout` /
   `login_state_cleared` / `login_state_migrated`）只记路径、结果与计数，**不记 Cookie 内容**。
 
+**平台说明。** 整个功能**仅限 Windows**：它驱动本机安装的 Microsoft Edge，要有可见窗口与可复用的
+登录态，配置界面本身也是 Windows UI 的一部分。macOS 与 Linux 上该能力会报自己不可用——
+`Windows-only capability (this is not a missing dependency)`——并给出文档化的替代路径
+（MCP 服务器、技能，或在 Windows 机器上跑完自动化再把结果拿过来看）；见
+[CROSS_PLATFORM.md](CROSS_PLATFORM.md) 第 3.2 节。
+
 ### 3.5 技能市场（任务五）
 
 `marketplace.py` 三层：数据源（GitHub Search API + 本地缓存）→ 服务层（搜索/详情/安装/卸载）
@@ -312,7 +342,7 @@ Cookie（老用户升级后不必重新登录），每次会话结束再导出�
 
 ---
 
-## 四、配置参考（backend\config.json）
+## 四、配置参考（backend/config.json）
 
 ```jsonc
 {
@@ -349,39 +379,99 @@ Cookie（老用户升级后不必重新登录），每次会话结束再导出�
 应用只写回 `config.json`，用户手写补丁不会被覆盖。
 （`config.user.json` 已在 `.gitignore` 中，适合放 GitHub Token 等个人设置。）
 
+**这个文件在哪——三平台的相对布局相同**：源码检出目录里是 `backend/config.json`，发布包里是
+`app/backend/config.json`（反斜杠只是 Windows 的路径分隔符，命令与脚本里统一写 `/`）。
+**用户数据目录**——界面状态、对话历史、批处理结果、界面语言包——则在**程序旁边**，即发布目录的外层：
+Windows 上就是程序目录本身；macOS 与 Linux 上，当程序目录不叫 `app` 时回退到
+`~/Library/Application Support/EchoDesk` 与 `$XDG_DATA_HOME/EchoDesk`（或 `~/.local/share/EchoDesk`）；
+三平台都可以用 `ECHODESK_DATA` 覆盖。**它不是 `%APPDATA%\EchoDesk`**：代码里没有任何路径写在那里
+（那个写法只出现在两处过时注释里，v0.2.2 已改正），后端通过 `config.user_data_root()` 逐级跳过
+`app/`、`backend/` 这些容器目录，得到的答案与前端一致。配置项里写了**相对路径**的后端产物
+（会话文件、模型、审计日志、已安装技能）仍落在后端工作目录，即发布包里的 `app/backend/`，
+不受 `ECHODESK_DATA` 影响；这些配置项都接受 `~` 与绝对路径，因此企业部署可以把它们指到受管盘。
+详见 [CROSS_PLATFORM.md](CROSS_PLATFORM.md) 第 5 节。
+
 ---
 
 ## 五、构建与发布
 
-```powershell
-# 1) 生成图标（改配色后重跑）
-python tools\make_icon.py
+**后端依赖——三平台命令相同**（只有激活方式不同）：
 
-# 2) 下载构建工具（rcedit，不入库）
+```bash
+# 建立虚拟环境并安装锁定版本的依赖
+python -m venv .venv
+python -m pip install -r backend/requirements.txt
+
+# macOS / Linux：激活环境（bash、zsh）
+. .venv/bin/activate
+```
+
+```powershell
+# Windows：激活环境（PowerShell；cmd.exe 里用 .venv\Scripts\activate.bat）
+.\.venv\Scripts\Activate.ps1
+```
+
+**仅 Windows——正式发布链。** `tools/build_release.ps1`、`tools/make_installer.ps1`、
+Inno Setup、`rcedit` 与 WPF UI 探针都只存在于 Windows，因为它们要产出 Windows 用户下载的
+安装包与便携目录：
+
+```powershell
+# 1) 下载构建工具（rcedit，不入库）
 cmd /c tools\fetch_tools.bat
 
-# 3) 一键发布（前端多文件 + 后端 onedir + 元数据 + 安装程序 + SHA256SUMS）
+# 2) 一键发布（前端多文件 + 后端 onedir + 元数据 + 安装程序 + SHA256SUMS）
 & tools\build_release.ps1 -IncludeModels -MakeInstaller
 
 # 从上一版迁移模型/配置时
 & tools\build_release.ps1 -IncludeModels -MigrateFrom publish\EchoDesk-v0.1.0
 
 # 只重打包某一端
-& tools\build_release.ps1 -SkipBackend      # 只重建前端
-& tools\build_release.ps1 -SkipFrontend     # 只重建后端
+& tools\build_release.ps1 -SkipBackend                            # 只重建前端
+& tools\build_release.ps1 -SkipFrontend                           # 只重建后端
 & tools\build_release.ps1 -SkipClean -SkipBackend -SkipFrontend   # 只重跑资源收集/元数据
 
 # 只重打安装程序（已构建过发布目录时）
 & tools\make_installer.ps1
 ```
 
+**三平台通用——图标与便携包（不涉及安装程序）。** 这些都是纯 Python 工具，因此
+Windows、macOS、Linux 上命令完全一致；一台 Windows 构建机也能准备好 Linux/macOS 的包
+（standalone 后端自带可重定位的预编译解释器，不依赖无法交叉编译的 PyInstaller）：
+
+```bash
+# 1) 图标源素材（Pillow；改配色后重跑）
+python tools/make_icon.py
+
+# 2) 后端 standalone 产物：全部 RID，或只产一个（可重复传该参数）
+python tools/pack_backend.py
+python tools/pack_backend.py --platform osx-arm64
+
+# 3) 某个目标 RID 的前端 + 后端整包（dist/EchoDesk-<版本>-<rid>.tar.gz；win-x64 为 .zip）
+python tools/pack_crossplatform.py --rid linux-x64
+python tools/pack_crossplatform.py --rid osx-arm64 --backend-mode standalone
+
+# 只想看步骤时先演练一遍
+python tools/pack_crossplatform.py --plan
+
+# 非 Windows 平台的图标与桌面条目
+python tools/gen_platform_icons.py
+```
+
+便携包不需要再"安装"别的：macOS/Linux 上就是
+`tar -xzf dist/EchoDesk-<版本>-<rid>.tar.gz && cd EchoDesk-<版本>-<rid> && ./start.sh`
+（解压时若丢了可执行位，先跑 `chmod +x start.sh app/EchoDesk`）；Windows 上解压 `.zip` 后运行
+`启动 EchoDesk.bat` 或 `app/EchoDesk.exe`。用户数据**不**落在发布包里：它落在第四节说的
+各平台数据目录，除非 `ECHODESK_DATA` 指到别处。
+
 **安装程序（Inno Setup 6）**：唯一一份交付物 `EchoDesk-v<版本>-Setup.exe`（**不含模型** ——
-模型按需下载，离线场景另发"模型补充包"）由 `tools\installer.iss` 编译，
-实际调用者是 `tools\make_installer.ps1`（可行性检查 + 编译 + 完整性断言 + 可选签名 + SHA256）。
+模型按需下载，离线场景另发"模型补充包"）由 `tools/installer.iss` 编译，
+实际调用者是 `tools/make_installer.ps1`（可行性检查 + 编译 + 完整性断言 + 可选签名 + SHA256）。
 默认安装位置是**安装程序自己所在的文件夹**（`[Code] GetDefaultDir` 返回
 `ExtractFileDir(ExpandConstant('{srcexe}'))`），向导里仍可改；
-快捷方式由 `[Icons]` 段创建，工作目录固定为 `{app}`（外层），这样 `results\` 与用户数据
-生成在外层而非 `app\` 里。需要 Inno Setup 6（脚本会自动探测，或用 `-ISCC` 指定）。
+快捷方式由 `[Icons]` 段创建，工作目录固定为 `{app}`（外层），这样 `results/` 与用户数据
+生成在外层而非 `app/` 里。需要 Inno Setup 6（脚本会自动探测，或用 `-ISCC` 指定）。
+Linux 与 macOS 的交付物是 `tools/pack_crossplatform.py` 产出的 `.tar.gz`，完全没有安装程序；
+macOS 还需要代码签名与公证，打包脚本不擅自执行，而是把步骤写进产物里的 `SIGNING.txt`。
 
 **构建脚本的三个坑（已在代码中注释）**：
 1. `rcedit 不能作用于 PyInstaller 产物`——PyInstaller 把 PKG 归档追加在 PE 映像之后，
@@ -395,10 +485,20 @@ cmd /c tools\fetch_tools.bat
 3. PowerShell 在 `ErrorActionPreference=Stop` 下会把原生命令的 stderr 当作终止性错误，
    导致 PyInstaller/dotnet 只打警告就中断构建——统一用 `Invoke-Native` 包装。
 
-**测试**：
+**测试**——第一组三平台都能跑，第二组需要 Windows 桌面：
+
+```bash
+# 三平台通用
+python tools/test_file_parsers.py                # 六种格式解析冒烟测试（退出码 0/1）
+python tools/check_standalone_backend.py         # 打包后的 standalone 后端：结构、启动脚本、协议
+python tools/check_crossplatform_release.py      # 打包后的发布包：归档格式、可执行位、校验和
+python tools/gen_licenses.py                     # 重新生成第三方许可证清单
+```
+
 ```powershell
-python tools\test_file_parsers.py     # 六种格式解析冒烟测试（退出码 0/1）
-python tools\gen_licenses.py          # 重新生成第三方许可证清单
+# 仅 Windows
+powershell -File tools\ui_probe.ps1              # WPF UI 探针：设置窗口快速打开、不产生崩溃日志
+& tools\verify_release.ps1 -SkipGui              # 顶层发布门禁，跳过需要交互式桌面的两项
 ```
 
 **版本控制与推送（统一 SSH）**：
@@ -406,35 +506,52 @@ python tools\gen_licenses.py          # 重新生成第三方许可证清单
 从 v0.2.1 跨平台-2 起，本仓库的 Git 远端操作**统一使用 SSH**，不再使用 HTTPS
 （HTTPS 推送到 GitHub 在维护者机器上反复被中断：`RPC failed; HTTP 408` /
 `Recv failure: Connection was reset`；SSH 不受同一网络干扰，也不需要每次输凭据）。
-三处口径：
+三处口径要一致。Git 操作本身三平台完全相同：
 
-```powershell
-# 1) remote 必须是 SSH（scp 形态 user@host:path）
+```bash
+# remote 必须是 SSH（scp 形态 user@host:path）
 git remote -v
 git remote set-url origin git@github.com:VoidEntropiaStudio/EchoDesk.git
+```
 
-# 2) 一键推送（分支 + 标签；预检覆盖工作区、标签不变式、安装包哈希与 SSH 连通性）
+推送包装脚本与 SSH 门禁是 PowerShell 脚本，因此仅限 Windows：
+
+```powershell
+# 一键推送（分支 + 标签；预检覆盖工作区、标签不变式、安装包哈希与 SSH 连通性）
 & tools\push_release.ps1 -DryRun     # 只检查
 & tools\push_release.ps1             # 检查后推送
 
-# 3) 统一 SSH 门禁（已包含在 verify_release.ps1 里；-TestConnection 才真连 GitHub）
+# 统一 SSH 门禁（已包含在 verify_release.ps1 里；-TestConnection 才真连 GitHub）
 & tools\check_git_ssh.ps1 -TestConnection
 ```
 
-`push_release.ps1` 会**断言** remote 是 SSH 形式：发现 HTTPS 直接判预检失败并打印
-`git remote set-url` 的改法，而不是"照样推、失败之后再说"。门禁则把这三处
+macOS 与 Linux 上等价的做法是手动执行同样的检查——`git status`、`git tag vX.Y.Z`、
+`git push origin master --tags`——并把那两个脚本预检的内容（remote 是 SSH、标签与发布版本一致、
+安装包哈希）写进拉取请求说明里。`push_release.ps1` 会**断言** remote 是 SSH 形式：发现 HTTPS 直接判预检失败
+并打印 `git remote set-url` 的改法，而不是"照样推、失败之后再说"。门禁则把这三处
 （remote、脚本默认值、文档示例）一起钉住，防止下次改动漂回 HTTPS。
 
-**密钥准备与故障排查**（推送失败时脚本末尾也会打印同一份清单）：
+**密钥准备与故障排查**（推送失败时脚本末尾也会打印同一份清单）。只有家目录的位置不同，
+命令本身一致：
+
+```bash
+# macOS / Linux
+ls -l ~/.ssh                                  # 要有 id_ed25519 与 id_ed25519.pub
+chmod 600 ~/.ssh/id_ed25519                   # 私钥对同组/其他用户可读时 ssh 会拒绝使用
+ssh-add ~/.ssh/id_ed25519                     # 交给 ssh-agent
+ssh -T git@github.com                         # 期望 Hi <用户名>! You've successfully authenticated
+```
 
 ```powershell
-Get-ChildItem $env:USERPROFILE\.ssh          # 要有 id_ed25519 与 id_ed25519.pub
-ssh-add $env:USERPROFILE\.ssh\id_ed25519     # 交给 ssh-agent
-ssh -T git@github.com                        # 期望 Hi <用户名>! You've successfully authenticated
+# Windows（PowerShell）；%USERPROFILE%\.ssh 与 ~/.ssh 是同一个目录
+Get-ChildItem $env:USERPROFILE\.ssh           # 要有 id_ed25519 与 id_ed25519.pub
+ssh-add $env:USERPROFILE\.ssh\id_ed25519      # 交给 ssh-agent
+ssh -T git@github.com                         # 期望 Hi <用户名>! You've successfully authenticated
 ```
 
 公钥（`id_ed25519.pub` 的**全文**，不是私钥）要加到 GitHub 的
-Settings → SSH and GPG keys。**网络挡 22 端口时**改走 443，在 `~/.ssh/config` 里加：
+Settings → SSH and GPG keys。**网络挡 22 端口时**改走 443，在 `~/.ssh/config` 里加
+（Windows 上是 `%USERPROFILE%\.ssh\config`，同一个文件）：
 
 ```
 Host github.com
