@@ -58,7 +58,7 @@ jobs:
       # frontend/EchoDesk.csproj 目标框架为 net10.0-windows，需要 .NET 10 SDK。
       # frontend/EchoDesk.csproj targets net10.0-windows, so the .NET 10 SDK is required.
       - name: Set up .NET SDK / 安装 .NET SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.0.x"
 
