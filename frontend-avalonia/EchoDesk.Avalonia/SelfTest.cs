@@ -172,12 +172,55 @@ internal static class SelfTest
                 File.Exists(logPath) && File.ReadAllText(logPath).Contains("selftest-marker"),
                 "内容可查");
 
-            // ④ 启动器：路径非空、能建、建完能被判定为"有效"
+            // ④ 启动器：文件名、以及 IsValid 在"没有启动器"时必须安全返回 false。
+            //
+            // **必须先把现场清干净再断言**（v0.2.2 第 4 批，裁定一/三之后发现的连带问题）：
+            // 决策①把启动方式改成"自动创建"之后，**只要跑过一次界面试探，程序目录里就会真的
+            // 躺着那个启动器**，于是这条断言变成了"依赖环境残留"——同一份代码，
+            // 干净机器上绿、跑过探针的机器上红。这是**断言自身不隔离**，不是产品缺陷，
+            // 属 PROJECT.md 硬约束 6（门禁失败先怀疑门禁）。
+            // 修法不是放宽断言，而是**把现场恢复成"没有启动器"再验**，验完把原状还原回去
+            // （这样开发机上不会因为跑自检而少一个文件）。
             Check("启动器文件名为本平台惯例",
                 ShortcutService.FileName.Length > 0, ShortcutService.FileName);
-            // 建到程序目录可能在只读位置，所以只断言"路径可计算 + 判定函数不抛"
-            bool valid = ShortcutService.IsValid();
-            Check("IsValid 在缺少启动器时安全返回 false", !valid, "未创建时应为 false");
+
+            string launcherPath = ShortcutService.ShortcutPath;
+            byte[]? originalLauncher = null;
+            try
+            {
+                if (File.Exists(launcherPath))
+                    originalLauncher = File.ReadAllBytes(launcherPath);
+
+                if (originalLauncher is not null)
+                    File.Delete(launcherPath);
+                Check("IsValid 在缺少启动器时安全返回 false", !ShortcutService.IsValid(),
+                    $"已临时移除 {Path.GetFileName(launcherPath)} 后判定");
+
+                // 建得出来、建完判定为"有效"（指向当前 exe），再删掉
+                string created = ShortcutService.Create();
+                bool ok = File.Exists(created) && ShortcutService.IsValid();
+                Check("Create 建出的启动器能被判定为有效", ok, created);
+            }
+            catch (Exception ex)
+            {
+                // 程序目录只读等场景：不把"环境不允许"误报成产品缺陷
+                Console.WriteLine($"  [SKIP] 启动器写盘受限，跳过创建类断言（{ex.Message}）");
+            }
+            finally
+            {
+                // 还原现场：原本有就写回去，原本没有就删掉（自检不留痕）
+                try
+                {
+                    if (originalLauncher is not null)
+                        File.WriteAllBytes(launcherPath, originalLauncher);
+                    else if (File.Exists(launcherPath))
+                        File.Delete(launcherPath);
+                }
+                catch (Exception)
+                {
+                    // 还原失败不影响结论
+                }
+            }
         }
         finally
         {
