@@ -64,7 +64,7 @@ function Find-AnyById([int]$procId, [string]$id) {
     return $null
 }
 
-# 点击一个 UIA 元素。**返回 $true 表示"真的点下去了"**，$false 表示没点成。
+# ---------- 动作类 UIA 助手（总策划裁定二 + v0.2.2 第 7 批 A 项的同类加固）----------
 #
 # v0.2.2 第 4 批（总策划裁定二，门禁工具健壮性）：原实现直接
 # `$el.GetCurrentPattern(InvokePattern).Invoke()` —— 元素存在但被禁用时抛
@@ -72,33 +72,88 @@ function Find-AnyById([int]$procId, [string]$id) {
 # 门禁工具把"点不动"变成"跑不完"，等于把一次可报告的失败变成一次无法归因的中断，
 # 属 PROJECT.md 硬约束 6（门禁失败先怀疑门禁）覆盖的缺陷。
 #
-# 现在的行为：
-#   * $el 为 $null      → FAIL「元素不存在」，返回 $false
-#   * IsEnabled 为 false → FAIL「元素存在但被禁用」（**与"不存在"分开报**），返回 $false
-#   * 其余               → 真的 Invoke，返回 $true
-# 两条失败都**只记不抛**：整轮继续跑完，结论行照常给出。
+# 现在所有"让元素做一件事"的入口都是同一个三段式：
+#   * $el 为 $null      → FAIL「元素不存在」，不抛
+#   * IsEnabled 为 false → FAIL「元素存在但被禁用」（**与"不存在"分开报**），不抛
+#   * 取不到该模式 / 动作本身抛异常 → FAIL 并带上异常文本，不抛
+# 三条失败都**只记不抛**：整轮继续跑完，结论行照常给出。
+#
+# **结论为什么放在 $script:elActionOk，而不是"返回值"**（第 7 批实测出来的连带缺陷）：
+# `Fail()`/`Ok()` 用 `Write-Output` 写日志，日志本身就走函数的输出流 —— 于是
+# `$ok = Invoke-El $el` 在**失败路径**上拿到的是 `@('[probe] FAIL …', $false)` 这个**数组**，
+# 而 PowerShell 把非空数组判为 `$true`，`if (-not $ok)` 得到 `$false`：
+# "没点下去"被当成"点下去了"。也就是说第 4 批注释里写的
+# "没点下去就不该往下断言"在失败路径上**实际没有生效**（本机实测：
+# 返回值类型=System.Object[]，元素数=2，`-not $r` 判为 False）。
+# 修法：动作类助手把结论写进 `$script:elActionOk`，调用点读它；
+# **助手不再返回布尔值**（返回值里混着日志，不能被用来判定）。
+# 记录：`records/v0.2.2-Avalonia功能对齐记录.md` §22.3。
+$script:elActionOk = $false
+
+# 点击一个 UIA 元素。结论见 $script:elActionOk（$true = 真的点下去了）。
 function Invoke-El($el, [string]$what = '元素') {
+    $script:elActionOk = $false
     if ($null -eq $el) {
         Fail "$what 不存在，无法点击"
-        return $false
+        return
     }
     try {
         if (-not $el.Current.IsEnabled) {
             Fail "$what 存在但被禁用（点不动）"
-            return $false
+            return
         }
     } catch {
         # 取 IsEnabled 本身失败（元素已失效/窗口已关）：也算点不成，但要说清是哪一种
         Fail "$what 状态读取失败，无法点击：$($_.Exception.Message)"
-        return $false
+        return
     }
     try {
         $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-        return $true
+        $script:elActionOk = $true
     } catch {
         Fail "$what 点击失败：$($_.Exception.Message)"
-        return $false
     }
+}
+
+# 除 InvokePattern 之外的模式（展开/收起、选中、勾选、填值）走这一个入口，
+# 判定与 Invoke-El 完全一致。$body 收到的参数是该模式对象，在里面做真正的动作。
+function Invoke-ElPattern($el, $patternType, [string]$action, [scriptblock]$body, [string]$what = '元素') {
+    $script:elActionOk = $false
+    if ($null -eq $el) {
+        Fail "$what 不存在，无法$action"
+        return
+    }
+    try {
+        if (-not $el.Current.IsEnabled) {
+            Fail "$what 存在但被禁用（无法$action）"
+            return
+        }
+    } catch {
+        Fail "$what 状态读取失败，无法$action：$($_.Exception.Message)"
+        return
+    }
+    try {
+        $pattern = $el.GetCurrentPattern($patternType)
+        $null = & $body $pattern
+        $script:elActionOk = $true
+    } catch {
+        Fail "$what $action 失败：$($_.Exception.Message)"
+    }
+}
+function Expand-El($el, [string]$what = '元素') {
+    Invoke-ElPattern $el ([System.Windows.Automation.ExpandCollapsePattern]::Pattern) '展开' { param($p) $p.Expand() } $what
+}
+function Collapse-El($el, [string]$what = '元素') {
+    Invoke-ElPattern $el ([System.Windows.Automation.ExpandCollapsePattern]::Pattern) '收起' { param($p) $p.Collapse() } $what
+}
+function Select-El($el, [string]$what = '元素') {
+    Invoke-ElPattern $el ([System.Windows.Automation.SelectionItemPattern]::Pattern) '选中' { param($p) $p.Select() } $what
+}
+function Toggle-El($el, [string]$what = '元素') {
+    Invoke-ElPattern $el ([System.Windows.Automation.TogglePattern]::Pattern) '勾选/取消勾选' { param($p) $p.Toggle() } $what
+}
+function Set-ElValue($el, $value, [string]$what = '元素') {
+    Invoke-ElPattern $el ([System.Windows.Automation.ValuePattern]::Pattern) '填值' { param($p) $p.SetValue($value) } $what
 }
 function Ms([System.Diagnostics.Stopwatch]$sw) { return [math]::Round($sw.Elapsed.TotalMilliseconds) }
 
@@ -281,12 +336,13 @@ function Close-FirstRunDialogs([int]$procId, [int]$waitMs = 4000) {
             foreach ($b in $dlg.FindAll([System.Windows.Automation.TreeScope]::Descendants, $btnCond)) {
                 # 优先点「否」/「No」：不接受创建快捷方式，避免污染用户桌面与程序目录
                 if ($b.Current.Name -match '^(否|No|取消|Cancel)') {
-                    (Invoke-El $b); $done = $true; break
+                    # $done 的含义是"真的点下去了"，所以读 $script:elActionOk（第 7 批统一口径）
+                    Invoke-El $b; $done = $script:elActionOk; break
                 }
             }
             if (-not $done) {
                 foreach ($b in $dlg.FindAll([System.Windows.Automation.TreeScope]::Descendants, $btnCond)) {
-                    (Invoke-El $b); $done = $true; break
+                    Invoke-El $b; $done = $script:elActionOk; break
                 }
             }
             Start-Sleep -Milliseconds 500
@@ -352,18 +408,21 @@ if ($null -eq $saveButton) {
 
 # ---------- 3. 设置窗口控件可用性（逐个 Tab 切换后检查其内容）----------
 function Select-Tab($win, [string]$header) {
+    # 结论读 $script:elActionOk（与本文件所有动作类助手一致，第 7 批 A 项加固）：
+    #   $true = 已切到该 Tab；$false = Tab 不存在 / 该 Tab 被禁用 / 切不动。
+    # 被禁用时 Select-El 已经记了一条 FAIL，调用点再记一条"无法切到 Tab：X"（指名是哪一页）。
+    $script:elActionOk = $false
     $cond = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
         [System.Windows.Automation.ControlType]::TabItem)
     $tabs = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)
     foreach ($t in $tabs) {
         if ($t.Current.Name -eq $header) {
-            $t.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
-            Start-Sleep -Milliseconds 350
-            return $true
+            Select-El $t "「$header」Tab 页"
+            if ($script:elActionOk) { Start-Sleep -Milliseconds 350 }
+            return
         }
     }
-    return $false
 }
 
 if ($null -ne $saveButton) {
@@ -412,7 +471,8 @@ if ($null -ne $saveButton) {
                           'ManifestAddRow', 'HooksText', 'PanelList')
         }
         foreach ($tabName in $perTab.Keys) {
-            if (-not (Select-Tab $win2 $tabName)) { Fail "无法切到 Tab：$tabName"; continue }
+            Select-Tab $win2 $tabName
+            if (-not $script:elActionOk) { Fail "无法切到 Tab：$tabName"; continue }
             foreach ($id in $perTab[$tabName]) {
                 if ($null -eq (Find-AnyById $proc.Id $id)) { Fail "设置窗口「$tabName」缺少控件 $id" }
             }
@@ -421,7 +481,8 @@ if ($null -ne $saveButton) {
         # ---------- 2z. 修复二 / 修复四：主题选择与能力信息（新增验收）----------
         # 修复二的静态色板由 tools\check_theme.py 校验、真实渲染由 tools\check_ui_pixels.ps1
         # 校验，这里只验证"界面上真的能选主题"（三态：跟随系统/浅色/深色）。
-        if (Select-Tab $win2 '常规') {
+        Select-Tab $win2 '常规'
+        if ($script:elActionOk) {
             $themeCombo = Find-AnyById $proc.Id 'ThemeCombo'
             if ($null -eq $themeCombo) {
                 Fail '缺少主题下拉框 ThemeCombo'
@@ -429,14 +490,14 @@ if ($null -ne $saveButton) {
                 $itemCond = New-Object System.Windows.Automation.PropertyCondition(
                     [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
                     [System.Windows.Automation.ControlType]::ListItem)
-                $expand = $themeCombo.GetCurrentPattern(
-                    [System.Windows.Automation.ExpandCollapsePattern]::Pattern)
-                $expand.Expand()
+                Expand-El $themeCombo '主题下拉框 ThemeCombo'
+                $themeExpanded = $script:elActionOk
                 Start-Sleep -Milliseconds 400
                 # WPF ComboBox 的列表项在展开前不在自动化树里，必须先 Expand 再取
                 $items = $themeCombo.FindAll([System.Windows.Automation.TreeScope]::Descendants, $itemCond)
                 $names = @(); foreach ($it in $items) { $names += $it.Current.Name }
-                $expand.Collapse()
+                # 展不开就不要去收起：那只会再多记一条与根因无关的 FAIL
+                if ($themeExpanded) { Collapse-El $themeCombo '主题下拉框 ThemeCombo' }
                 if ($names.Count -ge 3) {
                     Ok "主题三态可选：$($names -join ' / ')"
                 } else {
@@ -444,7 +505,8 @@ if ($null -ne $saveButton) {
                 }
             }
         }
-        if (Select-Tab $win2 '模型') {
+        Select-Tab $win2 '模型'
+        if ($script:elActionOk) {
             # 能力信息由后端 ready/capability 接口提供，界面只负责展示；
             # 后端未就绪时允许为空，因此这里只做"控件存在性"检查（已在上面的 perTab 里做过）。
             $cap = Find-AnyById $proc.Id 'HubStatusText'
@@ -497,9 +559,12 @@ if ($null -ne $saveButton) {
                 }
                 # 胶囊显示「未下载」却**被禁用**，本身就是一条要报的缺陷 ——
                 # 用户点不动它，也就没有任何入口去下载这个档位（总策划裁定三即由此而来）。
-                # Invoke-El 会记一条 FAIL 并返回 $false（不再中断整轮，裁定二），
-                # 这里据此跳过"确认下载对话框"这一段 —— 没点下去就不该往下断言。
-                $clicked = Invoke-El $chip '「未下载」档位胶囊'
+                # Invoke-El 会记一条 FAIL（不再中断整轮，裁定二），这里据结论跳过
+                # "确认下载对话框"这一段 —— 没点下去就不该往下断言。
+                # **注意**：结论要读 $script:elActionOk，不能读返回值
+                # （返回值里混着日志，失败路径上是 @('…FAIL…', $false) 数组，见文件头说明）。
+                Invoke-El $chip '「未下载」档位胶囊'
+                $clicked = $script:elActionOk
                 if (-not $clicked) {
                     Write-Output '[probe] 提示：胶囊点不动，跳过"确认下载对话框"一段（已记 FAIL）'
                 } else {
@@ -557,7 +622,8 @@ if ($null -ne $saveButton) {
             }
             return $text
         }
-        if (-not (Select-Tab $win2 '自动化')) {
+        Select-Tab $win2 '自动化'
+        if (-not $script:elActionOk) {
             Fail '无法切到「自动化」页验证字段帮助'
         } else {
             # 注意：Border 没有 UIA peer，不会出现在自动化树里，因此要找面板内的
@@ -578,8 +644,12 @@ if ($null -ne $saveButton) {
             if ($null -eq $helpBtn) {
                 Fail '缺少任务列表网址旁的「?」按钮'
             } else {
-                $inv = $helpBtn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-                $inv.Invoke()
+                # 第 7 批 A 项：按钮点不动就不再往下断言弹窗 —— 没点下去本来就不该有弹窗，
+                # 那不是"产品没弹窗"，点不动这一条已经记了 FAIL（与裁定二对胶囊同一处置）。
+                Invoke-El $helpBtn '任务列表网址旁的「?」按钮'
+                if (-not $script:elActionOk) {
+                    Write-Output '[probe] 提示：按钮点不动，跳过"弹出字段说明"一段（已记 FAIL）'
+                } else {
                 Start-Sleep -Milliseconds 900
                 $dlgCond = New-Object System.Windows.Automation.AndCondition(
                     (New-Object System.Windows.Automation.PropertyCondition(
@@ -602,9 +672,12 @@ if ($null -ne $saveButton) {
                         [System.Windows.Automation.ControlType]::Button)
                     $btns = $helpDlg.FindAll([System.Windows.Automation.TreeScope]::Descendants, $btnCond2)
                     if ($btns.Count -gt 0) {
-                        $btns[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+                        # 第 7 批 A 项：这条是"收尾动作"（把说明框关掉），点不动只记一条 FAIL，
+                        # 不影响后面的断言（原来直接 Invoke，被禁用时会把整轮打断）
+                        Invoke-El $btns[0] '字段说明对话框的按钮'
                         Start-Sleep -Milliseconds 500
                     }
+                }
                 }
             }
             $panel2 = Find-AnyById $proc.Id 'FieldHelpBody'
@@ -617,7 +690,8 @@ if ($null -ne $saveButton) {
 
         # ---------- 2b. 语言切换即时生效（任务书 3.4 验收项）----------
         # 切到英文后，设置窗口的 Tab 标题与主窗口状态区文本都必须立刻变英文，且不需要重启。
-        if (-not (Select-Tab $win2 '常规')) { Fail '语言切换前无法切到「常规」' }
+        Select-Tab $win2 '常规'
+        if (-not $script:elActionOk) { Fail '语言切换前无法切到「常规」' }
         $langCombo = Find-AnyById $proc.Id 'LanguageCombo'
         if ($null -eq $langCombo) {
             Fail '未找到 LanguageCombo，无法验证语言切换'
@@ -649,8 +723,12 @@ if ($null -ne $saveButton) {
                 Fail "无法展开语言下拉框：$($_.Exception.Message)"
             }
             if ($null -ne $enItem) {
-                $sel = $enItem.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
-                $sel.Select()
+                # 第 7 批 A 项：Select() 原来直接调、没兜底（被禁用/失效就抛断整轮）。
+                # 选中失败就不再断言"文案变英文"——后面那几条的前提是"真的切过去了"。
+                Select-El $enItem '语言下拉框的 English 选项'
+                if (-not $script:elActionOk) {
+                    Write-Output '[probe] 提示：English 选项选不中，跳过"切换语言即时生效"一段（已记 FAIL）'
+                } else {
                 Start-Sleep -Milliseconds 900
                 $headers2 = @()
                 foreach ($t in $win2.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCond)) {
@@ -681,7 +759,11 @@ if ($null -ne $saveButton) {
                 }
                 # 切回中文，避免影响后续步骤（$zhItem 在展开下拉时已经一起找到）
                 if ($null -ne $zhItem) {
-                    $zhItem.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+                    # 第 7 批 A 项：同样先判 IsEnabled 再 Select
+                    Select-El $zhItem '语言下拉框的「简体中文」选项'
+                    if (-not $script:elActionOk) {
+                        Write-Output '[probe] 提示：「简体中文」选项选不中，跳过切回验证（已记 FAIL）'
+                    } else {
                     Start-Sleep -Milliseconds 900
                     $headers3 = @()
                     foreach ($t in $win2.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCond)) {
@@ -689,9 +771,11 @@ if ($null -ne $saveButton) {
                     }
                     if ($headers3 -contains '自动化') { Ok '能切回中文并立即生效' }
                     else { Fail "切回中文失败：$($headers3 -join ', ')" }
+                    }
                 } else {
                     Write-Output '[probe] 提示：下拉选项里没找到「简体中文」，跳过切回验证'
                 }
+            }
             }
         }
 
@@ -702,7 +786,8 @@ if ($null -ne $saveButton) {
         #
         # 断言尽量不依赖中文文案（只匹配数字与元素可见性）：这个脚本是无 BOM 的 UTF-8，
         # 本机代码页恰好是 65001 才读得对，少用中文字面量就少一份环境依赖。
-        if (-not (Select-Tab $win2 '模型')) {
+        Select-Tab $win2 '模型'
+        if (-not $script:elActionOk) {
             Fail '无法切到「模型」页验证模型市场'
         } else {
             function Get-TextById([string]$id) {
@@ -743,7 +828,13 @@ if ($null -ne $saveButton) {
             if ($null -eq $kw) {
                 Fail '未找到 HubSearchBox'
             } else {
-                $kw.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('qwen')
+                # 第 7 批 A 项：原来直接 `$kw.GetCurrentPattern(ValuePattern).SetValue(...)`，
+                # 被禁用/失效就抛断整轮。写不进关键词的话后面 240 秒的等待必然落空，
+                # 所以没写进去就直接跳到这一段末尾（点不动/写不进已经记了 FAIL）。
+                Set-ElValue $kw 'qwen' '模型市场搜索框 HubSearchBox'
+                if (-not $script:elActionOk) {
+                    Write-Output '[probe] 提示：搜索框写不进关键词，跳过模型市场一段（已记 FAIL）'
+                } else {
                 Invoke-El (Find-AnyById $proc.Id 'HubSearchButton')
                 $loaded = Wait-Loaded 240
                 if ($loaded.Total -lt 2) {
@@ -827,14 +918,13 @@ if ($null -ne $saveButton) {
 
                     # --- 页码跳转：合法、非法、回车 ---
                     $pageBox = Find-AnyById $proc.Id 'HubPageBox'
-                    $vpBox = $pageBox.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-                    $vpBox.SetValue('3')
+                    Set-ElValue $pageBox '3' '页码框 HubPageBox'
                     Invoke-El (Find-AnyById $proc.Id 'HubGoPageButton')
                     Start-Sleep -Milliseconds 900
                     if ((Get-PagePair).Current -eq 3) { Ok '输入页码 3 后点「跳转」到第 3 页' }
                     else { Fail "页码跳转异常：$((Get-PagePair).Raw)" }
 
-                    $vpBox.SetValue('abc')
+                    Set-ElValue $pageBox 'abc' '页码框 HubPageBox'
                     Invoke-El (Find-AnyById $proc.Id 'HubGoPageButton')
                     Start-Sleep -Milliseconds 800
                     $hint = Get-TextById 'HubPagerHint'
@@ -844,7 +934,7 @@ if ($null -ne $saveButton) {
                         Fail "非法页码处理异常（页码 $((Get-PagePair).Raw)，提示 '$hint'）"
                     }
 
-                    $vpBox.SetValue('2')
+                    Set-ElValue $pageBox '2' '页码框 HubPageBox'
                     $pageBox.SetFocus()
                     [void][Win32.Fg]::SetForegroundWindow($proc.MainWindowHandle)
                     Start-Sleep -Milliseconds 400
@@ -980,8 +1070,13 @@ if ($null -ne $saveButton) {
                     if ($null -eq $expander) {
                         Fail '未找到筛选面板 HubFilterExpander'
                     } else {
-                        $expander.GetCurrentPattern(
-                            [System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+                        # 第 7 批 A 项：原来直接 Expand()，被禁用就抛断整轮。
+                        # 展不开的话下面那 4 条"筛选面板缺少控件"只是同一次失败的重复回声，
+                        # 所以展不开就整段跳过（展不开本身已经记了 FAIL）。
+                        Expand-El $expander '筛选面板 HubFilterExpander'
+                        if (-not $script:elActionOk) {
+                            Write-Output '[probe] 提示：筛选面板展不开，跳过筛选一段（已记 FAIL）'
+                        } else {
                         Start-Sleep -Milliseconds 700
                         foreach ($id in @('HubFilterBox', 'HubInstalledCombo', 'HubRecommendedCheck',
                                           'HubFilterResetButton')) {
@@ -1003,10 +1098,13 @@ if ($null -ne $saveButton) {
                         foreach ($b in $boxes) {
                             if ($b.Current.IsEnabled -and $null -ne $b.Current.Name -and
                                 $b.Current.Name -match 'B') {
-                                $b.GetCurrentPattern(
-                                    [System.Windows.Automation.TogglePattern]::Pattern).Toggle()
-                                $clicked = $true
-                                Write-Output "[probe] 勾选筛选项：$($b.Current.Name)"
+                                # 第 7 批 A 项：这里是"直接取 Pattern"里唯一已经先判 IsEnabled 的一处，
+                                # 但取 Pattern / Toggle() 本身仍可能抛（元素刚好失效），改成 Toggle-El。
+                                Toggle-El $b "结构化筛选项「$($b.Current.Name)」"
+                                if ($script:elActionOk) {
+                                    $clicked = $true
+                                    Write-Output "[probe] 勾选筛选项：$($b.Current.Name)"
+                                }
                                 break
                             }
                         }
@@ -1022,8 +1120,7 @@ if ($null -ne $saveButton) {
 
                         # 本地筛选框：实时过滤 + 筛空后给出"重新搜索远端"的出口
                         $filterBox = Find-AnyById $proc.Id 'HubFilterBox'
-                        $filterBox.GetCurrentPattern(
-                            [System.Windows.Automation.ValuePattern]::Pattern).SetValue('zzz_no_such_model_zzz')
+                        Set-ElValue $filterBox 'zzz_no_such_model_zzz' '本地筛选框 HubFilterBox'
                         Start-Sleep -Milliseconds 1600
                         if ($null -ne (Find-AnyById $proc.Id 'HubRemoteRetryButton')) {
                             Ok '本地筛选无结果时给出「重新搜索远端」的出口'
@@ -1040,6 +1137,7 @@ if ($null -ne $saveButton) {
                         } else {
                             Fail "重置筛选异常（条数 $((Get-FilteredCount))，期望 $filteredBefore）"
                         }
+                        }
                     }
 
                     # --- 默认模型钉在列表上方且不计入分页计数 ---
@@ -1051,8 +1149,8 @@ if ($null -ne $saveButton) {
                         Write-Output '[probe] 提示：本轮没有配置默认模型，钉住行按设计不显示'
                     }
                 }
-                $vp2 = $kw.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-                $vp2.SetValue('')
+                Set-ElValue $kw '' '模型市场搜索框（清空，收尾）'
+                }
             }
         }
 
@@ -1175,8 +1273,15 @@ if ($null -ne $autoChip) {
             [System.Windows.Automation.ControlType]::TabItem)
         $sel = ''
         foreach ($t in $win3.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCond2)) {
-            if ($t.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected) {
-                $sel = $t.Current.Name
+            # 第 7 批 A 项：这一处是**只读**（看哪个 Tab 被选中），不是"点不动"那一类 ——
+            # 被禁用的元素也能读模式，所以不套 IsEnabled 判定；读不到时如实记一条提示，
+            # 让下面那条主断言（是否切到「自动化」）仍然照常给结论，而不是把整轮打断。
+            try {
+                if ($t.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected) {
+                    $sel = $t.Current.Name
+                }
+            } catch {
+                Write-Output "[probe] 提示：读某个 Tab 的选中状态失败（$($_.Exception.Message)）"
             }
         }
         if ($sel -eq '自动化') { Ok '点击状态区「自动化」跳转到设置→自动化' }
@@ -1312,7 +1417,7 @@ if ($null -ne $cmdBtn) {
             $clicked = $false
             foreach ($b in $dlg.FindAll([System.Windows.Automation.TreeScope]::Descendants, $btnCond)) {
                 if ($b.Current.Name -eq '否(N)' -or $b.Current.Name -eq '否' -or $b.Current.Name -like '否*') {
-                    Invoke-El $b; $clicked = $true; break
+                    Invoke-El $b; $clicked = $script:elActionOk; break
                 }
             }
             if (-not $clicked) { Write-Output '[probe] 警告：未找到「否」按钮，对话框保持原状' }
