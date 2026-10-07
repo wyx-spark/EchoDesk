@@ -22,8 +22,12 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using EchoDesk.Avalonia.Services;
 
 namespace EchoDesk.Avalonia.Views.Settings;
@@ -53,7 +57,10 @@ public partial class DeveloperPage : UserControl, ISettingsPage
         };
         DevReloadButton.Click += async (_, _) =>
         {
-            await SendAsync(new { action = "skills_reload" });
+            // v0.2.2 第 4 批 3a：**作用域改为 scope=dev**（与 WPF 的 DevReloadButton_Click 一致）。
+            // 开发者页的「重载」要的是"把我刚写的开发插件重读一遍"，
+            // 全量重载会把正式安装的插件也一起卸载重挂 —— 那既慢又不必要。
+            await SendAsync(new { action = "skills_reload", scope = "dev" });
             await RefreshAsync();
             DevStatusText.Text = Loc.T("settings.developer.reloaded", "✅ 本地插件已重载");
         };
@@ -63,6 +70,18 @@ public partial class DeveloperPage : UserControl, ISettingsPage
             await RefreshAsync();
             DevStatusText.Text = Loc.T("settings.developer.examplesInstalled", "✅ 示例插件已安装到 skills_dev/");
         };
+        // ---- v0.2.2 第 4 批 3a：三个目录按钮 + 导出日志 + 清单编辑 + 面板动作 ----
+        OpenDevDirButton.Click += (_, _) => OpenSkillDir("dev");
+        OpenInstallDirButton.Click += (_, _) => OpenSkillDir("installed");
+        OpenExamplesDirButton.Click += (_, _) => OpenSkillDir("examples");
+        ExportDevLogButton.Click += async (_, _) => await ExportLogAsync();
+        ManifestAddRow.Click += (_, _) =>
+        {
+            _manifestRows.Add(new ManifestRow());
+            RenderManifestRows();
+        };
+        ManifestSaveButton.Click += async (_, _) => await SaveManifestAsync();
+        ManifestOpenRawButton.Click += (_, _) => OpenManifestRaw();
         RefreshDevLogButton.Click += async (_, _) => await RefreshLogAsync();
         ClearDevLogButton.Click += async (_, _) =>
         {
@@ -176,6 +195,11 @@ public partial class DeveloperPage : UserControl, ISettingsPage
         }
 
         await RefreshLogAsync();
+        // v0.2.2 第 4 批 3a：清单、钩子与面板这三块都来自同一份 skills_list 状态
+        // （清单要另外发 skills_manifest_get）。
+        RenderHooks();
+        RenderPanels();
+        await LoadManifestAsync();
     }
 
     private async Task RefreshLogAsync()
@@ -239,6 +263,442 @@ public partial class DeveloperPage : UserControl, ISettingsPage
             ? el.GetInt32()
             : 0;
 
+    // =================================================================
+    // v0.2.2 第 4 批 3a：目录按钮 / 导出日志 / 清单编辑 / 钩子与面板
+    // =================================================================
+
+    /// <summary>取状态里的某个目录（状态还没加载时返回空串，不抛异常）。</summary>
+    private string SkillDir(string name)
+    {
+        if (_status is JsonElement status
+            && status.TryGetProperty("dirs", out JsonElement dirs)
+            && dirs.ValueKind == JsonValueKind.Object)
+        {
+            return GetString(dirs, name);
+        }
+        return "";
+    }
+
+    private void OpenSkillDir(string name)
+    {
+        string dir = SkillDir(name);
+        if (!ShellOpen.TryOpenDirectory(dir))
+            DevStatusText.Text = Loc.T("settings.developer.openDirFailed", "⚠️ 无法打开目录：{0}", dir);
+    }
+
+    /// <summary>导出开发日志（`skills_export_log`）。路径由系统保存对话框给出（WPF 用 SaveFileDialog）。</summary>
+    private async Task ExportLogAsync()
+    {
+        TopLevel? top = TopLevel.GetTopLevel(this);
+        if (top is null)
+            return;
+        var file = await top.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = Loc.T("settings.developer.exportLog", "导出日志"),
+            SuggestedFileName = "skills_dev.log",
+            DefaultExtension = "log",
+            FileTypeChoices = new[]
+            {
+                new FilePickerFileType(Loc.T("settings.developer.logFilterDesc", "日志文件"))
+                {
+                    Patterns = new[] { "*.log", "*" },
+                },
+            },
+        });
+        string? path = file?.TryGetLocalPath();
+        if (string.IsNullOrEmpty(path))
+            return;
+        using JsonDocument? doc = await SendAsync(new { action = "skills_export_log", path });
+        DevStatusText.Text = doc is null
+            ? Loc.T("settings.installed.backendGone", "⚠️ 后端当前不可用，插件操作未执行（请稍后重试）")
+            : GetString(doc.RootElement, "content");
+    }
+
+    // ---- 本地插件清单（表格编辑） ----
+
+    /// <summary>清单里的一行（可编辑）。字段与 WPF 的 ManifestRow 逐一对齐。</summary>
+    private sealed class ManifestRow
+    {
+        public string Id { get; set; } = "";
+        public string Path { get; set; } = "";
+        public string Alias { get; set; } = "";
+        public bool Enabled { get; set; } = true;
+        public int Order { get; set; }
+        public string Note { get; set; } = "";
+    }
+
+    private readonly List<ManifestRow> _manifestRows = new();
+
+    private async Task LoadManifestAsync()
+    {
+        using JsonDocument? doc = await SendAsync(new { action = "skills_manifest_get" });
+        if (doc is null || !doc.RootElement.TryGetProperty("manifest", out JsonElement manifest))
+            return;
+        _manifestRows.Clear();
+        if (manifest.TryGetProperty("plugins", out JsonElement plugins) && plugins.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in plugins.EnumerateArray())
+            {
+                _manifestRows.Add(new ManifestRow
+                {
+                    Id = GetString(item, "id"),
+                    Path = GetString(item, "path"),
+                    Alias = GetString(item, "alias"),
+                    Enabled = !item.TryGetProperty("enabled", out JsonElement en) || en.ValueKind != JsonValueKind.False,
+                    Order = GetInt(item, "order"),
+                    Note = GetString(item, "note"),
+                });
+            }
+        }
+        RenderManifestRows();
+    }
+
+    /// <summary>
+    /// 重排清单行。每行是"id / 路径 / 别名 / 顺序 / 启用 / 删除"一组控件，
+    /// 字段与 WPF 的 RenderManifestRows 逐一对齐（含 ✕ 删除按钮）。
+    /// </summary>
+    private void RenderManifestRows()
+    {
+        ManifestList.Children.Clear();
+        if (_manifestRows.Count == 0)
+        {
+            ManifestList.Children.Add(new TextBlock
+            {
+                Text = Loc.T("settings.developer.manifestEmpty", "（清单为空：点「＋ 加一行」登记一个本地插件）"),
+                FontSize = 11, Opacity = 0.7, TextWrapping = TextWrapping.Wrap,
+            });
+            return;
+        }
+        foreach (ManifestRow row in _manifestRows)
+        {
+            var grid = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("130,*,Auto,Auto,Auto,Auto,Auto"),
+                Margin = new Thickness(0, 2),
+            };
+
+            var idBox = new TextBox { Text = row.Id, Padding = new Thickness(6, 3), FontSize = 11 };
+            AutomationProperties.SetAutomationId(idBox, "ManifestId_" + row.Id);
+            idBox.TextChanged += (_, _) => row.Id = idBox.Text ?? "";
+            Grid.SetColumn(idBox, 0);
+
+            var pathBox = new TextBox
+            {
+                Text = row.Path, Padding = new Thickness(6, 3), FontSize = 11,
+                Margin = new Thickness(6, 0, 0, 0),
+            };
+            pathBox.TextChanged += (_, _) => row.Path = pathBox.Text ?? "";
+            Grid.SetColumn(pathBox, 1);
+
+            var aliasBox = new TextBox
+            {
+                Text = row.Alias, Width = 110, Padding = new Thickness(6, 3), FontSize = 11,
+                Margin = new Thickness(6, 0, 0, 0),
+            };
+            aliasBox.TextChanged += (_, _) => row.Alias = aliasBox.Text ?? "";
+            Grid.SetColumn(aliasBox, 2);
+
+            var orderBox = new TextBox
+            {
+                Text = row.Order.ToString(), Width = 46, Padding = new Thickness(6, 3), FontSize = 11,
+                Margin = new Thickness(6, 0, 0, 0),
+            };
+            orderBox.TextChanged += (_, _) =>
+            {
+                if (int.TryParse(orderBox.Text, out int order))
+                    row.Order = order;
+            };
+            Grid.SetColumn(orderBox, 3);
+
+            var check = new CheckBox
+            {
+                IsChecked = row.Enabled,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(8, 0, 0, 0),
+            };
+            ToolTip.SetTip(check, Loc.T("settings.developer.manifestEnabled", "启用"));
+            check.IsCheckedChanged += (_, _) => row.Enabled = check.IsChecked == true;
+            Grid.SetColumn(check, 4);
+
+            var remove = new Button
+            {
+                Content = "✕",
+                Padding = new Thickness(6, 1),
+                FontSize = 11,
+                Margin = new Thickness(8, 0, 0, 0),
+            };
+            ToolTip.SetTip(remove, Loc.T("settings.button.remove", "移除"));
+            remove.Click += (_, _) =>
+            {
+                _manifestRows.Remove(row);
+                RenderManifestRows();
+            };
+            Grid.SetColumn(remove, 5);
+
+            grid.Children.Add(idBox);
+            grid.Children.Add(pathBox);
+            grid.Children.Add(aliasBox);
+            grid.Children.Add(orderBox);
+            grid.Children.Add(check);
+            grid.Children.Add(remove);
+            ManifestList.Children.Add(grid);
+        }
+    }
+
+    /// <summary>
+    /// 保存清单（`skills_manifest_set`）。只提交 id 与 path 都非空的行 ——
+    /// 与 WPF 的过滤条件一字不差（空行是"加了一行还没填"，不该被写进配置）。
+    /// </summary>
+    private async Task SaveManifestAsync()
+    {
+        var plugins = new List<object>();
+        var trusted = new List<string>();
+        foreach (ManifestRow row in _manifestRows)
+        {
+            string id = row.Id.Trim();
+            string path = row.Path.Trim();
+            if (id.Length > 0 && path.Length > 0)
+            {
+                plugins.Add(new
+                {
+                    id,
+                    path,
+                    enabled = row.Enabled,
+                    source = "local",
+                    order = row.Order,
+                    alias = row.Alias,
+                    note = row.Note,
+                });
+            }
+            if (id.Length > 0)
+                trusted.Add(id);
+        }
+        await SendAsync(new { action = "skills_manifest_set", manifest = new { plugins, trusted } });
+        DevStatusText.Text = Loc.T("settings.developer.manifestSaved", "✅ 本地插件清单已保存");
+        await RefreshAsync();
+    }
+
+    /// <summary>直接打开清单 JSON 原文（文件存在时用系统默认程序；否则打开它所在目录）。</summary>
+    private void OpenManifestRaw()
+    {
+        string path = SkillDir("manifest");
+        if (path.Length == 0)
+        {
+            DevStatusText.Text = Loc.T("settings.developer.openDirFailed", "⚠️ 无法打开目录：{0}", path);
+            return;
+        }
+        try
+        {
+            if (System.IO.File.Exists(path))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true,
+                });
+                return;
+            }
+        }
+        catch (Exception)
+        {
+            // 没有关联程序：退回到打开所在目录
+        }
+        ShellOpen.TryOpenDirectory(System.IO.Path.GetDirectoryName(path));
+    }
+
+    // ---- 自动化钩子清单 ----
+
+    private void RenderHooks()
+    {
+        if (_status is not JsonElement status
+            || !status.TryGetProperty("hooks", out JsonElement hooks)
+            || hooks.ValueKind != JsonValueKind.Object)
+        {
+            HooksText.Text = Loc.T("settings.developer.hooksEmpty", "（没有插件挂接自动化钩子）");
+            return;
+        }
+        var lines = new List<string>();
+        foreach (JsonProperty property in hooks.EnumerateObject())
+        {
+            var skills = new List<string>();
+            if (property.Value.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement entry in property.Value.EnumerateArray())
+                    skills.Add(entry.ToString());
+            }
+            if (skills.Count == 0)
+                continue;
+            // 阶段名走语言包（`settings.developer.hookStages.<阶段>`），缺键时回落成阶段名本身
+            string stageName = Loc.T("settings.developer.hookStages." + property.Name, property.Name);
+            lines.Add($"{stageName}: {string.Join(", ", skills)}");
+        }
+        HooksText.Text = lines.Count > 0
+            ? string.Join(Environment.NewLine, lines)
+            : Loc.T("settings.developer.hooksEmpty", "（没有插件挂接自动化钩子）");
+    }
+
+    // ---- 插件面板（声明式 UI + 面板动作） ----
+
+    /// <summary>
+    /// 渲染插件声明的面板：字段用原生控件生成（文本框 / 复选框），动作按钮发
+    /// `skills_panel_action`。与 WPF 的 RenderPanels 同一设计（技能不需要碰任何 UI 代码）。
+    /// </summary>
+    private void RenderPanels()
+    {
+        PanelList.Children.Clear();
+        if (_status is not JsonElement status
+            || !status.TryGetProperty("panels", out JsonElement panels)
+            || panels.ValueKind != JsonValueKind.Array
+            || panels.GetArrayLength() == 0)
+        {
+            PanelList.Children.Add(new TextBlock
+            {
+                Text = Loc.T("settings.developer.panelsEmpty", "（没有插件提供面板）"),
+                FontSize = 11, Opacity = 0.7, TextWrapping = TextWrapping.Wrap,
+            });
+            return;
+        }
+
+        foreach (JsonElement panel in panels.EnumerateArray())
+        {
+            string skillId = GetString(panel, "skill_id");
+            string panelId = GetString(panel, "id");
+            var stack = new StackPanel { Spacing = 4 };
+            stack.Children.Add(new TextBlock
+            {
+                Text = GetString(panel, "title"),
+                FontWeight = FontWeight.Bold,
+                FontSize = 12,
+                Foreground = TryBrush("AccentBrush"),
+            });
+            string description = GetString(panel, "description");
+            if (description.Length > 0)
+                stack.Children.Add(new TextBlock
+                {
+                    Text = description, FontSize = 11, Opacity = 0.75, TextWrapping = TextWrapping.Wrap,
+                });
+
+            // 取值表：面板动作要把它整份发给后端（与 WPF 的 values 字典同一用途）
+            var values = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (panel.TryGetProperty("fields", out JsonElement fields) && fields.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement field in fields.EnumerateArray())
+                {
+                    string key = GetString(field, "key");
+                    string type = GetString(field, "type");
+                    string label = GetString(field, "label");
+                    string help = GetString(field, "help");
+                    string defaultValue = GetString(field, "default");
+                    if (type == "checkbox")
+                    {
+                        bool initial = defaultValue is "1" or "true" or "True";
+                        values[key] = initial ? "1" : "0";
+                        var box = new CheckBox { Content = label, IsChecked = initial, FontSize = 11 };
+                        ToolTip.SetTip(box, help);
+                        box.IsCheckedChanged += (_, _) => values[key] = box.IsChecked == true ? "1" : "0";
+                        stack.Children.Add(box);
+                    }
+                    else
+                    {
+                        values[key] = defaultValue;
+                        stack.Children.Add(new TextBlock { Text = label, FontSize = 11, Opacity = 0.75 });
+                        var entry = new TextBox { Text = defaultValue, Padding = new Thickness(6, 4) };
+                        ToolTip.SetTip(entry, help);
+                        entry.TextChanged += (_, _) => values[key] = entry.Text ?? "";
+                        stack.Children.Add(entry);
+                    }
+                }
+            }
+
+            if (panel.TryGetProperty("actions", out JsonElement actions)
+                && actions.ValueKind == JsonValueKind.Array)
+            {
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                foreach (JsonElement action in actions.EnumerateArray())
+                {
+                    string actionKey = GetString(action, "key");
+                    var button = new Button
+                    {
+                        Content = GetString(action, "label"),
+                        Padding = new Thickness(12, 4),
+                        FontSize = 11,
+                    };
+                    button.Click += async (_, _) => await RunPanelActionAsync(skillId, panelId, actionKey, values);
+                    row.Children.Add(button);
+                }
+                stack.Children.Add(row);
+            }
+
+            PanelList.Children.Add(new Border
+            {
+                Background = TryBrush("CardBackgroundBrush"),
+                BorderBrush = TryBrush("CardBorderBrush"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(12, 10),
+                Child = stack,
+            });
+        }
+    }
+
+    /// <summary>面板动作：把当前取值整份发给后端，返回的文本显示在日志框（与 WPF 一致）。</summary>
+    private async Task RunPanelActionAsync(string skillId, string panelId, string actionKey,
+                                           Dictionary<string, string> values)
+    {
+        var payload = new Dictionary<string, object?>();
+        foreach (KeyValuePair<string, string> pair in values)
+            payload[pair.Key] = pair.Value;
+        using JsonDocument? doc = await SendAsync(new
+        {
+            action = "skills_panel_action",
+            skill_id = skillId,
+            panel_id = panelId,
+            panel_action = actionKey,
+            values = payload,
+        });
+        DevLogBox.Text = doc is null
+            ? Loc.T("settings.installed.backendGone", "⚠️ 后端当前不可用，插件操作未执行（请稍后重试）")
+            : GetString(doc.RootElement, "content");
+    }
+
+    private static Brush? TryBrush(string key)
+    {
+        if (Application.Current is null)
+            return null;
+        if (Application.Current.TryFindResource(key, out object? value) && value is Brush brush)
+            return brush;
+        return null;
+    }
+
+    /// <summary>供「已安装」页跳转过来时聚焦插件 ID 输入框（对齐 WPF 的 ScaffoldIdBox.Focus()）。</summary>
+    public void FocusScaffoldId() => ScaffoldIdBox.Focus();
+
+    // -----------------------------------------------------------------
+    // 探针接口（`EchoDesk --probe pages` 用：开发者页的三块新增功能）
+    // -----------------------------------------------------------------
+
+    /// <summary>开发者页的可观测状态。</summary>
+    public string DeveloperSnapshot()
+    {
+        return string.Join("; ", new[]
+        {
+            $"dirButtons={(string.IsNullOrEmpty(OpenDevDirButton.Content as string) ? 0 : 1)}"
+            + $"{(string.IsNullOrEmpty(OpenInstallDirButton.Content as string) ? 0 : 1)}"
+            + $"{(string.IsNullOrEmpty(OpenExamplesDirButton.Content as string) ? 0 : 1)}",
+            $"exportLogButton={(string.IsNullOrEmpty(ExportDevLogButton.Content as string) ? 0 : 1)}",
+            $"reloadIsDevOnly={((DevReloadButton.Content as string)?.Length > 0 ? 1 : 0)}",
+            $"manifestRows={_manifestRows.Count}",
+            $"manifestNodes={ManifestList.Children.Count}",
+            $"manifestButtons={(string.IsNullOrEmpty(ManifestAddRow.Content as string) ? 0 : 1)}"
+            + $"{(string.IsNullOrEmpty(ManifestSaveButton.Content as string) ? 0 : 1)}"
+            + $"{(string.IsNullOrEmpty(ManifestOpenRawButton.Content as string) ? 0 : 1)}",
+            $"hooksText={(string.IsNullOrEmpty(HooksText.Text) ? 0 : 1)}",
+            $"panelNodes={PanelList.Children.Count}",
+            $"dirsTextHasDev={(DevDirsText.Text?.Contains("skills_dev") == true ? 1 : 0)}",
+            $"status={(string.IsNullOrEmpty(DevStatusText.Text) ? 0 : 1)}",
+        });
+    }
+
     // -----------------------------------------------------------------
     public void ApplyTexts()
     {
@@ -249,7 +709,7 @@ public partial class DeveloperPage : UserControl, ISettingsPage
         DevDirsSectionLabel.Text = Loc.T("settings.developer.sectionDirs", "插件目录");
         InstallExamplesButton.Content = Loc.T("settings.developer.installExamples", "📦 安装示例插件");
         DevReloadSectionLabel.Text = Loc.T("settings.developer.sectionReload", "重载与日志");
-        DevReloadButton.Content = Loc.T("settings.developer.reload", "🔄 重载本地插件");
+        DevReloadButton.Content = Loc.T("settings.developer.reloadDev", "只重载开发插件");
         ClearDevLogButton.Content = Loc.T("settings.developer.clearLog", "🗑 清空日志");
         RefreshDevLogButton.Content = Loc.T("settings.installed.refresh", "🔄 刷新");
         LogLinesLabel.Text = Loc.T("settings.developer.logLines", "显示最后");
@@ -261,12 +721,23 @@ public partial class DeveloperPage : UserControl, ISettingsPage
         ScaffoldNameLabel.Text = Loc.T("settings.installed.scaffoldName", "插件显示名");
         ScaffoldAuthorLabel.Text = Loc.T("settings.installed.scaffoldAuthor", "作者");
         ScaffoldCreateButton.Content = Loc.T("settings.developer.scaffoldCreate", "➕ 创建");
-        ManifestNoticeText.Text = Loc.T("settings.developer.manifestNotMigrated",
-            "⏳ 「本地插件清单」的表格编辑还没有迁移到跨平台前端。"
-            + "替代做法：直接编辑上面列出的 skills_local.json（它支持任意路径、别名、启用状态、"
-            + "加载顺序与信任状态），保存后点「重载本地插件」生效。");
+        // v0.2.2 第 4 批 3a：三个目录按钮、导出日志、清单与钩子/面板区块
+        OpenDevDirButton.Content = Loc.T("settings.developer.openDevDir", "📂 开发目录");
+        OpenInstallDirButton.Content = Loc.T("settings.developer.openInstallDir", "📂 安装目录");
+        OpenExamplesDirButton.Content = Loc.T("settings.developer.openExamplesDir", "📂 示例插件");
+        ExportDevLogButton.Content = Loc.T("settings.developer.exportLog", "导出日志");
+        ManifestSectionLabel.Text = Loc.T("settings.developer.sectionManifest", "本地插件清单");
+        ManifestNoticeText.Text = Loc.T("settings.developer.manifestTip",
+            "登记本地插件（任意路径、别名、启用状态、加载顺序）。保存后点上面的「重载本地插件」生效；"
+            + "「直接编辑 JSON」会用系统默认程序打开清单文件。");
+        ManifestAddRow.Content = Loc.T("settings.developer.manifestAddRow", "＋ 加一行");
+        ManifestSaveButton.Content = Loc.T("settings.developer.manifestSave", "保存清单");
+        ManifestOpenRawButton.Content = Loc.T("settings.developer.manifestOpenRaw", "直接编辑 JSON");
+        HooksSectionLabel.Text = Loc.T("settings.developer.sectionHooks", "已挂接的自动化钩子");
+        PanelsSectionLabel.Text = Loc.T("settings.developer.sectionPanels", "插件面板");
         // 已加载的数据要按新语言重排一遍（不重新请求后端之外的东西）。
         if (_status is not null)
             _ = RefreshAsync();
     }
 }
+

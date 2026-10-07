@@ -31,6 +31,16 @@ public interface ISettingsHost
 
     /// <summary>收起字段帮助面板。</summary>
     void ClearFieldHelp();
+
+    /// <summary>
+    /// 切到另一个设置页（v0.2.2 第 4 批）。「已安装」页的「➕ 新建本地插件」要跳到
+    /// 「开发者」页并聚焦到插件 ID 输入框 —— WPF 侧是 `ShowTab(...)`，语义一致。
+    /// 找不到该页签时返回 false，不抛（跳转失败不该让设置窗口崩）。
+    /// </summary>
+    bool ShowTab(string tabKey);
+
+    /// <summary>按类型取已注册的设置页（跨页跳转后要聚焦某个控件时需要它）。找不到返回 null。</summary>
+    T? FindPage<T>() where T : class;
 }
 
 /// <summary>设置窗口的一个页签。</summary>

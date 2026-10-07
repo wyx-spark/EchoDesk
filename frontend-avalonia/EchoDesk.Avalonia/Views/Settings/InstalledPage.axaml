@@ -7,23 +7,57 @@
     列出市场安装 / 本地安装 / 开发目录里的全部插件及其加载状态。
     控件名与 AutomationId 与 WPF 版同名，便于复用 ui_probe 的既有断言。
   -->
-  <Grid RowDefinitions="Auto,*,Auto" Margin="16,12,16,10">
+  <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" Margin="16,12,16,10">
 
-    <!-- 操作条 -->
+    <!-- 操作条：控件名与 AutomationId 与 WPF 版同名（ui_probe 的既有断言可直接复用） -->
     <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
       <Button x:Name="SkillsRefreshButton" Padding="10,4"
               AutomationProperties.AutomationId="SkillsRefreshButton" />
       <Button x:Name="SkillsReloadButton" Padding="10,4"
               AutomationProperties.AutomationId="SkillsReloadButton" />
+      <Button x:Name="SkillsInstallFolderButton" Padding="10,4"
+              AutomationProperties.AutomationId="SkillsInstallFolderButton" />
+      <Button x:Name="SkillsScaffoldButton" Padding="10,4"
+              AutomationProperties.AutomationId="SkillsScaffoldButton" />
       <Button x:Name="SkillsExamplesButton" Padding="10,4"
               AutomationProperties.AutomationId="SkillsExamplesButton" />
     </StackPanel>
 
-    <TextBlock x:Name="InstalledTipText" Grid.Row="0" Margin="0,34,0,0" FontSize="11"
+    <TextBlock x:Name="InstalledTipText" Grid.Row="1" Margin="0,6,0,0" FontSize="11"
                TextWrapping="Wrap" Opacity="0.7" />
 
+    <!-- 首次加载未知来源插件的信任确认（v0.2.2 第 4 批 3a）。
+         WPF 用 TrustDialog 模态窗口；Avalonia 没有对话框体系，改成**页内一块面板**：
+         一次性列出全部待确认插件、逐条勾选、整批提交（后端 skills_trust_bulk）——
+         与 WPF 同一语义（"只问一次、整批决定"），只是承载方式不同。 -->
+    <Border x:Name="TrustPanel" Grid.Row="2" IsVisible="False" Margin="0,10,0,0"
+            Background="{DynamicResource WarningBannerBrush}"
+            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+            CornerRadius="6" Padding="12,10"
+            AutomationProperties.AutomationId="TrustPanel">
+      <StackPanel Spacing="6">
+        <TextBlock x:Name="TrustTitle" FontWeight="Bold" FontSize="13" />
+        <TextBlock x:Name="TrustIntro" FontSize="11" TextWrapping="Wrap" Opacity="0.85" />
+        <TextBlock x:Name="TrustWarn" FontSize="11" TextWrapping="Wrap" FontWeight="SemiBold"
+                   Foreground="{DynamicResource AccentBrush}" />
+        <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto">
+          <StackPanel x:Name="TrustList" Spacing="6" />
+        </ScrollViewer>
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button x:Name="TrustEnableAllButton" Padding="10,3" FontSize="11"
+                  AutomationProperties.AutomationId="TrustEnableAllButton" />
+          <Button x:Name="TrustDisableAllButton" Padding="10,3" FontSize="11"
+                  AutomationProperties.AutomationId="TrustDisableAllButton" />
+          <Button x:Name="TrustConfirmButton" Padding="12,3" FontSize="11"
+                  AutomationProperties.AutomationId="TrustConfirmButton" />
+          <Button x:Name="TrustCancelButton" Padding="12,3" FontSize="11"
+                  AutomationProperties.AutomationId="TrustCancelButton" />
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
     <!-- 列表 -->
-    <ScrollViewer Grid.Row="1" Margin="0,8,0,0" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer Grid.Row="3" Margin="0,8,0,0" VerticalScrollBarVisibility="Auto">
       <Grid>
         <ItemsControl x:Name="SkillList">
           <ItemsControl.ItemsPanel>
@@ -40,7 +74,7 @@
     </ScrollViewer>
 
     <!-- 状态行 -->
-    <TextBlock x:Name="SkillStatusText" Grid.Row="2" Margin="0,8,0,0" FontSize="11"
+    <TextBlock x:Name="SkillStatusText" Grid.Row="4" Margin="0,8,0,0" FontSize="11"
                TextWrapping="Wrap" Opacity="0.8"
                AutomationProperties.AutomationId="SkillStatusText" />
   </Grid>

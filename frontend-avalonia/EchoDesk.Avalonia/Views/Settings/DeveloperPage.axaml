@@ -32,8 +32,18 @@
         <StackPanel Spacing="8">
           <TextBlock x:Name="DevDirsText" FontSize="11" TextWrapping="Wrap" Opacity="0.8"
                      AutomationProperties.AutomationId="DevDirsText" />
-          <Button x:Name="InstallExamplesButton" HorizontalAlignment="Left" Padding="12,4" FontSize="11"
-                  AutomationProperties.AutomationId="InstallExamplesButton" />
+          <!-- 三个目录按钮（v0.2.2 第 4 批 3a）：与 WPF 同名同义，
+               「示例插件」目录是"插件长什么样"的第一手答案 -->
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button x:Name="OpenDevDirButton" Padding="12,4" FontSize="11"
+                    AutomationProperties.AutomationId="OpenDevDirButton" />
+            <Button x:Name="OpenInstallDirButton" Padding="12,4" FontSize="11"
+                    AutomationProperties.AutomationId="OpenInstallDirButton" />
+            <Button x:Name="OpenExamplesDirButton" Padding="12,4" FontSize="11"
+                    AutomationProperties.AutomationId="OpenExamplesDirButton" />
+            <Button x:Name="InstallExamplesButton" Padding="12,4" FontSize="11"
+                    AutomationProperties.AutomationId="InstallExamplesButton" />
+          </StackPanel>
         </StackPanel>
       </Border>
 
@@ -45,6 +55,8 @@
         <Button x:Name="ClearDevLogButton" Padding="12,4" FontSize="11"
                 AutomationProperties.AutomationId="ClearDevLogButton" />
         <Button x:Name="RefreshDevLogButton" Padding="12,4" FontSize="11" />
+        <Button x:Name="ExportDevLogButton" Padding="12,4" FontSize="11"
+                AutomationProperties.AutomationId="ExportDevLogButton" />
       </StackPanel>
       <StackPanel Orientation="Horizontal" Spacing="6">
         <TextBlock x:Name="LogLinesLabel" VerticalAlignment="Center" FontSize="11" Opacity="0.75" />
@@ -81,11 +93,32 @@
                 AutomationProperties.AutomationId="ScaffoldCreateButton" />
       </Grid>
 
-      <!-- ⑤ 未迁移部分：诚实标注，并给出替代做法 -->
-      <TextBlock x:Name="ManifestNoticeText" FontSize="11" TextWrapping="Wrap" Opacity="0.7"
-                 Margin="0,10,0,0" />
+      <!-- ⑤ 本地插件清单（v0.2.2 第 4 批 3a：从"未迁移"补成可编辑表格） -->
+      <TextBlock x:Name="ManifestSectionLabel" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
+      <TextBlock x:Name="ManifestNoticeText" FontSize="11" TextWrapping="Wrap" Opacity="0.7" />
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <Button x:Name="ManifestAddRow" Padding="12,4" FontSize="11"
+                AutomationProperties.AutomationId="ManifestAddRow" />
+        <Button x:Name="ManifestSaveButton" Padding="12,4" FontSize="11"
+                AutomationProperties.AutomationId="ManifestSaveButton" />
+        <Button x:Name="ManifestOpenRawButton" Padding="12,4" FontSize="11"
+                AutomationProperties.AutomationId="ManifestOpenRawButton" />
+      </StackPanel>
+      <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto">
+        <StackPanel x:Name="ManifestList" Spacing="4"
+                    AutomationProperties.AutomationId="ManifestList" />
+      </ScrollViewer>
 
-      <!-- ⑥ 状态行 -->
+      <!-- ⑥ 自动化钩子与插件面板（v0.2.2 第 4 批 3a） -->
+      <TextBlock x:Name="HooksSectionLabel" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
+      <TextBlock x:Name="HooksText" FontSize="11" TextWrapping="Wrap" Opacity="0.8"
+                 AutomationProperties.AutomationId="HooksText" />
+
+      <TextBlock x:Name="PanelsSectionLabel" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
+      <StackPanel x:Name="PanelList" Spacing="8"
+                  AutomationProperties.AutomationId="PanelList" />
+
+      <!-- ⑦ 状态行 -->
       <TextBlock x:Name="DevStatusText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
                  AutomationProperties.AutomationId="DevStatusText" />
 

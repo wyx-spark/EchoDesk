@@ -661,6 +661,12 @@
       "sectionManifest": "Local plugin manifest (skills_local.json)",
       "sectionHooks": "Attached automation hooks",
       "sectionPanels": "Plugin panels",
+      "openDevDir": "📂 Dev folder",
+      "openInstallDir": "📂 Install folder",
+      "openExamplesDir": "📂 Example plugins",
+      "openDirFailed": "⚠️ Could not open the folder: {0}",
+      "manifestAddRow": "＋ Add a row",
+      "manifestEmpty": "(The manifest is empty: click “＋ Add a row” to register a local plugin.)",
       "manifestAdd": "➕ Add a row",
       "manifestSave": "Save manifest and reload",
       "manifestOpenRaw": "Edit the JSON file directly",
@@ -693,6 +699,9 @@
       "loadedCount": "{0} plugins loaded",
       "uninstall": "Uninstall",
       "uninstallConfirmShort": "Confirm uninstall?",
+      "pathLabel": "Path",
+      "openDirFailed": "⚠️ Could not open the folder: {0}",
+      "scaffoldJumpFailed": "⚠️ The Developer tab was not found; switch to it manually and create the plugin there.",
       "confirmInstallShort": "Confirm install?"
     },
     "loadState": {

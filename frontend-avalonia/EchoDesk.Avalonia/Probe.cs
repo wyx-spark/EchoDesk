@@ -490,6 +490,56 @@ internal static class Probe
             && registry.Contains("refreshRegistryButton=1"), registry);
         Check("模型页状态行有内容", registry.Contains("statusLine=1"), registry);
 
+        // ---------- 已安装页：插件生态入口（v0.2.2 第 4 批 3a）----------
+        if (!settings.SelectTab("settings.tab.installed"))
+        {
+            Console.WriteLine("  [FAIL] 找不到「已安装」页签");
+            return false;
+        }
+        var installed = settings.FindPage<InstalledPage>();
+        if (installed is null)
+        {
+            Console.WriteLine("  [FAIL] 设置窗口里没有 InstalledPage");
+            return false;
+        }
+        await Dispatcher.UIThread.InvokeAsync(async () => await installed.RefreshAsync());
+        string plugins = installed.PluginSnapshot();
+        Console.WriteLine($"  已安装页   : {plugins}");
+        Check("从文件夹安装 / 新建本地插件入口在",
+            plugins.Contains("installFolderButton=1") && plugins.Contains("scaffoldButton=1"), plugins);
+        Check("插件卡片或空状态二选一可见",
+            plugins.Contains("cards=0") || plugins.Contains("emptyVisible=0"), plugins);
+        Check("信任确认面板的文案齐备",
+            plugins.Contains("trustTitle=1") && plugins.Contains("trustButtons=1111"), plugins);
+        installed.ProbeShowTrust();
+        Console.WriteLine($"  信任面板后 : {installed.PluginSnapshot()}");
+
+        // ---------- 开发者页：目录按钮 / 清单编辑 / 钩子与面板（3a）----------
+        if (!settings.SelectTab("settings.tab.developer"))
+        {
+            Console.WriteLine("  [FAIL] 找不到「开发者」页签");
+            return false;
+        }
+        var developer = settings.FindPage<DeveloperPage>();
+        if (developer is null)
+        {
+            Console.WriteLine("  [FAIL] 设置窗口里没有 DeveloperPage");
+            return false;
+        }
+        await Dispatcher.UIThread.InvokeAsync(async () => await developer.RefreshAsync());
+        string dev = developer.DeveloperSnapshot();
+        Console.WriteLine($"  开发者页   : {dev}");
+        Check("三个目录按钮都有文案", dev.Contains("dirButtons=111"), dev);
+        Check("导出日志按钮有文案", dev.Contains("exportLogButton=1"), dev);
+        Check("重载按钮已改为「只重载开发插件」", dev.Contains("reloadIsDevOnly=1"), dev);
+        Check("本地插件清单表格已渲染（含空状态说明）", dev.Contains("manifestNodes=")
+            && (dev.Contains("manifestNodes=0") ? false : true), dev);
+        Check("清单三个按钮有文案", dev.Contains("manifestButtons=111"), dev);
+        Check("钩子清单已渲染", dev.Contains("hooksText=1"), dev);
+        Check("插件面板区块已渲染", dev.Contains("panelNodes=")
+            && (dev.Contains("panelNodes=0") ? false : true), dev);
+        Check("目录清单含 skills_dev", dev.Contains("dirsTextHasDev=1"), dev);
+
         return ok;
     }
 

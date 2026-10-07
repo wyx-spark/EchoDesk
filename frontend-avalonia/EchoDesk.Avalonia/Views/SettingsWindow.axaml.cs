@@ -99,6 +99,12 @@ public partial class SettingsWindow : Window, ISettingsHost
 
     public void ClearFieldHelp() => FieldHelpPanel.IsVisible = false;
 
+    /// <summary>
+    /// 跨页跳转（「已安装」页的「➕ 新建本地插件」要跳到「开发者」页）。
+    /// 委托给既有的 <see cref="SelectTab"/> —— 同一份页签查找逻辑，不重复实现一遍。
+    /// </summary>
+    public bool ShowTab(string tabKey) => SelectTab(tabKey);
+
     // -----------------------------------------------------------------
     // 页签注册
     // -----------------------------------------------------------------

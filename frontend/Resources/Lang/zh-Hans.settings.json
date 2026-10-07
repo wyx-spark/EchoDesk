@@ -661,6 +661,12 @@
       "sectionManifest": "本地插件清单（skills_local.json）",
       "sectionHooks": "已挂接的自动化钩子",
       "sectionPanels": "插件面板",
+      "openDevDir": "📂 开发目录",
+      "openInstallDir": "📂 安装目录",
+      "openExamplesDir": "📂 示例插件",
+      "openDirFailed": "⚠️ 无法打开目录：{0}",
+      "manifestAddRow": "＋ 加一行",
+      "manifestEmpty": "（清单为空：点「＋ 加一行」登记一个本地插件）",
       "manifestAdd": "➕ 添加一行",
       "manifestSave": "保存清单并重载",
       "manifestOpenRaw": "直接编辑 JSON 文件",
@@ -693,7 +699,10 @@
       "loadedCount": "已加载 {0} 个插件",
       "uninstall": "卸载",
       "uninstallConfirmShort": "确认卸载？",
-      "confirmInstallShort": "确认安装？"
+      "confirmInstallShort": "确认安装？",
+      "pathLabel": "路径",
+      "openDirFailed": "⚠️ 无法打开目录：{0}",
+      "scaffoldJumpFailed": "⚠️ 找不到「开发者」页签，请手动切过去再新建插件"
     },
     "loadState": {
       "reading": "正在读取配置…",
