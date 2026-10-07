@@ -119,6 +119,79 @@ internal static class SelfTest
             backend.Dispose();
         }
 
+        // ---------- v0.2.2 第 3 批：界面设置的跨前端兼容 + 崩溃日志 + 启动器 ----------
+        //
+        // 这三项**不需要图形环境也不需要后端**，所以放在自检里最合适：
+        // 它们验的都是"纯逻辑"，任何平台上都能断言。
+        Console.WriteLine();
+        Console.WriteLine("== v0.2.2 第 3 批：界面状态兼容 / 崩溃日志 / 启动器 ==");
+
+        string tempDir = Path.Combine(Path.GetTempPath(), "echodesk-ui-state-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        string? previousData = Environment.GetEnvironmentVariable("ECHODESK_DATA");
+        try
+        {
+            Environment.SetEnvironmentVariable("ECHODESK_DATA", tempDir);
+
+            // ① 关键：WPF 写的是 PascalCase，跨平台版必须读得懂（否则换前端就丢偏好）
+            File.WriteAllText(Path.Combine(tempDir, "ui_state.json"),
+                "{\"FontSize\":17,\"Theme\":\"dark\",\"Language\":\"en\",\"EmojiMode\":\"never\","
+                + "\"WindowMaximized\":true,\"FirstRunDone\":true,\"ShortcutPromptDeclined\":true,"
+                + "\"WindowLeft\":123,\"WindowTop\":45}",
+                new System.Text.UTF8Encoding(false));
+            AppSettings wpfWritten = AppSettings.Load();
+            Check("读得懂 WPF 写的 PascalCase 字段（FontSize）", Math.Abs(wpfWritten.FontSize - 17) < 0.001,
+                wpfWritten.FontSize.ToString("0.#"));
+            Check("读得懂 WPF 写的 Theme", wpfWritten.Theme == "dark", wpfWritten.Theme);
+            Check("读得懂 WPF 写的 Language", wpfWritten.Language == "en", wpfWritten.Language);
+            Check("读得懂 WPF 写的 EmojiMode（映射到 EmojiPreference）",
+                wpfWritten.EmojiPreference == "never", wpfWritten.EmojiPreference);
+            Check("读得懂 WPF 写的窗口位置", Math.Abs(wpfWritten.WindowLeft - 123) < 0.001
+                && Math.Abs(wpfWritten.WindowTop - 45) < 0.001,
+                $"{wpfWritten.WindowLeft}/{wpfWritten.WindowTop}");
+            Check("读得懂 WPF 写的一次性询问标志",
+                wpfWritten.FirstRunDone && wpfWritten.ShortcutPromptDeclined, "两个都为 true");
+
+            // ② 反向：跨平台版写出去的文件里**两种键名都在**，WPF 也读得懂
+            wpfWritten.FontSize = 16;
+            wpfWritten.Save();
+            string written = File.ReadAllText(Path.Combine(tempDir, "ui_state.json"));
+            Check("落盘时同时写 snake_case 与 PascalCase",
+                written.Contains("\"font_size\"") && written.Contains("\"FontSize\""),
+                "两种键名都在");
+            AppSettings roundTrip = AppSettings.Load();
+            Check("回读自己的文件（snake_case 优先）", Math.Abs(roundTrip.FontSize - 16) < 0.001,
+                roundTrip.FontSize.ToString("0.#"));
+
+            // ③ 崩溃日志：写得进去，且内容里有异常类型
+            CrashLog.Append("selftest", new InvalidOperationException("selftest-marker"));
+            string logPath = CrashLog.FilePath;
+            Check("崩溃日志写到了用户数据目录", File.Exists(logPath) && logPath.StartsWith(tempDir,
+                StringComparison.OrdinalIgnoreCase), logPath);
+            Check("崩溃日志里有异常类型与消息",
+                File.Exists(logPath) && File.ReadAllText(logPath).Contains("selftest-marker"),
+                "内容可查");
+
+            // ④ 启动器：路径非空、能建、建完能被判定为"有效"
+            Check("启动器文件名为本平台惯例",
+                ShortcutService.FileName.Length > 0, ShortcutService.FileName);
+            // 建到程序目录可能在只读位置，所以只断言"路径可计算 + 判定函数不抛"
+            bool valid = ShortcutService.IsValid();
+            Check("IsValid 在缺少启动器时安全返回 false", !valid, "未创建时应为 false");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ECHODESK_DATA", previousData);
+            try
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+            catch (Exception)
+            {
+                // 临时目录删不掉不影响结论
+            }
+        }
+
         Console.WriteLine();
         Console.WriteLine($"通过 {passed} 项，失败 {failed} 项");
         return failed == 0 ? 0 : 1;

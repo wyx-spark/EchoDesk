@@ -32,6 +32,9 @@ public static class CommandCatalog
         new("/preset", "[list|light|balanced|quality]", "切换生成参数预设", "切换生成参数预设", true, false),
         new("/compact", "", "压缩上下文", "压缩上下文", false, false),
         new("/file", "<路径>", "上传本地文件", "上传文件加入上下文", true, false),
+        // /summarize 此前漏在回退表外（WPF 侧 23 条、跨平台版 22 条）：
+        // 后端没起来时用户在指令面板里看不到它，而它是"长文档摘要"的唯一手动入口。
+        new("/summarize", "", "对当前已加载的长文档手动触发全文分段摘要（逐段摘要后合并），摘要进度实时显示在对话框中", "手动触发全文摘要", false, false),
         new("/search", "on|off", "开启/关闭联网搜索", "开启/关闭联网搜索", true, false),
         new("/model", "[名称|别名|list]", "查看/切换本地模型", "查看/切换本地模型", true, false),
         new("/clearcache", "", "清空推理 KV 缓存", "清空推理 KV 缓存", false, true),

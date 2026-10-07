@@ -13,6 +13,7 @@
 // 模型、检索、Agent 这些**业务**配置留在后端的 config.json，前端不重复存一份，
 // 避免两边不一致（WPF 版也是这个分工）。
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -56,6 +57,27 @@ public sealed class AppSettings
     [JsonPropertyName("window_height")]
     public double WindowHeight { get; set; } = 760;
 
+    // ---------- v0.2.2 第 3 批：窗口位置与一次性询问的记忆 ----------
+    //
+    // 这五个字段与 WPF 版**同名同义**（WPF 侧 AppSettings 的 WindowLeft / WindowTop /
+    // WindowMaximized / FirstRunDone / ShortcutPromptDeclined）。
+    // 键名走 "两种写法都读、两种都写" 的兼容层，见 Load / Save 的说明。
+
+    /// <summary>主窗口左边缘（NaN = 还没记过，按系统默认位置）。</summary>
+    public double WindowLeft { get; set; } = double.NaN;
+
+    /// <summary>主窗口上边缘（NaN = 还没记过）。</summary>
+    public double WindowTop { get; set; } = double.NaN;
+
+    /// <summary>上次退出时是否最大化。</summary>
+    public bool WindowMaximized { get; set; }
+
+    /// <summary>是否已完成首次启动引导（只展示一次）。</summary>
+    public bool FirstRunDone { get; set; }
+
+    /// <summary>用户已拒绝创建启动快捷方式（不再重复询问）。</summary>
+    public bool ShortcutPromptDeclined { get; set; }
+
     /// <summary>
     /// 主窗口"轻量状态区"是否已折叠（v0.2.1 跨平台-2 任务二第二个迁移模块）。
     /// 与 WPF 版同名同语义：折叠状态要能在下次启动沿用，否则每次开窗都要手动收一次。
@@ -73,6 +95,40 @@ public sealed class AppSettings
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
+    // =================================================================
+    // 字段兼容（v0.2.2 第 3 批）：PascalCase ↔ snake_case
+    // =================================================================
+    //
+    // 两个前端**共用同一份 ui_state.json**（都在 UserPaths.DataRoot 下），但历史上键名
+    // 各写各的：WPF 用 C# 属性名（`WindowWidth` / `FontSize` / `EmojiMode` / `DarkMode`），
+    // Avalonia 用 snake_case（`window_width` / `font_size` / `emoji`）。
+    // 结果是**换一个前端就丢一次偏好**：用 WPF 调好的字号，切到跨平台版变回默认值 ——
+    // 差异清单 B7 记的就是这一条。
+    //
+    // 处理方式：**两种键名都读（snake_case 优先），两种都写**。
+    // 不做"统一成一种"，因为两种写法各有一个前端在读，改任何一边都会让另一边失明；
+    // 多写一个别名键的代价（文件大 20 行）远小于"用户偏好莫名其妙丢失"。
+
+    /// <summary>每个字段的（Avalonia 键名, WPF 键名）。两处都要读、两处都要写，见 Load / Save。</summary>
+    public static IReadOnlyList<(string Snake, string Pascal)> FieldAliases { get; } = new[]
+    {
+        ("language", "Language"),
+        ("theme", "Theme"),
+        ("font_size", "FontSize"),
+        ("emoji", "EmojiMode"),
+        ("confirm_destructive", "ConfirmDestructiveCommands"),
+        ("window_width", "WindowWidth"),
+        ("window_height", "WindowHeight"),
+        ("window_left", "WindowLeft"),
+        ("window_top", "WindowTop"),
+        ("window_maximized", "WindowMaximized"),
+        ("first_run_done", "FirstRunDone"),
+        ("shortcut_prompt_declined", "ShortcutPromptDeclined"),
+        ("status_strip_collapsed", "StatusStripCollapsed"),
+        ("settings_window_width", "SettingsWindowWidth"),
+        ("settings_window_height", "SettingsWindowHeight"),
+    };
+
     /// <summary>读设置。文件不存在/损坏都返回默认值并记下原因（不让界面起不来）。</summary>
     public static AppSettings Load()
     {
@@ -85,17 +141,99 @@ public sealed class AppSettings
             string text = File.ReadAllText(path);
             if (string.IsNullOrWhiteSpace(text))
                 return settings;
-            AppSettings? parsed = JsonSerializer.Deserialize<AppSettings>(text);
-            if (parsed is null)
+            using JsonDocument doc = JsonDocument.Parse(text);
+            JsonElement root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
                 return settings;
-            parsed.Clamp();
-            return parsed;
+
+            settings.Language = ReadString(root, "language", "Language", settings.Language);
+            settings.Theme = ReadString(root, "theme", "Theme", settings.Theme);
+            settings.FontSize = ReadDouble(root, "font_size", "FontSize", settings.FontSize);
+            settings.EmojiPreference = ReadString(root, "emoji", "EmojiMode", settings.EmojiPreference);
+            settings.ConfirmDestructiveCommands = ReadBool(root, "confirm_destructive",
+                "ConfirmDestructiveCommands", settings.ConfirmDestructiveCommands);
+            settings.WindowWidth = ReadDouble(root, "window_width", "WindowWidth", settings.WindowWidth);
+            settings.WindowHeight = ReadDouble(root, "window_height", "WindowHeight", settings.WindowHeight);
+            settings.WindowLeft = ReadDouble(root, "window_left", "WindowLeft", settings.WindowLeft);
+            settings.WindowTop = ReadDouble(root, "window_top", "WindowTop", settings.WindowTop);
+            settings.WindowMaximized = ReadBool(root, "window_maximized", "WindowMaximized", false);
+            settings.FirstRunDone = ReadBool(root, "first_run_done", "FirstRunDone", false);
+            settings.ShortcutPromptDeclined = ReadBool(root, "shortcut_prompt_declined",
+                "ShortcutPromptDeclined", false);
+            settings.StatusStripCollapsed = ReadBool(root, "status_strip_collapsed",
+                "StatusStripCollapsed", false);
+            settings.SettingsWindowWidth = ReadDouble(root, "settings_window_width",
+                "SettingsWindowWidth", settings.SettingsWindowWidth);
+            settings.SettingsWindowHeight = ReadDouble(root, "settings_window_height",
+                "SettingsWindowHeight", settings.SettingsWindowHeight);
+            settings.MigrateLegacyTheme(root);
+            settings.Clamp();
+            return settings;
         }
         catch (Exception ex)
         {
             settings.LastLoadError = ex.Message;
             return settings;
         }
+    }
+
+    /// <summary>
+    /// 迁移 v0.2.1 及更早版本的 `DarkMode` 布尔开关到三态 `theme`
+    /// （与 WPF 的 `MigrateLegacyTheme` 同一判据）。
+    ///
+    /// 只在"文件里没有 theme/Theme 字段"时迁移 —— 用户在新版本里选过主题就以新字段为准。
+    /// 旧版本默认写 `dark`，若一律当成用户偏好会把所有老用户的界面从浅色翻成深色，
+    /// 但反过来直接丢弃会让"确实手动切过深色"的用户设置丢失，故按"旧字段存在即视为偏好"处理。
+    /// </summary>
+    private void MigrateLegacyTheme(JsonElement root)
+    {
+        if (root.TryGetProperty("theme", out _) || root.TryGetProperty("Theme", out _))
+            return;
+        foreach (string name in new[] { "dark_mode", "DarkMode" })
+        {
+            if (root.TryGetProperty(name, out JsonElement legacy)
+                && legacy.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                Theme = legacy.GetBoolean() ? "dark" : "light";
+                return;
+            }
+        }
+    }
+
+    private static string ReadString(JsonElement root, string snake, string pascal, string fallback)
+    {
+        foreach (string name in new[] { snake, pascal })
+        {
+            if (root.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String)
+                return value.GetString() ?? fallback;
+        }
+        return fallback;
+    }
+
+    private static double ReadDouble(JsonElement root, string snake, string pascal, double fallback)
+    {
+        foreach (string name in new[] { snake, pascal })
+        {
+            if (root.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Number
+                && value.TryGetDouble(out double parsed))
+            {
+                return parsed;
+            }
+        }
+        return fallback;
+    }
+
+    private static bool ReadBool(JsonElement root, string snake, string pascal, bool fallback)
+    {
+        foreach (string name in new[] { snake, pascal })
+        {
+            if (root.TryGetProperty(name, out JsonElement value)
+                && value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                return value.GetBoolean();
+            }
+        }
+        return fallback;
     }
 
     /// <summary>写设置。失败不抛（只读目录、权限不足等）—— 界面不该因为存不了偏好而崩。</summary>
@@ -105,7 +243,7 @@ public sealed class AppSettings
         {
             Clamp();
             UserPaths.EnsureDirectory(UserPaths.DataRoot);
-            string json = JsonSerializer.Serialize(this, Options);
+            string json = SerializeWithAliases();
             File.WriteAllText(UserPaths.UiStateFile, json, new System.Text.UTF8Encoding(false));
             return true;
         }
@@ -114,6 +252,48 @@ public sealed class AppSettings
             LastLoadError = ex.Message;
             return false;
         }
+    }
+
+    /// <summary>
+    /// 落盘时**同时写两套键名**（snake_case 是 Avalonia 自己的规范写法，
+    /// PascalCase 是 WPF 读得懂的那一份）。见 <see cref="FieldAliases"/> 的说明。
+    /// </summary>
+    private string SerializeWithAliases()
+    {
+        var map = new Dictionary<string, object?>
+        {
+            ["language"] = Language,
+            ["Language"] = Language,
+            ["theme"] = Theme,
+            ["Theme"] = Theme,
+            ["font_size"] = FontSize,
+            ["FontSize"] = FontSize,
+            ["emoji"] = EmojiPreference,
+            ["EmojiMode"] = EmojiPreference,
+            ["confirm_destructive"] = ConfirmDestructiveCommands,
+            ["ConfirmDestructiveCommands"] = ConfirmDestructiveCommands,
+            ["window_width"] = WindowWidth,
+            ["WindowWidth"] = WindowWidth,
+            ["window_height"] = WindowHeight,
+            ["WindowHeight"] = WindowHeight,
+            ["window_left"] = double.IsNaN(WindowLeft) ? null : WindowLeft,
+            ["WindowLeft"] = double.IsNaN(WindowLeft) ? null : WindowLeft,
+            ["window_top"] = double.IsNaN(WindowTop) ? null : WindowTop,
+            ["WindowTop"] = double.IsNaN(WindowTop) ? null : WindowTop,
+            ["window_maximized"] = WindowMaximized,
+            ["WindowMaximized"] = WindowMaximized,
+            ["first_run_done"] = FirstRunDone,
+            ["FirstRunDone"] = FirstRunDone,
+            ["shortcut_prompt_declined"] = ShortcutPromptDeclined,
+            ["ShortcutPromptDeclined"] = ShortcutPromptDeclined,
+            ["status_strip_collapsed"] = StatusStripCollapsed,
+            ["StatusStripCollapsed"] = StatusStripCollapsed,
+            ["settings_window_width"] = SettingsWindowWidth,
+            ["SettingsWindowWidth"] = SettingsWindowWidth,
+            ["settings_window_height"] = SettingsWindowHeight,
+            ["SettingsWindowHeight"] = SettingsWindowHeight,
+        };
+        return JsonSerializer.Serialize(map, Options);
     }
 
     /// <summary>把越界的值拉回可用范围（手改 JSON 写坏了也不至于让界面没法用）。</summary>
@@ -139,5 +319,13 @@ public sealed class AppSettings
         };
         if (string.IsNullOrWhiteSpace(Language))
             Language = "auto";
+        // 窗口位置：只要有一个是 NaN 就整体丢弃（半记半不记会把窗口放到奇怪的角落）
+        if (double.IsNaN(WindowLeft) || double.IsNaN(WindowTop)
+            || double.IsInfinity(WindowLeft) || double.IsInfinity(WindowTop))
+        {
+            WindowLeft = double.NaN;
+            WindowTop = double.NaN;
+        }
     }
 }
+

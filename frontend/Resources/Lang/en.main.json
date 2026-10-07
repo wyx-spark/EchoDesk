@@ -36,6 +36,8 @@
       "sizeUnknown": "(size unknown)",
       "missingChat": "📦 The required model was not found locally: {0}{1}\nSource repository: {2}",
       "downloadQuestion": "Download the model '{0}'?",
+      "downloadConfirmHint": "Press Enter again (or send once more) to start the download; type anything else to cancel.",
+      "waitingConfirm": "⏳ Waiting for your confirmation: send an empty message once more to start",
       "downloadingHint": "⏳ Downloading the model; progress is shown live in the dialog below…",
       "downloadingNamed": "⏳ Downloading and loading the model '{0}', please wait…",
       "downloadCancelled": "❌ Model download cancelled and the backend has exited.\nYou can place the model file into the models/ folder and start EchoDesk again.",

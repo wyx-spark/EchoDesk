@@ -15,6 +15,11 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        // 全局异常钩子要**尽早**装上：越晚装，越容易漏掉启动阶段那一段崩溃。
+        // 装了它之后 dispatcher 上的异常不再直接杀进程，而是写日志 + 弹提示框
+        // （见 CrashLog 的说明，对齐 WPF `App.xaml.cs` 的那一个）。
+        CrashLog.Install();
+
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             // 先把语言包与界面设置读起来：窗口构造里就要用到（标题、按钮文案、字号）。

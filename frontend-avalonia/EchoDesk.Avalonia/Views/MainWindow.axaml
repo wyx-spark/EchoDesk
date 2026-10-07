@@ -267,7 +267,12 @@
                    MaxHeight="240">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="svc:CommandItem">
-                <StackPanel Margin="4,2">
+                <!-- 无障碍锚点（v0.2.2 第 3 批）：屏幕阅读器读到的应该是"这条指令是干什么的"，
+                     而不是把三个 TextBlock 拼起来念。用 Name 给一个短标题、HelpText 给完整说明 ——
+                     与 WPF 侧 ui_probe / UIA 的取法一致（Name 是标题、HelpText 是补充）。 -->
+                <StackPanel Margin="4,2"
+                            AutomationProperties.Name="{Binding Short}"
+                            AutomationProperties.HelpText="{Binding Description}">
                   <TextBlock Text="{Binding Command}" FontWeight="Bold"
                              Foreground="{DynamicResource AccentBrush}" />
                   <TextBlock Text="{Binding Format}" FontSize="11" Opacity="0.7" />

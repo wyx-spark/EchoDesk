@@ -43,7 +43,18 @@
       "button": "Context: {0}/{1}",
       "strip": "📊 Context {0}%",
       "tip": "Current context usage: {0}/{1} tokens\nClick to refresh",
+      "chipTip": "Context used {0} / {1} tokens ({2}%). Baseline floor {3}, actually sent last turn {4}. Click to refresh.",
       "unknown": "---"
+    },
+    "firstRun": {
+      "title": "👋 First time here? Three steps to get going:",
+      "step1": "1️⃣ Upload files: click “📎 Upload” or drop files straight onto the window",
+      "step2": "2️⃣ Ask: just write what you want extracted, reviewed or summarised",
+      "step3": "3️⃣ No model yet? Download one from Settings → Model → model hub",
+      "keys": "⌨️ Shortcuts: Ctrl+Enter to send · Esc to stop · Ctrl+L to clear · Ctrl+O to upload · Ctrl+Shift+C to copy the whole conversation · Ctrl+wheel to change the font size"
+    },
+    "progress": {
+      "starting": "⏳ Starting…"
     },
     "button": {
       "settingsTip": "Settings (Ctrl+, for settings · Ctrl+M for the skill marketplace)",
@@ -356,3 +367,4 @@
     }
   }
 }
+

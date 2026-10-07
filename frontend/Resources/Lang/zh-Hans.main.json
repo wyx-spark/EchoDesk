@@ -36,6 +36,8 @@
       "sizeUnknown": "（大小未知）",
       "missingChat": "📦 本地未找到所需模型：{0}{1}\n来源仓库：{2}",
       "downloadQuestion": "确定要下载模型 '{0}' 吗？",
+      "downloadConfirmHint": "再按一次 Enter（或再点一次「发送」）即开始下载；输入别的内容则取消。",
+      "waitingConfirm": "⏳ 等待确认下载：再发送一次空消息即可开始",
       "downloadingHint": "⏳ 正在下载模型，进度在下方对话框实时显示...",
       "downloadingNamed": "⏳ 正在下载并加载模型 '{0}'，请稍候...",
       "downloadCancelled": "❌ 已取消下载模型，后端已退出。\n可手动把模型文件放入 models/ 目录后重新启动 EchoDesk。",

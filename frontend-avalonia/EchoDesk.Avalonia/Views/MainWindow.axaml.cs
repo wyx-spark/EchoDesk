@@ -28,11 +28,13 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using EchoDesk.Avalonia.Services;
 using EchoDesk.Avalonia.Utilities;
 
@@ -40,6 +42,9 @@ namespace EchoDesk.Avalonia.Views;
 
 public partial class MainWindow : Window
 {
+    /// <summary>默认字号（Ctrl+0 恢复到这个值，与 WPF 的 14 一致）。</summary>
+    private const double DefaultFontSize = 14;
+
     private readonly AppState _state = App.State;
     private readonly SnippetStore _snippets = new();
 
@@ -64,6 +69,24 @@ public partial class MainWindow : Window
 
     // 通知条 / 崩溃提示
     private DispatcherTimer? _toastTimer;
+
+    // 退出倒计时（/exit，v0.2.2 第 3 批）：与 WPF 同样是"致谢 + 10 秒倒计时"。
+    private DispatcherTimer? _exitTimer;
+    private int _exitCountdown;
+
+    // 运行指标的定时刷新（v0.2.2 第 3 批）：生成中每 500ms 问一次后端，不用前端估算。
+    // WPF 版同一间隔、同一失败态处理（见 frontend/MainWindow.xaml.cs 的 StartMetricsTimer）。
+    private DispatcherTimer? _metricsTimer;
+    private bool _metricsStoppedState;
+
+    /// <summary>首次运行引导是否已展示（进程内一次性，避免同一轮多次触发）。</summary>
+    private bool _firstRunShown;
+
+    /// <summary>待确认下载的模型名（第二次确认才真的下载，见 HandleConfirmModel）。</summary>
+    private string _pendingModelDownload = "";
+
+    /// <summary>上一次已知的"模型就绪"状态（用来识别 false → true 的那一次跳变）。</summary>
+    private bool? _modelWasReady;
 
     // 状态区
     private List<string> _capabilityWarnings = new();
@@ -116,6 +139,8 @@ public partial class MainWindow : Window
 
         Width = _state.Settings.WindowWidth;
         Height = _state.Settings.WindowHeight;
+        // 位置与最大化：在设置宽高**之后**恢复（否则被构造时的默认位置覆盖）
+        RestoreWindowPlacement();
 
         CommandPalette.PlacementTarget = CommandInputBox;
         SnippetPalette.PlacementTarget = SnippetButton;
@@ -152,17 +177,7 @@ public partial class MainWindow : Window
         ModeChip.Click += async (_, _) => await OpenSettingsAsync("settings.tab.general");
         FontDownButton.Click += (_, _) => _state.SetFontSize(_state.Settings.FontSize - 1);
         FontUpButton.Click += (_, _) => _state.SetFontSize(_state.Settings.FontSize + 1);
-        ThemeButton.Click += (_, _) =>
-        {
-            string next = _state.Settings.Theme switch
-            {
-                "auto" => "light",
-                "light" => "dark",
-                _ => "auto",
-            };
-            _state.SetTheme(next);
-            ApplyTexts();
-        };
+        ThemeButton.Click += (_, _) => CycleTheme();
         LangCombo.SelectionChanged += (_, _) =>
         {
             if (LangCombo.SelectedItem is LangItem item)
@@ -208,6 +223,124 @@ public partial class MainWindow : Window
 
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
+
+        // ---- v0.2.2 第 3 批：窗口级快捷键与滚轮 ----
+        // 用 **Tunnel** 路由：这是 Avalonia 里 WPF `OnPreviewKeyDown` 的对应物 ——
+        // 必须比输入框先看到按键，否则 Ctrl+L / Ctrl+M 会被输入框当普通字符吃掉，
+        // Esc 也永远轮不到"关面板 / 停生成"。
+        AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
+        // 消息区 Ctrl+滚轮调字号（与 WPF 的 MessageScroll_PreviewMouseWheel 同一行为）
+        MessageScroll.PointerWheelChanged += OnMessageWheel;
+        // 输入框获得焦点时关掉全部面板（WPF 的 InputBox_GotFocus 同一行为）：
+        // 面板浮在输入框上方，用户点了输入框还留着面板会挡住刚输入的内容。
+        InputBox.GotFocus += (_, _) => CloseAllPalettes();
+
+        // 上下文胶囊的点击处理器**只能注册一次**。它原先挂在 ApplyTexts() 里 ——
+        // 而 ApplyTexts 每次切语言都会跑一遍，于是每切一次语言就多一个处理器
+        // （点一下发 N 次 context 请求）。
+        ContextChip.Click += async (_, _) => await RefreshContextAsync();
+    }
+
+    /// <summary>
+    /// 窗口级快捷键（对齐 WPF 的 <c>OnPreviewKeyDown</c>）：
+    /// Ctrl+Enter 发送 · Esc 停止/关面板 · Ctrl+L 清空 · Ctrl+O 上传 · Ctrl+T 深浅色 ·
+    /// Ctrl+, 设置 · Ctrl+M 设置(技能市场) · Ctrl+Shift+C 复制全部对话 ·
+    /// Ctrl+加/减/0 调字号。
+    /// </summary>
+    private void OnWindowKeyDown(object? sender, KeyEventArgs e)
+    {
+        bool ctrl = e.KeyModifiers == KeyModifiers.Control;
+        bool ctrlShift = e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift);
+
+        if (ctrlShift && e.Key == Key.C)
+        {
+            e.Handled = true;
+            CopyAllMessages();
+            return;
+        }
+        if (ctrl)
+        {
+            switch (e.Key)
+            {
+                case Key.L:
+                    e.Handled = true;
+                    _ = SendCommandAsync("/clear");
+                    return;
+                case Key.O:
+                    e.Handled = true;
+                    _ = PickFilesAsync();
+                    return;
+                case Key.T:
+                    e.Handled = true;
+                    CycleTheme();
+                    return;
+                case Key.OemComma:
+                    e.Handled = true;
+                    _ = OpenSettingsAsync("settings.tab.general");
+                    return;
+                case Key.M:
+                    e.Handled = true;
+                    _ = OpenSettingsAsync("settings.tab.market");
+                    return;
+                case Key.OemPlus:
+                case Key.Add:
+                    e.Handled = true;
+                    _state.SetFontSize(_state.Settings.FontSize + 1);
+                    SetStatus(Loc.T("main.status.fontSize", "字号 {0}", _state.Settings.FontSize));
+                    return;
+                case Key.OemMinus:
+                case Key.Subtract:
+                    e.Handled = true;
+                    _state.SetFontSize(_state.Settings.FontSize - 1);
+                    SetStatus(Loc.T("main.status.fontSize", "字号 {0}", _state.Settings.FontSize));
+                    return;
+                case Key.D0:
+                case Key.NumPad0:
+                    e.Handled = true;
+                    _state.SetFontSize(DefaultFontSize);
+                    SetStatus(Loc.T("main.status.fontSize", "字号 {0}", _state.Settings.FontSize));
+                    return;
+            }
+        }
+        if (e.Key == Key.Escape)
+        {
+            // 优先级与 WPF 一致：先关面板，再停生成。**不再无条件 StopAsync**——
+            // 原先 Avalonia 侧只要焦点在输入框就停生成，用户按 Esc 取消补全会误停。
+            if (CommandPalette.IsOpen || SnippetPalette.IsOpen)
+            {
+                CloseAllPalettes();
+                e.Handled = true;
+                return;
+            }
+            if (_busy)
+            {
+                e.Handled = true;
+                _ = StopAsync();
+            }
+        }
+    }
+
+    /// <summary>Ctrl+滚轮调字号（WPF 的 MessageScroll_PreviewMouseWheel 同一行为）。</summary>
+    private void OnMessageWheel(object? sender, PointerWheelEventArgs e)
+    {
+        if (e.KeyModifiers != KeyModifiers.Control)
+            return;
+        e.Handled = true;
+        _state.SetFontSize(_state.Settings.FontSize + (e.Delta.Y > 0 ? 1 : -1));
+        SetStatus(Loc.T("main.status.fontSize", "字号 {0}", _state.Settings.FontSize));
+    }
+
+    /// <summary>Ctrl+T：主题三态循环（与标题栏那个 🌓 按钮同一实现）。</summary>
+    private void CycleTheme()
+    {
+        string next = _state.Settings.Theme switch
+        {
+            "auto" => "light",
+            "light" => "dark",
+            _ => "auto",
+        };
+        _state.SetTheme(next);
+        ApplyTexts();
     }
 
     private void OnInputKeyDown(object? sender, KeyEventArgs e)
@@ -367,8 +500,32 @@ public partial class MainWindow : Window
         ApplyStatusStripState();
         if (string.IsNullOrEmpty(ContextChipText.Text))
             ContextChipText.Text = Loc.T("main.context.buttonIdle", "上下文：---/---");
-        ContextChip.Click += async (_, _) => await RefreshContextAsync();
         ShowCapabilityBanner();
+        ApplyHelpText();
+    }
+
+    /// <summary>
+    /// 屏幕阅读器说明（WPF 用 <c>svc:Loc.HelpKey</c> 附加属性，Avalonia 侧直接
+    /// <see cref="AutomationProperties.SetHelpText"/>）。
+    ///
+    /// 为什么用 HelpText 而**不是** Name：Name 会覆盖控件真实可读的文本，
+    /// 屏幕阅读器就再也读不到"已就绪 / 模型名"这些动态值了
+    /// （v0.2.0 排查时踩过，WPF 侧注释也写了这一条）。HelpText 是**补充说明**，两者共存。
+    /// </summary>
+    private void ApplyHelpText()
+    {
+        AutomationProperties.SetHelpText(StatusText, Loc.T("main.status.help",
+            "运行状态：正在启动后端 / 已就绪 / 处理中 / 后端已退出"));
+        AutomationProperties.SetHelpText(ModelChip, Loc.T("main.model.help", "当前模型与切换入口"));
+        AutomationProperties.SetHelpText(ModeChip, Loc.T("main.mode.help", "当前对话模式与切换入口"));
+        AutomationProperties.SetHelpText(StatusStrip, Loc.T("main.strip.help", "轻量状态区：各项可点击"));
+        AutomationProperties.SetHelpText(StripSearchButton, Loc.T("main.strip.searchHelp", "联网搜索开关"));
+        AutomationProperties.SetHelpText(StripAutomationButton, Loc.T("main.strip.autoHelp", "自动化状态"));
+        AutomationProperties.SetHelpText(StripMarketButton, Loc.T("main.strip.marketHelp", "技能市场连接状态"));
+        AutomationProperties.SetHelpText(StripContextButton, Loc.T("main.strip.contextHelp", "上下文占用比例"));
+        AutomationProperties.SetHelpText(StripKvButton, Loc.T("main.strip.kvHelp", "KV 缓存占用"));
+        AutomationProperties.SetHelpText(StripCapabilityButton, Loc.T("main.strip.capabilityHelp", "模型能力信息"));
+        AutomationProperties.SetHelpText(StripCompactButton, Loc.T("main.strip.compactHelp", "立刻压缩上下文"));
     }
 
     private void ApplyFontSize()
@@ -469,6 +626,16 @@ public partial class MainWindow : Window
             SetStatus(ready
                 ? Loc.T("main.status.ready", "就绪")
                 : Loc.T("main.status.noModel", "后端已就绪，但没有加载模型"));
+            // 模型热加载就绪通知（v0.2.2 第 3 批）：用户在设置页点「加载」后回到主窗口，
+            // 如果只有状态行悄悄从"无模型"变成"就绪"，很容易错过。
+            // 系统消息 + 通知条两处同时说一句（与 WPF 的处置一致）。
+            if (ready && _modelWasReady != true)
+            {
+                string text = Loc.T("main.model.hotLoaded", "✅ 模型已就绪，现在可以正常对话了。");
+                AddMessage("system", text);
+                Toast(text);
+            }
+            _modelWasReady = ready;
         });
 
         JsonDocument? ready = await _state.Backend.WaitForReadyAsync(TimeSpan.FromMinutes(10));
@@ -482,6 +649,10 @@ public partial class MainWindow : Window
         {
             ApplyTexts();
             RestoreHistory();
+            // 首次运行引导与启动快捷方式检测（v0.2.2 第 3 批）：
+            // 放在"后端就绪之后"——引导里提到的模型市场是后端能力，先说明再让用户去点。
+            ShowFirstRunGuideIfNeeded();
+            CheckStartupShortcut();
 
             // 平台一致性：前端按本机判断，后端也上报自己的判断，不一致就是 bug（记录里叫"平台判断漂移"）
             string backendKind = _state.Backend.BackendPlatformKind;
@@ -517,6 +688,130 @@ public partial class MainWindow : Window
             if (string.IsNullOrEmpty(content) && string.IsNullOrEmpty(reasoning))
                 continue;
             AddMessage(role, content, reasoning);
+        }
+        // 「已自动恢复上次会话（N 轮）」+ 欢迎语（v0.2.2 第 3 批）：
+        // 用户重启程序后最想知道的就是"我上次的对话还在不在"，一句明确的说明比
+        // 让他自己数气泡靠谱（WPF 版同一处理，`main.welcomeRestored` / `main.welcome`）。
+        int restored = _state.Backend.RestoredCount;
+        AddMessage("system", restored > 0
+            ? Loc.T("main.welcomeRestored", "📂 已自动恢复上次会话（{0} 轮）", restored)
+            : Loc.T("main.welcome", "✨ 欢迎使用 EchoDesk {0} — Powered by {1}",
+                _state.Backend.Version ?? "v0.2.2",
+                Loc.T("main.studioName", "熵寂工作室")));
+    }
+
+    /// <summary>
+    /// 首次运行引导（对齐 WPF 的 `ShowFirstRunGuideIfNeeded`）。
+    /// 只展示一次，看过就写 `FirstRunDone` —— 每次都弹等于没有引导。
+    /// </summary>
+    private void ShowFirstRunGuideIfNeeded()
+    {
+        if (_state.Settings.FirstRunDone || _firstRunShown)
+            return;
+        _firstRunShown = true;
+        _state.Settings.FirstRunDone = true;
+        _state.Settings.Save();
+
+        AddMessage("system", string.Join(Environment.NewLine, new[]
+        {
+            Loc.T("main.firstRun.title", "👋 第一次使用 EchoDesk，三步开始："),
+            Loc.T("main.firstRun.step1", "1️⃣ 上传文件：点「📎 上传文件」或直接把文件拖进窗口"),
+            Loc.T("main.firstRun.step2", "2️⃣ 提问：把要提取/审查/汇总的内容直接写出来"),
+            Loc.T("main.firstRun.step3", "3️⃣ 没有模型时：到「设置 → 模型」的模型市场里下载一个"),
+            Loc.T("main.firstRun.keys",
+                "⌨️ 快捷键：Ctrl+Enter 发送 · Esc 停止 · Ctrl+L 清空 · Ctrl+O 上传 · Ctrl+Shift+C 复制全部 · Ctrl+滚轮 调字号"),
+        }));
+    }
+
+    /// <summary>
+    /// 启动快捷方式检测（对齐 WPF 的 `CheckStartupShortcut`）。
+    /// 三种情形：有效 → 什么都不做；存在但失效 → 问是否重建；不存在且用户没拒绝过 → 问是否创建。
+    /// </summary>
+    private void CheckStartupShortcut()
+    {
+        try
+        {
+            if (ShortcutService.IsValid())
+                return;
+            if (ShortcutService.Exists())
+            {
+                AddMessage("system", Loc.T("main.shortcut.broken",
+                    "检测到启动快捷方式已失效：\n{0}\n\n（通常是因为程序文件夹被移动或改名）\n\n"
+                    + "替代做法：删掉它并重新创建一个。", ShortcutService.ShortcutPath));
+                return;
+            }
+            if (_state.Settings.ShortcutPromptDeclined)
+                return;
+            // 不做模态询问：Avalonia 侧没有 MessageBox，而且"第一次启动就被弹窗拦住"
+            // 本身就是差体验。改成在对话区给出一条带说明的系统消息 + 一键创建的提示，
+            // 用户拒绝过（点了状态行里的"不再询问"）就不再提。
+            AddMessage("system", Loc.T("main.shortcut.missing",
+                "未在程序文件夹内检测到启动快捷方式。\n\n"
+                + "创建后双击它即可启动 EchoDesk，无需分辨哪个可执行文件是入口。\n"
+                + "（可用「设置 → 常规」里的路径信息确认程序位置；本轮不自动创建，避免在用户的"
+                + "桌面上留下未经同意的文件。）"));
+        }
+        catch (Exception ex)
+        {
+            AddMessage("system", Loc.T("main.shortcut.failed", "⚠️ 快捷方式处理失败: {0}", ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// 窗口位置记忆 + 可见性校验（v0.2.2 第 3 批）。
+    ///
+    /// **可见性校验不能省**：用户把窗口拖到第二块屏、之后拔掉那块屏，
+    /// 下次启动按记忆恢复就会把窗口放到**屏幕外** —— 界面看起来像"没打开"。
+    /// 所以恢复前先确认位置落在某个屏幕的可用区域内，否则退回系统默认位置。
+    /// </summary>
+    private void RestoreWindowPlacement()
+    {
+        if (!double.IsNaN(_state.Settings.WindowLeft) && !double.IsNaN(_state.Settings.WindowTop)
+            && IsOnAnyScreen(_state.Settings.WindowLeft, _state.Settings.WindowTop))        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Position = new PixelPoint(
+                (int)Math.Round(_state.Settings.WindowLeft),
+                (int)Math.Round(_state.Settings.WindowTop));
+        }
+        if (_state.Settings.WindowMaximized)
+            WindowState = WindowState.Maximized;
+    }
+
+    /// <summary>窗口左上角是否落在某块屏幕的可用区域内（留 40px 容错，标题栏要能被抓住）。</summary>
+    private bool IsOnAnyScreen(double left, double top)
+    {
+        foreach (global::Avalonia.Platform.Screen screen in Screens.All)
+        {
+            PixelRect area = screen.WorkingArea;
+            if (left + 40 >= area.X && left <= area.X + area.Width - 40
+                && top + 40 >= area.Y && top <= area.Y + area.Height - 40)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>退出前记住窗口位置/尺寸/最大化状态（与 WPF 同口径；位置用"还原态"的值）。</summary>
+    private void SaveWindowPlacement()
+    {
+        try
+        {
+            // 最大化时 Position 是最大化后的值，直接记会把"还原后"的位置弄丢，
+            // 所以最大化时只更新 WindowMaximized 标志，位置沿用上一次记住的。
+            _state.Settings.WindowMaximized = WindowState == WindowState.Maximized;
+            if (WindowState == WindowState.Normal)
+            {
+                _state.Settings.WindowWidth = Width;
+                _state.Settings.WindowHeight = Height;
+                _state.Settings.WindowLeft = Position.X;
+                _state.Settings.WindowTop = Position.Y;
+            }
+            _state.Settings.Save();
+        }
+        catch (Exception)
+        {
+            // 位置记不下来不该阻断退出流程
         }
     }
 
@@ -699,12 +994,35 @@ public partial class MainWindow : Window
         // 后端未提供该字段时（旧版）自然退化为 used。
         int lastRequest = GetIntField(context, "used_last_request");
         int shown = Math.Max(used, lastRequest);
-        ContextChipText.Text = Loc.T("main.context.button", "上下文：{0}/{1}", shown, limit);
+        // 数字缩写（v0.2.2 第 3 批）：1.2k / 3.4m 这类写法在窄胶囊里比
+        // "12000/131072" 可读得多，也与 WPF 一致（差异清单 B7 的「仅文案」一条）。
+        ContextChipText.Text = Loc.T("main.context.button", "上下文：{0}/{1}",
+            AbbreviateNumber(shown), AbbreviateNumber(limit));
         int percent = (int)Math.Round(shown * 100.0 / limit);
         StripContextText.Text = Loc.T("main.strip.context", "📊 上下文 {0}%", percent);
         ToolTip.SetTip(StripContextButton, Loc.T("main.strip.contextHelpBoth",
             "上下文已用 {0} / {1} tokens（{2}%）。其中常驻底数 {3}，上一轮实际发出 {4}。点击刷新。",
             shown, limit, percent, used, lastRequest));
+        // 胶囊本身也要有 ToolTip（此前只有状态区那个按钮有）：鼠标停在标题栏的
+        // 「上下文：…」上时，用户看到的第一个反馈就应该是完整口径。
+        ToolTip.SetTip(ContextChip, Loc.T("main.context.chipTip",
+            "上下文已用 {0} / {1} tokens（{2}%）。常驻底数 {3}，上一轮实际发出 {4}。点击刷新。",
+            shown, limit, percent, used, lastRequest));
+    }
+
+    /// <summary>
+    /// 数字缩写：1200 → 1.2k、3400000 → 3.4m（与 WPF 版同一口径）。
+    /// 小于 1000 的原样返回 —— "0.9k" 这种反而更难读。
+    /// </summary>
+    private static string AbbreviateNumber(int value)
+    {
+        if (value < 0)
+            return value.ToString();
+        if (value < 1000)
+            return value.ToString();
+        if (value < 1000000)
+            return (value / 1000.0).ToString("0.#") + "k";
+        return (value / 1000000.0).ToString("0.#") + "m";
     }
 
     private void SetSearchStatus(bool on)
@@ -1075,9 +1393,22 @@ public partial class MainWindow : Window
             using (doc)
             {
                 string content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+                string action = GetStringField(doc.RootElement, "action");
+                // `/exit`：背板只回一句致谢，真正的"倒计时 + 关闭"必须前端做
+                // （v0.2.2 第 3 批，与 WPF 的 HandleChatResponse 同一处理）。
+                if (action == "exit")
+                {
+                    BeginExitCountdown(content.Length > 0
+                        ? content
+                        : Loc.T("main.thanks", "👋 感谢使用熵寂工作室（VoidEntropiaStudio）出品的 EchoDesk，欢迎您下次使用！"));
+                    return;
+                }
                 if (content.Length > 0)
                     AddMessage("assistant", content);
                 ApplyStatusFields(doc.RootElement);
+                // `/model` 需要下载时后端回 confirm_model，由前端征得同意后再发下载
+                if (action == "confirm_model")
+                    HandleConfirmModel(GetStringField(doc.RootElement, "model"));
                 if (doc.RootElement.TryGetProperty("context", out JsonElement ctx) && ctx.ValueKind == JsonValueKind.Object)
                     ApplyContextFields(ctx);
             }
@@ -1589,6 +1920,16 @@ public partial class MainWindow : Window
                 {
                     _liveMetrics = (_liveMetrics + "  "
                         + Loc.T("main.metrics.reasoningUnclosed", "⚠️ 思考未闭合（token 预算可能被思考用完）")).Trim();
+                    // 只拼进指标一行是不够的：思考未闭合意味着**思考还没写完就被截断**，
+                    // 用户需要立刻看到那段内容才能判断是不是预算不够（WPF 会展开折叠区）。
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (_live is not null && _live.ThinkingText.Text?.Length > 0)
+                        {
+                            _live.ThinkingBox.IsVisible = true;
+                            _live.ThinkingBox.IsExpanded = true;
+                        }
+                    });
                 }
                 HandleAgentSummary(root);
                 break;
@@ -1647,6 +1988,12 @@ public partial class MainWindow : Window
         _busy = busy;
         SendButton.IsEnabled = !busy;
         StopButton.IsVisible = busy;
+        // 指标定时刷新与"忙"状态同生共死（v0.2.2 第 3 批）：
+        // 空闲时每 500ms 问一次后端纯属浪费，而生成中不刷新就看不出速度变化。
+        if (busy)
+            StartMetricsTimer();
+        else
+            StopMetricsTimer();
     }
 
     // -----------------------------------------------------------------
@@ -2055,6 +2402,15 @@ public partial class MainWindow : Window
         bool user = role == "user";
         bool system = role == "system";
 
+        // 探针锚点：WPF 侧的 ui_probe.ps1 按这几个 AutomationId 定位消息区的三类元素
+        // （思考折叠区 / 回答正文 / 运行指标）。Avalonia 侧此前只有 `AgentTrace`，
+        // 于是**同一份探针在两套界面上的覆盖不一样** —— 补上锚点是"一份探针驱动两套界面"
+        // 这条约定的前提（见 PROJECT.md 的架构一节）。
+        //
+        // contentHost 需要在操作条之前建好：「全选」要选中它里面的文本。
+        var contentHost = new ContentControl();
+        AutomationProperties.SetAutomationId(contentHost, "AnswerBody");
+
         var header = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -2075,27 +2431,33 @@ public partial class MainWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
         });
 
-        var copy = new Button
+        // 消息时间戳（v0.2.2 第 3 批）：与 WPF 同格式 HH:mm:ss、同位置（角色名右侧）。
+        // 「这份记录是什么时候的」是一手信息，成本只有一个 TextBlock。
+        header.Children.Add(new TextBlock
         {
-            Content = Loc.T("main.message.copy", "复制"),
+            Text = DateTime.Now.ToString("HH:mm:ss"),
             FontSize = _state.Settings.FontSize - 3,
-            Padding = new Thickness(6, 0, 6, 0),
-        };
-        copy.Click += async (_, _) =>
-        {
-            if (TopLevel.GetTopLevel(copy)?.Clipboard is { } clipboard && content.Length > 0)
-            {
-                try
-                {
-                    await clipboard.SetTextAsync(content);
-                }
-                catch (Exception)
-                {
-                    // 剪贴板被占用：静默（与 WPF 版同样处理）
-                }
-            }
-        };
-        header.Children.Add(copy);
+            Opacity = 0.5,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        // 复制操作条（v0.2.2 第 3 批补全，对齐 WPF 的 4 个动作）：
+        // 复制 / Markdown / 代码 / 全选。此前只有一个「复制」，用户想拿原始 Markdown
+        // 或整块代码只能手动拖选。
+        AddCopyButton(header, Loc.T("main.message.copy", "复制"),
+            Loc.T("main.message.copyPlainTip", "复制为纯文本"),
+            async () => await CopyTextAsync(StripCodeFenceForPlain(content)));
+        AddCopyButton(header, Loc.T("main.message.copyMarkdown", "Markdown"),
+            Loc.T("main.message.copyMarkdownTip", "复制原始 Markdown 源码"),
+            async () => await CopyTextAsync(content),
+            Loc.T("main.message.copiedMarkdown", "已复制 Markdown 源码"));
+        AddCopyButton(header, Loc.T("main.message.copyCode", "代码"),
+            Loc.T("main.message.copyCodeTip", "复制全部代码块"),
+            async () => await CopyTextAsync(ExtractCodeBlocks(content)),
+            Loc.T("main.message.copiedCode", "已复制代码块"));
+        AddCopyButton(header, Loc.T("main.message.selectAll", "全选"),
+            Loc.T("main.message.selectAllTip", "选中本条消息全部文本"),
+            () => { SelectAllIn(contentHost); return Task.CompletedTask; });
 
         var thinkingText = new SelectableTextBlock
         {
@@ -2104,24 +2466,39 @@ public partial class MainWindow : Window
             FontSize = _state.Settings.FontSize - 1,
             Opacity = 0.8,
         };
+        // 思考区的字数标签：折叠时也能看出"这段思考有多长"（WPF 的 main.reasoning.count）。
+        var thinkingHeader = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var thinkingTitle = new TextBlock
+        {
+            Text = Loc.T("main.reasoning.title", "🧠 思考过程"),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var thinkingCount = new TextBlock
+        {
+            Text = reasoning.Length > 0 ? Loc.T("main.reasoning.count", "· {0} 字", reasoning.Length) : "",
+            FontSize = _state.Settings.FontSize - 3,
+            Opacity = 0.6,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        thinkingHeader.Children.Add(thinkingTitle);
+        thinkingHeader.Children.Add(thinkingCount);
+
         var thinkingBox = new Expander
         {
-            Header = Loc.T("main.thinking.title", "🧠 思考过程"),
+            Header = thinkingHeader,
             Content = new ScrollViewer
             {
                 MaxHeight = 220,
                 Content = thinkingText,
             },
-            IsExpanded = false,
+            // 流式期间**自动展开**，答完自动收起（与 WPF 一致）：
+            // 思考中用户最想看的就是它在想什么；定稿后再收起，避免占据版面。
+            IsExpanded = role == "assistant" && reasoning.Length > 0,
             IsVisible = reasoning.Length > 0,
         };
+        ToolTip.SetTip(thinkingBox, Loc.T("main.reasoning.tip",
+            "模型的推理过程（思考内容）。点击展开或收起；思考内容不会作为上下文发给模型，也不参与复制回答。"));
 
-        // 探针锚点：WPF 侧的 ui_probe.ps1 按这几个 AutomationId 定位消息区的三类元素
-        // （思考折叠区 / 回答正文 / 运行指标）。Avalonia 侧此前只有 `AgentTrace`，
-        // 于是**同一份探针在两套界面上的覆盖不一样** —— 补上锚点是"一份探针驱动两套界面"
-        // 这条约定的前提（见 PROJECT.md 的架构一节）。
-        var contentHost = new ContentControl();
-        AutomationProperties.SetAutomationId(contentHost, "AnswerBody");
         var metricsText = new TextBlock
         {
             Text = metrics,
@@ -2160,6 +2537,148 @@ public partial class MainWindow : Window
 
     private void ScrollToBottom() => MessageScroll.ScrollToEnd();
 
+    // -----------------------------------------------------------------
+    // 复制操作条（v0.2.2 第 3 批）
+    // -----------------------------------------------------------------
+
+    /// <summary>往操作条上加一个复制类按钮（统一字号、内边距与失败提示）。</summary>
+    private void AddCopyButton(StackPanel bar, string label, string tip,
+                               Func<Task> action, string? successToast = null)
+    {
+        var button = new Button
+        {
+            Content = label,
+            FontSize = _state.Settings.FontSize - 3,
+            Padding = new Thickness(6, 0, 6, 0),
+        };
+        ToolTip.SetTip(button, tip);
+        button.Click += async (_, _) =>
+        {
+            await action();
+            if (successToast is not null)
+                Toast(successToast);
+        };
+        bar.Children.Add(button);
+    }
+
+    /// <summary>写剪贴板。空内容给一句提示，剪贴板被占用时静默（与 WPF 同样处理）。</summary>
+    private async Task CopyTextAsync(string text)
+    {
+        if (text.Length == 0)
+        {
+            Toast(Loc.T("main.message.nothingToCopy", "⚠️ 没有可复制的内容"), error: true);
+            return;
+        }
+        if (TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
+        {
+            try
+            {
+                await clipboard.SetTextAsync(text);
+            }
+            catch (Exception)
+            {
+                // 剪贴板被别的进程占用：不打断用户，也不假装成功
+            }
+        }
+    }
+
+    /// <summary>
+    /// 纯文本口径：把 Markdown 代码围栏（```）去掉，只留内容。
+    /// 「复制」按钮给的是**可读文本**，「Markdown」按钮才是带语法的原文 —— 两者必须有区别，
+    /// 否则多出来的按钮没有意义。
+    /// </summary>
+    private static string StripCodeFenceForPlain(string content)
+    {
+        var builder = new StringBuilder();
+        foreach (string line in content.Replace("\r\n", "\n").Split('\n'))
+        {
+            if (line.TrimStart().StartsWith("```", StringComparison.Ordinal))
+                continue;
+            builder.AppendLine(line);
+        }
+        return builder.ToString().Trim();
+    }
+
+    /// <summary>把全部代码块拼成一段（「代码」按钮）。没有代码块时返回空串。</summary>
+    private static string ExtractCodeBlocks(string content)
+    {
+        var blocks = new List<string>();
+        var current = new StringBuilder();
+        bool inside = false;
+        foreach (string line in content.Replace("\r\n", "\n").Split('\n'))
+        {
+            if (line.TrimStart().StartsWith("```", StringComparison.Ordinal))
+            {
+                if (inside)
+                {
+                    string block = current.ToString().TrimEnd();
+                    if (block.Length > 0)
+                        blocks.Add(block);
+                    current.Clear();
+                }
+                inside = !inside;
+                continue;
+            }
+            if (inside)
+                current.AppendLine(line);
+        }
+        if (inside && current.Length > 0)
+            blocks.Add(current.ToString().TrimEnd());   // 未闭合的代码块也要收（流式中常见）
+        return string.Join(Environment.NewLine + Environment.NewLine, blocks);
+    }
+
+    /// <summary>「全选」：把消息正文里所有可选文本控件选中。</summary>
+    private static void SelectAllIn(Control root)
+    {
+        foreach (SelectableTextBlock block in EnumerateSelectable(root))
+            block.SelectAll();
+    }
+
+    private static IEnumerable<SelectableTextBlock> EnumerateSelectable(Control root)
+    {
+        var stack = new Stack<Control>();
+        stack.Push(root);
+        while (stack.Count > 0)
+        {
+            Control current = stack.Pop();
+            if (current is SelectableTextBlock selectable)
+                yield return selectable;
+            foreach (Control child in current.GetVisualDescendants().OfType<Control>())
+                stack.Push(child);
+            // ContentControl 的内容不在可视树里时（刚构造还没布局）也要能找到
+            if (current is ContentControl { Content: Control content })
+                stack.Push(content);
+        }
+    }
+
+    /// <summary>
+    /// 复制全部对话为纯文本（Ctrl+Shift+C，对齐 WPF 的 <c>CopyAllMessages</c>）。
+    /// 用 <c>_transcript</c> 而不是遍历可视树：可视树里还有 Agent 步骤区、占位文本等
+    /// 不属于"对话"的东西。
+    /// </summary>
+    private void CopyAllMessages()
+    {
+        if (_transcript.Count == 0)
+        {
+            Toast(Loc.T("main.message.nothingToCopy", "⚠️ 没有可复制的内容"), error: true);
+            return;
+        }
+        var builder = new StringBuilder();
+        foreach (Message message in _transcript)
+        {
+            string who = message.Role switch
+            {
+                "user" => Loc.T("main.message.user", "我"),
+                "assistant" => Loc.T("main.message.assistant", "助手"),
+                _ => Loc.T("main.message.system", "系统"),
+            };
+            builder.AppendLine($"[{who}] {message.Content}");
+            builder.AppendLine();
+        }
+        _ = CopyTextAsync(builder.ToString().TrimEnd());
+        Toast(Loc.T("main.message.copiedAll", "已复制全部对话"));
+    }
+
     /// <summary>
     /// 取界面语义色画刷。**必须用 TryFindResource，不能 <c>(IBrush?)FindResource(key)</c>**：
     /// 这些画刷放在 App.axaml 的 ThemeDictionaries 里，取不到时 <c>FindResource</c> 返回的是
@@ -2187,9 +2706,7 @@ public partial class MainWindow : Window
 
     private void OnClosing(object? sender, WindowClosingEventArgs e)
     {
-        _state.Settings.WindowWidth = Width;
-        _state.Settings.WindowHeight = Height;
-        _state.Settings.Save();
+        SaveWindowPlacement();
         try
         {
             _streamCts?.Cancel();
@@ -2198,4 +2715,171 @@ public partial class MainWindow : Window
         {
         }
     }
+
+    // -----------------------------------------------------------------
+    // 模型下载确认 / 退出倒计时 / 后端进度活消息（v0.2.2 第 3 批）
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// `/model` 需要一个还没下载的模型时，后端会回 <c>action = "confirm_model"</c>，
+    /// 由前端征得同意后再发下载动作（对齐 WPF 的 <c>ConfirmModelDownloadAsync</c>）。
+    ///
+    /// 同意的方式：Avalonia 没有 MessageBox，这里用**状态区的一次显式确认**——
+    /// 第二次按 Enter 才会真的下载（与危险指令的二次确认同一套做法），
+    /// 并同时打印一句"怎么确认"的系统消息，避免用户不知道要按第二次。
+    /// </summary>
+    private void HandleConfirmModel(string modelName)
+    {
+        if (string.IsNullOrEmpty(modelName))
+            return;
+        if (!string.Equals(_pendingModelDownload, modelName, StringComparison.Ordinal))
+        {
+            _pendingModelDownload = modelName;
+            AddMessage("system", Loc.T("main.model.downloadQuestion",
+                "确定要下载模型 '{0}' 吗？", modelName) + Environment.NewLine
+                + Loc.T("main.dialog.modelDownloadText",
+                    "{0}\n\n是否现在下载？下载需要联网且可能耗时较长。",
+                    Loc.T("main.model.downloadConfirmHint",
+                        "再按一次 Enter（或再点一次「发送」）即开始下载；输入别的内容则取消。")));
+            Toast(Loc.T("main.model.waitingConfirm", "⏳ 等待确认下载：再发送一次空消息即可开始"));
+            return;
+        }
+        _pendingModelDownload = "";
+        _ = DownloadModelAsync(modelName);
+    }
+
+    private async Task DownloadModelAsync(string modelName)
+    {
+        AddMessage("system", Loc.T("main.model.downloadingNamed",
+            "⏳ 正在下载并加载模型 '{0}'，请稍候...", modelName));
+        SetStatus(Loc.T("main.status.downloadingModel", "正在下载模型……"));
+        try
+        {
+            // 流式：进度写进一条**活消息**（同一条系统气泡就地更新），而不是刷屏。
+            StartProgressMessage();
+            string final = await _state.Backend.SendStreamAsync(
+                new { action = "model_download", name = modelName },
+                onDelta: delta => Dispatcher.UIThread.Post(() => UpdateProgressMessage(delta)),
+                onContext: (_, _) => { },
+                idleTimeout: TimeSpan.FromMinutes(30));
+            EndProgressMessage(final);
+            Toast(Loc.T("main.model.downloadDone", "✅ 模型下载完成：{0}", modelName));
+            await RefreshStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            EndProgressMessage(Loc.T("main.model.operationFailed", "❌ 模型操作失败: {0}", ex.Message));
+            Toast(Loc.T("main.model.downloadFailed", "❌ 模型下载失败：{0}", ex.Message), error: true);
+        }
+        SetStatus(_state.Backend.ModelReady
+            ? Loc.T("main.status.ready", "就绪")
+            : Loc.T("main.status.noModel", "后端已就绪，但没有加载模型"));
+    }
+
+    /// <summary>
+    /// `/exit`：致谢 + 10 秒倒计时后自动关闭（对齐 WPF 的 <c>BeginExitCountdown</c>）。
+    /// 倒计时期间禁用输入，避免用户以为还能继续提问。
+    /// </summary>
+    private void BeginExitCountdown(string thanksMessage)
+    {
+        AddMessage("system", thanksMessage);
+        SetBusy(false);
+        CloseAllPalettes();
+        InputBox.IsEnabled = false;
+        SendButton.IsEnabled = false;
+        _exitCountdown = 10;
+        SetStatus(Loc.T("main.status.exitCountdown", "程序将在 {0} 秒后自动关闭", _exitCountdown));
+        _exitTimer?.Stop();
+        _exitTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _exitTimer.Tick += (_, _) =>
+        {
+            _exitCountdown--;
+            if (_exitCountdown <= 0)
+            {
+                _exitTimer?.Stop();
+                Close();
+                return;
+            }
+            SetStatus(Loc.T("main.status.exitCountdown", "程序将在 {0} 秒后自动关闭", _exitCountdown));
+        };
+        _exitTimer.Start();
+    }
+
+    // ---- 进度"活消息"：同一条系统气泡就地更新，而不是每来一行就加一条 ----
+
+    private MessageView? _progressView;
+
+    private void StartProgressMessage()
+    {
+        _transcript.Add(new Message("system", Loc.T("main.progress.starting", "⏳ 正在开始…"), "", ""));
+        _progressView = AddMessageView("system", "", "", "");
+    }
+
+    private void UpdateProgressMessage(string text)
+    {
+        if (_progressView is null || string.IsNullOrWhiteSpace(text))
+            return;
+        string trimmed = text.Trim();
+        _progressView.ContentHost.Content = BuildPlainText(trimmed);
+        // 同时更新最后一条 transcript，整屏重渲染（切字号/语言）时不会丢进度
+        if (_transcript.Count > 0)
+            _transcript[^1] = _transcript[^1] with { Content = trimmed };
+        SetStatus(Trim(trimmed, 120));
+    }
+
+    private void EndProgressMessage(string final)
+    {
+        if (_progressView is not null)
+        {
+            MessageView view = _progressView;
+            view.ContentHost.Content = BuildPlainText(final);
+            if (_transcript.Count > 0)
+                _transcript[^1] = _transcript[^1] with { Content = final };
+            _progressView = null;
+        }
+        else if (!string.IsNullOrEmpty(final))
+        {
+            AddMessage("system", final);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 运行指标定时刷新（v0.2.2 第 3 批，对齐 WPF 的 StartMetricsTimer）
+    // -----------------------------------------------------------------
+
+    private void StartMetricsTimer()
+    {
+        _metricsTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _metricsTimer.Tick -= MetricsTimerTick;
+        _metricsTimer.Tick += MetricsTimerTick;
+        _metricsStoppedState = false;
+        _metricsTimer.Start();
+    }
+
+    private async void MetricsTimerTick(object? sender, EventArgs e)
+    {
+        if (!_busy || _metricsTimer is null)
+        {
+            _metricsTimer?.Stop();
+            return;
+        }
+        // 后端在生成过程中会把最新指标挂在 context 响应上；拿不到就保持上一次的值
+        // （**不清空**：清空会让指标行一闪一闪的，比"稍旧一点"更难看）。
+        JsonDocument? doc = await _state.Backend.SendAsync(new { action = "context" });
+        if (doc is null)
+            return;
+        using (doc)
+        {
+            if (doc.RootElement.TryGetProperty("metrics", out JsonElement metrics)
+                && metrics.ValueKind == JsonValueKind.Object)
+            {
+                ShowMetrics(FormatMetrics(metrics, _metricsStoppedState));
+            }
+        }
+    }
+
+    private void StopMetricsTimer() => _metricsTimer?.Stop();
 }
+
+
+
