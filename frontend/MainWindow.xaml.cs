@@ -75,35 +75,67 @@ public partial class MainWindow : Window
     // 说明（v0.2.1 任务三）：这张表是**后端不可用时的本地回退**。正常情况下
     // 指令面板的数据来自后端的 {"action":"commands"}，因此技能指令会自动出现在
     // 候选列表里，且命令说明随界面语言切换（任务书 2.6）。
-    private static readonly CommandItem[] FallbackCommands =
+    //
+    // v0.2.2 硬编码清查 §4.1 A-3（第 3 批）：回退表原先整表写死中文（23 行 / 56 条字面量），
+    // 后端未就绪或降级运行时英文界面会整屏显示中文。现在**只保留结构**（命令名 + 是否破坏性），
+    // 文案从语言包 `cmd.items.<cmd>.{name,usage,desc}` 取 —— 那批键本轮已复制进前端语言包
+    // （`frontend/Resources/Lang/*.main.json` 的 `cmd` 段），与 Avalonia 的
+    // `Services/CommandCatalog.cs` 用**同一套键、同一套组装口径**，避免两个前端再分叉。
+    private static readonly (string Command, bool Destructive)[] FallbackSpec =
     {
-        new("/help", "", "显示此指令介绍：完整指令列表、用法与作用", "显示全部指令及用法", false),
-        new("/mode", "<编号|缩写|全称>", "切换对话模式：现在是 chat 通用对话（默认）/ contract 条款审查 / agent 智能体（可调用工具）三个模式；摘要、翻译、代码排错、创意写作改用 /task 模板（/task summary、/task translate、/task code、/task creative），旧的 /mode summary 这类写法仍然可用；/mode list 查看全部模式及编号，切换时自动套用温度预设", "切换对话模式", true),
-        new("/agent", "[list|allow <工具>|deny <工具>|steps <1-8>|on|off]", "查看 Agent 能调用哪些工具、哪些已授权，并预授权敏感工具（联网搜索、读本机文件）；/agent allow web_search 授权、/agent steps 5 改进度上限，on/off 等价于切到 agent 模式", "查看 Agent 工具与权限", true),
-        new("/mcp", "[list|enable <名称>|disable <名称>|connect]", "查看 MCP Server 的连接状态与可用工具；enable/disable 启停某个 server（立即生效，无需重启）；connect 会真的拉起外部进程并拉取工具清单", "查看 MCP 服务器与工具", true),
-        new("/task", "[list|<模板名>|off]", "套用任务型提示词模板（摘要、合同审查、结构化抽取、翻译、代码排错、分步推理）；小模型按结构化提示词作答明显更稳，/task list 查看全部", "套用任务提示词模板", true),
-        new("/preset", "[list|light|balanced|quality]", "一键切换轻量/均衡/高质量三档生成参数（温度、top_p、重复惩罚、回复长度）", "切换生成参数预设", true),
-        new("/compact", "", "立刻压缩上下文：把较早的对话转成摘要（或按滑动窗口模式丢弃）腾出空间，不必等自动触发", "压缩上下文", false),
-        new("/file", "<路径>", "上传本地文件并加入上下文；支持 Office/TXT/PDF，加密 Office 文档在装有 WPS 的机器上自动解密；提问时提及文件即自动注入内容。长文档超出上下文窗口时自动分段摘要后注入，不截断丢信息", "上传文件加入上下文", true),
-        new("/summarize", "", "对当前已加载的长文档手动触发全文分段摘要（逐段摘要后合并），摘要进度实时显示在对话框中", "手动触发全文摘要", false),
-        new("/search", "on|off", "开启/关闭联网搜索（DuckDuckGo）；开启后提问前会先搜索网络参考信息（需联网）", "开启/关闭联网搜索", true),
-        new("/model", "[名称|别名|list]", "查看模型信息（架构/量化/上下文/GPU），或切换本地模型；支持档案别名与前缀匹配；缺失时征询后下载", "查看/切换本地模型", true),
-        new("/clearcache", "", "清空推理 KV 缓存（模式/提示词/历史变化时系统会自动清理）", "清空推理 KV 缓存", false),
-        new("/prompt", "<文本>|reset", "设置自定义系统提示词，临时改变助手角色；/prompt reset 清除", "设置自定义系统提示词", true),
-        new("/temp", "<0.0~1.0>|reset", "调整生成温度（默认随模式预设）；/temp reset 恢复模式预设", "调整生成温度", true),
-        new("/darkmode", "on|off", "切换深色/浅色界面主题（即时渲染，无需重启）", "切换深/浅色主题", true),
-        new("/stop", "", "停止当前正在生成中的回复（也可点 ⏹ 停止 按钮）", "停止当前生成", false),
-        new("/snippet", "add|remove|list …", "管理常用语模板：/snippet add 名称 文本 · remove 名称 · list", "管理常用语模板", true),
-        new("/status", "", "查看当前状态：模型/架构、模式、温度、线程、GPU、上下文占用、搜索、对话轮数与文件；以及模型能力（参数量/量化/训练窗口/实测速度）与能力提示", "查看当前状态与能力", false),
-        new("/clear", "", "清空对话历史与文件上下文，重新开始", "清空对话重新开始", false),
-        new("/undo", "", "撤回最近一轮问答（各一条）", "撤回最近一轮问答", false),
-        new("/save", "<文件名>", "把对话历史导出为 Markdown 文件（自动补 .md 后缀）", "导出对话为 Markdown", true),
-        new("/about", "", "关于 EchoDesk：版本号与出品方信息", "关于 EchoDesk", false),
-        new("/exit", "", "退出程序：显示感谢语后 10 秒自动关闭", "退出程序", false),
+        ("/help", false),
+        ("/mode", false),
+        ("/agent", false),
+        ("/mcp", false),
+        ("/task", false),
+        ("/preset", false),
+        ("/compact", false),
+        ("/file", false),
+        ("/summarize", false),
+        ("/search", false),
+        ("/model", false),
+        ("/clearcache", false),
+        ("/prompt", false),
+        ("/temp", false),
+        ("/darkmode", false),
+        ("/stop", false),
+        ("/snippet", false),
+        ("/status", false),
+        ("/clear", false),
+        ("/undo", false),
+        ("/save", false),
+        ("/about", false),
+        ("/exit", false),
     };
 
+    /// <summary>按当前语言现算回退指令表（字段口径与 <see cref="ApplyCommandsFromBackend"/> 一致）。</summary>
+    private static List<CommandItem> BuildFallbackCommands()
+    {
+        var items = new List<CommandItem>();
+        foreach ((string command, bool destructive) in FallbackSpec)
+        {
+            string desc = Loc.T($"cmd.items.{command}.desc");
+            string usage = Loc.T($"cmd.items.{command}.usage");
+            // 语言包里没有这条指令（极端情况：包被裁剪）→ 不伪造文案，直接不列出
+            if (desc.StartsWith("cmd.items.", StringComparison.Ordinal)
+                || usage.StartsWith("cmd.items.", StringComparison.Ordinal))
+                continue;
+            string format = usage.StartsWith(command, StringComparison.OrdinalIgnoreCase)
+                ? usage[command.Length..].Trim()
+                : usage.Trim();
+            string shortText = desc.Split('\n')[0];
+            if (shortText.Length > 40)
+                shortText = shortText[..40] + "…";
+            items.Add(new CommandItem(command, format, desc, shortText, format.Length > 0, destructive));
+        }
+        return items;
+    }
+
     /// <summary>当前生效的指令表（后端返回的本地化列表，或本地回退）。</summary>
-    private static List<CommandItem> Commands = FallbackCommands.ToList();
+    private static List<CommandItem> Commands = BuildFallbackCommands();
+
+    /// <summary>指令表是否已被后端数据替换（没换过时，切语言要重建回退表）。</summary>
+    private static bool _commandsFromBackend;
 
     /// <summary>把后端 {"action":"commands"} 返回的本地化指令元数据换成当前指令表。</summary>
     internal static void ApplyCommandsFromBackend(JsonElement array)
@@ -134,7 +166,10 @@ public partial class MainWindow : Window
             items.Add(new CommandItem(name, format, desc, shortText, format.Length > 0, destructive));
         }
         if (items.Count > 0)
+        {
             Commands = items;
+            _commandsFromBackend = true;
+        }
     }
 
     public MainWindow()
@@ -193,6 +228,10 @@ public partial class MainWindow : Window
         Title = Loc.T("main.title", "EchoDesk {0} — 由{1}出品", AppVersion, LocalizedStudio());
         if (!_isProcessing)
             StatusText.Text = Loc.T("main.status.ready");
+        // 回退指令表的文案来自语言包，切语言时要重建（后端数据不在时它才是当前表）。
+        // 不清空已选中的候选列表：重建只换文案，命令名与顺序不变。
+        if (!_commandsFromBackend)
+            Commands = BuildFallbackCommands();
         ApplyStatusStripState();
         CommandButtonText.Text = _commandRowOpen
             ? Loc.T("main.command.close") : Loc.T("main.command.open");
