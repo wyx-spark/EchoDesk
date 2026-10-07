@@ -19,43 +19,82 @@ public sealed record CommandItem(string Command, string Format, string Descripti
 public static class CommandCatalog
 {
     /// <summary>
-    /// 后端不可用时的本地回退。**刻意只有"读得到"的部分**：完整说明由后端语言包提供，
-    /// 这里只保证"后端没起来时指令面板不是空的"。
+    /// 后端不可用时的本地回退**只保留结构**（命令名与是否破坏性），文案一律走语言包。
+    ///
+    /// 为什么不再把中文写在这张表里（v0.2.2 硬编码清查 §5.1）：回退表的 23 条说明是
+    /// **整片中文**，后端慢/不可用/降级运行时英文界面会整屏显示中文指令。而同一批文案
+    /// 后端语言包（`cmd.items.*`）本来就有 —— 本轮把它**逐字复制**进前端语言包
+    /// （`frontend/Resources/Lang/*.main.json` 的 `cmd` 段），这里只按同一套字段组装，
+    /// 与 `ApplyFromBackend` 的取值口径逐字段对齐。
     /// </summary>
-    private static readonly CommandItem[] Fallback =
+    private static readonly (string Command, bool Destructive)[] Spec =
     {
-        new("/help", "", "显示指令介绍", "显示全部指令及用法", false, false),
-        new("/mode", "<编号|缩写|全称>", "切换对话模式", "切换对话模式", true, false),
-        new("/agent", "[list|allow|deny|steps|on|off]", "查看 Agent 工具与权限", "查看 Agent 工具与权限", true, false),
-        new("/mcp", "[list|enable|disable|connect]", "查看 MCP 服务器与工具", "查看 MCP 服务器与工具", true, false),
-        new("/task", "[list|<模板名>|off]", "套用任务提示词模板", "套用任务提示词模板", true, false),
-        new("/preset", "[list|light|balanced|quality]", "切换生成参数预设", "切换生成参数预设", true, false),
-        new("/compact", "", "压缩上下文", "压缩上下文", false, false),
-        new("/file", "<路径>", "上传本地文件", "上传文件加入上下文", true, false),
+        ("/help", false),
+        ("/mode", false),
+        ("/agent", false),
+        ("/mcp", false),
+        ("/task", false),
+        ("/preset", false),
+        ("/compact", false),
+        ("/file", false),
         // /summarize 此前漏在回退表外（WPF 侧 23 条、跨平台版 22 条）：
         // 后端没起来时用户在指令面板里看不到它，而它是"长文档摘要"的唯一手动入口。
-        new("/summarize", "", "对当前已加载的长文档手动触发全文分段摘要（逐段摘要后合并），摘要进度实时显示在对话框中", "手动触发全文摘要", false, false),
-        new("/search", "on|off", "开启/关闭联网搜索", "开启/关闭联网搜索", true, false),
-        new("/model", "[名称|别名|list]", "查看/切换本地模型", "查看/切换本地模型", true, false),
-        new("/clearcache", "", "清空推理 KV 缓存", "清空推理 KV 缓存", false, true),
-        new("/prompt", "<文本>|reset", "设置自定义系统提示词", "设置自定义系统提示词", true, false),
-        new("/temp", "<0.0~1.0>|reset", "调整生成温度", "调整生成温度", true, false),
-        new("/darkmode", "on|off", "切换深/浅色主题", "切换深/浅色主题", true, false),
-        new("/stop", "", "停止当前生成", "停止当前生成", false, false),
-        new("/snippet", "add|remove|list …", "管理常用语模板", "管理常用语模板", true, false),
-        new("/status", "", "查看当前状态与能力", "查看当前状态与能力", false, false),
-        new("/clear", "", "清空对话历史与文件上下文", "清空对话重新开始", false, true),
-        new("/undo", "", "撤回最近一轮问答", "撤回最近一轮问答", false, false),
-        new("/save", "<文件名>", "导出对话为 Markdown", "导出对话为 Markdown", true, false),
-        new("/about", "", "关于 EchoDesk", "关于 EchoDesk", false, false),
-        new("/exit", "", "退出程序", "退出程序", false, true),
+        ("/summarize", false),
+        ("/search", false),
+        ("/model", false),
+        ("/clearcache", true),
+        ("/prompt", false),
+        ("/temp", false),
+        ("/darkmode", false),
+        ("/stop", false),
+        ("/snippet", false),
+        ("/status", false),
+        ("/clear", true),
+        ("/undo", false),
+        ("/save", false),
+        ("/about", false),
+        ("/exit", true),
     };
 
-    /// <summary>当前生效的指令表。</summary>
-    public static List<CommandItem> Items { get; private set; } = Fallback.ToList();
+    /// <summary>从语言包组装一条指令（字段与 <see cref="ApplyFromBackend"/> 完全同一口径）。</summary>
+    private static CommandItem? BuildFromPack(string command, bool destructive)
+    {
+        string desc = Loc.T($"cmd.items.{command}.desc");
+        string usage = Loc.T($"cmd.items.{command}.usage");
+        // 语言包里没有这条指令（极端情况：包被裁剪）→ 不伪造文案，直接不列出
+        if (desc.StartsWith("cmd.items.", StringComparison.Ordinal)
+            || usage.StartsWith("cmd.items.", StringComparison.Ordinal))
+            return null;
+        string format = usage.StartsWith(command, StringComparison.OrdinalIgnoreCase)
+            ? usage[command.Length..].Trim()
+            : usage.Trim();
+        // 后端 usage 形如 "/mode <编号|缩写|全称>"，界面只显示参数部分
+        string shortText = desc.Split('\n')[0];
+        if (shortText.Length > 40)
+            shortText = shortText[..40] + "…";
+        return new CommandItem(command, format, desc, shortText, format.Length > 0, destructive);
+    }
+
+    /// <summary>按当前语言现算回退表（语言切换后自动跟着变，不需要重建缓存）。</summary>
+    private static List<CommandItem> BuildFallback()
+    {
+        var items = new List<CommandItem>();
+        foreach ((string command, bool destructive) in Spec)
+        {
+            CommandItem? item = BuildFromPack(command, destructive);
+            if (item is not null)
+                items.Add(item);
+        }
+        return items;
+    }
+
+    private static List<CommandItem>? _fromBackend;
+
+    /// <summary>当前生效的指令表（后端数据优先；没有就现算回退表）。</summary>
+    public static List<CommandItem> Items => _fromBackend ?? BuildFallback();
 
     /// <summary>是否已经用后端数据替换过回退表（界面据此决定要不要再拉一次）。</summary>
-    public static bool LoadedFromBackend { get; private set; }
+    public static bool LoadedFromBackend => _fromBackend is not null;
 
     /// <summary>把后端 {"action":"commands"} 的数组换成当前指令表（与 WPF 版逐字段对齐）。</summary>
     public static void ApplyFromBackend(JsonElement array)
@@ -87,8 +126,7 @@ public static class CommandCatalog
         }
         if (items.Count == 0)
             return;
-        Items = items;
-        LoadedFromBackend = true;
+        _fromBackend = items;
     }
 
     /// <summary>

@@ -97,14 +97,16 @@
             <TextBlock x:Name="ModeText" Text="🛠️ 模式: general" FontSize="11" />
           </Button>
         </StackPanel>
+        <!-- 悬停说明由 ApplyTexts() 用语言包设置（main.button.*Tip）：
+             这里不再写中文初值，否则英文界面在首帧就会露出中文（硬编码清查 §5.1） -->
         <Button x:Name="FontDownButton" Grid.Column="8" Classes="chip" Content="A-"
-                Margin="10,0,0,0" ToolTip.Tip="缩小字号" />
+                Margin="10,0,0,0" />
         <Button x:Name="FontUpButton" Grid.Column="9" Classes="chip" Content="A+"
-                Margin="4,0,0,0" ToolTip.Tip="放大字号" />
+                Margin="4,0,0,0" />
         <Button x:Name="ThemeButton" Grid.Column="10" Classes="chip" Content="🌓"
-                Margin="8,0,0,0" ToolTip.Tip="切换深色/浅色主题" />
+                Margin="8,0,0,0" />
         <ComboBox x:Name="LangCombo" Grid.Column="11" FontSize="12" Margin="8,0,0,0"
-                  MinWidth="118" ToolTip.Tip="界面语言" />
+                  MinWidth="118" />
       </Grid>
     </Border>
 

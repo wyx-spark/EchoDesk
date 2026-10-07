@@ -4,6 +4,133 @@
     "module": "main",
     "note": "Additional main-window strings (module fragment): merged with en.json, keys here win. Task book 3.5 asks for language packs split by module so several people can collaborate."
   },
+  "cmd": {
+    "_note": "指令表（后端未就绪时的本地回退用）：与后端语言包 cmd.items.* **逐字一致**。两个前端只读本目录（后端包在 lang/），缺这一份时指令面板会整片显示中文（硬编码清查清单 §5.1）。",
+    "items": {
+      "/help": {
+        "name": "Show this command reference",
+        "usage": "/help",
+        "desc": "Lists the usage and purpose of every command, i.e. this help."
+      },
+      "/mode": {
+        "name": "Switch conversation mode",
+        "usage": "/mode <number|abbreviation|full name>",
+        "desc": "Switches how the AI answers; there are three modes now — use /task when you need a specific output format. Run /mode list to see them all.",
+        "detail": "    Modes:\n      chat (default) / contract (clause review) / agent (can call tools)\n    Each mode states its role, output format, how much detail to give, reasoning steps,\n    one input/output example and its tone, and they all share the same general requirements\n    (say you do not know, one sentence when one sentence is enough, give the most likely\n    answer before asking, never fabricate sources).\n    Summarize / translate / code / creative writing no longer take up a mode slot:\n    call them with /task summary, /task translate, /task code and /task creative.\n    Old spellings such as /mode summary still work — they switch the mode and apply the\n    matching template for you.\n    /mode list shows each mode's description and temperature preset."
+      },
+      "/file": {
+        "name": "Upload a file",
+        "usage": "/file <path>",
+        "desc": "Adds the file contents to the context so the model can answer from it.",
+        "detail": "    Supports Office (doc/docx/xls/xlsx/ppt/pptx), TXT, PDF and more.\n    Encrypted Office documents are decrypted automatically on machines with WPS\n    installed; otherwise a generic parser is used as a fallback.\n    Long documents (estimated tokens above 50% of the context window) are\n    summarized chunk by chunk first instead of being truncated, and the summary\n    keeps pointers back to the original text.\n    Loaded skills may declare additional file extensions (see the format list on\n    the Installed page in Settings)."
+      },
+      "/summarize": {
+        "name": "Summarize the loaded document now",
+        "usage": "/summarize",
+        "desc": "Forces a chunked summary (summarize each chunk, then merge) of the loaded file and\n       injects the summary instead of the full text — useful for very long contracts.\n       Progress is shown live in the conversation."
+      },
+      "/search": {
+        "name": "Toggle web search",
+        "usage": "/search on|off",
+        "desc": "When on, each question first searches the web for reference material (needs network)."
+      },
+      "/model": {
+        "name": "Inspect or switch models",
+        "usage": "/model [name|alias|list]",
+        "desc": "Inspect or switch the local model.",
+        "detail": "    Usage: /model             show current model info (architecture, quantization, context, GPU…)\n        /model list         list models in the models/ folder and in the config profiles\n        /model model.gguf   switch to a local model (prefix matching supported)\n        /model alias        switch to a model profile from config.models (applies its context/temperature)\n    If the model is missing locally, the closest file in the repository is offered and\ndownloading only starts after you confirm (it can take a long time)."
+      },
+      "/clearcache": {
+        "name": "Clear the KV cache",
+        "usage": "/clearcache",
+        "desc": "Clears the inference engine's KV cache and input history. The system clears it\n       automatically when mode/prompt/history change; clearing manually helps when\n       diagnosing odd output."
+      },
+      "/prompt": {
+        "name": "Set a custom system prompt",
+        "usage": "/prompt <text>|reset",
+        "desc": "Overrides the current mode's default prompt to temporarily change the assistant's role (highest priority: it also overrides any /task template)."
+      },
+      "/temp": {
+        "name": "Adjust generation temperature",
+        "usage": "/temp <0.0~1.0>|reset",
+        "desc": "Higher temperature means more varied answers, lower means more conservative.",
+        "detail": "    Note: switching mode applies that mode's temperature preset (code 0.2 / translate 0.3 /\n        contract 0.3 / summary 0.4 / general 0.7 / creative 0.9).\n        Once set manually the manual value wins; /temp reset restores the preset."
+      },
+      "/stop": {
+        "name": "Stop the current generation",
+        "usage": "/stop",
+        "desc": "Interrupts the streaming reply in progress.",
+        "detail": "    (Equivalent to the ⏹ Stop button in the front end.)"
+      },
+      "/snippet": {
+        "name": "Snippets (managed by the front end)",
+        "usage": "/snippet <add|remove|list>",
+        "desc": "Manages the snippet templates that can be inserted into the input box with one click\n       (stored by the front end in snippets.json)."
+      },
+      "/darkmode": {
+        "name": "Switch theme",
+        "usage": "/darkmode on|off",
+        "desc": "Switches between the dark and light interface theme (rendered immediately by the front end)."
+      },
+      "/status": {
+        "name": "Show current status",
+        "usage": "/status",
+        "desc": "Shows model, mode, temperature, search state, turn count and the loaded file."
+      },
+      "/clear": {
+        "name": "Clear the conversation",
+        "usage": "/clear",
+        "desc": "Clears the history and the file context and starts over."
+      },
+      "/undo": {
+        "name": "Undo",
+        "usage": "/undo",
+        "desc": "Removes the most recent question and answer (one message each)."
+      },
+      "/save": {
+        "name": "Export the conversation",
+        "usage": "/save <file name>",
+        "desc": "Exports the current conversation to a Markdown file (.md is appended automatically)."
+      },
+      "/about": {
+        "name": "About",
+        "usage": "/about",
+        "desc": "Shows the version number and publisher information."
+      },
+      "/exit": {
+        "name": "Quit",
+        "usage": "/exit",
+        "desc": "Shows a farewell message; the front end closes the program within 10 seconds."
+      },
+      "/task": {
+        "name": "Task template",
+        "usage": "/task [list|<name>|off]",
+        "desc": "Apply a task-oriented prompt template (summary, contract review, extraction, translation, code debugging, step-by-step reasoning). It is **layered on top of** the current mode (the mode sets the scene and tone, the template sets this task's output format, and the template wins on conflict). Use /task list to see all, /task off to clear."
+      },
+      "/preset": {
+        "name": "Generation preset",
+        "usage": "/preset [list|light|balanced|quality]",
+        "desc": "Switch between the light, balanced and quality generation presets (temperature, top_p, repetition penalty, reply length) without tuning individual parameters."
+      },
+      "/compact": {
+        "name": "Compact context",
+        "usage": "/compact [focus on <what matters>]",
+        "desc": "Compact the context right away: older turns become a summary (or are dropped in sliding-window mode), freeing room for new content without waiting for the automatic trigger."
+      },
+      "/agent": {
+        "name": "Agent tools and permissions",
+        "usage": "/agent [list|allow <tool>|deny <tool>|steps <1-8>|on|off]",
+        "desc": "See which tools the agent may call and which are authorised, pre-authorise sensitive tools (web search, reading local files), or change the step limit; on/off is the same as switching to agent mode",
+        "detail": "    In agent mode the model decides which tool to call and in what order until it reaches a conclusion;\n    every step (which tool, which arguments, what came back) is shown in the conversation, and Esc stops it.\n\n    Tools come in two tiers:\n      ✅ safe: calculator, dates, unit conversion, lookup/summary inside uploaded files — enabled by default;\n      🔒 sensitive: web search and reading arbitrary local files — these send data out or read local\n         content, so they are off by default; enable them with /agent allow web_search.\n    This version ships **no tool that writes files or runs commands** (least privilege).\n\n    Common uses:\n      /agent                    show the tool list and permission state\n      /agent allow web_search   allow web search (written to config.json, persists)\n      /agent deny web_search    revoke it\n      /agent steps 5            force a conclusion after at most 5 tool calls\n      /agent on                 switch to agent mode (same as /mode agent)"
+      },
+      "/mcp": {
+        "name": "MCP servers",
+        "usage": "/mcp [list|enable <name>|disable <name>|connect]",
+        "desc": "Show MCP server status and the tools they expose; enabling or disabling a server takes effect immediately (no restart); connect actually starts the process and fetches its tool list",
+        "detail": "    MCP (Model Context Protocol) lets the agent use tools provided by **external processes**\n    (databases, APIs, file systems, …). EchoDesk ships a stdio client: declare one\n    command per server under mcp.servers in config.json.\n\n    Security boundary: an MCP server is a process you configured and EchoDesk cannot\n    control what it does, so its tools are **always treated as sensitive** and must be\n    authorised with /agent allow first. Secret environment variables are **not**\n    passed through by default — name them in passthrough_env if you need to.\n\n    Common uses:\n      /mcp                     show status and tools\n      /mcp enable echo         enable a server (written to config.json)\n      /mcp disable echo        disable it (takes effect immediately)\n      /mcp connect             connect now and fetch the tool list\n\n    Example: examples\\mcp\\echo_server.py (standard library only; configure it to\n    verify the plumbing end to end)."
+      }
+    }
+  },
   "main": {
     "connecting": "⏳ Connecting to the backend, please wait…",
     "welcome": "✨ Welcome to EchoDesk {0} — Powered by {1}",
@@ -282,12 +409,31 @@
       "stopSummaryTip": "Abort segmented summarization (Esc)",
       "send": "Send",
       "stop": "⏹ Stop",
-      "upload": "📎 Upload file"
+      "upload": "📎 Upload file",
+      "_note": "Tooltips for the four title-bar buttons (hardcoded-text audit §5.1): they used to live only in MainWindow.axaml's ToolTip.Tip with no override in code, so the English UI showed Chinese on hover.",
+      "fontDownTip": "Smaller text",
+      "fontUpTip": "Larger text",
+      "themeTip": "Switch between the light and dark theme",
+      "langTip": "Interface language"
     },
     "platform": {
       "degraded": "⚠️ {1} capability/capabilities are unavailable on this platform ({0})",
       "backendMissing": "⚠️ Backend is not running",
-      "mismatch": "⚠️ Frontend and backend disagree about the platform: frontend {0} / backend {1}. Degradation may behave unexpectedly."
+      "mismatch": "⚠️ Frontend and backend disagree about the platform: frontend {0} / backend {1}. Degradation may behave unexpectedly.",
+      "unknown": "Unknown platform ({0})",
+      "_note": "cap.* carries the platform capability list (hardcoded-text audit §5.1): it used to be hardcoded in Services/PlatformInfo.cs, so the whole degradation banner stayed Chinese in the English UI.",
+      "cap": {
+        "local": "Chat / streaming / file parsing",
+        "localNote": "Available on every platform",
+        "extended": "Local retrieval (RAG) / agent platform / MCP / plugins",
+        "extendedNote": "Available on every platform, implemented in pure Python",
+        "wps": "WPS COM for encrypted documents",
+        "wpsNote": "Windows only: uses the local WPS COM interface",
+        "wpsDegraded": "Windows only: on other platforms encrypted documents fall back to the generic parser, which turns ciphertext into garbage",
+        "automation": "Enterprise intranet automation (Playwright/Edge)",
+        "automationNote": "Windows only: uses the local Edge",
+        "automationDegraded": "Windows only: this page is not available here — use MCP/plugins to drive external tools instead"
+      }
     },
     "thinking": {
       "title": "🧠 Reasoning"

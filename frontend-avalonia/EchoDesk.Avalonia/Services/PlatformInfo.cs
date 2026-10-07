@@ -69,23 +69,35 @@ public sealed class PlatformInfo
     // 死代码 + 错注释的组合最容易被后来者当真，因此直接删掉：
     // 用户数据目录由 UserPaths.DataRoot 负责（那个才是唯一实现）。
 
-    /// <summary>能力列表：给界面横幅用 —— 哪些能力在本平台**不可用**及替代做法。</summary>
+    /// <summary>
+    /// 能力列表：给界面横幅用 —— 哪些能力在本平台**不可用**及替代做法。
+    ///
+    /// 文案**全部走语言包**（`main.platform.cap.*`）：此前这 6 段中文写死在本文件里，
+    /// 英文界面下整条降级横幅都是中文（硬编码清查清单 §5.1）。键值与后端
+    /// `platform_support.capabilities()` 的口径一致，只是本文件负责前端的"分组展示"文案。
+    /// </summary>
     public IReadOnlyList<(string Capability, bool Available, string Note)> Capabilities()
     {
         var list = new List<(string, bool, string)>
         {
-            ("对话 / 流式输出 / 文件解析", true, "全平台可用"),
-            ("本地检索（RAG）/ Agent 平台 / MCP / 插件", true, "全平台可用，纯 Python 实现"),
+            (Loc.T("main.platform.cap.local", "对话 / 流式输出 / 文件解析"), true,
+             Loc.T("main.platform.cap.localNote", "全平台可用")),
+            (Loc.T("main.platform.cap.extended", "本地检索（RAG）/ Agent 平台 / MCP / 插件"), true,
+             Loc.T("main.platform.cap.extendedNote", "全平台可用，纯 Python 实现")),
         };
+        string wps = Loc.T("main.platform.cap.wps", "WPS COM 读加密文档");
+        string automation = Loc.T("main.platform.cap.automation", "企业内网自动化（Playwright/Edge）");
         if (IsWindows)
         {
-            list.Add(("WPS COM 读加密文档", true, "Windows 专属：依赖本机 WPS 的 COM 接口"));
-            list.Add(("企业内网自动化（Playwright/Edge）", true, "Windows 专属：依赖本机 Edge"));
+            list.Add((wps, true, Loc.T("main.platform.cap.wpsNote", "Windows 专属：依赖本机 WPS 的 COM 接口")));
+            list.Add((automation, true, Loc.T("main.platform.cap.automationNote", "Windows 专属：依赖本机 Edge")));
         }
         else
         {
-            list.Add(("WPS COM 读加密文档", false, "仅 Windows：非 Windows 上加密文档改用通用解析器，密文会解析成乱码"));
-            list.Add(("企业内网自动化（Playwright/Edge）", false, "仅 Windows：本平台不提供该页面，可用 MCP/插件接入外部工具替代"));
+            list.Add((wps, false, Loc.T("main.platform.cap.wpsDegraded",
+                "仅 Windows：非 Windows 上加密文档改用通用解析器，密文会解析成乱码")));
+            list.Add((automation, false, Loc.T("main.platform.cap.automationDegraded",
+                "仅 Windows：本平台不提供该页面，可用 MCP/插件接入外部工具替代")));
         }
         return list;
     }
@@ -125,7 +137,9 @@ public sealed class PlatformInfo
             // 但**不阻止启动** —— 协议层是纯 stdio，理论上任何平台都能跑起来。
             kind = PlatformKind.Unknown;
             kindName = "unknown";
-            display = "未知平台（" + RuntimeInformation.OSDescription + "）";
+            // 文案走语言包（硬编码清查清单 §5.1）；这里在启动早期调用，语言包已由 App 初始化
+            display = Loc.T("main.platform.unknown", "未知平台（{0}）",
+                RuntimeInformation.OSDescription);
             exe = "EchoDeskBackend";
         }
 

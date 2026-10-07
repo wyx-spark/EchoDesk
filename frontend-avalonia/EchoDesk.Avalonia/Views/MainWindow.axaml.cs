@@ -489,6 +489,12 @@ public partial class MainWindow : Window
         //（见 :1102 的 IsVisible），所以「0 条」这一档不会真的被看到。
         ToolTip.SetTip(StripWarnButton, Loc.T("main.strip.warnTip",
             "有 {0} 条能力提示，点击查看详情", _capabilityWarnings.Count));
+        // 标题栏四个按钮的悬停说明：此前只写在 MainWindow.axaml 的 ToolTip.Tip 里、
+        // 代码里**没有任何覆盖点** → 英文界面悬停必现中文（硬编码清查 §5.1）
+        ToolTip.SetTip(FontDownButton, Loc.T("main.button.fontDownTip", "缩小字号"));
+        ToolTip.SetTip(FontUpButton, Loc.T("main.button.fontUpTip", "放大字号"));
+        ToolTip.SetTip(ThemeButton, Loc.T("main.button.themeTip", "切换深色/浅色主题"));
+        ToolTip.SetTip(LangCombo, Loc.T("main.button.langTip", "界面语言"));
         ThemeButton.Content = _state.Settings.Theme switch
         {
             "light" => "☀",
