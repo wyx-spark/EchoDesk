@@ -365,8 +365,9 @@ public partial class MainWindow : Window
         UpdateSnippetButtonText();
         UpdateCommandUi(InputBox.Text ?? "");
         ApplyStatusStripState();
-        if (string.IsNullOrEmpty(ContextChip.Text))
-            ContextChip.Text = Loc.T("main.context.buttonIdle", "上下文：---/---");
+        if (string.IsNullOrEmpty(ContextChipText.Text))
+            ContextChipText.Text = Loc.T("main.context.buttonIdle", "上下文：---/---");
+        ContextChip.Click += async (_, _) => await RefreshContextAsync();
         ShowCapabilityBanner();
     }
 
@@ -534,14 +535,27 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>刷新状态区（搜索 / KV / 能力 / 模式 / 模型名）。</summary>
+    /// <summary>
+    /// 刷新状态区（搜索 / KV / 能力 / 模式 / 模型名）。
+    ///
+    /// **这里此前发的是 `action = "status"`，而后端根本没有这个动作**
+    /// （`backend/main.py` 的动作分支表里只有 `context`）。于是响应落到"未知动作"分支，
+    /// `ApplyStatusFields` 一个字段都取不到 —— 表现是状态区那几项**启动后永远停在
+    /// XAML 的占位值**，而且不报错（这正是"控件在、功能不在"的静默失效）。
+    /// 后端 `_attach_context()` 本就把这六类字段挂在 **context** 响应上，
+    /// 所以修法不是改后端协议，而是**取对响应**：发 `context`，并把状态字段与上下文
+    /// 字段都从同一份响应里取（WPF 侧的 `RefreshStatusBarAsync` 就是这么做的）。
+    /// </summary>
     private async Task RefreshStatusAsync()
     {
-        JsonDocument? doc = await _state.Backend.SendAsync(new { action = "status" });
+        JsonDocument? doc = await _state.Backend.SendAsync(new { action = "context" });
         if (doc is null)
             return;
         using (doc)
+        {
             ApplyStatusFields(doc.RootElement);
+            ApplyContextFields(doc.RootElement);
+        }
     }
 
     private async Task RefreshContextAsync()
@@ -685,7 +699,7 @@ public partial class MainWindow : Window
         // 后端未提供该字段时（旧版）自然退化为 used。
         int lastRequest = GetIntField(context, "used_last_request");
         int shown = Math.Max(used, lastRequest);
-        ContextChip.Text = Loc.T("main.context.button", "上下文：{0}/{1}", shown, limit);
+        ContextChipText.Text = Loc.T("main.context.button", "上下文：{0}/{1}", shown, limit);
         int percent = (int)Math.Round(shown * 100.0 / limit);
         StripContextText.Text = Loc.T("main.strip.context", "📊 上下文 {0}%", percent);
         ToolTip.SetTip(StripContextButton, Loc.T("main.strip.contextHelpBoth",
@@ -1010,7 +1024,18 @@ public partial class MainWindow : Window
         return command is "/clear" or "/clearcache" or "/exit" or "/quit";
     }
 
-    /// <summary>把一条指令发给后端（走非流式 chat 动作，与 WPF 版的 SendCommandAsync 一致）。</summary>
+    /// <summary>
+    /// 把一条指令发给后端（走非流式 chat 动作，与 WPF 版的 SendCommandAsync 一致）。
+    ///
+    /// **但有几条指令必须由前端本地处理**（与 WPF 侧同一套做法）：后端对它们只回一句
+    /// 说明文本、不做任何事，转发过去等于"看起来执行了、其实什么都没发生"：
+    ///   * `/darkmode`  → 真正切换主题（后端不改前端主题，它管不着）；
+    ///   * `/snippet …` → 常用语的增删列表（存在前端 `snippets.json` 里，
+    ///                    后端的 `_snippet` 只回一句提示，SnippetStore 的 Add/Remove
+    ///                    此前**没有任何调用者**）；
+    ///   * `/help`、`/stop` → 后端不可用时的兜底。
+    /// 后端在线时 `/help` 仍然走后端（指令表由后端权威给出），只有离线才本地兜底。
+    /// </summary>
     private async Task SendCommandAsync(string command)
     {
         if (_busy)
@@ -1018,6 +1043,24 @@ public partial class MainWindow : Window
             Toast(Loc.T("main.error.busy", "⏳ 上一条回复仍在生成，请先停止或等待完成"), error: true);
             return;
         }
+
+        string head = command.Trim();
+        string verb = head.Split(' ', 2)[0].ToLowerInvariant();
+        if (!_state.Backend.IsRunning
+            && (verb == "/help" || verb == "/stop" || verb == "/darkmode" || verb == "/snippet"))
+        {
+            // 离线兜底：这几个不需要后端也能正确执行
+            AddMessage("user", command);
+            HandleLocalCommand(verb, head);
+            return;
+        }
+        if (verb == "/darkmode" || verb == "/snippet")
+        {
+            AddMessage("user", command);
+            HandleLocalCommand(verb, head);
+            return;
+        }
+
         AddMessage("user", command);
         SetBusy(true);
         try
@@ -1047,6 +1090,112 @@ public partial class MainWindow : Window
         {
             SetBusy(false);
             await RefreshContextAsync();
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 本地指令（不经过后端；与 WPF 版的本地兜底同一套语义）
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// `/darkmode` 与 `/snippet` 的前端本地实现。
+    ///
+    /// 为什么不能让后端做：
+    ///   * 主题是**前端**的状态（`AppState.SetTheme`），后端改不了也不该改；
+    ///   * 常用语存在前端自己的 `snippets.json`（`SnippetStore`），后端只回一句提示。
+    /// 这两条在 WPF 侧都是本地处理的（`HandleDarkMode` / `HandleSnippetCommand`），
+    /// Avalonia 迁移时漏了，于是用户敲下去只看到一句"这个是前端管的"之类的回执。
+    /// </summary>
+    private void HandleLocalCommand(string verb, string raw)
+    {
+        switch (verb)
+        {
+            case "/darkmode":
+            {
+                // 与主题按钮同一套三态循环：auto → light → dark → auto
+                string next = _state.Settings.Theme switch
+                {
+                    "auto" => "light",
+                    "light" => "dark",
+                    _ => "auto",
+                };
+                // 主题名走**已存在的**三个键（settings.general.themeSystem/Light/Dark）。
+                // 不要动态拼 "settings.general.theme." + next —— 那会拼出一个不存在的键，
+                // 语言包缺失时 Loc.T 会静默回落成兜底中文（反向审计脚本抓到过这一类）。
+                string label = next switch
+                {
+                    "light" => Loc.T("settings.general.themeLight", "浅色"),
+                    "dark" => Loc.T("settings.general.themeDark", "深色"),
+                    _ => Loc.T("settings.general.themeSystem", "跟随系统"),
+                };
+                _state.SetTheme(next);
+                ApplyTexts();
+                // 消息区整屏重渲染：换主题后旧气泡的配色也要跟着变（与换字号/换语言同一路径）
+                RenderTranscript();
+                AddMessage("assistant", Loc.T("main.local.darkmode", "🎨 主题已切换为：{0}", label));
+                break;
+            }
+            case "/snippet":
+            {
+                string[] parts = raw.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+                string action = parts.Length > 1 ? parts[1].ToLowerInvariant() : "list";
+                if (action == "add")
+                {
+                    // 用法：/snippet add 名称 文本
+                    if (parts.Length < 4 && parts.Length < 3)
+                    {
+                        AddMessage("assistant", Loc.T("main.snippet.usageAdd",
+                            "用法：/snippet add 名称 文本…"));
+                        break;
+                    }
+                    string name = parts[2];
+                    string text = parts.Length > 3 ? parts[3] : "";
+                    if (text.Length == 0)
+                    {
+                        AddMessage("assistant", Loc.T("main.snippet.usageAdd",
+                            "用法：/snippet add 名称 文本…"));
+                        break;
+                    }
+                    bool added = _snippets.Add(name, text);
+                    AddMessage("assistant", added
+                        ? Loc.T("main.snippet.added", "✅ 已新增常用语「{0}」", name)
+                        : Loc.T("main.snippet.exists", "❌ 常用语「{0}」已存在（可先 remove 再添加）", name));
+                    break;
+                }
+                if (action == "remove")
+                {
+                    if (parts.Length < 3)
+                    {
+                        AddMessage("assistant", Loc.T("main.snippet.usageRemove",
+                            "用法：/snippet remove 名称"));
+                        break;
+                    }
+                    string name = parts[2];
+                    bool removed = _snippets.Remove(name);
+                    AddMessage("assistant", removed
+                        ? Loc.T("main.snippet.removed", "🗑️ 已删除常用语「{0}」", name)
+                        : Loc.T("main.snippet.notFound", "❌ 未找到常用语「{0}」", name));
+                    break;
+                }
+                // list（或缺省）
+                _snippets.Load();
+                AddMessage("assistant", _snippets.Items.Count == 0
+                    ? Loc.T("main.snippet.empty", "（还没有常用语，输入 /snippet add 名称 文本 添加）")
+                    : Loc.T("main.snippet.listHeader", "📋 常用语：\n") + string.Join("\n",
+                        _snippets.Items.Select(s => Loc.T("main.snippet.listItem", "🔹 {0}：{1}", s.Name, s.Text))));
+                break;
+            }
+            case "/help":
+                AddMessage("assistant", Loc.T("main.local.helpOffline",
+                    "后端未运行，暂时看不到完整指令表。后端启动后输入 /help 可列出全部指令。"));
+                break;
+            case "/stop":
+                _ = StopAsync();
+                break;
+            default:
+                AddMessage("assistant", Loc.T("main.local.commandOffline",
+                    "后端未运行，这条指令暂时无法执行。"));
+                break;
         }
     }
 
@@ -1967,7 +2116,12 @@ public partial class MainWindow : Window
             IsVisible = reasoning.Length > 0,
         };
 
+        // 探针锚点：WPF 侧的 ui_probe.ps1 按这几个 AutomationId 定位消息区的三类元素
+        // （思考折叠区 / 回答正文 / 运行指标）。Avalonia 侧此前只有 `AgentTrace`，
+        // 于是**同一份探针在两套界面上的覆盖不一样** —— 补上锚点是"一份探针驱动两套界面"
+        // 这条约定的前提（见 PROJECT.md 的架构一节）。
         var contentHost = new ContentControl();
+        AutomationProperties.SetAutomationId(contentHost, "AnswerBody");
         var metricsText = new TextBlock
         {
             Text = metrics,
@@ -1976,6 +2130,8 @@ public partial class MainWindow : Window
             TextWrapping = TextWrapping.Wrap,
             IsVisible = metrics.Length > 0,
         };
+        AutomationProperties.SetAutomationId(metricsText, "RunMetrics");
+        AutomationProperties.SetAutomationId(thinkingBox, "ReasoningRegion");
 
         var body = new StackPanel { Spacing = 4 };
         body.Children.Add(header);

@@ -82,8 +82,12 @@
         <TextBlock x:Name="StatusText" Grid.Column="4" FontSize="12" FontWeight="SemiBold"
                    VerticalAlignment="Center" Margin="14,0,0,0"
                    TextTrimming="CharacterEllipsis" />
-        <TextBlock x:Name="ContextChip" Grid.Column="5" FontSize="11" VerticalAlignment="Center"
-                   Margin="14,0,0,0" Opacity="0.7" />
+        <!-- 上下文胶囊做成按钮（WPF 侧是可点刷新）：点一下重新拉取上下文占用。
+             用 Button + TextBlock 而不是裸 TextBlock —— 裸文本不可点，用户只能去状态区点。 -->
+        <Button x:Name="ContextChip" Grid.Column="5" Classes="chip" Margin="14,0,0,0"
+                AutomationProperties.AutomationId="ContextChip">
+          <TextBlock x:Name="ContextChipText" Text="上下文：---/---" FontSize="11" Opacity="0.8" />
+        </Button>
         <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
           <Button x:Name="ModelChip" Classes="chip">
             <TextBlock x:Name="ModelText" Text="🧠 模型: ---" FontSize="11" MaxWidth="220"

@@ -566,8 +566,21 @@ def main() -> int:
     if not args.plan:
         if archive_path:
             digest = sha256_of(archive_path)
-            with io.open(os.path.join(args.out, "SHA256SUMS.txt"), "a", encoding="utf-8", newline="\n") as handle:
-                handle.write(f"{digest}  {os.path.basename(archive_path)}\n")
+            # **按文件名替换**而不是纯追加：同一个 rid 重跑打包（例如先打成 pyinstaller 形态、
+            # 再改成 standalone 重打）会留下**两条同名、哈希不同**的记录，而门禁按文件名查表，
+            # 命中旧的那条就报"摘要不一致" —— 实测踩到（v0.2.2 交付轮：win-x64 重打后
+            # SHA256SUMS.txt 里两条 win-x64 记录，校验按第一条判失败）。
+            # 保留其它行，只覆盖同名行；文件不存在时等同写入。
+            sums_path = os.path.join(args.out, "SHA256SUMS.txt")
+            name = os.path.basename(archive_path)
+            kept = []
+            if os.path.isfile(sums_path):
+                with io.open(sums_path, encoding="utf-8") as existing:
+                    kept = [line for line in existing.read().splitlines()
+                            if line.strip() and not line.rstrip().endswith("  " + name)]
+            kept.append(f"{digest}  {name}")
+            with io.open(sums_path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write("\n".join(kept) + "\n")
             log(f"SHA256：{digest}")
 
         total, count = dir_size(tree)

@@ -254,6 +254,11 @@
       "lastUser": "↩️ Copied your previous question (Alt+↑)",
       "none": "No previous question to copy yet"
     },
+    "local": {
+      "darkmode": "🎨 Theme switched to: {0}",
+      "helpOffline": "The backend is not running, so the full command list is unavailable. Start it and type /help.",
+      "commandOffline": "The backend is not running, so this command cannot run yet."
+    },
     "context": {
       "buttonIdle": "Context: ---/---",
       "buttonTip": "Click to refresh the context usage"

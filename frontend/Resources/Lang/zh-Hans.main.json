@@ -254,6 +254,11 @@
       "lastUser": "↩️ 已复制上一条提问（Alt+↑）",
       "none": "还没有可以复制的提问"
     },
+    "local": {
+      "darkmode": "🎨 主题已切换为：{0}",
+      "helpOffline": "后端未运行，暂时看不到完整指令表。后端启动后输入 /help 可列出全部指令。",
+      "commandOffline": "后端未运行，这条指令暂时无法执行。"
+    },
     "context": {
       "buttonIdle": "上下文：---/---",
       "buttonTip": "点击刷新上下文占用"

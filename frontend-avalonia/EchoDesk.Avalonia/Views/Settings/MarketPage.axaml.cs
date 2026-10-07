@@ -59,10 +59,30 @@ public partial class MarketPage : UserControl, ISettingsPage
                 await SearchAsync();
             }
         };
+        // 输入即搜（300ms 防抖）：与 WPF 侧的 MarketSearchBox_TextChanged 同一行为。
+        // 为什么要有：用户的心智是"边打边看结果"，按一次回车才搜会让人以为搜索框坏了；
+        // 防抖是为了不每敲一个字就打一次远端。
+        MarketSearchBox.TextChanged += (_, _) =>
+        {
+            if (_suppressSearchEvents)
+                return;
+            _searchDebounce ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+            _searchDebounce.Stop();
+            _searchDebounce.Tick += async (_, _) =>
+            {
+                _searchDebounce?.Stop();
+                await SearchAsync();
+            };
+            _searchDebounce.Start();
+        };
         MarketSearchButton.Click += async (_, _) => await SearchAsync();
         MarketRefreshButton.Click += async (_, _) =>
         {
+            // 刷新 = 清空关键词再搜（与 WPF 一致）；清空会让 TextChanged 也触发一次，
+            // 用重入闸挡住重复请求。
+            _suppressSearchEvents = true;
             MarketSearchBox.Text = "";
+            _suppressSearchEvents = false;
             await SearchAsync();
         };
         MarketSortCombo.SelectionChanged += async (_, _) =>
@@ -73,6 +93,8 @@ public partial class MarketPage : UserControl, ISettingsPage
     }
 
     private bool _loaded;
+    private DispatcherTimer? _searchDebounce;
+    private bool _suppressSearchEvents;
 
     public string TabKey => "settings.tab.market";
     public string TabFallback => "技能市场";
@@ -163,6 +185,10 @@ public partial class MarketPage : UserControl, ISettingsPage
         bool empty = cards.Count == 0;
         MarketEmptyText.IsVisible = empty;
         MarketList.IsVisible = !empty;
+        // 双击条目打开详情（与 WPF 侧的 MarketList_MouseDoubleClick 同一行为）。
+        // 挂在列表上而不是逐项挂：卡片是运行时构建的，逐项挂会重复 N 次。
+        MarketList.DoubleTapped -= OnListDoubleTapped;
+        MarketList.DoubleTapped += OnListDoubleTapped;
         if (empty)
         {
             MarketEmptyText.Text = Loc.T("settings.market.emptyResult", "没有匹配的技能。") + "\n"
@@ -245,9 +271,14 @@ public partial class MarketPage : UserControl, ISettingsPage
         {
             Content = installed
                 ? Loc.T("settings.button.uninstall", "卸载")
-                : Loc.T("settings.button.install", "安装"),
+                // 未验证的技能**不允许安装**（与 WPF 侧同一规则：ActionText/CanAct）。
+                // 第三方技能以本地账户权限运行，未验证就放行等于把这个判断交给用户瞎猜。
+                : verified
+                    ? Loc.T("settings.button.install", "安装")
+                    : Loc.T("settings.market.unverified", "未验证"),
             Padding = new Thickness(12, 3),
             FontSize = 11,
+            IsEnabled = installed || verified,
         };
         action.Click += async (_, _) => await OnActionAsync(fullName, !installed, action);
         buttons.Children.Add(action);
@@ -284,6 +315,8 @@ public partial class MarketPage : UserControl, ISettingsPage
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(12, 10),
             Child = panel,
+            // 双击详情要靠它找回这一条的数据（ItemsControl 没有 SelectedItem）
+            Tag = item,
         };
     }
 
@@ -358,6 +391,27 @@ public partial class MarketPage : UserControl, ISettingsPage
         }
         // 重新搜索以刷新「已安装」徽标（与 WPF 版一致）。
         await RefreshAsync();
+    }
+
+    /// <summary>双击列表项 → 打开该技能的详情（与点「详情」同一路径）。</summary>
+    private async void OnListDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        // MarketList 是 ItemsControl（不是 ListBox），没有 SelectedItem；
+        // 卡片容器上存了该条目的 JsonElement（见 BuildCard 的 Tag），
+        // 从被点的元素沿**逻辑父链**往上找即可。
+        Control? current = e.Source as Control;
+        while (current is not null)
+        {
+            if (current.Tag is JsonElement item)
+            {
+                string fullName = GetString(item, "full_name");
+                string name = GetString(item, "name");
+                if (fullName.Length > 0)
+                    await ShowDetailAsync(fullName, name);
+                return;
+            }
+            current = current.Parent as Control;
+        }
     }
 
     /// <summary>技能详情：复用骨架右侧的字段帮助面板，不另造对话框。</summary>
