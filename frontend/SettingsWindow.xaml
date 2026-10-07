@@ -94,7 +94,7 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                     <Button Content="↻ 重新加载语言包" svc:Loc.Key="settings.general.reloadLang" Padding="10,3" FontSize="11"
                                             Style="{StaticResource RoundButton}" Click="ReloadLangButton_Click"
-                                            ToolTip="翻译者改完语言包文件后无需重启即可看到效果"/>
+                                            ToolTip="翻译者改完语言包文件后无需重启即可看到效果" svc:Loc.TipKey="settings.general.reloadLangTip"/>
                                     <Button Content="📂 打开语言包目录" svc:Loc.Key="settings.general.openLangDir" Padding="10,3" FontSize="11" Margin="8,0,0,0"
                                             Style="{StaticResource RoundButton}" Click="OpenLangDirButton_Click"/>
                                 </StackPanel>
@@ -134,7 +134,7 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="🧠 模型选择栏（Hugging Face GGUF 模型）"
+                    <TextBlock Grid.Row="0" Text="🧠 模型选择栏（Hugging Face GGUF 模型）" svc:Loc.Key="settings.model.sectionHub"
                                FontSize="15" FontWeight="Bold"
                                Foreground="{DynamicResource AccentBrush}"/>
 
@@ -152,18 +152,18 @@
                                    Foreground="{DynamicResource SubTextBrush}"/>
                         <ComboBox x:Name="HubSourceCombo" Grid.Column="1" Width="170" Margin="6,0,0,0"
                                   SelectionChanged="HubSourceCombo_SelectionChanged"
-                                  ToolTip="自动：优先镜像站，不可达时回退官方站"/>
+                                  ToolTip="自动：优先镜像站，不可达时回退官方站" svc:Loc.TipKey="settings.model.hubSourceHelp"/>
                         <TextBlock Grid.Column="2" Text="Token" VerticalAlignment="Center" Margin="14,0,0,0"
                                    Foreground="{DynamicResource SubTextBrush}"/>
                         <PasswordBox x:Name="HubTokenBox" Grid.Column="3" Margin="6,0,0,0" Padding="6,4"
-                                     ToolTip="下载需授权的 Gated 模型时填写；留空则读环境变量 HF_TOKEN"/>
+                                     ToolTip="下载需授权的 Gated 模型时填写；留空则读环境变量 HF_TOKEN" svc:Loc.TipKey="settings.model.hubTokenTip"/>
                         <Button x:Name="HubSaveTokenButton" Grid.Column="4" Margin="8,0,0,0" Padding="12,4"
                                 Content="保存 Token" svc:Loc.Key="settings.model.actionSaveToken" Style="{StaticResource RoundButton}"
                                 Click="HubSaveTokenButton_Click"/>
                         <Button x:Name="HubOpenDirButton" Grid.Column="5" Margin="8,0,0,0" Padding="12,4"
                                 Content="模型目录" svc:Loc.Key="settings.model.actionModelsDir" Style="{StaticResource RoundButton}"
                                 Click="HubOpenDirButton_Click"
-                                ToolTip="在文件资源管理器中打开本地模型库目录"/>
+                                ToolTip="在文件资源管理器中打开本地模型库目录" svc:Loc.TipKey="settings.model.openModelsDirTip"/>
                     </Grid>
 
                     <!-- 搜索行（任务二：关键字回车/按钮触发"取全部结果"） -->
@@ -602,12 +602,12 @@
                                 Background="{DynamicResource InputBackground}"
                                 BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
                             <StackPanel>
-                                <TextBlock Text="🔒 安全协议（开启自动化前必须阅读并勾选）"
+                                <TextBlock Text="🔒 安全协议（开启自动化前必须阅读并勾选）" svc:Loc.Key="settings.automation.safetyTitle"
                                            FontWeight="Bold" Margin="0,0,0,6"/>
                                 <TextBlock x:Name="SafetyText" TextWrapping="Wrap" FontSize="12"
                                            Foreground="{DynamicResource SubTextBrush}"/>
                                 <CheckBox x:Name="SafetyCheck" Margin="0,10,0,0"
-                                          Content="我已阅读并理解上述安全协议，自愿承担使用责任"
+                                          Content="我已阅读并理解上述安全协议，自愿承担使用责任" svc:Loc.Key="settings.automation.safetyAgree"
                                           Checked="SafetyCheck_Changed" Unchecked="SafetyCheck_Changed"/>
                             </StackPanel>
                         </Border>
@@ -630,7 +630,7 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <ComboBox x:Name="TemplateCombo" Grid.Column="0" Padding="6,4"
-                                              ToolTip="预置模板来自语言包，随界面语言切换"/>
+                                              ToolTip="预置模板来自语言包，随界面语言切换" svc:Loc.TipKey="settings.automation.templateFromPackTip"/>
                                     <Button x:Name="ApplyTemplateButton" Grid.Column="1" Margin="8,0,0,0" Padding="12,4"
                                             Content="套用模板" Style="{StaticResource RoundButton}"
                                             Click="ApplyTemplateButton_Click" svc:Loc.Key="settings.automation.applyTemplate"/>
@@ -674,7 +674,7 @@
                         <StackPanel Orientation="Horizontal" Margin="0,12,0,4">
                             <TextBlock Text="任务列表元素位置" Foreground="{DynamicResource SubTextBrush}"
                                        VerticalAlignment="Center" svc:Loc.Key="settings.automation.label.taskListSelector"
-                                       ToolTip="你想让程序点击的「任务链接」在页面上的位置"/>
+                                       ToolTip="你想让程序点击的「任务链接」在页面上的位置" svc:Loc.TipKey="settings.automation.pickTaskLinkTip"/>
                             <Button Content="?" Padding="5,0" Margin="6,0,0,0" FontSize="10" Height="18"
                                     Style="{StaticResource RoundButton}" Tag="task_list_selector"
                                     Click="FieldHelp_Click" ToolTip="查看填写说明" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
@@ -713,7 +713,7 @@
                                             Click="FieldHelp_Click" ToolTip="查看填写说明" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
                                     <Button Padding="6,0" Margin="6,0,0,0" Height="18"
                                             Style="{StaticResource RoundButton}" Tag="task_row"
-                                            Click="PickSelectorButton_Click" ToolTip="可视化选取这一行">
+                                            Click="PickSelectorButton_Click" ToolTip="可视化选取这一行" svc:Loc.TipKey="settings.automation.pickRowTip">
                                         <TextBlock Style="{StaticResource IconText}" Text="🎯" FontSize="10"/>
                                     </Button>
                                 </StackPanel>
@@ -729,7 +729,7 @@
                                             Click="FieldHelp_Click" ToolTip="查看填写说明" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
                                     <Button Padding="6,0" Margin="6,0,0,0" Height="18"
                                             Style="{StaticResource RoundButton}" Tag="next_page"
-                                            Click="PickSelectorButton_Click" ToolTip="可视化选取下一页按钮">
+                                            Click="PickSelectorButton_Click" ToolTip="可视化选取下一页按钮" svc:Loc.TipKey="settings.automation.pickNextPageTip">
                                         <TextBlock Style="{StaticResource IconText}" Text="🎯" FontSize="10"/>
                                     </Button>
                                 </StackPanel>
@@ -816,7 +816,7 @@
                                       VerticalAlignment="Center"/>
                         </StackPanel>
 
-                        <TextBlock Text="结果保存" FontWeight="Bold" Margin="0,16,0,6"/>
+                        <TextBlock Text="结果保存" svc:Loc.Key="settings.automation.sectionResults" FontWeight="Bold" Margin="0,16,0,6"/>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
@@ -827,7 +827,7 @@
                                        svc:Loc.Key="settings.automation.label.taskName"/>
                             <TextBox x:Name="TaskNameBox" Grid.Column="1" Margin="6,0,0,0" Padding="6,4" TextChanged="ResultsOption_TextChanged"
                                      GotKeyboardFocus="AutomationField_GotFocus" Tag="task_name"
-                                     ToolTip="结果的第三层目录名；同名任务会自动追加序号避免覆盖"/>
+                                     ToolTip="结果的第三层目录名；同名任务会自动追加序号避免覆盖" svc:Loc.TipKey="settings.automation.resultsRootNameTip"/>
                         </Grid>
                         <Grid Margin="0,8,0,0">
                             <Grid.ColumnDefinitions>
@@ -835,16 +835,16 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="顶层文件夹名" VerticalAlignment="Center"
+                            <TextBlock Grid.Column="0" Text="顶层文件夹名" svc:Loc.Key="settings.automation.resultsRootNameLabel" VerticalAlignment="Center"
                                        Foreground="{DynamicResource SubTextBrush}"/>
                             <TextBox x:Name="ResultsRootNameBox" Grid.Column="1" Margin="6,0,0,0" Padding="6,4" TextChanged="ResultsOption_TextChanged"
-                                     ToolTip="结果根目录下的第一层文件夹名，默认「results」"/>
+                                     ToolTip="结果根目录下的第一层文件夹名，默认「results」" svc:Loc.TipKey="settings.automation.resultsRootNameHelp"/>
                             <Button x:Name="OpenResultsButton" Grid.Column="2" Margin="8,0,0,0" Padding="12,4"
                                     Content="打开结果目录" svc:Loc.Key="settings.automation.openResults" Style="{StaticResource RoundButton}"
                                     Click="OpenResultsButton_Click"
                                     ToolTip="在文件资源管理器中打开结果根目录" svc:Loc.TipKey="settings.automation.openResultsTip"/>
                         </Grid>
-                        <TextBlock Text="保存位置（留空 = 程序根目录）" Margin="0,10,0,4"
+                        <TextBlock Text="保存位置（留空 = 程序根目录）" svc:Loc.Key="settings.automation.resultsLocation" Margin="0,10,0,4"
                                    Foreground="{DynamicResource SubTextBrush}"/>
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -852,7 +852,7 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBox x:Name="ResultsLocationBox" Grid.Column="0" Padding="6,4" TextChanged="ResultsOption_TextChanged"
-                                     ToolTip="可为绝对路径（如 D:\合同结果）或相对于程序根目录的路径"/>
+                                     ToolTip="可为绝对路径（如 D:\合同结果）或相对于程序根目录的路径" svc:Loc.TipKey="settings.automation.resultsLocationTip"/>
                             <Button x:Name="BrowseResultsButton" Grid.Column="1" Margin="8,0,0,0" Padding="12,4"
                                     Content="浏览…" svc:Loc.Key="settings.automation.browseResults" Style="{StaticResource RoundButton}"
                                     Click="BrowseResultsButton_Click"/>
@@ -861,13 +861,13 @@
                                    TextWrapping="Wrap" Foreground="{DynamicResource SubTextBrush}"
                                    Text="目录结构：结果根目录 / YYYY-MM-DD / 任务名称 / result.txt + 原始文件"/>
 
-                        <TextBlock Text="定时触发" FontWeight="Bold" Margin="0,16,0,6"/>                        <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="定时触发" svc:Loc.Key="settings.automation.sectionSchedule" FontWeight="Bold" Margin="0,16,0,6"/>                        <StackPanel Orientation="Horizontal">
                             <CheckBox x:Name="ScheduleCheck" Content="启用定时" svc:Loc.Key="settings.automation.scheduleEnabled" VerticalAlignment="Center"/>
-                            <TextBlock Text="每天执行时刻（HH:MM，逗号分隔）" Margin="16,0,8,0"
+                            <TextBlock Text="每天执行时刻（HH:MM，逗号分隔）" svc:Loc.Key="settings.automation.scheduleTimes" Margin="16,0,8,0"
                                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>
                             <TextBox x:Name="ScheduleTimesBox" Width="180" Padding="6,4"/>
                         </StackPanel>
-                        <TextBlock Text="说明：定时任务要求程序保持运行（后端后台线程调度）；开机自启需在系统「启动」文件夹中放入快捷方式。"
+                        <TextBlock Text="说明：定时任务要求程序保持运行（后端后台线程调度）；开机自启需在系统「启动」文件夹中放入快捷方式。" svc:Loc.Key="settings.automation.scheduleNote"
                                    FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"/>
 
@@ -930,7 +930,7 @@
                         </StackPanel>
                         <TextBox x:Name="LoginKeywordsBox" Padding="6,4"
                                  GotKeyboardFocus="AutomationField_GotFocus" Tag="login_url_keywords"
-                                 ToolTip="地址里出现这些词就认为跳到了登录页，例如 login, signin, sso"/>
+                                 ToolTip="地址里出现这些词就认为跳到了登录页，例如 login, signin, sso" svc:Loc.TipKey="settings.automation.loginKeywordsTip"/>
                         <TextBlock FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"
                                    Text="多个目标站点可以共用同一个数据目录（浏览器按域名分别保存 Cookie），无需为每个站点单独配置。"
@@ -1022,7 +1022,7 @@
                                 Content="已安装" Style="{StaticResource RoundButton}"
                                 Click="MarketInstalledButton_Click"
                                 svc:Loc.Key="settings.market.installed"
-                                ToolTip="查看本机已安装的技能"/>
+                                ToolTip="查看本机已安装的技能" svc:Loc.TipKey="settings.market.refreshInstalledTip"/>
                     </Grid>
 
                     <Border Grid.Row="2" CornerRadius="8"

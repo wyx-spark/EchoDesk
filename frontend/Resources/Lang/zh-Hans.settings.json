@@ -33,6 +33,7 @@
   },
   "settings": {
     "general": {
+      "reloadLangTip": "翻译者改完语言包文件后无需重启即可看到效果",
       "sectionLanguagePack": "语言包",
       "defaultMode": "默认对话模式（下次启动生效，也可用 /mode 即时切换）",
       "langCurrent": "当前语言",
@@ -81,6 +82,9 @@
       "hintOther": "替代做法：本页涉及的配置可以直接编辑 app/backend/config.json，或等待后续版本把该页迁移过来。"
     },
     "model": {
+      "hubTokenTip": "下载需授权的 Gated 模型时填写；留空则读环境变量 HF_TOKEN",
+      "openModelsDirTip": "在文件资源管理器中打开本地模型库目录",
+      "sectionHub": "🧠 模型选择栏（Hugging Face GGUF 模型）",
       "sortName": "名称",
       "sourceAuto": "自动（推荐）",
       "sourceMirror": "镜像源 hf-mirror.com",
@@ -448,6 +452,7 @@
       "notMigrated": "⏳ MCP 的增删改（命令、参数、环境变量透传、超时、连接测试）还没有迁移到跨平台前端，这里只显示当前状态。替代做法：编辑 app/backend/config.json 的 mcp 段，或在 Windows 上用 WPF 版设置页。"
     },
     "market": {
+      "refreshInstalledTip": "查看本机已安装的技能",
       "sortBest": "最佳匹配",
       "sortStars": "Star 最多",
       "searchAsYouType": "输入即搜（停止输入约 0.3 秒后自动搜索）",
@@ -499,6 +504,20 @@
       "uninstallConfirmShort": "确认卸载？"
     },
     "automation": {
+      "loginKeywordsTip": "地址里出现这些词就认为跳到了登录页，例如 login, signin, sso",
+      "pickNextPageTip": "可视化选取下一页按钮",
+      "pickRowTip": "可视化选取这一行",
+      "pickTaskLinkTip": "你想让程序点击的「任务链接」在页面上的位置",
+      "resultsLocationTip": "可为绝对路径（如 D:\\合同结果）或相对于程序根目录的路径",
+      "resultsRootNameHelp": "结果根目录下的第一层文件夹名，默认「results」",
+      "resultsRootNameLabel": "顶层文件夹名",
+      "resultsRootNameTip": "结果的第三层目录名；同名任务会自动追加序号避免覆盖",
+      "safetyAgree": "我已阅读并理解上述安全协议，自愿承担使用责任",
+      "safetyTitle": "🔒 安全协议（开启自动化前必须阅读并勾选）",
+      "scheduleNote": "说明：定时任务要求程序保持运行（后端后台线程调度）；开机自启需在系统「启动」文件夹中放入快捷方式。",
+      "sectionResults": "结果保存",
+      "sectionSchedule": "定时触发",
+      "templateFromPackTip": "预置模板来自语言包，随界面语言切换",
       "browserChoice": "浏览器",
       "browserAuto": "自动（依次尝试 Edge → Chrome → Chromium）",
       "reuseMode": "浏览器复用",

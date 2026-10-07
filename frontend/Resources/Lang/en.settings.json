@@ -33,6 +33,7 @@
   },
   "settings": {
     "general": {
+      "reloadLangTip": "Translators can edit the language packs and see the result without restarting.",
       "sectionLanguagePack": "Language packs",
       "defaultMode": "Default conversation mode (applies on the next start; /mode switches it immediately)",
       "langCurrent": "Current language",
@@ -81,6 +82,9 @@
       "hintOther": "Workaround: edit app/backend/config.json directly for the settings this page would expose, or wait for a later release to migrate it."
     },
     "model": {
+      "hubTokenTip": "Fill this in for gated models that need authorisation; leave it empty to read the HF_TOKEN environment variable.",
+      "openModelsDirTip": "Open the local model library folder in the file manager.",
+      "sectionHub": "🧠 Model bar (Hugging Face GGUF models)",
       "sortName": "Name",
       "sourceAuto": "Automatic (recommended)",
       "sourceMirror": "Mirror hf-mirror.com",
@@ -448,6 +452,7 @@
       "notMigrated": "⏳ Adding, editing and removing MCP servers (command, arguments, environment pass-through, timeout, connection test) has not been migrated to the cross-platform frontend yet — this page only shows the current state. Workaround: edit the mcp section of app/backend/config.json, or use the WPF settings page on Windows."
     },
     "market": {
+      "refreshInstalledTip": "Show the skills installed on this machine.",
       "sortBest": "Best match",
       "sortStars": "Most stars",
       "searchAsYouType": "Search as you type (about 0.3 s after you stop typing)",
@@ -499,6 +504,20 @@
       "uninstallConfirmShort": "Confirm uninstall?"
     },
     "automation": {
+      "loginKeywordsTip": "If the address contains any of these words the page counts as a login page, e.g. login, signin, sso",
+      "pickNextPageTip": "Pick the next-page button visually",
+      "pickRowTip": "Pick this row visually",
+      "pickTaskLinkTip": "Where the task link you want the program to click is on the page.",
+      "resultsLocationTip": "May be an absolute path (e.g. D:\\contract-results) or a path relative to the program root.",
+      "resultsRootNameHelp": "First-level folder name under the results root; defaults to “results”.",
+      "resultsRootNameLabel": "Top-level folder name",
+      "resultsRootNameTip": "Third-level folder name for results; tasks with the same name get a number appended so nothing is overwritten.",
+      "safetyAgree": "I have read and understood the safety protocol above and accept responsibility for using it.",
+      "safetyTitle": "🔒 Safety protocol (read and tick this before enabling automation)",
+      "scheduleNote": "Note: scheduled runs need the program to stay open (the backend schedules them on a background thread); to start with the system, put a shortcut in your Startup folder.",
+      "sectionResults": "Saving results",
+      "sectionSchedule": "Scheduled runs",
+      "templateFromPackTip": "The built-in templates come from the language pack and follow the interface language.",
       "browserChoice": "Browser",
       "browserAuto": "Automatic (tries Edge → Chrome → Chromium in turn)",
       "reuseMode": "Browser reuse",
