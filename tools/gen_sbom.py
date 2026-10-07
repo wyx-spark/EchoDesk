@@ -81,10 +81,15 @@ LICENSE_MD_PATH = os.path.join(REPO_ROOT, "docs", "THIRD_PARTY_LICENSES.md")
 VERSION_PY_PATH = os.path.join(REPO_ROOT, "backend", "version.py")
 OUT_JSON_PATH = os.path.join(REPO_ROOT, "docs", "SBOM.json")
 
-#: 清单里"全部 Python 发行包明细"小节的标题关键词（用于定位表格）
+#: 清单里"全部 Python 发行包明细"小节的标题关键词（**兜底**：老文档没有锚点时用）
 MD_DETAIL_SECTION = "Python 发行包明细"
-#: 清单里"后端直接依赖"小节的标题关键词
+#: 清单里"后端直接依赖"小节的标题关键词（兜底）
 MD_DIRECT_SECTION = "后端直接依赖"
+#: **语言无关锚点**（HTML 注释，不进渲染结果）。文档怎么翻译都能定位到小节。
+#: 加它的原因见 _parse_md_table 的说明：原先只认中文标题，而 THIRD_PARTY_LICENSES.md
+#: 按名字是英文版 —— 一旦真的译成英文，SBOM 会静默丢掉全部包明细。
+MD_DETAIL_MARKER = "<!-- sbom:python-detail -->"
+MD_DIRECT_MARKER = "<!-- sbom:direct-deps -->"
 
 SPDX_VERSION = "SPDX-2.3"
 DATA_LICENSE = "CC0-1.0"
@@ -335,20 +340,46 @@ def release_closure(roots: Sequence[str], by_name: Dict[str, dict],
 # ---------------------------------------------------------------------------
 
 
-def _parse_md_table(text: str, section_keyword: str) -> Dict[str, Tuple[str, str, str]]:
+def _parse_md_table(text: str, section_keyword: str, marker: str = "") -> Dict[str, Tuple[str, str, str]]:
     """从 Markdown 表格里取 ``| 包名 | 版本 | 许可证 |`` 三列。
 
-    先定位包含 ``section_keyword`` 的小节标题，再向下扫描表格行；
-    遇到小节内第一段非表格内容即停止。
+    **定位小节的方式**（v0.2.2 硬编码清查第 6 批收尾改的）：
+    优先找 ``marker``（形如 ``<!-- sbom:python-detail -->`` 的 HTML 注释）—— 它是
+    **语言无关**的锚点；找不到再退回 ``section_keyword``（中文小节标题）以保持兼容。
+
+    为什么加 marker：原先只能靠中文标题定位，而 ``docs/THIRD_PARTY_LICENSES.md``
+    按名字是"英文版"（实际正文目前仍是中文，见 check_lang 里已记在案的偏差）——
+    一旦那份文档真的译成英文，这里会**静默取不到表格**（SBOM 少掉全部包明细）。
+    有 marker 之后，文档怎么翻译都不影响取值。
+
+    先定位小节标题，再向下扫描表格行；遇到小节内第一段非表格内容即停止。
     """
     rows: Dict[str, Tuple[str, str, str]] = {}
     lines = text.splitlines()
     start: Optional[int] = None
     for index, line in enumerate(lines):
-        if line.startswith("#") and section_keyword in line:
+        if marker and marker in line:
+            # 锚点**后面紧跟的就是小节标题**（`<!-- sbom:… -->` + `## 五、…`）：
+            # 必须连标题一起跳过去，否则下面的扫描循环一看到 `#` 就以为"小节结束"、
+            # 直接取到 0 行 —— 这个坑是加锚点当轮的自检抓到的（有锚点时反而比没锚点更糟）。
+            j = index + 1
+            while j < len(lines) and not lines[j].strip().startswith("#"):
+                j += 1
+            start = j + 1 if j < len(lines) else j
+            break
+        if not marker and line.startswith("#") and section_keyword in line:
             start = index + 1
             break
+    if start is None and marker:
+        # 老文档没有 marker：退回中文标题（兼容），但把这件事说出来，别静默少数据
+        for index, line in enumerate(lines):
+            if line.startswith("#") and section_keyword in line:
+                start = index + 1
+                print(f"[WARN] {section_keyword}：文档里没有锚点 {marker}，已按中文标题定位"
+                      f"（建议给该小节补上锚点注释）")
+                break
     if start is None:
+        print(f"[WARN] 取不到小节 {section_keyword!r}（锚点 {marker!r} 与中文标题都没找到）")
         return rows
 
     seen_data = False
@@ -381,7 +412,7 @@ def parse_license_md(path: str) -> Dict[str, Tuple[str, str, str]]:
     except OSError as exc:
         print(f"[WARN] 无法读取 {path}：{exc}")
         return {}
-    return _parse_md_table(text, MD_DETAIL_SECTION)
+    return _parse_md_table(text, MD_DETAIL_SECTION, MD_DETAIL_MARKER)
 
 
 # ---------------------------------------------------------------------------

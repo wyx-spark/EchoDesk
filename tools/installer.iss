@@ -137,6 +137,19 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 #endif
 
+[CustomMessages]
+; v0.2.2 硬编码清查第 6 批收尾：卸载提示原先**写死中文**（见 [Code] 的 CurUninstallStepChanged），
+; 英文用户会看到一段中文。安装器没有运行期的 JSON 语言包（它跑在程序启动之前），
+; 所以这里用 Inno 自己的多语言机制：CustomMessages 按 [Languages] 的当前语言取值，
+; 没定义的语言回退到默认语言（english）。占位符用 %1，由 FmtMessage 传入路径。
+english.UninstallKeepResults=EchoDesk will keep the batch results folder as it is:%n%n%1%n%nFiles created while the program was running (sessions, models, caches, logs, ...) will be removed.
+; 中文那一条也必须用同一个条件包起来 —— 否则在"没装 ChineseSimplified.isl"的机器上，
+; CustomMessages 引用了一个 [Languages] 里并不存在的语言名，编译直接失败
+; （实测报 `Unknown language name "chinesesimplified"`，破坏了本文件"没放 .isl 也能编译"的约定）。
+#if FileExists(AddBackslash(CompilerPath) + "Languages\ChineseSimplified.isl")
+chinesesimplified.UninstallKeepResults=批量处理结果目录会原样保留：%n%n%1%n%n其余由程序运行时产生的文件（会话、模型、缓存、日志等）会被删除。
+#endif
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 
@@ -228,7 +241,6 @@ begin
     Exit;
   ResultsDir := ExpandConstant('{app}\results');
   if DirExists(ResultsDir) then
-    MsgBox('批量处理结果目录会原样保留：' + #13#10 + ResultsDir + #13#10 + #13#10 +
-           '其余由程序运行时产生的文件（会话、模型、缓存、日志等）会被删除。',
+    MsgBox(FmtMessage(CustomMessage('UninstallKeepResults'), [ResultsDir]),
            mbInformation, MB_OK);
 end;

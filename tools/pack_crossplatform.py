@@ -263,6 +263,13 @@ def write_top_launcher(tree: str, rid: str) -> str:
     脚本本身只做一件事：把真正的可执行文件**接管本进程**（exec），参数与退出码原样透传。
     """
     if rid.startswith("win"):
+        # 文件名**刻意保持中文**（v0.2.2 硬编码清查裁定 §3）：
+        #   * 文件名不是界面文本 —— 它出现在资源管理器里，用户双击的就是它；
+        #   * 本地化文件名会连带改掉快捷方式目标、文档里的引用（README / 用户手册 / 解压说明）
+        #     与 `check_crossplatform_release.py` 的断言，收益是"英文用户看着顺眼"、
+        #     代价是**所有既有链接与说明同时失效**；
+        #   * 打包脚本本身用 UTF-8 写入，Windows 10+ 的资源管理器与 cmd 都能正常显示。
+        # 所以这里保留中文名，并按裁定要求登记理由（不是漏掉）。
         path = os.path.join(tree, "启动 EchoDesk.bat")
         text = (
             "@echo off\r\n"

@@ -153,6 +153,9 @@ def main() -> None:
         "> 剩余的唯一 GPL 组件是构建工具 PyInstaller（GPLv2 带官方例外，允许打包分发专有程序）。",
         "> 同步收益：该依赖的安装体积从 52.9MB 降到约 1.4MB。",
         "",
+        # v0.2.2 硬编码清查第 6 批收尾：给 SBOM 生成器一个**语言无关**锚点
+        # （tools/gen_sbom.py 优先按它定位表格；文档翻译后也不会失配）
+        "<!-- sbom:direct-deps -->",
         "## 一、后端直接依赖",
         "",
         "| 组件 | 版本 | 许可证 | 说明 |",
@@ -231,6 +234,7 @@ def main() -> None:
         "- Playwright 驱动：Apache-2.0；其驱动的浏览器（Microsoft Edge）由用户系统安装，",
         "  EchoDesk 不重新分发浏览器本体。",
         "",
+        "<!-- sbom:python-detail -->",
         "## 五、全部 Python 发行包明细",
         "",
         "| 包名 | 版本 | 许可证 |",
