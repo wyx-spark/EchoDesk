@@ -3,7 +3,9 @@
 #
 # 覆盖：
 #   1. 设置窗口能否打开（历史缺陷：Slider.ValueChanged 在 InitializeComponent 期间空引用
-#      导致整个进程被终止），以及打开耗时（要求 < 500ms，不含异步数据加载）。
+#      导致整个进程被终止），以及打开耗时（阈值 4000ms，不含异步数据加载）。
+#      **阈值来历**：原为 500ms，实测常态约 2500ms，属"阈值本身写错"而非"门禁抓到问题"，
+#      经总策划裁定一改为 4000ms（修正错误阈值，不是放宽门禁）。详见下方计时处的注释。
 #   2. UI 线程响应性（Process.Responding）是否全程正常。
 #   3. 主窗口与设置窗口交替操作是否互相阻塞。
 #   4. 指令选择栏的 Enter 排序（精确匹配优先），读取 CommandList 首项的 AutomationId 名称。
@@ -62,7 +64,42 @@ function Find-AnyById([int]$procId, [string]$id) {
     return $null
 }
 
-function Invoke-El($el) { $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+# 点击一个 UIA 元素。**返回 $true 表示"真的点下去了"**，$false 表示没点成。
+#
+# v0.2.2 第 4 批（总策划裁定二，门禁工具健壮性）：原实现直接
+# `$el.GetCurrentPattern(InvokePattern).Invoke()` —— 元素存在但被禁用时抛
+# `ElementNotEnabledException`，整个探针**中断**，后面的断言一条都跑不到。
+# 门禁工具把"点不动"变成"跑不完"，等于把一次可报告的失败变成一次无法归因的中断，
+# 属 PROJECT.md 硬约束 6（门禁失败先怀疑门禁）覆盖的缺陷。
+#
+# 现在的行为：
+#   * $el 为 $null      → FAIL「元素不存在」，返回 $false
+#   * IsEnabled 为 false → FAIL「元素存在但被禁用」（**与"不存在"分开报**），返回 $false
+#   * 其余               → 真的 Invoke，返回 $true
+# 两条失败都**只记不抛**：整轮继续跑完，结论行照常给出。
+function Invoke-El($el, [string]$what = '元素') {
+    if ($null -eq $el) {
+        Fail "$what 不存在，无法点击"
+        return $false
+    }
+    try {
+        if (-not $el.Current.IsEnabled) {
+            Fail "$what 存在但被禁用（点不动）"
+            return $false
+        }
+    } catch {
+        # 取 IsEnabled 本身失败（元素已失效/窗口已关）：也算点不成，但要说清是哪一种
+        Fail "$what 状态读取失败，无法点击：$($_.Exception.Message)"
+        return $false
+    }
+    try {
+        $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        return $true
+    } catch {
+        Fail "$what 点击失败：$($_.Exception.Message)"
+        return $false
+    }
+}
 function Ms([System.Diagnostics.Stopwatch]$sw) { return [math]::Round($sw.Elapsed.TotalMilliseconds) }
 
 # 向上找到元素的顶层 Window（用于确认设置窗口确实存在）
@@ -291,8 +328,25 @@ if ($null -eq $saveButton) {
     $win = Get-OwnerWindow $saveButton
     $title = if ($null -ne $win) { $win.Current.Name } else { '(未取到标题)' }
     Write-Output "[probe] 设置窗口出现 @ +${openMs}ms  title='$title'"
-    # 构造 + 显示应远快于 500ms；数据填充是异步的，不计入
-    if ($openMs -lt 500) { Ok "设置窗口打开耗时 ${openMs}ms < 500ms" } else { Fail "设置窗口打开耗时 ${openMs}ms >= 500ms" }
+    # 构造 + 显示应远快于阈值；数据填充是异步的，不计入
+    #
+    # ==== v0.2.2 第 4 批：阈值 500ms → 4000ms（总策划裁定一）====
+    # **这是修正错误阈值，不是放宽门禁。** 两者的区别：
+    #   * 「调绿」＝ 门禁抓到了真问题，为了把红灯变绿而放宽阈值；
+    #   * 「修阈值」＝ 门禁抓的**不是**真问题，阈值本身写错了。
+    # 本次属后者：实测设置窗口打开耗时**稳定在 ~2500ms**（连续多次复现，
+    # 此前记录见 records\v0.2.2-Avalonia功能对齐记录.md §十七.3），
+    # 是**常态、非偶发、非本轮引入的退化**；500ms 与实测常态差了一个数量级，
+    # 这个阈值从一开始就写错了。
+    # 取 4000ms（约实测常态 2500ms 的 1.6 倍）：留足余量吸收机器负载波动，
+    # 但真退化到 4 秒以上仍会红灯。**不取 3000ms** —— 那太贴实测值，慢机器上会假报警。
+    # 禁止以此为先例放宽其他阈值：其他门禁阈值若有同类错误，须单独报告、单独裁定。
+    $openThresholdMs = 4000
+    if ($openMs -lt $openThresholdMs) {
+        Ok "设置窗口打开耗时 ${openMs}ms < ${openThresholdMs}ms"
+    } else {
+        Fail "设置窗口打开耗时 ${openMs}ms >= ${openThresholdMs}ms"
+    }
     if ($null -eq $win -or $title -notlike '*设置*') { Fail "设置窗口标题异常：$title" }
 }
 
@@ -441,7 +495,14 @@ if ($null -ne $saveButton) {
                 } else {
                     Fail "档位胶囊的量化名丢了下划线（WPF 把 '_' 当访问键）：$($chip.Current.Name)"
                 }
-                Invoke-El $chip
+                # 胶囊显示「未下载」却**被禁用**，本身就是一条要报的缺陷 ——
+                # 用户点不动它，也就没有任何入口去下载这个档位（总策划裁定三即由此而来）。
+                # Invoke-El 会记一条 FAIL 并返回 $false（不再中断整轮，裁定二），
+                # 这里据此跳过"确认下载对话框"这一段 —— 没点下去就不该往下断言。
+                $clicked = Invoke-El $chip '「未下载」档位胶囊'
+                if (-not $clicked) {
+                    Write-Output '[probe] 提示：胶囊点不动，跳过"确认下载对话框"一段（已记 FAIL）'
+                } else {
                 # 等确认下载的对话框出现（要等一次联网取详情，给它 60 秒）
                 $dlg = $null
                 $swDl = [System.Diagnostics.Stopwatch]::StartNew()
@@ -477,6 +538,7 @@ if ($null -ne $saveButton) {
                         if ($b.Current.Name -match '^(否|No|取消|Cancel)') { Invoke-El $b; break }
                     }
                     Start-Sleep -Milliseconds 500
+                }
                 }
             }
         }

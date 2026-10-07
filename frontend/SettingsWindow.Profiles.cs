@@ -145,8 +145,17 @@ public partial class SettingsWindow
                     FontSize = 11,
                     Padding = new Thickness(10, 3, 10, 3),
                     Margin = new Thickness(0, 0, 6, 0),
-                    // 当前档不需要再点（点了也是空操作），但仍然显示出来让用户看清现状
-                    IsEnabled = !item.Current,
+                    // 当前档不需要再点（点了也是空操作），但仍然显示出来让用户看清现状。
+                    //
+                    // **v0.2.2 第 4 批（总策划裁定三）：判据从 `!item.Current` 改成
+                    // `!(Current && Installed)`。** 原因：后端的 `current` 曾经在
+                    // "config 指着某个模型、文件却不在磁盘上"时也是 true，于是这条
+                    // `!Current` 把一个**未下载**的档位禁用了 —— 显示"未下载 · ▶ 正在使用"
+                    // 且点不动，用户**没有任何入口去下载它**。
+                    // 后端已同步修正（`current` 现在要求文件真的存在），这里再兜一层：
+                    // 只要没装到本地，胶囊就必须可点（点了走下载分支）。
+                    // 两侧行为一致：Avalonia 的 ModelPage 用同一判据。
+                    IsEnabled = !(item.Current && item.Installed),
                 };
                 if (TryFindResource("RoundButton") is Style style)
                     chip.Style = style;

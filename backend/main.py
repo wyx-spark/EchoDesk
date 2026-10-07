@@ -1370,7 +1370,17 @@ class Backend:
                 # 参数量/量化都按文件名推断：**不加载模型**也能在设置页显示档位差异
                 "params": _profile_params_text(name),
                 "quantization": _profile_quant_text(name),
-                "current": bool(name) and name == current,
+                # `current` **必须同时要求文件真的在**（v0.2.2 第 4 批，总策划裁定三）。
+                #
+                # 原判据只有 `name == current`，于是"config 指着某个模型、但那个文件不在磁盘上"
+                # 时（全新安装、还没下载任何模型的机器就是这样），同一档会**同时**
+                # `current=true` 与 `installed=false` —— 界面按 `IsEnabled = !current` 把它禁用，
+                # 渲染出"未下载 · ▶ 正在使用"这种自相矛盾的标签，而且**堵死了下载入口**：
+                # 用户看到一个说自己"正在使用"的档位，却点不动它去下载。
+                #
+                # 两个状态本就互斥：文件都不在，就没有任何东西"正在使用"。
+                # `installed` 是事实，`current` 应当建立在它之上。
+                "current": bool(name) and name == current and exists,
             })
         return {"current": current, "models_dir": models_dir, "items": items}
 

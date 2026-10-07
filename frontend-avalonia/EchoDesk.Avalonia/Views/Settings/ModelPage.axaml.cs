@@ -1,4 +1,4 @@
-﻿// 模型页的交互逻辑（v0.2.1 跨平台-2 任务一，第 8 个迁移模块）。
+// 模型页的交互逻辑（v0.2.1 跨平台-2 任务一，第 8 个迁移模块）。
 //
 // 后端动作：
 //   model_profiles         → { current, items: [ { alias, name, repo, installed, current,
@@ -489,7 +489,16 @@ public partial class ModelPage : UserControl, ISettingsPage
         {
             Content = content,
             Padding = new Thickness(12, 4),
-            IsEnabled = !current,
+            // **v0.2.2 第 4 批（总策划裁定三）：判据从 `!current` 改成 `!(current && installed)`。**
+            //
+            // 这条缺陷 **Avalonia 原样复刻了 WPF**（两边都是 `IsEnabled = !current`），
+            // 所以裁定要求"两边一起修"。触发条件：config 指着某个模型、而模型文件不在磁盘上
+            // （全新安装就是这样）→ 后端曾同时给出 `current=true` 与 `installed=false` →
+            // 胶囊显示"未下载"却被禁用 → **用户点不动它去下载**。
+            //
+            // 后端已同步修正（`current` 现在要求文件真的存在），这里再兜一层：
+            // 只要没装到本地，胶囊就必须可点，点了走下载分支。
+            IsEnabled = !(current && installed),
         };
         // Avalonia 的控件**没有** `ToolTip` 属性（WPF 的 Control 有），提示是**附加属性**：
         // 在对象初始化器里写 `ToolTip = …` 会编译报 CS0117，必须用 `ToolTip.SetTip()`。
