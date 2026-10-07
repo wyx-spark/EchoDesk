@@ -10,8 +10,16 @@
     **模型市场（搜索 / 筛选 / 分页 / 详情 / 下载）本轮未迁移** —— 那是 WPF 侧
     908 行的一整块（含流式加载与本地查询分页），页面底部有明确说明与替代做法。
   -->
-  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-    <StackPanel Margin="16" Spacing="10">
+  <!--
+    版式与 WPF 版对齐（本轮补全模型市场时改的）：**上面两块自己滚动、模型市场不滚**。
+    为什么不把市场也塞进同一个 ScrollViewer：分页控件要求"固定在结果列表下方、不随列表滚动"
+    （任务三），整页滚动的话分页条会跟着跑出视野；WPF 版用的是同一个结构
+    （Row0 = Auto 的滚动区 + Row1 = * 的市场区）。
+  -->
+  <Grid RowDefinitions="Auto,*">
+    <ScrollViewer Grid.Row="0" MaxHeight="300"
+                  VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Margin="16,16,16,8" Spacing="10">
 
       <!-- ① 模型档位 -->
       <TextBlock x:Name="ProfileTitle" FontWeight="Bold" FontSize="14" />
@@ -19,11 +27,51 @@
       <StackPanel Orientation="Horizontal" Spacing="8">
         <Button x:Name="ProfileRefreshButton" Padding="10,3" FontSize="11"
                 AutomationProperties.AutomationId="ProfileRefreshButton" />
+        <Button x:Name="ProfileNewButton" Padding="10,3" FontSize="11"
+                AutomationProperties.AutomationId="ProfileNewButton" />
       </StackPanel>
       <WrapPanel x:Name="ModelProfileChips" ItemSpacing="6" LineSpacing="6"
                  AutomationProperties.AutomationId="ModelProfileChips" />
       <TextBlock x:Name="ProfileStatusText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
                  AutomationProperties.AutomationId="ProfileStatusText" />
+
+      <!-- 档位编辑器（v0.2.2 补全：WPF 侧有「新建/编辑/删除档位」，跨平台版此前只能读）。
+           紧凑一行式表单：点胶囊上的「编辑」把该档读进来，点「＋ 新建档位」清空表单。
+           刻意**不做**弹窗：Avalonia 侧没有对话框体系，就地编辑还能与胶囊同屏对照。 -->
+      <Border x:Name="ProfileEditorPanel" IsVisible="False" CornerRadius="6" Padding="10,8"
+              BorderThickness="1" BorderBrush="{DynamicResource CardBorderBrush}"
+              AutomationProperties.AutomationId="ProfileEditorPanel">
+        <StackPanel Spacing="4">
+          <TextBlock x:Name="ProfileEditorTitle" FontWeight="Bold" FontSize="12" />
+          <Grid ColumnDefinitions="120,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" >
+            <TextBlock x:Name="ProfileAliasLabel" Grid.Row="0" VerticalAlignment="Center" FontSize="11" />
+            <TextBox x:Name="ProfileAliasBox" Grid.Row="0" Grid.Column="1" Margin="0,2"
+                     AutomationProperties.AutomationId="ProfileAliasBox" />
+            <TextBlock x:Name="ProfilePathLabel" Grid.Row="1" VerticalAlignment="Center" FontSize="11" />
+            <TextBox x:Name="ProfilePathBox" Grid.Row="1" Grid.Column="1" Margin="0,2"
+                     AutomationProperties.AutomationId="ProfilePathBox" />
+            <TextBlock x:Name="ProfileRepoLabel" Grid.Row="2" VerticalAlignment="Center" FontSize="11" />
+            <TextBox x:Name="ProfileRepoBox" Grid.Row="2" Grid.Column="1" Margin="0,2"
+                     AutomationProperties.AutomationId="ProfileRepoBox" />
+            <TextBlock x:Name="ProfileContextLabel" Grid.Row="3" VerticalAlignment="Center" FontSize="11" />
+            <TextBox x:Name="ProfileContextBox" Grid.Row="3" Grid.Column="1" Margin="0,2"
+                     AutomationProperties.AutomationId="ProfileContextBox" />
+            <TextBlock x:Name="ProfileTempLabel" Grid.Row="4" VerticalAlignment="Center" FontSize="11" />
+            <TextBox x:Name="ProfileTempBox" Grid.Row="4" Grid.Column="1" Margin="0,2"
+                     AutomationProperties.AutomationId="ProfileTempBox" />
+          </Grid>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button x:Name="ProfileSaveButton" Padding="14,4" FontSize="11"
+                    AutomationProperties.AutomationId="ProfileSaveButton" />
+            <Button x:Name="ProfileDeleteButton" Padding="14,4" FontSize="11"
+                    AutomationProperties.AutomationId="ProfileDeleteButton" />
+            <Button x:Name="ProfileCancelButton" Padding="14,4" FontSize="11"
+                    AutomationProperties.AutomationId="ProfileCancelButton" />
+          </StackPanel>
+          <TextBlock x:Name="ProfileEditorStatus" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
+                     AutomationProperties.AutomationId="ProfileEditorStatus" />
+        </StackPanel>
+      </Border>
 
       <!-- ② 推理参数 -->
       <TextBlock x:Name="InferenceTitle" FontWeight="Bold" FontSize="14" Margin="0,10,0,0" />
@@ -76,10 +124,15 @@
       <TextBlock x:Name="InferenceStatusText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
                  AutomationProperties.AutomationId="InferenceStatusText" />
 
-      <!-- ③ 未迁移部分 -->
-      <TextBlock x:Name="MarketNotMigratedText" FontSize="11" TextWrapping="Wrap" Opacity="0.7"
-                 Margin="0,10,0,0" />
+      </StackPanel>
+    </ScrollViewer>
 
-    </StackPanel>
-  </ScrollViewer>
+    <!-- ③ 模型市场（任务二/三/四/五/六）：**整个区块由 ModelMarket.cs 构建**
+         （控件多、且要按数据动态重建分面），这里只留一个容器。
+         保留一段说明文本，便于在没有后端时也知道这一块是什么。 -->
+    <Grid x:Name="MarketHostGrid" Grid.Row="1" RowDefinitions="Auto,*">
+      <TextBlock x:Name="MarketNotMigratedText" Grid.Row="0" FontSize="11" TextWrapping="Wrap"
+                 Opacity="0.7" Margin="16,0,16,4" />
+    </Grid>
+  </Grid>
 </UserControl>

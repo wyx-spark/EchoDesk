@@ -1521,6 +1521,18 @@ public partial class MainWindow : Window
                     : Loc.T("main.agent.stepNoMax", "📍 第 {0} 步", stepIndex),
                 "MutedForegroundBrush");
         }
+        else if (phase == "thought")
+        {
+            // 任务十三（自测问题修复-1）：后端把这一步的思考内容分离出来后，随
+            // phase="thought" 事件发过来。WPF 版把这一行渲染出来，Avalonia 迁移时漏了
+            // —— 于是跨平台版上"Agent 的思考过程"仍然看不见（本轮逐项比对时发现）。
+            // 有思考就渲染成一行（截断到 200 字符，与 tool_result 的观察结果同一口径），
+            // 没有就什么都不打，避免每步都多出一行空的。
+            string reasoning = GetStringField(root, "reasoning");
+            if (reasoning.Trim().Length > 0)
+                AddAgentRow(Loc.T("main.agent.thought", "💭 {0}", OneLineText(reasoning, 200)),
+                    "MutedForegroundBrush");
+        }
         // phase == "answer"：模型已决定直接作答，答案马上出现在回答区，
         // 这里不再多打一行（步骤区只讲"用了什么工具"）
     }

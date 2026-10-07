@@ -1446,6 +1446,19 @@ public partial class MainWindow : Window
                                     : Loc.T("main.agent.stepNoMax", "📍 第 {0} 步", stepIndex),
                                 "SubTextBrush");
                         }
+                        else if (phase == "thought")
+                        {
+                            // 任务十三（自测问题修复-1）后端把每一步的思考内容分离出来后，
+                            // 随 phase="thought" 事件发过来 —— 但这里此前**没有渲染它**：
+                            // 于是"Agent 的思考过程"只在最终那条 done.reasoning 的折叠区里看得到，
+                            // 逐步的思考是**发了却没人画**（本轮逐项比对两个前端时发现的）。
+                            // 有思考才画一行，没有就不画，免得每步多一行空的。
+                            // 截断到 200 字符，与 tool_result 的观察结果同一口径。
+                            string thought = GetStringField(root, "reasoning");
+                            if (thought.Trim().Length > 0)
+                                AddAgentRow(Loc.T("main.agent.thought", "💭 {0}", OneLineText(thought, 200)),
+                                    "SubTextBrush");
+                        }
                         // phase == "answer"：模型已决定直接作答，答案马上就出现在回答区，
                         // 这里不再多打一行（步骤区只讲"用了什么工具"）
                         return;

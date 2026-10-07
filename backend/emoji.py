@@ -68,6 +68,9 @@ ASCII_MAP: Dict[str, str] = {
     "👋": "[hi]",
     "💡": "[idea]",
     "💬": "[chat]",
+    # 「思考」气泡：Agent 每一步的思考行用它（main.agent.thought）。
+    # 加进降级表是必须的：终端/字体不支持时会渲染成 '?'，而这行恰恰是用户要读的内容。
+    "💭": "[thought]",
     "📌": "[pin]",
     "📎": "[attach]",
     "📏": "[ruler]",

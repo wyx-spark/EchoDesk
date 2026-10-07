@@ -526,11 +526,32 @@ try {
         Write-Host "[SKIP] UI 探针 / 像素校验（-SkipGui）" -ForegroundColor Yellow
     }
     else {
-        # Avalonia 侧的门禁：**跨平台包**才用 Avalonia（见上面那条说明）。
-        # 本树是 WPF，所以这里不跑它；真正跑 Avalonia 探针的是打包三平台包时的流程
-        # （tools/pack_crossplatform.py 之后）。开发机上想单独验可以用：
-        #   powershell -File tools\ui_probe_avalonia.ps1              # 开发机构建
-        #   powershell -File tools\ui_probe_avalonia.ps1 -Mode agent  # 含真后端 + Agent 事件链路
+        # Avalonia 侧的门禁（本轮加回来，且**指向开发机构建而不是发布树**）。
+        #
+        # 为什么必须指向开发构建：本发布树里在 app\ 下的是 **WPF** 前端
+        # （dotnet publish frontend\EchoDesk.csproj），Avalonia 是**另一条交付线**
+        # （tools\pack_crossplatform.py 的三平台包，由 check_crossplatform_release.py 校验
+        # start.sh / app/EchoDesk）。两者都在本仓库里，不是二选一。
+        #
+        # 为什么必须有这一条：记录 §7.4 的"Avalonia 前端这套代码此前从未被真正跑起来过"
+        # 就是因为**没有任何门禁会去构造窗口** —— 而 GUI 缺陷全都是"一构造/一显示就死"。
+        # 没有构建产物时跳过而不是失败：本机器的发布验证不该因为"没编过跨平台前端"而红。
+        Invoke-Check "Avalonia 界面探针（跨平台前端：窗口 + 模型市场整条交互）" {
+            $avExe = Join-Path $Root "frontend-avalonia\EchoDesk.Avalonia\bin\Debug\net10.0\EchoDesk.exe"
+            if (-not (Test-Path $avExe)) {
+                Write-Host "    [跳过] 没有跨平台前端的 Debug 构建：先 dotnet build frontend-avalonia\EchoDesk.Avalonia" -ForegroundColor Yellow
+                return "跳过（未构建）"
+            }
+            Invoke-Native "ui-probe-avalonia" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
+                                                             "-File", "tools\ui_probe_avalonia.ps1",
+                                                             "-Exe", $avExe, "-Mode", "both")
+            # market 模式要真后端 + 一次远端搜索，单独给它更长的超时
+            Invoke-Native "ui-probe-avalonia-market" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
+                                                                    "-File", "tools\ui_probe_avalonia.ps1",
+                                                                    "-Exe", $avExe, "-Mode", "market",
+                                                                    "-TimeoutSec", "300")
+            "通过"
+        }
         Invoke-Check "UI 探针（窗口/页签/字段帮助/思考区）" {
             <#
                 发布物**不含模型**（本版安装程序与便携目录都不带 .gguf，见 tools\installer.iss

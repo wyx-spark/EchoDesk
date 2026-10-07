@@ -13,6 +13,21 @@ public sealed class AppState
     /// <summary>后端服务（全进程唯一）。</summary>
     public BackendService Backend { get; } = new();
 
+    /// <summary>
+    /// 探针专用：临时把界面用的后端连接换成**探针自己持有的那一条**。
+    ///
+    /// 为什么需要它：stdout 是**单条共享流**，一个 <see cref="BackendService"/> 只应有
+    /// 一个读泵；界面（主窗口 / 设置页）与探针同时等 ready 握手时，先读到行的会把它取走，
+    /// 另一方永远等不到（实测现象："后端未完成启动即退出"，stderr 里能看到两个 python 进程）。
+    /// 探针自持连接并把界面指过来，两边就用同一条连接、同一个读泵，问题从根上消失。
+    ///
+    /// **只在探针里赋值**（Probe.cs），正常运行时保持 null，行为与以前完全一致。
+    /// </summary>
+    public BackendService? ProbeBackendOverride { get; set; }
+
+    /// <summary>界面各处应当使用的后端连接（探针优先用自己的那条）。</summary>
+    public BackendService ActiveBackend => ProbeBackendOverride ?? Backend;
+
     /// <summary>界面设置（语言/主题/字号/emoji）。</summary>
     public AppSettings Settings { get; private set; } = new();
 

@@ -65,11 +65,28 @@
       "profileApply": "Switch",
       "profileDownload": "Download",
       "profileNotDownloaded": "Not downloaded",
+      "profileEdit": "Edit",
       "profileContext": "{0} context",
       "profileHint": "In use: {0}　·　Click a chip to switch (hot-loaded, no restart); a chip that is not downloaded yet downloads first.",
       "profileApplied": "✅ Switched to {0}",
       "profileDownloadStarted": "⬇ Download of {0} started (watch progress in the model market)",
       "marketNotMigrated": "⏳ The model market (search, quantisation filters, paging, details, download progress) has not been migrated to the cross-platform frontend yet. Workaround: drop .gguf files into app/backend/models/ and click “Refresh profiles”; on Windows you can also download from the market with the WPF settings page.",
+      "hubIdle": "Type a keyword to search, or just click Search to browse popular GGUF models",
+      "backendUnavailable": "⚠️ The backend is not running: the model market is unavailable.",
+      "sourceLabel": "Source",
+      "actionSaveToken": "Save token",
+      "actionModelsDir": "Models folder",
+      "placeholder": "Search models (leave empty to browse popular GGUF)",
+      "filterPlaceholder": "Filter the loaded results",
+      "detailTitle": "🧩 Available files in {0}",
+      "detailLoading": "Reading the file list…",
+      "detailEmpty": "No usable GGUF file in this repository",
+      "detailFailedReason": "❌ Could not read the file list: {0}",
+      "detailFailed": "❌ Could not read the file list",
+      "downloadStarting": "⏳ Downloading {0}…",
+      "downloadDone": "✅ Download finished: {0}",
+      "stopSent": "⏹ Stop request sent",
+      "queryNoReply": "❌ The local filter got no reply (the backend may be busy)",
       "profileTipCurrent": "This tier is in use",
       "profileTipSwitch": "Click to switch to this tier (hot-loaded, no restart)",
       "profileTipDownload": "Click to download this tier from its repository",
@@ -267,6 +284,13 @@
       "editorNew": "New model tier",
       "editorEdit": "Edit tier “{0}”",
       "alias": "Alias",
+      "deleteConfirmShort": "Confirm delete?",
+      "deleteNeedEdit": "⚠️ Pick a profile first (click “Edit” next to a chip) before deleting.",
+      "deleted": "🗑️ Profile deleted (the model file on disk is untouched)",
+      "editTitle": "Edit model profile: {0}",
+      "unknownError": "unknown reason",
+      "new": "＋ New profile",
+      "newTitle": "New model profile",
       "aliasHint": "Tier name (≤32 chars, no \\ / : etc.); changing it renames the tier",
       "path": "Model file",
       "pathHint": "File name inside the models folder (e.g. qwen2.5-1.7b-q4_k_m.gguf), or an absolute path; leave empty to keep it",
@@ -430,6 +454,7 @@
       "detail": "Details",
       "searchTip": "Search skills (leave empty to browse all)",
       "installConfirmShort": "Confirm install?",
+      "confirmInstallShort": "Confirm install?",
       "uninstallConfirmShort": "Confirm uninstall?"
     },
     "automation": {
@@ -622,7 +647,8 @@
       "publishLine": "{0}: {1}",
       "loadedCount": "{0} plugins loaded",
       "uninstall": "Uninstall",
-      "uninstallConfirmShort": "Confirm uninstall?"
+      "uninstallConfirmShort": "Confirm uninstall?",
+      "confirmInstallShort": "Confirm install?"
     },
     "loadState": {
       "reading": "Reading the configuration…",
@@ -630,7 +656,10 @@
       "backendBusy": "⏳ {0}: the backend is busy (wait {1}, up to {2} s)…",
       "timeout": "⚠️ {0} timed out: {1}",
       "incomplete": "⚠️ {0} did not finish (the backend stayed busy). The window still works; click “Save settings” later to retry.",
-      "parseFailed": "⚠️ Failed to parse the automation configuration: {0}"
+      "parseFailed": "⚠️ Failed to parse the automation configuration: {0}",
+      "saved": "✅ Settings saved",
+      "saveFailed": "⚠️ Settings could not be written (read-only folder?)",
+      "backendSyncFailed": "⚠️ Some settings could not be synced to the backend: {0}"
     }
   }
 }

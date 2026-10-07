@@ -121,8 +121,19 @@ public partial class SettingsWindow : Window, ISettingsHost
         return false;
     }
 
-    private void RegisterPage(ISettingsPage page)
+    /// <summary>
+    /// 按类型找已注册的设置页（**探针用**：`EchoDesk --probe market` 要拿到
+    /// <c>ModelPage</c> 才能驱动模型市场那一套交互）。找不到返回 null，不抛。
+    /// </summary>
+    public T? FindPage<T>() where T : class
     {
+        foreach (ISettingsPage page in _pages)
+            if (page is T typed)
+                return typed;
+        return null;
+    }
+
+    private void RegisterPage(ISettingsPage page)    {
         page.Attach(this);
         page.ApplyTexts();
         var item = new TabItem

@@ -61,7 +61,8 @@
     },
     "command": {
       "move": "转移到命令输入框",
-      "completed": "已补全为 {0}，确认无误后再按 Enter 执行"
+      "completed": "已补全为 {0}，确认无误后再按 Enter 执行",
+      "confirmDestructive": "⚠️ {0} 会改变现有状态：再按一次 Enter 确认执行"
     },
     "upload": {
       "chooseTitle": "选择要上传的文件",
@@ -83,6 +84,10 @@
     "strip": {
       "searchOnTip": "联网搜索已开启：提问前会先搜索网络参考信息。点击关闭",
       "searchOffTip": "联网搜索已关闭。点击开启（/search on）",
+      "autoReady": "已启用",
+      "autoRunning": "运行中",
+      "marketConnected": "🌐 市场：已启用",
+      "context": "📊 上下文 {0}%",
       "kvValueTip": "KV Cache 估算约 {0}（fp16，随上下文窗口线性增长）\n点击打开「设置 → 模型」",
       "autoRunningTip": "自动化正在运行（浏览器已打开）。点击打开「设置 → 自动化」查看日志或停止",
       "autoIdleTip": "自动化已启用，当前空闲。点击打开「设置 → 自动化」",
@@ -138,7 +143,8 @@
       "added": "✅ 已新增常用语「{0}」",
       "exists": "❌ 常用语「{0}」已存在（可先 remove 再添加）",
       "removed": "🗑️ 已删除常用语「{0}」",
-      "notFound": "❌ 未找到常用语「{0}」"
+      "notFound": "❌ 未找到常用语「{0}」",
+      "inserted": "已填入常用语「{0}」，可直接编辑后发送"
     },
     "reasoning": {
       "title": "🧠 思考过程",
@@ -151,6 +157,7 @@
       "tip": "模型自己决定的每一步：调用哪个工具、参数是什么、返回了什么、耗时多久。按 Esc 可随时停止。",
       "step": "📍 第 {0}/{1} 步",
       "stepNoMax": "📍 第 {0} 步",
+      "thought": "💭 {0}",
       "call": "🔧 调用 {0}",
       "args": "参数 {0}",
       "why": "· 理由：{0}",
@@ -237,7 +244,8 @@
       "exitedDuringDownload": "后端在下载模型期间退出。",
       "idleTimeout": "后端在 {0:0.#} 分钟内没有响应，已中断等待。可稍后重试，或查看 app\\backend\\backend_crash.log。",
       "modelMissingDetail": "本地缺少模型 {0}",
-      "notReady": "❌ 后端没有就绪：{0}"
+      "notReady": "❌ 后端没有就绪：{0}",
+      "settingsFailed": "⚠️ 无法打开设置窗口：{0}"
     },
     "toast": {
       "copiedCount": "✅ {0}（{1} 字符）"

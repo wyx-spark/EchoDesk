@@ -52,6 +52,15 @@ public partial class ModelPage : UserControl, ISettingsPage
         BuildOptions();
 
         ProfileRefreshButton.Click += async (_, _) => await LoadProfilesAsync();
+        ProfileNewButton.Click += (_, _) => OpenProfileEditor(null);
+        ProfileSaveButton.Click += async (_, _) => await SaveProfileAsync();
+        ProfileDeleteButton.Click += async (_, _) => await DeleteProfileAsync();
+        ProfileCancelButton.Click += (_, _) =>
+        {
+            _profileDeletePending = false;
+            _profileEditingAlias = "";
+            ProfileEditorPanel.IsVisible = false;
+        };
         InferenceSaveButton.Click += async (_, _) => await SaveInferenceAsync();
         InferenceReloadButton.Click += async (_, _) => await LoadInferenceAsync();
         InferenceResetButton.Click += async (_, _) =>
@@ -151,13 +160,18 @@ public partial class ModelPage : UserControl, ISettingsPage
     {
         if (_host is null)
             return null;
-        return await _host.State.Backend.SendAsync(request, idleTimeout: idle ?? TimeSpan.FromSeconds(60));
+        // ActiveBackend：运行时就是 App.State.Backend；探针模式下是探针自己那条连接
+        // （见 AppState.ProbeBackendOverride 的说明）。
+        return await _host.State.ActiveBackend.SendAsync(request, idleTimeout: idle ?? TimeSpan.FromSeconds(60));
     }
 
     public async Task RefreshAsync()
     {
         await LoadProfilesAsync();
         await LoadInferenceAsync();
+        // 模型市场只刷新"已有的那一页"，**不自动搜索**（与 WPF 版一致：
+        // 打开设置页不该凭空打一次远端请求，那是用户点「搜索」才做的事）
+        await Market.RefreshAsync();
     }
 
     // -----------------------------------------------------------------
@@ -241,7 +255,203 @@ public partial class ModelPage : UserControl, ISettingsPage
             else
                 await DownloadProfileAsync(alias, repo, sizeText, caption);
         };
-        return chip;
+
+        // 「编辑」按钮：把这一档读进编辑器（v0.2.2 补全，对齐 WPF 的档位编辑器）
+        var edit = new Button
+        {
+            Content = Loc.T("settings.model.profileEdit", "编辑"),
+            Padding = new Thickness(8, 2),
+            FontSize = 10,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        edit.Click += (_, _) => OpenProfileEditor(profile);
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        row.Children.Add(chip);
+        row.Children.Add(edit);
+        return row;
+    }
+
+    // -----------------------------------------------------------------
+    // 档位编辑器（新建 / 编辑 / 删除；对齐 WPF 的 SettingsWindow.Profiles.cs）
+    // -----------------------------------------------------------------
+
+    /// <summary>当前正在编辑的档位别名（空 = 新建）。改名时作为 rename_from 发给后端。</summary>
+    private string _profileEditingAlias = "";
+    private bool _profileDeletePending;
+
+    private void OpenProfileEditor(JsonElement? profile)
+    {
+        ProfileEditorPanel.IsVisible = true;
+        _profileDeletePending = false;
+        ProfileDeleteButton.Content = Loc.T("settings.profile.delete", "删除");
+        ProfileEditorStatus.Text = "";
+        if (profile is JsonElement item)
+        {
+            _profileEditingAlias = GetString(item, "alias");
+            ProfileAliasBox.Text = _profileEditingAlias;
+            ProfilePathBox.Text = GetString(item, "path");
+            ProfileRepoBox.Text = GetString(item, "repo");
+            ProfileContextBox.Text = NumberText(item, "context_length");
+            ProfileTempBox.Text = NumberText(item, "temperature");
+            ProfileEditorTitle.Text = Loc.T("settings.profile.editTitle", "编辑模型档位：{0}",
+                _profileEditingAlias);
+        }
+        else
+        {
+            _profileEditingAlias = "";
+            ProfileAliasBox.Text = "";
+            ProfilePathBox.Text = "";
+            ProfileRepoBox.Text = "";
+            ProfileContextBox.Text = "";
+            ProfileTempBox.Text = "";
+            ProfileEditorTitle.Text = Loc.T("settings.profile.newTitle", "新建模型档位");
+        }
+        ProfileEditorPanel.IsVisible = true;
+    }
+
+    private async Task SaveProfileAsync()
+    {
+        string alias = ProfileAliasBox.Text?.Trim() ?? "";
+        if (alias.Length == 0)
+        {
+            ProfileEditorStatus.Text = Loc.T("settings.profile.aliasRequired", "⚠️ 别名不能为空");
+            return;
+        }
+        // 温度是界面上唯一"明知合法范围"的字段（0–1.5），先在客户端挡一道；
+        // 其余（上下文上限、别名长度、路径合法性）**一律不在这里夹紧** ——
+        // 把原值发给后端、显示后端返回的 ❌ 文案（接口夹紧=骗人，后端 main.py 的
+        // 同名注释写过这条教训，前端不重复第二套规则）。
+        string tempText = ProfileTempBox.Text?.Trim() ?? "";
+        if (tempText.Length > 0)
+        {
+            if (!double.TryParse(tempText, System.Globalization.NumberStyles.Float,
+                                 System.Globalization.CultureInfo.InvariantCulture, out double temp))
+            {
+                ProfileEditorStatus.Text = Loc.T("settings.profile.tempInvalid",
+                    "⚠️ 温度需要是数字（{0}–{1}）", 0, 1.5);
+                return;
+            }
+            if (temp < 0.0 || temp > 1.5)
+            {
+                ProfileEditorStatus.Text = Loc.T("settings.profile.tempRange",
+                    "⚠️ 温度需要在 {0}–{1} 之间", 0, 1.5);
+                return;
+            }
+        }
+
+        var patch = new Dictionary<string, object?> { ["action"] = "model_profile_save", ["alias"] = alias };
+        // 只发**填了内容**的字段：后端把空字符串当成"删掉这一项"，
+        // 而界面上空输入框更可能是"我没动它" —— 少发一个键 = 不覆盖已有值。
+        AddProfileField(patch, "path", ProfilePathBox);
+        AddProfileField(patch, "repo", ProfileRepoBox);
+        AddProfileField(patch, "context_length", ProfileContextBox);
+        AddProfileField(patch, "temperature", ProfileTempBox);
+        if (_profileEditingAlias.Length > 0
+            && !string.Equals(_profileEditingAlias, alias, StringComparison.Ordinal))
+            patch["rename_from"] = _profileEditingAlias;
+
+        ProfileEditorStatus.Text = Loc.T("settings.profile.saving", "正在保存档位…");
+        using JsonDocument? doc = await SendAsync(patch, TimeSpan.FromSeconds(60));
+        if (doc is null)
+        {
+            ProfileEditorStatus.Text = Loc.T("settings.profile.saveFailed",
+                "❌ 保存失败：{0}", "后端未响应");
+            return;
+        }
+        ApplyProfileWriteResult(doc.RootElement);
+        await LoadProfilesAsync();
+    }
+
+    private static void AddProfileField(Dictionary<string, object?> patch, string field, TextBox box)
+    {
+        string text = box.Text?.Trim() ?? "";
+        if (text.Length > 0)
+            patch[field] = text;
+    }
+
+    /// <summary>
+    /// 把响应里的一个数值字段读成文本（用于填输入框）。
+    /// 不能直接用 GetString：`context_length` / `temperature` 在 JSON 里是**数字**，
+    /// GetString 只认字符串，会返回空串 —— 表现是"编辑某档时这两个框是空的"，
+    /// 用户一保存就把已有值清掉了（比不显示更糟）。
+    /// </summary>
+    private static string NumberText(JsonElement item, string name)
+    {
+        if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty(name, out JsonElement el))
+            return "";
+        return el.ValueKind switch
+        {
+            JsonValueKind.Number => el.GetRawText(),
+            JsonValueKind.String => el.GetString() ?? "",
+            _ => "",
+        };
+    }
+
+    private void ApplyProfileWriteResult(JsonElement root)
+    {
+        string content = GetString(root, "content");
+        if (content.Length > 0)
+        {
+            ProfileEditorStatus.Text = content;
+            return;
+        }
+        // 后端把成功/失败都放在 model_profile_save 里：成功给 content，失败给 error
+        if (root.TryGetProperty("model_profile_save", out JsonElement saved))
+        {
+            bool ok = GetBool(saved, "ok");
+            string error = GetString(saved, "error");
+            ProfileEditorStatus.Text = ok
+                ? Loc.T("settings.profile.saved", "✅ 档位已保存")
+                : (error.Length > 0
+                    ? error
+                    : Loc.T("settings.profile.saveFailed", "❌ 保存失败：{0}",
+                        Loc.T("settings.profile.unknownError", "未知原因")));
+            return;
+        }
+        ProfileEditorStatus.Text = Loc.T("settings.profile.saveFailed", "❌ 保存失败：{0}",
+            Loc.T("settings.profile.unknownError", "未知原因"));
+    }
+
+    /// <summary>
+    /// 删除档位登记（**不删磁盘上的模型文件**）。
+    /// 就地二次确认（与技能市场同一套做法）：第一次点变「确认删除？」，再点一次才执行。
+    /// 确认文案里必须写明"只删登记、不删文件" —— 那是用户最容易误解的一点。
+    /// </summary>
+    private async Task DeleteProfileAsync()
+    {
+        if (_profileEditingAlias.Length == 0)
+        {
+            ProfileEditorStatus.Text = Loc.T("settings.profile.deleteNeedEdit",
+                "⚠️ 请先在上面选一个档位（点胶囊旁的「编辑」）再删除。");
+            return;
+        }
+        if (!_profileDeletePending)
+        {
+            _profileDeletePending = true;
+            ProfileDeleteButton.Content = Loc.T("settings.profile.deleteConfirmShort", "确认删除？");
+            ProfileEditorStatus.Text = Loc.T("settings.profile.deleteConfirmText",
+                "确定删除档位「{0}」吗？\n\n只删除 config.json 里的这条登记，不会删除磁盘上的模型文件；"
+                + "之后仍可用「＋ 新建档位」把它登记回来。", _profileEditingAlias);
+            return;
+        }
+        _profileDeletePending = false;
+        ProfileDeleteButton.Content = Loc.T("settings.profile.delete", "删除");
+        ProfileEditorStatus.Text = Loc.T("settings.profile.deleting", "正在删除档位…");
+        using JsonDocument? doc = await SendAsync(
+            new { action = "model_profile_delete", alias = _profileEditingAlias }, TimeSpan.FromSeconds(60));
+        if (doc is null)
+        {
+            ProfileEditorStatus.Text = Loc.T("settings.profile.deleteFailed",
+                "❌ 删除失败：{0}", "后端未响应");
+            return;
+        }
+        string content = GetString(doc.RootElement, "content");
+        ProfileEditorStatus.Text = content.Length > 0
+            ? content
+            : Loc.T("settings.profile.deleted", "🗑️ 档位已删除（磁盘文件保持不动）");
+        _profileEditingAlias = "";
+        ProfileEditorPanel.IsVisible = false;
+        await LoadProfilesAsync();
     }
 
     private async Task ApplyProfileAsync(string alias, string caption)
@@ -400,6 +610,15 @@ public partial class ModelPage : UserControl, ISettingsPage
         ProfileHintText.Text = Loc.T("settings.model.profileHint",
             "点胶囊即可切换（热加载，无需重启）；未下载的档位点一下会先下载。");
         ProfileRefreshButton.Content = Loc.T("settings.model.actionRefreshProfiles", "刷新档位");
+        ProfileNewButton.Content = Loc.T("settings.profile.new", "＋ 新建档位");
+        ProfileAliasLabel.Text = Loc.T("settings.profile.alias", "别名");
+        ProfilePathLabel.Text = Loc.T("settings.profile.path", "文件名");
+        ProfileRepoLabel.Text = Loc.T("settings.profile.repo", "仓库");
+        ProfileContextLabel.Text = Loc.T("settings.profile.context", "上下文长度");
+        ProfileTempLabel.Text = Loc.T("settings.profile.temperature", "温度");
+        ProfileSaveButton.Content = Loc.T("settings.profile.save", "保存档位");
+        ProfileDeleteButton.Content = Loc.T("settings.profile.delete", "删除");
+        ProfileCancelButton.Content = Loc.T("settings.button.close", "关闭");
 
         InferenceTitle.Text = Loc.T("settings.inference.title", "推理参数");
         TempLabel.Text = Loc.T("settings.inference.temp", "温度");
@@ -414,10 +633,7 @@ public partial class ModelPage : UserControl, ISettingsPage
         InferenceReloadButton.Content = Loc.T("settings.inference.reload", "🔄 重新读取");
         InferenceResetButton.Content = Loc.T("settings.inference.reset", "恢复默认");
 
-        MarketNotMigratedText.Text = Loc.T("settings.model.marketNotMigrated",
-            "⏳ 「模型市场」（搜索、量化筛选、分页、详情、下载进度）还没有迁移到跨平台前端。"
-            + "替代做法：把 .gguf 文件放进 app/backend/models/ 后点「刷新档位」；"
-            + "在 Windows 上也可以用 WPF 版设置页从市场下载。");
+        MarketNotMigratedText.Text = "";
 
         // 下拉项文案是委托，重建后按值选回。
         string? preset = (PresetCombo.SelectedItem as Option)?.Value;
@@ -426,5 +642,66 @@ public partial class ModelPage : UserControl, ISettingsPage
         Select(PresetCombo, preset);
         Select(ContextModeCombo, mode);
         RefreshSliderLabels();
+        Market.ApplyTexts();
+    }
+
+    // -----------------------------------------------------------------
+    // ③ 模型市场（本轮补全，v0.2.2）
+    // -----------------------------------------------------------------
+
+    // -----------------------------------------------------------------
+    // 探针接口（`EchoDesk --probe market` 用：无人值守验整条市场交互）
+    // -----------------------------------------------------------------
+
+    /// <summary>市场区块的可观测状态快照（见 ModelMarketSection.Snapshot）。</summary>
+    public ModelMarketSection.MarketState MarketSnapshot() => Market.Snapshot();
+
+    public Task ProbeMarketSearchAsync() => Market.ProbeSearchAsync();
+    public Task ProbeMarketFilterAsync(string keyword) => Market.ProbeFilterAsync(keyword);
+    public Task ProbeMarketToggleFacetAsync(int index) => Market.ProbeToggleFacetAsync(index);
+    public Task ProbeMarketGoToPageAsync(int page) => Market.ProbeGoToPageAsync(page);
+    public Task ProbeMarketSetPageSizeAsync(int size) => Market.ProbeSetPageSizeAsync(size);
+    public Task ProbeMarketResetAsync() => Market.ProbeResetFiltersAsync();
+    public Task ProbeMarketOpenPinnedDetailAsync() => Market.ProbeOpenPinnedDetailAsync();
+
+    /// <summary>市场区块（控件多，单独一个 UserControl；由这里负责"谁来发请求"）。</summary>
+    private ModelMarketSection? _market;
+
+    private ModelMarketSection Market => _market ??= CreateMarket();
+
+    private ModelMarketSection CreateMarket()
+    {
+        var section = new ModelMarketSection();
+        // 把"怎么发请求"交给这一页（页面已经持有后端连接），市场本身不碰 AppState 之外的全局
+        section.Attach(new MarketHost(this));
+        MarketHostGrid.Children.Add(section);
+        Grid.SetRow(section, 1);
+        return section;
+    }
+
+    /// <summary>市场区块与页面之间的桥：只暴露它真正需要的三件事。</summary>
+    private sealed class MarketHost : IModelMarketHost
+    {
+        private readonly ModelPage _page;
+        public MarketHost(ModelPage page) => _page = page;
+
+        public bool BackendAvailable => _page._host?.State.ActiveBackend.IsRunning == true;
+
+        public async Task<JsonDocument?> SendAsync(object request, TimeSpan? idleTimeout = null)
+            => await _page.SendAsync(request, idleTimeout);
+
+        public async Task SendStreamAsync(object request, Action<string, JsonElement> onEvent,
+                                          TimeSpan? idleTimeout = null)
+        {
+            if (_page._host is null)
+                return;
+            await _page._host.State.ActiveBackend.SendStreamAsync(
+                request,
+                onDelta: _ => { },
+                onContext: (_, _) => { },
+                idleTimeout: idleTimeout,
+                onEvent: onEvent,
+                onDeltaChannel: (_, _, _) => { });
+        }
     }
 }

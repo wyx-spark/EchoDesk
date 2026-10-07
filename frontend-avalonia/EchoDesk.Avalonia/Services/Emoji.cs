@@ -62,6 +62,7 @@ public static class Emoji
         ["👋"] = "[hi]",
         ["💡"] = "[idea]",
         ["💬"] = "[chat]",
+        ["💭"] = "[thought]",
         ["📌"] = "[pin]",
         ["📎"] = "[attach]",
         ["📏"] = "[ruler]",

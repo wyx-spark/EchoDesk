@@ -52,6 +52,12 @@ snippets.json
 # 它是**运行时产物**，且正文随时可由原文件重新解析；内容含用户文档原文，绝不入库。
 # It is a runtime artifact whose text can always be re-parsed from the originals, and it holds user document text, so it must never be committed.
 file_cache/
+# 模型市场的**远端响应缓存**（cache/model_hub/<repo>.json，单个可达数 MB）。
+# 纯运行时产物、可随时重新拉取，绝不入库；不加这条则跑一次模型市场门禁就会在
+# 仓库根留下一个未跟踪的大文件（实测踩到：跑 `--probe market` 之后出现 ?? cache/）。
+# The model-market response cache (cache/model_hub/<repo>.json, several MB each).
+# Purely a runtime artifact that can always be re-fetched, so it must never be committed.
+cache/
 backend_crash.log
 # 前端崩溃日志（v0.2.0 修复一：全局异常兜底会写这个文件）
 # Front end crash log (v0.2.0 fix one: the global exception fallback writes this file)

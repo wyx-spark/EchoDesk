@@ -99,6 +99,51 @@ uncaught exceptions from `tools/` scripts, which previously made real backend cr
 A duplicate definition of `load_file_into_context` was removed — the old single-file version was
 silently overriding the newer multi-file one.
 
+### The cross-platform front end now matches the Windows one
+
+The follow-up round on the same task specification, on the maintainer's instruction to bring the
+Avalonia front end up to feature parity with the WPF one. The full record — what was already in
+place, what was genuinely missing, the three real defects the probe found, and what is still
+outstanding — is `records/v0.2.2-Avalonia功能对齐记录.md` (internal, **not shipped with releases**).
+
+**The model market is there now.** It was the one whole feature the cross-platform front end did
+not have: search with live progress, the local filter panel (keyword plus facets for parameter
+count, quantization and last-updated, with counts), four sort orders, the full pager (first /
+previous / next / last / jump-to-page / page size), the pinned default-model row, repository
+details and per-file downloads with progress. All of it runs on the **same backend actions as the
+WPF front end, unchanged** — `model_hub_load` (streaming, with `no_page` so the first page is
+computed in exactly one place), `model_hub_query` (in-process filtering, sorting and paging — no
+network round trip per keystroke), `model_hub_detail` and `model_hub_download`. Control names and
+automation ids match the WPF ones deliberately, so one probe drives both front ends.
+
+**Two features were added to both front ends, not just ported.** `backend/agent.py` already
+emitted a `phase="thought"` event carrying each step's separated reasoning, but *neither* front end
+rendered it — the per-step reasoning was being sent and silently dropped. Both now show it. And
+the model-profile editor (create, rename, edit context length/temperature, delete) existed only in
+the WPF settings window, so on the cross-platform build adding a profile meant editing
+`config.json` by hand even though `model_profile_save` / `model_profile_delete` were already
+implemented; the cross-platform page now has the same editor, with the same rule that only filled-in
+fields are sent (an empty box means "I did not touch this", not "delete it").
+
+**A JSON number-format bug that only System.Text.Json exposes.** `JsonElement.GetInt32()` throws
+`FormatException` on a fractional value such as `recommend_basis.ram_gb`, where JSON.NET (used by
+the WPF front end) silently truncates. One such field made the market's status line fail to render,
+reporting "local filtering failed" instead — and because the exception ran inside the
+language-change UI callback, switching language broke with it. Numbers are now read as doubles and
+rounded.
+
+**Every language key the cross-platform front end asks for now exists.** The front end calls
+`Loc.T("key", "中文兜底")`, so a key that is missing from the language pack does not fail — it
+quietly falls back to Chinese and the English UI shows Chinese. `tools/check_lang.py` checks the
+opposite direction and cannot see this. A reverse audit (`artifacts/_audit_avalonia_keys.py`) found
+12 such keys and they are all filled in, in both languages.
+
+**New gate: `EchoDesk --probe market`.** It starts a real backend, walks the whole market
+interaction (search → paging → page size → local filter → reset → facets → pinned-row details →
+language switch) and asserts the market's own state snapshot, so "does filtering actually narrow
+the results" is a number rather than an impression. It is wired into `verify_release.ps1`'s GUI
+section, pointed at the developer build, alongside the existing window probe.
+
 ### Settings window, agent steps, context figure, and the gates that had gone blind
 
 A follow-up round on the same task specification, plus the items the previous round left open.

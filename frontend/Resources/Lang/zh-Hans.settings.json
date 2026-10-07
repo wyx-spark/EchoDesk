@@ -65,11 +65,28 @@
       "profileApply": "切换",
       "profileDownload": "下载",
       "profileNotDownloaded": "未下载",
+      "profileEdit": "编辑",
       "profileContext": "{0} 上下文",
       "profileHint": "当前使用：{0}　·　点胶囊即可切换（热加载，无需重启）；未下载的档位点一下会先下载。",
       "profileApplied": "✅ 已切换到 {0}",
       "profileDownloadStarted": "⬇ 已开始下载 {0}（可在「模型市场」观察进度）",
       "marketNotMigrated": "⏳ 「模型市场」（搜索、量化筛选、分页、详情、下载进度）还没有迁移到跨平台前端。替代做法：把 .gguf 文件放进 app/backend/models/ 后点「刷新档位」；在 Windows 上也可以用 WPF 版设置页从市场下载。",
+      "hubIdle": "输入关键词搜索，或直接点「搜索」浏览热门 GGUF 模型",
+      "backendUnavailable": "⚠️ 后端未启动：模型市场暂不可用。",
+      "sourceLabel": "数据源",
+      "actionSaveToken": "保存 Token",
+      "actionModelsDir": "模型目录",
+      "placeholder": "搜索模型（留空浏览热门 GGUF）",
+      "filterPlaceholder": "在已加载的结果里筛选",
+      "detailTitle": "🧩 {0} 的可用文件",
+      "detailLoading": "正在读取文件列表…",
+      "detailEmpty": "该仓库里没有可用的 GGUF 文件",
+      "detailFailedReason": "❌ 读取文件列表失败：{0}",
+      "detailFailed": "❌ 读取文件列表失败",
+      "downloadStarting": "⏳ 正在下载 {0}…",
+      "downloadDone": "✅ 下载完成：{0}",
+      "stopSent": "⏹ 已发送停止请求",
+      "queryNoReply": "❌ 本地筛选没有响应（后端可能正忙）",
       "profileTipCurrent": "当前正在使用这一档",
       "profileTipSwitch": "点一下切换到这一档（热加载，无需重启）",
       "profileTipDownload": "点一下从仓库下载这一档",
@@ -267,6 +284,13 @@
       "editorNew": "新建档位",
       "editorEdit": "编辑档位「{0}」",
       "alias": "别名",
+      "deleteConfirmShort": "确认删除？",
+      "deleteNeedEdit": "⚠️ 请先在上面选一个档位（点胶囊旁的「编辑」）再删除。",
+      "deleted": "🗑️ 档位已删除（磁盘文件保持不动）",
+      "editTitle": "编辑模型档位：{0}",
+      "unknownError": "未知原因",
+      "new": "＋ 新建档位",
+      "newTitle": "新建模型档位",
       "aliasHint": "档位名（≤32 字符，不能含 \\ / : 等字符）；改名即重命名这一档",
       "path": "模型文件名",
       "pathHint": "models 目录下的文件名（如 qwen2.5-1.7b-q4_k_m.gguf），也可填绝对路径；留空不改动",
@@ -430,6 +454,7 @@
       "detail": "详情",
       "searchTip": "搜索技能（留空浏览全部）",
       "installConfirmShort": "确认安装？",
+      "confirmInstallShort": "确认安装？",
       "uninstallConfirmShort": "确认卸载？"
     },
     "automation": {
@@ -622,7 +647,8 @@
       "publishLine": "{0}：{1}",
       "loadedCount": "已加载 {0} 个插件",
       "uninstall": "卸载",
-      "uninstallConfirmShort": "确认卸载？"
+      "uninstallConfirmShort": "确认卸载？",
+      "confirmInstallShort": "确认安装？"
     },
     "loadState": {
       "reading": "正在读取配置…",
@@ -630,7 +656,10 @@
       "backendBusy": "⏳ {0}：后端正在忙（第 {1} 次等待，最长 {2} 秒）…",
       "timeout": "⚠️ {0}超时：{1}",
       "incomplete": "⚠️ {0}未完成（后端长时间忙碌）。窗口可正常使用，稍后点「保存设置」会重试。",
-      "parseFailed": "⚠️ 自动化配置解析失败：{0}"
+      "parseFailed": "⚠️ 自动化配置解析失败：{0}",
+      "saved": "✅ 设置已保存",
+      "saveFailed": "⚠️ 设置无法写入（目录只读？）",
+      "backendSyncFailed": "⚠️ 部分设置未能同步到后端：{0}"
     }
   }
 }

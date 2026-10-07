@@ -23,6 +23,7 @@
 // agent 模式必须开后端 —— 它验的是"后端事件 → 界面渲染"这条端到端链路。
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -32,6 +33,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
 using EchoDesk.Avalonia.Services;
 using EchoDesk.Avalonia.Views;
+using EchoDesk.Avalonia.Views.Settings;
 
 namespace EchoDesk.Avalonia;
 
@@ -55,10 +57,12 @@ internal static class Probe
             }
         }
 
-        // agent 模式要跑一轮真模型推理：几十秒到几分钟都正常，放宽看门狗。
+        // agent 模式要跑一轮真模型推理；market 模式要跑一次远端搜索（几十秒）。
         Budget = target.Equals("agent", StringComparison.OrdinalIgnoreCase)
             ? TimeSpan.FromSeconds(300)
-            : TimeSpan.FromSeconds(60);
+            : target.Equals("market", StringComparison.OrdinalIgnoreCase)
+                ? TimeSpan.FromSeconds(300)
+                : TimeSpan.FromSeconds(60);
 
         Console.WriteLine($"=== EchoDesk 界面探针（--probe {target}）===");
 
@@ -104,6 +108,10 @@ internal static class Probe
                 {
                     ok = await RunAgentProbeAsync(desktop);
                 }
+                else if (target.Equals("market", StringComparison.OrdinalIgnoreCase))
+                {
+                    ok = await RunMarketProbeAsync(desktop);
+                }
                 else
                 {
                     if (!target.Equals("settings", StringComparison.OrdinalIgnoreCase))
@@ -130,6 +138,8 @@ internal static class Probe
                 // 所以能走到这里的是普通异常，同样记为失败并打印类型与消息。
                 ok = false;
                 Console.WriteLine($"  [FAIL] {ex.GetType().Name}: {ex.Message}");
+                Console.WriteLine("  [details] " + ex.GetType().FullName);
+                Console.WriteLine(ex.ToString());
             }
 
             Console.WriteLine($"{ResultPrefix} {(ok ? "PASS" : "FAIL")} target={target}");
@@ -296,6 +306,182 @@ internal static class Probe
 
         try { backend.Dispose(); } catch (Exception) { }
         return ok;
+    }
+
+    /// <summary>
+    /// 模型市场的端到端验证（v0.2.2：把 WPF 侧市场补全到跨平台版这一轮的验收）。
+    ///
+    /// 走的是**真实后端**与**真实交互路径**（点搜索 = 调 LoadMarketAsync；
+    /// 翻页 = 调 GoToPageAsync；筛选 = 调同一套 RefreshQueryAsync），
+    /// 断言的是市场自己给出的状态快照（ModelMarketSection.Snapshot）——
+    /// 于是"分页/筛选/三层数字有没有生效"是可判定的数字，不靠肉眼。
+    ///
+    /// 覆盖顺序刻意与任务书一致：搜索取回 → 分页 → 每页条数 → 本地筛选 → 重置 → 钉住行。
+    /// 每一条都打印 `[PASS]/[FAIL]`，最后统一汇总（部分失败不掩盖前面的结论）。
+    /// </summary>
+    private static async Task<bool> RunMarketProbeAsync(IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        bool ok = true;
+        _ = desktop;
+        // 探针自持一条后端连接，并让**界面也用它**（AppState.ProbeBackendOverride）。
+        // 不这么做的话：框架会自己建主窗口、主窗口又去拉后端并读 ready 握手，
+        // 探针与界面两个读者抢同一条 stdout 流 —— 先读到的那方赢，另一方永远等不到
+        // （实测现象："后端未完成启动即退出"，stderr 里能看到两个 python 进程的日志）。
+        var probeBackend = new BackendService();
+        App.State.ProbeBackendOverride = probeBackend;
+
+        var started = await probeBackend.StartAsync(verbose: true);
+        if (!started.Ok)
+        {
+            Console.WriteLine($"  [FAIL] 后端没能起来：{started.Error}");
+            return false;
+        }
+        int stderrLines = 0;
+        probeBackend.StderrReceived += line =>
+        {
+            if (Interlocked.Increment(ref stderrLines) <= 4)
+                Console.WriteLine($"  [backend stderr] {line}");
+        };
+        var ready = await probeBackend.WaitForReadyAsync(TimeSpan.FromSeconds(120));
+        if (ready is null)
+        {
+            Console.WriteLine($"  [FAIL] 120 秒内没有 ready 握手（{probeBackend.LastError}，stderr {stderrLines} 行）");
+            return false;
+        }
+        ready.Dispose();
+        Console.WriteLine("  [PASS] 后端已就绪");
+
+        // 界面用的就是探针这条连接，所以设置页/市场现在能直接发请求
+        var settings = new SettingsWindow(App.State);
+        desktop.MainWindow = settings;
+        settings.Show();
+        Console.WriteLine($"  [PASS] 设置窗口已构造并显示（{settings.Tabs.ItemCount} 个页签）");
+        if (!settings.SelectTab("settings.tab.model"))
+        {
+            Console.WriteLine("  [FAIL] 找不到「模型」页签");
+            return false;
+        }
+        Console.WriteLine("  [PASS] 已切到「模型」页签");
+
+        var backend = probeBackend;
+
+        var page = settings.FindPage<ModelPage>();
+        if (page is null)
+        {
+            Console.WriteLine("  [FAIL] 设置窗口里没有 ModelPage（页签注册与查找不一致）");
+            return false;
+        }
+        await Dispatcher.UIThread.InvokeAsync(async () => await page.RefreshAsync());
+
+        void Check(string name, bool pass, string detail)
+        {
+            Console.WriteLine($"  [{(pass ? "PASS" : "FAIL")}] {name}——{detail}");
+            if (!pass)
+                ok = false;
+        }
+
+        // ---- ① 搜索：取回结果并算出第一页 ----
+        var before = page.MarketSnapshot();
+        Console.WriteLine($"  初始状态   : 列表 {before.ItemCount} 行｜{before.PageInfo}｜{before.Total}");
+        await page.ProbeMarketSearchAsync();
+        var s1 = page.MarketSnapshot();
+        Console.WriteLine($"  搜索后     : 列表 {s1.ItemCount} 行｜{s1.PageInfo}｜{s1.Total}");
+        Console.WriteLine($"  状态行     : {OneLine(s1.Status, 160)}");
+        Check("搜索后取回一页结果", s1.ItemCount > 0, $"列表 {s1.ItemCount} 行");
+        Check("分页信息已填充", s1.PageInfo.Contains('/'), s1.PageInfo);
+        Check("总条数口径已给出", s1.Total.Length > 0, s1.Total);
+        Check("状态行说明下载量口径", s1.Status.Contains("下载量口径") || s1.Status.Contains("download"),
+            OneLine(s1.Status, 80));
+        if (s1.ItemCount == 0)
+        {
+            Console.WriteLine("  [SKIP] 没有取回结果（离线/限流）：后续分页与筛选断言无意义");
+            return ok;
+        }
+
+        // ---- ② 分页：下一页 / 回首页 ----
+        await page.ProbeMarketGoToPageAsync(2);
+        var s2 = page.MarketSnapshot();
+        Check("「下一页」可用且能跳到第 2 页", s2.PageInfo.Contains("2 /"), s2.PageInfo);
+        Check("非首页时「首页」可用", s2.FirstEnabled, $"FirstEnabled={s2.FirstEnabled}");
+        await page.ProbeMarketGoToPageAsync(1);
+        var s3 = page.MarketSnapshot();
+        Check("回到第 1 页后「首页」禁用", !s3.FirstEnabled, $"FirstEnabled={s3.FirstEnabled}");
+        Check("第 1 页时「下一页」可用", s3.NextEnabled, $"NextEnabled={s3.NextEnabled}");
+
+        // ---- ③ 每页条数：20 → 50 时总页数必须变少，且回到第 1 页 ----
+        await page.ProbeMarketGoToPageAsync(2);
+        await page.ProbeMarketSetPageSizeAsync(50);
+        var s4 = page.MarketSnapshot();
+        int pagesBefore = ParsePages(s2.PageInfo);
+        int pagesAfter = ParsePages(s4.PageInfo);
+        Check("切换每页条数后总页数变少", pagesAfter > 0 && pagesAfter < pagesBefore,
+            $"{pagesBefore} → {pagesAfter}");
+        Check("切换每页条数后回到第 1 页", s4.PageInfo.Contains("1 /"), s4.PageInfo);
+        await page.ProbeMarketSetPageSizeAsync(20);
+
+        // ---- ④ 本地筛选：用一个几乎不可能匹配的串，验证条数真的收窄并给出重搜出口 ----
+        await page.ProbeMarketFilterAsync("zzz-绝对不存在的模型名-zzz");
+        var s5 = page.MarketSnapshot();
+        Check("本地筛选把结果收窄到 0", s5.ItemCount == 0, $"列表 {s5.ItemCount} 行");
+        Check("筛完为空时给出「重新搜索远端」出口",
+            s5.Status.Contains("本地筛选后 0 条") || s5.Status.Contains("0 条"),
+            OneLine(s5.Status, 100));
+        await page.ProbeMarketResetAsync();
+        var s6 = page.MarketSnapshot();
+        Check("重置筛选后结果恢复", s6.ItemCount > 0, $"列表 {s6.ItemCount} 行");
+
+        // ---- ⑤ 结构化筛选：勾一个计数>0 的分面，条数应不大于未筛选时 ----
+        if (s6.FacetOptions > 0)
+        {
+            await page.ProbeMarketToggleFacetAsync(0);
+            var s7 = page.MarketSnapshot();
+            Check("勾选分面后结果不增加（收窄或持平）", s7.ItemCount <= s6.ItemCount,
+                $"{s6.ItemCount} → {s7.ItemCount}（分面 {s6.FacetOptions} 项）");
+            await page.ProbeMarketResetAsync();
+        }
+        else
+        {
+            Console.WriteLine("  [SKIP] 没有可选分面（后端未给 options）");
+        }
+
+        // ---- ⑥ 默认模型钉住行 + 详情 ----
+        var s8 = page.MarketSnapshot();
+        Check("默认模型钉住行可见", s8.PinnedVisible, $"PinnedVisible={s8.PinnedVisible}");
+        if (s8.PinnedVisible)
+        {
+            await page.ProbeMarketOpenPinnedDetailAsync();
+            var s9 = page.MarketSnapshot();
+            Check("钉住行的详情能列出文件", s9.FileRows > 0, $"详情行 {s9.FileRows}");
+        }
+
+        // ---- ⑦ 语言切换后市场文案跟着走（不重新问后端）----
+        App.State.SetLanguage("en");
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        var s10 = page.MarketSnapshot();
+        Check("切到英文后市场文案仍是完整的（没有空标签）", s10.Total.Length > 0 && s10.PageInfo.Length > 0,
+            $"{s10.PageInfo}｜{s10.Total}");
+        App.State.SetLanguage("zh-Hans");
+
+        settings.Close();
+        // 后端由 App.State 持有（进程内唯一），收尾统一由外层 State.Shutdown() 关，
+        // 这里不单独 Dispose —— 否则会关掉界面正在用的那条连接。
+        return ok;
+    }
+
+    private static int ParsePages(string pageInfo)
+    {
+        // "第 3 / 250 页" / "Page 3 / 250"：取斜杠**之后**的第一段数字。
+        // 用正则而不是 TakeWhile：文案里有全角字符与空格，手写切分会漏（本轮踩到过）。
+        var match = System.Text.RegularExpressions.Regex.Match(pageInfo ?? "", @"/\s*(\d+)");
+        return match.Success && int.TryParse(match.Groups[1].Value, out int pages) ? pages : 0;
+    }
+
+    private static string OneLine(string text, int limit)
+    {
+        if (string.IsNullOrEmpty(text))
+            return "";
+        string flat = text.Replace('\n', ' ').Replace('\r', ' ');
+        return flat.Length <= limit ? flat : flat[..limit] + "…";
     }
 
     private static IEnumerable<string> Counts(Dictionary<string, int> counts)
