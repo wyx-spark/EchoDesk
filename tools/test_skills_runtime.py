@@ -375,12 +375,21 @@ def run_all(workdir):
     check("扩展名列表包含 ofd", ".ofd" in skill_parser_extensions())
     check("内置扩展名不可被占用", not register_skill_parser(".pdf", ofd_reader, "ext-plugin"))
     open(os.path.join(workdir, "样例.ofd"), "w", encoding="utf-8").write("x")
-    from file_parser import parse_file_with_wps
+    from file_parser import is_parse_error, localize_error, parse_file_with_wps
     parsed = parse_file_with_wps(os.path.join(workdir, "样例.ofd"))
     check("技能解析器被真正调用", parsed == "OFD 内容：测试", repr(parsed))
-    check("未知扩展名仍报不支持", parse_file_with_wps(os.path.join(workdir, "x.zzz")).startswith("不支持"))
+    # v0.2.2 硬编码清查第 6 批（一）：解析失败串改成「语言无关标记 + 语言包正文」，
+    # 所以不能再按中文前缀断言（英文界面下正文不是中文）。改用 is_parse_error() 判"是失败串"、
+    # 再用 localize_error() 取当前语言正文来断言内容 —— 意图不变、判据更精确。
+    _unsupported = parse_file_with_wps(os.path.join(workdir, "x.zzz"))
+    check("未知扩展名仍报不支持",
+          is_parse_error(_unsupported) and "不支持" in localize_error(_unsupported),
+          repr(_unsupported))
     unregister_skill_parsers("ext-plugin")
-    check("卸载技能后解析器被移除", parse_file_with_wps(os.path.join(workdir, "样例.ofd")).startswith("不支持"))
+    _after_unregister = parse_file_with_wps(os.path.join(workdir, "样例.ofd"))
+    check("卸载技能后解析器被移除",
+          is_parse_error(_after_unregister) and "不支持" in localize_error(_after_unregister),
+          repr(_after_unregister))
     check("解析错误标记可识别", is_parse_error("解析失败: xx") and not is_parse_error("正常内容"))
 
     # ---------------------------------------------------------------

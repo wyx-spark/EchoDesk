@@ -33,6 +33,8 @@ import sys
 import threading
 import time
 import traceback
+
+from i18n import t as _t
 import zipfile
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -715,7 +717,7 @@ class SkillLoader:
             shutil.copyfile(self.log_file, dest)
             return os.path.abspath(dest)
         except OSError as e:
-            raise RuntimeError(f"导出日志失败: {e}") from e
+            raise RuntimeError(_t("skill.log_export_failed", error=e)) from e
 
     # ---------- 本地插件清单（任务书 2B.3） ----------
 
@@ -1189,7 +1191,7 @@ class SkillLoader:
             else:
                 spec = importlib.util.spec_from_file_location(module_name, rec.entry_file)
             if spec is None or spec.loader is None:
-                raise ImportError(f"无法为 {rec.entry_file} 构建加载器")
+                raise ImportError(_t("skill.loader_build_failed", entry=rec.entry_file))
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
@@ -1470,7 +1472,8 @@ class SkillLoader:
         rec = self.records.get(skill_id)
         panel = (rec.panels.get(panel_id) if rec else None)
         if panel is None:
-            return {"ok": False, "message": f"未找到面板 {skill_id}/{panel_id}"}
+            return {"ok": False, "message": _t("skill.panel_not_found", skill=skill_id,
+                                                panel=panel_id)}
         text = ""
         if panel.render is not None:
             try:
@@ -1491,9 +1494,10 @@ class SkillLoader:
         rec = self.records.get(skill_id)
         panel = (rec.panels.get(panel_id) if rec else None)
         if panel is None:
-            return {"ok": False, "message": f"未找到面板 {skill_id}/{panel_id}"}
+            return {"ok": False, "message": _t("skill.panel_not_found", skill=skill_id,
+                                                panel=panel_id)}
         if panel.on_action is None:
-            return {"ok": False, "message": "该面板未提供动作处理函数"}
+            return {"ok": False, "message": _t("skill.panel_no_action")}
         try:
             with self._env_lock:
                 saved = _strip_secret_env()
@@ -1571,11 +1575,11 @@ class SkillLoader:
         """新建本地插件骨架（任务书 2B.6）：在 skills_dev/ 下生成最小可用插件。"""
         sid = sanitize_id(skill_id, "")
         if not sid or not _ID_RE.match(sid):
-            return {"ok": False, "message": "插件 ID 只能包含字母、数字、点、下划线和连字符（1-64 位）。"}
+            return {"ok": False, "message": _t("skill.bad_id")}
         pkg = sanitize_id(sid).replace("-", "_").replace(".", "_") or "echodesk_skill"
         root = os.path.abspath(target) if target else os.path.join(self.dev_dir, sid)
         if os.path.exists(root) and os.listdir(root):
-            return {"ok": False, "message": f"目标目录已存在且非空：{root}"}
+            return {"ok": False, "message": _t("skill.dir_not_empty", path=root)}
         display = (name or sid).strip()
         files = _scaffold_files(sid, pkg, display, author.strip())
         try:
@@ -1585,21 +1589,22 @@ class SkillLoader:
                 with open(path, "w", encoding="utf-8", newline="\n") as f:
                     f.write(content)
         except OSError as e:
-            return {"ok": False, "message": f"创建插件骨架失败：{e}"}
+            return {"ok": False, "message": _t("skill.scaffold_failed", error=e)}
         self._logwrite("INFO", f"已创建本地插件骨架：{root}")
-        return {"ok": True, "path": root, "id": sid, "files": sorted(files), "message": f"已创建 {root}"}
+        return {"ok": True, "path": root, "id": sid, "files": sorted(files),
+                "message": _t("skill.scaffold_created", path=root)}
 
     def install_from_folder(self, src: str, *, dev: bool = False) -> Dict[str, Any]:
         """从任意文件夹安装插件（任务书 2B.7）：复制到 skills/ 或 skills_dev/ 并登记。"""
         source = os.path.abspath(str(src or "").strip().strip('"'))
         if not os.path.isdir(source):
-            return {"ok": False, "message": f"文件夹不存在：{source}"}
+            return {"ok": False, "message": _t("skill.folder_missing", path=source)}
         manifest_raw = _read_json(os.path.join(source, "skill.json"), None)
         if not isinstance(manifest_raw, dict):
-            return {"ok": False, "message": "该文件夹里没有 skill.json，无法确认这是一个 EchoDesk 插件。"}
+            return {"ok": False, "message": _t("skill.no_skill_json")}
         manifest = parse_manifest(manifest_raw)
         if not manifest["bundle"] and not dev:
-            return {"ok": False, "message": "skill.json 缺少 echodesk.bundle 字段，正式安装需要它（开发目录可放宽）。"}
+            return {"ok": False, "message": _t("skill.install_bundle_missing")}
         skill_id = sanitize_id(manifest["id"] or manifest["name"] or os.path.basename(source))
         dest_root = self.dev_dir if dev else self.install_dir
         dest = os.path.join(dest_root, skill_id)
@@ -1610,7 +1615,7 @@ class SkillLoader:
             shutil.copytree(source, dest, ignore=shutil.ignore_patterns(
                 ".git", "__pycache__", "*.pyc", "data", "*.zip"))
         except OSError as e:
-            return {"ok": False, "message": f"复制插件失败：{e}"}
+            return {"ok": False, "message": _t("skill.copy_failed", error=e)}
 
         registry_note = ""
         if not dev:
@@ -1631,12 +1636,15 @@ class SkillLoader:
             })
             registry["note"] = "EchoDesk 已安装技能注册表；卸载请使用设置窗口或技能市场。"
             if not _write_json(self.registry_file, registry):
-                return {"ok": False, "message": f"插件已复制到 {dest}，但注册表写入失败（{self.registry_file}）。"}
-            registry_note = "，并已登记到注册表"
+                return {"ok": False,
+                        "message": _t("skill.copied_not_registered", path=dest,
+                                      registry=self.registry_file)}
+            registry_note = _t("skill.registry_registered")
         self._logwrite("INFO", f"已从文件夹安装插件 {skill_id} → {dest}")
         return {
             "ok": True, "id": skill_id, "path": dest,
-            "message": f"已安装插件「{manifest['name'] or skill_id}」到 {dest}{registry_note}。点「重载本地插件」即可使用。",
+            "message": _t("skill.installed", name=manifest["name"] or skill_id, path=dest,
+                          registry_note=registry_note),
         }
 
     def uninstall(self, skill_id: str, *, delete_files: bool = True) -> Dict[str, Any]:
@@ -1656,7 +1664,7 @@ class SkillLoader:
                     path, source = cand, src
                     break
         if not path:
-            return {"ok": False, "message": f"未找到插件「{skill_id}」的目录。"}
+            return {"ok": False, "message": _t("skill.dir_not_found", id=skill_id)}
 
         self.unload(skill_id)
         removed_registry = False
@@ -1674,7 +1682,7 @@ class SkillLoader:
                 shutil.rmtree(path, ignore_errors=True)
                 removed_dir = not os.path.isdir(path)
             except OSError as e:
-                return {"ok": False, "message": f"目录删除失败：{e}"}
+                return {"ok": False, "message": _t("skill.delete_failed", error=e)}
 
         # 清单里显式登记的路径也一并移除
         data = self.local_manifest()
@@ -1696,7 +1704,7 @@ class SkillLoader:
         rec = self.records.get(skill_id)
         path = rec.path if rec else ""
         if not path or not os.path.isdir(path):
-            return {"ok": False, "message": f"未找到插件「{skill_id}」的目录。"}
+            return {"ok": False, "message": _t("skill.dir_not_found", id=skill_id)}
         target = dest or os.path.join(os.getcwd(), f"{skill_id}.zip")
         if not target.lower().endswith(".zip"):
             target += ".zip"
@@ -1711,41 +1719,44 @@ class SkillLoader:
                         full = os.path.join(root, name)
                         zf.write(full, os.path.relpath(full, path))
         except OSError as e:
-            return {"ok": False, "message": f"导出失败：{e}"}
+            return {"ok": False, "message": _t("skill.export_failed", error=e)}
         size = os.path.getsize(target)
         return {"ok": True, "path": os.path.abspath(target), "size": size,
-                "message": f"已导出到 {os.path.abspath(target)}（{size / 1024:.1f} KB）"}
+                "message": _t("skill.exported", path=os.path.abspath(target),
+                          size=f"{size / 1024:.1f}")}
 
     def publish_checklist(self, skill_id: str) -> Dict[str, Any]:
         """发布到市场前的自检清单（任务书 2B.8 一键「发布到市场」）。"""
         rec = self.records.get(skill_id)
         if rec is None:
-            return {"ok": False, "message": f"未找到插件「{skill_id}」"}
+            return {"ok": False, "message": _t("skill.not_found", id=skill_id)}
         checks: List[Dict[str, Any]] = []
 
         def check(name: str, ok: bool, hint: str) -> None:
             checks.append({"name": name, "ok": bool(ok), "hint": hint})
 
-        check("skill.json 含 echodesk.bundle", bool(rec.manifest.get("bundle")),
-              "缺这个字段市场会标记为「未验证」，安装按钮置灰。")
-        check("声明了 id", bool(rec.manifest.get("id")), "id 用于生成安装目录名。")
-        check("声明了 version", bool(rec.manifest.get("version")), "缺失时市场显示「未知」。")
-        check("声明了 license", bool(rec.manifest.get("license")),
-              "缺失时安装提示里会提醒用户，建议补 MIT 或 Apache-2.0。")
-        check("有 README.md", os.path.isfile(os.path.join(rec.path, "README.md")),
-              "市场会展示 README 摘要，写清用途、权限与卸载方式。")
-        check("入口文件可加载", bool(rec.entry_file), rec.error or "入口文件已解析。")
-        check("api_version 兼容", api_version_ok(rec.manifest.get("api_version")),
-              f"当前主程序支持 API {SKILL_API_VERSION}。")
+        check(_t("skill.chk_bundle_name"), bool(rec.manifest.get("bundle")),
+              _t("skill.chk_bundle_hint"))
+        check(_t("skill.chk_id_name"), bool(rec.manifest.get("id")), _t("skill.chk_id_hint"))
+        check(_t("skill.chk_version_name"), bool(rec.manifest.get("version")),
+              _t("skill.chk_version_hint"))
+        check(_t("skill.chk_license_name"), bool(rec.manifest.get("license")),
+              _t("skill.chk_license_hint"))
+        check(_t("skill.chk_readme_name"), os.path.isfile(os.path.join(rec.path, "README.md")),
+              _t("skill.chk_readme_hint"))
+        check(_t("skill.chk_entry_name"), bool(rec.entry_file),
+              rec.error or _t("skill.chk_entry_hint_ok"))
+        check(_t("skill.chk_api_name"), api_version_ok(rec.manifest.get("api_version")),
+              _t("skill.chk_api_hint", version=SKILL_API_VERSION))
         perms = rec.manifest.get("permissions") or {}
-        check("权限声明最小化", not perms.get("subprocess"),
-              "声明 subprocess 会显著增加审查成本，非必要请勿申请。")
+        check(_t("skill.chk_perm_name"), not perms.get("subprocess"),
+              _t("skill.chk_perm_hint"))
         ok = all(c["ok"] for c in checks)
         return {
             "ok": ok, "checks": checks,
             "repo_name": f"echodesk-skill-{skill_id}",
             "topic": getattr(self.cfg, "skill_topic", "echodesk-plugin"),
-            "message": ("自检通过，可以发布。" if ok else "存在未通过项，建议先修正再发布。"),
+            "message": _t("skill.selfcheck_ok") if ok else _t("skill.selfcheck_bad"),
         }
 
 
