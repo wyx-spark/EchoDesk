@@ -223,8 +223,14 @@ public partial class AgentPage : UserControl, ISettingsPage
                 AgentToolList.Children.Add(row);
         }
 
+        // 语言包（与 WPF 同一份）要 4 个参数：模式 · 最多调用次数 · 已启用/总数。
+        // 这里曾只传 3 个（缺 mode）→ string.Format 抛 FormatException → Loc.T 返回模板原文，
+        // 状态行直接显示「当前模式：{0} · 最多调用 {1} 次工具 · 已启用 {2}/{3} 个工具」
+        //（硬编码清查 §5.3 C-1）。mode 由后端的 agent_state 回传（与 WPF `_agentMode` 同源）。
+        string agentMode = GetString(agent, "mode");
         AgentStateText.Text = Loc.T("settings.agent.state",
-            "已授权 {0} / {1} 个工具　·　最大步数 {2}", enabled, total, maxSteps);
+            "当前模式：{0} · 最多调用 {1} 次工具 · 已启用 {2}/{3} 个工具",
+            agentMode.Length > 0 ? agentMode : "-", maxSteps, enabled, total);
     }
 
     /// <summary>一行工具授权：左侧名称 + 风险标签 + 说明，右侧开关。</summary>
@@ -269,7 +275,8 @@ public partial class AgentPage : UserControl, ISettingsPage
         if (argsHint.Length > 0)
             info.Children.Add(new TextBlock
             {
-                Text = $"{Loc.T("settings.agent.argsHint", "参数")}：{argsHint}",
+                // 包值是「参数：{0}」——参数要传进去，否则界面上会出现「参数：{0}：{…}」
+                Text = Loc.T("settings.agent.argsHint", "参数：{0}", argsHint),
                 FontSize = 10, Opacity = 0.6, TextWrapping = TextWrapping.Wrap,
             });
         if (!safe)
@@ -306,7 +313,10 @@ public partial class AgentPage : UserControl, ISettingsPage
                 ? (allowed
                     ? Loc.T("settings.agent.allowed", "✅ 已授权：{0}", name)
                     : Loc.T("settings.agent.denied", "⛔ 已关闭：{0}", name))
-                : Loc.T("settings.agent.saveFailed", "❌ 保存失败（后端未响应）");
+                // 包值是「❌ 设置失败：{0}」——"后端未响应"这一档用现成的 main.error.noResponse，
+                // 不再拼代码兜底（兜底在键存在时根本不会生效，界面上只会露出 {0}）
+                : Loc.T("settings.agent.saveFailed", "❌ 设置失败：{0}",
+                    Loc.T("main.error.noResponse", "无响应"));
             await LoadAgentStateAsync();
         };
 
@@ -333,15 +343,17 @@ public partial class AgentPage : UserControl, ISettingsPage
             return;
         if (!int.TryParse(AgentStepsBox.Text?.Trim(), out int steps))
         {
+            // 包值是「⚠️ 步数需要在 {0}–{1} 之间」：上下限与 WPF 侧同一口径（1–8）
             AgentStatusText.Text = Loc.T("settings.agent.stepsRange",
-                "⚠️ 步数必须是一个整数（建议 1–12）");
+                "⚠️ 步数需要在 {0}–{1} 之间", 1, 8);
             return;
         }
         AgentStatusText.Text = Loc.T("settings.agent.saving", "⏳ 正在保存…");
         using JsonDocument? doc = await SendAsync(new { action = "agent_configure", steps });
         AgentStatusText.Text = doc is not null
             ? Loc.T("settings.agent.stepsDone", "✅ 最大步数已设为 {0}", steps)
-            : Loc.T("settings.agent.saveFailed", "❌ 保存失败（后端未响应）");
+            : Loc.T("settings.agent.saveFailed", "❌ 设置失败：{0}",
+                Loc.T("main.error.noResponse", "无响应"));
         await LoadAgentStateAsync();
     }
 

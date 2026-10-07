@@ -197,7 +197,12 @@ public partial class MarketPage : UserControl, ISettingsPage
         }
         else
         {
-            MarketStatusText.Text = Loc.T("settings.market.resultCount", "共 {0} 个技能", cards.Count);
+            // 包值要两个参数：「共 {0} 个结果，本页 {1} 个」。总数取后端回传的 total_count
+            //（与 WPF `SettingsWindow.xaml.cs:1469` 同一字段），取不到时退化为本页条数。
+            int total = market.TryGetProperty("total_count", out JsonElement tc)
+                        && tc.ValueKind == JsonValueKind.Number ? tc.GetInt32() : cards.Count;
+            MarketStatusText.Text = Loc.T("settings.market.resultCount",
+                "共 {0} 个结果，本页 {1} 个", total, cards.Count);
         }
     }
 
@@ -334,10 +339,28 @@ public partial class MarketPage : UserControl, ISettingsPage
             button.Content = installing
                 ? Loc.T("settings.market.confirmInstallShort", "确认安装？")
                 : Loc.T("settings.market.uninstallConfirmShort", "确认卸载？");
+            // 包值要 4 个参数（技能 / 仓库 / 版本 / 来源）：只传 repo 会抛 FormatException，
+            // Loc.T 返回模板原文 → 整段安全提示变成「技能：{0} 仓库：{1} …」（硬编码清查 §5.3 C-1）。
+            // 三个附加值从列表里按 full_name 反查（与 WPF 传 item.Name/Version/HtmlUrl 同一口径）。
+            string skillName = "", skillVersion = "", skillSource = "";
+            foreach (JsonElement entry in _items)
+            {
+                if (GetString(entry, "full_name") != repo)
+                    continue;
+                skillName = GetString(entry, "name");
+                skillVersion = GetString(entry, "version");
+                skillSource = GetString(entry, "html_url");
+                break;
+            }
+            string skillUnknown = Loc.T("settings.market.state.unknown", "未知");
             MarketStatusText.Text = installing
                 ? Loc.T("settings.market.installConfirmText",
-                    "即将从 GitHub 安装第三方技能（{0}）。⚠️ 第三方技能以你的本地账户权限运行，"
-                    + "EchoDesk 不对其安全性负责。再点一次按钮确认安装。", repo)
+                    "即将从 GitHub 安装第三方技能：\n\n技能：{0}\n仓库：{1}\n版本：{2}\n来源：{3}\n\n"
+                    + "⚠️ 安全提示：第三方技能以你的本地账户权限运行，EchoDesk 不对其安全性负责。\n"
+                    + "安装前会读取并展示其 skill.json 以了解权限与依赖。是否继续？",
+                    skillName.Length > 0 ? skillName : repo, repo,
+                    skillVersion.Length > 0 ? skillVersion : skillUnknown,
+                    skillSource.Length > 0 ? skillSource : repo)
                 : Loc.T("settings.market.uninstallConfirm",
                     "确定卸载技能「{0}」吗？（将删除其安装目录并从技能清单移除）再点一次按钮确认。", repo);
             _pendingTimer?.Stop();
@@ -427,7 +450,9 @@ public partial class MarketPage : UserControl, ISettingsPage
         {
             _host.ShowFieldHelp(
                 Loc.T("settings.market.detailDialogTitle", "技能详情"),
-                Loc.T("settings.market.detailFailed", "❌ 读取技能详情失败"));
+                // 包值是「❌ 获取详情失败：{0}」：不传参会露出 {0}（硬编码清查 §5.3 C-1）
+                Loc.T("settings.market.detailFailed", "❌ 获取详情失败：{0}",
+                    Loc.T("main.error.noResponse", "无响应")));
             return;
         }
         JsonElement root = doc.RootElement;
@@ -435,7 +460,8 @@ public partial class MarketPage : UserControl, ISettingsPage
             ? c.GetString() ?? ""
             : root.ToString();
         _host.ShowFieldHelp(
-            Loc.T("settings.market.detailSkill", "技能") + "：" + (name.Length > 0 ? name : repo),
+            // 包值是「技能：{0}」，冒号在语言包里，代码里不再补一个（否则出现「技能：{0}：名字」）
+            Loc.T("settings.market.detailSkill", "技能：{0}", name.Length > 0 ? name : repo),
             body.Length > 0 ? body : Loc.T("settings.market.detailNone", "（该技能没有提供详情）"),
             repo);
     }

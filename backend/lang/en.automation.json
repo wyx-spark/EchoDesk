@@ -113,6 +113,11 @@
         "help": "One record is appended to this file per task so the run can be traced afterwards.",
         "example": "automation_log.jsonl"
       },
+      "browser": {
+        "label": "Browser (legacy field)",
+        "help": "The browser field from before v0.2.2: a browser executable name or path. It is superseded by “Browser to use” — setting it only moves that browser to the front of the candidate list (your existing config is respected). Leave it empty in new configs and use “Browser to use” below instead.",
+        "example": ""
+      },
       "browser_channel": {
         "label": "Browser to use",
         "help": "Which browser the automation opens pages with. Microsoft Edge installed on the machine is the default.",

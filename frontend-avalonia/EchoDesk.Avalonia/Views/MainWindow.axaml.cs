@@ -1,4 +1,4 @@
-﻿// 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
+// 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
 //
 // 迁移策略：**事件处理逻辑照搬 WPF 版**（发送、流式双通道、停止、文件上传、状态刷新、
 // 指令面板、常用语、通知条、状态区、Agent 步骤行），换掉的只有界面 API。
@@ -484,7 +484,11 @@ public partial class MainWindow : Window
         ToolTip.SetTip(StripKvButton, Loc.T("main.strip.kvTip", "点击打开「设置 → 模型」"));
         ToolTip.SetTip(StripCapabilityButton, Loc.T("main.strip.capabilityTip", "点击打开「设置 → 模型」"));
         ToolTip.SetTip(StripCompactButton, Loc.T("main.strip.compactTip", "立刻压缩上下文，腾出空间"));
-        ToolTip.SetTip(StripWarnButton, Loc.T("main.strip.warnTip", "点击查看全部能力提示"));
+        // 包值是「有 {0} 条能力提示，点击查看详情」——必须把条数传进去，否则 Loc.T 会返回
+        // 未格式化模板、悬停提示直接露出 {0}（硬编码清查 §5.3 C-1）。无告警时该按钮隐藏
+        //（见 :1102 的 IsVisible），所以「0 条」这一档不会真的被看到。
+        ToolTip.SetTip(StripWarnButton, Loc.T("main.strip.warnTip",
+            "有 {0} 条能力提示，点击查看详情", _capabilityWarnings.Count));
         ThemeButton.Content = _state.Settings.Theme switch
         {
             "light" => "☀",

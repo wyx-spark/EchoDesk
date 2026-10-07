@@ -11,6 +11,8 @@
   },
   "automation": {
     "_note": "自动化字段帮助与模板库的**前端**文案（v0.2.2 第 2 批）。后端语言包里本来就有一份同名键（automation.help.* / automation.guide.* / automation.template.*），但两个前端读的是 frontend/Resources/Lang/ —— 这里缺一份就会落到 Loc.T 的中文兜底，表现为英文界面里夹着中文。",
+    "_note2": "no_url 是 WPF 的「可视化选取」在网址为空时弹框用的键（v0.2.2 硬编码清查 §4.2 的 B 类缺陷：该键只存在于后端语言包，前端 Loc 读不到 → Loc.T 直接返回键名本身）。",
+    "no_url": "请先填写任务列表网址",
     "help": {
       "example": "示例",
       "required": "必填",
@@ -21,9 +23,13 @@
       "hint": "也可以查看完整文档：docs/<locale>/AUTOMATION_GUIDE.md（发布包内 docs 目录）"
     },
     "template": {
-      "custom_applied": "✅ 已套用模板「{name}」",
-      "custom_saved": "✅ 已保存为自定义模板「{name}」"
+      "custom_applied": "✅ 已套用模板「{0}」",
+      "custom_saved": "✅ 已保存为自定义模板「{0}」"
     }
+  },
+  "capability": {
+    "_note": "WPF 模型档位状态行的「未知」兜底（v0.2.2 硬编码清查 §4.2 的 B 类缺陷：键只存在于后端语言包 → 英文界面显示中文）。值取自后端同名键。",
+    "unknown": "未知"
   },
   "settings": {
     "general": {
@@ -502,7 +508,7 @@
       "reuseOffState": "复用已关闭：每次都会另开一个浏览器，需要重新登录",
       "reusePortOpen": "调试端口 {0} 已就绪",
       "reusePortClosed": "调试端口 {0} 未开放（浏览器不是以调试模式启动的）",
-      "reuseStateLine": "浏览器复用：{0}",
+      "reuseStateLine": "浏览器：{0} · 复用方式：{1} · 端口 {2}\n{3}",
       "reuseUnsupported": "当前浏览器不支持复用（只有 Chrome、Edge 这类 Chromium 系支持）",
       "cdpPort": "调试端口",
       "launchDebug": "🚀 用调试模式启动浏览器",
@@ -519,10 +525,10 @@
       "pickTargetLogin": "登录后才出现的元素",
       "pickHintIdle": "先点「开始选取」，再在浏览器页面里点击要选取的元素",
       "pickReadyPrompt": "请在浏览器中完成登录、并导航到你要选取元素的页面。准备好了点「开始选取」。",
-      "pickStateLine": "选取状态：{0}",
+      "pickStateLine": "状态：{0}{1}",
       "pickStateIdle": "等待准备",
       "pickLastResult": "（上次结果：{0}）",
-      "pickCurrentPage": "当前页面：{0}",
+      "pickCurrentPage": "当前目标页：{0}{1}　浏览器：{2}",
       "pickPageTitle": "页面标题：{0}",
       "pickNoPage": "还没有可选取的页面",
       "pickBackendDown": "⚠️ 后端没有响应",

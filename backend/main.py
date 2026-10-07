@@ -107,7 +107,7 @@ with _suppress_stdout():
     # 注入上下文"的闸门，现已取消（详见 _stream_chat 里 include_file 的说明）。
     from conversation import ConversationManager, REPEAT_INTENT
     from download_utils import check_model, download_model, find_best_model
-    from file_parser import parse_file_with_wps
+    from file_parser import localize_error, parse_file_with_wps
     from gguf_meta import format_bytes as _format_bytes
     from gguf_meta import resolve_context_window
     from llm_engine import LazyLLMEngine, LLMEngine, NoModelError, StreamStats
@@ -598,7 +598,11 @@ class Backend:
         n_ctx = config.context_for_model(path, train_ctx)
         log_user(
             log, "sys.log_model_loading",
-            path=path, ctx=n_ctx, trained=train_ctx or _t("sys.log_unknown", "未知"),
+            # i18n.t() 的签名是 t(key, **kwargs)：**不接受第二个位置参数**。
+            # 这里曾写成 `train_ctx or _t("sys.log_unknown", "未知")`，而 resolve_context_window()
+            # 在 GGUF 元数据读不到时返回 0 → 走到 or 右侧 → `TypeError: t() takes 1 positional
+            # argument but 2 were given`（见硬编码清查清单 §6.7）。缺键的回落交给回退链。
+            path=path, ctx=n_ctx, trained=train_ctx or _t("sys.log_unknown"),
             threads=n_threads, batch=config.n_batch, gpu=config.n_gpu_layers,
         )
         return LLMEngine(
@@ -3355,7 +3359,12 @@ class Backend:
         name = os.path.basename(filepath) or filepath
         content = parse_file_with_wps(filepath, self.config.file_max_chars)
         if content.startswith(("WPS读取失败", "解析失败", "文件内容为空", "不支持的文件类型")):
-            return {"ok": False, "name": name, "chars": 0, "message": f"❌ {content}"}
+            # 这里曾直接拼 `f"❌ {content}"`，把这批**中文**解析失败串原样送到界面：
+            # 英文界面下用户看到整句中文（`file_parser.py` 的 11 行错误串）。
+            # `localize_error()` 就是为这条路径写的，此前只被 command_handler 的两处调用，
+            # 上传路径漏了（见硬编码清查清单 §6.2 的连带缺陷）。
+            return {"ok": False, "name": name, "chars": 0,
+                    "message": f"❌ {localize_error(content)}"}
         files_cfg = self._files_cfg()
         entry = self.conv.add_file(filepath, content)
         try:

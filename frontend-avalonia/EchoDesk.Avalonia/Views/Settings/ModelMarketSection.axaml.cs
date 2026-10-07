@@ -522,8 +522,10 @@ public partial class ModelMarketSection : UserControl
         {
             // 非法输入不跳页，并把原因写在分页条旁边（**不能**写进折叠的筛选面板里：
             // 折叠内容不在 UIA 树里、用户也看不见 —— WPF 侧踩过）
+            // 包值是「⚠️ 请输入 {0}–{1} 之间的页码」：两个参数都要传，
+            // 只传一个会抛 FormatException、界面露出 {0}/{1}（硬编码清查 §5.3 C-1）
             HubPagerHint.Text = Loc.T("settings.model.pageInvalid",
-                "⚠️ 请输入 1–{0} 之间的页码", Math.Max(1, _hubPages));
+                "⚠️ 请输入 {0}–{1} 之间的页码", 1, Math.Max(1, _hubPages));
             return;
         }
         int clamped = Math.Clamp(wanted, 1, Math.Max(1, _hubPages));

@@ -426,15 +426,19 @@ public partial class ModelPage : UserControl, ISettingsPage
     // -----------------------------------------------------------------
     private async Task LoadProfilesAsync()
     {
-        ProfileStatusText.Text = Loc.T("settings.model.profileHint", "正在读取模型档位…");
+        // 包值带 {0}，必须传参（否则 Loc.T 返回未格式化模板、界面上露出 {0}）
+        ProfileStatusText.Text = Loc.T("settings.model.profileHint",
+            "当前使用：{0}　·　点胶囊即可切换（热加载，无需重启）；未下载的档位点一下会先下载。",
+            _currentProfile.Length > 0 ? _currentProfile : UnknownText());
         using JsonDocument? doc = await SendAsync(new { action = "model_profiles" });
         if (doc is null)
         {
             ProfileStatusText.Text = Loc.T("settings.model.profileLoadFailed",
-                "❌ 读取模型档位失败（后端未响应）");
+                "❌ 读取模型档位失败：{0}", Loc.T("main.error.noResponse", "无响应"));
             return;
         }
         JsonElement data = doc.RootElement;
+        _currentProfile = GetString(data, "current");
         ModelProfileChips.Children.Clear();
 
         int count = 0;
@@ -534,6 +538,18 @@ public partial class ModelPage : UserControl, ISettingsPage
     /// <summary>当前正在编辑的档位别名（空 = 新建）。改名时作为 rename_from 发给后端。</summary>
     private string _profileEditingAlias = "";
     private bool _profileDeletePending;
+
+    /// <summary>
+    /// 当前正在使用的档位名（后端 <c>model_profiles</c> 的顶层 <c>current</c>）。
+    ///
+    /// 为什么要存下来：`settings.model.profileHint` 的包值带 {0}（「当前使用：{0}…」），
+    /// 而 `ApplyTexts()`（语言切换时）也要用它——语言切换发生在数据之后，
+    /// 没有这个字段就只能写死或露出 {0}（硬编码清查 §5.3 C-1）。
+    /// </summary>
+    private string _currentProfile = "";
+
+    /// <summary>档位状态行用的「未知」：优先用语言包，取不到时回落中文（与 WPF 同一写法）。</summary>
+    private static string UnknownText() => Loc.T("capability.unknown", "未知");
 
     private void OpenProfileEditor(JsonElement? profile)
     {
@@ -717,7 +733,8 @@ public partial class ModelPage : UserControl, ISettingsPage
             new { action = "model_profile_apply", alias }, TimeSpan.FromSeconds(180));
         if (doc is null)
         {
-            ProfileStatusText.Text = Loc.T("settings.model.profileApplyFailed", "❌ 切换失败（后端未响应）");
+            ProfileStatusText.Text = Loc.T("settings.model.profileApplyFailed",
+                "❌ 切换失败：{0}", Loc.T("main.error.noResponse", "无响应"));
             return;
         }
         string content = GetString(doc.RootElement, "content");
@@ -827,7 +844,8 @@ public partial class ModelPage : UserControl, ISettingsPage
         });
         if (doc is null)
         {
-            InferenceStatusText.Text = Loc.T("settings.inference.saveFailed", "❌ 保存失败（后端未响应）");
+            InferenceStatusText.Text = Loc.T("settings.inference.saveFailed", "❌ 保存失败：{0}",
+                Loc.T("main.error.noResponse", "无响应"));
             return;
         }
         InferenceStatusText.Text = Loc.T("settings.inference.saved", "✅ 已保存");
@@ -874,7 +892,8 @@ public partial class ModelPage : UserControl, ISettingsPage
     {
         ProfileTitle.Text = Loc.T("settings.model.profileTitle", "🎚️ 模型档位（可选默认模型）");
         ProfileHintText.Text = Loc.T("settings.model.profileHint",
-            "点胶囊即可切换（热加载，无需重启）；未下载的档位点一下会先下载。");
+            "当前使用：{0}　·　点胶囊即可切换（热加载，无需重启）；未下载的档位点一下会先下载。",
+            _currentProfile.Length > 0 ? _currentProfile : UnknownText());
         ProfileRefreshButton.Content = Loc.T("settings.model.actionRefreshProfiles", "刷新档位");
         ProfileNewButton.Content = Loc.T("settings.profile.new", "＋ 新建档位");
         ProfileAliasLabel.Text = Loc.T("settings.profile.alias", "别名");

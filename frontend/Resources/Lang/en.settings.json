@@ -11,6 +11,8 @@
   },
   "automation": {
     "_note": "Front-end wording for the automation field help and template library (v0.2.2 batch 2). The backend pack already carries the same keys, but both front ends read frontend/Resources/Lang/ — without these the English UI silently falls back to the Chinese literals.",
+    "_note2": "no_url is used by the WPF picker dialog when the task list URL is empty (v0.2.2 hardcoded-text audit §4.2, class B: the key existed only in the backend pack, so the front end returned the key name itself).",
+    "no_url": "Please fill in the task list URL first",
     "help": {
       "example": "Example",
       "required": "required",
@@ -21,9 +23,13 @@
       "hint": "The full document is at docs/en/AUTOMATION_GUIDE.md inside the release package."
     },
     "template": {
-      "custom_applied": "✅ Template \"{name}\" applied",
-      "custom_saved": "✅ Saved as custom template \"{name}\""
+      "custom_applied": "✅ Template \"{0}\" applied",
+      "custom_saved": "✅ Saved as custom template \"{0}\""
     }
+  },
+  "capability": {
+    "_note": "Fallback shown in the WPF model-tier status line when no current model is known (v0.2.2 hardcoded-text audit §4.2, class B). Value mirrors the backend key of the same name.",
+    "unknown": "Unknown"
   },
   "settings": {
     "general": {
@@ -502,7 +508,7 @@
       "reuseOffState": "Reuse is off: a new browser is started every time, so you sign in again",
       "reusePortOpen": "Debug port {0} is ready",
       "reusePortClosed": "Debug port {0} is not open (the browser was not started in debug mode)",
-      "reuseStateLine": "Browser reuse: {0}",
+      "reuseStateLine": "Browser: {0} · Reuse: {1} · Port {2}\n{3}",
       "reuseUnsupported": "This browser cannot be reused (only Chromium-based ones such as Chrome and Edge can)",
       "cdpPort": "Debug port",
       "launchDebug": "🚀 Launch the browser in debug mode",
@@ -519,10 +525,10 @@
       "pickTargetLogin": "Element shown only after signing in",
       "pickHintIdle": "Click “Start picking” first, then click the element you want in the browser page",
       "pickReadyPrompt": "Sign in and navigate to the page whose element you want to pick, then click “Start picking”.",
-      "pickStateLine": "Picker state: {0}",
+      "pickStateLine": "State: {0}{1}",
       "pickStateIdle": "Waiting to start",
       "pickLastResult": "(last result: {0})",
-      "pickCurrentPage": "Current page: {0}",
+      "pickCurrentPage": "Target page: {0}{1}　Browser: {2}",
       "pickPageTitle": "Page title: {0}",
       "pickNoPage": "No page available to pick from yet",
       "pickBackendDown": "⚠️ No response from the backend",

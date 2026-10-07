@@ -447,7 +447,10 @@ public partial class AutomationPage : UserControl, ISettingsPage
         });
         if (doc is null)
         {
-            AutomationStatusText.Text = Loc.T("settings.automation.saveFailed", "❌ 保存失败（后端未响应）");
+            // 包值是「❌ 保存失败：{0}」；"后端未响应"用现成的 main.error.noResponse，
+            // 不能只写代码兜底——键存在时兜底不生效，界面会露出 {0}（硬编码清查 §5.3 C-1）
+            AutomationStatusText.Text = Loc.T("settings.automation.saveFailed", "❌ 保存失败：{0}",
+                Loc.T("main.error.noResponse", "无响应"));
             return;
         }
         string content = GetString(doc.RootElement, "content");
@@ -471,9 +474,13 @@ public partial class AutomationPage : UserControl, ISettingsPage
             return;
         }
         using JsonDocument? doc = await SendAsync(new { action = "automation_run" });
+        // 两个包值都带占位符：runStarted「▶ 开始运行自动化 — {0}」与 WPF 同一口径（传时刻），
+        // runFailed「❌ 自动化失败：{0}」；不传参就会露出 {0}（硬编码清查 §5.3 C-1）
         AutomationStatusText.Text = doc is not null
-            ? Loc.T("settings.automation.runStarted", "▶ 已开始运行（可在下方日志观察进度）")
-            : Loc.T("settings.automation.runFailed", "❌ 启动失败");
+            ? Loc.T("settings.automation.runStarted", "▶ 开始运行自动化 — {0}",
+                $"{DateTime.Now:HH:mm:ss}")
+            : Loc.T("settings.automation.runFailed", "❌ 自动化失败：{0}",
+                Loc.T("main.error.noResponse", "无响应"));
     }
 
     private async Task StopAsync()
@@ -1117,7 +1124,8 @@ public partial class AutomationPage : UserControl, ISettingsPage
             timeoutSeconds: 120);
         if (doc is null)
         {
-            ReuseStateText.Text = Loc.T("settings.automation.saveFailed", "❌ 保存失败（后端未响应）");
+            ReuseStateText.Text = Loc.T("settings.automation.saveFailed", "❌ 保存失败：{0}",
+                Loc.T("main.error.noResponse", "无响应"));
             return;
         }
         string content = GetString(doc.RootElement, "content");
