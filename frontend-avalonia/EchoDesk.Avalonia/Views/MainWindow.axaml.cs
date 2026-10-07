@@ -1,4 +1,4 @@
-// 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
+﻿// 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
 //
 // 迁移策略：**事件处理逻辑照搬 WPF 版**（发送、流式双通道、停止、文件上传、状态刷新、
 // 指令面板、常用语、通知条、状态区、Agent 步骤行），换掉的只有界面 API。
@@ -1804,7 +1804,7 @@ public partial class MainWindow : Window
                         _liveReasoning.Append(content);
                         if (_live is not null)
                         {
-                            _live.ThinkingText.Text = _liveReasoning.ToString();
+                            _live.ThinkingText.Text = Emoji.Prefer(_liveReasoning.ToString());
                             _live.ThinkingBox.IsVisible = true;
                         }
                     }
@@ -1817,7 +1817,7 @@ public partial class MainWindow : Window
                             _liveAnswer.Clear();
                             if (_live is not null)
                             {
-                                _live.ThinkingText.Text = _liveReasoning.ToString();
+                                _live.ThinkingText.Text = Emoji.Prefer(_liveReasoning.ToString());
                                 _live.ThinkingBox.IsVisible = true;
                             }
                         }
@@ -1901,7 +1901,7 @@ public partial class MainWindow : Window
                         {
                             if (_live is not null)
                             {
-                                _live.ThinkingText.Text = _liveReasoning.ToString();
+                                _live.ThinkingText.Text = Emoji.Prefer(_liveReasoning.ToString());
                                 _live.ThinkingBox.IsVisible = true;
                             }
                         });
@@ -2324,7 +2324,9 @@ public partial class MainWindow : Window
         _renderDirty = false;
         if (_live is null)
             return;
-        _live.ContentHost.Content = MarkdownRenderer.Build(_liveAnswer.ToString(), _state.Settings.FontSize);
+        // 流式正文同样走 emoji 降级（与 AddMessage 一致，见那里的说明）
+        _live.ContentHost.Content = MarkdownRenderer.Build(
+            Emoji.Prefer(_liveAnswer.ToString()), _state.Settings.FontSize);
         ScrollToBottom();
     }
 
@@ -2358,6 +2360,12 @@ public partial class MainWindow : Window
 
     private void AddMessage(string role, string content, string reasoning = "", string metrics = "")
     {
+        // Emoji 降级作用于**消息正文**（v0.2.2 第 4 批 3b）：此前只有 system 消息
+        // （BuildPlainText）走 Emoji.Prefer，助手/用户的正文里的 emoji 在缺字体的机器上
+        // 会显示成豆腐块。WPF 侧是在 AddMessage 入口统一转一次（`content = Emoji.Prefer(content)`），
+        // 这里照做 —— 转换发生在**渲染之前**，所以代码块、表格里的 emoji 也一并降级。
+        content = Emoji.Prefer(content);
+        reasoning = Emoji.Prefer(reasoning);
         _transcript.Add(new Message(role, content, reasoning, metrics));
         MessageView view = AddMessageView(role, content, reasoning, metrics);
         if (role == "assistant" || role == "user")
@@ -2880,6 +2888,7 @@ public partial class MainWindow : Window
 
     private void StopMetricsTimer() => _metricsTimer?.Stop();
 }
+
 
 
 

@@ -29,10 +29,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Automation;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Controls.Documents;
+using Avalonia.Media;
+using Avalonia.VisualTree;
 using Avalonia.Threading;
 using EchoDesk.Avalonia.Services;
 using EchoDesk.Avalonia.Views;
+using EchoDesk.Avalonia.Utilities;
 using EchoDesk.Avalonia.Views.Settings;
 
 namespace EchoDesk.Avalonia;
@@ -117,6 +122,10 @@ internal static class Probe
                 else if (target.Equals("pages", StringComparison.OrdinalIgnoreCase))
                 {
                     ok = await RunPagesProbeAsync(desktop);
+                }
+                else if (target.Equals("markdown", StringComparison.OrdinalIgnoreCase))
+                {
+                    ok = await Task.FromResult(RunMarkdownProbeAsync(desktop));
                 }
                 else
                 {
@@ -543,6 +552,223 @@ internal static class Probe
         return ok;
     }
 
+    /// <summary>
+    /// Markdown 渲染器验证（v0.2.2 第 4 批 3b）：`--probe markdown`。
+    ///
+    /// 为什么单独一个模式：渲染器的输出是**控件树**，靠肉眼看只能看出"大概渲染了"，
+    /// 而本批补的四件事（行内数学、表格对齐、误包还原、行内嵌套、可点击链接）
+    /// 都是"错了也照样有东西显示"的类型 —— 必须遍历控件树断言**结构**。
+    /// 不需要后端，也不开设置窗口。
+    /// </summary>
+    private static bool RunMarkdownProbeAsync(IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        bool ok = true;
+        _ = desktop;
+
+        void Check(string name, bool pass, string detail)
+        {
+            Console.WriteLine($"  [{(pass ? "PASS" : "FAIL")}] {name}——{detail}");
+            if (!pass)
+                ok = false;
+        }
+
+        // ① 行内数学 $x^2$：应产出等宽 Run，且**不残留** $ 定界符
+        Control formula = MarkdownRenderer.Build("勾股定理 $a^2 + b^2 = c^2$ 成立。", 14);
+        string formulaText = FlattenText(formula);
+        Check("行内数学 $…$ 被识别成等宽片段",
+            !formulaText.Contains('$') && formulaText.Contains("a^2 + b^2 = c^2"), formulaText);
+        Check("行内数学用等宽字体", HasMonoRun(formula), "找到等宽 Run");
+
+        // ② 美元金额**不能**被误判成公式（这是最容易踩的反向用例）
+        Control money = MarkdownRenderer.Build("价格 $100 到 $200 之间。", 14);
+        string moneyText = FlattenText(money);
+        Check("美元金额不被误判成公式", moneyText.Contains("$100 到 $200"), moneyText);
+        Check("美元金额不用等宽字体", !HasMonoRun(money), "没有等宽 Run");
+
+        // ③ 行内 $$…$$（出现在一行中间）
+        Control middle = MarkdownRenderer.Build("结论是 $$E = mc^2$$ 这样。", 14);
+        string middleText = FlattenText(middle);
+        Check("行中 $$…$$ 被识别", !middleText.Contains("$$") && middleText.Contains("E = mc^2"), middleText);
+
+        // ④ 表格列对齐 :---: / ---:
+        string table = "| 名称 | 数量 | 金额 |\n|:---|---:|:---:|\n| 甲 | 3 | 12.00 |\n| 乙 | 4 | 30.00 |";
+        Control tableTree = MarkdownRenderer.Build(table, 14);
+        var aligns = new List<TextAlignment>();
+        CollectAlignments(tableTree, aligns);
+        Check("表格右对齐（---:）生效", aligns.Contains(TextAlignment.Right), string.Join(",", aligns));
+        Check("表格居中（:---:）生效", aligns.Contains(TextAlignment.Center), string.Join(",", aligns));
+
+        // ⑤ 误包进代码块的表格被还原成真表格
+        Control fenced = MarkdownRenderer.Build("```\n" + table + "\n```\n", 14);
+        Check("代码块里的表格被还原成表格（Grid）", HasGrid(fenced), "找到 Grid");
+        Check("真正被包起来的表格内容仍然完整",
+            FlattenText(fenced).Contains("名称") && FlattenText(fenced).Contains("12.00"), FlattenText(fenced));
+
+        // ⑥ 真正的代码块**不能**被误还原
+        Control code = MarkdownRenderer.Build("```python\nprint('hi')\n```", 14);
+        Check("普通代码块仍然是代码块（没有 Grid）", !HasGrid(code), "未找到 Grid");
+
+        // ⑦ 行内嵌套：粗体里嵌行内代码
+        Control nested = MarkdownRenderer.Build("**粗体里有 `code` 片段**", 14);
+        Check("粗体中嵌行内代码（递归解析）", HasNestedMonoInsideBold(nested), "粗体 Span 内含等宽 Run");
+        Check("内层反引号不残留", !FlattenText(nested).Contains('`'), FlattenText(nested));
+
+        // ⑧ 可点击链接
+        Control link = MarkdownRenderer.Build("见 [文档](https://example.com/doc) 一节。", 14);
+        Check("链接渲染成可点击控件（InlineUIContainer + Button）", HasLinkButton(link), "找到链接按钮");
+        Check("链接文本不带尖括号 URL 尾巴",
+            !FlattenText(link).Contains("<https://"), FlattenText(link));
+
+        // ⑨ 块级公式仍然居中成块
+        Control blockFormula = MarkdownRenderer.Build("$$\nE = mc^2\n$$", 14);
+        Check("块级公式仍渲染成居中块", FlattenText(blockFormula).Contains("E = mc^2"), FlattenText(blockFormula));
+
+        return ok;
+    }
+
+    // ---- 控件树断言用的小工具（只在探针里用，不进产品代码） ----
+
+    private static IEnumerable<Control> Walk(Control root)
+    {
+        var stack = new Stack<Control>();
+        stack.Push(root);
+        while (stack.Count > 0)
+        {
+            Control current = stack.Pop();
+            yield return current;
+            foreach (Control child in current.GetVisualChildren().OfType<Control>())
+                stack.Push(child);
+            if (current is ContentControl { Content: Control content })
+                stack.Push(content);
+        }
+    }
+
+    /// <summary>把控件树里的文本拼起来（够断言"定界符有没有残留、内容在不在"）。</summary>
+    private static string FlattenText(Control root)
+    {
+        var builder = new System.Text.StringBuilder();
+        Collect(root, builder);
+        return builder.ToString();
+
+        static void Collect(object? node, System.Text.StringBuilder into)
+        {
+            switch (node)
+            {
+                // 顺序说明：`Text` 优先于 `Inlines`。
+                // Avalonia 的 `TextBlock.Inlines` **永远不为 null**（getter 会按需建集合），
+                // 所以"用 Inlines 判断有没有内容"一定会误判 —— 公式块那种"只设 Text、
+                // 不设 Inlines"的控件会被当成空的（本探针第一次跑就踩到了这条，
+                // 报"块级公式渲染成空"，其实是断言工具自己的问题）。
+                case SelectableTextBlock stb:
+                    if (stb.Text is { Length: > 0 } stext)
+                    {
+                        into.Append(stext);
+                    }
+                    else if (stb.Inlines is not null)
+                    {
+                        foreach (Inline inline in stb.Inlines)
+                            CollectInline(inline, into);
+                    }
+                    break;
+                case TextBlock tb:
+                    if (tb.Text is { Length: > 0 } text)
+                    {
+                        into.Append(text);
+                    }
+                    else if (tb.Inlines is not null)
+                    {
+                        foreach (Inline inline in tb.Inlines)
+                            CollectInline(inline, into);
+                    }
+                    break;
+                case ContentControl { Content: object inner }:
+                    Collect(inner, into);
+                    break;
+                case Panel panel:
+                    foreach (Control child in panel.Children)
+                        Collect(child, into);
+                    break;
+                case Decorator { Child: { } decorated }:
+                    Collect(decorated, into);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        static void CollectInline(Inline inline, System.Text.StringBuilder into)
+        {
+            switch (inline)
+            {
+                case Run run when run.Text is { Length: > 0 } text:
+                    into.Append(text);
+                    break;
+                case Span span when span.Inlines is not null:
+                    foreach (Inline child in span.Inlines)
+                        CollectInline(child, into);
+                    break;
+                case InlineUIContainer { Child: Button { Content: string label } }:
+                    into.Append(label);
+                    break;
+            }
+        }
+    }
+
+    private static bool HasMonoRun(Control root) =>
+        Walk(root).Any(c => c is TextBlock tb && ContainsMono(tb));
+
+    private static bool ContainsMono(TextBlock block)
+    {
+        if (block.Inlines is null)
+            return false;
+        foreach (Inline inline in block.Inlines)
+        {
+            if (inline is Run { FontFamily: { } font } && font.ToString().Contains("Consolas"))
+                return true;
+            if (inline is Span { Inlines: not null } span
+                && span.Inlines.Any(x => x is Run { FontFamily: { } f } && f.ToString().Contains("Consolas")))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool HasNestedMonoInsideBold(Control root)
+    {
+        foreach (Control control in Walk(root))
+        {
+            if (control is not TextBlock { Inlines: not null } block)
+                continue;
+            foreach (Inline inline in block.Inlines)
+            {
+                if (inline is Span { Inlines: not null } span
+                    && span.FontWeight == FontWeight.SemiBold
+                    && span.Inlines.Any(x => x is Run { FontFamily: { } f } && f.ToString().Contains("Consolas")))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static bool HasGrid(Control root) => Walk(root).Any(c => c is Grid);
+
+    private static void CollectAlignments(Control root, List<TextAlignment> into)
+    {
+        foreach (Control control in Walk(root))
+        {
+            if (control is TextBlock tb && tb.TextAlignment != TextAlignment.Left)
+                into.Add(tb.TextAlignment);
+        }
+    }
+
+    private static bool HasLinkButton(Control root) =>
+        Walk(root).Any(c => c is Button { Content: string } b
+                            && string.Equals(AutomationProperties.GetAutomationId(b), "MarkdownLink",
+                                StringComparison.Ordinal));
+
     private static async Task<bool> RunMarketProbeAsync(IClassicDesktopStyleApplicationLifetime desktop)
     {
         bool ok = true;
@@ -714,3 +940,4 @@ internal static class Probe
             yield return $"{pair.Key}={pair.Value}";
     }
 }
+

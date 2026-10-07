@@ -1,4 +1,4 @@
-// Markdown → Avalonia 控件的渲染器（对应 WPF 版的 Utilities/MarkdownRenderer.cs）。
+﻿// Markdown → Avalonia 控件的渲染器（对应 WPF 版的 Utilities/MarkdownRenderer.cs）。
 //
 // **这是本次原型最需要证明的一件事**：WPF 版的富文本是"Markdown → FlowDocument + Inline"，
 // 而 Avalonia 没有 FlowDocument，只有 TextBlock.Inlines（限于单段的行内排版）。
@@ -16,8 +16,10 @@ using System.Linq;
 using System.Text;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Automation;
 using Avalonia.Controls.Documents;
 using Avalonia.Controls.Primitives;
+using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -57,7 +59,15 @@ public static class MarkdownRenderer
                     i++;
                 }
                 i++;   // 跳过收尾的 ```
-                panel.Children.Add(BuildCodeBlock(body.ToString().TrimEnd('\n'), lang, fontSize));
+                // **误包进代码块的表格还原**（v0.2.2 第 4 批 3b）：模型经常把整张表格
+                // 塞进 ``` 里（"表格用代码块包起来更整齐"是常见误解），照原样渲染就变成
+                // 一坨对齐不了的等宽文本。判据与 WPF 一致：内容里出现表格分隔行 → 按
+                // Markdown 重新解析；否则才是真正的代码块。
+                string bodyText = body.ToString().TrimEnd('\n');
+                if (LooksLikeMarkdown(bodyText))
+                    panel.Children.Add(Build(bodyText, fontSize));
+                else
+                    panel.Children.Add(BuildCodeBlock(bodyText, lang, fontSize));
                 continue;
             }
 
@@ -174,7 +184,7 @@ public static class MarkdownRenderer
     private static Control BuildParagraph(string text, double fontSize)
     {
         var tb = NewTextBlock(fontSize);
-        ParseInlines(tb, text, fontSize, bold: false, italic: false);
+        ParseInlines(tb.Inlines!, text, fontSize, bold: false, italic: false);
         return tb;
     }
 
@@ -191,7 +201,7 @@ public static class MarkdownRenderer
         var tb = NewTextBlock(size);
         tb.FontWeight = FontWeight.SemiBold;
         tb.Margin = new Thickness(0, level <= 2 ? 8 : 4, 0, 2);
-        ParseInlines(tb, text, size, bold: true, italic: false);
+        ParseInlines(tb.Inlines!, text, size, bold: true, italic: false);
         return tb;
     }
 
@@ -199,7 +209,7 @@ public static class MarkdownRenderer
     {
         var inner = NewTextBlock(fontSize);
         inner.Opacity = 0.85;
-        ParseInlines(inner, text, fontSize, bold: false, italic: true);
+        ParseInlines(inner.Inlines!, text, fontSize, bold: false, italic: true);
         return new Border
         {
             BorderThickness = new Thickness(3, 0, 0, 0),
@@ -250,7 +260,7 @@ public static class MarkdownRenderer
                 VerticalAlignment = VerticalAlignment.Top,
             };
             var body = NewTextBlock(fontSize);
-            ParseInlines(body, text, fontSize, bold: false, italic: false);
+            ParseInlines(body.Inlines!, text, fontSize, bold: false, italic: false);
             Grid.SetColumn(bullet, 0);
             Grid.SetColumn(body, 1);
             row.Children.Add(bullet);
@@ -346,13 +356,33 @@ public static class MarkdownRenderer
     /// <summary>表格：Avalonia 没有 FlowDocument 的 Table，用 Grid + Border 画。</summary>
     private static Control BuildTable(List<string> rows, double fontSize)
     {
-        var parsed = rows.Where(r => !IsTableSeparator(r))
-                         .Select(SplitCells)
-                         .ToList();
+        var parsed = rows.Select(SplitCells).ToList();
         if (parsed.Count == 0)
             return new TextBlock { Text = "" };
 
+        // 列对齐（v0.2.2 第 4 批 3b）：从分隔行（|:---:|---:|）读出来，与 WPF 同一判据。
+        // 此前全部左对齐 —— 数字列（金额、数量）因此看起来是歪的。
+        int separatorIndex = -1;
+        for (int r = 0; r < rows.Count; r++)
+        {
+            if (IsTableSeparator(rows[r]))
+            {
+                separatorIndex = r;
+                break;
+            }
+        }
+        List<string> separatorCells = separatorIndex >= 0 ? parsed[separatorIndex] : new List<string>();
+
         int columns = parsed.Max(r => r.Count);
+        var aligns = new TextAlignment[columns];
+        for (int c = 0; c < columns; c++)
+        {
+            string spec = c < separatorCells.Count ? separatorCells[c].Trim() : "";
+            aligns[c] = spec.StartsWith(':') && spec.EndsWith(':') ? TextAlignment.Center
+                : spec.EndsWith(':') ? TextAlignment.Right
+                : TextAlignment.Left;
+        }
+
         var grid = new Grid();
         for (int c = 0; c < columns; c++)
             grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
@@ -360,26 +390,33 @@ public static class MarkdownRenderer
             grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 
         IBrush border = Brush("MarkdownRuleBrush", Color.FromArgb(60, 128, 128, 128));
+        int rowIndex = 0;
         for (int r = 0; r < parsed.Count; r++)
         {
+            if (r == separatorIndex)
+                continue;   // 分隔行本身不渲染成一行
+            // 表头加粗的判据与 WPF 一致：分隔行之前的行都是表头（分隔行在第 0 行时也当表头）
+            bool header = r < separatorIndex || separatorIndex == 0;
             for (int c = 0; c < columns; c++)
             {
                 string cell = c < parsed[r].Count ? parsed[r][c] : "";
                 var tb = NewTextBlock(fontSize);
                 tb.Margin = new Thickness(6, 4, 6, 4);
-                if (r == 0)
+                tb.TextAlignment = aligns[c];
+                if (header)
                     tb.FontWeight = FontWeight.SemiBold;
-                ParseInlines(tb, cell, fontSize, bold: r == 0, italic: false);
+                ParseInlines(tb.Inlines!, cell, fontSize, bold: header, italic: false);
                 var cellBorder = new Border
                 {
-                    BorderThickness = new Thickness(0, 0, 1, r == 0 ? 1 : 0),
+                    BorderThickness = new Thickness(0, 0, 1, header ? 1 : 0),
                     BorderBrush = border,
                     Child = tb,
                 };
-                Grid.SetRow(cellBorder, r);
+                Grid.SetRow(cellBorder, rowIndex);
                 Grid.SetColumn(cellBorder, c);
                 grid.Children.Add(cellBorder);
             }
+            rowIndex++;
         }
         return new Border
         {
@@ -391,16 +428,53 @@ public static class MarkdownRenderer
         };
     }
 
+    /// <summary>
+    /// 判断一段（被 ``` 包起来的）内容其实是不是 Markdown：出现形如 <c>|:---:|---:|</c>
+    /// 的表格分隔行就算。与 WPF 的 <c>LooksLikeMarkdown</c> 同一判据。
+    /// </summary>
+    private static bool LooksLikeMarkdown(string code)
+    {
+        foreach (string raw in code.Replace("\r\n", "\n").Split('\n'))
+        {
+            string t = raw.Trim();
+            if (!t.StartsWith('|'))
+                continue;
+            List<string> cells = SplitCells(t);
+            if (cells.Count >= 2 && cells.All(c => IsSeparatorCell(c)))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>分隔行里的单个单元格：<c>---</c> / <c>:---</c> / <c>---:</c> / <c>:---:</c>。</summary>
+    private static bool IsSeparatorCell(string cell)
+    {
+        string s = cell.Trim();
+        if (s.Length == 0)
+            return false;
+        if (s.StartsWith(':'))
+            s = s[1..];
+        if (s.EndsWith(':'))
+            s = s[..^1];
+        return s.Length > 0 && s.All(c => c == '-');
+    }
+
     // -----------------------------------------------------------------
     // 行内
     // -----------------------------------------------------------------
 
-    /// <summary>解析行内标记并逐段塞进 TextBlock.Inlines。</summary>
-    private static void ParseInlines(TextBlock target, string text, double fontSize, bool bold, bool italic)
+    /// <summary>
+    /// 解析行内标记并逐段塞进 Inlines。
+    ///
+    /// **递归解析内层**（v0.2.2 第 4 批 3b）：此前是"扁平"的 —— `**粗中带 `码`**`
+    /// 里那段行内代码不会被识别，整段当成粗体文字原样显示反引号。
+    /// 现在与 WPF 的 <c>ParseInlines</c> 一样：配对包裹符里的内容**再走一遍本函数**。
+    /// 行内代码是唯一的例外（它内部不解析 Markdown，与 CommonMark 一致）。
+    /// </summary>
+    private static void ParseInlines(InlineCollection col, string text, double fontSize, bool bold, bool italic)
     {
-        var inlines = new InlineCollection();
-        target.Inlines = inlines;
         int i = 0;
+        int n = text.Length;
         var buffer = new StringBuilder();
 
         void Flush()
@@ -410,114 +484,255 @@ public static class MarkdownRenderer
             var run = new Run(buffer.ToString());
             run.FontWeight = bold ? FontWeight.SemiBold : FontWeight.Normal;
             run.FontStyle = italic ? FontStyle.Italic : FontStyle.Normal;
-            inlines.Add(run);
+            col.Add(run);
             buffer.Clear();
         }
 
-        while (i < text.Length)
+        while (i < n)
         {
-            // 行内代码 `code`
-            if (text[i] == '`')
-            {
-                int end = text.IndexOf('`', i + 1);
-                if (end > i + 1)
-                {
-                    Flush();
-                    var run = new Run(text[(i + 1)..end])
-                    {
-                        FontFamily = MonoFont,
-                        Background = Brush("MarkdownCodeBrush", Color.FromArgb(28, 128, 128, 128)),
-                    };
-                    inlines.Add(run);
-                    i = end + 1;
-                    continue;
-                }
-            }
+            char c = text[i];
 
-            // 粗体 **x** / __x__
-            if (i + 1 < text.Length && ((text[i] == '*' && text[i + 1] == '*') || (text[i] == '_' && text[i + 1] == '_')))
+            // 链接 [文本](url)：标签内部支持嵌套；**可点击并打开浏览器**（3b）。
+            if (c == '[')
             {
-                string mark = text.Substring(i, 2);
-                int end = text.IndexOf(mark, i + 2, StringComparison.Ordinal);
-                if (end > i + 2)
+                int close = text.IndexOf("](", i, StringComparison.Ordinal);
+                if (close >= 0)
                 {
-                    Flush();
-                    inlines.Add(Styled(text[(i + 2)..end], bold: true, italic: italic, fontSize: fontSize));
-                    i = end + 2;
-                    continue;
-                }
-            }
-
-            // 删除线 ~~x~~
-            if (i + 1 < text.Length && text[i] == '~' && text[i + 1] == '~')
-            {
-                int end = text.IndexOf("~~", i + 2, StringComparison.Ordinal);
-                if (end > i + 2)
-                {
-                    Flush();
-                    var run = new Run(text[(i + 2)..end]) { TextDecorations = TextDecorations.Strikethrough };
-                    inlines.Add(run);
-                    i = end + 2;
-                    continue;
-                }
-            }
-
-            // 斜体 *x* / _x_
-            if (text[i] is '*' or '_')
-            {
-                char mark = text[i];
-                int end = text.IndexOf(mark, i + 1);
-                if (end > i + 1 && end < text.Length)
-                {
-                    Flush();
-                    inlines.Add(Styled(text[(i + 1)..end], bold: bold, italic: true, fontSize: fontSize));
-                    i = end + 1;
-                    continue;
-                }
-            }
-
-            // 链接 [text](url)
-            if (text[i] == '[')
-            {
-                int close = text.IndexOf(']', i + 1);
-                if (close > i && close + 1 < text.Length && text[close + 1] == '(')
-                {
-                    int paren = text.IndexOf(')', close + 2);
-                    if (paren > close)
+                    int end = text.IndexOf(')', close + 2);
+                    if (end >= 0)
                     {
                         Flush();
                         string label = text[(i + 1)..close];
-                        string url = text[(close + 2)..paren];
-                        // 链接渲染成"下划线 + 主题色"的 Run。**能力差异**：WPF 版给链接挂了
-                        // ToolTip 显示 URL，Avalonia 里 Run 不是 Control（ToolTip.SetTip 只接 Control），
-                        // 所以原型阶段把 URL 直接附在文本后（不静默丢弃信息）。
-                        string shown = label.Contains(url, StringComparison.Ordinal) ? label : $"{label} <{url}>";
-                        var run = new Run(shown)
-                        {
-                            Foreground = Brush("MarkdownLinkBrush", Color.FromArgb(255, 66, 133, 244)),
-                            TextDecorations = TextDecorations.Underline,
-                        };
-                        inlines.Add(run);
-                        i = paren + 1;
+                        string url = text[(close + 2)..end];
+                        col.Add(BuildLink(label, url, fontSize));
+                        i = end + 1;
                         continue;
                     }
                 }
             }
 
-            buffer.Append(text[i]);
+            // 行内 $$...$$（出现在一行中间，例如「结论是 $$E = mc^2$$ 这样」）。
+            // 块级扫描只认行首的 $$，不处理这一支就会把定界符原样显示、内容被拆碎。
+            if (c == '$' && i + 1 < n && text[i + 1] == '$')
+            {
+                int closeD = text.IndexOf("$$", i + 2, StringComparison.Ordinal);
+                if (closeD >= 0)
+                {
+                    Flush();
+                    col.Add(Mono(text[(i + 2)..closeD].Trim(), italic));
+                    i = closeD + 2;
+                    continue;
+                }
+            }
+
+            // 行内数学 $...$。**必须与美元金额区分开**：`价格 $100 到 $200` 是最容易
+            // 被误判成公式的输入，误判会把整段话变成等宽居中，比"公式没渲染"糟得多。
+            // 判据见 LooksLikeInlineMath（与 WPF 逐条一致，含"跳过空白后的比较运算"那一条）。
+            if (c == '$' && !(i + 1 < n && text[i + 1] == '$'))
+            {
+                int close = text.IndexOf('$', i + 1);
+                if (close > i + 1 && close - i - 1 <= 200)
+                {
+                    string inner = text[(i + 1)..close];
+                    if (LooksLikeInlineMath(inner))
+                    {
+                        Flush();
+                        col.Add(Mono(inner, italic));
+                        i = close + 1;
+                        continue;
+                    }
+                }
+            }
+
+            // 配对包裹符：` `、** **、__ __、~~ ~~、* *、_ _
+            // 顺序有意如此：先两字符再单字符，否则 `**` 会被当成两个 `*`。
+            if (TryMark(text, i, out string mark, out int markLen))
+            {
+                int closeIdx = text.IndexOf(mark, i + markLen, StringComparison.Ordinal);
+                if (closeIdx > i + markLen)
+                {
+                    string inner = text[(i + markLen)..closeIdx];
+                    Flush();
+                    if (mark == "`")
+                    {
+                        // 行内代码：直接成块，**不**解析内部 Markdown（与 CommonMark 一致）
+                        var code = new Run(inner)
+                        {
+                            FontFamily = MonoFont,
+                            Background = Brush("MarkdownCodeBrush", Color.FromArgb(28, 128, 128, 128)),
+                        };
+                        col.Add(code);
+                    }
+                    else
+                    {
+                        // 递归解析内层 —— 这就是"粗中嵌码/链"能显示出来的原因
+                        var span = new Span();
+                        span.FontWeight = mark is "**" or "__" ? FontWeight.SemiBold
+                            : bold ? FontWeight.SemiBold : FontWeight.Normal;
+                        span.FontStyle = italic ? FontStyle.Italic : FontStyle.Normal;
+                        if (mark == "~~")
+                        {
+                            var strike = new Span { TextDecorations = TextDecorations.Strikethrough };
+                            ParseInlines(strike.Inlines!, inner, fontSize, bold, italic);
+                            col.Add(strike);
+                        }
+                        else
+                        {
+                            bool innerBold = bold || mark is "**" or "__";
+                            bool innerItalic = italic || mark is "*" or "_";
+                            ParseInlines(span.Inlines!, inner, fontSize, innerBold, innerItalic);
+                            col.Add(span);
+                        }
+                    }
+                    i = closeIdx + markLen;
+                    continue;
+                }
+            }
+
+            buffer.Append(c);
             i++;
         }
         Flush();
     }
 
-    private static Run Styled(string text, bool bold, bool italic, double fontSize)
+    /// <summary>可点击的链接。</summary>
+    ///
+    /// **为什么用 InlineUIContainer 包一个 Button**：Avalonia 里 `Run` 不是 `Control`，
+    /// 既挂不了 `PointerPressed` 也挂不了 ToolTip（WPF 侧用的是 `Hyperlink.RequestNavigate`）。
+    /// `InlineUIContainer` 是 Avalonia 提供的"在文本流里嵌一个控件"的机制 ——
+    /// 用它包一个"看起来像链接"的扁按钮（无边框、无背景、下划线 + 主题色），
+    /// 排版上与一段文字无异，但**真的可以点**，点开交给系统浏览器。
+    private static Inline BuildLink(string label, string url, double fontSize)
+    {
+        var button = new Button
+        {
+            Content = Emoji.Prefer(label.Length > 0 ? label : url),
+            FontSize = fontSize,
+            Foreground = Brush("MarkdownLinkBrush", Color.FromArgb(255, 66, 133, 244)),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            Margin = new Thickness(0),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTip.SetTip(button, url);
+        button.Click += (_, _) => OpenUrl(url);
+        AutomationProperties.SetAutomationId(button, "MarkdownLink");
+        return new InlineUIContainer(button);
+    }
+
+    /// <summary>用系统默认程序打开链接（UseShellExecute：交给各平台的 shell 处理）。</summary>
+    private static void OpenUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception)
+        {
+            // 没有默认浏览器 / URL 非法：静默（不打断阅读）
+        }
+    }
+
+    /// <summary>等宽 + 代码前景色的行内片段（行内公式用）。</summary>
+    private static Run Mono(string text, bool italic)
     {
         return new Run(text)
         {
-            FontWeight = bold ? FontWeight.SemiBold : FontWeight.Normal,
+            FontFamily = MonoFont,
             FontStyle = italic ? FontStyle.Italic : FontStyle.Normal,
-            FontSize = fontSize,
+            Foreground = Brush("MarkdownCodeForeground", Color.FromArgb(200, 60, 60, 60)),
         };
+    }
+
+    /// <summary>识别当前位置的配对包裹符；返回 false 表示这里没有标记。</summary>
+    private static bool TryMark(string text, int i, out string mark, out int length)
+    {
+        mark = "";
+        length = 0;
+        if (i >= text.Length)
+            return false;
+        if (i + 1 < text.Length)
+        {
+            string two = text.Substring(i, 2);
+            if (two is "**" or "__" or "~~")
+            {
+                mark = two;
+                length = 2;
+                return true;
+            }
+        }
+        if (text[i] is '`' or '*' or '_')
+        {
+            mark = text[i].ToString();
+            length = 1;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 判断两个 <c>$</c> 之间的内容是否像行内公式（而不是美元金额）。
+    ///
+    /// 保守判据（宁可漏判也不误判，理由见调用点注释）：
+    ///   * 含中日韩等宽字符 → **不是**公式（`$合同金额$` 是误判高发区）；
+    ///   * 出现 LaTeX 特征字符 <c>\ ^ _ { } = + ( )</c> → 是公式；
+    ///   * 比较运算两侧（**跳过空白后**）是"字母对字母/数字" → 是公式
+    ///     （`x > 0` 是公式，`$100 > 50$` 不是）；
+    ///   * 含常见数学函数/命令名 → 是公式；
+    ///   * 其余（纯数字、数字+单位/货币符号）→ 不是公式。
+    /// </summary>
+    private static bool LooksLikeInlineMath(string inner)
+    {
+        if (string.IsNullOrWhiteSpace(inner))
+            return false;
+        foreach (char ch in inner)
+        {
+            if (ch > 0x2E7F)
+                return false;
+        }
+        if (inner.IndexOfAny(new[] { '\\', '^', '_', '{', '}', '=', '+', '(', ')' }) >= 0)
+            return true;
+
+        foreach (char op in new[] { '>', '<' })
+        {
+            int pos = inner.IndexOf(op);
+            if (pos < 0)
+                continue;
+            int li = pos - 1;
+            while (li >= 0 && inner[li] == ' ')
+                li--;
+            int ri = pos + 1;
+            while (ri < inner.Length && inner[ri] == ' ')
+                ri++;
+            if (li < 0 || ri >= inner.Length)
+                continue;
+            char left = inner[li];
+            char right = inner[ri];
+            if ((char.IsLetterOrDigit(left) && char.IsLetterOrDigit(right))
+                && (char.IsLetter(left) || char.IsLetter(right)))
+                return true;
+        }
+
+        string lower = inner.ToLowerInvariant();
+        foreach (string token in new[]
+                 {
+                     "frac", "sqrt", "sum", "int", "prod", "lim", "log", "sin", "cos", "tan",
+                     "alpha", "beta", "gamma", "delta", "theta", "lambda", "sigma", "omega", "pi",
+                     "times", "cdot", "leq", "geq", "neq", "approx", "infty", "partial",
+                 })
+        {
+            if (lower.Contains(token))
+                return true;
+        }
+        return false;
     }
 
     // -----------------------------------------------------------------
@@ -581,3 +796,6 @@ public static class MarkdownRenderer
         return new SolidColorBrush(fallback);
     }
 }
+
+
+

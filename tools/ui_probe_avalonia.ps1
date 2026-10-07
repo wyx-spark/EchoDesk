@@ -1,4 +1,4 @@
-# 适用平台：Avalonia 跨平台前端（三平台通用；Windows 上本机即可跑）
+﻿# 适用平台：Avalonia 跨平台前端（三平台通用；Windows 上本机即可跑）
 # EchoDesk Avalonia 界面探针 —— 回答"窗口到底能不能打开"
 #
 # 为什么需要它：v0.2.2 记录 §7.4 明写"Avalonia 前端这套代码此前从未被真正跑起来过"：
@@ -16,13 +16,14 @@
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode settings
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode agent          # 真后端 + Agent 事件链路
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode market         # 真后端 + 模型市场整条交互
-#   powershell -File tools\ui_probe_avalonia.ps1 -Mode pages          # 真后端 + 四个设置页的新增功能
+#   powershell -File tools\ui_probe_avalonia.ps1 -Mode pages          # 真后端 + 六个设置页的新增功能
+#   powershell -File tools\ui_probe_avalonia.ps1 -Mode markdown       # 不开后端：遍历控件树断言 Markdown 渲染结构
 #   powershell -File tools\ui_probe_avalonia.ps1 -Exe <发布树>\app\EchoDesk.exe
 param(
     # 默认指向本仓库的 Debug 构建（开发机跑得最快）。发布树里的自包含产物也可以直接传进来，
     # 那条路径才是"发布出去的东西到底能不能开"的证据。
     [string]$Exe = "$PSScriptRoot\..\frontend-avalonia\EchoDesk.Avalonia\bin\Debug\net10.0\EchoDesk.exe",
-    [ValidateSet('main', 'settings', 'both', 'agent', 'market', 'pages')]
+    [ValidateSet('main', 'settings', 'both', 'agent', 'market', 'pages', 'markdown')]
     [string]$Mode = 'both',
     [int]$TimeoutSec = 120
 )
@@ -90,3 +91,4 @@ if ($failures.Count -eq 0) {
 }
 Write-Output "[avalonia-probe] 失败 $($failures.Count) 项"
 exit 1
+
