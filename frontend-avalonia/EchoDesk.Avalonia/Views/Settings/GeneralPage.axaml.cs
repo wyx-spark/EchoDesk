@@ -101,12 +101,32 @@ public partial class GeneralPage : UserControl, ISettingsPage
                 : Loc.T("settings.general.emojiOn", "本机支持 emoji，当前正常显示"));
             _host.MarkDirty();
         };
-        LanguageCombo.SelectionChanged += (_, _) =>
+        LanguageCombo.SelectionChanged += async (_, _) =>
         {
             if (_applying || Selected(LanguageCombo) is not { } value || _host is null)
                 return;
             _host.State.SetLanguage(value);
             _host.MarkDirty();
+            // 语言包信息随语言变（"当前语言"那一行），重排一遍
+            UpdateLangPackText();
+            // 后端同步（对齐 WPF 的 LanguageCombo_SelectionChanged → SyncBackendLanguageAsync）：
+            // 系统消息、错误提示与技能的多语言资源都归后端管，不同步就会出现
+            // "界面是英文、后端回的话是中文"这种半截状态。
+            await SyncBackendLanguageAsync();
+        };
+        ReloadLangButton.Click += (_, _) =>
+        {
+            // 翻译者改完磁盘上的 JSON 后不必重启：Reload 会清缓存并按当前语言重读，
+            // 随之发出的 LanguageChanged 会让设置窗口与主窗口重建全部文案。
+            Loc.Reload();
+            UpdateLangPackText();
+            _host?.ShowStatus(Loc.T("settings.general.langReloaded", "✅ 语言包已重新加载"));
+        };
+        OpenLangDirButton.Click += (_, _) =>
+        {
+            if (!ShellOpen.TryOpenDirectory(UserPaths.LangDirectory))
+                _host?.ShowStatus(Loc.T("settings.general.openLangDirFailed",
+                    "⚠️ 无法打开语言包目录：{0}", UserPaths.LangDirectory));
         };
         FontSizeSlider.PropertyChanged += (_, e) =>
         {
@@ -137,6 +157,62 @@ public partial class GeneralPage : UserControl, ISettingsPage
 
     private static string? Selected(ComboBox combo) =>
         (combo.SelectedItem as Option)?.Value;
+
+    // -----------------------------------------------------------------
+    // 语言包信息与后端语言同步（v0.2.2 第 2 批补全，对齐 WPF 的 UpdateLangPackText /
+    // SyncBackendLanguageAsync）
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// 重排「语言包」区块的三行信息：当前语言 / 可用语言 / 语言包目录。
+    /// 与 WPF 版逐行同口径（同一批键），两边的英文界面不会一处中文一处英文。
+    /// </summary>
+    private void UpdateLangPackText()
+    {
+        var available = Loc.AvailableLocales();
+        LangPackText.Text = string.Join(Environment.NewLine, new[]
+        {
+            $"{Loc.T("settings.general.langCurrent", "当前语言")}：{Loc.DisplayName(Loc.Locale)}（{Loc.Locale}）",
+            $"{Loc.T("settings.general.langAvailable", "可用语言")}：" +
+            (available.Count > 0
+                ? string.Join(" / ", available.ConvertAll(Loc.DisplayName))
+                : Loc.T("settings.general.langNone", "（未找到语言包）")),
+            $"{Loc.T("settings.general.langDir", "语言包目录")}：{UserPaths.LangDirectory}",
+        });
+    }
+
+    /// <summary>
+    /// 通知后端切换语言。
+    ///
+    /// **后端是业务文案的主人**：系统消息、错误提示与技能自带的多语言资源都在它那边，
+    /// 前端只切自己的语言包会让用户看到"界面英文、回话中文"。响应里带回的
+    /// `commands` 是新语言的指令表 —— 顺手交给 <see cref="CommandCatalog"/>，
+    /// 否则指令面板的说明会停在旧语言（WPF 版同样处理）。
+    /// </summary>
+    private async Task SyncBackendLanguageAsync()
+    {
+        if (_host is null)
+            return;
+        try
+        {
+            using System.Text.Json.JsonDocument? doc =
+                await _host.State.ActiveBackend.SendAsync(
+                    new { action = "set_language", locale = Loc.Locale });
+            if (doc is null)
+            {
+                _host.ShowStatus(Loc.T("settings.general.langSyncFailed",
+                    "⚠️ 未能同步语言到后端（后端未响应）"));
+                return;
+            }
+            if (doc.RootElement.TryGetProperty("commands", out System.Text.Json.JsonElement commands))
+                CommandCatalog.ApplyFromBackend(commands);
+            _host.ShowStatus(Loc.T("settings.general.languageRestartBackend", "后端语言已同步"));
+        }
+        catch (Exception ex)
+        {
+            _host.ShowStatus($"⚠️ {ex.Message}");
+        }
+    }
 
     private static void Select(ComboBox combo, string? value)
     {
@@ -230,14 +306,13 @@ public partial class GeneralPage : UserControl, ISettingsPage
     }
 
     public void ApplyTexts()
-    {
-        ThemeLabel.Text = Loc.T("settings.general.themeLabel", "界面主题");
+    {        ThemeLabel.Text = Loc.T("settings.general.themeLabel", "界面主题");
         EmojiLabel.Text = Loc.T("settings.general.emojiLabel", "emoji 显示");
         EmojiStatusText.Text = Loc.T("settings.general.emojiHelp",
             "自动：本机有 emoji 字体就显示彩色图标，没有就换成纯文本标记（如 [OK]）。");
         FontSizeLabel.Text = Loc.T("settings.general.fontSize", "界面字号");
         LanguageLabel.Text = Loc.T("settings.general.language", "界面语言");
-        LangPackText.Text = Loc.T("settings.general.languageHelp",
+        LanguageHelpText.Text = Loc.T("settings.general.languageHelp",
             "切换后界面、错误提示与指令帮助立即生效，无需重启。选择结果记录在 ui_state.json。");
         // 默认模式的键在语言包里是一条完整说明（"默认对话模式（下次启动生效…）"），
         // 既当标题也当提示 —— 不另造一个更短的键，避免两处文案将来各说各话。
@@ -246,18 +321,47 @@ public partial class GeneralPage : UserControl, ISettingsPage
             "默认对话模式（下次启动生效，也可用 /mode 即时切换）");
         ConfirmDestructiveCheck.Content = Loc.T("settings.general.confirmDestructive",
             "执行有副作用的指令（/clear、/clearcache）前二次确认");
-        PathsLabel.Text = Loc.T("settings.general.pathUserData", "用户数据目录");
+        LangPackTitle.Text = Loc.T("settings.general.langPackTitle", "语言包");
+        ReloadLangButton.Content = Loc.T("settings.general.reloadLang", "↻ 重新加载语言包");
+        OpenLangDirButton.Content = Loc.T("settings.general.openLangDir", "📂 打开语言包目录");
+        UpdateLangPackText();
+        PathsTitle.Text = Loc.T("settings.general.sectionPaths", "📌 界面与数据位置");
+        PathsText.Text = DescribePaths();
         ThemeStatusText.Text = Loc.T("settings.general.themeNote",
             "主题与 emoji 显示即时生效，无需重启。");
-        PathsText.Text = string.Join(Environment.NewLine, new[]
-        {
-            $"{Loc.T("settings.general.pathProgram", "程序目录")}：{AppContext.BaseDirectory}",
-            $"{Loc.T("settings.general.pathUserData", "用户数据目录")}：{UserPaths.DataRoot}",
-            $"{Loc.T("settings.general.langDir", "语言包目录")}：{UserPaths.LangDirectory}",
-        });
 
         // 下拉项文案是委托，改了语言要把当前选中项显示刷新一遍。
         RefreshComboTexts(ThemeCombo, EmojiCombo, LanguageCombo, DefaultModeCombo);
+    }
+
+    /// <summary>
+    /// 界面/数据位置说明（对齐 WPF 的 DescribePaths，逐行同口径）。
+    ///
+    /// 为什么要把"后端目录 / 插件目录 / 语言包目录 / 用户数据目录"都列出来：
+    /// 用户报"我上传的文件在哪""插件装哪去了"这类问题时，这是第一手答案；
+    /// 便携版布局（程序本体在 app\、用户数据在外层）如果不写明，用户会去 app\ 里
+    /// 翻一个永远不会出现的 results 目录。
+    /// </summary>
+    private static string DescribePaths()
+    {
+        string program = UserPaths.ProgramDirectory;
+        string data = UserPaths.DataRoot;
+        var lines = new List<string>
+        {
+            $"{Loc.T("settings.general.pathProgram", "程序目录")}：{program}",
+            $"{Loc.T("settings.general.pathBackend", "后端目录（配置 / models / 会话 / 自动化日志）")}：" +
+            $"{System.IO.Path.Combine(program, "backend")}",
+            $"{Loc.T("settings.general.pathSkills", "插件目录")}：" +
+            $"{System.IO.Path.Combine(program, "backend", "skills")}",
+            $"{Loc.T("settings.general.pathUserData", "用户数据目录（界面状态 / 常用语 / results）")}：{data}",
+            $"{Loc.T("settings.general.langDir", "语言包目录")}：{UserPaths.LangDirectory}",
+        };
+        if (!string.Equals(program, data, StringComparison.OrdinalIgnoreCase))
+        {
+            lines.Add(Loc.T("settings.general.pathPortableNote",
+                "提示：本程序按便携版布局运行，程序本体在 app\\ 下，ui_state.json、常用语与「results」都在外层目录，便于备份与迁移。"));
+        }
+        return string.Join(Environment.NewLine, lines);
     }
 
     /// <summary>
@@ -291,5 +395,33 @@ public partial class GeneralPage : UserControl, ISettingsPage
         {
             _applying = previous;
         }
+    }
+
+    // -----------------------------------------------------------------
+    // 探针接口（`EchoDesk --probe pages` 用：无人值守验常规页的语言包区块与路径说明）
+    // -----------------------------------------------------------------
+
+    /// <summary>可观测状态快照（键=值，分号分隔）。断言写在 Probe.cs 里。</summary>
+    public string ProbeSnapshot()
+    {
+        int available = Loc.AvailableLocales().Count;
+        return string.Join("; ", new[]
+        {
+            $"langCurrent={(LangPackText.Text?.Contains(Loc.Locale) == true ? 1 : 0)}",
+            $"langAvailableCount={available}",
+            $"reloadLangButton={(string.IsNullOrEmpty(ReloadLangButton.Content as string) ? 0 : 1)}",
+            $"openLangDirButton={(string.IsNullOrEmpty(OpenLangDirButton.Content as string) ? 0 : 1)}",
+            $"pathsHasBackend={(PathsText.Text?.Contains("backend") == true ? 1 : 0)}",
+            $"pathsHasLangDir={(PathsText.Text?.Contains(UserPaths.LangDirectory) == true ? 1 : 0)}",
+            $"languageOptions={LanguageCombo.ItemCount}",
+        });
+    }
+
+    /// <summary>探针：模拟用户切换语言（验 `set_language` 同步到后端那条路径）。</summary>
+    public async Task ProbeSyncLanguageAsync()
+    {
+        Loc.Reload();
+        UpdateLangPackText();
+        await SyncBackendLanguageAsync();
     }
 }

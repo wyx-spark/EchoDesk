@@ -252,6 +252,17 @@ public partial class ModelMarketSection : UserControl
     // 数据：加载（流式）/ 查询（本地）/ 详情 / 下载
     // -----------------------------------------------------------------
 
+    /// <summary>
+    /// 让页面把「本地模型库」那一块的状态也写进**同一条**状态行
+    /// （v0.2.2 第 2 批）。
+    ///
+    /// 为什么不给模型库另起一行：WPF 的模型页只有一条 `HubStatusText`，
+    /// 模型市场的搜索/下载与模型库的重扫/加载/删除都往上写。另起一行会让
+    /// **同一个 AutomationId 在自动化树里出现两次**（探针取到哪一个不确定），
+    /// 而且用户会看到两块各自"以为在说话"的状态 —— 与 WPF 行为不一致。
+    /// </summary>
+    public void SetStatus(string text) => HubStatusText.Text = text;
+
     /// <summary>页面刷新时调用：只刷新状态与（已有的）当前页，**不自动搜索**。</summary>
     public async Task RefreshAsync()
     {

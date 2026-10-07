@@ -9,6 +9,22 @@
     "contract": "2. contract — 条款审查",
     "agent": "3. agent — 智能体（可调用工具）"
   },
+  "automation": {
+    "_note": "自动化字段帮助与模板库的**前端**文案（v0.2.2 第 2 批）。后端语言包里本来就有一份同名键（automation.help.* / automation.guide.* / automation.template.*），但两个前端读的是 frontend/Resources/Lang/ —— 这里缺一份就会落到 Loc.T 的中文兜底，表现为英文界面里夹着中文。",
+    "help": {
+      "example": "示例",
+      "required": "必填",
+      "optional": "可选"
+    },
+    "guide": {
+      "title": "自动化配置填写帮助",
+      "hint": "也可以查看完整文档：docs/<locale>/AUTOMATION_GUIDE.md（发布包内 docs 目录）"
+    },
+    "template": {
+      "custom_applied": "✅ 已套用模板「{name}」",
+      "custom_saved": "✅ 已保存为自定义模板「{name}」"
+    }
+  },
   "settings": {
     "general": {
       "sectionLanguagePack": "语言包",
@@ -44,6 +60,9 @@
       "langPackTitle": "语言包",
       "reloadLang": "↻ 重新加载语言包",
       "openLangDir": "📂 打开语言包目录",
+      "openLangDirFailed": "⚠️ 无法打开语言包目录：{0}",
+      "langSyncFailed": "⚠️ 未能同步语言到后端（后端未响应）",
+      "sectionPaths": "📌 界面与数据位置",
       "labelReadingMode": "读取当前对话模式"
     },
     "saveHint": {
@@ -63,6 +82,14 @@
       "labelReadingHubStatus": "读取模型中心状态",
       "statusSource": "数据源：{0}",
       "registryTitle": "📚 本地模型库（{0} 个 · {1}）",
+      "registryLoading": "正在读取本地模型库…",
+      "registryLoaded": "✅ 已读取本地模型库",
+      "registryEmpty": "（本地模型库还是空的：可在「模型市场」里下载，或把 .gguf 放进 models 目录后点「重新扫描模型文件夹」）",
+      "backendUnavailableShort": "后端未响应",
+      "loadTip": "热加载这个模型（成功后它就是当前模型，不需要重启程序）",
+      "deleteTip": "删除模型文件并从模型库移除（不可撤销，之后要重新下载）",
+      "actionDeleteConfirm": "确认删除？",
+      "deletingModel": "正在删除 {0}…",
       "profileTitle": "🎚️ 模型档位（可选默认模型）",
       "actionRefreshProfiles": "刷新档位",
       "profileApply": "切换",
@@ -602,7 +629,13 @@
       "guideItem": "【{0}】（{1}）",
       "wizardStepHead": "{0}（{1}）",
       "configFilterDesc": "EchoDesk 自动化配置",
-      "allFilesFilterDesc": "所有文件"
+      "allFilesFilterDesc": "所有文件",
+      "testSelector": "测试选择器",
+      "testSelectorTip": "打开浏览器访问该网址，预览选择器匹配到的元素",
+      "fieldHelpTip": "查看填写说明",
+      "openResultsTip": "在系统文件管理器里打开结果根目录",
+      "saveTemplateTip": "把当前的「附加指令」与「文件后缀」存成一个可复用的模板",
+      "templateNotSelected": "⚠️ 请先在上面的下拉框里选一个模板"
     },
     "developer": {
       "modeShort": "放宽的是验证严格度，不是权限边界。",

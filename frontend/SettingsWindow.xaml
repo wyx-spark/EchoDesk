@@ -105,7 +105,8 @@
                                 Background="{DynamicResource InputBackground}"
                                 BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
                             <StackPanel>
-                                <TextBlock Text="📌 界面与数据位置" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBlock Text="📌 界面与数据位置" FontWeight="Bold" Margin="0,0,0,6"
+                                           svc:Loc.Key="settings.general.sectionPaths"/>
                                 <TextBlock x:Name="PathsText" FontSize="11" TextWrapping="Wrap"
                                            Foreground="{DynamicResource SubTextBrush}"/>
                             </StackPanel>

@@ -48,7 +48,28 @@
         <TextBlock x:Name="LanguageLabel" FontWeight="SemiBold" />
         <ComboBox x:Name="LanguageCombo" Width="260" HorizontalAlignment="Left"
                   AutomationProperties.AutomationId="LanguageCombo" />
-        <TextBlock x:Name="LangPackText" FontSize="11" TextWrapping="Wrap" Opacity="0.7" />
+        <TextBlock x:Name="LanguageHelpText" FontSize="11" TextWrapping="Wrap" Opacity="0.7" />
+      </StackPanel>
+
+      <!-- ④-b 语言包（v0.2.2 第 2 批补全，对齐 WPF 的同名区块）：
+           当前语言 / 可用语言 / 目录 + 两个按钮。翻译者改完磁盘上的 JSON 后
+           点「重新加载语言包」就能看到效果，不必重启程序。 -->
+      <StackPanel Spacing="4">
+        <TextBlock x:Name="LangPackTitle" FontWeight="SemiBold" />
+        <Border CornerRadius="6" Padding="10,8" BorderThickness="1"
+                Background="{DynamicResource CardBackgroundBrush}"
+                BorderBrush="{DynamicResource CardBorderBrush}">
+          <StackPanel Spacing="8">
+            <TextBlock x:Name="LangPackText" FontSize="11" TextWrapping="Wrap" Opacity="0.75"
+                       AutomationProperties.AutomationId="LangPackText" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button x:Name="ReloadLangButton" Padding="10,3" FontSize="11"
+                      AutomationProperties.AutomationId="ReloadLangButton" />
+              <Button x:Name="OpenLangDirButton" Padding="10,3" FontSize="11"
+                      AutomationProperties.AutomationId="OpenLangDirButton" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
       </StackPanel>
 
       <!-- ⑤ 默认模式：**业务设置**，与界面设置分开 —— 它由后端持有（/mode 命令），
@@ -64,10 +85,13 @@
       <CheckBox x:Name="ConfirmDestructiveCheck" FontSize="13"
                 AutomationProperties.AutomationId="ConfirmDestructiveCheck" />
 
-      <!-- ⑦ 路径信息：用户数据目录与语言包目录（排查问题时最常问的两件事） -->
+      <!-- ⑦ 路径信息：用户数据目录与语言包目录（排查问题时最常问的两件事）。
+           v0.2.2 第 2 批补齐：加上后端目录、插件目录与便携版布局提示（对齐 WPF 的
+           DescribePaths）—— 它是"界面上传的文件到底落在哪"这类问题的第一手答案。 -->
       <StackPanel Spacing="4">
-        <TextBlock x:Name="PathsLabel" FontWeight="SemiBold" />
-        <TextBlock x:Name="PathsText" FontSize="11" TextWrapping="Wrap" Opacity="0.75" />
+        <TextBlock x:Name="PathsTitle" FontWeight="SemiBold" />
+        <TextBlock x:Name="PathsText" FontSize="11" TextWrapping="Wrap" Opacity="0.75"
+                   AutomationProperties.AutomationId="PathsText" />
       </StackPanel>
 
     </StackPanel>

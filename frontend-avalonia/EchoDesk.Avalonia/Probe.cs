@@ -57,12 +57,14 @@ internal static class Probe
             }
         }
 
-        // agent 模式要跑一轮真模型推理；market 模式要跑一次远端搜索（几十秒）。
+        // agent 模式要跑一轮真模型推理；market / pages 模式要真跟后端说一轮话（几十秒）。
         Budget = target.Equals("agent", StringComparison.OrdinalIgnoreCase)
             ? TimeSpan.FromSeconds(300)
             : target.Equals("market", StringComparison.OrdinalIgnoreCase)
                 ? TimeSpan.FromSeconds(300)
-                : TimeSpan.FromSeconds(60);
+                : target.Equals("pages", StringComparison.OrdinalIgnoreCase)
+                    ? TimeSpan.FromSeconds(300)
+                    : TimeSpan.FromSeconds(60);
 
         Console.WriteLine($"=== EchoDesk 界面探针（--probe {target}）===");
 
@@ -111,6 +113,10 @@ internal static class Probe
                 else if (target.Equals("market", StringComparison.OrdinalIgnoreCase))
                 {
                     ok = await RunMarketProbeAsync(desktop);
+                }
+                else if (target.Equals("pages", StringComparison.OrdinalIgnoreCase))
+                {
+                    ok = await RunPagesProbeAsync(desktop);
                 }
                 else
                 {
@@ -319,6 +325,174 @@ internal static class Probe
     /// 覆盖顺序刻意与任务书一致：搜索取回 → 分页 → 每页条数 → 本地筛选 → 重置 → 钉住行。
     /// 每一条都打印 `[PASS]/[FAIL]`，最后统一汇总（部分失败不掩盖前面的结论）。
     /// </summary>
+    /// <summary>
+    /// 设置页整块功能的端到端验证（v0.2.2 第 2 批新增）：`--probe pages`。
+    ///
+    /// 为什么要有它：`--probe settings` 只证明"7 个页签能构造出来"，
+    /// 而本批补的东西（本地模型库、MCP 可编辑、自动化帮助/模板/向导、语言包区块）
+    /// **全都要真的跟后端说一轮话之后才有内容** —— 不显式点一遍，它们看起来和
+    /// "控件在那儿但没接上"一模一样，而后者正是本批要消灭的那种缺陷。
+    ///
+    /// 做法与 market 模式一致：探针自持一条后端连接（`ProbeBackendOverride`），
+    /// 切到每个页签、调 `RefreshAsync`、再读页面自己给出的**状态快照**做断言。
+    /// </summary>
+    private static async Task<bool> RunPagesProbeAsync(IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        bool ok = true;
+        _ = desktop;
+        var probeBackend = new BackendService();
+        App.State.ProbeBackendOverride = probeBackend;
+
+        var started = await probeBackend.StartAsync(verbose: true);
+        if (!started.Ok)
+        {
+            Console.WriteLine($"  [FAIL] 后端没能起来：{started.Error}");
+            return false;
+        }
+        int stderrLines = 0;
+        probeBackend.StderrReceived += line =>
+        {
+            if (Interlocked.Increment(ref stderrLines) <= 4)
+                Console.WriteLine($"  [backend stderr] {line}");
+        };
+        var ready = await probeBackend.WaitForReadyAsync(TimeSpan.FromSeconds(120));
+        if (ready is null)
+        {
+            Console.WriteLine($"  [FAIL] 120 秒内没有 ready 握手（{probeBackend.LastError}，stderr {stderrLines} 行）");
+            return false;
+        }
+        ready.Dispose();
+        Console.WriteLine("  [PASS] 后端已就绪");
+
+        var settings = new SettingsWindow(App.State);
+        desktop.MainWindow = settings;
+        settings.Show();
+        Console.WriteLine($"  [PASS] 设置窗口已构造并显示（{settings.Tabs.ItemCount} 个页签）");
+
+        void Check(string name, bool pass, string detail)
+        {
+            Console.WriteLine($"  [{(pass ? "PASS" : "FAIL")}] {name}——{detail}");
+            if (!pass)
+                ok = false;
+        }
+
+        // ---------- 常规页：语言包区块 + 路径说明 + 后端语言同步 ----------
+        if (!settings.SelectTab("settings.tab.general"))
+        {
+            Console.WriteLine("  [FAIL] 找不到「常规」页签");
+            return false;
+        }
+        var general = settings.FindPage<GeneralPage>();
+        if (general is null)
+        {
+            Console.WriteLine("  [FAIL] 设置窗口里没有 GeneralPage");
+            return false;
+        }
+        await general.ProbeSyncLanguageAsync();
+        string generalSnapshot = general.ProbeSnapshot();
+        Console.WriteLine($"  常规页     : {generalSnapshot}");
+        Check("语言包区块列出了当前语言", generalSnapshot.Contains("langCurrent=1"), "LangPackText 含当前 locale");
+        Check("语言包区块列出了可用语言", generalSnapshot.Contains("langAvailableCount=") &&
+            !generalSnapshot.Contains("langAvailableCount=0"), "可用语言 ≥ 1");
+        Check("两个语言包按钮有文案", generalSnapshot.Contains("reloadLangButton=1")
+            && generalSnapshot.Contains("openLangDirButton=1"), "重新加载 / 打开目录");
+        Check("路径说明含后端目录", generalSnapshot.Contains("pathsHasBackend=1"), "DescribePaths 已补全");
+        Check("路径说明含语言包目录", generalSnapshot.Contains("pathsHasLangDir=1"), "语言包目录在列");
+
+        // ---------- 智能体页：MCP 可编辑 ----------
+        if (!settings.SelectTab("settings.tab.agent"))
+        {
+            Console.WriteLine("  [FAIL] 找不到「智能体」页签");
+            return false;
+        }
+        var agent = settings.FindPage<AgentPage>();
+        if (agent is null)
+        {
+            Console.WriteLine("  [FAIL] 设置窗口里没有 AgentPage");
+            return false;
+        }
+        await agent.ProbeReloadMcpAsync();
+        string mcpBefore = agent.McpSnapshot();
+        Console.WriteLine($"  MCP（读后）: {mcpBefore}");
+        Check("MCP 总开关已按后端回填", mcpBefore.Contains("mcpEnabled="), "读到了 enabled");
+        Check("MCP 超时框已按后端回填", mcpBefore.Contains("mcpTimeout=1"), "读到了 timeout_seconds");
+        Check("MCP 三个操作按钮有文案", mcpBefore.Contains("mcpSaveButton=1")
+            && mcpBefore.Contains("mcpConnectButton=1") && mcpBefore.Contains("mcpAddButton=1"),
+            "保存 / 连接并取工具 / 添加服务器");
+        Check("MCP 说明与安全提示都在", mcpBefore.Contains("mcpSecurityText=1"), "安全提示非空");
+        // 走一遍"添加服务器"的本地表单（只落本地列表，**不点保存**，不碰用户配置）
+        agent.ProbeOpenAddForm();
+        agent.ProbeSubmitAddForm();
+        string mcpAfter = agent.McpSnapshot();
+        Console.WriteLine($"  MCP（加行）: {mcpAfter}");
+        Check("添加服务器表单能落成一行", mcpAfter.Contains("mcpServerRows=") && mcpAfter != mcpBefore,
+            "行数或状态发生了变化");
+        agent.ProbeDropServer("probe-server");
+
+        // ---------- 自动化页：模板 / 字段帮助 / 安全联动 / 结果预览 ----------
+        if (!settings.SelectTab("settings.tab.automation"))
+        {
+            Console.WriteLine("  [FAIL] 找不到「自动化」页签");
+            return false;
+        }
+        var automation = settings.FindPage<AutomationPage>();
+        if (automation is null)
+        {
+            Console.WriteLine("  [FAIL] 设置窗口里没有 AutomationPage");
+            return false;
+        }
+        await Dispatcher.UIThread.InvokeAsync(async () => await automation.RefreshAsync());
+        string automationSnapshot = automation.AutomationSnapshot();
+        Console.WriteLine($"  自动化页   : {automationSnapshot}");
+        Console.WriteLine($"  字段帮助键 : {OneLine(automation.FieldHelpKeys(), 150)}");
+        Check("配置模板已从后端读到", automationSnapshot.Contains("templateCount=") &&
+            !automationSnapshot.Contains("templateCount=0"), automationSnapshot);
+        Check("字段级帮助已从后端读到", automationSnapshot.Contains("fieldHelpCount=") &&
+            !automationSnapshot.Contains("fieldHelpCount=0"), automationSnapshot);
+        Check("结果预览没有裸露的占位符", automationSnapshot.Contains("previewPlaceholders=0"),
+            "string.Format 参数个数已修对");
+        Check("结果预览含日期层", automationSnapshot.Contains("previewHasDate=1"), "对齐 WPF 的 4 参数");
+        Check("打开结果目录/浏览/测试选择器有文案", automationSnapshot.Contains("openResultsButton=1")
+            && automationSnapshot.Contains("browseResultsButton=1")
+            && automationSnapshot.Contains("testSelectorButton=1"), automationSnapshot);
+        Check("测试向导与导入导出有文案", automationSnapshot.Contains("wizardAndIoButtons=1111"),
+            automationSnapshot);
+        Check("登录态已显示", automationSnapshot.Contains("loginStateText=1"), "login_state 已渲染");
+        // 安全协议联动：接受 → 总开关可编辑；取消 → 自动取消并禁用
+        automation.ProbeSetSafety(true);
+        string safetyOn = automation.AutomationSnapshot();
+        Check("接受协议后总开关可编辑", safetyOn.Contains("enabledEditable=1"), safetyOn);
+        automation.ProbeSetSafety(false);
+        string safetyOff = automation.AutomationSnapshot();
+        Check("取消协议后总开关被禁用", safetyOff.Contains("enabledEditable=0"), safetyOff);
+        Check("取消协议后总开关被强制关掉", safetyOff.Contains("safetyAccepted=0"), safetyOff);
+
+        // ---------- 模型页：本地模型库 ----------
+        if (!settings.SelectTab("settings.tab.model"))
+        {
+            Console.WriteLine("  [FAIL] 找不到「模型」页签");
+            return false;
+        }
+        var model = settings.FindPage<ModelPage>();
+        if (model is null)
+        {
+            Console.WriteLine("  [FAIL] 设置窗口里没有 ModelPage");
+            return false;
+        }
+        await model.ProbeReloadRegistryAsync();
+        string registry = model.RegistrySnapshot();
+        Console.WriteLine($"  本地模型库 : {registry}");
+        Check("模型库列表有内容（行或空状态说明）", registry.Contains("registryRows=")
+            && (registry.Contains("registryRows=0") ? registry.Contains("registryEmptyHint=1") : true),
+            registry);
+        Check("模型库标题带条数与大小", registry.Contains("registryTitleHasParen=1"), registry);
+        Check("重扫 / 刷新按钮有文案", registry.Contains("rescanButton=1")
+            && registry.Contains("refreshRegistryButton=1"), registry);
+        Check("模型页状态行有内容", registry.Contains("statusLine=1"), registry);
+
+        return ok;
+    }
+
     private static async Task<bool> RunMarketProbeAsync(IClassicDesktopStyleApplicationLifetime desktop)
     {
         bool ok = true;

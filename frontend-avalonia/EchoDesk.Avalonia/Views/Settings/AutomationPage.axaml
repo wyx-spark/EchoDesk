@@ -1,4 +1,4 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.AutomationPage">
   <!--
@@ -35,36 +35,120 @@
       <CheckBox x:Name="AutomationEnabledCheck" FontSize="12"
                 AutomationProperties.AutomationId="AutomationEnabledCheck" />
 
+      <!-- ②-b 配置模板 + 填写帮助 + 逐字段「?」（v0.2.2 第 2 批补全，
+           对齐 WPF 的 TemplateCombo / AutomationGuideButton / AutomationField_GotFocus）。
+
+           模板内容来自后端（`automation_templates`），**随界面语言切换** ——
+           前端不复制一份模板文案，中英双语天然一致。
+           字段说明同理：`automation_field_help` 回传 label/help/example/step，
+           本页只负责把它摆到界面上。 -->
+      <TextBlock x:Name="TemplatesTitle" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
+
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+        <ComboBox x:Name="TemplateCombo" Grid.Column="0" HorizontalAlignment="Stretch"
+                  AutomationProperties.AutomationId="TemplateCombo" />
+        <Button x:Name="ApplyTemplateButton" Grid.Column="1" Margin="8,0,0,0" Padding="12,4"
+                AutomationProperties.AutomationId="ApplyTemplateButton" />
+        <Button x:Name="SaveTemplateButton" Grid.Column="2" Margin="8,0,0,0" Padding="12,4"
+                AutomationProperties.AutomationId="SaveTemplateButton" />
+        <Button x:Name="AutomationGuideButton" Grid.Column="3" Margin="8,0,0,0" Padding="12,4"
+                AutomationProperties.AutomationId="AutomationGuideButton" />
+      </Grid>
+
+      <!-- 「存为自定义模板」的内联表单（WPF 用的是 InputDialog；Avalonia 侧没有对话框体系，
+           就地展开一行输入框 —— 行为等价，少一个模态窗口） -->
+      <StackPanel x:Name="SaveTemplatePanel" Orientation="Horizontal" Spacing="8" IsVisible="False"
+                  AutomationProperties.AutomationId="SaveTemplatePanel">
+        <TextBox x:Name="SaveTemplateNameBox" Width="240" Padding="6,4"
+                 AutomationProperties.AutomationId="SaveTemplateNameBox" />
+        <Button x:Name="SaveTemplateConfirmButton" Padding="12,4"
+                AutomationProperties.AutomationId="SaveTemplateConfirmButton" />
+        <Button x:Name="SaveTemplateCancelButton" Padding="12,4"
+                AutomationProperties.AutomationId="SaveTemplateCancelButton" />
+      </StackPanel>
+
+      <TextBlock x:Name="TemplateStatusText" FontSize="10" TextWrapping="Wrap" Opacity="0.7"
+                 AutomationProperties.AutomationId="TemplateStatusText" />
+
+      <!-- 测试向导的结果：WPF 用 MessageBox 弹出，Avalonia 侧就地展开一块可滚动文本
+           （行为等价：结果可见、可复制；少一个必须逐次关闭的模态窗口） -->
+      <Border x:Name="WizardResultPanel" IsVisible="False" CornerRadius="6" Padding="10,8"
+              BorderThickness="1" BorderBrush="{DynamicResource CardBorderBrush}"
+              AutomationProperties.AutomationId="WizardResultPanel">
+        <StackPanel Spacing="4">
+          <TextBlock x:Name="WizardResultTitle" FontWeight="SemiBold" FontSize="12" />
+          <ScrollViewer MaxHeight="160" VerticalScrollBarVisibility="Auto">
+            <TextBlock x:Name="WizardResultText" FontSize="11" TextWrapping="Wrap"
+                       AutomationProperties.AutomationId="WizardResultText" />
+          </ScrollViewer>
+          <Button x:Name="WizardResultCloseButton" HorizontalAlignment="Left" Padding="10,3"
+                  FontSize="11" AutomationProperties.AutomationId="WizardResultCloseButton" />
+        </StackPanel>
+      </Border>
+
       <!-- ③ 任务与选择器 -->
       <TextBlock x:Name="BasicSectionTitle" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
       <Grid ColumnDefinitions="230,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" >
-        <TextBlock x:Name="TaskListUrlLabel" Grid.Row="0" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6">
+          <TextBlock x:Name="TaskListUrlLabel" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+          <Button x:Name="HelpTaskListUrlButton" Padding="5,0" FontSize="10" Height="18"
+                  VerticalAlignment="Center" Tag="task_list_url"
+                  AutomationProperties.AutomationId="HelpTaskListUrl" />
+        </StackPanel>
         <TextBox x:Name="TaskUrlBox" Grid.Row="0" Grid.Column="1" Margin="0,4" Padding="6,4"
-                 AutomationProperties.AutomationId="TaskUrlBox" />
-        <TextBlock x:Name="TaskListSelectorLabel" Grid.Row="1" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
-        <TextBox x:Name="TaskSelectorBox" Grid.Row="1" Grid.Column="1" Margin="0,4" Padding="6,4"
-                 AutomationProperties.AutomationId="TaskSelectorBox" />
-        <TextBlock x:Name="TaskRowSelectorLabel" Grid.Row="2" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+                 AutomationProperties.AutomationId="TaskUrlBox" Tag="task_list_url" />
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
+          <TextBlock x:Name="TaskListSelectorLabel" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+          <Button Padding="5,0" FontSize="10" Height="18" VerticalAlignment="Center"
+                  x:Name="HelpTaskListSelector" Tag="task_list_selector" AutomationProperties.AutomationId="HelpTaskListSelector" />
+        </StackPanel>
+        <Grid Grid.Row="1" Grid.Column="1" ColumnDefinitions="*,Auto">
+          <TextBox x:Name="TaskSelectorBox" Grid.Column="0" Margin="0,4" Padding="6,4"
+                   AutomationProperties.AutomationId="TaskSelectorBox" Tag="task_list_selector" />
+          <Button x:Name="TestSelectorButton" Grid.Column="1" Margin="8,4,0,4" Padding="12,4"
+                  AutomationProperties.AutomationId="TestSelectorButton" />
+        </Grid>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="6">
+          <TextBlock x:Name="TaskRowSelectorLabel" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+          <Button Padding="5,0" FontSize="10" Height="18" VerticalAlignment="Center"
+                  x:Name="HelpTaskRowSelector" Tag="task_row_selector" AutomationProperties.AutomationId="HelpTaskRowSelector" />
+        </StackPanel>
         <TextBox x:Name="TaskRowBox" Grid.Row="2" Grid.Column="1" Margin="0,4" Padding="6,4"
-                 AutomationProperties.AutomationId="TaskRowBox" />
-        <TextBlock x:Name="NextPageSelectorLabel" Grid.Row="3" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+                 AutomationProperties.AutomationId="TaskRowBox" Tag="task_row_selector" />
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="6">
+          <TextBlock x:Name="NextPageSelectorLabel" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+          <Button Padding="5,0" FontSize="10" Height="18" VerticalAlignment="Center"
+                  x:Name="HelpNextPageSelector" Tag="next_page_selector" AutomationProperties.AutomationId="HelpNextPageSelector" />
+        </StackPanel>
         <TextBox x:Name="NextPageBox" Grid.Row="3" Grid.Column="1" Margin="0,4" Padding="6,4"
-                 AutomationProperties.AutomationId="NextPageBox" />
-        <TextBlock x:Name="TaskDetailFileSelectorLabel" Grid.Row="4" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+                 AutomationProperties.AutomationId="NextPageBox" Tag="next_page_selector" />
+        <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="6">
+          <TextBlock x:Name="TaskDetailFileSelectorLabel" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+          <Button Padding="5,0" FontSize="10" Height="18" VerticalAlignment="Center"
+                  x:Name="HelpTaskDetailFileSelector" Tag="task_detail_file_selector" AutomationProperties.AutomationId="HelpTaskDetailFileSelector" />
+        </StackPanel>
         <TextBox x:Name="FileSelectorBox" Grid.Row="4" Grid.Column="1" Margin="0,4" Padding="6,4"
-                 AutomationProperties.AutomationId="FileSelectorBox" />
+                 AutomationProperties.AutomationId="FileSelectorBox" Tag="task_detail_file_selector" />
       </Grid>
 
       <!-- ④ 详情页与文件 -->
       <TextBlock x:Name="DetailSectionTitle" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
       <Grid ColumnDefinitions="230,*" RowDefinitions="Auto,Auto">
-        <TextBlock x:Name="FileExtensionsLabel" Grid.Row="0" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6">
+          <TextBlock x:Name="FileExtensionsLabel" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+          <Button Padding="5,0" FontSize="10" Height="18" VerticalAlignment="Center"
+                  x:Name="HelpFileExtensions" Tag="file_extensions" AutomationProperties.AutomationId="HelpFileExtensions" />
+        </StackPanel>
         <TextBox x:Name="ExtensionsBox" Grid.Row="0" Grid.Column="1" Margin="0,4" Padding="6,4"
-                 AutomationProperties.AutomationId="ExtensionsBox" />
-        <TextBlock x:Name="InstructionLabel" Grid.Row="1" VerticalAlignment="Top" FontSize="12" Margin="0,4" />
+                 AutomationProperties.AutomationId="ExtensionsBox" Tag="file_extensions" />
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
+          <TextBlock x:Name="InstructionLabel" VerticalAlignment="Top" FontSize="12" Margin="0,4" />
+          <Button Padding="5,0" FontSize="10" Height="18" VerticalAlignment="Center"
+                  x:Name="HelpInstruction" Tag="instruction" AutomationProperties.AutomationId="HelpInstruction" />
+        </StackPanel>
         <TextBox x:Name="InstructionBox" Grid.Row="1" Grid.Column="1" Margin="0,4" Padding="6,4"
                  Height="58" AcceptsReturn="True" TextWrapping="Wrap"
-                 AutomationProperties.AutomationId="InstructionBox" />
+                 AutomationProperties.AutomationId="InstructionBox" Tag="instruction" />
       </Grid>
       <TextBlock x:Name="ExtensionsHintText" FontSize="10" Opacity="0.6" TextWrapping="Wrap" />
 
@@ -93,13 +177,23 @@
         <TextBox x:Name="TaskNameBox" Grid.Row="0" Grid.Column="1" Margin="0,4" Padding="6,4"
                  AutomationProperties.AutomationId="TaskNameBox" />
         <TextBlock x:Name="ResultsRootNameLabel" Grid.Row="1" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
-        <TextBox x:Name="ResultsRootNameBox" Grid.Row="1" Grid.Column="1" Margin="0,4" Padding="6,4"
-                 AutomationProperties.AutomationId="ResultsRootNameBox" />
+        <Grid Grid.Row="1" Grid.Column="1" ColumnDefinitions="*,Auto">
+          <TextBox x:Name="ResultsRootNameBox" Grid.Column="0" Margin="0,4" Padding="6,4"
+                   AutomationProperties.AutomationId="ResultsRootNameBox" />
+          <Button x:Name="OpenResultsButton" Grid.Column="1" Margin="8,4,0,4" Padding="12,4"
+                  AutomationProperties.AutomationId="OpenResultsButton" />
+        </Grid>
         <TextBlock x:Name="ResultsLocationLabel" Grid.Row="2" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
-        <TextBox x:Name="ResultsLocationBox" Grid.Row="2" Grid.Column="1" Margin="0,4" Padding="6,4"
-                 AutomationProperties.AutomationId="ResultsLocationBox" />
+        <Grid Grid.Row="2" Grid.Column="1" ColumnDefinitions="*,Auto">
+          <TextBox x:Name="ResultsLocationBox" Grid.Column="0" Margin="0,4" Padding="6,4"
+                   AutomationProperties.AutomationId="ResultsLocationBox" />
+          <Button x:Name="BrowseResultsButton" Grid.Column="1" Margin="8,4,0,4" Padding="12,4"
+                  AutomationProperties.AutomationId="BrowseResultsButton" />
+        </Grid>
       </Grid>
       <TextBlock x:Name="ResultsPreviewText" FontSize="10" Opacity="0.65" TextWrapping="Wrap" />
+      <TextBlock x:Name="ResultsStatusText" FontSize="10" TextWrapping="Wrap" Opacity="0.8"
+                 AutomationProperties.AutomationId="ResultsStatusText" />
 
       <!-- ⑦ 定时 -->
       <StackPanel Orientation="Horizontal" Spacing="10">
@@ -112,16 +206,33 @@
       <!-- ⑧ 登录态 -->
       <TextBlock x:Name="LoginSectionTitle" FontWeight="Bold" FontSize="14" Margin="0,8,0,0" />
       <TextBlock x:Name="LoginHintText" FontSize="11" TextWrapping="Wrap" Opacity="0.7" />
+      <!-- 登录态读取结果（v0.2.2 第 2 批）：只显示"数据目录在哪、占多大、最后改动时间"，
+           **不显示任何 Cookie 内容** —— 界面上不该出现凭据，也不该给用户
+           "程序在读我的密码"的错觉。 -->
+      <TextBlock x:Name="LoginStateText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
+                 AutomationProperties.AutomationId="LoginStateText" />
       <Grid ColumnDefinitions="230,*" RowDefinitions="Auto,Auto,Auto">
-        <TextBlock x:Name="LoginStateDirLabel" Grid.Row="0" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6">
+          <TextBlock x:Name="LoginStateDirLabel" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+          <Button Padding="5,0" FontSize="10" Height="18" VerticalAlignment="Center"
+                  x:Name="HelpLoginStateDir" Tag="login_state_dir" AutomationProperties.AutomationId="HelpLoginStateDir" />
+        </StackPanel>
         <TextBox x:Name="LoginStateDirBox" Grid.Row="0" Grid.Column="1" Margin="0,4" Padding="6,4"
-                 AutomationProperties.AutomationId="LoginStateDirBox" />
-        <TextBlock x:Name="LoginCheckSelectorLabel" Grid.Row="1" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+                 AutomationProperties.AutomationId="LoginStateDirBox" Tag="login_state_dir" />
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
+          <TextBlock x:Name="LoginCheckSelectorLabel" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+          <Button Padding="5,0" FontSize="10" Height="18" VerticalAlignment="Center"
+                  x:Name="HelpLoginCheckSelector" Tag="login_check_selector" AutomationProperties.AutomationId="HelpLoginCheckSelector" />
+        </StackPanel>
         <TextBox x:Name="LoginCheckSelectorBox" Grid.Row="1" Grid.Column="1" Margin="0,4" Padding="6,4"
-                 AutomationProperties.AutomationId="LoginCheckSelectorBox" />
-        <TextBlock x:Name="LoginUrlKeywordsLabel" Grid.Row="2" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+                 AutomationProperties.AutomationId="LoginCheckSelectorBox" Tag="login_check_selector" />
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="6">
+          <TextBlock x:Name="LoginUrlKeywordsLabel" VerticalAlignment="Center" FontSize="12" Margin="0,4" />
+          <Button Padding="5,0" FontSize="10" Height="18" VerticalAlignment="Center"
+                  x:Name="HelpLoginUrlKeywords" Tag="login_url_keywords" AutomationProperties.AutomationId="HelpLoginUrlKeywords" />
+        </StackPanel>
         <TextBox x:Name="LoginKeywordsBox" Grid.Row="2" Grid.Column="1" Margin="0,4" Padding="6,4"
-                 AutomationProperties.AutomationId="LoginKeywordsBox" />
+                 AutomationProperties.AutomationId="LoginKeywordsBox" Tag="login_url_keywords" />
       </Grid>
       <Button x:Name="ClearLoginStateButton" HorizontalAlignment="Left" Padding="12,4"
               AutomationProperties.AutomationId="ClearLoginStateButton" />
@@ -136,6 +247,25 @@
                 AutomationProperties.AutomationId="RunOnceButton" />
         <Button x:Name="StopAutomationButton" Padding="14,6"
                 AutomationProperties.AutomationId="StopAutomationButton" />
+        <Button x:Name="WizardButton" Padding="14,6"
+                AutomationProperties.AutomationId="WizardButton" />
+      </StackPanel>
+
+      <!-- ⑨-a 测试向导第 1–4 步与配置导入导出（v0.2.2 第 2 批）：
+           WPF 把整套动作摆成一行按钮，这里照抄同一组 AutomationId。 -->
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <Button x:Name="WizardStep1Button" Padding="10,4"
+                AutomationProperties.AutomationId="WizardStep1Button" />
+        <Button x:Name="WizardStep2Button" Padding="10,4"
+                AutomationProperties.AutomationId="WizardStep2Button" />
+        <Button x:Name="WizardStep3Button" Padding="10,4"
+                AutomationProperties.AutomationId="WizardStep3Button" />
+        <Button x:Name="WizardStep4Button" Padding="10,4"
+                AutomationProperties.AutomationId="WizardStep4Button" />
+        <Button x:Name="ExportConfigButton" Padding="10,4" Margin="16,0,0,0"
+                AutomationProperties.AutomationId="ExportConfigButton" />
+        <Button x:Name="ImportConfigButton" Padding="10,4"
+                AutomationProperties.AutomationId="ImportConfigButton" />
       </StackPanel>
 
       <!-- ⑨-b 可视化选取与浏览器复用（任务十七，自测问题修复-1）
@@ -201,9 +331,6 @@
 
       <TextBlock x:Name="PickDebugHintText" FontSize="10" Opacity="0.6" TextWrapping="Wrap" />
 
-      <!-- ⑩ 未迁移部分 -->
-      <TextBlock x:Name="NotMigratedText" FontSize="11" TextWrapping="Wrap" Opacity="0.7" />
-
       <!-- ⑪ 日志与状态 -->
       <TextBlock x:Name="RunLogLabel" FontWeight="Bold" FontSize="13" Margin="0,6,0,0" />
       <ScrollViewer Height="150" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
@@ -217,3 +344,5 @@
     </StackPanel>
   </ScrollViewer>
 </UserControl>
+
+

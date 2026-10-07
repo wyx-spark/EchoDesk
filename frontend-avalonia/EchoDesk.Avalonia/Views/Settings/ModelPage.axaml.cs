@@ -1,4 +1,4 @@
-// 模型页的交互逻辑（v0.2.1 跨平台-2 任务一，第 8 个迁移模块）。
+﻿// 模型页的交互逻辑（v0.2.1 跨平台-2 任务一，第 8 个迁移模块）。
 //
 // 后端动作：
 //   model_profiles         → { current, items: [ { alias, name, repo, installed, current,
@@ -23,6 +23,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -83,6 +84,10 @@ public partial class ModelPage : UserControl, ISettingsPage
                 if (e.Property == Slider.ValueProperty)
                     RefreshSliderLabels();
             };
+
+        // 本地模型库（v0.2.2 第 2 批）：重扫 / 刷新
+        HubRescanButton.Click += async (_, _) => await RescanModelsAsync();
+        HubRegistryRefreshButton.Click += async (_, _) => await LoadRegistryAsync();
     }
 
     public string TabKey => "settings.tab.model";
@@ -169,9 +174,251 @@ public partial class ModelPage : UserControl, ISettingsPage
     {
         await LoadProfilesAsync();
         await LoadInferenceAsync();
+        await LoadRegistryAsync();
         // 模型市场只刷新"已有的那一页"，**不自动搜索**（与 WPF 版一致：
         // 打开设置页不该凭空打一次远端请求，那是用户点「搜索」才做的事）
         await Market.RefreshAsync();
+    }
+
+    // =================================================================
+    // ③ 本地模型库（v0.2.2 第 2 批补全，对齐 WPF 的 HubRegistry 那一块）
+    // =================================================================
+    //
+    // 与「模型市场」的分工（WPF 侧一直是两块不同的东西，此处逐项照抄）：
+    //   市场 = 远端"能下载什么"；模型库 = 本地磁盘"有什么"。
+    //
+    // 三个后端动作：
+    //   model_hub_registry   → { registry: { count, total_size_human,
+    //                            models: [ { name, size_human, quantization, repo,
+    //                                        downloaded_at, last_used, current, exists } ] } }
+    //   model_scan           → 重新扫描模型文件夹（手工放进 .gguf 后不必重启）
+    //   model_load {name}    → 热加载该模型（成功后就是当前模型）
+    //   model_hub_uninstall {name} → 删除模型文件
+
+    /// <summary>本地模型库里的一行。</summary>
+    private sealed record RegistryRow(string Name, string SizeText, string Meta,
+                                      bool InUse, bool Exists);
+
+    /// <summary>删除的二次确认状态：第一次点变「确认删除？」，再点一次才执行。</summary>
+    private string _registryDeletePending = "";
+
+    private async Task LoadRegistryAsync(bool keepPendingDelete = false)
+    {
+        Market.SetStatus(Loc.T("settings.model.registryLoading", "正在读取本地模型库…"));
+        using JsonDocument? doc = await SendAsync(new { action = "model_hub_registry" });
+        if (doc is null || !doc.RootElement.TryGetProperty("registry", out JsonElement registry))
+        {
+            Market.SetStatus(Loc.T("settings.model.registryLoadFailed",
+                "❌ 读取模型库失败：{0}", Loc.T("settings.model.backendUnavailableShort", "后端未响应")));
+            return;
+        }
+
+        var rows = new List<RegistryRow>();
+        if (registry.TryGetProperty("models", out JsonElement models) && models.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement model in models.EnumerateArray())
+            {
+                bool current = GetBool(model, "current");
+                bool exists = !model.TryGetProperty("exists", out JsonElement ex) || ex.ValueKind == JsonValueKind.True;
+                string downloaded = GetString(model, "downloaded_at").Replace('T', ' ');
+                string used = GetString(model, "last_used").Replace('T', ' ');
+                var parts = new List<string>();
+                foreach (string piece in new[]
+                         {
+                             GetString(model, "quantization"),
+                             GetString(model, "repo") is { Length: > 0 } repo
+                                 ? repo : Loc.T("settings.model.localFile", "本地文件"),
+                             downloaded.Length > 0
+                                 ? Loc.T("settings.model.downloadedAt", "下载于 {0}", downloaded) : "",
+                             used.Length > 0
+                                 ? Loc.T("settings.model.lastUsed", "最后使用 {0}", used)
+                                 : Loc.T("settings.model.neverUsed", "尚未使用"),
+                         })
+                {
+                    if (piece.Length > 0)
+                        parts.Add(piece);
+                }
+                rows.Add(new RegistryRow(GetString(model, "name"), GetString(model, "size_human"),
+                    string.Join(" · ", parts), current, exists));
+            }
+        }
+
+        HubRegistryList.Children.Clear();
+        if (!keepPendingDelete)
+            _registryDeletePending = "";
+        if (rows.Count == 0)
+        {
+            HubRegistryList.Children.Add(new TextBlock
+            {
+                Text = Loc.T("settings.model.registryEmpty",
+                    "（本地模型库还是空的：可在「模型市场」里下载，或把 .gguf 放进 models 目录后点「重新扫描模型文件夹」）"),
+                FontSize = 11, Opacity = 0.7, TextWrapping = TextWrapping.Wrap,
+            });
+        }
+        else
+        {
+            foreach (RegistryRow row in rows)
+                HubRegistryList.Children.Add(BuildRegistryRow(row));
+        }
+
+        int count = GetInt(registry, "count", rows.Count);
+        string total = GetString(registry, "total_size_human");
+        HubRegistryTitle.Text = Loc.T("settings.model.registryTitle", "📚 本地模型库（{0} 个 · {1}）",
+            count, total);
+        Market.SetStatus(Loc.T("settings.model.registryLoaded", "✅ 已读取本地模型库"));
+    }
+
+    /// <summary>一行：名称 + 使用中徽标 / 元信息，右侧「加载」「删除」。</summary>
+    private Control BuildRegistryRow(RegistryRow row)
+    {
+        var info = new StackPanel { Spacing = 1 };
+        var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        head.Children.Add(new TextBlock { Text = row.Name, FontSize = 12, FontWeight = FontWeight.Bold });
+        if (row.InUse)
+        {
+            head.Children.Add(new TextBlock
+            {
+                Text = Loc.T("settings.model.badgeInUse", "▶ 正在使用"),
+                FontSize = 10, VerticalAlignment = VerticalAlignment.Center,
+                Foreground = TryBrush("AccentBrush"),
+            });
+        }
+        info.Children.Add(head);
+        if (row.Meta.Length > 0)
+            info.Children.Add(new TextBlock { Text = row.Meta, FontSize = 10, Opacity = 0.65 });
+
+        // 「加载」：使用中的模型不需要再点；文件不存在（登记残留）时也点不了 ——
+        // 与 WPF 的 CanLoad 同一口径。
+        var load = new Button
+        {
+            Content = Loc.T("settings.model.actionLoad", "加载"),
+            Padding = new Thickness(10, 3),
+            FontSize = 11,
+            IsEnabled = row.Exists && !row.InUse,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTip.SetTip(load, Loc.T("settings.model.loadTip",
+            "热加载这个模型（成功后它就是当前模型，不需要重启程序）"));
+        load.Click += async (_, _) => await LoadModelAsync(row);
+
+        // 「删除」：使用中的模型不允许删（后端也会再拦一次），且需要二次确认。
+        var delete = new Button
+        {
+            Content = row.Name == _registryDeletePending
+                ? Loc.T("settings.model.actionDeleteConfirm", "确认删除？")
+                : Loc.T("settings.model.actionDelete", "删除"),
+            Padding = new Thickness(10, 3),
+            FontSize = 11,
+            IsEnabled = !row.InUse,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTip.SetTip(delete, Loc.T("settings.model.deleteTip",
+            "删除模型文件并从模型库移除（不可撤销，之后要重新下载）"));
+        delete.Click += async (_, _) => await DeleteModelAsync(row);
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal, Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        actions.Children.Add(load);
+        actions.Children.Add(delete);
+
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        Grid.SetColumn(info, 0);
+        Grid.SetColumn(actions, 1);
+        grid.Children.Add(info);
+        grid.Children.Add(actions);
+
+        var border = new Border
+        {
+            Padding = new Thickness(8, 4),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            BorderBrush = TryBrush("CardBorderBrush"),
+            Child = grid,
+        };
+        AutomationProperties.SetAutomationId(border, "HubRegistry_" + row.Name);
+        return border;
+    }
+
+    /// <summary>「重新扫描模型文件夹」：手工放进 .gguf 后不必重启即可加载。</summary>
+    private async Task RescanModelsAsync()
+    {
+        HubRescanButton.IsEnabled = false;
+        Market.SetStatus(Loc.T("settings.model.rescanning", "正在扫描模型文件夹…"));
+        try
+        {
+            using JsonDocument? doc = await SendAsync(new { action = "model_scan" },
+                TimeSpan.FromSeconds(180));
+            Market.SetStatus(doc is null
+                ? Loc.T("settings.model.rescanFailed", "❌ 扫描失败：{0}",
+                    Loc.T("settings.model.backendUnavailableShort", "后端未响应"))
+                : GetString(doc.RootElement, "content"));
+            await LoadRegistryAsync();
+        }
+        finally
+        {
+            HubRescanButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// 热加载某个本地模型。超时给到 10 分钟：把几 GB 的权重读进内存本来就要等，
+    /// 用默认的 60 秒会让"模型其实加载成功了、界面却报失败"（WPF 侧同一取值）。
+    /// </summary>
+    private async Task LoadModelAsync(RegistryRow row)
+    {
+        Market.SetStatus(Loc.T("settings.model.loadingModel", "正在加载模型 {0}…", row.Name));
+        using JsonDocument? doc = await SendAsync(
+            new { action = "model_load", name = row.Name }, TimeSpan.FromMinutes(10));
+        Market.SetStatus(doc is null
+            ? Loc.T("settings.model.loadModelFailed", "❌ 加载失败：{0}",
+                Loc.T("settings.model.backendUnavailableShort", "后端未响应"))
+            : GetString(doc.RootElement, "content"));
+        await LoadRegistryAsync();
+    }
+
+    /// <summary>
+    /// 删除模型文件。两道保护，与 WPF 逐条对齐：
+    ///   ① **使用中的模型不给删**（先切走再删），后端也会再拦一次；
+    ///   ② **二次确认**，且确认文案里写明"删的是文件、不可撤销"。
+    /// Avalonia 侧没有对话框体系，用就地二次确认（与档位删除同一套做法）。
+    /// </summary>
+    private async Task DeleteModelAsync(RegistryRow row)
+    {
+        if (row.InUse)
+        {
+            Market.SetStatus(Loc.T("settings.model.inUseCannotDelete",
+                "该模型正在使用中，请先用 /model 切换到其它模型再删除。"));
+            return;
+        }
+        if (!string.Equals(_registryDeletePending, row.Name, StringComparison.Ordinal))
+        {
+            // 第一次点：只把这一行的按钮换成「确认删除？」并说明后果，不执行任何删除。
+            _registryDeletePending = row.Name;
+            await LoadRegistryAsync(keepPendingDelete: true);
+            Market.SetStatus(Loc.T("settings.model.deleteConfirmText",
+                "确定删除模型「{0}」吗？\n\n将删除文件（{1}）并从模型库移除，此操作不可撤销。\n若之后还需要，必须重新下载。",
+                row.Name, row.SizeText));
+            return;
+        }
+        _registryDeletePending = "";
+        Market.SetStatus(Loc.T("settings.model.deletingModel", "正在删除 {0}…", row.Name));
+        using JsonDocument? doc = await SendAsync(
+            new { action = "model_hub_uninstall", name = row.Name }, TimeSpan.FromSeconds(60));
+        if (doc is null)
+        {
+            Market.SetStatus(Loc.T("settings.model.deleteFailed", "❌ 删除失败：{0}",
+                Loc.T("settings.model.backendUnavailableShort", "后端未响应")));
+        }
+        else
+        {
+            string content = GetString(doc.RootElement, "content");
+            Market.SetStatus(content.Length > 0
+                ? content : Loc.T("settings.model.deleted", "已删除"));
+        }
+        await LoadRegistryAsync();
     }
 
     // -----------------------------------------------------------------
@@ -603,6 +850,16 @@ public partial class ModelPage : UserControl, ISettingsPage
             ? el.GetDouble()
             : fallback;
 
+    /// <summary>取主题画刷；主题里没有这个键时返回 null（控件用默认前景色，不崩）。</summary>
+    private static Brush? TryBrush(string key)
+    {
+        if (Application.Current is null)
+            return null;
+        if (Application.Current.TryFindResource(key, out object? value) && value is Brush brush)
+            return brush;
+        return null;
+    }
+
     // -----------------------------------------------------------------
     public void ApplyTexts()
     {
@@ -632,6 +889,12 @@ public partial class ModelPage : UserControl, ISettingsPage
         InferenceSaveButton.Content = Loc.T("settings.inference.save", "保存");
         InferenceReloadButton.Content = Loc.T("settings.inference.reload", "🔄 重新读取");
         InferenceResetButton.Content = Loc.T("settings.inference.reset", "恢复默认");
+
+        // 本地模型库（v0.2.2 第 2 批）。标题会随数据重写（"（N 个 · 大小）"），
+        // 这里只保证"还没读到数据时它也不是空的"；两个按钮的文案是静态的。
+        HubRegistryTitle.Text = Loc.T("settings.model.localRegistryTitle", "本地模型库");
+        HubRescanButton.Content = Loc.T("settings.model.actionRescan", "重新扫描模型文件夹");
+        HubRegistryRefreshButton.Content = Loc.T("settings.model.actionRefreshRegistry", "刷新本地模型库");
 
         MarketNotMigratedText.Text = "";
 
@@ -663,6 +926,41 @@ public partial class ModelPage : UserControl, ISettingsPage
     public Task ProbeMarketSetPageSizeAsync(int size) => Market.ProbeSetPageSizeAsync(size);
     public Task ProbeMarketResetAsync() => Market.ProbeResetFiltersAsync();
     public Task ProbeMarketOpenPinnedDetailAsync() => Market.ProbeOpenPinnedDetailAsync();
+
+    // -----------------------------------------------------------------
+    // 探针接口（`EchoDesk --probe pages` 用：本地模型库那一块）
+    // -----------------------------------------------------------------
+
+    /// <summary>本地模型库的可观测状态（行数 / 空状态 / 两个按钮有没有文案）。</summary>
+    public string RegistrySnapshot()
+    {
+        int rows = 0;
+        bool emptyHint = false;
+        foreach (Control child in HubRegistryList.Children)
+        {
+            if (child is TextBlock hint && hint.Text?.StartsWith("（") == true)
+            {
+                emptyHint = true;
+                continue;
+            }
+            rows++;
+        }
+        return string.Join("; ", new[]
+        {
+            $"registryRows={rows}",
+            $"registryEmptyHint={(emptyHint ? 1 : 0)}",
+            $"registryTitleHasParen={(HubRegistryTitle.Text?.Contains('（') == true ? 1 : 0)}",
+            $"rescanButton={(string.IsNullOrEmpty(HubRescanButton.Content as string) ? 0 : 1)}",
+            $"refreshRegistryButton={(string.IsNullOrEmpty(HubRegistryRefreshButton.Content as string) ? 0 : 1)}",
+            $"statusLine={(string.IsNullOrEmpty(Market.Snapshot().Status) ? 0 : 1)}",
+        });
+    }
+
+    /// <summary>探针：重扫模型文件夹 + 重读模型库（走真实后端动作）。</summary>
+    public async Task ProbeRescanAsync() => await RescanModelsAsync();
+
+    /// <summary>探针：只重读模型库（不重扫磁盘）。</summary>
+    public async Task ProbeReloadRegistryAsync() => await LoadRegistryAsync();
 
     /// <summary>市场区块（控件多，单独一个 UserControl；由这里负责"谁来发请求"）。</summary>
     private ModelMarketSection? _market;
@@ -705,3 +1003,6 @@ public partial class ModelPage : UserControl, ISettingsPage
         }
     }
 }
+
+
+

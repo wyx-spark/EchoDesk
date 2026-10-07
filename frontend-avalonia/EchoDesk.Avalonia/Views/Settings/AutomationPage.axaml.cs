@@ -32,6 +32,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using EchoDesk.Avalonia.Services;
 
@@ -93,6 +94,12 @@ public partial class AutomationPage : UserControl, ISettingsPage
             BrowserChoiceBox, ReuseModeBox, CdpPortBox, PickTargetBox,
             PickOpenButton, PickBeginButton, PickCancelButton, PickCloseButton,
             LaunchDebugBrowserButton, PickReloadTabButton,
+            // v0.2.2 第 2 批新增的控件同样属于"自动化能力"：非 Windows 上一起禁用，
+            // 免得让人填完模板、跑完向导才发现整页跑不起来。
+            TemplateCombo, ApplyTemplateButton, SaveTemplateButton,
+            TestSelectorButton, OpenResultsButton, BrowseResultsButton,
+            WizardButton, WizardStep1Button, WizardStep2Button, WizardStep3Button,
+            WizardStep4Button, ExportConfigButton, ImportConfigButton,
         };
 
         SaveConfigButton.Click += async (_, _) => await SaveAsync();
@@ -104,6 +111,50 @@ public partial class AutomationPage : UserControl, ISettingsPage
         ResultsLocationBox.TextChanged += (_, _) => UpdateResultsPreview();
         ResultsRootNameBox.TextChanged += (_, _) => UpdateResultsPreview();
         TaskNameBox.TextChanged += (_, _) => UpdateResultsPreview();
+
+        // ---- v0.2.2 第 2 批：安全协议联动 / 结果目录 / 登录态 / 模板 / 字段帮助 /
+        //      测试选择器 / 测试向导 / 配置导入导出 ----
+        // 安全协议 ↔ 总开关联动：没接受协议就禁用总开关并强制取消（对齐 WPF 的 SyncSafetyUi）
+        SafetyCheck.IsCheckedChanged += (_, _) => SyncSafetyUi();
+        OpenResultsButton.Click += async (_, _) => await OpenResultsAsync();
+        BrowseResultsButton.Click += async (_, _) => await BrowseResultsAsync();
+        TestSelectorButton.Click += async (_, _) => await TestSelectorAsync();
+        TemplateCombo.SelectionChanged += (_, _) => { /* 只在点「套用模板」时才写入 */ };
+        ApplyTemplateButton.Click += (_, _) => ApplySelectedTemplate();
+        SaveTemplateButton.Click += (_, _) => ToggleSaveTemplateForm(true);
+        SaveTemplateConfirmButton.Click += async (_, _) => await SaveTemplateAsync();
+        SaveTemplateCancelButton.Click += (_, _) => ToggleSaveTemplateForm(false);
+        AutomationGuideButton.Click += (_, _) => ShowGuide();
+        WizardButton.Click += async (_, _) => await RunWizardAsync(1);
+        WizardStep1Button.Click += async (_, _) => await RunWizardAsync(1);
+        WizardStep2Button.Click += async (_, _) => await RunWizardAsync(2);
+        WizardStep3Button.Click += async (_, _) => await RunWizardAsync(3);
+        WizardStep4Button.Click += async (_, _) => await RunWizardAsync(4);
+        WizardResultCloseButton.Click += (_, _) => WizardResultPanel.IsVisible = false;
+        ExportConfigButton.Click += async (_, _) => await ExportConfigAsync();
+        ImportConfigButton.Click += async (_, _) => await ImportConfigAsync();
+        // 逐字段「?」：点开显示说明（Avalonia 侧统一走骨架右侧的字段帮助面板）
+        foreach (Button help in new[]
+                 {
+                     HelpTaskListUrlButton, HelpTaskListSelector, HelpTaskRowSelector,
+                     HelpNextPageSelector, HelpTaskDetailFileSelector, HelpFileExtensions,
+                     HelpInstruction, HelpLoginStateDir, HelpLoginCheckSelector, HelpLoginUrlKeywords,
+                 })
+        {
+            help.Content = "?";
+            ToolTip.SetTip(help, Loc.T("settings.automation.fieldHelpTip", "查看填写说明"));
+            help.Click += (_, _) => ShowFieldHelp((help.Tag as string) ?? "");
+        }
+        // 输入框获得焦点时把字段说明切到该字段（WPF 的 AutomationField_GotFocus 同一行为）
+        foreach (TextBox box in new[]
+                 {
+                     TaskUrlBox, TaskSelectorBox, TaskRowBox, NextPageBox, FileSelectorBox,
+                     ExtensionsBox, InstructionBox, LoginStateDirBox, LoginCheckSelectorBox,
+                     LoginKeywordsBox,
+                 })
+        {
+            box.GotFocus += (_, _) => ShowFieldHelp((box.Tag as string) ?? "");
+        }
 
         // ---- 任务十七：可视化选取与浏览器复用 ----
         PickOpenButton.Click += async (_, _) => await PickStepAsync("open");
@@ -248,6 +299,20 @@ public partial class AutomationPage : UserControl, ISettingsPage
         if (!doc.RootElement.TryGetProperty("automation", out JsonElement automation))
             return;
 
+        ApplyAutomation(automation);
+        UpdateResultsPreview();
+        AutomationStatusText.Text = Loc.T("settings.automation.stateIdle", "空闲");
+        // 顺便把"复用能力"、"选取状态"、"登录态"与字段帮助读一次：
+        // 后端持有状态机与帮助文本，界面重新打开时要能恢复显示。
+        await RefreshBrowserReuseAsync();
+        await PickStepAsync("status");
+        await RefreshLoginStateAsync();
+        await LoadAutomationHelpAsync();
+    }
+
+    /// <summary>把后端回传的 <c>automation</c> 对象渲染到控件上（配置读取与导入共用）。</summary>
+    private void ApplyAutomation(JsonElement automation)
+    {
         _loading = true;
         try
         {
@@ -273,7 +338,6 @@ public partial class AutomationPage : UserControl, ISettingsPage
             LoginStateDirBox.Text = GetString(automation, "login_state_dir");
             LoginCheckSelectorBox.Text = GetString(automation, "login_check_selector");
             LoginKeywordsBox.Text = GetString(automation, "login_url_keywords");
-            // 任务十七：浏览器、复用策略、调试端口（浏览器回退到 auto 以兼容缺字段的旧配置）
             SelectCombo(BrowserChoiceBox, GetString(automation, "browser") is { Length: > 0 } b ? b : "auto");
             SelectCombo(ReuseModeBox, GetString(automation, "browser_reuse") is { Length: > 0 } r ? r : "auto");
             CdpPortBox.Text = GetInt(automation, "cdp_port", 9222).ToString();
@@ -282,30 +346,51 @@ public partial class AutomationPage : UserControl, ISettingsPage
         {
             _loading = false;
         }
-
-        UpdateResultsPreview();
-        AutomationStatusText.Text = Loc.T("settings.automation.stateIdle", "空闲");
-        // 顺便把"复用能力"与"选取状态"读一次：后端持有状态机，界面重新打开时要能恢复显示
-        await RefreshBrowserReuseAsync();
-        await PickStepAsync("status");
+        SyncSafetyUi();
     }
 
-    /// <summary>保存位置留空时显示"程序根目录"，并预览完整目录（与 WPF 版同一口径）。</summary>
+    /// <summary>安全协议 ↔ 总开关联动（对齐 WPF 的 SyncSafetyUi）。</summary>
+    private void SyncSafetyUi()
+    {
+        bool accepted = SafetyCheck.IsChecked == true;
+        // 没接受协议时把总开关强制取消 + 禁用：不能让人"看着是开着的，其实跑不起来"。
+        // 顺序有意如此：先取消勾选再禁用，否则控件会停在"禁用但仍显示勾选"的状态。
+        if (!accepted && AutomationEnabledCheck.IsChecked == true)
+            AutomationEnabledCheck.IsChecked = false;
+        AutomationEnabledCheck.IsEnabled = _available && accepted;
+
+        if (!accepted && !string.IsNullOrEmpty(AutomationStatusText.Text))
+        {
+            // 只在已经有状态时补一句原因，避免页面刚打开就刷满提示
+            AutomationStatusText.Text = Loc.T("settings.automation.safetyDisabled",
+                "未接受安全协议：自动化已关闭且不可启用");
+        }
+    }
+    /// <summary>
+    /// 结果目录预览（对齐 WPF 的 UpdateResultsPreview）。
+    ///
+    /// **占位符必须是 4 个**：语言包里的 `settings.automation.resultsPreview` 是
+    /// "目录结构：{0}\{1}\{2}\{3}\（…）"（程序根 / 结果目录名 / 日期 / 任务名）。
+    /// 这里此前只传了 3 个，`Loc.T` 的 `string.Format` 抛 `FormatException` 后
+    /// 走 catch 返回**原模板**——于是界面上显示的是一串 `{0}\{1}\{2}\{3}` 字面量。
+    /// 本轮（第 2 批）按 WPF 的参数个数与顺序改对，并补上日期那一层。
+    /// </summary>
     private void UpdateResultsPreview()
     {
         if (_loading)
             return;
         string root = ResultsRootNameBox.Text?.Trim() ?? "";
         if (root.Length == 0)
-            root = Loc.T("settings.automation.defaultResultsRoot", "EchoDesk 结果");
+            root = Loc.T("settings.automation.defaultResultsRoot", "results");
         string task = TaskNameBox.Text?.Trim() ?? "";
         if (task.Length == 0)
-            task = Loc.T("settings.automation.defaultTaskName", "未命名任务");
+            task = Loc.T("settings.automation.defaultTaskName", "auto-task");
         string location = ResultsLocationBox.Text?.Trim() ?? "";
         if (location.Length == 0)
             location = Loc.T("settings.automation.programRoot", "程序根目录");
         ResultsPreviewText.Text = Loc.T("settings.automation.resultsPreview",
-            "结果将保存到：{0}\\{1}\\{2}\\（附件与摘要）", location, root, task);
+            "目录结构：{0}\\{1}\\{2}\\{3}\\（同名任务自动加 -1、-2；内含「result.txt」与下载的原始文件）",
+            location, root, $"{DateTime.Now:yyyy-MM-dd}", task);
     }
 
     /// <summary>收集当前控件值 → patch（字段名与 WPF 版逐一对齐）。</summary>
@@ -413,6 +498,509 @@ public partial class AutomationPage : UserControl, ISettingsPage
             return;
         string existing = AutomationLogBox.Text ?? "";
         AutomationLogBox.Text = existing.Length == 0 ? line : existing + Environment.NewLine + line;
+    }
+
+    // =================================================================
+    // v0.2.2 第 2 批：结果目录 / 登录态 / 模板 / 字段帮助 / 测试选择器 / 测试向导 / 导入导出
+    // =================================================================
+    //
+    // 全部对齐 WPF（`SettingsWindow.xaml.cs` 与 `SettingsWindow.Skills.cs` 的对应方法），
+    // 用的后端动作一个字都没改：
+    //   automation_status         → 结果根目录（由后端按自己的规则解析"程序根目录"）
+    //   automation_login_state    → 登录态只读状态（目录/占用/最后更新，**不含 Cookie 内容**）
+    //   automation_field_help     → 逐字段的 label/help/example/step
+    //   automation_templates      → 预置模板（内容来自后端语言包，随语言切换）
+    //   automation_save_template  → 存为自定义模板
+    //   automation_test           → 打开浏览器预览选择器匹配到的元素
+    //   automation_wizard / _step → 四步测试向导（第 4 步走流式，可在主窗口停止）
+    //   automation_config_export/import → 配置导出/导入（不含登录态与处理记录）
+
+    /// <summary>逐字段的填写说明（`automation_field_help` 回传，键是字段名）。</summary>
+    private readonly Dictionary<string, JsonElement> _fieldHelp = new(StringComparer.Ordinal);
+
+    /// <summary>在文件管理器中打开结果根目录（不存在时先创建）。</summary>
+    private async Task OpenResultsAsync()
+    {
+        // 让后端按自己的规则解析"程序根目录"，避免前端猜路径（与 WPF 同一做法）
+        using JsonDocument? doc = await SendAsync(new { action = "automation_status" });
+        string root = doc is not null
+                      && doc.RootElement.TryGetProperty("automation", out JsonElement status)
+            ? GetString(status, "results_root")
+            : "";
+        if (root.Length == 0)
+        {
+            ResultsStatusText.Text = Loc.T("settings.automation.resultsDirMissing",
+                "⚠️ 未取到结果目录，请先保存设置");
+            return;
+        }
+        ResultsStatusText.Text = ShellOpen.TryOpenDirectory(root)
+            ? Loc.T("settings.automation.opened", "已打开：{0}", root)
+            : Loc.T("settings.automation.resultsDirOpenFailed", "❌ 打开结果目录失败：{0}", root);
+    }
+
+    /// <summary>
+    /// 「浏览…」选择保存位置。Avalonia 走系统文件夹选择器（`StorageProvider`）——
+    /// 与 WPF 的 `OpenFolderDialog` 同一件事，只是 API 不同。
+    /// </summary>
+    private async Task BrowseResultsAsync()
+    {
+        TopLevel? top = TopLevel.GetTopLevel(this);
+        if (top is null)
+            return;
+        var folders = await top.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = Loc.T("settings.automation.resultsLocationPrompt", "选择结果保存位置"),
+            AllowMultiple = false,
+        });
+        if (folders.Count == 0)
+            return;
+        string? path = folders[0].TryGetLocalPath();
+        if (string.IsNullOrEmpty(path))
+            return;
+        ResultsLocationBox.Text = path;
+        UpdateResultsPreview();
+    }
+
+    /// <summary>
+    /// 读取登录态（只读）。
+    ///
+    /// 只显示"数据目录在哪、占多大、最后改动时间"，**不显示任何 Cookie 内容** ——
+    /// 界面上不该出现凭据，也不该给用户"程序在读我的密码"的错觉（WPF 同一口径）。
+    /// </summary>
+    private async Task RefreshLoginStateAsync()
+    {
+        using JsonDocument? doc = await SendAsync(new { action = "automation_login_state" });
+        if (doc is null || !doc.RootElement.TryGetProperty("login_state", out JsonElement state))
+            return;
+        bool exists = GetBool(state, "exists");
+        string dir = GetString(state, "profile_dir");
+        long size = state.TryGetProperty("size_bytes", out JsonElement sizeEl)
+                    && sizeEl.TryGetInt64(out long parsed) ? parsed : 0;
+        string modified = GetString(state, "modified");
+        string detail = exists
+            ? Loc.T("settings.automation.loginStateSaved", "登录态：已保存（{0}，约 {1} MB{2}）",
+                dir, (size / 1048576.0).ToString("0.0"),
+                modified.Length > 0
+                    ? Loc.T("settings.automation.loginStateModified", "，最后更新 {0}", modified) : "")
+            : Loc.T("settings.automation.loginStateEmpty",
+                "登录态：尚未保存（{0} 不存在）。第一次运行自动化时会在浏览器里引导你手动登录。", dir);
+        if (GetBool(state, "legacy_exists"))
+            detail += Loc.T("settings.automation.loginStateLegacy", "　旧备份文件 browser_state.json 仍在。");
+        LoginStateText.Text = detail;
+    }
+
+    /// <summary>拉取字段级帮助与模板库（内容随界面语言切换）。</summary>
+    private async Task LoadAutomationHelpAsync()
+    {
+        using (JsonDocument? help = await SendAsync(new { action = "automation_field_help" }))
+        {
+            if (help is not null
+                && help.RootElement.TryGetProperty("help", out JsonElement array)
+                && array.ValueKind == JsonValueKind.Array)
+            {
+                _fieldHelp.Clear();
+                foreach (JsonElement item in array.EnumerateArray())
+                {
+                    string field = GetString(item, "field");
+                    if (field.Length > 0)
+                        _fieldHelp[field] = item.Clone();
+                }
+            }
+        }
+
+        using (JsonDocument? templates = await SendAsync(new { action = "automation_templates" }))
+        {
+            if (templates is not null && templates.RootElement.TryGetProperty("templates", out JsonElement list))
+            {
+                string? keep = (TemplateCombo.SelectedItem as TemplateItem)?.Id;
+                var items = new List<TemplateItem>();
+                if (list.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement item in list.EnumerateArray())
+                    {
+                        items.Add(new TemplateItem(
+                            GetString(item, "id"), GetString(item, "label"),
+                            GetString(item, "instruction"), GetString(item, "extensions")));
+                    }
+                }
+                TemplateCombo.ItemsSource = items;
+                if (items.Count > 0)
+                    SelectTemplate(keep);
+            }
+        }
+    }
+
+    private void SelectTemplate(string? id)
+    {
+        if (TemplateCombo.ItemsSource is not List<TemplateItem> items)
+            return;
+        int index = 0;
+        for (int i = 0; i < items.Count; i++)
+        {
+            if (string.Equals(items[i].Id, id, StringComparison.OrdinalIgnoreCase))
+            {
+                index = i;
+                break;
+            }
+        }
+        TemplateCombo.SelectedIndex = index;
+    }
+
+    /// <summary>套用模板：只填"指令"与"文件后缀"两个字段，其余按实际网站自己调。</summary>
+    private void ApplySelectedTemplate()
+    {
+        if (TemplateCombo.SelectedItem is not TemplateItem template)
+        {
+            TemplateStatusText.Text = Loc.T("settings.automation.templateNotSelected",
+                "⚠️ 请先在上面的下拉框里选一个模板");
+            return;
+        }
+        if (template.Instruction.Length > 0)
+            InstructionBox.Text = template.Instruction;
+        if (template.Extensions.Length > 0)
+            ExtensionsBox.Text = template.Extensions;
+        UpdateResultsPreview();
+        TemplateStatusText.Text = Loc.T("automation.template.custom_applied",
+            "✅ 已套用模板「{name}」", template.Label);
+    }
+
+    private void ToggleSaveTemplateForm(bool show)
+    {
+        SaveTemplatePanel.IsVisible = show;
+        if (show)
+        {
+            SaveTemplateNameBox.Text = "";
+            SaveTemplateNameBox.Focus();
+        }
+    }
+
+    private async Task SaveTemplateAsync()
+    {
+        string name = (SaveTemplateNameBox.Text ?? "").Trim();
+        if (name.Length == 0)
+        {
+            TemplateStatusText.Text = Loc.T("settings.automation.saveTemplatePrompt", "模板名称");
+            return;
+        }
+        ToggleSaveTemplateForm(false);
+        using JsonDocument? doc = await SendAsync(new
+        {
+            action = "automation_save_template",
+            name,
+            template = new
+            {
+                label = name,
+                instruction = InstructionBox.Text,
+                extensions = ExtensionsBox.Text,
+            },
+        });
+        string content = doc is null ? "" : GetString(doc.RootElement, "content");
+        TemplateStatusText.Text = content.Length > 0
+            ? content
+            : Loc.T("automation.template.custom_saved", "✅ 已保存为自定义模板「{name}」", name);
+        await LoadAutomationHelpAsync();
+    }
+
+    /// <summary>
+    /// 「?」：把该字段的说明摆到右侧字段帮助面板；再点一次同样的字段时收起
+    /// （WPF 是弹 MessageBox，Avalonia 侧统一走骨架的面板 —— 见 ISettingsHost.ShowFieldHelp）。
+    /// </summary>
+    private void ShowFieldHelp(string field)
+    {
+        if (_host is null)
+            return;
+        if (field.Length == 0 || !_fieldHelp.TryGetValue(field, out JsonElement help))
+        {
+            _host.ShowFieldHelp(
+                Loc.T("settings.automation.helpPlaceholderTitle", "❓ 字段说明"),
+                Loc.T("settings.automation.helpPlaceholderBody",
+                    "把光标放进下面任意一个输入框（或点字段旁的「?」），这里会显示该字段的通俗说明与示例值。"
+                    + "完整指南见发布包 docs\\<locale>\\AUTOMATION_GUIDE.md。"));
+            return;
+        }
+        string example = GetString(help, "example");
+        _host.ShowFieldHelp(
+            "? " + GetString(help, "label"),
+            GetString(help, "help"),
+            example.Length > 0 ? Loc.T("automation.help.example", "示例") + ": " + example : "");
+    }
+
+    /// <summary>
+    /// 「📖 填写帮助」：把全部字段说明按"步骤"分组拼成一段文本展示。
+    ///
+    /// 与 WPF 的差别只有承载方式：WPF 用 `MessageBox`，这里用页面内的一块可滚动文本
+    /// （行为等价：内容一致、可复制；少一个必须逐次关闭的模态窗口）。
+    /// </summary>
+    private void ShowGuide()
+    {
+        var builder = new System.Text.StringBuilder();
+        builder.AppendLine(Loc.T("automation.guide.title", "自动化配置填写帮助"));
+        builder.AppendLine();
+        string lastStep = "";
+        foreach (JsonElement help in _fieldHelp.Values)
+        {
+            string step = GetString(help, "step");
+            string stepTitle = GetString(help, "stepTitle");
+            if (step != lastStep && stepTitle.Length > 0)
+            {
+                builder.AppendLine("── " + stepTitle + " ──");
+                lastStep = step;
+            }
+            string required = GetBool(help, "required")
+                ? Loc.T("automation.help.required", "必填")
+                : Loc.T("automation.help.optional", "可选");
+            builder.AppendLine(Loc.T("settings.automation.guideItem", "【{0}】（{1}）",
+                GetString(help, "label"), required));
+            builder.AppendLine("  " + GetString(help, "help"));
+            string example = GetString(help, "example");
+            if (example.Length > 0)
+                builder.AppendLine($"  {Loc.T("automation.help.example", "示例")}: {example}");
+            builder.AppendLine();
+        }
+        builder.AppendLine(Loc.T("automation.guide.hint",
+            "也可以查看完整文档：docs/<locale>/AUTOMATION_GUIDE.md（发布包内 docs 目录）"));
+
+        WizardResultPanel.IsVisible = true;
+        WizardResultTitle.Text = Loc.T("automation.guide.title", "自动化配置填写帮助");
+        WizardResultText.Text = builder.ToString();
+        AutomationGuideButton.Focus();
+    }
+
+    /// <summary>「测试选择器」：打开浏览器访问该网址，预览选择器匹配到的元素。</summary>
+    private async Task TestSelectorAsync()
+    {
+        string url = (TaskUrlBox.Text ?? "").Trim();
+        string selector = (TaskSelectorBox.Text ?? "").Trim();
+        if (url.Length == 0 || selector.Length == 0)
+        {
+            AppendLog(Loc.T("settings.automation.needUrlAndSelector", "❌ 请先填写任务列表网址与元素位置"));
+            return;
+        }
+        TestSelectorButton.IsEnabled = false;
+        AppendLog(Loc.T("settings.automation.testingSelector", "🔍 正在测试选择器：{0}", selector));
+        AutomationStatusText.Text = Loc.T("settings.automation.stateTesting",
+            "状态：测试选择器中（浏览器已打开）");
+        try
+        {
+            using JsonDocument? doc = await SendAsync(new { action = "automation_test", url, selector },
+                timeoutSeconds: 180);
+            AppendLog(doc is null
+                ? Loc.T("settings.automation.testFailed", "❌ 测试失败：{0}",
+                    Loc.T("settings.automation.pickBackendDown", "⚠️ 后端没有响应"))
+                : GetString(doc.RootElement, "content"));
+        }
+        finally
+        {
+            TestSelectorButton.IsEnabled = _available;
+            AutomationStatusText.Text = Loc.T("settings.automation.stateIdle", "空闲");
+        }
+    }
+
+    /// <summary>
+    /// 四步测试向导。第 4 步要在**真实页面上跑一个任务**，所以走流式（可在主窗口点 ⏹ 停止）；
+    /// 前三步是同步的 `automation_wizard_step`。
+    /// </summary>
+    private async Task RunWizardAsync(int step)
+    {
+        if (_host is null || !_available)
+            return;
+        WizardResultPanel.IsVisible = true;
+        WizardResultTitle.Text = Loc.T("settings.automation.wizardStep" + step, "第 " + step + " 步");
+        WizardResultText.Text = Loc.T("settings.automation.wizardRunning", "⏳ 正在执行，请稍候…");
+        AutomationStatusText.Text = Loc.T("settings.automation.wizardRunning", "⏳ 正在执行，请稍候…");
+
+        if (step == 4)
+        {
+            // 流式：每次 delta 更新一次结果文本，让用户看到"真的在跑"
+            var log = new System.Text.StringBuilder();
+            await _host.State.ActiveBackend.SendStreamAsync(
+                new { action = "automation_wizard", step },
+                onDelta: _ => { },
+                onContext: (_, _) => { },
+                idleTimeout: TimeSpan.FromMinutes(5),
+                onEvent: (name, payload) =>
+                {
+                    // 与 WPF 同一口径：把后端推来的可读文本追加到结果区
+                    if (payload.ValueKind == JsonValueKind.Object
+                        && payload.TryGetProperty("content", out JsonElement content)
+                        && content.ValueKind == JsonValueKind.String)
+                    {
+                        log.Append(content.GetString());
+                        string text = log.ToString().Trim();
+                        Dispatcher.UIThread.Post(() => WizardResultText.Text = text);
+                    }
+                },
+                onDeltaChannel: (_, _, _) => { });
+            if (log.Length == 0)
+                WizardResultText.Text = Loc.T("settings.automation.wizardDone", "✅ 这一步通过");
+        }
+        else
+        {
+            using JsonDocument? doc = await SendAsync(
+                new { action = "automation_wizard_step", step }, timeoutSeconds: 300);
+            if (doc is null || !doc.RootElement.TryGetProperty("wizard", out JsonElement wizard))
+            {
+                WizardResultText.Text = doc is null
+                    ? Loc.T("settings.automation.pickBackendDown", "⚠️ 后端没有响应")
+                    : GetString(doc.RootElement, "content");
+                AutomationStatusText.Text = Loc.T("settings.automation.wizardFailed", "❌ 这一步没通过");
+                return;
+            }
+            bool ok = GetBool(wizard, "ok");
+            var builder = new System.Text.StringBuilder();
+            builder.AppendLine(ok
+                ? Loc.T("settings.automation.wizardDone", "✅ 这一步通过")
+                : Loc.T("settings.automation.wizardFailed", "❌ 这一步没通过"));
+            builder.AppendLine();
+            builder.AppendLine(GetString(wizard, "detail"));
+            if (wizard.TryGetProperty("suggestions", out JsonElement suggestions)
+                && suggestions.ValueKind == JsonValueKind.Array)
+            {
+                var lines = new List<string>();
+                foreach (JsonElement item in suggestions.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.String)
+                        lines.Add("· " + item.GetString());
+                }
+                if (lines.Count > 0)
+                {
+                    builder.AppendLine();
+                    builder.AppendLine(Loc.T("settings.automation.wizardSuggestions", "建议："));
+                    foreach (string line in lines)
+                        builder.AppendLine(line);
+                }
+            }
+            WizardResultText.Text = builder.ToString().Trim();
+            AutomationStatusText.Text = Loc.T("settings.automation.wizardStepHead", "{0}（{1}）",
+                ok ? Loc.T("settings.automation.wizardDone", "✅ 这一步通过")
+                   : Loc.T("settings.automation.wizardFailed", "❌ 这一步没通过"),
+                Loc.T("settings.automation.wizardStep" + step, "第 " + step + " 步"));
+        }
+    }
+
+    /// <summary>导出自动化配置（`*.echodesk-auto`；不含登录态、处理记录与临时目录）。</summary>
+    private async Task ExportConfigAsync()
+    {
+        TopLevel? top = TopLevel.GetTopLevel(this);
+        if (top is null)
+            return;
+        var file = await top.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = Loc.T("settings.automation.exportConfig", "导出配置（.echodesk-auto）"),
+            SuggestedFileName = "echodesk-automation.echodesk-auto",
+            DefaultExtension = "echodesk-auto",
+            FileTypeChoices = new[]
+            {
+                new FilePickerFileType(Loc.T("settings.automation.configFilterDesc", "EchoDesk 自动化配置"))
+                {
+                    Patterns = new[] { "*.echodesk-auto" },
+                },
+            },
+        });
+        string? path = file?.TryGetLocalPath();
+        if (string.IsNullOrEmpty(path))
+            return;
+        using JsonDocument? doc = await SendAsync(new { action = "automation_config_export", path });
+        ResultsStatusText.Text = doc is null
+            ? Loc.T("settings.automation.saveFailed", "❌ 保存失败：{0}",
+                Loc.T("settings.automation.pickBackendDown", "⚠️ 后端没有响应"))
+            : GetString(doc.RootElement, "content");
+    }
+
+    /// <summary>导入自动化配置并**立刻回填界面**（与 WPF 的 ImportConfigButton_Click 一致）。</summary>
+    private async Task ImportConfigAsync()
+    {
+        TopLevel? top = TopLevel.GetTopLevel(this);
+        if (top is null)
+            return;
+        var files = await top.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = Loc.T("settings.automation.importConfig", "导入配置（.echodesk-auto）"),
+            AllowMultiple = false,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType(Loc.T("settings.automation.configFilterDesc", "EchoDesk 自动化配置"))
+                {
+                    Patterns = new[] { "*.echodesk-auto", "*.json" },
+                },
+                new FilePickerFileType(Loc.T("settings.automation.allFilesFilterDesc", "所有文件"))
+                {
+                    Patterns = new[] { "*" },
+                },
+            },
+        });
+        if (files.Count == 0)
+            return;
+        string? path = files[0].TryGetLocalPath();
+        if (string.IsNullOrEmpty(path))
+            return;
+        using JsonDocument? doc = await SendAsync(new { action = "automation_config_import", path });
+        if (doc is null)
+        {
+            ResultsStatusText.Text = Loc.T("settings.automation.saveFailed", "❌ 保存失败：{0}",
+                Loc.T("settings.automation.pickBackendDown", "⚠️ 后端没有响应"));
+            return;
+        }
+        ResultsStatusText.Text = GetString(doc.RootElement, "content");
+        if (doc.RootElement.TryGetProperty("automation", out JsonElement automation))
+        {
+            ApplyAutomation(automation);
+            UpdateResultsPreview();
+        }
+    }
+
+    /// <summary>自动化模板（内容全部来自后端语言包，随界面语言切换）。</summary>
+    private sealed record TemplateItem(string Id, string Label, string Instruction, string Extensions)
+    {
+        public override string ToString() => Label;
+    }
+
+    // -----------------------------------------------------------------
+    // 探针接口（`EchoDesk --probe pages` 用：模板 / 字段帮助 / 安全联动 / 结果预览）
+    // -----------------------------------------------------------------
+
+    /// <summary>本页第 2 批新增部分的可观测状态。</summary>
+    public string AutomationSnapshot()
+    {
+        string preview = ResultsPreviewText.Text ?? "";
+        return string.Join("; ", new[]
+        {
+            $"templateCount={TemplateCombo.ItemCount}",
+            $"fieldHelpCount={_fieldHelp.Count}",
+            // 预览里出现 {0} 说明 string.Format 抛过 FormatException（本轮修的就是它）
+            $"previewPlaceholders={(preview.Contains("{0}") ? 1 : 0)}",
+            $"previewHasDate={(preview.Contains(DateTime.Now.ToString("yyyy-MM-dd")) ? 1 : 0)}",
+            // 安全协议联动：总开关的可用性必须与协议勾选一致
+            $"safetyAccepted={(SafetyCheck.IsChecked == true ? 1 : 0)}",
+            $"enabledEditable={(AutomationEnabledCheck.IsEnabled ? 1 : 0)}",
+            $"openResultsButton={(string.IsNullOrEmpty(OpenResultsButton.Content as string) ? 0 : 1)}",
+            $"browseResultsButton={(string.IsNullOrEmpty(BrowseResultsButton.Content as string) ? 0 : 1)}",
+            $"testSelectorButton={(string.IsNullOrEmpty(TestSelectorButton.Content as string) ? 0 : 1)}",
+            $"wizardAndIoButtons={(string.IsNullOrEmpty(WizardButton.Content as string) ? 0 : 1)}"
+            + $"{(string.IsNullOrEmpty(WizardStep4Button.Content as string) ? 0 : 1)}"
+            + $"{(string.IsNullOrEmpty(ExportConfigButton.Content as string) ? 0 : 1)}"
+            + $"{(string.IsNullOrEmpty(ImportConfigButton.Content as string) ? 0 : 1)}",
+            $"loginStateText={(string.IsNullOrEmpty(LoginStateText.Text) ? 0 : 1)}",
+        });
+    }
+
+    /// <summary>探针：勾选/取消安全协议（验联动，不需要后端）。</summary>
+    public void ProbeSetSafety(bool accepted)
+    {
+        SafetyCheck.IsChecked = accepted;
+        if (accepted)
+            AutomationEnabledCheck.IsChecked = true;   // 验"接受协议后总开关可以打开"
+        SyncSafetyUi();
+    }
+
+    /// <summary>探针：按字段名显示一次字段帮助（验 `automation_field_help` 真的被读进来了）。</summary>
+    public void ProbeShowFieldHelp(string field) => ShowFieldHelp(field);
+
+    /// <summary>探针：当前已知的字段帮助键（逗号分隔），供断言"后端确实回了这些字段"。</summary>
+    public string FieldHelpKeys()
+    {
+        var keys = new List<string>(_fieldHelp.Keys);
+        return string.Join(",", keys.ToArray());
     }
 
     private static string GetString(JsonElement item, string name) =>
@@ -698,8 +1286,45 @@ public partial class AutomationPage : UserControl, ISettingsPage
         ReloadConfigButton.Content = Loc.T("settings.automation.reloadConfig", "🔄 重新读取");
         RunOnceButton.Content = Loc.T("settings.automation.runOnce", "▶ 立即运行一次");
         StopAutomationButton.Content = Loc.T("settings.automation.stopRun", "⏹ 停止");
-        NotMigratedText.Text = Loc.T("settings.automation.notMigrated", "");
         RunLogLabel.Text = Loc.T("settings.automation.runLog", "运行日志");
+
+        // ---- v0.2.2 第 2 批：模板 / 字段帮助 / 结果目录 / 测试向导 / 导入导出 ----
+        TemplatesTitle.Text = Loc.T("settings.automation.templates", "配置模板");
+        ApplyTemplateButton.Content = Loc.T("settings.automation.applyTemplate", "套用模板");
+        SaveTemplateButton.Content = Loc.T("settings.automation.saveTemplate", "存为自定义模板");
+        AutomationGuideButton.Content = Loc.T("settings.automation.onlineHelp", "📖 填写帮助");
+        ToolTip.SetTip(AutomationGuideButton, Loc.T("settings.automation.onlineHelpTip",
+            "在本窗口内查看每个字段的通俗说明、完整示例与排查表"));
+        ToolTip.SetTip(TemplateCombo, Loc.T("settings.automation.templateTip",
+            "选一个模板一键填入常用配置，再按实际网站微调。"));
+        SaveTemplateConfirmButton.Content = Loc.T("settings.button.save", "保存");
+        SaveTemplateCancelButton.Content = Loc.T("settings.button.close", "关闭");
+        SaveTemplateNameBox.PlaceholderText = Loc.T("settings.automation.saveTemplatePrompt", "模板名称");
+        OpenResultsButton.Content = Loc.T("settings.automation.openResults", "📂 打开结果目录");
+        ToolTip.SetTip(OpenResultsButton, Loc.T("settings.automation.openResultsTip",
+            "在系统文件管理器里打开结果根目录"));
+        BrowseResultsButton.Content = Loc.T("settings.automation.browseResults", "浏览…");
+        TestSelectorButton.Content = Loc.T("settings.automation.testSelector", "测试选择器");
+        ToolTip.SetTip(TestSelectorButton, Loc.T("settings.automation.testSelectorTip",
+            "打开浏览器访问该网址，预览选择器匹配到的元素"));
+        WizardButton.Content = Loc.T("settings.automation.wizard", "🧪 测试向导");
+        ToolTip.SetTip(WizardButton, Loc.T("settings.automation.wizardTip",
+            "分四步验证配置：任务列表 → 下一页 → 详情页附件 → 试运行一个任务"));
+        WizardStep1Button.Content = Loc.T("settings.automation.wizardStep1", "第 1 步");
+        WizardStep2Button.Content = Loc.T("settings.automation.wizardStep2", "第 2 步");
+        WizardStep3Button.Content = Loc.T("settings.automation.wizardStep3", "第 3 步");
+        WizardStep4Button.Content = Loc.T("settings.automation.wizardStep4", "第 4 步");
+        ExportConfigButton.Content = Loc.T("settings.automation.exportConfig", "导出配置");
+        ImportConfigButton.Content = Loc.T("settings.automation.importConfig", "导入配置");
+        ToolTip.SetTip(ExportConfigButton, Loc.T("settings.automation.exportTip",
+            "导出时不包含登录态、处理记录与临时目录，可安全地跨机复用。"));
+        ToolTip.SetTip(ImportConfigButton, Loc.T("settings.automation.importTip",
+            "导入不会继承安全协议与总开关，需要在本机重新勾选。"));
+        ToolTip.SetTip(SaveTemplateButton, Loc.T("settings.automation.saveTemplateTip",
+            "把当前的「附加指令」与「文件后缀」存成一个可复用的模板"));
+        WizardResultCloseButton.Content = Loc.T("settings.button.close", "关闭");
+        ResultsStatusText.Text = "";
+        TemplateStatusText.Text = "";
 
         // ---- 任务十七：可视化选取与浏览器复用 ----
         // 下拉框的**显示名**是前端本地化的（它们是"字段值"的枚举，不是状态文案）；
@@ -726,3 +1351,4 @@ public partial class AutomationPage : UserControl, ISettingsPage
         UpdateResultsPreview();
     }
 }
+

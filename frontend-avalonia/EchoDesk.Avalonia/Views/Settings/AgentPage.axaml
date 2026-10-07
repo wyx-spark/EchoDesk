@@ -29,16 +29,91 @@
                    TextWrapping="Wrap" Opacity="0.7" MaxWidth="420" />
       </StackPanel>
 
-      <!-- ③ MCP 状态（只读） -->
+      <!-- ③ MCP（v0.2.2 第 2 批：从"只读展示"补成**可编辑**，对齐 WPF 的 SettingsWindow.Mcp.cs）。
+           控件名与 AutomationId 与 WPF 同名，同一份探针可以驱动两套界面。
+
+           编辑模型与 WPF 逐条一致：**界面上的改动先落在本地**（服务器列表），
+           点「💾 保存」或「🔌 连接并取工具」才整体提交 —— mcp_apply 本身就是
+           "整份配置替换"的语义，攒着一起交比每敲一个键就发一次更符合接口形状，
+           也让"改错了不点保存"成为可能。 -->
       <TextBlock x:Name="McpTitle" FontWeight="Bold" FontSize="14" Margin="0,10,0,0" />
+
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <Button x:Name="McpReloadButton" Padding="12,4"
+                AutomationProperties.AutomationId="McpReloadButton" />
+        <Button x:Name="McpSaveButton" Padding="12,4"
+                AutomationProperties.AutomationId="McpSaveButton" />
+        <Button x:Name="McpConnectButton" Padding="12,4"
+                AutomationProperties.AutomationId="McpConnectButton" />
+      </StackPanel>
+
+      <TextBlock x:Name="McpIntro" FontSize="11" TextWrapping="Wrap" Opacity="0.75" />
+      <!-- 安全提示单独一行且用强调色 + 半粗体：这是"把外部进程接进 Agent"的风险边界，
+           不该塞进小字提示里。Avalonia 的主题里没有独立的警告前景色，
+           本工程已有的做法是用 AccentBrush 表达"需要注意"（见本页的风险标签）。 -->
+      <TextBlock x:Name="McpSecurity" FontSize="11" TextWrapping="Wrap" FontWeight="SemiBold"
+                 Foreground="{DynamicResource AccentBrush}"
+                 AutomationProperties.AutomationId="McpSecurity" />
+
+      <StackPanel Orientation="Horizontal" Spacing="14">
+        <CheckBox x:Name="McpEnabledCheck" FontSize="11" VerticalAlignment="Center"
+                  AutomationProperties.AutomationId="McpEnabledCheck" />
+        <CheckBox x:Name="McpAutoConnectCheck" FontSize="11" VerticalAlignment="Center"
+                  AutomationProperties.AutomationId="McpAutoConnectCheck" />
+        <TextBlock x:Name="McpTimeoutLabel" FontSize="11" VerticalAlignment="Center" />
+        <TextBox x:Name="McpTimeoutBox" Width="56" Padding="6,3" FontSize="11"
+                 VerticalAlignment="Center"
+                 AutomationProperties.AutomationId="McpTimeoutBox" />
+        <TextBlock x:Name="McpTimeoutHint" FontSize="10" VerticalAlignment="Center" Opacity="0.6" />
+      </StackPanel>
+
+      <TextBlock x:Name="McpStagedHint" FontSize="10" TextWrapping="Wrap" Opacity="0.65" />
+
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,6,0,0">
+        <TextBlock x:Name="McpListTitle" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" />
+        <Button x:Name="McpAddButton" Padding="12,3" FontSize="11"
+                AutomationProperties.AutomationId="McpAddButton" />
+        <Button x:Name="McpAddExampleButton" Padding="12,3" FontSize="11"
+                AutomationProperties.AutomationId="McpAddExampleButton" />
+      </StackPanel>
+
+      <!-- 新增 server 的内联表单（默认折叠：「＋ 添加服务器」才展开）。
+           刻意**不做弹窗**：Avalonia 侧没有对话框体系，就地展开还能与列表同屏对照 -->
+      <Border x:Name="McpFormPanel" IsVisible="False" CornerRadius="6" Padding="10,8"
+              BorderThickness="1" BorderBrush="{DynamicResource CardBorderBrush}"
+              Margin="0,4,0,0"
+              AutomationProperties.AutomationId="McpFormPanel">
+        <StackPanel Spacing="4">
+          <TextBlock x:Name="McpFormTitle" FontWeight="SemiBold" FontSize="11" />
+          <TextBlock x:Name="McpFormNameLabel" FontSize="10" Opacity="0.7" />
+          <TextBox x:Name="McpFormNameBox" Width="240" HorizontalAlignment="Left"
+                   AutomationProperties.AutomationId="McpFormNameBox" />
+          <TextBlock x:Name="McpFormCommandLabel" FontSize="10" Opacity="0.7" />
+          <TextBox x:Name="McpFormCommandBox" Width="240" HorizontalAlignment="Left"
+                   AutomationProperties.AutomationId="McpFormCommandBox" />
+          <TextBlock x:Name="McpFormArgsLabel" FontSize="10" Opacity="0.7" />
+          <TextBox x:Name="McpFormArgsBox" MinWidth="360" HorizontalAlignment="Left"
+                   AutomationProperties.AutomationId="McpFormArgsBox" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button x:Name="McpFormAddConfirmButton" Padding="14,4" FontSize="11"
+                    AutomationProperties.AutomationId="McpFormAddConfirmButton" />
+            <Button x:Name="McpFormCancelButton" Padding="14,4" FontSize="11"
+                    AutomationProperties.AutomationId="McpFormCancelButton" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <StackPanel x:Name="McpServerList" Spacing="6" />
+
+      <!-- 汇总行（跨平台版额外保留：WPF 侧没有这一行，它只做只读状态摘要） -->
       <TextBlock x:Name="McpSummaryText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
                  AutomationProperties.AutomationId="McpSummaryText" />
-      <StackPanel x:Name="McpServerList" Spacing="6" />
-      <TextBlock x:Name="McpNotMigratedText" FontSize="11" TextWrapping="Wrap" Opacity="0.7" />
 
       <!-- ④ 操作与状态 -->
       <Button x:Name="AgentReloadButton" HorizontalAlignment="Left" Padding="12,4" Margin="0,6,0,0"
               AutomationProperties.AutomationId="AgentReloadButton" />
+      <TextBlock x:Name="McpStatusText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
+                 AutomationProperties.AutomationId="McpStatusText" />
       <TextBlock x:Name="AgentStatusText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
                  AutomationProperties.AutomationId="AgentStatusText" />
 

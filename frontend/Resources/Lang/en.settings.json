@@ -9,6 +9,22 @@
     "contract": "2. contract — contract review",
     "agent": "3. agent — agent (can call tools)"
   },
+  "automation": {
+    "_note": "Front-end wording for the automation field help and template library (v0.2.2 batch 2). The backend pack already carries the same keys, but both front ends read frontend/Resources/Lang/ — without these the English UI silently falls back to the Chinese literals.",
+    "help": {
+      "example": "Example",
+      "required": "required",
+      "optional": "optional"
+    },
+    "guide": {
+      "title": "Automation configuration guide",
+      "hint": "The full document is at docs/en/AUTOMATION_GUIDE.md inside the release package."
+    },
+    "template": {
+      "custom_applied": "✅ Template \"{name}\" applied",
+      "custom_saved": "✅ Saved as custom template \"{name}\""
+    }
+  },
   "settings": {
     "general": {
       "sectionLanguagePack": "Language packs",
@@ -44,6 +60,9 @@
       "langPackTitle": "Language packs",
       "reloadLang": "↻ Reload language packs",
       "openLangDir": "📂 Open language pack folder",
+      "openLangDirFailed": "⚠️ Could not open the language pack folder: {0}",
+      "langSyncFailed": "⚠️ Could not sync the language to the backend (no response)",
+      "sectionPaths": "📌 Locations",
       "labelReadingMode": "Reading the current conversation mode"
     },
     "saveHint": {
@@ -63,6 +82,14 @@
       "labelReadingHubStatus": "Reading the model hub status",
       "statusSource": "Data source: {0}",
       "registryTitle": "📚 Local model library ({0} · {1})",
+      "registryLoading": "Reading the local model library…",
+      "registryLoaded": "✅ Local model library loaded",
+      "registryEmpty": "(The local model library is still empty: download a model from the model hub, or drop a .gguf into the models folder and click “Rescan model folder”.)",
+      "backendUnavailableShort": "no response from the backend",
+      "loadTip": "Hot-load this model (it becomes the current model, no restart needed)",
+      "deleteTip": "Delete the model file and remove it from the library (irreversible; you would have to download it again)",
+      "actionDeleteConfirm": "Delete?",
+      "deletingModel": "Deleting {0}…",
       "profileTitle": "🎚️ Model tiers (selectable default)",
       "actionRefreshProfiles": "Refresh tiers",
       "profileApply": "Switch",
@@ -602,7 +629,13 @@
       "guideItem": "{0} ({1})",
       "wizardStepHead": "{0} ({1})",
       "configFilterDesc": "EchoDesk automation configuration",
-      "allFilesFilterDesc": "All files"
+      "allFilesFilterDesc": "All files",
+      "testSelector": "Test selector",
+      "testSelectorTip": "Open the browser at that URL and preview which elements the selector matches",
+      "fieldHelpTip": "Show filling instructions",
+      "openResultsTip": "Open the results root folder in the system file manager",
+      "saveTemplateTip": "Save the current instruction and file extensions as a reusable template",
+      "templateNotSelected": "⚠️ Pick a template in the drop-down above first"
     },
     "developer": {
       "modeShort": "Only validation strictness is relaxed — never the permission boundary.",

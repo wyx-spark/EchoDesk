@@ -16,12 +16,13 @@
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode settings
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode agent          # 真后端 + Agent 事件链路
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode market         # 真后端 + 模型市场整条交互
+#   powershell -File tools\ui_probe_avalonia.ps1 -Mode pages          # 真后端 + 四个设置页的新增功能
 #   powershell -File tools\ui_probe_avalonia.ps1 -Exe <发布树>\app\EchoDesk.exe
 param(
     # 默认指向本仓库的 Debug 构建（开发机跑得最快）。发布树里的自包含产物也可以直接传进来，
     # 那条路径才是"发布出去的东西到底能不能开"的证据。
     [string]$Exe = "$PSScriptRoot\..\frontend-avalonia\EchoDesk.Avalonia\bin\Debug\net10.0\EchoDesk.exe",
-    [ValidateSet('main', 'settings', 'both', 'agent', 'market')]
+    [ValidateSet('main', 'settings', 'both', 'agent', 'market', 'pages')]
     [string]$Mode = 'both',
     [int]$TimeoutSec = 120
 )
