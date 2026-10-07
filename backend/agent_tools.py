@@ -48,6 +48,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # （v0.2.2 硬编码清查第 6 批）。i18n 是纯标准库模块，这里没有循环导入风险。
 from i18n import t as _t
 
+#: 权限类观察串的语言无关标记（前端据此判定"被拒绝"；显示前会剥掉）
+DENIED_MARK = "[!DENIED] "
+
+
 # ===========================================================================
 # 工具接口
 # ===========================================================================
@@ -474,12 +478,12 @@ def tool_doc_search(args: Dict[str, Any], ctx: ToolContext) -> str:
     """在**已上传文件**里按关键词挑相关段落（不外发、不读任意路径）。"""
     query = str(args.get("query") or args.get("q") or "").strip()
     if not query:
-        return "检索失败：请给出 query"
+        return _t("tool.retrieve_need_query")
     top_k = int(args.get("top") or 3)
     top_k = max(1, min(top_k, 8))
     names = ctx.file_names()
     if not names:
-        return "检索失败：用户还没有上传任何文件（可以先请用户用 /file 或拖入文件）"
+        return _t("tool.retrieve_no_files")
     wanted = str(args.get("file") or "").strip()
     hits: List[Tuple[float, str, str]] = []
     for name in names:
@@ -493,7 +497,7 @@ def tool_doc_search(args: Dict[str, Any], ctx: ToolContext) -> str:
             if score > 0:
                 hits.append((score, name, sentence))
     if not hits:
-        return f"没有在已上传文件里找到与「{query}」相关的段落（共 {len(names)} 份文件）"
+        return _t("tool.retrieve_no_match", query=query, count=len(names))
     hits.sort(key=lambda item: -item[0])
     lines = [f"在已上传文件里找到 {len(hits)} 段相关内容，最相关的 {min(top_k, len(hits))} 段：" ]
     for index, (score, name, sentence) in enumerate(hits[:top_k], 1):
@@ -506,7 +510,7 @@ def tool_doc_summary(args: Dict[str, Any], ctx: ToolContext) -> str:
     """取某份已上传文件的**已有**摘要（不触发新的模型调用，避免工具里套模型）。"""
     names = ctx.file_names()
     if not names:
-        return "摘要失败：用户还没有上传任何文件"
+        return _t("tool.summary_no_files")
     wanted = str(args.get("file") or "").strip()
     conv = ctx.conv
     entries = list(getattr(conv, "files", []) or [])
@@ -517,7 +521,7 @@ def tool_doc_summary(args: Dict[str, Any], ctx: ToolContext) -> str:
         summary = str(getattr(entry, "summary", "") or "")
         chars = int(getattr(entry, "chars", 0) or 0)
         if summary:
-            return f"《{name}》的分段摘要（原文 {chars} 字符）：\n{summary}"
+            return _t("tool.summary_ready", name=name, chars=chars, summary=summary)
         body = str(getattr(entry, "content", "") or "")
         if body:
             head = body[:600]
@@ -525,8 +529,9 @@ def tool_doc_summary(args: Dict[str, Any], ctx: ToolContext) -> str:
                     f"先给开头 600 字，需要全篇请让用户用 /summarize：\n{head}")
         stored = str(getattr(entry, "stored_at", "") or "")
         if stored:
-            return f"《{name}》正文过大已存盘（{stored}），上下文里只有指针，没有可读摘要。"
-    return f"摘要失败：找不到文件「{wanted or '（未指定）'}」（现有：{', '.join(names)}）"
+            return _t("tool.summary_stored_only", name=name, stored=stored)
+    return _t("tool.summary_not_found",
+              wanted=wanted or _t("tool.summary_unspecified"), names=", ".join(names))
 
 
 # ===========================================================================
@@ -536,18 +541,19 @@ def tool_doc_summary(args: Dict[str, Any], ctx: ToolContext) -> str:
 def tool_web_search(args: Dict[str, Any], ctx: ToolContext) -> str:
     query = str(args.get("query") or args.get("q") or "").strip()
     if not query:
-        return "搜索失败：请给出 query"
+        return _t("tool.search_need_query")
     if ctx.search is None:
-        return "搜索失败：当前环境没有可用的搜索组件"
+        return _t("tool.search_no_component")
     try:
         outcome = ctx.search.search(query)
     except Exception as exc:                     # 搜索失败不能把整轮对话带崩
-        return f"搜索失败：{exc}"
+        return _t("tool.search_failed", error=exc)
     if not getattr(outcome, "ok", False):
-        return f"搜索失败：{getattr(outcome, 'error', '') or '未知原因'}（可以先用已有信息作答）"
+        return _t("tool.search_failed_hint",
+                  error=getattr(outcome, "error", "") or _t("tool.search_unknown_reason"))
     results = list(getattr(outcome, "results", []) or [])
     if not results:
-        return f"搜索「{query}」没有返回结果"
+        return _t("tool.search_no_result", query=query)
     lines = [f"搜索「{query}」返回 {len(results)} 条结果："]
     for index, item in enumerate(results[:5], 1):
         snippet = str(getattr(item, "snippet", "") or "").strip().replace("\n", " ")
@@ -566,25 +572,25 @@ _READABLE_EXTS = (".txt", ".md", ".csv", ".json", ".log", ".yaml", ".yml", ".ini
 def tool_file_read(args: Dict[str, Any], ctx: ToolContext) -> str:
     path = str(args.get("path") or "").strip().strip('"')
     if not path:
-        return "读取失败：请给出 path"
+        return _t("tool.read_need_path")
     if not os.path.isabs(path):
         base = ctx.files_dir or os.getcwd()
         path = os.path.join(base, path)
     if not os.path.isfile(path):
-        return f"读取失败：文件不存在（{path}）"
+        return _t("tool.read_not_found", path=path)
     if os.path.splitext(path)[1].lower() not in _READABLE_EXTS:
-        return f"读取失败：只允许读取文本类文件（支持 {', '.join(_READABLE_EXTS[:6])} …）"
+        return _t("tool.read_text_only", exts=", ".join(_READABLE_EXTS[:6]))
     try:
         size = os.path.getsize(path)
         if size > 512 * 1024:
-            return f"读取失败：文件过大（{size} 字节，上限 512 KB），请让用户用 /file 上传"
+            return _t("tool.read_too_large", size=size, limit="512 KB")
         with open(path, "r", encoding="utf-8", errors="replace") as handle:
             body = handle.read()
     except OSError as exc:
-        return f"读取失败：{exc}"
+        return _t("tool.read_failed", error=exc)
     head = body[:2000]
-    tail = "" if len(body) <= 2000 else f"\n…（共 {len(body)} 字符，已截断）"
-    return f"《{os.path.basename(path)}》内容：\n{head}{tail}"
+    tail = "" if len(body) <= 2000 else _t("tool.read_truncated", chars=len(body))
+    return _t("tool.read_content", name=os.path.basename(path), head=head, tail=tail)
 
 
 # ===========================================================================
@@ -652,14 +658,14 @@ class ToolRegistry:
         if tool is None:
             known = ", ".join(self.names())
             self.calls.append({"tool": name, "ok": False, "reason": "unknown"})
-            return False, f"没有名为「{name}」的工具（可用：{known}）"
+            return False, _t("tool.unknown_tool", name=name, known=known)
         if not self.is_allowed(tool):
             self.calls.append({"tool": name, "ok": False, "reason": "denied"})
             if tool.risk == RISK_SENSITIVE:
                 return False, (f"工具「{name}」属于敏感操作（{tool.description}），"
                                f"当前未启用。请在设置里或让用户用 /agent allow {name} 开启；"
                                f"现在请基于已有信息作答或换用其它工具。")
-            return False, f"工具「{name}」当前不可用。"
+            return False, DENIED_MARK + _t("tool.unavailable", name=name)
         try:
             if tool.name in _CTX_TOOLS:
                 result = tool.run(args, self.ctx)
@@ -668,7 +674,7 @@ class ToolRegistry:
             text = str(result if result is not None else "")
         except Exception as exc:                       # 工具异常隔离（任务书要求）
             self.calls.append({"tool": name, "ok": False, "reason": "error", "error": str(exc)})
-            return False, f"工具「{name}」执行出错：{exc}"
+            return False, _t("tool.exec_failed", name=name, error=exc)
         # 工具按约定不抛异常，失败以说明文本返回 —— 这里按统一约定识别，
         # 否则"算不出来""MCP 对端报错"在界面上会显示成成功（见 _FAILURE_PREFIXES）。
         if looks_like_failure(text):
@@ -736,53 +742,53 @@ def default_tools() -> List[Tool]:
     return [
         Tool(
             name="calc",
-            description="计算算术表达式（支持 + - * / ** %、括号与 sqrt/round/abs/min/max/log 等函数）",
-            args_hint='{"expr": "表达式"}',
+            description=_t("tool.calc_desc"),
+            args_hint=_t("tool.calc_args"),
             risk=RISK_SAFE,
             run=tool_calc,
-            example='{"tool": "calc", "args": {"expr": "(128.6*10000)*0.003"}, "why": "算违约金"}',
+            example=_t("tool.calc_example"),
         ),
         Tool(
             name="date",
-            description="当前日期、日期加减、两天相差天数、某天是星期几",
+            description=_t("tool.date_desc"),
             args_hint='{"op": "today|add|diff|weekday", "from": "2026-03-15", "days": 30, "a": "…", "b": "…"}',
             risk=RISK_SAFE,
             run=tool_date,
-            example='{"tool": "date", "args": {"op": "add", "from": "2026-03-15", "days": 60}, "why": "算交付截止日"}',
+            example=_t("tool.date_example"),
         ),
         Tool(
             name="convert",
-            description="单位换算：长度/质量/面积/体积/数据/时间/速度/压力/温度",
+            description=_t("tool.convert_desc"),
             args_hint='{"value": 3, "from": "kg", "to": "lb"}',
             risk=RISK_SAFE,
             run=tool_convert,
-            example='{"tool": "convert", "args": {"value": 3, "from": "kg", "to": "lb"}, "why": "换算重量"}',
+            example=_t("tool.convert_example"),
         ),
         Tool(
             name="doc_search",
-            description="在**用户已上传的文件**里按关键词找相关段落（返回文件名与原文片段）",
-            args_hint='{"query": "关键词", "file": "可选，文件名的一部分", "top": 3}',
+            description=_t("tool.retrieve_desc"),
+            args_hint=_t("tool.retrieve_args"),
             risk=RISK_SAFE,
             run=tool_doc_search,
         ),
         Tool(
             name="doc_summary",
-            description="取用户已上传文件的摘要（若还没生成摘要则给开头片段）",
-            args_hint='{"file": "可选，文件名的一部分"}',
+            description=_t("tool.summary_desc"),
+            args_hint=_t("tool.summary_args"),
             risk=RISK_SAFE,
             run=tool_doc_summary,
         ),
         Tool(
             name="web_search",
-            description="联网搜索（会把关键词发到互联网，需要用户预先授权）",
-            args_hint='{"query": "关键词"}',
+            description=_t("tool.search_desc"),
+            args_hint=_t("tool.search_args"),
             risk=RISK_SENSITIVE,
             run=tool_web_search,
         ),
         Tool(
             name="file_read",
-            description="读取本机一个**文本类**文件（会把文件内容读进上下文，需要用户预先授权）",
-            args_hint='{"path": "绝对路径或相对程序目录的路径"}',
+            description=_t("tool.read_desc"),
+            args_hint=_t("tool.read_args"),
             risk=RISK_SENSITIVE,
             run=tool_file_read,
         ),

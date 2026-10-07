@@ -2261,8 +2261,19 @@ public partial class MainWindow : Window
     /// 原始观察结果、不随界面语言变 —— 所以按原文匹配是稳的。
     /// </summary>
     private static bool IsAgentDeniedObservation(string observation)
-        => observation.Contains("未启用", StringComparison.Ordinal)
+        => observation.Contains(AgentDeniedMark, StringComparison.Ordinal)
+           // 兼容旧串：v0.2.2 之前后端那两句是写死中文的（旧版后端仍可能这么发）
+           || observation.Contains("未启用", StringComparison.Ordinal)
            || observation.Contains("当前不可用", StringComparison.Ordinal);
+
+    /// <summary>
+    /// 后端"被拒绝"观察串的**语言无关标记**（v0.2.2 硬编码清查第 6 批）。
+    ///
+    /// 原先只能按中文原文匹配（见上面注释），但后端那两句本地化后**不再固定是中文**，
+    /// 按原文匹配在英文界面下必然失效。现在后端在观察串前加这个 ASCII 标记，
+    /// 前端据此判定，显示前剥掉（见 <see cref="OneLineText"/>）。
+    /// </summary>
+    private const string AgentDeniedMark = "[!DENIED] ";
 
     /// <summary>把多行文本压成一行并截断：步骤行的参数与工具返回常是多行/很长的 JSON。</summary>
     private static string OneLineText(string text, int max)
@@ -2270,6 +2281,9 @@ public partial class MainWindow : Window
         if (string.IsNullOrEmpty(text))
             return "";
         string flat = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        // 剥掉"被拒绝"标记：它只给判定用，不该显示给用户
+        if (flat.StartsWith(AgentDeniedMark, StringComparison.Ordinal))
+            flat = flat[AgentDeniedMark.Length..].Trim();
         while (flat.Contains("  ", StringComparison.Ordinal))
             flat = flat.Replace("  ", " ", StringComparison.Ordinal);
         return flat.Length <= max ? flat : flat[..max] + "…";
