@@ -35,6 +35,41 @@
     "no_content": "模型没有返回内容",
     "no_answer": "模型没有给出可用回答。"
   },
+  "convert": {
+    "bad_value": "换算失败：value 必须是数字",
+    "missing_args": "换算失败：请给出 from 与 to（如 from=\"kg\", to=\"lb\"）",
+    "temp_mismatch": "换算失败：温度只能与温度互换（c / f / k）",
+    "unknown_unit": "换算失败：不认识的单位 {unit}（支持：{units}）",
+    "mismatch": "换算失败：{src} 与 {dst} 不是同一类单位或不被支持（支持长度/质量/面积/体积/数据/时间/速度/压力/温度）"
+  },
+  "date": {
+    "bad_input": "无法识别的日期：{text}（请用 2026-03-15 这种写法）",
+    "today": "今天是 {date}（{weekday}），今年第 {yday} 天",
+    "add": "{base} 加 {months} 个月 {weeks} 周 {days} 天 = {result}（{weekday}）",
+    "diff": "{first} 到 {second} 相差 {days} 天（约 {months} 个月）",
+    "weekday": "{date} 是 {weekday}",
+    "failed": "日期计算失败：{error}",
+    "bad_op": "日期计算失败：op 只支持 today / add / diff / weekday",
+    "weekdays": "星期一,星期二,星期三,星期四,星期五,星期六,星期日"
+  },
+  "calc": {
+    "digits_only": "只支持数字",
+    "bad_operator": "不支持的运算符",
+    "pow_limit": "幂运算超出限制",
+    "div_zero": "除数为 0，无法计算",
+    "out_of_range": "计算结果超出范围（{error}）",
+    "bad_unary": "不支持的一元运算",
+    "bad_function": "只支持常见数学函数（sqrt/round/abs/min/max/log…）",
+    "function_kwargs": "函数不支持关键字参数",
+    "bad_chars": "表达式里只能出现数字、运算符与括号",
+    "empty": "表达式为空",
+    "too_long": "表达式过长",
+    "parse_error": "表达式无法解析：{error}",
+    "list_result": "结果是列表，请给出单个表达式",
+    "not_finite": "结果不是有限数值",
+    "failed": "计算失败：{error}",
+    "failed_hint": "计算失败：{error}（请换一个表达式再试）"
+  },
   "cmd": {
     "unknown": "未知指令: {name}（输入 /help 查看全部指令）",
     "disabled": "技能「{skill}」提供的指令 {name} 当前不可用：{reason}",

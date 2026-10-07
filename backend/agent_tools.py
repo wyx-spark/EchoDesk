@@ -44,6 +44,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+# 工具结果是**直接贴回模型上下文、也会显示在对话区**的文本，必须随界面语言走
+# （v0.2.2 硬编码清查第 6 批）。i18n 是纯标准库模块，这里没有循环导入风险。
+from i18n import t as _t
+
 # ===========================================================================
 # 工具接口
 # ===========================================================================
@@ -203,15 +207,15 @@ def _calc_node(node: ast.AST) -> Any:
         return _calc_node(node.body)
     if isinstance(node, ast.Constant):
         if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
-            raise CalcError("只支持数字")
+            raise CalcError(_t("calc.digits_only"))
         return node.value
     if isinstance(node, ast.BinOp):
         op = _CALC_BINOPS.get(type(node.op))
         if op is None:
-            raise CalcError("不支持的运算符")
+            raise CalcError(_t("calc.bad_operator"))
         left, right = _calc_node(node.left), _calc_node(node.right)
         if isinstance(node.op, ast.Pow) and (abs(right) > 64 or abs(left) > _MAX_POW):
-            raise CalcError("幂运算超出限制")
+            raise CalcError(_t("calc.pow_limit"))
         try:
             return op(left, right)
         except ZeroDivisionError as exc:
@@ -219,25 +223,25 @@ def _calc_node(node: ast.AST) -> Any:
             # 首轮实测就是这么被抓到的 —— tool_calc 当时只捕获 CalcError，
             # ZeroDivisionError 直接穿透到工具注册表（虽然注册表会兜住并返回
             # "执行出错"，但那对用户是"工具坏了"，而不是"这个表达式算不了"）。
-            raise CalcError("除数为 0，无法计算") from exc
+            raise CalcError(_t("calc.div_zero")) from exc
         except (OverflowError, ValueError, TypeError) as exc:
-            raise CalcError(f"计算结果超出范围（{exc}）") from exc
+            raise CalcError(_t("calc.out_of_range", error=exc)) from exc
     if isinstance(node, ast.UnaryOp):
         op = _CALC_UNARY.get(type(node.op))
         if op is None:
-            raise CalcError("不支持的一元运算")
+            raise CalcError(_t("calc.bad_unary"))
         return op(_calc_node(node.operand))
     if isinstance(node, ast.Call):
         if not isinstance(node.func, ast.Name) or node.func.id not in _CALC_FUNCS:
-            raise CalcError("只支持常见数学函数（sqrt/round/abs/min/max/log…）")
+            raise CalcError(_t("calc.bad_function"))
         if node.keywords:
-            raise CalcError("函数不支持关键字参数")
+            raise CalcError(_t("calc.function_kwargs"))
         return _CALC_FUNCS[node.func.id](*[_calc_node(a) for a in node.args])
     if isinstance(node, (ast.List, ast.Tuple)):
         return [_calc_node(e) for e in node.elts]
     # 属性访问 / 下标 / 推导式 / lambda / 名字（变量）一律拒绝：
     # 它们是把表达式变成任意代码的常见跳板（a.b.c、d["x"]、__class__…）
-    raise CalcError("表达式里只能出现数字、运算符与括号")
+    raise CalcError(_t("calc.bad_chars"))
 
 
 def calc_eval(expr: str) -> float:
@@ -248,18 +252,18 @@ def calc_eval(expr: str) -> float:
     """
     text = str(expr or "").strip().replace("×", "*").replace("÷", "/")
     if not text:
-        raise CalcError("表达式为空")
+        raise CalcError(_t("calc.empty"))
     if len(text) > 200:
-        raise CalcError("表达式过长")
+        raise CalcError(_t("calc.too_long"))
     try:
         tree = ast.parse(text, mode="eval")
     except SyntaxError as exc:
-        raise CalcError(f"表达式无法解析：{exc.msg}") from exc
+        raise CalcError(_t("calc.parse_error", error=exc.msg)) from exc
     value = _calc_node(tree)
     if isinstance(value, list):
-        raise CalcError("结果是列表，请给出单个表达式")
+        raise CalcError(_t("calc.list_result"))
     if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
-        raise CalcError("结果不是有限数值")
+        raise CalcError(_t("calc.not_finite"))
     return value
 
 
@@ -281,9 +285,9 @@ def tool_calc(args: Dict[str, Any]) -> str:
     try:
         value = calc_eval(str(expr))
     except CalcError as exc:
-        return f"计算失败：{exc}（请换一个表达式再试）"
+        return _t("calc.failed_hint", error=exc)
     except Exception as exc:                     # 兜底：工具**绝不抛异常**
-        return f"计算失败：{exc}"
+        return _t("calc.failed", error=exc)
     return f"{expr} = {_fmt_number(value)}"
 
 
@@ -293,7 +297,10 @@ def tool_calc(args: Dict[str, Any]) -> str:
 
 _DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S")
 
-_WEEKDAYS_ZH = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+def _weekday_name(index: int) -> str:
+    """星期几的显示名：从语言包按逗号列表取（原先写死的中文元组）。"""
+    names = _t("date.weekdays").split(",")
+    return names[index] if 0 <= index < len(names) else ""
 
 
 def _parse_date(text: str) -> _dt.date:
@@ -305,7 +312,7 @@ def _parse_date(text: str) -> _dt.date:
             return _dt.datetime.strptime(raw, fmt).date()
         except ValueError:
             continue
-    raise ValueError(f"无法识别的日期：{text}（请用 2026-03-15 这种写法）")
+    raise ValueError(_t("date.bad_input", text=text))
 
 
 def tool_date(args: Dict[str, Any]) -> str:
@@ -314,8 +321,9 @@ def tool_date(args: Dict[str, Any]) -> str:
     try:
         if op in ("today", "now", "current"):
             today = _dt.date.today()
-            return (f"今天是 {today.isoformat()}（{_WEEKDAYS_ZH[today.weekday()]}）"
-                    f"，今年第 {today.timetuple().tm_yday} 天")
+            return _t("date.today", date=today.isoformat(),
+                      weekday=_weekday_name(today.weekday()),
+                      yday=today.timetuple().tm_yday)
         if op in ("add", "plus", "offset"):
             base = _parse_date(str(args.get("from") or args.get("date") or ""))
             days = int(args.get("days") or 0)
@@ -328,19 +336,22 @@ def tool_date(args: Dict[str, Any]) -> str:
                 month = month % 12 + 1
                 day = min(result.day, _month_days(year, month))
                 result = _dt.date(year, month, day)
-            return (f"{base.isoformat()} 加 {months} 个月 {weeks} 周 {days} 天 = "
-                    f"{result.isoformat()}（{_WEEKDAYS_ZH[result.weekday()]}）")
+            return _t("date.add", base=base.isoformat(), months=months, weeks=weeks,
+                      days=days, result=result.isoformat(),
+                      weekday=_weekday_name(result.weekday()))
         if op in ("diff", "between", "sub"):
             first = _parse_date(str(args.get("a") or args.get("start") or ""))
             second = _parse_date(str(args.get("b") or args.get("end") or ""))
             days = (second - first).days
-            return f"{first.isoformat()} 到 {second.isoformat()} 相差 {days} 天（约 {days / 30.44:.1f} 个月）"
+            return _t("date.diff", first=first.isoformat(), second=second.isoformat(),
+                      days=days, months=f"{days / 30.44:.1f}")
         if op in ("weekday", "whatday"):
             target = _parse_date(str(args.get("date") or ""))
-            return f"{target.isoformat()} 是 {_WEEKDAYS_ZH[target.weekday()]}"
+            return _t("date.weekday", date=target.isoformat(),
+                      weekday=_weekday_name(target.weekday()))
     except (ValueError, TypeError) as exc:
-        return f"日期计算失败：{exc}"
-    return "日期计算失败：op 只支持 today / add / diff / weekday"
+        return _t("date.failed", error=exc)
+    return _t("date.bad_op")
 
 
 def _month_days(year: int, month: int) -> int:
@@ -393,15 +404,15 @@ def tool_convert(args: Dict[str, Any]) -> str:
     try:
         value = float(args.get("value"))
     except (TypeError, ValueError):
-        return "换算失败：value 必须是数字"
+        return _t("convert.bad_value")
     src = _normalize_unit(str(args.get("from") or args.get("unit") or ""))
     dst = _normalize_unit(str(args.get("to") or ""))
     if not src or not dst:
-        return "换算失败：请给出 from 与 to（如 from=\"kg\", to=\"lb\"）"
+        return _t("convert.missing_args")
     # 温度：需要偏移，单独算
     if src in ("c", "f", "k") or dst in ("c", "f", "k"):
         if src not in ("c", "f", "k") or dst not in ("c", "f", "k"):
-            return "换算失败：温度只能与温度互换（c / f / k）"
+            return _t("convert.temp_mismatch")
         celsius = {"c": value, "f": (value - 32) * 5 / 9, "k": value - 273.15}[src]
         out = {"c": celsius, "f": celsius * 9 / 5 + 32, "k": celsius + 273.15}[dst]
         return f"{_fmt_number(value)} {src.upper()} = {_fmt_number(round(out, 6))} {dst.upper()}"
@@ -410,9 +421,9 @@ def tool_convert(args: Dict[str, Any]) -> str:
             out = value * table[src] / table[dst]
             return f"{_fmt_number(value)} {src} = {_fmt_number(round(out, 10))} {dst}"
         if src in table and dst not in table and dst not in _all_units():
-            return f"换算失败：不认识的单位 {dst}（支持：{', '.join(sorted(table))}）"
-    return (f"换算失败：{src} 与 {dst} 不是同一类单位或不被支持"
-            f"（支持长度/质量/面积/体积/数据/时间/速度/压力/温度）")
+            return _t("convert.unknown_unit", unit=dst,
+                      units=", ".join(sorted(table)))
+    return _t("convert.mismatch", src=src, dst=dst)
 
 
 def _all_units() -> set:

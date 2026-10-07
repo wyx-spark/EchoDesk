@@ -35,6 +35,41 @@
     "no_content": "The model returned no content",
     "no_answer": "The model did not produce a usable answer."
   },
+  "convert": {
+    "bad_value": "Conversion failed: value must be a number",
+    "missing_args": "Conversion failed: give both from and to (e.g. from=\"kg\", to=\"lb\")",
+    "temp_mismatch": "Conversion failed: temperature converts only with temperature (c / f / k)",
+    "unknown_unit": "Conversion failed: unknown unit {unit} (supported: {units})",
+    "mismatch": "Conversion failed: {src} and {dst} are not the same kind of unit or are unsupported (supported: length/mass/area/volume/data/time/speed/pressure/temperature)"
+  },
+  "date": {
+    "bad_input": "Unrecognised date: {text} (use the form 2026-03-15)",
+    "today": "Today is {date} ({weekday}), day {yday} of the year",
+    "add": "{base} plus {months} month(s), {weeks} week(s), {days} day(s) = {result} ({weekday})",
+    "diff": "{first} to {second} is {days} day(s) apart (about {months} month(s))",
+    "weekday": "{date} is a {weekday}",
+    "failed": "Date calculation failed: {error}",
+    "bad_op": "Date calculation failed: op only supports today / add / diff / weekday",
+    "weekdays": "Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday"
+  },
+  "calc": {
+    "digits_only": "Only numbers are supported",
+    "bad_operator": "Unsupported operator",
+    "pow_limit": "Exponentiation exceeds the limit",
+    "div_zero": "Division by zero",
+    "out_of_range": "The result is out of range ({error})",
+    "bad_unary": "Unsupported unary operation",
+    "bad_function": "Only common math functions are supported (sqrt/round/abs/min/max/log, …)",
+    "function_kwargs": "Functions do not take keyword arguments",
+    "bad_chars": "An expression may only contain numbers, operators and parentheses",
+    "empty": "The expression is empty",
+    "too_long": "The expression is too long",
+    "parse_error": "The expression cannot be parsed: {error}",
+    "list_result": "The result is a list; give a single expression",
+    "not_finite": "The result is not a finite number",
+    "failed": "Calculation failed: {error}",
+    "failed_hint": "Calculation failed: {error} (try a different expression)"
+  },
   "cmd": {
     "unknown": "Unknown command: {name} (type /help for the full command list)",
     "disabled": "The command {name} from skill \"{skill}\" is unavailable: {reason}",
