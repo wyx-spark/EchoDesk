@@ -19,6 +19,50 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 > `records/v0.2.2-跨平台-2记录.md`; the file names keep the task-spec number they were written
 > under, **not the release number**).
 
+### Avalonia parity completed, five rulings, and an all-Chinese copyright notice
+
+Task specification: `prompts/EchoDesk-v0.2.2跨平台版本功能补齐.md`, plus a set of rulings issued on
+2026-10-07. The per-item records are `records/v0.2.2-Avalonia功能对齐记录.md` and
+`records/v0.2.2-Avalonia对齐差异清单.md` (internal, **not shipped with releases**).
+
+**The Avalonia front end now matches the WPF front end's user-visible behaviour.** Batches 2–4 of
+the specification are complete — the settings pages (local model library, an editable MCP section,
+the automation page's eight items, the language-pack section), the main window (the whole shortcut
+set moved to window-level tunnelled key handling, the four-action copy bar, message timestamps, the
+reasoning area's word count with automatic expand/collapse, window-placement memory with an
+off-screen guard, the first-run guide, model-download confirmation, the `/exit` countdown, the
+front-end crash log and screen-reader help text), the plugin ecosystem (export zip, publish
+self-check, install from folder, bulk trust confirmation, an editable local manifest, hook and panel
+lists, log export, the three folder buttons), the Markdown renderer (inline maths, table column
+alignment, restoring tables wrongly wrapped in code fences, nested inline markup, **clickable
+links**, and emoji fallback applied to message bodies), and the upload path (extension filter,
+over-limit prompt, per-file status, segmented-summary progress, cancellation while uploading, and
+snippets inserted at the caret). **All 63 remaining inventory items are closed.**
+
+**Five rulings were carried out.** (1) The UI probe's "the settings window opens in under 500 ms"
+threshold was **an incorrect threshold, not a gate that had caught a real problem**: the measured
+figure is about 2500 ms on an install with no model and 245 ms with one, so 500 ms was wrong by an
+order of magnitude. It is now 4000 ms, and the reasoning is written into the script. (2) The probe's
+`Invoke-El` no longer aborts the entire run when an element is disabled; it reports a FAIL that
+distinguishes *"the element is disabled"* from *"the element does not exist"* and carries on.
+(3) **A real defect in the WPF front end was found and fixed on both sides.** With no model file on
+disk, a model-tier chip was reported as both `installed=false` and `current=true`, so it rendered as
+"not downloaded · in use" **and was disabled** — leaving the user no way to click it and download the
+model. Avalonia had copied that defect verbatim. The reference is now *the correct behaviour*, not
+*the reference implementation's status quo*; this is written into `PROJECT.md` as a standing rule.
+(4) That boundary definition itself. (5) Isolation of the probe's runtime state.
+
+**The copyright notice is now fully Chinese.** Every user-visible "powered by 熵寂工作室" string
+became 由熵寂工作室出品 — 24 occurrences across 12 files: the Chinese language packs, ten code
+fallbacks and XAML design-time defaults, and two English entries whose parenthesised Chinese was
+removed so that each language pack is internally consistent. Non-copy text (repository URLs, plugin
+metadata, build metadata, historical records) was deliberately left untouched.
+
+**Packaging.** The Windows installer and the three platform packages were built for this release, and
+the complete release gate `tools/verify_release.ps1` — run **without** `-SkipE2E`, so including the
+real-browser automation end-to-end tests — passed **49 of 49 checks**. The frozen artifacts and their
+per-file SHA-256 digests are recorded in `publish/archive/<version>/MANIFEST.json`.
+
 ### Self-test fixes: uploaded files, web search, browser choice, agent reasoning
 
 Task specification: `prompts/EchoDesk-v0.2.2自测问题修复-1.md`. The full record — per-item root
