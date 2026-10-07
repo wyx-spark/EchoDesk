@@ -1,4 +1,4 @@
-﻿// 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
+// 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
 //
 // 迁移策略：**事件处理逻辑照搬 WPF 版**（发送、流式双通道、停止、文件上传、状态刷新、
 // 指令面板、常用语、通知条、状态区、Agent 步骤行），换掉的只有界面 API。
@@ -1558,15 +1558,26 @@ public partial class MainWindow : Window
             ? Loc.T("main.snippet.close", "收起常用语选择框")
             : Loc.T("main.snippet.open", "打开常用语选择框");
 
-    /// <summary>点选一条常用语 → 填进输入框（不直接发送，用户可以再补充）。</summary>
+    /// <summary>点选一条常用语 → **插入到光标处**（v0.2.2 第 4 批 3c）。</summary>
+    ///
+    /// 此前是"覆盖整个输入框"：用户先写了一半、再想插一句常用语，前面的内容就没了。
+    /// WPF 侧的做法是插入到光标位置，这里对齐 —— 光标停在哪儿就插到哪儿，
+    /// 并且插完把光标放到插入内容的后面（用户可以接着写）。
     private void InsertSnippet(Snippet snippet)
     {
         SnippetPalette.IsOpen = false;
         UpdateSnippetButtonText();
-        InputBox.Text = snippet.Text;
-        InputBox.CaretIndex = InputBox.Text.Length;
+        string current = InputBox.Text ?? "";
+        int caret = Math.Clamp(InputBox.CaretIndex, 0, current.Length);
+        string inserted = snippet.Text;
+        // 前后各补一个空格，避免和已有文字粘成一个词（已经是行首/行尾时不补）
+        bool needSpaceBefore = caret > 0 && !char.IsWhiteSpace(current[caret - 1]);
+        bool needSpaceAfter = caret < current.Length && !char.IsWhiteSpace(current[caret]);
+        string piece = (needSpaceBefore ? " " : "") + inserted + (needSpaceAfter ? " " : "");
+        InputBox.Text = current[..caret] + piece + current[caret..];
+        InputBox.CaretIndex = caret + piece.Length;
         InputBox.Focus();
-        Toast(Loc.T("main.snippet.inserted", "已填入常用语「{0}」，可直接编辑后发送", snippet.Name));
+        Toast(Loc.T("main.snippet.inserted", "已插入常用语「{0}」，可直接编辑后发送", snippet.Name));
     }
 
     // -----------------------------------------------------------------
@@ -2212,10 +2223,33 @@ public partial class MainWindow : Window
 
     private async Task PickFilesAsync()
     {
+        // 待确认的超限上传：再点一次「上传文件」即继续（Avalonia 没有 MessageBox，
+        // 与危险指令、模型下载用的是同一套两段式确认）。
+        if (_pendingUpload.Count > 0)
+        {
+            List<string> confirmed = _pendingUpload;
+            _pendingUpload = new List<string>();
+            await SendFilesAsync(confirmed, confirmed: true);
+            return;
+        }
+
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = Loc.T("main.button.upload", "📎 上传文件"),
+            Title = Loc.T("main.upload.chooseTitle", "选择要上传的文件"),
             AllowMultiple = true,
+            // 扩展名过滤器（v0.2.2 第 4 批 3c）：WPF 侧一直有，跨平台版此前是"所有文件"。
+            // 与 WPF 同一份清单（doc/docx/xls/xlsx/ppt/pptx/txt/pdf）。
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType(Loc.T("main.upload.filter", "支持的文件"))
+                {
+                    Patterns = new[] { "*.doc", "*.docx", "*.xls", "*.xlsx", "*.ppt", "*.pptx", "*.txt", "*.pdf" },
+                },
+                new FilePickerFileType(Loc.T("main.upload.filterAll", "所有文件"))
+                {
+                    Patterns = new[] { "*" },
+                },
+            },
         });
         var paths = files.Select(f => f.TryGetLocalPath()).Where(p => !string.IsNullOrEmpty(p)).Cast<string>().ToList();
         if (paths.Count > 0)
@@ -2247,37 +2281,100 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>上传文件（file_stream）：单文件与多文件是同一个动作的两种参数形态。</summary>
-    private async Task SendFilesAsync(List<string> paths)
+    /// <summary>
+    /// 上传文件（`file_stream`）：单文件与多文件是同一个动作的两种参数形态。
+    ///
+    /// v0.2.2 第 4 批 3c 补齐四处（此前只写状态栏一行）：
+    ///   * **文件数与总量超限询问**（10 个 / 60MB）：超限先问一次，确认后只处理前 10 个；
+    ///   * **逐份上传状态**（`file_status` 的 start / ok / failed）就地更新同一条消息；
+    ///   * **长文档分段摘要进度**（`summary_progress`）：替换当前文件那一行，不追加刷屏；
+    ///   * **上传期间可中止**：把 `_streamCts` 真正挂上（此前它是 null，点「停止」无效），
+    ///     Esc / ⏹ 都能真的停下后端。
+    ///
+    /// 数量与总量的**规则以后端为准**（`sys.files_too_many` / `sys.files_partial`），
+    /// 前端这一套只用于"先问一句"，不自己另算一套结论。
+    /// </summary>
+    private async Task SendFilesAsync(List<string> paths, bool confirmed = false)
     {
         if (_busy)
         {
             AddMessage("system", Loc.T("main.error.busy", "⏳ 上一条回复仍在生成，请先停止或等待完成"));
             return;
         }
-        AddMessage("user", "📎 " + string.Join("\n", paths.Select(Path.GetFileName)));
+        var list = paths.Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
+        if (list.Count == 0)
+            return;
+
+        // ---- 超限询问（只问一次；再点一次「上传文件」= 继续）----
+        if (!confirmed && list.Count > 1)
+        {
+            long totalBytes = 0;
+            foreach (string path in list)
+            {
+                try { totalBytes += new FileInfo(path).Length; }
+                catch (Exception) { /* 取不到大小就不计入总量 */ }
+            }
+            bool tooMany = list.Count > MaxUploadCount;
+            bool tooLarge = totalBytes > MaxUploadBytes;
+            if (tooMany || tooLarge)
+            {
+                _pendingUpload = list.Take(MaxUploadCount).ToList();
+                string reason = tooMany
+                    ? Loc.T("main.upload.confirmCount", "一次选择了 {0} 个文件（上限 {1} 个）",
+                        list.Count, MaxUploadCount)
+                    : Loc.T("main.upload.confirmSize", "所选文件共 {0}（上限 {1}）",
+                        FormatBytes(totalBytes), FormatBytes(MaxUploadBytes));
+                AddMessage("system", Loc.T("main.upload.confirmContinue",
+                    "{0}。\n\n继续会只处理前 {1} 个文件，其余忽略。是否继续？", reason, MaxUploadCount)
+                    + Environment.NewLine
+                    + Loc.T("main.upload.confirmHint",
+                        "再点一次「📎 上传文件」（或按 Ctrl+O）即继续；点别的地方则取消。"));
+                Toast(Loc.T("main.upload.confirmTitle", "文件较多"), error: true);
+                return;
+            }
+        }
+
+        AddMessage("user", "📎 " + string.Join("\n", list.Select(Path.GetFileName)));
+
+        // 逐份状态与分段摘要都写进**同一条**系统消息（8 个文件也不会把对话刷满）
+        AddMessage("system", list.Count > 1
+            ? Loc.T("main.upload.uploadingMany", "📥 正在上传 {0} 个文件…", list.Count)
+            : Loc.T("main.upload.uploading", "📤 正在上传文件: {0} ...", Path.GetFileName(list[0])));
+        var lines = new List<string>();
+
         SetBusy(true);
+        // 上传期间把「发送」按钮变成「停止」（与 WPF 一致）：用户可以随时中止
+        SendButton.Content = Loc.T("main.button.stop", "⏹ 停止");
+        ToolTip.SetTip(SendButton, Loc.T("main.button.stopSummaryTip", "中止分段摘要 (Esc)"));
+        _streamCts = new CancellationTokenSource();
+        // 探针据此断言"上传期间真的可以中止"（此前 _streamCts 是 null，点停停止无效）
+        ProbeUploadCancellable = true;
+        ProbeUploadStatusLines = 0;
+        int okCount = 0, failedCount = 0;
         try
         {
-            object request = paths.Count == 1
-                ? new { action = "file_stream", path = paths[0] }
-                : new { action = "file_stream", files = paths };
+            object request = list.Count == 1
+                ? new { action = "file_stream", path = list[0] }
+                : new { action = "file_stream", files = list };
             string content = await _state.Backend.SendStreamAsync(
                 request,
                 onDelta: null,
                 // 同上：上下文显示交给 done 行的 ApplyContextFields（那里才有 used_last_request）
                 onContext: (_, _) => { },
                 idleTimeout: BackendService.HeavyIdleTimeout,
-                onEvent: (type, root) =>
-                {
-                    if (type == "file_status")
-                    {
-                        string name = root.TryGetProperty("name", out JsonElement n) ? n.GetString() ?? "" : "";
-                        string phase = root.TryGetProperty("phase", out JsonElement p) ? p.GetString() ?? "" : "";
-                        Dispatcher.UIThread.Post(() => SetStatus($"{name} {phase}".Trim()));
-                    }
-                });
-            AddMessage("assistant", content);
+                cancellationToken: _streamCts.Token,
+                onEvent: (type, root) => DispatchUploadEvent(type, root, lines,
+                    ref okCount, ref failedCount),
+                onDeltaChannel: (_, _, _) => { });
+            if (content.Length > 0)
+                AddMessage("assistant", content);
+            else if (list.Count > 1)
+                AddMessage("system", Loc.T("main.upload.doneMany",
+                    "✅ 已加载 {0} 个文件（失败 {1} 个）", okCount, failedCount));
+        }
+        catch (OperationCanceledException)
+        {
+            AddMessage("system", Loc.T("main.upload.cancelled", "⏹ 已中止本次上传"));
         }
         catch (Exception ex)
         {
@@ -2285,9 +2382,160 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _streamCts?.Dispose();
+            _streamCts = null;
             SetBusy(false);
+            SendButton.Content = Loc.T("main.button.send", "发送");
+            ToolTip.SetTip(SendButton, Loc.T("main.button.sendTip", "发送 (Ctrl+Enter)"));
             await RefreshContextAsync();
         }
+    }
+
+    /// <summary>超限上传的待确认列表（再点一次「上传文件」即继续）。</summary>
+    private List<string> _pendingUpload = new();
+
+    /// <summary>单次上传的文件数上限（与 WPF 一致）。</summary>
+    private const int MaxUploadCount = 10;
+
+    /// <summary>单次上传的总量上限（60 MB，与 WPF 一致）。</summary>
+    private const long MaxUploadBytes = 60L * 1024 * 1024;
+
+    private static string FormatBytes(long bytes)
+        => bytes >= 1048576 ? $"{bytes / 1048576.0:0.#} MB" : $"{bytes / 1024.0:0.#} KB";
+
+    /// <summary>
+    /// 把上传过程中的结构化事件渲染成"逐份状态 + 摘要进度"。
+    ///
+    /// 两条事件的分工（与 WPF 一致）：
+    ///   * `file_status`：一份文件的开始 / 成功 / 失败，**追加**一行；
+    ///   * `summary_progress`：长文档分段摘要的进度，**替换最后一行**（不追加，否则刷屏）。
+    /// </summary>
+    private void DispatchUploadEvent(string type, JsonElement root, List<string> lines,
+                                     ref int okCount, ref int failedCount)
+    {
+        string index = "", total = "";
+        if (root.TryGetProperty("index", out JsonElement ix) && ix.ValueKind == JsonValueKind.Number)
+            index = ix.GetInt32().ToString();
+        if (root.TryGetProperty("total", out JsonElement tl) && tl.ValueKind == JsonValueKind.Number)
+            total = tl.GetInt32().ToString();
+
+        if (type == "file_status")
+        {
+            string name = GetStringField(root, "name");
+            string phase = GetStringField(root, "phase");
+            if (phase == "start")
+            {
+                lines.Add(Loc.T("main.upload.fileStart", "⏳ [{0}/{1}] {2} …", index, total, name));
+            }
+            else if (GetBoolField(root, "ok"))
+            {
+                okCount++;
+                int chars = GetIntField(root, "chars");
+                lines.Add(Loc.T("main.upload.fileOk", "✅ [{0}/{1}] {2}（{3} 字符）",
+                    index, total, name, chars));
+            }
+            else
+            {
+                failedCount++;
+                lines.Add(Loc.T("main.upload.fileFailed", "❌ [{0}/{1}] {2} 解析失败",
+                    index, total, name));
+            }
+            RenderUploadStatus(lines);
+            return;
+        }
+
+        if (type != "summary_progress")
+            return;
+        string text = GetStringField(root, "content");
+        if (text.Length == 0)
+            return;
+        string prefix = index.Length > 0 && total.Length > 0 ? $"[{index}/{total}] " : "";
+        if (lines.Count > 0 && lines[^1].StartsWith('⏳'))
+            lines[^1] = prefix + text;
+        else
+            lines.Add(prefix + text);
+        RenderUploadStatus(lines);
+    }
+
+    /// <summary>把多行上传状态写进最后一条系统消息（就地更新，不新增气泡）。</summary>
+    private void RenderUploadStatus(List<string> lines)
+    {
+        ProbeUploadStatusLines = lines.Count;
+        string text = string.Join(Environment.NewLine, lines);
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_transcript.Count > 0)
+                _transcript[^1] = _transcript[^1] with { Content = Emoji.Prefer(text) };
+            // 最后一条视图就是刚加的那条系统消息（AddMessage 之后没有追加别的）
+            if (_progressView is not null)
+                _progressView.ContentHost.Content = BuildPlainText(text);
+            else if (MessagePanel.Children.Count > 0
+                     && MessagePanel.Children[^1] is Control last)
+            {
+                ReplaceLastPlainText(last, text);
+            }
+            ScrollToBottom();
+        });
+    }
+
+    /// <summary>把一条系统消息视图的正文换成新的纯文本（就地更新用）。</summary>
+    private void ReplaceLastPlainText(Control root, string text)
+    {
+        foreach (Control control in EnumerateDescendants(root))
+        {
+            if (control is SelectableTextBlock block)
+            {
+                block.Text = Emoji.Prefer(text);
+                return;
+            }
+        }
+    }
+
+    private static IEnumerable<Control> EnumerateDescendants(Control root)
+    {
+        foreach (Control child in root.GetVisualDescendants().OfType<Control>())
+            yield return child;
+        if (root is ContentControl { Content: Control content })
+            yield return content;
+    }
+
+    private static bool GetBoolField(JsonElement item, string name) =>
+        item.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.True;
+
+    // -----------------------------------------------------------------
+    // 探针接口（`EchoDesk --probe upload` 用：上传路径与常用语插入）
+    // -----------------------------------------------------------------
+
+    /// <summary>上传期间是否挂上了可取消的 CTS（点「停止」/Esc 能不能真的停下后端）。</summary>
+    public bool ProbeUploadCancellable { get; private set; }
+
+    /// <summary>最近一次上传里逐份状态行的条数（断言"逐份状态真的渲染了"）。</summary>
+    public int ProbeUploadStatusLines { get; private set; }
+
+    /// <summary>最近一条系统消息的正文（断言上传结果写在了界面上）。</summary>
+    public string ProbeLastSystemText()
+    {
+        for (int i = _transcript.Count - 1; i >= 0; i--)
+        {
+            if (_transcript[i].Role == "system")
+                return _transcript[i].Content;
+        }
+        return "";
+    }
+
+    /// <summary>探针：走一次真实上传（不经过文件选择器）。</summary>
+    public async Task ProbeUploadAsync(List<string> paths, bool confirmed = true)
+    {
+        await SendFilesAsync(paths, confirmed);
+    }
+
+    /// <summary>探针：直接设置输入框内容与光标，然后插一条常用语（验"插入到光标处"）。</summary>
+    public string ProbeInsertSnippetAtCaret(string current, int caret, string snippetText)
+    {
+        InputBox.Text = current;
+        InputBox.CaretIndex = caret;
+        InsertSnippet(new Snippet { Name = "probe", Text = snippetText });
+        return InputBox.Text ?? "";
     }
 
     // -----------------------------------------------------------------

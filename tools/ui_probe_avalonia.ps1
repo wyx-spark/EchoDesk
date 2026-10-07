@@ -18,12 +18,13 @@
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode market         # 真后端 + 模型市场整条交互
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode pages          # 真后端 + 六个设置页的新增功能
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode markdown       # 不开后端：遍历控件树断言 Markdown 渲染结构
+#   powershell -File tools\ui_probe_avalonia.ps1 -Mode upload         # 程序内自拉后端：真实上传两份临时文件
 #   powershell -File tools\ui_probe_avalonia.ps1 -Exe <发布树>\app\EchoDesk.exe
 param(
     # 默认指向本仓库的 Debug 构建（开发机跑得最快）。发布树里的自包含产物也可以直接传进来，
     # 那条路径才是"发布出去的东西到底能不能开"的证据。
     [string]$Exe = "$PSScriptRoot\..\frontend-avalonia\EchoDesk.Avalonia\bin\Debug\net10.0\EchoDesk.exe",
-    [ValidateSet('main', 'settings', 'both', 'agent', 'market', 'pages', 'markdown')]
+    [ValidateSet('main', 'settings', 'both', 'agent', 'market', 'pages', 'markdown', 'upload')]
     [string]$Mode = 'both',
     [int]$TimeoutSec = 120
 )
@@ -91,4 +92,5 @@ if ($failures.Count -eq 0) {
 }
 Write-Output "[avalonia-probe] 失败 $($failures.Count) 项"
 exit 1
+
 

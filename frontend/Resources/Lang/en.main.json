@@ -81,7 +81,9 @@
       "confirmTitle": "Many files",
       "confirmCount": "You selected {0} files (limit {1})",
       "confirmSize": "The selected files total {0} (limit {1})",
-      "confirmContinue": "{0}.\n\nContinuing processes only the first {1} files and ignores the rest. Continue?"
+      "confirmContinue": "{0}.\n\nContinuing processes only the first {1} files and ignores the rest. Continue?",
+      "confirmHint": "Click “📎 Upload” once more (or press Ctrl+O) to continue; do anything else to cancel.",
+      "cancelled": "⏹ This upload was cancelled"
     },
     "strip": {
       "searchOnTip": "Web search is on: each question searches the web first. Click to turn it off",

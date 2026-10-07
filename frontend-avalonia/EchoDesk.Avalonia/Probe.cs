@@ -1,4 +1,4 @@
-// 无头（无人值守）界面探针 —— `EchoDesk --probe [main|settings|agent|both]`。
+﻿// 无头（无人值守）界面探针 —— `EchoDesk --probe [main|settings|agent|both]`。
 //
 // 为什么需要它：`--selftest` 刻意不开窗口，只验证"启动链路 + 协议"，于是
 // **"窗口到底能不能打开"这件事一直没有任何可判定的证据**。记录里那句
@@ -126,6 +126,10 @@ internal static class Probe
                 else if (target.Equals("markdown", StringComparison.OrdinalIgnoreCase))
                 {
                     ok = await Task.FromResult(RunMarkdownProbeAsync(desktop));
+                }
+                else if (target.Equals("upload", StringComparison.OrdinalIgnoreCase))
+                {
+                    ok = await RunUploadProbeAsync(desktop);
                 }
                 else
                 {
@@ -769,6 +773,92 @@ internal static class Probe
                             && string.Equals(AutomationProperties.GetAutomationId(b), "MarkdownLink",
                                 StringComparison.Ordinal));
 
+    /// <summary>
+    /// 上传路径验证（v0.2.2 第 4 批 3c）：`--probe upload`。
+    ///
+    /// 需要真后端：逐份状态（`file_status`）与分段摘要进度（`summary_progress`）都是
+    /// 后端推来的事件，前端造不出来。用两个临时 txt 文件走一遍真实上传，
+    /// 再断言"界面上确实出现了逐份状态、并且上传期间是可中止的"。
+    /// </summary>
+    private static async Task<bool> RunUploadProbeAsync(IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        bool ok = true;
+        var probeBackend = new BackendService();
+        App.State.ProbeBackendOverride = probeBackend;
+
+        var started = await probeBackend.StartAsync(verbose: true);
+        if (!started.Ok)
+        {
+            Console.WriteLine($"  [FAIL] 后端没能起来：{started.Error}");
+            return false;
+        }
+        var ready = await probeBackend.WaitForReadyAsync(TimeSpan.FromSeconds(120));
+        if (ready is null)
+        {
+            Console.WriteLine($"  [FAIL] 120 秒内没有 ready 握手（{probeBackend.LastError}）");
+            return false;
+        }
+        ready.Dispose();
+        Console.WriteLine("  [PASS] 后端已就绪");
+
+        // **不要 Show()**：MainWindow 的 Loaded 会触发它自己的 StartBackendAsync，
+        // 那会再拉一个后端、并把探针这条连接上的 ready/done 行抢走（实测表现为
+        // 无响应（后端进程可能已退出））。控件树在构造时就已经建好，不显示也够断言。
+        var window = new MainWindow();
+        desktop.MainWindow = window;
+
+        void Check(string name, bool pass, string detail)
+        {
+            Console.WriteLine($"  [{(pass ? "PASS" : "FAIL")}] {name}——{detail}");
+            if (!pass)
+                ok = false;
+        }
+
+        // ---------- ① 常用语插入到光标处（纯界面，先验，不依赖后端）----------
+        string composed = window.ProbeInsertSnippetAtCaret("请帮我", 3, "总结这段");
+        Check("常用语插入到光标处（不覆盖已有文字）",
+            composed.Contains("请帮我") && composed.Contains("总结这段"), composed);
+        string mid = window.ProbeInsertSnippetAtCaret("前 后", 2, "中间");
+        Check("光标在中间时插入到中间",
+            mid.IndexOf("中间", StringComparison.Ordinal) < mid.IndexOf('后'), mid);
+
+        // ---------- ② 真实上传两份文件：逐份状态 ----------
+        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+            "echodesk-upload-" + Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        string first = System.IO.Path.Combine(dir, "probe-a.txt");
+        string second = System.IO.Path.Combine(dir, "probe-b.txt");
+        System.IO.File.WriteAllText(first, "这是第一份探针文件的内容。", new System.Text.UTF8Encoding(false));
+        System.IO.File.WriteAllText(second, "这是第二份探针文件的内容。", new System.Text.UTF8Encoding(false));
+        try
+        {
+            await Dispatcher.UIThread.InvokeAsync(async () =>
+                await window.ProbeUploadAsync(new List<string> { first, second }));
+
+            string last = window.ProbeLastSystemText();
+            Console.WriteLine($"  上传结果   : {OneLine(last, 160)}");
+            Check("上传期间挂上了可取消的 CTS（点「停止」真的能停）",
+                window.ProbeUploadCancellable, "ProbeUploadCancellable=true");
+            Check("逐份状态行渲染了（file_status）",
+                window.ProbeUploadStatusLines > 0, $"statusLines={window.ProbeUploadStatusLines}");
+            Check("上传结果写进了对话区",
+                last.Contains("probe-a") || last.Contains("✅") || last.Contains("字符"), OneLine(last, 120));
+        }
+        finally
+        {
+            try
+            {
+                System.IO.Directory.Delete(dir, recursive: true);
+            }
+            catch (Exception)
+            {
+                // 临时目录删不掉不影响结论
+            }
+        }
+
+        return ok;
+    }
+
     private static async Task<bool> RunMarketProbeAsync(IClassicDesktopStyleApplicationLifetime desktop)
     {
         bool ok = true;
@@ -940,4 +1030,6 @@ internal static class Probe
             yield return $"{pair.Key}={pair.Value}";
     }
 }
+
+
 
