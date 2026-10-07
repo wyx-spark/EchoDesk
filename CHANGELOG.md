@@ -135,7 +135,7 @@ rounded.
 **Every language key the cross-platform front end asks for now exists.** The front end calls
 `Loc.T("key", "中文兜底")`, so a key that is missing from the language pack does not fail — it
 quietly falls back to Chinese and the English UI shows Chinese. `tools/check_lang.py` checks the
-opposite direction and cannot see this. A reverse audit (`artifacts/_audit_avalonia_keys.py`) found
+opposite direction and cannot see this. A reverse audit (`tools/audit_lang_keys.py`) found
 12 such keys and they are all filled in, in both languages.
 
 **New gate: `EchoDesk --probe market`.** It starts a real backend, walks the whole market

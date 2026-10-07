@@ -9,7 +9,7 @@
 #   * 版本资源：前端 exe 与后端 exe 的文件版本
 #   * 后端自检与各专题测试（selftest / 文件解析 / 纯文本 / 结果目录 / 技能 / 多语言 /
 #     开发者模式 / 模型能力 / 后端协议端到端）
-#   * 静态检查：语言包完整性、主题色板与对比度、emoji 字形覆盖、文档链接
+#   * 静态检查：语言包完整性、反向语言键审计、主题色板与对比度、emoji 字形覆盖、文档链接
 #   * 图形与真实渲染：UI 探针、像素对比度校验（需交互式桌面）
 #   * 需要真实浏览器/联网：自动化端到端、模型中心端到端
 #
@@ -485,6 +485,18 @@ try {
 
     # ---------- 3. 静态检查 ----------
     Invoke-Check "语言包完整性" { Invoke-Python "语言包" "tools\check_lang.py"; "通过" }
+
+    # v0.2.2 反向语言键审计（本轮从 artifacts\_audit_avalonia_keys.py 移入 tools\ 并接上门禁）：
+    # check_lang.py 查"语言包自身齐不齐"，方向相反；而 Avalonia 的 Loc.T("key","中文兜底")
+    # 在**缺键时不报错**，只安静回落中文 —— 英文界面照样显示中文，check_lang.py 看不见这一类。
+    # 判定门槛就是**缺失键数 = 0**（当前基线 807 个引用键、0 缺失），阈值未放松；
+    # 脚本在输入目录缺失时以 2 退出（不静默通过）。
+    # 另外两个前端**动作名差集**的清点脚本（tools\inventory_frontend_actions.py）不进这里：
+    # 它输出的是预期存在的差异，没有可判定的通过/失败（理由写在脚本头部）。
+    Invoke-Check "反向语言键审计（Avalonia 引用但语言包缺失的键）" {
+        Invoke-Python "反向语言键审计" "tools\audit_lang_keys.py"
+        "通过"
+    }
     Invoke-Check "主题色板与对比度（修复二）" { Invoke-Python "主题" "tools\check_theme.py"; "通过" }
     Invoke-Check "emoji 字形覆盖（修复六）" {
         Invoke-Native "emoji" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
