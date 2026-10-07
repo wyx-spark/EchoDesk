@@ -95,10 +95,22 @@ if ((Split-Path -Leaf $appDir) -eq 'app') { $userDataDir = Split-Path -Parent $a
 # 那时也是靠这个参数换模型才测得到。
 # 这里用 config.user.json（后端配置覆盖层，优先生效）把 model_path 指过去，
 # 不动被测程序自带的 config.json，也不删它自带的模型文件。
+# 模型放哪？**app\backend\models\**（也就是后端进程的**工作目录**下的 models\）。
+#
+# 这一条是实测出来的，两个候选位置只差一级目录，放错的表现是"后端永远不就绪"：
+#   * 前端（frontend\Services\BackendService.cs）把后端子进程的 **WorkingDirectory
+#     设为后端所在目录**，即 `app\backend\`；
+#   * 后端解析模型走 `check_model(config.model_path)` → `<工作目录>\models\<名>`；
+#   * 配置层同理：`Config._find` 的第 1 个候选是 cwd（= app\backend），
+#     所以被读的配置就是 `app\backend\config.json`，config.user.json 也必须在它旁边。
+# 实测（把模型放 app\backend\models + config.user.json 指过去）：打包后端 3 秒 ready、
+# model_ready=true。放到发布根的 models\ 则永远找不到。
 $probeModelDir = Join-Path $appDir 'backend\models'
 $probeUserConfig = Join-Path $appDir 'backend\config.user.json'
 $probeModelName = ''
 $probeModelCopied = $false
+$probeModelDirCreated = $false
+$probeEnvData = $env:ECHODESK_DATA
 # 提前退出（后端没起来等）时也要撤掉临时覆盖，否则会把被测程序留在"指向临时模型"的状态
 function Remove-ProbeModelOverride {
     try {
@@ -110,6 +122,23 @@ function Remove-ProbeModelOverride {
             if (Test-Path -LiteralPath $stray) { Remove-Item -LiteralPath $stray -Force }
             Write-Output "[probe] 已清理临时模型 $script:probeModelName"
         }
+        # 目录是探针自己建的（发布物不含模型，models\ 往往不存在）：清完必须删掉，
+        # 否则会在发布目录里留下一个空目录，"无运行期残留"那条门禁会认出来。
+        if ($script:probeModelDirCreated -and (Test-Path -LiteralPath $script:probeModelDir)) {
+            $left = @(Get-ChildItem -LiteralPath $script:probeModelDir -Force -ErrorAction SilentlyContinue)
+            if ($left.Count -eq 0) {
+                Remove-Item -LiteralPath $script:probeModelDir -Force
+                Write-Output "[probe] 已清理临时创建的 models\ 目录"
+            }
+        }
+        # ECHODESK_DATA 若被外部设过，会在本次探针里影响数据根判定：
+        # 探针不依赖它（模型走工作目录下的 models\），但为了不让调用方的环境
+        # 悄悄改变被测程序的行为，这里显式清掉，探针结束后恢复原值。
+        if ($null -eq $script:probeEnvData) {
+            [Environment]::SetEnvironmentVariable('ECHODESK_DATA', $null, 'Process')
+        } else {
+            [Environment]::SetEnvironmentVariable('ECHODESK_DATA', $script:probeEnvData, 'Process')
+        }
     } catch {
         # 清理本身失败不能把探针的失败原因顶掉（$ErrorActionPreference='Stop' 下
         # 这里的异常会让脚本在打印真正原因前中止 —— 本轮实测踩到过）
@@ -118,6 +147,15 @@ function Remove-ProbeModelOverride {
 }
 if ($ThinkingModel -ne '' -and (Test-Path -LiteralPath $ThinkingModel)) {
     $probeModelName = Split-Path -Leaf $ThinkingModel
+    # 目录必须先建：发布物**不含模型**（PROJECT.md 硬约束 4），所以
+    # `app\backend\models\` 往往根本不存在，Copy-Item 会以 DirectoryNotFoundException
+    # 直接终止脚本 —— 而在 `$ErrorActionPreference='Stop'` 下这条异常发生在
+    # Start-Process 之前，表现是"探针什么都没跑就退出/或后端 180 秒不就绪"，
+    # 排查方向会被带偏到后端上去（本轮实测踩到）。
+    if (-not (Test-Path -LiteralPath $probeModelDir)) {
+        New-Item -ItemType Directory -Path $probeModelDir -Force | Out-Null
+        $probeModelDirCreated = $true
+    }
     $dest = Join-Path $probeModelDir $probeModelName
     if (-not (Test-Path -LiteralPath $dest)) {
         Copy-Item -LiteralPath $ThinkingModel -Destination $dest -Force
@@ -158,7 +196,14 @@ $ready = $false
 while ($sw.Elapsed.TotalSeconds -lt $ReadyTimeoutSec) {
     Start-Sleep -Milliseconds 400
     $txt = $main.Current.Name
-    if ($txt -eq '已就绪') { $ready = $true; break }
+    # 就绪判定用**包含**而不是全等：状态文案改过口径（v0.2.1 的 "已就绪" → v0.2.2 的 "就绪"，
+    # 见 frontend\Resources\Lang\zh-Hans.json 的 main.status.ready）。
+    # 旧写法 `-eq '已就绪'` 在文案改口径后**永远等不到**，于是报"后端未就绪"——
+    # 而真实情况是"后端 5 秒就绪、探针在等一个已经不存在的中文串"（本轮实测：
+    # 进程里 EchoDeskBackend 已在跑、状态文本就是 "就绪"）。改文案时这个探针不该跟着坏。
+    # 注意顺序：先判就绪，"未就绪/失败"里也含"就绪"二字，必须放在它后面。
+    if ($txt -match '未就绪') { Fail "后端未就绪：$txt"; break }
+    if ($txt -match '就绪|Ready') { $ready = $true; break }
     if ($txt -like '*失败*') { Fail "后端启动失败：$txt"; break }
 }
 Write-Output "[probe] 后端就绪=$ready @ $((Ms $sw))ms"

@@ -95,6 +95,9 @@
       "marketHelp": "Skill marketplace connection; click to open Settings",
       "contextTip": "Context usage: click to refresh",
       "contextHelp": "Current context usage percentage; click to refresh",
+      "contextHelpBoth": "Context usage {0:N0} / {1:N0} tokens ({2}%). Persistent base {3:N0}, actually sent last turn {4:N0}. The percentage uses the larger of the two, so both this turn's load and the long-term base stay visible. Click to refresh.",
+      "contextStrip": "📊 Context {0}%",
+      "contextTipTwo": "Context usage {0:N0} / {1:N0} tokens ({2}%)\nPersistent base {3:N0}, actually sent last turn {4:N0}\nClick to refresh",
       "kvHelp": "KV cache memory estimate; click to open the model settings",
       "capability": "🧠 {0}",
       "capabilityTip": "Model capability: parameters · quantization · usable window · measured speed",
@@ -238,6 +241,10 @@
     },
     "toast": {
       "copiedCount": "✅ {0} ({1} characters)"
+    },
+    "recall": {
+      "lastUser": "↩️ Copied your previous question (Alt+↑)",
+      "none": "No previous question to copy yet"
     },
     "context": {
       "buttonIdle": "Context: ---/---",

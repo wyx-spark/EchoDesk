@@ -616,10 +616,15 @@ def check(locales, quiet):
             print(line)
 
     print()
+    # 已经**记在案的偏差**（DECLARATION_WARNINGS）不该把整条发布门禁判成失败。
+    # 它们由 check_bilingual_pairs 以 " ! " 形式输出、且刻意不计入 problems；
+    # 这里把它们的条数单独数出来，让退出码只反映"真正待修的问题"。
+    deferred = sum(1 for line in pair_lines if line.lstrip().startswith("!")) \
+        if "pair_lines" in dir() else 0
     if problems:
-        print(f"✗ 发现问题 {problems} 处")
+        print(f"✗ 发现问题 {problems} 处" + (f"（另有 {deferred} 处已记在案的偏差）" if deferred else ""))
     else:
-        print("✓ 语言包检查通过")
+        print("✓ 语言包检查通过" + (f"（{deferred} 处已记在案的偏差，见 DECLARATION_WARNINGS）" if deferred else ""))
     return 1 if problems else 0
 
 

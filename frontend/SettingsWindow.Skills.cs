@@ -1671,7 +1671,14 @@ public partial class SettingsWindow
 
     private static void Walk<T>(DependencyObject node, List<T> found, string tag) where T : FrameworkElement
     {
-        if (node is T typed && string.Equals((string?)typed.Tag, tag, StringComparison.Ordinal))
+        // Tag 必须用 `as string` 取，**不能** `(string?)typed.Tag` 直接强转：
+        // 有些控件把 Tag 用作别的用途（模型页的 InferenceSliderRow 就把整行对象放进去），
+        // 强转遇到非 string 的 Tag 会抛 InvalidCastException。它在
+        // SettingsWindow_ContentRendered → LoadInitialAsync → ApplyFieldHelpTooltips
+        // 这条路径上，于是**一打开设置窗口就写一条前端崩溃日志**
+        // （本轮实测：ui_probe 的"产生前端崩溃日志"检查抓到它）。
+        // `as` 取不到就是 null，与 tag 不匹配等价，直接跳过即可。
+        if (node is T typed && string.Equals(typed.Tag as string, tag, StringComparison.Ordinal))
             found.Add(typed);
         // 只有 Visual / Visual3D 才有可视化子节点。逻辑树里还会出现 ColumnDefinition、
         // RowDefinition 这类非 Visual 的 DependencyObject，对它调

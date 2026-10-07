@@ -35,6 +35,10 @@ public partial class MainWindow : Window
     // 下载/预热等实时进度在对话框中的"活"消息（内容块），复用更新避免刷屏
     private TextBox? _liveStatusContent;
 
+    // 任务十二：最后一条用户消息（Alt+↑ 复制回输入框用）。
+    // 只存一条字符串而不是整份消息列表：这个功能唯一需要的就是"上一条提问"。
+    private string _lastUserMessage = "";
+
     // 流式 Markdown 实时渲染：节流计时器，边生成边把累积文本渲染进 RichTextBox
     private DispatcherTimer? _mdTimer;
     private RichTextBox? _mdTarget;
@@ -1213,12 +1217,46 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        // Alt+↑（任务十二）：把上一条用户消息复制回输入框。放在 Ctrl+Enter 之前：
+        // 两者的 Key 不同，但先判"带修饰键的方向键"能避免将来加别的方向键快捷键时互相偷键。
+        if (e.Key == Key.Up && Keyboard.Modifiers == ModifierKeys.Alt)
+        {
+            e.Handled = true;
+            RecallLastUserMessage();
+            return;
+        }
         // Ctrl+Enter 发送；其余（Enter / Shift+Enter）均插入换行
         if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.Control)
         {
             e.Handled = true;
             await SendMessageAsync();
         }
+    }
+
+    /// <summary>
+    /// 任务十二：把上一条用户消息复制回输入框（Alt+↑）。
+    ///
+    /// 与 Avalonia 版同一语义（frontend-avalonia 的 RecallLastUserMessage）：
+    /// 只找 role == "user"、覆盖输入框内容、用状态栏说明结果而不弹确认框。
+    /// 记录 §8.4 要求实现前确认与既有快捷键不冲突：输入框上现有的绑定只有
+    /// Ctrl+Enter（发送）与指令面板的 ↑/↓/Tab/Enter/Esc（面板打开时优先吃掉），
+    /// Alt+↑ 在两者之外。
+    /// </summary>
+    private void RecallLastUserMessage()
+    {
+        // 用**显式记录的字段**而不是从可视树回读：消息面板里没有角色标记
+        // （NewMessagePanel 只放时间与内容块），从可视树反推角色既脆又容易在
+        // 主题/语言重渲染后失效。这里只在 AddMessage 时记一行文本，零额外状态机。
+        string text = _lastUserMessage;
+        if (text.Length == 0)
+        {
+            StatusText.Text = Loc.T("main.recall.none", "还没有可以复制的提问");
+            return;
+        }
+        InputBox.Text = text;
+        InputBox.CaretIndex = text.Length;
+        InputBox.Focus();
+        StatusText.Text = Loc.T("main.recall.lastUser", "↩️ 已复制上一条提问（Alt+↑）");
     }
 
     private void InputBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -1365,7 +1403,7 @@ public partial class MainWindow : Window
                     ScheduleMarkdownRender(sb.ToString()); // 节流实时渲染
                     ScheduleScrollToBottom();              // 滚动同样节流（任务五）
                 },
-                onContext: (used, limit) => ContextText.Text = FormatContext(used, limit),
+                onContext: (_, _) => { },   // 上下文显示改由 UpdateContextFromResponse(root) 统一处理，见下方 onEvent
                 onEvent: (type, root) =>
                 {
                     // 心跳（任务五）：模型还在算但暂时没有新 token。
@@ -2341,12 +2379,26 @@ public partial class MainWindow : Window
         {
             int used = usedEl.GetInt32();
             int limit = limitEl.GetInt32();
-            ContextText.Text = FormatContext(used, limit);
+            // 任务十（自测问题修复-1）：显示值改用**上一轮真正发出去的量**。
+            //
+            // 后端并列给了两个口径（backend/main.py 的 _attach_context）：
+            //   used              = 系统提示 + 历史（持久占用的底数）
+            //   used_last_request = 上一轮实际发出去的全部内容（含文件正文/检索片段/搜索结果）
+            // 旧显示只取 used，于是"占了 355 / 6553（5.4%）"而真实那一次发出去的是 1462 tokens ——
+            // 用户说的"远未到 1/3"就是这么来的。这里两者取**较大值**：底数和上一轮都可以是
+            // 当前占用的大头，取大不会漏报；后端没给这个字段（旧版）时自然退化为 used。
+            int lastRequest = root.TryGetProperty("used_last_request", out JsonElement lrEl)
+                              && lrEl.ValueKind == JsonValueKind.Number
+                ? lrEl.GetInt32() : 0;
+            int shown = Math.Max(used, lastRequest);
+            ContextText.Text = FormatContext(shown, limit);
             // 优化五：轻量状态区显示占用百分比（图标 + 简短短语）
-            int percent = limit > 0 ? (int)Math.Round(used * 100.0 / limit) : 0;
+            int percent = limit > 0 ? (int)Math.Round(shown * 100.0 / limit) : 0;
             StripContextText.Text = Loc.T("main.context.strip", "📊 上下文 {0}%", Math.Clamp(percent, 0, 100));
-            StripContextButton.ToolTip = Loc.T("main.context.tip",
-                "上下文占用 {0:N0} / {1:N0} tokens（{2}%）\n点击刷新", used, limit, percent);
+            // 提示里把两个口径都写出来：用户才知道"这一轮压了多满"与"底数是多少"的差别
+            StripContextButton.ToolTip = Loc.T("main.strip.contextTipTwo",
+                "上下文占用 {0:N0} / {1:N0} tokens（{2}%）\n其中常驻底数 {3:N0}，上一轮实际发出 {4:N0}\n点击刷新",
+                shown, limit, percent, used, lastRequest);
         }
         if (root.TryGetProperty("kv_cache_text", out JsonElement kv) && kv.ValueKind == JsonValueKind.String)
             SetKvCacheStatus(kv.GetString() ?? "");
@@ -2752,7 +2804,7 @@ public partial class MainWindow : Window
             string final = await _backend.SendStreamRequestAsync(
                 new { action = "file_stream", files = paths },
                 _ => { },
-                onContext: (used, limit) => ContextText.Text = FormatContext(used, limit),
+                onContext: (_, _) => { },   // 上下文显示改由 UpdateContextFromResponse(root) 统一处理，见下方 onEvent
                 onEvent: (type, root) =>
                 {
                     // 逐份状态行（任务八）：file_status 只在多文件路径产出
@@ -2862,7 +2914,7 @@ public partial class MainWindow : Window
                         MessageScrollViewer.ScrollToBottom();
                     }
                 },
-                onContext: (used, limit) => ContextText.Text = FormatContext(used, limit),
+                onContext: (_, _) => { },   // 上下文显示改由 UpdateContextFromResponse(root) 统一处理，见下方 onEvent
                 onEvent: (type, root) =>
                 {
                     // 只有 summary_progress 需要在这里渲染：它是结构化进度（阶段/段号/耗时/慢）
@@ -3220,6 +3272,10 @@ public partial class MainWindow : Window
 
     private void AddMessage(string role, string content, string reasoning = "")
     {
+        // 任务十二：记下最后一条用户消息，供 Alt+↑ 复制回输入框。
+        // 只记**用户**的：复制助手回复没有意义，"再问一次"才是用户会反复做的事。
+        if (role == "user" && content.Trim().Length > 0)
+            _lastUserMessage = content;
         // 修复六：消息内容里的 emoji 也走同一套降级（后端返回的 system 消息同样带上它）
         content = Emoji.Prefer(content);
         var panel = NewMessagePanel(role, role == "assistant" ? "" : content, out FrameworkElement contentBlock);

@@ -27,6 +27,13 @@ import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "backend"))
+# 版本号**唯一来源**是 backend/version.py（PROJECT.md 硬约束 5）。
+# 这里原先写死 "v0.2.1"：v0.2.2 发布后门禁一直在报"✗ 版本为 v0.2.1 v0.2.2"，
+# 也就是**守着旧版本号报错**，反而把真实的版本升级当成了失败。导入常量即可根治。
+from version import APP_VERSION  # noqa: E402
+
+
 def _resolve_backend() -> str:
     """定位打包后的后端 exe：新布局（便携版三层）优先，其次兼容旧的扁平布局。
 
@@ -164,7 +171,7 @@ def run_all(backend, exe):
         print("  后端要求先下载模型，本测试跳过（请用含模型的发布物运行）")
         return
     check("收到 ready", ready.get("type") == "ready", str(ready)[:200])
-    check("版本为 v0.2.1", ready.get("version") == "v0.2.1", str(ready.get("version")))
+    check(f"版本为 {APP_VERSION}", ready.get("version") == APP_VERSION, str(ready.get("version")))
     i18n = ready.get("i18n") or {}
     check("ready 带语言信息", bool(i18n.get("locale")), str(i18n))
     check("可用语言只列真实语言（不含模块分片）",
@@ -420,7 +427,7 @@ def run_all(backend, exe):
     check("状态取值为预期之一",
           update.get("status") in ("available", "up_to_date", "disabled", "skipped", "error", "ahead"),
           str(update.get("status")))
-    check("当前版本正确", update.get("current") == "v0.2.1", str(update.get("current")))
+    check("当前版本正确", update.get("current") == APP_VERSION, str(update.get("current")))
     check("绝不自动下载替换（只返回提示与链接）",
           "url" in update and "downloaded" not in update and "replaced" not in update,
           str(sorted(update)))

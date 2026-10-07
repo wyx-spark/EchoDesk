@@ -69,10 +69,10 @@ the one the cross-platform packages ship — crashed on launch and then again on
 the main window never called its generated `InitializeComponent()`, so every `x:Name` field was
 `null` (the settings window and all seven settings pages *do* call it; only the main window missed
 it), and four places cast the result of `FindResource` straight to a brush, which throws as soon as
-the key resolves to `AvaloniaProperty.UnsetValue` instead of a brush. Both are fixed. A third
-startup problem remains **open** and is recorded rather than papered over: opening the Settings
-window raises a stack overflow inside Avalonia 12.1.3's theme-variant resolution, so that window
-cannot be opened at all in this build.
+the key resolves to `AvaloniaProperty.UnsetValue` instead of a brush. Both are fixed. The third
+startup problem — the Settings window could not be opened at all — is fixed too; it is described in
+"Settings window, agent steps, context figure" below, together with a **correction of the cause
+previously recorded here**: it was not Avalonia's theme-variant resolution.
 
 **The command box placeholder now lines up.** It was a hand-positioned overlay whose margin (16)
 did not match the real text origin (15 = 1px border + 8 margin + 6 padding), so the prompt sat 2px
@@ -98,6 +98,78 @@ created). `file_cache/` is now ignored by Git. The backend crash log is no longe
 uncaught exceptions from `tools/` scripts, which previously made real backend crashes hard to spot.
 A duplicate definition of `load_file_into_context` was removed — the old single-file version was
 silently overriding the newer multi-file one.
+
+### Settings window, agent steps, context figure, and the gates that had gone blind
+
+A follow-up round on the same task specification, plus the items the previous round left open.
+The full record is `records/v0.2.2-自测问题修复记录.md` §16 (internal, **not shipped with releases**).
+
+**Opening the Settings window no longer kills the process — and the cause was misdiagnosed.**
+The previous entry blamed Avalonia 12.1.3's theme-variant resolution, based on where the stack
+overflow surfaced. That was wrong. The real cause is a **synchronous cycle between rebuilding the
+UI texts and the language selector**: `Loc.SetLocale` raises `LanguageChanged`, the settings window
+rebuilds all its texts, the General page re-creates its combo items and re-selects the current
+value — which the control reports as a genuine selection change — and that fires `SetLanguage`
+again, straight back into `Loc.SetLocale`. It ran 340 rounds deep and overflowed the stack.
+The two guards that break the cycle were already in place; this round established **why** they are
+needed, verified it by bisection (disabling them reproduces the crash with exactly that stack), and
+corrected the record. No theme code needed to change.
+
+**"Avalonia was never actually run" is now impossible to repeat by accident.** That entire class of
+defect existed because no gate ever constructed a window: the backend self-test deliberately opens
+none, and `tools/ui_probe.ps1` drives the **WPF** build. A headless front-end probe now exists
+(`EchoDesk --probe main|settings|agent|both`, driven by `tools/ui_probe_avalonia.ps1`): it really
+constructs and shows the windows and reports the verdict as an exit code. Because a stack overflow
+cannot be caught in .NET, "the process died without printing a verdict" *is* the failure signal.
+Its `agent` mode starts a real backend, runs one real Agent turn, and feeds the events the backend
+actually emitted into the front end's real dispatch path, then asserts the step rows were rendered
+— so Agent step rendering is a number, not an impression (measured: 2 `agent_step` events → 3 rows).
+
+**The two front ends are two delivery lines, not a choice between them.** The Windows portable
+build and installer ship the **WPF** front end (`tools/build_release.ps1` publishes
+`frontend/EchoDesk.csproj`; the tree contains `PresentationFramework*.dll` and no `Avalonia*.dll`),
+while the three-platform packages ship the Avalonia one. The earlier "which front end do we fix?"
+question rested on the opposite assumption and is therefore moot: the WPF findings from self-testing
+are on the path Windows users actually run. `PROJECT.md` has been corrected accordingly.
+
+**The context figure now reports what was really sent.** The backend was already sending
+`used_last_request`; the front end still displayed only `used`, so users kept seeing the figure that
+under-reports by roughly a factor of four. Both front ends now show the larger of the two, and the
+tooltip spells both out.
+
+**Genuine WPF crash on opening the Settings window.** `Walk<T>` in `SettingsWindow.Skills.cs`
+cast `Tag` straight to `string`; the model page stores a whole row object in `Tag`, so the cast
+threw `InvalidCastException` and wrote a front-end crash log every time the window opened.
+It now uses `as string`, which simply does not match.
+
+**Alt+↑ copies your previous question back into the input box** (task twelve), in both front ends,
+without colliding with the existing shortcuts (`Ctrl+Enter` sends; the arrow keys are taken by the
+command palette only while it is open).
+
+**Backend INFO logs are bilingual.** Every line the backend writes to stderr is shown in the status
+bar, so INFO messages are user-facing text. A single entry point (`i18n.log_user`) now resolves the
+message through the language pack, and the 14 user-facing `log.info` calls in `main.py` were moved
+to it in one pass — deliberately not piecemeal, because a half-translated set is harder to explain
+than a consistently single-language one. Developer-facing diagnostics (internal paths, cache-hit
+counts, compaction arithmetic) stay single-language, by the classification in the record.
+
+**Three gates had gone blind and were fixed.** `tools/test_backend_e2e.py` asserted the version
+number **literally** (`"v0.2.1"`), so it had been failing on every run since the version bump —
+reporting a successful upgrade as a failure — and it silently "passed" (0 checks, exit 0) whenever
+the release tree had no model. `tools/ui_probe.ps1` waited for the exact status string `已就绪`
+after the wording had changed to `就绪`, so it reported "backend not ready" while the backend was
+ready in five seconds; it also copied the test model into a directory that does not exist in a
+release tree (which aborted the script before it launched anything). All three now report the real
+state, and the model the probe needs is staged where the backend actually looks for it.
+Two more had the opposite problem — failing on inputs unrelated to what they test: an i18n
+self-check asserted that `check_lang.py --locale no-such` must exit 0, although `--locale` only
+filters language packs and never the document-pair checks it was actually reacting to; and
+`check_lang.py` counted a **already-recorded** deviation (`docs/THIRD_PARTY_LICENSES.md` is
+generated in Chinese, so it cannot also link to a Chinese translation) as a hard problem, which
+turned both the language gate and the i18n gate red indefinitely. Recorded deviations are now
+counted and printed separately and no longer decide the exit code; they are still reported.
+With all of that fixed, `tools/verify_release.ps1 -SkipE2E` — GUI checks included — passes
+39 of 39 gates.
 
 ### Bilingual coverage and three-platform friendliness across the whole repository
 

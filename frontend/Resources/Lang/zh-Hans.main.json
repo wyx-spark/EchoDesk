@@ -95,6 +95,9 @@
       "marketHelp": "技能市场连接状态，点击打开设置",
       "contextTip": "上下文占用：点击刷新",
       "contextHelp": "当前上下文占用百分比，点击刷新",
+      "contextHelpBoth": "上下文占用 {0:N0} / {1:N0} tokens（{2}%）。其中常驻底数 {3:N0}，上一轮实际发出 {4:N0}。比例取两者中较大的一个：既能看清这一轮压了多满，也能看清长期底数。点击刷新。",
+      "contextStrip": "📊 上下文 {0}%",
+      "contextTipTwo": "上下文占用 {0:N0} / {1:N0} tokens（{2}%）\n其中常驻底数 {3:N0}，上一轮实际发出 {4:N0}\n点击刷新",
       "kvHelp": "KV Cache 内存占用估算，点击打开模型设置",
       "capability": "🧠 {0}",
       "capabilityTip": "模型能力：参数量 · 量化 · 可用窗口 · 实测生成速度",
@@ -238,6 +241,10 @@
     },
     "toast": {
       "copiedCount": "✅ {0}（{1} 字符）"
+    },
+    "recall": {
+      "lastUser": "↩️ 已复制上一条提问（Alt+↑）",
+      "none": "还没有可以复制的提问"
     },
     "context": {
       "buttonIdle": "上下文：---/---",

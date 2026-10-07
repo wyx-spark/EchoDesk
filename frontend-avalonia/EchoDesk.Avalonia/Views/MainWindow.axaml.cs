@@ -77,6 +77,18 @@ public partial class MainWindow : Window
     // 运行指标：由后端上报（done.stats / progress.stats），前端不估算
     private string _stripMetrics = "";
 
+    // 本轮流式的运行指标（done.stats 里带 stopped 的那份）。
+    // 它原先只是 StreamChatAsync 里的一个局部变量，改成字段是为了让事件分发
+    // （DispatchStreamEvent）能独立成一个可被探针直接调用的方法 —— 见那里的说明。
+    private string _liveMetrics = "";
+
+    /// <summary>
+    /// Agent 步骤区当前的行数（**探针用**：无人值守时无法"看"界面，
+    /// 只能靠可读的数字断言"步骤行确实渲染了"）。没有步骤区时返回 0。
+    /// </summary>
+    public int AgentStepRowCount
+        => _agentRegion is null ? 0 : EnumerateAgentRows(_agentRegion).Count();
+
     private sealed record Message(string Role, string Content, string Reasoning, string Metrics);
 
     /// <summary>一条消息的可更新视图（流式期间就地更新，避免整屏重排）。</summary>
@@ -206,6 +218,15 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        // Alt+↑（任务十二）：把上一条**用户**消息复制回输入框。
+        // 判据放在最前，且要求"确实是 Alt 而不是 Ctrl/Shift"——否则会和未来
+        // 可能加进来的其它方向键快捷键互相偷键。
+        if (e.Key == Key.Up && e.KeyModifiers == KeyModifiers.Alt)
+        {
+            e.Handled = true;
+            RecallLastUserMessage();
+            return;
+        }
         if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
             e.Handled = true;
@@ -216,6 +237,36 @@ public partial class MainWindow : Window
             e.Handled = true;
             _ = StopAsync();
         }
+    }
+
+    /// <summary>
+    /// 任务十二：把上一条用户消息复制回输入框（Alt+↑）。
+    ///
+    /// 三个刻意的取舍（记录 §8.4 要求"实现前先确认与既有快捷键不冲突"）：
+    ///   * **只找 role == "user"**：复制助手回复没有意义，而"再问一次".
+    ///     是用户真正会反复做的事；
+    ///   * **不覆盖已有输入**是错的还是对的？这里选择**覆盖**并在状态栏提示，
+    ///     与"上一条"的语义一致；用户按 Ctrl+Z 或再打一遍即可恢复，
+    ///     而"什么都不做"会让人以为快捷键没生效；
+    ///   * 输入框里已有的内容**不做确认弹窗**：这毕竟是可撤销的编辑动作，
+    ///     弹窗会让连续追问变得很烦。用状态栏一句话说明"已复制上一条"。
+    /// </summary>
+    private void RecallLastUserMessage()
+    {
+        for (int i = _transcript.Count - 1; i >= 0; i--)
+        {
+            if (!string.Equals(_transcript[i].Role, "user", StringComparison.Ordinal))
+                continue;
+            string text = _transcript[i].Content;
+            if (text.Length == 0)
+                continue;
+            InputBox.Text = text;
+            InputBox.CaretIndex = text.Length;
+            InputBox.Focus();
+            SetStatus(Loc.T("main.recall.lastUser", "↩️ 已复制上一条提问（Alt+↑）"));
+            return;
+        }
+        SetStatus(Loc.T("main.recall.none", "还没有可以复制的提问"));
     }
 
     private void OnCommandInputKeyDown(object? sender, KeyEventArgs e)
@@ -627,11 +678,19 @@ public partial class MainWindow : Window
         int limit = GetIntField(context, "limit");
         if (limit <= 0)
             return;
-        ContextChip.Text = Loc.T("main.context.button", "上下文：{0}/{1}", used, limit);
-        int percent = (int)Math.Round(used * 100.0 / limit);
+        // 任务十（自测问题修复-1）：显示值改用**上一轮真正发出去的量**，理由见
+        // backend/main.py 的 _attach_context 与 records §9.4（旧显示只算 system+history，
+        // 漏掉文件正文/检索片段，用户看到的值只有真实值的四分之一）。
+        // 两者取较大值：底数与上一轮都可能是当前占用的大头，取大不会漏报；
+        // 后端未提供该字段时（旧版）自然退化为 used。
+        int lastRequest = GetIntField(context, "used_last_request");
+        int shown = Math.Max(used, lastRequest);
+        ContextChip.Text = Loc.T("main.context.button", "上下文：{0}/{1}", shown, limit);
+        int percent = (int)Math.Round(shown * 100.0 / limit);
         StripContextText.Text = Loc.T("main.strip.context", "📊 上下文 {0}%", percent);
-        ToolTip.SetTip(StripContextButton, Loc.T("main.strip.contextHelp",
-            "上下文已用 {0} / {1} tokens（{2}%）。点击刷新。", used, limit, percent));
+        ToolTip.SetTip(StripContextButton, Loc.T("main.strip.contextHelpBoth",
+            "上下文已用 {0} / {1} tokens（{2}%）。其中常驻底数 {3}，上一轮实际发出 {4}。点击刷新。",
+            shown, limit, percent, used, lastRequest));
     }
 
     private void SetSearchStatus(bool on)
@@ -1241,7 +1300,7 @@ public partial class MainWindow : Window
         _streamCts = new CancellationTokenSource();
 
         string finalText = "";
-        string metrics = "";
+        _liveMetrics = "";
         try
         {
             finalText = await _state.Backend.SendStreamAsync(
@@ -1251,76 +1310,13 @@ public partial class MainWindow : Window
                     _liveAnswer.Append(delta);
                     MarkDirty();
                 },
-                onContext: (used, limit) => Dispatcher.UIThread.Post(() =>
-                {
-                    if (limit > 0)
-                    {
-                        ContextChip.Text = Loc.T("main.context.button", "上下文：{0}/{1}", used, limit);
-                        int percent = (int)Math.Round(used * 100.0 / limit);
-                        StripContextText.Text = Loc.T("main.strip.context", "📊 上下文 {0}%", percent);
-                    }
-                }),
+                // 上下文显示统一由 done 行那条 onEvent → DispatchStreamEvent →
+                // ApplyContextFields 处理：只有它拿得到 used_last_request（任务十）。
+                // 这里再显示一次 used 反而会把"上一轮实际发出"的值盖掉。
+                onContext: (_, _) => { },
                 idleTimeout: null,   // 流式不设空闲超时（后端可能在等待很长的生成）
                 cancellationToken: _streamCts.Token,
-                onEvent: (type, root) =>
-                {
-                    switch (type)
-                    {
-                        case "progress":
-                        {
-                            // 心跳：说明"还在算"，避免界面看起来像卡死
-                            if (root.TryGetProperty("stats", out JsonElement beat) && beat.ValueKind == JsonValueKind.Object)
-                            {
-                                bool waiting = root.TryGetProperty("waiting_first_token", out JsonElement w)
-                                               && w.ValueKind == JsonValueKind.True;
-                                Dispatcher.UIThread.Post(() => ShowMetrics(FormatMetrics(beat, waiting)));
-                            }
-                            string content = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
-                            Dispatcher.UIThread.Post(() => SetStatus(Trim(Emoji.Prefer(content), 120)));
-                            break;
-                        }
-                        case "agent_step":
-                            HandleAgentStep(root);
-                            break;
-                        case "tool_call":
-                            HandleToolCall(root);
-                            break;
-                        case "tool_result":
-                            HandleToolResult(root);
-                            break;
-                        case "done":
-                        {
-                            if (root.TryGetProperty("reasoning", out JsonElement r))
-                            {
-                                string reasoning = r.GetString() ?? "";
-                                if (reasoning.Length > 0 && _liveReasoning.Length == 0)
-                                {
-                                    _liveReasoning.Append(reasoning);
-                                    Dispatcher.UIThread.Post(() =>
-                                    {
-                                        if (_live is not null)
-                                        {
-                                            _live.ThinkingText.Text = _liveReasoning.ToString();
-                                            _live.ThinkingBox.IsVisible = true;
-                                        }
-                                    });
-                                }
-                            }
-                            if (root.TryGetProperty("stats", out JsonElement stats) && stats.ValueKind == JsonValueKind.Object)
-                            {
-                                bool stopped = root.TryGetProperty("stopped", out JsonElement st)
-                                               && st.ValueKind == JsonValueKind.True;
-                                metrics = FormatMetrics(stats, stopped);
-                                Dispatcher.UIThread.Post(() => ShowMetrics(metrics));
-                            }
-                            if (root.TryGetProperty("reasoning_unclosed", out JsonElement unclosed)
-                                && unclosed.ValueKind == JsonValueKind.True)
-                                metrics = (metrics + "  " + Loc.T("main.metrics.reasoningUnclosed", "⚠️ 思考未闭合（token 预算可能被思考用完）")).Trim();
-                            HandleAgentSummary(root);
-                            break;
-                        }
-                    }
-                },
+                onEvent: DispatchStreamEvent,
                 onDeltaChannel: (channel, content, reset) => Dispatcher.UIThread.Post(() =>
                 {
                     if (channel == "reasoning")
@@ -1353,9 +1349,9 @@ public partial class MainWindow : Window
         catch (OperationCanceledException)
         {
             finalText = _liveAnswer.ToString();
-            metrics = Loc.T("main.metrics.stopped", "⏹ 已中止");
+            _liveMetrics = Loc.T("main.metrics.stopped", "⏹ 已中止");
             if (_live is not null)
-                _live.Metrics = metrics;
+                _live.Metrics = _liveMetrics;
         }
         catch (Exception ex)
         {
@@ -1368,12 +1364,86 @@ public partial class MainWindow : Window
             string answer = finalText.Length > 0 ? finalText : _liveAnswer.ToString();
             string reasoning = _liveReasoning.ToString();
             RemoveLiveMessage();
-            AddMessage("assistant", answer, reasoning, metrics);
+            AddMessage("assistant", answer, reasoning, _liveMetrics);
             _streamCts?.Dispose();
             _streamCts = null;
             _agentRegion = null;
             _agentRows = null;
             await RefreshContextAsync();
+        }
+    }
+
+    /// <summary>
+    /// 流式事件分发（progress / agent_step / tool_call / tool_result / done）。
+    ///
+    /// **为什么它是一个独立方法而不是内联在 StreamChatAsync 的 lambda 里**：
+    /// 无人值守的界面探针（Probe.cs）无法"点一下界面"来触发 Agent 步骤行，
+    /// 但它可以把后端真实发出的那些事件行逐条喂进这个方法，再读
+    /// <see cref="AgentStepRowCount"/> 断言"步骤行确实渲染出来了"。
+    /// 内联在 lambda 里时这条路径**没有任何办法在无人值守下验证**，
+    /// 而 v0.2.2 记录 §10 第 3 条（Agent 步骤行渲染）正是卡在这里。
+    /// </summary>
+    public void DispatchStreamEvent(string type, JsonElement root)
+    {
+        switch (type)
+        {
+            case "progress":
+            {
+                // 心跳：说明"还在算"，避免界面看起来像卡死
+                if (root.TryGetProperty("stats", out JsonElement beat) && beat.ValueKind == JsonValueKind.Object)
+                {
+                    bool waiting = root.TryGetProperty("waiting_first_token", out JsonElement w)
+                                   && w.ValueKind == JsonValueKind.True;
+                    Dispatcher.UIThread.Post(() => ShowMetrics(FormatMetrics(beat, waiting)));
+                }
+                string content = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+                Dispatcher.UIThread.Post(() => SetStatus(Trim(Emoji.Prefer(content), 120)));
+                break;
+            }
+            case "agent_step":
+                HandleAgentStep(root);
+                break;
+            case "tool_call":
+                HandleToolCall(root);
+                break;
+            case "tool_result":
+                HandleToolResult(root);
+                break;
+            case "done":
+            {
+                if (root.TryGetProperty("reasoning", out JsonElement r))
+                {
+                    string reasoning = r.GetString() ?? "";
+                    if (reasoning.Length > 0 && _liveReasoning.Length == 0)
+                    {
+                        _liveReasoning.Append(reasoning);
+                        Dispatcher.UIThread.Post(() =>
+                        {
+                            if (_live is not null)
+                            {
+                                _live.ThinkingText.Text = _liveReasoning.ToString();
+                                _live.ThinkingBox.IsVisible = true;
+                            }
+                        });
+                    }
+                }
+                if (root.TryGetProperty("stats", out JsonElement stats) && stats.ValueKind == JsonValueKind.Object)
+                {
+                    bool stopped = root.TryGetProperty("stopped", out JsonElement st)
+                                   && st.ValueKind == JsonValueKind.True;
+                    _liveMetrics = FormatMetrics(stats, stopped);
+                    string text = _liveMetrics;
+                    Dispatcher.UIThread.Post(() => ShowMetrics(text));
+                }
+                if (root.TryGetProperty("reasoning_unclosed", out JsonElement unclosed)
+                    && unclosed.ValueKind == JsonValueKind.True)
+                {
+                    _liveMetrics = (_liveMetrics + "  "
+                        + Loc.T("main.metrics.reasoningUnclosed", "⚠️ 思考未闭合（token 预算可能被思考用完）")).Trim();
+                }
+                HandleAgentSummary(root);
+                break;
+            }
         }
     }
 
@@ -1687,11 +1757,8 @@ public partial class MainWindow : Window
             string content = await _state.Backend.SendStreamAsync(
                 request,
                 onDelta: null,
-                onContext: (used, limit) => Dispatcher.UIThread.Post(() =>
-                {
-                    if (limit > 0)
-                        ContextChip.Text = Loc.T("main.context.button", "上下文：{0}/{1}", used, limit);
-                }),
+                // 同上：上下文显示交给 done 行的 ApplyContextFields（那里才有 used_last_request）
+                onContext: (_, _) => { },
                 idleTimeout: BackendService.HeavyIdleTimeout,
                 onEvent: (type, root) =>
                 {

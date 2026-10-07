@@ -118,6 +118,7 @@ with _suppress_stdout():
 
 # 多语言（任务三）：必须在 Config.load 之后导入，避免 i18n 反向依赖 config 时成环
 from i18n import get as _i18n
+from i18n import log_user
 from i18n import t as _t
 
 # Emoji 降级（修复六）与目录布局（修复七）
@@ -537,7 +538,7 @@ class Backend:
             try:
                 removed = self._automation.cleanup_temp()
                 if removed:
-                    log.info("已清理上次残留的自动化临时文件: %d 项", removed)
+                    log_user(log, "sys.log_automation_cleaned", count=removed)
             except Exception:
                 log.warning("启动清理自动化临时目录失败", exc_info=True)
         else:
@@ -570,9 +571,10 @@ class Backend:
             )
         train_ctx = resolve_context_window(path, 0)
         n_ctx = config.context_for_model(path, train_ctx)
-        log.info(
-            "加载模型: %s (ctx=%d, 训练窗口=%s, threads=%d, batch=%d, gpu_layers=%d)",
-            path, n_ctx, train_ctx or "未知", n_threads, config.n_batch, config.n_gpu_layers,
+        log_user(
+            log, "sys.log_model_loading",
+            path=path, ctx=n_ctx, trained=train_ctx or _t("sys.log_unknown", "未知"),
+            threads=n_threads, batch=config.n_batch, gpu=config.n_gpu_layers,
         )
         return LLMEngine(
             path, n_ctx,
@@ -866,7 +868,7 @@ class Backend:
         """
         locale = str(request.get("locale") or "auto")
         effective = _i18n().set_locale(locale)
-        log.info("界面语言切换为 %s（请求 %s）", effective, locale)
+        log_user(log, "sys.log_language_switched", effective=effective, locale=locale)
         info = _i18n().info()
         # 语言变化后指令帮助与技能面板标题都要跟着变
         return {"type": "system", "content": _t("sys.language_switched", locale=effective),
@@ -2935,7 +2937,7 @@ class Backend:
             try:
                 removed = engine.cleanup_temp()
                 if removed:
-                    log.info("自动化临时文件清理: %d 项", removed)
+                    log_user(log, "sys.log_automation_cleanup", count=removed)
             except Exception:
                 log.warning("自动化临时目录清理失败", exc_info=True)
 
@@ -2977,7 +2979,7 @@ class Backend:
         try:
             self.config.automation = AutomationConfig(**data)
             self.config.save()
-            log.info("可视化选取已写入 %s = %s", field, selector)
+            log_user(log, "sys.log_visual_pick_written", field=field, selector=selector)
         except Exception:
             log.warning("保存可视化选取结果失败", exc_info=True)
 
@@ -3119,7 +3121,7 @@ class Backend:
         try:
             self.config.automation = AutomationConfig(**data)
             self.config.save()
-            log.info("可视化选取已写入 %s = %s", field, value)
+            log_user(log, "sys.log_visual_pick_written", field=field, selector=value)
         except Exception:
             log.warning("保存可视化选取结果失败", exc_info=True)
 
@@ -3288,7 +3290,7 @@ class Backend:
             path = os.path.join(self._disk_store_dir(), f"{stamp}-{safe}.txt")
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(content)
-            log.info("大文件正文已落盘: %s（%d 字符）", path, len(content))
+            log_user(log, "sys.log_large_file_stored", path=path, chars=len(content))
             return path
         except Exception:
             log.warning("大文件落盘失败，改为在内存中保留", exc_info=True)
@@ -3332,7 +3334,7 @@ class Backend:
             if stored:
                 entry.stored_at = stored
                 entry.content = ""
-                log.info("文件 %s 超过 %d 字符，正文已落盘（%s）", name, threshold, stored)
+                log_user(log, "sys.log_file_stored", name=name, threshold=threshold, path=stored)
         if allow_summary and self.summarizer.should_use_summary(content, self.llm.n_ctx):
             log.info(
                 "文件 %s 约 %d tokens，超过窗口 %d 的 %.0f%%：转入分段摘要",
@@ -3582,7 +3584,7 @@ class Backend:
                     "hits": hit.get("hits") or 0,
                 })
                 self.llm.clear_cache()
-                log.info("分段摘要命中缓存：%s（第 %s 次复用）", name, hit.get("hits"))
+                log_user(log, "sys.log_summary_cache_hit", name=name, hits=hit.get("hits"))
                 return (
                     _t("sys.summary_cache_hit", trigger=trigger, name=name) + "\n"
                     + _t("sys.summary_cache_hit_detail", chars=hit.get('origin_chars') or 0,
@@ -3994,7 +3996,7 @@ class Backend:
             by_turns = self._turn_start(conv.history, 1)
             keep_start = min(by_turns, len(conv.history) - keep_count)
             if keep_start > 0:
-                log.info("手动压缩：grace zone 收缩为 1 轮（原 %d 轮覆盖了全部历史）", grace_turns)
+                log_user(log, "sys.log_compaction_manual", grace=grace_turns)
                 result["grace_shrunk"] = True
         result["grace"] = grace_turns
         result["kept_by_turns"] = len(conv.history) - by_turns
@@ -4163,8 +4165,8 @@ class Backend:
                         kind, getattr(outcome, "source", ""), outcome.error)
         else:
             self._last_search_note = _t("sys.search_empty")
-        log.info("搜索未产生可用结果：ok=%s 条数=%d 原因=%s",
-                 outcome.ok, outcome.count, self._last_search_note)
+        log_user(log, "sys.log_search_no_result",
+                 ok=outcome.ok, count=outcome.count, reason=self._last_search_note)
         return ""
 
     def _search_note(self) -> str:
@@ -4261,7 +4263,9 @@ def main() -> None:
     try:
         skill_summary = backend.load_skills()
         if skill_summary.get("total"):
-            log.info("技能加载完成：%s", skill_summary)
+            log_user(log, "sys.log_skills_loaded",
+                     total=skill_summary.get("total"), failed=skill_summary.get("failed"),
+                     skipped=skill_summary.get("skipped"))
     except Exception:
         log.exception("技能加载阶段异常（已忽略）")
         skill_summary = {}
@@ -4307,7 +4311,7 @@ def main() -> None:
             ),
         })
 
-    log.info("%s %s 就绪 — Powered by %s", APP_NAME, APP_VERSION, STUDIO)
+    log_user(log, "sys.log_ready", app=APP_NAME, version=APP_VERSION, studio=STUDIO)
     # 就绪声明：预热等准备工作全部完成后才输出，前端据此放行输入；附带恢复的历史消息供前端展示
     _write({"type": "ready", "version": APP_VERSION, "studio": STUDIO, "restored": restored,
             "history": backend.conv.history,
@@ -4382,7 +4386,7 @@ def main() -> None:
         elif action in ("exit", "quit"):
             # 任务一：退出只由用户主动触发。旧行为里"拒绝下载模型"也会走到这里，
             # 现在缺模型时后端照常运行，这条路只剩前端"退出"按钮会用到。
-            log.info("收到退出请求，保存会话后退出")
+            log_user(log, "sys.log_exit_requested")
             backend.save_session()
             _write({"type": "system", "content": _t("sys.exit_ack")})
             return

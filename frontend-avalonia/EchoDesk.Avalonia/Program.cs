@@ -29,6 +29,14 @@ internal static class Program
         {
             return SelfTest.RunAsync(args).GetAwaiter().GetResult();
         }
+
+        // 支持 --probe：真的构造并显示窗口，用退出码回答"界面到底能不能开"。
+        // 与 --selftest 的分工：selftest 验协议（不开窗口），probe 验界面（不拉后端）。
+        // 见 Probe.cs 顶部说明与 tools/ui_probe_avalonia.ps1。
+        if (Array.Exists(args, a => a.Equals("--probe", StringComparison.OrdinalIgnoreCase)))
+        {
+            return Probe.Run(args);
+        }
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         return 0;
     }

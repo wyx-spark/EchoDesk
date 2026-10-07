@@ -526,6 +526,11 @@ try {
         Write-Host "[SKIP] UI 探针 / 像素校验（-SkipGui）" -ForegroundColor Yellow
     }
     else {
+        # Avalonia 侧的门禁：**跨平台包**才用 Avalonia（见上面那条说明）。
+        # 本树是 WPF，所以这里不跑它；真正跑 Avalonia 探针的是打包三平台包时的流程
+        # （tools/pack_crossplatform.py 之后）。开发机上想单独验可以用：
+        #   powershell -File tools\ui_probe_avalonia.ps1              # 开发机构建
+        #   powershell -File tools\ui_probe_avalonia.ps1 -Mode agent  # 含真后端 + Agent 事件链路
         Invoke-Check "UI 探针（窗口/页签/字段帮助/思考区）" {
             <#
                 发布物**不含模型**（本版安装程序与便携目录都不带 .gguf，见 tools\installer.iss
