@@ -259,4 +259,97 @@ for label, count in summary.items():
     print("   %-22s 缺失 %s" % (label, "无法进行" if count < 0 else count))
 print("结论：Avalonia 缺失 %d / 其余两处合计缺失 %d（判定阈值仍是 0 缺失）"
       % (len(set(missing_en) | set(missing_zh)), extra_problems))
+
+
+# ---------------------------------------------------------------------------
+# 静态自检：用 `_t(` / `log_user(` 却没有把名字导入进来的文件
+#
+# 为什么加（两次真实事故，见 records/v0.2.2-硬编码修复记录.md 第 6 批）：
+#   * platform_support.py 在模块级用 `_t(...)`，而该模块**刻意**用函数内延迟导入 i18n
+#     → `NameError`，后端连 ready 握手都发不出；
+#   * agent_tools.py 只改了字符串、忘了补 `from i18n import t as _t` → 全部工具调用 NameError。
+# 两次都是"跑到真实调用才发现"。这件事**静态就能查**，所以放进门禁。
+#
+# 判定：文件里出现 `_t(` / `log_user(` 的调用，但没有任何"绑定该名字"的 i18n 导入：
+#   * `_t`      ← `from i18n import t as _t`（模块级或函数内都算）
+#   * `log_user`← `from i18n import log_user ...`
+#   * `i18n.t(` ← `import i18n`
+# 只查 backend/：前端是 C#，另有自己的反向审计（上面几节）。
+# ---------------------------------------------------------------------------
+#: —— 判定调用用 **AST**（注释与文档字符串里的 `i18n.t(` 不算调用；`def log_user(` 也不算）
+def _i18n_calls(source: str) -> set:
+    """返回文件里真正**调用**了哪些 i18n 名字：{"t"} / {"log_user"} / {"i18n.t"}。"""
+    import ast as _ast
+
+    found = set()
+    try:
+        tree = _ast.parse(source)
+    except SyntaxError:
+        return found
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, _ast.Name) and func.id in ("_t", "t", "log_user"):
+            found.add(func.id)
+        elif isinstance(func, _ast.Attribute) and func.attr == "t" \
+                and isinstance(func.value, _ast.Name) and func.value.id == "i18n":
+            found.add("i18n.t")
+    return found
+
+
+#: 导入名：**行尾注释靠正则剥离**（`([^#\n]+)`），不能要求整行只剩名字 ——
+#: `from i18n import t as _t  # 延迟导入…` 那种写法第一次就被误报成"没导入"。
+_IMPORT_RE = re.compile(r"^\s*from\s+i18n\s+import\s+([^#\n]+)", re.M)
+_PLAIN_IMPORT_RE = re.compile(r"^\s*import\s+i18n\s*(?:#.*)?$", re.M)
+
+
+def _import_selfcheck(root: str) -> int:
+    """返回问题条数（0 = 通过）。"""
+    problems = []
+    checked = 0
+    for name in sorted(os.listdir(root)):
+        if not name.endswith(".py"):
+            continue
+        if name == "i18n.py":
+            # 定义处：`t` / `log_user` 就是本模块定义的，自己调用自己当然不需要导入
+            continue
+        path = os.path.join(root, name)
+        source = io.open(path, encoding="utf-8", errors="replace").read()
+        checked += 1
+        bound = set()
+        for match in _IMPORT_RE.finditer(source):
+            for piece in match.group(1).split(","):
+                piece = piece.strip()
+                if " as " in piece:
+                    bound.add(piece.split(" as ")[-1].strip())
+                else:
+                    bound.add(piece.split(".")[0].strip())
+        has_plain = bool(_PLAIN_IMPORT_RE.search(source))
+        calls = _i18n_calls(source)
+        needs = []
+        # `t` 与 `_t` 是同一个名字的两种写法（`from i18n import t` / `... import t as _t`）
+        if ({"t", "_t"} & calls) and not ({"t", "_t"} & bound):
+            needs.append("`_t(`（需要 `from i18n import t as _t`）")
+        if "log_user" in calls and "log_user" not in bound:
+            needs.append("`log_user(`（需要 `from i18n import log_user`）")
+        if "i18n.t" in calls and not has_plain:
+            needs.append("`i18n.t(`（需要 `import i18n`）")
+        if needs:
+            problems.append((name, needs))
+
+    print()
+    print("-- i18n 导入自检（用 _t(/log_user( 却没导入）")
+    print(f"   受检文件 {checked} 个；问题 {len(problems)} 个")
+    for name, needs in problems:
+        print(f"     ? backend/{name}：{'、'.join(needs)}")
+    if not problems:
+        print("   ✓ 所有用到 `_t(` / `log_user(` 的文件都已有对应导入")
+    return len(problems)
+
+
+_i18n_import_problems = _import_selfcheck(os.path.join(ROOT, "backend"))
+if _i18n_import_problems:
+    sys.exit(1)
+
 sys.exit(1 if ((missing_en or missing_zh) or extra_problems) else 0)
