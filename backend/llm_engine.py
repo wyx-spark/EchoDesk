@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Tuple
 
 from gguf_meta import describe_model, estimate_kv_cache_bytes, format_bytes, resolve_context_window
+from i18n import log_user
 from reasoning import ANSWER, ReasoningSplitter, normalize_tags, split_text
 
 log = logging.getLogger("EchoDesk.LLM")

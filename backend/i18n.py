@@ -399,8 +399,9 @@ def set_locale(locale: Optional[str]) -> str:
 # ---------------------------------------------------------------------------
 # 面向用户的日志（任务十四：INFO 日志双语）
 # ---------------------------------------------------------------------------
-def log_user(logger: Any, key: str, *args: Any, locale: Optional[str] = None, **kwargs: Any) -> str:
-    """写一条**面向用户**的 INFO 日志：文案走语言包，中英双语。
+def log_user(logger: Any, key: str, *args: Any, locale: Optional[str] = None,
+             level: str = "info", **kwargs: Any) -> str:
+    """写一条**面向用户**的日志：文案走语言包，中英双语。
 
     为什么需要这个统一入口（v0.2.2 自测问题修复记录 §12.3/§12.4 的收口要求）：
     后端每一行 stderr 都会被前端投到**界面状态栏**（WPF/Avalonia 两侧都是），
@@ -411,10 +412,15 @@ def log_user(logger: Any, key: str, *args: Any, locale: Optional[str] = None, **
       * **面向用户**（用户正在等、且这句话解释了"在等什么"）→ 用 ``log_user``；
       * **面向开发者**（内部路径、缓存命中次数、状态转储…）→ 继续用普通 ``log.info`` 单语。
 
+    ``level`` 是 v0.2.2 硬编码清查第 5 批加的（默认 ``"info"``，**行为不变**）：
+    会进状态栏的日志里，多数其实是 ``warning``/``error``/``exception``
+    （"用户点了按钮、操作失败"这一类），它们同样要双语，但级别不能降成 INFO ——
+    降级会让 backend_crash.log 与运维视角失真。所以这里按级别转发，不另造入口。
+
     实现上的两个硬性细节：
     1. **绝不写 ``log.info(t(key))``**：那会把译文本身当成 ``%`` 格式串，
        译文里只要出现一个 ``%``（例如"完成 50%"）就会抛异常或吞掉后续参数。
-       所以这里固定用 ``logger.info("%s", text)``。
+       所以这里固定用 ``logger.<level>("%s", text)``。
     2. 文案**在调用时**解析（不是导入时）：``set_locale`` 由前端在启动后触发，
        早于它的日志只能落到默认语言 —— 这是设计约束，见记录 §12.3。
 
@@ -425,5 +431,5 @@ def log_user(logger: Any, key: str, *args: Any, locale: Optional[str] = None, **
         text = text.format(*args)
     # 放到 `text` 之后再拼 locale 变量，避免调用方漏传时静默出错（目前仅用于将来扩展）
     _ = locale
-    logger.info("%s", text)
+    getattr(logger, level)("%s", text)
     return text

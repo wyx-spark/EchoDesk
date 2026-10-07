@@ -4302,7 +4302,7 @@ def main() -> None:
             backend.warmup()
             backend.touch_model_usage()   # 新增四：记录模型最后使用时间
     except Exception as e:
-        log.exception("后端初始化失败")
+        log_user(log, "sys.log_backend_init_failed", level="exception")
         # 向 stdout 输出一条错误响应，前端首条请求即可读到
         print(json.dumps({"type": "system", "content": _t("sys.backend_init_failed", error=e)},
                          ensure_ascii=False), flush=True)

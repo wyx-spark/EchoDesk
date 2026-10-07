@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from i18n import t as _t
+
 # 上下文窗口的硬性下限（低于此值无法正常对话）
 MIN_CONTEXT = 512
 

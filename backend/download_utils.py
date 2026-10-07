@@ -7,6 +7,8 @@ from functools import partial
 from typing import Callable, Iterable, Optional, Tuple
 
 from huggingface_hub import HfApi, hf_hub_download
+
+from i18n import t as _t
 from tqdm import tqdm
 
 
