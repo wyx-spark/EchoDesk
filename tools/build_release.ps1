@@ -1051,7 +1051,12 @@ if ((Test-Path $SessionFile) -and -not $KeepSession) {
 # ---------- 7. 写入版本资源与图标 ----------
 if (Test-Path $Rcedit) {
     Write-Step "写入前端版本资源与图标（rcedit）"
-    Invoke-Native "cmd" @("/c", "`"$Root\tools\set_metadata.bat`" `"$AppOut`"") "元数据写入"
+    # 版本号**必须传进去**（v0.2.2 裁定① 之后 set_metadata.bat 不再有写死的默认值）：
+    # `$Version` 是上面从 backend\version.py 派生的三段式，这里补成版本资源要的四段式。
+    # 【实测踩到】裁定① 里我在 set_metadata.bat 加了"版本必填"，却**漏改了这个调用点**，
+    # 于是重打包在"元数据写入"这一步直接失败（退出码 2）——单看两个文件各自都对，
+    # 错在**接线**上。验证一个"参数化"的改动，必须跑到调用方为止。
+    Invoke-Native "cmd" @("/c", "`"$Root\tools\set_metadata.bat`" `"$AppOut`" `"$Version.0`"") "元数据写入"
     Write-Ok "app\EchoDesk.exe 元数据与图标已写入（后端由 spec 的 version/icon 写入）"
 }
 
