@@ -78,11 +78,48 @@ $KeepAfterUninstall = @("results\2025-01-01\result.txt")
 # 测试目录放在 artifacts\ 下（不入库），**不能**放 %TEMP%：
 # 第 7 项要断言"%TEMP% 里没有 EchoDesk 残留"，把安装目标放进 %TEMP% 就自相矛盾了。
 $TestRoot = Join-Path $Root "artifacts\installer-test"
-Remove-Item $TestRoot -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Path $TestRoot -Force | Out-Null
 
+# 【清理顺序（v0.2.2 裁定②）】先**卸载上一次留下的安装**，再删目录 —— 不能反过来。
+# 旧实现是"`Remove-Item $TestRoot` 在最前面、遍历 `$TestRoot` 找旧安装卸载在后面"，
+# 于是：上一次跑到一半被中断时，卸载器（在 $TestRoot 里）**先被删掉**，
+# 那个安装记录就再也没人能卸载 —— 注册表里的孤儿记录清不掉，且每次中断都多留一条。
 $StartMenuDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\EchoDesk"
 $DesktopLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) "EchoDesk.lnk"
+
+if (Test-Path $TestRoot) {
+    foreach ($d in @(Get-ChildItem $TestRoot -Directory -ErrorAction SilentlyContinue)) {
+        [void](Invoke-SilentUninstall $d.FullName)
+    }
+    Remove-Item $TestRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+New-Item -ItemType Directory -Path $TestRoot -Force | Out-Null
+
+# 再兜一层：卸载器本身已经不在（目录被删/被中断）时，注册表里会留下指向本测试目录的孤儿记录。
+# 这类记录**无法靠卸载器清除**（可执行文件已不在），只能直接删注册表项。
+# 只处理 InstallLocation 指向本测试目录的记录，不碰用户机器上的正式安装。
+$OrphanKeys = @("HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+                "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+                "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*")
+$orphans = @()
+foreach ($k in $OrphanKeys) {
+    $orphans += @(Get-ItemProperty $k -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.DisplayName -like "EchoDesk*" -and $_.InstallLocation -and
+            $_.InstallLocation -like "*artifacts\installer-test*"
+        })
+}
+foreach ($o in $orphans) {
+    $sub = $o.PSChildName
+    foreach ($root in @("HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall")) {
+        $path = Join-Path $root $sub
+        if (Test-Path $path) {
+            Remove-Item $path -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "    [清理] 移除孤儿卸载记录：$($o.DisplayName) @ $($o.InstallLocation)" -ForegroundColor DarkGray
+        }
+    }
+}
 
 $results = New-Object System.Collections.ArrayList
 function Check([string]$Name, [scriptblock]$Body) {
@@ -167,9 +204,7 @@ function Invoke-SilentUninstall([string]$Dir) {
 }
 
 # 验收开始前先清掉可能存在的旧安装（同一个 AppId，避免上一次的残留干扰）
-foreach ($d in @(Get-ChildItem $TestRoot -Directory -ErrorAction SilentlyContinue)) {
-    [void](Invoke-SilentUninstall $d.FullName)
-}
+# —— 这一步已经在上面做过（顺序已修正：**先卸载、后删目录**），这里只清快捷方式。
 Remove-Item $StartMenuDir -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $DesktopLnk -Force -ErrorAction SilentlyContinue
 

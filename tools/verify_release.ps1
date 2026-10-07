@@ -43,6 +43,55 @@ $Out = Join-Path $Root "publish\EchoDesk-v$Version"
 $AppOut = Join-Path $Out "app"
 $BackendExe = Join-Path $AppOut "backend\EchoDeskBackend.exe"
 
+# ---------------------------------------------------------------------------
+# 可重入性隔离（v0.2.2 裁定②）
+#
+# 现象：界面类检查会**启动被测程序**，而便携布局下程序把 `ui_state.json`（窗口位置/字号/
+# 主题/语言）写在发布树根 —— 这是设计行为（见 build_release.ps1 的目录说明）。
+# 但后面"全英文命名 + 无过程文档 + 无运行期残留"那条断言要求发布树里没有运行期文件，
+# 于是**跑过一次之后第二次跑就红**：门禁不可重入。
+#
+# 修法（裁定给的第二种做法：检查前后做隔离）：
+#   * 在任何检查之前先清掉**程序自己该产生的那些状态文件**（白名单）；
+#   * 界面检查跑完再清一次。
+# 断言**没有放宽**：白名单之外的任何残留依旧会被那条断言抓住。
+# 白名单必须与那条断言里列的名字一致（两处同源，改一处要改两处）。
+$RuntimeStateNames = @('ui_state.json', 'snippets.json', 'browser_state.json',
+                       'frontend_crash.log', 'backend_crash.log', 'automation_log.jsonl',
+                       'skills_local.json', 'summary_cache.json', 'market_cache.json',
+                       'skills_dev.log', 'automation_templates.json', 'models_registry.json')
+function Clear-ReleaseRuntimeState {
+    param([string]$ReleaseRoot)
+    $removed = @()
+    if (-not (Test-Path -LiteralPath $ReleaseRoot)) { return $removed }
+    foreach ($name in $RuntimeStateNames) {
+        # 三个位置都要看：发布树根、app\、以及 app\backend\（后端崩溃日志写在**后端 exe 旁边**，
+        # 第一次实现只看了前两处，于是 `backend_crash.log` 没被清掉、断言继续红）。
+        foreach ($candidate in @((Join-Path $ReleaseRoot $name),
+                                 (Join-Path (Join-Path $ReleaseRoot "app") $name),
+                                 (Join-Path (Join-Path (Join-Path $ReleaseRoot "app") "backend") $name))) {
+            if (-not (Test-Path -LiteralPath $candidate)) { continue }
+            # **崩溃日志只有是空的才删**：后端启动时就会建这个文件，正常情况 0 字节；
+            # 一旦里面真有内容，那是**真实崩溃的证据**，必须留在原地让断言报出来，
+            # 而不是被"清理"掉把问题抹平。
+            if ($name -like "*crash.log") {
+                $size = (Get-Item -LiteralPath $candidate).Length
+                if ($size -gt 0) {
+                    Write-Host "    [保留] $candidate 有内容（$size 字节）——疑似真实崩溃，不清理，留给断言报出" -ForegroundColor Yellow
+                    continue
+                }
+            }
+            Remove-Item -LiteralPath $candidate -Force -ErrorAction SilentlyContinue
+            $removed += $candidate
+        }
+    }
+    return $removed
+}
+$preClean = Clear-ReleaseRuntimeState -ReleaseRoot $Out
+if ($preClean.Count -gt 0) {
+    Write-Host "版本校验前：移除上一次运行留下的界面状态文件 $($preClean.Count) 个（保证可重入）" -ForegroundColor DarkGray
+}
+
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 
@@ -548,6 +597,9 @@ try {
     }
 
     # ---------- 4. 需要交互式桌面的项 ----------
+    #
+    # 可重入性隔离见文件头部 `Clear-ReleaseRuntimeState` 的说明：**跑前**那一次已经在
+    # 所有检查之前做了（脚本开头、无条件），这里只负责**跑后**再清一次。
     if ($SkipGui) {
         Write-Host "[SKIP] UI 探针 / 像素校验（-SkipGui）" -ForegroundColor Yellow
     }
@@ -613,6 +665,15 @@ try {
             Invoke-Native "ui-pixels" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
                                                      "-File", "tools\check_ui_pixels.ps1", "-Theme", "both")
             "通过"
+        }
+
+        # 跑后再清一次：上面几个检查都启动过被测程序，便携布局下会把界面状态写回发布树根。
+        # 不清的话，**下一次**跑 verify_release 时第 167 行那条"无运行期残留"就会红 ——
+        # 那正是裁定② 说的"门禁不可重入"。清掉的是程序**本来就该产生**的状态文件（白名单），
+        # 白名单之外的残留依旧会被那条断言抓住。
+        $afterProbe = Clear-ReleaseRuntimeState -ReleaseRoot $Out
+        if ($afterProbe.Count -gt 0) {
+            Write-Host "    [清理] 移除界面探针运行后产生的状态文件 $($afterProbe.Count) 个（下次运行可重入）" -ForegroundColor DarkGray
         }
     }
 
