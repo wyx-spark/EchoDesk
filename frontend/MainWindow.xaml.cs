@@ -221,6 +221,10 @@ public partial class MainWindow : Window
         AddMessage("system", Loc.T("main.connecting", "⏳ 正在连接后端，请稍候..."));
         // 实时显示后端起模型下载等 stderr 进度
         _backend.StderrReceived += Backend_StderrReceived;
+        // v0.2.2 第 4 批：宿主的**结构化**进度事件（后端在处理非流式请求期间主动发来）。
+        // 渲染成"活消息"——同一条系统气泡就地更新，而不是像 stderr 那样只在状态栏闪一下。
+        // WPF 侧同样要接：这条协议扩展是给两个前端共用的，只改一个会让另一个漏掉进度。
+        _backend.HostProgressReceived += Backend_HostProgressReceived;
         // 后端异常退出时在对话框提示，避免用户只看上方状态栏
         _backend.ProcessExited += Backend_ProcessExited;
         try
@@ -943,6 +947,22 @@ public partial class MainWindow : Window
                 StatusText.Text = SimplifyStatus(line.Trim());
             });
         }
+    }
+
+    /// <summary>
+    /// 宿主的结构化进度（v0.2.2 第 4 批）：后端在处理非流式请求期间主动发来，
+    /// 已经是一条干净的进度文本（不需要像 stderr 那样先做关键字过滤）。
+    /// 复用同一套 `UpdateLiveStatus` / `SimplifyStatus`，行为与 stderr 那条路一致。
+    /// </summary>
+    private void Backend_HostProgressReceived(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return;
+        Dispatcher.Invoke(() =>
+        {
+            UpdateLiveStatus(text.Trim());
+            StatusText.Text = SimplifyStatus(text.Trim());
+        });
     }
 
     /// <summary>把完整进度写进对话框：复用同一条"活"消息，避免每条百分比都新增一条。</summary>

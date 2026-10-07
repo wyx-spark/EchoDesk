@@ -60,7 +60,7 @@ import shutil
 import sys
 import threading
 import time
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from reasoning import ANSWER as _CH_ANSWER
 from reasoning import REASONING as _CH_REASONING
@@ -233,6 +233,31 @@ def _write(response: Dict[str, Any]) -> None:
     with _io_lock:
         sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
         sys.stdout.flush()
+
+
+# =====================================================================
+# 宿主进度事件（v0.2.2 第 4 批，**经总策划定向放开的唯一一处协议扩展**）
+# =====================================================================
+#
+# 背景：分段摘要的进度本来有两条路 —— 流式请求里走 `summary_progress` 事件，
+# **非流式**的 `/file` 命令则退回 `print(..., file=sys.stderr)`。
+# 后者前端只能当"一行日志"显示，看不出这是进度还是警告。
+#
+# 这条扩展新增一种 stdout 行类型 `{"type": "host_progress", "content": "…"}`，
+# 仅在**非流式请求处理期间**由后端主动发出。三条自我约束，避免污染协议：
+#   1. **只在有请求在处理时发**（`_host_progress_sink` 非 None）；
+#      请求之外一个字节都不多发，所以"空闲时收到意外的 JSON"这种情形不存在。
+#   2. 前端一律"见到就跳过、不当响应"（两个前端都改了各自的 ReadUntilJson），
+#      所以它不会顶替真正的响应行。
+#   3. 没有 sink 时行为**完全不变**（照旧写 stderr），保证老前端与直接跑后端的场景不受影响。
+_host_progress_sink: Optional[Callable[[str], None]] = None
+
+
+def _emit_host_progress(text: str) -> None:
+    """把一条宿主进度写成结构化事件（只在请求处理期间被调用）。"""
+    if not text:
+        return
+    _write({"type": "host_progress", "content": text})
 
 
 class Backend:
@@ -3603,7 +3628,13 @@ class Backend:
                 return
             label = self._summary_progress_text(event)
             if label:
-                print(emoji_mod.prefer(f"📝 {label}"), file=sys.stderr, flush=True)
+                text = emoji_mod.prefer(f"📝 {label}")
+                # v0.2.2 第 4 批：有宿主进度通道就用结构化事件（前端渲染成活消息），
+                # 没有才退回 stderr（直接跑后端 / 老前端的行为一字不变）。
+                if _host_progress_sink is not None:
+                    _host_progress_sink(text)
+                    return
+                print(text, file=sys.stderr, flush=True)
 
         result = self.summarizer.summarize(
             entry.content, source_name=name, force=force, on_progress=_progress,
@@ -4391,7 +4422,15 @@ def main() -> None:
             _write({"type": "system", "content": _t("sys.exit_ack")})
             return
         else:
-            response = backend.handle(request)
+            # v0.2.2 第 4 批：非流式请求处理期间打开"宿主进度"通道，
+            # 让 `/file` 这类动作的分段摘要进度也能以结构化事件送到前端
+            # （此前只能写 stderr，前端当一行日志看待）。处理完立即关掉。
+            global _host_progress_sink
+            _host_progress_sink = _emit_host_progress
+            try:
+                response = backend.handle(request)
+            finally:
+                _host_progress_sink = None
             backend._attach_context(response)  # 附带上下文占用，/clear、/undo 后实时减少
             _write(response)
             backend.save_session()

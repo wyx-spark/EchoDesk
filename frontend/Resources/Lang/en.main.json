@@ -221,6 +221,7 @@
       "missing": "No startup shortcut was found in the program folder.\n\nCreate \"{0}\"?\nAfter that you can just double-click it to start EchoDesk — no need to work out which executable is the entry point.",
       "skipped": "ℹ️ Skipped creating the startup shortcut (won't ask again; you can create one manually).",
       "created": "✅ Startup shortcut created: {0}",
+      "recreated": "🔧 The startup shortcut was broken (usually because the program folder was moved or renamed). It has been recreated:\n{0}",
       "createFailed": "❌ Failed to create the shortcut: {0}",
       "failed": "⚠️ Shortcut handling failed: {0}"
     },

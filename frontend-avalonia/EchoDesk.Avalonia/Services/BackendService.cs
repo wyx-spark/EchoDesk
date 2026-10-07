@@ -1,4 +1,4 @@
-// 后端子进程管理与 JSON 行协议（移植自 frontend/Services/BackendService.cs，任务书 任务二）。
+﻿// 后端子进程管理与 JSON 行协议（移植自 frontend/Services/BackendService.cs，任务书 任务二）。
 //
 // 这是"复用而不是重写"的核心证据：协议层（stdin 写一行 JSON / stdout 读一行 JSON、
 // 单请求闸门、空闲超时、流式 delta 双通道）在 WPF 版已经被验证过 4 轮，跨平台版
@@ -717,7 +717,47 @@ public sealed class BackendService : IDisposable
                 throw new InvalidOperationException(Loc.T("main.error.noResponse", "无响应"));
             if (!line.TrimStart().StartsWith('{'))
                 continue;
+            // v0.2.2 第 4 批：`host_progress` 是后端在处理**非流式**请求期间主动发的
+            // 进度事件（宿主进度，见 backend/main.py 的 `_emit_host_progress`）。
+            // 它**不是**响应，必须在这里跳过并转交出去 —— 否则会被当成响应返回，
+            // 调用方拿到一个只有 content 的进度行，看起来就是"请求成功了但什么都没做"。
+            if (TryReadHostProgress(line, out string hostText))
+            {
+                HostProgressReceived?.Invoke(hostText);
+                continue;
+            }
             return line;
+        }
+    }
+
+    /// <summary>宿主进度事件（后端在处理非流式请求期间主动发来）。</summary>
+    public event Action<string>? HostProgressReceived;
+
+    /// <summary>判断一行是不是宿主进度事件；是则取出它的正文。</summary>
+    private static bool TryReadHostProgress(string line, out string content)
+    {
+        content = "";
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(line);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+            if (!doc.RootElement.TryGetProperty("type", out JsonElement type)
+                || type.ValueKind != JsonValueKind.String
+                || type.GetString() != "host_progress")
+            {
+                return false;
+            }
+            if (doc.RootElement.TryGetProperty("content", out JsonElement c)
+                && c.ValueKind == JsonValueKind.String)
+            {
+                content = c.GetString() ?? "";
+            }
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 
@@ -857,3 +897,4 @@ public sealed class BackendService : IDisposable
         _requestGate.Dispose();
     }
 }
+

@@ -431,7 +431,47 @@ public sealed class BackendService : IDisposable
                 Debug.WriteLine($"[backend:ignored] {line}");
                 continue;
             }
+            // v0.2.2 第 4 批：`host_progress` 是后端在处理**非流式**请求期间主动发的
+            // 宿主进度事件（见 backend/main.py 的 `_emit_host_progress`），**不是响应**。
+            // 在这里跳过并转交出去 —— 否则它会被当成响应返回给调用方，
+            // 表现就是"请求成功了但什么都没做"。
+            if (TryReadHostProgress(line, out string hostText))
+            {
+                HostProgressReceived?.Invoke(hostText);
+                continue;
+            }
             return line;
+        }
+    }
+
+    /// <summary>宿主进度事件（后端在处理非流式请求期间主动发来；v0.2.2 第 4 批）。</summary>
+    public event Action<string>? HostProgressReceived;
+
+    /// <summary>判断一行是不是宿主进度事件；是则取出它的正文。</summary>
+    private static bool TryReadHostProgress(string line, out string content)
+    {
+        content = "";
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(line);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+            if (!doc.RootElement.TryGetProperty("type", out JsonElement type)
+                || type.ValueKind != JsonValueKind.String
+                || type.GetString() != "host_progress")
+            {
+                return false;
+            }
+            if (doc.RootElement.TryGetProperty("content", out JsonElement c)
+                && c.ValueKind == JsonValueKind.String)
+            {
+                content = c.GetString() ?? "";
+            }
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 

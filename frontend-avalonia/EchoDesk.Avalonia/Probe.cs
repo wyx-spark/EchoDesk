@@ -33,6 +33,7 @@ using Avalonia.Automation;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Controls.Documents;
 using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.VisualTree;
 using Avalonia.Threading;
 using EchoDesk.Avalonia.Services;
@@ -130,6 +131,10 @@ internal static class Probe
                 else if (target.Equals("upload", StringComparison.OrdinalIgnoreCase))
                 {
                     ok = await RunUploadProbeAsync(desktop);
+                }
+                else if (target.Equals("theme", StringComparison.OrdinalIgnoreCase))
+                {
+                    ok = await Task.FromResult(RunThemeProbeAsync(desktop));
                 }
                 else
                 {
@@ -859,6 +864,158 @@ internal static class Probe
         return ok;
     }
 
+    /// <summary>
+    /// 主题跟随系统**实测**（v0.2.2 第 4 批，差异清单 §F5 第 4 条）：`--probe theme`。
+    ///
+    /// 差异清单此前把这一条记成"未验证：Avalonia 走 ThemeVariant.Default 由系统驱动，
+    /// 无需显式钩子"。**"没有显式钩子"与"确实生效"是两件事** —— 本模式真的去改
+    /// 系统的"应用使用浅色/深色主题"开关，等一等，看 `ActualThemeVariant` 有没有跟着翻。
+    ///
+    /// 实现说明（为什么这里允许 P/Invoke）：
+    /// 改注册表**不会**自动通知已运行的进程 —— 需要广播 `WM_SETTINGCHANGE`。
+    /// 产品代码里没有任何 P/Invoke（跨平台工程的红线），但**探针是只在 Windows 上跑的
+    /// 测试工具**，没有别的办法把这条链路真的走通。非 Windows 平台直接报 SKIP（不报 PASS）。
+    /// </summary>
+    private static bool RunThemeProbeAsync(IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        bool ok = true;
+        void Check(string name, bool pass, string detail)
+        {
+            Console.WriteLine($"  [{(pass ? "PASS" : "FAIL")}] {name}——{detail}");
+            if (!pass)
+                ok = false;
+        }
+
+        // ① 机制面：theme=auto 时应当把决定权交给平台（RequestedThemeVariant = Default）
+        string original = App.State.Settings.Theme;
+        App.State.Settings.Theme = "auto";
+        App.State.ApplyTheme();
+        Check("theme=auto 时把决定权交给平台",
+            Application.Current?.RequestedThemeVariant == ThemeVariant.Default,
+            $"RequestedThemeVariant={Application.Current?.RequestedThemeVariant}");
+
+        var window = new MainWindow();
+        desktop.MainWindow = window;
+
+        if (!OperatingSystem.IsWindows())
+        {
+            Console.WriteLine("  [SKIP] 非 Windows 平台：不做改系统主题的实测（不写 PASS）");
+            App.State.Settings.Theme = original;
+            App.State.ApplyTheme();
+            return ok;
+        }
+
+        const string key = @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
+        object? before = null;
+        try
+        {
+            before = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(key)?.GetValue("AppsUseLightTheme");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  [SKIP] 读不到系统主题注册表项（{ex.Message}），实测无法进行（不写 PASS）");
+            App.State.Settings.Theme = original;
+            App.State.ApplyTheme();
+            return ok;
+        }
+
+        int originalValue = before is int i ? i : 1;
+        try
+        {
+            int target = originalValue == 0 ? 1 : 0;
+            Microsoft.Win32.Registry.SetValue(key, "AppsUseLightTheme", target);
+            BroadcastSettingChange();
+
+            // 给平台设置一点反应时间（Avalonia 收到 WM_SETTINGCHANGE 后在本进程内转发）
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (DateTime.UtcNow < deadline)
+            {
+                Dispatcher.UIThread.RunJobs();
+                bool expectedDark = target == 0;
+                ThemeVariant seen = Application.Current!.ActualThemeVariant;
+                if (seen != ThemeVariant.Default && (seen == ThemeVariant.Dark) == expectedDark)
+                    break;
+                System.Threading.Thread.Sleep(100);
+            }
+
+            bool expected = target == 0;
+            bool gotDark = Application.Current!.ActualThemeVariant == ThemeVariant.Dark;
+            Check("改系统主题后 ActualThemeVariant 跟着翻（无需重启/重建窗口）",
+                gotDark == expected,
+                $"系统 AppsUseLightTheme {originalValue}→{target}，ActualThemeVariant={Application.Current.ActualThemeVariant}");
+            Check("跟随系统时资源确实按新主题解析（不只是枚举变了）",
+                ThemeResourceChanged(Application.Current.ActualThemeVariant),
+                $"变体 {Application.Current.ActualThemeVariant}");
+        }
+        finally
+        {
+            // **必须还原**：这是用户机器的真实设置，探针不能留下痕迹
+            try
+            {
+                Microsoft.Win32.Registry.SetValue(key, "AppsUseLightTheme", originalValue);
+                BroadcastSettingChange();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  [WARN] 还原系统主题失败：{ex.Message}");
+            }
+            App.State.Settings.Theme = original;
+            App.State.ApplyTheme();
+        }
+
+        return ok;
+    }
+
+    /// <summary>
+    /// 取一对随主题变化的资源，确认"真的换了皮"而不只是枚举翻了。
+    /// 拿不到资源就不下结论（返回 true）—— 资源名可能随主题包变化，不该因此判失败。
+    /// </summary>
+    private static bool ThemeResourceChanged(ThemeVariant variant)
+    {
+        try
+        {
+            if (Application.Current is null || variant == ThemeVariant.Default)
+                return false;
+            Application.Current.TryGetResource("CardBackgroundBrush", ThemeVariant.Light, out object? light);
+            Application.Current.TryGetResource("CardBackgroundBrush", ThemeVariant.Dark, out object? dark);
+            if (light is null || dark is null)
+                return true;
+            return !Equals(light.ToString(), dark.ToString());
+        }
+        catch (Exception)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 广播 <c>WM_SETTINGCHANGE</c>，让已运行的进程知道系统设置变了。
+    /// **只在探针里用**：产品代码不引 P/Invoke（跨平台红线），
+    /// 但"改注册表 → 不广播 → 进程收不到通知"是 Windows 的既定行为，
+    /// 不广播就根本测不出"跟随系统是否即时响应"。
+    /// </summary>
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto,
+        SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, string lParam,
+        uint flags, uint timeout, out IntPtr result);
+
+    private static void BroadcastSettingChange()
+    {
+        const uint WM_SETTINGCHANGE = 0x001A;
+        const uint SMTO_ABORTIFHUNG = 0x0002;
+        const uint HWND_BROADCAST = 0xFFFF;
+        try
+        {
+            // "ImmersiveColorSet"：Windows 用它通知"浅色/深色主题变了"
+            SendMessageTimeout(new IntPtr(HWND_BROADCAST), WM_SETTINGCHANGE, IntPtr.Zero,
+                "ImmersiveColorSet", SMTO_ABORTIFHUNG, 1000, out _);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  [WARN] 广播 WM_SETTINGCHANGE 失败：{ex.Message}");
+        }
+    }
+
     private static async Task<bool> RunMarketProbeAsync(IClassicDesktopStyleApplicationLifetime desktop)
     {
         bool ok = true;
@@ -1030,6 +1187,9 @@ internal static class Probe
             yield return $"{pair.Key}={pair.Value}";
     }
 }
+
+
+
 
 
 

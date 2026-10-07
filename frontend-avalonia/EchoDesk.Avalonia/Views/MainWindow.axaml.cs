@@ -85,6 +85,9 @@ public partial class MainWindow : Window
     /// <summary>待确认下载的模型名（第二次确认才真的下载，见 HandleConfirmModel）。</summary>
     private string _pendingModelDownload = "";
 
+    /// <summary>本次生成的指标是否处于失败态（v0.2.2 第 4 批，对齐 WPF 的 _metricsState == "failed"）。</summary>
+    private bool _metricsFailed;
+
     /// <summary>上一次已知的"模型就绪"状态（用来识别 false → true 的那一次跳变）。</summary>
     private bool? _modelWasReady;
 
@@ -615,6 +618,23 @@ public partial class MainWindow : Window
         }
 
         _state.Backend.StderrReceived += line => Dispatcher.UIThread.Post(() => SetStatus(Trim(line, 120)));
+        // v0.2.2 第 4 批（总策划定向放开的那一处协议扩展）：宿主的**结构化**进度事件
+        // 渲染成"活消息"——同一条系统气泡就地更新，而不是像 stderr 那样只在状态栏闪一下。
+        // 这修的正是差异清单 §F5 第 3 条："后端 stderr 那一行仍只写状态栏"。
+        _state.Backend.HostProgressReceived += text => Dispatcher.UIThread.Post(() =>
+        {
+            if (_progressView is null)
+            {
+                _transcript.Add(new Message("system", Emoji.Prefer(text), "", ""));
+                _progressView = AddMessageView("system", "", "", "");
+                _progressView.ContentHost.Content = BuildPlainText(text);
+            }
+            else
+            {
+                UpdateProgressMessage(text);
+            }
+            SetStatus(Trim(text, 120));
+        });
         _state.Backend.ProcessExited += code => Dispatcher.UIThread.Post(() =>
         {
             AddMessage("system", Loc.T("main.error.backendCrashed", "⚠️ 后端进程意外退出（退出码 {0}）。", code));
@@ -725,7 +745,14 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// 启动快捷方式检测（对齐 WPF 的 `CheckStartupShortcut`）。
-    /// 三种情形：有效 → 什么都不做；存在但失效 → 问是否重建；不存在且用户没拒绝过 → 问是否创建。
+    ///
+    /// **总策划本轮裁定：自动创建**（原来是"只检测与说明，不自动创建"）。
+    /// WPF 的判据是"已存在且有效 → 什么都不做；存在但失效 → 提示重建；
+    /// 不存在且用户没拒绝过 → 建一个"。跨平台版按同一判据，只是产物换成各平台的启动器
+    /// （`.cmd` / `.command` / `.desktop`，见 Services/ShortcutService.cs 的说明）。
+    ///
+    /// 用户拒绝过一次（`ShortcutPromptDeclined`）就不再建 —— 这条与 WPF 一致，
+    /// 也是"自动创建"不至于变成"每次启动都往桌面上写文件"的唯一保障。
     /// </summary>
     private void CheckStartupShortcut()
     {
@@ -733,23 +760,23 @@ public partial class MainWindow : Window
         {
             if (ShortcutService.IsValid())
                 return;
+
             if (ShortcutService.Exists())
             {
-                AddMessage("system", Loc.T("main.shortcut.broken",
-                    "检测到启动快捷方式已失效：\n{0}\n\n（通常是因为程序文件夹被移动或改名）\n\n"
-                    + "替代做法：删掉它并重新创建一个。", ShortcutService.ShortcutPath));
+                // 存在但失效（程序目录被改名/搬家）：直接重建，并说明原因
+                string path = ShortcutService.Create();
+                AddMessage("system", Loc.T("main.shortcut.recreated",
+                    "🔧 检测到启动快捷方式已失效（通常是因为程序文件夹被移动或改名），已重新创建：\n{0}",
+                    path));
                 return;
             }
+
             if (_state.Settings.ShortcutPromptDeclined)
                 return;
-            // 不做模态询问：Avalonia 侧没有 MessageBox，而且"第一次启动就被弹窗拦住"
-            // 本身就是差体验。改成在对话区给出一条带说明的系统消息 + 一键创建的提示，
-            // 用户拒绝过（点了状态行里的"不再询问"）就不再提。
-            AddMessage("system", Loc.T("main.shortcut.missing",
-                "未在程序文件夹内检测到启动快捷方式。\n\n"
-                + "创建后双击它即可启动 EchoDesk，无需分辨哪个可执行文件是入口。\n"
-                + "（可用「设置 → 常规」里的路径信息确认程序位置；本轮不自动创建，避免在用户的"
-                + "桌面上留下未经同意的文件。）"));
+
+            string created = ShortcutService.Create();
+            AddMessage("system", Loc.T("main.shortcut.created",
+                "✅ 已创建启动快捷方式：{0}", created));
         }
         catch (Exception ex)
         {
@@ -1848,6 +1875,10 @@ public partial class MainWindow : Window
         {
             AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
             finalText = _liveAnswer.ToString();
+            // 生成失败：指标行要说"这次是失败的"，否则界面上只留下一串上一次的旧数字，
+            // 看起来像"还在算"（v0.2.2 第 4 批补的失败态，对齐 WPF）
+            _metricsFailed = true;
+            Dispatcher.UIThread.Post(() => ShowMetrics(_liveMetrics));
         }
         finally
         {
@@ -1971,10 +2002,22 @@ public partial class MainWindow : Window
 
     private static string FormatMs(int ms) => ms >= 1000 ? $"{ms / 1000.0:0.#}s" : $"{ms}ms";
 
-    /// <summary>状态区的运行指标（后端实测上报，前端不做估算）。</summary>
+    /// <summary>
+    /// 状态区的运行指标（后端实测上报，前端不做估算）。
+    ///
+    /// **失败态文案**（v0.2.2 第 4 批，差异清单 §F5 第 2 条）：WPF 的指标区分
+    /// running / waiting / done / stopped / **failed**，失败时显示 `main.metrics.failed`。
+    /// 跨平台版此前只有"有值就显示、没值就保持旧值"，生成失败时界面看起来像"还在算" ——
+    /// 这条差异本轮补掉。
+    /// </summary>
     private void ShowMetrics(string text)
     {
         _stripMetrics = text ?? "";
+        if (_metricsFailed)
+        {
+            string failed = Loc.T("main.metrics.failed", "⚠️ 失败");
+            _stripMetrics = _stripMetrics.Length > 0 ? $"{_stripMetrics}  ·  {failed}" : failed;
+        }
         MetricsText.Text = Emoji.Prefer(Trim(_stripMetrics, 120));
         MetricsText.IsVisible = _stripMetrics.Length > 0;
         ToolTip.SetTip(MetricsText, Loc.T("main.metrics.tip", "运行指标：全部由后端实测上报"));
@@ -2002,9 +2045,14 @@ public partial class MainWindow : Window
         // 指标定时刷新与"忙"状态同生共死（v0.2.2 第 3 批）：
         // 空闲时每 500ms 问一次后端纯属浪费，而生成中不刷新就看不出速度变化。
         if (busy)
+        {
+            _metricsFailed = false;   // 新一轮生成：清掉上一次的失败标记
             StartMetricsTimer();
+        }
         else
+        {
             StopMetricsTimer();
+        }
     }
 
     // -----------------------------------------------------------------
@@ -3136,6 +3184,7 @@ public partial class MainWindow : Window
 
     private void StopMetricsTimer() => _metricsTimer?.Stop();
 }
+
 
 
 
