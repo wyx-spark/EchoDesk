@@ -365,6 +365,18 @@
       "cancel": "Cancel"
     },
     "error": {
+      "backendMissingEnv": "  · the path given by the ECHODESK_BACKEND environment variable",
+      "backendMissingHasPython": "Python is available ({0}), but backend/{1} was not found.",
+      "backendMissingHeader": "Backend not found: this platform ({0}) expects the backend file backend/{1}.",
+      "backendMissingHowto": "How to fix: install the release package for this platform, or point ECHODESK_BACKEND at the packaged backend executable.",
+      "backendMissingNoPython": "No usable Python interpreter was found (tried python3 / python), so the backend cannot be started from source either.",
+      "backendMissingSearched": "Locations searched:",
+      "backendMissingSource": "  · backend/{0} up to 6 levels above the program folder (running from source)",
+      "badJsonResponse": "The backend returned a non-JSON response: {0}",
+      "noResponseExited": "No response (the backend process may have exited).",
+      "notRunning": "The backend is not running.",
+      "startProcessFailedDetail": "Could not start the backend process: {0} (command: {1})",
+      "startupTimeout": "Timed out waiting for the backend to become ready ({0} s).",
       "backendCrashed": "⚠️ The backend process exited unexpectedly (exit code {0}). Check backend_crash.log in the program folder, or restart EchoDesk.",
       "noResponse": "No response",
       "settingsOpenFailed": "❌ Failed to open the settings window: {0}",

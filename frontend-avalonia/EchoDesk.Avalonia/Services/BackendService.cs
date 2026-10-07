@@ -315,17 +315,24 @@ public sealed class BackendService : IDisposable
         (string FileName, string[] PrefixArgs)? python = PlatformInfo.Current.FindPython();
         var lines = new List<string>
         {
-            $"未找到后端：本平台（{PlatformInfo.Current.DisplayName}）期望的后端文件是 backend/{exeName}。",
-            "已查找的位置：",
-            $"  · 环境变量 ECHODESK_BACKEND 指定的路径",
+            Loc.T("main.error.backendMissingHeader",
+                "未找到后端：本平台（{0}）期望的后端文件是 backend/{1}。",
+                PlatformInfo.Current.DisplayName, exeName),
+            Loc.T("main.error.backendMissingSearched", "已查找的位置："),
+            Loc.T("main.error.backendMissingEnv", "  · 环境变量 ECHODESK_BACKEND 指定的路径"),
             $"  · {Path.Combine(AppContext.BaseDirectory, "backend", exeName)}",
             $"  · {Path.Combine(AppContext.BaseDirectory, exeName)}",
-            $"  · 从程序目录向上 6 层的 backend/{PlatformInfo.Current.BackendScriptName}（源码运行方式）",
+            Loc.T("main.error.backendMissingSource",
+                "  · 从程序目录向上 6 层的 backend/{0}（源码运行方式）",
+                PlatformInfo.Current.BackendScriptName),
         };
         lines.Add(python is null
-            ? "本机没有可用的 Python 解释器（已试 python3 / python），因此也无法用源码方式启动后端。"
-            : $"本机有 Python（{python.Value.FileName}），但没找到 backend/{PlatformInfo.Current.BackendScriptName}。");
-        lines.Add("处理办法：安装对应平台的发布包，或把 ECHODESK_BACKEND 指向打包好的后端可执行文件。");
+            ? Loc.T("main.error.backendMissingNoPython",
+                "本机没有可用的 Python 解释器（已试 python3 / python），因此也无法用源码方式启动后端。")
+            : Loc.T("main.error.backendMissingHasPython", "本机有 Python（{0}），但没找到 backend/{1}。",
+                python.Value.FileName, PlatformInfo.Current.BackendScriptName));
+        lines.Add(Loc.T("main.error.backendMissingHowto",
+            "处理办法：安装对应平台的发布包，或把 ECHODESK_BACKEND 指向打包好的后端可执行文件。"));
         return string.Join(Environment.NewLine, lines);
     }
 
@@ -376,14 +383,16 @@ public sealed class BackendService : IDisposable
         }
         catch (Exception ex)
         {
-            LaunchError = $"启动后端进程失败：{ex.Message}（命令：{_launch.CommandLine}）";
+            LaunchError = Loc.T("main.error.startProcessFailedDetail",
+                "启动后端进程失败：{0}（命令：{1}）", ex.Message, _launch.CommandLine);
             if (verbose)
                 Console.WriteLine(LaunchError);
             return Task.FromResult(new StartResult { Ok = false, Command = _launch.CommandLine, Error = LaunchError });
         }
         if (_process is null)
         {
-            LaunchError = "启动后端进程失败：Process.Start 返回 null。";
+            // 复用 WPF 侧的同一个键（"无法启动后端进程。"）：两侧同一批错误文案，别再各写一份
+            LaunchError = Loc.T("main.error.startProcessFailed", "无法启动后端进程。");
             return Task.FromResult(new StartResult { Ok = false, Command = _launch.CommandLine, Error = LaunchError });
         }
 
@@ -455,7 +464,8 @@ public sealed class BackendService : IDisposable
             TimeSpan remain = deadline - DateTime.UtcNow;
             if (remain <= TimeSpan.Zero)
             {
-                LastError = $"等待后端就绪超时（{timeout.TotalSeconds:0} 秒）。";
+                LastError = Loc.T("main.error.startupTimeout", "等待后端就绪超时（{0} 秒）。",
+                    timeout.TotalSeconds);
                 return null;
             }
             string? line;
@@ -465,12 +475,14 @@ public sealed class BackendService : IDisposable
             }
             catch (BackendTimeoutException)
             {
-                LastError = $"等待后端就绪超时（{timeout.TotalSeconds:0} 秒）。";
+                LastError = Loc.T("main.error.startupTimeout", "等待后端就绪超时（{0} 秒）。",
+                    timeout.TotalSeconds);
                 return null;
             }
             if (line is null)
             {
-                LastError = "后端未完成启动即退出。";
+                // 复用 WPF 侧的键（同一句文案）
+                LastError = Loc.T("main.error.exitedDuringStartup", "后端未完成启动即退出。");
                 return null;
             }
             if (!line.TrimStart().StartsWith('{'))
@@ -519,7 +531,7 @@ public sealed class BackendService : IDisposable
         }
         catch (JsonException ex)
         {
-            LastError = "后端返回了非 JSON 响应：" + ex.Message;
+            LastError = Loc.T("main.error.badJsonResponse", "后端返回了非 JSON 响应：{0}", ex.Message);
             return null;
         }
     }
@@ -533,7 +545,8 @@ public sealed class BackendService : IDisposable
     {
         if (_writer is null || _reader is null)
         {
-            LastError = "后端尚未启动。";
+            // 复用 WPF 侧的键
+            LastError = Loc.T("main.error.notStarted", "后端尚未启动。");
             return null;
         }
         try
@@ -567,7 +580,7 @@ public sealed class BackendService : IDisposable
     {
         if (_writer is null || !IsRunning)
         {
-            LastError = "后端未在运行。";
+            LastError = Loc.T("main.error.notRunning", "后端未在运行。");
             return false;
         }
         try
@@ -601,7 +614,7 @@ public sealed class BackendService : IDisposable
         Action<string, string, bool>? onDeltaChannel = null)
     {
         if (_writer is null || _reader is null)
-            throw new InvalidOperationException("后端尚未启动。");
+            throw new InvalidOperationException(Loc.T("main.error.notStarted", "后端尚未启动。"));
         await AcquireGateAsync(queueTimeout, cancellationToken);
         try
         {
@@ -613,7 +626,8 @@ public sealed class BackendService : IDisposable
             {
                 string? line = await ReadLineAsync(idleTimeout, cancellationToken);
                 if (line is null)
-                    throw new InvalidOperationException("无响应（后端进程可能已退出）。");
+                    throw new InvalidOperationException(Loc.T("main.error.noResponseExited",
+                        "无响应（后端进程可能已退出）。"));
                 if (!line.TrimStart().StartsWith('{'))
                     continue;
 

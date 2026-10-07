@@ -365,6 +365,18 @@
       "cancel": "取消"
     },
     "error": {
+      "backendMissingEnv": "  · 环境变量 ECHODESK_BACKEND 指定的路径",
+      "backendMissingHasPython": "本机有 Python（{0}），但没找到 backend/{1}。",
+      "backendMissingHeader": "未找到后端：本平台（{0}）期望的后端文件是 backend/{1}。",
+      "backendMissingHowto": "处理办法：安装对应平台的发布包，或把 ECHODESK_BACKEND 指向打包好的后端可执行文件。",
+      "backendMissingNoPython": "本机没有可用的 Python 解释器（已试 python3 / python），因此也无法用源码方式启动后端。",
+      "backendMissingSearched": "已查找的位置：",
+      "backendMissingSource": "  · 从程序目录向上 6 层的 backend/{0}（源码运行方式）",
+      "badJsonResponse": "后端返回了非 JSON 响应：{0}",
+      "noResponseExited": "无响应（后端进程可能已退出）。",
+      "notRunning": "后端未在运行。",
+      "startProcessFailedDetail": "启动后端进程失败：{0}（命令：{1}）",
+      "startupTimeout": "等待后端就绪超时（{0} 秒）。",
       "backendCrashed": "⚠️ 后端进程意外退出（退出码 {0}）。请检查程序所在目录的 backend_crash.log，或重启 EchoDesk。",
       "noResponse": "无响应",
       "settingsOpenFailed": "❌ 打开设置窗口失败：{0}",
