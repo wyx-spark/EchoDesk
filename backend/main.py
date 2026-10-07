@@ -107,7 +107,7 @@ with _suppress_stdout():
     # 注入上下文"的闸门，现已取消（详见 _stream_chat 里 include_file 的说明）。
     from conversation import ConversationManager, REPEAT_INTENT
     from download_utils import check_model, download_model, find_best_model
-    from file_parser import localize_error, parse_file_with_wps
+    from file_parser import is_parse_error, localize_error, parse_file_with_wps
     from gguf_meta import format_bytes as _format_bytes
     from gguf_meta import resolve_context_window
     from llm_engine import LazyLLMEngine, LLMEngine, NoModelError, StreamStats
@@ -3358,7 +3358,7 @@ class Backend:
         """
         name = os.path.basename(filepath) or filepath
         content = parse_file_with_wps(filepath, self.config.file_max_chars)
-        if content.startswith(("WPS读取失败", "解析失败", "文件内容为空", "不支持的文件类型")):
+        if is_parse_error(content):
             # 这里曾直接拼 `f"❌ {content}"`，把这批**中文**解析失败串原样送到界面：
             # 英文界面下用户看到整句中文（`file_parser.py` 的 11 行错误串）。
             # `localize_error()` 就是为这条路径写的，此前只被 command_handler 的两处调用，

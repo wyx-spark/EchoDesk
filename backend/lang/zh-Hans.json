@@ -530,6 +530,11 @@
     "mcp_no_servers": "当前没有配置 MCP Server。在设置 → 智能体 → MCP，或直接改 config.json 的 mcp.servers。"
   },
   "file": {
+    "wps_missing_pywin32": "本机缺少 pywin32（{error}），无法使用 WPS COM 读取",
+    "wps_unavailable_reason": "当前平台不支持 WPS COM 接口（该能力仅 Windows 提供）。",
+    "legacy_needs_windows": "{ext} 是旧版二进制格式，需要 Windows 上的 WPS COM 接口才能读取；当前平台不提供该能力。\n替代做法：① 在 Windows 机器上另存为 {ext}x 后来读；② 用 MCP/插件接入外部转换服务；③ 安装提供该扩展名的技能（技能可注册自己的解析器）。\nWPS: {wps}\n解析: {builtin}",
+    "page_header": "【第 {page} 页】",
+    "sheet_header": "【工作表】{name}",
     "wps_failed": "WPS读取失败: {error}",
     "legacy_needs_wps": "WPS读取失败，且 {ext} 为旧版二进制格式，内置解析器不支持。\n请安装 WPS/Office 后重试，或先另存为 {ext}x。\nWPS: {wps}",
     "both_failed": "WPS读取失败，内置解析也失败。\nWPS: {wps}\n解析: {builtin}",

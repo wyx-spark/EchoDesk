@@ -63,9 +63,11 @@ def _wps_available() -> bool:
 
 def _wps_unavailable_reason() -> str:
     """不可用的原因：分清"平台没有这个能力"与"本机缺 pywin32"——两者的处理办法完全不同。"""
+    from i18n import t as _t
+
     if not _platform_is_windows():
-        return "当前平台不支持 WPS COM 接口（该能力仅 Windows 提供）"
-    return f"本机缺少 pywin32（{_WIN32_IMPORT_ERROR}），无法使用 WPS COM 读取"
+        return _t("file.wps_unavailable_reason")
+    return _t("file.wps_missing_pywin32", error=_WIN32_IMPORT_ERROR)
 
 # 技能注册的扩展名解析器：{".ofd": (技能id, 处理函数(filepath) -> str)}
 _SKILL_PARSERS: Dict[str, "tuple[str, Callable[[str], str]]"] = {}
@@ -133,21 +135,48 @@ _BUILTIN_EXTS = {".docx", ".xlsx", ".xlsm", ".xls", ".pptx", ".pdf"}
 # ---------------------------------------------------------------------------
 # 解析失败标记（多语言说明，v0.2.1）
 # ---------------------------------------------------------------------------
-# 解析器用这几个中文前缀作为**机器可读的失败标记**（与界面语言无关，因此不会
-# 因为切换语言而失效）；展示给用户前请调用 localize_error() 转成当前语言。
-_ERROR_MARKERS = ("WPS读取失败", "解析失败", "文件内容为空", "不支持的文件类型")
+# v0.2.2 硬编码清查第 6 批改造：标记与正文**分开**。
+#   原先中文前缀既是"机器可读标记"、又要显示给用户，于是正文只能写死中文 ——
+#   英文界面下 localize_error() 只能翻前缀，细节（"技能「x」的 docx 解析器出错…"）原样是中文。
+#   现在：
+#     * **标记**是下面的 ASCII 常量，只给 is_parse_error() 判定用，**不进界面**；
+#     * **正文**由语言包产出（file.parse_failed / file.skill_parser_failed / file.pdf_encrypted …），
+#       产生时就是当前语言，因此 localize_error() 只需把标记剥掉。
+_ERROR_MARKS = ("[!WPS]", "[!PARSE]", "[!EMPTY]", "[!EXT]")
+#: 旧版中文前缀仍然识别（兼容历史上由旧代码路径产出的字符串，例如已落盘的旧错误串）
+_LEGACY_MARKERS = ("WPS读取失败", "解析失败", "文件内容为空", "不支持的文件类型")
+
+
+def _err(mark: str, key: str, **kwargs) -> str:
+    """构造一条解析失败串：**标记 + 当前语言正文**（正文已可直接显示）。"""
+    from i18n import t as _t
+
+    return mark + _t(key, **kwargs)
+
+
+def _is_wps_failure(text: str) -> bool:
+    """WPS 读取是不是"没成功"（新标记与旧中文前缀都认）。"""
+    return str(text or "").startswith(("[!WPS]", "WPS读取失败"))
 
 
 def is_parse_error(text: str) -> bool:
-    """判断解析器返回的是不是失败提示（机器标记，见上）。"""
-    return bool(text) and text.startswith(_ERROR_MARKERS)
+    """判断解析器返回的是不是失败提示（机器标记，语言无关，见上）。"""
+    raw = str(text or "")
+    return bool(raw) and raw.startswith(_ERROR_MARKS + _LEGACY_MARKERS)
 
 
 def localize_error(text: str) -> str:
-    """把解析失败标记翻译成当前界面语言；无法识别时原样返回。"""
+    """把解析失败串转成"当前语言、可直接显示"的文本。
+
+    正文在**产生时**已按当前语言渲染（见 ``_err``），这里剥掉机器标记即可；
+    对旧式"中文前缀 + 中文正文"的串，仍按前缀映射到语言包键（兼容分支）。
+    """
     from i18n import t as _t
 
     raw = str(text or "")
+    for mark in _ERROR_MARKS:
+        if raw.startswith(mark):
+            return raw[len(mark):]
     if raw.startswith("WPS读取失败: "):
         return _t("file.wps_failed", error=raw[len("WPS读取失败: "):])
     if raw.startswith("WPS读取失败，且 "):
@@ -173,28 +202,20 @@ def parse_file_with_wps(filepath: str, max_chars: int = 0) -> str:
     ext = os.path.splitext(filepath)[1].lower()
     if ext in _WPS_PROGIDS:
         wps_result = _read_office_with_wps(filepath, max_chars)
-        if not wps_result.startswith("WPS读取失败"):
+        if not _is_wps_failure(wps_result):
             return wps_result
         fallback = _parse_builtin(filepath, ext)
-        if not fallback.startswith(("解析失败", "不支持的文件类型")):
+        if not is_parse_error(fallback):
             return fallback
         if ext in _LEGACY_ONLY_WPS:
             if _platform_is_windows():
-                return (
-                    f"WPS读取失败，且 {ext} 为旧版二进制格式，内置解析器不支持。\n"
-                    f"请安装 WPS/Office 后重试，或先另存为 {ext}x。\nWPS: {wps_result}"
-                )
+                # 正文来自语言包（zh 值自带"WPS读取失败，且 …"的措辞），标记由 _err 加在前面
+                return _err("[!WPS]", "file.legacy_needs_wps", ext=ext) + f"\nWPS: {wps_result}"
             # 非 Windows：旧版二进制格式（.doc/.xls）只有 WPS COM 能读 —— 这是
             # 任务五里"必须给替代路径"的典型场景，所以文案要给三条可执行的做法。
-            return (
-                f"{ext} 是旧版二进制格式，需要 Windows 上的 WPS COM 接口才能读取；"
-                f"当前平台不提供该能力。\n"
-                f"替代做法：① 在 Windows 机器上另存为 {ext}x 后来读；"
-                f"② 用 MCP/插件接入外部转换服务；"
-                f"③ 安装提供该扩展名的技能（技能可注册自己的解析器）。\n"
-                f"WPS: {wps_result}\n解析: {fallback}"
-            )
-        return f"WPS读取失败，内置解析也失败。\nWPS: {wps_result}\n解析: {fallback}"
+            return _err("[!WPS]", "file.legacy_needs_windows", ext=ext,
+                        wps=wps_result, builtin=fallback)
+        return _err("[!WPS]", "file.both_failed", wps=wps_result, builtin=fallback)
     return _parse_builtin(filepath, ext)
 
 
@@ -213,7 +234,7 @@ def _read_office_with_wps(filepath: str, max_chars: int) -> str:
     """
     if not _wps_available():
         # 不是"出错"，而是任务五定义的能力边界：文案必须写清原因，让调用方给出替代路径
-        return f"WPS读取失败: {_wps_unavailable_reason()}。"
+        return _err("[!WPS]", "file.wps_failed", error=_wps_unavailable_reason())
     app = doc = None
     try:
         progid = _WPS_PROGIDS[os.path.splitext(filepath)[1].lower()]
@@ -228,7 +249,7 @@ def _read_office_with_wps(filepath: str, max_chars: int) -> str:
             content = doc.Text
         return _truncate(content, max_chars)
     except Exception as e:
-        return f"WPS读取失败: {e}"
+        return _err("[!WPS]", "file.wps_failed", error=e)
     finally:
         if doc:
             try:
@@ -265,16 +286,19 @@ def _parse_builtin(filepath: str, ext: str) -> str:
             try:
                 text = handler(filepath)
             except Exception as e:
-                return f"解析失败: 技能「{skill_id}」的 {ext} 解析器出错（{type(e).__name__}: {e}）"
+                return _err("[!PARSE]", "file.skill_parser_failed", skill=skill_id, ext=ext,
+                            kind=type(e).__name__, error=e)
         else:
-            return f"不支持的文件类型: {ext or '(无扩展名)'}"
+            from i18n import t as _t
+
+            return _err("[!EXT]", "file.unsupported", ext=ext or _t("file.no_ext"))
     except ImportError as e:
-        return f"解析失败: 缺少解析依赖（{e}）"
+        return _err("[!PARSE]", "file.missing_dep", error=e)
     except Exception as e:
-        return f"解析失败: {e}"
+        return _err("[!PARSE]", "file.parse_failed", error=e)
 
     if not text or not text.strip():
-        return "文件内容为空"
+        return _err("[!EMPTY]", "file.empty")
     return text
 
 
@@ -313,7 +337,9 @@ def _read_xlsx(filepath: str) -> str:
     parts = []
     try:
         for ws in wb.worksheets:
-            parts.append(f"【工作表】{ws.title}")
+            from i18n import t as _t
+
+            parts.append(_t("file.sheet_header", name=ws.title))
             for row in ws.iter_rows(values_only=True):
                 cells = ["" if v is None else str(v).strip() for v in row]
                 if any(cells):
@@ -331,7 +357,9 @@ def _read_xls(filepath: str) -> str:
     book = xlrd.open_workbook(filepath)
     parts = []
     for sheet in book.sheets():
-        parts.append(f"【工作表】{sheet.name}")
+        from i18n import t as _t
+
+        parts.append(_t("file.sheet_header", name=sheet.name))
         for r in range(sheet.nrows):
             cells = [str(sheet.cell_value(r, c)).strip() for c in range(sheet.ncols)]
             if any(cells):
@@ -376,13 +404,17 @@ def _read_pdf(filepath: str) -> str:
         try:
             reader.decrypt("")
         except Exception as e:
-            return f"解析失败: PDF 已加密，无法读取（{e}）"
+            return _err("[!PARSE]", "file.pdf_encrypted", error=e)
     parts = []
     for index, page in enumerate(reader.pages, 1):
         try:
             text = (page.extract_text() or "").strip()
         except Exception as e:  # 单页损坏不应让整份文档失败
-            text = f"[第 {index} 页提取失败: {e}]"
+            from i18n import t as _t
+
+            text = _t("file.pdf_page_failed", page=index, error=e)
         if text:
-            parts.append(f"【第 {index} 页】\n{text}")
+            from i18n import t as _t
+
+            parts.append(_t("file.page_header", page=index) + f"\n{text}")
     return "\n\n".join(parts)

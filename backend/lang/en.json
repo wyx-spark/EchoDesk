@@ -530,6 +530,11 @@
     "mcp_no_servers": "No MCP server is configured. Add one under Settings → Agent → MCP, or edit mcp.servers in config.json."
   },
   "file": {
+    "wps_missing_pywin32": "pywin32 is missing on this machine ({error}), so WPS COM cannot be used to read the file",
+    "wps_unavailable_reason": "This platform does not provide the WPS COM interface (that capability is Windows-only).",
+    "legacy_needs_windows": "{ext} is a legacy binary format that can only be read through the WPS COM interface on Windows, which this platform does not provide.\nWorkarounds: (1) save it as {ext}x on a Windows machine and read that; (2) use an MCP server/plugin that converts external documents; (3) install a skill providing this extension (skills can register their own parser).\nWPS: {wps}\nBuilt-in: {builtin}",
+    "page_header": "[Page {page}]",
+    "sheet_header": "[Sheet] {name}",
     "wps_failed": "WPS read failed: {error}",
     "legacy_needs_wps": "WPS read failed and {ext} is a legacy binary format that the built-in parser does not support.\nInstall WPS/Office and try again, or save the file as {ext}x first.\nWPS: {wps}",
     "both_failed": "WPS read failed and the built-in parser failed too.\nWPS: {wps}\nParser: {builtin}",
