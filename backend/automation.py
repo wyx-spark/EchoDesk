@@ -81,6 +81,7 @@ except Exception:  # noqa: BLE001
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 多语言（任务三）：必须在 config 之后导入，避免 i18n 反向依赖 config 时成环
+from i18n import log_user
 from i18n import t as _t
 
 # Playwright 同样做容错导入：未安装时由 validate()/run() 给出明确提示，而不是启动即崩
@@ -1172,7 +1173,8 @@ class AutomationEngine:
                 fh.write(content)
             return self.report_path
         except Exception as exc:  # noqa: BLE001
-            self.logger.warning("写入结果文件失败：%s", _redact(exc, 200))
+            log_user(self.logger, "sys.log_result_write_failed", level="warning",
+                     error=_redact(exc, 200))
             return ""
 
     def _move_into_task_dir(self, paths: Sequence[str]) -> List[str]:
@@ -1441,7 +1443,8 @@ class AutomationEngine:
                 shutil.rmtree(profile)
             except Exception as exc:  # noqa: BLE001
                 result["error"] = _redact(exc, 200)
-                self.logger.warning("清除自动化登录态失败：%s", _redact(exc, 200))
+                log_user(self.logger, "sys.log_login_state_clear_failed", level="warning",
+                         error=_redact(exc, 200))
                 return result
             result["removed_files"] = count
         # 旧机制的 storage_state 备份文件里也有 Cookie，一并清掉才算"清除登录态"
@@ -1541,7 +1544,9 @@ class AutomationEngine:
             label = BROWSER_LABELS.get(name, name)
             failures.append(_t("automation.browser.candidate_failed",
                                browser=label, error=error))
-            self.logger.warning("浏览器 %s 启动失败：%s", name, error)
+            # 复用已有的用户可见文案键（同义同参）
+            log_user(self.logger, "automation.browser.candidate_failed", level="warning",
+                     browser=name, error=error)
         if context is None:
             try:
                 playwright.stop()
@@ -1670,8 +1675,8 @@ class AutomationEngine:
                 self.cdp_endpoint, timeout=CDP_CONNECT_TIMEOUT_MS
             )
         except Exception as exc:  # noqa: BLE001 —— 端口没人监听是最常见的情况
-            self.logger.info("未能连接本机调试端口 %s（将按策略处理）：%s",
-                             self.cdp_port, _redact(exc, 160))
+            log_user(self.logger, "sys.log_cdp_connect_failed",
+                     port=self.cdp_port, error=_redact(exc, 200))
             if playwright is not None:
                 try:
                     playwright.stop()
@@ -1689,13 +1694,14 @@ class AutomationEngine:
             try:
                 context = browser.new_context()
             except Exception as exc:  # noqa: BLE001
-                self.logger.warning("调试浏览器里没有可用的浏览器上下文：%s", _redact(exc, 150))
+                log_user(self.logger, "sys.log_debug_no_context", level="warning",
+                         error=_redact(exc, 150))
                 try:
                     playwright.stop()
                 except Exception:  # noqa: BLE001
                     pass
                 return None
-        self.logger.info("已连接本机调试端口 %s（复用已打开的浏览器）", self.cdp_port)
+        log_user(self.logger, "sys.log_cdp_connected", port=self.cdp_port)
         # owns_browser=False：**绝不关闭用户的浏览器**（见 _BrowserSession.close）
         return _BrowserSession(playwright, context, None, mode="reuse", reused=True,
                                endpoint=self.cdp_endpoint, owns_browser=False)
@@ -1833,7 +1839,7 @@ class AutomationEngine:
                     return session
                 # 连上了却没有一个可用的普通页面（全是内部页面）：不能对着
                 # edge://settings 这类页面干活，关掉连接走兜底。
-                self.logger.warning("调试浏览器里没有可用的标签页，改用新实例")
+                log_user(self.logger, "sys.log_debug_no_tab", level="warning")
                 note = _t("automation.reuse.no_usable_tab")
                 session.close()
             elif mode == "required":
@@ -2005,7 +2011,8 @@ class AutomationEngine:
             self._audit("login_state_migrated", result="ok", cookies=len(cookies))
             return len(cookies)
         except Exception as exc:  # noqa: BLE001
-            self.logger.warning("迁移旧登录态失败（忽略）：%s", _redact(exc, 200))
+            log_user(self.logger, "sys.log_login_migrate_failed", level="warning",
+                     error=_redact(exc, 200))
             return 0
 
     def _save_storage_state(self, context: Any) -> None:
@@ -2023,7 +2030,8 @@ class AutomationEngine:
                 os.makedirs(directory, exist_ok=True)
             context.storage_state(path=path)
         except Exception as exc:  # noqa: BLE001
-            self.logger.warning("保存登录态失败：%s", _redact(exc, 200))
+            log_user(self.logger, "sys.log_login_state_save_failed", level="warning",
+                     error=_redact(exc, 200))
 
     def _wait_loaded(self, page: Any) -> None:
         """统一的等待策略：domcontentloaded → （可选）networkidle → 短暂停顿，全部容错。"""
@@ -2047,7 +2055,8 @@ class AutomationEngine:
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=self.page_timeout_ms)
         except _PWTimeoutError:
-            self.logger.warning("页面加载超时（继续处理）：%s", _redact(url, 200))
+            log_user(self.logger, "sys.log_page_load_timeout", level="warning",
+                     url=_redact(url, 200))
         except Exception as exc:  # noqa: BLE001
             raise AutomationError(_t("automation.browser.goto_failed",
                                      error=_redact(exc, 200))) from exc
@@ -2408,7 +2417,8 @@ class AutomationEngine:
             return
         self._selector_error = _t("automation.selector.unparsable", what=what, selector=selector,
                                   error=_redact(exc, 200))
-        self.logger.warning("选择器查询失败：%s", _redact(self._selector_error, 200))
+        log_user(self.logger, "sys.log_selector_query_failed", level="warning",
+                 error=_redact(self._selector_error, 200))
 
     @staticmethod
     def _new_pages(context: Any, known: Sequence[Any]) -> List[Any]:
@@ -2929,7 +2939,8 @@ class AutomationEngine:
         except Exception as exc:  # noqa: BLE001
             result["ok"] = False
             result["error"] = _redact(exc, 300)
-            self.logger.warning("选择器测试失败：%s", _redact(exc, 200))
+            log_user(self.logger, "sys.log_automation_selector_test_failed", level="warning",
+                     error=_redact(exc, 200))
         finally:
             if session is not None:
                 session.close()
@@ -3373,7 +3384,8 @@ class AutomationEngine:
             )
         except Exception as exc:  # noqa: BLE001
             message = _t("automation.pick.failed", error=_redact(exc, 300))
-            self.logger.warning("可视化选取失败：%s", _redact(exc, 200))
+            log_user(self.logger, "sys.log_pick_failed", level="warning",
+                     error=_redact(exc, 200))
             yield self._event("error", message)
         finally:
             try:
@@ -3603,7 +3615,8 @@ class AutomationEngine:
         try:
             state = page.evaluate(self.PICKER_POLL_JS)
         except Exception as exc:  # noqa: BLE001 —— 页面被关/跳转走了
-            self.logger.info("读取选取结果失败（按页面已关闭处理）：%s", _redact(exc, 150))
+            log_user(self.logger, "sys.log_pick_result_read_failed",
+                     error=_redact(exc, 150))
             machine.mark_page_gone(_t("automation.reuse.target_closed"))
             return
         if not isinstance(state, dict):
@@ -3739,7 +3752,8 @@ class AutomationEngine:
                 result["error"] = self._selector_error or _t("automation.test.no_match")
         except Exception as exc:  # noqa: BLE001
             result["error"] = _redact(exc, 300)
-            self.logger.warning("元素测试失败：%s", _redact(exc, 200))
+            log_user(self.logger, "sys.log_element_test_failed", level="warning",
+                     error=_redact(exc, 200))
         finally:
             if session is not None:
                 session.close()
@@ -4346,7 +4360,7 @@ class AutomationEngine:
         except Exception as exc:  # noqa: BLE001
             message = _t("automation.run.unexpected", error=_redact(exc, 300))
             self._last_error = message
-            self.logger.exception("自动化运行异常")
+            log_user(self.logger, "sys.log_automation_run_exception", level="exception")
             self._audit("run_end", url=self.task_list_url, result="failed", error=message, **counters)
             yield self._event("error", message)
         finally:
