@@ -373,6 +373,14 @@ try {
     }
 
     # ---------- 2. 后端测试 ----------
+    # 放在最前面：这是最基础的一条 ——"后端起得来吗"（ready 握手 + 一条最小请求 + 干净退出）。
+    # 为什么单独一条（v0.2.2 硬编码清查第 6 批（二）的真实事故）：那次把 platform_support.py 的
+    # 平台名改成本地化时写成模块级 `_t(...)`，后端直接 `NameError`、连 ready 都发不出；
+    # 而 selftest(155/155)、check_lang 当时**全是绿的** —— 没有一项断言"后端能不能起来"。
+    # 唯一拦住它的是界面探针（要 Avalonia 产物、跑得慢），所以把这条断言摘出来单独跑。
+    Invoke-Check "后端启动冒烟（ready 握手 + 最小请求 + 干净退出）" {
+        Invoke-Python "后端启动" "tools\check_backend_boot.py"; "通过"
+    }
     Invoke-Check "后端 selftest" { Invoke-Python "selftest" "tools\selftest.py"; "通过" }
     Invoke-Check "文件解析" { Invoke-Python "文件解析" "tools\test_file_parsers.py"; "通过" }
     Invoke-Check "纯文本落盘" { Invoke-Python "纯文本落盘" "tools\test_plaintext.py"; "通过" }
