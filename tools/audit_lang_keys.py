@@ -132,4 +132,131 @@ for key, fallback, where in hardcoded:
 print()
 print("反向审计结论：en 缺失 %d / zh-Hans 缺失 %d（引用键 %d）"
       % (len(missing_en), len(missing_zh), len(used)))
-sys.exit(1 if (missing_en or missing_zh) else 0)
+
+# ---------------------------------------------------------------------------
+# v0.2.2 硬编码清查 §3.4：把同一个"反向核对"扩到**另外两个扫描根**
+#
+# 为什么必须扩（本轮实测的盲区）：上面这一段只看 frontend-avalonia/，而
+# WPF 的 `frontend/**` 与后端的 `backend/*.py` 都不在其中 —— 于是
+# `capability.unknown` / `automation.no_url`（只存在于 backend/lang、WPF 却按
+# 前端包调用）这种"跨包缺键"两个门禁**都看不见**。这里按"谁读哪份包"分别核对：
+#   * frontend/**  （WPF）        → 前端包（frontend/Resources/Lang/*.json）
+#   * backend/**    （Python）    → 后端包（backend/lang/*.json）
+#   * frontend-avalonia/**（上面已查）→ 前端包
+# 判定口径与上面完全一致（缺键 = 直接缺失且不构成任何已有键的前缀）。
+# ---------------------------------------------------------------------------
+BACKEND_LANG_DIR = os.path.join(ROOT, "backend", "lang")
+WPF_DIR = os.path.join(ROOT, "frontend")
+BACKEND_DIR = os.path.join(ROOT, "backend")
+
+import re  # noqa: E402
+
+WPF_PATTERNS = (
+    re.compile(r'Loc\.T\(\s*"([A-Za-z0-9_./@-]+)"\s*(?:,\s*"([^"]*)")?', re.S),
+    re.compile(r'Loc\.Has\(\s*"([A-Za-z0-9_./@-]+)"'),
+    re.compile(r'(?:svc:)?Loc\.(?:Key|TipKey|HelpKey)\s*=\s*"([A-Za-z0-9_./@-]+)"'),
+)
+BACKEND_PATTERNS = (
+    re.compile(r'(?<![\w.])(?:_t|t|api\.lang)\(\s*"([A-Za-z0-9_./@-]+)"'),
+    re.compile(r'log_user\(\s*[^,]+,\s*"([A-Za-z0-9_./@-]+)"'),
+)
+
+
+def build_lang(directory):
+    """读一个语言目录（主文件 + 模块分片），返回 {locale: {key}}。"""
+    packs = {}
+    if not os.path.isdir(directory):
+        return packs
+    for name in sorted(os.listdir(directory)):
+        if not name.endswith(".json"):
+            continue
+        locale = name[:-5].split(".")[0]
+        try:
+            with io.open(os.path.join(directory, name), encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception:
+            continue
+        found = packs.setdefault(locale, set())
+
+        def walk(node, prefix=""):
+            for key, value in node.items():
+                if not isinstance(key, str) or key.startswith(("_", "//")):
+                    continue
+                if isinstance(value, dict):
+                    walk(value, prefix + key + ".")
+                else:
+                    found.add(prefix + key)
+
+        walk(data)
+    return packs
+
+
+#: 与 tools/check_lang.py 的 SKELETON_KEYS 同一份理由：`backend/skills_runtime.py` 里
+#: `api.lang("hello.reply", …)` 这类调用出现在**给新插件生成的入口骨架**里，
+#: 那些键属于插件自己的语言包（骨架会同时生成 `<plugin>/lang/*.json`），不在主程序包里。
+#: 不豁免就会长期挂一个已知假阳性 —— 那样的门禁没人看（理由与 `satisfied()` 里的前缀判定同源）。
+SKELETON_KEYS = frozenset({"hello.default_name", "hello.reply", "panel.result"})
+
+#: 扫描时要跳过的目录（第三方库、构建产物、缓存）
+SKIP_DIRS = frozenset({"bin", "obj", "__pycache__", ".venv", "site-packages", "node_modules", ".git"})
+
+
+def scan(root, patterns, exts):
+    used = {}
+    for base, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for filename in files:
+            if not filename.endswith(exts):
+                continue
+            path = os.path.join(base, filename)
+            try:
+                with io.open(path, encoding="utf-8", errors="replace") as fh:
+                    source = fh.read()
+            except OSError:
+                continue
+            for pattern in patterns:
+                for match in pattern.finditer(source):
+                    key = match.group(1)
+                    if key in SKELETON_KEYS:
+                        continue
+                    fallback = match.group(2) if (match.lastindex or 0) > 1 else ""
+                    used.setdefault(key, (fallback or "", os.path.relpath(path, ROOT)))
+    return used
+
+
+extra_problems = 0
+summary = {}
+for label, root, patterns, exts, lang_dir in (
+    ("WPF（frontend/**）", WPF_DIR, WPF_PATTERNS, (".cs", ".xaml"), LANG_DIR),
+    ("后端（backend/*.py）", BACKEND_DIR, BACKEND_PATTERNS, (".py",), BACKEND_LANG_DIR),
+):
+    pack = build_lang(lang_dir)
+    if not pack:
+        print("\n反向审计（%s）无法进行：找不到语言包目录 %s" % (label, lang_dir))
+        extra_problems += 1
+        summary[label] = -1
+        continue
+    refs = scan(root, patterns, exts)
+    if root == BACKEND_DIR:
+        # 语言包目录自己也含中文字面量（那是文案本体，不是引用），排除
+        refs = {k: v for k, v in refs.items()
+                if not v[1].replace("\\", "/").startswith("backend/lang")}
+    miss_en = sorted(k for k in refs if not satisfied(k, pack.get("en", set())))
+    miss_zh = sorted(k for k in refs if not satisfied(k, pack.get("zh-Hans", set())))
+    miss = sorted(set(miss_en) | set(miss_zh))
+    summary[label] = len(miss)
+    print()
+    print("-- %s：引用键 %d，缺失 %d（en %d / zh-Hans %d）"
+          % (label, len(refs), len(miss), len(miss_en), len(miss_zh)))
+    for key in miss:
+        fallback, where = refs[key]
+        print("     ? %-46s %s   （兜底：%s）" % (key, where, fallback[:30]))
+    extra_problems += len(miss)
+
+print()
+print("反向审计（扩面后，逐行汇总）：")
+for label, count in summary.items():
+    print("   %-22s 缺失 %s" % (label, "无法进行" if count < 0 else count))
+print("结论：Avalonia 缺失 %d / 其余两处合计缺失 %d（判定阈值仍是 0 缺失）"
+      % (len(set(missing_en) | set(missing_zh)), extra_problems))
+sys.exit(1 if ((missing_en or missing_zh) or extra_problems) else 0)

@@ -184,11 +184,17 @@ try {
         "无中文名/无过程文档/无运行期残留"
     }
 
-    Invoke-Check "版本资源 = 0.2.1.0" {
+    # 期望值**从 backend\version.py 派生**（v0.2.2 硬编码清查 §九 第 2 批）：
+    # 这里原来写死 "0.2.1.0"，于是它断言的不是"版本对不对"，而是"版本资源跟我记的那个字面量一样"
+    # —— 版本升到 v0.2.2 之后这条会**继续通过**（打包产物若仍是旧版号也照样绿），
+    # 属于"写死的期望值掩盖真实差异"。改成读 version.py 之后，"产物版本 ≠ 源码版本"
+    # 会被门禁抓到（这正是它该做的判断）。
+    $expectedVersion = "$Version.0"      # 0.2.2 → 0.2.2.0（FileVersion 的四段式）
+    Invoke-Check "版本资源 = $expectedVersion（取自 backend\version.py）" {
         $front = (Get-Item (Join-Path $AppOut "EchoDesk.exe")).VersionInfo.FileVersion
         $back = (Get-Item $BackendExe).VersionInfo.FileVersion
-        if ($front -ne "0.2.1.0" -or $back -ne "0.2.1.0") {
-            throw "版本不符：前端=$front 后端=$back"
+        if ($front -ne $expectedVersion -or $back -ne $expectedVersion) {
+            throw "版本不符：期望 $expectedVersion，前端=$front 后端=$back"
         }
         "$front / $back"
     }

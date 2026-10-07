@@ -510,20 +510,32 @@ def check(locales, quiet):
             if not missing and not extra and not mismatched:
                 print("   ✓ 完整且占位符一致")
 
-    # 代码用到的键是否都在源语言包里
-    source_all = {}
-    for found in packs.values():
-        source_all.update(found.get(SOURCE_LOCALE, {}))
-    unknown = sorted(k for k in used
-                      if k not in source_all and k not in IGNORED_MISSING and k not in SKELETON_KEYS)
+    # 代码用到的键是否都在**它自己读的那份**源语言包里。
+    #
+    # 这里修的是一个真实缺陷（v0.2.2 硬编码清查 §3.3/§3.4）：原先把后端与前端源语言包
+    # **并成一个集合**再判断，于是"只存在于另一个包"的键会被判成存在 ——
+    # 而运行期两个前端只读 `frontend/Resources/Lang`（+ 磁盘 `lang/ui`），后端读 `lang/`，
+    # 两边互不可见。实测漏掉的就是 `capability.unknown` 与 `automation.no_url`：
+    # 它们在 `backend/lang` 里有、`frontend/Resources/Lang` 里没有，WPF 调用时
+    # Loc.T 直接返回键名本身（弹框里显示 `automation.no_url`）。
+    # 现在按文件所在目录分别判：`backend/**` 查后端包，其余（`frontend/**`）查前端包。
+    unknown = []
+    for key in sorted(used):
+        if key in IGNORED_MISSING or key in SKELETON_KEYS:
+            continue
+        for rel in sorted(set(used[key])):
+            target = "后端" if rel.replace("\\", "/").startswith("backend/") else "前端"
+            if key not in packs.get(target, {}).get(SOURCE_LOCALE, {}):
+                unknown.append(f"{key}   （{rel}，应有于{target}语言包）")
+                break
     if unknown:
-        print(f"\n-- 代码中引用但源语言包里没有的键（{len(unknown)} 个）：")
-        for key in unknown[:60]:
-            where = ", ".join(sorted(set(used[key]))[:2])
-            print(f"     ? {key}   （{where}）")
+        print(f"\n-- 代码中引用但**自己读的那份**源语言包里没有的键（{len(unknown)} 个）：")
+        for item in unknown[:60]:
+            print(f"     ? {item}")
         problems += len(unknown)
     elif not quiet:
-        print(f"\n✓ 代码引用的 {len(used)} 个键都能在源语言包里找到")
+        print(f"\n✓ 代码引用的 {len(used)} 个键都能在**各自读取的**源语言包里找到"
+              f"（后端 / 前端分别判，不再并成一个集合）")
 
     # 同一个键是否同时以"嵌套对象"和"扁平点号键"两种形式存在。
     #
@@ -563,6 +575,11 @@ def check(locales, quiet):
               f"（有 {redundant} 处内容相同的冗余写法，不影响行为）")
 
     # 源语言自身有没有"定义了但没人用"的键
+    # （这里仍用两份源语言包的**并集**：这条只是"提示"，不判失败；
+    #   而上面的"引用键在不在自己那份包里"必须是**分开判**的，见那段注释）
+    source_all = {}
+    for found in packs.values():
+        source_all.update(found.get(SOURCE_LOCALE, {}))
     unused = sorted(k for k in source_all if k not in used)
     if unused and not quiet:
         print(f"\n提示：源语言包里有 {len(unused)} 条未被代码直接引用的键")
