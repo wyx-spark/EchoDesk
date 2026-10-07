@@ -15,6 +15,26 @@
     "studio": "熵寂工作室",
     "studio_full": "熵寂工作室"
   },
+  "search": {
+    "no_dependency_requests": "requests 未安装",
+    "no_dependency_ddgs": "duckduckgo_search 未安装",
+    "parse_failed": "解析失败: {error}",
+    "primary_empty": "主源无结果",
+    "fallback_empty": "无结果",
+    "both_sources_failed": "{primary} ｜ 备用源：{fallback}"
+  },
+  "mcp": {
+    "tool_reported_error": "（工具报告错误）{detail}",
+    "no_detail": "无详细信息",
+    "empty_result": "（工具返回了空结果）",
+    "call_failed": "MCP 工具调用失败：{error}",
+    "call_exception": "MCP 工具调用异常：{kind}: {error}",
+    "tool_default": "MCP 工具"
+  },
+  "agent": {
+    "no_content": "模型没有返回内容",
+    "no_answer": "模型没有给出可用回答。"
+  },
   "cmd": {
     "unknown": "未知指令: {name}（输入 /help 查看全部指令）",
     "disabled": "技能「{skill}」提供的指令 {name} 当前不可用：{reason}",
@@ -301,6 +321,7 @@
     "items./mcp.detail": "    MCP（Model Context Protocol）让 Agent 能用上**外部进程**提供的工具\n    （数据库、API、文件系统…）。EchoDesk 自带一个 stdio 客户端，\n    在 config.json 的 mcp.servers 里写一行命令即可接入。\n\n    安全边界：MCP Server 是你自己配的进程，它的行为不受 EchoDesk 控制，\n    所以它的工具**一律按敏感工具处理**，要先 /agent allow 才能调用；\n    默认也**不会**把它需要的密钥环境变量透传给它（要透传就在\n    passthrough_env 里点名）。\n\n    常用：\n      /mcp                     查看状态与工具\n      /mcp enable echo         启用某个 server（写进 config.json）\n      /mcp disable echo        停用（立即生效，无需重启）\n      /mcp connect             立刻连接并拉取工具清单\n\n    示例：examples\\mcp\\echo_server.py（纯标准库，可直接配来验证通路）。"
   },
   "sys": {
+    "speed_hint": "⏱️ 提示：当前生成速度约 {tps} 字/秒，偏慢。上下文窗口为 {n_ctx} tokens（KV Cache 约 {kv}），窗口越大内存占用越高、速度越慢；可在 config.json 调小 context_length，或增大 n_threads / 使用更小的量化模型。",
     "ready": "后端已就绪",
     "unknown_action": "未知动作",
     "busy": "⏳ 上一条回复仍在生成，请先停止（⏹ 按钮或 /stop）或等待完成",
@@ -1139,6 +1160,7 @@
     "progress.failed": "❌ 分段摘要失败：{total} 段全部未产出摘要。"
   },
   "platform": {
+    "unknown_name": "未知平台（{platform}）",
     "chat": "对话与流式输出（全平台可用）",
     "files": "文件解析（通用解析器，全平台可用）",
     "retrieval": "本地检索 RAG（纯 Python，全平台可用）",

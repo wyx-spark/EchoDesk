@@ -22,6 +22,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 
 from gguf_meta import describe_model, estimate_kv_cache_bytes, format_bytes, resolve_context_window
 from i18n import log_user
+from i18n import t as _t
 from reasoning import ANSWER, ReasoningSplitter, normalize_tags, split_text
 
 log = logging.getLogger("EchoDesk.LLM")
@@ -556,12 +557,8 @@ class LLMEngine:
             return ""
         if self.last_tps >= min_tps:
             return ""
-        return (
-            f"⏱️ 提示：当前生成速度约 {self.last_tps:.1f} 字/秒，偏慢。"
-            f"上下文窗口为 {self.n_ctx} tokens（KV Cache 约 {self.kv_cache_text()}），"
-            "窗口越大内存占用越高、速度越慢；可在 config.json 调小 context_length，"
-            "或增大 n_threads / 使用更小的量化模型。"
-        )
+        return _t("sys.speed_hint", tps=f"{self.last_tps:.1f}", n_ctx=self.n_ctx,
+                  kv=self.kv_cache_text())
 
 
 class LazyLLMEngine(LLMEngine):

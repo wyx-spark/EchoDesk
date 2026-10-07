@@ -82,11 +82,13 @@ def is_forced() -> bool:
 
 def name() -> str:
     """给人看的平台名（界面横幅用）。"""
+    from i18n import t as _t  # 延迟导入：与本文件 _cap_reason() 同样的理由（避免模块级循环依赖）
+
     return {
         WINDOWS: "Windows",
         MACOS: "macOS",
         LINUX: "Linux",
-    }.get(kind(), f"未知平台（{sys.platform}）")
+    }.get(kind(), _t("platform.unknown_name", platform=sys.platform))
 
 
 def architecture() -> str:

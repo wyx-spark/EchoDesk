@@ -15,6 +15,26 @@
     "studio": "Void Entropia Studio",
     "studio_full": "Void Entropia Studio"
   },
+  "search": {
+    "no_dependency_requests": "requests is not installed",
+    "no_dependency_ddgs": "duckduckgo_search is not installed",
+    "parse_failed": "Parsing failed: {error}",
+    "primary_empty": "the primary source returned no results",
+    "fallback_empty": "no results",
+    "both_sources_failed": "{primary} | fallback source: {fallback}"
+  },
+  "mcp": {
+    "tool_reported_error": "(the tool reported an error) {detail}",
+    "no_detail": "no details",
+    "empty_result": "(the tool returned an empty result)",
+    "call_failed": "MCP tool call failed: {error}",
+    "call_exception": "MCP tool call raised an exception: {kind}: {error}",
+    "tool_default": "MCP tool"
+  },
+  "agent": {
+    "no_content": "The model returned no content",
+    "no_answer": "The model did not produce a usable answer."
+  },
   "cmd": {
     "unknown": "Unknown command: {name} (type /help for the full command list)",
     "disabled": "The command {name} from skill \"{skill}\" is unavailable: {reason}",
@@ -301,6 +321,7 @@
     "items./mcp.detail": "    MCP (Model Context Protocol) lets the agent use tools provided by **external processes**\n    (databases, APIs, file systems, …). EchoDesk ships a stdio client: declare one\n    command per server under mcp.servers in config.json.\n\n    Security boundary: an MCP server is a process you configured and EchoDesk cannot\n    control what it does, so its tools are **always treated as sensitive** and must be\n    authorised with /agent allow first. Secret environment variables are **not**\n    passed through by default — name them in passthrough_env if you need to.\n\n    Common uses:\n      /mcp                     show status and tools\n      /mcp enable echo         enable a server (written to config.json)\n      /mcp disable echo        disable it (takes effect immediately)\n      /mcp connect             connect now and fetch the tool list\n\n    Example: examples\\mcp\\echo_server.py (standard library only; configure it to\n    verify the plumbing end to end)."
   },
   "sys": {
+    "speed_hint": "⏱️ Note: generation is running at about {tps} chars/s, which is slow. The context window is {n_ctx} tokens (KV cache about {kv}); the larger the window, the more memory it uses and the slower it gets. You can lower context_length in config.json, raise n_threads, or use a smaller quantised model.",
     "ready": "Backend ready",
     "unknown_action": "Unknown action",
     "busy": "⏳ The previous reply is still being generated. Stop it first (⏹ button or /stop) or wait for it to finish",
@@ -1139,6 +1160,7 @@
     "progress.failed": "❌ Segmented summarization failed: none of the {total} segments produced a summary."
   },
   "platform": {
+    "unknown_name": "Unknown platform ({platform})",
     "chat": "Chat and streaming (available on all platforms)",
     "files": "File parsing with the generic parser (available on all platforms)",
     "retrieval": "Local retrieval / RAG, pure Python (available on all platforms)",

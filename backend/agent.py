@@ -17,6 +17,7 @@ Jinja handler 在流式下对工具语义的支持有硬限制（见 :mod:`agent
 非流式 + 每次调用前发一个进度事件，界面上不会显得卡住（一次 0.6B 调用约数秒）。
 """
 from __future__ import annotations
+from i18n import t as _t
 
 import json
 import time
@@ -179,7 +180,7 @@ class AgentLoop:
                       "max_steps": self.max_steps, "reasoning": reasoning})
             if not text.strip():
                 # 模型这一轮什么都没说（或只输出了思考）：不再硬撑，收敛。
-                run.error = "模型没有返回内容"
+                run.error = _t("agent.no_content")
                 break
 
             call = parse_tool_call(text)
@@ -246,7 +247,7 @@ class AgentLoop:
                     run.answer = extract_final_answer(step.text)
                     break
             if not run.answer:
-                run.answer = run.error or "模型没有给出可用回答。"
+                run.answer = run.error or _t("agent.no_answer")
 
         run.elapsed_ms = int((time.time() - started) * 1000)
         return run

@@ -46,6 +46,7 @@
 而用户按下开关本身就是一次明确意图表达。
 """
 from __future__ import annotations
+from i18n import t as _t
 
 import base64
 import logging
@@ -341,7 +342,7 @@ def search_bing(query: str, max_results: int = 5, timeout: int = 15) -> SearchOu
     try:
         import requests
     except ImportError:  # requests 是必需依赖，正常不会走到这里
-        outcome.error = "requests 未安装"
+        outcome.error = _t("search.no_dependency_requests")
         outcome.error_kind = "no_dependency"
         return outcome
 
@@ -370,7 +371,7 @@ def search_bing(query: str, max_results: int = 5, timeout: int = 15) -> SearchOu
     try:
         parser.feed(resp.text)
     except Exception as exc:  # noqa: BLE001 —— 解析失败按"源改版"处理
-        outcome.error = f"解析失败: {exc}"
+        outcome.error = _t("search.parse_failed", error=exc)
         outcome.error_kind = "source_changed"
         outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
         return outcome
@@ -413,7 +414,7 @@ class SearchEngine:
             with DDGS() as ddgs:
                 raw = list(ddgs.text(text, max_results=self.max_results))
         except ImportError:
-            outcome.error = "duckduckgo_search 未安装"
+            outcome.error = _t("search.no_dependency_ddgs")
             outcome.error_kind = "no_dependency"
             outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
             return outcome
@@ -483,7 +484,9 @@ class SearchEngine:
                      primary.error_kind or primary.error, fallback.count)
             return fallback
 
-        outcome.error = f"{primary.error or '主源无结果'} ｜ 备用源：{fallback.error or '无结果'}"
+        outcome.error = _t("search.both_sources_failed",
+                           primary=primary.error or _t("search.primary_empty"),
+                           fallback=fallback.error or _t("search.fallback_empty"))
         # 分类以**备用源**为准：它才是真正能反映当前网络状况的那一个
         # （主源在国内是"必然失败"，它的分类对用户没有指导意义）。
         outcome.error_kind = fallback.error_kind or primary.error_kind or "unknown"

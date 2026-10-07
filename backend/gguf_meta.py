@@ -10,6 +10,7 @@
 GGUF 规范见 https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
 """
 import os
+from i18n import t as _t
 import struct
 from typing import Any, Dict, Optional
 
@@ -180,7 +181,7 @@ def estimate_kv_cache_bytes(path: str, n_ctx: int) -> Optional[int]:
 def describe_model(path: str, n_ctx: int) -> Dict[str, Any]:
     """汇总模型关键参数（供日志与 /model 展示）。"""
     meta = read_metadata(path)
-    arch = architecture(meta) if meta else "未知"
+    arch = architecture(meta) if meta else _t("sys.log_unknown")
     train_ctx = resolve_context_window(path, default=0) if meta else 0
     return {
         "architecture": arch,
@@ -197,7 +198,7 @@ def describe_model(path: str, n_ctx: int) -> Dict[str, Any]:
 def format_bytes(n: Optional[int]) -> str:
     """字节数格式化（用于 KV Cache 占用展示）。"""
     if not n:
-        return "未知"
+        return _t("sys.log_unknown")
     if n >= 1073741824:
         return f"{n / 1073741824:.2f} GB"
     return f"{n / 1048576:.1f} MB"

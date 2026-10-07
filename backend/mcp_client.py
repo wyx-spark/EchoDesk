@@ -41,6 +41,7 @@ MCP Server 是**用户自己配的进程**，它的行为不受 EchoDesk 控制�
 3. EchoDesk 自身不发起网络请求 —— 联网与否取决于用户配的那个 server 进程。
 """
 from __future__ import annotations
+from i18n import t as _t
 
 import json
 import os
@@ -298,8 +299,8 @@ def _render_result(result: Dict[str, Any]) -> str:
         parts.append(str(result.get("value")))
     text = "\n".join(part for part in parts if part).strip()
     if result.get("isError"):
-        return f"（工具报告错误）{text or '无详细信息'}"
-    return text or "（工具返回了空结果）"
+        return _t("mcp.tool_reported_error", detail=text or _t("mcp.no_detail"))
+    return text or _t("mcp.empty_result")
 
 
 def _echodesk_version() -> str:
@@ -449,13 +450,14 @@ def register_mcp_tools(registry: Any, bridge: McpBridge) -> int:
             try:
                 return bridge.call(name, args)
             except McpError as exc:
-                return f"MCP 工具调用失败：{exc}"
+                return _t("mcp.call_failed", error=exc)
             except Exception as exc:                     # 兜底：外部进程什么都可能干
-                return f"MCP 工具调用异常：{type(exc).__name__}: {exc}"
+                return _t("mcp.call_exception", kind=type(exc).__name__, error=exc)
 
         registry.register(Tool(
             name=full_name,
-            description=f"[{info['server']}] {info.get('description') or 'MCP 工具'}",
+            description=f"[{info['server']}] "
+                        f"{info.get('description') or _t('mcp.tool_default')}",
             args_hint=json.dumps(schema, ensure_ascii=False) if schema else "",
             risk=RISK_SENSITIVE,
             run=_run,
