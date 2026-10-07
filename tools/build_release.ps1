@@ -133,7 +133,10 @@
 param(
     # 默认版本（决定输出目录名 publish\EchoDesk-v<Version>）。
     # 口径：v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本。见 backend\version.py 的说明。
-    [string]$Version = "0.2.2",
+    # 默认版本从 backend\version.py 读（v0.2.2 裁定①）：原来这里写死 "0.2.2"，
+    # 升版本时若忘了改，产出的目录名与**写进 exe 的版本资源**都会是旧值。
+    # 派生之后，"改版本"只需改 version.py 一处。
+    [string]$Version = "",
     [switch]$IncludeModels,
     [string]$MigrateFrom = "",
     [switch]$SkipBackend,
@@ -168,6 +171,16 @@ trap {
 }
 
 $Root = Split-Path -Parent $PSScriptRoot
+if (-not $Version) {
+    # 版本从唯一来源派生（v0.2.2 裁定①）：参数默认值改成空串之后，这里必须真正解析出来，
+    # 否则下面所有路径都会变成 publish\EchoDesk-v\ 。读法与 verify_release / make_installer 一致。
+    $VersionFile = Join-Path $Root "backend\version.py"
+    $VersionMatch = Select-String -Path $VersionFile -Pattern 'APP_VERSION\s*=\s*["'']([^"'']+)["'']' |
+                    Select-Object -First 1
+    if (-not $VersionMatch) { throw "读不出 APP_VERSION：$VersionFile（可用 -Version 显式指定）" }
+    $Version = $VersionMatch.Matches[0].Groups[1].Value.TrimStart('v')
+    Write-Host "版本号（取自 backend\version.py）：$Version" -ForegroundColor DarkGray
+}
 $Out = Join-Path $Root "publish\EchoDesk-v$Version"
 # 修复七：程序本体统一放进 app\，外层只留快捷方式/用户数据/文档
 $AppOut = Join-Path $Out "app"

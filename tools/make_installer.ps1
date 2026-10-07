@@ -82,7 +82,10 @@
 [CmdletBinding()]
 param(
     # 口径：v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本（见 backend\version.py）。
-    [string]$Version = "0.2.2",
+    # 默认版本**从 backend\version.py 派生**（v0.2.2 裁定①）：原来这里写死 "0.2.2"，
+    # 升版本时若忘了改，产出的目录名、Setup 文件名与**写进安装包的版本资源**都会是旧值。
+    # 派生之后"改版本"只需改 version.py 一处（与 build_release.ps1 同一做法）。
+    [string]$Version = "",
     [string]$ReleaseDir = "",
     [string]$OutDir = "",
     [string]$ISCC = "",
@@ -106,6 +109,15 @@ trap {
 }
 
 $Root = Split-Path -Parent $PSScriptRoot
+if (-not $Version) {
+    # 版本从唯一来源派生（v0.2.2 裁定①）—— 与 verify_release.ps1 / build_release.ps1 同一读法
+    $VersionFile = Join-Path $Root "backend\version.py"
+    $VersionMatch = Select-String -Path $VersionFile -Pattern 'APP_VERSION\s*=\s*["'']([^"'']+)["'']' |
+                    Select-Object -First 1
+    if (-not $VersionMatch) { throw "读不出 APP_VERSION：$VersionFile（可用 -Version 显式指定）" }
+    $Version = $VersionMatch.Matches[0].Groups[1].Value.TrimStart('v')
+    Write-Host "版本号（取自 backend\version.py）：$Version" -ForegroundColor DarkGray
+}
 if (-not $ReleaseDir) { $ReleaseDir = Join-Path $Root "publish\EchoDesk-v$Version" }
 if (-not (Test-Path $ReleaseDir)) { throw "发布目录不存在：$ReleaseDir（先跑 tools\build_release.ps1）" }
 $ReleaseDir = (Resolve-Path -LiteralPath $ReleaseDir).Path

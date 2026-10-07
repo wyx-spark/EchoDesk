@@ -27,7 +27,12 @@
 $ErrorActionPreference = 'Continue'
 $Root = Split-Path -Parent $PSScriptRoot
 # 口径：v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本（见 backend\version.py）。
-$Version = "0.2.2"
+# 版本从唯一来源派生（v0.2.2 裁定①）：原先写死 "0.2.2"，升版本后这个门禁会去校验旧版本号。
+$VersionFile = Join-Path $PSScriptRoot "..\backend\version.py"
+$VersionMatch = Select-String -Path $VersionFile -Pattern 'APP_VERSION\s*=\s*["'']([^"'']+)["'']' |
+                Select-Object -First 1
+if (-not $VersionMatch) { throw "读不出 APP_VERSION：$VersionFile" }
+$Version = $VersionMatch.Matches[0].Groups[1].Value.TrimStart('v')
 $Publish = Join-Path $Root "publish"
 $Setup = Join-Path $Publish "EchoDesk-v$Version-Setup.exe"
 $Sums = Join-Path $Publish "SHA256SUMS.txt"

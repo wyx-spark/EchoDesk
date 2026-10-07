@@ -7,8 +7,10 @@ rem 本轮就是这样把发布构建弄失败的。
 rem ============================================================================
 rem  EchoDesk 可执行文件元数据与图标统一设置（rcedit）
 rem
-rem  用法:  tools\set_metadata.bat [发布目录]
-rem         默认发布目录: publish\EchoDesk-v0.2.1
+rem  用法:  tools\set_metadata.bat [发布目录] [版本]
+rem         版本**必填**（四段式，如 0.2.2.0）；缺省时本脚本会尝试用 python 读
+rem         backend\version.py —— 读不到就报错退出，**不再有写死的默认版本**。
+rem         发布目录默认按版本派生: publish\EchoDesk-v<三段式版本>
 rem
 rem  执行时机: 编译构建完成之后、打包发布之前（见 tools\build_release.ps1）
 rem
@@ -27,8 +29,8 @@ rem    ProductName       EchoDesk
 rem    OriginalFilename  对应可执行文件名
 rem    InternalName      对应可执行文件名
 rem    Comments          Powered by Void Entropia Studio
-rem    FileVersion       0.2.1.0
-rem    ProductVersion    0.2.1.0
+rem    FileVersion       （取自 backend\version.py，四段式；不再写死）
+rem    ProductVersion    同上
 rem    图标              assets\EchoDesk.ico（16/32/48/64/128/256 六尺寸）
 rem ============================================================================
 setlocal
@@ -41,7 +43,19 @@ popd
 set "RCEDIT=%ROOT%\tools\rcedit-x64.exe"
 set "ICON=%ROOT%\assets\EchoDesk.ico"
 
-set "VERSION=0.2.1.0"
+rem 版本号从**调用方**传入（tools\build_release.ps1 会从 backend\version.py 读出后传进来）。
+rem 【为什么不在这里自己读 version.py】批处理里嵌 python 一行命令 + 反引号 for/f + 单双引号
+rem 混排，实测在 cmd 下会被解析成几条乱七八糟的命令（报 "The system cannot find the path
+rem specified" 与 "'get' is not recognized"），把整个脚本带坏。版本号本来就只有
+rem build_release.ps1 一个调用方，由它派生既可靠又保持"唯一来源"。
+rem 缺参数就**报错退出**：写死默认值正是本次要修的根因（原来这里是 set "VERSION=0.2.1.0"）。
+set "VERSION=%~2"
+if not "%VERSION%"=="" goto :have_version
+echo [错误] 未指定版本号（四段式，如 0.2.2.0）。
+echo         用法: tools\set_metadata.bat [发布目录] [版本]
+echo         调用方 tools\build_release.ps1 会从 backend\version.py 读出后传入。
+exit /b 2
+:have_version
 set "COMPANY=Void Entropia Studio"
 set "COPYRIGHT=Copyright (C) Void Entropia Studio"
 set "DESC=EchoDesk - Local AI Desktop Assistant"
@@ -49,7 +63,11 @@ set "PRODUCT=EchoDesk"
 set "COMMENTS=Powered by Void Entropia Studio"
 
 set "TARGET=%~1"
-if "%TARGET%"=="" set "TARGET=%ROOT%\publish\EchoDesk-v0.2.1\app"
+if not "%TARGET%"=="" goto :have_target
+rem 默认发布目录按版本派生：0.2.2.0 → publish\EchoDesk-v0.2.2\app
+rem （原来写死 v0.2.1，升版本后会指向一个不存在的目录）
+set "TARGET=%ROOT%\publish\EchoDesk-v%VERSION:~0,-2%\app"
+:have_target
 
 rem 修复七：程序本体在 app\ 下，若调用方传的是发布根目录则自动下探一层
 if exist "%TARGET%\EchoDesk.exe" goto :target_ok

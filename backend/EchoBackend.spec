@@ -38,7 +38,14 @@ from PyInstaller.utils.hooks import collect_all
 IS_WINDOWS = sys.platform.startswith("win")
 
 # ---------- 可执行文件元数据（与 tools\set_metadata.bat 保持一致） ----------
-APP_VERSION = "0.2.1.0"
+# 版本号**从唯一来源取**（v0.2.2 裁定①）：这里以前写死 "0.2.1.0"，升版本时没人改，
+# 冻结发布树的后端 exe 就一直报旧版本号。spec 由 PyInstaller 执行，SPECPATH 指向本文件所在目录。
+_here = globals().get("SPECPATH") or os.path.dirname(os.path.abspath(__file__))
+if _here not in sys.path:
+    sys.path.insert(0, _here)
+from version import app_version_4            # noqa: E402
+
+APP_VERSION = app_version_4()
 COMPANY = "Void Entropia Studio"
 PRODUCT = "EchoDesk"
 EXE_NAME = "EchoDeskBackend.exe" if IS_WINDOWS else "EchoDeskBackend"
