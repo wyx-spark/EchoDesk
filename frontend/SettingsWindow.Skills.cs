@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
@@ -203,7 +203,7 @@ public partial class SettingsWindow
 
     /// <summary>安全协议正文：正式文本来自语言包，这里给中文兜底（键缺失时使用）。</summary>
     private string DefaultSafetyBody => Loc.T("settings.automation.safetyBody",
-        "1. 自动化功能仅在本机运行，操作过程使用有头浏览器，你可随时观察；\n2. EchoDesk 不会把任务内容、下载文件或生成结果上传到任何服务器；\n3. 已下载的附件会保留在结果目录中，便于你复核，请在共享前自行确认敏感信息；\n4. 你需要自行确认该自动化操作符合所在组织的规章制度与目标网站的服务条款；\n5. 因违规使用导致的后果由使用者自行承担，熵寂工作室（VoidEntropiaStudio）不承担责任。");
+        "1. 自动化功能仅在本机运行，操作过程使用有头浏览器，你可随时观察；\n2. EchoDesk 不会把任务内容、下载文件或生成结果上传到任何服务器；\n3. 已下载的附件会保留在结果目录中，便于你复核，请在共享前自行确认敏感信息；\n4. 你需要自行确认该自动化操作符合所在组织的规章制度与目标网站的服务条款；\n5. 因违规使用导致的后果由使用者自行承担，熵寂工作室不承担责任。");
 
     private void RefreshModeCombo()
     {
@@ -1697,3 +1697,4 @@ public partial class SettingsWindow
         }
     }
 }
+

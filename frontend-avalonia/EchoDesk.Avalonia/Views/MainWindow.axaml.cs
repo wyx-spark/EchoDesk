@@ -1,4 +1,4 @@
-// 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
+﻿// 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
 //
 // 迁移策略：**事件处理逻辑照搬 WPF 版**（发送、流式双通道、停止、文件上传、状态刷新、
 // 指令面板、常用语、通知条、状态区、Agent 步骤行），换掉的只有界面 API。
@@ -453,7 +453,7 @@ public partial class MainWindow : Window
         Title = $"EchoDesk {_state.Backend.Version ?? "v0.2.1"}";
         VersionText.Text = _state.Backend.Version ?? "v0.2.1";
         BrandText.Text = Loc.T("main.brand", "📡 EchoDesk");
-        PoweredText.Text = Loc.T("main.powered", "Powered by Void Entropia Studio");
+        PoweredText.Text = Loc.T("main.powered", "由熵寂工作室出品");
         PlatformChip.Text = $"🖥 {_state.Platform.DisplayName}";
         ModelText.Text = _state.Backend.ModelReady
             ? Loc.T("main.model.chip", "🧠 模型: {0}", string.IsNullOrEmpty(_state.Backend.LoadedModel) ? "local" : _state.Backend.LoadedModel)
@@ -715,7 +715,7 @@ public partial class MainWindow : Window
         int restored = _state.Backend.RestoredCount;
         AddMessage("system", restored > 0
             ? Loc.T("main.welcomeRestored", "📂 已自动恢复上次会话（{0} 轮）", restored)
-            : Loc.T("main.welcome", "✨ 欢迎使用 EchoDesk {0} — Powered by {1}",
+            : Loc.T("main.welcome", "✨ 欢迎使用 EchoDesk {0} — 由{1}出品",
                 _state.Backend.Version ?? "v0.2.2",
                 Loc.T("main.studioName", "熵寂工作室")));
     }
@@ -1427,7 +1427,7 @@ public partial class MainWindow : Window
                 {
                     BeginExitCountdown(content.Length > 0
                         ? content
-                        : Loc.T("main.thanks", "👋 感谢使用熵寂工作室（VoidEntropiaStudio）出品的 EchoDesk，欢迎您下次使用！"));
+                        : Loc.T("main.thanks", "👋 感谢使用熵寂工作室出品的 EchoDesk，欢迎您下次使用！"));
                     return;
                 }
                 if (content.Length > 0)
@@ -3184,6 +3184,8 @@ public partial class MainWindow : Window
 
     private void StopMetricsTimer() => _metricsTimer?.Stop();
 }
+
+
 
 
 

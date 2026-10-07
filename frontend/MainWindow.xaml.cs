@@ -143,7 +143,7 @@ public partial class MainWindow : Window
         AllowDrop = true; // 允许文件拖拽
         // 多语言（任务三）：先按当前语言回填 XAML 里声明的 Loc.Key，再订阅切换事件
         Loc.Apply(this);
-        Title = Loc.T("main.title", "EchoDesk {0} — Powered by {1}", AppVersion, LocalizedStudio());
+        Title = Loc.T("main.title", "EchoDesk {0} — 由{1}出品", AppVersion, LocalizedStudio());
         VersionText.Text = AppVersion;
         Loc.LanguageChanged += (_, _) => ApplyLanguage();
         Loaded += MainWindow_Loaded;
@@ -173,9 +173,15 @@ public partial class MainWindow : Window
         Loc.T("main.studioName", fallback ?? StudioName);
 
     /// <summary>
-    /// 首次出现用的**完整形式**：中文「熵寂工作室（VoidEntropiaStudio）」、
-    /// 英文 "Void Entropia Studio (熵寂工作室)" —— 首次出现就把中英对应关系说清楚，
-    /// 之后各处用简称。
+    /// 首次出现用的**完整形式**——历史上这里是「熵寂工作室（VoidEntropiaStudio）」这种
+    /// 中英并存写法，用意是"第一次就交代中英对应关系"。
+    ///
+    /// **2026-10-07 总策划裁定七改为全中文**：版权声明一律不再中英混合，
+    /// 所以中文语言包里的完整形式与简称现在**同为「熵寂工作室」**。
+    /// 英文语言包对应地只留 "Void Entropia Studio"（原先那份带中文括注的同样去掉，
+    /// 否则英文界面里会冒出中文，两个语言包各自内部自洽）。
+    /// 这个函数保留：它仍表示"规范署名位"的取值入口（`/about` 用它），
+    /// 日后若中文侧需要更完整的中文表达（例如加年份），只改语言包即可。
     /// </summary>
     private static string LocalizedStudioFull(string? fallback = null) =>
         Loc.T("main.studioNameFull", fallback ?? StudioName);
@@ -184,7 +190,7 @@ public partial class MainWindow : Window
     internal void ApplyLanguage()
     {
         Loc.Apply(this);
-        Title = Loc.T("main.title", "EchoDesk {0} — Powered by {1}", AppVersion, LocalizedStudio());
+        Title = Loc.T("main.title", "EchoDesk {0} — 由{1}出品", AppVersion, LocalizedStudio());
         if (!_isProcessing)
             StatusText.Text = Loc.T("main.status.ready");
         ApplyStatusStripState();
@@ -250,8 +256,8 @@ public partial class MainWindow : Window
             StatusText.Text = Loc.T("main.status.ready");
         else
             EnterNoModelMode();
-        Title = Loc.T("main.title", "EchoDesk {0} — Powered by {1}", _backend.Version, LocalizedStudio(_backend.Studio));
-        string welcome = Loc.T("main.welcome", "✨ 欢迎使用 EchoDesk {0} — Powered by {1}",
+        Title = Loc.T("main.title", "EchoDesk {0} — 由{1}出品", _backend.Version, LocalizedStudio(_backend.Studio));
+        string welcome = Loc.T("main.welcome", "✨ 欢迎使用 EchoDesk {0} — 由{1}出品",
                                _backend.Version, LocalizedStudioFull(_backend.Studio));
         if (_backend.RestoredCount > 0)
             welcome += "\n" + Loc.T("main.welcomeRestored", "📂 已自动恢复上次会话（{0} 轮）",
@@ -2594,7 +2600,7 @@ public partial class MainWindow : Window
     private void ShowHelpLocally()
     {
         var sb = new StringBuilder();
-        sb.AppendLine(Loc.T("main.help.header", "📖 EchoDesk {0} 完整指令介绍 — Powered by {1}",
+        sb.AppendLine(Loc.T("main.help.header", "📖 EchoDesk {0} 完整指令介绍 — 由{1}出品",
                             _backend?.Version ?? AppVersion,
                             LocalizedStudio(_backend?.Studio)));
         sb.AppendLine();
@@ -3360,3 +3366,4 @@ public sealed record CommandItem(string Command, string Format, string Descripti
     /// <summary>有副作用且不可逆（/clear、/clearcache）：执行前二次确认（修复二）。</summary>
     public bool HasSideEffects => Destructive;
 }
+

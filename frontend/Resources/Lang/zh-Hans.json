@@ -6,11 +6,11 @@
     "note": "EchoDesk 前端界面语言包（简体中文 = 源语言）。键名按模块分组，以 _ 或 // 开头的键是给翻译者的注释，程序会忽略。花括号里的 {0} {1} 是占位符，翻译时必须保留。"
   },
   "main": {
-    "title": "EchoDesk {0} — Powered by {1}",
+    "title": "EchoDesk {0} — 由{1}出品",
     "brand": "📡 EchoDesk",
-    "powered": "Powered by 熵寂工作室",
+    "powered": "由熵寂工作室出品",
     "studioName": "熵寂工作室",
-    "studioNameFull": "熵寂工作室（VoidEntropiaStudio）",
+    "studioNameFull": "熵寂工作室",
     "status": {
       "starting": "正在启动后端...",
       "ready": "已就绪",
@@ -82,12 +82,12 @@
     "hint": "💡 拖拽文件可上传 · Ctrl+Enter 发送 · Esc 停止 · Ctrl+L 清空 · Ctrl+滚轮 字号",
     "paletteHint": "↑↓ 选择 · Tab 补全 · Enter 执行（候选不唯一时先补全命令名再确认）· Esc 关闭",
     "help": {
-      "header": "📖 EchoDesk {0} 完整指令介绍 — Powered by {1}",
+      "header": "📖 EchoDesk {0} 完整指令介绍 — 由{1}出品",
       "usage": "用法：{0}",
       "noArgs": "（无参数）",
       "skillSection": "🧩 技能指令（由已加载插件提供）"
     },
-    "thanks": "👋 感谢使用熵寂工作室（VoidEntropiaStudio）出品的 EchoDesk，欢迎您下次使用！",
+    "thanks": "👋 感谢使用熵寂工作室出品的 EchoDesk，欢迎您下次使用！",
     "exit": {
       "countdown": "{0}\n\n程序将在 {1} 秒后自动关闭（点击「取消」可留在程序中）",
       "title": "正在退出"
@@ -179,7 +179,7 @@
       "stripCollapsed": "默认收起输入框下方的状态区",
       "stripCollapsedHelp": "收起后主界面更紧凑，点击状态区右侧按钮可再次展开。",
       "sectionAbout": "关于",
-      "aboutText": "EchoDesk {0}\n本地 AI 桌面助手 · 全离线推理\nPowered by 熵寂工作室（VoidEntropiaStudio）",
+      "aboutText": "EchoDesk {0}\n本地 AI 桌面助手 · 全离线推理\n由熵寂工作室出品",
       "aboutLicense": "开源许可：Apache-2.0 · 详见发布包 LICENSE 与 NOTICE"
     },
     "model": {

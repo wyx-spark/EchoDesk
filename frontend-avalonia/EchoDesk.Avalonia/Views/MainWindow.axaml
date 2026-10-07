@@ -75,7 +75,7 @@
                    VerticalAlignment="Bottom" />
         <TextBlock x:Name="VersionText" Grid.Column="1" Text="v0.2.1" FontSize="10"
                    Margin="4,0,0,2" VerticalAlignment="Bottom" Opacity="0.6" />
-        <TextBlock x:Name="PoweredText" Grid.Column="2" Text="Powered by Void Entropia Studio"
+        <TextBlock x:Name="PoweredText" Grid.Column="2" Text="由熵寂工作室出品"
                    Classes="sub" Margin="14,0,0,2" VerticalAlignment="Bottom" />
         <TextBlock x:Name="PlatformChip" Grid.Column="3" FontSize="12" VerticalAlignment="Center"
                    Margin="14,0,0,0" Opacity="0.8" />

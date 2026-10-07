@@ -13,7 +13,7 @@
     "about.program_dir": "Program folder: {path}",
     "about.repo": "Project home and full licence text: https://github.com/VoidEntropiaStudio/EchoDesk (Apache-2.0)",
     "studio": "Void Entropia Studio",
-    "studio_full": "Void Entropia Studio (熵寂工作室)"
+    "studio_full": "Void Entropia Studio"
   },
   "cmd": {
     "unknown": "Unknown command: {name} (type /help for the full command list)",

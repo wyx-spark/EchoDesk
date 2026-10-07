@@ -32,7 +32,7 @@
                 <TextBlock Grid.Column="1" x:Name="VersionText" Text="v0.2.1" FontSize="10" Margin="4,0,0,0"
                            VerticalAlignment="Bottom" Foreground="{DynamicResource SubTextBrush}"/>
             </Grid>
-            <TextBlock Text="Powered by Void Entropia Studio" FontSize="11" Margin="14,8,0,0"
+            <TextBlock Text="由熵寂工作室出品" FontSize="11" Margin="14,8,0,0"
                        svc:Loc.Key="main.powered"
                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>
             <!-- 关键状态：运行状态 / 模型 / 模式。
