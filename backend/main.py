@@ -3440,7 +3440,7 @@ class Backend:
         if len(accepted) > 1:
             parts.append(_t("sys.files_loaded_summary", count=len(ok),
                             total=len(accepted), failed=len(failed),
-                            names="、".join(self.conv.file_names())))
+                            names=_t("sys.list_separator").join(self.conv.file_names())))
         return {
             "ok": len(ok), "failed": len(failed), "files": results,
             "ignored": ignored, "text": "\n".join(p for p in parts if p),
@@ -3510,7 +3510,8 @@ class Backend:
         ok = [r for r in collected if r.get("ok")]
         failed = [r for r in collected if not r.get("ok")]
         summary = _t("sys.files_loaded_summary", count=len(ok), total=len(accepted),
-                     failed=len(failed), names="、".join(r.get("name", "") for r in ok))
+                     failed=len(failed),
+                     names=_t("sys.list_separator").join(r.get("name", "") for r in ok))
         done: Dict[str, Any] = {"type": "done", "content": summary,
                                 "files": [{"name": r.get("name", ""), "ok": bool(r.get("ok")),
                                            "chars": int(r.get("chars", 0) or 0),

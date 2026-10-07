@@ -1553,7 +1553,8 @@ class AutomationEngine:
             except Exception:  # noqa: BLE001
                 pass
             raise AutomationError(
-                _t("automation.browser.launch_failed", detail="；".join(failures))
+                _t("automation.browser.launch_failed",
+                   detail=_t("automation.browser.failure_separator").join(failures))
             )
         if len(candidates) > 1:
             note = _t("automation.browser.using",
@@ -1563,7 +1564,8 @@ class AutomationEngine:
         # 老用户升级后不必重新登录（只导入，不删除源文件）。
         migrated = self._migrate_legacy_state(context) if first_run else 0
         if migrated:
-            note = (note + _t("automation.login.migrated", count=migrated)).strip()
+            note = (note + _t("sys.sentence_joiner")
+                    + _t("automation.login.migrated", count=migrated)).strip()
         return _BrowserSession(playwright, context, getattr(context, "browser", None),
                                note, profile_dir=profile, first_run=first_run)
 
@@ -1793,7 +1795,8 @@ class AutomationEngine:
         if session.reused and current and not _is_internal_url(current):
             note = _t("automation.reuse.using_open_tab", url=_clip(current, 150))
             if target_url and not _same_site(current, target_url):
-                note += _t("automation.reuse.tab_mismatch", want=_clip(target_url, 120))
+                note += (_t("sys.sentence_joiner")
+                         + _t("automation.reuse.tab_mismatch", want=_clip(target_url, 120)))
             self._refresh_target_info(session)
             return note
         if target_url:
@@ -1856,8 +1859,9 @@ class AutomationEngine:
 
         # ---- 兜底：老路径（全新实例）----
         session = self._open_session()
-        note = (note + _t("automation.reuse.fallback_cost")).strip()
-        session.note = (session.note + note).strip()
+        note = (note + _t("sys.sentence_joiner")
+                + _t("automation.reuse.fallback_cost")).strip()
+        session.note = (session.note + _t("sys.sentence_joiner") + note).strip()
         self._audit("browser_reuse", result="fallback", mode=mode,
                     port=self.cdp_port, browser=want)
         return session
@@ -3527,7 +3531,7 @@ class AutomationEngine:
                     raise AutomationError(_t("automation.reuse.no_usable_tab"))
             prepared = self._prepare_task_list_page(page, session, url)
             if prepared:
-                note = (note + prepared).strip()
+                note = (note + _t("sys.sentence_joiner") + prepared).strip()
             machine.open(target=str(target or "task_list"),
                          url=session.target_url or _page_url(page),
                          title=session.target_title,

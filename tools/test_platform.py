@@ -163,9 +163,12 @@ with io.open(txt_path, "w", encoding="utf-8") as handle:
 check("普通文本文件照常解析",
       "跨平台解析回归检查" in fp.parse_file_with_wps(txt_path),
       fp.parse_file_with_wps(txt_path)[:80])
+# v0.2.2 硬编码清查第 6 批（一）：解析失败串改成「语言无关标记 + 语言包正文」，
+# 所以不能按中文前缀断言（英文界面下正文不是中文）。改成先判"是失败串"、再取当前语言正文来断言。
+_zzz = fp.parse_file_with_wps(os.path.join(workdir, "x.zzz"))
 check("不支持的扩展名照常报「不支持」",
-      fp.parse_file_with_wps(os.path.join(workdir, "x.zzz")).startswith("不支持的文件类型"),
-      fp.parse_file_with_wps(os.path.join(workdir, "x.zzz"))[:60])
+      fp.is_parse_error(_zzz) and "不支持" in fp.localize_error(_zzz),
+      _zzz[:60])
 
 print("=== 7. 自动化：非 Windows 上 validate() 说明原因，不是「没装 Playwright」 ===")
 import automation as am           # noqa: E402

@@ -115,6 +115,7 @@
     "read_args": "{\"path\": \"an absolute path or one relative to the program folder\"}"
   },
   "cmd": {
+    "status.not_measured": "not measured yet",
     "unknown": "Unknown command: {name} (type /help for the full command list)",
     "disabled": "The command {name} from skill \"{skill}\" is unavailable: {reason}",
     "help": {
@@ -302,7 +303,7 @@
       "model": "🧠 Model: {model}",
       "arch": "🏗️  Architecture: {arch}",
       "mode": "🛠️  Mode: {mode}",
-      "temperature": "🌡️  Temperature: {temp}",
+      "temperature": "🌡️  Temperature: {temp}{manual}",
       "threads": "⚙️  Threads: {threads} · batch {batch} · GPU layers {gpu}",
       "kv": "💾 KV cache: about {kv}",
       "unknown": "unknown",
@@ -400,6 +401,8 @@
     "items./mcp.detail": "    MCP (Model Context Protocol) lets the agent use tools provided by **external processes**\n    (databases, APIs, file systems, …). EchoDesk ships a stdio client: declare one\n    command per server under mcp.servers in config.json.\n\n    Security boundary: an MCP server is a process you configured and EchoDesk cannot\n    control what it does, so its tools are **always treated as sensitive** and must be\n    authorised with /agent allow first. Secret environment variables are **not**\n    passed through by default — name them in passthrough_env if you need to.\n\n    Common uses:\n      /mcp                     show status and tools\n      /mcp enable echo         enable a server (written to config.json)\n      /mcp disable echo        disable it (takes effect immediately)\n      /mcp connect             connect now and fetch the tool list\n\n    Example: examples\\mcp\\echo_server.py (standard library only; configure it to\n    verify the plumbing end to end)."
   },
   "sys": {
+    "sentence_joiner": " ",
+    "list_separator": ", ",
     "speed_hint": "⏱️ Note: generation is running at about {tps} chars/s, which is slow. The context window is {n_ctx} tokens (KV cache about {kv}); the larger the window, the more memory it uses and the slower it gets. You can lower context_length in config.json, raise n_threads, or use a smaller quantised model.",
     "ready": "Backend ready",
     "unknown_action": "Unknown action",
@@ -833,6 +836,7 @@
     "query.needs_load": "Search results have not been loaded yet; run a search first."
   },
   "automation": {
+    "browser.failure_separator": "; ",
     "disabled": "Automation is not enabled",
     "safety_required": "The automation switch requires the safety protocol to be accepted first; it has been turned off automatically",
     "headless_ignored": "Automation only supports headed mode; headless=True was ignored",

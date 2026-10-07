@@ -115,6 +115,7 @@
     "read_args": "{\"path\": \"绝对路径或相对程序目录的路径\"}"
   },
   "cmd": {
+    "status.not_measured": "尚未统计",
     "unknown": "未知指令: {name}（输入 /help 查看全部指令）",
     "disabled": "技能「{skill}」提供的指令 {name} 当前不可用：{reason}",
     "help": {
@@ -302,7 +303,7 @@
       "model": "🧠 模型: {model}",
       "arch": "🏗️  架构: {arch}",
       "mode": "🛠️  模式: {mode}",
-      "temperature": "🌡️  温度: {temp}",
+      "temperature": "🌡️  温度: {temp}{manual}",
       "threads": "⚙️  线程: {threads} · batch {batch} · GPU 层 {gpu}",
       "kv": "💾 KV Cache: 约 {kv}",
       "unknown": "未知",
@@ -400,6 +401,8 @@
     "items./mcp.detail": "    MCP（Model Context Protocol）让 Agent 能用上**外部进程**提供的工具\n    （数据库、API、文件系统…）。EchoDesk 自带一个 stdio 客户端，\n    在 config.json 的 mcp.servers 里写一行命令即可接入。\n\n    安全边界：MCP Server 是你自己配的进程，它的行为不受 EchoDesk 控制，\n    所以它的工具**一律按敏感工具处理**，要先 /agent allow 才能调用；\n    默认也**不会**把它需要的密钥环境变量透传给它（要透传就在\n    passthrough_env 里点名）。\n\n    常用：\n      /mcp                     查看状态与工具\n      /mcp enable echo         启用某个 server（写进 config.json）\n      /mcp disable echo        停用（立即生效，无需重启）\n      /mcp connect             立刻连接并拉取工具清单\n\n    示例：examples\\mcp\\echo_server.py（纯标准库，可直接配来验证通路）。"
   },
   "sys": {
+    "sentence_joiner": "",
+    "list_separator": "、",
     "speed_hint": "⏱️ 提示：当前生成速度约 {tps} 字/秒，偏慢。上下文窗口为 {n_ctx} tokens（KV Cache 约 {kv}），窗口越大内存占用越高、速度越慢；可在 config.json 调小 context_length，或增大 n_threads / 使用更小的量化模型。",
     "ready": "后端已就绪",
     "unknown_action": "未知动作",
@@ -833,6 +836,7 @@
     "query.needs_load": "尚未加载搜索结果，请先搜索。"
   },
   "automation": {
+    "browser.failure_separator": "；",
     "disabled": "自动化未启用",
     "safety_required": "自动化开关需要先勾选安全协议，已自动关闭",
     "headless_ignored": "自动化仅支持有头模式，已忽略 headless=True",
