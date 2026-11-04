@@ -1258,6 +1258,9 @@ public partial class AutomationPage : UserControl, ISettingsPage
     // -----------------------------------------------------------------
     public void ApplyTexts()
     {
+        FieldHelpIntroTitle.Text = Loc.T("settings.automation.fieldHelpTitle", "? 字段说明");
+        FieldHelpIntroText.Text = Loc.T("settings.automation.fieldHelpIntro",
+            "把光标放进下面任意一个输入框（或点字段旁的「?」），这里会显示该字段的通俗说明与示例值。");
         SafetyTitle.Text = "🔒 " + Loc.T("settings.automation.sectionSafety", "安全协议");
         SafetyBodyText.Text = Loc.T("settings.automation.safetyBody", "");
         SafetyCheck.Content = Loc.T("settings.automation.toggleSafety", "我已阅读并同意上述安全协议");
