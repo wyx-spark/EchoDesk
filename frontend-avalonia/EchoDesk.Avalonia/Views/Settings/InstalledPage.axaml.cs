@@ -655,6 +655,8 @@ public partial class InstalledPage : UserControl, ISettingsPage
     // -----------------------------------------------------------------
     public void ApplyTexts()
     {
+        // 区块标题：与 WPF 的「已加载插件」同一个键、同一个字号口径（15 号加粗强调色）。
+        InstalledTitle.Text = Loc.T("settings.installed.title", "已加载插件");
         SkillsRefreshButton.Content = Loc.T("settings.installed.refresh", "🔄 刷新");
         SkillsReloadButton.Content = Loc.T("settings.installed.reload", "🔄 重载本地插件");
         SkillsInstallFolderButton.Content = Loc.T("settings.installed.installFolder", "📥 从文件夹安装");

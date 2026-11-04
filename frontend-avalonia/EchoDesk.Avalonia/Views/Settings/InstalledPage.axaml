@@ -1,16 +1,23 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.InstalledPage">
   <!--
-    已安装页（v0.2.1 跨平台-2 任务一，第 3 个迁移模块）。
-
-    列出市场安装 / 本地安装 / 开发目录里的全部插件及其加载状态。
-    控件名与 AutomationId 与 WPF 版同名，便于复用 ui_probe 的既有断言。
+    已安装页（视觉对齐版）：版式按 frontend/SettingsWindow.xaml 的「已安装」页签复刻。
+      · 顶部是 15 号加粗强调色的「已加载插件」标题 + 一行说明；
+      · 操作条在说明下面（刷新 / 重载本地插件 / 从文件夹安装 / 新建本地插件）；
+      · 插件列表放在**一个 8 圆角、1px 描边的框里**（WPF 一直是这个画法，
+        Avalonia 原来是一块没有边界的裸区域）；
+      · 状态行（已安装 total=…）在列表框下方。
+    控件名与 AutomationId 保持不变。
   -->
-  <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" Margin="16,12,16,10">
+  <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Margin="14,12,14,10">
 
-    <!-- 操作条：控件名与 AutomationId 与 WPF 版同名（ui_probe 的既有断言可直接复用） -->
-    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
+    <!-- 标题 -->
+    <TextBlock x:Name="InstalledTitle" Grid.Row="0" FontSize="15" FontWeight="Bold"
+               Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,6" />
+
+    <!-- 操作条 -->
+    <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
       <Button x:Name="SkillsRefreshButton" Padding="10,4"
               AutomationProperties.AutomationId="SkillsRefreshButton" />
       <Button x:Name="SkillsReloadButton" Padding="10,4"
@@ -23,14 +30,14 @@
               AutomationProperties.AutomationId="SkillsExamplesButton" />
     </StackPanel>
 
-    <TextBlock x:Name="InstalledTipText" Grid.Row="1" Margin="0,6,0,0" FontSize="11"
+    <TextBlock x:Name="InstalledTipText" Grid.Row="1" Margin="0,2,0,8" FontSize="11"
                TextWrapping="Wrap" Opacity="0.7" />
 
     <!-- 首次加载未知来源插件的信任确认（v0.2.2 第 4 批 3a）。
          WPF 用 TrustDialog 模态窗口；Avalonia 没有对话框体系，改成**页内一块面板**：
          一次性列出全部待确认插件、逐条勾选、整批提交（后端 skills_trust_bulk）——
          与 WPF 同一语义（"只问一次、整批决定"），只是承载方式不同。 -->
-    <Border x:Name="TrustPanel" Grid.Row="2" IsVisible="False" Margin="0,10,0,0"
+    <Border x:Name="TrustPanel" Grid.Row="3" IsVisible="False" Margin="0,10,0,0"
             Background="{DynamicResource WarningBannerBrush}"
             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
             CornerRadius="6" Padding="12,10"
@@ -56,25 +63,29 @@
       </StackPanel>
     </Border>
 
-    <!-- 列表 -->
-    <ScrollViewer Grid.Row="3" Margin="0,8,0,0" VerticalScrollBarVisibility="Auto">
-      <Grid>
-        <ItemsControl x:Name="SkillList">
-          <ItemsControl.ItemsPanel>
-            <ItemsPanelTemplate>
-              <StackPanel Spacing="8" />
-            </ItemsPanelTemplate>
-          </ItemsControl.ItemsPanel>
-        </ItemsControl>
-        <TextBlock x:Name="SkillEmptyText" HorizontalAlignment="Center" VerticalAlignment="Center"
-                   FontSize="12" Opacity="0.65" TextWrapping="Wrap" TextAlignment="Center"
-                   IsVisible="False"
-                   AutomationProperties.AutomationId="SkillEmptyText" />
-      </Grid>
-    </ScrollViewer>
+    <!-- 列表：与 WPF 一样放在一个描边框里 -->
+    <Border Grid.Row="4" Margin="0,10,0,0" CornerRadius="8" BorderThickness="1"
+            BorderBrush="{DynamicResource InputBorderBrush}"
+            Background="{DynamicResource InputBackgroundBrush}">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="6">
+        <Grid>
+          <ItemsControl x:Name="SkillList">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <StackPanel Spacing="8" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+          </ItemsControl>
+          <TextBlock x:Name="SkillEmptyText" HorizontalAlignment="Center" VerticalAlignment="Center"
+                     FontSize="12" Opacity="0.65" TextWrapping="Wrap" TextAlignment="Center"
+                     IsVisible="False"
+                     AutomationProperties.AutomationId="SkillEmptyText" />
+        </Grid>
+      </ScrollViewer>
+    </Border>
 
     <!-- 状态行 -->
-    <TextBlock x:Name="SkillStatusText" Grid.Row="4" Margin="0,8,0,0" FontSize="11"
+    <TextBlock x:Name="SkillStatusText" Grid.Row="5" Margin="0,6,0,0" FontSize="11"
                TextWrapping="Wrap" Opacity="0.8"
                AutomationProperties.AutomationId="SkillStatusText" />
   </Grid>
