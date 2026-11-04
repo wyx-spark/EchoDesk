@@ -1,4 +1,4 @@
-// 智能体页的交互逻辑（v0.2.1 跨平台-2 任务一，第 6 个迁移模块）。
+﻿// 智能体页的交互逻辑（v0.2.1 跨平台-2 任务一，第 6 个迁移模块）。
 //
 // 两个后端动作的数据形状（与 WPF 版一致）：
 //   agent_state → { agent: { mode, max_steps, tools: [ { name, risk, description,
@@ -326,15 +326,9 @@ public partial class AgentPage : UserControl, ISettingsPage
         grid.Children.Add(info);
         grid.Children.Add(check);
 
-        return new Border
-        {
-            Background = TryBrush("CardBackgroundBrush"),
-            BorderBrush = TryBrush("CardBorderBrush"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(12, 8),
-            Child = grid,
-        };
+        var card = new Border { Child = grid };
+        card.Classes.Add("card");
+        return card;
     }
 
     private async Task ApplyStepsAsync()
@@ -631,15 +625,8 @@ public partial class AgentPage : UserControl, ISettingsPage
         grid.Children.Add(info);
         grid.Children.Add(actions);
 
-        var border = new Border
-        {
-            Background = TryBrush("CardBackgroundBrush"),
-            BorderBrush = TryBrush("CardBorderBrush"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(12, 8),
-            Child = grid,
-        };
+        var border = new Border { Child = grid };
+        border.Classes.Add("card");
         AutomationProperties.SetAutomationId(border, "McpServer_" + row.Name);
         return border;
     }
@@ -797,13 +784,16 @@ public partial class AgentPage : UserControl, ISettingsPage
         return patch;
     }
 
-    private static Brush? TryBrush(string key)
+    /// <summary>
+    /// 按语义键取画刷。**必须在控件实例上解析**，不能用 Application.Current.TryFindResource：
+    /// 应用的资源放在 ThemeDictionaries 里（Light/Dark 各一份），
+    /// 在 Application 上查不会带上"当前主题变体"，于是永远取不到 —— 返回 null。
+    /// 后果是代码生成的工具卡片与 MCP 卡片全都画不出边框和底色（实测：Agent 页工具行
+    /// 看起来像没有卡片的纯文本）。控件实例上的 TryFindResource 会用 ActualThemeVariant。
+    /// </summary>
+    private Brush? TryBrush(string key)
     {
-        if (Application.Current is null)
-            return null;
-        if (Application.Current.TryFindResource(key, out object? value) && value is Brush brush)
-            return brush;
-        return null;
+        return TryGetResource(key, ActualThemeVariant, out object? value) && value is Brush brush ? brush : null;
     }
 
     private static string GetString(JsonElement item, string name) =>
@@ -882,10 +872,13 @@ public partial class AgentPage : UserControl, ISettingsPage
     // -----------------------------------------------------------------
     public void ApplyTexts()
     {
-        AgentToolsTitle.Text = Loc.T("settings.agent.toolsTitle", "工具授权");
+        AgentTitle.Text = Loc.T("settings.agent.title", "🛡 智能体（Agent）");
+        AgentToolsTitle.Text = Loc.T("settings.agent.toolsTitle", "工具权限");
+        AgentToolsSubtitle.Text = Loc.T("settings.agent.safeAlwaysOn",
+            "安全工具默认可用（不需要授权，也无法关闭）");
         AgentIntroText.Text = Loc.T("settings.agent.intro",
             "智能体可以调用下列工具。开启越多能力越强，风险也越大；只读工具默认允许。");
-        AgentStepsLabel.Text = Loc.T("settings.agent.stepsLabel", "最大步数");
+        AgentStepsLabel.Text = Loc.T("settings.agent.stepsLabel", "最大工具调用数");
         AgentStepsApplyButton.Content = Loc.T("settings.agent.stepsApply", "应用");
         AgentStepsHint.Text = Loc.T("settings.agent.stepsHint",
             "一次任务里最多允许「思考 → 调用工具」的轮数。太小会做不完，太大会让单次请求变慢。");
