@@ -1,7 +1,7 @@
 # 第三方组件声明（简体中文译本）
 
 > **本文为英文版 [`NOTICE`](NOTICE) 的中文译本。** 如与英文版有歧义，**以英文版为准**。
-> 英文原版随本文件同目录提供；第三方组件清单的可机读形式见 [`docs/SBOM.json`](docs/SBOM.json)。
+> 英文原版随本文件同目录提供；第三方组件清单的可机读形式软件物料清单为 `docs/SBOM.json`，按随包分发的分发版生成
 
 > This is the Chinese translation of the English [`NOTICE`](NOTICE). If the two ever disagree,
 > the English version prevails. A machine-readable component list is in [`docs/SBOM.json`](docs/SBOM.json).

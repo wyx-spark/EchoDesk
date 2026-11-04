@@ -21,7 +21,7 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)（�
 > 所以在 Windows 上产出的 `results/` 目录拿到哪个平台都能看。
 >
 > 因此本文其余部分说明的是 **Windows** 上的配置界面。真正因平台而不同的路径（首要是结果保存位置）
-> 会三平台并列给出。权威说明见 [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md) 第 3.2 与第 5 节。
+> 会三平台并列给出。权威说明Windows 具备全部能力；macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属功能，其中加密文档读取退为"仅未加密文档"，浏览器自动化不可用；三平台默认数据目录分别为 `%APPDATA%\EchoDesk`、`~/Library/Application Support/EchoDesk`、`~/.config/EchoDesk`第 3.2 与第 5 节。
 
 **本文里的路径怎么写**：程序目录内部的路径统一用正斜杠（`app/backend/config.json`）——macOS 与 Linux 上
 就是这样显示的，Windows 上同一条路径写作 `app\backend\config.json`。真正因平台而不同的只有**结果根目录**，

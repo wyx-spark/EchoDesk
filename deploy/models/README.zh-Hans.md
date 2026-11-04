@@ -55,7 +55,7 @@ cp model.gguf "<release directory>/app/backend/models/"
   `EchoDesk-<版本>-Setup.exe` 的那个文件夹。安装程序**不含模型**：它排除 `*.gguf`，
   需要首次启动时下载，或由你自己放进去。
 - **macOS / Linux**：发布物是压缩包、没有安装程序，解压到任意可写目录即可；
-  解压后若可执行位丢失，见[用户手册](../../docs/zh-Hans/USER_GUIDE.md)。
+  解压后若可执行位丢失，用户手册给出安装、日常使用与无图形环境下的替代做法。
 
 模型市场搜索结果的磁盘缓存，是本文唯一不在发布目录内的、与模型相关的路径：
 `model_hub.search_cache_dir` 留空时，它落在用户数据目录下的 `cache/model_hub`，

@@ -10,7 +10,7 @@ English version: [`docs/en/SKILL_GUIDE.md`](../en/SKILL_GUIDE.md)（本文为英
 确实与平台有关的是两项 EchoDesk 能力，技能可能会碰到：通过 COM 读取 WPS/Office 的**加密文档**
 （含旧版 `.doc` / `.xls`）与企业内网浏览器自动化，这两项**仅 Windows 提供**。如果你的技能本身依赖
 Windows 专属的东西（比如通过 COM 调 WPS），请在 README 里写明（市场卡片会展示它）——EchoDesk 没法让那个
-组件在别的平台上存在。完整矩阵见 [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md)。
+组件在别的平台上存在。完整矩阵Windows 具备全部能力；macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属功能，其中加密文档读取退为"仅未加密文档"，浏览器自动化不可用；三平台默认数据目录分别为 `%APPDATA%\EchoDesk`、`~/Library/Application Support/EchoDesk`、`~/.config/EchoDesk`
 
 ---
 

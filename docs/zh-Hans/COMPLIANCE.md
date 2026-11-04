@@ -81,7 +81,7 @@ export NO_PROXY="localhost,127.0.0.1,.corp.example"
 2. 配置：`/search off`、`"marketplace": {"enabled": false}`、`"update": {"enabled": false}`、
    `"automation": {"enabled": false}`。
 3. 模型：手工预置 `.gguf` 到模型目录，不从界面触发下载（**模型下载没有"一键禁网"配置项**，
-   见 [`../PRIVACY.md`](../PRIVACY.zh-Hans.md) 第 2.1 节的说明）。
+   本机默认不联网；联网只发生在你主动触发的搜索、模型下载与技能市场，且日志仅记录文件名）。
 
 ## 三、证书（Certificates）
 
@@ -387,7 +387,7 @@ macOS 上把 `app/EchoDesk` 拖进程序坞即可。
 
 > **仅限 Windows。** 本节描述的路径要经本机 WPS/Office 的 COM 接口，而 macOS 与 Linux 上不存在该接口。
 > 在这两个平台上，受保护文档根本打不开：程序会把该能力报成"仅限 Windows"，而不是解析失败；
-> 老式二进制 `.doc`/`.xls` 同理。见 [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md) 第 3.1 节。
+> 老式二进制 `.doc`/`.xls` 同理。Windows 具备全部能力；macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属功能，其中加密文档读取退为"仅未加密文档"，浏览器自动化不可用；三平台默认数据目录分别为 `%APPDATA%\EchoDesk`、`~/Library/Application Support/EchoDesk`、`~/.config/EchoDesk`
 
 - **不接触加密驱动、不修改加密策略、不持有密钥。** EchoDesk 不安装、不注册、不补丁、不卸载
   加密客户端，也不读取属于它的密钥与授权材料。
@@ -419,5 +419,5 @@ macOS 上把 `app/EchoDesk` 拖进程序坞即可。
 | 事后审计 | `automation_log.jsonl`（谁/何时/跑了什么）+ `results/.../result.txt`（做了什么/结果如何） |
 | 快捷方式丢失（Windows 便携版） | 直接跑 `app\EchoDesk.exe`，按提示重建（必要时先删 `ui_state.json`） |
 | Linux / macOS 发布包 | 解压 `.tar.gz` 后运行 `./start.sh`；用户数据落在 macOS 的 `~/Library/Application Support/EchoDesk`、Linux 的 `$XDG_DATA_HOME/EchoDesk` / `~/.local/share/EchoDesk`，或 `ECHODESK_DATA` 指定的位置 |
-| 读取企业加密系统保护的文档 | 装上 WPS 与对应的加密客户端、给账户授予访问权限；读取过程经 WPS，与手动打开完全一致 —— 见 [`../ENCRYPTED_DOCUMENTS.zh-Hans.md`](../ENCRYPTED_DOCUMENTS.zh-Hans.md)（仅 Windows） |
+| 读取企业加密系统保护的文档 | 装上 WPS 与对应的加密客户端、给账户授予访问权限；读取过程经 WPS，与手动打开完全一致 —— 解密在内存中完成、磁盘不落盘，且不破解任何加密（仅 Windows） |
 | 完全禁止这条路径 | 不在该机器上安装 WPS，受保护文档即解析失败（预期行为） |

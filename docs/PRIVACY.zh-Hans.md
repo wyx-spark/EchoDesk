@@ -66,7 +66,7 @@
 | 上传数据 | 无（纯下载；除上面的请求头与文件名外不写入任何内容） |
 | 数据去向 | 模型文件**下载到本机**（默认 `app\backend\models\`，可用 `model_hub.models_dir` 改到受管盘）；下载完成后可按大小与 sha256 校验（`model_hub.verify_sha256`，默认开启） |
 | 保留多久 | 模型文件一直留在你的磁盘上，**只有你手动删除才会消失**（模型中心可删除，或直接删文件）。第三方站点（镜像站/官方站）的**服务器访问日志由该第三方按其自身政策保留**，EchoDesk 无法查询、导出或删除这些日志 |
-| 如何关闭 | ① 询问下载时选"否"，程序不会自行下载；② 把 `.gguf` 文件**手工放进** `models\` 目录，程序只从本地加载，全程不联网；③ 不填 Token、不设 `HF_TOKEN`（Token 只影响私有/受限模型的鉴权，与本机数据无关）；④ 在防火墙/代理层阻断上述域名（见 [`zh-Hans/COMPLIANCE.md`](zh-Hans/COMPLIANCE.md)） |
+| 如何关闭 | ① 询问下载时选"否"，程序不会自行下载；② 把 `.gguf` 文件**手工放进** `models\` 目录，程序只从本地加载，全程不联网；③ 不填 Token、不设 `HF_TOKEN`（Token 只影响私有/受限模型的鉴权，与本机数据无关）；④ 在防火墙/代理层阻断上述域名（合规说明逐项给出许可证、隐私、数据留存与三平台差异的结论，并附可复核证据） |
 
 > **注意（当前未实施）**：配置项 `model_hub` 下虽有 `enabled` 字段，但**当前版本未在下载/搜索路径上生效**，
 > 请勿依赖它来"一键禁网"；模型下载的可控点只有"是否同意下载"与网络层的域名阻断。
@@ -165,7 +165,7 @@
 ## 四、企业/受限环境：彻底禁止联网的操作清单
 
 按下面的清单逐项执行，可把 EchoDesk 收敛为**完全离线**的运行方式
-（更详细的做法与域名白名单见 [`zh-Hans/COMPLIANCE.md`](zh-Hans/COMPLIANCE.md) / [`en/COMPLIANCE.md`](en/COMPLIANCE.md)）：
+（更详细的做法与域名白名单合规说明逐项给出许可证、隐私、数据留存与三平台差异的结论，并附可复核证据/ [`en/COMPLIANCE.md`](en/COMPLIANCE.md)）：
 
 1. **模型离线化**：在联网的机器上下载 `.gguf`，拷贝到内网机器的 `models\` 目录，用 `/model` 选择本地文件。
    不要在任何提示里点"下载"。
@@ -228,5 +228,5 @@ EchoDesk 面向成年专业用户设计。使用自动化功能访问第三方�
   [Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions)；如隐私问题必须私下处理，
   请走 [`SECURITY.md`](../SECURITY.zh-Hans.md) 里的私有报告渠道——本仓库 **Security → Report a vulnerability**
   私有公告表单 <https://github.com/VoidEntropiaStudio/EchoDesk/security/advisories/new>——且不要开公开 Issue。
-- 一般问题与使用咨询：参见 [`zh-Hans/FAQ.md`](zh-Hans/FAQ.md) / [`en/FAQ.md`](en/FAQ.md)，
+- 一般问题与使用咨询：常见问题覆盖启动、模型、文件解析、自动化与技能市场/ [`en/FAQ.md`](en/FAQ.md)，
   以及发布物内的说明文件。

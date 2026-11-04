@@ -1,7 +1,7 @@
 # EchoDesk 用户手册（v0.2.2）
 
 面向实际使用场景的操作手册。快速上手与故障排除见 `docs/zh-Hans/FAQ.md`；
-自动化字段的逐项填写说明见 [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md)。
+自动化字段的逐项填写说明自动化指南逐字段说明任务链接、登录判定、翻页与结果目录的填写方法，并提供选择器可视化选取
 English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 
 ---

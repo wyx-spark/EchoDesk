@@ -108,7 +108,7 @@ EchoDesk 是一款**纯本地**桌面应用：模型推理、文件解析与浏�
 3. **第三方依赖自身的漏洞**：请**报告给上游**（例如 llama.cpp、PyInstaller、Playwright、
    `requests`、`pypdf`、Python 标准库等）。
    你可以同时抄送我们，我们会在下一版升级依赖；但修复责任与时间表在上游。
-   当前依赖清单见 [`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PARTY_LICENSES.md) 与
+   当前依赖清单随包分发的第三方组件与其许可证逐项列在 `docs/THIRD_PARTY_LICENSES.md`，机器可读版本为 `docs/SBOM.json`与
    [`docs/SBOM.json`](docs/SBOM.json)。
 4. **已在机器上运行的恶意软件**、以及 Microsoft Edge / WPS Office / Microsoft Office /
    操作系统本身的漏洞（请报给对应厂商）。
@@ -132,7 +132,7 @@ EchoDesk 是一款**纯本地**桌面应用：模型推理、文件解析与浏�
   唯一的注册表访问是**只读**读取 `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`
   下的 `AppsUseLightTheme`，用于"跟随系统主题"；不写入、不创建键。
 - **联网只发生在后端**：前端（.NET WPF）自身不发起任何网络请求。
-  会联网的五个功能及其域名清单见 [`docs/PRIVACY.md`](docs/PRIVACY.md) 第二节。
+  会联网的五个功能及其域名清单本机默认不联网；联网行为只发生在你主动触发的搜索、模型下载与技能市场，且日志只记录文件名，不含文档正文、模型输出、Token、Cookie 或密码第二节。
 
 ### 7.2 技能（插件）
 

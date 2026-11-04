@@ -7,7 +7,10 @@ English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)（本文为英文�
 
 **本文的命令写法**：优先给三平台通用的写法（`python`、`git`、正斜杠），只在确实有差异时展开并标注
 平台（虚拟环境激活、环境变量、Windows 专属的发布链）。Windows、macOS、Linux 三个平台都受支持，
-能力矩阵见 [CROSS_PLATFORM.md](CROSS_PLATFORM.md)。
+但支持程度不同：Windows 10 / 11（x64）为正式交付平台，具备全部能力；macOS（Apple Silicon）与
+Linux（x86_64）由 Avalonia 前端提供图形界面，后端代码通用，但两项能力被平台约束降级 ——
+加密文档读取仅 Windows 可用（Linux / macOS 退为只读未加密文档），浏览器自动化仅 Windows 驱动本机
+Microsoft Edge（另外两个平台不提供该功能）。
 
 ---
 
@@ -72,13 +75,14 @@ dotnet run --project frontend-avalonia/EchoDesk.Avalonia/EchoDesk.Avalonia.cspro
 dotnet run --project frontend/EchoDesk.csproj
 ```
 
-后端本身三平台都能跑（`python backend/main.py`）；各平台分别支持哪些能力见
-[CROSS_PLATFORM.md](CROSS_PLATFORM.md) 第 2 节。
+后端本身三平台都能跑（`python backend/main.py`）。各平台能力边界为：Windows 具备全部能力；
+macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属功能，其中加密文档读取退为
+"仅未加密文档"、浏览器自动化不可用。
 
 ### 1.1 系统提示词的层次与长度预算（v0.2.1 提示词优化）
 
-系统提示词按下面的顺序拼装（见 `conversation.py` 的 `MODES` / `_CORE_RULES` /
-`_REPLY_LANGUAGE` 与 `get_system_prompt()`）：
+系统提示词按下面的顺序拼装，该顺序由 `conversation.py` 的 `MODES` / `_CORE_RULES` /
+`_REPLY_LANGUAGE` 与 `get_system_prompt()` 定义：
 
 | 层 | 内容 | 谁写的 | 与其它层的关系 |
 | --- | --- | --- | --- |
@@ -274,12 +278,16 @@ dotnet run --project frontend/EchoDesk.csproj
 其 `estrattori` 子包在 `__init__` 里用 `os.listdir` 自动导入同目录全部解析器，
 打包时必须整目录收集（否则启动即 `FileNotFoundError`），而整目录收集会连带引入
 easyocr→torch/torchvision/scipy/cv2/skimage/numba，后端体积从 ~178MB 膨胀到 976MB；
-其依赖链还含 GPL/LGPL 组件，对外分发会产生著佐权义务。详见 `docs/THIRD_PARTY_LICENSES.md`。
+其依赖链还含 GPL/LGPL 组件，对外分发会产生著佐权义务。因此本项目的发布物不包含这类组件；
+确有 OCR 需求的部署可在目标机器上自行安装，并自行承担随之产生的许可证义务。
+随包分发的第三方组件及其许可证，逐项列在 `docs/THIRD_PARTY_LICENSES.md`（中文译名对照见
+`docs/THIRD_PARTY_LICENSES.zh-Hans.md`），机器可读版本为 `docs/SBOM.json`。
 
 **平台说明。** COM 这条路径**仅限 Windows**：`file_parser.py` 只在平台是 Windows 且能拿到
 WPS/Office 自动化对象时才走它。macOS 与 Linux 上直接走内置的纯 Python 解析器，老式二进制
-`.doc` / `.xls` 完全读不了，上传这类文件时报的是"该能力仅限 Windows"，**而不是**解析失败——
-见 [CROSS_PLATFORM.md](CROSS_PLATFORM.md) 第 3.1 节。
+`.doc` / `.xls` 完全读不了，上传这类文件时报的是"该能力仅限 Windows"，**而不是**解析失败。
+这条判定写在 `platform_support.py`：先按平台给出能力结论，再决定是否进入解析分支，因此错误信息
+描述的是能力边界而不是文件损坏。
 
 ### 3.4 自动化（任务四）
 
@@ -370,7 +378,7 @@ Cookie（老用户升级后不必重新登录），每次会话结束再导出�
     "servers": [ { "name": "", "command": "", "args": [], "env": {},
                    "enabled": true, "passthrough_env": [] } ]
   },
-  "automation": { /* 见 backend/config.json，含安全协议与选择器 */ },
+  "automation": { /* 与 backend/config.json 的 automation 段一致：安全协议版本、选择器与超时 */ },
   "marketplace": { "skill_topic": "echodesk-plugin", "cache_ttl_hours": 6, "github_token": "" }
 }
 ```
@@ -389,7 +397,9 @@ Windows 上就是程序目录本身；macOS 与 Linux 上，当程序目录不�
 `app/`、`backend/` 这些容器目录，得到的答案与前端一致。配置项里写了**相对路径**的后端产物
 （会话文件、模型、审计日志、已安装技能）仍落在后端工作目录，即发布包里的 `app/backend/`，
 不受 `ECHODESK_DATA` 影响；这些配置项都接受 `~` 与绝对路径，因此企业部署可以把它们指到受管盘。
-详见 [CROSS_PLATFORM.md](CROSS_PLATFORM.md) 第 5 节。
+三个平台的默认数据目录分别是：Windows `%APPDATA%\EchoDesk`，macOS `~/Library/Application Support/EchoDesk`，
+Linux `~/.config/EchoDesk`；设置环境变量 `ECHODESK_DATA` 可整体改写该位置，前后端对同一变量的解析结果
+由 `tools/check_data_dir_consistency.py` 断言一致。
 
 ---
 
@@ -579,7 +589,7 @@ Host github.com
 
 ### 6.2 工具接口（Agent 的一个工具就是一个 `Tool`）
 
-见 `backend/agent_tools.py`：
+工具注册与调用约束定义在 `backend/agent_tools.py`，关键结构如下：
 
 ```python
 Tool(name="calc", description="计算算术表达式", args_hint='{"expr": "表达式"}',
@@ -635,7 +645,7 @@ Tool(name="calc", description="计算算术表达式", args_hint='{"expr": "表�
 
 ### 6.4 检索扩展点
 
-见 `backend/retrieval.py`：
+检索相关能力定义在 `backend/retrieval.py`，关键结构如下：
 
 - `Retriever.add_file(name, text)` 只索引那一份（**增量**，已有文件一个字节都不动，
   同名文件按最新内容替换）；`remove_file(name)` 精确摘除并重建 BM25 统计；
@@ -654,7 +664,7 @@ Tool(name="calc", description="计算算术表达式", args_hint='{"expr": "表�
 
 ### 6.5 插件依赖与版本校验
 
-见 `backend/skills_runtime.py`：
+技能运行时定义在 `backend/skills_runtime.py`，关键结构如下：
 
 - `parse_manifest(manifest)["dependencies"]`：归一成 `{插件 id: 版本要求}`。
   `skill.json` 的 `dependencies` 支持**列表**（`["other"]`、`["other>=1.2"]`）与
@@ -675,4 +685,8 @@ Tool(name="calc", description="计算算术表达式", args_hint='{"expr": "表�
 
 ### 6.6 技能开发规范
 
-- 见 `docs/zh-Hans/SKILL_GUIDE.md`（中文）与 `docs/en/SKILL_GUIDE.md`（英文）。
+- 技能（插件）的开发规范另成专文，核心约束是：插件清单 `skill.json` 必须声明 `id`、`version`、
+  `echodesk.api_version`，能力（命令、面板、自动化钩子、文件解析器）必须与实现一一对应，
+  权限须显式声明且不得超出清单；本地开发可绕过市场直接从磁盘加载，发布则走 GitHub topic
+  `echodesk-plugin` 的发现流程。字段级说明与完整示例的权威位置是
+  `docs/zh-Hans/SKILL_GUIDE.md` 与 `docs/en/SKILL_GUIDE.md`（两者章节一一对应，英文本为正式版本）。

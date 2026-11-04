@@ -27,7 +27,7 @@ No cloud account. No API key. No telemetry.
 | **Batch web automation, configured visually** | Point EchoDesk at a task-list page, describe the task links, and it walks the list, opens each task, downloads the matching attachments, reviews them with the local model and writes a result file per task. Configuration works through a point-and-click selector picker and per-field help, with a selector test that opens the page and shows what matched before you run anything. |
 | **Audit log and safety protocol** | Browser automation requires explicitly accepting a safety protocol; the protocol version and your consent time are written to an audit log. Every automation run is logged (task, time, downloaded file names) with no document text, model output, tokens or cookies. Downloaded files live in a temporary folder and are deleted as soon as the task is processed. |
 | **Skill marketplace plus a local plugin interface** | Extend EchoDesk with skills discovered through the GitHub topic `echodesk-plugin`, or load a plugin straight from disk while you develop it — no need to publish first. Skills register commands, UI panels, automation hooks and extra file parsers. |
-| **Multi-language** | The interface, system messages, error messages and command help are language-pack driven. Simplified Chinese and English ship today; additional locales are community contributions (see [Languages](#languages)). |
+| **Multi-language** | The interface, system messages, error messages and command help are language-pack driven. Simplified Chinese and English ship today; additional locales are community contributions, with the workflow described under Languages below. |
 
 ## Core capabilities
 
@@ -61,8 +61,8 @@ No cloud account. No API key. No telemetry.
 
 1. Get the release from the
    [Releases page](https://github.com/VoidEntropiaStudio/EchoDesk/releases) of this repository
-   (once a release has been published) or by building it yourself
-   (see [Option B](#option-b--build-from-source)); the build lands in `publish\EchoDesk-v0.2.2\`.
+   (once a release has been published) or by building it yourself with Option B below;
+   the build lands in `publish\EchoDesk-v0.2.2\`.
 2. Install it or unpack it:
    - **Installer** — double-click `EchoDesk-v0.2.2-Setup.exe` (the single installer; it does **not**
      bundle a model, and asks on first launch whether to download one). By default it installs into the
@@ -209,8 +209,10 @@ afterthought:
 - **Fallback chain**: `requested locale → en → zh-Hans → the key itself`. Returning the key makes
   missing translations obvious instead of silently showing blanks.
 - **Community locales**: `zh-Hant`, `ja`, `ko`, `de`, `fr`, `es` and `pt-BR` are the next
-  candidates, and any locale is accepted — see the translation workflow in
-  [CONTRIBUTING.md](CONTRIBUTING.md).
+  candidates, and any locale is accepted. The workflow is: copy `backend/lang/en.json` and
+  `frontend/Resources/Lang/en.*.json` to the target locale code, translate the values while
+  keeping the keys, run `python tools/check_lang.py` to confirm the key set matches English,
+  then add the matching document translation under `docs/`.
 
 ## Extending EchoDesk: skills and local plugins
 
@@ -299,9 +301,10 @@ number and no postal address**.
 
 ## License
 
-EchoDesk is released under the **Apache License 2.0** — see [LICENSE](LICENSE). The license
-includes an explicit patent grant and permits commercial and enterprise use, modification and
-redistribution, which is why it was chosen over a shorter permissive license.
+EchoDesk is released under the **Apache License 2.0**, whose full text ships with the repository
+and with every release as `LICENSE`. The license includes an explicit patent grant and permits
+commercial and enterprise use, modification and redistribution, which is why it was chosen over a
+shorter permissive license.
 
 - Attribution for the main bundled third-party components: [NOTICE](NOTICE).
 - Full component and license inventory: [docs/THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md).

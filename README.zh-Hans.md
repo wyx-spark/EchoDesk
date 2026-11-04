@@ -27,7 +27,7 @@ EchoDesk 把整套 AI 能力都留在你自己的机器上：推理、文件解�
 | **批量网页自动化，可视化配置** | 填好任务列表页面与任务链接的位置，EchoDesk 就会逐条进入任务、下载匹配的附件、用本地模型审阅，并为每个任务生成结果文件。配置过程提供点选式选择器与字段级帮助，并可在真正运行前用「测试选择器」打开页面查看匹配结果。 |
 | **审计日志与安全协议** | 启用浏览器自动化前必须显式勾选安全协议，协议版本与同意时间写入审计日志。每次自动化都会记录任务、时间与下载的文件名，但不记录文档正文、模型输出、Token 或 Cookie。下载文件放在临时目录，任务处理完立即删除。 |
 | **技能市场 + 本地插件接口** | 通过 GitHub topic `echodesk-plugin` 发现并安装技能；开发中的插件也可以直接从磁盘加载，不必先发布到 GitHub。技能可注册指令、UI 面板、自动化钩子与额外的文件解析格式。 |
-| **多语言** | 界面、系统消息、错误提示与指令帮助都由语言包驱动。当前随版本提供简体中文与英语，其他语言由社区贡献（见[多语言](#多语言)）。 |
+| **多语言** | 界面、系统消息、错误提示与指令帮助都由语言包驱动。当前随版本提供简体中文与英语，其他语言由社区贡献（本文“多语言”一节）。 |
 
 ## 核心能力
 
@@ -46,7 +46,7 @@ EchoDesk 把整套 AI 能力都留在你自己的机器上：推理、文件解�
 
 | 项目 | 要求 |
 | --- | --- |
-| 操作系统 | 正式交付物为 Windows 10 / 11（x64）。Linux 与 macOS 由跨平台前端（Avalonia，`frontend-avalonia/`）支持，后端代码三平台通用；两类平台上的能力差异与降级做法见 [docs/zh-Hans/CROSS_PLATFORM.md](docs/zh-Hans/CROSS_PLATFORM.md)。 |
+| 操作系统 | 正式交付物为 Windows 10 / 11（x64）。Linux 与 macOS 由跨平台前端（Avalonia，`frontend-avalonia/`）支持，后端代码三平台通用。两项能力为 Windows 专属，其余两项在 Linux / macOS 上降级：加密文档（.doc/.docx 等带密码或 DRM 的文件）仅 Windows 可通过本机 WPS 内存解密读取，Linux / macOS 使用内置通用解析器，只能读取未加密文档；浏览器自动化仅 Windows 驱动本机 Microsoft Edge，Linux / macOS 上该功能不可用，其余功能不受影响。 |
 | 前端运行时 | 无需额外安装。Windows 前端是 WPF 程序（目标框架 `net10.0-windows`），跨平台前端是 Avalonia 程序（目标框架 `net10.0`），两者都以自包含方式发布，便携发布物自带运行时。 |
 | CPU | 任意 x64 处理器。默认使用 CPU 推理（`backend\config.json` 中 `n_gpu_layers: 0`）。 |
 | 内存 | 最低 4 GB，建议 8 GB 以上。默认模型文件约 472 MB，默认 8192 tokens 窗口的 KV Cache 另需约 0.3–0.4 GB；窗口越大、模型越大，占用越高。 |
@@ -61,7 +61,7 @@ EchoDesk 把整套 AI 能力都留在你自己的机器上：推理、文件解�
 
 1. 获取发布物：可以从本仓库的
    [Releases 页面](https://github.com/VoidEntropiaStudio/EchoDesk/releases) 下载（发布归档上线后），
-   也可以自己构建（见[方案 B](#方案-b--从源码构建)），产物位于 `publish\EchoDesk-v0.2.2\`。
+   也可以自己构建（本文“方案 B”一节），产物位于 `publish\EchoDesk-v0.2.2\`。
 2. 安装或解压：
    - **安装程序** —— 双击 `EchoDesk-v0.2.2-Setup.exe`（只有这一份，**不含内置模型**，
      首次启动会询问是否下载）。默认装到**安装程序自己所在的文件夹**，向导里可以改到别处。
@@ -118,9 +118,10 @@ $env:ECHODESK_BACKEND = "$PWD\dist\EchoDeskBackend\EchoDeskBackend.exe"
 dotnet run --project frontend\EchoDesk.csproj
 ```
 
-后端也可以单独启动（`python backend\main.py`）：它通过 stdin/stdout 使用「每行一个 JSON」的
-协议，详见 [docs/DEVELOPER.md](docs/DEVELOPER.md)。把 `.gguf` 模型放进 `backend\models\`
-（源码运行）或打包后端的 `models\` 文件夹即可。
+后端也可以单独启动（`python backend\main.py`）。它与前端通过 stdin/stdout 通信：一行一个 JSON 对象，
+请求带 `action` 字段，响应带 `type` 字段，进程启动后的第一条输出是 `{"type":"ready"}` 握手；
+错误以 `type:error` 返回并带 `message`。把 `.gguf` 模型放进 `backend\models\`（源码运行）
+或打包后端的 `models\` 文件夹即可。
 
 ### 首次启动：还没有模型？程序照样能用
 
@@ -180,7 +181,7 @@ EchoDesk **不自带**模型权重，也**不会静默下载**任何东西：
 以及双语界面下的技能市场——将在后续版本中放进 `assets/screenshots/`，届时本节会直接嵌入这些图片。
 
 在那之前，想尽快看到界面，直接运行便携版即可：无需安装、无需云端账号，本地对话也不需要联网
-（见[快速上手](#快速上手)）。
+（本文“快速上手”一节）。
 
 ## 多语言
 
@@ -196,7 +197,7 @@ EchoDesk 面向全球用户，多语言是产品的一部分而不是事后补�
 - **回退链**：`请求语言 → en → zh-Hans → 键名本身`。回退到键名是刻意设计：缺失的翻译会
   直接显示出来，而不是悄悄留空。
 - **社区语言**：`zh-Hant`、`ja`、`ko`、`de`、`fr`、`es`、`pt-BR` 是下一批候选，
-  也欢迎任何语言——翻译流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+  也欢迎任何语言。翻译流程为：复制 `backend/lang/en.json` 与 `frontend/Resources/Lang/en.*.json`，改名为目标语言代码（例如 `ja.json`），逐条译出值、保留键名；随后运行 `python tools/check_lang.py` 确认键集合与英文版一致，并在 `docs/en/` 与 `docs/zh-Hans/` 之间补齐文档译本。
 
 ## 扩展 EchoDesk：技能与本地插件
 
@@ -232,9 +233,8 @@ EchoDesk 的本地化是设计目标，并且写成了公开文档：
   不含文档正文、模型输出、Token、Cookie 或密码。
 - **数据由你掌控**：随时删除 `backend\session.json`、`snippets.json`、`ui_state.json`、
   `backend\models\*.gguf` 或 `backend\browser_state.json`，即可清除历史、偏好、模型或
-  已保存的浏览器登录态。逐项说明见 [docs/PRIVACY.zh-Hans.md](docs/PRIVACY.zh-Hans.md)，
-  使用条款见 [docs/EULA.zh-Hans.md](docs/EULA.zh-Hans.md)——其中也说明了本地小模型输出可能有误，
-  不构成专业意见。
+  已保存的浏览器登录态。上述文件全部位于本机，不随任何网络请求上传。
+- **输出口径**：本地小模型的输出可能有误，不构成法律、医疗或财务专业意见；涉及合同条款等高风险内容时，请以原文为准并人工复核。
 
 ## 文档
 
@@ -268,15 +268,15 @@ EchoDesk 的本地化是设计目标，并且写成了公开文档：
 - **提问、分享技能、协作翻译** —— 请到
   [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions) 发帖。
 - **提交改动** —— 请开 Pull Request；[CONTRIBUTING.md](CONTRIBUTING.md) 里有开发环境、
-  代码风格、提交信息规范与评审流程。日志位置见 [SECURITY.zh-Hans.md](SECURITY.zh-Hans.md)。
+  代码风格、提交信息规范与评审流程。日志位置：浏览器自动化审计日志写在 `backend\automation_log.jsonl`，崩溃日志写在程序目录的 `backend_crash.log`；两者都不记录文档正文、模型输出、Token 或 Cookie。
 - **安全漏洞** —— **请不要开公开 Issue**，按 [SECURITY.zh-Hans.md](SECURITY.zh-Hans.md) 的私有渠道报告
   （支持的版本、报告需包含什么、响应时间承诺也在那里）。
 - **社区行为** —— [CODE_OF_CONDUCT.zh-Hans.md](CODE_OF_CONDUCT.zh-Hans.md)。
 
 ## 许可证
 
-EchoDesk 采用 **Apache License 2.0** 发布，全文见 [LICENSE](LICENSE)。该许可证包含明确的
-专利授权，允许商用与企业内部使用、修改与再分发，这也是它优于更简短宽松许可证的原因。
+EchoDesk 采用 **Apache License 2.0** 发布；许可证全文随仓库与每个发布物一同分发（`LICENSE` 文件）。
+该许可证包含明确的专利授权，允许商用与企业内部使用、修改与再分发，这也是它优于更简短宽松许可证的原因。
 
 - 随包分发的主要第三方组件署名：[NOTICE](NOTICE)。
 - 完整的组件与许可证清单：[docs/THIRD_PARTY_LICENSES.zh-Hans.md](docs/THIRD_PARTY_LICENSES.zh-Hans.md)。

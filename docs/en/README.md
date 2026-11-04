@@ -86,7 +86,7 @@ reference translation (`*.zh-Hans.md`), and the English file always prevails.
 
 `docs/SECURITY.md` is a short pointer to the root policy, and `docs/DEVELOPER.md` is a short pointer
 to the developer documentation in this folder and in `docs/zh-Hans/`. Translations of the shared
-documents are welcome; see the translation section below.
+documents are welcome; the translation section below lists the exact steps.
 
 ## Project-level documents (repository root)
 

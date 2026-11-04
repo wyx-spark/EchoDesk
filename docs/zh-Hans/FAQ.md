@@ -27,7 +27,7 @@ $XDG_DATA_HOME/EchoDesk/
 
 macOS 与 Linux 上程序本体就是解压出来的压缩包，用 `./start.sh` 启动
 （解压时丢了可执行位就先执行一次 `chmod +x start.sh app/EchoDesk`）；Windows 用安装程序或便携版 zip。
-`ECHODESK_DATA` 在三平台都能覆盖数据目录；完整的安装与启动步骤见 [`USER_GUIDE.md`](USER_GUIDE.md)。
+`ECHODESK_DATA` 在三平台都能覆盖数据目录；完整的安装与启动步骤用户手册覆盖安装启动、日常问答、长文档处理、批量自动化与技能使用，并给出没有图形环境时的替代做法
 
 ---
 
@@ -384,7 +384,7 @@ $XDG_DATA_HOME/EchoDesk/results/
 ```
 
 想让用户数据整体换位置（含 `ui_state.json`、`snippets.json`），可以设置环境变量 `ECHODESK_DATA`。
-保存位置、顶层文件夹名与任务名称的填法见 [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md)。
+保存位置、顶层文件夹名与任务名称的填法自动化指南逐字段说明任务链接、登录判定、翻页与结果目录的填写方法，并提供选择器可视化选取
 
 ### 登录态
 第一次需要手动登录一次；程序会把 Cookie/localStorage 存进 `app/backend/browser_state.json`，
@@ -476,4 +476,4 @@ macOS 上是 `~/Library/Application Support/EchoDesk/`，Linux 上是 `~/.local/
   `app/backend/backend_crash.log`（若有内容）、`app/backend/config.json`、
   `/status` 的输出，以及能复现问题的操作步骤。
 - **安全漏洞** → **请不要开公开 Issue**，按 [`SECURITY.zh-Hans.md`](../../SECURITY.zh-Hans.md) 的私有渠道报告。
-- **想改代码、文档或翻译** → 请开 Pull Request，见 [`CONTRIBUTING.md`](../../CONTRIBUTING.md)。
+- **想改代码、文档或翻译** → 请开 Pull Request，贡献流程为：fork → 建分支 → 改代码并补测试 → 跑 `python tools/selftest.py` 与 `python tools/check_lang.py` → 提交 Pull Request。

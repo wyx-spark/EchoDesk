@@ -12,7 +12,8 @@ English documentation: [`docs/en/README.md`](../en/README.md)（本文为英文�
 EchoDesk 支持 **Windows、macOS、Linux** 三平台。Windows 版是完整的正式交付物；Linux 与 macOS 由
 **跨平台前端**（Avalonia）在同一条 Python 后端之上支持。有**两项能力仅 Windows 提供**——通过 COM 读取
 WPS/Office 的**加密文档**（含旧版 `.doc` / `.xls`），以及**企业内网浏览器自动化**。这两项都会明确降级：
-说明平台原因并给出替代做法，而不是静默失败——矩阵与替代见 [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md)。
+说明平台原因并给出替代做法，而不是静默失败。
+能力边界共两条：加密文档（带密码或 DRM）仅 Windows 可通过本机 WPS 在内存中解密读取，Linux / macOS 使用内置通用解析器、只能读未加密文档；浏览器自动化仅 Windows 驱动本机 Microsoft Edge，另外两个平台不提供该功能。此外三项差异来自平台本身：数据目录分别位于 `%APPDATA%\EchoDesk`、`~/Library/Application Support/EchoDesk` 与 `~/.config/EchoDesk`；Windows 前端为 WPF（`net10.0-windows`），另外两平台为 Avalonia（`net10.0`）；安装形式分别为 Inno Setup 安装程序、`.tar.gz` 与 `.zip` 便携包。
 其余功能（对话与流式输出、文件解析、本地检索、Agent、MCP、技能、模型管理）三平台表现一致。
 
 | 平台 | 下载哪个文件 | 怎么启动 |
@@ -46,7 +47,7 @@ $XDG_DATA_HOME/EchoDesk/
 ```
 
 三平台都可以用环境变量 `ECHODESK_DATA` 覆盖这个位置。逐步的安装与启动说明（含 macOS 的 Gatekeeper
-说明、没有图形环境时的做法）见 [`USER_GUIDE.md`](USER_GUIDE.md)。
+说明、没有图形环境时的做法）。要点是：首次启动若没有模型，程序仍可正常打开界面、读取文件、管理设置与技能，只有推理相关功能提示先下载模型；在无图形环境（纯 SSH 或容器）中，可只启动后端进程并通过 stdin/stdout 的 JSON 行协议驱动，界面相关功能不可用。
 
 ## 本目录文档
 

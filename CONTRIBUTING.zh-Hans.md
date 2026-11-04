@@ -5,8 +5,7 @@
 感谢你抽出时间提供帮助。EchoDesk 是一款本地优先的 AI 桌面助手，任何形式的贡献都有价值：
 缺陷报告、修复、文档、翻译与新的技能。Windows 是完整的正式交付平台；Linux 与 macOS 由同一套
 Python 后端之上的跨平台（Avalonia）前端提供支持，因此贡献时请把三个平台都考虑进去。
-平台支持矩阵与"哪些能力仅限 Windows"的准确边界见
-[docs/zh-Hans/CROSS_PLATFORM.md](docs/zh-Hans/CROSS_PLATFORM.md)。
+平台支持矩阵与"哪些能力仅限 Windows"的准确边界Windows 具备全部能力；macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属功能，其中加密文档读取退为"仅未加密文档"，浏览器自动化不可用；三平台默认数据目录分别为 `%APPDATA%\EchoDesk`、`~/Library/Application Support/EchoDesk`、`~/.config/EchoDesk`
 
 参与本项目即表示你同意遵守[行为准则](CODE_OF_CONDUCT.md)。
 
@@ -30,7 +29,7 @@ Python 后端之上的跨平台（Avalonia）前端提供支持，因此贡献�
 
 | 我想要…… | 从这里开始 |
 | --- | --- |
-| 报告缺陷 | 提交 [bug 报告 issue](https://github.com/VoidEntropiaStudio/EchoDesk/issues)（见[提交 issue](#提交-issue)）；附上版本、操作系统、复现步骤与日志。 |
+| 报告缺陷 | 提交 [bug 报告 issue](https://github.com/VoidEntropiaStudio/EchoDesk/issues)（本文“提交 issue”一节）；附上版本、操作系统、复现步骤与日志。 |
 | 请求新功能 | 提交 [功能请求 issue](https://github.com/VoidEntropiaStudio/EchoDesk/issues)，描述你想要的场景与工作流。 |
 | 提问或讨论想法 | 在 [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions) 发起话题——问答、技能分享与翻译协调都在那里。 |
 | 修复或改进代码 | 阅读[开发环境](#开发环境)，然后提交拉取请求。 |
@@ -47,8 +46,7 @@ Python 后端之上的跨平台（Avalonia）前端提供支持，因此贡献�
   <https://github.com/VoidEntropiaStudio/EchoDesk/issues> 提交 issue。
 - **问题、想法、技能分享与翻译协调** → 在
   [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions) 发起话题。
-- **代码、文档或翻译改动** → 提交拉取请求，见
-  [分支与拉取请求流程](#分支与拉取请求流程)。
+- **代码、文档或翻译改动** → 提交拉取请求，（本文“分支与拉取请求流程”一节）。
 
 Issue 模板位于 [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/)——请选择与你的报告相符的
 模板（bug、功能请求、技能提交、翻译）。好的报告能让维护者不必猜测就能复现问题，因此请包含：
@@ -61,7 +59,7 @@ Issue 模板位于 [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/)——请
 - **准确步骤**：按顺序列出你点击或输入的内容。自动化相关问题请附上
   选择器配置与 URL 模式（涉密内容请脱敏）。
 - **预期行为与实际行为**：你期望发生什么，实际发生了什么。
-- **日志**：日志位置见 [SECURITY.md](SECURITY.md)——两份崩溃日志分别是
+- **日志**：日志位置安全策略在本仓库根目录的 `SECURITY.md`（含受理范围与报告渠道），崩溃日志分别位于程序目录的 `backend_crash.log` 与前端 `frontend_crash.log`——两份崩溃日志分别是
   程序目录下的 `frontend_crash.log` 和 `backend/` 内的 `backend_crash.log`。
   两者都在失败时追加写入，因此文件为空表示「没有记录到崩溃」。
   用户数据（对话历史、界面状态、`results/`）在**程序旁边**，也就是发布目录的外层，不在 `app/` 里：
@@ -101,10 +99,8 @@ git remote set-url origin git@github.com:VoidEntropiaStudio/EchoDesk.git
 这些命令三平台完全一致：Windows 上 `~/.ssh` 就是 `%USERPROFILE%\.ssh`（同一个目录，PowerShell 7
 与 Git Bash 都认 `~`）；macOS/Linux 上私钥不能对同组或其他用户可读，创建后执行一次
 `chmod 600 ~/.ssh/id_ed25519`。
-公司网络挡 22 端口时改用 443，写法见
-[docs/zh-Hans/DEVELOPER.md](docs/zh-Hans/DEVELOPER.md) 的「版本控制与推送（统一 SSH）」。
-完整的密钥/ssh-agent 清单（含各平台路径）见
-[docs/zh-Hans/DEVELOPER.md](docs/zh-Hans/DEVELOPER.md) 第五节。
+公司网络挡 22 端口时改用 443，写法开发文档覆盖架构、stdin/stdout JSON 行协议、模块职责、配置参考、构建与发布的「版本控制与推送（统一 SSH）」。
+完整的密钥/ssh-agent 清单（含各平台路径）开发文档覆盖架构、stdin/stdout JSON 行协议、模块职责、配置参考、构建与发布第五节。
 
 要求：
 
@@ -160,8 +156,7 @@ dotnet run --project frontend-avalonia/EchoDesk.Avalonia/EchoDesk.Avalonia.cspro
 ```
 
 后端也可以独立运行以便调试协议（`python backend/main.py`）：它从 stdin 每行读取一个
-JSON 请求，并向 stdout 每行写入一个 JSON 响应。动作列表、响应类型与模块映射见
-[docs/zh-Hans/DEVELOPER.md](docs/zh-Hans/DEVELOPER.md)。
+JSON 请求，并向 stdout 每行写入一个 JSON 响应。动作列表、响应类型与模块映射开发文档覆盖架构、stdin/stdout JSON 行协议、模块职责、配置参考、构建与发布
 
 只有真正做推理时才需要模型：把 `.gguf` 文件放入 `backend/models/`（源码运行）
 或打包后端的 `models/` 文件夹（发布物里是 `app/backend/models/`）。其他一切——解析、自动化管线、
@@ -268,7 +263,7 @@ python tools/test_automation_e2e.py  # 对本地静态站点跑端到端自动�
   应当保持不变，以让代码库风格一致。模块级文档字符串说明*为什么*选择某种
   设计，这是本代码库最有价值的部分。
 - 能让语言包条目承载的用户可见字符串，不要留在代码路径里
-  （见[贡献翻译](#贡献翻译)）。
+  （本文“贡献翻译”一节）。
 - 失败要柔和：后端绝不能因为单个坏文件、坏技能或自动化任务而让进程
   挂掉。捕获、记录、继续。
 
@@ -324,8 +319,7 @@ python tools/test_automation_e2e.py  # 对本地静态站点跑端到端自动�
 6. 维护者评审，可能要求修改，然后合并。小而说明清楚的拉取请求
    评审最快。
 
-绝不要提交模型、构建产物、用户数据或凭据——见
-[仓库卫生](#仓库卫生)。
+绝不要提交模型、构建产物、用户数据或凭据——（本文“仓库卫生”一节）。
 
 ## 贡献翻译
 
