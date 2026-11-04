@@ -1,4 +1,4 @@
-// 模型页的交互逻辑（v0.2.1 跨平台-2 任务一，第 8 个迁移模块）。
+﻿// 模型页的交互逻辑（v0.2.1 跨平台-2 任务一，第 8 个迁移模块）。
 //
 // 后端动作：
 //   model_profiles         → { current, items: [ { alias, name, repo, installed, current,
@@ -1001,7 +1001,7 @@ public partial class ModelPage : UserControl, ISettingsPage
         // 把"怎么发请求"交给这一页（页面已经持有后端连接），市场本身不碰 AppState 之外的全局
         section.Attach(new MarketHost(this));
         MarketHostGrid.Children.Add(section);
-        Grid.SetRow(section, 1);
+        Grid.SetRow(section, 0);
         return section;
     }
 

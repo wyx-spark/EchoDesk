@@ -1193,6 +1193,8 @@ public partial class ModelMarketSection : UserControl
     // -----------------------------------------------------------------
     public void ApplyTexts()
     {
+        // 区块标题（WPF 的 settings.model.sectionHub）：15 号加粗强调色，和常规页的区块标题同一口径。
+        HubSectionTitle.Text = Loc.T("settings.model.sectionHub", "🧠 模型选择栏（Hugging Face GGUF 模型）");
         HubSourceLabel.Text = Loc.T("settings.model.sourceLabel", "数据源");
         HubTokenLabel.Text = "Token";
         HubSaveTokenButton.Content = Loc.T("settings.model.actionSaveToken", "保存 Token");

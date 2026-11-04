@@ -1,4 +1,4 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.ModelPage">
   <!--
@@ -16,20 +16,29 @@
     （任务三），整页滚动的话分页条会跟着跑出视野；WPF 版用的是同一个结构
     （Row0 = Auto 的滚动区 + Row1 = * 的市场区）。
   -->
-  <Grid RowDefinitions="Auto,*">
-    <ScrollViewer Grid.Row="0" MaxHeight="300"
+  <Grid RowDefinitions="*,Auto">
+    <!-- 视觉对齐：WPF 的模型页把"模型市场"放在**顶部**、结果列表吃剩余高度，
+         档位与推理参数压在它下面（SettingsWindow.xaml 的行 0-4 是市场，行 5-8 是档位/推理）。
+         原来的 Avalonia 版是反过来的，截图里两页的阅读顺序完全不同。 -->
+    <Grid x:Name="MarketHostGrid" Grid.Row="0" RowDefinitions="*">
+      <TextBlock x:Name="MarketNotMigratedText" IsVisible="False" />
+    </Grid>
+
+    <ScrollViewer Grid.Row="1" MaxHeight="238"
                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-      <StackPanel Margin="16,16,16,8" Spacing="10">
+      <StackPanel Margin="14,6,14,8" Spacing="8">
 
       <!-- ① 模型档位 -->
-      <TextBlock x:Name="ProfileTitle" FontWeight="Bold" FontSize="14" />
-      <TextBlock x:Name="ProfileHintText" FontSize="11" TextWrapping="Wrap" Opacity="0.75" />
-      <StackPanel Orientation="Horizontal" Spacing="8">
-        <Button x:Name="ProfileRefreshButton" Padding="10,3" FontSize="11"
+      <!-- 与 WPF 同排法：标题与「刷新档位 / ＋新建档位」在同一行，省掉一整行高度 -->
+      <Grid ColumnDefinitions="Auto,Auto,Auto,*">
+        <TextBlock x:Name="ProfileTitle" Grid.Column="0" FontWeight="Bold" FontSize="14"
+                   VerticalAlignment="Center" Margin="0,0,10,0" />
+        <Button x:Name="ProfileRefreshButton" Grid.Column="1" Padding="10,3" FontSize="11" Margin="0,0,6,0"
                 AutomationProperties.AutomationId="ProfileRefreshButton" />
-        <Button x:Name="ProfileNewButton" Padding="10,3" FontSize="11"
+        <Button x:Name="ProfileNewButton" Grid.Column="2" Padding="10,3" FontSize="11"
                 AutomationProperties.AutomationId="ProfileNewButton" />
-      </StackPanel>
+      </Grid>
+      <TextBlock x:Name="ProfileHintText" FontSize="11" TextWrapping="Wrap" Opacity="0.75" />
       <WrapPanel x:Name="ModelProfileChips" ItemSpacing="6" LineSpacing="6"
                  AutomationProperties.AutomationId="ModelProfileChips" />
       <TextBlock x:Name="ProfileStatusText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
@@ -73,57 +82,80 @@
         </StackPanel>
       </Border>
 
-      <!-- ② 推理参数 -->
-      <TextBlock x:Name="InferenceTitle" FontWeight="Bold" FontSize="14" Margin="0,10,0,0" />
+      <!-- ② 推理参数：WPF 把这一整块放在 8 圆角、1px 描边的卡片里，
+           而且**两列并排**（温度/核采样、重复惩罚/最大生成），预设与上下文策略在标题行上。
+           单列竖排在 660 高的窗口里必须滚动才能看全 —— 与 WPF 并排的排法差了一倍高度。 -->
+      <Border CornerRadius="8" Padding="12,10" BorderThickness="1"
+              Background="{DynamicResource InputBackgroundBrush}"
+              BorderBrush="{DynamicResource InputBorderBrush}">
+        <StackPanel Spacing="6">
 
-      <Grid ColumnDefinitions="190,*,70" RowDefinitions="Auto,Auto,Auto,Auto">
-        <TextBlock x:Name="TempLabel" Grid.Row="0" VerticalAlignment="Center" FontSize="12" Margin="0,3" />
-        <Slider x:Name="TempSlider" Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="2"
-                TickFrequency="0.05" IsSnapToTickEnabled="True"
-                AutomationProperties.AutomationId="TempSlider" />
-        <TextBlock x:Name="TempValueText" Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" FontSize="11" />
-        <TextBlock x:Name="TopPLabel" Grid.Row="1" VerticalAlignment="Center" FontSize="12" Margin="0,3" />
-        <Slider x:Name="TopPSlider" Grid.Row="1" Grid.Column="1" Minimum="0.1" Maximum="1"
-                TickFrequency="0.05" IsSnapToTickEnabled="True"
-                AutomationProperties.AutomationId="TopPSlider" />
-        <TextBlock x:Name="TopPValueText" Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" FontSize="11" />
-        <TextBlock x:Name="RepeatLabel" Grid.Row="2" VerticalAlignment="Center" FontSize="12" Margin="0,3" />
-        <Slider x:Name="RepeatSlider" Grid.Row="2" Grid.Column="1" Minimum="1" Maximum="2"
-                TickFrequency="0.05" IsSnapToTickEnabled="True"
-                AutomationProperties.AutomationId="RepeatSlider" />
-        <TextBlock x:Name="RepeatValueText" Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" FontSize="11" />
-        <TextBlock x:Name="MaxTokensLabel" Grid.Row="3" VerticalAlignment="Center" FontSize="12" Margin="0,3" />
-        <Slider x:Name="MaxTokensSlider" Grid.Row="3" Grid.Column="1" Minimum="64" Maximum="4096"
-                TickFrequency="64" IsSnapToTickEnabled="True"
-                AutomationProperties.AutomationId="MaxTokensSlider" />
-        <TextBlock x:Name="MaxTokensValueText" Grid.Row="3" Grid.Column="2" VerticalAlignment="Center" FontSize="11" />
-      </Grid>
+          <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*">
+            <TextBlock x:Name="InferenceTitle" Grid.Column="0" FontWeight="Bold" FontSize="14"
+                       VerticalAlignment="Center" Margin="0,0,14,0" />
+            <TextBlock x:Name="PresetLabel" Grid.Column="1" VerticalAlignment="Center" FontSize="12"
+                       Margin="0,0,6,0" />
+            <ComboBox x:Name="PresetCombo" Grid.Column="2" Width="150" MinWidth="0"
+                      AutomationProperties.AutomationId="PresetCombo" />
+            <TextBlock x:Name="ContextModeLabel" Grid.Column="3" VerticalAlignment="Center" FontSize="12"
+                       Margin="16,0,6,0" />
+            <ComboBox x:Name="ContextModeCombo" Grid.Column="4" Width="150" MinWidth="0"
+                      AutomationProperties.AutomationId="ContextModeCombo" />
+          </Grid>
 
-      <Grid ColumnDefinitions="190,*" RowDefinitions="Auto,Auto">
-        <TextBlock x:Name="PresetLabel" Grid.Row="0" VerticalAlignment="Center" FontSize="12" Margin="0,3" />
-        <ComboBox x:Name="PresetCombo" Grid.Row="0" Grid.Column="1" HorizontalAlignment="Left" Width="260"
-                  AutomationProperties.AutomationId="PresetCombo" />
-        <TextBlock x:Name="ContextModeLabel" Grid.Row="1" VerticalAlignment="Center" FontSize="12" Margin="0,3" />
-        <ComboBox x:Name="ContextModeCombo" Grid.Row="1" Grid.Column="1" HorizontalAlignment="Left" Width="260"
-                  AutomationProperties.AutomationId="ContextModeCombo" />
-      </Grid>
+          <Grid ColumnDefinitions="170,*,60,28,170,*,60" RowDefinitions="Auto,Auto">
+            <TextBlock x:Name="TempLabel" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center"
+                       FontSize="12" Margin="0,3" />
+            <Slider x:Name="TempSlider" Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="2"
+                    TickFrequency="0.05" IsSnapToTickEnabled="True"
+                    AutomationProperties.AutomationId="TempSlider" />
+            <TextBlock x:Name="TempValueText" Grid.Row="0" Grid.Column="2" VerticalAlignment="Center"
+                       FontSize="11" Margin="6,0,0,0" />
 
-      <CheckBox x:Name="ClarifyVagueCheck" FontSize="12"
-                AutomationProperties.AutomationId="ClarifyVagueCheck" />
-      <CheckBox x:Name="SummaryCacheCheck" FontSize="12"
-                AutomationProperties.AutomationId="SummaryCacheCheck" />
+            <TextBlock x:Name="TopPLabel" Grid.Row="0" Grid.Column="4" VerticalAlignment="Center"
+                       FontSize="12" Margin="0,3" />
+            <Slider x:Name="TopPSlider" Grid.Row="0" Grid.Column="5" Minimum="0.1" Maximum="1"
+                    TickFrequency="0.05" IsSnapToTickEnabled="True"
+                    AutomationProperties.AutomationId="TopPSlider" />
+            <TextBlock x:Name="TopPValueText" Grid.Row="0" Grid.Column="6" VerticalAlignment="Center"
+                       FontSize="11" Margin="6,0,0,0" />
 
-      <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
-        <Button x:Name="InferenceSaveButton" Padding="16,5"
-                AutomationProperties.AutomationId="InferenceSaveButton" />
-        <Button x:Name="InferenceReloadButton" Padding="12,5"
-                AutomationProperties.AutomationId="InferenceReloadButton" />
-        <Button x:Name="InferenceResetButton" Padding="12,5"
-                AutomationProperties.AutomationId="InferenceResetButton" />
-      </StackPanel>
-      <TextBlock x:Name="InferenceStatusText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
-                 AutomationProperties.AutomationId="InferenceStatusText" />
+            <TextBlock x:Name="RepeatLabel" Grid.Row="1" Grid.Column="0" VerticalAlignment="Center"
+                       FontSize="12" Margin="0,3" />
+            <Slider x:Name="RepeatSlider" Grid.Row="1" Grid.Column="1" Minimum="1" Maximum="2"
+                    TickFrequency="0.05" IsSnapToTickEnabled="True"
+                    AutomationProperties.AutomationId="RepeatSlider" />
+            <TextBlock x:Name="RepeatValueText" Grid.Row="1" Grid.Column="2" VerticalAlignment="Center"
+                       FontSize="11" Margin="6,0,0,0" />
 
+            <TextBlock x:Name="MaxTokensLabel" Grid.Row="1" Grid.Column="4" VerticalAlignment="Center"
+                       FontSize="12" Margin="0,3" />
+            <Slider x:Name="MaxTokensSlider" Grid.Row="1" Grid.Column="5" Minimum="64" Maximum="4096"
+                    TickFrequency="64" IsSnapToTickEnabled="True"
+                    AutomationProperties.AutomationId="MaxTokensSlider" />
+            <TextBlock x:Name="MaxTokensValueText" Grid.Row="1" Grid.Column="6" VerticalAlignment="Center"
+                       FontSize="11" Margin="6,0,0,0" />
+          </Grid>
+
+          <StackPanel Orientation="Horizontal" Spacing="16">
+            <CheckBox x:Name="ClarifyVagueCheck" FontSize="12"
+                      AutomationProperties.AutomationId="ClarifyVagueCheck" />
+            <CheckBox x:Name="SummaryCacheCheck" FontSize="12"
+                      AutomationProperties.AutomationId="SummaryCacheCheck" />
+          </StackPanel>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button x:Name="InferenceSaveButton" Padding="16,5"
+                    AutomationProperties.AutomationId="InferenceSaveButton" />
+            <Button x:Name="InferenceReloadButton" Padding="12,5"
+                    AutomationProperties.AutomationId="InferenceReloadButton" />
+            <Button x:Name="InferenceResetButton" Padding="12,5"
+                    AutomationProperties.AutomationId="InferenceResetButton" />
+          </StackPanel>
+          <TextBlock x:Name="InferenceStatusText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
+                     AutomationProperties.AutomationId="InferenceStatusText" />
+        </StackPanel>
+      </Border>
       <!-- ③ 本地模型库（v0.2.2 第 2 批补全，对齐 WPF 的 HubRegistry* 那一块）。
            「模型市场」列的是**能下载什么**，「本地模型库」列的是**磁盘上有什么** —— WPF 侧
            一直是两块不同的东西，此前跨平台版只有市场、没有库。
@@ -150,12 +182,5 @@
       </StackPanel>
     </ScrollViewer>
 
-    <!-- ③ 模型市场（任务二/三/四/五/六）：**整个区块由 ModelMarket.cs 构建**
-         （控件多、且要按数据动态重建分面），这里只留一个容器。
-         保留一段说明文本，便于在没有后端时也知道这一块是什么。 -->
-    <Grid x:Name="MarketHostGrid" Grid.Row="1" RowDefinitions="Auto,*">
-      <TextBlock x:Name="MarketNotMigratedText" Grid.Row="0" FontSize="11" TextWrapping="Wrap"
-                 Opacity="0.7" Margin="16,0,16,4" />
-    </Grid>
   </Grid>
 </UserControl>

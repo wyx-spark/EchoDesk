@@ -1,4 +1,4 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.ModelMarketSection">
   <!--
@@ -14,10 +14,13 @@
     tools/ui_probe.ps1 就是按这些 AutomationId 驱动整条市场交互流程的，
     同名意味着**同一份探针可以同时验两个前端**，对比一致性时用的是同一把尺子。
   -->
-  <Grid RowDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto" Margin="16,0,16,12">
+  <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto" Margin="14,12,14,8">
 
-    <!-- ① 数据源 + Token -->
-    <Grid Grid.Row="0" Margin="0,0,0,6" ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto">
+    <!-- ① 区块标题（WPF 的 settings.model.sectionHub） -->
+    <TextBlock x:Name="HubSectionTitle" Grid.Row="0" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10" />
+
+    <!-- ② 数据源 + Token -->
+    <Grid Grid.Row="1" Margin="0,10,0,6" ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto">
       <TextBlock x:Name="HubSourceLabel" Grid.Column="0" VerticalAlignment="Center" FontSize="12" />
       <ComboBox x:Name="HubSourceCombo" Grid.Column="1" Width="170" Margin="6,0,0,0"
                 AutomationProperties.AutomationId="HubSourceCombo" />
@@ -31,8 +34,8 @@
               AutomationProperties.AutomationId="HubOpenDirButton" />
     </Grid>
 
-    <!-- ② 搜索行 -->
-    <Grid Grid.Row="1" Margin="0,0,0,8" ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
+    <!-- ③ 搜索行 -->
+    <Grid Grid.Row="2" Margin="0,0,0,8" ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
       <TextBox x:Name="HubSearchBox" Grid.Column="0" Padding="6,4"
                AutomationProperties.AutomationId="HubSearchBox" />
       <ComboBox x:Name="HubSortCombo" Grid.Column="1" Width="128" MinWidth="104" Margin="8,0,0,0"
@@ -47,8 +50,8 @@
               AutomationProperties.AutomationId="HubStopButton" />
     </Grid>
 
-    <!-- ③ 本地筛选 + 结构化筛选 -->
-    <Expander x:Name="HubFilterExpander" Grid.Row="2" Margin="0,0,0,8" IsExpanded="False"
+    <!-- ④ 本地筛选 + 结构化筛选 -->
+    <Expander x:Name="HubFilterExpander" Grid.Row="3" Margin="0,0,0,8" IsExpanded="False"
               AutomationProperties.AutomationId="HubFilterExpander">
       <Expander.Header>
         <StackPanel Orientation="Horizontal">
@@ -81,12 +84,11 @@
       </StackPanel>
     </Expander>
 
-    <!-- ④ 结果列表 + 详情面板（列表区域独立滚动） -->
-    <Border Grid.Row="3" CornerRadius="8" BorderThickness="1"
+    <!-- ⑤ 结果列表 + 详情面板（列表区域独立滚动） -->
+    <Border Grid.Row="4" CornerRadius="8" BorderThickness="1"
             BorderBrush="{DynamicResource CardBorderBrush}"
-            Background="{DynamicResource CardBackgroundBrush}"
-            MinHeight="180">
-      <Grid RowDefinitions="Auto,*">
+            Background="{DynamicResource CardBackgroundBrush}" MinHeight="0">
+      <Grid RowDefinitions="Auto,*,Auto">
         <Border x:Name="HubDetailPanel" Grid.Row="0" IsVisible="False" Margin="6" CornerRadius="6"
                 Padding="10,8" BorderThickness="1"
                 BorderBrush="{DynamicResource AccentBrush}"
@@ -138,41 +140,42 @@
             </Grid>
           </Grid>
         </Grid>
+    <!-- 分页控件：WPF 把它放在结果框内部的底部一行，不单独占一个框 -->
+    <Border Grid.Row="2" BorderThickness="0,1,0,0"
+            BorderBrush="{DynamicResource CardBorderBrush}" Padding="8,4">
+            <WrapPanel x:Name="HubPagerPanel">
+              <TextBlock x:Name="HubPageInfoText" VerticalAlignment="Center" FontSize="11" Margin="0,2"
+                         FontWeight="Bold" AutomationProperties.AutomationId="HubPageInfoText" />
+              <TextBlock x:Name="HubTotalText" VerticalAlignment="Center" FontSize="11" Margin="10,2,0,2"
+                         Opacity="0.75" AutomationProperties.AutomationId="HubTotalText" />
+              <Button x:Name="HubFirstPageButton" Padding="8,3" FontSize="11" Margin="10,2,0,2"
+                      AutomationProperties.AutomationId="HubFirstPageButton" />
+              <Button x:Name="HubPrevPageButton" Padding="8,3" FontSize="11" Margin="4,2,0,2"
+                      AutomationProperties.AutomationId="HubPrevPageButton" />
+              <TextBlock x:Name="HubJumpLabel" VerticalAlignment="Center" FontSize="11" Margin="10,2,0,2"
+                         Opacity="0.75" />
+              <TextBox x:Name="HubPageBox" Width="52" Padding="4,2" FontSize="11" Margin="4,2,0,2"
+                       AutomationProperties.AutomationId="HubPageBox" />
+              <Button x:Name="HubGoPageButton" Padding="8,3" FontSize="11" Margin="4,2,0,2"
+                      AutomationProperties.AutomationId="HubGoPageButton" />
+              <Button x:Name="HubNextPageButton" Padding="8,3" FontSize="11" Margin="10,2,0,2"
+                      AutomationProperties.AutomationId="HubNextPageButton" />
+              <Button x:Name="HubLastPageButton" Padding="8,3" FontSize="11" Margin="4,2,0,2"
+                      AutomationProperties.AutomationId="HubLastPageButton" />
+              <TextBlock x:Name="HubPageSizeLabel" VerticalAlignment="Center" FontSize="11" Margin="10,2,0,2"
+                         Opacity="0.75" />
+              <ComboBox x:Name="HubPageSizeCombo" Width="66" Margin="4,2,0,2" FontSize="11"
+                        AutomationProperties.AutomationId="HubPageSizeCombo" />
+              <TextBlock x:Name="HubPagerHint" VerticalAlignment="Center" FontSize="11" Margin="10,2,0,2"
+                         Opacity="0.75" AutomationProperties.AutomationId="HubPagerHint" />
+            </WrapPanel>
+    </Border>
       </Grid>
     </Border>
 
-    <!-- ⑤ 分页控件（固定在结果列表下方，不随列表滚动） -->
-    <Border Grid.Row="4" Margin="0,6,0,0" CornerRadius="8" Padding="8,4" BorderThickness="1"
-            BorderBrush="{DynamicResource CardBorderBrush}">
-      <WrapPanel x:Name="HubPagerPanel">
-        <TextBlock x:Name="HubPageInfoText" VerticalAlignment="Center" FontSize="11" Margin="0,2"
-                   FontWeight="Bold" AutomationProperties.AutomationId="HubPageInfoText" />
-        <TextBlock x:Name="HubTotalText" VerticalAlignment="Center" FontSize="11" Margin="10,2,0,2"
-                   Opacity="0.75" AutomationProperties.AutomationId="HubTotalText" />
-        <Button x:Name="HubFirstPageButton" Padding="8,3" FontSize="11" Margin="10,2,0,2"
-                AutomationProperties.AutomationId="HubFirstPageButton" />
-        <Button x:Name="HubPrevPageButton" Padding="8,3" FontSize="11" Margin="4,2,0,2"
-                AutomationProperties.AutomationId="HubPrevPageButton" />
-        <TextBlock x:Name="HubJumpLabel" VerticalAlignment="Center" FontSize="11" Margin="10,2,0,2"
-                   Opacity="0.75" />
-        <TextBox x:Name="HubPageBox" Width="52" Padding="4,2" FontSize="11" Margin="4,2,0,2"
-                 AutomationProperties.AutomationId="HubPageBox" />
-        <Button x:Name="HubGoPageButton" Padding="8,3" FontSize="11" Margin="4,2,0,2"
-                AutomationProperties.AutomationId="HubGoPageButton" />
-        <Button x:Name="HubNextPageButton" Padding="8,3" FontSize="11" Margin="10,2,0,2"
-                AutomationProperties.AutomationId="HubNextPageButton" />
-        <Button x:Name="HubLastPageButton" Padding="8,3" FontSize="11" Margin="4,2,0,2"
-                AutomationProperties.AutomationId="HubLastPageButton" />
-        <TextBlock x:Name="HubPageSizeLabel" VerticalAlignment="Center" FontSize="11" Margin="10,2,0,2"
-                   Opacity="0.75" />
-        <ComboBox x:Name="HubPageSizeCombo" Width="66" Margin="4,2,0,2" FontSize="11"
-                  AutomationProperties.AutomationId="HubPageSizeCombo" />
-        <TextBlock x:Name="HubPagerHint" VerticalAlignment="Center" FontSize="11" Margin="10,2,0,2"
-                   Opacity="0.75" AutomationProperties.AutomationId="HubPagerHint" />
-      </WrapPanel>
-    </Border>
 
-    <!-- ⑥ 进度 -->
+
+    <!-- ⑦ 进度 -->
     <StackPanel Grid.Row="5" Spacing="4" Margin="0,4,0,0">
       <ProgressBar x:Name="HubLoadProgressBar" Height="4" Minimum="0" Maximum="100" IsVisible="False"
                    IsIndeterminate="True" AutomationProperties.AutomationId="HubLoadProgressBar" />
@@ -184,8 +187,8 @@
       </Grid>
     </StackPanel>
 
-    <!-- ⑦ 状态行 -->
-    <TextBlock x:Name="HubStatusText" Grid.Row="6" Margin="0,4,0,0" FontSize="11" TextWrapping="Wrap"
+    <!-- ⑧ 状态行 -->
+    <TextBlock x:Name="HubStatusText" Grid.Row="6" Margin="0,4,0,0" FontSize="11" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" MaxHeight="16"
                AutomationProperties.AutomationId="HubStatusText" />
   </Grid>
 </UserControl>
