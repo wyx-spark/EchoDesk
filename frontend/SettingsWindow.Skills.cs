@@ -856,7 +856,10 @@ public partial class SettingsWindow
         // DataTemplate 里的 svc:Loc.Key 是在**模板解析时**应用一次的，列表项实例化时不会重新取值；
         // 于是"打开目录 / 导出 zip / 发布自检 / 卸载"这几个按钮会停在解析那一刻的语言
         // （v0.2.2 UI 英文扫描：英文界面里它们仍是中文）。卡片建好后对整棵树再刷一次。
-        if (IsLoaded) Loc.Apply(this);
+        // 用 Dispatcher 排队到 Background 优先级：等 ItemsSource 的容器真正生成之后再刷。
+        // （打包版实测：卡片可能先于窗口 Loaded 渲染，`if (IsLoaded)` 会跳过重刷，
+        //   于是那四个按钮停在模板解析时的语言。）
+        Dispatcher.BeginInvoke(new Action(() => Loc.Apply(this)), DispatcherPriority.Background);
         if (SkillStatusText is not null && _skillStatus is JsonElement st
             && st.TryGetProperty("counts", out JsonElement counts))
         {
