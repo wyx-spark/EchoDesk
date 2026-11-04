@@ -423,6 +423,9 @@ PS1_ALLOWLIST: dict[str, str] = {
     "tools/check_installer_deliverables.ps1": "验收 Inno Setup 安装包（Windows 专属产物）",
     "tools/check_ui_pixels.ps1": "需要 WPF 窗口与交互式桌面（Windows 专属）",
     "tools/ui_probe.ps1": "WPF UI 自动化探针（Windows 专属）",
+    "tools/ui_sweep_wpf.ps1": "WPF 英文环境 UI 全页扫描（UI Automation，Windows 专属）；"
+                              "跨平台等价能力由 Avalonia 的 `--probe sweep` 提供（进程内视觉树 + 截图），"
+                              "三平台都能跑，因此不需要 .sh/.py 等价物",
     "tools/ui_probe_avalonia.ps1": "Avalonia 界面探针的判定脚本 —— **本体跨平台**（被测程序三平台都能跑），"
                                   "但按本仓库约定门禁脚本走 PowerShell（Windows 发布链）；"
                                   "非 Windows 上可直接跑 `app/EchoDesk --probe` 再用同样的结论行判定",
