@@ -1,4 +1,4 @@
-# 适用平台：Windows（WPF 与 Avalonia 都在真窗口上截）
+﻿# 适用平台：Windows（WPF 与 Avalonia 都在真窗口上截）
 # EchoDesk 视觉对齐取证：把 WPF / Avalonia 两个前端按**同一套窗口、同一套路径**截图，
 # 供人工（多模态视觉）逐页比对间距 / 边距 / 字号 / 对齐 / 配色 / 圆角。
 #
@@ -208,7 +208,7 @@ try {
         else {
             Info "设置窗口：$($setWin.Current.Name)"
             Start-Sleep -Milliseconds 1200
-            $names = @('general', 'model', 'installed', 'market', 'automation', 'agent', 'developer')
+            $names = @('general', 'model', 'agent', 'automation', 'market', 'installed', 'developer')
             $tabCond = New-Object System.Windows.Automation.PropertyCondition(
                 [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
                 [System.Windows.Automation.ControlType]::TabItem)
