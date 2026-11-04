@@ -1208,6 +1208,9 @@ internal static class Probe
 
     private static async Task<bool> RunEnglishSweepAsync(IClassicDesktopStyleApplicationLifetime desktop)
     {
+        // 记住原语言并在结束时恢复：SetLanguage 会**持久化**到界面设置里，
+        // 不恢复的话后续探针（market）会以英文启动，而它按中文页码格式断言 —— 实测踩到过。
+        string previousLanguage = App.State.Settings.Language;
         App.State.SetLanguage("en");
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
         Console.WriteLine("  [info] 界面语言已强制设为 en");
@@ -1256,6 +1259,10 @@ internal static class Probe
             Console.WriteLine($"  [info] {pageName} 扫描完成");
         }
         settings.Close();
+
+        // 恢复原语言（含持久化），避免污染后续探针与用户的真实设置
+        App.State.SetLanguage(string.IsNullOrWhiteSpace(previousLanguage) ? "auto" : previousLanguage);
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
 
         Console.WriteLine($"  [info] 共扫描控件文本 {texts} 条，截图 {shots} 张 → {outDir}");
         if (failures.Count == 0)
