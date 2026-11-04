@@ -1164,22 +1164,22 @@
                                                                     Tag="{Binding}" Click="SkillDetail_Click"
                                                                     Visibility="{Binding ErrorVisibility}"
                                                                     svc:Loc.Key="settings.installed.detail"/>
-                                                            <Button Content="📂 打开目录" Padding="8,2" FontSize="11"
+                                                            <Button Content="{Binding OpenDirText}" Padding="8,2" FontSize="11"
                                                                     Margin="6,0,0,0"
                                                                     Style="{StaticResource RoundButton}"
                                                                     Tag="{Binding}" Click="SkillOpenDir_Click"
                                                                     svc:Loc.Key="settings.installed.openDir"/>
-                                                            <Button Content="导出 zip" Padding="8,2" FontSize="11"
+                                                            <Button Content="{Binding ExportZipText}" Padding="8,2" FontSize="11"
                                                                     Margin="6,0,0,0"
                                                                     Style="{StaticResource RoundButton}"
                                                                     Tag="{Binding}" Click="SkillExportZip_Click"
                                                                     svc:Loc.Key="settings.installed.exportZip"/>
-                                                            <Button Content="发布自检" Padding="8,2" FontSize="11"
+                                                            <Button Content="{Binding PublishCheckText}" Padding="8,2" FontSize="11"
                                                                     Margin="6,0,0,0"
                                                                     Style="{StaticResource RoundButton}"
                                                                     Tag="{Binding}" Click="SkillPublishCheck_Click"
                                                                     svc:Loc.Key="settings.installed.publishCheck"/>
-                                                            <Button Content="卸载" Padding="8,2" FontSize="11"
+                                                            <Button Content="{Binding UninstallText}" Padding="8,2" FontSize="11"
                                                                     Margin="6,0,0,0"
                                                                     Style="{StaticResource RoundButton}"
                                                                     Tag="{Binding}" Click="SkillUninstall_Click"

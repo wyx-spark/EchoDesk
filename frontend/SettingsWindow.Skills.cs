@@ -24,6 +24,14 @@ namespace EchoDesk;
 public sealed class SkillCardItem
 {
     public string Id { get; init; } = "";
+
+    // 按钮文案在**实例创建时**求值（XAML 里 Content="{Binding …Text}"）：
+    // DataTemplate 里的 svc:Loc.Key 只在模板解析时求值一次，而重新 Apply 整树也赶不上
+    // ListView 容器生成的时刻 —— 打包版实测四个按钮会停在旧语言。绑定 + 重建卡片可彻底避开。
+    public string OpenDirText => Loc.T("settings.installed.openDir", "📂 打开目录");
+    public string ExportZipText => Loc.T("settings.installed.exportZip", "导出 zip");
+    public string PublishCheckText => Loc.T("settings.installed.publishCheck", "发布自检");
+    public string UninstallText => Loc.T("settings.button.uninstall", "卸载");
     public string Name { get; init; } = "";
     public string Version { get; init; } = "";
     public string Source { get; init; } = "";
