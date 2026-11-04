@@ -19,6 +19,49 @@ Version numbers follow `MAJOR.MINOR.PATCH`; file version resources are uniformly
 > `records/v0.2.2-跨平台-2记录.md`; the file names keep the task-spec number they were written
 > under, **not the release number**).
 
+### Hard-coded text sweep: 485 sites, six batches, and the release chain re-frozen
+
+The whole repository was audited for user-visible text that bypassed the language packs:
+**485 sites** (415 hard-coded A + 13 implicit-fallback B + 57 half-hard-coded C), of which **341**
+were recommended "must fix". The inventory is `records/v0.2.2-硬编码清查清单.md` (Chinese), and the
+per-batch record is `records/v0.2.2-硬编码修复记录.md`.
+
+- **Six batches, each with its own commit and gate run**: hotfixes (31 sites), Avalonia porting gaps
+  (34), the gates' own blind spots (3 scripts), WPF (80), Avalonia services (13), backend logs
+  (47 of 116; the remaining 69 were deliberately left single-language), backend response text and
+  C-class glue (114). **319 of the 341 must-fix sites** were changed; **144** were deliberately left
+  alone (build metadata, crash paths, diagnostic logs, input vocabularies, developer tools), with the
+  reason for each class recorded in the inventory rather than silently skipped.
+- **Machine-readable markers replaced Chinese-text sniffing.** `file_parser` failure strings now carry
+  ASCII marks (`[!WPS]`, `[!PARSE]`, …) that `is_parse_error()` recognises, while the text itself comes
+  from the language pack — so an English UI no longer shows Chinese parse errors. The two front ends'
+  "this tool was denied" detection changed from `Contains("未启用")` to a language-independent
+  `[!DENIED] ` marker, changed in the backend and both fronts together; the marker is stripped before
+  display.
+- **Gates fixed and hardened.** `check_lang.py` now judges completeness per directory (backend pack vs
+  front-end pack); `audit_lang_keys.py` also covers WPF `.cs`/`.xaml` and backend Python files;
+  `verify_release.ps1` derives the expected version from `backend/version.py` instead of a literal;
+  a new `tools/check_backend_boot.py` asserts the backend actually reaches its `ready` handshake and
+  exits cleanly (a real regression had slipped past the self-test once); and `audit_lang_keys.py`
+  gained a static check that any file calling `_t(`/`log_user(` really imports it. **Every new gate was
+  negative-tested**: break the thing it guards, the gate must go red, restore, it must go green.
+- **Version resources now derive from the single source.** The four-part resource version lives in
+  `backend/version.py::app_version_4()`; `EchoBackend.spec`, `tools/set_metadata.bat` and the three
+  PowerShell build/check scripts all read it. Two of those places used to hard-code `0.2.1.0`, which is
+  why the frozen binaries reported the wrong version while a fresh local build was correct.
+- **`verify_release.ps1` is re-entrant again.** The UI probes start the packaged app, which by design
+  writes `ui_state.json` into the portable root — so a second run used to fail the "no runtime residue"
+  assertion. The script now clears that known set before and after the GUI section; empty crash logs are
+  cleared, but a **non-empty** crash log is real evidence and is left in place for the assertion to report.
+- **Release chain re-run and re-frozen.** Windows tree and installer rebuilt, the three-platform
+  standalone backends rebuilt from scratch (no reuse of stale `dist/` trees), all three platform
+  packages re-packed, and the release re-frozen into `publish/archive/v0.2.2/` with a manifest whose
+  **8 artifact hashes were independently recomputed (8/8 match)**. The pre-fix freeze is preserved as
+  `publish/archive/v0.2.2-pre-hardcode-fix/` (status `superseded`). Full `verify_release.ps1` with no
+  skips: **50/50 pass**.
+- Known deviation: `EchoDesk-v0.2.2-portable.zip` is not produced by the current chain — the Windows
+  portable deliverable is `EchoDesk-v0.2.2-win-x64.zip` (from `tools/pack_crossplatform.py`).
+
 ### Avalonia parity completed, five rulings, and an all-Chinese copyright notice
 
 Task specification: `prompts/EchoDesk-v0.2.2跨平台版本功能补齐.md`, plus a set of rulings issued on
