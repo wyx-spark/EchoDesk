@@ -316,14 +316,47 @@ def resolve_requirements(spec_target: dict[str, str]) -> tuple[list[str], list[s
                 decisions.append((line, "构建工具，运行时不需要，跳过"))
                 continue
             requirements.append(line)
-    # 最后再过一遍"本地 wheel 缓存"：弱网下把钉 URL 的依赖换成本地已校验的同一份文件。
+    # 最后再过一遍"本地 wheel 缓存"：弱网下把钉 URL / 钉版本的依赖换成本地已校验的同一份文件。
     resolved: list[str] = []
     for line in requirements:
         new_line, why = local_wheel_override(line)
+        if not why:
+            # 钉版本的行（`pkg==ver`）也优先用本地 wheel：否则 pip 仍会去索引下载，
+            # github 一断就整轮失败（v0.2.2 收尾实测：0.3.19 的 win 轮子明明已在缓存里）。
+            new_line, why = pinned_local_override(line, spec_target["pip_platform"])
         if why:
             decisions.append((line, why))
         resolved.append(new_line)
     return pip_args, resolved, decisions
+
+
+def pinned_local_override(line: str, pip_platform: str) -> tuple[str, str]:
+    """`name==version` 且缓存里有**同平台**的 wheel 时，改写成 file:// 直链。
+
+    只认精确版本（`==`）——范围约束（`>=`）不该被本地缓存"钉死"，那会让依赖解析变得不可预期。
+    平台标签必须相符，否则 pip 会因为"不兼容当前 --platform"直接失败。
+    """
+    match = re.fullmatch(r"\s*([A-Za-z0-9_.\-]+)\s*==\s*([0-9][^\s;]*)\s*", line)
+    if not match:
+        return line, ""
+    name, version = match.group(1), match.group(2)
+    normalized = name.replace("-", "_").replace(".", "_").lower()
+    prefix = f"{normalized}-{version}-"
+    platform_hint = {
+        "win_amd64": "win_amd64",
+        "manylinux2014_x86_64": "manylinux",
+        "macosx_11_0_arm64": "macosx_11_0_arm64",
+    }.get(pip_platform, pip_platform)
+    matches = [
+        entry for entry in sorted(os.listdir(WHEEL_CACHE))
+        if entry.lower().startswith(prefix.lower()) and entry.endswith(".whl")
+        and platform_hint.lower() in entry.lower()
+    ] if os.path.isdir(WHEEL_CACHE) else []
+    if len(matches) != 1:
+        return line, ""
+    cached = os.path.join(WHEEL_CACHE, matches[0])
+    return (f"{name} @ {pathlib.Path(cached).resolve().as_uri()}",
+            f"复用本地已校验的 {matches[0]}（{os.path.getsize(cached) / 1048576:.1f} MB）")
 
 
 def requirement_name(line: str) -> str:

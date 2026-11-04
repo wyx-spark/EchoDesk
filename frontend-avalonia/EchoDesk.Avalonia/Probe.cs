@@ -1297,6 +1297,16 @@ internal static class Probe
     /// <summary>语言自称（语言选择器里必须用各自的文字）。</summary>
     private static readonly string[] LanguageAutonyms = { "简体中文", "繁體中文" };
 
+    /// <summary>
+    /// 插件显示名：**专有名词 / 品牌名，不参与 UI 本地化**（维护者裁定）。
+    /// 界面里显示插件自己的名字是正确的产品设计，不是漏译 —— 与语言自称同理，只放过这一种形态。
+    /// </summary>
+    private static readonly string[] PluginNames =
+    {
+        "Hello World 示例插件", "OFD 文档读取",
+        "Hello World example plugin", "OFD document reader",
+    };
+
     /// <summary>以时间戳开头的后端日志行（§12.3 设计为单语，原样显示属已知取舍）。</summary>
     private static readonly Regex BackendLogLine = new(@"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}");
 
@@ -1307,6 +1317,13 @@ internal static class Probe
     private static bool IsAllowedChinese(string text)
     {
         if (BackendLogLine.IsMatch(text.TrimStart())) return true;   // 整行是后端日志：跳过
+
+        // 插件显示名（专有名词）：整串就是插件名时直接放过
+        string trimmed = text.Trim();
+        foreach (string plugin in PluginNames)
+        {
+            if (trimmed == plugin || trimmed.StartsWith(plugin)) return true;
+        }
 
         string probe = text;
         foreach (string autonym in LanguageAutonyms)

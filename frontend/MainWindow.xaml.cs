@@ -277,28 +277,18 @@ public partial class MainWindow : Window
             // 等待后端完成模型加载 + 会话恢复 + 预热后就绪
             await _backend.StartAsync();
 
-            // 启动时**必须**把界面语言推给后端（v0.2.2 UI 英文扫描发现）：
-            // 此前 `set_language` 只在设置窗口里手动切语言时才发，于是"界面持久化为英文、
-            // 重启后界面英文而后端讲中文"——Agent 页的工具说明、模型页的数据源、
-            // 各处的"未知"全是中文。同步失败只写调试日志，不挡启动。
-            try
-            {
-                string langJson = await _backend.SendRequestAsync(
-                    new { action = "set_language", locale = Loc.Locale });
-                using System.Text.Json.JsonDocument langDoc =
-                    System.Text.Json.JsonDocument.Parse(langJson);
-                if (langDoc.RootElement.TryGetProperty("commands", out System.Text.Json.JsonElement langCommands))
-                    ApplyCommandsFromBackend(langCommands);
-            }
-            catch (Exception langEx)
-            {
-                System.Diagnostics.Debug.WriteLine("启动时同步后端语言失败：" + langEx.Message);
-            }
+            // 见下方 SyncBackendLanguageOnStartup 的说明：后端"就绪"和"要下载模型"
+            // 是两条不同路径，语言同步两条都要做。
+            await SyncBackendLanguageOnStartup();
         }
         catch (Exception ex)
         {
             StatusText.Text = Loc.T("main.status.startFailed", "后端启动失败");
             AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
+            // 发布构建不含模型时，后端会先回 need_download（StartAsync 因此抛错），
+            // 但进程是活的、后续请求照常可用 —— 语言同步**必须**在这条路径上补做，
+            // 否则会出现"英文界面 + 后端讲中文"（Agent 工具说明、模型数据源、插件名）。
+            await SyncBackendLanguageOnStartup();
             SetControlsEnabled(false); // 保持禁用
             return;
         }
@@ -902,6 +892,33 @@ public partial class MainWindow : Window
     /// 模型可用状态变化时的界面切换（任务六）：下载完成/热加载成功后自动转为正常状态，
     /// 模型被删除或加载失败则回到"无模型"引导 —— 全程不需要重启前端。
     /// </summary>
+
+    /// <summary>
+    /// 启动后把界面语言推给后端（v0.2.2 UI 英文扫描）。
+    ///
+    /// 为什么要单独一个方法：`StartAsync()` 有两条路径 —— 正常就绪，以及**发布构建不含模型**时的
+    /// `need_download`（后者会抛异常）。两条路径下后端进程都是活的、都会按自己的 locale 回文案，
+    /// 所以语言同步必须在**两条路径上都执行**；原先写在 try 里，`need_download` 时被跳过，
+    /// 于是打包版出现"界面英文、后端中文"（Agent 工具说明 / 模型数据源 / 插件名）。
+    ///
+    /// 失败只记调试日志：语言同步不该挡住启动。
+    /// </summary>
+    private async Task SyncBackendLanguageOnStartup()
+    {
+        try
+        {
+            string langJson = await _backend.SendRequestAsync(
+                new { action = "set_language", locale = Loc.Locale });
+            using System.Text.Json.JsonDocument langDoc = System.Text.Json.JsonDocument.Parse(langJson);
+            if (langDoc.RootElement.TryGetProperty("commands", out System.Text.Json.JsonElement langCommands))
+                ApplyCommandsFromBackend(langCommands);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("启动时同步后端语言失败：" + ex.Message);
+        }
+    }
+
     private void Backend_ModelReadyChanged(bool ready)
     {
         try

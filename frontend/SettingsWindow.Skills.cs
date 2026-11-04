@@ -853,6 +853,10 @@ public partial class SettingsWindow
         }
         SkillList.ItemsSource = cards;
         SkillEmptyText.Visibility = cards.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        // DataTemplate 里的 svc:Loc.Key 是在**模板解析时**应用一次的，列表项实例化时不会重新取值；
+        // 于是"打开目录 / 导出 zip / 发布自检 / 卸载"这几个按钮会停在解析那一刻的语言
+        // （v0.2.2 UI 英文扫描：英文界面里它们仍是中文）。卡片建好后对整棵树再刷一次。
+        if (IsLoaded) Loc.Apply(this);
         if (SkillStatusText is not null && _skillStatus is JsonElement st
             && st.TryGetProperty("counts", out JsonElement counts))
         {

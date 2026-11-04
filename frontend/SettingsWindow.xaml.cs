@@ -172,6 +172,10 @@ public partial class SettingsWindow : Window
 
         // 多语言（任务三）：先回填 XAML 静态文案，再订阅切换事件（切换后即时刷新）
         Loc.Apply(this);
+        // 列表类控件（如"已安装"页的插件卡片）里的 svc:Loc.Key 在 DataTemplate 解析时应用一次，
+        // 实例化时不会重新取值 —— 窗口 Loaded 后再刷一遍整棵树，保证模板内的按钮也是当前语言
+        // （v0.2.2 UI 英文扫描：英文界面里"打开目录/导出 zip/发布自检/卸载"仍是中文）。
+        Loaded += (_, _) => Loc.Apply(this);
         Title = Loc.T("settings.title");
         Loc.LanguageChanged += (_, _) => ApplyLanguage();
 

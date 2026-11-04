@@ -31,6 +31,11 @@ $Cjk = [regex]'[\u4e00-\u9fa5]'
 $Autonyms = @('简体中文', '繁體中文')
 # 刻意双语显示的标题（"语言 / Language" 这类，两种用户都能一眼找到）——不是漏译。
 $BilingualLabels = @('语言 / Language')
+# 插件元数据属于**专有名词 / 品牌名**，不参与 UI 本地化翻译（维护者裁定）——
+# 界面里显示插件自己的名字（哪怕它是中文）是正确的产品设计，不是漏译。
+# 只列插件显示名本身，不放宽别的文案。
+$PluginNames = @('Hello World 示例插件', 'OFD 文档读取', 'Hello World example plugin', 'OFD document reader')
+$PluginNameWithId = [regex]'^\s*[^()（）]{1,60}\s*[（(][A-Za-z0-9_.\-]{2,60}[)）]\s*$'
 $LogLine = [regex]'^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}'
 $PathFrag = [regex]'[A-Za-z]:\\[^\r\n，。；]*|/[A-Za-z0-9_.\-]+(?:/[^\r\n，。；]*)*'
 
@@ -47,6 +52,12 @@ function Allowed([string]$text) {
     foreach ($a in $Autonyms) { $probe = $probe.Replace($a, '') }
     foreach ($a in $BilingualLabels) { $probe = $probe.Replace($a, '') }
     $probe = $PathFrag.Replace($probe, '')
+    # 插件显示名（专有名词）：整串就是"插件名"或"插件名 (id)"时直接放过。
+    $trimmed = $text.Trim()
+    foreach ($p in $PluginNames) {
+        if ($trimmed -eq $p -or $trimmed.StartsWith($p)) { return $true }
+    }
+    if ($PluginNameWithId.IsMatch($trimmed)) { return $true }
     return -not $Cjk.IsMatch($probe)
 }
 
@@ -75,6 +86,9 @@ function Collect-Texts($root) {
     $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
         [System.Windows.Automation.Condition]::TrueCondition)
     foreach ($el in $all) {
+        # 只统计**当前可见**的控件：设置窗口里未选中的页签内容也在控件树里，
+        # 不滤掉就会把别的页签的文案算到当前页上（第一版就出现过每页都有插件名的假象）。
+        if ($el.Current.IsOffscreen) { continue }
         $kind = $el.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
         $name = $el.Current.Name
         if ($name) { [void]$list.Add(@{ Kind = "$kind.Name"; Text = $name }) }
