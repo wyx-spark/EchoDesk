@@ -85,7 +85,10 @@ xlrd                      # .xls（BSD）
 
 # ---------- 自动化（任务四） ----------
 playwright==1.63.0        # 驱动本机 Microsoft Edge（Apache-2.0）
-numpy==2.5.3              # 传递依赖（llama-cpp-python 等），显式钉住以与 SBOM 一致
+# numpy：Windows 钉回 SBOM 版本（随包 SBOM 校验的是 Windows 的 PyInstaller 后端）；
+# Linux/macOS 的 cp313 索引里没有 2.5.3（只到 2.2.x），只能交回索引解析。
+numpy==2.5.3 ; sys_platform == "win32"
+numpy ; sys_platform != "win32"
 schedule                  # 定时触发（MIT）
 
 # ---------- 构建工具 ----------
