@@ -1,4 +1,4 @@
-# 英文环境 UI 扫描（WPF）—— 主窗口 + 设置窗口 7 页签，抓全部可见控件文本查中文。
+﻿# 英文环境 UI 扫描（WPF）—— 主窗口 + 设置窗口 7 页签，抓全部可见控件文本查中文。
 #
 # 为什么需要它（维护者要求）：静态扫描（check_lang / audit_lang_keys）只看得到源码里的字面量，
 # 抓不到"动态拼接"与"渲染期才存在"的中文。这里用 UI Automation 在**真实进程**里读控件，
@@ -11,7 +11,11 @@
 param(
     [string]$Exe = "",
     [string]$OutDir = "",
-    [int]$TimeoutSec = 180
+    [int]$TimeoutSec = 180,
+    # 扫描语言：en（默认，查英文界面里的中文残留）/ zh-Hans（查中文界面里的英文残留）
+    [ValidateSet('en', 'zh-Hans')][string]$Language = 'en',
+    # 中文模式下只列"疑似英文"清单供人工确认（技术名词会混在里面），不据此判死
+    [switch]$CheckLatin
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,11 +44,37 @@ $LogLine = [regex]'^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}'
 $PathFrag = [regex]'[A-Za-z]:\\[^\r\n，。；]*|/[A-Za-z0-9_.\-]+(?:/[^\r\n，。；]*)*'
 
 $failures = New-Object System.Collections.ArrayList
+$latinCandidates = New-Object System.Collections.ArrayList
 $texts = 0
 $shots = 0
 
 function Fail([string]$msg) { [void]$failures.Add($msg); Write-Output "[sweep] FAIL $msg" }
 function Info([string]$msg) { Write-Output "[sweep] $msg" }
+
+# 中文界面里本来就该是英文的技术名词 / 框架文案（品牌、协议、快捷键、参数名、滚动条无障碍名）
+$LatinAllowed = @(
+    'EchoDesk', 'WPF', 'Avalonia', 'Agent', 'MCP', 'API', 'Token', 'GGUF', 'HF', 'GitHub',
+    'URL', 'KV', 'Top-P', 'top_p', 'Ctrl', 'Enter', 'Esc', 'Tab', 'Markdown', 'JSON',
+    'HTML', 'HTTP', 'HTTPS', 'Python', 'Windows', 'Linux', 'macOS', 'llama', 'Qwen',
+    'Studio', 'Void', 'Entropia', 'GPU', 'CPU', 'ID', 'OK', 'PDF', 'DOCX', 'XLSX',
+    'PPTX', 'OFD', 'UTF', 'SHA', 'SQL', 'local', 'auto', 'chat', 'contract', 'general',
+    'light', 'dark', 'English',
+    'Line up', 'Line down', 'Line left', 'Line right',
+    'Page up', 'Page down', 'Page left', 'Page right', 'Position'
+)
+$LatinSentence = [regex]'^[A-Za-z][A-Za-z0-9 .,:;!?()\[\]/+\-–—_&%''"]*$'
+
+# 像"英文文案"而不是路径/URL/类型名/版本号/ID 的文本
+function Looks-LikeEnglish([string]$text) {
+    $t = $text.Trim()
+    if ($t.Length -lt 3) { return $false }
+    if ($t -match '[\u4e00-\u9fa5]') { return $false }
+    if ($t -match '^v?\d+(\.\d+)+$') { return $false }
+    if ($t -match 'Avalonia\.|EchoDesk\.|System\.') { return $false }
+    if (-not $LatinSentence.IsMatch($t)) { return $false }
+    $word = $t.TrimEnd('.', ':', '!', '?', ' ')
+    return ($LatinAllowed -notcontains $word)
+}
 
 function Allowed([string]$text) {
     if ($LogLine.IsMatch($text.TrimStart())) { return $true }
@@ -111,9 +141,13 @@ function Sweep-Page($win, [string]$pageName, [string]$shotName) {
     $script:texts += (Collect-Texts $win).Count
     foreach ($row in (Collect-Texts $win)) {
         if (-not $row.Text) { continue }
-        if (Allowed $row.Text) { continue }
         $clean = ($row.Text -replace '[\r\n]+', ' ').Trim()
         if ($clean.Length -gt 120) { $clean = $clean.Substring(0, 120) + '…' }
+        if ($CheckLatin) {
+            if (Looks-LikeEnglish $row.Text) {  [void]$script:latinCandidates.Add("【$pageName】的【$($row.Kind)】：$clean") }
+            continue
+        }
+        if (Allowed $row.Text) { continue }
         Fail "【$pageName】的【$($row.Kind)】显示了中文：【$clean】"
     }
     $script:shots += (Save-Shot $win $shotName)
@@ -132,10 +166,10 @@ if (Test-Path $statePath) {
 }
 $env:ECHODESK_DATA = $DataDir
 # 首启标记一并写上：否则会弹"首次使用"对话框挡住设置按钮（ui_probe.ps1 里是先关对话框，这里直接置位更稳）。
-$state = @{ Language = 'en'; FirstRunDone = $true; ShortcutPromptDeclined = $true }
+$state = @{ Language = $Language; FirstRunDone = $true; ShortcutPromptDeclined = $true }
 if ($backup) {
-    try { $state = $backup | ConvertFrom-Json -AsHashtable } catch { $state = @{ Language = 'en' } }
-    $state['Language'] = 'en'
+    try { $state = $backup | ConvertFrom-Json -AsHashtable } catch { $state = @{ Language = $Language } }
+    $state['Language'] = $Language
 }
 ($state | ConvertTo-Json -Depth 5) | Set-Content -Path $statePath -Encoding UTF8
 
@@ -214,12 +248,13 @@ try {
                 } catch { }
                 if (-not $langText) { $langText = $langCombo.Current.Name }
             }
-            if ($langText -notmatch 'English') {
-                Fail ("界面语言没有切成英文（LanguageCombo 选中项='{0}'）—— 扫描结果不可信，先查强制英文这条路" -f $langText)
+            $expectedLang = if ($Language -eq 'zh-Hans') { '简体中文' } else { 'English' }
+            if ($langText -notmatch [regex]::Escape($expectedLang)) {
+                Fail ("界面语言没有切成 {0}（LanguageCombo 选中项='{1}'）—— 扫描结果不可信，先查强制语言这条路" -f $expectedLang, $langText)
                 Write-Output 'SWEEP-RESULT: FAIL'
                 exit 1
             }
-            Info "已确认界面语言为英文（LanguageCombo='$langText'）"
+            Info "已确认界面语言为 $expectedLang（LanguageCombo='$langText'）"
 
             $tabs = $settingsWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCond)
             Info "设置窗口有 $($tabs.Count) 个页签"
@@ -246,8 +281,16 @@ try {
 }
 
 Info "共扫描控件文本 $texts 条，截图 $shots 张 → $OutDir"
+if ($CheckLatin) {
+    Info "中文界面里疑似英文残留 $($latinCandidates.Count) 条（需人工确认）："
+    foreach ($line in $latinCandidates) { Write-Output "    - $line" }
+}
 if ($failures.Count -eq 0) {
-    Write-Output "[sweep] PASS 主窗口 + 设置窗口 7 页签：全部控件文本均为英文（无中文字符）"
+    if ($CheckLatin) {
+        Write-Output ("[sweep] PASS 主窗口 + 设置窗口 7 页签：中文界面里未发现白名单外的英文残留；候选 {0} 条已列出供人工确认" -f $latinCandidates.Count)
+    } else {
+        Write-Output "[sweep] PASS 主窗口 + 设置窗口 7 页签：全部控件文本均为英文（无中文字符）"
+    }
     Write-Output 'SWEEP-RESULT: PASS'
     exit 0
 }

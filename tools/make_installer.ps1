@@ -726,7 +726,16 @@ foreach ($p in @(
         (Join-Path $Root "LICENSE"), (Join-Path $Root "LICENSE.zh-Hans.md"),
         (Join-Path $Root "NOTICE"), (Join-Path $Root "NOTICE.zh-Hans.md")
     )) {
-    if (Test-Path $p) { $assets += (Resolve-Path -LiteralPath $p).Path }
+    # **必须哈希"随包发出的那一份"**：文档在发布构建时会做规范化（去过程性内容、统一换行），
+    # 发布目录里的副本与仓库源文件并不总是逐字节相同。原先这里直接哈希仓库根的文件，
+    # 于是 SHA256SUMS.txt 与用户手里拿到的文件对不上（verify_release 实测报
+    # "哈希不一致: NOTICE.zh-Hans.md"）。优先取发布目录里的同名文件，取不到才回退仓库源文件。
+    $shipped = Join-Path $OutDir (Split-Path -Leaf $p)
+    if (Test-Path -LiteralPath $shipped) {
+        $assets += (Resolve-Path -LiteralPath $shipped).Path
+    } elseif (Test-Path -LiteralPath $p) {
+        $assets += (Resolve-Path -LiteralPath $p).Path
+    }
 }
 $lines = @()
 foreach ($a in $assets) {

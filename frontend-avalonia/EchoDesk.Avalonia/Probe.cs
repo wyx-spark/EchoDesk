@@ -1211,9 +1211,18 @@ internal static class Probe
         // 记住原语言并在结束时恢复：SetLanguage 会**持久化**到界面设置里，
         // 不恢复的话后续探针（market）会以英文启动，而它按中文页码格式断言 —— 实测踩到过。
         string previousLanguage = App.State.Settings.Language;
-        App.State.SetLanguage("en");
+        // 扫描语言可被 ECHODESK_SWEEP_LANG 覆盖：
+        //   en（默认）→ 查"英文界面里残留的中文"；
+        //   zh-Hans     → 查"中文界面里不该出现的英文"（只列清单供人工确认，不判死）。
+        string forced = Environment.GetEnvironmentVariable("ECHODESK_SWEEP_LANG") ?? "";
+        if (string.IsNullOrWhiteSpace(forced))
+            forced = "en";
+        bool latinMode = forced.StartsWith("zh", StringComparison.OrdinalIgnoreCase);
+        App.State.SetLanguage(forced);
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-        Console.WriteLine("  [info] 界面语言已强制设为 en");
+        LatinCandidatesMode = latinMode;
+        LatinCandidates.Clear();
+        Console.WriteLine($"  [info] 界面语言已强制设为 {forced}（检查方向：{(latinMode ? "英文残留" : "中文残留")}）");
 
         string outDir = Environment.GetEnvironmentVariable("ECHODESK_SWEEP_DIR") ?? "";
         if (string.IsNullOrWhiteSpace(outDir))
@@ -1265,6 +1274,14 @@ internal static class Probe
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
 
         Console.WriteLine($"  [info] 共扫描控件文本 {texts} 条，截图 {shots} 张 → {outDir}");
+        if (latinMode)
+        {
+            // 中文界面里的英文残留：**只列清单**。技术名词（Token / MCP / Top-P…）会混在里面，
+            // 是否算缺陷要人看，机器不判死（否则会为了几条误报反复放宽，门禁失去意义）。
+            Console.WriteLine($"  [info] 中文界面里疑似英文残留 {LatinCandidates.Count} 条（需人工确认）：");
+            foreach (string line in LatinCandidates)
+                Console.WriteLine($"    - {line}");
+        }
         if (failures.Count == 0)
         {
             Console.WriteLine("  [PASS] 主窗口 + 设置窗口 7 页签：全部控件文本均为英文（无中文字符）");
@@ -1277,6 +1294,49 @@ internal static class Probe
     }
 
     /// <summary>扫描一个窗口/页面下的全部控件文本；返回收集到的文本条数。</summary>
+    /// <summary>当前扫描是否处于"中文界面查英文残留"模式。</summary>
+    private static bool LatinCandidatesMode;
+
+    /// <summary>中文界面里本来就该是英文的技术名词（品牌 / 协议 / 快捷键 / 参数名）。</summary>
+    private static readonly HashSet<string> LatinAllowed = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "EchoDesk", "WPF", "Avalonia", "Agent", "MCP", "API", "Token", "GGUF", "HF", "GitHub",
+        "URL", "KV", "Top-P", "top_p", "Ctrl", "Enter", "Esc", "Tab", "Markdown", "JSON",
+        "HTML", "HTTP", "HTTPS", "Python", "Windows", "Linux", "macOS", "llama", "Qwen",
+        "Studio", "Void", "Entropia", "GPU", "CPU", "ID", "OK", "PDF", "DOCX", "XLSX",
+        "PPTX", "OFD", "UTF", "SHA", "SQL", "local", "auto", "chat", "contract", "general",
+        "light", "dark", "en", "zh-Hans", "zh-Hant", "Skill", "Skills", "Hub", "Plugin",
+        "Plugins", "GGUF", "Q4_K_M", "Q6_K", "Q8_0", "Instruct", "Chat", "Base",
+        // 框架自带的滚动条按钮/滑块的无障碍名：不是产品文案
+        "Line up", "Line down", "Line left", "Line right",
+        "Page up", "Page down", "Page left", "Page right", "Position",
+    };
+
+    /// <summary>
+    /// 像"英文文案"而不是路径/URL/代码/ID 的文本：
+    /// 纯 ASCII 字母开头、只含字母数字与常见标点、至少 3 个字符、且不含中文。
+    /// 命中白名单里的技术名词不算。
+    /// </summary>
+    private static bool LooksLikeUnexpectedEnglish(string text)
+    {
+        string t = text.Trim();
+        if (t.Length < 3)
+            return false;
+        if (CjkPattern.IsMatch(t))
+            return false;
+        // .NET 类型名（ContentControl.Content 会返回控件类型名）：不是界面文案
+        if (t.Contains("Avalonia.", StringComparison.Ordinal) || t.Contains("EchoDesk.", StringComparison.Ordinal))
+            return false;
+        if (!LatinSentence.IsMatch(t))
+            return false;
+        string word = t.TrimEnd('.', ':', '!', '?', ' ');
+        return !LatinAllowed.Contains(word);
+    }
+
+    private static readonly Regex LatinSentence = new(@"^[A-Za-z][A-Za-z0-9 .,:;!?()\[\]/+\-–—_&%'""]*$");
+    /// <summary>中文模式下收集到的"疑似英文残留"（只列清单，由人确认；技术名词会混在里面）。</summary>
+    private static readonly List<string> LatinCandidates = new();
+
     private static int SweepControl(Control root, string pageName, List<string> failures)
     {
         int count = 0;
@@ -1290,10 +1350,16 @@ internal static class Probe
                 if (string.IsNullOrWhiteSpace(text)) continue;
                 if (!seen.Add(text)) continue;          // 同一控件同类文本只报一次（Header 与 Content 常重叠）
                 count++;
-                if (IsAllowedChinese(text)) continue;
-                if (!CjkPattern.IsMatch(text)) continue;
                 string clean = text.Replace("\r", " ").Replace("\n", " ").Trim();
                 if (clean.Length > 120) clean = clean[..120] + "…";
+                if (LatinCandidatesMode)
+                {
+                    if (LooksLikeUnexpectedEnglish(text))
+                        LatinCandidates.Add($"【{pageName}】的【{kind}】：{clean}");
+                    continue;
+                }
+                if (IsAllowedChinese(text)) continue;
+                if (!CjkPattern.IsMatch(text)) continue;
                 failures.Add($"【{pageName}】的【{kind}】显示了中文：【{clean}】");
             }
         }
@@ -1320,7 +1386,13 @@ internal static class Probe
     /// <summary>路径片段（中文目录名属"数据"，不是界面文案）。</summary>
     private static readonly Regex PathFragment = new(@"[A-Za-z]:\\[^\r\n，。；]*|/[A-Za-z0-9_.\-]+(?:/[^\r\n，。；]*)*");
 
-    /// <summary>把上列三类"合理中文"从文本里剔掉；剔完还剩中文才算缺陷。</summary>
+    /// <summary>
+    /// 刻意双语显示的标题（与 WPF 侧 ui_sweep_wpf.ps1 的 BilingualLabels 同源）：
+    /// 「语言 / Language」这类标题两种语言的用户都能一眼找到，属于**设计如此**，不是漏译。
+    /// </summary>
+    private static readonly string[] BilingualLabels = { "语言 / Language", "Language / 语言" };
+
+    /// <summary>把上列几类"合理中文"从文本里剔掉；剔完还剩中文才算缺陷。</summary>
     private static bool IsAllowedChinese(string text)
     {
         if (BackendLogLine.IsMatch(text.TrimStart())) return true;   // 整行是后端日志：跳过
@@ -1335,6 +1407,8 @@ internal static class Probe
         string probe = text;
         foreach (string autonym in LanguageAutonyms)
             probe = probe.Replace(autonym, "");
+        foreach (string bilingual in BilingualLabels)
+            probe = probe.Replace(bilingual, "");
         probe = PathFragment.Replace(probe, "");
         return !CjkPattern.IsMatch(probe);
     }

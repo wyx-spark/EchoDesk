@@ -73,7 +73,8 @@
       "labelReadingMode": "Reading the current conversation mode",
       "langCurrentLine": "{0}: {1} ({2})",
       "langAvailableLine": "{0}: {1}",
-      "langDirLine": "{0}: {1}"
+      "langDirLine": "{0}: {1}",
+      "emojiUnavailable": "No emoji font on this machine; plain-text markers are used instead."
     },
     "saveHint": {
       "dirty": "Unsaved changes"
@@ -506,7 +507,8 @@
       "searchTip": "Search skills (leave empty to browse all)",
       "installConfirmShort": "Confirm install?",
       "confirmInstallShort": "Confirm install?",
-      "uninstallConfirmShort": "Confirm uninstall?"
+      "uninstallConfirmShort": "Confirm uninstall?",
+      "title": "Search plugins"
     },
     "automation": {
       "loginKeywordsTip": "If the address contains any of these words the page counts as a login page, e.g. login, signin, sso",
@@ -667,7 +669,9 @@
       "saveTemplateTip": "Save the current instruction and file extensions as a reusable template",
       "templateNotSelected": "⚠️ Pick a template in the drop-down above first",
       "dirStructureNote": "Folder layout: results root / YYYY-MM-DD / task name / result.txt + the original files",
-      "loginStateReading": "Sign-in state: reading…"
+      "loginStateReading": "Sign-in state: reading…",
+      "fieldHelpTitle": "? Field help",
+      "fieldHelpIntro": "Focus any field below (or click the ? next to it) and this box explains it in plain words, with an example."
     },
     "developer": {
       "modeShort": "Only validation strictness is relaxed — never the permission boundary.",
@@ -738,7 +742,8 @@
       "confirmInstallShort": "Confirm install?",
       "openDir": "📂 Open folder",
       "exportZip": "Export zip",
-      "publishCheck": "Publish self-check"
+      "publishCheck": "Publish self-check",
+      "title": "Installed plugins"
     },
     "loadState": {
       "reading": "Reading the configuration…",

@@ -163,7 +163,32 @@ public partial class MainWindow : Window
         ShowCapabilityBanner();
 
         Closing += OnClosing;
-        Opened += async (_, _) => await StartBackendAsync();
+        Opened += async (_, _) =>
+        {
+            // 先把窗口尺寸收进当前屏幕的可用区域，再开后端：
+            // 记忆里的尺寸可能是旧版本留下的（或被拖到过更小的屏幕），
+            // 超出屏幕时窗口底部的输入区/状态区会被裁掉，用户会以为"窗口太大、点不到"。
+            ClampSizeToScreen();
+            await StartBackendAsync();
+        };
+    }
+
+    /// <summary>把窗口尺寸限制在当前屏幕的可用区域内（留 24px 余量，保证标题栏与底部都能抓到）。</summary>
+    private void ClampSizeToScreen()
+    {
+        global::Avalonia.Platform.Screen? screen =
+            Screens.ScreenFromWindow(this) ?? Screens.Primary;
+        if (screen is null)
+            return;
+        double scale = screen.Scaling > 0 ? screen.Scaling : 1.0;
+        // 注意：Avalonia 的 Width/Height 是**客户区**，窗口边框与标题栏还要再加约 16x39。
+        // 只按可用区域减 24 的话，客户区虽然"装得下"，整窗反而会高出屏幕一截。
+        double maxWidth = screen.WorkingArea.Width / scale - 48;
+        double maxHeight = screen.WorkingArea.Height / scale - 56;
+        if (maxWidth > 0 && Width > maxWidth)
+            Width = Math.Max(MinWidth, maxWidth);
+        if (maxHeight > 0 && Height > maxHeight)
+            Height = Math.Max(MinHeight, maxHeight);
     }
 
     // -----------------------------------------------------------------

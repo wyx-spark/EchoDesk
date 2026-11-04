@@ -1,4 +1,4 @@
-// 界面设置（移植自 frontend/Services/AppSettings.cs，任务书 任务三 的"用户数据目录按平台惯例"）。
+﻿// 界面设置（移植自 frontend/Services/AppSettings.cs，任务书 任务三 的"用户数据目录按平台惯例"）。
 //
 // WPF 版把 ui_state.json 写在"程序目录的外层"（修复七：便携版不希望用户数据跟着程序目录跑）。
 // 跨平台版改为交给 UserPaths.DataRoot 决定，并保留 ECHODESK_DATA 覆盖 ——
@@ -52,9 +52,9 @@ public sealed class AppSettings
     /// 所以这里取 WPF 整窗减去非客户区（横向 16、纵向 39）后的 764x621。
     /// </summary>
     [JsonPropertyName("settings_window_width")]
-    public double SettingsWindowWidth { get; set; } = 764;
+    public double SettingsWindowWidth { get; set; } = 844;
     [JsonPropertyName("settings_window_height")]
-    public double SettingsWindowHeight { get; set; } = 621;
+    public double SettingsWindowHeight { get; set; } = 581;
 
     /// <summary>主窗口尺寸。同样对齐 WPF 的 860x620 整窗，即客户区 844x581。</summary>
     [JsonPropertyName("window_width")]
@@ -173,6 +173,7 @@ public sealed class AppSettings
             settings.SettingsWindowHeight = ReadDouble(root, "settings_window_height",
                 "SettingsWindowHeight", settings.SettingsWindowHeight);
             settings.MigrateLegacyTheme(root);
+            settings.MigrateLegacyWindowSizes();
             settings.Clamp();
             return settings;
         }
@@ -203,6 +204,36 @@ public sealed class AppSettings
                 Theme = legacy.GetBoolean() ? "dark" : "light";
                 return;
             }
+        }
+    }
+
+    /// <summary>
+    /// 把旧版本记忆下来的窗口尺寸迁到 v0.2.2 对齐后的默认值。
+    ///
+    /// 为什么需要：视觉对齐把主窗口默认从 1080x760 改成 844x581（WPF 860x620 的客户区）、
+    /// 设置窗口从 980x720 改成 764x621。但窗口尺寸是**记住**的 —— 只改默认值的话，
+    /// 老用户的 ui_state.json 里仍存着旧的大尺寸，窗口会一直按 1080x760 打开；
+    /// 在 1366x768 这类屏上再经系统缩放放大后几乎铺满，用户会觉得"太大不好操作"。
+    ///
+    /// 只迁移**恰好等于旧默认值**的那两组数：用户自己拖过的尺寸保持不动（那是真实偏好）。
+    /// </summary>
+    private void MigrateLegacyWindowSizes()
+    {
+        if (Math.Abs(WindowWidth - 1080) < 0.5 && Math.Abs(WindowHeight - 760) < 0.5)
+        {
+            WindowWidth = 844;
+            WindowHeight = 581;
+        }
+        // 设置窗口的历史默认有两代：v0.2.1 的 980x720，和视觉对齐第一版的 764x621。
+        // 用户要求"设置窗口跟主窗口同样大小"，所以这两代默认值都迁到 844x581；
+        // 用户自己拖过的其它尺寸保持不动。
+        bool legacySettingsSize =
+            (Math.Abs(SettingsWindowWidth - 980) < 0.5 && Math.Abs(SettingsWindowHeight - 720) < 0.5)
+            || (Math.Abs(SettingsWindowWidth - 764) < 0.5 && Math.Abs(SettingsWindowHeight - 621) < 0.5);
+        if (legacySettingsSize)
+        {
+            SettingsWindowWidth = 844;
+            SettingsWindowHeight = 581;
         }
     }
 
@@ -308,9 +339,13 @@ public sealed class AppSettings
         if (double.IsNaN(FontSize) || FontSize < 10 || FontSize > 28)
             FontSize = 14;
         if (double.IsNaN(WindowWidth) || WindowWidth < 720)
-            WindowWidth = 1080;
+            WindowWidth = 844;
         if (double.IsNaN(WindowHeight) || WindowHeight < 520)
-            WindowHeight = 760;
+            WindowHeight = 581;
+        if (double.IsNaN(SettingsWindowWidth) || SettingsWindowWidth < 560)
+            SettingsWindowWidth = 844;
+        if (double.IsNaN(SettingsWindowHeight) || SettingsWindowHeight < 420)
+            SettingsWindowHeight = 581;
         Theme = (Theme ?? "auto").Trim().ToLowerInvariant() switch
         {
             "light" => "light",

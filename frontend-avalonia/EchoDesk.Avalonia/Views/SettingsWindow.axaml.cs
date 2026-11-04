@@ -76,6 +76,28 @@ public partial class SettingsWindow : Window, ISettingsHost
         SaveButton.Click += async (_, _) => await SaveAsync();
         CloseButton.Click += (_, _) => Close();
         FieldHelpCloseButton.Click += (_, _) => ClearFieldHelp();
+
+        // 与主窗口同一道保险：记忆里的尺寸可能来自旧版本（980x720），
+        // 超出当前屏幕可用区域时会把底部的保存/关闭按钮裁掉。
+        Opened += (_, _) => ClampSizeToScreen();
+    }
+
+    /// <summary>把窗口尺寸限制在当前屏幕的可用区域内（留 24px 余量）。</summary>
+    private void ClampSizeToScreen()
+    {
+        global::Avalonia.Platform.Screen? screen =
+            Screens.ScreenFromWindow(this) ?? Screens.Primary;
+        if (screen is null)
+            return;
+        double scale = screen.Scaling > 0 ? screen.Scaling : 1.0;
+        // 注意：Avalonia 的 Width/Height 是**客户区**，窗口边框与标题栏还要再加约 16x39。
+        // 只按可用区域减 24 的话，客户区虽然"装得下"，整窗反而会高出屏幕一截。
+        double maxWidth = screen.WorkingArea.Width / scale - 48;
+        double maxHeight = screen.WorkingArea.Height / scale - 56;
+        if (maxWidth > 0 && Width > maxWidth)
+            Width = Math.Max(MinWidth, maxWidth);
+        if (maxHeight > 0 && Height > maxHeight)
+            Height = Math.Max(MinHeight, maxHeight);
     }
 
     // -----------------------------------------------------------------

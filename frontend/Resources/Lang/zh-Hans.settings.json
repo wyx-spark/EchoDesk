@@ -73,7 +73,8 @@
       "labelReadingMode": "读取当前对话模式",
       "langCurrentLine": "{0}：{1}（{2}）",
       "langAvailableLine": "{0}：{1}",
-      "langDirLine": "{0}：{1}"
+      "langDirLine": "{0}：{1}",
+      "emojiUnavailable": "本机缺少 emoji 字体，已改用纯文本标记"
     },
     "saveHint": {
       "dirty": "有未保存的改动"
@@ -506,7 +507,8 @@
       "searchTip": "搜索技能（留空浏览全部）",
       "installConfirmShort": "确认安装？",
       "confirmInstallShort": "确认安装？",
-      "uninstallConfirmShort": "确认卸载？"
+      "uninstallConfirmShort": "确认卸载？",
+      "title": "搜索技能"
     },
     "automation": {
       "loginKeywordsTip": "地址里出现这些词就认为跳到了登录页，例如 login, signin, sso",
@@ -667,7 +669,9 @@
       "saveTemplateTip": "把当前的「附加指令」与「文件后缀」存成一个可复用的模板",
       "templateNotSelected": "⚠️ 请先在上面的下拉框里选一个模板",
       "dirStructureNote": "目录结构：结果根目录 / YYYY-MM-DD / 任务名称 / result.txt + 原始文件",
-      "loginStateReading": "登录态：正在读取…"
+      "loginStateReading": "登录态：正在读取…",
+      "fieldHelpTitle": "? 字段说明",
+      "fieldHelpIntro": "把光标放进下面任意一个输入框（或点字段旁的「?」），这里会显示该字段的通俗说明与示例值。"
     },
     "developer": {
       "modeShort": "放宽的是验证严格度，不是权限边界。",
@@ -738,7 +742,8 @@
       "scaffoldJumpFailed": "⚠️ 找不到「开发者」页签，请手动切过去再新建插件",
       "openDir": "📂 打开目录",
       "exportZip": "导出 zip",
-      "publishCheck": "发布自检"
+      "publishCheck": "发布自检",
+      "title": "已加载插件"
     },
     "loadState": {
       "reading": "正在读取配置…",

@@ -430,6 +430,9 @@ PS1_ALLOWLIST: dict[str, str] = {
                                   "但按本仓库约定门禁脚本走 PowerShell（Windows 发布链）；"
                                   "非 Windows 上可直接跑 `app/EchoDesk --probe` 再用同样的结论行判定",
     "tools/ui_shot.ps1": "WPF 窗口截图（Windows 专属）",
+    "tools/ui_pair_shot.ps1": "WPF 与 Avalonia 逐页截图取证（视觉对齐用）—— 两种前端都在真窗口上截，"
+                              "需要交互式桌面与 UIA；非 Windows 上可直接跑 `app/EchoDesk --probe` 的截图，"
+                              "因此不需要 .sh/.py 等价物",
     "tools/check_emoji.ps1": "用 WPF GlyphTypeface 查字体链（Windows 专属能力）",
     "tools/check_docs_links.ps1": "**应补 .py 等价物** —— 见未完成项；本版先登记",
     "tools/check_feedback.ps1": "**应补 .py 等价物** —— 见未完成项；本版先登记",
