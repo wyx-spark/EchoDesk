@@ -469,7 +469,7 @@
                         </StackPanel>
                         <TextBlock x:Name="HubStatusText" Margin="0,4,0,0" FontSize="11"
                                    TextWrapping="Wrap" Foreground="{DynamicResource SubTextBrush}"
-                                   Text="尚未搜索。点「搜索」浏览热门 GGUF 模型，或在详情中选择量化版本下载。"/>
+                                   Text="尚未搜索。点「搜索」浏览热门 GGUF 模型，或在详情中选择量化版本下载。" svc:Loc.Key="settings.model.emptyHint"/>
                     </StackPanel>
 
                     <!-- 模型档位（多档默认模型）：一行胶囊，点即切换/下载。
@@ -521,7 +521,7 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock x:Name="HubRegistryTitle" Grid.Column="0" FontWeight="Bold"
-                                       VerticalAlignment="Center" Text="📚 本地模型库"/>
+                                       VerticalAlignment="Center" Text="📚 本地模型库" svc:Loc.Key="settings.model.localLibraryTitle"/>
                             <StackPanel Grid.Column="1" Orientation="Horizontal">
                                 <!-- 任务二：手工放入 .gguf 后的入口（扫描到即可加载，无需重启程序） -->
                                 <Button x:Name="HubRescanButton" Padding="12,3" FontSize="11" Margin="0,0,8,0"
@@ -859,7 +859,7 @@
                         </Grid>
                         <TextBlock x:Name="ResultsPreviewText" FontSize="11" Margin="0,4,0,0"
                                    TextWrapping="Wrap" Foreground="{DynamicResource SubTextBrush}"
-                                   Text="目录结构：结果根目录 / YYYY-MM-DD / 任务名称 / result.txt + 原始文件"/>
+                                   Text="目录结构：结果根目录 / YYYY-MM-DD / 任务名称 / result.txt + 原始文件" svc:Loc.Key="settings.automation.dirStructureNote"/>
 
                         <TextBlock Text="定时触发" svc:Loc.Key="settings.automation.sectionSchedule" FontWeight="Bold" Margin="0,16,0,6"/>                        <StackPanel Orientation="Horizontal">
                             <CheckBox x:Name="ScheduleCheck" Content="启用定时" svc:Loc.Key="settings.automation.scheduleEnabled" VerticalAlignment="Center"/>
@@ -880,7 +880,7 @@
                                    svc:Loc.Key="settings.automation.loginHint"/>
                         <TextBlock x:Name="LoginStateText" FontSize="11" Margin="0,0,0,4" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"
-                                   Text="登录态：正在读取…"/>
+                                   Text="登录态：正在读取…" svc:Loc.Key="settings.automation.loginStateReading"/>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                             <TextBlock Text="数据目录（留空 = 程序目录下的 browser_profile）"
                                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"

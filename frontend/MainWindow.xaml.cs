@@ -276,6 +276,24 @@ public partial class MainWindow : Window
         {
             // 等待后端完成模型加载 + 会话恢复 + 预热后就绪
             await _backend.StartAsync();
+
+            // 启动时**必须**把界面语言推给后端（v0.2.2 UI 英文扫描发现）：
+            // 此前 `set_language` 只在设置窗口里手动切语言时才发，于是"界面持久化为英文、
+            // 重启后界面英文而后端讲中文"——Agent 页的工具说明、模型页的数据源、
+            // 各处的"未知"全是中文。同步失败只写调试日志，不挡启动。
+            try
+            {
+                string langJson = await _backend.SendRequestAsync(
+                    new { action = "set_language", locale = Loc.Locale });
+                using System.Text.Json.JsonDocument langDoc =
+                    System.Text.Json.JsonDocument.Parse(langJson);
+                if (langDoc.RootElement.TryGetProperty("commands", out System.Text.Json.JsonElement langCommands))
+                    ApplyCommandsFromBackend(langCommands);
+            }
+            catch (Exception langEx)
+            {
+                System.Diagnostics.Debug.WriteLine("启动时同步后端语言失败：" + langEx.Message);
+            }
         }
         catch (Exception ex)
         {

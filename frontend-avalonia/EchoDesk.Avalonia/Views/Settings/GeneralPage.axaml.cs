@@ -170,14 +170,19 @@ public partial class GeneralPage : UserControl, ISettingsPage
     private void UpdateLangPackText()
     {
         var available = Loc.AvailableLocales();
+        // 标点也随语言走（v0.2.2 UI 英文扫描）：原先这里用硬编码全角"：（）"拼接，
+        // 英文界面会显示 `Current language：English（en）` —— 半中半英的典型残留。
         LangPackText.Text = string.Join(Environment.NewLine, new[]
         {
-            $"{Loc.T("settings.general.langCurrent", "当前语言")}：{Loc.DisplayName(Loc.Locale)}（{Loc.Locale}）",
-            $"{Loc.T("settings.general.langAvailable", "可用语言")}：" +
-            (available.Count > 0
-                ? string.Join(" / ", available.ConvertAll(Loc.DisplayName))
-                : Loc.T("settings.general.langNone", "（未找到语言包）")),
-            $"{Loc.T("settings.general.langDir", "语言包目录")}：{UserPaths.LangDirectory}",
+            Loc.T("settings.general.langCurrentLine", "{0}: {1} ({2})",
+                Loc.T("settings.general.langCurrent", "当前语言"), Loc.DisplayName(Loc.Locale), Loc.Locale),
+            Loc.T("settings.general.langAvailableLine", "{0}: {1}",
+                Loc.T("settings.general.langAvailable", "可用语言"),
+                available.Count > 0
+                    ? string.Join(" / ", available.ConvertAll(Loc.DisplayName))
+                    : Loc.T("settings.general.langNone", "（未找到语言包）")),
+            Loc.T("settings.general.langDirLine", "{0}: {1}",
+                Loc.T("settings.general.langDir", "语言包目录"), UserPaths.LangDirectory),
         });
     }
 

@@ -177,12 +177,15 @@
       "noModel": "🧠 Model: none",
       "noModelTip": "No local model is available. Click to open Settings → Model and download or load one.",
       "hotLoaded": "✅ The model is ready; you can chat normally now.",
-      "none": "🧠 No model"
+      "none": "🧠 No model",
+      "chip": " ",
+      "chipUnknown": " "
     },
     "mode": {
       "clickTip": "Click to change the default conversation mode in Settings",
       "help": "The current conversation mode; click to open Settings",
-      "placeholder": "🛠️ Mode: general"
+      "placeholder": "🛠️ Mode: general",
+      "chip": "️"
     },
     "automation": {
       "disabled": "off",
@@ -260,7 +263,14 @@
       "autoIdle": "⚙️ Automation: off",
       "marketIdle": "🌐 Market: not connected",
       "contextIdle": "📊 Context 0%",
-      "warnIdle": "⚠️ Capability notes"
+      "warnIdle": "⚠️ Capability notes",
+      "on": "On",
+      "off": "Off",
+      "search": "🔍 Search: {0}",
+      "automation": "⚙️ Automation: {0}",
+      "market": "🌐 Market: {0}",
+      "marketUnconnected": "not connected",
+      "kv": "💾 KV: {0}"
     },
     "snippet": {
       "empty": "(no snippets yet — add one with /snippet add <name> <text>)",
@@ -456,6 +466,12 @@
     "capability": {
       "title": "Capabilities on this platform ({0})",
       "backend": "Backend capability profile:"
+    },
+    "plugin": {
+      "openDir": "📂 Open folder",
+      "exportZip": "Export zip",
+      "selfCheck": "Publish self-check",
+      "uninstall": "Uninstall"
     }
   },
   "settings": {

@@ -86,15 +86,15 @@
              用 Button + TextBlock 而不是裸 TextBlock —— 裸文本不可点，用户只能去状态区点。 -->
         <Button x:Name="ContextChip" Grid.Column="5" Classes="chip" Margin="14,0,0,0"
                 AutomationProperties.AutomationId="ContextChip">
-          <TextBlock x:Name="ContextChipText" Text="上下文：---/---" FontSize="11" Opacity="0.8" />
+          <TextBlock x:Name="ContextChipText" Text="" FontSize="11" Opacity="0.8" />
         </Button>
         <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
           <Button x:Name="ModelChip" Classes="chip">
-            <TextBlock x:Name="ModelText" Text="🧠 模型: ---" FontSize="11" MaxWidth="220"
+            <TextBlock x:Name="ModelText" Text="" FontSize="11" MaxWidth="220"
                        TextTrimming="CharacterEllipsis" />
           </Button>
           <Button x:Name="ModeChip" Classes="chip">
-            <TextBlock x:Name="ModeText" Text="🛠️ 模式: general" FontSize="11" />
+            <TextBlock x:Name="ModeText" Text="" FontSize="11" />
           </Button>
         </StackPanel>
         <!-- 悬停说明由 ApplyTexts() 用语言包设置（main.button.*Tip）：
@@ -179,25 +179,25 @@
         <WrapPanel x:Name="StatusStripItems" Grid.Column="0" Orientation="Horizontal">
           <Button x:Name="StripSearchButton" Classes="chip" Margin="0,0,4,0"
                   ToolTip.Tip="开启/关闭联网搜索">
-            <TextBlock x:Name="SearchText" Text="🔍 搜索：关" FontSize="11" />
+            <TextBlock x:Name="SearchText" Text="" FontSize="11" />
           </Button>
           <Button x:Name="StripAutomationButton" Classes="chip" Margin="0,0,4,0">
-            <TextBlock x:Name="AutoText" Text="⚙️ 自动化：关" FontSize="11" />
+            <TextBlock x:Name="AutoText" Text="" FontSize="11" />
           </Button>
           <Button x:Name="StripMarketButton" Classes="chip" Margin="0,0,4,0">
-            <TextBlock x:Name="MarketText" Text="🌐 市场：未连接" FontSize="11" />
+            <TextBlock x:Name="MarketText" Text="" FontSize="11" />
           </Button>
           <Button x:Name="StripContextButton" Classes="chip" Margin="0,0,4,0">
-            <TextBlock x:Name="StripContextText" Text="📊 上下文 0%" FontSize="11" />
+            <TextBlock x:Name="StripContextText" Text="" FontSize="11" />
           </Button>
           <Button x:Name="StripKvButton" Classes="chip" Margin="0,0,4,0">
             <TextBlock x:Name="StripKvText" Text="💾 KV: ---" FontSize="11" />
           </Button>
           <Button x:Name="StripCapabilityButton" Classes="chip" Margin="0,0,4,0">
-            <TextBlock x:Name="StripCapabilityText" Text="🧠 模型: ---" FontSize="11" />
+            <TextBlock x:Name="StripCapabilityText" Text="" FontSize="11" />
           </Button>
           <Button x:Name="StripCompactButton" Classes="chip" Margin="0,0,4,0">
-            <TextBlock x:Name="StripCompactText" Text="🗜 压缩上下文" FontSize="11" />
+            <TextBlock x:Name="StripCompactText" Text="" FontSize="11" />
           </Button>
           <Button x:Name="StripWarnButton" Classes="chip" Margin="0,0,4,0" IsVisible="False">
             <TextBlock x:Name="StripWarnText" Text="⚠️ 能力提示" FontSize="11" />

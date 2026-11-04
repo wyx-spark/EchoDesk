@@ -177,12 +177,15 @@
       "noModel": "🧠 模型: 无模型",
       "noModelTip": "当前没有可用的本地模型。点击打开「设置 → 模型」下载或加载模型。",
       "hotLoaded": "✅ 模型已就绪，现在可以正常对话了。",
-      "none": "🧠 无模型"
+      "none": "🧠 无模型",
+      "chip": "🧠",
+      "chipUnknown": "🧠"
     },
     "mode": {
       "clickTip": "点击打开设置修改默认对话模式",
       "help": "当前对话模式，点击打开设置",
-      "placeholder": "🛠️ 模式: general"
+      "placeholder": "🛠️ 模式: general",
+      "chip": "🛠"
     },
     "automation": {
       "disabled": "未启用",
@@ -260,7 +263,14 @@
       "autoIdle": "⚙️ 自动化：关",
       "marketIdle": "🌐 市场：未连接",
       "contextIdle": "📊 上下文 0%",
-      "warnIdle": "⚠️ 能力提示"
+      "warnIdle": "⚠️ 能力提示",
+      "on": "开",
+      "off": "关",
+      "search": "🔍 搜索：{0}",
+      "automation": "⚙️ 自动化：{0}",
+      "market": "🌐 市场：{0}",
+      "marketUnconnected": "未连接",
+      "kv": "💾 KV: {0}"
     },
     "snippet": {
       "empty": "（还没有常用语，输入 /snippet add 名称 文本 添加）",
@@ -456,6 +466,12 @@
     "capability": {
       "title": "本平台能力清单（{0}）",
       "backend": "后端能力画像："
+    },
+    "plugin": {
+      "openDir": "📂 打开目录",
+      "exportZip": "导出 zip",
+      "selfCheck": "发布自检",
+      "uninstall": "卸载"
     }
   },
   "settings": {

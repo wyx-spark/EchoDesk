@@ -34,7 +34,10 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Controls.Documents;
 using Avalonia.Media;
 using Avalonia.Styling;
+using Avalonia.Media.Imaging;
 using Avalonia.VisualTree;
+using System.IO;
+using System.Text.RegularExpressions;
 using Avalonia.Threading;
 using EchoDesk.Avalonia.Services;
 using EchoDesk.Avalonia.Views;
@@ -66,6 +69,8 @@ internal static class Probe
         // agent 模式要跑一轮真模型推理；market / pages 模式要真跟后端说一轮话（几十秒）。
         Budget = target.Equals("agent", StringComparison.OrdinalIgnoreCase)
             ? TimeSpan.FromSeconds(300)
+            : target.Equals("sweep", StringComparison.OrdinalIgnoreCase)
+                ? TimeSpan.FromSeconds(240)
             : target.Equals("market", StringComparison.OrdinalIgnoreCase)
                 ? TimeSpan.FromSeconds(300)
                 : target.Equals("pages", StringComparison.OrdinalIgnoreCase)
@@ -135,6 +140,10 @@ internal static class Probe
                 else if (target.Equals("theme", StringComparison.OrdinalIgnoreCase))
                 {
                     ok = await Task.FromResult(RunThemeProbeAsync(desktop));
+                }
+                else if (target.Equals("sweep", StringComparison.OrdinalIgnoreCase))
+                {
+                    ok = await RunEnglishSweepAsync(desktop);
                 }
                 else
                 {
@@ -1179,6 +1188,207 @@ internal static class Probe
             return "";
         string flat = text.Replace('\n', ' ').Replace('\r', ' ');
         return flat.Length <= limit ? flat : flat[..limit] + "…";
+    }
+
+
+    // ===================================================================================
+    // 英文环境全页扫描（--probe sweep）
+    //
+    // 存在理由（维护者要求）：静态扫描（check_lang / audit_lang_keys）只能看到**源码里的字面量**，
+    // 抓不到"动态拼接"和"渲染期才存在"的中文 —— 例如
+    //   $"{Loc.T("a", "…")}（{x}）" 拼出来的整句、
+    //   ComboBox 运行时塞进去的 Items、ToolTip 在模板里给的文本、AutomationProperties.Name。
+    // 所以在**真实窗口**里把所有可见控件的文本抓一遍，用 [\u4e00-\u9fa5] 判定。
+    //
+    // 强制英文：App.State.SetLanguage("en") —— 与用户点"语言：English"走同一条路径。
+    // 截图：RenderTargetBitmap 直接渲染窗口，和文本是**同一次渲染**，便于人工复核。
+    // ===================================================================================
+
+    private static readonly Regex CjkPattern = new(@"[\u4e00-\u9fa5]");
+
+    private static async Task<bool> RunEnglishSweepAsync(IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        App.State.SetLanguage("en");
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        Console.WriteLine("  [info] 界面语言已强制设为 en");
+
+        string outDir = Environment.GetEnvironmentVariable("ECHODESK_SWEEP_DIR") ?? "";
+        if (string.IsNullOrWhiteSpace(outDir))
+            outDir = Path.Combine(Environment.CurrentDirectory, "artifacts", "ui-sweep");
+        Directory.CreateDirectory(outDir);
+
+        var failures = new List<string>();
+        int texts = 0, shots = 0;
+
+        var main = new MainWindow();
+        desktop.MainWindow = main;
+        main.Show();
+        await Task.Delay(900);
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        texts += SweepControl(main, "主窗口", failures);
+        shots += SaveShot(main, Path.Combine(outDir, "01-主窗口.png"));
+
+        var settings = new SettingsWindow(App.State);
+        settings.Show();
+        await Task.Delay(600);
+        string[] tabs =
+        {
+            "settings.tab.general", "settings.tab.model", "settings.tab.installed",
+            "settings.tab.market", "settings.tab.automation", "settings.tab.agent",
+            "settings.tab.developer",
+        };
+        Console.WriteLine($"  [info] 设置窗口有 {settings.Tabs.ItemCount} 个页签，逐个扫描");
+        for (int i = 0; i < tabs.Length; i++)
+        {
+            string key = tabs[i];
+            string shortName = key.Replace("settings.tab.", "");
+            string pageName = $"设置窗口/{shortName}";
+            if (!settings.SelectTab(key))
+            {
+                failures.Add($"【{pageName}】页签切换失败（SelectTab 返回 false）");
+                Console.WriteLine($"  [FAIL] 【{pageName}】页签切换失败");
+                continue;
+            }
+            await Task.Delay(600);
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            texts += SweepControl(settings, pageName, failures);
+            shots += SaveShot(settings, Path.Combine(outDir, $"settings-{i + 1:00}-{shortName}.png"));
+            Console.WriteLine($"  [info] {pageName} 扫描完成");
+        }
+        settings.Close();
+
+        Console.WriteLine($"  [info] 共扫描控件文本 {texts} 条，截图 {shots} 张 → {outDir}");
+        if (failures.Count == 0)
+        {
+            Console.WriteLine("  [PASS] 主窗口 + 设置窗口 7 页签：全部控件文本均为英文（无中文字符）");
+            return true;
+        }
+        Console.WriteLine($"  [FAIL] 发现 {failures.Count} 处中文残留：");
+        foreach (string line in failures)
+            Console.WriteLine($"    {line}");
+        return false;
+    }
+
+    /// <summary>扫描一个窗口/页面下的全部控件文本；返回收集到的文本条数。</summary>
+    private static int SweepControl(Control root, string pageName, List<string> failures)
+    {
+        int count = 0;
+        var nodes = new List<Control> { root };
+        nodes.AddRange(root.GetVisualDescendants().OfType<Control>());
+        foreach (var node in nodes)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (kind, text) in TextsOf(node))
+            {
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                if (!seen.Add(text)) continue;          // 同一控件同类文本只报一次（Header 与 Content 常重叠）
+                count++;
+                if (IsAllowedChinese(text)) continue;
+                if (!CjkPattern.IsMatch(text)) continue;
+                string clean = text.Replace("\r", " ").Replace("\n", " ").Trim();
+                if (clean.Length > 120) clean = clean[..120] + "…";
+                failures.Add($"【{pageName}】的【{kind}】显示了中文：【{clean}】");
+            }
+        }
+        return count;
+    }
+
+
+    /// <summary>语言自称（语言选择器里必须用各自的文字）。</summary>
+    private static readonly string[] LanguageAutonyms = { "简体中文", "繁體中文" };
+
+    /// <summary>以时间戳开头的后端日志行（§12.3 设计为单语，原样显示属已知取舍）。</summary>
+    private static readonly Regex BackendLogLine = new(@"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}");
+
+    /// <summary>路径片段（中文目录名属"数据"，不是界面文案）。</summary>
+    private static readonly Regex PathFragment = new(@"[A-Za-z]:\\[^\r\n，。；]*|/[A-Za-z0-9_.\-]+(?:/[^\r\n，。；]*)*");
+
+    /// <summary>把上列三类"合理中文"从文本里剔掉；剔完还剩中文才算缺陷。</summary>
+    private static bool IsAllowedChinese(string text)
+    {
+        if (BackendLogLine.IsMatch(text.TrimStart())) return true;   // 整行是后端日志：跳过
+
+        string probe = text;
+        foreach (string autonym in LanguageAutonyms)
+            probe = probe.Replace(autonym, "");
+        probe = PathFragment.Replace(probe, "");
+        return !CjkPattern.IsMatch(probe);
+    }
+
+    /// <summary>一个控件上"用户能看见/能读到"的所有文本来源。</summary>
+    private static IEnumerable<(string Kind, string Text)> TextsOf(Control node)
+    {
+        switch (node)
+        {
+            case TextBlock tb:
+                yield return ("TextBlock.Text", tb.Text ?? "");
+                break;
+            case TextBox box:
+                yield return ("TextBox.Text", box.Text ?? "");
+                yield return ("TextBox.PlaceholderText", box.PlaceholderText ?? "");
+                break;
+            case ComboBox combo:
+                yield return ("ComboBox.选中项", AsText(combo.SelectedItem));
+                if (combo.Items is not null)
+                {
+                    foreach (object? item in combo.Items)
+                        yield return ("ComboBox.Items", AsText(item));
+                }
+                break;
+            case TabItem tab:
+                yield return ("TabItem.Header", AsText(tab.Header));
+                break;
+            case Expander ex:
+                yield return ("Expander.Header", AsText(ex.Header));
+                break;
+            case MenuItem mi:
+                yield return ("MenuItem.Header", AsText(mi.Header));
+                break;
+            case ToggleSwitch sw:
+                yield return ("ToggleSwitch.Content", AsText(sw.Content) + " " + AsText(sw.OnContent) + " " + AsText(sw.OffContent));
+                break;
+        }
+
+        if (node is ContentControl cc) yield return (node.GetType().Name + ".Content", AsText(cc.Content));
+
+        if (ToolTip.GetTip(node) is { } tip) yield return ("ToolTip", AsText(tip));
+
+        string autoName = AutomationProperties.GetName(node) ?? "";
+        if (!string.IsNullOrEmpty(autoName)) yield return ("AutomationProperties.Name", autoName);
+        string autoHelp = AutomationProperties.GetHelpText(node) ?? "";
+        if (!string.IsNullOrEmpty(autoHelp)) yield return ("AutomationProperties.HelpText", autoHelp);
+    }
+
+    private static string AsText(object? value) => value switch
+    {
+        null => "",
+        string s => s,
+        TextBlock tb => tb.Text ?? "",
+        _ => value.ToString() ?? "",
+    };
+
+    /// <summary>把窗口按当前渲染结果存成 PNG；失败只告警（截图是复核材料，不是判定条件）。</summary>
+    private static int SaveShot(Control window, string path)
+    {
+        try
+        {
+            int w = (int)Math.Ceiling(window.Bounds.Width);
+            int h = (int)Math.Ceiling(window.Bounds.Height);
+            if (w <= 0 || h <= 0)
+            {
+                Console.WriteLine($"  [warn] 截图跳过（窗口尺寸 {w}x{h}）：{Path.GetFileName(path)}");
+                return 0;
+            }
+            using var bmp = new RenderTargetBitmap(new PixelSize(w, h), new Vector(96, 96));
+            bmp.Render(window);
+            bmp.Save(path);  // 注：该重载标记过时（仅警告），保留以免依赖具体版本的编码器选项类型
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  [warn] 截图失败 {Path.GetFileName(path)}：{ex.GetType().Name}: {ex.Message}");
+            return 0;
+        }
     }
 
     private static IEnumerable<string> Counts(Dictionary<string, int> counts)

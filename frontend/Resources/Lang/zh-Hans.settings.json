@@ -70,7 +70,10 @@
       "openLangDirFailed": "⚠️ 无法打开语言包目录：{0}",
       "langSyncFailed": "⚠️ 未能同步语言到后端（后端未响应）",
       "sectionPaths": "📌 界面与数据位置",
-      "labelReadingMode": "读取当前对话模式"
+      "labelReadingMode": "读取当前对话模式",
+      "langCurrentLine": "{0}：{1}（{2}）",
+      "langAvailableLine": "{0}：{1}",
+      "langDirLine": "{0}：{1}"
     },
     "saveHint": {
       "dirty": "有未保存的改动"
@@ -274,7 +277,9 @@
       "tipLocalFilter": "在已加载的结果里实时过滤（仓库名/描述/标签），不会重新请求远端",
       "tipPageBox": "输入页码后回车跳转",
       "totalNone": "尚未加载结果",
-      "retrying": "⚠️ 这一轮没有取回任何结果，正在自动重试…"
+      "retrying": "⚠️ 这一轮没有取回任何结果，正在自动重试…",
+      "emptyHint": "尚未搜索。点「搜索」浏览热门 GGUF 模型，或在详情中选择量化版本下载。",
+      "localLibraryTitle": "📚 本地模型库"
     },
     "inference": {
       "title": "🎛️ 推理参数（采样）",
@@ -660,7 +665,9 @@
       "fieldHelpTip": "查看填写说明",
       "openResultsTip": "在系统文件管理器里打开结果根目录",
       "saveTemplateTip": "把当前的「附加指令」与「文件后缀」存成一个可复用的模板",
-      "templateNotSelected": "⚠️ 请先在上面的下拉框里选一个模板"
+      "templateNotSelected": "⚠️ 请先在上面的下拉框里选一个模板",
+      "dirStructureNote": "目录结构：结果根目录 / YYYY-MM-DD / 任务名称 / result.txt + 原始文件",
+      "loginStateReading": "登录态：正在读取…"
     },
     "developer": {
       "modeShort": "放宽的是验证严格度，不是权限边界。",
@@ -710,7 +717,8 @@
       "textFilterDesc": "文本"
     },
     "button": {
-      "cancel": "取消"
+      "cancel": "取消",
+      "uninstall": "卸载"
     },
     "installed": {
       "trustBulkIntro": "发现 {0} 个新的本地插件。它们将以你的账户权限运行，只勾选你信任的插件。\n你的选择会被记住，之后不再询问。",
@@ -727,7 +735,10 @@
       "confirmInstallShort": "确认安装？",
       "pathLabel": "路径",
       "openDirFailed": "⚠️ 无法打开目录：{0}",
-      "scaffoldJumpFailed": "⚠️ 找不到「开发者」页签，请手动切过去再新建插件"
+      "scaffoldJumpFailed": "⚠️ 找不到「开发者」页签，请手动切过去再新建插件",
+      "openDir": "📂 打开目录",
+      "exportZip": "导出 zip",
+      "publishCheck": "发布自检"
     },
     "loadState": {
       "reading": "正在读取配置…",

@@ -70,7 +70,10 @@
       "openLangDirFailed": "⚠️ Could not open the language pack folder: {0}",
       "langSyncFailed": "⚠️ Could not sync the language to the backend (no response)",
       "sectionPaths": "📌 Locations",
-      "labelReadingMode": "Reading the current conversation mode"
+      "labelReadingMode": "Reading the current conversation mode",
+      "langCurrentLine": "{0}: {1} ({2})",
+      "langAvailableLine": "{0}: {1}",
+      "langDirLine": "{0}: {1}"
     },
     "saveHint": {
       "dirty": "Unsaved changes"
@@ -274,7 +277,9 @@
       "tipLocalFilter": "Filter the loaded results live (repo name / description / tags) without hitting the remote source",
       "tipPageBox": "Type a page number and press Enter to jump",
       "totalNone": "Results not loaded yet",
-      "retrying": "⚠️ Nothing was fetched this round; retrying automatically…"
+      "retrying": "⚠️ Nothing was fetched this round; retrying automatically…",
+      "emptyHint": "Nothing searched yet. Click “Search” to browse popular GGUF models, or pick a quantisation in the details.",
+      "localLibraryTitle": "📚 Local model library"
     },
     "inference": {
       "title": "🎛️ Inference (sampling)",
@@ -660,7 +665,9 @@
       "fieldHelpTip": "Show filling instructions",
       "openResultsTip": "Open the results root folder in the system file manager",
       "saveTemplateTip": "Save the current instruction and file extensions as a reusable template",
-      "templateNotSelected": "⚠️ Pick a template in the drop-down above first"
+      "templateNotSelected": "⚠️ Pick a template in the drop-down above first",
+      "dirStructureNote": "Folder layout: results root / YYYY-MM-DD / task name / result.txt + the original files",
+      "loginStateReading": "Sign-in state: reading…"
     },
     "developer": {
       "modeShort": "Only validation strictness is relaxed — never the permission boundary.",
@@ -710,7 +717,8 @@
       "textFilterDesc": "Text"
     },
     "button": {
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "uninstall": "Uninstall"
     },
     "installed": {
       "trustBulkIntro": "Found {0} new local plugin(s). They run with your account's privileges, so only tick the ones you trust.\nYour choices are remembered and will not be asked again.",
@@ -727,7 +735,10 @@
       "pathLabel": "Path",
       "openDirFailed": "⚠️ Could not open the folder: {0}",
       "scaffoldJumpFailed": "⚠️ The Developer tab was not found; switch to it manually and create the plugin there.",
-      "confirmInstallShort": "Confirm install?"
+      "confirmInstallShort": "Confirm install?",
+      "openDir": "📂 Open folder",
+      "exportZip": "Export zip",
+      "publishCheck": "Publish self-check"
     },
     "loadState": {
       "reading": "Reading the configuration…",

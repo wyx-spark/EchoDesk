@@ -457,7 +457,19 @@ public partial class MainWindow : Window
         PlatformChip.Text = $"🖥 {_state.Platform.DisplayName}";
         ModelText.Text = _state.Backend.ModelReady
             ? Loc.T("main.model.chip", "🧠 模型: {0}", string.IsNullOrEmpty(_state.Backend.LoadedModel) ? "local" : _state.Backend.LoadedModel)
-            : Loc.T("main.model.noModel", "🧠 模型: 无模型");
+            : Loc.T("main.model.chipUnknown", "🧠 模型: ---");
+        // 状态栏的"未知/未连接"初值也必须走语言包（v0.2.2 UI 英文扫描）：
+        // XAML 里原先写死中文，后端没连上时英文界面会整条露出中文；
+        // 这里给全套初值，随后的状态事件会把它们覆盖成实时值。
+        ContextChipText.Text = Loc.T("main.context.buttonIdle", "上下文：---/---");
+        ModeText.Text = Loc.T("main.mode.chip", "🛠️ 模式: {0}", "general");
+        SearchText.Text = Loc.T("main.strip.search", "🔍 搜索：{0}", Loc.T("main.strip.off", "关"));
+        AutoText.Text = Loc.T("main.strip.automation", "⚙️ 自动化：{0}", Loc.T("main.strip.off", "关"));
+        MarketText.Text = Loc.T("main.strip.market", "🌐 市场：{0}",
+            Loc.T("main.strip.marketUnconnected", "未连接"));
+        StripContextText.Text = Loc.T("main.strip.contextStrip", "📊 Context {0}%", 0);
+        StripCapabilityText.Text = Loc.T("main.strip.capability", "🧠 {0}", "---");
+        StripCompactText.Text = Loc.T("main.strip.compact", "🗜 压缩上下文");
         UploadButton.Content = Loc.T("main.button.upload", "📎 上传文件");
         SendButton.Content = Loc.T("main.button.send", "发送");
         StopButton.Content = Loc.T("main.button.stop", "⏹ 停止");
