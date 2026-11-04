@@ -1,4 +1,4 @@
-// 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
+﻿// 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
 //
 // 迁移策略：**事件处理逻辑照搬 WPF 版**（发送、流式双通道、停止、文件上传、状态刷新、
 // 指令面板、常用语、通知条、状态区、Agent 步骤行），换掉的只有界面 API。
@@ -455,9 +455,14 @@ public partial class MainWindow : Window
         BrandText.Text = Loc.T("main.brand", "📡 EchoDesk");
         PoweredText.Text = Loc.T("main.powered", "由熵寂工作室出品");
         PlatformChip.Text = $"🖥 {_state.Platform.DisplayName}";
+        // 模型胶囊的文案口径必须与 WPF 完全一致（同一份语言包、同一批键）：
+        //   未就绪 → main.model.noModel（"🧠 模型: 无模型"）
+        //   已就绪 → main.model.chip（"🧠 模型: {0}"）
+        // 此前这里用的是 main.model.chipUnknown，它在语言包里只有 "🧠"，
+        // 于是 Avalonia 的胶囊只剩一个脑子图标、WPF 却是整句话 —— 截图上一眼就能看出来。
         ModelText.Text = _state.Backend.ModelReady
             ? Loc.T("main.model.chip", "🧠 模型: {0}", string.IsNullOrEmpty(_state.Backend.LoadedModel) ? "local" : _state.Backend.LoadedModel)
-            : Loc.T("main.model.chipUnknown", "🧠 模型: ---");
+            : Loc.T("main.model.noModel", "🧠 模型: 无模型");
         // 状态栏的"未知/未连接"初值也必须走语言包（v0.2.2 UI 英文扫描）：
         // XAML 里原先写死中文，后端没连上时英文界面会整条露出中文；
         // 这里给全套初值，随后的状态事件会把它们覆盖成实时值。
@@ -470,11 +475,11 @@ public partial class MainWindow : Window
         StripContextText.Text = Loc.T("main.strip.contextStrip", "📊 Context {0}%", 0);
         StripCapabilityText.Text = Loc.T("main.strip.capability", "🧠 {0}", "---");
         StripCompactText.Text = Loc.T("main.strip.compact", "🗜 压缩上下文");
-        UploadButton.Content = Loc.T("main.button.upload", "📎 上传文件");
-        SendButton.Content = Loc.T("main.button.send", "发送");
-        StopButton.Content = Loc.T("main.button.stop", "⏹ 停止");
+        // 视觉对齐：WPF 版的发送/上传是**纯图标圆形按钮**（➤ / 📎），不是带文字的方块按钮。
+        // 所以这里不再往 Content 里写文案；含义靠 ToolTip 与无障碍 HelpText 传达，
+        // 与 WPF 完全一致（main.button.sendTip / uploadTip）。
+        StopButton.Content = "⏹";
         HintText.Text = Loc.T("main.hint", "💡 拖拽文件可上传 · Ctrl+Enter 发送 · Esc 停止 · A-/A+ 或 Ctrl+滚轮 调字号");
-        InputBox.PlaceholderText = Loc.T("main.input.placeholder", "输入消息，Ctrl+Enter 发送 · 拖拽文件到窗口即可上传");
         // 指令输入框的提示文字走 TextBox 自带的水印：见 MainWindow.axaml 里 CommandInputRow 的注释
         // （手工叠 TextBlock 的办法既对不准、也不会自己隐藏）。
         CommandInputBox.PlaceholderText = Loc.T("main.command.placeholder", "在此处输入以“/”开头的指令 · 了解用法输入 /help");
@@ -649,7 +654,7 @@ public partial class MainWindow : Window
             {
                 _transcript.Add(new Message("system", Emoji.Prefer(text), "", ""));
                 _progressView = AddMessageView("system", "", "", "");
-                _progressView.ContentHost.Content = BuildPlainText(text);
+                _progressView.ContentHost.Content = BuildPlainText("system", text);
             }
             else
             {
@@ -706,8 +711,11 @@ public partial class MainWindow : Window
             }
             if (!_state.Backend.ModelReady && !string.IsNullOrWhiteSpace(_state.Backend.ModelGuide))
             {
-                GuideBanner.IsVisible = true;
-                GuideText.Text = Emoji.Prefer(_state.Backend.ModelGuide);
+                // 视觉对齐：WPF 把这段"没有模型怎么办"的说明作为**一条系统消息**放进对话区
+                // （MainWindow.xaml.cs 的 AddMessage("system", guide)），而不是窗口顶部的横幅。
+                // 横幅会把标题行整体往下推，截图里与 WPF 的版面完全对不上 —— 改成同一条路径。
+                AddMessage("system", _state.Backend.ModelGuide);
+                GuideBanner.IsVisible = false;
             }
         }
         SetStatus(_state.Backend.ModelReady
@@ -2427,8 +2435,8 @@ public partial class MainWindow : Window
         var lines = new List<string>();
 
         SetBusy(true);
-        // 上传期间把「发送」按钮变成「停止」（与 WPF 一致）：用户可以随时中止
-        SendButton.Content = Loc.T("main.button.stop", "⏹ 停止");
+        // 上传期间「发送」按钮的**含义**变成停止（与 WPF 一致），但外观仍是 WPF 的 ➤ 图标：
+        // 文字提示放在 ToolTip 里，不在按钮上换字（WPF 版按钮上从来没有文字）。
         ToolTip.SetTip(SendButton, Loc.T("main.button.stopSummaryTip", "中止分段摘要 (Esc)"));
         _streamCts = new CancellationTokenSource();
         // 探针据此断言"上传期间真的可以中止"（此前 _streamCts 是 null，点停停止无效）
@@ -2469,7 +2477,7 @@ public partial class MainWindow : Window
             _streamCts?.Dispose();
             _streamCts = null;
             SetBusy(false);
-            SendButton.Content = Loc.T("main.button.send", "发送");
+            SendButton.Content = "➤";
             ToolTip.SetTip(SendButton, Loc.T("main.button.sendTip", "发送 (Ctrl+Enter)"));
             await RefreshContextAsync();
         }
@@ -2552,7 +2560,7 @@ public partial class MainWindow : Window
                 _transcript[^1] = _transcript[^1] with { Content = Emoji.Prefer(text) };
             // 最后一条视图就是刚加的那条系统消息（AddMessage 之后没有追加别的）
             if (_progressView is not null)
-                _progressView.ContentHost.Content = BuildPlainText(text);
+                _progressView.ContentHost.Content = BuildPlainText("system", text);
             else if (MessagePanel.Children.Count > 0
                      && MessagePanel.Children[^1] is Control last)
             {
@@ -2700,10 +2708,12 @@ public partial class MainWindow : Window
         reasoning = Emoji.Prefer(reasoning);
         _transcript.Add(new Message(role, content, reasoning, metrics));
         MessageView view = AddMessageView(role, content, reasoning, metrics);
-        if (role == "assistant" || role == "user")
+        // 与 WPF 一致：只有助手消息走 Markdown（且没有角色图标）；
+        // 用户/系统消息是**纯文本**，正文前带角色图标，整段用角色色（UserBrush / SystemBrush）。
+        if (role == "assistant")
             view.ContentHost.Content = MarkdownRenderer.Build(content, _state.Settings.FontSize);
         else
-            view.ContentHost.Content = BuildPlainText(content);
+            view.ContentHost.Content = BuildPlainText(role, content);
     }
 
     /// <summary>整屏重渲染（换字号/换语言时用）：从 _transcript 重建，保证不丢内容。</summary>
@@ -2719,19 +2729,37 @@ public partial class MainWindow : Window
         foreach (Message message in _transcript)
         {
             MessageView view = AddMessageView(message.Role, message.Content, message.Reasoning, message.Metrics);
-            view.ContentHost.Content = message.Role == "system"
-                ? BuildPlainText(message.Content)
-                : MarkdownRenderer.Build(message.Content, _state.Settings.FontSize);
+            view.ContentHost.Content = message.Role == "assistant"
+                ? MarkdownRenderer.Build(message.Content, _state.Settings.FontSize)
+                : BuildPlainText(message.Role, message.Content);
         }
     }
 
-    private Control BuildPlainText(string content)
+    /// <summary>角色图标：与 WPF NewMessagePanel 的 <c>role switch</c> 一一对应。</summary>
+    private static string RoleIcon(string role) => role switch
+    {
+        "user" => "👤 ",
+        "assistant" => "🤖 ",
+        _ => "ℹ️ ",
+    };
+
+    /// <summary>角色正文色：与 WPF 的 UserBrush / AssistantBrush / SystemBrush 对应。</summary>
+    private static string RoleBrushKey(string role) => role switch
+    {
+        "user" => "UserBrush",
+        "assistant" => "AssistantBrush",
+        _ => "SystemBrush",
+    };
+
+    private Control BuildPlainText(string role, string content)
     {
         var selectable = new SelectableTextBlock
         {
-            Text = Emoji.Prefer(content),
+            Text = Emoji.Prefer(RoleIcon(role) + content),
             TextWrapping = TextWrapping.Wrap,
             FontSize = _state.Settings.FontSize,
+            // WPF 用 ThemeService 把整段文字的 Foreground 绑到角色色上
+            Foreground = ResolveBrush(RoleBrushKey(role), Brushes.Black),
         };
         return selectable;
     }
@@ -2739,65 +2767,25 @@ public partial class MainWindow : Window
     private (Border, ContentControl, SelectableTextBlock, Expander, TextBlock) BuildMessageControls(
         string role, string content, string reasoning, string metrics)
     {
-        bool user = role == "user";
-        bool system = role == "system";
-
-        // 探针锚点：WPF 侧的 ui_probe.ps1 按这几个 AutomationId 定位消息区的三类元素
-        // （思考折叠区 / 回答正文 / 运行指标）。Avalonia 侧此前只有 `AgentTrace`，
-        // 于是**同一份探针在两套界面上的覆盖不一样** —— 补上锚点是"一份探针驱动两套界面"
-        // 这条约定的前提（见 PROJECT.md 的架构一节）。
+        // ---- 视觉对齐：消息面板按 WPF 的 NewMessagePanel 复刻 ----
+        // WPF 的消息**没有气泡**：右上角一行时间戳，正文平铺在窗口底色上，
+        // 复制操作条在最下方右对齐。原来的 Avalonia 版是"圆角描边气泡 + 角色名 + 操作条在顶部"，
+        // 截图里一眼就能分出来 —— 这里按 WPF 的顺序重建。
         //
-        // contentHost 需要在操作条之前建好：「全选」要选中它里面的文本。
+        // 探针锚点保持不变：AnswerBody（正文）/ ReasoningRegion（思考区）/ RunMetrics（指标）。
         var contentHost = new ContentControl();
         AutomationProperties.SetAutomationId(contentHost, "AnswerBody");
 
-        var header = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            Margin = new Thickness(0, 0, 0, 4),
-        };
-        header.Children.Add(new TextBlock
-        {
-            Text = role switch
-            {
-                "user" => Loc.T("main.message.user", "我"),
-                "assistant" => Loc.T("main.message.assistant", "助手"),
-                _ => Loc.T("main.message.system", "系统"),
-            },
-            FontWeight = FontWeight.SemiBold,
-            FontSize = _state.Settings.FontSize - 2,
-            Opacity = 0.7,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
+        var root = new StackPanel { Margin = new Thickness(5) };
 
-        // 消息时间戳（v0.2.2 第 3 批）：与 WPF 同格式 HH:mm:ss、同位置（角色名右侧）。
-        // 「这份记录是什么时候的」是一手信息，成本只有一个 TextBlock。
-        header.Children.Add(new TextBlock
+        // 时间戳：与 WPF 同字号(10)、同色(SubText)、同位置（右上角）
+        root.Children.Add(new TextBlock
         {
             Text = DateTime.Now.ToString("HH:mm:ss"),
-            FontSize = _state.Settings.FontSize - 3,
-            Opacity = 0.5,
-            VerticalAlignment = VerticalAlignment.Center,
+            FontSize = 10,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Foreground = ResolveBrush("SubTextBrush", Brushes.Gray),
         });
-
-        // 复制操作条（v0.2.2 第 3 批补全，对齐 WPF 的 4 个动作）：
-        // 复制 / Markdown / 代码 / 全选。此前只有一个「复制」，用户想拿原始 Markdown
-        // 或整块代码只能手动拖选。
-        AddCopyButton(header, Loc.T("main.message.copy", "复制"),
-            Loc.T("main.message.copyPlainTip", "复制为纯文本"),
-            async () => await CopyTextAsync(StripCodeFenceForPlain(content)));
-        AddCopyButton(header, Loc.T("main.message.copyMarkdown", "Markdown"),
-            Loc.T("main.message.copyMarkdownTip", "复制原始 Markdown 源码"),
-            async () => await CopyTextAsync(content),
-            Loc.T("main.message.copiedMarkdown", "已复制 Markdown 源码"));
-        AddCopyButton(header, Loc.T("main.message.copyCode", "代码"),
-            Loc.T("main.message.copyCodeTip", "复制全部代码块"),
-            async () => await CopyTextAsync(ExtractCodeBlocks(content)),
-            Loc.T("main.message.copiedCode", "已复制代码块"));
-        AddCopyButton(header, Loc.T("main.message.selectAll", "全选"),
-            Loc.T("main.message.selectAllTip", "选中本条消息全部文本"),
-            () => { SelectAllIn(contentHost); return Task.CompletedTask; });
 
         var thinkingText = new SelectableTextBlock
         {
@@ -2831,13 +2819,15 @@ public partial class MainWindow : Window
                 MaxHeight = 220,
                 Content = thinkingText,
             },
-            // 流式期间**自动展开**，答完自动收起（与 WPF 一致）：
-            // 思考中用户最想看的就是它在想什么；定稿后再收起，避免占据版面。
+            // 流式期间**自动展开**，答完自动收起（与 WPF 一致）。
             IsExpanded = role == "assistant" && reasoning.Length > 0,
             IsVisible = reasoning.Length > 0,
         };
         ToolTip.SetTip(thinkingBox, Loc.T("main.reasoning.tip",
             "模型的推理过程（思考内容）。点击展开或收起；思考内容不会作为上下文发给模型，也不参与复制回答。"));
+        root.Children.Add(thinkingBox);
+
+        root.Children.Add(contentHost);
 
         var metricsText = new TextBlock
         {
@@ -2849,28 +2839,46 @@ public partial class MainWindow : Window
         };
         AutomationProperties.SetAutomationId(metricsText, "RunMetrics");
         AutomationProperties.SetAutomationId(thinkingBox, "ReasoningRegion");
+        root.Children.Add(metricsText);
 
-        var body = new StackPanel { Spacing = 4 };
-        body.Children.Add(header);
-        body.Children.Add(thinkingBox);
-        body.Children.Add(contentHost);
-        body.Children.Add(metricsText);
+        // 复制操作条（对齐 WPF 的 4 个动作）：复制 / Markdown / 代码 / 全选。
+        // WPF 把操作条放在消息**底部右对齐**，不在顶部。
+        var actionBar = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 2, 0, 0),
+        };
+        AddCopyButton(actionBar, Loc.T("main.message.copy", "📋 复制"),
+            Loc.T("main.message.copyPlainTip", "复制为纯文本"),
+            async () => await CopyTextAsync(StripCodeFenceForPlain(content)));
+        // 与 WPF 的 AddMessageActions 一致：**只有助手消息**才有 Markdown / 代码两个按钮
+        // （用户与系统消息本来就没有 Markdown 源码可取），否则按钮数量与位置都对不上。
+        if (role == "assistant")
+        {
+            AddCopyButton(actionBar, Loc.T("main.message.copyMarkdown", "⧉ Markdown"),
+                Loc.T("main.message.copyMarkdownTip", "复制原始 Markdown 源码"),
+                async () => await CopyTextAsync(content),
+                Loc.T("main.message.copiedMarkdown", "已复制 Markdown 源码"));
+            AddCopyButton(actionBar, Loc.T("main.message.copyCode", "</> 代码"),
+                Loc.T("main.message.copyCodeTip", "复制全部代码块"),
+                async () => await CopyTextAsync(ExtractCodeBlocks(content)),
+                Loc.T("main.message.copiedCode", "已复制代码块"));
+        }
+        AddCopyButton(actionBar, Loc.T("main.message.selectAll", "全选"),
+            Loc.T("main.message.selectAllTip", "选中本条消息全部文本"),
+            () => { SelectAllIn(contentHost); return Task.CompletedTask; });
+        root.Children.Add(actionBar);
 
+        // 外框保留为透明 Border（调用方按 Border 存引用，见 MessageView.Root）：
+        // 视觉上它与 WPF 的 StackPanel 等价，不画任何背景、边框与圆角。
         var bubble = new Border
         {
-            Background = ResolveBrush(
-                system ? "SystemBubbleBrush" : user ? "UserBubbleBrush" : "AssistantBubbleBrush",
-                Brushes.Transparent),
-            BorderBrush = ResolveBrush("CardBorderBrush", Brushes.Gray),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(12, 8, 12, 8),
-            MaxWidth = system ? double.PositiveInfinity : 720,
-            HorizontalAlignment = user ? HorizontalAlignment.Right : HorizontalAlignment.Left,
-            Child = body,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            Child = root,
         };
-        if (!system)
-            bubble.Margin = user ? new Thickness(60, 0, 0, 0) : new Thickness(0, 0, 60, 0);
 
         return (bubble, contentHost, thinkingText, thinkingBox, metricsText);
     }
@@ -2885,11 +2893,14 @@ public partial class MainWindow : Window
     private void AddCopyButton(StackPanel bar, string label, string tip,
                                Func<Task> action, string? successToast = null)
     {
+        // 尺寸照抄 WPF 的 MakeActionButton：10 号字、内边距 6,1、左边距 4、胶囊圆角 17。
         var button = new Button
         {
             Content = label,
-            FontSize = _state.Settings.FontSize - 3,
-            Padding = new Thickness(6, 0, 6, 0),
+            FontSize = 10,
+            Padding = new Thickness(6, 1, 6, 1),
+            Margin = new Thickness(4, 0, 0, 0),
+            CornerRadius = new CornerRadius(17),
         };
         ToolTip.SetTip(button, tip);
         button.Click += async (_, _) =>
@@ -3160,7 +3171,7 @@ public partial class MainWindow : Window
         if (_progressView is null || string.IsNullOrWhiteSpace(text))
             return;
         string trimmed = text.Trim();
-        _progressView.ContentHost.Content = BuildPlainText(trimmed);
+        _progressView.ContentHost.Content = BuildPlainText("system", trimmed);
         // 同时更新最后一条 transcript，整屏重渲染（切字号/语言）时不会丢进度
         if (_transcript.Count > 0)
             _transcript[^1] = _transcript[^1] with { Content = trimmed };
@@ -3172,7 +3183,7 @@ public partial class MainWindow : Window
         if (_progressView is not null)
         {
             MessageView view = _progressView;
-            view.ContentHost.Content = BuildPlainText(final);
+            view.ContentHost.Content = BuildPlainText("system", final);
             if (_transcript.Count > 0)
                 _transcript[^1] = _transcript[^1] with { Content = final };
             _progressView = null;

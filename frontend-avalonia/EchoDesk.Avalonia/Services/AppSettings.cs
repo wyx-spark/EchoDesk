@@ -45,17 +45,23 @@ public sealed class AppSettings
     [JsonPropertyName("confirm_destructive")]
     public bool ConfirmDestructiveCommands { get; set; } = true;
 
-    /// <summary>设置窗口尺寸（任务一要求"窗口状态记忆"；与主窗口分开存，互不影响）。</summary>
+    /// <summary>
+    /// 设置窗口尺寸（任务一要求"窗口状态记忆"；与主窗口分开存，互不影响）。
+    /// 默认值与 WPF 版 SettingsWindow.xaml 的 Width=780 / Height=660 对齐：
+    /// Avalonia 的 Window.Width/Height 是**客户区**尺寸，WPF 的是含边框的整窗尺寸，
+    /// 所以这里取 WPF 整窗减去非客户区（横向 16、纵向 39）后的 764x621。
+    /// </summary>
     [JsonPropertyName("settings_window_width")]
-    public double SettingsWindowWidth { get; set; } = 980;
+    public double SettingsWindowWidth { get; set; } = 764;
     [JsonPropertyName("settings_window_height")]
-    public double SettingsWindowHeight { get; set; } = 720;
+    public double SettingsWindowHeight { get; set; } = 621;
 
+    /// <summary>主窗口尺寸。同样对齐 WPF 的 860x620 整窗，即客户区 844x581。</summary>
     [JsonPropertyName("window_width")]
-    public double WindowWidth { get; set; } = 1080;
+    public double WindowWidth { get; set; } = 844;
 
     [JsonPropertyName("window_height")]
-    public double WindowHeight { get; set; } = 760;
+    public double WindowHeight { get; set; } = 581;
 
     // ---------- v0.2.2 第 3 批：窗口位置与一次性询问的记忆 ----------
     //
