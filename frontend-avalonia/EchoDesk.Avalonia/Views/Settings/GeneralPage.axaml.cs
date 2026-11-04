@@ -86,6 +86,7 @@ public partial class GeneralPage : UserControl, ISettingsPage
             if (_applying || Selected(ThemeCombo) is not { } value || _host is null)
                 return;
             _host.State.SetTheme(value);
+            UpdateThemeStatus();
             _host.ShowStatus(Loc.T("settings.general.themeEffective", "当前生效：{0}",
                 Loc.T($"settings.general.theme{(value == "auto" ? "Following" : value == "light" ? "Light" : "Dark")}",
                     value == "light" ? "浅色" : value == "dark" ? "深色" : "跟随系统")));
@@ -132,7 +133,7 @@ public partial class GeneralPage : UserControl, ISettingsPage
         {
             if (e.Property != Slider.ValueProperty)
                 return;
-            FontSizeValueText.Text = $"{FontSizeSlider.Value:0} px";
+            FontSizeValueText.Text = $"{FontSizeSlider.Value:0} pt";
             if (_applying || _host is null)
                 return;
             _host.State.SetFontSize(FontSizeSlider.Value);
@@ -153,6 +154,21 @@ public partial class GeneralPage : UserControl, ISettingsPage
                 return;
             _host.MarkDirty();
         };
+    }
+
+    /// <summary>下拉框右侧那行"当前生效：浅色 / 深色 / 跟随系统"。</summary>
+    private void UpdateThemeStatus()
+    {
+        string themeValue = (ThemeCombo.SelectedItem as Option)?.Value ?? "auto";
+        // 注意别把"当前生效：{0}" 套在语言包里那条"当前跟随系统：{0}（…）"上 ——
+        // 那会拼出"当前生效：当前跟随系统：0"这种读不通的句子（本轮实测踩到）。
+        string themeName = themeValue switch
+        {
+            "light" => Loc.T("settings.general.themeLight", "浅色"),
+            "dark" => Loc.T("settings.general.themeDark", "深色"),
+            _ => Loc.T("settings.general.themeSystem", "跟随系统"),
+        };
+        ThemeStatusText.Text = Loc.T("settings.general.themeEffective", "当前生效：{0}", themeName);
     }
 
     private static string? Selected(ComboBox combo) =>
@@ -251,13 +267,16 @@ public partial class GeneralPage : UserControl, ISettingsPage
             if (DefaultModeCombo.SelectedIndex < 0)
                 DefaultModeCombo.SelectedIndex = 0;
             FontSizeSlider.Value = settings.FontSize;
-            FontSizeValueText.Text = $"{settings.FontSize:0} px";
+            FontSizeValueText.Text = $"{settings.FontSize:0} pt";
             ConfirmDestructiveCheck.IsChecked = settings.ConfirmDestructiveCommands;
         }
         finally
         {
             _applying = false;
         }
+        // 载入之后才同步"当前生效：…"：首帧 ApplyTexts 时下拉项还没选中，
+        // 那时算出来永远是"跟随系统"（与 WPF 显示的当前值对不上）。
+        UpdateThemeStatus();
     }
 
     public void ApplyTo(AppSettings settings)
@@ -311,19 +330,26 @@ public partial class GeneralPage : UserControl, ISettingsPage
     }
 
     public void ApplyTexts()
-    {        ThemeLabel.Text = Loc.T("settings.general.themeLabel", "界面主题");
+    {        AppearanceTitle.Text = Loc.T("settings.general.sectionAppearance", "外观与默认行为");
+        ThemeLabel.Text = Loc.T("settings.general.themeLabel", "界面主题");
+        // WPF 把"当前生效：浅色"放在下拉框右侧，把"主题与 emoji 显示即时生效"单独一行放在下面。
+        // 两句话原来被合并进了同一个控件，位置和文案都与 WPF 不同 —— 这里拆回两个控件。
+        UpdateThemeStatus();
+        ThemeNote.Text = Loc.T("settings.general.themeNote", "主题与 emoji 显示即时生效，无需重启");
         EmojiLabel.Text = Loc.T("settings.general.emojiLabel", "emoji 显示");
-        EmojiStatusText.Text = Loc.T("settings.general.emojiHelp",
-            "自动：本机有 emoji 字体就显示彩色图标，没有就换成纯文本标记（如 [OK]）。");
-        FontSizeLabel.Text = Loc.T("settings.general.fontSize", "界面字号");
+        EmojiStatusText.Text = Emoji.Available
+            ? Loc.T("settings.general.emojiOn", "本机支持 emoji，当前正常显示")
+            : Loc.T("settings.general.emojiUnavailable", "本机缺少 emoji 字体，已改用纯文本标记");
+        FontSizeLabel.Text = Loc.T("settings.general.fontSize", "字体大小");
+        LanguageTitle.Text = Loc.T("settings.general.sectionLanguage", "语言 / Language");
         LanguageLabel.Text = Loc.T("settings.general.language", "界面语言");
         LanguageHelpText.Text = Loc.T("settings.general.languageHelp",
             "切换后界面、错误提示与指令帮助立即生效，无需重启。选择结果记录在 ui_state.json。");
         // 默认模式的键在语言包里是一条完整说明（"默认对话模式（下次启动生效…）"），
         // 既当标题也当提示 —— 不另造一个更短的键，避免两处文案将来各说各话。
-        DefaultModeLabel.Text = Loc.T("settings.general.defaultMode", "默认对话模式");
-        DefaultModeHint.Text = Loc.T("settings.general.defaultMode",
+        DefaultModeLabel.Text = Loc.T("settings.general.defaultMode",
             "默认对话模式（下次启动生效，也可用 /mode 即时切换）");
+        DefaultModeHint.Text = DefaultModeLabel.Text;
         ConfirmDestructiveCheck.Content = Loc.T("settings.general.confirmDestructive",
             "执行有副作用的指令（/clear、/clearcache）前二次确认");
         LangPackTitle.Text = Loc.T("settings.general.langPackTitle", "语言包");
@@ -332,8 +358,6 @@ public partial class GeneralPage : UserControl, ISettingsPage
         UpdateLangPackText();
         PathsTitle.Text = Loc.T("settings.general.sectionPaths", "📌 界面与数据位置");
         PathsText.Text = DescribePaths();
-        ThemeStatusText.Text = Loc.T("settings.general.themeNote",
-            "主题与 emoji 显示即时生效，无需重启。");
 
         // 下拉项文案是委托，改了语言要把当前选中项显示刷新一遍。
         RefreshComboTexts(ThemeCombo, EmojiCombo, LanguageCombo, DefaultModeCombo);

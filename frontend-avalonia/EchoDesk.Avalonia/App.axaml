@@ -213,6 +213,69 @@
       <Setter Property="Background" Value="{DynamicResource AppBackgroundBrush}" />
       <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
       <Setter Property="Padding" Value="0" />
+      <!--
+        内容区加 1px 描边：WPF 的默认 TabControl 模板会在页签下方画一圈边框，
+        Avalonia 的 Fluent 模板没有 —— 设置窗口看起来就少了一个"内容容器"。
+        这里照 WPF 画：页签行在上，内容在 1px 描边里。
+      -->
+      <Setter Property="Template">
+        <ControlTemplate TargetType="TabControl">
+          <Grid RowDefinitions="Auto,*">
+            <ItemsPresenter Name="PART_ItemsPresenter" Grid.Row="0"
+                            ItemsPanel="{TemplateBinding ItemsPanel}" />
+            <Border Grid.Row="1" BorderThickness="1" BorderBrush="{DynamicResource InputBorderBrush}"
+                    Background="{DynamicResource AppBackgroundBrush}">
+              <ContentPresenter Name="PART_SelectedContentHost" Grid.Row="1"
+                                Content="{TemplateBinding SelectedContent}"
+                                ContentTemplate="{TemplateBinding SelectedContentTemplate}" />
+            </Border>
+          </Grid>
+        </ControlTemplate>
+      </Setter>
+      <!-- WPF 的页签是横排、放不下时换行（TabPanel）；这里用同样的排法 -->
+      <Setter Property="ItemsPanel">
+        <ItemsPanelTemplate>
+          <WrapPanel Orientation="Horizontal" />
+        </ItemsPanelTemplate>
+      </Setter>
+      <!--
+        Avalonia 12 的 TabControl 通过 ItemContainerTheme 给页签容器套模板，
+        这条主题值的优先级**高于**普通的 `Style Selector="TabItem"` ——
+        只写 TabItem 样式时能改颜色/内边距，但形状仍是 Fluent 的"下划线页签"
+        （实测：圆角、描边都没生效）。所以必须直接把页签主题换掉。
+      -->
+      <Setter Property="ItemContainerTheme">
+        <ControlTheme TargetType="TabItem">
+          <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI" />
+          <Setter Property="FontSize" Value="12" />
+          <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
+          <Setter Property="Padding" Value="12,6" />
+          <Setter Property="Margin" Value="0,0,3,0" />
+          <Setter Property="MinHeight" Value="0" />
+          <Setter Property="Template">
+            <ControlTemplate TargetType="TabItem">
+              <Border Name="PART_Border" CornerRadius="6,6,0,0"
+                      Margin="{TemplateBinding Margin}"
+                      Padding="{TemplateBinding Padding}"
+                      Background="{DynamicResource TabInactiveBackgroundBrush}"
+                      BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1,1,1,0">
+                <ContentPresenter Content="{TemplateBinding Header}"
+                                  VerticalAlignment="Center" HorizontalAlignment="Center" />
+              </Border>
+            </ControlTemplate>
+          </Setter>
+          <Style Selector="^:pointerover /template/ Border#PART_Border">
+            <Setter Property="Background" Value="{DynamicResource RowHoverBackgroundBrush}" />
+          </Style>
+          <Style Selector="^:selected /template/ Border#PART_Border">
+            <Setter Property="Background" Value="{DynamicResource TabActiveBackgroundBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+          </Style>
+          <Style Selector="^:selected">
+            <Setter Property="FontWeight" Value="SemiBold" />
+          </Style>
+        </ControlTheme>
+      </Setter>
     </Style>
     <Style Selector="TabItem">
       <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI" />
@@ -221,29 +284,6 @@
       <Setter Property="Padding" Value="12,6" />
       <Setter Property="Margin" Value="0,0,3,0" />
       <Setter Property="MinHeight" Value="0" />
-      <Setter Property="Template">
-        <ControlTemplate TargetType="TabItem">
-          <Border Name="PART_Border" CornerRadius="6,6,0,0"
-                  Margin="{TemplateBinding Margin}"
-                  Padding="{TemplateBinding Padding}"
-                  Background="{DynamicResource TabInactiveBackgroundBrush}"
-                  BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1,1,1,0">
-            <ContentPresenter Content="{TemplateBinding Header}"
-                              ContentTemplate="{TemplateBinding HeaderTemplate}"
-                              VerticalAlignment="Center" HorizontalAlignment="Center" />
-          </Border>
-        </ControlTemplate>
-      </Setter>
-    </Style>
-    <Style Selector="TabItem:pointerover /template/ Border#PART_Border">
-      <Setter Property="Background" Value="{DynamicResource RowHoverBackgroundBrush}" />
-    </Style>
-    <Style Selector="TabItem:selected /template/ Border#PART_Border">
-      <Setter Property="Background" Value="{DynamicResource TabActiveBackgroundBrush}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
-    </Style>
-    <Style Selector="TabItem:selected">
-      <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
 
     <!-- ================= 滚动条（11px，圆角 4，与 WPF 一致） ================= -->

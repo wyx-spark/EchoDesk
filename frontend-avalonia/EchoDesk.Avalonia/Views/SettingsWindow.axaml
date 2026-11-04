@@ -13,13 +13,10 @@
 
     骨架只负责四件事：页签容器、窗口状态记忆、底部状态与保存、主题/语言即时生效。
   -->
-  <DockPanel LastChildFill="True">
+  <Grid RowDefinitions="*,Auto" Margin="12">
 
     <!-- 底部：状态行 + 保存/关闭（与 WPF 版同位置、同 AutomationId） -->
-    <Border DockPanel.Dock="Bottom"
-            Background="{DynamicResource PanelBackgroundBrush}"
-            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="0,1,0,0"
-            Padding="14,10">
+    <Border Grid.Row="1" Padding="0" Margin="0,8,0,0">
       <Grid ColumnDefinitions="Auto,*,Auto,Auto">
         <TextBlock x:Name="LoadStateText" Grid.Column="0" VerticalAlignment="Center"
                    FontSize="12" Opacity="0.8"
@@ -28,18 +25,18 @@
                    HorizontalAlignment="Right" Margin="12,0" FontSize="12" Opacity="0.7"
                    TextTrimming="CharacterEllipsis"
                    AutomationProperties.AutomationId="SaveHintText" />
-        <Button x:Name="SaveButton" Grid.Column="2" Padding="18,6"
+        <Button x:Name="SaveButton" Grid.Column="2" Padding="18,6" CornerRadius="17"
                 AutomationProperties.AutomationId="SaveButton" />
-        <Button x:Name="CloseButton" Grid.Column="3" Padding="18,6" Margin="8,0,0,0"
+        <Button x:Name="CloseButton" Grid.Column="3" Padding="18,6" Margin="8,0,0,0" CornerRadius="17"
                 AutomationProperties.AutomationId="CloseButton" />
       </Grid>
     </Border>
 
     <!-- 顶部：设置页静态提示（页签名由 TabControl 提供） -->
-    <Grid ColumnDefinitions="*,Auto" RowDefinitions="*">
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" RowDefinitions="*">
 
       <!-- 页签容器：由代码注册 ISettingsPage，未迁移的页签显示明确的"未迁移"说明 -->
-      <TabControl x:Name="Tabs" Grid.Row="0" Grid.Column="0" Padding="6,4,6,0"
+      <TabControl x:Name="Tabs" Grid.Row="0" Grid.Column="0" Padding="0"
                   AutomationProperties.AutomationId="Tabs" />
 
       <!-- 字段帮助面板（任务书要求：字段帮助可被探针检查；WPF 版在自动化页用得最多） -->
@@ -62,5 +59,5 @@
       </Border>
 
     </Grid>
-  </DockPanel>
+  </Grid>
 </Window>

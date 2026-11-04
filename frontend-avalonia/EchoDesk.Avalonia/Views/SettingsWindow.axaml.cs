@@ -1,4 +1,4 @@
-// 设置窗口骨架（v0.2.1 跨平台-2 任务一，第 1 个迁移模块）。
+﻿// 设置窗口骨架（v0.2.1 跨平台-2 任务一，第 1 个迁移模块）。
 //
 // 这一层刻意只做四件事，别的一律交给页面：
 //   1. 页签容器：按 ISettingsPage 注册页面（未迁移的页签给出**明确的未迁移说明**，
@@ -47,12 +47,15 @@ public partial class SettingsWindow : Window, ISettingsHost
         InitializeComponent();
 
         RegisterPage(new GeneralPage());
-        RegisterPage(new InstalledPage());
-        RegisterPage(new MarketPage());
-        RegisterPage(new DeveloperPage());
+        // 页签顺序必须与 WPF SettingsWindow.xaml 的 TabItem 顺序一致
+        // （常规 → 模型 → 智能体 → 自动化 → 技能市场 → 已安装 → 开发者）：
+        // 顺序不同的时候，同一份界面在两边看起来就像两套产品。
+        RegisterPage(new ModelPage());
         RegisterPage(new AgentPage());
         RegisterPage(new AutomationPage());
-        RegisterPage(new ModelPage());
+        RegisterPage(new MarketPage());
+        RegisterPage(new InstalledPage());
+        RegisterPage(new DeveloperPage());
         foreach ((string key, string fallback) in NotMigratedTabs)
             AddNotMigratedTab(key, fallback);
 

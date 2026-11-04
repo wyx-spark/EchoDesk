@@ -1,4 +1,4 @@
-﻿# 适用平台：Windows（WPF 与 Avalonia 都在真窗口上截）
+# 适用平台：Windows（WPF 与 Avalonia 都在真窗口上截）
 # EchoDesk 视觉对齐取证：把 WPF / Avalonia 两个前端按**同一套窗口、同一套路径**截图，
 # 供人工（多模态视觉）逐页比对间距 / 边距 / 字号 / 对齐 / 配色 / 圆角。
 #
@@ -55,8 +55,21 @@ $DataDir = Join-Path $Root "artifacts\align\state-$Flavor"
 if (Test-Path $DataDir) { Remove-Item -Recurse -Force $DataDir }
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 $statePath = Join-Path $DataDir 'ui_state.json'
-@{ Language = 'zh-Hans'; Theme = 'light'; DarkMode = $false; FirstRunDone = $true; ShortcutPromptDeclined = $true } |
-    ConvertTo-Json -Depth 5 | Set-Content -Path $statePath -Encoding utf8
+# 两个前端读 ui_state.json 的键名大小写不同（WPF 用 Language/Theme/DarkMode，
+# Avalonia 用 language/theme/font_size…）。同一份夹具里两种都写，保证两边起跑状态一致。
+# 注意：PowerShell 的哈希表键**大小写不敏感**，"Language" 与 "language" 会撞成重复键，
+# 所以这里直接写 JSON 文本，不用 @{ } 转。
+$stateJson = @'
+{
+  "Language": "zh-Hans", "language": "zh-Hans",
+  "Theme": "light", "theme": "light",
+  "DarkMode": false, "dark_mode": false,
+  "FirstRunDone": true, "first_run_done": true,
+  "ShortcutPromptDeclined": true,
+  "font_size": 14
+}
+'@
+$stateJson | Set-Content -Path $statePath -Encoding utf8
 $env:ECHODESK_DATA = $DataDir
 
 # 两边必须连**同一份后端**，否则截出来的状态区/模型胶囊是两份数据（一个"无模型"、

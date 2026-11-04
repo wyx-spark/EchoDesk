@@ -2,97 +2,103 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.GeneralPage">
   <!--
-    常规页（v0.2.1 跨平台-2 任务一，第 2 个迁移模块）。
-
-    内容与 WPF 版 SettingsWindow.xaml 的「常规」页签对齐：主题 / emoji 偏好 / 字号 /
-    界面语言 / 默认模式 / 危险操作确认 / 路径信息。
-    控件名（x:Name）与 AutomationId **刻意与 WPF 版同名**，这样 ui_probe.ps1 的既有
-    断言可以复用，而不是为跨平台前端再写一套探针。
+    常规页（视觉对齐版）：版式按 frontend/SettingsWindow.xaml 的「常规」页签复刻。
+      · StackPanel Margin="14,12"，不靠 Spacing，而是按 WPF 的逐块 Margin 排；
+      · 三个区块标题（外观与默认行为 / 语言 / 语言包）是 15 号加粗强调色；
+      · 字段标签是副色小字，控件宽度 200（主题/emoji）、260（模式/语言）、320（滑块）；
+      · 语言包与"界面与数据位置"都是 8 圆角、1px 描边的卡片。
+    控件名（x:Name）与 AutomationId 保持不变，探针与代码都按这些名字找控件。
   -->
   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-    <StackPanel Margin="16" Spacing="16">
+    <StackPanel Margin="14,12">
 
-      <!-- ① 主题：切换后立即生效（不等保存），与 WPF 版行为一致 -->
-      <StackPanel Spacing="4">
-        <TextBlock x:Name="ThemeLabel" FontWeight="SemiBold" />
-        <StackPanel Orientation="Horizontal" Spacing="10">
-          <ComboBox x:Name="ThemeCombo" Width="220" AutomationProperties.AutomationId="ThemeCombo" />
-          <TextBlock x:Name="ThemeStatusText" VerticalAlignment="Center" FontSize="11" Opacity="0.7"
-                     TextWrapping="Wrap" />
-        </StackPanel>
+      <!-- ① 外观与默认行为 -->
+      <TextBlock x:Name="AppearanceTitle" FontSize="15" FontWeight="Bold"
+                 Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10" />
+
+      <TextBlock x:Name="ThemeLabel" Margin="0,4,0,4"
+                 Foreground="{DynamicResource SubTextBrush}" />
+      <StackPanel Orientation="Horizontal">
+        <ComboBox x:Name="ThemeCombo" Width="200" HorizontalAlignment="Left"
+                  AutomationProperties.AutomationId="ThemeCombo" />
+        <TextBlock x:Name="ThemeStatusText" Margin="12,0,0,0" VerticalAlignment="Center"
+                   FontSize="11" Foreground="{DynamicResource SubTextBrush}" />
+      </StackPanel>
+      <TextBlock x:Name="ThemeNote" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
+                 Foreground="{DynamicResource SubTextBrush}" />
+
+      <TextBlock x:Name="EmojiLabel" Margin="0,12,0,4"
+                 Foreground="{DynamicResource SubTextBrush}" />
+      <StackPanel Orientation="Horizontal">
+        <ComboBox x:Name="EmojiCombo" Width="200" HorizontalAlignment="Left"
+                  AutomationProperties.AutomationId="EmojiCombo" />
+        <TextBlock x:Name="EmojiStatusText" Margin="12,0,0,0" VerticalAlignment="Center"
+                   FontSize="11" Foreground="{DynamicResource SubTextBrush}" TextWrapping="Wrap" />
       </StackPanel>
 
-      <!-- ② emoji 偏好：影响是否把 emoji 降级成 ASCII（终端/字体不支持时用） -->
-      <StackPanel Spacing="4">
-        <TextBlock x:Name="EmojiLabel" FontWeight="SemiBold" />
-        <StackPanel Orientation="Horizontal" Spacing="10">
-          <ComboBox x:Name="EmojiCombo" Width="220" AutomationProperties.AutomationId="EmojiCombo" />
-          <TextBlock x:Name="EmojiStatusText" VerticalAlignment="Center" FontSize="11" Opacity="0.7"
-                     TextWrapping="Wrap" />
-        </StackPanel>
+      <TextBlock x:Name="FontSizeLabel" Margin="0,14,0,4"
+                 Foreground="{DynamicResource SubTextBrush}" />
+      <StackPanel Orientation="Horizontal">
+        <Slider x:Name="FontSizeSlider" Width="320" Minimum="10" Maximum="24"
+                TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center"
+                AutomationProperties.AutomationId="FontSizeSlider" />
+        <TextBlock x:Name="FontSizeValueText" Margin="12,0,0,0" VerticalAlignment="Center"
+                   Foreground="{DynamicResource SubTextBrush}"
+                   AutomationProperties.AutomationId="FontSizeValueText" />
       </StackPanel>
 
-      <!-- ③ 聊天区字号 -->
-      <StackPanel Spacing="4">
-        <TextBlock x:Name="FontSizeLabel" FontWeight="SemiBold" />
-        <StackPanel Orientation="Horizontal" Spacing="12">
-          <Slider x:Name="FontSizeSlider" Width="320" Minimum="10" Maximum="24"
-                  TickFrequency="1" IsSnapToTickEnabled="True"
-                  AutomationProperties.AutomationId="FontSizeSlider" />
-          <TextBlock x:Name="FontSizeValueText" VerticalAlignment="Center" FontSize="12" />
-        </StackPanel>
-      </StackPanel>
+      <TextBlock x:Name="DefaultModeLabel" Margin="0,14,0,4"
+                 Foreground="{DynamicResource SubTextBrush}" />
+      <ComboBox x:Name="DefaultModeCombo" Width="260" HorizontalAlignment="Left"
+                AutomationProperties.AutomationId="DefaultModeCombo" />
+      <TextBlock x:Name="DefaultModeHint" IsVisible="False" />
 
-      <!-- ④ 界面语言：切换后立即生效并落盘 -->
-      <StackPanel Spacing="4">
-        <TextBlock x:Name="LanguageLabel" FontWeight="SemiBold" />
-        <ComboBox x:Name="LanguageCombo" Width="260" HorizontalAlignment="Left"
-                  AutomationProperties.AutomationId="LanguageCombo" />
-        <TextBlock x:Name="LanguageHelpText" FontSize="11" TextWrapping="Wrap" Opacity="0.7" />
-      </StackPanel>
-
-      <!-- ④-b 语言包（v0.2.2 第 2 批补全，对齐 WPF 的同名区块）：
-           当前语言 / 可用语言 / 目录 + 两个按钮。翻译者改完磁盘上的 JSON 后
-           点「重新加载语言包」就能看到效果，不必重启程序。 -->
-      <StackPanel Spacing="4">
-        <TextBlock x:Name="LangPackTitle" FontWeight="SemiBold" />
-        <Border CornerRadius="6" Padding="10,8" BorderThickness="1"
-                Background="{DynamicResource CardBackgroundBrush}"
-                BorderBrush="{DynamicResource CardBorderBrush}">
-          <StackPanel Spacing="8">
-            <TextBlock x:Name="LangPackText" FontSize="11" TextWrapping="Wrap" Opacity="0.75"
-                       AutomationProperties.AutomationId="LangPackText" />
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <Button x:Name="ReloadLangButton" Padding="10,3" FontSize="11"
-                      AutomationProperties.AutomationId="ReloadLangButton" />
-              <Button x:Name="OpenLangDirButton" Padding="10,3" FontSize="11"
-                      AutomationProperties.AutomationId="OpenLangDirButton" />
-            </StackPanel>
-          </StackPanel>
-        </Border>
-      </StackPanel>
-
-      <!-- ⑤ 默认模式：**业务设置**，与界面设置分开 —— 它由后端持有（/mode 命令），
-           前端只负责把它发过去，不自己存一份（WPF 版也是这个分工）。 -->
-      <StackPanel Spacing="4">
-        <TextBlock x:Name="DefaultModeLabel" FontWeight="SemiBold" />
-        <ComboBox x:Name="DefaultModeCombo" Width="260" HorizontalAlignment="Left"
-                  AutomationProperties.AutomationId="DefaultModeCombo" />
-        <TextBlock x:Name="DefaultModeHint" FontSize="11" Opacity="0.7" TextWrapping="Wrap" />
-      </StackPanel>
-
-      <!-- ⑥ 危险操作确认（界面设置） -->
-      <CheckBox x:Name="ConfirmDestructiveCheck" FontSize="13"
+      <CheckBox x:Name="ConfirmDestructiveCheck" Margin="0,14,0,0"
                 AutomationProperties.AutomationId="ConfirmDestructiveCheck" />
 
-      <!-- ⑦ 路径信息：用户数据目录与语言包目录（排查问题时最常问的两件事）。
-           v0.2.2 第 2 批补齐：加上后端目录、插件目录与便携版布局提示（对齐 WPF 的
-           DescribePaths）—— 它是"界面上传的文件到底落在哪"这类问题的第一手答案。 -->
-      <StackPanel Spacing="4">
-        <TextBlock x:Name="PathsTitle" FontWeight="SemiBold" />
-        <TextBlock x:Name="PathsText" FontSize="11" TextWrapping="Wrap" Opacity="0.75"
-                   AutomationProperties.AutomationId="PathsText" />
+      <!-- ② 语言 / Language -->
+      <TextBlock x:Name="LanguageTitle" FontSize="15" FontWeight="Bold"
+                 Foreground="{DynamicResource AccentBrush}" Margin="0,18,0,10" />
+
+      <TextBlock x:Name="LanguageLabel" Margin="0,0,0,4"
+                 Foreground="{DynamicResource SubTextBrush}" />
+      <StackPanel Orientation="Horizontal">
+        <ComboBox x:Name="LanguageCombo" Width="260" HorizontalAlignment="Left"
+                  AutomationProperties.AutomationId="LanguageCombo" />
       </StackPanel>
+      <TextBlock x:Name="LanguageHelpText" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
+                 Foreground="{DynamicResource SubTextBrush}" />
+
+      <!-- ③ 语言包 -->
+      <TextBlock x:Name="LangPackTitle" FontSize="15" FontWeight="Bold"
+                 Foreground="{DynamicResource AccentBrush}" Margin="0,18,0,10" />
+      <Border CornerRadius="8" Padding="10,8" BorderThickness="1"
+              Background="{DynamicResource CardBackgroundBrush}"
+              BorderBrush="{DynamicResource CardBorderBrush}">
+        <StackPanel>
+          <TextBlock x:Name="LangPackText" FontSize="11" TextWrapping="Wrap"
+                     Foreground="{DynamicResource SubTextBrush}"
+                     AutomationProperties.AutomationId="LangPackText" />
+          <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+            <Button x:Name="ReloadLangButton" Padding="10,3" FontSize="11"
+                    AutomationProperties.AutomationId="ReloadLangButton" />
+            <Button x:Name="OpenLangDirButton" Padding="10,3" FontSize="11" Margin="8,0,0,0"
+                    AutomationProperties.AutomationId="OpenLangDirButton" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- ④ 界面与数据位置 -->
+      <Border Margin="0,18,0,0" CornerRadius="8" Padding="12,10" BorderThickness="1"
+              Background="{DynamicResource CardBackgroundBrush}"
+              BorderBrush="{DynamicResource CardBorderBrush}">
+        <StackPanel>
+          <TextBlock x:Name="PathsTitle" FontWeight="Bold" Margin="0,0,0,6" />
+          <TextBlock x:Name="PathsText" FontSize="11" TextWrapping="Wrap"
+                     Foreground="{DynamicResource SubTextBrush}"
+                     AutomationProperties.AutomationId="PathsText" />
+        </StackPanel>
+      </Border>
 
     </StackPanel>
   </ScrollViewer>
