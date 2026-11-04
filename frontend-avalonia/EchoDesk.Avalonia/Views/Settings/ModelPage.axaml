@@ -24,7 +24,7 @@
       <TextBlock x:Name="MarketNotMigratedText" IsVisible="False" />
     </Grid>
 
-    <ScrollViewer Grid.Row="1" MaxHeight="238"
+    <ScrollViewer Grid.Row="1" MaxHeight="212"
                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel Margin="14,6,14,8" Spacing="8">
 
