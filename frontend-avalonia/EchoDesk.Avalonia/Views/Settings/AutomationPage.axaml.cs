@@ -1,4 +1,4 @@
-// 自动化页的交互逻辑（v0.2.1 跨平台-2 任务一，第 7 个迁移模块）。
+﻿// 自动化页的交互逻辑（v0.2.1 跨平台-2 任务一，第 7 个迁移模块）。
 //
 // 后端动作：
 //   automation_config      → { automation: { …20 个字段… } }
@@ -1258,7 +1258,7 @@ public partial class AutomationPage : UserControl, ISettingsPage
     // -----------------------------------------------------------------
     public void ApplyTexts()
     {
-        SafetyTitle.Text = Loc.T("settings.automation.sectionSafety", "安全协议");
+        SafetyTitle.Text = "🔒 " + Loc.T("settings.automation.sectionSafety", "安全协议");
         SafetyBodyText.Text = Loc.T("settings.automation.safetyBody", "");
         SafetyCheck.Content = Loc.T("settings.automation.toggleSafety", "我已阅读并同意上述安全协议");
         AutomationEnabledCheck.Content = Loc.T("settings.automation.toggleEnabled", "启用自动化");
