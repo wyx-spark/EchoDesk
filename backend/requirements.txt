@@ -24,7 +24,13 @@
 #   Intel Mac（x86_64）不在本轮三平台目标内（目标为 osx-arm64），换机器时把 URL 里的
 #   `macosx_11_0_arm64` 换成 `macosx_10_9_x86_64` 并重新校验完整性即可。
 # Linux / Windows 仍走 cpu 索引的常规解析（这两个平台的轮子实测完好）。
-llama-cpp-python ; sys_platform != "darwin"
+# Linux / Windows 必须装**官方 prebuilt wheel**，不能落到 sdist 源码编译：
+#   cpu 索引 https://abetlen.github.io/llama-cpp-python/whl/cpu 上，
+#   cp313-win_amd64 的轮子最高只到 **0.3.19**（0.3.20 及以后没有 cp313 的 Windows 轮子），
+#   而不钉版本时 pip 会解析到 0.3.36 的 sdist 并触发本地 CMake/MSVC 编译。
+#   装法：pip install -r requirements.txt --only-binary=llama-cpp-python
+#   若将来换 Python 3.11/3.12（cp311/cp312 轮子更新更全），可放宽本 pin。
+llama-cpp-python==0.3.19 ; sys_platform != "darwin"
 llama-cpp-python @ https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30-metal/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl ; sys_platform == "darwin"
 pydantic>=2.0             # 配置模型与校验
 huggingface_hub           # 模型仓库查询与下载
