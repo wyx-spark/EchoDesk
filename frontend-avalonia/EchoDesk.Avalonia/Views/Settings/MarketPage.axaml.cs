@@ -488,6 +488,8 @@ public partial class MarketPage : UserControl, ISettingsPage
     // -----------------------------------------------------------------
     public void ApplyTexts()
     {
+        // 区块标题：与 WPF 的「搜索技能」同一个键、同一个字号口径（15 号加粗强调色）。
+        MarketTitle.Text = Loc.T("settings.market.title", "搜索技能");
         MarketSearchButton.Content = Loc.T("settings.market.search", "🔍 搜索");
         MarketRefreshButton.Content = Loc.T("settings.market.refresh", "🔄 刷新");
         MarketSearchTip.Text = Loc.T("settings.market.tip", "输入关键词后回车，也支持「作者/仓库」形式。");

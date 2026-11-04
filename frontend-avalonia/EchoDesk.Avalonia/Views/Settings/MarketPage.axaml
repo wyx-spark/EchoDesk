@@ -2,49 +2,58 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.MarketPage">
   <!--
-    技能市场页（v0.2.1 跨平台-2 任务一，第 4 个迁移模块）。
-
-    搜索 → 卡片列表 → 安装/卸载。控件名与 AutomationId 与 WPF 版同名，
-    便于复用 ui_probe.ps1 的既有断言。
-    技能详情复用骨架的右侧「字段帮助」面板显示（WPF 版是弹一个对话框）——
-    这样不必为详情再造一个窗口，而且详情与列表能同屏对照。
+    技能市场页（视觉对齐版）：版式按 frontend/SettingsWindow.xaml 的「技能市场」页签复刻。
+      · 顶部是 15 号加粗强调色的「搜索技能」标题；
+      · 搜索条一行：输入框 + 排序 + 按钮；
+      · 结果是**一个 8 圆角、1px 描边的框**，空状态在框内居中（原来是没有边框的裸区域）；
+      · 说明文字在结果框下方、状态行在最后（WPF 同位置）。
+    控件名与 AutomationId 保持不变。
   -->
-  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16,12,16,10">
+  <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="14,12,14,10">
+
+    <!-- 标题 -->
+    <TextBlock x:Name="MarketTitle" Grid.Row="0" FontSize="15" FontWeight="Bold"
+               Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10" />
 
     <!-- 搜索条 -->
-    <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto">
+    <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto,Auto">
       <TextBox x:Name="MarketSearchBox" Grid.Column="0" Padding="6,4"
                AutomationProperties.AutomationId="MarketSearchBox" />
-      <ComboBox x:Name="MarketSortCombo" Grid.Column="1" Width="150" Margin="8,0,0,0"
+      <ComboBox x:Name="MarketSortCombo" Grid.Column="1" Width="130" Margin="8,0,0,0"
                 AutomationProperties.AutomationId="MarketSortCombo" />
-      <Button x:Name="MarketSearchButton" Grid.Column="2" Margin="8,0,0,0" Padding="14,4"
+      <Button x:Name="MarketSearchButton" Grid.Column="2" Margin="8,0,0,0" Padding="12,4"
               AutomationProperties.AutomationId="MarketSearchButton" />
-      <Button x:Name="MarketRefreshButton" Grid.Column="3" Margin="8,0,0,0" Padding="14,4"
+      <Button x:Name="MarketRefreshButton" Grid.Column="3" Margin="8,0,0,0" Padding="12,4"
               AutomationProperties.AutomationId="MarketRefreshButton" />
     </Grid>
 
-    <TextBlock x:Name="MarketSearchTip" Grid.Row="1" Margin="0,6,0,0" FontSize="11"
+    <!-- 结果列表：与 WPF 一样放在一个描边框里，空状态在框内居中 -->
+    <Border Grid.Row="2" Margin="0,10,0,0" CornerRadius="8" BorderThickness="1"
+            BorderBrush="{DynamicResource InputBorderBrush}"
+            Background="{DynamicResource InputBackgroundBrush}">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="2">
+        <Grid>
+          <ItemsControl x:Name="MarketList">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <StackPanel Spacing="8" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+          </ItemsControl>
+          <TextBlock x:Name="MarketEmptyText" HorizontalAlignment="Center" VerticalAlignment="Center"
+                     FontSize="12" Opacity="0.65" TextWrapping="Wrap" TextAlignment="Center"
+                     IsVisible="False" MaxWidth="460"
+                     AutomationProperties.AutomationId="MarketEmptyText" />
+        </Grid>
+      </ScrollViewer>
+    </Border>
+
+    <!-- 说明（WPF 在结果框下方） -->
+    <TextBlock x:Name="MarketSearchTip" Grid.Row="3" Margin="0,6,0,0" FontSize="11"
                TextWrapping="Wrap" Opacity="0.7" />
 
-    <!-- 结果列表 -->
-    <ScrollViewer Grid.Row="2" Margin="0,8,0,0" VerticalScrollBarVisibility="Auto">
-      <Grid>
-        <ItemsControl x:Name="MarketList">
-          <ItemsControl.ItemsPanel>
-            <ItemsPanelTemplate>
-              <StackPanel Spacing="8" />
-            </ItemsPanelTemplate>
-          </ItemsControl.ItemsPanel>
-        </ItemsControl>
-        <TextBlock x:Name="MarketEmptyText" HorizontalAlignment="Center" VerticalAlignment="Center"
-                   FontSize="12" Opacity="0.65" TextWrapping="Wrap" TextAlignment="Center"
-                   IsVisible="False" MaxWidth="460"
-                   AutomationProperties.AutomationId="MarketEmptyText" />
-      </Grid>
-    </ScrollViewer>
-
     <!-- 状态行 -->
-    <TextBlock x:Name="MarketStatusText" Grid.Row="3" Margin="0,8,0,0" FontSize="11"
+    <TextBlock x:Name="MarketStatusText" Grid.Row="4" Margin="0,4,0,0" FontSize="11"
                TextWrapping="Wrap" Opacity="0.85"
                AutomationProperties.AutomationId="MarketStatusText" />
   </Grid>
