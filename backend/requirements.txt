@@ -27,10 +27,18 @@
 # Linux / Windows 必须装**官方 prebuilt wheel**，不能落到 sdist 源码编译：
 #   cpu 索引 https://abetlen.github.io/llama-cpp-python/whl/cpu 上，
 #   cp313-win_amd64 的轮子最高只到 **0.3.19**（0.3.20 及以后没有 cp313 的 Windows 轮子），
-#   而不钉版本时 pip 会解析到 0.3.36 的 sdist 并触发本地 CMake/MSVC 编译。
+#   而不钉版本时 pip 会解析到最新版的 sdist 并触发本地 CMake/MSVC 编译。
 #   装法：pip install -r requirements.txt --only-binary=llama-cpp-python
 #   若将来换 Python 3.11/3.12（cp311/cp312 轮子更新更全），可放宽本 pin。
-llama-cpp-python==0.3.19 ; sys_platform != "darwin"
+#
+# 【v0.2.2 收尾实测修正】这个 pin **只能给 Windows**：
+#   linux-x64 的 cpu 索引从 **0.3.21** 起才有轮子（没有 0.3.19），
+#   写成 `sys_platform != "darwin"` 会让 `pack_backend.py --platform linux-x64`
+#   直接失败（pip：Could not find a version that satisfies llama-cpp-python==0.3.19
+#   from versions: 0.3.21 … 0.3.36）。所以按平台分开钉：Windows 钉 0.3.19，Linux 交回
+#   索引解析（本地 artifacts/wheels 里已有 manylinux 的 0.3.36，可离线复用）。
+llama-cpp-python==0.3.19 ; sys_platform == "win32"
+llama-cpp-python ; sys_platform == "linux"
 llama-cpp-python @ https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30-metal/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl ; sys_platform == "darwin"
 pydantic>=2.0             # 配置模型与校验
 huggingface_hub           # 模型仓库查询与下载
