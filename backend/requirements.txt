@@ -40,7 +40,9 @@
 llama-cpp-python==0.3.19 ; sys_platform == "win32"
 llama-cpp-python ; sys_platform == "linux"
 llama-cpp-python @ https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30-metal/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl ; sys_platform == "darwin"
-pydantic>=2.0             # 配置模型与校验
+# 版本钉死以与随包 docs/SBOM.json 一致（v0.2.2 收尾裁定 (a)）：
+# 干净 venv 重建时装到了最新版（2.14.2 / 1.64.1 / 2.5.4），与合规清单不符。
+pydantic==2.13.5          # 配置模型与校验
 huggingface_hub           # 模型仓库查询与下载
 duckduckgo-search         # 联网搜索（可选功能）
 # pywin32 只在 Windows 上存在（WPS/Office COM 调用，读取加密文档）。
@@ -82,7 +84,8 @@ pypdf                     # .pdf（BSD-3-Clause）
 xlrd                      # .xls（BSD）
 
 # ---------- 自动化（任务四） ----------
-playwright                # 驱动本机 Microsoft Edge（Apache-2.0）
+playwright==1.63.0        # 驱动本机 Microsoft Edge（Apache-2.0）
+numpy==2.5.3              # 传递依赖（llama-cpp-python 等），显式钉住以与 SBOM 一致
 schedule                  # 定时触发（MIT）
 
 # ---------- 构建工具 ----------
