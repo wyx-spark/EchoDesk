@@ -1,4 +1,4 @@
-<Application xmlns="https://github.com/avaloniaui"
+﻿<Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.App"
              RequestedThemeVariant="Default">
@@ -309,8 +309,21 @@
     </Style>
 
     <!-- ================= 滑块 / 进度条 ================= -->
+    <!-- WPF 的滑块是"细轨道 + 小圆点"，Fluent 的是"粗轨道 + 大圆点"。
+         这里把滑块尺寸与滑块头换成 WPF 的口径（12px 圆点、20 高），
+         设置页常规/模型两处的滑块在两边看起来就一致了。 -->
     <Style Selector="Slider">
       <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+      <!-- 负边距：Fluent 的滑块模板要 32 高才不裁掉圆点，但 WPF 的滑块只占约 14 高。
+           用上下 -9 把多出来的高度吃掉，既保留完整圆点、又不把下面的内容整体推下去。 -->
+      <Setter Property="Margin" Value="0,-9,0,-9" />
+      <Setter Property="MinHeight" Value="32" />
+      <Setter Property="Height" Value="32" />
+    </Style>
+    <!-- 滑块头只改尺寸，保留 Fluent 自带的模板：自己套一个 12px 的 Border 会被轨道容器裁掉下半截。 -->
+    <Style Selector="Slider /template/ Thumb">
+      <Setter Property="Width" Value="12" />
+      <Setter Property="Height" Value="12" />
     </Style>
     <Style Selector="ProgressBar">
       <Setter Property="Background" Value="{DynamicResource SurfaceAltBrush}" />
