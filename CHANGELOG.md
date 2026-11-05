@@ -92,7 +92,7 @@ consistency, bilingual coverage, and release gating.
 - Vector retrieval is not implemented; local retrieval uses a dependency-free keyword approach.
 - Automatic updates are limited to checking and notifying; automatic download-and-replace and incremental
   updates are not included.
-- The build is not reproducible: rebuilding the same commit does not yield identical hashes.
+- The build is not reproducible: rebuilding the same commit does not yield identical hashes. Tracked in [#6](https://github.com/wyx-spark/EchoDesk/issues/6).
 
 ### Artifacts
 
