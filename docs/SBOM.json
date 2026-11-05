@@ -11,7 +11,7 @@
       "Organization: Void Entropia Studio"
     ]
   },
-  "comment": "This SBOM lists the Python distributions that are actually shipped in the release tree (PyInstaller onedir: app/backend/_internal/*.dist-info). It intentionally does not list build-only distributions such as PyInstaller itself.",
+  "comment": "Python distributions shipped in the Windows release tree (PyInstaller onedir: app/backend/_internal/*.dist-info). Build-only tools such as PyInstaller are intentionally excluded. Cross-platform note (v0.2.2): the Linux and macOS trees resolve two dependencies differently because of platform wheel availability. Linux: llama-cpp-python 0.3.36, numpy 2.2.6. macOS arm64: llama-cpp-python 0.3.30, numpy 2.5.4. All other versions listed here are identical across the three platform trees. pywin32 is Windows-only.",
   "packages": [
     {
       "SPDXID": "SPDXRef-Package-pypi-click-8.5.0",
