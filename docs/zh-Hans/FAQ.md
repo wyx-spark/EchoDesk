@@ -469,9 +469,9 @@ macOS 上是 `~/Library/Application Support/EchoDesk/`，Linux 上是 `~/.local/
 邮寄地址——GitHub 是唯一渠道，写在那里的问题会直接送到维护者手上：
 
 - **提问、交流想法、分享技能、协作翻译** → 在
-  [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions) 发帖。
+  [GitHub Discussions](https://github.com/wyx-spark/EchoDesk/discussions) 发帖。
 - **上面没覆盖到的可复现问题** → 请**开 Issue**：
-  <https://github.com/VoidEntropiaStudio/EchoDesk/issues>。请附上
+  <https://github.com/wyx-spark/EchoDesk/issues>。请附上
   [想反馈问题](#想反馈问题) 里列出的内容：版本号、所在平台（Windows / macOS / Linux）及其版本号、
   `app/backend/backend_crash.log`（若有内容）、`app/backend/config.json`、
   `/status` 的输出，以及能复现问题的操作步骤。

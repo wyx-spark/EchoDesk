@@ -104,10 +104,10 @@ Windows 上核对：`certutil -hashfile <文件名> SHA256`。
 
 ## 反馈渠道 / Feedback
 
-- **问题与功能请求**：请开 [GitHub Issue](https://github.com/VoidEntropiaStudio/EchoDesk/issues)，
+- **问题与功能请求**：请开 [GitHub Issue](https://github.com/wyx-spark/EchoDesk/issues)，
   并附上版本号、Windows 版本、复现步骤与相关日志（`app\backend\backend_crash.log`）。
-- **提问、交流技能与协作翻译**：[GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions)。
-- **安全漏洞**：**请勿开公开 Issue**，请按仓库根目录 [`SECURITY.md`](https://github.com/VoidEntropiaStudio/EchoDesk/blob/master/SECURITY.md)
+- **提问、交流技能与协作翻译**：[GitHub Discussions](https://github.com/wyx-spark/EchoDesk/discussions)。
+- **安全漏洞**：**请勿开公开 Issue**，请按仓库根目录 [`SECURITY.md`](https://github.com/wyx-spark/EchoDesk/blob/master/SECURITY.md)
   的私有渠道报告（Security 标签页 → Report a vulnerability；兜底为 GitHub noreply 邮箱）。
 
 本项目**不提供**支持邮箱、电话号码或邮寄地址 —— 以上 GitHub 渠道是全部公开联系方式。
@@ -228,12 +228,12 @@ On Windows, check with `certutil -hashfile <file name> SHA256`.
 
 ## Feedback
 
-- **Bugs and feature requests**: open a [GitHub issue](https://github.com/VoidEntropiaStudio/EchoDesk/issues)
+- **Bugs and feature requests**: open a [GitHub issue](https://github.com/wyx-spark/EchoDesk/issues)
   and include the version number, your Windows version, the steps to reproduce and the relevant log
   (`app\backend\backend_crash.log`).
-- **Questions, skill talk and translation help**: [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions).
+- **Questions, skill talk and translation help**: [GitHub Discussions](https://github.com/wyx-spark/EchoDesk/discussions).
 - **Security vulnerabilities**: **do not open a public issue**; report through the private channel
-  described in [`SECURITY.md`](https://github.com/VoidEntropiaStudio/EchoDesk/blob/master/SECURITY.md)
+  described in [`SECURITY.md`](https://github.com/wyx-spark/EchoDesk/blob/master/SECURITY.md)
   at the repository root (Security tab → Report a vulnerability; the fallback is a GitHub noreply
   email address).
 

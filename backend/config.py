@@ -481,7 +481,7 @@ class UpdateConfig(BaseModel):
 
     enabled: bool = True
     # owner/name；开源发布后由维护者改为真实仓库。留空则跳过检查。
-    repo: str = "VoidEntropiaStudio/EchoDesk"
+    repo: str = "wyx-spark/EchoDesk"
     api_base: str = "https://api.github.com"
     check_on_startup: bool = True
     check_interval_hours: int = Field(default=24, ge=1, le=720)

@@ -175,7 +175,7 @@
     },
     "update": {
         "enabled": true,
-        "repo": "VoidEntropiaStudio/EchoDesk",
+        "repo": "wyx-spark/EchoDesk",
         "api_base": "https://api.github.com",
         "check_on_startup": true,
         "check_interval_hours": 24,

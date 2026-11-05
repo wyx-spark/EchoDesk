@@ -25,7 +25,7 @@
 [CmdletBinding()]
 param(
     [string]$RemoteName = "origin",
-    [string]$RemoteUrl = "git@github.com:VoidEntropiaStudio/EchoDesk.git",
+    [string]$RemoteUrl = "git@github.com:wyx-spark/EchoDesk.git",
     [string]$Branch = "master",
     # 标签留空表示**从 backend\version.py 派生**（v0.2.2 改造）。原来这里写死 "v0.2.1"，
     # 版本一升，脚本就会去检查/推送一个**过时**的标签，而报错信息是"标签不存在或不是附注标签"——

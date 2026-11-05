@@ -529,9 +529,9 @@ no phone number and no postal address** — GitHub is the only channel, and a re
 reaches the maintainers directly:
 
 - **Questions, ideas, skill sharing and translation coordination** → post in
-  [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions).
+  [GitHub Discussions](https://github.com/wyx-spark/EchoDesk/discussions).
 - **A reproducible problem that is not covered above** → **open an Issue**:
-  <https://github.com/VoidEntropiaStudio/EchoDesk/issues>. Include what
+  <https://github.com/wyx-spark/EchoDesk/issues>. Include what
   [I want to report a problem](#i-want-to-report-a-problem) lists: the version, your platform
   (Windows / macOS / Linux) and platform build, `app/backend/backend_crash.log` (if it has content),
   `app/backend/config.json`, the output of `/status`, and the exact steps that reproduce it.

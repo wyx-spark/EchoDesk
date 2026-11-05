@@ -647,8 +647,8 @@ Powered by Void Entropia Studio
   release assets.
 
 [FEEDBACK]
-  Problems and feature requests: https://github.com/VoidEntropiaStudio/EchoDesk/issues
-  Questions and discussion:      https://github.com/VoidEntropiaStudio/EchoDesk/discussions
+  Problems and feature requests: https://github.com/wyx-spark/EchoDesk/issues
+  Questions and discussion:      https://github.com/wyx-spark/EchoDesk/discussions
   Security vulnerabilities:      report privately - do not open a public issue;
                                 see SECURITY.md for the private channel
 
@@ -771,8 +771,8 @@ Build time: $buildTime
   该文件同时列出了安装包与其它发布资产。
 
 【反馈】
-  问题与功能请求：https://github.com/VoidEntropiaStudio/EchoDesk/issues
-  提问与讨论：    https://github.com/VoidEntropiaStudio/EchoDesk/discussions
+  问题与功能请求：https://github.com/wyx-spark/EchoDesk/issues
+  提问与讨论：    https://github.com/wyx-spark/EchoDesk/discussions
   安全漏洞：      请私下报告，不要开公开 Issue —— 见 SECURITY.md
 
 构建时间：$buildTime

@@ -201,12 +201,12 @@ itself.
 
 - **Security vulnerabilities**: use the private reporting channel in [`SECURITY.md`](../SECURITY.md)
   and do **not** open a public Issue. The private advisory form is
-  `https://github.com/VoidEntropiaStudio/EchoDesk/security/advisories/new`. The fallback email
+  `https://github.com/wyx-spark/EchoDesk/security/advisories/new`. The fallback email
   address is `VoidEntropiaStudio@users.noreply.github.com`.
 - **General questions and licensing and compliance enquiries (including questions about the terms
   of this agreement and legal notices)**: submit them through GitHub Issues at
-  `https://github.com/VoidEntropiaStudio/EchoDesk/issues`; for discussion use GitHub Discussions at
-  `https://github.com/VoidEntropiaStudio/EchoDesk/discussions`; for usage questions you can first
+  `https://github.com/wyx-spark/EchoDesk/issues`; for discussion use GitHub Discussions at
+  `https://github.com/wyx-spark/EchoDesk/discussions`; for usage questions you can first
   check [`zh-Hans/FAQ.md`](zh-Hans/FAQ.md) / [`en/FAQ.md`](en/FAQ.md).
 - The Studio **does not provide** telephone support or instant-messaging support channels.
 

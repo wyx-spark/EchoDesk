@@ -563,7 +563,7 @@ Three places must agree. The Git operations themselves are identical on all thre
 ```bash
 # the remote must be SSH (scp form user@host:path)
 git remote -v
-git remote set-url origin git@github.com:VoidEntropiaStudio/EchoDesk.git
+git remote set-url origin git@github.com:wyx-spark/EchoDesk.git
 ```
 
 The push wrapper and the SSH gate are PowerShell scripts and therefore Windows-only:

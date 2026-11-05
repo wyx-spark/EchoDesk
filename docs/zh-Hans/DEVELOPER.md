@@ -521,7 +521,7 @@ powershell -File tools\ui_probe.ps1              # WPF UI 探针：设置窗口�
 ```bash
 # remote 必须是 SSH（scp 形态 user@host:path）
 git remote -v
-git remote set-url origin git@github.com:VoidEntropiaStudio/EchoDesk.git
+git remote set-url origin git@github.com:wyx-spark/EchoDesk.git
 ```
 
 推送包装脚本与 SSH 门禁是 PowerShell 脚本，因此仅限 Windows：

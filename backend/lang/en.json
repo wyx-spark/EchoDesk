@@ -11,7 +11,7 @@
     "about.legal_header": "Legal documents (shipped with the program — open the files directly):",
     "about.legal_missing": "{name} was not found in this distribution (normal when running from source; it should exist in a release build)",
     "about.program_dir": "Program folder: {path}",
-    "about.repo": "Project home and full licence text: https://github.com/VoidEntropiaStudio/EchoDesk (Apache-2.0)",
+    "about.repo": "Project home and full licence text: https://github.com/wyx-spark/EchoDesk (Apache-2.0)",
     "studio": "Void Entropia Studio",
     "studio_full": "Void Entropia Studio"
   },

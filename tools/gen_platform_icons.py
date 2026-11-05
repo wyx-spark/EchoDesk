@@ -169,7 +169,7 @@ def metainfo() -> str:
         "    </p>\n"
         "  </description>\n"
         "  <launchable type=\"desktop-id\">echodesk.desktop</launchable>\n"
-        "  <url type=\"homepage\">https://github.com/VoidEntropiaStudio/EchoDesk</url>\n"
+        "  <url type=\"homepage\">https://github.com/wyx-spark/EchoDesk</url>\n"
         "  <developer id=\"com.voidentropia\">\n"
         "    <name>Void Entropia Studio</name>\n"
         "  </developer>\n"

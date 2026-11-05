@@ -246,10 +246,10 @@ explanatory files inside the distribution, and will be noted in [`CHANGELOG.md`]
 ## 10. Contact
 
 - Security vulnerabilities and privacy questions: the public feedback channels are
-  [Issues](https://github.com/VoidEntropiaStudio/EchoDesk/issues) and
-  [Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions); if a privacy question must be
+  [Issues](https://github.com/wyx-spark/EchoDesk/issues) and
+  [Discussions](https://github.com/wyx-spark/EchoDesk/discussions); if a privacy question must be
   handled privately, use the private reporting channel in [`SECURITY.md`](../SECURITY.md) — this repository's
   **Security → Report a vulnerability** private advisory form,
-  <https://github.com/VoidEntropiaStudio/EchoDesk/security/advisories/new> — and do not open a public Issue.
+  <https://github.com/wyx-spark/EchoDesk/security/advisories/new> — and do not open a public Issue.
 - General questions and usage enquiries: see [`zh-Hans/FAQ.md`](zh-Hans/FAQ.md) / [`en/FAQ.md`](en/FAQ.md),
   and the explanatory files inside the distribution.

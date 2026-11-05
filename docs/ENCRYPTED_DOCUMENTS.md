@@ -153,11 +153,11 @@ and that log is what you can point to when the operation needs to be explained.
 ---
 
 **Feedback and contact**: general questions, compliance questions and corrections to this document go
-to GitHub Issues at `https://github.com/VoidEntropiaStudio/EchoDesk/issues` or GitHub Discussions at
-`https://github.com/VoidEntropiaStudio/EchoDesk/discussions`. Security-sensitive reports — including
+to GitHub Issues at `https://github.com/wyx-spark/EchoDesk/issues` or GitHub Discussions at
+`https://github.com/wyx-spark/EchoDesk/discussions`. Security-sensitive reports — including
 anything that looks like a way to bypass an encryption system — must **not** be opened as a public
 Issue; use the private advisory form at
-`https://github.com/VoidEntropiaStudio/EchoDesk/security/advisories/new`, which is the private channel
+`https://github.com/wyx-spark/EchoDesk/security/advisories/new`, which is the private channel
 described in [`SECURITY.md`](../SECURITY.md). The fallback email address is
 `VoidEntropiaStudio@users.noreply.github.com`. Void Entropia Studio provides no telephone or instant
 messaging support channel.

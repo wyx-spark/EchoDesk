@@ -484,7 +484,7 @@ def build_sbom(installed: Sequence[dict], nuget: Sequence[Tuple[str, str]], vers
         "SPDXID": DOCUMENT_ID,
         "name": f"EchoDesk-{version}",
         # 版本唯一且可复现（同一版本重复运行得到同一命名空间），便于比对两次生成的差异。
-        "documentNamespace": f"https://github.com/VoidEntropiaStudio/EchoDesk/spdx/{version}",
+        "documentNamespace": f"https://github.com/wyx-spark/EchoDesk/spdx/{version}",
         "creationInfo": {
             "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "creators": [

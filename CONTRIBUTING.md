@@ -32,9 +32,9 @@ activation, environment variables, the Windows-only release chain. Do the same i
 
 | I want to... | Start here |
 | --- | --- |
-| Report a bug | Open a [bug report issue](https://github.com/VoidEntropiaStudio/EchoDesk/issues) (see [Filing an issue](#filing-an-issue)); include version, OS, steps and logs. |
-| Request a feature | Open a [feature request issue](https://github.com/VoidEntropiaStudio/EchoDesk/issues) describing the scenario and the workflow you want. |
-| Ask a question or discuss an idea | Start a thread in [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions) — Q&A, skill sharing and translation coordination all live there. |
+| Report a bug | Open a [bug report issue](https://github.com/wyx-spark/EchoDesk/issues) (see [Filing an issue](#filing-an-issue)); include version, OS, steps and logs. |
+| Request a feature | Open a [feature request issue](https://github.com/wyx-spark/EchoDesk/issues) describing the scenario and the workflow you want. |
+| Ask a question or discuss an idea | Start a thread in [GitHub Discussions](https://github.com/wyx-spark/EchoDesk/discussions) — Q&A, skill sharing and translation coordination all live there. |
 | Fix or improve code | Read [Development environment](#development-environment), then open a pull request. |
 | Translate the UI, messages or docs | Follow [Contributing a translation](#contributing-a-translation). |
 | Publish a skill | Follow [Contributing a skill](#contributing-a-skill). |
@@ -47,9 +47,9 @@ email address, no phone number and no postal address**, so GitHub is the only ch
 gets lost in a private inbox:
 
 - **Bugs and other reproducible problems** → open an issue at
-  <https://github.com/VoidEntropiaStudio/EchoDesk/issues>.
+  <https://github.com/wyx-spark/EchoDesk/issues>.
 - **Questions, ideas, skill sharing and translation coordination** → start a thread in
-  [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions).
+  [GitHub Discussions](https://github.com/wyx-spark/EchoDesk/discussions).
 - **Code, documentation or translation changes** → open a pull request, see
   [Branch and pull-request flow](#branch-and-pull-request-flow).
 
@@ -86,7 +86,7 @@ private reporting process in [SECURITY.md](SECURITY.md).
 Clone and push over SSH — this repository does not use HTTPS remote URLs:
 
 ```bash
-git clone git@github.com:VoidEntropiaStudio/EchoDesk.git
+git clone git@github.com:wyx-spark/EchoDesk.git
 cd EchoDesk
 ```
 
@@ -94,11 +94,11 @@ If you already have a working copy, check that the remote is SSH:
 
 ```bash
 git remote -v
-# origin  git@github.com:VoidEntropiaStudio/EchoDesk.git (fetch)
-# origin  git@github.com:VoidEntropiaStudio/EchoDesk.git (push)
+# origin  git@github.com:wyx-spark/EchoDesk.git (fetch)
+# origin  git@github.com:wyx-spark/EchoDesk.git (push)
 
 # If it shows https://…, switch it with one command:
-git remote set-url origin git@github.com:VoidEntropiaStudio/EchoDesk.git
+git remote set-url origin git@github.com:wyx-spark/EchoDesk.git
 ```
 
 You need a key first: `ssh-keygen -t ed25519 -C "machine label"`, then add the **full

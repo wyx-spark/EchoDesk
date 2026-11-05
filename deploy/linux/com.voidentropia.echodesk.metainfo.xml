@@ -21,7 +21,7 @@
     </p>
   </description>
   <launchable type="desktop-id">echodesk.desktop</launchable>
-  <url type="homepage">https://github.com/VoidEntropiaStudio/EchoDesk</url>
+  <url type="homepage">https://github.com/wyx-spark/EchoDesk</url>
   <developer id="com.voidentropia">
     <name>Void Entropia Studio</name>
   </developer>

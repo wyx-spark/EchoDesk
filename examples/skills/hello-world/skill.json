@@ -5,7 +5,7 @@
   "description": "EchoDesk 官方示例插件：演示命令注册、面板、多语言与自动化钩子。",
   "author": "Void Entropia Studio",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/VoidEntropiaStudio/EchoDesk",
+  "homepage": "https://github.com/wyx-spark/EchoDesk",
   "echodesk": {
     "bundle": "echodesk_hello",
     "entry": "echodesk_hello/__init__.py",

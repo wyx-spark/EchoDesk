@@ -2,7 +2,7 @@
 # Blank issues are disabled on purpose: templates collect the version and logs needed to help.
 #
 # 仓库地址（已定稿）/ Repository address (final):
-#   https://github.com/VoidEntropiaStudio/EchoDesk
+#   https://github.com/wyx-spark/EchoDesk
 #   下方两处链接都指向该仓库；若项目迁移，请同步更新它们，并确认仓库
 #   Settings → Features 中 Discussions 处于开启状态，否则「提问与讨论」链接会 404。
 #   Both links below point at that repository. If the project ever moves, update them
@@ -12,8 +12,8 @@ blank_issues_enabled: false
 
 contact_links:
   - name: 提问与讨论（问答 / 技能分享 / 翻译协作）/ Q&A, skill sharing, translation coordination
-    url: https://github.com/VoidEntropiaStudio/EchoDesk/discussions
+    url: https://github.com/wyx-spark/EchoDesk/discussions
     about: 使用问题、技能与插件分享、翻译协作请到 Discussions；确实可复现的缺陷再开 Issue。/ Questions, skill sharing and translation coordination belong in Discussions; open an issue for reproducible defects.
   - name: 安全漏洞报告（请勿公开提交）/ Security vulnerability report (do not file publicly)
-    url: https://github.com/VoidEntropiaStudio/EchoDesk/security/policy
+    url: https://github.com/wyx-spark/EchoDesk/security/policy
     about: 可被利用的安全漏洞请按 SECURITY.md 私下报告，不要在 Issue 中公开细节。/ Report exploitable vulnerabilities privately as described in SECURITY.md — do not post details in a public issue.

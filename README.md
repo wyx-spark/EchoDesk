@@ -60,7 +60,7 @@ No cloud account. No API key. No telemetry.
 ### Option A — install or unpack a release build (recommended, nothing to build)
 
 1. Get the release from the
-   [Releases page](https://github.com/VoidEntropiaStudio/EchoDesk/releases) of this repository
+   [Releases page](https://github.com/wyx-spark/EchoDesk/releases) of this repository
    (once a release has been published) or by building it yourself with Option B below;
    the build lands in `publish\EchoDesk-v0.2.2\`.
 2. Install it or unpack it:
@@ -292,11 +292,11 @@ Every public channel is on GitHub; the project publishes **no support email addr
 number and no postal address**.
 
 - **Report a problem or request a feature** — report problems by opening a GitHub Issue:
-  <https://github.com/VoidEntropiaStudio/EchoDesk/issues>. Bug reports, feature requests, skill
+  <https://github.com/wyx-spark/EchoDesk/issues>. Bug reports, feature requests, skill
   submissions and translation help each have a template; include your version, operating system,
   exact steps and the relevant log.
 - **Ask a question, share a skill, coordinate a translation** — start a thread in
-  [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions).
+  [GitHub Discussions](https://github.com/wyx-spark/EchoDesk/discussions).
 - **Send a change** — open a pull request; [CONTRIBUTING.md](CONTRIBUTING.md) covers the
   development environment, code style, commit conventions and the review flow. See
   [SECURITY.md](SECURITY.md) for log locations.

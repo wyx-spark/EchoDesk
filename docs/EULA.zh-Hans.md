@@ -149,12 +149,12 @@
 
 - **安全漏洞**：请走 [`SECURITY.md`](../SECURITY.zh-Hans.md) 中的私有报告渠道，**不要**开公开 Issue。
   私有报告表单为
-  `https://github.com/VoidEntropiaStudio/EchoDesk/security/advisories/new`；
+  `https://github.com/wyx-spark/EchoDesk/security/advisories/new`；
   邮件兜底地址为 `VoidEntropiaStudio@users.noreply.github.com`。
 - **一般问题、许可与合规咨询（含本协议条款相关问题与法律通知）**：通过 GitHub Issues
-  `https://github.com/VoidEntropiaStudio/EchoDesk/issues` 提交，
+  `https://github.com/wyx-spark/EchoDesk/issues` 提交，
   讨论请用 GitHub Discussions
-  `https://github.com/VoidEntropiaStudio/EchoDesk/discussions`；
+  `https://github.com/wyx-spark/EchoDesk/discussions`；
   使用问题可先查 [`zh-Hans/FAQ.md`](zh-Hans/FAQ.md) / [`en/FAQ.md`](en/FAQ.md)。
 - 本工作室**未提供**电话支持或即时通讯支持渠道。
 

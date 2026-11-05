@@ -224,9 +224,9 @@ EchoDesk 面向成年专业用户设计。使用自动化功能访问第三方�
 
 ## 十、联系方式
 
-- 安全漏洞与隐私问题：公开反馈渠道为 [Issues](https://github.com/VoidEntropiaStudio/EchoDesk/issues) 与
-  [Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions)；如隐私问题必须私下处理，
+- 安全漏洞与隐私问题：公开反馈渠道为 [Issues](https://github.com/wyx-spark/EchoDesk/issues) 与
+  [Discussions](https://github.com/wyx-spark/EchoDesk/discussions)；如隐私问题必须私下处理，
   请走 [`SECURITY.md`](../SECURITY.zh-Hans.md) 里的私有报告渠道——本仓库 **Security → Report a vulnerability**
-  私有公告表单 <https://github.com/VoidEntropiaStudio/EchoDesk/security/advisories/new>——且不要开公开 Issue。
+  私有公告表单 <https://github.com/wyx-spark/EchoDesk/security/advisories/new>——且不要开公开 Issue。
 - 一般问题与使用咨询：常见问题覆盖启动、模型、文件解析、自动化与技能市场/ [`en/FAQ.md`](en/FAQ.md)，
   以及发布物内的说明文件。

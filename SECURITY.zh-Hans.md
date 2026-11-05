@@ -33,7 +33,7 @@ EchoDesk 是一款**纯本地**桌面应用：模型推理、文件解析与浏�
 ## 二、如何报告漏洞
 
 1. **首选：GitHub 私有安全公告。** 打开仓库的
-   [Security → Advisories](https://github.com/VoidEntropiaStudio/EchoDesk/security/advisories/new)
+   [Security → Advisories](https://github.com/wyx-spark/EchoDesk/security/advisories/new)
    页面，选择 "Report a vulnerability"。报告内容、讨论与补丁在公告发布前都保持私有。
 2. **兜底：邮件。** 无法使用 GitHub 公告时，请写信到
    `VoidEntropiaStudio@users.noreply.github.com`。这是项目的 GitHub noreply 地址，

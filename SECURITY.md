@@ -34,7 +34,7 @@ older build, expect the first question to be whether it still reproduces on the 
 ## How to report a vulnerability
 
 1. **Preferred: a private GitHub Security Advisory.** Open the repository's
-   [Security → Advisories](https://github.com/VoidEntropiaStudio/EchoDesk/security/advisories/new)
+   [Security → Advisories](https://github.com/wyx-spark/EchoDesk/security/advisories/new)
    page and use "Report a vulnerability". The report, the discussion and any patch stay private
    until an advisory is published.
 2. **Fallback: email.** If you cannot use GitHub advisories, write to

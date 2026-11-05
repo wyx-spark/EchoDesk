@@ -29,9 +29,9 @@ Python 后端之上的跨平台（Avalonia）前端提供支持，因此贡献�
 
 | 我想要…… | 从这里开始 |
 | --- | --- |
-| 报告缺陷 | 提交 [bug 报告 issue](https://github.com/VoidEntropiaStudio/EchoDesk/issues)（本文“提交 issue”一节）；附上版本、操作系统、复现步骤与日志。 |
-| 请求新功能 | 提交 [功能请求 issue](https://github.com/VoidEntropiaStudio/EchoDesk/issues)，描述你想要的场景与工作流。 |
-| 提问或讨论想法 | 在 [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions) 发起话题——问答、技能分享与翻译协调都在那里。 |
+| 报告缺陷 | 提交 [bug 报告 issue](https://github.com/wyx-spark/EchoDesk/issues)（本文“提交 issue”一节）；附上版本、操作系统、复现步骤与日志。 |
+| 请求新功能 | 提交 [功能请求 issue](https://github.com/wyx-spark/EchoDesk/issues)，描述你想要的场景与工作流。 |
+| 提问或讨论想法 | 在 [GitHub Discussions](https://github.com/wyx-spark/EchoDesk/discussions) 发起话题——问答、技能分享与翻译协调都在那里。 |
 | 修复或改进代码 | 阅读[开发环境](#开发环境)，然后提交拉取请求。 |
 | 翻译界面、消息或文档 | 参照[贡献翻译](#贡献翻译)。 |
 | 发布技能 | 参照[贡献技能](#贡献技能)。 |
@@ -43,9 +43,9 @@ Python 后端之上的跨平台（Avalonia）前端提供支持，因此贡献�
 因此 GitHub 是唯一渠道——不会有内容丢在私人收件箱里：
 
 - **缺陷与其他可复现的问题** → 在
-  <https://github.com/VoidEntropiaStudio/EchoDesk/issues> 提交 issue。
+  <https://github.com/wyx-spark/EchoDesk/issues> 提交 issue。
 - **问题、想法、技能分享与翻译协调** → 在
-  [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions) 发起话题。
+  [GitHub Discussions](https://github.com/wyx-spark/EchoDesk/discussions) 发起话题。
 - **代码、文档或翻译改动** → 提交拉取请求，（本文“分支与拉取请求流程”一节）。
 
 Issue 模板位于 [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/)——请选择与你的报告相符的
@@ -78,7 +78,7 @@ Issue 模板位于 [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/)——请
 克隆与推送都用 SSH（本仓库不使用 HTTPS 形式的远端地址）：
 
 ```bash
-git clone git@github.com:VoidEntropiaStudio/EchoDesk.git
+git clone git@github.com:wyx-spark/EchoDesk.git
 cd EchoDesk
 ```
 
@@ -86,11 +86,11 @@ cd EchoDesk
 
 ```bash
 git remote -v
-# origin  git@github.com:VoidEntropiaStudio/EchoDesk.git (fetch)
-# origin  git@github.com:VoidEntropiaStudio/EchoDesk.git (push)
+# origin  git@github.com:wyx-spark/EchoDesk.git (fetch)
+# origin  git@github.com:wyx-spark/EchoDesk.git (push)
 
 # 若显示的是 https://…，一条命令改过来：
-git remote set-url origin git@github.com:VoidEntropiaStudio/EchoDesk.git
+git remote set-url origin git@github.com:wyx-spark/EchoDesk.git
 ```
 
 需要先准备密钥：`ssh-keygen -t ed25519 -C "本机标签"`，把 `~/.ssh/id_ed25519.pub`

@@ -96,9 +96,9 @@ Write-Host "    扫描被跟踪的文本文件 $($files.Count) 个" -ForegroundC
 # ---------------------------------------------------------------------------
 # 1. 反馈渠道存在（任务书「全局要求三」）
 # ---------------------------------------------------------------------------
-$ISSUES = "https://github.com/VoidEntropiaStudio/EchoDesk/issues"
-$DISCUSS = "https://github.com/VoidEntropiaStudio/EchoDesk/discussions"
-$ADVISORY = "https://github.com/VoidEntropiaStudio/EchoDesk/security/advisories/new"
+$ISSUES = "https://github.com/wyx-spark/EchoDesk/issues"
+$DISCUSS = "https://github.com/wyx-spark/EchoDesk/discussions"
+$ADVISORY = "https://github.com/wyx-spark/EchoDesk/security/advisories/new"
 
 $needBoth = @(
     "README.md", "README.zh-Hans.md", "CONTRIBUTING.md",

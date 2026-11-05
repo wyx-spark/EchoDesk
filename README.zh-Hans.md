@@ -60,7 +60,7 @@ EchoDesk 把整套 AI 能力都留在你自己的机器上：推理、文件解�
 ### 方案 A —— 安装或解压发布物（推荐，无需安装任何运行时）
 
 1. 获取发布物：可以从本仓库的
-   [Releases 页面](https://github.com/VoidEntropiaStudio/EchoDesk/releases) 下载（发布归档上线后），
+   [Releases 页面](https://github.com/wyx-spark/EchoDesk/releases) 下载（发布归档上线后），
    也可以自己构建（本文“方案 B”一节），产物位于 `publish\EchoDesk-v0.2.2\`。
 2. 安装或解压：
    - **安装程序** —— 双击 `EchoDesk-v0.2.2-Setup.exe`（只有这一份，**不含内置模型**，
@@ -267,11 +267,11 @@ EchoDesk 的本地化是设计目标，并且写成了公开文档：
 本项目**不提供**支持邮箱、电话号码或邮寄地址。
 
 - **反馈问题或提功能请求** —— 请开 GitHub Issue：
-  <https://github.com/VoidEntropiaStudio/EchoDesk/issues>。
+  <https://github.com/wyx-spark/EchoDesk/issues>。
   缺陷报告、功能请求、技能提交与翻译协作各有对应模板；请附上版本号、操作系统、可复现步骤
   与相关日志。
 - **提问、分享技能、协作翻译** —— 请到
-  [GitHub Discussions](https://github.com/VoidEntropiaStudio/EchoDesk/discussions) 发帖。
+  [GitHub Discussions](https://github.com/wyx-spark/EchoDesk/discussions) 发帖。
 - **提交改动** —— 请开 Pull Request；[CONTRIBUTING.md](CONTRIBUTING.md) 里有开发环境、
   代码风格、提交信息规范与评审流程。日志位置：浏览器自动化审计日志写在 `backend\automation_log.jsonl`，崩溃日志写在程序目录的 `backend_crash.log`；两者都不记录文档正文、模型输出、Token 或 Cookie。
 - **安全漏洞** —— **请不要开公开 Issue**，按 [SECURITY.zh-Hans.md](SECURITY.zh-Hans.md) 的私有渠道报告

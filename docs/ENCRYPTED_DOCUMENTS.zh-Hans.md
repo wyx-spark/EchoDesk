@@ -127,10 +127,10 @@ EchoDesk 调用 WPS 读取文件的行为，与员工用 WPS 手动打开同一�
 ---
 
 **反馈与联系方式**：一般问题、合规问题以及对本文件的更正，请通过 GitHub Issues
-`https://github.com/VoidEntropiaStudio/EchoDesk/issues` 或 GitHub Discussions
-`https://github.com/VoidEntropiaStudio/EchoDesk/discussions` 提交。涉及安全敏感的报告
+`https://github.com/wyx-spark/EchoDesk/issues` 或 GitHub Discussions
+`https://github.com/wyx-spark/EchoDesk/discussions` 提交。涉及安全敏感的报告
 （包括任何看起来可以绕过加密系统的途径）**不要**开公开 Issue，请使用
-`https://github.com/VoidEntropiaStudio/EchoDesk/security/advisories/new`
+`https://github.com/wyx-spark/EchoDesk/security/advisories/new`
 私有公告表单，即 [`SECURITY.md`](../SECURITY.zh-Hans.md) 中所述的私有报告渠道；
 邮件兜底地址为 `VoidEntropiaStudio@users.noreply.github.com`。
 熵寂工作室 **未提供**电话支持或即时通讯支持渠道。

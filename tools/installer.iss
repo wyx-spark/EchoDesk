@@ -74,7 +74,7 @@
 #define MyAppName "EchoDesk"
 #define MyAppPublisher "Void Entropia Studio"
 ; 任务书「全局要求三」：公开反馈指向 GitHub Issues 与 Discussions，无实体地址
-#define MyAppURL "https://github.com/VoidEntropiaStudio/EchoDesk"
+#define MyAppURL "https://github.com/wyx-spark/EchoDesk"
 ; 修复七：程序本体在 app\ 子目录，外层是用户数据目录
 #define MyAppExeSubDir "app"
 #define MyAppExeName "EchoDesk.exe"
