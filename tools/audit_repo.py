@@ -100,6 +100,8 @@ SINGLE_FILE_BILINGUAL: dict[str, str] = {
     "docs/SECURITY.md": "指针文件：策略正文只保留在根目录两个文件里，本文件中英并排说明「去哪里读」",
     "deploy/linux/README.md": "Linux 安装说明，一屏长度，中英并排比拆两份更好对照",
     "assets/icons/README.md": "生成物说明，中英并排（图标由工具产出，改源 ico 后要重跑）",
+    "CODE_SIGNING.md": "代码签名策略：SignPath Foundation 等第三方需要**单一稳定 URL** 读取策略原文，"
+                       "拆成中英两份会出现两个入口、且英文版才是申请表单引用的那一份，故中英并排在一个文件里",
 }
 
 #: 需要成对的语言的类别（其余类别不要求成对）。

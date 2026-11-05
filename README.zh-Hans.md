@@ -71,6 +71,11 @@ EchoDesk 把整套 AI 能力都留在你自己的机器上：推理、文件解�
      （会话、模型、缓存、日志等），但 **`results\` 原样保留**。
    - **zip 免安装版** —— 解压到任意位置：桌面、其他磁盘、甚至 U 盘都可以。不会往该文件夹
      以外写任何东西，删除文件夹即卸载。
+
+   > **注意：** 本软件目前未使用商业数字签名，Windows 可能会弹出「未知发布者」警告。这是
+   > 开源项目的正常现象，请点击「更多信息」→「仍要运行」。我们的签名策略见
+   > [CODE_SIGNING.md](CODE_SIGNING.md)。
+
 3. 启动 EchoDesk：用**开始菜单快捷方式**（安装程序装的），或双击文件夹里的
    **`Start-EchoDesk-v0.2.2.lnk`**（zip 免安装版；若没有这个快捷方式，先运行一次
    `install-complete.bat`）。两种方式创建的快捷方式都指向**你自己机器上的**这份程序。
@@ -281,4 +286,5 @@ EchoDesk 采用 **Apache License 2.0** 发布；许可证全文随仓库与每�
 - 随包分发的主要第三方组件署名：[NOTICE](NOTICE)。
 - 完整的组件与许可证清单：[docs/THIRD_PARTY_LICENSES.zh-Hans.md](docs/THIRD_PARTY_LICENSES.zh-Hans.md)。
 - 模型权重**不属于**本项目，仍归其发布方的许可证管辖；下载模型前请自行确认其条款。
+- 代码签名策略：[代码签名策略](CODE_SIGNING.md)。
 - 版权所有 (C) 2026 熵寂工作室（VoidEntropiaStudio）。

@@ -74,6 +74,12 @@ No cloud account. No API key. No telemetry.
      the program created while running (session, models, caches, logs) but **keeps `results\`**.
    - **Portable zip** — unzip anywhere: desktop, another drive, even a USB stick. Nothing is written
      outside that folder, and deleting the folder uninstalls it.
+
+   > **Note:** EchoDesk is not currently signed with a commercial code-signing certificate, and
+   > Windows may show an "Unknown publisher" warning. This is normal for open-source projects —
+   > click **More info** → **Run anyway**. Our signing policy is documented in
+   > [CODE_SIGNING.md](CODE_SIGNING.md).
+
 3. Start EchoDesk: use the **Start Menu shortcut** (installer), or double-click
    **`Start-EchoDesk-v0.2.2.lnk`** inside the folder (portable zip — run `install-complete.bat`
    once if that shortcut is missing). Either shortcut points at *your* copy of the program.
@@ -310,4 +316,5 @@ shorter permissive license.
 - Full component and license inventory: [docs/THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md).
 - Model weights are **not** part of the project and remain under the license chosen by their
   publisher; confirm the terms of the model you download.
+- Code signing policy: [Code Signing Policy](CODE_SIGNING.md).
 - Copyright 2026 Void Entropia Studio.
