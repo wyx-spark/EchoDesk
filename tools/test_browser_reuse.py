@@ -263,7 +263,7 @@ def test_loopback():
     print("\n=== 1. 调试端口只连本机回环地址（安全边界）===")
     check("默认端点指向 127.0.0.1", _cdp_endpoint(9222) == "http://127.0.0.1:9222",
           _cdp_endpoint(9222))
-    for bad in ("0.0.0.0", "::", "192.168.1.10"):
+    for bad in ("0.0.0.0", "::", "192.0.2.10"):
         made = _cdp_endpoint(bad)
         check(f"端口传入 {bad!r} 时仍只会连 127.0.0.1", made.startswith("http://127.0.0.1:"), made)
         check(f"端口传入 {bad!r} 时端点里不含外部地址", bad not in made, made)
