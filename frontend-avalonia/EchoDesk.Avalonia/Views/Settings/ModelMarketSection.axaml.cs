@@ -34,6 +34,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using EchoDesk.Avalonia.Services;
 
@@ -1281,8 +1282,13 @@ public partial class ModelMarketSection : UserControl
     {
         if (Application.Current is null)
             return null;
-        if (Application.Current.TryFindResource(key, out object? value) && value is Brush brush)
+        // 必须带当前主题变体查找：不带变体时拿到的是**浅色**那份资源，
+        // 深色模式下结果行标题会被刷成浅色主题的深紫（#483D8B），在深底上几乎看不见。
+        ThemeVariant variant = Application.Current.ActualThemeVariant;
+        if (Application.Current.TryFindResource(key, variant, out object? value) && value is Brush brush)
             return brush;
+        if (Application.Current.TryFindResource(key, out value) && value is Brush fallback)
+            return fallback;
         return null;
     }
 
@@ -1325,6 +1331,148 @@ public partial class ModelMarketSection : UserControl
     // -----------------------------------------------------------------
 
     /// <summary>当前市场的可观测状态（无人值守探针据此断言，不靠"看界面"）。</summary>
+    /// <summary>
+    /// 探针：填入一组真实结构的市场结果，供 README 截图使用（`--probe shots`）。
+    /// 不联网、不依赖本机缓存；仍走 <see cref="RenderQuery"/> 这条正式渲染路径，
+    /// 所以列表、分面、分页、状态行都是产品自己的控件，不是截图时临时拼的。
+    /// </summary>
+    public void ProbeShowDemo(bool english = false)
+    {
+        _hubSuppressFilterEvents = true;
+        try
+        {
+            HubSearchBox.Text = "qwen2.5 gguf";
+            HubFilterBox.Text = "qwen2.5";
+            HubFilterExpander.IsExpanded = true;
+            _hubParamSelected.Clear();
+            _hubParamSelected.Add("p_3_8");
+            _hubQuantSelected.Clear();
+            _hubQuantSelected.Add("Q4_K_M");
+            _hubUpdatedSelected.Clear();
+            _hubUpdatedSelected.Add("d_90");
+
+            const string json = """
+            {
+              "page": 2,
+              "pages": 13,
+              "page_size": 20,
+              "filtered": 246,
+              "loaded": 246,
+              "has_more": false,
+              "total_available": 246,
+              "source_note": "__SOURCE_NOTE__",
+              "message": "__MESSAGE__",
+              "pinned": [
+                {
+                  "repo": "Qwen/Qwen2.5-7B-Instruct-GGUF",
+                  "name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+                  "is_default": true,
+                  "installed": true
+                }
+              ],
+              "items": [
+                {
+                  "repo": "bartowski/Qwen2.5-7B-Instruct-GGUF",
+                  "name": "Qwen2.5-7B-Instruct-GGUF",
+                  "author": "bartowski",
+                  "downloads": 128432,
+                  "downloads_source": "all_time",
+                  "likes": 1842,
+                  "param_b": 7.6,
+                  "quant_code": "Q4_K_M",
+                  "updated_at": "2026-10-28",
+                  "origin": "remote",
+                  "recommended": true,
+                  "installed": true
+                },
+                {
+                  "repo": "Qwen/Qwen2.5-7B-Instruct-GGUF",
+                  "name": "Qwen2.5-7B-Instruct-GGUF",
+                  "author": "Qwen",
+                  "downloads": 96421,
+                  "downloads_source": "all_time",
+                  "likes": 2107,
+                  "param_b": 7.6,
+                  "quant_code": "Q4_K_M",
+                  "updated_at": "2026-10-21",
+                  "origin": "remote",
+                  "recommended": true
+                },
+                {
+                  "repo": "lmstudio-community/Qwen2.5-7B-Instruct-GGUF",
+                  "name": "Qwen2.5-7B-Instruct-GGUF",
+                  "author": "lmstudio-community",
+                  "downloads": 42118,
+                  "downloads_source": "all_time",
+                  "likes": 689,
+                  "param_b": 7.6,
+                  "quant_code": "Q4_K_M",
+                  "updated_at": "2026-09-30",
+                  "origin": "remote",
+                  "recommended": true
+                },
+                {
+                  "repo": "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
+                  "name": "Qwen2.5-Coder-7B-Instruct-GGUF",
+                  "author": "bartowski",
+                  "downloads": 33107,
+                  "downloads_source": "all_time",
+                  "likes": 954,
+                  "param_b": 7.6,
+                  "quant_code": "Q4_K_M",
+                  "updated_at": "2026-10-11",
+                  "origin": "remote"
+                },
+                {
+                  "repo": "mradermacher/Qwen2.5-7B-Instruct-i1-GGUF",
+                  "name": "Qwen2.5-7B-Instruct-i1-GGUF",
+                  "author": "mradermacher",
+                  "downloads": 18764,
+                  "downloads_source": "default_fallback",
+                  "likes": 312,
+                  "param_b": 7.6,
+                  "quant_code": "Q4_K_M",
+                  "updated_at": "2026-08-19",
+                  "origin": "remote"
+                },
+                {
+                  "repo": "TheBloke/Qwen2.5-7B-Instruct-GGUF",
+                  "name": "Qwen2.5-7B-Instruct-GGUF",
+                  "author": "TheBloke",
+                  "downloads": 15209,
+                  "downloads_source": "all_time",
+                  "likes": 428,
+                  "param_b": 7.6,
+                  "quant_code": "Q4_K_M",
+                  "updated_at": "2026-07-02",
+                  "origin": "remote"
+                }
+              ],
+              "options": {
+                "params": { "p_le1": 9, "p_1_3": 31, "p_3_8": 118, "p_8_20": 64, "p_20_40": 18, "p_gt40": 6 },
+                "quant": { "Q4_K_M": 96, "Q5_K_M": 41, "Q8_0": 27, "Q3_K_S": 22, "Q6_K": 19, "IQ4_XS": 12 },
+                "updated": { "d_30": 53, "d_90": 121, "d_365": 72 }
+              },
+              "recommend_basis": { "params": "3–8B", "ram_gb": 16, "cpu_cores": 8 }
+            }
+            """;
+
+            string localized = json
+                .Replace("__SOURCE_NOTE__", english
+                    ? "hf-mirror.com (Hugging Face mirror)"
+                    : "hf-mirror.com（Hugging Face 镜像）", StringComparison.Ordinal)
+                .Replace("__MESSAGE__", english
+                    ? "Loaded all 246 results"
+                    : "已取回全部 246 条结果", StringComparison.Ordinal);
+            using JsonDocument document = JsonDocument.Parse(localized);
+            RenderQuery(document.RootElement, rebuildFacets: true);
+        }
+        finally
+        {
+            _hubSuppressFilterEvents = false;
+        }
+    }
+
     public sealed record MarketState(
         int ItemCount, int FacetOptions, string PageInfo, string Total, bool EmptyVisible,
         bool PinnedVisible, string PagerHint, bool NextEnabled, bool FirstEnabled,

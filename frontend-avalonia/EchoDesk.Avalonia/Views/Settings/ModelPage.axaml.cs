@@ -1,4 +1,4 @@
-﻿// 模型页的交互逻辑（v0.2.1 跨平台-2 任务一，第 8 个迁移模块）。
+// 模型页的交互逻辑（v0.2.1 跨平台-2 任务一，第 8 个迁移模块）。
 //
 // 后端动作：
 //   model_profiles         → { current, items: [ { alias, name, repo, installed, current,
@@ -954,6 +954,9 @@ public partial class ModelPage : UserControl, ISettingsPage
     public Task ProbeMarketSetPageSizeAsync(int size) => Market.ProbeSetPageSizeAsync(size);
     public Task ProbeMarketResetAsync() => Market.ProbeResetFiltersAsync();
     public Task ProbeMarketOpenPinnedDetailAsync() => Market.ProbeOpenPinnedDetailAsync();
+
+    /// <summary>探针：填入模型市场演示数据（README 截图用，可选英文）。</summary>
+    public void ProbeShowDemoMarket(bool english = false) => Market.ProbeShowDemo(english);
 
     // -----------------------------------------------------------------
     // 探针接口（`EchoDesk --probe pages` 用：本地模型库那一块）

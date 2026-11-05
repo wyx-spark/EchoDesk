@@ -1,4 +1,4 @@
-﻿// 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
+// 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
 //
 // 迁移策略：**事件处理逻辑照搬 WPF 版**（发送、流式双通道、停止、文件上传、状态刷新、
 // 指令面板、常用语、通知条、状态区、Agent 步骤行），换掉的只有界面 API。
@@ -115,6 +115,12 @@ public partial class MainWindow : Window
     public int AgentStepRowCount
         => _agentRegion is null ? 0 : EnumerateAgentRows(_agentRegion).Count();
 
+    /// <summary>
+    /// 探针/截图模式：为 true 时 Opened 不拉后端。
+    /// 截图必须可复现，不能依赖本机是否装了模型、网络是否可达；真实运行路径不受影响。
+    /// </summary>
+    public bool ProbeSuppressBackendStart { get; set; }
+
     private sealed record Message(string Role, string Content, string Reasoning, string Metrics);
 
     /// <summary>一条消息的可更新视图（流式期间就地更新，避免整屏重排）。</summary>
@@ -169,7 +175,8 @@ public partial class MainWindow : Window
             // 记忆里的尺寸可能是旧版本留下的（或被拖到过更小的屏幕），
             // 超出屏幕时窗口底部的输入区/状态区会被裁掉，用户会以为"窗口太大、点不到"。
             ClampSizeToScreen();
-            await StartBackendAsync();
+            if (!ProbeSuppressBackendStart)
+                await StartBackendAsync();
         };
     }
 
@@ -2653,6 +2660,106 @@ public partial class MainWindow : Window
         InputBox.CaretIndex = caret;
         InsertSnippet(new Snippet { Name = "probe", Text = snippetText });
         return InputBox.Text ?? "";
+    }
+
+    /// <summary>
+    /// 探针：填入一组**演示数据**，供 README 截图使用（`--probe shots`）。
+    /// 只走真实的消息渲染路径（AddMessage / MarkdownRenderer / 状态条），不截图临时拼的控件，
+    /// 因此截图里的排版、字号、状态区与用户实际看到的完全一致。
+    /// </summary>
+    public void ProbePrepareShowcase(bool english = false)
+    {
+        MessagePanel.Children.Clear();
+        _transcript.Clear();
+        _agentRegion = null;
+        _agentRows = null;
+        _live = null;
+
+        if (english)
+        {
+            AddMessage("user", "Summarize the liability clauses in this contract, especially the penalty cap and termination terms.");
+            AddMessage("assistant",
+                "Parsed **Equipment Purchase Agreement (2026 revision).docx** (18 pages / 21,480 characters) "
+                + "and used Contract mode to locate the liability clauses:\n\n"
+                + "### Key liability terms\n"
+                + "| Clause | Term | Risk |\n"
+                + "| --- | --- | --- |\n"
+                + "| 8.1 · Late delivery | 0.05% of contract value per day, capped at 10% | Medium |\n"
+                + "| 8.3 · Quality defect | Replace within 15 days; 10% of defective value after that | High |\n"
+                + "| 9.2 · Unilateral termination | Buyer may terminate, but must reimburse reasonable costs | Low |\n\n"
+                + "### Findings\n"
+                + "- **Penalty cap is low**: 10% is below the 15%–20% range common for equipment purchases.\n"
+                + "- **Quality remedy is incomplete**: clause 8.3 covers replacement only, not line-down losses or third-party inspection fees.\n"
+                + "- **Termination favours the buyer**, but “reasonable costs” is undefined; add a calculation basis.\n\n"
+                + "### Suggested rewrite (clause 8.1)\n"
+                + "> For each day of delay, Seller shall pay 0.05% of the contract value as liquidated damages. "
+                + "If cumulative damages reach 20% of the contract value, Buyer may terminate and claim actual losses.\n\n"
+                + "Source pointer: Chapter 8 “Liability” · characters 12,840–15,206 ▍",
+                "",
+                "Output 428 tokens · 18.4 tok/s · first token 0.8s · context 6,144/8,192");
+
+            InputBox.Text = "Raise the clause 8.1 penalty cap to 20% and draft a negotiation note.";
+            InputBox.CaretIndex = InputBox.Text.Length;
+
+            VersionText.Text = "v0.2.2";
+            StatusText.Text = "⏳ Generating · 428 tokens written";
+            ModelText.Text = "🧠 Model: Qwen2.5-7B-Instruct-Q4_K_M";
+            ModeText.Text = "MODE CONTRACT";
+            ContextChipText.Text = "Context: 6,144/8,192";
+            SearchText.Text = "🔎 Search: off";
+            AutoText.Text = "🤖 Automation: on";
+            MarketText.Text = "🧩 Skills: 12";
+            StripContextText.Text = "📚 Context: 6,144/8,192";
+            StripKvText.Text = "💾 KV: ~0.34 GB";
+            StripCapabilityText.Text = "🖥 Capabilities: WPS ready";
+            StripCompactText.Text = "🗜 Compaction: on";
+            MetricsText.Text = "⚡ 18.4 tok/s · first token 0.8s";
+            HintText.Text = "Enter to send · Shift+Enter for a new line · Ctrl+O to upload";
+        }
+        else
+        {
+            AddMessage("user", "帮我总结这份合同的违约责任，重点看违约金上限和解除条件。");
+            AddMessage("assistant",
+                "已解析 **《设备采购合同（2026 修订版）.docx》**（18 页 / 21,480 字），"
+                + "并用合同模式定位到违约责任相关条款：\n\n"
+                + "### 违约责任要点\n"
+                + "| 条款 | 约定 | 风险 |\n"
+                + "| --- | --- | --- |\n"
+                + "| 第 8.1 条 · 逾期交付 | 每逾期 1 日按合同总价 0.05% 计违约金，累计上限 10% | 中 |\n"
+                + "| 第 8.3 条 · 质量不符 | 乙方 15 日内更换；逾期按不合格品金额 10% 赔偿 | 高 |\n"
+                + "| 第 9.2 条 · 单方解除 | 甲方可解除，但须赔偿乙方已发生的合理成本 | 低 |\n\n"
+                + "### 关键结论\n"
+                + "- **违约金上限偏低**：10% 的上限低于同类设备采购常见的 15%–20%。\n"
+                + "- **质量责任缺少兜底**：第 8.3 条只约定更换，未覆盖停线损失与第三方检测费用。\n"
+                + "- **解除权对甲方有利**，但“合理成本”未定义，建议补充计价口径。\n\n"
+                + "### 建议改写（第 8.1 条）\n"
+                + "> 每逾期一日，乙方按合同总价的 0.05% 向甲方支付违约金；累计违约金达到合同总价 20% 时，"
+                + "甲方有权解除合同并要求赔偿实际损失。\n\n"
+                + "原文指针：第 8 章「违约责任」· 字符区间 12,840–15,206 ▍",
+                "",
+                "输出 428 tokens · 18.4 tok/s · 首字 0.8s · 上下文 6,144/8,192");
+
+            InputBox.Text = "把第 8.1 条的违约金上限改成 20%，再给我一版谈判口径。";
+            InputBox.CaretIndex = InputBox.Text.Length;
+
+            VersionText.Text = "v0.2.2";
+            StatusText.Text = "⏳ 正在生成 · 已输出 428 tokens";
+            ModelText.Text = "🧠 模型: Qwen2.5-7B-Instruct-Q4_K_M";
+            ModeText.Text = "MODE 合同审阅";
+            ContextChipText.Text = "上下文：6,144/8,192";
+            SearchText.Text = "🔎 搜索：关闭";
+            AutoText.Text = "🤖 自动化：已启用";
+            MarketText.Text = "🧩 技能市场：12 个";
+            StripContextText.Text = "📚 上下文：6,144/8,192";
+            StripKvText.Text = "💾 KV：约 0.34 GB";
+            StripCapabilityText.Text = "🖥 本机能力：WPS 可用";
+            StripCompactText.Text = "🗜 压缩：开启";
+            MetricsText.Text = "⚡ 18.4 tok/s · 首字 0.8s";
+            HintText.Text = "Enter 发送 · Shift+Enter 换行 · Ctrl+O 上传文档";
+        }
+
+        MetricsText.IsVisible = true;
+        StopButton.IsVisible = true;
     }
 
     // -----------------------------------------------------------------

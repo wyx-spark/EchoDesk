@@ -1,5 +1,7 @@
 # EchoDesk
 
+![EchoDesk 主界面 —— 本地模型正在流式输出结构化合同审阅](docs/images/screenshot-main.zh-Hans.png)
+
 > 本文是 [README.md](README.md) 的中文参考译本。如两者有歧义，**以英文版为准**。
 
 **为在严格管控环境下工作的用户提供的本地、可审计、可扩展 AI 桌面助手。**
@@ -11,6 +13,10 @@ EchoDesk 把整套 AI 能力都留在你自己的机器上：推理、文件解�
 无需云端账号，无需 API Key，无遥测。
 
 [English →](README.md)
+
+| 模型市场 | 浏览器自动化 |
+| :---: | :---: |
+| ![带筛选与分页的 Hugging Face GGUF 模型市场](docs/images/screenshot-model-market.zh-Hans.png) | ![已接受安全协议的浏览器自动化设置](docs/images/screenshot-automation.zh-Hans.png) |
 
 - **平台**：Windows 10 / 11（x64），单文件夹便携发布，唯一入口
 - **推理**：通过 llama.cpp（`llama-cpp-python`）加载本地 GGUF 模型，默认使用 CPU

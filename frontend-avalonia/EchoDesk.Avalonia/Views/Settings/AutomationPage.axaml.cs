@@ -1,4 +1,4 @@
-﻿// 自动化页的交互逻辑（v0.2.1 跨平台-2 任务一，第 7 个迁移模块）。
+// 自动化页的交互逻辑（v0.2.1 跨平台-2 任务一，第 7 个迁移模块）。
 //
 // 后端动作：
 //   automation_config      → { automation: { …20 个字段… } }
@@ -998,6 +998,96 @@ public partial class AutomationPage : UserControl, ISettingsPage
         if (accepted)
             AutomationEnabledCheck.IsChecked = true;   // 验"接受协议后总开关可以打开"
         SyncSafetyUi();
+    }
+
+    /// <summary>
+    /// 探针：填入一组已接受的自动化配置，供 README 截图使用（`--probe shots`）。
+    /// 走的是产品自己的控件与联动（SyncSafetyUi / UpdateResultsPreview），
+    /// 所以“接受协议 → 总开关可编辑 → 结果目录预览”这些状态与真实操作一致。
+    /// </summary>
+    public void ProbeShowDemo(bool english = false)
+    {
+        _loading = true;
+        try
+        {
+            SafetyCheck.IsChecked = true;
+            AutomationEnabledCheck.IsChecked = true;
+
+            TemplateCombo.ItemsSource = english
+                ? new List<TemplateItem>
+                {
+                    new("tender", "Tender notices · attachment capture",
+                        "Open each tender notice, download its attachments, and extract the project name, budget, deadline and contact details.",
+                        "pdf;docx;xlsx;zip"),
+                    new("contract", "Contract register · key clause extraction",
+                        "Walk the contract list and attachments, then extract counterparty, amount, term and liability clauses.",
+                        "pdf;docx"),
+                }
+                : new List<TemplateItem>
+                {
+                    new("tender", "招标公告 · 附件抓取",
+                        "逐条打开招标公告，下载公告附件，提取项目名称、预算金额、投标截止时间与联系方式。",
+                        "pdf;docx;xlsx;zip"),
+                    new("contract", "合同台账 · 关键条款抽取",
+                        "抓取合同列表与每份合同附件，提取相对方、金额、期限与违约责任条款。",
+                        "pdf;docx"),
+                };
+            TemplateCombo.SelectedIndex = 0;
+
+            TaskUrlBox.Text = "https://example.gov.cn/notice/tender-list";
+            TaskSelectorBox.Text = "div.tender-list > ul > li";
+            TaskRowBox.Text = "a.tender-title";
+            NextPageBox.Text = "a.next-page";
+            FileSelectorBox.Text = "div.attachment a[href$='.pdf']";
+            ExtensionsBox.Text = "pdf;docx;xlsx;zip";
+            InstructionBox.Text = english
+                ? "Extract the project name, budget, submission deadline and buyer contact. "
+                  + "If an attachment is a scanned image, mark it for manual review and never guess numbers."
+                : "提取项目名称、预算金额、投标截止时间与采购人联系方式；"
+                  + "若附件为扫描件，标注“需人工复核”，不要猜测表格里的数字。";
+            MaxTasksBox.Text = "20";
+            TimeoutBox.Text = "30000";
+            RetriesBox.Text = "1";
+            DedupeCheck.IsChecked = true;
+            SaveResultsCheck.IsChecked = true;
+            TaskNameBox.Text = english ? "Tender attachment capture" : "招标公告附件抓取";
+            ResultsRootNameBox.Text = "results";
+            ResultsLocationBox.Text = @"D:\EchoDesk\results";
+            ScheduleCheck.IsChecked = false;
+            ScheduleTimesBox.Text = "09:00";
+            LoginStateDirBox.Text = "browser_profile";
+            LoginCheckSelectorBox.Text = ".user-avatar";
+            LoginKeywordsBox.Text = "login;passport";
+            LoginStateText.Text = english
+                ? "Login state: saved (Microsoft Edge · last updated 2026-11-05 19:58)"
+                : "登录态：已保存（Microsoft Edge · 最后更新 2026-11-05 19:58）";
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+        SyncSafetyUi();
+        UpdateResultsPreview();
+        ResultsStatusText.Text = english
+            ? "✅ Results folder writable · last run produced 20 results"
+            : "✅ 结果目录可写 · 最近一次运行生成 20 份结果";
+        AutomationStatusText.Text = english
+            ? "✅ Configuration saved · last run succeeded (2026-11-05 20:42)"
+            : "✅ 配置已保存 · 最近一次运行成功（2026-11-05 20:42）";
+        AutomationLogBox.Text = english
+            ? "[20:41:58] Connected to Microsoft Edge (reused signed-in window)\n"
+              + "[20:42:03] Page 1: 20 tasks found, 20 after de-duplication\n"
+              + "[20:42:11] Task #01 downloaded 2 attachments → local model review complete\n"
+              + "[20:42:19] Task #02 downloaded 1 attachment → local model review complete\n"
+              + "[20:42:27] Task #03 had no attachment; recorded and skipped\n"
+              + "[20:42:31] Run complete: 20 tasks, 18 result files, 0 failures"
+            : "[20:41:58] 已连接 Microsoft Edge（复用已登录窗口）\n"
+              + "[20:42:03] 第 1 页：识别到 20 条任务，去重后 20 条\n"
+              + "[20:42:11] 任务 #01 下载附件 2 份 → 本地模型审阅完成\n"
+              + "[20:42:19] 任务 #02 下载附件 1 份 → 本地模型审阅完成\n"
+              + "[20:42:27] 任务 #03 未发现附件，已记录并跳过\n"
+              + "[20:42:31] 运行完成：20 个任务，18 份结果文件，0 次失败";
     }
 
     /// <summary>探针：按字段名显示一次字段帮助（验 `automation_field_help` 真的被读进来了）。</summary>

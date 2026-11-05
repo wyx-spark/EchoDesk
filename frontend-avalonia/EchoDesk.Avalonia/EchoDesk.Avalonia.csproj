@@ -24,6 +24,10 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <AssemblyName>EchoDesk</AssemblyName>
     <RootNamespace>EchoDesk.Avalonia</RootNamespace>
+    <!-- 窗口/任务栏/资源管理器里显示的图标。源文件是 ../assets/EchoDesk.ico 的副本，
+         放在 Assets 下是为了同时作为 AvaloniaResource 供 Window.Icon 使用
+         （Linux/macOS 上 ApplicationIcon 不生效，只有 AvaloniaResource 生效）。 -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- 版本口径：v0.2.1 = 跨平台之前（没有这个工程）；v0.2.2 = 跨平台版本。
          见 backend/version.py 的说明。 -->
     <Version>0.2.2.0</Version>

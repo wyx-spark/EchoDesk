@@ -1,8 +1,9 @@
-﻿<Window xmlns="https://github.com/avaloniaui"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:svc="clr-namespace:EchoDesk.Avalonia.Services"
         x:Class="EchoDesk.Avalonia.Views.MainWindow"
         Title="EchoDesk"
+        Icon="/Assets/app.ico"
         Width="844" Height="581" MinWidth="744" MinHeight="501"
         Background="{DynamicResource AppBackgroundBrush}"
         DragDrop.AllowDrop="True">

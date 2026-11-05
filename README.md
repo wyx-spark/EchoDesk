@@ -1,5 +1,7 @@
 # EchoDesk
 
+![EchoDesk main window — a local model streaming a structured contract review](docs/images/screenshot-main.png)
+
 **A local, auditable, extensible AI desktop assistant for users working in strictly-controlled environments.**
 
 EchoDesk is a Windows desktop application that keeps the entire AI stack on your own machine:
@@ -11,6 +13,10 @@ wants their files to stay on the machine.
 No cloud account. No API key. No telemetry.
 
 [中文说明 →](README.zh-Hans.md)
+
+| Model marketplace | Browser automation |
+| :---: | :---: |
+| ![Hugging Face GGUF model marketplace with filters and pagination](docs/images/screenshot-model-market.png) | ![Browser automation settings with the safety protocol accepted](docs/images/screenshot-automation.png) |
 
 - **Platform**: Windows 10 / 11 (x64), portable folder with a single entry point
 - **Inference**: local GGUF models through llama.cpp (`llama-cpp-python`), CPU by default

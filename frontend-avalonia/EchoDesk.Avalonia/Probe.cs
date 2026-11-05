@@ -1,4 +1,4 @@
-﻿// 无头（无人值守）界面探针 —— `EchoDesk --probe [main|settings|agent|both]`。
+// 无头（无人值守）界面探针 —— `EchoDesk --probe [main|settings|agent|both]`。
 //
 // 为什么需要它：`--selftest` 刻意不开窗口，只验证"启动链路 + 协议"，于是
 // **"窗口到底能不能打开"这件事一直没有任何可判定的证据**。记录里那句
@@ -54,6 +54,9 @@ internal static class Probe
     /// <summary>超过这个时间还没有结论就自己退出（退出码 1），避免无人值守时挂死。</summary>
     private static TimeSpan Budget = TimeSpan.FromSeconds(60);
 
+    /// <summary>`--probe shots` 的图片输出目录（`--out &lt;dir&gt;` 可覆盖）。</summary>
+    private static string ShowcaseDir = Path.Combine(Environment.CurrentDirectory, "docs", "images");
+
     public static int Run(string[] args)
     {
         string target = "both";
@@ -63,6 +66,10 @@ internal static class Probe
                 && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
             {
                 target = args[i + 1].ToLowerInvariant();
+            }
+            if (args[i].Equals("--out", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                ShowcaseDir = Path.GetFullPath(args[i + 1]);
             }
         }
 
@@ -75,6 +82,8 @@ internal static class Probe
                 ? TimeSpan.FromSeconds(300)
                 : target.Equals("pages", StringComparison.OrdinalIgnoreCase)
                     ? TimeSpan.FromSeconds(300)
+                : target.Equals("shots", StringComparison.OrdinalIgnoreCase)
+                    ? TimeSpan.FromSeconds(120)
                     : TimeSpan.FromSeconds(60);
 
         Console.WriteLine($"=== EchoDesk 界面探针（--probe {target}）===");
@@ -144,6 +153,10 @@ internal static class Probe
                 else if (target.Equals("sweep", StringComparison.OrdinalIgnoreCase))
                 {
                     ok = await RunEnglishSweepAsync(desktop);
+                }
+                else if (target.Equals("shots", StringComparison.OrdinalIgnoreCase))
+                {
+                    ok = await RunShowcaseAsync(desktop);
                 }
                 else
                 {
@@ -1206,6 +1219,162 @@ internal static class Probe
 
     private static readonly Regex CjkPattern = new(@"[\u4e00-\u9fa5]");
 
+    // ===================================================================================
+    // README 宣传截图（--probe shots）
+    //
+    // 只在**开发机**跑：固定深色主题、简体中文，用演示数据注入三个真实窗口，
+    // 再用 RenderTargetBitmap 以 2 倍像素渲染成 PNG。为什么这样做而不是让用户手截：
+    //   * 同一份代码每次生成同一组图，README 不会因为某次系统主题/用户名/路径而变成泄密源；
+    //   * 走的是产品自己的渲染路径（AddMessage / MarkdownRenderer / 设置页控件），
+    //     不是另画一套"示意图"——图上有什么，用户打开就能看到什么；
+    //   * 不拉后端、不联网：截图不依赖本机是否装了模型。
+    // ===================================================================================
+
+    private static async Task<bool> RunShowcaseAsync(IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        bool ok = true;
+        Directory.CreateDirectory(ShowcaseDir);
+        Console.WriteLine($"  输出目录   : {ShowcaseDir}");
+
+        string previousTheme = App.State.Settings.Theme;
+        string previousLanguage = App.State.Settings.Language;
+        double previousSettingsWidth = App.State.Settings.SettingsWindowWidth;
+        double previousSettingsHeight = App.State.Settings.SettingsWindowHeight;
+
+        var windows = new List<Window>();
+        try
+        {
+            // 深色是宣传图的主色调；中英各出一套，README.md 用英文，README.zh-Hans.md 用中文。
+            App.State.Settings.Theme = "dark";
+            App.State.ApplyTheme();
+
+            ok &= await CaptureLanguageAsync(desktop, windows, "en", english: true, suffix: "");
+            ok &= await CaptureLanguageAsync(desktop, windows, "zh-Hans", english: false, suffix: ".zh-Hans");
+
+            Console.WriteLine("  [PASS] 中英双语截图已生成（2 倍像素，深色主题）");
+        }
+        catch (Exception ex)
+        {
+            ok = false;
+            Console.WriteLine($"  [FAIL] 截图流程异常：{ex.GetType().Name}: {ex.Message}");
+            Console.WriteLine(ex.ToString());
+        }
+        finally
+        {
+            foreach (Window window in windows)
+            {
+                try { window.Close(); } catch (Exception) { }
+            }
+            // 还原用户设置：截图是开发工具，不应把主题/语言/窗口尺寸留成演示值。
+            App.State.Settings.Theme = previousTheme;
+            App.State.ApplyTheme();
+            App.State.SetLanguage(string.IsNullOrWhiteSpace(previousLanguage) ? "auto" : previousLanguage);
+            App.State.Settings.SettingsWindowWidth = previousSettingsWidth;
+            App.State.Settings.SettingsWindowHeight = previousSettingsHeight;
+        }
+
+        return ok;
+    }
+
+    /// <summary>生成一个语言版本的三张图；英文用裸文件名，中文加 .zh-Hans 后缀。</summary>
+    private static async Task<bool> CaptureLanguageAsync(IClassicDesktopStyleApplicationLifetime desktop,
+        List<Window> windows, string language, bool english, string suffix)
+    {
+        bool ok = true;
+        App.State.SetLanguage(language);
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        Console.WriteLine($"  [info] 生成 {language} 截图{suffix}");
+
+        // ---------- ① 主界面：合同摘要正在流式输出 ----------
+        var main = new MainWindow
+        {
+            ProbeSuppressBackendStart = true,
+            Width = 1280,
+            Height = 820,
+        };
+        windows.Add(main);
+        desktop.MainWindow = main;
+        main.Show();
+        await Task.Delay(800);
+        main.Width = 1280;
+        main.Height = 820;
+        main.ProbePrepareShowcase(english);
+        await Task.Delay(900);
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        ok &= CheckShowcase($"主界面（{language}）", main.Icon is not null, "Window.Icon 已解析（非 null）");
+        ok &= SaveShot(main, Path.Combine(ShowcaseDir, $"screenshot-main{suffix}.png"), scale: 2) == 1;
+
+        // ---------- ② 设置 → 模型市场 ----------
+        var marketSettings = new SettingsWindow(App.State) { Width = 1280, Height = 920 };
+        windows.Add(marketSettings);
+        marketSettings.Show();
+        await Task.Delay(1200);
+        if (!marketSettings.SelectTab("settings.tab.model"))
+        {
+            Console.WriteLine("  [FAIL] 找不到「模型」页签");
+            ok = false;
+        }
+        else
+        {
+            ModelPage? modelPage = marketSettings.FindPage<ModelPage>();
+            if (modelPage is null)
+            {
+                Console.WriteLine("  [FAIL] 设置窗口里没有 ModelPage");
+                ok = false;
+            }
+            else
+            {
+                modelPage.ProbeShowDemoMarket(english);
+                var demoState = modelPage.MarketSnapshot();
+                Console.WriteLine($"  [info] 市场演示数据：{demoState.ItemCount} 行｜{demoState.PageInfo}｜{demoState.Total}");
+                await Task.Delay(900);
+                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+                var settledState = modelPage.MarketSnapshot();
+                Console.WriteLine($"  [info] 截图前市场状态：{settledState.ItemCount} 行｜{settledState.PageInfo}｜{settledState.Total}");
+                ok &= CheckShowcase($"模型市场（{language}）", marketSettings.Icon is not null,
+                    "Window.Icon 已解析（非 null）");
+                ok &= SaveShot(marketSettings,
+                    Path.Combine(ShowcaseDir, $"screenshot-model-market{suffix}.png"), scale: 2) == 1;
+            }
+        }
+
+        // ---------- ③ 设置 → 自动化（已接受安全协议 + 填好抓取任务） ----------
+        var automationSettings = new SettingsWindow(App.State) { Width = 1280, Height = 920 };
+        windows.Add(automationSettings);
+        automationSettings.Show();
+        await Task.Delay(1200);
+        if (!automationSettings.SelectTab("settings.tab.automation"))
+        {
+            Console.WriteLine("  [FAIL] 找不到「自动化」页签");
+            ok = false;
+        }
+        else
+        {
+            AutomationPage? automationPage = automationSettings.FindPage<AutomationPage>();
+            if (automationPage is null)
+            {
+                Console.WriteLine("  [FAIL] 设置窗口里没有 AutomationPage");
+                ok = false;
+            }
+            else
+            {
+                automationPage.ProbeShowDemo(english);
+                await Task.Delay(900);
+                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+                ok &= SaveShot(automationSettings,
+                    Path.Combine(ShowcaseDir, $"screenshot-automation{suffix}.png"), scale: 2) == 1;
+            }
+        }
+
+        return ok;
+    }
+
+    private static bool CheckShowcase(string name, bool condition, string detail)
+    {
+        Console.WriteLine($"  [{(condition ? "PASS" : "FAIL")}] {name}——{detail}");
+        return condition;
+    }
+
     private static async Task<bool> RunEnglishSweepAsync(IClassicDesktopStyleApplicationLifetime desktop)
     {
         // 记住原语言并在结束时恢复：SetLanguage 会**持久化**到界面设置里，
@@ -1465,8 +1634,11 @@ internal static class Probe
         _ => value.ToString() ?? "",
     };
 
-    /// <summary>把窗口按当前渲染结果存成 PNG；失败只告警（截图是复核材料，不是判定条件）。</summary>
-    private static int SaveShot(Control window, string path)
+    /// <summary>
+    /// 把窗口按当前渲染结果存成 PNG；失败只告警（截图是复核材料，不是判定条件）。
+    /// <paramref name="scale"/> 用于 README 宣传图：2 表示按 2 倍像素渲染（高分屏观感）。
+    /// </summary>
+    private static int SaveShot(Control window, string path, int scale = 1)
     {
         try
         {
@@ -1477,9 +1649,16 @@ internal static class Probe
                 Console.WriteLine($"  [warn] 截图跳过（窗口尺寸 {w}x{h}）：{Path.GetFileName(path)}");
                 return 0;
             }
-            using var bmp = new RenderTargetBitmap(new PixelSize(w, h), new Vector(96, 96));
+            int safeScale = Math.Clamp(scale, 1, 4);
+            string? directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory))
+                Directory.CreateDirectory(directory);
+            using var bmp = new RenderTargetBitmap(
+                new PixelSize(w * safeScale, h * safeScale),
+                new Vector(96 * safeScale, 96 * safeScale));
             bmp.Render(window);
             bmp.Save(path);  // 注：该重载标记过时（仅警告），保留以免依赖具体版本的编码器选项类型
+            Console.WriteLine($"  截图       : {Path.GetFileName(path)}（{w * safeScale}×{h * safeScale}）");
             return 1;
         }
         catch (Exception ex)
