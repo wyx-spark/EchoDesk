@@ -78,15 +78,11 @@ internal static class Probe
         // agent 模式要跑一轮真模型推理；market / pages 模式要真跟后端说一轮话（几十秒）。
         Budget = target.Equals("agent", StringComparison.OrdinalIgnoreCase)
             ? TimeSpan.FromSeconds(300)
-            : target.Equals("sweep", StringComparison.OrdinalIgnoreCase)
-                ? TimeSpan.FromSeconds(240)
-            : target.Equals("market", StringComparison.OrdinalIgnoreCase)
-                ? TimeSpan.FromSeconds(300)
-                : target.Equals("pages", StringComparison.OrdinalIgnoreCase)
-                    ? TimeSpan.FromSeconds(300)
-                : target.Equals("shots", StringComparison.OrdinalIgnoreCase)
-                    ? TimeSpan.FromSeconds(120)
-                    : TimeSpan.FromSeconds(60);
+            : target.Equals("sweep", StringComparison.OrdinalIgnoreCase) ? TimeSpan.FromSeconds(240)
+            : target.Equals("market", StringComparison.OrdinalIgnoreCase) ? TimeSpan.FromSeconds(300)
+            : target.Equals("pages", StringComparison.OrdinalIgnoreCase) ? TimeSpan.FromSeconds(300)
+            : target.Equals("shots", StringComparison.OrdinalIgnoreCase) ? TimeSpan.FromSeconds(120)
+            : TimeSpan.FromSeconds(60);
 
         Console.WriteLine($"=== EchoDesk 界面探针（--probe {target}）===");
 
@@ -143,6 +139,10 @@ internal static class Probe
                 else if (target.Equals("markdown", StringComparison.OrdinalIgnoreCase))
                 {
                     ok = await Task.FromResult(RunMarkdownProbeAsync(desktop));
+                }
+                else if (target.Equals("chat", StringComparison.OrdinalIgnoreCase))
+                {
+                    ok = await RunChatProbeAsync(desktop);
                 }
                 else if (target.Equals("upload", StringComparison.OrdinalIgnoreCase))
                 {
@@ -657,6 +657,83 @@ internal static class Probe
         Check("块级公式仍渲染成居中块", FlattenText(blockFormula).Contains("E = mc^2"), FlattenText(blockFormula));
 
         return ok;
+    }
+
+    /// <summary>
+    /// [EN] Verification of the flattened message layout and of the streaming throttle
+    ///      (`--probe chat`). The mode deliberately runs without a backend: the layout parameters
+    ///      are read from freshly constructed message containers, and the streaming behaviour is
+    ///      exercised through the same buffer and timer path used by real generation.
+    /// [ZH] 平铺式消息布局与流式节流的验证（`--probe chat`）。该模式刻意不连接后端：布局参数取自
+    ///      新构建的消息容器，流式行为则通过真实生成所使用的同一缓冲区与定时器路径演练。
+    /// </summary>
+    private static async Task<bool> RunChatProbeAsync(IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        bool ok = true;
+
+        void Check(string name, bool pass, string detail)
+        {
+            Console.WriteLine($"  [{(pass ? "PASS" : "FAIL")}] {name}——{detail}");
+            if (!pass)
+                ok = false;
+        }
+
+        var main = new MainWindow { ProbeSuppressBackendStart = true };
+        desktop.MainWindow = main;
+        main.Show();
+        Console.WriteLine("  [PASS] 主窗口已构造并显示（不启动后端）");
+        await Task.Delay(300);
+
+        string styles = main.ProbeMessageStyleSnapshot();
+        Console.WriteLine($"  消息样式   : {styles.Replace("\n", "  ‖  ")}");
+        string[] parts = styles.Split('\n');
+        string user = parts.Length > 0 ? parts[0] : "";
+        string assistant = parts.Length > 1 ? parts[1] : "";
+
+        Check("用户消息呈现为浅色背景块",
+            user.Contains("bg=#", StringComparison.Ordinal)
+            && !user.Contains("bg=Transparent", StringComparison.Ordinal)
+            && !user.Contains("bg=#00ffffff", StringComparison.OrdinalIgnoreCase), user);
+        Check("助手消息正文平铺（无背景）",
+            assistant.Contains("bg=Transparent", StringComparison.Ordinal)
+            || assistant.Contains("bg=#00ffffff", StringComparison.OrdinalIgnoreCase), assistant);
+        Check("消息下方间距已增大（≥ 14）",
+            ReadNumber(user, "marginBottom") >= 14, OneLine(user, 160));
+        Check("用户块具备内边距", ReadNumber(user, "padLeft") >= 10, OneLine(user, 160));
+        Check("操作条默认隐藏且不参与命中测试",
+            user.Contains("barOpacity=0", StringComparison.Ordinal)
+            && user.Contains("barHit=False", StringComparison.Ordinal), user);
+        Check("操作条具备淡入过渡", ReadNumber(user, "barTransitions") >= 1, user);
+        Check("悬停时操作条浮现且恢复可交互",
+            user.Contains("barHover=1/True", StringComparison.Ordinal), user);
+        Check("角色标识为小号字体", ReadNumber(user, "roleFont") is >= 10 and <= 12, user);
+
+        string streaming = await main.ProbeStreamingAsync(2000);
+        Console.WriteLine($"  流式节流   : {streaming}");
+        Check("节流间隔不超过 40 毫秒", ReadNumber(streaming, "interval") is > 0 and <= 40,
+            OneLine(streaming, 160));
+        Check("高频 Token 被合并且渲染次数远小于 Token 数",
+            ReadNumber(streaming, "renders") > 0
+            && ReadNumber(streaming, "renders") < ReadNumber(streaming, "tokens") / 10,
+            OneLine(streaming, 160));
+        Check("最后一个 Token 没有丢失",
+            streaming.Contains("tailPresent=True", StringComparison.Ordinal), OneLine(streaming, 160));
+        Check("流式期间显示打字机光标",
+            streaming.Contains("caretDuring=True", StringComparison.Ordinal), OneLine(streaming, 160));
+        Check("生成结束后光标立即消失",
+            streaming.Contains("caretAfter=False", StringComparison.Ordinal), OneLine(streaming, 160));
+
+        return ok;
+    }
+
+    /// <summary>
+    /// [EN] Reads the numeric value of a <c>key=value</c> pair from a probe report string.
+    /// [ZH] 从探针报告字符串中读取 <c>key=value</c> 键值对的数值。
+    /// </summary>
+    private static double ReadNumber(string report, string key)
+    {
+        var match = Regex.Match(report, Regex.Escape(key) + @"=(-?[0-9]+(?:\.[0-9]+)?)");
+        return match.Success && double.TryParse(match.Groups[1].Value, out double value) ? value : -1;
     }
 
     // ---- 控件树断言用的小工具（只在探针里用，不进产品代码） ----

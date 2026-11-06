@@ -1,4 +1,4 @@
-﻿// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Utilities/MarkdownRenderer.cs. See type and member comments for details.
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Utilities/MarkdownRenderer.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Utilities/MarkdownRenderer.cs。类型与成员说明见下方注释。
 // Markdown → Avalonia 控件的渲染器（对应 WPF 版的 Utilities/MarkdownRenderer.cs）。
 //
@@ -35,12 +35,21 @@ public static class MarkdownRenderer
     public static readonly FontFamily MonoFont =
         new("Consolas, Menlo, DejaVu Sans Mono, Liberation Mono, Courier New, monospace");
 
-    /// <summary>把 Markdown 文本渲染成一棵可放进消息气泡的控件树。</summary>
-    public static Control Build(string markdown, double fontSize)
+    /// <summary>
+    /// [EN] Renders Markdown into a control tree that can be hosted by a message container.
+    ///      When a trailing caret control is supplied, it is appended to the end of the final
+    ///      flow text block so that the streaming position follows the last glyph.
+    /// [ZH] 将 Markdown 渲染为可由消息容器承载的控件树。若提供尾随光标控件，则将其追加到最后一个
+    ///      流式文本块的末尾，使流式位置紧随最后一个字形。
+    /// </summary>
+    public static Control Build(string markdown, double fontSize, Control? trailingCaret = null)
     {
         var panel = new StackPanel { Spacing = 6 };
         if (string.IsNullOrEmpty(markdown))
+        {
+            AttachTrailingCaret(panel, trailingCaret, fontSize);
             return panel;
+        }
 
         string[] lines = markdown.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
         int i = 0;
@@ -176,7 +185,70 @@ public static class MarkdownRenderer
             }
             panel.Children.Add(BuildParagraph(string.Join("\n", para), fontSize));
         }
+        AttachTrailingCaret(panel, trailingCaret, fontSize);
         return panel;
+    }
+
+    // -----------------------------------------------------------------
+    // [EN] Streaming caret attachment / [ZH] 流式光标挂接
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// [EN] Attaches the supplied caret to the end of the last flow text block. The caret is
+    ///      inserted as an inline element of that block, therefore it occupies the exact glyph
+    ///      position and participates in the same text layout. A document whose last block is a
+    ///      non-flow block (code block, table or formula) receives a dedicated trailing
+    ///      paragraph, because appending inlines to a text container that renders a plain text
+    ///      string would replace its content.
+    /// [ZH] 将给定光标挂接到最后一个流式文本块的末尾。光标作为该块的行内元素插入，因此它占据精确的
+    ///      字位并参与同一套文本排版。若文档的最后一个块为非流式块（代码块、表格或公式块），
+    ///      则改用一段专用的尾随段落承载，因为向以纯文本字符串呈现内容的文本容器追加行内元素
+    ///      会替换其既有内容。
+    /// </summary>
+    private static void AttachTrailingCaret(StackPanel panel, Control? trailingCaret, double fontSize)
+    {
+        if (trailingCaret is null)
+            return;
+        TextBlock? host = FindTrailingFlowTextBlock(panel);
+        if (host is null || host.Inlines is null)
+        {
+            var fallback = NewTextBlock(fontSize);
+            fallback.Inlines!.Add(new InlineUIContainer(trailingCaret));
+            panel.Children.Add(fallback);
+            return;
+        }
+        host.Inlines.Add(new InlineUIContainer(trailingCaret));
+    }
+
+    /// <summary>
+    /// [EN] Locates the last text block in document order that renders through its inline
+    ///      collection. Containers are traversed in visual order so that the result is the
+    ///      block the reader perceives as the final line of the rendered document.
+    /// [ZH] 按文档顺序定位最后一个通过行内集合呈现内容的文本块。容器按可视化顺序遍历，
+    ///      因此结果就是读者所感知的文档末行所在块。
+    /// </summary>
+    private static TextBlock? FindTrailingFlowTextBlock(Control root)
+    {
+        TextBlock? last = null;
+        Collect(root);
+        return last;
+
+        void Collect(Control node)
+        {
+            switch (node)
+            {
+                case TextBlock block when string.IsNullOrEmpty(block.Text) && block.Inlines is { Count: > 0 }:
+                    last = block;
+                    break;
+                case Panel panel:
+                    foreach (Control child in panel.Children)
+                        Collect(child);
+                    break;
+                case Decorator { Child: Control decorated }:
+                    Collect(decorated);
+                    break;
+            }
+        }
     }
 
     // -----------------------------------------------------------------
@@ -790,8 +862,18 @@ public static class MarkdownRenderer
     {
         try
         {
-            if (Application.Current is { } app && app.TryFindResource(key, out object? value) && value is IBrush brush)
-                return brush;
+            if (Application.Current is { } app)
+            {
+                // [EN] The theme variant is passed explicitly: the application requests
+                //      ThemeVariant.Default while the palette lives in the Light and Dark
+                //      dictionaries.
+                // [ZH] 显式传入主题变体：应用程序请求 ThemeVariant.Default，而色板存放于 Light 与
+                //      Dark 两个主题字典中。
+                if (app.TryFindResource(key, app.ActualThemeVariant, out object? value) && value is IBrush brush)
+                    return brush;
+                if (app.TryFindResource(key, out value) && value is IBrush fallbackBrush)
+                    return fallbackBrush;
+            }
         }
         catch (Exception)
         {

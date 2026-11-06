@@ -25,8 +25,11 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Documents;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
@@ -56,12 +59,37 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _streamCts;
     private bool _busy;
 
-    // 流式中：文本缓冲 + 节流重渲染
+    // [EN] Streaming state. The answer and reasoning buffers are appended from the backend
+    //      reader thread, therefore every access is serialised through the gate below while the
+    //      rendering pass itself executes on the UI thread only.
+    // [ZH] 流式状态。回答与思考缓冲区由后端读取线程追加，因此所有访问均经下方闸门串行化，
+    //      而渲染过程本身只在界面线程执行。
+    private readonly object _streamGate = new();
     private readonly StringBuilder _liveAnswer = new();
     private readonly StringBuilder _liveReasoning = new();
     private MessageView? _live;
     private DispatcherTimer? _renderTimer;
-    private bool _renderDirty;
+    private volatile bool _renderDirty;
+    private string _liveRendered = "";
+    private int _renderCount;
+    private Control? _liveCaret;
+    private readonly Stopwatch _caretClock = Stopwatch.StartNew();
+
+    /// <summary>
+    /// [EN] Coalescing interval of the streaming render timer: at most one Markdown parse per
+    ///      frame budget, which keeps tokens that arrive at a higher rate from each triggering
+    ///      their own layout pass.
+    /// [ZH] 流式渲染定时器的合并间隔：每个帧预算最多执行一次 Markdown 解析，使以更高频率到达的
+    ///      Token 不会各自触发一次布局过程。
+    /// </summary>
+    private static readonly TimeSpan RenderInterval = TimeSpan.FromMilliseconds(33);
+
+    /// <summary>
+    /// [EN] Total duration of one breathing cycle of the streaming caret, in milliseconds.
+    /// [ZH] 流式光标单个呼吸周期的总时长，单位为毫秒。
+    /// </summary>
+    private const double CaretBreathMilliseconds = 1200;
+
 
     // 指令面板 / 常用语面板
     private TextBox? _paletteSource;
@@ -1996,11 +2024,16 @@ public partial class MainWindow : Window
         return false;
     }
 
-    /// <summary>流式对话（chat_stream）：双通道 delta + 结构化事件 + 可中止。</summary>
+    /// <summary>
+    /// [EN] Streams one conversation turn: dual-channel deltas, structured events and
+    ///      cancellation support. Every delta reaches the buffers through the stream gate and is
+    ///      rendered by the coalescing timer, never directly from the reader thread.
+    /// [ZH] 流式执行一轮对话：双通道增量、结构化事件与可中止能力。每个增量均通过流式闸门写入
+    ///      缓冲区，并由合并式定时器渲染，绝不直接在后端读取线程上渲染。
+    /// </summary>
     private async Task StreamChatAsync(string text)
     {
-        _liveAnswer.Clear();
-        _liveReasoning.Clear();
+        ResetStreamBuffers();
         _live = AddMessageView("assistant", "", "");
         StartRenderTimer();
         _streamCts = new CancellationTokenSource();
@@ -2011,14 +2044,13 @@ public partial class MainWindow : Window
         {
             finalText = await _state.Backend.SendStreamAsync(
                 new { action = "chat_stream", message = text },
-                onDelta: delta =>
-                {
-                    _liveAnswer.Append(delta);
-                    MarkDirty();
-                },
-                // 上下文显示统一由 done 行那条 onEvent → DispatchStreamEvent →
-                // ApplyContextFields 处理：只有它拿得到 used_last_request（任务十）。
-                // 这里再显示一次 used 反而会把"上一轮实际发出"的值盖掉。
+                onDelta: delta => AppendAnswerText(delta),
+                // [EN] Context accounting is handled exclusively by the done event through
+                //      DispatchStreamEvent and ApplyContextFields, because only that path carries
+                //      the value of the previous request. Reporting it here would overwrite that
+                //      authoritative figure.
+                // [ZH] 上下文计量仅由 done 事件经 DispatchStreamEvent 与 ApplyContextFields 处理，
+                //      因为只有该路径携带上一轮请求的数值。在此处重复上报会覆盖该权威数值。
                 onContext: (_, _) => { },
                 idleTimeout: null,   // 流式不设空闲超时（后端可能在等待很长的生成）
                 cancellationToken: _streamCts.Token,
@@ -2027,10 +2059,10 @@ public partial class MainWindow : Window
                 {
                     if (channel == "reasoning")
                     {
-                        _liveReasoning.Append(content);
+                        AppendReasoningText(content);
                         if (_live is not null)
                         {
-                            _live.ThinkingText.Text = Emoji.Prefer(_liveReasoning.ToString());
+                            _live.ThinkingText.Text = Emoji.Prefer(SnapshotReasoning());
                             _live.ThinkingBox.IsVisible = true;
                         }
                     }
@@ -2038,23 +2070,27 @@ public partial class MainWindow : Window
                     {
                         if (reset)
                         {
-                            // 作废回答区：此前发的内容其实属于思考（把已累积的回答搬进思考区）
-                            _liveReasoning.Insert(0, _liveAnswer.ToString());
-                            _liveAnswer.Clear();
+                            // [EN] The answer channel is declared void: the accumulated content in
+                        //      fact belongs to the reasoning channel and is moved there.
+                        // [ZH] 回答通道被声明作废：此前累积的内容实际属于思考通道，故迁移至该通道。
+                            lock (_streamGate)
+                            {
+                                _liveReasoning.Insert(0, _liveAnswer.ToString());
+                                _liveAnswer.Clear();
+                            }
                             if (_live is not null)
                             {
-                                _live.ThinkingText.Text = Emoji.Prefer(_liveReasoning.ToString());
+                                _live.ThinkingText.Text = Emoji.Prefer(SnapshotReasoning());
                                 _live.ThinkingBox.IsVisible = true;
                             }
                         }
-                        _liveAnswer.Append(content);
-                        MarkDirty();
+                        AppendAnswerText(content);
                     }
                 }));
         }
         catch (OperationCanceledException)
         {
-            finalText = _liveAnswer.ToString();
+            finalText = SnapshotAnswer();
             _liveMetrics = Loc.T("main.metrics.stopped", "⏹ 已中止");
             if (_live is not null)
                 _live.Metrics = _liveMetrics;
@@ -2062,17 +2098,20 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
-            finalText = _liveAnswer.ToString();
-            // 生成失败：指标行要说"这次是失败的"，否则界面上只留下一串上一次的旧数字，
-            // 看起来像"还在算"（v0.2.2 第 4 批补的失败态，对齐 WPF）
+            finalText = SnapshotAnswer();
+            // [EN] Generation failed: the metrics row must state the failure explicitly,
+            //      otherwise the previous figures remain on screen and the interface appears to be
+            //      still computing.
+            // [ZH] 生成失败：指标行必须明确说明失败，否则界面上会残留上一轮的数值，
+            //      使界面看起来仍在计算。
             _metricsFailed = true;
             Dispatcher.UIThread.Post(() => ShowMetrics(_liveMetrics));
         }
         finally
         {
             StopRenderTimer();
-            string answer = finalText.Length > 0 ? finalText : _liveAnswer.ToString();
-            string reasoning = _liveReasoning.ToString();
+            string answer = finalText.Length > 0 ? finalText : SnapshotAnswer();
+            string reasoning = SnapshotReasoning();
             RemoveLiveMessage();
             AddMessage("assistant", answer, reasoning, _liveMetrics);
             _streamCts?.Dispose();
@@ -2124,14 +2163,14 @@ public partial class MainWindow : Window
                 if (root.TryGetProperty("reasoning", out JsonElement r))
                 {
                     string reasoning = r.GetString() ?? "";
-                    if (reasoning.Length > 0 && _liveReasoning.Length == 0)
+                    if (reasoning.Length > 0 && SnapshotReasoning().Length == 0)
                     {
-                        _liveReasoning.Append(reasoning);
+                        AppendReasoningText(reasoning);
                         Dispatcher.UIThread.Post(() =>
                         {
                             if (_live is not null)
                             {
-                                _live.ThinkingText.Text = Emoji.Prefer(_liveReasoning.ToString());
+                                _live.ThinkingText.Text = Emoji.Prefer(SnapshotReasoning());
                                 _live.ThinkingBox.IsVisible = true;
                             }
                         });
@@ -2892,41 +2931,176 @@ public partial class MainWindow : Window
     // 消息渲染
     // -----------------------------------------------------------------
 
+    /// <summary>
+    /// [EN] Starts the coalescing render timer. A single dispatcher timer drives both the
+    ///      throttled Markdown refresh and the breathing phase of the streaming caret, therefore
+    ///      no second timer competes for the UI thread budget.
+    /// [ZH] 启动合并式渲染定时器。由单个调度定时器同时驱动节流后的 Markdown 刷新与流式光标的
+    ///      呼吸相位，因此不会有第二个定时器争夺界面线程的时间预算。
+    /// </summary>
     private void StartRenderTimer()
     {
-        _renderTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
-        _renderTimer.Tick -= OnRenderTick;
-        _renderTimer.Tick += OnRenderTick;
+        if (_renderTimer is null)
+        {
+            _renderTimer = new DispatcherTimer { Interval = RenderInterval };
+            _renderTimer.Tick += OnRenderTick;
+        }
+        _caretClock.Restart();
         _renderTimer.Start();
     }
 
+    /// <summary>
+    /// [EN] Stops the render timer and performs a final flush so that the last token received
+    ///      before completion is always rendered, even when it arrived after the final tick.
+    /// [ZH] 停止渲染定时器并执行最终刷新，确保完成之前收到的最后一个 Token 一定被渲染，
+    ///      即使它晚于最后一次定时器触发才到达。
+    /// </summary>
     private void StopRenderTimer()
     {
-        if (_renderTimer is not null)
-            _renderTimer.Stop();
+        _renderTimer?.Stop();
         if (_renderDirty)
             RenderLive();
+        // [EN] The caret belongs to the streaming state only; completion removes it immediately.
+        // [ZH] 光标仅属于流式状态；生成完成时立即移除。
+        _liveCaret = null;
     }
 
     private void OnRenderTick(object? sender, EventArgs e)
     {
+        // [EN] Opacity is a render-only property, therefore the breathing update never
+        //      invalidates measure or arranges a new text layout.
+        // [ZH] 不透明度仅影响渲染，因此呼吸更新不会使测量失效，也不会重新安排文本布局。
+        UpdateCaretOpacity();
         if (_renderDirty)
             RenderLive();
     }
 
     private void MarkDirty() => _renderDirty = true;
 
-    /// <summary>把流式缓冲渲染进当前气泡（节流后调用，不在每个 token 上做）。</summary>
+    /// <summary>
+    /// [EN] Appends an answer fragment under the stream gate. The backend reader thread may be
+    ///      the caller, so no UI element is touched here; only the shared buffer is extended and
+    ///      the render pass is marked as pending.
+    /// [ZH] 在流式闸门下追加回答片段。调用方可能是后端读取线程，因此此处不触碰任何界面元素；
+    ///      仅扩展共享缓冲区并将渲染过程标记为待执行。
+    /// </summary>
+    private void AppendAnswerText(string text)
+    {
+        lock (_streamGate)
+            _liveAnswer.Append(text);
+        MarkDirty();
+    }
+
+    /// <summary>
+    /// [EN] Appends a reasoning fragment under the stream gate.
+    /// [ZH] 在流式闸门下追加思考片段。
+    /// </summary>
+    private void AppendReasoningText(string text)
+    {
+        lock (_streamGate)
+            _liveReasoning.Append(text);
+    }
+
+    /// <summary>
+    /// [EN] Returns a consistent snapshot of a streaming buffer. A snapshot is required because
+    ///      the buffer may grow while the UI thread is parsing the previous content.
+    /// [ZH] 返回流式缓冲区的一致快照。必须使用快照，因为界面线程解析上一份内容期间缓冲区可能仍在增长。
+    /// </summary>
+    private string SnapshotAnswer()
+    {
+        lock (_streamGate)
+            return _liveAnswer.ToString();
+    }
+
+    private string SnapshotReasoning()
+    {
+        lock (_streamGate)
+            return _liveReasoning.ToString();
+    }
+
+    /// <summary>
+    /// [EN] Clears both streaming buffers under the gate.
+    /// [ZH] 在闸门下清空两个流式缓冲区。
+    /// </summary>
+    private void ResetStreamBuffers()
+    {
+        lock (_streamGate)
+        {
+            _liveAnswer.Clear();
+            _liveReasoning.Clear();
+        }
+        _liveRendered = "";
+    }
+
+    /// <summary>
+    /// [EN] Creates the caret element for the current font size. The element is two pixels wide
+    ///      and one text line high, and it is inserted into the inline flow rather than overlaid,
+    ///      so it cannot cover surrounding content.
+    /// [ZH] 按当前字号创建光标元素。该元素宽两像素、高度为一行文本，并插入行内流中而非叠加层，
+    ///      因此不会遮挡周围内容。
+    /// </summary>
+    private Control CreateTypingCaret()
+    {
+        double height = Math.Max(12, _state.Settings.FontSize * 1.15);
+        var caret = new Border
+        {
+            Width = 2,
+            Height = height,
+            Margin = new Thickness(3, 0, 0, 0),
+            CornerRadius = new CornerRadius(1),
+            Background = ResolveBrush("AccentBrush", Brushes.Teal),
+            VerticalAlignment = VerticalAlignment.Center,
+            Opacity = CaretOpacity(),
+        };
+        AutomationProperties.SetAutomationId(caret, "TypingCaret");
+        return caret;
+    }
+
+    /// <summary>
+    /// [EN] Current breathing opacity of the caret, computed from the elapsed stream time on a
+    ///      continuous 1 -> 0 -> 1 cosine cycle. The phase is continuous across re-renders, so
+    ///      a recreated caret resumes at the same level instead of restarting.
+    /// [ZH] 光标的当前呼吸不透明度，根据已流逝的流式时间在连续的 1 → 0 → 1 余弦周期上计算。
+    ///      相位在多次重渲染之间保持连续，因此重建后的光标从同一水平继续，而不会重新开始。
+    /// </summary>
+    private double CaretOpacity()
+    {
+        double phase = (_caretClock.ElapsedMilliseconds % CaretBreathMilliseconds) / CaretBreathMilliseconds;
+        return 0.5 + 0.5 * Math.Cos(phase * 2 * Math.PI);
+    }
+
+    private void UpdateCaretOpacity()
+    {
+        if (_liveCaret is not null)
+            _liveCaret.Opacity = CaretOpacity();
+    }
+
+    /// <summary>
+    /// [EN] Renders the buffered answer into the live message. The pass runs at most once per
+    ///      render interval and skips work when neither the text nor the caret state changed,
+    ///      which prevents repeated Markdown parsing from entering a layout feedback loop.
+    /// [ZH] 将缓冲的回答渲染进流式消息。该过程每个渲染间隔至多执行一次，并在文本与光标状态均未
+    ///      变化时跳过，从而防止重复的 Markdown 解析进入布局反馈循环。
+    /// </summary>
     private void RenderLive()
     {
         _renderDirty = false;
         if (_live is null)
             return;
-        // 流式正文同样走 emoji 降级（与 AddMessage 一致，见那里的说明）
+        string answer = SnapshotAnswer();
+        if (_liveCaret is not null && string.Equals(answer, _liveRendered, StringComparison.Ordinal))
+            return;
+        _liveRendered = answer;
+        _renderCount++;
+        // [EN] A fresh caret instance is created per pass; its opacity is taken from the shared
+        //      phase so that the breathing remains continuous.
+        // [ZH] 每次渲染创建新的光标实例；其不透明度取自共享相位，因此呼吸保持连续。
+        _liveCaret = CreateTypingCaret();
         _live.ContentHost.Content = MarkdownRenderer.Build(
-            Emoji.Prefer(_liveAnswer.ToString()), _state.Settings.FontSize);
+            Emoji.Prefer(answer), _state.Settings.FontSize, _liveCaret);
         ScrollToBottom();
     }
+
 
     private MessageView AddMessageView(string role, string content, string reasoning, string metrics = "")
     {
@@ -2958,16 +3132,19 @@ public partial class MainWindow : Window
 
     private void AddMessage(string role, string content, string reasoning = "", string metrics = "")
     {
-        // Emoji 降级作用于**消息正文**（v0.2.2 第 4 批 3b）：此前只有 system 消息
-        // （BuildPlainText）走 Emoji.Prefer，助手/用户的正文里的 emoji 在缺字体的机器上
-        // 会显示成豆腐块。WPF 侧是在 AddMessage 入口统一转一次（`content = Emoji.Prefer(content)`），
-        // 这里照做 —— 转换发生在**渲染之前**，所以代码块、表格里的 emoji 也一并降级。
+        // [EN] Emoji degradation is applied to the message body at the single entry point, before
+        //      rendering, so that emoji inside code blocks and tables are degraded as well.
+        // [ZH] Emoji 降级在唯一的入口处、渲染之前施加于消息正文，因此代码块与表格内部的 emoji
+        //      同样会被降级。
         content = Emoji.Prefer(content);
         reasoning = Emoji.Prefer(reasoning);
         _transcript.Add(new Message(role, content, reasoning, metrics));
         MessageView view = AddMessageView(role, content, reasoning, metrics);
-        // 与 WPF 一致：只有助手消息走 Markdown（且没有角色图标）；
-        // 用户/系统消息是**纯文本**，正文前带角色图标，整段用角色色（UserBrush / SystemBrush）。
+        // [EN] Only assistant messages are rendered as Markdown. User and system messages are
+        //      rendered as plain text in the role body colour; the role itself is conveyed by the
+        //      header label rather than by an inline icon.
+        // [ZH] 仅助手消息按 Markdown 呈现。用户与系统消息以角色正文色呈现为纯文本；角色信息由
+        //      标题行标识传达，而不再使用行内图标。
         if (role == "assistant")
             view.ContentHost.Content = MarkdownRenderer.Build(content, _state.Settings.FontSize);
         else
@@ -2993,15 +3170,202 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>角色图标：与 WPF NewMessagePanel 的 <c>role switch</c> 一一对应。</summary>
-    private static string RoleIcon(string role) => role switch
-    {
-        "user" => "👤 ",
-        "assistant" => "🤖 ",
-        _ => "ℹ️ ",
-    };
+    // -----------------------------------------------------------------
+    // [EN] Probe interface: message layout and streaming throttle
+    // [ZH] 探针接口：消息布局与流式节流
+    // -----------------------------------------------------------------
 
-    /// <summary>角色正文色：与 WPF 的 UserBrush / AssistantBrush / SystemBrush 对应。</summary>
+    /// <summary>
+    /// [EN] Reports the visual parameters of a freshly constructed user message and assistant
+    ///      message. The values allow an unattended probe to assert the flattened layout: the
+    ///      user block carries a light background, the assistant body is transparent, the spacing
+    ///      below each message is increased, and the action bar starts hidden and excluded from
+    ///      hit testing.
+    /// [ZH] 报告新构建的用户消息与助手消息的视觉参数。借助这些数值，无人值守探针可以断言平铺式
+    ///      布局：用户块带有浅色背景、助手正文透明、每条消息下方间距增大，且操作条初始为隐藏状态
+    ///      并排除于命中测试之外。
+    /// </summary>
+    public string ProbeMessageStyleSnapshot()
+    {
+        var user = BuildMessageControls("user", "probe", "", "");
+        var assistant = BuildMessageControls("assistant", "probe", "", "");
+        return Describe(user.Item1) + "\n" + Describe(assistant.Item1);
+
+        static string Describe(Border bubble)
+        {
+            var stack = bubble.Child as StackPanel;
+            StackPanel? bar = null;
+            TextBlock? roleLabel = null;
+            if (stack is not null)
+            {
+                foreach (object child in stack.Children)
+                {
+                    if (child is StackPanel candidate
+                        && string.Equals(AutomationProperties.GetAutomationId(candidate), "MessageActions",
+                            StringComparison.Ordinal))
+                        bar = candidate;
+                    if (child is Grid header)
+                        roleLabel = header.Children.OfType<TextBlock>().FirstOrDefault();
+                }
+            }
+            // [EN] The reveal state is exercised through the same helper that the pointer
+            //      handlers invoke, then restored, so the idle values remain those of a message
+            //      that has not been hovered.
+            // [ZH] 浮现状态通过指针处理器调用的同一辅助方法演练，随后复原，因此静息值仍为
+            //      尚未悬停的消息所应有的取值。
+            string hover = "n/a";
+            if (bar is not null)
+            {
+                SetActionBarVisible(bar, true);
+                hover = $"{bar.Opacity:0.##}/{bar.IsHitTestVisible}";
+                SetActionBarVisible(bar, false);
+            }
+            return $"bg={bubble.Background}｜padLeft={bubble.Padding.Left:0.#}"
+                   + $"｜marginBottom={bubble.Margin.Bottom:0.#}"
+                   + $"｜barOpacity={bar?.Opacity:0.##}｜barHit={bar?.IsHitTestVisible}"
+                   + $"｜barHover={hover}"
+                   + $"｜barTransitions={bar?.Transitions?.Count ?? 0}"
+                   + $"｜roleFont={(roleLabel?.FontSize ?? 0):0.#}";
+        }
+    }
+
+    /// <summary>
+    /// [EN] Exercises the streaming pipeline without a backend connection. A high-frequency token
+    ///      burst is pushed into the shared buffer while the coalescing timer runs, then a final
+    ///      fragment is appended after the last tick and the forced flush is verified to contain
+    ///      it. The report also states whether the caret exists during streaming and whether it
+    ///      has disappeared once the turn is completed.
+    /// [ZH] 在不连接后端的前提下演练流式管线。在合并式定时器运行期间向共享缓冲区写入高频 Token
+    ///      突发，随后在最后一次定时器触发之后追加最后一个片段，并验证强制刷新结果包含该片段。
+    ///      报告同时说明光标在流式期间是否存在、以及本轮结束后是否已经消失。
+    /// </summary>
+    public async Task<string> ProbeStreamingAsync(int tokenCount)
+    {
+        ResetStreamBuffers();
+        _live = AddMessageView("assistant", "", "");
+        StartRenderTimer();
+        _renderCount = 0;
+        for (int i = 0; i < tokenCount; i++)
+        {
+            AppendAnswerText($"tok{i} ");
+            if (i % 200 == 199)
+                await Task.Delay(40);
+        }
+        bool caretDuring = _liveCaret is not null && FindByAutomationId(_live.Root, "TypingCaret") is not null;
+        // [EN] The final fragment deliberately arrives after the last timer tick.
+        // [ZH] 最后一个片段刻意在最后一次定时器触发之后到达。
+        AppendAnswerText("final-token");
+        StopRenderTimer();
+        string rendered = FlattenContentText(_live.ContentHost);
+        bool tailPresent = rendered.Contains("final-token", StringComparison.Ordinal);
+        RemoveLiveMessage();
+        AddMessage("assistant", rendered);
+        bool caretAfter = FindByAutomationId(MessagePanel, "TypingCaret") is not null;
+        return $"tokens={tokenCount}｜renders={_renderCount}｜interval={RenderInterval.TotalMilliseconds:0}"
+               + $"｜tailPresent={tailPresent}｜caretDuring={caretDuring}｜caretAfter={caretAfter}";
+    }
+
+    /// <summary>
+    /// [EN] Flattens the rendered text of a control tree, including inline runs, so that a probe
+    ///      can verify that the rendered content equals the buffered content.
+    /// [ZH] 将控件树的已渲染文本（含行内片段）拼接为单一字符串，使探针能够验证渲染内容与缓冲区
+    ///      内容一致。
+    /// </summary>
+    private static string FlattenContentText(Control? root)
+    {
+        var builder = new StringBuilder();
+        Collect(root);
+        return builder.ToString();
+
+        void Collect(Control? node)
+        {
+            switch (node)
+            {
+                case TextBlock block:
+                    if (!string.IsNullOrEmpty(block.Text))
+                    {
+                        builder.Append(block.Text);
+                    }
+                    else if (block.Inlines is not null)
+                    {
+                        foreach (Inline inline in block.Inlines)
+                            CollectInline(inline);
+                    }
+                    break;
+                case Panel panel:
+                    foreach (Control child in panel.Children)
+                        Collect(child);
+                    break;
+                case Decorator { Child: Control decorated }:
+                    Collect(decorated);
+                    break;
+                case ContentControl { Content: Control content }:
+                    Collect(content);
+                    break;
+            }
+        }
+
+        void CollectInline(Inline inline)
+        {
+            switch (inline)
+            {
+                case Run run:
+                    builder.Append(run.Text);
+                    break;
+                case Span { Inlines: not null } span:
+                    foreach (Inline child in span.Inlines)
+                        CollectInline(child);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// [EN] Finds a control by automation identifier without relying on the visual tree, so that
+    ///      the lookup also works before the window has been laid out.
+    /// [ZH] 依据自动化标识查找控件，且不依赖可视化树，因此该查找在窗口完成布局之前同样有效。
+    /// </summary>
+    private static Control? FindByAutomationId(Control root, string automationId)
+    {
+        if (string.Equals(AutomationProperties.GetAutomationId(root), automationId, StringComparison.Ordinal))
+            return root;
+        foreach (Control child in EnumerateChildControls(root))
+        {
+            Control? found = FindByAutomationId(child, automationId);
+            if (found is not null)
+                return found;
+        }
+        return null;
+    }
+
+    private static IEnumerable<Control> EnumerateChildControls(Control node)
+    {
+        switch (node)
+        {
+            case Panel panel:
+                foreach (Control child in panel.Children)
+                    yield return child;
+                break;
+            case Decorator { Child: Control decorated }:
+                yield return decorated;
+                break;
+            case ContentControl { Content: Control content }:
+                yield return content;
+                break;
+            case TextBlock { Inlines: not null } block:
+                foreach (Inline inline in block.Inlines)
+                {
+                    if (inline is InlineUIContainer { Child: Control inlineChild })
+                        yield return inlineChild;
+                }
+                break;
+        }
+    }
+
+    /// <summary>
+    /// [EN] Role body colour: the counterpart of UserBrush, AssistantBrush and SystemBrush.
+    /// [ZH] 角色正文色：与 UserBrush、AssistantBrush 及 SystemBrush 相对应。
+    /// </summary>
     private static string RoleBrushKey(string role) => role switch
     {
         "user" => "UserBrush",
@@ -3009,11 +3373,18 @@ public partial class MainWindow : Window
         _ => "SystemBrush",
     };
 
+    /// <summary>
+    /// [EN] Renders plain text for user and system messages. The role is conveyed by the header
+    ///      label rather than by an inline icon, which keeps the flattened layout free of
+    ///      decorative prefixes.
+    /// [ZH] 呈现用户与系统消息的纯文本。角色信息由标题行的标识传达，而不再使用行内图标，
+    ///      从而使平铺式布局不带有装饰性前缀。
+    /// </summary>
     private Control BuildPlainText(string role, string content)
     {
         var selectable = new SelectableTextBlock
         {
-            Text = Emoji.Prefer(RoleIcon(role) + content),
+            Text = Emoji.Prefer(content),
             TextWrapping = TextWrapping.Wrap,
             FontSize = _state.Settings.FontSize,
             // WPF 用 ThemeService 把整段文字的 Foreground 绑到角色色上
@@ -3022,28 +3393,27 @@ public partial class MainWindow : Window
         return selectable;
     }
 
+    /// <summary>
+    /// [EN] Builds the flattened message container. Assistant output is rendered directly on the
+    ///      window surface, while a user message is presented as a light block indented from the
+    ///      right edge. The action bar remains in the layout flow beneath the body and is revealed
+    ///      on pointer entry, therefore it neither covers the text nor intercepts input while it
+    ///      is hidden.
+    /// [ZH] 构建平铺式消息容器。助手输出直接呈现于窗口表面，用户消息则以浅色块的形式自右缘缩进
+    ///      展示。操作条始终位于正文下方的布局流中，并在指针进入时浮现，因此既不会覆盖文本，
+    ///      也不会在隐藏期间拦截输入。
+    /// </summary>
     private (Border, ContentControl, SelectableTextBlock, Expander, TextBlock) BuildMessageControls(
         string role, string content, string reasoning, string metrics)
     {
-        // ---- 视觉对齐：消息面板按 WPF 的 NewMessagePanel 复刻 ----
-        // WPF 的消息**没有气泡**：右上角一行时间戳，正文平铺在窗口底色上，
-        // 复制操作条在最下方右对齐。原来的 Avalonia 版是"圆角描边气泡 + 角色名 + 操作条在顶部"，
-        // 截图里一眼就能分出来 —— 这里按 WPF 的顺序重建。
-        //
-        // 探针锚点保持不变：AnswerBody（正文）/ ReasoningRegion（思考区）/ RunMetrics（指标）。
+        // [EN] Probe anchors are preserved unchanged: AnswerBody, ReasoningRegion and RunMetrics.
+        // [ZH] 界面探针锚点保持不变：AnswerBody、ReasoningRegion 与 RunMetrics。
         var contentHost = new ContentControl();
         AutomationProperties.SetAutomationId(contentHost, "AnswerBody");
+        bool isUser = string.Equals(role, "user", StringComparison.Ordinal);
 
-        var root = new StackPanel { Margin = new Thickness(5) };
-
-        // 时间戳：与 WPF 同字号(10)、同色(SubText)、同位置（右上角）
-        root.Children.Add(new TextBlock
-        {
-            Text = DateTime.Now.ToString("HH:mm:ss"),
-            FontSize = 10,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Foreground = ResolveBrush("SubTextBrush", Brushes.Gray),
-        });
+        var root = new StackPanel { Spacing = 6 };
+        root.Children.Add(BuildMessageHeader(role));
 
         var thinkingText = new SelectableTextBlock
         {
@@ -3052,7 +3422,9 @@ public partial class MainWindow : Window
             FontSize = _state.Settings.FontSize - 1,
             Opacity = 0.8,
         };
-        // 思考区的字数标签：折叠时也能看出"这段思考有多长"（WPF 的 main.reasoning.count）。
+        // [EN] Character count of the reasoning region: it allows the length to be judged while
+        //      the region is collapsed.
+        // [ZH] 思考区字数标签：在折叠状态下仍可判断该段内容的篇幅。
         var thinkingHeader = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         var thinkingTitle = new TextBlock
         {
@@ -3077,7 +3449,9 @@ public partial class MainWindow : Window
                 MaxHeight = 220,
                 Content = thinkingText,
             },
-            // 流式期间**自动展开**，答完自动收起（与 WPF 一致）。
+            // [EN] The region expands automatically while streaming and collapses once the turn
+            //      is complete.
+            // [ZH] 该区域在流式期间自动展开，并在本轮完成后自动收起。
             IsExpanded = role == "assistant" && reasoning.Length > 0,
             IsVisible = reasoning.Length > 0,
         };
@@ -3099,19 +3473,36 @@ public partial class MainWindow : Window
         AutomationProperties.SetAutomationId(thinkingBox, "ReasoningRegion");
         root.Children.Add(metricsText);
 
-        // 复制操作条（对齐 WPF 的 4 个动作）：复制 / Markdown / 代码 / 全选。
-        // WPF 把操作条放在消息**底部右对齐**，不在顶部。
+        // [EN] Action bar with the four established copy operations: copy, Markdown, code and
+        //      select all. It is aligned to the bottom-right corner of the message.
+        // [ZH] 操作条包含四项既有复制操作：复制、Markdown、代码与全选。其对齐方式为消息
+        //      右下角。
         var actionBar = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
             Margin = new Thickness(0, 2, 0, 0),
+            Opacity = 0,
+            IsHitTestVisible = false,
+            Transitions = new Transitions
+            {
+                new DoubleTransition
+                {
+                    Property = OpacityProperty,
+                    Duration = TimeSpan.FromMilliseconds(160),
+                    Easing = new CubicEaseOut(),
+                },
+            },
         };
+        AutomationProperties.SetAutomationId(actionBar, "MessageActions");
         AddCopyButton(actionBar, Loc.T("main.message.copy", "📋 复制"),
             Loc.T("main.message.copyPlainTip", "复制为纯文本"),
             async () => await CopyTextAsync(StripCodeFenceForPlain(content)));
-        // 与 WPF 的 AddMessageActions 一致：**只有助手消息**才有 Markdown / 代码两个按钮
-        // （用户与系统消息本来就没有 Markdown 源码可取），否则按钮数量与位置都对不上。
+        // [EN] Only assistant messages expose the Markdown and code operations, because user and
+        //      system messages have no Markdown source to copy. The operation count and position
+        //      therefore depend on the role.
+        // [ZH] 仅助手消息提供 Markdown 与代码两项操作，因为用户与系统消息没有可供复制的
+        //      Markdown 源文本。因此操作项的数量与位置随角色而定。
         if (role == "assistant")
         {
             AddCopyButton(actionBar, Loc.T("main.message.copyMarkdown", "⧉ Markdown"),
@@ -3128,18 +3519,94 @@ public partial class MainWindow : Window
             () => { SelectAllIn(contentHost); return Task.CompletedTask; });
         root.Children.Add(actionBar);
 
-        // 外框保留为透明 Border（调用方按 Border 存引用，见 MessageView.Root）：
-        // 视觉上它与 WPF 的 StackPanel 等价，不画任何背景、边框与圆角。
+        // [EN] The container is transparent for assistant and system messages, so the body is
+        //      painted directly on the window surface. The transparent background is retained
+        //      because it makes the whole block a pointer hit-test target.
+        // [ZH] 助手与系统消息的容器为透明，正文因此直接绘制于窗口表面。保留透明背景是因为
+        //      它使整个区块成为指针命中测试的目标。
         var bubble = new Border
         {
-            Background = Brushes.Transparent,
+            Background = isUser
+                ? ResolveBrush("SurfaceAltBrush", Brushes.WhiteSmoke)
+                : Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            Padding = new Thickness(0),
+            CornerRadius = new CornerRadius(10),
+            Padding = isUser ? new Thickness(14, 10, 14, 10) : new Thickness(0),
+            Margin = new Thickness(isUser ? 64 : 0, 4, 0, 18),
+            HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Stretch,
             Child = root,
         };
+        if (isUser)
+            bubble.MaxWidth = 720;
+        AutomationProperties.SetAutomationId(bubble, "MessageRoot");
+
+        // [EN] Hover reveal: the bar fades in when the pointer enters the message block and fades
+        //      out when it leaves. The handlers are attached to the container itself, therefore
+        //      moving the pointer onto the revealed buttons does not trigger a leave event.
+        // [ZH] 悬停浮现：指针进入消息区块时操作条淡入，离开时淡出。处理器挂接在容器本身上，
+        //      因此指针移动到已浮现的按钮上不会触发离开事件。
+        bubble.PointerEntered += (_, _) => SetActionBarVisible(actionBar, true);
+        bubble.PointerExited += (_, _) => SetActionBarVisible(actionBar, false);
 
         return (bubble, contentHost, thinkingText, thinkingBox, metricsText);
     }
+
+    /// <summary>
+    /// [EN] Builds the role header: a small accent-coloured role label on the left and the
+    ///      timestamp on the right. The single compact row separates the roles without competing
+    ///      with the body typography.
+    /// [ZH] 构建角色标题行：左侧为小号强调色角色标识，右侧为时间戳。该行紧凑且唯一，
+    ///      在不与正文排版争夺注意力的前提下区分角色。
+    /// </summary>
+    private Grid BuildMessageHeader(string role)
+    {
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+        var label = new TextBlock
+        {
+            Text = RoleLabel(role),
+            FontSize = Math.Max(10, _state.Settings.FontSize - 3),
+            FontWeight = FontWeight.SemiBold,
+            Foreground = ResolveBrush("AccentBrush", Brushes.Teal),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        AutomationProperties.SetAutomationId(label, "RoleLabel");
+        var stamp = new TextBlock
+        {
+            Text = DateTime.Now.ToString("HH:mm:ss"),
+            FontSize = 10,
+            Foreground = ResolveBrush("SubTextBrush", Brushes.Gray),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(label, 0);
+        Grid.SetColumn(stamp, 2);
+        header.Children.Add(label);
+        header.Children.Add(stamp);
+        return header;
+    }
+
+    /// <summary>
+    /// [EN] Shows or hides the action bar without altering the layout. While hidden the bar is
+    ///      excluded from hit testing, therefore the pointer passes through to the message body
+    ///      and text selection remains unaffected.
+    /// [ZH] 在不改变布局的前提下显示或隐藏操作条。隐藏期间该条不参与命中测试，
+    ///      因此指针可穿透至消息正文，文本选择不受影响。
+    /// </summary>
+    private static void SetActionBarVisible(StackPanel bar, bool visible)
+    {
+        bar.Opacity = visible ? 1 : 0;
+        bar.IsHitTestVisible = visible;
+    }
+
+    /// <summary>
+    /// [EN] Returns the localised role label displayed in the message header.
+    /// [ZH] 返回消息标题行中显示的角色标识文案。
+    /// </summary>
+    private static string RoleLabel(string role) => role switch
+    {
+        "user" => Loc.T("main.message.user", "我"),
+        "assistant" => Loc.T("main.message.assistant", "助手"),
+        _ => Loc.T("main.message.system", "系统"),
+    };
 
     private void ScrollToBottom() => MessageScroll.ScrollToEnd();
 
@@ -3298,8 +3765,18 @@ public partial class MainWindow : Window
     /// </summary>
     private static IBrush ResolveBrush(string key, IBrush fallback)
     {
-        if (Application.Current is { } app && app.TryFindResource(key, out object? value) && value is IBrush brush)
-            return brush;
+        if (Application.Current is { } app)
+        {
+            // [EN] The theme variant is supplied explicitly because the application requests
+            //      ThemeVariant.Default while the palette is stored in the Light and Dark theme
+            //      dictionaries. The overload without a variant does not resolve those entries.
+            // [ZH] 由于应用程序请求 ThemeVariant.Default，而色板存放于 Light 与 Dark 两个主题字典中，
+            //      此处显式提供主题变体。不带变体的重载无法解析这些条目。
+            if (app.TryFindResource(key, app.ActualThemeVariant, out object? value) && value is IBrush brush)
+                return brush;
+            if (app.TryFindResource(key, out value) && value is IBrush fallbackBrush)
+                return fallbackBrush;
+        }
         return fallback;
     }
 
