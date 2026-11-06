@@ -184,14 +184,14 @@
       "noModelTip": "当前没有可用的本地模型。点击打开「设置 → 模型」下载或加载模型。",
       "hotLoaded": "✅ 模型已就绪，现在可以正常对话了。",
       "none": "🧠 无模型",
-      "chip": "🧠",
-      "chipUnknown": "🧠"
+      "chip": "🧠 模型: {0}",
+      "chipUnknown": "🧠 模型: ---"
     },
     "mode": {
       "clickTip": "点击打开设置修改默认对话模式",
       "help": "当前对话模式，点击打开设置",
       "placeholder": "🛠️ 模式: general",
-      "chip": "🛠"
+      "chip": "🛠️ 模式: {0}"
     },
     "automation": {
       "disabled": "未启用",

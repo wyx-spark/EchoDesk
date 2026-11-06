@@ -1,4 +1,4 @@
-﻿<ResourceDictionary xmlns="https://github.com/avaloniaui"
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <!--
     [EN] Light colour palette for the EchoDesk Avalonia shell. Every key is resolved through
@@ -24,6 +24,14 @@
   <SolidColorBrush x:Key="InputBackgroundBrush" Color="#FFFFFFFF" />
   <SolidColorBrush x:Key="InputBorderBrush" Color="#FFD0D7DE" />
   <SolidColorBrush x:Key="FocusBorderBrush" Color="#FF007B8A" />
+  <!--
+    [EN] ToggleSwitch tokens: the off track reuses the neutral border tone and the knob is pure
+         white in both palettes, which keeps the switch legible over every surface.
+    [ZH] 开关令牌：关闭态轨道沿用中性描边色调，滑块在深浅两套色板中均为纯白，使开关在任意底面上
+         均保持可辨识。
+  -->
+  <SolidColorBrush x:Key="ToggleTrackOffBrush" Color="#FFD0D7DE" />
+  <SolidColorBrush x:Key="ToggleKnobBrush" Color="#FFFFFFFF" />
   <SolidColorBrush x:Key="TextForegroundBrush" Color="#FF1F2328" />
   <SolidColorBrush x:Key="SubTextBrush" Color="#FF57606A" />
   <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FFFFFFFF" />
@@ -85,4 +93,10 @@
     [ZH] 高程令牌。浅色模式下层级由柔和投影承载（0 4px 12px、5% 不透明度），而非强描边。
   -->
   <BoxShadows x:Key="CardShadow">0 4 12 0 #0D000000</BoxShadows>
+  <!--
+    [EN] Focus glow of the borderless input underline. The spread is deliberately small so that
+         the effect reads as an illuminated rule rather than a floating halo.
+    [ZH] 无边框输入框底线的焦点光晕。扩散半径刻意保持较小，使效果呈现为被点亮的线条而非悬浮光晕。
+  -->
+  <BoxShadows x:Key="InputUnderlineGlow">0 0 6 0 #59007B8A</BoxShadows>
 </ResourceDictionary>

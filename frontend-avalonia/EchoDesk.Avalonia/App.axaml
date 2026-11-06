@@ -1,4 +1,4 @@
-﻿<Application xmlns="https://github.com/avaloniaui"
+<Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.App"
              RequestedThemeVariant="Default">
@@ -6,10 +6,12 @@
     [EN] Global style baseline for the Avalonia shell (v0.2.3 iteration 2).
     [ZH] Avalonia 外壳的全局样式基线（v0.2.3 研发任务-2）。
     [EN] Palette definitions now live in Themes/Light.axaml and Themes/Dark.axaml, while the
-         immersive scrollbar lives in Themes/Controls.axaml. This file is limited to the
-         application-wide control styles that must remain identical across themes.
+         immersive scrollbar lives in Themes/Controls.axaml and the core widget themes live in
+         Themes/Widgets.axaml. This file is limited to the application-wide control styles that
+         must remain identical across themes.
     [ZH] 色板定义现已迁移至 Themes/Light.axaml 与 Themes/Dark.axaml，沉浸式滚动条位于
-         Themes/Controls.axaml。本文件仅保留跨主题必须保持一致的全局控件样式。
+         Themes/Controls.axaml，核心控件主题位于 Themes/Widgets.axaml。本文件仅保留跨主题必须
+         保持一致的全局控件样式。
     [EN] Typography contract: Inter is the preferred Latin face with a Unicode-complete fallback
          chain and the base size is 15 px; body paragraphs use a 1.6x line height, applied by the
          Markdown renderer so that the ratio follows the configured paragraph size.
@@ -42,60 +44,13 @@
       <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
     </Style>
 
-    <!-- ================= 按钮（正常 / 悬停 / 按下 / 禁用） / Button states ================= -->
     <!--
-      [EN] Geometry: 12x6 padding, 6 px corner radius and no intrinsic minimum size, so that
-           compact toolbars keep their intended proportions.
-      [ZH] 几何参数：内边距 12x6、圆角 6px、不设固有最小尺寸，以保证紧凑工具栏维持既有比例。
+      [EN] Button geometry, states and transitions are owned by Themes/Widgets.axaml. Only the
+           title-bar caption variant remains here because it is a shell-specific exception to the
+           general button contract.
+      [ZH] 按钮的几何参数、状态与过渡均由 Themes/Widgets.axaml 统一治理。此处仅保留标题栏窗口按钮
+           变体，因为它是一般按钮约定之外的外壳专属例外。
     -->
-    <Style Selector="Button">
-      <Setter Property="Padding" Value="12,6" />
-      <Setter Property="Margin" Value="5" />
-      <Setter Property="MinHeight" Value="0" />
-      <Setter Property="MinWidth" Value="0" />
-      <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
-      <Setter Property="FontSize" Value="14" />
-      <Setter Property="Background" Value="{DynamicResource ButtonBackgroundBrush}" />
-      <Setter Property="Foreground" Value="{DynamicResource ButtonForegroundBrush}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorderBrush}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="HorizontalContentAlignment" Value="Center" />
-      <Setter Property="VerticalContentAlignment" Value="Center" />
-      <Setter Property="Cursor" Value="Hand" />
-      <Setter Property="CornerRadius" Value="6" />
-      <Setter Property="Template">
-        <ControlTemplate TargetType="Button">
-          <Border Name="PART_Border"
-                  CornerRadius="{TemplateBinding CornerRadius}"
-                  Background="{TemplateBinding Background}"
-                  BorderBrush="{TemplateBinding BorderBrush}"
-                  BorderThickness="{TemplateBinding BorderThickness}">
-            <ContentPresenter Name="PART_ContentPresenter"
-                              Margin="{TemplateBinding Padding}"
-                              HorizontalAlignment="Center" VerticalAlignment="Center"
-                              Content="{TemplateBinding Content}"
-                              ContentTemplate="{TemplateBinding ContentTemplate}" />
-          </Border>
-        </ControlTemplate>
-      </Setter>
-    </Style>
-    <Style Selector="Button:pointerover /template/ Border#PART_Border">
-      <Setter Property="Background" Value="{DynamicResource ButtonHoverBackgroundBrush}" />
-    </Style>
-    <Style Selector="Button:pressed /template/ Border#PART_Border">
-      <Setter Property="Background" Value="{DynamicResource ButtonPressedBackgroundBrush}" />
-    </Style>
-    <Style Selector="Button:disabled /template/ Border#PART_Border">
-      <Setter Property="Background" Value="{DynamicResource ButtonDisabledBackgroundBrush}" />
-    </Style>
-    <Style Selector="Button:disabled">
-      <Setter Property="Foreground" Value="{DynamicResource ButtonDisabledForegroundBrush}" />
-      <Setter Property="Cursor" Value="Arrow" />
-    </Style>
-    <Style Selector="Button:focus-visible /template/ Border#PART_Border">
-      <Setter Property="BorderBrush" Value="{DynamicResource FocusBorderBrush}" />
-    </Style>
-
     <!--
       [EN] Caption buttons of the custom title bar. They occupy the full 44 px chrome strip,
            stay transparent at rest, and never inherit the default button margin.
@@ -115,6 +70,12 @@
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
       <Setter Property="Cursor" Value="Arrow" />
+      <!--
+        [EN] Caption buttons must not inherit the press compression of content buttons: the
+             window chrome is a fixed hit target and a scaling caption breaks its alignment.
+        [ZH] 窗口按钮不得继承内容按钮的按压缩放：窗口外框是固定命中目标，缩放其标题控件会破坏对齐。
+      -->
+      <Setter Property="RenderTransform" Value="scale(1)" />
     </Style>
     <Style Selector="Button.chrome:pointerover /template/ Border#PART_Border">
       <Setter Property="Background" Value="{DynamicResource TitleBarButtonHoverBrush}" />
@@ -126,65 +87,15 @@
       <Setter Property="Background" Value="{DynamicResource TitleBarCloseHoverBrush}" />
     </Style>
 
-    <!-- ================= 输入框 / Text input ================= -->
-    <Style Selector="TextBox">
-      <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
-      <Setter Property="FontSize" Value="14" />
-      <Setter Property="MinHeight" Value="0" />
-      <Setter Property="Padding" Value="6,4" />
-      <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}" />
-      <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
-      <Setter Property="CaretBrush" Value="{DynamicResource TextForegroundBrush}" />
-      <Setter Property="SelectionBrush" Value="{DynamicResource SelectionBackgroundBrush}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource InputBorderBrush}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="6" />
-    </Style>
+    <!--
+      [EN] Text input, combo box, check box and slider themes are owned by Themes/Widgets.axaml.
+           Radio buttons and lists remain below because their templates are not part of this
+           iteration's redesign scope.
+      [ZH] 文本输入框、下拉框、复选框与滑块的主题均由 Themes/Widgets.axaml 治理。单选框与列表保持在
+           下方，因为其模板不属于本次重绘范围。
+    -->
 
-    <!-- ================= 下拉框 / Combo box ================= -->
-    <Style Selector="ComboBox">
-      <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
-      <Setter Property="FontSize" Value="14" />
-      <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
-      <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource InputBorderBrush}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="6" />
-      <Setter Property="Padding" Value="8,4" />
-      <Setter Property="MinHeight" Value="0" />
-      <Setter Property="HorizontalContentAlignment" Value="Left" />
-      <Setter Property="VerticalContentAlignment" Value="Center" />
-    </Style>
-
-    <!-- ================= 复选框 / 单选框 / Check box and radio button ================= -->
-    <Style Selector="CheckBox">
-      <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
-      <Setter Property="FontSize" Value="14" />
-      <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
-      <Setter Property="Cursor" Value="Hand" />
-      <Setter Property="MinHeight" Value="0" />
-      <Setter Property="Template">
-        <ControlTemplate TargetType="CheckBox">
-          <StackPanel Orientation="Horizontal" Background="Transparent">
-            <Border Name="PART_Box" Width="16" Height="16" CornerRadius="4"
-                    Background="{DynamicResource InputBackgroundBrush}"
-                    BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
-                    VerticalAlignment="Center">
-              <TextBlock Name="PART_Mark" Text="✓" FontSize="12" LineHeight="14" IsVisible="False"
-                         HorizontalAlignment="Center" VerticalAlignment="Center"
-                         Foreground="{DynamicResource AccentBrush}" />
-            </Border>
-            <ContentPresenter Margin="7,0,0,0" VerticalAlignment="Center"
-                              Content="{TemplateBinding Content}"
-                              ContentTemplate="{TemplateBinding ContentTemplate}" />
-          </StackPanel>
-        </ControlTemplate>
-      </Setter>
-    </Style>
-    <Style Selector="CheckBox:checked /template/ TextBlock#PART_Mark">
-      <Setter Property="IsVisible" Value="True" />
-    </Style>
-
+    <!-- ================= 单选框 / Radio button ================= -->
     <Style Selector="RadioButton">
       <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
       <Setter Property="FontSize" Value="14" />
@@ -316,17 +227,7 @@
       <Setter Property="FontSize" Value="13" />
     </Style>
 
-    <!-- ================= 滑块 / 进度条 / Slider and progress bar ================= -->
-    <Style Selector="Slider">
-      <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
-      <Setter Property="Margin" Value="0,-9,0,-9" />
-      <Setter Property="MinHeight" Value="32" />
-      <Setter Property="Height" Value="32" />
-    </Style>
-    <Style Selector="Slider /template/ Thumb">
-      <Setter Property="Width" Value="12" />
-      <Setter Property="Height" Value="12" />
-    </Style>
+    <!-- ================= 进度条 / Progress bar ================= -->
     <Style Selector="ProgressBar">
       <Setter Property="Background" Value="{DynamicResource SurfaceAltBrush}" />
       <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
@@ -378,6 +279,7 @@
     <ResourceDictionary>
       <ResourceDictionary.MergedDictionaries>
         <ResourceInclude Source="avares://EchoDesk/Themes/Controls.axaml" />
+        <ResourceInclude Source="avares://EchoDesk/Themes/Widgets.axaml" />
       </ResourceDictionary.MergedDictionaries>
       <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Light">

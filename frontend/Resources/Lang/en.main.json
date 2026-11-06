@@ -184,14 +184,14 @@
       "noModelTip": "No local model is available. Click to open Settings → Model and download or load one.",
       "hotLoaded": "✅ The model is ready; you can chat normally now.",
       "none": "🧠 No model",
-      "chip": " ",
-      "chipUnknown": " "
+      "chip": "🧠 Model: {0}",
+      "chipUnknown": "🧠 Model: ---"
     },
     "mode": {
       "clickTip": "Click to change the default conversation mode in Settings",
       "help": "The current conversation mode; click to open Settings",
       "placeholder": "🛠️ Mode: general",
-      "chip": "️"
+      "chip": "🛠️ Mode: {0}"
     },
     "automation": {
       "disabled": "off",
