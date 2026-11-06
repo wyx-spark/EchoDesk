@@ -23,7 +23,17 @@ Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 Add-Type -AssemblyName System.Drawing
 
 $Root = Split-Path -Parent $PSScriptRoot
-if (-not $Exe) { $Exe = Join-Path $Root "publish\EchoDesk-v0.2.2\app\EchoDesk.exe" }
+if (-not $Exe) {
+    # [EN] The release directory is derived from backend\version.py so that the sweep always
+    #      enumerates the current build instead of an obsolete release tree.
+    # [ZH] 发布目录由 backend\version.py 派生，使全页扫描始终枚举当前构建，而非过期的发布树。
+    $VersionFile = Join-Path $Root "backend\version.py"
+    $versionMatch = Select-String -Path $VersionFile -Pattern 'APP_VERSION\s*=\s*["'']([^"'']+)["'']' |
+                    Select-Object -First 1
+    if (-not $versionMatch) { throw "读不出 APP_VERSION：$VersionFile（可用 -Exe 显式指定）" }
+    $releaseVersion = $versionMatch.Matches[0].Groups[1].Value.TrimStart('v')
+    $Exe = Join-Path $Root "publish\EchoDesk-v$releaseVersion\app\EchoDesk.exe"
+}
 if (-not (Test-Path $Exe)) { Write-Output "[sweep] FAIL 找不到被测程序：$Exe"; exit 1 }
 $Exe = (Resolve-Path $Exe).Path
 $AppDir = Split-Path -Parent $Exe                 # ……\app

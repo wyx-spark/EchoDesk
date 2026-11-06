@@ -70,7 +70,23 @@
       </Grid>
     </Border>
 
-    <Grid Grid.Row="1" RowDefinitions="*,Auto" Margin="12">
+    <!--
+      [EN] Content entrance. The settings surface replaces the conversation surface while it is
+           open; a 250 ms fade combined with a six-pixel vertical offset communicates that
+           replacement without animating any measured property, therefore the conversation layout
+           underneath is never invalidated.
+      [ZH] 内容入场。设置界面在打开期间取代对话界面；250 毫秒淡入配合六像素垂直偏移即可传达这一
+           替换关系，且不涉及任何参与测量的属性，因此底层对话布局绝不会失效。
+    -->
+    <Grid x:Name="ContentRoot" Grid.Row="1" RowDefinitions="*,Auto" Margin="12"
+          Opacity="0" RenderTransform="translate(0px, 6px)">
+      <Grid.Transitions>
+        <Transitions>
+          <DoubleTransition Property="Opacity" Duration="0:0:0.25" Easing="CubicEaseOut" />
+          <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.25"
+                                         Easing="CubicEaseOut" />
+        </Transitions>
+      </Grid.Transitions>
 
     <!-- 底部：状态行 + 保存/关闭（与 WPF 版同位置、同 AutomationId） -->
     <Border Grid.Row="1" Padding="0" Margin="0,8,0,0">
@@ -96,12 +112,35 @@
       <TabControl x:Name="Tabs" Grid.Row="0" Grid.Column="0" Padding="0"
                   AutomationProperties.AutomationId="Tabs" />
 
-      <!-- 字段帮助面板（任务书要求：字段帮助可被探针检查；WPF 版在自动化页用得最多） -->
-      <Border x:Name="FieldHelpPanel" Grid.Row="0" Grid.Column="1" Width="320"
+      <!--
+        [EN] Field help panel. The panel must remain inspectable by the unattended probes, and it
+             is used most frequently by the automation page.
+        [ZH] 字段帮助面板。该面板必须保持可被无人值守探针检查，且在自动化页中的使用频率最高。
+      -->
+      <!--
+        [EN] Field help side panel. Its opening and closing motion is expressed as a width
+             transition combined with an opacity transition, which is the closest equivalent of
+             the grid-length animation requested for sidebars: Avalonia does not provide a
+             grid-length animator, while the panel width is a plain double and therefore fully
+             animatable. The panel remains outside the layout flow of the tab content and only
+             animates while a field receives focus or the panel is dismissed by the user.
+        [ZH] 字段帮助侧面板。其开启与关闭动效由宽度过渡配合不透明度过渡表达，这是侧边栏所要求的
+             网格长度动画最接近的等价实现：Avalonia 未提供网格长度动画器，而面板宽度是普通双精度值，
+             因而完全可以参与动画。该面板不占据页签内容的布局流，且仅在字段获得焦点或用户关闭面板时
+             才播放动效。
+      -->
+      <Border x:Name="FieldHelpPanel" Grid.Row="0" Grid.Column="1" Width="0" Opacity="0"
               IsVisible="False" Margin="0,6,12,12" Classes="elevated"
+              ClipToBounds="True"
               Background="{DynamicResource CardBackgroundBrush}"
               BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
               CornerRadius="6" Padding="12,10">
+        <Border.Transitions>
+          <Transitions>
+            <DoubleTransition Property="Width" Duration="0:0:0.2" Easing="CubicEaseOut" />
+            <DoubleTransition Property="Opacity" Duration="0:0:0.18" Easing="CubicEaseOut" />
+          </Transitions>
+        </Border.Transitions>
         <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel Spacing="6">
             <TextBlock x:Name="FieldHelpTitle" FontWeight="Bold" FontSize="13"

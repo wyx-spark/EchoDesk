@@ -21,11 +21,33 @@
 #   model_path 指过去（config.user.json 是后端的覆盖层，优先于 config.json），
 #   跑完在收尾处删掉这两样东西。不给就用被测程序自带的模型（有的话）。
 param(
-    [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.2\app\EchoDesk.exe",
+    # [EN] The executable under test. An empty value means "derive the release directory from
+    #      backend\version.py": a hard-coded version here silently pins the probe to an older
+    #      release tree, so the whole gate would keep validating a build that no longer
+    #      corresponds to the working tree (observed in v0.2.3: the probe was checking the
+    #      v0.2.2 tree and reported the LTS banner and the About page as missing).
+    # [ZH] 被测程序。留空表示由 backend\version.py 派生发布目录：在此写死版本号会让探针静默指向
+    #      旧的发布树，整条门禁便持续验证一个与工作区不再对应的构建（v0.2.3 实测：探针检查的是
+    #      v0.2.2 发布树，因而把 LTS 提示条与「关于」页报成缺失）。
+    [string]$Exe = "",
     [int]$ReadyTimeoutSec = 180,
     [string]$ThinkingModel = "",
     [switch]$KeepOpen
 )
+
+# [EN] Resolve the release directory from the single version source when no explicit path is
+#      supplied. Passing -Exe remains supported for release-tree regression runs.
+# [ZH] 未显式给出路径时，从唯一版本来源解析发布目录。显式传入 -Exe 仍然支持，用于针对冻结
+#      发布树执行回归。
+if (-not $Exe) {
+    $ProbeRoot = Split-Path -Parent $PSScriptRoot
+    $VersionFile = Join-Path $ProbeRoot "backend\version.py"
+    $versionMatch = Select-String -Path $VersionFile -Pattern 'APP_VERSION\s*=\s*["'']([^"'']+)["'']' |
+                    Select-Object -First 1
+    if (-not $versionMatch) { throw "读不出 APP_VERSION：$VersionFile（可用 -Exe 显式指定）" }
+    $releaseVersion = $versionMatch.Matches[0].Groups[1].Value.TrimStart('v')
+    $Exe = Join-Path $ProbeRoot "publish\EchoDesk-v$releaseVersion\app\EchoDesk.exe"
+}
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes

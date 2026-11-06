@@ -37,6 +37,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
+using Avalonia.Media.Transformation;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -74,6 +75,33 @@ public partial class MainWindow : Window
     private int _renderCount;
     private Control? _liveCaret;
     private readonly Stopwatch _caretClock = Stopwatch.StartNew();
+
+    // [EN] First-token indicator. While the answer and the reasoning buffers are both empty the
+    //      live message hosts three staggered dots instead of an empty body; the dots are driven
+    //      by the same shared clock as the caret and therefore cost one opacity write per render
+    //      tick and no layout pass whatsoever.
+    // [ZH] 首字指示器。当回答与思考缓冲区均为空时，实时消息以三个错相圆点代替空白正文；圆点与光标
+    //      共用同一时钟，因此每个渲染节拍仅产生一次不透明度写入，完全不触发布局过程。
+    private Panel? _liveLoading;
+
+    /// <summary>
+    /// [EN] Total duration of one blink cycle of the first-token dots, in milliseconds.
+    /// [ZH] 首字圆点单个闪烁周期的总时长，单位为毫秒。
+    /// </summary>
+    private const double LoadingDotCycleMilliseconds = 1200;
+
+    /// <summary>
+    /// [EN] Phase offset between two adjacent first-token dots, in milliseconds.
+    /// [ZH] 相邻两个首字圆点之间的相位偏移量，单位为毫秒。
+    /// </summary>
+    private const double LoadingDotStaggerMilliseconds = 160;
+
+    // [EN] One-shot timer that hides the status strip after its collapse fade has finished. It is
+    //      intentionally separate from the streaming render timer, which must never be used for
+    //      one-off UI chores.
+    // [ZH] 状态区折叠淡出结束后负责隐藏它的一次性定时器。该定时器刻意与流式渲染定时器分离，
+    //      后者绝不应承担一次性的界面事务。
+    private DispatcherTimer? _statusStripHideTimer;
 
     /// <summary>
     /// [EN] Coalescing interval of the streaming render timer: at most one Markdown parse per
@@ -404,7 +432,7 @@ public partial class MainWindow : Window
         {
             _state.Settings.StatusStripCollapsed = !_state.Settings.StatusStripCollapsed;
             _state.Settings.Save();
-            ApplyStatusStripState();
+            ApplyStatusStripState(animate: true);
         };
 
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
@@ -1369,10 +1397,63 @@ public partial class MainWindow : Window
     // 状态区的折叠状态（存 ui_state.json，下次启动沿用）
     // -----------------------------------------------------------------
 
-    private void ApplyStatusStripState()
+    /// <summary>
+    /// [EN] Applies the persisted collapsed state of the status strip. The interactive toggle
+    ///      requests an animated transition, whereas every other caller (construction, language
+    ///      change, appearance refresh) applies the state immediately so that no motion is
+    ///      replayed outside an explicit user gesture.
+    /// [ZH] 应用状态区已持久化的折叠状态。交互式切换请求动画过渡；其余调用方（构造、语言切换、
+    ///      外观刷新）立即应用该状态，因此显式用户手势之外不会重放任何动效。
+    /// </summary>
+    private void ApplyStatusStripState(bool animate = false)
     {
         bool collapsed = _state.Settings.StatusStripCollapsed;
-        StatusStripItems.IsVisible = !collapsed;
+
+        // [EN] A pending hide belongs to the previous collapse gesture and must not fire against
+        //      the newly requested state.
+        // [ZH] 尚未执行的隐藏动作属于上一次折叠手势，不得针对新请求的状态触发。
+        _statusStripHideTimer?.Stop();
+        _statusStripHideTimer = null;
+
+        if (!animate)
+        {
+            StatusStripItems.IsVisible = !collapsed;
+            StatusStripItems.Opacity = collapsed ? 0 : 1;
+            StatusStripItems.RenderTransform = TransformOperations.Parse(
+                collapsed ? "translate(0px, 6px)" : "translate(0px, 0px)");
+        }
+        else if (collapsed)
+        {
+            StatusStripItems.Opacity = 0;
+            StatusStripItems.RenderTransform = TransformOperations.Parse("translate(0px, 6px)");
+            // [EN] The element is hidden only after the fade has completed, therefore the strip
+            //      recedes instead of disappearing in a single frame.
+            // [ZH] 该元素仅在淡出完成后才被隐藏，因此状态区是渐隐退出，而非在单帧内消失。
+            _statusStripHideTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(190) };
+            _statusStripHideTimer.Tick += (_, _) =>
+            {
+                _statusStripHideTimer?.Stop();
+                _statusStripHideTimer = null;
+                if (_state.Settings.StatusStripCollapsed)
+                    StatusStripItems.IsVisible = false;
+            };
+            _statusStripHideTimer.Start();
+        }
+        else
+        {
+            StatusStripItems.IsVisible = true;
+            // [EN] The visible properties are restored on the next render pass so that the
+            //      transition has a previous value to interpolate from; changing them in the same
+            //      turn would make the element snap into place.
+            // [ZH] 可见属性在下一个渲染回合恢复，使过渡拥有可插值的先前值；在同一回合内修改会使元素
+            //      直接跳变到位。
+            Dispatcher.UIThread.Post(() =>
+            {
+                StatusStripItems.Opacity = 1;
+                StatusStripItems.RenderTransform = TransformOperations.Parse("translate(0px, 0px)");
+            }, DispatcherPriority.Render);
+        }
+
         StripToggleText.Text = collapsed
             ? Loc.T("main.strip.toggleExpand", "▸")
             : Loc.T("main.strip.toggleCollapse", "▾");
@@ -2035,6 +2116,7 @@ public partial class MainWindow : Window
     {
         ResetStreamBuffers();
         _live = AddMessageView("assistant", "", "");
+        ShowLoadingIndicator();
         StartRenderTimer();
         _streamCts = new CancellationTokenSource();
 
@@ -2960,17 +3042,23 @@ public partial class MainWindow : Window
         _renderTimer?.Stop();
         if (_renderDirty)
             RenderLive();
-        // [EN] The caret belongs to the streaming state only; completion removes it immediately.
-        // [ZH] 光标仅属于流式状态；生成完成时立即移除。
+        // [EN] The caret and the first-token dots belong to the streaming state only; completion
+        //      removes both immediately.
+        // [ZH] 光标与首字圆点仅属于流式状态；生成完成时二者立即移除。
         _liveCaret = null;
+        _liveLoading = null;
     }
 
     private void OnRenderTick(object? sender, EventArgs e)
     {
         // [EN] Opacity is a render-only property, therefore the breathing update never
-        //      invalidates measure or arranges a new text layout.
-        // [ZH] 不透明度仅影响渲染，因此呼吸更新不会使测量失效，也不会重新安排文本布局。
+        //      invalidates measure or arranges a new text layout. The first-token dots follow the
+        //      same rule and are advanced from this single tick so that no additional timer is
+        //      introduced.
+        // [ZH] 不透明度仅影响渲染，因此呼吸更新不会使测量失效，也不会重新安排文本布局。首字圆点遵循
+        //      同一规则，并在同一次节拍内推进，因此不引入任何额外定时器。
         UpdateCaretOpacity();
+        UpdateLoadingDotsOpacity();
         if (_renderDirty)
             RenderLive();
     }
@@ -3076,6 +3164,82 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// [EN] Installs the first-token indicator into the live message. The indicator consists of
+    ///      three dots that blink in sequence, which communicates progress without the abrupt
+    ///      appearance of a spinner and without requesting a single layout pass.
+    /// [ZH] 将首字指示器安装到实时消息中。该指示器由三个依次闪烁的圆点组成，在不出现生硬的旋转指示器
+    ///      的前提下传达进展，并且不请求任何布局过程。
+    /// </summary>
+    private void ShowLoadingIndicator()
+    {
+        if (_live is null)
+            return;
+        _liveLoading = CreateLoadingDots();
+        _live.ContentHost.Content = _liveLoading;
+        UpdateLoadingDotsOpacity();
+    }
+
+    /// <summary>
+    /// [EN] Creates the three-dot indicator. Each dot is a filled border whose opacity is derived
+    ///      from the shared streaming clock, therefore the animation survives re-parenting and
+    ///      never restarts from an arbitrary phase.
+    /// [ZH] 创建三点指示器。每个圆点均为实心边框，其不透明度取自共享的流式时钟，因此动画在挂载变更后
+    ///      仍然连续，且不会从任意相位重新开始。
+    /// </summary>
+    private Panel CreateLoadingDots()
+    {
+        double size = Math.Max(5, _state.Settings.FontSize * 0.34);
+        var panel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 5,
+            Margin = new Thickness(0, 7, 0, 7),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        for (int index = 0; index < 3; index++)
+        {
+            var dot = new Border
+            {
+                Width = size,
+                Height = size,
+                CornerRadius = new CornerRadius(size / 2),
+                Background = ResolveBrush("AccentBrush", Brushes.Teal),
+                Opacity = LoadingDotOpacity(index),
+            };
+            AutomationProperties.SetAutomationId(dot, $"LoadingDot{index}");
+            panel.Children.Add(dot);
+        }
+        AutomationProperties.SetAutomationId(panel, "LoadingDots");
+        AutomationProperties.SetName(panel,
+            Loc.T("main.loading.waitFirstToken", "等待首个 Token…"));
+        return panel;
+    }
+
+    /// <summary>
+    /// [EN] Opacity of one first-token dot at the current instant. The phase runs on a continuous
+    ///      cosine cycle and is offset per dot, which yields the sequential blink.
+    /// [ZH] 某一首字圆点在当前时刻的不透明度。相位沿连续的余弦周期推进，并按圆点序号偏移，从而形成
+    ///      依次闪烁的效果。
+    /// </summary>
+    private double LoadingDotOpacity(int index)
+    {
+        double elapsed = _caretClock.ElapsedMilliseconds - index * LoadingDotStaggerMilliseconds;
+        double phase = elapsed % LoadingDotCycleMilliseconds;
+        if (phase < 0)
+            phase += LoadingDotCycleMilliseconds;
+        double normalised = phase / LoadingDotCycleMilliseconds;
+        return 0.2 + 0.8 * (0.5 + 0.5 * Math.Cos(normalised * 2 * Math.PI));
+    }
+
+    private void UpdateLoadingDotsOpacity()
+    {
+        if (_liveLoading is null)
+            return;
+        for (int index = 0; index < _liveLoading.Children.Count; index++)
+            _liveLoading.Children[index].Opacity = LoadingDotOpacity(index);
+    }
+
+    /// <summary>
     /// [EN] Renders the buffered answer into the live message. The pass runs at most once per
     ///      render interval and skips work when neither the text nor the caret state changed,
     ///      which prevents repeated Markdown parsing from entering a layout feedback loop.
@@ -3092,6 +3256,10 @@ public partial class MainWindow : Window
             return;
         _liveRendered = answer;
         _renderCount++;
+        // [EN] The first-token indicator is retired by the first render pass that carries content,
+        //      therefore it can never remain visible behind an answer.
+        // [ZH] 首个携带内容的渲染过程即撤下首字指示器，因此它绝不会残留在回答之后。
+        _liveLoading = null;
         // [EN] A fresh caret instance is created per pass; its opacity is taken from the shared
         //      phase so that the breathing remains continuous.
         // [ZH] 每次渲染创建新的光标实例；其不透明度取自共享相位，因此呼吸保持连续。
@@ -3127,6 +3295,7 @@ public partial class MainWindow : Window
         {
             MessagePanel.Children.Remove(_live.Root);
             _live = null;
+            _liveLoading = null;
         }
     }
 
@@ -3233,18 +3402,25 @@ public partial class MainWindow : Window
     /// [EN] Exercises the streaming pipeline without a backend connection. A high-frequency token
     ///      burst is pushed into the shared buffer while the coalescing timer runs, then a final
     ///      fragment is appended after the last tick and the forced flush is verified to contain
-    ///      it. The report also states whether the caret exists during streaming and whether it
-    ///      has disappeared once the turn is completed.
+    ///      it. The report additionally states whether the first-token indicator was present
+    ///      before the first fragment, whether the caret existed during streaming, and whether
+    ///      both have disappeared once the turn is completed.
     /// [ZH] 在不连接后端的前提下演练流式管线。在合并式定时器运行期间向共享缓冲区写入高频 Token
     ///      突发，随后在最后一次定时器触发之后追加最后一个片段，并验证强制刷新结果包含该片段。
-    ///      报告同时说明光标在流式期间是否存在、以及本轮结束后是否已经消失。
+    ///      报告同时说明首个片段到达之前是否存在首字指示器、光标在流式期间是否存在，以及二者在本轮
+    ///      结束后是否均已消失。
     /// </summary>
     public async Task<string> ProbeStreamingAsync(int tokenCount)
     {
         ResetStreamBuffers();
         _live = AddMessageView("assistant", "", "");
+        ShowLoadingIndicator();
         StartRenderTimer();
         _renderCount = 0;
+        // [EN] Before any fragment is appended the live body must hold the three-dot indicator
+        //      instead of an empty container.
+        // [ZH] 在追加任何片段之前，实时正文必须呈现三点指示器，而非空白容器。
+        bool dotsBeforeFirstToken = FindByAutomationId(_live.Root, "LoadingDots") is not null;
         for (int i = 0; i < tokenCount; i++)
         {
             AppendAnswerText($"tok{i} ");
@@ -3252,6 +3428,7 @@ public partial class MainWindow : Window
                 await Task.Delay(40);
         }
         bool caretDuring = _liveCaret is not null && FindByAutomationId(_live.Root, "TypingCaret") is not null;
+        bool dotsDuring = FindByAutomationId(_live.Root, "LoadingDots") is not null;
         // [EN] The final fragment deliberately arrives after the last timer tick.
         // [ZH] 最后一个片段刻意在最后一次定时器触发之后到达。
         AppendAnswerText("final-token");
@@ -3261,8 +3438,57 @@ public partial class MainWindow : Window
         RemoveLiveMessage();
         AddMessage("assistant", rendered);
         bool caretAfter = FindByAutomationId(MessagePanel, "TypingCaret") is not null;
+        bool dotsAfter = FindByAutomationId(MessagePanel, "LoadingDots") is not null;
         return $"tokens={tokenCount}｜renders={_renderCount}｜interval={RenderInterval.TotalMilliseconds:0}"
-               + $"｜tailPresent={tailPresent}｜caretDuring={caretDuring}｜caretAfter={caretAfter}";
+               + $"｜tailPresent={tailPresent}｜caretDuring={caretDuring}｜caretAfter={caretAfter}"
+               + $"｜dotsBeforeFirstToken={dotsBeforeFirstToken}｜dotsDuring={dotsDuring}"
+               + $"｜dotsAfter={dotsAfter}";
+    }
+
+    /// <summary>
+    /// [EN] Reports the motion configuration of the main window for unattended verification.
+    ///      The status strip must carry an opacity transition and a render-transform transition,
+    ///      and its resting transform must be a pure vertical offset, so that collapsing it can
+    ///      never invalidate the layout of the conversation area.
+    /// [ZH] 为主窗口的动效配置提供无人值守验证所需的报告。状态区必须同时携带不透明度过渡与渲染变换
+    ///      过渡，且其静息变换仅包含垂直偏移，从而保证折叠过程绝不会使对话区域的布局失效。
+    /// </summary>
+    public string ProbeMotionSnapshot()
+    {
+        int transitions = StatusStripItems.Transitions?.Count ?? 0;
+        string transform = StatusStripItems.RenderTransform?.ToString() ?? "none";
+        var kinds = StatusStripItems.Transitions is null
+            ? ""
+            : string.Join(",", StatusStripItems.Transitions.Select(t => t.GetType().Name));
+        return $"stripTransitions={transitions}｜stripKinds={kinds}｜stripTransform={transform}"
+               + $"｜stripVisible={StatusStripItems.IsVisible}";
+    }
+
+    /// <summary>
+    /// [EN] Exercises the collapse and expansion of the status strip through the same code path
+    ///      that the toggle button invokes, and reports whether the element settles into the
+    ///      expected visual state after the transition has elapsed. The persisted preference is
+    ///      restored before the method returns.
+    /// [ZH] 通过与切换按钮相同的代码路径演练状态区的折叠与展开，并报告该元素在过渡结束后是否稳定
+    ///      落入预期的视觉状态。方法返回之前会复原已持久化的偏好。
+    /// </summary>
+    public async Task<string> ProbeStatusStripMotionAsync()
+    {
+        bool original = _state.Settings.StatusStripCollapsed;
+
+        _state.Settings.StatusStripCollapsed = true;
+        ApplyStatusStripState(animate: true);
+        await Task.Delay(260);
+        bool collapsedHidden = !StatusStripItems.IsVisible && StatusStripItems.Opacity <= 0.01;
+
+        _state.Settings.StatusStripCollapsed = false;
+        ApplyStatusStripState(animate: true);
+        await Task.Delay(260);
+        bool expandedVisible = StatusStripItems.IsVisible && StatusStripItems.Opacity >= 0.99;
+
+        _state.Settings.StatusStripCollapsed = original;
+        ApplyStatusStripState();
+        return $"collapsedHidden={collapsedHidden}｜expandedVisible={expandedVisible}";
     }
 
     /// <summary>

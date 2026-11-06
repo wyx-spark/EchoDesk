@@ -15,14 +15,32 @@
 #   powershell -File tools\check_ui_pixels.ps1                    # 浅色 + 深色各跑一遍
 #   powershell -File tools\check_ui_pixels.ps1 -Theme dark -KeepShots
 param(
-    # 口径：v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本（见 backend\version.py）。
-    [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.2\app\EchoDesk.exe",
+    # [EN] The executable under test. An empty value derives the release directory from
+    #      backend\version.py, because a hard-coded version silently pins this check to an older
+    #      release tree and the pixel assertions would then describe a build that is no longer
+    #      current.
+    # [ZH] 被测程序。留空表示由 backend\version.py 派生发布目录；写死版本号会让本项检查静默指向
+    #      旧的发布树，其像素断言描述的便不再是当前构建。
+    [string]$Exe = "",
     [ValidateSet('light', 'dark', 'both')][string]$Theme = 'both',
     [string]$Out = "$PSScriptRoot\..\artifacts\pixels",
     [int]$ReadyTimeoutSec = 180,
     [double]$MinContrast = 4.5,
     [switch]$KeepShots
 )
+
+# [EN] Resolve the release directory from the single version source when no explicit path is
+#      supplied.
+# [ZH] 未显式给出路径时，从唯一版本来源解析发布目录。
+if (-not $Exe) {
+    $PixelRoot = Split-Path -Parent $PSScriptRoot
+    $VersionFile = Join-Path $PixelRoot "backend\version.py"
+    $versionMatch = Select-String -Path $VersionFile -Pattern 'APP_VERSION\s*=\s*["'']([^"'']+)["'']' |
+                    Select-Object -First 1
+    if (-not $versionMatch) { throw "读不出 APP_VERSION：$VersionFile（可用 -Exe 显式指定）" }
+    $releaseVersion = $versionMatch.Matches[0].Groups[1].Value.TrimStart('v')
+    $Exe = Join-Path $PixelRoot "publish\EchoDesk-v$releaseVersion\app\EchoDesk.exe"
+}
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing

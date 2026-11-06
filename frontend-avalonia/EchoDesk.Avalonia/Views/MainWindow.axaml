@@ -284,8 +284,24 @@
             BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
             Padding="8,3">
       <Grid ColumnDefinitions="*,Auto">
-        <!-- 必须是 WrapPanel 而不是 StackPanel：状态项随功能增加，单行横排超出可用宽度的项会被裁掉 -->
-        <WrapPanel x:Name="StatusStripItems" Grid.Column="0" Orientation="Horizontal">
+        <!--
+          [EN] The container must be a WrapPanel rather than a StackPanel: status items grow with
+               every feature, and single-line horizontal flow would clip those that exceed the
+               available width. The transition set below only touches opacity and the render
+               transform, therefore collapsing the strip never invalidates measure or arrange of
+               the surrounding chat layout.
+          [ZH] 该容器必须是 WrapPanel 而非 StackPanel：状态项随功能增加，单行横排会裁掉超出可用宽度的项。
+               下方过渡仅作用于不透明度与渲染变换，因此折叠状态区不会使周围对话布局的测量或排列失效。
+        -->
+        <WrapPanel x:Name="StatusStripItems" Grid.Column="0" Orientation="Horizontal"
+                   RenderTransform="translate(0px, 0px)">
+          <WrapPanel.Transitions>
+            <Transitions>
+              <DoubleTransition Property="Opacity" Duration="0:0:0.18" Easing="CubicEaseOut" />
+              <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.18"
+                                             Easing="CubicEaseOut" />
+            </Transitions>
+          </WrapPanel.Transitions>
           <Button x:Name="StripSearchButton" Classes="chip">
             <TextBlock x:Name="SearchText" Text="" FontSize="11" />
           </Button>

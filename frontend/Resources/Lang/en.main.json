@@ -299,6 +299,9 @@
       "tip": "The model's reasoning trace. Click to expand or collapse; thinking is never sent back as context and is not included when copying the answer.",
       "noAnswer": "\n\n⚠️ The model only produced thinking and never reached a final answer (usually the length limit ran out: switch to the quality preset with /preset quality, raise max_tokens in config.json, or ask a more specific question)"
     },
+    "loading": {
+      "waitFirstToken": "Waiting for the first token…"
+    },
     "agent": {
       "title": "🛠️ Agent steps",
       "tip": "Every step the model decided on: which tool it called, with what arguments, what came back and how long it took. Press Esc to stop at any time.",

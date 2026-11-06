@@ -1,4 +1,4 @@
-﻿# 适用平台：Windows（WPF 与 Avalonia 都在真窗口上截）
+# 适用平台：Windows（WPF 与 Avalonia 都在真窗口上截）
 # EchoDesk 视觉对齐取证：把 WPF / Avalonia 两个前端按**同一套窗口、同一套路径**截图，
 # 供人工（多模态视觉）逐页比对间距 / 边距 / 字号 / 对齐 / 配色 / 圆角。
 #
@@ -39,8 +39,21 @@ Add-Type -Namespace AlignShot -Name Win32 -MemberDefinition @'
 [void][AlignShot.Win32]::SetProcessDPIAware()
 
 $Root = Split-Path -Parent $PSScriptRoot
+# [EN] The Windows release directory is derived from backend\version.py; a hard-coded version
+#      would make the comparison capture an obsolete build.
+# [ZH] Windows 发布目录由 backend\version.py 派生；写死版本号会使对照截图采集到过期的构建。
+$pairVersion = ""
+$pairVersionFile = Join-Path $Root "backend\version.py"
+$pairVersionMatch = Select-String -Path $pairVersionFile -Pattern 'APP_VERSION\s*=\s*["'']([^"'']+)["'']' |
+                     Select-Object -First 1
+if ($pairVersionMatch) { $pairVersion = $pairVersionMatch.Matches[0].Groups[1].Value.TrimStart('v') }
+$wpfExe = if ($pairVersion) {
+    Join-Path $Root "publish\EchoDesk-v$pairVersion\app\EchoDesk.exe"
+} else {
+    Join-Path $Root 'publish\EchoDesk-v0.2.2\app\EchoDesk.exe'
+}
 if (-not $Exe) {
-    if ($Flavor -eq 'wpf') { $Exe = Join-Path $Root 'publish\EchoDesk-v0.2.2\app\EchoDesk.exe' }
+    if ($Flavor -eq 'wpf') { $Exe = $wpfExe }
     else { $Exe = Join-Path $Root 'frontend-avalonia\EchoDesk.Avalonia\bin\Debug\net10.0\EchoDesk.exe' }
 }
 if (-not (Test-Path $Exe)) { Write-Output "[align] FAIL 找不到被测程序：$Exe"; exit 1 }
@@ -76,7 +89,7 @@ $env:ECHODESK_DATA = $DataDir
 # 一个"Q6_K 已加载"），根本没法比。Avalonia 开发构建默认会向上找到仓库里的 backend\，
 # 那份 config 与发布树不同 —— 这里显式指到发布树的后端，与 WPF 那一路完全一致。
 if ($Flavor -eq 'avalonia') {
-    $sharedBackend = Join-Path $Root 'publish\EchoDesk-v0.2.2\app\backend\EchoDeskBackend.exe'
+    $sharedBackend = Join-Path (Split-Path -Parent $wpfExe) 'backend\EchoDeskBackend.exe'
     if (Test-Path -LiteralPath $sharedBackend) {
         $env:ECHODESK_BACKEND = $sharedBackend
         Write-Output "[align] 后端统一为发布树：$sharedBackend"

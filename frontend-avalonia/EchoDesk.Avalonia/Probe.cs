@@ -175,6 +175,25 @@ internal static class Probe
                         var settings = new SettingsWindow(App.State);
                         settings.Show();
                         Console.WriteLine($"  [PASS] 设置窗口已构造并显示（{settings.Tabs.ItemCount} 个页签）");
+                        // [EN] Motion contract of the settings surface: the page entrance must run
+                        //      for 250 ms through opacity and the render transform, and the
+                        //      field-help side panel must start at zero width with a width
+                        //      transition available for its opening motion.
+                        // [ZH] 设置界面的动效约定：页签入场必须通过不透明度与渲染变换在 250 毫秒内完成，
+                        //      且字段帮助侧面板必须以零宽度起始，并具备供其展开动效使用的宽度过渡。
+                        string settingsMotion = settings.ProbeMotionSnapshot();
+                        Console.WriteLine($"  设置窗口动效: {settingsMotion}");
+                        bool settingsMotionOk =
+                            settingsMotion.Contains("pageDuration=250", StringComparison.Ordinal)
+                            && settingsMotion.Contains("DoubleTransition", StringComparison.Ordinal)
+                            && settingsMotion.Contains("TransformOperationsTransition", StringComparison.Ordinal)
+                            && settingsMotion.Contains("fieldHelpWidth=0", StringComparison.Ordinal)
+                            && settingsMotion.Contains("fieldHelpTransitions=DoubleTransition",
+                                StringComparison.Ordinal);
+                        Console.WriteLine($"  [{(settingsMotionOk ? "PASS" : "FAIL")}] 设置窗口动效配置"
+                            + $"——{(settingsMotionOk ? "页签与侧面板过渡均已就位" : OneLine(settingsMotion, 180))}");
+                        if (!settingsMotionOk)
+                            ok = false;
                         // 关掉它：Closing 里会写窗口尺寸记忆，顺便验证那条路径不炸。
                         settings.Close();
                     }
@@ -722,6 +741,27 @@ internal static class Probe
             streaming.Contains("caretDuring=True", StringComparison.Ordinal), OneLine(streaming, 160));
         Check("生成结束后光标立即消失",
             streaming.Contains("caretAfter=False", StringComparison.Ordinal), OneLine(streaming, 160));
+        Check("首字到达前呈现三点等待指示器",
+            streaming.Contains("dotsBeforeFirstToken=True", StringComparison.Ordinal), OneLine(streaming, 200));
+        Check("首个片段到达后三点指示器立即撤下",
+            streaming.Contains("dotsDuring=False", StringComparison.Ordinal), OneLine(streaming, 200));
+        Check("生成结束后三点指示器不复存在",
+            streaming.Contains("dotsAfter=False", StringComparison.Ordinal), OneLine(streaming, 200));
+
+        string motion = main.ProbeMotionSnapshot();
+        Console.WriteLine($"  主窗口动效 : {motion}");
+        Check("状态区折叠同时具备不透明度过渡与渲染变换过渡",
+            ReadNumber(motion, "stripTransitions") >= 2
+            && motion.Contains("DoubleTransition", StringComparison.Ordinal)
+            && motion.Contains("TransformOperationsTransition", StringComparison.Ordinal),
+            OneLine(motion, 200));
+
+        string stripMotion = await main.ProbeStatusStripMotionAsync();
+        Console.WriteLine($"  状态区收放 : {stripMotion}");
+        Check("状态区折叠后完成隐藏并复位不透明度",
+            stripMotion.Contains("collapsedHidden=True", StringComparison.Ordinal), OneLine(stripMotion, 160));
+        Check("状态区展开后恢复可见并回到满不透明度",
+            stripMotion.Contains("expandedVisible=True", StringComparison.Ordinal), OneLine(stripMotion, 160));
 
         return ok;
     }

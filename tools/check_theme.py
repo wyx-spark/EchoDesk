@@ -9,6 +9,15 @@
 3. **不硬编码颜色**：界面代码（xaml / cs）里不允许出现色值字面量，颜色必须来自色板；
    同时校验所有 ``{DynamicResource <键>}`` 引用的键真的存在（写错键名会导致文字不可见）。
 
+色板来源（v0.2.3 起明确）：
+
+* 第 1、2 项的通用断言针对 WPF 色板 ``frontend/Resources/Theme.Light.xaml`` /
+  ``Theme.Dark.xaml``；
+* 跨平台前端（Avalonia）拥有独立的色板 ``frontend-avalonia/.../Themes/Light.axaml`` /
+  ``Dark.axaml``，其中定义了仅由该前端使用的强调色令牌（悬停、按下）。
+  WPF 在转入长期支持时清理了这些未引用令牌，因此针对它们的对比度断言必须检查
+  **真正定义它们的色板**，否则门禁会拿一个不可能出现的键去比对，自己变瞎。
+
 用法：
     python tools/check_theme.py            # 检查
     python tools/check_theme.py -v         # 打印全部对比度明细
@@ -25,6 +34,11 @@ THEME_DIR = os.path.join(ROOT, "frontend", "Resources")
 LIGHT = os.path.join(THEME_DIR, "Theme.Light.xaml")
 DARK = os.path.join(THEME_DIR, "Theme.Dark.xaml")
 STYLES = os.path.join(THEME_DIR, "Styles.xaml")
+
+# 跨平台前端（Avalonia）的色板：v0.2.3 起该前端拥有独立主题文件。
+AVALONIA_THEME_DIR = os.path.join(ROOT, "frontend-avalonia", "EchoDesk.Avalonia", "Themes")
+AV_LIGHT = os.path.join(AVALONIA_THEME_DIR, "Light.axaml")
+AV_DARK = os.path.join(AVALONIA_THEME_DIR, "Dark.axaml")
 
 # 允许出现色值的文件（色板的唯一来源）
 COLOR_ALLOWLIST = {os.path.normcase(LIGHT), os.path.normcase(DARK)}
@@ -56,8 +70,6 @@ CONTRAST_PAIRS = [
     ("AccentBrush", "WindowBackground", 4.5, "强调色文字（标题）/ 窗口背景", True),
     ("AccentBrush", "SurfaceBrush", 4.5, "强调色文字 / 卡片表面", True),
     ("AccentForegroundBrush", "AccentBrush", 4.5, "强调按钮文字 / 强调背景", True),
-    ("AccentForegroundBrush", "AccentHoverBrush", 4.5, "强调按钮文字 / 悬停", True),
-    ("AccentForegroundBrush", "AccentPressedBrush", 4.5, "强调按钮文字 / 按下", True),
     ("SelectionForeground", "SelectionBackground", 4.5, "选中项文字 / 选中背景", True),
     ("MenuForeground", "MenuBackground", 4.5, "菜单文字 / 菜单背景", True),
     ("MenuForeground", "MenuHighlightBackground", 4.5, "菜单文字 / 菜单高亮", True),
@@ -81,6 +93,14 @@ CONTRAST_PAIRS = [
     ("ScrollBarThumbBrush", "ScrollBarTrackBrush", 3.0, "滚动条滑块 / 轨道", True),
     # 纯装饰元素：只测量
     ("SeparatorBrush", "SurfaceBrush", 3.0, "分隔线 / 卡片表面（装饰性）", False),
+]
+
+# Avalonia 专属的对比度断言。这些键只存在于跨平台前端的色板中（WPF 在转入长期支持时
+# 清理了未引用的悬停/按下令牌），因此必须针对 Avalonia 色板执行，阈值与上表一致。
+AVALONIA_CONTRAST_PAIRS = [
+    ("AccentForegroundBrush", "AccentBrush", 4.5, "强调按钮文字 / 强调背景（Avalonia）", True),
+    ("AccentForegroundBrush", "AccentHoverBrush", 4.5, "强调按钮文字 / 悬停（Avalonia）", True),
+    ("AccentForegroundBrush", "AccentPressedBrush", 4.5, "强调按钮文字 / 按下（Avalonia）", True),
 ]
 
 BRUSH_RE = re.compile(r'x:Key="([A-Za-z0-9_]+)"\s+Color="(#[0-9A-Fa-f]{6,8})"')
@@ -121,26 +141,26 @@ def contrast(fg: str, bg: str) -> float:
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def check_palette(labels: dict) -> None:
-    for name, palette in labels.items():
-        if not palette:
-            failures.append(f"{name} 主题色板为空，路径可能写错了")
-    light, dark = labels["浅色"], labels["深色"]
+def check_palette(family: str, light: dict, dark: dict) -> None:
+    if not light or not dark:
+        failures.append(f"{family} 主题色板为空，路径可能写错了")
+        return
     missing_in_dark = sorted(set(light) - set(dark))
     missing_in_light = sorted(set(dark) - set(light))
     if missing_in_dark:
-        failures.append(f"深色主题缺少键（切主题时会残留默认色）: {', '.join(missing_in_dark)}")
+        failures.append(f"{family} 深色主题缺少键（切主题时会残留默认色）: {', '.join(missing_in_dark)}")
     if missing_in_light:
-        failures.append(f"浅色主题缺少键: {', '.join(missing_in_light)}")
+        failures.append(f"{family} 浅色主题缺少键: {', '.join(missing_in_light)}")
     if not missing_in_dark and not missing_in_light:
-        print(f"  [OK] 两套色板键名一致，共 {len(light)} 个键")
+        print(f"  [OK] {family} 两套色板键名一致，共 {len(light)} 个键")
 
 
-def check_contrast(labels: dict, verbose: bool) -> None:
+def check_contrast(labels: dict, verbose: bool, pairs=None) -> None:
+    pairs = CONTRAST_PAIRS if pairs is None else pairs
     for name, palette in labels.items():
         bad = 0
         advisory = []
-        for fg_key, bg_key, minimum, label, required in CONTRAST_PAIRS:
+        for fg_key, bg_key, minimum, label, required in pairs:
             if fg_key not in palette or bg_key not in palette:
                 failures.append(f"{name}：对比度表引用了不存在的键 {fg_key} / {bg_key}")
                 bad += 1
@@ -229,9 +249,21 @@ def main() -> int:
 
     print("== 主题色板（修复二）==")
     labels = {"浅色": load_palette(LIGHT), "深色": load_palette(DARK)}
-    check_palette(labels)
+    check_palette("WPF", labels["浅色"], labels["深色"])
     print("-- WCAG AA 对比度")
     check_contrast(labels, args.verbose)
+
+    # 跨平台前端的色板：v0.2.3 起为独立主题文件。此处检查键名一致性与专属令牌的对比度，
+    # 阈值与 WPF 色板相同（正文 4.5:1），不降低任何既有要求。
+    print("-- 跨平台前端色板（Avalonia）")
+    if not (os.path.exists(AV_LIGHT) and os.path.exists(AV_DARK)):
+        failures.append(f"Avalonia 色板缺失：{AV_LIGHT} / {AV_DARK}")
+    else:
+        av_labels = {"浅色（Avalonia）": load_palette(AV_LIGHT),
+                     "深色（Avalonia）": load_palette(AV_DARK)}
+        check_palette("Avalonia", av_labels["浅色（Avalonia）"], av_labels["深色（Avalonia）"])
+        check_contrast(av_labels, args.verbose, AVALONIA_CONTRAST_PAIRS)
+
     print("-- 界面代码")
     check_hardcoded(labels)
 

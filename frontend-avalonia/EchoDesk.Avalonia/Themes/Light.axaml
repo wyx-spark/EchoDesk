@@ -35,7 +35,15 @@
   <SolidColorBrush x:Key="TextForegroundBrush" Color="#FF1F2328" />
   <SolidColorBrush x:Key="SubTextBrush" Color="#FF57606A" />
   <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FFFFFFFF" />
-  <SolidColorBrush x:Key="AccentHoverBrush" Color="#FF0095A8" />
+  <!--
+    [EN] Hover tone of the accent surface. It must stay lighter than the resting accent so that
+         the hover state is perceivable, while keeping white label text at or above the WCAG AA
+         ratio of 4.5:1 (the previous value #0095A8 measured 3.58:1 and therefore failed the
+         contrast gate for this palette).
+    [ZH] 强调色表面的悬停色调。它必须比静息态强调色更浅，使悬停状态可被察觉，同时保证白色标签文字
+         不低于 WCAG AA 的 4.5:1（原值 #0095A8 实测为 3.58:1，因此未通过本色板的对比度门禁）。
+  -->
+  <SolidColorBrush x:Key="AccentHoverBrush" Color="#FF00808F" />
   <SolidColorBrush x:Key="AccentPressedBrush" Color="#FF00636F" />
   <SolidColorBrush x:Key="LinkBrush" Color="#FF007B8A" />
   <SolidColorBrush x:Key="SuccessBrush" Color="#FF1A7F37" />

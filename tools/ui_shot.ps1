@@ -10,11 +10,27 @@
 #   powershell -File tools\ui_shot.ps1 -Exe <path> -Out <dir>
 #   powershell -File tools\ui_shot.ps1 -SkipLaunch          # 只对已在运行的进程截图
 param(
-    [string]$Exe = "$PSScriptRoot\..\publish\EchoDesk-v0.2.2\app\EchoDesk.exe",
+    # [EN] The executable under test. An empty value derives the release directory from
+    #      backend\version.py so that screenshots always depict the current build.
+    # [ZH] 被测程序。留空表示由 backend\version.py 派生发布目录，使截图始终对应当前构建。
+    [string]$Exe = "",
     [string]$Out = "$PSScriptRoot\..\artifacts\ui-shots",
     [int]$ReadyTimeoutSec = 180,
     [switch]$SkipLaunch
 )
+
+# [EN] Resolve the release directory from the single version source when no explicit path is
+#      supplied.
+# [ZH] 未显式给出路径时，从唯一版本来源解析发布目录。
+if (-not $Exe) {
+    $ShotRoot = Split-Path -Parent $PSScriptRoot
+    $VersionFile = Join-Path $ShotRoot "backend\version.py"
+    $versionMatch = Select-String -Path $VersionFile -Pattern 'APP_VERSION\s*=\s*["'']([^"'']+)["'']' |
+                    Select-Object -First 1
+    if (-not $versionMatch) { throw "读不出 APP_VERSION：$VersionFile（可用 -Exe 显式指定）" }
+    $releaseVersion = $versionMatch.Matches[0].Groups[1].Value.TrimStart('v')
+    $Exe = Join-Path $ShotRoot "publish\EchoDesk-v$releaseVersion\app\EchoDesk.exe"
+}
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing

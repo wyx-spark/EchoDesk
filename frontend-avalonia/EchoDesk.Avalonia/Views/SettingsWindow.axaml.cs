@@ -11,13 +11,18 @@
 //      （Avalonia 用事件重建，WPF 用附加属性遍历 —— 机制不同，效果一致）。
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.Transformation;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using EchoDesk.Avalonia.Services;
 using EchoDesk.Avalonia.Views.Settings;
@@ -30,6 +35,21 @@ public partial class SettingsWindow : Window, ISettingsHost
     private readonly List<ISettingsPage> _pages = new();
     private readonly List<(TabItem Item, string Key, string Fallback)> _tabHeaders = new();
     private bool _dirty;
+
+    // [EN] Motion contract of the settings surface. The page transition and the panel transition
+    //      are expressed through render-only properties wherever possible; the field-help panel is
+    //      the sole exception, because its width is the substance of the requested sidebar motion.
+    // [ZH] 设置界面的动效约定。页签过渡与面板过渡尽可能通过仅影响渲染的属性表达；字段帮助面板是唯一
+    //      的例外，因为其宽度正是所要求的侧边栏动效实体。
+    private const double PageTransitionMilliseconds = 250;
+    private const double FieldHelpWidth = 320;
+    private const double FieldHelpTransitionMilliseconds = 200;
+
+    /// <summary>
+    /// [EN] One-shot timer that hides the field-help panel after its closing transition completes.
+    /// [ZH] 字段帮助面板关闭过渡结束后负责隐藏它的一次性定时器。
+    /// </summary>
+    private DispatcherTimer? _fieldHelpHideTimer;
 
     // [EN] Manual double-click bookkeeping for the custom caption; see MainWindow for rationale.
     // [ZH] 自定义标题栏的手动双击判定状态；判定理由见主窗口对应说明。
@@ -69,6 +89,11 @@ public partial class SettingsWindow : Window, ISettingsHost
         foreach ((string key, string fallback) in NotMigratedTabs)
             AddNotMigratedTab(key, fallback);
 
+        // [EN] The page transition is attached after registration so that the initial page, which
+        //      is selected while the items are added, is presented without motion.
+        // [ZH] 页签过渡在注册完成后挂接，因此新增条目时被选中的初始页签不会播放动效。
+        Tabs.SelectionChanged += OnTabSelectionChanged;
+
         Loc.LanguageChanged += (_, _) => ApplyTexts();
         ApplyTexts();
         LoadFromSettings();
@@ -100,7 +125,116 @@ public partial class SettingsWindow : Window, ISettingsHost
 
         // 与主窗口同一道保险：记忆里的尺寸可能来自旧版本（980x720），
         // 超出当前屏幕可用区域时会把底部的保存/关闭按钮裁掉。
-        Opened += (_, _) => ClampSizeToScreen();
+        Opened += (_, _) =>
+        {
+            ClampSizeToScreen();
+            PlayContentEntrance();
+        };
+    }
+
+    // -----------------------------------------------------------------
+    // [EN] Surface and page motion / [ZH] 界面与页签动效
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// [EN] Plays the 250 ms entrance of the settings content. Only opacity and the render
+    ///      transform are animated, therefore the window can be measured and arranged once and
+    ///      the entrance adds no layout pass of its own.
+    /// [ZH] 播放设置内容 250 毫秒的入场动效。仅不透明度与渲染变换参与动画，因此窗口只需完成一次测量与
+    ///      排列，入场过程本身不增加任何布局过程。
+    /// </summary>
+    private void PlayContentEntrance()
+    {
+        ContentRoot.Opacity = 1;
+        ContentRoot.RenderTransform = TransformOperations.Parse("translate(0px, 0px)");
+    }
+
+    /// <summary>
+    /// [EN] Plays the 250 ms entrance of a newly selected page. The transition is restarted from
+    ///      an explicit initial value, so that switching back and forth yields the same motion;
+    ///      the animation touches opacity and the render transform only.
+    /// [ZH] 播放新选中页签 250 毫秒的入场动效。过渡从显式初始值重新开始，因此往返切换具有一致的运动
+    ///      表现；动画仅涉及不透明度与渲染变换。
+    /// </summary>
+    private void OnTabSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (Tabs.SelectedItem is not TabItem { Content: Control page })
+            return;
+        page.Opacity = 0;
+        page.RenderTransform = TransformOperations.Parse("translate(0px, 6px)");
+        // [EN] The target values are applied on the next render pass so that the transition has a
+        //      previous value to interpolate from; applying both in the same turn would snap.
+        // [ZH] 目标值在下一个渲染回合施加，使过渡拥有可插值的先前值；在同一回合内一并施加只会直接跳变。
+        Dispatcher.UIThread.Post(() =>
+        {
+            page.Opacity = 1;
+            page.RenderTransform = TransformOperations.Parse("translate(0px, 0px)");
+        }, DispatcherPriority.Render);
+    }
+
+    /// <summary>
+    /// [EN] Opens or closes the field-help side panel through a width transition. The panel is
+    ///      hidden only after the closing transition has elapsed, therefore the surface recedes
+    ///      smoothly instead of collapsing in a single frame.
+    /// [ZH] 通过宽度过渡开启或关闭字段帮助侧面板。面板仅在关闭过渡结束之后才被隐藏，因此该界面是平滑
+    ///      退出，而非在单帧内骤缩。
+    /// </summary>
+    private void AnimateFieldHelp(bool show)
+    {
+        _fieldHelpHideTimer?.Stop();
+        _fieldHelpHideTimer = null;
+
+        if (show)
+        {
+            FieldHelpPanel.IsVisible = true;
+            FieldHelpPanel.IsHitTestVisible = true;
+            FieldHelpPanel.Opacity = 1;
+            FieldHelpPanel.Width = FieldHelpWidth;
+            return;
+        }
+
+        FieldHelpPanel.IsHitTestVisible = false;
+        FieldHelpPanel.Opacity = 0;
+        FieldHelpPanel.Width = 0;
+        _fieldHelpHideTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(FieldHelpTransitionMilliseconds + 20),
+        };
+        _fieldHelpHideTimer.Tick += (_, _) =>
+        {
+            _fieldHelpHideTimer?.Stop();
+            _fieldHelpHideTimer = null;
+            if (FieldHelpPanel.Width <= 0.5)
+                FieldHelpPanel.IsVisible = false;
+        };
+        _fieldHelpHideTimer.Start();
+    }
+
+    /// <summary>
+    /// [EN] Reports the motion configuration of the settings surface for unattended verification:
+    ///      the page transition duration, the field-help panel transitions and its resting width.
+    /// [ZH] 为无人值守验证提供设置界面的动效配置报告：页签过渡时长、字段帮助面板的过渡项及其静息宽度。
+    /// </summary>
+    public string ProbeMotionSnapshot()
+    {
+        string kinds = "none";
+        double pageDuration = 0;
+        if (Tabs.SelectedItem is TabItem { Content: Control page })
+        {
+            if (page.Transitions is { Count: > 0 } transitions)
+                kinds = string.Join(",", transitions.Select(t => t.GetType().Name));
+            foreach (DoubleTransition transition in page.Transitions?.OfType<DoubleTransition>() ?? [])
+            {
+                if (transition.Property == Visual.OpacityProperty)
+                    pageDuration = transition.Duration.TotalMilliseconds;
+            }
+        }
+        string fieldHelpKinds = FieldHelpPanel.Transitions is { Count: > 0 } fieldTransitions
+            ? string.Join(",", fieldTransitions.Select(t => t.GetType().Name))
+            : "none";
+        return $"pageTransitions={kinds}｜pageDuration={pageDuration:0}"
+               + $"｜fieldHelpTransitions={fieldHelpKinds}"
+               + $"｜fieldHelpWidth={FieldHelpPanel.Width:0}｜fieldHelpVisible={FieldHelpPanel.IsVisible}";
     }
 
     // -----------------------------------------------------------------
@@ -235,10 +369,10 @@ public partial class SettingsWindow : Window, ISettingsHost
         FieldHelpBody.Text = body;
         FieldHelpExample.Text = example;
         FieldHelpExample.IsVisible = !string.IsNullOrWhiteSpace(example);
-        FieldHelpPanel.IsVisible = true;
+        AnimateFieldHelp(show: true);
     }
 
-    public void ClearFieldHelp() => FieldHelpPanel.IsVisible = false;
+    public void ClearFieldHelp() => AnimateFieldHelp(show: false);
 
     /// <summary>
     /// 跨页跳转（「已安装」页的「➕ 新建本地插件」要跳到「开发者」页）。
@@ -283,10 +417,33 @@ public partial class SettingsWindow : Window, ISettingsHost
     private void RegisterPage(ISettingsPage page)    {
         page.Attach(this);
         page.ApplyTexts();
+        // [EN] Each page carries its own transition set, because a transition must live on the
+        //      element whose property it animates. The resting values are the settled state of an
+        //      entrance that has already completed.
+        // [ZH] 每个页面各自携带过渡集合，因为过渡必须位于其所动画属性所属的元素上。静息值即入场动效
+        //      完成后的稳定状态。
+        var pageControl = (Control)page;
+        pageControl.Opacity = 1;
+        pageControl.RenderTransform = TransformOperations.Parse("translate(0px, 0px)");
+        pageControl.Transitions = new Transitions
+        {
+            new DoubleTransition
+            {
+                Property = Visual.OpacityProperty,
+                Duration = TimeSpan.FromMilliseconds(PageTransitionMilliseconds),
+                Easing = new CubicEaseOut(),
+            },
+            new TransformOperationsTransition
+            {
+                Property = Visual.RenderTransformProperty,
+                Duration = TimeSpan.FromMilliseconds(PageTransitionMilliseconds),
+                Easing = new CubicEaseOut(),
+            },
+        };
         var item = new TabItem
         {
             Header = Loc.T(page.TabKey, page.TabFallback),
-            Content = (Control)page,
+            Content = pageControl,
             Tag = page,
         };
         AutomationProperties.SetAutomationId(item, page.AutomationId);
