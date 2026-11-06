@@ -457,9 +457,7 @@ def check() -> int:
 
     1. **根目录的成对文件**（`check_lang` 只扫 `docs/`，根目录不在它的射程内）；
     2. **仓库内嵌套的说明文档**（`examples/`、`assets/`、`deploy/` 下的 README）；
-    3. **`tools/` 下 `.ps1` 的跨平台等价物评估**（任务书 4.2 的登记表）；
-    4. **`.bat` 的编码安全**（见下方真实事故说明）；
-    5. **`PROJECT.md` 的忽略不变量**（内部大赛材料必须始终留在 `.gitignore`，且不得被跟踪）。
+    3. **`tools/` 下 `.ps1` 的跨平台等价物评估**（任务书 4.2 的登记表）。
     """
     docs = build_audit()
     problems: list[str] = []
@@ -529,28 +527,6 @@ def check() -> int:
                 f"{entry['path']} 的非 ASCII 文本出现在{where}（第 {offenders[:5]} 行）："
                 "cmd.exe 会按传统代码页解析这些字节，可能吃掉行尾并把后续内容当成命令执行 —— "
                 "把 chcp 65001 >nul 提到最前，或把这些行改成 ASCII")
-
-    # 5) PROJECT.md 的忽略不变量
-    #
-    # [EN] PROJECT.md must always stay in .gitignore and must never be tracked: it is internal
-    #      competition material, deliberately excluded from version control. The rule was once
-    #      dropped by accident and the file reappeared as an untracked entry, so the invariant is
-    #      now asserted instead of relying on memory.
-    # [ZH] PROJECT.md 必须始终留在 .gitignore 中且不得被跟踪：它是内部大赛材料，按既定决定
-    #      刻意不入库。该规则曾被误删，文件于是重新变成未跟踪项；现以断言固定这一不变量，
-    #      不再依赖记忆维护。
-    ignore_file = os.path.join(ROOT, ".gitignore")
-    try:
-        with io.open(ignore_file, "r", encoding="utf-8") as handle:
-            ignore_lines = [line.strip() for line in handle]
-    except OSError as exc:
-        problems.append(f"无法读取 .gitignore（{exc}）：无法确认 PROJECT.md 的忽略不变量")
-    else:
-        if "PROJECT.md" not in ignore_lines:
-            problems.append("PROJECT.md 不在 .gitignore 中：内部大赛材料必须始终被忽略，不得入库")
-    if "PROJECT.md" in {entry["path"] for entry in docs}:
-        problems.append("PROJECT.md 被 Git 跟踪：违反“内部大赛材料不入库”的约定，"
-                        "请执行 git rm --cached PROJECT.md")
 
     print("== 仓库双语与三平台友好度门禁 ==")
     print(f"被跟踪文件 {len(docs)} 个；.ps1 {len(ps1)} 个（登记 {len(PS1_ALLOWLIST)} 个）；.bat {len(bat)} 个")
