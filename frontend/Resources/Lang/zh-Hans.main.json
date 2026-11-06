@@ -132,6 +132,12 @@
     }
   },
   "main": {
+    "window": {
+      "minimize": "最小化",
+      "maximize": "最大化",
+      "restore": "还原",
+      "close": "关闭"
+    },
     "connecting": "⏳ 正在连接后端，请稍候...",
     "welcome": "✨ 欢迎使用 EchoDesk {0} — 由{1}出品",
     "welcomeRestored": "📂 已自动恢复上次会话（{0} 轮）",

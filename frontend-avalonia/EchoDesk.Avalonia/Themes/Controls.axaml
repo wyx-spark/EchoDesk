@@ -1,0 +1,126 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    [EN] Immersive control themes for the EchoDesk Avalonia shell. The stock Fluent scrollbar
+         is replaced by a minimal 4 px rail whose thumb widens to 6 px on hover.
+    [ZH] EchoDesk Avalonia 外壳的沉浸式控件主题。原生 Fluent 滚动条被替换为极简 4px 轨道，
+         其滑块在悬停时加宽至 6px。
+    [EN] The replacement is a ControlTheme keyed by the target type, therefore every ScrollBar
+         in the application adopts it without touching individual views.
+    [ZH] 该替换以控件类型为键的 ControlTheme 实现，因此应用内所有 ScrollBar 均自动采用，
+         无需逐视图修改。
+  -->
+
+  <!--
+    [EN] Invisible paging surface: preserves click-to-page behaviour of the Track while showing
+         no arrow buttons, in keeping with the borderless design language.
+    [ZH] 不可见翻页面：保留 Track 的点击翻页行为，同时不显示箭头按钮，契合无边框设计语言。
+  -->
+  <ControlTheme x:Key="ImmersiveScrollPageButton" TargetType="RepeatButton">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Focusable" Value="False" />
+    <Setter Property="IsTabStop" Value="False" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Background="{TemplateBinding Background}" />
+      </ControlTemplate>
+    </Setter>
+  </ControlTheme>
+
+  <ControlTheme x:Key="{x:Type ScrollBar}" TargetType="ScrollBar">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource ScrollBarThumbBrush}" />
+
+    <!--
+      [EN] Vertical rail: fixed 6 px reservation so that widening the thumb never reflows the
+           scrollable content; the visible rail itself remains 4 px wide.
+      [ZH] 垂直轨道：固定预留 6px，使滑块加宽时不会引起可滚动内容重排；可见轨道本身仍为 4px 宽。
+    -->
+    <Style Selector="^:vertical">
+      <Setter Property="Width" Value="6" />
+      <Setter Property="MinWidth" Value="6" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Grid Background="Transparent">
+            <Border Width="4" HorizontalAlignment="Center" CornerRadius="2"
+                    Background="{DynamicResource ScrollBarTrackBrush}" />
+            <Track Minimum="{TemplateBinding Minimum}"
+                   Maximum="{TemplateBinding Maximum}"
+                   Value="{TemplateBinding Value, Mode=TwoWay}"
+                   ViewportSize="{TemplateBinding ViewportSize}"
+                   Orientation="{TemplateBinding Orientation}"
+                   IsDirectionReversed="True">
+              <Track.DecreaseButton>
+                <RepeatButton Name="PART_PageUpButton"
+                              Theme="{StaticResource ImmersiveScrollPageButton}" />
+              </Track.DecreaseButton>
+              <Track.IncreaseButton>
+                <RepeatButton Name="PART_PageDownButton"
+                              Theme="{StaticResource ImmersiveScrollPageButton}" />
+              </Track.IncreaseButton>
+              <Thumb Width="4" MinHeight="24" HorizontalAlignment="Center" CornerRadius="2"
+                     Background="{DynamicResource ScrollBarThumbBrush}" />
+            </Track>
+          </Grid>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+
+    <!--
+      [EN] Horizontal rail: mirror of the vertical contract, with the reservation applied to the
+           height instead of the width.
+      [ZH] 水平轨道：与垂直轨道约定对称，预留量施加于高度而非宽度。
+    -->
+    <Style Selector="^:horizontal">
+      <Setter Property="Height" Value="6" />
+      <Setter Property="MinHeight" Value="6" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Grid Background="Transparent">
+            <Border Height="4" VerticalAlignment="Center" CornerRadius="2"
+                    Background="{DynamicResource ScrollBarTrackBrush}" />
+            <Track Minimum="{TemplateBinding Minimum}"
+                   Maximum="{TemplateBinding Maximum}"
+                   Value="{TemplateBinding Value, Mode=TwoWay}"
+                   ViewportSize="{TemplateBinding ViewportSize}"
+                   Orientation="{TemplateBinding Orientation}">
+              <Track.DecreaseButton>
+                <RepeatButton Name="PART_PageUpButton"
+                              Theme="{StaticResource ImmersiveScrollPageButton}" />
+              </Track.DecreaseButton>
+              <Track.IncreaseButton>
+                <RepeatButton Name="PART_PageDownButton"
+                              Theme="{StaticResource ImmersiveScrollPageButton}" />
+              </Track.IncreaseButton>
+              <Thumb Height="4" MinWidth="24" VerticalAlignment="Center" CornerRadius="2"
+                     Background="{DynamicResource ScrollBarThumbBrush}" />
+            </Track>
+          </Grid>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+
+    <!--
+      [EN] Hover and drag states: the thumb thickens to 6 px and resolves to the solid accent
+           colour, providing an unambiguous affordance without animation-induced jitter.
+      [ZH] 悬停与拖动状态：滑块加粗至 6px 并解析为实心强调色，在不引入动画抖动的前提下给出明确的可操作性提示。
+    -->
+    <Style Selector="^:vertical:pointerover /template/ Thumb">
+      <Setter Property="Width" Value="6" />
+      <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+    </Style>
+    <Style Selector="^:vertical:pressed /template/ Thumb">
+      <Setter Property="Width" Value="6" />
+      <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+    </Style>
+    <Style Selector="^:horizontal:pointerover /template/ Thumb">
+      <Setter Property="Height" Value="6" />
+      <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+    </Style>
+    <Style Selector="^:horizontal:pressed /template/ Thumb">
+      <Setter Property="Height" Value="6" />
+      <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+    </Style>
+  </ControlTheme>
+</ResourceDictionary>

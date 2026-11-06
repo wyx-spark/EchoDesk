@@ -741,11 +741,13 @@ public static class MarkdownRenderer
     // 小工具
     // -----------------------------------------------------------------
 
+    // [EN] Body line height is 1.6x the paragraph size, the typographic baseline of the shell.
+    // [ZH] 正文行高为段落字号的 1.6 倍，即外壳的排版基线。
     private static TextBlock NewTextBlock(double fontSize) => new()
     {
         TextWrapping = TextWrapping.Wrap,
         FontSize = fontSize,
-        LineHeight = fontSize * 1.5,
+        LineHeight = fontSize * 1.6,
         Inlines = new InlineCollection(),
     };
 

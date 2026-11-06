@@ -132,6 +132,12 @@
     }
   },
   "main": {
+    "window": {
+      "minimize": "Minimize",
+      "maximize": "Maximize",
+      "restore": "Restore",
+      "close": "Close"
+    },
     "connecting": "⏳ Connecting to the backend, please wait…",
     "welcome": "✨ Welcome to EchoDesk {0} — Powered by {1}",
     "welcomeRestored": "📂 Previous session restored automatically ({0} turns)",

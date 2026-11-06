@@ -4,8 +4,14 @@
         Title="EchoDesk 设置"
         Icon="/Assets/app.ico"
         Width="844" Height="581" MinWidth="680" MinHeight="520"
-        Background="{DynamicResource AppBackgroundBrush}">
+        Background="{DynamicResource AppBackgroundBrush}"
+        WindowDecorations="BorderOnly">
   <!--
+    [EN] Borderless settings shell. The native caption is removed while the resize frame and drop
+         shadow remain, and window movement is performed by the platform move loop in the
+         code-behind, so that drag, snap and DPI behaviour match the main window.
+    [ZH] 无边框设置外壳。移除原生标题栏，同时保留缩放边框与投影；窗口移动由代码隐藏文件中的
+         平台移动循环执行，使拖动、贴靠与 DPI 行为与主窗口一致。
     设置窗口骨架（v0.2.1 跨平台-2 任务一，第 1 个迁移模块）。
 
     与 WPF 版的对应关系：WPF 的 SettingsWindow 是一个 1321 行的 XAML + 六个分部类；
@@ -14,7 +20,57 @@
 
     骨架只负责四件事：页签容器、窗口状态记忆、底部状态与保存、主题/语言即时生效。
   -->
-  <Grid RowDefinitions="*,Auto" Margin="12">
+  <Grid RowDefinitions="Auto,*">
+
+    <!--
+      [EN] Custom caption shared with the main window: brand mark, localised title and the three
+           caption controls.
+      [ZH] 与主窗口同款的自定义标题栏：品牌标记、本地化标题与三个窗口控制按钮。
+    -->
+    <Border x:Name="TitleBar" Grid.Row="0" Height="44"
+            Background="{DynamicResource TitleBarBackgroundBrush}"
+            BorderBrush="{DynamicResource TitleBarBorderBrush}" BorderThickness="0,0,0,1"
+            PointerPressed="OnTitleBarPointerPressed">
+      <Grid ColumnDefinitions="Auto,*,Auto" Margin="12,0,0,0">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
+          <!--
+            [EN] Application identity mark: the official application icon is rendered directly,
+                 so that the title bar and the operating-system task switcher present one identity.
+            [ZH] 应用标识：直接渲染官方应用程序图标，使标题栏与操作系统任务切换器呈现同一标识。
+          -->
+          <Image Width="22" Height="22" Source="/Assets/app.ico" Stretch="Uniform" />
+          <TextBlock x:Name="TitleBarTitle" Text="EchoDesk" FontSize="13" FontWeight="SemiBold"
+                     LineHeight="16" TextWrapping="NoWrap"
+                     Foreground="{DynamicResource TitleBarForegroundBrush}"
+                     VerticalAlignment="Center" />
+        </StackPanel>
+
+        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="TitleBarMinimizeButton" Classes="chrome"
+                  AutomationProperties.AutomationId="TitleBarMinimizeButton">
+            <Path Data="M1,5.5 L11,5.5" Stroke="{DynamicResource TitleBarForegroundBrush}"
+                  StrokeThickness="1.2" />
+          </Button>
+          <Button x:Name="TitleBarMaximizeButton" Classes="chrome"
+                  AutomationProperties.AutomationId="TitleBarMaximizeButton">
+            <Panel Width="12" Height="12">
+              <Path x:Name="MaximizeGlyph" Data="M1,1 L11,1 L11,11 L1,11 Z"
+                    Stroke="{DynamicResource TitleBarForegroundBrush}" StrokeThickness="1.2" />
+              <Path x:Name="RestoreGlyph" IsVisible="False"
+                    Data="M4,1 L11,1 L11,8 M1,4 L8,4 L8,11 L1,11 Z"
+                    Stroke="{DynamicResource TitleBarForegroundBrush}" StrokeThickness="1.2" />
+            </Panel>
+          </Button>
+          <Button x:Name="TitleBarCloseButton" Classes="chrome close"
+                  AutomationProperties.AutomationId="TitleBarCloseButton">
+            <Path Data="M1,1 L11,11 M11,1 L1,11"
+                  Stroke="{DynamicResource TitleBarCloseForegroundBrush}" StrokeThickness="1.2" />
+          </Button>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" RowDefinitions="*,Auto" Margin="12">
 
     <!-- 底部：状态行 + 保存/关闭（与 WPF 版同位置、同 AutomationId） -->
     <Border Grid.Row="1" Padding="0" Margin="0,8,0,0">
@@ -42,7 +98,7 @@
 
       <!-- 字段帮助面板（任务书要求：字段帮助可被探针检查；WPF 版在自动化页用得最多） -->
       <Border x:Name="FieldHelpPanel" Grid.Row="0" Grid.Column="1" Width="320"
-              IsVisible="False" Margin="0,6,12,12"
+              IsVisible="False" Margin="0,6,12,12" Classes="elevated"
               Background="{DynamicResource CardBackgroundBrush}"
               BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
               CornerRadius="6" Padding="12,10">
@@ -59,6 +115,7 @@
         </ScrollViewer>
       </Border>
 
+    </Grid>
     </Grid>
   </Grid>
 </Window>

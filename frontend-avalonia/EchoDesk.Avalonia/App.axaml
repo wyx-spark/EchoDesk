@@ -3,53 +3,58 @@
              x:Class="EchoDesk.Avalonia.App"
              RequestedThemeVariant="Default">
   <!--
-    视觉对齐（v0.2.2 收尾任务）：Avalonia 的观感必须与 WPF 版逐像素一致。
-
-    做法不是"把 FluentTheme 调一调"，而是**按 WPF 自己的色板与控制模板重写一遍**：
-      · 色值来自 frontend/Resources/Theme.Light.xaml、Theme.Dark.xaml，键名也照抄，
-        这样两份代码里同一个语义色永远同一个值，不会再各调各的；
-      · 控件模板来自 frontend/Resources/Styles.xaml —— 圆角 4、1px 边框、灰底按钮、
-        页签 6,6,0,0 圆角、滚动条 11px，全部按 WPF 的参数写；
-      · FluentTheme 只保留"兜底"，凡是我们自己重写过的控件都不再受它影响。
-
-    为什么必须重写而不是只改颜色：Fluent 的按钮是"悬浮式圆角 + 主题蓝"，WPF 是
-    "1px 描边 + 4px 圆角 + 灰底"，两者在截图里一眼就能分出来 —— 只换色板的话，
-    控件形状、内边距、默认字号仍然是 Fluent 的。
-
-    键名对照（Avalonia ↔ WPF）：
-      AppBackgroundBrush  ← WindowBackground      PanelBackgroundBrush ← SurfaceBrush
-      CardBackgroundBrush ← SurfaceBrush          CardBorderBrush      ← InputBorder
-      AccentBrush         ← AccentBrush
+    [EN] Global style baseline for the Avalonia shell (v0.2.3 iteration 2).
+    [ZH] Avalonia 外壳的全局样式基线（v0.2.3 研发任务-2）。
+    [EN] Palette definitions now live in Themes/Light.axaml and Themes/Dark.axaml, while the
+         immersive scrollbar lives in Themes/Controls.axaml. This file is limited to the
+         application-wide control styles that must remain identical across themes.
+    [ZH] 色板定义现已迁移至 Themes/Light.axaml 与 Themes/Dark.axaml，沉浸式滚动条位于
+         Themes/Controls.axaml。本文件仅保留跨主题必须保持一致的全局控件样式。
+    [EN] Typography contract: Inter is the preferred Latin face with a Unicode-complete fallback
+         chain and the base size is 15 px; body paragraphs use a 1.6x line height, applied by the
+         Markdown renderer so that the ratio follows the configured paragraph size.
+    [ZH] 排版约定：拉丁字形优先使用 Inter，并配置覆盖完整的回退链，基准字号为 15px；正文段落
+         使用 1.6 倍行高，由 Markdown 渲染器按实际配置的段落字号施加，以保持比例一致。
   -->
   <Application.Styles>
     <FluentTheme />
 
-    <!-- ================= 字体 ================= -->
-    <!-- 与 WPF 的 UiFontFamily 同一条回退链：拉丁 → emoji → 符号 → 中文。 -->
+    <!-- ================= 字体与排版 / Typography ================= -->
     <Style Selector="Window">
-      <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI" />
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
+      <Setter Property="FontSize" Value="15" />
+      <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
     </Style>
     <Style Selector="TextBlock">
-      <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI" />
+      <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
+      <Setter Property="FontSize" Value="15" />
       <Setter Property="TextWrapping" Value="Wrap" />
       <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
     </Style>
+    <!--
+      [EN] The 1.6 line height is applied by the Markdown renderer to body paragraphs, where it is
+           derived from the actual paragraph size. Applying it to every label would clip the fixed
+           height status chips, hence no global LineHeight setter is defined.
+      [ZH] 1.6 行高由 Markdown 渲染器按实际段落字号施加于正文段落。若对所有标签统一施加，
+           会裁切固定高度的状态胶囊，因此此处不定义全局行高设置器。
+    -->
     <Style Selector="Label">
       <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
     </Style>
 
-    <!-- ================= 按钮（正常 / 悬停 / 按下 / 禁用） ================= -->
-    <!-- 参数照抄 WPF Styles.xaml：Padding 10,5 · Margin 5 · 圆角 4 · 1px 描边。 -->
+    <!-- ================= 按钮（正常 / 悬停 / 按下 / 禁用） / Button states ================= -->
+    <!--
+      [EN] Geometry: 12x6 padding, 6 px corner radius and no intrinsic minimum size, so that
+           compact toolbars keep their intended proportions.
+      [ZH] 几何参数：内边距 12x6、圆角 6px、不设固有最小尺寸，以保证紧凑工具栏维持既有比例。
+    -->
     <Style Selector="Button">
-      <Setter Property="Padding" Value="10,5" />
+      <Setter Property="Padding" Value="12,6" />
       <Setter Property="Margin" Value="5" />
-      <!-- Fluent 主题给 Button 默认 MinHeight=32 / MinWidth=120；WPF 的按钮是"内容 + 内边距"，
-           不设最小尺寸。不压掉这两个值，整行高度会被撑高 10px（标题行、工具条都受影响）。 -->
       <Setter Property="MinHeight" Value="0" />
       <Setter Property="MinWidth" Value="0" />
-      <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI" />
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
+      <Setter Property="FontSize" Value="14" />
       <Setter Property="Background" Value="{DynamicResource ButtonBackgroundBrush}" />
       <Setter Property="Foreground" Value="{DynamicResource ButtonForegroundBrush}" />
       <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorderBrush}" />
@@ -57,7 +62,7 @@
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
       <Setter Property="Cursor" Value="Hand" />
-      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="CornerRadius" Value="6" />
       <Setter Property="Template">
         <ControlTemplate TargetType="Button">
           <Border Name="PART_Border"
@@ -91,55 +96,85 @@
       <Setter Property="BorderBrush" Value="{DynamicResource FocusBorderBrush}" />
     </Style>
 
-    <!-- ================= 输入框 ================= -->
-    <!-- 只覆盖"看得见"的属性，模板仍用 Fluent 的（它已经带 PART_TextPresenter/PART_ScrollViewer，
-         自己重写模板反而会漏必需部件 → 编译期 AVLN2205）。WPF 的观感由 1px 边框 + 4 圆角 + 白底决定。 -->
-    <Style Selector="TextBox">
-      <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI" />
+    <!--
+      [EN] Caption buttons of the custom title bar. They occupy the full 44 px chrome strip,
+           stay transparent at rest, and never inherit the default button margin.
+      [ZH] 自定义标题栏的窗口按钮。其高度填满 44px 外框条带，静息态保持透明，且不继承默认按钮外边距。
+    -->
+    <Style Selector="Button.chrome">
+      <Setter Property="Width" Value="46" />
+      <Setter Property="Height" Value="44" />
+      <Setter Property="MinWidth" Value="0" />
       <Setter Property="MinHeight" Value="0" />
-      <Setter Property="Padding" Value="4,2" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Cursor" Value="Arrow" />
+    </Style>
+    <Style Selector="Button.chrome:pointerover /template/ Border#PART_Border">
+      <Setter Property="Background" Value="{DynamicResource TitleBarButtonHoverBrush}" />
+    </Style>
+    <Style Selector="Button.chrome:pressed /template/ Border#PART_Border">
+      <Setter Property="Background" Value="{DynamicResource TitleBarButtonHoverBrush}" />
+    </Style>
+    <Style Selector="Button.chrome.close:pointerover /template/ Border#PART_Border">
+      <Setter Property="Background" Value="{DynamicResource TitleBarCloseHoverBrush}" />
+    </Style>
+
+    <!-- ================= 输入框 / Text input ================= -->
+    <Style Selector="TextBox">
+      <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Padding" Value="6,4" />
       <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}" />
       <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
       <Setter Property="CaretBrush" Value="{DynamicResource TextForegroundBrush}" />
       <Setter Property="SelectionBrush" Value="{DynamicResource SelectionBackgroundBrush}" />
       <Setter Property="BorderBrush" Value="{DynamicResource InputBorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="CornerRadius" Value="6" />
     </Style>
 
-    <!-- ================= 下拉框 ================= -->
+    <!-- ================= 下拉框 / Combo box ================= -->
     <Style Selector="ComboBox">
-      <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI" />
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
+      <Setter Property="FontSize" Value="14" />
       <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
       <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}" />
       <Setter Property="BorderBrush" Value="{DynamicResource InputBorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="4" />
-      <Setter Property="Padding" Value="6,2" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Padding" Value="8,4" />
       <Setter Property="MinHeight" Value="0" />
       <Setter Property="HorizontalContentAlignment" Value="Left" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
 
-    <!-- ================= 复选框 / 单选框 ================= -->
+    <!-- ================= 复选框 / 单选框 / Check box and radio button ================= -->
     <Style Selector="CheckBox">
-      <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI" />
+      <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
+      <Setter Property="FontSize" Value="14" />
       <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
       <Setter Property="Cursor" Value="Hand" />
       <Setter Property="MinHeight" Value="0" />
       <Setter Property="Template">
         <ControlTemplate TargetType="CheckBox">
           <StackPanel Orientation="Horizontal" Background="Transparent">
-            <Border Name="PART_Box" Width="15" Height="15" CornerRadius="3"
+            <Border Name="PART_Box" Width="16" Height="16" CornerRadius="4"
                     Background="{DynamicResource InputBackgroundBrush}"
                     BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
                     VerticalAlignment="Center">
-              <TextBlock Name="PART_Mark" Text="✓" FontSize="11" IsVisible="False"
+              <TextBlock Name="PART_Mark" Text="✓" FontSize="12" LineHeight="14" IsVisible="False"
                          HorizontalAlignment="Center" VerticalAlignment="Center"
                          Foreground="{DynamicResource AccentBrush}" />
             </Border>
-            <ContentPresenter Margin="6,0,0,0" VerticalAlignment="Center"
+            <ContentPresenter Margin="7,0,0,0" VerticalAlignment="Center"
                               Content="{TemplateBinding Content}"
                               ContentTemplate="{TemplateBinding ContentTemplate}" />
           </StackPanel>
@@ -151,19 +186,21 @@
     </Style>
 
     <Style Selector="RadioButton">
+      <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
+      <Setter Property="FontSize" Value="14" />
       <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
       <Setter Property="Cursor" Value="Hand" />
       <Setter Property="Template">
         <ControlTemplate TargetType="RadioButton">
           <StackPanel Orientation="Horizontal" Background="Transparent">
-            <Border Width="15" Height="15" CornerRadius="8"
+            <Border Width="16" Height="16" CornerRadius="8"
                     Background="{DynamicResource InputBackgroundBrush}"
                     BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
                     VerticalAlignment="Center">
-              <Ellipse Name="PART_Dot" Width="7" Height="7" IsVisible="False"
+              <Ellipse Name="PART_Dot" Width="8" Height="8" IsVisible="False"
                        Fill="{DynamicResource AccentBrush}" />
             </Border>
-            <ContentPresenter Margin="6,0,0,0" VerticalAlignment="Center"
+            <ContentPresenter Margin="7,0,0,0" VerticalAlignment="Center"
                               Content="{TemplateBinding Content}"
                               ContentTemplate="{TemplateBinding ContentTemplate}" />
           </StackPanel>
@@ -174,21 +211,22 @@
       <Setter Property="IsVisible" Value="True" />
     </Style>
 
-    <!-- ================= 列表 ================= -->
+    <!-- ================= 列表 / List ================= -->
     <Style Selector="ListBox">
       <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
       <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
       <Setter Property="BorderBrush" Value="{DynamicResource InputBorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="CornerRadius" Value="6" />
       <Setter Property="Padding" Value="0" />
     </Style>
     <Style Selector="ListBoxItem">
-      <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI" />
+      <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
+      <Setter Property="FontSize" Value="14" />
       <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
-      <Setter Property="Padding" Value="6,4" />
+      <Setter Property="Padding" Value="8,6" />
       <Setter Property="Margin" Value="1" />
-      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="CornerRadius" Value="6" />
       <Setter Property="Template">
         <ControlTemplate TargetType="ListBoxItem">
           <Border Name="PART_Border"
@@ -208,23 +246,19 @@
       <Setter Property="Background" Value="{DynamicResource SelectionBackgroundBrush}" />
     </Style>
 
-    <!-- ================= 页签 ================= -->
+    <!-- ================= 页签 / Tabs ================= -->
     <Style Selector="TabControl">
       <Setter Property="Background" Value="{DynamicResource AppBackgroundBrush}" />
       <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
       <Setter Property="Padding" Value="0" />
-      <!--
-        内容区加 1px 描边：WPF 的默认 TabControl 模板会在页签下方画一圈边框，
-        Avalonia 的 Fluent 模板没有 —— 设置窗口看起来就少了一个"内容容器"。
-        这里照 WPF 画：页签行在上，内容在 1px 描边里。
-      -->
       <Setter Property="Template">
         <ControlTemplate TargetType="TabControl">
           <Grid RowDefinitions="Auto,*">
             <ItemsPresenter Name="PART_ItemsPresenter" Grid.Row="0"
                             ItemsPanel="{TemplateBinding ItemsPanel}" />
-            <Border Grid.Row="1" BorderThickness="1" BorderBrush="{DynamicResource InputBorderBrush}"
-                    Background="{DynamicResource AppBackgroundBrush}">
+            <Border Grid.Row="1" BorderThickness="1" BorderBrush="{DynamicResource CardBorderBrush}"
+                    Background="{DynamicResource AppBackgroundBrush}" CornerRadius="0,0,8,8"
+                    BoxShadow="{DynamicResource CardShadow}">
               <ContentPresenter Name="PART_SelectedContentHost" Grid.Row="1"
                                 Content="{TemplateBinding SelectedContent}"
                                 ContentTemplate="{TemplateBinding SelectedContentTemplate}" />
@@ -232,33 +266,26 @@
           </Grid>
         </ControlTemplate>
       </Setter>
-      <!-- WPF 的页签是横排、放不下时换行（TabPanel）；这里用同样的排法 -->
       <Setter Property="ItemsPanel">
         <ItemsPanelTemplate>
           <WrapPanel Orientation="Horizontal" />
         </ItemsPanelTemplate>
       </Setter>
-      <!--
-        Avalonia 12 的 TabControl 通过 ItemContainerTheme 给页签容器套模板，
-        这条主题值的优先级**高于**普通的 `Style Selector="TabItem"` ——
-        只写 TabItem 样式时能改颜色/内边距，但形状仍是 Fluent 的"下划线页签"
-        （实测：圆角、描边都没生效）。所以必须直接把页签主题换掉。
-      -->
       <Setter Property="ItemContainerTheme">
         <ControlTheme TargetType="TabItem">
-          <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI" />
-          <Setter Property="FontSize" Value="12" />
+          <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
+          <Setter Property="FontSize" Value="14" />
           <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
-          <Setter Property="Padding" Value="12,6" />
+          <Setter Property="Padding" Value="14,7" />
           <Setter Property="Margin" Value="0,0,3,0" />
           <Setter Property="MinHeight" Value="0" />
           <Setter Property="Template">
             <ControlTemplate TargetType="TabItem">
-              <Border Name="PART_Border" CornerRadius="6,6,0,0"
+              <Border Name="PART_Border" CornerRadius="8,8,0,0"
                       Margin="{TemplateBinding Margin}"
                       Padding="{TemplateBinding Padding}"
                       Background="{DynamicResource TabInactiveBackgroundBrush}"
-                      BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1,1,1,0">
+                      BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1,1,1,0">
                 <ContentPresenter Content="{TemplateBinding Header}"
                                   VerticalAlignment="Center" HorizontalAlignment="Center" />
               </Border>
@@ -277,50 +304,25 @@
         </ControlTheme>
       </Setter>
     </Style>
-    <Style Selector="TabItem">
-      <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI" />
-      <Setter Property="FontSize" Value="12" />
-      <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
-      <Setter Property="Padding" Value="12,6" />
-      <Setter Property="Margin" Value="0,0,3,0" />
-      <Setter Property="MinHeight" Value="0" />
-    </Style>
 
-    <!-- ================= 滚动条（11px，圆角 4，与 WPF 一致） ================= -->
-    <Style Selector="ScrollBar">
-      <Setter Property="Background" Value="{DynamicResource ScrollBarTrackBrush}" />
-      <Setter Property="Width" Value="11" />
-    </Style>
-    <Style Selector="ScrollBar /template/ Thumb">
-      <Setter Property="Background" Value="{DynamicResource ScrollBarThumbBrush}" />
-      <Setter Property="CornerRadius" Value="4" />
-      <Setter Property="Margin" Value="2" />
-    </Style>
-
-    <!-- ================= 浮层 ================= -->
+    <!-- ================= 浮层 / Flyouts ================= -->
     <Style Selector="ToolTip">
       <Setter Property="Background" Value="{DynamicResource TooltipBackgroundBrush}" />
       <Setter Property="Foreground" Value="{DynamicResource TooltipForegroundBrush}" />
       <Setter Property="BorderBrush" Value="{DynamicResource TooltipBorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="Padding" Value="8,4" />
-      <Setter Property="CornerRadius" Value="4" />
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Padding" Value="10,6" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="FontSize" Value="13" />
     </Style>
 
-    <!-- ================= 滑块 / 进度条 ================= -->
-    <!-- WPF 的滑块是"细轨道 + 小圆点"，Fluent 的是"粗轨道 + 大圆点"。
-         这里把滑块尺寸与滑块头换成 WPF 的口径（12px 圆点、20 高），
-         设置页常规/模型两处的滑块在两边看起来就一致了。 -->
+    <!-- ================= 滑块 / 进度条 / Slider and progress bar ================= -->
     <Style Selector="Slider">
       <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
-      <!-- 负边距：Fluent 的滑块模板要 32 高才不裁掉圆点，但 WPF 的滑块只占约 14 高。
-           用上下 -9 把多出来的高度吃掉，既保留完整圆点、又不把下面的内容整体推下去。 -->
       <Setter Property="Margin" Value="0,-9,0,-9" />
       <Setter Property="MinHeight" Value="32" />
       <Setter Property="Height" Value="32" />
     </Style>
-    <!-- 滑块头只改尺寸，保留 Fluent 自带的模板：自己套一个 12px 的 Border 会被轨道容器裁掉下半截。 -->
     <Style Selector="Slider /template/ Thumb">
       <Setter Property="Width" Value="12" />
       <Setter Property="Height" Value="12" />
@@ -330,16 +332,16 @@
       <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
       <Setter Property="BorderBrush" Value="{DynamicResource InputBorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="4" />
-      <Setter Property="MinHeight" Value="8" />
+      <Setter Property="CornerRadius" Value="3" />
+      <Setter Property="MinHeight" Value="6" />
     </Style>
 
-    <!-- ================= 折叠区（思考过程 / Agent 步骤） ================= -->
+    <!-- ================= 折叠区 / Expander ================= -->
     <Style Selector="Expander">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="0" />
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="14" />
     </Style>
     <Style Selector="Expander /template/ ToggleButton#PART_toggle">
       <Setter Property="Background" Value="Transparent" />
@@ -350,159 +352,43 @@
       <Setter Property="Foreground" Value="{DynamicResource SubTextBrush}" />
     </Style>
 
-    <!-- ================= 右键菜单 ================= -->
+    <!-- ================= 右键菜单 / Context menu ================= -->
     <Style Selector="MenuItem">
-      <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI" />
+      <Setter Property="FontFamily" Value="Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol" />
+      <Setter Property="FontSize" Value="14" />
       <Setter Property="Foreground" Value="{DynamicResource MenuForegroundBrush}" />
       <Setter Property="Background" Value="{DynamicResource MenuBackgroundBrush}" />
     </Style>
     <Style Selector="ContextMenu">
       <Setter Property="Background" Value="{DynamicResource MenuBackgroundBrush}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource InputBorderBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource CardBorderBrush}" />
+      <Setter Property="CornerRadius" Value="8" />
+    </Style>
+
+    <!--
+      [EN] Shared elevation class for panels that must read as a distinct surface.
+      [ZH] 供需要表达独立层级的面板复用的高程样式类。
+    -->
+    <Style Selector="Border.elevated">
+      <Setter Property="BoxShadow" Value="{DynamicResource CardShadow}" />
     </Style>
   </Application.Styles>
 
   <Application.Resources>
     <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="avares://EchoDesk/Themes/Controls.axaml" />
+      </ResourceDictionary.MergedDictionaries>
       <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Light">
-          <!-- ===== WPF Theme.Light.xaml 原值 ===== -->
-          <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FFF5F5F7" />
-          <SolidColorBrush x:Key="PanelBackgroundBrush" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="CardBorderBrush" Color="#FF8A8A96" />
-          <SolidColorBrush x:Key="AccentBrush" Color="#FF483D8B" />
-          <SolidColorBrush x:Key="MutedForegroundBrush" Color="#FF5A5A66" />
-          <SolidColorBrush x:Key="WarningBannerBrush" Color="#FFFFF4CE" />
-
-          <SolidColorBrush x:Key="WindowBackground" Color="#FFF5F5F7" />
-          <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="SurfaceAltBrush" Color="#FFEDEDF2" />
-          <SolidColorBrush x:Key="InputBackgroundBrush" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="InputBorderBrush" Color="#FF8A8A96" />
-          <SolidColorBrush x:Key="FocusBorderBrush" Color="#FF483D8B" />
-          <SolidColorBrush x:Key="SeparatorBrush" Color="#FFB8B8C4" />
-          <SolidColorBrush x:Key="TextForegroundBrush" Color="#FF1B1B1F" />
-          <SolidColorBrush x:Key="SubTextBrush" Color="#FF5A5A66" />
-          <SolidColorBrush x:Key="DisabledTextBrush" Color="#FF66666F" />
-          <SolidColorBrush x:Key="InverseTextBrush" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="AccentHoverBrush" Color="#FF5A4DA6" />
-          <SolidColorBrush x:Key="AccentPressedBrush" Color="#FF372E6B" />
-          <SolidColorBrush x:Key="LinkBrush" Color="#FF1A5FB4" />
-          <SolidColorBrush x:Key="SuccessBrush" Color="#FF1F7A3D" />
-          <SolidColorBrush x:Key="WarningBrush" Color="#FF8A5A00" />
-          <SolidColorBrush x:Key="ErrorBrush" Color="#FFC0272D" />
-          <SolidColorBrush x:Key="InfoBrush" Color="#FF1A5FB4" />
-          <SolidColorBrush x:Key="ButtonBackgroundBrush" Color="#FFE8E8EE" />
-          <SolidColorBrush x:Key="ButtonHoverBackgroundBrush" Color="#FFDCDCE6" />
-          <SolidColorBrush x:Key="ButtonPressedBackgroundBrush" Color="#FFCFCFDC" />
-          <SolidColorBrush x:Key="ButtonDisabledBackgroundBrush" Color="#FFEDEDF1" />
-          <SolidColorBrush x:Key="ButtonBorderBrush" Color="#FF8A8A96" />
-          <SolidColorBrush x:Key="ButtonForegroundBrush" Color="#FF1B1B1F" />
-          <SolidColorBrush x:Key="ButtonDisabledForegroundBrush" Color="#FF66666F" />
-          <SolidColorBrush x:Key="SelectionBackgroundBrush" Color="#FFCCE0FF" />
-          <SolidColorBrush x:Key="SelectionForegroundBrush" Color="#FF12213A" />
-          <SolidColorBrush x:Key="RowHoverBackgroundBrush" Color="#FFEDEDF2" />
-          <SolidColorBrush x:Key="TabActiveBackgroundBrush" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="TabInactiveBackgroundBrush" Color="#FFE4E4EA" />
-          <SolidColorBrush x:Key="ScrollBarThumbBrush" Color="#FF85858F" />
-          <SolidColorBrush x:Key="ScrollBarTrackBrush" Color="#FFEDEDF2" />
-          <SolidColorBrush x:Key="MenuBackgroundBrush" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="MenuForegroundBrush" Color="#FF1B1B1F" />
-          <SolidColorBrush x:Key="MenuHighlightBackgroundBrush" Color="#FFCCE0FF" />
-          <SolidColorBrush x:Key="TooltipBackgroundBrush" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="TooltipForegroundBrush" Color="#FF1B1B1F" />
-          <SolidColorBrush x:Key="TooltipBorderBrush" Color="#FFC8C8D0" />
-          <SolidColorBrush x:Key="UserBrush" Color="#FF1668C4" />
-          <SolidColorBrush x:Key="AssistantBrush" Color="#FF1E6B3F" />
-          <SolidColorBrush x:Key="SystemBrush" Color="#FF63636B" />
-          <SolidColorBrush x:Key="CodeBackground" Color="#FFF0F0F4" />
-          <SolidColorBrush x:Key="CodeForeground" Color="#FF1B1B1F" />
-          <SolidColorBrush x:Key="QuoteForeground" Color="#FF4A4A55" />
-          <SolidColorBrush x:Key="MessageBorderBrush" Color="#FFDCDCE4" />
-
-          <!-- Markdown（与 WPF MainWindow 的取色一致：代码底、分隔线、引用、公式、链接） -->
-          <SolidColorBrush x:Key="MarkdownCodeBrush" Color="#FFF0F0F4" />
-          <SolidColorBrush x:Key="MarkdownCodeForeground" Color="#FF1B1B1F" />
-          <SolidColorBrush x:Key="MarkdownRuleBrush" Color="#FFDCDCE4" />
-          <SolidColorBrush x:Key="MarkdownQuoteBrush" Color="#FF4A4A55" />
-          <SolidColorBrush x:Key="MarkdownFormulaBrush" Color="#1400648C" />
-          <SolidColorBrush x:Key="MarkdownLinkBrush" Color="#FF1A5FB4" />
-
-          <!-- 消息气泡（WPF 版没有气泡，保留这三个键是为了兼容旧引用） -->
-          <SolidColorBrush x:Key="UserBubbleBrush" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="AssistantBubbleBrush" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="SystemBubbleBrush" Color="#FFFFFFFF" />
+          <ResourceDictionary.MergedDictionaries>
+            <ResourceInclude Source="avares://EchoDesk/Themes/Light.axaml" />
+          </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
-
         <ResourceDictionary x:Key="Dark">
-          <!-- ===== WPF Theme.Dark.xaml 原值 ===== -->
-          <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF1E1E22" />
-          <SolidColorBrush x:Key="PanelBackgroundBrush" Color="#FF25252B" />
-          <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF25252B" />
-          <SolidColorBrush x:Key="CardBorderBrush" Color="#FF74747F" />
-          <SolidColorBrush x:Key="AccentBrush" Color="#FF8A9DFF" />
-          <SolidColorBrush x:Key="MutedForegroundBrush" Color="#FFA8A8B3" />
-          <SolidColorBrush x:Key="WarningBannerBrush" Color="#FF3E3520" />
-
-          <SolidColorBrush x:Key="WindowBackground" Color="#FF1E1E22" />
-          <SolidColorBrush x:Key="SurfaceBrush" Color="#FF25252B" />
-          <SolidColorBrush x:Key="SurfaceAltBrush" Color="#FF2C2C33" />
-          <SolidColorBrush x:Key="InputBackgroundBrush" Color="#FF26262B" />
-          <SolidColorBrush x:Key="InputBorderBrush" Color="#FF74747F" />
-          <SolidColorBrush x:Key="FocusBorderBrush" Color="#FF8A9DFF" />
-          <SolidColorBrush x:Key="SeparatorBrush" Color="#FF45454F" />
-          <SolidColorBrush x:Key="TextForegroundBrush" Color="#FFEDEDF0" />
-          <SolidColorBrush x:Key="SubTextBrush" Color="#FFA8A8B3" />
-          <SolidColorBrush x:Key="DisabledTextBrush" Color="#FF9A9AA4" />
-          <SolidColorBrush x:Key="InverseTextBrush" Color="#FF101014" />
-          <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FF101014" />
-          <SolidColorBrush x:Key="AccentHoverBrush" Color="#FFA6B4FF" />
-          <SolidColorBrush x:Key="AccentPressedBrush" Color="#FF6E80E0" />
-          <SolidColorBrush x:Key="LinkBrush" Color="#FF7FB2FF" />
-          <SolidColorBrush x:Key="SuccessBrush" Color="#FF5FD07F" />
-          <SolidColorBrush x:Key="WarningBrush" Color="#FFF0C063" />
-          <SolidColorBrush x:Key="ErrorBrush" Color="#FFFF8A8A" />
-          <SolidColorBrush x:Key="InfoBrush" Color="#FF7FB2FF" />
-          <SolidColorBrush x:Key="ButtonBackgroundBrush" Color="#FF33333A" />
-          <SolidColorBrush x:Key="ButtonHoverBackgroundBrush" Color="#FF3E3E47" />
-          <SolidColorBrush x:Key="ButtonPressedBackgroundBrush" Color="#FF4A4A55" />
-          <SolidColorBrush x:Key="ButtonDisabledBackgroundBrush" Color="#FF2A2A2F" />
-          <SolidColorBrush x:Key="ButtonBorderBrush" Color="#FF74747F" />
-          <SolidColorBrush x:Key="ButtonForegroundBrush" Color="#FFEDEDF0" />
-          <SolidColorBrush x:Key="ButtonDisabledForegroundBrush" Color="#FF9A9AA4" />
-          <SolidColorBrush x:Key="SelectionBackgroundBrush" Color="#FF2F4B7C" />
-          <SolidColorBrush x:Key="SelectionForegroundBrush" Color="#FFEDEDF0" />
-          <SolidColorBrush x:Key="RowHoverBackgroundBrush" Color="#FF2C2C33" />
-          <SolidColorBrush x:Key="TabActiveBackgroundBrush" Color="#FF33333A" />
-          <SolidColorBrush x:Key="TabInactiveBackgroundBrush" Color="#FF25252B" />
-          <SolidColorBrush x:Key="ScrollBarThumbBrush" Color="#FF6E6E7A" />
-          <SolidColorBrush x:Key="ScrollBarTrackBrush" Color="#FF232328" />
-          <SolidColorBrush x:Key="MenuBackgroundBrush" Color="#FF2C2C33" />
-          <SolidColorBrush x:Key="MenuForegroundBrush" Color="#FFEDEDF0" />
-          <SolidColorBrush x:Key="MenuHighlightBackgroundBrush" Color="#FF2F4B7C" />
-          <SolidColorBrush x:Key="TooltipBackgroundBrush" Color="#FF2C2C33" />
-          <SolidColorBrush x:Key="TooltipForegroundBrush" Color="#FFEDEDF0" />
-          <SolidColorBrush x:Key="TooltipBorderBrush" Color="#FF43434C" />
-          <SolidColorBrush x:Key="UserBrush" Color="#FF4FC3F7" />
-          <SolidColorBrush x:Key="AssistantBrush" Color="#FF66BB6A" />
-          <SolidColorBrush x:Key="SystemBrush" Color="#FFB0B0B0" />
-          <SolidColorBrush x:Key="CodeBackground" Color="#FF2A2A31" />
-          <SolidColorBrush x:Key="CodeForeground" Color="#FFE6E6E6" />
-          <SolidColorBrush x:Key="QuoteForeground" Color="#FFA8A8B3" />
-          <SolidColorBrush x:Key="MessageBorderBrush" Color="#FF34343C" />
-
-          <SolidColorBrush x:Key="MarkdownCodeBrush" Color="#FF2A2A31" />
-          <SolidColorBrush x:Key="MarkdownCodeForeground" Color="#FFE6E6E6" />
-          <SolidColorBrush x:Key="MarkdownRuleBrush" Color="#FF34343C" />
-          <SolidColorBrush x:Key="MarkdownQuoteBrush" Color="#FFA8A8B3" />
-          <SolidColorBrush x:Key="MarkdownFormulaBrush" Color="#2200A0FF" />
-          <SolidColorBrush x:Key="MarkdownLinkBrush" Color="#FF7FB2FF" />
-
-          <SolidColorBrush x:Key="UserBubbleBrush" Color="#FF25252B" />
-          <SolidColorBrush x:Key="AssistantBubbleBrush" Color="#FF25252B" />
-          <SolidColorBrush x:Key="SystemBubbleBrush" Color="#FF25252B" />
+          <ResourceDictionary.MergedDictionaries>
+            <ResourceInclude Source="avares://EchoDesk/Themes/Dark.axaml" />
+          </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
       </ResourceDictionary.ThemeDictionaries>
     </ResourceDictionary>

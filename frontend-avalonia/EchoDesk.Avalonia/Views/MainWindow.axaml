@@ -6,8 +6,18 @@
         Icon="/Assets/app.ico"
         Width="844" Height="581" MinWidth="744" MinHeight="501"
         Background="{DynamicResource AppBackgroundBrush}"
+        WindowDecorations="BorderOnly"
         DragDrop.AllowDrop="True">
   <!--
+    [EN] Borderless shell contract: WindowDecorations="BorderOnly" removes the operating-system
+         caption while preserving the native resize frame, drop shadow and maximise animation.
+         Window movement is delegated to BeginMoveDrag in the code-behind, which executes the
+         platform move loop and therefore inherits native snapping and DPI handling.
+    [ZH] 无边框外壳约定：WindowDecorations="BorderOnly" 移除操作系统标题栏，同时保留原生缩放边框、
+         投影与最大化动画。窗口移动交由代码隐藏文件中的 BeginMoveDrag 执行平台移动循环，
+         因此天然继承系统贴靠与 DPI 处理。
+    [EN] The historical visual-alignment notes below are retained unchanged for traceability.
+    [ZH] 下方历史视觉对齐说明保持原样，以便追溯。
     主窗口（视觉对齐版）：骨架、间距、字号、圆角全部按 frontend/MainWindow.xaml 复刻。
 
     与上一版的差别（都是"看得见"的差别，不是重构）：
@@ -62,13 +72,78 @@
     <Style Selector="TextBlock.muted">
       <Setter Property="Foreground" Value="{DynamicResource SubTextBrush}" />
     </Style>
+    <!--
+      [EN] Hover and pressed feedback for the primary send action; the resting accent fill is a
+           local value on the button itself.
+      [ZH] 发送主操作的悬停与按下反馈；静息态强调色填充由按钮自身的本地值承载。
+    -->
+    <Style Selector="Button#SendButton:pointerover /template/ Border#PART_Border">
+      <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+    </Style>
+    <Style Selector="Button#SendButton:pressed /template/ Border#PART_Border">
+      <Setter Property="Background" Value="{DynamicResource AccentPressedBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentPressedBrush}" />
+    </Style>
   </Window.Styles>
 
-  <Grid Margin="10" RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,42">
+  <Grid RowDefinitions="Auto,*">
+
+    <!--
+      [EN] Custom title bar. It hosts the brand mark, the window title and the three caption
+           controls; pointer input is handled centrally so that dragging the strip feels identical
+           to an operating-system caption area.
+      [ZH] 自定义标题栏。承载品牌标记、窗口标题与三个窗口控制按钮；指针输入集中处理，
+           使条带拖动的手感与操作系统标题栏完全一致。
+    -->
+    <Border x:Name="TitleBar" Grid.Row="0" Height="44"
+            Background="{DynamicResource TitleBarBackgroundBrush}"
+            BorderBrush="{DynamicResource TitleBarBorderBrush}" BorderThickness="0,0,0,1"
+            PointerPressed="OnTitleBarPointerPressed">
+      <Grid ColumnDefinitions="Auto,*,Auto" Margin="12,0,0,0">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
+          <!--
+            [EN] Application identity mark: the official application icon is rendered directly,
+                 so that the title bar and the operating-system task switcher present one identity.
+            [ZH] 应用标识：直接渲染官方应用程序图标，使标题栏与操作系统任务切换器呈现同一标识。
+          -->
+          <Image Width="22" Height="22" Source="/Assets/app.ico" Stretch="Uniform" />
+          <TextBlock x:Name="TitleBarTitle" Text="EchoDesk" FontSize="13" FontWeight="SemiBold"
+                     LineHeight="16" TextWrapping="NoWrap"
+                     Foreground="{DynamicResource TitleBarForegroundBrush}"
+                     VerticalAlignment="Center" />
+        </StackPanel>
+
+        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="TitleBarMinimizeButton" Classes="chrome"
+                  AutomationProperties.AutomationId="TitleBarMinimizeButton">
+            <Path Data="M1,5.5 L11,5.5" Stroke="{DynamicResource TitleBarForegroundBrush}"
+                  StrokeThickness="1.2" />
+          </Button>
+          <Button x:Name="TitleBarMaximizeButton" Classes="chrome"
+                  AutomationProperties.AutomationId="TitleBarMaximizeButton">
+            <Panel Width="12" Height="12">
+              <Path x:Name="MaximizeGlyph" Data="M1,1 L11,1 L11,11 L1,11 Z"
+                    Stroke="{DynamicResource TitleBarForegroundBrush}" StrokeThickness="1.2" />
+              <Path x:Name="RestoreGlyph" IsVisible="False"
+                    Data="M4,1 L11,1 L11,8 M1,4 L8,4 L8,11 L1,11 Z"
+                    Stroke="{DynamicResource TitleBarForegroundBrush}" StrokeThickness="1.2" />
+            </Panel>
+          </Button>
+          <Button x:Name="TitleBarCloseButton" Classes="chrome close"
+                  AutomationProperties.AutomationId="TitleBarCloseButton">
+            <Path Data="M1,1 L11,11 M11,1 L1,11"
+                  Stroke="{DynamicResource TitleBarCloseForegroundBrush}" StrokeThickness="1.2" />
+          </Button>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" Margin="10" RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,42">
 
     <!-- ① 顶部横幅区（平台降级 / 无模型引导）：单独占第 0 行，不与标题行重叠 -->
     <StackPanel Grid.Row="0" Spacing="4">
-    <Border x:Name="PlatformBanner" IsVisible="False"
+    <Border x:Name="PlatformBanner" Classes="elevated" IsVisible="False"
             Background="{DynamicResource WarningBannerBrush}"
             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
             CornerRadius="4" Padding="12,8" Margin="0,0,0,8">
@@ -79,7 +154,7 @@
     </Border>
 
     <!-- ② 无模型引导条：后端"无模型就绪"时把三条路径直白列出来 -->
-    <Border x:Name="GuideBanner" IsVisible="False"
+    <Border x:Name="GuideBanner" Classes="elevated" IsVisible="False"
             Background="{DynamicResource PanelBackgroundBrush}"
             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
             CornerRadius="4" Padding="12,8" Margin="0,0,0,8">
@@ -87,19 +162,26 @@
     </Border>
     </StackPanel>
 
-    <!-- ③ 标题行：品牌 + 版本 + 出品方 + 关键状态（运行状态 / 模型 / 模式），平铺在窗口底色上 -->
+    <!--
+      [EN] Status row: run state, model and conversation mode. The brand mark and version moved
+           to the custom title bar, therefore the duplicate brand block is retired while its
+           named controls are retained for the existing localisation bindings.
+      [ZH] 状态行：运行状态、模型与对话模式。品牌标记与版本已迁移至自定义标题栏，因此重复的
+           品牌区块不再展示，但其具名控件予以保留，以维持既有本地化绑定的完整性。
+    -->
     <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
-      <Grid ColumnDefinitions="Auto,Auto">
+      <Grid ColumnDefinitions="Auto,Auto" IsVisible="False">
         <TextBlock x:Name="BrandText" Grid.Column="0" Text="📡 EchoDesk" Classes="brand"
                    VerticalAlignment="Bottom" />
         <TextBlock x:Name="VersionText" Grid.Column="1" Text="v0.2.1" FontSize="10" Margin="4,0,0,0"
                    VerticalAlignment="Bottom" Foreground="{DynamicResource SubTextBrush}" />
       </Grid>
       <TextBlock x:Name="PoweredText" Text="由熵寂工作室出品" FontSize="11" Margin="14,8,0,0"
+                 IsVisible="False"
                  VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}" />
       <TextBlock x:Name="PlatformChip" IsVisible="False" />
       <TextBlock x:Name="StatusText" Grid.Column="4" FontSize="12" FontWeight="Bold"
-                 VerticalAlignment="Center" Margin="18,0,0,0"
+                 VerticalAlignment="Center" Margin="0,0,0,0"
                  TextTrimming="CharacterEllipsis" Foreground="{DynamicResource SubTextBrush}" />
       <Button x:Name="ModelChip" Margin="14,0,0,0" Padding="8,2" VerticalAlignment="Center"
               Classes="round">
@@ -137,7 +219,7 @@
     </Border>
 
     <!-- ⑥ 输入区：上半无框文本输入，下半圆形按钮工具栏 -->
-    <Border x:Name="InputAreaBorder" Grid.Row="4" Margin="0,6,0,0" CornerRadius="12"
+    <Border x:Name="InputAreaBorder" Classes="elevated" Grid.Row="4" Margin="0,6,0,0" CornerRadius="12"
             Background="{DynamicResource InputBackgroundBrush}"
             BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
             Padding="12,8">
@@ -182,14 +264,22 @@
                   Content="📎" FontSize="14" />
           <Button x:Name="StopButton" Grid.Column="6" Width="34" Height="34" Classes="icon"
                   Content="⏹" FontSize="14" IsVisible="False" />
+          <!--
+            [EN] The primary send affordance carries the accent fill as a local value, which is
+                 immune to the neutral icon-button style overriding it.
+            [ZH] 发送主操作以本地值承载强调色填充，避免被中性的图标按钮样式覆盖。
+          -->
           <Button x:Name="SendButton" Grid.Column="7" Width="40" Height="40" Margin="8,0,0,0"
-                  Classes="icon" Content="➤" FontSize="16" />
+                  Classes="icon" Content="➤" FontSize="16"
+                  Background="{DynamicResource AccentBrush}"
+                  BorderBrush="{DynamicResource AccentBrush}"
+                  Foreground="{DynamicResource AccentForegroundBrush}" />
         </Grid>
       </Grid>
     </Border>
 
     <!-- ⑦ 轻量状态区：图标 + 简短短语，点击任一项跳到对应设置/动作；右侧按钮可折叠 -->
-    <Border x:Name="StatusStrip" Grid.Row="5" Margin="0,4,0,0" CornerRadius="8"
+    <Border x:Name="StatusStrip" Classes="elevated" Grid.Row="5" Margin="0,4,0,0" CornerRadius="8"
             Background="{DynamicResource InputBackgroundBrush}"
             BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
             Padding="8,3">
@@ -236,7 +326,7 @@
     <StackPanel Grid.Row="6" Margin="0,3,0,0" HorizontalAlignment="Center" VerticalAlignment="Top">
       <TextBlock x:Name="CommandBarHint" IsVisible="False" FontSize="12"
                  Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center" />
-      <Border x:Name="ToastBorder" IsVisible="False" CornerRadius="10" Padding="12,4"
+      <Border x:Name="ToastBorder" Classes="elevated" IsVisible="False" CornerRadius="10" Padding="12,4"
               HorizontalAlignment="Center" Margin="0,2,0,0"
               Background="{DynamicResource InputBackgroundBrush}"
               BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1">
@@ -305,5 +395,6 @@
         </StackPanel>
       </Border>
     </Popup>
+    </Grid>
   </Grid>
 </Window>

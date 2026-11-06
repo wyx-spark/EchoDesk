@@ -1,0 +1,88 @@
+﻿<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    [EN] Light colour palette for the EchoDesk Avalonia shell. Every key is resolved through
+         DynamicResource so that a theme switch is applied without recreating any window.
+    [ZH] EchoDesk Avalonia 外壳的浅色色板。全部键均通过 DynamicResource 解析，因此切换主题
+         无需重建任何窗口。
+    [EN] Palette contract: the application canvas is #F8F9FA, panels are pure white, and
+         separation is expressed by a soft drop shadow instead of a heavy outline.
+    [ZH] 色板约定：应用画布为 #F8F9FA，面板为纯白，层级通过柔和投影而非粗描边表达。
+  -->
+
+  <!-- [EN] Semantic aliases retained for the WPF-aligned naming convention. / [ZH] 为兼容 WPF 命名约定而保留的语义别名。 -->
+  <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FFF8F9FA" />
+  <SolidColorBrush x:Key="PanelBackgroundBrush" Color="#FFFFFFFF" />
+  <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFFFF" />
+  <SolidColorBrush x:Key="CardBorderBrush" Color="#FFE6E8EB" />
+  <SolidColorBrush x:Key="AccentBrush" Color="#FF007B8A" />
+  <SolidColorBrush x:Key="MutedForegroundBrush" Color="#FF57606A" />
+  <SolidColorBrush x:Key="WarningBannerBrush" Color="#FFFFF4D6" />
+
+  <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFFFF" />
+  <SolidColorBrush x:Key="SurfaceAltBrush" Color="#FFF1F3F5" />
+  <SolidColorBrush x:Key="InputBackgroundBrush" Color="#FFFFFFFF" />
+  <SolidColorBrush x:Key="InputBorderBrush" Color="#FFD0D7DE" />
+  <SolidColorBrush x:Key="FocusBorderBrush" Color="#FF007B8A" />
+  <SolidColorBrush x:Key="TextForegroundBrush" Color="#FF1F2328" />
+  <SolidColorBrush x:Key="SubTextBrush" Color="#FF57606A" />
+  <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FFFFFFFF" />
+  <SolidColorBrush x:Key="AccentHoverBrush" Color="#FF0095A8" />
+  <SolidColorBrush x:Key="AccentPressedBrush" Color="#FF00636F" />
+  <SolidColorBrush x:Key="LinkBrush" Color="#FF007B8A" />
+  <SolidColorBrush x:Key="SuccessBrush" Color="#FF1A7F37" />
+  <SolidColorBrush x:Key="WarningBrush" Color="#FF9A6700" />
+  <SolidColorBrush x:Key="ErrorBrush" Color="#FFCF222E" />
+  <SolidColorBrush x:Key="InfoBrush" Color="#FF0969DA" />
+  <SolidColorBrush x:Key="ButtonBackgroundBrush" Color="#FFF3F4F6" />
+  <SolidColorBrush x:Key="ButtonHoverBackgroundBrush" Color="#FFE9EBEF" />
+  <SolidColorBrush x:Key="ButtonPressedBackgroundBrush" Color="#FFDFE3E8" />
+  <SolidColorBrush x:Key="ButtonDisabledBackgroundBrush" Color="#FFF6F7F8" />
+  <SolidColorBrush x:Key="ButtonBorderBrush" Color="#FFD8DDE3" />
+  <SolidColorBrush x:Key="ButtonForegroundBrush" Color="#FF1F2328" />
+  <SolidColorBrush x:Key="ButtonDisabledForegroundBrush" Color="#FF8C959F" />
+  <SolidColorBrush x:Key="SelectionBackgroundBrush" Color="#FFCCF2F6" />
+  <SolidColorBrush x:Key="RowHoverBackgroundBrush" Color="#FFF1F3F5" />
+  <SolidColorBrush x:Key="TabActiveBackgroundBrush" Color="#FFFFFFFF" />
+  <SolidColorBrush x:Key="TabInactiveBackgroundBrush" Color="#FFF0F2F5" />
+  <SolidColorBrush x:Key="ScrollBarThumbBrush" Color="#66007B8A" />
+  <SolidColorBrush x:Key="ScrollBarTrackBrush" Color="#14000000" />
+  <SolidColorBrush x:Key="MenuBackgroundBrush" Color="#FFFFFFFF" />
+  <SolidColorBrush x:Key="MenuForegroundBrush" Color="#FF1F2328" />
+  <SolidColorBrush x:Key="TooltipBackgroundBrush" Color="#FFFFFFFF" />
+  <SolidColorBrush x:Key="TooltipForegroundBrush" Color="#FF1F2328" />
+  <SolidColorBrush x:Key="TooltipBorderBrush" Color="#FFD8DDE3" />
+  <SolidColorBrush x:Key="UserBrush" Color="#FF007B8A" />
+  <SolidColorBrush x:Key="AssistantBrush" Color="#FF1A7F37" />
+  <SolidColorBrush x:Key="SystemBrush" Color="#FF6E7781" />
+  <SolidColorBrush x:Key="CodeForeground" Color="#FF1F2328" />
+
+  <!-- [EN] Markdown surfaces (code, rules, quotes, formulas and links). / [ZH] Markdown 载面（代码、分隔线、引用、公式与链接）。 -->
+  <SolidColorBrush x:Key="MarkdownCodeBrush" Color="#FFF1F3F5" />
+  <SolidColorBrush x:Key="MarkdownCodeForeground" Color="#FF1F2328" />
+  <SolidColorBrush x:Key="MarkdownRuleBrush" Color="#FFE6E8EB" />
+  <SolidColorBrush x:Key="MarkdownQuoteBrush" Color="#FF57606A" />
+  <SolidColorBrush x:Key="MarkdownFormulaBrush" Color="#14007B8A" />
+  <SolidColorBrush x:Key="MarkdownLinkBrush" Color="#FF007B8A" />
+
+
+  <!--
+    [EN] Immersive window chrome tokens: the title bar is a white panel separated from the
+         canvas by a single hairline, and the close affordance uses a restrained red tint.
+    [ZH] 沉浸式窗口外框令牌：标题栏为白色面板，与画布之间仅以一条极细分隔线区分，
+         关闭按钮采用克制的红色调和。
+  -->
+  <SolidColorBrush x:Key="TitleBarBackgroundBrush" Color="#FFFFFFFF" />
+  <SolidColorBrush x:Key="TitleBarBorderBrush" Color="#FFE6E8EB" />
+  <SolidColorBrush x:Key="TitleBarForegroundBrush" Color="#FF1F2328" />
+  <SolidColorBrush x:Key="TitleBarButtonHoverBrush" Color="#FFF0F2F5" />
+  <SolidColorBrush x:Key="TitleBarCloseHoverBrush" Color="#FFFDE8EA" />
+  <SolidColorBrush x:Key="TitleBarCloseForegroundBrush" Color="#FFCF222E" />
+
+  <!--
+    [EN] Elevation tokens. In light mode hierarchy is carried by a soft shadow
+         (0 4px 12px at 5% opacity) instead of a strong border.
+    [ZH] 高程令牌。浅色模式下层级由柔和投影承载（0 4px 12px、5% 不透明度），而非强描边。
+  -->
+  <BoxShadows x:Key="CardShadow">0 4 12 0 #0D000000</BoxShadows>
+</ResourceDictionary>

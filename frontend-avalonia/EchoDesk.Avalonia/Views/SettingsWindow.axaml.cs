@@ -15,8 +15,10 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using EchoDesk.Avalonia.Services;
 using EchoDesk.Avalonia.Views.Settings;
 
@@ -28,6 +30,12 @@ public partial class SettingsWindow : Window, ISettingsHost
     private readonly List<ISettingsPage> _pages = new();
     private readonly List<(TabItem Item, string Key, string Fallback)> _tabHeaders = new();
     private bool _dirty;
+
+    // [EN] Manual double-click bookkeeping for the custom caption; see MainWindow for rationale.
+    // [ZH] 自定义标题栏的手动双击判定状态；判定理由见主窗口对应说明。
+    private DateTime _lastCaptionPressAt = DateTime.MinValue;
+    private Point _lastCaptionPressPoint;
+    private DateTime _lastCaptionToggleAt = DateTime.MinValue;
 
     /// <summary>
     /// 还没迁移到跨平台前端的页签。**现在是空的**：设置窗口的 7 个页签已全部迁移完成
@@ -79,9 +87,115 @@ public partial class SettingsWindow : Window, ISettingsHost
         CloseButton.Click += (_, _) => Close();
         FieldHelpCloseButton.Click += (_, _) => ClearFieldHelp();
 
+        // [EN] Custom caption controls. The pointer-driven move loop is attached in XAML.
+        // [ZH] 自定义标题栏控件。指针驱动的移动循环在 XAML 中挂接。
+        TitleBarMinimizeButton.Click += (_, _) => WindowState = WindowState.Minimized;
+        TitleBarMaximizeButton.Click += (_, _) => ToggleMaximize();
+        TitleBarCloseButton.Click += (_, _) => Close();
+        // [EN] Window-state changes that bypass our controls (native gestures, snapping) must
+        //      still refresh the caption glyph and its accessible names.
+        // [ZH] 不经过自有控件的窗口状态变化（原生手势、贴靠）同样需要刷新标题栏字形与无障碍名称。
+        PropertyChanged += OnWindowPropertyChanged;
+        UpdateWindowChromeState();
+
         // 与主窗口同一道保险：记忆里的尺寸可能来自旧版本（980x720），
         // 超出当前屏幕可用区域时会把底部的保存/关闭按钮裁掉。
         Opened += (_, _) => ClampSizeToScreen();
+    }
+
+    // -----------------------------------------------------------------
+    // [EN] Custom window chrome / [ZH] 自定义窗口外框
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// [EN] Starts the platform window move loop from the custom caption. A double click within
+    ///      the system interval toggles the maximised state. The loop itself is provided by the
+    ///      platform, so snapping, cursor tracking and DPI transitions remain native.
+    /// [ZH] 从自定义标题栏启动平台窗口移动循环。系统间隔内的双击切换最大化状态。移动循环由平台
+    ///      提供，因此贴靠、光标跟随与 DPI 切换均保持原生行为。
+    /// </summary>
+    private void OnTitleBarPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+            return;
+        // [EN] Caption controls own their input; the drag surface must not steal it.
+        // [ZH] 窗口控制按钮自行处理输入，拖拽载面不得抢占。
+        if (e.Source is Visual visual && visual.FindAncestorOfType<Button>(includeSelf: true) is not null)
+            return;
+
+        // [EN] Double-click detection is performed explicitly (interval + displacement) because
+        //      the platform click counter is not reliable once the native move loop has started.
+        // [ZH] 双击判定在此显式完成（时间间隔 + 位移），因为平台移动循环启动后系统点击计数不再可靠。
+        DateTime now = DateTime.UtcNow;
+        Point point = e.GetPosition(this);
+        bool doubleByInterval = (now - _lastCaptionPressAt).TotalMilliseconds <= 400
+            && Math.Abs(point.X - _lastCaptionPressPoint.X) <= 4
+            && Math.Abs(point.Y - _lastCaptionPressPoint.Y) <= 4;
+        _lastCaptionPressAt = now;
+        _lastCaptionPressPoint = point;
+
+        if (doubleByInterval || e.ClickCount == 2)
+        {
+            // [EN] A single gesture must not toggle twice, even when both detection paths fire.
+            // [ZH] 同一次手势不得触发两次切换，即使两条判定路径同时命中。
+            if ((now - _lastCaptionToggleAt).TotalMilliseconds > 200)
+            {
+                _lastCaptionToggleAt = now;
+                _lastCaptionPressAt = DateTime.MinValue;
+                ToggleMaximize();
+            }
+            e.Handled = true;
+            return;
+        }
+
+        BeginMoveDrag(e);
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// [EN] Toggles the window between the maximised and restored states.
+    /// [ZH] 在最大化与还原状态之间切换窗口。
+    /// </summary>
+    private void ToggleMaximize()
+    {
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+        UpdateWindowChromeState();
+    }
+
+    /// <summary>
+    /// [EN] Applies the current window state to the custom caption, rebuilding the glyph, the
+    ///      tooltip and the accessible name in the active interface language.
+    /// [ZH] 将当前窗口状态应用到自定义标题栏，并按当前界面语言重建字形、悬停提示与无障碍名称。
+    /// </summary>
+    private void UpdateWindowChromeState()
+    {
+        bool maximized = WindowState == WindowState.Maximized;
+        MaximizeGlyph.IsVisible = !maximized;
+        RestoreGlyph.IsVisible = maximized;
+        TitleBarTitle.Text = Title;
+
+        string minimize = Loc.T("main.window.minimize", "最小化");
+        string maximize = maximized
+            ? Loc.T("main.window.restore", "还原")
+            : Loc.T("main.window.maximize", "最大化");
+        string close = Loc.T("main.window.close", "关闭");
+
+        ToolTip.SetTip(TitleBarMinimizeButton, minimize);
+        ToolTip.SetTip(TitleBarMaximizeButton, maximize);
+        ToolTip.SetTip(TitleBarCloseButton, close);
+        AutomationProperties.SetName(TitleBarMinimizeButton, minimize);
+        AutomationProperties.SetName(TitleBarMaximizeButton, maximize);
+        AutomationProperties.SetName(TitleBarCloseButton, close);
+    }
+
+    /// <summary>
+    /// [EN] Routes window-state property changes to the caption updater.
+    /// [ZH] 将窗口状态属性变更路由至标题栏更新逻辑。
+    /// </summary>
+    private void OnWindowPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+    {
+        if (e.Property == WindowStateProperty)
+            UpdateWindowChromeState();
     }
 
     /// <summary>把窗口尺寸限制在当前屏幕的可用区域内（留 24px 余量）。</summary>
@@ -238,6 +352,9 @@ public partial class SettingsWindow : Window, ISettingsHost
             item.Header = Loc.T(key, fallback);
         foreach (ISettingsPage page in _pages)
             page.ApplyTexts();
+        // [EN] Caption text and caption tooltips follow the interface language.
+        // [ZH] 标题栏文案与其悬停提示随界面语言一并刷新。
+        UpdateWindowChromeState();
     }
 
     private void LoadFromSettings()

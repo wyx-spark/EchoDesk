@@ -93,6 +93,15 @@ public partial class MainWindow : Window
     /// <summary>上一次已知的"模型就绪"状态（用来识别 false → true 的那一次跳变）。</summary>
     private bool? _modelWasReady;
 
+    // [EN] Manual double-click bookkeeping for the custom caption. Platform click counters may be
+    //      reset by the native move loop started by the first press, therefore the interval and
+    //      distance are tracked explicitly so that maximise/restore stays deterministic.
+    // [ZH] 自定义标题栏的手动双击判定状态。首次按下会启动平台移动循环，系统的点击计数可能因此复位，
+    //      故此处显式记录时间间隔与位移，确保最大化/还原行为稳定可重复。
+    private DateTime _lastCaptionPressAt = DateTime.MinValue;
+    private Point _lastCaptionPressPoint;
+    private DateTime _lastCaptionToggleAt = DateTime.MinValue;
+
     // 状态区
     private List<string> _capabilityWarnings = new();
     private string _updateUrl = "";
@@ -171,6 +180,11 @@ public partial class MainWindow : Window
         ShowCapabilityBanner();
 
         Closing += OnClosing;
+        // [EN] The caption glyph and accessible names must track state changes that do not pass
+        //      through our own controls (for example Aero Snap or a native maximise gesture).
+        // [ZH] 标题栏字形与无障碍名称必须跟随不经过自有控件的状态变化（例如系统贴靠或原生最大化手势）。
+        PropertyChanged += OnWindowPropertyChanged;
+        UpdateWindowChromeState();
         Opened += async (_, _) =>
         {
             // 先把窗口尺寸收进当前屏幕的可用区域，再开后端：
@@ -180,6 +194,105 @@ public partial class MainWindow : Window
             if (!ProbeSuppressBackendStart)
                 await StartBackendAsync();
         };
+    }
+
+    // -----------------------------------------------------------------
+    // [EN] Custom window chrome / [ZH] 自定义窗口外框
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// [EN] Starts a platform move loop when the custom caption is pressed with the primary
+    ///      button. A second click within the double-click interval toggles the maximised state.
+    ///      Because the move loop is executed by the operating system, cursor tracking, screen
+    ///      snapping and per-monitor DPI transitions are inherited instead of being reimplemented.
+    /// [ZH] 自定义标题栏被主键按下时启动平台移动循环；在双击间隔内的第二次点击切换最大化状态。
+    ///      由于移动循环由操作系统执行，光标跟随、屏幕贴靠与逐屏 DPI 切换均为系统原生行为，
+    ///      而非在本层重新实现。
+    /// </summary>
+    private void OnTitleBarPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+            return;
+        // [EN] Caption controls own their input; the drag surface must not steal it.
+        // [ZH] 窗口控制按钮自行处理输入，拖拽载面不得抢占。
+        if (e.Source is Visual visual && visual.FindAncestorOfType<Button>(includeSelf: true) is not null)
+            return;
+
+        // [EN] Double-click detection is performed explicitly (interval + displacement) because
+        //      the platform click counter is not reliable once the native move loop has started.
+        // [ZH] 双击判定在此显式完成（时间间隔 + 位移），因为平台移动循环启动后系统点击计数不再可靠。
+        DateTime now = DateTime.UtcNow;
+        Point point = e.GetPosition(this);
+        bool doubleByInterval = (now - _lastCaptionPressAt).TotalMilliseconds <= 400
+            && Math.Abs(point.X - _lastCaptionPressPoint.X) <= 4
+            && Math.Abs(point.Y - _lastCaptionPressPoint.Y) <= 4;
+        _lastCaptionPressAt = now;
+        _lastCaptionPressPoint = point;
+
+        if (doubleByInterval || e.ClickCount == 2)
+        {
+            // [EN] A single gesture must not toggle twice, even when both detection paths fire.
+            // [ZH] 同一次手势不得触发两次切换，即使两条判定路径同时命中。
+            if ((now - _lastCaptionToggleAt).TotalMilliseconds > 200)
+            {
+                _lastCaptionToggleAt = now;
+                _lastCaptionPressAt = DateTime.MinValue;
+                ToggleMaximize();
+            }
+            e.Handled = true;
+            return;
+        }
+
+        BeginMoveDrag(e);
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// [EN] Toggles the window between the maximised and restored states.
+    /// [ZH] 在最大化与还原状态之间切换窗口。
+    /// </summary>
+    private void ToggleMaximize()
+    {
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+        UpdateWindowChromeState();
+    }
+
+    /// <summary>
+    /// [EN] Applies the current window state to the custom caption: the restore glyph replaces
+    ///      the maximise glyph when maximised, and both the tooltip and the accessible name are
+    ///      rebuilt in the active interface language.
+    /// [ZH] 将当前窗口状态应用到自定义标题栏：最大化时以还原字形替换最大化字形，并按当前界面语言
+    ///      重建悬停提示与无障碍名称。
+    /// </summary>
+    private void UpdateWindowChromeState()
+    {
+        bool maximized = WindowState == WindowState.Maximized;
+        MaximizeGlyph.IsVisible = !maximized;
+        RestoreGlyph.IsVisible = maximized;
+        TitleBarTitle.Text = Title;
+
+        string minimize = Loc.T("main.window.minimize", "最小化");
+        string maximize = maximized
+            ? Loc.T("main.window.restore", "还原")
+            : Loc.T("main.window.maximize", "最大化");
+        string close = Loc.T("main.window.close", "关闭");
+
+        ToolTip.SetTip(TitleBarMinimizeButton, minimize);
+        ToolTip.SetTip(TitleBarMaximizeButton, maximize);
+        ToolTip.SetTip(TitleBarCloseButton, close);
+        AutomationProperties.SetName(TitleBarMinimizeButton, minimize);
+        AutomationProperties.SetName(TitleBarMaximizeButton, maximize);
+        AutomationProperties.SetName(TitleBarCloseButton, close);
+    }
+
+    /// <summary>
+    /// [EN] Routes window-state property changes to the caption updater.
+    /// [ZH] 将窗口状态属性变更路由至标题栏更新逻辑。
+    /// </summary>
+    private void OnWindowPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+    {
+        if (e.Property == WindowStateProperty)
+            UpdateWindowChromeState();
     }
 
     /// <summary>把窗口尺寸限制在当前屏幕的可用区域内（留 24px 余量，保证标题栏与底部都能抓到）。</summary>
@@ -206,6 +319,14 @@ public partial class MainWindow : Window
 
     private void WireEvents()
     {
+        // [EN] Custom caption controls: minimise, maximise-or-restore and close. The pointer
+        //      driven move loop is attached in XAML (OnTitleBarPointerPressed).
+        // [ZH] 自定义标题栏控件：最小化、最大化/还原与关闭。指针驱动的移动循环在 XAML 中挂接
+        //      （OnTitleBarPointerPressed）。
+        TitleBarMinimizeButton.Click += (_, _) => WindowState = WindowState.Minimized;
+        TitleBarMaximizeButton.Click += (_, _) => ToggleMaximize();
+        TitleBarCloseButton.Click += (_, _) => Close();
+
         SendButton.Click += async (_, _) => await SendAsync();
         StopButton.Click += async (_, _) => await StopAsync();
         UploadButton.Click += async (_, _) => await PickFilesAsync();
@@ -566,6 +687,9 @@ public partial class MainWindow : Window
             ContextChipText.Text = Loc.T("main.context.buttonIdle", "上下文：---/---");
         ShowCapabilityBanner();
         ApplyHelpText();
+        // [EN] Caption text is language-dependent, therefore it is refreshed with the rest of
+        //      the interface strings. / [ZH] 标题栏文案依赖界面语言，因此随其余界面文案一并刷新。
+        UpdateWindowChromeState();
     }
 
     /// <summary>
