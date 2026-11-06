@@ -62,7 +62,6 @@ public sealed class BackendService : IDisposable
     private StreamReader? _reader;
     private StreamReader? _stdErrReader;
     private CancellationTokenSource? _pumpCts;
-    private Task? _pumpTask;
     private bool _stopping;
 
     // stdout 行队列：单写（泵）多读（闸门保证同时只有一个读取方）
@@ -197,7 +196,7 @@ public sealed class BackendService : IDisposable
 
         // 唯一读取者：把 stdout 的每一行投递到队列
         _pumpCts = new CancellationTokenSource();
-        _pumpTask = Task.Run(() => PumpAsync(_pumpCts.Token));
+        _ = Task.Run(() => PumpAsync(_pumpCts.Token));
         // 后台收集 stderr，便于排查后端问题
         _ = Task.Run(ReadErrorsAsync);
 
@@ -719,7 +718,6 @@ public sealed class BackendService : IDisposable
         _stdErrReader = null;
         _pumpCts?.Dispose();
         _pumpCts = null;
-        _pumpTask = null;
         _lines.Writer.TryComplete();
     }
 

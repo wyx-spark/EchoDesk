@@ -1,6 +1,6 @@
 // [EN] EchoDesk WPF frontend module: frontend/MainWindow.xaml.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend/MainWindow.xaml.cs。类型与成员说明见下方注释。
-using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -186,15 +186,98 @@ public partial class MainWindow : Window
         Loaded += MainWindow_Loaded;
     }
 
-    /// <summary>当前程序版本（vX.Y.Z）：从程序集版本号推导，避免与窗口文案两处硬编码。</summary>
+    /// <summary>
+    /// [EN] Current application version (for example <c>v0.2.3-alpha.1</c>).
+    ///
+    /// [EN] v0.2.3 changed two things. First, the property reads InformationalVersion in
+    /// preference to AssemblyVersion: InformationalVersion allows a prerelease suffix such as
+    /// `-alpha.1`, whereas AssemblyVersion must be four purely numeric fields under Windows rules,
+    /// so reading it would display this preview build as v0.2.3. Second, the hard-coded fallback
+    /// literal was removed, because it was a second source of truth that expired on every version
+    /// bump. Build metadata (<c>+&lt;commit&gt;</c>) is never shown in the interface.
+    ///
+    /// [ZH] 当前程序版本（如 <c>v0.2.3-alpha.1</c>）。
+    ///
+    /// [ZH] v0.2.3 改了两处：**优先读 InformationalVersion**（它允许 `-alpha.1` 这类预发布
+    /// 后缀，而 AssemblyVersion 按 Windows 规则只能是四段纯数字，读它会把预览版显示成 v0.2.3），
+    /// 同时去掉了原来兜底的硬编码字面量（那是个会在升版本后过期的第二处真相）。
+    /// 构建元数据（<c>+&lt;commit&gt;</c>）不进界面。
+    /// </summary>
     internal static string AppVersion
     {
         get
         {
-            Version? version = typeof(MainWindow).Assembly.GetName().Version;
-            return version is null ? "v0.2.1" : $"v{version.Major}.{version.Minor}.{version.Build}";
+            Assembly assembly = typeof(MainWindow).Assembly;
+            string? informational = assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            if (!string.IsNullOrWhiteSpace(informational))
+            {
+                int plus = informational.IndexOf('+');
+                string text = (plus >= 0 ? informational[..plus] : informational).Trim();
+                if (text.Length > 0)
+                    return text.StartsWith('v') ? text : "v" + text;
+            }
+            Version? version = assembly.GetName().Version;
+            return version is null ? "v0.0.0" : $"v{version.Major}.{version.Minor}.{version.Build}";
         }
     }
+
+    /// <summary>
+    /// [EN] The project's Releases page. After WPF moved into LTS in v0.2.3, both LTS notices point
+    /// here. It uses <c>releases/latest</c> instead of a hard-coded version number so the buttons
+    /// keep working when a new version ships.
+    ///
+    /// [ZH] 项目 Release 页面（v0.2.3：WPF 转入 LTS 之后，两条 LTS 提示的按钮都指向这里）。
+    /// 用 <c>releases/latest</c> 而不是写死某个版本号：新版本发布后按钮不需要改。
+    /// </summary>
+    internal const string ReleasesUrl = "https://github.com/wyx-spark/EchoDesk/releases/latest";
+
+    /// <summary>
+    /// [EN] Project home page, shown on the About page and identical to the address in the backend
+    /// key <c>about.repo</c>.
+    ///
+    /// [ZH] 项目主页（「关于」页展示用，与后端 about.repo 的地址一致）。
+    /// </summary>
+    internal const string ProjectUrl = "https://github.com/wyx-spark/EchoDesk";
+
+    /// <summary>
+    /// [EN] Open an http(s) link in the system default browser.
+    ///
+    /// [EN] Only http and https are accepted: if another button reuses this entry point later, a
+    /// value such as <c>file:</c> from an external source still cannot turn one click into local
+    /// code execution.
+    ///
+    /// [ZH] 用系统默认浏览器打开一条 http(s) 链接。
+    ///
+    /// [ZH] 只放行 http / https：这个入口将来若被其它按钮复用，也不会因为传入
+    /// <c>file:</c> 之类的外部输入而变成"点一下执行本地程序"。
+    /// </summary>
+    internal static void OpenExternalLink(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = uri.AbsoluteUri,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            App.Log("MainWindow.OpenExternalLink", ex);
+        }
+    }
+
+    /// <summary>
+    /// [EN] The "Download the Avalonia edition" button on the LTS notice bar: it opens the latest
+    /// Releases page and never downloads or installs anything inside the application.
+    ///
+    /// [ZH] LTS 提示条上的「下载 Avalonia 版本」：跳到 Releases 最新版，不在程序内下载。
+    /// </summary>
+    private void LtsDownloadButton_Click(object sender, RoutedEventArgs e) => OpenExternalLink(ReleasesUrl);
 
     private const string StudioName = "Void Entropia Studio";
 
@@ -2673,19 +2756,6 @@ public partial class MainWindow : Window
 
     // ---------- 帮助 ----------
 
-    private async Task ShowHelpAsync()
-    {
-        try
-        {
-            string json = await _backend!.SendRequestAsync(new { action = "chat", message = "/help" });
-            HandleChatResponse(json);
-        }
-        catch
-        {
-            ShowHelpLocally(); // 后端不可用时回退本地渲染
-        }
-    }
-
     /// <summary>后端不可用时的本地 /help 回退渲染（文案同样走语言包）。</summary>
     private void ShowHelpLocally()
     {
@@ -2995,68 +3065,6 @@ public partial class MainWindow : Window
             else if (paths.Count > 1)
                 AddMessage("system", Loc.T("main.upload.doneMany",
                     "✅ 已加载 {0} 个文件（失败 {1} 个）", ok, failed));
-        }
-        catch (Exception ex)
-        {
-            AddMessage("system", Loc.T("main.upload.failed", "❌ 上传失败: {0}", ex.Message));
-        }
-        finally
-        {
-            _stopMode = previousStopMode;
-            SendButton.Content = "➤";
-            SendButton.ToolTip = Loc.T("main.button.sendTip", "发送 (Ctrl+Enter)");
-            SendButton.IsEnabled = true;
-        }
-    }
-
-    private async Task UploadFileAsync(string filePath)
-    {
-        if (_backend is null)
-            return;
-        AddMessage("system", Loc.T("main.upload.uploading",
-            "📤 正在上传文件: {0} ...", System.IO.Path.GetFileName(filePath)));
-
-        // 任务四：分段摘要的过程反馈。进度**就地更新同一条消息**（而不是每段新增一条），
-        // 长文档十几段才不会把对话框刷满；用户不查日志文件也能看到第几段、耗时、阶段。
-        var progressPanel = NewMessagePanel("system",
-            Loc.T("main.summary.preparing", "📝 正在解析文档并准备分段摘要…"), out FrameworkElement progressContent);
-        var progressTarget = progressContent as TextBox;
-        MessagePanel.Children.Add(progressPanel);
-        MessageScrollViewer.ScrollToBottom();
-
-        // 摘要期间把发送按钮变成"停止"（与流式对话一致）：用户可随时中止，后端会真的停下
-        bool previousStopMode = _stopMode;
-        _stopRequested = false;
-        _stopMode = true;
-        SendButton.Content = "⏹";
-        SendButton.ToolTip = Loc.T("main.button.stopSummaryTip", "中止分段摘要 (Esc)");
-        SendButton.IsEnabled = true;
-        try
-        {
-            string final = await _backend.SendStreamRequestAsync(
-                new { action = "file_stream", path = filePath },
-                delta =>
-                {
-                    if (progressTarget is not null)
-                    {
-                        progressTarget.Text = Emoji.Prefer(delta);
-                        MessageScrollViewer.ScrollToBottom();
-                    }
-                },
-                onContext: (_, _) => { },   // 上下文显示改由 UpdateContextFromResponse(root) 统一处理，见下方 onEvent
-                onEvent: (type, root) =>
-                {
-                    // 只有 summary_progress 需要在这里渲染：它是结构化进度（阶段/段号/耗时/慢）
-                    if (type != "summary_progress" || progressTarget is null)
-                        return;
-                    string text = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
-                    if (text.Length == 0)
-                        return;
-                    progressTarget.Text = Emoji.Prefer(text);
-                    MessageScrollViewer.ScrollToBottom();
-                });
-            if (final.Length > 0)
-                AddMessage("system", final);
         }
         catch (Exception ex)
         {

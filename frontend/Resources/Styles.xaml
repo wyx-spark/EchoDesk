@@ -65,14 +65,6 @@
         <Setter Property="FontFamily" Value="{DynamicResource UiFontFamily}"/>
     </Style>
 
-    <!-- 设置窗口里大量用 Border 做"分组卡片"，统一走 SurfaceBrush -->
-    <Style x:Key="CardBorder" TargetType="Border">
-        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
-        <Setter Property="BorderBrush" Value="{DynamicResource SeparatorBrush}"/>
-        <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="CornerRadius" Value="8"/>
-    </Style>
-
     <Style TargetType="Separator">
         <Setter Property="Background" Value="{DynamicResource SeparatorBrush}"/>
     </Style>
@@ -152,13 +144,6 @@
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
-    </Style>
-
-    <!-- 强调按钮（主操作） -->
-    <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource RoundButton}">
-        <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
-        <Setter Property="Foreground" Value="{DynamicResource AccentForegroundBrush}"/>
-        <Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
 
     <!-- ============ 输入框 ============ -->

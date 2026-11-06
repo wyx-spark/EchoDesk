@@ -180,3 +180,26 @@ artifacts/
 # 只留在工作区供作者查阅。
 # are not tracked either and remain only in the working tree for the author.
 /records/
+
+# ---------- v0.2.3 补齐 ----------
+# ---------- Added in v0.2.3 ----------
+# 模型下载的断点续传临时文件：backend/model_hub.py 先写 <文件名>.part，校验通过后才改名成正式文件。
+# 原来的 *.gguf 匹配不到 "xxx.gguf.part"，一次中断的下载会留下一个未跟踪的大文件（本地实测过）。
+# The resumable-download temp file: backend/model_hub.py writes <name>.part first and renames it
+# only after verification. The existing *.gguf rule does not match "xxx.gguf.part", so one
+# interrupted download used to leave a large untracked file behind (verified locally).
+*.part
+models/*.part
+
+# 编辑器与操作系统的随手文件（三平台开发都会遇到，且不属于任何一种交付物）
+# Incidental files from editors and operating systems (encountered on all three platforms and
+# never part of any deliverable).
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 补丁与合并残留（本地试改代码后最容易漏删的一类）
+# Patch and merge leftovers (the kind most easily forgotten after trying a local edit).
+*.orig
+*.rej
+*.bak

@@ -13,10 +13,71 @@ for traceability only; this changelog is the release-facing document.
 
 | Version | Type | Release date | Summary |
 | :--- | :--- | :--- | :--- |
+| [v0.2.3-alpha.1](#v023-alpha1) | Preview (alpha) | Unreleased | WPF frozen into long-term support; version and build-chain consolidation |
 | [v0.2.2](#v022) | Stable Release | 2026-11-04 | Cross-platform frontend, visual consistency, full bilingual coverage |
 | [v0.2.1](#v021) | Stable Release | 2026-10-05 | Capability consolidation, Agent platform, MCP, plugin ecosystem |
 | [v0.2.0](#v020) | Feature Release | 2026-09-23 | Long context and documents, automation, skill marketplace |
 | [v0.1.0](#v010) | Early Preview | 2026-08-29 | First public release: local inference with a desktop client |
+
+---
+
+## v0.2.3-alpha.1
+
+### Release positioning
+
+The first iteration of the v0.2.3 cycle, published as a preview. The v0.2.3 cycle refocuses the
+project on Avalonia as the primary interface; the WPF edition completes its functional development
+here and enters long-term support (LTS), which means security and crash fixes only and no new
+features. This iteration delivers the LTS notices, unifies the version number and its derivation
+across the build chain, and clears legacy code and obsolete resources from the WPF project.
+
+### Key capabilities
+
+**WPF moves into long-term support (LTS)**
+
+- The WPF main window carries a permanent notice bar stating that the edition has entered LTS, with
+  a button that opens the latest GitHub Releases page. The bar has no close action, because the
+  notice is meant to remain visible for as long as the edition is in LTS.
+- The Settings window gains a dedicated About page: the LTS statement is presented first and in a
+  prominent frame, followed by the version, the interface edition, the project home and the licence.
+  The page also links to the latest GitHub Releases page.
+- Every new string ships in both Chinese and English through the language packs, and a language
+  switch updates both notices immediately without restarting the application.
+- Scope of LTS: compatibility and stability are maintained through security and crash fixes; feature
+  development continues on the Avalonia edition only.
+
+**Version and lifecycle management**
+
+- `APP_VERSION` is now `v0.2.3-alpha.1`. The four-field form required by Windows version resources,
+  `0.2.3.0`, is derived by `app_version_4()`, which strips the SemVer prerelease suffix.
+- The packaging scripts and the release gate apply the same rule, so a preview version can no longer
+  produce an illegal version resource such as `0.2.3-alpha.1.0`.
+- The WPF and Avalonia project files now carry the same version numbers, and the interface displays
+  the full semantic version, including the prerelease suffix.
+- The installation package writes the numeric core to its Win32 version fields while keeping the
+  full version in the display fields.
+
+**Legacy cleanup**
+
+- Removed twenty-nine unused using directives, three uncalled methods, five write-only fields and
+  five unreferenced XAML resources (two named styles and three theme brushes) from the WPF project.
+- Removed eight obsolete language keys that no code referenced, in both Chinese and English.
+- Corrected a malformed XML documentation comment in the settings window.
+- Reviewed `.gitignore`: build outputs, release trees, runtime state files, model caches, screenshot
+  directories and development materials are all covered, and the checks in this iteration left no
+  untracked files behind.
+
+### Known limitations
+
+- This is a preview build. No release artifacts are produced for this iteration; the Windows
+  installer and the three-platform packages will be rebuilt and frozen when the cycle closes.
+- All limitations recorded for v0.2.2 continue to apply.
+- The WPF edition receives no new features from this version onwards; requests for new behaviour
+  are handled on the Avalonia edition.
+
+### Delivered artifacts
+
+No release artifacts in this preview iteration. The source tree is the deliverable.
 
 ---
 

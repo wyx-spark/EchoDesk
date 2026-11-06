@@ -20,43 +20,83 @@
 
         <!-- 标题栏（优化五：只保留最关键的运行状态 / 模型 / 模式，
              搜索、自动化、市场、上下文等次要信息移到输入框下方的轻量状态区） -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="📡 EchoDesk" FontSize="20" FontWeight="Bold"
-                           svc:Loc.Key="main.brand"
-                           Foreground="{DynamicResource AccentBrush}"/>
-                <TextBlock Grid.Column="1" x:Name="VersionText" Text="v0.2.1" FontSize="10" Margin="4,0,0,0"
-                           VerticalAlignment="Bottom" Foreground="{DynamicResource SubTextBrush}"/>
-            </Grid>
-            <TextBlock Text="由熵寂工作室出品" FontSize="11" Margin="14,8,0,0"
-                       svc:Loc.Key="main.powered"
-                       VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>
-            <!-- 关键状态：运行状态 / 模型 / 模式。
-                 注意：这里给状态文本用 HelpText 说明含义，不能用 AutomationProperties.Name 覆盖，
-                 否则屏幕阅读器读到的是"运行状态"而不是"已就绪"，反而丢失信息。 -->
-            <TextBlock x:Name="StatusText" Text="正在启动后端..." Margin="18,0,0,0"
-                       VerticalAlignment="Center" FontWeight="Bold"
-                       svc:Loc.HelpKey="main.status.help"
-                       Foreground="{DynamicResource SubTextBrush}"/>
-            <Button x:Name="ModelChip" Margin="14,0,0,0" Padding="8,2" VerticalAlignment="Center"
-                    Style="{StaticResource RoundButton}" Click="ModelChip_Click"
-                    svc:Loc.TipKey="main.model.clickTip"
-                    svc:Loc.HelpKey="main.model.help">
-                <TextBlock x:Name="ModelText" Text="🧠 模型: ---" FontSize="11" MaxWidth="200"
-                           svc:Loc.Key="main.model.placeholder"
-                           TextTrimming="CharacterEllipsis"/>
-            </Button>
-            <Button x:Name="ModeChip" Margin="8,0,0,0" Padding="8,2" VerticalAlignment="Center"
-                    Style="{StaticResource RoundButton}" Click="ModeChip_Click"
-                    svc:Loc.TipKey="main.mode.clickTip"
-                    svc:Loc.HelpKey="main.mode.help">
-                <TextBlock x:Name="ModeText" Text="🛠️ 模式: general" FontSize="11"
-                           svc:Loc.Key="main.mode.placeholder"/>
-            </Button>
+        <StackPanel Grid.Row="0">
+            <!-- [EN] v0.2.3: the WPF edition has entered long-term support (LTS), and this is a
+                 [EN] **permanent** notice bar. It deliberately has no close button — brief 3.1
+                 [EN] requires it to be always present, and it only explains where to go next, so it
+                 [EN] never interrupts any operation. Both the text and the link label come from the
+                 [EN] language packs (Chinese and English).
+                 [EN] It sits above the title bar rather than in the bottom status strip: the bottom
+                 [EN] row carries operational hints, and mixing the two would bury the LTS notice
+                 [EN] under everyday messages.
+                 [ZH] v0.2.3：WPF 版转入长期支持（LTS）维护期，这里是一条**常驻**提示条。
+                 [ZH] 刻意不提供关闭按钮 —— 任务书 3.1 要求"常驻"，而且它只是说明去向，
+                 [ZH] 不打断任何操作；文案与链接文字全部走语言包（中英双语）。
+                 [ZH] 放在标题栏上方而不是底部状态区：底部那行是"操作提示"，两者语义不同，
+                 [ZH] 混在一起会让 LTS 说明被日常提示淹没。 -->
+            <Border x:Name="LtsBanner" CornerRadius="8" Padding="10,6" Margin="0,0,0,8"
+                    Background="{DynamicResource InputBackground}"
+                    BorderBrush="{DynamicResource WarningBrush}" BorderThickness="1"
+                    svc:Loc.HelpKey="main.lts.help">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="⚠️" FontSize="14" Margin="0,0,8,0"
+                               VerticalAlignment="Center"/>
+                    <TextBlock x:Name="LtsText" Grid.Column="1"
+                               Text="WPF 版本已进入长期支持（LTS）维护期，不再新增功能。建议下载并体验更现代、更流畅的跨平台（Avalonia）版本。"
+                               FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"
+                               Foreground="{DynamicResource WarningBrush}"
+                               svc:Loc.Key="main.lts.banner"/>
+                    <Button x:Name="LtsDownloadButton" Grid.Column="2" Padding="10,2" Margin="10,0,0,0"
+                            VerticalAlignment="Center" FontSize="11"
+                            Style="{StaticResource RoundButton}"
+                            Click="LtsDownloadButton_Click"
+                            svc:Loc.Key="main.lts.download"/>
+                </Grid>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="📡 EchoDesk" FontSize="20" FontWeight="Bold"
+                               svc:Loc.Key="main.brand"
+                               Foreground="{DynamicResource AccentBrush}"/>
+                    <TextBlock Grid.Column="1" x:Name="VersionText" Text="" FontSize="10" Margin="4,0,0,0"
+                               VerticalAlignment="Bottom" Foreground="{DynamicResource SubTextBrush}"/>
+                </Grid>
+                <TextBlock Text="由熵寂工作室出品" FontSize="11" Margin="14,8,0,0"
+                           svc:Loc.Key="main.powered"
+                           VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>
+                <!-- 关键状态：运行状态 / 模型 / 模式。
+                     注意：这里给状态文本用 HelpText 说明含义，不能用 AutomationProperties.Name 覆盖，
+                     否则屏幕阅读器读到的是"运行状态"而不是"已就绪"，反而丢失信息。 -->
+                <TextBlock x:Name="StatusText" Text="正在启动后端..." Margin="18,0,0,0"
+                           VerticalAlignment="Center" FontWeight="Bold"
+                           svc:Loc.HelpKey="main.status.help"
+                           Foreground="{DynamicResource SubTextBrush}"/>
+                <Button x:Name="ModelChip" Margin="14,0,0,0" Padding="8,2" VerticalAlignment="Center"
+                        Style="{StaticResource RoundButton}" Click="ModelChip_Click"
+                        svc:Loc.TipKey="main.model.clickTip"
+                        svc:Loc.HelpKey="main.model.help">
+                    <TextBlock x:Name="ModelText" Text="🧠 模型: ---" FontSize="11" MaxWidth="200"
+                               svc:Loc.Key="main.model.placeholder"
+                               TextTrimming="CharacterEllipsis"/>
+                </Button>
+                <Button x:Name="ModeChip" Margin="8,0,0,0" Padding="8,2" VerticalAlignment="Center"
+                        Style="{StaticResource RoundButton}" Click="ModeChip_Click"
+                        svc:Loc.TipKey="main.mode.clickTip"
+                        svc:Loc.HelpKey="main.mode.help">
+                    <TextBlock x:Name="ModeText" Text="🛠️ 模式: general" FontSize="11"
+                               svc:Loc.Key="main.mode.placeholder"/>
+                </Button>
+            </StackPanel>
         </StackPanel>
 
         <!-- 消息列表（支持 Ctrl+滚轮调节字号） -->

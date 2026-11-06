@@ -1,4 +1,4 @@
-﻿// [EN] EchoDesk WPF frontend module: frontend/SettingsWindow.Skills.cs. See type and member comments for details.
+// [EN] EchoDesk WPF frontend module: frontend/SettingsWindow.Skills.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend/SettingsWindow.Skills.cs。类型与成员说明见下方注释。
 using System.Diagnostics;
 using System.IO;
@@ -100,9 +100,7 @@ public partial class SettingsWindow
     private JsonElement? _skillStatus;                       // skills_list 返回的完整状态
     private readonly Dictionary<string, JsonElement> _fieldHelp = new(StringComparer.Ordinal);
     private readonly List<ManifestRow> _manifestRows = new();
-    private readonly List<PluginPanelItem> _panelItems = new();
     private readonly Dictionary<string, TextBox> _panelFields = new(StringComparer.Ordinal);
-    private readonly List<string> _templateIds = new();
     private bool _devModeSyncing;
     private int _logLineCount = 200;
     // 修复一：批量确认框的一次性标志（防重入 + 同一窗口只问一次）
@@ -191,7 +189,12 @@ public partial class SettingsWindow
 
     private void OpenLangDirButton_Click(object sender, RoutedEventArgs e) => OpenFolder(Loc.LangDirectory);
 
-    /// <summary>语言切换后重跑一遍：回填 XAML 文案 + 重建那些内容由 Loc.T 生成的列表。</summary>
+    /// <summary>
+    /// [EN] Re-run everything after a language switch: refill the XAML text and rebuild the lists
+    /// whose content is generated from Loc.T.
+    ///
+    /// [ZH] 语言切换后重跑一遍：回填 XAML 文案 + 重建那些内容由 Loc.T 生成的列表。
+    /// </summary>
     internal void ApplyLanguage()
     {
         Loc.Apply(this);
@@ -202,6 +205,7 @@ public partial class SettingsWindow
         InitThemeControls();     // 主题项的名称也是语言包文本
         InitEmojiControls();     // emoji 策略项同理
         PathsText.Text = DescribePaths();
+        UpdateAboutTab();
         UpdateResultsPreview();
         RenderSkillCards();
         RenderManifestRows();

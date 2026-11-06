@@ -127,6 +127,11 @@
       "notice": "🎉 Version {0} is available (you have {1}) · click for release notes",
       "tip": "Click to open the download page",
       "checkFailed": "Update check failed: {0}"
+    },
+    "lts": {
+      "banner": "The WPF edition has entered long-term support (LTS): no new features will be added. We recommend the more modern and smoother cross-platform (Avalonia) edition.",
+      "download": "⬇ Download the Avalonia edition",
+      "help": "The WPF edition now receives security and crash fixes only, with no new features. The Avalonia edition runs on Windows, macOS and Linux and keeps receiving interface and interaction updates."
     }
   },
   "settings": {
@@ -160,27 +165,20 @@
       "automation": "Automation",
       "installed": "Installed",
       "market": "Marketplace",
-      "developer": "Developer"
+      "developer": "Developer",
+      "about": "About"
     },
     "general": {
       "sectionAppearance": "Appearance",
-      "theme": "Dark theme",
       "themeHelp": "Switch between the dark and light interface (also /darkmode on|off)",
       "fontSize": "Interface font size",
-      "fontSizeHelp": "Drag the slider, or use Ctrl+wheel in the main window",
       "sectionLanguage": "语言 / Language",
       "language": "Interface language",
       "languageHelp": "The interface, error messages and command help switch immediately — no restart needed. The choice is stored in ui_state.json.",
       "languageAuto": "Automatic (follow the system locale)",
       "languageRestartBackend": "Backend language synced",
-      "sectionBehavior": "Behaviour",
       "confirmDestructive": "Ask for confirmation before commands with side effects (/clear, /clearcache)",
-      "confirmDestructiveHelp": "On by default: prevents data loss when /clear is mistyped as /clearcache.",
-      "stripCollapsed": "Collapse the status strip under the input box by default",
-      "stripCollapsedHelp": "Keeps the main window compact; use the button on the right of the strip to expand it again.",
-      "sectionAbout": "About",
-      "aboutText": "EchoDesk {0}\nLocal AI desktop assistant · fully offline inference\nPowered by Void Entropia Studio",
-      "aboutLicense": "Open-source licence: Apache-2.0 · see LICENSE and NOTICE in the release package"
+      "confirmDestructiveHelp": "On by default: prevents data loss when /clear is mistyped as /clearcache."
     },
     "model": {
       "sectionSource": "Model source",
@@ -364,6 +362,17 @@
       "sectionPanels": "Plugin panels",
       "panelsEmpty": "(no plugin provides a panel yet. The Hello World example ships one — click “📦 Install example plugins”.)",
       "runAction": "Run"
+    },
+    "about": {
+      "sectionLts": "Long-term support (LTS) status",
+      "ltsBody": "The WPF edition has entered long-term support (LTS): from now on it receives security and crash fixes only, with no new features. We recommend the more modern and smoother cross-platform (Avalonia) edition — it runs on Windows, macOS and Linux, and its interface and interactions are still being updated.",
+      "download": "⬇ Open GitHub Releases to download the latest version",
+      "downloadTip": "Opens the project's Releases page in your default browser; nothing is downloaded or installed automatically",
+      "version": "Version: {0}",
+      "edition": "Interface: Windows (WPF, long-term support)",
+      "repo": "Project home: ",
+      "license": "Open-source licence: Apache-2.0 · see LICENSE and NOTICE in the release package",
+      "sectionInfo": "Version information"
     }
   }
 }

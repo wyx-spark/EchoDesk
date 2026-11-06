@@ -181,6 +181,16 @@ if (-not $Version) {
     $Version = $VersionMatch.Matches[0].Groups[1].Value.TrimStart('v')
     Write-Host "版本号（取自 backend\version.py）：$Version" -ForegroundColor DarkGray
 }
+# [EN] Four-part version number (added in v0.2.3): a Windows file-version resource can only
+# [EN] hold four numeric fields, whereas APP_VERSION now allows a SemVer prerelease suffix
+# [EN] (v0.2.3-alpha.1). The rule matches app_version_4() in backend\version.py — **both
+# [EN] places must be changed together**, otherwise rcedit receives an illegal version such as
+# [EN] "0.2.3-alpha.1.0": invisible at compile time, fatal only during packaging.
+# [ZH] 四段式版本号（v0.2.3 新增）：Windows 的文件版本资源只能是四段纯数字，
+# [ZH] 而 APP_VERSION 现在允许带 SemVer 预发布后缀（v0.2.3-alpha.1）。口径与
+# [ZH] backend\version.py 的 app_version_4() 一致 —— **两处必须同步改**，否则 rcedit 会收到
+# [ZH] "0.2.3-alpha.1.0" 这种非法版本号（编译期看不出、打包时才炸）。
+$NumericVersion = ($Version -split '[-+]')[0].Trim()
 $Out = Join-Path $Root "publish\EchoDesk-v$Version"
 # 修复七：程序本体统一放进 app\，外层只留快捷方式/用户数据/文档
 $AppOut = Join-Path $Out "app"
@@ -1051,12 +1061,23 @@ if ((Test-Path $SessionFile) -and -not $KeepSession) {
 # ---------- 7. 写入版本资源与图标 ----------
 if (Test-Path $Rcedit) {
     Write-Step "写入前端版本资源与图标（rcedit）"
-    # 版本号**必须传进去**（v0.2.2 裁定① 之后 set_metadata.bat 不再有写死的默认值）：
-    # `$Version` 是上面从 backend\version.py 派生的三段式，这里补成版本资源要的四段式。
-    # 【实测踩到】裁定① 里我在 set_metadata.bat 加了"版本必填"，却**漏改了这个调用点**，
-    # 于是重打包在"元数据写入"这一步直接失败（退出码 2）——单看两个文件各自都对，
-    # 错在**接线**上。验证一个"参数化"的改动，必须跑到调用方为止。
-    Invoke-Native "cmd" @("/c", "`"$Root\tools\set_metadata.bat`" `"$AppOut`" `"$Version.0`"") "元数据写入"
+    # [EN] The version **must** be passed in (since ruling ① in v0.2.2, set_metadata.bat no
+    # [EN] longer has a hard-coded default). `$NumericVersion` is the numeric core segment
+    # [EN] (APP_VERSION has allowed a prerelease suffix such as `-alpha.1` since v0.2.3); it is
+    # [EN] padded to the four fields the version resource requires. The display version
+    # [EN] `$Version` keeps its suffix and is used for directory and artefact names.
+    # [ZH] 版本号**必须传进去**（v0.2.2 裁定① 之后 set_metadata.bat 不再有写死的默认值）：
+    # [ZH] `$NumericVersion` 是数字核心段（v0.2.3 起 APP_VERSION 允许 `-alpha.1` 这类预发布
+    # [ZH] 后缀），这里补成版本资源要的四段式；显示用版本号 `$Version` 原样保留后缀
+    # [ZH] （目录名 / 文件名用它）。
+    # [EN] Encountered in practice: ruling ① added "version is mandatory" to set_metadata.bat but
+    # [EN] this call site was missed, so repackaging failed at the metadata step (exit code 2).
+    # [EN] Each file looked correct on its own; the fault was in the wiring. Verifying a
+    # [EN] parameterisation change means running it all the way to the caller.
+    # [ZH] 【实测踩到】裁定① 里我在 set_metadata.bat 加了"版本必填"，却**漏改了这个调用点**，
+    # [ZH] 于是重打包在"元数据写入"这一步直接失败（退出码 2）——单看两个文件各自都对，
+    # [ZH] 错在**接线**上。验证一个"参数化"的改动，必须跑到调用方为止。
+    Invoke-Native "cmd" @("/c", "`"$Root\tools\set_metadata.bat`" `"$AppOut`" `"$NumericVersion.0`"") "元数据写入"
     Write-Ok "app\EchoDesk.exe 元数据与图标已写入（后端由 spec 的 version/icon 写入）"
 }
 

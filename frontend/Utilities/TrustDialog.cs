@@ -1,10 +1,7 @@
 // [EN] EchoDesk WPF frontend module: frontend/Utilities/TrustDialog.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend/Utilities/TrustDialog.cs。类型与成员说明见下方注释。
-using System.Collections.Generic;
-using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
 using EchoDesk.Services;
 
 namespace EchoDesk.Utilities;

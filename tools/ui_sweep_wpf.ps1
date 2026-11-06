@@ -1,4 +1,4 @@
-﻿# 英文环境 UI 扫描（WPF）—— 主窗口 + 设置窗口 7 页签，抓全部可见控件文本查中文。
+# 英文环境 UI 扫描（WPF）—— 主窗口 + 设置窗口全部页签（v0.2.3 起为 8 个），抓全部可见控件文本查中文。
 #
 # 为什么需要它（维护者要求）：静态扫描（check_lang / audit_lang_keys）只看得到源码里的字面量，
 # 抓不到"动态拼接"与"渲染期才存在"的中文。这里用 UI Automation 在**真实进程**里读控件，
@@ -47,6 +47,8 @@ $failures = New-Object System.Collections.ArrayList
 $latinCandidates = New-Object System.Collections.ArrayList
 $texts = 0
 $shots = 0
+# 实际扫到的设置页签数（v0.2.3：页签会继续增加，PASS 文案不能再写死"7 页签"）
+$tabCount = 0
 
 function Fail([string]$msg) { [void]$failures.Add($msg); Write-Output "[sweep] FAIL $msg" }
 function Info([string]$msg) { Write-Output "[sweep] $msg" }
@@ -257,6 +259,7 @@ try {
             Info "已确认界面语言为 $expectedLang（LanguageCombo='$langText'）"
 
             $tabs = $settingsWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCond)
+            $tabCount = $tabs.Count
             Info "设置窗口有 $($tabs.Count) 个页签"
             for ($i = 0; $i -lt $tabs.Count; $i++) {
                 $tab = $tabs.Item($i)
@@ -287,9 +290,9 @@ if ($CheckLatin) {
 }
 if ($failures.Count -eq 0) {
     if ($CheckLatin) {
-        Write-Output ("[sweep] PASS 主窗口 + 设置窗口 7 页签：中文界面里未发现白名单外的英文残留；候选 {0} 条已列出供人工确认" -f $latinCandidates.Count)
+        Write-Output ("[sweep] PASS 主窗口 + 设置窗口 {0} 页签：中文界面里未发现白名单外的英文残留；候选 {1} 条已列出供人工确认" -f $tabCount, $latinCandidates.Count)
     } else {
-        Write-Output "[sweep] PASS 主窗口 + 设置窗口 7 页签：全部控件文本均为英文（无中文字符）"
+        Write-Output ("[sweep] PASS 主窗口 + 设置窗口 {0} 页签：全部控件文本均为英文（无中文字符）" -f $tabCount)
     }
     Write-Output 'SWEEP-RESULT: PASS'
     exit 0

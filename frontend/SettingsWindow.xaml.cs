@@ -8,7 +8,6 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
-using System.Windows.Media;
 using System.Windows.Threading;
 using EchoDesk.Services;
 
@@ -193,6 +192,9 @@ public partial class SettingsWindow : Window
         FontSizeSlider.Value = fontSize;
         FontSizeLabel.Text = $"{fontSize:0.#} pt";
         PathsText.Text = DescribePaths();
+        // [EN] Refresh the version number and project home on the About page (added in v0.2.3).
+        // [ZH] 刷新「关于」页的版本号与项目主页（v0.2.3）
+        UpdateAboutTab();
 
         MarketSortCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.market.sortBest", "最佳匹配"), Tag = "best" });
         MarketSortCombo.Items.Add(new ComboBoxItem { Content = Loc.T("settings.market.sortStars", "Star 最多"), Tag = "stars" });
@@ -1001,6 +1003,43 @@ public partial class SettingsWindow : Window
         return string.Join("\n", lines);
     }
 
+    // ---------- 「关于」页 / About page（v0.2.3：WPF 转入 LTS 的正式说明 / WPF moving into LTS） ----------
+
+    /// <summary>
+    /// [EN] Refresh the text on the About page that is generated in code.
+    ///
+    /// [EN] The version number is **not** hard-coded in XAML: its single source of truth is
+    /// `backend/version.py`. While the backend is alive the value from its `ready` handshake is
+    /// used; before the backend starts, the property falls back to the assembly version (the same
+    /// numbers obtained differently, see <see cref="MainWindow.AppVersion"/>). Language switches
+    /// must re-run this, which is why it is a separate method.
+    ///
+    /// [ZH] 刷新「关于」页里由代码生成的文本。
+    ///
+    /// [ZH] 版本号**不在 XAML 里写死**：唯一来源是 `backend/version.py`。后端在线时直接用它
+    /// `ready` 握手里的版本；后端还没起来时退回程序集里的版本（同一份数字的另一种取法，
+    /// 见 <see cref="MainWindow.AppVersion"/>）。语言切换后也要重跑一次，所以单独成方法。
+    /// </summary>
+    private void UpdateAboutTab()
+    {
+        if (AboutVersionText is null)
+            return;   // [EN] XAML not loaded yet / [ZH] XAML 尚未加载完成（构造期事件早于控件创建）
+        string version = string.IsNullOrWhiteSpace(_backend?.Version)
+            ? MainWindow.AppVersion
+            : _backend!.Version!;
+        AboutVersionText.Text = Loc.T("settings.about.version", "版本：{0}", version);
+        AboutRepoText.Text = Loc.T("settings.about.repo", "项目主页：") + " " + MainWindow.ProjectUrl;
+    }
+
+    /// <summary>
+    /// [EN] The download button on the About page: it opens the latest Releases page and never
+    /// downloads or installs anything inside the application.
+    ///
+    /// [ZH] 「关于」页的下载按钮：直达 Releases 最新版（不在程序内下载、不自动安装）。
+    /// </summary>
+    private void AboutDownloadButton_Click(object sender, RoutedEventArgs e)
+        => MainWindow.OpenExternalLink(MainWindow.ReleasesUrl);
+
     private void FontSizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         // XAML 解析 Minimum="10" 时 Value 会从 0 被强制为 10 并触发本回调，
@@ -1486,37 +1525,6 @@ public partial class SettingsWindow : Window
 
     private static string Shorten(string text, int max) =>
         text.Length <= max ? text : text[..max] + "…";
-
-    private async Task ShowInstalledAsync()
-    {
-        try
-        {
-            string json = await _backend.SendRequestAsync(new { action = "market_installed" });
-            using JsonDocument doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("installed", out JsonElement list) || list.ValueKind != JsonValueKind.Array)
-            {
-                MarketStatusText.Text = Loc.T("settings.market.installedListFailed", "⚠️ 无法读取已安装技能列表");
-                return;
-            }
-            var sb = new StringBuilder();
-            int count = 0;
-            foreach (JsonElement item in list.EnumerateArray())
-            {
-                string id = item.TryGetProperty("id", out JsonElement i) ? i.GetString() ?? "?" : "?";
-                string version = item.TryGetProperty("version", out JsonElement v) ? v.GetString() ?? "" : "";
-                sb.AppendLine($"• {id}{(version.Length > 0 ? $" v{version}" : "")}");
-                count++;
-            }
-            MarketStatusText.Text = count == 0
-                ? Loc.T("settings.market.noInstalled", "本机尚未安装任何技能。")
-                : Loc.T("settings.market.installedCount", "已安装 {0} 个技能：\n{1}", count, sb);
-        }
-        catch (Exception ex)
-        {
-            MarketStatusText.Text = Loc.T("settings.market.installedListLoadFailed",
-                "❌ 读取已安装列表失败：{0}", ex.Message);
-        }
-    }
 
     private void MarketDetail_Click(object sender, RoutedEventArgs e)
     {

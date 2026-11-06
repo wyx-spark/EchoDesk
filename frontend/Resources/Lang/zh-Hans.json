@@ -127,6 +127,11 @@
       "notice": "🎉 发现新版本 {0}（当前 {1}）· 点击查看发布说明",
       "tip": "点击打开下载页面",
       "checkFailed": "检查更新失败：{0}"
+    },
+    "lts": {
+      "banner": "WPF 版本已进入长期支持（LTS）维护期，不再新增功能。建议下载并体验更现代、更流畅的跨平台（Avalonia）版本。",
+      "download": "⬇ 下载 Avalonia 版本",
+      "help": "WPF 版今后只修复安全缺陷与崩溃问题，不再新增功能；Avalonia 版支持 Windows / macOS / Linux，界面与交互持续更新。"
     }
   },
   "settings": {
@@ -160,27 +165,20 @@
       "automation": "自动化",
       "installed": "已安装",
       "market": "技能市场",
-      "developer": "开发者"
+      "developer": "开发者",
+      "about": "关于"
     },
     "general": {
       "sectionAppearance": "外观",
-      "theme": "深色主题",
       "themeHelp": "切换深色/浅色界面（也可用 /darkmode on|off）",
       "fontSize": "界面字号",
-      "fontSizeHelp": "拖动滑块调整字号，也可在主窗口用 Ctrl+滚轮 调整",
       "sectionLanguage": "语言 / Language",
       "language": "界面语言",
       "languageHelp": "切换后界面、错误提示与指令帮助立即生效，无需重启。选择结果记录在 ui_state.json。",
       "languageAuto": "自动（跟随系统区域）",
       "languageRestartBackend": "后端语言已同步",
-      "sectionBehavior": "行为",
       "confirmDestructive": "执行有副作用的指令（/clear、/clearcache）前二次确认",
-      "confirmDestructiveHelp": "默认开启：避免把 /clear 误输入成 /clearcache 造成数据损失。",
-      "stripCollapsed": "默认收起输入框下方的状态区",
-      "stripCollapsedHelp": "收起后主界面更紧凑，点击状态区右侧按钮可再次展开。",
-      "sectionAbout": "关于",
-      "aboutText": "EchoDesk {0}\n本地 AI 桌面助手 · 全离线推理\n由熵寂工作室出品",
-      "aboutLicense": "开源许可：Apache-2.0 · 详见发布包 LICENSE 与 NOTICE"
+      "confirmDestructiveHelp": "默认开启：避免把 /clear 误输入成 /clearcache 造成数据损失。"
     },
     "model": {
       "sectionSource": "模型来源",
@@ -364,6 +362,17 @@
       "sectionPanels": "插件面板",
       "panelsEmpty": "（还没有插件提供面板。示例插件 Hello World 提供了一个面板，可点「📦 安装示例插件」试用。）",
       "runAction": "执行"
+    },
+    "about": {
+      "sectionLts": "长期支持（LTS）状态",
+      "ltsBody": "WPF 版本已进入长期支持（LTS）维护期：今后只修复安全缺陷与崩溃问题，不再新增功能。建议下载并体验更现代、更流畅的跨平台（Avalonia）版本 —— 它支持 Windows、macOS 与 Linux，界面与交互仍在持续更新。",
+      "download": "⬇ 打开 GitHub Releases 下载最新版本",
+      "downloadTip": "在系统默认浏览器中打开项目的 Releases 页面；不会自动下载或安装任何文件",
+      "version": "版本：{0}",
+      "edition": "界面版本：Windows（WPF，长期支持维护期）",
+      "repo": "项目主页：",
+      "license": "开源许可：Apache-2.0 · 详见发布包中的 LICENSE 与 NOTICE",
+      "sectionInfo": "版本信息"
     }
   }
 }

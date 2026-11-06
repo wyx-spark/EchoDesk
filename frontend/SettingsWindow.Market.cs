@@ -45,8 +45,6 @@ public partial class SettingsWindow
     /// <summary>当前页数据（ListBox 的 ItemsSource）。</summary>
     private readonly List<HubModelItem> _hubPage = new();
 
-    /// <summary>量化分面的显示文本 → 语言无关的量化代码（筛选键不能用显示文本）。</summary>
-    private readonly Dictionary<string, string> _hubQuantOption = new();
 
     /// <summary>
     /// 上一次查询结果的原样副本。存它是为了**切换界面语言时不用再问一次后端**：
@@ -74,7 +72,6 @@ public partial class SettingsWindow
     private bool _hubHasMore;
     private bool _hubOffline;
     private int _hubFallbackCount;
-    private string _hubDownloadsMetric = "all_time";
     private string _hubFacetSignature = "";   // 分面的"选项签名"，变了才重建控件（否则会抢焦点）
     private int _hubElapsedSeconds;
     private bool _hubLoading;
@@ -682,7 +679,6 @@ public partial class SettingsWindow
         _hubHasMore = GetBool(hub, "has_more");
         _hubStopReason = GetString(hub, "stop_reason");
         _hubLoadedFromLoad = GetInt(hub, "loaded", 0);
-        _hubDownloadsMetric = GetString(hub, "downloads_metric");
         _hubFallbackCount = GetInt(hub, "downloads_fallback_count", 0);
         _hubFacetSignature = "";               // 数据集变了，分面选项与计数都要重建
         if (hub.TryGetProperty("total_available", out JsonElement total)

@@ -1361,6 +1361,65 @@
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
+
+            <!-- ================= 关于 / About（v0.2.3 新增：WPF 转入 LTS 的正式说明） =================
+                 [EN] Brief 3.1 requires a prominent notice on the Settings → About page. The WPF
+                 [EN] edition previously had no standalone About page — version and licence details
+                 [EN] only appeared in the output of the /about command. This read-only page adds the
+                 [EN] LTS status, the version, the project home and the licence, plus a button that
+                 [EN] opens the latest GitHub Releases page (the same destination as the main window
+                 [EN] notice bar).
+                 [ZH] 任务书 3.1 要求"在设置-关于页面增加显著说明"。WPF 版此前没有独立的「关于」页，
+                 [ZH] 版本/许可信息只散落在 /about 指令输出里；这里补一个只读页：LTS 状态 + 版本 +
+                 [ZH] 项目主页 + 许可，并提供直达 Releases 最新版的按钮（与主窗口提示条同一个入口）。 -->
+            <TabItem Header="关于" svc:Loc.Key="settings.tab.about">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="14,12">
+                        <!-- 显著说明：警示色边框 + 加粗标题，放在整页最上方 -->
+                        <Border CornerRadius="8" Padding="14,12"
+                                Background="{DynamicResource InputBackground}"
+                                BorderBrush="{DynamicResource WarningBrush}" BorderThickness="2">
+                            <StackPanel>
+                                <TextBlock Text="⚠️ 长期支持（LTS）状态" FontSize="15" FontWeight="Bold"
+                                           TextWrapping="Wrap" Margin="0,0,0,8"
+                                           Foreground="{DynamicResource WarningBrush}"
+                                           svc:Loc.Key="settings.about.sectionLts"/>
+                                <TextBlock x:Name="AboutLtsText" FontSize="12" TextWrapping="Wrap"
+                                           LineHeight="20" Foreground="{DynamicResource TextForeground}"
+                                           Text="WPF 版本已进入长期支持（LTS）维护期……"
+                                           svc:Loc.Key="settings.about.ltsBody"/>
+                                <Button x:Name="AboutDownloadButton" Margin="0,12,0,0" Padding="14,5"
+                                        HorizontalAlignment="Left" FontSize="12"
+                                        Style="{StaticResource RoundButton}"
+                                        Click="AboutDownloadButton_Click"
+                                        svc:Loc.Key="settings.about.download"
+                                        svc:Loc.TipKey="settings.about.downloadTip"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 版本与许可信息：纯展示，不参与"保存设置" -->
+                        <TextBlock Text="版本信息" FontSize="15" FontWeight="Bold" Margin="0,18,0,10"
+                                   Foreground="{DynamicResource AccentBrush}"
+                                   svc:Loc.Key="settings.about.sectionInfo"/>
+                        <Border CornerRadius="8" Padding="12,10"
+                                Background="{DynamicResource InputBackground}"
+                                BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock x:Name="AboutVersionText" FontSize="12" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextForeground}"/>
+                                <TextBlock x:Name="AboutEditionText" FontSize="11" TextWrapping="Wrap"
+                                           Margin="0,4,0,0" Foreground="{DynamicResource SubTextBrush}"
+                                           svc:Loc.Key="settings.about.edition"/>
+                                <TextBlock x:Name="AboutRepoText" FontSize="11" TextWrapping="Wrap"
+                                           Margin="0,4,0,0" Foreground="{DynamicResource SubTextBrush}"/>
+                                <TextBlock x:Name="AboutLicenseText" FontSize="11" TextWrapping="Wrap"
+                                           Margin="0,4,0,0" Foreground="{DynamicResource SubTextBrush}"
+                                           svc:Loc.Key="settings.about.license"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
         </TabControl>
 
         <!-- 底部按钮 + 加载状态（加载状态只提示、不禁用界面，避免"看起来卡死"） -->

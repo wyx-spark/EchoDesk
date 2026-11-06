@@ -1,11 +1,7 @@
 // [EN] EchoDesk WPF frontend module: frontend/SettingsWindow.Profiles.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend/SettingsWindow.Profiles.cs。类型与成员说明见下方注释。
-using System;
-using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using System.Text.Json;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using EchoDesk.Services;
@@ -74,7 +70,7 @@ public sealed class ModelProfileItem
 /// 设置窗口 ·「模型档位」（多档默认模型的显示与切换）。
 ///
 /// 需求背景：`config.models` 里登记了多档模型（小档 0.6B 默认、大档 1.7B 可选），
-/// 但此前只有命令行 `/model <别名>` 能用，设置界面里完全看不到 —— 用户不知道有哪几档，
+/// 但此前只有命令行 `/model &lt;别名&gt;` 能用，设置界面里完全看不到 —— 用户不知道有哪几档，
 /// 也不知道哪一档在本地。这里把它做成设置页里的一排胶囊按钮：
 ///   * 每档显示 参数量 / 量化 / 上下文 / 体积，当前档额外标"正在使用"；
 ///   * 已下载 → 点击**切换**（热加载，不用重启程序或前端）；

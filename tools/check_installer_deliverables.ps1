@@ -26,13 +26,23 @@
 
 $ErrorActionPreference = 'Continue'
 $Root = Split-Path -Parent $PSScriptRoot
-# 口径：v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本（见 backend\version.py）。
-# 版本从唯一来源派生（v0.2.2 裁定①）：原先写死 "0.2.2"，升版本后这个门禁会去校验旧版本号。
+# [EN] Versioning: v0.2.1 = pre-cross-platform; v0.2.2 = cross-platform release; v0.2.3 =
+# [EN] Avalonia as the main line (WPF moves into LTS).
+# [EN] The version is derived from the single source of truth (ruling ① in v0.2.2): it used to
+# [EN] hard-code "0.2.2", so after a version bump this gate kept validating the old number.
+# [ZH] 口径：v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本；v0.2.3 = Avalonia 主线（WPF 转 LTS）。
+# [ZH] 版本从唯一来源派生（v0.2.2 裁定①）：原先写死 "0.2.2"，升版本后这个门禁会去校验旧版本号。
 $VersionFile = Join-Path $PSScriptRoot "..\backend\version.py"
 $VersionMatch = Select-String -Path $VersionFile -Pattern 'APP_VERSION\s*=\s*["'']([^"'']+)["'']' |
                 Select-Object -First 1
 if (-not $VersionMatch) { throw "读不出 APP_VERSION：$VersionFile" }
 $Version = $VersionMatch.Matches[0].Groups[1].Value.TrimStart('v')
+# [EN] Four-part version number (added in v0.2.3): APP_VERSION allows a prerelease suffix such
+# [EN] as `-alpha.1`, whereas version resources accept four purely numeric fields only.
+# [EN] The rule matches app_version_4() in backend\version.py.
+# [ZH] 四段式版本号（v0.2.3 新增）：APP_VERSION 允许 `-alpha.1` 这类预发布后缀，
+# [ZH] 而版本资源只能四段纯数字。口径与 backend\version.py 的 app_version_4() 一致。
+$NumericVersion = ($Version -split '[-+]')[0].Trim()
 $Publish = Join-Path $Root "publish"
 $Setup = Join-Path $Publish "EchoDesk-v$Version-Setup.exe"
 $Sums = Join-Path $Publish "SHA256SUMS.txt"
@@ -257,8 +267,8 @@ Check "安装程序版本资源与图标" {
         LegalCopyright    = "Copyright (C) Void Entropia Studio"
         ProductName       = "EchoDesk"
         # 用 Raw（数值口径）：Inno 把 FileVersion 的字符串末尾 ".0" 省掉，Raw 才是真值
-        FileVersionRaw    = "$Version.0"
-        ProductVersionRaw = "$Version.0"
+        FileVersionRaw    = "$NumericVersion.0"
+        ProductVersionRaw = "$NumericVersion.0"
         FileDescription   = "EchoDesk v$Version Portable Setup"
         OriginalFilename  = (Split-Path -Leaf $Setup)
     }

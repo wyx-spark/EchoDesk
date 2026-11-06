@@ -118,6 +118,14 @@ if (-not $Version) {
     $Version = $VersionMatch.Matches[0].Groups[1].Value.TrimStart('v')
     Write-Host "版本号（取自 backend\version.py）：$Version" -ForegroundColor DarkGray
 }
+# [EN] Four-part version number (added in v0.2.3): APP_VERSION allows a SemVer prerelease
+# [EN] suffix such as `-alpha.1`, whereas both Inno's VersionInfoVersion and the version resource
+# [EN] accept four purely numeric fields only. The rule matches app_version_4() in
+# [EN] backend\version.py — both places must be changed together.
+# [ZH] 四段式版本号（v0.2.3 新增）：APP_VERSION 允许 `-alpha.1` 这类 SemVer 预发布后缀，
+# [ZH] 而 Inno 的 VersionInfoVersion / 版本资源只能四段纯数字。口径与
+# [ZH] backend\version.py 的 app_version_4() 一致 —— 两处必须同步改。
+$NumericVersion = ($Version -split '[-+]')[0].Trim()
 if (-not $ReleaseDir) { $ReleaseDir = Join-Path $Root "publish\EchoDesk-v$Version" }
 if (-not (Test-Path $ReleaseDir)) { throw "发布目录不存在：$ReleaseDir（先跑 tools\build_release.ps1）" }
 $ReleaseDir = (Resolve-Path -LiteralPath $ReleaseDir).Path
@@ -616,8 +624,8 @@ function Assert-InstallerIntact([string]$Exe, [string]$ExpectedDescription, [str
         CompanyName       = "Void Entropia Studio"
         LegalCopyright    = "Copyright (C) Void Entropia Studio"
         ProductName       = "EchoDesk"
-        FileVersionRaw    = "$Version.0"
-        ProductVersionRaw = "$Version.0"
+        FileVersionRaw    = "$NumericVersion.0"
+        ProductVersionRaw = "$NumericVersion.0"
         FileDescription   = $ExpectedDescription
         OriginalFilename  = $ExpectedOriginalName
     }
@@ -664,6 +672,12 @@ function New-Installer([string]$Exe, [string]$Description, [string]$OriginalName
         "/Qp",
         "/O$OutDir",
         "/DMyAppVersion=$Version",
+        # [EN] Inno's VersionInfo* fields require four purely numeric fields: the prerelease
+        # [EN] suffix (-alpha.1) appears in the display version only, while the version resource
+        # [EN] takes the numeric core segment.
+        # [ZH] Inno 的 VersionInfo* 要求纯数字四段：预发布后缀（-alpha.1）只出现在
+        # [ZH] 显示用版本号里，版本资源用数字核心段。
+        "/DMyAppNumericVersion=$NumericVersion",
         "/DMySourceDir=$ReleaseDir",
         $IssPath
     )

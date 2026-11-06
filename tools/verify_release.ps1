@@ -39,6 +39,16 @@ if (-not $Version) {
     $Version = $match.Matches[0].Groups[1].Value.TrimStart('v')
     Write-Host "版本号（取自 backend\version.py）：$Version" -ForegroundColor DarkGray
 }
+# [EN] Four-part version number (added in v0.2.3): APP_VERSION allows a SemVer prerelease
+# [EN] suffix such as `-alpha.1`, while a file-version resource accepts four purely numeric
+# [EN] fields only. Building "$Version.0" directly would yield 0.2.3-alpha.1.0, so this check
+# [EN] would compare against an expected value that can never occur — the gate would blind
+# [EN] itself. The rule matches app_version_4() in backend\version.py; change both together.
+# [ZH] 四段式版本号（v0.2.3 新增）：APP_VERSION 允许 `-alpha.1` 这类 SemVer 预发布后缀，
+# [ZH] 而文件版本资源只能四段纯数字 —— 直接拼成 "$Version.0" 会变成 0.2.3-alpha.1.0，
+# [ZH] 于是这条断言会拿一个**永远不可能出现**的期望值去比对（门禁自己变瞎）。
+# [ZH] 口径与 backend\version.py 的 app_version_4() 一致，两处必须同步改。
+$NumericVersion = ($Version -split '[-+]')[0].Trim()
 $Out = Join-Path $Root "publish\EchoDesk-v$Version"
 $AppOut = Join-Path $Out "app"
 $BackendExe = Join-Path $AppOut "backend\EchoDeskBackend.exe"
@@ -238,7 +248,7 @@ try {
     # —— 版本升到 v0.2.2 之后这条会**继续通过**（打包产物若仍是旧版号也照样绿），
     # 属于"写死的期望值掩盖真实差异"。改成读 version.py 之后，"产物版本 ≠ 源码版本"
     # 会被门禁抓到（这正是它该做的判断）。
-    $expectedVersion = "$Version.0"      # 0.2.2 → 0.2.2.0（FileVersion 的四段式）
+    $expectedVersion = "$NumericVersion.0"      # 0.2.3 → 0.2.3.0（FileVersion 的四段式，去掉 -alpha.1）
     Invoke-Check "版本资源 = $expectedVersion（取自 backend\version.py）" {
         $front = (Get-Item (Join-Path $AppOut "EchoDesk.exe")).VersionInfo.FileVersion
         $back = (Get-Item $BackendExe).VersionInfo.FileVersion
@@ -294,8 +304,8 @@ try {
                 $checks = @{
                     # 版本号用 Raw（数值口径）：Inno 会把 FileVersion 字符串末尾的 ".0" 省掉，
                     # 例如 VersionInfoVersion=0.2.1.0 → 读回 FileVersion='0.2.1'，Raw 仍是 0.2.1.0。
-                    FileVersionRaw    = "$Version.0"
-                    ProductVersionRaw = "$Version.0"
+                    FileVersionRaw    = "$NumericVersion.0"
+                    ProductVersionRaw = "$NumericVersion.0"
                     CompanyName       = "Void Entropia Studio"
                     LegalCopyright    = "Copyright (C) Void Entropia Studio"
                     ProductName       = "EchoDesk"

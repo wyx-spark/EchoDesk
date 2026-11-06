@@ -353,6 +353,32 @@ function Close-FirstRunDialogs([int]$procId, [int]$waitMs = 4000) {
 }
 Close-FirstRunDialogs $proc.Id
 
+# ---------- 2a. v0.2.3：WPF 进入 LTS 的常驻提示条 ----------
+# [EN] Acceptance criterion for v0.2.3: "after starting the WPF edition, the LTS notice is
+# [EN] visible". This checks that the notice carries text mentioning LTS and that the button
+# [EN] leading to GitHub Releases exists. The button is deliberately **not clicked** here: it
+# [EN] would open the system browser and take the focus away from the window under test.
+# [ZH] v0.2.3 验收项："启动 WPF 后 LTS 提示可见"。这里验证提示文本存在且提到 LTS，
+# [ZH] 以及直达 GitHub Releases 的按钮存在。**刻意不点按钮**：那会打开系统浏览器、
+# [ZH] 并把焦点从被测窗口抢走，干扰后续的页签检查。
+$ltsText = Find-AnyById $proc.Id 'LtsText'
+if ($null -eq $ltsText) {
+    Fail '主窗口缺少 LTS 提示文本（LtsText）—— WPF 转入 LTS 后这条提示必须常驻'
+}
+else {
+    $ltsContent = $ltsText.Current.Name
+    if ($ltsContent -notmatch 'LTS') {
+        Fail "LTS 提示文本里没有提到 LTS：'$ltsContent'"
+    }
+    else {
+        $preview = if ($ltsContent.Length -gt 40) { $ltsContent.Substring(0, 40) + '…' } else { $ltsContent }
+        Ok "主窗口 LTS 提示可见：$preview"
+    }
+}
+if ($null -eq (Find-AnyById $proc.Id 'LtsDownloadButton')) {
+    Fail '主窗口缺少 LTS 下载按钮（LtsDownloadButton）—— 提示必须给出 Avalonia 版本的入口'
+}
+
 # ---------- 2. 点击设置：测量打开耗时与响应性 ----------
 $btn = Find-AnyById $proc.Id 'SettingsButton'
 if ($null -eq $btn) { Fail '未找到 SettingsButton'; if (-not $KeepOpen) { try { $proc.Kill() } catch { } }; Remove-ProbeModelOverride; exit 4 }
@@ -437,7 +463,10 @@ if ($null -ne $saveButton) {
         $tabs = $win2.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCond)
         $headers = @(); foreach ($t in $tabs) { $headers += $t.Current.Name }
         Write-Output "[probe] Tab 页：$($headers -join ' / ')"
-        foreach ($need in @('常规', '模型', '自动化', '已安装', '技能市场', '开发者')) {
+        # v0.2.3：WPF 转入 LTS 后新增「关于」页（LTS 说明 + 版本 + 项目主页 + 许可）。
+        # 注意只能列**可见**控件：该页是普通 ScrollViewer，没有折叠区，四个文本块与
+        # 下载按钮都在 UIA 树里。
+        foreach ($need in @('常规', '模型', '自动化', '已安装', '技能市场', '开发者', '关于')) {
             if ($headers -notcontains $need) { Fail "缺少 Tab：$need" }
         }
         $perTab = @{
@@ -469,6 +498,9 @@ if ($null -ne $saveButton) {
                           'DevApiText', 'DevReloadButton', 'DevLogBox',
                           'LogLinesCombo', 'ScaffoldIdBox', 'ScaffoldCreateButton', 'ManifestList',
                           'ManifestAddRow', 'HooksText', 'PanelList')
+            # v0.2.3：LTS 说明正文 + 版本号 + 项目主页 + 许可 + 下载入口
+            '关于'     = @('AboutLtsText', 'AboutVersionText', 'AboutEditionText', 'AboutRepoText',
+                          'AboutLicenseText', 'AboutDownloadButton')
         }
         foreach ($tabName in $perTab.Keys) {
             Select-Tab $win2 $tabName

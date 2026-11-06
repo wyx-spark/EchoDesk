@@ -1,6 +1,5 @@
 // [EN] EchoDesk WPF frontend module: frontend/Utilities/MarkdownHelper.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend/Utilities/MarkdownHelper.cs。类型与成员说明见下方注释。
-using System;
 using System.Text.RegularExpressions;
 
 namespace EchoDesk.Utilities

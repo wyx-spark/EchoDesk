@@ -23,13 +23,10 @@
     <SolidColorBrush x:Key="TextForeground" Color="#EDEDF0"/>
     <SolidColorBrush x:Key="SubTextBrush" Color="#A8A8B3"/>
     <SolidColorBrush x:Key="DisabledTextBrush" Color="#9A9AA4"/>
-    <SolidColorBrush x:Key="InverseTextBrush" Color="#101014"/>
 
     <!-- ============ 强调色 ============ -->
     <SolidColorBrush x:Key="AccentBrush" Color="#8A9DFF"/>
     <SolidColorBrush x:Key="AccentForegroundBrush" Color="#101014"/>
-    <SolidColorBrush x:Key="AccentHoverBrush" Color="#A6B4FF"/>
-    <SolidColorBrush x:Key="AccentPressedBrush" Color="#6E80E0"/>
     <SolidColorBrush x:Key="LinkBrush" Color="#7FB2FF"/>
 
     <!-- ============ 状态语义色 ============ -->

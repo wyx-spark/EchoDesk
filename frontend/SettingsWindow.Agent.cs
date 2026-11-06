@@ -1,11 +1,7 @@
 // [EN] EchoDesk WPF frontend module: frontend/SettingsWindow.Agent.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend/SettingsWindow.Agent.cs。类型与成员说明见下方注释。
-using System;
-using System.Collections.Generic;
 using System.Text.Json;
-using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Automation;
 using System.Windows.Controls;
 using EchoDesk.Services;
 

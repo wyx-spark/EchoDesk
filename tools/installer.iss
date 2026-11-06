@@ -60,10 +60,27 @@
 ; ============================================================================
 
 #ifndef MyAppVersion
-  ; 默认版本由 tools\make_installer.ps1 的 -MyAppVersion 覆盖（它从 backend\version.py 取）。
-  ; 这里的字面量只是"不传参直接编译"时的兜底，保持与 version.py 一致：
-  ; v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本。
-  #define MyAppVersion "0.2.2"
+  ; [EN] The default version is overridden by tools\make_installer.ps1 (-MyAppVersion, which
+  ; [EN] reads backend\version.py). The literal below is only the fallback for compiling without
+  ; [EN] parameters and is kept in sync with version.py: v0.2.1 = pre-cross-platform; v0.2.2 =
+  ; [EN] cross-platform release; v0.2.3 = Avalonia as the main line (WPF moves into LTS).
+  ; [ZH] 默认版本由 tools\make_installer.ps1 的 -MyAppVersion 覆盖（它从 backend\version.py 取）。
+  ; [ZH] 这里的字面量只是"不传参直接编译"时的兜底，保持与 version.py 一致：
+  ; [ZH] v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本；v0.2.3 = Avalonia 主线（WPF 转 LTS）。
+  #define MyAppVersion "0.2.3-alpha.1"
+#endif
+
+; [EN] Purely numeric core segment (**no prerelease suffix**): Inno's VersionInfoVersion and
+; [EN] VersionInfoProductVersion accept four numeric fields only, and `0.2.3-alpha.1.0` makes the
+; [EN] compiler fail outright. tools\make_installer.ps1 always passes it through
+; [EN] /DMyAppNumericVersion; the value below is only the fallback when no parameter is given and
+; [EN] matches app_version_4() in backend\version.py.
+; [ZH] 纯数字核心段（**不允许**预发布后缀）：Inno 的 VersionInfoVersion /
+; [ZH] VersionInfoProductVersion 只接受四段纯数字，`0.2.3-alpha.1.0` 会让编译器直接报错。
+; [ZH] tools\make_installer.ps1 总会用 /DMyAppNumericVersion 传进来；这里只是不传参时的兜底，
+; [ZH] 口径与 backend\version.py 的 app_version_4() 一致。
+#ifndef MyAppNumericVersion
+  #define MyAppNumericVersion "0.2.3"
 #endif
 
 ; 允许覆盖源目录，便于在不重建发布目录的情况下做脚本语法自检。
@@ -119,10 +136,10 @@ PrivilegesRequiredOverridesAllowed=dialog
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} v{#MyAppVersion} Portable Setup
 VersionInfoTextVersion={#MyAppVersion}
-VersionInfoVersion={#MyAppVersion}.0
+VersionInfoVersion={#MyAppNumericVersion}.0
 VersionInfoCopyright=Copyright (C) Void Entropia Studio
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion={#MyAppVersion}.0
+VersionInfoProductVersion={#MyAppNumericVersion}.0
 VersionInfoOriginalFileName=EchoDesk-v{#MyAppVersion}-Setup.exe
 
 [Languages]
