@@ -1,39 +1,86 @@
-"""本地文档检索（v0.2.1 能力扩展-1 任务六：RAG 深度）。
+"""
+[EN]
+Local document retrieval: BM25 keyword retrieval with passage localization.
 
-方案选择与理由（任务书要求"由 DSH 评估后给出选择与理由"）
-=========================================================
+Decision: use keyword retrieval (BM25) with passage localization and no new
+dependencies; do not introduce a vector database or an embedding model.
 
-**结论：关键词检索（BM25）+ 段落定位，零新依赖；不引入向量库、不引入嵌入模型。**
+Rationale:
+
+1. Distribution size. The release size is constrained by both design and release
+   gates (approximately 381 MB installed, with a 350-400 MB target). Vector
+   libraries such as faiss, hnswlib, or chromadb, together with
+   torch/sentence-transformers, add tens to hundreds of megabytes and require a
+   separate embedding model (GGUF or ONNX). This directly conflicts with the
+   size target.
+2. Data consistency. llama.cpp exposes ``create_embedding`` and could compute
+   vectors without a new runtime dependency, but the selected chat model would
+   also have to be an embedding model or a second model would be required. The
+   index would then become invalid whenever the user switches models. A keyword
+   index is model-independent.
+3. Benefit boundary. The product targets single-machine small models. Users
+   typically upload several documents about the same matter (contracts, meeting
+   notes, reports). Retrieval exists to avoid placing a 47 KB document into an
+   8192-token window. BM25 is sufficient for mixed Chinese/English office
+   documents. Semantic retrieval mainly improves synonym and cross-language
+   recall, which small local models do not handle reliably anyway.
+4. Explainability and verifiability. Keyword hits can be explained by the actual
+   terms that matched, whereas vector similarity yields only a number. Citation
+   traceability benefits from explicit term-level evidence.
+
+If vector retrieval is added later, ``RetrievalConfig.mode`` already reserves the
+``hybrid`` and ``vector`` values. The extension point is
+:meth:`Retriever.search`, which returns ``List[ScoredChunk]``; callers do not
+need to change.
+
+Relationship to chunk summarization:
+
+| Scenario | Mechanism | Reason |
+| :--- | :--- | :--- |
+| Short document fits in the window | Inject the full text; do not retrieve | Full text is most accurate for short material; retrieval would discard information |
+| Long document with a summary and a specific question | Summary for global context plus retrieved passages for detail | The summary explains the document; retrieval locates the specific clause |
+| Long document with a summary and a broad question | Summary first; retrieval only supplements top-k | Broad questions lack useful keywords; forced retrieval adds noise |
+
+Summarization compresses; retrieval localizes. They are complementary, not
+substitutes. The same distinction is documented in ``USER_GUIDE`` and
+``DEVELOPER``.
+
+[ZH]
+本地文档检索：基于 BM25 的关键词检索与段落定位。
+
+决策：采用关键词检索（BM25）与段落定位，不引入新依赖；不引入向量数据库或
+嵌入模型。
 
 理由：
-1. **体积**：发布物体积是被任务书与门禁同时盯着的指标（安装后 381 MB，
-   区间 350–400 MB）。向量库（faiss/hnswlib/chromadb）与 torch/sentence-transformers
-   起步就是几十到几百 MB，而且还要**再带一个嵌入模型**（GGUF 或 ONNX，几十 MB 起）。
-   这与"安装后不超过 400 MB"直接冲突。
-2. **数据一致性**：llama.cpp 自带 ``create_embedding``，理论上可以零依赖算向量
-   （审计确认），但那要求所选对话模型自身是 embedding 模型或另配一个 —— 用户换模型时
-   整个索引就失效。关键词索引对模型无关，换模型不动索引。
-3. **收益边界**：本工具面向**单机小模型**，用户上传的通常是同一件事的几份材料
-   （合同、纪要、报告）。检索的意义是"别把 47 KB 全文塞进 8192 窗口"，
-   BM25 在中英文混合的办公文档上足够完成这件事；语义检索的优势主要体现在
-   同义改写与跨语言召回，而这类问题在本地 0.6B 模型上本来就答不好。
-4. **可解释与可核对**：关键词命中可以直接告诉用户"因为出现了这几个词"，
-   而向量相似度只能给一个数字。任务书要求"引用溯源，用户可核对"，
-   关键词检索的溯源更可信。
 
-如果将来要上向量：``RetrievalConfig.mode`` 已经预留了 ``hybrid``/``vector`` 两个取值，
-扩展点是 :meth:`Retriever.search`（返回 ``List[ScoredChunk]`` 即可，上层不用改）。
+1. 分发体积。发布体积同时受设计与发布门禁约束（安装后约 381 MB，目标区间
+   350–400 MB）。faiss、hnswlib、chromadb 等向量库以及
+   torch/sentence-transformers 会增加数十至数百 MB，并且还需要额外的嵌入模型
+   （GGUF 或 ONNX）。这与体积目标直接冲突。
+2. 数据一致性。llama.cpp 提供 ``create_embedding``，可在不增加运行时依赖的
+   情况下计算向量，但所选对话模型必须同时是嵌入模型，或额外配置第二个模型。
+   用户切换模型后索引将失效。关键词索引与模型无关。
+3. 收益边界。产品面向单机小模型。用户通常上传围绕同一事项的多份文档（合同、
+   会议纪要、报告）。检索用于避免将 47 KB 文档放入 8192 token 窗口。BM25
+   足以处理中英混合办公文档。语义检索主要改善同义改写与跨语言召回，而小型
+   本地模型本身也难以可靠处理这类问题。
+4. 可解释与可核对。关键词命中可以直接说明匹配了哪些词，而向量相似度只能给出
+   一个数值。引用溯源更依赖显式的词级证据。
 
-**与分段摘要的关系**（任务书要求明确"什么场景用哪个"）：
+若将来增加向量检索，``RetrievalConfig.mode`` 已预留 ``hybrid`` 与 ``vector``
+两个取值。扩展点为 :meth:`Retriever.search`，其返回 ``List[ScoredChunk]``；
+调用方无需修改。
 
-| 场景 | 用哪个 | 为什么 |
+与分段摘要的关系：
+
+| 场景 | 机制 | 原因 |
 | :--- | :--- | :--- |
-| 短文档（全文能进窗口） | **全文注入**，不检索 | 材料够短时全文最准，检索只会丢信息 |
-| 长文档已生成摘要 + 具体问题 | **摘要（全局）+ 检索片段（细节）** | 摘要负责"这份材料讲什么"，检索负责"30 个工作日那条在哪" |
-| 长文档已生成摘要 + 泛问 | 摘要为主，检索只补 top-k | 泛问题没有可检索的关键词，硬检索会引入噪声 |
+| 短文档可放入窗口 | 注入全文，不检索 | 短材料全文最准确；检索会丢弃信息 |
+| 长文档已有摘要且问题具体 | 摘要提供全局上下文，检索提供细节 | 摘要说明文档内容，检索定位具体条款 |
+| 长文档已有摘要且问题宽泛 | 以摘要为主，检索仅补充 top-k | 宽泛问题缺少有效关键词，强制检索会引入噪声 |
 
-也就是说：**摘要是压缩，检索是定位，两者互补而不是替代** —— 这一条也写进了
-``USER_GUIDE`` 与 ``DEVELOPER``。
+摘要是压缩，检索是定位；两者互补而非替代。同一区分也记录在 ``USER_GUIDE``
+与 ``DEVELOPER`` 中。
 """
 from __future__ import annotations
 
@@ -43,19 +90,31 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 # ===========================================================================
-# 分词（中英混合办公文档）
+# [EN] Tokenization for mixed Chinese/English office documents
+# [ZH] 中英混合办公文档分词
 # ===========================================================================
 
-#: 中文切 2 字滑窗、英文数字按词。**刻意不用 jieba**（体积 + 词典冷启动），
-#: 与 ``extractive`` 的取舍一致：小模型场景下 2-gram 的召回足够，且零依赖。
+#: [EN] Chinese uses two-character sliding windows; English and numeric tokens
+#: [EN] are split by word. jieba is deliberately not used because of its size and
+#: [EN] dictionary cold-start cost. Two-character grams provide sufficient recall
+#: [EN] for small-model scenarios and introduce no dependency.
+#: [ZH] 中文采用两字滑窗；英文与数字按词切分。刻意不使用 jieba，原因是体积与
+#: [ZH] 词典冷启动成本。两字词元在小模型场景下召回足够，且不引入依赖。
 _ASCII_WORD = re.compile(r"[a-z0-9_]+")
 _HAN_RUN = re.compile(r"[\u4e00-\u9fff]+")
-#: 数值词元（含小数与百分号）。**必须单独抓**：首轮实测漏了它，于是"0.3%"被
-#: ``[a-z0-9_]+`` 切成 "0" 与 "3" 两个单字符、又被"长度 > 1"过滤掉，
-#: 结果"违约金比例是多少"这类**带数字的关键事实问题检索不到**（6 个关键事实只命中 4 个）。
+#: [EN] Numeric tokens, including decimals and percent signs, must be captured
+#: [EN] separately. Otherwise a value such as "0.3%" is split into "0" and "3"
+#: [EN] by ``[a-z0-9_]+``, both are discarded by the minimum-length filter, and
+#: [EN] numeric factual questions such as "what is the penalty rate" cannot be
+#: [EN] retrieved.
+#: [ZH] 数值词元（含小数与百分号）必须单独捕获。否则“0.3%”会被
+#: [ZH] ``[a-z0-9_]+`` 拆成“0”与“3”两个单字符，又被最小长度过滤掉，导致
+#: [ZH] “违约金比例是多少”这类带数字的事实性问题无法检索。
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?\s*%?")
 
-#: 无信息量的英文词（不参与 BM25，避免"the 出现了 30 次"这种噪声命中）
+#: [EN] Low-information English words excluded from BM25 to avoid noise such as
+#: [EN] "the" appearing 30 times.
+#: [ZH] 不参与 BM25 的无信息量英文词，避免“the 出现 30 次”这类噪声命中。
 _STOPWORDS = frozenset("""
 a an the and or of to in on for with by is are was were be been being this that these those
 it its as at from into over under than then so such not no do does did has have had will would
@@ -63,7 +122,15 @@ it its as at from into over under than then so such not no do does did has have 
 
 
 def tokenize(text: str) -> List[str]:
-    """把一段文本切成检索用的词元（小写化；中文按 2 字、英文按词、数值按整体）。"""
+    """
+    [EN]
+    Tokenize text for retrieval. Text is lower-cased; Chinese uses two-character
+    windows, English uses words, and numeric values are kept as whole tokens.
+
+    [ZH]
+    将文本切分为检索词元。文本转为小写；中文使用两字滑窗，英文按词切分，
+    数值保留为完整词元。
+    """
     lowered = (text or "").lower()
     terms: List[str] = []
     for raw in _NUMBER.findall(lowered):
@@ -81,18 +148,31 @@ def tokenize(text: str) -> List[str]:
 
 
 # ===========================================================================
-# 分块（句边界优先，带重叠，保留字符区间供溯源）
+# [EN] Chunking: sentence boundaries first, with overlap and source offsets
+# [ZH] 分块：优先句边界，带重叠并保留源字符区间
 # ===========================================================================
 
-#: 句子边界。中文标点与英文标点都算，句末标点跟随前一句（切分后不丢标点）。
+#: [EN] Sentence boundary. Both Chinese and English terminal punctuation are
+#: [EN] recognized; terminal punctuation stays with the preceding sentence.
+#: [ZH] 句子边界。中英文句末标点均被识别；句末标点保留在前一句中。
 _SENTENCE_END = re.compile(r"[^。！？；!?;\n]*[。！？；!?;\n]")
 
 
 def split_sentences(text: str) -> List[Tuple[int, int, str]]:
-    """切句并**保留字符区间**：``[(start, end, sentence)]``。
+    """
+    [EN]
+    Split text into sentences while preserving character offsets:
+    ``[(start, end, sentence)]``.
 
-    区间是引用溯源的基础 —— 用户要能拿着"字符 210-480"回去核对原文，
-    只给句子文本是不够的（同样的句子可能在文档里出现多次）。
+    Offsets are the basis of citation traceability. A user must be able to use a
+    range such as "characters 210-480" to inspect the source text; sentence text
+    alone is insufficient because the same sentence can occur multiple times.
+
+    [ZH]
+    按句子切分并保留字符区间：``[(start, end, sentence)]``。
+
+    字符区间是引用溯源的基础。用户需要能够依据“字符 210–480”回查原文；仅提供
+    句子文本不够，因为同一句子可能在文档中出现多次。
     """
     out: List[Tuple[int, int, str]] = []
     for match in _SENTENCE_END.finditer(text or ""):
@@ -104,12 +184,28 @@ def split_sentences(text: str) -> List[Tuple[int, int, str]]:
 
 def chunk_text(text: str, chunk_chars: int = 600, overlap_chars: int = 100
                ) -> List[Tuple[int, int, str]]:
-    """按句边界把长文切成 ``(start, end, chunk)`` 列表。
+    """
+    [EN]
+    Split a long document into ``(start, end, chunk)`` entries by sentence
+    boundaries.
 
-    三条规则：
-      * **不切断句子**（除非单句比 chunk_chars 还长，那只能硬切）；
-      * **保留重叠**：上一块的末尾若干句子带进下一块，避免"答案横跨块边界"查不到；
-      * 区间是**原文的绝对偏移**，重叠部分在两个块里出现两次，溯源仍然准确。
+    Rules:
+
+    * Do not split sentences unless a single sentence exceeds ``chunk_chars``;
+      such a sentence must be split by length.
+    * Preserve overlap: trailing sentences of one chunk are carried into the
+      next chunk so that an answer spanning a boundary remains retrievable.
+    * Offsets are absolute positions in the source text. Overlapping text occurs
+      in both chunks, but traceability remains exact.
+
+    [ZH]
+    按句子边界将长文档切分为 ``(start, end, chunk)`` 列表。
+
+    规则：
+
+    * 不切断句子，除非单句长度超过 ``chunk_chars``；此时只能按长度切分。
+    * 保留重叠：将上一块末尾的若干句子带入下一块，使跨块答案仍可检索。
+    * 区间为源文本中的绝对位置；重叠文本会出现在两个块中，但溯源仍然准确。
     """
     body = text or ""
     if not body.strip():
@@ -118,7 +214,9 @@ def chunk_text(text: str, chunk_chars: int = 600, overlap_chars: int = 100
     overlap_chars = max(0, min(int(overlap_chars or 0), chunk_chars // 2))
     sentences = split_sentences(body)
     if not sentences:
-        # 没有任何句末标点（例如一整段代码或表格）：按长度硬切
+        # [EN] No terminal punctuation (for example, a code block or table):
+        # [EN] split by length.
+        # [ZH] 没有句末标点（例如代码块或表格）：按长度切分。
         out = []
         step = max(1, chunk_chars - overlap_chars)
         for start in range(0, len(body), step):
@@ -139,7 +237,9 @@ def chunk_text(text: str, chunk_chars: int = 600, overlap_chars: int = 100
 
     for sentence in sentences:
         if sentence[1] - sentence[0] > chunk_chars:
-            # 超长单句：先结算当前块，再把这一句按长度切开
+            # [EN] Oversized sentence: flush the current chunk, then split the
+            # [EN] sentence by length.
+            # [ZH] 超长单句：先结算当前块，再按长度切分该句。
             flush()
             current = []
             piece_start = sentence[0]
@@ -150,7 +250,8 @@ def chunk_text(text: str, chunk_chars: int = 600, overlap_chars: int = 100
             continue
         if current and (sentence[1] - current[0][0]) > chunk_chars:
             flush()
-            # 用末尾若干句子做重叠
+            # [EN] Use trailing sentences for overlap.
+            # [ZH] 使用末尾若干句子构成重叠。
             tail: List[Tuple[int, int, str]] = []
             tail_len = 0
             for item in reversed(current):
@@ -165,26 +266,48 @@ def chunk_text(text: str, chunk_chars: int = 600, overlap_chars: int = 100
 
 
 # ===========================================================================
-# BM25 索引
+# [EN] BM25 index
+# [ZH] BM25 索引
 # ===========================================================================
 
 @dataclass
 class Chunk:
-    """一个可检索的片段（自带溯源信息）。"""
+    """
+    [EN]
+    A retrievable chunk carrying its own traceability metadata.
+
+    [ZH]
+    可检索片段，携带自身的溯源元数据。
+    """
 
     file: str
-    index: int          # 该文件内的第几块（从 1 开始，给用户看的段号）
-    start: int          # 原文起始字符偏移
-    end: int            # 原文结束字符偏移
+    # [EN] One-based chunk index within the file, displayed to users as a passage number.
+    # [ZH] 文件内从 1 开始的块序号，作为用户可见的段号。
+    index: int
+    # [EN] Absolute starting character offset in the source text.
+    # [ZH] 源文本中的绝对起始字符偏移。
+    start: int
+    # [EN] Absolute ending character offset in the source text.
+    # [ZH] 源文本中的绝对结束字符偏移。
+    end: int
     text: str
-    length: int = 0     # 词元数（BM25 的长度归一化用）
+    # [EN] Token count used for BM25 length normalization.
+    # [ZH] 用于 BM25 长度归一化的词元数。
+    length: int = 0
 
     def __post_init__(self) -> None:
         if not self.length:
             self.length = max(1, len(tokenize(self.text)))
 
     def locate(self) -> str:
-        """人类可读的位置描述（界面上"文件 + 字符区间"就是这么显示的）。"""
+        """
+        [EN]
+        Return a human-readable location description. The interface displays it
+        as "file + character range".
+
+        [ZH]
+        返回人类可读的位置描述。界面以“文件 + 字符区间”的形式显示。
+        """
         return f"{self.file}（字符 {self.start}-{self.end}）"
 
 
@@ -192,17 +315,29 @@ class Chunk:
 class ScoredChunk:
     chunk: Chunk
     score: float
-    matched: List[str] = field(default_factory=list)   # 命中的词元（可解释性）
+    # [EN] Matched terms, retained for explainability.
+    # [ZH] 命中的词元，用于可解释性展示。
+    matched: List[str] = field(default_factory=list)
 
 
-#: BM25 标准参数。k1 控制词频饱和、b 控制长度归一化；1.5/0.75 是文献默认值，
-#: 办公文档上没有必要重新调参（调了也说不清是文档变了还是参数变了）。
+#: [EN] Standard BM25 parameters. k1 controls term-frequency saturation and b
+#: [EN] controls length normalization. The values 1.5 and 0.75 are the literature
+#: [EN] defaults; retuning for office documents is unnecessary and would make it
+#: [EN] difficult to distinguish document changes from parameter changes.
+#: [ZH] BM25 标准参数。k1 控制词频饱和，b 控制长度归一化。1.5 与 0.75 为文献
+#: [ZH] 默认值；办公文档无需重新调参，否则难以区分文档变化与参数变化。
 _BM25_K1 = 1.5
 _BM25_B = 0.75
 
 
 class BM25Index:
-    """一个文件（或若干文件）的 BM25 索引。"""
+    """
+    [EN]
+    BM25 index for one or more files.
+
+    [ZH]
+    一个或多个文件的 BM25 索引。
+    """
 
     def __init__(self) -> None:
         self.chunks: List[Chunk] = []
@@ -232,7 +367,14 @@ class BM25Index:
 
     def search(self, query: str, top_k: int = 4, min_score: float = 0.0
                ) -> List[ScoredChunk]:
-        """返回按 BM25 得分降序的片段（得分 ≤ 0 的不返回）。"""
+        """
+        [EN]
+        Return chunks ordered by descending BM25 score. Chunks with a
+        non-positive score are omitted.
+
+        [ZH]
+        按 BM25 得分降序返回片段。得分非正的片段不会返回。
+        """
         terms = tokenize(query)
         if not terms or not self.chunks:
             return []
@@ -249,8 +391,12 @@ class BM25Index:
                 if not freq:
                     continue
                 df = self._df.get(term, 0)
-                # BM25 的 idf（加 0.5 平滑；df 达到全部块时取一个极小的正值，
-                # 而不是 0 —— 否则"每块都出现的词"会完全丧失区分度）
+                # [EN] BM25 idf with 0.5 smoothing. When df equals the total
+                # [EN] number of chunks, a small positive value is used instead
+                # [EN] of zero so that ubiquitous terms retain some
+                # [EN] discriminative value.
+                # [ZH] BM25 idf，使用 0.5 平滑。当 df 等于块总数时使用一个极小
+                # [ZH] 正值而非 0，使无处不在的词仍保留一定区分度。
                 idf = math.log(1.0 + (total - df + 0.5) / (df + 0.5))
                 denom = freq + _BM25_K1 * (1 - _BM25_B + _BM25_B * length / avg_len)
                 score += idf * (freq * (_BM25_K1 + 1)) / denom
@@ -267,12 +413,20 @@ class BM25Index:
 
 
 # ===========================================================================
-# 检索器（多文件 + 增量）
+# [EN] Retriever: multiple files with incremental updates
+# [ZH] 检索器：多文件与增量更新
 # ===========================================================================
 
 @dataclass
 class RetrievalConfigView:
-    """从 config.RetrievalConfig 抽出来的只读视图（避免本模块依赖 config）。"""
+    """
+    [EN]
+    Read-only view extracted from ``config.RetrievalConfig`` so that this module
+    does not depend on ``config``.
+
+    [ZH]
+    从 ``config.RetrievalConfig`` 提取的只读视图，使本模块不依赖 ``config``。
+    """
 
     enabled: bool = True
     mode: str = "keyword"
@@ -284,11 +438,21 @@ class RetrievalConfigView:
 
 
 class Retriever:
-    """多文件增量检索器。
+    """
+    [EN]
+    Incremental retriever for multiple files.
 
-    **增量**的含义：``add_file`` 只切分与索引那一份文件，已有文件一个字节都不动
-    （``_chunks_by_file`` 里各自一份，删除也是整份摘除）。所以"新上传的文件自动
-    加入索引，不必重建全部"是天然成立的，不需要额外的增量算法。
+    Incrementality means that ``add_file`` only chunks and indexes the newly
+    supplied file; existing files are not touched. Each file has its own entry
+    in ``_chunks_by_file``, and removal deletes only that file's entry. Newly
+    uploaded files therefore join the index without a full rebuild.
+
+    [ZH]
+    面向多文件的增量检索器。
+
+    增量更新意味着 ``add_file`` 仅对新文件执行分块与索引，不修改已有文件。
+    每个文件在 ``_chunks_by_file`` 中拥有独立条目，删除时仅移除该文件条目。
+    因此新上传文件可加入索引而无需全量重建。
     """
 
     def __init__(self, config: Optional[RetrievalConfigView] = None) -> None:
@@ -301,7 +465,14 @@ class Retriever:
     # ---------- 构建 ----------
 
     def add_file(self, name: str, text: str) -> int:
-        """索引（或**替换**）一份文件，返回块数。同名文件按最新内容重建。"""
+        """
+        [EN]
+        Index or replace a file and return the number of chunks. A file with the
+        same name is rebuilt from its latest content.
+
+        [ZH]
+        索引或替换文件，并返回块数。同名文件将按最新内容重建。
+        """
         key = str(name or "")
         if key in self._chunks_by_file:
             self.remove_file(key)
@@ -318,8 +489,12 @@ class Retriever:
         if key not in self._chunks_by_file:
             return False
         del self._chunks_by_file[key]
-        # BM25 的 df/长度统计是增量的，删一份文件后最稳妥的做法是重建索引
-        # （重建是纯内存操作，47 KB 文档实测 < 10 ms；换来的是统计量永远正确）。
+        # [EN] BM25 document-frequency and length statistics are incremental.
+        # [EN] After removing a file, rebuilding the index is the safest way to
+        # [EN] keep those statistics correct. Rebuilding is an in-memory
+        # [EN] operation and is inexpensive for ordinary office documents.
+        # [ZH] BM25 的文档频率与长度统计是增量维护的。删除文件后，重建索引是
+        # [ZH] 保持统计正确的最稳妥方式。重建为纯内存操作，对普通办公文档开销很低。
         self.rebuilds += 1
         self._rebuild()
         return True
@@ -356,7 +531,14 @@ class Retriever:
 
     def search(self, query: str, top_k: Optional[int] = None,
                files: Optional[Iterable[str]] = None) -> List[ScoredChunk]:
-        """跨文件检索（``files`` 可以限定只看某几份，多文档问答就是不带它）。"""
+        """
+        [EN]
+        Search across files. ``files`` can restrict the search to selected
+        documents; multi-document question answering omits it.
+
+        [ZH]
+        跨文件检索。``files`` 可将检索限定到指定文档；多文档问答不传该参数。
+        """
         if not self.config.enabled:
             return []
         hits = self._index.search(query, top_k=top_k or self.config.top_k,
@@ -368,18 +550,43 @@ class Retriever:
 
     def as_context(self, query: str, top_k: Optional[int] = None,
                    budget_chars: Optional[int] = None) -> str:
-        """把检索结果渲染成可注入上下文的文本（**带编号与位置，供引用溯源**）。
+        """
+        [EN]
+        Render retrieval results as context text with numbering and source
+        locations for citation traceability.
 
-        返回空串表示没有可用结果 —— 调用方据此**不要注入空块**（与搜索链路的
-        "没有结果就不注入"是同一条纪律）。
+        An empty string means no usable result; callers must not inject an empty
+        block. This follows the same rule as the search pipeline: no result, no
+        injection.
 
-        **重叠块去重**（真模型实测发现的）：分块本身带 100 字符重叠，而相邻块又常常
-        一起入选，于是上下文里会出现两段几乎一样的内容（实测 0.6B 那次，
-        [1] 与 [2] 是同一份合同里相隔不到 600 字符的两块，内容大半重复）。
-        对模型来说这是白占窗口、还容易被当成"两处不同的约定"。
-        规则：同一文件里与已选块**区间重叠超过较小块一半**的候选直接跳过；
-        另外**内容开头 200 字符完全相同**的候选也跳过 —— 文档里大段重复（模板化合同、
-        同一份材料的多个副本）时，区间并不重叠但内容是一样的，只按区间判重会漏掉。
+        Overlapping chunks are deduplicated. Chunking intentionally introduces
+        overlap, and adjacent chunks are often selected together, so the same
+        content can appear twice in the context. This wastes context window and
+        may be interpreted as two separate provisions.
+
+        Deduplication rules:
+
+        * Skip a candidate whose source range overlaps a selected chunk from the
+          same file by more than half of the smaller chunk.
+        * Also skip a candidate whose first 200 characters exactly match an
+          already selected chunk. Templated contracts and duplicate copies can
+          contain identical content with different ranges; range-only
+          deduplication would miss those cases.
+
+        [ZH]
+        将检索结果渲染为可注入上下文的文本，并附带编号与来源位置，以支持引用溯源。
+
+        返回空串表示没有可用结果；调用方不得注入空块。该规则与搜索链路一致：
+        没有结果就不注入。
+
+        重叠块需要去重。分块本身会引入重叠，相邻块又常被同时选中，导致相同内容
+        在上下文中重复出现。这会浪费上下文窗口，并可能被模型理解为两条不同的约定。
+
+        去重规则：
+
+        * 若候选与同一文件中已选块的源区间重叠超过较小块的一半，则跳过该候选。
+        * 若候选开头 200 个字符与已选块完全相同，也跳过。模板化合同或重复副本可能
+          在不同区间包含相同内容；仅按区间去重会漏掉这些情况。
         """
         hits = self.search(query, top_k=top_k)
         if not hits:
@@ -410,7 +617,14 @@ class Retriever:
 
     @staticmethod
     def _overlaps(first: Chunk, second: Chunk) -> bool:
-        """两个块是否属于同一文件且区间重叠过半（较小块的一半）。"""
+        """
+        [EN]
+        Return whether two chunks belong to the same file and their ranges
+        overlap by more than half of the smaller chunk.
+
+        [ZH]
+        返回两个块是否属于同一文件，且区间重叠超过较小块的一半。
+        """
         if first.file != second.file:
             return False
         overlap = min(first.end, second.end) - max(first.start, second.start)
@@ -421,7 +635,14 @@ class Retriever:
 
 
 def config_view(cfg: object) -> RetrievalConfigView:
-    """把 ``config.RetrievalConfig``（或任何同名属性的对象）转成只读视图。"""
+    """
+    [EN]
+    Convert ``config.RetrievalConfig`` or any object with the same attributes
+    into a read-only view.
+
+    [ZH]
+    将 ``config.RetrievalConfig`` 或任何具有相同属性的对象转换为只读视图。
+    """
     def pick(name: str, default: object) -> object:
         return getattr(cfg, name, default) if cfg is not None else default
 

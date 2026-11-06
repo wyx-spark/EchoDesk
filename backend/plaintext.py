@@ -1,17 +1,38 @@
-"""Markdown → 纯文本转换（任务书 新增三）。
+"""
+[EN]
+Markdown-to-plain-text conversion.
 
-自动化生成的 ``result.txt`` 要求是**纯文本，不含任何 Markdown 标记**：
-记事本与 Windows 原装工具没有 Markdown 渲染能力，``#``、``**``、``|`` 这些符号
-只会干扰阅读。本模块在保留可读结构的前提下剥离标记：
+Automation result files (``result.txt``) must contain plain text without any
+Markdown markup. Notepad and built-in Windows tools cannot render Markdown, so
+characters such as ``#``, ``**`` and ``|`` only interfere with reading. This
+module removes markup while preserving a readable structure:
 
-* ``# 标题`` → 标题文字独占一行，下一行用 ``=`` / ``-`` 下划线；
-* ``**粗体**`` / ``*斜体*`` / ``~~删除~~`` / ``` `代码` ``` → 只保留文字；
-* ``- 项`` / ``1. 项`` → 保留 ``-`` 与数字编号（纯文本下仍然易读）；
-* ``| a | b |`` 表格 → 按列宽对齐的纯文本表格（去掉竖线）；
-* ``[文字](链接)`` → ``文字（链接）``；``![alt](src)`` → ``[图片：alt]``；
-* ````` 代码块 ````` → 去掉围栏，内容整体缩进四格；
-* ``> 引用`` → 缩进两格的纯文本；
-* 其余 HTML 标签剥离、转义字符还原。
+* ``# Heading`` becomes the heading text on its own line, underlined with
+  ``=`` or ``-`` on the next line.
+* ``**bold**``, ``*italic*``, ``~~strike~~`` and inline code retain only text.
+* ``- item`` and ``1. item`` preserve the marker and numeric prefix for
+  readability in plain text.
+* Tables are rendered as column-aligned plain text without vertical bars.
+* ``[text](url)`` becomes ``text (url)``; images become ``[Image: alt]``.
+* Fenced code blocks lose their fences and are indented by four spaces.
+* Block quotes are indented by two spaces.
+* Remaining HTML tags are stripped and escape sequences are restored.
+
+[ZH]
+Markdown 到纯文本的转换。
+
+自动化生成的 ``result.txt`` 必须是纯文本，不得包含 Markdown 标记。记事本与
+Windows 内置工具不具备 Markdown 渲染能力，``#``、``**``、``|`` 等符号只会
+干扰阅读。本模块在保留可读结构的前提下移除标记：
+
+* ``# 标题`` 转为独立一行的标题文字，下一行使用 ``=`` 或 ``-`` 下划线。
+* ``**粗体**``、``*斜体*``、``~~删除~~`` 与行内代码只保留文字。
+* ``- 项`` 与 ``1. 项`` 保留前缀标记与数字编号，便于纯文本阅读。
+* 表格转为按列对齐的纯文本，并移除竖线。
+* ``[文字](链接)`` 转为 ``文字（链接）``；图片转为 ``[图片：alt]``。
+* 围栏代码块移除围栏，并将内容整体缩进四格。
+* 引用块缩进两格。
+* 其余 HTML 标签被剥离，转义字符被还原。
 """
 from __future__ import annotations
 
@@ -34,7 +55,9 @@ _CODE_SPAN_RE = re.compile(r"`([^`]*)`")
 _HTML_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9]*(?:\s[^<>]*)?/?>")
 _ESCAPE_RE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!|>~])")
 
-# 行内强调标记：成对出现才剥离，避免误伤数学式里的单个 * 或 _
+# [EN] Inline emphasis markers are removed only when paired, so that a single
+# [EN] ``*`` or ``_`` in a mathematical expression is preserved.
+# [ZH] 行内强调标记仅在成对出现时移除，避免误删数学表达式中的单个 ``*`` 或 ``_``。
 _EMPHASIS_PATTERNS = (
     (re.compile(r"\*\*\*(.+?)\*\*\*", re.S), r"\1"),
     (re.compile(r"\*\*(.+?)\*\*", re.S), r"\1"),
@@ -47,7 +70,13 @@ _EMPHASIS_PATTERNS = (
 
 
 def _strip_inline(text: str) -> str:
-    """剥离一行内的所有 Markdown 行内标记。"""
+    """
+    [EN]
+    Remove all inline Markdown markers from a single line.
+
+    [ZH]
+    移除单行中的全部 Markdown 行内标记。
+    """
     line = _ESCAPE_RE.sub(r"\1", text)
     line = _IMAGE_RE.sub(lambda m: f"[图片：{m.group(1)}]" if m.group(1).strip() else "[图片]", line)
     line = _LINK_RE.sub(
@@ -58,12 +87,20 @@ def _strip_inline(text: str) -> str:
     for pattern, repl in _EMPHASIS_PATTERNS:
         line = pattern.sub(repl, line)
     line = _HTML_TAG_RE.sub("", line)
-    # <br> 之类换行标签转成空格（已随标签一起删掉，这里压掉多余空白）
+    # [EN] Line-break tags such as <br> are removed with other tags; collapse the
+    # [EN] whitespace they leave behind.
+    # [ZH] 换行标签（如 <br>）已随其他标签一并删除；此处压缩其留下的多余空白。
     return line.replace("\u00a0", " ").rstrip()
 
 
 def _split_row(line: str) -> List[str]:
-    """把 Markdown 表格行拆成单元格文本。"""
+    """
+    [EN]
+    Split a Markdown table row into cell texts.
+
+    [ZH]
+    将 Markdown 表格行拆分为单元格文本。
+    """
     body = line.strip()
     if body.startswith("|"):
         body = body[1:]
@@ -88,7 +125,14 @@ def _split_row(line: str) -> List[str]:
 
 
 def _display_width(text: str) -> int:
-    """文本在等宽字体下的显示宽度（中日韩全角字符按 2 列计）。"""
+    """
+    [EN]
+    Return the display width of text in a monospaced font. CJK full-width
+    characters count as two columns.
+
+    [ZH]
+    返回文本在等宽字体下的显示宽度。中日韩全角字符按两列计算。
+    """
     import unicodedata
 
     width = 0
@@ -98,12 +142,25 @@ def _display_width(text: str) -> int:
 
 
 def _pad(text: str, width: int) -> str:
-    """按显示宽度右补空格（中文表格在记事本里才能对齐）。"""
+    """
+    [EN]
+    Pad text on the right according to its display width so that tables remain
+    aligned in a plain-text editor.
+
+    [ZH]
+    按显示宽度在右侧补空格，使表格在纯文本编辑器中保持对齐。
+    """
     return text + " " * max(0, width - _display_width(text))
 
 
 def _render_table(rows: List[List[str]]) -> List[str]:
-    """把表格渲染成按列宽对齐的纯文本（无竖线）。"""
+    """
+    [EN]
+    Render a table as column-aligned plain text without vertical bars.
+
+    [ZH]
+    将表格渲染为按列宽对齐的纯文本，不包含竖线。
+    """
     width = max(len(row) for row in rows)
     normalized = [row + [""] * (width - len(row)) for row in rows]
     widths = [max(_display_width(row[col]) for row in normalized) for col in range(width)]
@@ -118,7 +175,14 @@ def _render_table(rows: List[List[str]]) -> List[str]:
 
 
 def markdown_to_plain(text: str) -> str:
-    """把 Markdown 文本转成纯文本（保留段落与列表结构，去掉所有标记符号）。"""
+    """
+    [EN]
+    Convert Markdown text to plain text while preserving paragraph and list
+    structure and removing all markup symbols.
+
+    [ZH]
+    将 Markdown 文本转换为纯文本，保留段落与列表结构并移除全部标记符号。
+    """
     if not text:
         return ""
     source = str(text).replace("\r\n", "\n").replace("\r", "\n")
@@ -143,7 +207,9 @@ def markdown_to_plain(text: str) -> str:
             index += 1
             continue
 
-        # 表格：当前行含 | 且下一行是分隔行 → 整块处理
+        # [EN] Table: the current line contains | and the next line is a separator;
+        # [EN] process the whole block.
+        # [ZH] 表格：当前行包含 | 且下一行为分隔行；整块处理。
         if "|" in line and index + 1 < len(lines) and _TABLE_SEP_RE.match(lines[index + 1]):
             rows: List[List[str]] = [_split_row(line)]
             cursor = index + 2
@@ -200,7 +266,8 @@ def markdown_to_plain(text: str) -> str:
         out.append(stripped.rstrip())
         index += 1
 
-    # 收尾整理：去掉行尾空格、压掉 3 行以上的空行
+    # [EN] Final cleanup: trim trailing spaces and collapse runs of more than two blank lines.
+    # [ZH] 收尾整理：去除行尾空格，并压缩超过两行的连续空行。
     cleaned: List[str] = []
     blank = 0
     for item in out:
@@ -219,7 +286,14 @@ def markdown_to_plain(text: str) -> str:
 
 
 def contains_markdown(text: str) -> bool:
-    """粗检文本是否仍含常见 Markdown 标记（供自检/回归使用）。"""
+    """
+    [EN]
+    Coarsely detect whether text still contains common Markdown markers. The
+    check is used by self-tests and regression coverage.
+
+    [ZH]
+    粗略检测文本是否仍包含常见 Markdown 标记。该检查用于自检与回归测试。
+    """
     if not text:
         return False
     for line in str(text).splitlines():

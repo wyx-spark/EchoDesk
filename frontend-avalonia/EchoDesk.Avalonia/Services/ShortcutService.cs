@@ -1,3 +1,5 @@
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Services/ShortcutService.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Services/ShortcutService.cs。类型与成员说明见下方注释。
 // 启动快捷方式（v0.2.2 第 3 批，对齐 WPF 的 Services/ShortcutService.cs）。
 //
 // **为什么不能照抄 WPF 的实现**：WPF 版用 `WScript.Shell` COM 建 `.lnk`，

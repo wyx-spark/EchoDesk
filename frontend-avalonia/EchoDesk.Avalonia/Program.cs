@@ -1,3 +1,5 @@
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Program.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Program.cs。类型与成员说明见下方注释。
 // EchoDesk 跨平台前端（Avalonia）—— 程序入口。
 //
 // 与 WPF 版的差别（迁移时最容易被忽略的一条）：WPF 用 App.xaml 的 StartupUri

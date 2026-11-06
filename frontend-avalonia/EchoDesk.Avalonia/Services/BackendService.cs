@@ -1,4 +1,6 @@
-﻿// 后端子进程管理与 JSON 行协议（移植自 frontend/Services/BackendService.cs，任务书 任务二）。
+﻿// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Services/BackendService.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Services/BackendService.cs。类型与成员说明见下方注释。
+// 后端子进程管理与 JSON 行协议（移植自 frontend/Services/BackendService.cs，任务书 任务二）。
 //
 // 这是"复用而不是重写"的核心证据：协议层（stdin 写一行 JSON / stdout 读一行 JSON、
 // 单请求闸门、空闲超时、流式 delta 双通道）在 WPF 版已经被验证过 4 轮，跨平台版

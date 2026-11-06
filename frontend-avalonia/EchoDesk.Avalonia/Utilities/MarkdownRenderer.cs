@@ -1,4 +1,6 @@
-﻿// Markdown → Avalonia 控件的渲染器（对应 WPF 版的 Utilities/MarkdownRenderer.cs）。
+﻿// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Utilities/MarkdownRenderer.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Utilities/MarkdownRenderer.cs。类型与成员说明见下方注释。
+// Markdown → Avalonia 控件的渲染器（对应 WPF 版的 Utilities/MarkdownRenderer.cs）。
 //
 // **这是本次原型最需要证明的一件事**：WPF 版的富文本是"Markdown → FlowDocument + Inline"，
 // 而 Avalonia 没有 FlowDocument，只有 TextBlock.Inlines（限于单段的行内排版）。

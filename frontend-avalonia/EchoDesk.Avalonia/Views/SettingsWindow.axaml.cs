@@ -1,4 +1,6 @@
-﻿// 设置窗口骨架（v0.2.1 跨平台-2 任务一，第 1 个迁移模块）。
+﻿// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/SettingsWindow.axaml.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/SettingsWindow.axaml.cs。类型与成员说明见下方注释。
+// 设置窗口骨架（v0.2.1 跨平台-2 任务一，第 1 个迁移模块）。
 //
 // 这一层刻意只做四件事，别的一律交给页面：
 //   1. 页签容器：按 ISettingsPage 注册页面（未迁移的页签给出**明确的未迁移说明**，

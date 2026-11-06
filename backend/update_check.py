@@ -1,14 +1,27 @@
 # -*- coding: utf-8 -*-
-"""自动更新检查（任务书 任务五 · 方案 A：只检查与提示）。
+"""
+[EN]
+Update checking (design option A: check and notify only).
 
-**本模块刻意不做的事**：不下载发布包、不替换任何文件、不静默安装。
-用户拿到"有新版本"的提示后，自己点开浏览器到 Releases 页面下载。
-理由见 records/v0.2.1-研发记录.md：开源首版优先保证稳定与可控，
-方案 B（内置下载替换）需要处理文件占用、替换失败回滚、企业代理与证书，
-本版不做；方案 C（增量清单 + 签名校验）留待有发布基础设施后再评估。
+This module deliberately does not download release packages, replace files, or
+install silently. When a newer version is detected, the user opens the releases
+page in a browser and downloads it manually. Option B (in-app download and
+replacement) would require handling file locks, rollback on replacement failure,
+enterprise proxies and certificates; option C (incremental manifest with
+signature verification) remains out of scope until release infrastructure exists.
 
-体积说明（任务书 5.4）：只用标准库 urllib + json，
-不引入任何新的 HTTP 或 JSON 依赖。
+Only the Python standard library (urllib, json) is used; no additional HTTP or
+JSON dependency is introduced.
+
+[ZH]
+自动更新检查（设计选项 A：仅检查并提示）。
+
+本模块刻意不下载发布包、不替换任何文件、不静默安装。检测到新版本后，
+由用户在浏览器中打开 Releases 页面手动下载。选项 B（内置下载替代）需要
+处理文件占用、替换失败回滚、企业代理与证书；选项 C（增量清单与签名校验）
+需等待发布基础设施成熟后再评估。
+
+仅使用 Python 标准库（urllib、json），不引入额外的 HTTP 或 JSON 依赖。
 """
 from __future__ import annotations
 
@@ -22,16 +35,26 @@ from typing import Any, Dict, List, Optional, Tuple
 from i18n import t as _t
 from version import APP_VERSION
 
-#: 检查超时（秒）——启动时的检查不能拖慢界面
+#: [EN] Timeout for update checks, in seconds; a startup check must not delay the interface.
+#: [ZH] 更新检查超时（秒）；启动阶段的检查不得拖慢界面。
 _TIMEOUT = 8
-#: GitHub API 要求的 User-Agent
+#: [EN] User-Agent required by the GitHub API.
+#: [ZH] GitHub API 要求的 User-Agent。
 _UA = f"EchoDesk/{APP_VERSION.lstrip('v')} (+update-check)"
 
 
 def parse_version(text: str) -> Tuple[int, ...]:
-    """把语义化版本解析成元组，便于比较（``v0.2.10`` > ``v0.2.9``）。"""
+    """
+    [EN]
+    Parse a semantic version into a tuple so that versions compare correctly
+    (``v0.2.10`` > ``v0.2.9``).
+
+    [ZH]
+    将语义化版本解析为元组，以保证版本比较正确（``v0.2.10`` > ``v0.2.9``）。
+    """
     raw = str(text or "").strip().lstrip("vV")
-    # 取主版本部分，丢掉 -beta.1 / +build 之类的后缀
+    # [EN] Keep the numeric core and discard suffixes such as -beta.1 or +build.
+    # [ZH] 保留数字主体，丢弃 -beta.1、+build 等后缀。
     core = re.split(r"[-+]", raw, maxsplit=1)[0]
     parts: List[int] = []
     for chunk in core.split("."):
@@ -43,7 +66,14 @@ def parse_version(text: str) -> Tuple[int, ...]:
 
 
 def compare_versions(current: str, latest: str) -> int:
-    """比较版本：返回 1 表示 latest 更新，-1 表示更旧（降级），0 表示相同。"""
+    """
+    [EN]
+    Compare versions: 1 if ``latest`` is newer, -1 if it is older (downgrade),
+    and 0 if the versions are equal.
+
+    [ZH]
+    比较版本：``latest`` 更新时返回 1，更旧（降级）时返回 -1，相同时返回 0。
+    """
     a, b = parse_version(current), parse_version(latest)
     if b > a:
         return 1
@@ -64,7 +94,13 @@ def _api_url(cfg: Any) -> str:
 
 
 def _due(cfg: Any, force: bool) -> Tuple[bool, int]:
-    """判断是否到了该检查的时间；返回 (是否该检查, 配置的间隔小时数)。"""
+    """
+    [EN]
+    Determine whether a check is due. Returns (is_due, configured_interval_hours).
+
+    [ZH]
+    判断是否到达检查时间。返回 (是否应检查, 配置的间隔小时数)。
+    """
     hours = max(1, int(getattr(cfg, "check_interval_hours", 24) or 24))
     if force:
         return True, hours
@@ -79,7 +115,14 @@ def _due(cfg: Any, force: bool) -> Tuple[bool, int]:
 
 
 def _fetch_releases(cfg: Any) -> List[Dict[str, Any]]:
-    """请求 GitHub Releases API；尊重系统代理设置（urllib 默认走环境代理）。"""
+    """
+    [EN]
+    Query the GitHub Releases API. System proxy settings are honoured because
+    urllib uses the environment proxy configuration by default.
+
+    [ZH]
+    请求 GitHub Releases API。由于 urllib 默认读取环境代理配置，系统代理设置会被遵循。
+    """
     request = urllib.request.Request(_api_url(cfg), headers={
         "User-Agent": _UA,
         "Accept": "application/vnd.github+json",
@@ -92,11 +135,22 @@ def _fetch_releases(cfg: Any) -> List[Dict[str, Any]]:
 
 
 def check_for_update(cfg: Any, force: bool = False) -> Dict[str, Any]:
-    """检查是否有新版本。
+    """
+    [EN]
+    Check whether a newer release is available.
 
-    返回 ``{ok, status, current, latest, url, notes, message, checked_at}``，
-    ``status`` 为 ``up_to_date`` / ``available`` / ``disabled`` / ``skipped`` / ``error``。
-    任何网络异常都以 ``ok=False`` 返回，不抛给调用方（更新检查不该影响使用）。
+    Returns ``{ok, status, current, latest, url, notes, message, checked_at}``;
+    ``status`` is one of ``up_to_date``, ``available``, ``disabled``, ``skipped``
+    or ``error``. Network failures are returned with ``ok=False`` and are never
+    propagated to the caller, because update checking must not affect normal use.
+
+    [ZH]
+    检查是否存在更新的发布版本。
+
+    返回 ``{ok, status, current, latest, url, notes, message, checked_at}``；
+    ``status`` 为 ``up_to_date``、``available``、``disabled``、``skipped``
+    或 ``error``。网络故障以 ``ok=False`` 返回，不向调用方抛出，因为更新检查
+    不得影响正常使用。
     """
     current = APP_VERSION
     result: Dict[str, Any] = {
@@ -135,7 +189,9 @@ def check_for_update(cfg: Any, force: bool = False) -> Dict[str, Any]:
         else:
             result["message"] = _t("update.check_failed", error=f"HTTP {e.code}")
         return result
-    except Exception as e:  # noqa: BLE001 —— 网络问题不该弹出堆栈
+    # [EN] Network failures must not surface a traceback to the caller.
+    # [ZH] 网络故障不得向调用方暴露堆栈。
+    except Exception as e:  # noqa: BLE001
         result["message"] = _t("update.check_failed", error=e)
         return result
 

@@ -1,3 +1,5 @@
+// [EN] EchoDesk WPF frontend module: frontend/Services/Emoji.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend/Services/Emoji.cs。类型与成员说明见下方注释。
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -5,33 +7,60 @@ using System.Text;
 namespace EchoDesk.Services;
 
 /// <summary>
-/// Emoji 降级（任务书修复六）。
+/// [EN] Emoji fallback support.
 ///
-/// 主路径是"让 emoji 正常显示"：WPF 的字体回退链（<c>UiFontFamily</c>）已经把
-/// <c>Segoe UI Emoji</c> 排进家族列表，所以 Windows 10/11 默认环境下 emoji 会正常渲染。
+/// The primary path relies on WPF font fallback, which includes
+/// <c>Segoe UI Emoji</c> and renders emoji correctly on standard Windows 10/11
+/// installations.
 ///
-/// 本类负责**降级策略**：Windows 10 早期版本、精简版系统（N 版/Server Core）、
-/// 被组策略裁掉字体的企业环境里可能连 <c>seguiemj.ttf</c> 都没有，此时 emoji 又变成方块。
-/// 于是提供：
+/// This class provides the fallback policy for environments where the emoji font
+/// is missing, such as early Windows 10 builds, reduced installations, or
+/// enterprise images with fonts removed by policy:
 /// <list type="bullet">
-/// <item><b>自动检测</b>：<see cref="Available"/> 检查 emoji 字体是否真的存在；</item>
-/// <item><b>手动开关</b>：设置窗口里的"使用 emoji"选项，写入 <c>ui_state.json</c>；</item>
-/// <item><b>ASCII 替换</b>：关掉或被检测出不支持时，<c>✅</c> → <c>[OK]</c>、
-/// <c>⚠️</c> → <c>[!]</c>，绝不留下方块。</item>
+/// <item><b>Automatic detection</b>: <see cref="Available"/> checks whether the
+/// emoji font file exists.</item>
+/// <item><b>Manual switch</b>: the "use emoji" option stored in
+/// <c>ui_state.json</c>.</item>
+/// <item><b>ASCII replacement</b>: when disabled or unsupported, symbols such as
+/// <c>✅</c> and <c>⚠️</c> become <c>[OK]</c> and <c>[!]</c> instead of
+/// rendering as boxes.</item>
 /// </list>
 ///
-/// 替换点只有两处（保持"一处收口"）：<see cref="Loc.T(string)"/> 与消息渲染。
+/// Replacement is centralized in <see cref="Loc.T(string)"/> and message
+/// rendering.
+///
+/// [ZH] Emoji 降级支持。
+///
+/// 主路径依赖 WPF 字体回退链，其中包含 <c>Segoe UI Emoji</c>，在标准 Windows
+/// 10/11 环境中可正确渲染 emoji。
+///
+/// 本类为缺少 emoji 字体的环境提供降级策略，例如早期 Windows 10、精简安装或
+/// 被策略移除字体的企业镜像：
+/// <list type="bullet">
+/// <item><b>自动检测</b>：<see cref="Available"/> 检查 emoji 字体文件是否存在。</item>
+/// <item><b>手动开关</b>：设置窗口中写入 <c>ui_state.json</c> 的“使用 emoji”选项。</item>
+/// <item><b>ASCII 替换</b>：关闭或不受支持时，<c>✅</c>、<c>⚠️</c> 等符号替换为
+/// <c>[OK]</c>、<c>[!]</c>，避免显示为方块。</item>
+/// </list>
+///
+/// 替换集中在 <see cref="Loc.T(string)"/> 与消息渲染处。
 /// </summary>
 public static class Emoji
 {
-    /// <summary>emoji → ASCII 标记。未列出的 emoji 统一替换为 "?"，宁可信息弱一点也不显示方块。</summary>
+    /// <summary>
+    /// [EN] Emoji-to-ASCII map. Unmapped emoji are replaced with "?" rather than
+    /// risking a missing-glyph box.
+    /// [ZH] emoji 到 ASCII 标记的映射。未列出的 emoji 统一替换为 "?"，避免出现缺字方块。
+    /// </summary>
     private static readonly Dictionary<string, string> AsciiMap = new(StringComparer.Ordinal)
     {
         ["✅"] = "[OK]", ["❌"] = "[X]", ["⚠️"] = "[!]", ["⚠"] = "[!]",
         ["⏳"] = "[..]", ["⏱️"] = "[time]", ["⏱"] = "[time]",
-        // ⚡：运行指标里的"首 token 延迟"（v0.2.1 优化已知问题-2 任务七）
+        // [EN] Lightning bolt: first-token latency in runtime metrics.
+        // [ZH] 闪电符号：运行指标中的首 token 延迟。
         ["⚡"] = "[fast]",
-        // ⏹：中止标记（流式停止与运行指标的"已中止"）
+        // [EN] Stop symbol: aborted streaming and aborted runtime metrics.
+        // [ZH] 停止符号：流式中止与运行指标中的“已中止”。
         ["⏹"] = "[stop]",
         ["✨"] = "*", ["🌙"] = "[dark]", ["☀️"] = "[light]", ["☀"] = "[light]",
         ["📡"] = "[net]", ["🧠"] = "[model]", ["🛠️"] = "[mode]", ["🛠"] = "[mode]",
@@ -40,13 +69,18 @@ public static class Emoji
         ["💾"] = "[save]", ["📥"] = "[in]", ["📤"] = "[out]", ["🚀"] = "[go]",
         ["⚙️"] = "[cfg]", ["⚙"] = "[cfg]", ["🔧"] = "[cfg]",
         ["📝"] = "[edit]", ["👤"] = "[user]", ["🤖"] = "[bot]", ["ℹ️"] = "[i]", ["ℹ"] = "[i]",
-        // 🔁：分段摘要"超时重试"那一行用的（v0.2.1 综合优化 任务四）。
-        // 📍：Agent 步骤行"第 N/M 步"用的（v0.2.1 能力扩展-1 任务二）。
-        // 与 backend\emoji.py 的 ASCII_MAP 必须保持一致（tools\check_emoji.ps1 会比对）。
+        // [EN] Repeat symbol: summary timeout retry line. Pin symbol: agent step
+        // [EN] line "step N/M". This map must stay consistent with
+        // [EN] backend/emoji.py; tools/check_emoji.ps1 compares them.
+        // [ZH] 循环符号：摘要超时重试行。定位符号：Agent 步骤行“第 N/M 步”。
+        // [ZH] 该映射必须与 backend/emoji.py 保持一致；tools/check_emoji.ps1 会比对。
         ["🔁"] = "[retry]",
         ["📍"] = "[step]",
-        // ⏸：MCP server"已停用"状态行用的。它不在 check_emoji.ps1 的扫描区间里，
-        // 门禁不会要求它进这张表；主动补上是因为"门禁没查"不等于"不会显示成方块"。
+        // [EN] Pause symbol: MCP server "disabled" status line. It is outside the
+        // [EN] check_emoji.ps1 scan range, but is included because an unchecked
+        // [EN] symbol can still render as a box.
+        // [ZH] 暂停符号：MCP server“已停用”状态行。它不在 check_emoji.ps1 的扫描范围
+        // [ZH] 内，但仍主动加入，因为未检查的符号也可能显示为方块。
         ["⏸"] = "[pause]",
         ["🔗"] = "[link]", ["🧩"] = "[plugin]", ["🔒"] = "[lock]", ["🔓"] = "[unlock]",
         ["⏹️"] = "[stop]", ["⏹"] = "[stop]", ["▶️"] = "[run]", ["▶"] = "[run]",
@@ -87,25 +121,36 @@ public static class Emoji
         ["🧵"] = "[thread]",
         ["🪟"] = "[window]",
         ["📉"] = "[trend-down]",
-        // 模型市场优化（v0.2.1）：筛选面板标题与"离线模式"提示。
-        // 带变体选择符（VS16）与不带的是两个不同字符串，两个都要列。
+        // [EN] Model-market filter panel title and offline-mode notice. Strings
+        // [EN] with and without the variation selector are distinct and both must
+        // [EN] be listed.
+        // [ZH] 模型市场筛选面板标题与离线模式提示。带变体选择符（VS16）与不带的是
+        // [ZH] 不同字符串，两者都必须列出。
         ["🎛️"] = "[filter]",
         ["🎛"] = "[filter]",
         ["📴"] = "[offline]",
-        // 模型档位（v0.2.1 默认模型切换一轮）：设置页「🎚️ 模型档位」标题。
-        // 同样带变体选择符，两个写法都要列，否则带 VS16 的那份会退化成 "?"。
+        // [EN] Model-tier settings page title. Both forms are listed because the
+        // [EN] variant-selector form would otherwise degrade to "?".
+        // [ZH] 模型档位设置页标题。两种写法都必须列出，否则带 VS16 的形式会退化为 "?"。
         ["🎚️"] = "[tiers]",
         ["🎚"] = "[tiers]",
     };
 
-    /// <summary>emoji 字体文件（Windows 自带）；缺失即认为环境不支持彩色 emoji。</summary>
+    /// <summary>
+    /// [EN] Emoji font files shipped with Windows. A missing file means color
+    /// emoji are treated as unsupported.
+    /// [ZH] Windows 自带的 emoji 字体文件。文件缺失时按不支持彩色 emoji 处理。
+    /// </summary>
     private static readonly string[] EmojiFontFiles = { "seguiemj.ttf" };
 
     private static bool? _available;
 
     /// <summary>
-    /// 本机是否具备 emoji 字体。检测文件存在性而不是"渲染结果"——
-    /// 后者需要一次真实绘制，代价高且在无界面环境不可用。
+    /// [EN] Whether the local system has an emoji font. Detection checks file
+    /// existence rather than rendering, which would require a costly draw and is
+    /// unavailable in headless environments.
+    /// [ZH] 本机是否具备 emoji 字体。检测文件是否存在，而不是检测渲染结果；后者需要
+    /// 真实绘制，开销高且在无界面环境中不可用。
     /// </summary>
     public static bool Available
     {
@@ -128,7 +173,9 @@ public static class Emoji
             }
             catch
             {
-                // 取不到字体目录：按支持处理（WPF 自身还有回退链）
+                // [EN] If the font directory cannot be read, assume support; WPF
+                // [EN] still has its own fallback chain.
+                // [ZH] 无法读取字体目录时按支持处理；WPF 自身仍有回退链。
                 found = true;
             }
             _available = found;
@@ -136,10 +183,18 @@ public static class Emoji
         }
     }
 
-    /// <summary>是否输出 emoji 作为状态图标（"跟随系统"模式下由 <see cref="Available"/> 决定）。</summary>
+    /// <summary>
+    /// [EN] Whether emoji are emitted as status icons. In "follow system" mode,
+    /// this is determined by <see cref="Available"/>.
+    /// [ZH] 是否输出 emoji 作为状态图标。“跟随系统”模式下由 <see cref="Available"/>
+    /// 决定。
+    /// </summary>
     public static bool Enabled { get; private set; } = true;
 
-    /// <summary>用户设置（auto / always / never）。</summary>
+    /// <summary>
+    /// [EN] Apply the user preference: auto, always, or never.
+    /// [ZH] 应用用户设置：auto、always 或 never。
+    /// </summary>
     public static void Configure(string? preference)
     {
         string value = (preference ?? "auto").Trim().ToLowerInvariant();
@@ -151,22 +206,34 @@ public static class Emoji
         };
     }
 
-    /// <summary>是否处于"用户显式选择"状态（设置界面里显示成"始终/从不"）。</summary>
+    /// <summary>
+    /// [EN] Serialize an explicit user choice for display as "always" or "never".
+    /// [ZH] 将用户的显式选择序列化为“始终”或“从不”。
+    /// </summary>
     public static string Serialize(bool enabled) => enabled ? "always" : "never";
 
     /// <summary>
-    /// 需要纯文本（不允许 emoji）时把 emoji 替换成 ASCII 标记；否则原样返回。
-    /// 注意：这里只处理 emoji，不动中文与普通标点。
+    /// [EN] Replace emoji with ASCII markers when plain text is required;
+    /// otherwise return the input unchanged. Chinese text and ordinary
+    /// punctuation are not modified.
+    /// [ZH] 需要纯文本时将 emoji 替换为 ASCII 标记；否则原样返回。不会修改中文与
+    /// 普通标点。
     /// </summary>
     public static string Prefer(string text) => Enabled || string.IsNullOrEmpty(text) ? text : Strip(text);
 
-    /// <summary>无条件把 emoji 换成 ASCII 标记（日志、文件写入等必须纯文本的场合）。</summary>
+    /// <summary>
+    /// [EN] Unconditionally replace emoji with ASCII markers for logs, file
+    /// writes, and other plain-text-only contexts.
+    /// [ZH] 无条件将 emoji 替换为 ASCII 标记，适用于日志、文件写入等仅允许纯文本的场合。
+    /// </summary>
     public static string Strip(string text)
     {
         if (string.IsNullOrEmpty(text))
             return text;
         string result = text;
-        // 先替换长的（带变体选择符的组合），避免 "⚠️" 被 "⚠" 先吃掉而留下孤立的选择符
+        // [EN] Replace longer sequences first so a variant-selector combination
+        // [EN] is not partially consumed, leaving an orphan selector.
+        // [ZH] 先替换较长的组合，避免变体选择符组合被部分匹配而留下孤立选择符。
         foreach (KeyValuePair<string, string> pair in AsciiMap)
         {
             if (pair.Key.Length < 2)
@@ -184,7 +251,11 @@ public static class Emoji
         return DropRemaining(result);
     }
 
-    /// <summary>把映射表没覆盖到的 emoji 也清掉（换成 "?"），确保界面上不会出现方块。</summary>
+    /// <summary>
+    /// [EN] Replace emoji not covered by the map with "?" so missing glyphs do
+    /// not appear as boxes.
+    /// [ZH] 将映射表未覆盖的 emoji 替换为 "?"，确保界面不出现缺字方块。
+    /// </summary>
     private static string DropRemaining(string text)
     {
         var builder = new StringBuilder(text.Length);
@@ -196,7 +267,10 @@ public static class Emoji
             int width = pair ? 2 : 1;
             if (code is 0xFE0F or 0xFE0E or 0x200D)
             {
-                i += width;     // 变体选择符与零宽连接符：仅丢弃，不占位
+                // [EN] Variation selectors and zero-width joiners are dropped
+                // [EN] without emitting a placeholder.
+                // [ZH] 变体选择符与零宽连接符直接丢弃，不输出占位符。
+                i += width;
                 continue;
             }
             bool isEmoji = (code >= 0x1F000 && code <= 0x1FAFF)

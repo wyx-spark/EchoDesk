@@ -1,3 +1,5 @@
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/Settings/AutomationPage.axaml.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/Settings/AutomationPage.axaml.cs。类型与成员说明见下方注释。
 // 自动化页的交互逻辑（v0.2.1 跨平台-2 任务一，第 7 个迁移模块）。
 //
 // 后端动作：

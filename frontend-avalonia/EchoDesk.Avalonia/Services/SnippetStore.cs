@@ -1,3 +1,5 @@
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Services/SnippetStore.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Services/SnippetStore.cs。类型与成员说明见下方注释。
 // 常用语（snippets.json）—— 与 WPF 版 frontend/Utilities/SnippetManager.cs 同一份数据格式。
 //
 // 跨平台版的差别只在**路径**：WPF 版用 ShortcutService.UserDataDirectory，这里走

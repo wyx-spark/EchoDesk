@@ -1,3 +1,5 @@
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Services/CommandCatalog.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Services/CommandCatalog.cs。类型与成员说明见下方注释。
 // 指令表（指令面板的数据源）—— 与 WPF 版 frontend/MainWindow.xaml.cs 的 CommandItem 同一套语义。
 //
 // **为什么单独拆出来**：WPF 版把这张表和"谁在用它的界面逻辑"混在 3000 行的主窗口里；

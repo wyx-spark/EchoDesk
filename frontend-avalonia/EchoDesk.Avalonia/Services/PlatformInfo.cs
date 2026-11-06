@@ -1,3 +1,5 @@
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Services/PlatformInfo.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Services/PlatformInfo.cs。类型与成员说明见下方注释。
 // 平台探测与能力边界（任务书 任务三 / 任务五 的前端半边）。
 //
 // 这个类要回答三个问题，而且是**唯一**回答它们的地方：

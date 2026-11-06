@@ -1,14 +1,21 @@
-// 用系统默认程序打开目录 / 链接（v0.2.2 第 2 批新增）。
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Services/ShellOpen.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Services/ShellOpen.cs。类型与成员说明见下方注释。
+// [EN] Open a directory or link with the system default application.
 //
-// **为什么要有这个文件**：本批要补的三处（常规页的语言包目录、自动化页的结果目录、
-// 模型页的模型目录）都要"用系统文件管理器打开一个目录"。三份复制粘贴的
-// `Process.Start(UseShellExecute)` 会在"非 Windows 上该用什么参数"这类问题上慢慢分叉，
-// 所以收口在这里。
+// This helper centralizes the three places that open a directory in the system
+// file manager: the language-pack directory, the automation results directory,
+// and the model directory. Duplicating `Process.Start(UseShellExecute)` would
+// drift across platforms.
 //
-// 刻意**不用 P/Invoke**（explorer.exe / open / xdg-open）：Avalonia 工程明确不引 Windows
-// 专属能力（见 EchoDesk.Avalonia.csproj 头部说明），而 `UseShellExecute = true`
-// 正是各平台"交给 shell 处理"的标准做法 —— Windows 资源管理器、macOS Finder、
-// Linux xdg-open 都由它代劳。
+// P/Invoke is deliberately avoided. `UseShellExecute = true` delegates to the
+// platform shell: Windows Explorer, macOS Finder, or Linux xdg-open.
+// [ZH] 使用系统默认程序打开目录或链接。
+//
+// 该辅助类统一了三处需要在系统文件管理器中打开目录的位置：语言包目录、自动化结果
+// 目录与模型目录。重复的 `Process.Start(UseShellExecute)` 会在不同平台间产生差异。
+//
+// 有意不使用 P/Invoke。`UseShellExecute = true` 将操作交给平台 shell：Windows
+// 资源管理器、macOS Finder 或 Linux xdg-open。
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -18,8 +25,11 @@ namespace EchoDesk.Avalonia.Services;
 public static class ShellOpen
 {
     /// <summary>
-    /// 打开目录（不存在时先创建——"目录还没有"时用户点按钮的意图通常是"带我去那儿"，
-    /// 而不是"告诉我它不存在"）。失败只返回 false，不抛：调用方负责显示提示。
+    /// [EN] Open a directory, creating it first when missing. A user who opens a
+    /// not-yet-created directory usually wants to be taken there. Failures return
+    /// false instead of throwing; the caller displays the message.
+    /// [ZH] 打开目录；不存在时先创建。用户打开尚未创建的目录时，通常希望直接前往
+    /// 该位置。失败返回 false 而不抛出异常；由调用方显示提示。
     /// </summary>
     public static bool TryOpenDirectory(string? dir)
     {
@@ -33,7 +43,10 @@ public static class ShellOpen
         }
         catch (Exception)
         {
-            // 权限不足 / 没有默认文件管理器 / 路径非法：调用方把 false 变成一句提示
+            // [EN] Insufficient permissions, no default file manager, or an
+            // [EN] invalid path: the caller turns false into a user-facing notice.
+            // [ZH] 权限不足、缺少默认文件管理器或路径非法：调用方将 false 转换为
+            // [ZH] 用户提示。
             return false;
         }
     }

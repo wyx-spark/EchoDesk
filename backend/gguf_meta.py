@@ -1,11 +1,28 @@
-"""GGUF 元数据轻量读取与显存/内存估算。
+"""
+[EN]
+Lightweight GGUF metadata reader and memory estimation.
 
-只解析 GGUF 头部的 KV 元数据区（不读张量数据），因此无需把模型载入内存即可
-拿到训练上下文长度、层数、注意力头数等关键参数，用于：
+Only the KV metadata section of the GGUF header is parsed; tensor data is not
+loaded. This makes the training-context length, layer count, attention-head
+count and related parameters available without loading the model into memory.
+The values are used to:
 
-1. 按模型决定上下文窗口上限（``resolve_context_window``）；
+1. resolve the context-window limit per model (``resolve_context_window``);
+2. estimate KV-cache memory (``estimate_kv_cache_bytes``);
+3. emit context-window details when a model is loaded or reloaded.
+
+The GGUF specification is available at
+https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
+
+[ZH]
+GGUF 元数据的轻量读取与内存估算。
+
+仅解析 GGUF 头部的 KV 元数据区，不读取张量数据。因此无需将模型载入内存即可
+获得训练上下文长度、层数、注意力头数等关键参数。这些值用于：
+
+1. 按模型解析上下文窗口上限（``resolve_context_window``）；
 2. 估算 KV Cache 内存占用（``estimate_kv_cache_bytes``）；
-3. 模型加载/重载时输出窗口大小日志。
+3. 在模型加载或重载时输出上下文窗口信息。
 
 GGUF 规范见 https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
 """
@@ -16,7 +33,9 @@ from typing import Any, Dict, Optional
 
 MAGIC = b"GGUF"
 
-# GGUF 元数据值类型 → struct 格式（字符串与数组单独处理）
+# [EN] GGUF metadata value types mapped to struct format strings. Strings and
+# [EN] arrays are handled separately.
+# [ZH] GGUF 元数据值类型到 struct 格式字符串的映射。字符串与数组单独处理。
 _SCALAR_FORMATS = {
     0: "<B",   # UINT8
     1: "<b",   # INT8
@@ -33,12 +52,21 @@ _SCALAR_FORMATS = {
 _TYPE_STRING = 8
 _TYPE_ARRAY = 9
 
-# 数组最多读入的元素个数（元数据里的 tokenizer 词表可能上万个，没必要全读）
+# [EN] Maximum number of array elements read eagerly. Tokenizer vocabularies in
+# [EN] metadata can contain tens of thousands of entries and need not be loaded.
+# [ZH] 数组最多预读的元素数量。元数据中的分词器词表可能包含数万项，无需全部载入。
 _MAX_ARRAY_ITEMS = 64
 
 
 class GgufReader:
-    """按顺序读取 GGUF 的元数据键值对；读不懂的地方抛异常由调用方兜底。"""
+    """
+    [EN]
+    Read GGUF metadata key-value pairs sequentially. Unsupported or malformed
+    entries raise an exception that the caller is expected to handle.
+
+    [ZH]
+    按顺序读取 GGUF 元数据键值对。遇到不支持或格式异常的条目时抛出异常，由调用方处理。
+    """
 
     def __init__(self, fh) -> None:
         self._fh = fh
@@ -61,7 +89,9 @@ class GgufReader:
             item_type = self._read("<I")
             count = self._read("<Q")
             if count > _MAX_ARRAY_ITEMS:
-                # 超大数组（如词表）跳过：只读前若干项做类型判断，其余按需 seek
+                # [EN] Skip oversized arrays such as vocabularies: read the first
+                # [EN] few entries for type checks and seek past the remainder.
+                # [ZH] 跳过大数组（如词表）：只读取前若干项用于类型判断，其余部分通过 seek 跳过。
                 head = [self._value(item_type) for _ in range(_MAX_ARRAY_ITEMS)]
                 self._skip_array_items(item_type, count - _MAX_ARRAY_ITEMS)
                 return head
@@ -73,7 +103,14 @@ class GgufReader:
         return bool(value) if vtype == 7 else value
 
     def _skip_array_items(self, item_type: int, count: int) -> None:
-        """跳过数组剩余元素（变长类型只能逐个读）。"""
+        """
+        [EN]
+        Skip the remaining elements of an array. Variable-length types must be
+        read one by one.
+
+        [ZH]
+        跳过数组剩余元素。变长类型只能逐项读取。
+        """
         if item_type in (_TYPE_STRING, _TYPE_ARRAY):
             for _ in range(count):
                 self._value(item_type)
@@ -85,7 +122,14 @@ class GgufReader:
 
 
 def read_metadata(path: str, max_pairs: int = 4096) -> Dict[str, Any]:
-    """读取 GGUF 文件的元数据字典；文件不存在或格式异常时返回空字典。"""
+    """
+    [EN]
+    Read the metadata dictionary of a GGUF file. Returns an empty dictionary if
+    the file is missing or malformed.
+
+    [ZH]
+    读取 GGUF 文件的元数据字典。文件不存在或格式异常时返回空字典。
+    """
     if not path or not os.path.exists(path):
         return {}
     try:
@@ -93,10 +137,14 @@ def read_metadata(path: str, max_pairs: int = 4096) -> Dict[str, Any]:
             if fh.read(4) != MAGIC:
                 return {}
             version = struct.unpack("<I", fh.read(4))[0]
+            # [EN] Version 1 uses a different layout and is intentionally unsupported.
+            # [ZH] 版本 1 的布局不同，刻意不提供兼容。
             if version < 2:
-                return {}  # v1 布局不同，不做兼容
+                return {}
             reader = GgufReader(fh)
-            reader._read("<Q")  # tensor_count，无需使用
+            # [EN] tensor_count is present in the header but not used here.
+            # [ZH] 头部包含 tensor_count，但本模块不使用该值。
+            reader._read("<Q")
             kv_count = reader._read("<Q")
             meta: Dict[str, Any] = {"general.gguf_version": version}
             for _ in range(min(kv_count, max_pairs)):
@@ -109,7 +157,15 @@ def read_metadata(path: str, max_pairs: int = 4096) -> Dict[str, Any]:
 
 
 def _as_int(value: Any) -> Optional[int]:
-    """把元数据值稳妥地转成 int（数组取首项，如 head_count_kv 可能是数组）。"""
+    """
+    [EN]
+    Convert a metadata value to int defensively. For arrays, the first element is
+    used because fields such as ``head_count_kv`` may be arrays.
+
+    [ZH]
+    稳健地将元数据值转换为 int。对于数组取首项，因为 ``head_count_kv`` 等字段
+    可能以数组形式出现。
+    """
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -127,13 +183,26 @@ def _as_int(value: Any) -> Optional[int]:
 
 
 def architecture(meta: Dict[str, Any]) -> str:
-    """返回模型架构名（如 qwen3、llama）。"""
+    """
+    [EN]
+    Return the model architecture name, such as qwen3 or llama.
+
+    [ZH]
+    返回模型架构名称，例如 qwen3 或 llama。
+    """
     value = meta.get("general.architecture")
     return str(value) if isinstance(value, str) and value else "llama"
 
 
 def resolve_context_window(path: str, default: int = 4096) -> int:
-    """返回模型训练时的上下文窗口 token 数（读不到时返回 default）。"""
+    """
+    [EN]
+    Return the model's training context window in tokens, or ``default`` when
+    the value cannot be read.
+
+    [ZH]
+    返回模型训练时的上下文窗口 token 数；无法读取时返回 ``default``。
+    """
     meta = read_metadata(path)
     if not meta:
         return default
@@ -146,10 +215,19 @@ def resolve_context_window(path: str, default: int = 4096) -> int:
 
 
 def estimate_kv_cache_bytes(path: str, n_ctx: int) -> Optional[int]:
-    """估算给定上下文长度下 KV Cache 的内存占用（字节，按 fp16 计）。
+    """
+    [EN]
+    Estimate KV-cache memory in bytes for the given context length, assuming
+    fp16 storage.
+
+    Formula: n_ctx x n_layer x n_head_kv x (key_dim + value_dim) x 2 bytes.
+    Returns ``None`` when the metadata is insufficient.
+
+    [ZH]
+    估算给定上下文长度下 KV Cache 的内存占用（字节），按 fp16 存储计算。
 
     公式：n_ctx × n_layer × n_head_kv × (key_dim + value_dim) × 2 字节。
-    元数据不足时返回 None。
+    元数据不足时返回 ``None``。
     """
     meta = read_metadata(path)
     if not meta:
@@ -179,7 +257,13 @@ def estimate_kv_cache_bytes(path: str, n_ctx: int) -> Optional[int]:
 
 
 def describe_model(path: str, n_ctx: int) -> Dict[str, Any]:
-    """汇总模型关键参数（供日志与 /model 展示）。"""
+    """
+    [EN]
+    Summarize key model parameters for logs and the ``/model`` command.
+
+    [ZH]
+    汇总模型关键参数，供日志与 ``/model`` 命令展示。
+    """
     meta = read_metadata(path)
     arch = architecture(meta) if meta else _t("sys.log_unknown")
     train_ctx = resolve_context_window(path, default=0) if meta else 0
@@ -196,7 +280,13 @@ def describe_model(path: str, n_ctx: int) -> Dict[str, Any]:
 
 
 def format_bytes(n: Optional[int]) -> str:
-    """字节数格式化（用于 KV Cache 占用展示）。"""
+    """
+    [EN]
+    Format a byte count for KV-cache usage display.
+
+    [ZH]
+    格式化字节数，用于展示 KV Cache 占用。
+    """
     if not n:
         return _t("sys.log_unknown")
     if n >= 1073741824:

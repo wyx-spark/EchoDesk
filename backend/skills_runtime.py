@@ -1,24 +1,54 @@
 # -*- coding: utf-8 -*-
-"""技能运行期加载器与本地插件接口（任务书 任务二 / 任务二·补）。
+"""
+[EN]
+Skill runtime loader and local plugin interface.
+
+Responsibilities
+
+1. Discovery: scan three plugin sources, ``skills_dev/`` (development),
+   ``skills_local.json`` (explicit manifest), and ``skills/`` (installed), and
+   parse each ``skill.json``.
+2. Loading: dynamically import the entry module, call its ``register(api)``
+   function, and attach declared commands to the ``command_handler`` command
+   table with the same behaviour as built-in commands.
+3. Isolation: exceptions from any single skill's import, registration, or
+   execution are captured and logged without affecting other skills or
+   application startup.
+4. Hot reload: unload the old module and registrations, then re-import without
+   restarting the application.
+5. Local plugin interface: manifest, scaffolding, folder installation, ZIP
+   export, trust confirmation, and environment sanitization.
+
+Security boundaries
+
+* Development directories may omit ``echodesk.bundle``; only validation
+  strictness is relaxed, not the permission boundary.
+* Before executing a skill command, environment variables whose names contain
+  KEY, SECRET, TOKEN, or PASSWORD are removed.
+* Normal loading accepts only skills recorded in ``skills_registry.json`` and
+  marked ``verified=true`` in the marketplace verification cache. Local and
+  development sources use a separate relaxed path and are labelled by source.
+
+[ZH]
+技能运行期加载器与本地插件接口。
 
 职责
-----
-1. **发现**：扫描 ``skills_dev/``（开发）、``skills_local.json``（显式清单）、
-   ``skills/``（正式安装）三处插件来源，解析各自的 ``skill.json``。
-2. **加载**：动态导入入口模块、调用其注册函数 ``register(api)``，
-   把技能声明的指令挂到 ``command_handler`` 的指令表上（与内置指令行为一致）。
-3. **隔离**：任何单个技能的导入/注册/执行异常都被捕获并写入日志，
-   不影响其它技能，也不影响主程序启动。
-4. **热重载**：卸载旧模块与注册项后重新导入，无需重启程序。
-5. **本地插件接口**：清单文件、脚手架、从文件夹安装、导出 zip、信任确认、
-   环境变量清洗。
 
-安全边界（任务书 2B.9）
-----------------------
-* 放宽的只是**验证严格度**（开发目录允许缺 ``echodesk.bundle``），权限边界不变；
-* 执行技能指令前清洗 ``os.environ`` 中名称含 KEY/SECRET/TOKEN/PASSWORD 的变量；
-* 正式加载默认只接受 ``skills_registry.json`` 中记录、且市场验证缓存标记为
-  ``verified=true`` 的技能；本地/开发来源走独立的放宽路径并单独标注来源。
+1. 发现：扫描三个插件来源 ``skills_dev/``（开发）、``skills_local.json``（显式
+   清单）与 ``skills/``（已安装），并解析各自的 ``skill.json``。
+2. 加载：动态导入入口模块，调用其 ``register(api)`` 函数，并将声明的指令挂到
+   ``command_handler`` 指令表，行为与内置指令一致。
+3. 隔离：单个技能的导入、注册或执行异常会被捕获并记录，不影响其他技能，也不影响
+   应用启动。
+4. 热重载：卸载旧模块与注册项后重新导入，无需重启应用。
+5. 本地插件接口：清单、脚手架、文件夹安装、ZIP 导出、信任确认与环境变量清洗。
+
+安全边界
+
+* 仅放宽验证严格度：开发目录允许缺少 ``echodesk.bundle``，权限边界不变。
+* 执行技能指令前，移除名称包含 KEY、SECRET、TOKEN 或 PASSWORD 的环境变量。
+* 正常加载仅接受 ``skills_registry.json`` 中记录、且在市场验证缓存中标记为
+  ``verified=true`` 的技能。本地与开发来源使用独立的放宽路径，并按来源标注。
 """
 from __future__ import annotations
 
@@ -42,20 +72,27 @@ from i18n import get as _i18n
 from i18n import t as _t
 from version import APP_VERSION
 
-#: 当前支持的技能 API 版本（主版本号相同即兼容）
+#: [EN] Supported skill API version. Matching major versions are compatible.
+#: [ZH] 当前支持的技能 API 版本。主版本号相同即兼容。
 SKILL_API_VERSION = "1"
 
-#: 本地插件清单（skills_local.json）的当前 schema 版本。
-#: 1 → 2 只是新增了 denied 列表，旧文件仍可读（缺字段当空处理）。
+#: [EN] Current schema version of the local plugin manifest
+#: [EN] (``skills_local.json``). Version 2 adds the denied list; version 1 files
+#: [EN] remain readable and missing fields are treated as empty.
+#: [ZH] 本地插件清单（``skills_local.json``）的当前 schema 版本。版本 2 新增
+#: [ZH] denied 列表；版本 1 文件仍可读取，缺失字段按空处理。
 MANIFEST_SCHEMA = 2
 
-#: 自动化钩子可挂接的阶段（任务书 2.3）
+#: [EN] Automation stages to which hooks may attach.
+#: [ZH] 自动化钩子可挂接的阶段。
 HOOK_STAGES: Tuple[str, ...] = ("before_task", "after_download", "after_summary", "after_task")
 
-#: 环境变量清洗：名称命中这些片段就临时移除（任务书 2B.9）
+#: [EN] Environment-variable name fragments that cause temporary removal.
+#: [ZH] 环境变量名称中命中这些片段时会临时移除该变量。
 _SECRET_HINTS = ("KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD", "CREDENTIAL")
 
-#: 允许声明的权限（用于在界面上展示，供用户审查）
+#: [EN] Permissions that may be declared, shown in the interface for user review.
+#: [ZH] 允许声明的权限，在界面中展示以供用户审查。
 KNOWN_PERMISSIONS: Tuple[str, ...] = ("network", "filesystem", "automation", "subprocess", "clipboard")
 
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -87,14 +124,27 @@ def _write_json(path: str, data: Any) -> bool:
 
 
 def sanitize_id(raw: Any, fallback: str = "plugin") -> str:
-    """把用户输入的名字安全化为插件 ID（目录名安全）。"""
+    """
+    [EN]
+    Sanitize a user-supplied name into a directory-safe plugin id.
+
+    [ZH]
+    将用户提供的名称安全化为可安全用作目录名的插件 id。
+    """
     text = str(raw or "").strip()
     text = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-.")
     return text[:64] or fallback
 
 
 def parse_manifest(manifest: Any) -> Dict[str, Any]:
-    """从 skill.json 中解析出加载器需要的字段（兼容多种写法）。"""
+    """
+    [EN]
+    Parse the fields required by the loader from ``skill.json``, accepting
+    multiple supported forms.
+
+    [ZH]
+    从 ``skill.json`` 解析加载器所需字段，兼容多种受支持写法。
+    """
     data = manifest if isinstance(manifest, dict) else {}
     echodesk = data.get("echodesk") if isinstance(data.get("echodesk"), dict) else {}
     bundle = echodesk.get("bundle") or data.get("echodesk.bundle") or data.get("entry") or data.get("main") or ""
@@ -124,20 +174,35 @@ def parse_manifest(manifest: Any) -> Dict[str, Any]:
         "permissions": {k: v for k, v in perms.items()},
         "lang_default": str(lang.get("default") or "").strip(),
         "lang_available": [str(x) for x in (lang.get("available") or []) if str(x).strip()],
-        # 插件间依赖（能力扩展-1 任务四）：`dependencies` 支持两种写法 ——
-        # 列表（`["other-plugin"]` 或 `["other-plugin>=1.2"]`）与字典
-        # （`{"other-plugin": ">=1.2"}`）。两种都归一成 {插件 id: 版本要求}。
+        # [EN] Inter-plugin dependencies accept two forms: a list such as
+        # [EN] ["other-plugin"] or ["other-plugin>=1.2"], and a dictionary such
+        # [EN] as {"other-plugin": ">=1.2"}. Both normalize to
+        # [EN] {plugin_id: version_requirement}.
+        # [ZH] 插件间依赖支持两种形式：列表（如 ["other-plugin"] 或
+        # [ZH] ["other-plugin>=1.2"]）与字典（如 {"other-plugin": ">=1.2"}）。
+        # [ZH] 两者均归一化为 {插件 id: 版本要求}。
         "dependencies": _parse_dependencies(data.get("dependencies")),
     }
 
 
 def _parse_dependencies(value: Any) -> Dict[str, str]:
-    """把 ``dependencies`` 归一成 ``{插件 id: 版本要求}``（版本要求可为空串）。
+    """
+    [EN]
+    Normalize ``dependencies`` into ``{plugin_id: version_requirement}``. The
+    requirement may be an empty string.
 
-    为什么必须归一：审计发现这个字段在旧代码里**只被市场侧抄进注册表**，
-    运行期完全不解析 —— 也就是说"插件声明依赖另一个插件"既不校验也不提示，
-    用户看到的是"装上去了但命令没有"。归一之后 :meth:`SkillLoader.load_all`
-    就能在加载期给出明确结论（缺哪个、要什么版本）。
+    Without normalization, dependencies are copied into the registry by the
+    marketplace but never evaluated at runtime. A plugin declaring a dependency
+    would be installed without validation or a warning, and the user would see a
+    missing command. Normalization lets :meth:`SkillLoader.load_all` report
+    which dependency is missing and which version is required during loading.
+
+    [ZH]
+    将 ``dependencies`` 归一化为 ``{插件 id: 版本要求}``。版本要求可为空串。
+
+    若不做归一化，依赖只会由市场侧复制进注册表，运行期不会解析。插件声明的依赖
+    因此既不会校验也不会提示，用户只会看到“已安装但没有命令”。归一化后，
+    :meth:`SkillLoader.load_all` 可在加载期报告缺失的依赖及其所需版本。
     """
     out: Dict[str, str] = {}
     if isinstance(value, dict):
@@ -157,23 +222,44 @@ def _parse_dependencies(value: Any) -> Dict[str, str]:
 
 
 def parse_requirement(spec: str) -> Tuple[str, str]:
-    """把 ``">=1.2"`` / ``"==1.0"`` / ``"1.2"`` / ``">=v1.2"`` 拆成 ``(运算符, 版本)``。
+    """
+    [EN]
+    Split ``">=1.2"``, ``"==1.0"``, ``"1.2"``, or ``">=v1.2"`` into
+    ``(operator, version)``.
 
-    **版本段允许一个可选的 ``v`` 前缀**：实测发现 ``">=v99.0.0"`` 在旧正则下解析失败
-    → ``version_satisfies`` 直接放行 → 新加的 ``min_version`` 校验被静默绕过。
-    小模型写的清单、以及照抄 GitHub tag 名字（``v1.2.0``）的插件都会带这个前缀，
-    所以这里必须认它（而不是把"写了 v 就不校验"当成宽松）。
+    The version segment accepts an optional ``v`` prefix. Without this, a
+    requirement such as ``">=v99.0.0"`` fails to parse, and
+    ``version_satisfies`` would silently accept it, bypassing the minimum-version
+    check. Manifests written by small models and plugins that copy GitHub tag
+    names commonly include this prefix.
+
+    [ZH]
+    将 ``">=1.2"``、``"==1.0"``、``"1.2"`` 或 ``">=v1.2"`` 拆分为
+    ``(运算符, 版本)``。
+
+    版本段允许可选 ``v`` 前缀。缺少该支持时，``">=v99.0.0"`` 等要求无法解析，
+    ``version_satisfies`` 会静默放行，从而绕过最低版本校验。小模型编写的清单以及
+    照抄 GitHub tag 名称的插件常带有该前缀。
     """
     text = str(spec or "").strip()
     match = re.match(r"^(>=|<=|==|=|>|<|\^|~)?\s*[vV]?\s*([0-9][0-9A-Za-z.\-]*)$", text)
     if not match:
         return "", ""
-    op = match.group(1) or ">="            # 只写版本号时按"至少这个版本"理解（最常见意图）
+    # [EN] A bare version means "at least this version", the most common intent.
+    # [ZH] 仅写版本号时按“至少该版本”理解，这是最常见的意图。
+    op = match.group(1) or ">="
     return (">=" if op in ("=", "^", "~") else op), match.group(2)
 
 
 def version_satisfies(version: str, spec: str) -> bool:
-    """版本是否满足要求；**要求为空或无法解析时一律放行**（宽松优先，避免误伤）。"""
+    """
+    [EN]
+    Return whether a version satisfies a requirement. Empty or unparseable
+    requirements are accepted to avoid false rejections.
+
+    [ZH]
+    返回版本是否满足要求。要求为空或无法解析时一律放行，以避免误拒。
+    """
     op, want = parse_requirement(spec)
     if not op:
         return True
@@ -181,8 +267,10 @@ def version_satisfies(version: str, spec: str) -> bool:
     target = _version_tuple(want)
     if not have or not target:
         return True
-    # 补齐到同样长度再比：`(1, 0, 0) == (1, 0)` 是 False，但"1.0.0" 与 "1.0"
-    # 在人看来是同一个版本。缺的段按 0 补（语义上 1.0 == 1.0.0）。
+    # [EN] Pad both tuples to the same length before comparison: (1, 0, 0) and
+    # [EN] (1, 0) differ as tuples but represent the same version.
+    # [ZH] 比较前将两个元组补齐到相同长度：(1, 0, 0) 与 (1, 0) 在元组层面不同，
+    # [ZH] 但表示同一版本。
     size = max(len(have), len(target))
     have = have + (0,) * (size - len(have))
     target = target + (0,) * (size - len(target))
@@ -200,7 +288,14 @@ def version_satisfies(version: str, spec: str) -> bool:
 
 
 def _version_tuple(text: str) -> Tuple[int, ...]:
-    """把 ``"1.2.3"`` 变成 ``(1, 2, 3)``；取不出数字时返回空元组（调用方放行）。"""
+    """
+    [EN]
+    Convert ``"1.2.3"`` to ``(1, 2, 3)``. Return an empty tuple when no digits
+    are present, which callers treat as acceptance.
+
+    [ZH]
+    将 ``"1.2.3"`` 转换为 ``(1, 2, 3)``。无法提取数字时返回空元组，调用方按放行处理。
+    """
     parts = re.findall(r"\d+", str(text or ""))
     if not parts:
         return ()
@@ -214,7 +309,14 @@ def _license_text(value: Any) -> str:
 
 
 def api_version_ok(want: str) -> bool:
-    """API 版本校验：主版本号一致即兼容；未声明视为兼容（开发模式更宽松）。"""
+    """
+    [EN]
+    Validate the API version. Matching major versions are compatible, and an
+    undeclared version is accepted for development compatibility.
+
+    [ZH]
+    校验 API 版本。主版本号一致即兼容；未声明版本时按兼容处理，以支持开发模式。
+    """
     text = str(want or "").strip()
     if not text:
         return True
@@ -222,16 +324,24 @@ def api_version_ok(want: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 技能可用的 API
+# [EN] API available to skills / [ZH] 技能可用的 API
 # ---------------------------------------------------------------------------
 
 
 class SkillPanel:
-    """技能声明的 UI 面板（任务书 2.3 UI 面板注册）。
+    """
+    [EN]
+    UI panel declared by a skill.
 
-    面板本身只是数据：标题、说明、表单字段、动作按钮，以及两个可选回调。
-    前端用原生控件渲染成一个 Tab，因此技能不需要碰 UI 代码，也不需要
-    额外引入 WebView2 之类的重依赖（任务书 2B.12 体积优化）。
+    A panel is data only: title, description, form fields, action buttons, and
+    two optional callbacks. The frontend renders it as a native tab, so skills
+    do not touch UI code and do not require a heavy dependency such as WebView2.
+
+    [ZH]
+    技能声明的 UI 面板。
+
+    面板仅包含数据：标题、说明、表单字段、动作按钮与两个可选回调。前端将其渲染
+    为原生 Tab，因此技能无需接触 UI 代码，也无需引入 WebView2 等重型依赖。
     """
 
     def __init__(self, panel_id: str, title: str, description: str = "") -> None:
@@ -245,7 +355,14 @@ class SkillPanel:
         self.skill_id = ""
 
     def public(self, api: "SkillAPI") -> Dict[str, Any]:
-        """序列化给前端（标题与字段说明都走技能自己的语言包）。"""
+        """
+        [EN]
+        Serialize the panel for the frontend. Titles and field descriptions use
+        the skill's own language pack.
+
+        [ZH]
+        将面板序列化供前端使用。标题与字段说明使用技能自己的语言包。
+        """
         def loc(value: Any) -> str:
             return api.lang_value(value)
 
@@ -273,7 +390,14 @@ class SkillPanel:
 
 
 class SkillAPI:
-    """传给技能 ``register(api)`` 的对象：技能能用到的全部能力都在这里。"""
+    """
+    [EN]
+    Object passed to a skill's ``register(api)`` function. It exposes every
+    capability available to the skill.
+
+    [ZH]
+    传给技能 ``register(api)`` 函数的对象，提供技能可用的全部能力。
+    """
 
     def __init__(self, loader: "SkillLoader", record: "SkillRecord") -> None:
         self._loader = loader
@@ -281,7 +405,7 @@ class SkillAPI:
         self._lang_cache: Dict[str, Dict[str, str]] = {}
         self.log = record.logger.info
 
-    # ---- 元信息 ----
+    # ---- [EN] Metadata / [ZH] 元信息 ----
 
     @property
     def id(self) -> str:
@@ -311,7 +435,14 @@ class SkillAPI:
         return APP_VERSION
 
     def data_dir(self) -> str:
-        """技能自己的数据目录（技能目录内，与主程序数据隔离）。"""
+        """
+        [EN]
+        Return the skill's own data directory inside the skill folder, isolated
+        from application data.
+
+        [ZH]
+        返回技能目录内的独立数据目录，与主程序数据隔离。
+        """
         path = os.path.join(self._record.path, "data")
         try:
             os.makedirs(path, exist_ok=True)
@@ -326,7 +457,7 @@ class SkillAPI:
     def debug(self, message: str) -> None:
         self._record.logger.debug("%s", message)
 
-    # ---- 1. 命令注册 ----
+    # ---- [EN] 1. Command registration / [ZH] 1. 命令注册 ----
 
     def register_command(
         self,
@@ -339,7 +470,14 @@ class SkillAPI:
         destructive: bool = False,
         aliases: Tuple[str, ...] = (),
     ) -> bool:
-        """注册一个 ``/xxx`` 指令；处理函数接收参数列表，返回文本或动作对象。"""
+        """
+        [EN]
+        Register a ``/xxx`` command. The handler receives the argument list and
+        returns text or an action object.
+
+        [ZH]
+        注册 ``/xxx`` 指令。处理函数接收参数列表，并返回文本或动作对象。
+        """
         if handler is None:
             self.warn(f"register_command({name!r}) 未提供处理函数，已忽略")
             return False
@@ -360,7 +498,7 @@ class SkillAPI:
             self.warn(f"指令 {name} 与内置指令或已注册指令重名，已跳过")
         return added
 
-    # ---- 2. UI 面板注册 ----
+    # ---- [EN] 2. UI panel registration / [ZH] 2. UI 面板注册 ----
 
     def register_panel(
         self,
@@ -373,7 +511,14 @@ class SkillAPI:
         on_action: Optional[Callable[[str, str, Dict[str, Any]], Any]] = None,
         render: Optional[Callable[[], Any]] = None,
     ) -> bool:
-        """声明一个设置窗口里的面板 Tab（由前端用原生控件渲染）。"""
+        """
+        [EN]
+        Declare a settings-window tab rendered by the frontend with native
+        controls.
+
+        [ZH]
+        声明设置窗口中的面板 Tab，由前端使用原生控件渲染。
+        """
         key = sanitize_id(panel_id, "panel")
         panel = SkillPanel(key, title if isinstance(title, str) else str(title),
                            description if isinstance(description, str) else str(description))
@@ -387,10 +532,18 @@ class SkillAPI:
             self._record.manifest["ui_panels"].append(key)
         return True
 
-    # ---- 3. 自动化钩子 ----
+    # ---- [EN] 3. Automation hooks / [ZH] 3. 自动化钩子 ----
 
     def register_automation_hook(self, stage: str, handler: Callable[..., Any]) -> bool:
-        """挂接自动化流程的阶段钩子：before_task / after_download / after_summary / after_task。"""
+        """
+        [EN]
+        Attach a hook to an automation stage: before_task, after_download,
+        after_summary, or after_task.
+
+        [ZH]
+        将钩子挂接到自动化阶段：before_task、after_download、after_summary 或
+        after_task。
+        """
         key = str(stage or "").strip().lower()
         if key not in HOOK_STAGES:
             self.warn(f"未知的自动化钩子阶段 {stage!r}（可用：{', '.join(HOOK_STAGES)}）")
@@ -404,10 +557,16 @@ class SkillAPI:
             self._record.hooks.append(key)
         return True
 
-    # ---- 4. 文件解析扩展 ----
+    # ---- [EN] 4. File-parser extension / [ZH] 4. 文件解析扩展 ----
 
     def register_file_parser(self, ext: str, handler: Callable[[str], str]) -> bool:
-        """声明支持额外的文件扩展名（如 ``.ofd``）。"""
+        """
+        [EN]
+        Declare support for an additional file extension, such as ``.ofd``.
+
+        [ZH]
+        声明支持额外的文件扩展名，例如 ``.ofd``。
+        """
         from file_parser import register_skill_parser
 
         ok = register_skill_parser(ext, handler, self._record.id)
@@ -421,7 +580,7 @@ class SkillAPI:
             self.warn(f"扩展名 {ext} 已被内置解析器或其它技能占用，未注册")
         return ok
 
-    # ---- 5. 配置读写（技能目录内，与主配置隔离） ----
+    # ---- [EN] 5. Configuration I/O inside the skill directory / [ZH] 5. 技能目录内的配置读写 ----
 
     def config_path(self) -> str:
         return os.path.join(self._record.path, "config.json")
@@ -435,7 +594,7 @@ class SkillAPI:
         current.update(values or {})
         return _write_json(self.config_path(), current)
 
-    # ---- 6. 多语言资源 ----
+    # ---- [EN] 6. Localization resources / [ZH] 6. 多语言资源 ----
 
     def locale(self) -> str:
         return _i18n().locale
@@ -453,7 +612,15 @@ class SkillAPI:
         return flat
 
     def lang(self, key: str, default: str = "", **kwargs: Any) -> str:
-        """取技能自己的语言包文案；缺失时回退到技能默认语言 → default → key。"""
+        """
+        [EN]
+        Resolve text from the skill's own language pack. Missing keys fall back
+        to the skill's default language, then ``default``, then the key.
+
+        [ZH]
+        从技能自己的语言包获取文案。缺失时依次回退到技能默认语言、``default``
+        与 key。
+        """
         want = _i18n().locale
         chain = [want]
         if "-" in want:
@@ -469,7 +636,15 @@ class SkillAPI:
         return default or key
 
     def lang_value(self, value: Any) -> str:
-        """把 ``{"zh-Hans": "...", "en": "..."}`` 或多语言键 ``"@key"`` 解析成当前语言的文本。"""
+        """
+        [EN]
+        Resolve a ``{"zh-Hans": "...", "en": "..."}`` mapping or an ``"@key"``
+        localization key to text in the current language.
+
+        [ZH]
+        将 ``{"zh-Hans": "...", "en": "..."}`` 映射或 ``"@key"`` 本地化键解析为
+        当前语言的文本。
+        """
         if value is None:
             return ""
         if isinstance(value, dict):
@@ -499,21 +674,31 @@ def _flatten(node: Any, prefix: str, out: Dict[str, str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 插件记录
+# [EN] Plugin record / [ZH] 插件记录
 # ---------------------------------------------------------------------------
 
 
 class SkillRecord:
-    """一个已发现/已加载插件的状态。"""
+    """
+    [EN]
+    State of a discovered or loaded plugin.
+
+    [ZH]
+    已发现或已加载插件的状态。
+    """
 
     def __init__(self, skill_id: str, path: str, source: str, manifest: Dict[str, Any],
                  logger: logging.Logger) -> None:
         self.id = skill_id
         self.path = os.path.abspath(path)
-        self.source = source                 # dev | local | installed
+        # [EN] Source: dev, local, or installed.
+        # [ZH] 来源：dev、local 或 installed。
+        self.source = source
         self.manifest = manifest
         self.logger = logger
-        self.entry_file = ""                 # 解析出的入口文件绝对路径
+        # [EN] Absolute path of the resolved entry file.
+        # [ZH] 解析后的入口文件绝对路径。
+        self.entry_file = ""
         self.entry_is_package = False
         self.loaded = False
         self.error = ""
@@ -524,7 +709,9 @@ class SkillRecord:
         self.hooks: List[str] = []
         self.api: Optional[SkillAPI] = None
         self.module_name = ""
-        self.overrode = ""                   # 被本记录覆盖掉的下级来源路径
+        # [EN] Path of the lower-priority source overridden by this record.
+        # [ZH] 被本记录覆盖的低优先级来源路径。
+        self.overrode = ""
         self.verified = False
         self.trust_pending = False
         self.alias = ""
@@ -532,7 +719,9 @@ class SkillRecord:
         self.order = 0
         self.enabled = True
         self.loaded_at = ""
-        # 插件间依赖（能力扩展-1 任务四）：{插件 id: 版本要求}，由 parse_manifest 归一。
+        # [EN] Inter-plugin dependencies: {plugin_id: version_requirement},
+        # [EN] normalized by parse_manifest.
+        # [ZH] 插件间依赖：{插件 id: 版本要求}，由 parse_manifest 归一化。
         self.dependencies: Dict[str, str] = dict(manifest.get("dependencies") or {})
 
     @property
@@ -540,7 +729,14 @@ class SkillRecord:
         return self.source == "dev"
 
     def capabilities(self) -> List[str]:
-        """本插件实际注册到的能力（供批量确认框展示"它能做什么"）。"""
+        """
+        [EN]
+        Return the capabilities actually registered by this plugin, used by the
+        bulk confirmation dialog to show what it can do.
+
+        [ZH]
+        返回本插件实际注册的能力，用于批量确认框展示其可执行的操作。
+        """
         labels = []
         if self.commands:
             labels.append("commands")
@@ -598,27 +794,39 @@ class SkillRecord:
 
 
 # ---------------------------------------------------------------------------
-# 加载器
+# [EN] Loader / [ZH] 加载器
 # ---------------------------------------------------------------------------
 
 
 class SkillLoader:
-    """技能/本地插件加载器。"""
+    """
+    [EN]
+    Loader for skills and local plugins.
+
+    [ZH]
+    技能与本地插件加载器。
+    """
 
     def __init__(self, cfg: Any, commands: Any = None, logger: Optional[logging.Logger] = None) -> None:
-        self.cfg = cfg                       # MarketplaceConfig
-        self.commands = commands             # CommandHandler（可为 None，例如单测）
+        # [EN] Marketplace configuration.
+        # [ZH] 市场配置。
+        self.cfg = cfg
+        # [EN] Command handler, which may be None in unit tests.
+        # [ZH] 指令处理器，在单元测试中可为 None。
+        self.commands = commands
         self.log = logger or logging.getLogger("EchoDesk.Skills")
         self.hooks: Dict[str, List[Dict[str, Any]]] = {}
         self.records: Dict[str, SkillRecord] = {}
         self._lock = threading.RLock()
         self._env_lock = threading.Lock()
-        self._path_entries: Dict[str, str] = {}   # skill_id -> 加入 sys.path 的目录
+        # [EN] skill_id to the directory added to sys.path.
+        # [ZH] skill_id 到已加入 sys.path 的目录的映射。
+        self._path_entries: Dict[str, str] = {}
         self._last_error = ""
         self._manifest_cache: Optional[Dict[str, Any]] = None
         self._dev_mode_cache: Optional[bool] = None
 
-    # ---------- 路径 ----------
+    # ---------- [EN] Paths / [ZH] 路径 ----------
 
     @property
     def dev_dir(self) -> str:
@@ -644,16 +852,34 @@ class SkillLoader:
 
     @property
     def dev_mode(self) -> bool:
-        """开发者模式是否生效。
+        """
+        [EN]
+        Return whether developer mode is active.
 
-        修复一：开关必须**双向可用**。原实现是"配置开启 **或** skills_dev 里有插件"
-        就返回 True，于是只要目录里有插件（随包附带的示例插件就在那里），
-        用户在界面上关掉开关后状态立刻又变回"开启"，表现为"关不掉"。
+        The switch must work in both directions. The previous implementation
+        returned True when the configuration enabled it **or** a plugin existed
+        in ``skills_dev/``. Because bundled examples live there, turning the
+        switch off immediately produced "enabled" again, so it could not be
+        disabled.
 
-        现在分两种情况：
-        * 用户显式设置过（``dev_mode_explicit``）→ 完全以配置为准，关就真的关；
-        * 从未设置过 → 沿用"目录里有插件就自动启用"的开箱即用行为，
-          并把自动判定的结果暴露为 :attr:`dev_detected` 供界面说明。
+        Current behaviour:
+        * If the user set the switch explicitly (``dev_mode_explicit``), the
+          configuration is authoritative.
+        * If the user never set it, plugins in the directory enable developer
+          mode automatically, and :attr:`dev_detected` exposes the automatic
+          result for display.
+
+        [ZH]
+        返回开发者模式是否生效。
+
+        开关必须双向可用。原实现只要配置开启 **或** ``skills_dev/`` 中存在插件
+        就返回 True。由于随包示例插件位于该目录，用户关闭开关后状态立即再次变为
+        “开启”，表现为无法关闭。
+
+        当前行为：
+        * 若用户显式设置过开关（``dev_mode_explicit``），以配置为准。
+        * 若从未设置，目录中存在插件时自动启用开发者模式，并通过
+          :attr:`dev_detected` 暴露自动判定结果供界面显示。
         """
         configured = bool(getattr(self.cfg, "dev_mode", False))
         if bool(getattr(self.cfg, "dev_mode_explicit", False)):
@@ -664,17 +890,31 @@ class SkillLoader:
 
     @property
     def dev_detected(self) -> bool:
-        """``skills_dev/`` 下是否存在插件（只看磁盘，不看开关）。"""
+        """
+        [EN]
+        Return whether any plugin exists under ``skills_dev/``, based only on
+        disk contents and not on the switch.
+
+        [ZH]
+        返回 ``skills_dev/`` 下是否存在插件，仅依据磁盘内容，不考虑开关状态。
+        """
         if self._dev_mode_cache is None:
             self._dev_mode_cache = bool(self._scan_dev_dirs())
         return self._dev_mode_cache
 
     @property
     def dev_mode_explicit(self) -> bool:
-        """用户是否显式设置过开关（供界面显示"按目录自动启用"还是"按你的选择"）。"""
+        """
+        [EN]
+        Return whether the user explicitly set the switch, so the interface can
+        distinguish automatic directory-based enabling from an explicit choice.
+
+        [ZH]
+        返回用户是否显式设置过开关，使界面能够区分按目录自动启用与用户明确选择。
+        """
         return bool(getattr(self.cfg, "dev_mode_explicit", False))
 
-    # ---------- 日志 ----------
+    # ---------- [EN] Logging / [ZH] 日志 ----------
 
     def _logwrite(self, level: str, message: str, exc: Optional[BaseException] = None) -> None:
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -695,7 +935,14 @@ class SkillLoader:
         self.log.log(numeric, "%s", message)
 
     def read_log(self, lines: int = 200) -> str:
-        """读取插件加载日志的最后 N 行（开发者 Tab 内嵌展示）。"""
+        """
+        [EN]
+        Read the last N lines of the plugin loader log for display in the
+        developer tab.
+
+        [ZH]
+        读取插件加载日志的最后 N 行，用于开发者 Tab 展示。
+        """
         try:
             with open(self.log_file, "r", encoding="utf-8", errors="replace") as f:
                 content = f.read().splitlines()
@@ -719,7 +966,7 @@ class SkillLoader:
         except OSError as e:
             raise RuntimeError(_t("skill.log_export_failed", error=e)) from e
 
-    # ---------- 本地插件清单（任务书 2B.3） ----------
+    # ---------- [EN] Local plugin manifest / [ZH] 本地插件清单 ----------
 
     def local_manifest(self) -> Dict[str, Any]:
         data = _read_json(self.local_manifest_file, None)
@@ -749,8 +996,12 @@ class SkillLoader:
         trusted = data.get("trusted")
         if not isinstance(trusted, list):
             trusted = []
-        # 修复一：还要记住"用户明确拒绝过"的插件，否则下次启动会反复追问同一件事。
-        # schema 1 的旧文件没有 denied 字段，读成空列表即可（等价于"尚未答复"）。
+        # [EN] The manifest must remember plugins the user explicitly denied;
+        # [EN] otherwise the same prompt reappears on every start. Schema 1
+        # [EN] files have no denied field, which reads as an empty list and
+        # [EN] means "not yet answered".
+        # [ZH] 清单必须记住用户明确拒绝的插件；否则每次启动都会重复询问。schema 1
+        # [ZH] 文件没有 denied 字段，读取为空列表，表示“尚未答复”。
         denied = data.get("denied")
         if not isinstance(denied, list):
             denied = []
@@ -789,17 +1040,33 @@ class SkillLoader:
         return skill_id in set(data.get("trusted") or [])
 
     def is_reviewed(self, skill_id: str, data: Optional[Dict[str, Any]] = None) -> bool:
-        """用户是否已经就该插件做过选择（信任或拒绝）——已答复过的不再询问。"""
+        """
+        [EN]
+        Return whether the user has already chosen to trust or deny this plugin.
+        Answered plugins are not prompted again.
+
+        [ZH]
+        返回用户是否已选择信任或拒绝该插件。已答复的插件不再询问。
+        """
         if data is None:
             data = self.local_manifest()
         return (skill_id in set(data.get("trusted") or [])
                 or skill_id in set(data.get("denied") or []))
 
     def trust_plugin(self, skill_id: str, trusted: bool = True) -> bool:
-        """记录用户对某个本地插件的选择（任务书 2B.9 + 修复一"记忆选择"）。
+        """
+        [EN]
+        Record the user's choice for a local plugin.
 
-        ``trusted=True`` 记入 trusted 并移出 denied；``trusted=False`` 反之。
-        两个列表都持久化到 ``skills_local.json``，因此**下次启动不再重复询问**。
+        ``trusted=True`` adds the plugin to trusted and removes it from denied;
+        ``trusted=False`` does the reverse. Both lists are persisted in
+        ``skills_local.json`` so the prompt is not repeated on the next start.
+
+        [ZH]
+        记录用户对本地插件的选择。
+
+        ``trusted=True`` 将插件加入 trusted 并从 denied 移除；``trusted=False``
+        则相反。两个列表均持久化到 ``skills_local.json``，下次启动不再重复询问。
         """
         data = self.local_manifest()
         trusted_ids = set(data.get("trusted") or [])
@@ -815,7 +1082,14 @@ class SkillLoader:
         return self.save_local_manifest(data)
 
     def resolve_plugin_path(self, raw: str) -> str:
-        """清单里的路径解析：绝对路径原样，相对路径以程序目录为基准（任务书 2B.3）。"""
+        """
+        [EN]
+        Resolve a manifest path: absolute paths are kept, and relative paths
+        are resolved against the program directory.
+
+        [ZH]
+        解析清单中的路径：绝对路径保持不变，相对路径以程序目录为基准。
+        """
         text = str(raw or "").strip().strip('"')
         if not text:
             return ""
@@ -833,7 +1107,7 @@ class SkillLoader:
                 return os.path.abspath(cand)
         return os.path.abspath(candidates[0])
 
-    # ---------- 发现（任务书 2B.4 优先级） ----------
+    # ---------- [EN] Discovery and source priority / [ZH] 发现与来源优先级 ----------
 
     def _scan_dev_dirs(self) -> List[str]:
         try:
@@ -844,16 +1118,27 @@ class SkillLoader:
         except OSError:
             return []
 
-    # ---------- 随包示例插件（修复一"内置插件静默"） ----------
+    # ---------- [EN] Bundled example plugins / [ZH] 随包示例插件 ----------
 
     def builtin_ids(self) -> set:
-        """随包附带的官方示例插件 ID 集合。
+        """
+        [EN]
+        Return the ids of official example plugins bundled with the application.
 
-        判定依据是**随包 examples 目录里实际存在的插件目录名**，而不是插件自己在
-        skill.json 里声明的标记 —— 后者任何人都能伪造，用它来决定"跳过信任确认"
-        等于把确认框变成摆设。用户手工放进 ``skills_dev/`` 的插件不在这个集合里，
-        因此一定会出现在批量确认框中（同名覆盖官方示例的情况除外，那种情况界面会
-        标成"已覆盖"，用户仍然看得到）。
+        The set is derived from directory names that actually exist in the
+        bundled examples directory, not from a marker declared in ``skill.json``,
+        which any plugin could forge. User plugins placed manually in
+        ``skills_dev/`` are not in this set and therefore appear in the bulk
+        confirmation dialog. A user plugin that overrides a bundled example is
+        marked as overridden and remains visible.
+
+        [ZH]
+        返回随应用附带的官方示例插件 id 集合。
+
+        集合依据随包 examples 目录中实际存在的目录名，而不是 ``skill.json`` 中
+        声明的标记，因为后者可被任意伪造。用户手工放入 ``skills_dev/`` 的插件不在
+        该集合中，因此会出现在批量确认框中。覆盖官方示例的用户插件会被标记为已覆盖，
+        并且仍然可见。
         """
         root = self.examples_dir()
         ids = set()
@@ -873,16 +1158,34 @@ class SkillLoader:
         return ids
 
     def is_builtin(self, skill_id: str) -> bool:
-        """是否随包示例插件（这类插件默认启用且不弹确认框）。"""
+        """
+        [EN]
+        Return whether this is a bundled example plugin. These are enabled by
+        default and do not trigger a confirmation dialog.
+
+        [ZH]
+        返回是否为随包示例插件。此类插件默认启用，且不弹出确认框。
+        """
         return skill_id in self.builtin_ids()
 
     def pending_review(self) -> List[Dict[str, Any]]:
-        """待用户确认的本地插件清单（修复一：一次性汇总确认框的数据来源）。
+        """
+        [EN]
+        Return local plugins awaiting user confirmation.
 
-        只包含"需要询问且用户还没答复过"的插件：
-        * 来源是 ``dev`` / ``local``（第三方路径）;
-        * 不是随包示例插件;
-        * 既不在 trusted 也不在 denied 里（答复过就不再问）。
+        Only plugins that require a prompt and have not been answered are
+        included:
+        * source is ``dev`` or ``local``;
+        * not a bundled example plugin;
+        * present in neither trusted nor denied.
+
+        [ZH]
+        返回等待用户确认的本地插件。
+
+        仅包含需要询问且尚未答复的插件：
+        * 来源为 ``dev`` 或 ``local``；
+        * 不是随包示例插件；
+        * 既不在 trusted 也不在 denied 中。
         """
         data = self.local_manifest()
         trusted = set(data.get("trusted") or [])
@@ -891,7 +1194,9 @@ class SkillLoader:
         pending: List[Dict[str, Any]] = []
         with self._lock:
             records = list(self.records.values())
-        # records 可能还没建立（首次 discover 之前），此时按磁盘扫描兜底
+        # [EN] Records may not exist before the first discover call; the
+        # [EN] disk scan below provides a fallback.
+        # [ZH] 首次 discover 之前记录可能尚不存在；以下磁盘扫描提供回退。
         if records:
             for rec in records:
                 if rec.source not in ("dev", "local"):
@@ -927,7 +1232,14 @@ class SkillLoader:
         return {"schema": 1, "skills": skills if isinstance(skills, list) else []}
 
     def _verified_ids(self) -> set:
-        """从市场验证缓存里取"已通过验证"的仓库名（任务书 2.4 加载白名单）。"""
+        """
+        [EN]
+        Return repository names marked as verified in the marketplace
+        verification cache. These form the loading allowlist.
+
+        [ZH]
+        返回市场验证缓存中标记为已通过验证的仓库名，构成加载白名单。
+        """
         cache = _read_json(os.path.abspath(getattr(self.cfg, "cache_file", "market_cache.json")
                                           or "market_cache.json"), None)
         if not isinstance(cache, dict):
@@ -942,10 +1254,20 @@ class SkillLoader:
         return out
 
     def discover(self) -> List[SkillRecord]:
-        """扫描三处来源，解析 skill.json，处理优先级与冲突标注。
+        """
+        [EN]
+        Scan the three sources, parse ``skill.json``, and apply priority and
+        conflict annotations.
 
-        优先级（高 → 低）：``skills_dev/`` > ``skills_local.json`` > ``skills/``。
-        同一 ID 只保留最高优先级的那份，其余记录为 ``overrode``。
+        Priority, highest to lowest: ``skills_dev/``, ``skills_local.json``,
+        then ``skills/``. For each id, only the highest-priority record is kept;
+        the others are recorded in ``overrode``.
+
+        [ZH]
+        扫描三个来源、解析 ``skill.json``，并处理优先级与冲突标注。
+
+        优先级从高到低为 ``skills_dev/``、``skills_local.json``、``skills/``。
+        同一 id 仅保留最高优先级记录，其余记录在 ``overrode`` 中。
         """
         self._dev_mode_cache = None
         manifest_data = self.local_manifest()
@@ -959,10 +1281,19 @@ class SkillLoader:
         require_verified = bool(getattr(self.cfg, "require_verified", True))
 
         def review_needed(skill_id: str) -> bool:
-            """是否需要弹确认框（修复一）。
+            """
+            [EN]
+            Return whether a confirmation dialog is required.
 
-            随包示例插件静默通过；用户已答复过（信任或拒绝）的也不再询问；
-            被明确拒绝的插件由调用方负责不加载。
+            Bundled example plugins pass silently. Plugins the user already
+            trusted or denied are not prompted again. Plugins explicitly denied
+            are not loaded by the caller.
+
+            [ZH]
+            返回是否需要弹出确认框。
+
+            随包示例插件静默通过。用户已信任或拒绝的插件不再询问。被明确拒绝的插件
+            由调用方负责不加载。
             """
             if skill_id in builtin or skill_id in trusted or skill_id in denied:
                 return False
@@ -976,7 +1307,9 @@ class SkillLoader:
             nonlocal order_counter
             manifest_raw = _read_json(os.path.join(path, "skill.json"), None)
             if not isinstance(manifest_raw, dict):
-                # 没有 skill.json：开发目录给出告警记录，其它来源直接跳过
+                # [EN] No skill.json: development sources produce a warning
+                # [EN] record; other sources are skipped.
+                # [ZH] 没有 skill.json：开发来源生成告警记录，其他来源直接跳过。
                 if source == "dev":
                     missing_id = sanitize_id(os.path.basename(path))
                     rec = SkillRecord(missing_id, path, source, parse_manifest({}), self.log)
@@ -993,14 +1326,18 @@ class SkillLoader:
             skill_id = sanitize_id(manifest["id"] or manifest["name"] or os.path.basename(path))
             rec = SkillRecord(skill_id, path, source, manifest, self.log)
             rec.alias, rec.note, rec.order = alias, note, order
-            # 用户明确拒绝过的本地插件不再加载（修复一：禁用要真的生效）
+            # [EN] Local plugins explicitly denied by the user are not loaded.
+            # [ZH] 用户明确拒绝的本地插件不会加载。
             rec.enabled = enabled and skill_id not in denied
             order_counter += 1
             if not rec.order:
                 rec.order = order_counter
 
-            # 加载白名单（任务书 2.4）：正式来源必须在注册表里；
-            # 若验证缓存对该仓库有明确的"未通过"记录，也拒绝加载。
+            # [EN] Loading allowlist: installed sources must be present in the
+            # [EN] registry, and a repository explicitly marked as unverified in
+            # [EN] the verification cache is also rejected.
+            # [ZH] 加载白名单：正式来源必须存在于注册表中；验证缓存中明确标记为
+            # [ZH] 未通过的仓库同样拒绝加载。
             repo = str(manifest_raw.get("_repo") or "").strip().lower()
             rec.verified = True
             if source == "installed" and require_verified:
@@ -1013,7 +1350,8 @@ class SkillLoader:
                     self._logwrite("WARNING", f"{skill_id}: 仓库 {repo} 在市场验证缓存中标记为未通过，已跳过")
             rec.trust_pending = source in ("dev", "local") and review_needed(skill_id)
 
-            # 解析入口
+            # [EN] Resolve the entry file.
+            # [ZH] 解析入口文件。
             entry = manifest["entry"] or manifest["bundle"]
             if not entry:
                 msg = _t("skill.bundle_missing", id=skill_id)
@@ -1029,9 +1367,13 @@ class SkillLoader:
                 self._logwrite("ERROR", f"{skill_id}: {rec.error}")
             elif manifest.get("min_version") and not version_satisfies(
                     APP_VERSION, ">=" + str(manifest["min_version"])):
-                # 最低 EchoDesk 版本校验（能力扩展-1 任务四）：审计发现 min_version
-                # 此前**只解析、只展示**，运行期完全不查 —— 于是"要求 0.3 才有的 API"
-                # 的插件在 0.2.1 上照装不误，然后在运行期以各种奇怪方式失败。
+                # [EN] Minimum EchoDesk version check. Previously min_version was
+                # [EN] parsed and displayed but never evaluated at runtime, so a
+                # [EN] plugin requiring a newer API could install and then fail
+                # [EN] unpredictably.
+                # [ZH] 最低 EchoDesk 版本校验。此前 min_version 仅被解析与展示，
+                # [ZH] 运行期从不检查，导致要求较新 API 的插件仍可安装，并在运行期
+                # [ZH] 以不可预期的方式失败。
                 rec.error = _t("skill.min_version_too_new", id=skill_id,
                                want=manifest["min_version"], have=APP_VERSION)
                 self._logwrite("ERROR", f"{skill_id}: {rec.error}")
@@ -1068,7 +1410,10 @@ class SkillLoader:
                         self._logwrite("INFO", f"插件 ID 冲突：{rec.path}（{rec.source}）"
                                                f"覆盖 {old.path}（{old.source}）")
                 else:
-                    # 已有记录优先级更高：把"被它覆盖的来源"记在它身上，便于界面展示
+                    # [EN] The existing record has higher priority. Record the
+                    # [EN] overridden source on it for display.
+                    # [ZH] 已有记录优先级更高。将被覆盖的来源记录在该记录上，便于界面
+                    # [ZH] 展示。
                     old.overrode = path
                     if old.source == "dev" and source != "dev":
                         self._logwrite("INFO", _t("skill.dev_overridden",
@@ -1083,11 +1428,14 @@ class SkillLoader:
             by_id[skill_id] = rec
             return rec
 
-        # 1) 开发目录（最高优先级）
+        # [EN] 1) Development directory, highest priority.
+        # [ZH] 1) 开发目录，最高优先级。
         for name in self._scan_dev_dirs():
             add(os.path.join(self.dev_dir, name), "dev")
 
-        # 2) 显式清单（可指定任意路径、别名、启用状态、加载顺序）
+        # [EN] 2) Explicit manifest: arbitrary paths, aliases, enabled state, and
+        # [EN] load order.
+        # [ZH] 2) 显式清单：可指定任意路径、别名、启用状态与加载顺序。
         for entry in self._manifest_entries(manifest_data):
             path = self.resolve_plugin_path(entry.get("path", ""))
             if not os.path.isdir(path):
@@ -1098,7 +1446,8 @@ class SkillLoader:
                 alias=str(entry.get("alias") or ""), note=str(entry.get("note") or ""),
                 order=int(entry.get("order") or 0))
 
-        # 3) 正式安装目录（最低优先级）
+        # [EN] 3) Installed directory, lowest priority.
+        # [ZH] 3) 正式安装目录，最低优先级。
         for name in self._scan_install_dir():
             add(os.path.join(self.install_dir, name), "installed")
 
@@ -1108,7 +1457,14 @@ class SkillLoader:
         return records
 
     def _cache_repos(self) -> set:
-        """验证缓存里出现过的仓库名（用于判断"明确标记为未通过"）。"""
+        """
+        [EN]
+        Return repository names present in the verification cache, used to
+        detect an explicit unverified marker.
+
+        [ZH]
+        返回验证缓存中出现过的仓库名，用于判断是否明确标记为未通过。
+        """
         cache = _read_json(os.path.abspath(getattr(self.cfg, "cache_file", "market_cache.json")
                                           or "market_cache.json"), None)
         if not isinstance(cache, dict):
@@ -1118,21 +1474,33 @@ class SkillLoader:
             return set()
         return {str(k).lower() for k in verified}
 
-    # ---------- 加载 ----------
+    # ---------- [EN] Loading / [ZH] 加载 ----------
 
     def load_all(self) -> Dict[str, Any]:
-        """发现并加载全部插件（启动时或热重载时调用）。
+        """
+        [EN]
+        Discover and load all plugins, called at startup or during hot reload.
 
-        每次调用都先把上一轮加载的插件卸载干净，再按当前磁盘状态重新加载：
-        这样"在清单里禁用某个插件"或"删掉 skills_dev 里的目录"之后，
-        它的指令会立刻从指令表消失，而不是残留到下次重启。
+        Each call first unloads plugins from the previous round, then reloads
+        from the current disk state. Disabling a plugin in the manifest or
+        deleting a directory under ``skills_dev/`` therefore removes its commands
+        immediately instead of leaving them until the next restart.
+
+        [ZH]
+        发现并加载全部插件，在启动或热重载时调用。
+
+        每次调用先卸载上一轮插件，再按当前磁盘状态重新加载。因此在清单中禁用插件或
+        删除 ``skills_dev/`` 下的目录后，其指令会立即从指令表移除，而不是残留到
+        下次重启。
         """
         with self._lock:
             previous = list(self.records.values())
         for rec in previous:
             if rec.loaded:
                 try:
-                    self.unload(rec.id)   # 从指令表/解析器/钩子/sys.modules 里撤掉
+                    # [EN] Remove from commands, parsers, hooks, and sys.modules.
+                    # [ZH] 从指令表、解析器、钩子与 sys.modules 中撤掉。
+                    self.unload(rec.id)
                 except Exception:  # noqa: BLE001
                     self._logwrite("WARNING", f"卸载上一轮的 {rec.id} 时出错", sys.exc_info()[1])
         with self._lock:
@@ -1175,11 +1543,14 @@ class SkillLoader:
         detail = self.dev_mode or rec.dev
         self._logwrite("INFO", f"加载插件 {rec.id}（来源={rec.source}，路径={rec.path}）")
         module_name = f"echodesk_skill_{sanitize_id(rec.id)}"
-        # 只把该技能自己的目录加入搜索路径，卸载时移除（不污染全局）
+        # [EN] Add only this skill's directory to the search path and remove it
+        # [EN] on unload, avoiding global contamination.
+        # [ZH] 仅将该技能自己的目录加入搜索路径，并在卸载时移除，避免污染全局。
         base_dir = rec.path
         old_path = list(sys.path)
         try:
-            # 只把该技能自己的目录加入搜索路径，并在卸载时移除（不污染全局）
+            # [EN] Add only this skill's directory and remove it on unload.
+            # [ZH] 仅添加该技能自己的目录，并在卸载时移除。
             if base_dir not in sys.path:
                 sys.path.insert(0, base_dir)
             self._path_entries[rec.id] = base_dir
@@ -1195,7 +1566,9 @@ class SkillLoader:
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
-        except BaseException as e:  # noqa: BLE001 —— 必须隔离，不能让技能拖垮主程序
+        except BaseException as e:  # noqa: BLE001
+            # [EN] Exceptions must be isolated so a skill cannot crash the host.
+            # [ZH] 必须隔离异常，避免技能拖垮主程序。
             sys.path[:] = old_path
             self._path_entries.pop(rec.id, None)
             sys.modules.pop(module_name, None)
@@ -1236,19 +1609,36 @@ class SkillLoader:
                               f"格式 {rec.parsers or '无'}")
         return True
 
-    # ---------- 依赖与声明一致性（能力扩展-1 任务四） ----------
+    # ---------- [EN] Dependency and declaration consistency / [ZH] 依赖与声明一致性 ----------
 
     def _check_dependencies(self, records: List[SkillRecord]) -> None:
-        """加载前解析插件间依赖，缺依赖的插件**不加载并说明原因**。
+        """
+        [EN]
+        Resolve inter-plugin dependencies before loading. Plugins with missing
+        dependencies are not loaded, and the reason is reported.
 
-        为什么放在"发现之后、逐个加载之前"而不是加载过程中：依赖关系可能互相交叉
-        （A 依赖 B、B 依赖 A 的顺序在字典里是随机的），必须先拿到全部清单才能判断。
-        判定口径：
-          * 依赖的插件必须**在本轮清单里且启用**，否则报"缺少依赖 X"；
-          * 声明了版本要求时，被依赖插件的版本必须满足（``>=1.2`` 这类）；
-          * 版本读不出来（插件没写 version）时**放行**，只记警告 —— 开发期的插件
-            经常忘写版本号，为此拒绝加载会把开发体验搞坏，而运行期真正要防的是
-            "依赖根本没装"。
+        The check runs after discovery and before loading because dependencies
+        may be cyclic; the full record set is required before evaluating them.
+        Rules:
+        * A dependency must be present in this round's records and enabled;
+          otherwise it is reported as missing.
+        * When a version requirement is declared, the dependency's version must
+          satisfy it.
+        * An unreadable version is accepted with a warning. Development plugins
+          often omit versions, and rejecting them would harm the development
+          workflow. The runtime check primarily guards against missing
+          dependencies.
+
+        [ZH]
+        加载前解析插件间依赖。缺少依赖的插件不会加载，并报告原因。
+
+        检查安排在发现之后、加载之前，因为依赖可能循环，必须先获得完整记录集合。
+        判定规则：
+        * 依赖必须存在于本轮记录中且已启用，否则报告为缺失。
+        * 声明版本要求时，依赖版本必须满足要求。
+        * 无法读取版本时放行并记录警告。开发期插件经常省略版本号，拒绝加载会破坏
+          开发体验；运行期主要防止依赖根本未安装。
+
         """
         by_id = {rec.id: rec for rec in records}
         for rec in records:
@@ -1277,25 +1667,41 @@ class SkillLoader:
                 self._logwrite("ERROR", f"{rec.id}: {rec.error}")
             elif any(by_id.get(dep_id) and not str(by_id[dep_id].version or "").strip()
                      for dep_id in deps):
-                # 依赖在、但对方没写版本、而这里又要求了版本 → 只警告，不阻断
+                # [EN] The dependency exists but declares no version while a
+                # [EN] version is required; warn without blocking.
+                # [ZH] 依赖存在但未声明版本，而此处要求了版本；仅警告，不阻断。
                 self._logwrite("WARNING", f"{rec.id}: 依赖的插件未声明版本号，跳过版本校验")
 
     def _verify_declared_commands(self, rec: SkillRecord) -> None:
-        """核对"声明的命令"与"实际注册的命令"是否一致，不一致写进警告与日志。
+        """
+        [EN]
+        Compare declared commands with commands actually registered, recording
+        mismatches in warnings and the log.
 
-        为什么值得做：插件的 ``capabilities.commands`` 是**给用户看的承诺**
-        （市场页、信任对话框都据此展示）。声明了 ``/foo`` 却没注册，用户会以为
-        装上就能用；注册了没声明则是"偷偷多了一个指令"。两者都不报错、只是不生效，
-        审计里正是这类"静默不一致"最难排查 —— 所以加载成功后立刻核对并记下来。
+        ``capabilities.commands`` is a promise shown to the user in the
+        marketplace and trust dialog. A declared command that is not registered
+        makes the user expect functionality that does not exist; a registered
+        command that was not declared is an unreported extra command. Both fail
+        silently, so the check runs immediately after a successful load.
+
+        [ZH]
+        比较声明的命令与实际注册的命令，并将不一致写入警告与日志。
+
+        ``capabilities.commands`` 是向用户展示的承诺（市场页与信任对话框据此展示）。
+        声明了命令却未注册，会让用户期待不存在的功能；注册了未声明的命令，则是未报告
+        的额外指令。两者都静默失败，因此在加载成功后立即检查。
+
         """
         declared = [str(c).strip().lower()
                     for c in (rec.manifest.get("commands") or []) if str(c).strip()]
         actual = [str(c).strip().lower() for c in (rec.commands or []) if str(c).strip()]
         if not declared and not actual:
             return
-        # 什么都不声明却注册了命令，同样要提示：市场页与信任对话框展示的是**声明**，
-        # 未声明的命令用户看不到就多了一个"不知道从哪来的指令"。这条是测试子代理
-        # 指出来的漏报（原先 declared 为空时直接 return，等于放过这一类）。
+        # [EN] Registering commands without declaring any is also reported. The
+        # [EN] marketplace and trust dialog display declarations, so an
+        # [EN] undeclared command would be invisible to the user.
+        # [ZH] 未声明任何命令却注册了命令也会报告。市场页与信任对话框展示的是声明，
+        # [ZH] 未声明的命令对用户不可见。
         if not declared:
             rec.warnings.append(_t("skill.command_undeclared", commands=", ".join(actual)))
             self._logwrite("WARNING", f"{rec.id}: {rec.warnings[-1]}")
@@ -1310,7 +1716,14 @@ class SkillLoader:
             self._logwrite("WARNING", f"{rec.id}: {warning}")
 
     def _unload_module(self, rec: SkillRecord) -> None:
-        """从 sys.modules 与 sys.path 中移除技能模块（任务书 2.4 卸载热重载）。"""
+        """
+        [EN]
+        Remove the skill module from ``sys.modules`` and ``sys.path`` during
+        unload or hot reload.
+
+        [ZH]
+        在卸载或热重载时从 ``sys.modules`` 与 ``sys.path`` 中移除技能模块。
+        """
         if rec.module_name:
             for name in list(sys.modules):
                 if name == rec.module_name or name.startswith(rec.module_name + "."):
@@ -1324,7 +1737,14 @@ class SkillLoader:
                 pass
 
     def unload(self, skill_id: str) -> bool:
-        """卸载一个已加载插件：撤指令、撤解析器、撤钩子、清模块缓存。"""
+        """
+        [EN]
+        Unload a loaded plugin: remove commands, parsers, hooks, and module
+        cache entries.
+
+        [ZH]
+        卸载已加载插件：移除指令、解析器、钩子与模块缓存。
+        """
         rec = self.records.get(skill_id)
         if rec is None:
             return False
@@ -1349,20 +1769,36 @@ class SkillLoader:
         return True
 
     def reload_all(self) -> Dict[str, Any]:
-        """热重载全部插件（任务书 2B.5）：先卸载旧模块，再重新发现与导入。"""
+        """
+        [EN]
+        Hot-reload all plugins: unload old modules, then rediscover and import
+        them again.
+
+        [ZH]
+        热重载全部插件：卸载旧模块，然后重新发现并导入。
+        """
         self._logwrite("INFO", "开始热重载本地插件 …")
         self._manifest_cache = None
         return self.load_all()
 
     def reload_dev(self) -> Dict[str, Any]:
-        """只重载开发目录里的插件（其余保持不变）。
+        """
+        [EN]
+        Reload only plugins from development sources; installed plugins remain
+        unchanged.
 
-        能力扩展-1 任务四修正：旧实现直接调 ``reload_all()`` 再把 ``scope`` 覆盖成
-        ``"all"``，也就是说**名字叫"只重载开发插件"、干的却是全部重载**。
-        开发者改一行代码点一次「重载」，已安装的正式插件也被整体卸下再装一遍 ——
-        既有开销，也有风险（安装态插件的运行期状态会被清掉）。
-        现在只卸载 ``source in ("dev", "local")`` 的那批，再重新发现并加载；
-        正式安装的插件保持原样不动。
+        The previous implementation called ``reload_all()`` and then overwrote
+        ``scope`` with ``"all"``, so a method named "reload development plugins"
+        actually reloaded everything. It now unloads only ``source`` values of
+        ``dev`` or ``local``, then rediscovers and loads them. Installed plugins
+        are left untouched.
+
+        [ZH]
+        仅重载开发来源的插件，正式安装插件保持不变。
+
+        此前的实现调用 ``reload_all()`` 后将 ``scope`` 覆盖为 ``"all"``，名为
+        “只重载开发插件”却执行了全部重载。现在仅卸载 ``source`` 为 ``dev`` 或
+        ``local`` 的插件，再重新发现并加载；正式安装插件不受影响。
         """
         self._logwrite("INFO", "开始热重载开发插件 …")
         with self._lock:
@@ -1373,20 +1809,34 @@ class SkillLoader:
             except Exception:  # noqa: BLE001
                 self._logwrite("WARNING", f"重载前卸载开发插件 {skill_id} 失败", sys.exc_info()[1])
         self._manifest_cache = None
-        # 重新发现：load_all 会把所有插件重新加载一遍，但对"正式安装且已加载"的插件
-        # 而言，先卸载再加载与保持不动在行为上等价 —— 真正的差别在**日志与状态**，
-        # 以及"开发者目录里删掉的插件会消失、新加的会出现"。
+        # [EN] Rediscovery reloads every plugin. For an installed plugin that is
+        # [EN] already loaded, unloading and reloading is behaviourally
+        # [EN] equivalent to leaving it alone; the difference is in logs and
+        # [EN] state, and in removed development plugins disappearing while new
+        # [EN] ones appear.
+        # [ZH] 重新发现会加载所有插件。对于已加载的正式安装插件，卸载后重新加载与
+        # [ZH] 保持不变在行为上等价；差别在于日志与状态，以及开发目录中删除的插件会
+        # [ZH] 消失、新增的插件会出现。
         summary = self.load_all()
         summary["scope"] = "dev"
         summary["reloaded"] = targets
         return summary
 
     def unload_dev(self) -> List[str]:
-        """卸载全部来自开发目录/本地清单的插件，并把它们的指令从指令表撤掉。
+        """
+        [EN]
+        Unload all plugins from development directories and the local manifest,
+        removing their commands from the command table.
 
-        修复一：关闭开发者模式时必须真的把这些插件从内存与指令表里清出去
-        （只改开关不卸载的话，``/hello`` 之类仍然可用，用户会觉得"没关掉"）。
-        返回被卸载的插件 ID 列表。
+        Disabling developer mode must actually remove these plugins from memory
+        and the command table; changing only the switch would leave commands such
+        as ``/hello`` usable. Returns the ids of unloaded plugins.
+
+        [ZH]
+        卸载来自开发目录与本地清单的全部插件，并从指令表移除其指令。
+
+        关闭开发者模式必须真正将这些插件从内存与指令表移除；仅修改开关会使
+        ``/hello`` 等命令仍可使用。返回已卸载插件的 id 列表。
         """
         with self._lock:
             targets = [r.id for r in self.records.values() if r.source in ("dev", "local")]
@@ -1395,7 +1845,9 @@ class SkillLoader:
             try:
                 if self.unload(skill_id):
                     removed.append(skill_id)
-            except Exception:  # noqa: BLE001 - 单个插件卸载失败不应阻断其余
+            except Exception:  # noqa: BLE001
+                # [EN] Failure to unload one plugin must not block the others.
+                # [ZH] 单个插件卸载失败不应阻断其余插件。
                 self._logwrite("WARNING", f"卸载开发插件 {skill_id} 失败", sys.exc_info()[1])
         with self._lock:
             for skill_id in targets:
@@ -1405,7 +1857,7 @@ class SkillLoader:
                                    f"({', '.join(removed)})")
         return removed
 
-    # ---------- 与主程序接线 ----------
+    # ---------- [EN] Integration with the host application / [ZH] 与主程序接线 ----------
 
     def register_skill_command(self, rec: SkillRecord, name: str, handler: Callable[..., Any], *,
                               label: str = "", usage: str = "", description: str = "",
@@ -1424,7 +1876,13 @@ class SkillLoader:
         return ok
 
     def _wrap_handler(self, rec: SkillRecord, handler: Callable[..., Any]) -> Callable[[list], Any]:
-        """包一层：环境变量清洗 + 异常写入开发日志（任务书 2B.9 / 2.4）。"""
+        """
+        [EN]
+        Wrap a handler with environment sanitization and exception logging.
+
+        [ZH]
+        包装处理函数，加入环境变量清洗与异常日志。
+        """
         def runner(args: List[str]) -> Any:
             with self._env_lock:
                 saved = _strip_secret_env()
@@ -1438,7 +1896,14 @@ class SkillLoader:
         return runner
 
     def fire_hook(self, stage: str, context: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """触发自动化钩子（任务书 2.3）；单个钩子出错只记日志，不影响自动化本身。"""
+        """
+        [EN]
+        Fire automation hooks. A failing hook is logged and does not affect the
+        automation flow.
+
+        [ZH]
+        触发自动化钩子。单个钩子失败仅记录日志，不影响自动化流程。
+        """
         results: List[Dict[str, Any]] = []
         for item in list(self.hooks.get(stage) or []):
             skill_id = item.get("skill_id", "")
@@ -1456,7 +1921,14 @@ class SkillLoader:
         return results
 
     def panels(self) -> List[Dict[str, Any]]:
-        """全部技能面板的声明（前端渲染成设置窗口里的 Tab）。"""
+        """
+        [EN]
+        Return all skill panel declarations rendered as settings tabs by the
+        frontend.
+
+        [ZH]
+        返回全部技能面板声明，由前端渲染为设置窗口中的 Tab。
+        """
         out: List[Dict[str, Any]] = []
         for rec in self.records.values():
             if not rec.loaded:
@@ -1511,14 +1983,23 @@ class SkillLoader:
         return {"ok": True, "text": _stringify(value)}
 
     def status(self) -> Dict[str, Any]:
-        """给设置界面的完整状态（已安装 Tab / 开发者 Tab 共用）。"""
+        """
+        [EN]
+        Return the complete status used by the installed and developer settings
+        tabs.
+
+        [ZH]
+        返回设置界面使用的完整状态，供已安装 Tab 与开发者 Tab 共用。
+        """
         from file_parser import skill_parser_extensions
 
         records = sorted(self.records.values(), key=lambda r: (r.order, r.id))
         enabled_dev = [r.id for r in records if r.enabled and r.source in ("dev", "local") and r.loaded]
         return {
             "dev_mode": self.dev_mode,
-            # 修复一：把"开关是谁定的"也告诉界面，用户才能看懂为什么开关是这个状态
+            # [EN] Report whether the switch was set explicitly so the interface
+            # [EN] can explain its current state.
+            # [ZH] 报告开关是否为显式设置，使界面能够解释当前状态。
             "dev_mode_explicit": self.dev_mode_explicit,
             "dev_detected": self.dev_detected,
             "dev_enabled": enabled_dev,
@@ -1551,10 +2032,17 @@ class SkillLoader:
             },
         }
 
-    # ---------- 开发者工具 ----------
+    # ---------- [EN] Developer tools / [ZH] 开发者工具 ----------
 
     def examples_dir(self) -> str:
-        """随发布包附带的示例插件目录（仓库里在 examples/skills/）。"""
+        """
+        [EN]
+        Return the bundled example-plugin directory (``examples/skills/`` in the
+        repository).
+
+        [ZH]
+        返回随发布包附带的示例插件目录（仓库中的 ``examples/skills/``）。
+        """
         candidates = []
         try:
             from config import program_root
@@ -1572,7 +2060,14 @@ class SkillLoader:
 
     def scaffold(self, skill_id: str, name: str = "", author: str = "",
                  target: str = "") -> Dict[str, Any]:
-        """新建本地插件骨架（任务书 2B.6）：在 skills_dev/ 下生成最小可用插件。"""
+        """
+        [EN]
+        Create a local plugin scaffold: generate a minimal working plugin under
+        ``skills_dev/``.
+
+        [ZH]
+        创建本地插件骨架：在 ``skills_dev/`` 下生成最小可用插件。
+        """
         sid = sanitize_id(skill_id, "")
         if not sid or not _ID_RE.match(sid):
             return {"ok": False, "message": _t("skill.bad_id")}
@@ -1595,7 +2090,14 @@ class SkillLoader:
                 "message": _t("skill.scaffold_created", path=root)}
 
     def install_from_folder(self, src: str, *, dev: bool = False) -> Dict[str, Any]:
-        """从任意文件夹安装插件（任务书 2B.7）：复制到 skills/ 或 skills_dev/ 并登记。"""
+        """
+        [EN]
+        Install a plugin from an arbitrary folder: copy it to ``skills/`` or
+        ``skills_dev/`` and register it.
+
+        [ZH]
+        从任意文件夹安装插件：复制到 ``skills/`` 或 ``skills_dev/`` 并登记。
+        """
         source = os.path.abspath(str(src or "").strip().strip('"'))
         if not os.path.isdir(source):
             return {"ok": False, "message": _t("skill.folder_missing", path=source)}
@@ -1648,16 +2150,26 @@ class SkillLoader:
         }
 
     def uninstall(self, skill_id: str, *, delete_files: bool = True) -> Dict[str, Any]:
-        """卸载插件（任务书 2B.7）。
+        """
+        [EN]
+        Uninstall a plugin.
 
-        * ``skills/`` 中的插件：移除注册表条目并删除目录；
-        * ``skills_dev/`` 中的插件：只删除目录，不涉及注册表。
+        * Plugins under ``skills/``: remove the registry entry and delete the
+          directory.
+        * Plugins under ``skills_dev/``: delete the directory only.
+
+        [ZH]
+        卸载插件。
+
+        * ``skills/`` 中的插件：移除注册表条目并删除目录。
+        * ``skills_dev/`` 中的插件：仅删除目录。
         """
         rec = self.records.get(skill_id)
         path = rec.path if rec else ""
         source = rec.source if rec else ""
         if not path:
-            # 未加载的记录也允许按目录名卸载
+            # [EN] Unloaded records may also be uninstalled by directory name.
+            # [ZH] 未加载的记录也可按目录名卸载。
             for root, src in ((self.dev_dir, "dev"), (self.install_dir, "installed")):
                 cand = os.path.join(root, sanitize_id(skill_id))
                 if os.path.isdir(cand):
@@ -1684,7 +2196,8 @@ class SkillLoader:
             except OSError as e:
                 return {"ok": False, "message": _t("skill.delete_failed", error=e)}
 
-        # 清单里显式登记的路径也一并移除
+        # [EN] Remove an explicitly registered manifest path as well.
+        # [ZH] 同时移除清单中显式登记的路径。
         data = self.local_manifest()
         kept = [p for p in data.get("plugins") or [] if str(p.get("id")) != skill_id]
         if len(kept) != len(data.get("plugins") or []):
@@ -1700,7 +2213,13 @@ class SkillLoader:
         return {"ok": True, "path": path, "message": "，".join(parts) + "。"}
 
     def export_zip(self, skill_id: str, dest: str = "") -> Dict[str, Any]:
-        """把插件导出为 zip 包（任务书 2B.7），便于分享或提交市场。"""
+        """
+        [EN]
+        Export a plugin as a ZIP archive for sharing or marketplace submission.
+
+        [ZH]
+        将插件导出为 ZIP 包，便于分享或提交到市场。
+        """
         rec = self.records.get(skill_id)
         path = rec.path if rec else ""
         if not path or not os.path.isdir(path):
@@ -1726,7 +2245,13 @@ class SkillLoader:
                           size=f"{size / 1024:.1f}")}
 
     def publish_checklist(self, skill_id: str) -> Dict[str, Any]:
-        """发布到市场前的自检清单（任务书 2B.8 一键「发布到市场」）。"""
+        """
+        [EN]
+        Return the pre-publication checklist for marketplace submission.
+
+        [ZH]
+        返回提交市场前的自检清单。
+        """
         rec = self.records.get(skill_id)
         if rec is None:
             return {"ok": False, "message": _t("skill.not_found", id=skill_id)}
@@ -1772,7 +2297,14 @@ def _stringify(value: Any) -> str:
 
 
 def _strip_secret_env() -> Dict[str, str]:
-    """临时移除含 KEY/SECRET/TOKEN/PASSWORD 的环境变量（任务书 2B.9）。"""
+    """
+    [EN]
+    Temporarily remove environment variables whose names contain KEY, SECRET,
+    TOKEN, or PASSWORD.
+
+    [ZH]
+    临时移除名称包含 KEY、SECRET、TOKEN 或 PASSWORD 的环境变量。
+    """
     saved: Dict[str, str] = {}
     for name in list(os.environ):
         upper = name.upper()
@@ -1787,10 +2319,15 @@ def _restore_env(saved: Dict[str, str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 脚手架内容（任务书 2B.6 / 2B.12：最小骨架，无多余文件与依赖）
+# [EN] Scaffold contents: minimal skeleton with no extra files or dependencies
+# [ZH] 脚手架内容：最小骨架，无额外文件或依赖
 # ---------------------------------------------------------------------------
-# 用 string.Template 而不是 str.format：骨架里既有 JSON 的 {} 又有语言包占位符
-# {name}，str.format 会把它们当自己的占位符而报错。$xxx 与之完全不冲突。
+# [EN] string.Template is used instead of str.format because the scaffold
+# [EN] contains both JSON braces and language-pack placeholders such as {name};
+# [EN] str.format would treat them as its own placeholders. $xxx does not
+# [EN] conflict with either.
+# [ZH] 使用 string.Template 而不是 str.format：骨架中既有 JSON 花括号，又有语言包
+# [ZH] 占位符 {name}；str.format 会将它们误当作自身占位符。$xxx 与两者均不冲突。
 
 _SKILL_JSON_TEMPLATE = string.Template('''{
   "id": "$sid",

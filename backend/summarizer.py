@@ -1,53 +1,130 @@
-"""长文档分段摘要（map-reduce），带过程反馈、心跳、超时与中断。
+"""
+[EN]
+Long-document segmented summarization (map-reduce) with progress feedback,
+heartbeats, timeouts, and interruption.
+
+When the full text to be injected exceeds a configured fraction of the context
+window, it is no longer truncated directly. Instead:
+1. Chunking (map): split by ``chunk_chars`` with ``overlap_chars`` overlap between
+   chunks, preferring paragraph or sentence boundaries so that sentences are not
+   cut in half;
+2. Per-chunk summarization: each chunk is summarized by the LLM into bullet points
+   of at most ``max_summary_tokens``;
+3. Merge (reduce): when the combined chunk summaries exceed ``merge_max_tokens``,
+   they are grouped and summarized again, recursively, until the length fits, with
+   a depth cap and truncation fallback;
+4. Source pointers: the output records the source file name and the original
+   character range of each chunk for later lookup.
+
+The summarization model defaults to the active conversation model; when
+``summarize.model`` names another local model, it is loaded on demand.
+
+--------------------------------------------------------------------------
+Progress feedback and failure diagnosis
+--------------------------------------------------------------------------
+Previously, only "summarizing chunk i/N" was written to stderr and never appeared
+in the UI. On CPU-only hardware a single chunk takes tens of seconds, and a long
+document with a dozen chunks takes tens of minutes, so the user could not
+distinguish "still running" from "stalled".
+
+The behavior is now:
+* Process visibility: every step emits a structured event through the
+  ``on_progress(event)`` callback (phase / status / index / total / elapsed /
+  chars / tokens / slow / counters). The caller (``main.py``) attaches localized
+  text and forwards it to the frontend. This module deliberately contains no UI
+  copy and does not import i18n: the summarization algorithm should not depend on
+  the active UI language.
+* No long silent waits: single-chunk generation uses ``engine.chat_stream`` and
+  iterates token by token, emitting a heartbeat at least every
+  ``heartbeat_seconds``, including the number of characters generated so far. A
+  long period with no output therefore cannot occur by construction.
+* Interruptibility: the same token-by-token iteration stops the current generation
+  as soon as ``should_stop()`` returns true, so pressing stop does not wait for the
+  current chunk to finish. With a non-streaming engine that lacks ``chat_stream``,
+  the check can only happen after the call returns; such events carry
+  ``stream=False``.
+* Timeout: ``chunk_timeout_seconds`` (0 means unlimited) is measured as wall-clock
+  time since the chunk started. The behavior is controlled by
+  ``chunk_timeout_action``: ``skip`` (skip and continue), ``retry`` (retry once,
+  then skip if it times out again), or ``abort`` (abort the whole summarization).
+* Slow versus failed: slowness only produces a hint (``slow=True`` and a
+  ``slow_chunks`` count) and never interrupts. Only actual failures (model call
+  exceptions, timeouts, or all chunks failing) produce an error and recovery
+  guidance.
+* Log sanitization: only chunk numbers, character counts, durations, status, and
+  control characters are logged. Document bodies are never logged, because they may
+  contain contract amounts, party names, and other sensitive information.
+
+Callback event fields (structured data only, no copy):
+
+``phase``   ``prepare`` / ``map`` / ``reduce`` / ``done`` / ``aborted`` / ``failed``
+``status``  ``start`` / ``running`` / ``ok`` / ``failed`` / ``timeout`` / ``skipped`` / ``retry``
+``index`` / ``total``      Current chunk index and total chunk count (during reduce,
+                           the index of the current group)
+``chars``                  Original character count of the chunk
+``tokens``                 Characters generated so far for the chunk, used by
+                           heartbeats to show that progress continues
+``elapsed``                Elapsed time of the whole flow, in seconds
+``chunk_elapsed``          Elapsed time of the current chunk, in seconds
+``slow``                   Whether the current chunk exceeded
+                           ``slow_chunk_seconds`` (slow is not failed)
+``stream``                 Whether the streaming path is active; only streaming
+                           supports intra-chunk interruption and heartbeats
+``failed_chunks`` / ``timeout_chunks`` / ``skipped_chunks`` / ``slow_chunks``
+                           Cumulative counters
+``error``                  Short failure reason on failure (no document body)
+
+[ZH]
+长文档分段摘要（map-reduce），带过程反馈、心跳、超时与中断。
 
 当待注入的文件全文超出上下文窗口一定比例时，不再直接截断，而是：
 
-1. **分段（map）**：按 ``chunk_chars`` 切分，段间保留 ``overlap_chars`` 重叠，
-   切点优先落在段落/句号边界，避免把一句话劈开；
-2. **逐段摘要**：每段交给 LLM 生成不超过 ``max_summary_tokens`` 的要点；
-3. **合并（reduce）**：段摘要合计超过 ``merge_max_tokens`` 时分组再摘要，
-   递归到长度达标为止（带深度上限与截断兜底）；
-4. **保留原文指针**：输出中记录源文件名与每段对应的原文字符区间，便于回查全文。
+1. 分段（map）：按 ``chunk_chars`` 切分，段间保留 ``overlap_chars`` 重叠，切点优先
+   落在段落或句号边界，避免把句子劈开；
+2. 逐段摘要：每段交给 LLM 生成不超过 ``max_summary_tokens`` 的要点；
+3. 合并（reduce）：段摘要合计超过 ``merge_max_tokens`` 时分组再摘要，递归到长度
+   达标为止（带深度上限与截断兜底）；
+4. 保留原文指针：输出中记录源文件名与每段对应的原文字符区间，便于回查全文。
 
 摘要模型默认复用当前对话模型；``summarize.model`` 指定了其他本地模型时按需加载。
 
 --------------------------------------------------------------------------
-v0.2.1 综合优化（任务四）：过程反馈与故障排查
+过程反馈与故障排查
 --------------------------------------------------------------------------
-此前只把"正在摘要第 i/N 段"打到 **stderr**，前端对话框里看不到；小模型 + 纯 CPU 下
-一段要跑几十秒，长文档十几段就是十几分钟，用户无法区分"正在跑"与"已经卡死"。
+此前只把"正在摘要第 i/N 段"输出到 stderr，前端对话框中不可见；小模型 + 纯 CPU 环境
+下单段需要数十秒，长文档十几段即需十几分钟，用户无法区分"正在运行"与"已经卡死"。
 
-现在改为：
+当前行为：
 
-* **过程可见**：每一步都通过 ``on_progress(event)`` 回调抛出**结构化事件**
-  （phase / status / index / total / elapsed / chars / tokens / slow / 计数），
-  由调用方（``main.py``）补上语言包文案后发给前端。本模块刻意不含任何界面文案，
-  也不 import i18n —— 摘要算法不应该关心当前是哪种界面语言。
-* **不让用户干等**：单段生成走 ``engine.chat_stream``，逐 token 迭代，
-  每隔 ``heartbeat_seconds`` 至少发一次心跳（含"已生成多少字符"），
-  因此"长时间没有任何输出"这种情况在设计上就不会出现。
-* **可中断**：同样是逐 token 迭代，``should_stop()`` 一旦为真立刻停止本轮生成，
-  不会出现"点了停止还要等整段跑完"。用非流式引擎（没有 ``chat_stream``）时
-  只能在调用返回后判断，此时会在事件里标注 ``stream=False``。
-* **超时**：``chunk_timeout_seconds``（0 = 不限）按"该段从开始到现在"的墙钟时间判定，
-  超时行为由 ``chunk_timeout_action`` 决定：``skip``（跳过并继续）/ ``retry``（重试一次，
-  再超时按 skip）/ ``abort``（中止整个摘要）。
-* **区分"慢"与"坏"**：慢只提示（``slow=True`` + ``slow_chunks`` 计数），不打断；
-  真正的失败（模型调用异常 / 超时 / 全部段落失败）才给出错误与恢复建议。
-* **日志脱敏**：只记录段号、字符数、耗时、状态与控制字符，**从不记录文档正文**
-  （正文可能含合同金额、当事人等敏感信息）。
+* 过程可见：每一步都通过 ``on_progress(event)`` 回调抛出结构化事件（phase / status /
+  index / total / elapsed / chars / tokens / slow / 计数），由调用方（``main.py``）
+  补充语言包文案后发送给前端。本模块刻意不包含任何界面文案，也不 import i18n：
+  摘要算法不应依赖当前界面语言。
+* 避免用户长时间干等：单段生成使用 ``engine.chat_stream``，逐 token 迭代，每隔
+  ``heartbeat_seconds`` 至少发送一次心跳（包含"已生成多少字符"），因此"长时间无任何
+  输出"在设计上不会出现。
+* 可中断：同样逐 token 迭代，``should_stop()`` 一旦为真立即停止本轮生成，不会出现
+  "点击停止后仍需等待整段运行完毕"。使用非流式引擎（没有 ``chat_stream``）时只能在
+  调用返回后判断，此时会在事件中标注 ``stream=False``。
+* 超时：``chunk_timeout_seconds``（0 表示不限）按"该段从开始到当前"的墙钟时间判定，
+  超时行为由 ``chunk_timeout_action`` 决定：``skip``（跳过并继续）、``retry``（重试
+  一次，再次超时按 skip 处理）、``abort``（中止整个摘要）。
+* 区分"慢"与"故障"：慢只提示（``slow=True`` + ``slow_chunks`` 计数），不打断；真正的
+  失败（模型调用异常、超时或全部段落失败）才给出错误与恢复建议。
+* 日志脱敏：只记录段号、字符数、耗时、状态与控制字符，从不记录文档正文（正文可能
+  包含合同金额、当事人等敏感信息）。
 
-回调事件字段（都是结构化数据，无文案）：
+回调事件字段（均为结构化数据，不含文案）：
 
 ``phase``   ``prepare`` / ``map`` / ``reduce`` / ``done`` / ``aborted`` / ``failed``
 ``status``  ``start`` / ``running`` / ``ok`` / ``failed`` / ``timeout`` / ``skipped`` / ``retry``
 ``index`` / ``total``      当前段号与总段数（reduce 阶段表示第几组）
 ``chars``                  该段原文字符数
-``tokens``                 该段已生成的字符数（心跳时用它判断"还在产出"）
+``tokens``                 该段已生成的字符数（心跳时用于判断是否仍在产出）
 ``elapsed``                整个流程已耗时（秒）
 ``chunk_elapsed``          当前段已耗时（秒）
-``slow``                   当前段是否已超过 ``slow_chunk_seconds``（慢 ≠ 坏）
-``stream``                 是否走了流式（流式才支持段内中断与心跳）
+``slow``                   当前段是否已超过 ``slow_chunk_seconds``（慢不等于故障）
+``stream``                 是否使用流式路径（流式才支持段内中断与心跳）
 ``failed_chunks`` / ``timeout_chunks`` / ``skipped_chunks`` / ``slow_chunks``  累计计数
 ``error``                  失败时的简短原因（不含正文）
 """
@@ -61,12 +138,19 @@ from extractive import extract as extractive_pick
 
 log = logging.getLogger("EchoDesk.Summarizer")
 
-# 分段摘要的系统提示（v0.2.1 提示词优化：补齐「输出格式 / 思维 / 语气」，
-# 与 conversation.MODES 用同一套六要素写法）。
+# [EN] System prompt for chunk summarization. It follows the same six-element
+# structure as conversation.MODES, including output format, reasoning, and tone.
 #
-# 【刻意保持简短】这段提示词会**随每一个分段**一起送进模型，写长等于按分段数
-# 放大上下文占用（3000 字符一段的长文档会有十几段）；所以只保留对摘要质量
-# 真正有约束力的几条，不做角色扮演式的铺陈。
+# Deliberately kept short: this prompt accompanies every chunk sent to the model, so
+# a longer prompt multiplies context usage by the chunk count (a long document of
+# 3000-character chunks may have a dozen chunks). Only constraints that materially
+# affect summary quality are kept, with no elaborate role-play framing.
+# [ZH] 分段摘要的系统提示（与 conversation.MODES 使用同一套六要素写法，补齐输出格式、
+# 思维与语气）。
+#
+# 刻意保持简短：该提示词会随每一个分段一起送入模型，写得越长，上下文占用按分段数
+# 放大（3000 字符一段的长文档会有十几段）；因此只保留对摘要质量真正有约束力的几条，
+# 不做角色扮演式的铺陈。
 _CHUNK_SYSTEM = (
     "【角色】你是文档分段摘要器，只提炼、不发挥。\n"
     "【输出格式】纯文本要点，每条一行，不加标题、不加评论。\n"
@@ -75,9 +159,14 @@ _CHUNK_SYSTEM = (
     "绝不补充原文没有的内容。\n"
     "【语气】中性、书面，用简体中文。"
 )
-# 合并阶段的系统提示：在压缩的同时防止关键要素丢失。
-# 新增一条「表述不一致时两者都保留」：合同/报告里同一事项在不同段落写法不同
-# 是常见情况，此前的提示词只要求"合并重复"，模型容易把其中一种说法丢掉。
+# [EN] System prompt for the merge phase: compress while preventing loss of key
+# elements. It adds the rule that inconsistent descriptions are both retained: in
+# contracts and reports, the same item is commonly worded differently across
+# sections, and the previous prompt only required merging duplicates, so the model
+# frequently dropped one of the formulations.
+# [ZH] 合并阶段的系统提示：在压缩的同时防止关键要素丢失。新增"表述不一致时两者都
+# 保留"一条：合同或报告中同一事项在不同段落的写法不同属于常见情况，此前的提示词仅
+# 要求"合并重复"，模型容易丢弃其中一种说法。
 _MERGE_SYSTEM = (
     "【角色】你是文档摘要合并器，把多段要点并成一份完整摘要。\n"
     "【输出格式】先一段总述，再按主题分组列出要点；合并重复项，不新增条目。\n"
@@ -87,74 +176,165 @@ _MERGE_SYSTEM = (
     "【语气】中性、书面，用简体中文。"
 )
 
-# reduce 递归深度上限（防止病态输入导致无限归并）
+# [EN] Maximum reduce recursion depth, preventing pathological inputs from causing
+# unbounded merging.
+# [ZH] reduce 递归深度上限（防止病态输入导致无限归并）。
 _MAX_REDUCE_DEPTH = 4
 
-#: 段摘要失败/超时/跳过时，用该段前若干字符兜底（保证最终摘要仍覆盖该段内容）
+#: [EN] When a chunk summary fails, times out, or is skipped, fall back to the first
+#: characters of the chunk so that the final summary still covers that content.
+#: [ZH] 段摘要失败、超时或跳过时，用该段前若干字符兜底，以保证最终摘要仍覆盖该段
+#: 内容。
 _FALLBACK_MIN_CHARS = 200
 
 
 @dataclass
 class SummaryResult:
-    """分段摘要结果（含任务四的过程统计）。"""
+    """
+    [EN]
+    Segmented summarization result, including process statistics.
+    [ZH]
+    分段摘要结果（含过程统计）。
+    """
 
-    text: str                       # 最终注入上下文的摘要文本（含原文指针）
-    chunk_count: int = 0            # 分段数量
-    segments: List[Tuple[int, int, str]] = field(default_factory=list)  # (起, 止, 段摘要)
-    origin_chars: int = 0           # 原文总字符数
-    summarized: bool = False        # 是否真的做了摘要（否则为原样/截断）
-    # ---------- 任务四：过程与故障统计 ----------
-    status: str = "ok"              # ok / partial / failed / aborted
-    ok_chunks: int = 0              # 由模型正常产出摘要的段数
-    failed_chunks: int = 0          # 模型调用异常、改用截断兜底的段数
-    partial_chunks: int = 0         # 流式生成中途断开、但已产出可用内容的段数
-    timeout_chunks: int = 0         # 触发单段超时并按其策略处理的段数
-    skipped_chunks: int = 0         # 超时/失败后按策略跳过的段数
-    slow_chunks: int = 0            # 单段耗时超过 slow_chunk_seconds 的段数
-    aborted: bool = False           # 用户主动中止
-    elapsed: float = 0.0            # 整个流程耗时（秒）
-    error: str = ""                 # status=failed 时的简短原因（不含正文）
-    # ---------- 任务四（优化已知问题-2）：抽取式预筛统计 ----------
-    # 让"预筛到底生效没有"可验证：只看最终摘要看不出来，必须有可断言的数字。
-    # 命名口径（**别把这三项混起来**，测试直接断言它们的相对大小）：
-    #   extractive_origin_chars 所有段**原文**字符数之和；
-    #   extractive_input_chars  实际**送进模型**的字符数之和（预筛后）；
+    # [EN] Final summary text injected into the context, including source pointers.
+    # [ZH] 最终注入上下文的摘要文本（含原文指针）。
+    text: str
+    # [EN] Number of chunks.
+    # [ZH] 分段数量。
+    chunk_count: int = 0
+    # [EN] (start, end, chunk summary) for each chunk.
+    # [ZH] (起始, 结束, 段摘要)。
+    segments: List[Tuple[int, int, str]] = field(default_factory=list)
+    # [EN] Total character count of the original text.
+    # [ZH] 原文总字符数。
+    origin_chars: int = 0
+    # [EN] Whether summarization actually ran; otherwise the text is unchanged or
+    # truncated.
+    # [ZH] 是否实际执行了摘要（否则为原样或截断）。
+    summarized: bool = False
+    # ---------- [EN] Process and failure statistics ----------
+    # ---------- [ZH] 过程与故障统计 ----------
+    # [EN] One of ok / partial / failed / aborted.
+    # [ZH] ok / partial / failed / aborted。
+    status: str = "ok"
+    # [EN] Chunks for which the model produced a summary normally.
+    # [ZH] 由模型正常产出摘要的段数。
+    ok_chunks: int = 0
+    # [EN] Chunks where the model call raised and truncation fallback was used.
+    # [ZH] 模型调用异常、改用截断兜底的段数。
+    failed_chunks: int = 0
+    # [EN] Chunks where streaming stopped early but produced usable content.
+    # [ZH] 流式生成中途断开、但已产出可用内容的段数。
+    partial_chunks: int = 0
+    # [EN] Chunks that hit the per-chunk timeout and were handled by its policy.
+    # [ZH] 触发单段超时并按其策略处理的段数。
+    timeout_chunks: int = 0
+    # [EN] Chunks skipped by policy after a timeout or failure.
+    # [ZH] 超时或失败后按策略跳过的段数。
+    skipped_chunks: int = 0
+    # [EN] Chunks whose duration exceeded ``slow_chunk_seconds``.
+    # [ZH] 单段耗时超过 ``slow_chunk_seconds`` 的段数。
+    slow_chunks: int = 0
+    # [EN] Whether the user aborted the operation.
+    # [ZH] 用户是否主动中止。
+    aborted: bool = False
+    # [EN] Total duration of the flow, in seconds.
+    # [ZH] 整个流程耗时（秒）。
+    elapsed: float = 0.0
+    # [EN] Short reason when status is failed (no document body).
+    # [ZH] status=failed 时的简短原因（不含正文）。
+    error: str = ""
+    # ---------- [EN] Extractive pre-filter statistics ----------
+    # ---------- [ZH] 抽取式预筛统计 ----------
+    # [EN] Whether the pre-filter took effect cannot be inferred from the final
+    # summary alone, so assertable numbers are recorded. The three fields must not be
+    # conflated; tests assert their relative magnitudes:
+    #   extractive_origin_chars  sum of original characters across all chunks;
+    #   extractive_input_chars   sum of characters actually sent to the model after
+    #                            pre-filtering;
+    #   extractive_saved_chars   origin - input, the characters saved by pre-filtering.
+    # Chunks without pre-filtering contribute the same value to origin and input, so
+    # the compression ratio ``origin / input`` is directly comparable with the switch
+    # on and off.
+    # [ZH] 仅看最终摘要无法判断预筛是否生效，因此必须记录可断言的数字。三项口径不可
+    # 混淆，测试直接断言其相对大小：
+    #   extractive_origin_chars 所有段原文字符数之和；
+    #   extractive_input_chars  实际送入模型的字符数之和（预筛后）；
     #   extractive_saved_chars  = origin - input，即预筛省下的字符数。
-    # 未做预筛的段三项都算上（origin == input），因此压缩比
-    # ``origin / input`` 在开关打开前后是可直接对比的。
-    extractive_chunks: int = 0          # 真正发生了预筛的段数
-    extractive_origin_chars: int = 0    # 各段原文字符总和
-    extractive_input_chars: int = 0     # 各段实际送模型的字符总和
+    # 未做预筛的段三项均计入（origin == input），因此压缩比 ``origin / input`` 在
+    # 开关打开前后可直接对比。
+    # [EN] Chunks that actually underwent pre-filtering.
+    # [ZH] 真正发生预筛的段数。
+    extractive_chunks: int = 0
+    # [EN] Sum of original characters across chunks.
+    # [ZH] 各段原文字符总和。
+    extractive_origin_chars: int = 0
+    # [EN] Sum of characters actually sent to the model across chunks.
+    # [ZH] 各段实际送入模型的字符总和。
+    extractive_input_chars: int = 0
 
     @property
     def extractive_saved_chars(self) -> int:
-        """预筛省下的字符数（origin - input）。"""
+        """
+        [EN]
+        Characters saved by pre-filtering (origin - input).
+        [ZH]
+        预筛省下的字符数（origin - input）。
+        """
         return max(0, self.extractive_origin_chars - self.extractive_input_chars)
 
     @property
     def extractive_ratio(self) -> float:
-        """实际送模型字数 / 原文字数（1.0 = 没有压缩）。"""
+        """
+        [EN]
+        Characters actually sent to the model divided by original characters
+        (1.0 means no compression).
+        [ZH]
+        实际送入模型的字数与原文字数之比（1.0 表示未压缩）。
+        """
         if self.extractive_origin_chars <= 0:
             return 1.0
         return self.extractive_input_chars / self.extractive_origin_chars
 
     @property
     def pointer(self) -> str:
-        """原文指针：源文件 + 各段字符区间。"""
+        """
+        [EN]
+        Source pointer: the source file and the character range of each chunk.
+        [ZH]
+        原文指针：源文件与各段字符区间。
+        """
         ranges = ",".join(f"{a}-{b}" for a, b, _ in self.segments)
         return f"chars={ranges}" if ranges else ""
 
     @property
     def degraded(self) -> bool:
-        """是否有段落走了兜底（用于在结果里如实说明，而不是假装一切正常）。"""
+        """
+        [EN]
+        Whether any chunk used a fallback path, so the result can report that
+        truthfully instead of implying normal operation.
+        [ZH]
+        是否有段落使用了兜底路径，以便在结果中如实说明，而不是默认一切正常。
+        """
         return bool(self.failed_chunks or self.timeout_chunks or self.skipped_chunks
                     or self.partial_chunks)
 
 
 def split_chunks(text: str, chunk_chars: int, overlap_chars: int) -> List[Tuple[int, int, str]]:
-    """把长文本切成带重叠的段落，返回 [(起始字符, 结束字符, 段文本)]。
+    """
+    [EN]
+    Split long text into overlapping chunks and return
+    [(start_char, end_char, chunk_text)].
 
-    切点优先选段落分隔、换行或句末标点；找不到合适边界时按长度硬切。
+    Cut points prefer paragraph separators, line breaks, or sentence-ending
+    punctuation; when no suitable boundary exists, the text is cut at the length
+    limit.
+
+    [ZH]
+    将长文本切分为带重叠的段落，返回 [(起始字符, 结束字符, 段文本)]。
+
+    切点优先选择段落分隔、换行或句末标点；找不到合适边界时按长度硬切。
     """
     n = len(text)
     if n == 0:
@@ -167,7 +347,9 @@ def split_chunks(text: str, chunk_chars: int, overlap_chars: int) -> List[Tuple[
         end = min(start + chunk_chars, n)
         if end < n:
             window = text[start:end]
-            # 从后往前找自然的切分点（至少用到半段，避免碎成片段）
+            # [EN] Search backwards for a natural cut point, using at least half of
+            # the window so chunks do not fragment.
+            # [ZH] 从后向前查找自然的切分点（至少使用半段，避免碎成片段）。
             cut = -1
             for token in ("\n\n", "\n", "。", "！", "？", "；", ". ", "! ", "? ", "; "):
                 pos = window.rfind(token)
@@ -183,7 +365,12 @@ def split_chunks(text: str, chunk_chars: int, overlap_chars: int) -> List[Tuple[
 
 
 class DocumentSummarizer:
-    """map-reduce 分段摘要器。"""
+    """
+    [EN]
+    Map-reduce segmented summarizer.
+    [ZH]
+    map-reduce 分段摘要器。
+    """
 
     def __init__(
         self,
@@ -194,15 +381,26 @@ class DocumentSummarizer:
         self.engine = engine
         self.cfg = cfg
         self._engine_factory = engine_factory
-        self._dedicated = None      # 专用摘要模型引擎（懒加载）
+        # [EN] Dedicated summarization engine, loaded lazily.
+        # [ZH] 专用摘要模型引擎（懒加载）。
+        self._dedicated = None
         self._dedicated_path = ""
 
-    # ---------- 触发判断 ----------
+    # ---------- [EN] Trigger evaluation ----------
+    # ---------- [ZH] 触发判断 ----------
 
     def needs_summary(self, text: str, n_ctx: int) -> bool:
-        """判断是否需要对文档做分段摘要。
+        """
+        [EN]
+        Decide whether the document requires segmented summarization.
 
-        依据：文本长度达到 ``min_chars``，且估算 token 数超过窗口的 ``trigger_ratio``。
+        The text must reach ``min_chars`` and its estimated token count must exceed
+        ``trigger_ratio`` of the context window.
+
+        [ZH]
+        判断是否需要对文档执行分段摘要。
+
+        条件：文本长度达到 ``min_chars``，且估算 token 数超过窗口的 ``trigger_ratio``。
         """
         if not self.cfg.enabled or n_ctx <= 0:
             return False
@@ -212,12 +410,19 @@ class DocumentSummarizer:
         return tokens > max(1, int(n_ctx * self.cfg.trigger_ratio))
 
     def should_use_summary(self, text: str, n_ctx: int, force: bool = False) -> bool:
-        """force=True 时无条件摘要（供用户手动触发全文摘要）。"""
+        """
+        [EN]
+        Summarize unconditionally when ``force=True``, which supports a manual
+        full-document summarization request.
+        [ZH]
+        ``force=True`` 时无条件摘要（供用户手动触发全文摘要）。
+        """
         if force:
             return bool(text) and self.cfg.enabled
         return self.needs_summary(text, n_ctx)
 
-    # ---------- 摘要主流程 ----------
+    # ---------- [EN] Main summarization flow ----------
+    # ---------- [ZH] 摘要主流程 ----------
 
     def summarize(
         self,
@@ -227,10 +432,20 @@ class DocumentSummarizer:
         on_progress: Optional[Callable[[Dict], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> SummaryResult:
-        """对文档做分段摘要；文本较短或功能关闭时原样返回。
+        """
+        [EN]
+        Summarize a document in segments; returns the text unchanged when it is short
+        or the feature is disabled.
 
-        ``on_progress`` 收到结构化事件（字段见模块头部注释），无文案；
-        ``should_stop`` 每次为真即中止（任务四：手动停止要能正确中断并清理）。
+        ``on_progress`` receives structured events (fields are documented in the
+        module docstring) with no display text. ``should_stop`` aborts as soon as it
+        returns true, so manual stop interrupts and cleans up correctly.
+
+        [ZH]
+        对文档执行分段摘要；文本较短或功能关闭时原样返回。
+
+        ``on_progress`` 接收结构化事件（字段见模块头部注释），不含文案；
+        ``should_stop`` 每次为真即中止（手动停止须能正确中断并清理）。
         """
         origin_chars = len(text)
         if not text:
@@ -247,21 +462,31 @@ class DocumentSummarizer:
         total = len(chunks)
 
         counters = {"ok": 0, "failed": 0, "partial": 0, "timeout": 0, "skipped": 0, "slow": 0}
-        # 预筛统计（任务四）：只看最终摘要看不出预筛有没有生效，必须记数字
+        # [EN] Pre-filter statistics: whether pre-filtering took effect cannot be
+        # inferred from the final summary, so numeric counters are required.
+        # [ZH] 预筛统计：仅看最终摘要无法判断预筛是否生效，必须记录数字。
         pf_chunks = 0
         pf_saved = 0
         pf_origin = 0
         pf_input = 0
 
         def pf() -> Dict[str, int]:
-            """预筛累计量（供进度事件携带；函数形式是为了拿到每轮的最新值）。"""
+            """
+            [EN]
+            Accumulated pre-filter values carried in progress events. A function is
+            used so that each iteration reads the latest values.
+            [ZH]
+            预筛累计量（供进度事件携带）；采用函数形式以读取每轮的最新值。
+            """
             return {
                 "prefilter_chunks": pf_chunks,
                 "prefilter_saved_chars": pf_saved,
                 "prefilter_origin_chars": pf_origin,
                 "prefilter_input_chars": pf_input,
             }
-        # 日志脱敏：只记段数/字符数/耗时，正文一律不进日志
+        # [EN] Log sanitization: only chunk counts, character counts, and durations
+        # are recorded; document bodies never enter the log.
+        # [ZH] 日志脱敏：只记录段数、字符数与耗时，正文一律不写入日志。
         log.info(
             "开始分段摘要: %s（%d 字符 → %d 段，段长 %d，重叠 %d，模型 %s，流式 %s，预筛 %s）",
             source_name or "(未命名)", origin_chars, total,
@@ -290,8 +515,12 @@ class DocumentSummarizer:
                 "chunk_elapsed": 0.0, "stream": stream_capable, **self._counters(counters, pf()),
             })
 
-            # 抽取式预筛（任务四）：先压字数，再交给模型。毫秒级、不占模型；
-            # 任何异常都退回原文，绝不因为它让整篇摘要失败。
+            # [EN] Extractive pre-filtering: reduce character count before handing
+            # the text to the model. It takes milliseconds and does not occupy the
+            # model, and any exception falls back to the original text; it must never
+            # fail the whole summarization.
+            # [ZH] 抽取式预筛：先压缩字数，再交给模型。该步骤为毫秒级，不占用模型；
+            # 任何异常都退回原文，绝不因此导致整篇摘要失败。
             model_input, raw_chars, kept_chars = self._prefilter(chunk)
             pf_origin += raw_chars
             pf_input += kept_chars
@@ -315,7 +544,9 @@ class DocumentSummarizer:
                     break
                 if (status == "timeout" and attempt == 1
                         and str(self.cfg.chunk_timeout_action).lower() == "retry"):
-                    # retry：只重试一次；再超时按 skip 处理，避免无限重试把时间耗光
+                    # [EN] retry: retry exactly once; a second timeout is treated as
+                    # skip, so unbounded retries cannot consume the time budget.
+                    # [ZH] retry：仅重试一次；再次超时按 skip 处理，避免无限重试耗尽时间。
                     self._emit(on_progress, {
                         "phase": "map", "status": "retry", "index": index, "total": total,
                         "chars": len(chunk), "elapsed": time.perf_counter() - started,
@@ -371,7 +602,8 @@ class DocumentSummarizer:
                 "stream": stream_capable, **self._counters(counters, pf()),
             })
 
-        # ---------- 收尾 ----------
+        # ---------- [EN] Finalization ----------
+        # ---------- [ZH] 收尾 ----------
         elapsed = time.perf_counter() - started
         if aborted:
             log.info("分段摘要已中止: %s（已完成 %d/%d 段，耗时 %.1f 秒）",
@@ -380,8 +612,12 @@ class DocumentSummarizer:
                 "phase": "aborted", "status": "failed", "index": len(segments), "total": total,
                 "elapsed": elapsed, "stream": stream_capable, **self._counters(counters, pf()),
             })
-            # 已终止：不产出半份摘要（半份摘要静默进入上下文比失败更危险），
-            # 由调用方提示用户可重试；原文件内容仍完整保留在会话里。
+            # [EN] Aborted: no partial summary is produced, because a half summary
+            # silently entering the context is more dangerous than a failure. The
+            # caller informs the user that a retry is possible, and the original file
+            # content remains intact in the session.
+            # [ZH] 已中止：不产出半份摘要（半份摘要静默进入上下文比失败更危险），由
+            # 调用方提示用户可重试；原文件内容仍完整保留在会话中。
             return SummaryResult(
                 text="", chunk_count=total, segments=segments, origin_chars=origin_chars,
                 summarized=False, status="aborted", aborted=True,
@@ -394,8 +630,12 @@ class DocumentSummarizer:
             )
 
         if counters["ok"] + counters["partial"] == 0:
-            # 全部段落都没能产出摘要：这是真故障（模型不可用/内存不足/引擎异常），
-            # 如实报错并保留重试路径，而不是注入一份"全是截断"的假摘要。
+            # [EN] No chunk produced a summary: this is a genuine failure (model
+            # unavailable, out of memory, or engine fault). Report it truthfully and
+            # keep the retry path, rather than injecting a fake summary composed only
+            # of truncations.
+            # [ZH] 所有段落均未能产出摘要：这属于真实故障（模型不可用、内存不足或引擎
+            # 异常）。应如实报错并保留重试路径，而不是注入一份"全是截断"的假摘要。
             log.error("分段摘要失败: %s（%d 段全部未能产出摘要，耗时 %.1f 秒）",
                       source_name or "(未命名)", total, elapsed)
             self._emit(on_progress, {
@@ -454,21 +694,44 @@ class DocumentSummarizer:
         })
         return result
 
-    # ---------- 抽取式预筛（任务四·优化已知问题-2） ----------
+    # ---------- [EN] Extractive pre-filtering ----------
+    # ---------- [ZH] 抽取式预筛 ----------
 
     def _prefilter(self, chunk: str) -> Tuple[str, int, int]:
-        """对一段原文做抽取式预筛，返回 ``(送模型的文本, 原字符数, 压缩后字符数)``。
+        """
+        [EN]
+        Apply extractive pre-filtering to one chunk and return ``(text sent to the
+        model, original character count, filtered character count)``.
 
-        这是任务书任务四里杠杆最大的一条：**减少送给模型的字数**。
-        模型生成速度是瓶颈（纯 CPU 上小模型约 5~10 字/秒），而分段摘要是
-        N 次串行生成；把每段输入压到三分之一，prefill 与输出长度同步下降，
-        而这一步**毫秒级、不占模型**。
+        Reducing the character count sent to the model has the largest leverage in
+        the pipeline. Model generation speed is the bottleneck (about 5-10
+        characters per second for a small model on CPU), and segmented summarization
+        performs N serial generations. Reducing every chunk input to one third lowers
+        prefill and output length together, and this step takes milliseconds without
+        occupying the model.
 
-        安全兜底（三处，全部只影响性能、不影响正确性）：
+        Three safety fallbacks, all affecting performance only and never
+        correctness:
+        * Disabled switch, chunk too short, or no sentence boundary: return the input
+          unchanged (see ``extractive.extract``);
+        * Empty or nearly empty extraction result: return the input unchanged; it is
+          better to save no time than to give the model an empty chunk;
+        * Extraction raises: log and return the input unchanged. Pre-filtering is a
+          pure optimization and must never fail the whole summarization.
 
-        * 关闭开关、段太短、切不出句子 → 原样返回（见 ``extractive.extract``）；
-        * 抽取结果为空或几乎为空 → 原样返回（宁可不省时间，也不能让模型收到空段）；
-        * 抽取抛异常 → 记日志并原样返回（预筛是纯优化，绝不能因为它让整篇摘要失败）。
+        [ZH]
+        对一段原文执行抽取式预筛，返回 ``(送入模型的文本, 原字符数, 压缩后字符数)``。
+
+        减少送入模型的字数是该流程中杠杆最大的一步。模型生成速度是瓶颈（纯 CPU 上
+        小模型约 5~10 字/秒），而分段摘要是 N 次串行生成；把每段输入压缩到三分之一，
+        prefill 与输出长度同步下降，而该步骤为毫秒级、不占用模型。
+
+        安全兜底（三处，均只影响性能，不影响正确性）：
+
+        * 关闭开关、段过短或切不出句子 → 原样返回（见 ``extractive.extract``）；
+        * 抽取结果为空或几乎为空 → 原样返回（宁可节省时间为零，也不能让模型收到空段）；
+        * 抽取抛出异常 → 记录日志并原样返回（预筛属于纯优化，绝不能因此导致整篇摘要
+          失败）。
         """
         if not bool(getattr(self.cfg, "extractive", True)):
             return chunk, len(chunk), len(chunk)
@@ -485,7 +748,8 @@ class DocumentSummarizer:
             return chunk, len(chunk), len(chunk)
         return picked.text, len(chunk), len(picked.text)
 
-    # ---------- 单段生成（含心跳 / 超时 / 中断） ----------
+    # ---------- [EN] Single-chunk generation (heartbeat, timeout, interruption) ----------
+    # ---------- [ZH] 单段生成（含心跳、超时与中断） ----------
 
     def _generate_chunk(
         self,
@@ -501,15 +765,33 @@ class DocumentSummarizer:
         counters: Dict[str, int],
         model_input: str = "",
     ) -> Tuple[str, str]:
-        """生成一段摘要，返回 ``(文本, 状态)``；状态 ∈ ok/partial/failed/timeout/aborted。
+        """
+        [EN]
+        Generate one chunk summary and return ``(text, status)``, where status is one
+        of ok/partial/failed/timeout/aborted.
 
-        ``model_input`` 是**经过抽取式预筛**后真正送进模型的文本（默认取 ``chunk``）。
-        注意两件事：
+        ``model_input`` is the text actually sent to the model after extractive
+        pre-filtering; it defaults to ``chunk``. Two invariants apply:
+        * The character range ``start-end`` in the prompt always refers to the
+          original text, because the UI must show which part of the source the
+          summary came from. Pre-filtering affects only the character count sent to
+          the model, not the provenance;
+        * Fallback text uses ``chunk`` (the original) rather than ``model_input``. When
+          the model produces nothing for this chunk, falling back to the first
+          characters of the original is preferable to presenting the filtered remnant
+          as a summary.
 
-        * 提示里的字符区间 ``start-end`` 始终指**原文**区间 —— 界面上要显示的是
-          "这段来自原文哪一块"，预筛只影响送进去的字数，不改变出处；
-        * 兜底文本用的是 ``chunk``（原文）而不是 ``model_input``：这一段模型没给出
-          结果时，我们宁可回退到原文前若干字符，也不要用"预筛后的残段"冒充摘要。
+        [ZH]
+        生成一段摘要，返回 ``(文本, 状态)``；状态为 ok/partial/failed/timeout/aborted
+        之一。
+
+        ``model_input`` 是经过抽取式预筛后真正送入模型的文本（默认取 ``chunk``）。
+        需注意两点：
+
+        * 提示中的字符区间 ``start-end`` 始终指原文区间：界面需要显示"该段来自原文
+          哪一部分"，预筛只影响送入的字数，不改变出处；
+        * 兜底文本使用 ``chunk``（原文）而非 ``model_input``：该段模型未给出结果时，
+          宁可回退到原文前若干字符，也不能用"预筛后的残段"冒充摘要。
         """
         body = model_input or chunk
         messages = [
@@ -536,7 +818,12 @@ class DocumentSummarizer:
         chars: int,
         counters: Dict[str, int],
     ) -> Tuple[str, str]:
-        """调用模型生成一段文本；流式优先，从而支持心跳、段内超时与段内中断。
+        """
+        [EN]
+        Call the local model to produce a summary.
+
+        [ZH]
+        调用模型生成一段文本；流式优先，从而支持心跳、段内超时与段内中断。
 
         非流式引擎（没有 ``chat_stream``，例如测试用的假引擎或第三方实现）退化为
         "调用返回后再判定"：心跳与中断只能在段与段之间生效，事件里会带 ``stream=False``，
@@ -549,7 +836,13 @@ class DocumentSummarizer:
         slow_reported = False
 
         def _tick(produced: int, chunk_elapsed: float) -> None:
-            """心跳：如实报告"还在产出多少字符"，让用户能看出是否真有进展。"""
+            """
+            [EN]
+            Advance the progress counter.
+
+            [ZH]
+            心跳：如实报告"还在产出多少字符"，让用户能看出是否真有进展。
+            """
             nonlocal slow_reported
             is_slow = chunk_elapsed >= slow_after
             if is_slow:
@@ -621,12 +914,23 @@ class DocumentSummarizer:
         return (text, "ok") if text else ("", "failed")
 
     def _fallback_text(self, chunk: str) -> str:
-        """段摘要失败时的兜底文本（截断该段前若干字符）。"""
+        """
+        [EN]
+        Return a deterministic fallback summary when the model is unavailable.
+
+        [ZH]
+        段摘要失败时的兜底文本（截断该段前若干字符）。
+        """
         limit = max(_FALLBACK_MIN_CHARS, int(self.cfg.max_summary_tokens) * 2)
         return chunk[:limit] + ("……" if len(chunk) > limit else "")
 
     def _counters(self, counters: Dict[str, int], prefilter: Optional[Dict[str, int]] = None) -> Dict[str, int]:
-        """把累计计数展开成事件字段（键名与 SummaryResult 对齐，便于前端直接读）。
+        """
+        [EN]
+        Return counters used for progress reporting.
+
+        [ZH]
+        把累计计数展开成事件字段（键名与 SummaryResult 对齐，便于前端直接读）。
 
         ``prefilter`` 是抽取式预筛的累计量（段数 / 省下的字符 / 原本要送的字符），
         带上它之后，前端进度提示与测试都能验证"预筛到底有没有生效"。
@@ -644,7 +948,13 @@ class DocumentSummarizer:
         return data
 
     def _emit(self, on_progress: Optional[Callable[[Dict], None]], event: Dict) -> None:
-        """抛出进度事件；回调自身抛异常不影响摘要流程（进度不能反过来搞挂主流程）。"""
+        """
+        [EN]
+        Emit a summarization progress event.
+
+        [ZH]
+        抛出进度事件；回调自身抛异常不影响摘要流程（进度不能反过来搞挂主流程）。
+        """
         if on_progress is None:
             return
         if not bool(getattr(self.cfg, "progress_events", True)):
@@ -657,7 +967,13 @@ class DocumentSummarizer:
     # ---------- 内部实现 ----------
 
     def _pick_engine(self):
-        """选择摘要模型：summarize.model 指定且存在时加载专用引擎，否则复用当前模型。"""
+        """
+        [EN]
+        Select the summarization engine for the current input.
+
+        [ZH]
+        选择摘要模型：summarize.model 指定且存在时加载专用引擎，否则复用当前模型。
+        """
         want = (self.cfg.model or "").strip()
         if not want or self._engine_factory is None:
             return self.engine
@@ -680,7 +996,12 @@ class DocumentSummarizer:
         return str(getattr(engine, "model_path", "当前模型"))
 
     def _summarize_block(self, content: str, system: str, header: str, max_tokens: int, engine) -> str:
-        """对一段内容调用模型生成摘要；失败时退回该段前若干字符。
+        """
+        [EN]
+        Summarize one block of text.
+
+        [ZH]
+        对一段内容调用模型生成摘要；失败时退回该段前若干字符。
 
         保留这个简化版入口供归并阶段（reduce）使用：归并是在摘要**已经产出**之后的
         二次压缩，失败时用截断兜底即可，不需要再把心跳/超时事件透传给界面
@@ -712,7 +1033,13 @@ class DocumentSummarizer:
         should_stop: Optional[Callable[[], bool]] = None,
         counters: Optional[Dict[str, int]] = None,
     ) -> str:
-        """把多段摘要递归归并到 merge_max_tokens 以内。"""
+        """
+        [EN]
+        Reduce partial summaries into a final summary.
+
+        [ZH]
+        把多段摘要递归归并到 merge_max_tokens 以内。
+        """
         if not summaries:
             return ""
         if len(summaries) == 1:
@@ -749,7 +1076,13 @@ class DocumentSummarizer:
         return self._reduce(merged, engine, depth + 1, started, on_progress, should_stop, counters)
 
     def _group_by_tokens(self, items: List[str], budget: int, engine) -> List[List[str]]:
-        """按 token 预算把条目分组，尽量填满每组。"""
+        """
+        [EN]
+        Group text into token-bounded blocks.
+
+        [ZH]
+        按 token 预算把条目分组，尽量填满每组。
+        """
         groups: List[List[str]] = []
         current: List[str] = []
         used = 0
@@ -772,7 +1105,13 @@ class DocumentSummarizer:
             return len(text) // 2
 
     def _truncate_to_tokens(self, text: str, max_tokens: int, engine) -> str:
-        """按 token 上限截断（按字符比例近似，避免逐字二分带来的额外开销）。"""
+        """
+        [EN]
+        Truncate text to a token limit.
+
+        [ZH]
+        按 token 上限截断（按字符比例近似，避免逐字二分带来的额外开销）。
+        """
         total = self._tokens(text, engine)
         if total <= max_tokens or total <= 0:
             return text
@@ -786,7 +1125,13 @@ class DocumentSummarizer:
         segments: List[Tuple[int, int, str]],
         merged: str,
     ) -> str:
-        """拼接最终注入上下文的长文档摘要（含原文指针）。"""
+        """
+        [EN]
+        Format a summary result for display.
+
+        [ZH]
+        拼接最终注入上下文的长文档摘要（含原文指针）。
+        """
         title = source_name or "(未命名文档)"
         lines = [
             f"【长文档摘要】{title}",

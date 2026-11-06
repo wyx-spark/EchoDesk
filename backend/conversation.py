@@ -1,4 +1,11 @@
-"""对话管理：模式、历史记录、文件上下文、撤回、导出、持久化与摘要压缩。"""
+"""
+[EN]
+Conversation management: modes, history, file context, undo, export,
+persistence, and summary compaction.
+
+[ZH]
+对话管理：模式、历史记录、文件上下文、撤回、导出、持久化与摘要压缩。
+"""
 import json
 import os
 import re
@@ -6,45 +13,68 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
 
-# 多语言（任务三）：界面文本（模式菜单、导出 Markdown 的标题行）走语言包。
-# i18n 只依赖标准库（config 在 i18n 内部惰性导入），可直接在这里导入。
+# [EN] Interface text (mode menu and Markdown export headings) is resolved from
+# [EN] the language pack. i18n depends only on the standard library, so it can be
+# [EN] imported directly here.
+# [ZH] 界面文本（模式菜单与 Markdown 导出标题）通过语言包解析。i18n 仅依赖
+# [ZH] 标准库，因此可在此直接导入。
 from i18n import t as _t
 
 # ===========================================================================
-# 系统提示词（v0.2.1 提示词优化 → 提示词重构 → 能力扩展-1 模式简化）
+# [EN] System prompt composition:
+# [EN] mode block + shared rules + language instruction + optional task layer +
+# [EN] optional custom instruction.
 #
-# 结构：**模式块 + 共享主干 + 语言指令 +（可选）任务层 +（可选）自定义指令**
+# [EN] 1. Mode blocks (``MODES``): three modes, each defining role, output format,
+# [EN]    level of detail, reasoning procedure, examples, tone, and scenario
+# [EN]    boundaries. The level-of-detail element returns control over response
+# [EN]    length to the model instead of forcing every answer into a template.
+# [EN]    The mode set was reduced from seven to three (chat, contract, agent);
+# [EN]    migration details are documented next to ``MODE_ALIASES``.
+# [EN] 2. Shared rules (``_CORE_RULES``): seven invariants common to every mode
+# [EN]    (perspective, boundaries, verbosity, answer-before-question,
+# [EN]    explicit assumptions, guidance, and output discipline). They are shared
+# [EN]    because duplicating them in every mode wastes context and creates three
+# [EN]    independent sources of truth.
+# [EN] 3. Language instruction (``_REPLY_LANGUAGE``): follows the interface locale.
+# [EN] 4. Task layer: a template applied by ``/task`` and layered on top of the
+# [EN]    mode block rather than replacing it.
+# [EN] 5. Custom instruction: content set by ``/prompt``; it has the highest
+# [EN]    priority and replaces both the mode block and the task layer.
 #
-#   1. **模式块**（``MODES``）：**3 个**模式，各带六要素——角色 / 输出格式 /
-#      **详略判断** / 思维链 / 少样本示例 / 语气，再加该场景特有的边界。
-#      详略那一项是"提示词重构"轮加的：上一轮补齐六要素后约束加码过多，
-#      模型变成"只按模板办事"（简单问题也列三条、信息不全就拒绝回答）；
-#      详略把"该说多少"的判断权交回模型。
-#      **模式数量**是"能力扩展-1 任务一"重新定的：从 7 个收敛到 3 个
-#      （chat / contract / agent），理由与迁移方案见下面 MODE_ALIASES 上方的长注释。
-#   2. **共享主干**（``_CORE_RULES``）：所有模式共用的七条通用纪律（视角、边界、
-#      详略、先答后问、摊开推测、引导、输出纪律）。**刻意共享而不是每个模式各写一遍**：
-#      这些与场景无关，写 3 遍既白占上下文（0.8B 模型对冗长提示词更敏感），
-#      又会在改动时留下三处不一致。
-#   3. **语言指令**（``_REPLY_LANGUAGE``）：跟随**界面语言**，见下方说明。
-#   4. **任务层**：``/task`` 套用的模板，**叠加**在模式之上而不是替换它
-#      （见 :meth:`ConversationManager.get_system_prompt` 与 ``prompts.build_system_prompt``）。
-#      **被移除的四个模式（summary/translate/code/creative）与 guide 的能力就住在这里。**
-#   5. **自定义指令**：``/prompt`` 的内容，优先级最高，替换模式块与任务层。
+# [EN] The prompt body is sent to the model, not displayed to the user, so it
+# [EN] intentionally remains Chinese. Translating it would weaken wording designed
+# [EN] for small models. The prompt language and the reply language are separate:
+# [EN] replies follow ``_REPLY_LANGUAGE``. User-visible mode descriptions remain in
+# [EN] the language pack under ``mode.desc.<mode>``.
 #
-# 多语言说明：下面是**发给模型的提示词正文**，不是界面文本，因此刻意保持中文、
-# 不进语言包——正文译成英文会削弱这些针对小模型跑偏专门设计的措辞。正文语言与
-# **回复语言是两件事**：回复语言由 ``_REPLY_LANGUAGE`` 跟随界面语言决定，
-# 所以"英文界面 + 中文提示词正文"不会让英文用户收到中文回复。
-# 界面上要显示的模式**说明**另见语言包的 ``mode.desc.<模式>``（由 ``mode_menu()``
-# 取用），它是面向用户的短句，与这里的提示词正文**不再共用同一段文字**。
+# [EN] Length budget: a mode block is at most 480 characters; the mode block plus
+# [EN] shared rules and language instruction is at most 700 characters. The default
+# [EN] context is 8192 tokens. ``tools/test_capability.py`` asserts these limits;
+# [EN] later revisions must compress existing wording rather than raise them.
 #
-# 长度预算（依据见 records/v0.2.1-提示词优化记录.md）：
-#   * 单个模式块 ≤ 480 字符；
-#   * 模式块 + 共享主干 + 语言指令 ≤ 700 字符。
-#   默认上下文 8192 token，中文约 1 字符/token 量级，700 字符约占 8.5%，
-#   余量留给文件摘要与对话历史。上限由 ``tools/test_capability.py`` 断言守住。
-#   **两次重构都没有放宽这两条上限**：新增内容是靠压缩原有措辞腾出空间的。
+# [ZH]
+# 系统提示词组合：模式块、共享规则、语言指令、可选任务层与可选自定义指令。
+#
+# 1. 模式块（``MODES``）：三个模式，分别定义角色、输出格式、详略程度、推理步骤、
+#    示例、语气与场景边界。“详略程度”将回答长度的控制权交还模型，避免所有回答
+#    被模板化。模式集合由七个收敛为三个（chat、contract、agent）；迁移细节见
+#    ``MODE_ALIASES`` 附近的说明。
+# 2. 共享规则（``_CORE_RULES``）：所有模式共用的七条约束（视角、边界、详略、
+#    先答后问、显式假设、引导与输出纪律）。共享的目的是避免在每个模式中重复，
+#    既节省上下文，也避免出现三份彼此不一致的规则。
+# 3. 语言指令（``_REPLY_LANGUAGE``）：跟随界面语言。
+# 4. 任务层：由 ``/task`` 套用的模板，叠加在模式块之上，而不是替换模式块。
+# 5. 自定义指令：由 ``/prompt`` 设置，优先级最高，替换模式块与任务层。
+#
+# 提示词正文发送给模型而不是展示给用户，因此刻意保持中文。翻译会削弱针对小型
+# 模型设计的措辞。提示词语言与回复语言是两个独立问题：回复语言由
+# ``_REPLY_LANGUAGE`` 决定。用户可见的模式说明仍位于语言包的
+# ``mode.desc.<模式>`` 下。
+#
+# 长度预算：单个模式块不超过 480 字符；模式块、共享规则与语言指令合计不超过
+# 700 字符。默认上下文为 8192 token。``tools/test_capability.py`` 对这些上限
+# 进行断言；后续修改必须压缩既有措辞，不得提高上限。
 # ===========================================================================
 
 MODES: Dict[str, str] = {
@@ -82,15 +112,23 @@ MODES: Dict[str, str] = {
     ),
 }
 
-#: 所有模式共用的主干（视角 / 边界 / 判断详略 / 输出纪律）。
-#: 与场景无关，故共享一份而不是在每个模式里重复——见文件头"长度预算"说明。
-#:
-#: **v0.2.1 系统提示词重构**：上一轮给每个模式补齐六要素后，约束加码过多，模型变得
-#: 「只按模板办事、没有判断力」（任务书三个现象：一律分点、信息不全就拒绝回答、
-#: 用户说不清时帮不上忙）。第 4~6 条就是这次的"放松"层：**把顺序反过来**
-#: （先给最可能的答案 → 再问要不要展开）、把推测摊开、把详略判断权下放。
-#: 放松的同时第 2 条"不编造"与各模式里的硬格式要求（摘录逐字一致、免责提示）
-#: 一字未动 —— 那是底线，不是约束过头。
+#: [EN] Shared rules for every mode: perspective, boundaries, verbosity, and
+#: [EN] output discipline. They are scenario-independent, so a single shared copy
+#: [EN] is used instead of repetition in each mode; see the length-budget note at
+#: [EN] the top of the file.
+#: [EN]
+#: [EN] Rules 4-6 deliberately relax earlier over-constraining instructions:
+#: [EN] answer the most likely interpretation first, then offer alternatives;
+#: [EN] state assumptions explicitly; and let the model decide the level of
+#: [EN] detail. Rule 2 (no fabrication) and the hard per-mode format requirements
+#: [EN] remain unchanged; they are safety invariants, not over-constraints.
+#: [ZH] 所有模式共用的规则：视角、边界、详略与输出纪律。这些规则与场景无关，
+#: [ZH] 因此只保留一份共享副本，而不是在每个模式中重复；参见文件顶部的长度预算
+#: [ZH] 说明。
+#: [ZH]
+#: [ZH] 第 4–6 条有意放宽了此前的过度约束：先回答最可能的解释，再提供替代方案；
+#: [ZH] 显式说明假设；由模型决定详略程度。第 2 条（不得编造）与各模式的硬性格式
+#: [ZH] 要求保持不变；这些是安全约束，而非过度约束。
 _CORE_RULES = (
     "\n\n[通用要求]\n"
     "1. 视角：「用户」指正在提问的人，「你」是助手；要求复述时引用他最近一次输入，而非你的回复。\n"
@@ -105,62 +143,108 @@ _CORE_RULES = (
     "7. 输出纪律：纯文本，不要开场白与自我说明、不复述用户的话；多方案时给推荐和一句理由。"
 )
 
-#: 回复语言指令：**跟随界面语言**，而不是写死中文。
-#:
-#: 为什么（v0.2.1 提示词优化）：原先这里写死「请始终使用简体中文回复」，
-#: 于是把界面切成 English 的用户仍然只收到中文回复——界面多语言了，产出却
-#: 没有。改成本表之后：中文界面要求简体中文（并显式排除繁体，0.8B 模型偶发
-#: 输出繁体），英文界面要求英文，其它语言（社区语言包）要求"与提问同语言"。
-#:
-#: 只有两种内置语言，所以这张表很小；社区新增语言包时无需改代码，
-#: 会自然落到 _REPLY_LANGUAGE_FALLBACK。这里的内容是**发给模型的指令**，
-#: 不是界面文本，故按本项目约定不以语言包键存放（见文件头）。
+#: [EN] Reply-language instruction: follows the interface locale rather than
+#: [EN] hard-coding Chinese.
+#: [EN]
+#: [EN] Simplified Chinese requests Simplified Chinese and explicitly excludes
+#: [EN] Traditional Chinese output, which small models occasionally produce.
+#: [EN] English requests English. Locales without a built-in instruction fall
+#: [EN] through to ``_REPLY_LANGUAGE_FALLBACK`` and reply in the question's
+#: [EN] language. The table is an instruction sent to the model, not interface
+#: [EN] text, so it is not stored in the language pack.
+#: [ZH] 回复语言指令：跟随界面语言，而不是硬编码中文。
+#: [ZH]
+#: [ZH] 简体中文界面要求使用简体中文，并显式排除繁体中文输出（小型模型偶尔会
+#: [ZH] 输出繁体）。英文界面要求使用英文。没有内置指令的语言使用
+#: [ZH] ``_REPLY_LANGUAGE_FALLBACK``，以提问语言回复。该表是发送给模型的指令，
+#: [ZH] 不是界面文本，因此不存放在语言包中。
 _REPLY_LANGUAGE: Dict[str, str] = {
     "zh-Hans": "\n请始终使用简体中文回复，不要输出繁体字。",
     "en": "\nAlways reply in English.",
 }
 
-#: 未内置回复指令的语言：让模型跟随提问语言，避免替用户选错语言。
+#: [EN] Fallback for locales without a built-in reply instruction: follow the
+#: [EN] question's language rather than choosing one for the user.
+#: [ZH] 没有内置回复指令的语言所使用的回退规则：跟随提问语言，而不是替用户选择。
 _REPLY_LANGUAGE_FALLBACK = "\n请使用与用户提问相同的语言回复。"
 
 
 def reply_language_instruction() -> str:
-    """按当前界面语言给出"用什么语言回复"的指令（见 ``_REPLY_LANGUAGE``）。"""
+    """
+    [EN]
+    Return the reply-language instruction for the active interface locale. See
+    ``_REPLY_LANGUAGE``.
+
+    [ZH]
+    返回当前界面语言对应的回复语言指令。参见 ``_REPLY_LANGUAGE``。
+    """
     try:
         from i18n import get as _i18n_get
 
         locale = _i18n_get().locale
-    except Exception:  # i18n 不可用时不能连累出提示词
+    # [EN] Prompt construction must remain functional when i18n is unavailable.
+    # [ZH] i18n 不可用时，提示词构造仍须保持可用。
+    except Exception:
         locale = "zh-Hans"
     return _REPLY_LANGUAGE.get(locale, _REPLY_LANGUAGE_FALLBACK)
 
 # ===========================================================================
-# 对话模式简化（v0.2.1 能力扩展-1 任务一）
+# [EN] Mode simplification: three modes with distinct semantics.
+# [EN]
+# [EN] chat: general conversation; contract: clause review; agent: tool-using
+# [EN] agent. The criterion is whether a user can identify the appropriate mode
+# [EN] without reasoning about prompt design.
+# [EN]
+# [EN] The previous seven modes (general, summary, translate, code, contract,
+# [EN] creative, guide) were reduced for these reasons:
+# [EN] * summary, translate, code, and creative differ in output instructions,
+# [EN]   not in conversation semantics. They are temporary tasks within one
+# [EN]   conversation and belong to ``/task`` templates. Their prompt bodies were
+# [EN]   preserved in the corresponding task templates.
+# [EN] * guide's "list two or three possible directions" is now rule 6 of the
+# [EN]   shared rules, and its model-driven form moved to ``/task guide``.
+# [EN] * contract remains a separate mode because it defines a specialist role
+# [EN]   and strict output requirements (verbatim excerpts and mandatory human
+# [EN]   review), producing distinct tone and boundaries.
+# [EN] * agent is a new semantic category: the model selects tools
+# [EN]   autonomously, which is distinct from predefined batch automation.
+# [EN]
+# [EN] Legacy mode names remain available through ``LEGACY_MODES``. For example,
+# [EN] ``/mode summary`` switches to chat, applies the summary template, and keeps
+# [EN] the legacy temperature preset. Behaviour is preserved without consuming a
+# [EN] separate mode slot.
+# [ZH]
+# 模式简化：三个具有不同语义的模式。
 #
-# **三个模式，三种语义**：chat（通用对话）/ contract（条款审查）/ agent（可调工具的智能体）。
-# 判定标准取自任务书：用户要能一眼说清"我现在该用哪个"，而不是"这个任务该配哪段提示词"。
+# chat：通用对话；contract：条款审查；agent：可调用工具的智能体。判定标准是
+# 用户能否在不理解提示词设计的前提下确定应使用哪个模式。
 #
-# 为什么现在是 3 个而不是上一版的 7 个（general/summary/translate/code/contract/creative/guide）：
-#   * summary / translate / code / creative 的差别**只是提示词不同**，不是语义不同——
-#     它们是"同一场对话里的临时任务"，本来就该由 ``/task`` 模板承担（模板本来就是
-#     "本轮输出格式"的层）。这四个模式块的正文没有丢，全部搬进了对应的任务模板。
-#   * guide（引导）同理：它的"列 2~3 种可能方向"已经写进共享主干第 6 条（所有模式通用），
-#     模型驱动的版本搬进 ``/task guide``。
-#   * contract 保留为独立模式：它带专业角色与**硬输出要求**（原文逐字一致、必须提示
-#     人工复核），是"对话语气与边界都不同"的场景，合并会丢能力（任务书明确要求保留）。
-#   * agent 是新增的第三种语义：模型自主决定调用工具（与"预定义流程的批量执行"
-#     的自动化是两件事）。
+# 此前的七个模式（general、summary、translate、code、contract、creative、
+# guide）按以下理由收敛：
+# * summary、translate、code、creative 的差别在于输出指令，而非对话语义。
+#   它们是同一场对话中的临时任务，应由 ``/task`` 模板承担。其提示词正文已保留
+#   在对应任务模板中。
+# * guide 的“列出两到三个可能方向”已写入共享规则第 6 条；其模型驱动形式迁移至
+#   ``/task guide``。
+# * contract 保留为独立模式，因为它定义专业角色与严格输出要求（逐字摘录与强制
+#   人工复核），语气与边界均不同。
+# * agent 是新的语义类别：由模型自主选择工具，与预定义流程的批量自动化不同。
 #
-# **旧名字仍然可用**（``LEGACY_MODES``）：``/mode summary`` 会切到 chat 并把 summary
-# 模板套上，同时把温度预设也沿用旧值 —— 用户不用改习惯，能力一点没少，只是不再占一个模式位。
-# ===========================================================================
+# 旧模式名仍可通过 ``LEGACY_MODES`` 使用。例如 ``/mode summary`` 会切换到 chat、
+# 套用 summary 模板并沿用旧温度预设。行为得以保留，同时不再占用独立模式位。
 
-#: 模式别名：编号 / 缩写 / 全称 / **旧模式名**均可切换。
-#:
-#: **编号只认新的 1/2/3**（chat/contract/agent）。上一版的 4/5/6/7 不再映射到任何模式 ——
-#: 它们与新编号在语义上会打架（旧 `/mode 2` 是 summary，新 `/mode 2` 是 contract），
-#: 与其让"同一个数字在两类用户眼里指两件事"，不如明确报错并告诉用户该用哪个模板
-#: （见 `LEGACY_NUMBERS` 与 `command_handler._mode`）。
+#: [EN] Mode aliases: numeric identifiers, abbreviations, full names, and legacy
+#: [EN] mode names are accepted.
+#: [EN]
+#: [EN] Numeric identifiers are only 1/2/3 (chat/contract/agent). The previous
+#: [EN] 4/5/6/7 values are not mapped because their semantics conflict with the
+#: [EN] new numbering. ``/mode 4`` therefore reports a migration hint instead of
+#: [EN] silently selecting a different mode.
+#: [ZH] 模式别名：接受数字标识、缩写、全称与旧模式名。
+#: [ZH]
+#: [ZH] 数字标识仅包括 1/2/3（chat、contract、agent）。旧的 4/5/6/7 不再映射，
+#: [ZH] 因为其语义与新编号冲突。``/mode 4`` 会返回迁移提示，而不会静默选择
+#: [ZH] 语义不同的模式。
 MODE_ALIASES: Dict[str, str] = {
     "1": "chat", "c": "chat", "chat": "chat",
     "2": "contract", "ct": "contract", "contract": "contract",
@@ -174,8 +258,10 @@ MODE_ALIASES: Dict[str, str] = {
     "guide": "chat", "gd": "chat",
 }
 
-#: 旧模式名 → 迁移后要自动套用的任务模板 id（``""`` 表示只切模式、不套模板）。
-#: ``/mode summary`` 因此等于"切到 chat + /task summary"，能力不丢、概念少一个。
+#: [EN] Legacy mode name to the task template applied during migration. An empty
+#: [EN] value means mode switching only, with no template.
+#: [ZH] 旧模式名到迁移时自动套用的任务模板 id 的映射。空值表示仅切换模式，
+#: [ZH] 不套用模板。
 LEGACY_MODES: Dict[str, str] = {
     "summary": "summary",
     "translate": "translate",
@@ -185,43 +271,64 @@ LEGACY_MODES: Dict[str, str] = {
     "general": "",
 }
 
-#: 当前编号（1/2/3）。单独抽出来是为了让"数字属于新编号还是旧编号"这件事**只有一处判据**：
-#: `command_handler._mode` 用它决定"这是新编号（切模式）还是旧编号（报错指路）"。
+#: [EN] Current numeric identifiers (1/2/3). Kept separate so that the distinction
+#: [EN] between current and legacy numbers has a single source of truth.
+#: [ZH] 当前数字标识（1/2/3）。单独维护，使“当前编号与旧编号”的判定只有一个
+#: [ZH] 事实来源。
 MODE_NUMBERS: Dict[str, str] = {"1": "chat", "2": "contract", "3": "agent"}
 
-#: 旧编号 → 旧模式名。**只用来给出有用的报错**，不再用来切模式或套模板：
-#: 上一版 ``/mode 2`` 是 summary、``/mode 6`` 是 creative，而新编号里 ``/mode 2``
-#: 是 contract、``/mode 3`` 是 agent —— 同一个数字在两套编号里指不同东西。
-#: 让数字继续"自动迁移"会出现"我按旧习惯敲 /mode 2，结果进了合同审查模式还套了摘要模板"
-#: 这种既不是旧语义也不是新语义的状态（文档子代理按实测发现过这个组合）。
-#: 所以：数字只认新编号，旧编号直接报错并指路；旧**模式名**（不带歧义）才自动迁移。
+#: [EN] Legacy numeric identifier to legacy mode name. This mapping is used only
+#: [EN] to produce a helpful error; it does not switch modes or apply templates.
+#: [EN] In the previous numbering, 2 meant summary and 6 meant creative; in the
+#: [EN] current numbering, 2 means contract and 3 means agent. Automatic migration
+#: [EN] of numbers would produce a state matching neither semantics. Numbers are
+#: [EN] therefore accepted only for the current numbering; legacy numbers report a
+#: [EN] migration hint, while unambiguous legacy mode names migrate automatically.
+#: [ZH] 旧数字标识到旧模式名的映射。该映射仅用于生成明确的错误提示，不用于切换
+#: [ZH] 模式或套用模板。旧编号中 2 表示 summary、6 表示 creative；当前编号中
+#: [ZH] 2 表示 contract、3 表示 agent。自动迁移数字会产生既不匹配旧语义也不匹配
+#: [ZH] 新语义的状态。因此数字仅接受当前编号；旧编号返回迁移提示，而无歧义的旧
+#: [ZH] 模式名可自动迁移。
 LEGACY_NUMBERS: Dict[str, str] = {
     "1": "general", "2": "summary", "3": "translate", "4": "code",
     "5": "contract", "6": "creative", "7": "guide",
 }
 
-#: 旧模式名 → 温度预设。迁移时沿用，避免"合并之后回答风格也变了"。
+#: [EN] Legacy mode name to temperature preset. Migration preserves the preset so
+#: [EN] that response style does not change unexpectedly.
+#: [ZH] 旧模式名到温度预设的映射。迁移时保留原预设，避免回答风格意外改变。
 LEGACY_TEMPERATURES: Dict[str, float] = {
     "summary": 0.4, "translate": 0.3, "code": 0.2, "creative": 0.9, "guide": 0.6,
 }
 
-# 每个模式的展示缩写（用于 /mode list）
+# [EN] Display abbreviation for each mode, used by /mode list.
+# [ZH] 每个模式的展示缩写，用于 /mode list。
 MODE_SHORT_NAMES: Dict[str, str] = {
     "chat": "c", "contract": "ct", "agent": "ag",
 }
 
-# 模式 × 温度预设（用户手动 /temp 后以手动值为准）
+# [EN] Mode temperature presets. A manual /temp setting takes precedence.
+# [ZH] 模式温度预设。用户通过 /temp 手动设置的值优先。
 MODE_TEMPERATURES: Dict[str, float] = {
     "chat": 0.7,
-    # 审查要稳：宁可保守也不要发挥。
+    # [EN] Contract review prioritizes stability over creativity.
+    # [ZH] 合同审查优先保证稳定性，而非创造性。
     "contract": 0.3,
-    # 智能体要"会用工具"但别乱调：0.5 比 code(0.2) 敢试、比 creative(0.9) 收得住。
+    # [EN] The agent should use tools but not act erratically: 0.5 is more
+    # [EN] exploratory than code (0.2) and more controlled than creative (0.9).
+    # [ZH] 智能体应使用工具但不得行为失稳：0.5 比 code（0.2）更具探索性，
+    # [ZH] 比 creative（0.9）更受约束。
     "agent": 0.5,
 }
 
 
 def canonical_mode(name: str) -> str:
-    """把任意写法（编号/缩写/全称/旧模式名）解析成正式模式名；无效则回 chat。
+    """
+    [EN]
+    Resolve any mode spelling to its canonical mode name, defaulting to chat.
+
+    [ZH]
+    把任意写法（编号/缩写/全称/旧模式名）解析成正式模式名；无效则回 chat。
 
     配置里可能存着旧名字（``default_mode: "summary"``），所以**加载路径也走它**，
     而不是只在 ``/mode`` 里迁移。
@@ -231,7 +338,12 @@ def canonical_mode(name: str) -> str:
 
 
 def legacy_template(name: str) -> str:
-    """旧**模式名**对应要套用的任务模板 id；不是旧名字则返回空串。
+    """
+    [EN]
+    Return the task template to apply for a legacy mode name.
+
+    [ZH]
+    旧**模式名**对应要套用的任务模板 id；不是旧名字则返回空串。
 
     刻意**不认旧编号**（见 ``LEGACY_NUMBERS`` 的说明）：编号在两套编号体系里会歧义，
     由 ``command_handler._mode`` 单独报错指路。
@@ -240,7 +352,12 @@ def legacy_template(name: str) -> str:
 
 
 def legacy_number_hint(token: str) -> str:
-    """旧编号 → 建议的替代写法（不是旧编号则返回空串）。
+    """
+    [EN]
+    Return a replacement hint for a legacy numeric mode identifier.
+
+    [ZH]
+    旧编号 → 建议的替代写法（不是旧编号则返回空串）。
 
     ``/mode 6`` 这样的旧写法会得到"旧编号 6 曾指创意写作，现在请用 /task creative"，
     而不是默默切到一个语义不同的模式。
@@ -258,29 +375,39 @@ def legacy_number_hint(token: str) -> str:
 
 
 def legacy_note() -> str:
-    """``/mode list`` 末尾的迁移说明（界面文本，由调用方取语言包渲染）。"""
+    """
+    [EN]
+    Return the migration note listing legacy mode names and templates.
+
+    [ZH]
+    ``/mode list`` 末尾的迁移说明（界面文本，由调用方取语言包渲染）。
+    """
     return ", ".join(f"{name}→{template}" for name, template in LEGACY_MODES.items() if template)
 
-# 用户询问"我刚才说了什么"时的意图识别
+# [EN] Intent detection for questions such as "what did I just say?".
+# [ZH] “我刚才说了什么”等问题的意图识别。
 REPEAT_INTENT = re.compile(
     r"(刚才|刚刚|之前|上一条|上句|前面).{0,8}(说|讲|问|输入|发).{0,6}(什么|啥)"
     r"|我说过什么|我说了什么|我刚刚说了什么",
     re.S,
 )
 
-# 提问与已上传文件相关时，把文件全文注入上下文（其余时候只保留文件名指针，省上下文）
-#
-# ⚠️ **不要再拿它当"要不要注入文件正文"的闸门**（任务一，自测问题修复-1）。
-# 这个判断本身就是错的，而且已经造成过两次相同的线上症状"上传文件后模型回答
-# 没有看到文件内容"：
-#   * 用户最自然的问法是「帮我总结一下」「分析一下」「甲方是谁」，这些词**不在**
-#     下面的正则里（正则收的是"摘要一下""读一下""看看"，却没收到"总结""分析"），
-#     于是文件正文一个字都进不了上下文，模型只能看到系统提示里的文件名；
-#   * 本地小模型看不到内容时，据实回答"没有看到文件内容"是完全正确的行为 ——
-#     错的不是模型，是这道闸门。
-# 现在 ``main._stream_chat`` 的做法是"**有文件就注入**"（``conv.has_file()``），
-# 长度由 ``config.files.total_chars`` 预算约束；检索路径也早已是同样口径。
-# 保留这个正则只为兼容既有引用，**不得再用于决定注入与否**。
+# [EN] Legacy file-related intent pattern. File bodies are injected whenever a
+# [EN] file is present; this pattern must no longer gate injection.
+# [EN]
+# [EN] The original gate caused a class of failures in which a user uploaded a
+# [EN] file but the model reported that no file content was available. Natural
+# [EN] questions such as "summarize this" or "who is the buyer" did not match
+# [EN] the pattern, so the body was never injected. The current injection rule is
+# [EN] "inject whenever ``conv.has_file()`` is true", bounded by
+# [EN] ``config.files.total_chars``. The pattern is retained only for backwards
+# [EN] compatibility with existing references.
+# [ZH] 旧的文件意图正则。只要存在文件就注入正文；该正则不得再用于控制注入。
+# [ZH]
+# [ZH] 原闸门曾导致用户上传文件后模型声称看不到文件内容。诸如“帮我总结一下”
+# [ZH] 或“甲方是谁”的自然提问不匹配该正则，正文因此从未被注入。当前规则为
+# [ZH] “只要 ``conv.has_file()`` 为真就注入”，并由 ``config.files.total_chars``
+# [ZH] 限制总长度。该正则仅为兼容既有引用而保留。
 FILE_INTENT = re.compile(
     r"文件|文档|合同|条款|内容|里面|这个|上面|上文|上述|上传|审阅|基于|根据|摘要一下|读一下|看看",
     re.S,
@@ -288,38 +415,70 @@ FILE_INTENT = re.compile(
 
 
 # ===========================================================================
-# 多文件上下文（v0.2.1 优化已知问题-2 任务八）
+# [EN] Multi-file context
+# [ZH] 多文件上下文
 # ===========================================================================
 #
-# 任务书要求支持一次上传多个文件，并把"多个文件内容如何注入"作为需要明确的点：
-# "全部注入、按相关性选择、或用户指定"。
-#
-# **本实现的决策：全部注入，但总长受 ``config.files.total_chars`` 约束**，
-# 超出时按"后上传的优先"注入并如实告知用户哪些文件没进上下文。
-# 理由：本地小模型没有可靠的"哪份文件相关"判断能力，用模型做相关性筛选要额外
-# 推理且不稳定；而用户一次拖进来的文件通常本来就是同一件事的资料。
-# 与其猜，不如全部给模型 + 明确告知取舍。
+# [EN] The implementation injects every file, subject to the
+# [EN] ``config.files.total_chars`` budget. When the budget is insufficient,
+# [EN] files uploaded later take precedence and the user is explicitly told
+# [EN] which files were not injected. Local small models cannot reliably judge
+# [EN] relevance, and using the model for relevance selection adds unstable
+# [EN] inference cost. Files uploaded together usually belong to the same task,
+# [EN] so complete injection with an explicit notice is preferable to guessing.
+# [ZH] 实现采用“全部注入，但受 ``config.files.total_chars`` 预算约束”的策略。
+# [ZH] 预算不足时，后上传的文件优先注入，并明确告知用户哪些文件未进入上下文。
+# [ZH] 本地小型模型无法可靠判断相关性，使用模型进行相关性筛选会增加不稳定的
+# [ZH] 推理成本。一次上传的文件通常属于同一任务，因此完整注入并明确提示，
+# [ZH] 优于依赖猜测。
 
-#: 单个文件超过这个字符数就**落盘**保存，上下文里只放"文件指针 + 摘要"。
-#: 任务书任务九的"工具输出单独处理"在文件侧的同一条思路：大块内容不该整段
-#: 塞进上下文，但要留下可回查的指针。
+#: [EN] Files larger than this threshold are stored on disk; only a file pointer
+#: [EN] and summary remain in the context. Large content should not be placed
+#: [EN] verbatim in the context window, but a retrievable pointer must remain.
+#: [ZH] 超过该阈值的文件会落盘保存；上下文中仅保留文件指针与摘要。大段内容
+#: [ZH] 不应原样放入上下文窗口，但必须保留可回查的指针。
 _DISK_THRESHOLD_CHARS = 20000
 
 
 @dataclass
 class FileEntry:
-    """一份已加载文件：内容、摘要与"内容放在哪"。"""
+    """
+    [EN]
+    A loaded file: content, summary, and storage location.
 
-    name: str = ""                       # 文件名（用于展示与上下文指针）
-    path: str = ""                       # 原始路径（可能为空：同名文件去重后沿用首个）
-    content: str = ""                    # 全文（落在磁盘时为空串）
-    summary: str = ""                    # 分段摘要（有值时优先注入摘要）
+    [ZH]
+    已加载文件：内容、摘要与存储位置。
+    """
+
+    # [EN] File name used for display and context pointers.
+    # [ZH] 用于展示与上下文指针的文件名。
+    name: str = ""
+    # [EN] Original path. It may be empty when a duplicate file reuses the first entry.
+    # [ZH] 原始路径。同名文件去重后可能沿用首个条目，此时为空。
+    path: str = ""
+    # [EN] Full text. Empty when the content has been stored on disk.
+    # [ZH] 全文。内容已落盘时为空。
+    content: str = ""
+    # [EN] Chunk summary. When present, the summary is injected in preference to the full text.
+    # [ZH] 分段摘要。存在时优先注入摘要而非全文。
+    summary: str = ""
     summary_meta: Dict = field(default_factory=dict)
-    chars: int = 0                       # 原文字符数（落盘后仍要能显示体积）
-    stored_at: str = ""                  # 落盘路径（空 = 内容在内存里）
+    # [EN] Character count of the original text, still available after disk storage.
+    # [ZH] 原文字符数，落盘后仍可显示体积。
+    chars: int = 0
+    # [EN] Disk path. Empty means the content remains in memory.
+    # [ZH] 落盘路径。为空表示内容仍在内存中。
+    stored_at: str = ""
 
     def inject_body(self) -> str:
-        """注入上下文时用的正文（摘要优先，落盘时给指针）。"""
+        """
+        [EN]
+        Return the body used for context injection: summary first, then full
+        text, then a disk pointer.
+
+        [ZH]
+        返回用于上下文注入的正文：优先摘要，其次全文，最后为磁盘指针。
+        """
         if self.summary:
             return self.summary
         if self.content:
@@ -330,7 +489,14 @@ class FileEntry:
         return ""
 
     def to_dict(self) -> Dict:
-        """会话持久化用的字典（**不写正文**：正文落盘或由文件名回指）。"""
+        """
+        [EN]
+        Return the dictionary used for session persistence. The body is omitted;
+        it is stored on disk or can be re-read from the source file.
+
+        [ZH]
+        返回用于会话持久化的字典。正文不写入；正文已落盘或可由源文件重新读取。
+        """
         return {
             "name": self.name,
             "path": self.path,
@@ -353,41 +519,65 @@ class FileEntry:
 
 
 class ConversationManager:
-    """管理多轮对话历史、模式切换、文件上下文、自定义提示词与会话持久化。"""
+    """
+    [EN]
+    Manage multi-turn history, mode switching, file context, custom prompts, and
+    session persistence.
+
+    [ZH]
+    管理多轮对话历史、模式切换、文件上下文、自定义提示词与会话持久化。
+    """
 
     def __init__(self, max_history: int = 10, default_mode: str = "chat") -> None:
         self.max_history = max_history
-        # 走 canonical_mode 而不是直接比对：**配置与会话里可能存着旧模式名**
-        # （`default_mode: "general"`、会话文件里的 `"mode": "summary"`），
-        # 迁移逻辑只有一份，加载路径与 /mode 命令都用它。
+        # [EN] Use canonical_mode rather than direct comparison: configuration and
+        # [EN] session files may contain legacy mode names. A single migration
+        # [EN] path is shared by loading and the /mode command.
+        # [ZH] 使用 canonical_mode 而不是直接比较：配置与会话文件可能保存旧模式名。
+        # [ZH] 加载路径与 /mode 命令共用同一条迁移逻辑。
         self.mode = canonical_mode(default_mode)
         self.history: List[dict] = []
-        # ---------- 多文件（任务八） ----------
-        # files 是**有序**列表（上传顺序），active_index 指向"当前操作的那一份"
-        # （/summarize、/status、上下文指针都以它为准）。
-        # file_name / file_content / file_summary / file_summary_meta 四个老字段
-        # 保留为**只读属性代理**（见下方 property），因此既有调用方与测试不用改。
+        # ---------- [EN] Multiple files / [ZH] 多文件 ----------
+        # [EN] files is an ordered list in upload order; active_index identifies
+        # [EN] the file used by /summarize, /status, and context pointers.
+        # [ZH] files 为按上传顺序排列的有序列表；active_index 指向 /summarize、
+        # [ZH] /status 与上下文指针所使用的当前文件。
         self.files: List[FileEntry] = []
         self.active_index: int = -1
         self.undo_stack: List[dict] = []
-        self.custom_prompt = ""   # /prompt 的内容：优先级最高，替换模式块与任务层
-        self.task_prompt = ""     # /task 套用的任务层正文：叠加在模式块之上
-        self.task_template = ""   # 当前任务层的模板 id（供 /status 与引导短路判断）
-        self.summary = ""  # 早期对话的自动摘要（长会话压缩产物）
-        # ---------- 思考内容（v0.2.1 模型思考内容分离） ----------
-        # 这两个开关由 Backend 按 config.reasoning 注入：
-        #   persist_reasoning=False 时不把思考写进历史（老会话的字段缺失照旧兼容）；
-        #   reasoning_max_chars 限制每条思考的保留长度（0 = 不限制）。
+        # [EN] /prompt content: highest priority; replaces mode and task layers.
+        # [ZH] /prompt 内容：优先级最高，替换模式层与任务层。
+        self.custom_prompt = ""
+        # [EN] /task task-layer text: layered on top of the mode block.
+        # [ZH] /task 任务层正文：叠加在模式块之上。
+        self.task_prompt = ""
+        # [EN] Current task-template id, used by /status and guidance short-circuit checks.
+        # [ZH] 当前任务模板 id，供 /status 与引导短路判断使用。
+        self.task_template = ""
+        # [EN] Automatic summary of earlier turns, produced by long-session compaction.
+        # [ZH] 早期对话的自动摘要，由长会话压缩生成。
+        self.summary = ""
+        # ---------- [EN] Reasoning content / [ZH] 思考内容 ----------
+        # [EN] Backend injects these settings from config.reasoning:
+        # [EN] persist_reasoning=False omits reasoning from history;
+        # [EN] reasoning_max_chars limits retained reasoning per turn (0 = unlimited).
+        # [ZH] Backend 根据 config.reasoning 注入这两个设置：
+        # [ZH] persist_reasoning=False 时不将思考写入历史；
+        # [ZH] reasoning_max_chars 限制每轮保留的思考长度（0 表示不限制）。
         self.persist_reasoning = True
         self.reasoning_max_chars = 8000
 
-    # ---------- 多文件：老字段的兼容代理（任务八） ----------
+    # ---------- [EN] Legacy single-file compatibility proxies / [ZH] 单文件兼容代理 ----------
     #
-    # 为什么要留这四个属性：`file_name` / `file_content` / `file_summary` /
-    # `file_summary_meta` 在指令、状态显示、摘要触发、会话读写、测试里被引用了
-    # 几十处。改成列表后如果逐一改写调用点，任何一处漏改都是运行时崩溃；
-    # 用属性代理把它们统一映射到"当前活动文件"，语义与单文件时代完全一致，
-    # 新代码走 files 列表即可。
+    # [EN] file_name, file_content, file_summary, and file_summary_meta are
+    # [EN] referenced by commands, status display, summary triggers, session I/O,
+    # [EN] and tests. Rewriting every call site would risk a runtime failure on
+    # [EN] any missed reference. These properties map the legacy names to the
+    # [EN] active file, preserving single-file semantics; new code uses files.
+    # [ZH] file_name、file_content、file_summary 与 file_summary_meta 被指令、
+    # [ZH] 状态显示、摘要触发、会话读写与测试引用。逐一改写调用点会因遗漏而引发
+    # [ZH] 运行时错误。以下属性将旧字段映射到当前活动文件，保持单文件语义；
+    # [ZH] 新代码应使用 files 列表。
 
     @property
     def _active(self) -> Optional[FileEntry]:
@@ -402,7 +592,10 @@ class ConversationManager:
 
     @file_name.setter
     def file_name(self, value: str) -> None:
-        # 兼容直接赋值（老代码/测试）：没有活动文件时补一条空壳，便于逐字段构造
+        # [EN] Support direct assignment from legacy callers and tests. When no
+        # [EN] active file exists, create an empty entry for field-by-field setup.
+        # [ZH] 兼容旧调用方与测试的直接赋值。没有活动文件时创建空条目，
+        # [ZH] 以便逐字段构造。
         if self._active is None:
             self.files.append(FileEntry(name=os.path.basename(value or ""), path=value or ""))
             self.active_index = len(self.files) - 1
@@ -447,14 +640,25 @@ class ConversationManager:
             self.active_index = len(self.files) - 1
         self._active.summary_meta = value or {}
 
-    # ---------- 多文件：真正的 API（任务八） ----------
+    # ---------- [EN] Multi-file API / [ZH] 多文件 API ----------
 
     def add_file(self, filepath: str, content: str) -> FileEntry:
-        """登记一份文件并把**它**设为当前活动文件。
+        """
+        [EN]
+        Register a file and make it the active file.
 
-        同名文件（按文件名比较）视为重复上传：**替换**内容而不是追加第二条 ——
-        否则同一份合同拖两次就会在上下文里出现两遍，白占窗口且让模型困惑。
-        替换时保留原有位置，活动指针指过去。
+        A file with the same name is treated as a re-upload: its content is
+        replaced in place rather than appended as a second entry. Otherwise the
+        same document could appear twice in the context, wasting window space
+        and confusing the model. Replacement preserves the original position and
+        moves the active pointer to it.
+
+        [ZH]
+        登记文件，并将其设为当前活动文件。
+
+        同名文件视为重复上传：就地替换内容，而不是追加第二个条目。否则同一文档
+        会在上下文中出现两次，浪费窗口并造成模型混淆。替换时保留原位置，并将
+        活动指针指向该条目。
         """
         name = os.path.basename(filepath or "") or (filepath or "未命名")
         entry = FileEntry(name=name, path=filepath or "", content=content or "",
@@ -469,7 +673,14 @@ class ConversationManager:
         return entry
 
     def remove_file(self, index: int) -> bool:
-        """移除第 ``index`` 份文件（任务书要求"用户可单独移除某个文件"）。"""
+        """
+        [EN]
+        Remove the file at ``index``. Individual files can be removed without
+        clearing the rest of the context.
+
+        [ZH]
+        移除索引 ``index`` 处的文件。可单独移除某个文件，而不清空其余上下文。
+        """
         if not (0 <= index < len(self.files)):
             return False
         self.files.pop(index)
@@ -488,7 +699,13 @@ class ConversationManager:
         return False
 
     def select_file(self, index: int) -> bool:
-        """切换"当前活动文件"（/summarize 等指令作用于它）。"""
+        """
+        [EN]
+        Select the active file used by commands such as /summarize.
+
+        [ZH]
+        切换当前活动文件；/summarize 等指令作用于该文件。
+        """
         if 0 <= index < len(self.files):
             self.active_index = index
             return True
@@ -501,19 +718,40 @@ class ConversationManager:
         return sum(entry.chars for entry in self.files)
 
     def has_file(self) -> bool:
-        """是否至少上传了一份文件（老 API；多文件下等价于 ``bool(self.files)``）。"""
+        """
+        [EN]
+        Return whether at least one file was uploaded. This legacy API is
+        equivalent to ``bool(self.files)``.
+
+        [ZH]
+        返回是否至少上传了一份文件。该旧 API 等价于 ``bool(self.files)``。
+        """
         return bool(self.files)
 
     def set_entry_summary(self, entry: FileEntry, summary: str,
                           meta: Optional[Dict] = None) -> None:
-        """给**指定**文件写摘要（多文件下摘要作用于哪一份必须显式指定）。"""
+        """
+        [EN]
+        Write a summary for the specified file. In multi-file mode, the target
+        file must be explicit.
+
+        [ZH]
+        为指定文件写入摘要。在多文件模式下，必须显式指定目标文件。
+        """
         entry.summary = summary or ""
         entry.summary_meta = meta or {}
 
-    # ---------- 模式 ----------
+    # ---------- [EN] Modes / [ZH] 模式 ----------
 
     def set_mode(self, mode: str) -> bool:
-        """按编号 / 缩写 / 全称切换模式（**旧模式名同样有效**，见 ``LEGACY_MODES``）。"""
+        """
+        [EN]
+        Switch modes by number, abbreviation, or full name. Legacy mode names
+        remain valid; see ``LEGACY_MODES``.
+
+        [ZH]
+        按编号、缩写或全称切换模式。旧模式名仍然有效；参见 ``LEGACY_MODES``。
+        """
         key = (mode or "").strip().lower()
         if key not in MODE_ALIASES and key not in MODES:
             return False
@@ -521,16 +759,32 @@ class ConversationManager:
         return True
 
     def migrated_template(self, mode: str) -> str:
-        """旧模式名需要一并套用的任务模板 id（不是旧名字则返回空串）。
+        """
+        [EN]
+        Return the task-template id to apply together with a legacy mode name,
+        or an empty string for a non-legacy name.
 
-        ``/mode summary`` 的语义 = "切到 chat + 套用 summary 模板"，
-        所以调用方（``command_handler._mode``）用它决定要不要设任务层。
+        ``/mode summary`` means "switch to chat and apply the summary template";
+        the caller uses this value to decide whether to set the task layer.
+
+        [ZH]
+        返回与旧模式名一并套用的任务模板 id；非旧模式名返回空串。
+
+        ``/mode summary`` 的语义是“切换到 chat 并套用 summary 模板”；调用方
+        据此决定是否设置任务层。
         """
         return legacy_template(mode)
 
     @staticmethod
     def legacy_number_hint(token: str) -> str:
-        """旧编号的替代写法建议（供 ``/mode 4`` 这类旧写法报错时指路）。"""
+        """
+        [EN]
+        Return the replacement syntax for a legacy numeric identifier, used when
+        reporting an error for forms such as ``/mode 4``.
+
+        [ZH]
+        返回旧数字标识的替代写法，用于 ``/mode 4`` 等旧写法的错误提示。
+        """
         return legacy_number_hint(token)
 
     def get_mode(self) -> str:
@@ -542,10 +796,19 @@ class ConversationManager:
 
     @staticmethod
     def mode_menu() -> str:
-        """生成带编号、缩写与温度预设的模式清单文本（模式简化后只剩 3 个）。
+        """
+        [EN]
+        Build the mode list with numbers, abbreviations, and temperature presets.
 
-        模式**说明**取自语言包（``mode.desc.<模式>``），它是界面文本；
-        MODES 里的系统提示词正文是发给模型的内容，按设计保持中文（见文件头）。
+        User-visible mode descriptions come from the language pack under
+        ``mode.desc.<mode>``. The prompt bodies in MODES are sent to the model and
+        intentionally remain Chinese; see the file header.
+
+        [ZH]
+        生成包含编号、缩写与温度预设的模式清单。
+
+        用户可见的模式说明来自语言包的 ``mode.desc.<模式>``。MODES 中的提示词
+        正文发送给模型，按设计保持中文；参见文件头部说明。
         """
         lines = []
         for idx, name in enumerate(MODES, 1):
@@ -557,26 +820,44 @@ class ConversationManager:
 
     @staticmethod
     def legacy_mode_note() -> str:
-        """``/mode list`` 末尾的"旧模式名仍可用"提示（界面文本，走语言包）。"""
+        """
+        [EN]
+        Return the end-of-list note stating that legacy mode names remain valid.
+        The text is user-visible and comes from the language pack.
+
+        [ZH]
+        返回列表末尾关于旧模式名仍然有效的提示。该文本面向用户，来自语言包。
+        """
         pairs = ", ".join(f"{name} → /task {template}"
                           for name, template in LEGACY_MODES.items() if template)
         return _t("cmd.resp.mode_legacy", pairs=pairs)
 
-    # ---------- 历史记录 ----------
+    # ---------- [EN] History / [ZH] 历史记录 ----------
 
     def add_message(self, role: str, content: str, reasoning: str = "") -> None:
-        """追加一条历史记录。
+        """
+        [EN]
+        Append a history record.
 
-        ``reasoning``（v0.2.1 模型思考内容分离）是**该轮助手回复的思考内容**，
-        单独存字段而不是拼进 ``content``：
+        ``reasoning`` is the reasoning content produced for this assistant turn.
+        It is stored in a separate field rather than concatenated into
+        ``content`` so that persisted sessions preserve the distinction and the
+        reasoning does not become part of the answer or the model context (see
+        :meth:`build_messages`).
 
-        * 任务书任务五要求"重新加载含思考内容的历史会话，确认区分正确" ——
-          不持久化就无从区分，所以默认存进历史；
-        * 但它**不参与** :meth:`build_messages` 构造的上下文（见那里的说明），
-          所以既不会污染回答文本，也不会白占上下文窗口。
+        Empty reasoning is not written. Legacy sessions and sessions from models
+        without reasoning remain unchanged, and session.json does not grow from
+        empty string fields.
 
-        空思考内容不写字段：老会话（没有这个字段）与普通模型的会话保持原样，
-        session.json 也不会因为一堆空字符串而变大。
+        [ZH]
+        追加一条历史记录。
+
+        ``reasoning`` 是该轮助手回复的思考内容。它存放在独立字段中，而不是拼接
+        进 ``content``，以便持久化会话保留区分，且思考不会进入回答文本或模型
+        上下文（参见 :meth:`build_messages`）。
+
+        空思考内容不写入。旧会话与无思考模型的会话保持不变，session.json 也
+        不会因空字符串字段而增大。
         """
         record: Dict[str, object] = {
             "role": role,
@@ -587,12 +868,21 @@ class ConversationManager:
         if trimmed and self.persist_reasoning:
             record["reasoning"] = trimmed
         self.history.append(record)
-        # 硬上限保护（正常由后端把超限部分压缩为摘要）
+        # [EN] Hard upper bound; under normal operation the backend compacts the
+        # [EN] overflow into a summary first.
+        # [ZH] 硬上限保护；正常情况下后端会先将超出部分压缩为摘要。
         if len(self.history) > self.max_history * 4:
             self.history = self.history[-self.max_history * 4 :]
 
     def _trim_reasoning(self, reasoning: str) -> str:
-        """按配置截断思考内容（超长时保留头部并加省略说明）。"""
+        """
+        [EN]
+        Truncate reasoning according to configuration, retaining the beginning
+        and appending an elision marker.
+
+        [ZH]
+        按配置截断思考内容，保留开头并附加省略标记。
+        """
         text = (reasoning or "").strip()
         limit = int(self.reasoning_max_chars or 0)
         if not text or limit <= 0 or len(text) <= limit:
@@ -600,14 +890,28 @@ class ConversationManager:
         return text[:limit] + _t("export.reasoning_truncated")
 
     def last_user_message(self) -> Optional[str]:
-        """返回最近一条用户消息（用于"我刚才说了什么"等场景）。"""
+        """
+        [EN]
+        Return the most recent user message, used by questions such as "what did
+        I just say?".
+
+        [ZH]
+        返回最近一条用户消息，用于“我刚才说了什么”等问题。
+        """
         for msg in reversed(self.history):
             if msg["role"] == "user":
                 return msg["content"]
         return None
 
     def undo(self) -> bool:
-        """撤回最后一轮对话（user + assistant 两条）。"""
+        """
+        [EN]
+        Undo the last conversation turn, removing the user and assistant
+        messages.
+
+        [ZH]
+        撤回最后一轮对话，移除用户消息与助手消息。
+        """
         if len(self.history) < 2:
             return False
         self.undo_stack.append(self.history.pop())
@@ -622,11 +926,22 @@ class ConversationManager:
         self.summary = ""
 
     def export_markdown(self) -> str:
-        """将对话历史导出为 Markdown 文本（标题行随界面语言切换）。
+        """
+        [EN]
+        Export conversation history as Markdown. Headings follow the active
+        interface language.
 
-        思考内容单独作为可折叠块导出（``<details>``，GitHub / VS Code / Typora
-        都能折叠）：导出要"完整"但也要"一眼分得清哪部分是思考"，直接拼在答案
-        前面会让导出件读起来像跑题；丢掉又等于悄悄删了用户看过的内容。
+        Reasoning is exported as a collapsible ``<details>`` block. The export
+        must be complete while keeping reasoning visually distinct from the
+        answer; concatenating reasoning before the answer makes the export read
+        as off-topic, and omitting it silently removes content the user saw.
+
+        [ZH]
+        将对话历史导出为 Markdown。标题随当前界面语言变化。
+
+        思考内容导出为可折叠的 ``<details>`` 块。导出必须完整，同时使思考与回答
+        在视觉上可区分；将思考拼接在回答之前会使导出内容显得离题，而省略思考
+        则等于静默删除用户看过的内容。
         """
         lines = [_t("export.title"), _t("export.mode", mode=self.mode), ""]
         for msg in self.history:
@@ -645,38 +960,69 @@ class ConversationManager:
             lines.append("")
         return "\n".join(lines)
 
-    # ---------- 自定义提示词 / 任务层 ----------
+    # ---------- [EN] Custom prompt and task layer / [ZH] 自定义提示词与任务层 ----------
 
     def set_custom_prompt(self, text: str) -> None:
-        """设置 ``/prompt`` 的自定义指令（优先级最高，替换模式块与任务层）。"""
+        """
+        [EN]
+        Set the ``/prompt`` custom instruction. It has the highest priority and
+        replaces the mode block and task layer.
+
+        [ZH]
+        设置 ``/prompt`` 自定义指令。该指令优先级最高，替换模式块与任务层。
+        """
         self.custom_prompt = text.strip()
 
     def set_task_prompt(self, text: str, template: str = "") -> None:
-        """设置 ``/task`` 的任务层正文（叠加在模式块之后，不替换模式）。
+        """
+        [EN]
+        Set the ``/task`` task-layer text. It is layered after the mode block and
+        does not replace the mode.
 
-        与 ``set_custom_prompt`` 分开存，是为了让 ``/task off`` 只取消任务层、
-        不会把用户用 ``/prompt`` 设的自定义指令一起清掉 —— v0.2.1 提示词优化
-        之前两者共用 ``custom_prompt``，``/task off`` 会连自定义指令一起清空。
+        Keeping it separate from ``set_custom_prompt`` ensures that ``/task off``
+        removes only the task layer and does not clear a custom instruction set
+        through ``/prompt``.
 
-        ``template`` 是模板 id（如 ``"guide"``）：模式简化之后需要知道"当前任务层
-        是哪一份"，才能让 ``/task guide`` 与旧的 guide 模式行为一致（见
-        ``main._vague_guide``：套了 guide 模板时不再插确定性引导话术）。
+        ``template`` is the template id, such as ``"guide"``. After mode
+        simplification, the active task template must be known so that
+        ``/task guide`` behaves consistently with the former guide mode.
+
+        [ZH]
+        设置 ``/task`` 任务层正文。该文本叠加在模式块之后，不替换模式。
+
+        与 ``set_custom_prompt`` 分开保存，使 ``/task off`` 仅移除任务层，不会
+        清除用户通过 ``/prompt`` 设置的自定义指令。
+
+        ``template`` 是模板 id，例如 ``"guide"``。模式简化后，必须知道当前任务
+        模板，才能使 ``/task guide`` 与原有 guide 模式行为一致。
         """
         self.task_prompt = (text or "").strip()
         self.task_template = (template or "").strip() if self.task_prompt else ""
 
-    # ---------- 文件上下文 ----------
+    # ---------- [EN] File context / [ZH] 文件上下文 ----------
 
     def set_file(self, filepath: str, content: str) -> None:
-        """登记并激活一份文件（老 API；等价于 :meth:`add_file`）。
+        """
+        [EN]
+        Register and activate a file. This legacy API is equivalent to
+        :meth:`add_file` and is retained for existing callers such as ``/file``,
+        backend loading paths, and tests.
 
-        保留它是为了不改既有调用方（``/file``、后端加载路径、测试）。
-        多文件下语义是"再加一份并激活它"，与单文件时代"覆盖当前文件"一致。
+        [ZH]
+        登记并激活文件。该旧 API 等价于 :meth:`add_file`，保留以兼容 ``/file``、
+        后端加载路径与测试等既有调用方。
         """
         self.add_file(filepath, content)
 
     def set_file_summary(self, summary: str, meta: Optional[Dict] = None) -> None:
-        """记录**当前活动文件**的分段摘要与其元信息（段数/原文字符数/原文指针）。"""
+        """
+        [EN]
+        Record the chunk summary and metadata (chunk count, source character
+        count, source pointer) for the active file.
+
+        [ZH]
+        记录当前活动文件的分段摘要与元信息（段数、原文字符数、原文指针）。
+        """
         entry = self._active
         if entry is None:
             self.files.append(FileEntry(name="", path=""))
@@ -684,29 +1030,49 @@ class ConversationManager:
             entry = self._active
         self.set_entry_summary(entry, summary, meta)
 
-    # ---------- Prompt 构建 ----------
+    # ---------- [EN] Prompt construction / [ZH] 提示词构建 ----------
 
     def get_system_prompt(self) -> str:
-        """拼出当前生效的系统提示词（层次结构见文件头）。
+        """
+        [EN]
+        Compose the effective system prompt. Layers are ordered by priority:
 
-        层次（优先级从高到低）：
-          1. ``/prompt`` 的自定义指令 —— **替换**模式块与任务层（用户明确要接管）；
-          2. 模式块（``MODES``）；
-          3. ``/task`` 的任务层 —— **叠加**在模式块之后（不再是替换模式）；
-          4. 共享主干 ``_CORE_RULES``（视角 / 边界 / 详略 / 先答后问 / 引导 / 输出纪律）；
-          5. 语言指令 ``reply_language_instruction()``（跟随界面语言）；
-          6. 早期对话摘要与已上传文件指针。
+        1. ``/prompt`` custom instruction, which replaces the mode block and the
+           task layer.
+        2. Mode block (``MODES``).
+        3. ``/task`` task layer, layered after the mode block and not replacing
+           the mode.
+        4. Shared rules (``_CORE_RULES``).
+        5. Language instruction from ``reply_language_instruction()``.
+        6. Early-conversation summary and uploaded-file pointers.
 
-        多语言说明：下面所有中文字符串（``[自定义指令]`` / ``[通用要求]`` /
-        ``【早期对话摘要】`` / ``【已上传文件】`` 等）都是**发给模型的提示词内容**，
-        不是界面文本，故刻意不进语言包；真正随界面语言变化的是第 5 层。
+        The Chinese strings below are prompt content sent to the model, not
+        interface text, so they intentionally remain outside the language pack.
+        Only layer 5 follows the interface locale.
+
+        [ZH]
+        组合当前生效的系统提示词。各层按优先级排列：
+
+        1. ``/prompt`` 自定义指令，替换模式块与任务层。
+        2. 模式块（``MODES``）。
+        3. ``/task`` 任务层，叠加在模式块之后，不替换模式。
+        4. 共享规则（``_CORE_RULES``）。
+        5. 来自 ``reply_language_instruction()`` 的语言指令。
+        6. 早期对话摘要与已上传文件指针。
+
+        下方中文字符串是发送给模型的提示词内容，而非界面文本，因此刻意不放入
+        语言包。只有第 5 层跟随界面语言。
         """
         if self.custom_prompt:
-            # 自定义指令优先：以更强的措辞包裹，帮助小模型严格遵守。
-            # 「不要反问」后面刻意留了例外：用户信息不足时需要先答后问，
-            # 写死"不许反问"会让提示词自相矛盾 —— v0.2.1 提示词优化时发现并修掉；
-            # v0.2.1 系统提示词重构又把这条例外从"先问清最关键的一点"改成
-            # "先给最可能的答案再问"，与共享主干的第 4 条保持一致。
+            # [EN] Custom instructions take precedence and are wrapped in
+            # [EN] stronger wording to improve adherence by small models. The
+            # [EN] instruction deliberately preserves an exception: when
+            # [EN] information is insufficient, answer the most likely
+            # [EN] interpretation first and then ask for clarification, matching
+            # [EN] shared rule 4.
+            # [ZH] 自定义指令优先，并使用更明确的措辞，以提高小型模型的遵循度。
+            # [ZH] 指令刻意保留例外：信息不足时，先回答最可能的解释，再请求澄清，
+            # [ZH] 与共享规则第 4 条保持一致。
             prompt = (
                 f"[自定义指令]\n{self.custom_prompt}\n\n"
                 f"[执行要求] 你必须严格遵守上述自定义指令，直接输出用户要求的内容，"
@@ -716,22 +1082,34 @@ class ConversationManager:
         else:
             prompt = MODES.get(self.mode, MODES["chat"])
             if self.task_prompt:
-                # 任务层**叠加**而不是替换模式：两层各自负责不同粒度
-                # （模式=场景与语气，任务=本轮的具体输出格式），
-                # prompts.build_system_prompt 已在末尾给出「冲突时以本节为准」的优先级行。
+                # [EN] The task layer is layered on the mode, not a replacement:
+                # [EN] the mode defines scenario and tone, while the task layer
+                # [EN] defines this turn's output format.
+                # [ZH] 任务层叠加在模式之上，而不是替换模式：模式定义场景与语气，
+                # [ZH] 任务层定义本轮的具体输出格式。
                 prompt += "\n\n" + self.task_prompt
         prompt += _CORE_RULES
         prompt += reply_language_instruction()
         if self.summary:
             prompt += f"\n\n【早期对话摘要】\n{self.summary}"
         if self.files:
-            # 只保留文件名清单（含"哪一份是当前文件"），完整内容在用户提问与
-            # 文件相关时随问题注入 —— 与单文件时代同一策略，只是清单变成多行。
+            # [EN] Keep only the file-name inventory, including the active file.
+            # [EN] Full content is injected with the current question; the
+            # [EN] inventory becomes multi-line in multi-file mode.
+            # [ZH] 仅保留文件名清单，并标注当前活动文件。完整内容随当前问题注入；
+            # [ZH] 多文件模式下清单为多行。
             prompt += self._file_pointer()
         return prompt
 
     def _file_pointer(self) -> str:
-        """系统提示里的"已上传文件"清单（多文件：逐条列出 + 标注当前文件）。"""
+        """
+        [EN]
+        Return the uploaded-file inventory for the system prompt. Multi-file
+        mode lists every file and marks the active file.
+
+        [ZH]
+        返回系统提示中的已上传文件清单。多文件模式逐条列出文件并标注当前活动文件。
+        """
         if not self.files:
             return ""
         if len(self.files) == 1:
@@ -743,11 +1121,15 @@ class ConversationManager:
                 chars = meta.get("origin_chars")
                 detail = f"（原文 {chars} 字符，已分 {chunks} 段摘要）" if chunks and chars else ""
                 pointer += f"\n【长文档摘要已就绪】{detail} 该文档过长，提问时将注入分段摘要而非全文。"
-            # 任务一（自测问题修复-1）：原文案是"（如需基于文件内容回答，请在问题中提及）"，
-            # 它等于在**教模型**遇到文件问题时先要用户点名文件——而闸门（FILE_INTENT）
-            # 又恰好不认「帮我总结一下」「分析一下」这类最自然的问法，两者叠加就是
-            # "我上传了文件，模型却说没有看到内容"。现在文件正文随提问自动注入，
-            # 这句提示随之改成陈述事实，不再要求用户点名。
+            # [EN] File bodies are injected automatically with each question.
+            # [EN] The prompt therefore states that the content is available
+            # [EN] rather than instructing the model to ask the user to name the
+            # [EN] file. The previous wording combined with an overly narrow
+            # [EN] intent pattern and caused the model to claim that no content
+            # [EN] had been provided.
+            # [ZH] 文件正文会随每次提问自动注入。因此提示词直接说明内容可用，
+            # [ZH] 而不是要求用户点名文件。此前措辞与过窄的意图正则叠加，曾导致
+            # [ZH] 模型声称没有收到文件内容。
             pointer += "\n（该文件内容会随提问一并提供给你，直接按内容回答，不要反问用户是否上传过文件）"
             return pointer
         lines = [f"\n\n【已上传文件】共 {len(self.files)} 份（提问时如涉及文件内容会一并注入）："]
@@ -764,37 +1146,74 @@ class ConversationManager:
 
     def build_messages(self, user_query: str, search_context: str = "", include_file: bool = False,
                        retrieval_context: str = "") -> List[dict]:
-        """构造发送给模型的完整消息列表（系统提示 + 历史 + 当前问题）。
+        """
+        [EN]
+        Build the complete message list sent to the model: system prompt,
+        history, and the current question.
 
-        include_file=True 且已上传文件时，把文件内容注入到当前问题之前：
-        有分段摘要则注入摘要（含原文指针），否则注入全文。
+        When ``include_file`` is true and files are present, file content is
+        injected before the current question. A chunk summary is used when
+        available; otherwise the full text is injected.
 
-        **多文件（任务八）**：逐份注入，每份前带文件名标签（``【文件 N/共 M：名字】``），
-        并按 ``config.files.total_chars`` 限制总长；从**后上传的开始装**（用户刚拖进来
-        的通常就是这次要用的），装不下的文件不注入，由调用方按返回的
-        :meth:`last_injection_note` 如实告知用户 —— 静默少注入几份文件比报错更糟。
+        Multi-file mode injects files individually, each preceded by a file label
+        and constrained by ``config.files.total_chars``. Files uploaded later are
+        placed first because they are usually the ones needed for the current
+        request. Files that do not fit are omitted, and the caller reports them
+        through :meth:`last_injection_note`. Silently omitting files is worse
+        than reporting the omission.
 
-        **检索增强（能力扩展-1 任务六）**：``retrieval_context`` 是 ``retrieval.Retriever``
-        产出的"相关片段 + 位置"，排在文件块**之前**。它由调用方（``Backend``）决定要不要
-        传：只有在"启用了检索、且文件是长文档（已落盘或有摘要）"时才传 —— 短文档全文
-        注入本来就更准，检索只会丢信息。这条分工见 ``backend/retrieval.py`` 的模块说明。
+        ``retrieval_context`` contains retrieved passages and locations produced
+        by ``retrieval.Retriever`` and is placed before file blocks. The caller
+        passes it only when retrieval is enabled and the document is long
+        (stored on disk or summarized). Full-text injection is more accurate for
+        short documents, and retrieval would discard information. This division
+        of responsibility is documented in ``backend/retrieval.py``.
 
-        这里拼接的 ``【{label}】`` / ``参考以下网络信息：`` 同属提示词内容，
-        按文件头说明保持中文、不进语言包。
+        The ``【{label}】`` and ``参考以下网络信息：`` prefixes are prompt content,
+        not interface text, so they remain Chinese and outside the language pack.
 
-        **思考内容刻意不进上下文**（v0.2.1 模型思考内容分离的自行判断项）：
-        历史记录里的 ``reasoning`` 字段只用于界面回放，不拼进 messages。理由有三：
+        Reasoning is deliberately excluded from the model context. The
+        ``reasoning`` field is for interface replay only:
 
-        1. 思考通常比答案还长，重新喂回去会成倍占用上下文窗口，而它对"下一轮
-           该说什么"几乎没有帮助（结论已经在 ``content`` 里了）；
-        2. DeepSeek 官方接口明确要求不要把 ``reasoning_content`` 传回下一轮；
-        3. DeepSeek-R1 蒸馏版的 GGUF 对话模板自己就在做同一件事 ——
-           ``{% if '</think>' in content %}{% set content = content.split('</think>')[-1] %}``
-           （实测见 records/v0.2.1-模型思考内容分离记录.md）：模型侧也只接受答案。
+        1. Reasoning is often longer than the answer; feeding it back consumes
+           context window without helping the next turn, because the conclusion
+           is already present in ``content``.
+        2. The DeepSeek API explicitly requires that ``reasoning_content`` not be
+           sent back in the next turn.
+        3. DeepSeek-R1 distilled GGUF chat templates apply the same rule and
+           accept only the answer portion.
+
+        [ZH]
+        构造发送给模型的完整消息列表：系统提示、历史记录与当前问题。
+
+        ``include_file`` 为真且存在文件时，文件内容会注入到当前问题之前。有分段
+        摘要时使用摘要，否则注入全文。
+
+        多文件模式逐份注入文件，每份前带文件标签，并受
+        ``config.files.total_chars`` 限制。后上传的文件优先放入，因为它们通常是
+        当前请求所需材料。无法放入的文件会被省略，调用方通过
+        :meth:`last_injection_note` 如实报告。静默省略文件比报告省略更糟。
+
+        ``retrieval_context`` 包含 ``retrieval.Retriever`` 产出的相关片段与位置，
+        位于文件块之前。仅当启用检索且文档为长文档（已落盘或已有摘要）时，调用方
+        才传入该参数。短文档全文注入更准确，检索反而会丢弃信息。该分工记录在
+        ``backend/retrieval.py`` 中。
+
+        ``【{label}】`` 与 ``参考以下网络信息：`` 前缀属于提示词内容，不是界面
+        文本，因此保持中文且不进入语言包。
+
+        思考内容刻意不进入模型上下文。``reasoning`` 字段仅用于界面回放：
+
+        1. 思考通常长于答案；回灌会占用上下文窗口，却对下一轮帮助很小，因为结论
+           已存在于 ``content`` 中。
+        2. DeepSeek API 明确要求下一轮不得回传 ``reasoning_content``。
+        3. DeepSeek-R1 蒸馏版 GGUF 对话模板采用同一规则，只接受回答部分。
         """
         messages: List[dict] = [{"role": "system", "content": self.get_system_prompt()}]
         for msg in self.history:
-            # 只取 role/content：timestamp 与 reasoning 都不是模型输入
+            # [EN] Only role and content are model inputs; timestamp and
+            # [EN] reasoning are excluded.
+            # [ZH] 仅 role 与 content 属于模型输入；timestamp 与 reasoning 不参与。
             messages.append({"role": msg["role"], "content": msg["content"]})
 
         user_content = f"参考以下网络信息：\n{search_context}\n\n问题：{user_query}" if search_context else user_query
@@ -805,7 +1224,9 @@ class ConversationManager:
             used = 0
             skipped: List[str] = []
             total = len(self.files)
-            # 从后往前装：刚上传的优先进入上下文
+            # [EN] Fill from the most recent upload backwards so that newly
+            # [EN] uploaded files enter the context first.
+            # [ZH] 从最近上传的文件开始向前填充，使新上传文件优先进入上下文。
             order = list(range(total - 1, -1, -1))
             injected: Dict[int, str] = {}
             for index in order:
@@ -833,33 +1254,57 @@ class ConversationManager:
             if blocks:
                 user_content = "\n\n".join(blocks) + "\n\n" + user_content
         if retrieval_context:
-            # 检索片段排在**所有前置材料的最前面**：模型先看到"定位到的依据"，
-            # 再看整份文件的摘要/全文，最后才是问题 —— 与"引用要能对上"的顺序一致。
-            # （首轮实测把它放在了文件块**之后**，因为文件块是往 user_content 前面
-            # 拼接的；顺序反了会让小模型把检索片段当成附注而忽略引用要求。）
+            # [EN] Retrieved passages precede all other material: the model sees
+            # [EN] the located evidence first, then file summaries or full text,
+            # [EN] and finally the question. This ordering supports citation
+            # [EN] traceability.
+            # [ZH] 检索片段位于所有前置材料之前：模型先看到定位到的依据，再看文件
+            # [ZH] 摘要或全文，最后看到问题。该顺序支持引用溯源。
             user_content = f"{retrieval_context}\n\n{user_content}"
         messages.append({"role": "user", "content": user_content})
         return messages
 
     def last_injection_note(self) -> str:
-        """上一次 :meth:`build_messages` 注入多文件时的提示（无则空串）。
+        """
+        [EN]
+        Return the notice produced by the most recent multi-file injection in
+        :meth:`build_messages`, or an empty string if none.
 
-        任务书要求"总内容超出窗口时触发分段摘要，或提示用户选择部分文件"——
-        本实现选后者（提示），把取舍如实说出来，而不是悄悄丢掉几份文件。
+        When the total content exceeds the window, the implementation informs the
+        user about omitted files instead of silently dropping them.
+
+        [ZH]
+        返回上一次 :meth:`build_messages` 多文件注入产生的提示；没有则返回空串。
+
+        当总内容超出窗口时，实现会告知用户哪些文件被省略，而不是静默丢弃。
         """
         return str(getattr(self, "_injection_note", "") or "")
 
-    # ---------- 会话持久化 ----------
+    # ---------- [EN] Session persistence / [ZH] 会话持久化 ----------
 
     def save_session(self, path: str, model_path: str = "") -> None:
-        """把模式、提示词、摘要、文件、模型与历史保存到 JSON 文件。
+        """
+        [EN]
+        Save mode, prompts, summary, files, model, and history to a JSON file.
 
-        **多文件（任务八）**：``files`` 写成字典列表（**不写正文**，只写文件名、
-        摘要、体积与落盘路径）。理由：正文动辄几十万字，写进 session.json 会让
-        会话文件膨胀到几十 MB，而它随时可以从原文件重新解析；
-        真正需要持久化的是"用户上传过哪些文件、它们的摘要是什么"。
-        同时保留 ``file_name``/``file_*`` 旧字段（指向当前活动文件），
-        使**旧版本读新会话**或**新版本读旧会话**都不会缺字段。
+        In multi-file mode, ``files`` is stored as a list of dictionaries
+        without file bodies. File bodies can be very large and would inflate
+        session.json to many megabytes, while they can always be re-parsed from
+        the source files. The persistent state is which files were uploaded and
+        what summaries were produced.
+
+        Legacy ``file_name`` and ``file_*`` fields remain for the active file so
+        that older and newer versions can read each other's sessions.
+
+        [ZH]
+        将模式、提示词、摘要、文件、模型与历史保存到 JSON 文件。
+
+        多文件模式下，``files`` 保存为字典列表，不写入文件正文。正文可能非常
+        庞大，写入 session.json 会使文件膨胀到数十 MB，而正文始终可从源文件重新
+        解析。需要持久化的是用户上传过哪些文件以及生成了哪些摘要。
+
+        同时保留指向当前活动文件的 ``file_name`` 与 ``file_*`` 旧字段，使新旧
+        版本能够互相读取会话。
         """
         data = {
             "mode": self.mode,
@@ -879,20 +1324,36 @@ class ConversationManager:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     def load_session(self, path: str):
-        """从 JSON 文件恢复会话。
+        """
+        [EN]
+        Restore a session from a JSON file.
 
-        返回 (成功且有历史, 上次使用的模型路径)。
+        Returns (has_history, last_model_path).
 
-        用 ``utf-8-sig`` 读：会话文件由本程序写入（无 BOM），但用户手工编辑过之后
-        记事本可能加上 BOM —— 老代码会在这里抛异常并被下面的 ``except`` 吞掉，
-        表现为"历史莫名其妙没了"，而不是给出原因（v0.2.1 模型思考内容分离时
-        顺带加固，与 config.py 的处理保持一致）。
+        The file is read with ``utf-8-sig`` so that a BOM inserted by a text
+        editor does not cause a decoding failure. Session files written by the
+        application have no BOM, but manual editing may add one.
 
-        **多文件兼容（任务八）**：新会话有 ``files`` 列表；旧会话只有
-        ``file_name``/``file_content``/``file_summary`` 三个标量字段 —— 两者都认，
-        旧会话被自动升级成"只有一份文件的列表"。正文不落盘，因此恢复后的文件
-        条目**没有正文**，只有文件名、体积与摘要；用户再次提问涉及文件内容时
-        会按摘要注入（若当时没生成摘要，提示需要重新上传 —— 见 Backend 的说明）。
+        Multi-file compatibility: new sessions contain a ``files`` list; legacy
+        sessions contain scalar fields such as ``file_name`` and
+        ``file_content``. Both forms are accepted, and legacy sessions are
+        upgraded to a single-file list. File bodies are not persisted, so restored
+        entries contain only name, size, and summary. Questions involving file
+        content use the summary; if no summary was generated, the user must
+        upload the file again.
+
+        [ZH]
+        从 JSON 文件恢复会话。
+
+        返回 (是否存在历史, 上次使用的模型路径)。
+
+        使用 ``utf-8-sig`` 读取，避免文本编辑器添加的 BOM 导致解码失败。应用写入
+        的会话文件不带 BOM，但手工编辑可能引入 BOM。
+
+        多文件兼容：新会话包含 ``files`` 列表；旧会话包含
+        ``file_name``、``file_content`` 等标量字段。两种形式均被接受，旧会话会
+        升级为单文件列表。文件正文不持久化，因此恢复后的条目仅包含名称、体积与
+        摘要。涉及文件内容的提问使用摘要；若未生成摘要，则需要用户重新上传文件。
         """
         if not os.path.exists(path):
             return False, ""
@@ -902,8 +1363,11 @@ class ConversationManager:
             if data.get("mode") in MODES:
                 self.mode = data["mode"]
             self.custom_prompt = data.get("custom_prompt", "")
-            # 旧会话没有 task_prompt 字段（v0.2.1 提示词优化之前任务模板写在
-            # custom_prompt 里）——缺字段时自然取默认空串，老会话仍能正常恢复。
+            # [EN] Legacy sessions have no task_prompt field; task templates were
+            # [EN] previously stored in custom_prompt. A missing field defaults to
+            # [EN] an empty string, so legacy sessions still load correctly.
+            # [ZH] 旧会话没有 task_prompt 字段；任务模板此前存放在
+            # [ZH] custom_prompt 中。字段缺失时默认为空串，旧会话仍可正常加载。
             self.task_prompt = data.get("task_prompt", "")
             self.summary = data.get("summary", "")
             self.files = []

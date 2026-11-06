@@ -1,3 +1,5 @@
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Services/AppState.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Services/AppState.cs。类型与成员说明见下方注释。
 // 进程内共享状态（对应 WPF 版的 App.xaml.cs 静态字段 + SettingsWindow 共享的后端实例）。
 //
 // 为什么必须共享一个 BackendService：stdout 是一条共享流，两个窗口各起一个后端会

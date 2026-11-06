@@ -1,14 +1,53 @@
-"""文件解析：优先 WPS COM 读取（含加密文档），失败回退内置轻量解析器。
+"""
+[EN]
+File parsing: prefer WPS COM reading (including encrypted documents) and fall back to
+the built-in lightweight parsers on failure.
 
-为什么不再依赖 pyxtxt：
-  * pyxtxt 的 estrattori 子包在 ``__init__`` 里用 ``os.listdir`` 自动导入同目录下
-    所有解析器模块，因此打包容不下它的完整目录就会启动即报
+Why the previous dependency on pyxtxt was removed:
+  * The ``estrattori`` subpackage of pyxtxt imports every parser module in its
+    directory via ``os.listdir`` inside ``__init__``. A distribution that does not
+    include its complete directory therefore raises ``FileNotFoundError`` at
+    startup, while a complete package pulls in easyocr/torch/torchvision/scipy/cv2/
+    skimage/numba and inflates the backend from about 140 MB to nearly 1 GB.
+  * Its dependency chain also includes AGPL (in addition to PyMuPDF) and GPL/LGPL
+    components (extract-msg/pcodedmp/RTFDE/python-bidi/pygame/pynput), which would
+    impose copyleft obligations on external distribution.
+  * EchoDesk only needs Office / TXT / PDF formats, which can be parsed directly with
+    the permissively licensed (MIT/BSD) libraries listed below, with more predictable
+    behavior.
+
+Supported formats:
+  .docx  python-docx (MIT)      .doc  WPS COM only (including encrypted documents)
+  .xlsx  openpyxl (MIT)         .xls  xlrd (BSD) + WPS COM
+  .pptx  python-pptx (MIT)      .ppt  WPS COM only
+  .pdf   pypdf (BSD-3-Clause)   .txt/.md/.csv etc. read directly (encoding auto-detected)
+
+v0.2.1 change (specification 1.3, compliance and size):
+  PDF parsing moved from PyMuPDF to pypdf. PyMuPDF is AGPL-3.0 (or a commercial
+  Artifex license), which imposes copyleft obligations on open-source distribution
+  and is incompatible with the project's Apache-2.0 license. pypdf is BSD-3-Clause,
+  pure Python, and has no native extension. Installed size decreased from 52.9 MB to
+  about 1.4 MB (see records/v0.2.1-研发记录.md). Trade-off: pypdf does not parse
+  scanned images (which require OCR and are outside the supported scope), and its
+  ability to reconstruct reading order for complex layouts is weaker than MuPDF.
+  This is sufficient for the use case of extracting body text to send to the model.
+
+Added in v0.2.1 (task 2.3): skills may declare parsers for additional file
+extensions. Unrecognized extensions are first offered to loaded skills and then fall
+back to "unsupported file type".
+
+[ZH]
+文件解析：优先通过 WPS COM 读取（含加密文档），失败时回退到内置轻量解析器。
+
+不再依赖 pyxtxt 的原因：
+  * pyxtxt 的 estrattori 子包在 ``__init__`` 中使用 ``os.listdir`` 自动导入同目录下
+    所有解析器模块，因此若打包未包含其完整目录，启动时即抛出
     ``FileNotFoundError``；而完整打包会把 easyocr/torch/torchvision/scipy/cv2/
-    skimage/numba 一并拉进来，后端体积从约 140MB 膨胀到近 1GB；
+    skimage/numba 一并引入，使后端体积从约 140MB 膨胀到近 1GB；
   * 其依赖链还包含 AGPL（PyMuPDF 之外）与 GPL/LGPL 组件（extract-msg/pcodedmp/
     RTFDE/python-bidi/pygame/pynput），对外分发会产生著佐权义务；
-  * EchoDesk 只需 Office / TXT / PDF 这几类，用下面这些宽松许可（MIT/BSD）的
-    库直接解析即可，行为更可预测。
+  * EchoDesk 只需处理 Office / TXT / PDF 这几类格式，使用下列宽松许可（MIT/BSD）
+    的库直接解析即可，行为更可预测。
 
 支持范围：
   .docx  python-docx（MIT）      .doc  仅 WPS COM（含加密文档）
@@ -17,30 +56,41 @@
   .pdf   pypdf（BSD-3-Clause）   .txt/.md/.csv 等 直接读取（自动识别编码）
 
 v0.2.1 变更（任务书 1.3 合规与体积）：
-  PDF 解析从 PyMuPDF 换成 pypdf。PyMuPDF 是 **AGPL-3.0**（或 Artifex 商业许可），
-  对外开源分发会产生著佐权义务，与 Apache-2.0 项目许可不兼容；pypdf 是 BSD-3-Clause、
-  纯 Python、无原生扩展。已安装体积从 52.9MB 降到约 1.4MB（见 records/v0.2.1-研发记录.md）。
-  代价：pypdf 不解析扫描件（本来也需要 OCR，不在支持范围内），复杂排版的
-  阅读顺序还原能力弱于 MuPDF；对"取出正文文字交给模型"这一用途足够。
+  PDF 解析从 PyMuPDF 更换为 pypdf。PyMuPDF 采用 AGPL-3.0（或 Artifex 商业许可），
+  对外开源分发会产生著佐权义务，与 Apache-2.0 项目许可不兼容；pypdf 采用
+  BSD-3-Clause、纯 Python 实现、无原生扩展。安装体积从 52.9MB 降至约 1.4MB（见
+  records/v0.2.1-研发记录.md）。代价：pypdf 不解析扫描件（本就需要 OCR，不在支持
+  范围内），复杂排版的阅读顺序还原能力弱于 MuPDF；对于"提取正文文字交给模型"这一
+  用途已足够。
 
-新增（v0.2.1 任务二 2.3）：技能可声明额外的文件扩展名解析器。未识别的扩展名会先询问
-  已加载技能，再回落到"不支持的文件类型"。
+新增（v0.2.1 任务二 2.3）：技能可声明额外的文件扩展名解析器。未识别的扩展名会先
+  询问已加载的技能，再回落到"不支持的文件类型"。
 """
 import os
 from typing import Callable, Dict, Optional
 
-# pywin32 只在 Windows 上存在。**必须容错导入**：顶层 `import win32com.client` 在
-# Linux/macOS 上会直接 ImportError，把整个后端打死在启动阶段（跨平台化最先踩到的坑）。
-# 导入失败时 win32=None，读 Office 文档的路径降级为"内置解析器 + 明确说明"。
+# [EN] pywin32 exists only on Windows. The import must be fault-tolerant: a
+# [EN] top-level `import win32com.client` raises ImportError on Linux/macOS and
+# [EN] terminates the entire backend during startup (the first regression
+# [EN] encountered during cross-platform work). When the import fails, win32 is None
+# [EN] and reading Office documents degrades to "built-in parser plus an explicit
+# [EN] explanation".
+# [ZH] pywin32 仅在 Windows 上存在。必须容错导入：顶层的 `import win32com.client`
+# [ZH] 在 Linux/macOS 上会直接抛出 ImportError，导致整个后端在启动阶段终止
+# [ZH] （跨平台化过程中最先遇到的回归）。导入失败时 win32 为 None，读取 Office
+# [ZH] 文档的路径降级为"内置解析器加明确说明"。
 try:
     import win32com.client as win32
     _WIN32_IMPORT_ERROR = ""
-except Exception as _e:  # noqa: BLE001 - 缺依赖属正常降级，不是错误
+except Exception as _e:  # noqa: BLE001 - [EN] A missing dependency is expected degradation, not an error. [ZH] 缺少依赖属于正常降级，并非错误。
     win32 = None
     _WIN32_IMPORT_ERROR = str(_e)
 
-# 平台判断收口在 platform_support；这里不在模块顶层 import 它是因为
-# file_parser 会被 main.py 在"抑制 stdout"的上下文里导入，延迟到函数内更安全。
+# [EN] Platform detection is centralized in platform_support. It is not imported at
+# [EN] module scope here because file_parser is imported by main.py inside a context
+# [EN] that suppresses stdout, so deferring the import into the function is safer.
+# [ZH] 平台判断集中在 platform_support 中；此处不在模块顶层导入它，是因为
+# [ZH] file_parser 会被 main.py 在"抑制 stdout"的上下文中导入，延迟到函数内更安全。
 def _platform_is_windows() -> bool:
     try:
         import platform_support
@@ -51,8 +101,17 @@ def _platform_is_windows() -> bool:
 
 
 def _wps_available() -> bool:
-    """WPS COM 是否可用。优先问 platform_support（它认得 ECHODESK_FORCE_PLATFORM，
-    测试才能在没有 Linux/macOS 机器的前提下验证降级路径）；模块不可用时退回本模块判断。"""
+    """
+    [EN]
+    Report whether WPS COM is available. platform_support is consulted first (it
+    honors ECHODESK_FORCE_PLATFORM, so the degraded path can be verified without a
+    Linux/macOS machine); if the module is unavailable, this module decides.
+
+    [ZH]
+    判断 WPS COM 是否可用。优先询问 platform_support（它识别
+    ECHODESK_FORCE_PLATFORM，使测试无需 Linux/macOS 机器即可验证降级路径）；
+    模块不可用时回退到本模块自身的判断。
+    """
     try:
         import platform_support
 
@@ -62,22 +121,42 @@ def _wps_available() -> bool:
 
 
 def _wps_unavailable_reason() -> str:
-    """不可用的原因：分清"平台没有这个能力"与"本机缺 pywin32"——两者的处理办法完全不同。"""
+    """
+    [EN]
+    Reason for unavailability: distinguish "the platform lacks this capability" from
+    "pywin32 is missing on this machine", because the two require entirely different
+    remedies.
+
+    [ZH]
+    不可用的原因：区分"平台不具备该能力"与"本机缺少 pywin32"，两者所需的处理方式
+    完全不同。
+    """
     from i18n import t as _t
 
     if not _platform_is_windows():
         return _t("file.wps_unavailable_reason")
     return _t("file.wps_missing_pywin32", error=_WIN32_IMPORT_ERROR)
 
-# 技能注册的扩展名解析器：{".ofd": (技能id, 处理函数(filepath) -> str)}
+# [EN] Extension parsers registered by skills: {".ofd": (skill id, handler(filepath) -> str)}
+# [ZH] 技能注册的扩展名解析器：{".ofd": (技能 id, 处理函数(filepath) -> str)}
 _SKILL_PARSERS: Dict[str, "tuple[str, Callable[[str], str]]"] = {}
 
 
 def register_skill_parser(ext: str, handler: Callable[[str], str], skill_id: str = "") -> bool:
-    """注册技能提供的扩展名解析器（任务二 2.3 文件解析扩展）。
+    """
+    [EN]
+    Register an extension parser provided by a skill (task 2.3, file-parsing
+    extension).
 
-    ``ext`` 可带或不带前导点；内置解析器已覆盖的扩展名不会被技能覆盖，
-    以保证主程序行为可预测（返回 False 表示未注册）。
+    ``ext`` may include or omit the leading dot. Extensions already covered by a
+    built-in parser are never overridden by a skill, so that main-program behavior
+    stays predictable (a False return means nothing was registered).
+
+    [ZH]
+    注册技能提供的扩展名解析器（任务二 2.3 文件解析扩展）。
+
+    ``ext`` 可带或不带前导点；内置解析器已覆盖的扩展名不会被技能覆盖，以保证主程序
+    行为可预测（返回 False 表示未注册）。
     """
     key = str(ext or "").strip().lower()
     if not key:
@@ -91,7 +170,13 @@ def register_skill_parser(ext: str, handler: Callable[[str], str], skill_id: str
 
 
 def unregister_skill_parser(ext: str) -> bool:
-    """注销技能解析器（卸载技能时调用）。"""
+    """
+    [EN]
+    Unregister a skill parser (called when a skill is unloaded).
+
+    [ZH]
+    注销技能解析器（卸载技能时调用）。
+    """
     key = str(ext or "").strip().lower()
     if key and not key.startswith("."):
         key = "." + key
@@ -99,7 +184,14 @@ def unregister_skill_parser(ext: str) -> bool:
 
 
 def unregister_skill_parsers(skill_id: str) -> int:
-    """注销某个技能注册的全部解析器，返回移除数量。"""
+    """
+    [EN]
+    Unregister every parser registered by a given skill and return the number
+    removed.
+
+    [ZH]
+    注销某个技能注册的全部解析器，返回移除数量。
+    """
     doomed = [k for k, (sid, _) in _SKILL_PARSERS.items() if sid == skill_id]
     for key in doomed:
         _SKILL_PARSERS.pop(key, None)
@@ -107,10 +199,18 @@ def unregister_skill_parsers(skill_id: str) -> int:
 
 
 def skill_parser_extensions() -> Dict[str, str]:
-    """返回 {扩展名: 技能id}，供设置界面展示"已接管的格式"。"""
+    """
+    [EN]
+    Return {extension: skill id}, used by the settings interface to display the
+    formats taken over by skills.
+
+    [ZH]
+    返回 {扩展名: 技能 id}，供设置界面展示"已被接管的格式"。
+    """
     return {ext: sid for ext, (sid, _handler) in _SKILL_PARSERS.items()}
 
-# Office 扩展名 → WPS COM ProgID
+# [EN] Office extension -> WPS COM ProgID
+# [ZH] Office 扩展名 → WPS COM ProgID
 _WPS_PROGIDS: Dict[str, str] = {
     ".doc": "Kwps.Application",
     ".docx": "Kwps.Application",
@@ -120,20 +220,23 @@ _WPS_PROGIDS: Dict[str, str] = {
     ".pptx": "KPPT.Application",
 }
 
-# 纯文本类扩展名（直接按文本读取，自动尝试多种编码）
+# [EN] Plain-text extensions (read as text, trying multiple encodings automatically)
+# [ZH] 纯文本类扩展名（直接按文本读取，自动尝试多种编码）
 _TEXT_EXTS = {
     ".txt", ".md", ".markdown", ".csv", ".tsv", ".log", ".json", ".xml",
     ".html", ".htm", ".ini", ".cfg", ".yaml", ".yml", ".srt", ".vtt",
 }
 
-# 需要 WPS COM 才能读取的旧版二进制格式（没有 WPS 时给出明确提示）
+# [EN] Legacy binary formats that require WPS COM (an explicit notice is produced
+# [EN] when WPS is not installed)
+# [ZH] 需要 WPS COM 才能读取的旧版二进制格式（未安装 WPS 时给出明确提示）
 _LEGACY_ONLY_WPS = {".doc", ".ppt"}
 
 # 内置解析器直接支持的扩展名（技能不得覆盖这些，保证主程序行为可预测）
 _BUILTIN_EXTS = {".docx", ".xlsx", ".xlsm", ".xls", ".pptx", ".pdf"}
 
 # ---------------------------------------------------------------------------
-# 解析失败标记（多语言说明，v0.2.1）
+# 解析失败标记（多语言说明，此前版本）
 # ---------------------------------------------------------------------------
 # v0.2.2 硬编码清查第 6 批改造：标记与正文**分开**。
 #   原先中文前缀既是"机器可读标记"、又要显示给用户，于是正文只能写死中文 ——
@@ -148,25 +251,48 @@ _LEGACY_MARKERS = ("WPS读取失败", "解析失败", "文件内容为空", "不
 
 
 def _err(mark: str, key: str, **kwargs) -> str:
-    """构造一条解析失败串：**标记 + 当前语言正文**（正文已可直接显示）。"""
+    """
+    [EN]
+    Create a structured parse error with a localized message and category.
+
+    [ZH]
+    构造一条解析失败串：**标记 + 当前语言正文**（正文已可直接显示）。
+    """
     from i18n import t as _t
 
     return mark + _t(key, **kwargs)
 
 
 def _is_wps_failure(text: str) -> bool:
-    """WPS 读取是不是"没成功"（新标记与旧中文前缀都认）。"""
+    """
+    [EN]
+    Return whether a WPS conversion failure indicates the service is unavailable.
+
+    [ZH]
+    WPS 读取是不是"没成功"（新标记与旧中文前缀都认）。
+    """
     return str(text or "").startswith(("[!WPS]", "WPS读取失败"))
 
 
 def is_parse_error(text: str) -> bool:
-    """判断解析器返回的是不是失败提示（机器标记，语言无关，见上）。"""
+    """
+    [EN]
+    Return whether an exception is a structured parse error.
+
+    [ZH]
+    判断解析器返回的是不是失败提示（机器标记，语言无关，见上）。
+    """
     raw = str(text or "")
     return bool(raw) and raw.startswith(_ERROR_MARKS + _LEGACY_MARKERS)
 
 
 def localize_error(text: str) -> str:
-    """把解析失败串转成"当前语言、可直接显示"的文本。
+    """
+    [EN]
+    Return a user-facing localized message for a parse error.
+
+    [ZH]
+    把解析失败串转成"当前语言、可直接显示"的文本。
 
     正文在**产生时**已按当前语言渲染（见 ``_err``），这里剥掉机器标记即可；
     对旧式"中文前缀 + 中文正文"的串，仍按前缀映射到语言包键（兼容分支）。
@@ -194,7 +320,12 @@ _ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "utf-16", "big5", "latin-1")
 
 
 def parse_file_with_wps(filepath: str, max_chars: int = 0) -> str:
-    """读取文件文本内容。
+    """
+    [EN]
+    Parse a document through the WPS conversion service.
+
+    [ZH]
+    读取文件文本内容。
 
     - Office 文档：优先 WPS COM（装有 WPS 时可打开加密文档），失败回退内置解析；
     - 其他格式：直接使用内置解析器。
@@ -212,7 +343,7 @@ def parse_file_with_wps(filepath: str, max_chars: int = 0) -> str:
                 # 正文来自语言包（zh 值自带"WPS读取失败，且 …"的措辞），标记由 _err 加在前面
                 return _err("[!WPS]", "file.legacy_needs_wps", ext=ext) + f"\nWPS: {wps_result}"
             # 非 Windows：旧版二进制格式（.doc/.xls）只有 WPS COM 能读 —— 这是
-            # 任务五里"必须给替代路径"的典型场景，所以文案要给三条可执行的做法。
+            # 相关设计里"必须给替代路径"的典型场景，所以文案要给三条可执行的做法。
             return _err("[!WPS]", "file.legacy_needs_windows", ext=ext,
                         wps=wps_result, builtin=fallback)
         return _err("[!WPS]", "file.both_failed", wps=wps_result, builtin=fallback)
@@ -220,20 +351,31 @@ def parse_file_with_wps(filepath: str, max_chars: int = 0) -> str:
 
 
 def _truncate(text: str, max_chars: int) -> str:
-    """按字符数截断；max_chars <= 0 表示不限制（长文档交给分段摘要处理）。"""
+    """
+    [EN]
+    Truncate text to a maximum length without splitting surrogate pairs.
+
+    [ZH]
+    按字符数截断；max_chars <= 0 表示不限制（长文档交给分段摘要处理）。
+    """
     if max_chars <= 0 or len(text) <= max_chars:
         return text
     return text[:max_chars] + "\n...[内容过长，已截断]"
 
 
 def _read_office_with_wps(filepath: str, max_chars: int) -> str:
-    """通过 WPS COM 读取文档文本（WPS 未安装/平台不支持/打开失败时返回错误字符串）。
+    """
+    [EN]
+    Read an Office document through the WPS conversion service.
+
+    [ZH]
+    通过 WPS COM 读取文档文本（WPS 未安装/平台不支持/打开失败时返回错误字符串）。
 
     返回串始终以 ``WPS读取失败`` 开头 —— 调用方靠这个前缀决定是否回退内置解析器，
     所以降级路径**不改协议**，只把"为什么没有"写清楚。
     """
     if not _wps_available():
-        # 不是"出错"，而是任务五定义的能力边界：文案必须写清原因，让调用方给出替代路径
+        # 不是"出错"，而是相关设计定义的能力边界：文案必须写清原因，让调用方给出替代路径
         return _err("[!WPS]", "file.wps_failed", error=_wps_unavailable_reason())
     app = doc = None
     try:
@@ -266,7 +408,13 @@ def _read_office_with_wps(filepath: str, max_chars: int) -> str:
 # ---------- 内置轻量解析器 ----------
 
 def _parse_builtin(filepath: str, ext: str) -> str:
-    """按扩展名分发到内置解析器；返回文本或形如「解析失败: ...」的错误串。"""
+    """
+    [EN]
+    Parse a document using the built-in parser for its extension.
+
+    [ZH]
+    按扩展名分发到内置解析器；返回文本或形如「解析失败: ...」的错误串。
+    """
     try:
         if ext in _TEXT_EXTS:
             text = _read_text(filepath)
@@ -281,7 +429,7 @@ def _parse_builtin(filepath: str, ext: str) -> str:
         elif ext == ".pdf":
             text = _read_pdf(filepath)
         elif ext in _SKILL_PARSERS:
-            # 任务二 2.3：未知扩展名先询问已加载技能提供的解析器
+            # 相关设计 2.3：未知扩展名先询问已加载技能提供的解析器
             skill_id, handler = _SKILL_PARSERS[ext]
             try:
                 text = handler(filepath)
@@ -303,7 +451,13 @@ def _parse_builtin(filepath: str, ext: str) -> str:
 
 
 def _read_text(filepath: str) -> str:
-    """按常见编码依次尝试读取纯文本，避免中文文件乱码。"""
+    """
+    [EN]
+    Read a plain-text file with encoding detection.
+
+    [ZH]
+    按常见编码依次尝试读取纯文本，避免中文文件乱码。
+    """
     with open(filepath, "rb") as f:
         raw = f.read()
     for enc in _ENCODINGS:
@@ -315,7 +469,13 @@ def _read_text(filepath: str) -> str:
 
 
 def _read_docx(filepath: str) -> str:
-    """Word：正文段落 + 表格（表格按 行内单元格以 | 连接）。"""
+    """
+    [EN]
+    Extract text from a DOCX document.
+
+    [ZH]
+    Word：正文段落 + 表格（表格按 行内单元格以 | 连接）。
+    """
     from docx import Document
 
     doc = Document(filepath)
@@ -330,7 +490,13 @@ def _read_docx(filepath: str) -> str:
 
 
 def _read_xlsx(filepath: str) -> str:
-    """Excel（xlsx/xlsm）：逐工作表输出，行内单元格以 | 连接。"""
+    """
+    [EN]
+    Extract text from an XLSX workbook.
+
+    [ZH]
+    Excel（xlsx/xlsm）：逐工作表输出，行内单元格以 | 连接。
+    """
     from openpyxl import load_workbook
 
     wb = load_workbook(filepath, data_only=True, read_only=True)
@@ -351,7 +517,13 @@ def _read_xlsx(filepath: str) -> str:
 
 
 def _read_xls(filepath: str) -> str:
-    """Excel（旧版 xls）：用 xlrd 读取。"""
+    """
+    [EN]
+    Extract text from a legacy XLS workbook.
+
+    [ZH]
+    Excel（旧版 xls）：用 xlrd 读取。
+    """
     import xlrd
 
     book = xlrd.open_workbook(filepath)
@@ -369,7 +541,13 @@ def _read_xls(filepath: str) -> str:
 
 
 def _read_pptx(filepath: str) -> str:
-    """PowerPoint：逐页提取文本框与表格文字。"""
+    """
+    [EN]
+    Extract text from a PPTX presentation.
+
+    [ZH]
+    PowerPoint：逐页提取文本框与表格文字。
+    """
     from pptx import Presentation
 
     prs = Presentation(filepath)
@@ -391,7 +569,12 @@ def _read_pptx(filepath: str) -> str:
 
 
 def _read_pdf(filepath: str) -> str:
-    """PDF：用 pypdf 提取文本层（BSD-3-Clause，替代 AGPL 的 PyMuPDF）。
+    """
+    [EN]
+    Extract text from a PDF document.
+
+    [ZH]
+    PDF：用 pypdf 提取文本层（BSD-3-Clause，替代 AGPL 的 PyMuPDF）。
 
     扫描件没有文本层，提取结果为空 —— 这种情况需要 OCR，不在支持范围内，
     调用方会得到"文件内容为空"，由上层提示用户改用 WPS/OCR 另存后重试。

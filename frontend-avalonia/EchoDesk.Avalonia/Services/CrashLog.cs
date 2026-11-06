@@ -1,4 +1,6 @@
-﻿// 前端崩溃日志与全局异常兜底（v0.2.2 第 3 批，对齐 WPF 的 App.Log + 全局异常处理）。
+﻿// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Services/CrashLog.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Services/CrashLog.cs。类型与成员说明见下方注释。
+// 前端崩溃日志与全局异常兜底（v0.2.2 第 3 批，对齐 WPF 的 App.Log + 全局异常处理）。
 //
 // WPF 版有两条相关能力，跨平台版此前一条都没有（差异清单 B5「整块缺失」）：
 //   ① **全局未处理异常提示框** —— 界面线程上的意外异常不会让进程静默消失，

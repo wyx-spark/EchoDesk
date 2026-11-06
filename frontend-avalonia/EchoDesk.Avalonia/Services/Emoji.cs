@@ -1,3 +1,5 @@
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Services/Emoji.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Services/Emoji.cs。类型与成员说明见下方注释。
 // Emoji 降级（移植自 frontend/Services/Emoji.cs，任务书 修复六）。
 //
 // 跨平台后这段逻辑的两个前提都变了，必须一起改：

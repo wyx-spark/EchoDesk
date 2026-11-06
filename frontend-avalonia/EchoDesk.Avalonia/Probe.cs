@@ -1,3 +1,5 @@
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Probe.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Probe.cs。类型与成员说明见下方注释。
 // 无头（无人值守）界面探针 —— `EchoDesk --probe [main|settings|agent|both]`。
 //
 // 为什么需要它：`--selftest` 刻意不开窗口，只验证"启动链路 + 协议"，于是

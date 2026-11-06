@@ -1,50 +1,110 @@
-"""任务型提示词模板（任务书修复四 方向一：输入侧优化）。
+"""
+[EN]
+Task-oriented prompt templates for input-side optimization.
 
-小模型对提示词高度敏感：同一句话，加不加角色设定、要不要示例、有没有输出格式
-约束，结果差距能到「能用/不能用」的程度。这里把经过验证的结构化提示词固化成模板，
-让用户一句 ``/task 合同审查`` 就能用上，而不必自己研究提示词工程。
+Small models are highly sensitive to prompt wording: for the same request, the
+presence of a role definition, of examples, and of output-format constraints can
+determine whether the result is usable at all. This module freezes validated
+structured prompts into templates so that a single ``/task contract review``
+invocation is sufficient, without requiring the user to study prompt engineering.
 
-四个要素（模板里尽量齐备）：
-  1. **具体角色**——不是「你是助手」，而是「你是审查采购合同条款的财务专员」；
-  2. **输出格式约束**——明确要求纯文本/字段列表/JSON，避免模型自由发挥；
-  3. **思维链引导**——推理类任务要求「先列依据再给结论」（小模型更需要外部脚手架）；
-  4. **少样本示例**——给 1 个输入输出样例，显著提升格式遵循度。
+Four elements, provided wherever possible:
+  1. A specific role, such as "a finance specialist reviewing procurement contract
+     terms", rather than a generic "you are an assistant";
+  2. Output-format constraints: plain text, field lists, or JSON explicitly
+     required, so the model cannot improvise;
+  3. Chain-of-thought guidance: reasoning tasks require listing evidence before
+     drawing a conclusion, because small models benefit more from explicit
+     scaffolding;
+  4. Few-shot examples: one input/output pair, which measurably improves format
+     adherence.
 
-注意：模板是**叠加在模式提示词后面**的（v0.2.1 提示词优化起生效），
-不替换对话模式：模式负责"场景与语气"，模板负责"本轮的具体输出格式"，
-两者冲突时以模板为准（``build_system_prompt`` 末尾的 ``[优先级]`` 行显式写明，
-所以两层同时存在不会产生互相打架的指令）。
-用户仍可用 ``/prompt <文本>`` 覆盖一切（自定义提示词优先级最高）。
+The template is appended after the mode prompt and does not replace the
+conversation mode: the mode defines scenario and tone, while the template defines
+the concrete output format for this turn. The template takes precedence on
+conflict, and the ``[优先级]`` line at the end of ``build_system_prompt`` states
+this explicitly, so the two layers do not issue conflicting instructions. The user
+can still override everything with ``/prompt <text>``, since a custom prompt has
+the highest priority.
 
-约束强度（v0.2.1 系统提示词重构）
---------------------------------
-模板正文里的格式要求**改成条件式**：短材料才免分点、问 API 用法就不必给代码、
-还没给合同就先列常见风险而不是索要材料。结尾一行也分两档
+Constraint strength
+-------------------
+Format requirements in the template body are conditional: short material does not
+need bullet points, an API-usage question does not require code, and a contract
+question without the contract text should first list common risks instead of
+requesting the document. The closing line also has two variants
+(``_RELAXED_ENDING`` / ``_STRICT_ENDING``): except for machine-readable templates
+with ``relax=False`` (``extract``), the model is told explicitly that the level of
+detail follows question complexity and need not satisfy every bullet. This is not
+a weakening of the requirements; it corrects a side effect of the previous
+version, where a single "strictly follow the format" instruction caused small
+models such as 0.6B and 0.8B to apply the full template even to simple questions.
+
+Localization
+------------
+* ``label`` and ``note`` are UI text shown by ``/task list``, ``/status``, and the
+  settings UI. They are always read from the language pack under
+  ``task.<id>.label`` / ``task.<id>.note``, so the template table does not store
+  them; they are resolved through :func:`task_label` / :func:`task_note`.
+* ``role`` / ``format`` / ``cot`` / ``examples`` remain in Chinese and are not
+  localized: they are prompt-engineering content sent to the model, not UI text.
+  The system prompt in ``conversation.py`` requires replies in Simplified Chinese,
+  and translating template bodies into English would break the combination of a
+  Chinese UI with English prompts. These phrasings are also designed specifically
+  to suppress small-model hallucination (for example, "excerpts must match the
+  source verbatim"), and translation weakens that effect.
+
+[ZH]
+任务型提示词模板（输入侧优化）。
+
+小模型对提示词高度敏感：同一句话，是否包含角色设定、是否给出示例、是否有输出格式
+约束，结果差距可能达到"可用/不可用"的程度。本模块把经过验证的结构化提示词固化为
+模板，使用户通过一条 ``/task 合同审查`` 即可使用，无需自行研究提示词工程。
+
+四个要素（模板中尽量齐备）：
+  1. 具体角色：不是"你是助手"，而是"你是审查采购合同条款的财务专员"；
+  2. 输出格式约束：明确要求纯文本、字段列表或 JSON，避免模型自由发挥；
+  3. 思维链引导：推理类任务要求"先列依据再给结论"，小模型更需要外部脚手架；
+  4. 少样本示例：给出 1 个输入输出样例，可显著提升格式遵循度。
+
+注意：模板叠加在模式提示词之后，不替换对话模式：模式负责"场景与语气"，模板负责
+"本轮的具体输出格式"；两者冲突时以模板为准（``build_system_prompt`` 末尾的
+``[优先级]`` 行已显式写明，因此两层同时存在不会产生互相冲突的指令）。用户仍可用
+``/prompt <文本>`` 覆盖全部提示词（自定义提示词优先级最高）。
+
+约束强度
+--------
+模板正文中的格式要求改为条件式：材料较短时免于分点、询问 API 用法时不必给出代码、
+尚未提供合同时先列出常见风险而不是索要材料。结尾行分为两档
 （``_RELAXED_ENDING`` / ``_STRICT_ENDING``）：除 ``relax=False`` 的机器可读模板
-（``extract``）外，都要显式告诉模型"详略按问题复杂度判断，不必凑满每一条"。
-这不是削弱要求，而是修上一版的副作用——只有"严格遵守格式"一句话时，
-0.6B/0.8B 这类小模型会把"简单问题"也套进完整模板。
+（``extract``）外，均显式告知模型"详略按问题复杂度判断，不必凑满每一条"。这并非削弱
+要求，而是修正上一版的副作用：仅有"严格遵守格式"一句时，0.6B/0.8B 等小模型会把
+"简单问题"也套入完整模板。
 
-多语言（任务三）
-----------------
-* **label / note 是界面文本**（``/task list``、``/status`` 与设置界面会显示），
-  一律从语言包取（键 ``task.<id>.label`` / ``task.<id>.note``），所以模板表里
-  不再存这两项；取值时经 :func:`task_label` / :func:`task_note` 解析。
-* **role / format / cot / examples 保持中文，不进语言包**：它们是发给模型的
-  **提示词工程内容**，不是界面文本。本项目 ``conversation.py`` 的系统提示词里
-  要求「请始终使用简体中文回复」，把模板正文译成英文会让"中文界面 + 英文提示词"
-  这种组合失效；而且这些措辞是针对小模型幻觉专门设计的（例如「摘录必须与原文
-  逐字一致」），翻译会削弱效果。
+多语言
+------
+* label / note 属于界面文本（``/task list``、``/status`` 与设置界面会显示），
+  一律从语言包读取（键 ``task.<id>.label`` / ``task.<id>.note``），因此模板表中不再
+  存储这两项；取值时经 :func:`task_label` / :func:`task_note` 解析。
+* role / format / cot / examples 保持中文，不进入语言包：它们是发送给模型的提示词
+  工程内容，而非界面文本。本项目 ``conversation.py`` 的系统提示词要求"请始终使用
+  简体中文回复"，将模板正文译为英文会使"中文界面 + 英文提示词"的组合失效；这些措辞
+  也是针对小模型幻觉专门设计的（例如"摘录必须与原文逐字一致"），翻译会削弱效果。
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-# 多语言（任务三）：i18n 只依赖标准库（config 是惰性导入的），可直接在这里导入
+# [EN] Localization: i18n depends only on the standard library (config is imported
+# lazily), so it can be imported directly here.
+# [ZH] 多语言：i18n 仅依赖标准库（config 为惰性导入），可直接在此处导入。
 from i18n import t as _t
 
-#: 任务模板：id → {role, format, cot, examples}
-#: label / note 见文件头说明：那是界面文本，存在语言包 task.<id>.* 里。
+#: [EN] Task templates: id -> {role, format, cot, examples}. For label / note, see
+#: the module docstring: they are UI text stored in the language pack under
+#: task.<id>.*.
+#: [ZH] 任务模板：id → {role, format, cot, examples}。label / note 见文件头说明：
+#: 它们属于界面文本，存放在语言包的 task.<id>.* 中。
 TASK_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "summary": {
         "role": "你是资深会议记录员，擅长把冗长材料压缩成不丢关键信息的要点。",
@@ -94,8 +154,11 @@ TASK_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "原文没有的字段填 null，绝不猜测。"
         ),
         "cot": "先定位数字与日期所在句子，再逐字段抄录，抄完检查是否原样一致。",
-        # 机器可读格式**不放松**：这里的 JSON 会被程序解析，允许模型"按复杂度
-        # 自行判断详略"就等于允许它输出散文（v0.2.1 系统提示词重构时显式标注）。
+        # [EN] Machine-readable formats are not relaxed: this JSON is parsed by
+        # programs, and allowing the model to choose the level of detail by question
+        # complexity would permit prose output.
+        # [ZH] 机器可读格式不作放松：此处的 JSON 会被程序解析，允许模型"按复杂度自行
+        # 判断详略"等同于允许其输出散文。
         "relax": False,
         "examples": [
             {"in": "发票号码 00123456，价税合计人民币 12,860.00 元，开票日期 2026-03-01。",
@@ -157,9 +220,14 @@ TASK_TEMPLATES: Dict[str, Dict[str, Any]] = {
                     "【推理过程】乙=10+2=12；甲=12+3=15\n【结论】甲 15 岁\n【不确定之处】无"},
         ],
     },
-    # ---- 下面两个模板是"能力扩展-1 任务一"从**被移除的模式**搬过来的 ----
-    # summary/translate/code 三个模板原先就有（内容已按被移除模式的措辞补全）；
-    # creative 与 guide 原先没有模板，所以在这里新建，保证"模式合并后能力一点没少"。
+    # ---- [EN] The next two templates were migrated from removed modes. ----
+    # The summary, translate, and code templates already existed (their content was
+    # completed with the wording of the removed modes); creative and guide had no
+    # templates, so they are defined here to ensure no capability is lost after the
+    # mode merge.
+    # ---- [ZH] 下面两个模板由被移除的模式迁移而来。----
+    # summary/translate/code 三个模板原先已存在（内容已按被移除模式的措辞补全）；
+    # creative 与 guide 原先没有模板，故在此新建，以保证模式合并后能力没有缺失。
     "creative": {
         "role": "你是创意写作伙伴，擅长故事、诗歌、文案与剧本，敢于给有辨识度的写法。",
         "format": (
@@ -192,14 +260,23 @@ TASK_TEMPLATES: Dict[str, Dict[str, Any]] = {
     },
 }
 
-#: 机器可读格式的模板（``relax=False``）：结尾不写"详略自定"那一句，
-#: 而是继续要求严格遵守格式。抽取值定就是给程序解析的，不能随模型心情变形。
+#: [EN] Ending for machine-readable templates (``relax=False``): it omits the
+#: "detail level is discretionary" sentence and continues to require strict format
+#: adherence. Extracted values are consumed by programs and must not vary with model
+#: discretion.
+#: [ZH] 机器可读格式模板（``relax=False``）的结尾：不写"详略自定"那一句，而是继续
+#: 要求严格遵守格式。抽取结果由程序解析，不能随模型的自由裁量而变形。
 _STRICT_ENDING = (
     "[重要] 严格遵守上述输出格式；不要输出与本任务无关的内容。"
 )
-#: 其余模板的结尾：格式优先，但**详略仍由模型判断**（v0.2.1 系统提示词重构）。
-#: 上一版这里只有一句"严格遵守上述输出格式"，小模型据此对任何问题都套满格式
-#: （用户问「这个 API 怎么用」也回一段代码 + 验证步骤）。
+#: [EN] Ending for the remaining templates: format takes precedence, but the level
+#: of detail remains a model judgment. The previous version contained only "strictly
+#: follow the output format above", which caused small models to apply the full
+#: format to every question (a question about API usage also received a code block
+#: plus verification steps).
+#: [ZH] 其余模板的结尾：格式优先，但详略仍由模型判断。上一版此处仅有"严格遵守上述
+#: 输出格式"一句，小模型据此对任何问题都套用完整格式（用户询问"这个 API 怎么用"时
+#: 也会返回一段代码及验证步骤）。
 _RELAXED_ENDING = (
     "[重要] 本任务的格式要求优先；但详略仍按问题复杂度判断——"
     "简单问题可以只答一句话，不必凑满上面每一条。"
@@ -207,21 +284,42 @@ _RELAXED_ENDING = (
 
 
 def task_label(tid: str) -> str:
-    """任务模板的显示名（**界面文本**，按当前语言从语言包取）。"""
+    """
+    [EN]
+    Display name of a task template. This is UI text resolved from the language pack
+    for the active language.
+    [ZH]
+    任务模板的显示名（界面文本，按当前语言从语言包读取）。
+    """
     return _t(f"task.{tid}.label")
 
 
 def task_note(tid: str) -> str:
-    """任务模板的一句话说明（**界面文本**，按当前语言从语言包取）。"""
+    """
+    [EN]
+    One-line description of a task template. This is UI text resolved from the
+    language pack for the active language.
+    [ZH]
+    任务模板的一句话说明（界面文本，按当前语言从语言包读取）。
+    """
     return _t(f"task.{tid}.note")
 
 
 def _view(tid: str, item: Dict[str, Any]) -> Dict[str, Any]:
-    """模板的"可显示副本"：补上本地化的 label / note。
+    """
+    [EN]
+    Display copy of a template with localized label and note added.
 
-    刻意做成**取值时才解析**（而不是在 ``TASK_TEMPLATES`` 里直接写 ``_t(...)``）：
-    模块级字典在导入时求值，会把语言固化在导入那一刻，之后 ``set_language``
-    切到英文也不生效。
+    Resolution is deliberately deferred to access time rather than calling
+    ``_t(...)`` inside ``TASK_TEMPLATES``: a module-level dictionary is evaluated at
+    import time, which would freeze the language at that moment, so a later
+    ``set_language`` call switching to English would have no effect.
+
+    [ZH]
+    模板的可显示副本，补充本地化的 label / note。
+
+    刻意在取值时才解析，而不是在 ``TASK_TEMPLATES`` 中直接写 ``_t(...)``：模块级字典
+    在导入时求值，会把语言固化在导入时刻，之后 ``set_language`` 切换到英文也不会生效。
     """
     out = dict(item)
     out["id"] = tid
@@ -231,7 +329,13 @@ def _view(tid: str, item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _find(name: str) -> Optional[str]:
-    """按 id / 当前语言的标签 / 前缀找到模板 id；找不到返回 None。"""
+    """
+    [EN]
+    Resolve a template id by exact id, by label in the active language, or by
+    prefix. Returns None when no template matches.
+    [ZH]
+    按 id、当前语言下的标签或前缀查找模板 id；找不到时返回 None。
+    """
     key = (name or "").strip()
     if not key:
         return None
@@ -241,7 +345,8 @@ def _find(name: str) -> Optional[str]:
     for tid in TASK_TEMPLATES:
         if tid.lower() == lowered or task_label(tid) == key:
             return tid
-    # 前缀匹配，方便用户少打字
+    # [EN] Prefix matching reduces the amount of typing required.
+    # [ZH] 前缀匹配，减少用户输入量。
     for tid in TASK_TEMPLATES:
         if tid.startswith(lowered):
             return tid
@@ -253,22 +358,46 @@ def template_ids() -> List[str]:
 
 
 def get_template(name: str) -> Optional[Dict[str, Any]]:
-    """按 id 或界面语言下的标签取模板（返回值里带本地化的 label / note）。"""
+    """
+    [EN]
+    Return a template by id or by its label in the active UI language. The returned
+    mapping includes localized label and note.
+    [ZH]
+    按 id 或当前界面语言下的标签获取模板；返回值包含本地化的 label / note。
+    """
     tid = _find(name)
     return None if tid is None else _view(tid, TASK_TEMPLATES[tid])
 
 
 def build_system_prompt(name: str, include_examples: bool = True) -> str:
-    """把模板拼成一段可直接塞进系统提示词的中文说明。
+    """
+    [EN]
+    Assemble a template into a Chinese instruction block that can be inserted
+    directly into the system prompt.
 
-    返回空串表示模板不存在（调用方据此给出「未找到模板」的提示）。
+    An empty string means the template does not exist; callers use it to emit a
+    "template not found" message.
 
-    拼接用的框架文字（``[任务模式]`` / ``[推理要求]`` / ``[示例]`` / ``[重要]``）
-    与模板正文一样属于**提示词内容**而不是界面文本，因此保持中文、不进语言包；
-    模板名取当前语言的 label，方便用户把界面上的名字和提示词对上。
+    The framing text (``[任务模式]`` / ``[推理要求]`` / ``[示例]`` / ``[重要]``),
+    like the template body, is prompt content rather than UI text. It therefore
+    stays in Chinese and is not localized. The template name uses the label for the
+    active language so that users can match the UI name with the prompt content.
 
-    结尾一行按 :data:`_RELAXED_ENDING` / :data:`_STRICT_ENDING` 二选一
-    （机器可读格式的模板不放松，见 ``_STRICT_ENDING`` 的说明）。
+    The closing line is one of :data:`_RELAXED_ENDING` or :data:`_STRICT_ENDING`;
+    machine-readable templates are not relaxed, as described at
+    ``_STRICT_ENDING``.
+
+    [ZH]
+    将模板拼接为一段可直接插入系统提示词的中文说明。
+
+    返回空串表示模板不存在（调用方据此给出"未找到模板"的提示）。
+
+    拼接使用的框架文字（``[任务模式]`` / ``[推理要求]`` / ``[示例]`` / ``[重要]``）
+    与模板正文一样属于提示词内容而非界面文本，因此保持中文、不进入语言包；模板名取
+    当前语言的 label，便于用户将界面上的名称与提示词对应。
+
+    结尾行从 :data:`_RELAXED_ENDING` / :data:`_STRICT_ENDING` 中二选一（机器可读
+    格式的模板不作放松，见 ``_STRICT_ENDING`` 的说明）。
     """
     tid = _find(name)
     if tid is None:
@@ -295,7 +424,12 @@ def build_system_prompt(name: str, include_examples: bool = True) -> str:
 
 
 def menu_text() -> str:
-    """``/task list`` 展示用清单（label / note 随界面语言切换）。"""
+    """
+    [EN]
+    List displayed by ``/task list``. Label and note follow the active UI language.
+    [ZH]
+    ``/task list`` 的展示清单（label / note 随界面语言切换）。
+    """
     lines = []
     for tid in TASK_TEMPLATES:
         lines.append(_t("task.menu_item", id=tid, label=task_label(tid), note=task_note(tid)))
@@ -303,10 +437,18 @@ def menu_text() -> str:
 
 
 def public_list() -> List[Dict[str, Any]]:
-    """机器可读清单（供设置窗口/前端下拉框）。
+    """
+    [EN]
+    Machine-readable list for the settings window and frontend dropdowns.
 
-    label / note 是本地化后的界面文本；role / format / cot 是提示词正文，
-    按设计保持中文（见文件头说明）。
+    Label and note are localized UI text; role, format, and cot are prompt bodies
+    and remain in Chinese by design (see the module docstring).
+
+    [ZH]
+    机器可读清单（供设置窗口与前端下拉框使用）。
+
+    label / note 为本地化后的界面文本；role / format / cot 为提示词正文，按设计保持
+    中文（见文件头说明）。
     """
     return [
         {
@@ -317,8 +459,11 @@ def public_list() -> List[Dict[str, Any]]:
             "cot": item.get("cot", ""),
             "note": task_note(tid),
             "example_count": len(item.get("examples") or []),
-            # v0.2.1 系统提示词重构：机器可读格式（如 extract 的 JSON）不参与
-            # "详略自定"的放松，界面/诊断据此能看出哪些模板是硬格式。
+            # [EN] Machine-readable formats (such as the extract JSON) do not take
+            # part in the "detail level is discretionary" relaxation, so the UI and
+            # diagnostics can identify templates with a strict format.
+            # [ZH] 机器可读格式（如 extract 的 JSON）不参与"详略自定"的放松，界面与
+            # 诊断信息据此可识别哪些模板使用硬性格式。
             "relax": item.get("relax") is not False,
         }
         for tid, item in TASK_TEMPLATES.items()
@@ -326,13 +471,21 @@ def public_list() -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# 方向七：模糊提问检测（信息不足时追问，而不是硬答）
-#    → v0.2.1 系统提示词重构：追问升级为**引导**（列 2~3 种可能方向让用户选）
+# [EN] Vague-question detection: ask for clarification when information is
+# insufficient instead of guessing. Clarification is presented as guidance that
+# lists two or three possible directions for the user to choose from.
+# [ZH] 模糊提问检测：信息不足时追问，而不是勉强回答。追问以引导形式呈现，
+# 列出 2~3 种可能方向供用户选择。
 # ---------------------------------------------------------------------------
 
-#: 明显信息不足的提问特征（很短、且只有指代词/单字动词）
-#: 这是**对用户输入的匹配规则**（跟正则同类），不是显示文本，故不进语言包；
-#: 界面上真正会被看到的是引导话术本身（键 task.clarify_prompt）。
+#: [EN] Characteristics of clearly under-specified questions: very short and
+#: consisting only of pronouns or generic verbs. These are matching rules over user
+#: input, comparable to a regular expression, not display text, so they are not
+#: localized. What the UI actually shows is the guidance text itself, under the key
+#: task.clarify_prompt.
+#: [ZH] 明显信息不足的提问特征（很短，且仅含指代词或泛化动词）。这是对用户输入的
+#: 匹配规则（与正则同类），并非显示文本，因此不进入语言包；界面上实际展示的是引导
+#: 话术本身（键 task.clarify_prompt）。
 _VAGUE_PATTERNS = (
     "这个", "那个", "它", "怎么办", "怎么弄", "搞一下", "看一下", "帮我弄",
     "弄一下", "处理下", "处理一下", "优化下", "改一下",
@@ -342,10 +495,20 @@ _MIN_MEANINGFUL_CHARS = 6
 
 
 def is_vague_question(text: str) -> bool:
-    """判断提问是否信息不足到「必须先追问」的程度。
+    """
+    [EN]
+    Decide whether a question is under-specified enough to require clarification.
 
-    刻意保守：只在**同时**满足「很短」和「含指代/泛动词」时才判为模糊，
-    避免把正常短问题（「1+1=?」）也拦下来。返回 True 时调用方应追问而不是硬答。
+    The check is deliberately conservative: a question is considered vague only when
+    it is both very short and contains a pronoun or generic verb, so that normal
+    short questions (for example "1+1=?") are not intercepted. When this returns
+    True, the caller should ask for clarification instead of answering.
+
+    [ZH]
+    判断提问是否信息不足到必须先追问的程度。
+
+    判断刻意保守：仅在同时满足"很短"与"含指代词/泛化动词"时才判定为模糊，避免把
+    正常短问题（如"1+1=?"）也拦截下来。返回 True 时，调用方应追问而不是勉强回答。
     """
     stripped = (text or "").strip()
     if len(stripped) > 20:
@@ -356,13 +519,24 @@ def is_vague_question(text: str) -> bool:
     return any(pattern in stripped for pattern in _VAGUE_PATTERNS)
 
 
-#: 引导方向：(id, 触发关键词)。**关键词语言无关地混在一起**——用户可能中英混写，
-#: 而方向**文案**一律从语言包取（键 ``task.guide_dir.<id>``），所以英文界面下
-#: 不会漏出中文（``tools/test_capability.py`` 有断言守着）。
+#: [EN] Guidance directions: (id, trigger keywords). Keywords for different
+#: languages are mixed together because users may write in Chinese and English, while
+#: the direction text always comes from the language pack under
+#: ``task.guide_dir.<id>``, so no Chinese leaks into an English UI (asserted by
+#: ``tools/test_capability.py``).
 #:
-#: 为什么用关键词而不是让模型现场想方向：这条路径**不调用模型**（见 ``main.py``
-#: 的模糊提问短路），是零成本、确定性的兜底；模型自己想的版本留给引导模式
-#: （``conversation.MODES["guide"]``），两者分工写在 records 里。
+#: Keywords are used instead of asking the model to generate directions because this
+#: path does not invoke the model (see the vague-question short circuit in
+#: ``main.py``) and is a zero-cost, deterministic fallback. Model-generated
+#: directions belong to the guide mode (``conversation.MODES["guide"]``); the
+#: division of responsibility is documented in the records.
+#: [ZH] 引导方向：(id, 触发关键词)。不同语言的关键词混合存放，因为用户可能中英混写；
+#: 而方向文案一律从语言包读取（键 ``task.guide_dir.<id>``），因此英文界面下不会出现
+#: 中文（``tools/test_capability.py`` 有断言保障）。
+#:
+#: 使用关键词而不是让模型即时生成方向的原因：该路径不调用模型（见 ``main.py`` 的
+#: 模糊提问短路逻辑），是零成本、确定性的兜底方案；由模型生成方向的实现保留在引导
+#: 模式（``conversation.MODES["guide"]``）中，两者的职责划分记录在 records 文档中。
 _GUIDE_DIRECTIONS = (
     ("object", ("文件", "文档", "合同", "表格", "图片", "段落", "条款",
                 "file", "doc", "pdf", "excel", "word")),
@@ -376,17 +550,30 @@ _GUIDE_DIRECTIONS = (
                "how", "step")),
 )
 
-#: 关键词没命中时兜底的方向顺序（覆盖面最广的三类诉求）。
+#: [EN] Fallback direction order when no keyword matches, covering the three most
+#: common request categories.
+#: [ZH] 关键词未命中时使用的兜底方向顺序（覆盖面最广的三类诉求）。
 _GUIDE_DEFAULT = ("object", "howto", "diagnose")
 
-#: 引导话术里列出的方向个数：任务书要求 2~3 种，取 3 种（够覆盖又不至于让人挑花眼）。
+#: [EN] Number of directions listed in the guidance text: three, which provides
+#: adequate coverage without overwhelming the user.
+#: [ZH] 引导话术中列出的方向数量：取 3 种，既能覆盖主要可能，又不至于让用户难以选择。
 _GUIDE_MAX = 3
 
 
 def guide_direction_ids(text: str, limit: int = _GUIDE_MAX) -> List[str]:
-    """按用户那句话挑出要展示的方向 id（关键词命中优先，不足则用默认顺序补齐）。
+    """
+    [EN]
+    Select the direction ids to display for the user's message. Keyword matches take
+    precedence, and the default order fills any remaining slots.
 
-    返回**恰好 limit 个不重复**的 id；纯函数，便于单测。
+    Returns exactly ``limit`` distinct ids. This is a pure function, which keeps it
+    straightforward to unit test.
+
+    [ZH]
+    按用户输入挑选需要展示的方向 id（关键词命中优先，数量不足时用默认顺序补齐）。
+
+    返回恰好 limit 个不重复的 id；为纯函数，便于单元测试。
     """
     lowered = (text or "").lower()
     picked: List[str] = []
@@ -407,15 +594,30 @@ def guide_direction_ids(text: str, limit: int = _GUIDE_MAX) -> List[str]:
 
 
 def clarification_prompt(text: str) -> str:
-    """生成**引导话术**：列出 2~3 种可能的理解方向，让用户挑一个。
+    """
+    [EN]
+    Generate the guidance text that lists two or three possible interpretations and
+    asks the user to choose one.
 
-    这段文本会作为**助手消息**显示在对话框里，因此整段取自语言包：
-    开场与收尾是 ``task.clarify_prompt``（带 ``{directions}`` 占位），
-    每条方向是 ``task.guide_dir.<id>``。
+    This text is displayed as an assistant message in the conversation, so it is
+    taken entirely from the language pack: the opening and closing text is
+    ``task.clarify_prompt`` (with a ``{directions}`` placeholder), and each
+    direction is ``task.guide_dir.<id>``.
 
-    v0.2.1 系统提示词重构前的版本是"请补充这三点（对象/输出形式/约束）"——
-    那正是任务书现象三："用户不知如何表达时模型也帮不上"，它把组织语言的责任
-    推回给了说不清楚的用户。改成给方向之后，用户只需回一个数字。
+    The previous version asked the user to supply three items (object, output
+    format, constraints), which placed the burden of articulating the request back
+    on a user who could not do so. Presenting concrete directions reduces the
+    response to a single number.
+
+    [ZH]
+    生成引导话术：列出 2~3 种可能的理解方向，让用户选择其中一个。
+
+    该文本作为助手消息显示在对话框中，因此整段取自语言包：开场与收尾为
+    ``task.clarify_prompt``（带 ``{directions}`` 占位符），每条方向为
+    ``task.guide_dir.<id>``。
+
+    上一版要求用户补充三点信息（对象/输出形式/约束），实际上把组织语言的责任又推回给
+    表达不清的用户。改为给出具体方向后，用户只需回复一个数字。
     """
     directions = guide_direction_ids(text)
     lines = [f"{index}. {_t(f'task.guide_dir.{direction_id}')}"

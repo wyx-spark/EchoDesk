@@ -1,3 +1,5 @@
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/MainWindow.axaml.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/MainWindow.axaml.cs。类型与成员说明见下方注释。
 // 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
 //
 // 迁移策略：**事件处理逻辑照搬 WPF 版**（发送、流式双通道、停止、文件上传、状态刷新、

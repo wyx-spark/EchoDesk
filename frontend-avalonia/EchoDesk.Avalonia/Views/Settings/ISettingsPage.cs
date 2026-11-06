@@ -1,3 +1,5 @@
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/Settings/ISettingsPage.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/Settings/ISettingsPage.cs。类型与成员说明见下方注释。
 // 设置窗口内每个页签的统一契约（v0.2.1 跨平台-2 任务一）。
 //
 // **为什么要有这个契约**，而不是像 WPF 版那样把 7 个页签的逻辑塞进 SettingsWindow 的分部类：

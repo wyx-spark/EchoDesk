@@ -1,20 +1,51 @@
-"""Agent 调用循环（v0.2.1 能力扩展-1 任务二）。
+"""
+[EN]
+Agent invocation loop (v0.2.1 capability extension, task 2).
 
-职责：把"模型 → 调用工具 → 看结果 → 再决定"这个循环跑起来，并把每一步**显式**
-产出去（不是只给最终答案），同时守住任务书要求的四条硬约束：
+Responsibility: drive the "model -> tool call -> observe result -> decide again"
+loop and emit every step explicitly instead of returning only the final answer,
+while preserving the four hard constraints required by the task specification:
 
-* **最大步数**：``max_steps``（默认 4）之后不再执行工具，改成让模型"用已有信息给结论"，
-  所以循环一定有终点。防的是"模型反复调同一个工具把本地机器跑满"。
-* **可中断**：每步的模型调用与每次工具执行前后都检查 ``stop_event``，
-  与流式路径共用同一个停止信号（用户在界面上按 Esc 就是它）。
-* **每一步可见**：循环产出 ``agent_step`` / ``tool_call`` / ``tool_result`` 三类事件，
-  前端据此渲染"调了什么、参数是什么、返回了什么"，而不是只看到最后一段话。
-* **异常隔离**：单步模型调用失败、工具抛异常、结果为空都只影响这一步，
-  循环继续（必要时直接收敛到"用已有信息作答"）。
+* Maximum step count: once ``max_steps`` (default 4) is reached, no further tool is
+  executed; the model is instead instructed to conclude using the information
+  already gathered, so the loop always terminates. This guards against a model that
+  repeatedly invokes the same tool and saturates local machine resources.
+* Interruptibility: ``stop_event`` is checked before and after every model call and
+  every tool execution, sharing the same stop signal as the streaming path (the Esc
+  key in the user interface).
+* Per-step visibility: the loop emits ``agent_step`` / ``tool_call`` /
+  ``tool_result`` events so the front end can render which tool was invoked, with
+  which arguments, and what it returned, rather than only the final paragraph.
+* Exception isolation: a failed single-step model call, a tool exception, or an
+  empty result affects only that step; the loop continues and, when necessary,
+  converges directly on "answer using the available information".
 
-为什么每步是**非流式**调用：工具调用要求"一行 JSON"这种严格形状，而 llama.cpp 的
-Jinja handler 在流式下对工具语义的支持有硬限制（见 :mod:`agent_tools` 的说明）。
-非流式 + 每次调用前发一个进度事件，界面上不会显得卡住（一次 0.6B 调用约数秒）。
+Why every step uses a non-streaming call: tool invocation requires the strict
+"one JSON line" shape, and the llama.cpp Jinja handler has hard limitations in its
+support for tool semantics while streaming (see :mod:`agent_tools`). A non-streaming
+call combined with a progress event emitted before each invocation keeps the
+interface from appearing stalled (a 0.6B call takes a few seconds).
+
+[ZH]
+Agent 调用循环（v0.2.1 能力扩展，任务二）。
+
+职责：驱动"模型 → 调用工具 → 观察结果 → 再次决策"这一循环，并显式输出每一步，
+而不是只返回最终答案；同时满足任务书规定的四条硬约束：
+
+* 最大步数：达到 ``max_steps``（默认 4）后不再执行任何工具，改为让模型基于已有
+  信息给出结论，因此循环必然终止。该约束用于防止模型反复调用同一工具并耗尽本地
+  机器资源。
+* 可中断：每一步的模型调用与每一次工具执行前后都会检查 ``stop_event``，与流式
+  路径共用同一个停止信号（即用户在界面上按 Esc 时触发的信号）。
+* 每一步可见：循环产出 ``agent_step`` / ``tool_call`` / ``tool_result`` 三类事件，
+  前端据此渲染"调用了哪个工具、参数是什么、返回了什么"，而不是只看到最后一段话。
+* 异常隔离：单步模型调用失败、工具抛出异常或结果为空，都只影响该步；循环继续，
+  必要时直接收敛到"使用已有信息作答"。
+
+每一步采用非流式调用的原因：工具调用要求"一行 JSON"的严格形状，而 llama.cpp 的
+Jinja handler 在流式模式下对工具语义的支持存在硬性限制（参见 :mod:`agent_tools`）。
+非流式调用加上每次调用前发出的进度事件，可避免界面看起来卡住（一次 0.6B 调用
+约需数秒）。
 """
 from __future__ import annotations
 from i18n import t as _t
@@ -27,22 +58,40 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 from agent_tools import ToolRegistry, extract_final_answer, parse_tool_call
 from reasoning import split_text
 
-#: 单条工具结果最多注入多少字符。工具结果会原样回灌进上下文，不设上限时
-#: 一次 ``file_read`` 就能把 8192 的窗口吃掉一半。
+#: [EN] Maximum number of characters injected from a single tool result. Tool results
+#: [EN] are fed back into the context verbatim; without a cap, one ``file_read`` call
+#: [EN] can consume half of an 8192-token window.
+#: [ZH] 单条工具结果最多注入的字符数。工具结果会原样回灌进上下文；若不设上限，
+#: [ZH] 一次 ``file_read`` 调用即可占用 8192 窗口的一半。
 MAX_OBSERVATION_CHARS = 1200
 
-#: 所有工具结果累计注入上限（超出时从最早的开始替换成一句省略说明）。
+#: [EN] Cumulative injection limit across all tool results (on overflow, the earliest
+#: [EN] entries are replaced with an elision note).
+#: [ZH] 所有工具结果的累计注入上限（超出时从最早的结果开始替换为一条省略说明）。
 MAX_TOTAL_OBSERVATION_CHARS = 4000
 
 
 @dataclass
 class AgentStep:
-    """一步的记录（诊断与测试都要能读到"到底发生了什么"）。"""
+    """
+    [EN]
+    Record of a single agent step. Diagnostics and tests must both be able to read
+    what actually happened.
+
+    [ZH]
+    单步记录。诊断与测试都必须能够读取"实际发生了什么"。
+    """
 
     index: int
-    text: str = ""              # 模型这一步的原始输出
-    # 任务十三（自测问题修复-1）：这一步的**思考内容**（``<think>`` 之类标签里的部分）。
-    # 与 ``text`` 分开存：``text`` 是"去掉思考后的正文"，工具调用解析与最终答案都只用它。
+    text: str = ""              # [EN] Raw model output for this step.
+                                # [ZH] 模型本步的原始输出。
+    # [EN] Task 13 (self-test fix 1): the reasoning content of this step (the part
+    # [EN] inside tags such as ``<think>``). It is stored separately from ``text``:
+    # [EN] ``text`` is the body with reasoning removed, and both tool-call parsing
+    # [EN] and final-answer extraction operate on it only.
+    # [ZH] 相关设计（自测问题兼容性修正）：本步的思考内容（``<think>`` 等标签内部的部分）。
+    # [ZH] 与 ``text`` 分开存储：``text`` 是去除思考后的正文，工具调用解析与最终答案
+    # [ZH] 提取都只使用它。
     reasoning: str = ""
     tool: str = ""
     args: Dict[str, Any] = field(default_factory=dict)
@@ -54,7 +103,13 @@ class AgentStep:
 
 @dataclass
 class AgentRun:
-    """一轮 Agent 任务的完整结果。"""
+    """
+    [EN]
+    Complete result of one agent run.
+
+    [ZH]
+    一轮 Agent 任务的完整结果。
+    """
 
     steps: List[AgentStep] = field(default_factory=list)
     answer: str = ""
@@ -64,10 +119,22 @@ class AgentRun:
     elapsed_ms: int = 0
 
     def trace(self) -> List[Dict[str, Any]]:
-        """机器可读的步骤轨迹（供 ``agent_diagnostics`` 与测试断言）。
+        """
+        [EN]
+        Machine-readable step trace, consumed by ``agent_diagnostics`` and by test
+        assertions.
 
-        ``reasoning`` 也带上（任务十三）：诊断里要能看出"这一步到底有没有产生思考"，
-        否则"没产生"和"没显示"又分不清了 —— 那正是这次要修的 bug。
+        ``reasoning`` is included as well (task 13): diagnostics must be able to
+        distinguish "this step produced no reasoning" from "this step produced
+        reasoning that was not displayed". Those two conditions were previously
+        indistinguishable, which is the regression this task addresses.
+
+        [ZH]
+        机器可读的步骤轨迹，供 ``agent_diagnostics`` 与测试断言使用。
+
+        同时包含 ``reasoning``（任务十三）：诊断必须能够区分"该步没有产生思考"与
+        "该步产生了思考但未显示"。此前这两种情况无法区分，而这正是本任务修复的
+        缺陷。
         """
         return [
             {"index": step.index, "tool": step.tool, "args": step.args, "ok": step.ok,
@@ -78,10 +145,20 @@ class AgentRun:
 
 
 class AgentLoop:
-    """工具调用循环。
+    """
+    [EN]
+    Tool invocation loop.
 
-    ``llm`` 只要求实现 ``chat_complete(messages, temperature=..., max_tokens=...)``
-    （``LLMEngine`` 与测试桩都满足），便于在不加载模型的情况下单测整个循环。
+    ``llm`` only has to implement ``chat_complete(messages, temperature=...,
+    max_tokens=...)`` (both ``LLMEngine`` and the test stubs satisfy this), so the
+    whole loop can be unit-tested without loading a model.
+
+    [ZH]
+    工具调用循环。
+
+    ``llm`` 只需实现 ``chat_complete(messages, temperature=..., max_tokens=...)``
+    （``LLMEngine`` 与测试桩均满足该接口），因此无需加载模型即可对整个循环做单元
+    测试。
     """
 
     def __init__(
@@ -100,28 +177,56 @@ class AgentLoop:
         self.max_tokens = max(64, int(max_tokens or 512))
         self.max_observation_chars = max(200, int(max_observation_chars or 200))
 
-    # ---------- 内部小工具 ----------
+    # [EN] ---------- Internal helpers ----------
+    # [ZH] ---------- 内部辅助方法 ----------
 
     def _stopped(self) -> bool:
         return bool(self.stop_event is not None and self.stop_event.is_set())
 
     def _complete(self, messages: List[dict], temperature: float) -> Tuple[str, str]:
-        """调用一次模型（非流式），返回 ``(思考内容, 正文)``。
+        """
+        [EN]
+        Perform one non-streaming model call and return ``(reasoning, body)``.
 
-        异常在这里被翻译成两个空串，由调用方决定怎么收敛。
+        Exceptions are translated here into two empty strings; the caller decides how
+        to converge.
 
-        **任务十三（自测问题修复-1）：思考必须在这里分离，有两个独立的理由 ——**
+        Task 13 (self-test fix 1): reasoning must be separated at this point for two
+        independent reasons.
 
-        1. **界面要能看到每一步的思考**。用户报的现象是"Agent 模式下思考过程不显示"。
-           根因不是模型没产生思考，而是这条路径**从来没做过分离**：``chat_complete``
-           把模型原始输出（含 ``<think>`` 段落）整段返回，循环直接拿它当"这一步说了什么"，
-           而发往前端的 ``agent_step`` 事件里又**只有 index/phase、没有正文**，
-           所以界面没有任何可渲染的思考内容。普通对话路径用
-           ``chat_stream_split`` + ``ReasoningSplitter`` 分了两条通道，Agent 这条路没跟上。
-        2. **解析必须只看正文**。``parse_tool_call`` 与 ``extract_final_answer`` 都是
-           对着模型输出做形状匹配的；把思考段落一起喂进去，思考里出现的
-           "我可以调用 file_read…"这种字句**会被误判成真的工具调用**。
-           先分离再解析，顺带消掉这个隐患。
+        1. The interface must display the reasoning of every step. The reported
+           symptom was "the reasoning process is not displayed in Agent mode". The
+           root cause was not that the model produced no reasoning, but that this
+           path never separated it: ``chat_complete`` returns the entire raw model
+           output (including ``<think>`` sections) and the loop treated it as the
+           content of the step, while the ``agent_step`` events sent to the front end
+           carried only index/phase and no body text. Consequently the interface had
+           no renderable reasoning content. The regular chat path splits the two
+           channels via ``chat_stream_split`` and ``ReasoningSplitter``; the Agent path
+           did not.
+        2. Parsing must operate on the body only. ``parse_tool_call`` and
+           ``extract_final_answer`` both perform shape matching over the model output.
+           If reasoning text is fed in as well, phrases such as "I can call file_read"
+           that appear inside the reasoning are misclassified as a real tool call.
+           Separating before parsing eliminates this failure mode.
+
+        [ZH]
+        执行一次非流式模型调用，返回 ``(思考内容, 正文)``。
+
+        异常在此处被转换为两个空串，由调用方决定如何收敛。
+
+        任务十三（自测问题修复一）：必须在此处分离思考内容，原因有两点。
+
+        1. 界面必须显示每一步的思考。用户报告的现象是"Agent 模式下不显示思考过程"。
+           根因并非模型没有产生思考，而是该路径从未做过分离：``chat_complete``
+           整段返回模型原始输出（含 ``<think>`` 段落），循环直接将其视为本步内容；
+           而发往前端的 ``agent_step`` 事件只包含 index/phase，不包含正文，因此界面
+           没有任何可渲染的思考内容。普通对话路径通过 ``chat_stream_split`` 与
+           ``ReasoningSplitter`` 拆分两条通道，Agent 路径未做同样处理。
+        2. 解析必须只针对正文。``parse_tool_call`` 与 ``extract_final_answer`` 均对
+           模型输出做形状匹配；若把思考段落一并传入，思考中出现的"我可以调用
+           file_read"之类语句会被误判为真实的工具调用。先分离再解析可消除该失效
+           模式。
         """
         try:
             text = self.llm.chat_complete(
@@ -143,7 +248,8 @@ class AgentLoop:
         return (f"{head}\n{observation}\n\n"
                 f"请继续：可以再调用一个工具，或用「最终答案：」开头给出结论。")
 
-    # ---------- 主循环 ----------
+    # [EN] ---------- Main loop ----------
+    # [ZH] ---------- 主循环 ----------
 
     def run(
         self,
@@ -151,16 +257,27 @@ class AgentLoop:
         temperature: float = 0.5,
         on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> AgentRun:
-        """跑完一轮 Agent 任务。
+        """
+        [EN]
+        Execute one complete agent run.
 
-        ``on_event`` 收到的事件形状与后端协议一致（``agent_step`` / ``tool_call`` /
-        ``tool_result``），调用方（``Backend._stream_agent``）直接把它们转成流式行即可。
+        The event shapes delivered to ``on_event`` match the backend protocol
+        (``agent_step`` / ``tool_call`` / ``tool_result``); the caller
+        (``Backend._stream_agent``) converts them directly into stream lines.
+
+        [ZH]
+        执行一轮完整的 Agent 任务。
+
+        传给 ``on_event`` 的事件形状与后端协议一致（``agent_step`` / ``tool_call`` /
+        ``tool_result``），调用方（``Backend._stream_agent``）可直接将其转换为流式
+        行。
         """
         emit = on_event or (lambda _event: None)
         started = time.time()
         run = AgentRun()
         convo: List[dict] = [dict(m) for m in messages]
-        observations: List[str] = []          # 已注入的工具结果（累计长度用）
+        observations: List[str] = []          # [EN] Tool results already injected (for the cumulative length).
+                                              # [ZH] 已注入的工具结果（用于累计长度）。
         total_chars = 0
 
         for index in range(1, self.max_steps + 1):
@@ -173,13 +290,22 @@ class AgentLoop:
             step = AgentStep(index=index, text=text, reasoning=reasoning)
             run.steps.append(step)
             if reasoning:
-                # 任务十三：思考内容单独发一条事件。它必须放在模型返回**之后** ——
-                # 上面那条 thinking 的职责是让界面立刻显示"第 N 步正在思考"，
-                # 避免数秒空白；内容此刻才拿到，所以另发一条带 reasoning 的。
+                # [EN] Task 13: emit the reasoning content as a separate event. It must
+                # [EN] be emitted after the model returns: the preceding "thinking" event
+                # [EN] exists to let the interface immediately show "step N is thinking"
+                # [EN] and avoid a multi-second blank period; the content is only
+                # [EN] available at this point, hence the additional event carrying
+                # [EN] ``reasoning``.
+                # [ZH] 相关设计：将思考内容作为独立事件发出。该事件必须位于模型返回
+                # [ZH] 之后：前一条 "thinking" 事件的职责是让界面立即显示"第 N 步正在
+                # [ZH] 思考"，避免数秒的空白；内容此时才获取到，因此另发一条携带
+                # [ZH] ``reasoning`` 的事件。
                 emit({"type": "agent_step", "index": index, "phase": "thought",
                       "max_steps": self.max_steps, "reasoning": reasoning})
             if not text.strip():
-                # 模型这一轮什么都没说（或只输出了思考）：不再硬撑，收敛。
+                # [EN] The model produced no body text this round (or emitted reasoning
+                # [EN] only): stop retrying and converge.
+                # [ZH] 模型本轮未输出正文（或仅输出思考）：不再继续尝试，直接收敛。
                 run.error = _t("agent.no_content")
                 break
 
@@ -208,8 +334,12 @@ class AgentLoop:
             emit({"type": "tool_result", "index": index, "tool": step.tool, "ok": ok,
                   "observation": step.observation, "elapsed_ms": step.elapsed_ms})
 
-            # 累计超限时把最早的结果替换掉：宁可让模型少看一段旧结果，
-            # 也不能让工具结果把上下文窗口挤爆（那会让后续每步都变慢甚至截断）。
+            # [EN] On cumulative overflow, drop the earliest results. It is preferable
+            # [EN] for the model to lose an older observation than for tool results to
+            # [EN] overflow the context window, which would slow down or truncate every
+            # [EN] subsequent step.
+            # [ZH] 累计超限时丢弃最早的结果：宁可让模型少看一段旧结果，也不能让工具
+            # [ZH] 结果挤爆上下文窗口，否则后续每一步都会变慢甚至被截断。
             total_chars += len(step.observation)
             observations.append(step.observation)
             if total_chars > MAX_TOTAL_OBSERVATION_CHARS and len(observations) > 1:
@@ -223,8 +353,12 @@ class AgentLoop:
             if index == self.max_steps:
                 run.hit_max_steps = True
 
-        # 达到步数上限仍在调工具：再给一次"只用已有信息作答"的机会，
-        # 这样用户总能拿到一段结论，而不是一句"步数用完了"。
+        # [EN] The step limit was reached while still invoking tools: give the model
+        # [EN] one further opportunity to answer using only the information already
+        # [EN] gathered, so the user always receives a conclusion rather than a bare
+        # [EN] "step limit exhausted" notice.
+        # [ZH] 达到步数上限时仍在调用工具：再给模型一次仅使用已有信息作答的机会，
+        # [ZH] 使调用方总能获得一段结论，而不是仅得到"步数已用完"的提示。
         if not run.answer and not run.stopped and run.hit_max_steps:
             convo.append({"role": "user",
                           "content": f"已达到本次最大工具调用步数（{self.max_steps}）。"
@@ -233,15 +367,20 @@ class AgentLoop:
             emit({"type": "agent_step", "index": self.max_steps + 1, "phase": "finalize",
                   "max_steps": self.max_steps})
             final_reasoning, final_text = self._complete(convo, temperature)
-            # 任务十三：这一步同样可能带思考；把它也发出去，界面上"最后收尾"这一步
-            # 才不会是个没有内容的事件。
+            # [EN] Task 13: this step may also produce reasoning; emit it as well so that
+            # [EN] the finalization step is not rendered as an event without content.
+            # [ZH] 相关设计：该步同样可能产生思考，也一并发出，使界面上"最后收尾"
+            # [ZH] 这一步不会成为一个没有内容的事件。
             if final_reasoning:
                 emit({"type": "agent_step", "index": self.max_steps + 1, "phase": "thought",
                       "max_steps": self.max_steps, "reasoning": final_reasoning})
             run.answer = extract_final_answer(final_text) or final_text.strip()
 
         if not run.answer and not run.stopped:
-            # 兜底：把最后一步的文本当答案（比空手而归有用），没有文本就给原因
+            # [EN] Fallback: use the last non-empty step text as the answer (more useful
+            # [EN] than returning nothing); if no text exists, report the reason instead.
+            # [ZH] 兜底：将最后一步的非空文本作为答案（比空结果更有用）；若无文本，
+            # [ZH] 则返回原因。
             for step in reversed(run.steps):
                 if step.text.strip():
                     run.answer = extract_final_answer(step.text)
@@ -254,7 +393,14 @@ class AgentLoop:
 
 
 def run_summary_json(run: AgentRun) -> str:
-    """把一轮 Agent 结果压成一行 JSON（供日志/诊断用，人类可读优先）。"""
+    """
+    [EN]
+    Compress one agent run into a single JSON line for logging and diagnostics;
+    human readability takes priority.
+
+    [ZH]
+    将一轮 Agent 结果压缩为一行 JSON，用于日志与诊断；优先保证人类可读。
+    """
     return json.dumps(
         {"steps": len(run.steps), "stopped": run.stopped, "hit_max_steps": run.hit_max_steps,
          "elapsed_ms": run.elapsed_ms, "tools": [s.tool for s in run.steps]},

@@ -1,4 +1,66 @@
-"""EchoDesk 后端主程序：与前端通过 stdin/stdout 以 JSON 行协议通信。
+"""
+[EN]
+EchoDesk backend entry point. It communicates with the frontend over stdin/stdout
+using a line-delimited JSON protocol.
+
+Protocol:
+  {"action": "chat", "message": "..."}         -> one response line {"type": "assistant|system", "content": ...}
+  {"action": "chat_stream", "message": "..."}  -> multiple streamed lines: {"type":"delta",...} ... {"type":"done",...}
+  {"action": "stop"}                           -> interrupts the current streaming generation
+  {"action": "file", "path": "..."}            -> one response line
+  {"action": "file_stream", "path": "..."}     -> streamed: summary_progress lines + done (task 4)
+  {"action": "model_download", "name": "..."}  -> downloads a model and hot-swaps it: delta progress + done
+  {"action": "model_scan"}                     -> rescans the model directory
+  {"action": "model_load", "name": "..."}      -> hot-loads the named model without restarting the process
+
+**Reasoning-content channel (v0.2.1 model reasoning separation, tasks 3/4)**:
+
+For reasoning models, the thinking process and the final answer travel on two separate
+channels; the answer pane carries the final answer only:
+
+* ``{"type":"delta","channel":"reasoning","content":...}`` -- a reasoning-content increment;
+* ``{"type":"delta","channel":"answer","content":...}`` -- a final-answer increment;
+* ``{"type":"delta","channel":"answer","reset":true}`` -- **invalidates the answer pane**: the text
+  previously emitted as an "answer" is in fact reasoning content (the model's opening tag
+  lives in the prompt and only the closing tag is observable, e.g. DeepSeek-R1); the
+  frontend must move the accumulated answer text into the reasoning pane;
+* the ``done`` line additionally carries ``reasoning`` (the full reasoning text) and
+  ``reasoning_unclosed: true`` (the tag never closed, which usually means the token budget
+  was exhausted by reasoning and the answer has not started yet).
+
+**Streaming heartbeat and runtime metrics (v0.2.1 known-issues optimization, tasks 5/7)**:
+
+* ``{"type":"progress","channel":"heartbeat","stats":{...},"waiting_first_token":bool}``
+  -- **heartbeat**: the model is still computing but has produced no new token yet
+  (the prefill phase can last tens of seconds). The frontend uses it to display
+  "processing input / waiting for the first token" instead of looking frozen.
+  Heartbeats are produced by the engine's reader thread (see
+  ``llm_engine._iter_with_heartbeat``); the interval is taken from
+  ``config.stream_heartbeat_seconds`` (default 1.5 seconds).
+* the ``done`` line additionally carries ``stats``: runtime metrics measured by the backend
+  (first-token latency, output token count, tokens/s, total elapsed time, whether the values
+  are estimates), for display in the status area. Field definitions: ``llm_engine.StreamStats``.
+
+Delta lines without a ``channel`` field keep the legacy semantics (progress/summary and
+other non-conversational text); the frontend handles them unchanged.
+
+**No-model-ready state (v0.2.1 general optimization, task 1)**:
+If no local model is present at startup, the backend **neither blocks nor exits**; it keeps
+running in a "no model ready" state: it initializes a Backend whose ``llm`` is left empty and
+serves the main loop as usual. Behaviour boundaries are defined by :meth:`Backend.model_state`:
+reasoning requests return guidance text (without crashing), while the model-independent
+features -- file parsing, skill marketplace, settings read/write, model marketplace search and
+download, session-history inspection -- **remain fully available**. After the user downloads a
+model in settings, or places a ``.gguf`` file into the model directory manually, the backend
+**hot-loads it in place** (same engine object, no process restart).
+
+Startup sequence: ``need_download`` (**non-blocking**; reports only which model is missing,
+with ``blocking: false``) -> ``ready`` (with ``model_ready: false`` and ``model_missing``
+details). The former "exit when the user declines" behaviour is removed: exit is triggered
+only by the user (the frontend sends ``exit``).
+
+[ZH]
+EchoDesk 后端主程序：与前端通过 stdin/stdout 以 JSON 行协议通信。
 
 协议：
   {"action": "chat", "message": "..."}         -> 一行响应 {"type": "assistant|system", "content": ...}
@@ -17,44 +79,51 @@
 * ``{"type":"delta","channel":"reasoning","content":...}`` —— 思考内容增量；
 * ``{"type":"delta","channel":"answer","content":...}`` —— 最终回答增量；
 * ``{"type":"delta","channel":"answer","reset":true}`` —— **作废回答区**：此前发出的
-  "回答"其实是思考内容（模型的起始标签写在提示词里，只有结束标签可见，如
-  DeepSeek-R1），前端应把已累积的回答文本搬到思考区；
-* ``done`` 行额外带 ``reasoning``（思考全文）、``reasoning_unclosed: true``
-  （标签未闭合，通常意味着 token 预算被思考用完、答案还没开始）。
+  "回答"实为思考内容（模型的起始标签写在提示词内，只有结束标签可见，如
+  DeepSeek-R1），前端应将已累积的回答文本移入思考区；
+* ``done`` 行额外携带 ``reasoning``（思考全文）与 ``reasoning_unclosed: true``
+  （标签未闭合，通常意味着 token 预算已被思考耗尽、答案尚未开始）。
 
 **流式心跳与运行指标（v0.2.1 优化已知问题-2 任务五/七）**：
 
 * ``{"type":"progress","channel":"heartbeat","stats":{...},"waiting_first_token":bool}``
-  —— **心跳**：模型还在算但暂时没有新 token（prefill 阶段可能几十秒）。
-  前端据此显示"正在处理输入 / 等待首 token"，而不是让界面看起来像卡死。
+  —— **心跳**：模型仍在计算但暂时没有新 token（prefill 阶段可能持续数十秒）。
+  前端据此显示"正在处理输入 / 等待首 token"，避免界面呈现为停滞状态。
   心跳由引擎的读者线程产生（见 ``llm_engine._iter_with_heartbeat``），
-  间隔取 ``config.stream_heartbeat_seconds``（默认 1.5 秒）。
-* ``done`` 行额外带 ``stats``：后端实测的运行指标（首 token 延迟、输出 token 数、
-  token/s、总耗时、是否估算），供状态区显示。字段定义见 ``llm_engine.StreamStats``。
+  间隔取自 ``config.stream_heartbeat_seconds``（默认 1.5 秒）。
+* ``done`` 行额外携带 ``stats``：后端实测的运行指标（首 token 延迟、输出 token 数、
+  token/s、总耗时、是否为估算值），供状态区显示。字段定义见 ``llm_engine.StreamStats``。
 
-没有 ``channel`` 字段的 delta 行沿用旧语义（进度/摘要等非对话文本），前端按原样处理。
+没有 ``channel`` 字段的 delta 行沿用既有语义（进度/摘要等非对话文本），前端按原样处理。
 
 **无模型就绪（v0.2.1 综合优化 任务一）**：
 启动时若本地缺少模型，后端**不再阻塞等待、也不再退出**，而是以"无模型就绪"状态继续运行：
-初始化一个 ``llm`` 留空的 Backend，主循环照常服务。行为边界见 :meth:`Backend.model_state`：
-推理类请求返回引导文案（不崩溃），文件解析 / 技能市场 / 设置读写 / 模型市场搜索与下载 /
-会话历史查看等不依赖模型的功能**照常可用**。用户在设置里下载模型、或把 ``.gguf`` 手动放进
+初始化一个 ``llm`` 留空的 Backend，主循环照常提供服务。行为边界见 :meth:`Backend.model_state`：
+推理类请求返回引导文案（不崩溃），而文件解析 / 技能市场 / 设置读写 / 模型市场搜索与下载 /
+会话历史查看等不依赖模型的功能**照常可用**。用户在设置中下载模型，或把 ``.gguf`` 手动放入
 模型文件夹后，后端**原地热加载**（同一个引擎对象，无需重启进程）。
 
-启动顺序：``need_download``（**非阻塞**，仅告知缺哪个模型，带 ``blocking: false``）→
+启动顺序：``need_download``（**非阻塞**，仅告知缺少哪个模型，带 ``blocking: false``）→
 ``ready``（带 ``model_ready: false`` 与 ``model_missing`` 详情）。旧行为"用户拒绝即退出"
-已移除：退出只由用户主动触发（前端发 ``exit``）。
+已移除：退出仅由用户主动触发（前端发 ``exit``）。
 """
 import contextlib
 import json
 import logging
 import os
 import queue
-# 任务一/任务十五（自测问题修复-1）：`_store_large_file` 一直在用 `re.sub` 清洗文件名，
-# 但本模块**从来没有 import re** —— 那次调用必然抛 NameError，又被自己的
-# `except Exception` 吞掉、只留一行 warning，于是"大文件正文落盘"这个功能
-# **自始至终没有生效过**：超过 disk_threshold_chars 的文件仍整篇留在会话里，
-# file_cache 目录也从来没被创建过（上下文里给出的落盘指针指向不存在的目录）。
+# [EN] Tasks 1/15 (self-test fix-1): ``_store_large_file`` always used ``re.sub`` to sanitize
+# [EN] file names, but this module never imported ``re`` -- the call therefore raised
+# [EN] NameError, which its own ``except Exception`` swallowed with only a warning. As a
+# [EN] result the large-file spill feature never took effect: files above
+# [EN] ``disk_threshold_chars`` stayed in the session in full, the ``file_cache`` directory
+# [EN] was never created, and the spill pointer written into the context referenced a
+# [EN] non-existent directory.
+# [ZH] 相关设计/相关设计（自测问题修复-1）：`_store_large_file` 一直使用 `re.sub` 清洗文件名，
+# [ZH] 但本模块从未 import re —— 该调用必然抛出 NameError，又被自身的
+# [ZH] `except Exception` 捕获、只留一行 warning，因此"大文件正文落盘"功能
+# [ZH] 自始至终没有生效：超过 disk_threshold_chars 的文件仍整篇留在会话中，
+# [ZH] file_cache 目录也从未被创建（上下文中给出的落盘指针指向不存在的目录）。
 import re
 import shutil
 import sys
@@ -66,12 +135,19 @@ from reasoning import ANSWER as _CH_ANSWER
 from reasoning import REASONING as _CH_REASONING
 from reasoning import RESET as _CH_RESET
 from version import APP_NAME, APP_VERSION, STUDIO
-# 平台探测与能力边界（任务书 任务三 / 任务五）：只在本模块里做判断，
-# 别处一律通过它问"本平台有没有这个能力"，避免判断散落、前端对不上。
+# [EN] Platform detection and capability boundaries (scope tasks 3 / 5): the decision is
+# [EN] made here only, and every other module queries it for "does this platform support
+# [EN] this capability", so the checks do not scatter and the frontend stays consistent.
+# [ZH] 平台探测与能力边界（设计规范 相关设计 / 相关设计）：只在本模块内判断，
+# [ZH] 其余模块一律通过它查询"本平台是否具备该能力"，避免判断分散、前后端不一致。
 import platform_support
-# 协议走 stdin/stdout，且内容含中文/emoji。某些机器（英文 locale）下 Python
-# 默认用 cp1252 编码，写中文会抛 UnicodeEncodeError 直接崩溃（“后端进程已退出”）。
-# 统一强制 UTF-8，且用 errors="replace" 兜底，保证任何机器都能正常输出。
+# [EN] The protocol runs over stdin/stdout and carries Chinese text and emoji. On some
+# [EN] machines (English locale) Python defaults to cp1252, and writing Chinese raises
+# [EN] UnicodeEncodeError, which terminates the process ("backend exited"). Therefore UTF-8
+# [EN] is enforced here, with errors="replace" as a fallback, so output never fails.
+# [ZH] 协议走 stdin/stdout，且内容含中文/emoji。某些机器（英文 locale）下 Python
+# [ZH] 默认使用 cp1252 编码，写中文会抛 UnicodeEncodeError 导致进程终止（"后端进程已退出"）。
+# [ZH] 因此统一强制 UTF-8，并以 errors="replace" 兜底，保证任何机器都能正常输出。
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
@@ -82,7 +158,14 @@ del _stream
 
 @contextlib.contextmanager
 def _suppress_stdout():
-    """临时把 sys.stdout 指向 devnull，吞掉第三方库直接 print 到 stdout 的诊断信息。"""
+    """
+    [EN]
+    Temporarily redirect ``sys.stdout`` to devnull to suppress diagnostic output that
+    third-party libraries print directly to stdout.
+
+    [ZH]
+    临时把 sys.stdout 指向 devnull，屏蔽第三方库直接 print 到 stdout 的诊断信息。
+    """
     saved = sys.stdout
     sink = open(os.devnull, "w", encoding="utf-8", errors="replace")
     sys.stdout = sink
@@ -95,49 +178,70 @@ def _suppress_stdout():
 
 with _suppress_stdout():
     from config import AutomationConfig, Config
-    # 在 import huggingface_hub 相关模块前，就把 HF 端点切换到镜像，
-    # 否则 huggingface_hub 默认连 huggingface.co（国内不可达），下载/查询都会超时。
+    # [EN] Switch the Hugging Face endpoint to the mirror before importing
+    # [EN] huggingface_hub modules; otherwise huggingface_hub connects to huggingface.co by
+    # [EN] default (unreachable in some regions) and downloads/queries time out.
+    # [ZH] 在导入 huggingface_hub 相关模块前把 HF 端点切换到镜像，
+    # [ZH] 否则 huggingface_hub 默认连接 huggingface.co（部分地区不可达），下载/查询都会超时。
     _cfg = Config.load()
     if _cfg.hf_endpoint and not os.environ.get("HF_ENDPOINT"):
         os.environ["HF_ENDPOINT"] = _cfg.hf_endpoint
     from command_handler import CommandHandler
     from compact_log import EVENT_SKIP, EVENT_SUMMARY, CompactEvent, CompactLog, replay
     from config import CompactionConfig
-    # 任务一（自测问题修复-1）：不再导入 FILE_INTENT —— 它曾作为"要不要把文件正文
-    # 注入上下文"的闸门，现已取消（详见 _stream_chat 里 include_file 的说明）。
+    # [EN] Task 1 (self-test fix-1): FILE_INTENT is no longer imported. It used to gate
+    # [EN] whether the file body was injected into the context; that gate has been removed
+    # [EN] (see the include_file explanation in _stream_chat).
+    # [ZH] 相关设计（自测问题修复-1）：不再导入 FILE_INTENT —— 它曾作为"是否把文件正文
+    # [ZH] 注入上下文"的开关，现已取消（详见 _stream_chat 中 include_file 的说明）。
     from conversation import ConversationManager, REPEAT_INTENT
     from download_utils import check_model, download_model, find_best_model
     from file_parser import is_parse_error, localize_error, parse_file_with_wps
     from gguf_meta import format_bytes as _format_bytes
     from gguf_meta import resolve_context_window
     from llm_engine import LazyLLMEngine, LLMEngine, NoModelError, StreamStats
-    # 心跳通道标记（任务五）：引擎在 prefill 阶段产出它，见 llm_engine._iter_with_heartbeat
+    # [EN] Heartbeat channel marker (task 5): the engine emits it during prefill, see
+    # [EN] llm_engine._iter_with_heartbeat.
+    # [ZH] 心跳通道标记（相关设计）：引擎在 prefill 阶段产出，见 llm_engine._iter_with_heartbeat。
     from llm_engine import HEARTBEAT as _CH_HEARTBEAT
     from search_engine import FAIL_KIND_KEYS, SearchEngine
     from summarizer import DocumentSummarizer
 
-# 多语言（任务三）：必须在 Config.load 之后导入，避免 i18n 反向依赖 config 时成环
+# [EN] Multilingual support (task 3): must be imported after Config.load so that i18n
+# [EN] does not create an import cycle by depending on config in reverse.
+# [ZH] 多语言（相关设计）：必须在 Config.load 之后导入，避免 i18n 反向依赖 config 时形成循环导入。
 from i18n import get as _i18n
 from i18n import log_user
 from i18n import t as _t
 
-# Emoji 降级（修复六）与目录布局（修复七）
+# [EN] Emoji fallback (fix 6) and directory layout (fix 7).
+# [ZH] Emoji 降级（兼容性修正）与目录布局（兼容性修正）。
 import emoji as emoji_mod
 from config import program_dir, program_root as user_data_root
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("EchoDesk")
 
-# ---------- 崩溃日志 ----------
-# 进程可能因原生代码崩溃（llama.cpp 的 SIGILL/SIGSEGV）等原因无 Python 回溯地直接退出，
-# 此时把崩溃原因写入 backend_crash.log，便于在别的机器上排查。
-#
-# ⚠️ 任务十五（自测问题修复-1）：这些是**进程级**副作用，绝不能在被 import 时执行。
-# 本模块会被 `tools/` 下几乎所有测试与工具脚本 import；原来无条件执行的
-# `sys.excepthook = _excepthook` 会让**任何一个脚本**的未捕获异常都写进
-# backend_crash.log —— 实测该文件里混进了 test_reasoning / test_retrieval /
-# test_search 的异常回溯，真正的后端崩溃反而被这些噪声淹掉，
-# 排查的人会以为"后端又崩了"。现在改为只由程序入口显式安装。
+# ---------- 崩溃日志 / Crash log ----------
+# [EN] The process can terminate from native code crashes (SIGILL/SIGSEGV in llama.cpp) with
+# [EN] no Python traceback. The crash reason is written to backend_crash.log so it can be
+# [EN] diagnosed on another machine.
+# [EN]
+# [EN] These are **process-level** side effects and must never run at import time. This module
+# [EN] is imported by nearly every test and tool script under ``tools/``; unconditionally
+# [EN] assigning ``sys.excepthook = _excepthook`` made every uncaught exception from any
+# [EN] script land in backend_crash.log. In practice the file filled with tracebacks from
+# [EN] test_reasoning / test_retrieval / test_search, drowning out real backend crashes and
+# [EN] making it look as if the backend crashed again. The hook is now installed only by the
+# [EN] program entry point.
+# [ZH] 进程可能因原生代码崩溃（llama.cpp 的 SIGILL/SIGSEGV）等原因在没有 Python 回溯的
+# [ZH] 情况下直接退出，此时把崩溃原因写入 backend_crash.log，便于在其他机器上排查。
+# [ZH]
+# [ZH] 这些是**进程级**副作用，绝不能在 import 时执行。本模块会被 `tools/` 下几乎所有
+# [ZH] 测试与工具脚本 import；原先无条件执行的 `sys.excepthook = _excepthook` 会让
+# [ZH] **任何脚本**的未捕获异常都写进 backend_crash.log —— 验证该文件混入了
+# [ZH] test_reasoning / test_retrieval / test_search 的异常回溯，真正的后端崩溃反而被
+# [ZH] 这些噪声掩盖。现在改为只由程序入口显式安装。
 import faulthandler
 
 _crash = None
@@ -152,7 +256,14 @@ def _crash_log_path() -> str:
 
 
 def _excepthook(etype, value, tb):
-    """未捕获的 Python 异常也写入崩溃日志，避免静默退出。"""
+    """
+    [EN]
+    Also write uncaught Python exceptions to the crash log so that silent termination does
+    not occur.
+
+    [ZH]
+    未捕获的 Python 异常也写入崩溃日志，避免进程静默退出。
+    """
     import traceback
     try:
         with open(_crash_log_path(), "a", encoding="utf-8") as f:
@@ -164,7 +275,17 @@ def _excepthook(etype, value, tb):
 
 
 def install_crash_handlers() -> None:
-    """安装进程级崩溃/异常钩子。
+    """
+    [EN]
+    Install the process-level crash/exception hooks.
+
+    **Must only be called by the program entry point (``__main__``)**; see the note at the
+    top of this section. It is a function rather than module-level code because the packaged
+    backend entry point is this file (``EchoBackend.spec``'s ``Analysis([... "main.py"])``),
+    so reaching ``__main__`` installs the hooks exactly as before.
+
+    [ZH]
+    安装进程级崩溃/异常钩子。
 
     **只应由程序入口（``__main__``）调用**，理由见本节顶部说明。
     之所以做成函数而不是留在模块级：打包后的后端入口就是本文件
@@ -181,26 +302,46 @@ def install_crash_handlers() -> None:
         _crash = None
     sys.excepthook = _excepthook
 
-# stdout 写锁：主循环与流式后台线程共用 stdout
+# [EN] stdout write lock: the main loop and streaming background threads share stdout.
+# [ZH] stdout 写锁：主循环与流式后台线程共用 stdout。
 _io_lock = threading.Lock()
 
 
 def _preset_list() -> List[Dict[str, Any]]:
-    """生成参数预设清单（修复四 方向六）。"""
+    """
+    [EN]
+    Build the parameter-preset list (fix 4, direction 6).
+
+    [ZH]
+    生成参数预设清单（修复四 方向六）。
+    """
     from model_profile import preset_menu
 
     return preset_menu()
 
 
 def _task_template_list() -> List[Dict[str, Any]]:
-    """任务型提示词模板清单（修复四 方向一）。"""
+    """
+    [EN]
+    Task-oriented prompt template list (fix 4, direction 1).
+
+    [ZH]
+    任务型提示词模板清单（修复四 方向一）。
+    """
     from prompts import public_list
 
     return public_list()
 
 
 def _recommendation() -> Dict[str, Any]:
-    """按本机硬件推荐模型规模与生成参数（修复四 方向六）。"""
+    """
+    [EN]
+    Recommend a model size and generation parameters for the local hardware (fix 4,
+    direction 6).
+
+    [ZH]
+    按本机硬件推荐模型规模与生成参数（修复四 方向六）。
+    """
     from model_profile import _read_machine_memory, recommend_config
 
     ram, cores = _read_machine_memory()
@@ -208,7 +349,16 @@ def _recommendation() -> Dict[str, Any]:
 
 
 def _profile_params_text(name: str) -> str:
-    """按文件名推断参数量文本（0.6B / 1.7B）；取不到返回空串。
+    """
+    [EN]
+    Infer the parameter-count text from the file name (0.6B / 1.7B); return an empty string
+    when it cannot be determined.
+
+    Reuses ``model_profile._fmt_params`` (the same formatting rules as the capability
+    profile) so that the "how many B" and "how many decimals" logic is not duplicated here.
+
+    [ZH]
+    按文件名推断参数量文本（0.6B / 1.7B）；无法获取时返回空串。
 
     复用 `model_profile._fmt_params`（与能力画像同一套格式化规则），
     避免在这里再写一份"多少算 B、保留几位小数"的判断。
@@ -221,7 +371,14 @@ def _profile_params_text(name: str) -> str:
 
 
 def _profile_quant_text(name: str) -> str:
-    """按文件名推断量化文本（Q6_K / Q4_K_M）；取不到返回空串。"""
+    """
+    [EN]
+    Infer the quantization text from the file name (Q6_K / Q4_K_M); return an empty string
+    when it cannot be determined.
+
+    [ZH]
+    按文件名推断量化文本（Q6_K / Q4_K_M）；无法获取时返回空串。
+    """
     try:
         from model_hub import guess_quantization
         return guess_quantization(name)
@@ -236,44 +393,85 @@ def _write(response: Dict[str, Any]) -> None:
 
 
 # =====================================================================
-# 宿主进度事件（v0.2.2 第 4 批，**经总策划定向放开的唯一一处协议扩展**）
+# 宿主进度事件 / Host progress events (v0.2.2 batch 4)
 # =====================================================================
 #
-# 背景：分段摘要的进度本来有两条路 —— 流式请求里走 `summary_progress` 事件，
-# **非流式**的 `/file` 命令则退回 `print(..., file=sys.stderr)`。
-# 后者前端只能当"一行日志"显示，看不出这是进度还是警告。
-#
-# 这条扩展新增一种 stdout 行类型 `{"type": "host_progress", "content": "…"}`，
-# 仅在**非流式请求处理期间**由后端主动发出。三条自我约束，避免污染协议：
-#   1. **只在有请求在处理时发**（`_host_progress_sink` 非 None）；
-#      请求之外一个字节都不多发，所以"空闲时收到意外的 JSON"这种情形不存在。
-#   2. 前端一律"见到就跳过、不当响应"（两个前端都改了各自的 ReadUntilJson），
-#      所以它不会顶替真正的响应行。
-#   3. 没有 sink 时行为**完全不变**（照旧写 stderr），保证老前端与直接跑后端的场景不受影响。
+# [EN] Background: chunked-summary progress used to have two paths -- the `summary_progress`
+# [EN] event on streaming requests, and `print(..., file=sys.stderr)` for the **non-streaming**
+# [EN] `/file` command. The frontend could only render the latter as "one log line" and could
+# [EN] not tell progress apart from a warning.
+# [EN]
+# [EN] This extension adds the stdout line type `{"type": "host_progress", "content": "..."}`,
+# [EN] emitted by the backend **only while a non-streaming request is being handled**. It is
+# [EN] the only protocol extension explicitly approved for this release, and it is subject to
+# [EN] three self-imposed constraints so the protocol is not polluted:
+# [EN]   1. **Only emitted while a request is in flight** (`_host_progress_sink` is not None);
+# [EN]      not a single extra byte is written otherwise, so "unexpected JSON while idle"
+# [EN]      cannot occur.
+# [EN]   2. The frontend always "skips it on sight, never treats it as a response" (both
+# [EN]      frontends updated their own ReadUntilJson), so it never displaces a real response
+# [EN]      line.
+# [EN]   3. Without a sink the behaviour is **entirely unchanged** (still writes to stderr),
+# [EN]      so older frontends and direct backend runs are unaffected.
+# [ZH] 背景：分段摘要的进度原本有两条路径 —— 流式请求中走 `summary_progress` 事件，
+# [ZH] **非流式**的 `/file` 命令则退回 `print(..., file=sys.stderr)`。
+# [ZH] 后者前端只能当作"一行日志"显示，无法区分是进度还是警告。
+# [ZH]
+# [ZH] 本扩展新增一种 stdout 行类型 `{"type": "host_progress", "content": "…"}`，
+# [ZH] 仅在**非流式请求处理期间**由后端主动发出。为不污染协议，附加三条约束：
+# [ZH]   1. **只在有请求在处理时发送**（`_host_progress_sink` 非 None）；
+# [ZH]      请求之外不额外发送任何字节，因此不存在"空闲时收到意外 JSON"的情形。
+# [ZH]   2. 前端一律"见到即跳过、不当作响应"（两个前端都修改了各自的 ReadUntilJson），
+# [ZH]      因此它不会顶替真正的响应行。
+# [ZH]   3. 没有 sink 时行为**完全不变**（照旧写 stderr），保证老前端与直接运行后端的场景不受影响。
 _host_progress_sink: Optional[Callable[[str], None]] = None
 
 
 def _emit_host_progress(text: str) -> None:
-    """把一条宿主进度写成结构化事件（只在请求处理期间被调用）。"""
+    """
+    [EN]
+    Write one host progress entry as a structured event (called only while a request is
+    being handled).
+
+    [ZH]
+    把一条宿主进度写成结构化事件（只在请求处理期间被调用）。
+    """
     if not text:
         return
     _write({"type": "host_progress", "content": text})
 
 
 class Backend:
-    """后端服务：负责模型加载、会话恢复、预热与请求分发。"""
+    """
+    [EN]
+    Backend service: responsible for model loading, session restoration, warm-up, and
+    request dispatch.
+
+    [ZH]
+    后端服务：负责模型加载、会话恢复、预热与请求分发。
+    """
 
     def __init__(self, config: Config, model_path: str = "") -> None:
         self.config = config
-        # 引擎：给了模型就是真引擎；没给就是一个"空着、可原地加载"的引擎（任务一）。
-        # 刻意**保持同一个对象**（见 llm_engine.LazyLLMEngine 的说明）：热加载后
-        # command_handler / summarizer 里的引用不用重新接线，也就不会出现
-        # "加载成功了但还在用旧对象"这种静默错误。
+        # [EN] Engine: a real engine when a model is supplied, otherwise an "empty but
+        # [EN] loadable in place" engine (task 1). The **same object is deliberately kept**
+        # [EN] (see the notes in llm_engine.LazyLLMEngine): after a hot load the references
+        # [EN] held by command_handler / summarizer need no rewiring, so the silent failure
+        # [EN] mode "loaded successfully but still using the old object" cannot occur.
+        # [ZH] 引擎：提供模型即为真引擎；未提供则是"留空、可原地加载"的引擎（相关设计）。
+        # [ZH] 刻意**保持同一个对象**（见 llm_engine.LazyLLMEngine 的说明）：热加载后
+        # [ZH] command_handler / summarizer 中的引用无需重新接线，也就不会出现
+        # [ZH] "加载成功但仍在使用旧对象"这类静默错误。
         self.llm = self._build_engine(config, model_path)
         self.conv = ConversationManager(config.max_history, config.default_mode)
-        # 思考内容写入历史的两个开关（v0.2.1 模型思考内容分离）：是否持久化、
-        # 每条保留多少字符。放在这里而不是 ConversationManager 内部，是因为
-        # 这两个值来自 config.json，而会话管理器本身不依赖配置模块。
+        # [EN] The two switches controlling reasoning content written to history (此前版本
+        # [EN] reasoning separation): whether to persist it and how many characters to keep
+        # [EN] per entry. They live here rather than inside ConversationManager because these
+        # [EN] values come from config.json and the conversation manager itself does not
+        # [EN] depend on the config module.
+        # [ZH] 思考内容写入历史的两个开关（此前版本 模型思考内容分离）：是否持久化、
+        # [ZH] 每条保留多少字符。放在这里而不是 ConversationManager 内部，是因为
+        # [ZH] 这两个值来自 config.json，而会话管理器本身不依赖配置模块。
         _reasoning_cfg = getattr(config, "reasoning", None)
         self.conv.persist_reasoning = bool(getattr(_reasoning_cfg, "persist", True))
         self.conv.reasoning_max_chars = int(getattr(_reasoning_cfg, "history_max_chars", 8000) or 0)
@@ -286,15 +484,22 @@ class Backend:
             file_loader=self.load_file_into_context, summarize_file=self.summarize_current_file,
             files_loader=self.load_files_into_context,
         )
-        # 浏览器自动化引擎（Playwright）：惰性创建，未使用时不加载
+        # [EN] Browser automation engine (Playwright): created lazily, not loaded unless used.
+        # [ZH] 浏览器自动化引擎（Playwright）：惰性创建，未使用时不加载。
         self._automation = None
-        # 技能市场：同样惰性创建
+        # [EN] Skill marketplace: also created lazily.
+        # [ZH] 技能市场：同样惰性创建。
         self._market = None
-        # 模型选择栏（新增四）：惰性创建
+        # [EN] Model selector (feature 4): created lazily.
+        # [ZH] 模型选择栏（新增四）：惰性创建。
         self._model_hub = None
-        # 技能运行期加载器（任务二）：同样惰性创建，第一次用到时才扫描目录
+        # [EN] Skill runtime loader (task 2): also created lazily; the directory is scanned
+        # [EN] only on first use.
+        # [ZH] 技能运行期加载器（相关设计）：同样惰性创建，首次使用时才扫描目录。
         self._skills = None
-        # 修复四：分段摘要缓存（方向八）与"手动压缩上下文"回调接线
+        # [EN] Fix 4: chunked-summary cache (direction 8) and the wiring of the "manual
+        # [EN] context compaction" callback.
+        # [ZH] 兼容性修正：分段摘要缓存（方向八）与"手动压缩上下文"回调接线。
         self._summary_cache = None
         self._capability_cache = None
         self._capability_key = None
@@ -305,50 +510,101 @@ class Backend:
         self.commands.mcp_control = self.mcp_control
         self.stream_active = False
         self.stop_event = threading.Event()
-        # 搜索链路可观测状态（优化已知问题-2 任务二）：上一次搜索的结果对象与
-        # "为什么没用上"的说明。任务书要求逐环节排查，所以状态要留着可查。
+        # [EN] Observable state of the search pipeline (known-issues optimization-2, task 2):
+        # [EN] the result object of the last search and the explanation of "why it was not
+        # [EN] used". The task requires per-stage investigation, so this state is retained for
+        # [EN] inspection.
+        # [ZH] 搜索链路可观测状态（优化已知问题-2 相关设计）：上一次搜索的结果对象与
+        # [ZH] "为什么未使用"的说明。设计规范要求逐环节排查，因此状态需保留以便查询。
         self._last_search = None
         self._last_search_note = ""
-        # 压缩事件日志（任务九）：惰性创建，见 compact_log()
+        # [EN] Compaction event log (task 9): created lazily, see compact_log().
+        # [ZH] 压缩事件日志（相关设计）：惰性创建，见 compact_log()。
         self._compact_log = None
-        # Agent 工具注册表（能力扩展-1 任务二）：惰性创建；上一次运行的轨迹留档，
-        # 供 /agent 与 agent_diagnostics() 显示"每一步做了什么"。
+        # [EN] Agent tool registry (capability extension-1, task 2): created lazily; the trace
+        # [EN] of the last run is retained so /agent and agent_diagnostics() can show "what
+        # [EN] each step did".
+        # [ZH] Agent 工具注册表（后续版本 相关设计）：惰性创建；上一次运行的轨迹留档，
+        # [ZH] 供 /agent 与 agent_diagnostics() 显示"每一步做了什么"。
         self._agent_registry = None
         self._last_agent_run = None
         self._agent_run = None
-        # 上一次检索的摘要（供 /status 与检索诊断显示"这次到底检索了什么"）
+        # [EN] Summary of the last retrieval (used by /status and retrieval diagnostics to
+        # [EN] show "what was actually retrieved this time").
+        # [ZH] 上一次检索的摘要（供 /status 与检索诊断显示"本次实际检索了什么"）。
         self._last_retrieval = None
-        # 本地文档检索（能力扩展-1 任务六）：惰性创建，索引随文件增删**增量**更新。
+        # [EN] Local document retrieval (capability extension-1, task 6): created lazily; the
+        # [EN] index is updated **incrementally** as files are added or removed.
+        # [ZH] 本地文档检索（后续版本 相关设计）：惰性创建，索引随文件增删**增量**更新。
         self._retriever = None
-        # MCP 客户端（能力扩展-1 任务三）：惰性创建；配置签名变化时重建并关掉旧进程。
+        # [EN] MCP client (capability extension-1, task 3): created lazily; rebuilt and the
+        # [EN] old process closed when the config signature changes.
+        # [ZH] MCP 客户端（后续版本 相关设计）：惰性创建；配置签名变化时重建并关闭旧进程。
         self._mcp_bridge = None
         self._mcp_signature = ""
-        # 多文件注入总长：此前这个值只在测试里被设置过，生产路径从未赋值 ——
-        # 结果 config.files.total_chars（默认 60000）**实际上没有生效**，
-        # 注入是"不限长"的（能力扩展-1 审计发现的既有缺陷）。这里补上。
+        # [EN] Total injected multi-file length: this value used to be set only in tests and
+        # [EN] was never assigned on the production path. As a result
+        # [EN] config.files.total_chars (default 60000) had no effect and injection was
+        # [EN] unbounded -- a pre-existing defect found in the capability extension-1 audit.
+        # [EN] It is assigned here.
+        # [ZH] 多文件注入总长：此前该值只在测试中被设置过，生产路径从未赋值 ——
+        # [ZH] 结果 config.files.total_chars（默认 60000）**实际上没有生效**，
+        # [ZH] 注入是"不限长"的（后续版本 审计发现的既有缺陷）。此处补上。
         self.conv.files_total_chars = int(getattr(config.files, "total_chars", 0) or 0)
 
     def clear_summary_cache(self) -> int:
-        """清空分段摘要缓存并返回清掉的条目数（供 /clearcache 与动作接口使用）。"""
+        """
+    [EN]
+    Clear the chunked-summary cache and return the number of entries removed (used by
+    /clearcache and the action interface).
+
+    [ZH]
+    清空分段摘要缓存并返回清除的条目数（供 /clearcache 与动作接口使用）。
+    """
         cache = self.summary_cache()
         return cache.clear() if cache is not None else 0
 
-    # ---------- 无模型就绪 / 热加载（v0.2.1 综合优化 任务一、二、五） ----------
+    # ---------- 无模型就绪 / 热加载（此前版本 综合优化 相关设计、二、五） ----------
+    # [EN] No-model-ready state and hot loading (此前版本 general optimization, tasks 1/2/5).
+    # [ZH] 无模型就绪 / 热加载（此前版本 综合优化 相关设计、二、五）。
 
     @property
     def model_ready(self) -> bool:
-        """当前是否有可用模型（推理类功能的前提）。"""
+        """
+        [EN]
+        Whether a usable model is currently available (a precondition for reasoning features).
+
+        [ZH]
+        当前是否有可用模型（推理类功能的前提）。
+        """
         return bool(getattr(self.llm, "ready", True))
 
     def models_dir(self) -> str:
-        """模型文件夹的实际路径（引导文案里必须给真实路径，不能用占位符）。"""
+        """
+        [EN]
+        Actual path of the model directory (the guidance text must show the real path, not a
+        placeholder).
+
+        [ZH]
+        模型文件夹的实际路径（引导文案中必须给出真实路径，不能使用占位符）。
+        """
         try:
             return self.model_hub().models_dir
         except Exception:
             return os.path.abspath("models")
 
     def model_state(self) -> Dict[str, Any]:
-        """机器可读的模型状态，供前端区分"后端已就绪"与"推理可用"（任务一）。
+        """
+        [EN]
+        Machine-readable model state, so the frontend can distinguish "backend ready" from
+        "reasoning available" (task 1).
+
+        When ``ready=false`` the frontend should keep the UI interactive, show the status bar
+        as "no model", and use ``guide`` to direct the user to the model marketplace or to
+        placing a model file manually.
+
+        [ZH]
+        机器可读的模型状态，供前端区分"后端已就绪"与"推理可用"（任务一）。
 
         ``ready=false`` 时前端应保持界面可交互、把状态栏显示为"无模型"，
         并按 ``guide`` 引导用户去模型市场或手动放置模型文件。
@@ -363,19 +619,41 @@ class Backend:
         }
 
     def guide_text(self) -> str:
-        """无模型时的引导文案：说明现状 + 三条可行路径 + 模型文件夹真实路径（任务二）。"""
+        """
+        [EN]
+        Guidance text for the no-model case: current state, three viable paths, and the real
+        model directory path (task 2).
+
+        [ZH]
+        无模型时的引导文案：说明现状 + 三条可行路径 + 模型文件夹真实路径（任务二）。
+        """
         return _t("sys.no_model_guide", dir=self.models_dir())
 
     def load_model(self, name_or_path: str = "", *,
                    profile: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """热加载模型（任务五）：下载完成、扫描到新模型、用户手动切换都走这里。
+        """
+        [EN]
+        Hot-load a model (task 5): used after a download completes, when a new model is
+        discovered by a scan, and when the user switches models manually.
+
+        Returns ``{ok, name, error, state}``. On failure the backend **stays in the no-model
+        state** and reports the cause faithfully (corrupt file / unsupported format /
+        insufficient memory), so the user can retry directly without restarting the process.
+
+        ``profile`` (optional): the entry from ``config.models`` used to apply that entry's
+        own ``context_length`` and ``temperature`` (the settings-page "model profile" switch
+        takes this path, with the same semantics as the ``/model <alias>`` command). When
+        omitted, the window is opened according to the global configuration.
+
+        [ZH]
+        热加载模型（任务五）：下载完成、扫描到新模型、用户手动切换都走这里。
 
         返回 ``{ok, name, error, state}``。失败时**保持无模型状态**并把原因如实带回
-        （文件损坏 / 格式不支持 / 内存不足），用户可以直接重试，不用重启进程。
+        （文件损坏 / 格式不支持 / 内存不足），用户可以直接重试，无需重启进程。
 
-        ``profile``（可选）：``config.models`` 里那一档的档案，用来套用该档自己的
+        ``profile``（可选）：``config.models`` 中该档位的档案，用于套用该档自己的
         ``context_length`` 与 ``temperature``（设置页的"模型档位"切换走这条路，
-        与命令行 ``/model <别名>`` 的语义一致）。不给就按全局配置开窗。
+        与命令行 ``/model <别名>`` 的语义一致）。不提供时按全局配置开窗。
         """
         want = str(name_or_path or "").strip()
         if not want:
@@ -406,7 +684,11 @@ class Backend:
                     "state": self.model_state()}
         name = os.path.basename(path)
         self.config.model_path = name
-        # 档位自带温度时才覆盖（用户手动改过温度也以档案为准：档案就是这一档的推荐值）
+        # [EN] Override the temperature only when the profile specifies one; a profile value
+        # [EN] also takes precedence over a manual change, since the profile is the
+        # [EN] recommended value for that entry.
+        # [ZH] 仅当档位自带温度时才覆盖；用户手动修改过的温度同样以档案为准，
+        # [ZH] 因为档案就是该档位的推荐值。
         if profile and profile.get("temperature") is not None:
             try:
                 self.config.temperature = float(profile["temperature"])
@@ -417,22 +699,35 @@ class Backend:
         except Exception:
             log.warning("配置保存失败（不影响本次运行）", exc_info=True)
         self.touch_model_usage()
-        # 换模型后旧 KV 缓存与历史摘要都不再适用
+        # [EN] After a model switch, the previous KV cache and history summary are no longer
+        # [EN] applicable.
+        # [ZH] 切换模型后旧 KV 缓存与历史摘要均不再适用。
         self.llm.clear_cache()
         try:
             self.warmup()
         except Exception:
             log.warning("热加载后的预热失败（不影响使用）", exc_info=True)
-        # 任务十四：切模型是用户主动操作，这行会立刻出现在状态栏，必须跟界面语言。
+        # [EN] Task 14: switching models is a user-initiated action, so this line appears in
+        # [EN] the status bar immediately and must follow the UI language.
+        # [ZH] 相关设计：切换模型是用户主动操作，该行会立即出现在状态栏，必须与界面语言一致。
         log.info("%s", _t("sys.log_model_hot_loaded", name=name,
                           ctx=int(getattr(self.llm, "n_ctx", 0) or 0)))
         return {"ok": True, "name": name, "error": "", "state": self.model_state()}
 
     def scan_models(self, auto_load: bool = True) -> Dict[str, Any]:
-        """重新扫描模型文件夹（任务二：手动放置 ``.gguf`` 后能被识别）。
+        """
+        [EN]
+        Rescan the model directory (task 2: a manually placed ``.gguf`` is then recognized).
 
-        扫描结果来自 ``model_hub.registry()``（它会把手工放进目录的文件一并登记）。
-        只有一个模型时自动加载并提示；多个模型时只回报清单，由用户选择。
+        The scan results come from ``model_hub.registry()`` (which also registers files
+        placed into the directory by hand). With exactly one model it is loaded automatically
+        and reported; with several models only the list is returned and the user chooses.
+
+        [ZH]
+        重新扫描模型文件夹（任务二：手动放置 ``.gguf`` 后能被识别）。
+
+        扫描结果来自 ``model_hub.registry()``（它会把手工放入目录的文件一并登记）。
+        只有一个模型时自动加载并提示；多个模型时只返回清单，由用户选择。
         """
         hub = self.model_hub()
         info = hub.registry(current_model=str(getattr(self.llm, "model_path", "") or ""))
@@ -453,14 +748,27 @@ class Backend:
             "state": self.model_state(),
         }
 
-    # ---------- 修复四：模型能力画像 / 摘要缓存 ----------
+    # ---------- 兼容性修正：模型能力画像 / 摘要缓存 ----------
+    # [EN] Fix 4: model capability profile and summary cache.
+    # [ZH] 兼容性修正：模型能力画像 / 摘要缓存。
 
     def capability(self):
-        """当前模型的能力画像（修复四 方向六/七）。
+        """
+        [EN]
+        Capability profile of the current model (fix 4, directions 6/7).
+
+        The cache is keyed by "model path + context window + thread count + GPU layer count":
+        switching or reloading the model, or changing the window, changes the key and
+        invalidates the cache automatically. This is less error-prone than writing an
+        explicit invalidate call at every reload site (a single missed site would display the
+        previous model's parameter count).
+
+        [ZH]
+        当前模型的能力画像（修复四 方向六/七）。
 
         缓存按「模型路径 + 上下文窗口 + 线程数 + GPU 层数」做键：模型切换、
-        重载、改窗口之后键会变，缓存自动失效。这样比在每个重载点手写
-        invalidate 更不容易漏（漏一处就会显示上一个模型的参数量）。
+        重载、修改窗口后键会变化，缓存自动失效。这比在每个重载点手写
+        invalidate 更不容易遗漏（遗漏一处就会显示上一个模型的参数量）。
         """
         from model_profile import build_profile
 
@@ -479,12 +787,25 @@ class Backend:
         return profile
 
     def invalidate_capability(self) -> None:
-        """让能力画像缓存立即失效（一般不需要手动调，缓存键会自己变）。"""
+        """
+        [EN]
+        Invalidate the capability-profile cache immediately (normally unnecessary, since the
+        cache key changes by itself).
+
+        [ZH]
+        让能力画像缓存立即失效（一般不需要手动调用，缓存键会自动变化）。
+        """
         self._capability_cache = None
         self._capability_key = None
 
     def model_capability(self) -> Dict[str, Any]:
-        """机器可读的能力画像（供 /status 与前端状态区使用）。"""
+        """
+        [EN]
+        Machine-readable capability profile (for /status and the frontend status area).
+
+        [ZH]
+        机器可读的能力画像（供 /status 与前端状态区使用）。
+        """
         try:
             return self.capability().public()
         except Exception:
@@ -492,7 +813,14 @@ class Backend:
             return {}
 
     def summary_cache(self):
-        """分段摘要缓存（惰性创建；config.summary_cache=False 时返回 None）。"""
+        """
+        [EN]
+        Chunked-summary cache (created lazily; returns None when config.summary_cache is
+        False).
+
+        [ZH]
+        分段摘要缓存（惰性创建；config.summary_cache=False 时返回 None）。
+        """
         if not bool(getattr(self.config, "summary_cache", True)):
             return None
         if self._summary_cache is None:
@@ -503,7 +831,14 @@ class Backend:
         return self._summary_cache
 
     def skills(self):
-        """按需创建技能加载器，并把它接到指令表 / 文件解析 / 自动化钩子上（任务二 2.2）。"""
+        """
+        [EN]
+        Create the skill loader on demand and wire it into the command table, file parsing,
+        and automation hooks (task 2, 2.2).
+
+        [ZH]
+        按需创建技能加载器，并把它接入指令表 / 文件解析 / 自动化钩子（任务二 2.2）。
+        """
         if self._skills is None:
             from skills_runtime import SkillLoader
 
@@ -520,7 +855,14 @@ class Backend:
         return self._skills
 
     def load_skills(self) -> dict:
-        """启动时/重载时加载全部插件；任何失败都被隔离，不影响后端启动。"""
+        """
+        [EN]
+        Load all plugins at startup or on reload; every failure is isolated and does not
+        affect backend startup.
+
+        [ZH]
+        启动时/重载时加载全部插件；任何失败都被隔离，不影响后端启动。
+        """
         try:
             return self.skills().load_all()
         except Exception as e:  # noqa: BLE001
@@ -528,7 +870,13 @@ class Backend:
             return {"total": 0, "loaded": 0, "failed": 0, "skipped": 0, "error": str(e)}
 
     def model_hub(self):
-        """按需创建模型中心（新增四）。"""
+        """
+        [EN]
+        Create the model hub on demand (feature 4).
+
+        [ZH]
+        按需创建模型中心（新增四）。
+        """
         if self._model_hub is None:
             from model_hub import ModelHub
 
@@ -538,7 +886,14 @@ class Backend:
         return self._model_hub
 
     def market(self):
-        """按需创建技能市场（避免未使用市场时也加载网络相关依赖）。"""
+        """
+        [EN]
+        Create the skill marketplace on demand (avoids loading network dependencies when the
+        marketplace is not used).
+
+        [ZH]
+        按需创建技能市场（避免未使用市场时也加载网络相关依赖）。
+        """
         if self._market is None:
             from marketplace import Marketplace
 
@@ -548,18 +903,30 @@ class Backend:
         return self._market
 
     def automation(self):
-        """按需创建自动化引擎（避免未使用自动化时也加载 Playwright）。"""
+        """
+        [EN]
+        Create the automation engine on demand (avoids loading Playwright when automation is
+        not used).
+
+        [ZH]
+        按需创建自动化引擎（避免未使用自动化时也加载 Playwright）。
+        """
         if self._automation is None:
             from automation import AutomationEngine
 
             self._automation = AutomationEngine(self.config.automation, llm_engine=self.llm)
-            # 技能自动化钩子（任务二 2.3）：把插件的 after_task / after_download 等挂上来
+            # [EN] Skill automation hooks (task 2, 2.3): attach the plugin hooks such as
+            # [EN] after_task / after_download here.
+            # [ZH] 技能自动化钩子（相关设计 2.3）：把插件的 after_task / after_download 等挂载上来。
             try:
                 self._automation.hook_dispatcher = self.skills().fire_hook
             except Exception:
                 log.warning("注入技能自动化钩子失败（自动化仍可正常使用）", exc_info=True)
-            # 上次进程被强杀时可能残留下载临时文件，这里清理一次
-            # （与 PRIVACY.md 中"程序异常退出时残留的临时目录会在下次启动时清理"一致）。
+            # [EN] A previous forced termination may have left download temp files behind;
+            # [EN] clean them up once here (consistent with PRIVACY.md: "temp directories left
+            # [EN] by an abnormal exit are cleaned on the next startup").
+            # [ZH] 上次进程被强制终止时可能残留下载临时文件，此处清理一次
+            # [ZH] （与 PRIVACY.md 中"程序异常退出时残留的临时目录会在下次启动时清理"一致）。
             try:
                 removed = self._automation.cleanup_temp()
                 if removed:
@@ -571,12 +938,32 @@ class Backend:
         return self._automation
 
     def _make_summary_engine(self, model_path: str):
-        """为 summarize.model 指定的专用摘要模型创建引擎（按该模型训练窗口开窗）。"""
+        """
+        [EN]
+        Create an engine for the dedicated summary model named by summarize.model, opening the
+        window according to that model's training context.
+
+        [ZH]
+        为 summarize.model 指定的专用摘要模型创建引擎（按该模型训练窗口开窗）。
+        """
         return self._build_engine(self.config, model_path)
 
     @staticmethod
     def _build_engine(config: Config, model_path: str):
-        """按"所选模型"的上下文窗口创建推理引擎。
+        """
+        [EN]
+        Create the inference engine for the selected model's context window.
+
+        The window is the minimum of the configured value, the model training window (GGUF
+        metadata), and config.max_context; at load time LLMEngine logs the window size and KV
+        cache usage.
+
+        When ``model_path`` is empty, :class:`LazyLLMEngine` (an empty engine) is returned:
+        that is the carrier of the "no model ready" state -- the backend starts as usual and
+        :meth:`Backend.load_model` **loads in place** once a model is available (tasks 1 / 5).
+
+        [ZH]
+        按"所选模型"的上下文窗口创建推理引擎。
 
         窗口取配置值、模型训练窗口（GGUF 元数据）与 config.max_context 三者的最小值；
         加载时由 LLMEngine 输出窗口大小与 KV Cache 占用日志。
@@ -598,10 +985,17 @@ class Backend:
         n_ctx = config.context_for_model(path, train_ctx)
         log_user(
             log, "sys.log_model_loading",
-            # i18n.t() 的签名是 t(key, **kwargs)：**不接受第二个位置参数**。
-            # 这里曾写成 `train_ctx or _t("sys.log_unknown", "未知")`，而 resolve_context_window()
-            # 在 GGUF 元数据读不到时返回 0 → 走到 or 右侧 → `TypeError: t() takes 1 positional
-            # argument but 2 were given`（见硬编码清查清单 §6.7）。缺键的回落交给回退链。
+            # [EN] The signature of i18n.t() is t(key, **kwargs): it does **not accept a
+            # [EN] second positional argument**. This was once written as
+            # [EN] `train_ctx or _t("sys.log_unknown", "未知")`, while resolve_context_window()
+            # [EN] returns 0 when the GGUF metadata is unreadable -> the right-hand side of
+            # [EN] `or` executes -> `TypeError: t() takes 1 positional argument but 2 were
+            # [EN] given`. A missing key must be left to the fallback chain.
+            # [ZH] i18n.t() 的签名是 t(key, **kwargs)：**不接受第二个位置参数**。
+            # [ZH] 此处曾写成 `train_ctx or _t("sys.log_unknown", "未知")`，而
+            # [ZH] resolve_context_window() 在 GGUF 元数据读取不到时返回 0 → 执行 or 右侧
+            # [ZH] → `TypeError: t() takes 1 positional argument but 2 were given`。
+            # [ZH] 缺键的回落应交给回退链处理。
             path=path, ctx=n_ctx, trained=train_ctx or _t("sys.log_unknown"),
             threads=n_threads, batch=config.n_batch, gpu=config.n_gpu_layers,
         )
@@ -612,7 +1006,14 @@ class Backend:
         )
 
     def restore_session(self) -> int:
-        """恢复上次会话，返回恢复的对话轮数；若上次使用的模型与当前不同则记录提醒。"""
+        """
+        [EN]
+        Restore the previous session and return the number of restored turns; if the model
+        used last time differs from the current one, log a reminder.
+
+        [ZH]
+        恢复上次会话，返回恢复的对话轮数；若上次使用的模型与当前不同则记录提醒。
+        """
         if not self.config.session_file:
             return 0
         restored, prev_model = self.conv.load_session(self.config.session_file)
@@ -628,29 +1029,59 @@ class Backend:
                 log.warning("会话保存失败", exc_info=True)
 
     def touch_model_usage(self) -> None:
-        """记录当前模型的"最后使用时间"（新增四：模型库列表要显示该信息）。"""
+        """
+        [EN]
+        Record the "last used" time of the current model (feature 4: the model library list
+        displays it).
+
+        [ZH]
+        记录当前模型的"最后使用时间"（新增四：模型库列表需要显示该信息）。
+        """
         try:
             self.model_hub().touch(os.path.basename(self.config.model_path or ""))
         except Exception:
             log.debug("更新模型最后使用时间失败", exc_info=True)
 
     def warmup(self) -> None:
-        """用当前系统提示词做一次极小推理，预热 KV 缓存，缩短首次回复延迟。
+        """
+        [EN]
+        Run one minimal inference with the current system prompt to warm up the KV cache and
+        reduce the first response latency.
 
-        无模型时直接跳过：预热的意义是"第一次回复更快"，没有模型就无从谈起，
-        不能让它把启动流程拖住（任务一：缺失模型时后端必须照常就绪）。
+        With no model this is skipped: the point of warm-up is "a faster first response", and
+        without a model there is nothing to warm up. It must not hold up startup (task 1: the
+        backend must become ready even when the model is missing).
+
+        [ZH]
+        用当前系统提示词做一次极小推理，预热 KV 缓存，缩短首次回复延迟。
+
+        无模型时直接跳过：预热的意义是"首次回复更快"，没有模型则无从谈起，
+        也不能让它拖住启动流程（任务一：缺失模型时后端必须照常就绪）。
         """
         if not self.config.warmup:
             return
-        # 任务十四（自测问题修复-1）：这几行是**用户看得见**的 —— 后端进程的 stderr
-        # 被前端逐行读到状态栏（`MainWindow.axaml.cs` 里 `StderrReceived` → `SetStatus`），
-        # 所以"模型预热中…"这类话在英文界面下也必须说英文。
-        #
-        # 一律写成 `log.info("%s", _t(...))` 而不是 `log.info(_t(...))`：后者会把译文
-        # 本身当成 % 格式串，译文里只要出现一个 `%` 就会抛异常或吞掉后续参数。
-        #
-        # 已知时序约束：语言由前端通过 `set_language` 请求下发，**早于该请求的启动日志**
-        # 只能落到默认语言 —— 这条约束绕不过去（见 records 任务十四一节的说明）。
+        # [EN] Task 14 (self-test fix-1): these lines are **visible to the user** -- the
+        # [EN] backend process's stderr is read line by line into the status bar
+        # [EN] (`StderrReceived` -> `SetStatus` in `MainWindow.axaml.cs`), so messages such as
+        # [EN] "preheating the model..." must also be in English when the UI language is
+        # [EN] English.
+        # [EN]
+        # [EN] Always write `log.info("%s", _t(...))` rather than `log.info(_t(...))`: the
+        # [EN] latter treats the translated text itself as a % format string, so a single `%`
+        # [EN] in the translation raises an exception or silently consumes later arguments.
+        # [EN]
+        # [EN] Known timing constraint: the language is delivered by the frontend through the
+        # [EN] `set_language` request, so startup logs emitted **before** that request can only
+        # [EN] use the default language. This constraint cannot be avoided.
+        # [ZH] 相关设计（自测问题修复-1）：以下几行**用户可见** —— 后端进程的 stderr
+        # [ZH] 被前端逐行读到状态栏（`MainWindow.axaml.cs` 中 `StderrReceived` → `SetStatus`），
+        # [ZH] 因此"模型预热中…"这类消息在英文界面下也必须使用英文。
+        # [ZH]
+        # [ZH] 一律写成 `log.info("%s", _t(...))` 而不是 `log.info(_t(...))`：后者会把译文
+        # [ZH] 本身当作 % 格式串，译文只要出现一个 `%` 就会抛异常或吞掉后续参数。
+        # [ZH]
+        # [ZH] 已知时序约束：语言由前端通过 `set_language` 请求下发，**早于该请求的启动日志**
+        # [ZH] 只能落到默认语言 —— 这条约束无法规避。
         if not self.model_ready:
             log.info("%s", _t("sys.log_model_skip_preheat"))
             return
@@ -659,14 +1090,24 @@ class Backend:
         log.info("%s", _t("sys.log_model_preheated"))
 
     # ---------- 请求分发 ----------
+    # [EN] Request dispatch.
+    # [ZH] 请求分发。
 
     def handle(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """处理单行响应的请求。"""
+        """
+        [EN]
+        Handle a request that returns a single response line.
+
+        [ZH]
+        处理单行响应的请求。
+        """
         action = request.get("action")
         if action == "chat":
             return self._handle_chat(request.get("message", ""))
         if action == "file":
-            # 多文件（任务八）：files 是路径数组；单文件仍走 path（向后兼容）
+            # [EN] Multi-file (task 8): files is an array of paths; single-file requests still
+            # [EN] use path (backward compatible).
+            # [ZH] 多文件（相关设计）：files 是路径数组；单文件仍走 path（向后兼容）。
             paths = request.get("files")
             if isinstance(paths, list) and paths:
                 result = self.load_files_into_context([str(p) for p in paths])
@@ -707,18 +1148,30 @@ class Backend:
             return {"type": "system", "content": "", "help": self._automation_field_help()}
         if action == "automation_status":
             status = self.automation().status()
-            # 是否"已启用"由配置决定（安全协议未勾选时 enabled 一定为 False）
+            # [EN] "Enabled" is decided by the configuration (enabled is always False while
+            # [EN] the safety agreement is unchecked).
+            # [ZH] 是否"已启用"由配置决定（安全协议未勾选时 enabled 一定为 False）。
             status["enabled"] = bool(
                 self.config.automation.enabled and self.config.automation.safety_accepted
             )
             return {"type": "system", "content": "", "automation": status}
-        # ---------- 任务十七：复用已打开的浏览器 + 两段式可视化选取 ----------
-        #
-        # 这几条都是**新增**的分支，没有改动上面任何既有分支的行为：
-        # 老的流式 `automation_pick`（WPF 界面在用）原样保留，可以继续工作。
-        # 之所以走"同步请求 + 前端轮询"而不是流式：两段式里真正耗时的是**用户自己
-        # 准备页面**的那段时间，程序在那段时间什么也不做，一直挂着一个流式连接
-        # 干等用户操作反而更容易被超时误伤。
+        # ---------- 相关设计：复用已打开的浏览器 + 两段式可视化选取 ----------
+        # [EN] Task 17: reuse an already-open browser and two-phase visual selection.
+        # [EN]
+        # [EN] These are **additional** branches; the behaviour of every existing branch above
+        # [EN] is unchanged: the old streaming `automation_pick` (used by the WPF UI) is
+        # [EN] retained as-is and keeps working. The "synchronous request + frontend polling"
+        # [EN] design was chosen over streaming because the slow part of the two-phase flow is
+        # [EN] the period in which **the user prepares the page**; holding a streaming
+        # [EN] connection idle during that period makes it more likely to be killed by a
+        # [EN] timeout.
+        # [ZH] 相关设计：复用已打开的浏览器 + 两段式可视化选取。
+        # [ZH]
+        # [ZH] 这些分支均为**新增**，未改动上述任何既有分支的行为：
+        # [ZH] 原有的流式 `automation_pick`（WPF 界面在用）原样保留，可继续工作。
+        # [ZH] 之所以采用"同步请求 + 前端轮询"而不是流式：两段式流程中真正耗时的是
+        # [ZH] **用户自行准备页面**的那段时间，程序在此期间不执行操作，长期挂起一个流式连接
+        # [ZH] 反而更容易因超时被中断。
         if action == "automation_browser_reuse":
             return self._handle_automation_browser_reuse(request)
         if action == "automation_launch_debug_browser":
@@ -727,7 +1180,9 @@ class Backend:
             return self._handle_automation_pick_step(request)
         if action in ("automation_pick_open", "automation_pick_begin", "automation_pick_status",
                       "automation_pick_cancel", "automation_pick_close"):
-            # 五个入口共用一个处理器（状态机在后端，动作只是"推一下"状态机）
+            # [EN] The five entry points share one handler (the state machine lives in the
+            # [EN] backend; each action merely advances it).
+            # [ZH] 五个入口共用一个处理器（状态机在后端，动作只是推进状态机）。
             return self._handle_automation_pick_step(
                 {**request, "step": action.rsplit("_", 1)[-1]}
             )
@@ -744,6 +1199,8 @@ class Backend:
         if action == "market_status":
             return self._handle_market_status()
         # ---------- 模型选择栏（新增四） ----------
+        # [EN] Model selector (feature 4).
+        # [ZH] 模型选择栏（新增四）。
         if action == "model_hub_search":
             return self._handle_model_hub_search(request)
         if action == "model_hub_query":
@@ -758,7 +1215,10 @@ class Backend:
             return self._handle_model_hub_status()
         if action == "model_hub_config_set":
             return self._handle_model_hub_config_set(request)
-        # ---------- 无模型就绪 / 热加载（v0.2.1 综合优化 任务一、二、五） ----------
+        # ---------- 无模型就绪 / 热加载（此前版本 综合优化 相关设计、二、五） ----------
+        # [EN] No-model-ready state and hot loading (此前版本 general optimization, tasks
+        # [EN] 1/2/5).
+        # [ZH] 无模型就绪 / 热加载（此前版本 综合优化 相关设计、二、五）。
         if action == "model_state":
             return {"type": "system", "content": "", "model_state": self.model_state()}
         if action == "model_scan":
@@ -766,6 +1226,8 @@ class Backend:
         if action == "model_load":
             return self._handle_model_load(request)
         # ---------- 模型档位（多档默认模型的设置页入口） ----------
+        # [EN] Model profiles (settings-page entry for multiple default models).
+        # [ZH] 模型档位（多档默认模型的设置页入口）。
         if action == "model_profiles":
             return {"type": "system", "content": "", "model_profiles": self.profiles_state()}
         if action == "model_profile_apply":
@@ -774,21 +1236,33 @@ class Backend:
             return self._handle_model_profile_save(request)
         if action == "model_profile_delete":
             return self._handle_model_profile_delete(request)
-        # ---------- 多语言（任务三 3.4） ----------
+        # ---------- 多语言（相关设计 3.4） ----------
+        # [EN] Multilingual support (task 3, 3.4).
+        # [ZH] 多语言（相关设计 3.4）。
         if action == "set_language":
             return self._handle_set_language(request)
         if action == "language":
             return self._handle_language()
-        # ---------- 指令面板数据源（任务二 2.6） ----------
+        # ---------- 指令面板数据源（相关设计 2.6） ----------
+        # [EN] Command palette data source (task 2, 2.6).
+        # [ZH] 指令面板数据源（相关设计 2.6）。
         if action == "commands":
             return {"type": "system", "content": "", "commands": self.commands.all_commands()}
-        # ---------- 跨平台（任务三 / 任务五）：平台与能力边界 ----------
-        # 前端启动时从 ready.platform 拿到同一份报告；这个动作供"能力清单"面板
-        # 与排障时随时再查（例如用户换了机器、插了外置显卡、装了 WPS 之后）。
+        # ---------- 跨平台（相关设计 / 相关设计）：平台与能力边界 ----------
+        # [EN] Cross-platform (tasks 3 / 5): platform and capability boundaries.
+        # [EN] The frontend receives the same report from ready.platform at startup; this
+        # [EN] action lets the "capability list" panel and troubleshooting re-query it at any
+        # [EN] time (for example after the user changes machine, plugs in an external GPU, or
+        # [EN] installs WPS).
+        # [ZH] 跨平台（相关设计 / 相关设计）：平台与能力边界。
+        # [ZH] 前端启动时从 ready.platform 获取同一份报告；该动作供"能力清单"面板
+        # [ZH] 与排障时随时再次查询（例如用户更换机器、插入外置显卡、安装 WPS 之后）。
         if action == "platform":
             report = platform_support.report()
             return {"type": "system", "content": "", "platform": report}
-        # ---------- 修复四：模型能力与上下文管理 ----------
+        # ---------- 兼容性修正：模型能力与上下文管理 ----------
+        # [EN] Fix 4: model capability and context management.
+        # [ZH] 兼容性修正：模型能力与上下文管理。
         if action == "capability":
             return {"type": "system", "content": "", "capability": self.model_capability(),
                     "presets": _preset_list(),
@@ -816,7 +1290,9 @@ class Backend:
                             "enabled": self.config.summarize.enabled,
                         },
                     }}
-        # ---------- Agent 与 MCP（能力扩展-1 任务二 / 三） ----------
+        # ---------- Agent 与 MCP（后续版本 相关设计 / 三） ----------
+        # [EN] Agent and MCP (capability extension-1, tasks 2 / 3).
+        # [ZH] Agent 与 MCP（后续版本 相关设计 / 三）。
         if action == "agent_state":
             return {"type": "system", "content": "", "agent": self.agent_diagnostics()}
         if action == "agent_configure":
@@ -838,7 +1314,9 @@ class Backend:
             cleared = cache.clear() if cache else 0
             return {"type": "system", "content": "", "cleared": cleared,
                     "summary_cache": (cache.stats() if cache else {})}
-        # ---------- 技能与本地插件（任务二 / 任务二·补） ----------
+        # ---------- 技能与本地插件（相关设计 / 相关设计·补） ----------
+        # [EN] Skills and local plugins (task 2 / task 2 supplement).
+        # [ZH] 技能与本地插件（相关设计 / 相关设计·补）。
         if action == "skills_list":
             return {"type": "system", "content": "", "skills": self.skills().status()}
         if action == "skills_reload":
@@ -867,7 +1345,9 @@ class Backend:
         if action == "skills_trust_bulk":
             return self._handle_skills_trust_bulk(request)
         if action == "skills_pending_review":
-            # 修复一：批量确认框的数据源（只列"该问且还没答复过"的插件）
+            # [EN] Fix 1: data source for the bulk confirmation dialog (lists only the
+            # [EN] plugins that need asking and have not been answered yet).
+            # [ZH] 兼容性修正：批量确认框的数据源（只列出"需要询问且尚未答复"的插件）。
             return {"type": "system", "content": "",
                     "pending": self.skills().pending_review(),
                     "skills": self.skills().status()}
@@ -882,39 +1362,70 @@ class Backend:
             return self._handle_skills_panel_action(request)
         if action == "skills_examples":
             return self._handle_skills_examples(request)
-        # ---------- 自动更新（任务五 方案 A：只检查与提示） ----------
+        # ---------- 自动更新（相关设计 方案 A：只检查与提示） ----------
+        # [EN] Auto-update (task 5, option A: check and notify only).
+        # [ZH] 自动更新（相关设计 方案 A：只检查与提示）。
         if action == "update_check":
             return self._handle_update_check(request)
         return {"type": "system", "content": _t("sys.unknown_action")}
 
-    # ---------- 多语言（任务三 3.4） ----------
+    # ---------- 多语言（相关设计 3.4） ----------
+    # [EN] Multilingual support (task 3, 3.4).
+    # [ZH] 多语言（相关设计 3.4）。
 
     def _handle_set_language(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """切换后端语言：影响系统消息、错误提示与指令帮助。
+        """
+        [EN]
+        Switch the backend language: affects system messages, error messages, and command
+        help.
+
+        The selection is written to ui_state.json by the frontend (task 3.4 persistence
+        requirement); the backend applies it only for the current run, so switching language
+        does not rewrite config.json.
+
+        [ZH]
+        切换后端语言：影响系统消息、错误提示与指令帮助。
 
         选择结果由前端写入 ui_state.json（任务书 3.4 持久化要求），
-        后端只在本次运行内生效，避免为了切语言去改写 config.json。
+        后端只在本次运行内生效，避免为了切换语言而改写 config.json。
         """
         locale = str(request.get("locale") or "auto")
         effective = _i18n().set_locale(locale)
         log_user(log, "sys.log_language_switched", effective=effective, locale=locale)
         info = _i18n().info()
-        # 语言变化后指令帮助与技能面板标题都要跟着变
+        # [EN] After a language change, command help and skill panel titles must follow.
+        # [ZH] 语言变化后指令帮助与技能面板标题都需要随之变化。
         return {"type": "system", "content": _t("sys.language_switched", locale=effective),
                 "i18n": info, "commands": self.commands.all_commands()}
 
     def _handle_language(self) -> Dict[str, Any]:
         return {"type": "system", "content": "", "i18n": _i18n().info()}
 
-    # ---------- 技能与本地插件（任务二 / 任务二·补） ----------
+    # ---------- 技能与本地插件（相关设计 / 相关设计·补） ----------
+    # [EN] Skills and local plugins (task 2 / task 2 supplement).
+    # [ZH] 技能与本地插件（相关设计 / 相关设计·补）。
 
     def _handle_skills_reload(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """热重载插件（任务书 2B.5）：无需重启即可看到 skills_dev/ 里的改动。
+        """
+        [EN]
+        Hot-reload plugins (task 2B.5): changes in skills_dev/ become visible without a
+        restart.
 
-        ``scope`` 参数（能力扩展-1 任务四）：``"dev"`` 只重载开发目录与本地清单里的插件
-        （开发者页的「重载本地插件」按钮就该走这条），缺省 ``"all"`` 重载全部。
-        两个入口对应 ``SkillLoader.reload_dev()`` 与 ``reload_all()`` —— 后端只暴露一个动作、
-        用参数区分，是为了不新增协议动作（前端已存在的按钮只需多带一个字段）。
+        The ``scope`` parameter (capability extension-1, task 4): ``"dev"`` reloads only
+        plugins in the development directory and the local manifest (the "reload local
+        plugins" button on the developer page takes this path); the default ``"all"`` reloads
+        everything. The two entry points map to ``SkillLoader.reload_dev()`` and
+        ``reload_all()``. A single action with a parameter is exposed instead of two actions
+        so that no new protocol action is added (existing frontend buttons only need one extra
+        field).
+
+        [ZH]
+        热重载插件（任务书 2B.5）：无需重启即可看到 skills_dev/ 中的改动。
+
+        ``scope`` 参数（能力扩展-1 任务四）：``"dev"`` 只重载开发目录与本地清单中的插件
+        （开发者页的「重载本地插件」按钮即走这条路径），缺省 ``"all"`` 重载全部。
+        两个入口对应 ``SkillLoader.reload_dev()`` 与 ``reload_all()`` —— 后端只暴露一个
+        动作、用参数区分，是为了不新增协议动作（前端已存在的按钮只需多带一个字段）。
         """
         scope = str(request.get("scope") or "all").strip().lower()
         try:
@@ -931,11 +1442,27 @@ class Backend:
                 "commands": self.commands.all_commands(), "summary": summary}
 
     def _handle_skills_dev_mode(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """开发者模式开关（修复一：必须双向可用）。
+        """
+        [EN]
+        Developer-mode toggle (fix 1: must work in both directions).
 
-        关闭时要做四件事，缺一件用户就会觉得"没关掉"：
-        1. 记下"用户显式设置过"，否则 dev_mode 属性会因 ``skills_dev/`` 里仍有插件
-           而自动重新变成 True（这是原来"一旦开启就关不掉"的根因）；
+        Disabling must perform four steps; missing any one makes the user believe it is still
+        enabled:
+        1. Record that "the user set this explicitly"; otherwise the dev_mode property turns
+           True again automatically while ``skills_dev/`` still contains plugins (this was the
+           root cause of "once enabled, it cannot be disabled").
+        2. Unload the loaded development plugins and remove their commands from the command
+           table.
+        3. Stop hot reloading (once ``dev_mode`` is False, the dev directory no longer
+           participates in discovery).
+        4. Clear the development log.
+
+        [ZH]
+        开发者模式开关（修复一：必须双向可用）。
+
+        关闭时需完成四件事，缺一件用户就会认为"未关闭"：
+        1. 记录"用户显式设置过"，否则 ``skills_dev/`` 中仍有插件时 dev_mode 属性会自动
+           重新变为 True（这是原先"一旦开启就关不掉"的根因）；
         2. 卸载已加载的开发插件，并把它们的指令从指令表移除；
         3. 停止热重载（``dev_mode`` 为 False 后 dev 目录不再参与发现）；
         4. 清理开发日志。
@@ -952,7 +1479,8 @@ class Backend:
         unloaded: List[str] = []
         cleared = False
         if enabled:
-            # 开启时重新发现，让 skills_dev/ 里的插件立刻生效
+            # [EN] On enable, rescan so that plugins in skills_dev/ take effect immediately.
+            # [ZH] 开启时重新发现，使 skills_dev/ 中的插件立即生效。
             loader.reload_all()
             content = _t("skill.dev_mode_on")
         else:
@@ -969,7 +1497,17 @@ class Backend:
                 "log_cleared": cleared}
 
     def _handle_skills_trust_bulk(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """批量记录本地插件的信任选择（修复一：一次汇总确认，不再逐个弹窗）。
+        """
+        [EN]
+        Record trust decisions for local plugins in bulk (fix 1: one aggregated confirmation
+        instead of one dialog per plugin).
+
+        Request body: ``{"decisions": [{"id": "...", "trusted": true|false}, ...]}``. The
+        shorthand ``{"ids": [...], "trusted": true}`` ("enable all / disable all") is also
+        accepted.
+
+        [ZH]
+        批量记录本地插件的信任选择（修复一：一次汇总确认，不再逐个弹窗）。
 
         请求体：``{"decisions": [{"id": "...", "trusted": true|false}, ...]}``
         也接受 ``{"ids": [...], "trusted": true}`` 的简写形式（"全部启用/全部禁用"）。
@@ -995,7 +1533,9 @@ class Backend:
         loader = self.skills()
         for decision in decisions:
             loader.trust_plugin(decision["id"], decision["trusted"])
-        # 拒绝的插件要立刻卸载；新信任的插件要立刻加载
+        # [EN] Denied plugins must be unloaded immediately; newly trusted plugins must be
+        # [EN] loaded immediately.
+        # [ZH] 被拒绝的插件需立即卸载；新信任的插件需立即加载。
         for decision in decisions:
             if not decision["trusted"]:
                 try:
@@ -1020,7 +1560,13 @@ class Backend:
         return {"type": "system", "content": _t("skill.log_exported", path=path)}
 
     def _handle_skills_scaffold(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """新建本地插件骨架（任务书 2B.6 新建插件向导）。"""
+        """
+        [EN]
+        Create a local plugin skeleton (task 2B.6, new-plugin wizard).
+
+        [ZH]
+        新建本地插件骨架（任务书 2B.6 新建插件向导）。
+        """
         result = self.skills().scaffold(
             str(request.get("id") or ""), str(request.get("name") or ""),
             str(request.get("author") or ""), str(request.get("target") or ""),
@@ -1061,7 +1607,13 @@ class Backend:
         return {"type": "system", "content": "", "publish_check": result}
 
     def _handle_skills_trust(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """记录/撤销对本地插件的信任（任务书 2B.9 首次加载确认框）。"""
+        """
+        [EN]
+        Record or revoke trust in a local plugin (task 2B.9, first-load confirmation dialog).
+
+        [ZH]
+        记录/撤销对本地插件的信任（任务书 2B.9 首次加载确认框）。
+        """
         skill_id = str(request.get("id") or "")
         trusted = bool(request.get("trusted", True))
         ok = self.skills().trust_plugin(skill_id, trusted)
@@ -1071,7 +1623,13 @@ class Backend:
                 "skills": self.skills().status(), "commands": self.commands.all_commands()}
 
     def _handle_skills_manifest_set(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """写入本地插件清单（任务书 2B.3 / 2B.10 插件清单编辑）。"""
+        """
+        [EN]
+        Write the local plugin manifest (task 2B.3 / 2B.10, plugin manifest editing).
+
+        [ZH]
+        写入本地插件清单（任务书 2B.3 / 2B.10 插件清单编辑）。
+        """
         payload = request.get("manifest")
         if not isinstance(payload, dict):
             return {"type": "system", "content": _t("sys.skill_manifest_invalid")}
@@ -1094,7 +1652,13 @@ class Backend:
                 "panel_result": result}
 
     def _handle_skills_examples(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """把随包附带的示例插件复制到 skills_dev/（任务书 2.5 示例技能）。"""
+        """
+        [EN]
+        Copy the bundled example plugins into skills_dev/ (task 2.5, example skills).
+
+        [ZH]
+        把随包附带的示例插件复制到 skills_dev/（任务书 2.5 示例技能）。
+        """
         loader = self.skills()
         src_root = loader.examples_dir()
         if not os.path.isdir(src_root):
@@ -1128,10 +1692,18 @@ class Backend:
         return {"type": "system", "content": text, "copied": copied,
                 "skills": loader.status(), "commands": self.commands.all_commands()}
 
-    # ---------- 自动更新（任务五 方案 A） ----------
+    # ---------- 自动更新（相关设计 方案 A） ----------
+    # [EN] Auto-update (task 5, option A).
+    # [ZH] 自动更新（相关设计 方案 A）。
 
     def _handle_update_check(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """检查 GitHub Releases 是否有新版本；只提示，不下载、不替换。"""
+        """
+        [EN]
+        Check GitHub Releases for a newer version; notify only, do not download or replace.
+
+        [ZH]
+        检查 GitHub Releases 是否有新版本；只提示，不下载、不替换。
+        """
         try:
             from update_check import check_for_update
 
@@ -1140,7 +1712,9 @@ class Backend:
             log.exception("检查更新失败")
             return {"type": "system", "content": _t("update.check_failed", error=e),
                     "update": {"ok": False, "error": str(e)}}
-        # 记录本次检查时间，避免每次启动都请求 GitHub（任务书 5.2 企业环境友好）
+        # [EN] Record the time of this check so GitHub is not queried on every startup
+        # [EN] (task 5.2, enterprise-network friendliness).
+        # [ZH] 记录本次检查时间，避免每次启动都请求 GitHub（设计规范 5.2 企业环境友好）。
         if result.get("checked_at"):
             self.config.update.last_check = result["checked_at"]
             self.config.update.last_seen_version = result.get("latest") or ""
@@ -1151,17 +1725,30 @@ class Backend:
         return {"type": "system", "content": result.get("message", ""), "update": result}
 
     # ---------- 模型选择栏（新增四） ----------
+    # [EN] Model selector (feature 4).
+    # [ZH] 模型选择栏（新增四）。
 
     def _model_hub_error(self, e: Exception, verb: str) -> Dict[str, Any]:
         log.exception("模型中心%s失败", verb)
         return {"type": "system", "content": _t("err.hub_failed", verb=verb, error=e)}
 
     def _handle_model_hub_search(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """搜索可下载的 GGUF 模型（镜像/官方双源，自动回退）。
+        """
+        [EN]
+        Search downloadable GGUF models (mirror and official sources, with automatic
+        fallback).
 
-        v0.2.1 模型市场优化后：**一次调用就把该关键词的全部结果取回来**
+        After the v0.2.1 model-marketplace optimization, **one call fetches all results for the
+        keyword** (bounded by a safety limit); filtering, sorting, and pagination are then done
+        locally, returning page ``page``. This is the synchronous version; the UI uses the
+        streaming version ``model_hub_load`` with progress feedback.
+
+        [ZH]
+        搜索可下载的 GGUF 模型（镜像/官方双源，自动回退）。
+
+        v0.2.1 模型市场优化后：**一次调用即取回该关键词的全部结果**
         （受安全上限约束），再在本地做筛选/排序/分页，返回第 ``page`` 页。
-        同步版本；界面走的是带进度反馈的流式版本 ``model_hub_load``。
+        这是同步版本；界面走的是带进度反馈的流式版本 ``model_hub_load``。
         """
         try:
             result = self.model_hub().search(
@@ -1182,10 +1769,20 @@ class Backend:
         return {"type": "system", "content": result.get("message", ""), "model_hub": result}
 
     def _handle_model_hub_query(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """在**已加载的结果集**上做本地筛选/排序/翻页（不重新请求远端）。
+        """
+        [EN]
+        Apply local filtering/sorting/paging to the **already loaded result set** (no new
+        remote request).
+
+        This is the delivery point for tasks 3/4/5/6: the paging control, live local
+        filtering, structured filters, and the four sort orders all send only this action, so
+        changing a filter does not trigger another network round trip.
+
+        [ZH]
+        在**已加载的结果集**上做本地筛选/排序/翻页（不重新请求远端）。
 
         任务书任务三/四/五/六的落点：分页控件、本地实时筛选、结构化筛选器、四种排序
-        都只发这一个动作，因此不会因为"筛选条件改了一下"就重打网络。
+        都只发这一个动作，因此不会因为"筛选条件改了一下"就重新发起网络请求。
         """
         try:
             result = self.model_hub().query_session(request)
@@ -1194,11 +1791,23 @@ class Backend:
         return {"type": "system", "content": "", "hub_query": result}
 
     def _stream_model_hub_load(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
-        """流式加载模型市场结果：边取边报进度，最后把完整数据集交给界面。
+        """
+        [EN]
+        Stream the model-marketplace results: report progress while fetching, then hand the
+        complete dataset to the UI.
 
-        为什么必须是流式的：任务二要求"加载过程需有进度反馈（如正在加载 500 / 4356），
-        避免用户干等"，而一次取回 5000 条要发 5 页请求、耗时几十秒。
-        进度行用独立 type（``hub_progress``），与既有的 ``summary_progress`` 一样，
+        This must stream because task 2 requires "progress feedback during loading (e.g.
+        loading 500 / 4356) to avoid a long blank wait", while fetching 5000 entries requires
+        5 page requests and takes tens of seconds. Progress lines use a dedicated type
+        (``hub_progress``); like the existing ``summary_progress`` they are consumed by the
+        frontend onEvent callback and do not disturb the existing delta/done semantics.
+
+        [ZH]
+        流式加载模型市场结果：边取边报进度，最后把完整数据集交给界面。
+
+        必须是流式的：任务二要求"加载过程需有进度反馈（如正在加载 500 / 4356），
+        避免用户长时间等待"，而一次取回 5000 条需要 5 页请求、耗时数十秒。
+        进度行使用独立 type（``hub_progress``），与既有的 ``summary_progress`` 一样，
         由前端 onEvent 回调消费，不干扰 delta/done 的既有语义。
         """
         hub = self.model_hub()
@@ -1234,13 +1843,22 @@ class Backend:
                 filters=request.get("filters") if isinstance(request.get("filters"), dict) else None,
             )
         message = str(dataset.get("message") or "")
-        # 结果集走独立 type：前端 SendStreamRequestAsync 的 done 只回 content，
-        # 结构化数据必须自己占一条消息（与 file_stream 的做法一致）。
+        # [EN] The result set uses its own type: the frontend's SendStreamRequestAsync only
+        # [EN] returns content on done, so structured data must occupy its own message (the
+        # [EN] same approach as file_stream).
+        # [ZH] 结果集走独立 type：前端 SendStreamRequestAsync 的 done 只返回 content，
+        # [ZH] 结构化数据必须单独占用一条消息（与 file_stream 的做法一致）。
         yield {"type": "hub_result", "model_hub": dataset}
         yield {"type": "done", "content": message, "model_hub": dataset}
 
     def _handle_model_hub_detail(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """模型详情：所有可用的 GGUF 量化文件与大小。"""
+        """
+        [EN]
+        Model details: all available GGUF quantization files and their sizes.
+
+        [ZH]
+        模型详情：所有可用的 GGUF 量化文件与大小。
+        """
         try:
             detail = self.model_hub().detail(str(request.get("repo") or ""), request.get("source"))
         except Exception as e:
@@ -1248,11 +1866,22 @@ class Backend:
         return {"type": "system", "content": "", "detail": detail}
 
     def _handle_model_hub_registry(self) -> Dict[str, Any]:
-        """模型库列表（含当前正在使用的模型标记）。
+        """
+        [EN]
+        Model library listing (including the marker for the model currently in use).
 
-        "当前使用中"取**引擎里实际加载的**模型，而不是配置里写的名字：
-        无模型就绪状态下配置里仍有默认文件名，但那个文件并不存在、也没被加载，
-        按配置标会显示出一个"正在使用中"的假象（任务一：状态要反映真实情况）。
+        "Currently in use" is taken from the model **actually loaded in the engine**, not from
+        the name written in the configuration: in the no-model-ready state the configuration
+        still holds a default file name although that file does not exist and was never
+        loaded, so marking by configuration would display a false "in use" state (task 1:
+        status must reflect reality).
+
+        [ZH]
+        模型库列表（含当前正在使用的模型标记）。
+
+        "当前使用中"取自**引擎中实际加载的**模型，而不是配置中写的名称：
+        无模型就绪状态下配置里仍有默认文件名，但该文件并不存在、也未被加载，
+        按配置标记会显示出"正在使用中"的假象（任务一：状态必须反映真实情况）。
         """
         current = str(getattr(self.llm, "model_path", "") or "")
         try:
@@ -1263,7 +1892,13 @@ class Backend:
         return {"type": "system", "content": "", "registry": data}
 
     def _handle_model_hub_uninstall(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """删除模型文件（前端已确认）。"""
+        """
+        [EN]
+        Delete a model file (already confirmed by the frontend).
+
+        [ZH]
+        删除模型文件（前端已确认）。
+        """
         try:
             result = self.model_hub().uninstall(
                 str(request.get("name") or ""), current_model=self.config.model_path
@@ -1273,7 +1908,14 @@ class Backend:
         return {"type": "system", "content": f"✅ {result.get('message', '')}"}
 
     def _handle_model_hub_status(self) -> Dict[str, Any]:
-        """模型中心状态（供状态栏与设置窗口显示当前数据源）。"""
+        """
+        [EN]
+        Model hub status (for the status bar and settings window to show the current data
+        source).
+
+        [ZH]
+        模型中心状态（供状态栏与设置窗口显示当前数据源）。
+        """
         try:
             state = self.model_hub().status()
         except Exception as e:
@@ -1281,7 +1923,13 @@ class Backend:
         return {"type": "system", "content": "", "model_hub_status": state}
 
     def _handle_model_hub_config_set(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """保存模型选择栏配置（数据源 / Token / 模型库目录）。"""
+        """
+        [EN]
+        Save the model selector configuration (data source / token / model library directory).
+
+        [ZH]
+        保存模型选择栏配置（数据源 / Token / 模型库目录）。
+        """
         patch = request.get("model_hub") or {}
         if not isinstance(patch, dict):
             return {"type": "system", "content": _t("sys.model_hub_must_be_object")}
@@ -1294,7 +1942,9 @@ class Backend:
             self.config.save()
         except Exception as e:
             return {"type": "system", "content": _t("sys.config_save_failed", error=e)}
-        # 数据源等信息变化后重建实例，避免缓存旧设置
+        # [EN] Rebuild the instance after data-source or similar changes so stale settings
+        # [EN] are not cached.
+        # [ZH] 数据源等信息变化后重建实例，避免缓存旧设置。
         self._model_hub = None
         if changed:
             note = _t("sys.model_hub_saved", fields=_t("sys.list_sep").join(changed))
@@ -1302,10 +1952,20 @@ class Backend:
             note = _t("sys.model_hub_no_change")
         return {"type": "system", "content": note, "model_hub": self.model_hub().status()}
 
-    # ---------- 无模型就绪 / 重新扫描 / 热加载（v0.2.1 综合优化 任务二、五） ----------
+    # ---------- 无模型就绪 / 重新扫描 / 热加载（此前版本 综合优化 相关设计、五） ----------
+    # [EN] No-model-ready state, rescan, and hot loading (此前版本 general optimization, tasks
+    # [EN] 2/5).
+    # [ZH] 无模型就绪 / 重新扫描 / 热加载（此前版本 综合优化 相关设计、五）。
 
     def _handle_model_scan(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """重新扫描模型文件夹：手工放进 ``.gguf`` 后能被识别并按需热加载。"""
+        """
+        [EN]
+        Rescan the model directory: a manually placed ``.gguf`` is then recognized and
+        hot-loaded when needed.
+
+        [ZH]
+        重新扫描模型文件夹：手工放入 ``.gguf`` 后能被识别并按需热加载。
+        """
         try:
             result = self.scan_models(auto_load=bool(request.get("auto_load", True)))
         except Exception as e:  # noqa: BLE001
@@ -1327,7 +1987,14 @@ class Backend:
                 "model_state": result.get("state", self.model_state())}
 
     def _handle_model_load(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """热加载指定模型（不重启进程）。失败时保持无模型状态并给出原因。"""
+        """
+        [EN]
+        Hot-load the specified model (without restarting the process). On failure the
+        no-model state is retained and the reason is reported.
+
+        [ZH]
+        热加载指定模型（不重启进程）。失败时保持无模型状态并给出原因。
+        """
         result = self.load_model(str(request.get("name") or ""))
         if result.get("ok"):
             content = _t("sys.model_hot_loaded", name=result.get("name", ""))
@@ -1337,17 +2004,37 @@ class Backend:
                 "model_state": result.get("state", self.model_state())}
 
     # ---------- 模型档位（多档默认模型：设置页里显示与切换） ----------
+    # [EN] Model profiles (multiple default models: display and switch in the settings page).
+    # [ZH] 模型档位（多档默认模型：设置页中显示与切换）。
 
     def profiles_state(self) -> Dict[str, Any]:
-        """列出 ``config.models`` 里登记的模型档位，并标出"当前使用""是否已下载"。
+        """
+        [EN]
+        List the model profiles registered in ``config.models`` and mark "currently in use"
+        and "already downloaded".
+
+        Why this is needed (user requirement: "both profiles should be selectable defaults and
+        switchable in settings"): `config.models` was previously usable only through the
+        ``/model <alias>`` command and was invisible in the settings UI, so users could not
+        tell which profiles existed or which one was present locally. This turns that registry
+        into structured data rendered by the settings page as a profile list (with size,
+        quantization, parameter count, and a switch button).
+
+        It deliberately **does not access the network**: it reads local files only, and a
+        profile that has not been downloaded is reported as `installed=false` (downloading is
+        done through the model marketplace, or through the "download" button on the profile
+        row, which uses the marketplace streaming download).
+
+        [ZH]
+        列出 ``config.models`` 中登记的模型档位，并标出"当前使用""是否已下载"。
 
         为什么需要它（用户需求："两档都作为可选默认显示、可在设置里切换"）：
-        `config.models` 原本只能通过命令行 ``/model <别名>`` 使用，设置界面里看不到，
-        用户没法知道有哪几档、哪一档已经在本地。这里把这份注册表变成结构化数据，
+        `config.models` 原本只能通过命令行 ``/model <别名>`` 使用，设置界面中不可见，
+        用户无法知道有哪些档位、哪一档已在本地。这里把这份注册表转为结构化数据，
         由设置页渲染成"档位"列表（含体积/量化/参数量与切换按钮）。
 
-        刻意**不联网**：只读本地文件，未下载的档位就如实标 `installed=false`
-        （要下载请走模型市场，或点档位行上的「下载」——它用的是市场那套流式下载）。
+        刻意**不联网**：只读取本地文件，未下载的档位如实标为 `installed=false`
+        （下载请走模型市场，或点击档位行上的「下载」—— 它使用市场那套流式下载）。
         """
         current = os.path.basename(str(getattr(self.config, "model_path", "") or ""))
         models_dir = self.models_dir()
@@ -1361,8 +2048,12 @@ class Backend:
             items.append({
                 "alias": alias,
                 "name": name,
-                # path 与 note 也回传（能力扩展-1 前端联调发现）：档位编辑表单要**回填**
-                # 用户当初填的值，否则"打开编辑再保存"就会把没显示的字段按空值处理。
+                # [EN] path and note are returned as well (found during capability extension-1
+                # [EN] frontend integration): the profile edit form must **prefill** the
+                # [EN] values the user originally entered; otherwise "open, edit, save" would
+                # [EN] treat the hidden fields as empty values.
+                # [ZH] path 与 note 也回传（后续版本 前端联调发现）：档位编辑表单需**回填**
+                # [ZH] 用户当初填写的值，否则"打开编辑再保存"会把未显示的字段按空值处理。
                 "path": str(raw.get("path") or ""),
                 "note": str(raw.get("note") or ""),
                 "repo": str(raw.get("repo") or ""),
@@ -1371,25 +2062,54 @@ class Backend:
                 "size_human": _format_bytes(size) if exists else "",
                 "context_length": int(raw.get("context_length") or 0),
                 "temperature": raw.get("temperature"),
-                # 参数量/量化都按文件名推断：**不加载模型**也能在设置页显示档位差异
+                # [EN] Parameter count and quantization are inferred from the file name: the
+                # [EN] settings page can show the differences between profiles **without
+                # [EN] loading the model**.
+                # [ZH] 参数量/量化均按文件名推断：**不加载模型**也能在设置页显示档位差异。
                 "params": _profile_params_text(name),
                 "quantization": _profile_quant_text(name),
-                # `current` **必须同时要求文件真的在**（v0.2.2 第 4 批，总策划裁定三）。
-                #
-                # 原判据只有 `name == current`，于是"config 指着某个模型、但那个文件不在磁盘上"
-                # 时（全新安装、还没下载任何模型的机器就是这样），同一档会**同时**
-                # `current=true` 与 `installed=false` —— 界面按 `IsEnabled = !current` 把它禁用，
-                # 渲染出"未下载 · ▶ 正在使用"这种自相矛盾的标签，而且**堵死了下载入口**：
-                # 用户看到一个说自己"正在使用"的档位，却点不动它去下载。
-                #
-                # 两个状态本就互斥：文件都不在，就没有任何东西"正在使用"。
-                # `installed` 是事实，`current` 应当建立在它之上。
+                # [EN] `current` **must also require that the file really exists** (v0.2.2
+                # [EN] batch 4).
+                # [EN]
+                # [EN] The original predicate was only `name == current`, so when "config
+                # [EN] points to a model whose file is not on disk" (a fresh install with no
+                # [EN] model downloaded yet), the same profile was **both** `current=true` and
+                # [EN] `installed=false`. The UI computes `IsEnabled = !current`, disables it,
+                # [EN] renders the self-contradictory label "not downloaded - currently in
+                # [EN] use", and **blocks the download entry point**: the user sees a profile
+                # [EN] that claims to be in use but cannot click it to download.
+                # [EN]
+                # [EN] The two states are mutually exclusive by definition: if the file is not
+                # [EN] present, nothing can be "in use". `installed` is the fact, and `current`
+                # [EN] should be built on top of it.
+                # [ZH] `current` **必须同时要求文件确实存在**（v0.2.2 第 4 批）。
+                # [ZH]
+                # [ZH] 原判据只有 `name == current`，因此当"config 指向某个模型、但该文件
+                # [ZH] 不在磁盘上"时（全新安装、尚未下载任何模型的机器即如此），同一档位会
+                # [ZH] **同时**为 `current=true` 与 `installed=false` —— 界面按
+                # [ZH] `IsEnabled = !current` 将其禁用，渲染出"未下载 · ▶ 正在使用"这种
+                # [ZH] 自相矛盾的标签，并且**阻断了下载入口**：
+                # [ZH] 用户看到一个声称自己"正在使用"的档位，却无法点击它去下载。
+                # [ZH]
+                # [ZH] 两个状态本互斥：文件都不在，就没有任何东西"正在使用"。
+                # [ZH] `installed` 是事实，`current` 应建立在它之上。
                 "current": bool(name) and name == current and exists,
             })
         return {"current": current, "models_dir": models_dir, "items": items}
 
     def apply_profile(self, alias: str) -> Dict[str, Any]:
-        """切换到 ``config.models`` 里的某一档（热加载 + 套用该档的窗口与温度）。
+        """
+        [EN]
+        Switch to a profile from ``config.models`` (hot load plus that profile's window and
+        temperature).
+
+        Same semantics as the ``/model <alias>`` command: an unknown alias, a file missing
+        locally, or a load failure **reports the reason faithfully**, and the UI prompts
+        accordingly (for a profile that is not downloaded, the UI directs the user to
+        download it).
+
+        [ZH]
+        切换到 ``config.models`` 中的某一档（热加载 + 套用该档的窗口与温度）。
 
         与命令行 ``/model <别名>`` 走同一份语义：找不到别名、文件不在本地、
         加载失败都**如实返回原因**，界面据此提示（未下载的档位由界面引导去下载）。
@@ -1412,7 +2132,14 @@ class Backend:
         return result
 
     def _handle_model_profile_apply(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """设置页的「切换」按钮：换档位并回传新的模型状态。"""
+        """
+        [EN]
+        The "switch" button on the settings page: change profile and return the new model
+        state.
+
+        [ZH]
+        设置页的「切换」按钮：切换档位并回传新的模型状态。
+        """
         alias = str(request.get("alias") or "")
         result = self.apply_profile(alias)
         if result.get("ok"):
@@ -1423,11 +2150,19 @@ class Backend:
                 "model_profiles": self.profiles_state(),
                 "model_state": result.get("state", self.model_state())}
 
-    # ---------- 自定义模型档位（能力扩展-1 任务五 C） ----------
+    # ---------- 自定义模型档位（后续版本 相关设计 C） ----------
 
-    #: 档位里允许写入的字段与类型（白名单）。**刻意不做"任意键都存"**：
-    #: `config.models` 会被 /model、设置页与加载路径共同读取，写进一个拼错的键
-    #: 只会变成静默失效，而白名单能在写入时就报错。
+    # ---------- 自定义模型档位（后续版本 相关设计 C） ----------
+    # [EN] Custom model profiles (capability extension-1, task 5 C).
+    # [ZH] 自定义模型档位（后续版本 相关设计 C）。
+
+    #: [EN] Fields and types permitted in a profile (whitelist). **Storing arbitrary keys is
+    #: deliberately avoided**: `config.models` is read by /model, the settings page, and the
+    #: load path, so a misspelled key would silently do nothing, whereas a whitelist can
+    #: reject it at write time.
+    #: [ZH] 档位中允许写入的字段与类型（白名单）。**刻意不做"任意键都存"**：
+    #: `config.models` 会被 /model、设置页与加载路径共同读取，写入一个拼错的键
+    #: 只会静默失效，而白名单能在写入时即报错。
     PROFILE_FIELDS = ("path", "repo", "context_length", "temperature", "note", "quantization")
 
     def _save_profile_field(self, alias: str, profile: Dict[str, Any]) -> None:
@@ -1437,15 +2172,31 @@ class Backend:
         self.config.save()
 
     def save_profile(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """新增/修改一个模型档位（别名就是键），写进 ``config.json`` 的 ``models`` 段。
+        """
+        [EN]
+        Add or modify a model profile (the alias is the key), written to the ``models``
+        section of ``config.json``.
+
+        The task requires "users can define custom model profiles (not only two presets),
+        setting the alias, context length, temperature, and note". Previously there were only
+        "read" and "switch" operations and no write entry point, so adding a profile required
+        editing ``config.json`` by hand. This adds the write path while keeping the existing
+        field semantics unchanged (**extension, not rewrite**: the ``models`` structure remains
+        ``{alias: {path, repo, context_length, temperature, ...}}``; old configurations are
+        still readable, with only two optional keys, ``note`` and ``quantization``, added).
+
+        An existing alias means modification (not appending); ``rename_from`` supports renaming.
+
+        [ZH]
+        新增/修改一个模型档位（别名即键），写入 ``config.json`` 的 ``models`` 段。
 
         任务书要求"用户可自定义模型档位（不只是两档预设），设定别名、上下文长度、
-        温度、备注" —— 原先只有"读"与"切换"，没有任何写入口，加档位必须手改
-        ``config.json``。这里补上写入口，并保持既有字段语义不变（**扩展而不是重写**：
-        ``models`` 的结构仍是 ``{别名: {path, repo, context_length, temperature, ...}}``，
-        老配置照常读，只是多了 ``note`` 与 ``quantization`` 两个可选键）。
+        温度、备注" —— 原先只有"读"与"切换"，没有任何写入口，添加档位必须手工修改
+        ``config.json``。此处补上写入口，并保持既有字段语义不变（**扩展而不是重写**：
+        ``models`` 的结构仍为 ``{别名: {path, repo, context_length, temperature, ...}}``，
+        老配置照常读取，只是新增了 ``note`` 与 ``quantization`` 两个可选键）。
 
-        同名别名 = 修改（不是追加），``rename_from`` 支持改名。
+        别名相同即修改（而非追加），``rename_from`` 支持改名。
         """
         alias = str(request.get("alias") or "").strip()
         if not alias:
@@ -1469,9 +2220,14 @@ class Backend:
                 except (TypeError, ValueError):
                     return {"ok": False, "error": _t("sys.profile_bad_context", value=value),
                             "state": self.profiles_state()}
-                # **越界要报错而不是静默夹紧**：界面滑块夹紧是体贴，接口夹紧是骗人
-                # （用户传 100000 却得到 32768，还以为自己设成功了）。首轮实测就是
-                # 传 temperature=9 被静默改成 1.5 且提示"已保存"。
+                # [EN] **Out-of-range values must be rejected, not silently clamped**: clamping
+                # [EN] in the UI slider is considerate, clamping in the API is misleading (the
+                # [EN] user passes 100000 and gets 32768 while believing the setting applied).
+                # [EN] During the first round of testing, temperature=9 was silently changed to
+                # [EN] 1.5 together with a "saved" message.
+                # [ZH] **越界必须报错而不是静默夹紧**：界面滑块夹紧是体贴，接口夹紧则是误导
+                # [ZH] （用户传入 100000 却得到 32768，还以为设置成功）。首轮验证中
+                # [ZH] 传入 temperature=9 被静默改为 1.5 且提示"已保存"。
                 if number < 0 or number > int(self.config.max_context):
                     return {"ok": False,
                             "error": _t("sys.profile_context_out_of_range",
@@ -1505,10 +2261,19 @@ class Backend:
                 "content": _t("sys.profile_saved", alias=alias)}
 
     def delete_profile(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """删除一个档位登记（**不删磁盘上的模型文件**）。
+        """
+        [EN]
+        Delete a profile registration (**without deleting the model file on disk**).
 
-        为什么只删登记：删文件是不可逆的重操作，而档位只是"我常用这一档"的记录。
-        真删文件在模型库里另有入口（带确认弹窗）。
+        Why only the registration is removed: deleting a file is an irreversible, heavyweight
+        operation, whereas a profile is only a record of "I commonly use this one". Actual file
+        deletion has its own entry point in the model library (with a confirmation dialog).
+
+        [ZH]
+        删除一个档位登记（**不删除磁盘上的模型文件**）。
+
+        为什么只删登记：删除文件是不可逆的重操作，而档位只是"我常用这一档"的记录。
+        真正删除文件在模型库中另有入口（带确认弹窗）。
         """
         alias = str(request.get("alias") or "").strip()
         models = dict(self.config.models or {})
@@ -1528,11 +2293,22 @@ class Backend:
 
     @staticmethod
     def _profile_response_content(result: Dict[str, Any]) -> str:
-        """把档位写操作的结果统一成一行界面文本（失败一定带 ❌ 前缀）。
+        """
+        [EN]
+        Normalize profile write results into one line of UI text (failures always carry a ❌
+        prefix).
 
-        为什么单独抽出来：`error` 字段里的文案有的自带 ❌（如 `profile_in_use`）、
+        Why this is a separate helper: some texts in the `error` field already include ❌ (e.g.
+        `profile_in_use`) while others do not (e.g. `profile_unknown`, a neutral message reused
+        elsewhere). The UI needs consistent presentation, so the prefix is added in the **output
+        layer** rather than by modifying those shared language keys.
+
+        [ZH]
+        把档位写操作的结果统一成一行界面文本（失败一定带 ❌ 前缀）。
+
+        为什么单独抽出：`error` 字段中的文案有的自带 ❌（如 `profile_in_use`）、
         有的没有（如 `profile_unknown` 是给别处复用的中性提示）。界面需要一致的呈现，
-        所以由**输出层**补齐前缀，而不是去改那些被复用的语言键。
+        因此由**输出层**补齐前缀，而不是修改那些被复用的语言键。
         """
         content = str(result.get("content") or "")
         if content:
@@ -1552,14 +2328,23 @@ class Backend:
         return {"type": "system", "content": self._profile_response_content(result),
                 "model_profile_delete": result, "model_profiles": result.get("state", {})}
 
-    # ---------- 技能市场（任务五） ----------
+    # ---------- 技能市场（相关设计） ----------
+    # [EN] Skill marketplace (task 5).
+    # [ZH] 技能市场（相关设计）。
 
     def _market_error(self, e: Exception, verb: str) -> Dict[str, Any]:
         log.exception("技能市场%s失败", verb)
         return {"type": "system", "content": _t("err.market_failed", verb=verb, error=e)}
 
     def _handle_market_search(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """搜索技能：关键词 + 排序 + 页码（缓存命中时直接返回快照）。"""
+        """
+        [EN]
+        Search skills: keyword + sort order + page number (a cached snapshot is returned
+        directly on a cache hit).
+
+        [ZH]
+        搜索技能：关键词 + 排序 + 页码（缓存命中时直接返回快照）。
+        """
         try:
             keyword = str(request.get("keyword") or "").strip()
             sort = str(request.get("sort") or "best").strip().lower()
@@ -1575,7 +2360,13 @@ class Backend:
         return {"type": "system", "content": result.get("message", ""), "market": result}
 
     def _handle_market_detail(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """技能详情：完整 skill.json、README 摘要、版本、依赖与入口文件。"""
+        """
+        [EN]
+        Skill details: full skill.json, README excerpt, version, dependencies, and entry files.
+
+        [ZH]
+        技能详情：完整 skill.json、README 摘要、版本、依赖与入口文件。
+        """
         repo = str(request.get("repo") or "").strip()
         if not repo:
             return {"type": "system", "content": _t("sys.market_missing_repo")}
@@ -1586,12 +2377,25 @@ class Backend:
         return {"type": "system", "content": "", "detail": detail}
 
     def _handle_market_install(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """安装技能（用户已在前端确认），**装完立刻热重载**。
+        """
+        [EN]
+        Install a skill (the user has confirmed in the frontend) and **hot-reload
+        immediately after installation**.
 
-        能力扩展-1 任务四：审计发现"装上就能用"差最后一步 —— 旧实现只回一句文案，
-        用户必须自己去点「重载本地插件」或重启，否则指令面板里看不到新指令
-        （这正是任务书说的"运行期加载器接线尚未完成"的真实表现）。
-        现在安装成功后直接走 ``skills().reload_all()``，把加载结果一并回给界面。
+        Capability extension-1, task 4: the audit found that "install and it works" was
+        missing its last step -- the old implementation only returned a message, and the user
+        had to click "reload local plugins" or restart, otherwise the new command did not
+        appear in the command palette (this is the concrete manifestation of the task
+        statement's "runtime loader wiring is not complete"). Success now calls
+        ``skills().reload_all()`` directly and returns the load result to the UI.
+
+        [ZH]
+        安装技能（用户已在前端确认），**安装完成后立即热重载**。
+
+        能力扩展-1 任务四：审计发现"安装后即可使用"缺少最后一步 —— 旧实现只返回一句文案，
+        用户必须自行点击「重载本地插件」或重启，否则指令面板中看不到新指令
+        （这正是任务书所述"运行期加载器接线尚未完成"的实际表现）。
+        现在安装成功后直接调用 ``skills().reload_all()``，并把加载结果一并返回界面。
         """
         repo = str(request.get("repo") or "").strip()
         if not repo:
@@ -1611,17 +2415,30 @@ class Backend:
         return response
 
     def _reload_skills_note(self) -> str:
-        """热重载插件并把结果说清楚（供安装/卸载后复用）。"""
+        """
+        [EN]
+        Hot-reload plugins and describe the result clearly (reused after install/uninstall).
+
+        [ZH]
+        热重载插件并把结果说明清楚（供安装/卸载后复用）。
+        """
         try:
             summary = self.skills().reload_all()
-        except Exception as e:                             # 重载失败不掩盖安装成功
+        except Exception as e:                             # [EN] A reload failure must not mask a successful install; [ZH] 重载失败不得掩盖安装成功
             log.exception("安装后热重载插件失败")
             return _t("sys.skills_reload_failed", error=e)
         return _t("sys.skills_reloaded", loaded=summary.get("loaded", 0),
                   total=summary.get("total", 0), failed=summary.get("failed", 0))
 
     def _handle_market_uninstall(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """卸载技能：移除注册表条目并删除技能目录，再回读确认（同样立刻热重载）。"""
+        """
+        [EN]
+        Uninstall a skill: remove the registry entry and delete the skill directory, then
+        read back to confirm (and hot-reload immediately as well).
+
+        [ZH]
+        卸载技能：移除注册表条目并删除技能目录，再回读确认（同样立即热重载）。
+        """
         skill_id = str(request.get("id") or request.get("repo") or "").strip()
         if not skill_id:
             return {"type": "system", "content": _t("sys.market_missing_skill_id")}
@@ -1635,7 +2452,9 @@ class Backend:
                                     "content": f"{icon} {result.get('message', '')}",
                                     "market_uninstall": result}
         if ok:
-            # 卸载后必须重载：否则被删插件的指令仍留在指令表里，点下去才报错
+            # [EN] A reload is mandatory after uninstall: otherwise the deleted plugin's
+            # [EN] commands remain in the command table and fail only when invoked.
+            # [ZH] 卸载后必须重载：否则被删插件的指令仍留在指令表中，点击后才报错。
             response["content"] += "\n" + self._reload_skills_note()
             response["model_skills"] = self.skills().status()
         return response
@@ -1648,22 +2467,44 @@ class Backend:
         return {"type": "system", "content": "", "installed": items}
 
     def _handle_market_status(self) -> Dict[str, Any]:
-        """市场连接状态（供主窗口状态栏显示）。"""
+        """
+        [EN]
+        Marketplace connection status (for the main window status bar).
+
+        [ZH]
+        市场连接状态（供主窗口状态栏显示）。
+        """
         try:
             state = self.market().status()
         except Exception as e:
             return self._market_error(e, _t("sys.verb_query_status"))
         return {"type": "system", "content": "", "market_status": state}
 
-    # ---------- 自动化配置与测试（任务四） ----------
+    # ---------- 自动化配置与测试（相关设计） ----------
+    # [EN] Automation configuration and testing (task 4).
+    # [ZH] 自动化配置与测试（相关设计）。
 
     @staticmethod
     def _automation_payload(cfg) -> Dict[str, Any]:
-        """把自动化配置转成前端表单需要的扁平结构。"""
+        """
+        [EN]
+        Convert the automation configuration into the flat structure required by the frontend
+        form.
+
+        [ZH]
+        把自动化配置转换为前端表单所需的扁平结构。
+        """
         return cfg.model_dump()
 
     def _automation_login_payload(self) -> Dict[str, Any]:
-        """登录态现状（v0.2.1 自动化优化 任务一）：只给路径/大小/时间，不含 Cookie 内容。"""
+        """
+        [EN]
+        Current login-state information (v0.2.1 automation optimization, task 1): returns only
+        paths/sizes/timestamps, never cookie contents.
+
+        [ZH]
+        登录态现状（v0.2.1 自动化优化 任务一）：只返回路径/大小/时间，不含 Cookie 内容。
+        """
         try:
             return self.automation().login_state_status()
         except Exception as exc:  # noqa: BLE001
@@ -1673,7 +2514,14 @@ class Backend:
                     "error": str(exc)[:200]}
 
     def _handle_automation_login_state(self, _request: Dict[str, Any]) -> Dict[str, Any]:
-        """读取自动化登录态信息（设置窗口与"清除登录态"按钮共用）。"""
+        """
+        [EN]
+        Read the automation login-state information (shared by the settings window and the
+        "clear login state" button).
+
+        [ZH]
+        读取自动化登录态信息（设置窗口与"清除登录态"按钮共用）。
+        """
         return {
             "type": "system",
             "content": "",
@@ -1681,7 +2529,14 @@ class Backend:
         }
 
     def _handle_automation_clear_login(self, _request: Dict[str, Any]) -> Dict[str, Any]:
-        """清除自动化登录态（删除持久化数据目录），下次运行重新引导登录。"""
+        """
+        [EN]
+        Clear the automation login state (delete the persisted data directory); the next run
+        guides the user through login again.
+
+        [ZH]
+        清除自动化登录态（删除持久化数据目录），下次运行重新引导登录。
+        """
         if self.automation().running:
             return {"type": "system", "content": _t("sys.automation_clear_login_running"),
                     "login_state": self._automation_login_payload()}
@@ -1700,7 +2555,13 @@ class Backend:
                 "cleared": bool(result.get("ok"))}
 
     def _handle_automation_config(self, _request: Dict[str, Any]) -> Dict[str, Any]:
-        """读取自动化配置（设置窗口打开时调用）。"""
+        """
+        [EN]
+        Read the automation configuration (called when the settings window opens).
+
+        [ZH]
+        读取自动化配置（设置窗口打开时调用）。
+        """
         return {
             "type": "system",
             "content": _t("sys.automation_config_title"),
@@ -1708,7 +2569,16 @@ class Backend:
         }
 
     def _handle_automation_config_set(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """更新自动化配置并写回配置文件。
+        """
+        [EN]
+        Update the automation configuration and write it back to the config file.
+
+        Safety agreement: when accepted (safety_accepted=True), the agreement version and
+        consent time are recorded; when not accepted, the AutomationConfig validator forces
+        enabled to False.
+
+        [ZH]
+        更新自动化配置并写回配置文件。
 
         安全协议：勾选（safety_accepted=True）时记录协议版本与同意时间；
         未勾选时 AutomationConfig 校验器会强制把 enabled 置为 False。
@@ -1720,7 +2590,9 @@ class Backend:
             return {"type": "system", "content": _t("sys.automation_bad_format")}
         data = self.config.automation.model_dump()
         data.update({k: v for k, v in patch.items() if k in data})
-        # 勾选安全协议时记录版本与时间；取消勾选则清空同意时间并关闭开关
+        # [EN] When the safety agreement is accepted, record version and time; when it is
+        # [EN] unchecked, clear the consent time and disable the switch.
+        # [ZH] 勾选安全协议时记录版本与时间；取消勾选则清空同意时间并关闭开关。
         if patch.get("safety_accepted") and not self.config.automation.safety_accepted:
             data["safety_accepted_at"] = datetime.datetime.now().isoformat(timespec="seconds")
             data["safety_version"] = data.get("safety_version") or "1.0"
@@ -1743,9 +2615,12 @@ class Backend:
             "automation": self._automation_payload(cfg),
         }
 
-    # ---------- 自动化配置向导、模板与导入导出（v0.2.1 任务四） ----------
+    # ---------- 自动化配置向导、模板与导入导出（此前版本 相关设计） ----------
+    # [EN] Automation configuration wizard, templates, import and export (此前版本, task 4).
+    # [ZH] 自动化配置向导、模板与导入导出（此前版本 相关设计）。
 
-    #: 需要出现在「填写帮助」里的字段（顺序即界面顺序）
+    #: [EN] Fields that must appear in "field help" (order equals UI order).
+    #: [ZH] 需要出现在「填写帮助」中的字段（顺序即界面顺序）。
     AUTOMATION_FIELDS = (
         ("task_list_url", "step1", True),
         ("task_list_selector", "step1", True),
@@ -1757,8 +2632,11 @@ class Backend:
         ("task_name", "step4", False),
         ("results_root_name", "step4", False),
         ("results_location", "step4", False),
-        # 登录态（v0.2.1 自动化优化 任务一）：归在第 5 步「运行参数」里，
-        # 因为它们都是"怎么跑"的设置，而且大多数用户不需要改（默认值即可）。
+        # [EN] Login state (此前版本 automation optimization, task 1): grouped under step 5
+        # [EN] "run parameters" because these are all "how to run" settings and most users do
+        # [EN] not need to change them (the defaults suffice).
+        # [ZH] 登录态（此前版本 自动化优化 相关设计）：归入第 5 步「运行参数」，
+        # [ZH] 因为它们都是"如何运行"的设置，且大多数用户不需要修改（默认值即可）。
         ("login_state_dir", "step5", False),
         ("login_check_selector", "step5", False),
         ("login_url_keywords", "step5", False),
@@ -1773,9 +2651,13 @@ class Backend:
         ("wait_network_idle", "step5", False),
         ("audit_log_file", "step5", False),
         ("download_dir", "step5", False),
-        # 任务十六（自测问题修复-1）：浏览器选择归在「运行参数」里。
-        # 放在 browser_channel 之前：界面与文档都以新字段为准，
-        # 旧字段只是为了不破坏老配置。
+        # [EN] Task 16 (self-test fix-1): browser selection is grouped under "run
+        # [EN] parameters". It is placed before browser_channel because the UI and the
+        # [EN] documentation treat the new field as authoritative; the old field exists only to
+        # [EN] preserve compatibility with older configurations.
+        # [ZH] 相关设计（自测问题修复-1）：浏览器选择归入「运行参数」。
+        # [ZH] 放在 browser_channel 之前：界面与文档均以新字段为准，
+        # [ZH] 旧字段仅用于不破坏老配置。
         ("browser", "step5", False),
         ("browser_channel", "step5", False),
         ("schedule_enabled", "step5", False),
@@ -1785,12 +2667,21 @@ class Backend:
         ("enabled", "step5", False),
     )
 
-    #: 预置模板（任务书 4.4）；内容取自语言包，可多语言
+    #: [EN] Preset templates (task 4.4); the content comes from the language pack and can be
+    #: multilingual.
+    #: [ZH] 预置模板（设计规范 4.4）；内容取自语言包，可多语言。
     AUTOMATION_TEMPLATES = ("contract", "invoice", "report", "table")
 
     @staticmethod
     def _automation_field_help() -> List[Dict[str, Any]]:
-        """字段级帮助（任务书 4.3）：标签、通俗说明、示例、是否必填、所在步骤。"""
+        """
+        [EN]
+        Field-level help (task 4.3): label, plain-language description, example, whether it is
+        required, and the step it belongs to.
+
+        [ZH]
+        字段级帮助（任务书 4.3）：标签、通俗说明、示例、是否必填、所在步骤。
+        """
         items: List[Dict[str, Any]] = []
         for name, step, required in Backend.AUTOMATION_FIELDS:
             key = f"automation.help.{name}"
@@ -1807,7 +2698,14 @@ class Backend:
 
     @staticmethod
     def _automation_templates() -> List[Dict[str, Any]]:
-        """预置模板（任务书 4.4）+ 用户自定义模板（存在 config.user.json 旁）。"""
+        """
+        [EN]
+        Preset templates (task 4.4) plus user-defined templates (stored next to
+        config.user.json).
+
+        [ZH]
+        预置模板（任务书 4.4）+ 用户自定义模板（存放在 config.user.json 旁）。
+        """
         items: List[Dict[str, Any]] = []
         for name in Backend.AUTOMATION_TEMPLATES:
             items.append({
@@ -1845,7 +2743,13 @@ class Backend:
         return out
 
     def _handle_automation_save_template(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """把当前配置存成自定义模板（任务书 4.4 末句）。"""
+        """
+        [EN]
+        Save the current configuration as a custom template (task 4.4, last sentence).
+
+        [ZH]
+        把当前配置保存为自定义模板（任务书 4.4 末句）。
+        """
         name = str(request.get("name") or "").strip()
         if not name:
             return {"type": "system", "content": _t("sys.automation_template_need_name")}
@@ -1868,10 +2772,19 @@ class Backend:
                 "templates": self._automation_templates()}
 
     def _handle_automation_wizard_step(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """测试选择器向导的单步（任务书 4.5）：第 1~4 步。
+        """
+        [EN]
+        One step of the selector-testing wizard (task 4.5): steps 1 to 4.
 
-        第 4 步（试运行）需要几分钟，走流式通道 ``automation_wizard``；
-        这里处理 1~3 步这类"单次同步"的检查。
+        Step 4 (dry run) takes several minutes and uses the streaming channel
+        ``automation_wizard``; this handler covers the single synchronous checks of steps 1 to
+        3.
+
+        [ZH]
+        测试选择器向导的单步（任务书 4.5）：第 1~4 步。
+
+        第 4 步（试运行）需要数分钟，走流式通道 ``automation_wizard``；
+        这里处理 1~3 步这类"单次同步"检查。
         """
         try:
             step = int(request.get("step") or 1)
@@ -1888,9 +2801,18 @@ class Backend:
         return {"type": "system", "content": result.get("detail", ""), "wizard": result}
 
     def _exportable_automation(self) -> Dict[str, Any]:
-        """导出自动化配置（任务书 4.7）：排除登录态、Token 等敏感信息。"""
+        """
+        [EN]
+        Export the automation configuration (task 4.7): excludes sensitive information such as
+        login state and tokens.
+
+        [ZH]
+        导出自动化配置（任务书 4.7）：排除登录态、Token 等敏感信息。
+        """
         data = self.config.automation.model_dump()
-        # 登录态文件内容是会话 Cookie，绝不导出；路径本身也不导出，避免跨机覆盖
+        # [EN] The login-state file contains session cookies and is never exported; the path
+        # [EN] itself is excluded too, to prevent overwriting on another machine.
+        # [ZH] 登录态文件内容是会话 Cookie，绝不导出；路径本身也不导出，避免跨机覆盖。
         data.pop("login_state_file", None)
         data.pop("processed_file", None)
         data.pop("download_dir", None)
@@ -1920,7 +2842,15 @@ class Backend:
         return {"type": "system", "content": _t("sys.automation_export_done", path=dest), "path": dest}
 
     def _handle_automation_config_import(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """导入自动化配置（任务书 4.7）。
+        """
+        [EN]
+        Import the automation configuration (task 4.7).
+
+        When the imported language differs from the current UI language, a notice is shown,
+        but the import is **not blocked**.
+
+        [ZH]
+        导入自动化配置（任务书 4.7）。
 
         导入的语言与当前界面语言不同时给出提示，但**不阻断**导入。
         """
@@ -1938,7 +2868,9 @@ class Backend:
         if not isinstance(incoming, dict):
             return {"type": "system", "content": _t("sys.automation_import_no_section")}
 
-        # 安全协议与开关不从文件里继承：必须由本机用户亲自勾选（安全默认）
+        # [EN] The safety agreement and the enable switch are not inherited from the file: they
+        # [EN] must be accepted by the local user in person (secure by default).
+        # [ZH] 安全协议与开关不从文件中继承：必须由本机用户亲自勾选（安全默认）。
         incoming.pop("safety_accepted", None)
         incoming.pop("safety_accepted_at", None)
         incoming.pop("enabled", None)
@@ -1968,7 +2900,13 @@ class Backend:
         }
 
     def _handle_automation_test(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """测试选择器：打开浏览器访问指定网址，预览选择器匹配结果。"""
+        """
+        [EN]
+        Test a selector: open a browser at the given URL and preview the selector's matches.
+
+        [ZH]
+        测试选择器：打开浏览器访问指定网址，预览选择器匹配结果。
+        """
         url = str(request.get("url") or self.config.automation.task_list_url or "").strip()
         selector = str(request.get("selector") or self.config.automation.task_list_selector or "").strip()
         if not url or not selector:
@@ -1997,27 +2935,54 @@ class Backend:
         return {"type": "system", "content": "\n".join(lines)}
 
     def _handle_context(self) -> Dict[str, Any]:
-        """返回当前上下文占用（used/limit，供前端工具栏实时显示）。"""
+        """
+        [EN]
+        Return the current context usage (used/limit) for real-time display in the frontend
+        toolbar.
+
+        [ZH]
+        返回当前上下文占用（used/limit，供前端工具栏实时显示）。
+        """
         response: Dict[str, Any] = {"type": "context"}
         self._attach_context(response)
         return response
 
     def _attach_context(self, response: Dict[str, Any]) -> None:
-        """把当前上下文占用附加到响应上，前端据此实时刷新（/clear、/undo 后自然减少）。
+        """
+        [EN]
+        Attach the current context usage to the response so the frontend refreshes in real
+        time (it naturally decreases after /clear or /undo).
+
+        Optimization 5: the KV cache estimate and context window are provided additionally for
+        the lightweight status area below the input box (the frontend no longer has to parse
+        the Chinese text in /status).
+
+        [ZH]
+        把当前上下文占用附加到响应上，前端据此实时刷新（/clear、/undo 后自然减少）。
 
         优化五：额外给出 KV Cache 估算与上下文窗口，供输入框下方的轻量状态区显示
-        （前端不必再去解析 /status 里的中文文本）。
+        （前端不必再去解析 /status 中的中文文本）。
         """
         try:
             messages = [{"role": "system", "content": self.conv.get_system_prompt()}] + self.conv.history
             response["used"] = self._estimate_tokens(messages)
-            # 任务十（自测问题修复-1）：把两个口径**并列**给出 ——
-            #   ``used``                = 系统提示 + 历史（持久占用的底数；
-            #                             /clear、/compact 后立刻反映变化）；
-            #   ``used_last_request``   = **上一轮真正发给模型的全部内容**，含本轮注入的
-            #                             文件正文、检索片段与搜索结果。
-            # 用户报的"占用远未到 1/3"就是因为原来只有前者；只看它等于漏掉了最大的一块。
-            # 不覆盖 ``used`` 是刻意的：既有的显示与回归断言都基于它，并列给出信息更全。
+            # [EN] Task 10 (self-test fix-1): report the two measurements **side by side**:
+            # [EN]   ``used``              = system prompt + history (the persistent baseline;
+            # [EN]                           reflects /clear and /compact immediately);
+            # [EN]   ``used_last_request`` = **everything actually sent to the model in the last
+            # [EN]                           turn**, including the file body, retrieval
+            # [EN]                           fragments, and search results injected that turn.
+            # [EN] The user-reported "usage is far below 1/3" occurred because only the former
+            # [EN] existed; it misses the largest component. Not overwriting ``used`` is
+            # [EN] deliberate: existing displays and regression assertions rely on it, and
+            # [EN] reporting both is more informative.
+            # [ZH] 相关设计（自测问题修复-1）：把两个口径**并列**给出 ——
+            # [ZH]   ``used``                = 系统提示 + 历史（持久占用的底数；
+            # [ZH]                             /clear 与 /compact 后立即反映变化）；
+            # [ZH]   ``used_last_request``   = **上一轮真正发给模型的全部内容**，含本轮注入的
+            # [ZH]                             文件正文、检索片段与搜索结果。
+            # [ZH] 用户报告的"占用远未到 1/3"就是因为原先只有前者；只看它等于漏掉了最大的一块。
+            # [ZH] 不覆盖 ``used`` 是刻意的：既有显示与回归断言都基于它，并列给出信息更全。
             response["used_last_request"] = int(getattr(self, "_last_request_tokens", 0) or 0)
             response["limit"] = int(self.llm.n_ctx * 0.8)
             response["n_ctx"] = int(self.llm.n_ctx)
@@ -2029,15 +2994,22 @@ class Backend:
                 response["model"] = os.path.basename(self.config.model_path or "")
             except Exception:
                 response["model"] = ""
-            # 任务一：机器可读的"推理是否可用"。前端据此显示"无模型"并把推理入口
-            # 变成引导，而不是等用户提交后才报错。不带它前端就只能猜。
+            # [EN] Task 1: machine-readable "is inference available". The frontend uses it to
+            # [EN] show "no model" and turn the inference entry point into guidance, instead of
+            # [EN] reporting an error only after the user submits. Without it the frontend can
+            # [EN] only guess.
+            # [ZH] 相关设计：机器可读的"推理是否可用"。前端据此显示"无模型"并把推理入口
+            # [ZH] 转为引导，而不是等用户提交后才报错。缺少该字段时前端只能推测。
             response["model_ready"] = self.model_ready
             try:
                 response["search"] = bool(self.commands.search_enabled)
             except Exception:
                 response["search"] = False
-            # v0.2.1 任务三：模式也做成机器可读字段。前端此前靠匹配
-            # "✅ 已切换模式为: " 这个中文前缀来判断，切到英文界面后就失效了。
+            # [EN] 此前版本 task 3: the mode is also exposed as a machine-readable field. The
+            # [EN] frontend previously matched the Chinese prefix "✅ 已切换模式为: ", which
+            # [EN] stopped working in the English UI.
+            # [ZH] 此前版本 相关设计：模式也作为机器可读字段。前端此前依靠匹配
+            # [ZH] "✅ 已切换模式为: " 这个中文前缀来判断，切换到英文界面后即失效。
             try:
                 response["mode"] = self.conv.get_mode()
             except Exception:
@@ -2046,9 +3018,13 @@ class Backend:
                 response["temperature"] = float(self.commands.temperature)
             except Exception:
                 response["temperature"] = None
-            # 修复四（方向七：能力透明化）：把"模型能跑多快、窗口开了多少、
-            # 有没有触到能力边界"一并带上，前端状态区据此实时显示，
-            # 用户不必去翻 /status 的中文文本。
+            # [EN] Fix 4 (direction 7: capability transparency): include how fast the model can
+            # [EN] run, how large the window is, and whether a capability boundary has been
+            # [EN] reached, so the frontend status area can display it in real time without the
+            # [EN] user reading the Chinese text of /status.
+            # [ZH] 兼容性修正（方向七：能力透明化）：把"模型能跑多快、窗口开了多大、
+            # [ZH] 是否触及能力边界"一并带上，前端状态区据此实时显示，
+            # [ZH] 用户不必去翻阅 /status 的中文文本。
             profile = self.model_capability()
             if profile:
                 response["capability"] = {
@@ -2067,16 +3043,33 @@ class Backend:
             pass
 
     def _context_snapshot(self) -> Dict[str, Any]:
-        """单独取一份上下文快照（不含 type 字段），供能力接口复用。"""
+        """
+        [EN]
+        Take a standalone context snapshot (without the type field) for reuse by the
+        capability endpoints.
+
+        [ZH]
+        单独取一份上下文快照（不含 type 字段），供能力接口复用。
+        """
         snapshot: Dict[str, Any] = {"type": "context"}
         self._attach_context(snapshot)
         snapshot.pop("type", None)
         return snapshot
 
     def mcp_control(self, action: str = "", name: str = "") -> Dict[str, Any]:
-        """``/mcp`` 的统一入口：读状态、启停某个 server、或强制连接。
+        """
+        [EN]
+        Unified entry point for ``/mcp``: read state, enable/disable a server, or force a
+        connection.
 
-        启停会写进 ``config.json``（用户按一次就长期生效）并**立刻重建工具表**，
+        Enabling/disabling is written to ``config.json`` (a single user press persists) and
+        **rebuilds the tool table immediately**, satisfying the task's "enable/disable at
+        runtime without restart".
+
+        [ZH]
+        ``/mcp`` 的统一入口：读取状态、启停某个 server、或强制连接。
+
+        启停会写入 ``config.json``（用户按一次即长期生效）并**立即重建工具表**，
         满足任务书"运行时启停，无需重启"。
         """
         cfg = getattr(self.config, "mcp", None)
@@ -2094,7 +3087,9 @@ class Backend:
                 return {"ok": False, "state": self.mcp_diagnostics()}
             target.enabled = (action == "enable")
             self.config.save()
-            # 关掉的 server 要真的把进程收掉；打开的按 auto_connect 决定是否立刻连
+            # [EN] A disabled server must actually have its process terminated; an enabled one
+            # [EN] connects immediately only if auto_connect says so.
+            # [ZH] 被关闭的 server 必须真正终止进程；被开启的按 auto_connect 决定是否立即连接。
             if self._mcp_bridge is not None:
                 self._mcp_bridge.close()
             self._mcp_bridge = None
@@ -2112,10 +3107,20 @@ class Backend:
         return {"ok": False, "state": self.mcp_diagnostics()}
 
     def _handle_agent_config(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """设置页/指令的 Agent 配置写入（工具授权、步数上限）。
+        """
+        [EN]
+        Agent configuration writes from the settings page or commands (tool authorization, step
+        limit).
 
-        与 ``/agent`` 指令走同一个 ``configure_agent`` —— 界面与指令**不能各有一套
-        权限逻辑**，否则迟早出现"界面上显示已启用、实际没启用"这类不一致。
+        It uses the same ``configure_agent`` as the ``/agent`` command: the UI and the command
+        **must not have two separate permission implementations**, otherwise inconsistencies
+        such as "the UI shows enabled but it is not actually enabled" are inevitable.
+
+        [ZH]
+        设置页/指令的 Agent 配置写入（工具授权、步数上限）。
+
+        与 ``/agent`` 指令共用同一个 ``configure_agent`` —— 界面与指令**不能各有一套
+        权限逻辑**，否则必然出现"界面显示已启用、实际未启用"这类不一致。
         """
         if "steps" in request:
             result = self.configure_agent("__steps__", request.get("steps"))
@@ -2128,12 +3133,23 @@ class Backend:
                 "agent": self.agent_diagnostics()}
 
     def _handle_mcp_apply(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """应用 MCP 配置（启用/禁用 server、改命令与超时），并**运行时生效**。
+        """
+        [EN]
+        Apply the MCP configuration (enable/disable servers, change commands and timeouts) with
+        **immediate effect at runtime**.
+
+        The task requires "users can enable/disable an MCP server in settings without a
+        restart": ``refresh_agent_tools`` rebuilds the tool registry and (when enabled) starts
+        the newly configured server processes and attaches their tools to the Agent; a disabled
+        server is ``close()``-ed and its tools disappear from the list immediately.
+
+        [ZH]
+        应用 MCP 配置（启用/禁用 server、修改命令与超时），并**在运行时立即生效**。
 
         任务书要求"用户可在设置中启用/禁用某个 MCP Server，无需重启"：
-        ``refresh_agent_tools`` 会重建工具注册表，并（在启用时）拉起新配的 server
-        进程、把工具挂进 Agent；被停用的 server 会被 ``close()`` 掉，
-        它的工具立刻从清单里消失。
+        ``refresh_agent_tools`` 会重建工具注册表，并在启用时拉起新配置的 server
+        进程、把工具挂入 Agent；被停用的 server 会被 ``close()``，
+        其工具立即从清单中消失。
         """
         cfg = getattr(self.config, "mcp", None)
         if cfg is None:
@@ -2152,9 +3168,14 @@ class Backend:
             from config import McpServerConfig
             from mcp_client import McpBridge
 
-            # 按 name 与既有配置合并：界面传回来的条目可能省略 env / passthrough_env
-            # （老版本前端不回传它们）。不合并的话，"改个超时再保存"会把用户手写在
-            # config.json 里的环境变量抹掉 —— 属于静默的数据丢失，必须从根上堵住。
+            # [EN] Merge with the existing configuration by name: entries sent back by the UI
+            # [EN] may omit env / passthrough_env (older frontends do not return them). Without
+            # [EN] merging, "change a timeout and save" would erase environment variables the
+            # [EN] user wrote by hand in config.json -- silent data loss that must be prevented
+            # [EN] at the source.
+            # [ZH] 按 name 与既有配置合并：界面回传的条目可能省略 env / passthrough_env
+            # [ZH] （老版本前端不回传它们）。不合并的话，"改个超时再保存"会抹掉用户手写在
+            # [ZH] config.json 中的环境变量 —— 属于静默数据丢失，必须从根源上阻止。
             existing = {str(getattr(item, "name", "")): item for item in (cfg.servers or [])}
             cleaned = []
             for item in servers:
@@ -2171,8 +3192,11 @@ class Backend:
                         parsed.env = dict(getattr(old, "env", {}) or {})
                     if "passthrough_env" not in item:
                         parsed.passthrough_env = list(getattr(old, "passthrough_env", []) or [])
-                # 用**模型对象**而不是 dict 存回配置：pydantic 对"声明了类型却塞 dict"
-                # 会给出序列化警告，写出的 JSON 也可能与声明不一致（实测踩到过）。
+                # [EN] Store the **model object** rather than a dict back into the config:
+                # [EN] pydantic warns at serialization time about a declared type receiving a
+                # [EN] dict, and the emitted JSON may disagree with the declaration.
+                # [ZH] 使用**模型对象**而不是 dict 存回配置：pydantic 对"声明了类型却塞入
+                # [ZH] dict"会给出序列化警告，写出的 JSON 也可能与声明不一致。
                 cleaned.append(McpServerConfig(
                     name=parsed.name, command=parsed.command, args=list(parsed.args),
                     env=dict(parsed.env), enabled=bool(parsed.enabled),
@@ -2180,7 +3204,9 @@ class Backend:
                 ))
             cfg.servers = cleaned
         self.config.save()
-        # 配置变了 → 重建桥接器与工具表；只有"启用 + 要求连接"时才真的拉起进程
+        # [EN] Configuration changed -> rebuild the bridge and the tool table; a process is
+        # [EN] actually started only when "enabled + connect required".
+        # [ZH] 配置已变化 → 重建桥接器与工具表；仅当"已启用 + 要求连接"时才真正拉起进程。
         if self._mcp_bridge is not None:
             self._mcp_bridge.close()
         self._mcp_bridge = None
@@ -2193,10 +3219,20 @@ class Backend:
                 "mcp": self.mcp_diagnostics(), "agent": self.agent_diagnostics()}
 
     def _handle_capability_settings(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """运行期调整能力相关设置（修复四：预设 / 滑动窗口 / 分段摘要参数）。
+        """
+        [EN]
+        Adjust capability-related settings at runtime (fix 4: presets / sliding window /
+        chunked-summary parameters).
 
-        只接受白名单字段并逐个做范围校验：这些都是会直接影响推理结果的参数，
-        放任前端传什么就写什么，很容易做出一个"看起来很行但跑不动"的配置。
+        Only whitelisted fields are accepted, and each is range-checked: these parameters
+        directly affect inference results, and accepting arbitrary frontend values would easily
+        produce a configuration that "looks fine but cannot run".
+
+        [ZH]
+        运行期调整能力相关设置（修复四：预设 / 滑动窗口 / 分段摘要参数）。
+
+        只接受白名单字段并逐个做范围校验：这些参数会直接影响推理结果，
+        放任前端传什么就写什么，很容易产生"看起来可用但无法运行"的配置。
         """
         changed: List[str] = []
         cfg = self.config
@@ -2224,10 +3260,16 @@ class Backend:
             cfg.context_mode = mode
             changed.append("context_mode")
 
-        # 采样参数范围。温度上限从 1.0 放宽到 1.5（能力扩展-1 任务五）：
-        # 设置界面的滑块做到 0–1.5，后端只认到 1.0 会让"拖到头保存后又变回去"，
-        # 用户会认为界面在骗人。1.5 仍是可控范围（llama.cpp 支持到 2.0，
-        # 但小模型超过 1.5 基本只剩胡话，权衡后卡在这里）。
+        # [EN] Sampling parameter ranges. The temperature upper bound was widened from 1.0 to
+        # [EN] 1.5 (capability extension-1, task 5): the settings slider goes up to 0-1.5, and a
+        # [EN] backend that capped at 1.0 produced "drag to the end, save, and it reverts",
+        # [EN] which users perceive as a deceptive UI. 1.5 remains a controllable range
+        # [EN] (llama.cpp supports up to 2.0, but small models above 1.5 mostly produce
+        # [EN] incoherent output, so the limit was set here after weighing the tradeoff).
+        # [ZH] 采样参数范围。温度上限从 1.0 放宽到 1.5（后续版本 相关设计）：
+        # [ZH] 设置界面的滑块做到 0–1.5，后端只认到 1.0 会导致"拖到头保存后又变回去"，
+        # [ZH] 用户会认为界面在误导。1.5 仍是可控范围（llama.cpp 支持到 2.0，
+        # [ZH] 但小模型超过 1.5 基本只输出无意义内容，权衡后定在此处）。
         for key, low, high in (("temperature", 0.0, 1.5), ("top_p", 0.0, 1.0),
                                ("repeat_penalty", 0.5, 2.0)):
             if key in request and request.get(key) is not None:
@@ -2252,7 +3294,7 @@ class Backend:
             if flag in request:
                 setattr(cfg, flag, bool(request[flag]))
                 if flag == "summary_cache":
-                    self._summary_cache = None   # 开关切换后重新按需创建
+                    self._summary_cache = None   # [EN] Recreate on demand after the switch changes; [ZH] 开关切换后按需重新创建
                 changed.append(flag)
 
         summarize = request.get("summarize")
@@ -2290,7 +3332,14 @@ class Backend:
                 "context": self._context_snapshot()}
 
     def stream(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
-        """流式对话：逐个产出 delta 行，最后产出 done 行（支持 stop 中断）。"""
+        """
+        [EN]
+        Streaming chat: yield delta lines one by one and a done line at the end (interruptible
+        by stop).
+
+        [ZH]
+        流式对话：逐个产出 delta 行，最后产出 done 行（支持 stop 中断）。
+        """
         action = request.get("action")
         if action == "model_download":
             yield from self._stream_model_download(request.get("name", ""))
@@ -2308,7 +3357,9 @@ class Backend:
             yield from self._stream_automation_pick(request)
             return
         if action == "file_stream":
-            # 多文件（任务八）：files 数组优先；stage=true 表示"只解析不摘要"
+            # [EN] Multi-file (task 8): the files array takes precedence; stage=true means
+            # [EN] "parse only, do not summarize".
+            # [ZH] 多文件（相关设计）：files 数组优先；stage=true 表示"只解析不摘要"。
             paths = request.get("files")
             if isinstance(paths, list) and paths:
                 yield from self._stream_files([str(p) for p in paths],
@@ -2325,7 +3376,9 @@ class Backend:
             yield self._handle_chat(user_msg)
             return
 
-        # 任务一：无模型时给出引导，而不是抛异常/让前端看到"推理失败"
+        # [EN] Task 1: provide guidance when no model is available instead of raising an
+        # [EN] exception or letting the frontend see "inference failed".
+        # [ZH] 相关设计：无模型时提供引导，而不是抛出异常或让前端看到"推理失败"。
         if not self.model_ready:
             guide = self.guide_text()
             self.conv.add_message("user", user_msg)
@@ -2337,10 +3390,16 @@ class Backend:
             yield done
             return
 
-        # 模糊提问引导（v0.2.1 系统提示词重构）：与 _handle_chat 用同一个判断，
-        # **必须在流式路径也拦一次** —— 前端正常对话走的是 chat_stream，而这条分支
-        # 此前只写在 _handle_chat（非流式 action 与斜杠指令）里，于是"模糊提问给方向"
-        # 在图形界面里从来没生效过（本轮集成测试抓到的既有缺陷）。
+        # [EN] Vague-question guidance (此前版本 system-prompt rework): uses the same check as
+        # [EN] _handle_chat and **must also intercept on the streaming path** -- normal
+        # [EN] frontend conversations use chat_stream, and this branch previously existed only
+        # [EN] in _handle_chat (non-streaming actions and slash commands), so "offer directions
+        # [EN] for vague questions" never took effect in the GUI (a pre-existing defect found
+        # [EN] by this round's integration tests).
+        # [ZH] 模糊提问引导（此前版本 系统提示词重构）：与 _handle_chat 使用同一判断，
+        # [ZH] **必须在流式路径也拦截一次** —— 前端正常对话走 chat_stream，而该分支
+        # [ZH] 此前只写在 _handle_chat（非流式 action 与斜杠指令）中，因此"模糊提问给出方向"
+        # [ZH] 在图形界面中从未生效（本轮集成测试发现的既有缺陷）。
         vague_guide = self._vague_guide(user_msg)
         if vague_guide:
             self.conv.add_message("user", user_msg)
@@ -2353,40 +3412,70 @@ class Backend:
             yield vague_done
             return
 
-        # Agent 模式（能力扩展-1 任务二）：模型自主调用工具的循环，走独立通道。
-        # 放在这里而不是聊天路径里，是因为它产出的是**多步事件流**
-        # （agent_step / tool_call / tool_result + 最终 done），与单次生成不同。
+        # [EN] Agent mode (capability extension-1, task 2): the loop in which the model calls
+        # [EN] tools autonomously, carried on a dedicated channel. It is dispatched here rather
+        # [EN] than in the chat path because it produces a **multi-step event stream**
+        # [EN] (agent_step / tool_call / tool_result + a final done), unlike a single
+        # [EN] generation.
+        # [ZH] Agent 模式（后续版本 相关设计）：模型自主调用工具的循环，走独立通道。
+        # [ZH] 放在这里而不是聊天路径中，是因为它产出的是**多步事件流**
+        # [ZH] （agent_step / tool_call / tool_result + 最终 done），与单次生成不同。
         if self.conv.get_mode() == "agent":
             yield from self._stream_agent(user_msg)
             return
 
         search_context = self._search_if_enabled(user_msg)
-        # 任务一（自测问题修复-1）：**不再拿"问题里提到文件"当闸门**。
-        # 旧写法 `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
-        # 直接造成"上传文件后模型回答没有看到文件内容"：用户问「帮我总结一下」
-        # 「分析一下」「甲方是谁」时一个 FILE_INTENT 关键词都不含，文件正文便一个字
-        # 都没进上下文，模型只看得到系统提示里的文件名，于是据实回答"没有看到内容"。
-        # 检索路径早就得出过同一结论（见 _retrieval_context_for 的说明：那道闸门会让
-        # "违约金比例是多少"这种不点名的提问检索不到），只是全文注入这条路径没跟上。
-        # 旧写法里的 `bool(self.conv.file_content)` 对大文件同样是错的：正文超过
-        # files.disk_threshold_chars 会落盘、entry.content 被清空，闸门随之恒为假。
-        # 现在改成"有文件就注入"，长度仍由 files.total_chars 预算约束。
+        # [EN] Task 1 (self-test fix-1): **the gate "the question mentions a file" is removed**.
+        # [EN] The old form `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
+        # [EN] caused "the model does not see the file content after a file is uploaded": for
+        # [EN] questions such as "summarize this", "analyze this", or "who is the counterparty"
+        # [EN] no FILE_INTENT keyword matches, so not a single character of the file body
+        # [EN] entered the context; the model saw only the file name in the system prompt and
+        # [EN] truthfully answered that no content was visible. The retrieval path had already
+        # [EN] reached the same conclusion (see _retrieval_context_for: that gate prevented
+        # [EN] unnamed questions such as "what is the penalty rate" from retrieving), but the
+        # [EN] full-text injection path had not followed. The old
+        # [EN] `bool(self.conv.file_content)` is also wrong for large files: a body above
+        # [EN] files.disk_threshold_chars is spilled to disk and entry.content is cleared, so
+        # [EN] the gate was permanently false. The rule is now "inject whenever a file exists",
+        # [EN] and the length is still bounded by the files.total_chars budget.
+        # [ZH] 相关设计（自测问题修复-1）：**不再以"问题中是否提到文件"作为注入开关**。
+        # [ZH] 旧写法 `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
+        # [ZH] 直接造成"上传文件后模型回答看不到文件内容"：用户提问「帮我总结一下」
+        # [ZH] 「分析一下」「甲方是谁」时不包含任何 FILE_INTENT 关键词，文件正文便一个字
+        # [ZH] 都未进入上下文，模型只能看到系统提示中的文件名，于是如实回答"没有看到内容"。
+        # [ZH] 检索路径早已得出同一结论（见 _retrieval_context_for 的说明：该开关会使
+        # [ZH] "违约金比例是多少"这类不点名的提问检索不到），只是全文注入这条路径未同步。
+        # [ZH] 旧写法中的 `bool(self.conv.file_content)` 对大文件同样不正确：正文超过
+        # [ZH] files.disk_threshold_chars 会落盘、entry.content 被清空，开关随之恒为假。
+        # [ZH] 现在改为"有文件即注入"，长度仍由 files.total_chars 预算约束。
         include_file = self.conv.has_file()
         messages = self.conv.build_messages(user_msg, search_context, include_file=include_file,
                                             retrieval_context=self._retrieval_context_for(user_msg))
-        # 任务十（自测问题修复-1）：记下**本轮真正发出去的消息**有多大。
+        # [EN] Task 10 (self-test fix-1): record how large **the messages actually sent this
+        # [EN] turn** were.
+        # [ZH] 相关设计（自测问题修复-1）：记录**本轮真正发出的消息**的大小。
         self._note_request_size(messages)
-        # 任务二（优化已知问题-2）：搜索开着却没拿到可用结果时，**明确告知用户**，
-        # 而不是静默继续 —— 否则用户会以为"搜索没生效"或"模型忽略了搜索结果"，
-        # 实际是这一层就没拿到东西。这条提示作为回答区的首段前缀发出。
+        # [EN] Task 2 (known-issues optimization-2): when search is enabled but no usable
+        # [EN] result was obtained, **tell the user explicitly** instead of continuing silently
+        # [EN] -- otherwise the user assumes "search did not work" or "the model ignored the
+        # [EN] results", when in fact this layer obtained nothing. The notice is emitted as the
+        # [EN] first paragraph prefix of the answer area.
+        # [ZH] 相关设计（优化已知问题-2）：搜索已开启但未取得可用结果时，**明确告知用户**，
+        # [ZH] 而不是静默继续 —— 否则用户会认为"搜索未生效"或"模型忽略了搜索结果"，
+        # [ZH] 实际是该层未取得任何内容。该提示作为回答区的首段前缀发出。
         search_note = self._search_note()
         if search_note:
             yield {"type": "delta", "channel": _CH_ANSWER, "content": search_note + "\n\n"}
 
         parts: list = []
-        # 思考内容与回答走两条通道（任务三）：通道名与前端约定见模块头协议说明。
+        # [EN] Reasoning content and the answer travel on two channels (task 3): the channel
+        # [EN] names are agreed with the frontend in the module header protocol description.
+        # [ZH] 思考内容与回答走两条通道（相关设计）：通道名与前端约定见模块头协议说明。
         splitter = self.llm.make_splitter() if hasattr(self.llm, "make_splitter") else None
-        # 运行指标（优化已知问题-2 任务七）：由引擎实测，随心跳与 done 上报。
+        # [EN] Runtime metrics (known-issues optimization-2, task 7): measured by the engine and
+        # [EN] reported with heartbeats and on done.
+        # [ZH] 运行指标（优化已知问题-2 相关设计）：由引擎验证，随心跳与 done 上报。
         stats = StreamStats()
         heartbeat = float(getattr(self.config, "stream_heartbeat_seconds", 1.5) or 1.5)
         try:
@@ -2400,23 +3489,41 @@ class Backend:
                     splitter=splitter,
                     stats=stats,
                     heartbeat_seconds=heartbeat):
-                # 停止检查放在**产出之后**（优化已知问题-2 任务五）。
-                # 放在循环开头会让"模型已经生成、只差交付"的那一块被丢掉：
-                # 停止信号置位时往往已经有一两块排在引擎的队列里（引擎的读者线程
-                # 比消费者快），丢掉它们会出现"停止前界面上明明显示过的思考内容
-                # 在 done 里却没有"这种不一致 —— 既有回归用例正好断言了这一点。
-                # 放在产出之后：已拿到的内容照常交付，之后立刻停止，不再等模型跑完。
+                # [EN] The stop check is placed **after** yielding a piece (known-issues
+                # [EN] optimization-2, task 5). Placing it at the top of the loop would discard
+                # [EN] the piece the model has already generated and which only awaits
+                # [EN] delivery: when the stop flag is set there are usually one or two pieces
+                # [EN] already queued in the engine (its reader thread is faster than the
+                # [EN] consumer), and dropping them produces the inconsistency "reasoning
+                # [EN] content that the UI had already displayed before stop is missing from
+                # [EN] done" -- an existing regression test asserts exactly this. Placed after
+                # [EN] yielding: content already received is delivered as usual, then the loop
+                # [EN] stops immediately without waiting for the model to finish.
+                # [ZH] 停止检查放在**产出之后**（优化已知问题-2 相关设计）。
+                # [ZH] 放在循环开头会丢弃"模型已经生成、只差交付"的那一块内容：
+                # [ZH] 停止信号置位时往往已有一两块排在引擎队列中（引擎的读者线程
+                # [ZH] 比消费者快），丢弃它们会出现"停止前界面上已显示过的思考内容
+                # [ZH] 在 done 中却不存在"这种不一致 —— 既有回归用例正好断言了这一点。
+                # [ZH] 放在产出之后：已取得的内容照常交付，随后立即停止，不再等待模型跑完。
                 if channel == _CH_HEARTBEAT:
-                    # 任务五：prefill 阶段（首 token 之前）可能几十秒没有任何内容。
-                    # 心跳让界面能区分"还在工作"与"卡死了"，并顺带刷新实时指标。
+                    # [EN] Task 5: during prefill (before the first token) there may be no
+                    # [EN] content for tens of seconds. The heartbeat lets the UI distinguish
+                    # [EN] "still working" from "stuck", and refreshes the live metrics at the
+                    # [EN] same time.
+                    # [ZH] 相关设计：prefill 阶段（首 token 之前）可能数十秒没有任何内容。
+                    # [ZH] 心跳使界面能够区分"仍在工作"与"已停滞"，并同时刷新实时指标。
                     yield {"type": "progress", "channel": _CH_HEARTBEAT,
                            "stats": stats.to_dict(),
                            "waiting_first_token": not stats.prefill_done}
                 elif channel == _CH_REASONING:
                     yield {"type": "delta", "channel": _CH_REASONING, "content": piece}
                 elif channel == _CH_RESET:
-                    # 孤立结束标签：此前发到回答区的内容其实都是思考。前端收到
-                    # reset 后把回答区已有的文本"搬"到思考区，不需要后端重发。
+                    # [EN] Orphan closing tag: everything sent to the answer area so far is in
+                    # [EN] fact reasoning. After receiving reset, the frontend moves the text
+                    # [EN] already present in the answer area into the reasoning area; the
+                    # [EN] backend does not need to resend it.
+                    # [ZH] 孤立结束标签：此前发送到回答区的内容实际上都是思考内容。前端收到
+                    # [ZH] reset 后把回答区已有文本"搬"到思考区，后端无需重发。
                     yield {"type": "delta", "channel": _CH_ANSWER,
                            "reset": True, "content": ""}
                 else:
@@ -2424,21 +3531,35 @@ class Backend:
                     yield {"type": "delta", "channel": _CH_ANSWER, "content": piece}
                 if self.stop_event.is_set():
                     break
-            # 用分离器自己的回答累积串作为权威结果：出现孤立结束标签时它已经把
-            # "此前误发到回答区的内容"改判给思考区，这里不能再另存一份累积串
-            # （否则 done.content 会把思考内容一起带上，测试 C2 就是这么抓出来的）。
+            # [EN] The splitter's own accumulated answer text is the authoritative result: when
+            # [EN] an orphan closing tag appears it has already reclassified "content
+            # [EN] mistakenly emitted to the answer area" as reasoning, so a second accumulator
+            # [EN] must not be kept here (otherwise done.content would carry the reasoning
+            # [EN] content too -- exactly what test C2 caught).
+            # [ZH] 以分离器自身的回答累积串作为权威结果：出现孤立结束标签时它已把
+            # [ZH] "此前误发到回答区的内容"改判给思考区，此处不能再另存一份累积串
+            # [ZH] （否则 done.content 会把思考内容一并带上，测试 C2 正是这样发现的）。
             full = splitter.answer_text if splitter is not None else "".join(parts)
             thinking = splitter.reasoning_text.strip() if splitter is not None else ""
-            # 中断时也要落库：任务书任务五要求"思考过程中止不残留半截内容到回答区"，
-            # 回答区只存回答、思考单独存字段，前端据此清理即可。
+            # [EN] Persist even on interruption: task 5 requires that "an aborted reasoning
+            # [EN] process leaves no partial content in the answer area". The answer area stores
+            # [EN] only the answer, and the reasoning is stored in a separate field, so the
+            # [EN] frontend can clean up accordingly.
+            # [ZH] 中断时也要落库：设计规范相关设计要求"思考过程中止不残留半截内容到回答区"，
+            # [ZH] 回答区只存回答、思考单独存字段，前端据此清理即可。
             self.conv.add_message("user", user_msg)
             self.conv.add_message("assistant", full, reasoning=thinking)
             self._compact_history()
             done: Dict[str, Any] = {"type": "done", "content": full,
                                     "stopped": self.stop_event.is_set()}
-            # 运行指标（任务七）：输出 token 数用**模型真分词器**精确数（引擎在
-            # _finish_stats 里只做了兜底粗估，并已把 tokens_estimated 置真）。
-            # 这里拿到的是完整文本（含思考），与"模型实际生成了多少"口径一致。
+            # [EN] Runtime metrics (task 7): the output token count is measured precisely with
+            # [EN] the **model's real tokenizer** (the engine only performs a coarse fallback
+            # [EN] estimate in _finish_stats and sets tokens_estimated accordingly). The text
+            # [EN] obtained here is the complete text (including reasoning), consistent with
+            # [EN] "how much the model actually generated".
+            # [ZH] 运行指标（相关设计）：输出 token 数使用**模型真实分词器**精确统计（引擎在
+            # [ZH] _finish_stats 中只做兜底粗估，并已置位 tokens_estimated）。
+            # [ZH] 此处取得的是完整文本（含思考），与"模型实际生成了多少"口径一致。
             try:
                 counted_text = (thinking + full) if thinking else full
                 tokens, estimated = self.llm.count_output_tokens(counted_text)
@@ -2453,28 +3574,45 @@ class Backend:
             if thinking:
                 done["reasoning"] = thinking
             if splitter is not None and splitter.unclosed and not self.stop_event.is_set():
-                # 标签没闭合，且不是用户主动停止（用户停止时前端已经有"已停止生成"提示，
-                # 再报"长度上限用完"就是误导）：通常意味着 token 预算被思考吃光。
+                # [EN] The tag did not close, and this is not a user-initiated stop (the
+                # [EN] frontend already shows "generation stopped" when the user stops, so
+                # [EN] additionally reporting "length limit exhausted" would be misleading):
+                # [EN] this usually means the token budget was consumed by reasoning.
+                # [ZH] 标签未闭合，且不是用户主动停止（用户停止时前端已有"已停止生成"提示，
+                # [ZH] 再报"长度上限用完"会造成误导）：通常意味着 token 预算被思考耗尽。
                 done["reasoning_unclosed"] = True
-            # 扩展上下文后速度明显下降时给出提示（窗口越大 KV Cache 越大、越慢）
+            # [EN] Warn when throughput drops noticeably after the context is extended (a
+            # [EN] larger window means a larger KV cache and slower inference).
+            # [ZH] 扩展上下文后速度明显下降时给出提示（窗口越大 KV Cache 越大、越慢）。
             if self.config.speed_hint and not self.stop_event.is_set():
                 hint = self.llm.speed_hint(self.config.speed_min_tps)
                 if hint:
                     done["content"] = f"{full}\n\n{hint}" if full else hint
                     _write({"type": "delta", "channel": _CH_ANSWER, "content": f"\n\n{hint}"})
-            self._attach_context(done)  # 附带当前上下文占用，供前端刷新
+            self._attach_context(done)  # [EN] Attach current context usage for the frontend to refresh; [ZH] 附带当前上下文占用，供前端刷新
             yield done
         except Exception as e:
             log.exception("流式推理失败")
             yield {"type": "error", "content": _t("sys.inference_failed", error=e)}
 
-    # ---------- Agent（能力扩展-1 任务二） ----------
+    # ---------- Agent（后续版本 相关设计） ----------
+    # [EN] Agent (capability extension-1, task 2).
+    # [ZH] Agent（后续版本 相关设计）。
 
     def agent_registry(self) -> Any:
-        """当前的工具注册表（含权限状态）。
+        """
+        [EN]
+        The current tool registry (including permission state).
 
-        惰性创建 + **配置变更后重建**：``_agent_registry`` 是缓存，
-        ``refresh_agent_tools()`` 会把它清掉（MCP 启停、权限变更都走那条路）。
+        Created lazily and **rebuilt after configuration changes**: ``_agent_registry`` is a
+        cache, and ``refresh_agent_tools()`` clears it (that path is taken by MCP
+        enable/disable and permission changes).
+
+        [ZH]
+        当前的工具注册表（含权限状态）。
+
+        惰性创建，且**配置变更后重建**：``_agent_registry`` 是缓存，
+        ``refresh_agent_tools()`` 会清除它（MCP 启停、权限变更都走该路径）。
         """
         from agent_tools import ToolContext, ToolRegistry
 
@@ -2496,11 +3634,21 @@ class Backend:
         return registry
 
     def refresh_agent_tools(self, discover_mcp: bool = False) -> Dict[str, Any]:
-        """重建工具注册表（MCP 启停、配置变更后调用）。
+        """
+        [EN]
+        Rebuild the tool registry (called after MCP enable/disable or configuration changes).
 
-        ``discover_mcp=True`` 会真的拉起配置里的 MCP Server 进程并拉取工具清单 ——
-        这是**有代价也有风险**的动作（外部进程、可能联网），所以要显式要求，
-        不会在每次提问时顺手做。
+        ``discover_mcp=True`` actually starts the configured MCP server processes and fetches
+        their tool lists. This is an action that is **both costly and risky** (external
+        processes, possibly network access), so it must be requested explicitly and is never
+        performed implicitly on every question.
+
+        [ZH]
+        重建工具注册表（MCP 启停、配置变更后调用）。
+
+        ``discover_mcp=True`` 会真正拉起配置中的 MCP Server 进程并拉取工具清单 ——
+        这是**有代价也有风险**的动作（外部进程、可能联网），因此必须显式请求，
+        不会在每次提问时隐式执行。
         """
         self._agent_registry = None
         registry = self.agent_registry()
@@ -2512,20 +3660,26 @@ class Backend:
                 from mcp_client import register_mcp_tools
 
                 registered = register_mcp_tools(registry, bridge)
-            except Exception as exc:                   # MCP 不可用不能连累 Agent 本身
+            except Exception as exc:                   # [EN] MCP unavailability must not affect the Agent itself; [ZH] MCP 不可用不得影响 Agent 本身
                 log.warning("注册 MCP 工具失败：%s", exc)
         return {"registered": registered,
                 "tools": registry.names(),
                 "enabled": [tool.name for tool in registry.available()]}
 
     def mcp_bridge(self) -> Any:
-        """按 ``config.mcp`` 构造/复用 MCP 桥接器（惰性）。"""
+        """
+        [EN]
+        Build or reuse the MCP bridge for ``config.mcp`` (lazily).
+
+        [ZH]
+        按 ``config.mcp`` 构造/复用 MCP 桥接器（惰性）。
+        """
         from mcp_client import McpBridge, McpServer
 
         cfg = getattr(self.config, "mcp", None)
         if self._mcp_bridge is None or self._mcp_signature != self._mcp_config_signature():
             if self._mcp_bridge is not None:
-                self._mcp_bridge.close()               # 配置变了先关掉旧进程
+                self._mcp_bridge.close()               # [EN] The configuration changed: close the old process first; [ZH] 配置已变化：先关闭旧进程
             servers: List[Any] = []
             for raw in (getattr(cfg, "servers", []) or []):
                 item = raw if isinstance(raw, dict) else raw.model_dump()
@@ -2555,7 +3709,13 @@ class Backend:
             return ""
 
     def mcp_diagnostics(self) -> Dict[str, Any]:
-        """MCP 的可观测状态（供 /mcp、设置页与测试用）。"""
+        """
+        [EN]
+        Observable MCP state (for /mcp, the settings page, and tests).
+
+        [ZH]
+        MCP 的可观测状态（供 /mcp、设置页与测试使用）。
+        """
         cfg = getattr(self.config, "mcp", None)
         bridge = self.mcp_bridge()
         return {
@@ -2568,10 +3728,19 @@ class Backend:
         }
 
     def agent_diagnostics(self) -> Dict[str, Any]:
-        """Agent 的可观测状态（供 /agent、测试与排查用）。
+        """
+        [EN]
+        Observable Agent state (for /agent, tests, and troubleshooting).
 
-        任务书要求"用户能看到 Agent 的每一步"，后端这边必须先把"每一步"留成结构化数据，
-        前端才有可能显示得对；否则排查时只能靠翻日志。
+        The task requires "users can see every step of the Agent", so the backend must first
+        retain "every step" as structured data before the frontend can display it correctly;
+        otherwise troubleshooting depends on reading logs.
+
+        [ZH]
+        Agent 的可观测状态（供 /agent、测试与排查使用）。
+
+        任务书要求"用户能看到 Agent 的每一步"，后端必须先把"每一步"留存为结构化数据，
+        前端才有可能正确显示；否则排查时只能依靠翻阅日志。
         """
         registry = self._agent_registry or self.agent_registry()
         cfg = getattr(self.config, "agent", None)
@@ -2584,12 +3753,25 @@ class Backend:
         }
 
     def _iter_agent_events(self, runner: Any) -> Iterator[Dict[str, Any]]:
-        """把 Agent 循环（同步、会阻塞）变成可流式产出的生成器。
+        """
+        [EN]
+        Turn the Agent loop (synchronous and blocking) into a generator that can yield in a
+        streaming fashion.
 
-        为什么要线程 + 队列：循环里每一步都要调模型（几秒）与执行工具，
-        若在生成器里同步跑，用户在界面上会看到长时间毫无动静 —— 与流式路径的
+        Why a thread plus a queue: every step of the loop calls the model (several seconds) and
+        executes tools, so running it synchronously inside the generator would leave the UI
+        silent for a long time. This follows the existing approach of the streaming path
+        (``llm_engine._iter_with_heartbeat``): a reader thread plus a queue, with heartbeats
+        emitted while waiting. The stop flag is passed to the loop (checked at every step) and
+        also returns immediately here.
+
+        [ZH]
+        把 Agent 循环（同步、会阻塞）转为可流式产出的生成器。
+
+        为什么使用线程 + 队列：循环中每一步都要调用模型（数秒）并执行工具，
+        若在生成器内同步运行，界面上会出现长时间无任何输出 —— 与流式路径的
         既有做法（``llm_engine._iter_with_heartbeat``）保持一致：读者线程 + 队列，
-        等待期间发心跳。停止信号既传给循环（每步检查），也在这里立刻返回。
+        等待期间发送心跳。停止信号既传给循环（每步检查），也在此处立即返回。
         """
         import queue as _queue
         import threading
@@ -2600,7 +3782,7 @@ class Backend:
         def worker() -> None:
             try:
                 box["run"] = runner(lambda event: events.put(event))
-            except Exception as exc:                       # 循环本身崩了也要给出原因
+            except Exception as exc:                       # [EN] A failure of the loop itself must still report its cause; [ZH] 循环本身失败也必须给出原因
                 box["error"] = str(exc)
             finally:
                 events.put(None)
@@ -2623,7 +3805,13 @@ class Backend:
         self._agent_run = box.get("run")
 
     def _stream_agent(self, user_msg: str) -> Iterator[Dict[str, Any]]:
-        """Agent 模式的流式处理：多步事件 + 最终 done。"""
+        """
+        [EN]
+        Streaming handling of Agent mode: multi-step events plus a final done.
+
+        [ZH]
+        Agent 模式的流式处理：多步事件 + 最终 done。
+        """
         from agent import AgentLoop
 
         cfg = getattr(self.config, "agent", None)
@@ -2644,15 +3832,20 @@ class Backend:
             if event.get("type") in ("agent_step", "tool_call", "tool_result"):
                 yield event
             else:
-                # 心跳等其它事件原样透传（前端只认 type，多余字段无害）
+                # [EN] Other events such as heartbeats are passed through unchanged (the
+                # [EN] frontend only inspects type; extra fields are harmless).
+                # [ZH] 心跳等其它事件原样透传（前端只识别 type，多余字段无影响）。
                 yield event
 
         run = self._agent_run
         answer = str(getattr(run, "answer", "") or "") if run is not None else ""
         if run is None:
             answer = _t("sys.inference_failed", error="agent loop did not return")
-        # 把最终答案按流式 delta 发一遍：前端已有的渲染路径不用改就能显示结论，
-        # done 行仍然是权威内容（与 chat_stream 的约定一致）。
+        # [EN] Send the final answer once as streaming deltas: the frontend's existing render
+        # [EN] path can display the conclusion without changes, while the done line remains the
+        # [EN] authoritative content (consistent with the chat_stream contract).
+        # [ZH] 把最终答案按流式 delta 发送一遍：前端既有的渲染路径无需改动即可显示结论，
+        # [ZH] done 行仍是权威内容（与 chat_stream 的约定一致）。
         if answer:
             yield {"type": "delta", "channel": _CH_ANSWER, "content": answer}
 
@@ -2684,22 +3877,47 @@ class Backend:
         yield done
 
     def _agent_messages(self, user_msg: str, registry: Any) -> List[dict]:
-        """Agent 轮的 messages：系统提示词 + **运行期追加的工具协议** + 历史 + 问题。
-
-        工具协议与可用工具清单是**动态的**（受权限开关影响），所以放在这里追加，
-        而不是写进 ``MODES["agent"]``：模式块要守住 700 字符的审计上限，
-        也不能在提示词里列出"当前没启用的工具"。
         """
-        # 任务一（自测问题修复-1）：**不再拿"问题里提到文件"当闸门**。
-        # 旧写法 `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
-        # 直接造成"上传文件后模型回答没有看到文件内容"：用户问「帮我总结一下」
-        # 「分析一下」「甲方是谁」时一个 FILE_INTENT 关键词都不含，文件正文便一个字
-        # 都没进上下文，模型只看得到系统提示里的文件名，于是据实回答"没有看到内容"。
-        # 检索路径早就得出过同一结论（见 _retrieval_context_for 的说明：那道闸门会让
-        # "违约金比例是多少"这种不点名的提问检索不到），只是全文注入这条路径没跟上。
-        # 旧写法里的 `bool(self.conv.file_content)` 对大文件同样是错的：正文超过
-        # files.disk_threshold_chars 会落盘、entry.content 被清空，闸门随之恒为假。
-        # 现在改成"有文件就注入"，长度仍由 files.total_chars 预算约束。
+        [EN]
+        Messages for an Agent turn: system prompt + **tool protocol appended at runtime** +
+        history + question.
+
+        The tool protocol and the available tool list are **dynamic** (they depend on
+        permission switches), so they are appended here rather than written into
+        ``MODES["agent"]``: the mode block must respect the 700-character audit limit, and the
+        prompt must not list "tools that are currently disabled".
+
+        [ZH]
+        Agent 轮的 messages：系统提示词 + **运行期追加的工具协议** + 历史 + 问题。
+
+        工具协议与可用工具清单是**动态的**（受权限开关影响），因此在此处追加，
+        而不是写进 ``MODES["agent"]``：模式块必须遵守 700 字符的审计上限，
+        也不能在提示词中列出"当前未启用的工具"。
+        """
+        # [EN] Task 1 (self-test fix-1): **the gate "the question mentions a file" is removed**.
+        # [EN] The old form `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
+        # [EN] caused "the model does not see the file content after a file is uploaded": for
+        # [EN] questions such as "summarize this", "analyze this", or "who is the counterparty"
+        # [EN] no FILE_INTENT keyword matches, so not a single character of the file body
+        # [EN] entered the context; the model saw only the file name in the system prompt and
+        # [EN] truthfully answered that no content was visible. The retrieval path had already
+        # [EN] reached the same conclusion (see _retrieval_context_for: that gate prevented
+        # [EN] unnamed questions such as "what is the penalty rate" from retrieving), but the
+        # [EN] full-text injection path had not followed. The old
+        # [EN] `bool(self.conv.file_content)` is also wrong for large files: a body above
+        # [EN] files.disk_threshold_chars is spilled to disk and entry.content is cleared, so
+        # [EN] the gate was permanently false. The rule is now "inject whenever a file exists",
+        # [EN] and the length is still bounded by the files.total_chars budget.
+        # [ZH] 相关设计（自测问题修复-1）：**不再以"问题中是否提到文件"作为注入开关**。
+        # [ZH] 旧写法 `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
+        # [ZH] 直接造成"上传文件后模型回答看不到文件内容"：用户提问「帮我总结一下」
+        # [ZH] 「分析一下」「甲方是谁」时不包含任何 FILE_INTENT 关键词，文件正文便一个字
+        # [ZH] 都未进入上下文，模型只能看到系统提示中的文件名，于是如实回答"没有看到内容"。
+        # [ZH] 检索路径早已得出同一结论（见 _retrieval_context_for 的说明：该开关会使
+        # [ZH] "违约金比例是多少"这类不点名的提问检索不到），只是全文注入这条路径未同步。
+        # [ZH] 旧写法中的 `bool(self.conv.file_content)` 对大文件同样不正确：正文超过
+        # [ZH] files.disk_threshold_chars 会落盘、entry.content 被清空，开关随之恒为假。
+        # [ZH] 现在改为"有文件即注入"，长度仍由 files.total_chars 预算约束。
         include_file = self.conv.has_file()
         messages = self.conv.build_messages(user_msg, "", include_file=include_file)
         self._note_request_size(messages)
@@ -2710,11 +3928,21 @@ class Backend:
         return messages
 
     # ---------- 具体动作 ----------
+    # [EN] Concrete actions.
+    # [ZH] 具体动作。
 
-    # ---------- 本地检索（能力扩展-1 任务六） ----------
+    # ---------- 本地检索（后续版本 相关设计） ----------
+    # [EN] Local retrieval (capability extension-1, task 6).
+    # [ZH] 本地检索（后续版本 相关设计）。
 
     def retriever(self) -> Any:
-        """当前检索器（惰性创建，配置取自 ``config.retrieval``）。"""
+        """
+        [EN]
+        The current retriever (created lazily, configured from ``config.retrieval``).
+
+        [ZH]
+        当前检索器（惰性创建，配置取自 ``config.retrieval``）。
+        """
         if self._retriever is None:
             from retrieval import Retriever, config_view
 
@@ -2722,10 +3950,22 @@ class Backend:
         return self._retriever
 
     def index_files(self) -> Dict[str, Any]:
-        """把**当前上下文里的文件**同步进索引（增量的：只补新文件、只删已移除的）。
+        """
+        [EN]
+        Synchronize **the files currently in the context** into the index (incrementally: only
+        new files are added, only removed files are deleted).
 
-        为什么每次注入前同步而不是"上传时索引一次"：文件可以经 /file、拖拽、
-        会话恢复三条路径进来，还有同名替换；统一在"要用的时候对齐一次"最不容易漏。
+        Why synchronize before every injection instead of "index once at upload": files can
+        enter through /file, drag and drop, and session restoration, and same-name replacement
+        is possible; aligning once "at the moment of use" is the least error-prone option. The
+        alignment itself is an in-memory operation (measured under 20 ms for 47 KB), so it is
+        not a performance concern.
+
+        [ZH]
+        把**当前上下文中的文件**同步进索引（增量：只补充新文件、只删除已移除的文件）。
+
+        为什么在每次注入前同步而不是"上传时索引一次"：文件可经 /file、拖拽、
+        会话恢复三条路径进入，且存在同名替换；统一在"使用时对齐一次"最不容易遗漏。
         对齐本身是纯内存操作（47 KB 实测 < 20 ms），不构成性能问题。
         """
         retriever = self.retriever()
@@ -2761,25 +4001,54 @@ class Backend:
         return retriever.stats()
 
     def retrieval_diagnostics(self) -> Dict[str, Any]:
-        """检索的可观测状态（供 /status、测试与排查用）。"""
+        """
+        [EN]
+        Observable retrieval state (for /status, tests, and troubleshooting).
+
+        [ZH]
+        检索的可观测状态（供 /status、测试与排查使用）。
+        """
         stats = dict(self.retriever().stats())
         stats["last_query"] = getattr(self, "_last_retrieval", None)
         return stats
 
     def _retrieval_context_for(self, user_msg: str) -> str:
-        """按"摘要 vs 检索"的分工决定要不要注入检索片段。
+        """
+        [EN]
+        Decide whether retrieval fragments should be injected, based on the division of labour
+        between "summary" and "retrieval".
+
+        Rules (consistent with the module description in ``backend/retrieval.py``):
+          * no files, or retrieval disabled -> inject nothing;
+          * the file is a **short document** (can be injected in full) -> do not retrieve; the
+            full text is more accurate;
+          * the file is a **long document** (already spilled to disk or already summarized) ->
+            retrieve the top-k fragments and inject them.
+
+        **A "the question mentions a file" requirement is deliberately no longer applied.**
+        Retrieval is cheap and self-validating: a query with no hits (``as_context`` returns an
+        empty string) injects nothing anyway. Retaining that gate meant questions that do not
+        name the file, such as "what is the penalty rate", failed to retrieve -- while
+        multi-document Q&A specifically requires that users need not name the file (this was
+        the observed symptom in the first round of testing).
+        (Task 1 supplement: the full-text injection path also carried the same gate, which was
+        the root cause of "the model does not see the file content after upload"; that gate has
+        now been removed as well, see ``include_file`` in ``_stream_chat``.)
+
+        [ZH]
+        按"摘要 vs 检索"的分工决定是否注入检索片段。
 
         规则（与 ``backend/retrieval.py`` 模块说明一致）：
-          * 没有文件、或检索被关掉 → 不注入；
-          * 文件是**短文档**（能全文注入）→ 不检索，全文更准；
+          * 没有文件、或检索被关闭 → 不注入；
+          * 文件是**短文档**（可全文注入）→ 不检索，全文更准确；
           * 文件是**长文档**（已落盘或已生成摘要）→ 检索 top-k 片段注入。
 
-        **刻意不再要求"问题里提到文件"**。检索本身又便宜又能自证：没有命中的查询
-        （``as_context`` 返回空串）本来就不会注入任何东西。若沿用那道闸门，
-        "违约金比例是多少"这种**不点名文件**的提问反而检索不到 —— 而多文档问答
-        恰恰要求用户不必点名（首轮实测就是这个症状）。
-        （任务一补充：全文注入那条路径原先也挂着同一道闸门，那正是"上传文件后模型
-        回答没有看到文件内容"的根因；现已一并取消，见 ``_stream_chat`` 的
+        **刻意不再要求"问题中提及文件"**。检索本身成本低且可自证：没有命中的查询
+        （``as_context`` 返回空串）本来就不会注入任何内容。若沿用该开关，
+        "违约金比例是多少"这类**不点名文件**的提问反而检索不到 —— 而多文档问答
+        恰恰要求用户不必点名（首轮实测即为此症状）。
+        （任务一补充：全文注入路径原先也挂有同一开关，这正是"上传文件后模型
+        回答看不到文件内容"的根因；现已一并取消，见 ``_stream_chat`` 的
         ``include_file``。）
         """
         cfg = getattr(self.config, "retrieval", None)
@@ -2807,15 +4076,30 @@ class Backend:
         return context
 
     def configure_agent(self, tool: str = "", allowed: Any = True) -> Dict[str, Any]:
-        """``/agent`` 的写入口：读取状态、开关某个工具的权限、改进度上限。
+        """
+        [EN]
+        Write entry point for ``/agent``: read state, toggle a tool's permission, or change the
+        step limit.
 
-        调用形状（由 ``CommandHandler._agent`` 决定）：
+        Call shapes (decided by ``CommandHandler._agent``):
+          * ``configure_agent()``                    -> read state only
+          * ``configure_agent("web_search", True)``  -> authorize
+          * ``configure_agent("__steps__", 5)``      -> change the step limit
+
+        Permissions and the step limit are written to ``config.json`` (``config.save()``): one
+        user press persists them. Otherwise every restart would require re-authorization,
+        which would in practice be criticized and lead to the whole feature being disabled.
+
+        [ZH]
+        ``/agent`` 的写入口：读取状态、开关某个工具的权限、修改步数上限。
+
+        调用形式（由 ``CommandHandler._agent`` 决定）：
           * ``configure_agent()``                    → 只读状态
           * ``configure_agent("web_search", True)``  → 授权
-          * ``configure_agent("__steps__", 5)``      → 改进度上限
+          * ``configure_agent("__steps__", 5)``      → 修改步数上限
 
-        权限与步数都写进 ``config.json``（``config.save()``）：用户按一次就长期生效，
-        否则每次重启都要重新授权，实际使用中一定会被吐槽然后被关掉整个功能。
+        权限与步数均写入 ``config.json``（``config.save()``）：用户按一次即长期生效，
+        否则每次重启都要重新授权，实际使用中必然引发不满并导致该功能被整体关闭。
         """
         registry = self.agent_registry()
         cfg = getattr(self.config, "agent", None)
@@ -2838,23 +4122,51 @@ class Backend:
         return self.agent_diagnostics()
 
     def _vague_guide(self, user_msg: str) -> str:
-        """提问过于模糊时该回的**引导话术**；不该拦就返回空串。
+        """
+        [EN]
+        The **guidance text** to return when the question is too vague; return an empty string
+        when it should not be intercepted.
 
-        修复四（方向七）原本的机制是"先追问要材料"，v0.2.1 系统提示词重构把它升级成
-        **引导**：列出 2~3 种可能的方向、每种配一句做法，让用户回一个编号。
+        The original mechanism (fix 4, direction 7) was "ask a follow-up question requesting
+        material"; the v0.2.1 system-prompt rework upgraded it to **guidance**: list 2-3
+        possible directions, each with a one-line approach, and let the user reply with a
+        number.
 
-        只在"没有文件上下文、也没有历史"时触发：已经有上下文的情况下"这个怎么办"
-        往往指的是上文内容，引导反而多余。
+        It triggers only when there is neither file context nor history: with context present,
+        "what should I do about this" usually refers to the preceding content, and guidance
+        would be redundant.
 
-        **两种情况下不拦**（能力扩展-1 任务一之后，guide 不再是模式而是任务模板）：
-        ``/task guide``（用户明确要模型自己列方向）与 agent 模式（模型本来就要自己
-        决定做什么）。判据从"模式名等于 guide"改成了"任务层就是 guide 模板"。
+        **Two cases are not intercepted** (after capability extension-1, task 1, guide is no
+        longer a mode but a task template): ``/task guide`` (the user explicitly wants the model
+        to list directions) and agent mode (the model is already meant to decide what to do).
+        The predicate changed from "mode name equals guide" to "the task layer is the guide
+        template".
 
-        抽成方法是因为**两个调用点必须一致**：上一轮的集成测试发现这条判断原先只写在
-        `_handle_chat` 里，而前端正常对话走的是 `stream()` 的 `chat_stream` ——
-        也就是说"模糊提问给方向/追问"在图形界面里从来没生效过（历史遗留缺陷，
-        见 records/v0.2.1-系统提示词重构记录.md）。修法不是把代码复制到第二个地方，
-        而是只有这一份。
+        It is a method because **the two call sites must agree**: an earlier round of
+        integration testing found that this check existed only in `_handle_chat`, while normal
+        frontend conversations use `chat_stream` from `stream()` -- in other words, "offer
+        directions / ask follow-up for vague questions" never took effect in the GUI (a
+        historical defect, see records/v0.2.1-系统提示词重构记录.md). The fix is not to copy
+        the code to a second site, but to keep only this one copy.
+
+        [ZH]
+        提问过于模糊时应返回的**引导话术**；不应拦截时返回空串。
+
+        修复四（方向七）的原本机制是"先追问要材料"，v0.2.1 系统提示词重构将其升级为
+        **引导**：列出 2~3 种可能的方向、每种配一句做法，让用户回复一个编号。
+
+        仅在"没有文件上下文、也没有历史"时触发：已有上下文时"这个怎么办"
+        往往指代上文内容，引导反而多余。
+
+        **两种情况下不拦截**（能力扩展-1 任务一之后，guide 不再是模式而是任务模板）：
+        ``/task guide``（用户明确要模型自行列出方向）与 agent 模式（模型本来就要自行
+        决定做什么）。判据从"模式名等于 guide"改为"任务层就是 guide 模板"。
+
+        抽成方法是因为**两个调用点必须一致**：上一轮集成测试发现该判断原先只写在
+        `_handle_chat` 中，而前端正常对话走的是 `stream()` 的 `chat_stream` ——
+        也就是说"模糊提问给方向/追问"在图形界面中从未生效（历史遗留缺陷，
+        见 records/v0.2.1-系统提示词重构记录.md）。修法不是把代码复制到第二个位置，
+        而是只保留这一份。
         """
         if not bool(getattr(self.config, "clarify_vague", True)):
             return ""
@@ -2878,7 +4190,9 @@ class Backend:
                 self._merge_action(response, action)
             return response
 
-        # 任务一：无模型时不走推理，直接给引导（并记进历史，用户切回来后能看到上下文）
+        # [EN] Task 1: with no model, skip inference and return guidance directly (and record
+        # [EN] it in history so the user sees the context after switching back).
+        # [ZH] 相关设计：无模型时不走推理，直接给出引导（并记入历史，用户切回后能看到上下文）。
         if not self.model_ready:
             guide = self.guide_text()
             self.conv.add_message("user", user_msg)
@@ -2886,7 +4200,9 @@ class Backend:
             self._compact_history()
             return {"type": "assistant", "content": guide, "model_ready": False, "guide": True}
 
-        # 意图短路：用户问"我刚才说了什么"时直接引用最近输入，避免小模型混淆视角
+        # [EN] Intent short-circuit: when the user asks "what did I just say", quote the most
+        # [EN] recent input directly to prevent small models from confusing the perspective.
+        # [ZH] 意图短路：用户询问"我刚才说了什么"时直接引用最近输入，避免小模型混淆视角。
         last_user = self.conv.last_user_message()
         if last_user and REPEAT_INTENT.search(user_msg):
             answer = _t("sys.repeat_intent", text=last_user)
@@ -2895,9 +4211,14 @@ class Backend:
             self._compact_history()
             return {"type": "assistant", "content": answer}
 
-        # 修复四（方向七）+ v0.2.1 系统提示词重构：提问过模糊时先给**引导**
-        # （列 2~3 种可能方向让用户挑），而不是硬答、也不是反过来要材料。
-        # 判断本体在 _vague_guide 里 —— 流式路径（前端正常对话）与非流式路径共用同一份。
+        # [EN] Fix 4 (direction 7) plus the 此前版本 system-prompt rework: when the question is too
+        # [EN] vague, give **guidance** first (list 2-3 possible directions for the user to
+        # [EN] choose), rather than answering blindly or requesting material. The predicate
+        # [EN] lives in _vague_guide, shared by the streaming path (normal frontend
+        # [EN] conversations) and the non-streaming path.
+        # [ZH] 兼容性修正（方向七）+ 此前版本 系统提示词重构：提问过于模糊时先给出**引导**
+        # [ZH] （列出 2~3 种可能方向供用户选择），而不是强行作答或反向索取材料。
+        # [ZH] 判断本体在 _vague_guide 中 —— 流式路径（前端正常对话）与非流式路径共用同一份。
         guide = self._vague_guide(user_msg)
         if guide:
             self.conv.add_message("user", user_msg)
@@ -2906,22 +4227,40 @@ class Backend:
             return {"type": "assistant", "content": guide, "clarify": True}
 
         search_context = self._search_if_enabled(user_msg)
-        # 任务一（自测问题修复-1）：**不再拿"问题里提到文件"当闸门**。
-        # 旧写法 `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
-        # 直接造成"上传文件后模型回答没有看到文件内容"：用户问「帮我总结一下」
-        # 「分析一下」「甲方是谁」时一个 FILE_INTENT 关键词都不含，文件正文便一个字
-        # 都没进上下文，模型只看得到系统提示里的文件名，于是据实回答"没有看到内容"。
-        # 检索路径早就得出过同一结论（见 _retrieval_context_for 的说明：那道闸门会让
-        # "违约金比例是多少"这种不点名的提问检索不到），只是全文注入这条路径没跟上。
-        # 旧写法里的 `bool(self.conv.file_content)` 对大文件同样是错的：正文超过
-        # files.disk_threshold_chars 会落盘、entry.content 被清空，闸门随之恒为假。
-        # 现在改成"有文件就注入"，长度仍由 files.total_chars 预算约束。
+        # [EN] Task 1 (self-test fix-1): **the gate "the question mentions a file" is removed**.
+        # [EN] The old form `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
+        # [EN] caused "the model does not see the file content after a file is uploaded": for
+        # [EN] questions such as "summarize this", "analyze this", or "who is the counterparty"
+        # [EN] no FILE_INTENT keyword matches, so not a single character of the file body
+        # [EN] entered the context; the model saw only the file name in the system prompt and
+        # [EN] truthfully answered that no content was visible. The retrieval path had already
+        # [EN] reached the same conclusion (see _retrieval_context_for: that gate prevented
+        # [EN] unnamed questions such as "what is the penalty rate" from retrieving), but the
+        # [EN] full-text injection path had not followed. The old
+        # [EN] `bool(self.conv.file_content)` is also wrong for large files: a body above
+        # [EN] files.disk_threshold_chars is spilled to disk and entry.content is cleared, so
+        # [EN] the gate was permanently false. The rule is now "inject whenever a file exists",
+        # [EN] and the length is still bounded by the files.total_chars budget.
+        # [ZH] 相关设计（自测问题修复-1）：**不再以"问题中是否提到文件"作为注入开关**。
+        # [ZH] 旧写法 `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
+        # [ZH] 直接造成"上传文件后模型回答看不到文件内容"：用户提问「帮我总结一下」
+        # [ZH] 「分析一下」「甲方是谁」时不包含任何 FILE_INTENT 关键词，文件正文便一个字
+        # [ZH] 都未进入上下文，模型只能看到系统提示中的文件名，于是如实回答"没有看到内容"。
+        # [ZH] 检索路径早已得出同一结论（见 _retrieval_context_for 的说明：该开关会使
+        # [ZH] "违约金比例是多少"这类不点名的提问检索不到），只是全文注入这条路径未同步。
+        # [ZH] 旧写法中的 `bool(self.conv.file_content)` 对大文件同样不正确：正文超过
+        # [ZH] files.disk_threshold_chars 会落盘、entry.content 被清空，开关随之恒为假。
+        # [ZH] 现在改为"有文件即注入"，长度仍由 files.total_chars 预算约束。
         include_file = self.conv.has_file()
         messages = self.conv.build_messages(user_msg, search_context, include_file=include_file,
                                             retrieval_context=self._retrieval_context_for(user_msg))
-        # 任务十（自测问题修复-1）：这一条路径同样要记下"本轮真正发出去多少"。
-        # 它是**非流式**回答路径，漏掉它的话，走这条路时状态区的数字会一直停在上一次
-        # 流式请求的结果上 —— 那正是任务十要消除的那类"显示与真实不符"。
+        # [EN] Task 10 (self-test fix-1): this path must also record "how much was actually sent
+        # [EN] this turn". It is the **non-streaming** answer path; omitting it leaves the status
+        # [EN] area showing the result of the previous streaming request -- exactly the class of
+        # [EN] "display does not match reality" that task 10 eliminates.
+        # [ZH] 相关设计（自测问题修复-1）：这条路径同样需要记录"本轮实际发出多少"。
+        # [ZH] 它是**非流式**回答路径，缺了它则状态区数字会一直停在上一次流式请求的结果上
+        # [ZH] —— 这正是相关设计要消除的那类"显示与真实不符"。
         self._note_request_size(messages)
         try:
             thinking, response = self.llm.chat_complete_split(
@@ -2936,7 +4275,9 @@ class Backend:
             self._compact_history()
             result: Dict[str, Any] = {"type": "assistant", "content": response}
             if thinking:
-                # 同一份内容分别给两条通道（任务四）：界面折叠展示思考、只显示答案
+                # [EN] The same content is delivered on two channels (task 4): the UI displays
+                # [EN] the reasoning collapsed and shows only the answer.
+                # [ZH] 同一份内容分别提供给两条通道（相关设计）：界面折叠展示思考、只显示答案。
                 result["reasoning"] = thinking
             self._attach_context(result)
             return result
@@ -2945,12 +4286,25 @@ class Backend:
             return {"type": "system", "content": _t("sys.inference_failed", error=e)}
 
     def _stream_automation(self) -> Iterator[Dict[str, Any]]:
-        """跑一次浏览器自动化，把引擎的进度事件原样转发给前端。
+        """
+        [EN]
+        Run browser automation once and forward the engine's progress events to the frontend
+        unchanged.
+
+        Stopping: the frontend sends action=stop, which sets stop_event; the engine exits its
+        loops as early as possible.
+
+        [ZH]
+        运行一次浏览器自动化，把引擎的进度事件原样转发给前端。
 
         停止：前端发送 action=stop 会置位 stop_event，引擎在各循环处尽早退出。
         """
-        # 任务一的功能边界：自动化里"生成摘要/审核意见"那一步依赖模型，
-        # 无模型时先给引导，别让整轮任务跑到一半才失败（既浪费时间又留下半份结果）。
+        # [EN] Functional boundary of task 1: the "generate summary / review opinion" step of
+        # [EN] automation depends on the model. With no model, provide guidance first so the
+        # [EN] whole task does not fail halfway through (which wastes time and leaves partial
+        # [EN] results).
+        # [ZH] 相关设计的功能边界：自动化中"生成摘要/审核意见"这一步依赖模型。
+        # [ZH] 无模型时先给出引导，避免整轮任务执行到一半才失败（既浪费时间又留下半份结果）。
         if not self.model_ready:
             yield {"type": "error",
                    "content": _t("sys.automation_need_model",
@@ -2960,7 +4314,9 @@ class Backend:
         engine = self.automation()
         try:
             for event in engine.run(stop_event=self.stop_event):
-                # 结束时把结果也写进对话历史，便于后续提问引用
+                # [EN] On completion, also write the result into the conversation history so
+                # [EN] later questions can reference it.
+                # [ZH] 结束时把结果也写入对话历史，便于后续提问引用。
                 if event.get("type") == "done":
                     summary = str(event.get("content") or "")
                     if summary:
@@ -2972,7 +4328,9 @@ class Backend:
             log.exception("自动化执行失败")
             yield {"type": "error", "content": _t("sys.automation_run_failed", error=e)}
         finally:
-            # 兜底清理下载临时目录（引擎按任务清理文件，这里连同本轮的空目录一并清掉）
+            # [EN] Fallback cleanup of the download temp directory (the engine cleans files per
+            # [EN] task; this additionally removes the empty directories of this run).
+            # [ZH] 兜底清理下载临时目录（引擎按任务清理文件，此处连同本轮的空目录一并清除）。
             try:
                 removed = engine.cleanup_temp()
                 if removed:
@@ -2981,10 +4339,20 @@ class Backend:
                 log.warning("自动化临时目录清理失败", exc_info=True)
 
     def _stream_automation_pick(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
-        """可视化选取选择器（任务书 4.2）：在真实页面上点一下元素即生成选择器。
+        """
+        [EN]
+        Visual selector picking (task 4.2): click an element on the real page to generate a
+        selector.
 
-        之所以走流式通道：用户可能要在页面上登录、点几下，耗时以分钟计，
-        前端需要实时进度、并且能随时停止（关掉浏览器窗口）。
+        This is streamed because the user may need to log in and interact with the page, which
+        can take minutes; the frontend needs live progress and must be able to stop at any time
+        (by closing the browser window).
+
+        [ZH]
+        可视化选取选择器（任务书 4.2）：在真实页面上点击元素即生成选择器。
+
+        之所以走流式通道：用户可能需要在页面上登录、点击操作，耗时以分钟计，
+        前端需要实时进度，并且能够随时停止（关闭浏览器窗口）。
         """
         target = str(request.get("target") or "task_list")
         url = str(request.get("url") or self.config.automation.task_list_url or "").strip()
@@ -3004,7 +4372,14 @@ class Backend:
             yield {"type": "error", "content": _t("sys.automation_pick_failed", error=e)}
 
     def _apply_picked_selector(self, target: str, selector: str) -> None:
-        """把选取结果写入配置（前端只负责展示，落盘由后端统一做，避免双写）。"""
+        """
+        [EN]
+        Write the picking result into the configuration (the frontend only displays it; the
+        backend persists it centrally to avoid double writes).
+
+        [ZH]
+        把选取结果写入配置（前端只负责展示，落盘由后端统一执行，避免双写）。
+        """
         field = {
             "task_list": "task_list_selector",
             "task_row": "task_row_selector",
@@ -3023,17 +4398,25 @@ class Backend:
             log.warning("保存可视化选取结果失败", exc_info=True)
 
     # =====================================================================
-    # 任务十七：复用已打开的浏览器 + 两段式可视化选取（自测问题修复-1）
-    # =====================================================================
-    # 任务十七：复用已打开的浏览器 + 两段式可视化选取（自测问题修复-1）
+    # 相关设计：复用已打开的浏览器 + 两段式可视化选取（自测问题修复-1）
+    # [EN] Task 17: reuse an already-open browser and two-phase visual selection (self-test
+    # [EN] fix-1).
+    # [ZH] 相关设计：复用已打开的浏览器 + 两段式可视化选取（自测问题修复-1）。
     # =====================================================================
 
-    #: 两段式选取里"登录检测元素"的落盘字段。
+    #: [EN] Persistence field for the "login check element" in two-phase selection.
     #:
-    #: **必须是类属性、且用 ``self.`` 访问**：方法体里的裸名字走 LEGB，找不到类作用域
-    #: （automation.py 的 ``_target_label`` 就因为这个踩过坑）。既有
-    #: ``_apply_picked_selector`` 的映射表没有 login_check，会**静默丢弃**这个选择器，
-    #: 而配置里确实有 ``login_check_selector`` 这一项，所以在这里补映射。
+    #: It **must be a class attribute and accessed via ``self.``**: a bare name inside a method
+    #: body follows LEGB and cannot see the class scope (automation.py's ``_target_label`` hit
+    #: exactly this problem). The mapping table of the existing ``_apply_picked_selector`` has
+    #: no login_check entry, so it would **silently discard** this selector even though the
+    #: configuration does have ``login_check_selector``; the mapping is added here.
+    #: [ZH] 两段式选取中"登录检测元素"的落盘字段。
+    #:
+    #: **必须是类属性、且通过 ``self.`` 访问**：方法体中的裸名字走 LEGB，找不到类作用域
+    #: （automation.py 的 ``_target_label`` 曾因此出现问题）。既有
+    #: ``_apply_picked_selector`` 的映射表没有 login_check，会**静默丢弃**该选择器，
+    #: 而配置中确实有 ``login_check_selector`` 这一项，因此在此补充映射。
     _PICK_EXTRA_FIELDS: Dict[str, str] = {"login_check": "login_check_selector"}
 
     # 这一组是**新增**的处理器，没有改动任何既有函数的函数体：
@@ -3041,12 +4424,23 @@ class Backend:
     # 原样保留，WPF 界面与既有测试继续照旧工作。
 
     def _automation_browser_payload(self) -> Dict[str, Any]:
-        """把"复用已打开的浏览器"的当前能力状态给前端（不含任何凭据）。"""
+        """
+        [EN]
+        Build the browser-status payload returned to the frontend.
+
+        [ZH]
+        把"复用已打开的浏览器"的当前能力状态给前端（不含任何凭据）。
+        """
         engine = self.automation()
         return engine.browser_reuse_payload()
 
     def _handle_automation_browser_reuse(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """查询/设置"复用已打开的浏览器"（任务十七 A：三档连接方式）。
+        """
+        [EN]
+        Handle reuse of an existing automation browser session.
+
+        [ZH]
+        查询/设置"复用已打开的浏览器"（相关设计 A：三档连接方式）。
 
         ``set`` 非空时按 patch 写配置——**只认白名单里的三个字段**，
         免得前端顺手把别的配置项也改了。之所以不并入 ``automation_config_set``：
@@ -3072,14 +4466,19 @@ class Backend:
         # **必须在写完配置之后再取引擎**：`AutomationEngine.cfg` 指向的是一个配置对象，
         # 上面那句 `self.config.automation = AutomationConfig(...)` 换掉了那个对象，
         # 而 `Backend.automation()` 只在被调用时才会把新对象绑给引擎。
-        # 先取引擎的话，这里回给前端的会是**改动前**的旧值（实测踩到过：
+        # 先取引擎的话，这里回给前端的会是**改动前**的旧值（验证踩到过：
         # 界面点了"必须复用"却仍显示"自动"）。
         engine = self.automation()
         return {"type": "system", "content": "",
                 "browser_reuse": engine.browser_reuse_payload()}
 
     def _handle_automation_launch_debug_browser(self, _request: Dict[str, Any]) -> Dict[str, Any]:
-        """用调试模式启动一个浏览器（任务十七 A.2 的入口）。
+        """
+        [EN]
+        Launch a debuggable browser for automation setup.
+
+        [ZH]
+        用调试模式启动一个浏览器（相关设计 A.2 的入口）。
 
         **这个浏览器不由程序关闭**：用户可以自己在里面登录、导航，程序只连上去用一下。
         """
@@ -3094,7 +4493,12 @@ class Backend:
                 "browser_debug": result}
 
     def _handle_automation_pick_step(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """两段式可视化选取的统一入口（open / begin / status / cancel / close）。
+        """
+        [EN]
+        Handle one step of the visual selector-picking flow.
+
+        [ZH]
+        两段式可视化选取的统一入口（open / begin / status / cancel / close）。
 
         每一步都返回**完整的当前状态**（``pick``），前端只负责照着显示：
         状态机在后端，刷新界面、切换设置页都不会把它弄丢；也因此"选取中"这个
@@ -3152,7 +4556,13 @@ class Backend:
         return {"type": "system", "content": content, "pick": payload}
 
     def _save_automation_field(self, field: str, value: str) -> None:
-        """把单个自动化配置字段写盘（与 ``_apply_picked_selector`` 同一口径）。"""
+        """
+        [EN]
+        Persist a single automation configuration field.
+
+        [ZH]
+        把单个自动化配置字段写盘（与 ``_apply_picked_selector`` 同一口径）。
+        """
         data = self.config.automation.model_dump()
         if field not in data:
             return
@@ -3165,7 +4575,12 @@ class Backend:
             log.warning("保存可视化选取结果失败", exc_info=True)
 
     def _stream_automation_wizard(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
-        """测试选择器向导（任务书 4.5）：第 4 步需要跑一次真实任务，因此走流式。
+        """
+        [EN]
+        Stream the automation configuration wizard responses.
+
+        [ZH]
+        测试选择器向导（设计规范 4.5）：第 4 步需要跑一次真实任务，因此走流式。
 
         第 1~3 步由 ``automation_wizard_step`` 同步处理；这里只在 step=4 时使用。
         """
@@ -3193,7 +4608,12 @@ class Backend:
                 pass
 
     def _stream_model_hub_download(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
-        """下载模型库中选定的 GGUF 文件（新增四）。
+        """
+        [EN]
+        Stream a model-hub download with progress events.
+
+        [ZH]
+        下载模型库中选定的 GGUF 文件（新增四）。
 
         进度以 delta 行输出（百分比 + 速度 + 剩余时间），前端实时显示；
         前端发送 action=stop 可取消，取消时保留 ``.part`` 断点，下次继续。
@@ -3220,7 +4640,13 @@ class Backend:
         latest: Dict[str, str] = {"line": ""}
 
         def _progress(info: Dict[str, Any]) -> None:
-            """字节级进度 → 一行人类可读文本（速度与剩余时间，任务书要求）。"""
+            """
+            [EN]
+            Report progress for a long-running operation.
+
+            [ZH]
+            字节级进度 → 一行人类可读文本（速度与剩余时间，设计规范要求）。
+            """
             if "retry" in info:
                 latest["line"] = _t("sys.hub_download_retry", attempt=info.get("attempt"),
                                     retries=info.get("retries"), error=info.get("error"))
@@ -3274,7 +4700,7 @@ class Backend:
                 self.conv.add_message("assistant", _t("sys.model_downloaded_to_library",
                                                      name=os.path.basename(path)))
                 self._compact_history()
-                # 任务五：下载完成后**就地热加载**，用户不必重启进程/前端。
+                # 相关设计：下载完成后**就地热加载**，用户不必重启进程/前端。
                 # 失败（损坏、格式不支持、内存不足）时保持无模型状态并给出原因与重试路径。
                 yield {"type": "delta", "content": _t("sys.model_hot_loading",
                                                       name=os.path.basename(path))}
@@ -3302,14 +4728,25 @@ class Backend:
             return {"type": "system", "content": _t("sys.file_need_path")}
         return {"type": "system", "content": self.load_file_into_context(filepath)}
 
-    # ---------- 多文件（任务八） ----------
+    # ---------- 多文件（相关设计） ----------
 
     def _files_cfg(self):
-        """多文件配置（老配置文件没有这一段时回落到默认值）。"""
+        """
+        [EN]
+        Return the file-handling configuration section.
+
+        [ZH]
+        多文件配置（老配置文件没有这一段时回落到默认值）。
+        """
         return getattr(self.config, "files", None) or FilesConfig()
 
     def _disk_store_dir(self) -> str:
-        """大文件正文的落盘目录（``results`` 同级的 ``file_cache``）。
+        """
+        [EN]
+        Return the directory used for large file storage.
+
+        [ZH]
+        大文件正文的落盘目录（``results`` 同级的 ``file_cache``）。
 
         放在程序目录下而不是临时目录：用户可能要按上下文里的指针去回查原文，
         临时目录会被系统清理，指针就失效了。
@@ -3322,7 +4759,13 @@ class Backend:
         return base
 
     def _store_large_file(self, name: str, content: str) -> str:
-        """把超大文件正文落盘，返回落盘路径（失败时返回空串，调用方按内存处理）。"""
+        """
+        [EN]
+        Store large file content on disk and return a pointer.
+
+        [ZH]
+        把超大文件正文落盘，返回落盘路径（失败时返回空串，调用方按内存处理）。
+        """
         try:
             safe = re.sub(r"[^\w.\-]+", "_", name or "file")[:80] or "file"
             stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -3336,10 +4779,15 @@ class Backend:
             return ""
 
     def load_file_into_context(self, filepath: str, progress_sink=None) -> str:
-        """解析单个文件并入上下文（多文件时是其中一份）。
+        """
+        [EN]
+        Load a single file into the conversation context.
+
+        [ZH]
+        解析单个文件并入上下文（多文件时是其中一份）。
 
         返回给用户看的反馈文本（成功或失败都会说明原因）。
-        ``progress_sink`` 透传给分段摘要（任务四：流式入口据此实时报进度）。
+        ``progress_sink`` 透传给分段摘要（相关设计：流式入口据此实时报进度）。
         实际由 :meth:`_load_one_file` 完成，本方法只保留"返回一行文本"的旧语义。
         """
         result = self._load_one_file(filepath, progress_sink=progress_sink)
@@ -3347,10 +4795,15 @@ class Backend:
 
     def _load_one_file(self, filepath: str, progress_sink=None,
                        allow_summary: bool = True) -> Dict[str, Any]:
-        """解析一份文件、登记到会话并按需分段摘要。
+        """
+        [EN]
+        Load and parse one file for context injection.
+
+        [ZH]
+        解析一份文件、登记到会话并按需分段摘要。
 
         返回 ``{"ok": bool, "name": str, "message": str, "chars": int, ...}`` ——
-        结构化结果让多文件场景能逐份报告状态（任务书要求"每个文件独立显示状态
+        结构化结果让多文件场景能逐份报告状态（设计规范要求"每个文件独立显示状态
         （成功、失败、进度）""单个失败不影响其他"）。
 
         ``allow_summary=False`` 时只解析不摘要（多文件分批汇总时用：先把所有文件
@@ -3384,7 +4837,7 @@ class Backend:
                 "文件 %s 约 %d tokens，超过窗口 %d 的 %.0f%%：转入分段摘要",
                 name, tokens, self.llm.n_ctx, self.config.summarize.trigger_ratio * 100,
             )
-            # 任务一：文件解析**不依赖模型**，必须照常完成；只有"分段摘要"这一步需要模型。
+            # 相关设计：文件解析**不依赖模型**，必须照常完成；只有"分段摘要"这一步需要模型。
             # 所以这里保留已解析的全文，只把摘要这一步换成引导（而不是整个加载失败）。
             if not self.model_ready:
                 return {"ok": True, "name": name, "chars": len(content), "tokens": tokens,
@@ -3406,10 +4859,15 @@ class Backend:
                 "message": _t("sys.file_loaded", name=name, chars=len(content), tokens=tokens)}
 
     def load_files_into_context(self, paths: List[str], progress_sink=None) -> Dict[str, Any]:
-        """按顺序加载多份文件（任务八），返回结构化汇总。
+        """
+        [EN]
+        Load multiple files into the conversation context.
+
+        [ZH]
+        按顺序加载多份文件（相关设计），返回结构化汇总。
 
         **单个失败不影响其他**：逐份独立 try/except，失败的那份只进 ``failed``
-        列表并在汇总里点名。任务书明确要求这一点，所以这里刻意不用"一次失败就
+        列表并在汇总里点名。设计规范明确要求这一点，所以这里刻意不用"一次失败就
         整体退出"的短路写法。
 
         数量上限由 ``config.files.max_count`` 控制，超出的文件**不处理**并在汇总里
@@ -3448,7 +4906,12 @@ class Backend:
         }
 
     def _stream_files(self, paths: List[str], stage: bool = False) -> Iterator[Dict[str, Any]]:
-        """流式加载多份文件（任务八）：逐份解析 + 逐份进度 + 逐份结果行。
+        """
+        [EN]
+        Stream file-loading progress and results.
+
+        [ZH]
+        流式加载多份文件（相关设计）：逐份解析 + 逐份进度 + 逐份结果行。
 
         与单文件 ``file_stream`` 的区别：这里在**文件之间**也有输出
         （``file_status`` 行：第 i/n 份、成功/失败、字符数），因此用户能看到
@@ -3524,7 +4987,13 @@ class Backend:
     @staticmethod
     def _drain_file_progress(progress: "queue.Queue", collected: List[Dict[str, Any]],
                              total: int) -> Iterator[Dict[str, Any]]:
-        """把进度队列里的内容转成协议行（摘要进度 / 逐份状态）。"""
+        """
+        [EN]
+        Drain queued file-progress events.
+
+        [ZH]
+        把进度队列里的内容转成协议行（摘要进度 / 逐份状态）。
+        """
         while True:
             try:
                 event = progress.get_nowait()
@@ -3555,7 +5024,7 @@ class Backend:
                 payload["file_name"] = meta.get("name")
             yield payload
 
-    # 任务一/任务十五（自测问题修复-1）：此处原有一个**重复定义**的旧版
+    # 相关设计/相关设计（自测问题修复-1）：此处原有一个**重复定义**的旧版
     # ``load_file_into_context``（单文件时代实现：走 ``conv.set_file``、没有落盘、
     # 也没有多文件的结构化返回）。Python 同名方法后定义者胜，于是上面那份
     # **带落盘与多文件登记的新实现反倒成了死代码**，单文件上传路径一直走着旧逻辑：
@@ -3565,16 +5034,21 @@ class Backend:
     # 现已删除旧版，统一由 ``_load_one_file`` 承担（解析 → 登记 → 落盘 → 摘要）。
     def summarize_current_file(self, force: bool = True, source_name: str = "",
                                trigger: str = "", progress_sink=None) -> str:
-        """对当前已加载文件做分段摘要并替换注入内容（供自动触发与 /summarize 调用）。
+        """
+        [EN]
+        Summarize the active file.
 
-        修复四（方向八：缓存与复用）：摘要结果按"文件指纹 + 摘要参数"缓存，
+        [ZH]
+        对当前已加载文件做分段摘要并替换注入内容（供自动触发与 /summarize 调用）。
+
+        兼容性修正（方向八：缓存与复用）：摘要结果按"文件指纹 + 摘要参数"缓存，
         同一文件二次上传/二次摘要直接命中缓存，不再重复跑 map-reduce
         （长文档一次摘要是几十次模型调用，重复计算代价很高）。
 
         ``trigger``（"自动"/"手动"）是**界面文本**：默认值留空，进来后按当前语言
         解析（不能在形参默认值里写 ``_t(...)``——那是导入时求值，会固化语言）。
 
-        ``progress_sink``（任务四）：传入一个可调用对象时，摘要过程中的结构化进度
+        ``progress_sink``（相关设计）：传入一个可调用对象时，摘要过程中的结构化进度
         事件会交给它（流式入口据此实时推给前端）；不传则退回"打到 stderr"的旧行为，
         这样非流式调用（``/summarize``、自动触发）不会往协议里插异步行。
         """
@@ -3587,7 +5061,12 @@ class Backend:
 
     def summarize_entry(self, entry, force: bool = True, source_name: str = "",
                         trigger: str = "", progress_sink=None) -> str:
-        """对**指定文件条目**做分段摘要（多文件下必须能指名道姓，任务八）。
+        """
+        [EN]
+        Summarize a specific file entry.
+
+        [ZH]
+        对**指定文件条目**做分段摘要（多文件下必须能指名道姓，相关设计）。
 
         与 ``summarize_current_file`` 的差别只有"作用于哪一份"：
         后者取当前活动文件，前者由调用方指定条目。
@@ -3595,7 +5074,7 @@ class Backend:
         trigger = trigger or _t("sys.summarize_trigger_manual")
         if entry is None or not (entry.content or entry.stored_at):
             return _t("cmd.resp.summarize_no_file")
-        # 任务一：无模型时摘要无从谈起，给引导而不是抛异常
+        # 相关设计：无模型时摘要无从谈起，给引导而不是抛异常
         if not self.model_ready:
             return _t("sys.summarize_need_model",
                       guide=_t("sys.no_model_guide", dir=self.models_dir()))
@@ -3638,8 +5117,14 @@ class Backend:
                 )
 
         def _progress(event: Dict[str, Any]) -> None:
-            """摘要进度（任务四）：有 sink 就交给流式入口实时推给前端，
-            没有就退回打到 stderr 的旧行为（不往协议里插异步行）。"""
+            """
+            [EN]
+            Report progress for a long-running operation.
+
+            [ZH]
+            摘要进度（相关设计）：有 sink 就交给流式入口实时推给前端，
+            没有就退回打到 stderr 的旧行为（不往协议里插异步行）。
+            """
             if progress_sink is not None:
                 try:
                     progress_sink(event)
@@ -3660,7 +5145,7 @@ class Backend:
             entry.content, source_name=name, force=force, on_progress=_progress,
             should_stop=lambda: self.stop_event.is_set(),
         )
-        # 任务四：把"慢"与"坏"分开报。中止/失败都不注入半份摘要，并保留重试路径。
+        # 相关设计：把"慢"与"坏"分开报。中止/失败都不注入半份摘要，并保留重试路径。
         if result.aborted:
             return _t("sys.summary_aborted", name=name, done=len(result.segments),
                       total=result.chunk_count, elapsed=f"{result.elapsed:.0f}")
@@ -3691,7 +5176,7 @@ class Backend:
             + _t("sys.summary_done_note") + "\n"
             + _t("sys.summary_done_pointer", pointer=shown)
         )
-        # 有段落走兜底时如实说明，不假装一切正常（任务四：真故障要给错误信息）
+        # 有段落走兜底时如实说明，不假装一切正常（相关设计：真故障要给错误信息）
         if result.status == "partial":
             text += "\n" + _t("sys.summary_partial_notice",
                               ok=result.ok_chunks + result.partial_chunks,
@@ -3704,7 +5189,12 @@ class Backend:
         return text
 
     def _summary_progress_text(self, event: Dict[str, Any]) -> str:
-        """把摘要进度事件转成一行人类可读文案（任务四：结构化数据 → 界面文本）。
+        """
+        [EN]
+        Format summary progress text for the frontend.
+
+        [ZH]
+        把摘要进度事件转成一行人类可读文案（相关设计：结构化数据 → 界面文本）。
 
         文案统一在这里按语言包解析：``summarizer.py`` 只产结构化字段，不含界面文案，
         这样摘要算法不必关心当前界面语言，也不会把语言固化在导入时。
@@ -3752,7 +5242,12 @@ class Backend:
         return ""
 
     def _stream_file(self, filepath: str) -> Iterator[Dict[str, Any]]:
-        """流式加载文件（任务四）：解析 → 必要时分段摘要 → 边跑边报进度。
+        """
+        [EN]
+        Stream a file operation with progress updates.
+
+        [ZH]
+        流式加载文件（相关设计）：解析 → 必要时分段摘要 → 边跑边报进度。
 
         为什么要有流式入口：非流式的 ``file`` 动作在整个摘要期间**没有一行输出**，
         小块模型 + 纯 CPU 下一段要跑几十秒，用户在界面上看到的就是"卡住了"。
@@ -3818,7 +5313,13 @@ class Backend:
         yield done
 
     def _handle_model_download(self, name: str) -> Dict[str, Any]:
-        """用户已同意后下载模型并热切换。"""
+        """
+        [EN]
+        Handle a model download request.
+
+        [ZH]
+        用户已同意后下载模型并热切换。
+        """
         if not name:
             return {"type": "system", "content": _t("sys.model_need_name")}
         try:
@@ -3834,7 +5335,12 @@ class Backend:
         return {"type": "system", "content": _t("sys.model_downloaded_and_loaded", name=name)}
 
     def _stream_model_download(self, name: str) -> Iterator[Dict[str, Any]]:
-        """流式下载模型：后台线程下载，逐条 yield 进度，最后 yield done/error。
+        """
+        [EN]
+        Stream model-download progress and completion.
+
+        [ZH]
+        流式下载模型：后台线程下载，逐条 yield 进度，最后 yield done/error。
 
         进度来自 download_model 的 on_progress 回调（字节 → 百分比）。
         """
@@ -3881,20 +5387,31 @@ class Backend:
         yield {"type": "done", "content": _t("sys.model_downloaded_and_loaded", name=name)}
 
     def _estimate_tokens(self, messages) -> int:
-        """用模型分词器估算消息 token 数；失败时按字符数粗略估算。"""
+        """
+        [EN]
+        Estimate token count for a text string.
+
+        [ZH]
+        用模型分词器估算消息 token 数；失败时按字符数粗略估算。
+        """
         try:
             return sum(len(self.llm.llm.tokenize(m["content"].encode("utf-8"))) for m in messages)
         except Exception:
             return sum(len(m["content"]) for m in messages) // 2
 
     def _note_request_size(self, messages) -> None:
-        """记下本轮**实际发给模型**的消息有多大（任务十，自测问题修复-1）。
+        """
+        [EN]
+        Record the size of the current model request.
+
+        [ZH]
+        记下本轮**实际发给模型**的消息有多大（相关设计，自测问题修复-1）。
 
         为什么需要它：状态区的上下文占用原来只算 ``system + history``
         （见 :meth:`_attach_context`），**完全没算这一轮注入的文件正文、检索片段与
         搜索结果** —— 而这三块恰恰是大头（文件块上限 60000 字符，比多数会话的历史还长）。
         于是用户看到的现象就是"占用远未到 1/3"，而它同时又"一会儿多一会儿少"：
-        少的那些轮次只是恰好没注入文件（修复任务一之前，文件注入与否取决于
+        少的那些轮次只是恰好没注入文件（修复相关设计之前，文件注入与否取决于
         问题里有没有"文件/合同/总结"这类词），多的那些轮次才是真实占用。
 
         **不去伪造一个"平均值"**：占用本来就会随注入内容变化，这是事实而不是缺陷。
@@ -3907,15 +5424,33 @@ class Backend:
 
     @staticmethod
     def _fmt_mb(n: int) -> str:
-        """把字节数格式化为可读的 MB 字符串，用于下载进度展示。"""
+        """
+        [EN]
+        Format a byte count in megabytes.
+
+        [ZH]
+        把字节数格式化为可读的 MB 字符串，用于下载进度展示。
+        """
         return f"{n / 1048576:.1f} MB"
 
     def _compaction_cfg(self):
-        """取压缩配置（老配置文件没有这一段时回落到默认值）。"""
+        """
+        [EN]
+        Return the conversation-compaction configuration.
+
+        [ZH]
+        取压缩配置（老配置文件没有这一段时回落到默认值）。
+        """
         return getattr(self.config, "compact", None) or CompactionConfig()
 
     def compact_log(self):
-        """压缩事件日志（惰性创建；``log_file`` 为空时返回 None）。"""
+        """
+        [EN]
+        Compact the conversation log when it exceeds its budget.
+
+        [ZH]
+        压缩事件日志（惰性创建；``log_file`` 为空时返回 None）。
+        """
         cfg = self._compaction_cfg()
         path = str(getattr(cfg, "log_file", "") or "")
         if not path:
@@ -3932,7 +5467,12 @@ class Backend:
 
     @staticmethod
     def _turn_start(history: List[dict], turns: int) -> int:
-        """返回"最近 ``turns`` 轮"的起始下标（grace zone 的左边界）。
+        """
+        [EN]
+        Return the index of the current turn's first message.
+
+        [ZH]
+        返回"最近 ``turns`` 轮"的起始下标（grace zone 的左边界）。
 
         轮的定义：一次 user 消息开始，到它的 assistant 回复为止。
         从末尾往前数 ``turns`` 个 user 消息，它们之前的位置就是要压缩的边界。
@@ -3950,7 +5490,12 @@ class Backend:
 
     @staticmethod
     def _truncate_tool_outputs(messages: List[dict], limit: int) -> tuple:
-        """把"大块内容"在进压缩器之前单独截断（任务书任务九·工具输出单独处理）。
+        """
+        [EN]
+        Truncate oversized tool outputs in the conversation.
+
+        [ZH]
+        把"大块内容"在进压缩器之前单独截断（设计规范相关设计·工具输出单独处理）。
 
         ``limit`` 为 0 时不截断。返回 ``(处理后的消息, 被截断条数, 省下的字符数)``。
 
@@ -3981,14 +5526,19 @@ class Backend:
 
     def _compact_history(self, force: bool = False, focus: str = "",
                          reason: str = "") -> Dict[str, Any]:
-        """上下文长度管理：把"装不下"的历史搬出上下文。
+        """
+        [EN]
+        Compact older conversation history into a summary.
+
+        [ZH]
+        上下文长度管理：把"装不下"的历史搬出上下文。
 
         三个模式（``config.compact`` 与 ``context_mode`` 共同决定）：
 
         * ``summarize``（默认）：更早的历史交给模型压成要点摘要，信息保留最好；
         * ``slide``：直接丢弃最早的历史（滑动窗口），不做额外推理，最快。
 
-        任务九（优化已知问题-2）改掉的三件事：
+        相关设计（优化已知问题-2）改掉的三件事：
 
         1. **触发按 token 比例**（``compact.trigger_ratio``，默认 0.70）而不是
            硬编码 80%，阈值可配；
@@ -4142,10 +5692,15 @@ class Backend:
         return result
 
     def compact_context(self, force: bool = True, focus: str = "") -> Dict[str, Any]:
-        """对外暴露的手动压缩入口（``/compact`` 与前端按钮共用）。
+        """
+        [EN]
+        Compact the model context when it exceeds its limit.
+
+        [ZH]
+        对外暴露的手动压缩入口（``/compact`` 与前端按钮共用）。
 
         ``focus`` 是用户指定的重点（``/compact focus on 合同金额``），
-        会追加到摘要提示词里（任务九"支持用户自定义重点"）。
+        会追加到摘要提示词里（相关设计"支持用户自定义重点"）。
 
         压缩后清掉 KV 缓存：历史变了，缓存不再对应，
         不清的话下一次生成会带着错误的注意力前缀。
@@ -4160,7 +5715,12 @@ class Backend:
         return result
 
     def compaction_diagnostics(self) -> Dict[str, Any]:
-        """压缩链路的可观测快照（任务九"压缩事件可追溯"的查询入口）。
+        """
+        [EN]
+        Return diagnostics about context compaction.
+
+        [ZH]
+        压缩链路的可观测快照（相关设计"压缩事件可追溯"的查询入口）。
 
         返回当前生效的阈值/保留策略、日志汇总、以及回放出的当前摘要 ——
         用户与测试都能据此回答"什么时候压的、压了什么、现在摘要是什么"。
@@ -4183,9 +5743,14 @@ class Backend:
         return info
 
     def _search_if_enabled(self, query: str) -> str:
-        """按开关执行搜索并返回**可注入上下文**的文本（不可用时为空串）。
+        """
+        [EN]
+        Run a web search when search is enabled.
 
-        优化已知问题-2 任务二：失败与"没搜到"都**如实记录**，并且把不可用的原因
+        [ZH]
+        按开关执行搜索并返回**可注入上下文**的文本（不可用时为空串）。
+
+        优化已知问题-2 相关设计：失败与"没搜到"都**如实记录**，并且把不可用的原因
         记进 ``self._last_search_note``，由 :meth:`_search_note` 转成给用户的一句话
         —— 旧实现把失败静默成空串，用户完全看不出"搜索其实没生效"，只看得出
         "回答里没有搜索结果"。
@@ -4200,7 +5765,7 @@ class Backend:
         self._last_search = outcome
         # 不可用：区分"失败"与"没有结果"，两者要给用户不同的说法
         if not outcome.ok:
-            # 任务二第 4 条（自测问题修复-1）：把底层异常**翻译成用户能理解的一类**。
+            # 相关设计第 4 条（自测问题修复-1）：把底层异常**翻译成用户能理解的一类**。
             # 旧写法直接把 outcome.error 塞进提示，用户看到的是
             # 「联网搜索失败（https://www.bing.com/search ConnectError: error sending
             #   request for url (…)）」—— 那是给开发者看的话，既没告诉他该怎么办，
@@ -4221,13 +5786,24 @@ class Backend:
         return ""
 
     def _search_note(self) -> str:
-        """取出上一次搜索的"为什么没用上"说明（无则空串）。"""
+        """
+        [EN]
+        Build the note describing search results.
+
+        [ZH]
+        取出上一次搜索的"为什么没用上"说明（无则空串）。
+        """
         return str(getattr(self, "_last_search_note", "") or "")
 
     def search_diagnostics(self) -> Dict[str, Any]:
-        """搜索链路的可观测快照（供状态区与测试断言四个环节）。
+        """
+        [EN]
+        Return diagnostics about the search subsystem.
 
-        任务书要求"逐环节排查"，所以这里把每个环节的结果都暴露出来：
+        [ZH]
+        搜索链路的可观测快照（供状态区与测试断言四个环节）。
+
+        设计规范要求"逐环节排查"，所以这里把每个环节的结果都暴露出来：
         是否开启、是否执行、返回条数、注入字符数、失败原因。
         """
         outcome = getattr(self, "_last_search", None)
@@ -4238,7 +5814,7 @@ class Backend:
             "results": int(outcome.count) if outcome is not None else 0,
             "elapsed_ms": int(outcome.elapsed_ms) if outcome is not None else 0,
             "error": str(outcome.error) if outcome is not None else "",
-            # 任务二：把"失败类别"与"实际生效的搜索源"也暴露出来，
+            # 相关设计：把"失败类别"与"实际生效的搜索源"也暴露出来，
             # 国内网络下"主源永远失败、真正干活的是内建 Bing 源"这件事
             # 必须能从诊断里看出来，否则排查会一直盯着 duckduckgo 打转。
             "error_kind": str(getattr(outcome, "error_kind", "")) if outcome is not None else "",
@@ -4248,14 +5824,26 @@ class Backend:
 
     @staticmethod
     def _merge_action(response: Dict[str, Any], action: Dict[str, Any]) -> None:
-        """把动作字段并入响应（不覆盖 type）。"""
+        """
+        [EN]
+        Merge an automation action into the pending action map.
+
+        [ZH]
+        把动作字段并入响应（不覆盖 type）。
+        """
         for key, value in action.items():
             if key != "type":
                 response[key] = value
 
 
 class ModelMissing(Exception):
-    """本地缺少模型：携带仓库中最匹配的文件名与体积，交由前端征询用户后再下载。"""
+    """
+    [EN]
+    Raised when the configured model file is missing.
+
+    [ZH]
+    本地缺少模型：携带仓库中最匹配的文件名与体积，交由前端征询用户后再下载。
+    """
 
     def __init__(self, filename: str, size: Optional[int] = None, repo: str = "") -> None:
         self.filename = filename
@@ -4265,7 +5853,7 @@ class ModelMissing(Exception):
 
 
 # ---------------------------------------------------------------------------
-# 旧行为已移除（v0.2.1 综合优化 任务一）：这里曾有两个函数
+# 旧行为已移除（此前版本 综合优化 相关设计）：这里曾有两个函数
 #   * `_await_download_decision()` —— 缺模型时**阻塞**读 stdin 等用户答复，
 #     收到 `exit` 或 stdin 关闭就返回 None，调用方随之结束进程；
 #   * `_download_with_progress()` —— 上面那个函数专用的一次性下载器
@@ -4280,7 +5868,7 @@ class ModelMissing(Exception):
 
 
 def main() -> None:
-    # 修复六：先把输出流切到 UTF-8 并判断能否安全输出 emoji。
+    # 兼容性修正：先把输出流切到 UTF-8 并判断能否安全输出 emoji。
     # 必须在任何输出之前执行——控制台代码页不是 UTF-8 时 emoji 会变成 "??"，
     # 那时再降级就已经晚了（日志/进度消息是边跑边打的）。
     emoji_mod.configure_streams()
@@ -4289,7 +5877,7 @@ def main() -> None:
 
     config = Config.load()
 
-    # 任务一：模型缺失**不再征询后退出**，而是以"无模型就绪"状态继续跑。
+    # 相关设计：模型缺失**不再征询后退出**，而是以"无模型就绪"状态继续跑。
     # 这里只做一次"模型在不在"的判断；缺模型时先把 Backend 建起来（引擎留空），
     # 稍后在 ready 之前发一条**非阻塞**的 need_download 告知前端。
     model_path = check_model(config.model_path)
@@ -4309,7 +5897,7 @@ def main() -> None:
                          ensure_ascii=False), flush=True)
         return
 
-    # v0.2.1 任务二：加载已安装技能与本地插件（发现/导入/注册命令）。
+    # 此前版本 相关设计：加载已安装技能与本地插件（发现/导入/注册命令）。
     # 放在预热之后：技能加载失败不会拖慢或阻塞主程序启动，且异常已被隔离。
     try:
         skill_summary = backend.load_skills()
@@ -4321,7 +5909,7 @@ def main() -> None:
         log.exception("技能加载阶段异常（已忽略）")
         skill_summary = {}
 
-    # 任务一：缺模型时告知前端（**非阻塞**）——前端据此显示引导，而不是弹"是否下载、
+    # 相关设计：缺模型时告知前端（**非阻塞**）——前端据此显示引导，而不是弹"是否下载、
     # 拒绝就退出"的强制选择。放在 ready 之前，前端渲染就绪状态时一次就能拿到全部信息。
     model_missing: Dict[str, Any] = {}
     if not backend.model_ready:
@@ -4369,13 +5957,13 @@ def main() -> None:
             "locale": _i18n().locale, "i18n": _i18n().info(),
             "commands": backend.commands.all_commands(),
             "skills": backend.skills().status(),
-            # 任务一：明确区分"后端已就绪"与"推理可用"
+            # 相关设计：明确区分"后端已就绪"与"推理可用"
             "model_ready": backend.model_ready,
             "model_state": backend.model_state(),
             "model_missing": model_missing,
-            # 修复六 / 修复七：告知前端 emoji 是否可用、数据目录在哪（合规与支持排查都要用）
+            # 兼容性修正 / 兼容性修正：告知前端 emoji 是否可用、数据目录在哪（合规与支持排查都要用）
             "emoji": emoji_mod.enabled(),
-            # 任务三：平台与能力边界 —— 前端据此显示降级横幅，并校验前后端平台判断一致
+            # 相关设计：平台与能力边界 —— 前端据此显示降级横幅，并校验前后端平台判断一致
             "platform": platform_support.report(),
             "paths": {"program": program_dir(), "data": user_data_root()}})
 
@@ -4407,7 +5995,7 @@ def main() -> None:
         if backend.stream_active and action != "stop":
             is_command = isinstance(request.get("message"), str) and request.get("message", "").startswith("/")
             if not is_command:
-                # busy 标记（v0.2.1 模型市场优化）：单条 stdout 是共享流，
+                # busy 标记（此前版本 模型市场优化）：单条 stdout 是共享流，
                 # 两个线程同时写会交错成坏 JSON，所以长任务期间一律拒绝并发请求。
                 # 带上结构化标记，界面才能说清"是后端忙"而不是"模型中心坏了"。
                 _write({"type": "system", "content": _t("sys.busy"), "busy": True})
@@ -4417,8 +6005,8 @@ def main() -> None:
                       "automation_pick", "automation_wizard", "file_stream", "model_hub_load"):
             # 八个长任务都走流式线程：进度实时输出，stop 可中断。
             # automation_* 还会检查 stop_event 尽早退出并关闭浏览器；
-            # file_stream（任务四）在分段摘要期间持续报进度，stop 能真正打断生成；
-            # model_hub_load（模型市场优化 任务二）按页报告"已取回 N 条"。
+            # file_stream（相关设计）在分段摘要期间持续报进度，stop 能真正打断生成；
+            # model_hub_load（模型市场优化 相关设计）按页报告"已取回 N 条"。
             if action in ("automation_run", "automation_pick", "automation_wizard") and backend.stream_active:
                 _write({"type": "system", "content": _t("sys.automation_running")})
                 continue
@@ -4435,7 +6023,7 @@ def main() -> None:
             else:
                 _write({"type": "system", "content": _t("sys.stop_none")})
         elif action in ("exit", "quit"):
-            # 任务一：退出只由用户主动触发。旧行为里"拒绝下载模型"也会走到这里，
+            # 相关设计：退出只由用户主动触发。旧行为里"拒绝下载模型"也会走到这里，
             # 现在缺模型时后端照常运行，这条路只剩前端"退出"按钮会用到。
             log_user(log, "sys.log_exit_requested")
             backend.save_session()
@@ -4460,6 +6048,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    # 进程级崩溃/异常钩子只在真正作为后端进程运行时安装（任务十五）。
+    # 进程级崩溃/异常钩子只在真正作为后端进程运行时安装（相关设计）。
     install_crash_handlers()
     main()

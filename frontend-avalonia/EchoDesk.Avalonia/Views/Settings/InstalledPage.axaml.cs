@@ -1,3 +1,5 @@
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/Settings/InstalledPage.axaml.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/Settings/InstalledPage.axaml.cs。类型与成员说明见下方注释。
 // 已安装页的交互逻辑（v0.2.1 跨平台-2 任务一，第 3 个迁移模块；
 // v0.2.2 第 4 批 3a 补齐插件生态全套）。
 //

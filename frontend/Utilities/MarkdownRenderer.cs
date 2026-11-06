@@ -1,3 +1,5 @@
+// [EN] EchoDesk WPF frontend module: frontend/Utilities/MarkdownRenderer.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend/Utilities/MarkdownRenderer.cs。类型与成员说明见下方注释。
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;

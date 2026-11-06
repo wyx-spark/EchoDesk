@@ -1,37 +1,94 @@
-"""Agent 工具层（v0.2.1 能力扩展-1 任务二）：工具接口、内置工具集与权限分级。
+"""
+[EN]
+Agent tool layer (v0.2.1 capability extension, task 2): tool interface, built-in
+tool set, and permission tiers.
 
-设计要点（每条都对应任务书里"需要 DSH 判断"的问题）
+Design notes (each answers a question in the task specification that required a
+DSH decision)
+=========================================================================
+
+1. Why the native llama.cpp ``tools`` / ``tool_choice`` parameters are not used
+---------------------------------------------------------------------------
+The underlying ``create_chat_completion`` does expose both parameters, but the
+observed constraints are rigid: when a GGUF file carries
+``tokenizer.chat_template``, the Jinja handler is used and ``tool_choice=None``
+causes the entire tools payload to be ignored; ``tool_choice="auto"`` forces a
+non-streaming decision internally and raises
+``ValueError: Automatic streaming tool choice is not supported`` if the matched
+function also requests ``stream=True``. In other words, whether tools are usable
+depends on the chat template shipped with the model, while EchoDesk targets
+arbitrary GGUF files (template support in the 0.6B class is especially
+unreliable). This implementation therefore has the model emit one line of JSON
+that we parse: no new dependency, valid for any GGUF, and unit-testable
+(``parse_tool_call`` is a pure function). The cost is that the tool-call format
+relies on prompt constraints, which is guaranteed jointly by the [output format]
+section of ``MODES["agent"]`` and the "tool protocol" appended at runtime; the
+parser also tolerates common deviations (code-fence wrapping, explanatory text
+before or after the JSON, extraneous whitespace).
+
+2. Permission tiers: three levels, with only the safest enabled by default
+------------------------------------------------------------------------
+  * ``safe``: pure computation and operations that only read content the user has
+    already supplied (calculator, date, unit conversion, retrieval over uploaded
+    files, reading the summary of an uploaded file). No outbound traffic, no
+    arbitrary path access, no disk writes; enabled by default.
+  * ``sensitive``: transmits data externally or reads arbitrary local content
+    (web search, reading arbitrary local files). Disabled by default; it must be
+    pre-authorized in ``agent.allow_sensitive`` in ``config.json`` or per session
+    with ``/agent allow <tool>``.
+  * Tools with persistent side effects, such as writing files or executing
+    commands, are not provided at all in this version: minimal privilege, and no
+    self-escalation path inside the product itself.
+
+  An unauthorized tool does not fail silently: ``ToolRegistry.run`` returns an
+  explanatory observation, the model continues with it (answering from known
+  information), and the user can see in the conversation that the tool is not
+  enabled and how to enable it.
+
+3. Tool selection: existing capabilities plus several new tools (task requirement)
+-------------------------------------------------------------------------------
+Reused capabilities: ``doc_search`` (retrieval over uploaded files),
+``doc_summary`` (segmented summary), ``web_search`` (web search, sensitive).
+New: ``calc``, ``date``, ``convert``, ``file_read`` (sensitive). Every tool is
+"one call, one string result", which keeps it easy for small models to
+understand and for the interface to display.
+
+[ZH]
+Agent 工具层（v0.2.1 能力扩展，任务二）：工具接口、内置工具集与权限分级。
+
+设计要点（每条都对应任务书中需要由 DSH 判断的问题）
 =====================================================
 
-**1. 为什么不用 llama.cpp 原生的 ``tools``/``tool_choice``**
-底层的 ``create_chat_completion`` 确实有这两个形参，但实测约束很硬：GGUF 带
-``tokenizer.chat_template`` 时走 Jinja handler，``tool_choice=None`` 时**整段 tools
-被忽略**；``tool_choice="auto"`` 内部强制非流式决策，若命中函数又要求 ``stream=True``
-会直接 ``ValueError: Automatic streaming tool choice is not supported``。
-也就是说"能不能用工具"取决于模型自带的对话模板，而 EchoDesk 面向的是任意 GGUF
-（0.6B 档的模板支持尤其不可靠）。**所以本实现让模型输出一行 JSON，由我们解析**：
-零新依赖、对任何 GGUF 都成立、可单测（``parse_tool_call`` 是纯函数）。
-代价是"工具调用格式"靠提示词约束 —— 这一点用 ``MODES["agent"]`` 的【输出格式】
-与运行时追加的「工具协议」共同保证，并且解析器对常见的跑偏写法（代码块包裹、
-前后有解释文字、多余空白）都做了容错。
+1. 为什么不使用 llama.cpp 原生的 ``tools`` / ``tool_choice``
+底层 ``create_chat_completion`` 确实提供这两个形参，但实测约束非常严格：GGUF 带
+``tokenizer.chat_template`` 时走 Jinja handler，``tool_choice=None`` 会使整段 tools
+被忽略；``tool_choice="auto"`` 内部强制非流式决策，若命中函数又要求 ``stream=True``
+会直接抛出 ``ValueError: Automatic streaming tool choice is not supported``。
+也就是说，能否使用工具取决于模型自带的对话模板，而 EchoDesk 面向任意 GGUF
+（0.6B 档位的模板支持尤其不可靠）。因此本实现让模型输出一行 JSON 并由本层解析：
+零新增依赖、对任何 GGUF 都成立、可单元测试（``parse_tool_call`` 是纯函数）。
+代价是工具调用格式依赖提示词约束，这一点由 ``MODES["agent"]`` 的【输出格式】
+与运行时追加的「工具协议」共同保证；解析器还对常见偏差写法（代码块包裹、
+前后附带解释文字、多余空白）做了容错。
 
-**2. 权限分级：三个等级，默认只开最安全的一档**
-  * ``safe``：纯计算与"只看用户已经放进来的内容"（计算器、日期、单位换算、
-    在已上传文件里检索、读已上传文件的摘要）。不外发、不读任意路径、不写盘，默认可用。
-  * ``sensitive``：会把数据带出去或读本机任意内容（联网搜索、读取任意本地文件）。
-    **默认关闭**，要在 ``config.json`` 的 ``agent.allow_sensitive`` 里或会话里
+2. 权限分级：三个等级，默认只开启最安全的一档
+  * ``safe``：纯计算，以及只读取用户已提供内容的能力（计算器、日期、单位换算、
+    在已上传文件中检索、读取已上传文件的摘要）。不外发、不读取任意路径、不写盘，
+    默认可用。
+  * ``sensitive``：会把数据带出本机或读取本机任意内容（联网搜索、读取任意本地文件）。
+    默认关闭，需要在 ``config.json`` 的 ``agent.allow_sensitive`` 中或会话内
     用 ``/agent allow <工具>`` 预授权。
-  * 写文件、执行命令这类**有持久副作用的工具本版一个都不提供** —— 权限最小化，
-    也是"不要给自己的产品开一个能自我提权的口子"。
+  * 写文件、执行命令这类具有持久副作用的工具，本版本一个都不提供：权限最小化，
+    同时避免在产品内部留下可自我提权的入口。
 
-  没被授权的工具**不是静默失败**：``ToolRegistry.run`` 返回一条说明性观察结果，
-  模型据此继续（用已知信息作答），用户也能在对话里看到"这个工具没启用，怎么开"。
+  未授权的工具不会静默失败：``ToolRegistry.run`` 返回一条说明性观察结果，
+  模型据此继续（用已知信息作答），用户也能在对话中看到该工具未启用及其开启方式。
 
-**3. 工具集选择：覆盖现有能力 + 若干新工具（任务书要求）**
+3. 工具集选择：覆盖现有能力并新增若干工具（任务书要求）
   复用现有能力：``doc_search``（检索已上传文件）、``doc_summary``（分段摘要）、
   ``web_search``（联网搜索，sensitive）。新增：``calc``、``date``、``convert``、
   ``file_read``（sensitive）。每个工具都是"一次调用、一个字符串结果"，
-  便于小模型理解与显示。
+  便于小模型理解与界面显示。
 """
 from __future__ import annotations
 
@@ -44,31 +101,55 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-# 工具结果是**直接贴回模型上下文、也会显示在对话区**的文本，必须随界面语言走
-# （v0.2.2 硬编码清查第 6 批）。i18n 是纯标准库模块，这里没有循环导入风险。
+# [EN] Tool results are text that is pasted directly back into the model context
+# [EN] and also rendered in the conversation area, so it must follow the UI language
+# [EN] (v0.2.2 hardcoded-string audit, batch 6). The i18n module uses only the
+# [EN] standard library, so no circular import is possible here.
+# [ZH] 工具结果是直接贴回模型上下文、同时显示在对话区的文本，必须随界面语言变化
+# [ZH] （v0.2.2 硬编码清查，第 6 批）。i18n 仅依赖标准库，此处不存在循环导入风险。
 from i18n import t as _t
 
-#: 权限类观察串的语言无关标记（前端据此判定"被拒绝"；显示前会剥掉）
+#: [EN] Locale-independent marker for permission-related observations; the front end
+#: [EN] uses it to detect a denial, and it is stripped before display.
+#: [ZH] 权限类观察结果的语言无关标记；前端据此判定"被拒绝"，显示前会被剥除。
 DENIED_MARK = "[!DENIED] "
 
 
 # ===========================================================================
-# 工具接口
+# [EN] Tool interface
+# [ZH] 工具接口
 # ===========================================================================
 
-#: 权限等级。``safe`` 默认可用；``sensitive`` 需要预授权；``guard`` 本版无工具
-#: （保留常量是为了配置/文档/前端有统一的词表，将来要加也有明确的一档）。
+#: [EN] Permission levels. ``safe`` is available by default; ``sensitive`` requires
+#: [EN] pre-authorization; no tool uses ``guard`` in this version (the constant is
+#: [EN] retained so configuration, documentation, and the front end share one
+#: [EN] vocabulary, and a future tier has an explicit slot).
+#: [ZH] 权限等级。``safe`` 默认可用；``sensitive`` 需要预授权；本版本没有使用
+#: [ZH] ``guard`` 的工具（保留该常量是为了让配置、文档与前端共用统一的词表，
+#: [ZH] 将来新增约束等级时也有明确的取值）。
 RISK_SAFE = "safe"
 RISK_SENSITIVE = "sensitive"
 RISK_GUARD = "guard"
 
 
-#: 工具"失败"的文本约定：以这些短语开头的结果会被 ``ToolRegistry.run`` 判为失败。
-#:
-#: 为什么需要它：工具体**约定不抛异常**（抛异常会让 Agent 循环更难收敛），
-#: 于是"算不出来""没搜到""MCP 对端报错"都以**一段说明文本**的形式返回。若不区分，
-#: 界面上这些都会显示成"成功"，用户看到的是"工具用过了但什么也没有"。
-#: 约定写在这里、而不是每处各判各的，是为了让"成功/失败"只有一种口径。
+#: [EN] Textual convention for tool failure: results that start with these phrases
+#: [EN] are classified as failures by ``ToolRegistry.run``.
+#: [EN]
+#: [EN] Why this is needed: tool implementations are contractually forbidden to raise
+#: [EN] (exceptions make the agent loop harder to converge), so "cannot compute",
+#: [EN] "no results", and "MCP peer error" are all returned as an explanatory text.
+#: [EN] Without this distinction the interface would show all of them as successes,
+#: [EN] and the user would see a tool that ran but produced nothing.
+#: [EN] The convention lives here, rather than being re-implemented at each call
+#: [EN] site, so that success and failure have exactly one definition.
+#: [ZH] 工具"失败"的文本约定：以这些短语开头的结果会被 ``ToolRegistry.run``
+#: [ZH] 判定为失败。
+#: [ZH]
+#: [ZH] 需要该约定的原因：工具体按约定不得抛异常（抛异常会使 Agent 循环更难收敛），
+#: [ZH] 因此"无法计算""未检索到结果""MCP 对端报错"都以一段说明文本的形式返回。
+#: [ZH] 若不加区分，这些情况在界面上都会显示为"成功"，用户看到的是
+#: [ZH] "工具执行过但没有任何产出"。
+#: [ZH] 把约定集中在此处而非在每个调用点各自判断，是为了让成功/失败只有一种口径。
 _FAILURE_PREFIXES = (
     "计算失败", "换算失败", "日期计算失败", "检索失败", "摘要失败", "搜索失败",
     "读取失败", "MCP 工具调用失败", "MCP 工具调用异常", "工具执行出错",
@@ -77,7 +158,14 @@ _FAILURE_MARKERS = ("未启用", "已退出", "超时")
 
 
 def looks_like_failure(text: str) -> bool:
-    """按上面的约定判断一段工具结果是否表示失败。"""
+    """
+    [EN]
+    Apply the convention above to determine whether a tool result represents a
+    failure.
+
+    [ZH]
+    按上述约定判断一段工具结果是否表示失败。
+    """
     body = str(text or "").strip()
     if not body:
         return False
@@ -89,30 +177,59 @@ def looks_like_failure(text: str) -> bool:
 
 @dataclass
 class Tool:
-    """一个可供模型调用的工具。
+    """
+    [EN]
+    A tool that the model can invoke.
 
-    ``run`` 只接收一个参数 dict，返回**字符串**（观察结果）。返回值必须是字符串
-    而不是结构化对象：它要原样贴回模型的上下文，形状越简单小模型越不容易读错。
-    工具**不应该抛异常**（``ToolRegistry.run`` 也会兜住），错误的正确表达是
-    返回一句"为什么没成功"，让模型有机会换一种方式再试。
+    ``run`` accepts a single argument dict and returns a string (the observation).
+    The return value must be a string rather than a structured object because it is
+    pasted back into the model context verbatim; the simpler the shape, the less
+    likely a small model misreads it. A tool should not raise exceptions
+    (``ToolRegistry.run`` also catches them); the correct way to signal an error is
+    to return a sentence explaining why the call did not succeed, so the model has
+    an opportunity to retry differently.
+
+    [ZH]
+    一个可供模型调用的工具。
+
+    ``run`` 只接收一个参数 dict，返回字符串（观察结果）。返回值必须是字符串而非
+    结构化对象：它要原样贴回模型上下文，形状越简单，小模型越不容易读错。
+    工具不应抛出异常（``ToolRegistry.run`` 也会兜底捕获）；错误的正确表达方式是
+    返回一句"为什么没有成功"的说明，让模型有机会换一种方式重试。
     """
 
     name: str
-    #: 给模型看的一句话说明（进系统提示词的「可用工具」清单）。
+    #: [EN] One-line description shown to the model (part of the available-tool list
+    #: [EN] in the system prompt).
+    #: [ZH] 给模型看的一句话说明（进入系统提示词的「可用工具」清单）。
     description: str
-    #: 参数说明（同上，写清字段名，否则小模型不知道 args 里该放什么）。
+    #: [EN] Argument description (same location; field names must be explicit,
+    #: [EN] otherwise a small model does not know what to put in args).
+    #: [ZH] 参数说明（同上；必须写明字段名，否则小模型不知道 args 中应放什么）。
     args_hint: str = ""
     risk: str = RISK_SAFE
     run: Callable[[Dict[str, Any]], str] = field(default=lambda _a: "")
-    #: 示例（进「工具协议」的示例区，帮助 0.6B 学会格式）。
+    #: [EN] Example invocation (placed in the example section of the tool protocol
+    #: [EN] to help the 0.6B class learn the format).
+    #: [ZH] 示例调用（放入「工具协议」的示例区，帮助 0.6B 档位掌握格式）。
     example: str = ""
 
 
 class ToolContext:
-    """工具运行时可用的宿主能力（由 Backend 注入，避免工具层反向依赖 main）。
+    """
+    [EN]
+    Host capabilities available to tools at runtime (injected by Backend so that the
+    tool layer does not depend on main in reverse).
 
-    刻意用"回调 + 已就绪对象"而不是让工具 import main：工具层要保持可单测
-    （``tools/test_agent.py`` 直接用桩实现构造它）。
+    Callbacks plus ready-made objects are used deliberately instead of letting tools
+    import main, because the tool layer must remain unit-testable
+    (``tools/test_agent.py`` builds this context from stubs directly).
+
+    [ZH]
+    工具运行时可用的宿主能力（由 Backend 注入，避免工具层反向依赖 main）。
+
+    刻意采用"回调 + 已就绪对象"的方式，而不是让工具层 import main：工具层必须
+    保持可单元测试（``tools/test_agent.py`` 直接使用桩实现构造该对象）。
     """
 
     def __init__(
@@ -129,7 +246,8 @@ class ToolContext:
         self.count_tokens = count_tokens
         self.files_dir = files_dir
 
-    # ---------- 供工具使用的小工具方法 ----------
+    # ---------- [EN] Small helper methods for tools ----------
+    # ---------- [ZH] 供工具使用的小工具方法 ----------
 
     def file_names(self) -> List[str]:
         conv = self.conv
@@ -141,7 +259,14 @@ class ToolContext:
             return []
 
     def file_text(self, name: str = "") -> str:
-        """取某份已上传文件的正文（名字为空或找不到时取当前文件）。"""
+        """
+        [EN]
+        Return the body text of an uploaded file (falls back to the active file when
+        the name is empty or unmatched).
+
+        [ZH]
+        取某份已上传文件的正文（名字为空或找不到时取当前文件）。
+        """
         conv = self.conv
         if conv is None:
             return ""
@@ -157,7 +282,8 @@ class ToolContext:
                 if str(getattr(entry, "name", "")) == name:
                     target = entry
                     break
-            if target is None:                       # 允许用文件名的一部分匹配
+            if target is None:                       # [EN] Allow a partial file-name match.
+                                                     # [ZH] 允许用文件名的一部分进行匹配。
                 for entry in entries:
                     if name and name in str(getattr(entry, "name", "")):
                         target = entry
@@ -165,7 +291,9 @@ class ToolContext:
         if target is None:
             index = getattr(conv, "active_index", -1)
             target = entries[index] if 0 <= index < len(entries) else entries[-1]
-        # 正文为空（落盘/只有摘要）时退化为摘要文本，保证工具总有东西可用
+        # [EN] When the body is empty (content persisted to disk or only a summary is
+        # [EN] available), fall back to the summary text so the tool always has input.
+        # [ZH] 正文为空（已落盘或只有摘要）时退化为摘要文本，保证工具总有可用内容。
         body = str(getattr(target, "content", "") or "")
         if not body:
             body = str(getattr(target, "summary", "") or "")
@@ -173,11 +301,15 @@ class ToolContext:
 
 
 # ===========================================================================
-# 计算器（safe）—— 用 AST 白名单求值，不用 eval
+# [EN] Calculator (safe): AST whitelist evaluation instead of eval
+# [ZH] 计算器（safe）：使用 AST 白名单求值，不使用 eval
 # ===========================================================================
 
-#: 允许的函数名 → 实现。**刻意只有数学函数**：没有 open/exec/__import__，
-#: 也没有属性访问，因此"拿到任意代码执行"这条路在语法层就被堵住了。
+#: [EN] Allowed function names mapped to implementations. Deliberately limited to
+#: [EN] math functions: no open/exec/__import__ and no attribute access, so the path
+#: [EN] to arbitrary code execution is closed at the syntax level.
+#: [ZH] 允许的函数名及其实现。刻意只包含数学函数：没有 open/exec/__import__，
+#: [ZH] 也没有属性访问，因此在语法层面就封堵了获取任意代码执行的路径。
 _CALC_FUNCS: Dict[str, Callable[..., Any]] = {
     "abs": abs, "round": round, "min": min, "max": max,
     "sqrt": math.sqrt, "floor": math.floor, "ceil": math.ceil,
@@ -198,12 +330,20 @@ _CALC_BINOPS = {
 
 _CALC_UNARY = {ast.UAdd: lambda a: +a, ast.USub: lambda a: -a}
 
-#: 幂运算的上限：``10**10**10`` 这类写法会让解释器算到天荒地老（等于一条本地 DoS）。
+#: [EN] Upper bound for exponentiation: expressions such as ``10**10**10`` would keep
+#: [EN] the interpreter busy indefinitely, which is a local denial of service.
+#: [ZH] 幂运算的上限：``10**10**10`` 这类写法会让解释器长时间计算，等同本地 DoS。
 _MAX_POW = 1e6
 
 
 class CalcError(ValueError):
-    """计算器拒绝执行（语法不支持或超出限制）。"""
+    """
+    [EN]
+    The calculator refused to evaluate (unsupported syntax or limit exceeded).
+
+    [ZH]
+    计算器拒绝执行（语法不受支持或超出限制）。
+    """
 
 
 def _calc_node(node: ast.AST) -> Any:
@@ -223,10 +363,16 @@ def _calc_node(node: ast.AST) -> Any:
         try:
             return op(left, right)
         except ZeroDivisionError as exc:
-            # **求值本身也会失败**：`1/0`、`1%0`、`0**-1` 都会抛异常。
-            # 首轮实测就是这么被抓到的 —— tool_calc 当时只捕获 CalcError，
-            # ZeroDivisionError 直接穿透到工具注册表（虽然注册表会兜住并返回
-            # "执行出错"，但那对用户是"工具坏了"，而不是"这个表达式算不了"）。
+            # [EN] Evaluation itself can also fail: `1/0`, `1%0`, and `0**-1` all
+            # [EN] raise. This was caught during the first test run: tool_calc only
+            # [EN] handled CalcError, so ZeroDivisionError propagated to the tool
+            # [EN] registry (which did catch it and report "execution error", but the
+            # [EN] user then saw a broken tool rather than "this expression cannot be
+            # [EN] evaluated").
+            # [ZH] 求值本身也可能失败：`1/0`、`1%0`、`0**-1` 都会抛出异常。
+            # [ZH] 首轮验证即发现该问题：tool_calc 当时只捕获 CalcError，
+            # [ZH] ZeroDivisionError 会穿透到工具注册表（注册表虽会兜底并返回
+            # [ZH] "执行出错"，但对用户而言是"工具损坏"，而不是"该表达式无法计算"）。
             raise CalcError(_t("calc.div_zero")) from exc
         except (OverflowError, ValueError, TypeError) as exc:
             raise CalcError(_t("calc.out_of_range", error=exc)) from exc
@@ -243,16 +389,29 @@ def _calc_node(node: ast.AST) -> Any:
         return _CALC_FUNCS[node.func.id](*[_calc_node(a) for a in node.args])
     if isinstance(node, (ast.List, ast.Tuple)):
         return [_calc_node(e) for e in node.elts]
-    # 属性访问 / 下标 / 推导式 / lambda / 名字（变量）一律拒绝：
-    # 它们是把表达式变成任意代码的常见跳板（a.b.c、d["x"]、__class__…）
+    # [EN] Attribute access, subscripting, comprehensions, lambda, and bare names
+    # [EN] (variables) are rejected: they are the common springboards that turn an
+    # [EN] expression into arbitrary code (a.b.c, d["x"], __class__, ...).
+    # [ZH] 属性访问、下标、推导式、lambda 与裸名字（变量）一律拒绝：
+    # [ZH] 它们是把表达式变为任意代码的常见跳板（a.b.c、d["x"]、__class__ 等）。
     raise CalcError(_t("calc.bad_chars"))
 
 
 def calc_eval(expr: str) -> float:
-    """安全求值一个算术表达式（允许数学函数），返回数值。
+    """
+    [EN]
+    Safely evaluate an arithmetic expression (math functions allowed) and return a
+    numeric value.
 
-    刻意不用 ``eval``：``__import__('os').system(...)`` 这类输入在真实环境里出现过，
-    而本地小模型又极易被文档里的文字诱导。
+    ``eval`` is deliberately avoided: inputs such as
+    ``__import__('os').system(...)`` have appeared in real environments, and local
+    small models are highly susceptible to suggestion from text inside documents.
+
+    [ZH]
+    安全求值一个算术表达式（允许数学函数），返回数值。
+
+    刻意不使用 ``eval``：``__import__('os').system(...)`` 这类输入在真实环境中
+    已经出现过，而本地小模型极易被文档中的文字诱导。
     """
     text = str(expr or "").strip().replace("×", "*").replace("÷", "/")
     if not text:
@@ -272,7 +431,14 @@ def calc_eval(expr: str) -> float:
 
 
 def _fmt_number(value: Any) -> str:
-    """把数值格式化成人看的字符串（整数不带小数点，浮点最多 6 位小数）。"""
+    """
+    [EN]
+    Format a numeric value for display (integers without a decimal point; floats
+    with at most six decimal places).
+
+    [ZH]
+    把数值格式化为便于阅读的字符串（整数不带小数点，浮点数最多保留 6 位小数）。
+    """
     if isinstance(value, bool):
         return str(value)
     if isinstance(value, int):
@@ -290,19 +456,28 @@ def tool_calc(args: Dict[str, Any]) -> str:
         value = calc_eval(str(expr))
     except CalcError as exc:
         return _t("calc.failed_hint", error=exc)
-    except Exception as exc:                     # 兜底：工具**绝不抛异常**
+    except Exception as exc:                     # [EN] Catch-all: tools never raise.
+                                                 # [ZH] 兜底：工具绝不抛出异常。
         return _t("calc.failed", error=exc)
     return f"{expr} = {_fmt_number(value)}"
 
 
 # ===========================================================================
-# 日期与时间（safe）
+# [EN] Date and time (safe)
+# [ZH] 日期与时间（safe）
 # ===========================================================================
 
 _DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S")
 
 def _weekday_name(index: int) -> str:
-    """星期几的显示名：从语言包按逗号列表取（原先写死的中文元组）。"""
+    """
+    [EN]
+    Display name of a weekday, read as a comma-separated list from the language
+    pack (previously a hardcoded Chinese tuple).
+
+    [ZH]
+    星期几的显示名：从语言包中按逗号分隔列表读取（原先为写死的中文元组）。
+    """
     names = _t("date.weekdays").split(",")
     return names[index] if 0 <= index < len(names) else ""
 
@@ -320,7 +495,13 @@ def _parse_date(text: str) -> _dt.date:
 
 
 def tool_date(args: Dict[str, Any]) -> str:
-    """日期工具：``op`` 支持 today（默认）/ add / diff / weekday。"""
+    """
+    [EN]
+    Date tool: ``op`` supports today (default) / add / diff / weekday.
+
+    [ZH]
+    日期工具：``op`` 支持 today（默认）/ add / diff / weekday。
+    """
     op = str(args.get("op") or args.get("action") or "today").strip().lower()
     try:
         if op in ("today", "now", "current"):
@@ -366,10 +547,13 @@ def _month_days(year: int, month: int) -> int:
 
 
 # ===========================================================================
-# 单位换算（safe）
+# [EN] Unit conversion (safe)
+# [ZH] 单位换算（safe）
 # ===========================================================================
 
-#: 每类单位到"基准单位"的倍率（温度单独处理，因为它需要偏移而不是倍率）。
+#: [EN] Factor from each unit to the base unit of its category (temperature is
+#: [EN] handled separately because it requires an offset rather than a factor).
+#: [ZH] 每类单位到基准单位的倍率（温度需要偏移而非倍率，单独处理）。
 _UNITS: Dict[str, Dict[str, float]] = {
     "length": {"m": 1, "km": 1000, "cm": 0.01, "mm": 0.001, "um": 1e-6,
                "mi": 1609.344, "yd": 0.9144, "ft": 0.3048, "in": 0.0254},
@@ -384,7 +568,8 @@ _UNITS: Dict[str, Dict[str, float]] = {
     "pressure": {"pa": 1, "kpa": 1000, "mpa": 1e6, "bar": 1e5, "atm": 101325, "mmhg": 133.322},
 }
 
-#: 单位别名（中文/常见写法 → 表里的键）。
+#: [EN] Unit aliases (Chinese names and common spellings mapped to table keys).
+#: [ZH] 单位别名（中文名称及常见写法映射到表中的键）。
 _UNIT_ALIASES = {
     "米": "m", "千米": "km", "公里": "km", "厘米": "cm", "毫米": "mm", "微米": "um",
     "英里": "mi", "码": "yd", "英尺": "ft", "英寸": "in",
@@ -413,7 +598,8 @@ def tool_convert(args: Dict[str, Any]) -> str:
     dst = _normalize_unit(str(args.get("to") or ""))
     if not src or not dst:
         return _t("convert.missing_args")
-    # 温度：需要偏移，单独算
+    # [EN] Temperature requires an offset, so it is computed separately.
+    # [ZH] 温度需要偏移量，单独计算。
     if src in ("c", "f", "k") or dst in ("c", "f", "k"):
         if src not in ("c", "f", "k") or dst not in ("c", "f", "k"):
             return _t("convert.temp_mismatch")
@@ -438,7 +624,8 @@ def _all_units() -> set:
 
 
 # ===========================================================================
-# 已上传文件：检索与摘要（safe）
+# [EN] Uploaded files: retrieval and summaries (safe)
+# [ZH] 已上传文件：检索与摘要（safe）
 # ===========================================================================
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？；;!?\n])")
@@ -449,10 +636,21 @@ def _sentences(text: str) -> List[str]:
 
 
 def _keyword_score(query: str, sentence: str) -> float:
-    """极简相关度：查询里的词（中文按 2 字滑窗 + 英文按词）在句子里出现的次数。
+    """
+    [EN]
+    Minimal relevance score: the number of occurrences in the sentence of query
+    terms (two-character sliding windows for Chinese, words for English).
 
-    刻意不引入向量/BM25 之外的东西：工具层要零依赖、毫秒级。检索质量由
-    ``retrieval.py``（RAG 深度）承担，这里只保证"能挑出相关段落"。
+    Nothing beyond this is introduced deliberately: the tool layer must have zero
+    dependencies and millisecond latency. Retrieval quality is the responsibility of
+    ``retrieval.py`` (RAG depth); this function only needs to pick out relevant
+    passages.
+
+    [ZH]
+    极简相关度：查询中的词（中文按 2 字滑窗、英文按词）在句子中出现的次数。
+
+    刻意不引入额外组件：工具层要求零依赖、毫秒级延迟。检索质量由
+    ``retrieval.py``（RAG 深度）承担，这里只需保证能挑出相关段落。
     """
     if not query or not sentence:
         return 0.0
@@ -475,7 +673,14 @@ def _keyword_score(query: str, sentence: str) -> float:
 
 
 def tool_doc_search(args: Dict[str, Any], ctx: ToolContext) -> str:
-    """在**已上传文件**里按关键词挑相关段落（不外发、不读任意路径）。"""
+    """
+    [EN]
+    Select relevant passages from uploaded files by keyword (no outbound traffic, no
+    arbitrary path access).
+
+    [ZH]
+    在已上传文件中按关键词挑选相关段落（不外发数据、不读取任意路径）。
+    """
     query = str(args.get("query") or args.get("q") or "").strip()
     if not query:
         return _t("tool.retrieve_need_query")
@@ -507,7 +712,14 @@ def tool_doc_search(args: Dict[str, Any], ctx: ToolContext) -> str:
 
 
 def tool_doc_summary(args: Dict[str, Any], ctx: ToolContext) -> str:
-    """取某份已上传文件的**已有**摘要（不触发新的模型调用，避免工具里套模型）。"""
+    """
+    [EN]
+    Return the summary already computed for an uploaded file (no new model call is
+    triggered, which avoids a model invocation nested inside a tool).
+
+    [ZH]
+    取某份已上传文件已有的摘要（不触发新的模型调用，避免在工具内嵌套模型调用）。
+    """
     names = ctx.file_names()
     if not names:
         return _t("tool.summary_no_files")
@@ -535,7 +747,8 @@ def tool_doc_summary(args: Dict[str, Any], ctx: ToolContext) -> str:
 
 
 # ===========================================================================
-# 联网搜索（sensitive）与本地文件读取（sensitive）
+# [EN] Web search (sensitive) and local file reading (sensitive)
+# [ZH] 联网搜索（sensitive）与本地文件读取（sensitive）
 # ===========================================================================
 
 def tool_web_search(args: Dict[str, Any], ctx: ToolContext) -> str:
@@ -546,7 +759,9 @@ def tool_web_search(args: Dict[str, Any], ctx: ToolContext) -> str:
         return _t("tool.search_no_component")
     try:
         outcome = ctx.search.search(query)
-    except Exception as exc:                     # 搜索失败不能把整轮对话带崩
+    except Exception as exc:                     # [EN] A search failure must not
+                                                 # [EN] abort the whole turn.
+                                                 # [ZH] 搜索失败不得导致整轮对话中断。
         return _t("tool.search_failed", error=exc)
     if not getattr(outcome, "ok", False):
         return _t("tool.search_failed_hint",
@@ -563,7 +778,9 @@ def tool_web_search(args: Dict[str, Any], ctx: ToolContext) -> str:
     return "\n".join(lines)
 
 
-#: 文本类扩展名白名单：``file_read`` 只读这些，二进制/可执行文件一律拒绝。
+#: [EN] Whitelist of text file extensions: ``file_read`` reads only these; binary and
+#: [EN] executable files are always rejected.
+#: [ZH] 文本类扩展名白名单：``file_read`` 只读取这些扩展名，二进制与可执行文件一律拒绝。
 _READABLE_EXTS = (".txt", ".md", ".csv", ".json", ".log", ".yaml", ".yml", ".ini",
                   ".py", ".js", ".ts", ".cs", ".java", ".c", ".h", ".cpp", ".go", ".rs",
                   ".html", ".xml", ".sql", ".bat", ".ps1", ".sh")
@@ -594,11 +811,18 @@ def tool_file_read(args: Dict[str, Any], ctx: ToolContext) -> str:
 
 
 # ===========================================================================
-# 注册表
+# [EN] Registry
+# [ZH] 注册表
 # ===========================================================================
 
 class ToolRegistry:
-    """工具注册表 + 权限检查 + 统一调用入口。"""
+    """
+    [EN]
+    Tool registry, permission checks, and the unified invocation entry point.
+
+    [ZH]
+    工具注册表、权限检查与统一调用入口。
+    """
 
     def __init__(self, tools: Optional[List[Tool]] = None,
                  allowed_sensitive: Optional[List[str]] = None,
@@ -606,11 +830,13 @@ class ToolRegistry:
         self.tools: Dict[str, Tool] = {}
         self.allowed_sensitive: set = {str(x).strip().lower() for x in (allowed_sensitive or [])}
         self.ctx = ctx or ToolContext()
-        self.calls: List[Dict[str, Any]] = []          # 调用审计（可观测性）
+        self.calls: List[Dict[str, Any]] = []          # [EN] Invocation audit log.
+                                                       # [ZH] 调用审计记录（可观测性）。
         for tool in tools if tools is not None else default_tools():
             self.register(tool)
 
-    # ---------- 注册与查询 ----------
+    # ---------- [EN] Registration and lookup ----------
+    # ---------- [ZH] 注册与查询 ----------
 
     def register(self, tool: Tool) -> None:
         self.tools[tool.name] = tool
@@ -622,18 +848,34 @@ class ToolRegistry:
         return self.tools.get(str(name or "").strip())
 
     def available(self) -> List[Tool]:
-        """当前**真正可调用**的工具（权限也考虑在内）—— 写进提示词的就是这些。"""
+        """
+        [EN]
+        Tools that are actually invocable under the current permissions; exactly
+        these are written into the prompt.
+
+        [ZH]
+        当前真正可调用的工具（已考虑权限），写入提示词的就是这些。
+        """
         return [tool for tool in self.tools.values() if self.is_allowed(tool)]
 
     def is_allowed(self, tool: Tool) -> bool:
         if tool.risk == RISK_GUARD:
-            return False                              # 本版不提供任何有写入副作用的工具
+            return False                              # [EN] This version provides no
+                                                       # [EN] tool with write side effects.
+                                                       # [ZH] 本版本不提供任何具有写入副作用的工具。
         if tool.risk == RISK_SENSITIVE:
             return tool.name.lower() in self.allowed_sensitive
         return True
 
     def allow(self, name: str, allowed: bool = True) -> bool:
-        """会话/配置级预授权开关。返回是否命中了某个工具。"""
+        """
+        [EN]
+        Session- or configuration-level pre-authorization switch. Returns whether the
+        name matched a registered tool.
+
+        [ZH]
+        会话级或配置级的预授权开关。返回是否匹配到某个已注册的工具。
+        """
         tool = self.get(name)
         if tool is None:
             return False
@@ -644,14 +886,26 @@ class ToolRegistry:
             self.allowed_sensitive.discard(key)
         return True
 
-    # ---------- 调用 ----------
+    # ---------- [EN] Invocation ----------
+    # ---------- [ZH] 调用 ----------
 
     def run(self, name: str, args: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
-        """执行一个工具，返回 ``(是否成功, 观察结果文本)``。
+        """
+        [EN]
+        Execute a tool and return ``(succeeded, observation text)``.
 
-        **任何情况下都返回文本**（不抛异常、不静默失败）：
-        * 权限不足 → 说明"没启用 + 怎么启用"，模型可以据此改用别的办法；
-        * 工具内部抛异常 → 兜住并写成一句失败说明，同时记进 ``calls`` 审计。
+        A text result is returned in every case (no exception, no silent failure):
+        * Insufficient permission -> explains that the tool is not enabled and how to
+          enable it, so the model can choose another approach;
+        * An exception inside the tool -> caught and converted into a failure
+          explanation, and also recorded in the ``calls`` audit log.
+
+        [ZH]
+        执行一个工具，返回 ``(是否成功, 观察结果文本)``。
+
+        任何情况下都返回文本（不抛异常、不静默失败）：
+        * 权限不足 → 说明"未启用 + 如何启用"，模型可据此改用其他办法；
+        * 工具内部抛出异常 → 兜底捕获并写成失败说明，同时记入 ``calls`` 审计。
         """
         tool = self.get(name)
         args = args if isinstance(args, dict) else {}
@@ -672,11 +926,17 @@ class ToolRegistry:
             else:
                 result = tool.run(args)
             text = str(result if result is not None else "")
-        except Exception as exc:                       # 工具异常隔离（任务书要求）
+        except Exception as exc:                       # [EN] Tool exception isolation
+                                                       # [EN] (task requirement).
+                                                       # [ZH] 工具异常隔离（设计规范要求）。
             self.calls.append({"tool": name, "ok": False, "reason": "error", "error": str(exc)})
             return False, _t("tool.exec_failed", name=name, error=exc)
-        # 工具按约定不抛异常，失败以说明文本返回 —— 这里按统一约定识别，
-        # 否则"算不出来""MCP 对端报错"在界面上会显示成成功（见 _FAILURE_PREFIXES）。
+        # [EN] Tools do not raise by contract; failures are reported as explanatory
+        # [EN] text. The convention is applied here, because otherwise "cannot
+        # [EN] compute" or "MCP peer error" would appear as success in the interface
+        # [EN] (see _FAILURE_PREFIXES).
+        # [ZH] 工具按约定不抛异常，失败以说明文本返回；这里按统一约定识别，
+        # [ZH] 否则"无法计算""MCP 对端报错"在界面上会显示为成功（见 _FAILURE_PREFIXES）。
         if looks_like_failure(text):
             self.calls.append({"tool": name, "ok": False, "reason": "reported"})
             return False, text
@@ -684,7 +944,14 @@ class ToolRegistry:
         return True, text
 
     def public_list(self) -> List[Dict[str, Any]]:
-        """给界面/文档用的工具清单（含权限与是否启用）。"""
+        """
+        [EN]
+        Tool listing for the interface and documentation, including permission tier
+        and enabled state.
+
+        [ZH]
+        供界面与文档使用的工具清单（包含权限等级与启用状态）。
+        """
         return [
             {
                 "name": tool.name,
@@ -698,20 +965,41 @@ class ToolRegistry:
         ]
 
     def protocol_text(self) -> str:
-        """运行时追加到系统提示词的「工具协议 + 可用工具」段落。
+        """
+        [EN]
+        The "tool protocol + available tools" section appended to the system prompt at
+        runtime.
 
-        **为什么放在这里而不是写进 ``MODES["agent"]``**：可用工具清单是动态的
-        （受权限开关影响），而模式块有 700 字符的长度上限、且对所有模式共用一份
-        审计口径。运行期追加既不占那个预算，也不会出现"提示词里列了没启用的工具"。
+        Why it is assembled here instead of being written into ``MODES["agent"]``:
+        the available-tool list is dynamic (it depends on permission switches),
+        whereas mode blocks are capped at 700 characters and share a single audit
+        baseline across all modes. Runtime appending neither consumes that budget nor
+        produces a prompt that lists tools which are not enabled.
+
+        [ZH]
+        运行时追加到系统提示词的「工具协议 + 可用工具」段落。
+
+        为什么在此处生成而不写进 ``MODES["agent"]``：可用工具清单是动态的
+        （受权限开关影响），而模式块有 700 字符的长度上限，且所有模式共用同一份
+        审计口径。运行期追加既不占用该预算，也不会出现"提示词中列出了未启用工具"
+        的情况。
         """
         enabled = self.available()
         lines = ["[工具协议]", "需要工具时，只输出**一行** JSON，不要输出别的文字：",
                  '{"tool": "工具名", "args": {...}, "why": "一句话为什么"}',
                  "收到「工具结果」后继续：可以再调一个工具，或输出以「最终答案：」开头的结论。",
                  "一次只调一个工具；工具没启用或失败时，用已有信息作答并说明。",
-                 # 这一条来自实测：0.6B 档位在一次"总额 − 手续费"的提问里算出了**手续费**
-                 # 就当成最终结论（3000×7.2×0.05 = 1080），工具调用本身完全正确。
-                 # 与其去猜模型哪里想错了，不如把"交卷前再读一遍题"写成一条明确要求。
+                 # [EN] This rule comes from a test run: for the question
+                 # [EN] "total minus fee", the 0.6B class computed the fee
+                 # [EN] (3000 x 7.2 x 0.05 = 1080) and reported it as the final
+                 # [EN] answer, while the tool invocation itself was correct.
+                 # [EN] Rather than guessing where the model misread the task, the
+                 # [EN] requirement to re-read the question before answering is stated
+                 # [EN] explicitly.
+                 # [ZH] 该要求来自验证：在一次"总额 − 手续费"的提问中，0.6B 档位
+                 # [ZH] 算出了手续费（3000×7.2×0.05 = 1080）并把它当作最终结论，
+                 # [ZH] 而工具调用本身完全正确。与其推测模型在哪一步理解有误，
+                 # [ZH] 不如把"作答前重新阅读问题"写成一条明确要求。
                  "给出「最终答案：」之前，再读一遍用户的问题，确认你算的量与他问的量一致"
                  "（要总额还是差额、要比例还是金额、有没有算漏一步）。"]
         if enabled:
@@ -731,14 +1019,26 @@ class ToolRegistry:
         return "\n".join(lines)
 
 
-#: 需要注入上下文的工具（签名是 ``(args, ctx)``）。其余工具只接收 args。
-#: 用一张表而不是检查签名：签名检查在打包/装饰器环境下容易失效，
-#: 而这张表在注册表构造时就能一眼看全"哪些工具要碰宿主状态"。
+#: [EN] Tools that require an injected context (signature ``(args, ctx)``); all other
+#: [EN] tools receive args only. A lookup table is used instead of signature
+#: [EN] inspection because introspection is fragile under packaging and decorators,
+#: [EN] whereas this table shows at registry construction time which tools touch host
+#: [EN] state.
+#: [ZH] 需要注入上下文的工具（签名为 ``(args, ctx)``）。其余工具只接收 args。
+#: [ZH] 使用查表而非签名检查：签名检查在打包与装饰器环境下容易失效，
+#: [ZH] 而该表在构造注册表时即可一眼看清哪些工具会访问宿主状态。
 _CTX_TOOLS = {"doc_search", "doc_summary", "web_search", "file_read"}
 
 
 def default_tools() -> List[Tool]:
-    """内置工具集（任务书要求"至少覆盖现有能力 + 若干新工具"）。"""
+    """
+    [EN]
+    Built-in tool set (the task requires coverage of existing capabilities plus
+    several new tools).
+
+    [ZH]
+    内置工具集（任务书要求"至少覆盖现有能力并新增若干工具"）。
+    """
     return [
         Tool(
             name="calc",
@@ -796,20 +1096,34 @@ def default_tools() -> List[Tool]:
 
 
 # ===========================================================================
-# 模型输出 → 工具调用（纯函数，可单测）
+# [EN] Model output -> tool call (pure functions, unit-testable)
+# [ZH] 模型输出 → 工具调用（纯函数，可单元测试）
 # ===========================================================================
 
 _TOOL_LINE = re.compile(r"\{\s*\"(?:tool|tool_name|name)\"\s*:", re.S)
 
 
 def _strip_code_fence(text: str) -> str:
-    """去掉 ```json … ``` 包裹（小模型很爱加代码块）。"""
+    """
+    [EN]
+    Remove a ```json ... ``` fence (small models frequently add one).
+
+    [ZH]
+    去掉 ```json … ``` 包裹（小模型经常添加代码块）。
+    """
     match = re.search(r"```[a-zA-Z]*\s*(.+?)```", text or "", re.S)
     return match.group(1) if match else (text or "")
 
 
 def _json_objects(text: str) -> List[str]:
-    """从一段文本里切出所有**括号平衡**的 JSON 对象字面量（字符串内的括号不算）。"""
+    """
+    [EN]
+    Extract every brace-balanced JSON object literal from a text (braces inside
+    strings are not counted).
+
+    [ZH]
+    从一段文本中切分出所有括号平衡的 JSON 对象字面量（字符串内的括号不计入）。
+    """
     out: List[str] = []
     depth = 0
     start = -1
@@ -840,14 +1154,28 @@ def _json_objects(text: str) -> List[str]:
 
 
 def parse_tool_call(text: str) -> Optional[Dict[str, Any]]:
-    """从模型输出里解析出工具调用；不是工具调用则返回 ``None``。
+    """
+    [EN]
+    Parse a tool call from model output; return ``None`` when the text is not a tool
+    call.
 
-    容错点（都是实测中小模型真会写出来的形状）：
-      * 用 ```json 代码块包起来；
-      * JSON 前后还写了"我来算一下："这类解释；
+    Tolerance cases (shapes small models were observed to produce):
+      * wrapped in a ```json code fence;
+      * explanatory text such as "let me calculate" before or after the JSON;
+      * key names written as ``tool_name`` / ``name``;
+      * args flattened at the top level (``{"tool":"calc","expr":"1+1"}``).
+    A parse failure always returns None (the text is treated as a normal answer) and
+    never raises.
+
+    [ZH]
+    从模型输出中解析出工具调用；若不是工具调用则返回 ``None``。
+
+    容错点（均为实测中小模型确实会产生的写法）：
+      * 用 ```json 代码块包裹；
+      * JSON 前后附带"我来计算一下"这类解释文字；
       * 键名写成 ``tool_name`` / ``name``；
       * args 直接平铺在顶层（``{"tool":"calc","expr":"1+1"}``）。
-    解析失败一律返回 None（当成普通回答处理），**绝不抛异常**。
+    解析失败一律返回 None（按普通回答处理），绝不抛出异常。
     """
     raw = _strip_code_fence(text or "")
     if not raw.strip():
@@ -867,7 +1195,9 @@ def parse_tool_call(text: str) -> Optional[Dict[str, Any]]:
         if not isinstance(args, dict):
             args = data.get("arguments")
         if not isinstance(args, dict):
-            # 平铺写法：除 tool/why 之外的键都当参数
+            # [EN] Flattened form: every key other than tool/why is treated as an
+            # [EN] argument.
+            # [ZH] 平铺写法：除 tool/why 之外的键都当作参数。
             args = {k: v for k, v in data.items()
                     if k not in ("tool", "tool_name", "name", "why", "reason")}
         why = str(data.get("why") or data.get("reason") or "").strip()
@@ -875,22 +1205,37 @@ def parse_tool_call(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-#: "最终答案"的常见写法（模型可能加粗、加冒号或换行）。
+#: [EN] Common spellings of "final answer" (the model may add emphasis, a colon, or
+#: [EN] a line break).
+#: [ZH] "最终答案"的常见写法（模型可能加粗、加冒号或换行）。
 _FINAL_MARK = re.compile(r"(?:最终答案|最终结论|最后答案|答案)\s*[:：]?\s*", re.S)
 
 
 def extract_final_answer(text: str) -> str:
-    """取出「最终答案：」之后的内容；没有这个标记则返回原文（去掉工具调用行）。
+    """
+    [EN]
+    Return the content following the "final answer:" marker, or the original text
+    (with tool-call lines removed) when the marker is absent.
 
-    会清掉尾随的 Markdown 强调符号：模型极爱写 ``**最终答案：** 甲 15 岁``，
-    直接取冒号之后会得到 ``** 甲 15 岁``（星号留在答案里，界面看起来像格式坏了）。
+    Trailing Markdown emphasis characters are stripped: models frequently write
+    ``**final answer:** ...``, and naively taking everything after the colon leaves
+    the leading ``**`` in the answer, which makes the interface look corrupted.
+
+    [ZH]
+    取出「最终答案：」之后的内容；没有该标记时返回原文（去掉工具调用行）。
+
+    会清除尾随的 Markdown 强调符号：模型经常写 ``**最终答案：** 甲 15 岁``，
+    直接取冒号之后会得到 ``** 甲 15 岁``（星号残留在答案中，界面看起来像格式损坏）。
     """
     raw = (text or "").strip()
     if not raw:
         return ""
     match = None
     for candidate in _FINAL_MARK.finditer(raw):
-        match = candidate                            # 取最后一处，避免把示例里的标记当结果
+        match = candidate                            # [EN] Take the last match so a
+                                                     # [EN] marker inside an example
+                                                     # [EN] is not mistaken for the result.
+                                                     # [ZH] 取最后一处，避免把示例中的标记当作结果。
     if match:
         tail = raw[match.end():].strip()
         tail = re.sub(r"^[\s*_`]+", "", tail).strip()

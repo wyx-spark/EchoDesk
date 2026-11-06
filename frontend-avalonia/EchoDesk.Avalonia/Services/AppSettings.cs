@@ -1,4 +1,6 @@
-﻿// 界面设置（移植自 frontend/Services/AppSettings.cs，任务书 任务三 的"用户数据目录按平台惯例"）。
+﻿// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Services/AppSettings.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Services/AppSettings.cs。类型与成员说明见下方注释。
+// 界面设置（移植自 frontend/Services/AppSettings.cs，任务书 任务三 的"用户数据目录按平台惯例"）。
 //
 // WPF 版把 ui_state.json 写在"程序目录的外层"（修复七：便携版不希望用户数据跟着程序目录跑）。
 // 跨平台版改为交给 UserPaths.DataRoot 决定，并保留 ECHODESK_DATA 覆盖 ——

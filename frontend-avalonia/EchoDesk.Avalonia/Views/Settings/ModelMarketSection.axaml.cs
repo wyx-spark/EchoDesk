@@ -1,3 +1,5 @@
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/Settings/ModelMarketSection.axaml.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/Settings/ModelMarketSection.axaml.cs。类型与成员说明见下方注释。
 // 模型市场区块的交互逻辑（v0.2.2：把 WPF 侧的模型市场补全到跨平台版）。
 //
 // 这一块**以 WPF 版行为为准**（frontend/SettingsWindow.Market.cs，908 行），

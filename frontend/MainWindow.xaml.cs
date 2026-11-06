@@ -1,3 +1,5 @@
+// [EN] EchoDesk WPF frontend module: frontend/MainWindow.xaml.cs. See type and member comments for details.
+// [ZH] EchoDesk 前端模块：frontend/MainWindow.xaml.cs。类型与成员说明见下方注释。
 using System.IO;
 using System.Text;
 using System.Text.Json;
