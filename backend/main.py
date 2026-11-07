@@ -199,6 +199,7 @@ with _suppress_stdout():
     from file_parser import is_parse_error, localize_error, parse_file_with_wps
     from gguf_meta import format_bytes as _format_bytes
     from gguf_meta import resolve_context_window
+    import hardware_profiler
     from llm_engine import LazyLLMEngine, LLMEngine, NoModelError, StreamStats
     # [EN] Heartbeat channel marker (task 5): the engine emits it during prefill, see
     # [EN] llm_engine._iter_with_heartbeat.
@@ -675,8 +676,17 @@ class Backend:
                 requested = None
         try:
             train_ctx = resolve_context_window(path, 0)
-            n_ctx = self.config.context_for_model(path, train_ctx, requested)
-            self.llm.load(path, n_ctx)
+            plan = hardware_profiler.plan_inference(
+                profile=hardware_profiler.probe(),
+                model_path=path,
+                train_context=train_ctx,
+                requested_context=int(requested or self.config.context_length or 0),
+                max_context=int(self.config.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
+                requested_gpu_layers=int(self.config.n_gpu_layers or 0),
+                n_threads_override=int(self.config.n_threads or 0),
+            )
+            self.llm.apply_plan(plan)
+            self.llm.load(path, plan.n_ctx_initial)
         except Exception as e:  # noqa: BLE001 - 损坏/不支持/内存不足都在这里
             log.exception("热加载模型失败: %s", os.path.basename(path))
             return {"ok": False, "name": os.path.basename(path),
@@ -952,37 +962,72 @@ class Backend:
     def _build_engine(config: Config, model_path: str):
         """
         [EN]
-        Create the inference engine for the selected model's context window.
+        Create the inference engine from the hardware profile and the selected model.
 
-        The window is the minimum of the configured value, the model training window (GGUF
-        metadata), and config.max_context; at load time LLMEngine logs the window size and KV
-        cache usage.
+        The initial window is the planned small allocation, while the hardware ceiling is
+        retained by the engine for on-demand growth (see
+        ``llm_engine.LLMEngine.maybe_grow_context``). The thread count, accelerator choice
+        and GPU layer count all come from ``hardware_profiler.plan_inference``; no tuning
+        value is hard-coded in this method.
 
         When ``model_path`` is empty, :class:`LazyLLMEngine` (an empty engine) is returned:
         that is the carrier of the "no model ready" state -- the backend starts as usual and
-        :meth:`Backend.load_model` **loads in place** once a model is available (tasks 1 / 5).
+        :meth:`Backend.load_model` **loads in place** once a model is available.
 
         [ZH]
-        按"所选模型"的上下文窗口创建推理引擎。
+        依据硬件档案与所选模型创建推理引擎。
 
-        窗口取配置值、模型训练窗口（GGUF 元数据）与 config.max_context 三者的最小值；
-        加载时由 LLMEngine 输出窗口大小与 KV Cache 占用日志。
+        初始窗口取规划后的较小分配值，硬件上限则保留在引擎内供按需扩展（见
+        ``llm_engine.LLMEngine.maybe_grow_context``）。线程数、加速器选择与 GPU 层数
+        全部来自 ``hardware_profiler.plan_inference``；本方法不再硬编码任何调优值。
 
         ``model_path`` 为空时返回 :class:`LazyLLMEngine`（空引擎）：这是"无模型就绪"
-        的载体，后端照常启动，等模型到位后由 :meth:`Backend.load_model` **原地加载**
-        （任务一 / 任务五）。
+        的载体，后端照常启动，等模型到位后由 :meth:`Backend.load_model` **原地加载**。
         """
-        n_threads = config.n_threads or os.cpu_count() or 4
+        profile = hardware_profiler.probe()
         path = str(model_path or "").strip()
         if not path:
-            log.info("%s", _t("sys.log_model_none_state"))
-            return LazyLLMEngine(
-                int(config.context_length or 8192), n_threads=n_threads,
-                n_batch=config.n_batch, n_gpu_layers=config.n_gpu_layers,
-                reasoning=getattr(config, "reasoning", None),
+            plan = hardware_profiler.plan_inference(
+                profile=profile,
+                requested_context=int(config.context_length or 0),
+                max_context=int(config.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
+                requested_gpu_layers=0,
+                n_threads_override=int(config.n_threads or 0),
             )
+            log.info("%s", _t("sys.log_model_none_state"))
+            engine = LazyLLMEngine(
+                plan.n_ctx_initial, n_threads=plan.n_threads,
+                n_batch=config.n_batch, n_gpu_layers=plan.n_gpu_layers,
+                reasoning=getattr(config, "reasoning", None),
+                profile=profile, max_n_ctx=plan.n_ctx_max,
+                backend_label=plan.backend,
+            )
+            engine.inference_plan = plan.to_dict()
+            return engine
         train_ctx = resolve_context_window(path, 0)
-        n_ctx = config.context_for_model(path, train_ctx)
+        plan = hardware_profiler.plan_inference(
+            profile=profile,
+            model_path=path,
+            train_context=train_ctx,
+            requested_context=int(config.context_length or 0),
+            max_context=int(config.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
+            requested_gpu_layers=int(config.n_gpu_layers or 0),
+            n_threads_override=int(config.n_threads or 0),
+        )
+        features = ",".join(
+            name for name, enabled in (("AVX2", profile.cpu.avx2),
+                                       ("AVX-512", profile.cpu.avx512)) if enabled
+        ) or "—"
+        log_user(
+            log, "sys.log_hardware_profile",
+            physical=profile.cpu.physical_cores,
+            logical=profile.cpu.logical_cores,
+            features=features,
+            ram=_format_bytes(profile.ram_total_bytes),
+            available=_format_bytes(profile.ram_available_bytes),
+            gpu=profile.gpu.label,
+            backend=plan.backend,
+        )
         log_user(
             log, "sys.log_model_loading",
             # [EN] The signature of i18n.t() is t(key, **kwargs): it does **not accept a
@@ -996,14 +1041,19 @@ class Backend:
             # [ZH] resolve_context_window() 在 GGUF 元数据读取不到时返回 0 → 执行 or 右侧
             # [ZH] → `TypeError: t() takes 1 positional argument but 2 were given`。
             # [ZH] 缺键的回落应交给回退链处理。
-            path=path, ctx=n_ctx, trained=train_ctx or _t("sys.log_unknown"),
-            threads=n_threads, batch=config.n_batch, gpu=config.n_gpu_layers,
+            path=path, ctx=plan.n_ctx_initial, trained=train_ctx or _t("sys.log_unknown"),
+            threads=plan.n_threads, batch=config.n_batch, gpu=plan.n_gpu_layers,
         )
-        return LLMEngine(
-            path, n_ctx,
-            n_threads=n_threads, n_batch=config.n_batch, n_gpu_layers=config.n_gpu_layers,
+        engine = LLMEngine(
+            path, plan.n_ctx_initial,
+            n_threads=plan.n_threads, n_batch=config.n_batch,
+            n_gpu_layers=plan.n_gpu_layers,
             reasoning=getattr(config, "reasoning", None),
+            profile=profile, max_n_ctx=plan.n_ctx_max,
+            backend_label=plan.backend,
         )
+        engine.inference_plan = plan.to_dict()
+        return engine
 
     def restore_session(self) -> int:
         """
@@ -2984,8 +3034,16 @@ class Backend:
             # [ZH] 用户报告的"占用远未到 1/3"就是因为原先只有前者；只看它等于漏掉了最大的一块。
             # [ZH] 不覆盖 ``used`` 是刻意的：既有显示与回归断言都基于它，并列给出信息更全。
             response["used_last_request"] = int(getattr(self, "_last_request_tokens", 0) or 0)
-            response["limit"] = int(self.llm.n_ctx * 0.8)
-            response["n_ctx"] = int(self.llm.n_ctx)
+            # [EN] Report the hardware ceiling rather than the currently allocated
+            # [EN] window: the engine grows on demand up to that ceiling, so the
+            # [EN] front-end progress bar must be scaled against it; otherwise a
+            # [EN] modest history would display as over 100% before compaction runs.
+            # [ZH] 上报硬件上限而非当前已分配的窗口：引擎按需扩展至该上限，因此
+            # [ZH] 前端进度条必须以其为分母；否则一段不长的历史在压缩触发之前就会
+            # [ZH] 显示为超过 100%。
+            effective_ctx = int(getattr(self.llm, "max_n_ctx", 0) or self.llm.n_ctx or 0)
+            response["limit"] = int(effective_ctx * 0.8)
+            response["n_ctx"] = effective_ctx
             try:
                 response["kv_cache_text"] = self.llm.kv_cache_text()
             except Exception:
@@ -4832,10 +4890,17 @@ class Backend:
                 entry.stored_at = stored
                 entry.content = ""
                 log_user(log, "sys.log_file_stored", name=name, threshold=threshold, path=stored)
-        if allow_summary and self.summarizer.should_use_summary(content, self.llm.n_ctx):
+        # [EN] The summarisation trigger is evaluated against the hardware
+        # [EN] ceiling, not the small initial window: a file that fits within the
+        # [EN] ceiling expands the window on demand and must not be summarised
+        # [EN] prematurely.
+        # [ZH] 摘要触发判断以硬件上限为基准，而非较小的初始窗口：能够容纳在上限
+        # [ZH] 之内的文件会按需扩展窗口，不得被提前摘要。
+        effective_ctx = int(getattr(self.llm, "max_n_ctx", 0) or self.llm.n_ctx or 0)
+        if allow_summary and self.summarizer.should_use_summary(content, effective_ctx):
             log.info(
                 "文件 %s 约 %d tokens，超过窗口 %d 的 %.0f%%：转入分段摘要",
-                name, tokens, self.llm.n_ctx, self.config.summarize.trigger_ratio * 100,
+                name, tokens, effective_ctx, self.config.summarize.trigger_ratio * 100,
             )
             # 相关设计：文件解析**不依赖模型**，必须照常完成；只有"分段摘要"这一步需要模型。
             # 所以这里保留已解析的全文，只把摘要这一步换成引导（而不是整个加载失败）。
@@ -4846,7 +4911,7 @@ class Backend:
                                       chars=len(content), tokens=tokens,
                                       guide=_t("sys.no_model_guide", dir=self.models_dir()))}
             head = _t("sys.file_auto_summary_head", name=name, tokens=tokens,
-                      n_ctx=self.llm.n_ctx,
+                      n_ctx=effective_ctx,
                       ratio=f"{self.config.summarize.trigger_ratio:.0%}") + "\n"
             return {"ok": True, "name": name, "chars": len(content), "tokens": tokens,
                     "needs_summary": True,
@@ -5554,7 +5619,11 @@ class Backend:
         conv = self.conv
         cfg = self._compaction_cfg()
         ratio = float(getattr(cfg, "trigger_ratio", 0.70) or 0.70)
-        limit = int(self.llm.n_ctx * ratio)
+        # [EN] Compaction is evaluated against the hardware ceiling so that the
+        # [EN] small initial allocation does not trigger premature summarisation.
+        # [ZH] 压缩判断以硬件上限为基准，避免较小的初始分配导致过早摘要。
+        effective_ctx = int(getattr(self.llm, "max_n_ctx", 0) or self.llm.n_ctx or 0)
+        limit = int(effective_ctx * ratio)
         trigger = "manual" if force else "auto"
         result: Dict[str, Any] = {"compressed": False, "limit": limit,
                                  "ratio": ratio, "trigger": trigger}

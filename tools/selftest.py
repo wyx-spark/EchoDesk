@@ -140,7 +140,12 @@ def test_config() -> None:
     # 摘要配置默认值
     cfg = config.Config()
     check("摘要触发比例默认 0.5", abs(cfg.summarize.trigger_ratio - 0.5) < 1e-9)
-    check("默认上下文窗口 8192", cfg.context_length == 8192, f"得到 {cfg.context_length}")
+    # [EN] Since v0.2.4 the configured value is a ceiling, not the allocated
+    # [EN] window: the hardware planner starts at 2048 tokens and expands on
+    # [EN] demand. The default ceiling therefore matches max_context.
+    # [ZH] 自 v0.2.4 起，配置值为上限而非已分配的窗口：硬件规划器从 2048 token
+    # [ZH] 起步并按需扩展。因此默认上限与 max_context 一致。
+    check("默认上下文上限 32768", cfg.context_length == 32768, f"得到 {cfg.context_length}")
 
     # 新增三：results目录的配置默认值与程序根目录解析
     check("结果顶层文件夹默认「results」", auto.results_root_name == "results",
@@ -750,7 +755,7 @@ def test_imports() -> None:
         "i18n", "update_check", "config", "command_handler", "conversation",
         "file_parser", "gguf_meta", "plaintext", "skills_runtime", "summarizer",
         "download_utils", "search_engine", "llm_engine", "model_hub", "marketplace",
-        "automation", "main", "version",
+        "automation", "hardware_profiler", "main", "version",
     ]
     failures = []
     for name in modules:

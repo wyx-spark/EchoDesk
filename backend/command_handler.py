@@ -30,6 +30,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from config import Config
 from conversation import ConversationManager, MODE_TEMPERATURES
 from download_utils import find_best_model
+import hardware_profiler
 from file_parser import is_parse_error, localize_error, parse_file_with_wps
 from gguf_meta import resolve_context_window
 from i18n import get as _i18n
@@ -861,10 +862,25 @@ class CommandHandler:
 
         上下文窗口按新模型的训练窗口与 config.max_context 收敛，防止超限。
         """
+        # [EN] A model switch is a hardware decision as well: the accelerator,
+        # [EN] thread count and context ceiling are recomputed for the new model
+        # [EN] before the reload, so the previous model's tuning is not retained.
+        # [ZH] 切换模型同样属于硬件决策：重新加载之前会为新模型重新计算加速器、
+        # [ZH] 线程数与上下文上限，避免沿用上一个模型的调优参数。
         requested = int(profile["context_length"]) if profile and profile.get("context_length") else None
         train = resolve_context_window(path, 0)
-        n_ctx = self.config.context_for_model(path, train, requested)
+        plan = hardware_profiler.plan_inference(
+            profile=hardware_profiler.probe(),
+            model_path=path,
+            train_context=train,
+            requested_context=int(requested or self.config.context_length or 0),
+            max_context=int(self.config.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
+            requested_gpu_layers=int(self.config.n_gpu_layers or 0),
+            n_threads_override=int(self.config.n_threads or 0),
+        )
+        n_ctx = plan.n_ctx_initial
         try:
+            self.llm_engine.apply_plan(plan)
             self.llm_engine.reload(path, n_ctx)
         except Exception as e:
             return t("cmd.resp.model_apply_failed", error=e), None

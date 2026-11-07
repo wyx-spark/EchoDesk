@@ -17,18 +17,20 @@ EchoDesk 版本与署名信息。
 远小于归属错误带来的长期代价。设计规范编号只在记录正文里引用，不进文件名。
 """
 APP_NAME = "EchoDesk"
-# [EN] v0.2.3 = "Avalonia as the main line, WPF moved into long-term support (LTS)".
-# [EN] The release is stable from this point; reproducible-build guarantees are part of the
-# [EN] v0.2.3 delivery.
+# [EN] v0.2.4 = "Hardware-adaptive runtime tuning". The inference engine now
+# [EN] profiles the host, derives the GPU layer count from free VRAM behind a
+# [EN] safety watermark, and grows the context window on demand from a small
+# [EN] initial allocation up to the hardware ceiling.
 # [EN] Every downstream consumer derives its version from ``APP_VERSION``, so there is no
 # [EN] second source of truth. Windows file-version resources can only hold four numeric
 # [EN] fields, therefore ``app_version_4()`` below is the only place allowed to derive that
 # [EN] form; do not re-implement it downstream.
-# [ZH] v0.2.3 =「Avalonia 主线 + WPF 转入长期支持（LTS）」。自本版本起为正式稳定版；
-# [ZH] 可复现构建保证属于 v0.2.3 的交付内容。
+# [ZH] v0.2.4 =「硬件自适应运行时调优」。推理引擎在启动时探测宿主硬件，依据空闲显存
+# [ZH] 与安全水位线推导 GPU 卸载层数，并以较小的初始分配为起点按需扩展上下文窗口，
+# [ZH] 直至硬件上限。
 # [ZH] 下游全部按 ``APP_VERSION`` 派生，不再有第二处真相。注意：Windows 的**文件版本资源**
 # [ZH] 只能是四段纯数字，这件事只由下面的 ``app_version_4()`` 负责，不要在下游各写一份。
-APP_VERSION = "v0.2.3"
+APP_VERSION = "v0.2.4"
 
 
 def app_version_4() -> str:

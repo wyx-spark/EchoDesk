@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Tuple
 
 from gguf_meta import describe_model, estimate_kv_cache_bytes, format_bytes, resolve_context_window
+from hardware_profiler import DEFAULT_INITIAL_CONTEXT
 from i18n import log_user
 from i18n import t as _t
 from reasoning import ANSWER, ReasoningSplitter, normalize_tags, split_text
@@ -173,18 +174,33 @@ class LLMEngine:
     def __init__(
         self,
         model_path: str,
-        n_ctx: int = 8192,
+        n_ctx: int = DEFAULT_INITIAL_CONTEXT,
         verbose: bool = False,
         n_threads: Optional[int] = None,
         n_batch: int = 512,
         n_gpu_layers: int = 0,
         reasoning=None,
+        profile=None,
+        max_n_ctx: Optional[int] = None,
+        backend_label: str = "",
     ) -> None:
         self.model_path = model_path
-        self.n_ctx = n_ctx
+        self.n_ctx = int(n_ctx)
         self.n_threads = n_threads
         self.n_batch = n_batch
         self.n_gpu_layers = n_gpu_layers
+        # [EN] Hardware profile and planning bounds supplied by the startup
+        # [EN] planner. ``max_n_ctx`` is the ceiling to which :meth:`maybe_grow_context`
+        # [EN] may expand the window on demand; it is never smaller than ``n_ctx``.
+        # [ZH] 由启动规划器提供的硬件档案与规划边界。``max_n_ctx`` 是
+        # [ZH] :meth:`maybe_grow_context` 按需扩展窗口时可达到的上限，且永不小于
+        # [ZH] ``n_ctx``。
+        self.profile = profile
+        self.max_n_ctx = max(int(n_ctx), int(max_n_ctx or n_ctx))
+        self.backend_label = str(
+            backend_label or ("CPU" if int(n_gpu_layers) == 0 else "GPU")
+        )
+        self.inference_plan: Dict[str, object] = {}
         # [EN] Reasoning separation (config.reasoning): `enabled` controls whether
         # the split is active, and `tags` is the list of additional tags. Passing
         # None (for example from a third-party or test construction) defaults to
@@ -231,18 +247,94 @@ class LLMEngine:
         self.log_window()
         return llm
 
+    def apply_plan(self, plan) -> None:
+        """
+        [EN]
+        Apply a hardware-derived inference plan to this engine before the next
+        model load.
+
+        The plan carries the accelerator decision, the thread count and the
+        context ceiling. Applying it before ``load`` / ``reload`` means the
+        underlying llama.cpp object is constructed with the planned values, so a
+        model switch cannot silently retain the previous model's tuning.
+
+        [ZH]
+        在下一次加载模型之前，把由硬件推导出的推理规划应用到本引擎。
+
+        规划包含加速器决策、线程数与上下文上限。在 ``load`` / ``reload`` 之前
+        应用该规划，可确保底层 llama.cpp 对象以规划值构建，因此切换模型不会
+        静默沿用上一个模型的调优参数。
+        """
+        try:
+            threads = int(getattr(plan, "n_threads", 0) or 0)
+            if threads > 0:
+                self.n_threads = threads
+            self.n_gpu_layers = int(
+                getattr(plan, "n_gpu_layers", self.n_gpu_layers)
+            )
+            ceiling = int(getattr(plan, "n_ctx_max", 0) or 0)
+            if ceiling > 0:
+                # [EN] The ceiling belongs to the planned model and replaces the
+                # [EN] previous one; the subsequent reload supplies an initial
+                # [EN] window that never exceeds it.
+                # [ZH] 上限属于本次规划的模型并替换旧值；随后的重新加载会提供一个
+                # [ZH] 绝不超过该上限的初始窗口。
+                self.max_n_ctx = max(1, ceiling)
+            backend = str(getattr(plan, "backend", "") or "")
+            if backend:
+                self.backend_label = backend
+            to_dict = getattr(plan, "to_dict", None)
+            if callable(to_dict):
+                self.inference_plan = dict(to_dict())
+        except Exception:  # noqa: BLE001 - planning must not abort model loading
+            log.warning("应用推理规划失败（沿用当前参数）", exc_info=True)
+
+    def inference_status(self) -> Dict[str, object]:
+        """
+        [EN]
+        Return the active inference configuration for diagnostics and tests.
+        [ZH]
+        返回当前生效的推理配置，供诊断与测试使用。
+        """
+        return {
+            "backend": self.backend_label,
+            "n_gpu_layers": int(self.n_gpu_layers),
+            "n_ctx": int(self.n_ctx),
+            "n_ctx_max": int(self.max_n_ctx),
+            "n_threads": int(self.n_threads or 0),
+            "plan": dict(self.inference_plan),
+        }
+
     def log_window(self) -> None:
         """
         [EN]
-        Log the active context window size when a model is loaded or reloaded.
+        Log the active inference backend, context window and thread count when a
+        model is loaded or reloaded. The first line is user-facing because every
+        backend stderr line is forwarded to the interface status region.
+
         [ZH]
-        模型加载/重载时输出当前上下文窗口大小。
+        模型加载/重载时输出当前推理后端、上下文窗口与线程数。首行属于面向用户的
+        文本，因为后端每一行 stderr 都会被转发到界面状态区。
         """
-        train = f"{self.n_ctx_train} tokens" if self.n_ctx_train else "未知"
-        log.info(
-            "上下文窗口: %d tokens（模型训练窗口 %s，KV Cache 约 %s，线程 %s，GPU 层 %d）",
-            self.n_ctx, train, format_bytes(self.kv_cache_bytes),
-            self.n_threads, self.n_gpu_layers,
+        # [EN] The language-pack template supplies the "tokens" unit, so only the
+        # [EN] numeric value is passed here.
+        # [ZH] 语言包模板已包含 "tokens" 单位，因此此处仅传入数值。
+        trained = str(self.n_ctx_train) if self.n_ctx_train else _t("sys.log_unknown")
+        log_user(
+            log, "sys.log_inference_backend",
+            backend=self.backend_label,
+            layers=self.n_gpu_layers,
+            ctx=self.n_ctx,
+            max_ctx=self.max_n_ctx,
+            threads=self.n_threads,
+        )
+        log_user(
+            log, "sys.log_context_window",
+            n_ctx=self.n_ctx,
+            trained=trained,
+            kv=format_bytes(self.kv_cache_bytes),
+            threads=self.n_threads,
+            gpu=self.n_gpu_layers,
         )
 
     def reload(self, model_path: Optional[str] = None, n_ctx: Optional[int] = None) -> None:
@@ -389,6 +481,73 @@ class LLMEngine:
             return None
         return ReasoningSplitter(self.reasoning_tags)
 
+    def _prompt_token_estimate(self, messages: List[dict]) -> int:
+        """
+        [EN]
+        Estimate the total token count of a message list. The model tokenizer is
+        preferred; the character-based estimate is a fallback for an unavailable
+        tokenizer.
+
+        [ZH]
+        估算消息列表的总 token 数。优先使用模型分词器；分词器不可用时回落到按
+        字符估算。
+        """
+        total = 0
+        for message in messages or []:
+            text = str(message.get("content", "") or "")
+            try:
+                total += max(0, int(self.count_tokens(text)))
+            except Exception:  # noqa: BLE001
+                total += max(0, len(text) // 2)
+        return total
+
+    def maybe_grow_context(self, messages: List[dict], max_tokens: int = 0) -> bool:
+        """
+        [EN]
+        Expand the context window on demand when the next request would exceed
+        the currently allocated window.
+
+        The initial window is deliberately small (see
+        :data:`hardware_profiler.DEFAULT_INITIAL_CONTEXT`) so that an idle model
+        occupies little memory. Growth is performed by reloading the model with a
+        larger window, doubling the current value and clamping it to the
+        hardware ceiling. A reload failure is logged and the request proceeds
+        with the existing window, because refusing to answer would be a worse
+        user-visible outcome than a possible allocation failure.
+
+        [ZH]
+        当下一次请求将超出当前已分配的窗口时，按需扩展上下文窗口。
+
+        初始窗口刻意较小（见 :data:`hardware_profiler.DEFAULT_INITIAL_CONTEXT`），
+        使空闲模型占用较少内存。扩展通过以更大窗口重新加载模型完成：将当前值
+        翻倍，并收敛到硬件上限。重新加载失败时记录日志并沿用既有窗口继续请求，
+        因为拒绝回答对用户而言比一次可能的内存分配失败更糟。
+        """
+        ceiling = int(getattr(self, "max_n_ctx", 0) or 0)
+        current = int(self.n_ctx or 0)
+        if ceiling <= current or not messages:
+            return False
+        needed = self._prompt_token_estimate(messages) + max(0, int(max_tokens or 0)) + 64
+        if needed <= current:
+            return False
+        target = max(current * 2, needed)
+        target = min(ceiling, target - (target % 256) if target % 256 else target)
+        if target <= current:
+            return False
+        try:
+            self.reload(n_ctx=target)
+        except Exception:  # noqa: BLE001 - keep the session usable on failure
+            log.warning(
+                "上下文按需扩展失败（沿用 %d tokens）: target=%d", current, target,
+                exc_info=True,
+            )
+            return False
+        log_user(
+            log, "sys.log_context_expanded",
+            old=current, new=int(self.n_ctx or target), max_ctx=ceiling,
+        )
+        return True
+
     def _chat_complete_raw(
         self,
         messages: List[dict],
@@ -404,6 +563,11 @@ class LLMEngine:
         [ZH]
         底层非流式补全，返回模型原样输出（可能包含思考标签）。
         """
+        # [EN] Grow the window before building the request so the allocation
+        # [EN] matches the conversation length; see :meth:`maybe_grow_context`.
+        # [ZH] 在构建请求之前扩展窗口，使分配值与对话长度相匹配；见
+        # [ZH] :meth:`maybe_grow_context`。
+        self.maybe_grow_context(messages, max_tokens)
         kwargs: Dict[str, object] = {
             "messages": messages,
             "stream": False,
@@ -660,6 +824,11 @@ class LLMEngine:
         速度统计刻意将思考内容计入 ``last_tokens``：思考同样属于模型生成的输出，
         "变慢"必须如实反映，不能因分流而少计一部分。
         """
+        # [EN] Grow the window before dispatching the request; the expansion is
+        # [EN] part of the caller-visible latency and must precede prefill.
+        # [ZH] 在派发请求之前扩展窗口；扩展耗时属于调用方可见的延迟，必须发生在
+        # [ZH] prefill 之前。
+        self.maybe_grow_context(messages, max_tokens)
         started = time.perf_counter()
         produced = 0
         if stats is not None:
@@ -921,17 +1090,27 @@ class LazyLLMEngine(LLMEngine):
     清空缓存、窗口/KV 描述、速度提示。
     """
 
-    def __init__(self, n_ctx: int = 8192, verbose: bool = False,
+    def __init__(self, n_ctx: int = DEFAULT_INITIAL_CONTEXT, verbose: bool = False,
                  n_threads: Optional[int] = None, n_batch: int = 512,
-                 n_gpu_layers: int = 0, reasoning=None) -> None:
+                 n_gpu_layers: int = 0, reasoning=None, profile=None,
+                 max_n_ctx: Optional[int] = None, backend_label: str = "") -> None:
         # [EN] Deliberately does not call super().__init__: that path would import
         # llama_cpp and load the model immediately.
         # [ZH] 刻意不调用 super().__init__：该路径会立即 import llama_cpp 并加载模型。
         self.model_path = ""
-        self.n_ctx = int(n_ctx or 0)
+        self.n_ctx = int(n_ctx or DEFAULT_INITIAL_CONTEXT)
         self.n_threads = n_threads
         self.n_batch = n_batch
         self.n_gpu_layers = n_gpu_layers
+        # [EN] Preserve the planned bounds so a later hot load applies the same
+        # [EN] accelerator and context decisions.
+        # [ZH] 保留规划边界，使后续热加载沿用相同的加速器与上下文决策。
+        self.profile = profile
+        self.max_n_ctx = max(int(self.n_ctx), int(max_n_ctx or self.n_ctx))
+        self.backend_label = str(
+            backend_label or ("CPU" if int(n_gpu_layers) == 0 else "GPU")
+        )
+        self.inference_plan: Dict[str, object] = {}
         # [EN] Reasoning separation: record the configuration even before the model
         # is loaded so it takes effect immediately after a hot load.
         # [ZH] 思考内容分离：未加载模型时也先记录配置，热加载后立即生效。
@@ -984,7 +1163,12 @@ class LazyLLMEngine(LLMEngine):
         # [ZH] 延迟到真正加载模型时才 import。
         from llama_cpp import Llama
 
-        target_ctx = int(n_ctx or self.n_ctx or 8192)
+        # [EN] Use the planned initial window instead of a global constant, and
+        # [EN] never exceed the planned hardware ceiling.
+        # [ZH] 使用规划后的初始窗口而非全局常量，并且绝不超出规划得到的硬件上限。
+        target_ctx = int(n_ctx or self.n_ctx or DEFAULT_INITIAL_CONTEXT)
+        if self.max_n_ctx > 0:
+            target_ctx = min(target_ctx, int(self.max_n_ctx))
         train = resolve_context_window(path, default=0)
         llm = Llama(
             model_path=path,

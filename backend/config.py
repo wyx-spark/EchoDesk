@@ -1083,10 +1083,17 @@ class Config(BaseModel):
     # [ZH] 旧值（general/summary/…）仍然能读进来 —— conversation.canonical_mode 会把它们
     # [ZH] 迁移成新名字，所以老用户的 config.json 不需要手工改。
     default_mode: str = "chat"
-    # [EN] Requested context window: 8192 by default (4096 in v0.1.0, far too small
-    # [EN] for long contract documents).
-    # [ZH] 请求的上下文窗口：默认 8192（v0.1.0 为 4096，合同类长文档严重不足）
-    context_length: int = 8192
+    # [EN] Requested context ceiling (maximum permitted window). The actual
+    # [EN] initial allocation is derived by ``hardware_profiler`` from the CPU,
+    # [EN] RAM and GPU profile and starts at 2048 tokens; the engine expands it
+    # [EN] on demand up to this ceiling or the hardware limit, whichever is
+    # [EN] smaller. The previous global constant of 8192 is therefore no longer
+    # [EN] a hard limit on the allocated window.
+    # [ZH] 请求的上下文上限（允许的最大窗口）。实际初始分配由
+    # [ZH] ``hardware_profiler`` 依据 CPU、内存与 GPU 档案推导，起始值为 2048
+    # [ZH] token；引擎按需扩展至该上限与硬件上限中的较小者。因此，此前的全局
+    # [ZH] 常量 8192 不再是已分配窗口的硬性限制。
+    context_length: int = 32768
     # [EN] Configuration ceiling for the context window, used for validation; no value
     # [EN] from any source can exceed it.
     # [ZH] 上下文窗口配置上限：校验用，任何来源的取值都不会超过它

@@ -1,0 +1,1224 @@
+"""
+[EN]
+Hardware capability profiling and dynamic inference planning for EchoDesk.
+
+The module performs a single, defensive scan of the host before a model is
+loaded and derives every runtime tuning value from that scan:
+
+  * CPU: physical core count, logical core count, AVX2 and AVX-512 support;
+  * GPU: NVIDIA CUDA, AMD ROCm and Apple Metal availability, with free VRAM;
+  * Memory: total and currently available system RAM;
+  * Planning: a safe initial context window, a hardware ceiling for that
+    window, a safe ``n_gpu_layers`` value, and a deterministic thread count.
+
+Every probe is isolated inside an exception boundary. A probe failure must
+never propagate to the caller: the planner silently degrades to the most
+conservative CPU-only configuration and records the degradation in the
+profile so that the condition remains observable in the log.
+
+[ZH]
+EchoDesk 的硬件能力探测与动态推理规划模块。
+
+该模块在加载模型之前对宿主环境执行一次防御式扫描，并据此推导全部运行时
+调优参数：
+
+  * CPU：物理核心数、逻辑核心数、AVX2 与 AVX-512 支持情况；
+  * GPU：NVIDIA CUDA、AMD ROCm 与 Apple Metal 的可用性及空闲显存；
+  * 内存：系统总内存与当前可用内存；
+  * 规划：安全初始上下文窗口、该窗口的硬件上限、安全的 ``n_gpu_layers``
+    取值，以及确定性的线程数。
+
+所有探测均置于异常边界之内。探测失败不得向调用方传播：规划器静默降级为最
+保守的纯 CPU 配置，并把降级事实记录在档案对象中，使该状况在日志中仍然可观测。
+"""
+from __future__ import annotations
+
+import ctypes
+import glob
+import logging
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
+
+log = logging.getLogger("EchoDesk.Hardware")
+
+#: [EN] Context window allocated for a freshly loaded model. A small initial
+#: allocation keeps the KV cache, and therefore idle memory usage, low; the
+#: window grows on demand up to the hardware ceiling.
+#: [ZH] 新加载模型时分配的初始上下文窗口。较小的初始分配可压低 KV Cache 占用，
+#: 从而降低空闲内存占用；该窗口按需增长，直至硬件上限。
+DEFAULT_INITIAL_CONTEXT = 2048
+
+#: [EN] Absolute lower bound for any context window. Matches
+#: ``config.MIN_CONTEXT`` so that the planner never produces a value the
+#: configuration layer would reject.
+#: [ZH] 任何上下文窗口的绝对下界。与 ``config.MIN_CONTEXT`` 保持一致，使规划器
+#: 不会产出配置层会拒绝的取值。
+MIN_CONTEXT = 512
+
+#: [EN] Fallback ceiling used only when no configuration value is supplied.
+#: [ZH] 仅在未提供配置取值时使用的后备上限。
+DEFAULT_MAX_CONTEXT = 32768
+
+#: [EN] VRAM safety watermark. Twenty percent of free VRAM is deliberately left
+#: unallocated to absorb driver overhead, allocator fragmentation and transient
+#: compute buffers, preventing out-of-memory termination.
+#: [ZH] 显存安全水位线。刻意保留 20% 的空闲显存不予分配，用于吸收驱动开销、
+#: 分配器碎片与瞬时计算缓冲，避免显存耗尽导致的进程终止。
+VRAM_SAFETY_RATIO = 0.20
+
+#: [EN] RAM safety ratio applied to the currently available physical memory.
+#: [ZH] 针对当前可用物理内存施加的内存安全比例。
+RAM_SAFETY_RATIO = 0.20
+
+#: [EN] Fixed allowance for the computation graph, logits and temporary buffers
+#: created by llama.cpp during inference.
+#: [ZH] 为 llama.cpp 推理期间创建的计算图、logits 与临时缓冲预留的固定额度。
+COMPUTE_BUFFER_BYTES = 256 * 1024 * 1024
+
+#: [EN] Context window values are rounded down to this granularity so that the
+#: reported and allocated values remain stable and human-readable.
+#: [ZH] 上下文窗口取值按该粒度向下取整，使上报值与分配值保持稳定且便于阅读。
+CONTEXT_ROUNDING = 256
+
+_MIB = 1024 * 1024
+_GIB = 1024 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class CpuProfile:
+    """
+    [EN]
+    Static CPU capabilities relevant to inference scheduling.
+
+    [ZH]
+    与推理调度相关的静态 CPU 能力。
+    """
+
+    physical_cores: int
+    logical_cores: int
+    avx2: bool
+    avx512: bool
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Serialize the CPU profile into a JSON-compatible mapping.
+        [ZH]
+        将 CPU 档案序列化为与 JSON 兼容的映射。
+        """
+        return {
+            "physical_cores": int(self.physical_cores),
+            "logical_cores": int(self.logical_cores),
+            "avx2": bool(self.avx2),
+            "avx512": bool(self.avx512),
+        }
+
+
+@dataclass(frozen=True)
+class GpuProfile:
+    """
+    [EN]
+    Detected accelerator and its usable video memory.
+
+    ``detected_backend`` records what the host exposes, while ``available``
+    records whether the installed llama.cpp build can actually offload layers
+    to that accelerator. A dedicated NVIDIA driver installation combined with a
+    CPU-only llama.cpp build therefore yields ``detected_backend="cuda"`` and
+    ``available=False``, which is the truthful state and prevents a futile
+    offload attempt.
+
+    [ZH]
+    已探测到的加速器及其可用显存。
+
+    ``detected_backend`` 记录宿主实际暴露的加速器类型，``available`` 记录当前
+    安装的 llama.cpp 构建是否真的能够把网络层卸载到该加速器上。因此，"已安装
+    NVIDIA 驱动但 llama.cpp 为纯 CPU 构建"这一组合会得到
+    ``detected_backend="cuda"`` 且 ``available=False`` 的结果；该结果符合真实
+    状态，并可避免一次注定失败的卸载尝试。
+    """
+
+    detected_backend: str
+    available: bool
+    name: str
+    total_vram_bytes: int
+    free_vram_bytes: int
+    reason: str = ""
+
+    @property
+    def label(self) -> str:
+        """
+        [EN]
+        Short backend label used in logs and status text.
+        [ZH]
+        用于日志与状态文本的简短后端名称。
+        """
+        if not self.available:
+            return "CPU"
+        labels = {"cuda": "CUDA", "rocm": "ROCm", "metal": "Metal"}
+        return labels.get(self.detected_backend, "GPU")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Serialize the GPU profile into a JSON-compatible mapping.
+        [ZH]
+        将 GPU 档案序列化为与 JSON 兼容的映射。
+        """
+        return {
+            "detected_backend": self.detected_backend,
+            "available": bool(self.available),
+            "name": self.name,
+            "total_vram_bytes": int(self.total_vram_bytes),
+            "free_vram_bytes": int(self.free_vram_bytes),
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class HardwareProfile:
+    """
+    [EN]
+    Immutable snapshot of the host capabilities consumed by the inference
+    planner. ``degraded`` is true when at least one probe fell back to a
+    conservative default; ``notes`` records the individual fallbacks.
+
+    [ZH]
+    供推理规划器消费的宿主能力不可变快照。``degraded`` 表示至少有一项探测
+    回落到保守默认值；``notes`` 记录各项回落的具体原因。
+    """
+
+    cpu: CpuProfile
+    gpu: GpuProfile
+    ram_total_bytes: int
+    ram_available_bytes: int
+    degraded: bool = False
+    notes: Tuple[str, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Serialize the complete hardware profile.
+        [ZH]
+        序列化完整的硬件档案。
+        """
+        return {
+            "cpu": self.cpu.to_dict(),
+            "gpu": self.gpu.to_dict(),
+            "ram_total_bytes": int(self.ram_total_bytes),
+            "ram_available_bytes": int(self.ram_available_bytes),
+            "degraded": bool(self.degraded),
+            "notes": list(self.notes),
+        }
+
+    def summary(self) -> str:
+        """
+        [EN]
+        Produce a compact single-line description for diagnostics.
+        [ZH]
+        生成用于诊断的单行简要描述。
+        """
+        return (
+            f"cpu={self.cpu.physical_cores}P/{self.cpu.logical_cores}L "
+            f"avx2={self.cpu.avx2} avx512={self.cpu.avx512} "
+            f"gpu={self.gpu.label} vram_free={self.gpu.free_vram_bytes} "
+            f"ram={self.ram_total_bytes}/{self.ram_available_bytes} "
+            f"degraded={self.degraded}"
+        )
+
+
+@dataclass(frozen=True)
+class InferencePlan:
+    """
+    [EN]
+    Complete set of runtime tuning values derived from a hardware profile.
+
+    ``n_ctx_initial`` governs the first model load and ``n_ctx_max`` is the
+    ceiling to which the engine may expand on demand. ``n_gpu_layers`` follows
+    the llama.cpp convention: ``-1`` requests full offload, ``0`` forces CPU
+    inference, and a positive value offloads exactly that many layers.
+
+    [ZH]
+    由硬件档案推导出的完整运行时调优参数。
+
+    ``n_ctx_initial`` 决定首次加载模型时的窗口，``n_ctx_max`` 是引擎可按需扩展
+    至的上限。``n_gpu_layers`` 遵循 llama.cpp 的约定：``-1`` 表示全量卸载，
+    ``0`` 表示强制纯 CPU 推理，正数表示精确卸载该数量的网络层。
+    """
+
+    n_ctx_initial: int
+    n_ctx_max: int
+    n_gpu_layers: int
+    n_threads: int
+    backend: str
+    model_layers: int
+    model_bytes: int
+    kv_cache_bytes: int
+    vram_usable_bytes: int
+    reasons: Tuple[str, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Serialize the inference plan into a JSON-compatible mapping.
+        [ZH]
+        将推理规划序列化为与 JSON 兼容的映射。
+        """
+        return {
+            "n_ctx_initial": int(self.n_ctx_initial),
+            "n_ctx_max": int(self.n_ctx_max),
+            "n_gpu_layers": int(self.n_gpu_layers),
+            "n_threads": int(self.n_threads),
+            "backend": self.backend,
+            "model_layers": int(self.model_layers),
+            "model_bytes": int(self.model_bytes),
+            "kv_cache_bytes": int(self.kv_cache_bytes),
+            "vram_usable_bytes": int(self.vram_usable_bytes),
+            "reasons": list(self.reasons),
+        }
+
+
+# ---------------------------------------------------------------------------
+# [EN] Defensive probe helpers
+# [ZH] 防御式探测辅助函数
+# ---------------------------------------------------------------------------
+
+def _run_quiet(args: List[str], timeout: float = 5.0) -> Optional[subprocess.CompletedProcess]:
+    """
+    [EN]
+    Execute an external probe command without showing a console window and
+    without allowing it to block the caller indefinitely. Returns ``None`` when
+    the executable is unavailable or the invocation fails.
+
+    [ZH]
+    在不显示控制台窗口、且不无限期阻塞调用方的前提下执行外部探测命令。当可执行
+    文件不可用或调用失败时返回 ``None``。
+    """
+    executable = shutil.which(args[0]) if args else None
+    if not executable:
+        return None
+    try:
+        kwargs: Dict[str, Any] = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.DEVNULL,
+            "timeout": max(0.5, float(timeout)),
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        return subprocess.run([executable] + list(args[1:]), **kwargs)
+    except Exception:  # noqa: BLE001 - a failed probe is not an application failure
+        return None
+
+
+def _logical_core_count() -> int:
+    """
+    [EN]
+    Return the logical processor count, falling back to one on failure.
+    [ZH]
+    返回逻辑处理器数量，失败时回落到 1。
+    """
+    try:
+        value = int(os.cpu_count() or 0)
+    except Exception:  # noqa: BLE001
+        value = 0
+    return max(1, value)
+
+
+def _physical_core_count(logical: int, notes: List[str]) -> int:
+    """
+    [EN]
+    Return the number of physical CPU cores.
+
+    The preferred source is ``psutil`` when it happens to be installed; the
+    standard library fallbacks below then cover every supported platform. When
+    every source fails, the logical count is reported and the fallback is
+    recorded, because over-reporting the thread count is preferable to
+    under-utilising the processor.
+
+    [ZH]
+    返回 CPU 物理核心数。
+
+    若环境中恰好安装了 ``psutil`` 则优先使用；随后的标准库回退覆盖全部受支持
+    平台。当所有来源均失败时，返回逻辑核心数并记录该回落事实，因为线程数偏高
+    优于处理器利用不足。
+    """
+    try:
+        import psutil  # type: ignore
+
+        value = psutil.cpu_count(logical=False)
+        if value:
+            return max(1, int(value))
+    except Exception:  # noqa: BLE001 - optional dependency
+        pass
+
+    try:
+        if os.name == "nt":
+            return _windows_physical_cores(logical, notes)
+        if sys.platform.startswith("linux"):
+            return _linux_physical_cores(logical, notes)
+        if sys.platform == "darwin":
+            result = _run_quiet(["sysctl", "-n", "hw.physicalcpu"])
+            if result is not None and result.returncode == 0:
+                value = int(str(result.stdout).strip() or 0)
+                if value > 0:
+                    return value
+    except Exception:  # noqa: BLE001
+        pass
+    notes.append("physical_cores_fallback")
+    return max(1, logical)
+
+
+def _windows_physical_cores(logical: int, notes: List[str]) -> int:
+    """
+    [EN]
+    Enumerate physical cores through ``GetLogicalProcessorInformationEx`` with
+    ``RelationProcessorCore``. The variable-length records are parsed from a raw
+    buffer, so no fragile structure packing is involved.
+
+    [ZH]
+    通过 ``GetLogicalProcessorInformationEx`` 的 ``RelationProcessorCore``
+    关系枚举物理核心。变长记录直接从原始缓冲区解析，以避免脆弱的结构体对齐
+    处理。
+    """
+    try:
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        size = ctypes.c_uint(0)
+        kernel32.GetLogicalProcessorInformationEx(0, None, ctypes.byref(size))
+        if not size.value:
+            notes.append("physical_cores_unavailable")
+            return max(1, logical)
+        buffer = ctypes.create_string_buffer(size.value)
+        if not kernel32.GetLogicalProcessorInformationEx(0, buffer, ctypes.byref(size)):
+            notes.append("physical_cores_unavailable")
+            return max(1, logical)
+        raw = buffer.raw[: size.value]
+        count = 0
+        offset = 0
+        while offset + 8 <= len(raw):
+            record_size = int.from_bytes(raw[offset + 4: offset + 8], "little")
+            if record_size <= 0 or offset + record_size > len(raw):
+                break
+            count += 1
+            offset += record_size
+        return count or max(1, logical)
+    except Exception:  # noqa: BLE001
+        notes.append("physical_cores_unavailable")
+        return max(1, logical)
+
+
+def _linux_physical_cores(logical: int, notes: List[str]) -> int:
+    """
+    [EN]
+    Derive the physical core count from ``/proc/cpuinfo`` on Linux.
+    [ZH]
+    在 Linux 上从 ``/proc/cpuinfo`` 推导物理核心数。
+    """
+    try:
+        with open("/proc/cpuinfo", "r", encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+        pairs = set()
+        for block in text.split("\n\n"):
+            physical = re.search(r"^physical id\s*:\s*(\d+)", block, re.MULTILINE)
+            core = re.search(r"^core id\s*:\s*(\d+)", block, re.MULTILINE)
+            if physical and core:
+                pairs.add((physical.group(1), core.group(1)))
+        if pairs:
+            return len(pairs)
+        match = re.search(r"^cpu cores\s*:\s*(\d+)", text, re.MULTILINE)
+        if match and int(match.group(1)) > 0:
+            return int(match.group(1))
+    except Exception:  # noqa: BLE001
+        pass
+    notes.append("physical_cores_unavailable")
+    return max(1, logical)
+
+
+def _cpu_features(notes: List[str]) -> Tuple[bool, bool]:
+    """
+    [EN]
+    Return ``(avx2, avx512)`` support flags. Unknown support is reported as
+    ``False``; the flags are informational only and never change correctness.
+
+    [ZH]
+    返回 ``(avx2, avx512)`` 支持标志。未知支持情况一律报告为 ``False``；
+    这两个标志仅用于信息展示，不影响正确性。
+    """
+    try:
+        if os.name == "nt":
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            # [EN] Win32 processor-feature identifiers: 40 = AVX2, 41 = AVX-512F.
+            # [ZH] Win32 处理器特性标识：40 = AVX2，41 = AVX-512F。
+            return bool(kernel32.IsProcessorFeaturePresent(40)), bool(
+                kernel32.IsProcessorFeaturePresent(41)
+            )
+        if sys.platform.startswith("linux"):
+            with open("/proc/cpuinfo", "r", encoding="utf-8", errors="replace") as handle:
+                flags = handle.read().lower()
+            return " avx2" in flags, "avx512f" in flags
+        if sys.platform == "darwin":
+            result = _run_quiet(["sysctl", "-n", "machdep.cpu.leaf7_features"])
+            if result is not None and result.returncode == 0:
+                flags = str(result.stdout).lower()
+                return "avx2" in flags, "avx512f" in flags
+    except Exception:  # noqa: BLE001
+        notes.append("cpu_features_unavailable")
+    return False, False
+
+
+def _windows_memory() -> Tuple[int, int]:
+    """
+    [EN]
+    Return ``(total, available)`` physical memory on Windows.
+    [ZH]
+    返回 Windows 上的 ``(总内存, 可用内存)``。
+    """
+
+    class _MemoryStatusEx(ctypes.Structure):
+        _fields_ = [
+            ("dwLength", ctypes.c_ulong),
+            ("dwMemoryLoad", ctypes.c_ulong),
+            ("ullTotalPhys", ctypes.c_ulonglong),
+            ("ullAvailPhys", ctypes.c_ulonglong),
+            ("ullTotalPageFile", ctypes.c_ulonglong),
+            ("ullAvailPageFile", ctypes.c_ulonglong),
+            ("ullTotalVirtual", ctypes.c_ulonglong),
+            ("ullAvailVirtual", ctypes.c_ulonglong),
+            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+        ]
+
+    status = _MemoryStatusEx()
+    status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+    if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):  # type: ignore[attr-defined]
+        return int(status.ullTotalPhys), int(status.ullAvailPhys)
+    return 0, 0
+
+
+def _linux_memory() -> Tuple[int, int]:
+    """
+    [EN]
+    Return ``(total, available)`` physical memory from ``/proc/meminfo``.
+    [ZH]
+    从 ``/proc/meminfo`` 读取 ``(总内存, 可用内存)``。
+    """
+    total = available = 0
+    with open("/proc/meminfo", "r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if line.startswith("MemTotal:"):
+                total = int(line.split()[1]) * 1024
+            elif line.startswith("MemAvailable:"):
+                available = int(line.split()[1]) * 1024
+    return total, available or max(0, total // 2)
+
+
+def _darwin_memory() -> Tuple[int, int]:
+    """
+    [EN]
+    Return ``(total, available)`` physical memory on macOS.
+    [ZH]
+    返回 macOS 上的 ``(总内存, 可用内存)``。
+    """
+    total = 0
+    result = _run_quiet(["sysctl", "-n", "hw.memsize"])
+    if result is not None and result.returncode == 0:
+        total = int(str(result.stdout).strip() or 0)
+    available = 0
+    page_size = 4096
+    result = _run_quiet(["vm_stat"])
+    if result is not None and result.returncode == 0:
+        text = str(result.stdout)
+        match = re.search(r"page size of (\d+) bytes", text)
+        if match:
+            page_size = int(match.group(1))
+        free = inactive = 0
+        for line in text.splitlines():
+            if line.startswith("Pages free:"):
+                free = int(re.sub(r"\D", "", line.split(":")[1].split(".")[0]) or 0)
+            elif line.startswith("Pages inactive:"):
+                inactive = int(re.sub(r"\D", "", line.split(":")[1].split(".")[0]) or 0)
+        available = (free + inactive) * page_size
+    if total and not available:
+        available = total // 2
+    return total, available
+
+
+def _memory_bytes(notes: List[str]) -> Tuple[int, int]:
+    """
+    [EN]
+    Return ``(total, available)`` physical memory in bytes. Every platform
+    failure is contained and recorded; the final fallback reports zero so that
+    the planner applies its most conservative limits.
+
+    [ZH]
+    返回以字节计的 ``(总内存, 可用内存)``。各平台失败均被捕获并记录；最终回落
+    报告零值，使规划器采用最保守的限制。
+    """
+    try:
+        if os.name == "nt":
+            total, available = _windows_memory()
+            if total > 0:
+                return total, available
+        elif sys.platform.startswith("linux"):
+            total, available = _linux_memory()
+            if total > 0:
+                return total, available
+        elif sys.platform == "darwin":
+            total, available = _darwin_memory()
+            if total > 0:
+                return total, available
+    except Exception:  # noqa: BLE001
+        pass
+    notes.append("memory_probe_failed")
+    return 0, 0
+
+
+def _best_gpu(candidates: List[GpuProfile], notes: List[str]) -> Optional[GpuProfile]:
+    """
+    [EN]
+    Select the candidate with the largest free video memory.
+
+    Multiple accelerators are deliberately not summed: llama.cpp offloads to one
+    device by default, so summing would overstate the budget and could produce
+    an offload target that does not fit any single device.
+
+    [ZH]
+    选择空闲显存最大的候选设备。
+
+    刻意不对多块加速器求和：llama.cpp 默认卸载到单块设备，求和会高估预算，
+    并可能得出任何单块设备都无法容纳的卸载目标。
+    """
+    usable = [item for item in candidates if item is not None and item.available]
+    if not usable:
+        return None
+    if len(usable) > 1:
+        notes.append("multiple_gpus_best_free_vram_selected")
+    return max(usable, key=lambda item: item.free_vram_bytes)
+
+
+def _probe_nvidia(notes: List[str]) -> Optional[GpuProfile]:
+    """
+    [EN]
+    Probe NVIDIA devices through ``nvidia-smi``.
+    [ZH]
+    通过 ``nvidia-smi`` 探测 NVIDIA 设备。
+    """
+    result = _run_quiet(
+        [
+            "nvidia-smi",
+            "--query-gpu=name,memory.total,memory.free",
+            "--format=csv,noheader,nounits",
+        ]
+    )
+    if result is None:
+        return None
+    if result.returncode != 0:
+        notes.append("nvidia_smi_failed")
+        return None
+    candidates: List[GpuProfile] = []
+    for line in str(result.stdout).splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 3:
+            continue
+        try:
+            total = int(float(parts[-2]) * _MIB)
+            free = int(float(parts[-1]) * _MIB)
+        except (TypeError, ValueError):
+            continue
+        name = ", ".join(parts[:-2]) or "NVIDIA GPU"
+        candidates.append(
+            GpuProfile(
+                detected_backend="cuda",
+                available=True,
+                name=name,
+                total_vram_bytes=total,
+                free_vram_bytes=free,
+            )
+        )
+    return _best_gpu(candidates, notes)
+
+
+def _probe_amd(notes: List[str]) -> Optional[GpuProfile]:
+    """
+    [EN]
+    Probe AMD devices through the amdgpu sysfs interface. The interface exposes
+    the same information that ROCm reports and requires no proprietary tooling.
+
+    [ZH]
+    通过 amdgpu 的 sysfs 接口探测 AMD 设备。该接口提供与 ROCm 相同的信息，
+    且不依赖任何专有工具。
+    """
+    candidates: List[GpuProfile] = []
+    try:
+        for total_path in glob.glob("/sys/class/drm/card*/device/mem_info_vram_total"):
+            directory = os.path.dirname(total_path)
+            try:
+                with open(total_path, "r", encoding="ascii") as handle:
+                    total = int(handle.read().strip())
+                used = 0
+                used_path = os.path.join(directory, "mem_info_vram_used")
+                if os.path.isfile(used_path):
+                    with open(used_path, "r", encoding="ascii") as handle:
+                        used = int(handle.read().strip())
+            except (OSError, ValueError):
+                continue
+            if total <= 0:
+                continue
+            name = "AMD GPU"
+            name_path = os.path.join(directory, "product_name")
+            try:
+                if os.path.isfile(name_path):
+                    with open(name_path, "r", encoding="utf-8", errors="replace") as handle:
+                        name = handle.read().strip() or name
+            except OSError:
+                pass
+            candidates.append(
+                GpuProfile(
+                    detected_backend="rocm",
+                    available=True,
+                    name=name,
+                    total_vram_bytes=total,
+                    free_vram_bytes=max(0, total - used),
+                )
+            )
+    except Exception:  # noqa: BLE001
+        notes.append("amd_probe_failed")
+    return _best_gpu(candidates, notes)
+
+
+def _probe_metal(notes: List[str], ram_total: int) -> Optional[GpuProfile]:
+    """
+    [EN]
+    Report Apple Metal on macOS. Unified memory is bounded by the wired-memory
+    limit reported by the kernel; when that value is unavailable, seventy
+    percent of physical memory is used as a conservative approximation.
+
+    [ZH]
+    在 macOS 上报告 Apple Metal。统一内存以内核报告的驻留内存上限为界；该值
+    不可用时，使用物理内存的 70% 作为保守近似。
+    """
+    if sys.platform != "darwin":
+        return None
+    total = 0
+    result = _run_quiet(["sysctl", "-n", "iogpu.wired_limit_mb"])
+    if result is not None and result.returncode == 0:
+        try:
+            total = int(str(result.stdout).strip() or 0) * _MIB
+        except ValueError:
+            total = 0
+    if total <= 0 and ram_total > 0:
+        total = int(ram_total * 0.70)
+    if total <= 0:
+        notes.append("metal_vram_unavailable")
+        return None
+    return GpuProfile(
+        detected_backend="metal",
+        available=True,
+        name="Apple Metal",
+        total_vram_bytes=total,
+        free_vram_bytes=total,
+    )
+
+
+def _llama_gpu_offload_supported() -> Optional[bool]:
+    """
+    [EN]
+    Ask the installed llama.cpp build whether it supports GPU offload. Returns
+    ``None`` when the answer cannot be determined, in which case the detected
+    accelerator is trusted.
+
+    [ZH]
+    询问当前安装的 llama.cpp 构建是否支持 GPU 卸载。无法确定时返回 ``None``，
+    此时以探测到的加速器为准。
+    """
+    try:
+        import llama_cpp  # type: ignore
+
+        probe = getattr(llama_cpp, "llama_supports_gpu_offload", None)
+        if callable(probe):
+            return bool(probe())
+        inner = getattr(llama_cpp, "llama_cpp", None)
+        probe = getattr(inner, "llama_supports_gpu_offload", None)
+        if callable(probe):
+            return bool(probe())
+    except Exception:  # noqa: BLE001 - a missing backend is a normal deployment
+        return None
+    return None
+
+
+_CACHED_PROFILE: Optional[HardwareProfile] = None
+
+
+def probe(force: bool = False) -> HardwareProfile:
+    """
+    [EN]
+    Return the hardware profile, probing the host at most once per process.
+
+    The function is total: every internal failure is converted into a
+    conservative CPU-only profile. It never raises, because it is invoked on the
+    startup path where an exception would terminate the backend process.
+
+    [ZH]
+    返回硬件档案，每个进程至多执行一次探测。
+
+    该函数为全函数：所有内部失败都会转换为保守的纯 CPU 档案。该函数绝不抛出
+    异常，因为它运行于启动路径之上，一旦抛出将终止后端进程。
+    """
+    global _CACHED_PROFILE
+    if _CACHED_PROFILE is not None and not force:
+        return _CACHED_PROFILE
+    try:
+        profile = _probe_impl()
+    except Exception:  # noqa: BLE001 - the startup path must never be interrupted
+        log.warning("硬件探测发生未预期异常，已静默降级为保守配置", exc_info=True)
+        logical = _logical_core_count()
+        profile = HardwareProfile(
+            cpu=CpuProfile(physical_cores=max(1, logical), logical_cores=logical,
+                           avx2=False, avx512=False),
+            gpu=GpuProfile("none", False, "", 0, 0, "probe_exception"),
+            ram_total_bytes=0,
+            ram_available_bytes=0,
+            degraded=True,
+            notes=("probe_exception",),
+        )
+    _CACHED_PROFILE = profile
+    return profile
+
+
+def reset_cache() -> None:
+    """
+    [EN]
+    Discard the cached profile. Provided for tests and for explicit
+    re-enumeration after a hardware change.
+    [ZH]
+    丢弃已缓存的档案。供测试使用，或在硬件发生变化后显式重新枚举。
+    """
+    global _CACHED_PROFILE
+    _CACHED_PROFILE = None
+
+
+def _probe_impl() -> HardwareProfile:
+    """
+    [EN]
+    Perform the actual probe sequence and assemble the profile.
+    [ZH]
+    执行实际探测流程并组装档案。
+    """
+    notes: List[str] = []
+    logical = _logical_core_count()
+    physical = _physical_core_count(logical, notes)
+    avx2, avx512 = _cpu_features(notes)
+    ram_total, ram_available = _memory_bytes(notes)
+
+    gpu_candidates: List[GpuProfile] = []
+    for detector in (
+        lambda: _probe_nvidia(notes),
+        lambda: _probe_amd(notes),
+        lambda: _probe_metal(notes, ram_total),
+    ):
+        try:
+            candidate = detector()
+        except Exception:  # noqa: BLE001
+            candidate = None
+        if candidate is not None:
+            gpu_candidates.append(candidate)
+    gpu = _best_gpu(gpu_candidates, notes)
+
+    if gpu is None:
+        gpu = GpuProfile("none", False, "", 0, 0, "no_supported_gpu")
+    else:
+        supported = _llama_gpu_offload_supported()
+        if supported is False:
+            gpu = GpuProfile(
+                detected_backend=gpu.detected_backend,
+                available=False,
+                name=gpu.name,
+                total_vram_bytes=gpu.total_vram_bytes,
+                free_vram_bytes=gpu.free_vram_bytes,
+                reason="llama_cpp_without_gpu_offload",
+            )
+            notes.append("llama_cpp_without_gpu_offload")
+
+    degraded = bool(notes)
+    profile = HardwareProfile(
+        cpu=CpuProfile(physical_cores=physical, logical_cores=logical,
+                       avx2=avx2, avx512=avx512),
+        gpu=gpu,
+        ram_total_bytes=max(0, int(ram_total)),
+        ram_available_bytes=max(0, int(ram_available)),
+        degraded=degraded,
+        notes=tuple(notes),
+    )
+    log.info("硬件探测完成: %s", profile.summary())
+    return profile
+
+
+# ---------------------------------------------------------------------------
+# [EN] Model shape inspection
+# [ZH] 模型形态检查
+# ---------------------------------------------------------------------------
+
+def _model_shape(model_path: str) -> Tuple[int, int]:
+    """
+    [EN]
+    Return ``(layer_count, file_size_bytes)`` for a GGUF model. Unavailable
+    values are reported as zero and never interrupt planning.
+
+    [ZH]
+    返回 GGUF 模型的 ``(网络层数, 文件字节数)``。不可用的取值报告为零，且不会
+    中断规划流程。
+    """
+    layers = 0
+    size = 0
+    path = str(model_path or "").strip()
+    if path:
+        try:
+            if os.path.isfile(path):
+                size = int(os.path.getsize(path))
+        except OSError:
+            size = 0
+        try:
+            from gguf_meta import architecture, read_metadata
+
+            meta = read_metadata(path)
+            if meta:
+                arch = architecture(meta)
+                value = meta.get(f"{arch}.block_count")
+                if isinstance(value, (int, float)):
+                    layers = max(0, int(value))
+        except Exception:  # noqa: BLE001 - unreadable metadata is a normal case
+            layers = 0
+    return layers, size
+
+
+def _kv_bytes_per_token(model_path: str) -> float:
+    """
+    [EN]
+    Return the KV-cache cost of a single context token, or zero when the model
+    metadata is insufficient. A 1024-token sample is measured and divided, which
+    keeps the arithmetic in floating point rather than integer division.
+
+    [ZH]
+    返回单个上下文 token 的 KV Cache 开销；模型元数据不足时返回零。实现上先
+    测量 1024 token 的样本再相除，使运算保持浮点精度而非整数除法。
+    """
+    path = str(model_path or "").strip()
+    if not path or not os.path.isfile(path):
+        return 0.0
+    try:
+        from gguf_meta import estimate_kv_cache_bytes
+
+        sample = estimate_kv_cache_bytes(path, 1024)
+        if sample and sample > 0:
+            return float(sample) / 1024.0
+    except Exception:  # noqa: BLE001
+        return 0.0
+    return 0.0
+
+
+def _kv_cache_bytes(model_path: str, n_ctx: int) -> int:
+    """
+    [EN]
+    Estimate the KV-cache size for the supplied context window.
+    [ZH]
+    估算指定上下文窗口下的 KV Cache 大小。
+    """
+    path = str(model_path or "").strip()
+    if not path or not os.path.isfile(path) or int(n_ctx) <= 0:
+        return 0
+    try:
+        from gguf_meta import estimate_kv_cache_bytes
+
+        value = estimate_kv_cache_bytes(path, int(n_ctx))
+        return int(value) if value and value > 0 else 0
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# [EN] Planning primitives
+# [ZH] 规划原语
+# ---------------------------------------------------------------------------
+
+def safe_context_limit(
+    profile: HardwareProfile,
+    model_path: str = "",
+    train_context: int = 0,
+    requested_max: int = 0,
+    ceiling: int = DEFAULT_MAX_CONTEXT,
+) -> int:
+    """
+    [EN]
+    Compute the largest context window that the host can serve safely.
+
+    The result is the minimum of four constraints: the configured ceiling, the
+    requested maximum, the model's trained window, and the memory budget derived
+    from currently available RAM. The memory budget reserves a fixed ratio of
+    available memory plus the computation buffer, so the calculation remains
+    conservative under concurrent load.
+
+    [ZH]
+    计算宿主能够安全承载的最大上下文窗口。
+
+    结果取四项约束的最小值：配置上限、请求上限、模型训练窗口，以及由当前可用
+    内存推导出的内存预算。内存预算保留固定比例的可用内存与计算缓冲，因此在
+    并发负载下仍保持保守。
+    """
+    caps: List[int] = []
+    if ceiling and int(ceiling) > 0:
+        caps.append(int(ceiling))
+    if requested_max and int(requested_max) > 0:
+        caps.append(int(requested_max))
+
+    trained = int(train_context or 0)
+    if trained <= 0 and model_path:
+        try:
+            from gguf_meta import resolve_context_window
+
+            trained = int(resolve_context_window(model_path, 0) or 0)
+        except Exception:  # noqa: BLE001
+            trained = 0
+    if trained > 0:
+        caps.append(trained)
+
+    cap = min(caps) if caps else DEFAULT_MAX_CONTEXT
+    per_token = _kv_bytes_per_token(model_path)
+    if per_token > 0 and profile.ram_available_bytes > 0:
+        _, model_bytes = _model_shape(model_path)
+        budget = (
+            int(profile.ram_available_bytes * (1.0 - RAM_SAFETY_RATIO))
+            - int(model_bytes)
+            - COMPUTE_BUFFER_BYTES
+        )
+        memory_cap = int(budget // per_token) if budget > 0 else 0
+        cap = min(cap, memory_cap) if memory_cap > 0 else MIN_CONTEXT
+    elif per_token <= 0:
+        # [EN] Without metadata, an 8192-token ceiling is the conservative
+        # [EN] assumption; a larger value cannot be justified from the file.
+        # [ZH] 元数据不可用时，以 8192 token 为保守假设；更大的取值无法由文件
+        # [ZH] 内容得到支持。
+        cap = min(cap, 8192)
+
+    cap = max(MIN_CONTEXT, int(cap))
+    remainder = cap % CONTEXT_ROUNDING
+    if remainder:
+        cap -= remainder
+    return int(max(MIN_CONTEXT, cap))
+
+
+def initial_context_for(
+    n_ctx_max: int, preferred: int = DEFAULT_INITIAL_CONTEXT
+) -> int:
+    """
+    [EN]
+    Derive the initial context window from the hardware ceiling.
+
+    The initial window is the preferred small allocation, rounded down to the
+    context granularity and clamped to the ceiling. It is never larger than the
+    ceiling and never smaller than the absolute minimum.
+
+    [ZH]
+    由硬件上限推导初始上下文窗口。
+
+    初始窗口取首选的较小分配值，按上下文粒度向下取整并收敛到上限。该值不会
+    超过上限，也不会低于绝对下界。
+    """
+    maximum = max(MIN_CONTEXT, int(n_ctx_max or MIN_CONTEXT))
+    target = max(MIN_CONTEXT, min(int(preferred), maximum))
+    target = max(MIN_CONTEXT, target - (target % CONTEXT_ROUNDING))
+    return int(min(maximum, target))
+
+
+def _gpu_layer_decision(
+    profile: HardwareProfile,
+    model_layers: int,
+    model_bytes: int,
+    kv_cache_bytes: int,
+    safety_ratio: float = VRAM_SAFETY_RATIO,
+    compute_buffer: int = COMPUTE_BUFFER_BYTES,
+) -> Tuple[int, str]:
+    """
+    [EN]
+    Decide how many transformer layers can be offloaded to the accelerator.
+
+    The decision applies three rules in order:
+
+    1. With no usable accelerator, or with unusable model dimensions, the result
+       is forced to zero (pure CPU inference).
+    2. When model weights, KV cache and the computation buffer all fit inside
+       the usable VRAM (free VRAM minus the safety watermark), full offload
+       (``-1``) is requested.
+    3. Otherwise the remaining VRAM is divided by the per-layer weight size.
+       One layer-equivalent is withheld for embeddings and the output head,
+       which remain resident on the host in llama.cpp's partial-offload mode.
+
+    [ZH]
+    决定可卸载至加速器的网络层数量。
+
+    决策按以下三条规则依次执行：
+
+    1. 没有可用加速器，或模型维度不可用时，结果强制为零（纯 CPU 推理）。
+    2. 当模型权重、KV Cache 与计算缓冲均能容纳在可用显存（空闲显存减去安全
+       水位线）之内时，请求全量卸载（``-1``）。
+    3. 否则以剩余显存除以单层权重大小。llama.cpp 的部分卸载模式下词嵌入与输出
+       头保留在宿主侧，因此预留一个单层等效额度。
+    """
+    gpu = profile.gpu
+    if not gpu.available or gpu.free_vram_bytes <= 0:
+        return 0, "no_accelerator"
+    if model_layers <= 0 or model_bytes <= 0:
+        return 0, "model_dimensions_unknown"
+
+    usable = int(gpu.free_vram_bytes * (1.0 - float(safety_ratio)))
+    overhead = max(0, int(kv_cache_bytes)) + max(0, int(compute_buffer))
+    if usable <= overhead:
+        return 0, "insufficient_vram"
+    if model_bytes + overhead <= usable:
+        return -1, "full_offload_fits_safety_watermark"
+
+    per_layer = float(model_bytes) / float(model_layers + 1)
+    if per_layer <= 0:
+        return 0, "model_dimensions_unknown"
+    remaining = float(usable - overhead) - per_layer
+    layers = int(max(0.0, remaining) // per_layer)
+    layers = max(0, min(int(model_layers), layers))
+    if layers <= 0:
+        return 0, "insufficient_vram"
+    return layers, "partial_offload"
+
+
+def compute_gpu_layers(
+    profile: HardwareProfile,
+    model_layers: int,
+    model_bytes: int,
+    kv_cache_bytes: int = 0,
+    safety_ratio: float = VRAM_SAFETY_RATIO,
+    compute_buffer: int = COMPUTE_BUFFER_BYTES,
+) -> int:
+    """
+    [EN]
+    Public wrapper around :func:`_gpu_layer_decision` that returns only the
+    layer count, suitable for direct assertions in tests.
+
+    [ZH]
+    :func:`_gpu_layer_decision` 的公开包装，仅返回层数，便于在测试中直接断言。
+    """
+    layers, _ = _gpu_layer_decision(
+        profile=profile,
+        model_layers=model_layers,
+        model_bytes=model_bytes,
+        kv_cache_bytes=kv_cache_bytes,
+        safety_ratio=safety_ratio,
+        compute_buffer=compute_buffer,
+    )
+    return int(layers)
+
+
+def plan_inference(
+    profile: Optional[HardwareProfile] = None,
+    model_path: str = "",
+    train_context: int = 0,
+    requested_context: int = 0,
+    max_context: int = DEFAULT_MAX_CONTEXT,
+    requested_gpu_layers: int = 0,
+    n_threads_override: int = 0,
+    initial_context_preference: int = DEFAULT_INITIAL_CONTEXT,
+) -> InferencePlan:
+    """
+    [EN]
+    Produce the complete inference plan for a model on the supplied profile.
+
+    ``requested_gpu_layers`` preserves the established manual override: a
+    positive value or ``-1`` is honoured when an accelerator is available, and
+    is forcibly reset to zero when it is not. ``n_threads_override`` preserves
+    the user's explicit thread count; zero selects the physical core count.
+
+    [ZH]
+    在给定档案上为某个模型生成完整的推理规划。
+
+    ``requested_gpu_layers`` 保留既有的手工覆盖语义：存在可用加速器时，正数或
+    ``-1`` 均被采纳；不存在可用加速器时强制归零。``n_threads_override`` 保留
+    用户显式指定的线程数；取零时选择物理核心数。
+    """
+    hardware = profile if profile is not None else probe()
+    layers, model_bytes = _model_shape(model_path)
+    n_ctx_max = safe_context_limit(
+        hardware,
+        model_path=model_path,
+        train_context=train_context,
+        requested_max=requested_context,
+        ceiling=max_context,
+    )
+    n_ctx_initial = initial_context_for(n_ctx_max, initial_context_preference)
+    kv_cache_bytes = _kv_cache_bytes(model_path, n_ctx_max)
+
+    reasons: List[str] = []
+    if not hardware.gpu.available:
+        n_gpu_layers = 0
+        reasons.append("cpu_only")
+        if hardware.gpu.detected_backend != "none":
+            reasons.append(hardware.gpu.reason or "accelerator_unavailable")
+    elif requested_gpu_layers:
+        n_gpu_layers = int(requested_gpu_layers)
+        reasons.append("manual_override")
+    else:
+        n_gpu_layers, reason = _gpu_layer_decision(
+            profile=hardware,
+            model_layers=layers,
+            model_bytes=model_bytes,
+            kv_cache_bytes=kv_cache_bytes,
+        )
+        reasons.append(reason)
+
+    if n_gpu_layers != 0 and hardware.gpu.available:
+        backend = hardware.gpu.label
+    else:
+        backend = "CPU"
+        n_gpu_layers = 0
+
+    logical = max(1, int(hardware.cpu.logical_cores or 1))
+    physical = int(hardware.cpu.physical_cores or 0)
+    if int(n_threads_override) > 0:
+        n_threads = int(n_threads_override)
+    else:
+        n_threads = physical if physical > 0 else logical
+    n_threads = max(1, min(logical, int(n_threads)))
+
+    if model_path and layers <= 0:
+        reasons.append("model_layer_count_unknown")
+    if hardware.degraded:
+        reasons.append("hardware_profile_degraded")
+    if n_ctx_max <= MIN_CONTEXT:
+        reasons.append("context_clamped_to_minimum")
+
+    usable_vram = (
+        int(hardware.gpu.free_vram_bytes * (1.0 - VRAM_SAFETY_RATIO))
+        if hardware.gpu.available
+        else 0
+    )
+    plan = InferencePlan(
+        n_ctx_initial=int(n_ctx_initial),
+        n_ctx_max=int(n_ctx_max),
+        n_gpu_layers=int(n_gpu_layers),
+        n_threads=int(n_threads),
+        backend=backend,
+        model_layers=int(layers),
+        model_bytes=int(model_bytes),
+        kv_cache_bytes=int(kv_cache_bytes),
+        vram_usable_bytes=int(usable_vram),
+        reasons=tuple(reasons),
+    )
+    log.info(
+        "推理规划: initial_ctx=%d max_ctx=%d layers=%d threads=%d backend=%s "
+        "model_layers=%d kv=%d vram_usable=%d reasons=%s",
+        plan.n_ctx_initial, plan.n_ctx_max, plan.n_gpu_layers, plan.n_threads,
+        plan.backend, plan.model_layers, plan.kv_cache_bytes,
+        plan.vram_usable_bytes, ",".join(plan.reasons),
+    )
+    return plan

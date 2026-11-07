@@ -454,6 +454,11 @@ try {
     Invoke-Check "多语言机制" { Invoke-Python "多语言" "tools\test_i18n.py"; "通过" }
     Invoke-Check "开发者模式（修复一）" { Invoke-Python "开发者模式" "tools\test_dev_mode.py"; "通过" }
     Invoke-Check "模型能力辅助（修复四）" { Invoke-Python "模型能力" "tools\test_capability.py"; "通过" }
+    # [EN] v0.2.4: synthetic 8 GiB / 12 GiB profiles assert the GPU layer count,
+    # [EN] the VRAM safety watermark and the silent CPU degradation path.
+    # [ZH] v0.2.4：以合成的 8 GiB / 12 GiB 档案断言 GPU 层数、显存安全水位线与
+    # [ZH] 静默降级为纯 CPU 的路径。
+    Invoke-Check "硬件探测与推理规划（v0.2.4）" { Invoke-Python "硬件规划" "tools\test_hardware_profiler.py"; "通过" }
     Invoke-Check "后端协议端到端" { Invoke-Python "后端协议端到端" "tools\test_backend_e2e.py"; "通过" }
     # v0.2.1 模型市场优化：加载器（分页取全/上限/重试/缓存/离线降级）用本机 HTTP 桩验证，
     # 不依赖真实网络；再驱动**打包后的后端**验证流式加载与本地查询协议。

@@ -3,7 +3,7 @@
     "model_repo": "unsloth/Qwen3-0.6B-GGUF",
     "hf_endpoint": "https://hf-mirror.com",
     "default_mode": "chat",
-    "context_length": 8192,
+    "context_length": 32768,
     "max_context": 32768,
     "auto_context": true,
     "model_context_windows": {
