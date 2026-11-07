@@ -4,8 +4,9 @@
 
 **A local, auditable, extensible AI desktop assistant for users working in strictly-controlled environments.**
 
-EchoDesk is a Windows desktop application that keeps the entire AI stack on your own machine:
-inference, document parsing, conversation history and browser automation all happen locally.
+EchoDesk is a local-first AI desktop assistant with native Windows (WPF) and cross-platform
+(Avalonia) frontends. It keeps the entire AI stack on your own machine: inference, document
+parsing, conversation history and browser automation all happen locally.
 It is built for people who are not allowed to send their documents to a cloud AI service —
 compliance-bound enterprises, network-isolated or air-gapped sites, and anyone who simply
 wants their files to stay on the machine.
@@ -18,7 +19,7 @@ No cloud account. No API key. No telemetry.
 | :---: | :---: |
 | ![Hugging Face GGUF model marketplace with filters and pagination](docs/images/screenshot-model-market.png) | ![Browser automation settings with the safety protocol accepted](docs/images/screenshot-automation.png) |
 
-- **Platform**: Windows 10 / 11 (x64), portable folder with a single entry point
+- **Platform**: Windows 10 / 11 (x64) with the native WPF frontend; Windows, Linux and macOS with the Avalonia frontend
 - **Inference**: local GGUF models through llama.cpp (`llama-cpp-python`), CPU by default
 - **Interface**: C# WPF desktop app, packaged backend written in Python 3.13
 - **Languages**: Simplified Chinese and English shipped; more via community language packs
@@ -26,6 +27,8 @@ No cloud account. No API key. No telemetry.
 - **Organization**: [Void-Entropia-Studio](https://github.com/Void-Entropia-Studio)
 
 ## Why EchoDesk
+
+> EchoDesk is an independent project and is not affiliated with any other product using the same or similar name.
 
 | Differentiator | What it means in practice |
 | --- | --- |

@@ -6,6 +6,7 @@
 Version: v0.2.2
 Copyright: Copyright (C) Void Entropia Studio
 Publisher: Void Entropia Studio, Online only (hereinafter "the Studio")
+Clarification: Void Entropia Studio is the personal studio name of the maintainer, wyx-spark.
 > Studio name mapping: **Void Entropia Studio = 熵寂工作室**. `Void Entropia Studio` /
 > `Void-Entropia-Studio` is the legal-entity identifier used in this agreement and in all
 > English documents; the Chinese translation uses 熵寂工作室. The legal entity is

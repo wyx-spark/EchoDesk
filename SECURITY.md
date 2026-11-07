@@ -23,8 +23,8 @@ prepared before the details are public.
 
 | Version | Supported |
 | --- | --- |
-| **v0.2.1** — current release | **Yes** — security fixes are made here |
-| 0.2.x earlier than v0.2.1 (including v0.2.0) | Upgrade recommended — fixes land only in the latest release of the line |
+| **v0.2.3** — current release | **Yes** — security fixes are made here |
+| 0.2.x earlier than v0.2.3 (including v0.2.0) | Upgrade recommended — fixes land only in the latest release of the line |
 | 0.1.x | No — please upgrade to the latest 0.2.x release |
 | Anything older, a locally modified build, or a third-party repackaged build | No |
 

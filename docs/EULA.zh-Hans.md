@@ -9,6 +9,7 @@
 版本：v0.2.2
 版权：版权所有 (C) 熵寂工作室（Void-Entropia-Studio）
 出品方：熵寂工作室（Void-Entropia-Studio）, Online only（下称"本工作室"）
+澄清：Void Entropia Studio 是维护者 wyx-spark 的个人工作室名称。
 > 工作室中文名与英文名的对应关系：**熵寂工作室 = Void-Entropia-Studio**。
 > 本协议中的**法律主体以英文版 [`EULA.md`](EULA.md) 为准**（英文版使用 `Void Entropia Studio`）。
 项目本体许可：**Apache License 2.0**（详见仓库根目录 [`../LICENSE`](../LICENSE) 与 [`../NOTICE`](../NOTICE)）

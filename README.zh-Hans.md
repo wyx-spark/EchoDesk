@@ -6,9 +6,10 @@
 
 **为在严格管控环境下工作的用户提供的本地、可审计、可扩展 AI 桌面助手。**
 
-EchoDesk 把整套 AI 能力都留在你自己的机器上：推理、文件解析、
-对话记录与浏览器自动化全部在本机完成。它面向这样的人群——因为数据合规、网络隔离或企业
-政策而不能把文档交给云端 AI 服务的企业用户，以及任何希望文件不出本机的人。
+EchoDesk 是本地优先的 AI 桌面助手，提供原生 Windows（WPF）与跨平台（Avalonia）两种前端。
+它把整套 AI 能力都留在你自己的机器上：推理、文件解析、对话记录与浏览器自动化全部在本机完成。
+它面向这样的人群——因为数据合规、网络隔离或企业政策而不能把文档交给云端 AI 服务的企业用户，
+以及任何希望文件不出本机的人。
 
 无需云端账号，无需 API Key，无遥测。
 
@@ -18,7 +19,7 @@ EchoDesk 把整套 AI 能力都留在你自己的机器上：推理、文件解�
 | :---: | :---: |
 | ![带筛选与分页的 Hugging Face GGUF 模型市场](docs/images/screenshot-model-market.zh-Hans.png) | ![已接受安全协议的浏览器自动化设置](docs/images/screenshot-automation.zh-Hans.png) |
 
-- **平台**：Windows 10 / 11（x64），单文件夹便携发布，唯一入口
+- **平台**：Windows 10 / 11（x64）提供原生 WPF 前端；Windows、Linux 与 macOS 提供 Avalonia 跨平台前端
 - **推理**：通过 llama.cpp（`llama-cpp-python`）加载本地 GGUF 模型，默认使用 CPU
 - **界面**：C# WPF 桌面程序，后端为 Python 3.13 打包的可执行文件
 - **语言**：内置简体中文与英语，其他语言由社区语言包补齐
@@ -26,6 +27,8 @@ EchoDesk 把整套 AI 能力都留在你自己的机器上：推理、文件解�
 - **组织**：[Void-Entropia-Studio](https://github.com/Void-Entropia-Studio)
 
 ## 与同类工具的差异
+
+> EchoDesk 是独立项目，与任何其他使用相同或相似名称的产品均无关联。
 
 | 差异点 | 实际意味着什么 |
 | --- | --- |
