@@ -45,6 +45,8 @@ No cloud account. No API key. No telemetry.
 | --- | --- |
 | **Local chat** | Streaming answers from a local model, with adjustable temperature, prompt role, per-model profiles and desktop keyboard shortcuts. `/help` lists every command. |
 | **Context management** | Default context window 8192 tokens (hard cap 32768), automatically converged to the model's real training window read from GGUF metadata. `/status` reports the window and an fp16 KV-cache estimate. |
+| **Automatic hardware tuning** | Before a model loads, EchoDesk profiles the CPU (physical/logical cores, AVX2/AVX-512), NVIDIA CUDA / AMD ROCm / Apple Metal availability with free VRAM, and total/available RAM. It then chooses a safe `n_gpu_layers` behind a 20% VRAM watermark, starts the context at a small allocation and grows it on demand up to the model's native window or the memory budget, and derives the thread count from physical cores. Probe failures degrade silently to CPU-only inference. Probe results are aggregate capabilities only: no MAC address, serial number or absolute path is stored or written to a packaged file. |
+| **Transparent override and diagnostics** | Settings → Model shows a folded hardware diagnostics panel with the detected CPU/GPU/RAM, the model's native window, the hardware budget and the recommended profile. `n_ctx` and `n_gpu_layers` are editable and default to the recommendation. An over-budget value raises a yellow warning icon with an explanation but never blocks saving; the backend adopts it verbatim. A “Test load” button tries the current values in an isolated child process with a 60-second limit. If loading fails (for example a 999999-token window or GPU layers on a machine without an accelerator), the backend returns the raw error and actionable suggestions, the UI shows a dialog, and the previously working engine keeps running. |
 | **Long documents** | Documents larger than a fraction of the window are not truncated: they are split, summarized chunk by chunk (map-reduce) and merged, keeping **source pointers** (file name plus character ranges) so answers can be traced back. `/summarize` triggers it manually. |
 | **Document formats** | `.docx`, `.xlsx`, `.xlsm`, `.xls`, `.pptx`, `.pdf`, `.txt`, `.md`, `.csv` and similar plain-text formats; `.doc` / `.ppt` and encrypted files via WPS/Office COM. |
 | **Model hub** | Search and download GGUF models from a Hugging Face mirror (`hf-mirror.com` by default, switchable to the official endpoint), verify SHA-256, register them in a local model library and hot-swap between them with `/model`. |
@@ -58,8 +60,8 @@ No cloud account. No API key. No telemetry.
 | --- | --- |
 | Operating system | The shipped build targets Windows 10 / 11 (x64). Linux and macOS are supported by the cross-platform frontend (Avalonia, `frontend-avalonia/`) with a shared Python backend; the capability differences and degradation rules for those platforms are documented in [docs/en/CROSS_PLATFORM.md](docs/en/CROSS_PLATFORM.md). |
 | Frontend runtime | None to install. The Windows frontend is a WPF app (target framework `net10.0-windows`) and the cross-platform frontend is an Avalonia app (target framework `net10.0`); both are published self-contained, so the portable build carries its own runtime. |
-| CPU | Any x64 CPU. Inference runs on CPU by default (`n_gpu_layers: 0` in `backend\config.json`). |
-| Memory | 4 GB minimum; 8 GB or more recommended. The default model file is about 472 MB, and the KV cache for the default 8192-token window is roughly 0.3–0.4 GB on top of it. Larger context windows and larger models need more. |
+| CPU | Any x64 CPU. Inference runs on CPU by default; EchoDesk probes the cores and AVX support and picks the thread count automatically. `n_threads` / `n_gpu_layers` can be overridden, subject to the warnings described under **Transparent override and diagnostics**. |
+| Memory | 4 GB minimum; 8 GB or more recommended. The initial context is deliberately small and grows on demand up to the model's native window or the memory budget. The default model file is about 472 MB, and the KV cache for a 32K-token window is roughly 3.5 GB on top of it; larger windows and larger models need more. |
 | Disk | About 1 GB for the portable folder (roughly 0.85 GB when the model is included, about 0.4 GB without it). Allow 2 GB free while a model is being downloaded. |
 | WPS Office or Microsoft Office (optional) | Required for encrypted documents and legacy `.doc` / `.ppt` files, which are read through COM. Without it, use the modern formats listed above. |
 | Microsoft Edge (optional) | Required only for browser automation, which drives the locally installed Edge (`channel = msedge`). EchoDesk does not bundle a browser. |
@@ -72,9 +74,9 @@ No cloud account. No API key. No telemetry.
 1. Get the release from the
    [Releases page](https://github.com/wyx-spark/EchoDesk/releases) of this repository
    (once a release has been published) or by building it yourself with Option B below;
-   the build lands in `publish\EchoDesk-v0.2.2\`.
+   the build lands in `publish\EchoDesk-v0.2.4\`.
 2. Install it or unpack it:
-   - **Installer** — double-click `EchoDesk-v0.2.2-Setup.exe` (the single installer; it does **not**
+   - **Installer** — double-click `EchoDesk-v0.2.4-Setup.exe` (the single installer; it does **not**
      bundle a model, and asks on first launch whether to download one). By default it installs into the
      folder the installer itself
      sits in; the wizard lets you pick another folder. It creates the Start Menu shortcut, a desktop
@@ -91,7 +93,7 @@ No cloud account. No API key. No telemetry.
    > [CODE_SIGNING.md](CODE_SIGNING.md).
 
 3. Start EchoDesk: use the **Start Menu shortcut** (installer), or double-click
-   **`Start-EchoDesk-v0.2.2.lnk`** inside the folder (portable zip — run `install-complete.bat`
+   **`Start-EchoDesk-v0.2.4.lnk`** inside the folder (portable zip — run `install-complete.bat`
    once if that shortcut is missing). Either shortcut points at *your* copy of the program.
    Whichever route you took, that shortcut is the only entry point you need;
    `app\EchoDesk.exe` is the UI and `app\backend\EchoDeskBackend.exe` is started automatically —
@@ -120,7 +122,7 @@ dotnet build frontend\EchoDesk.csproj -c Release
 python tools\selftest.py            # backend unit-level self-test, exit code 0/1
 python tools\test_file_parsers.py   # smoke test for every supported file format
 
-# 4) Full portable build -> publish\EchoDesk-v0.2.2\
+# 4) Full portable build -> publish\EchoDesk-v0.2.4\
 & tools\build_release.ps1
 & tools\build_release.ps1 -SkipBackend     # rebuild only the WPF frontend
 & tools\build_release.ps1 -SkipFrontend    # rebuild only the packaged backend
@@ -179,7 +181,7 @@ or move lives in the outer folder, while the program itself sits in `app\`.
 
 | Path | Contents |
 | --- | --- |
-| `Start-EchoDesk-v0.2.2.lnk` | The only entry point (targets `app\EchoDesk.exe`, working directory = this folder). |
+| `Start-EchoDesk-v0.2.4.lnk` | The only entry point (targets `app\EchoDesk.exe`, working directory = this folder). |
 | `results\` | Automation output (`date\task\` folders with plain-text reports and downloaded files). |
 | `ui_state.json`, `snippets.json` | Window state, font size, theme, language and reusable snippets. |
 | `lang\` | Backend language packs (system messages, errors, command help). Drop in a new `<locale>.json` to add a language. |
@@ -198,7 +200,7 @@ on managed machines where the program folder itself is read-only).
 
 ## Screenshots and demo
 
-Screenshots are **not part of the v0.2.2 release**. The only image assets that ship today are
+Screenshots are **not part of the v0.2.4 release**. The only image assets that ship today are
 `assets/EchoDesk.ico` (the application icon) and `assets/EchoDesk.png` (the logo). Nothing in
 this README links to an image that does not exist yet.
 

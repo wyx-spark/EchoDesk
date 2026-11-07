@@ -24,7 +24,7 @@
       <TextBlock x:Name="MarketNotMigratedText" IsVisible="False" />
     </Grid>
 
-    <ScrollViewer Grid.Row="1" MaxHeight="212"
+    <ScrollViewer Grid.Row="1" MaxHeight="280"
                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel Margin="14,6,14,8" Spacing="8">
 
@@ -118,6 +118,35 @@
                        AutomationProperties.AutomationId="ContextWindowText" />
           </Grid>
 
+          <!-- [EN] Explicit override inputs (v0.2.4 task 3): the values default to
+               [EN] the hardware recommendation and become the user's decision once
+               [EN] edited. The warning icon explains an over-budget value but never
+               [EN] blocks saving — that is the "dashboard, not nanny" contract.
+               [ZH] 显式覆盖输入（v0.2.4 任务-3）：默认填入硬件推荐值，用户一旦编辑
+               [ZH] 即成为其决定。警告图标解释超预算取值，但绝不阻止保存 —— 这正是
+               [ZH] "仪表盘而非保姆"的约定。 -->
+          <Grid ColumnDefinitions="Auto,110,24,Auto,110,24,*">
+            <TextBlock x:Name="NctxLabel" Grid.Column="0" VerticalAlignment="Center"
+                       FontSize="12" Margin="0,0,6,0" />
+            <TextBox x:Name="NctxBox" Grid.Column="1" Width="100" FontSize="12"
+                     AutomationProperties.AutomationId="NctxBox" />
+            <TextBlock x:Name="NctxWarningIcon" Grid.Column="2" Text="⚠" IsVisible="False"
+                       FontSize="14" VerticalAlignment="Center" Margin="4,0,0,0"
+                       AutomationProperties.AutomationId="NctxWarningIcon" />
+            <TextBlock x:Name="GpuLayersLabel" Grid.Column="3" VerticalAlignment="Center"
+                       FontSize="12" Margin="12,0,6,0" />
+            <TextBox x:Name="GpuLayersBox" Grid.Column="4" Width="100" FontSize="12"
+                     AutomationProperties.AutomationId="GpuLayersBox" />
+            <TextBlock x:Name="GpuLayersWarningIcon" Grid.Column="5" Text="⚠" IsVisible="False"
+                       FontSize="14" VerticalAlignment="Center" Margin="4,0,0,0"
+                       AutomationProperties.AutomationId="GpuLayersWarningIcon" />
+            <TextBlock x:Name="OverrideHintText" Grid.Column="6" VerticalAlignment="Center"
+                       FontSize="11" Margin="10,0,0,0" TextWrapping="Wrap" Opacity="0.75" />
+          </Grid>
+
+          <TextBlock x:Name="OverrideWarningsText" FontSize="11" TextWrapping="Wrap"
+                     IsVisible="False" AutomationProperties.AutomationId="OverrideWarningsText" />
+
           <Grid ColumnDefinitions="170,*,60,28,170,*,60" RowDefinitions="Auto,Auto">
             <TextBlock x:Name="TempLabel" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center"
                        FontSize="12" Margin="0,3" />
@@ -166,11 +195,41 @@
                     AutomationProperties.AutomationId="InferenceReloadButton" />
             <Button x:Name="InferenceResetButton" Padding="12,5"
                     AutomationProperties.AutomationId="InferenceResetButton" />
+            <Button x:Name="InferenceTestLoadButton" Padding="12,5"
+                    AutomationProperties.AutomationId="InferenceTestLoadButton" />
           </StackPanel>
           <TextBlock x:Name="InferenceStatusText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
                      AutomationProperties.AutomationId="InferenceStatusText" />
         </StackPanel>
       </Border>
+
+      <!-- [EN] Hardware diagnostics (v0.2.4 task 3): a collapsed panel that
+           [EN] makes the probe results and the recommended values visible instead
+           [EN] of hiding them behind automatic decisions.
+           [ZH] 硬件诊断（v0.2.4 任务-3）：折叠面板，把探测结果与推荐值摆到明面，
+           [ZH] 而不是藏在自动决策背后。 -->
+      <Expander x:Name="HardwareDiagnosticsExpander" IsExpanded="False"
+                AutomationProperties.AutomationId="HardwareDiagnosticsExpander">
+        <Expander.Header>
+          <TextBlock x:Name="HardwareDiagnosticsTitle" FontWeight="Bold" FontSize="13" />
+        </Expander.Header>
+        <StackPanel Spacing="2" Margin="4,2,4,4">
+          <TextBlock x:Name="HardwareCpuText" FontSize="11" TextWrapping="Wrap"
+                     AutomationProperties.AutomationId="HardwareCpuText" />
+          <TextBlock x:Name="HardwareGpuText" FontSize="11" TextWrapping="Wrap"
+                     AutomationProperties.AutomationId="HardwareGpuText" />
+          <TextBlock x:Name="HardwareRamText" FontSize="11" TextWrapping="Wrap"
+                     AutomationProperties.AutomationId="HardwareRamText" />
+          <TextBlock x:Name="HardwareNativeText" FontSize="11" TextWrapping="Wrap"
+                     AutomationProperties.AutomationId="HardwareNativeText" />
+          <TextBlock x:Name="HardwareBudgetText" FontSize="11" TextWrapping="Wrap"
+                     AutomationProperties.AutomationId="HardwareBudgetText" />
+          <TextBlock x:Name="HardwareRecommendedText" FontSize="11" TextWrapping="Wrap"
+                     AutomationProperties.AutomationId="HardwareRecommendedText" />
+          <TextBlock x:Name="HardwareWarningsText" FontSize="11" TextWrapping="Wrap"
+                     IsVisible="False" AutomationProperties.AutomationId="HardwareWarningsText" />
+        </StackPanel>
+      </Expander>
       <!-- ③ 本地模型库（v0.2.2 第 2 批补全，对齐 WPF 的 HubRegistry* 那一块）。
            「模型市场」列的是**能下载什么**，「本地模型库」列的是**磁盘上有什么** —— WPF 侧
            一直是两块不同的东西，此前跨平台版只有市场、没有库。

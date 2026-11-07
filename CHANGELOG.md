@@ -13,11 +13,94 @@ for traceability only; this changelog is the release-facing document.
 
 | Version | Type | Release date | Summary |
 | :--- | :--- | :--- | :--- |
+| [v0.2.4](#v024) | Stable Release | 2026-11-07 | Automatic hardware tuning, three inference presets, transparent override and diagnostics |
 | [v0.2.3](#v023) | Stable Release | 2026-11-07 | Reproducible builds, dependency locks, Avalonia main line, WPF LTS |
 | [v0.2.2](#v022) | Stable Release | 2026-11-04 | Cross-platform frontend, visual consistency, full bilingual coverage |
 | [v0.2.1](#v021) | Stable Release | 2026-10-05 | Capability consolidation, Agent platform, MCP, plugin ecosystem |
 | [v0.2.0](#v020) | Feature Release | 2026-09-23 | Long context and documents, automation, skill marketplace |
 | [v0.1.0](#v010) | Early Preview | 2026-08-29 | First public release: local inference with a desktop client |
+
+---
+
+## v0.2.4
+
+### Release positioning
+
+A quality and transparency release built on the hardware-adaptive runtime introduced in this
+cycle. EchoDesk now profiles the host before a model loads and turns those measurements into
+concrete recommendations; the user can accept them or override them. The release also adds
+three inference presets, structured model metadata awareness, and a diagnostics surface that
+makes every automatic decision visible. Reproducible builds remain byte-identical after the new
+probes: hardware detection never writes a host identifier or absolute path into a packaged file.
+
+### Key capabilities
+
+**Automatic hardware tuning**
+
+- Before a model loads, the backend probes the CPU (physical and logical cores, AVX2/AVX-512),
+  NVIDIA CUDA through `nvidia-smi`, AMD ROCm through the amdgpu sysfs interface, Apple Metal,
+  total/available RAM, and free VRAM.
+- GPU offload is derived behind a 20% free-VRAM safety watermark after reserving the KV cache
+  and a 256 MiB compute buffer. It requests full offload (`-1`) only when the model fits,
+  otherwise computes a safe positive layer count; no discrete GPU forces `n_gpu_layers=0`.
+- The context window starts at a small allocation (2048 tokens by default) and grows on demand
+  up to the model's native window, the configured ceiling or the memory budget, whichever is
+  smallest. The thread count follows the detected physical cores.
+- Every probe is isolated inside an exception boundary; a failure degrades silently to a
+  conservative CPU-only profile and records the reason in the plan.
+
+**Three inference presets**
+
+- `fast`, `balanced` and `quality` control construction-time parameters: initial context,
+  the usable share of the native/hardware ceiling, prompt batch size and thread preference.
+- `fast` halves the ceiling, starts at 1024 tokens, uses a 1024 batch and every logical thread.
+  `balanced` keeps the full ceiling, starts at 2048 and uses physical cores. `quality` keeps
+  the full ceiling, starts at 4096 and uses an F16 KV cache.
+- Changing a preset re-plans and rebuilds the model so `n_ctx` and `n_batch` really take effect;
+  the settings page shows the native window, usable window and the constraint that limited it.
+
+**Transparent override and diagnostics**
+
+- Settings → Model gains a folded hardware diagnostics panel: detected CPU, GPU model and VRAM,
+  system memory, the model's native window, the hardware budget and the recommended profile.
+- `n_ctx` and `n_gpu_layers` are editable and default to the recommendation. Over-budget values
+  show a yellow warning icon with a concrete explanation but do not block saving: the backend
+  adopts them verbatim and returns a localized `warnings` list.
+- A “Test load” button tries the current values in an isolated child process with a 60-second
+  limit. The parent terminates the child on timeout, so model memory is released immediately and
+  the live engine is never duplicated.
+- If an override cannot load (a 999999-token window, or GPU layers on a machine without an
+  accelerator), the backend returns the raw exception plus actionable suggestions and keeps the
+  previous engine running. The UI shows the failure in a dialog; it is never swallowed. A
+  persisted bad override is caught at startup and enters the no-model state instead of crashing
+  the backend, so the user can open Settings and restore the recommendation.
+
+**Model metadata and reproducibility**
+
+- The planner reads the GGUF header for the native context, layer count, attention heads, KV
+  heads, embedding width and key/value dimensions; the native window is a hard ceiling and the
+  memory budget can only lower it.
+- Hardware probing does not affect output determinism: the full release chain was built twice
+  from the same commit and every deliverable hash matched. A dedicated gate (`selftest`,
+  `test_hardware_profiler`, `test_inference_override`, Avalonia `--probe pages`) covers the new
+  override, warning, diagnostics and test-load paths.
+
+### Known limitations
+
+- GPU offload and the three presets were validated with synthetic VRAM profiles and a real
+  CPU-only host; a long-context stress test on real CUDA / ROCm / Metal hardware has not been
+  executed. AMD probing covers the Linux sysfs interface only.
+- Quantised KV caches (Q8_0 and similar) need flash-attention support that has not been verified
+  on the supported hardware set, so all three presets use F16.
+- Changing a preset or applying an override rebuilds the model; hot-swapping without reloading
+  the weights is not available in llama.cpp.
+- The “Test load” child process uses the same executable as the backend. It is bounded by a
+  60-second timeout but adds one full model-load cycle when used.
+
+### Artifacts
+
+`EchoDesk-v0.2.4-Setup.exe`, the portable Windows zip and the Linux/macOS archives are listed
+with their SHA-256 digests in `SHA256SUMS.txt` next to the release assets.
 
 ---
 

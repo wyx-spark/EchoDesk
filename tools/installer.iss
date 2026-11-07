@@ -63,11 +63,13 @@
   ; [EN] The default version is overridden by tools\make_installer.ps1 (-MyAppVersion, which
   ; [EN] reads backend\version.py). The literal below is only the fallback for compiling without
   ; [EN] parameters and is kept in sync with version.py: v0.2.1 = pre-cross-platform; v0.2.2 =
-  ; [EN] cross-platform release; v0.2.3 = Avalonia as the main line (WPF moves into LTS).
+  ; [EN] cross-platform release; v0.2.3 = Avalonia as the main line (WPF moves into LTS);
+  ; [EN] v0.2.4 = hardware-adaptive tuning with three inference presets.
   ; [ZH] 默认版本由 tools\make_installer.ps1 的 -MyAppVersion 覆盖（它从 backend\version.py 取）。
   ; [ZH] 这里的字面量只是"不传参直接编译"时的兜底，保持与 version.py 一致：
-  ; [ZH] v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本；v0.2.3 = Avalonia 主线（WPF 转 LTS）。
-  #define MyAppVersion "0.2.3"
+  ; [ZH] v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本；v0.2.3 = Avalonia 主线（WPF 转 LTS）；
+  ; [ZH] v0.2.4 = 硬件自适应与三档推理预设。
+  #define MyAppVersion "0.2.4"
 #endif
 
 ; [EN] Purely numeric core segment (**no prerelease suffix**): Inno's VersionInfoVersion and
@@ -80,7 +82,7 @@
 ; [ZH] tools\make_installer.ps1 总会用 /DMyAppNumericVersion 传进来；这里只是不传参时的兜底，
 ; [ZH] 口径与 backend\version.py 的 app_version_4() 一致。
 #ifndef MyAppNumericVersion
-  #define MyAppNumericVersion "0.2.3"
+  #define MyAppNumericVersion "0.2.4"
 #endif
 
 ; 允许覆盖源目录，便于在不重建发布目录的情况下做脚本语法自检。

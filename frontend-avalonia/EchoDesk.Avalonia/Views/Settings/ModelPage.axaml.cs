@@ -37,6 +37,15 @@ public partial class ModelPage : UserControl, ISettingsPage
 {
     private ISettingsHost? _host;
     private bool _syncing;
+    // [EN] Recommendation snapshot from the backend, used to fill the editable
+    // [EN] override inputs and to decide locally whether a value is over budget.
+    // [ZH] 来自后端的推荐值快照，用于填入可编辑覆盖输入框并在本地判断是否超预算。
+    private int _recommendedNctx;
+    private int _recommendedGpuLayers;
+    private int _recommendedBatch;
+    private bool _recommendedGpuAvailable;
+    private int _hardwareBudget;
+    private readonly List<string> _backendWarnings = new();
 
     /// <summary>默认值：读不到后端设置时用它（与 WPF 版同一组默认）。</summary>
     private const double DefaultTemperature = 0.7;
@@ -66,6 +75,9 @@ public partial class ModelPage : UserControl, ISettingsPage
         };
         InferenceSaveButton.Click += async (_, _) => await SaveInferenceAsync();
         InferenceReloadButton.Click += async (_, _) => await LoadInferenceAsync();
+        InferenceTestLoadButton.Click += async (_, _) => await TestLoadInferenceAsync();
+        NctxBox.TextChanged += (_, _) => UpdateOverrideWarnings();
+        GpuLayersBox.TextChanged += (_, _) => UpdateOverrideWarnings();
         InferenceResetButton.Click += async (_, _) =>
         {
             // 恢复默认：只是把滑块拨回默认值并提示"还要点保存"，
@@ -75,7 +87,10 @@ public partial class ModelPage : UserControl, ISettingsPage
             SetSlider(TopPSlider, TopPValueText, DefaultTopP);
             SetSlider(RepeatSlider, RepeatValueText, DefaultRepeatPenalty);
             SetSlider(MaxTokensSlider, MaxTokensValueText, DefaultMaxTokens);
+            NctxBox.Text = _recommendedNctx.ToString();
+            GpuLayersBox.Text = _recommendedGpuLayers.ToString();
             _syncing = false;
+            UpdateOverrideWarnings();
             InferenceStatusText.Text = Loc.T("settings.inference.resetApplied",
                 "↩️ 已恢复默认值（点「保存」后写入 config.json）");
         };
@@ -824,14 +839,128 @@ public partial class ModelPage : UserControl, ISettingsPage
             SummaryCacheCheck.IsChecked = GetBoolOr(settings, "summary_cache", true);
             if (doc.RootElement.TryGetProperty("inference", out JsonElement inference))
                 ApplyInferenceInfo(inference);
+            if (doc.RootElement.TryGetProperty("hardware", out JsonElement hardware))
+            {
+                ApplyHardwareInfo(hardware);
+                ApplyHardwareInputs(hardware);
+            }
         }
         finally
         {
             _syncing = false;
         }
         RefreshSliderLabels();
+        UpdateOverrideWarnings();
         InferenceStatusText.Text = Loc.T("settings.inference.loaded",
             "✅ 已读取当前参数（点「保存」后写入 config.json）");
+    }
+
+    /// <summary>
+    /// [EN] Render the hardware diagnostics panel and remember the recommendation.
+    /// [ZH] 渲染硬件诊断面板并记住推荐值。
+    /// </summary>
+    private void ApplyHardwareInfo(JsonElement hardware)
+    {
+        int physical = 0, logical = 0;
+        if (hardware.TryGetProperty("cpu", out JsonElement cpu))
+        {
+            physical = GetInt(cpu, "physical_cores");
+            logical = GetInt(cpu, "logical_cores");
+        }
+        HardwareCpuText.Text = Loc.T("settings.inference.hardwareCpu",
+            "🧠 CPU：{0} 物理核 / {1} 逻辑核", physical, logical);
+
+        bool gpuAvailable = false;
+        string gpuName = "";
+        long totalVram = 0;
+        if (hardware.TryGetProperty("gpu", out JsonElement gpu))
+        {
+            gpuAvailable = GetBool(gpu, "available");
+            gpuName = GetString(gpu, "name");
+            totalVram = GetLong(gpu, "total_vram_bytes");
+            string label = GetString(gpu, "label");
+            HardwareGpuText.Text = gpuAvailable
+                ? Loc.T("settings.inference.hardwareGpu",
+                    "🎮 GPU：{0}（{1}，显存 {2}）", gpuName, label, FormatBytes(totalVram))
+                : Loc.T("settings.inference.hardwareGpuCpu",
+                    "🎮 GPU：未探测到可用加速器，使用 CPU 推理（{0}）",
+                    gpuName.Length > 0 ? gpuName : label);
+        }
+
+        long ramTotal = 0;
+        if (hardware.TryGetProperty("ram", out JsonElement ram))
+            ramTotal = GetLong(ram, "total_bytes");
+        HardwareRamText.Text = Loc.T("settings.inference.hardwareRam",
+            "💾 系统内存：{0}", FormatBytes(ramTotal));
+
+        int native = 0;
+        if (hardware.TryGetProperty("model", out JsonElement model))
+            native = GetInt(model, "native_context");
+        HardwareNativeText.Text = Loc.T("settings.inference.hardwareNative",
+            "📄 模型原生窗口：{0} tokens", native);
+
+        int budget = 0, recNctx = 0, recGpu = 0, recBatch = 0;
+        string recProfile = "";
+        if (hardware.TryGetProperty("recommended", out JsonElement recommended))
+        {
+            recNctx = GetInt(recommended, "n_ctx");
+            recGpu = GetInt(recommended, "n_gpu_layers");
+            recBatch = GetInt(recommended, "n_batch");
+            budget = GetInt(recommended, "hardware_budget");
+            recProfile = GetString(recommended, "profile");
+        }
+        _recommendedNctx = recNctx;
+        _recommendedGpuLayers = recGpu;
+        _recommendedBatch = recBatch;
+        _recommendedGpuAvailable = gpuAvailable;
+        _hardwareBudget = budget;
+        HardwareBudgetText.Text = Loc.T("settings.inference.hardwareBudget",
+            "📐 硬件预算上限：{0} tokens", budget);
+        HardwareRecommendedText.Text = Loc.T("settings.inference.hardwareRecommended",
+            "⭐ 推荐：n_ctx {0} · n_gpu_layers {1} · n_batch {2} · 档位 {3}",
+            recNctx, recGpu, recBatch, recProfile);
+
+        if (hardware.TryGetProperty("warnings", out JsonElement warnings)
+            && warnings.ValueKind == JsonValueKind.Array)
+        {
+            _backendWarnings.Clear();
+            foreach (JsonElement warning in warnings.EnumerateArray())
+            {
+                if (warning.ValueKind == JsonValueKind.String)
+                    _backendWarnings.Add(warning.GetString() ?? "");
+            }
+        }
+    }
+
+    /// <summary>
+    /// [EN] Fill the editable inputs: the recommendation when no override is
+    /// [EN] active, otherwise the user's persisted request.
+    /// [ZH] 填充可编辑输入框：未启用覆盖时填推荐值，否则填用户已保存的请求值。
+    /// </summary>
+    private void ApplyHardwareInputs(JsonElement hardware)
+    {
+        bool overrideActive = false;
+        int requestedNctx = _recommendedNctx;
+        int requestedGpu = _recommendedGpuLayers;
+        if (hardware.TryGetProperty("requested", out JsonElement requested))
+        {
+            overrideActive = GetBool(requested, "override");
+            if (overrideActive)
+            {
+                requestedNctx = GetInt(requested, "n_ctx");
+                requestedGpu = GetInt(requested, "n_gpu_layers");
+            }
+        }
+        _syncing = true;
+        try
+        {
+            NctxBox.Text = requestedNctx.ToString();
+            GpuLayersBox.Text = requestedGpu.ToString();
+        }
+        finally
+        {
+            _syncing = false;
+        }
     }
 
     private string CurrentPreset() => (PresetCombo.SelectedItem as Option)?.Value ?? "balanced";
@@ -884,6 +1013,16 @@ public partial class ModelPage : UserControl, ISettingsPage
         }
         _contextWindowText = text;
         ContextWindowText.Text = text;
+        _backendWarnings.Clear();
+        if (inference.ValueKind == JsonValueKind.Object
+            && inference.TryGetProperty("warnings", out JsonElement warningList)
+            && warningList.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement warning in warningList.EnumerateArray())
+                if (warning.ValueKind == JsonValueKind.String)
+                    _backendWarnings.Add(warning.GetString() ?? "");
+        }
+        UpdateOverrideWarnings();
     }
 
     /// <summary>
@@ -891,17 +1030,221 @@ public partial class ModelPage : UserControl, ISettingsPage
     /// 后端按"收到什么写什么"处理，全量发送让界面成为唯一事实来源，
     /// 不会出现"某次改动没发出去、之后每次保存都把它漏掉"的隐性偏差。
     /// </summary>
+    /// <summary>
+    /// [EN] Read the editable override inputs, returning false when either box is
+    /// [EN] not a valid integer.
+    /// [ZH] 读取可编辑的覆盖输入；任一输入框不是合法整数时返回 false。
+    /// </summary>
+    private (int Nctx, int GpuLayers, bool Ok) ReadOverrideInputs()
+    {
+        bool ctxOk = int.TryParse((NctxBox.Text ?? "").Trim(), out int nctx);
+        bool gpuOk = int.TryParse((GpuLayersBox.Text ?? "").Trim(), out int gpu);
+        return (nctx, gpu, ctxOk && gpuOk && nctx >= 512 && gpu >= -1);
+    }
+
+    /// <summary>
+    /// [EN] Show the over-budget warnings beside the inputs without blocking the
+    /// [EN] save path. The tooltip carries the concrete numbers; the inline line
+    /// [EN] keeps the same text visible for keyboard and screen-reader users.
+    /// [ZH] 在输入框旁显示超预算警告，但不阻断保存。悬停提示给出具体数值；行内文本
+    /// [ZH] 保留同样内容，方便键盘与读屏用户。
+    /// </summary>
+    private void UpdateOverrideWarnings()
+    {
+        if (_syncing)
+            return;
+        var (nctx, gpu, ok) = ReadOverrideInputs();
+        var warnings = new List<string>();
+        if (!ok)
+        {
+            warnings.Add(Loc.T("settings.inference.overrideInvalid",
+                "⚠️ 请输入整数：n_ctx ≥ 512，n_gpu_layers ≥ -1"));
+        }
+        else
+        {
+            if (_hardwareBudget > 0 && nctx > _hardwareBudget)
+            {
+                warnings.Add(Loc.T("settings.inference.warnContextOverBudget",
+                    "⚠️ n_ctx {0} 超出硬件预算 {1} tokens；保存后会按你的选择尝试加载，失败时会明确报错。",
+                    nctx, _hardwareBudget));
+            }
+            if (gpu != 0 && !_recommendedGpuAvailable)
+            {
+                warnings.Add(Loc.T("settings.inference.warnGpuUnavailable",
+                    "⚠️ 本机未探测到可用 GPU 加速器；n_gpu_layers={0} 会在加载时失败。", gpu));
+            }
+            else if (gpu > 0 && _recommendedGpuLayers >= 0 && gpu > _recommendedGpuLayers)
+            {
+                warnings.Add(Loc.T("settings.inference.warnGpuLayersOver",
+                    "⚠️ n_gpu_layers {0} 高于安全推荐值 {1}；可能显存不足。",
+                    gpu, _recommendedGpuLayers));
+            }
+        }
+        foreach (string warning in _backendWarnings)
+        {
+            if (!warnings.Contains(warning))
+                warnings.Add(warning);
+        }
+        string ctxWarning = warnings.Count > 0 ? string.Join("\n", warnings) : "";
+        string gpuWarning = warnings.Count > 0 ? string.Join("\n", warnings) : "";
+        NctxWarningIcon.IsVisible = !ok || (warnings.Count > 0);
+        GpuLayersWarningIcon.IsVisible = !ok || (warnings.Count > 0);
+        IBrush? warningBrush = TryBrush("WarningBrush");
+        NctxWarningIcon.Foreground = warningBrush ?? Brushes.Goldenrod;
+        GpuLayersWarningIcon.Foreground = warningBrush ?? Brushes.Goldenrod;
+        ToolTip.SetTip(NctxWarningIcon, ctxWarning);
+        ToolTip.SetTip(GpuLayersWarningIcon, gpuWarning);
+        OverrideWarningsText.Text = string.Join("\n", warnings);
+        OverrideWarningsText.IsVisible = warnings.Count > 0;
+        OverrideWarningsText.Foreground = warningBrush ?? Brushes.Goldenrod;
+    }
+
+    /// <summary>
+    /// [EN] Error dialog required by v0.2.4 task 3: a failed override must be
+    /// [EN] shown, never swallowed. The raw backend error and its suggestions are
+    /// [EN] displayed verbatim on separate lines.
+    /// [ZH] v0.2.4 任务-3 要求的错误对话框：覆盖失败必须展示，绝不吞掉。后端原始
+    /// [ZH] 错误与其建议分行原样显示。
+    /// </summary>
+    private async Task ShowErrorDialogAsync(string title, string message)
+    {
+        Window? owner = TopLevel.GetTopLevel(this) as Window;
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 560,
+            Height = 300,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+        };
+        var text = new TextBlock
+        {
+            Text = message,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 12,
+            Margin = new Thickness(0, 0, 0, 10),
+        };
+        var ok = new Button
+        {
+            Content = Loc.T("settings.inference.dialogOk", "确定"),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Padding = new Thickness(18, 4),
+        };
+        ok.Click += (_, _) => dialog.Close();
+        dialog.Content = new StackPanel
+        {
+            Margin = new Thickness(18, 16),
+            Spacing = 8,
+            Children =
+            {
+                new TextBlock { Text = title, FontSize = 15, FontWeight = FontWeight.Bold },
+                text,
+                ok,
+            },
+        };
+        if (owner is not null)
+            await dialog.ShowDialog(owner);
+        else
+            dialog.Show();
+    }
+
+    /// <summary>
+    /// [EN] "Test load": ask the backend to try the current inputs in a child
+    /// [EN] process with a 60-second timeout. A failure is rendered in a dialog.
+    /// [ZH]「测试加载」：让后端在子进程中用当前输入尝试加载，超时 60 秒。失败时
+    /// [ZH] 以对话框展示。
+    /// </summary>
+    private async Task TestLoadInferenceAsync()
+    {
+        var (nctx, gpu, ok) = ReadOverrideInputs();
+        if (!ok)
+        {
+            await ShowErrorDialogAsync(
+                Loc.T("settings.inference.testLoadFailedTitle", "测试加载失败"),
+                Loc.T("settings.inference.overrideInvalid",
+                    "⚠️ 请输入整数：n_ctx ≥ 512，n_gpu_layers ≥ -1"));
+            return;
+        }
+        InferenceTestLoadButton.IsEnabled = false;
+        InferenceStatusText.Text = Loc.T("settings.inference.testingLoad",
+            "⏳ 正在用当前参数测试加载（最多 60 秒）…");
+        try
+        {
+            using JsonDocument? doc = await SendAsync(new
+            {
+                action = "capability_settings",
+                test_load = true,
+                n_ctx = nctx,
+                n_gpu_layers = gpu,
+                inference_profile = CurrentInferenceProfile(),
+            }, TimeSpan.FromSeconds(75));
+            if (doc is null)
+            {
+                InferenceStatusText.Text = Loc.T("settings.inference.testLoadFailed",
+                    "❌ 测试加载失败：{0}", Loc.T("main.error.noResponse", "无响应"));
+                return;
+            }
+            JsonElement result = doc.RootElement.TryGetProperty("test_load", out JsonElement test)
+                ? test : default;
+            bool passed = result.ValueKind == JsonValueKind.Object && GetBool(result, "ok");
+            if (passed)
+            {
+                InferenceStatusText.Text = Loc.T("settings.inference.testLoadOk",
+                    "✅ 测试加载成功（{0} 秒）", GetDouble(result, "elapsed_seconds", 0));
+                _backendWarnings.Clear();
+                UpdateOverrideWarnings();
+                return;
+            }
+            string error = result.ValueKind == JsonValueKind.Object
+                ? GetString(result, "error") : "";
+            var suggestions = new List<string>();
+            if (result.ValueKind == JsonValueKind.Object
+                && result.TryGetProperty("suggestions", out JsonElement list)
+                && list.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement item in list.EnumerateArray())
+                    if (item.ValueKind == JsonValueKind.String)
+                        suggestions.Add(item.GetString() ?? "");
+            }
+            string message = error.Length > 0
+                ? error
+                : Loc.T("settings.inference.testLoadFailed",
+                    "❌ 测试加载失败：{0}", Loc.T("settings.inference.unknownError", "未知原因"));
+            if (suggestions.Count > 0)
+                message += "\n\n" + string.Join("\n", suggestions);
+            InferenceStatusText.Text = Loc.T("settings.inference.testLoadFailed",
+                "❌ 测试加载失败：{0}", error);
+            await ShowErrorDialogAsync(
+                Loc.T("settings.inference.testLoadFailedTitle", "测试加载失败"), message);
+        }
+        finally
+        {
+            InferenceTestLoadButton.IsEnabled = true;
+        }
+    }
+
     private async Task SaveInferenceAsync()
     {
         if (_host is null || _syncing)
             return;
+        var (nctx, gpu, inputsOk) = ReadOverrideInputs();
+        if (!inputsOk)
+        {
+            string invalid = Loc.T("settings.inference.overrideInvalid",
+                "⚠️ 请输入整数：n_ctx ≥ 512，n_gpu_layers ≥ -1");
+            InferenceStatusText.Text = invalid;
+            await ShowErrorDialogAsync(
+                Loc.T("settings.inference.saveFailedTitle", "保存失败"), invalid);
+            return;
+        }
+        bool allowOverride = nctx != _recommendedNctx || gpu != _recommendedGpuLayers;
         InferenceStatusText.Text = Loc.T("settings.inference.saving", "⏳ 正在保存…");
-        // [EN] A preset change rebuilds the underlying model, which may take
-        // [EN] minutes for a multi-gigabyte file. The idle timeout must therefore
-        // [EN] exceed the model load time, otherwise a successful rebuild would be
-        // [EN] reported as a failure.
-        // [ZH] 切换预设会重建底层模型，对于数 GB 的文件可能耗时数分钟。因此空闲超时必须
-        // [ZH] 大于模型加载时间，否则一次成功的重建会被报告为失败。
+        // [EN] A preset or override change rebuilds the underlying model, which
+        // [EN] may take minutes for a multi-gigabyte file. The idle timeout must
+        // [EN] therefore exceed the model load time, otherwise a successful
+        // [EN] rebuild would be reported as a failure.
+        // [ZH] 预设或覆盖变更会重建底层模型，对于数 GB 的文件可能耗时数分钟。因此空闲
+        // [ZH] 超时必须大于模型加载时间，否则一次成功的重建会被报告为失败。
         using JsonDocument? doc = await SendAsync(new
         {
             action = "capability_settings",
@@ -914,14 +1257,75 @@ public partial class ModelPage : UserControl, ISettingsPage
             context_mode = CurrentContextMode(),
             clarify_vague = ClarifyVagueCheck.IsChecked == true,
             summary_cache = SummaryCacheCheck.IsChecked == true,
+            n_ctx = nctx,
+            n_gpu_layers = gpu,
+            allow_override = allowOverride,
         }, TimeSpan.FromMinutes(10));
         if (doc is null)
         {
-            InferenceStatusText.Text = Loc.T("settings.inference.saveFailed", "❌ 保存失败：{0}",
+            string noResponse = Loc.T("settings.inference.saveFailed", "❌ 保存失败：{0}",
                 Loc.T("main.error.noResponse", "无响应"));
+            InferenceStatusText.Text = noResponse;
+            await ShowErrorDialogAsync(
+                Loc.T("settings.inference.saveFailedTitle", "保存失败"), noResponse);
             return;
         }
-        if (doc.RootElement.TryGetProperty("inference", out JsonElement inference))
+
+        bool responseOk = true;
+        if (doc.RootElement.TryGetProperty("ok", out JsonElement okElement)
+            && okElement.ValueKind == JsonValueKind.False)
+            responseOk = false;
+        JsonElement inference = default;
+        if (doc.RootElement.TryGetProperty("inference", out JsonElement inferenceElement))
+        {
+            inference = inferenceElement;
+            if (inferenceElement.ValueKind == JsonValueKind.Object
+                && inferenceElement.TryGetProperty("ok", out JsonElement inferenceOk)
+                && inferenceOk.ValueKind == JsonValueKind.False)
+                responseOk = false;
+        }
+        if (!responseOk)
+        {
+            string error = GetString(inference, "error");
+            if (error.Length == 0)
+                error = GetString(doc.RootElement, "error");
+            if (error.Length == 0)
+                error = GetString(doc.RootElement, "content");
+            var suggestions = new List<string>();
+            foreach (JsonElement source in new[] { doc.RootElement, inference })
+            {
+                if (source.ValueKind == JsonValueKind.Object
+                    && source.TryGetProperty("suggestions", out JsonElement list)
+                    && list.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement item in list.EnumerateArray())
+                        if (item.ValueKind == JsonValueKind.String)
+                            suggestions.Add(item.GetString() ?? "");
+                }
+            }
+            string message = error.Length > 0 ? error
+                : Loc.T("settings.inference.unknownError", "未知原因");
+            if (suggestions.Count > 0)
+                message += "\n\n" + string.Join("\n", suggestions);
+            InferenceStatusText.Text = Loc.T("settings.inference.saveFailed",
+                "❌ 保存失败：{0}", error);
+            await ShowErrorDialogAsync(
+                Loc.T("settings.inference.saveFailedTitle", "保存失败"), message);
+            if (doc.RootElement.TryGetProperty("hardware", out JsonElement hardware))
+            {
+                ApplyHardwareInfo(hardware);
+                ApplyHardwareInputs(hardware);
+            }
+            if (inference.ValueKind == JsonValueKind.Object)
+                ApplyInferenceInfo(inference);
+            return;
+        }
+        if (doc.RootElement.TryGetProperty("hardware", out JsonElement savedHardware))
+        {
+            ApplyHardwareInfo(savedHardware);
+            ApplyHardwareInputs(savedHardware);
+        }
+        if (inference.ValueKind == JsonValueKind.Object)
             ApplyInferenceInfo(inference);
         InferenceStatusText.Text = Loc.T("settings.inference.saved", "✅ 已保存");
         // 回读：后端会裁剪到合法范围，界面要跟上真实值（quiet 模式，不覆盖上面的提示）。
@@ -930,27 +1334,50 @@ public partial class ModelPage : UserControl, ISettingsPage
     }
 
     private static string GetString(JsonElement item, string name) =>
-        item.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.String
+        item.ValueKind == JsonValueKind.Object && item.TryGetProperty(name, out JsonElement el)
+        && el.ValueKind == JsonValueKind.String
             ? el.GetString() ?? ""
             : "";
 
     private static bool GetBool(JsonElement item, string name) =>
-        item.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.True;
+        item.ValueKind == JsonValueKind.Object && item.TryGetProperty(name, out JsonElement el)
+        && el.ValueKind == JsonValueKind.True;
 
     private static bool GetBoolOr(JsonElement item, string name, bool fallback) =>
-        item.TryGetProperty(name, out JsonElement el) ? el.ValueKind == JsonValueKind.True : fallback;
+        item.ValueKind == JsonValueKind.Object && item.TryGetProperty(name, out JsonElement el)
+            ? el.ValueKind == JsonValueKind.True
+            : fallback;
 
     private static int GetInt(JsonElement item, string name, int fallback) =>
-        item.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.Number
+        item.ValueKind == JsonValueKind.Object && item.TryGetProperty(name, out JsonElement el)
+        && el.ValueKind == JsonValueKind.Number
             ? el.GetInt32()
             : fallback;
 
     private static int GetInt(JsonElement item, string name) => GetInt(item, name, 0);
 
+    private static long GetLong(JsonElement item, string name) =>
+        item.ValueKind == JsonValueKind.Object && item.TryGetProperty(name, out JsonElement el)
+        && el.ValueKind == JsonValueKind.Number
+            ? el.GetInt64()
+            : 0;
+
     private static double GetDouble(JsonElement item, string name, double fallback) =>
-        item.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.Number
+        item.ValueKind == JsonValueKind.Object && item.TryGetProperty(name, out JsonElement el)
+        && el.ValueKind == JsonValueKind.Number
             ? el.GetDouble()
             : fallback;
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes <= 0)
+            return "0 MB";
+        const double mib = 1024.0 * 1024.0;
+        const double gib = 1024.0 * 1024.0 * 1024.0;
+        return bytes >= gib
+            ? $"{bytes / gib:0.0} GB"
+            : $"{bytes / mib:0} MB";
+    }
 
     /// <summary>取主题画刷；主题里没有这个键时返回 null（控件用默认前景色，不崩）。</summary>
     private static Brush? TryBrush(string key)
@@ -988,11 +1415,18 @@ public partial class ModelPage : UserControl, ISettingsPage
         PresetLabel.Text = Loc.T("settings.inference.preset", "预设");
         InferenceProfileLabel.Text = Loc.T("settings.inference.profileLabel", "推理档位");
         ContextModeLabel.Text = Loc.T("settings.inference.contextMode", "上下文策略");
+        NctxLabel.Text = Loc.T("settings.inference.nctxLabel", "上下文 n_ctx");
+        GpuLayersLabel.Text = Loc.T("settings.inference.gpuLayersLabel", "GPU 层数");
+        OverrideHintText.Text = Loc.T("settings.inference.overrideHint",
+            "默认填推荐值；修改后按你的选择加载，超限只警告、不阻止保存。");
+        HardwareDiagnosticsTitle.Text = Loc.T("settings.inference.hardwareTitle",
+            "🔍 硬件诊断（探测结果与推荐值）");
         ClarifyVagueCheck.Content = Loc.T("settings.inference.clarifyVague", "模糊问题先追问");
         SummaryCacheCheck.Content = Loc.T("settings.inference.summaryCache", "缓存分段摘要");
         InferenceSaveButton.Content = Loc.T("settings.inference.save", "保存");
         InferenceReloadButton.Content = Loc.T("settings.inference.reload", "🔄 重新读取");
         InferenceResetButton.Content = Loc.T("settings.inference.reset", "恢复默认");
+        InferenceTestLoadButton.Content = Loc.T("settings.inference.testLoad", "🧪 测试加载");
 
         // 本地模型库（v0.2.2 第 2 批）。标题会随数据重写（"（N 个 · 大小）"），
         // 这里只保证"还没读到数据时它也不是空的"；两个按钮的文案是静态的。
@@ -1092,6 +1526,8 @@ public partial class ModelPage : UserControl, ISettingsPage
         string selected = CurrentInferenceProfile();
         bool contextText = !string.IsNullOrWhiteSpace(ContextWindowText.Text);
         bool profileLabel = !string.IsNullOrWhiteSpace(InferenceProfileLabel.Text);
+        int visibleWarnings = (NctxWarningIcon.IsVisible ? 1 : 0)
+                              + (GpuLayersWarningIcon.IsVisible ? 1 : 0);
         return string.Join("; ", new[]
         {
             $"profileOptions={options}",
@@ -1099,7 +1535,31 @@ public partial class ModelPage : UserControl, ISettingsPage
             $"contextText={(contextText ? 1 : 0)}",
             $"profileLabel={(profileLabel ? 1 : 0)}",
             $"saveButton={(string.IsNullOrEmpty(InferenceSaveButton.Content as string) ? 0 : 1)}",
+            $"nctxField={(string.IsNullOrEmpty(NctxBox.Text) ? 0 : 1)}",
+            $"gpuLayersField={(string.IsNullOrEmpty(GpuLayersBox.Text) ? 0 : 1)}",
+            $"testLoadButton={(string.IsNullOrEmpty(InferenceTestLoadButton.Content as string) ? 0 : 1)}",
+            $"diagnosticsPanel={(HardwareDiagnosticsExpander is null ? 0 : 1)}",
+            $"warnIcons={visibleWarnings}",
+            $"recommendedNctx={_recommendedNctx}",
+            $"recommendedGpuLayers={_recommendedGpuLayers}",
         });
+    }
+
+    /// <summary>
+    /// [EN] Probe entry point: put deliberately over-budget values into the
+    /// [EN] editable inputs and report the resulting warning state. The probe
+    /// [EN] never clicks "Test load", so it cannot block for 60 seconds.
+    /// [ZH] 探针入口：向可编辑输入框填入故意超预算的值并上报警告状态。探针不会点击
+    /// [ZH]「测试加载」，因此不会阻塞 60 秒。
+    /// </summary>
+    public string ProbeOverrideSnapshot()
+    {
+        _syncing = true;
+        NctxBox.Text = "999999";
+        GpuLayersBox.Text = "99";
+        _syncing = false;
+        UpdateOverrideWarnings();
+        return InferenceSnapshot();
     }
 
     /// <summary>

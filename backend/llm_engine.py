@@ -369,6 +369,50 @@ class LLMEngine:
             gpu=self.n_gpu_layers,
         )
 
+    def close(self) -> None:
+        """
+        [EN]
+        Release the underlying llama.cpp model explicitly.
+
+        CPython drops the ``Llama`` object when the last reference disappears,
+        but the native model is large and its destructor timing is not part of
+        the API contract. Tests and the "Test load" child process must be able
+        to free it deterministically, so this method calls ``Llama.close()``
+        when available and clears the reference.
+
+        [ZH]
+        显式释放底层 llama.cpp 模型。
+
+        CPython 在最后一个引用消失时会回收 ``Llama`` 对象，但原生模型很大，析构时机
+        并不属于 API 契约。测试与「测试加载」子进程需要确定性地释放它，因此本方法在
+        ``Llama.close()`` 可用时调用它，并清空引用。
+        """
+        llm = getattr(self, "llm", None)
+        self.llm = None
+        if llm is None:
+            return
+        close = getattr(llm, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001 - cleanup must never mask the real error
+                log.debug("释放 llama.cpp 模型失败（忽略）", exc_info=True)
+
+    def __enter__(self):
+        """
+        [EN] Context-manager entry for temporary engines (test load).
+        [ZH] 临时引擎（测试加载）的上下文管理器入口。
+        """
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        """
+        [EN] Always release the native model, including on exceptions.
+        [ZH] 无论是否发生异常都释放原生模型。
+        """
+        self.close()
+        return False
+
     def reload(self, model_path: Optional[str] = None, n_ctx: Optional[int] = None) -> None:
         """
         [EN]
@@ -381,7 +425,15 @@ class LLMEngine:
             self.n_ctx_train = resolve_context_window(model_path, default=0)
         if n_ctx:
             self.n_ctx = n_ctx
+        previous = getattr(self, "llm", None)
         self.llm = self._create(verbose=False)
+        if previous is not None and previous is not self.llm:
+            close = getattr(previous, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001
+                    log.debug("释放旧 llama.cpp 模型失败（忽略）", exc_info=True)
 
     def load(self, model_path: str, n_ctx: Optional[int] = None) -> None:
         """

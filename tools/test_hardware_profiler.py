@@ -20,7 +20,9 @@ and the dynamic context planning rules.
 
 Run: ``python tools\\test_hardware_profiler.py``. Exit code 0 means all passed.
 """
+import json
 import os
+import platform
 import sys
 from unittest import mock
 
@@ -136,9 +138,11 @@ def test_partial_offload_layer_count():
                                    model_bytes=int(4.2 * GIB),
                                    kv_cache_bytes=int(0.5 * GIB))
     # [EN] The exact value is asserted so a regression in the arithmetic cannot
-    # [EN] hide behind a loose range check.
-    # [ZH] 断言精确取值，使算术回归无法藏在宽松的区间判断之后。
-    check("4 GiB 显存 → 部分卸载 18 层", layers == 18, str(layers))
+    # [EN] hide behind a loose range check. v0.2.4 task 3 raised the VRAM compute
+    # [EN] buffer to 512 MiB, which reduces the partial-offload count from 18 to 16.
+    # [ZH] 断言精确取值，使算术回归无法藏在宽松的区间判断之后。v0.2.4 任务-3 把显存
+    # [ZH] 计算缓冲提升到 512 MiB，部分卸载层数因此从 18 降到 16。
+    check("4 GiB 显存 → 部分卸载 16 层", layers == 16, str(layers))
 
 
 def test_insufficient_vram_returns_zero():
@@ -355,6 +359,108 @@ def test_inference_presets():
           all(entry.get("label") for entry in menu), str(menu))
 
 
+def test_probe_and_plan_never_write_to_disk():
+    print("=== 14. 探测与规划只驻留内存：不写盘、不采集主机标识 ===")
+    writes = []
+    real_open = open
+
+    def guarded_open(file, mode="r", *args, **kwargs):
+        if any(flag in str(mode) for flag in ("w", "a", "x", "+")):
+            writes.append(str(file))
+        return real_open(file, mode, *args, **kwargs)
+
+    with mock.patch("builtins.open", guarded_open), \
+            mock.patch.object(hp, "_run_quiet", return_value=None), \
+            mock.patch.object(hp, "_llama_gpu_offload_supported", return_value=None):
+        hp.reset_cache()
+        captured = hp.probe(force=True)
+        plan = hp.plan_inference(profile=captured, max_context=8192,
+                                 requested_context=8192)
+    hp.reset_cache()
+
+    check("探测与规划期间没有任何写入型 open", writes == [], str(writes))
+    profile_keys = set(captured.to_dict())
+    check("硬件档案只序列化聚合能力字段",
+          profile_keys == {"cpu", "gpu", "ram_total_bytes", "ram_available_bytes",
+                           "degraded", "notes"}, str(sorted(profile_keys)))
+    payload = json.dumps({"profile": captured.to_dict(), "plan": plan.to_dict()},
+                         ensure_ascii=False)
+    home = os.path.expanduser("~")
+    check("序列化结果不含本机用户目录", not home or home not in payload,
+          "检测到用户目录")
+    check("序列化结果不含本机主机名",
+          not platform.node() or platform.node() not in payload, "检测到主机名")
+
+
+def test_model_path_is_not_serialized():
+    print("=== 15. 模型绝对路径不得进入规划序列化结果 ===")
+    from gguf_meta import ModelMetadata
+
+    secret = r"D:\private-models\model.gguf"
+    metadata = ModelMetadata(
+        path=secret,
+        architecture="llama",
+        n_ctx_train=32768,
+        n_layers=32,
+        n_heads=32,
+        n_kv_heads=8,
+        n_embd=4096,
+    )
+    cpu_only = profile(hp.GpuProfile("none", False, "", 0, 0),
+                       ram_total=64 * GIB, ram_available=48 * GIB)
+    with mock.patch.object(hp, "_read_model_metadata", return_value=metadata), \
+            mock.patch.object(hp, "_model_shape", return_value=(32, 4 * GIB)), \
+            mock.patch.object(hp, "_kv_bytes_per_token", return_value=131072.0):
+        plan = hp.plan_inference(profile=cpu_only, model_path=secret,
+                                 requested_context=32768, max_context=32768)
+    payload = json.dumps(plan.to_dict(), ensure_ascii=False)
+    check("规划序列化不含模型绝对路径", secret not in payload, payload[:200])
+    check("模型元数据序列化不含 path 键",
+          "path" not in plan.model_metadata, str(sorted(plan.model_metadata)))
+    check("模型元数据仍保留可读维度", plan.model_layers == 32,
+          str(plan.model_layers))
+
+
+def test_override_adopts_user_values_with_warnings():
+    print("=== 16. 显式覆盖原样采纳用户值，并返回可读警告与推荐值 ===")
+    cpu_only = profile(hp.GpuProfile("none", False, "", 0, 0),
+                       ram_total=16 * GIB, ram_available=8 * GIB)
+    common = dict(profile=cpu_only, train_context=32768, max_context=32768)
+    with mock.patch.object(hp, "_kv_bytes_per_token", return_value=131072.0), \
+            mock.patch.object(hp, "_model_shape", return_value=(32, 0)):
+        auto = hp.plan_inference(requested_context=32768, **common)
+        overridden = hp.plan_inference(
+            requested_context=999999, requested_gpu_layers=99,
+            requested_n_batch=9999, allow_override=True, **common)
+        recommended = hp.plan_inference(requested_context=0, **common)
+    check("默认模式仍自动收窄", auto.n_ctx_max < 999999, str(auto.n_ctx_max))
+    check("覆盖模式原样采纳 n_ctx=999999", overridden.n_ctx_max == 999999,
+          str(overridden.n_ctx_max))
+    check("覆盖模式初始窗口等于用户值", overridden.n_ctx_initial == 999999,
+          str(overridden.n_ctx_initial))
+    check("覆盖模式原样采纳 n_gpu_layers=99", overridden.n_gpu_layers == 99,
+          str(overridden.n_gpu_layers))
+    check("覆盖模式原样采纳 n_batch=9999", overridden.n_batch == 9999,
+          str(overridden.n_batch))
+    check("覆盖标记已上报", overridden.allow_override is True)
+    check("上下文超预算产生警告",
+          any("内存预算" in warning for warning in overridden.warnings),
+          str(overridden.warnings))
+    check("无加速器却指定 GPU 层数产生警告",
+          any("加速器" in warning for warning in overridden.warnings),
+          str(overridden.warnings))
+    check("批大小越界产生警告",
+          any("n_batch" in warning for warning in overridden.warnings),
+          str(overridden.warnings))
+    check("推荐值不受用户覆盖影响",
+          recommended.recommended_n_ctx == recommended.n_ctx_max,
+          f"{recommended.recommended_n_ctx}/{recommended.n_ctx_max}")
+    check("覆盖值保留在 requested 字段",
+          overridden.n_ctx_requested == 999999
+          and overridden.n_gpu_layers_requested == 99,
+          f"{overridden.n_ctx_requested}/{overridden.n_gpu_layers_requested}")
+
+
 def main():
     tests = [
         test_cpu_only_degrades_silently,
@@ -370,6 +476,9 @@ def main():
         test_native_context_is_hard_ceiling,
         test_hardware_memory_limits_context,
         test_inference_presets,
+        test_probe_and_plan_never_write_to_disk,
+        test_model_path_is_not_serialized,
+        test_override_adopts_user_values_with_warnings,
     ]
     for test in tests:
         try:

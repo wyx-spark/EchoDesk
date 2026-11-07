@@ -321,11 +321,21 @@ class ModelMetadata:
         """
         [EN]
         Serialize the metadata for logs, diagnostics and the JSON line protocol.
+
+        ``path`` is deliberately **not** part of the serialized form. Every value
+        here can travel into the inference plan, a status response or a log;
+        the model path is an absolute host path and must never leak into a
+        packaged artifact or a support bundle. Callers that need the path
+        already hold it as a local variable.
+
         [ZH]
         将元数据序列化，供日志、诊断与 JSON 行协议使用。
+
+        序列化结果**刻意不包含** ``path``。这里的每个取值都可能进入推理规划、状态
+        响应或日志，而模型路径是本机绝对路径，绝不能泄漏进发布物或支持包。需要
+        路径的调用方本来就以局部变量持有它。
         """
         return {
-            "path": self.path,
             "architecture": self.architecture,
             "n_ctx_train": int(self.n_ctx_train),
             "n_layers": int(self.n_layers),

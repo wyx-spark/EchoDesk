@@ -16,6 +16,14 @@ never propagate to the caller: the planner silently degrades to the most
 conservative CPU-only configuration and records the degradation in the
 profile so that the condition remains observable in the log.
 
+Privacy invariant: the profiler only observes aggregate capabilities (core
+counts, byte counts, backend labels). It never reads a MAC address, a serial
+number, a machine GUID or an absolute path for the purpose of tuning, and it
+never writes a profile or a plan to disk. Results live in memory for the
+lifetime of the process; anything that is serialized (logs, diagnostics, the
+JSON line protocol) is restricted to numbers and identifiers. The release gate
+``tools/check_release_privacy.py`` enforces the packaged side of this rule.
+
 [ZH]
 EchoDesk 的硬件能力探测与动态推理规划模块。
 
@@ -30,6 +38,11 @@ EchoDesk 的硬件能力探测与动态推理规划模块。
 
 所有探测均置于异常边界之内。探测失败不得向调用方传播：规划器静默降级为最
 保守的纯 CPU 配置，并把降级事实记录在档案对象中，使该状况在日志中仍然可观测。
+
+隐私不变量：探测只观察聚合能力（核心数、字节数、后端名称），绝不为了调优去读取
+MAC 地址、序列号、机器 GUID 或绝对路径，也绝不把档案或规划写入磁盘。结果仅在该
+进程生命周期内驻留内存；任何被序列化的内容（日志、诊断、JSON 行协议）只允许包含
+数值与标识符。发布物一侧由门禁 ``tools/check_release_privacy.py`` 强制校验。
 """
 from __future__ import annotations
 
@@ -77,9 +90,20 @@ VRAM_SAFETY_RATIO = 0.20
 RAM_SAFETY_RATIO = 0.20
 
 #: [EN] Fixed allowance for the computation graph, logits and temporary buffers
-#: created by llama.cpp during inference.
+#: created by llama.cpp during inference. It is applied to the **system-memory**
+#: context budget only; VRAM uses the separate, larger allowance below.
 #: [ZH] 为 llama.cpp 推理期间创建的计算图、logits 与临时缓冲预留的固定额度。
+#: 该额度只用于**系统内存**的上下文预算；显存使用下方单独且更大的额度。
 COMPUTE_BUFFER_BYTES = 256 * 1024 * 1024
+
+#: [EN] Fixed allowance reserved inside free VRAM for the computation graph,
+#: logits and transient CUDA/ROCm buffers. Raised from 256 MiB to 512 MiB in
+#: v0.2.4 task 3: on 8 GiB cards the extra headroom avoids inference-time OOM at
+#: the cost of one or two offloaded layers, which is the intended trade.
+#: [ZH] 在空闲显存内为计算图、logits 与瞬时 CUDA/ROCm 缓冲预留的固定额度。
+#: v0.2.4 任务-3 从 256 MiB 提升到 512 MiB：8 GiB 显卡上多留的余量可避免推理期
+#: OOM，代价是少卸载一到两层 —— 这是刻意选择的取舍。
+VRAM_COMPUTE_BUFFER_BYTES = 512 * 1024 * 1024
 
 #: [EN] Context window values are rounded down to this granularity so that the
 #: reported and allocated values remain stable and human-readable.
@@ -435,6 +459,22 @@ class InferencePlan:
     hardware_context: int = 0
     context_limited_by: str = ""
     model_metadata: Dict[str, Any] = field(default_factory=dict)
+    # [EN] Override diagnostics (v0.2.4 task 3): whether the user's values were
+    # [EN] adopted verbatim, the safe recommendation computed independently of
+    # [EN] that decision, and the localized warnings the interface must show.
+    # [ZH] 覆盖诊断（v0.2.4 任务-3）：用户取值是否被原样采纳、独立于该决定计算出的
+    # [ZH] 安全推荐值，以及界面必须展示的已本地化警告。
+    allow_override: bool = False
+    n_ctx_requested: int = 0
+    n_gpu_layers_requested: int = 0
+    n_batch_requested: int = 0
+    recommended_n_ctx: int = 0
+    recommended_n_gpu_layers: int = 0
+    recommended_n_batch: int = 0
+    hardware_budget: int = 0
+    gpu_available: bool = False
+    gpu_name: str = ""
+    warnings: Tuple[str, ...] = field(default_factory=tuple)
     reasons: Tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -461,6 +501,17 @@ class InferencePlan:
             "hardware_context": int(self.hardware_context),
             "context_limited_by": self.context_limited_by,
             "model_metadata": dict(self.model_metadata),
+            "allow_override": bool(self.allow_override),
+            "n_ctx_requested": int(self.n_ctx_requested),
+            "n_gpu_layers_requested": int(self.n_gpu_layers_requested),
+            "n_batch_requested": int(self.n_batch_requested),
+            "recommended_n_ctx": int(self.recommended_n_ctx),
+            "recommended_n_gpu_layers": int(self.recommended_n_gpu_layers),
+            "recommended_n_batch": int(self.recommended_n_batch),
+            "hardware_budget": int(self.hardware_budget),
+            "gpu_available": bool(self.gpu_available),
+            "gpu_name": self.gpu_name,
+            "warnings": list(self.warnings),
             "reasons": list(self.reasons),
         }
 
@@ -1292,7 +1343,7 @@ def _gpu_layer_decision(
     model_bytes: int,
     kv_cache_bytes: int,
     safety_ratio: float = VRAM_SAFETY_RATIO,
-    compute_buffer: int = COMPUTE_BUFFER_BYTES,
+    compute_buffer: int = VRAM_COMPUTE_BUFFER_BYTES,
 ) -> Tuple[int, str]:
     """
     [EN]
@@ -1350,7 +1401,7 @@ def compute_gpu_layers(
     model_bytes: int,
     kv_cache_bytes: int = 0,
     safety_ratio: float = VRAM_SAFETY_RATIO,
-    compute_buffer: int = COMPUTE_BUFFER_BYTES,
+    compute_buffer: int = VRAM_COMPUTE_BUFFER_BYTES,
 ) -> int:
     """
     [EN]
@@ -1382,6 +1433,7 @@ def plan_inference(
     initial_context_preference: int = 0,
     inference_profile: str = "",
     requested_n_batch: int = 0,
+    allow_override: bool = False,
 ) -> InferencePlan:
     """
     [EN]
@@ -1422,8 +1474,22 @@ def plan_inference(
     ``requested_gpu_layers`` 保留既有的手工覆盖语义：存在可用加速器时，正数或
     ``-1`` 均被采纳；不存在可用加速器时强制归零。``n_threads_override`` 保留
     用户显式指定的线程数；取零时采用预设隐含的取值。
+
+    ``allow_override`` (v0.2.4 task 3) changes the role of the planner from
+    "decision maker" to "advisor": when true, the requested context, GPU layer
+    count and batch size are adopted verbatim, and the plan carries localized
+    ``warnings`` plus the independent ``recommended_*`` values. The default
+    false preserves the established automatic narrowing, so no existing caller
+    changes behaviour without opting in.
+
+    ``allow_override``（v0.2.4 任务-3）把规划器的角色从"决策者"改为"顾问"：
+    为真时原样采纳请求的上下文、GPU 层数与批大小，并在规划中带上已本地化的
+    ``warnings`` 以及独立计算出的 ``recommended_*`` 推荐值。默认假保留既有的自动
+    收窄行为，因此未显式开启的调用方行为不变。
     """
     hardware = profile if profile is not None else probe()
+    from i18n import t as _t
+
     preset = get_inference_preset(inference_profile)
     metadata = _read_model_metadata(model_path)
     layers = int(getattr(metadata, "n_layers", 0) or 0)
@@ -1435,6 +1501,47 @@ def plan_inference(
         getattr(metadata, "n_ctx_train", 0) or 0
     ) or int(train_context or 0)
 
+    # [EN] Safe recommendation, computed independently of the user's request:
+    # [EN] the panel reports the machine's budget even while an override is
+    # [EN] active, so "recommended" never mutates into "what you typed".
+    # [ZH] 安全推荐值独立于用户请求计算：即使覆盖已生效，诊断面板上报的仍是机器的
+    # [ZH] 预算，避免"推荐值"悄悄变成"用户刚输入的值"。
+    recommended_hardware_context, _recommended_reason = _context_limit_detail(
+        hardware,
+        model_path=model_path,
+        train_context=native_context,
+        requested_max=0,
+        ceiling=max_context,
+    )
+    ratio = float(preset.context_ratio)
+    if ratio < 1.0:
+        recommended_cap = int(recommended_hardware_context * ratio)
+        recommended_cap = max(
+            MIN_CONTEXT, recommended_cap - (recommended_cap % CONTEXT_ROUNDING)
+        )
+    else:
+        recommended_cap = int(recommended_hardware_context)
+    recommended_n_ctx = max(MIN_CONTEXT, int(recommended_cap))
+    preferred_initial = int(initial_context_preference or preset.initial_context)
+    recommended_initial = initial_context_for(recommended_n_ctx, preferred_initial)
+    recommended_kv_cache_bytes = _kv_cache_bytes(model_path, recommended_n_ctx)
+
+    recommended_n_gpu_layers = 0
+    recommended_gpu_reason = "cpu_only"
+    if hardware.gpu.available:
+        recommended_n_gpu_layers, recommended_gpu_reason = _gpu_layer_decision(
+            profile=hardware,
+            model_layers=layers,
+            model_bytes=model_bytes,
+            kv_cache_bytes=recommended_kv_cache_bytes,
+        )
+    recommended_n_batch = int(preset.n_batch)
+
+    # [EN] Automatic plan (the established behaviour). ``requested_context`` is
+    # [EN] still honoured as a ceiling here; only an explicit override skips the
+    # [EN] narrowing below.
+    # [ZH] 自动规划（既有行为）。此处仍把 ``requested_context`` 当作上限；只有显式
+    # [ZH] 覆盖才会跳过下面的收窄。
     hardware_context, hardware_reason = _context_limit_detail(
         hardware,
         model_path=model_path,
@@ -1442,41 +1549,77 @@ def plan_inference(
         requested_max=requested_context,
         ceiling=max_context,
     )
-
-    # [EN] The fast preset deliberately reserves only part of the ceiling; the
-    # [EN] other presets preserve the complete ceiling so that an explicit
-    # [EN] request is never reduced without a stated reason.
-    # [ZH] 极速档刻意只使用上限的一部分；其余档位保留完整上限，使用户显式请求的
-    # [ZH] 窗口永远不会在没有说明原因的情况下被缩小。
-    ratio = float(preset.context_ratio)
     if ratio < 1.0:
         preset_cap = int(hardware_context * ratio)
         preset_cap = max(MIN_CONTEXT, preset_cap - (preset_cap % CONTEXT_ROUNDING))
     else:
         preset_cap = int(hardware_context)
-    n_ctx_max = int(min(hardware_context, preset_cap))
-    if n_ctx_max < hardware_context:
-        context_limited_by = "preset"
+    auto_n_ctx_max = int(min(hardware_context, preset_cap))
+    if auto_n_ctx_max < hardware_context:
+        auto_context_limited_by = "preset"
     elif hardware_reason == "native":
-        context_limited_by = "native"
+        auto_context_limited_by = "native"
     elif hardware_reason == "config":
-        context_limited_by = "config"
+        auto_context_limited_by = "config"
     else:
-        context_limited_by = "hardware"
+        auto_context_limited_by = "hardware"
 
-    preferred_initial = int(initial_context_preference or preset.initial_context)
-    n_ctx_initial = initial_context_for(n_ctx_max, preferred_initial)
+    warnings: List[str] = []
+    requested_ctx_value = int(requested_context or 0)
+    if allow_override and requested_ctx_value > 0:
+        n_ctx_max = max(MIN_CONTEXT, requested_ctx_value)
+        n_ctx_initial = n_ctx_max
+        context_limited_by = "override"
+        if n_ctx_max > recommended_hardware_context:
+            warnings.append(_t(
+                "inference.warn_context_over_budget",
+                requested=n_ctx_max,
+                budget=recommended_hardware_context,
+            ))
+        if native_context > 0 and n_ctx_max > native_context:
+            warnings.append(_t(
+                "inference.warn_context_over_native",
+                requested=n_ctx_max,
+                native=native_context,
+            ))
+    else:
+        n_ctx_max = auto_n_ctx_max
+        n_ctx_initial = initial_context_for(n_ctx_max, preferred_initial)
+        context_limited_by = auto_context_limited_by
     kv_cache_bytes = _kv_cache_bytes(model_path, n_ctx_max)
-
-    if int(requested_n_batch or 0) > 0:
-        n_batch = int(requested_n_batch)
-    else:
-        n_batch = int(preset.n_batch)
-    n_batch = max(MIN_N_BATCH, min(MAX_N_BATCH, n_batch))
 
     reasons: List[str] = []
     reasons.append(f"preset_{preset.name}")
-    if not hardware.gpu.available:
+    if allow_override:
+        n_gpu_layers = int(requested_gpu_layers)
+        reasons.append("manual_override")
+        if not hardware.gpu.available and n_gpu_layers != 0:
+            warnings.append(_t(
+                "inference.warn_gpu_unavailable",
+                layers=n_gpu_layers,
+            ))
+        elif hardware.gpu.available:
+            if n_gpu_layers == -1 and recommended_n_gpu_layers != -1:
+                warnings.append(_t(
+                    "inference.warn_gpu_full_offload",
+                    requested=n_gpu_layers,
+                    recommended=recommended_n_gpu_layers,
+                ))
+            elif (n_gpu_layers > 0 and recommended_n_gpu_layers >= 0
+                  and n_gpu_layers > recommended_n_gpu_layers):
+                warnings.append(_t(
+                    "inference.warn_gpu_layers_over",
+                    requested=n_gpu_layers,
+                    recommended=recommended_n_gpu_layers,
+                ))
+            if layers > 0 and n_gpu_layers > layers:
+                warnings.append(_t(
+                    "inference.warn_gpu_layers_over_model",
+                    requested=n_gpu_layers,
+                    layers=layers,
+                ))
+        backend = hardware.gpu.label if n_gpu_layers != 0 else "CPU"
+    elif not hardware.gpu.available:
         n_gpu_layers = 0
         reasons.append("cpu_only")
         if hardware.gpu.detected_backend != "none":
@@ -1493,11 +1636,12 @@ def plan_inference(
         )
         reasons.append(reason)
 
-    if n_gpu_layers != 0 and hardware.gpu.available:
-        backend = hardware.gpu.label
-    else:
-        backend = "CPU"
-        n_gpu_layers = 0
+    if not allow_override:
+        if n_gpu_layers != 0 and hardware.gpu.available:
+            backend = hardware.gpu.label
+        else:
+            backend = "CPU"
+            n_gpu_layers = 0
 
     logical = max(1, int(hardware.cpu.logical_cores or 1))
     physical = int(hardware.cpu.physical_cores or 0)
@@ -1509,6 +1653,29 @@ def plan_inference(
         n_threads = physical if physical > 0 else logical
     n_threads = max(1, min(logical, int(n_threads)))
 
+    if int(requested_n_batch or 0) > 0:
+        requested_batch_value = int(requested_n_batch)
+    else:
+        requested_batch_value = 0
+    if requested_batch_value > 0:
+        n_batch = requested_batch_value
+        if allow_override and (n_batch < MIN_N_BATCH or n_batch > MAX_N_BATCH):
+            warnings.append(_t(
+                "inference.warn_batch_out_of_range",
+                batch=n_batch,
+                low=MIN_N_BATCH,
+                high=MAX_N_BATCH,
+            ))
+        if not allow_override:
+            n_batch = max(MIN_N_BATCH, min(MAX_N_BATCH, n_batch))
+    else:
+        n_batch = int(preset.n_batch)
+        n_batch = max(MIN_N_BATCH, min(MAX_N_BATCH, n_batch))
+
+    if allow_override:
+        reasons.append("override")
+    if warnings:
+        reasons.append("has_warnings")
     if model_path and layers <= 0:
         reasons.append("model_layer_count_unknown")
     if hardware.degraded:
@@ -1538,15 +1705,27 @@ def plan_inference(
         hardware_context=int(hardware_context),
         context_limited_by=str(context_limited_by),
         model_metadata=(metadata.to_dict() if metadata is not None else {}),
+        allow_override=bool(allow_override),
+        n_ctx_requested=requested_ctx_value,
+        n_gpu_layers_requested=int(requested_gpu_layers),
+        n_batch_requested=requested_batch_value,
+        recommended_n_ctx=int(recommended_n_ctx),
+        recommended_n_gpu_layers=int(recommended_n_gpu_layers),
+        recommended_n_batch=int(recommended_n_batch),
+        hardware_budget=int(recommended_hardware_context),
+        gpu_available=bool(hardware.gpu.available),
+        gpu_name=str(hardware.gpu.name or hardware.gpu.label),
+        warnings=tuple(warnings),
         reasons=tuple(reasons),
     )
     log.info(
         "推理规划: preset=%s initial_ctx=%d max_ctx=%d native_ctx=%d batch=%d "
         "layers=%d threads=%d backend=%s model_layers=%d kv=%d vram_usable=%d "
-        "limited_by=%s reasons=%s",
+        "limited_by=%s override=%s warnings=%d reasons=%s",
         preset.name, plan.n_ctx_initial, plan.n_ctx_max, plan.native_context,
         plan.n_batch, plan.n_gpu_layers, plan.n_threads, plan.backend,
         plan.model_layers, plan.kv_cache_bytes, plan.vram_usable_bytes,
-        plan.context_limited_by, ",".join(plan.reasons),
+        plan.context_limited_by, plan.allow_override, len(plan.warnings),
+        ",".join(plan.reasons),
     )
     return plan

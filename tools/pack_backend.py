@@ -134,6 +134,45 @@ PBS_RELEASE_API = (
 #: 缓存目录（artifacts/ 已被 .gitignore 覆盖，不入库、不进发布物）。
 CACHE_ROOT = os.path.join(ROOT, "artifacts", "backend-cache")
 
+
+def _cached_release_from_archives() -> dict:
+    """
+    [EN]
+    Build a release description from the already verified standalone-Python
+    archives in the build cache. ``download()`` treats an existing archive as
+    complete, so the only thing missing on an offline machine is the asset
+    list. Reconstructing it keeps a second reproducible build working when the
+    GitHub API is unreachable; the archives themselves still have to exist and
+    match the pinned release tag.
+
+    [ZH]
+    用构建缓存中已校验的 standalone Python 归档构造 Release 描述。``download()``
+    把已存在的归档视为完整文件，因此离线机器上唯一缺少的是资产清单。重建该清单
+    可以让第二次可复现构建在 GitHub API 不可达时继续；归档本身仍必须存在并与固定
+    的 Release 标签匹配。
+    """
+    if not os.path.isdir(CACHE_ROOT):
+        return {}
+    version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    marker = f"+{PBS_RELEASE_TAG}-"
+    assets = []
+    for name in sorted(os.listdir(CACHE_ROOT)):
+        if not name.startswith(f"cpython-{version}.") or marker not in name:
+            continue
+        if not name.endswith(".tar.gz"):
+            continue
+        assets.append({
+            "name": name,
+            "browser_download_url": (
+                "https://github.com/astral-sh/python-build-standalone/releases/download/"
+                f"{PBS_RELEASE_TAG}/{name}"
+            ),
+        })
+    if not assets:
+        return {}
+    return {"tag_name": PBS_RELEASE_TAG, "assets": assets}
+
+
 #: 已下载/已校验的 wheel 缓存（tools/fetch_wheel.py 的落点）。
 #: 用途：钉 URL 的依赖可以复用这里**同一份、已逐成员校验过**的文件，避免重复下载。
 WHEEL_CACHE = os.path.join(ROOT, "artifacts", "wheels")
@@ -448,10 +487,50 @@ def write_resolved_requirements(requirements: list[str], pip_args: list[str], de
 # ---------------------------------------------------------------------------
 # python-build-standalone
 # ---------------------------------------------------------------------------
+PBS_RELEASE_CACHE = os.path.join(CACHE_ROOT, f"pbs-release-{PBS_RELEASE_TAG}.json")
+
+
 def fetch_release_info() -> dict:
+    """
+    [EN]
+    Fetch the pinned Release description, with an offline fallback. The API can
+    be unreachable on an air-gapped or flaky build machine; the archives are
+    already cached and verified, so a cached JSON description or a synthetic
+    asset list is enough to complete the second reproducible build.
+
+    [ZH]
+    获取固定的 Release 描述，并提供离线回退。构建机可能断网或网络抖动；归档已经
+    缓存并校验，因此缓存的 JSON 描述或由归档重建的资产清单足以完成第二次可复现构建。
+    """
     request = urllib.request.Request(PBS_RELEASE_API, headers={"User-Agent": "EchoDesk-pack-backend"})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            release = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - offline build machines are expected
+        for candidate in (PBS_RELEASE_CACHE,):
+            if os.path.isfile(candidate):
+                try:
+                    with open(candidate, "r", encoding="utf-8") as handle:
+                        release = json.load(handle)
+                    log(f"Release API 不可达（{exc}），已使用缓存清单 {os.path.relpath(candidate, ROOT)}")
+                    return release
+                except Exception:  # noqa: BLE001
+                    pass
+        release = _cached_release_from_archives()
+        if release:
+            log(f"Release API 不可达（{exc}），已由本地归档重建资产清单")
+            return release
+        raise
+    if not os.path.isdir(CACHE_ROOT):
+        os.makedirs(CACHE_ROOT, exist_ok=True)
+    try:
+        with open(PBS_RELEASE_CACHE, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(release, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+    except OSError:
+        pass
+    return release
+
 
 
 def pick_asset(release: dict, triple: str, version: str, keep_symbols: bool = False) -> dict:

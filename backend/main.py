@@ -108,6 +108,7 @@ EchoDesk 后端主程序：与前端通过 stdin/stdout 以 JSON 行协议通信
 已移除：退出仅由用户主动触发（前端发 ``exit``）。
 """
 import contextlib
+import gc
 import json
 import logging
 import os
@@ -126,6 +127,7 @@ import queue
 # [ZH] file_cache 目录也从未被创建（上下文中给出的落盘指针指向不存在的目录）。
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -349,6 +351,68 @@ def _recommendation() -> Dict[str, Any]:
     return recommend_config(ram, cores)
 
 
+def _override_blocking_error(plan) -> str:
+    """
+    [EN]
+    Return a human-readable error when an explicit override cannot possibly work
+    on this machine, or an empty string when the plan may proceed.
+
+    The check is deliberately performed here instead of relying on llama.cpp:
+    a CPU-only build may silently ignore ``n_gpu_layers`` rather than raising, so
+    "request 99 GPU layers on an integrated-GPU machine" would otherwise report
+    success while nothing was offloaded. The acceptance criterion requires a
+    clear, reproducible failure, so the backend owns that decision.
+
+    [ZH]
+    当显式覆盖在本机上必然无法工作时返回可读错误；规划可以继续时返回空字符串。
+
+    该检查刻意放在这里，而不是依赖 llama.cpp：纯 CPU 构建可能**静默忽略**
+    ``n_gpu_layers`` 而不是抛错，于是"集显机器上请求 99 层 GPU 卸载"会变成
+    "报告成功、实际什么都没卸载"。验收标准要求清晰且可复现的失败，因此由后端
+    自己做出这个判断。
+    """
+    if not bool(getattr(plan, "allow_override", False)):
+        return ""
+    layers = int(getattr(plan, "n_gpu_layers", 0) or 0)
+    if layers != 0 and not bool(getattr(plan, "gpu_available", False)):
+        return _t("inference.error_no_accelerator", layers=layers)
+    return ""
+
+
+def _preflight_context_error(plan) -> str:
+    """
+    [EN]
+    Reject an obviously impossible context allocation before llama.cpp is
+    asked to reserve it. A 999999-token window needs more than 100 GiB of KV
+    cache for a small model; attempting it drives the host into swap for a
+    minute and can exhaust memory on the build machine. The planner still
+    adopts the user's value (the override contract is unchanged); this is the
+    load-time feasibility check, and it returns an explicit, actionable error.
+
+    [ZH]
+    在要求 llama.cpp 预留之前拒绝明显不可能完成的上下文分配。对一个小模型来说，
+    999999 token 窗口需要超过 100 GiB 的 KV Cache；真正尝试会让宿主进入交换区长达
+    一分钟，并可能耗尽构建机内存。规划器仍原样采纳用户值（覆盖契约不变）；这里是
+    加载阶段的可行性检查，返回明确且可操作的错误。
+    """
+    kv = int(getattr(plan, "kv_cache_bytes", 0) or 0)
+    if kv <= 0:
+        return ""
+    try:
+        profile = hardware_profiler.probe()
+        available = int(profile.ram_available_bytes or 0)
+    except Exception:  # noqa: BLE001 - the probe must never block loading
+        return ""
+    if available > 0 and kv > available:
+        return _t(
+            "inference.error_context_preflight",
+            requested=int(getattr(plan, "n_ctx_max", 0) or 0),
+            kv=round(kv / (1024 ** 3), 1),
+            ram=round(available / (1024 ** 3), 1),
+        )
+    return ""
+
+
 def _profile_params_text(name: str) -> str:
     """
     [EN]
@@ -463,7 +527,25 @@ class Backend:
         # [ZH] 刻意**保持同一个对象**（见 llm_engine.LazyLLMEngine 的说明）：热加载后
         # [ZH] command_handler / summarizer 中的引用无需重新接线，也就不会出现
         # [ZH] "加载成功但仍在使用旧对象"这类静默错误。
-        self.llm = self._build_engine(config, model_path)
+        # [EN] v0.2.4 task 3: an explicit override may make the configured
+        # [EN] parameters unloadable (a 999999-token window, or GPU layers on a
+        # [EN] machine without an accelerator). The backend must start anyway and
+        # [EN] enter the no-model state, so the user can open Settings and change
+        # [EN] the value back; a raised exception here used to terminate the
+        # [EN] process before the first `ready` handshake.
+        # [ZH] v0.2.4 任务-3：显式覆盖可能让已配置的参数无法加载（999999 token 窗口，
+        # [ZH] 或没有加速器却要求 GPU 层数）。后端必须照常启动并进入无模型状态，使用户
+        # [ZH] 能打开设置改回取值；此前这里抛异常会在首次 `ready` 握手前终止进程。
+        self._startup_inference_error = ""
+        if model_path:
+            try:
+                self.llm = self._build_engine(config, model_path)
+            except Exception as exc:  # noqa: BLE001 - startup must survive a bad override
+                self._startup_inference_error = f"{type(exc).__name__}: {exc}"
+                log.exception("模型加载失败（已进入无模型状态，可在设置页改回推荐值）")
+                self.llm = self._build_engine(config, "")
+        else:
+            self.llm = self._build_engine(config, "")
         self.conv = ConversationManager(config.max_history, config.default_mode)
         # [EN] The two switches controlling reasoning content written to history (此前版本
         # [EN] reasoning separation): whether to persist it and how many characters to keep
@@ -628,10 +710,25 @@ class Backend:
             "usable_context": int(getattr(self.llm, "max_n_ctx", 0)
                                   or getattr(self.llm, "n_ctx", 0) or 0),
             "inference_profile": str(getattr(self.config, "inference_profile", "balanced")),
+            "inference_override": bool(getattr(self.config, "inference_override", False)),
+            "warnings": list(self._inference_warnings()),
+            "startup_error": str(getattr(self, "_startup_inference_error", "") or ""),
             "context_limited_by": self._context_limited_by(),
             "context_limit_text": self._context_limit_text(),
             "guide": "" if ready else self.guide_text(),
         }
+
+    def _inference_warnings(self) -> List[str]:
+        """
+        [EN]
+        Return the localized warnings attached to the active inference plan.
+        [ZH]
+        返回当前推理规划携带的已本地化警告。
+        """
+        plan = getattr(self.llm, "inference_plan", None) or {}
+        if not isinstance(plan, dict):
+            return []
+        return [str(item) for item in (plan.get("warnings") or []) if str(item)]
 
     def _context_limited_by(self) -> str:
         """
@@ -688,6 +785,8 @@ class Backend:
             return _t("sys.context_limit_config", ctx=usable)
         if reason == "preset":
             return _t("sys.context_limit_preset", ctx=usable)
+        if reason == "override":
+            return _t("sys.context_limit_override", ctx=usable)
         return ""
 
     def inference_summary(self) -> Dict[str, Any]:
@@ -734,10 +833,236 @@ class Backend:
                 "context_limited_by": self._context_limited_by(),
                 "context_limit_text": self._context_limit_text(),
                 "ready": bool(self.model_ready),
+                "override": bool(plan.get("allow_override")
+                                 or getattr(self.config, "inference_override", False)),
+                "n_ctx_requested": int(plan.get("n_ctx_requested", 0) or 0),
+                "n_gpu_layers_requested": int(
+                    plan.get("n_gpu_layers_requested", 0) or 0),
+                "n_batch_requested": int(plan.get("n_batch_requested", 0) or 0),
+                "recommended_n_ctx": int(plan.get("recommended_n_ctx", 0) or 0),
+                "recommended_n_gpu_layers": int(
+                    plan.get("recommended_n_gpu_layers", 0) or 0),
+                "recommended_n_batch": int(plan.get("recommended_n_batch", 0) or 0),
+                "hardware_budget": int(plan.get("hardware_budget", 0) or 0),
+                "warnings": self._inference_warnings(),
             }
         except Exception:
             log.warning("生成推理摘要失败", exc_info=True)
             return {}
+
+    def hardware_diagnostics(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Machine-readable hardware and recommendation snapshot for the settings
+        page's diagnostics panel (v0.2.4 task 3). It reports aggregate
+        capabilities only, never a host identifier or an absolute path.
+
+        [ZH]
+        供设置页诊断面板使用的硬件与推荐值快照（v0.2.4 任务-3）。只上报聚合能力，
+        绝不上报主机标识或绝对路径。
+        """
+        try:
+            profile = hardware_profiler.probe()
+            rec = self._recommended_plan()
+            plan = getattr(self.llm, "inference_plan", None) or {}
+            if not isinstance(plan, dict):
+                plan = {}
+            return {
+                "cpu": {
+                    "physical_cores": int(profile.cpu.physical_cores),
+                    "logical_cores": int(profile.cpu.logical_cores),
+                    "avx2": bool(profile.cpu.avx2),
+                    "avx512": bool(profile.cpu.avx512),
+                },
+                "gpu": {
+                    "available": bool(profile.gpu.available),
+                    "backend": profile.gpu.detected_backend,
+                    "label": profile.gpu.label,
+                    "name": profile.gpu.name,
+                    "total_vram_bytes": int(profile.gpu.total_vram_bytes),
+                    "free_vram_bytes": int(profile.gpu.free_vram_bytes),
+                },
+                "ram": {
+                    "total_bytes": int(profile.ram_total_bytes),
+                    "available_bytes": int(profile.ram_available_bytes),
+                },
+                "model": {
+                    "name": os.path.basename(str(getattr(self.llm, "model_path", "") or "")),
+                    "layers": int(rec.model_layers),
+                    "native_context": int(rec.native_context),
+                },
+                "recommended": {
+                    "profile": str(getattr(self.config, "inference_profile", "balanced")),
+                    "n_ctx": int(rec.n_ctx_max),
+                    "n_gpu_layers": int(rec.n_gpu_layers),
+                    "n_batch": int(rec.n_batch),
+                    "hardware_budget": int(rec.hardware_budget),
+                },
+                "requested": {
+                    "n_ctx": int(getattr(self.config, "context_length", 0) or 0),
+                    "n_gpu_layers": int(getattr(self.config, "n_gpu_layers", 0) or 0),
+                    "n_batch": int(getattr(self.config, "n_batch", 0) or 0),
+                    "override": bool(getattr(self.config, "inference_override", False)),
+                },
+                "warnings": [str(item) for item in (plan.get("warnings") or [])],
+            }
+        except Exception:
+            log.warning("生成硬件诊断信息失败", exc_info=True)
+            return {}
+
+    def _current_model_path(self) -> str:
+        """
+        [EN]
+        Return the model file actually in use, or the configured file when no
+        model is loaded but the file exists. The test-load and override paths
+        must target a real file; an empty string means "nothing to load".
+        [ZH]
+        返回当前实际使用的模型文件；未加载模型但配置文件存在时返回配置的文件。
+        测试加载与覆盖路径必须指向真实文件；空字符串表示"没有可加载的模型"。
+        """
+        path = str(getattr(self.llm, "model_path", "") or "").strip()
+        if path:
+            return path
+        configured = os.path.basename(str(getattr(self.config, "model_path", "") or ""))
+        if not configured:
+            return ""
+        candidate = os.path.join(self.models_dir(), configured)
+        return candidate if os.path.isfile(candidate) else ""
+
+    def _recommended_plan(self):
+        """
+        [EN]
+        Recompute the safe recommendation with the override disabled. The
+        settings page displays these values as defaults and the save path uses
+        them to decide whether the user actually changed anything.
+        [ZH]
+        在关闭覆盖的情况下重新计算安全推荐值。设置页把它们显示为默认值，保存路径
+        据此判断用户是否真的改动了参数。
+        """
+        cfg = self.config
+        path = self._current_model_path()
+        return hardware_profiler.plan_inference(
+            profile=hardware_profiler.probe(),
+            model_path=path,
+            train_context=resolve_context_window(path, 0) if path else 0,
+            requested_context=0,
+            max_context=int(cfg.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
+            requested_gpu_layers=0,
+            n_threads_override=int(cfg.n_threads or 0),
+            inference_profile=str(getattr(cfg, "inference_profile", "")),
+            requested_n_batch=0,
+            allow_override=False,
+        )
+
+    def _inference_failure(self, plan, exc: Exception) -> Dict[str, Any]:
+        """
+        [EN]
+        Build the structured failure payload shared by save and test-load.
+        The raw exception text is preserved; suggestions are localized and
+        actionable. The live engine is never replaced here.
+        [ZH]
+        构造保存与测试加载共用的结构化失败负载。保留原始异常文本；建议文案已本地化
+        且可操作。此处绝不替换正在运行的引擎。
+        """
+        error = str(exc)
+        lowered = error.lower()
+        if "llama_context" in lowered or "failed to create context" in lowered:
+            requested = int(getattr(plan, "n_ctx_requested", 0) or 0)
+            budget = int(getattr(plan, "hardware_budget", 0) or 0)
+            error = _t("inference.error_context_alloc_failed",
+                       requested=requested, budget=budget, error=error)
+        suggestions: List[str] = []
+        lowered = error.lower()
+        if "gpu" in lowered or "cuda" in lowered or "offload" in lowered:
+            suggestions.append(_t("inference.suggest_lower_gpu_layers"))
+        if "context" in lowered or "memory" in lowered or "oom" in lowered:
+            suggestions.append(_t("inference.suggest_lower_context"))
+        suggestions.append(_t("inference.suggest_use_recommended"))
+        summary = self.inference_summary()
+        summary.update({
+            "ok": False,
+            "error": error,
+            "error_type": type(exc).__name__,
+            "suggestions": suggestions,
+            "warnings": list(getattr(plan, "warnings", ()) or ()),
+            "plan": plan.to_dict() if hasattr(plan, "to_dict") else {},
+        })
+        return summary
+
+    def _rebuild_inference(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Re-plan with the current configuration and apply the result. On failure
+        the previous engine parameters are restored and the raw error is
+        returned; this is the "keep the working engine, report clearly" rule
+        agreed for v0.2.4 task 3.
+        [ZH]
+        按当前配置重新规划并应用结果。失败时恢复旧引擎参数并返回原始错误；这是
+        v0.2.4 任务-3 约定的"保留可用引擎、明确报错"规则。
+        """
+        cfg = self.config
+        path = self._current_model_path()
+        plan = hardware_profiler.plan_inference(
+            profile=hardware_profiler.probe(),
+            model_path=path,
+            train_context=resolve_context_window(path, 0) if path else 0,
+            requested_context=int(cfg.context_length or 0),
+            max_context=int(cfg.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
+            requested_gpu_layers=int(cfg.n_gpu_layers or 0),
+            n_threads_override=int(cfg.n_threads or 0),
+            inference_profile=str(getattr(cfg, "inference_profile", "")),
+            requested_n_batch=int(cfg.n_batch or 0),
+            allow_override=bool(getattr(cfg, "inference_override", False)),
+        )
+        snapshot = {
+            "n_threads": getattr(self.llm, "n_threads", None),
+            "n_batch": getattr(self.llm, "n_batch", None),
+            "n_gpu_layers": getattr(self.llm, "n_gpu_layers", None),
+            "n_ctx": getattr(self.llm, "n_ctx", None),
+            "max_n_ctx": getattr(self.llm, "max_n_ctx", None),
+            "kv_cache_type": getattr(self.llm, "kv_cache_type", None),
+            "n_ctx_train": getattr(self.llm, "n_ctx_train", None),
+            "backend_label": getattr(self.llm, "backend_label", None),
+            "inference_plan": dict(getattr(self.llm, "inference_plan", {}) or {}),
+        }
+        try:
+            blocking = _override_blocking_error(plan) or _preflight_context_error(plan)
+            if blocking:
+                raise RuntimeError(blocking)
+            self.llm.apply_plan(plan)
+            if path and self.model_ready:
+                # [EN] Rebuild the underlying object so the new construction-time
+                # [EN] parameters actually take effect.
+                # [ZH] 重建底层对象，使新的构建期参数真正生效。
+                self.llm.reload(n_ctx=plan.n_ctx_initial)
+            self.invalidate_capability()
+            log_user(
+                log, "sys.log_inference_profile",
+                profile=str(getattr(cfg, "inference_profile", "")),
+                native=plan.native_context or _t("sys.log_unknown"),
+                ctx=plan.n_ctx_initial,
+                max_ctx=plan.n_ctx_max,
+                batch=plan.n_batch,
+                threads=plan.n_threads,
+            )
+            for warning in plan.warnings:
+                log_user(log, "sys.log_inference_warning", warning=warning)
+        except Exception as exc:  # noqa: BLE001 - keep the working engine alive
+            for key, value in snapshot.items():
+                if value is not None:
+                    try:
+                        setattr(self.llm, key, value)
+                    except Exception:  # noqa: BLE001
+                        pass
+            log.warning("应用推理设置失败（已保留原引擎）: %s", exc, exc_info=True)
+            gc.collect()
+            return self._inference_failure(plan, exc)
+        summary = self.inference_summary()
+        summary["ok"] = True
+        summary["error"] = ""
+        summary["warnings"] = list(plan.warnings)
+        summary["plan"] = plan.to_dict()
+        return summary
 
     def apply_inference_profile(self, name: str) -> Dict[str, Any]:
         """
@@ -768,48 +1093,19 @@ class Backend:
         preset = get_inference_preset(name)
         cfg = self.config
         cfg.inference_profile = preset.name
-        cfg.n_batch = int(preset.n_batch)
+        if not bool(getattr(cfg, "inference_override", False)):
+            cfg.n_batch = int(preset.n_batch)
         error = ""
         try:
             cfg.save()
         except Exception as exc:  # noqa: BLE001 - a read-only medium must not abort
             log.warning("保存推理预设失败（不影响本次运行）", exc_info=True)
             error = str(exc)
-        try:
-            path = str(getattr(self.llm, "model_path", "") or "")
-            plan = hardware_profiler.plan_inference(
-                profile=hardware_profiler.probe(),
-                model_path=path,
-                train_context=resolve_context_window(path, 0) if path else 0,
-                requested_context=int(cfg.context_length or 0),
-                max_context=int(cfg.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
-                requested_gpu_layers=int(cfg.n_gpu_layers or 0),
-                n_threads_override=int(cfg.n_threads or 0),
-                inference_profile=preset.name,
-                requested_n_batch=int(cfg.n_batch or 0),
-            )
-            self.llm.apply_plan(plan)
-            if path and self.model_ready:
-                # [EN] Rebuild the underlying object so the new construction-time
-                # [EN] parameters actually take effect.
-                # [ZH] 重建底层对象，使新的构建期参数真正生效。
-                self.llm.reload(n_ctx=plan.n_ctx_initial)
-            self.invalidate_capability()
-            log_user(
-                log, "sys.log_inference_profile",
-                profile=preset.name,
-                native=plan.native_context or _t("sys.log_unknown"),
-                ctx=plan.n_ctx_initial,
-                max_ctx=plan.n_ctx_max,
-                batch=plan.n_batch,
-                threads=plan.n_threads,
-            )
-        except Exception as exc:  # noqa: BLE001 - keep the session usable
-            log.warning("应用推理预设失败（沿用当前参数）", exc_info=True)
-            error = str(exc)
-        summary = self.inference_summary()
-        summary["ok"] = not error
-        summary["error"] = error
+        summary = self._rebuild_inference()
+        if error:
+            summary["ok"] = False
+            summary["error"] = error
+            summary["error_type"] = type(error).__name__
         return summary
 
     def guide_text(self) -> str:
@@ -879,7 +1175,11 @@ class Backend:
                 n_threads_override=int(self.config.n_threads or 0),
                 inference_profile=str(getattr(self.config, "inference_profile", "")),
                 requested_n_batch=int(self.config.n_batch or 0),
+                allow_override=bool(getattr(self.config, "inference_override", False)),
             )
+            blocking = _override_blocking_error(plan) or _preflight_context_error(plan)
+            if blocking:
+                raise RuntimeError(blocking)
             self.llm.apply_plan(plan)
             self.llm.load(path, plan.n_ctx_initial)
         except Exception as e:  # noqa: BLE001 - 损坏/不支持/内存不足都在这里
@@ -889,6 +1189,7 @@ class Backend:
                     "state": self.model_state()}
         name = os.path.basename(path)
         self.config.model_path = name
+        self._startup_inference_error = ""
         # [EN] Override the temperature only when the profile specifies one; a profile value
         # [EN] also takes precedence over a manual change, since the profile is the
         # [EN] recommended value for that entry.
@@ -1190,6 +1491,7 @@ class Backend:
                 n_threads_override=int(config.n_threads or 0),
                 inference_profile=str(getattr(config, "inference_profile", "")),
                 requested_n_batch=int(config.n_batch or 0),
+                allow_override=bool(getattr(config, "inference_override", False)),
             )
             log.info("%s", _t("sys.log_model_none_state"))
             engine = LazyLLMEngine(
@@ -1212,7 +1514,11 @@ class Backend:
             n_threads_override=int(config.n_threads or 0),
             inference_profile=str(getattr(config, "inference_profile", "")),
             requested_n_batch=int(config.n_batch or 0),
+            allow_override=bool(getattr(config, "inference_override", False)),
         )
+        blocking = _override_blocking_error(plan) or _preflight_context_error(plan)
+        if blocking:
+            raise RuntimeError(blocking)
         features = ",".join(
             name for name, enabled in (("AVX2", profile.cpu.avx2),
                                        ("AVX-512", profile.cpu.avx512)) if enabled
@@ -1521,11 +1827,17 @@ class Backend:
                     "summary_cache": (self.summary_cache().stats() if self.summary_cache() else {}),
                     "context": self._context_snapshot(),
                     "inference": self.inference_summary(),
+                    "hardware": self.hardware_diagnostics(),
                     "settings": {
                         "preset": self.config.preset,
                         "inference_profile": str(
                             getattr(self.config, "inference_profile", "balanced")),
                         "context_mode": self.config.context_mode,
+                        "n_ctx": int(getattr(self.config, "context_length", 0) or 0),
+                        "n_gpu_layers": int(getattr(self.config, "n_gpu_layers", 0) or 0),
+                        "n_batch": int(getattr(self.config, "n_batch", 0) or 0),
+                        "inference_override": bool(
+                            getattr(self.config, "inference_override", False)),
                         "temperature": float(self.commands.temperature),
                         "top_p": float(getattr(self.config, "top_p", 0.9)),
                         "repeat_penalty": float(getattr(self.config, "repeat_penalty", 1.1)),
@@ -3493,6 +3805,146 @@ class Backend:
                               "connected": should_connect},
                 "mcp": self.mcp_diagnostics(), "agent": self.agent_diagnostics()}
 
+    def _parse_override_request(self, request: Dict[str, Any]) -> tuple:
+        """
+        [EN]
+        Validate the optional ``n_ctx`` / ``n_gpu_layers`` / ``n_batch`` fields
+        submitted by the settings page. Only a sanity bound is enforced here;
+        the values themselves are the user's decision and are adopted verbatim
+        by the planner.
+
+        [ZH]
+        校验设置页提交的可选 ``n_ctx`` / ``n_gpu_layers`` / ``n_batch`` 字段。
+        此处只执行合理性边界；取值本身是用户的决定，由规划器原样采纳。
+        """
+        from config import MAX_CONTEXT_OVERRIDE, MIN_CONTEXT
+
+        values: Dict[str, int] = {}
+        if "n_ctx" in request and request.get("n_ctx") is not None:
+            try:
+                value = int(request["n_ctx"])
+            except (TypeError, ValueError):
+                return {}, _t("inference.invalid_value", field="n_ctx",
+                              error=request.get("n_ctx"))
+            if value < MIN_CONTEXT or value > MAX_CONTEXT_OVERRIDE:
+                return {}, _t("inference.value_out_of_range", field="n_ctx",
+                              low=MIN_CONTEXT, high=MAX_CONTEXT_OVERRIDE)
+            values["n_ctx"] = value
+        if "n_gpu_layers" in request and request.get("n_gpu_layers") is not None:
+            try:
+                value = int(request["n_gpu_layers"])
+            except (TypeError, ValueError):
+                return {}, _t("inference.invalid_value", field="n_gpu_layers",
+                              error=request.get("n_gpu_layers"))
+            if value < -1 or value > 10000:
+                return {}, _t("inference.value_out_of_range", field="n_gpu_layers",
+                              low=-1, high=10000)
+            values["n_gpu_layers"] = value
+        if "n_batch" in request and request.get("n_batch") is not None:
+            try:
+                value = int(request["n_batch"])
+            except (TypeError, ValueError):
+                return {}, _t("inference.invalid_value", field="n_batch",
+                              error=request.get("n_batch"))
+            if value < 1 or value > 65536:
+                return {}, _t("inference.value_out_of_range", field="n_batch",
+                              low=1, high=65536)
+            values["n_batch"] = value
+        return values, ""
+
+    def _test_load_inference(self, values: Dict[str, int]) -> Dict[str, Any]:
+        """
+        [EN]
+        Run a throwaway load plus a tiny completion in a **child process**.
+        The child owns the model memory, so a 60-second timeout can terminate it
+        with the process and release every byte; the live engine is never
+        duplicated in this process.
+
+        [ZH]
+        在**子进程**中执行一次用完即弃的加载与极短推理。模型内存归子进程所有，
+        因此 60 秒超时可以连同进程一起终止并释放全部内存；本进程内绝不会出现
+        两份模型同时常驻。
+        """
+        import subprocess
+
+        path = self._current_model_path()
+        if not path:
+            return {"ok": False, "error": _t("inference.test_no_model"),
+                    "error_type": "NoModel", "suggestions": [], "warnings": []}
+        plan = hardware_profiler.plan_inference(
+            profile=hardware_profiler.probe(),
+            model_path=path,
+            train_context=resolve_context_window(path, 0),
+            requested_context=int(values.get("n_ctx", 0)),
+            max_context=int(self.config.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
+            requested_gpu_layers=int(values.get("n_gpu_layers", 0)),
+            n_threads_override=int(self.config.n_threads or 0),
+            inference_profile=str(getattr(self.config, "inference_profile", "")),
+            requested_n_batch=int(values.get("n_batch", 0)),
+            allow_override=True,
+        )
+        blocking = _override_blocking_error(plan) or _preflight_context_error(plan)
+        if blocking:
+            return self._inference_failure(plan, RuntimeError(blocking))
+
+        payload = {
+            "path": path,
+            "n_ctx": int(values.get("n_ctx", 0)),
+            "n_gpu_layers": int(values.get("n_gpu_layers", 0)),
+            "n_batch": int(values.get("n_batch", 0)),
+            "profile": str(getattr(self.config, "inference_profile", "balanced")),
+            "threads": int(self.config.n_threads or 0),
+        }
+        if getattr(sys, "frozen", False):
+            command = [sys.executable, "--inference-test-load", json.dumps(payload)]
+        else:
+            command = [sys.executable, os.path.abspath(__file__),
+                       "--inference-test-load", json.dumps(payload)]
+        env = dict(os.environ)
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        kwargs: Dict[str, Any] = {
+            "capture_output": True,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+            "timeout": 60,
+            "env": env,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        started = time.time()
+        try:
+            completed = subprocess.run(command, **kwargs)
+        except subprocess.TimeoutExpired:
+            timeout_error = TimeoutError(_t("inference.test_timeout", seconds=60))
+            return self._inference_failure(plan, timeout_error)
+        result: Dict[str, Any] = {}
+        for line in reversed((completed.stdout or "").splitlines()):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                candidate = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict):
+                result = candidate
+                break
+        if completed.returncode != 0 or not result.get("ok"):
+            detail = str(result.get("error") or "").strip()
+            if not detail:
+                tail = (completed.stderr or "").strip().splitlines()[-3:]
+                detail = "\n".join(tail) or f"exit code {completed.returncode}"
+            return self._inference_failure(plan, RuntimeError(detail))
+        return {
+            "ok": True,
+            "elapsed_seconds": round(time.time() - started, 2),
+            "plan": result.get("plan") or plan.to_dict(),
+            "answer": str(result.get("answer") or ""),
+            "warnings": list(plan.warnings),
+        }
+
     def _handle_capability_settings(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
         [EN]
@@ -3503,58 +3955,89 @@ class Backend:
         directly affect inference results, and accepting arbitrary frontend values would easily
         produce a configuration that "looks fine but cannot run".
 
+        v0.2.4 task 3 adds the optional ``n_ctx`` / ``n_gpu_layers`` / ``n_batch``
+        override fields and ``test_load``. An override is persisted and applied
+        verbatim; a failed load returns the raw error while the previous engine
+        parameters are restored, so a working model keeps working.
+
         [ZH]
         运行期调整能力相关设置（修复四：预设 / 滑动窗口 / 分段摘要参数）。
 
         只接受白名单字段并逐个做范围校验：这些参数会直接影响推理结果，
         放任前端传什么就写什么，很容易产生"看起来可用但无法运行"的配置。
+
+        v0.2.4 任务-3 增加可选覆盖字段 ``n_ctx`` / ``n_gpu_layers`` / ``n_batch``
+        与 ``test_load``。覆盖值会被持久化并原样应用；加载失败时返回原始错误并恢复
+        旧引擎参数，使原本可用的模型继续可用。
         """
         changed: List[str] = []
         cfg = self.config
+        values, value_error = self._parse_override_request(request)
+        if value_error:
+            return {"type": "system", "content": value_error, "ok": False,
+                    "error": value_error, "error_type": "ValidationError"}
+        if bool(request.get("test_load")):
+            result = self._test_load_inference(values)
+            return {"type": "system", "content": "", "test_load": result,
+                    "inference": self.inference_summary(),
+                    "hardware": self.hardware_diagnostics()}
 
         preset = str(request.get("preset") or "").strip().lower()
         if preset:
             from model_profile import apply_preset
 
-            values = apply_preset(preset)
-            if values is None:
+            values_preset = apply_preset(preset)
+            if values_preset is None:
                 return {"type": "system", "content": _t("sys.preset_not_found", name=preset)}
             cfg.preset = preset
-            cfg.temperature = float(values["temperature"])
-            cfg.top_p = float(values["top_p"])
-            cfg.repeat_penalty = float(values["repeat_penalty"])
-            cfg.max_tokens = int(values["max_tokens"])
+            cfg.temperature = float(values_preset["temperature"])
+            cfg.top_p = float(values_preset["top_p"])
+            cfg.repeat_penalty = float(values_preset["repeat_penalty"])
+            cfg.max_tokens = int(values_preset["max_tokens"])
             self.commands.temperature = cfg.temperature
             self.commands.temp_manual = False
             changed.append("preset")
 
-        # [EN] Inference preset (fast / balanced / quality). It is handled before
-        # [EN] the sampling fields because switching it rebuilds the engine: the
-        # [EN] rebuild must happen once, after the configuration values it depends
-        # [EN] on are already in place.
-        # [ZH] 推理预设（极速 / 均衡 / 质量）。它在采样字段之前处理，因为切换该预设会
-        # [ZH] 重建引擎：重建必须只发生一次，且发生在它依赖的配置值已经就位之后。
-        applied_profile: Optional[Dict[str, Any]] = None
+        inference_changed = False
         profile_name = str(request.get("inference_profile") or "").strip().lower()
         if profile_name:
             from hardware_profiler import get_inference_preset, normalize_inference_preset
 
             normalized = normalize_inference_preset(profile_name)
             preset_values = get_inference_preset(normalized)
-            if (normalized != str(getattr(cfg, "inference_profile", ""))
-                    or int(cfg.n_batch or 0) != int(preset_values.n_batch)):
-                applied_profile = self.apply_inference_profile(normalized)
+            if normalized != str(getattr(cfg, "inference_profile", "")):
+                cfg.inference_profile = normalized
                 changed.append("inference_profile")
-                if not applied_profile.get("ok"):
-                    return {
-                        "type": "system",
-                        "content": _t("sys.inference_profile_apply_failed",
-                                      error=applied_profile.get("error") or ""),
-                        "changed": changed,
-                        "inference": applied_profile,
-                        "capability": self.model_capability(),
-                        "context": self._context_snapshot(),
-                    }
+                inference_changed = True
+            if "n_batch" not in values and not bool(getattr(cfg, "inference_override", False)):
+                if int(cfg.n_batch or 0) != int(preset_values.n_batch):
+                    cfg.n_batch = int(preset_values.n_batch)
+                    inference_changed = True
+
+        if "n_ctx" in values:
+            cfg.context_length = int(values["n_ctx"])
+            changed.append("n_ctx")
+            inference_changed = True
+        if "n_gpu_layers" in values:
+            cfg.n_gpu_layers = int(values["n_gpu_layers"])
+            changed.append("n_gpu_layers")
+            inference_changed = True
+        if "n_batch" in values:
+            cfg.n_batch = int(values["n_batch"])
+            changed.append("n_batch")
+            inference_changed = True
+        if values or "allow_override" in request:
+            recommendation = self._recommended_plan()
+            differs = (
+                int(cfg.context_length or 0) != int(recommendation.n_ctx_max)
+                or int(cfg.n_gpu_layers or 0) != int(recommendation.n_gpu_layers)
+                or int(cfg.n_batch or 0) != int(recommendation.n_batch)
+            )
+            override = bool(request.get("allow_override", False)) or differs
+            if override != bool(getattr(cfg, "inference_override", False)):
+                cfg.inference_override = override
+                changed.append("inference_override")
+                inference_changed = True
 
         mode = str(request.get("context_mode") or "").strip().lower()
         if mode:
@@ -3627,12 +4110,36 @@ class Backend:
             return {"type": "system", "content": _t("sys.nothing_changed")}
         try:
             cfg.save()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - report instead of silently dropping
             log.warning("保存能力设置失败", exc_info=True)
+            return {"type": "system",
+                    "content": _t("inference.save_failed", error=exc),
+                    "ok": False, "error": str(exc),
+                    "error_type": type(exc).__name__, "suggestions": [],
+                    "warnings": [], "changed": changed}
+        if inference_changed:
+            result = self._rebuild_inference()
+            if not result.get("ok"):
+                return {
+                    "type": "system",
+                    "content": _t("sys.inference_override_failed",
+                                  error=result.get("error") or ""),
+                    "ok": False,
+                    "error": result.get("error") or "",
+                    "error_type": result.get("error_type") or "Error",
+                    "suggestions": result.get("suggestions") or [],
+                    "warnings": result.get("warnings") or [],
+                    "changed": changed,
+                    "inference": result,
+                    "capability": self.model_capability(),
+                    "hardware": self.hardware_diagnostics(),
+                    "context": self._context_snapshot(),
+                }
         return {"type": "system",
                 "content": _t("sys.capability_settings_saved", fields=", ".join(changed)),
                 "changed": changed, "capability": self.model_capability(),
-                "inference": applied_profile or self.inference_summary(),
+                "inference": self.inference_summary(),
+                "hardware": self.hardware_diagnostics(),
                 "context": self._context_snapshot()}
 
     def stream(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
@@ -6182,7 +6689,89 @@ class ModelMissing(Exception):
 # ---------------------------------------------------------------------------
 
 
+def _run_inference_test_load_cli(payload_json: str) -> None:
+    """
+    [EN]
+    Child-process entry point for the settings page's "Test load" button.
+    It loads the requested parameters, runs one tiny completion and prints a
+    single JSON line on stdout. Running in a child process is what makes the
+    60-second timeout enforceable: the parent can terminate the process and
+    reclaim the model memory immediately.
+
+    [ZH]
+    设置页「测试加载」按钮的子进程入口。按请求参数加载模型、执行一次极短推理，并在
+    stdout 打印一行 JSON。放在子进程中运行，才使 60 秒超时可强制实施：父进程可以
+    终止该进程并立即回收模型内存。
+    """
+    engine = None
+    try:
+        payload = json.loads(payload_json)
+        path = str(payload.get("path") or "")
+        from hardware_profiler import plan_inference, probe
+
+        plan = plan_inference(
+            profile=probe(),
+            model_path=path,
+            train_context=resolve_context_window(path, 0),
+            requested_context=int(payload.get("n_ctx") or 0),
+            max_context=int(Config.load().max_context or 32768),
+            requested_gpu_layers=int(payload.get("n_gpu_layers") or 0),
+            n_threads_override=int(payload.get("threads") or 0),
+            inference_profile=str(payload.get("profile") or ""),
+            requested_n_batch=int(payload.get("n_batch") or 0),
+            allow_override=True,
+        )
+        blocking = _override_blocking_error(plan) or _preflight_context_error(plan)
+        if blocking:
+            raise RuntimeError(blocking)
+        from llm_engine import LLMEngine
+
+        with LLMEngine(
+            path,
+            plan.n_ctx_initial,
+            n_threads=plan.n_threads,
+            n_batch=plan.n_batch,
+            n_gpu_layers=plan.n_gpu_layers,
+            max_n_ctx=plan.n_ctx_max,
+            backend_label=plan.backend,
+        ) as engine:
+            engine.apply_plan(plan)
+            answer = engine.chat_complete(
+                [{"role": "user", "content": "ping"}],
+                temperature=0.0,
+                max_tokens=8,
+            )
+        print(json.dumps({
+            "ok": True,
+            "plan": plan.to_dict(),
+            "answer": str(answer or "")[:120],
+            "warnings": list(plan.warnings),
+        }, ensure_ascii=False), flush=True)
+    except Exception as exc:  # noqa: BLE001 - the parent renders the raw error
+        print(json.dumps({
+            "ok": False,
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+        }, ensure_ascii=False), flush=True)
+        raise SystemExit(3)
+    finally:
+        if engine is not None:
+            engine.close()
+        del engine
+        gc.collect()
+
+
 def main() -> None:
+    # [EN] Hidden child-process mode used by the settings page's "Test load"
+    # [EN] button. It must run before Config.load / Backend construction so the
+    # [EN] ordinary startup path is untouched.
+    # [ZH] 设置页「测试加载」按钮使用的隐藏子进程模式。必须在 Config.load 与 Backend
+    # [ZH] 构造之前处理，使普通启动路径完全不受影响。
+    if "--inference-test-load" in sys.argv:
+        index = sys.argv.index("--inference-test-load")
+        if index + 1 < len(sys.argv):
+            _run_inference_test_load_cli(sys.argv[index + 1])
+        return
     # 兼容性修正：先把输出流切到 UTF-8 并判断能否安全输出 emoji。
     # 必须在任何输出之前执行——控制台代码页不是 UTF-8 时 emoji 会变成 "??"，
     # 那时再降级就已经晚了（日志/进度消息是边跑边打的）。

@@ -566,6 +566,28 @@ internal static class Probe
             inference.Contains("profileLabel=1") && inference.Contains("saveButton=1"),
             inference);
 
+        // [EN] v0.2.4 task 3: editable override inputs, warning icons, test-load
+        // [EN] button and the hardware diagnostics panel must all exist. The
+        // [EN] snapshot fills deliberately over-budget values; the probe never
+        // [EN] clicks "Test load", so it cannot block for 60 seconds.
+        // [ZH] v0.2.4 任务-3：可编辑覆盖输入、警告图标、测试加载按钮与硬件诊断面板
+        // [ZH] 必须全部存在。快照会填入故意超预算的值；探针不会点击「测试加载」，
+        // [ZH] 因此不会阻塞 60 秒。
+        Check("覆盖输入框与测试加载按钮存在",
+            inference.Contains("nctxField=1")
+            && inference.Contains("gpuLayersField=1")
+            && inference.Contains("testLoadButton=1"), inference);
+        Check("硬件诊断面板存在", inference.Contains("diagnosticsPanel=1"), inference);
+        string overrideSnapshot = model.ProbeOverrideSnapshot();
+        Console.WriteLine($"  覆盖警告   : {overrideSnapshot}");
+        Check("超预算时两个警告图标均可见",
+            overrideSnapshot.Contains("warnIcons=2"), overrideSnapshot);
+        Check("推荐值已从后端回填",
+            !overrideSnapshot.Contains("recommendedNctx=0")
+            && !overrideSnapshot.Contains("recommendedGpuLayers=-999"),
+            overrideSnapshot);
+        await model.ProbeReloadInferenceAsync();
+
         // ---------- 已安装页：插件生态入口（v0.2.2 第 4 批 3a）----------
         if (!settings.SelectTab("settings.tab.installed"))
         {

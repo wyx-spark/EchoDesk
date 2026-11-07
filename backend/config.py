@@ -28,6 +28,16 @@ from i18n import t as _t
 # [ZH] 上下文窗口的硬性下限（低于此值无法正常对话）。
 MIN_CONTEXT = 512
 
+#: [EN] Sanity ceiling for an explicit user override of the context window. The
+#: planner never silently narrows an override, so the configuration layer alone
+#: is responsible for rejecting values a 64-bit integer or llama.cpp could not
+#: survive. Values below this bound are adopted verbatim and fail at load time
+#: with a structured error when the machine cannot serve them.
+#: [ZH] 用户显式覆盖上下文窗口时的合理性上限。规划器不会静默收窄覆盖值，因此由
+#: 配置层单独负责拒绝 64 位整数或 llama.cpp 无法承受的取值。低于该上限的值会被
+#: 原样采纳，并在机器无法承载时于加载阶段以结构化错误失败。
+MAX_CONTEXT_OVERRIDE = 4_194_304
+
 
 def program_dir() -> str:
     """
@@ -1238,6 +1248,16 @@ class Config(BaseModel):
     # [EN] can be raised, e.g. 99 for all layers).
     # [ZH] GPU 加速层数：0 = 纯 CPU（有 NVIDIA 显卡可调大，如 99=全部）
     n_gpu_layers: int = 0
+    # [EN] Explicit inference override (v0.2.4 task 3). When true, the values
+    # [EN] in ``context_length``, ``n_gpu_layers`` and ``n_batch`` are treated as
+    # [EN] the user's decision: the planner adopts them verbatim and returns
+    # [EN] warnings instead of silently narrowing them. The default false keeps
+    # [EN] the established behaviour, where the planner recommends and applies a
+    # [EN] safe value.
+    # [ZH] 显式推理覆盖开关（v0.2.4 任务-3）。为真时，``context_length``、
+    # [ZH] ``n_gpu_layers`` 与 ``n_batch`` 被视作用户的决定：规划器原样采纳并返回
+    # [ZH] 警告，而不是静默收窄。默认假保留既有行为：由规划器给出并应用安全推荐值。
+    inference_override: bool = False
     # [EN] Session persistence file (an empty string disables automatic saving).
     # [ZH] 会话持久化文件（空字符串表示关闭自动保存）
     session_file: str = "session.json"
@@ -1292,20 +1312,37 @@ class Config(BaseModel):
     def _clamp_context(self) -> "Config":
         """
         [EN]
-        Context window ceiling validation: values from any source are clamped to
-        [MIN_CONTEXT, max_context].
+        Context window validation. In the default (recommended) mode, values from
+        any source are clamped to [MIN_CONTEXT, max_context], preserving the
+        established automatic behaviour. An explicit override is adopted
+        verbatim up to MAX_CONTEXT_OVERRIDE, because the whole point of the
+        override is that the user — not the planner — decides; a value the
+        machine cannot serve then fails at load time with a structured error.
+        A hand-edited value above max_context is treated as an override
+        automatically, so editing config.json directly behaves like the
+        settings-page input.
 
         [ZH]
-        上下文窗口上限校验：任何来源的取值都钳制到 [MIN_CONTEXT, max_context]。
+        上下文窗口校验。默认（推荐）模式下，任何来源的取值都钳制到
+        [MIN_CONTEXT, max_context]，保持既有的自动行为。显式覆盖值则在
+        MAX_CONTEXT_OVERRIDE 以内原样采纳 —— 覆盖的意义正是"由用户而非规划器决定"；
+        机器无法承载的值会在加载阶段以结构化错误失败。手改配置中超过 max_context
+        的值会自动视为覆盖，使直接编辑 config.json 与设置页输入具有相同语义。
         """
         if self.max_context < MIN_CONTEXT:
             raise ValueError(f"max_context 不得小于 {MIN_CONTEXT}")
         original = self.context_length
-        self.context_length = max(MIN_CONTEXT, min(int(self.context_length), int(self.max_context)))
+        wants_override = bool(self.inference_override) or int(original) > int(self.max_context)
+        if wants_override:
+            self.inference_override = True
+            self.context_length = max(MIN_CONTEXT, min(int(original), MAX_CONTEXT_OVERRIDE))
+        else:
+            self.context_length = max(MIN_CONTEXT, min(int(original), int(self.max_context)))
         if self.context_length != original:
+            limit = MAX_CONTEXT_OVERRIDE if wants_override else self.max_context
             print(
                 f"⚠️ context_length={original} 超出允许范围，已钳制为 {self.context_length}"
-                f"（上限 max_context={self.max_context}）",
+                f"（上限 {limit}）",
                 file=sys.stderr, flush=True,
             )
         return self

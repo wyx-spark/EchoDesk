@@ -879,7 +879,11 @@ class CommandHandler:
             n_threads_override=int(self.config.n_threads or 0),
             inference_profile=str(getattr(self.config, "inference_profile", "")),
             requested_n_batch=int(getattr(self.config, "n_batch", 0) or 0),
+            allow_override=bool(getattr(self.config, "inference_override", False)),
         )
+        if (plan.allow_override and int(plan.n_gpu_layers or 0) != 0
+                and not bool(plan.gpu_available)):
+            return t("inference.error_no_accelerator", layers=plan.n_gpu_layers), None
         n_ctx = plan.n_ctx_initial
         try:
             self.llm_engine.apply_plan(plan)

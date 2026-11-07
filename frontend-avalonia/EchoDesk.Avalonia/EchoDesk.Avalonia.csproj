@@ -29,18 +29,19 @@
          （Linux/macOS 上 ApplicationIcon 不生效，只有 AvaloniaResource 生效）。 -->
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- 版本口径：v0.2.1 = 跨平台之前（没有这个工程）；v0.2.2 = 跨平台版本；
-         v0.2.3 = Avalonia 主线（WPF 同期转入 LTS）。权威来源是 backend/version.py 的
-         APP_VERSION，升版本时这四处必须同步：`<Version>` 可带预发布后缀，
-         `AssemblyVersion`/`FileVersion` 只能是四段纯数字（口径同 app_version_4()）。
-         Versioning: v0.2.1 = pre-cross-platform (this project did not exist); v0.2.2 =
-         cross-platform release; v0.2.3 = Avalonia as the main line (WPF moves into LTS at the
-         same time). The authoritative source is APP_VERSION in backend/version.py, and these
-         four fields must be kept in sync: `<Version>` may carry a prerelease suffix, while
-         `AssemblyVersion`/`FileVersion` must be four purely numeric fields (same rule as
-         app_version_4()). -->
-    <Version>0.2.3</Version>
-    <FileVersion>0.2.3.0</FileVersion>
-    <AssemblyVersion>0.2.3.0</AssemblyVersion>
+         v0.2.3 = Avalonia 主线（WPF 同期转入 LTS）；v0.2.4 = 硬件自适应与三档推理预设。
+         权威来源是 backend/version.py 的 APP_VERSION，升版本时这四处必须同步：
+         `<Version>` 可带预发布后缀，`AssemblyVersion`/`FileVersion` 只能是四段纯数字
+         （口径同 app_version_4()）。Versioning: v0.2.1 = pre-cross-platform (this project
+         did not exist); v0.2.2 = cross-platform release; v0.2.3 = Avalonia as the main line
+         (WPF moves into LTS at the same time); v0.2.4 = hardware-adaptive tuning with three
+         inference presets. The authoritative source is APP_VERSION in backend/version.py, and
+         these four fields must be kept in sync: `<Version>` may carry a prerelease suffix,
+         while `AssemblyVersion`/`FileVersion` must be four purely numeric fields (same rule
+         as app_version_4()). -->
+    <Version>0.2.4</Version>
+    <FileVersion>0.2.4.0</FileVersion>
+    <AssemblyVersion>0.2.4.0</AssemblyVersion>
     <Product>EchoDesk</Product>
     <Company>Void-Entropia-Studio</Company>
     <Copyright>Copyright (c) Void-Entropia-Studio</Copyright>

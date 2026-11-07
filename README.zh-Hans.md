@@ -45,6 +45,8 @@ EchoDesk 是本地优先的 AI 桌面助手，提供原生 Windows（WPF）与�
 | --- | --- |
 | **本地对话** | 本地模型流式回答，可调整温度、临时切换助手角色、按模型档案切换，并支持桌面快捷键。`/help` 列出全部指令。 |
 | **上下文管理** | 默认上下文窗口 8192 tokens（硬上限 32768），并按 GGUF 元数据中模型真实训练窗口自动收敛。`/status` 显示当前窗口与 fp16 KV Cache 估算。 |
+| **自动硬件调优** | 加载模型前探测 CPU（物理/逻辑核、AVX2/AVX-512）、NVIDIA CUDA / AMD ROCm / Apple Metal 可用性与空闲显存、系统总内存与可用内存；随后在 20% 显存安全水位线内推导安全的 `n_gpu_layers`，以较小的初始上下文起步并按需扩展至模型原生窗口或内存预算，线程数按物理核心数推导。探测失败时静默降级为纯 CPU 推理。探测只产生聚合能力信息：不采集或写入 MAC 地址、序列号与绝对路径。 |
+| **透明覆盖与诊断** | 设置 → 模型新增可折叠的硬件诊断面板，展示探测到的 CPU/GPU/内存、模型原生窗口、硬件预算与推荐档位。`n_ctx` 与 `n_gpu_layers` 可编辑且默认填推荐值；超预算时显示黄色警告图标与说明，但绝不阻止保存，后端原样采纳。新增「测试加载」按钮，在独立子进程中用当前参数尝试加载（上限 60 秒）。加载失败时（例如 999999 token 窗口，或没有加速器却要求 GPU 层数）后端返回原始错误与可操作建议，前端弹窗展示，原本可用的引擎继续运行。 |
 | **长文档处理** | 超过窗口一定比例时不再截断：分段摘要（map-reduce）后归并，并保留**原文指针**（文件名 + 字符区间）便于回查原文。也可用 `/summarize` 手动触发。 |
 | **文件格式** | 支持 `.docx`、`.xlsx`、`.xlsm`、`.xls`、`.pptx`、`.pdf`、`.txt`、`.md`、`.csv` 等；`.doc` / `.ppt` 与加密文档通过 WPS/Office COM 读取。 |
 | **模型中心** | 从 Hugging Face 镜像（默认 `hf-mirror.com`，可切换官方站点）搜索并下载 GGUF 模型，校验 SHA-256，登记到本地模型库，用 `/model` 热切换。 |
@@ -58,8 +60,8 @@ EchoDesk 是本地优先的 AI 桌面助手，提供原生 Windows（WPF）与�
 | --- | --- |
 | 操作系统 | 正式交付物为 Windows 10 / 11（x64）。Linux 与 macOS 由跨平台前端（Avalonia，`frontend-avalonia/`）支持，后端代码三平台通用。两项能力为 Windows 专属，其余两项在 Linux / macOS 上降级：加密文档（.doc/.docx 等带密码或 DRM 的文件）仅 Windows 可通过本机 WPS 内存解密读取，Linux / macOS 使用内置通用解析器，只能读取未加密文档；浏览器自动化仅 Windows 驱动本机 Microsoft Edge，Linux / macOS 上该功能不可用，其余功能不受影响。 |
 | 前端运行时 | 无需额外安装。Windows 前端是 WPF 程序（目标框架 `net10.0-windows`），跨平台前端是 Avalonia 程序（目标框架 `net10.0`），两者都以自包含方式发布，便携发布物自带运行时。 |
-| CPU | 任意 x64 处理器。默认使用 CPU 推理（`backend\config.json` 中 `n_gpu_layers: 0`）。 |
-| 内存 | 最低 4 GB，建议 8 GB 以上。默认模型文件约 472 MB，默认 8192 tokens 窗口的 KV Cache 另需约 0.3–0.4 GB；窗口越大、模型越大，占用越高。 |
+| CPU | 任意 x64 处理器。默认使用 CPU 推理；EchoDesk 会探测核心数与 AVX 支持并自动选择线程数。`n_threads` / `n_gpu_layers` 可覆盖，受「透明覆盖与诊断」一节的警告约束。 |
+| 内存 | 最低 4 GB，建议 8 GB 以上。初始上下文刻意较小，并按需扩展至模型原生窗口或内存预算。默认模型文件约 472 MB，32K token 窗口的 KV Cache 另需约 3.5 GB；窗口越大、模型越大，占用越高。 |
 | 磁盘 | 便携文件夹约 1 GB（含模型约 0.85 GB，不含模型约 0.4 GB）。下载模型期间建议保留 2 GB 可用空间。 |
 | WPS Office 或 Microsoft Office（可选） | 读取加密文档与旧版 `.doc` / `.ppt` 时需要（走 COM）。没有时应改用上面列出的现代格式。 |
 | Microsoft Edge（可选） | 仅浏览器自动化功能需要，它驱动本机已安装的 Edge（`channel = msedge`）。EchoDesk 不分发浏览器本体。 |
@@ -71,9 +73,9 @@ EchoDesk 是本地优先的 AI 桌面助手，提供原生 Windows（WPF）与�
 
 1. 获取发布物：可以从本仓库的
    [Releases 页面](https://github.com/wyx-spark/EchoDesk/releases) 下载（发布归档上线后），
-   也可以自己构建（本文“方案 B”一节），产物位于 `publish\EchoDesk-v0.2.2\`。
+   也可以自己构建（本文“方案 B”一节），产物位于 `publish\EchoDesk-v0.2.4\`。
 2. 安装或解压：
-   - **安装程序** —— 双击 `EchoDesk-v0.2.2-Setup.exe`（只有这一份，**不含内置模型**，
+   - **安装程序** —— 双击 `EchoDesk-v0.2.4-Setup.exe`（只有这一份，**不含内置模型**，
      首次启动会询问是否下载）。默认装到**安装程序自己所在的文件夹**，向导里可以改到别处。
      它会创建开始菜单快捷方式、勾选后创建桌面快捷方式，并登记卸载入口（之后可在
      「应用和功能」里卸载）。装出来的目录结构与便携版完全一致：程序本体在 `app\`，
@@ -87,7 +89,7 @@ EchoDesk 是本地优先的 AI 桌面助手，提供原生 Windows（WPF）与�
    > [CODE_SIGNING.md](CODE_SIGNING.md)。
 
 3. 启动 EchoDesk：用**开始菜单快捷方式**（安装程序装的），或双击文件夹里的
-   **`Start-EchoDesk-v0.2.2.lnk`**（zip 免安装版；若没有这个快捷方式，先运行一次
+   **`Start-EchoDesk-v0.2.4.lnk`**（zip 免安装版；若没有这个快捷方式，先运行一次
    `install-complete.bat`）。两种方式创建的快捷方式都指向**你自己机器上的**这份程序。
    无论走哪条路，这个快捷方式都是唯一需要的入口；`app\EchoDesk.exe` 是界面主程序，
    `app\backend\EchoDeskBackend.exe` 由界面自动拉起，**请不要单独运行后端**。
@@ -114,7 +116,7 @@ dotnet build frontend\EchoDesk.csproj -c Release
 python tools\selftest.py            # 后端单元级自检，退出码 0/1
 python tools\test_file_parsers.py   # 全部支持格式的解析冒烟测试
 
-# 4) 完整便携构建 -> publish\EchoDesk-v0.2.2\
+# 4) 完整便携构建 -> publish\EchoDesk-v0.2.4\
 & tools\build_release.ps1
 & tools\build_release.ps1 -SkipBackend     # 只重建 WPF 前端
 & tools\build_release.ps1 -SkipFrontend    # 只重建打包后的后端
@@ -169,7 +171,7 @@ EchoDesk **不自带**模型权重，也**不会静默下载**任何东西：
 
 | 路径 | 内容 |
 | --- | --- |
-| `Start-EchoDesk-v0.2.2.lnk` | 唯一入口（指向 `app\EchoDesk.exe`，工作目录为本文件夹）。 |
+| `Start-EchoDesk-v0.2.4.lnk` | 唯一入口（指向 `app\EchoDesk.exe`，工作目录为本文件夹）。 |
 | `results\` | 自动化结果（按 `日期\任务名\` 分层的纯文本报告与下载的原始文件）。 |
 | `ui_state.json`、`snippets.json` | 窗口状态、字号、主题、语言与常用语。 |
 | `lang\` | 后端语言包（系统消息、错误提示、指令帮助）。丢一个新的 `<locale>.json` 进去即可加语言。 |
@@ -189,7 +191,7 @@ EchoDesk **不自带**模型权重，也**不会静默下载**任何东西：
 
 ## 截图与演示
 
-**v0.2.2 发布物不包含截图**。目前随包提供的图片资源只有 `assets/EchoDesk.ico`（程序图标）与
+**v0.2.4 发布物不包含截图**。目前随包提供的图片资源只有 `assets/EchoDesk.ico`（程序图标）与
 `assets/EchoDesk.png`（Logo）；本 README 里没有任何指向不存在图片的链接。
 
 界面预览图——主界面、长文档分段摘要、带「测试选择器」的自动化页、有头模式的自动化运行，

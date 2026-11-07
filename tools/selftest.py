@@ -36,9 +36,19 @@ def test_config() -> None:
     section("配置层")
     import config
 
-    # 上限校验：超出 max_context 会被钳制
+    # [EN] v0.2.4 task 3: a value above max_context is treated as an explicit
+    # [EN] override and adopted verbatim; only the sanity ceiling still clamps.
+    # [ZH] v0.2.4 任务-3：超过 max_context 的值视为显式覆盖并原样采纳；只有合理性
+    # [ZH] 上限仍会钳制。
     cfg = config.Config(context_length=999999, max_context=32768)
-    check("context_length 超上限被钳制", cfg.context_length == 32768, f"得到 {cfg.context_length}")
+    check("context_length 超上限被视为覆盖并保留",
+          cfg.context_length == 999999 and cfg.inference_override is True,
+          f"得到 {cfg.context_length} / override={cfg.inference_override}")
+
+    cfg = config.Config(context_length=config.MAX_CONTEXT_OVERRIDE + 1, max_context=32768)
+    check("context_length 超过合理性上限被钳制",
+          cfg.context_length == config.MAX_CONTEXT_OVERRIDE,
+          f"得到 {cfg.context_length}")
 
     # 下限保护
     cfg = config.Config(context_length=8)

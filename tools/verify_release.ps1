@@ -459,6 +459,12 @@ try {
     # [ZH] v0.2.4：以合成的 8 GiB / 12 GiB 档案断言 GPU 层数、显存安全水位线与
     # [ZH] 静默降级为纯 CPU 的路径。
     Invoke-Check "硬件探测与推理规划（v0.2.4）" { Invoke-Python "硬件规划" "tools\test_hardware_profiler.py"; "通过" }
+    # [EN] v0.2.4 task 3: explicit override, structured failure and the
+    # [EN] child-process "test load" path are verified against a real model.
+    # [ZH] v0.2.4 任务-3：显式覆盖、结构化失败与子进程「测试加载」路径用真实模型验证。
+    Invoke-Check "推理覆盖与透明诊断（v0.2.4 任务-3）" {
+        Invoke-Python "覆盖诊断" "tools\test_inference_override.py"; "通过"
+    }
     Invoke-Check "后端协议端到端" { Invoke-Python "后端协议端到端" "tools\test_backend_e2e.py"; "通过" }
     # v0.2.1 模型市场优化：加载器（分页取全/上限/重试/缓存/离线降级）用本机 HTTP 桩验证，
     # 不依赖真实网络；再驱动**打包后的后端**验证流式加载与本地查询协议。
