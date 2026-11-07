@@ -7,7 +7,7 @@ Version: v0.2.2
 Copyright: Copyright (C) Void Entropia Studio
 Publisher: Void Entropia Studio, Online only (hereinafter "the Studio")
 > Studio name mapping: **Void Entropia Studio = 熵寂工作室**. `Void Entropia Studio` /
-> `VoidEntropiaStudio` is the legal-entity identifier used in this agreement and in all
+> `Void-Entropia-Studio` is the legal-entity identifier used in this agreement and in all
 > English documents; the Chinese translation uses 熵寂工作室. The legal entity is
 > governed by **this English version**.
 License for the project itself: **Apache License 2.0** (see [`../LICENSE`](../LICENSE) and [`../NOTICE`](../NOTICE) in the repository root)
@@ -202,7 +202,7 @@ itself.
 - **Security vulnerabilities**: use the private reporting channel in [`SECURITY.md`](../SECURITY.md)
   and do **not** open a public Issue. The private advisory form is
   `https://github.com/wyx-spark/EchoDesk/security/advisories/new`. The fallback email
-  address is `VoidEntropiaStudio@users.noreply.github.com`.
+  address is `Void-Entropia-Studio@users.noreply.github.com`.
 - **General questions and licensing and compliance enquiries (including questions about the terms
   of this agreement and legal notices)**: submit them through GitHub Issues at
   `https://github.com/wyx-spark/EchoDesk/issues`; for discussion use GitHub Discussions at

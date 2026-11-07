@@ -1423,10 +1423,10 @@ class CommandHandler:
         lines = [
             f"✨ {APP_NAME} {APP_VERSION}",
             # [EN] /about is the canonical place for the complete attribution: use the
-            # [EN] full form on first occurrence (Chinese: 熵寂工作室（VoidEntropiaStudio）);
+            # [EN] full form on first occurrence (Chinese: 熵寂工作室（Void-Entropia-Studio）);
             # [EN] all other locations use the short form.
             # [ZH] /about 是"何处出现完整署名"的规范位置，用首次完整形式
-            # [ZH] （中文：熵寂工作室（VoidEntropiaStudio））；其余位置用简称。
+            # [ZH] （中文：熵寂工作室（Void-Entropia-Studio））；其余位置用简称。
             f"Powered by {t('app.studio_full')}",
             t("app.about"),
             "",

@@ -7,9 +7,9 @@
 > disagree, the English version prevails.
 
 版本：v0.2.2
-版权：版权所有 (C) 熵寂工作室（VoidEntropiaStudio）
-出品方：熵寂工作室（VoidEntropiaStudio）, Online only（下称"本工作室"）
-> 工作室中文名与英文名的对应关系：**熵寂工作室 = VoidEntropiaStudio**。
+版权：版权所有 (C) 熵寂工作室（Void-Entropia-Studio）
+出品方：熵寂工作室（Void-Entropia-Studio）, Online only（下称"本工作室"）
+> 工作室中文名与英文名的对应关系：**熵寂工作室 = Void-Entropia-Studio**。
 > 本协议中的**法律主体以英文版 [`EULA.md`](EULA.md) 为准**（英文版使用 `Void Entropia Studio`）。
 项目本体许可：**Apache License 2.0**（详见仓库根目录 [`../LICENSE`](../LICENSE) 与 [`../NOTICE`](../NOTICE)）
 
@@ -150,7 +150,7 @@
 - **安全漏洞**：请走 [`SECURITY.md`](../SECURITY.zh-Hans.md) 中的私有报告渠道，**不要**开公开 Issue。
   私有报告表单为
   `https://github.com/wyx-spark/EchoDesk/security/advisories/new`；
-  邮件兜底地址为 `VoidEntropiaStudio@users.noreply.github.com`。
+  邮件兜底地址为 `Void-Entropia-Studio@users.noreply.github.com`。
 - **一般问题、许可与合规咨询（含本协议条款相关问题与法律通知）**：通过 GitHub Issues
   `https://github.com/wyx-spark/EchoDesk/issues` 提交，
   讨论请用 GitHub Discussions

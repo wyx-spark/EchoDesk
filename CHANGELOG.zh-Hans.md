@@ -10,7 +10,7 @@
 
 | 版本 | 类型 | 发布日期 | 概要 |
 | :--- | :--- | :--- | :--- |
-| [v0.2.3-alpha.1](#v023-alpha1) | 预览版（alpha） | 未发布 | WPF 冻结并转入长期支持；版本号与构建链收口 |
+| [v0.2.3](#v023) | 稳定版 | 2026-11-07 | 可复现构建、依赖锁定、Avalonia 主线、WPF 转入长期支持 |
 | [v0.2.2](#v022) | 稳定版 | 2026-11-04 | 跨平台前端、视觉一致性、全面双语 |
 | [v0.2.1](#v021) | 稳定版 | 2026-10-05 | 能力体系收口、Agent 平台、MCP、插件生态 |
 | [v0.2.0](#v020) | 功能版 | 2026-09-23 | 长上下文与长文档、自动化、技能市场 |
@@ -18,14 +18,14 @@
 
 ---
 
-## v0.2.3-alpha.1
+## v0.2.3
 
 ### 版本定位
 
-v0.2.3 周期的第一轮迭代，以预览版形式发布。v0.2.3 周期将项目重心转向 Avalonia 主线界面；
-WPF 版本在本轮完成功能开发并转入长期支持（LTS）维护期，即只修复安全与崩溃问题、不再新增
-功能。本轮交付 LTS 提示、统一版本号及其在构建链上的派生方式，并清理 WPF 工程中的遗留代码与
-废弃资源。
+v0.2.3 周期的正式稳定版，也是 EchoDesk 首个可由标签提交逐字节独立重建交付物的版本。本周期将
+项目重心转向 Avalonia 主线界面；WPF 版本在本周期完成功能开发并转入长期支持（LTS）维护期，
+即只修复安全与崩溃问题、不再新增功能。本版本合并了 LTS 提示、预览迭代期间的界面工作，以及
+关闭 Issue #6 的可复现构建与供应链加固。
 
 ### 核心特性
 
@@ -40,11 +40,10 @@ WPF 版本在本轮完成功能开发并转入长期支持（LTS）维护期，�
 
 **版本号与生命周期管理**
 
-- `APP_VERSION` 升级为 `v0.2.3-alpha.1`。Windows 版本资源要求的四段式 `0.2.3.0` 由
-  `app_version_4()` 派生，该函数负责剥离 SemVer 预发布后缀。
-- 打包脚本与发布门禁采用同一条派生规则，预览版本不会再产生 `0.2.3-alpha.1.0` 这类非法版本
-  资源。
-- WPF 与 Avalonia 两个工程文件改为同一套版本号；界面显示完整的语义版本号（含预发布后缀）。
+- `APP_VERSION` 升级为 `v0.2.3`。Windows 版本资源要求的四段式 `0.2.3.0` 由
+  `app_version_4()` 派生。
+- 打包脚本与发布门禁采用同一条派生规则；显示版本号与版本资源不一致时会在打包前被拒绝。
+- WPF 与 Avalonia 两个工程文件改为同一套版本号。
 - 安装包的 Win32 版本字段写入数字核心段，显示字段保留完整版本号。
 
 **遗留资源清理**
@@ -56,15 +55,51 @@ WPF 版本在本轮完成功能开发并转入长期支持（LTS）维护期，�
 - 复核 `.gitignore`：构建产物、发布树、运行期状态文件、模型缓存、截图目录与开发材料均已被
   覆盖；本轮各项检查执行后未留下未跟踪文件。
 
+**可复现构建与供应链完整性**
+
+- 所有打包脚本从 `HEAD` 的提交时间派生单一规范 `SOURCE_DATE_EPOCH`。工作区存在未提交改动时
+  打包立即终止，确保发布物只能由确切提交产生。
+- 全部时间格式化均使用 UTC；本地时区值不得影响任何交付字节。
+- 两个 .NET 工程均启用 `Deterministic`、`ContinuousIntegrationBuild`、`DeterministicSourcePaths`
+  与显式 `PathMap`，从程序集元数据中移除构建机绝对路径。
+- `backend/requirements.lock` 精确锁定 Windows、Linux 与 macOS arm64 的全部运行期发行包。
+  `llama-cpp-python`、`numpy`、`greenlet` 与 `pillow` 的平台差异以环境标记表达，并按目标 RID
+  求值，绝不按构建机求值。`backend/requirements-build.lock` 锁定 PyInstaller 构建环境，
+  `tools/check_venv_lock.py` 在发布构建前校验该环境。
+- zip 与 tar.gz 写入器固定条目时间戳、属主（uid/gid 为 0）、权限位、条目顺序与 gzip 头。
+  Inno Setup 使用 `notimestamp` 与 `TimeStampRounding=1`，最终 Setup 可执行文件的 PE 时间戳
+  在原地规范化，不触碰追加的安装数据。PyInstaller 的 `base_library.zip` 在收集后统一元数据，
+  因为即使设置了 `SOURCE_DATE_EPOCH`，PyInstaller 仍会为该归档写入墙上时钟，且可能以不同
+  条目顺序写入相同内容。
+- `tools/verify_reproducible_build.ps1` 连续执行两次完整构建，并在两次之间清除编译器缓存与
+  构建输出；随后比对安装程序、三个平台归档、其清单以及发布树中每个文件的 SHA-256。两次构建
+  逐字节一致。
+- 全量发布门禁在不跳过任何项目的情况下 50/50 通过。
+
+**品牌统一与发布体积优化**
+
+- 组织标识在源码、构建元数据、语言包、法律文档与安装程序中统一为 `Void-Entropia-Studio`。
+  组织链接指向 <https://github.com/Void-Entropia-Studio>。
+- 发布树会剔除测试套件、演示包、`__pycache__` 目录、调试与导入库，以及属于其它平台的 C 扩展。
+- Playwright 仅开发者使用的跟踪查看器、录制器、仪表盘、HTML 报告资源与 TypeScript 声明不再
+  随包分发；自动化功能从不加载这些内容。
+- Windows 发布树由 400.7 MB 降至约 373.6 MB，安装程序由 115.19 MB 降至约 114.3 MB。Linux 与
+  macOS 的 standalone 后端目录树各减少约 13 MB。
+
 ### 已知限制
 
-- 本次为预览版，不产出发布物；Windows 安装程序与三平台包将在本周期关账时重新构建并冻结。
 - v0.2.2 记录的全部已知限制继续适用。
 - WPF 版本自本版本起不再新增功能；新行为需求统一在 Avalonia 版本上实现。
+- Windows 交付物未做 Authenticode 签名；macOS 交付物未签名、未公证，因为所需证书不在构建机
+  上持有。剩余步骤记录在 `SIGNING.txt`。
 
 ### 交付物
 
-本次预览迭代不产出发布物，交付内容为源码树。
+- `EchoDesk-v0.2.3-Setup.exe`（Windows，不含模型）。
+- `EchoDesk-v0.2.3-win-x64.zip`、`EchoDesk-v0.2.3-linux-x64.tar.gz` 与
+  `EchoDesk-v0.2.3-osx-arm64.tar.gz`。
+- `SHA256SUMS.txt` 与各 RID 清单。产物冻结于 `publish/archive/v0.2.3/`，哈希记录在其
+  `MANIFEST.json` 中。
 
 ---
 

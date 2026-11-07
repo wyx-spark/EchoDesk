@@ -38,13 +38,22 @@
          four fields must be kept in sync: `<Version>` may carry a prerelease suffix, while
          `AssemblyVersion`/`FileVersion` must be four purely numeric fields (same rule as
          app_version_4()). -->
-    <Version>0.2.3-alpha.1</Version>
+    <Version>0.2.3</Version>
     <FileVersion>0.2.3.0</FileVersion>
     <AssemblyVersion>0.2.3.0</AssemblyVersion>
     <Product>EchoDesk</Product>
-    <Company>VoidEntropiaStudio</Company>
-    <Copyright>Copyright (c) VoidEntropiaStudio</Copyright>
+    <Company>Void-Entropia-Studio</Company>
+    <Copyright>Copyright (c) Void-Entropia-Studio</Copyright>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- [EN] Reproducible compilation: deterministic PE/MVID, CI-style source mapping, and an
+         [EN] explicit PathMap so no build-machine absolute path can leak into metadata.
+         [ZH] 可复现编译：确定性的 PE/MVID、CI 式源码映射，并显式设置 PathMap，确保构建机
+         [ZH] 的绝对路径不会进入元数据。 -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <DeterministicSourcePaths>true</DeterministicSourcePaths>
+    <RepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..'))</RepoRoot>
+    <PathMap>$(RepoRoot)=/_/EchoDesk</PathMap>
     <!-- 体积：跨平台版把 trimming 的坑留在记录里，先按"不裁剪"发布（见 records 的体积一节） -->
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>

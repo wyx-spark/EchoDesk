@@ -13,7 +13,7 @@ for traceability only; this changelog is the release-facing document.
 
 | Version | Type | Release date | Summary |
 | :--- | :--- | :--- | :--- |
-| [v0.2.3-alpha.1](#v023-alpha1) | Preview (alpha) | Unreleased | WPF frozen into long-term support; version and build-chain consolidation |
+| [v0.2.3](#v023) | Stable Release | 2026-11-07 | Reproducible builds, dependency locks, Avalonia main line, WPF LTS |
 | [v0.2.2](#v022) | Stable Release | 2026-11-04 | Cross-platform frontend, visual consistency, full bilingual coverage |
 | [v0.2.1](#v021) | Stable Release | 2026-10-05 | Capability consolidation, Agent platform, MCP, plugin ecosystem |
 | [v0.2.0](#v020) | Feature Release | 2026-09-23 | Long context and documents, automation, skill marketplace |
@@ -21,15 +21,16 @@ for traceability only; this changelog is the release-facing document.
 
 ---
 
-## v0.2.3-alpha.1
+## v0.2.3
 
 ### Release positioning
 
-The first iteration of the v0.2.3 cycle, published as a preview. The v0.2.3 cycle refocuses the
-project on Avalonia as the primary interface; the WPF edition completes its functional development
-here and enters long-term support (LTS), which means security and crash fixes only and no new
-features. This iteration delivers the LTS notices, unifies the version number and its derivation
-across the build chain, and clears legacy code and obsolete resources from the WPF project.
+The first stable release of the v0.2.3 cycle and the first EchoDesk release whose deliverables can be
+independently rebuilt byte-for-byte from the tagged commit. The cycle refocuses the project on Avalonia as
+the primary interface; the WPF edition completes its functional development here and enters long-term
+support (LTS), which means security and crash fixes only and no new features. This release combines the LTS
+notices, the interface work delivered during the preview iterations, and the reproducible-build and
+supply-chain hardening that closes Issue #6.
 
 ### Key capabilities
 
@@ -48,12 +49,11 @@ across the build chain, and clears legacy code and obsolete resources from the W
 
 **Version and lifecycle management**
 
-- `APP_VERSION` is now `v0.2.3-alpha.1`. The four-field form required by Windows version resources,
-  `0.2.3.0`, is derived by `app_version_4()`, which strips the SemVer prerelease suffix.
-- The packaging scripts and the release gate apply the same rule, so a preview version can no longer
-  produce an illegal version resource such as `0.2.3-alpha.1.0`.
-- The WPF and Avalonia project files now carry the same version numbers, and the interface displays
-  the full semantic version, including the prerelease suffix.
+- `APP_VERSION` is now `v0.2.3`. The four-field form required by Windows version resources,
+  `0.2.3.0`, is derived by `app_version_4()`.
+- The packaging scripts and the release gate apply the same derivation rule, so a mismatch between
+  the display version and the version resource is rejected before packaging.
+- The WPF and Avalonia project files now carry the same version numbers.
 - The installation package writes the numeric core to its Win32 version fields while keeping the
   full version in the display fields.
 
@@ -67,17 +67,59 @@ across the build chain, and clears legacy code and obsolete resources from the W
   directories and development materials are all covered, and the checks in this iteration left no
   untracked files behind.
 
+**Reproducible builds and supply-chain integrity**
+
+- Every packaging script now derives a single canonical `SOURCE_DATE_EPOCH` from the commit time of
+  `HEAD`. Packaging aborts when the Git worktree is not clean, so a release can only be produced from
+  an exact commit.
+- All timestamp formatting uses UTC; no local-time value can affect a shipped byte.
+- Both .NET projects enable `Deterministic`, `ContinuousIntegrationBuild`, `DeterministicSourcePaths`
+  and an explicit `PathMap`, removing build-machine absolute paths from assembly metadata.
+- `backend/requirements.lock` pins every runtime distribution for Windows, Linux and macOS arm64.
+  The platform-specific `llama-cpp-python`, `numpy`, `greenlet` and `pillow` versions are expressed
+  with environment markers and are evaluated against the target RID, never the build machine.
+  `backend/requirements-build.lock` pins the PyInstaller build environment, and
+  `tools/check_venv_lock.py` verifies it before a release build.
+- Zip and tar.gz writers fix entry timestamps, ownership (uid/gid 0), permission bits, entry order and
+  the gzip header. Inno Setup uses `notimestamp` and `TimeStampRounding=1`, and the PE timestamp of
+  the final Setup executable is normalised in place without touching the appended installation data.
+  PyInstaller's `base_library.zip` metadata is normalised after collection, because PyInstaller
+  stamps that archive with the wall-clock time and may emit otherwise identical entries in a
+  different order.
+- `tools/verify_reproducible_build.ps1` performs two full builds in sequence, clearing compiler caches
+  and outputs between them, and compares SHA-256 hashes for the installer, all three platform
+  archives, their manifests and every file in the release trees. The two runs are byte-identical.
+- The full release gate passes 50/50 without skipping any item.
+
+**Branding and release-size optimisation**
+
+- The organization identifier is unified as `Void-Entropia-Studio` across source, build metadata,
+  language packs, legal documents and installers. Organization links point to
+  <https://github.com/Void-Entropia-Studio>.
+- Release trees are pruned of test suites, demo packages, `__pycache__` directories, debug and
+  import libraries, and C extensions that belong to a different platform.
+- Playwright's developer-only trace viewer, recorder, dashboard, HTML report assets and TypeScript
+  declarations are excluded; the automation feature never loads them.
+- The Windows release tree drops from 400.7 MB to approximately 373.6 MB, and the Setup executable
+  from 115.19 MB to approximately 114.3 MB. The standalone Linux and macOS backend trees drop by
+  approximately 13 MB each.
+
 ### Known limitations
 
-- This is a preview build. No release artifacts are produced for this iteration; the Windows
-  installer and the three-platform packages will be rebuilt and frozen when the cycle closes.
 - All limitations recorded for v0.2.2 continue to apply.
 - The WPF edition receives no new features from this version onwards; requests for new behaviour
   are handled on the Avalonia edition.
+- Windows artifacts are not Authenticode-signed; macOS artifacts are neither signed nor notarised,
+  because the required certificates are not held by the build machine. `SIGNING.txt` documents the
+  remaining steps.
 
 ### Delivered artifacts
 
-No release artifacts in this preview iteration. The source tree is the deliverable.
+- `EchoDesk-v0.2.3-Setup.exe` (Windows, no models).
+- `EchoDesk-v0.2.3-win-x64.zip`, `EchoDesk-v0.2.3-linux-x64.tar.gz` and
+  `EchoDesk-v0.2.3-osx-arm64.tar.gz`.
+- `SHA256SUMS.txt` and per-RID manifests. The artifacts are frozen in `publish/archive/v0.2.3/` and
+  their hashes are recorded in its `MANIFEST.json`.
 
 ---
 

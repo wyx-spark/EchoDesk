@@ -293,7 +293,7 @@ public partial class MainWindow : Window
         Loc.T("main.studioName", fallback ?? StudioName);
 
     /// <summary>
-    /// 首次出现用的**完整形式**——历史上这里是「熵寂工作室（VoidEntropiaStudio）」这种
+    /// 首次出现用的**完整形式**——历史上这里是「熵寂工作室（Void-Entropia-Studio）」这种
     /// 中英并存写法，用意是"第一次就交代中英对应关系"。
     ///
     /// **2026-10-07 总策划裁定七改为全中文**：版权声明一律不再中英混合，

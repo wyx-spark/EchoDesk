@@ -441,6 +441,13 @@ PS1_ALLOWLIST: dict[str, str] = {
     "tools/check_git_ssh.ps1": "**应补 .py 等价物** —— 见未完成项；本版先登记",
     "tools/push_release.ps1": "推送要 SSH 私钥，而三平台都可能有私钥 → 见未完成项",
     "tools/verify_release.ps1": "顶层编排，内含 Windows 专属项（安装包/UI 探针）",
+    "tools/reproducible.ps1": "[EN] PowerShell entry point for the release chain; the shared "
+                              "implementation is tools/reproducible.py / [ZH] 发布链的 PowerShell 入口；"
+                              "共享实现位于 tools/reproducible.py，因此不需要独立的 .sh 等价物",
+    "tools/verify_reproducible_build.ps1": "[EN] Orchestrates the Windows installer plus the three "
+                                          "platform packagers; the packagers themselves are Python and "
+                                          "cross-platform / [ZH] 编排 Windows 安装程序与三平台打包器；"
+                                          "打包器本身是跨平台 Python 脚本，因此该编排脚本仅限 Windows 发布链",
 }
 
 

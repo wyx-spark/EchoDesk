@@ -132,7 +132,7 @@ macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属�
 
 > **协议里的 `studio` 字段一律是英文 `Void Entropia Studio`**（法律主体标识，同 rcedit 元数据与
 > SBOM，不随界面语言变化）。中文界面显示的出品方名称来自语言包（`main.studioName` =
-> 「熵寂工作室」、`main.studioNameFull` = 「熵寂工作室（VoidEntropiaStudio）」），
+> 「熵寂工作室」、`main.studioNameFull` = 「熵寂工作室（Void-Entropia-Studio）」），
 > 后端 `/help`、`/status`、`/about` 用的也是语言包键 `app.studio` / `app.studio_full`。
 > 也就是说：**中英对应关系由语言包表达，协议与元数据保持英文**。
 
@@ -510,6 +510,24 @@ python tools/gen_licenses.py                     # 重新生成第三方许可�
 powershell -File tools\ui_probe.ps1              # WPF UI 探针：设置窗口快速打开、不产生崩溃日志
 & tools\verify_release.ps1 -SkipGui              # 顶层发布门禁，跳过需要交互式桌面的两项
 ```
+
+**可复现构建**：
+
+所有打包脚本从 `HEAD` 的提交时间派生单一 `SOURCE_DATE_EPOCH`；当 `git status --porcelain` 报告
+未提交改动时拒绝打包。全部时间格式化均使用 UTC。两个 .NET 工程启用确定性编译与显式 `PathMap`；
+运行期依赖按平台精确锁定于 `backend/requirements.lock`，PyInstaller 构建环境锁定于
+`backend/requirements-build.lock`。zip 与 tar.gz 写入器固定条目时间戳、属主、权限、顺序与 gzip
+头。Inno Setup 使用 `notimestamp` 与 `TimeStampRounding=1`，最终 Setup 可执行文件的 PE 时间戳
+在原地规范化，不触碰追加的安装数据。
+
+在干净提交上验证该保证：
+
+```powershell
+powershell tools\verify_reproducible_build.ps1
+```
+
+脚本在两次完整构建之间清除编译器缓存与构建输出，随后比对安装程序、三个平台归档、其清单以及
+发布树中每个文件的 SHA-256；任何差异都会使验证失败。
 
 **版本控制与推送（统一 SSH）**：
 

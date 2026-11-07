@@ -40,9 +40,9 @@ import os
 import shutil
 import subprocess
 import sys
-import tarfile
-import time
-import zipfile
+
+import reproducible as repro
+import prune_release as pruner
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKEND = os.path.join(ROOT, "backend")
@@ -173,44 +173,21 @@ def tar_mode(rel_posix: str, is_dir: bool) -> int:
 
 
 def make_archive(tree: str, out_dir: str, fmt: str) -> str:
+    """[EN] Delegate archive creation to the shared deterministic writers.
+
+    [ZH] 将归档创建委托给共享的确定性写入器。
+    """
     name = os.path.basename(tree)
     if fmt == "tar.gz":
         path = os.path.join(out_dir, name + ".tar.gz")
-        with tarfile.open(path, "w:gz") as tar:
-            # 自己走目录树，而不是一句 `tar.add(tree, arcname=name)`：
-            # 后者会把打包机（Windows）的权限位原样写进去，见 EXECUTABLE_PATHS 的说明。
-            # **顺序必须是"先目录、后文件"**（tar 流式解开时，写到某个路径前它的父目录要已存在，
-            # 否则 rsync/tar -x 之类的工具会报"父目录不存在"）；根目录本身也要作为条目写进去，
-            # 否则顶层文件（README/SIGNING.txt/start.sh…）在归档里没有父目录条目。
-            entries: list[tuple[str, bool]] = [("", True)]
-            for base, dirs, files in os.walk(tree):
-                dirs.sort()
-                for dir_name in dirs:
-                    full = os.path.join(base, dir_name)
-                    entries.append((os.path.relpath(full, tree).replace(os.sep, "/"), True))
-                for file_name in sorted(files):
-                    full = os.path.join(base, file_name)
-                    entries.append((os.path.relpath(full, tree).replace(os.sep, "/"), False))
-            entries.sort(key=lambda item: (item[0].count("/"), item[0]))
-            for rel, is_dir in entries:
-                source = tree if rel == "" else os.path.join(tree, rel.replace("/", os.sep))
-                info = tar.gettarinfo(source, arcname=name if rel == "" else f"{name}/{rel}")
-                info.mode = tar_mode(rel, is_dir)
-                if is_dir:
-                    tar.addfile(info)
-                else:
-                    with open(source, "rb") as handle:
-                        tar.addfile(info, handle)
+        # [EN] Unix ownership, mode bits, entry order and the gzip header are all fixed by
+        # [EN] the shared writer; the caller only supplies the target-platform mode policy.
+        # [ZH] Unix 属主、权限位、条目顺序与 gzip 头均由共享写入器固定；调用方只提供
+        # [ZH] 目标平台的权限策略。
+        repro.write_tar_gz(tree, path, arcname=name, mode_for=tar_mode)
         return path
     path = os.path.join(out_dir, name + ".zip")
-    # zip 走这条路只在 Windows 目标上用（见 main 里按 RID 选格式）：
-    # zip 也能通过 external_attr 记 Unix 权限，但 Windows 自带的资源管理器解压不看它，
-    # 所以这里不做——Windows 上本来也不需要可执行位。
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for base, _dirs, files in os.walk(tree):
-            for file_name in files:
-                full = os.path.join(base, file_name)
-                zf.write(full, os.path.relpath(full, os.path.dirname(tree)))
+    repro.write_zip(tree, path)
     return path
 
 
@@ -382,7 +359,13 @@ def main() -> int:
     parser.add_argument("--reuse-frontend", default="", help="复用既有前端发布目录（跳过 dotnet publish）")
     parser.add_argument("--keep-pdb", action="store_true", help="保留 .pdb（默认清理，Windows 上能省下约 100MB）")
     parser.add_argument("--archive", default="auto", choices=("auto", "tar.gz", "zip", "none"))
+    parser.add_argument("--allow-dirty", action="store_true",
+                        help="[EN] development only: bypass the clean-worktree guard "
+                             "/ [ZH] 仅限开发：绕过干净工作区校验")
     args = parser.parse_args()
+
+    repro.require_clean_worktree(args.allow_dirty)
+    repro.source_date_epoch()
 
     rid = args.rid or ps.rid()
     version = app_version()
@@ -428,7 +411,8 @@ def main() -> int:
         run(["dotnet", "publish", os.path.join("frontend-avalonia", "EchoDesk.Avalonia", "EchoDesk.Avalonia.csproj"),
              "-c", "Release", "-r", rid, "--self-contained", "true",
              "-p:PublishSingleFile=false", "-p:DebugType=none", "-p:DebugSymbols=false",
-             "-p:NuGetAudit=false", "-o", app_dir], dry=args.plan)
+             "-p:NuGetAudit=false", "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true",
+             "-p:DeterministicSourcePaths=true", "-o", app_dir], dry=args.plan)
 
     # ---------- 2. 后端（两种形态，由 --backend-mode 决定） ----------
     #
@@ -542,13 +526,21 @@ def main() -> int:
                 if name.endswith(".json"):
                     shutil.copy2(os.path.join(lang_src, name), os.path.join(ui_lang, name))
 
-    # ---------- 4. 清理调试符号 ----------
+    # ---------- 4. 清理调试符号与冗余文件 ----------
     if not args.plan:
         removed = strip_binaries(app_dir, args.keep_pdb)
         if removed:
             log(f"清理调试符号 {len(removed)} 个（例如 {removed[0]}）")
         elif not args.keep_pdb:
             log("没有需要清理的调试符号")
+        # [EN] Apply the same platform-aware pruning to reused backend trees, then prune the
+        # [EN] whole application directory (tests / caches / foreign binaries / dev tooling).
+        # [ZH] 对复用后端树应用同一套平台感知清理，然后清理整个应用目录
+        # [ZH]（测试 / 缓存 / 异平台二进制 / 开发工具）。
+        summary = pruner.prune_tree(app_dir, rid)
+        log(f"[EN] pruned {summary['removed_files']} redundant files "
+            f"({summary['removed_bytes'] / 1048576:.1f} MB) / [ZH] 已清理 "
+            f"{summary['removed_files']} 个冗余文件（{summary['removed_bytes'] / 1048576:.1f} MB）")
 
     # ---------- 5. 顶层启动脚本 + 签名说明（**都必须在归档之前写**） ----------
     #
@@ -567,8 +559,13 @@ def main() -> int:
     archive_path = ""
     if not args.plan and archive_fmt != "none":
         os.makedirs(args.out, exist_ok=True)
+        # [EN] Normalise the tree before compression so every generated file carries the
+        # [EN] same timestamp regardless of when its individual step completed.
+        # [ZH] 压缩前统一目录树时间戳，使每个生成文件无论其步骤何时完成都携带同一时间。
+        repro.normalize_tree(tree)
         archive_path = make_archive(tree, args.out, archive_fmt)
-        log(f"归档：{os.path.relpath(archive_path, ROOT)}")
+        log(f"[EN] archive: {os.path.relpath(archive_path, ROOT)}"
+            f" / [ZH] 归档：{os.path.relpath(archive_path, ROOT)}")
 
     if not args.plan:
         if archive_path:
@@ -595,7 +592,7 @@ def main() -> int:
             "version": version,
             "rid": rid,
             "platform": ps.report(),
-            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "generated_at": repro.utc_iso(),
             "tree": os.path.relpath(tree, ROOT),
             "app_bytes": total,
             "app_files": count,

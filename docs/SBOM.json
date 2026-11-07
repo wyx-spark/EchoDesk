@@ -2,10 +2,10 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "EchoDesk-v0.2.2",
-  "documentNamespace": "https://github.com/wyx-spark/EchoDesk/spdx/v0.2.2",
+  "name": "EchoDesk-v0.2.3",
+  "documentNamespace": "https://github.com/Void-Entropia-Studio/EchoDesk/spdx/v0.2.3",
   "creationInfo": {
-    "created": "2026-11-04T10:59:00Z",
+    "created": "2026-11-06T14:42:08Z",
     "creators": [
       "Tool: gen_sbom_release_scan.py",
       "Organization: Void Entropia Studio"

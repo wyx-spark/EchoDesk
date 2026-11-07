@@ -423,6 +423,7 @@ try {
 
     Invoke-Check "依赖声明完整性（干净环境可导入）" {
         Invoke-Python "依赖自检" "tools\check_requirements.py"
+        Invoke-Python "依赖锁校验" "tools\gen_requirements_lock.py" @("--check")
         "通过"
     }
 

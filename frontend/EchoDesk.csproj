@@ -11,6 +11,15 @@
     <!-- 单文件自包含发布时避免生成多余的 .pdb -->
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
+    <!-- [EN] Reproducible compilation: deterministic PE/MVID, CI-style source mapping, and an
+         [EN] explicit PathMap so no build-machine absolute path can leak into metadata.
+         [ZH] 可复现编译：确定性的 PE/MVID、CI 式源码映射，并显式设置 PathMap，确保构建机
+         [ZH] 的绝对路径不会进入元数据。 -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <DeterministicSourcePaths>true</DeterministicSourcePaths>
+    <RepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..'))</RepoRoot>
+    <PathMap>$(RepoRoot)=/_/EchoDesk</PathMap>
   </PropertyGroup>
 
   <!-- 版本与版权信息（rcedit 会在打包前进一步写入 Win32 版本资源，两者保持一致）
@@ -31,13 +40,13 @@
        <Version> may carry a prerelease suffix; <AssemblyVersion>/<FileVersion> must be four
        purely numeric fields. -->
   <PropertyGroup>
-    <Version>0.2.3-alpha.1</Version>
+    <Version>0.2.3</Version>
     <AssemblyVersion>0.2.3.0</AssemblyVersion>
     <FileVersion>0.2.3.0</FileVersion>
     <!-- 固定写全，避免 ProductVersion 带 "+commit" 后缀混进界面与版本资源
          Written out in full so ProductVersion does not pick up a "+commit" suffix that would
          leak into the interface and the version resource. -->
-    <InformationalVersion>0.2.3-alpha.1</InformationalVersion>
+    <InformationalVersion>0.2.3</InformationalVersion>
     <Product>EchoDesk</Product>
     <Company>Void Entropia Studio</Company>
     <Copyright>Copyright (C) Void Entropia Studio</Copyright>

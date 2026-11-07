@@ -38,7 +38,7 @@ older build, expect the first question to be whether it still reproduces on the 
    page and use "Report a vulnerability". The report, the discussion and any patch stay private
    until an advisory is published.
 2. **Fallback: email.** If you cannot use GitHub advisories, write to
-   `VoidEntropiaStudio@users.noreply.github.com`. That is the project's GitHub noreply address and
+   `Void-Entropia-Studio@users.noreply.github.com`. That is the project's GitHub noreply address and
    the only email address we publish; it reaches the maintainers' GitHub notifications.
 
 ### Encryption
@@ -50,7 +50,7 @@ older build, expect the first question to be whether it still reproduces on the 
   link (publishing a fingerprint that does not exist would be worse than publishing none). If you
   need to send encrypted material, say so in the private advisory and we will first provide a
   verifiable key or agree on another channel both sides accept.
-- The email fallback (`VoidEntropiaStudio@users.noreply.github.com`) is plain SMTP and is **not**
+- The email fallback (`Void-Entropia-Studio@users.noreply.github.com`) is plain SMTP and is **not**
   guaranteed to be end-to-end encrypted; please do not put full exploit code or real confidential
   data in the first message.
 

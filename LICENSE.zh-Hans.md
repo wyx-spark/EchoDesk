@@ -163,7 +163,7 @@ NOTICE 文件内容而进行合理且惯常使用所必需者除外。
 
 **参考译文（仅供理解之用，不得作为通知文本本身使用）：**
 
-版权所有 (C) 2026 熵寂工作室（VoidEntropiaStudio）
+版权所有 (C) 2026 熵寂工作室（Void-Entropia-Studio）
 （法律主体以英文原文 `Copyright 2026 Void Entropia Studio` 为准）
 
 依据 Apache License, Version 2.0（“本许可证”）许可；

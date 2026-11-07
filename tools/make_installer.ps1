@@ -92,7 +92,10 @@ param(
     [switch]$AssumeYes,
     [switch]$Sign,
     [string]$CertThumbprint = "",
-    [string]$TimestampUrl = "http://timestamp.digicert.com"
+    [string]$TimestampUrl = "http://timestamp.digicert.com",
+    # [EN] Development-only escape hatch; release verification never supplies this switch.
+    # [ZH] 仅限开发期使用的豁免开关；发布验证流程绝不传入该开关。
+    [switch]$AllowDirtyWorktree
 )
 
 $ErrorActionPreference = "Stop"
@@ -109,6 +112,12 @@ trap {
 }
 
 $Root = Split-Path -Parent $PSScriptRoot
+# [EN] Load the shared reproducible-build helpers before the release tree is inspected.
+# [ZH] 在检查发布目录之前加载共享的可复现构建辅助函数。
+. (Join-Path $PSScriptRoot "reproducible.ps1")
+$BuildEpoch = Initialize-SourceDateEpoch -Root $Root -AllowDirty:$AllowDirtyWorktree
+$BuildUtc = Format-UtcTimestamp -Epoch $BuildEpoch
+Write-Host "构建时间源（SOURCE_DATE_EPOCH）：$BuildEpoch（UTC $BuildUtc）" -ForegroundColor DarkGray
 if (-not $Version) {
     # 版本从唯一来源派生（v0.2.2 裁定①）—— 与 verify_release.ps1 / build_release.ps1 同一读法
     $VersionFile = Join-Path $Root "backend\version.py"
@@ -693,7 +702,33 @@ if (-not $AssumeYes) {
 else {
     Write-Step "编译安装程序（不含模型）"
 }
+# [EN] Normalise every entry in the release tree before compression. Inno Setup stores
+# [EN] source timestamps unless each entry carries ``notimestamp``; normalising the tree as
+# [EN] well keeps every other consumer (portable zip, manifests) independent of build order.
+# [ZH] 压缩前统一发布目录内所有条目的时间戳。除 ``[Files]`` 条目显式带 ``notimestamp``
+# [ZH] 外，统一目录树还能保证便携 zip、清单等其它消费者不依赖构建顺序。
+& python (Join-Path $PSScriptRoot "reproducible.py") --normalize $ReleaseDir
+if ($LASTEXITCODE -ne 0) { throw "统一发布目录时间戳失败（退出码 $LASTEXITCODE）" }
+# [EN] Normalise the PE header of the two shipped executables before they are compressed.
+# [EN] rcedit and other post-processing steps may otherwise stamp them with the wall clock.
+# [ZH] 在压缩前规范化两个随包可执行文件的 PE 头；否则 rcedit 等后处理步骤可能写入墙上时钟。
+$peTargets = @(
+    (Join-Path $AppDir "EchoDesk.exe"),
+    (Join-Path $BackendDir "EchoDeskBackend.exe")
+) | Where-Object { Test-Path -LiteralPath $_ }
+if ($peTargets.Count -gt 0) {
+    & python (Join-Path $PSScriptRoot "pe_timestamp.py") --epoch $BuildEpoch @peTargets
+    if ($LASTEXITCODE -ne 0) { throw "规范化可执行文件 PE 时间戳失败（退出码 $LASTEXITCODE）" }
+    & python (Join-Path $PSScriptRoot "reproducible.py") --normalize $ReleaseDir
+    if ($LASTEXITCODE -ne 0) { throw "重新统一发布目录时间戳失败（退出码 $LASTEXITCODE）" }
+}
 New-Installer $SetupExe "EchoDesk v$Version Portable Setup" (Split-Path -Leaf $SetupExe)
+# [EN] Inno Setup writes the compile wall-clock time into the PE optional header. The field
+# [EN] is metadata only; rewriting it in place cannot affect the appended installation data.
+# [ZH] Inno Setup 会把编译时的墙上时钟写入 PE 可选头。该字段仅为元数据；原地覆写不会
+# [ZH] 影响追加的安装数据。
+& python (Join-Path $PSScriptRoot "pe_timestamp.py") --epoch $BuildEpoch $SetupExe
+if ($LASTEXITCODE -ne 0) { throw "规范化安装程序 PE 时间戳失败（退出码 $LASTEXITCODE）" }
 
 # ===========================================================================
 # 4. 可选代码签名

@@ -58,10 +58,11 @@ import json
 import os
 import re
 import sys
-import time
 import xml.etree.ElementTree as ET
 from importlib.metadata import distributions
 from typing import Dict, List, Optional, Sequence, Set, Tuple
+
+import reproducible as repro
 
 # 可选导入：只在评估 Requires-Dist 的环境标记时用到。
 # 没有它脚本依然可用（退化为"不评估标记"的保守超集），因此不写进 requirements。
@@ -484,9 +485,13 @@ def build_sbom(installed: Sequence[dict], nuget: Sequence[Tuple[str, str]], vers
         "SPDXID": DOCUMENT_ID,
         "name": f"EchoDesk-{version}",
         # 版本唯一且可复现（同一版本重复运行得到同一命名空间），便于比对两次生成的差异。
-        "documentNamespace": f"https://github.com/wyx-spark/EchoDesk/spdx/{version}",
+        "documentNamespace": f"https://github.com/Void-Entropia-Studio/EchoDesk/spdx/{version}",
         "creationInfo": {
-            "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            # [EN] The creation timestamp is derived from SOURCE_DATE_EPOCH, so regenerating
+            # [EN] the same commit produces a byte-identical document.
+            # [ZH] 创建时间戳由 SOURCE_DATE_EPOCH 派生，因此同一提交重复生成会得到逐字节
+            # [ZH] 一致的文档。
+            "created": repro.utc_iso(),
             "creators": [
                 "Tool: gen_sbom.py",
                 "Organization: Void Entropia Studio",

@@ -36,7 +36,6 @@
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import hashlib
 import io
 import json
@@ -45,8 +44,8 @@ import re
 import shutil
 import subprocess
 import sys
-import time
-import zipfile
+
+import reproducible as repro
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PUBLISH = os.path.join(ROOT, "publish")
@@ -93,28 +92,17 @@ def app_version() -> str:
 
 
 def zip_tree(tree: str, out_path: str, exclude_globs: tuple[str, ...] = ()) -> list[str]:
-    """把发布目录打成 zip（便携版）。**不用 `shutil.make_archive`**：它不接受"把内容放在
-    某个顶层目录下"的写法，而发布目录的顶层目录名必须保留 —— `UserPaths.DataRoot`
-    靠"程序目录名是否为 `app`"来判断便携布局，压缩包的层级不能变。
+    """[EN] Freeze a release directory into a deterministic portable zip.
 
-    ``exclude_globs``：按 **相对发布树的路径**（正斜杠）做 fnmatch 排除。
-    实测用途见模块 docstring（v0.2.0 的运行期下载模型）。返回被排除的文件列表，
-    以便写进清单 —— "归档里少了什么"必须可查，不能只体现在体积上。
+    [ZH] 将发布目录冻结为确定性便携 zip。
+
+    The shared writer fixes entry timestamps, Unix ownership, permission bits and entry
+    order. The exclusion list is returned so the manifest can record exactly what was left
+    out of the archive.
     """
-    if os.path.isfile(out_path):
-        os.remove(out_path)
-    root = os.path.dirname(tree)
-    excluded: list[str] = []
-    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for base, dirs, names in os.walk(tree):
-            dirs.sort()
-            for name in sorted(names):
-                full = os.path.join(base, name)
-                rel = os.path.relpath(full, tree).replace("\\", "/")
-                if any(fnmatch.fnmatch(rel, pattern) for pattern in exclude_globs):
-                    excluded.append(rel)
-                    continue
-                zf.write(full, os.path.relpath(full, root))
+    excluded = repro.collect_excluded(tree, tuple(exclude_globs))
+    repro.normalize_tree(tree)
+    repro.write_zip(tree, out_path, exclude_globs=tuple(exclude_globs))
     return excluded
 
 
@@ -359,7 +347,7 @@ def main() -> int:
         "commit": provenance["commit"],
         "commit_subject": provenance["commit_subject"],
         "working_tree_dirty": bool(git("status", "--porcelain")),
-        "frozen_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "frozen_at": repro.utc_iso(),
         "exists_because": ("publish/ 被 .gitignore 覆盖：产物只存在于构建它的机器上，"
                            "重跑构建脚本会覆盖同名文件。本目录是**构建脚本不会写**的位置，"
                            "清单里的 tag/commit 是「这份产物对应哪一段代码」的唯一凭据。"),

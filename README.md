@@ -23,6 +23,7 @@ No cloud account. No API key. No telemetry.
 - **Interface**: C# WPF desktop app, packaged backend written in Python 3.13
 - **Languages**: Simplified Chinese and English shipped; more via community language packs
 - **License**: [Apache-2.0](LICENSE)
+- **Organization**: [Void-Entropia-Studio](https://github.com/Void-Entropia-Studio)
 
 ## Why EchoDesk
 

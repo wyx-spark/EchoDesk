@@ -135,7 +135,7 @@ foreach ($rel in @("SECURITY.md", "SECURITY.zh-Hans.md")) {
     }
     else { Fail "$rel 未明确要求"不要在公开 Issue 中披露安全问题"" }
 
-    if ($text -match [regex]::Escape("VoidEntropiaStudio@users.noreply.github.com")) {
+    if ($text -match [regex]::Escape("Void-Entropia-Studio@users.noreply.github.com")) {
         Pass "$rel 兜底渠道为 GitHub noreply 邮箱"
     }
     else { Fail "$rel 缺少 GitHub noreply 兜底邮箱" }

@@ -18,16 +18,17 @@ EchoDesk 版本与署名信息。
 """
 APP_NAME = "EchoDesk"
 # [EN] v0.2.3 = "Avalonia as the main line, WPF moved into long-term support (LTS)".
-# [EN] Prereleases carry the SemVer ``-alpha.N`` suffix; a stable release simply drops it.
+# [EN] The release is stable from this point; reproducible-build guarantees are part of the
+# [EN] v0.2.3 delivery.
 # [EN] Every downstream consumer derives its version from ``APP_VERSION``, so there is no
 # [EN] second source of truth. Windows file-version resources can only hold four numeric
-# [EN] fields, therefore the prerelease suffix must be stripped — ``app_version_4()`` below
-# [EN] is the only place allowed to do that; do not re-implement it downstream.
-# [ZH] v0.2.3 =「Avalonia 主线 + WPF 转入长期支持（LTS）」。预发布期用 SemVer 的
-# [ZH] ``-alpha.N`` 后缀，正式发布时去掉后缀即可（下游全部按 ``APP_VERSION`` 派生，
-# [ZH] 不再有第二处真相）。注意：Windows 的**文件版本资源**只能是四段纯数字，预发布后缀
-# [ZH] 必须剥离 —— 这件事只由下面的 ``app_version_4()`` 负责，不要在下游各写一份。
-APP_VERSION = "v0.2.3-alpha.1"
+# [EN] fields, therefore ``app_version_4()`` below is the only place allowed to derive that
+# [EN] form; do not re-implement it downstream.
+# [ZH] v0.2.3 =「Avalonia 主线 + WPF 转入长期支持（LTS）」。自本版本起为正式稳定版；
+# [ZH] 可复现构建保证属于 v0.2.3 的交付内容。
+# [ZH] 下游全部按 ``APP_VERSION`` 派生，不再有第二处真相。注意：Windows 的**文件版本资源**
+# [ZH] 只能是四段纯数字，这件事只由下面的 ``app_version_4()`` 负责，不要在下游各写一份。
+APP_VERSION = "v0.2.3"
 
 
 def app_version_4() -> str:

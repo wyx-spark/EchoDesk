@@ -7,7 +7,7 @@
 > If the two ever disagree, the English version prevails.
 
 版本：v0.2.2
-出品方：熵寂工作室（VoidEntropiaStudio）
+出品方：熵寂工作室（Void-Entropia-Studio）
 适用对象：在已安装企业加密客户端的电脑上，用 EchoDesk 读取 Office 文档（Word / Excel / PowerPoint）的使用者
 
 相关文档：[`PRIVACY.md`](PRIVACY.zh-Hans.md)（隐私政策：联网行为与数据处理）、
@@ -132,5 +132,5 @@ EchoDesk 调用 WPS 读取文件的行为，与员工用 WPS 手动打开同一�
 （包括任何看起来可以绕过加密系统的途径）**不要**开公开 Issue，请使用
 `https://github.com/wyx-spark/EchoDesk/security/advisories/new`
 私有公告表单，即 [`SECURITY.md`](../SECURITY.zh-Hans.md) 中所述的私有报告渠道；
-邮件兜底地址为 `VoidEntropiaStudio@users.noreply.github.com`。
+邮件兜底地址为 `Void-Entropia-Studio@users.noreply.github.com`。
 熵寂工作室 **未提供**电话支持或即时通讯支持渠道。

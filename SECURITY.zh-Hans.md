@@ -36,7 +36,7 @@ EchoDesk 是一款**纯本地**桌面应用：模型推理、文件解析与浏�
    [Security → Advisories](https://github.com/wyx-spark/EchoDesk/security/advisories/new)
    页面，选择 "Report a vulnerability"。报告内容、讨论与补丁在公告发布前都保持私有。
 2. **兜底：邮件。** 无法使用 GitHub 公告时，请写信到
-   `VoidEntropiaStudio@users.noreply.github.com`。这是项目的 GitHub noreply 地址，
+   `Void-Entropia-Studio@users.noreply.github.com`。这是项目的 GitHub noreply 地址，
    也是我们公开的唯一邮箱，会进入维护者的 GitHub 通知。
 
 ### 加密方式
@@ -45,7 +45,7 @@ EchoDesk 是一款**纯本地**桌面应用：模型推理、文件解析与浏�
 - **PGP / GPG 公钥：暂未提供。** 仓库中当前不包含 PGP 公钥、`security.txt` 或
   `.well-known/` 目录，因此本文件**不给出**任何公钥指纹或指纹链接（给出不存在的指纹比不给更危险）。
   如你需要加密传输附件，请在私有公告里说明，我们会先提供一个可验证的公钥或改用其他双方认可的渠道。
-- 邮件兜底渠道（`VoidEntropiaStudio@users.noreply.github.com`）为普通 SMTP，**不保证端到端加密**；
+- 邮件兜底渠道（`Void-Entropia-Studio@users.noreply.github.com`）为普通 SMTP，**不保证端到端加密**；
   请勿在首封邮件里附带完整的利用代码或真实机密数据。
 
 请不要在公开 Issue、讨论区或 Pull Request 中披露利用细节。如果你已经不小心公开了信息，

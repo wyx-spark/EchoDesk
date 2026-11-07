@@ -144,7 +144,7 @@ The backend prints `ready` only after **session restore + warm-up have finished*
 > The `studio` field in the protocol is **always the English `Void Entropia Studio`** (the
 > legal-entity identifier, like the rcedit metadata and the SBOM — it does not follow the UI
 > language). What the Chinese UI shows comes from the language pack
-> (`main.studioName` = 熵寂工作室, `main.studioNameFull` = 熵寂工作室（VoidEntropiaStudio）);
+> (`main.studioName` = 熵寂工作室, `main.studioNameFull` = 熵寂工作室（Void-Entropia-Studio）);
 > the backend's `/help`, `/status` and `/about` use the language-pack keys
 > `app.studio` / `app.studio_full` the same way. In other words: **the name mapping lives in the
 > language packs, while the protocol and build metadata stay English.**
@@ -551,6 +551,26 @@ python tools/gen_licenses.py                     # regenerate the third-party li
 powershell -File tools\ui_probe.ps1              # WPF UI probe: settings window opens fast, no crash log
 & tools\verify_release.ps1 -SkipGui              # top-level release gate, minus the interactive-desktop items
 ```
+
+**Reproducible builds**:
+
+Every packaging script derives a single `SOURCE_DATE_EPOCH` from the commit time of `HEAD`, and refuses to
+package when `git status --porcelain` reports uncommitted changes. All timestamp formatting uses UTC.
+The two .NET projects enable deterministic compilation and an explicit `PathMap`; the runtime dependency
+set is pinned per platform in `backend/requirements.lock`, and the PyInstaller environment is pinned in
+`backend/requirements-build.lock`. Zip and tar.gz writers fix entry timestamps, ownership, permissions,
+order and the gzip header. Inno Setup uses `notimestamp` and `TimeStampRounding=1`, and the final Setup
+executable's PE timestamp is normalised in place without touching the appended installation data.
+
+To prove the guarantee on a clean commit, run:
+
+```powershell
+powershell tools\verify_reproducible_build.ps1
+```
+
+The script clears compiler caches and build outputs between two complete runs, then compares the SHA-256
+of the installer, all three platform archives, their manifests and every file in the release trees. Any
+difference fails the verification.
 
 **Version control and pushing (SSH only)**:
 

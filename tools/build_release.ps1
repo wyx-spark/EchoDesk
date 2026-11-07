@@ -150,7 +150,10 @@ param(
     [string]$CertThumbprint = "",
     [string]$TimestampUrl = "http://timestamp.digicert.com",
     [switch]$MakeInstaller,
-    [switch]$MakeSfx
+    [switch]$MakeSfx,
+    # [EN] Development-only escape hatch; release verification never supplies this switch.
+    # [ZH] 仅限开发期使用的豁免开关；发布验证流程绝不传入该开关。
+    [switch]$AllowDirtyWorktree
 )
 
 $ErrorActionPreference = "Stop"
@@ -171,6 +174,14 @@ trap {
 }
 
 $Root = Split-Path -Parent $PSScriptRoot
+# [EN] Load the shared reproducible-build helpers. The clean-worktree guard and the
+# [EN] canonical SOURCE_DATE_EPOCH must be established before any output path is touched.
+# [ZH] 加载共享的可复现构建辅助函数。干净工作区校验与规范 SOURCE_DATE_EPOCH 必须在触碰
+# [ZH] 任何输出路径之前建立。
+. (Join-Path $PSScriptRoot "reproducible.ps1")
+$BuildEpoch = Initialize-SourceDateEpoch -Root $Root -AllowDirty:$AllowDirtyWorktree
+$BuildUtc = Format-UtcTimestamp -Epoch $BuildEpoch
+Write-Host "构建时间源（SOURCE_DATE_EPOCH）：$BuildEpoch（UTC $BuildUtc）" -ForegroundColor DarkGray
 if (-not $Version) {
     # 版本从唯一来源派生（v0.2.2 裁定①）：参数默认值改成空串之后，这里必须真正解析出来，
     # 否则下面所有路径都会变成 publish\EchoDesk-v\ 。读法与 verify_release / make_installer 一致。
@@ -332,6 +343,11 @@ elseif (-not $SkipBackend) {
     New-Item -ItemType Directory -Path $BackendOut -Force | Out-Null
     Copy-Item (Join-Path $built "*") $BackendOut -Recurse -Force
     Remove-Item $stage, $work -Recurse -Force -ErrorAction SilentlyContinue
+    # [EN] Remove tests, debug/build artefacts and foreign-platform binaries from the
+    # [EN] collected distribution before the release tree is measured or compressed.
+    # [ZH] 在度量或压缩发布树之前，从收集到的发行包中清除测试、调试/构建产物与异平台二进制。
+    & python (Join-Path $Root "tools\prune_release.py") --tree $BackendOut --rid win-x64
+    if ($LASTEXITCODE -ne 0) { throw "后端冗余清理失败（退出码 $LASTEXITCODE）" }
     $size = [math]::Round((Get-ChildItem $BackendOut -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 1)
     Write-Ok "后端已就位: app\backend\EchoDeskBackend.exe（依赖在 app\backend\_internal\，$size MB）"
 }
@@ -345,6 +361,8 @@ if (-not $SkipFrontend) {
         "-p:PublishSingleFile=false",
         "-p:DebugType=none", "-p:DebugSymbols=false",
         "-p:NuGetAudit=false",
+        "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true",
+        "-p:DeterministicSourcePaths=true",
         "-o", $AppOut
     )
     Invoke-Native "dotnet" $publishArgs "前端构建"
@@ -518,7 +536,7 @@ if ($MigrateFrom) {
 # 「全局要求一」要求文件名英文（原为 使用说明.txt）。
 # 正文英文在前、中文在后：面向全球用户先给英文，中文用户往下看同一份内容。
 Write-Step "生成 USAGE.txt（结构与操作说明，中英双语）"
-$buildTime = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+$buildTime = $BuildUtc
 $usage = @"
 EchoDesk v$Version - Local AI Desktop Assistant
 Powered by Void Entropia Studio
@@ -662,7 +680,7 @@ Powered by Void Entropia Studio
   Security vulnerabilities:      report privately - do not open a public issue;
                                 see SECURITY.md for the private channel
 
-Build time: $buildTime
+Build timestamp (UTC): $buildTime
 
 ================================================================
 中文说明（同一份内容的中文版）
@@ -785,7 +803,7 @@ Build time: $buildTime
   提问与讨论：    https://github.com/wyx-spark/EchoDesk/discussions
   安全漏洞：      请私下报告，不要开公开 Issue —— 见 SECURITY.md
 
-构建时间：$buildTime
+构建时间戳（UTC）：$buildTime
 "@
 # .txt 写成 UTF-8 **带 BOM**：Windows 10 的记事本遇到无 BOM 的 UTF-8 会按 ANSI 解码，
 # 中文会变乱码。被程序/工具解析的文件才必须无 BOM：install-complete.bat（第 6b 步有断言）
@@ -1078,6 +1096,12 @@ if (Test-Path $Rcedit) {
     # [ZH] 于是重打包在"元数据写入"这一步直接失败（退出码 2）——单看两个文件各自都对，
     # [ZH] 错在**接线**上。验证一个"参数化"的改动，必须跑到调用方为止。
     Invoke-Native "cmd" @("/c", "`"$Root\tools\set_metadata.bat`" `"$AppOut`" `"$NumericVersion.0`"") "元数据写入"
+    # [EN] rcedit rebuilds the PE image to attach the version resource and may stamp it with
+    # [EN] the current wall clock. Normalise the header after the edit, in place.
+    # [ZH] rcedit 为附加版本资源会重建 PE 映像，并可能写入当前墙上时钟。编辑完成后原地
+    # [ZH] 规范化该头部。
+    & python (Join-Path $PSScriptRoot "pe_timestamp.py") --epoch $BuildEpoch (Join-Path $AppOut "EchoDesk.exe")
+    if ($LASTEXITCODE -ne 0) { throw "规范化前端可执行文件 PE 时间戳失败（退出码 $LASTEXITCODE）" }
     Write-Ok "app\EchoDesk.exe 元数据与图标已写入（后端由 spec 的 version/icon 写入）"
 }
 
@@ -1284,6 +1308,7 @@ if ($MakeInstaller) {
     # `@("-Version", $Version)` 会把 "-Version" 当成第一个位置参数的值
     # （实测踩到：make_installer.ps1 收到 ReleaseDir="0.2.1" 并报"发布目录不存在"）。
     $installerArgs = @{ Version = $Version }
+    if ($AllowDirtyWorktree) { $installerArgs["AllowDirtyWorktree"] = $true }
     if ($Sign) {
         $installerArgs["Sign"] = $true
         if ($CertThumbprint) { $installerArgs["CertThumbprint"] = $CertThumbprint }

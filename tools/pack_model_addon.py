@@ -47,6 +47,8 @@ import urllib.error
 import urllib.request
 import zipfile
 
+import reproducible as repro
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG = os.path.join(ROOT, "backend", "config.json")
 TARGET = os.path.join(ROOT, "publish", "archive", "models")
@@ -211,11 +213,10 @@ def pack(records: list[dict]) -> int:
         target = os.path.join(TARGET, package)
         print(f"  打包 {package}（{human(record['local_size'])}）…")
         started = time.time()
-        if os.path.isfile(target):
-            os.remove(target)
-        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
-            # 模型文件放 zip 根部、不套目录：用户可直接解压进 models 目录
-            zf.write(source, name)
+        # [EN] Deterministic member timestamp and fixed permission bits; the model file is
+        # [EN] stored at the archive root so users can extract it directly into models/.
+        # [ZH] 固定成员时间戳与权限位；模型文件位于归档根部，用户可直接解压进 models/。
+        repro.write_zip_files(target, [(source, name)])
         seconds = time.time() - started
         zip_size = os.path.getsize(target)
         with zipfile.ZipFile(target) as zf:
@@ -249,7 +250,7 @@ def pack(records: list[dict]) -> int:
                 (record["local_size"] - zip_size) / record["local_size"] * 100, 3),
             "hf_lfs_sha256": record["remote_sha256"],
             "hf_verified": True,
-            "packed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "packed_at": repro.utc_iso(),
         })
 
     with io.open(os.path.join(TARGET, "SHA256SUMS.txt"), "w", encoding="utf-8", newline="\n") as handle:
@@ -272,7 +273,7 @@ def pack(records: list[dict]) -> int:
             "model_sha256": "与 HuggingFace 仓库 API 的 LFS sha256 逐项核对一致"
                             "（backend/model_hub.py 的 verify_sha256 用的就是同一字段）",
             "package_sha256": "打包后从 zip 内读回成员重算，必须等于已核对的模型 sha256",
-            "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "checked_at": repro.utc_iso(),
         },
         "packages": entries,
     }

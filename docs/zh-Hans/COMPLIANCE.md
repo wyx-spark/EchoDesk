@@ -1,7 +1,7 @@
 # EchoDesk 企业环境适配与合规说明
 
 版本：v0.2.2
-出品方：熵寂工作室（VoidEntropiaStudio）
+出品方：熵寂工作室（Void-Entropia-Studio）
 适用对象：在受管企业环境中部署 EchoDesk 桌面版（便携版或安装版）的 IT 管理员与合规审查人员
 
 相关文档：[`../PRIVACY.md`](../PRIVACY.zh-Hans.md)（联网行为逐项说明）、[`../EULA.md`](../EULA.zh-Hans.md)（许可协议）、

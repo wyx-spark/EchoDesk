@@ -23,6 +23,7 @@ EchoDesk 把整套 AI 能力都留在你自己的机器上：推理、文件解�
 - **界面**：C# WPF 桌面程序，后端为 Python 3.13 打包的可执行文件
 - **语言**：内置简体中文与英语，其他语言由社区语言包补齐
 - **许可证**：[Apache-2.0](LICENSE)
+- **组织**：[Void-Entropia-Studio](https://github.com/Void-Entropia-Studio)
 
 ## 与同类工具的差异
 
@@ -293,4 +294,4 @@ EchoDesk 采用 **Apache License 2.0** 发布；许可证全文随仓库与每�
 - 完整的组件与许可证清单：[docs/THIRD_PARTY_LICENSES.zh-Hans.md](docs/THIRD_PARTY_LICENSES.zh-Hans.md)。
 - 模型权重**不属于**本项目，仍归其发布方的许可证管辖；下载模型前请自行确认其条款。
 - 代码签名策略：[代码签名策略](CODE_SIGNING.md)。
-- 版权所有 (C) 2026 熵寂工作室（VoidEntropiaStudio）。
+- 版权所有 (C) 2026 熵寂工作室（Void-Entropia-Studio）。

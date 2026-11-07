@@ -67,7 +67,7 @@
   ; [ZH] 默认版本由 tools\make_installer.ps1 的 -MyAppVersion 覆盖（它从 backend\version.py 取）。
   ; [ZH] 这里的字面量只是"不传参直接编译"时的兜底，保持与 version.py 一致：
   ; [ZH] v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本；v0.2.3 = Avalonia 主线（WPF 转 LTS）。
-  #define MyAppVersion "0.2.3-alpha.1"
+  #define MyAppVersion "0.2.3"
 #endif
 
 ; [EN] Purely numeric core segment (**no prerelease suffix**): Inno's VersionInfoVersion and
@@ -119,6 +119,14 @@ OutputDir=..\publish
 OutputBaseFilename=EchoDesk-v{#MyAppVersion}-Setup
 Compression=lzma2/max
 SolidCompression=yes
+; [EN] Round file timestamps to a one-second boundary. This directive is combined with the
+; [EN] ``notimestamp`` flag on the [Files] entry below: the flag removes the source
+; [EN] timestamps entirely, while the rounding keeps any timestamp Inno still records from
+; [EN] drifting with the filesystem clock.
+; [ZH] 将文件时间戳向下取整到一秒边界。本指令与下方 [Files] 条目的 ``notimestamp`` 标志
+; [ZH] 配合使用：该标志彻底移除源文件时间戳，取整则避免 Inno 仍记录的时间戳随文件系统
+; [ZH] 时钟漂移。
+TimeStampRounding=1
 WizardStyle=modern
 ; 后端与前端均为 64 位
 ArchitecturesAllowed=x64compatible
@@ -178,7 +186,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; 在 app 之前还有一级目录）。这条实测结论花了 7 组对照才确定，别凭直觉改。
 ; 同时用 *.gguf 兜底：安装程序就该"一个 .gguf 都没有"，这样校验断言是结构性成立的。
 ; 模型文件一个都不进包时，空的 models\ 目录也不会被创建（[Dirs] 也没有它）。
-Source: "{#MySourceDir}\*"; DestDir: "{app}"; Excludes: "app\backend\models\*,*\models\*,*.gguf"; Flags: ignoreversion recursesubdirs createallsubdirs
+; [EN] ``notimestamp`` is required for reproducible output: without it, Inno Setup stores the
+; [EN] last-write time of every source file inside the installation payload.
+; [ZH] ``notimestamp`` 是可复现产物的必需项：缺少它时，Inno Setup 会把每个源文件的最后
+; [ZH] 写入时间写入安装数据。
+Source: "{#MySourceDir}\*"; DestDir: "{app}"; Excludes: "app\backend\models\*,*\models\*,*.gguf"; Flags: ignoreversion recursesubdirs createallsubdirs notimestamp
 
 [Dirs]
 ; 便携版里 results\ 是个空目录（自动化结果默认位置），Inno 不会因为

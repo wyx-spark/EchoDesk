@@ -73,14 +73,21 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import time
 import urllib.request
-import zipfile
+
+import reproducible as repro
+import prune_release as pruner
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKEND = os.path.join(ROOT, "backend")
 if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
+
+#: [EN] Exact, per-platform dependency lock. It is the only input of the runtime install
+#: step; ``requirements.txt`` records intent and pip options.
+#: [ZH] 分平台的精确依赖锁。它是运行期安装步骤的唯一输入；``requirements.txt`` 只记录
+#: [ZH] 依赖意图与 pip 选项。
+REQUIREMENTS_LOCK = os.path.join(BACKEND, "requirements.lock")
 
 #: 三平台目标。RID 命名与 tools/pack_crossplatform.py、Avalonia 的 dotnet publish -r 保持一致。
 PLATFORMS: dict[str, dict[str, str]] = {
@@ -113,8 +120,16 @@ PLATFORMS: dict[str, dict[str, str]] = {
     },
 }
 
-#: python-build-standalone 的 Release 资产地址前缀（install_only 归档）。
-PBS_RELEASE_API = "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest"
+#: [EN] Pinned python-build-standalone release. Querying ``latest`` would let the
+#: [EN] interpreter change between two builds of the same commit; the tag is therefore fixed
+#: [EN] and treated as a supply-chain input.
+#: [ZH] 固定的 python-build-standalone 版本。查询 ``latest`` 会让同一提交的两次构建使用
+#: [ZH] 不同解释器；因此固定标签，并将其视为供应链输入。
+PBS_RELEASE_TAG = "20261026"
+PBS_RELEASE_API = (
+    "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/"
+    + PBS_RELEASE_TAG
+)
 
 #: 缓存目录（artifacts/ 已被 .gitignore 覆盖，不入库、不进发布物）。
 CACHE_ROOT = os.path.join(ROOT, "artifacts", "backend-cache")
@@ -279,55 +294,71 @@ def _marker_holds(marker: str, spec_target: dict[str, str]) -> bool:
 
 
 def resolve_requirements(spec_target: dict[str, str]) -> tuple[list[str], list[str], list[tuple[str, str]]]:
-    """把 backend/requirements.txt 解析成"目标平台上的运行时依赖"。
+    """[EN] Resolve the runtime dependency set for the target platform from the lock file.
 
-    返回 (pip 附加参数, 要求行, [(包名, 被判定的标记)])。
+    [ZH] 从锁文件解析目标平台的运行期依赖集合。
+
+    The lock file is authoritative for versions. ``requirements.txt`` is still read for the
+    pip options it carries (for example the llama-cpp-python CPU wheel index). Every lock
+    line is expected to be an exact pin or a direct wheel URL; ranges are rejected because
+    they would reintroduce dependency drift.
     """
     pip_args: list[str] = []
-    requirements: list[str] = []
     decisions: list[tuple[str, str]] = []
-    path = os.path.join(BACKEND, "requirements.txt")
-    with io.open(path, encoding="utf-8") as handle:
+    source = REQUIREMENTS_LOCK if os.path.isfile(REQUIREMENTS_LOCK) else os.path.join(BACKEND, "requirements.txt")
+    if not os.path.isfile(source):
+        raise SystemExit(
+            "[EN] Missing dependency lock file: backend/requirements.lock\n"
+            "[ZH] 缺少依赖锁文件：backend/requirements.lock"
+        )
+    # [EN] pip options always come from requirements.txt, never from the lock file.
+    # [ZH] pip 选项始终来自 requirements.txt，绝不来自锁文件。
+    options_path = os.path.join(BACKEND, "requirements.txt")
+    if os.path.isfile(options_path):
+        with io.open(options_path, encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.split("#", 1)[0].strip()
+                if line.startswith("-"):
+                    pip_args.extend(shlex.split(line))
+    if source == os.path.join(BACKEND, "requirements.txt"):
+        decisions.append(("backend/requirements.lock",
+                          "[EN] lock file missing; fell back to requirements.txt "
+                          "/ [ZH] 锁文件缺失，已回退到 requirements.txt"))
+
+    requirements: list[str] = []
+    with io.open(source, encoding="utf-8") as handle:
         for raw in handle:
             line = raw.split("#", 1)[0].strip()
-            if not line:
+            if not line or line.startswith("-"):
                 continue
-            if line.startswith("-"):
-                # `--extra-index-url` 这类 pip 参数原样传递（llama-cpp-python 的
-                # CPU wheel 索引就在 requirements.txt 里，漏了就装不上）。
-                #
-                # **必须按 shell 规则拆成多个 argv**：`--extra-index-url https://…`
-                # 是"选项 + 值"两个参数；整行当一个参数传过去，pip 会报
-                # `no such option: --extra-index-url https://…` 而整轮构建失败（实测踩到）。
-                pip_args.extend(shlex.split(line))
-                continue
+            requirement = line
+            marker = ""
             if ";" in line:
-                requirement, marker = line.split(";", 1)
-                requirement = requirement.strip()
-                marker = marker.strip()
-                if not _marker_holds(marker, spec_target):
-                    decisions.append((requirement, f"{marker} → 目标平台不成立，跳过"))
-                    continue
-                decisions.append((requirement, f"{marker} → 目标平台成立，保留"))
-                requirements.append(requirement)
+                requirement, marker = (part.strip() for part in line.split(";", 1))
+            if marker and not _marker_holds(marker, spec_target):
+                decisions.append((requirement, f"{marker} → target platform does not match; skipped"))
                 continue
-            name = requirement_name(line)
+            if marker:
+                decisions.append((requirement, f"{marker} → target platform matches; kept"))
+            name = requirement_name(requirement)
             if name in BUILD_ONLY_PACKAGES:
-                decisions.append((line, "构建工具，运行时不需要，跳过"))
+                decisions.append((requirement, "build-only tool; excluded from the runtime tree"))
                 continue
-            requirements.append(line)
-    # 最后再过一遍"本地 wheel 缓存"：弱网下把钉 URL / 钉版本的依赖换成本地已校验的同一份文件。
-    resolved: list[str] = []
-    for line in requirements:
-        new_line, why = local_wheel_override(line)
-        if not why:
-            # 钉版本的行（`pkg==ver`）也优先用本地 wheel：否则 pip 仍会去索引下载，
-            # github 一断就整轮失败（v0.2.2 收尾实测：0.3.19 的 win 轮子明明已在缓存里）。
-            new_line, why = pinned_local_override(line, spec_target["pip_platform"])
-        if why:
-            decisions.append((line, why))
-        resolved.append(new_line)
-    return pip_args, resolved, decisions
+            if "@" not in requirement and "==" not in requirement:
+                raise SystemExit(
+                    "[EN] The dependency lock contains an unpinned requirement: "
+                    f"{requirement!r}\n[ZH] 依赖锁包含未钉死版本的依赖：{requirement!r}"
+                )
+            new_line, why = local_wheel_override(requirement)
+            if not why:
+                new_line, why = pinned_local_override(requirement, spec_target["pip_platform"])
+            if why:
+                decisions.append((requirement, why))
+            requirements.append(new_line)
+    if source == REQUIREMENTS_LOCK:
+        decisions.insert(0, ("backend/requirements.lock",
+                             "[EN] exact pins for the target platform / [ZH] 目标平台的精确版本锁定"))
+    return pip_args, requirements, decisions
 
 
 def pinned_local_override(line: str, pip_platform: str) -> tuple[str, str]:
@@ -714,23 +745,43 @@ def installed_packages(site_packages: str) -> list[dict[str, str]]:
     return result
 
 
+def sanitize_site_packages(site_packages: str) -> list[str]:
+    """[EN] Remove installer metadata that embeds absolute build-machine paths.
+
+    [ZH] 移除嵌入了构建机绝对路径的安装器元数据。
+
+    ``pip install --target`` writes ``direct_url.json`` for wheel installs performed from a
+    local ``file://`` URL. That file contains the absolute cache path, which is not part of
+    the dependency and would make the tree depend on the build machine layout.
+    """
+    removed: list[str] = []
+    if not os.path.isdir(site_packages):
+        return removed
+    for name in sorted(os.listdir(site_packages)):
+        if not name.endswith(".dist-info"):
+            continue
+        direct = os.path.join(site_packages, name, "direct_url.json")
+        if os.path.isfile(direct):
+            try:
+                os.remove(direct)
+                removed.append(os.path.relpath(direct, site_packages))
+            except OSError:
+                pass
+    return removed
+
+
 def make_archive(tree: str, out_dir: str, fmt: str) -> str:
+    """[EN] Delegate archive creation to the shared deterministic writers.
+
+    [ZH] 将归档创建委托给共享的确定性写入器。
+    """
     name = os.path.basename(tree)
     if fmt == "zip":
         path = os.path.join(out_dir, name + ".zip")
-        if os.path.isfile(path):
-            os.remove(path)
-        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for base, _dirs, files in os.walk(tree):
-                for file_name in files:
-                    full = os.path.join(base, file_name)
-                    zf.write(full, os.path.relpath(full, os.path.dirname(tree)))
+        repro.write_zip(tree, path)
         return path
     path = os.path.join(out_dir, name + ".tar.gz")
-    if os.path.isfile(path):
-        os.remove(path)
-    with tarfile.open(path, "w:gz") as tar:
-        tar.add(tree, arcname=name)
+    repro.write_tar_gz(tree, path, arcname=name)
     return path
 
 
@@ -801,8 +852,20 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
             # 30 秒 + 10 次重试：失败得快（约 5 分钟见分晓），又能熬过常见的抖动。
             "--timeout", "30",
             "--retries", "10",
-        ] + pip_args + ["-r", resolved_req]
+        ] + pip_args + ["--no-deps", "-r", resolved_req]
         run(pip_cmd, dry=args.plan)
+        if not args.plan:
+            removed_metadata = sanitize_site_packages(site_packages)
+            if removed_metadata:
+                log(f"[EN] removed {len(removed_metadata)} absolute-path metadata file(s) from site-packages"
+                    f" / [ZH] 已从 site-packages 移除 {len(removed_metadata)} 个含绝对路径的元数据文件")
+            # [EN] Prune tests, bytecode caches and foreign-platform binaries after installation.
+            # [ZH] 安装完成后清理测试、字节码缓存与异平台二进制。
+            prune_summary = pruner.prune_tree(site_packages, rid)
+            log(f"[EN] pruned {prune_summary['removed_files']} redundant files "
+                f"({prune_summary['removed_bytes'] / 1048576:.1f} MB) from site-packages"
+                f" / [ZH] 已从 site-packages 清理 {prune_summary['removed_files']} 个冗余文件"
+                f"（{prune_summary['removed_bytes'] / 1048576:.1f} MB）")
 
     # ---------- 3. 后端代码 ----------
     if not args.plan:
@@ -838,12 +901,25 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
     app_size, app_files = dir_size(os.path.join(tree, "app"))
     total_size, total_files = dir_size(tree)
 
+    # [EN] Fixed timestamps before archiving make the tree itself independent of the moment
+    # [EN] at which each step ran. The archive writers also stamp every entry explicitly.
+    # [ZH] 归档前统一时间戳，使目录树本身不依赖各步骤的执行时刻；归档写入器还会显式
+    # [ZH] 固定每个条目的时间。
+    repro.normalize_tree(tree)
     archive = make_archive(tree, out_root, spec_target["archive"]) if args.archive != "none" else ""
     if archive:
-        log(f"归档：{os.path.relpath(archive, ROOT)}（{os.path.getsize(archive) / 1048576:.1f} MB）")
-        with io.open(os.path.join(out_root, "backend-SHA256SUMS.txt"), "a",
-                     encoding="utf-8", newline="\n") as handle:
-            handle.write(f"{sha256_of(archive)}  {os.path.basename(archive)}\n")
+        log(f"[EN] archive: {os.path.relpath(archive, ROOT)} ({os.path.getsize(archive) / 1048576:.1f} MB)"
+            f" / [ZH] 归档：{os.path.relpath(archive, ROOT)}（{os.path.getsize(archive) / 1048576:.1f} MB）")
+        sums_path = os.path.join(out_root, "backend-SHA256SUMS.txt")
+        name = os.path.basename(archive)
+        kept: list[str] = []
+        if os.path.isfile(sums_path):
+            with io.open(sums_path, encoding="utf-8") as existing:
+                kept = [line for line in existing.read().splitlines()
+                        if line.strip() and not line.rstrip().endswith("  " + name)]
+        kept.append(f"{sha256_of(archive)}  {name}")
+        with io.open(sums_path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("\n".join(kept) + "\n")
 
     manifest = {
         "version": version,
@@ -861,7 +937,7 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
                     "sha256": sha256_of(archive) if archive else "",
                     "bytes": os.path.getsize(archive) if archive else 0},
         "launcher": spec_target["launcher"],
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "generated_at": repro.utc_iso(),
         "generated_on": f"{sys.platform} (python {sys.version.split()[0]})",
         "requirements_decisions": [{"requirement": r, "reason": w} for r, w in decisions],
         "build_only_excluded": list(BUILD_ONLY_PACKAGES),
@@ -896,7 +972,13 @@ def main() -> int:
                         help="用未剥离调试符号的解释器归档（默认用 install_only_stripped，"
                              "体积小得多且不影响运行；只有要用 gdb/lldb 调原生崩溃时才需要它）")
     parser.add_argument("--archive", default="auto", choices=("auto", "none"))
+    parser.add_argument("--allow-dirty", action="store_true",
+                        help="[EN] development only: bypass the clean-worktree guard "
+                             "/ [ZH] 仅限开发：绕过干净工作区校验")
     args = parser.parse_args()
+
+    repro.require_clean_worktree(args.allow_dirty)
+    repro.source_date_epoch()
 
     targets = args.platform or list(PLATFORMS)
     unknown = [t for t in targets if t not in PLATFORMS]

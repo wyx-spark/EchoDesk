@@ -21,12 +21,13 @@
     </p>
   </description>
   <launchable type="desktop-id">echodesk.desktop</launchable>
-  <url type="homepage">https://github.com/wyx-spark/EchoDesk</url>
+  <url type="homepage">https://github.com/Void-Entropia-Studio</url>
+  <url type="vcs-browser">https://github.com/wyx-spark/EchoDesk</url>
   <developer id="com.voidentropia">
     <name>Void Entropia Studio</name>
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="0.2.2" date="2026-10-06"/>
+    <release version="0.2.3" date="2026-11-07"/>
   </releases>
 </component>

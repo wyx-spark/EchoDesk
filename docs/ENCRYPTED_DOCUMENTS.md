@@ -159,5 +159,5 @@ anything that looks like a way to bypass an encryption system — must **not** b
 Issue; use the private advisory form at
 `https://github.com/wyx-spark/EchoDesk/security/advisories/new`, which is the private channel
 described in [`SECURITY.md`](../SECURITY.md). The fallback email address is
-`VoidEntropiaStudio@users.noreply.github.com`. Void Entropia Studio provides no telephone or instant
+`Void-Entropia-Studio@users.noreply.github.com`. Void Entropia Studio provides no telephone or instant
 messaging support channel.

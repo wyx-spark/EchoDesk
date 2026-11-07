@@ -10,7 +10,7 @@
 
 版本：v0.2.2
 生效日期：随本版本发布之日
-出品方：熵寂工作室（VoidEntropiaStudio）
+出品方：熵寂工作室（Void-Entropia-Studio）
 适用对象：EchoDesk 桌面版（Python 后端 `EchoDeskBackend.exe` + .NET WPF 前端 `EchoDesk.exe`）
 
 相关文档：[`SECURITY.md`](../SECURITY.zh-Hans.md)（安全策略与漏洞报告）、[`EULA.md`](EULA.md)（许可协议）、

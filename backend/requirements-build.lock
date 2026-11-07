@@ -1,0 +1,28 @@
+# EchoDesk PyInstaller build-environment lock (Windows x64).
+#
+# [EN]
+# This file pins the build-only distributions that live in artifacts/clean-venv. The
+# runtime distributions are pinned by backend/requirements.lock; the two files together
+# define the environment that produces the Windows PyInstaller backend. Keeping the build
+# environment separate prevents PyInstaller and its transitive helpers from leaking into
+# the runtime dependency lock.
+#
+# [ZH]
+# 本文件精确锁定 artifacts/clean-venv 中的仅构建期发行包。运行期发行包由
+# backend/requirements.lock 锁定；两份文件共同定义产出 Windows PyInstaller 后端的环境。
+# 将构建环境单独列出，可避免 PyInstaller 及其传递辅助包混入运行期依赖锁。
+#
+# Rebuild command / 重建命令：
+#   python -m venv artifacts/clean-venv
+#   artifacts/clean-venv/Scripts/python.exe -m pip install --no-deps ^
+#       -r backend/requirements.lock -r backend/requirements-build.lock
+#
+# Generated from artifacts/clean-venv; regenerate deliberately when the build toolchain
+# is upgraded. / 由 artifacts/clean-venv 生成；升级构建工具链时须显式重新生成。
+altgraph==0.17.5
+pefile==2024.8.26
+pip==26.3
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9
+pywin32-ctypes==0.2.3
+setuptools==84.2.1
