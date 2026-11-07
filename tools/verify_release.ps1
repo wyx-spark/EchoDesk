@@ -649,6 +649,13 @@ try {
                                                                     "-File", "tools\ui_probe_avalonia.ps1",
                                                                     "-Exe", $avExe, "-Mode", "market",
                                                                     "-TimeoutSec", "300")
+            # [EN] pages mode drives the settings pages against a real backend and
+            # [EN] asserts the inference preset controls added in v0.2.4 task 2.
+            # [ZH] pages 模式对着真后端逐页验证设置页，并断言 v0.2.4 任务-2 新增的推理档位控件。
+            Invoke-Native "ui-probe-avalonia-pages" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
+                                                                   "-File", "tools\ui_probe_avalonia.ps1",
+                                                                   "-Exe", $avExe, "-Mode", "pages",
+                                                                   "-TimeoutSec", "300")
             "通过"
         }
         Invoke-Check "UI 探针（窗口/页签/字段帮助/思考区）" {

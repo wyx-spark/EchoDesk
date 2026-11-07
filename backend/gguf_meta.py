@@ -29,7 +29,9 @@ GGUF 规范见 https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
 import os
 from i18n import t as _t
 import struct
-from typing import Any, Dict, Optional
+import threading
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple
 
 MAGIC = b"GGUF"
 
@@ -182,6 +184,206 @@ def _as_int(value: Any) -> Optional[int]:
     return None
 
 
+# [EN] Metadata cache. The inference planner reads the same file five to eight
+# [EN] times per model load (native window, layer count, KV cost per token, KV
+# [EN] cost at the ceiling, and the human-readable summary). Each read opens and
+# [EN] parses the header, so the parse is memoised by path, size and modification
+# [EN] time. The cache is bounded so that a long-lived process scanning a large
+# [EN] model directory cannot grow it without limit; a metadata change (a
+# [EN] replaced file) yields a different key and is re-read.
+# [ZH] 元数据缓存。推理规划器在每次加载模型时会读取同一文件五到八次（原生窗口、
+# [ZH] 层数、单 token 的 KV 开销、上限处的 KV 开销以及可读摘要）。每次读取都会
+# [ZH] 打开并解析文件头，因此按路径、大小与修改时间做记忆化。缓存设有上限，
+# [ZH] 使长期运行的进程在扫描大型模型目录时不会无限增长；元数据变化（文件被
+# [ZH] 替换）会产生不同的键并被重新读取。
+_METADATA_CACHE: Dict[Tuple[str, int, int], Dict[str, Any]] = {}
+_METADATA_LOCK = threading.Lock()
+_METADATA_CACHE_LIMIT = 16
+
+
+def cached_metadata(path: str) -> Dict[str, Any]:
+    """
+    [EN]
+    Return the GGUF metadata dictionary, memoised by path, size and modification
+    time. Returns an empty dictionary when the file cannot be read.
+
+    [ZH]
+    返回 GGUF 元数据字典，按路径、大小与修改时间进行记忆化。文件无法读取时返回
+    空字典。
+    """
+    text = str(path or "").strip()
+    if not text:
+        return {}
+    try:
+        stat = os.stat(text)
+        key = (os.path.abspath(text), int(stat.st_size), int(stat.st_mtime_ns))
+    except OSError:
+        return {}
+    with _METADATA_LOCK:
+        hit = _METADATA_CACHE.get(key)
+    if hit is not None:
+        return hit
+    meta = read_metadata(text)
+    with _METADATA_LOCK:
+        if len(_METADATA_CACHE) >= _METADATA_CACHE_LIMIT:
+            # [EN] Evict the oldest insertion; the access pattern is a handful of
+            # [EN] recent models, so insertion order is a sufficient policy.
+            # [ZH] 驱逐最早插入的条目；访问模式只涉及少量近期模型，因此插入顺序
+            # [ZH] 已足以作为淘汰策略。
+            for stale in list(_METADATA_CACHE)[: max(1, _METADATA_CACHE_LIMIT // 2)]:
+                _METADATA_CACHE.pop(stale, None)
+        _METADATA_CACHE[key] = meta
+    return meta
+
+
+@dataclass(frozen=True)
+class ModelMetadata:
+    """
+    [EN]
+    Structured subset of the GGUF header that governs inference planning.
+
+    The fields are read from the native KV section only; tensor data is never
+    touched. ``n_ctx_train`` is the context length the model was trained with and
+    is a hard ceiling: a larger window cannot be justified by the file. A zero
+    value means the field could not be read, and callers must fall back to a
+    conservative assumption instead of treating zero as a real limit.
+
+    [ZH]
+    用于支配推理规划的 GGUF 头部结构化子集。
+
+    字段仅来自原生 KV 元数据区，绝不触碰张量数据。``n_ctx_train`` 是模型训练时
+    的上下文长度，属于硬性上限：更大的窗口无法由文件内容得到支持。取值为零表示
+    该字段无法读取，调用方必须回退到保守假设，而不得把零当作真实上限。
+    """
+
+    path: str = ""
+    architecture: str = ""
+    n_ctx_train: int = 0
+    n_layers: int = 0
+    n_heads: int = 0
+    n_kv_heads: int = 0
+    n_embd: int = 0
+    key_length: int = 0
+    value_length: int = 0
+    file_type: int = -1
+
+    @property
+    def readable(self) -> bool:
+        """
+        [EN]
+        Whether any dimension was read from the file.
+        [ZH]
+        是否从文件中读到了任意一项维度信息。
+        """
+        return bool(self.n_ctx_train or self.n_layers or self.n_heads or self.n_embd)
+
+    @property
+    def head_dim(self) -> int:
+        """
+        [EN]
+        Per-head key dimension, derived from the embedding width when the file
+        does not declare it explicitly.
+        [ZH]
+        单个注意力头的键维度；文件未显式声明时由嵌入宽度推导。
+        """
+        if self.key_length > 0:
+            return int(self.key_length)
+        if self.n_embd > 0 and self.n_heads > 0:
+            return int(self.n_embd // self.n_heads)
+        return 0
+
+    def kv_bytes_per_token(self, bytes_per_element: int = 2) -> float:
+        """
+        [EN]
+        KV-cache cost of one context token in bytes, assuming the supplied
+        element width (2 bytes for F16, which is the llama.cpp default).
+
+        Formula: n_layers x n_kv_heads x (key_dim + value_dim) x bytes.
+
+        [ZH]
+        单个上下文 token 的 KV Cache 字节开销，按给定的元素宽度计算（F16 为
+        2 字节，这也是 llama.cpp 的默认值）。
+
+        公式：n_layers × n_kv_heads × (key_dim + value_dim) × 字节数。
+        """
+        try:
+            kv_heads = int(self.n_kv_heads or self.n_heads or 0)
+            layers = int(self.n_layers or 0)
+            key_dim = int(self.key_length or self.head_dim or 0)
+            value_dim = int(self.value_length or key_dim)
+            if layers <= 0 or kv_heads <= 0 or key_dim <= 0:
+                return 0.0
+            return float(layers * kv_heads * (key_dim + value_dim) * max(1, int(bytes_per_element)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Serialize the metadata for logs, diagnostics and the JSON line protocol.
+        [ZH]
+        将元数据序列化，供日志、诊断与 JSON 行协议使用。
+        """
+        return {
+            "path": self.path,
+            "architecture": self.architecture,
+            "n_ctx_train": int(self.n_ctx_train),
+            "n_layers": int(self.n_layers),
+            "n_heads": int(self.n_heads),
+            "n_kv_heads": int(self.n_kv_heads),
+            "n_embd": int(self.n_embd),
+            "key_length": int(self.key_length),
+            "value_length": int(self.value_length),
+            "file_type": int(self.file_type),
+            "readable": self.readable,
+        }
+
+
+def read_model_metadata(path: str) -> ModelMetadata:
+    """
+    [EN]
+    Read the structured model metadata used by the inference planner.
+
+    Every field is optional: an unreadable or malformed file yields an empty
+    metadata object rather than an exception. Parsing failure is a normal
+    deployment condition (a partially downloaded file, an unsupported GGUF
+    version), and the planner must remain able to produce a conservative plan.
+
+    [ZH]
+    读取推理规划器使用的结构化模型元数据。
+
+    所有字段都是可选的：不可读或格式异常的文件会返回空元数据对象，而不是抛出
+    异常。解析失败属于正常部署状况（文件尚未下载完成、GGUF 版本不受支持），
+    规划器必须仍能产出保守的规划。
+    """
+    text = str(path or "").strip()
+    meta = cached_metadata(text)
+    if not meta:
+        return ModelMetadata(path=text)
+    arch = architecture(meta)
+
+    def value(*keys: str) -> int:
+        for key in keys:
+            parsed = _as_int(meta.get(key))
+            if parsed is not None:
+                return int(parsed)
+        return 0
+
+    return ModelMetadata(
+        path=text,
+        architecture=arch,
+        n_ctx_train=value(f"{arch}.context_length", "general.context_length",
+                          "llama.context_length"),
+        n_layers=value(f"{arch}.block_count"),
+        n_heads=value(f"{arch}.attention.head_count"),
+        n_kv_heads=value(f"{arch}.attention.head_count_kv"),
+        n_embd=value(f"{arch}.embedding_length"),
+        key_length=value(f"{arch}.attention.key_length"),
+        value_length=value(f"{arch}.attention.value_length"),
+        file_type=value("general.file_type"),
+    )
+
+
 def architecture(meta: Dict[str, Any]) -> str:
     """
     [EN]
@@ -203,7 +405,7 @@ def resolve_context_window(path: str, default: int = 4096) -> int:
     [ZH]
     返回模型训练时的上下文窗口 token 数；无法读取时返回 ``default``。
     """
-    meta = read_metadata(path)
+    meta = cached_metadata(path)
     if not meta:
         return default
     arch = architecture(meta)
@@ -229,7 +431,7 @@ def estimate_kv_cache_bytes(path: str, n_ctx: int) -> Optional[int]:
     公式：n_ctx × n_layer × n_head_kv × (key_dim + value_dim) × 2 字节。
     元数据不足时返回 ``None``。
     """
-    meta = read_metadata(path)
+    meta = cached_metadata(path)
     if not meta:
         return None
     arch = architecture(meta)
@@ -264,7 +466,7 @@ def describe_model(path: str, n_ctx: int) -> Dict[str, Any]:
     [ZH]
     汇总模型关键参数，供日志与 ``/model`` 命令展示。
     """
-    meta = read_metadata(path)
+    meta = cached_metadata(path)
     arch = architecture(meta) if meta else _t("sys.log_unknown")
     train_ctx = resolve_context_window(path, default=0) if meta else 0
     return {

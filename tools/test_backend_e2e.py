@@ -34,22 +34,73 @@ sys.path.insert(0, os.path.join(ROOT, "backend"))
 from version import APP_VERSION  # noqa: E402
 
 
-def _resolve_backend() -> str:
-    """定位打包后的后端 exe：新布局（便携版三层）优先，其次兼容旧的扁平布局。
-
-    修复七把程序本体收进了 app\\，这两个 e2e 脚本当时留在旧路径上，
-    结果"脚本报找不到后端"而不是"测试失败"—— 一个静默失效的验证工具比没有更糟，
-    因此这里对两种布局都做尝试，并在两处都没有时打印实际找过的路径。
+def _publish_trees() -> "list[str]":
     """
-    candidates = [
-        os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "app", "backend", "EchoDeskBackend.exe"),
-        os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "backend", "EchoDeskBackend.exe"),
-        os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "EchoDeskBackend.exe"),
-    ]
-    for path in candidates:
-        if os.path.isfile(path):
-            return path
-    return candidates[0]
+    [EN]
+    Return the release trees under ``publish/`` in resolution order: the tree that
+    matches ``backend/version.py`` first, then any remaining trees newest name
+    first. The version is read from its single source of truth, so a version bump
+    never requires editing this test again.
+
+    [ZH]
+    返回 ``publish/`` 下的发布树，按解析顺序排列：与 ``backend/version.py`` 匹配的
+    发布树优先，其余按名称从新到旧。版本号从其唯一来源读取，因此升级版本不再需要
+    修改本测试。
+    """
+    publish = os.path.join(ROOT, "publish")
+    if not os.path.isdir(publish):
+        return []
+    found = []
+    for name in sorted(os.listdir(publish), reverse=True):
+        path = os.path.join(publish, name)
+        if name.startswith("EchoDesk-v") and os.path.isdir(path):
+            found.append(path)
+    # [EN] Release trees are named ``EchoDesk-vX.Y.Z``; APP_VERSION already
+    # [EN] carries the leading ``v``.
+    # [ZH] 发布树命名为 ``EchoDesk-vX.Y.Z``；APP_VERSION 本身已带前导 ``v``。
+    preferred = os.path.join(publish, f"EchoDesk-{APP_VERSION}")
+    ordered = [preferred] if preferred in found else []
+    ordered.extend(path for path in found if path not in ordered)
+    return ordered
+
+
+def _resolve_backend() -> str:
+    """
+    [EN]
+    Locate the packaged backend executable. Both the portable three-level layout
+    (``<release>/app/backend/``) and the legacy flat layout are probed, across the
+    release tree that matches the current version and then any other tree present.
+
+    The previous implementation hard-coded ``publish/EchoDesk-v0.2.2``. Once that
+    tree was removed by a later build the script reported "backend not found"
+    instead of a real failure, and it kept validating a stale artefact. Deriving
+    the tree from ``backend/version.py`` removes both problems.
+
+    [ZH]
+    定位打包后的后端可执行文件。同时探测便携版三层布局（``<release>/app/backend/``）
+    与旧的扁平布局，先查与当前版本匹配的发布树，再查其余存在的发布树。
+
+    旧实现把 ``publish/EchoDesk-v0.2.2`` 写死在代码里。该发布树被后续构建移除之后，
+    脚本报告的是"找不到后端"而不是真实的失败，并且一直在验证过期产物。改为从
+    ``backend/version.py`` 派生发布树即可同时消除这两个问题。
+    """
+    searched = []
+    for tree in _publish_trees():
+        for candidate in (
+            os.path.join(tree, "app", "backend", "EchoDeskBackend.exe"),
+            os.path.join(tree, "backend", "EchoDeskBackend.exe"),
+            os.path.join(tree, "EchoDeskBackend.exe"),
+        ):
+            searched.append(candidate)
+            if os.path.isfile(candidate):
+                return candidate
+    # [EN] Report the first expected path so the failure message names a concrete
+    # [EN] location; the full search list is printed by the caller's diagnostics.
+    # [ZH] 返回第一个预期路径，使失败信息能给出具体位置；完整搜索列表由调用方的
+    # [ZH] 诊断信息打印。
+    return searched[0] if searched else os.path.join(
+        ROOT, "publish", f"EchoDesk-{APP_VERSION}", "app", "backend",
+        "EchoDeskBackend.exe")
 
 
 DEFAULT_BACKEND = _resolve_backend()

@@ -1189,6 +1189,17 @@ class Config(BaseModel):
     # [EN] the three values below).
     # [ZH] 当前预设档位：light / balanced / quality（/preset 切换，决定下面三项的取值）
     preset: str = "balanced"
+    # [EN] Inference preset: fast / balanced / quality (settings model page). Unlike
+    # [EN] ``preset`` above, which only selects sampling parameters, this field governs
+    # [EN] construction-time parameters: the initial context window, the usable fraction
+    # [EN] of the native/hardware ceiling, the prompt batch size and the thread
+    # [EN] preference. The balanced value is the documented default and preserves the
+    # [EN] behaviour established by the previous release.
+    # [ZH] 推理预设：fast / balanced / quality（设置模型页）。与上面的 ``preset`` 不同，
+    # [ZH] 后者只选择采样参数；本字段支配构建期参数：初始上下文窗口、原生/硬件上限的
+    # [ZH] 可用比例、提示词批大小与线程偏好。balanced 为文档规定的默认值，并保持上一
+    # [ZH] 发布版本已确立的行为。
+    inference_profile: str = "balanced"
     # [EN] top_p and repetition penalty: these two mainly control repetition loops and
     # [EN] topic drift in small models.
     # [ZH] top_p 与重复惩罚：小模型"复读"和"跑题"主要由这两项控制
@@ -1255,6 +1266,27 @@ class Config(BaseModel):
     # [ZH] 前端 delta 的合并节流间隔（毫秒）。后端逐 token 发，前端按这个间隔
     # [ZH] 合并一次 UI 更新 —— 每 token 都重排一次 RichTextBox 才是卡顿的主因。
     stream_throttle_ms: int = Field(default=50, ge=0, le=1000)
+
+    @field_validator("inference_profile", mode="before")
+    @classmethod
+    def _normalize_inference_profile(cls, value: Any) -> str:
+        """
+        [EN]
+        Normalize the inference preset identifier and reject unknown values by
+        falling back to the balanced default. A hand-edited configuration file
+        must never prevent startup, and an unknown identifier must not silently
+        select an unintended tuning profile.
+
+        [ZH]
+        规范化推理预设标识，并通过回落到均衡默认值来拒绝未知取值。手改的配置文件
+        绝不能阻止程序启动，未知标识也不得静默选中非预期的调优档位。
+        """
+        text = str(value or "").strip().lower()
+        aliases = {"speed": "fast", "light": "fast", "turbo": "fast",
+                   "default": "balanced", "normal": "balanced",
+                   "max": "quality", "high": "quality", "best": "quality"}
+        text = aliases.get(text, text)
+        return text if text in ("fast", "balanced", "quality") else "balanced"
 
     @model_validator(mode="after")
     def _clamp_context(self) -> "Config":

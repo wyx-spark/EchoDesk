@@ -209,6 +209,24 @@ def test_gguf() -> None:
 
     window = gguf_meta.resolve_context_window(model, 0)
     check("读到模型训练窗口", window > 0, f"得到 {window}")
+    # [EN] Structured metadata (v0.2.4 research task 2): the planner needs the
+    # [EN] native context, layer count and attention-head geometry, not merely the
+    # [EN] window. All four values must come from the header without loading the
+    # [EN] tensors.
+    # [ZH] 结构化元数据（v0.2.4 研发任务-2）：规划器需要原生上下文、层数与注意力头
+    # [ZH] 几何，而不只是窗口。四项取值都必须在不加载张量的前提下从头文件读得。
+    structured = gguf_meta.read_model_metadata(model)
+    check("结构化元数据标记为可读", structured.readable is True)
+    check("结构化元数据读出原生上下文", structured.n_ctx_train == window,
+          f"得到 {structured.n_ctx_train}")
+    check("结构化元数据读出层数", structured.n_layers > 0, f"得到 {structured.n_layers}")
+    check("结构化元数据读出注意力头数", structured.n_heads > 0, f"得到 {structured.n_heads}")
+    check("结构化元数据读出 KV 头数", structured.n_kv_heads > 0,
+          f"得到 {structured.n_kv_heads}")
+    check("结构化元数据的单 token KV 开销为正", structured.kv_bytes_per_token() > 0,
+          f"得到 {structured.kv_bytes_per_token()}")
+    check("不存在的文件返回空结构化元数据",
+          gguf_meta.read_model_metadata("__not_exists__.gguf").readable is False)
     kv = gguf_meta.estimate_kv_cache_bytes(model, 8192)
     check("KV Cache 估算为正数", bool(kv and kv > 0), f"得到 {kv}")
     info = gguf_meta.describe_model(model, 8192)

@@ -1,4 +1,4 @@
-﻿<UserControl xmlns="https://github.com/avaloniaui"
+<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.ModelPage">
   <!--
@@ -101,6 +101,21 @@
                        Margin="16,0,6,0" />
             <ComboBox x:Name="ContextModeCombo" Grid.Column="4" Width="150" MinWidth="0"
                       AutomationProperties.AutomationId="ContextModeCombo" />
+          </Grid>
+
+          <!-- 推理预设（v0.2.4 研发任务-2）：极速 / 均衡 / 质量三档。
+               与上面的「生成预设」是**两件不同的事**：生成预设只改采样参数（温度 / top_p /
+               重复惩罚 / 最大输出），推理预设改的是**构建期参数**（初始上下文、可用上限比例、
+               批大小与线程偏好），因此切换后必须重建引擎。两行并排会让用户以为它们是同一组，
+               所以单独占一行，右侧同时给出「原生上下文 / 实际可用」以及限制原因。 -->
+          <Grid ColumnDefinitions="Auto,160,*,Auto">
+            <TextBlock x:Name="InferenceProfileLabel" Grid.Column="0" VerticalAlignment="Center"
+                       FontSize="12" Margin="0,0,6,0" />
+            <ComboBox x:Name="InferenceProfileCombo" Grid.Column="1" Width="150" MinWidth="0"
+                      AutomationProperties.AutomationId="InferenceProfileCombo" />
+            <TextBlock x:Name="ContextWindowText" Grid.Column="2" VerticalAlignment="Center"
+                       FontSize="11" Margin="12,0,0,0" TextWrapping="Wrap" Opacity="0.85"
+                       AutomationProperties.AutomationId="ContextWindowText" />
           </Grid>
 
           <Grid ColumnDefinitions="170,*,60,28,170,*,60" RowDefinitions="Auto,Auto">

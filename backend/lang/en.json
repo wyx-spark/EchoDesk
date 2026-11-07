@@ -423,6 +423,11 @@
     "context_mode_invalid": "❌ Context strategy must be summarize or slide; got: {mode}",
     "nothing_changed": "No setting needed changing",
     "capability_settings_saved": "✅ Updated and saved: {fields}",
+    "inference_profile_apply_failed": "❌ Failed to apply the inference preset (the current parameters were kept): {error}",
+    "context_limit_native": "The model's native context of {ctx} tokens is fully in use",
+    "context_limit_hardware": "Limited by the current hardware; the context was automatically restricted to {ctx} tokens",
+    "context_limit_config": "Limited by the configured ceiling; the context is restricted to {ctx} tokens",
+    "context_limit_preset": "Limited by the active inference preset; the context is {ctx} tokens",
     "verb_search": "search",
     "verb_read_detail": "read the details",
     "verb_read_registry": "read the model registry",
@@ -533,7 +538,8 @@
     "log_unknown": "unknown",
     "log_model_loading": "Loading model: {path} (ctx={ctx}, trained_window={trained}, threads={threads}, batch={batch}, gpu_layers={gpu})",
     "log_hardware_profile": "Hardware probe: CPU {physical} physical / {logical} logical core(s) ({features}), memory {ram} (available {available}), GPU {gpu}, inference backend {backend}",
-    "log_inference_backend": "Active inference backend: {backend}, offloaded layers: {layers} (context {ctx}/{max_ctx} tokens, threads {threads})",
+    "log_inference_backend": "Active inference backend: {backend}, offloaded layers: {layers} (context {ctx}/{max_ctx} tokens, native window {native} tokens, batch {batch}, threads {threads})",
+    "log_inference_profile": "Inference preset switched to {profile}: native window {native} tokens, initial context {ctx} tokens (ceiling {max_ctx}), batch {batch}, threads {threads}",
     "log_context_expanded": "Context expanded on demand: {old} → {new} tokens (hardware ceiling {max_ctx})",
     "log_context_window": "Context window: {n_ctx} tokens (model trained window {trained} tokens, KV cache about {kv}, threads {threads}, GPU layers {gpu})",
     "log_skills_loaded": "Loaded {total} skill(s) (total={total}, failed={failed}, skipped={skipped})",
@@ -1201,6 +1207,14 @@
     "command_not_registered": "declared but not registered: {commands}",
     "command_undeclared": "registered without declaring: {commands}",
     "reload_dev_scope": "(Only development-directory and local-manifest plugins were reloaded; installed plugins were left untouched.)"
+  },
+  "inference": {
+    "preset_fast_label": "Fast",
+    "preset_fast_note": "A lower context, a larger batch and every logical thread, prioritising the shortest time to first token; suitable for short questions and quick experiments.",
+    "preset_balanced_label": "Balanced",
+    "preset_balanced_note": "The recommended default: balanced between the native and hardware ceilings, trading time to first token against long-context capacity.",
+    "preset_quality_label": "Quality",
+    "preset_quality_note": "Uses the full available context and reserves a larger initial window, with an F16 KV cache; suitable for long documents and careful review, at the highest memory cost."
   },
   "capability": {
     "unknown": "Unknown",

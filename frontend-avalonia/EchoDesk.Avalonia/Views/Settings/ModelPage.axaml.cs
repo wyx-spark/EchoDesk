@@ -115,6 +115,18 @@ public partial class ModelPage : UserControl, ISettingsPage
             new("balanced", () => Loc.T("settings.inference.presetBalanced", "均衡")),
             new("quality", () => Loc.T("settings.inference.presetQuality", "质量优先")),
         };
+        // [EN] Inference presets are construction-time profiles (initial context,
+        // [EN] usable share of the native/hardware ceiling, batch size and thread
+        // [EN] preference) and are deliberately separate from the sampling preset
+        // [EN] above.
+        // [ZH] 推理预设属于构建期档位（初始上下文、原生/硬件上限的可用比例、批大小与
+        // [ZH] 线程偏好），与上面的采样预设刻意分开。
+        InferenceProfileCombo.ItemsSource = new List<Option>
+        {
+            new("fast", () => Loc.T("settings.inference.profileFast", "极速")),
+            new("balanced", () => Loc.T("settings.inference.profileBalanced", "均衡")),
+            new("quality", () => Loc.T("settings.inference.profileQuality", "质量")),
+        };
         ContextModeCombo.ItemsSource = new List<Option>
         {
             new("summarize", () => Loc.T("settings.inference.contextSummarize", "分段摘要")),
@@ -806,9 +818,12 @@ public partial class ModelPage : UserControl, ISettingsPage
             SetSlider(RepeatSlider, RepeatValueText, GetDouble(settings, "repeat_penalty", DefaultRepeatPenalty));
             SetSlider(MaxTokensSlider, MaxTokensValueText, GetInt(settings, "max_tokens", DefaultMaxTokens));
             Select(PresetCombo, GetString(settings, "preset"));
+            Select(InferenceProfileCombo, GetString(settings, "inference_profile"));
             Select(ContextModeCombo, GetString(settings, "context_mode"));
             ClarifyVagueCheck.IsChecked = GetBoolOr(settings, "clarify_vague", true);
             SummaryCacheCheck.IsChecked = GetBoolOr(settings, "summary_cache", true);
+            if (doc.RootElement.TryGetProperty("inference", out JsonElement inference))
+                ApplyInferenceInfo(inference);
         }
         finally
         {
@@ -820,7 +835,56 @@ public partial class ModelPage : UserControl, ISettingsPage
     }
 
     private string CurrentPreset() => (PresetCombo.SelectedItem as Option)?.Value ?? "balanced";
+    private string CurrentInferenceProfile() =>
+        (InferenceProfileCombo.SelectedItem as Option)?.Value ?? "balanced";
     private string CurrentContextMode() => (ContextModeCombo.SelectedItem as Option)?.Value ?? "summarize";
+
+    /// <summary>
+    /// [EN] Rendered context description, retained so that a language switch can
+    /// re-render it without another backend round trip.
+    /// [ZH] 已渲染的上下文描述，保留它是为了让语言切换时无需再次请求后端即可重新渲染。
+    /// </summary>
+    private string _contextWindowText = "";
+
+    /// <summary>
+    /// [EN] Render the native-versus-usable context description from the backend
+    /// snapshot. The explanatory sentence is produced by the backend because only
+    /// the backend knows which constraint (native window, hardware memory,
+    /// configuration or preset) determined the final window; the interface must
+    /// not re-derive it from numbers and risk naming the wrong cause.
+    /// [ZH] 依据后端快照渲染「原生上下文 / 实际可用」描述。解释语句由后端生成，因为只有
+    /// 后端知道最终窗口由哪种约束（原生窗口、硬件内存、配置或预设）决定；界面不得
+    /// 从数值自行推导，以免把原因说错。
+    /// </summary>
+    private void ApplyInferenceInfo(JsonElement inference)
+    {
+        bool ready = GetBool(inference, "ready");
+        int native = GetInt(inference, "n_ctx_native");
+        int usable = GetInt(inference, "n_ctx_max");
+        if (usable <= 0)
+            usable = GetInt(inference, "n_ctx");
+        int batch = GetInt(inference, "n_batch");
+        string limit = GetString(inference, "context_limit_text");
+        string text;
+        if (!ready)
+        {
+            text = Loc.T("settings.inference.contextNoModel",
+                "尚未加载模型：原生上下文与实际可用上下文将在模型就绪后显示。");
+        }
+        else
+        {
+            text = native > 0
+                ? Loc.T("settings.inference.contextNativeUsable",
+                    "原生上下文 {0} tokens · 实际可用 {1} tokens · 批大小 {2}",
+                    native, usable, batch)
+                : Loc.T("settings.inference.contextUsableOnly",
+                    "实际可用 {0} tokens · 批大小 {1}", usable, batch);
+            if (limit.Length > 0)
+                text += " · " + limit;
+        }
+        _contextWindowText = text;
+        ContextWindowText.Text = text;
+    }
 
     /// <summary>
     /// 保存。**全量发送**面板上的每一个值（而不是只发改动过的）：
@@ -832,10 +896,17 @@ public partial class ModelPage : UserControl, ISettingsPage
         if (_host is null || _syncing)
             return;
         InferenceStatusText.Text = Loc.T("settings.inference.saving", "⏳ 正在保存…");
+        // [EN] A preset change rebuilds the underlying model, which may take
+        // [EN] minutes for a multi-gigabyte file. The idle timeout must therefore
+        // [EN] exceed the model load time, otherwise a successful rebuild would be
+        // [EN] reported as a failure.
+        // [ZH] 切换预设会重建底层模型，对于数 GB 的文件可能耗时数分钟。因此空闲超时必须
+        // [ZH] 大于模型加载时间，否则一次成功的重建会被报告为失败。
         using JsonDocument? doc = await SendAsync(new
         {
             action = "capability_settings",
             preset = CurrentPreset(),
+            inference_profile = CurrentInferenceProfile(),
             temperature = TempSlider.Value,
             top_p = TopPSlider.Value,
             repeat_penalty = RepeatSlider.Value,
@@ -843,13 +914,15 @@ public partial class ModelPage : UserControl, ISettingsPage
             context_mode = CurrentContextMode(),
             clarify_vague = ClarifyVagueCheck.IsChecked == true,
             summary_cache = SummaryCacheCheck.IsChecked == true,
-        });
+        }, TimeSpan.FromMinutes(10));
         if (doc is null)
         {
             InferenceStatusText.Text = Loc.T("settings.inference.saveFailed", "❌ 保存失败：{0}",
                 Loc.T("main.error.noResponse", "无响应"));
             return;
         }
+        if (doc.RootElement.TryGetProperty("inference", out JsonElement inference))
+            ApplyInferenceInfo(inference);
         InferenceStatusText.Text = Loc.T("settings.inference.saved", "✅ 已保存");
         // 回读：后端会裁剪到合法范围，界面要跟上真实值（quiet 模式，不覆盖上面的提示）。
         await LoadInferenceAsync();
@@ -913,6 +986,7 @@ public partial class ModelPage : UserControl, ISettingsPage
         RepeatLabel.Text = Loc.T("settings.inference.repeat", "重复惩罚");
         MaxTokensLabel.Text = Loc.T("settings.inference.maxTokens", "最大输出 tokens");
         PresetLabel.Text = Loc.T("settings.inference.preset", "预设");
+        InferenceProfileLabel.Text = Loc.T("settings.inference.profileLabel", "推理档位");
         ContextModeLabel.Text = Loc.T("settings.inference.contextMode", "上下文策略");
         ClarifyVagueCheck.Content = Loc.T("settings.inference.clarifyVague", "模糊问题先追问");
         SummaryCacheCheck.Content = Loc.T("settings.inference.summaryCache", "缓存分段摘要");
@@ -930,10 +1004,16 @@ public partial class ModelPage : UserControl, ISettingsPage
 
         // 下拉项文案是委托，重建后按值选回。
         string? preset = (PresetCombo.SelectedItem as Option)?.Value;
+        string? profile = (InferenceProfileCombo.SelectedItem as Option)?.Value;
         string? mode = (ContextModeCombo.SelectedItem as Option)?.Value;
         BuildOptions();
         Select(PresetCombo, preset);
+        Select(InferenceProfileCombo, profile);
         Select(ContextModeCombo, mode);
+        ContextWindowText.Text = _contextWindowText.Length > 0
+            ? _contextWindowText
+            : Loc.T("settings.inference.contextNoModel",
+                "尚未加载模型：原生上下文与实际可用上下文将在模型就绪后显示。");
         RefreshSliderLabels();
         Market.ApplyTexts();
     }
@@ -994,6 +1074,39 @@ public partial class ModelPage : UserControl, ISettingsPage
 
     /// <summary>探针：只重读模型库（不重扫磁盘）。</summary>
     public async Task ProbeReloadRegistryAsync() => await LoadRegistryAsync();
+
+    // -----------------------------------------------------------------
+    // 探针接口（`EchoDesk --probe pages` 用：推理预设与上下文描述）
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// [EN] Observable state of the inference preset controls: number of options,
+    /// selected identifier and whether the context description was rendered.
+    /// [ZH] 推理预设控件的可观测状态：选项数量、当前选中标识以及上下文描述是否已渲染。
+    /// </summary>
+    public string InferenceSnapshot()
+    {
+        int options = InferenceProfileCombo.ItemsSource is IEnumerable<Option> items
+            ? System.Linq.Enumerable.Count(items)
+            : 0;
+        string selected = CurrentInferenceProfile();
+        bool contextText = !string.IsNullOrWhiteSpace(ContextWindowText.Text);
+        bool profileLabel = !string.IsNullOrWhiteSpace(InferenceProfileLabel.Text);
+        return string.Join("; ", new[]
+        {
+            $"profileOptions={options}",
+            $"profileSelected={selected}",
+            $"contextText={(contextText ? 1 : 0)}",
+            $"profileLabel={(profileLabel ? 1 : 0)}",
+            $"saveButton={(string.IsNullOrEmpty(InferenceSaveButton.Content as string) ? 0 : 1)}",
+        });
+    }
+
+    /// <summary>
+    /// [EN] Probe entry point: re-read the inference settings from the backend.
+    /// [ZH] 探针入口：从后端重新读取推理设置。
+    /// </summary>
+    public async Task ProbeReloadInferenceAsync() => await LoadInferenceAsync();
 
     /// <summary>市场区块（控件多，单独一个 UserControl；由这里负责"谁来发请求"）。</summary>
     private ModelMarketSection? _market;

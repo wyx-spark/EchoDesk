@@ -877,6 +877,8 @@ class CommandHandler:
             max_context=int(self.config.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
             requested_gpu_layers=int(self.config.n_gpu_layers or 0),
             n_threads_override=int(self.config.n_threads or 0),
+            inference_profile=str(getattr(self.config, "inference_profile", "")),
+            requested_n_batch=int(getattr(self.config, "n_batch", 0) or 0),
         )
         n_ctx = plan.n_ctx_initial
         try:

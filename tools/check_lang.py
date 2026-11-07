@@ -415,7 +415,7 @@ BACKEND_SCAFFOLD_MODULES = (
     # 任务四），同样的道理必须同步加进来，否则新语言模板会整组缺失。
     "app", "cmd", "sys", "file", "err", "market", "hub",
     "automation", "update", "skill",
-    "capability", "task", "mode", "export", "summary",
+    "capability", "task", "mode", "export", "summary", "inference",
 )
 
 

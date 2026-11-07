@@ -189,6 +189,14 @@ class LLMEngine:
         self.n_threads = n_threads
         self.n_batch = n_batch
         self.n_gpu_layers = n_gpu_layers
+        # [EN] KV-cache storage width selected by the inference preset. F16 is the
+        # [EN] only value currently produced by the preset table (see
+        # [EN] ``hardware_profiler.KV_CACHE_TYPE_F16``); it is recorded here so the
+        # [EN] active configuration is fully observable in diagnostics and logs.
+        # [ZH] 由推理预设选择的 KV Cache 存储宽度。F16 是预设表当前唯一产出的取值
+        # [ZH] （见 ``hardware_profiler.KV_CACHE_TYPE_F16``）；在此记录，使当前生效的
+        # [ZH] 配置在诊断与日志中可完整观测。
+        self.kv_cache_type = "f16"
         # [EN] Hardware profile and planning bounds supplied by the startup
         # [EN] planner. ``max_n_ctx`` is the ceiling to which :meth:`maybe_grow_context`
         # [EN] may expand the window on demand; it is never smaller than ``n_ctx``.
@@ -269,6 +277,17 @@ class LLMEngine:
             threads = int(getattr(plan, "n_threads", 0) or 0)
             if threads > 0:
                 self.n_threads = threads
+            batch = int(getattr(plan, "n_batch", 0) or 0)
+            if batch > 0:
+                # [EN] ``n_batch`` is a construction-time parameter: it only takes
+                # [EN] effect when the llama.cpp object is rebuilt, which the reload
+                # [EN] performed by the caller guarantees.
+                # [ZH] ``n_batch`` 是构建期参数：只有重建 llama.cpp 对象才会生效，
+                # [ZH] 调用方随后执行的重新加载保证了这一点。
+                self.n_batch = batch
+            kv_type = str(getattr(plan, "kv_cache_type", "") or "")
+            if kv_type:
+                self.kv_cache_type = kv_type
             self.n_gpu_layers = int(
                 getattr(plan, "n_gpu_layers", self.n_gpu_layers)
             )
@@ -280,6 +299,14 @@ class LLMEngine:
                 # [ZH] 上限属于本次规划的模型并替换旧值；随后的重新加载会提供一个
                 # [ZH] 绝不超过该上限的初始窗口。
                 self.max_n_ctx = max(1, ceiling)
+            native = int(getattr(plan, "native_context", 0) or 0)
+            if native > 0:
+                # [EN] The native window read from the GGUF header is authoritative
+                # [EN] for display; llama.cpp may report a different effective value
+                # [EN] after loading, which then overwrites this field.
+                # [ZH] 从 GGUF 头部读到的原生窗口用于展示且具有权威性；llama.cpp 在
+                # [ZH] 加载后可能报告不同的生效值，届时会覆盖本字段。
+                self.n_ctx_train = native
             backend = str(getattr(plan, "backend", "") or "")
             if backend:
                 self.backend_label = backend
@@ -301,7 +328,10 @@ class LLMEngine:
             "n_gpu_layers": int(self.n_gpu_layers),
             "n_ctx": int(self.n_ctx),
             "n_ctx_max": int(self.max_n_ctx),
+            "n_ctx_native": int(self.n_ctx_train or 0),
             "n_threads": int(self.n_threads or 0),
+            "n_batch": int(self.n_batch or 0),
+            "kv_cache_type": str(self.kv_cache_type),
             "plan": dict(self.inference_plan),
         }
 
@@ -327,6 +357,8 @@ class LLMEngine:
             ctx=self.n_ctx,
             max_ctx=self.max_n_ctx,
             threads=self.n_threads,
+            batch=self.n_batch,
+            native=trained,
         )
         log_user(
             log, "sys.log_context_window",
@@ -1102,6 +1134,11 @@ class LazyLLMEngine(LLMEngine):
         self.n_threads = n_threads
         self.n_batch = n_batch
         self.n_gpu_layers = n_gpu_layers
+        # [EN] Record the planned KV-cache width even before a model is loaded, so
+        # [EN] that the settings page can display the active preset immediately.
+        # [ZH] 在加载模型之前即记录规划得到的 KV Cache 宽度，使设置页可以立即显示
+        # [ZH] 当前生效的预设。
+        self.kv_cache_type = "f16"
         # [EN] Preserve the planned bounds so a later hot load applies the same
         # [EN] accelerator and context decisions.
         # [ZH] 保留规划边界，使后续热加载沿用相同的加速器与上下文决策。

@@ -423,6 +423,11 @@
     "context_mode_invalid": "❌ 上下文策略只支持 summarize 或 slide，收到：{mode}",
     "nothing_changed": "没有需要修改的设置",
     "capability_settings_saved": "✅ 已更新并保存：{fields}",
+    "inference_profile_apply_failed": "❌ 应用推理预设失败（已沿用当前参数）：{error}",
+    "context_limit_native": "已用满模型原生上下文 {ctx} tokens",
+    "context_limit_hardware": "受限于当前硬件，上下文已自动限制为 {ctx} tokens",
+    "context_limit_config": "受限于配置上限，上下文已限制为 {ctx} tokens",
+    "context_limit_preset": "受当前推理预设限制，上下文为 {ctx} tokens",
     "verb_search": "搜索",
     "verb_read_detail": "读取详情",
     "verb_read_registry": "读取模型库",
@@ -533,7 +538,8 @@
     "log_unknown": "未知",
     "log_model_loading": "加载模型: {path}（ctx={ctx}, 训练窗口={trained}, threads={threads}, batch={batch}, gpu_layers={gpu}）",
     "log_hardware_profile": "硬件探测：CPU {physical} 物理核 / {logical} 逻辑核（{features}），内存 {ram}（可用 {available}），显卡 {gpu}，推理后端 {backend}",
-    "log_inference_backend": "当前推理后端：{backend}，卸载层数：{layers}（上下文 {ctx}/{max_ctx} tokens，线程 {threads}）",
+    "log_inference_backend": "当前推理后端：{backend}，卸载层数：{layers}（上下文 {ctx}/{max_ctx} tokens，原生窗口 {native} tokens，批大小 {batch}，线程 {threads}）",
+    "log_inference_profile": "推理预设已切换为 {profile}：原生窗口 {native} tokens，初始上下文 {ctx} tokens（上限 {max_ctx}），批大小 {batch}，线程 {threads}",
     "log_context_expanded": "上下文已按需扩展：{old} → {new} tokens（硬件上限 {max_ctx}）",
     "log_context_window": "上下文窗口: {n_ctx} tokens（模型训练窗口 {trained} tokens，KV Cache 约 {kv}，线程 {threads}，GPU 层 {gpu}）",
     "log_skills_loaded": "已加载技能 {total} 个 (total={total}, failed={failed}, skipped={skipped})",
@@ -1201,6 +1207,14 @@
     "command_not_registered": "声明了命令但未注册：{commands}",
     "command_undeclared": "注册了未声明的命令：{commands}",
     "reload_dev_scope": "（只重载了开发目录与本地清单里的插件，已安装的正式插件保持原样）"
+  },
+  "inference": {
+    "preset_fast_label": "极速",
+    "preset_fast_note": "更低上下文、更大批大小与全部逻辑线程，以更短的首字等待时间为目标；适合短问答与快速试算。",
+    "preset_balanced_label": "均衡",
+    "preset_balanced_note": "默认推荐档：在原生与硬件上限之间取得平衡，兼顾首字延迟与长上下文能力。",
+    "preset_quality_label": "质量",
+    "preset_quality_note": "使用完整可用上下文并预留更大的初始窗口，KV Cache 采用 F16 精度；适合长文档与严谨审查，内存占用最高。"
   },
   "capability": {
     "unknown": "未知",

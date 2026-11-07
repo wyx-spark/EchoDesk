@@ -551,6 +551,21 @@ internal static class Probe
             && registry.Contains("refreshRegistryButton=1"), registry);
         Check("模型页状态行有内容", registry.Contains("statusLine=1"), registry);
 
+        // ---------- 模型页：推理预设与上下文描述（v0.2.4 研发任务-2）----------
+        await model.ProbeReloadInferenceAsync();
+        string inference = model.InferenceSnapshot();
+        Console.WriteLine($"  推理预设   : {inference}");
+        Check("三档推理预设都已列出", inference.Contains("profileOptions=3"), inference);
+        Check("当前推理预设已按后端回填",
+            inference.Contains("profileSelected=fast")
+            || inference.Contains("profileSelected=balanced")
+            || inference.Contains("profileSelected=quality"), inference);
+        Check("上下文描述已渲染（原生 / 实际可用）",
+            inference.Contains("contextText=1"), inference);
+        Check("推理档位标签与保存按钮有文案",
+            inference.Contains("profileLabel=1") && inference.Contains("saveButton=1"),
+            inference);
+
         // ---------- 已安装页：插件生态入口（v0.2.2 第 4 批 3a）----------
         if (!settings.SelectTab("settings.tab.installed"))
         {

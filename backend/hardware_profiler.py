@@ -86,8 +86,170 @@ COMPUTE_BUFFER_BYTES = 256 * 1024 * 1024
 #: [ZH] 上下文窗口取值按该粒度向下取整，使上报值与分配值保持稳定且便于阅读。
 CONTEXT_ROUNDING = 256
 
+#: [EN] Allowed batch sizes for prompt processing. ``n_batch`` is a
+#: [EN] construction-time llama.cpp parameter, so it is validated before a model
+#: [EN] is loaded instead of being passed through unexamined.
+#: [ZH] 提示词处理批大小的允许范围。``n_batch`` 是 llama.cpp 的构建期参数，
+#: [ZH] 因此在加载模型之前完成校验，而不是原样透传。
+MIN_N_BATCH = 64
+MAX_N_BATCH = 2048
+
+#: [EN] KV-cache storage width. F16 is the llama.cpp default and the highest
+#: [EN] precision used by the shipped presets. Quantised KV caches require
+#: [EN] flash-attention support on the active backend, which has not been
+#: [EN] verified on the supported hardware set, so no preset enables them.
+#: [ZH] KV Cache 的存储宽度。F16 是 llama.cpp 的默认值，也是发布预设使用的最高
+#: [ZH] 精度。量化 KV Cache 需要当前后端提供 flash-attention 支持，尚未在受支持的
+#: [ZH] 硬件集合上验证，因此没有任何预设启用量化。
+KV_CACHE_TYPE_F16 = "f16"
+
 _MIB = 1024 * 1024
 _GIB = 1024 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class InferencePreset:
+    """
+    [EN]
+    One of the three inference presets exposed in the settings model page.
+
+    A preset selects construction-time parameters only. Sampling parameters
+    (temperature, top-p, repetition penalty) are a separate concern and remain in
+    ``model_profile.PRESETS``; mixing the two would make "quality" mean two
+    unrelated things at once.
+
+    ``context_ratio`` reduces the hardware/native ceiling for the fast preset;
+    the balanced and quality presets keep the full ceiling so that an explicitly
+    requested window is never silently reduced. ``thread_preference`` selects
+    logical cores for the fast preset, because more worker threads shorten prompt
+    prefill, at the cost of contention with the rest of the system.
+
+    [ZH]
+    设置模型页暴露的三档推理预设之一。
+
+    预设只决定构建期参数。采样参数（温度、top-p、重复惩罚）属于另一关注点，仍由
+    ``model_profile.PRESETS`` 管理；把两者混在一起会使"质量"同时表示两件互不相关
+    的事情。
+
+    ``context_ratio`` 仅对极速档收窄硬件/原生上限；均衡与质量档保留完整上限，使
+    用户显式请求的窗口不会被静默缩小。``thread_preference`` 让极速档选择逻辑核心，
+    因为更多的并行线程可缩短提示词预填充时间，代价是与系统其余部分争用资源。
+    """
+
+    name: str
+    initial_context: int
+    n_batch: int
+    context_ratio: float
+    thread_preference: str
+    kv_cache_type: str
+    label_key: str
+    note_key: str
+
+
+#: [EN] Inference preset table. Labels and notes are stored as language keys and
+#: resolved at call time, because a module-level dictionary is evaluated at
+#: import time and would freeze the active locale.
+#: [ZH] 推理预设表。标签与说明以语言键形式保存，并在调用时解析，因为模块级字典
+#: [ZH] 在导入时求值，会把当前语言固定下来。
+INFERENCE_PRESETS: Dict[str, InferencePreset] = {
+    "fast": InferencePreset(
+        name="fast",
+        initial_context=1024,
+        n_batch=1024,
+        context_ratio=0.5,
+        thread_preference="logical",
+        kv_cache_type=KV_CACHE_TYPE_F16,
+        label_key="inference.preset_fast_label",
+        note_key="inference.preset_fast_note",
+    ),
+    "balanced": InferencePreset(
+        name="balanced",
+        initial_context=DEFAULT_INITIAL_CONTEXT,
+        n_batch=512,
+        context_ratio=1.0,
+        thread_preference="physical",
+        kv_cache_type=KV_CACHE_TYPE_F16,
+        label_key="inference.preset_balanced_label",
+        note_key="inference.preset_balanced_note",
+    ),
+    "quality": InferencePreset(
+        name="quality",
+        initial_context=4096,
+        n_batch=512,
+        context_ratio=1.0,
+        thread_preference="physical",
+        kv_cache_type=KV_CACHE_TYPE_F16,
+        label_key="inference.preset_quality_label",
+        note_key="inference.preset_quality_note",
+    ),
+}
+
+DEFAULT_INFERENCE_PRESET = "balanced"
+
+#: [EN] Aliases accepted from older configuration files or command input.
+#: [ZH] 兼容旧配置文件与命令输入而接受的别名。
+_PRESET_ALIASES = {
+    "speed": "fast", "light": "fast", "turbo": "fast",
+    "default": "balanced", "normal": "balanced",
+    "max": "quality", "high": "quality", "best": "quality",
+}
+
+
+def normalize_inference_preset(name: str) -> str:
+    """
+    [EN]
+    Normalize a preset identifier. Unknown values fall back to the balanced
+    preset, which is the documented default; the function never raises, because
+    it runs on the model loading path.
+
+    [ZH]
+    规范化预设标识。未知取值回落到文档中的默认档（均衡）；该函数绝不抛出异常，
+    因为它运行在模型加载路径之上。
+    """
+    key = str(name or "").strip().lower()
+    key = _PRESET_ALIASES.get(key, key)
+    return key if key in INFERENCE_PRESETS else DEFAULT_INFERENCE_PRESET
+
+
+def get_inference_preset(name: str) -> InferencePreset:
+    """
+    [EN]
+    Return the preset for the supplied identifier, normalized defensively.
+    [ZH]
+    返回给定标识对应的预设，并进行防御式规范化。
+    """
+    return INFERENCE_PRESETS[normalize_inference_preset(name)]
+
+
+def inference_preset_menu() -> List[Dict[str, Any]]:
+    """
+    [EN]
+    Return the three presets with localized labels and notes, for the settings
+    model page and for diagnostics endpoints.
+
+    Labels are resolved at call time rather than stored in the table, so a
+    language switch takes effect without reloading this module.
+
+    [ZH]
+    返回三档预设及其已本地化的标签与说明，供设置模型页与诊断接口使用。
+
+    标签在调用时解析而非存放在表中，因此切换界面语言无需重新加载本模块。
+    """
+    from i18n import t as _t
+
+    return [
+        {
+            "id": preset.name,
+            "label": _t(preset.label_key),
+            "note": _t(preset.note_key),
+            "initial_context": int(preset.initial_context),
+            "n_batch": int(preset.n_batch),
+            "context_ratio": float(preset.context_ratio),
+            "thread_preference": preset.thread_preference,
+            "kv_cache_type": preset.kv_cache_type,
+        }
+        for preset in INFERENCE_PRESETS.values()
+    ]
 
 
 @dataclass(frozen=True)
@@ -260,6 +422,19 @@ class InferencePlan:
     model_bytes: int
     kv_cache_bytes: int
     vram_usable_bytes: int
+    # [EN] Construction-time parameters contributed by the inference preset and
+    # [EN] the model metadata: batch size, KV-cache storage width, the model's
+    # [EN] native training window, the hardware ceiling before the preset ratio,
+    # [EN] and the constraint that determined the final window.
+    # [ZH] 由推理预设与模型元数据贡献的构建期参数：批大小、KV Cache 存储宽度、
+    # [ZH] 模型原生训练窗口、应用预设比例之前的硬件上限，以及决定最终窗口的约束。
+    n_batch: int = 512
+    kv_cache_type: str = KV_CACHE_TYPE_F16
+    preset: str = DEFAULT_INFERENCE_PRESET
+    native_context: int = 0
+    hardware_context: int = 0
+    context_limited_by: str = ""
+    model_metadata: Dict[str, Any] = field(default_factory=dict)
     reasons: Tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -279,6 +454,13 @@ class InferencePlan:
             "model_bytes": int(self.model_bytes),
             "kv_cache_bytes": int(self.kv_cache_bytes),
             "vram_usable_bytes": int(self.vram_usable_bytes),
+            "n_batch": int(self.n_batch),
+            "kv_cache_type": self.kv_cache_type,
+            "preset": self.preset,
+            "native_context": int(self.native_context),
+            "hardware_context": int(self.hardware_context),
+            "context_limited_by": self.context_limited_by,
+            "model_metadata": dict(self.model_metadata),
             "reasons": list(self.reasons),
         }
 
@@ -864,6 +1046,29 @@ def _probe_impl() -> HardwareProfile:
 # [ZH] 模型形态检查
 # ---------------------------------------------------------------------------
 
+def _read_model_metadata(model_path: str):
+    """
+    [EN]
+    Read the structured GGUF metadata used by the planner. The import is
+    deferred so that this module remains importable while the model layer is
+    being initialized, and every failure degrades to empty metadata rather than
+    interrupting planning.
+
+    [ZH]
+    读取规划器使用的结构化 GGUF 元数据。导入被延迟到调用时，使本模块在模型层
+    初始化期间仍可导入；所有失败都降级为空元数据，而不中断规划流程。
+    """
+    path = str(model_path or "").strip()
+    try:
+        from gguf_meta import ModelMetadata, read_model_metadata
+
+        if not path:
+            return ModelMetadata()
+        return read_model_metadata(path)
+    except Exception:  # noqa: BLE001 - unreadable metadata is a normal case
+        return None
+
+
 def _model_shape(model_path: str) -> Tuple[int, int]:
     """
     [EN]
@@ -883,34 +1088,32 @@ def _model_shape(model_path: str) -> Tuple[int, int]:
                 size = int(os.path.getsize(path))
         except OSError:
             size = 0
-        try:
-            from gguf_meta import architecture, read_metadata
-
-            meta = read_metadata(path)
-            if meta:
-                arch = architecture(meta)
-                value = meta.get(f"{arch}.block_count")
-                if isinstance(value, (int, float)):
-                    layers = max(0, int(value))
-        except Exception:  # noqa: BLE001 - unreadable metadata is a normal case
-            layers = 0
+        metadata = _read_model_metadata(path)
+        if metadata is not None:
+            layers = max(0, int(getattr(metadata, "n_layers", 0) or 0))
     return layers, size
 
 
-def _kv_bytes_per_token(model_path: str) -> float:
+def _kv_bytes_per_token(model_path: str, kv_cache_type: str = KV_CACHE_TYPE_F16) -> float:
     """
     [EN]
     Return the KV-cache cost of a single context token, or zero when the model
-    metadata is insufficient. A 1024-token sample is measured and divided, which
-    keeps the arithmetic in floating point rather than integer division.
+    metadata is insufficient. The width is read from the model header, so the
+    estimate covers grouped-query attention models exactly rather than assuming
+    one key/value head per layer.
 
     [ZH]
-    返回单个上下文 token 的 KV Cache 开销；模型元数据不足时返回零。实现上先
-    测量 1024 token 的样本再相除，使运算保持浮点精度而非整数除法。
+    返回单个上下文 token 的 KV Cache 开销；模型元数据不足时返回零。宽度取自模型
+    头部，因此该估算能精确覆盖分组查询注意力模型，而不是假定每层一个键/值头。
     """
     path = str(model_path or "").strip()
     if not path or not os.path.isfile(path):
         return 0.0
+    metadata = _read_model_metadata(path)
+    if metadata is not None:
+        value = float(getattr(metadata, "kv_bytes_per_token", lambda _b=2: 0.0)(2))
+        if value > 0:
+            return value
     try:
         from gguf_meta import estimate_kv_cache_bytes
 
@@ -946,6 +1149,86 @@ def _kv_cache_bytes(model_path: str, n_ctx: int) -> int:
 # [ZH] 规划原语
 # ---------------------------------------------------------------------------
 
+def _context_limit_detail(
+    profile: HardwareProfile,
+    model_path: str = "",
+    train_context: int = 0,
+    requested_max: int = 0,
+    ceiling: int = DEFAULT_MAX_CONTEXT,
+) -> Tuple[int, str]:
+    """
+    [EN]
+    Compute the hardware context ceiling together with the constraint that
+    determined it.
+
+    The returned reason is one of ``native`` (the model's trained window),
+    ``config`` (the configured ceiling or request), ``hardware`` (the available
+    memory budget, including the unknown-metadata fallback), or ``unknown`` when
+    no constraint could be identified. The reason is reported to the interface so
+    that a reduced window is explained rather than silently applied.
+
+    [ZH]
+    计算硬件上下文上限，并给出决定该上限的约束。
+
+    返回的原因取值为：``native``（模型的训练窗口）、``config``（配置上限或请求
+    值）、``hardware``（可用内存预算，含元数据未知时的回退），以及在无法识别任何
+    约束时的 ``unknown``。该原因会上报给界面，使被收窄的窗口得到解释，而不是被
+    静默应用。
+    """
+    constraints: List[Tuple[str, int]] = []
+    if ceiling and int(ceiling) > 0:
+        constraints.append(("config", int(ceiling)))
+    if requested_max and int(requested_max) > 0:
+        constraints.append(("config", int(requested_max)))
+
+    trained = int(train_context or 0)
+    if trained <= 0 and model_path:
+        try:
+            from gguf_meta import resolve_context_window
+
+            trained = int(resolve_context_window(model_path, 0) or 0)
+        except Exception:  # noqa: BLE001
+            trained = 0
+    if trained > 0:
+        constraints.append(("native", trained))
+
+    if constraints:
+        reason, cap = min(constraints, key=lambda item: item[1])
+    else:
+        reason, cap = "unknown", DEFAULT_MAX_CONTEXT
+
+    per_token = _kv_bytes_per_token(model_path)
+    if per_token > 0 and profile.ram_available_bytes > 0:
+        _, model_bytes = _model_shape(model_path)
+        budget = (
+            int(profile.ram_available_bytes * (1.0 - RAM_SAFETY_RATIO))
+            - int(model_bytes)
+            - COMPUTE_BUFFER_BYTES
+        )
+        memory_cap = int(budget // per_token) if budget > 0 else 0
+        if memory_cap > 0:
+            if memory_cap < cap:
+                cap = memory_cap
+                reason = "hardware"
+        else:
+            cap = MIN_CONTEXT
+            reason = "hardware"
+    elif per_token <= 0:
+        # [EN] Without metadata, an 8192-token ceiling is the conservative
+        # [EN] assumption; a larger value cannot be justified from the file.
+        # [ZH] 元数据不可用时，以 8192 token 为保守假设；更大的取值无法由文件
+        # [ZH] 内容得到支持。
+        if cap > 8192:
+            cap = 8192
+            reason = "hardware"
+
+    cap = max(MIN_CONTEXT, int(cap))
+    remainder = cap % CONTEXT_ROUNDING
+    if remainder:
+        cap -= remainder
+    return int(max(MIN_CONTEXT, cap)), reason
+
+
 def safe_context_limit(
     profile: HardwareProfile,
     model_path: str = "",
@@ -970,46 +1253,14 @@ def safe_context_limit(
     内存推导出的内存预算。内存预算保留固定比例的可用内存与计算缓冲，因此在
     并发负载下仍保持保守。
     """
-    caps: List[int] = []
-    if ceiling and int(ceiling) > 0:
-        caps.append(int(ceiling))
-    if requested_max and int(requested_max) > 0:
-        caps.append(int(requested_max))
-
-    trained = int(train_context or 0)
-    if trained <= 0 and model_path:
-        try:
-            from gguf_meta import resolve_context_window
-
-            trained = int(resolve_context_window(model_path, 0) or 0)
-        except Exception:  # noqa: BLE001
-            trained = 0
-    if trained > 0:
-        caps.append(trained)
-
-    cap = min(caps) if caps else DEFAULT_MAX_CONTEXT
-    per_token = _kv_bytes_per_token(model_path)
-    if per_token > 0 and profile.ram_available_bytes > 0:
-        _, model_bytes = _model_shape(model_path)
-        budget = (
-            int(profile.ram_available_bytes * (1.0 - RAM_SAFETY_RATIO))
-            - int(model_bytes)
-            - COMPUTE_BUFFER_BYTES
-        )
-        memory_cap = int(budget // per_token) if budget > 0 else 0
-        cap = min(cap, memory_cap) if memory_cap > 0 else MIN_CONTEXT
-    elif per_token <= 0:
-        # [EN] Without metadata, an 8192-token ceiling is the conservative
-        # [EN] assumption; a larger value cannot be justified from the file.
-        # [ZH] 元数据不可用时，以 8192 token 为保守假设；更大的取值无法由文件
-        # [ZH] 内容得到支持。
-        cap = min(cap, 8192)
-
-    cap = max(MIN_CONTEXT, int(cap))
-    remainder = cap % CONTEXT_ROUNDING
-    if remainder:
-        cap -= remainder
-    return int(max(MIN_CONTEXT, cap))
+    limit, _ = _context_limit_detail(
+        profile,
+        model_path=model_path,
+        train_context=train_context,
+        requested_max=requested_max,
+        ceiling=ceiling,
+    )
+    return int(limit)
 
 
 def initial_context_for(
@@ -1128,37 +1379,103 @@ def plan_inference(
     max_context: int = DEFAULT_MAX_CONTEXT,
     requested_gpu_layers: int = 0,
     n_threads_override: int = 0,
-    initial_context_preference: int = DEFAULT_INITIAL_CONTEXT,
+    initial_context_preference: int = 0,
+    inference_profile: str = "",
+    requested_n_batch: int = 0,
 ) -> InferencePlan:
     """
     [EN]
     Produce the complete inference plan for a model on the supplied profile.
 
+    The plan combines three inputs that were previously examined in isolation:
+
+    1. the GGUF header, for the model's native context window, layer count and
+       attention-head geometry;
+    2. the hardware profile, for the GPU offload decision and the memory-bounded
+       context ceiling;
+    3. the inference preset, for the batch size, the initial window, the context
+       ratio and the thread preference.
+
+    The native window is a hard ceiling: neither the requested context nor the
+    available memory can raise it. The memory budget can only lower it, and the
+    constraint that determined the final window is reported through
+    ``context_limited_by`` so that the interface can explain the reduction.
+
     ``requested_gpu_layers`` preserves the established manual override: a
-    positive value or ``-1`` is honoured when an accelerator is available, and
-    is forcibly reset to zero when it is not. ``n_threads_override`` preserves
-    the user's explicit thread count; zero selects the physical core count.
+    positive value or ``-1`` is honoured when an accelerator is available, and is
+    forcibly reset to zero when it is not. ``n_threads_override`` preserves the
+    user's explicit thread count; zero selects the value implied by the preset.
 
     [ZH]
     在给定档案上为某个模型生成完整的推理规划。
 
+    规划综合此前各自独立查看的三类输入：
+
+    1. GGUF 头部：模型原生上下文窗口、层数与注意力头几何；
+    2. 硬件档案：GPU 卸载决策与受内存约束的上下文上限；
+    3. 推理预设：批大小、初始窗口、上下文比例与线程偏好。
+
+    原生窗口是硬性上限：请求的上下文与可用内存都不能抬高它，内存预算只能收窄
+    它。决定最终窗口的约束通过 ``context_limited_by`` 上报，使界面能够解释收窄的
+    原因。
+
     ``requested_gpu_layers`` 保留既有的手工覆盖语义：存在可用加速器时，正数或
     ``-1`` 均被采纳；不存在可用加速器时强制归零。``n_threads_override`` 保留
-    用户显式指定的线程数；取零时选择物理核心数。
+    用户显式指定的线程数；取零时采用预设隐含的取值。
     """
     hardware = profile if profile is not None else probe()
-    layers, model_bytes = _model_shape(model_path)
-    n_ctx_max = safe_context_limit(
+    preset = get_inference_preset(inference_profile)
+    metadata = _read_model_metadata(model_path)
+    layers = int(getattr(metadata, "n_layers", 0) or 0)
+    model_bytes = 0
+    if model_path:
+        layers, model_bytes = _model_shape(model_path)
+
+    native_context = int(
+        getattr(metadata, "n_ctx_train", 0) or 0
+    ) or int(train_context or 0)
+
+    hardware_context, hardware_reason = _context_limit_detail(
         hardware,
         model_path=model_path,
-        train_context=train_context,
+        train_context=native_context,
         requested_max=requested_context,
         ceiling=max_context,
     )
-    n_ctx_initial = initial_context_for(n_ctx_max, initial_context_preference)
+
+    # [EN] The fast preset deliberately reserves only part of the ceiling; the
+    # [EN] other presets preserve the complete ceiling so that an explicit
+    # [EN] request is never reduced without a stated reason.
+    # [ZH] 极速档刻意只使用上限的一部分；其余档位保留完整上限，使用户显式请求的
+    # [ZH] 窗口永远不会在没有说明原因的情况下被缩小。
+    ratio = float(preset.context_ratio)
+    if ratio < 1.0:
+        preset_cap = int(hardware_context * ratio)
+        preset_cap = max(MIN_CONTEXT, preset_cap - (preset_cap % CONTEXT_ROUNDING))
+    else:
+        preset_cap = int(hardware_context)
+    n_ctx_max = int(min(hardware_context, preset_cap))
+    if n_ctx_max < hardware_context:
+        context_limited_by = "preset"
+    elif hardware_reason == "native":
+        context_limited_by = "native"
+    elif hardware_reason == "config":
+        context_limited_by = "config"
+    else:
+        context_limited_by = "hardware"
+
+    preferred_initial = int(initial_context_preference or preset.initial_context)
+    n_ctx_initial = initial_context_for(n_ctx_max, preferred_initial)
     kv_cache_bytes = _kv_cache_bytes(model_path, n_ctx_max)
 
+    if int(requested_n_batch or 0) > 0:
+        n_batch = int(requested_n_batch)
+    else:
+        n_batch = int(preset.n_batch)
+    n_batch = max(MIN_N_BATCH, min(MAX_N_BATCH, n_batch))
+
     reasons: List[str] = []
+    reasons.append(f"preset_{preset.name}")
     if not hardware.gpu.available:
         n_gpu_layers = 0
         reasons.append("cpu_only")
@@ -1186,6 +1503,8 @@ def plan_inference(
     physical = int(hardware.cpu.physical_cores or 0)
     if int(n_threads_override) > 0:
         n_threads = int(n_threads_override)
+    elif preset.thread_preference == "logical":
+        n_threads = logical
     else:
         n_threads = physical if physical > 0 else logical
     n_threads = max(1, min(logical, int(n_threads)))
@@ -1212,13 +1531,22 @@ def plan_inference(
         model_bytes=int(model_bytes),
         kv_cache_bytes=int(kv_cache_bytes),
         vram_usable_bytes=int(usable_vram),
+        n_batch=int(n_batch),
+        kv_cache_type=str(preset.kv_cache_type),
+        preset=str(preset.name),
+        native_context=int(native_context),
+        hardware_context=int(hardware_context),
+        context_limited_by=str(context_limited_by),
+        model_metadata=(metadata.to_dict() if metadata is not None else {}),
         reasons=tuple(reasons),
     )
     log.info(
-        "推理规划: initial_ctx=%d max_ctx=%d layers=%d threads=%d backend=%s "
-        "model_layers=%d kv=%d vram_usable=%d reasons=%s",
-        plan.n_ctx_initial, plan.n_ctx_max, plan.n_gpu_layers, plan.n_threads,
-        plan.backend, plan.model_layers, plan.kv_cache_bytes,
-        plan.vram_usable_bytes, ",".join(plan.reasons),
+        "推理规划: preset=%s initial_ctx=%d max_ctx=%d native_ctx=%d batch=%d "
+        "layers=%d threads=%d backend=%s model_layers=%d kv=%d vram_usable=%d "
+        "limited_by=%s reasons=%s",
+        preset.name, plan.n_ctx_initial, plan.n_ctx_max, plan.native_context,
+        plan.n_batch, plan.n_gpu_layers, plan.n_threads, plan.backend,
+        plan.model_layers, plan.kv_cache_bytes, plan.vram_usable_bytes,
+        plan.context_limited_by, ",".join(plan.reasons),
     )
     return plan

@@ -616,8 +616,201 @@ class Backend:
             "model": os.path.basename(str(getattr(self.llm, "model_path", "") or "")),
             "models_dir": self.models_dir(),
             "n_ctx": int(getattr(self.llm, "n_ctx", 0) or 0),
+            # [EN] Native and usable context are reported side by side so the
+            # [EN] interface can state both facts instead of only the effective
+            # [EN] value: a 32K-capable model that is limited to 4K by physical
+            # [EN] memory is a different situation from an 8K model that is
+            # [EN] already running at its full window.
+            # [ZH] 原生上下文与可用上下文并列上报，使界面能够同时陈述两个事实，而不是
+            # [ZH] 只给出生效值：一个原生支持 32K、但受物理内存限制而只能用 4K 的模型，
+            # [ZH] 与一个已经跑满窗口的 8K 模型，是两种不同的状况。
+            "native_context": int(getattr(self.llm, "n_ctx_train", 0) or 0),
+            "usable_context": int(getattr(self.llm, "max_n_ctx", 0)
+                                  or getattr(self.llm, "n_ctx", 0) or 0),
+            "inference_profile": str(getattr(self.config, "inference_profile", "balanced")),
+            "context_limited_by": self._context_limited_by(),
+            "context_limit_text": self._context_limit_text(),
             "guide": "" if ready else self.guide_text(),
         }
+
+    def _context_limited_by(self) -> str:
+        """
+        [EN]
+        Return the constraint that determined the planned context ceiling, or an
+        empty string when no model has been planned yet.
+
+        [ZH]
+        返回决定规划上下文上限的约束；尚未规划任何模型时返回空串。
+        """
+        plan = getattr(self.llm, "inference_plan", None) or {}
+        if not isinstance(plan, dict):
+            return ""
+        return str(plan.get("context_limited_by") or "")
+
+    def _context_limit_text(self) -> str:
+        """
+        [EN]
+        Produce the localized sentence that explains a reduced context window.
+
+        The four cases are deliberately distinct: a native-window limit is a
+        property of the model, a hardware limit is a property of this machine, a
+        configuration limit was requested by the user, and a preset limit was
+        chosen by the active inference preset. Collapsing them into one message
+        would tell the user to change the wrong setting.
+
+        [ZH]
+        生成解释上下文窗口被收窄的本地化语句。
+
+        四种情形刻意区分：原生窗口限制属于模型属性，硬件限制属于本机属性，配置限制
+        由用户请求，预设限制由当前推理预设选择。把它们合并成一条消息会引导用户修改
+        错误的设置。
+        """
+        if not self.model_ready:
+            return ""
+        reason = self._context_limited_by()
+        plan = getattr(self.llm, "inference_plan", None) or {}
+        usable = int(
+            (plan.get("n_ctx_max") if isinstance(plan, dict) else 0)
+            or getattr(self.llm, "max_n_ctx", 0)
+            or getattr(self.llm, "n_ctx", 0)
+            or 0
+        )
+        native = int(
+            (plan.get("native_context") if isinstance(plan, dict) else 0)
+            or getattr(self.llm, "n_ctx_train", 0)
+            or 0
+        )
+        if reason == "native":
+            return _t("sys.context_limit_native", ctx=native or usable)
+        if reason == "hardware":
+            return _t("sys.context_limit_hardware", ctx=usable)
+        if reason == "config":
+            return _t("sys.context_limit_config", ctx=usable)
+        if reason == "preset":
+            return _t("sys.context_limit_preset", ctx=usable)
+        return ""
+
+    def inference_summary(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Machine-readable snapshot of the active inference plan for the settings
+        page and the status area. Every value is a number or an identifier; the
+        only localized field is ``context_limit_text``, which the interface
+        displays verbatim.
+
+        [ZH]
+        供设置页与状态区使用的推理规划机器可读快照。除 ``context_limit_text`` 之外
+        的字段均为数值或标识符；该本地化字段由界面原样展示。
+        """
+        try:
+            plan = getattr(self.llm, "inference_plan", None) or {}
+            if not isinstance(plan, dict):
+                plan = {}
+            usable = int(
+                getattr(self.llm, "max_n_ctx", 0) or getattr(self.llm, "n_ctx", 0) or 0
+            )
+            return {
+                "profile": str(getattr(self.config, "inference_profile", "balanced")),
+                "n_ctx": int(getattr(self.llm, "n_ctx", 0) or 0),
+                "n_ctx_max": usable,
+                "n_ctx_native": int(
+                    plan.get("native_context")
+                    or getattr(self.llm, "n_ctx_train", 0)
+                    or 0
+                ),
+                "n_batch": int(
+                    plan.get("n_batch") or getattr(self.llm, "n_batch", 0) or 0
+                ),
+                "n_threads": int(
+                    plan.get("n_threads") or getattr(self.llm, "n_threads", 0) or 0
+                ),
+                "n_gpu_layers": int(
+                    plan.get("n_gpu_layers") or getattr(self.llm, "n_gpu_layers", 0) or 0
+                ),
+                "kv_cache_type": str(
+                    plan.get("kv_cache_type")
+                    or getattr(self.llm, "kv_cache_type", "f16")
+                ),
+                "context_limited_by": self._context_limited_by(),
+                "context_limit_text": self._context_limit_text(),
+                "ready": bool(self.model_ready),
+            }
+        except Exception:
+            log.warning("生成推理摘要失败", exc_info=True)
+            return {}
+
+    def apply_inference_profile(self, name: str) -> Dict[str, Any]:
+        """
+        [EN]
+        Persist the selected inference preset and rebuild the live engine with
+        the parameters it implies.
+
+        The rebuild is mandatory rather than optional: ``n_ctx`` and ``n_batch``
+        are construction-time parameters of llama.cpp, so a preset change that
+        only rewrote configuration would report success while the running model
+        kept the previous values. When no model is loaded, the plan is still
+        recomputed so that the first load uses the selected preset.
+
+        Returns the updated inference summary, augmented with ``ok`` and
+        ``error``.
+
+        [ZH]
+        持久化所选的推理预设，并以该预设隐含的参数重建当前引擎。
+
+        重建是必需的而非可选的：``n_ctx`` 与 ``n_batch`` 都是 llama.cpp 的构建期
+        参数，只改写配置会报告成功，而正在运行的模型仍沿用旧值。未加载模型时同样
+        重新计算规划，使首次加载即采用所选预设。
+
+        返回更新后的推理摘要，并附带 ``ok`` 与 ``error`` 字段。
+        """
+        from hardware_profiler import get_inference_preset
+
+        preset = get_inference_preset(name)
+        cfg = self.config
+        cfg.inference_profile = preset.name
+        cfg.n_batch = int(preset.n_batch)
+        error = ""
+        try:
+            cfg.save()
+        except Exception as exc:  # noqa: BLE001 - a read-only medium must not abort
+            log.warning("保存推理预设失败（不影响本次运行）", exc_info=True)
+            error = str(exc)
+        try:
+            path = str(getattr(self.llm, "model_path", "") or "")
+            plan = hardware_profiler.plan_inference(
+                profile=hardware_profiler.probe(),
+                model_path=path,
+                train_context=resolve_context_window(path, 0) if path else 0,
+                requested_context=int(cfg.context_length or 0),
+                max_context=int(cfg.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
+                requested_gpu_layers=int(cfg.n_gpu_layers or 0),
+                n_threads_override=int(cfg.n_threads or 0),
+                inference_profile=preset.name,
+                requested_n_batch=int(cfg.n_batch or 0),
+            )
+            self.llm.apply_plan(plan)
+            if path and self.model_ready:
+                # [EN] Rebuild the underlying object so the new construction-time
+                # [EN] parameters actually take effect.
+                # [ZH] 重建底层对象，使新的构建期参数真正生效。
+                self.llm.reload(n_ctx=plan.n_ctx_initial)
+            self.invalidate_capability()
+            log_user(
+                log, "sys.log_inference_profile",
+                profile=preset.name,
+                native=plan.native_context or _t("sys.log_unknown"),
+                ctx=plan.n_ctx_initial,
+                max_ctx=plan.n_ctx_max,
+                batch=plan.n_batch,
+                threads=plan.n_threads,
+            )
+        except Exception as exc:  # noqa: BLE001 - keep the session usable
+            log.warning("应用推理预设失败（沿用当前参数）", exc_info=True)
+            error = str(exc)
+        summary = self.inference_summary()
+        summary["ok"] = not error
+        summary["error"] = error
+        return summary
 
     def guide_text(self) -> str:
         """
@@ -684,6 +877,8 @@ class Backend:
                 max_context=int(self.config.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
                 requested_gpu_layers=int(self.config.n_gpu_layers or 0),
                 n_threads_override=int(self.config.n_threads or 0),
+                inference_profile=str(getattr(self.config, "inference_profile", "")),
+                requested_n_batch=int(self.config.n_batch or 0),
             )
             self.llm.apply_plan(plan)
             self.llm.load(path, plan.n_ctx_initial)
@@ -993,11 +1188,13 @@ class Backend:
                 max_context=int(config.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
                 requested_gpu_layers=0,
                 n_threads_override=int(config.n_threads or 0),
+                inference_profile=str(getattr(config, "inference_profile", "")),
+                requested_n_batch=int(config.n_batch or 0),
             )
             log.info("%s", _t("sys.log_model_none_state"))
             engine = LazyLLMEngine(
                 plan.n_ctx_initial, n_threads=plan.n_threads,
-                n_batch=config.n_batch, n_gpu_layers=plan.n_gpu_layers,
+                n_batch=plan.n_batch, n_gpu_layers=plan.n_gpu_layers,
                 reasoning=getattr(config, "reasoning", None),
                 profile=profile, max_n_ctx=plan.n_ctx_max,
                 backend_label=plan.backend,
@@ -1013,6 +1210,8 @@ class Backend:
             max_context=int(config.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
             requested_gpu_layers=int(config.n_gpu_layers or 0),
             n_threads_override=int(config.n_threads or 0),
+            inference_profile=str(getattr(config, "inference_profile", "")),
+            requested_n_batch=int(config.n_batch or 0),
         )
         features = ",".join(
             name for name, enabled in (("AVX2", profile.cpu.avx2),
@@ -1042,11 +1241,11 @@ class Backend:
             # [ZH] → `TypeError: t() takes 1 positional argument but 2 were given`。
             # [ZH] 缺键的回落应交给回退链处理。
             path=path, ctx=plan.n_ctx_initial, trained=train_ctx or _t("sys.log_unknown"),
-            threads=plan.n_threads, batch=config.n_batch, gpu=plan.n_gpu_layers,
+            threads=plan.n_threads, batch=plan.n_batch, gpu=plan.n_gpu_layers,
         )
         engine = LLMEngine(
             path, plan.n_ctx_initial,
-            n_threads=plan.n_threads, n_batch=config.n_batch,
+            n_threads=plan.n_threads, n_batch=plan.n_batch,
             n_gpu_layers=plan.n_gpu_layers,
             reasoning=getattr(config, "reasoning", None),
             profile=profile, max_n_ctx=plan.n_ctx_max,
@@ -1316,12 +1515,16 @@ class Backend:
         if action == "capability":
             return {"type": "system", "content": "", "capability": self.model_capability(),
                     "presets": _preset_list(),
+                    "inference_presets": hardware_profiler.inference_preset_menu(),
                     "task_templates": _task_template_list(),
                     "recommendation": _recommendation(),
                     "summary_cache": (self.summary_cache().stats() if self.summary_cache() else {}),
                     "context": self._context_snapshot(),
+                    "inference": self.inference_summary(),
                     "settings": {
                         "preset": self.config.preset,
+                        "inference_profile": str(
+                            getattr(self.config, "inference_profile", "balanced")),
                         "context_mode": self.config.context_mode,
                         "temperature": float(self.commands.temperature),
                         "top_p": float(getattr(self.config, "top_p", 0.9)),
@@ -3044,6 +3247,20 @@ class Backend:
             effective_ctx = int(getattr(self.llm, "max_n_ctx", 0) or self.llm.n_ctx or 0)
             response["limit"] = int(effective_ctx * 0.8)
             response["n_ctx"] = effective_ctx
+            # [EN] Native and planned context are reported alongside the effective
+            # [EN] ceiling so that the interface can distinguish "the model cannot
+            # [EN] exceed this window" from "this machine cannot afford a larger
+            # [EN] window". The explanatory sentence is localized by the backend and
+            # [EN] displayed verbatim.
+            # [ZH] 原生上下文与规划上下文同生效上限一并上报，使界面能够区分"模型本身
+            # [ZH] 无法超出该窗口"与"本机无法承担更大的窗口"。解释语句由后端本地化后
+            # [ZH] 由界面原样展示。
+            response["n_ctx_native"] = int(getattr(self.llm, "n_ctx_train", 0) or 0)
+            response["inference_profile"] = str(
+                getattr(self.config, "inference_profile", "balanced"))
+            response["n_batch"] = int(getattr(self.llm, "n_batch", 0) or 0)
+            response["context_limited_by"] = self._context_limited_by()
+            response["context_limit_text"] = self._context_limit_text()
             try:
                 response["kv_cache_text"] = self.llm.kv_cache_text()
             except Exception:
@@ -3311,6 +3528,34 @@ class Backend:
             self.commands.temp_manual = False
             changed.append("preset")
 
+        # [EN] Inference preset (fast / balanced / quality). It is handled before
+        # [EN] the sampling fields because switching it rebuilds the engine: the
+        # [EN] rebuild must happen once, after the configuration values it depends
+        # [EN] on are already in place.
+        # [ZH] 推理预设（极速 / 均衡 / 质量）。它在采样字段之前处理，因为切换该预设会
+        # [ZH] 重建引擎：重建必须只发生一次，且发生在它依赖的配置值已经就位之后。
+        applied_profile: Optional[Dict[str, Any]] = None
+        profile_name = str(request.get("inference_profile") or "").strip().lower()
+        if profile_name:
+            from hardware_profiler import get_inference_preset, normalize_inference_preset
+
+            normalized = normalize_inference_preset(profile_name)
+            preset_values = get_inference_preset(normalized)
+            if (normalized != str(getattr(cfg, "inference_profile", ""))
+                    or int(cfg.n_batch or 0) != int(preset_values.n_batch)):
+                applied_profile = self.apply_inference_profile(normalized)
+                changed.append("inference_profile")
+                if not applied_profile.get("ok"):
+                    return {
+                        "type": "system",
+                        "content": _t("sys.inference_profile_apply_failed",
+                                      error=applied_profile.get("error") or ""),
+                        "changed": changed,
+                        "inference": applied_profile,
+                        "capability": self.model_capability(),
+                        "context": self._context_snapshot(),
+                    }
+
         mode = str(request.get("context_mode") or "").strip().lower()
         if mode:
             if mode not in ("summarize", "slide"):
@@ -3387,6 +3632,7 @@ class Backend:
         return {"type": "system",
                 "content": _t("sys.capability_settings_saved", fields=", ".join(changed)),
                 "changed": changed, "capability": self.model_capability(),
+                "inference": applied_profile or self.inference_summary(),
                 "context": self._context_snapshot()}
 
     def stream(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:

@@ -260,6 +260,101 @@ def test_real_probe_never_raises():
         print(f"  真实模型规划：{real_plan.to_dict()}")
 
 
+def test_native_context_is_hard_ceiling():
+    print("=== 11. 原生上下文是不可逾越的硬上限，且限制原因如实上报 ===")
+    cpu_only = profile(hp.GpuProfile("none", False, "", 0, 0))
+    small = hp.plan_inference(profile=cpu_only, train_context=8192,
+                              requested_context=32768, max_context=32768)
+    check("原生 8192 的模型不得被开到 32768", small.n_ctx_max == 8192,
+          str(small.n_ctx_max))
+    check("原生上下文原样上报", small.native_context == 8192,
+          str(small.native_context))
+    check("限制原因标记为 native", small.context_limited_by == "native",
+          small.context_limited_by)
+    # [EN] A 32K-capable model on ample memory: the KV estimate comes from the
+    # [EN] header, so the window may reach the native 32K instead of the
+    # [EN] conservative 8K fallback used when the metadata is unreadable.
+    # [ZH] 内存充裕且支持 32K 的模型：KV 估算来自文件头，因此窗口可以到达原生 32K，
+    # [ZH] 而不是元数据不可读时使用的保守 8K 回退值。
+    ample = profile(hp.GpuProfile("none", False, "", 0, 0),
+                    ram_total=64 * GIB, ram_available=48 * GIB)
+    with mock.patch.object(hp, "_kv_bytes_per_token", return_value=131072.0), \
+            mock.patch.object(hp, "_model_shape", return_value=(32, 0)):
+        large = hp.plan_inference(profile=ample, model_path="synthetic.gguf",
+                                  train_context=32768, requested_context=32768,
+                                  max_context=32768)
+    check("原生 32768 时上限保持 32768", large.n_ctx_max == 32768,
+          str(large.n_ctx_max))
+    check("原生支持 32K 的模型不再被压缩到 8K", large.n_ctx_max > 8192,
+          str(large.n_ctx_max))
+    check("原生上下文原样上报 32768", large.native_context == 32768,
+          str(large.native_context))
+
+
+def test_hardware_memory_limits_context():
+    print("=== 12. 内存预算可收窄窗口，且限制原因标记为 hardware ===")
+    cpu_only = profile(hp.GpuProfile("none", False, "", 0, 0),
+                       ram_total=16 * GIB, ram_available=4 * GIB)
+    with mock.patch.object(hp, "_kv_bytes_per_token", return_value=131072.0), \
+            mock.patch.object(hp, "_model_shape", return_value=(32, 0)):
+        plan = hp.plan_inference(profile=cpu_only, model_path="synthetic.gguf",
+                                 train_context=32768, requested_context=32768,
+                                 max_context=32768)
+    check("内存不足时窗口收敛到 24064 tokens", plan.n_ctx_max == 24064,
+          str(plan.n_ctx_max))
+    check("内存限制的原因标记为 hardware", plan.context_limited_by == "hardware",
+          plan.context_limited_by)
+    check("原生上下文仍如实上报 32768", plan.native_context == 32768,
+          str(plan.native_context))
+
+
+def test_inference_presets():
+    print("=== 13. 极速 / 均衡 / 质量三档确实改变构建期参数 ===")
+    cpu_only = profile(hp.GpuProfile("none", False, "", 0, 0), physical=8, logical=16,
+                       ram_total=64 * GIB, ram_available=48 * GIB)
+    common = dict(profile=cpu_only, model_path="synthetic.gguf",
+                  train_context=32768, requested_context=32768, max_context=32768)
+    with mock.patch.object(hp, "_kv_bytes_per_token", return_value=131072.0), \
+            mock.patch.object(hp, "_model_shape", return_value=(32, 0)):
+        fast = hp.plan_inference(inference_profile="fast", **common)
+        balanced = hp.plan_inference(inference_profile="balanced", **common)
+        quality = hp.plan_inference(inference_profile="quality", **common)
+        overridden = hp.plan_inference(inference_profile="fast",
+                                       requested_n_batch=256, **common)
+
+    check("极速档上限为硬件/原生上限的一半", fast.n_ctx_max == 16384,
+          str(fast.n_ctx_max))
+    check("极速档初始上下文为 1024", fast.n_ctx_initial == 1024,
+          str(fast.n_ctx_initial))
+    check("极速档批大小为 1024", fast.n_batch == 1024, str(fast.n_batch))
+    check("极速档使用全部逻辑线程", fast.n_threads == 16, str(fast.n_threads))
+    check("极速档限制原因标记为 preset", fast.context_limited_by == "preset",
+          fast.context_limited_by)
+
+    check("均衡档初始上下文保持 2048", balanced.n_ctx_initial == 2048,
+          str(balanced.n_ctx_initial))
+    check("均衡档批大小为 512", balanced.n_batch == 512, str(balanced.n_batch))
+    check("均衡档使用物理核心数", balanced.n_threads == 8, str(balanced.n_threads))
+    check("均衡档保留完整上限", balanced.n_ctx_max == 32768,
+          str(balanced.n_ctx_max))
+
+    check("质量档初始上下文为 4096", quality.n_ctx_initial == 4096,
+          str(quality.n_ctx_initial))
+    check("质量档保留完整上限", quality.n_ctx_max == 32768,
+          str(quality.n_ctx_max))
+    check("质量档 KV Cache 为 F16 精度",
+          quality.kv_cache_type == "f16", quality.kv_cache_type)
+
+    check("显式批大小覆盖预设取值", overridden.n_batch == 256,
+          str(overridden.n_batch))
+    check("未知预设回落到均衡档",
+          hp.normalize_inference_preset("no-such-profile") == "balanced")
+    menu = hp.inference_preset_menu()
+    check("预设菜单包含三档", len(menu) == 3, str(len(menu)))
+    check("预设菜单三档都有标签",
+          all(entry.get("label") for entry in menu), str(menu))
+
+
 def main():
     tests = [
         test_cpu_only_degrades_silently,
@@ -272,6 +367,9 @@ def main():
         test_thread_count_is_dynamic,
         test_probe_failure_is_silent,
         test_real_probe_never_raises,
+        test_native_context_is_hard_ceiling,
+        test_hardware_memory_limits_context,
+        test_inference_presets,
     ]
     for test in tests:
         try:
