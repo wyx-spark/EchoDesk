@@ -102,7 +102,12 @@ $DesktopLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) "EchoDesk.lnk"
 
 if (Test-Path $TestRoot) {
     foreach ($d in @(Get-ChildItem $TestRoot -Directory -ErrorAction SilentlyContinue)) {
-        [void](Invoke-SilentUninstall $d.FullName)
+        # [EN] Function definitions appear later in this script; on a first run there is
+        # [EN] nothing to uninstall, so guard the call instead of invoking an undefined name.
+        # [ZH] 函数定义在本脚本后面；首次运行时没有旧安装，因此先判断再调用，避免未定义命令。
+        if (Get-Command Invoke-SilentUninstall -ErrorAction SilentlyContinue) {
+            [void](Invoke-SilentUninstall $d.FullName)
+        }
     }
     Remove-Item $TestRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -199,22 +204,37 @@ function Get-TempEchoDeskResidue {
     return $hits
 }
 
+function Invoke-NoShell([string]$Exe, [string]$ArgLine) {
+    # [EN] Use CreateProcess (UseShellExecute=false) instead of ShellExecute. On a machine
+    # [EN] where Attachment Manager decides to show "Open File - Security Warning", the
+    # [EN] ShellExecute path blocks the whole gate on an invisible desktop dialog.
+    # [ZH] 用 CreateProcess（UseShellExecute=false）而不是 ShellExecute。若机器的附件管理器
+    # [ZH] 决定弹出「打开文件 - 安全警告」，ShellExecute 会把整个门禁卡在一个不可见对话框上。
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Exe
+    $psi.Arguments = $ArgLine
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $p.WaitForExit()
+    return $p.ExitCode
+}
+
 function Invoke-SilentInstall([string]$Exe, [string]$LogPath) {
     # 刻意**不传 /DIR**：要验证的正是"默认装到安装程序自己所在的目录"。
     # /MERGETASKS="!desktopicon" 关掉桌面图标：自动化验收不该在用户桌面上留东西，
     # 开始菜单快捷方式足以验证 [Icons] 段。
-    $args = @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/MERGETASKS=`"!desktopicon`"")
-    if ($LogPath) { $args += "/LOG=`"$LogPath`"" }
-    $p = Start-Process -FilePath $Exe -ArgumentList $args -PassThru -Wait
-    return $p.ExitCode
+    $argLine = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /MERGETASKS="!desktopicon"'
+    if ($LogPath) { $argLine += " /LOG=`"$LogPath`"" }
+    return Invoke-NoShell $Exe $argLine
 }
 
 function Invoke-SilentUninstall([string]$Dir) {
     $unins = Join-Path $Dir "unins000.exe"
     if (-not (Test-Path $unins)) { return -1 }
-    $p = Start-Process -FilePath $unins -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -PassThru -Wait
+    $code = Invoke-NoShell $unins '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART'
     Start-Sleep -Seconds 3
-    return $p.ExitCode
+    return $code
 }
 
 # 验收开始前先清掉可能存在的旧安装（同一个 AppId，避免上一次的残留干扰）
