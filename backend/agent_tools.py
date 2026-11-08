@@ -3,7 +3,7 @@
 Agent tool layer (v0.2.1 capability extension, task 2): tool interface, built-in
 tool set, and permission tiers.
 
-Design notes (each answers a question in the task specification that required a
+Design notes (each answers a question in the design specification that required a
 DSH decision)
 =========================================================================
 
@@ -56,7 +56,7 @@ understand and for the interface to display.
 [ZH]
 Agent 工具层（v0.2.1 能力扩展，任务二）：工具接口、内置工具集与权限分级。
 
-设计要点（每条都对应任务书中需要由 DSH 判断的问题）
+设计要点（每条都对应设计规范中需要由 DSH 判断的问题）
 =====================================================
 
 1. 为什么不使用 llama.cpp 原生的 ``tools`` / ``tool_choice``
@@ -84,7 +84,7 @@ Agent 工具层（v0.2.1 能力扩展，任务二）：工具接口、内置工�
   未授权的工具不会静默失败：``ToolRegistry.run`` 返回一条说明性观察结果，
   模型据此继续（用已知信息作答），用户也能在对话中看到该工具未启用及其开启方式。
 
-3. 工具集选择：覆盖现有能力并新增若干工具（任务书要求）
+3. 工具集选择：覆盖现有能力并新增若干工具（设计规范要求）
   复用现有能力：``doc_search``（检索已上传文件）、``doc_summary``（分段摘要）、
   ``web_search``（联网搜索，sensitive）。新增：``calc``、``date``、``convert``、
   ``file_read``（sensitive）。每个工具都是"一次调用、一个字符串结果"，
@@ -246,8 +246,8 @@ class ToolContext:
         self.count_tokens = count_tokens
         self.files_dir = files_dir
 
-    # ---------- [EN] Small helper methods for tools ----------
-    # ---------- [ZH] 供工具使用的小工具方法 ----------
+    # [EN] ---------- Small helper methods for tools ----------
+    # [ZH] ---------- 供工具使用的小工具方法 ----------
 
     def file_names(self) -> List[str]:
         conv = self.conv
@@ -835,8 +835,8 @@ class ToolRegistry:
         for tool in tools if tools is not None else default_tools():
             self.register(tool)
 
-    # ---------- [EN] Registration and lookup ----------
-    # ---------- [ZH] 注册与查询 ----------
+    # [EN] ---------- Registration and lookup ----------
+    # [ZH] ---------- 注册与查询 ----------
 
     def register(self, tool: Tool) -> None:
         self.tools[tool.name] = tool
@@ -886,8 +886,8 @@ class ToolRegistry:
             self.allowed_sensitive.discard(key)
         return True
 
-    # ---------- [EN] Invocation ----------
-    # ---------- [ZH] 调用 ----------
+    # [EN] ---------- Invocation ----------
+    # [ZH] ---------- 调用 ----------
 
     def run(self, name: str, args: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
         """
@@ -1037,7 +1037,7 @@ def default_tools() -> List[Tool]:
     several new tools).
 
     [ZH]
-    内置工具集（任务书要求"至少覆盖现有能力并新增若干工具"）。
+    内置工具集（设计规范要求"至少覆盖现有能力并新增若干工具"）。
     """
     return [
         Tool(

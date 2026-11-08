@@ -2,26 +2,26 @@
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Services/UserPaths.cs。类型与成员说明见下方注释。
 // [EN] Platform-specific data and log directory conventions.
 //
-// The WPF frontend uses `ShortcutService.UserDataDirectory`, which resolves
-// `ECHODESK_DATA`, then the parent of an `app` program directory, then the
-// program directory itself. It does not use `%APPDATA%`.
+// [EN] The WPF frontend uses `ShortcutService.UserDataDirectory`, which resolves
+// [EN] `ECHODESK_DATA`, then the parent of an `app` program directory, then the
+// [EN] program directory itself. It does not use `%APPDATA%`.
 //
-// The cross-platform frontend adds platform fallbacks for non-portable layouts:
-// Application Support on macOS and XDG directories on Linux. Both frontends
-// resolve to the same location in the published layout.
+// [EN] The cross-platform frontend adds platform fallbacks for non-portable layouts:
+// [EN] Application Support on macOS and XDG directories on Linux. Both frontends
+// [EN] resolve to the same location in the published layout.
 //
-// All path construction is centralized here. The backend counterpart is
-// `user_data_root()` in `backend/config.py`; both must return the same answer.
+// [EN] All path construction is centralized here. The backend counterpart is
+// [EN] `user_data_root()` in `backend/config.py`; both must return the same answer.
 // [ZH] 各平台的数据与日志目录约定。
 //
-// WPF 前端使用 `ShortcutService.UserDataDirectory`，依次解析 `ECHODESK_DATA`、
-// 名为 `app` 的程序目录的父目录，最后是程序目录本身。它不使用 `%APPDATA%`。
+// [ZH] WPF 前端使用 `ShortcutService.UserDataDirectory`，依次解析 `ECHODESK_DATA`、
+// [ZH] 名为 `app` 的程序目录的父目录，最后是程序目录本身。它不使用 `%APPDATA%`。
 //
-// 跨平台前端为非便携布局增加了平台回退：macOS 使用 Application Support，Linux
-// 使用 XDG 目录。两种前端在发布布局下解析到同一位置。
+// [ZH] 跨平台前端为非便携布局增加了平台回退：macOS 使用 Application Support，Linux
+// [ZH] 使用 XDG 目录。两种前端在发布布局下解析到同一位置。
 //
-// 所有路径构造集中于此。后端对应实现为 `backend/config.py` 的 `user_data_root()`，
-// 两者必须返回一致结果。
+// [ZH] 所有路径构造集中于此。后端对应实现为 `backend/config.py` 的 `user_data_root()`，
+// [ZH] 两者必须返回一致结果。
 using System;
 using System.IO;
 
@@ -38,21 +38,21 @@ public static class UserPaths
 
     /// <summary>
     /// [EN] User data root. Resolution order, kept consistent with the backend
-    /// `user_data_root()` and WPF `ShortcutService.UserDataDirectory`:
-    ///   1. the <c>ECHODESK_DATA</c> environment variable;
-    ///   2. if the program directory is named <c>app</c>, its parent;
-    ///   3. Windows: the program directory;
-    ///      macOS: <c>~/Library/Application Support/EchoDesk</c>;
-    ///      Linux: <c>$XDG_DATA_HOME/EchoDesk</c> or
-    ///      <c>~/.local/share/EchoDesk</c>.
+    /// [EN] `user_data_root()` and WPF `ShortcutService.UserDataDirectory`:
+    /// [EN]   1. the <c>ECHODESK_DATA</c> environment variable;
+    /// [EN]   2. if the program directory is named <c>app</c>, its parent;
+    /// [EN]   3. Windows: the program directory;
+    /// [EN]      macOS: <c>~/Library/Application Support/EchoDesk</c>;
+    /// [EN]      Linux: <c>$XDG_DATA_HOME/EchoDesk</c> or
+    /// [EN]      <c>~/.local/share/EchoDesk</c>.
     ///
     /// [ZH] 用户数据根目录。判定顺序与后端 `user_data_root()` 及 WPF
-    /// `ShortcutService.UserDataDirectory` 保持一致：
-    ///   1. 环境变量 <c>ECHODESK_DATA</c>；
-    ///   2. 程序目录名为 <c>app</c> 时取其父目录；
-    ///   3. Windows 使用程序目录；macOS 使用
-    ///      <c>~/Library/Application Support/EchoDesk</c>；Linux 使用
-    ///      <c>$XDG_DATA_HOME/EchoDesk</c> 或 <c>~/.local/share/EchoDesk</c>。
+    /// [ZH] `ShortcutService.UserDataDirectory` 保持一致：
+    /// [ZH]   1. 环境变量 <c>ECHODESK_DATA</c>；
+    /// [ZH]   2. 程序目录名为 <c>app</c> 时取其父目录；
+    /// [ZH]   3. Windows 使用程序目录；macOS 使用
+    /// [ZH]      <c>~/Library/Application Support/EchoDesk</c>；Linux 使用
+    /// [ZH]      <c>$XDG_DATA_HOME/EchoDesk</c> 或 <c>~/.local/share/EchoDesk</c>。
     /// </summary>
     public static string DataRoot
     {
@@ -102,21 +102,21 @@ public static class UserPaths
 
     /// <summary>
     /// [EN] UI language-pack directory, overridable through
-    /// <c>ECHODESK_LANG_DIR</c> for translator testing.
+    /// [EN] <c>ECHODESK_LANG_DIR</c> for translator testing.
     ///
-    /// Read-only fallback (v0.2.5 P0): when the data directory has no <c>lang/ui</c>
-    /// (macOS <c>.app</c> and Linux AppImage keep their language packs as read-only
-    /// packaged resources), use <c>&lt;program directory&gt;/lang/ui</c> instead.
-    /// Without it the English UI silently degrades to the built-in Chinese fallback
-    /// strings on those layouts. The data directory always wins when it does exist, so
-    /// translators can still drop a pack there and see it immediately.
+    /// [EN] Read-only fallback (v0.2.5 P0): when the data directory has no <c>lang/ui</c>
+    /// [EN] (macOS <c>.app</c> and Linux AppImage keep their language packs as read-only
+    /// [EN] packaged resources), use <c>&lt;program directory&gt;/lang/ui</c> instead.
+    /// [EN] Without it the English UI silently degrades to the built-in Chinese fallback
+    /// [EN] strings on those layouts. The data directory always wins when it does exist, so
+    /// [EN] translators can still drop a pack there and see it immediately.
     ///
     /// [ZH] 界面语言包目录，可通过 <c>ECHODESK_LANG_DIR</c> 覆盖，便于翻译者测试。
     ///
-    /// 只读回落（v0.2.5 P0）：数据目录下没有 <c>lang/ui</c> 时（macOS <c>.app</c> 与
-    /// Linux AppImage 的语言包是随包的只读资源），改用
-    /// <c>&lt;程序目录&gt;/lang/ui</c>。没有这条回落，这些形态下的英文界面会静默退化
-    /// 成内置中文兜底文案。数据目录存在时始终优先，翻译者仍可把语言包放进去立即生效。
+    /// [ZH] 只读回落（v0.2.5 P0）：数据目录下没有 <c>lang/ui</c> 时（macOS <c>.app</c> 与
+    /// [ZH] Linux AppImage 的语言包是随包的只读资源），改用
+    /// [ZH] <c>&lt;程序目录&gt;/lang/ui</c>。没有这条回落，这些形态下的英文界面会静默退化
+    /// [ZH] 成内置中文兜底文案。数据目录存在时始终优先，翻译者仍可把语言包放进去立即生效。
     /// </summary>
     public static string LangDirectory
     {

@@ -55,7 +55,7 @@ back to "unsupported file type".
   .pptx  python-pptx（MIT）      .ppt  仅 WPS COM
   .pdf   pypdf（BSD-3-Clause）   .txt/.md/.csv 等 直接读取（自动识别编码）
 
-v0.2.1 变更（任务书 1.3 合规与体积）：
+v0.2.1 变更（设计规范 1.3 合规与体积）：
   PDF 解析从 PyMuPDF 更换为 pypdf。PyMuPDF 采用 AGPL-3.0（或 Artifex 商业许可），
   对外开源分发会产生著佐权义务，与 Apache-2.0 项目许可不兼容；pypdf 采用
   BSD-3-Clause、纯 Python 实现、无原生扩展。安装体积从 52.9MB 降至约 1.4MB（见
@@ -232,21 +232,41 @@ _TEXT_EXTS = {
 # [ZH] 需要 WPS COM 才能读取的旧版二进制格式（未安装 WPS 时给出明确提示）
 _LEGACY_ONLY_WPS = {".doc", ".ppt"}
 
-# 内置解析器直接支持的扩展名（技能不得覆盖这些，保证主程序行为可预测）
+# [EN] Extensions supported directly by the built-in parsers. Skills must not
+# [EN] override them, so that the main program's behavior stays predictable.
+# [ZH] 内置解析器直接支持的扩展名（技能不得覆盖这些，保证主程序行为可预测）。
 _BUILTIN_EXTS = {".docx", ".xlsx", ".xlsm", ".xls", ".pptx", ".pdf"}
 
 # ---------------------------------------------------------------------------
-# 解析失败标记（多语言说明，此前版本）
+# [EN] Parse-error markers (multilingual explanation; earlier release)
+# [ZH] 解析失败标记（多语言说明，此前版本）
 # ---------------------------------------------------------------------------
-# v0.2.2 硬编码清查第 6 批改造：标记与正文**分开**。
-#   原先中文前缀既是"机器可读标记"、又要显示给用户，于是正文只能写死中文 ——
-#   英文界面下 localize_error() 只能翻前缀，细节（"技能「x」的 docx 解析器出错…"）原样是中文。
-#   现在：
-#     * **标记**是下面的 ASCII 常量，只给 is_parse_error() 判定用，**不进界面**；
-#     * **正文**由语言包产出（file.parse_failed / file.skill_parser_failed / file.pdf_encrypted …），
-#       产生时就是当前语言，因此 localize_error() 只需把标记剥掉。
+# [EN] v0.2.2 hard-coded-string audit, batch 6: the marker and the message are
+# [EN] **separated**.
+# [EN]   Previously the Chinese prefix served both as the "machine-readable marker"
+# [EN]   and as text shown to the user, so the message itself could only be written
+# [EN]   in Chinese; in an English UI, localize_error() could translate the prefix
+# [EN]   only, and the detail ("skill \"x\" docx parser failed ...") stayed Chinese.
+# [EN]   Now:
+# [EN]     * The **marker** is the ASCII constant below; it is used only by
+# [EN]       is_parse_error() and **never reaches the UI**.
+# [EN]     * The **message** comes from the language pack (file.parse_failed /
+# [EN]       file.skill_parser_failed / file.pdf_encrypted ...), so it is already in
+# [EN]       the current language when produced; localize_error() only has to strip
+# [EN]       the marker.
+# [ZH] v0.2.2 硬编码清查第 6 批改造：标记与正文**分开**。
+# [ZH]   原先中文前缀既是"机器可读标记"、又要显示给用户，于是正文只能写死中文 ——
+# [ZH]   英文界面下 localize_error() 只能翻前缀，细节（"技能「x」的 docx 解析器出错…"）
+# [ZH]   原样是中文。
+# [ZH]   现在：
+# [ZH]     * **标记**是下面的 ASCII 常量，只给 is_parse_error() 判定用，**不进界面**；
+# [ZH]     * **正文**由语言包产出（file.parse_failed / file.skill_parser_failed /
+# [ZH]       file.pdf_encrypted …），产生时就是当前语言，因此 localize_error() 只需
+# [ZH]       把标记剥掉。
 _ERROR_MARKS = ("[!WPS]", "[!PARSE]", "[!EMPTY]", "[!EXT]")
-#: 旧版中文前缀仍然识别（兼容历史上由旧代码路径产出的字符串，例如已落盘的旧错误串）
+#: [EN] Legacy Chinese prefixes are still recognized, for compatibility with strings
+#: [EN] produced by older code paths (for example error strings already persisted).
+#: [ZH] 旧版中文前缀仍然识别（兼容历史上由旧代码路径产出的字符串，例如已落盘的旧错误串）
 _LEGACY_MARKERS = ("WPS读取失败", "解析失败", "文件内容为空", "不支持的文件类型")
 
 
@@ -306,7 +326,9 @@ def localize_error(text: str) -> str:
     if raw.startswith("WPS读取失败: "):
         return _t("file.wps_failed", error=raw[len("WPS读取失败: "):])
     if raw.startswith("WPS读取失败，且 "):
-        # 旧版二进制格式、缺少 WPS 的提示：整段保留细节，只翻译前缀
+        # [EN] Legacy binary format with WPS missing: keep the whole message verbatim
+        # [EN] and translate only the prefix.
+        # [ZH] 旧版二进制格式、缺少 WPS 的提示：整段保留细节，只翻译前缀。
         return _t("file.parse_failed", error=raw)
     if raw.startswith("解析失败: "):
         return _t("file.parse_failed", error=raw[len("解析失败: "):])
@@ -340,10 +362,17 @@ def parse_file_with_wps(filepath: str, max_chars: int = 0) -> str:
             return fallback
         if ext in _LEGACY_ONLY_WPS:
             if _platform_is_windows():
-                # 正文来自语言包（zh 值自带"WPS读取失败，且 …"的措辞），标记由 _err 加在前面
+                # [EN] The message comes from the language pack (the zh value already
+                # [EN] reads "WPS read failed, and ..."), and _err prefixes the marker.
+                # [ZH] 正文来自语言包（zh 值自带"WPS读取失败，且 …"的措辞），标记由 _err
+                # [ZH] 加在前面。
                 return _err("[!WPS]", "file.legacy_needs_wps", ext=ext) + f"\nWPS: {wps_result}"
-            # 非 Windows：旧版二进制格式（.doc/.xls）只有 WPS COM 能读 —— 这是
-            # 相关设计里"必须给替代路径"的典型场景，所以文案要给三条可执行的做法。
+            # [EN] Not Windows: the legacy binary formats (.doc/.xls) can only be read
+            # [EN] through WPS COM. This is the typical "always provide an alternative"
+            # [EN] case in the design specification, so the message offers three
+            # [EN] actionable options.
+            # [ZH] 非 Windows：旧版二进制格式（.doc/.xls）只有 WPS COM 能读 —— 这是
+            # [ZH] 相关设计里"必须给替代路径"的典型场景，所以文案要给三条可执行的做法。
             return _err("[!WPS]", "file.legacy_needs_windows", ext=ext,
                         wps=wps_result, builtin=fallback)
         return _err("[!WPS]", "file.both_failed", wps=wps_result, builtin=fallback)
@@ -375,7 +404,11 @@ def _read_office_with_wps(filepath: str, max_chars: int) -> str:
     所以降级路径**不改协议**，只把"为什么没有"写清楚。
     """
     if not _wps_available():
-        # 不是"出错"，而是相关设计定义的能力边界：文案必须写清原因，让调用方给出替代路径
+        # [EN] This is not an "error" but a capability boundary defined by the design
+        # [EN] specification: the message must state the reason so that the caller can
+        # [EN] offer an alternative path.
+        # [ZH] 不是"出错"，而是相关设计定义的能力边界：文案必须写清原因，让调用方给出
+        # [ZH] 替代路径。
         return _err("[!WPS]", "file.wps_failed", error=_wps_unavailable_reason())
     app = doc = None
     try:
@@ -405,7 +438,8 @@ def _read_office_with_wps(filepath: str, max_chars: int) -> str:
                 pass
 
 
-# ---------- 内置轻量解析器 ----------
+# [EN] ---------- Built-in lightweight parsers ----------
+# [ZH] ---------- 内置轻量解析器 ----------
 
 def _parse_builtin(filepath: str, ext: str) -> str:
     """
@@ -429,7 +463,9 @@ def _parse_builtin(filepath: str, ext: str) -> str:
         elif ext == ".pdf":
             text = _read_pdf(filepath)
         elif ext in _SKILL_PARSERS:
-            # 相关设计 2.3：未知扩展名先询问已加载技能提供的解析器
+            # [EN] Design specification 2.3: for an unknown extension, first ask the
+            # [EN] parsers provided by loaded skills.
+            # [ZH] 相关设计 2.3：未知扩展名先询问已加载技能提供的解析器
             skill_id, handler = _SKILL_PARSERS[ext]
             try:
                 text = handler(filepath)
@@ -583,7 +619,9 @@ def _read_pdf(filepath: str) -> str:
 
     reader = PdfReader(filepath)
     if getattr(reader, "is_encrypted", False):
-        # 空口令加密（只设了权限密码）可以先解密；真正的用户口令无法处理
+        # [EN] An empty-password encryption (only a permissions password is set) can be
+        # [EN] decrypted first; a real user password cannot be handled.
+        # [ZH] 空口令加密（只设了权限密码）可以先解密；真正的用户口令无法处理
         try:
             reader.decrypt("")
         except Exception as e:
@@ -592,7 +630,8 @@ def _read_pdf(filepath: str) -> str:
     for index, page in enumerate(reader.pages, 1):
         try:
             text = (page.extract_text() or "").strip()
-        except Exception as e:  # 单页损坏不应让整份文档失败
+        except Exception as e:  # [EN] One corrupted page must not fail the document.
+                                # [ZH] 单页损坏不应让整份文档失败。
             from i18n import t as _t
 
             text = _t("file.pdf_page_failed", page=index, error=e)

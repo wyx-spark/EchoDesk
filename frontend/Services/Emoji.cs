@@ -29,19 +29,25 @@ namespace EchoDesk.Services;
 ///
 /// [ZH] Emoji 降级支持。
 ///
-/// 主路径依赖 WPF 字体回退链，其中包含 <c>Segoe UI Emoji</c>，在标准 Windows
-/// 10/11 环境中可正确渲染 emoji。
+/// [ZH] 主路径依赖 WPF 字体回退链，其中包含 <c>Segoe UI Emoji</c>，在标准
+/// [ZH] Windows 10/11 环境中可正确渲染 emoji。
 ///
-/// 本类为缺少 emoji 字体的环境提供降级策略，例如早期 Windows 10、精简安装或
-/// 被策略移除字体的企业镜像：
+/// [ZH] 本类为缺少 emoji 字体的环境提供降级策略，例如早期 Windows 10、精简安装
+/// [ZH] 或被策略移除字体的企业镜像：
 /// <list type="bullet">
-/// <item><b>自动检测</b>：<see cref="Available"/> 检查 emoji 字体文件是否存在。</item>
-/// <item><b>手动开关</b>：设置窗口中写入 <c>ui_state.json</c> 的“使用 emoji”选项。</item>
-/// <item><b>ASCII 替换</b>：关闭或不受支持时，<c>✅</c>、<c>⚠️</c> 等符号替换为
-/// <c>[OK]</c>、<c>[!]</c>，避免显示为方块。</item>
+/// <item>
+/// [ZH] <b>自动检测</b>：<see cref="Available"/> 检查 emoji 字体文件是否存在。
+/// </item>
+/// <item>
+/// [ZH] <b>手动开关</b>：设置窗口中写入 <c>ui_state.json</c> 的“使用 emoji”选项。
+/// </item>
+/// <item>
+/// [ZH] <b>ASCII 替换</b>：关闭或不受支持时，<c>✅</c>、<c>⚠️</c> 等符号替换为
+/// [ZH] <c>[OK]</c>、<c>[!]</c>，避免显示为方块。
+/// </item>
 /// </list>
 ///
-/// 替换集中在 <see cref="Loc.T(string)"/> 与消息渲染处。
+/// [ZH] 替换集中在 <see cref="Loc.T(string)"/> 与消息渲染处。
 /// </summary>
 public static class Emoji
 {
@@ -149,7 +155,7 @@ public static class Emoji
     /// existence rather than rendering, which would require a costly draw and is
     /// unavailable in headless environments.
     /// [ZH] 本机是否具备 emoji 字体。检测文件是否存在，而不是检测渲染结果；后者需要
-    /// 真实绘制，开销高且在无界面环境中不可用。
+    /// [ZH] 真实绘制，开销高且在无界面环境中不可用。
     /// </summary>
     public static bool Available
     {
@@ -186,7 +192,7 @@ public static class Emoji
     /// [EN] Whether emoji are emitted as status icons. In "follow system" mode,
     /// this is determined by <see cref="Available"/>.
     /// [ZH] 是否输出 emoji 作为状态图标。“跟随系统”模式下由 <see cref="Available"/>
-    /// 决定。
+    /// [ZH] 决定。
     /// </summary>
     public static bool Enabled { get; private set; } = true;
 
@@ -216,7 +222,7 @@ public static class Emoji
     /// otherwise return the input unchanged. Chinese text and ordinary
     /// punctuation are not modified.
     /// [ZH] 需要纯文本时将 emoji 替换为 ASCII 标记；否则原样返回。不会修改中文与
-    /// 普通标点。
+    /// [ZH] 普通标点。
     /// </summary>
     public static string Prefer(string text) => Enabled || string.IsNullOrEmpty(text) ? text : Strip(text);
 

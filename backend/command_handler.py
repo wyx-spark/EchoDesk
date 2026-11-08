@@ -2,11 +2,11 @@
 [EN]
 Command parsing: handles user commands that start with '/'.
 
-v0.2.1 (task specification 3.4 / 3.7): all user-facing text is resolved from the
+v0.2.1 (design specification 3.4 / 3.7): all user-facing text is resolved from the
 language pack (``backend/lang/<locale>.json``) with the fallback chain
 "current locale -> en -> zh-Hans -> key".
 
-v0.2.1 (task specification 2.2): the command table supports runtime registration
+v0.2.1 (design specification 2.2): the command table supports runtime registration
 of external commands (skills and local plug-ins) with behaviour identical to
 built-in commands. ``COMMAND_SPEC`` is also the data source for /help and the
 front-end command palette, so skill commands appear automatically in the input
@@ -15,10 +15,10 @@ completion list.
 [ZH]
 指令解析：处理以 '/' 开头的用户指令。
 
-v0.2.1（任务书 任务三 3.4 / 3.7）：所有面向用户的文案改为从语言包取用
+v0.2.1（设计规范 任务三 3.4 / 3.7）：所有面向用户的文案改为从语言包取用
 （``backend/lang/<locale>.json``），并按"当前语言 → en → zh-Hans → 键名"回退。
 
-v0.2.1（任务书 任务二 2.2）：指令表支持运行期注册外部指令（技能/本地插件），
+v0.2.1（设计规范 任务二 2.2）：指令表支持运行期注册外部指令（技能/本地插件），
 行为与内置指令完全一致；``COMMAND_SPEC`` 同时是 /help 与前端指令面板的数据源，
 因此技能指令会自动出现在输入框的候选列表里。
 """
@@ -141,17 +141,18 @@ def describe_commands(extra: Optional[List[Dict[str, Any]]] = None) -> List[Dict
 def help_text(extra: Optional[List[Dict[str, Any]]] = None) -> str:
     """
     [EN]
-    Build the complete /help text, including skill commands (task specification
+    Build the complete /help text, including skill commands (design specification
     2.6).
 
     [ZH]
-    构建 /help 的完整文案（含技能指令，任务书任务二 2.6）。
+    构建 /help 的完整文案（含技能指令，设计规范任务二 2.6）。
     """
-    # [EN] The studio name is resolved from the language pack (task specification
-    # [EN] "studio name finalized"): the Chinese UI shows 熵寂工作室 and the English UI
-    # [EN] shows "Void Entropia Studio". Do NOT use version.STUDIO here directly:
-    # [EN] that is the English constant, so the Chinese UI would display the English
-    # [EN] name. The caller supplies the value of the `{studio}` placeholder.
+    # [EN] The studio name is resolved from the language pack (task
+    # [EN] specification "studio name finalized"): the Chinese UI shows the
+    # [EN] localized name and the English UI shows "Void Entropia Studio".
+    # [EN] Do NOT use version.STUDIO here directly: that is the English
+    # [EN] constant, so the Chinese UI would display the English name. The
+    # [EN] caller supplies the value of the `{studio}` placeholder.
     # [ZH] 出品方名称走语言包（设计规范「工作室名称敲定」）：中文界面显示「熵寂工作室」、
     # [ZH] 英文界面显示 "Void Entropia Studio"。不要在这里直接使用 version.STUDIO ——
     # [ZH] 那是英文常量，中文界面会跟着显示英文名（`{studio}` 占位符的值由调用方提供）。
@@ -296,8 +297,8 @@ class CommandHandler:
         # [ZH] 当前生效的任务模板 id（兼容性修正 方向一）；空串表示未启用。
         self.task_template = ""
 
-    # ---------- [EN] Runtime command registration (task 2, items 2.2 / 2.4) ----------
-    # ---------- [ZH] 运行期指令注册（相关设计 2.2 / 2.4） ----------
+    # [EN] ---------- Runtime command registration (task 2, items 2.2 / 2.4) ----------
+    # [ZH] ---------- 运行期指令注册（相关设计 2.2 / 2.4） ----------
 
     def register_command(
         self,
@@ -409,8 +410,8 @@ class CommandHandler:
         """
         return describe_commands(self.external_commands())
 
-    #: [EN] Argument tokenizer: quoted arguments are supported (此前版本 known-issue
-    #: [EN] optimization, task 8).
+    #: [EN] Argument tokenizer: quoted arguments are supported (known-issue
+    #: [EN] optimization from an earlier release, task 8).
     #:
     #: [EN] Why quoting is required: a path containing spaces such as
     #: [EN] `/file C:\My Documents\contract 2026.docx` is split into four tokens by
@@ -536,11 +537,11 @@ class CommandHandler:
             return "", None
         return str(result), None
 
-    # ---------- [EN] Command implementations ----------
-    # ---------- [ZH] 指令实现 ----------
+    # [EN] ---------- Command implementations ----------
+    # [ZH] ---------- 指令实现 ----------
 
     def _help(self, _args: list) -> Response:
-        # [EN] Skill commands must also appear in /help (task specification 2.6).
+        # [EN] Skill commands must also appear in /help (design specification 2.6).
         # [ZH] 技能指令也要出现在 /help 里（设计规范 2.6）。
         return help_text(self.external_commands()), None
 
@@ -980,8 +981,8 @@ class CommandHandler:
     def _snippet(_args: list) -> Response:
         return t("cmd.resp.snippet_hint"), None
 
-    # ---------- [EN] Fix 4: task templates / generation presets / manual context compaction ----------
-    # ---------- [ZH] 兼容性修正：任务模板 / 生成预设 / 手动压缩上下文 ----------
+    # [EN] ---------- Fix 4: task templates / generation presets / manual context compaction ----------
+    # [ZH] ---------- 兼容性修正：任务模板 / 生成预设 / 手动压缩上下文 ----------
 
     def _task(self, args: list) -> Response:
         """
@@ -1068,7 +1069,7 @@ class CommandHandler:
         * ``allow <tool>`` / ``deny <tool>``: pre-authorization switches. Sensitive
           tools (web search, local file reading) are disabled by default and enabled
           explicitly here; the setting is persisted in config.json. This removes the
-          need to confirm every single invocation: the task specification permits a
+          need to confirm every single invocation: the design specification permits a
           session-level authorization tier, and it suits the fast loop of a local
           small model better than per-call confirmation.
         * ``steps <1-8>``: tool-call step limit.
@@ -1081,7 +1082,7 @@ class CommandHandler:
         * 无参数 / ``list``：当前模式、步数上限、工具清单（含权限与启用状态）；
         * ``allow <工具>`` / ``deny <工具>``：预授权开关。敏感工具（联网搜索、
           读本机文件）默认关闭，用户在这里显式打开；写进 config.json 持久生效。
-          这样"每一次调用都弹窗确认"就不需要了 —— 任务书允许"会话级授权"这一档，
+          这样"每一次调用都弹窗确认"就不需要了 —— 设计规范允许"会话级授权"这一档，
           而它比每次确认更适合本地小模型的快节奏循环。
         * ``steps <1-8>``：工具调用步数上限。
         * ``on`` / ``off``：等价于 ``/mode agent`` 与 ``/mode chat``（Agent 是一种
@@ -1418,7 +1419,7 @@ class CommandHandler:
     def _about(_args: list) -> Response:
         """
         [EN]
-        ``/about``: version, publisher, and compliance documents (task specification
+        ``/about``: version, publisher, and compliance documents (design specification
         fix 5 requires the about page to show license links).
 
         The license and privacy documents are distributed with the release package
@@ -1428,7 +1429,7 @@ class CommandHandler:
         The repository address is also given for online reference.
 
         [ZH]
-        ``/about``：版本号、出品方与合规文档（任务书修复五要求"关于页面展示许可证链接"）。
+        ``/about``：版本号、出品方与合规文档（设计规范修复五要求"关于页面展示许可证链接"）。
 
         许可证与隐私文档随发布包一起分发（外层根目录的 LICENSE/NOTICE 与 docs\\ 下的
         PRIVACY/EULA/THIRD_PARTY_LICENSES/SBOM），因此这里给出本机实际路径，
@@ -1444,9 +1445,10 @@ class CommandHandler:
             data_root = program = ""
         lines = [
             f"✨ {APP_NAME} {APP_VERSION}",
-            # [EN] /about is the canonical place for the complete attribution: use the
-            # [EN] full form on first occurrence (Chinese: 熵寂工作室（Void-Entropia-Studio）);
-            # [EN] all other locations use the short form.
+            # [EN] /about is the canonical place for the complete attribution: use
+            # [EN] the full form on first occurrence (the localized studio name,
+            # [EN] with "Void-Entropia-Studio" in parentheses); all other
+            # [EN] locations use the short form.
             # [ZH] /about 是"何处出现完整署名"的规范位置，用首次完整形式
             # [ZH] （中文：熵寂工作室（Void-Entropia-Studio））；其余位置用简称。
             f"Powered by {t('app.studio_full')}",

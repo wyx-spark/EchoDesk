@@ -54,10 +54,10 @@ log = logging.getLogger("EchoDesk.LLM")
 #: cannot distinguish "no output yet" from "stalled". A heartbeat every 1.5 seconds
 #: removes that ambiguity without flooding the protocol (a long reply remains
 #: bounded to a few hundred heartbeat messages).
-#: [ZH] 流式读取时"无新 token 即发心跳"的默认间隔（秒）。prefill 阶段慢、decode
-#: 阶段快，纯 CPU 环境下首 token 可能需要等待十几秒，界面无法区分"暂无输出"与
-#: "已卡死"。每 1.5 秒发送一次心跳可消除该歧义，又不会使协议消息量失控（一次长回复
-#: 的心跳数量上限约为数百条）。
+#: [ZH] 流式读取时"无新 token 即发心跳"的默认间隔（秒）。prefill 阶段慢、
+#: [ZH] decode 阶段快，纯 CPU 环境下首 token 可能需要等待十几秒，界面无法区分
+#: [ZH] "暂无输出"与"已卡死"。每 1.5 秒发送一次心跳可消除该歧义，又不会使协议
+#: [ZH] 消息量失控（一次长回复的心跳数量上限约为数百条）。
 DEFAULT_HEARTBEAT_SECONDS = 1.5
 
 #: [EN] Dedicated marker for heartbeat events in the channel stream:
@@ -66,8 +66,8 @@ DEFAULT_HEARTBEAT_SECONDS = 1.5
 #: splitter never sees it (otherwise a heartbeat would be treated as untagged body
 #: text and fed into the answer channel).
 #: [ZH] 心跳事件在通道流中的专用标记：``(HEARTBEAT, "")``。它并非模型输出，
-#: :meth:`LLMEngine.chat_stream_split` 仅将其作为信号转发，分离器不会看到它
-#: （否则心跳会被当作"无标签的正文"送入回答通道）。
+#: [ZH] :meth:`LLMEngine.chat_stream_split` 仅将其作为信号转发，分离器不会看到它
+#: [ZH] （否则心跳会被当作"无标签的正文"送入回答通道）。
 HEARTBEAT = "heartbeat"
 
 #: [EN] Sentinel used internally by the generator: the reader thread has finished,
@@ -214,8 +214,8 @@ class LLMEngine:
         # None (for example from a third-party or test construction) defaults to
         # enabled, preserving backward compatibility with the previous behavior.
         # [ZH] 思考内容分离（config.reasoning）：`enabled` 控制是否分流，`tags` 为
-        # 追加标签表。传入 None（例如第三方或测试代码构造）时按默认开启处理，与旧行为
-        # 向后兼容。
+        # [ZH] 追加标签表。传入 None（例如第三方或测试代码构造）时按默认开启处理，
+        # [ZH] 与旧行为向后兼容。
         self.reasoning_enabled = bool(getattr(reasoning, "enabled", True))
         self.reasoning_tags = normalize_tags(getattr(reasoning, "tags", None))
         # [EN] Model training window, read from GGUF metadata without loading the model.
@@ -474,8 +474,8 @@ class LLMEngine:
         """
         self.reload(model_path, n_ctx)
 
-    # ---------- [EN] Model information and cache management ----------
-    # ---------- [ZH] 模型信息与缓存管理 ----------
+    # [EN] ---------- Model information and cache management ----------
+    # [ZH] ---------- 模型信息与缓存管理 ----------
 
     def model_info(self) -> Dict[str, str]:
         """
@@ -540,8 +540,8 @@ class LLMEngine:
             pass
         return False
 
-    # ---------- [EN] Conversation ----------
-    # ---------- [ZH] 对话 ----------
+    # [EN] ---------- Conversation ----------
+    # [ZH] ---------- 对话 ----------
 
     def make_splitter(self) -> Optional[ReasoningSplitter]:
         """
@@ -662,7 +662,7 @@ class LLMEngine:
         # omitted, do not forward them, so llama.cpp applies its own defaults and
         # the previous behavior is preserved.
         # [ZH] 预设档位可能需要 top_p 与重复惩罚；未指定时不传递，让 llama.cpp 使用
-        # 自身默认值，以与旧行为保持一致。
+        # [ZH] 自身默认值，以与旧行为保持一致。
         if top_p is not None:
             kwargs["top_p"] = float(top_p)
         if repeat_penalty is not None:
@@ -808,11 +808,11 @@ class LLMEngine:
         #: is delivered additionally, slowing the stop semantics.
         #: [ZH] 停止信号被发现时，读者线程已经从底层取得的那一块的序号。
         #:
-        #: 之所以需要如此细的粒度：读者线程会领先于消费者，停止信号置位时，其手上的
-        #: 那一块已被底层"生成"完成（对桩引擎而言 ``on_piece`` 已回调）。该块及其之后
-        #: 的所有块都不属于"用户已经看到的内容"，必须丢弃；其之前的块才计入，必须照常
-        #: 交付。否则要么丢失用户已看到的思考内容（回归用例），要么多交付一块用户根本
-        #: 来不及看到的内容（使停止语义变慢）。
+        #: [ZH] 之所以需要如此细的粒度：读者线程会领先于消费者，停止信号置位时，
+        #: [ZH] 其手上的那一块已被底层"生成"完成（对桩引擎而言 ``on_piece`` 已回调）。
+        #: [ZH] 该块及其之后的所有块都不属于"用户已经看到的内容"，必须丢弃；其之前
+        #: [ZH] 的块才计入，必须照常交付。否则要么丢失用户已看到的思考内容（回归用例），
+        #: [ZH] 要么多交付一块用户根本来不及看到的内容（使停止语义变慢）。
         drop_from: List[int] = []
 
         def reader() -> None:
@@ -831,7 +831,7 @@ class LLMEngine:
                     # memory usage (otherwise a fast model would grow the queue
                     # without limit).
                     # [ZH] 有界队列：模型产出快于界面消费时，此处会短暂阻塞读者线程，
-                    # 从而限制内存占用（否则高速模型会使队列无限增长）。
+                    # [ZH] 从而限制内存占用（否则高速模型会使队列无限增长）。
                     pending.put(("delta", delta, index))
                     index += 1
             # [EN] Rethrown unchanged on the consumer side.
@@ -860,7 +860,7 @@ class LLMEngine:
                 # heartbeat only indicates that work is still in progress; how it is
                 # displayed is decided by the frontend.
                 # [ZH] 无新 token：这段静默可能来自 prefill，也可能是模型解码较慢。心跳
-                # 仅表示仍在工作，具体展示方式由前端决定。
+                # [ZH] 仅表示仍在工作，具体展示方式由前端决定。
                 if error_box:
                     raise error_box[0]
                 yield ("heartbeat", None)
@@ -870,7 +870,7 @@ class LLMEngine:
             # stop signal was observed: truncate at drop_from, delivering content
             # produced before the stop and discarding everything after it.
             # [ZH] 队列中的内容可能已排到"发现停止信号时的那个块"之后：按 drop_from
-            # 截断，如实交付停止前产出的内容，丢弃其后的内容。
+            # [ZH] 截断，如实交付停止前产出的内容，丢弃其后的内容。
             if kind == _EOF:
                 if error_box:
                     raise error_box[0]
@@ -936,7 +936,8 @@ class LLMEngine:
                     # elapsed". The empty payload only signals that metrics should
                     # be refreshed; the caller dispatches on `kind`.
                     # [ZH] 心跳期间刷新指标（前端据此显示"已生成 N 字 / 已用时 N 秒"）。
-                    # 产出空串仅用于向上层发出"需要刷新指标"的信号，上层按 kind 处理。
+                    # [ZH] 产出空串仅用于向上层发出"需要刷新指标"的信号，上层按 kind
+                    # [ZH] 处理。
                     if stats is not None:
                         stats.elapsed_ms = int((time.perf_counter() - started) * 1000)
                         stats.output_chars = produced
@@ -1071,7 +1072,7 @@ class LLMEngine:
                 # them as untagged body text, so prefill-phase heartbeats would fill
                 # the answer area with empty paragraphs.
                 # [ZH] 心跳不送入分离器：送入后会被当作"无标签的正文"，导致 prefill
-                # 阶段的心跳把回答区填充为空段落。
+                # [ZH] 阶段的心跳把回答区填充为空段落。
                 yield (HEARTBEAT, "")
                 continue
             for event in splitter.feed(piece):
@@ -1213,8 +1214,8 @@ class LazyLLMEngine(LLMEngine):
         self.llm = None
         log.info("未加载模型：进入无模型就绪状态（可推理功能暂不可用，其余功能正常）")
 
-    # ---------- [EN] State ----------
-    # ---------- [ZH] 状态 ----------
+    # [EN] ---------- State ----------
+    # [ZH] ---------- 状态 ----------
 
     @property
     def ready(self) -> bool:
@@ -1295,8 +1296,8 @@ class LazyLLMEngine(LLMEngine):
             raise NoModelError("模型路径为空")
         self.load(target, n_ctx)
 
-    # ---------- [EN] Entry points that touch the underlying Llama object ----------
-    # ---------- [ZH] 会访问底层 Llama 对象的入口 ----------
+    # [EN] ---------- Entry points that touch the underlying Llama object ----------
+    # [ZH] ---------- 会访问底层 Llama 对象的入口 ----------
 
     def chat_complete(
         self,

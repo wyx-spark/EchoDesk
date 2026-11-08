@@ -172,7 +172,7 @@
       "sectionAppearance": "外观",
       "themeHelp": "切换深色/浅色界面（也可用 /darkmode on|off）",
       "fontSize": "界面字号",
-      "sectionLanguage": "语言 / Language",
+      "sectionLanguage": "语言",
       "language": "界面语言",
       "languageHelp": "切换后界面、错误提示与指令帮助立即生效，无需重启。选择结果记录在 ui_state.json。",
       "languageAuto": "自动（跟随系统区域）",

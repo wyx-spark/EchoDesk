@@ -1,31 +1,76 @@
 // [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/Settings/AutomationPage.axaml.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/Settings/AutomationPage.axaml.cs。类型与成员说明见下方注释。
-// 自动化页的交互逻辑（v0.2.1 跨平台-2 任务一，第 7 个迁移模块）。
-//
-// 后端动作：
-//   automation_config      → { automation: { …20 个字段… } }
-//   automation_config_set  { automation: patch } → { content, automation }
-//   automation_run / stop / automation_status / automation_clear_login
-//
-// **任务十七（自测问题修复-1）新增的四个动作**（都在本页下半部分的"可视化选取"块里）：
-//   automation_browser_reuse          → { browser_reuse: { …能力与配置… } }（可带 set 写回）
-//   automation_launch_debug_browser   → { browser_debug: { ok, command, message } }
-//   automation_pick_open/begin/status/cancel/close
-//                                     → { pick: { state, … } }（两段式状态机，后端持有）
-//
-// 两段式的分工（任务书第 4 条）：**状态机在后端**，前端只做两件事——
-//   ① 按 `pick.state` 决定哪些按钮可用、显示后端回传的文案；
-//   ② 选取中用 DispatcherTimer 轮询 `automation_pick_status`（后端借这次轮询去页面上
-//      收结果）。这样"脚本到底注入了没有"这个事实永远与界面一致，切换设置页也不会丢状态。
-//
-// **平台降级（任务书明确要求）**：自动化依赖本机 Edge 的受控启动，
-// 是 EchoDesk 在非 Windows 上的两条降级边界之一。本页在那些平台上：
-//   ① 顶部横幅说明原因**与替代做法**（不把平台限制说成"没装 Playwright"这类依赖缺失）；
-//   ② 全部输入禁用 —— 让人填一整套配置却永远跑不起来，比直接说明不可用更糟；
-//   ③ 后端还会再拒绝一次（平台检查在 automation.validate 里），前端只是不让人白填。
-//
-// 保存走 `ApplyToBackendAsync()`：这正是"设置窗口骨架的保存按钮 → 各页自己同步业务设置"
-// 这条契约的用途（界面设置归 ui_state.json，业务设置归后端 config.json）。
+// [EN] Interaction logic of the automation page (v0.2.1 cross-platform batch 2,
+// [EN] development task 1; the seventh migrated module).
+// [ZH] 自动化页的交互逻辑（v0.2.1 跨平台-2 任务一，第 7 个迁移模块）。
+// [EN]
+// [EN] Backend actions:
+// [ZH]
+// [ZH] 后端动作：
+// [EN]   automation_config      → { automation: { ...20 fields... } }
+// [EN]   automation_config_set  { automation: patch } → { content, automation }
+// [EN]   automation_run / stop / automation_status / automation_clear_login
+// [ZH]   automation_config      → { automation: { …20 个字段… } }
+// [ZH]   automation_config_set  { automation: patch } → { content, automation }
+// [ZH]   automation_run / stop / automation_status / automation_clear_login
+// [EN]
+// [EN] The four actions added by development task 17 (self-test fix 1), all in the
+// [EN] "visual picking" block in the lower half of this page:
+// [ZH]
+// [ZH] **任务十七（自测问题修复-1）新增的四个动作**（都在本页下半部分的“可视化选取”块里）：
+// [EN]   automation_browser_reuse          → { browser_reuse: { ...capability and config... } }
+// [EN]                                     (may carry set to write back)
+// [EN]   automation_launch_debug_browser   → { browser_debug: { ok, command, message } }
+// [EN]   automation_pick_open/begin/status/cancel/close
+// [EN]                                     → { pick: { state, ... } } (two-stage state
+// [EN]                                       machine, owned by the backend)
+// [ZH]   automation_browser_reuse          → { browser_reuse: { …能力与配置… } }（可带 set 写回）
+// [ZH]   automation_launch_debug_browser   → { browser_debug: { ok, command, message } }
+// [ZH]   automation_pick_open/begin/status/cancel/close
+// [ZH]                                     → { pick: { state, … } }（两段式状态机，后端持有）
+// [EN]
+// [EN] Division of labor in the two-stage flow (item 4 of the design specification):
+// [EN] **the state machine lives in the backend**; the front end does only two things:
+// [EN]   1. decide from `pick.state` which buttons are enabled, and show the text
+// [EN]      returned by the backend;
+// [EN]   2. while picking, poll `automation_pick_status` with a DispatcherTimer (the
+// [EN]      backend collects the result from the page during this poll). This keeps the
+// [EN]      fact "was the script injected or not" consistent with the UI at all times,
+// [EN]      and switching settings pages does not lose the state.
+// [ZH]
+// [ZH] 两段式的分工（设计规范第 4 条）：**状态机在后端**，前端只做两件事——
+// [ZH]   ① 按 `pick.state` 决定哪些按钮可用、显示后端回传的文案；
+// [ZH]   ② 选取中用 DispatcherTimer 轮询 `automation_pick_status`（后端借这次轮询
+// [ZH]      去页面上收结果）。这样“脚本到底注入了没有”这个事实永远与界面一致，
+// [ZH]      切换设置页也不会丢状态。
+// [EN]
+// [EN] **Platform degradation (explicitly required by the design specification)**:
+// [EN] automation depends on the controlled startup of the local Edge and is one of the
+// [EN] two degradation boundaries of EchoDesk on non-Windows systems. On those platforms
+// [EN] this page:
+// [EN]   1. states the reason **and the alternative** in a top banner (a platform limit
+// [EN]      is not presented as a missing dependency such as "Playwright not installed");
+// [EN]   2. disables all inputs — letting people fill in a whole configuration that can
+// [EN]      never run is worse than stating outright that it is unavailable;
+// [EN]   3. is rejected once more by the backend (the platform check lives in
+// [EN]      automation.validate); the front end merely prevents pointless data entry.
+// [ZH]
+// [ZH] **平台降级（设计规范明确要求）**：自动化依赖本机 Edge 的受控启动，
+// [ZH] 是 EchoDesk 在非 Windows 上的两条降级边界之一。本页在那些平台上：
+// [ZH]   ① 顶部横幅说明原因**与替代做法**（不把平台限制说成“没装 Playwright”
+// [ZH]      这类依赖缺失）；
+// [ZH]   ② 全部输入禁用 —— 让人填一整套配置却永远跑不起来，比直接说明不可用更糟；
+// [ZH]   ③ 后端还会再拒绝一次（平台检查在 automation.validate 里），前端只是不让人
+// [ZH]      白填。
+// [EN]
+// [EN] Saving goes through `ApplyToBackendAsync()`: this is exactly the purpose of the
+// [EN] contract "the save button of the settings window shell → each page syncs its own
+// [EN] business settings" (UI settings live in ui_state.json, business settings live in
+// [EN] the backend config.json).
+// [ZH]
+// [ZH] 保存走 `ApplyToBackendAsync()`：这正是“设置窗口骨架的保存按钮 → 各页自己
+// [ZH] 同步业务设置”这条契约的用途（界面设置归 ui_state.json，业务设置归后端
+// [ZH] config.json）。
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
@@ -42,41 +87,78 @@ namespace EchoDesk.Avalonia.Views.Settings;
 
 public partial class AutomationPage : UserControl, ISettingsPage
 {
-    /// <summary>安全协议版本（与 WPF 版一致；后端据此判断用户接受的是哪一版协议）。</summary>
+    /// <summary>
+    /// [EN] Safety protocol version (consistent with the WPF version; the backend uses
+    /// [EN] it to tell which version of the protocol the user accepted).
+    /// [ZH] 安全协议版本（与 WPF 版一致；后端据此判断用户接受的是哪一版协议）。
+    /// </summary>
     private const string SafetyVersion = "1.0";
 
-    /// <summary>选取目标取值（与后端 _PICK_PURPOSE 的键一致；顺序即界面顺序）。</summary>
+    /// <summary>
+    /// [EN] Values of the pick target (identical to the keys of `_PICK_PURPOSE` in the
+    /// [EN] backend; the order is the UI order).
+    /// [ZH] 选取目标取值（与后端 _PICK_PURPOSE 的键一致；顺序即界面顺序）。
+    /// </summary>
     private static readonly string[] PickTargets =
         { "task_list", "task_row", "next_page", "task_detail_file", "login_check" };
 
-    /// <summary>浏览器取值（与后端 automation.BROWSER_CHOICES / AUTO_ORDER 一致）。</summary>
+    /// <summary>
+    /// [EN] Values of the browser choice (consistent with automation.BROWSER_CHOICES and
+    /// [EN] AUTO_ORDER in the backend).
+    /// [ZH] 浏览器取值（与后端 automation.BROWSER_CHOICES / AUTO_ORDER 一致）。
+    /// </summary>
     private static readonly string[] BrowserChoices = { "auto", "edge", "chrome", "chromium", "firefox" };
 
-    /// <summary>复用策略取值（与后端 automation.REUSE_MODES 一致）。</summary>
+    /// <summary>
+    /// [EN] Values of the reuse policy (consistent with automation.REUSE_MODES in the
+    /// [EN] backend).
+    /// [ZH] 复用策略取值（与后端 automation.REUSE_MODES 一致）。
+    /// </summary>
     private static readonly string[] ReuseModes = { "auto", "required", "off" };
 
     private ISettingsHost? _host;
     private bool _loading;
     private bool _available = true;
 
-    /// <summary>"选取中"的轮询定时器：后端没有后台线程，结果靠这里的心跳收回来。</summary>
+    /// <summary>
+    /// [EN] Polling timer for "picking in progress": the backend has no background
+    /// [EN] thread, so results come back through this heartbeat.
+    /// [ZH] “选取中”的轮询定时器：后端没有后台线程，结果靠这里的心跳收回来。
+    /// </summary>
     private readonly DispatcherTimer _pickTimer = new() { Interval = TimeSpan.FromMilliseconds(700) };
     private bool _pickPolling;
 
-    /// <summary>后端最近一次回传的选取状态原文，用于"复制命令"之类只读展示。</summary>
+    /// <summary>
+    /// [EN] Raw pick state last returned by the backend, used for read-only display
+    /// [EN] such as "copy command".
+    /// [ZH] 后端最近一次回传的选取状态原文，用于“复制命令”之类只读展示。
+    /// </summary>
     private string _debugCommand = "";
 
     /// <summary>
-    /// 正在用代码填写下拉框（FillCombo）时为真。
+    /// [EN] True while the dropdowns are being filled by code (FillCombo).
     ///
-    /// 为什么必须有这个标志：给 ComboBox 设 SelectedIndex 会触发 SelectionChanged，
-    /// 而那个事件是会**写回后端配置**的。界面刚打开时 ApplyTexts 先用默认值填一遍、
-    /// RefreshAsync 再用配置里的真实值填一遍——若不挡住，第一遍那次"默认 auto"
-    /// 会先把用户配置好的浏览器覆盖成 auto，等他看到界面时配置已经被自己改掉了。
+    /// [EN] Why this flag is necessary: setting SelectedIndex on a ComboBox raises
+    /// [EN] SelectionChanged, and that event **writes back to the backend
+    /// [EN] configuration**. When the page opens, ApplyTexts first fills in default
+    /// [EN] values and RefreshAsync then fills in the real values from the
+    /// [EN] configuration; without this guard the first pass ("default auto") would
+    /// [EN] overwrite the browser the user configured, and by the time the UI becomes
+    /// [EN] visible the configuration would already have been changed.
+    /// [ZH] 正在用代码填写下拉框（FillCombo）时为真。
+    ///
+    /// [ZH] 为什么必须有这个标志：给 ComboBox 设 SelectedIndex 会触发
+    /// [ZH] SelectionChanged，而那个事件是会**写回后端配置**的。界面刚打开时
+    /// [ZH] ApplyTexts 先用默认值填一遍、RefreshAsync 再用配置里的真实值填一遍——
+    /// [ZH] 若不挡住，第一遍那次“默认 auto”会先把用户配置好的浏览器覆盖成 auto，
+    /// [ZH] 等他看到界面时配置已经被自己改掉了。
     /// </summary>
     private bool _fillingCombos;
 
-    /// <summary>所有输入控件：非 Windows 上统一禁用（见文件头）。</summary>
+    /// <summary>
+    /// [EN] All input controls: disabled uniformly on non-Windows (see the file header).
+    /// [ZH] 所有输入控件：非 Windows 上统一禁用（见文件头）。
+    /// </summary>
     private List<Control> _inputs = new();
 
     public AutomationPage()
@@ -92,12 +174,18 @@ public partial class AutomationPage : UserControl, ISettingsPage
             ScheduleCheck, ScheduleTimesBox,
             LoginStateDirBox, LoginCheckSelectorBox, LoginKeywordsBox,
             ClearLoginStateButton, SaveConfigButton, RunOnceButton,
-            // 任务十七新增的控件也纳入平台降级（非 Windows 上自动化整体不可用）
+            // [EN] Controls added by development task 17 are also part of the platform
+            // [EN] degradation (automation is entirely unavailable on non-Windows).
+            // [ZH] 任务十七新增的控件也纳入平台降级（非 Windows 上自动化整体不可用）
             BrowserChoiceBox, ReuseModeBox, CdpPortBox, PickTargetBox,
             PickOpenButton, PickBeginButton, PickCancelButton, PickCloseButton,
             LaunchDebugBrowserButton, PickReloadTabButton,
-            // v0.2.2 第 2 批新增的控件同样属于"自动化能力"：非 Windows 上一起禁用，
-            // 免得让人填完模板、跑完向导才发现整页跑不起来。
+            // [EN] The controls added in batch 2 of v0.2.2 belong to the same
+            // [EN] "automation capability": they are disabled together on non-Windows, so
+            // [EN] that nobody fills in a template and runs the wizard only to find that
+            // [EN] the entire page cannot work.
+            // [ZH] v0.2.2 第 2 批新增的控件同样属于“自动化能力”：非 Windows 上一起禁用，
+            // [ZH] 免得让人填完模板、跑完向导才发现整页跑不起来。
             TemplateCombo, ApplyTemplateButton, SaveTemplateButton,
             TestSelectorButton, OpenResultsButton, BrowseResultsButton,
             WizardButton, WizardStep1Button, WizardStep2Button, WizardStep3Button,
@@ -109,19 +197,29 @@ public partial class AutomationPage : UserControl, ISettingsPage
         RunOnceButton.Click += async (_, _) => await RunOnceAsync();
         StopAutomationButton.Click += async (_, _) => await StopAsync();
         ClearLoginStateButton.Click += async (_, _) => await ClearLoginAsync();
-        // 结果目录预览：任一相关字段变化就更新（不请求后端，纯本地拼路径）。
+        // [EN] Results directory preview: updated whenever a relevant field changes
+        // [EN] (no backend request; the path is assembled locally).
+        // [ZH] 结果目录预览：任一相关字段变化就更新（不请求后端，纯本地拼路径）。
         ResultsLocationBox.TextChanged += (_, _) => UpdateResultsPreview();
         ResultsRootNameBox.TextChanged += (_, _) => UpdateResultsPreview();
         TaskNameBox.TextChanged += (_, _) => UpdateResultsPreview();
 
-        // ---- v0.2.2 第 2 批：安全协议联动 / 结果目录 / 登录态 / 模板 / 字段帮助 /
-        //      测试选择器 / 测试向导 / 配置导入导出 ----
-        // 安全协议 ↔ 总开关联动：没接受协议就禁用总开关并强制取消（对齐 WPF 的 SyncSafetyUi）
+        // [EN] ---- v0.2.2 batch 2: safety protocol linkage / results directory / login
+        // [EN]      state / templates / field help / selector test / test wizard /
+        // [EN]      configuration import and export ----
+        // [ZH] ---- v0.2.2 第 2 批：安全协议联动 / 结果目录 / 登录态 / 模板 /
+        // [ZH]      字段帮助 / 测试选择器 / 测试向导 / 配置导入导出 ----
+        // [EN] Safety protocol ↔ master switch linkage: without an accepted protocol the
+        // [EN] master switch is disabled and forced off (aligned with SyncSafetyUi in WPF).
+        // [ZH] 安全协议 ↔ 总开关联动：没接受协议就禁用总开关并强制取消（对齐 WPF 的
+        // [ZH] SyncSafetyUi）
         SafetyCheck.IsCheckedChanged += (_, _) => SyncSafetyUi();
         OpenResultsButton.Click += async (_, _) => await OpenResultsAsync();
         BrowseResultsButton.Click += async (_, _) => await BrowseResultsAsync();
         TestSelectorButton.Click += async (_, _) => await TestSelectorAsync();
-        TemplateCombo.SelectionChanged += (_, _) => { /* 只在点「套用模板」时才写入 */ };
+        // [EN] Written only when "Apply template" is clicked.
+        // [ZH] 只在点「套用模板」时才写入。
+        TemplateCombo.SelectionChanged += (_, _) => {  };
         ApplyTemplateButton.Click += (_, _) => ApplySelectedTemplate();
         SaveTemplateButton.Click += (_, _) => ToggleSaveTemplateForm(true);
         SaveTemplateConfirmButton.Click += async (_, _) => await SaveTemplateAsync();
@@ -135,7 +233,9 @@ public partial class AutomationPage : UserControl, ISettingsPage
         WizardResultCloseButton.Click += (_, _) => WizardResultPanel.IsVisible = false;
         ExportConfigButton.Click += async (_, _) => await ExportConfigAsync();
         ImportConfigButton.Click += async (_, _) => await ImportConfigAsync();
-        // 逐字段「?」：点开显示说明（Avalonia 侧统一走骨架右侧的字段帮助面板）
+        // [EN] Per-field "?": clicking opens the explanation (on the Avalonia side it
+        // [EN] always goes to the field help panel on the right of the shell).
+        // [ZH] 逐字段「?」：点开显示说明（Avalonia 侧统一走骨架右侧的字段帮助面板）
         foreach (Button help in new[]
                  {
                      HelpTaskListUrlButton, HelpTaskListSelector, HelpTaskRowSelector,
@@ -147,7 +247,9 @@ public partial class AutomationPage : UserControl, ISettingsPage
             ToolTip.SetTip(help, Loc.T("settings.automation.fieldHelpTip", "查看填写说明"));
             help.Click += (_, _) => ShowFieldHelp((help.Tag as string) ?? "");
         }
-        // 输入框获得焦点时把字段说明切到该字段（WPF 的 AutomationField_GotFocus 同一行为）
+        // [EN] When an input box gains focus, switch the field explanation to that field
+        // [EN] (the same behavior as AutomationField_GotFocus in WPF).
+        // [ZH] 输入框获得焦点时把字段说明切到该字段（WPF 的 AutomationField_GotFocus 同一行为）
         foreach (TextBox box in new[]
                  {
                      TaskUrlBox, TaskSelectorBox, TaskRowBox, NextPageBox, FileSelectorBox,
@@ -158,15 +260,23 @@ public partial class AutomationPage : UserControl, ISettingsPage
             box.GotFocus += (_, _) => ShowFieldHelp((box.Tag as string) ?? "");
         }
 
-        // ---- 任务十七：可视化选取与浏览器复用 ----
+        // [EN] ---- Development task 17: visual picking and browser reuse ----
+        // [ZH] ---- 任务十七：可视化选取与浏览器复用 ----
         PickOpenButton.Click += async (_, _) => await PickStepAsync("open");
         PickBeginButton.Click += async (_, _) => await PickStepAsync("begin");
         PickCancelButton.Click += async (_, _) => await PickStepAsync("cancel");
         PickCloseButton.Click += async (_, _) => await PickStepAsync("close");
-        PickReloadTabButton.Click += async (_, _) => await PickStepAsync("open");   // 重新取"当前标签页"
+        // [EN] Re-reads the "current tab".
+        // [ZH] 重新取“当前标签页”。
+        PickReloadTabButton.Click += async (_, _) => await PickStepAsync("open");
         LaunchDebugBrowserButton.Click += async (_, _) => await LaunchDebugBrowserAsync();
-        // 选了别的浏览器/复用方式就立刻写回后端：这两个开关决定"这次会不会复用成功"，
-        // 等用户去点整个页面的「保存」再生效太绕（页脚保存按钮仍会再同步一次，幂等）。
+        // [EN] Once another browser or reuse mode is selected, write it back to the
+        // [EN] backend immediately: these two switches decide whether the next reuse
+        // [EN] succeeds, and waiting for the user to click "Save" on the whole page is
+        // [EN] too indirect (the save button in the footer still syncs once more;
+        // [EN] the operation is idempotent).
+        // [ZH] 选了别的浏览器/复用方式就立刻写回后端：这两个开关决定“这次会不会复用成功”，
+        // [ZH] 等用户去点整个页面的「保存」再生效太绕（页脚保存按钮仍会再同步一次，幂等）。
         BrowserChoiceBox.SelectionChanged += async (_, _) => await SaveReuseSettingsAsync();
         ReuseModeBox.SelectionChanged += async (_, _) => await SaveReuseSettingsAsync();
         CdpPortBox.LostFocus += async (_, _) => await SaveReuseSettingsAsync();
@@ -195,7 +305,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
             control.IsEnabled = enabled;
     }
 
-    /// <summary>给 ComboBox 填"(取值, 显示名)"并选中某个取值（显示名由语言包提供）。</summary>
+    /// <summary>
+    /// [EN] Fills a ComboBox with "(value, display name)" pairs and selects a value (the
+    /// [EN] display name is provided by the language pack).
+    /// [ZH] 给 ComboBox 填“(取值, 显示名)”并选中某个取值（显示名由语言包提供）。
+    /// </summary>
     private void FillCombo(ComboBox box, string[] values, Func<string, string> label, string? current)
     {
         _fillingCombos = true;
@@ -274,7 +388,9 @@ public partial class AutomationPage : UserControl, ISettingsPage
         if (_host is null)
             return;
 
-        // 平台能力：非 Windows 上自动化不可用（降级边界之一）。
+        // [EN] Platform capability: automation is unavailable on non-Windows (one of the
+        // [EN] degradation boundaries).
+        // [ZH] 平台能力：非 Windows 上自动化不可用（降级边界之一）。
         _available = PlatformInfo.Current.IsWindows;
         PlatformBanner.IsVisible = !_available;
         if (!_available)
@@ -288,7 +404,9 @@ public partial class AutomationPage : UserControl, ISettingsPage
                 + "其余功能（对话、文档处理、检索、智能体）在本平台一切正常。");
         }
         SetInputsEnabled(_available);
-        // 停止按钮只在运行时可用，单独处理（这里先按平台能力给值）。
+        // [EN] The stop button is enabled only while running, so it is handled
+        // [EN] separately (here the platform capability value is applied first).
+        // [ZH] 停止按钮只在运行时可用，单独处理（这里先按平台能力给值）。
         StopAutomationButton.IsEnabled = _available;
 
         using JsonDocument? doc = await SendAsync(new { action = "automation_config" });
@@ -304,15 +422,22 @@ public partial class AutomationPage : UserControl, ISettingsPage
         ApplyAutomation(automation);
         UpdateResultsPreview();
         AutomationStatusText.Text = Loc.T("settings.automation.stateIdle", "空闲");
-        // 顺便把"复用能力"、"选取状态"、"登录态"与字段帮助读一次：
-        // 后端持有状态机与帮助文本，界面重新打开时要能恢复显示。
+        // [EN] Also read the "reuse capability", the "pick state", the "login state" and
+        // [EN] the field help once: the backend owns the state machine and the help
+        // [EN] text, so reopening the page must restore their display.
+        // [ZH] 顺便把“复用能力”、“选取状态”、“登录态”与字段帮助读一次：
+        // [ZH] 后端持有状态机与帮助文本，界面重新打开时要能恢复显示。
         await RefreshBrowserReuseAsync();
         await PickStepAsync("status");
         await RefreshLoginStateAsync();
         await LoadAutomationHelpAsync();
     }
 
-    /// <summary>把后端回传的 <c>automation</c> 对象渲染到控件上（配置读取与导入共用）。</summary>
+    /// <summary>
+    /// [EN] Renders the `automation` object returned by the backend onto the controls
+    /// [EN] (shared by configuration loading and import).
+    /// [ZH] 把后端回传的 <c>automation</c> 对象渲染到控件上（配置读取与导入共用）。
+    /// </summary>
     private void ApplyAutomation(JsonElement automation)
     {
         _loading = true;
@@ -351,31 +476,52 @@ public partial class AutomationPage : UserControl, ISettingsPage
         SyncSafetyUi();
     }
 
-    /// <summary>安全协议 ↔ 总开关联动（对齐 WPF 的 SyncSafetyUi）。</summary>
+    /// <summary>
+    /// [EN] Safety protocol ↔ master switch linkage (aligned with SyncSafetyUi in WPF).
+    /// [ZH] 安全协议 ↔ 总开关联动（对齐 WPF 的 SyncSafetyUi）。
+    /// </summary>
     private void SyncSafetyUi()
     {
         bool accepted = SafetyCheck.IsChecked == true;
-        // 没接受协议时把总开关强制取消 + 禁用：不能让人"看着是开着的，其实跑不起来"。
-        // 顺序有意如此：先取消勾选再禁用，否则控件会停在"禁用但仍显示勾选"的状态。
+        // [EN] When the protocol is not accepted, force the master switch off and
+        // [EN] disable it: the user must not see it "on" while it cannot run.
+        // [ZH] 没接受协议时把总开关强制取消 + 禁用：不能让人“看着是开着的，
+        // [ZH] 其实跑不起来”。
+        // [EN] The order is intentional: clear the check first, then disable; otherwise
+        // [EN] the control would remain "disabled but still checked".
+        // [ZH] 顺序有意如此：先取消勾选再禁用，否则控件会停在“禁用但仍显示勾选”
+        // [ZH] 的状态。
         if (!accepted && AutomationEnabledCheck.IsChecked == true)
             AutomationEnabledCheck.IsChecked = false;
         AutomationEnabledCheck.IsEnabled = _available && accepted;
 
         if (!accepted && !string.IsNullOrEmpty(AutomationStatusText.Text))
         {
-            // 只在已经有状态时补一句原因，避免页面刚打开就刷满提示
+            // [EN] Add a reason only when a status already exists, so the page does not
+            // [EN] flood the area with notices right after opening.
+            // [ZH] 只在已经有状态时补一句原因，避免页面刚打开就刷满提示
             AutomationStatusText.Text = Loc.T("settings.automation.safetyDisabled",
                 "未接受安全协议：自动化已关闭且不可启用");
         }
     }
     /// <summary>
-    /// 结果目录预览（对齐 WPF 的 UpdateResultsPreview）。
+    /// [EN] Results directory preview (aligned with UpdateResultsPreview in WPF).
     ///
-    /// **占位符必须是 4 个**：语言包里的 `settings.automation.resultsPreview` 是
-    /// "目录结构：{0}\{1}\{2}\{3}\（…）"（程序根 / 结果目录名 / 日期 / 任务名）。
-    /// 这里此前只传了 3 个，`Loc.T` 的 `string.Format` 抛 `FormatException` 后
-    /// 走 catch 返回**原模板**——于是界面上显示的是一串 `{0}\{1}\{2}\{3}` 字面量。
-    /// 本轮（第 2 批）按 WPF 的参数个数与顺序改对，并补上日期那一层。
+    /// [EN] **The number of placeholders must be 4**: `settings.automation.resultsPreview`
+    /// [EN] in the language pack is "directory structure: {0}\{1}\{2}\{3}\ (...)"
+    /// [EN] (program root / results directory name / date / task name).
+    /// [EN] This method previously passed only 3, so `string.Format` inside `Loc.T` threw
+    /// [EN] `FormatException` and the catch branch returned **the raw template**; the UI
+    /// [EN] then showed a string of `{0}\{1}\{2}\{3}` literals.
+    /// [EN] In this round (batch 2) the arguments were corrected to the count and order
+    /// [EN] used by WPF, and the date level was added.
+    /// [ZH] 结果目录预览（对齐 WPF 的 UpdateResultsPreview）。
+    ///
+    /// [ZH] **占位符必须是 4 个**：语言包里的 `settings.automation.resultsPreview` 是
+    /// [ZH] “目录结构：{0}\{1}\{2}\{3}\（…）”（程序根 / 结果目录名 / 日期 / 任务名）。
+    /// [ZH] 这里此前只传了 3 个，`Loc.T` 的 `string.Format` 抛 `FormatException` 后
+    /// [ZH] 走 catch 返回**原模板**——于是界面上显示的是一串 `{0}\{1}\{2}\{3}` 字面量。
+    /// [ZH] 本轮（第 2 批）按 WPF 的参数个数与顺序改对，并补上日期那一层。
     /// </summary>
     private void UpdateResultsPreview()
     {
@@ -395,7 +541,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
             location, root, $"{DateTime.Now:yyyy-MM-dd}", task);
     }
 
-    /// <summary>收集当前控件值 → patch（字段名与 WPF 版逐一对齐）。</summary>
+    /// <summary>
+    /// [EN] Collects the current control values into a patch (field names match the WPF
+    /// [EN] version one by one).
+    /// [ZH] 收集当前控件值 → patch（字段名与 WPF 版逐一对齐）。
+    /// </summary>
     private Dictionary<string, object?> BuildPatch() => new()
     {
         ["safety_accepted"] = SafetyCheck.IsChecked == true,
@@ -421,7 +571,9 @@ public partial class AutomationPage : UserControl, ISettingsPage
         ["login_state_dir"] = (LoginStateDirBox.Text ?? "").Trim(),
         ["login_check_selector"] = (LoginCheckSelectorBox.Text ?? "").Trim(),
         ["login_url_keywords"] = (LoginKeywordsBox.Text ?? "").Trim(),
-        // 任务十七：浏览器与复用设置也在同一次保存里同步（与上面几个字段同一口径）
+        // [EN] Development task 17: browser and reuse settings are synced in the same
+        // [EN] save (the same convention as the fields above).
+        // [ZH] 任务十七：浏览器与复用设置也在同一次保存里同步（与上面几个字段同一口径）
         ["browser"] = ComboValue(BrowserChoiceBox) is { Length: > 0 } value ? value : "auto",
         ["browser_reuse"] = ComboValue(ReuseModeBox) is { Length: > 0 } reuse ? reuse : "auto",
         ["cdp_port"] = ParseInt(CdpPortBox.Text, 9222),
@@ -436,7 +588,9 @@ public partial class AutomationPage : UserControl, ISettingsPage
             return;
         if (AutomationEnabledCheck.IsChecked == true && SafetyCheck.IsChecked != true)
         {
-            // 后端也会拒绝，但在这里先说清楚，省一次往返。
+            // [EN] The backend would reject this as well, but stating it here first saves
+            // [EN] a round trip.
+            // [ZH] 后端也会拒绝，但在这里先说清楚，省一次往返。
             AutomationStatusText.Text = Loc.T("settings.automation.enabledNeedsSafety",
                 "⚠️ 启用自动化前需要先勾选并同意安全协议");
             return;
@@ -449,8 +603,13 @@ public partial class AutomationPage : UserControl, ISettingsPage
         });
         if (doc is null)
         {
-            // 包值是「❌ 保存失败：{0}」；"后端未响应"用现成的 main.error.noResponse，
-            // 不能只写代码兜底——键存在时兜底不生效，界面会露出 {0}（硬编码清查 §5.3 C-1）
+            // [EN] The language-pack value is the "save failed" template; for "backend
+            // [EN] not responding" use the existing main.error.noResponse key. A code-only
+            // [EN] fallback is not enough: while the key exists the fallback never takes
+            // [EN] effect and the UI would expose {0} (hardcoded-text audit §5.3 C-1).
+            // [ZH] 包值是「❌ 保存失败：{0}」；“后端未响应”用现成的 main.error.noResponse，
+            // [ZH] 不能只写代码兜底——键存在时兜底不生效，界面会露出 {0}
+            // [ZH] （硬编码清查 §5.3 C-1）
             AutomationStatusText.Text = Loc.T("settings.automation.saveFailed", "❌ 保存失败：{0}",
                 Loc.T("main.error.noResponse", "无响应"));
             return;
@@ -462,7 +621,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
         AppendLog(AutomationStatusText.Text);
     }
 
-    /// <summary>骨架的保存按钮会调这里（业务设置的同步入口）。</summary>
+    /// <summary>
+    /// [EN] Called by the save button of the shell (the sync entry point for business
+    /// [EN] settings).
+    /// [ZH] 骨架的保存按钮会调这里（业务设置的同步入口）。
+    /// </summary>
     public async Task ApplyToBackendAsync() => await SaveAsync();
 
     private async Task RunOnceAsync()
@@ -476,8 +639,13 @@ public partial class AutomationPage : UserControl, ISettingsPage
             return;
         }
         using JsonDocument? doc = await SendAsync(new { action = "automation_run" });
-        // 两个包值都带占位符：runStarted「▶ 开始运行自动化 — {0}」与 WPF 同一口径（传时刻），
-        // runFailed「❌ 自动化失败：{0}」；不传参就会露出 {0}（硬编码清查 §5.3 C-1）
+        // [EN] Both message-pack values carry placeholders: runStarted is the "starting
+        // [EN] automation" template with {0} for the time, the same convention as WPF;
+        // [EN] runFailed is the "automation failed" template with {0}. Without arguments
+        // [EN] the UI would expose {0} (hardcoded-text audit §5.3 C-1).
+        // [ZH] 两个包值都带占位符：runStarted「▶ 开始运行自动化 — {0}」与 WPF 同一口径
+        // [ZH] （传时刻），runFailed「❌ 自动化失败：{0}」；不传参就会露出 {0}
+        // [ZH] （硬编码清查 §5.3 C-1）
         AutomationStatusText.Text = doc is not null
             ? Loc.T("settings.automation.runStarted", "▶ 开始运行自动化 — {0}",
                 $"{DateTime.Now:HH:mm:ss}")
@@ -510,27 +678,57 @@ public partial class AutomationPage : UserControl, ISettingsPage
     }
 
     // =================================================================
-    // v0.2.2 第 2 批：结果目录 / 登录态 / 模板 / 字段帮助 / 测试选择器 / 测试向导 / 导入导出
+    // [EN] v0.2.2 batch 2: results directory / login state / templates / field help /
+    // [EN] selector test / test wizard / import and export
+    // [ZH] v0.2.2 第 2 批：结果目录 / 登录态 / 模板 / 字段帮助 / 测试选择器 /
+    // [ZH] 测试向导 / 导入导出
     // =================================================================
     //
-    // 全部对齐 WPF（`SettingsWindow.xaml.cs` 与 `SettingsWindow.Skills.cs` 的对应方法），
-    // 用的后端动作一个字都没改：
-    //   automation_status         → 结果根目录（由后端按自己的规则解析"程序根目录"）
-    //   automation_login_state    → 登录态只读状态（目录/占用/最后更新，**不含 Cookie 内容**）
-    //   automation_field_help     → 逐字段的 label/help/example/step
-    //   automation_templates      → 预置模板（内容来自后端语言包，随语言切换）
-    //   automation_save_template  → 存为自定义模板
-    //   automation_test           → 打开浏览器预览选择器匹配到的元素
-    //   automation_wizard / _step → 四步测试向导（第 4 步走流式，可在主窗口停止）
-    //   automation_config_export/import → 配置导出/导入（不含登录态与处理记录）
+    // [EN] Everything is aligned with WPF (the corresponding methods in
+    // [EN] `SettingsWindow.xaml.cs` and `SettingsWindow.Skills.cs`); the backend actions
+    // [EN] used are unchanged word for word:
+    // [ZH] 全部对齐 WPF（`SettingsWindow.xaml.cs` 与 `SettingsWindow.Skills.cs` 的
+    // [ZH] 对应方法），用的后端动作一个字都没改：
+    // [EN]   automation_status         → results root directory (the backend resolves the
+    // [EN]                               "program root" by its own rules)
+    // [EN]   automation_login_state    → read-only login state (directory / size / last
+    // [EN]                               modified; **no Cookie content**)
+    // [EN]   automation_field_help     → per-field label/help/example/step
+    // [EN]   automation_templates      → preset templates (content comes from the backend
+    // [EN]                               language pack and follows the UI language)
+    // [EN]   automation_save_template  → save as a custom template
+    // [EN]   automation_test           → open a browser to preview the element matched by
+    // [EN]                               the selector
+    // [EN]   automation_wizard / _step → four-step test wizard (step 4 runs streaming and
+    // [EN]                               can be stopped from the main window)
+    // [EN]   automation_config_export/import → configuration export/import (excluding
+    // [EN]                               login state and processing records)
+    // [ZH]   automation_status         → 结果根目录（由后端按自己的规则解析“程序根目录”）
+    // [ZH]   automation_login_state    → 登录态只读状态（目录/占用/最后更新，**不含 Cookie 内容**）
+    // [ZH]   automation_field_help     → 逐字段的 label/help/example/step
+    // [ZH]   automation_templates      → 预置模板（内容来自后端语言包，随语言切换）
+    // [ZH]   automation_save_template  → 存为自定义模板
+    // [ZH]   automation_test           → 打开浏览器预览选择器匹配到的元素
+    // [ZH]   automation_wizard / _step → 四步测试向导（第 4 步走流式，可在主窗口停止）
+    // [ZH]   automation_config_export/import → 配置导出/导入（不含登录态与处理记录）
 
-    /// <summary>逐字段的填写说明（`automation_field_help` 回传，键是字段名）。</summary>
+    /// <summary>
+    /// [EN] Per-field input help (returned by `automation_field_help`; keys are field
+    /// [EN] names).
+    /// [ZH] 逐字段的填写说明（`automation_field_help` 回传，键是字段名）。
+    /// </summary>
     private readonly Dictionary<string, JsonElement> _fieldHelp = new(StringComparer.Ordinal);
 
-    /// <summary>在文件管理器中打开结果根目录（不存在时先创建）。</summary>
+    /// <summary>
+    /// [EN] Opens the results root directory in the file manager (creating it first if it
+    /// [EN] does not exist).
+    /// [ZH] 在文件管理器中打开结果根目录（不存在时先创建）。
+    /// </summary>
     private async Task OpenResultsAsync()
     {
-        // 让后端按自己的规则解析"程序根目录"，避免前端猜路径（与 WPF 同一做法）
+        // [EN] Let the backend resolve the "program root" by its own rules so the front
+        // [EN] end does not guess paths (the same approach as WPF).
+        // [ZH] 让后端按自己的规则解析“程序根目录”，避免前端猜路径（与 WPF 同一做法）
         using JsonDocument? doc = await SendAsync(new { action = "automation_status" });
         string root = doc is not null
                       && doc.RootElement.TryGetProperty("automation", out JsonElement status)
@@ -548,8 +746,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 「浏览…」选择保存位置。Avalonia 走系统文件夹选择器（`StorageProvider`）——
-    /// 与 WPF 的 `OpenFolderDialog` 同一件事，只是 API 不同。
+    /// [EN] "Browse…" to choose the save location. Avalonia uses the system folder picker
+    /// [EN] (`StorageProvider`), which is the same thing as `OpenFolderDialog` in WPF with
+    /// [EN] a different API.
+    /// [ZH] 「浏览…」选择保存位置。Avalonia 走系统文件夹选择器（`StorageProvider`）——
+    /// [ZH] 与 WPF 的 `OpenFolderDialog` 同一件事，只是 API 不同。
     /// </summary>
     private async Task BrowseResultsAsync()
     {
@@ -571,10 +772,16 @@ public partial class AutomationPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 读取登录态（只读）。
+    /// [EN] Reads the login state (read-only).
     ///
-    /// 只显示"数据目录在哪、占多大、最后改动时间"，**不显示任何 Cookie 内容** ——
-    /// 界面上不该出现凭据，也不该给用户"程序在读我的密码"的错觉（WPF 同一口径）。
+    /// [EN] Shows only "where the data directory is, how large it is, when it was last
+    /// [EN] modified"; **no Cookie content is ever shown**. Credentials must not appear
+    /// [EN] in the UI, and the user must not be given the impression that the program is
+    /// [EN] reading their password (the same convention as WPF).
+    /// [ZH] 读取登录态（只读）。
+    ///
+    /// [ZH] 只显示“数据目录在哪、占多大、最后改动时间”，**不显示任何 Cookie 内容** ——
+    /// [ZH] 界面上不该出现凭据，也不该给用户“程序在读我的密码”的错觉（WPF 同一口径）。
     /// </summary>
     private async Task RefreshLoginStateAsync()
     {
@@ -598,7 +805,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
         LoginStateText.Text = detail;
     }
 
-    /// <summary>拉取字段级帮助与模板库（内容随界面语言切换）。</summary>
+    /// <summary>
+    /// [EN] Loads the field-level help and the template library (the content follows the
+    /// [EN] UI language).
+    /// [ZH] 拉取字段级帮助与模板库（内容随界面语言切换）。
+    /// </summary>
     private async Task LoadAutomationHelpAsync()
     {
         using (JsonDocument? help = await SendAsync(new { action = "automation_field_help" }))
@@ -655,7 +866,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
         TemplateCombo.SelectedIndex = index;
     }
 
-    /// <summary>套用模板：只填"指令"与"文件后缀"两个字段，其余按实际网站自己调。</summary>
+    /// <summary>
+    /// [EN] Applies a template: only the "instruction" and "file extension" fields are
+    /// [EN] filled; the rest are adjusted per the actual site.
+    /// [ZH] 套用模板：只填“指令”与“文件后缀”两个字段，其余按实际网站自己调。
+    /// </summary>
     private void ApplySelectedTemplate()
     {
         if (TemplateCombo.SelectedItem is not TemplateItem template)
@@ -711,8 +926,12 @@ public partial class AutomationPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 「?」：把该字段的说明摆到右侧字段帮助面板；再点一次同样的字段时收起
-    /// （WPF 是弹 MessageBox，Avalonia 侧统一走骨架的面板 —— 见 ISettingsHost.ShowFieldHelp）。
+    /// [EN] "?": puts the explanation of that field into the field help panel on the
+    /// [EN] right; clicking the same field again collapses it (WPF shows a MessageBox,
+    /// [EN] while the Avalonia side always uses the shell panel — see
+    /// [EN] ISettingsHost.ShowFieldHelp).
+    /// [ZH] 「?」：把该字段的说明摆到右侧字段帮助面板；再点一次同样的字段时收起
+    /// [ZH] （WPF 是弹 MessageBox，Avalonia 侧统一走骨架的面板 —— 见 ISettingsHost.ShowFieldHelp）。
     /// </summary>
     private void ShowFieldHelp(string field)
     {
@@ -735,10 +954,17 @@ public partial class AutomationPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 「📖 填写帮助」：把全部字段说明按"步骤"分组拼成一段文本展示。
+    /// [EN] "📖 input help": groups all field explanations by "step" and assembles them
+    /// [EN] into one text block.
     ///
-    /// 与 WPF 的差别只有承载方式：WPF 用 `MessageBox`，这里用页面内的一块可滚动文本
-    /// （行为等价：内容一致、可复制；少一个必须逐次关闭的模态窗口）。
+    /// [EN] The only difference from WPF is the presentation: WPF uses `MessageBox`,
+    /// [EN] while this page uses a scrollable text block inside the page (behaviorally
+    /// [EN] equivalent: same content, copyable, and one less modal window that has to be
+    /// [EN] closed every time).
+    /// [ZH] 「📖 填写帮助」：把全部字段说明按“步骤”分组拼成一段文本展示。
+    ///
+    /// [ZH] 与 WPF 的差别只有承载方式：WPF 用 `MessageBox`，这里用页面内的一块可滚动文本
+    /// [ZH] （行为等价：内容一致、可复制；少一个必须逐次关闭的模态窗口）。
     /// </summary>
     private void ShowGuide()
     {
@@ -775,7 +1001,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
         AutomationGuideButton.Focus();
     }
 
-    /// <summary>「测试选择器」：打开浏览器访问该网址，预览选择器匹配到的元素。</summary>
+    /// <summary>
+    /// [EN] "Test selector": opens a browser at the URL and previews the element matched
+    /// [EN] by the selector.
+    /// [ZH] 「测试选择器」：打开浏览器访问该网址，预览选择器匹配到的元素。
+    /// </summary>
     private async Task TestSelectorAsync()
     {
         string url = (TaskUrlBox.Text ?? "").Trim();
@@ -806,8 +1036,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 四步测试向导。第 4 步要在**真实页面上跑一个任务**，所以走流式（可在主窗口点 ⏹ 停止）；
-    /// 前三步是同步的 `automation_wizard_step`。
+    /// [EN] Four-step test wizard. Step 4 runs **a real task on a real page**, so it uses
+    /// [EN] streaming (the user can press ⏹ in the main window to stop); the first three
+    /// [EN] steps use the synchronous `automation_wizard_step`.
+    /// [ZH] 四步测试向导。第 4 步要在**真实页面上跑一个任务**，所以走流式（可在主窗口点 ⏹ 停止）；
+    /// [ZH] 前三步是同步的 `automation_wizard_step`。
     /// </summary>
     private async Task RunWizardAsync(int step)
     {
@@ -820,7 +1053,9 @@ public partial class AutomationPage : UserControl, ISettingsPage
 
         if (step == 4)
         {
-            // 流式：每次 delta 更新一次结果文本，让用户看到"真的在跑"
+            // [EN] Streaming: update the result text on every delta so the user sees that
+            // [EN] something is really running.
+            // [ZH] 流式：每次 delta 更新一次结果文本，让用户看到“真的在跑”
             var log = new System.Text.StringBuilder();
             await _host.State.ActiveBackend.SendStreamAsync(
                 new { action = "automation_wizard", step },
@@ -829,7 +1064,9 @@ public partial class AutomationPage : UserControl, ISettingsPage
                 idleTimeout: TimeSpan.FromMinutes(5),
                 onEvent: (name, payload) =>
                 {
-                    // 与 WPF 同一口径：把后端推来的可读文本追加到结果区
+                    // [EN] Same convention as WPF: append the readable text pushed by the
+                    // [EN] backend to the result area.
+                    // [ZH] 与 WPF 同一口径：把后端推来的可读文本追加到结果区
                     if (payload.ValueKind == JsonValueKind.Object
                         && payload.TryGetProperty("content", out JsonElement content)
                         && content.ValueKind == JsonValueKind.String)
@@ -887,7 +1124,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
         }
     }
 
-    /// <summary>导出自动化配置（`*.echodesk-auto`；不含登录态、处理记录与临时目录）。</summary>
+    /// <summary>
+    /// [EN] Exports the automation configuration (`*.echodesk-auto`; excluding login
+    /// [EN] state, processing records and temporary directories).
+    /// [ZH] 导出自动化配置（`*.echodesk-auto`；不含登录态、处理记录与临时目录）。
+    /// </summary>
     private async Task ExportConfigAsync()
     {
         TopLevel? top = TopLevel.GetTopLevel(this);
@@ -916,7 +1157,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
             : GetString(doc.RootElement, "content");
     }
 
-    /// <summary>导入自动化配置并**立刻回填界面**（与 WPF 的 ImportConfigButton_Click 一致）。</summary>
+    /// <summary>
+    /// [EN] Imports an automation configuration and **immediately refills the UI**
+    /// [EN] (consistent with ImportConfigButton_Click in WPF).
+    /// [ZH] 导入自动化配置并**立刻回填界面**（与 WPF 的 ImportConfigButton_Click 一致）。
+    /// </summary>
     private async Task ImportConfigAsync()
     {
         TopLevel? top = TopLevel.GetTopLevel(this);
@@ -958,17 +1203,26 @@ public partial class AutomationPage : UserControl, ISettingsPage
         }
     }
 
-    /// <summary>自动化模板（内容全部来自后端语言包，随界面语言切换）。</summary>
+    /// <summary>
+    /// [EN] Automation template (all content comes from the backend language pack and
+    /// [EN] follows the UI language).
+    /// [ZH] 自动化模板（内容全部来自后端语言包，随界面语言切换）。
+    /// </summary>
     private sealed record TemplateItem(string Id, string Label, string Instruction, string Extensions)
     {
         public override string ToString() => Label;
     }
 
     // -----------------------------------------------------------------
-    // 探针接口（`EchoDesk --probe pages` 用：模板 / 字段帮助 / 安全联动 / 结果预览）
+    // [EN] Probe interface (used by `EchoDesk --probe pages`: templates / field help /
+    // [EN] safety linkage / results preview)
+    // [ZH] 探针接口（`EchoDesk --probe pages` 用：模板 / 字段帮助 / 安全联动 / 结果预览）
     // -----------------------------------------------------------------
 
-    /// <summary>本页第 2 批新增部分的可观测状态。</summary>
+    /// <summary>
+    /// [EN] Observable state of the parts added to this page in batch 2.
+    /// [ZH] 本页第 2 批新增部分的可观测状态。
+    /// </summary>
     public string AutomationSnapshot()
     {
         string preview = ResultsPreviewText.Text ?? "";
@@ -976,10 +1230,14 @@ public partial class AutomationPage : UserControl, ISettingsPage
         {
             $"templateCount={TemplateCombo.ItemCount}",
             $"fieldHelpCount={_fieldHelp.Count}",
-            // 预览里出现 {0} 说明 string.Format 抛过 FormatException（本轮修的就是它）
+            // [EN] A {0} in the preview means string.Format once threw FormatException
+            // [EN] (which is what this round fixes).
+            // [ZH] 预览里出现 {0} 说明 string.Format 抛过 FormatException（本轮修的就是它）
             $"previewPlaceholders={(preview.Contains("{0}") ? 1 : 0)}",
             $"previewHasDate={(preview.Contains(DateTime.Now.ToString("yyyy-MM-dd")) ? 1 : 0)}",
-            // 安全协议联动：总开关的可用性必须与协议勾选一致
+            // [EN] Safety protocol linkage: the availability of the master switch must
+            // [EN] match the protocol check state.
+            // [ZH] 安全协议联动：总开关的可用性必须与协议勾选一致
             $"safetyAccepted={(SafetyCheck.IsChecked == true ? 1 : 0)}",
             $"enabledEditable={(AutomationEnabledCheck.IsEnabled ? 1 : 0)}",
             $"openResultsButton={(string.IsNullOrEmpty(OpenResultsButton.Content as string) ? 0 : 1)}",
@@ -993,19 +1251,30 @@ public partial class AutomationPage : UserControl, ISettingsPage
         });
     }
 
-    /// <summary>探针：勾选/取消安全协议（验联动，不需要后端）。</summary>
+    /// <summary>
+    /// [EN] Probe: checks or unchecks the safety protocol (verifies the linkage; the
+    /// [EN] backend is not needed).
+    /// [ZH] 探针：勾选/取消安全协议（验联动，不需要后端）。
+    /// </summary>
     public void ProbeSetSafety(bool accepted)
     {
         SafetyCheck.IsChecked = accepted;
         if (accepted)
-            AutomationEnabledCheck.IsChecked = true;   // 验"接受协议后总开关可以打开"
+            // [EN] Verifies that the master switch can be turned on after the protocol
+            // [EN] is accepted.
+            // [ZH] 验“接受协议后总开关可以打开”
+            AutomationEnabledCheck.IsChecked = true;
         SyncSafetyUi();
     }
 
     /// <summary>
-    /// 探针：填入一组已接受的自动化配置，供 README 截图使用（`--probe shots`）。
-    /// 走的是产品自己的控件与联动（SyncSafetyUi / UpdateResultsPreview），
-    /// 所以“接受协议 → 总开关可编辑 → 结果目录预览”这些状态与真实操作一致。
+    /// [EN] Probe: fills in a set of accepted automation settings for README screenshots
+    /// [EN] (`--probe shots`). It goes through the product's own controls and linkage
+    /// [EN] (SyncSafetyUi / UpdateResultsPreview), so states such as "protocol accepted →
+    /// [EN] master switch editable → results directory preview" match real operation.
+    /// [ZH] 探针：填入一组已接受的自动化配置，供 README 截图使用（`--probe shots`）。
+    /// [ZH] 走的是产品自己的控件与联动（SyncSafetyUi / UpdateResultsPreview），
+    /// [ZH] 所以“接受协议 → 总开关可编辑 → 结果目录预览”这些状态与真实操作一致。
     /// </summary>
     public void ProbeShowDemo(bool english = false)
     {
@@ -1092,10 +1361,18 @@ public partial class AutomationPage : UserControl, ISettingsPage
               + "[20:42:31] 运行完成：20 个任务，18 份结果文件，0 次失败";
     }
 
-    /// <summary>探针：按字段名显示一次字段帮助（验 `automation_field_help` 真的被读进来了）。</summary>
+    /// <summary>
+    /// [EN] Probe: shows the field help for one field name once (verifies that
+    /// [EN] `automation_field_help` is actually read in).
+    /// [ZH] 探针：按字段名显示一次字段帮助（验 `automation_field_help` 真的被读进来了）。
+    /// </summary>
     public void ProbeShowFieldHelp(string field) => ShowFieldHelp(field);
 
-    /// <summary>探针：当前已知的字段帮助键（逗号分隔），供断言"后端确实回了这些字段"。</summary>
+    /// <summary>
+    /// [EN] Probe: the currently known field help keys (comma-separated), so tests can
+    /// [EN] assert that "the backend really returned these fields".
+    /// [ZH] 探针：当前已知的字段帮助键（逗号分隔），供断言“后端确实回了这些字段”。
+    /// </summary>
     public string FieldHelpKeys()
     {
         var keys = new List<string>(_fieldHelp.Keys);
@@ -1119,16 +1396,33 @@ public partial class AutomationPage : UserControl, ISettingsPage
             : fallback;
 
     // =================================================================
-    // 任务十七：复用已打开的浏览器 + 两段式可视化选取
+    // [EN] Development task 17: reuse an open browser + two-stage visual picking
+    // [ZH] 任务十七：复用已打开的浏览器 + 两段式可视化选取
     // =================================================================
     //
-    // 这一块的**文案几乎都来自后端**（automation.picker.* / automation.reuse.*），
-    // 前端只把 JSON 里的字符串直接摆到界面上。原因有两个：
-    //   ① 状态机在后端，"此刻该显示哪句话"和后端状态是同一件事，分开写一定会漂移；
-    //   ② 任务书要求所有面向用户的文案都走语言包、中英双语齐全 —— 后端语言包一份就够，
-    //      前端不必再维护一遍同样的句子（本工程的语言包目录不在本次改动范围内）。
+    // [EN] **Most of the text in this block comes from the backend**
+    // [EN] (automation.picker.* / automation.reuse.*); the front end just places the
+    // [EN] strings from the JSON onto the UI. There are two reasons:
+    // [EN]   1. the state machine lives in the backend, so "which sentence to show now"
+    // [EN]      and the backend state are the same thing; writing them separately would
+    // [EN]      inevitably drift;
+    // [EN]   2. the design specification requires all user-facing text to come from the
+    // [EN]      language pack in both Chinese and English — one backend language pack is
+    // [EN]      enough, and the front end does not have to maintain the same sentences
+    // [EN]      again (the language pack directory of this project is out of scope for
+    // [EN]      this change).
+    // [ZH] 这一块的**文案几乎都来自后端**（automation.picker.* / automation.reuse.*），
+    // [ZH] 前端只把 JSON 里的字符串直接摆到界面上。原因有两个：
+    // [ZH]   ① 状态机在后端，“此刻该显示哪句话”和后端状态是同一件事，分开写一定会漂移；
+    // [ZH]   ② 设计规范要求所有面向用户的文案都走语言包、中英双语齐全 —— 后端语言包
+    // [ZH]      一份就够，前端不必再维护一遍同样的句子（本工程的语言包目录不在本次
+    // [ZH]      改动范围内）。
 
-    /// <summary>读一次"复用能力"（浏览器、端口、是否支持、调试启动命令）。</summary>
+    /// <summary>
+    /// [EN] Reads the "reuse capability" once (browser, port, whether it is supported,
+    /// [EN] debug launch command).
+    /// [ZH] 读一次“复用能力”（浏览器、端口、是否支持、调试启动命令）。
+    /// </summary>
     private async Task RefreshBrowserReuseAsync()
     {
         using JsonDocument? doc = await SendAsync(new { action = "automation_browser_reuse" });
@@ -1153,7 +1447,9 @@ public partial class AutomationPage : UserControl, ISettingsPage
             ? dc.GetString() ?? "" : "";
         string note = reuse.TryGetProperty("note", out JsonElement nt) ? nt.GetString() ?? "" : "";
 
-        // 状态行说清楚三件事：这次会不会复用、靠什么复用、现在能不能复用
+        // [EN] The state line states three things: whether this run will reuse, what it
+        // [EN] reuses, and whether reuse is currently possible.
+        // [ZH] 状态行说清楚三件事：这次会不会复用、靠什么复用、现在能不能复用
         string state;
         if (!supported)
             state = note.Length > 0 ? note
@@ -1172,8 +1468,12 @@ public partial class AutomationPage : UserControl, ISettingsPage
         ReuseStateText.Text = Loc.T("settings.automation.reuseStateLine",
             "浏览器：{0} · 复用方式：{1} · 端口 {2}\n{3}", label, ReuseModeLabelText(mode), port, state);
 
-        // 调试启动按钮只在"支持 CDP 且没连上"时才需要；Firefox 上它没有意义（必须禁用而不是
-        // 让人点了报错）—— 这正是任务书 F 条要求说清楚的边界。
+        // [EN] The debug launch button is needed only when CDP is supported and not yet
+        // [EN] connected; on Firefox it is meaningless (it must be disabled rather than
+        // [EN] letting the click produce an error) — this is exactly the boundary that
+        // [EN] item F of the design specification requires to be stated.
+        // [ZH] 调试启动按钮只在“支持 CDP 且没连上”时才需要；Firefox 上它没有意义（必须
+        // [ZH] 禁用而不是让人点了报错）—— 这正是设计规范 F 条要求说清楚的边界。
         LaunchDebugBrowserButton.IsEnabled = _available && supported;
         LaunchDebugBrowserButton.Content = Loc.T("settings.automation.launchDebug", "🚀 用调试模式启动浏览器");
         PickDebugHintText.Text = supported
@@ -1185,11 +1485,19 @@ public partial class AutomationPage : UserControl, ISettingsPage
                 "Firefox 没有 CDP 调试接口，无法复用已打开的浏览器；想复用请把浏览器改成 Chrome、Edge 或 Chromium。");
     }
 
-    /// <summary>浏览器/复用方式/端口改动后立刻写回后端（不必等页脚的"保存"）。</summary>
+    /// <summary>
+    /// [EN] Writes browser / reuse mode / port changes back to the backend immediately
+    /// [EN] (no need to wait for "Save" in the footer).
+    /// [ZH] 浏览器/复用方式/端口改动后立刻写回后端（不必等页脚的“保存”）。
+    /// </summary>
     private async Task SaveReuseSettingsAsync()
     {
-        // `_fillingCombos` 这个条件不能少：它挡住"程序自己填下拉框"触发的事件，
-        // 否则界面刚打开时 ApplyTexts 的默认值会先把用户配置好的浏览器覆盖成 auto。
+        // [EN] The `_fillingCombos` condition is indispensable: it blocks the event raised
+        // [EN] when the program itself fills the dropdowns; otherwise the default values
+        // [EN] filled in by ApplyTexts when the page opens would first overwrite the
+        // [EN] browser configured by the user with auto.
+        // [ZH] `_fillingCombos` 这个条件不能少：它挡住“程序自己填下拉框”触发的事件，
+        // [ZH] 否则界面刚打开时 ApplyTexts 的默认值会先把用户配置好的浏览器覆盖成 auto。
         if (_host is null || !_available || _loading || _fillingCombos)
             return;
         using JsonDocument? doc = await SendAsync(new
@@ -1211,7 +1519,9 @@ public partial class AutomationPage : UserControl, ISettingsPage
         if (_host is null || !_available)
             return;
         ReuseStateText.Text = Loc.T("settings.automation.debugLaunching", "⏳ 正在用调试模式启动浏览器…");
-        // 冷启动 + 加载数据目录要几秒，这里给足超时（后端自己最多等 25 秒）
+        // [EN] Cold start plus loading the data directory takes a few seconds, so the
+        // [EN] timeout is generous (the backend itself waits at most 25 seconds).
+        // [ZH] 冷启动 + 加载数据目录要几秒，这里给足超时（后端自己最多等 25 秒）
         using JsonDocument? doc = await SendAsync(new { action = "automation_launch_debug_browser" },
             timeoutSeconds: 120);
         if (doc is null)
@@ -1228,12 +1538,17 @@ public partial class AutomationPage : UserControl, ISettingsPage
         }
         if (doc.RootElement.TryGetProperty("browser_debug", out JsonElement debug))
         {
-            // 启动完再读一次能力状态：端口就绪后"可以复用"的提示会立刻变绿
+            // [EN] Read the capability state once more after startup: the "reuse
+            // [EN] possible" hint turns green as soon as the port is ready.
+            // [ZH] 启动完再读一次能力状态：端口就绪后“可以复用”的提示会立刻变绿
             await RefreshBrowserReuseAsync();
         }
     }
 
-    /// <summary>推一下两段式状态机（open / begin / status / cancel / close）。</summary>
+    /// <summary>
+    /// [EN] Advances the two-stage state machine (open / begin / status / cancel / close).
+    /// [ZH] 推一下两段式状态机（open / begin / status / cancel / close）。
+    /// </summary>
     private async Task PickStepAsync(string step)
     {
         if (_host is null || !_available)
@@ -1241,8 +1556,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
         object request = step == "open"
             ? new { action = "automation_pick_open", step, target = ComboValue(PickTargetBox) is { Length: > 0 } t ? t : "task_list" }
             : new { action = "automation_pick_step", step };
-        // 打开/连接浏览器可能要几秒（冷启动更久），超时给宽一点；轮询则必须短，
-        // 否则界面会"卡"在一次没必要的等待上。
+        // [EN] Opening or connecting the browser may take a few seconds (longer on cold
+        // [EN] start), so the timeout is generous; polling must be short, otherwise the UI
+        // [EN] would "freeze" on an unnecessary wait.
+        // [ZH] 打开/连接浏览器可能要几秒（冷启动更久），超时给宽一点；轮询则必须短，
+        // [ZH] 否则界面会“卡”在一次没必要的等待上。
         using JsonDocument? doc = await SendAsync(request, timeoutSeconds: step == "open" ? 120 : 30);
         if (doc is null)
         {
@@ -1259,7 +1577,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
             PickMessageText.Text = content;
     }
 
-    /// <summary>轮询：后端借这次询问去页面上收一次结果（前端只是心跳）。</summary>
+    /// <summary>
+    /// [EN] Polling: the backend uses this request to collect one result from the page
+    /// [EN] (the front end is only a heartbeat).
+    /// [ZH] 轮询：后端借这次询问去页面上收一次结果（前端只是心跳）。
+    /// </summary>
     private async Task PollPickAsync()
     {
         if (_pickPolling)
@@ -1287,7 +1609,11 @@ public partial class AutomationPage : UserControl, ISettingsPage
             _pickTimer.Stop();
     }
 
-    /// <summary>把后端回传的状态渲染到界面：按钮可用性 + 提示 + 当前目标页。</summary>
+    /// <summary>
+    /// [EN] Renders the state returned by the backend onto the UI: button availability,
+    /// [EN] hints, and the current target page.
+    /// [ZH] 把后端回传的状态渲染到界面：按钮可用性 + 提示 + 当前目标页。
+    /// </summary>
     private void ApplyPickState(JsonElement pick)
     {
         string state = GetString(pick, "state");
@@ -1295,7 +1621,10 @@ public partial class AutomationPage : UserControl, ISettingsPage
         picking = picking || (pick.TryGetProperty("picking", out JsonElement pk) && pk.ValueKind == JsonValueKind.True);
         bool active = pick.TryGetProperty("active", out JsonElement ac) && ac.ValueKind == JsonValueKind.True;
 
-        // 按钮文案与标签：优先用后端语言包回传的（中英双语天然一致），拿不到时用本地兜底
+        // [EN] Button labels and captions: prefer the ones returned by the backend
+        // [EN] language pack (naturally consistent in Chinese and English), and fall back
+        // [EN] to the local value when they are unavailable.
+        // [ZH] 按钮文案与标签：优先用后端语言包回传的（中英双语天然一致），拿不到时用本地兜底
         if (pick.TryGetProperty("buttons", out JsonElement buttons))
         {
             PickOpenButton.Content = ComboText(buttons, "open", "打开 / 连接浏览器");
@@ -1327,8 +1656,12 @@ public partial class AutomationPage : UserControl, ISettingsPage
         string message = GetString(pick, "message");
         PickMessageText.Text = message.Length > 0 ? message : PickMessageText.Text;
 
-        // 两段式的按钮可用性就是状态机的直接映射：等待准备时只能"开始选取"，
-        // 选取中只能"取消选取"——不给用户任何"点错一下就把状态搞乱"的机会。
+        // [EN] Button availability in the two-stage flow is a direct mapping of the state
+        // [EN] machine: while waiting for preparation only "begin picking" is available,
+        // [EN] and while picking only "cancel picking" — the user is never given a chance
+        // [EN] to "break the state with one wrong click".
+        // [ZH] 两段式的按钮可用性就是状态机的直接映射：等待准备时只能“开始选取”，
+        // [ZH] 选取中只能“取消选取”——不给用户任何“点错一下就把状态搞乱”的机会。
         PickOpenButton.IsEnabled = _available && !picking;
         PickBeginButton.IsEnabled = _available && !picking && active;
         PickCancelButton.IsEnabled = _available && picking;
@@ -1391,7 +1724,9 @@ public partial class AutomationPage : UserControl, ISettingsPage
         StopAutomationButton.Content = Loc.T("settings.automation.stopRun", "⏹ 停止");
         RunLogLabel.Text = Loc.T("settings.automation.runLog", "运行日志");
 
-        // ---- v0.2.2 第 2 批：模板 / 字段帮助 / 结果目录 / 测试向导 / 导入导出 ----
+        // [EN] ---- v0.2.2 batch 2: templates / field help / results directory / test
+        // [EN]      wizard / import and export ----
+        // [ZH] ---- v0.2.2 第 2 批：模板 / 字段帮助 / 结果目录 / 测试向导 / 导入导出 ----
         TemplatesTitle.Text = Loc.T("settings.automation.templates", "配置模板");
         ApplyTemplateButton.Content = Loc.T("settings.automation.applyTemplate", "套用模板");
         SaveTemplateButton.Content = Loc.T("settings.automation.saveTemplate", "存为自定义模板");
@@ -1429,9 +1764,13 @@ public partial class AutomationPage : UserControl, ISettingsPage
         ResultsStatusText.Text = "";
         TemplateStatusText.Text = "";
 
-        // ---- 任务十七：可视化选取与浏览器复用 ----
-        // 下拉框的**显示名**是前端本地化的（它们是"字段值"的枚举，不是状态文案）；
-        // 具体状态与提示语由后端回传，见 ApplyPickState。
+        // [EN] ---- Development task 17: visual picking and browser reuse ----
+        // [ZH] ---- 任务十七：可视化选取与浏览器复用 ----
+        // [EN] The **display names** of the dropdowns are localized by the front end
+        // [EN] (they are enumerations of "field values", not status text); the actual
+        // [EN] states and prompts come from the backend, see ApplyPickState.
+        // [ZH] 下拉框的**显示名**是前端本地化的（它们是“字段值”的枚举，不是状态文案）；
+        // [ZH] 具体状态与提示语由后端回传，见 ApplyPickState。
         PickSectionTitle.Text = Loc.T("settings.automation.pickSection", "可视化选取（在已打开的浏览器里选）");
         BrowserChoiceLabel.Text = Loc.T("settings.automation.browserChoice", "浏览器");
         ReuseModeLabel.Text = Loc.T("settings.automation.reuseMode", "复用已打开的浏览器");

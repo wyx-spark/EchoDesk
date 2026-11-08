@@ -1,22 +1,36 @@
 ﻿// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/Settings/AgentPage.axaml.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/Settings/AgentPage.axaml.cs。类型与成员说明见下方注释。
-// 智能体页的交互逻辑（v0.2.1 跨平台-2 任务一，第 6 个迁移模块）。
+// [EN] Interaction logic of the Agent page (v0.2.1 cross-platform-2 development task 1,
+// [EN] the sixth migrated module).
+// [ZH] 智能体页的交互逻辑（v0.2.1 跨平台-2 研发任务 1，第 6 个迁移模块）。
 //
-// 两个后端动作的数据形状（与 WPF 版一致）：
+// [EN] Data shapes of the two backend actions (identical to the WPF version):
+// [ZH] 两个后端动作的数据形状（与 WPF 版一致）：
 //   agent_state → { agent: { mode, max_steps, tools: [ { name, risk, description,
 //                            args_hint, enabled } ] } }
 //   mcp_state   → { mcp: { enabled, auto_connect, timeout_seconds,
 //                          servers: [ { name, command, args[], enabled, connected,
 //                                       error, tools[] } ] } }
-//   写：agent_configure { tool, allowed } 或 { steps }
+// [EN]   Write: agent_configure { tool, allowed } or { steps }
+// [ZH]   写：agent_configure { tool, allowed } 或 { steps }
 //
-// **工具授权的默认值来自后端**：`risk == "safe"` 的工具在没有明确设置时默认开启
-// （WPF 版同一口径）。前端不自己发明默认值——否则"界面显示开着、后端其实关着"
-// 这类不一致会出现在安全相关的功能上，代价太大。
+// [EN] **Tool authorization defaults come from the backend**: a tool with `risk == "safe"`
+// [EN] is enabled by default when there is no explicit setting (the WPF version uses
+// [EN] the same rule). The front end does not invent defaults on its own -- otherwise an
+// [EN] inconsistency such as "the UI shows it on while the backend has it off" would show
+// [EN] up in security-relevant features, which is too costly.
+// [ZH] **工具授权的默认值来自后端**：`risk == "safe"` 的工具在没有明确设置时默认开启
+// [ZH] （WPF 版同一口径）。前端不自己发明默认值——否则"界面显示开着、后端其实关着"
+// [ZH] 这类不一致会出现在安全相关的功能上，代价太大。
 //
-// **MCP 本轮只做只读展示**：完整编辑（增删服务器、改命令与参数、env 透传、
-// 超时、连接测试）需要一整块表单，属于下一轮。这里显示状态与"为什么没迁移"，
-// 而不是摆一个点了没反应的界面 —— 与已安装页、开发者页的处置口径一致。
+// [EN] **MCP is read-only display in this round**: full editing (adding and removing
+// [EN] servers, changing command and arguments, env passthrough, timeout, connection test)
+// [EN] needs a whole form and belongs to the next round. What is shown here is the status
+// [EN] and "why it was not migrated", not a UI that does nothing when clicked -- consistent
+// [EN] with how the Installed page and the Developer page were handled.
+// [ZH] **MCP 本轮只做只读展示**：完整编辑（增删服务器、改命令与参数、env 透传、
+// [ZH] 超时、连接测试）需要一整块表单，属于下一轮。这里显示状态与"为什么没迁移"，
+// [ZH] 而不是摆一个点了没反应的界面 —— 与已安装页、开发者页的处置口径一致。
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
@@ -50,11 +64,15 @@ public partial class AgentPage : UserControl, ISettingsPage
             }
         };
 
-        // ---- MCP（v0.2.2 第 2 批）----
+        // [EN] ---- MCP (v0.2.2, batch 2) ----
+        // [ZH] ---- MCP（v0.2.2 第 2 批）----
         McpReloadButton.Click += async (_, _) => await LoadMcpStateAsync();
         McpSaveButton.Click += async (_, _) => await SendMcpApplyAsync(connect: false);
-        // 「连接并取工具」= 保存 + auto_connect=true：与 /mcp connect 等价。
-        // 界面上不勾「启动时连接」也能用一次 —— 这正是这个按钮的用处（试通路）。
+        // [EN] "Connect and fetch tools" = save + auto_connect=true: equivalent to
+        // [EN] /mcp connect. It can also be used once without ticking "connect on startup"
+        // [EN] -- that is exactly what this button is for (probing the path).
+        // [ZH] 「连接并取工具」= 保存 + auto_connect=true：与 /mcp connect 等价。
+        // [ZH] 界面上不勾「启动时连接」也能用一次 —— 这正是这个按钮的用处（试通路）。
         McpConnectButton.Click += async (_, _) => await SendMcpApplyAsync(connect: true);
         McpAddButton.Click += (_, _) => ToggleMcpAddForm(true);
         McpAddExampleButton.Click += (_, _) =>
@@ -68,12 +86,16 @@ public partial class AgentPage : UserControl, ISettingsPage
         };
         McpFormAddConfirmButton.Click += (_, _) => AddMcpServerFromForm();
         McpFormCancelButton.Click += (_, _) => ToggleMcpAddForm(false);
-        // 总开关与自动连接只标记"待保存"，不立刻发请求（见 McpServerRow 的编辑模型）。
+        // [EN] The master switch and auto-connect only mark the state as "pending save";
+        // [EN] no request is sent immediately (see the edit model of McpServerRow).
+        // [ZH] 总开关与自动连接只标记"待保存"，不立刻发请求（见 McpServerRow 的编辑模型）。
         McpEnabledCheck.IsCheckedChanged += (_, _) =>
         {
             if (_mcpSyncing)
                 return;
-            RenderMcpServerRows();   // 全局开关变了，每行的"未启用"状态要跟着变
+            RenderMcpServerRows();   // [EN] The global switch changed; each row's
+                                     // [EN] "disabled" state must follow.
+                                     // [ZH] 全局开关变了，每行的"未启用"状态要跟着变
             SetMcpStagedHint();
         };
         McpAutoConnectCheck.IsCheckedChanged += (_, _) =>
@@ -83,7 +105,11 @@ public partial class AgentPage : UserControl, ISettingsPage
         };
     }
 
-    /// <summary>新增 server 的内联表单提交（名称与命令都不能为空；重名要挡下来）。</summary>
+    /// <summary>
+    /// [EN] Inline form submit for adding a server (the name and the command must both be
+    /// [EN] non-empty; duplicates are rejected).
+    /// [ZH] 新增 server 的内联表单提交（名称与命令都不能为空；重名要挡下来）。
+    /// </summary>
     private void AddMcpServerFromForm()
     {
         string name = (McpFormNameBox.Text ?? "").Trim();
@@ -127,8 +153,11 @@ public partial class AgentPage : UserControl, ISettingsPage
 
     // -----------------------------------------------------------------
     /// <summary>
-    /// 发一条请求。<paramref name="timeoutSeconds"/> 默认为 60 ——
-    /// **mcp_apply 要拉起外部进程**，那条路径显式给 120 秒（与 WPF 侧同一取值）。
+    /// [EN] Sends one request. <paramref name="timeoutSeconds"/> defaults to 60 --
+    /// [EN] **mcp_apply must launch an external process**, so that path explicitly gets
+    /// [EN] 120 seconds (the same value as the WPF side).
+    /// [ZH] 发一条请求。<paramref name="timeoutSeconds"/> 默认为 60 ——
+    /// [ZH] **mcp_apply 要拉起外部进程**，那条路径显式给 120 秒（与 WPF 侧同一取值）。
     /// </summary>
     private async Task<JsonDocument?> SendAsync(object request, int timeoutSeconds = 60)
     {
@@ -147,7 +176,8 @@ public partial class AgentPage : UserControl, ISettingsPage
     }
 
     // -----------------------------------------------------------------
-    // 工具授权
+    // [EN] Tool authorization
+    // [ZH] 工具授权
     // -----------------------------------------------------------------
     private async Task LoadAgentStateAsync()
     {
@@ -170,11 +200,18 @@ public partial class AgentPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 用后端回传的 <c>agent</c> 对象重排工具清单与步数。
+    /// [EN] Rebuilds the tool list and the step count from the <c>agent</c> object returned
+    /// [EN] by the backend.
     ///
-    /// 单独立一个方法是因为 <c>mcp_apply</c> 的响应里**也**带一份 <c>agent</c>：
-    /// MCP 工具刚注册进来，上面的工具权限清单必须跟着更新，否则用户要自己再点一次
-    /// 「重新读取」才看得到新工具（WPF 侧同一处理）。
+    /// [EN] It is a separate method because the <c>mcp_apply</c> response **also** carries
+    /// [EN] an <c>agent</c> object: the MCP tools were just registered, so the tool
+    /// [EN] permission list above must be updated too, otherwise the user has to click
+    /// [EN] "reload" once more to see the new tools (the WPF side does the same).
+    /// [ZH] 用后端回传的 <c>agent</c> 对象重排工具清单与步数。
+    ///
+    /// [ZH] 单独立一个方法是因为 <c>mcp_apply</c> 的响应里**也**带一份 <c>agent</c>：
+    /// [ZH] MCP 工具刚注册进来，上面的工具权限清单必须跟着更新，否则用户要自己再点一次
+    /// [ZH] 「重新读取」才看得到新工具（WPF 侧同一处理）。
     /// </summary>
     private void RenderAgentState(JsonElement agent)
     {
@@ -199,7 +236,9 @@ public partial class AgentPage : UserControl, ISettingsPage
                 string risk = GetString(tool, "risk");
                 if (risk.Length == 0)
                     risk = "safe";
-                // 默认值：safe 工具默认开启，其余默认关闭（与后端同一口径）。
+                // [EN] Defaults: safe tools are on by default, everything else is off (the
+                // [EN] same rule as the backend).
+                // [ZH] 默认值：safe 工具默认开启，其余默认关闭（与后端同一口径）。
                 bool isEnabled = GetBoolOr(tool, "enabled", risk == "safe");
                 total++;
                 if (isEnabled)
@@ -225,17 +264,27 @@ public partial class AgentPage : UserControl, ISettingsPage
                 AgentToolList.Children.Add(row);
         }
 
-        // 语言包（与 WPF 同一份）要 4 个参数：模式 · 最多调用次数 · 已启用/总数。
-        // 这里曾只传 3 个（缺 mode）→ string.Format 抛 FormatException → Loc.T 返回模板原文，
-        // 状态行直接显示「当前模式：{0} · 最多调用 {1} 次工具 · 已启用 {2}/{3} 个工具」
-        //（硬编码清查 §5.3 C-1）。mode 由后端的 agent_state 回传（与 WPF `_agentMode` 同源）。
+        // [EN] The language pack (the same one as in WPF) needs 4 arguments: mode, maximum
+        // [EN] number of calls, enabled count, total count. This used to pass only 3 (mode
+        // [EN] was missing), so string.Format threw FormatException and Loc.T returned the
+        // [EN] raw template; the status line then showed the unformatted placeholder text
+        // [EN] (hard-coded audit §5.3 C-1). mode comes back from the backend's agent_state
+        // [EN] (the same source as `_agentMode` on the WPF side).
+        // [ZH] 语言包（与 WPF 同一份）要 4 个参数：模式 · 最多调用次数 · 已启用/总数。
+        // [ZH] 这里曾只传 3 个（缺 mode）→ string.Format 抛 FormatException → Loc.T 返回模板原文，
+        // [ZH] 状态行直接显示「当前模式：{0} · 最多调用 {1} 次工具 · 已启用 {2}/{3} 个工具」
+        // [ZH]（硬编码清查 §5.3 C-1）。mode 由后端的 agent_state 回传（与 WPF `_agentMode` 同源）。
         string agentMode = GetString(agent, "mode");
         AgentStateText.Text = Loc.T("settings.agent.state",
             "当前模式：{0} · 最多调用 {1} 次工具 · 已启用 {2}/{3} 个工具",
             agentMode.Length > 0 ? agentMode : "-", maxSteps, enabled, total);
     }
 
-    /// <summary>一行工具授权：左侧名称 + 风险标签 + 说明，右侧开关。</summary>
+    /// <summary>
+    /// [EN] One tool authorization row: the name on the left plus a risk label and a
+    /// [EN] description, a switch on the right.
+    /// [ZH] 一行工具授权：左侧名称 + 风险标签 + 说明，右侧开关。
+    /// </summary>
     private Control BuildToolRow(string name, string risk, string description, string argsHint, bool isEnabled)
     {
         bool safe = risk == "safe";
@@ -277,7 +326,10 @@ public partial class AgentPage : UserControl, ISettingsPage
         if (argsHint.Length > 0)
             info.Children.Add(new TextBlock
             {
-                // 包值是「参数：{0}」——参数要传进去，否则界面上会出现「参数：{0}：{…}」
+                // [EN] The pack value is a single-argument template: the argument must be
+                // [EN] passed in, otherwise the UI shows the raw template followed by the
+                // [EN] value.
+                // [ZH] 包值是「参数：{0}」——参数要传进去，否则界面上会出现「参数：{0}：{…}」
                 Text = Loc.T("settings.agent.argsHint", "参数：{0}", argsHint),
                 FontSize = 10, Opacity = 0.6, TextWrapping = TextWrapping.Wrap,
             });
@@ -291,8 +343,11 @@ public partial class AgentPage : UserControl, ISettingsPage
 
         var check = new CheckBox
         {
-            // 「启用」标签：WPF 侧的勾选框带这一行字，这里对齐（此前只有一个裸勾选框，
-            // 用户不知道勾的是什么 —— 差异清单 C3 的「仅文案」一条）。
+            // [EN] The "enabled" label: the WPF check box carries this text, so it is
+            // [EN] aligned here (it used to be a bare check box and the user did not know
+            // [EN] what it toggled -- the "text only" item C3 of the difference list).
+            // [ZH] 「启用」标签：WPF 侧的勾选框带这一行字，这里对齐（此前只有一个裸勾选框，
+            // [ZH] 用户不知道勾的是什么 —— 差异清单 C3 的「仅文案」一条）。
             Content = Loc.T("settings.agent.enable", "启用"),
             FontSize = 11,
             IsChecked = isEnabled,
@@ -315,8 +370,12 @@ public partial class AgentPage : UserControl, ISettingsPage
                 ? (allowed
                     ? Loc.T("settings.agent.allowed", "✅ 已授权：{0}", name)
                     : Loc.T("settings.agent.denied", "⛔ 已关闭：{0}", name))
-                // 包值是「❌ 设置失败：{0}」——"后端未响应"这一档用现成的 main.error.noResponse，
-                // 不再拼代码兜底（兜底在键存在时根本不会生效，界面上只会露出 {0}）
+                // [EN] The pack value is a single-argument failure template: the "backend
+                // [EN] did not respond" case reuses the existing main.error.noResponse, and
+                // [EN] no code fallback is appended any more (a fallback never takes effect
+                // [EN] while the key exists; the UI would only show the raw placeholder).
+                // [ZH] 包值是「❌ 设置失败：{0}」——"后端未响应"这一档用现成的 main.error.noResponse，
+                // [ZH] 不再拼代码兜底（兜底在键存在时根本不会生效，界面上只会露出 {0}）
                 : Loc.T("settings.agent.saveFailed", "❌ 设置失败：{0}",
                     Loc.T("main.error.noResponse", "无响应"));
             await LoadAgentStateAsync();
@@ -339,7 +398,9 @@ public partial class AgentPage : UserControl, ISettingsPage
             return;
         if (!int.TryParse(AgentStepsBox.Text?.Trim(), out int steps))
         {
-            // 包值是「⚠️ 步数需要在 {0}–{1} 之间」：上下限与 WPF 侧同一口径（1–8）
+            // [EN] The pack value is a range template: the lower and upper bounds match
+            // [EN] the WPF side (1-8).
+            // [ZH] 包值是「⚠️ 步数需要在 {0}–{1} 之间」：上下限与 WPF 侧同一口径（1–8）
             AgentStatusText.Text = Loc.T("settings.agent.stepsRange",
                 "⚠️ 步数需要在 {0}–{1} 之间", 1, 8);
             return;
@@ -354,35 +415,62 @@ public partial class AgentPage : UserControl, ISettingsPage
     }
 
     // =================================================================
-    // MCP（v0.2.2 第 2 批：从"只读展示"补成可编辑，对齐 WPF 的 SettingsWindow.Mcp.cs）
+    // [EN] MCP (v0.2.2, batch 2: expanded from "read-only display" to editable, aligned
+    // [EN] with SettingsWindow.Mcp.cs on the WPF side)
+    // [ZH] MCP（v0.2.2 第 2 批：从"只读展示"补成可编辑，对齐 WPF 的 SettingsWindow.Mcp.cs）
     // =================================================================
     //
-    // MCP（Model Context Protocol）Server = 用户自己配置的外部进程，接上之后它提供的工具
-    // 会注册进 Agent 的工具表（`mcp__<server>__<tool>`），模型就能按需调用。
-    // 与内置工具的区别：内置工具随程序走，MCP 工具来自第三方进程 —— 所以这里有两道明确的
-    // 安全表达：**MCP 工具一律按敏感工具处理**（要在上面的工具权限区另外勾选）与
-    // **默认不透传环境变量**（密钥不会被顺手交给它）。
+    // [EN] An MCP (Model Context Protocol) server is an external process configured by the
+    // [EN] user; once it is connected, the tools it provides are registered in the Agent's
+    // [EN] tool table (`mcp__<server>__<tool>`), so the model can call them as needed.
+    // [EN] Difference from built-in tools: built-in tools ship with the program while MCP
+    // [EN] tools come from third-party processes -- hence the two explicit safety
+    // [EN] statements here: **MCP tools are always treated as sensitive tools** (they must
+    // [EN] be checked separately in the tool permission area above), and **environment
+    // [EN] variables are not passed through by default** (so secrets are not handed over
+    // [EN] casually).
+    // [ZH] MCP（Model Context Protocol）Server = 用户自己配置的外部进程，接上之后它提供的工具
+    // [ZH] 会注册进 Agent 的工具表（`mcp__<server>__<tool>`），模型就能按需调用。
+    // [ZH] 与内置工具的区别：内置工具随程序走，MCP 工具来自第三方进程 —— 所以这里有两道明确的
+    // [ZH] 安全表达：**MCP 工具一律按敏感工具处理**（要在上面的工具权限区另外勾选）与
+    // [ZH] **默认不透传环境变量**（密钥不会被顺手交给它）。
     //
-    // 后端协议（一个字都没改）：
+    // [EN] Backend protocol (unchanged, not a single word):
+    // [ZH] 后端协议（一个字都没改）：
     //   mcp_state → { mcp: { enabled, auto_connect, timeout_seconds, servers[], error } }
-    //   mcp_apply → 保存**并立刻生效**（重建桥接器与工具表），响应里同时回传 mcp 与 agent
+    // [EN]   mcp_apply → saves **and takes effect immediately** (rebuilds the bridge and
+    // [EN] the tool table); the response returns both mcp and agent.
+    // [ZH]   mcp_apply → 保存**并立刻生效**（重建桥接器与工具表），响应里同时回传 mcp 与 agent
 
-    /// <summary>界面上的一个 MCP Server（本地编辑状态 + 后端回传的只读状态）。</summary>
+    /// <summary>
+    /// [EN] One MCP server as shown in the UI (local edit state plus the read-only state
+    /// [EN] returned by the backend).
+    /// [ZH] 界面上的一个 MCP Server（本地编辑状态 + 后端回传的只读状态）。
+    /// </summary>
     private sealed class McpServerRow
     {
         public string Name = "";
         public string Command = "";
         public List<string> Args = new();
-        /// <summary>配置里的 env（后端**不回传**这个字段，所以已知 server 也只能是空表）。</summary>
+        /// <summary>
+        /// [EN] env from the configuration (the backend does **not** return this field, so
+        /// [EN] even a known server can only have an empty table here).
+        /// [ZH] 配置里的 env（后端**不回传**这个字段，所以已知 server 也只能是空表）。
+        /// </summary>
         public Dictionary<string, string> Env = new();
         public bool Enabled = true;
         public List<string> PassthroughEnv = new();
 
-        // 以下来自 mcp_state 的只读状态
+        // [EN] The following comes from the read-only state of mcp_state.
+        // [ZH] 以下来自 mcp_state 的只读状态
         public bool Connected;
         public List<string> Tools = new();
         public string Error = "";
-        /// <summary>是否是后端已知的 server（界面上新加的为 false，只用于状态文案）。</summary>
+        /// <summary>
+        /// [EN] Whether this is a server known to the backend (false for one just added in
+        /// [EN] the UI; used for the status text only).
+        /// [ZH] 是否是后端已知的 server（界面上新加的为 false，只用于状态文案）。
+        /// </summary>
         public bool Known;
 
         public string CommandText => Args.Count > 0 ? Command + " " + string.Join(" ", Args) : Command;
@@ -390,13 +478,25 @@ public partial class AgentPage : UserControl, ISettingsPage
 
     private readonly List<McpServerRow> _mcpServers = new();
 
-    /// <summary>列表被改过（增/删/启用勾选）→ 保存时要把 servers 整份发回去。见 BuildMcpPatch。</summary>
+    /// <summary>
+    /// [EN] The list was modified (added, removed or enable check) → the whole servers
+    /// [EN] array must be sent back on save. See BuildMcpPatch.
+    /// [ZH] 列表被改过（增/删/启用勾选）→ 保存时要把 servers 整份发回去。见 BuildMcpPatch。
+    /// </summary>
     private bool _mcpServersDirty;
 
-    /// <summary>回填期间为真：勾选框的程序化改值不该被当成"用户改过"。</summary>
+    /// <summary>
+    /// [EN] True while the state is being applied back: a programmatic change of the check
+    /// [EN] box must not count as "modified by the user".
+    /// [ZH] 回填期间为真：勾选框的程序化改值不该被当成"用户改过"。
+    /// </summary>
     private bool _mcpSyncing;
 
-    /// <summary>后端报的全局错误（例如某个 server 连接失败的原因）。</summary>
+    /// <summary>
+    /// [EN] Global error reported by the backend (for example why one server failed to
+    /// [EN] connect).
+    /// [ZH] 后端报的全局错误（例如某个 server 连接失败的原因）。
+    /// </summary>
     private string _mcpError = "";
 
     private async Task LoadMcpStateAsync(bool quiet = false)
@@ -415,7 +515,11 @@ public partial class AgentPage : UserControl, ISettingsPage
             McpStatusText.Text = Loc.T("settings.mcp.loaded", "✅ 已读取 MCP 状态");
     }
 
-    /// <summary>把 mcp_state 的响应渲染到控件上（整段状态都由后端决定，界面只是显示）。</summary>
+    /// <summary>
+    /// [EN] Renders the mcp_state response onto the controls (the whole state is decided
+    /// [EN] by the backend; the UI only displays it).
+    /// [ZH] 把 mcp_state 的响应渲染到控件上（整段状态都由后端决定，界面只是显示）。
+    /// </summary>
     private void RenderMcpState(JsonElement mcp)
     {
         _mcpSyncing = true;
@@ -452,8 +556,12 @@ public partial class AgentPage : UserControl, ISettingsPage
                     row.Args = ReadStringList(server, "args");
                     row.PassthroughEnv = ReadStringList(server, "passthrough_env");
                     row.Tools = ReadStringList(server, "tools");
-                    // env 目前不在 mcp_state 里（后端有意不回传）；能读到就保管起来原样回传，
-                    // 读不到就是空表 —— 后端哪天放出来，这里不用改。
+                    // [EN] env is not in mcp_state at the moment (the backend deliberately
+                    // [EN] does not return it); if it can be read, it is kept and sent back
+                    // [EN] as is, and if not it stays an empty table -- the day the backend
+                    // [EN] exposes it, nothing here needs to change.
+                    // [ZH] env 目前不在 mcp_state 里（后端有意不回传）；能读到就保管起来原样回传，
+                    // [ZH] 读不到就是空表 —— 后端哪天放出来，这里不用改。
                     if (server.TryGetProperty("env", out JsonElement env) && env.ValueKind == JsonValueKind.Object)
                     {
                         foreach (JsonProperty property in env.EnumerateObject())
@@ -466,8 +574,11 @@ public partial class AgentPage : UserControl, ISettingsPage
                 }
             }
             _mcpError = GetString(mcp, "error");
-            // 后端回读的状态就是真相：重排之后"未保存的改动"自然被丢弃，
-            // 所以这里必须把 dirty 清掉（否则下次保存会拿旧列表覆盖）。
+            // [EN] The state read back from the backend is the truth: after a rebuild,
+            // [EN] "unsaved changes" are discarded naturally, so dirty must be cleared here
+            // [EN] (otherwise the next save would overwrite with the old list).
+            // [ZH] 后端回读的状态就是真相：重排之后"未保存的改动"自然被丢弃，
+            // [ZH] 所以这里必须把 dirty 清掉（否则下次保存会拿旧列表覆盖）。
             _mcpServersDirty = false;
             RenderMcpServerRows();
         }
@@ -491,7 +602,11 @@ public partial class AgentPage : UserControl, ISettingsPage
         return list;
     }
 
-    /// <summary>重排 server 行（本地增删与整段回填都走它）。</summary>
+    /// <summary>
+    /// [EN] Rebuilds the server rows (used both for local add/remove and for a full
+    /// [EN] apply-back).
+    /// [ZH] 重排 server 行（本地增删与整段回填都走它）。
+    /// </summary>
     private void RenderMcpServerRows()
     {
         bool previous = _mcpSyncing;
@@ -524,8 +639,11 @@ public partial class AgentPage : UserControl, ISettingsPage
         var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         head.Children.Add(new TextBlock { Text = row.Name, FontWeight = FontWeight.SemiBold, FontSize = 12 });
 
-        // 连接状态：全局关 / 该 server 未启用 / 已连接 / 连接失败 / 待保存，几种说清楚 ——
-        // 用户排查"为什么工具没出现"时，第一个要看的就是这里。
+        // [EN] Connection status: globally off / this server is disabled / connected /
+        // [EN] connection failed / pending save. Make each case clear -- this is the first
+        // [EN] place a user looks when checking "why the tools do not appear".
+        // [ZH] 连接状态：全局关 / 该 server 未启用 / 已连接 / 连接失败 / 待保存，几种说清楚 ——
+        // [ZH] 用户排查"为什么工具没出现"时，第一个要看的就是这里。
         string stateText;
         string brushKey;
         if (!globalEnabled || !row.Enabled)
@@ -633,14 +751,22 @@ public partial class AgentPage : UserControl, ISettingsPage
         return border;
     }
 
-    /// <summary>工具名可能很长（mcp__server__tool），压成一行并截断显示。</summary>
+    /// <summary>
+    /// [EN] Tool names can be very long (mcp__server__tool), so flatten them onto one line
+    /// [EN] and truncate for display.
+    /// [ZH] 工具名可能很长（mcp__server__tool），压成一行并截断显示。
+    /// </summary>
     private static string Shorten(string text, int max)
     {
         string flat = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
         return flat.Length <= max ? flat : flat[..max] + "…";
     }
 
-    /// <summary>参数串按空白切分（空串 → 空数组）。刻意不做引号解析，避免"我以为它懂"。</summary>
+    /// <summary>
+    /// [EN] Splits the argument string on whitespace (an empty string → an empty array).
+    /// Quote parsing is deliberately not implemented, to avoid "I assumed it understands".
+    /// [ZH] 参数串按空白切分（空串 → 空数组）。刻意不做引号解析，避免"我以为它懂"。
+    /// </summary>
     private static List<string> SplitMcpArgs(string? text)
     {
         var list = new List<string>();
@@ -653,12 +779,20 @@ public partial class AgentPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 随包示例 MCP server 的路径。
+    /// [EN] Path of the example MCP server shipped with the package.
     ///
-    /// 为什么要几个候选目录：便携版布局下程序在 `app\`、示例在外层目录；
-    /// 开发时 exe 在 `frontend-avalonia\...\bin\Debug\net10.0\`，示例在仓库根的
-    /// `examples\mcp\`。都没找到时返回"最可能的那个路径"让用户自己改 ——
-    /// 比填一个空串有用（用户一眼能看出该填什么）。
+    /// [EN] Why several candidate directories: in the portable layout the program sits in
+    /// [EN] `app\` and the examples are in the outer directory; during development the exe
+    /// [EN] is in `frontend-avalonia\...\bin\Debug\net10.0\` and the examples are in
+    /// [EN] `examples\mcp\` at the repository root. When none is found, the "most likely"
+    /// [EN] path is returned so the user can edit it -- more useful than an empty string
+    /// [EN] (the user can see at a glance what to fill in).
+    /// [ZH] 随包示例 MCP server 的路径。
+    ///
+    /// [ZH] 为什么要几个候选目录：便携版布局下程序在 `app\`、示例在外层目录；
+    /// [ZH] 开发时 exe 在 `frontend-avalonia\...\bin\Debug\net10.0\`，示例在仓库根的
+    /// [ZH] `examples\mcp\`。都没找到时返回"最可能的那个路径"让用户自己改 ——
+    /// [ZH] 比填一个空串有用（用户一眼能看出该填什么）。
     /// </summary>
     private static string ExampleMcpServerPath()
     {
@@ -680,7 +814,8 @@ public partial class AgentPage : UserControl, ISettingsPage
             }
             catch (ArgumentException)
             {
-                // 路径里有非法字符时跳过这个候选
+                // [EN] Skip this candidate when the path contains invalid characters.
+                // [ZH] 路径里有非法字符时跳过这个候选
             }
         }
         return System.IO.Path.Combine(UserPaths.ProgramDirectory, "examples", "mcp", "echo_server.py");
@@ -698,11 +833,18 @@ public partial class AgentPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 保存并应用（<paramref name="connect"/> 为真时同时要求立刻连接）。
+    /// [EN] Saves and applies (when <paramref name="connect"/> is true, a connection is
+    /// [EN] also required immediately).
     ///
-    /// 响应用 `mcp` + `agent` **一起回传**：MCP 工具刚重新注册过，
-    /// 所以顺手把上面的工具权限清单也重排一遍 —— 用户能立刻看到新出现的
-    /// `mcp__…` 工具（否则要自己再点一次「重新读取」）。
+    /// [EN] The response returns `mcp` and `agent` **together**: the MCP tools were just
+    /// [EN] registered, so the tool permission list above is rebuilt as well -- the user
+    /// [EN] sees the newly appeared `mcp__…` tools right away (otherwise they would have
+    /// [EN] to click "reload" once more).
+    /// [ZH] 保存并应用（<paramref name="connect"/> 为真时同时要求立刻连接）。
+    ///
+    /// [ZH] 响应用 `mcp` + `agent` **一起回传**：MCP 工具刚重新注册过，
+    /// [ZH] 所以顺手把上面的工具权限清单也重排一遍 —— 用户能立刻看到新出现的
+    /// [ZH] `mcp__…` 工具（否则要自己再点一次「重新读取」）。
     /// </summary>
     private async Task SendMcpApplyAsync(bool connect)
     {
@@ -716,7 +858,9 @@ public partial class AgentPage : UserControl, ISettingsPage
             return;
         }
         McpStatusText.Text = Loc.T("settings.mcp.saving", "正在保存 MCP 配置…");
-        // 拉起外部进程可能要等一会儿，超时给足（WPF 侧同一取值）
+        // [EN] Launching an external process may take a while, so the timeout is generous
+        // [EN] (the same value as the WPF side).
+        // [ZH] 拉起外部进程可能要等一会儿，超时给足（WPF 侧同一取值）
         using JsonDocument? doc = await SendAsync(BuildMcpPatch(connect), 120);
         if (doc is null)
         {
@@ -732,11 +876,17 @@ public partial class AgentPage : UserControl, ISettingsPage
         if (hasState)
             RenderMcpState(mcp);
         if (doc.RootElement.TryGetProperty("agent", out JsonElement agent))
-            RenderAgentState(agent);   // MCP 工具刚注册进来，工具权限清单要跟着更新
+            RenderAgentState(agent);   // [EN] The MCP tools were just registered, so the
+                                       // [EN] tool permission list must follow.
+                                       // [ZH] MCP 工具刚注册进来，工具权限清单要跟着更新
         if (content.Length > 0)
         {
-            // 后端只在失败时给 content（❌ 开头的原因），如实显示，不自己编一句；
-            // 此时也不重排界面 —— 用户刚填的东西要留着，改一处就能重试。
+            // [EN] The backend only returns content on failure (the reason, prefixed with
+            // [EN] the error mark); show it as it is and do not invent a sentence. The UI
+            // [EN] is not rebuilt at this point either -- what the user just filled in must
+            // [EN] stay so that one correction allows a retry.
+            // [ZH] 后端只在失败时给 content（❌ 开头的原因），如实显示，不自己编一句；
+            // [ZH] 此时也不重排界面 —— 用户刚填的东西要留着，改一处就能重试。
             McpStatusText.Text = content;
             return;
         }
@@ -744,16 +894,27 @@ public partial class AgentPage : UserControl, ISettingsPage
             ? Loc.T("settings.mcp.connected", "✅ 已连接：注册了 {0} 个工具", registered)
             : Loc.T("settings.mcp.saved", "✅ 已保存（工具已重新注册，无需重启）");
         if (!hasState)
-            await LoadMcpStateAsync(quiet: true);   // 响应里没带状态时补读一次
+            await LoadMcpStateAsync(quiet: true);   // [EN] Read the state once more when the
+                                                    // [EN] response did not carry it.
+                                                    // [ZH] 响应里没带状态时补读一次
     }
 
     /// <summary>
-    /// 组装 mcp_apply 的请求体。
+    /// [EN] Builds the request body of mcp_apply.
     ///
-    /// **servers 只在列表被改过时才发**：后端收到 servers 就整份替换（并重建进程与工具表），
-    /// 而 mcp_state 出于安全**不回传** per-server 的 env —— 无谓地重发一次就会把
-    /// config.json 里手写的 env 抹掉。没改列表就不发，这是本版能做的最大保全
-    /// （彻底修法在后端：把 env 放进 mcp_state，或让 mcp_apply 按 name 合并）。
+    /// [EN] **servers is sent only when the list was modified**: once the backend receives
+    /// [EN] servers it replaces the whole set (and rebuilds the processes and the tool
+    /// [EN] table), while mcp_state **does not return** a per-server env for safety reasons
+    /// [EN] -- an unnecessary resend would wipe the env written by hand in config.json. Not
+    /// [EN] sending it when the list is unchanged is the strongest protection this release
+    /// [EN] can offer (the thorough fix belongs to the backend: put env into mcp_state, or
+    /// [EN] let mcp_apply merge by name).
+    /// [ZH] 组装 mcp_apply 的请求体。
+    ///
+    /// [ZH] **servers 只在列表被改过时才发**：后端收到 servers 就整份替换（并重建进程与工具表），
+    /// [ZH] 而 mcp_state 出于安全**不回传** per-server 的 env —— 无谓地重发一次就会把
+    /// [ZH] config.json 里手写的 env 抹掉。没改列表就不发，这是本版能做的最大保全
+    /// [ZH] （彻底修法在后端：把 env 放进 mcp_state，或让 mcp_apply 按 name 合并）。
     /// </summary>
     private Dictionary<string, object?> BuildMcpPatch(bool connect)
     {
@@ -765,7 +926,10 @@ public partial class AgentPage : UserControl, ISettingsPage
         };
         string timeoutText = (McpTimeoutBox.Text ?? "").Trim();
         if (timeoutText.Length > 0)
-            patch["timeout_seconds"] = timeoutText;   // 字符串即可：后端自己转 float 并夹到 1–600
+            patch["timeout_seconds"] = timeoutText;   // [EN] A string is fine: the backend
+                                                      // [EN] converts it to float and clamps
+                                                      // [EN] it to 1-600.
+                                                      // [ZH] 字符串即可：后端自己转 float 并夹到 1–600
         if (_mcpServersDirty)
         {
             var servers = new List<Dictionary<string, object?>>();
@@ -787,11 +951,19 @@ public partial class AgentPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 按语义键取画刷。**必须在控件实例上解析**，不能用 Application.Current.TryFindResource：
-    /// 应用的资源放在 ThemeDictionaries 里（Light/Dark 各一份），
-    /// 在 Application 上查不会带上"当前主题变体"，于是永远取不到 —— 返回 null。
-    /// 后果是代码生成的工具卡片与 MCP 卡片全都画不出边框和底色（实测：Agent 页工具行
-    /// 看起来像没有卡片的纯文本）。控件实例上的 TryFindResource 会用 ActualThemeVariant。
+    /// [EN] Resolves a brush by semantic key. **It must be resolved on a control instance**,
+    /// [EN] not with Application.Current.TryFindResource: application resources live in
+    /// [EN] ThemeDictionaries (one set for Light and one for Dark), and a lookup on
+    /// [EN] Application does not carry the "current theme variant", so it never finds them
+    /// [EN] and returns null. The consequence is that code-generated tool cards and MCP
+    /// [EN] cards have no border and no background at all (observed: the tool rows on the
+    /// [EN] Agent page look like plain text without cards). TryFindResource on a control
+    /// [EN] instance uses ActualThemeVariant.
+    /// [ZH] 按语义键取画刷。**必须在控件实例上解析**，不能用 Application.Current.TryFindResource：
+    /// [ZH] 应用的资源放在 ThemeDictionaries 里（Light/Dark 各一份），
+    /// [ZH] 在 Application 上查不会带上"当前主题变体"，于是永远取不到 —— 返回 null。
+    /// [ZH] 后果是代码生成的工具卡片与 MCP 卡片全都画不出边框和底色（实测：Agent 页工具行
+    /// [ZH] 看起来像没有卡片的纯文本）。控件实例上的 TryFindResource 会用 ActualThemeVariant。
     /// </summary>
     private Brush? TryBrush(string key)
     {
@@ -817,10 +989,15 @@ public partial class AgentPage : UserControl, ISettingsPage
             : fallback;
 
     // -----------------------------------------------------------------
-    // 探针接口（`EchoDesk --probe pages` 用：MCP 可编辑那一块）
+    // [EN] Probe interface (used by `EchoDesk --probe pages`: the editable MCP section)
+    // [ZH] 探针接口（`EchoDesk --probe pages` 用：MCP 可编辑那一块）
     // -----------------------------------------------------------------
 
-    /// <summary>MCP 小节的可观测状态（开关回填 / 服务器行数 / 表单与按钮文案）。</summary>
+    /// <summary>
+    /// [EN] Observable state of the MCP section (switch apply-back, server row count, form
+    /// [EN] and button texts).
+    /// [ZH] MCP 小节的可观测状态（开关回填 / 服务器行数 / 表单与按钮文案）。
+    /// </summary>
     public string McpSnapshot()
     {
         int rows = 0;
@@ -845,7 +1022,11 @@ public partial class AgentPage : UserControl, ISettingsPage
         });
     }
 
-    /// <summary>探针：展开新增服务器表单并填一个假的 server（**只改界面，不发请求**）。</summary>
+    /// <summary>
+    /// [EN] Probe: expands the add-server form and fills in a fake server (**changes the UI
+    /// [EN] only, sends no request**).
+    /// [ZH] 探针：展开新增服务器表单并填一个假的 server（**只改界面，不发请求**）。
+    /// </summary>
     public void ProbeOpenAddForm()
     {
         ToggleMcpAddForm(true);
@@ -854,15 +1035,26 @@ public partial class AgentPage : UserControl, ISettingsPage
         McpFormArgsBox.Text = "--version";
     }
 
-    /// <summary>探针：提交上面那两个框（验证"本地列表 + 未保存提示"，不写后端配置）。</summary>
+    /// <summary>
+    /// [EN] Probe: submits the two boxes above (verifies "local list + unsaved hint"; does
+    /// [EN] not write the backend configuration).
+    /// [ZH] 探针：提交上面那两个框（验证"本地列表 + 未保存提示"，不写后端配置）。
+    /// </summary>
     public void ProbeSubmitAddForm() => AddMcpServerFromForm();
 
-    /// <summary>探针：读一次 MCP 状态（真实后端动作）。</summary>
+    /// <summary>
+    /// [EN] Probe: reads the MCP state once (a real backend action).
+    /// [ZH] 探针：读一次 MCP 状态（真实后端动作）。
+    /// </summary>
     public async Task ProbeReloadMcpAsync() => await LoadMcpStateAsync();
 
     /// <summary>
-    /// 探针：**不发请求**地撤掉刚加的那一行，避免把测试数据留在界面里。
-    /// （真要保存必须走 McpSaveButton —— 探针刻意不点它，否则会改到用户的 config.json。）
+    /// [EN] Probe: removes the row just added **without sending a request**, so no test
+    /// [EN] data is left in the UI. (A real save must go through McpSaveButton -- the probe
+    /// [EN] deliberately does not click it, otherwise it would modify the user's
+    /// [EN] config.json.)
+    /// [ZH] 探针：**不发请求**地撤掉刚加的那一行，避免把测试数据留在界面里。
+    /// [ZH] （真要保存必须走 McpSaveButton —— 探针刻意不点它，否则会改到用户的 config.json。）
     /// </summary>
     public void ProbeDropServer(string name)
     {
@@ -917,7 +1109,9 @@ public partial class AgentPage : UserControl, ISettingsPage
         McpStagedHint.Text = Loc.T("settings.mcp.stagedHint",
             "改动在点「💾 保存」或「🔌 连接并取工具」后生效（会立刻重新注册工具，不需要重启）。");
         AgentReloadButton.Content = Loc.T("settings.agent.reload", "🔄 重新读取");
-        // 已加载的数据按新语言重排（工具行与服务器行的文案是运行时拼的）。
+        // [EN] Re-layout the loaded data in the new language (the texts of the tool rows
+        // [EN] and server rows are composed at runtime).
+        // [ZH] 已加载的数据按新语言重排（工具行与服务器行的文案是运行时拼的）。
         if (_host is not null)
             _ = RefreshAsync();
     }

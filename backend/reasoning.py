@@ -89,7 +89,8 @@ RESET = "reset"
 #: [ZH] 事件类型：``(通道, 文本)``。
 Event = Tuple[str, str]
 
-# ---- [EN] Tag table construction / [ZH] 标签表构造 ----
+# [EN] ---- Tag table construction ----
+# [ZH] ---- 标签表构造 ----
 # [EN] Closing-tag literals are not written directly in source. DeepSeek's
 # [EN] end-of-reasoning marker shares its token form with special tokens in some
 # [EN] toolchains and can be altered during copying or transport. Constructing
@@ -102,7 +103,8 @@ _LT = "<"
 _GT = ">"
 _SLASH = "/"
 _BAR = "\uff5c"          # ｜
-_MARK = "\u2581"         # ▁（SentencePiece 的词首空格标记）
+_MARK = "\u2581"         # [EN] ▁ (SentencePiece word-initial space marker).
+                        # [ZH] ▁（SentencePiece 的词首空格标记）。
 
 #: [EN] Default tag names. Each name produces a ``<name>`` / ``</name>`` pair.
 #: [ZH] 默认识别的标签名。每个名称生成 ``<名字>`` / ``</名字>`` 一对标签。
@@ -309,7 +311,8 @@ class ReasoningSplitter:
         self.unclosed = False
         self.reclassified = False
 
-    # ---------- [EN] Results / [ZH] 结果 ----------
+    # [EN] ---------- Results ----------
+    # [ZH] ---------- 结果 ----------
 
     @property
     def reasoning_text(self) -> str:
@@ -356,7 +359,8 @@ class ReasoningSplitter:
         """
         return bool(self.reasoning_text.strip())
 
-    # ---------- [EN] Incremental input / [ZH] 增量输入 ----------
+    # [EN] ---------- Incremental input ----------
+    # [ZH] ---------- 增量输入 ----------
 
     def feed(self, text: str) -> List[Event]:
         """
@@ -410,7 +414,8 @@ class ReasoningSplitter:
             self._depth = 0
         return events
 
-    # ---------- [EN] Internal: splitting / [ZH] 内部：切分 ----------
+    # [EN] ---------- Internal: splitting ----------
+    # [ZH] ---------- 内部：切分 ----------
 
     def _find_earliest_tag(self, text: str) -> Optional[Tuple[int, str, bool]]:
         """

@@ -15,8 +15,8 @@ namespace EchoDesk.Services;
 ///
 /// [ZH] 前端本地界面状态，保存在 <c>ui_state.json</c> 中。
 ///
-/// 记录窗口大小、位置、最大化状态、字号、主题，以及拒绝创建快捷方式等一次性询问结果，
-/// 使已拒绝的询问不会在每次启动时重复出现。
+/// [ZH] 记录窗口大小、位置、最大化状态、字号、主题，以及拒绝创建快捷方式等一次性询问结果，
+/// [ZH] 使已拒绝的询问不会在每次启动时重复出现。
 /// </summary>
 public sealed class AppSettings
 {
@@ -41,14 +41,16 @@ public sealed class AppSettings
     /// </summary>
     public bool FirstRunDone { get; set; }
 
-    // ---------- [EN] Window state / [ZH] 窗口状态记忆 ----------
+    // [EN] ---------- Window state ----------
+    // [ZH] ---------- 窗口状态记忆 ----------
     public double WindowWidth { get; set; }
     public double WindowHeight { get; set; }
     public double WindowLeft { get; set; } = double.NaN;
     public double WindowTop { get; set; } = double.NaN;
     public bool WindowMaximized { get; set; }
 
-    // ---------- [EN] Interface preferences / [ZH] 界面偏好 ----------
+    // [EN] ---------- Interface preferences ----------
+    // [ZH] ---------- 界面偏好 ----------
     public double FontSize { get; set; } = 14;
 
     /// <summary>
@@ -63,7 +65,7 @@ public sealed class AppSettings
     /// must be migrated. New versions use <see cref="Theme"/> and never write
     /// this field.
     /// [ZH] 旧版深色开关，仅用于读取旧文件。此前写入 <c>DarkMode</c> 的用户已经表达
-    /// 过偏好，迁移时不能丢失。新版本以 <see cref="Theme"/> 为准，不再写回本字段。
+    /// [ZH] 过偏好，迁移时不能丢失。新版本以 <see cref="Theme"/> 为准，不再写回本字段。
     /// </summary>
     public bool? DarkMode { get; set; }
 
@@ -79,7 +81,7 @@ public sealed class AppSettings
     /// [EN] Interface language: <c>auto</c> follows the system locale; explicit
     /// tags such as <c>zh-Hans</c> or <c>en</c> are also accepted.
     /// [ZH] 界面语言：<c>auto</c> 表示跟随系统区域设置；也可使用
-    /// <c>zh-Hans</c>、<c>en</c> 等明确语言标签。
+    /// [ZH] <c>zh-Hans</c>、<c>en</c> 等明确语言标签。
     /// </summary>
     public string Language { get; set; } = "auto";
 
@@ -95,7 +97,7 @@ public sealed class AppSettings
     /// <c>/clear</c> and <c>/clearcache</c>. Enabled by default to prevent
     /// accidental data loss.
     /// [ZH] 执行具有不可逆副作用的指令（如 <c>/clear</c>、<c>/clearcache</c>）前是否
-    /// 二次确认。默认开启，以避免误操作造成数据丢失。
+    /// [ZH] 二次确认。默认开启，以避免误操作造成数据丢失。
     /// </summary>
     public bool ConfirmDestructiveCommands { get; set; } = true;
 
@@ -117,9 +119,9 @@ public sealed class AppSettings
     ///
     /// [ZH] 流式输出的界面合并间隔（毫秒）。
     ///
-    /// 后端逐 token 发送 delta。若每个 delta 都重建 Markdown 文档并滚动，会造成数百次
-    /// 全量布局和明显卡顿。按 50 毫秒合并一次，人眼几乎无法察觉，同时将布局次数
-    /// 降低一个数量级。设为 0 表示不合并、每个 delta 都更新，仅用于诊断。
+    /// [ZH] 后端逐 token 发送 delta。若每个 delta 都重建 Markdown 文档并滚动，会造成数百次
+    /// [ZH] 全量布局和明显卡顿。按 50 毫秒合并一次，人眼几乎无法察觉，同时将布局次数
+    /// [ZH] 降低一个数量级。设为 0 表示不合并、每个 delta 都更新，仅用于诊断。
     /// </summary>
     public int StreamThrottleMs { get; set; } = 50;
 
@@ -173,10 +175,10 @@ public sealed class AppSettings
     ///
     /// [ZH] 将旧版 <c>DarkMode</c> 布尔开关迁移到三态 <see cref="Theme"/>。
     ///
-    /// 仅当旧文件没有 Theme 字段时迁移；新版本中选择的主题优先。旧版默认写入
-    /// <c>dark</c>，若一律视为用户偏好会使所有老用户变为深色；直接丢弃又会丢失真实
-    /// 的手动选择。因此旧字段存在时按偏好处理。全新安装不含 ui_state.json，默认跟随
-    /// 系统主题。
+    /// [ZH] 仅当旧文件没有 Theme 字段时迁移；新版本中选择的主题优先。旧版默认写入
+    /// [ZH] <c>dark</c>，若一律视为用户偏好会使所有老用户变为深色；直接丢弃又会丢失真实
+    /// [ZH] 的手动选择。因此旧字段存在时按偏好处理。全新安装不含 ui_state.json，默认跟随
+    /// [ZH] 系统主题。
     /// </summary>
     private void MigrateLegacyTheme(string json)
     {

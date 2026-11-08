@@ -1,14 +1,29 @@
 ﻿// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/SettingsWindow.axaml.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/SettingsWindow.axaml.cs。类型与成员说明见下方注释。
-// 设置窗口骨架（v0.2.1 跨平台-2 任务一，第 1 个迁移模块）。
+// [EN] Settings window skeleton (v0.2.1 cross-platform-2 development task 1, the first
+// [EN] migrated module).
+// [ZH] 设置窗口骨架（v0.2.1 跨平台-2 研发任务 1，第 1 个迁移模块）。
 //
-// 这一层刻意只做四件事，别的一律交给页面：
-//   1. 页签容器：按 ISettingsPage 注册页面（未迁移的页签给出**明确的未迁移说明**，
-//      不假装功能存在 —— 这是记录里"降级提示要给原因与替代做法"的同一条原则）；
-//   2. 窗口状态记忆：尺寸存进 ui_state.json（与主窗口分开存，互不影响）；
-//   3. 底部状态行与保存按钮：收集各页改动 → 落盘 → 需要后端的页自己去同步；
-//   4. 主题 / 语言即时生效：主题立刻改（AppState.SetTheme），语言立刻重建全部文案
-//      （Avalonia 用事件重建，WPF 用附加属性遍历 —— 机制不同，效果一致）。
+// [EN] This layer deliberately does only four things; everything else is left to the pages:
+// [ZH] 这一层刻意只做四件事，别的一律交给页面：
+// [EN]   1. Tab container: pages are registered through ISettingsPage (a tab that has not
+// [EN]      been migrated gets an **explicit not-migrated explanation**, not a pretense that
+// [EN]      the feature exists -- the same principle as "a degraded hint must give the reason
+// [EN]      and the alternative" recorded in the notes);
+// [EN]   2. Window state memory: the size is stored in ui_state.json (separate from the main
+// [EN]      window, so the two do not interfere);
+// [EN]   3. Bottom status line and save button: collect the changes of each page → write
+// [EN]      them to disk → pages that need the backend synchronize themselves;
+// [EN]   4. Theme / language take effect immediately: the theme changes at once
+// [EN]      (AppState.SetTheme), and the language rebuilds all texts at once (Avalonia
+// [EN]      rebuilds through events, WPF walks attached properties -- different mechanisms,
+// [EN]      same result).
+// [ZH]   1. 页签容器：按 ISettingsPage 注册页面（未迁移的页签给出**明确的未迁移说明**，
+// [ZH]      不假装功能存在 —— 这是记录里"降级提示要给原因与替代做法"的同一条原则）；
+// [ZH]   2. 窗口状态记忆：尺寸存进 ui_state.json（与主窗口分开存，互不影响）；
+// [ZH]   3. 底部状态行与保存按钮：收集各页改动 → 落盘 → 需要后端的页自己去同步；
+// [ZH]   4. 主题 / 语言即时生效：主题立刻改（AppState.SetTheme），语言立刻重建全部文案
+// [ZH]      （Avalonia 用事件重建，WPF 用附加属性遍历 —— 机制不同，效果一致）。
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -36,11 +51,12 @@ public partial class SettingsWindow : Window, ISettingsHost
     private readonly List<(TabItem Item, string Key, string Fallback)> _tabHeaders = new();
     private bool _dirty;
 
-    // [EN] Motion contract of the settings surface. The page transition and the panel transition
-    //      are expressed through render-only properties wherever possible; the field-help panel is
-    //      the sole exception, because its width is the substance of the requested sidebar motion.
+    // [EN] Motion contract of the settings surface. The page transition and the panel
+    // [EN] transition are expressed through render-only properties wherever possible; the
+    // [EN] field-help panel is the sole exception, because its width is the substance of the
+    // [EN] requested sidebar motion.
     // [ZH] 设置界面的动效约定。页签过渡与面板过渡尽可能通过仅影响渲染的属性表达；字段帮助面板是唯一
-    //      的例外，因为其宽度正是所要求的侧边栏动效实体。
+    // [ZH] 的例外，因为其宽度正是所要求的侧边栏动效实体。
     private const double PageTransitionMilliseconds = 250;
     private const double FieldHelpWidth = 320;
     private const double FieldHelpTransitionMilliseconds = 200;
@@ -58,11 +74,19 @@ public partial class SettingsWindow : Window, ISettingsHost
     private DateTime _lastCaptionToggleAt = DateTime.MinValue;
 
     /// <summary>
-    /// 还没迁移到跨平台前端的页签。**现在是空的**：设置窗口的 7 个页签已全部迁移完成
-    /// （v0.2.1 跨平台-2 任务一）。
+    /// [EN] Tabs that have not been migrated to the cross-platform front end yet. **It is
+    /// [EN] empty now**: all 7 tabs of the settings window have been migrated
+    /// [EN] (v0.2.1 cross-platform-2 development task 1).
     ///
-    /// 保留这个数组而不是删掉，是因为**主窗口的各功能面板**还没迁移；将来若出现
-    /// "先占位、后实现"的页签，在这里登记一行即可，不必把 AddNotMigratedTab 的逻辑找回来。
+    /// [EN] This array is kept instead of deleted because the **feature panels of the main
+    /// [EN] window** have not been migrated yet; if a "placeholder first, implementation
+    /// [EN] later" tab ever appears, register one line here, and the AddNotMigratedTab logic
+    /// [EN] does not have to be brought back.
+    /// [ZH] 还没迁移到跨平台前端的页签。**现在是空的**：设置窗口的 7 个页签已全部迁移完成
+    /// [ZH] （v0.2.1 跨平台-2 研发任务 1）。
+    ///
+    /// [ZH] 保留这个数组而不是删掉，是因为**主窗口的各功能面板**还没迁移；将来若出现
+    /// [ZH] "先占位、后实现"的页签，在这里登记一行即可，不必把 AddNotMigratedTab 的逻辑找回来。
     /// </summary>
     private static readonly (string Key, string Fallback)[] NotMigratedTabs =
         Array.Empty<(string Key, string Fallback)>();
@@ -77,9 +101,13 @@ public partial class SettingsWindow : Window, ISettingsHost
         InitializeComponent();
 
         RegisterPage(new GeneralPage());
-        // 页签顺序必须与 WPF SettingsWindow.xaml 的 TabItem 顺序一致
-        // （常规 → 模型 → 智能体 → 自动化 → 技能市场 → 已安装 → 开发者）：
-        // 顺序不同的时候，同一份界面在两边看起来就像两套产品。
+        // [EN] The tab order must match the TabItem order in SettingsWindow.xaml on the WPF
+        // [EN] side (General → Model → Agent → Automation → Skill market → Installed →
+        // [EN] Developer): when the order differs, the same UI looks like two different
+        // [EN] products on the two sides.
+        // [ZH] 页签顺序必须与 WPF SettingsWindow.xaml 的 TabItem 顺序一致
+        // [ZH] （常规 → 模型 → 智能体 → 自动化 → 技能市场 → 已安装 → 开发者）：
+        // [ZH] 顺序不同的时候，同一份界面在两边看起来就像两套产品。
         RegisterPage(new ModelPage());
         RegisterPage(new AgentPage());
         RegisterPage(new AutomationPage());
@@ -98,7 +126,9 @@ public partial class SettingsWindow : Window, ISettingsHost
         ApplyTexts();
         LoadFromSettings();
 
-        // 窗口尺寸记忆（任务书要求）。Closing 里存，避免拖动过程中频繁写盘。
+        // [EN] Window size memory (required by the design specification). It is stored in
+        // [EN] Closing to avoid frequent disk writes while dragging.
+        // [ZH] 窗口尺寸记忆（设计规范要求）。Closing 里存，避免拖动过程中频繁写盘。
         Width = _state.Settings.SettingsWindowWidth;
         Height = _state.Settings.SettingsWindowHeight;
         Closing += (_, _) =>
@@ -123,8 +153,11 @@ public partial class SettingsWindow : Window, ISettingsHost
         PropertyChanged += OnWindowPropertyChanged;
         UpdateWindowChromeState();
 
-        // 与主窗口同一道保险：记忆里的尺寸可能来自旧版本（980x720），
-        // 超出当前屏幕可用区域时会把底部的保存/关闭按钮裁掉。
+        // [EN] The same safeguard as in the main window: the remembered size may come from
+        // [EN] an older release (980x720) and would clip the save/close buttons at the
+        // [EN] bottom when it exceeds the current screen's working area.
+        // [ZH] 与主窗口同一道保险：记忆里的尺寸可能来自旧版本（980x720），
+        // [ZH] 超出当前屏幕可用区域时会把底部的保存/关闭按钮裁掉。
         Opened += (_, _) =>
         {
             ClampSizeToScreen();
@@ -133,15 +166,16 @@ public partial class SettingsWindow : Window, ISettingsHost
     }
 
     // -----------------------------------------------------------------
-    // [EN] Surface and page motion / [ZH] 界面与页签动效
+    // [EN] Surface and page motion
+    // [ZH] 界面与页签动效
     // -----------------------------------------------------------------
 
     /// <summary>
     /// [EN] Plays the 250 ms entrance of the settings content. Only opacity and the render
-    ///      transform are animated, therefore the window can be measured and arranged once and
-    ///      the entrance adds no layout pass of its own.
+    /// [EN] transform are animated, therefore the window can be measured and arranged once
+    /// [EN] and the entrance adds no layout pass of its own.
     /// [ZH] 播放设置内容 250 毫秒的入场动效。仅不透明度与渲染变换参与动画，因此窗口只需完成一次测量与
-    ///      排列，入场过程本身不增加任何布局过程。
+    /// [ZH] 排列，入场过程本身不增加任何布局过程。
     /// </summary>
     private void PlayContentEntrance()
     {
@@ -150,11 +184,11 @@ public partial class SettingsWindow : Window, ISettingsHost
     }
 
     /// <summary>
-    /// [EN] Plays the 250 ms entrance of a newly selected page. The transition is restarted from
-    ///      an explicit initial value, so that switching back and forth yields the same motion;
-    ///      the animation touches opacity and the render transform only.
+    /// [EN] Plays the 250 ms entrance of a newly selected page. The transition is restarted
+    /// [EN] from an explicit initial value, so that switching back and forth yields the same
+    /// [EN] motion; the animation touches opacity and the render transform only.
     /// [ZH] 播放新选中页签 250 毫秒的入场动效。过渡从显式初始值重新开始，因此往返切换具有一致的运动
-    ///      表现；动画仅涉及不透明度与渲染变换。
+    /// [ZH] 表现；动画仅涉及不透明度与渲染变换。
     /// </summary>
     private void OnTabSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
@@ -173,11 +207,11 @@ public partial class SettingsWindow : Window, ISettingsHost
     }
 
     /// <summary>
-    /// [EN] Opens or closes the field-help side panel through a width transition. The panel is
-    ///      hidden only after the closing transition has elapsed, therefore the surface recedes
-    ///      smoothly instead of collapsing in a single frame.
+    /// [EN] Opens or closes the field-help side panel through a width transition. The panel
+    /// [EN] is hidden only after the closing transition has elapsed, therefore the surface
+    /// [EN] recedes smoothly instead of collapsing in a single frame.
     /// [ZH] 通过宽度过渡开启或关闭字段帮助侧面板。面板仅在关闭过渡结束之后才被隐藏，因此该界面是平滑
-    ///      退出，而非在单帧内骤缩。
+    /// [ZH] 退出，而非在单帧内骤缩。
     /// </summary>
     private void AnimateFieldHelp(bool show)
     {
@@ -238,15 +272,17 @@ public partial class SettingsWindow : Window, ISettingsHost
     }
 
     // -----------------------------------------------------------------
-    // [EN] Custom window chrome / [ZH] 自定义窗口外框
+    // [EN] Custom window chrome
+    // [ZH] 自定义窗口外框
     // -----------------------------------------------------------------
 
     /// <summary>
-    /// [EN] Starts the platform window move loop from the custom caption. A double click within
-    ///      the system interval toggles the maximised state. The loop itself is provided by the
-    ///      platform, so snapping, cursor tracking and DPI transitions remain native.
+    /// [EN] Starts the platform window move loop from the custom caption. A double click
+    /// [EN] within the system interval toggles the maximized state. The loop itself is
+    /// [EN] provided by the platform, so snapping, cursor tracking and DPI transitions
+    /// [EN] remain native.
     /// [ZH] 从自定义标题栏启动平台窗口移动循环。系统间隔内的双击切换最大化状态。移动循环由平台
-    ///      提供，因此贴靠、光标跟随与 DPI 切换均保持原生行为。
+    /// [ZH] 提供，因此贴靠、光标跟随与 DPI 切换均保持原生行为。
     /// </summary>
     private void OnTitleBarPointerPressed(object? sender, PointerPressedEventArgs e)
     {
@@ -332,7 +368,11 @@ public partial class SettingsWindow : Window, ISettingsHost
             UpdateWindowChromeState();
     }
 
-    /// <summary>把窗口尺寸限制在当前屏幕的可用区域内（留 24px 余量）。</summary>
+    /// <summary>
+    /// [EN] Clamps the window size to the working area of the current screen (leaving a
+    /// [EN] 24 px margin).
+    /// [ZH] 把窗口尺寸限制在当前屏幕的可用区域内（留 24px 余量）。
+    /// </summary>
     private void ClampSizeToScreen()
     {
         global::Avalonia.Platform.Screen? screen =
@@ -340,8 +380,12 @@ public partial class SettingsWindow : Window, ISettingsHost
         if (screen is null)
             return;
         double scale = screen.Scaling > 0 ? screen.Scaling : 1.0;
-        // 注意：Avalonia 的 Width/Height 是**客户区**，窗口边框与标题栏还要再加约 16x39。
-        // 只按可用区域减 24 的话，客户区虽然"装得下"，整窗反而会高出屏幕一截。
+        // [EN] Note: Width/Height in Avalonia are the **client area**; the window border and
+        // [EN] the title bar add roughly 16x39 more. Subtracting only 24 from the working
+        // [EN] area would make the client area "fit" while the whole window ends up higher
+        // [EN] than the screen.
+        // [ZH] 注意：Avalonia 的 Width/Height 是**客户区**，窗口边框与标题栏还要再加约 16x39。
+        // [ZH] 只按可用区域减 24 的话，客户区虽然"装得下"，整窗反而会高出屏幕一截。
         double maxWidth = screen.WorkingArea.Width / scale - 48;
         double maxHeight = screen.WorkingArea.Height / scale - 56;
         if (maxWidth > 0 && Width > maxWidth)
@@ -375,19 +419,28 @@ public partial class SettingsWindow : Window, ISettingsHost
     public void ClearFieldHelp() => AnimateFieldHelp(show: false);
 
     /// <summary>
-    /// 跨页跳转（「已安装」页的「➕ 新建本地插件」要跳到「开发者」页）。
-    /// 委托给既有的 <see cref="SelectTab"/> —— 同一份页签查找逻辑，不重复实现一遍。
+    /// [EN] Cross-page jump (the "add new local plugin" button on the Installed page must
+    /// [EN] land on the Developer page). Delegated to the existing <see cref="SelectTab"/> --
+    /// [EN] the same tab lookup logic, not implemented twice.
+    /// [ZH] 跨页跳转（「已安装」页的「➕ 新建本地插件」要跳到「开发者」页）。
+    /// [ZH] 委托给既有的 <see cref="SelectTab"/> —— 同一份页签查找逻辑，不重复实现一遍。
     /// </summary>
     public bool ShowTab(string tabKey) => SelectTab(tabKey);
 
     // -----------------------------------------------------------------
-    // 页签注册
+    // [EN] Tab registration
+    // [ZH] 页签注册
     // -----------------------------------------------------------------
 
     /// <summary>
-    /// 选中某个页签（主窗口状态区各项都是"点一下跳到对应设置"，需要直接落到那一页）。
-    /// 传的是 <see cref="ISettingsPage.TabKey"/>（如 <c>settings.tab.model</c>），
-    /// 找不到就保持默认页 —— 不抛异常，跳转失败不该让设置窗口打不开。
+    /// [EN] Selects a tab (every item of the main window's status area is "click to jump to
+    /// [EN] the matching setting" and needs to land on that page directly). The argument is
+    /// [EN] <see cref="ISettingsPage.TabKey"/> (such as <c>settings.tab.model</c>); when no
+    /// [EN] tab matches, the default page is kept -- no exception is thrown, since a failed
+    /// [EN] jump must not keep the settings window from opening.
+    /// [ZH] 选中某个页签（主窗口状态区各项都是"点一下跳到对应设置"，需要直接落到那一页）。
+    /// [ZH] 传的是 <see cref="ISettingsPage.TabKey"/>（如 <c>settings.tab.model</c>），
+    /// [ZH] 找不到就保持默认页 —— 不抛异常，跳转失败不该让设置窗口打不开。
     /// </summary>
     public bool SelectTab(string tabKey)
     {
@@ -403,8 +456,11 @@ public partial class SettingsWindow : Window, ISettingsHost
     }
 
     /// <summary>
-    /// 按类型找已注册的设置页（**探针用**：`EchoDesk --probe market` 要拿到
-    /// <c>ModelPage</c> 才能驱动模型市场那一套交互）。找不到返回 null，不抛。
+    /// [EN] Finds a registered settings page by type (**for probes**:
+    /// [EN] `EchoDesk --probe market` needs the <c>ModelPage</c> to drive the interactions of
+    /// [EN] the model market). Returns null when none is found; no exception is thrown.
+    /// [ZH] 按类型找已注册的设置页（**探针用**：`EchoDesk --probe market` 要拿到
+    /// [ZH] <c>ModelPage</c> 才能驱动模型市场那一套交互）。找不到返回 null，不抛。
     /// </summary>
     public T? FindPage<T>() where T : class
     {
@@ -417,11 +473,11 @@ public partial class SettingsWindow : Window, ISettingsHost
     private void RegisterPage(ISettingsPage page)    {
         page.Attach(this);
         page.ApplyTexts();
-        // [EN] Each page carries its own transition set, because a transition must live on the
-        //      element whose property it animates. The resting values are the settled state of an
-        //      entrance that has already completed.
+        // [EN] Each page carries its own transition set, because a transition must live on
+        // [EN] the element whose property it animates. The resting values are the settled
+        // [EN] state of an entrance that has already completed.
         // [ZH] 每个页面各自携带过渡集合，因为过渡必须位于其所动画属性所属的元素上。静息值即入场动效
-        //      完成后的稳定状态。
+        // [ZH] 完成后的稳定状态。
         var pageControl = (Control)page;
         pageControl.Opacity = 1;
         pageControl.RenderTransform = TransformOperations.Parse("translate(0px, 0px)");
@@ -453,8 +509,12 @@ public partial class SettingsWindow : Window, ISettingsHost
     }
 
     /// <summary>
-    /// 未迁移页签的占位：说清"这页在哪、现在怎么办"，而不是显示一个空面板。
-    /// Windows 上有功能完整的 WPF 版可以直接用；非 Windows 上则明确说明该页暂不可用。
+    /// [EN] Placeholder for a not-yet-migrated tab: it states where the page is and what to
+    /// [EN] do for now, instead of showing an empty panel. On Windows the full-featured WPF
+    /// [EN] build can be used directly; on other platforms it is stated explicitly that the
+    /// [EN] page is unavailable for now.
+    /// [ZH] 未迁移页签的占位：说清"这页在哪、现在怎么办"，而不是显示一个空面板。
+    /// [ZH] Windows 上有功能完整的 WPF 版可以直接用；非 Windows 上则明确说明该页暂不可用。
     /// </summary>
     private void AddNotMigratedTab(string key, string fallback)
     {
@@ -493,7 +553,8 @@ public partial class SettingsWindow : Window, ISettingsHost
     }
 
     // -----------------------------------------------------------------
-    // 文案 / 设置
+    // [EN] Texts / settings
+    // [ZH] 文案 / 设置
     // -----------------------------------------------------------------
     private void ApplyTexts()
     {
@@ -533,7 +594,10 @@ public partial class SettingsWindow : Window, ISettingsHost
             ? Loc.T("settings.loadState.saved", "✅ 设置已保存")
             : Loc.T("settings.loadState.saveFailed", "⚠️ 设置无法写入（目录只读？）");
 
-        // 业务设置（如默认模式）由页面自己同步给后端 —— 前端不持有第二份业务配置。
+        // [EN] Business settings (such as the default mode) are synchronized to the backend
+        // [EN] by the page itself -- the front end does not hold a second copy of the
+        // [EN] business configuration.
+        // [ZH] 业务设置（如默认模式）由页面自己同步给后端 —— 前端不持有第二份业务配置。
         foreach (ISettingsPage page in _pages)
         {
             try

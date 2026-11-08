@@ -225,7 +225,8 @@ from config import program_dir, program_root as user_data_root
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("EchoDesk")
 
-# ---------- 崩溃日志 / Crash log ----------
+# [EN] ---------- Crash log ----------
+# [ZH] ---------- 崩溃日志 ----------
 # [EN] The process can terminate from native code crashes (SIGILL/SIGSEGV in llama.cpp) with
 # [EN] no Python traceback. The crash reason is written to backend_crash.log so it can be
 # [EN] diagnosed on another machine.
@@ -431,7 +432,9 @@ def _profile_params_text(name: str) -> str:
     try:
         from model_profile import _fmt_params, params_from_name
         return _fmt_params(params_from_name(name))
-    except Exception:  # noqa: BLE001 - 只是展示字段，取不到就不显示
+    except Exception:  # noqa: BLE001
+        # [EN] Display-only field: when it cannot be read, it is simply not shown.
+        # [ZH] 只是展示字段，取不到就不显示。
         return ""
 
 
@@ -458,7 +461,8 @@ def _write(response: Dict[str, Any]) -> None:
 
 
 # =====================================================================
-# 宿主进度事件 / Host progress events (v0.2.2 batch 4)
+# [EN] Host progress events (v0.2.2 batch 4)
+# [ZH] 宿主进度事件（v0.2.2 第 4 批）
 # =====================================================================
 #
 # [EN] Background: chunked-summary progress used to have two paths -- the `summary_progress`
@@ -547,11 +551,11 @@ class Backend:
         else:
             self.llm = self._build_engine(config, "")
         self.conv = ConversationManager(config.max_history, config.default_mode)
-        # [EN] The two switches controlling reasoning content written to history (此前版本
-        # [EN] reasoning separation): whether to persist it and how many characters to keep
-        # [EN] per entry. They live here rather than inside ConversationManager because these
-        # [EN] values come from config.json and the conversation manager itself does not
-        # [EN] depend on the config module.
+        # [EN] The two switches controlling reasoning content written to history (reasoning
+        # [EN] separation in an earlier release): whether to persist it and how many
+        # [EN] characters to keep per entry. They live here rather than inside
+        # [EN] ConversationManager because these values come from config.json and the
+        # [EN] conversation manager itself does not depend on the config module.
         # [ZH] 思考内容写入历史的两个开关（此前版本 模型思考内容分离）：是否持久化、
         # [ZH] 每条保留多少字符。放在这里而不是 ConversationManager 内部，是因为
         # [ZH] 这两个值来自 config.json，而会话管理器本身不依赖配置模块。
@@ -647,9 +651,9 @@ class Backend:
         cache = self.summary_cache()
         return cache.clear() if cache is not None else 0
 
-    # ---------- 无模型就绪 / 热加载（此前版本 综合优化 相关设计、二、五） ----------
-    # [EN] No-model-ready state and hot loading (此前版本 general optimization, tasks 1/2/5).
-    # [ZH] 无模型就绪 / 热加载（此前版本 综合优化 相关设计、二、五）。
+    # [EN] ---------- No-model-ready state and hot loading (general optimization in an
+    # [EN] earlier release, design sections II and V, tasks 1/2/5) ----------
+    # [ZH] ---------- 无模型就绪 / 热加载（此前版本 综合优化 相关设计、二、五） ----------
 
     @property
     def model_ready(self) -> bool:
@@ -1182,7 +1186,10 @@ class Backend:
                 raise RuntimeError(blocking)
             self.llm.apply_plan(plan)
             self.llm.load(path, plan.n_ctx_initial)
-        except Exception as e:  # noqa: BLE001 - 损坏/不支持/内存不足都在这里
+        except Exception as e:  # noqa: BLE001
+            # [EN] Covers every failure mode here: a corrupt file, an unsupported format,
+            # [EN] or insufficient memory.
+            # [ZH] 损坏、格式不支持、内存不足都在这里。
             log.exception("热加载模型失败: %s", os.path.basename(path))
             return {"ok": False, "name": os.path.basename(path),
                     "error": _t("sys.model_load_failed", name=os.path.basename(path), error=e),
@@ -1254,9 +1261,8 @@ class Backend:
             "state": self.model_state(),
         }
 
-    # ---------- 兼容性修正：模型能力画像 / 摘要缓存 ----------
-    # [EN] Fix 4: model capability profile and summary cache.
-    # [ZH] 兼容性修正：模型能力画像 / 摘要缓存。
+    # [EN] ---------- Fix 4: model capability profile and summary cache ----------
+    # [ZH] ---------- 兼容性修正：模型能力画像 / 摘要缓存 ----------
 
     def capability(self):
         """
@@ -1537,7 +1543,7 @@ class Backend:
             log, "sys.log_model_loading",
             # [EN] The signature of i18n.t() is t(key, **kwargs): it does **not accept a
             # [EN] second positional argument**. This was once written as
-            # [EN] `train_ctx or _t("sys.log_unknown", "未知")`, while resolve_context_window()
+            # [EN] `train_ctx or _t("sys.log_unknown", …)`, while resolve_context_window()
             # [EN] returns 0 when the GGUF metadata is unreadable -> the right-hand side of
             # [EN] `or` executes -> `TypeError: t() takes 1 positional argument but 2 were
             # [EN] given`. A missing key must be left to the fallback chain.
@@ -1644,9 +1650,8 @@ class Backend:
         self.llm.chat_complete(self.conv.build_messages("ping"), max_tokens=1)
         log.info("%s", _t("sys.log_model_preheated"))
 
-    # ---------- 请求分发 ----------
-    # [EN] Request dispatch.
-    # [ZH] 请求分发。
+    # [EN] ---------- Request dispatch ----------
+    # [ZH] ---------- 请求分发 ----------
 
     def handle(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1710,9 +1715,9 @@ class Backend:
                 self.config.automation.enabled and self.config.automation.safety_accepted
             )
             return {"type": "system", "content": "", "automation": status}
-        # ---------- 相关设计：复用已打开的浏览器 + 两段式可视化选取 ----------
-        # [EN] Task 17: reuse an already-open browser and two-phase visual selection.
-        # [EN]
+        # [EN] ---------- Task 17: reuse an already-open browser and two-phase visual
+        # [EN] selection ----------
+        # [ZH] ---------- 相关设计：复用已打开的浏览器 + 两段式可视化选取 ----------
         # [EN] These are **additional** branches; the behaviour of every existing branch above
         # [EN] is unchanged: the old streaming `automation_pick` (used by the WPF UI) is
         # [EN] retained as-is and keeps working. The "synchronous request + frontend polling"
@@ -1720,8 +1725,6 @@ class Backend:
         # [EN] the period in which **the user prepares the page**; holding a streaming
         # [EN] connection idle during that period makes it more likely to be killed by a
         # [EN] timeout.
-        # [ZH] 相关设计：复用已打开的浏览器 + 两段式可视化选取。
-        # [ZH]
         # [ZH] 这些分支均为**新增**，未改动上述任何既有分支的行为：
         # [ZH] 原有的流式 `automation_pick`（WPF 界面在用）原样保留，可继续工作。
         # [ZH] 之所以采用"同步请求 + 前端轮询"而不是流式：两段式流程中真正耗时的是
@@ -1753,9 +1756,8 @@ class Backend:
             return self._handle_market_installed()
         if action == "market_status":
             return self._handle_market_status()
-        # ---------- 模型选择栏（新增四） ----------
-        # [EN] Model selector (feature 4).
-        # [ZH] 模型选择栏（新增四）。
+        # [EN] ---------- Model selector (feature 4) ----------
+        # [ZH] ---------- 模型选择栏（新增四） ----------
         if action == "model_hub_search":
             return self._handle_model_hub_search(request)
         if action == "model_hub_query":
@@ -1770,19 +1772,17 @@ class Backend:
             return self._handle_model_hub_status()
         if action == "model_hub_config_set":
             return self._handle_model_hub_config_set(request)
-        # ---------- 无模型就绪 / 热加载（此前版本 综合优化 相关设计、二、五） ----------
-        # [EN] No-model-ready state and hot loading (此前版本 general optimization, tasks
-        # [EN] 1/2/5).
-        # [ZH] 无模型就绪 / 热加载（此前版本 综合优化 相关设计、二、五）。
+        # [EN] ---------- No-model-ready state and hot loading (general optimization in an
+        # [EN] earlier release, design sections II and V, tasks 1/2/5) ----------
+        # [ZH] ---------- 无模型就绪 / 热加载（此前版本 综合优化 相关设计、二、五） ----------
         if action == "model_state":
             return {"type": "system", "content": "", "model_state": self.model_state()}
         if action == "model_scan":
             return self._handle_model_scan(request)
         if action == "model_load":
             return self._handle_model_load(request)
-        # ---------- 模型档位（多档默认模型的设置页入口） ----------
-        # [EN] Model profiles (settings-page entry for multiple default models).
-        # [ZH] 模型档位（多档默认模型的设置页入口）。
+        # [EN] ---------- Model profiles (settings-page entry for multiple default models) ----------
+        # [ZH] ---------- 模型档位（多档默认模型的设置页入口） ----------
         if action == "model_profiles":
             return {"type": "system", "content": "", "model_profiles": self.profiles_state()}
         if action == "model_profile_apply":
@@ -1791,33 +1791,29 @@ class Backend:
             return self._handle_model_profile_save(request)
         if action == "model_profile_delete":
             return self._handle_model_profile_delete(request)
-        # ---------- 多语言（相关设计 3.4） ----------
-        # [EN] Multilingual support (task 3, 3.4).
-        # [ZH] 多语言（相关设计 3.4）。
+        # [EN] ---------- Multilingual support (task 3, 3.4) ----------
+        # [ZH] ---------- 多语言（相关设计 3.4） ----------
         if action == "set_language":
             return self._handle_set_language(request)
         if action == "language":
             return self._handle_language()
-        # ---------- 指令面板数据源（相关设计 2.6） ----------
-        # [EN] Command palette data source (task 2, 2.6).
-        # [ZH] 指令面板数据源（相关设计 2.6）。
+        # [EN] ---------- Command palette data source (task 2, 2.6) ----------
+        # [ZH] ---------- 指令面板数据源（相关设计 2.6） ----------
         if action == "commands":
             return {"type": "system", "content": "", "commands": self.commands.all_commands()}
-        # ---------- 跨平台（相关设计 / 相关设计）：平台与能力边界 ----------
-        # [EN] Cross-platform (tasks 3 / 5): platform and capability boundaries.
+        # [EN] ---------- Cross-platform: platform and capability boundaries ----------
+        # [ZH] ---------- 跨平台（相关设计 / 相关设计）：平台与能力边界 ----------
         # [EN] The frontend receives the same report from ready.platform at startup; this
         # [EN] action lets the "capability list" panel and troubleshooting re-query it at any
         # [EN] time (for example after the user changes machine, plugs in an external GPU, or
         # [EN] installs WPS).
-        # [ZH] 跨平台（相关设计 / 相关设计）：平台与能力边界。
         # [ZH] 前端启动时从 ready.platform 获取同一份报告；该动作供"能力清单"面板
         # [ZH] 与排障时随时再次查询（例如用户更换机器、插入外置显卡、安装 WPS 之后）。
         if action == "platform":
             report = platform_support.report()
             return {"type": "system", "content": "", "platform": report}
-        # ---------- 兼容性修正：模型能力与上下文管理 ----------
-        # [EN] Fix 4: model capability and context management.
-        # [ZH] 兼容性修正：模型能力与上下文管理。
+        # [EN] ---------- Fix 4: model capability and context management ----------
+        # [ZH] ---------- 兼容性修正：模型能力与上下文管理 ----------
         if action == "capability":
             return {"type": "system", "content": "", "capability": self.model_capability(),
                     "presets": _preset_list(),
@@ -1855,9 +1851,8 @@ class Backend:
                             "enabled": self.config.summarize.enabled,
                         },
                     }}
-        # ---------- Agent 与 MCP（后续版本 相关设计 / 三） ----------
-        # [EN] Agent and MCP (capability extension-1, tasks 2 / 3).
-        # [ZH] Agent 与 MCP（后续版本 相关设计 / 三）。
+        # [EN] ---------- Agent and MCP (capability extension-1, tasks 2 / 3) ----------
+        # [ZH] ---------- Agent 与 MCP（后续版本 相关设计 / 三） ----------
         if action == "agent_state":
             return {"type": "system", "content": "", "agent": self.agent_diagnostics()}
         if action == "agent_configure":
@@ -1879,9 +1874,8 @@ class Backend:
             cleared = cache.clear() if cache else 0
             return {"type": "system", "content": "", "cleared": cleared,
                     "summary_cache": (cache.stats() if cache else {})}
-        # ---------- 技能与本地插件（相关设计 / 相关设计·补） ----------
-        # [EN] Skills and local plugins (task 2 / task 2 supplement).
-        # [ZH] 技能与本地插件（相关设计 / 相关设计·补）。
+        # [EN] ---------- Skills and local plugins (task 2 / task 2 supplement) ----------
+        # [ZH] ---------- 技能与本地插件（相关设计 / 相关设计·补） ----------
         if action == "skills_list":
             return {"type": "system", "content": "", "skills": self.skills().status()}
         if action == "skills_reload":
@@ -1927,9 +1921,8 @@ class Backend:
             return self._handle_skills_panel_action(request)
         if action == "skills_examples":
             return self._handle_skills_examples(request)
-        # ---------- 自动更新（相关设计 方案 A：只检查与提示） ----------
-        # [EN] Auto-update (task 5, option A: check and notify only).
-        # [ZH] 自动更新（相关设计 方案 A：只检查与提示）。
+        # [EN] ---------- Auto-update (task 5, option A: check and notify only) ----------
+        # [ZH] ---------- 自动更新（相关设计 方案 A：只检查与提示） ----------
         if action == "update_check":
             return self._handle_update_check(request)
         # [EN] v0.2.4 patch: the user must explicitly ask for a download; the backend
@@ -1944,9 +1937,8 @@ class Backend:
             return self._handle_update_ignore(request)
         return {"type": "system", "content": _t("sys.unknown_action")}
 
-    # ---------- 多语言（相关设计 3.4） ----------
-    # [EN] Multilingual support (task 3, 3.4).
-    # [ZH] 多语言（相关设计 3.4）。
+    # [EN] ---------- Multilingual support (task 3, 3.4) ----------
+    # [ZH] ---------- 多语言（相关设计 3.4） ----------
 
     def _handle_set_language(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1961,7 +1953,7 @@ class Backend:
         [ZH]
         切换后端语言：影响系统消息、错误提示与指令帮助。
 
-        选择结果由前端写入 ui_state.json（任务书 3.4 持久化要求），
+        选择结果由前端写入 ui_state.json（设计规范 3.4 持久化要求），
         后端只在本次运行内生效，避免为了切换语言而改写 config.json。
         """
         locale = str(request.get("locale") or "auto")
@@ -1976,9 +1968,8 @@ class Backend:
     def _handle_language(self) -> Dict[str, Any]:
         return {"type": "system", "content": "", "i18n": _i18n().info()}
 
-    # ---------- 技能与本地插件（相关设计 / 相关设计·补） ----------
-    # [EN] Skills and local plugins (task 2 / task 2 supplement).
-    # [ZH] 技能与本地插件（相关设计 / 相关设计·补）。
+    # [EN] ---------- Skills and local plugins (task 2 / task 2 supplement) ----------
+    # [ZH] ---------- 技能与本地插件（相关设计 / 相关设计·补） ----------
 
     def _handle_skills_reload(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1995,7 +1986,7 @@ class Backend:
         field).
 
         [ZH]
-        热重载插件（任务书 2B.5）：无需重启即可看到 skills_dev/ 中的改动。
+        热重载插件（设计规范 2B.5）：无需重启即可看到 skills_dev/ 中的改动。
 
         ``scope`` 参数（能力扩展-1 任务四）：``"dev"`` 只重载开发目录与本地清单中的插件
         （开发者页的「重载本地插件」按钮即走这条路径），缺省 ``"all"`` 重载全部。
@@ -2140,7 +2131,7 @@ class Backend:
         Create a local plugin skeleton (task 2B.6, new-plugin wizard).
 
         [ZH]
-        新建本地插件骨架（任务书 2B.6 新建插件向导）。
+        新建本地插件骨架（设计规范 2B.6 新建插件向导）。
         """
         result = self.skills().scaffold(
             str(request.get("id") or ""), str(request.get("name") or ""),
@@ -2187,7 +2178,7 @@ class Backend:
         Record or revoke trust in a local plugin (task 2B.9, first-load confirmation dialog).
 
         [ZH]
-        记录/撤销对本地插件的信任（任务书 2B.9 首次加载确认框）。
+        记录/撤销对本地插件的信任（设计规范 2B.9 首次加载确认框）。
         """
         skill_id = str(request.get("id") or "")
         trusted = bool(request.get("trusted", True))
@@ -2203,7 +2194,7 @@ class Backend:
         Write the local plugin manifest (task 2B.3 / 2B.10, plugin manifest editing).
 
         [ZH]
-        写入本地插件清单（任务书 2B.3 / 2B.10 插件清单编辑）。
+        写入本地插件清单（设计规范 2B.3 / 2B.10 插件清单编辑）。
         """
         payload = request.get("manifest")
         if not isinstance(payload, dict):
@@ -2232,7 +2223,7 @@ class Backend:
         Copy the bundled example plugins into skills_dev/ (task 2.5, example skills).
 
         [ZH]
-        把随包附带的示例插件复制到 skills_dev/（任务书 2.5 示例技能）。
+        把随包附带的示例插件复制到 skills_dev/（设计规范 2.5 示例技能）。
         """
         loader = self.skills()
         src_root = loader.examples_dir()
@@ -2267,9 +2258,8 @@ class Backend:
         return {"type": "system", "content": text, "copied": copied,
                 "skills": loader.status(), "commands": self.commands.all_commands()}
 
-    # ---------- 自动更新（相关设计 方案 A） ----------
-    # [EN] Auto-update (task 5, option A).
-    # [ZH] 自动更新（相关设计 方案 A）。
+    # [EN] ---------- Auto-update (task 5, option A) ----------
+    # [ZH] ---------- 自动更新（相关设计 方案 A） ----------
 
     def _handle_update_check(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -2477,9 +2467,8 @@ class Backend:
             },
         }
 
-    # ---------- 模型选择栏（新增四） ----------
-    # [EN] Model selector (feature 4).
-    # [ZH] 模型选择栏（新增四）。
+    # [EN] ---------- Model selector (feature 4) ----------
+    # [ZH] ---------- 模型选择栏（新增四） ----------
 
     def _model_hub_error(self, e: Exception, verb: str) -> Dict[str, Any]:
         log.exception("模型中心%s失败", verb)
@@ -2534,7 +2523,7 @@ class Backend:
         [ZH]
         在**已加载的结果集**上做本地筛选/排序/翻页（不重新请求远端）。
 
-        任务书任务三/四/五/六的落点：分页控件、本地实时筛选、结构化筛选器、四种排序
+        设计规范任务三/四/五/六的落点：分页控件、本地实时筛选、结构化筛选器、四种排序
         都只发这一个动作，因此不会因为"筛选条件改了一下"就重新发起网络请求。
         """
         try:
@@ -2705,10 +2694,9 @@ class Backend:
             note = _t("sys.model_hub_no_change")
         return {"type": "system", "content": note, "model_hub": self.model_hub().status()}
 
-    # ---------- 无模型就绪 / 重新扫描 / 热加载（此前版本 综合优化 相关设计、五） ----------
-    # [EN] No-model-ready state, rescan, and hot loading (此前版本 general optimization, tasks
-    # [EN] 2/5).
-    # [ZH] 无模型就绪 / 重新扫描 / 热加载（此前版本 综合优化 相关设计、五）。
+    # [EN] ---------- No-model-ready state, rescan, and hot loading (general optimization
+    # [EN] in an earlier release, design section V, tasks 2/5) ----------
+    # [ZH] ---------- 无模型就绪 / 重新扫描 / 热加载（此前版本 综合优化 相关设计、五） ----------
 
     def _handle_model_scan(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -2756,9 +2744,9 @@ class Backend:
         return {"type": "system", "content": content, "model_load": result,
                 "model_state": result.get("state", self.model_state())}
 
-    # ---------- 模型档位（多档默认模型：设置页里显示与切换） ----------
-    # [EN] Model profiles (multiple default models: display and switch in the settings page).
-    # [ZH] 模型档位（多档默认模型：设置页中显示与切换）。
+    # [EN] ---------- Model profiles (multiple default models: display and switch in the
+    # [EN] settings page) ----------
+    # [ZH] ---------- 模型档位（多档默认模型：设置页里显示与切换） ----------
 
     def profiles_state(self) -> Dict[str, Any]:
         """
@@ -2903,19 +2891,16 @@ class Backend:
                 "model_profiles": self.profiles_state(),
                 "model_state": result.get("state", self.model_state())}
 
-    # ---------- 自定义模型档位（后续版本 相关设计 C） ----------
-
-    # ---------- 自定义模型档位（后续版本 相关设计 C） ----------
-    # [EN] Custom model profiles (capability extension-1, task 5 C).
-    # [ZH] 自定义模型档位（后续版本 相关设计 C）。
+    # [EN] ---------- Custom model profiles (capability extension-1, task 5 C) ----------
+    # [ZH] ---------- 自定义模型档位（后续版本 相关设计 C） ----------
 
     #: [EN] Fields and types permitted in a profile (whitelist). **Storing arbitrary keys is
     #: deliberately avoided**: `config.models` is read by /model, the settings page, and the
     #: load path, so a misspelled key would silently do nothing, whereas a whitelist can
     #: reject it at write time.
     #: [ZH] 档位中允许写入的字段与类型（白名单）。**刻意不做"任意键都存"**：
-    #: `config.models` 会被 /model、设置页与加载路径共同读取，写入一个拼错的键
-    #: 只会静默失效，而白名单能在写入时即报错。
+    #: [ZH] `config.models` 会被 /model、设置页与加载路径共同读取，写入一个拼错的键
+    #: [ZH] 只会静默失效，而白名单能在写入时即报错。
     PROFILE_FIELDS = ("path", "repo", "context_length", "temperature", "note", "quantization")
 
     def _save_profile_field(self, alias: str, profile: Dict[str, Any]) -> None:
@@ -2943,7 +2928,7 @@ class Backend:
         [ZH]
         新增/修改一个模型档位（别名即键），写入 ``config.json`` 的 ``models`` 段。
 
-        任务书要求"用户可自定义模型档位（不只是两档预设），设定别名、上下文长度、
+        设计规范要求"用户可自定义模型档位（不只是两档预设），设定别名、上下文长度、
         温度、备注" —— 原先只有"读"与"切换"，没有任何写入口，添加档位必须手工修改
         ``config.json``。此处补上写入口，并保持既有字段语义不变（**扩展而不是重写**：
         ``models`` 的结构仍为 ``{别名: {path, repo, context_length, temperature, ...}}``，
@@ -3081,9 +3066,8 @@ class Backend:
         return {"type": "system", "content": self._profile_response_content(result),
                 "model_profile_delete": result, "model_profiles": result.get("state", {})}
 
-    # ---------- 技能市场（相关设计） ----------
-    # [EN] Skill marketplace (task 5).
-    # [ZH] 技能市场（相关设计）。
+    # [EN] ---------- Skill marketplace (task 5) ----------
+    # [ZH] ---------- 技能市场（相关设计） ----------
 
     def _market_error(self, e: Exception, verb: str) -> Dict[str, Any]:
         log.exception("技能市场%s失败", verb)
@@ -3147,7 +3131,7 @@ class Backend:
 
         能力扩展-1 任务四：审计发现"安装后即可使用"缺少最后一步 —— 旧实现只返回一句文案，
         用户必须自行点击「重载本地插件」或重启，否则指令面板中看不到新指令
-        （这正是任务书所述"运行期加载器接线尚未完成"的实际表现）。
+        （这正是设计规范所述"运行期加载器接线尚未完成"的实际表现）。
         现在安装成功后直接调用 ``skills().reload_all()``，并把加载结果一并返回界面。
         """
         repo = str(request.get("repo") or "").strip()
@@ -3177,7 +3161,9 @@ class Backend:
         """
         try:
             summary = self.skills().reload_all()
-        except Exception as e:                             # [EN] A reload failure must not mask a successful install; [ZH] 重载失败不得掩盖安装成功
+        # [EN] A reload failure must not mask a successful install.
+        # [ZH] 重载失败不得掩盖安装成功。
+        except Exception as e:
             log.exception("安装后热重载插件失败")
             return _t("sys.skills_reload_failed", error=e)
         return _t("sys.skills_reloaded", loaded=summary.get("loaded", 0),
@@ -3233,9 +3219,8 @@ class Backend:
             return self._market_error(e, _t("sys.verb_query_status"))
         return {"type": "system", "content": "", "market_status": state}
 
-    # ---------- 自动化配置与测试（相关设计） ----------
-    # [EN] Automation configuration and testing (task 4).
-    # [ZH] 自动化配置与测试（相关设计）。
+    # [EN] ---------- Automation configuration and testing (task 4) ----------
+    # [ZH] ---------- 自动化配置与测试（相关设计） ----------
 
     @staticmethod
     def _automation_payload(cfg) -> Dict[str, Any]:
@@ -3368,9 +3353,9 @@ class Backend:
             "automation": self._automation_payload(cfg),
         }
 
-    # ---------- 自动化配置向导、模板与导入导出（此前版本 相关设计） ----------
-    # [EN] Automation configuration wizard, templates, import and export (此前版本, task 4).
-    # [ZH] 自动化配置向导、模板与导入导出（此前版本 相关设计）。
+    # [EN] ---------- Automation configuration wizard, templates, import and export
+    # [EN] (task 4 in an earlier release) ----------
+    # [ZH] ---------- 自动化配置向导、模板与导入导出（此前版本 相关设计） ----------
 
     #: [EN] Fields that must appear in "field help" (order equals UI order).
     #: [ZH] 需要出现在「填写帮助」中的字段（顺序即界面顺序）。
@@ -3385,9 +3370,9 @@ class Backend:
         ("task_name", "step4", False),
         ("results_root_name", "step4", False),
         ("results_location", "step4", False),
-        # [EN] Login state (此前版本 automation optimization, task 1): grouped under step 5
-        # [EN] "run parameters" because these are all "how to run" settings and most users do
-        # [EN] not need to change them (the defaults suffice).
+        # [EN] Login state (automation optimization in an earlier release, task 1): grouped
+        # [EN] under step 5 "run parameters" because these are all "how to run" settings and
+        # [EN] most users do not need to change them (the defaults suffice).
         # [ZH] 登录态（此前版本 自动化优化 相关设计）：归入第 5 步「运行参数」，
         # [ZH] 因为它们都是"如何运行"的设置，且大多数用户不需要修改（默认值即可）。
         ("login_state_dir", "step5", False),
@@ -3433,7 +3418,7 @@ class Backend:
         required, and the step it belongs to.
 
         [ZH]
-        字段级帮助（任务书 4.3）：标签、通俗说明、示例、是否必填、所在步骤。
+        字段级帮助（设计规范 4.3）：标签、通俗说明、示例、是否必填、所在步骤。
         """
         items: List[Dict[str, Any]] = []
         for name, step, required in Backend.AUTOMATION_FIELDS:
@@ -3457,7 +3442,7 @@ class Backend:
         config.user.json).
 
         [ZH]
-        预置模板（任务书 4.4）+ 用户自定义模板（存放在 config.user.json 旁）。
+        预置模板（设计规范 4.4）+ 用户自定义模板（存放在 config.user.json 旁）。
         """
         items: List[Dict[str, Any]] = []
         for name in Backend.AUTOMATION_TEMPLATES:
@@ -3501,7 +3486,7 @@ class Backend:
         Save the current configuration as a custom template (task 4.4, last sentence).
 
         [ZH]
-        把当前配置保存为自定义模板（任务书 4.4 末句）。
+        把当前配置保存为自定义模板（设计规范 4.4 末句）。
         """
         name = str(request.get("name") or "").strip()
         if not name:
@@ -3534,7 +3519,7 @@ class Backend:
         3.
 
         [ZH]
-        测试选择器向导的单步（任务书 4.5）：第 1~4 步。
+        测试选择器向导的单步（设计规范 4.5）：第 1~4 步。
 
         第 4 步（试运行）需要数分钟，走流式通道 ``automation_wizard``；
         这里处理 1~3 步这类"单次同步"检查。
@@ -3560,7 +3545,7 @@ class Backend:
         login state and tokens.
 
         [ZH]
-        导出自动化配置（任务书 4.7）：排除登录态、Token 等敏感信息。
+        导出自动化配置（设计规范 4.7）：排除登录态、Token 等敏感信息。
         """
         data = self.config.automation.model_dump()
         # [EN] The login-state file contains session cookies and is never exported; the path
@@ -3603,7 +3588,7 @@ class Backend:
         but the import is **not blocked**.
 
         [ZH]
-        导入自动化配置（任务书 4.7）。
+        导入自动化配置（设计规范 4.7）。
 
         导入的语言与当前界面语言不同时给出提示，但**不阻断**导入。
         """
@@ -3792,9 +3777,9 @@ class Backend:
                 response["search"] = bool(self.commands.search_enabled)
             except Exception:
                 response["search"] = False
-            # [EN] 此前版本 task 3: the mode is also exposed as a machine-readable field. The
-            # [EN] frontend previously matched the Chinese prefix "✅ 已切换模式为: ", which
-            # [EN] stopped working in the English UI.
+            # [EN] Development task 3 in an earlier release: the mode is also exposed as a
+            # [EN] machine-readable field. The frontend previously matched the Chinese prefix
+            # [EN] of the "mode switched" message, which stopped working in the English UI.
             # [ZH] 此前版本 相关设计：模式也作为机器可读字段。前端此前依靠匹配
             # [ZH] "✅ 已切换模式为: " 这个中文前缀来判断，切换到英文界面后即失效。
             try:
@@ -3857,7 +3842,7 @@ class Backend:
         ``/mcp`` 的统一入口：读取状态、启停某个 server、或强制连接。
 
         启停会写入 ``config.json``（用户按一次即长期生效）并**立即重建工具表**，
-        满足任务书"运行时启停，无需重启"。
+        满足设计规范"运行时启停，无需重启"。
         """
         cfg = getattr(self.config, "mcp", None)
         if cfg is None:
@@ -3933,7 +3918,7 @@ class Backend:
         [ZH]
         应用 MCP 配置（启用/禁用 server、修改命令与超时），并**在运行时立即生效**。
 
-        任务书要求"用户可在设置中启用/禁用某个 MCP Server，无需重启"：
+        设计规范要求"用户可在设置中启用/禁用某个 MCP Server，无需重启"：
         ``refresh_agent_tools`` 会重建工具注册表，并在启用时拉起新配置的 server
         进程、把工具挂入 Agent；被停用的 server 会被 ``close()``，
         其工具立即从清单中消失。
@@ -4280,7 +4265,9 @@ class Backend:
             if flag in request:
                 setattr(cfg, flag, bool(request[flag]))
                 if flag == "summary_cache":
-                    self._summary_cache = None   # [EN] Recreate on demand after the switch changes; [ZH] 开关切换后按需重新创建
+                    # [EN] Recreated on demand after the switch changes.
+                    # [ZH] 开关切换后按需重新创建。
+                    self._summary_cache = None
                 changed.append(flag)
 
         summarize = request.get("summarize")
@@ -4404,12 +4391,12 @@ class Backend:
             yield done
             return
 
-        # [EN] Vague-question guidance (此前版本 system-prompt rework): uses the same check as
-        # [EN] _handle_chat and **must also intercept on the streaming path** -- normal
-        # [EN] frontend conversations use chat_stream, and this branch previously existed only
-        # [EN] in _handle_chat (non-streaming actions and slash commands), so "offer directions
-        # [EN] for vague questions" never took effect in the GUI (a pre-existing defect found
-        # [EN] by this round's integration tests).
+        # [EN] Vague-question guidance (system-prompt rework in an earlier release): uses
+        # [EN] the same check as _handle_chat and **must also intercept on the streaming
+        # [EN] path** -- normal frontend conversations use chat_stream, and this branch
+        # [EN] previously existed only in _handle_chat (non-streaming actions and slash
+        # [EN] commands), so "offer directions for vague questions" never took effect in the
+        # [EN] GUI (a pre-existing defect found by this round's integration tests).
         # [ZH] 模糊提问引导（此前版本 系统提示词重构）：与 _handle_chat 使用同一判断，
         # [ZH] **必须在流式路径也拦截一次** —— 前端正常对话走 chat_stream，而该分支
         # [ZH] 此前只写在 _handle_chat（非流式 action 与斜杠指令）中，因此"模糊提问给出方向"
@@ -4603,15 +4590,16 @@ class Backend:
                 if hint:
                     done["content"] = f"{full}\n\n{hint}" if full else hint
                     _write({"type": "delta", "channel": _CH_ANSWER, "content": f"\n\n{hint}"})
-            self._attach_context(done)  # [EN] Attach current context usage for the frontend to refresh; [ZH] 附带当前上下文占用，供前端刷新
+            # [EN] Attach the current context usage so that the front end can refresh.
+            # [ZH] 附带当前上下文占用，供前端刷新。
+            self._attach_context(done)
             yield done
         except Exception as e:
             log.exception("流式推理失败")
             yield {"type": "error", "content": _t("sys.inference_failed", error=e)}
 
-    # ---------- Agent（后续版本 相关设计） ----------
-    # [EN] Agent (capability extension-1, task 2).
-    # [ZH] Agent（后续版本 相关设计）。
+    # [EN] ---------- Agent (capability extension-1, task 2) ----------
+    # [ZH] ---------- Agent（后续版本 相关设计） ----------
 
     def agent_registry(self) -> Any:
         """
@@ -4674,7 +4662,9 @@ class Backend:
                 from mcp_client import register_mcp_tools
 
                 registered = register_mcp_tools(registry, bridge)
-            except Exception as exc:                   # [EN] MCP unavailability must not affect the Agent itself; [ZH] MCP 不可用不得影响 Agent 本身
+            # [EN] MCP unavailability must not affect the Agent itself.
+            # [ZH] MCP 不可用不得影响 Agent 本身。
+            except Exception as exc:
                 log.warning("注册 MCP 工具失败：%s", exc)
         return {"registered": registered,
                 "tools": registry.names(),
@@ -4693,7 +4683,9 @@ class Backend:
         cfg = getattr(self.config, "mcp", None)
         if self._mcp_bridge is None or self._mcp_signature != self._mcp_config_signature():
             if self._mcp_bridge is not None:
-                self._mcp_bridge.close()               # [EN] The configuration changed: close the old process first; [ZH] 配置已变化：先关闭旧进程
+                # [EN] The configuration changed: close the old process first.
+                # [ZH] 配置已变化：先关闭旧进程。
+                self._mcp_bridge.close()
             servers: List[Any] = []
             for raw in (getattr(cfg, "servers", []) or []):
                 item = raw if isinstance(raw, dict) else raw.model_dump()
@@ -4753,7 +4745,7 @@ class Backend:
         [ZH]
         Agent 的可观测状态（供 /agent、测试与排查使用）。
 
-        任务书要求"用户能看到 Agent 的每一步"，后端必须先把"每一步"留存为结构化数据，
+        设计规范要求"用户能看到 Agent 的每一步"，后端必须先把"每一步"留存为结构化数据，
         前端才有可能正确显示；否则排查时只能依靠翻阅日志。
         """
         registry = self._agent_registry or self.agent_registry()
@@ -4796,7 +4788,9 @@ class Backend:
         def worker() -> None:
             try:
                 box["run"] = runner(lambda event: events.put(event))
-            except Exception as exc:                       # [EN] A failure of the loop itself must still report its cause; [ZH] 循环本身失败也必须给出原因
+            # [EN] A failure of the loop itself must still report its cause.
+            # [ZH] 循环本身失败也必须给出原因。
+            except Exception as exc:
                 box["error"] = str(exc)
             finally:
                 events.put(None)
@@ -4941,13 +4935,11 @@ class Backend:
         }
         return messages
 
-    # ---------- 具体动作 ----------
-    # [EN] Concrete actions.
-    # [ZH] 具体动作。
+    # [EN] ---------- Concrete actions ----------
+    # [ZH] ---------- 具体动作 ----------
 
-    # ---------- 本地检索（后续版本 相关设计） ----------
-    # [EN] Local retrieval (capability extension-1, task 6).
-    # [ZH] 本地检索（后续版本 相关设计）。
+    # [EN] ---------- Local retrieval (capability extension-1, task 6) ----------
+    # [ZH] ---------- 本地检索（后续版本 相关设计） ----------
 
     def retriever(self) -> Any:
         """
@@ -4997,7 +4989,9 @@ class Backend:
                 continue
             body = str(getattr(entry, "content", "") or "")
             if not body and str(getattr(entry, "stored_at", "") or ""):
-                # 正文落盘的文件：从磁盘读回来索引（检索要用原文，不能用摘要）
+                # [EN] The body was spilled to disk: read it back for indexing (retrieval
+                # [EN] needs the original text, not the summary).
+                # [ZH] 正文落盘的文件：从磁盘读回来索引（检索要用原文，不能用摘要）。
                 try:
                     with open(str(entry.stored_at), "r", encoding="utf-8", errors="replace") as handle:
                         body = handle.read()
@@ -5008,7 +5002,8 @@ class Backend:
             if not body:
                 continue
             existing = getattr(retriever, "_chunks_by_file", {}).get(name) or []
-            # 已经索引过且长度一致 → 不重复切分（增量）
+            # [EN] Already indexed with the same length -> do not split it again (incremental)
+            # [ZH] 已经索引过且长度一致 → 不重复切分（增量）
             if existing and sum(len(chunk.text) for chunk in existing) >= min(len(body), 1):
                 continue
             retriever.add_file(name, body)
@@ -5077,7 +5072,8 @@ class Backend:
         try:
             self.index_files()
             context = self.retriever().as_context(user_msg)
-        except Exception as exc:                       # 检索失败不能连累作答
+        except Exception as exc:  # [EN] A retrieval failure must not affect the answer.
+                                  # [ZH] 检索失败不能连累作答。
             log.warning("检索失败，退回原有注入方式：%s", exc)
             return ""
         if not context:
@@ -5225,11 +5221,11 @@ class Backend:
             self._compact_history()
             return {"type": "assistant", "content": answer}
 
-        # [EN] Fix 4 (direction 7) plus the 此前版本 system-prompt rework: when the question is too
-        # [EN] vague, give **guidance** first (list 2-3 possible directions for the user to
-        # [EN] choose), rather than answering blindly or requesting material. The predicate
-        # [EN] lives in _vague_guide, shared by the streaming path (normal frontend
-        # [EN] conversations) and the non-streaming path.
+        # [EN] Fix 4 (direction 7) plus the system-prompt rework of an earlier release: when
+        # [EN] the question is too vague, give **guidance** first (list 2-3 possible
+        # [EN] directions for the user to choose), rather than answering blindly or requesting
+        # [EN] material. The predicate lives in _vague_guide, shared by the streaming path
+        # [EN] (normal frontend conversations) and the non-streaming path.
         # [ZH] 兼容性修正（方向七）+ 此前版本 系统提示词重构：提问过于模糊时先给出**引导**
         # [ZH] （列出 2~3 种可能方向供用户选择），而不是强行作答或反向索取材料。
         # [ZH] 判断本体在 _vague_guide 中 —— 流式路径（前端正常对话）与非流式路径共用同一份。
@@ -5363,7 +5359,7 @@ class Backend:
         (by closing the browser window).
 
         [ZH]
-        可视化选取选择器（任务书 4.2）：在真实页面上点击元素即生成选择器。
+        可视化选取选择器（设计规范 4.2）：在真实页面上点击元素即生成选择器。
 
         之所以走流式通道：用户可能需要在页面上登录、点击操作，耗时以分钟计，
         前端需要实时进度，并且能够随时停止（关闭浏览器窗口）。
@@ -5412,30 +5408,34 @@ class Backend:
             log.warning("保存可视化选取结果失败", exc_info=True)
 
     # =====================================================================
-    # 相关设计：复用已打开的浏览器 + 两段式可视化选取（自测问题修复-1）
     # [EN] Task 17: reuse an already-open browser and two-phase visual selection (self-test
-    # [EN] fix-1).
-    # [ZH] 相关设计：复用已打开的浏览器 + 两段式可视化选取（自测问题修复-1）。
+    # [EN] fix-1)
+    # [ZH] 相关设计：复用已打开的浏览器 + 两段式可视化选取（自测问题修复-1）
     # =====================================================================
 
     #: [EN] Persistence field for the "login check element" in two-phase selection.
     #:
-    #: It **must be a class attribute and accessed via ``self.``**: a bare name inside a method
-    #: body follows LEGB and cannot see the class scope (automation.py's ``_target_label`` hit
-    #: exactly this problem). The mapping table of the existing ``_apply_picked_selector`` has
-    #: no login_check entry, so it would **silently discard** this selector even though the
-    #: configuration does have ``login_check_selector``; the mapping is added here.
+    #: [EN] It **must be a class attribute and accessed via ``self.``**: a bare name inside
+    #: [EN] a method body follows LEGB and cannot see the class scope (automation.py's
+    #: [EN] ``_target_label`` hit exactly this problem). The mapping table of the existing
+    #: [EN] ``_apply_picked_selector`` has no login_check entry, so it would **silently
+    #: [EN] discard** this selector even though the configuration does have
+    #: [EN] ``login_check_selector``; the mapping is added here.
     #: [ZH] 两段式选取中"登录检测元素"的落盘字段。
     #:
-    #: **必须是类属性、且通过 ``self.`` 访问**：方法体中的裸名字走 LEGB，找不到类作用域
-    #: （automation.py 的 ``_target_label`` 曾因此出现问题）。既有
-    #: ``_apply_picked_selector`` 的映射表没有 login_check，会**静默丢弃**该选择器，
-    #: 而配置中确实有 ``login_check_selector`` 这一项，因此在此补充映射。
+    #: [ZH] **必须是类属性、且通过 ``self.`` 访问**：方法体中的裸名字走 LEGB，找不到类作用域
+    #: [ZH] （automation.py 的 ``_target_label`` 曾因此出现问题）。既有
+    #: [ZH] ``_apply_picked_selector`` 的映射表没有 login_check，会**静默丢弃**该选择器，
+    #: [ZH] 而配置中确实有 ``login_check_selector`` 这一项，因此在此补充映射。
     _PICK_EXTRA_FIELDS: Dict[str, str] = {"login_check": "login_check_selector"}
 
-    # 这一组是**新增**的处理器，没有改动任何既有函数的函数体：
-    # 老的流式 ``automation_pick`` / ``_stream_automation_pick`` / ``_apply_picked_selector``
-    # 原样保留，WPF 界面与既有测试继续照旧工作。
+    # [EN] This group consists of **additional** handlers; no existing function body was
+    # [EN] changed: the old streaming ``automation_pick`` / ``_stream_automation_pick`` /
+    # [EN] ``_apply_picked_selector`` are kept as-is, and the WPF UI and the existing tests
+    # [EN] keep working as before.
+    # [ZH] 这一组是**新增**的处理器，没有改动任何既有函数的函数体：
+    # [ZH] 老的流式 ``automation_pick`` / ``_stream_automation_pick`` / ``_apply_picked_selector``
+    # [ZH] 原样保留，WPF 界面与既有测试继续照旧工作。
 
     def _automation_browser_payload(self) -> Dict[str, Any]:
         """
@@ -5477,11 +5477,18 @@ class Backend:
                 return {"type": "system",
                         "content": _t("sys.automation_config_invalid", error=e),
                         "browser_reuse": engine.browser_reuse_payload()}
-        # **必须在写完配置之后再取引擎**：`AutomationEngine.cfg` 指向的是一个配置对象，
-        # 上面那句 `self.config.automation = AutomationConfig(...)` 换掉了那个对象，
-        # 而 `Backend.automation()` 只在被调用时才会把新对象绑给引擎。
-        # 先取引擎的话，这里回给前端的会是**改动前**的旧值（验证踩到过：
-        # 界面点了"必须复用"却仍显示"自动"）。
+        # [EN] **The engine must be fetched after the configuration has been written**: the
+        # [EN] `AutomationEngine.cfg` attribute points at a configuration object, and the
+        # [EN] statement above, `self.config.automation = AutomationConfig(...)`, replaces
+        # [EN] that object, while `Backend.automation()` binds the new object to the engine
+        # [EN] only when it is called. Fetching the engine first would return the **old**
+        # [EN] values to the front end here (this was hit during verification: the UI was set
+        # [EN] to "must reuse" but still displayed "auto").
+        # [ZH] **必须在写完配置之后再取引擎**：`AutomationEngine.cfg` 指向的是一个配置对象，
+        # [ZH] 上面那句 `self.config.automation = AutomationConfig(...)` 换掉了那个对象，
+        # [ZH] 而 `Backend.automation()` 只在被调用时才会把新对象绑给引擎。
+        # [ZH] 先取引擎的话，这里回给前端的会是**改动前**的旧值（验证踩到过：
+        # [ZH] 界面点了"必须复用"却仍显示"自动"）。
         engine = self.automation()
         return {"type": "system", "content": "",
                 "browser_reuse": engine.browser_reuse_payload()}
@@ -5524,14 +5531,22 @@ class Backend:
         """
         engine = self.automation()
         step = str(request.get("step") or "status").strip().lower()
-        # 局部导入 AutomationError：main.py 顶层是"按需加载 automation"的（见 automation()），
-        # 这里跟随同样的风格，避免为了一个异常类型把 Playwright 提前拉起来。
+        # [EN] Local import of AutomationError: main.py loads `automation` on demand at the
+        # [EN] top level (see automation()), and this follows the same style so that
+        # [EN] Playwright is not started early just for one exception type.
+        # [ZH] 局部导入 AutomationError：main.py 顶层是"按需加载 automation"的（见 automation()），
+        # [ZH] 这里跟随同样的风格，避免为了一个异常类型把 Playwright 提前拉起来。
         from automation import AutomationError
 
         if step == "open" and engine.running:
-            # 自动化跑着的时候不允许开始选取：那条运行正在**驱动同一个标签页**
-            # （复用模式下就是用户当前这一页），此时注入选取脚本会与它的点击/导航
-            # 互相干扰，两边都会给出难以理解的失败。宁可先说清楚。
+            # [EN] Visual selection may not start while automation is running: that run is
+            # [EN] **driving the same tab** (in reuse mode, the very page the user is on), so
+            # [EN] injecting the picker script here would interfere with its clicks and
+            # [EN] navigation, and both sides would fail in hard-to-understand ways. Better
+            # [EN] to state this clearly up front.
+            # [ZH] 自动化跑着的时候不允许开始选取：那条运行正在**驱动同一个标签页**
+            # [ZH] （复用模式下就是用户当前这一页），此时注入选取脚本会与它的点击/导航
+            # [ZH] 互相干扰，两边都会给出难以理解的失败。宁可先说清楚。
             return {"type": "system", "content": _t("automation.picker.busy_running"),
                     "pick": engine.pick_state()}
 
@@ -5548,8 +5563,11 @@ class Backend:
             else:
                 payload = engine.pick_status()
         except AutomationError as e:
-            # 状态机拒绝的非法动作（还没打开就开始选、正在选又要开始选）：
-            # 这不是故障，把话说清楚并回传当前状态即可
+            # [EN] An illegal action rejected by the state machine (starting a pick before a
+            # [EN] page is open, or starting another pick while one is in progress): this is
+            # [EN] not a fault; state it clearly and return the current state.
+            # [ZH] 状态机拒绝的非法动作（还没打开就开始选、正在选又要开始选）：
+            # [ZH] 这不是故障，把话说清楚并回传当前状态即可
             return {"type": "system", "content": str(e), "pick": engine.pick_state()}
         except Exception as e:  # noqa: BLE001
             log.exception("可视化选取（两段式）失败")
@@ -5559,10 +5577,16 @@ class Backend:
         if pending:
             target, selector = pending
             if target in self._PICK_EXTRA_FIELDS:
-                # "登录检测元素"（login_check）不在既有 _apply_picked_selector 的映射表里，
-                # 那条老路径会**静默丢弃**这个选择器的落盘（配置里明明有
-                # automation.login_check_selector 这一项）。_apply_picked_selector 属于
-                # 既有函数、本次不改它的函数体，所以在这里补一条映射后走同一套落盘逻辑。
+                # [EN] The "login check element" (login_check) is not in the mapping table of
+                # [EN] the existing _apply_picked_selector, and that old path would
+                # [EN] **silently discard** persisting this selector (the configuration does
+                # [EN] have automation.login_check_selector). _apply_picked_selector is an
+                # [EN] existing function whose body is not changed here, so a mapping is added
+                # [EN] here and the same persistence logic is reused.
+                # [ZH] "登录检测元素"（login_check）不在既有 _apply_picked_selector 的映射表里，
+                # [ZH] 那条老路径会**静默丢弃**这个选择器的落盘（配置里明明有
+                # [ZH] automation.login_check_selector 这一项）。_apply_picked_selector 属于
+                # [ZH] 既有函数、本次不改它的函数体，所以在这里补一条映射后走同一套落盘逻辑。
                 self._save_automation_field(self._PICK_EXTRA_FIELDS[target], selector)
             else:
                 self._apply_picked_selector(target, selector)
@@ -5641,7 +5665,9 @@ class Backend:
         source = request.get("source")
         hub = self.model_hub()
 
-        # 下载前的最后一次人工确认信息（大小与预计磁盘占用）
+        # [EN] Final manual confirmation before the download starts (size and expected disk
+        # [EN] usage).
+        # [ZH] 下载前的最后一次人工确认信息（大小与预计磁盘占用）
         yield {
             "type": "delta",
             "content": _t("sys.hub_download_prepare", repo=repo, filename=filename,
@@ -5650,7 +5676,9 @@ class Backend:
         }
         self.stop_event.clear()
 
-        # 下载在子线程里进行（urllib 阻塞），主线程轮询进度缓存并把变化推给前端
+        # [EN] The download runs in a worker thread (urllib blocks); the main thread polls
+        # [EN] the progress cache and pushes changes to the front end.
+        # [ZH] 下载在子线程里进行（urllib 阻塞），主线程轮询进度缓存并把变化推给前端
         latest: Dict[str, str] = {"line": ""}
 
         def _progress(info: Dict[str, Any]) -> None:
@@ -5714,8 +5742,13 @@ class Backend:
                 self.conv.add_message("assistant", _t("sys.model_downloaded_to_library",
                                                      name=os.path.basename(path)))
                 self._compact_history()
-                # 相关设计：下载完成后**就地热加载**，用户不必重启进程/前端。
-                # 失败（损坏、格式不支持、内存不足）时保持无模型状态并给出原因与重试路径。
+                # [EN] Design specification: after the download completes the model is
+                # [EN] **hot-loaded in place**, so the user does not have to restart the
+                # [EN] process or the front end. On failure (corrupt file, unsupported
+                # [EN] format, insufficient memory) the backend stays in the no-model state
+                # [EN] and reports the reason plus a retry path.
+                # [ZH] 相关设计：下载完成后**就地热加载**，用户不必重启进程/前端。
+                # [ZH] 失败（损坏、格式不支持、内存不足）时保持无模型状态并给出原因与重试路径。
                 yield {"type": "delta", "content": _t("sys.model_hot_loading",
                                                       name=os.path.basename(path))}
                 load = self.load_model(os.path.basename(path))
@@ -5742,7 +5775,8 @@ class Backend:
             return {"type": "system", "content": _t("sys.file_need_path")}
         return {"type": "system", "content": self.load_file_into_context(filepath)}
 
-    # ---------- 多文件（相关设计） ----------
+    # [EN] ---------- Multiple files (design specification) ----------
+    # [ZH] ---------- 多文件（相关设计） ----------
 
     def _files_cfg(self):
         """
@@ -5826,10 +5860,17 @@ class Backend:
         name = os.path.basename(filepath) or filepath
         content = parse_file_with_wps(filepath, self.config.file_max_chars)
         if is_parse_error(content):
-            # 这里曾直接拼 `f"❌ {content}"`，把这批**中文**解析失败串原样送到界面：
-            # 英文界面下用户看到整句中文（`file_parser.py` 的 11 行错误串）。
-            # `localize_error()` 就是为这条路径写的，此前只被 command_handler 的两处调用，
-            # 上传路径漏了（见硬编码清查清单 §6.2 的连带缺陷）。
+            # [EN] This used to concatenate `f"❌ {content}"` directly, sending these
+            # [EN] **Chinese** parse-failure strings to the UI verbatim: in the English UI the
+            # [EN] user saw a whole Chinese sentence (the 11-line error strings from
+            # [EN] `file_parser.py`). `localize_error()` was written for exactly this path;
+            # [EN] before, it was called only from the two command_handler call sites, and
+            # [EN] the upload path was missed (see the knock-on defect in section 6.2 of the
+            # [EN] hard-coded string audit list).
+            # [ZH] 这里曾直接拼 `f"❌ {content}"`，把这批**中文**解析失败串原样送到界面：
+            # [ZH] 英文界面下用户看到整句中文（`file_parser.py` 的 11 行错误串）。
+            # [ZH] `localize_error()` 就是为这条路径写的，此前只被 command_handler 的两处调用，
+            # [ZH] 上传路径漏了（见硬编码清查清单 §6.2 的连带缺陷）。
             return {"ok": False, "name": name, "chars": 0,
                     "message": f"❌ {localize_error(content)}"}
         files_cfg = self._files_cfg()
@@ -5838,7 +5879,10 @@ class Backend:
             tokens = self.llm.count_tokens(content)
         except Exception:
             tokens = len(content) // 2
-        # 超大文件：正文落盘，上下文只带指针 + 摘要，避免一份文件撑爆会话与窗口
+        # [EN] Oversized file: the body is spilled to disk and the context carries only a
+        # [EN] pointer plus the summary, so that one file cannot blow up the conversation and
+        # [EN] the window.
+        # [ZH] 超大文件：正文落盘，上下文只带指针 + 摘要，避免一份文件撑爆会话与窗口
         threshold = int(getattr(files_cfg, "disk_threshold_chars", 0) or 0)
         if threshold > 0 and len(content) > threshold:
             stored = self._store_large_file(name, content)
@@ -5858,8 +5902,12 @@ class Backend:
                 "文件 %s 约 %d tokens，超过窗口 %d 的 %.0f%%：转入分段摘要",
                 name, tokens, effective_ctx, self.config.summarize.trigger_ratio * 100,
             )
-            # 相关设计：文件解析**不依赖模型**，必须照常完成；只有"分段摘要"这一步需要模型。
-            # 所以这里保留已解析的全文，只把摘要这一步换成引导（而不是整个加载失败）。
+            # [EN] Design specification: file parsing **does not depend on the model** and
+            # [EN] must still complete; only the "chunked summary" step needs the model. So
+            # [EN] the parsed full text is kept here and only the summary step is replaced by
+            # [EN] guidance (instead of failing the whole load).
+            # [ZH] 相关设计：文件解析**不依赖模型**，必须照常完成；只有"分段摘要"这一步需要模型。
+            # [ZH] 所以这里保留已解析的全文，只把摘要这一步换成引导（而不是整个加载失败）。
             if not self.model_ready:
                 return {"ok": True, "name": name, "chars": len(content), "tokens": tokens,
                         "needs_summary": True,
@@ -5907,7 +5955,9 @@ class Backend:
                 break
             try:
                 results.append(self._load_one_file(path, progress_sink=progress_sink))
-            except Exception as exc:  # noqa: BLE001 —— 单份失败不能影响其他
+            except Exception as exc:  # noqa: BLE001
+                # [EN] A single failure must not affect the other files.
+                # [ZH] 单份失败不能影响其他。
                 log.exception("加载文件失败: %s", path)
                 results.append({"ok": False, "name": os.path.basename(path),
                                 "message": _t("sys.file_load_failed", error=exc)})
@@ -5967,7 +6017,9 @@ class Backend:
                             progress_sink=lambda event, i=index, t=total, n=name: progress.put(
                                 {**event, "__file__": {"index": i, "total": t, "name": n}}),
                             allow_summary=not stage)
-                    except Exception as exc:  # noqa: BLE001 —— 单份失败不影响其他
+                    except Exception as exc:  # noqa: BLE001
+                        # [EN] A single failure does not affect the other files.
+                        # [ZH] 单份失败不影响其他。
                         log.exception("加载文件失败: %s", path)
                         result = {"ok": False, "name": name,
                                   "message": _t("sys.file_load_failed", error=exc)}
@@ -6045,14 +6097,28 @@ class Backend:
                 payload["file_name"] = meta.get("name")
             yield payload
 
-    # 相关设计/相关设计（自测问题修复-1）：此处原有一个**重复定义**的旧版
-    # ``load_file_into_context``（单文件时代实现：走 ``conv.set_file``、没有落盘、
-    # 也没有多文件的结构化返回）。Python 同名方法后定义者胜，于是上面那份
-    # **带落盘与多文件登记的新实现反倒成了死代码**，单文件上传路径一直走着旧逻辑：
-    #   * 超过 ``files.disk_threshold_chars`` 的正文不会落盘，整篇留在会话里；
-    #   * 与 ``load_files_into_context``（多文件入口）行为不一致——同一个动作
-    #     走单文件和多文件两条路，落盘/摘要结果不同。
-    # 现已删除旧版，统一由 ``_load_one_file`` 承担（解析 → 登记 → 落盘 → 摘要）。
+    # [EN] Design specification / design specification (self-test fix-1): this spot used to
+    # [EN] hold an older, **duplicate definition** of ``load_file_into_context`` (the
+    # [EN] single-file era implementation: it went through ``conv.set_file``, spilled nothing
+    # [EN] to disk, and had no structured multi-file return). In Python the later definition
+    # [EN] of the same name wins, so the implementation above -- the new one with disk spill
+    # [EN] and multi-file bookkeeping -- **became dead code**, and the single-file upload
+    # [EN] path kept running the old logic:
+    # [EN]   * bodies above ``files.disk_threshold_chars`` were not spilled to disk and the
+    # [EN]     whole text stayed in the conversation;
+    # [EN]   * behaviour diverged from ``load_files_into_context`` (the multi-file entry
+    # [EN]     point): the same action took two different paths, with different disk-spill
+    # [EN]     and summary results.
+    # [EN] The old version has been removed; ``_load_one_file`` now handles everything
+    # [EN] (parse -> register -> spill to disk -> summarize).
+    # [ZH] 相关设计/相关设计（自测问题修复-1）：此处原有一个**重复定义**的旧版
+    # [ZH] ``load_file_into_context``（单文件时代实现：走 ``conv.set_file``、没有落盘、
+    # [ZH] 也没有多文件的结构化返回）。Python 同名方法后定义者胜，于是上面那份
+    # [ZH] **带落盘与多文件登记的新实现反倒成了死代码**，单文件上传路径一直走着旧逻辑：
+    # [ZH]   * 超过 ``files.disk_threshold_chars`` 的正文不会落盘，整篇留在会话里；
+    # [ZH]   * 与 ``load_files_into_context``（多文件入口）行为不一致——同一个动作
+    # [ZH]     走单文件和多文件两条路，落盘/摘要结果不同。
+    # [ZH] 现已删除旧版，统一由 ``_load_one_file`` 承担（解析 → 登记 → 落盘 → 摘要）。
     def summarize_current_file(self, force: bool = True, source_name: str = "",
                                trigger: str = "", progress_sink=None) -> str:
         """
@@ -6095,12 +6161,16 @@ class Backend:
         trigger = trigger or _t("sys.summarize_trigger_manual")
         if entry is None or not (entry.content or entry.stored_at):
             return _t("cmd.resp.summarize_no_file")
-        # 相关设计：无模型时摘要无从谈起，给引导而不是抛异常
+        # [EN] Design specification: without a model there is nothing to summarize, so give
+        # [EN] guidance instead of raising.
+        # [ZH] 相关设计：无模型时摘要无从谈起，给引导而不是抛异常
         if not self.model_ready:
             return _t("sys.summarize_need_model",
                       guide=_t("sys.no_model_guide", dir=self.models_dir()))
         if not entry.content:
-            # 正文已落盘（超大文件）：从磁盘读回来做摘要，而不是报"没有内容"
+            # [EN] The body is already on disk (oversized file): read it back to summarize
+            # [EN] it instead of reporting "no content".
+            # [ZH] 正文已落盘（超大文件）：从磁盘读回来做摘要，而不是报"没有内容"
             try:
                 with open(entry.stored_at, "r", encoding="utf-8", errors="replace") as handle:
                     entry.content = handle.read()
@@ -6109,7 +6179,9 @@ class Backend:
                 return _t("sys.file_load_failed", error=entry.stored_at)
         name = source_name or entry.name or os.path.basename(entry.path or "")
 
-        # 命中缓存：直接把上次的摘要装回上下文（跳过全部模型调用）
+        # [EN] Cache hit: load the previous summary straight back into the context (skipping
+        # [EN] every model call).
+        # [ZH] 命中缓存：直接把上次的摘要装回上下文（跳过全部模型调用）
         cache = self.summary_cache()
         cache_key_path = entry.path or name
         params = {
@@ -6155,8 +6227,12 @@ class Backend:
             label = self._summary_progress_text(event)
             if label:
                 text = emoji_mod.prefer(f"📝 {label}")
-                # v0.2.2 第 4 批：有宿主进度通道就用结构化事件（前端渲染成活消息），
-                # 没有才退回 stderr（直接跑后端 / 老前端的行为一字不变）。
+                # [EN] v0.2.2 batch 4: when a host progress channel exists, use structured
+                # [EN] events (the front end renders them as live messages); otherwise fall
+                # [EN] back to stderr (behaviour for a directly run backend or an older
+                # [EN] front end is unchanged down to the character).
+                # [ZH] v0.2.2 第 4 批：有宿主进度通道就用结构化事件（前端渲染成活消息），
+                # [ZH] 没有才退回 stderr（直接跑后端 / 老前端的行为一字不变）。
                 if _host_progress_sink is not None:
                     _host_progress_sink(text)
                     return
@@ -6166,7 +6242,9 @@ class Backend:
             entry.content, source_name=name, force=force, on_progress=_progress,
             should_stop=lambda: self.stop_event.is_set(),
         )
-        # 相关设计：把"慢"与"坏"分开报。中止/失败都不注入半份摘要，并保留重试路径。
+        # [EN] Design specification: report "slow" and "broken" separately. Neither an abort
+        # [EN] nor a failure injects half a summary, and the retry path is preserved.
+        # [ZH] 相关设计：把"慢"与"坏"分开报。中止/失败都不注入半份摘要，并保留重试路径。
         if result.aborted:
             return _t("sys.summary_aborted", name=name, done=len(result.segments),
                       total=result.chunk_count, elapsed=f"{result.elapsed:.0f}")
@@ -6181,12 +6259,16 @@ class Backend:
             {"chunks": result.chunk_count, "origin_chars": result.origin_chars,
              "pointer": result.pointer, "status": result.status},
         )
-        # 写入缓存：下次同一文件（内容与参数都没变）直接复用
+        # [EN] Write the cache: the next request for the same file (with unchanged content
+        # [EN] and parameters) reuses it directly.
+        # [ZH] 写入缓存：下次同一文件（内容与参数都没变）直接复用
         if cache is not None and os.path.isfile(cache_key_path):
             cache.put(cache_key_path, params, result.text,
                       chunk_count=result.chunk_count, origin_chars=result.origin_chars)
             cache.save()
-        self.llm.clear_cache()  # 注入内容结构变化，旧 KV 缓存失效
+        # [EN] The injected content structure changed, so the old KV cache is invalidated.
+        # [ZH] 注入内容结构变化，旧 KV 缓存失效。
+        self.llm.clear_cache()
         summary_tokens = self.llm.count_tokens(result.text)
         pointer = result.pointer
         shown = pointer[:160] + ("…" if len(pointer) > 160 else "")
@@ -6197,7 +6279,9 @@ class Backend:
             + _t("sys.summary_done_note") + "\n"
             + _t("sys.summary_done_pointer", pointer=shown)
         )
-        # 有段落走兜底时如实说明，不假装一切正常（相关设计：真故障要给错误信息）
+        # [EN] When some chunks fall back, say so honestly instead of pretending everything
+        # [EN] is fine (design specification: a real fault must produce an error message).
+        # [ZH] 有段落走兜底时如实说明，不假装一切正常（相关设计：真故障要给错误信息）
         if result.status == "partial":
             text += "\n" + _t("sys.summary_partial_notice",
                               ok=result.ok_chunks + result.partial_chunks,
@@ -6315,7 +6399,9 @@ class Backend:
                 yield {"type": "delta", "content": _t("sys.summary_stopping")}
                 drained = True
             _ = drained
-        # 收尾：把队列里剩下的事件推完（避免最后一条进度被丢掉）
+        # [EN] Wrap-up: flush the events left in the queue (so the last progress line is not
+        # [EN] dropped).
+        # [ZH] 收尾：把队列里剩下的事件推完（避免最后一条进度被丢掉）
         while True:
             try:
                 event = progress.get_nowait()
@@ -6397,7 +6483,8 @@ class Backend:
                 yield {"type": "error", "content": _t("sys.download_failed", error=a)}
                 return
 
-        # 下载完成 → 加载并热切换
+        # [EN] Download complete -> load and hot-switch.
+        # [ZH] 下载完成 → 加载并热切换
         try:
             self.llm.reload(a)
         except Exception as e:
@@ -6598,7 +6685,8 @@ class Backend:
             result["reason"] = "under_limit"
             return result
 
-        # ---------- 保留区：grace zone（轮）∪ token 预算，取并集 ----------
+        # [EN] ---------- Preserved region: grace zone (turns) ∪ token budget, union ----------
+        # [ZH] ---------- 保留区：grace zone（轮）∪ token 预算，取并集 ----------
         grace_turns = int(getattr(cfg, "grace_turns", 3) or 0)
         keep_ratio = float(getattr(cfg, "keep_ratio", 0.20) or 0.0)
         by_turns = self._turn_start(conv.history, grace_turns)
@@ -6611,14 +6699,24 @@ class Backend:
             keep_count += 1
             if acc >= keep_tokens:
                 break
-        # 并集：谁保留得多听谁的（grace zone 保"轮"，keep_ratio 保"量"）
+        # [EN] Union: whichever keeps more wins (the grace zone keeps "turns", keep_ratio
+        # [EN] keeps "volume").
+        # [ZH] 并集：谁保留得多听谁的（grace zone 保"轮"，keep_ratio 保"量"）
         keep_start = min(by_turns, len(conv.history) - keep_count)
         if keep_start <= 0 and force and grace_turns > 1:
-            # 手动压缩（/compact 或状态区按钮）被用户明确要求"现在就腾地方"：
-            # 此时若 grace zone 恰好覆盖全部历史，就把它收缩到 1 轮再做一次 ——
-            # 否则"用户点了压缩却什么也没发生"是更糟的体验。自动触发**不做**这个
-            # 让步：自动压缩的背景是"快满了"，而"最近 3 轮就占满"说明该由用户
-            # 自己选（提示他调小 grace_turns），不该由程序擅自压掉刚说过的话。
+            # [EN] Manual compaction (/compact or the status area button) is the user
+            # [EN] explicitly asking to "make room right now": if the grace zone happens to
+            # [EN] cover the whole history, shrink it to 1 turn and retry -- otherwise "the
+            # [EN] user pressed compact and nothing happened" is the worse experience.
+            # [EN] Automatic triggering does **not** make this concession: automatic
+            # [EN] compaction starts from "it is nearly full", and "the last 3 turns alone
+            # [EN] fill it" means the user should decide (by lowering grace_turns); the
+            # [EN] program must not silently crush what was just said.
+            # [ZH] 手动压缩（/compact 或状态区按钮）被用户明确要求"现在就腾地方"：
+            # [ZH] 此时若 grace zone 恰好覆盖全部历史，就把它收缩到 1 轮再做一次 ——
+            # [ZH] 否则"用户点了压缩却什么也没发生"是更糟的体验。自动触发**不做**这个
+            # [ZH] 让步：自动压缩的背景是"快满了"，而"最近 3 轮就占满"说明该由用户
+            # [ZH] 自己选（提示他调小 grace_turns），不该由程序擅自压掉刚说过的话。
             by_turns = self._turn_start(conv.history, 1)
             keep_start = min(by_turns, len(conv.history) - keep_count)
             if keep_start > 0:
@@ -6644,13 +6742,16 @@ class Backend:
             reason=reason or ("manual" if force else "over_limit"),
         )
         if mode == "slide":
-            # 滑动窗口：不做摘要，只是把最早的历史移出上下文
+            # [EN] Sliding window: no summary is produced; the oldest history is simply moved
+            # [EN] out of the context.
+            # [ZH] 滑动窗口：不做摘要，只是把最早的历史移出上下文
             log.info("上下文 %d/%d tokens：滑动窗口丢弃最早 %d 条（未生成摘要，阈值 %.0f%%）",
                      total, limit, len(dropped), ratio * 100)
             result["mode"] = "slide"
             result["summary_chars"] = 0
         else:
-            # ---------- 大块内容单独截断后再喂压缩器 ----------
+            # [EN] ---------- Truncate large blocks before feeding the compressor ----------
+            # [ZH] ---------- 大块内容单独截断后再喂压缩器 ----------
             prepared, truncated, saved = self._truncate_tool_outputs(
                 dropped, int(getattr(cfg, "tool_output_chars", 2000) or 0))
             event.truncated_outputs = truncated
@@ -6670,7 +6771,9 @@ class Backend:
             prompt = str(getattr(cfg, "prompt", "") or "").strip()
             focus_text = str(focus or "").strip()
             if focus_text:
-                # 用户指定重点：追加在提示词末尾而不是替换它，避免丢掉通用要求
+                # [EN] User-specified focus: append it at the end of the prompt instead of
+                # [EN] replacing it, so the general requirements are not lost.
+                # [ZH] 用户指定重点：追加在提示词末尾而不是替换它，避免丢掉通用要求
                 prompt = f"{prompt}\n本次特别要求保留的重点：{focus_text}"
             event.prompt = prompt
             event.focus = focus_text
@@ -6685,7 +6788,9 @@ class Backend:
                     temperature=0.3,
                     max_tokens=int(getattr(cfg, "summary_max_tokens", 200) or 200),
                 ).strip()
-            except Exception as exc:  # noqa: BLE001 —— 压缩失败不能让本轮对话崩
+            except Exception as exc:  # noqa: BLE001
+                # [EN] A compaction failure must not crash this round of conversation.
+                # [ZH] 压缩失败不能让本轮对话崩。
                 log.warning("历史压缩失败，已直接裁剪", exc_info=True)
                 event.error = str(exc)[:200]
             if summary:
@@ -6709,7 +6814,9 @@ class Backend:
             event.used_after = result["used_after"]
         except Exception:
             result["used_after"] = None
-        # 事件落盘（失败只告警，不影响压缩结果）
+        # [EN] Persist the event (a failure only logs a warning; the compaction result is
+        # [EN] unaffected).
+        # [ZH] 事件落盘（失败只告警，不影响压缩结果）
         journal = self.compact_log()
         if journal is not None:
             journal.append(event)
@@ -6788,14 +6895,25 @@ class Backend:
             self._last_search = outcome
             return outcome.as_context()
         self._last_search = outcome
-        # 不可用：区分"失败"与"没有结果"，两者要给用户不同的说法
+        # [EN] Unavailable: distinguish "failed" from "no results"; the two need different
+        # [EN] wording for the user.
+        # [ZH] 不可用：区分"失败"与"没有结果"，两者要给用户不同的说法
         if not outcome.ok:
-            # 相关设计第 4 条（自测问题修复-1）：把底层异常**翻译成用户能理解的一类**。
-            # 旧写法直接把 outcome.error 塞进提示，用户看到的是
-            # 「联网搜索失败（https://www.bing.com/search ConnectError: error sending
-            #   request for url (…)）」—— 那是给开发者看的话，既没告诉他该怎么办，
-            # 也没区分"网络不通"和"搜索源改版"。现在按类别给面向用户的说法；
-            # 原始错误仍进日志与 search_diagnostics，排查时拿得到。
+            # [EN] Item 4 of the design specification (self-test fix-1): **translate the
+            # [EN] underlying exception into a category the user can understand**. The old
+            # [EN] code put outcome.error straight into the message, so the user saw
+            # [EN] "web search failed (https://www.bing.com/search ConnectError: error
+            # [EN] sending request for url (...))" -- wording meant for developers that
+            # [EN] neither said what to do nor distinguished "the network is down" from
+            # [EN] "the search source changed". Categories now produce user-facing wording;
+            # [EN] the original error still goes to the log and to search_diagnostics, so it
+            # [EN] is available when troubleshooting.
+            # [ZH] 相关设计第 4 条（自测问题修复-1）：把底层异常**翻译成用户能理解的一类**。
+            # [ZH] 旧写法直接把 outcome.error 塞进提示，用户看到的是
+            # [ZH] 「联网搜索失败（https://www.bing.com/search ConnectError: error sending
+            # [ZH]   request for url (…)）」—— 那是给开发者看的话，既没告诉他该怎么办，
+            # [ZH] 也没区分"网络不通"和"搜索源改版"。现在按类别给面向用户的说法；
+            # [ZH] 原始错误仍进日志与 search_diagnostics，排查时拿得到。
             kind = getattr(outcome, "error_kind", "") or "unknown"
             key = FAIL_KIND_KEYS.get(kind, "sys.search_failed")
             if key == "sys.search_failed":
@@ -6839,9 +6957,14 @@ class Backend:
             "results": int(outcome.count) if outcome is not None else 0,
             "elapsed_ms": int(outcome.elapsed_ms) if outcome is not None else 0,
             "error": str(outcome.error) if outcome is not None else "",
-            # 相关设计：把"失败类别"与"实际生效的搜索源"也暴露出来，
-            # 国内网络下"主源永远失败、真正干活的是内建 Bing 源"这件事
-            # 必须能从诊断里看出来，否则排查会一直盯着 duckduckgo 打转。
+            # [EN] Design specification: also expose the "failure category" and the search
+            # [EN] source that actually took effect. On networks in mainland China, "the
+            # [EN] primary source always fails and the built-in Bing source does the work"
+            # [EN] must be visible in diagnostics; otherwise troubleshooting keeps chasing
+            # [EN] duckduckgo.
+            # [ZH] 相关设计：把"失败类别"与"实际生效的搜索源"也暴露出来，
+            # [ZH] 国内网络下"主源永远失败、真正干活的是内建 Bing 源"这件事
+            # [ZH] 必须能从诊断里看出来，否则排查会一直盯着 duckduckgo 打转。
             "error_kind": str(getattr(outcome, "error_kind", "")) if outcome is not None else "",
             "source": str(getattr(outcome, "source", "")) if outcome is not None else "",
             "note": self._search_note(),
@@ -6878,17 +7001,35 @@ class ModelMissing(Exception):
 
 
 # ---------------------------------------------------------------------------
-# 旧行为已移除（此前版本 综合优化 相关设计）：这里曾有两个函数
-#   * `_await_download_decision()` —— 缺模型时**阻塞**读 stdin 等用户答复，
-#     收到 `exit` 或 stdin 关闭就返回 None，调用方随之结束进程；
-#   * `_download_with_progress()` —— 上面那个函数专用的一次性下载器
-#     （模型市场已经有更完整的下载实现 `_stream_model_hub_download`：
-#     断点续传、重试、速度/剩余时间、取消、SHA256 校验）。
-# 它们合起来构成"要么立即下载，要么整个应用不可用"的墙角，正是本轮要拆掉的东西。
-# 现在缺模型走"无模型就绪"：后端照常运行，引导用户在模型市场下载或手动放置 .gguf，
-# 到位后原地热加载。退出只由用户主动触发（前端发 `exit`，主循环里处理）。
-# 对应的语言键 `sys.await_download_confirm` / `sys.model_declined` /
-# `sys.model_missing_no_repo` 也一并删除，避免留下"描述已废弃行为"的文案。
+# [EN] The old behaviour has been removed (general optimization in an earlier release,
+# [EN] design specification): two functions used to live here:
+# [EN]   * `_await_download_decision()` -- when the model was missing, it **blocked** reading
+# [EN]     stdin for the user's answer; on `exit` or a closed stdin it returned None and the
+# [EN]     caller ended the process;
+# [EN]   * `_download_with_progress()` -- a one-off downloader dedicated to that function
+# [EN]     (the model marketplace already has a more complete download implementation,
+# [EN]     `_stream_model_hub_download`: resumable transfer, retries, speed/remaining time,
+# [EN]     cancellation, SHA256 verification).
+# [EN] Together they formed the corner "either download immediately or the whole
+# [EN] application is unusable", which this round removes.
+# [EN] A missing model now goes through the "no-model-ready" state: the backend keeps
+# [EN] running and guides the user to download from the model marketplace or place a .gguf
+# [EN] manually; once it is there it is hot-loaded in place. Exit is only triggered by the
+# [EN] user (the front end sends `exit`, handled in the main loop).
+# [EN] The corresponding language keys `sys.await_download_confirm` / `sys.model_declined` /
+# [EN] `sys.model_missing_no_repo` were removed as well, so that no text "describing
+# [EN] deprecated behaviour" is left behind.
+# [ZH] 旧行为已移除（此前版本 综合优化 相关设计）：这里曾有两个函数
+# [ZH]   * `_await_download_decision()` —— 缺模型时**阻塞**读 stdin 等用户答复，
+# [ZH]     收到 `exit` 或 stdin 关闭就返回 None，调用方随之结束进程；
+# [ZH]   * `_download_with_progress()` —— 上面那个函数专用的一次性下载器
+# [ZH]     （模型市场已经有更完整的下载实现 `_stream_model_hub_download`：
+# [ZH]     断点续传、重试、速度/剩余时间、取消、SHA256 校验）。
+# [ZH] 它们合起来构成"要么立即下载，要么整个应用不可用"的墙角，正是本轮要拆掉的东西。
+# [ZH] 现在缺模型走"无模型就绪"：后端照常运行，引导用户在模型市场下载或手动放置 .gguf，
+# [ZH] 到位后原地热加载。退出只由用户主动触发（前端发 `exit`，主循环里处理）。
+# [ZH] 对应的语言键 `sys.await_download_confirm` / `sys.model_declined` /
+# [ZH] `sys.model_missing_no_repo` 也一并删除，避免留下"描述已废弃行为"的文案。
 # ---------------------------------------------------------------------------
 
 
@@ -6975,18 +7116,28 @@ def main() -> None:
         if index + 1 < len(sys.argv):
             _run_inference_test_load_cli(sys.argv[index + 1])
         return
-    # 兼容性修正：先把输出流切到 UTF-8 并判断能否安全输出 emoji。
-    # 必须在任何输出之前执行——控制台代码页不是 UTF-8 时 emoji 会变成 "??"，
-    # 那时再降级就已经晚了（日志/进度消息是边跑边打的）。
+    # [EN] Compatibility fix: switch the output streams to UTF-8 first and decide whether
+    # [EN] emoji can be emitted safely.
+    # [EN] This must run before any output: when the console code page is not UTF-8, emoji
+    # [EN] become "??", and downgrading afterwards would already be too late (log and
+    # [EN] progress messages are printed while the program is running).
+    # [ZH] 兼容性修正：先把输出流切到 UTF-8 并判断能否安全输出 emoji。
+    # [ZH] 必须在任何输出之前执行——控制台代码页不是 UTF-8 时 emoji 会变成 "??"，
+    # [ZH] 那时再降级就已经晚了（日志/进度消息是边跑边打的）。
     emoji_mod.configure_streams()
     if "--no-emoji" in sys.argv:
         emoji_mod.set_enabled(False)
 
     config = Config.load()
 
-    # 相关设计：模型缺失**不再征询后退出**，而是以"无模型就绪"状态继续跑。
-    # 这里只做一次"模型在不在"的判断；缺模型时先把 Backend 建起来（引擎留空），
-    # 稍后在 ready 之前发一条**非阻塞**的 need_download 告知前端。
+    # [EN] Design specification: a missing model **no longer prompts and then exits**; the
+    # [EN] backend keeps running in the "no-model-ready" state. Only one "is the model there"
+    # [EN] check is made here; when it is missing, the Backend is still constructed (with the
+    # [EN] engine left empty), and a **non-blocking** need_download is sent to the front end
+    # [EN] before ready.
+    # [ZH] 相关设计：模型缺失**不再征询后退出**，而是以"无模型就绪"状态继续跑。
+    # [ZH] 这里只做一次"模型在不在"的判断；缺模型时先把 Backend 建起来（引擎留空），
+    # [ZH] 稍后在 ready 之前发一条**非阻塞**的 need_download 告知前端。
     model_path = check_model(config.model_path)
     if not model_path:
         log.warning("%s", _t("sys.log_missing_model", model=config.model_path))
@@ -6996,16 +7147,23 @@ def main() -> None:
             backend = Backend(config, model_path or "")
             restored = backend.restore_session()
             backend.warmup()
-            backend.touch_model_usage()   # 新增四：记录模型最后使用时间
+            backend.touch_model_usage()   # [EN] Feature 4: record the model's last use time.
+                                          # [ZH] 新增四：记录模型最后使用时间
     except Exception as e:
         log_user(log, "sys.log_backend_init_failed", level="exception")
-        # 向 stdout 输出一条错误响应，前端首条请求即可读到
+        # [EN] Write one error response to stdout so that the front end's first request can
+        # [EN] read it.
+        # [ZH] 向 stdout 输出一条错误响应，前端首条请求即可读到
         print(json.dumps({"type": "system", "content": _t("sys.backend_init_failed", error=e)},
                          ensure_ascii=False), flush=True)
         return
 
-    # 此前版本 相关设计：加载已安装技能与本地插件（发现/导入/注册命令）。
-    # 放在预热之后：技能加载失败不会拖慢或阻塞主程序启动，且异常已被隔离。
+    # [EN] Design specification in an earlier release: load installed skills and local
+    # [EN] plugins (discovery / import / registration commands). Placed after warm-up so a
+    # [EN] skill-loading failure cannot slow down or block application startup, and the
+    # [EN] exceptions are already isolated.
+    # [ZH] 此前版本 相关设计：加载已安装技能与本地插件（发现/导入/注册命令）。
+    # [ZH] 放在预热之后：技能加载失败不会拖慢或阻塞主程序启动，且异常已被隔离。
     try:
         skill_summary = backend.load_skills()
         if skill_summary.get("total"):
@@ -7016,8 +7174,12 @@ def main() -> None:
         log.exception("技能加载阶段异常（已忽略）")
         skill_summary = {}
 
-    # 相关设计：缺模型时告知前端（**非阻塞**）——前端据此显示引导，而不是弹"是否下载、
-    # 拒绝就退出"的强制选择。放在 ready 之前，前端渲染就绪状态时一次就能拿到全部信息。
+    # [EN] Design specification: tell the front end when the model is missing
+    # [EN] (**non-blocking**) so that it shows guidance instead of a forced choice such as
+    # [EN] "download now or refuse and exit". Emitted before ready, so the front end gets
+    # [EN] all the information at once when it renders the ready state.
+    # [ZH] 相关设计：缺模型时告知前端（**非阻塞**）——前端据此显示引导，而不是弹"是否下载、
+    # [ZH] 拒绝就退出"的强制选择。放在 ready 之前，前端渲染就绪状态时一次就能拿到全部信息。
     model_missing: Dict[str, Any] = {}
     if not backend.model_ready:
         target, size, repo_error = "", 0, ""
@@ -7025,8 +7187,11 @@ def main() -> None:
             target, size = find_best_model(config.model_repo, config.model_path,
                                            hf_endpoint=config.hf_endpoint)
         except Exception as e:  # noqa: BLE001
-            # 查仓库失败（离线/镜像不可达）不影响无模型启动：引导里仍给出模型市场与
-            # 手动放置两条路径，只是没有"预计体积"可显示。
+            # [EN] A failed repository lookup (offline / unreachable mirror) does not affect
+            # [EN] no-model startup: the guidance still offers both the model marketplace and
+            # [EN] manual placement, only without an "expected size" to display.
+            # [ZH] 查仓库失败（离线/镜像不可达）不影响无模型启动：引导里仍给出模型市场与
+            # [ZH] 手动放置两条路径，只是没有"预计体积"可显示。
             log.warning("查询模型仓库失败（不影响无模型启动）: %s", e)
             repo_error = str(e)
         model_missing = {
@@ -7039,8 +7204,12 @@ def main() -> None:
         }
         _write({
             "type": "need_download",
-            # blocking=False：**新语义**。旧行为是"后端停下等答复，拒绝即退出"；
-            # 现在它只是一条告知，后端已就绪并继续服务（见模块头部的说明）。
+            # [EN] blocking=False: **new semantics**. The old behaviour was "the backend
+            # [EN] stops and waits for an answer, and refusing exits"; it is now only a
+            # [EN] notification, the backend is ready and keeps serving (see the module
+            # [EN] header).
+            # [ZH] blocking=False：**新语义**。旧行为是"后端停下等答复，拒绝即退出"；
+            # [ZH] 现在它只是一条告知，后端已就绪并继续服务（见模块头部的说明）。
             "blocking": False,
             "model": config.model_path,
             "size": int(size or 0),
@@ -7058,19 +7227,30 @@ def main() -> None:
         })
 
     log_user(log, "sys.log_ready", app=APP_NAME, version=APP_VERSION, studio=STUDIO)
-    # 就绪声明：预热等准备工作全部完成后才输出，前端据此放行输入；附带恢复的历史消息供前端展示
+    # [EN] Ready declaration: emitted only after warm-up and all other preparation have
+    # [EN] finished; the front end uses it to unlock input. It also carries the restored
+    # [EN] history for the front end to display.
+    # [ZH] 就绪声明：预热等准备工作全部完成后才输出，前端据此放行输入；附带恢复的历史消息供前端展示
     _write({"type": "ready", "version": APP_VERSION, "studio": STUDIO, "restored": restored,
             "history": backend.conv.history,
             "locale": _i18n().locale, "i18n": _i18n().info(),
             "commands": backend.commands.all_commands(),
             "skills": backend.skills().status(),
-            # 相关设计：明确区分"后端已就绪"与"推理可用"
+            # [EN] Design specification: clearly distinguish "the backend is ready" from
+            # [EN] "inference is available".
+            # [ZH] 相关设计：明确区分"后端已就绪"与"推理可用"
             "model_ready": backend.model_ready,
             "model_state": backend.model_state(),
             "model_missing": model_missing,
-            # 兼容性修正 / 兼容性修正：告知前端 emoji 是否可用、数据目录在哪（合规与支持排查都要用）
+            # [EN] Compatibility fix / compatibility fix: tell the front end whether emoji
+            # [EN] are available and where the data directory is (both are needed for
+            # [EN] compliance and for support troubleshooting).
+            # [ZH] 兼容性修正 / 兼容性修正：告知前端 emoji 是否可用、数据目录在哪（合规与支持排查都要用）
             "emoji": emoji_mod.enabled(),
-            # 相关设计：平台与能力边界 —— 前端据此显示降级横幅，并校验前后端平台判断一致
+            # [EN] Design specification: platform and capability boundaries -- the front end
+            # [EN] uses this to show the degraded-mode banner and to check that both sides
+            # [EN] judge the platform the same way.
+            # [ZH] 相关设计：平台与能力边界 —— 前端据此显示降级横幅，并校验前后端平台判断一致
             "platform": platform_support.report(),
             "paths": {"program": program_dir(), "data": user_data_root()}})
 
@@ -7087,7 +7267,8 @@ def main() -> None:
         line = line.strip()
         if not line:
             continue
-        # 兼容前端写入 stdin 时可能带上的 UTF-8 BOM
+        # [EN] Tolerate a UTF-8 BOM that the front end may include when writing to stdin.
+        # [ZH] 兼容前端写入 stdin 时可能带上的 UTF-8 BOM
         if line.startswith("\ufeff"):
             line = line.lstrip("\ufeff").strip()
         try:
@@ -7098,23 +7279,36 @@ def main() -> None:
 
         action = request.get("action")
 
-        # 流式生成期间：指令类请求（以 / 开头）与 stop 允许；新的对话/文件请求提示忙碌
+        # [EN] While a stream is active: command requests (starting with /) and stop are
+        # [EN] allowed; new conversation or file requests are told that the backend is busy.
+        # [ZH] 流式生成期间：指令类请求（以 / 开头）与 stop 允许；新的对话/文件请求提示忙碌
         if backend.stream_active and action != "stop":
             is_command = isinstance(request.get("message"), str) and request.get("message", "").startswith("/")
             if not is_command:
-                # busy 标记（此前版本 模型市场优化）：单条 stdout 是共享流，
-                # 两个线程同时写会交错成坏 JSON，所以长任务期间一律拒绝并发请求。
-                # 带上结构化标记，界面才能说清"是后端忙"而不是"模型中心坏了"。
+                # [EN] Busy flag (model marketplace optimization in an earlier release): the
+                # [EN] single stdout stream is shared, and two threads writing at once
+                # [EN] interleave into broken JSON, so concurrent requests are refused while
+                # [EN] long tasks run. The structured flag lets the UI say "the backend is
+                # [EN] busy" instead of "the model center is broken".
+                # [ZH] busy 标记（此前版本 模型市场优化）：单条 stdout 是共享流，
+                # [ZH] 两个线程同时写会交错成坏 JSON，所以长任务期间一律拒绝并发请求。
+                # [ZH] 带上结构化标记，界面才能说清"是后端忙"而不是"模型中心坏了"。
                 _write({"type": "system", "content": _t("sys.busy"), "busy": True})
                 continue
 
         if action in ("chat_stream", "model_download", "update_download", "automation_run",
                       "model_hub_download", "automation_pick", "automation_wizard",
                       "file_stream", "model_hub_load"):
-            # 九个长任务都走流式线程：进度实时输出，stop 可中断。
-            # automation_* 还会检查 stop_event 尽早退出并关闭浏览器；
-            # file_stream（相关设计）在分段摘要期间持续报进度，stop 能真正打断生成；
-            # model_hub_load（模型市场优化 相关设计）按页报告"已取回 N 条"。
+            # [EN] All nine long tasks run on streaming threads: progress is emitted live and
+            # [EN] stop can interrupt them. automation_* also checks stop_event to exit early
+            # [EN] and close the browser; file_stream (design specification) keeps reporting
+            # [EN] progress during chunked summarization, and stop can really interrupt
+            # [EN] generation; model_hub_load (model marketplace optimization, design
+            # [EN] specification) reports "N entries fetched" page by page.
+            # [ZH] 九个长任务都走流式线程：进度实时输出，stop 可中断。
+            # [ZH] automation_* 还会检查 stop_event 尽早退出并关闭浏览器；
+            # [ZH] file_stream（相关设计）在分段摘要期间持续报进度，stop 能真正打断生成；
+            # [ZH] model_hub_load（模型市场优化 相关设计）按页报告"已取回 N 条"。
             if action in ("automation_run", "automation_pick", "automation_wizard") and backend.stream_active:
                 _write({"type": "system", "content": _t("sys.automation_running")})
                 continue
@@ -7124,30 +7318,43 @@ def main() -> None:
         elif action == "stop":
             if backend.stream_active:
                 backend.stop_event.set()
-                # 自动化引擎另有自己的停止入口，一并通知，确保浏览器及时关闭
+                # [EN] The automation engine has its own stop entry point; notify it as well
+                # [EN] so that the browser is closed promptly.
+                # [ZH] 自动化引擎另有自己的停止入口，一并通知，确保浏览器及时关闭
                 if backend._automation is not None:
                     backend._automation.stop()
                 _write({"type": "system", "content": _t("sys.stop_sent")})
             else:
                 _write({"type": "system", "content": _t("sys.stop_none")})
         elif action in ("exit", "quit"):
-            # 相关设计：退出只由用户主动触发。旧行为里"拒绝下载模型"也会走到这里，
-            # 现在缺模型时后端照常运行，这条路只剩前端"退出"按钮会用到。
+            # [EN] Design specification: exit is only triggered by the user. Under the old
+            # [EN] behaviour "refusing to download the model" also reached this point; now
+            # [EN] the backend keeps running without a model, so only the front end's "exit"
+            # [EN] button uses this path.
+            # [ZH] 相关设计：退出只由用户主动触发。旧行为里"拒绝下载模型"也会走到这里，
+            # [ZH] 现在缺模型时后端照常运行，这条路只剩前端"退出"按钮会用到。
             log_user(log, "sys.log_exit_requested")
             backend.save_session()
             _write({"type": "system", "content": _t("sys.exit_ack")})
             return
         else:
-            # v0.2.2 第 4 批：非流式请求处理期间打开"宿主进度"通道，
-            # 让 `/file` 这类动作的分段摘要进度也能以结构化事件送到前端
-            # （此前只能写 stderr，前端当一行日志看待）。处理完立即关掉。
+            # [EN] v0.2.2 batch 4: open the "host progress" channel while a non-streaming
+            # [EN] request is handled, so that the chunked-summary progress of actions such
+            # [EN] as `/file` also reaches the front end as structured events (previously it
+            # [EN] could only write to stderr, which the front end treated as one log line).
+            # [EN] The channel is closed again immediately afterwards.
+            # [ZH] v0.2.2 第 4 批：非流式请求处理期间打开"宿主进度"通道，
+            # [ZH] 让 `/file` 这类动作的分段摘要进度也能以结构化事件送到前端
+            # [ZH] （此前只能写 stderr，前端当一行日志看待）。处理完立即关掉。
             global _host_progress_sink
             _host_progress_sink = _emit_host_progress
             try:
                 response = backend.handle(request)
             finally:
                 _host_progress_sink = None
-            backend._attach_context(response)  # 附带上下文占用，/clear、/undo 后实时减少
+            # [EN] Attach the context usage; it decreases in real time after /clear or /undo.
+            # [ZH] 附带上下文占用，/clear、/undo 后实时减少
+            backend._attach_context(response)
             _write(response)
             backend.save_session()
             if response.get("action") == "exit":
@@ -7156,6 +7363,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    # 进程级崩溃/异常钩子只在真正作为后端进程运行时安装（相关设计）。
+    # [EN] Process-level crash and exception hooks are installed only when the program is
+    # [EN] really running as the backend process (design specification).
+    # [ZH] 进程级崩溃/异常钩子只在真正作为后端进程运行时安装（相关设计）。
     install_crash_handlers()
     main()

@@ -9,21 +9,41 @@ using System.Windows.Media;
 namespace EchoDesk.Utilities;
 
 /// <summary>
-/// 轻量 Markdown → WPF FlowDocument 渲染器（支持标题/加粗/斜体/行内代码/代码块/
-/// 列表/引用/链接/删除线/分隔线/表格），供 RichTextBox 只读展示模型输出。
-///
-/// 修复二：这里的颜色**不再硬编码**。<c>Paragraph</c>/<c>Run</c>/<c>Span</c>/<c>Hyperlink</c>/
-/// <c>Table</c>/<c>TableCell</c> 都是 <c>FrameworkContentElement</c>，支持
-/// <c>SetResourceReference</c>，因此直接绑定到色板键即可随主题切换自动重绘——
-/// 不需要在主题切换时重建文档（原文 Markdown 并未保留，重建本来也做不到）。
+/// [EN] Lightweight Markdown to WPF FlowDocument renderer (headings, bold, italics, inline
+/// [EN] code, code blocks, lists, quotes, links, strikethrough, rules, and tables) that a
+/// [EN] read-only RichTextBox uses to display model output.
+/// [EN]
+/// [EN] Fix two: colors are no longer hard-coded here. <c>Paragraph</c>, <c>Run</c>,
+/// [EN] <c>Span</c>, <c>Hyperlink</c>, <c>Table</c>, and <c>TableCell</c> are all
+/// [EN] <c>FrameworkContentElement</c> instances and support <c>SetResourceReference</c>, so
+/// [EN] binding them directly to palette keys repaints them automatically when the theme
+/// [EN] changes; no document rebuild is needed on a theme switch (the original Markdown is not
+/// [EN] retained, so a rebuild would not be possible anyway).
+/// [ZH] 轻量 Markdown → WPF FlowDocument 渲染器（支持标题、加粗、斜体、行内代码、
+/// [ZH] 代码块、列表、引用、链接、删除线、分隔线、表格），供 RichTextBox 只读
+/// [ZH] 展示模型输出。
+/// [ZH]
+/// [ZH] 修复二：这里的颜色不再硬编码。<c>Paragraph</c>/<c>Run</c>/<c>Span</c>/
+/// [ZH] <c>Hyperlink</c>/<c>Table</c>/<c>TableCell</c> 都是
+/// [ZH] <c>FrameworkContentElement</c>，支持 <c>SetResourceReference</c>，因此直接
+/// [ZH] 绑定到色板键即可随主题切换自动重绘，不需要在主题切换时重建文档（原文
+/// [ZH] Markdown 并未保留，重建本来也做不到）。
 /// </summary>
 public static class MarkdownRenderer
 {
-    /// <summary>字体键：正文用 UiFontFamily（含 emoji 回退链），代码用 MonoFontFamily。</summary>
+    /// <summary>
+    /// [EN] Font keys: body text uses UiFontFamily (including the emoji fallback chain), and
+    /// [EN] code uses MonoFontFamily.
+    /// [ZH] 字体键：正文用 UiFontFamily（含 emoji 回退链），代码用 MonoFontFamily。
+    /// </summary>
     private const string UiFontKey = "UiFontFamily";
     private const string MonoFontKey = "MonoFontFamily";
 
-    /// <summary>把内容元素的属性绑定到色板键（修复二：随主题切换自动更新）。</summary>
+    /// <summary>
+    /// [EN] Binds a content element property to a palette key (fix two: updates automatically
+    /// [EN] when the theme changes).
+    /// [ZH] 把内容元素的属性绑定到色板键（修复二：随主题切换自动更新）。
+    /// </summary>
     private static T Themed<T>(T element, DependencyProperty property, string key)
         where T : FrameworkContentElement
     {
@@ -31,7 +51,11 @@ public static class MarkdownRenderer
         return element;
     }
 
-    /// <summary>取字体家族的取值快照（字体家族不随主题变化，无需动态绑定）。</summary>
+    /// <summary>
+    /// [EN] Takes a value snapshot of a font family (font families do not change with the
+    /// [EN] theme, so dynamic binding is unnecessary).
+    /// [ZH] 取字体家族的取值快照（字体家族不随主题变化，无需动态绑定）。
+    /// </summary>
     private static FontFamily FontFor(string key, string fallback)
         => Application.Current?.TryFindResource(key) as FontFamily ?? new FontFamily(fallback);
 
@@ -44,20 +68,36 @@ public static class MarkdownRenderer
     }
 
     /// <summary>
-    /// 主题切换后的兜底刷新。
-    ///
-    /// 正常情况下不需要做任何事（上面全部用了资源引用），保留此入口是为了
-    /// 兼容"文档在修复前构建、元素上写死了画刷"的极端情况——直接按当前色板重刷一遍。
+    /// [EN] Fallback refresh after a theme switch.
+    /// [EN]
+    /// [EN] Under normal conditions nothing needs to be done (everything above uses resource
+    /// [EN] references). This entry point is kept for the extreme case where a document was
+    /// [EN] built before the fix and its elements carry hard-coded brushes: repaint it once
+    /// [EN] from the current palette.
+    /// [ZH] 主题切换后的兜底刷新。
+    /// [ZH]
+    /// [ZH] 正常情况下不需要做任何事（上面全部用了资源引用），保留此入口是为了
+    /// [ZH] 兼容“文档在修复前构建、元素上写死了画刷”的极端情况——直接按当前
+    /// [ZH] 色板重刷一遍。
     /// </summary>
     public static void RebindTheme(DependencyObject root)
     {
-        // 资源引用已在 Build 时建立，主题字典替换后 WPF 会自动重新求值；
-        // 这里只触发一次布局重算，确保复用中的消息区立即重绘（避免滚动时才刷新）。
+        // [EN] Resource references were established during Build, and WPF re-evaluates them
+        // [EN] automatically once the theme dictionary is replaced; this only triggers one
+        // [EN] layout pass so that a message area being reused repaints immediately (instead of
+        // [EN] waiting for a scroll).
+        // [ZH] 资源引用已在 Build 时建立，主题字典替换后 WPF 会自动重新求值；
+        // [ZH] 这里只触发一次布局重算，确保复用中的消息区立即重绘（避免滚动时才刷新）。
         if (root is FrameworkElement element)
             element.InvalidateVisual();
     }
 
-    /// <summary>核心解析：把 markdown 文本逐块解析进 doc。供顶层与“误包进代码块的表格”复用。</summary>
+    /// <summary>
+    /// [EN] Core parsing: parses the markdown text block by block into doc. Reused by the
+    /// [EN] top-level path and by the “table wrapped in a code block by mistake” path.
+    /// [ZH] 核心解析：把 markdown 文本逐块解析进 doc。供顶层与“误包进代码块的表格”
+    /// [ZH] 复用。
+    /// </summary>
     private static void AppendBlocks(FlowDocument doc, string text)
     {
         var lines = text.Replace("\r\n", "\n").Split('\n');
@@ -87,14 +127,24 @@ public static class MarkdownRenderer
 
             string t = line.Trim();
 
-            // ---------- 数学公式（v0.2.1 优化已知问题-2 交付要求） ----------
-            // 需求原话是"增加前端对「$$ $$」MD 标识符的识别"。两种形态都处理：
-            //   * 块级：整行（或多行）被 $$ 包起来 → 单独成一个居中式块；
-            //   * 行内：正文里的 $...$ → 行内等宽呈现。
-            // 识别放在代码块/表格之后（``` 与 | 表格优先级更高），但在普通段落之前。
+            // [EN] ---------- Math formulas (v0.2.1 known-issue optimization 2 delivery
+            // [EN] requirement) ----------
+            // [ZH] ---------- 数学公式（v0.2.1 优化已知问题-2 交付要求） ----------
+            // [EN] The requirement was worded as "add front end recognition of the $$ $$
+            // [EN] Markdown marker". Both forms are handled:
+            // [EN]   * Block level: a whole line (or several lines) wrapped in $$ becomes a
+            // [EN]     standalone centered block;
+            // [EN]   * Inline: $...$ inside body text is rendered inline in a monospace run.
+            // [EN] Recognition sits after code blocks and tables (``` and | tables take
+            // [EN] priority) but before ordinary paragraphs.
+            // [ZH] 需求原话是“增加前端对「$$ $$」MD 标识符的识别”。两种形态都处理：
+            // [ZH]   * 块级：整行（或多行）被 $$ 包起来 → 单独成一个居中式块；
+            // [ZH]   * 行内：正文里的 $...$ → 行内等宽呈现。
+            // [ZH] 识别放在代码块/表格之后（``` 与 | 表格优先级更高），但在普通段落之前。
             if (t.StartsWith("$$"))
             {
-                // 同行闭合：$$ ... $$
+                // [EN] Closed on the same line: $$ ... $$
+                // [ZH] 同行闭合：$$ ... $$
                 int close = t.IndexOf("$$", 2, StringComparison.Ordinal);
                 if (close > 0)
                 {
@@ -103,7 +153,9 @@ public static class MarkdownRenderer
                     i++;
                     continue;
                 }
-                // 跨行：从本行 $$ 之后开始收，直到出现只含 $$ 或在中间闭合的一行
+                // [EN] Multi-line: collection starts after the $$ on this line and continues
+                // [EN] until a line appears that contains only $$ or closes in the middle.
+                // [ZH] 跨行：从本行 $$ 之后开始收，直到出现只含 $$ 或在中间闭合的一行
                 var body = new System.Text.StringBuilder(t.Substring(2));
                 int k = i + 1;
                 bool closed = false;
@@ -129,8 +181,12 @@ public static class MarkdownRenderer
                 }
                 else
                 {
-                    // 流式未写完（只有开头的 $$）：先按文本显示，下一帧再渲染成公式，
-                    // 免得"公式区"在流式过程中反复出现/消失（跳动比晚一点更糟）。
+                    // [EN] Streaming is incomplete (only the opening $$ is present): display it
+                    // [EN] as text first and render it as a formula on the next frame, so
+                    // [EN] that the "formula area" does not appear and disappear repeatedly
+                    // [EN] during streaming (jumping is worse than a slightly later render).
+                    // [ZH] 流式未写完（只有开头的 $$）：先按文本显示，下一帧再渲染成公式，
+                    // [ZH] 免得“公式区”在流式过程中反复出现/消失（跳动比晚一点更糟）。
                     doc.Blocks.Add(BuildFormulaBlock(body.ToString()));
                     i = k;
                 }
@@ -151,7 +207,9 @@ public static class MarkdownRenderer
                 continue;
             }
 
-            // 表格块：连续若干行以 | 开头，且其中包含分隔行（|---|）
+            // [EN] Table block: several consecutive lines start with | and one of them is a
+            // [EN] separator row (|---|).
+            // [ZH] 表格块：连续若干行以 | 开头，且其中包含分隔行（|---|）
             if (t.StartsWith("|") && CountBars(t) >= 2)
             {
                 var rows = new List<string>();
@@ -169,7 +227,9 @@ public static class MarkdownRenderer
                     i = j;
                     continue;
                 }
-                // 不是合法表格（无分隔行，如流式未写完）：按普通文本继续
+                // [EN] Not a valid table (no separator row, for example while streaming is
+                // [EN] incomplete): continue as ordinary text.
+                // [ZH] 不是合法表格（无分隔行，如流式未写完）：按普通文本继续
             }
 
             if (t.StartsWith("---") || t.StartsWith("***") || t.StartsWith("___"))
@@ -236,7 +296,13 @@ public static class MarkdownRenderer
         Flush(doc, ref para);
     }
 
-    /// <summary>代码块输出：若内容“像 Markdown 表格/标题”，则按 Markdown 解析（修正模型误包进代码块的表格）；否则保持纯代码块。</summary>
+    /// <summary>
+    /// [EN] Code block output: if the content “looks like a Markdown table or heading”, it is
+    /// [EN] parsed as Markdown (correcting tables the model wrapped in a code block by
+    /// [EN] mistake); otherwise it stays a plain code block.
+    /// [ZH] 代码块输出：若内容“像 Markdown 表格/标题”，则按 Markdown 解析（修正模型
+    /// [ZH] 误包进代码块的表格）；否则保持纯代码块。
+    /// </summary>
     private static void FlushCodeBlock(FlowDocument doc, string code)
     {
         if (LooksLikeMarkdown(code))
@@ -245,7 +311,11 @@ public static class MarkdownRenderer
             doc.Blocks.Add(BuildCodeBlock(code));
     }
 
-    /// <summary>判断代码块内容是否其实是 Markdown（存在形如 |:---:|---:| 的表格分隔行）。</summary>
+    /// <summary>
+    /// [EN] Checks whether the code block content is actually Markdown (a table separator
+    /// [EN] row such as |:---:|---:| is present).
+    /// [ZH] 判断代码块内容是否其实是 Markdown（存在形如 |:---:|---:| 的表格分隔行）。
+    /// </summary>
     private static bool LooksLikeMarkdown(string code)
     {
         foreach (string raw in code.Replace("\r\n", "\n").Split('\n'))
@@ -255,7 +325,8 @@ public static class MarkdownRenderer
                 continue;
             var cells = SplitCells(t);
             if (cells.Count >= 2 && cells.All(c => Regex.IsMatch(c, @"^:?-{1,}:?$")))
-                return true; // 命中表格对齐行 → 判定为 Markdown
+                return true; // [EN] Table alignment row matched, so the content is Markdown.
+                             // [ZH] 命中表格对齐行 → 判定为 Markdown。
         }
         return false;
     }
@@ -276,7 +347,11 @@ public static class MarkdownRenderer
         return s.Split('|').Select(x => x.Trim()).ToList();
     }
 
-    /// <summary>尝试把若干表格行解析成 FlowDocument.Table；缺少分隔行时返回 null。</summary>
+    /// <summary>
+    /// [EN] Tries to parse several table rows into a FlowDocument.Table; returns null when the
+    /// [EN] separator row is missing.
+    /// [ZH] 尝试把若干表格行解析成 FlowDocument.Table；缺少分隔行时返回 null。
+    /// </summary>
     private static Table? TryBuildTable(List<string> rows)
     {
         int sepIndex = -1;
@@ -325,7 +400,8 @@ public static class MarkdownRenderer
                 string txt = c < cells.Count ? cells[c] : "";
                 var p = new Paragraph { Margin = new Thickness(6, 2, 6, 2), TextAlignment = aligns[c] };
                 AddInlines(p, txt);
-                if (r < sepIndex || sepIndex == 0) // 表头加粗
+                if (r < sepIndex || sepIndex == 0) // [EN] The header row is bold.
+                                                   // [ZH] 表头加粗。
                     foreach (var run in p.Inlines.OfType<Run>())
                         run.FontWeight = FontWeights.Bold;
                 var cell = new TableCell(p)
@@ -362,16 +438,31 @@ public static class MarkdownRenderer
     }
 
     /// <summary>
-    /// 渲染块级数学公式（<c>$$ ... $$</c>）。
-    ///
-    /// **为什么不引 LaTeX 排版引擎**：WPF 没有原生公式排版，社区方案要么依赖
-    /// WebView2（本项目刻意不引入，见 UI 插件评估），要么依赖第三方渲染库
-    /// （体积与许可证成本都超出"识别 $$"这一条要求）。这里按**等宽 + 居中 +
-    /// 浅底**呈现公式源码：可读、可选中复制、与代码块视觉区分，
-    /// 且对"把 LaTeX 粘到别处继续编辑"这件事最友好。
-    ///
-    /// 与代码块的区别：居中、无边框背景块改为浅底圆角（公式通常比代码短，
-    /// 通栏底色会让页面显得很碎），字号跟随正文。
+    /// [EN] Renders a block-level math formula (<c>$$ ... $$</c>).
+    /// [EN]
+    /// [EN] Why no LaTeX typesetting engine is used: WPF has no native formula typesetting, and
+    /// [EN] community options either depend on WebView2 (deliberately not introduced in this
+    /// [EN] project; see the UI plugin evaluation) or on third-party rendering libraries (both
+    /// [EN] their size and their license cost exceed the single requirement of
+    /// [EN] "recognizing $$"). Here the formula source is presented as monospace, centered,
+    /// [EN] on a light background: readable, selectable and copyable, visually distinct from
+    /// [EN] code blocks, and the most friendly choice for "paste the LaTeX elsewhere and keep
+    /// [EN] editing".
+    /// [EN]
+    /// [EN] Difference from code blocks: centered, without a border, and the background block
+    /// [EN] becomes a light rounded fill (formulas are usually shorter than code, and a
+    /// [EN] full-width fill would make the page look fragmented); the font size follows body
+    /// [EN] text.
+    /// [ZH] 渲染块级数学公式（<c>$$ ... $$</c>）。
+    /// [ZH]
+    /// [ZH] 为什么不引 LaTeX 排版引擎：WPF 没有原生公式排版，社区方案要么依赖
+    /// [ZH] WebView2（本项目刻意不引入，见 UI 插件评估），要么依赖第三方渲染库
+    /// [ZH] （体积与许可证成本都超出“识别 $$”这一条要求）。这里按等宽 + 居中 +
+    /// [ZH] 浅底呈现公式源码：可读、可选中复制、与代码块视觉区分，
+    /// [ZH] 且对“把 LaTeX 粘到别处继续编辑”这件事最友好。
+    /// [ZH]
+    /// [ZH] 与代码块的区别：居中、无边框背景块改为浅底圆角（公式通常比代码短，
+    /// [ZH] 通栏底色会让页面显得很碎），字号跟随正文。
     /// </summary>
     private static Paragraph BuildFormulaBlock(string body)
     {
@@ -387,13 +478,21 @@ public static class MarkdownRenderer
         return p;
     }
 
-    /// <summary>递归解析行内 Markdown，支持任意嵌套（粗中嵌斜/码/删/链等）。</summary>
+    /// <summary>
+    /// [EN] Recursively parses inline Markdown and supports arbitrary nesting (italics, code,
+    /// [EN] strikethrough, or links inside bold text, and so on).
+    /// [ZH] 递归解析行内 Markdown，支持任意嵌套（粗中嵌斜/码/删/链等）。
+    /// </summary>
     private static void AddInlines(Paragraph p, string text)
     {
         ParseInlines(p.Inlines, text);
     }
 
-    /// <summary>逐字符扫描 text，识别配对标记并递归解析内层，实现嵌套 Markdown 渲染。</summary>
+    /// <summary>
+    /// [EN] Scans text character by character, recognizes paired markers, and recursively
+    /// [EN] parses the inner span to implement nested Markdown rendering.
+    /// [ZH] 逐字符扫描 text，识别配对标记并递归解析内层，实现嵌套 Markdown 渲染。
+    /// </summary>
     private static void ParseInlines(InlineCollection col, string text)
     {
         var buf = new System.Text.StringBuilder();
@@ -402,7 +501,8 @@ public static class MarkdownRenderer
         {
             char c = text[i];
 
-            // 链接 [文](url)：优先整段识别，标签内可再嵌套
+            // [EN] Link [text](url): matched as a whole first, and the label may nest further.
+            // [ZH] 链接 [文](url)：优先整段识别，标签内可再嵌套
             if (c == '[')
             {
                 int close = text.IndexOf("](", i);
@@ -421,7 +521,9 @@ public static class MarkdownRenderer
                             try { Process.Start(new ProcessStartInfo(ea.Uri.IsAbsoluteUri ? ea.Uri.AbsoluteUri : ea.Uri.OriginalString) { UseShellExecute = true }); }
                             catch { }
                         };
-                        ParseInlines(link.Inlines, label); // 标签内部支持嵌套
+                        // [EN] The label may contain nested markup.
+                        // [ZH] 标签内部支持嵌套
+                        ParseInlines(link.Inlines, label);
                         col.Add(link);
                         i = end + 1;
                         continue;
@@ -429,11 +531,19 @@ public static class MarkdownRenderer
                 }
             }
 
-            // $$ ... $$ 出现在**一行中间**（探针抓出来的场景）：
-            // `结论是 $$E = mc^2$$ 这样。` 这种写法在模型输出里很常见，而块级扫描只认
-            // "行首是 $$"，漏掉它会让定界符原样显示、内容被拆成碎片。
-            // 这里按**行内等宽片段**呈现（不新建居中段落：公式在句子中间时居中会
-            // 把句子劈成两半），块级公式（自己占一行）才走居中样式。
+            // [EN] $$ ... $$ appearing in the middle of a line (a scenario surfaced by the
+            // [EN] probe): a sentence that embeds $$E = mc^2$$ mid-line is common in model
+            // [EN] output, while the block-level scan only recognizes "a line that starts with
+            // [EN] $$". Missing this case would display the delimiters verbatim and split the
+            // [EN] content into fragments. Here it is rendered as an inline monospace fragment
+            // [EN] (no new centered paragraph: centering a formula in the middle of a sentence
+            // [EN] would split the sentence in two); only block formulas (which occupy a line
+            // [EN] of their own) use the centered style.
+            // [ZH] $$ ... $$ 出现在**一行中间**（探针抓出来的场景）：
+            // [ZH] `结论是 $$E = mc^2$$ 这样。` 这种写法在模型输出里很常见，而块级扫描只认
+            // [ZH] “行首是 $$”，漏掉它会让定界符原样显示、内容被拆成碎片。
+            // [ZH] 这里按**行内等宽片段**呈现（不新建居中段落：公式在句子中间时居中会
+            // [ZH] 把句子劈成两半），块级公式（自己占一行）才走居中样式。
             if (c == '$' && i + 1 < n && text[i + 1] == '$')
             {
                 int closeD = text.IndexOf("$$", i + 2, StringComparison.Ordinal);
@@ -451,14 +561,26 @@ public static class MarkdownRenderer
                 }
             }
 
-            // 行内数学：$...$（任务书交付要求"前端识别 $$ $$"；行内单 $ 一并支持）
+            // [EN] Inline math: $...$ (the design specification requires "front end
+            // [EN] recognition of $$ $$"; single-$ inline spans are supported as well).
+            // [ZH] 行内数学：$...$（设计规范交付要求“前端识别 $$ $$”；行内单 $ 一并支持）
             //
-            // **必须与"美元金额"区分开**：`价格 $100 到 $200` 是最容易被误判成
-            // 公式的输入。三条判据同时成立才当公式：① 两个 $ 之间有内容且不含
-            // 空白包裹的换行；② 内容里**没有**裸数字紧跟货币语境（用"内容含
-            // LaTeX 特征或非纯数字+单位"判断）；③ 两个 $ 之间的长度不超过 200
-            // 字符（公式不会是一整段散文）。误判公式会把整段话变成等宽居中，
-            // 比"公式没渲染"糟得多，所以判据偏保守。
+            // [EN] This must be distinguished from "US dollar amounts": a price range such as
+            // [EN] `$100 to $200` is the input most easily mistaken for a formula. A span is
+            // [EN] treated as a formula only when three criteria hold at once: (1) the two $
+            // [EN] delimiters contain content and no whitespace-wrapped newline; (2) the
+            // [EN] content does not have a bare number next to a currency context (judged by
+            // [EN] "the content contains LaTeX traits or is not just a number plus a unit");
+            // [EN] (3) the span between the two $ is at most 200 characters long (a formula is
+            // [EN] never a whole paragraph of prose). Mistaking prose for a formula turns the
+            // [EN] whole paragraph into centered monospace, which is far worse than "the
+            // [EN] formula was not rendered", so the criteria lean conservative.
+            // [ZH] **必须与“美元金额”区分开**：`价格 $100 到 $200` 是最容易被误判成
+            // [ZH] 公式的输入。三条判据同时成立才当公式：① 两个 $ 之间有内容且不含
+            // [ZH] 空白包裹的换行；② 内容里**没有**裸数字紧跟货币语境（用“内容含
+            // [ZH] LaTeX 特征或非纯数字+单位”判断）；③ 两个 $ 之间的长度不超过 200
+            // [ZH] 字符（公式不会是一整段散文）。误判公式会把整段话变成等宽居中，
+            // [ZH] 比“公式没渲染”糟得多，所以判据偏保守。
             if (c == '$' && !(i + 1 < n && text[i + 1] == '$'))
             {
                 int close = text.IndexOf('$', i + 1);
@@ -480,7 +602,8 @@ public static class MarkdownRenderer
                 }
             }
 
-            // 配对包裹符：** **  __ __  ~~ ~~  * *  _ _  ` `
+            // [EN] Paired wrapper markers: ** **, __ __, ~~ ~~, * *, _ _, ` `.
+            // [ZH] 配对包裹符：** **  __ __  ~~ ~~  * *  _ _  ` `
             if (TryMark(text, i, out string open, out int openLen))
             {
                 int closeIdx = text.IndexOf(open, i + openLen);
@@ -490,7 +613,9 @@ public static class MarkdownRenderer
                     string inner = text.Substring(i + openLen, closeIdx - (i + openLen));
                     if (open == "`")
                     {
-                        // 行内代码：直接成块，不解析内部 Markdown
+                        // [EN] Inline code: emitted as a single run; the inner Markdown is not
+                        // [EN] parsed.
+                        // [ZH] 行内代码：直接成块，不解析内部 Markdown
                         var codeRun = new Run(inner) { FontFamily = FontFor(MonoFontKey, "Consolas, Segoe UI Emoji") };
                         Themed(codeRun, TextElement.BackgroundProperty, "CodeBackground");
                         Themed(codeRun, TextElement.ForegroundProperty, "CodeForeground");
@@ -500,7 +625,9 @@ public static class MarkdownRenderer
                     {
                         var span = new Span();
                         ApplyMark(span, open);
-                        ParseInlines(span.Inlines, inner); // 递归处理嵌套
+                        // [EN] Handle nested markup recursively.
+                        // [ZH] 递归处理嵌套
+                        ParseInlines(span.Inlines, inner);
                         col.Add(span);
                     }
                     i = closeIdx + openLen;
@@ -524,13 +651,27 @@ public static class MarkdownRenderer
     }
 
     /// <summary>
-    /// 判断两个 <c>$</c> 之间的内容是否像行内公式（而不是美元金额）。
-    ///
-    /// 保守判据（宁可漏判也不误判，理由见调用点注释）：
-    ///   * 出现 LaTeX 特征字符 <c>\ ^ _ { } = + / ( )</c> 或希腊字母名 → 公式；
-    ///   * 或包含数学函数/命令名（frac / sqrt / sum / int / alpha …）→ 公式；
-    ///   * 纯数字、或"数字+单位/货币符号" → **不是**公式（`$100`、`$1.5M`）；
-    ///   * 含中文 → 不是公式（中文公式极少用 $ 包裹，而"$合同金额$"是误判高发区）。
+    /// [EN] Determines whether the content between two <c>$</c> characters looks like an inline
+    /// [EN] formula (rather than a US dollar amount).
+    /// [EN]
+    /// [EN] Conservative criteria (a missed formula is preferable to a false positive; see the
+    /// [EN] comment at the call site):
+    /// [EN]   * a LaTeX trait character <c>\ ^ _ { } = + / ( )</c> or a Greek letter name is
+    /// [EN]     present, so it is a formula;
+    /// [EN]   * or a math function or command name (frac / sqrt / sum / int / alpha ...) is
+    /// [EN]     present, so it is a formula;
+    /// [EN]   * a plain number, or "a number plus a unit or currency symbol", is not a formula
+    /// [EN]     (`$100`, `$1.5M`);
+    /// [EN]   * content containing Chinese is not a formula (Chinese formulas are rarely
+    /// [EN]     wrapped in $, while a Chinese phrase wrapped in $ is a frequent
+    /// [EN]     false-positive case).
+    /// [ZH] 判断两个 <c>$</c> 之间的内容是否像行内公式（而不是美元金额）。
+    /// [ZH]
+    /// [ZH] 保守判据（宁可漏判也不误判，理由见调用点注释）：
+    /// [ZH]   * 出现 LaTeX 特征字符 <c>\ ^ _ { } = + / ( )</c> 或希腊字母名 → 公式；
+    /// [ZH]   * 或包含数学函数/命令名（frac / sqrt / sum / int / alpha …）→ 公式；
+    /// [ZH]   * 纯数字、或“数字+单位/货币符号” → 不是公式（`$100`、`$1.5M`）；
+    /// [ZH]   * 含中文 → 不是公式（中文公式极少用 $ 包裹，而“$合同金额$”是误判高发区）。
     /// </summary>
     private static bool LooksLikeInlineMath(string inner)
     {
@@ -538,19 +679,33 @@ public static class MarkdownRenderer
             return false;
         foreach (char ch in inner)
         {
-            if (ch > 0x2E7F)   // 中日韩等宽字符区：不当公式
+            if (ch > 0x2E7F)   // [EN] CJK and other wide-character ranges: not a formula.
+                               // [ZH] 中日韩等宽字符区：不当公式
                 return false;
         }
         if (inner.IndexOfAny(new[] { '\\', '^', '_', '{', '}', '=', '+', '(', ')' }) >= 0)
             return true;
-        // 比较运算 + 单字母变量：`x > 0`、`n < 10`、`a ≠ b` 这类也是公式。
-        // 判据要求"比较符号两侧紧邻单字母或数字"，这样"$100 > 50$"（金额比较）
-        // 不会被误判成公式 —— 它与纯金额一样属于散文，不是数学排版需求。
-            // 比较运算 + 单字母变量：`x > 0`、`n < 10`、`a ≠ b` 这类也是公式。
-            // 判据要求"比较符号**跳过空白后的**两侧是单字母或数字"，
-            // 这样"$100 > 50$"（金额比较）不会被误判成公式 —— 它与纯金额一样
-            // 属于散文，不是数学排版需求。注意必须跳过空白：`x > 0` 里紧邻 `>`
-            // 的两个字符都是空格，不跳过就永远匹配不上（探针抓出来的）。
+        // [EN] Comparison operators with single-letter variables: `x > 0`, `n < 10`,
+        // [EN] `a ≠ b` are formulas as well. The criterion requires "a single letter or
+        // [EN] digit immediately on both sides of the comparison symbol", so "$100 > 50$"
+        // [EN] (a comparison of amounts) is not mistaken for a formula; like a plain
+        // [EN] amount it belongs to prose and is not a typesetting need for math.
+        // [ZH] 比较运算 + 单字母变量：`x > 0`、`n < 10`、`a ≠ b` 这类也是公式。
+        // [ZH] 判据要求“比较符号两侧紧邻单字母或数字”，这样“$100 > 50$”（金额比较）
+        // [ZH] 不会被误判成公式 —— 它与纯金额一样属于散文，不是数学排版需求。
+            // [EN] Comparison operators with single-letter variables: `x > 0`, `n < 10`,
+            // [EN] `a ≠ b` are formulas as well. The criterion requires "a single letter or
+            // [EN] digit on both sides of the comparison symbol after skipping whitespace",
+            // [EN] so "$100 > 50$" (a comparison of amounts) is not mistaken for a formula;
+            // [EN] like a plain amount it belongs to prose and is not a typesetting need for
+            // [EN] math. Whitespace must be skipped: in `x > 0` the two characters adjacent
+            // [EN] to `>` are both spaces, so without skipping the pattern would never match
+            // [EN] (a finding from the probe).
+            // [ZH] 比较运算 + 单字母变量：`x > 0`、`n < 10`、`a ≠ b` 这类也是公式。
+            // [ZH] 判据要求“比较符号**跳过空白后的**两侧是单字母或数字”，
+            // [ZH] 这样“$100 > 50$”（金额比较）不会被误判成公式 —— 它与纯金额一样
+            // [ZH] 属于散文，不是数学排版需求。注意必须跳过空白：`x > 0` 里紧邻 `>`
+            // [ZH] 的两个字符都是空格，不跳过就永远匹配不上（探针抓出来的）。
             foreach (char op in new[] { '>', '<' })
             {
                 int pos = inner.IndexOf(op);
@@ -582,12 +737,19 @@ public static class MarkdownRenderer
             if (lower.Contains(token))
                 return true;
         }
-        // 剩下的情况只有"纯数字/字母表达式"：要求同时含数字与运算符之外，
-        // 一律不当公式（`$100`、`$USD`、`$1,860,000` 都属于这一类）。
+        // [EN] What remains is only a "plain number or letter expression": unless it
+        // [EN] contains both a digit and an operator, it is never treated as a formula
+        // [EN] (`$100`, `$USD`, `$1,860,000` all fall into this category).
+        // [ZH] 剩下的情况只有“纯数字/字母表达式”：要求同时含数字与运算符之外，
+        // [ZH] 一律不当公式（`$100`、`$USD`、`$1,860,000` 都属于这一类）。
         return false;
     }
 
-    /// <summary>判断 text[i] 处是否是一个成对标记开头；是则返回标记串与长度。</summary>
+    /// <summary>
+    /// [EN] Checks whether position text[i] starts a paired marker; if so, returns the marker
+    /// [EN] string and its length.
+    /// [ZH] 判断 text[i] 处是否是一个成对标记开头；是则返回标记串与长度。
+    /// </summary>
     private static bool TryMark(string text, int i, out string mark, out int len)
     {
         char c = text[i];

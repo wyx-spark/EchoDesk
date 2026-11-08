@@ -303,7 +303,8 @@ class ModelProfile:
         if not self.quantization_source:
             self.quantization_source = _t("capability.unknown")
 
-    # ---------- 展示 ----------
+    # [EN] ---------- Display ----------
+    # [ZH] ---------- 展示 ----------
 
     def params_text(self) -> str:
         text = _fmt_params(float(self.parameters) if self.parameters else None)
@@ -452,7 +453,9 @@ def capability_warnings(profile: ModelProfile, cfg: Any = None) -> List[str]:
     # [EN] 1) KV cache exceeds a reasonable fraction of available memory.
     # [ZH] 1) KV Cache 超出可用内存的合理比例。
     if profile.kv_cache_bytes and profile.ram_gb:
-        limit = profile.ram_gb * 1024 ** 3 * 0.5      # 留一半给系统与模型权重
+        # [EN] Leave half for the system and the model weights.
+        # [ZH] 留一半给系统与模型权重。
+        limit = profile.ram_gb * 1024 ** 3 * 0.5
         if profile.kv_cache_bytes > limit:
             notes.append(_t("capability.warn_kv_over_ram", kv=profile.kv_text(),
                             ram=f"{profile.ram_gb:.1f}"))
@@ -647,7 +650,8 @@ class SummaryCache:
         self.limit = max(1, int(limit))
         self._data: Dict[str, Any] = self._load()
 
-    # ---------- 读写 ----------
+    # [EN] ---------- Read/write ----------
+    # [ZH] ---------- 读写 ----------
 
     def _load(self) -> Dict[str, Any]:
         if not self.path:
@@ -678,7 +682,8 @@ class SummaryCache:
         except OSError:
             log.debug("摘要缓存写入失败（忽略）", exc_info=True)
 
-    # ---------- 指纹与查询 ----------
+    # [EN] ---------- Fingerprint and query ----------
+    # [ZH] ---------- 指纹与查询 ----------
 
     @staticmethod
     def fingerprint(file_path: str, params: Dict[str, Any]) -> str:

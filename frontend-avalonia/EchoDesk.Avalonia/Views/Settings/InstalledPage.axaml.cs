@@ -1,20 +1,39 @@
 // [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/Settings/InstalledPage.axaml.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/Settings/InstalledPage.axaml.cs。类型与成员说明见下方注释。
-// 已安装页的交互逻辑（v0.2.1 跨平台-2 任务一，第 3 个迁移模块；
-// v0.2.2 第 4 批 3a 补齐插件生态全套）。
-//
-// 数据来自后端 `skills_list`，响应形状（与 WPF 版一致）：
-//     { "skills": { "skills": [ { id, name, version, source, loaded, enabled, error,
-//                                 overrode, path, dev, trust_pending,
-//                                 commands[], parsers[], hooks[], panels[], permissions{} } ],
-//                  "counts": {...}, "api_version": "…" } }
-//
-// 与 WPF 版的差异只有"承载方式"，行为逐条对齐：
-//   * **卸载/信任确认没有模态框**：Avalonia 没有内置 MessageBox。卸载改成
-//     "按钮就地变成『确认卸载？』、3 秒内再点一次才执行"；首次加载未知来源插件的
-//     信任确认改成**页内一块面板**（一次性列出全部、逐条勾选、整批提交）——
-//     与 WPF 的 TrustDialog 同一语义（只问一次、整批决定）。
-//   * 文件对话框走 Avalonia 的 `StorageProvider`（WPF 是 `OpenFolderDialog`/`SaveFileDialog`）。
+// [EN] Interaction logic of the installed page (v0.2.1 cross-platform batch 2,
+// [EN] development task 1; the third migrated module; v0.2.2 batch 4 3a completes the
+// [EN] full plugin ecosystem).
+// [ZH] 已安装页的交互逻辑（v0.2.1 跨平台-2 任务一，第 3 个迁移模块；
+// [ZH] v0.2.2 第 4 批 3a 补齐插件生态全套）。
+// [EN]
+// [EN] The data comes from the backend `skills_list`; the response shape (consistent
+// [EN] with the WPF version):
+// [ZH] 数据来自后端 `skills_list`，响应形状（与 WPF 版一致）：
+// [EN]     { "skills": { "skills": [ { id, name, version, source, loaded, enabled, error,
+// [EN]                             overrode, path, dev, trust_pending,
+// [EN]                             commands[], parsers[], hooks[], panels[], permissions{} } ],
+// [EN]                  "counts": {...}, "api_version": "..." } }
+// [ZH]     { "skills": { "skills": [ { id, name, version, source, loaded, enabled, error,
+// [ZH]                             overrode, path, dev, trust_pending,
+// [ZH]                             commands[], parsers[], hooks[], panels[], permissions{} } ],
+// [ZH]                  "counts": {...}, "api_version": "…" } }
+// [EN]
+// [EN] The only differences from the WPF version are the "presentation"; the behavior
+// [EN] matches item by item:
+// [ZH] 与 WPF 版的差异只有“承载方式”，行为逐条对齐：
+// [EN]   * **Uninstall/trust confirmation has no modal dialog**: Avalonia has no built-in
+// [EN]     MessageBox. Uninstall becomes "the button turns into 'Confirm uninstall?' in
+// [EN]     place, and a second click within 3 seconds performs it"; the trust confirmation
+// [EN]     for newly loaded plugins of unknown origin becomes **an in-page panel** (list
+// [EN]     all at once, check each one, submit the batch) — the same semantics as the WPF
+// [EN]     TrustDialog (ask once, decide as a batch).
+// [ZH]   * **卸载/信任确认没有模态框**：Avalonia 没有内置 MessageBox。卸载改成
+// [ZH]     “按钮就地变成『确认卸载？』、3 秒内再点一次才执行”；首次加载未知来源插件
+// [ZH]     的信任确认改成**页内一块面板**（一次性列出全部、逐条勾选、整批提交）——
+// [ZH]     与 WPF 的 TrustDialog 同一语义（只问一次、整批决定）。
+// [EN]   * File dialogs use the Avalonia `StorageProvider` (WPF uses `OpenFolderDialog` /
+// [EN]     `SaveFileDialog`).
+// [ZH]   * 文件对话框走 Avalonia 的 `StorageProvider`（WPF 是 `OpenFolderDialog`/`SaveFileDialog`）。
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -36,17 +55,32 @@ public partial class InstalledPage : UserControl, ISettingsPage
 {
     private ISettingsHost? _host;
 
-    /// <summary>最近一次 skills_list 的原始响应，渲染卡片时反复用到。</summary>
+    /// <summary>
+    /// [EN] Raw response of the most recent skills_list, used repeatedly when rendering
+    /// [EN] cards.
+    /// [ZH] 最近一次 skills_list 的原始响应，渲染卡片时反复用到。
+    /// </summary>
     private JsonElement? _status;
 
-    /// <summary>等待二次确认卸载的插件 id（见文件头注释）。</summary>
+    /// <summary>
+    /// [EN] Id of the plugin awaiting the second uninstall confirmation (see the file
+    /// [EN] header).
+    /// [ZH] 等待二次确认卸载的插件 id（见文件头注释）。
+    /// </summary>
     private string _pendingUninstallId = "";
     private DispatcherTimer? _pendingTimer;
 
-    /// <summary>本次窗口会话里是否已经问过信任确认（与 WPF 的 _trustDialogHandled 同口径）。</summary>
+    /// <summary>
+    /// [EN] Whether the trust confirmation has already been asked in this window session
+    /// [EN] (the same convention as _trustDialogHandled in WPF).
+    /// [ZH] 本次窗口会话里是否已经问过信任确认（与 WPF 的 _trustDialogHandled 同口径）。
+    /// </summary>
     private bool _trustHandled;
 
-    /// <summary>信任确认面板里每个插件的勾选状态（id → 是否信任）。</summary>
+    /// <summary>
+    /// [EN] Check state of each plugin in the trust confirmation panel (id → trusted).
+    /// [ZH] 信任确认面板里每个插件的勾选状态（id → 是否信任）。
+    /// </summary>
     private readonly Dictionary<string, bool> _trustDecisions = new(StringComparer.Ordinal);
 
     public InstalledPage()
@@ -63,7 +97,8 @@ public partial class InstalledPage : UserControl, ISettingsPage
             await SendAsync(new { action = "skills_examples" });
             await RefreshAsync();
         };
-        // v0.2.2 第 4 批 3a：从文件夹安装 / 新建本地插件
+        // [EN] v0.2.2 batch 4 3a: install from a folder / create a local plugin
+        // [ZH] v0.2.2 第 4 批 3a：从文件夹安装 / 新建本地插件
         SkillsInstallFolderButton.Click += async (_, _) => await InstallFromFolderAsync();
         SkillsScaffoldButton.Click += (_, _) => GoToScaffold();
 
@@ -72,7 +107,9 @@ public partial class InstalledPage : UserControl, ISettingsPage
         TrustConfirmButton.Click += async (_, _) => await SubmitTrustAsync();
         TrustCancelButton.Click += (_, _) =>
         {
-            // 直接关掉：不写任何记录，下次打开设置窗口时会再问一次（与 WPF 同一行为）
+            // [EN] Close directly: nothing is recorded, and the question will be asked
+            // [EN] again the next time the settings window opens (the same behavior as WPF).
+            // [ZH] 直接关掉：不写任何记录，下次打开设置窗口时会再问一次（与 WPF 同一行为）
             TrustPanel.IsVisible = false;
             _trustHandled = false;
         };
@@ -84,13 +121,16 @@ public partial class InstalledPage : UserControl, ISettingsPage
 
     public void Attach(ISettingsHost host) => _host = host;
 
-    // 已安装页全是"从后端读"的内容，没有需要收进 ui_state.json 的界面设置。
+    // [EN] The installed page contains only content read from the backend; it has no UI
+    // [EN] setting to store in ui_state.json.
+    // [ZH] 已安装页全是“从后端读”的内容，没有需要收进 ui_state.json 的界面设置。
     public void LoadFrom(AppSettings settings) { }
     public void ApplyTo(AppSettings settings) { }
     public Task ApplyToBackendAsync() => Task.CompletedTask;
 
     // -----------------------------------------------------------------
-    // 数据
+    // [EN] Data
+    // [ZH] 数据
     // -----------------------------------------------------------------
     private async Task<JsonDocument?> SendAsync(object request)
     {
@@ -128,7 +168,8 @@ public partial class InstalledPage : UserControl, ISettingsPage
         SkillList.IsVisible = !empty;
         if (!empty)
         {
-            // 状态行口径与 WPF 一致：条数 + 加载/失败数 + API 版本
+            // [EN] Status line convention matches WPF: count + loaded/failed + API version
+            // [ZH] 状态行口径与 WPF 一致：条数 + 加载/失败数 + API 版本
             string counts = "";
             if (status.TryGetProperty("counts", out JsonElement c))
             {
@@ -144,14 +185,19 @@ public partial class InstalledPage : UserControl, ISettingsPage
             SkillStatusText.Text = "";
         }
 
-        // 信任确认放在**本次加载结束之后**再弹：与 WPF 的处置一致
-        // （WPF 用 Dispatcher.BeginInvoke 延后，理由是模态框会阻塞 UI 线程；
-        //  这里没有模态框，但"先把列表画出来再问"的顺序仍然更友好）。
+        // [EN] The trust confirmation is shown only **after the current load completes**:
+        // [EN] the same handling as WPF (WPF defers it with Dispatcher.BeginInvoke because
+        // [EN] a modal dialog blocks the UI thread; there is no modal dialog here, but
+        // [EN] "draw the list first, then ask" is still friendlier).
+        // [ZH] 信任确认放在**本次加载结束之后**再弹：与 WPF 的处置一致
+        // [ZH] （WPF 用 Dispatcher.BeginInvoke 延后，理由是模态框会阻塞 UI 线程；
+        // [ZH]  这里没有模态框，但“先把列表画出来再问”的顺序仍然更友好）。
         Dispatcher.UIThread.Post(CheckTrustPending);
     }
 
     // -----------------------------------------------------------------
-    // 卡片
+    // [EN] Cards
+    // [ZH] 卡片
     // -----------------------------------------------------------------
     private Control BuildCard(JsonElement item)
     {
@@ -201,7 +247,9 @@ public partial class InstalledPage : UserControl, ISettingsPage
         });
         panel.Children.Add(titleRow);
 
-        // 能力行（指令 / 接管格式 / 自动化钩子 / 面板）—— 与 WPF 版同口径，只显示非空的
+        // [EN] Capability line (commands / takeover formats / automation hooks / panels) —
+        // [EN] the same convention as the WPF version; only non-empty values are shown.
+        // [ZH] 能力行（指令 / 接管格式 / 自动化钩子 / 面板）—— 与 WPF 版同口径，只显示非空的
         var caps = new List<string>();
         AppendList(caps, item, "commands", "settings.installed.commandsLabel", "指令：");
         AppendList(caps, item, "parsers", "settings.installed.parsersLabel", "接管格式：");
@@ -210,7 +258,9 @@ public partial class InstalledPage : UserControl, ISettingsPage
         if (caps.Count > 0)
             panel.Children.Add(new TextBlock { Text = string.Join("　", caps), FontSize = 11, Opacity = 0.75, TextWrapping = TextWrapping.Wrap });
 
-        // 「路径」行（v0.2.2 第 4 批 3a）：排查"到底加载的是哪一份"时的第一手信息
+        // [EN] "Path" line (v0.2.2 batch 4 3a): first-hand information when investigating
+        // [EN] "which copy is actually loaded".
+        // [ZH] 「路径」行（v0.2.2 第 4 批 3a）：排查“到底加载的是哪一份”时的第一手信息
         if (path.Length > 0)
         {
             panel.Children.Add(new TextBlock
@@ -220,7 +270,9 @@ public partial class InstalledPage : UserControl, ISettingsPage
             });
         }
 
-        // 「权限」行（同上）：插件声明了什么权限，是"要不要信任它"的判断依据
+        // [EN] "Permissions" line (same as above): the permissions declared by the plugin
+        // [EN] are the basis for deciding whether to trust it.
+        // [ZH] 「权限」行（同上）：插件声明了什么权限，是“要不要信任它”的判断依据
         panel.Children.Add(new TextBlock
         {
             Text = Loc.T("settings.installed.permissionsLabel", "声明的权限：") + DescribePermissions(item),
@@ -245,7 +297,8 @@ public partial class InstalledPage : UserControl, ISettingsPage
                 Foreground = TryBrush("AccentBrush"),
             });
 
-        // ---- 卡片操作条（v0.2.2 第 4 批 3a）----
+        // [EN] ---- Card action bar (v0.2.2 batch 4 3a) ----
+        // [ZH] ---- 卡片操作条（v0.2.2 第 4 批 3a）----
         var actions = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -264,7 +317,10 @@ public partial class InstalledPage : UserControl, ISettingsPage
 
         if (error.Length > 0)
         {
-            // 「错误详情」只在**确实有错误**时出现：没有错误时它的内容是空数组，点了只会让人困惑
+            // [EN] "Error details" appears only when there really is an error: without an
+            // [EN] error its content is an empty array, and clicking it would only confuse.
+            // [ZH] 「错误详情」只在**确实有错误**时出现：没有错误时它的内容是空数组，
+            // [ZH] 点了只会让人困惑
             var detail = new Button { Content = Loc.T("settings.installed.detail", "错误详情"), Padding = new Thickness(10, 3), FontSize = 11 };
             AutomationProperties.SetAutomationId(detail, "SkillDetail_" + id);
             detail.Click += (_, _) => ShowErrorDetail(name, id, path, error);
@@ -299,7 +355,11 @@ public partial class InstalledPage : UserControl, ISettingsPage
         return border;
     }
 
-    /// <summary>把 <c>permissions</c> 对象渲染成一行文本；没声明时给"（未声明任何权限）"。</summary>
+    /// <summary>
+    /// [EN] Renders the <c>permissions</c> object as one line of text; when nothing is
+    /// [EN] declared it returns "(no permissions declared)".
+    /// [ZH] 把 <c>permissions</c> 对象渲染成一行文本；没声明时给“（未声明任何权限）”。
+    /// </summary>
     private static string DescribePermissions(JsonElement item)
     {
         if (!item.TryGetProperty("permissions", out JsonElement perms) || perms.ValueKind != JsonValueKind.Object)
@@ -327,10 +387,15 @@ public partial class InstalledPage : UserControl, ISettingsPage
     }
 
     // -----------------------------------------------------------------
-    // 卡片动作（v0.2.2 第 4 批 3a）
+    // [EN] Card actions (v0.2.2 batch 4 3a)
+    // [ZH] 卡片动作（v0.2.2 第 4 批 3a）
     // -----------------------------------------------------------------
 
-    /// <summary>错误详情：WPF 弹 MessageBox，这里就地展开在状态行（内容可选中、不阻塞）。</summary>
+    /// <summary>
+    /// [EN] Error details: WPF shows a MessageBox; here they are expanded in place in the
+    /// [EN] status line (selectable, non-blocking).
+    /// [ZH] 错误详情：WPF 弹 MessageBox，这里就地展开在状态行（内容可选中、不阻塞）。
+    /// </summary>
     private void ShowErrorDetail(string name, string id, string path, string error)
     {
         SkillStatusText.Text = string.Join(Environment.NewLine, new[]
@@ -342,7 +407,11 @@ public partial class InstalledPage : UserControl, ISettingsPage
         });
     }
 
-    /// <summary>导出插件为 zip（`skills_export_zip`）。路径由系统保存对话框给出。</summary>
+    /// <summary>
+    /// [EN] Exports a plugin as a zip (`skills_export_zip`). The path comes from the system
+    /// [EN] save dialog.
+    /// [ZH] 导出插件为 zip（`skills_export_zip`）。路径由系统保存对话框给出。
+    /// </summary>
     private async Task ExportZipAsync(string id)
     {
         TopLevel? top = TopLevel.GetTopLevel(this);
@@ -368,8 +437,11 @@ public partial class InstalledPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 发布自检（`skills_publish_check`）。WPF 弹 MessageBox，这里**就地展开**在状态行：
-    /// 逐条列出 ✓/✗ 与未通过项的提示（内容与 WPF 的对话框一字不差）。
+    /// [EN] Publish self-check (`skills_publish_check`). WPF shows a MessageBox; here the
+    /// [EN] result is **expanded in place** in the status line: ✓/✗ items and hints for
+    /// [EN] failures are listed one by one (the content is identical to the WPF dialog).
+    /// [ZH] 发布自检（`skills_publish_check`）。WPF 弹 MessageBox，这里**就地展开**在状态行：
+    /// [ZH] 逐条列出 ✓/✗ 与未通过项的提示（内容与 WPF 的对话框一字不差）。
     /// </summary>
     private async Task PublishCheckAsync(string id)
     {
@@ -404,7 +476,10 @@ public partial class InstalledPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 从文件夹安装（`skills_install_folder`）。文件夹由系统选择器给出（WPF 用 OpenFolderDialog）。
+    /// [EN] Installs from a folder (`skills_install_folder`). The folder comes from the
+    /// [EN] system picker (WPF uses OpenFolderDialog).
+    /// [ZH] 从文件夹安装（`skills_install_folder`）。文件夹由系统选择器给出
+    /// [ZH] （WPF 用 OpenFolderDialog）。
     /// </summary>
     private async Task InstallFromFolderAsync()
     {
@@ -428,7 +503,12 @@ public partial class InstalledPage : UserControl, ISettingsPage
         await RefreshAsync();
     }
 
-    /// <summary>「➕ 新建本地插件」：跳到「开发者」页并聚焦到插件 ID 输入框（对齐 WPF 的 SkillsScaffoldButton_Click）。</summary>
+    /// <summary>
+    /// [EN] "➕ create local plugin": switches to the developer page and focuses the plugin
+    /// [EN] ID input (aligned with SkillsScaffoldButton_Click in WPF).
+    /// [ZH] 「➕ 新建本地插件」：跳到「开发者」页并聚焦到插件 ID 输入框（对齐 WPF 的
+    /// [ZH] SkillsScaffoldButton_Click）。
+    /// </summary>
     private void GoToScaffold()
     {
         if (_host is null)
@@ -443,10 +523,17 @@ public partial class InstalledPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 卸载的二次确认：第一次点击把按钮变成"确认卸载？"，3 秒内再点一次才真正执行。
-    /// 为什么不用模态对话框：Avalonia 没有内置 MessageBox，为一个确认框再造一个窗口
-    /// 不划算，而完全不做确认又会让误点直接删插件。
-    /// 开发插件的确认文案与 WPF 一致（明确"只删 skills_dev 下的目录"）。
+    /// [EN] Second confirmation for uninstall: the first click turns the button into
+    /// [EN] "Confirm uninstall?", and a second click within 3 seconds performs it.
+    /// [EN] Why no modal dialog: Avalonia has no built-in MessageBox, building another
+    /// [EN] window for one confirmation is not worthwhile, and doing no confirmation at all
+    /// [EN] would let a stray click delete a plugin.
+    /// [EN] The confirmation text for development plugins matches WPF (it states clearly
+    /// [EN] that "only the directory under skills_dev is deleted").
+    /// [ZH] 卸载的二次确认：第一次点击把按钮变成“确认卸载？”，3 秒内再点一次才真正执行。
+    /// [ZH] 为什么不用模态对话框：Avalonia 没有内置 MessageBox，为一个确认框再造一个窗口
+    /// [ZH] 不划算，而完全不做确认又会让误点直接删插件。
+    /// [ZH] 开发插件的确认文案与 WPF 一致（明确“只删 skills_dev 下的目录”）。
     /// </summary>
     private async Task OnUninstallAsync(string id, Button button, bool dev, string name)
     {
@@ -477,15 +564,22 @@ public partial class InstalledPage : UserControl, ISettingsPage
     }
 
     // -----------------------------------------------------------------
-    // 首次加载未知来源插件的信任确认（v0.2.2 第 4 批 3a）
+    // [EN] Trust confirmation for newly loaded plugins of unknown origin (v0.2.2 batch 4 3a)
+    // [ZH] 首次加载未知来源插件的信任确认（v0.2.2 第 4 批 3a）
     // -----------------------------------------------------------------
 
     /// <summary>
-    /// 收集 `trust_pending` 的插件并显示确认面板。
+    /// [EN] Collects the plugins with `trust_pending` set and shows the confirmation panel.
     ///
-    /// 与 WPF 的 TrustDialog 同一套判据（那套判据本身是"修复一"的产物）：
-    /// **一次性列出全部**待确认插件，而不是每发现一个弹一次；
-    /// 用户整批决定后一次写入（`skills_trust_bulk`），此后再也不问。
+    /// [EN] The same criteria as the WPF TrustDialog (those criteria are themselves the
+    /// [EN] product of "fix 1"): **all pending plugins are listed at once** instead of
+    /// [EN] asking every time one is found; after the user decides for the whole batch it
+    /// [EN] is written in one call (`skills_trust_bulk`), and this is never asked again.
+    /// [ZH] 收集 `trust_pending` 的插件并显示确认面板。
+    ///
+    /// [ZH] 与 WPF 的 TrustDialog 同一套判据（那套判据本身是“修复一”的产物）：
+    /// [ZH] **一次性列出全部**待确认插件，而不是每发现一个弹一次；
+    /// [ZH] 用户整批决定后一次写入（`skills_trust_bulk`），此后再也不问。
     /// </summary>
     private void CheckTrustPending()
     {
@@ -526,7 +620,10 @@ public partial class InstalledPage : UserControl, ISettingsPage
         TrustList.Children.Clear();
         foreach ((string id, string name, string path, _, List<string> caps, string permissions) in pending)
         {
-            _trustDecisions[id] = true;   // 默认勾选"信任"，与 WPF TrustDialog 的初值一致
+            // [EN] Checked by default, consistent with the initial value of the WPF
+            // [EN] TrustDialog.
+            // [ZH] 默认勾选“信任”，与 WPF TrustDialog 的初值一致
+            _trustDecisions[id] = true;
             var row = new StackPanel { Spacing = 2 };
             var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             var check = new CheckBox
@@ -573,7 +670,9 @@ public partial class InstalledPage : UserControl, ISettingsPage
         foreach (string id in new List<string>(_trustDecisions.Keys))
         {
             _trustDecisions[id] = trusted;
-            // 同步勾选框：用可视化后代找（面板里的行是运行时构建的）
+            // [EN] Sync the check boxes: find them through visual descendants (the rows in
+            // [EN] the panel are built at runtime).
+            // [ZH] 同步勾选框：用可视化后代找（面板里的行是运行时构建的）
             foreach (CheckBox box in TrustList.GetVisualDescendants().OfType<CheckBox>())
             {
                 if (AutomationProperties.GetAutomationId(box) == "TrustCheck_" + id)
@@ -582,7 +681,11 @@ public partial class InstalledPage : UserControl, ISettingsPage
         }
     }
 
-    /// <summary>整批提交信任决定（`skills_trust_bulk`），然后收起面板并刷新。</summary>
+    /// <summary>
+    /// [EN] Submits all trust decisions in one batch (`skills_trust_bulk`), then hides the
+    /// [EN] panel and refreshes.
+    /// [ZH] 整批提交信任决定（`skills_trust_bulk`），然后收起面板并刷新。
+    /// </summary>
     private async Task SubmitTrustAsync()
     {
         var decisions = new List<object>();
@@ -617,10 +720,15 @@ public partial class InstalledPage : UserControl, ISettingsPage
             : 0;
 
     // -----------------------------------------------------------------
-    // 探针接口（`EchoDesk --probe pages` 用：插件生态的入口是否真的都在）
+    // [EN] Probe interface (used by `EchoDesk --probe pages`: whether all plugin
+    // [EN] ecosystem entry points really exist)
+    // [ZH] 探针接口（`EchoDesk --probe pages` 用：插件生态的入口是否真的都在）
     // -----------------------------------------------------------------
 
-    /// <summary>已安装页的可观测状态。</summary>
+    /// <summary>
+    /// [EN] Observable state of the installed page.
+    /// [ZH] 已安装页的可观测状态。
+    /// </summary>
     public string PluginSnapshot()
     {
         int cards = 0;
@@ -645,7 +753,11 @@ public partial class InstalledPage : UserControl, ISettingsPage
         });
     }
 
-    /// <summary>探针：直接触发信任确认（用后端真的返回的 trust_pending 数据）。</summary>
+    /// <summary>
+    /// [EN] Probe: triggers the trust confirmation directly (using the trust_pending data
+    /// [EN] actually returned by the backend).
+    /// [ZH] 探针：直接触发信任确认（用后端真的返回的 trust_pending 数据）。
+    /// </summary>
     public void ProbeShowTrust()
     {
         _trustHandled = false;
@@ -653,11 +765,14 @@ public partial class InstalledPage : UserControl, ISettingsPage
     }
 
     // -----------------------------------------------------------------
-    // 文案
+    // [EN] Texts
+    // [ZH] 文案
     // -----------------------------------------------------------------
     public void ApplyTexts()
     {
-        // 区块标题：与 WPF 的「已加载插件」同一个键、同一个字号口径（15 号加粗强调色）。
+        // [EN] Section title: the same key and the same font-size convention as "Loaded
+        // [EN] plugins" in WPF (15 pt, bold, accent color).
+        // [ZH] 区块标题：与 WPF 的「已加载插件」同一个键、同一个字号口径（15 号加粗强调色）。
         InstalledTitle.Text = Loc.T("settings.installed.title", "已加载插件");
         SkillsRefreshButton.Content = Loc.T("settings.installed.refresh", "🔄 刷新");
         SkillsReloadButton.Content = Loc.T("settings.installed.reload", "🔄 重载本地插件");
@@ -675,7 +790,9 @@ public partial class InstalledPage : UserControl, ISettingsPage
         TrustDisableAllButton.Content = Loc.T("settings.installed.trustDisableAll", "全部禁用");
         TrustConfirmButton.Content = Loc.T("settings.installed.trustAccept", "信任并加载");
         TrustCancelButton.Content = Loc.T("settings.installed.trustReject", "不加载");
-        // 卡片内容是运行时构建的：语言变了要重建一次（Avalonia 没有 WPF 的附加属性遍历）。
+        // [EN] Card content is built at runtime: when the language changes it must be
+        // [EN] rebuilt once (Avalonia has no WPF-style attached-property traversal).
+        // [ZH] 卡片内容是运行时构建的：语言变了要重建一次（Avalonia 没有 WPF 的附加属性遍历）。
         if (_status is { } status)
             _ = RefreshAsync();
     }

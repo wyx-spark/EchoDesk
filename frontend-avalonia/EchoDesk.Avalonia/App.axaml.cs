@@ -10,25 +10,39 @@ namespace EchoDesk.Avalonia;
 
 public partial class App : Application
 {
-    /// <summary>当前进程的共享状态（后端服务、界面设置、语言）。</summary>
+    /// <summary>
+    /// [EN] Shared state of the current process (backend service, UI settings, language).
+    /// [ZH] 当前进程的共享状态（后端服务、界面设置、语言）。
+    /// </summary>
     public static AppState State { get; } = new();
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
     public override void OnFrameworkInitializationCompleted()
     {
-        // 全局异常钩子要**尽早**装上：越晚装，越容易漏掉启动阶段那一段崩溃。
-        // 装了它之后 dispatcher 上的异常不再直接杀进程，而是写日志 + 弹提示框
-        // （见 CrashLog 的说明，对齐 WPF `App.xaml.cs` 的那一个）。
+        // [EN] Install the global exception hook **as early as possible**: the later it is
+        // [EN] installed, the more likely a crash during the startup phase is missed.
+        // [EN] Once installed, an exception on the dispatcher no longer kills the process
+        // [EN] outright; it is logged and a message box is shown (see the CrashLog notes; this
+        // [EN] matches the one in WPF `App.xaml.cs`).
+        // [ZH] 全局异常钩子要**尽早**装上：越晚装，越容易漏掉启动阶段那一段崩溃。
+        // [ZH] 装了它之后 dispatcher 上的异常不再直接杀进程，而是写日志 + 弹提示框
+        // [ZH] （见 CrashLog 的说明，对齐 WPF `App.xaml.cs` 的那一个）。
         CrashLog.Install();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            // 先把语言包与界面设置读起来：窗口构造里就要用到（标题、按钮文案、字号）。
+            // [EN] Load the language pack and UI settings first: window construction already
+            // [EN] needs them (title, button labels, font size).
+            // [ZH] 先把语言包与界面设置读起来：窗口构造里就要用到（标题、按钮文案、字号）。
             State.Initialize();
             desktop.MainWindow = new MainWindow();
-            // 关窗时把后端子进程收干净：WPF 版靠 Process 的 Kill 兜底，
-            // 跨平台版同样要显式做——Linux 上留下孤儿 python 进程会一直占着模型内存。
+            // [EN] Reap the backend child process when the window closes: the WPF version
+            // [EN] relies on Process.Kill as a backstop, and the cross-platform version must
+            // [EN] do it explicitly as well — an orphaned python process on Linux keeps
+            // [EN] holding the model memory.
+            // [ZH] 关窗时把后端子进程收干净：WPF 版靠 Process 的 Kill 兜底，
+            // [ZH] 跨平台版同样要显式做——Linux 上留下孤儿 python 进程会一直占着模型内存。
             desktop.ShutdownRequested += (_, _) => State.Backend.Dispose();
         }
         base.OnFrameworkInitializationCompleted();

@@ -72,12 +72,12 @@ direct use in tests.
 
 ## 为什么需要它
 
-任务书任务四：47KB 文档的分段摘要耗时过长，几百 KB 的合同线性外推可达数小时。
+设计规范任务四：47KB 文档的分段摘要耗时过长，几百 KB 的合同线性外推可达数小时。
 核心矛盾是模型生成速度有限，而摘要需要 N 次串行生成。要真正降低耗时，必须同时
 减少送给模型的字数与模型需要输出的字数，而这件事根本不需要模型：纯统计方法即可
 把一段 3000 字的合同压缩到约 500 字，且不丢失关键句。
 
-这是任务书列出的杠杆中收益最高的一条（"抽取式预筛"），本模块只负责这一件事。
+这是设计规范列出的杠杆中收益最高的一条（"抽取式预筛"），本模块只负责这一件事。
 
 ## 算法
 
@@ -648,10 +648,10 @@ def _score_sentences(sentences: Sequence[str]) -> List[float]:
                     + _RARITY_WEIGHT * rarity[idx])
         length = len(sentences[idx].strip())
         if length <= 4:
-            # [EN] Short fragment (for example "同上。"). Exception: a document title
-            # [EN] ("采购合同") is short as well, but it states what the whole document
-            # [EN] is about; losing the title leaves the summary without a subject, so
-            # [EN] it is not penalized.
+            # [EN] Short fragment (for example "same as above"). Exception: a document title
+            # [EN] ("purchase contract") is short as well, but it states what the
+            # [EN] whole document is about; losing the title leaves the summary
+            # [EN] without a subject, so it is not penalized.
             # [ZH] 短残句（如"同上。"）。例外：文档标题（"采购合同"）同样是短句，但
             # [ZH] 它表明整篇文档的主题；标题丢失后摘要将失去主体，因此不予惩罚。
             length_factor = 1.0 if _looks_like_title(sentences[idx], idx) else 0.25
@@ -924,10 +924,10 @@ def extract(text: str, ratio: float = _DEFAULT_RATIO,
     # [EN] Pass zero: structural titles (short title lines at the start of the
     # [EN] document) are retained unconditionally. This is not a matter of score:
     # [EN] once the title is dropped, the summary can no longer indicate what the
-    # [EN] document is ("采购合同" receives a 0.25x length penalty and rarity 2, so it
-    # [EN] cannot rank near the top by any ordering), yet it occupies only a dozen
-    # [EN] characters. It is deducted before the budget, and the remaining budget is
-    # [EN] allocated by score as usual.
+    # [EN] document is ("purchase contract" receives a 0.25x length penalty and
+    # [EN] rarity 2, so it cannot rank near the top by any ordering), yet it
+    # [EN] occupies only a dozen characters. It is deducted before the budget,
+    # [EN] and the remaining budget is allocated by score as usual.
     # [ZH] 第零遍：结构性标题（文档开头的短标题行）无条件保留。这不是得分高低的
     # [ZH] 问题——标题被丢弃后，摘要中再也看不出该文件是什么（"采购合同"四个字长度
     # [ZH] 惩罚 0.25 倍、稀有度 2，无论怎么排序都进不了前几名），而它只占十几个字符。

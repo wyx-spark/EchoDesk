@@ -104,7 +104,7 @@ from i18n import t as _t
 #: the module docstring: they are UI text stored in the language pack under
 #: task.<id>.*.
 #: [ZH] 任务模板：id → {role, format, cot, examples}。label / note 见文件头说明：
-#: 它们属于界面文本，存放在语言包的 task.<id>.* 中。
+#: [ZH] 它们属于界面文本，存放在语言包的 task.<id>.* 中。
 TASK_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "summary": {
         "role": "你是资深会议记录员，擅长把冗长材料压缩成不丢关键信息的要点。",
@@ -157,8 +157,8 @@ TASK_TEMPLATES: Dict[str, Dict[str, Any]] = {
         # [EN] Machine-readable formats are not relaxed: this JSON is parsed by
         # programs, and allowing the model to choose the level of detail by question
         # complexity would permit prose output.
-        # [ZH] 机器可读格式不作放松：此处的 JSON 会被程序解析，允许模型"按复杂度自行
-        # 判断详略"等同于允许其输出散文。
+        # [ZH] 机器可读格式不作放松：此处的 JSON 会被程序解析，允许模型
+        # [ZH] "按复杂度自行判断详略"等同于允许其输出散文。
         "relax": False,
         "examples": [
             {"in": "发票号码 00123456，价税合计人民币 12,860.00 元，开票日期 2026-03-01。",
@@ -220,14 +220,14 @@ TASK_TEMPLATES: Dict[str, Dict[str, Any]] = {
                     "【推理过程】乙=10+2=12；甲=12+3=15\n【结论】甲 15 岁\n【不确定之处】无"},
         ],
     },
-    # ---- [EN] The next two templates were migrated from removed modes. ----
-    # The summary, translate, and code templates already existed (their content was
-    # completed with the wording of the removed modes); creative and guide had no
-    # templates, so they are defined here to ensure no capability is lost after the
-    # mode merge.
-    # ---- [ZH] 下面两个模板由被移除的模式迁移而来。----
-    # summary/translate/code 三个模板原先已存在（内容已按被移除模式的措辞补全）；
-    # creative 与 guide 原先没有模板，故在此新建，以保证模式合并后能力没有缺失。
+    # [EN] ---- The next two templates were migrated from removed modes. ----
+    # [EN] The summary, translate, and code templates already existed (their content
+    # [EN] was completed with the wording of the removed modes); creative and guide had
+    # [EN] no templates, so they are defined here to ensure no capability is lost
+    # [EN] after the mode merge.
+    # [ZH] ---- 下面两个模板由被移除的模式迁移而来。----
+    # [ZH] summary/translate/code 三个模板原先已存在（内容已按被移除模式的措辞补全）；
+    # [ZH] creative 与 guide 原先没有模板，故在此新建，以保证模式合并后能力没有缺失。
     "creative": {
         "role": "你是创意写作伙伴，擅长故事、诗歌、文案与剧本，敢于给有辨识度的写法。",
         "format": (
@@ -265,7 +265,7 @@ TASK_TEMPLATES: Dict[str, Dict[str, Any]] = {
 #: adherence. Extracted values are consumed by programs and must not vary with model
 #: discretion.
 #: [ZH] 机器可读格式模板（``relax=False``）的结尾：不写"详略自定"那一句，而是继续
-#: 要求严格遵守格式。抽取结果由程序解析，不能随模型的自由裁量而变形。
+#: [ZH] 要求严格遵守格式。抽取结果由程序解析，不能随模型的自由裁量而变形。
 _STRICT_ENDING = (
     "[重要] 严格遵守上述输出格式；不要输出与本任务无关的内容。"
 )
@@ -275,8 +275,8 @@ _STRICT_ENDING = (
 #: format to every question (a question about API usage also received a code block
 #: plus verification steps).
 #: [ZH] 其余模板的结尾：格式优先，但详略仍由模型判断。上一版此处仅有"严格遵守上述
-#: 输出格式"一句，小模型据此对任何问题都套用完整格式（用户询问"这个 API 怎么用"时
-#: 也会返回一段代码及验证步骤）。
+#: [ZH] 输出格式"一句，小模型据此对任何问题都套用完整格式（用户询问"这个 API 怎么用"
+#: [ZH] 时也会返回一段代码及验证步骤）。
 _RELAXED_ENDING = (
     "[重要] 本任务的格式要求优先；但详略仍按问题复杂度判断——"
     "简单问题可以只答一句话，不必凑满上面每一条。"
@@ -463,7 +463,7 @@ def public_list() -> List[Dict[str, Any]]:
             # part in the "detail level is discretionary" relaxation, so the UI and
             # diagnostics can identify templates with a strict format.
             # [ZH] 机器可读格式（如 extract 的 JSON）不参与"详略自定"的放松，界面与
-            # 诊断信息据此可识别哪些模板使用硬性格式。
+            # [ZH] 诊断信息据此可识别哪些模板使用硬性格式。
             "relax": item.get("relax") is not False,
         }
         for tid, item in TASK_TEMPLATES.items()
@@ -475,7 +475,7 @@ def public_list() -> List[Dict[str, Any]]:
 # insufficient instead of guessing. Clarification is presented as guidance that
 # lists two or three possible directions for the user to choose from.
 # [ZH] 模糊提问检测：信息不足时追问，而不是勉强回答。追问以引导形式呈现，
-# 列出 2~3 种可能方向供用户选择。
+# [ZH] 列出 2~3 种可能方向供用户选择。
 # ---------------------------------------------------------------------------
 
 #: [EN] Characteristics of clearly under-specified questions: very short and
@@ -484,8 +484,8 @@ def public_list() -> List[Dict[str, Any]]:
 #: localized. What the UI actually shows is the guidance text itself, under the key
 #: task.clarify_prompt.
 #: [ZH] 明显信息不足的提问特征（很短，且仅含指代词或泛化动词）。这是对用户输入的
-#: 匹配规则（与正则同类），并非显示文本，因此不进入语言包；界面上实际展示的是引导
-#: 话术本身（键 task.clarify_prompt）。
+#: [ZH] 匹配规则（与正则同类），并非显示文本，因此不进入语言包；界面上实际展示的是
+#: [ZH] 引导话术本身（键 task.clarify_prompt）。
 _VAGUE_PATTERNS = (
     "这个", "那个", "它", "怎么办", "怎么弄", "搞一下", "看一下", "帮我弄",
     "弄一下", "处理下", "处理一下", "优化下", "改一下",
@@ -531,12 +531,13 @@ def is_vague_question(text: str) -> bool:
 #: directions belong to the guide mode (``conversation.MODES["guide"]``); the
 #: division of responsibility is documented in the records.
 #: [ZH] 引导方向：(id, 触发关键词)。不同语言的关键词混合存放，因为用户可能中英混写；
-#: 而方向文案一律从语言包读取（键 ``task.guide_dir.<id>``），因此英文界面下不会出现
-#: 中文（``tools/test_capability.py`` 有断言保障）。
+#: [ZH] 而方向文案一律从语言包读取（键 ``task.guide_dir.<id>``），因此英文界面下不会
+#: [ZH] 出现中文（``tools/test_capability.py`` 有断言保障）。
 #:
-#: 使用关键词而不是让模型即时生成方向的原因：该路径不调用模型（见 ``main.py`` 的
-#: 模糊提问短路逻辑），是零成本、确定性的兜底方案；由模型生成方向的实现保留在引导
-#: 模式（``conversation.MODES["guide"]``）中，两者的职责划分记录在 records 文档中。
+#: [ZH] 使用关键词而不是让模型即时生成方向的原因：该路径不调用模型（见 ``main.py``
+#: [ZH] 的模糊提问短路逻辑），是零成本、确定性的兜底方案；由模型生成方向的实现保留
+#: [ZH] 在引导模式（``conversation.MODES["guide"]``）中，两者的职责划分记录在 records
+#: [ZH] 文档中。
 _GUIDE_DIRECTIONS = (
     ("object", ("文件", "文档", "合同", "表格", "图片", "段落", "条款",
                 "file", "doc", "pdf", "excel", "word")),

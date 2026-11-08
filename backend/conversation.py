@@ -53,28 +53,27 @@ from i18n import t as _t
 # [EN] context is 8192 tokens. ``tools/test_capability.py`` asserts these limits;
 # [EN] later revisions must compress existing wording rather than raise them.
 #
-# [ZH]
-# 系统提示词组合：模式块、共享规则、语言指令、可选任务层与可选自定义指令。
+# [ZH] 系统提示词组合：模式块、共享规则、语言指令、可选任务层与可选自定义指令。
 #
-# 1. 模式块（``MODES``）：三个模式，分别定义角色、输出格式、详略程度、推理步骤、
-#    示例、语气与场景边界。“详略程度”将回答长度的控制权交还模型，避免所有回答
-#    被模板化。模式集合由七个收敛为三个（chat、contract、agent）；迁移细节见
-#    ``MODE_ALIASES`` 附近的说明。
-# 2. 共享规则（``_CORE_RULES``）：所有模式共用的七条约束（视角、边界、详略、
-#    先答后问、显式假设、引导与输出纪律）。共享的目的是避免在每个模式中重复，
-#    既节省上下文，也避免出现三份彼此不一致的规则。
-# 3. 语言指令（``_REPLY_LANGUAGE``）：跟随界面语言。
-# 4. 任务层：由 ``/task`` 套用的模板，叠加在模式块之上，而不是替换模式块。
-# 5. 自定义指令：由 ``/prompt`` 设置，优先级最高，替换模式块与任务层。
+# [ZH] 1. 模式块（``MODES``）：三个模式，分别定义角色、输出格式、详略程度、推理步骤、
+# [ZH]    示例、语气与场景边界。“详略程度”将回答长度的控制权交还模型，避免所有回答
+# [ZH]    被模板化。模式集合由七个收敛为三个（chat、contract、agent）；迁移细节见
+# [ZH]    ``MODE_ALIASES`` 附近的说明。
+# [ZH] 2. 共享规则（``_CORE_RULES``）：所有模式共用的七条约束（视角、边界、详略、
+# [ZH]    先答后问、显式假设、引导与输出纪律）。共享的目的是避免在每个模式中重复，
+# [ZH]    既节省上下文，也避免出现三份彼此不一致的规则。
+# [ZH] 3. 语言指令（``_REPLY_LANGUAGE``）：跟随界面语言。
+# [ZH] 4. 任务层：由 ``/task`` 套用的模板，叠加在模式块之上，而不是替换模式块。
+# [ZH] 5. 自定义指令：由 ``/prompt`` 设置，优先级最高，替换模式块与任务层。
 #
-# 提示词正文发送给模型而不是展示给用户，因此刻意保持中文。翻译会削弱针对小型
-# 模型设计的措辞。提示词语言与回复语言是两个独立问题：回复语言由
-# ``_REPLY_LANGUAGE`` 决定。用户可见的模式说明仍位于语言包的
-# ``mode.desc.<模式>`` 下。
+# [ZH] 提示词正文发送给模型而不是展示给用户，因此刻意保持中文。翻译会削弱针对小型
+# [ZH] 模型设计的措辞。提示词语言与回复语言是两个独立问题：回复语言由
+# [ZH] ``_REPLY_LANGUAGE`` 决定。用户可见的模式说明仍位于语言包的
+# [ZH] ``mode.desc.<模式>`` 下。
 #
-# 长度预算：单个模式块不超过 480 字符；模式块、共享规则与语言指令合计不超过
-# 700 字符。默认上下文为 8192 token。``tools/test_capability.py`` 对这些上限
-# 进行断言；后续修改必须压缩既有措辞，不得提高上限。
+# [ZH] 长度预算：单个模式块不超过 480 字符；模式块、共享规则与语言指令合计不超过
+# [ZH] 700 字符。默认上下文为 8192 token。``tools/test_capability.py`` 对这些上限
+# [ZH] 进行断言；后续修改必须压缩既有措辞，不得提高上限。
 # ===========================================================================
 
 MODES: Dict[str, str] = {
@@ -213,25 +212,24 @@ def reply_language_instruction() -> str:
 # [EN] ``/mode summary`` switches to chat, applies the summary template, and keeps
 # [EN] the legacy temperature preset. Behaviour is preserved without consuming a
 # [EN] separate mode slot.
-# [ZH]
-# 模式简化：三个具有不同语义的模式。
+# [ZH] 模式简化：三个具有不同语义的模式。
 #
-# chat：通用对话；contract：条款审查；agent：可调用工具的智能体。判定标准是
-# 用户能否在不理解提示词设计的前提下确定应使用哪个模式。
+# [ZH] chat：通用对话；contract：条款审查；agent：可调用工具的智能体。判定标准是
+# [ZH] 用户能否在不理解提示词设计的前提下确定应使用哪个模式。
 #
-# 此前的七个模式（general、summary、translate、code、contract、creative、
-# guide）按以下理由收敛：
-# * summary、translate、code、creative 的差别在于输出指令，而非对话语义。
-#   它们是同一场对话中的临时任务，应由 ``/task`` 模板承担。其提示词正文已保留
-#   在对应任务模板中。
-# * guide 的“列出两到三个可能方向”已写入共享规则第 6 条；其模型驱动形式迁移至
-#   ``/task guide``。
-# * contract 保留为独立模式，因为它定义专业角色与严格输出要求（逐字摘录与强制
-#   人工复核），语气与边界均不同。
-# * agent 是新的语义类别：由模型自主选择工具，与预定义流程的批量自动化不同。
+# [ZH] 此前的七个模式（general、summary、translate、code、contract、creative、
+# [ZH] guide）按以下理由收敛：
+# [ZH] * summary、translate、code、creative 的差别在于输出指令，而非对话语义。
+# [ZH]   它们是同一场对话中的一次性任务，应由 ``/task`` 模板承担。其提示词正文已保留
+# [ZH]   在对应任务模板中。
+# [ZH] * guide 的“列出两到三个可能方向”已写入共享规则第 6 条；其模型驱动形式迁移至
+# [ZH]   ``/task guide``。
+# [ZH] * contract 保留为独立模式，因为它定义专业角色与严格输出要求（逐字摘录与强制
+# [ZH]   人工复核），语气与边界均不同。
+# [ZH] * agent 是新的语义类别：由模型自主选择工具，与预定义流程的批量自动化不同。
 #
-# 旧模式名仍可通过 ``LEGACY_MODES`` 使用。例如 ``/mode summary`` 会切换到 chat、
-# 套用 summary 模板并沿用旧温度预设。行为得以保留，同时不再占用独立模式位。
+# [ZH] 旧模式名仍可通过 ``LEGACY_MODES`` 使用。例如 ``/mode summary`` 会切换到 chat、
+# [ZH] 套用 summary 模板并沿用旧温度预设。行为得以保留，同时不再占用独立模式位。
 
 #: [EN] Mode aliases: numeric identifiers, abbreviations, full names, and legacy
 #: [EN] mode names are accepted.
@@ -249,7 +247,9 @@ MODE_ALIASES: Dict[str, str] = {
     "1": "chat", "c": "chat", "chat": "chat",
     "2": "contract", "ct": "contract", "contract": "contract",
     "3": "agent", "ag": "agent", "agent": "agent",
-    # ---- 上一版的模式名：仍然可用，会自动切模式并套上同名模板（见 LEGACY_MODES） ----
+    # [EN] ---- Previous-version mode names: still available; switching mode also applies
+    # [EN] the template of the same name (see ``LEGACY_MODES``). ----
+    # [ZH] ---- 上一版的模式名：仍然可用，会自动切模式并套上同名模板（见 LEGACY_MODES） ----
     "general": "chat", "g": "chat",
     "summary": "chat", "s": "chat", "sum": "chat",
     "translate": "chat", "t": "chat", "tr": "chat",
@@ -537,7 +537,8 @@ class ConversationManager:
         # [ZH] 加载路径与 /mode 命令共用同一条迁移逻辑。
         self.mode = canonical_mode(default_mode)
         self.history: List[dict] = []
-        # ---------- [EN] Multiple files / [ZH] 多文件 ----------
+        # [EN] ---------- Multiple files ----------
+        # [ZH] ---------- 多文件 ----------
         # [EN] files is an ordered list in upload order; active_index identifies
         # [EN] the file used by /summarize, /status, and context pointers.
         # [ZH] files 为按上传顺序排列的有序列表；active_index 指向 /summarize、
@@ -557,7 +558,8 @@ class ConversationManager:
         # [EN] Automatic summary of earlier turns, produced by long-session compaction.
         # [ZH] 早期对话的自动摘要，由长会话压缩生成。
         self.summary = ""
-        # ---------- [EN] Reasoning content / [ZH] 思考内容 ----------
+        # [EN] ---------- Reasoning content ----------
+        # [ZH] ---------- 思考内容 ----------
         # [EN] Backend injects these settings from config.reasoning:
         # [EN] persist_reasoning=False omits reasoning from history;
         # [EN] reasoning_max_chars limits retained reasoning per turn (0 = unlimited).
@@ -567,7 +569,8 @@ class ConversationManager:
         self.persist_reasoning = True
         self.reasoning_max_chars = 8000
 
-    # ---------- [EN] Legacy single-file compatibility proxies / [ZH] 单文件兼容代理 ----------
+    # [EN] ---------- Legacy single-file compatibility proxies ----------
+    # [ZH] ---------- 单文件兼容代理 ----------
     #
     # [EN] file_name, file_content, file_summary, and file_summary_meta are
     # [EN] referenced by commands, status display, summary triggers, session I/O,
@@ -640,7 +643,8 @@ class ConversationManager:
             self.active_index = len(self.files) - 1
         self._active.summary_meta = value or {}
 
-    # ---------- [EN] Multi-file API / [ZH] 多文件 API ----------
+    # [EN] ---------- Multi-file API ----------
+    # [ZH] ---------- 多文件 API ----------
 
     def add_file(self, filepath: str, content: str) -> FileEntry:
         """
@@ -741,7 +745,8 @@ class ConversationManager:
         entry.summary = summary or ""
         entry.summary_meta = meta or {}
 
-    # ---------- [EN] Modes / [ZH] 模式 ----------
+    # [EN] ---------- Modes ----------
+    # [ZH] ---------- 模式 ----------
 
     def set_mode(self, mode: str) -> bool:
         """
@@ -832,7 +837,8 @@ class ConversationManager:
                           for name, template in LEGACY_MODES.items() if template)
         return _t("cmd.resp.mode_legacy", pairs=pairs)
 
-    # ---------- [EN] History / [ZH] 历史记录 ----------
+    # [EN] ---------- History ----------
+    # [ZH] ---------- 历史记录 ----------
 
     def add_message(self, role: str, content: str, reasoning: str = "") -> None:
         """
@@ -960,7 +966,8 @@ class ConversationManager:
             lines.append("")
         return "\n".join(lines)
 
-    # ---------- [EN] Custom prompt and task layer / [ZH] 自定义提示词与任务层 ----------
+    # [EN] ---------- Custom prompt and task layer ----------
+    # [ZH] ---------- 自定义提示词与任务层 ----------
 
     def set_custom_prompt(self, text: str) -> None:
         """
@@ -999,7 +1006,8 @@ class ConversationManager:
         self.task_prompt = (text or "").strip()
         self.task_template = (template or "").strip() if self.task_prompt else ""
 
-    # ---------- [EN] File context / [ZH] 文件上下文 ----------
+    # [EN] ---------- File context ----------
+    # [ZH] ---------- 文件上下文 ----------
 
     def set_file(self, filepath: str, content: str) -> None:
         """
@@ -1030,7 +1038,8 @@ class ConversationManager:
             entry = self._active
         self.set_entry_summary(entry, summary, meta)
 
-    # ---------- [EN] Prompt construction / [ZH] 提示词构建 ----------
+    # [EN] ---------- Prompt construction ----------
+    # [ZH] ---------- 提示词构建 ----------
 
     def get_system_prompt(self) -> str:
         """
@@ -1280,7 +1289,8 @@ class ConversationManager:
         """
         return str(getattr(self, "_injection_note", "") or "")
 
-    # ---------- [EN] Session persistence / [ZH] 会话持久化 ----------
+    # [EN] ---------- Session persistence ----------
+    # [ZH] ---------- 会话持久化 ----------
 
     def save_session(self, path: str, model_path: str = "") -> None:
         """

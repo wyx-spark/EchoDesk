@@ -224,7 +224,8 @@ def _resolve_state_path(raw: Any) -> str:
     text = os.path.expanduser(str(raw or "").strip() or ".")
     if os.path.isabs(text):
         return os.path.abspath(text)
-    from config import state_dir  # [EN] deferred to avoid an import cycle at load time / [ZH] 延迟导入以避开加载期的循环依赖
+    from config import state_dir  # [EN] Deferred to avoid an import cycle at load time.
+                                  # [ZH] 延迟导入以避开加载期的循环依赖。
     return os.path.abspath(os.path.join(state_dir(), text))
 
 
@@ -274,7 +275,8 @@ class ModelHub:
         # [ZH] 该缓存仅存在于进程内，后端重启后失效；磁盘缓存另行处理。
         self._session: Optional[Dict[str, Any]] = None
 
-    # ---------- [EN] Configuration / [ZH] 配置读取 ----------
+    # [EN] ---------- Configuration ----------
+    # [ZH] ---------- 配置读取 ----------
 
     @property
     def source_setting(self) -> str:
@@ -339,7 +341,8 @@ class ModelHub:
     def _ensure_dirs(self) -> None:
         os.makedirs(self.models_dir, exist_ok=True)
 
-    # ---------- [EN] HTTP basics / [ZH] HTTP 基础 ----------
+    # [EN] ---------- HTTP basics ----------
+    # [ZH] ---------- HTTP 基础 ----------
 
     def _headers(self) -> Dict[str, str]:
         headers = {"User-Agent": "EchoDesk/0.2.0 (+local desktop assistant)"}
@@ -407,7 +410,8 @@ class ModelHub:
         return {"key": "mirror", "base": MIRROR_ENDPOINT,
                 "note": _t("hub.source.note_all_unreachable")}
 
-    # ---------- [EN] Search / [ZH] 搜索 ----------
+    # [EN] ---------- Search ----------
+    # [ZH] ---------- 搜索 ----------
 
     def load_limits(self) -> Dict[str, Any]:
         """
@@ -491,10 +495,14 @@ class ModelHub:
             from config import user_data_root
 
             return os.path.join(user_data_root(), "cache", "model_hub")
-        except Exception:  # noqa: BLE001 - 取不到用户目录就退到配置/模型库同级
+        except Exception:  # noqa: BLE001
+            # [EN] If the user directory cannot be resolved, fall back to the
+            # [EN] directory next to the configuration / model library.
+            # [ZH] 取不到用户目录就退到配置/模型库同级。
             return os.path.abspath(os.path.join(os.path.dirname(self.registry_path), "hub_cache"))
 
-    # ---------- [EN] HTTP pagination / [ZH] HTTP 分页 ----------
+    # [EN] ---------- HTTP pagination ----------
+    # [ZH] ---------- HTTP 分页 ----------
 
     def _search_params(self, keyword: str, sort: str, cursor: str = "",
                        page_limit: int = MAX_PAGE_SIZE) -> List[Tuple[str, str]]:
@@ -988,7 +996,8 @@ class ModelHub:
         dataset["query"] = self.query_dataset(dataset, page=page, page_size=size, filters=extra)
         return dataset
 
-    # ---------- [EN] Loaded dataset to page (local filter, sort, paginate) / [ZH] 已加载数据集到页面（本地筛选、排序、分页） ----------
+    # [EN] ---------- Loaded dataset to page (local filter, sort, paginate) ----------
+    # [ZH] ---------- 已加载数据集到页面（本地筛选、排序、分页） ----------
 
     def _cache_key(self, keyword: str, sort: str, source_key: str) -> str:
         raw = f"{CACHE_VERSION}|{source_key}|{keyword.strip().lower()}|{sort}"
@@ -1114,7 +1123,10 @@ class ModelHub:
             "pinned": pinned,
             "loaded": loaded,
             "pinned_count": len(pinned),
-            "total": loaded,                 # 兼容旧字段：总条数（含本地来源）
+            # [EN] Legacy-compatible field: total item count (including local
+            # [EN] sources).
+            # [ZH] 兼容旧字段：总条数（含本地来源）。
+            "total": loaded,
             "total_available": total_available,
             "has_more": has_more,
             "stop_reason": stop_reason,
@@ -1322,7 +1334,8 @@ class ModelHub:
         return dataset
 
 
-    # ---------- [EN] Default model, local models, hardware recommendation / [ZH] 默认模型、本地模型与硬件推荐 ----------
+    # [EN] ---------- Default model, local models, hardware recommendation ----------
+    # [ZH] ---------- 默认模型、本地模型与硬件推荐 ----------
 
     def default_repo(self) -> str:
         """
@@ -1541,7 +1554,8 @@ class ModelHub:
                 "models": info.get("models", []),
                 "total_size_human": info.get("total_size_human", "0 B")}
 
-    # ---------- [EN] Detail / [ZH] 详情 ----------
+    # [EN] ---------- Detail ----------
+    # [ZH] ---------- 详情 ----------
 
     def detail(self, repo: str, source: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -1615,7 +1629,8 @@ class ModelHub:
                 return text.split(":", 1)[1]
         return ""
 
-    # ---------- [EN] Download / [ZH] 下载 ----------
+    # [EN] ---------- Download ----------
+    # [ZH] ---------- 下载 ----------
 
     def download(
         self,
@@ -1804,7 +1819,8 @@ class ModelHub:
             if digest.hexdigest().lower() != expected_sha.lower():
                 raise ModelHubError(_t("hub.verify.sha_mismatch"))
 
-    # ---------- [EN] Model registry / [ZH] 模型库 ----------
+    # [EN] ---------- Model registry ----------
+    # [ZH] ---------- 模型库 ----------
 
     def _load_registry(self) -> Dict[str, Any]:
         path = self.registry_path

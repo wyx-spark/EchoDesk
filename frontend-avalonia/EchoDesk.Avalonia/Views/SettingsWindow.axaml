@@ -1,24 +1,34 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="EchoDesk.Avalonia.Views.SettingsWindow"
-        Title="EchoDesk 设置"
+        Title=""
         Icon="/Assets/app.ico"
         Width="844" Height="581" MinWidth="680" MinHeight="520"
         Background="{DynamicResource AppBackgroundBrush}"
         WindowDecorations="BorderOnly">
   <!--
-    [EN] Borderless settings shell. The native caption is removed while the resize frame and drop
-         shadow remain, and window movement is performed by the platform move loop in the
-         code-behind, so that drag, snap and DPI behaviour match the main window.
+    [EN] Borderless settings shell. The native caption is removed while the resize frame and
+    [EN] drop shadow remain, and window movement is performed by the platform move loop in the
+    [EN] code-behind, so that drag, snap and DPI behaviour match the main window.
     [ZH] 无边框设置外壳。移除原生标题栏，同时保留缩放边框与投影；窗口移动由代码隐藏文件中的
-         平台移动循环执行，使拖动、贴靠与 DPI 行为与主窗口一致。
-    设置窗口骨架（v0.2.1 跨平台-2 任务一，第 1 个迁移模块）。
+    [ZH] 平台移动循环执行，使拖动、贴靠与 DPI 行为与主窗口一致。
+    [EN] Settings window skeleton (v0.2.1 cross-platform track 2, development task 1, first
+    [EN] migrated module).
 
-    与 WPF 版的对应关系：WPF 的 SettingsWindow 是一个 1321 行的 XAML + 六个分部类；
-    这里改成「骨架 + 每页一个 UserControl」（Views/Settings/*），页签由代码按
-    ISettingsPage 注册。理由见 Views/Settings/ISettingsPage.cs 顶部注释。
+    [EN] Correspondence with the WPF build: the WPF SettingsWindow is a 1321-line XAML file plus
+    [EN] six partial classes; here it becomes "skeleton plus one UserControl per page"
+    [EN] (Views/Settings/*), with the tabs registered from code through ISettingsPage. See the
+    [EN] comment at the top of Views/Settings/ISettingsPage.cs for the rationale.
 
-    骨架只负责四件事：页签容器、窗口状态记忆、底部状态与保存、主题/语言即时生效。
+    [EN] The skeleton is responsible for four things only: the tab container, window-state
+    [EN] memory, the bottom status and save area, and immediate theme/language application.
+    [ZH] 设置窗口骨架（v0.2.1 跨平台-2 任务一，第 1 个迁移模块）。
+
+    [ZH] 与 WPF 版的对应关系：WPF 的 SettingsWindow 是一个 1321 行的 XAML + 六个分部类；
+    [ZH] 这里改成「骨架 + 每页一个 UserControl」（Views/Settings/*），页签由代码按
+    [ZH] ISettingsPage 注册。理由见 Views/Settings/ISettingsPage.cs 顶部注释。
+
+    [ZH] 骨架只负责四件事：页签容器、窗口状态记忆、底部状态与保存、主题/语言即时生效。
   -->
   <Grid RowDefinitions="Auto,*">
 
@@ -88,7 +98,11 @@
         </Transitions>
       </Grid.Transitions>
 
-    <!-- 底部：状态行 + 保存/关闭（与 WPF 版同位置、同 AutomationId） -->
+    <!--
+      [EN] Bottom area: status row plus Save/Close, at the same position and with the same
+           AutomationId as the WPF build.
+      [ZH] 底部：状态行 + 保存/关闭（与 WPF 版同位置、同 AutomationId）。
+    -->
     <Border Grid.Row="1" Padding="0" Margin="0,8,0,0">
       <Grid ColumnDefinitions="Auto,*,Auto,Auto">
         <TextBlock x:Name="LoadStateText" Grid.Column="0" VerticalAlignment="Center"
@@ -105,10 +119,18 @@
       </Grid>
     </Border>
 
-    <!-- 顶部：设置页静态提示（页签名由 TabControl 提供） -->
+    <!--
+      [EN] Top area: static hint for the settings page (the tab titles come from the
+           TabControl).
+      [ZH] 顶部：设置页静态提示（页签名由 TabControl 提供）。
+    -->
     <Grid Grid.Row="0" ColumnDefinitions="*,Auto" RowDefinitions="*">
 
-      <!-- 页签容器：由代码注册 ISettingsPage，未迁移的页签显示明确的"未迁移"说明 -->
+      <!--
+        [EN] Tab container: pages register themselves as ISettingsPage from code, and a page
+             that has not been migrated yet states so explicitly.
+        [ZH] 页签容器：由代码注册 ISettingsPage，未迁移的页签显示明确的“未迁移”说明。
+      -->
       <TabControl x:Name="Tabs" Grid.Row="0" Grid.Column="0" Padding="0"
                   AutomationProperties.AutomationId="Tabs" />
 

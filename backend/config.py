@@ -35,8 +35,8 @@ MIN_CONTEXT = 512
 #: survive. Values below this bound are adopted verbatim and fail at load time
 #: with a structured error when the machine cannot serve them.
 #: [ZH] 用户显式覆盖上下文窗口时的合理性上限。规划器不会静默收窄覆盖值，因此由
-#: 配置层单独负责拒绝 64 位整数或 llama.cpp 无法承受的取值。低于该上限的值会被
-#: 原样采纳，并在机器无法承载时于加载阶段以结构化错误失败。
+#: [ZH] 配置层单独负责拒绝 64 位整数或 llama.cpp 无法承受的取值。低于该上限的值会被
+#: [ZH] 原样采纳，并在机器无法承载时于加载阶段以结构化错误失败。
 MAX_CONTEXT_OVERRIDE = 4_194_304
 
 
@@ -98,8 +98,8 @@ CONTAINER_DIRS = frozenset({"app", "backend"})
 #: cache keeps the answer stable for a given directory for the lifetime of the process
 #: (permissions are not expected to change mid-run, and tests that chdir get a new key).
 #: [ZH] 以绝对路径为键的写权限探测缓存。`state_dir()` 在每次模型库访问时都会被读取，
-#: 每调一次就探测一次纯属文件系统噪声；缓存让同一目录在进程生命周期内保持稳定答案
-#: （运行中不预期权限变化，切换 cwd 的测试会得到新的键）。
+#: [ZH] 每调一次就探测一次纯属文件系统噪声；缓存让同一目录在进程生命周期内保持稳定答案
+#: [ZH] （运行中不预期权限变化，切换 cwd 的测试会得到新的键）。
 _WRITABLE_DIR_CACHE: Dict[str, bool] = {}
 
 
@@ -343,7 +343,7 @@ class FilesConfig(BaseModel):
     [EN]
     Multi-file upload (v0.2.1 known-issue optimization 2, task 8).
 
-    The task specification lists two points that required an explicit decision:
+    The design specification lists two points that required an explicit decision:
     warning the user and asking whether to continue when there are too many files or
     the total size is too large, and triggering segmented summaries or asking the
     user to select a subset when the total content exceeds the window. The chosen
@@ -365,7 +365,7 @@ class FilesConfig(BaseModel):
     [ZH]
     多文件上传（v0.2.1 优化已知问题-2 任务八）。
 
-    任务书把"文件过多或总大小过大时提示用户并询问是否继续""总内容超出窗口时
+    设计规范把"文件过多或总大小过大时提示用户并询问是否继续""总内容超出窗口时
     触发分段摘要，或提示用户选择部分文件"都列为需要明确的点。这里的取值：
 
     * ``max_count`` 默认 10：一次拖十个文件是常见办公场景（一批合同、一套附件），
@@ -542,8 +542,8 @@ class SummarizeConfig(BaseModel):
     # [ZH] 摘要中保留原文指针（文件名 + 段落区间），便于按需回查原文
     keep_pointer: bool = True
 
-    # ---------- [EN] Task 4: progress feedback ----------
-    # ---------- [ZH] 相关设计：过程反馈 ----------
+    # [EN] ---------- Task 4: progress feedback ----------
+    # [ZH] ---------- 研发任务 4：过程反馈 ----------
     # [EN] Whether to emit progress events (summary_progress) to the front end.
     # [EN] Disabling this only affects visibility, not the summary result; unattended or
     # [EN] scripted callers can disable it to reduce protocol noise.
@@ -558,7 +558,7 @@ class SummarizeConfig(BaseModel):
     heartbeat_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
     # [EN] If a single segment remains incomplete for longer than this, the progress
     # [EN] entry is marked "abnormally slow" and a hint is emitted (hint only, no
-    # [EN] interruption: slowness is not failure, and the task specification requires
+    # [EN] interruption: slowness is not failure, and the design specification requires
     # [EN] distinguishing the two).
     # [ZH] 单段超过这么多秒仍未完成，就在进度里标记为"异常缓慢"并给出提示
     # [ZH] （只提示、不打断：慢不等于故障，设计规范要求区分这两种情况）。
@@ -572,8 +572,8 @@ class SummarizeConfig(BaseModel):
     # [ZH] 单段超时后的行为：skip（跳过该段并继续，默认）/ retry（重试一次）/ abort（中止整个摘要）
     chunk_timeout_action: str = "skip"
 
-    # ---------- [EN] Task 4: extractive pre-filtering (此前版本 known-issue optimization 2) ----------
-    # ---------- [ZH] 相关设计：抽取式预筛（此前版本 优化已知问题-2） ----------
+    # [EN] ---------- Task 4: extractive pre-filtering (earlier release, known-issue optimization 2) ----------
+    # [ZH] ---------- 研发任务 4：抽取式预筛（此前版本，优化已知问题 2） ----------
     # [EN] Before sending to the model, TextRank compresses each segment to roughly
     # [EN] extractive_ratio. It is purely statistical and model-free; a 3000-character
     # [EN] segment takes about 8 ms (see artifacts/probe_extractive.py).
@@ -625,13 +625,13 @@ class AutomationConfig(BaseModel):
     """
 
     enabled: bool = False
-    # ---------- [EN] Safety agreement ----------
-    # ---------- [ZH] 安全协议 ----------
+    # [EN] ---------- Safety agreement ----------
+    # [ZH] ---------- 安全协议 ----------
     safety_accepted: bool = False
     safety_version: str = "1.0"
     safety_accepted_at: str = ""
-    # ---------- [EN] Task list page ----------
-    # ---------- [ZH] 任务列表页 ----------
+    # [EN] ---------- Task list page ----------
+    # [ZH] ---------- 任务列表页 ----------
     task_list_url: str = ""
     task_list_selector: str = ""      # [EN] CSS or XPath (treated as XPath when it starts with //, (, or xpath=).
                                       # [ZH] CSS 或 XPath（以 //、(、xpath= 开头判为 XPath）。
@@ -639,31 +639,31 @@ class AutomationConfig(BaseModel):
                                       # [ZH] 可选：行容器选择器。
     next_page_selector: str = ""      # [EN] Optional: next-page button.
                                       # [ZH] 可选：下一页按钮。
-    # ---------- [EN] Task detail page ----------
-    # ---------- [ZH] 任务详情页 ----------
+    # [EN] ---------- Task detail page ----------
+    # [ZH] ---------- 任务详情页 ----------
     task_detail_file_selector: str = ""
     file_extensions: List[str] = Field(
         default_factory=lambda: ["pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "txt"]
     )
-    # ---------- [EN] Task instruction and generation ----------
-    # ---------- [ZH] 任务指令与生成 ----------
+    # [EN] ---------- Task instruction and generation ----------
+    # [ZH] ---------- 任务指令与生成 ----------
     instruction: str = "摘取合同的主要信息并生成财务审核意见"
     llm_temperature: float = Field(default=0.3, ge=0.0, le=1.0)
     llm_max_tokens: int = Field(default=512, ge=64, le=4096)
-    # ---------- [EN] Runtime parameters ----------
-    # ---------- [ZH] 运行参数 ----------
+    # [EN] ---------- Runtime parameters ----------
+    # [ZH] ---------- 运行参数 ----------
     max_tasks: int = Field(default=20, ge=1, le=500)
     page_timeout_ms: int = Field(default=30000, ge=3000, le=300000)
     wait_network_idle: bool = True
     retries: int = Field(default=1, ge=0, le=5)
     download_dir: str = ""            # [EN] Empty = echodesk_downloads under the system temp directory.
                                       # [ZH] 空 = 系统临时目录下 echodesk_downloads。
-    # ---------- [EN] Deduplication and login state ----------
-    # ---------- [ZH] 去重与登录态 ----------
+    # [EN] ---------- Deduplication and login state ----------
+    # [ZH] ---------- 去重与登录态 ----------
     dedupe: bool = True
     processed_file: str = "automation_processed.json"
-    # [EN] Login state (此前版本 automation optimization, task 1): the primary mechanism
-    # [EN] is now Playwright's persistent user data directory
+    # [EN] Login state (automation optimization in an earlier release, task 1): the
+    # [EN] primary mechanism is now Playwright's persistent user data directory
     # [EN] (``launch_persistent_context``); cookies, localStorage, and sessions are
     # [EN] written by the browser itself into the directory referenced by
     # [EN] ``login_state_dir`` and reused automatically on the next launch.
@@ -691,8 +691,8 @@ class AutomationConfig(BaseModel):
         default_factory=lambda: ["login", "signin", "sign-in", "logon", "sso", "passport", "cas", "auth"]
     )
     manual_login_wait_seconds: int = Field(default=180, ge=0, le=3600)
-    # ---------- [EN] Browser ----------
-    # ---------- [ZH] 浏览器 ----------
+    # [EN] ---------- Browser ----------
+    # [ZH] ---------- 浏览器 ----------
     headless: bool = False            # [EN] Headed mode is fixed so the user can see the browser operations.
                                       # [ZH] 固定有头模式：用户可见浏览器操作过程。
     # [EN] Task 16 (self-test fix 1): user-selectable browser.
@@ -746,7 +746,7 @@ class AutomationConfig(BaseModel):
     # [EN]     using).
     # [EN]
     # [EN] Why this policy is configurable rather than hardcoded: requirement 5 of the
-    # [EN] task specification delegates the degradation path to DSH, but the cost of
+    # [EN] design specification delegates the degradation path to DSH, but the cost of
     # [EN] degradation (logging in once more) is a trade-off the user should make, so a
     # [EN] switch is provided instead of deciding on the user's behalf.
     # [ZH] 相关设计（自测问题修复-1）：复用已经打开的浏览器的策略。
@@ -772,12 +772,12 @@ class AutomationConfig(BaseModel):
     # [ZH] 只会连 127.0.0.1（见 automation._cdp_endpoint）：调试端点等于该浏览器的
     # [ZH] 完全控制权，绝不能暴露到局域网。
     cdp_port: int = 9222
-    # ---------- [EN] Results and audit ----------
-    # ---------- [ZH] 结果与审计 ----------
+    # [EN] ---------- Results and audit ----------
+    # [ZH] ---------- 结果与审计 ----------
     save_results: bool = True
     # [EN] Results directory (addition 3): results root\YYYY-MM-DD\task-name\ (a
     # [EN] numeric suffix -1, -2 is appended on collision).
-    # [EN] 此前版本 release specification, global requirement 1: directory names
+    # [EN] An earlier release specification, global requirement 1: directory names
     # [EN] generated by the program are always English, so the default of
     # [EN] results_root_name changed from the Chinese name to results and the default
     # [EN] of task_name changed to auto-task (the same applies to result file names;
@@ -794,8 +794,8 @@ class AutomationConfig(BaseModel):
     task_name: str = "auto-task"             # [EN] Third-level directory: name of this run's task.
                                              # [ZH] 第三层目录名：本次运行的任务名称。
     audit_log_file: str = "automation_log.jsonl"
-    # ---------- [EN] Scheduled triggering (4.4) ----------
-    # ---------- [ZH] 定时触发（4.4） ----------
+    # [EN] ---------- Scheduled triggering (4.4) ----------
+    # [ZH] ---------- 定时触发（4.4） ----------
     schedule_enabled: bool = False
     schedule_times: List[str] = Field(default_factory=lambda: ["09:00"])
     start_with_windows: bool = False
@@ -884,7 +884,7 @@ class AutomationConfig(BaseModel):
             )
             self.enabled = False
         if self.headless:
-            # [EN] Task specification 4.5: only headed mode is supported so the user
+            # [EN] Design specification 4.5: only headed mode is supported so the user
             # [EN] can see the browser operations; this forces the correct value.
             # [ZH] 设计规范 4.5：仅使用有头模式，用户可见浏览器操作；这里强制纠正
             print("⚠️ 自动化仅支持有头模式，已忽略 headless=True", file=sys.stderr, flush=True)
@@ -895,7 +895,7 @@ class AutomationConfig(BaseModel):
 class ModelHubConfig(BaseModel):
     """
     [EN]
-    Model selection panel configuration (task specification, addition 4).
+    Model selection panel configuration (design specification, addition 4).
 
     The data source can be switched between auto / mirror / official; ``hf_token`` is
     only required for downloading gated models and should be placed in
@@ -903,7 +903,7 @@ class ModelHubConfig(BaseModel):
     configuration.
 
     [ZH]
-    模型选择栏配置（任务书 新增四）。
+    模型选择栏配置（设计规范 新增四）。
 
     数据源可在「自动 / 镜像 / 官方」之间切换；``hf_token`` 仅在下载 Gated 模型时需要，
     建议放在 config.user.json（已被 .gitignore 忽略）而不是基础配置里。
@@ -927,8 +927,8 @@ class ModelHubConfig(BaseModel):
     download_retries: int = Field(default=3, ge=1, le=10)
     search_limit: int = Field(default=20, ge=1, le=100)
 
-    # ---------- [EN] 此前版本 model marketplace optimization ----------
-    # ---------- [ZH] 此前版本 模型市场优化 ----------
+    # [EN] ---------- Model marketplace optimization of an earlier release ----------
+    # [ZH] ---------- 此前版本的模型市场优化 ----------
     # [EN] Safety limits for loading all results automatically (task 2): any one of the
     # [EN] three gates stops the operation and reports "N entries loaded, more
     # [EN] available". This prevents runaway behaviour when a keyword is very broad
@@ -963,7 +963,7 @@ class ReasoningConfig(BaseModel):
       previous behaviour" is possible if problems appear; it is not intended to
       encourage disabling;
     * ``persist``: whether reasoning content is written into the conversation
-      history. Enabled by default: task 5 of the task specification requires
+      history. Enabled by default: task 5 of the design specification requires
       "reload a historical session containing reasoning content and confirm the
       separation is correct", which is impossible without persistence;
     * ``history_max_chars``: retention limit per reasoning entry in the history.
@@ -983,7 +983,7 @@ class ReasoningConfig(BaseModel):
 
     * ``enabled`` —— 关掉后退回旧行为（思考标签原样留在回答里）。留这个开关是为了
       "出问题时能一键回到没改之前"，而不是鼓励关掉；
-    * ``persist`` —— 思考内容是否写进会话历史。默认写：任务书任务五要求
+    * ``persist`` —— 思考内容是否写进会话历史。默认写：设计规范任务五要求
       "重新加载含思考内容的历史会话，确认区分正确"，不持久化就没法满足；
     * ``history_max_chars`` —— 历史里每条思考内容的保留上限。思考往往比答案长得多，
       不设上限时 session.json 会被单个长思考撑大；超限的部分截断并加省略标记；
@@ -1019,8 +1019,8 @@ class MarketplaceConfig(BaseModel):
     install_dir: str = "skills"
     registry_file: str = "skills_registry.json"
     api_base: str = "https://api.github.com"
-    # ---------- [EN] Local plug-in interface (task 2, supplement 2B) ----------
-    # ---------- [ZH] 本地插件接口（相关设计·补 2B） ----------
+    # [EN] ---------- Local plug-in interface (task 2, supplement 2B) ----------
+    # [ZH] ---------- 本地插件接口（相关设计·补 2B） ----------
     # [EN] In-development plug-in directory: files placed here are discovered with more
     # [EN] lenient loading and are not written to the formal registry.
     # [ZH] 开发中的插件目录：放进去即被识别，加载更宽松，不写入正式注册表。
@@ -1055,7 +1055,7 @@ class MarketplaceConfig(BaseModel):
 class UpdateConfig(BaseModel):
     """
     [EN]
-    Automatic updates (task specification, task 5, option A: check and notify only;
+    Automatic updates (design specification, task 5, option A: check and notify only;
     no automatic download or replacement).
 
     Options B and C (automatic download/replacement and incremental manifests) are
@@ -1063,7 +1063,7 @@ class UpdateConfig(BaseModel):
     records/v0.2.1-研发记录.md.
 
     [ZH]
-    自动更新（任务书 任务五 方案 A：只检查与提示，不自动下载替换）。
+    自动更新（设计规范 任务五 方案 A：只检查与提示，不自动下载替换）。
 
     方案 B/C（自动下载替换、增量清单）本版不实现，理由见 records/v0.2.1-研发记录.md。
     """
@@ -1077,7 +1077,7 @@ class UpdateConfig(BaseModel):
     check_on_startup: bool = True
     check_interval_hours: int = Field(default=24, ge=1, le=720)
     include_prerelease: bool = False
-    # [EN] Enterprises can disable automatic checks (task specification 5.2, "allow
+    # [EN] Enterprises can disable automatic checks (design specification 5.2, "allow
     # [EN] disabling automatic checks via configuration").
     # [ZH] 企业环境可关掉自动检查（设计规范 5.2「允许通过配置禁用自动检查」）。
     last_check: str = ""
@@ -1275,20 +1275,20 @@ class Config(BaseModel):
     # [EN] Long-document segmented summarization.
     # [ZH] 长文档分段摘要
     summarize: SummarizeConfig = Field(default_factory=SummarizeConfig)
-    # [EN] Context compaction (此前版本 known-issue optimization 2, task 9).
-    # [ZH] 上下文压缩（此前版本 优化已知问题-2 相关设计）
+    # [EN] Context compaction (known-issue optimization 2 in an earlier release, task 9).
+    # [ZH] 上下文压缩（此前版本，优化已知问题 2，研发任务 9）
     compact: CompactionConfig = Field(default_factory=CompactionConfig)
-    # [EN] Multi-file upload (此前版本 known-issue optimization 2, task 8).
-    # [ZH] 多文件上传（此前版本 优化已知问题-2 相关设计）
+    # [EN] Multi-file upload (known-issue optimization 2 in an earlier release, task 8).
+    # [ZH] 多文件上传（此前版本，优化已知问题 2，研发任务 8）
     files: FilesConfig = Field(default_factory=FilesConfig)
-    # [EN] Agent platform (此前版本 capability extension 1, task 2).
-    # [ZH] Agent 平台（此前版本 后续版本 相关设计）
+    # [EN] Agent platform (capability extension 1 in an earlier release, task 2).
+    # [ZH] Agent 平台（此前版本，能力扩展 1，研发任务 2）
     agent: AgentConfig = Field(default_factory=AgentConfig)
-    # [EN] Local document retrieval (此前版本 capability extension 1, task 6).
-    # [ZH] 本地文档检索（此前版本 后续版本 相关设计）
+    # [EN] Local document retrieval (capability extension 1 in an earlier release, task 6).
+    # [ZH] 本地文档检索（此前版本，能力扩展 1，研发任务 6）
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
-    # [EN] MCP client (此前版本 capability extension 1, task 3).
-    # [ZH] MCP 客户端（此前版本 后续版本 相关设计）
+    # [EN] MCP client (capability extension 1 in an earlier release, task 3).
+    # [ZH] MCP 客户端（此前版本，能力扩展 1，研发任务 3）
     mcp: McpConfig = Field(default_factory=McpConfig)
     # [EN] Browser automation (task 4).
     # [ZH] 浏览器自动化（相关设计）
@@ -1299,8 +1299,8 @@ class Config(BaseModel):
     # [EN] Model selection panel (addition 4).
     # [ZH] 模型选择栏（新增四）
     model_hub: ModelHubConfig = Field(default_factory=ModelHubConfig)
-    # [EN] Reasoning content separation (此前版本 model reasoning separation).
-    # [ZH] 思考内容分离（此前版本 模型思考内容分离）
+    # [EN] Reasoning content separation (model reasoning separation in an earlier release).
+    # [ZH] 思考内容分离（此前版本，模型思考内容分离）
     reasoning: ReasoningConfig = Field(default_factory=ReasoningConfig)
     # [EN] Automatic updates (task 5, option A).
     # [ZH] 自动更新（相关设计 方案 A）
@@ -1349,8 +1349,8 @@ class Config(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=1.5)
     max_tokens: int = 1024
     search_results: int = 3
-    # ---------- [EN] Fix 4: generation presets and context management ----------
-    # ---------- [ZH] 兼容性修正：生成参数预设与上下文管理 ----------
+    # [EN] ---------- Fix 4: generation presets and context management ----------
+    # [ZH] ---------- 兼容性修正：生成参数预设与上下文管理 ----------
     # [EN] Current preset: light / balanced / quality (switched by /preset; determines
     # [EN] the three values below).
     # [ZH] 当前预设档位：light / balanced / quality（/preset 切换，决定下面三项的取值）
@@ -1425,8 +1425,8 @@ class Config(BaseModel):
     # [ZH] 扩展上下文后生成明显变慢时，在回复末尾给出提示
     speed_hint: bool = True
     speed_min_tps: float = 3.0
-    # ---------- [EN] Streaming heartbeat and runtime metrics (此前版本 known-issue optimization 2, task 5) ----------
-    # ---------- [ZH] 流式心跳与运行指标（此前版本 优化已知问题-2 相关设计） ----------
+    # [EN] ---------- Streaming heartbeat and runtime metrics (earlier release, known-issue optimization 2, task 5) ----------
+    # [ZH] ---------- 流式心跳与运行指标（此前版本，优化已知问题 2，研发任务 5） ----------
     # [EN] How long without a new token triggers a heartbeat during generation. In the
     # [EN] prefill phase (before the first token), CPU-only inference may produce no
     # [EN] output for tens of seconds, and the interface cannot distinguish "computing"

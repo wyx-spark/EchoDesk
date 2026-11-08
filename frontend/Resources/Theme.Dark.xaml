@@ -1,41 +1,53 @@
 <!--
-  EchoDesk 深色语义色板（修复二）
-
-  与 Theme.Light.xaml 键名一一对应，取值按 WCAG AA 对比度要求挑选：
-  正文文字 ≥ 4.5:1，次要文字 ≥ 4.5:1（本项目把时间戳也算正文），
-  按钮四态文字 ≥ 4.5:1（禁用在浅色下最容易不达标，已单独取值）。
-  校验脚本：tools/check_theme.py
+  [EN] EchoDesk dark semantic color palette (remediation 2).
+  [EN] The keys map one-to-one to those in Theme.Light.xaml; the values are chosen to meet
+  [EN] the WCAG AA contrast requirements: body text at least 4.5:1, secondary text at least
+  [EN] 4.5:1 (this project counts timestamps as body text), and text in all four button
+  [EN] states at least 4.5:1 (the disabled state is the easiest to miss on light
+  [EN] backgrounds, so it has its own value).
+  [EN] Validation script: tools/check_theme.py
+  [ZH] EchoDesk 深色语义色板（修复二）。
+  [ZH] 与 Theme.Light.xaml 键名一一对应，取值按 WCAG AA 对比度要求挑选：
+  [ZH] 正文文字 ≥ 4.5:1，次要文字 ≥ 4.5:1（本项目把时间戳也算正文），
+  [ZH] 按钮四态文字 ≥ 4.5:1（禁用在浅色下最容易不达标，已单独取值）。
+  [ZH] 校验脚本：tools/check_theme.py
 -->
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <!-- ============ 背景与表面 ============ -->
+    <!-- [EN] ============ Background and surfaces ============ -->
+    <!-- [ZH] ============ 背景与表面 ============ -->
     <SolidColorBrush x:Key="WindowBackground" Color="#1E1E22"/>
     <SolidColorBrush x:Key="SurfaceBrush" Color="#25252B"/>
     <SolidColorBrush x:Key="SurfaceAltBrush" Color="#2C2C33"/>
     <SolidColorBrush x:Key="InputBackground" Color="#26262B"/>
-    <!-- 边框按 WCAG 1.4.11 取 3:1（对 #1E1E22 为 3.6:1） -->
+    <!-- [EN] Borders use a 3:1 ratio per WCAG 1.4.11 (3.6:1 against #1E1E22). -->
+    <!-- [ZH] 边框按 WCAG 1.4.11 取 3:1（对 #1E1E22 为 3.6:1）。 -->
     <SolidColorBrush x:Key="InputBorder" Color="#74747F"/>
     <SolidColorBrush x:Key="FocusBorder" Color="#8A9DFF"/>
     <SolidColorBrush x:Key="SeparatorBrush" Color="#45454F"/>
 
-    <!-- ============ 文字 ============ -->
+    <!-- [EN] ============ Text ============ -->
+    <!-- [ZH] ============ 文字 ============ -->
     <SolidColorBrush x:Key="TextForeground" Color="#EDEDF0"/>
     <SolidColorBrush x:Key="SubTextBrush" Color="#A8A8B3"/>
     <SolidColorBrush x:Key="DisabledTextBrush" Color="#9A9AA4"/>
 
-    <!-- ============ 强调色 ============ -->
+    <!-- [EN] ============ Accent colors ============ -->
+    <!-- [ZH] ============ 强调色 ============ -->
     <SolidColorBrush x:Key="AccentBrush" Color="#8A9DFF"/>
     <SolidColorBrush x:Key="AccentForegroundBrush" Color="#101014"/>
     <SolidColorBrush x:Key="LinkBrush" Color="#7FB2FF"/>
 
-    <!-- ============ 状态语义色 ============ -->
+    <!-- [EN] ============ Semantic status colors ============ -->
+    <!-- [ZH] ============ 状态语义色 ============ -->
     <SolidColorBrush x:Key="SuccessBrush" Color="#5FD07F"/>
     <SolidColorBrush x:Key="WarningBrush" Color="#F0C063"/>
     <SolidColorBrush x:Key="ErrorBrush" Color="#FF8A8A"/>
     <SolidColorBrush x:Key="InfoBrush" Color="#7FB2FF"/>
 
-    <!-- ============ 按钮（正常 / 悬停 / 按下 / 禁用 四态） ============ -->
+    <!-- [EN] ============ Buttons (normal / hover / pressed / disabled) ============ -->
+    <!-- [ZH] ============ 按钮（正常 / 悬停 / 按下 / 禁用 四态） ============ -->
     <SolidColorBrush x:Key="ButtonBackground" Color="#33333A"/>
     <SolidColorBrush x:Key="ButtonHoverBackground" Color="#3E3E47"/>
     <SolidColorBrush x:Key="ButtonPressedBackground" Color="#4A4A55"/>
@@ -44,20 +56,24 @@
     <SolidColorBrush x:Key="ButtonForeground" Color="#EDEDF0"/>
     <SolidColorBrush x:Key="ButtonDisabledForeground" Color="#9A9AA4"/>
 
-    <!-- ============ 选中与列表 ============ -->
+    <!-- [EN] ============ Selection and lists ============ -->
+    <!-- [ZH] ============ 选中与列表 ============ -->
     <SolidColorBrush x:Key="SelectionBackground" Color="#2F4B7C"/>
     <SolidColorBrush x:Key="SelectionForeground" Color="#EDEDF0"/>
     <SolidColorBrush x:Key="RowHoverBackground" Color="#2C2C33"/>
 
-    <!-- ============ 页签 ============ -->
+    <!-- [EN] ============ Tabs ============ -->
+    <!-- [ZH] ============ 页签 ============ -->
     <SolidColorBrush x:Key="TabActiveBackground" Color="#33333A"/>
     <SolidColorBrush x:Key="TabInactiveBackground" Color="#25252B"/>
 
-    <!-- ============ 滚动条 ============ -->
+    <!-- [EN] ============ Scroll bars ============ -->
+    <!-- [ZH] ============ 滚动条 ============ -->
     <SolidColorBrush x:Key="ScrollBarThumbBrush" Color="#6E6E7A"/>
     <SolidColorBrush x:Key="ScrollBarTrackBrush" Color="#232328"/>
 
-    <!-- ============ 浮层（菜单 / 提示气泡） ============ -->
+    <!-- [EN] ============ Overlays (menus / tooltips) ============ -->
+    <!-- [ZH] ============ 浮层（菜单 / 提示气泡） ============ -->
     <SolidColorBrush x:Key="MenuBackground" Color="#2C2C33"/>
     <SolidColorBrush x:Key="MenuForeground" Color="#EDEDF0"/>
     <SolidColorBrush x:Key="MenuHighlightBackground" Color="#2F4B7C"/>
@@ -65,12 +81,14 @@
     <SolidColorBrush x:Key="TooltipForeground" Color="#EDEDF0"/>
     <SolidColorBrush x:Key="TooltipBorder" Color="#43434C"/>
 
-    <!-- ============ 对话区角色标识 ============ -->
+    <!-- [EN] ============ Role markers in the conversation area ============ -->
+    <!-- [ZH] ============ 对话区角色标识 ============ -->
     <SolidColorBrush x:Key="UserBrush" Color="#4FC3F7"/>
     <SolidColorBrush x:Key="AssistantBrush" Color="#66BB6A"/>
     <SolidColorBrush x:Key="SystemBrush" Color="#B0B0B0"/>
 
-    <!-- ============ 消息内 Markdown ============ -->
+    <!-- [EN] ============ Markdown inside messages ============ -->
+    <!-- [ZH] ============ 消息内 Markdown ============ -->
     <SolidColorBrush x:Key="CodeBackground" Color="#2A2A31"/>
     <SolidColorBrush x:Key="CodeForeground" Color="#E6E6E6"/>
     <SolidColorBrush x:Key="QuoteForeground" Color="#A8A8B3"/>

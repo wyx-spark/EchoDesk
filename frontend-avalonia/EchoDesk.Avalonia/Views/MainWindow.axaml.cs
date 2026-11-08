@@ -1,20 +1,41 @@
 // [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/MainWindow.axaml.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/MainWindow.axaml.cs。类型与成员说明见下方注释。
-// 主窗口（任务一原型 / 任务二第一个迁移模块，本轮补齐「各功能面板」）。
+// [EN] Main window (the prototype of development task 1 and the first module migrated in
+// [EN] development task 2; this round completes the functional panels).
+// [ZH] 主窗口（研发任务 1 的原型、研发任务 2 的第一个迁移模块；本轮补齐「各功能面板」）。
 //
-// 迁移策略：**事件处理逻辑照搬 WPF 版**（发送、流式双通道、停止、文件上传、状态刷新、
-// 指令面板、常用语、通知条、状态区、Agent 步骤行），换掉的只有界面 API。
+// [EN] Migration strategy: **the event-handling logic is carried over from the WPF version**
+// [EN] (send, dual streaming channels, stop, file upload, status refresh, command panel,
+// [EN] snippets, notification bar, status area, Agent step rows); only the UI APIs are
+// [EN] replaced.
+// [ZH] 迁移策略：**事件处理逻辑照搬 WPF 版**（发送、流式双通道、停止、文件上传、状态刷新、
+// [ZH] 指令面板、常用语、通知条、状态区、Agent 步骤行），只替换界面 API。
 //
-// 与 WPF 版对齐的**行为**（不是"长得像"，而是同样的判据与文案来源）：
-//   · 指令表来自后端 {"action":"commands"}，后端没起来时用本地回退表；
-//   · 候选排序规则逐条一致（精确匹配 > 名字长度 > 指令表顺序）；
-//   · 状态区每一项的取值字段与 WPF 版相同（status / context / capability /
-//     automation_status / market_status / update_check）；
-//   · 通知条 6 秒后自动隐藏，显示时压掉操作提示；
-//   · Agent 的 agent_step / tool_call / tool_result 各渲染成**独立一行**，
-//     且随字号一起缩放；
-//   · 危险指令要二次确认 —— Avalonia 没有 MessageBox，改成"同一个输入框里
-//     再按一次 Enter"，与设置页"再点一次确认"的做法一致。
+// [EN] **Behaviours** aligned with the WPF version (identical criteria and text sources, not
+// [EN] merely a similar look):
+// [ZH] 与 WPF 版对齐的**行为**（不是“长得像”，而是同样的判据与文案来源）：
+// [EN] * The command table comes from the backend via {"action":"commands"}; when the backend
+// [EN] is not running, a local fallback table is used.
+// [ZH]   · 指令表来自后端 {"action":"commands"}；后端未启动时使用本地回退表。
+// [EN] * Candidate ranking follows the same rules item by item (exact match > name length >
+// [EN] command table order).
+// [ZH]   · 候选排序规则逐条一致（精确匹配 > 名字长度 > 指令表顺序）；
+// [EN] * Every status area field is read from the same key as in the WPF version (status /
+// [EN] context / capability / automation_status / market_status / update_check).
+// [ZH]   · 状态区每一项的取值字段与 WPF 版相同（status / context / capability /
+// [ZH]     automation_status / market_status / update_check）；
+// [EN] * The notification bar hides itself after 6 seconds and suppresses the action hint while
+// [EN] it is visible.
+// [ZH]   · 通知条 6 秒后自动隐藏，显示时压掉操作提示；
+// [EN] * Each agent_step / tool_call / tool_result event of the Agent renders as **its own
+// [EN] row** and scales with the font size.
+// [ZH]   · Agent 的 agent_step / tool_call / tool_result 各渲染成**独立一行**，
+// [ZH]     且随字号一起缩放；
+// [EN] * Destructive commands require a second confirmation. Avalonia has no MessageBox, so the
+// [EN] check becomes "press Enter again in the same input box", matching the "click once more
+// [EN] to confirm" pattern used by the settings pages.
+// [ZH]   · 危险指令要二次确认 —— Avalonia 没有 MessageBox，改成“同一个输入框里
+// [ZH]     再按一次 Enter”，与设置页“再点一次确认”的做法一致。
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -49,13 +70,20 @@ namespace EchoDesk.Avalonia.Views;
 
 public partial class MainWindow : Window
 {
-    /// <summary>默认字号（Ctrl+0 恢复到这个值，与 WPF 的 14 一致）。</summary>
+    /// <summary>
+    /// [EN] Default font size (Ctrl+0 restores this value; 14, matching the WPF version).
+    /// [ZH] 默认字号（Ctrl+0 恢复到这个值，与 WPF 的 14 一致）。
+    /// </summary>
     private const double DefaultFontSize = 14;
 
     private readonly AppState _state = App.State;
     private readonly SnippetStore _snippets = new();
 
-    /// <summary>已定稿的消息（用于换字号/换语言时整屏重渲染）。</summary>
+    /// <summary>
+    /// [EN] Finalised messages (used to re-render the whole transcript when the font size or
+    /// [EN] the interface language changes).
+    /// [ZH] 已定稿的消息（用于换字号/换语言时整屏重渲染）。
+    /// </summary>
     private readonly List<Message> _transcript = new();
 
     private CancellationTokenSource? _streamCts;
@@ -65,7 +93,7 @@ public partial class MainWindow : Window
     //      reader thread, therefore every access is serialised through the gate below while the
     //      rendering pass itself executes on the UI thread only.
     // [ZH] 流式状态。回答与思考缓冲区由后端读取线程追加，因此所有访问均经下方闸门串行化，
-    //      而渲染过程本身只在界面线程执行。
+    // [ZH] 而渲染过程本身只在界面线程执行。
     private readonly object _streamGate = new();
     private readonly StringBuilder _liveAnswer = new();
     private readonly StringBuilder _liveReasoning = new();
@@ -82,7 +110,7 @@ public partial class MainWindow : Window
     //      by the same shared clock as the caret and therefore cost one opacity write per render
     //      tick and no layout pass whatsoever.
     // [ZH] 首字指示器。当回答与思考缓冲区均为空时，实时消息以三个错相圆点代替空白正文；圆点与光标
-    //      共用同一时钟，因此每个渲染节拍仅产生一次不透明度写入，完全不触发布局过程。
+    // [ZH] 共用同一时钟，因此每个渲染节拍仅产生一次不透明度写入，完全不触发布局过程。
     private Panel? _liveLoading;
 
     /// <summary>
@@ -97,11 +125,12 @@ public partial class MainWindow : Window
     /// </summary>
     private const double LoadingDotStaggerMilliseconds = 160;
 
-    // [EN] One-shot timer that hides the status strip after its collapse fade has finished. It is
+    // [EN] One-shot timer that hides the status strip after its collapse fade has finished. It
+    // [EN] is
     //      intentionally separate from the streaming render timer, which must never be used for
     //      one-off UI chores.
     // [ZH] 状态区折叠淡出结束后负责隐藏它的一次性定时器。该定时器刻意与流式渲染定时器分离，
-    //      后者绝不应承担一次性的界面事务。
+    // [ZH] 后者绝不应承担一次性的界面事务。
     private DispatcherTimer? _statusStripHideTimer;
 
     /// <summary>
@@ -109,7 +138,7 @@ public partial class MainWindow : Window
     ///      frame budget, which keeps tokens that arrive at a higher rate from each triggering
     ///      their own layout pass.
     /// [ZH] 流式渲染定时器的合并间隔：每个帧预算最多执行一次 Markdown 解析，使以更高频率到达的
-    ///      Token 不会各自触发一次布局过程。
+    /// [ZH] Token 不会各自触发一次布局过程。
     /// </summary>
     private static readonly TimeSpan RenderInterval = TimeSpan.FromMilliseconds(33);
 
@@ -120,46 +149,72 @@ public partial class MainWindow : Window
     private const double CaretBreathMilliseconds = 1200;
 
 
-    // 指令面板 / 常用语面板
+    // [EN] Command panel and snippet panel.
+    // [ZH] 指令面板 / 常用语面板。
     private TextBox? _paletteSource;
     private bool _commandLike;
     private bool _commandRowOpen;
     private string _pendingDestructive = "";
 
-    // 通知条 / 崩溃提示
+    // [EN] Notification bar and crash notice.
+    // [ZH] 通知条 / 崩溃提示。
     private DispatcherTimer? _toastTimer;
 
-    // 退出倒计时（/exit，v0.2.2 第 3 批）：与 WPF 同样是"致谢 + 10 秒倒计时"。
+    // [EN] Exit countdown (/exit, v0.2.2 batch 3): as in WPF, a thank-you note plus a 10-second
+    // [EN] countdown.
+    // [ZH] 退出倒计时（/exit，v0.2.2 第 3 批）：与 WPF 同样是“致谢 + 10 秒倒计时”。
     private DispatcherTimer? _exitTimer;
     private int _exitCountdown;
 
-    // 运行指标的定时刷新（v0.2.2 第 3 批）：生成中每 500ms 问一次后端，不用前端估算。
-    // WPF 版同一间隔、同一失败态处理（见 frontend/MainWindow.xaml.cs 的 StartMetricsTimer）。
+    // [EN] Periodic refresh of the runtime metrics (v0.2.2 batch 3): while generating, the
+    // [EN] backend is polled every 500 ms; the front end does not estimate these values. The
+    // [EN] WPF version uses the same interval and the same failure handling (see
+    // [EN] StartMetricsTimer in frontend/MainWindow.xaml.cs).
+    // [ZH] 运行指标的定时刷新（v0.2.2 第 3 批）：生成中每 500ms 问一次后端，不用前端估算。
+    // [ZH] WPF 版同一间隔、同一失败态处理（见 frontend/MainWindow.xaml.cs 的 StartMetricsTimer）。
     private DispatcherTimer? _metricsTimer;
     private bool _metricsStoppedState;
 
-    /// <summary>首次运行引导是否已展示（进程内一次性，避免同一轮多次触发）。</summary>
+    /// <summary>
+    /// [EN] Whether the first-run guide has already been shown (once per process, so that it is
+    /// [EN] not triggered several times in the same round).
+    /// [ZH] 首次运行引导是否已展示（进程内一次性，避免同一轮多次触发）。
+    /// </summary>
     private bool _firstRunShown;
 
-    /// <summary>待确认下载的模型名（第二次确认才真的下载，见 HandleConfirmModel）。</summary>
+    /// <summary>
+    /// [EN] Name of the model awaiting download confirmation (the download starts only after
+    /// [EN] the second confirmation; see HandleConfirmModel).
+    /// [ZH] 待确认下载的模型名（第二次确认才真的下载，见 HandleConfirmModel）。
+    /// </summary>
     private string _pendingModelDownload = "";
 
-    /// <summary>本次生成的指标是否处于失败态（v0.2.2 第 4 批，对齐 WPF 的 _metricsState == "failed"）。</summary>
+    /// <summary>
+    /// [EN] Whether the metrics of the current generation are in the failed state (v0.2.2 batch
+    /// [EN] 4, aligned with <c>_metricsState == "failed"</c> in WPF).
+    /// [ZH] 本次生成的指标是否处于失败态（v0.2.2 第 4 批，对齐 WPF 的 _metricsState == "failed"）。
+    /// </summary>
     private bool _metricsFailed;
 
-    /// <summary>上一次已知的"模型就绪"状态（用来识别 false → true 的那一次跳变）。</summary>
+    /// <summary>
+    /// [EN] Last known "model ready" state (used to detect the single false to true
+    /// [EN] transition).
+    /// [ZH] 上一次已知的“模型就绪”状态（用来识别 false → true 的那一次跳变）。
+    /// </summary>
     private bool? _modelWasReady;
 
-    // [EN] Manual double-click bookkeeping for the custom caption. Platform click counters may be
+    // [EN] Manual double-click bookkeeping for the custom caption. Platform click counters may
+    // [EN] be
     //      reset by the native move loop started by the first press, therefore the interval and
     //      distance are tracked explicitly so that maximise/restore stays deterministic.
     // [ZH] 自定义标题栏的手动双击判定状态。首次按下会启动平台移动循环，系统的点击计数可能因此复位，
-    //      故此处显式记录时间间隔与位移，确保最大化/还原行为稳定可重复。
+    // [ZH] 故此处显式记录时间间隔与位移，确保最大化/还原行为稳定可重复。
     private DateTime _lastCaptionPressAt = DateTime.MinValue;
     private Point _lastCaptionPressPoint;
     private DateTime _lastCaptionToggleAt = DateTime.MinValue;
 
-    // 状态区
+    // [EN] Status area.
+    // [ZH] 状态区。
     private List<string> _capabilityWarnings = new();
     private string _updateUrl = "";
     private bool _updateAvailable;
@@ -173,38 +228,57 @@ public partial class MainWindow : Window
     /// [EN] True under <c>--probe</c>. Unattended probes must never block on a modal
     ///      update prompt, so the startup check is skipped in that mode.
     /// [ZH] 在 <c>--probe</c> 下为 true。无人值守探针绝不能阻塞在模态更新提示上，
-    ///      因此该模式下跳过启动检查。
+    /// [ZH] 因此该模式下跳过启动检查。
     /// </summary>
     private readonly bool _probeMode;
 
-    // Agent 步骤区（本轮迁移的功能面板之一）
+    // [EN] Agent step area (one of the functional panels migrated in this round).
+    // [ZH] Agent 步骤区（本轮迁移的功能面板之一）。
     private Border? _agentRegion;
     private StackPanel? _agentRows;
 
-    // 运行指标：由后端上报（done.stats / progress.stats），前端不估算
+    // [EN] Runtime metrics: reported by the backend (done.stats / progress.stats); the front
+    // [EN] end does not estimate them.
+    // [ZH] 运行指标：由后端上报（done.stats / progress.stats），前端不估算。
     private string _stripMetrics = "";
 
-    // 本轮流式的运行指标（done.stats 里带 stopped 的那份）。
-    // 它原先只是 StreamChatAsync 里的一个局部变量，改成字段是为了让事件分发
-    // （DispatchStreamEvent）能独立成一个可被探针直接调用的方法 —— 见那里的说明。
+    // [EN] Runtime metrics of the current streaming round (the copy that carries stopped in
+    // [EN] done.stats).
+    // [ZH] 本轮流式的运行指标（done.stats 里带 stopped 的那份）。
+    // [EN] It used to be a local variable inside StreamChatAsync; turning it into a field lets
+    // [EN] the event dispatch (DispatchStreamEvent) stand alone as a method that probes can
+    // [EN] call directly. See the explanation there.
+    // [ZH] 它原先只是 StreamChatAsync 里的一个局部变量，改成字段是为了让事件分发
+    // [ZH] （DispatchStreamEvent）能独立成一个可被探针直接调用的方法 —— 见那里的说明。
     private string _liveMetrics = "";
 
     /// <summary>
-    /// Agent 步骤区当前的行数（**探针用**：无人值守时无法"看"界面，
-    /// 只能靠可读的数字断言"步骤行确实渲染了"）。没有步骤区时返回 0。
+    /// [EN] Current number of rows in the Agent step area (**used by probes**: unattended runs
+    /// [EN] cannot "look" at the interface, so a readable number is the only way to assert that
+    /// [EN] the step rows really rendered). Returns 0 when there is no step area.
+    /// [ZH] Agent 步骤区当前的行数（**探针用**：无人值守时无法“看”界面，
+    /// [ZH] 只能靠可读的数字断言“步骤行确实渲染了”）。没有步骤区时返回 0。
     /// </summary>
     public int AgentStepRowCount
         => _agentRegion is null ? 0 : EnumerateAgentRows(_agentRegion).Count();
 
     /// <summary>
-    /// 探针/截图模式：为 true 时 Opened 不拉后端。
-    /// 截图必须可复现，不能依赖本机是否装了模型、网络是否可达；真实运行路径不受影响。
+    /// [EN] Probe and screenshot mode: when true, Opened does not start the backend.
+    /// [ZH] 探针/截图模式：为 true 时 Opened 不拉后端。
+    /// [EN] Screenshots must be reproducible and therefore may not depend on whether a model is
+    /// [EN] installed locally or whether the network is reachable; the real run path is
+    /// [EN] unaffected.
+    /// [ZH] 截图必须可复现，不能依赖本机是否装了模型、网络是否可达；真实运行路径不受影响。
     /// </summary>
     public bool ProbeSuppressBackendStart { get; set; }
 
     private sealed record Message(string Role, string Content, string Reasoning, string Metrics);
 
-    /// <summary>一条消息的可更新视图（流式期间就地更新，避免整屏重排）。</summary>
+    /// <summary>
+    /// [EN] Updatable view of one message (updated in place while streaming, so that the whole
+    /// [EN] transcript is not re-laid out).
+    /// [ZH] 一条消息的可更新视图（流式期间就地更新，避免整屏重排）。
+    /// </summary>
     private sealed class MessageView
     {
         public required Border Root { get; init; }
@@ -220,17 +294,28 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         _probeMode = Environment.GetCommandLineArgs().Any(a => a == "--probe");
-        // 必须调生成的 InitializeComponent()，**不能**只调 AvaloniaXamlLoader.Load(this)。
-        // 两个都在时以 InitializeComponent 为准：它除了 Load 还会把 x:Name 具名控件
-        // 赋给字段（SettingsWindow 与 7 个设置页一直这么写，只有主窗口漏了）。
-        // 只调 Load 的后果不是"少几个字段"，而是构造到下面第 N 行就 NullReferenceException，
-        // **整个前端起不来**（实测：dotnet build 与 dotnet publish 的产物都如此）。
+        // [EN] The generated InitializeComponent() must be called; **do not** call only
+        // [EN] AvaloniaXamlLoader.Load(this).
+        // [ZH] 必须调生成的 InitializeComponent()，**不能**只调 AvaloniaXamlLoader.Load(this)。
+        // [EN] When both are present, InitializeComponent wins: besides Load it also assigns
+        // [EN] the x:Name-named controls to their fields (SettingsWindow and the seven settings
+        // [EN] pages have always done this; only the main window was missing it).
+        // [ZH] 两个都在时以 InitializeComponent 为准：它除了 Load 还会把 x:Name 具名控件
+        // [ZH] 赋给字段（SettingsWindow 与 7 个设置页一直这么写，只有主窗口漏了）。
+        // [EN] The consequence of calling only Load is not "a few missing fields" but a
+        // [EN] NullReferenceException at some line below during construction: **the whole front
+        // [EN] end fails to start** (measured: this holds for both dotnet build and dotnet
+        // [EN] publish output).
+        // [ZH] 只调 Load 的后果不是“少几个字段”，而是构造到下面第 N 行就 NullReferenceException，
+        // [ZH] **整个前端起不来**（实测：dotnet build 与 dotnet publish 的产物都如此）。
         InitializeComponent();
         _state.Initialize();
 
         Width = _state.Settings.WindowWidth;
         Height = _state.Settings.WindowHeight;
-        // 位置与最大化：在设置宽高**之后**恢复（否则被构造时的默认位置覆盖）
+        // [EN] Position and maximised state: restored **after** the width and height are set
+        // [EN] (otherwise the default position assigned during construction overrides them).
+        // [ZH] 位置与最大化：在设置宽高**之后**恢复（否则被构造时的默认位置覆盖）
         RestoreWindowPlacement();
 
         CommandPalette.PlacementTarget = CommandInputBox;
@@ -258,9 +343,14 @@ public partial class MainWindow : Window
         UpdateWindowChromeState();
         Opened += async (_, _) =>
         {
-            // 先把窗口尺寸收进当前屏幕的可用区域，再开后端：
-            // 记忆里的尺寸可能是旧版本留下的（或被拖到过更小的屏幕），
-            // 超出屏幕时窗口底部的输入区/状态区会被裁掉，用户会以为"窗口太大、点不到"。
+            // [EN] First clamp the window size to the working area of the current screen, then
+            // [EN] start the backend: the remembered size may be left over from an older
+            // [EN] release (or the window may have been dragged onto a smaller screen); when it
+            // [EN] exceeds the screen, the input and status areas at the bottom are cut off and
+            // [EN] users conclude that "the window is too large to click".
+            // [ZH] 先把窗口尺寸收进当前屏幕的可用区域，再开后端：
+            // [ZH] 记忆里的尺寸可能是旧版本留下的（或被拖到过更小的屏幕），
+            // [ZH] 超出屏幕时窗口底部的输入区/状态区会被裁掉，用户会以为“窗口太大、点不到”。
             ClampSizeToScreen();
             if (!ProbeSuppressBackendStart)
                 await StartBackendAsync();
@@ -268,7 +358,8 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // [EN] Custom window chrome / [ZH] 自定义窗口外框
+    // [EN] Custom window chrome
+    // [ZH] 自定义窗口外框
     // -----------------------------------------------------------------
 
     /// <summary>
@@ -277,8 +368,8 @@ public partial class MainWindow : Window
     ///      Because the move loop is executed by the operating system, cursor tracking, screen
     ///      snapping and per-monitor DPI transitions are inherited instead of being reimplemented.
     /// [ZH] 自定义标题栏被主键按下时启动平台移动循环；在双击间隔内的第二次点击切换最大化状态。
-    ///      由于移动循环由操作系统执行，光标跟随、屏幕贴靠与逐屏 DPI 切换均为系统原生行为，
-    ///      而非在本层重新实现。
+    /// [ZH] 由于移动循环由操作系统执行，光标跟随、屏幕贴靠与逐屏 DPI 切换均为系统原生行为，
+    /// [ZH] 而非在本层重新实现。
     /// </summary>
     private void OnTitleBarPointerPressed(object? sender, PointerPressedEventArgs e)
     {
@@ -333,7 +424,7 @@ public partial class MainWindow : Window
     ///      the maximise glyph when maximised, and both the tooltip and the accessible name are
     ///      rebuilt in the active interface language.
     /// [ZH] 将当前窗口状态应用到自定义标题栏：最大化时以还原字形替换最大化字形，并按当前界面语言
-    ///      重建悬停提示与无障碍名称。
+    /// [ZH] 重建悬停提示与无障碍名称。
     /// </summary>
     private void UpdateWindowChromeState()
     {
@@ -366,7 +457,11 @@ public partial class MainWindow : Window
             UpdateWindowChromeState();
     }
 
-    /// <summary>把窗口尺寸限制在当前屏幕的可用区域内（留 24px 余量，保证标题栏与底部都能抓到）。</summary>
+    /// <summary>
+    /// [EN] Clamps the window size to the working area of the current screen (with a 24 px
+    /// [EN] margin so that both the title bar and the bottom edge remain reachable).
+    /// [ZH] 把窗口尺寸限制在当前屏幕的可用区域内（留 24px 余量，保证标题栏与底部都能抓到）。
+    /// </summary>
     private void ClampSizeToScreen()
     {
         global::Avalonia.Platform.Screen? screen =
@@ -374,8 +469,12 @@ public partial class MainWindow : Window
         if (screen is null)
             return;
         double scale = screen.Scaling > 0 ? screen.Scaling : 1.0;
-        // 注意：Avalonia 的 Width/Height 是**客户区**，窗口边框与标题栏还要再加约 16x39。
-        // 只按可用区域减 24 的话，客户区虽然"装得下"，整窗反而会高出屏幕一截。
+        // [EN] Note: in Avalonia, Width/Height refer to the **client area**; the window border
+        // [EN] and title bar add roughly another 16x39.
+        // [ZH] 注意：Avalonia 的 Width/Height 是**客户区**，窗口边框与标题栏还要再加约 16x39。
+        // [EN] Subtracting only 24 from the working area lets the client area "fit" while the
+        // [EN] whole window still sticks out above the screen.
+        // [ZH] 只按可用区域减 24 的话，客户区虽然“装得下”，整窗反而会高出屏幕一截。
         double maxWidth = screen.WorkingArea.Width / scale - 48;
         double maxHeight = screen.WorkingArea.Height / scale - 56;
         if (maxWidth > 0 && Width > maxWidth)
@@ -385,7 +484,8 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 初始化与文案
+    // [EN] Initialisation and texts
+    // [ZH] 初始化与文案
     // -----------------------------------------------------------------
 
     private void WireEvents()
@@ -413,7 +513,8 @@ public partial class MainWindow : Window
                 _state.SetLanguage(item.Tag);
         };
 
-        // 输入区
+        // [EN] Input area.
+        // [ZH] 输入区。
         InputBox.KeyDown += OnInputKeyDown;
         InputBox.TextChanged += (_, _) => UpdateCommandUi(InputBox.Text ?? "");
         CommandInputBox.KeyDown += OnCommandInputKeyDown;
@@ -421,7 +522,8 @@ public partial class MainWindow : Window
         CommandButton.Click += (_, _) => ToggleCommandRow();
         SnippetButton.Click += (_, _) => ToggleSnippetPalette();
 
-        // 指令面板 / 常用语面板的鼠标选择
+        // [EN] Mouse selection in the command panel and the snippet panel.
+        // [ZH] 指令面板 / 常用语面板的鼠标选择
         CommandList.PointerReleased += (_, _) =>
         {
             if (CommandList.SelectedItem is CommandItem item)
@@ -433,7 +535,8 @@ public partial class MainWindow : Window
                 InsertSnippet(snippet);
         };
 
-        // 状态区
+        // [EN] Status area.
+        // [ZH] 状态区
         StripSearchButton.Click += async (_, _) => await ToggleSearchAsync();
         StripAutomationButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.automation");
         StripMarketButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.market");
@@ -454,28 +557,46 @@ public partial class MainWindow : Window
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
 
-        // ---- v0.2.2 第 3 批：窗口级快捷键与滚轮 ----
-        // 用 **Tunnel** 路由：这是 Avalonia 里 WPF `OnPreviewKeyDown` 的对应物 ——
-        // 必须比输入框先看到按键，否则 Ctrl+L / Ctrl+M 会被输入框当普通字符吃掉，
-        // Esc 也永远轮不到"关面板 / 停生成"。
+        // [EN] ---- v0.2.2 batch 3: window-level shortcuts and wheel handling ----
+        // [ZH] ---- v0.2.2 第 3 批：窗口级快捷键与滚轮 ----
+        // [EN] Use the **Tunnel** routing strategy: it is the Avalonia counterpart of WPF's
+        // [EN] `OnPreviewKeyDown`. Key presses must be seen before the input box, otherwise
+        // [EN] Ctrl+L / Ctrl+M are swallowed by the input box as ordinary characters and Esc
+        // [EN] never reaches "close the panel / stop generation".
+        // [ZH] 用 **Tunnel** 路由：这是 Avalonia 里 WPF `OnPreviewKeyDown` 的对应物 ——
+        // [ZH] 必须比输入框先看到按键，否则 Ctrl+L / Ctrl+M 会被输入框当普通字符吃掉，
+        // [ZH] Esc 也永远轮不到“关面板 / 停生成”。
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
-        // 消息区 Ctrl+滚轮调字号（与 WPF 的 MessageScroll_PreviewMouseWheel 同一行为）
+        // [EN] Message area: Ctrl+wheel adjusts the font size (the same behaviour as
+        // [EN] MessageScroll_PreviewMouseWheel in WPF).
+        // [ZH] 消息区 Ctrl+滚轮调字号（与 WPF 的 MessageScroll_PreviewMouseWheel 同一行为）
         MessageScroll.PointerWheelChanged += OnMessageWheel;
-        // 输入框获得焦点时关掉全部面板（WPF 的 InputBox_GotFocus 同一行为）：
-        // 面板浮在输入框上方，用户点了输入框还留着面板会挡住刚输入的内容。
+        // [EN] Close every panel when the input box gains focus (the same behaviour as
+        // [EN] InputBox_GotFocus in WPF): the panels float above the input box, so a panel left
+        // [EN] open after the user clicks the input box would cover what was just typed.
+        // [ZH] 输入框获得焦点时关掉全部面板（WPF 的 InputBox_GotFocus 同一行为）：
+        // [ZH] 面板浮在输入框上方，用户点了输入框还留着面板会挡住刚输入的内容。
         InputBox.GotFocus += (_, _) => CloseAllPalettes();
 
-        // 上下文胶囊的点击处理器**只能注册一次**。它原先挂在 ApplyTexts() 里 ——
-        // 而 ApplyTexts 每次切语言都会跑一遍，于是每切一次语言就多一个处理器
-        // （点一下发 N 次 context 请求）。
+        // [EN] The click handler of the context chip may be registered **only once**. It used
+        // [EN] to live in ApplyTexts(), which runs on every language change, so each language
+        // [EN] switch added another handler (one click then sent N context requests).
+        // [ZH] 上下文胶囊的点击处理器**只能注册一次**。它原先挂在 ApplyTexts() 里 ——
+        // [ZH] 而 ApplyTexts 每次切语言都会跑一遍，于是每切一次语言就多一个处理器
+        // [ZH] （点一下发 N 次 context 请求）。
         ContextChip.Click += async (_, _) => await RefreshContextAsync();
     }
 
     /// <summary>
-    /// 窗口级快捷键（对齐 WPF 的 <c>OnPreviewKeyDown</c>）：
-    /// Ctrl+Enter 发送 · Esc 停止/关面板 · Ctrl+L 清空 · Ctrl+O 上传 · Ctrl+T 深浅色 ·
-    /// Ctrl+, 设置 · Ctrl+M 设置(技能市场) · Ctrl+Shift+C 复制全部对话 ·
-    /// Ctrl+加/减/0 调字号。
+    /// [EN] Window-level shortcuts (aligned with <c>OnPreviewKeyDown</c> in WPF): Ctrl+Enter
+    /// [EN] sends · Esc stops or closes panels · Ctrl+L clears · Ctrl+O uploads · Ctrl+T
+    /// [EN] toggles light and dark · Ctrl+, opens settings · Ctrl+M opens settings (skill
+    /// [EN] market) · Ctrl+Shift+C copies the whole conversation · Ctrl+plus/minus/0 adjusts
+    /// [EN] the font size.
+    /// [ZH] 窗口级快捷键（对齐 WPF 的 <c>OnPreviewKeyDown</c>）：
+    /// [ZH] Ctrl+Enter 发送 · Esc 停止/关面板 · Ctrl+L 清空 · Ctrl+O 上传 · Ctrl+T 深浅色 ·
+    /// [ZH] Ctrl+, 设置 · Ctrl+M 设置(技能市场) · Ctrl+Shift+C 复制全部对话 ·
+    /// [ZH] Ctrl+加/减/0 调字号。
     /// </summary>
     private void OnWindowKeyDown(object? sender, KeyEventArgs e)
     {
@@ -534,8 +655,12 @@ public partial class MainWindow : Window
         }
         if (e.Key == Key.Escape)
         {
-            // 优先级与 WPF 一致：先关面板，再停生成。**不再无条件 StopAsync**——
-            // 原先 Avalonia 侧只要焦点在输入框就停生成，用户按 Esc 取消补全会误停。
+            // [EN] Priority matches WPF: close panels first, then stop generation. **No
+            // [EN] unconditional StopAsync any more** — the Avalonia version used to stop
+            // [EN] generation whenever the input box had focus, so pressing Esc to cancel
+            // [EN] completion stopped it by mistake.
+            // [ZH] 优先级与 WPF 一致：先关面板，再停生成。**不再无条件 StopAsync**——
+            // [ZH] 原先 Avalonia 侧只要焦点在输入框就停生成，用户按 Esc 取消补全会误停。
             if (CommandPalette.IsOpen || SnippetPalette.IsOpen)
             {
                 CloseAllPalettes();
@@ -550,7 +675,11 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Ctrl+滚轮调字号（WPF 的 MessageScroll_PreviewMouseWheel 同一行为）。</summary>
+    /// <summary>
+    /// [EN] Ctrl+wheel adjusts the font size (the same behaviour as
+    /// [EN] MessageScroll_PreviewMouseWheel in WPF).
+    /// [ZH] Ctrl+滚轮调字号（WPF 的 MessageScroll_PreviewMouseWheel 同一行为）。
+    /// </summary>
     private void OnMessageWheel(object? sender, PointerWheelEventArgs e)
     {
         if (e.KeyModifiers != KeyModifiers.Control)
@@ -560,7 +689,11 @@ public partial class MainWindow : Window
         SetStatus(Loc.T("main.status.fontSize", "字号 {0}", _state.Settings.FontSize));
     }
 
-    /// <summary>Ctrl+T：主题三态循环（与标题栏那个 🌓 按钮同一实现）。</summary>
+    /// <summary>
+    /// [EN] Ctrl+T: cycles through the three theme states (the same implementation as the 🌓
+    /// [EN] button in the title bar).
+    /// [ZH] Ctrl+T：主题三态循环（与标题栏那个 🌓 按钮同一实现）。
+    /// </summary>
     private void CycleTheme()
     {
         string next = _state.Settings.Theme switch
@@ -575,15 +708,21 @@ public partial class MainWindow : Window
 
     private void OnInputKeyDown(object? sender, KeyEventArgs e)
     {
-        // 指令面板打开时优先吃掉方向键/Enter/Esc/Tab（与 WPF 版同一优先级）
+        // [EN] While the command panel is open it consumes the arrow keys / Enter / Esc / Tab
+        // [EN] first (the same priority as in the WPF version).
+        // [ZH] 指令面板打开时优先吃掉方向键/Enter/Esc/Tab（与 WPF 版同一优先级）
         if (HandlePaletteKey(e))
         {
             e.Handled = true;
             return;
         }
-        // Alt+↑（任务十二）：把上一条**用户**消息复制回输入框。
-        // 判据放在最前，且要求"确实是 Alt 而不是 Ctrl/Shift"——否则会和未来
-        // 可能加进来的其它方向键快捷键互相偷键。
+        // [EN] Alt+Up (development task 12): copy the previous **user** message back into the
+        // [EN] input box. The test comes first and requires "Alt and nothing else, not
+        // [EN] Ctrl/Shift"; otherwise it would steal keys from other arrow-key shortcuts that
+        // [EN] may be added later.
+        // [ZH] Alt+↑（任务十二）：把上一条**用户**消息复制回输入框。
+        // [ZH] 判据放在最前，且要求"确实是 Alt 而不是 Ctrl/Shift"——否则会和未来
+        // [ZH] 可能加进来的其它方向键快捷键互相偷键。
         if (e.Key == Key.Up && e.KeyModifiers == KeyModifiers.Alt)
         {
             e.Handled = true;
@@ -603,16 +742,30 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 任务十二：把上一条用户消息复制回输入框（Alt+↑）。
+    /// [EN] Development task 12: copy the previous user message back into the input box
+    /// [EN] (Alt+Up).
     ///
-    /// 三个刻意的取舍（记录 §8.4 要求"实现前先确认与既有快捷键不冲突"）：
-    ///   * **只找 role == "user"**：复制助手回复没有意义，而"再问一次".
-    ///     是用户真正会反复做的事；
-    ///   * **不覆盖已有输入**是错的还是对的？这里选择**覆盖**并在状态栏提示，
-    ///     与"上一条"的语义一致；用户按 Ctrl+Z 或再打一遍即可恢复，
-    ///     而"什么都不做"会让人以为快捷键没生效；
-    ///   * 输入框里已有的内容**不做确认弹窗**：这毕竟是可撤销的编辑动作，
-    ///     弹窗会让连续追问变得很烦。用状态栏一句话说明"已复制上一条"。
+    /// [EN] Three deliberate trade-offs (the records §8.4 require confirming before
+    /// [EN] implementation that no existing shortcut conflicts):
+    /// [EN] * **Only messages with role == "user" are searched**: copying an assistant reply is
+    /// [EN] pointless, whereas "ask once more" is what users really do repeatedly;
+    /// [EN] * Is **not overwriting existing input** right or wrong? Overwriting is chosen here,
+    /// [EN] with a status bar hint, consistent with the meaning of "the previous one"; the user
+    /// [EN] can press Ctrl+Z or type the text again to recover, while "doing nothing" would
+    /// [EN] make the shortcut look broken;
+    /// [EN] * Existing content in the input box is **not confirmed with a dialog**: this is an
+    /// [EN] undoable edit after all, and a dialog would make repeated follow-up questions
+    /// [EN] annoying. One status bar sentence states that the previous message was copied.
+    /// [ZH] 任务十二：把上一条用户消息复制回输入框（Alt+↑）。
+    ///
+    /// [ZH] 三个刻意的取舍（记录 §8.4 要求"实现前先确认与既有快捷键不冲突"）：
+    /// [ZH]   * **只找 role == "user"**：复制助手回复没有意义，而"再问一次".
+    /// [ZH]     是用户真正会反复做的事；
+    /// [ZH]   * **不覆盖已有输入**是错的还是对的？这里选择**覆盖**并在状态栏提示，
+    /// [ZH]     与"上一条"的语义一致；用户按 Ctrl+Z 或再打一遍即可恢复，
+    /// [ZH]     而"什么都不做"会让人以为快捷键没生效；
+    /// [ZH]   * 输入框里已有的内容**不做确认弹窗**：这毕竟是可撤销的编辑动作，
+    /// [ZH]     弹窗会让连续追问变得很烦。用状态栏一句话说明"已复制上一条"。
     /// </summary>
     private void RecallLastUserMessage()
     {
@@ -674,12 +827,16 @@ public partial class MainWindow : Window
                                  ?? items[0];
     }
 
-    /// <summary>把界面文案刷成当前语言（Avalonia 版用直接赋值，不用 WPF 的附加属性遍历）。</summary>
+    /// <summary>
+    /// [EN] Refreshes the interface texts to the current language (the Avalonia version assigns
+    /// [EN] them directly instead of walking attached properties as WPF does).
+    /// [ZH] 把界面文案刷成当前语言（Avalonia 版用直接赋值，不用 WPF 的附加属性遍历）。
+    /// </summary>
     private void ApplyTexts()
     {
-        // [EN] Never hard-code a version in the frontend: before the backend handshake
-        // [EN] the title is just the product name, and the version appears once the
-        // [EN] single source of truth (backend/version.py) reports it.
+        // [EN] Never hard-code a version in the frontend: before the backend handshake the
+        // [EN] title is just the product name, and the version appears once the single source
+        // [EN] of truth (backend/version.py) reports it.
         // [ZH] 前端绝不写死版本号：握手前标题只显示产品名，版本由唯一来源
         // [ZH]（backend/version.py）上报后再出现。
         string appVersion = _state.Backend.Version ?? "";
@@ -693,17 +850,27 @@ public partial class MainWindow : Window
         BrandText.Text = Loc.T("main.brand", "📡 EchoDesk");
         PoweredText.Text = Loc.T("main.powered", "由熵寂工作室出品");
         PlatformChip.Text = $"🖥 {_state.Platform.DisplayName}";
-        // 模型胶囊的文案口径必须与 WPF 完全一致（同一份语言包、同一批键）：
-        //   未就绪 → main.model.noModel（"🧠 模型: 无模型"）
-        //   已就绪 → main.model.chip（"🧠 模型: {0}"）
-        // 此前这里用的是 main.model.chipUnknown，它在语言包里只有 "🧠"，
-        // 于是 Avalonia 的胶囊只剩一个脑子图标、WPF 却是整句话 —— 截图上一眼就能看出来。
+        // [EN] The wording of the model chip must match WPF exactly (same language pack, same
+        // [EN] keys): not ready → main.model.noModel; ready → main.model.chip.
+        // [ZH] 模型胶囊的文案口径必须与 WPF 完全一致（同一份语言包、同一批键）：
+        // [ZH]   未就绪 → main.model.noModel（"🧠 模型: 无模型"）
+        // [ZH]   已就绪 → main.model.chip（"🧠 模型: {0}"）
+        // [EN] This used to use main.model.chipUnknown, whose only value in the language pack
+        // [EN] is the brain emoji, so the Avalonia chip showed just that icon while WPF showed
+        // [EN] the whole sentence — obvious at a glance in screenshots.
+        // [ZH] 此前这里用的是 main.model.chipUnknown，它在语言包里只有 "🧠"，
+        // [ZH] 于是 Avalonia 的胶囊只剩一个脑子图标、WPF 却是整句话 —— 截图上一眼就能看出来。
         ModelText.Text = _state.Backend.ModelReady
             ? Loc.T("main.model.chip", "🧠 模型: {0}", string.IsNullOrEmpty(_state.Backend.LoadedModel) ? "local" : _state.Backend.LoadedModel)
             : Loc.T("main.model.noModel", "🧠 模型: 无模型");
-        // 状态栏的"未知/未连接"初值也必须走语言包（v0.2.2 UI 英文扫描）：
-        // XAML 里原先写死中文，后端没连上时英文界面会整条露出中文；
-        // 这里给全套初值，随后的状态事件会把它们覆盖成实时值。
+        // [EN] The initial "unknown / not connected" values of the status bar must also come
+        // [EN] from the language pack (v0.2.2 English UI scan): the XAML used to hard-code
+        // [EN] Chinese, so an English interface showed Chinese in these fields whenever the
+        // [EN] backend was not connected. Full initial values are supplied here; the subsequent
+        // [EN] status events overwrite them with live ones.
+        // [ZH] 状态栏的"未知/未连接"初值也必须走语言包（v0.2.2 UI 英文扫描）：
+        // [ZH] XAML 里原先写死中文，后端没连上时英文界面会整条露出中文；
+        // [ZH] 这里给全套初值，随后的状态事件会把它们覆盖成实时值。
         ContextChipText.Text = Loc.T("main.context.buttonIdle", "上下文：---/---");
         ModeText.Text = Loc.T("main.mode.chip", "🛠️ 模式: {0}", "general");
         SearchText.Text = Loc.T("main.strip.search", "🔍 搜索：{0}", Loc.T("main.strip.off", "关"));
@@ -714,13 +881,21 @@ public partial class MainWindow : Window
         StripMemoryText.Text = Loc.T("main.strip.memoryStrip", "🧠 内存 {0}%", "--");
         StripCapabilityText.Text = Loc.T("main.strip.capability", "🧠 {0}", "---");
         StripCompactText.Text = Loc.T("main.strip.compact", "🗜 压缩上下文");
-        // 视觉对齐：WPF 版的发送/上传是**纯图标圆形按钮**（➤ / 📎），不是带文字的方块按钮。
-        // 所以这里不再往 Content 里写文案；含义靠 ToolTip 与无障碍 HelpText 传达，
-        // 与 WPF 完全一致（main.button.sendTip / uploadTip）。
+        // [EN] Visual alignment: in the WPF version, send and upload are **icon-only round
+        // [EN] buttons** (➤ / 📎), not square buttons with text.
+        // [ZH] 视觉对齐：WPF 版的发送/上传是**纯图标圆形按钮**（➤ / 📎），不是带文字的方块按钮。
+        // [EN] Therefore no text is written into Content here; the meaning is conveyed by
+        // [EN] ToolTip and the accessibility HelpText, exactly as in WPF (main.button.sendTip /
+        // [EN] uploadTip).
+        // [ZH] 所以这里不再往 Content 里写文案；含义靠 ToolTip 与无障碍 HelpText 传达，
+        // [ZH] 与 WPF 完全一致（main.button.sendTip / uploadTip）。
         StopButton.Content = "⏹";
         HintText.Text = Loc.T("main.hint", "💡 拖拽文件可上传 · Ctrl+Enter 发送 · Esc 停止 · A-/A+ 或 Ctrl+滚轮 调字号");
-        // 指令输入框的提示文字走 TextBox 自带的水印：见 MainWindow.axaml 里 CommandInputRow 的注释
-        // （手工叠 TextBlock 的办法既对不准、也不会自己隐藏）。
+        // [EN] The placeholder of the command input box uses the TextBox watermark: see the
+        // [EN] comment on CommandInputRow in MainWindow.axaml (manually stacking a TextBlock is
+        // [EN] neither aligned correctly nor self-hiding).
+        // [ZH] 指令输入框的提示文字走 TextBox 自带的水印：见 MainWindow.axaml 里 CommandInputRow 的注释
+        // [ZH] （手工叠 TextBlock 的办法既对不准、也不会自己隐藏）。
         CommandInputBox.PlaceholderText = Loc.T("main.command.placeholder", "在此处输入以“/”开头的指令 · 了解用法输入 /help");
         SnippetHint.Text = Loc.T("main.snippet.hint", "/snippet add 名称 文本 可新增 · 空列表时先添加");
         PaletteHint.Text = Loc.T("main.paletteHint",
@@ -741,13 +916,21 @@ public partial class MainWindow : Window
         ToolTip.SetTip(StripMemoryButton, Loc.T("main.strip.memoryTip", "点击打开「设置 → 模型」查看硬件诊断"));
         ToolTip.SetTip(StripCapabilityButton, Loc.T("main.strip.capabilityTip", "点击打开「设置 → 模型」"));
         ToolTip.SetTip(StripCompactButton, Loc.T("main.strip.compactTip", "立刻压缩上下文，腾出空间"));
-        // 包值是「有 {0} 条能力提示，点击查看详情」——必须把条数传进去，否则 Loc.T 会返回
-        // 未格式化模板、悬停提示直接露出 {0}（硬编码清查 §5.3 C-1）。无告警时该按钮隐藏
-        //（见 :1102 的 IsVisible），所以「0 条」这一档不会真的被看到。
+        // [EN] The bundled value is "there are {0} capability warnings, click for details", so
+        // [EN] the count must be passed in; otherwise Loc.T returns the unformatted template
+        // [EN] and the tooltip shows {0} literally (hard-code audit §5.3 C-1). The button is
+        // [EN] hidden when there are no warnings (see the IsVisible at :1102), so the "0
+        // [EN] warnings" case is never actually visible.
+        // [ZH] 包值是「有 {0} 条能力提示，点击查看详情」——必须把条数传进去，否则 Loc.T 会返回
+        // [ZH] 未格式化模板、悬停提示直接露出 {0}（硬编码清查 §5.3 C-1）。无告警时该按钮隐藏
+        // [ZH]（见 :1102 的 IsVisible），所以「0 条」这一档不会真的被看到。
         ToolTip.SetTip(StripWarnButton, Loc.T("main.strip.warnTip",
             "有 {0} 条能力提示，点击查看详情", _capabilityWarnings.Count));
-        // 标题栏四个按钮的悬停说明：此前只写在 MainWindow.axaml 的 ToolTip.Tip 里、
-        // 代码里**没有任何覆盖点** → 英文界面悬停必现中文（硬编码清查 §5.1）
+        // [EN] Tooltips of the four title bar buttons: they used to live only in ToolTip.Tip in
+        // [EN] MainWindow.axaml and **there was no override in code**, so hovering in an
+        // [EN] English interface always showed Chinese (hard-code audit §5.1).
+        // [ZH] 标题栏四个按钮的悬停说明：此前只写在 MainWindow.axaml 的 ToolTip.Tip 里、
+        // [ZH] 代码里**没有任何覆盖点** → 英文界面悬停必现中文（硬编码清查 §5.1）
         ToolTip.SetTip(FontDownButton, Loc.T("main.button.fontDownTip", "缩小字号"));
         ToolTip.SetTip(FontUpButton, Loc.T("main.button.fontUpTip", "放大字号"));
         ToolTip.SetTip(ThemeButton, Loc.T("main.button.themeTip", "切换深色/浅色主题"));
@@ -758,7 +941,9 @@ public partial class MainWindow : Window
             "dark" => "🌙",
             _ => "🌓",
         };
-        // 状态区里与语言相关的固定文案（数值部分由后端数据驱动，不在这里覆盖）
+        // [EN] Fixed, language-dependent texts in the status area (the numeric parts are driven
+        // [EN] by backend data and are not overridden here).
+        // [ZH] 状态区里与语言相关的固定文案（数值部分由后端数据驱动，不在这里覆盖）
         if (!_updateAvailable)
             StripUpdateText.Text = Loc.T("main.update.idle", "🎉 新版本");
         StripWarnText.Text = _capabilityWarnings.Count > 0
@@ -773,17 +958,26 @@ public partial class MainWindow : Window
         ShowCapabilityBanner();
         ApplyHelpText();
         // [EN] Caption text is language-dependent, therefore it is refreshed with the rest of
-        //      the interface strings. / [ZH] 标题栏文案依赖界面语言，因此随其余界面文案一并刷新。
+        // [EN] the interface strings.
+        // [ZH] 标题栏文案依赖界面语言，因此随其余界面文案一并刷新。
         UpdateWindowChromeState();
     }
 
     /// <summary>
-    /// 屏幕阅读器说明（WPF 用 <c>svc:Loc.HelpKey</c> 附加属性，Avalonia 侧直接
-    /// <see cref="AutomationProperties.SetHelpText"/>）。
+    /// [EN] Screen reader description (WPF uses the <c>svc:Loc.HelpKey</c> attached property;
+    /// [EN] the Avalonia side calls <see cref="AutomationProperties.SetHelpText"/> directly).
     ///
-    /// 为什么用 HelpText 而**不是** Name：Name 会覆盖控件真实可读的文本，
-    /// 屏幕阅读器就再也读不到"已就绪 / 模型名"这些动态值了
-    /// （v0.2.0 排查时踩过，WPF 侧注释也写了这一条）。HelpText 是**补充说明**，两者共存。
+    /// [EN] Why HelpText and **not** Name: Name overrides the text that the control actually
+    /// [EN] reads out, so the screen reader could no longer read the dynamic values such as
+    /// [EN] "ready / model name" (this was hit during the v0.2.0 investigation, and the WPF
+    /// [EN] side comments record it too). HelpText is a **supplementary description**; the two
+    /// [EN] coexist.
+    /// [ZH] 屏幕阅读器说明（WPF 用 <c>svc:Loc.HelpKey</c> 附加属性，Avalonia 侧直接
+    /// [ZH] <see cref="AutomationProperties.SetHelpText"/>）。
+    ///
+    /// [ZH] 为什么用 HelpText 而**不是** Name：Name 会覆盖控件真实可读的文本，
+    /// [ZH] 屏幕阅读器就再也读不到"已就绪 / 模型名"这些动态值了
+    /// [ZH] （v0.2.0 排查时踩过，WPF 侧注释也写了这一条）。HelpText 是**补充说明**，两者共存。
     /// </summary>
     private void ApplyHelpText()
     {
@@ -806,15 +1000,22 @@ public partial class MainWindow : Window
     {
         InputBox.FontSize = _state.Settings.FontSize + 1;
         CommandInputBox.FontSize = _state.Settings.FontSize;
-        // 消息区字号：逐条重建（Avalonia 没有 FlowDocument 那种"整篇一个字号"的容器）
+        // [EN] Message area font size: rebuilt message by message (Avalonia has no FlowDocument
+        // [EN] style container that applies one font size to the whole document).
+        // [ZH] 消息区字号：逐条重建（Avalonia 没有 FlowDocument 那种"整篇一个字号"的容器）
         RenderTranscript();
-        // Agent 步骤区与思考区同样跟随（Ctrl+滚轮调字号时才不会落下它们）
+        // [EN] The Agent step area and the thinking area follow as well, so that Ctrl+wheel
+        // [EN] does not leave them behind.
+        // [ZH] Agent 步骤区与思考区同样跟随（Ctrl+滚轮调字号时才不会落下它们）
         ScaleAgentTrace();
     }
 
     /// <summary>
-    /// 平台能力横幅（任务五的降级文案）：**只在能力缺失时显示**，
-    /// 并且必须给出"为什么没有 + 替代路径"，而不是一句"不支持"。
+    /// [EN] Platform capability banner (the degradation texts of development task 5): **shown
+    /// [EN] only when a capability is missing**, and it must state "why it is missing + the
+    /// [EN] alternative path" rather than a bare "not supported".
+    /// [ZH] 平台能力横幅（任务五的降级文案）：**只在能力缺失时显示**，
+    /// [ZH] 并且必须给出"为什么没有 + 替代路径"，而不是一句"不支持"。
     /// </summary>
     private void ShowCapabilityBanner()
     {
@@ -840,7 +1041,10 @@ public partial class MainWindow : Window
         foreach ((string capability, bool available, string note) in _state.Platform.Capabilities())
             lines.Add($"{(available ? "✅" : "❌")} {capability} —— {note}");
 
-        // 后端的能力画像（/capability）也要能看到：前后端各有一套能力判断，用户需要对照
+        // [EN] The backend capability profile (/capability) must be visible as well: the front
+        // [EN] end and the backend each keep their own capability checks, and users need to
+        // [EN] compare them.
+        // [ZH] 后端的能力画像（/capability）也要能看到：前后端各有一套能力判断，用户需要对照
         JsonDocument? doc = await _state.Backend.SendAsync(new { action = "capability" }, idleTimeout: TimeSpan.FromSeconds(90));
         if (doc is not null)
         {
@@ -870,7 +1074,8 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 后端启动
+    // [EN] Backend startup
+    // [ZH] 后端启动
     // -----------------------------------------------------------------
 
     private async Task StartBackendAsync()
@@ -879,7 +1084,9 @@ public partial class MainWindow : Window
         StartResult started = await _state.Backend.StartAsync();
         if (!started.Ok)
         {
-            // 后端缺失/启动失败**不是崩溃**：把命令与原因摆出来，界面继续可用（任务五）
+            // [EN] A missing backend or a failed start is **not a crash**: the command and the
+            // [EN] reason are shown and the interface stays usable (development task 5).
+            // [ZH] 后端缺失/启动失败**不是崩溃**：把命令与原因摆出来，界面继续可用（任务五）
             AddMessage("system", Loc.T("main.error.backendUnavailable", "❌ 后端不可用：{0}", started.Error));
             SetStatus(Loc.T("main.status.backendMissing", "后端未启动"));
             PlatformBanner.IsVisible = true;
@@ -889,9 +1096,15 @@ public partial class MainWindow : Window
         }
 
         _state.Backend.StderrReceived += line => Dispatcher.UIThread.Post(() => SetStatus(Trim(line, 120)));
-        // v0.2.2 第 4 批（总策划定向放开的那一处协议扩展）：宿主的**结构化**进度事件
-        // 渲染成"活消息"——同一条系统气泡就地更新，而不是像 stderr 那样只在状态栏闪一下。
-        // 这修的正是差异清单 §F5 第 3 条："后端 stderr 那一行仍只写状态栏"。
+        // [EN] v0.2.2 batch 4 (the one protocol extension explicitly released by the lead
+        // [EN] designer): the host's **structured** progress events are rendered as a "live
+        // [EN] message" — the same system bubble is updated in place instead of only flashing
+        // [EN] in the status bar as stderr does.
+        // [ZH] v0.2.2 第 4 批（总策划定向放开的那一处协议扩展）：宿主的**结构化**进度事件
+        // [ZH] 渲染成"活消息"——同一条系统气泡就地更新，而不是像 stderr 那样只在状态栏闪一下。
+        // [EN] This fixes exactly item 3 of §F5 in the difference list: "the backend stderr
+        // [EN] line is still only written to the status bar".
+        // [ZH] 这修的正是差异清单 §F5 第 3 条："后端 stderr 那一行仍只写状态栏"。
         _state.Backend.HostProgressReceived += text => Dispatcher.UIThread.Post(() =>
         {
             if (_progressView is null)
@@ -917,9 +1130,14 @@ public partial class MainWindow : Window
             SetStatus(ready
                 ? Loc.T("main.status.ready", "就绪")
                 : Loc.T("main.status.noModel", "后端已就绪，但没有加载模型"));
-            // 模型热加载就绪通知（v0.2.2 第 3 批）：用户在设置页点「加载」后回到主窗口，
-            // 如果只有状态行悄悄从"无模型"变成"就绪"，很容易错过。
-            // 系统消息 + 通知条两处同时说一句（与 WPF 的处置一致）。
+            // [EN] Model hot-load ready notification (v0.2.2 batch 3): after the user clicks
+            // [EN] "load" in the settings page and returns to the main window, a status line
+            // [EN] that silently changes from "no model" to "ready" is easy to miss.
+            // [ZH] 模型热加载就绪通知（v0.2.2 第 3 批）：用户在设置页点「加载」后回到主窗口，
+            // [ZH] 如果只有状态行悄悄从"无模型"变成"就绪"，很容易错过。
+            // [EN] A system message and the notification bar both say it once (the same
+            // [EN] handling as WPF).
+            // [ZH] 系统消息 + 通知条两处同时说一句（与 WPF 的处置一致）。
             if (ready && _modelWasReady != true)
             {
                 string text = Loc.T("main.model.hotLoaded", "✅ 模型已就绪，现在可以正常对话了。");
@@ -940,12 +1158,18 @@ public partial class MainWindow : Window
         {
             ApplyTexts();
             RestoreHistory();
-            // 首次运行引导与启动快捷方式检测（v0.2.2 第 3 批）：
-            // 放在"后端就绪之后"——引导里提到的模型市场是后端能力，先说明再让用户去点。
+            // [EN] First-run guide and startup shortcut check (v0.2.2 batch 3): placed **after
+            // [EN] the backend is ready**, because the model market mentioned in the guide is a
+            // [EN] backend capability; explain it first, then let the user click through.
+            // [ZH] 首次运行引导与启动快捷方式检测（v0.2.2 第 3 批）：
+            // [ZH] 放在"后端就绪之后"——引导里提到的模型市场是后端能力，先说明再让用户去点。
             ShowFirstRunGuideIfNeeded();
             CheckStartupShortcut();
 
-            // 平台一致性：前端按本机判断，后端也上报自己的判断，不一致就是 bug（记录里叫"平台判断漂移"）
+            // [EN] Platform consistency: the front end decides from the local machine while the
+            // [EN] backend reports its own verdict, so a mismatch is a bug (called "platform
+            // [EN] verdict drift" in the records).
+            // [ZH] 平台一致性：前端按本机判断，后端也上报自己的判断，不一致就是 bug（记录里叫"平台判断漂移"）
             string backendKind = _state.Backend.BackendPlatformKind;
             if (backendKind.Length > 0 && backendKind != _state.Platform.KindName)
             {
@@ -955,9 +1179,15 @@ public partial class MainWindow : Window
             }
             if (!_state.Backend.ModelReady && !string.IsNullOrWhiteSpace(_state.Backend.ModelGuide))
             {
-                // 视觉对齐：WPF 把这段"没有模型怎么办"的说明作为**一条系统消息**放进对话区
-                // （MainWindow.xaml.cs 的 AddMessage("system", guide)），而不是窗口顶部的横幅。
-                // 横幅会把标题行整体往下推，截图里与 WPF 的版面完全对不上 —— 改成同一条路径。
+                // [EN] Visual alignment: WPF puts this "what to do without a model" explanation
+                // [EN] into the conversation area as **one system message**
+                // [EN] (AddMessage("system", guide) in MainWindow.xaml.cs), not into a banner
+                // [EN] at the top of the window.
+                // [ZH] 视觉对齐：WPF 把这段"没有模型怎么办"的说明作为**一条系统消息**放进对话区
+                // [ZH] （MainWindow.xaml.cs 的 AddMessage("system", guide)），而不是窗口顶部的横幅。
+                // [EN] A banner pushes the whole title row down, so the screenshot layout no
+                // [EN] longer matches WPF at all — hence the same path is used here.
+                // [ZH] 横幅会把标题行整体往下推，截图里与 WPF 的版面完全对不上 —— 改成同一条路径。
                 AddMessage("system", _state.Backend.ModelGuide);
                 GuideBanner.IsVisible = false;
             }
@@ -966,7 +1196,9 @@ public partial class MainWindow : Window
             ? Loc.T("main.status.ready", "就绪")
             : Loc.T("main.status.noModel", "后端已就绪，但没有加载模型"));
 
-        // 就绪后把状态区能拉的全拉一遍：与 WPF 版同一批动作
+        // [EN] Once ready, pull everything the status area can provide: the same batch of
+        // [EN] actions as in the WPF version.
+        // [ZH] 就绪后把状态区能拉的全拉一遍：与 WPF 版同一批动作
         await LoadCommandsAsync();
         await RefreshStatusAsync();
         await RefreshContextAsync();
@@ -983,9 +1215,14 @@ public partial class MainWindow : Window
                 continue;
             AddMessage(role, content, reasoning);
         }
-        // 「已自动恢复上次会话（N 轮）」+ 欢迎语（v0.2.2 第 3 批）：
-        // 用户重启程序后最想知道的就是"我上次的对话还在不在"，一句明确的说明比
-        // 让他自己数气泡靠谱（WPF 版同一处理，`main.welcomeRestored` / `main.welcome`）。
+        // [EN] "The previous session was restored automatically (N turns)" plus the welcome
+        // [EN] text (v0.2.2 batch 3): after a restart users most want to know whether their
+        // [EN] previous conversation is still there, and one explicit sentence is more reliable
+        // [EN] than making them count bubbles (the same handling as WPF, `main.welcomeRestored`
+        // [EN] / `main.welcome`).
+        // [ZH] 「已自动恢复上次会话（N 轮）」+ 欢迎语（v0.2.2 第 3 批）：
+        // [ZH] 用户重启程序后最想知道的就是"我上次的对话还在不在"，一句明确的说明比
+        // [ZH] 让他自己数气泡靠谱（WPF 版同一处理，`main.welcomeRestored` / `main.welcome`）。
         int restored = _state.Backend.RestoredCount;
         AddMessage("system", restored > 0
             ? Loc.T("main.welcomeRestored", "📂 已自动恢复上次会话（{0} 轮）", restored)
@@ -995,8 +1232,11 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 首次运行引导（对齐 WPF 的 `ShowFirstRunGuideIfNeeded`）。
-    /// 只展示一次，看过就写 `FirstRunDone` —— 每次都弹等于没有引导。
+    /// [EN] First-run guide (aligned with `ShowFirstRunGuideIfNeeded` in WPF).
+    /// [ZH] 首次运行引导（对齐 WPF 的 `ShowFirstRunGuideIfNeeded`）。
+    /// [EN] Shown only once; once it has been seen, `FirstRunDone` is written — showing it
+    /// [EN] every time would be the same as having no guide at all.
+    /// [ZH] 只展示一次，看过就写 `FirstRunDone` —— 每次都弹等于没有引导。
     /// </summary>
     private void ShowFirstRunGuideIfNeeded()
     {
@@ -1018,15 +1258,26 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 启动快捷方式检测（对齐 WPF 的 `CheckStartupShortcut`）。
+    /// [EN] Startup shortcut check (aligned with `CheckStartupShortcut` in WPF).
+    /// [ZH] 启动快捷方式检测（对齐 WPF 的 `CheckStartupShortcut`）。
     ///
-    /// **总策划本轮裁定：自动创建**（原来是"只检测与说明，不自动创建"）。
-    /// WPF 的判据是"已存在且有效 → 什么都不做；存在但失效 → 提示重建；
-    /// 不存在且用户没拒绝过 → 建一个"。跨平台版按同一判据，只是产物换成各平台的启动器
-    /// （`.cmd` / `.command` / `.desktop`，见 Services/ShortcutService.cs 的说明）。
+    /// [EN] **The lead designer ruled this round: create it automatically** (previously it was
+    /// [EN] "detect and explain only, never create automatically").
+    /// [ZH] **总策划本轮裁定：自动创建**（原来是"只检测与说明，不自动创建"）。
+    /// [EN] The WPF criteria are "exists and is valid → do nothing; exists but is broken →
+    /// [EN] prompt to recreate; does not exist and the user has not declined → create one". The
+    /// [EN] cross-platform version uses the same criteria; only the artefact differs per
+    /// [EN] platform (`.cmd` / `.command` / `.desktop`, see the notes in
+    /// [EN] Services/ShortcutService.cs).
+    /// [ZH] WPF 的判据是"已存在且有效 → 什么都不做；存在但失效 → 提示重建；
+    /// [ZH] 不存在且用户没拒绝过 → 建一个"。跨平台版按同一判据，只是产物换成各平台的启动器
+    /// [ZH] （`.cmd` / `.command` / `.desktop`，见 Services/ShortcutService.cs 的说明）。
     ///
-    /// 用户拒绝过一次（`ShortcutPromptDeclined`）就不再建 —— 这条与 WPF 一致，
-    /// 也是"自动创建"不至于变成"每次启动都往桌面上写文件"的唯一保障。
+    /// [EN] Once the user has declined (`ShortcutPromptDeclined`), nothing is created any more
+    /// [EN] — this matches WPF and is the only guarantee that "automatic creation" does not
+    /// [EN] become "a file written to the desktop on every start".
+    /// [ZH] 用户拒绝过一次（`ShortcutPromptDeclined`）就不再建 —— 这条与 WPF 一致，
+    /// [ZH] 也是"自动创建"不至于变成"每次启动都往桌面上写文件"的唯一保障。
     /// </summary>
     private void CheckStartupShortcut()
     {
@@ -1037,7 +1288,9 @@ public partial class MainWindow : Window
 
             if (ShortcutService.Exists())
             {
-                // 存在但失效（程序目录被改名/搬家）：直接重建，并说明原因
+                // [EN] Exists but is broken (the program directory was renamed or moved):
+                // [EN] recreate it directly and explain why.
+                // [ZH] 存在但失效（程序目录被改名/搬家）：直接重建，并说明原因
                 string path = ShortcutService.Create();
                 AddMessage("system", Loc.T("main.shortcut.recreated",
                     "🔧 检测到启动快捷方式已失效（通常是因为程序文件夹被移动或改名），已重新创建：\n{0}",
@@ -1059,11 +1312,18 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 窗口位置记忆 + 可见性校验（v0.2.2 第 3 批）。
+    /// [EN] Window position memory plus visibility validation (v0.2.2 batch 3).
+    /// [ZH] 窗口位置记忆 + 可见性校验（v0.2.2 第 3 批）。
     ///
-    /// **可见性校验不能省**：用户把窗口拖到第二块屏、之后拔掉那块屏，
-    /// 下次启动按记忆恢复就会把窗口放到**屏幕外** —— 界面看起来像"没打开"。
-    /// 所以恢复前先确认位置落在某个屏幕的可用区域内，否则退回系统默认位置。
+    /// [EN] **The visibility check cannot be skipped**: if the user drags the window to a
+    /// [EN] second monitor and later unplugs it, restoring the remembered position on the next
+    /// [EN] start would place the window **off-screen**, which looks as if the interface did
+    /// [EN] not open.
+    /// [ZH] **可见性校验不能省**：用户把窗口拖到第二块屏、之后拔掉那块屏，
+    /// [ZH] 下次启动按记忆恢复就会把窗口放到**屏幕外** —— 界面看起来像"没打开"。
+    /// [EN] Therefore the position is validated against the working area of some screen before
+    /// [EN] it is restored, and the system default position is used otherwise.
+    /// [ZH] 所以恢复前先确认位置落在某个屏幕的可用区域内，否则退回系统默认位置。
     /// </summary>
     private void RestoreWindowPlacement()
     {
@@ -1078,7 +1338,11 @@ public partial class MainWindow : Window
             WindowState = WindowState.Maximized;
     }
 
-    /// <summary>窗口左上角是否落在某块屏幕的可用区域内（留 40px 容错，标题栏要能被抓住）。</summary>
+    /// <summary>
+    /// [EN] Whether the top-left corner of the window falls inside the working area of some
+    /// [EN] screen (with a 40 px tolerance so that the title bar can still be grabbed).
+    /// [ZH] 窗口左上角是否落在某块屏幕的可用区域内（留 40px 容错，标题栏要能被抓住）。
+    /// </summary>
     private bool IsOnAnyScreen(double left, double top)
     {
         foreach (global::Avalonia.Platform.Screen screen in Screens.All)
@@ -1093,13 +1357,21 @@ public partial class MainWindow : Window
         return false;
     }
 
-    /// <summary>退出前记住窗口位置/尺寸/最大化状态（与 WPF 同口径；位置用"还原态"的值）。</summary>
+    /// <summary>
+    /// [EN] Remember the window position, size and maximised state before exiting (the same
+    /// [EN] criteria as WPF; the position uses the restored-state value).
+    /// [ZH] 退出前记住窗口位置/尺寸/最大化状态（与 WPF 同口径；位置用"还原态"的值）。
+    /// </summary>
     private void SaveWindowPlacement()
     {
         try
         {
-            // 最大化时 Position 是最大化后的值，直接记会把"还原后"的位置弄丢，
-            // 所以最大化时只更新 WindowMaximized 标志，位置沿用上一次记住的。
+            // [EN] When maximised, Position is the maximised value, and recording it directly
+            // [EN] would lose the restored position; therefore only the WindowMaximized flag is
+            // [EN] updated while maximised and the position keeps the previously remembered
+            // [EN] value.
+            // [ZH] 最大化时 Position 是最大化后的值，直接记会把"还原后"的位置弄丢，
+            // [ZH] 所以最大化时只更新 WindowMaximized 标志，位置沿用上一次记住的。
             _state.Settings.WindowMaximized = WindowState == WindowState.Maximized;
             if (WindowState == WindowState.Normal)
             {
@@ -1112,11 +1384,16 @@ public partial class MainWindow : Window
         }
         catch (Exception)
         {
-            // 位置记不下来不该阻断退出流程
+            // [EN] Failing to record the position must not block the exit flow.
+            // [ZH] 位置记不下来不该阻断退出流程
         }
     }
 
-    /// <summary>取后端的本地化指令表（含技能指令）；失败时保留本地回退表。</summary>
+    /// <summary>
+    /// [EN] Fetch the backend's localised command table (including skill commands); keep the
+    /// [EN] local fallback table when the request fails.
+    /// [ZH] 取后端的本地化指令表（含技能指令）；失败时保留本地回退表。
+    /// </summary>
     private async Task LoadCommandsAsync()
     {
         if (CommandCatalog.LoadedFromBackend)
@@ -1132,15 +1409,27 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 刷新状态区（搜索 / KV / 能力 / 模式 / 模型名）。
+    /// [EN] Refreshes the status area (search / KV / capability / mode / model name).
     ///
-    /// **这里此前发的是 `action = "status"`，而后端根本没有这个动作**
-    /// （`backend/main.py` 的动作分支表里只有 `context`）。于是响应落到"未知动作"分支，
-    /// `ApplyStatusFields` 一个字段都取不到 —— 表现是状态区那几项**启动后永远停在
-    /// XAML 的占位值**，而且不报错（这正是"控件在、功能不在"的静默失效）。
-    /// 后端 `_attach_context()` 本就把这六类字段挂在 **context** 响应上，
-    /// 所以修法不是改后端协议，而是**取对响应**：发 `context`，并把状态字段与上下文
-    /// 字段都从同一份响应里取（WPF 侧的 `RefreshStatusBarAsync` 就是这么做的）。
+    /// [EN] **This used to send `action = "status"`, an action the backend does not have at
+    /// [EN] all** (`backend/main.py` has only `context` in its action branch table). The
+    /// [EN] response fell into the "unknown action" branch and `ApplyStatusFields` could not
+    /// [EN] read a single field; the symptom was that those status area items **stayed at their
+    /// [EN] XAML placeholder values forever after startup**, without any error (the silent
+    /// [EN] failure mode of "controls present, function absent"). The backend's
+    /// [EN] `_attach_context()` already attaches these six kinds of field to the **context**
+    /// [EN] response, so the fix is not to change the backend protocol but to **take the right
+    /// [EN] response**: send `context` and read both the status fields and the context fields
+    /// [EN] from the same response (that is what `RefreshStatusBarAsync` on the WPF side does).
+    /// [ZH] 刷新状态区（搜索 / KV / 能力 / 模式 / 模型名）。
+    ///
+    /// [ZH] **这里此前发的是 `action = "status"`，而后端根本没有这个动作**
+    /// [ZH] （`backend/main.py` 的动作分支表里只有 `context`）。于是响应落到"未知动作"分支，
+    /// [ZH] `ApplyStatusFields` 一个字段都取不到 —— 表现是状态区那几项**启动后永远停在
+    /// [ZH] XAML 的占位值**，而且不报错（这正是"控件在、功能不在"的静默失效）。
+    /// [ZH] 后端 `_attach_context()` 本就把这六类字段挂在 **context** 响应上，
+    /// [ZH] 所以修法不是改后端协议，而是**取对响应**：发 `context`，并把状态字段与上下文
+    /// [ZH] 字段都从同一份响应里取（WPF 侧的 `RefreshStatusBarAsync` 就是这么做的）。
     /// </summary>
     private async Task RefreshStatusAsync()
     {
@@ -1200,8 +1489,8 @@ public partial class MainWindow : Window
     /// interface. When a newer release is found the user is asked **before** anything is
     /// downloaded; answering "no" is final for this session and no request is sent.
     /// [ZH]
-    /// 启动时静默检查。网络失败或检查被关闭都不会打断界面。发现新版本时，会在下载**之前**
-    /// 询问用户；选择「否」即在本会话内确定为不下载，且不会发出任何下载请求。
+    /// [ZH] 启动时静默检查。网络失败或检查被关闭都不会打断界面。发现新版本时，会在下载**之前**
+    /// [ZH] 询问用户；选择「否」即在本会话内确定为不下载，且不会发出任何下载请求。
     /// </summary>
     private async Task CheckUpdateAsync()
     {
@@ -1218,8 +1507,8 @@ public partial class MainWindow : Window
                 if (!doc.RootElement.TryGetProperty("update", out JsonElement update))
                     return;
                 string status = update.TryGetProperty("status", out JsonElement st) ? st.GetString() ?? "" : "";
-                // [EN] An explicitly ignored version is not prompted again, but the chip
-                // [EN] stays available so the user can still open the release page.
+                // [EN] An explicitly ignored version is not prompted again, but the chip stays
+                // [EN] available so the user can still open the release page.
                 // [ZH] 明确忽略的版本不再提示，但保留状态区入口，用户仍可打开发布页面。
                 if (string.Equals(status, "ignored", StringComparison.Ordinal))
                 {
@@ -1268,7 +1557,7 @@ public partial class MainWindow : Window
     ///      after an explicit "yes"; "no" leaves the chip in place so the user can still
     ///      open the release page later.
     /// [ZH] 询问是否下载检测到的更新。只有在明确选择「是」之后才发送下载请求；选择「否」时
-    ///      保留状态区入口，用户之后仍可打开发布页面。
+    /// [ZH] 保留状态区入口，用户之后仍可打开发布页面。
     /// </summary>
     private async Task PromptDownloadUpdateAsync()
     {
@@ -1326,7 +1615,7 @@ public partial class MainWindow : Window
             // [EN] Streaming request: the backend emits `update_progress` lines with
             //      downloaded/total bytes, then a final `done` line carrying the path.
             // [ZH] 流式请求：后端先输出带已下载/总字节的 `update_progress` 行，最后输出带
-            //      路径的 `done` 行。
+            // [ZH] 路径的 `done` 行。
             await _state.Backend.SendStreamAsync(
                 new { action = "update_download", tag = _updateTag, asset = _updateAsset },
                 idleTimeout: TimeSpan.FromMinutes(45),
@@ -1382,7 +1671,7 @@ public partial class MainWindow : Window
     ///      and then starts the installer detached. The UI exits so the installer can
     ///      replace program files without a file lock.
     /// [ZH] 把已下载的安装程序交给后端：后端先备份用户数据，再分离启动安装程序。界面退出，
-    ///      使安装程序可以在没有文件锁的情况下替换程序文件。
+    /// [ZH] 使安装程序可以在没有文件锁的情况下替换程序文件。
     /// </summary>
     private async Task ApplyUpdateAsync()
     {
@@ -1411,8 +1700,8 @@ public partial class MainWindow : Window
                     return;
                 }
             }
-            // [EN] The backend response already contains the backup directory; the app is
-            // [EN] about to exit, so the toast is the visible acknowledgement.
+            // [EN] The backend response already contains the backup directory; the app is about
+            // [EN] to exit, so the toast is the visible acknowledgement.
             // [ZH] 后端响应已包含备份目录；应用即将退出，提示条就是可见的确认。
             Toast(Loc.T("main.update.applying", "正在安装更新，应用即将退出…"));
             await Task.Delay(900);
@@ -1484,7 +1773,7 @@ public partial class MainWindow : Window
     ///      distinguishes "download now" from "do not download", and carries the ignore
     ///      choice so the caller can persist it only when the user declined.
     /// [ZH] 带「忽略此版本」复选框的下载询问框。返回的元组区分「现在下载」与「不下载」，
-    ///      并携带忽略选择，使调用方只在用户拒绝时持久化该选择。
+    /// [ZH] 并携带忽略选择，使调用方只在用户拒绝时持久化该选择。
     /// </summary>
     private async Task<(bool download, bool ignore)> ShowUpdateDownloadDialogAsync(
         string title, string message, string primary, string secondary, string ignoreLabel)
@@ -1548,7 +1837,7 @@ public partial class MainWindow : Window
     /// [EN] Persist the ignored version through the backend, then leave the chip in a
     ///      clearly ignored state. A failure is non-fatal: the session still declines.
     /// [ZH] 通过后端持久化忽略版本，然后把状态项置为明确的「已忽略」。失败不影响本会
-    ///      话继续拒绝下载。
+    /// [ZH] 话继续拒绝下载。
     /// </summary>
     private async Task IgnoreUpdateVersionAsync()
     {
@@ -1611,9 +1900,9 @@ public partial class MainWindow : Window
 
     private async void OpenUpdatePage()
     {
-        // [EN] A downloaded update turns the chip into the "apply" entry; an available
-        // [EN] update that was not yet answered re-opens the download prompt. Everything
-        // [EN] else keeps the historical behaviour: open the release page.
+        // [EN] A downloaded update turns the chip into the "apply" entry; an available update
+        // [EN] that was not yet answered re-opens the download prompt. Everything else keeps
+        // [EN] the historical behaviour: open the release page.
         // [ZH] 已下载更新时，状态项变成「应用」入口；尚未回答的可用更新重新打开下载询问；
         // [ZH] 其余情况保持历史行为：打开发布页面。
         if (_downloadedUpdatePath.Length > 0)
@@ -1630,7 +1919,9 @@ public partial class MainWindow : Window
             return;
         try
         {
-            // UseShellExecute 在三大平台上都会交给系统默认浏览器
+            // [EN] UseShellExecute hands the URL to the system default browser on all three
+            // [EN] platforms.
+            // [ZH] UseShellExecute 在三大平台上都会交给系统默认浏览器
             Process.Start(new ProcessStartInfo { FileName = _updateUrl, UseShellExecute = true });
         }
         catch (Exception ex)
@@ -1640,7 +1931,8 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 状态区字段映射（字段名与 WPF 版完全一致）
+    // [EN] Status area field mapping (field names exactly as in the WPF version)
+    // [ZH] 状态区字段映射（字段名与 WPF 版完全一致）
     // -----------------------------------------------------------------
 
     private void ApplyStatusFields(JsonElement root)
@@ -1677,22 +1969,36 @@ public partial class MainWindow : Window
             ApplyContextFields(ctxEl);
     }
 
-    /// <summary>上下文占用：主标题与状态区两处一起更新（都来自后端，前端不估算）。</summary>
+    /// <summary>
+    /// [EN] Context usage: the main caption and the status area are updated together (both
+    /// [EN] values come from the backend; the front end does not estimate them).
+    /// [ZH] 上下文占用：主标题与状态区两处一起更新（都来自后端，前端不估算）。
+    /// </summary>
     private void ApplyContextFields(JsonElement context)
     {
         int used = GetIntField(context, "used");
         int limit = GetIntField(context, "limit");
         if (limit <= 0)
             return;
-        // 任务十（自测问题修复-1）：显示值改用**上一轮真正发出去的量**，理由见
-        // backend/main.py 的 _attach_context 与 records §9.4（旧显示只算 system+history，
-        // 漏掉文件正文/检索片段，用户看到的值只有真实值的四分之一）。
-        // 两者取较大值：底数与上一轮都可能是当前占用的大头，取大不会漏报；
-        // 后端未提供该字段时（旧版）自然退化为 used。
+        // [EN] Development task 10 (self-test fix 1): the displayed value now uses **what was
+        // [EN] actually sent in the previous round**; see _attach_context in backend/main.py
+        // [EN] and records §9.4 (the old display counted only system+history and missed file
+        // [EN] bodies and retrieval fragments, so users saw only a quarter of the real value).
+        // [ZH] 任务十（自测问题修复-1）：显示值改用**上一轮真正发出去的量**，理由见
+        // [ZH] backend/main.py 的 _attach_context 与 records §9.4（旧显示只算 system+history，
+        // [ZH] 漏掉文件正文/检索片段，用户看到的值只有真实值的四分之一）。
+        // [EN] The larger of the two is taken: either the baseline or the previous round may
+        // [EN] dominate current usage, and taking the maximum never under-reports. When the
+        // [EN] backend does not provide the field (older releases) this degrades to used.
+        // [ZH] 两者取较大值：底数与上一轮都可能是当前占用的大头，取大不会漏报；
+        // [ZH] 后端未提供该字段时（旧版）自然退化为 used。
         int lastRequest = GetIntField(context, "used_last_request");
         int shown = Math.Max(used, lastRequest);
-        // 数字缩写（v0.2.2 第 3 批）：1.2k / 3.4m 这类写法在窄胶囊里比
-        // "12000/131072" 可读得多，也与 WPF 一致（差异清单 B7 的「仅文案」一条）。
+        // [EN] Number abbreviation (v0.2.2 batch 3): forms such as 1.2k / 3.4m are far more
+        // [EN] readable in a narrow chip than "12000/131072", and they match WPF (the "wording
+        // [EN] only" item B7 of the difference list).
+        // [ZH] 数字缩写（v0.2.2 第 3 批）：1.2k / 3.4m 这类写法在窄胶囊里比
+        // [ZH] "12000/131072" 可读得多，也与 WPF 一致（差异清单 B7 的「仅文案」一条）。
         ContextChipText.Text = Loc.T("main.context.button", "上下文：{0}/{1}",
             AbbreviateNumber(shown), AbbreviateNumber(limit));
         int percent = (int)Math.Round(shown * 100.0 / limit);
@@ -1700,16 +2006,22 @@ public partial class MainWindow : Window
         ToolTip.SetTip(StripContextButton, Loc.T("main.strip.contextHelpBoth",
             "上下文已用 {0} / {1} tokens（{2}%）。其中常驻底数 {3}，上一轮实际发出 {4}。点击刷新。",
             shown, limit, percent, used, lastRequest));
-        // 胶囊本身也要有 ToolTip（此前只有状态区那个按钮有）：鼠标停在标题栏的
-        // 「上下文：…」上时，用户看到的第一个反馈就应该是完整口径。
+        // [EN] The chip itself needs a ToolTip as well (previously only the status area button
+        // [EN] had one): when the pointer rests on "context: …" in the title bar, the first
+        // [EN] feedback the user gets should be the full picture.
+        // [ZH] 胶囊本身也要有 ToolTip（此前只有状态区那个按钮有）：鼠标停在标题栏的
+        // [ZH] 「上下文：…」上时，用户看到的第一个反馈就应该是完整口径。
         ToolTip.SetTip(ContextChip, Loc.T("main.context.chipTip",
             "上下文已用 {0} / {1} tokens（{2}%）。常驻底数 {3}，上一轮实际发出 {4}。点击刷新。",
             shown, limit, percent, used, lastRequest));
     }
 
     /// <summary>
-    /// 数字缩写：1200 → 1.2k、3400000 → 3.4m（与 WPF 版同一口径）。
-    /// 小于 1000 的原样返回 —— "0.9k" 这种反而更难读。
+    /// [EN] Number abbreviation: 1200 → 1.2k, 3400000 → 3.4m (the same convention as the WPF
+    /// [EN] version).
+    /// [ZH] 数字缩写：1200 → 1.2k、3400000 → 3.4m（与 WPF 版同一口径）。
+    /// [EN] Values below 1000 are returned unchanged; forms such as "0.9k" are harder to read.
+    /// [ZH] 小于 1000 的原样返回 —— "0.9k" 这种反而更难读。
     /// </summary>
     private static string AbbreviateNumber(int value)
     {
@@ -1736,11 +2048,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// [EN] Physical-memory pressure reported by the backend hardware snapshot. The percentage is
+    /// [EN] Physical-memory pressure reported by the backend hardware snapshot. The percentage
+    /// [EN] is
     ///      used memory over total memory; the raw byte values remain in the tooltip so the
     ///      figure can be audited instead of trusted blindly.
     /// [ZH] 由后端硬件快照上报的物理内存压力。百分比为已用内存占总内存的比例；原始字节值保留在
-    ///      悬停提示中，便于核对而不是盲信一个数字。
+    /// [ZH] 悬停提示中，便于核对而不是盲信一个数字。
     /// </summary>
     private void SetMemoryStatus(JsonElement memory)
     {
@@ -1758,8 +2071,8 @@ public partial class MainWindow : Window
         StripMemoryText.Text = critical
             ? Loc.T("main.strip.memoryCritical", "⚠️ 内存 {0}%", percent)
             : Loc.T("main.strip.memoryStrip", "🧠 内存 {0}%", percent);
-        // [EN] The class drives the red error brush through the theme; removing it restores
-        // [EN] the normal foreground without hard-coding colours in code-behind.
+        // [EN] The class drives the red error brush through the theme; removing it restores the
+        // [EN] normal foreground without hard-coding colours in code-behind.
         // [ZH] 该类通过主题驱动红色错误画刷；移除后恢复普通前景色，代码里不写死颜色。
         StripMemoryText.Classes.Set("memory-critical", critical);
         ToolTip.SetTip(StripMemoryButton, critical
@@ -1791,8 +2104,12 @@ public partial class MainWindow : Window
     private void SetMarketStatus(string text) => MarketText.Text = text;
 
     /// <summary>
-    /// 状态区：模型能力（参数量 · 量化 · 可用窗口 · 实测速度）。
-    /// 四项都缺时保持占位文本 —— 空白会让人以为界面坏了。
+    /// [EN] Status area: model capabilities (parameter count · quantization · usable window ·
+    /// [EN] measured speed).
+    /// [ZH] 状态区：模型能力（参数量 · 量化 · 可用窗口 · 实测速度）。
+    /// [EN] When all four are missing, the placeholder text is kept; blank fields would make
+    /// [EN] people think the interface is broken.
+    /// [ZH] 四项都缺时保持占位文本 —— 空白会让人以为界面坏了。
     /// </summary>
     private void SetCapabilityStatus(JsonElement capability)
     {
@@ -1820,7 +2137,10 @@ public partial class MainWindow : Window
             ToolTip.SetTip(StripWarnButton, string.Join("\n", _capabilityWarnings.Select(w => "• " + w)));
     }
 
-    /// <summary>把全部能力提示讲清楚（状态区只放得下一个数字）。</summary>
+    /// <summary>
+    /// [EN] Spells out all capability warnings (the status area has room for only one number).
+    /// [ZH] 把全部能力提示讲清楚（状态区只放得下一个数字）。
+    /// </summary>
     private void ShowWarnings()
     {
         if (_capabilityWarnings.Count == 0)
@@ -1857,7 +2177,10 @@ public partial class MainWindow : Window
         return list.Where(x => x.Length > 0).ToList();
     }
 
-    /// <summary>状态栏模型名过长时截断显示。</summary>
+    /// <summary>
+    /// [EN] Truncates the model name shown in the status bar when it is too long.
+    /// [ZH] 状态栏模型名过长时截断显示。
+    /// </summary>
     private static string Shorten(string name)
     {
         const int limit = 28;
@@ -1865,7 +2188,9 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 状态区的折叠状态（存 ui_state.json，下次启动沿用）
+    // [EN] Collapsed state of the status area (stored in ui_state.json and reused on the next
+    // [EN] start)
+    // [ZH] 状态区的折叠状态（存 ui_state.json，下次启动沿用）
     // -----------------------------------------------------------------
 
     /// <summary>
@@ -1874,13 +2199,14 @@ public partial class MainWindow : Window
     ///      change, appearance refresh) applies the state immediately so that no motion is
     ///      replayed outside an explicit user gesture.
     /// [ZH] 应用状态区已持久化的折叠状态。交互式切换请求动画过渡；其余调用方（构造、语言切换、
-    ///      外观刷新）立即应用该状态，因此显式用户手势之外不会重放任何动效。
+    /// [ZH] 外观刷新）立即应用该状态，因此显式用户手势之外不会重放任何动效。
     /// </summary>
     private void ApplyStatusStripState(bool animate = false)
     {
         bool collapsed = _state.Settings.StatusStripCollapsed;
 
-        // [EN] A pending hide belongs to the previous collapse gesture and must not fire against
+        // [EN] A pending hide belongs to the previous collapse gesture and must not fire
+        // [EN] against
         //      the newly requested state.
         // [ZH] 尚未执行的隐藏动作属于上一次折叠手势，不得针对新请求的状态触发。
         _statusStripHideTimer?.Stop();
@@ -1917,7 +2243,7 @@ public partial class MainWindow : Window
             //      transition has a previous value to interpolate from; changing them in the same
             //      turn would make the element snap into place.
             // [ZH] 可见属性在下一个渲染回合恢复，使过渡拥有可插值的先前值；在同一回合内修改会使元素
-            //      直接跳变到位。
+            // [ZH] 直接跳变到位。
             Dispatcher.UIThread.Post(() =>
             {
                 StatusStripItems.Opacity = 1;
@@ -1936,15 +2262,22 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 指令面板
+    // [EN] Command panel
+    // [ZH] 指令面板
     // -----------------------------------------------------------------
 
-    /// <summary>聊天输入框出现 "/"+英文字母 时：只显示底部提示与按钮文字，不改动加号图标。</summary>
+    /// <summary>
+    /// [EN] When "/" followed by an ASCII letter appears in the chat input box, only the bottom
+    /// [EN] hint and the button text change; the plus icon is left untouched.
+    /// [ZH] 聊天输入框出现 "/"+英文字母 时：只显示底部提示与按钮文字，不改动加号图标。
+    /// </summary>
     private void UpdateCommandUi(string text)
     {
         _commandLike = text.Length >= 1 && text.StartsWith('/') && (text.Length == 1 || IsAsciiLetter(text[1]));
         CommandBarHint.IsVisible = _commandLike;
-        // 输入框里出现 "/" 也弹指令面板（面板目标跟着切到聊天输入框）
+        // [EN] A "/" in the input box also opens the command panel (the panel target switches
+        // [EN] to the chat input box accordingly).
+        // [ZH] 输入框里出现 "/" 也弹指令面板（面板目标跟着切到聊天输入框）
         if (text.StartsWith('/'))
             UpdateCommandPalette(InputBox);
         UpdateCommandButtonText();
@@ -1965,7 +2298,9 @@ public partial class MainWindow : Window
 
     private void ToggleCommandRow()
     {
-        // 聊天输入框里像指令 → 按钮变成"转移到命令输入框"：把内容搬过去再展开
+        // [EN] Looks like a command in the chat input box → the button turns into "move to the
+        // [EN] command input box": move the text over first, then expand.
+        // [ZH] 聊天输入框里像指令 → 按钮变成"转移到命令输入框"：把内容搬过去再展开
         if (_commandLike)
         {
             CommandInputBox.Text = InputBox.Text;
@@ -2003,7 +2338,11 @@ public partial class MainWindow : Window
         CloseCommandPalette();
     }
 
-    /// <summary>指令面板打开时接管按键。返回 true 表示已处理。</summary>
+    /// <summary>
+    /// [EN] Takes over key handling while the command panel is open. Returns true when the key
+    /// [EN] was handled.
+    /// [ZH] 指令面板打开时接管按键。返回 true 表示已处理。
+    /// </summary>
     private bool HandlePaletteKey(KeyEventArgs e)
     {
         if (!CommandPalette.IsOpen)
@@ -2025,11 +2364,16 @@ public partial class MainWindow : Window
                 return true;
             case Key.Enter:
                 if (CommandList.SelectedItem is not CommandItem item)
-                    return false;   // 无选中项 → 回落为正常发送
+                    return false;   // [EN] No selection → fall back to a normal send.
+                                    // [ZH] 无选中项 → 回落为正常发送
                 string typed = (_paletteSource?.Text ?? "").Trim();
                 bool exact = string.Equals(item.Command, typed, StringComparison.OrdinalIgnoreCase);
-                // 候选不唯一且首项并非精确匹配时**先补全不执行**：匹配项多时（如 /s）
-                // 应让用户看清完整指令与参数格式后再决定，而不是盲目执行第一项。
+                // [EN] When the candidate set is not unique and the first item is not an exact
+                // [EN] match, **complete first and do not execute**: with many matches (such as
+                // [EN] /s) the user should see the full command and its parameter format before
+                // [EN] deciding, instead of blindly running the first item.
+                // [ZH] 候选不唯一且首项并非精确匹配时**先补全不执行**：匹配项多时（如 /s）
+                // [ZH] 应让用户看清完整指令与参数格式后再决定，而不是盲目执行第一项。
                 if (!exact && CommandList.Items.Count > 1)
                 {
                     ExecuteCommandItem(item, completeOnly: true);
@@ -2067,7 +2411,9 @@ public partial class MainWindow : Window
         CloseCommandPalette();
         TextBox target = _paletteSource ?? CommandInputBox;
 
-        // 需要参数或 Tab 补全 → 只填"指令+空格"，让用户继续输入参数
+        // [EN] Arguments required, or Tab completion → fill in only "command + space" so the
+        // [EN] user can continue typing the arguments.
+        // [ZH] 需要参数或 Tab 补全 → 只填"指令+空格"，让用户继续输入参数
         if (item.NeedsArgs || completeOnly)
         {
             target.Text = item.Command + " ";
@@ -2075,17 +2421,25 @@ public partial class MainWindow : Window
             target.Focus();
             return;
         }
-        // 无需参数 → 直接执行
+        // [EN] No arguments needed → execute directly.
+        // [ZH] 无需参数 → 直接执行
         if (ReferenceEquals(target, InputBox))
         {
             InputBox.Text = item.Command;
-            _ = SendAsync();       // 危险指令的确认环节在 SendAsync 内统一处理
+            // [EN] The confirmation step for destructive commands is handled centrally inside
+            // [EN] SendAsync.
+            // [ZH] 危险指令的确认环节在 SendAsync 内统一处理
+            _ = SendAsync();
             return;
         }
         RunCommandFromCommandBox(item.Command);
     }
 
-    /// <summary>从指令输入框执行一条指令（含危险指令的二次确认）。</summary>
+    /// <summary>
+    /// [EN] Executes one command from the command input box (including the second confirmation
+    /// [EN] for destructive commands).
+    /// [ZH] 从指令输入框执行一条指令（含危险指令的二次确认）。
+    /// </summary>
     private void RunCommandFromCommandBox(string command)
     {
         if (!ConfirmDestructive(command))
@@ -2095,12 +2449,21 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 危险指令的二次确认。
+    /// [EN] Second confirmation for destructive commands.
+    /// [ZH] 危险指令的二次确认。
     ///
-    /// Avalonia 没有内置 MessageBox，而"再点一次确认"这个项目里已有的做法
-    /// （见设置页的卸载确认）在这里不适用 —— 指令是靠 Enter 触发的，没有按钮可点。
-    /// 因此改成**同一个输入框里再按一次 Enter**：第一次把指令放回输入框并提示，
-    /// 第二次才真的执行。判据是"输入框里现在就是这条危险指令"，用户改一个字就重置。
+    /// [EN] Avalonia has no built-in MessageBox, and the existing "click once more to confirm"
+    /// [EN] pattern in this project (see the uninstall confirmation in the settings pages) does
+    /// [EN] not apply here, because commands are triggered with Enter and there is no button to
+    /// [EN] click.
+    /// [ZH] Avalonia 没有内置 MessageBox，而"再点一次确认"这个项目里已有的做法
+    /// [ZH] （见设置页的卸载确认）在这里不适用 —— 指令是靠 Enter 触发的，没有按钮可点。
+    /// [EN] The confirmation therefore becomes **pressing Enter again in the same input box**:
+    /// [EN] the first press puts the command back into the input box together with a hint, and
+    /// [EN] only the second press really executes it. The criterion is "the input box now
+    /// [EN] contains exactly this destructive command"; changing one character resets it.
+    /// [ZH] 因此改成**同一个输入框里再按一次 Enter**：第一次把指令放回输入框并提示，
+    /// [ZH] 第二次才真的执行。判据是"输入框里现在就是这条危险指令"，用户改一个字就重置。
     /// </summary>
     private bool ConfirmDestructive(string command)
     {
@@ -2133,21 +2496,37 @@ public partial class MainWindow : Window
             .FirstOrDefault(c => string.Equals(c.Command, command, StringComparison.OrdinalIgnoreCase));
         if (item is not null)
             return item.Destructive;
-        // 回退表没命中（例如技能指令）时按已知的危险指令名单判断
+        // [EN] When the fallback table does not contain the command (for example a skill
+        // [EN] command), decide from the list of known destructive commands.
+        // [ZH] 回退表没命中（例如技能指令）时按已知的危险指令名单判断
         return command is "/clear" or "/clearcache" or "/exit" or "/quit";
     }
 
     /// <summary>
-    /// 把一条指令发给后端（走非流式 chat 动作，与 WPF 版的 SendCommandAsync 一致）。
+    /// [EN] Sends one command to the backend (through the non-streaming chat action, the same
+    /// [EN] as SendCommandAsync in the WPF version).
+    /// [ZH] 把一条指令发给后端（走非流式 chat 动作，与 WPF 版的 SendCommandAsync 一致）。
     ///
-    /// **但有几条指令必须由前端本地处理**（与 WPF 侧同一套做法）：后端对它们只回一句
-    /// 说明文本、不做任何事，转发过去等于"看起来执行了、其实什么都没发生"：
-    ///   * `/darkmode`  → 真正切换主题（后端不改前端主题，它管不着）；
-    ///   * `/snippet …` → 常用语的增删列表（存在前端 `snippets.json` 里，
-    ///                    后端的 `_snippet` 只回一句提示，SnippetStore 的 Add/Remove
-    ///                    此前**没有任何调用者**）；
-    ///   * `/help`、`/stop` → 后端不可用时的兜底。
-    /// 后端在线时 `/help` 仍然走后端（指令表由后端权威给出），只有离线才本地兜底。
+    /// [EN] **A few commands must be handled locally by the front end**, however (the same
+    /// [EN] approach as on the WPF side): the backend only replies with one explanatory
+    /// [EN] sentence and does nothing for them, so forwarding them means "it looks executed but
+    /// [EN] nothing happened":
+    /// [ZH] **但有几条指令必须由前端本地处理**（与 WPF 侧同一套做法）：后端对它们只回一句
+    /// [ZH] 说明文本、不做任何事，转发过去等于"看起来执行了、其实什么都没发生"：
+    /// [EN] * `/darkmode`  → actually switch the theme (the backend does not change the front
+    /// [EN] end theme; it has no say in it);
+    /// [ZH]   * `/darkmode`  → 真正切换主题（后端不改前端主题，它管不着）；
+    /// [EN] * `/snippet …` → add, remove and list snippets (stored in the front end's
+    /// [EN] `snippets.json`; the backend's `_snippet` only replies with a hint, and Add/Remove
+    /// [EN] of SnippetStore previously had **no caller at all**);
+    /// [ZH]   * `/snippet …` → 常用语的增删列表（存在前端 `snippets.json` 里，
+    /// [ZH]                    后端的 `_snippet` 只回一句提示，SnippetStore 的 Add/Remove
+    /// [ZH]                    此前**没有任何调用者**）；
+    /// [EN] * `/help`, `/stop` → fallbacks for when the backend is unavailable.
+    /// [ZH]   * `/help`、`/stop` → 后端不可用时的兜底。
+    /// [EN] While the backend is online, `/help` still goes through it (the command table is
+    /// [EN] authoritative on the backend); only the offline case is handled locally.
+    /// [ZH] 后端在线时 `/help` 仍然走后端（指令表由后端权威给出），只有离线才本地兜底。
     /// </summary>
     private async Task SendCommandAsync(string command)
     {
@@ -2162,7 +2541,8 @@ public partial class MainWindow : Window
         if (!_state.Backend.IsRunning
             && (verb == "/help" || verb == "/stop" || verb == "/darkmode" || verb == "/snippet"))
         {
-            // 离线兜底：这几个不需要后端也能正确执行
+            // [EN] Offline fallback: these commands work correctly without the backend.
+            // [ZH] 离线兜底：这几个不需要后端也能正确执行
             AddMessage("user", command);
             HandleLocalCommand(verb, head);
             return;
@@ -2189,8 +2569,11 @@ public partial class MainWindow : Window
             {
                 string content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
                 string action = GetStringField(doc.RootElement, "action");
-                // `/exit`：背板只回一句致谢，真正的"倒计时 + 关闭"必须前端做
-                // （v0.2.2 第 3 批，与 WPF 的 HandleChatResponse 同一处理）。
+                // [EN] `/exit`: the backend replies only with a thank-you note, so the actual
+                // [EN] "countdown + close" has to be done by the front end (v0.2.2 batch 3, the
+                // [EN] same handling as HandleChatResponse in WPF).
+                // [ZH] `/exit`：背板只回一句致谢，真正的"倒计时 + 关闭"必须前端做
+                // [ZH] （v0.2.2 第 3 批，与 WPF 的 HandleChatResponse 同一处理）。
                 if (action == "exit")
                 {
                     BeginExitCountdown(content.Length > 0
@@ -2201,7 +2584,10 @@ public partial class MainWindow : Window
                 if (content.Length > 0)
                     AddMessage("assistant", content);
                 ApplyStatusFields(doc.RootElement);
-                // `/model` 需要下载时后端回 confirm_model，由前端征得同意后再发下载
+                // [EN] When `/model` needs a download, the backend replies confirm_model; the
+                // [EN] front end asks for consent first and only then sends the download
+                // [EN] request.
+                // [ZH] `/model` 需要下载时后端回 confirm_model，由前端征得同意后再发下载
                 if (action == "confirm_model")
                     HandleConfirmModel(GetStringField(doc.RootElement, "model"));
                 if (doc.RootElement.TryGetProperty("context", out JsonElement ctx) && ctx.ValueKind == JsonValueKind.Object)
@@ -2220,17 +2606,28 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 本地指令（不经过后端；与 WPF 版的本地兜底同一套语义）
+    // [EN] Local commands (they do not go through the backend; the same semantics as the local
+    // [EN] fallbacks in the WPF version)
+    // [ZH] 本地指令（不经过后端；与 WPF 版的本地兜底同一套语义）
     // -----------------------------------------------------------------
 
     /// <summary>
-    /// `/darkmode` 与 `/snippet` 的前端本地实现。
+    /// [EN] Front end implementation of `/darkmode` and `/snippet`.
+    /// [ZH] `/darkmode` 与 `/snippet` 的前端本地实现。
     ///
-    /// 为什么不能让后端做：
-    ///   * 主题是**前端**的状态（`AppState.SetTheme`），后端改不了也不该改；
-    ///   * 常用语存在前端自己的 `snippets.json`（`SnippetStore`），后端只回一句提示。
-    /// 这两条在 WPF 侧都是本地处理的（`HandleDarkMode` / `HandleSnippetCommand`），
-    /// Avalonia 迁移时漏了，于是用户敲下去只看到一句"这个是前端管的"之类的回执。
+    /// [EN] Why the backend cannot do this:
+    /// [ZH] 为什么不能让后端做：
+    /// [EN] * the theme is **front end** state (`AppState.SetTheme`); the backend cannot change
+    /// [EN] it and should not;
+    /// [ZH]   * 主题是**前端**的状态（`AppState.SetTheme`），后端改不了也不该改；
+    /// [EN] * snippets live in the front end's own `snippets.json` (`SnippetStore`), and the
+    /// [EN] backend only replies with a hint.
+    /// [ZH]   * 常用语存在前端自己的 `snippets.json`（`SnippetStore`），后端只回一句提示。
+    /// [EN] Both are handled locally on the WPF side (`HandleDarkMode` /
+    /// [EN] `HandleSnippetCommand`); the Avalonia migration missed them, so typing the command
+    /// [EN] only produced a receipt such as "this is managed by the front end".
+    /// [ZH] 这两条在 WPF 侧都是本地处理的（`HandleDarkMode` / `HandleSnippetCommand`），
+    /// [ZH] Avalonia 迁移时漏了，于是用户敲下去只看到一句"这个是前端管的"之类的回执。
     /// </summary>
     private void HandleLocalCommand(string verb, string raw)
     {
@@ -2238,16 +2635,24 @@ public partial class MainWindow : Window
         {
             case "/darkmode":
             {
-                // 与主题按钮同一套三态循环：auto → light → dark → auto
+                // [EN] The same three-state cycle as the theme button: auto → light → dark →
+                // [EN] auto.
+                // [ZH] 与主题按钮同一套三态循环：auto → light → dark → auto
                 string next = _state.Settings.Theme switch
                 {
                     "auto" => "light",
                     "light" => "dark",
                     _ => "auto",
                 };
-                // 主题名走**已存在的**三个键（settings.general.themeSystem/Light/Dark）。
-                // 不要动态拼 "settings.general.theme." + next —— 那会拼出一个不存在的键，
-                // 语言包缺失时 Loc.T 会静默回落成兜底中文（反向审计脚本抓到过这一类）。
+                // [EN] The theme name uses the **three existing** keys
+                // [EN] (settings.general.themeSystem/Light/Dark).
+                // [ZH] 主题名走**已存在的**三个键（settings.general.themeSystem/Light/Dark）。
+                // [EN] Do not build "settings.general.theme." + next dynamically: that produces
+                // [EN] a key which does not exist.
+                // [ZH] 不要动态拼 "settings.general.theme." + next —— 那会拼出一个不存在的键，
+                // [EN] When the language pack lacks it, Loc.T silently falls back to the
+                // [EN] Chinese default (the reverse audit script caught this class of issue).
+                // [ZH] 语言包缺失时 Loc.T 会静默回落成兜底中文（反向审计脚本抓到过这一类）。
                 string label = next switch
                 {
                     "light" => Loc.T("settings.general.themeLight", "浅色"),
@@ -2256,7 +2661,10 @@ public partial class MainWindow : Window
                 };
                 _state.SetTheme(next);
                 ApplyTexts();
-                // 消息区整屏重渲染：换主题后旧气泡的配色也要跟着变（与换字号/换语言同一路径）
+                // [EN] Re-render the whole message area: after a theme change the colours of
+                // [EN] old bubbles must change too (the same path as font size and language
+                // [EN] changes).
+                // [ZH] 消息区整屏重渲染：换主题后旧气泡的配色也要跟着变（与换字号/换语言同一路径）
                 RenderTranscript();
                 AddMessage("assistant", Loc.T("main.local.darkmode", "🎨 主题已切换为：{0}", label));
                 break;
@@ -2267,7 +2675,8 @@ public partial class MainWindow : Window
                 string action = parts.Length > 1 ? parts[1].ToLowerInvariant() : "list";
                 if (action == "add")
                 {
-                    // 用法：/snippet add 名称 文本
+                    // [EN] Usage: /snippet add <name> <text>
+                    // [ZH] 用法：/snippet add 名称 文本
                     if (parts.Length < 4 && parts.Length < 3)
                     {
                         AddMessage("assistant", Loc.T("main.snippet.usageAdd",
@@ -2303,7 +2712,8 @@ public partial class MainWindow : Window
                         : Loc.T("main.snippet.notFound", "❌ 未找到常用语「{0}」", name));
                     break;
                 }
-                // list（或缺省）
+                // [EN] list (or the default).
+                // [ZH] list（或缺省）
                 _snippets.Load();
                 AddMessage("assistant", _snippets.Items.Count == 0
                     ? Loc.T("main.snippet.empty", "（还没有常用语，输入 /snippet add 名称 文本 添加）")
@@ -2326,7 +2736,8 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 常用语面板
+    // [EN] Snippet panel
+    // [ZH] 常用语面板
     // -----------------------------------------------------------------
 
     private void ToggleSnippetPalette()
@@ -2353,11 +2764,19 @@ public partial class MainWindow : Window
             ? Loc.T("main.snippet.close", "收起常用语选择框")
             : Loc.T("main.snippet.open", "打开常用语选择框");
 
-    /// <summary>点选一条常用语 → **插入到光标处**（v0.2.2 第 4 批 3c）。</summary>
+    /// <summary>
+    /// [EN] Select one snippet → **insert it at the caret** (v0.2.2 batch 4, item 3c).
+    /// [ZH] 点选一条常用语 → **插入到光标处**（v0.2.2 第 4 批 3c）。
+    /// </summary>
     ///
-    /// 此前是"覆盖整个输入框"：用户先写了一半、再想插一句常用语，前面的内容就没了。
-    /// WPF 侧的做法是插入到光标位置，这里对齐 —— 光标停在哪儿就插到哪儿，
-    /// 并且插完把光标放到插入内容的后面（用户可以接着写）。
+    /// [EN] This used to "overwrite the whole input box": if the user had written half a
+    /// [EN] sentence and then wanted to insert a snippet, everything typed before was lost. The
+    /// [EN] WPF side inserts at the caret position, and this version aligns with it: the
+    /// [EN] snippet goes wherever the caret is, and afterwards the caret is placed after the
+    /// [EN] inserted content so that the user can keep typing.
+    /// [ZH] 此前是"覆盖整个输入框"：用户先写了一半、再想插一句常用语，前面的内容就没了。
+    /// [ZH] WPF 侧的做法是插入到光标位置，这里对齐 —— 光标停在哪儿就插到哪儿，
+    /// [ZH] 并且插完把光标放到插入内容的后面（用户可以接着写）。
     private void InsertSnippet(Snippet snippet)
     {
         SnippetPalette.IsOpen = false;
@@ -2365,7 +2784,9 @@ public partial class MainWindow : Window
         string current = InputBox.Text ?? "";
         int caret = Math.Clamp(InputBox.CaretIndex, 0, current.Length);
         string inserted = snippet.Text;
-        // 前后各补一个空格，避免和已有文字粘成一个词（已经是行首/行尾时不补）
+        // [EN] Add one space on each side so that the snippet does not merge into an existing
+        // [EN] word (no space is added at the start or the end of the line).
+        // [ZH] 前后各补一个空格，避免和已有文字粘成一个词（已经是行首/行尾时不补）
         bool needSpaceBefore = caret > 0 && !char.IsWhiteSpace(current[caret - 1]);
         bool needSpaceAfter = caret < current.Length && !char.IsWhiteSpace(current[caret]);
         string piece = (needSpaceBefore ? " " : "") + inserted + (needSpaceAfter ? " " : "");
@@ -2376,10 +2797,15 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 通知条
+    // [EN] Notification bar
+    // [ZH] 通知条
     // -----------------------------------------------------------------
 
-    /// <summary>底部通知条：短暂显示后自动隐藏（6 秒，与 WPF 版一致）。</summary>
+    /// <summary>
+    /// [EN] Bottom notification bar: it is shown briefly and then hides itself (6 seconds, as
+    /// [EN] in the WPF version).
+    /// [ZH] 底部通知条：短暂显示后自动隐藏（6 秒，与 WPF 版一致）。
+    /// </summary>
     private void Toast(string message, bool error = false)
     {
         ToastText.Text = Emoji.Prefer(message);
@@ -2406,7 +2832,8 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 搜索开关 / 上下文压缩
+    // [EN] Search toggle / context compression
+    // [ZH] 搜索开关 / 上下文压缩
     // -----------------------------------------------------------------
 
     private async Task ToggleSearchAsync()
@@ -2436,8 +2863,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 手动压缩上下文：走 context_compress 而不是让用户等自动触发 ——
-    /// 准备上传大文件、或上下文已经 70% 时，用户需要一个"立刻腾地方"的按钮。
+    /// [EN] Manual context compression: it runs context_compress instead of making the user
+    /// [EN] wait for an automatic trigger.
+    /// [ZH] 手动压缩上下文：走 context_compress 而不是让用户等自动触发 ——
+    /// [EN] When about to upload a large file, or when the context is already at 70%, the user
+    /// [EN] needs a "free up space right now" button.
+    /// [ZH] 准备上传大文件、或上下文已经 70% 时，用户需要一个"立刻腾地方"的按钮。
     /// </summary>
     private async Task CompactContextAsync()
     {
@@ -2487,10 +2918,15 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 设置窗口
+    // [EN] Settings window
+    // [ZH] 设置窗口
     // -----------------------------------------------------------------
 
-    /// <summary>打开设置窗口并选中某个页签（状态区各项都是"点一下跳到对应设置"）。</summary>
+    /// <summary>
+    /// [EN] Opens the settings window and selects one tab (every item in the status area means
+    /// [EN] "click to jump to the matching settings page").
+    /// [ZH] 打开设置窗口并选中某个页签（状态区各项都是"点一下跳到对应设置"）。
+    /// </summary>
     private async Task OpenSettingsAsync(string tabKey)
     {
         try
@@ -2498,7 +2934,9 @@ public partial class MainWindow : Window
             var window = new SettingsWindow(_state);
             window.SelectTab(tabKey);
             await window.ShowDialog(this);
-            // 回来后把可能被改动的业务设置反映到状态区
+            // [EN] On return, reflect any business settings that may have changed in the status
+            // [EN] area.
+            // [ZH] 回来后把可能被改动的业务设置反映到状态区
             ApplyTexts();
             await RefreshStatusAsync();
         }
@@ -2509,7 +2947,8 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 发送 / 停止
+    // [EN] Send / stop
+    // [ZH] 发送 / 停止
     // -----------------------------------------------------------------
 
     private async Task SendAsync()
@@ -2518,7 +2957,9 @@ public partial class MainWindow : Window
         if (text.Length == 0 || _busy || !_state.Backend.IsRunning)
             return;
 
-        // 危险指令在发送前统一确认（与从指令面板执行时同一判据）
+        // [EN] Destructive commands are confirmed centrally before sending (the same criterion
+        // [EN] as execution from the command panel).
+        // [ZH] 危险指令在发送前统一确认（与从指令面板执行时同一判据）
         if (text.StartsWith('/') && IsDestructive(text) && !ConfirmDestructiveSend(text))
             return;
 
@@ -2530,7 +2971,9 @@ public partial class MainWindow : Window
         {
             if (!_state.Backend.ModelReady)
             {
-                // 无模型：后端会返回引导文案（非流式），界面不把它当失败
+                // [EN] No model: the backend returns guidance text (non-streaming) and the
+                // [EN] interface does not treat it as a failure.
+                // [ZH] 无模型：后端会返回引导文案（非流式），界面不把它当失败
                 JsonDocument? doc = await _state.Backend.SendAsync(new { action = "chat", message = text });
                 if (doc is null)
                 {
@@ -2555,9 +2998,14 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 聊天输入框里直接发送危险指令时的确认。
-    /// 与指令输入框同一套两段式确认，只是位置不同 —— 这里把指令搬进指令输入框，
-    /// 让"再按一次 Enter"发生在同一个地方（避免两个输入框各有一套确认状态）。
+    /// [EN] Confirmation when a destructive command is sent directly from the chat input box.
+    /// [ZH] 聊天输入框里直接发送危险指令时的确认。
+    /// [EN] It is the same two-step confirmation as in the command input box, only at a
+    /// [EN] different place: the command is moved into the command input box so that "press
+    /// [EN] Enter again" happens in one and the same place (avoiding two independent
+    /// [EN] confirmation states).
+    /// [ZH] 与指令输入框同一套两段式确认，只是位置不同 —— 这里把指令搬进指令输入框，
+    /// [ZH] 让"再按一次 Enter"发生在同一个地方（避免两个输入框各有一套确认状态）。
     /// </summary>
     private bool ConfirmDestructiveSend(string command)
     {
@@ -2581,7 +3029,7 @@ public partial class MainWindow : Window
     ///      cancellation support. Every delta reaches the buffers through the stream gate and is
     ///      rendered by the coalescing timer, never directly from the reader thread.
     /// [ZH] 流式执行一轮对话：双通道增量、结构化事件与可中止能力。每个增量均通过流式闸门写入
-    ///      缓冲区，并由合并式定时器渲染，绝不直接在后端读取线程上渲染。
+    /// [ZH] 缓冲区，并由合并式定时器渲染，绝不直接在后端读取线程上渲染。
     /// </summary>
     private async Task StreamChatAsync(string text)
     {
@@ -2603,9 +3051,12 @@ public partial class MainWindow : Window
                 //      the value of the previous request. Reporting it here would overwrite that
                 //      authoritative figure.
                 // [ZH] 上下文计量仅由 done 事件经 DispatchStreamEvent 与 ApplyContextFields 处理，
-                //      因为只有该路径携带上一轮请求的数值。在此处重复上报会覆盖该权威数值。
+                // [ZH] 因为只有该路径携带上一轮请求的数值。在此处重复上报会覆盖该权威数值。
                 onContext: (_, _) => { },
-                idleTimeout: null,   // 流式不设空闲超时（后端可能在等待很长的生成）
+                // [EN] Streaming does not set an idle timeout (the backend may wait a long time
+                // [EN] for a generation).
+                // [ZH] 流式不设空闲超时（后端可能在等待很长的生成）
+                idleTimeout: null,
                 cancellationToken: _streamCts.Token,
                 onEvent: DispatchStreamEvent,
                 onDeltaChannel: (channel, content, reset) => Dispatcher.UIThread.Post(() =>
@@ -2623,7 +3074,8 @@ public partial class MainWindow : Window
                     {
                         if (reset)
                         {
-                            // [EN] The answer channel is declared void: the accumulated content in
+                            // [EN] The answer channel is declared void: the accumulated content
+                            // [EN] in
                         //      fact belongs to the reasoning channel and is moved there.
                         // [ZH] 回答通道被声明作废：此前累积的内容实际属于思考通道，故迁移至该通道。
                             lock (_streamGate)
@@ -2656,7 +3108,7 @@ public partial class MainWindow : Window
             //      otherwise the previous figures remain on screen and the interface appears to be
             //      still computing.
             // [ZH] 生成失败：指标行必须明确说明失败，否则界面上会残留上一轮的数值，
-            //      使界面看起来仍在计算。
+            // [ZH] 使界面看起来仍在计算。
             _metricsFailed = true;
             Dispatcher.UIThread.Post(() => ShowMetrics(_liveMetrics));
         }
@@ -2676,14 +3128,23 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 流式事件分发（progress / agent_step / tool_call / tool_result / done）。
+    /// [EN] Streaming event dispatch (progress / agent_step / tool_call / tool_result / done).
+    /// [ZH] 流式事件分发（progress / agent_step / tool_call / tool_result / done）。
     ///
-    /// **为什么它是一个独立方法而不是内联在 StreamChatAsync 的 lambda 里**：
-    /// 无人值守的界面探针（Probe.cs）无法"点一下界面"来触发 Agent 步骤行，
-    /// 但它可以把后端真实发出的那些事件行逐条喂进这个方法，再读
-    /// <see cref="AgentStepRowCount"/> 断言"步骤行确实渲染出来了"。
-    /// 内联在 lambda 里时这条路径**没有任何办法在无人值守下验证**，
-    /// 而 v0.2.2 记录 §10 第 3 条（Agent 步骤行渲染）正是卡在这里。
+    /// [EN] **Why it is a separate method instead of a lambda inlined in StreamChatAsync**:
+    /// [ZH] **为什么它是一个独立方法而不是内联在 StreamChatAsync 的 lambda 里**：
+    /// [EN] an unattended interface probe (Probe.cs) cannot "click the interface" to trigger
+    /// [EN] Agent step rows, but it can feed the event lines the backend really emitted into
+    /// [EN] this method one by one and then read <see cref="AgentStepRowCount"/> to assert that
+    /// [EN] "the step rows really rendered".
+    /// [ZH] 无人值守的界面探针（Probe.cs）无法"点一下界面"来触发 Agent 步骤行，
+    /// [ZH] 但它可以把后端真实发出的那些事件行逐条喂进这个方法，再读
+    /// [ZH] <see cref="AgentStepRowCount"/> 断言"步骤行确实渲染出来了"。
+    /// [EN] When inlined in the lambda there was **no way to verify this path unattended**, and
+    /// [EN] item 3 of §10 in the v0.2.2 records (Agent step row rendering) was blocked exactly
+    /// [EN] there.
+    /// [ZH] 内联在 lambda 里时这条路径**没有任何办法在无人值守下验证**，
+    /// [ZH] 而 v0.2.2 记录 §10 第 3 条（Agent 步骤行渲染）正是卡在这里。
     /// </summary>
     public void DispatchStreamEvent(string type, JsonElement root)
     {
@@ -2691,7 +3152,9 @@ public partial class MainWindow : Window
         {
             case "progress":
             {
-                // 心跳：说明"还在算"，避免界面看起来像卡死
+                // [EN] Heartbeat: states "still computing" so that the interface does not look
+                // [EN] stuck.
+                // [ZH] 心跳：说明"还在算"，避免界面看起来像卡死
                 if (root.TryGetProperty("stats", out JsonElement beat) && beat.ValueKind == JsonValueKind.Object)
                 {
                     bool waiting = root.TryGetProperty("waiting_first_token", out JsonElement w)
@@ -2742,8 +3205,12 @@ public partial class MainWindow : Window
                 {
                     _liveMetrics = (_liveMetrics + "  "
                         + Loc.T("main.metrics.reasoningUnclosed", "⚠️ 思考未闭合（token 预算可能被思考用完）")).Trim();
-                    // 只拼进指标一行是不够的：思考未闭合意味着**思考还没写完就被截断**，
-                    // 用户需要立刻看到那段内容才能判断是不是预算不够（WPF 会展开折叠区）。
+                    // [EN] Appending it to the metrics row alone is not enough: an unclosed
+                    // [EN] reasoning block means the reasoning was **cut off before it had
+                    // [EN] finished**, and the user must see that content immediately to judge
+                    // [EN] whether the budget ran out (WPF expands the collapsible area).
+                    // [ZH] 只拼进指标一行是不够的：思考未闭合意味着**思考还没写完就被截断**，
+                    // [ZH] 用户需要立刻看到那段内容才能判断是不是预算不够（WPF 会展开折叠区）。
                     Dispatcher.UIThread.Post(() =>
                     {
                         if (_live is not null && _live.ThinkingText.Text?.Length > 0)
@@ -2783,12 +3250,20 @@ public partial class MainWindow : Window
     private static string FormatMs(int ms) => ms >= 1000 ? $"{ms / 1000.0:0.#}s" : $"{ms}ms";
 
     /// <summary>
-    /// 状态区的运行指标（后端实测上报，前端不做估算）。
+    /// [EN] Runtime metrics of the status area (measured and reported by the backend; the front
+    /// [EN] end does not estimate them).
+    /// [ZH] 状态区的运行指标（后端实测上报，前端不做估算）。
     ///
-    /// **失败态文案**（v0.2.2 第 4 批，差异清单 §F5 第 2 条）：WPF 的指标区分
-    /// running / waiting / done / stopped / **failed**，失败时显示 `main.metrics.failed`。
-    /// 跨平台版此前只有"有值就显示、没值就保持旧值"，生成失败时界面看起来像"还在算" ——
-    /// 这条差异本轮补掉。
+    /// [EN] **Failure-state wording** (v0.2.2 batch 4, item 2 of §F5 in the difference list):
+    /// [EN] WPF distinguishes running / waiting / done / stopped / **failed** for the metrics
+    /// [EN] and shows `main.metrics.failed` on failure.
+    /// [ZH] **失败态文案**（v0.2.2 第 4 批，差异清单 §F5 第 2 条）：WPF 的指标区分
+    /// [ZH] running / waiting / done / stopped / **failed**，失败时显示 `main.metrics.failed`。
+    /// [EN] The cross-platform version previously only did "show a value when there is one,
+    /// [EN] keep the old value otherwise", so a failed generation looked as if it were still
+    /// [EN] computing; this round closes that difference.
+    /// [ZH] 跨平台版此前只有"有值就显示、没值就保持旧值"，生成失败时界面看起来像"还在算" ——
+    /// [ZH] 这条差异本轮补掉。
     /// </summary>
     private void ShowMetrics(string text)
     {
@@ -2822,11 +3297,17 @@ public partial class MainWindow : Window
         _busy = busy;
         SendButton.IsEnabled = !busy;
         StopButton.IsVisible = busy;
-        // 指标定时刷新与"忙"状态同生共死（v0.2.2 第 3 批）：
-        // 空闲时每 500ms 问一次后端纯属浪费，而生成中不刷新就看不出速度变化。
+        // [EN] The periodic metrics refresh lives and dies with the "busy" state (v0.2.2 batch
+        // [EN] 3):
+        // [ZH] 指标定时刷新与"忙"状态同生共死（v0.2.2 第 3 批）：
+        // [EN] polling the backend every 500 ms while idle is pure waste, whereas not
+        // [EN] refreshing during generation hides speed changes.
+        // [ZH] 空闲时每 500ms 问一次后端纯属浪费，而生成中不刷新就看不出速度变化。
         if (busy)
         {
-            _metricsFailed = false;   // 新一轮生成：清掉上一次的失败标记
+            // [EN] A new generation round: clear the failure flag left by the previous one.
+            // [ZH] 新一轮生成：清掉上一次的失败标记
+            _metricsFailed = false;
             StartMetricsTimer();
         }
         else
@@ -2836,7 +3317,8 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // Agent 步骤区（agent_step / tool_call / tool_result 各一行）
+    // [EN] Agent step area (one row each for agent_step / tool_call / tool_result)
+    // [ZH] Agent 步骤区（agent_step / tool_call / tool_result 各一行）
     // -----------------------------------------------------------------
 
     private void HandleAgentStep(JsonElement root)
@@ -2846,7 +3328,9 @@ public partial class MainWindow : Window
         int maxSteps = GetIntField(root, "max_steps");
         if (phase == "finalize")
         {
-            // 步数用完后的"收敛"补一轮：用户要知道为什么突然出结论了
+            // [EN] One extra "convergence" round after the step budget is exhausted: the user
+            // [EN] needs to know why a conclusion suddenly appeared.
+            // [ZH] 步数用完后的"收敛"补一轮：用户要知道为什么突然出结论了
             AddAgentRow(Loc.T("main.agent.finalize", "🧩 正在汇总结论"), "MutedForegroundBrush");
         }
         else if (phase == "thinking")
@@ -2858,18 +3342,29 @@ public partial class MainWindow : Window
         }
         else if (phase == "thought")
         {
-            // 任务十三（自测问题修复-1）：后端把这一步的思考内容分离出来后，随
-            // phase="thought" 事件发过来。WPF 版把这一行渲染出来，Avalonia 迁移时漏了
-            // —— 于是跨平台版上"Agent 的思考过程"仍然看不见（本轮逐项比对时发现）。
-            // 有思考就渲染成一行（截断到 200 字符，与 tool_result 的观察结果同一口径），
-            // 没有就什么都不打，避免每步都多出一行空的。
+            // [EN] Development task 13 (self-test fix 1): after separating the reasoning
+            // [EN] content of this step, the backend sends it with the phase="thought" event.
+            // [EN] The WPF version renders that row; the Avalonia migration missed it, so the
+            // [EN] "Agent reasoning" was still invisible on the cross-platform version (found
+            // [EN] during this round's item-by-item comparison).
+            // [ZH] 任务十三（自测问题修复-1）：后端把这一步的思考内容分离出来后，随
+            // [ZH] phase="thought" 事件发过来。WPF 版把这一行渲染出来，Avalonia 迁移时漏了
+            // [ZH] —— 于是跨平台版上"Agent 的思考过程"仍然看不见（本轮逐项比对时发现）。
+            // [EN] When there is reasoning it is rendered as one row (truncated to 200
+            // [EN] characters, the same convention as the tool_result observation); when there
+            // [EN] is none nothing is printed, so that every step does not gain an empty row.
+            // [ZH] 有思考就渲染成一行（截断到 200 字符，与 tool_result 的观察结果同一口径），
+            // [ZH] 没有就什么都不打，避免每步都多出一行空的。
             string reasoning = GetStringField(root, "reasoning");
             if (reasoning.Trim().Length > 0)
                 AddAgentRow(Loc.T("main.agent.thought", "💭 {0}", OneLineText(reasoning, 200)),
                     "MutedForegroundBrush");
         }
-        // phase == "answer"：模型已决定直接作答，答案马上出现在回答区，
-        // 这里不再多打一行（步骤区只讲"用了什么工具"）
+        // [EN] phase == "answer": the model has decided to answer directly and the answer
+        // [EN] appears in the reply area immediately, so no extra row is printed here (the step
+        // [EN] area only covers "which tools were used").
+        // [ZH] phase == "answer"：模型已决定直接作答，答案马上出现在回答区，
+        // [ZH] 这里不再多打一行（步骤区只讲"用了什么工具"）
     }
 
     private void HandleToolCall(JsonElement root)
@@ -2894,7 +3389,9 @@ public partial class MainWindow : Window
         bool ok = root.TryGetProperty("ok", out JsonElement okEl) && okEl.ValueKind == JsonValueKind.True;
         if (!ok && IsAgentDeniedObservation(observation))
         {
-            // 权限不足单独一档、且加重字重：这不是"工具坏了"，而是"用户没授权"
+            // [EN] Insufficient permission is a separate case with a heavier font weight: this
+            // [EN] is not "the tool is broken" but "the user has not authorised it".
+            // [ZH] 权限不足单独一档、且加重字重：这不是"工具坏了"，而是"用户没授权"
             AddAgentRow(Loc.T("main.agent.denied",
                     "🔒 {0} 未启用（用 /agent allow {1} 授权后可用）", tool, tool),
                 "WarningBannerBrush", strong: true);
@@ -2912,14 +3409,19 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Agent 轮的汇总（步数 / 工具 / 总耗时）。判据是"真的跑过 Agent"。</summary>
+    /// <summary>
+    /// [EN] Summary of an Agent round (steps / tools / total time). The criterion is "the Agent
+    /// [EN] really ran".
+    /// [ZH] Agent 轮的汇总（步数 / 工具 / 总耗时）。判据是"真的跑过 Agent"。
+    /// </summary>
     private void HandleAgentSummary(JsonElement root)
     {
         if (!root.TryGetProperty("agent", out JsonElement agent) || agent.ValueKind != JsonValueKind.Object)
             return;
         int steps = GetIntField(agent, "steps");
         if (steps <= 0 && _agentRegion is null)
-            return;   // 普通对话不该被塞进一行"共 0 步"
+            return;   // [EN] An ordinary conversation must not get a "0 steps in total" row.
+                      // [ZH] 普通对话不该被塞进一行"共 0 步"
         if (agent.TryGetProperty("hit_max_steps", out JsonElement hit) && hit.ValueKind == JsonValueKind.True)
             AddAgentRow(Loc.T("main.agent.hitMax", "⚠️ 已达步数上限，改为直接给结论"), "WarningBannerBrush");
         bool stopped = root.TryGetProperty("stopped", out JsonElement st) && st.ValueKind == JsonValueKind.True;
@@ -2979,7 +3481,9 @@ public partial class MainWindow : Window
         };
         ToolTip.SetTip(border, Loc.T("main.agent.tip",
             "模型自己决定的每一步：调用哪个工具、参数是什么、返回了什么、耗时多久。按 Esc 可随时停止。"));
-        // 界面探针用：按这个 AutomationId 找 Agent 步骤区
+        // [EN] Used by the interface probe: it locates the Agent step area by this
+        // [EN] AutomationId.
+        // [ZH] 界面探针用：按这个 AutomationId 找 Agent 步骤区
         AutomationProperties.SetAutomationId(border, "AgentTrace");
         return (border, rows);
     }
@@ -2988,7 +3492,9 @@ public partial class MainWindow : Window
     {
         var row = new TextBlock
         {
-            // 与消息文本一致地做 emoji 降级（本机没有 emoji 字体时换成纯文本标记）
+            // [EN] Emoji degradation is applied consistently with the message text (text
+            // [EN] markers are used when the local machine has no emoji font).
+            // [ZH] 与消息文本一致地做 emoji 降级（本机没有 emoji 字体时换成纯文本标记）
             Text = Emoji.Prefer(text),
             FontSize = Math.Max(9, _state.Settings.FontSize - 2),
             TextWrapping = TextWrapping.Wrap,
@@ -2998,7 +3504,11 @@ public partial class MainWindow : Window
         rows.Children.Add(row);
     }
 
-    /// <summary>Agent 步骤区的字号跟随全局字号（Ctrl+滚轮调字号时才不会落下它）。</summary>
+    /// <summary>
+    /// [EN] The font size of the Agent step area follows the global font size, so that
+    /// [EN] Ctrl+wheel does not leave it behind.
+    /// [ZH] Agent 步骤区的字号跟随全局字号（Ctrl+滚轮调字号时才不会落下它）。
+    /// </summary>
     private void ScaleAgentTrace()
     {
         if (_agentRegion is null)
@@ -3024,34 +3534,56 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 工具返回「没权限」而不是「执行失败」的判据。
+    /// [EN] Criterion for a tool returning "no permission" rather than "execution failed".
+    /// [ZH] 工具返回「没权限」而不是「执行失败」的判据。
     ///
-    /// 后端的措辞是固定的两句中文（agent_tools.ToolRegistry.run：敏感工具未授权时
-    /// 「…当前未启用…」，本版不提供的保护类工具「…当前不可用」），而它就是模型看到的
-    /// 原始观察结果、不随界面语言变 —— 所以按原文匹配是稳的。
+    /// [EN] The backend wording consists of two fixed Chinese sentences
+    /// [EN] (agent_tools.ToolRegistry.run: "…not enabled at present…" when a sensitive tool is
+    /// [EN] not authorised, and "…not available at present" for protection tools this release
+    /// [EN] does not provide). That text is the raw observation the model sees and does not
+    /// [EN] vary with the interface language, so matching on the original text is stable.
+    /// [ZH] 后端的措辞是固定的两句中文（agent_tools.ToolRegistry.run：敏感工具未授权时
+    /// [ZH] 「…当前未启用…」，本版不提供的保护类工具「…当前不可用」），而它就是模型看到的
+    /// [ZH] 原始观察结果、不随界面语言变 —— 所以按原文匹配是稳的。
     /// </summary>
     private static bool IsAgentDeniedObservation(string observation)
         => observation.Contains(AgentDeniedMark, StringComparison.Ordinal)
-           // 兼容旧串：v0.2.2 之前后端那两句是写死中文的（旧版后端仍可能这么发）
+           // [EN] Compatibility with older strings: before v0.2.2 those two backend sentences
+           // [EN] were hard-coded Chinese (an older backend may still send them).
+           // [ZH] 兼容旧串：v0.2.2 之前后端那两句是写死中文的（旧版后端仍可能这么发）
            || observation.Contains("未启用", StringComparison.Ordinal)
            || observation.Contains("当前不可用", StringComparison.Ordinal);
 
     /// <summary>
-    /// 后端"被拒绝"观察串的**语言无关标记**（v0.2.2 硬编码清查第 6 批）。
+    /// [EN] **Language-independent marker** for the backend's "denied" observation string
+    /// [EN] (v0.2.2 hard-code audit, batch 6).
+    /// [ZH] 后端"被拒绝"观察串的**语言无关标记**（v0.2.2 硬编码清查第 6 批）。
     ///
-    /// 原先只能按中文原文匹配（见上面注释），但后端那两句本地化后**不再固定是中文**，
-    /// 按原文匹配在英文界面下必然失效。现在后端在观察串前加这个 ASCII 标记，
-    /// 前端据此判定，显示前剥掉（见 <see cref="OneLineText"/>）。
+    /// [EN] Previously the match could only use the Chinese original (see the comment above),
+    /// [EN] but after localisation those two backend sentences are **no longer always
+    /// [EN] Chinese**, so matching on the original text necessarily fails in an English
+    /// [EN] interface.
+    /// [ZH] 原先只能按中文原文匹配（见上面注释），但后端那两句本地化后**不再固定是中文**，
+    /// [ZH] 按原文匹配在英文界面下必然失效。现在后端在观察串前加这个 ASCII 标记，
+    /// [EN] The backend now prefixes the observation string with this ASCII marker; the front
+    /// [EN] end decides from it and strips it before display (see <see cref="OneLineText"/>).
+    /// [ZH] 前端据此判定，显示前剥掉（见 <see cref="OneLineText"/>）。
     /// </summary>
     private const string AgentDeniedMark = "[!DENIED] ";
 
-    /// <summary>把多行文本压成一行并截断：步骤行的参数与工具返回常是多行/很长的 JSON。</summary>
+    /// <summary>
+    /// [EN] Collapses multi-line text into one line and truncates it: step row arguments and
+    /// [EN] tool results are often multi-line or very long JSON.
+    /// [ZH] 把多行文本压成一行并截断：步骤行的参数与工具返回常是多行/很长的 JSON。
+    /// </summary>
     private static string OneLineText(string text, int max)
     {
         if (string.IsNullOrEmpty(text))
             return "";
         string flat = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
-        // 剥掉"被拒绝"标记：它只给判定用，不该显示给用户
+        // [EN] Strip the "denied" marker: it exists only for the decision and must not be shown
+        // [EN] to the user.
+        // [ZH] 剥掉"被拒绝"标记：它只给判定用，不该显示给用户
         if (flat.StartsWith(AgentDeniedMark, StringComparison.Ordinal))
             flat = flat[AgentDeniedMark.Length..].Trim();
         while (flat.Contains("  ", StringComparison.Ordinal))
@@ -3060,13 +3592,17 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 文件上传
+    // [EN] File upload
+    // [ZH] 文件上传
     // -----------------------------------------------------------------
 
     private async Task PickFilesAsync()
     {
-        // 待确认的超限上传：再点一次「上传文件」即继续（Avalonia 没有 MessageBox，
-        // 与危险指令、模型下载用的是同一套两段式确认）。
+        // [EN] An over-limit upload awaiting confirmation: clicking "upload files" once more
+        // [EN] continues (Avalonia has no MessageBox, so this is the same two-step confirmation
+        // [EN] used for destructive commands and model downloads).
+        // [ZH] 待确认的超限上传：再点一次「上传文件」即继续（Avalonia 没有 MessageBox，
+        // [ZH] 与危险指令、模型下载用的是同一套两段式确认）。
         if (_pendingUpload.Count > 0)
         {
             List<string> confirmed = _pendingUpload;
@@ -3079,8 +3615,11 @@ public partial class MainWindow : Window
         {
             Title = Loc.T("main.upload.chooseTitle", "选择要上传的文件"),
             AllowMultiple = true,
-            // 扩展名过滤器（v0.2.2 第 4 批 3c）：WPF 侧一直有，跨平台版此前是"所有文件"。
-            // 与 WPF 同一份清单（doc/docx/xls/xlsx/ppt/pptx/txt/pdf）。
+            // [EN] Extension filter (v0.2.2 batch 4, item 3c): the WPF side always had one,
+            // [EN] while the cross-platform version previously accepted "all files".
+            // [ZH] 扩展名过滤器（v0.2.2 第 4 批 3c）：WPF 侧一直有，跨平台版此前是"所有文件"。
+            // [EN] The same list as in WPF (doc/docx/xls/xlsx/ppt/pptx/txt/pdf).
+            // [ZH] 与 WPF 同一份清单（doc/docx/xls/xlsx/ppt/pptx/txt/pdf）。
             FileTypeFilter = new[]
             {
                 new FilePickerFileType(Loc.T("main.upload.filter", "支持的文件"))
@@ -3100,7 +3639,9 @@ public partial class MainWindow : Window
 
     private void OnDragOver(object? sender, DragEventArgs e)
     {
-        // Avalonia 12 的拖放换成了 DataTransfer API（e.Data / DataFormats.Files 已移除）
+        // [EN] Drag and drop in Avalonia 12 uses the DataTransfer API (e.Data /
+        // [EN] DataFormats.Files has been removed).
+        // [ZH] Avalonia 12 的拖放换成了 DataTransfer API（e.Data / DataFormats.Files 已移除）
         e.DragEffects = e.DataTransfer.Contains(DataFormat.File) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
@@ -3124,17 +3665,32 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 上传文件（`file_stream`）：单文件与多文件是同一个动作的两种参数形态。
+    /// [EN] Uploads files (`file_stream`): a single file and several files are two parameter
+    /// [EN] shapes of the same action.
+    /// [ZH] 上传文件（`file_stream`）：单文件与多文件是同一个动作的两种参数形态。
     ///
-    /// v0.2.2 第 4 批 3c 补齐四处（此前只写状态栏一行）：
-    ///   * **文件数与总量超限询问**（10 个 / 60MB）：超限先问一次，确认后只处理前 10 个；
-    ///   * **逐份上传状态**（`file_status` 的 start / ok / failed）就地更新同一条消息；
-    ///   * **长文档分段摘要进度**（`summary_progress`）：替换当前文件那一行，不追加刷屏；
-    ///   * **上传期间可中止**：把 `_streamCts` 真正挂上（此前它是 null，点「停止」无效），
-    ///     Esc / ⏹ 都能真的停下后端。
+    /// [EN] v0.2.2 batch 4, item 3c completed four things (previously only one status bar line
+    /// [EN] was written):
+    /// [ZH] v0.2.2 第 4 批 3c 补齐四处（此前只写状态栏一行）：
+    /// [EN] * **Ask when the file count or total size is over the limit** (10 files / 60 MB):
+    /// [EN] ask once first, and process only the first 10 after confirmation;
+    /// [ZH]   * **文件数与总量超限询问**（10 个 / 60MB）：超限先问一次，确认后只处理前 10 个；
+    /// [EN] * **Per-file upload status** (`file_status` start / ok / failed) updates the same
+    /// [EN] message in place;
+    /// [ZH]   * **逐份上传状态**（`file_status` 的 start / ok / failed）就地更新同一条消息；
+    /// [EN] * **Chunked summary progress for long documents** (`summary_progress`): replaces
+    /// [EN] the line of the current file instead of appending and flooding the view;
+    /// [ZH]   * **长文档分段摘要进度**（`summary_progress`）：替换当前文件那一行，不追加刷屏；
+    /// [EN] * **The upload can be aborted**: `_streamCts` is now really attached (it used to be
+    /// [EN] null, so "stop" did nothing), and both Esc and ⏹ can actually stop the backend.
+    /// [ZH]   * **上传期间可中止**：把 `_streamCts` 真正挂上（此前它是 null，点「停止」无效），
+    /// [ZH]     Esc / ⏹ 都能真的停下后端。
     ///
-    /// 数量与总量的**规则以后端为准**（`sys.files_too_many` / `sys.files_partial`），
-    /// 前端这一套只用于"先问一句"，不自己另算一套结论。
+    /// [EN] The **rules for the count and the total size are those of the backend**
+    /// [EN] (`sys.files_too_many` / `sys.files_partial`); the front end copy only serves to
+    /// [EN] "ask first" and does not derive its own conclusions.
+    /// [ZH] 数量与总量的**规则以后端为准**（`sys.files_too_many` / `sys.files_partial`），
+    /// [ZH] 前端这一套只用于"先问一句"，不自己另算一套结论。
     /// </summary>
     private async Task SendFilesAsync(List<string> paths, bool confirmed = false)
     {
@@ -3147,7 +3703,8 @@ public partial class MainWindow : Window
         if (list.Count == 0)
             return;
 
-        // ---- 超限询问（只问一次；再点一次「上传文件」= 继续）----
+        // [EN] ---- Over-limit prompt (asked once; "upload files" again continues) ----
+        // [ZH] ---- 超限询问（只问一次；再点一次「上传文件」= 继续）----
         if (!confirmed && list.Count > 1)
         {
             long totalBytes = 0;
@@ -3178,18 +3735,26 @@ public partial class MainWindow : Window
 
         AddMessage("user", "📎 " + string.Join("\n", list.Select(Path.GetFileName)));
 
-        // 逐份状态与分段摘要都写进**同一条**系统消息（8 个文件也不会把对话刷满）
+        // [EN] Per-file status and chunked summaries are both written into **the same** system
+        // [EN] message (so eight files do not flood the conversation).
+        // [ZH] 逐份状态与分段摘要都写进**同一条**系统消息（8 个文件也不会把对话刷满）
         AddMessage("system", list.Count > 1
             ? Loc.T("main.upload.uploadingMany", "📥 正在上传 {0} 个文件…", list.Count)
             : Loc.T("main.upload.uploading", "📤 正在上传文件: {0} ...", Path.GetFileName(list[0])));
         var lines = new List<string>();
 
         SetBusy(true);
-        // 上传期间「发送」按钮的**含义**变成停止（与 WPF 一致），但外观仍是 WPF 的 ➤ 图标：
-        // 文字提示放在 ToolTip 里，不在按钮上换字（WPF 版按钮上从来没有文字）。
+        // [EN] During an upload the **meaning** of the "send" button becomes stop (as in WPF),
+        // [EN] while its appearance remains the WPF ➤ icon.
+        // [ZH] 上传期间「发送」按钮的**含义**变成停止（与 WPF 一致），但外观仍是 WPF 的 ➤ 图标：
+        // [EN] The text hint lives in the ToolTip; the label on the button is not replaced (the
+        // [EN] WPF button never carried text).
+        // [ZH] 文字提示放在 ToolTip 里，不在按钮上换字（WPF 版按钮上从来没有文字）。
         ToolTip.SetTip(SendButton, Loc.T("main.button.stopSummaryTip", "中止分段摘要 (Esc)"));
         _streamCts = new CancellationTokenSource();
-        // 探针据此断言"上传期间真的可以中止"（此前 _streamCts 是 null，点停停止无效）
+        // [EN] The probe uses this to assert that "an upload really can be aborted" (previously
+        // [EN] _streamCts was null and clicking stop did nothing).
+        // [ZH] 探针据此断言"上传期间真的可以中止"（此前 _streamCts 是 null，点停停止无效）
         ProbeUploadCancellable = true;
         ProbeUploadStatusLines = 0;
         int okCount = 0, failedCount = 0;
@@ -3201,7 +3766,9 @@ public partial class MainWindow : Window
             string content = await _state.Backend.SendStreamAsync(
                 request,
                 onDelta: null,
-                // 同上：上下文显示交给 done 行的 ApplyContextFields（那里才有 used_last_request）
+                // [EN] Same as above: the context display is left to ApplyContextFields on the
+                // [EN] done line (only there is used_last_request available).
+                // [ZH] 同上：上下文显示交给 done 行的 ApplyContextFields（那里才有 used_last_request）
                 onContext: (_, _) => { },
                 idleTimeout: BackendService.HeavyIdleTimeout,
                 cancellationToken: _streamCts.Token,
@@ -3233,24 +3800,38 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>超限上传的待确认列表（再点一次「上传文件」即继续）。</summary>
+    /// <summary>
+    /// [EN] Pending list of an over-limit upload (clicking "upload files" once more continues).
+    /// [ZH] 超限上传的待确认列表（再点一次「上传文件」即继续）。
+    /// </summary>
     private List<string> _pendingUpload = new();
 
-    /// <summary>单次上传的文件数上限（与 WPF 一致）。</summary>
+    /// <summary>
+    /// [EN] Maximum number of files in one upload (the same as in WPF).
+    /// [ZH] 单次上传的文件数上限（与 WPF 一致）。
+    /// </summary>
     private const int MaxUploadCount = 10;
 
-    /// <summary>单次上传的总量上限（60 MB，与 WPF 一致）。</summary>
+    /// <summary>
+    /// [EN] Maximum total size of one upload (60 MB, the same as in WPF).
+    /// [ZH] 单次上传的总量上限（60 MB，与 WPF 一致）。
+    /// </summary>
     private const long MaxUploadBytes = 60L * 1024 * 1024;
 
     private static string FormatBytes(long bytes)
         => bytes >= 1048576 ? $"{bytes / 1048576.0:0.#} MB" : $"{bytes / 1024.0:0.#} KB";
 
     /// <summary>
-    /// 把上传过程中的结构化事件渲染成"逐份状态 + 摘要进度"。
+    /// [EN] Renders the structured events of an upload as "per-file status + summary progress".
+    /// [ZH] 把上传过程中的结构化事件渲染成"逐份状态 + 摘要进度"。
     ///
-    /// 两条事件的分工（与 WPF 一致）：
-    ///   * `file_status`：一份文件的开始 / 成功 / 失败，**追加**一行；
-    ///   * `summary_progress`：长文档分段摘要的进度，**替换最后一行**（不追加，否则刷屏）。
+    /// [EN] Division of labour between the two events (the same as in WPF):
+    /// [ZH] 两条事件的分工（与 WPF 一致）：
+    /// [EN] * `file_status`: start / success / failure of one file, **appends** a line;
+    /// [ZH]   * `file_status`：一份文件的开始 / 成功 / 失败，**追加**一行；
+    /// [EN] * `summary_progress`: progress of the chunked summary of a long document,
+    /// [EN] **replaces the last line** (no appending, which would flood the view).
+    /// [ZH]   * `summary_progress`：长文档分段摘要的进度，**替换最后一行**（不追加，否则刷屏）。
     /// </summary>
     private void DispatchUploadEvent(string type, JsonElement root, List<string> lines,
                                      ref int okCount, ref int failedCount)
@@ -3299,7 +3880,11 @@ public partial class MainWindow : Window
         RenderUploadStatus(lines);
     }
 
-    /// <summary>把多行上传状态写进最后一条系统消息（就地更新，不新增气泡）。</summary>
+    /// <summary>
+    /// [EN] Writes the multi-line upload status into the last system message (updates it in
+    /// [EN] place and does not add a bubble).
+    /// [ZH] 把多行上传状态写进最后一条系统消息（就地更新，不新增气泡）。
+    /// </summary>
     private void RenderUploadStatus(List<string> lines)
     {
         ProbeUploadStatusLines = lines.Count;
@@ -3308,7 +3893,9 @@ public partial class MainWindow : Window
         {
             if (_transcript.Count > 0)
                 _transcript[^1] = _transcript[^1] with { Content = Emoji.Prefer(text) };
-            // 最后一条视图就是刚加的那条系统消息（AddMessage 之后没有追加别的）
+            // [EN] The last view is exactly the system message that was just added (nothing
+            // [EN] else was appended after AddMessage).
+            // [ZH] 最后一条视图就是刚加的那条系统消息（AddMessage 之后没有追加别的）
             if (_progressView is not null)
                 _progressView.ContentHost.Content = BuildPlainText("system", text);
             else if (MessagePanel.Children.Count > 0
@@ -3320,7 +3907,11 @@ public partial class MainWindow : Window
         });
     }
 
-    /// <summary>把一条系统消息视图的正文换成新的纯文本（就地更新用）。</summary>
+    /// <summary>
+    /// [EN] Replaces the body of a system message view with new plain text (used for in-place
+    /// [EN] updates).
+    /// [ZH] 把一条系统消息视图的正文换成新的纯文本（就地更新用）。
+    /// </summary>
     private void ReplaceLastPlainText(Control root, string text)
     {
         foreach (Control control in EnumerateDescendants(root))
@@ -3345,16 +3936,30 @@ public partial class MainWindow : Window
         item.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.True;
 
     // -----------------------------------------------------------------
-    // 探针接口（`EchoDesk --probe upload` 用：上传路径与常用语插入）
+    // [EN] Probe interface (used by `EchoDesk --probe upload`: the upload path and snippet
+    // [EN] insertion)
+    // [ZH] 探针接口（`EchoDesk --probe upload` 用：上传路径与常用语插入）
     // -----------------------------------------------------------------
 
-    /// <summary>上传期间是否挂上了可取消的 CTS（点「停止」/Esc 能不能真的停下后端）。</summary>
+    /// <summary>
+    /// [EN] Whether a cancellable CTS was attached during the upload (whether "stop" / Esc can
+    /// [EN] really stop the backend).
+    /// [ZH] 上传期间是否挂上了可取消的 CTS（点「停止」/Esc 能不能真的停下后端）。
+    /// </summary>
     public bool ProbeUploadCancellable { get; private set; }
 
-    /// <summary>最近一次上传里逐份状态行的条数（断言"逐份状态真的渲染了"）。</summary>
+    /// <summary>
+    /// [EN] Number of per-file status lines in the most recent upload (asserts that "the
+    /// [EN] per-file status really rendered").
+    /// [ZH] 最近一次上传里逐份状态行的条数（断言"逐份状态真的渲染了"）。
+    /// </summary>
     public int ProbeUploadStatusLines { get; private set; }
 
-    /// <summary>最近一条系统消息的正文（断言上传结果写在了界面上）。</summary>
+    /// <summary>
+    /// [EN] Text of the most recent system message (asserts that the upload result was written
+    /// [EN] to the interface).
+    /// [ZH] 最近一条系统消息的正文（断言上传结果写在了界面上）。
+    /// </summary>
     public string ProbeLastSystemText()
     {
         for (int i = _transcript.Count - 1; i >= 0; i--)
@@ -3365,13 +3970,20 @@ public partial class MainWindow : Window
         return "";
     }
 
-    /// <summary>探针：走一次真实上传（不经过文件选择器）。</summary>
+    /// <summary>
+    /// [EN] Probe: performs one real upload (bypassing the file picker).
+    /// [ZH] 探针：走一次真实上传（不经过文件选择器）。
+    /// </summary>
     public async Task ProbeUploadAsync(List<string> paths, bool confirmed = true)
     {
         await SendFilesAsync(paths, confirmed);
     }
 
-    /// <summary>探针：直接设置输入框内容与光标，然后插一条常用语（验"插入到光标处"）。</summary>
+    /// <summary>
+    /// [EN] Probe: sets the input box content and the caret directly, then inserts one snippet
+    /// [EN] (verifies "insert at the caret").
+    /// [ZH] 探针：直接设置输入框内容与光标，然后插一条常用语（验"插入到光标处"）。
+    /// </summary>
     public string ProbeInsertSnippetAtCaret(string current, int caret, string snippetText)
     {
         InputBox.Text = current;
@@ -3381,9 +3993,15 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 探针：填入一组**演示数据**，供 README 截图使用（`--probe shots`）。
-    /// 只走真实的消息渲染路径（AddMessage / MarkdownRenderer / 状态条），不截图临时拼的控件，
-    /// 因此截图里的排版、字号、状态区与用户实际看到的完全一致。
+    /// [EN] Probe: fills in a set of **demo data** for the README screenshots (`--probe
+    /// [EN] shots`).
+    /// [ZH] 探针：填入一组**演示数据**，供 README 截图使用（`--probe shots`）。
+    /// [EN] Only the real message rendering path is used (AddMessage / MarkdownRenderer /
+    /// [EN] status bar); no controls are assembled ad hoc for the screenshot,
+    /// [ZH] 只走真实的消息渲染路径（AddMessage / MarkdownRenderer / 状态条），不截图临时拼的控件，
+    /// [EN] so the layout, font size and status area in the screenshot are exactly what the
+    /// [EN] user sees.
+    /// [ZH] 因此截图里的排版、字号、状态区与用户实际看到的完全一致。
     /// </summary>
     public void ProbePrepareShowcase(bool english = false)
     {
@@ -3481,7 +4099,8 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 消息渲染
+    // [EN] Message rendering
+    // [ZH] 消息渲染
     // -----------------------------------------------------------------
 
     /// <summary>
@@ -3489,7 +4108,7 @@ public partial class MainWindow : Window
     ///      throttled Markdown refresh and the breathing phase of the streaming caret, therefore
     ///      no second timer competes for the UI thread budget.
     /// [ZH] 启动合并式渲染定时器。由单个调度定时器同时驱动节流后的 Markdown 刷新与流式光标的
-    ///      呼吸相位，因此不会有第二个定时器争夺界面线程的时间预算。
+    /// [ZH] 呼吸相位，因此不会有第二个定时器争夺界面线程的时间预算。
     /// </summary>
     private void StartRenderTimer()
     {
@@ -3506,14 +4125,15 @@ public partial class MainWindow : Window
     /// [EN] Stops the render timer and performs a final flush so that the last token received
     ///      before completion is always rendered, even when it arrived after the final tick.
     /// [ZH] 停止渲染定时器并执行最终刷新，确保完成之前收到的最后一个 Token 一定被渲染，
-    ///      即使它晚于最后一次定时器触发才到达。
+    /// [ZH] 即使它晚于最后一次定时器触发才到达。
     /// </summary>
     private void StopRenderTimer()
     {
         _renderTimer?.Stop();
         if (_renderDirty)
             RenderLive();
-        // [EN] The caret and the first-token dots belong to the streaming state only; completion
+        // [EN] The caret and the first-token dots belong to the streaming state only;
+        // [EN] completion
         //      removes both immediately.
         // [ZH] 光标与首字圆点仅属于流式状态；生成完成时二者立即移除。
         _liveCaret = null;
@@ -3527,7 +4147,7 @@ public partial class MainWindow : Window
         //      same rule and are advanced from this single tick so that no additional timer is
         //      introduced.
         // [ZH] 不透明度仅影响渲染，因此呼吸更新不会使测量失效，也不会重新安排文本布局。首字圆点遵循
-        //      同一规则，并在同一次节拍内推进，因此不引入任何额外定时器。
+        // [ZH] 同一规则，并在同一次节拍内推进，因此不引入任何额外定时器。
         UpdateCaretOpacity();
         UpdateLoadingDotsOpacity();
         if (_renderDirty)
@@ -3541,7 +4161,7 @@ public partial class MainWindow : Window
     ///      the caller, so no UI element is touched here; only the shared buffer is extended and
     ///      the render pass is marked as pending.
     /// [ZH] 在流式闸门下追加回答片段。调用方可能是后端读取线程，因此此处不触碰任何界面元素；
-    ///      仅扩展共享缓冲区并将渲染过程标记为待执行。
+    /// [ZH] 仅扩展共享缓冲区并将渲染过程标记为待执行。
     /// </summary>
     private void AppendAnswerText(string text)
     {
@@ -3596,7 +4216,7 @@ public partial class MainWindow : Window
     ///      and one text line high, and it is inserted into the inline flow rather than overlaid,
     ///      so it cannot cover surrounding content.
     /// [ZH] 按当前字号创建光标元素。该元素宽两像素、高度为一行文本，并插入行内流中而非叠加层，
-    ///      因此不会遮挡周围内容。
+    /// [ZH] 因此不会遮挡周围内容。
     /// </summary>
     private Control CreateTypingCaret()
     {
@@ -3620,7 +4240,7 @@ public partial class MainWindow : Window
     ///      continuous 1 -> 0 -> 1 cosine cycle. The phase is continuous across re-renders, so
     ///      a recreated caret resumes at the same level instead of restarting.
     /// [ZH] 光标的当前呼吸不透明度，根据已流逝的流式时间在连续的 1 → 0 → 1 余弦周期上计算。
-    ///      相位在多次重渲染之间保持连续，因此重建后的光标从同一水平继续，而不会重新开始。
+    /// [ZH] 相位在多次重渲染之间保持连续，因此重建后的光标从同一水平继续，而不会重新开始。
     /// </summary>
     private double CaretOpacity()
     {
@@ -3639,7 +4259,7 @@ public partial class MainWindow : Window
     ///      three dots that blink in sequence, which communicates progress without the abrupt
     ///      appearance of a spinner and without requesting a single layout pass.
     /// [ZH] 将首字指示器安装到实时消息中。该指示器由三个依次闪烁的圆点组成，在不出现生硬的旋转指示器
-    ///      的前提下传达进展，并且不请求任何布局过程。
+    /// [ZH] 的前提下传达进展，并且不请求任何布局过程。
     /// </summary>
     private void ShowLoadingIndicator()
     {
@@ -3651,11 +4271,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// [EN] Creates the three-dot indicator. Each dot is a filled border whose opacity is derived
+    /// [EN] Creates the three-dot indicator. Each dot is a filled border whose opacity is
+    /// [EN] derived
     ///      from the shared streaming clock, therefore the animation survives re-parenting and
     ///      never restarts from an arbitrary phase.
     /// [ZH] 创建三点指示器。每个圆点均为实心边框，其不透明度取自共享的流式时钟，因此动画在挂载变更后
-    ///      仍然连续，且不会从任意相位重新开始。
+    /// [ZH] 仍然连续，且不会从任意相位重新开始。
     /// </summary>
     private Panel CreateLoadingDots()
     {
@@ -3687,10 +4308,11 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// [EN] Opacity of one first-token dot at the current instant. The phase runs on a continuous
+    /// [EN] Opacity of one first-token dot at the current instant. The phase runs on a
+    /// [EN] continuous
     ///      cosine cycle and is offset per dot, which yields the sequential blink.
     /// [ZH] 某一首字圆点在当前时刻的不透明度。相位沿连续的余弦周期推进，并按圆点序号偏移，从而形成
-    ///      依次闪烁的效果。
+    /// [ZH] 依次闪烁的效果。
     /// </summary>
     private double LoadingDotOpacity(int index)
     {
@@ -3715,7 +4337,7 @@ public partial class MainWindow : Window
     ///      render interval and skips work when neither the text nor the caret state changed,
     ///      which prevents repeated Markdown parsing from entering a layout feedback loop.
     /// [ZH] 将缓冲的回答渲染进流式消息。该过程每个渲染间隔至多执行一次，并在文本与光标状态均未
-    ///      变化时跳过，从而防止重复的 Markdown 解析进入布局反馈循环。
+    /// [ZH] 变化时跳过，从而防止重复的 Markdown 解析进入布局反馈循环。
     /// </summary>
     private void RenderLive()
     {
@@ -3727,7 +4349,8 @@ public partial class MainWindow : Window
             return;
         _liveRendered = answer;
         _renderCount++;
-        // [EN] The first-token indicator is retired by the first render pass that carries content,
+        // [EN] The first-token indicator is retired by the first render pass that carries
+        // [EN] content,
         //      therefore it can never remain visible behind an answer.
         // [ZH] 首个携带内容的渲染过程即撤下首字指示器，因此它绝不会残留在回答之后。
         _liveLoading = null;
@@ -3772,10 +4395,11 @@ public partial class MainWindow : Window
 
     private void AddMessage(string role, string content, string reasoning = "", string metrics = "")
     {
-        // [EN] Emoji degradation is applied to the message body at the single entry point, before
+        // [EN] Emoji degradation is applied to the message body at the single entry point,
+        // [EN] before
         //      rendering, so that emoji inside code blocks and tables are degraded as well.
         // [ZH] Emoji 降级在唯一的入口处、渲染之前施加于消息正文，因此代码块与表格内部的 emoji
-        //      同样会被降级。
+        // [ZH] 同样会被降级。
         content = Emoji.Prefer(content);
         reasoning = Emoji.Prefer(reasoning);
         _transcript.Add(new Message(role, content, reasoning, metrics));
@@ -3784,21 +4408,33 @@ public partial class MainWindow : Window
         //      rendered as plain text in the role body colour; the role itself is conveyed by the
         //      header label rather than by an inline icon.
         // [ZH] 仅助手消息按 Markdown 呈现。用户与系统消息以角色正文色呈现为纯文本；角色信息由
-        //      标题行标识传达，而不再使用行内图标。
+        // [ZH] 标题行标识传达，而不再使用行内图标。
         if (role == "assistant")
             view.ContentHost.Content = MarkdownRenderer.Build(content, _state.Settings.FontSize);
         else
             view.ContentHost.Content = BuildPlainText(role, content);
     }
 
-    /// <summary>整屏重渲染（换字号/换语言时用）：从 _transcript 重建，保证不丢内容。</summary>
+    /// <summary>
+    /// [EN] Full-screen re-render (used when the font size or the language changes): rebuilds
+    /// [EN] from _transcript so that no content is lost.
+    /// [ZH] 整屏重渲染（换字号/换语言时用）：从 _transcript 重建，保证不丢内容。
+    /// </summary>
     private void RenderTranscript()
     {
         MessagePanel.Children.Clear();
-        // Agent 步骤区不在 _transcript 里（它是"过程信息"，与消息正文分开存），
-        // 整屏重建会把它从可视树上摘掉。**必须同时把引用清空**：否则流式过程中若刚好
-        // 切了字号，后续的步骤行会往一个已经脱离可视树的容器里追加 —— 界面看起来就像
-        // "思考到一半 Agent 步骤突然不动了"。
+        // [EN] The Agent step area is not part of _transcript (it is "process information"
+        // [EN] stored separately from the message bodies),
+        // [ZH] Agent 步骤区不在 _transcript 里（它是"过程信息"，与消息正文分开存），
+        // [EN] so a full rebuild removes it from the visual tree. **Its reference must be
+        // [EN] cleared at the same time**: otherwise, if the font size happens to change
+        // [EN] mid-stream,
+        // [ZH] 整屏重建会把它从可视树上摘掉。**必须同时把引用清空**：否则流式过程中若刚好
+        // [EN] subsequent step rows are appended to a container that is no longer in the visual
+        // [EN] tree, and the interface looks as if "the Agent steps suddenly stopped halfway
+        // [EN] through thinking".
+        // [ZH] 切了字号，后续的步骤行会往一个已经脱离可视树的容器里追加 —— 界面看起来就像
+        // [ZH] "思考到一半 Agent 步骤突然不动了"。
         _agentRegion = null;
         _agentRows = null;
         foreach (Message message in _transcript)
@@ -3822,8 +4458,8 @@ public partial class MainWindow : Window
     ///      below each message is increased, and the action bar starts hidden and excluded from
     ///      hit testing.
     /// [ZH] 报告新构建的用户消息与助手消息的视觉参数。借助这些数值，无人值守探针可以断言平铺式
-    ///      布局：用户块带有浅色背景、助手正文透明、每条消息下方间距增大，且操作条初始为隐藏状态
-    ///      并排除于命中测试之外。
+    /// [ZH] 布局：用户块带有浅色背景、助手正文透明、每条消息下方间距增大，且操作条初始为隐藏状态
+    /// [ZH] 并排除于命中测试之外。
     /// </summary>
     public string ProbeMessageStyleSnapshot()
     {
@@ -3852,7 +4488,7 @@ public partial class MainWindow : Window
             //      handlers invoke, then restored, so the idle values remain those of a message
             //      that has not been hovered.
             // [ZH] 浮现状态通过指针处理器调用的同一辅助方法演练，随后复原，因此静息值仍为
-            //      尚未悬停的消息所应有的取值。
+            // [ZH] 尚未悬停的消息所应有的取值。
             string hover = "n/a";
             if (bar is not null)
             {
@@ -3870,16 +4506,17 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// [EN] Exercises the streaming pipeline without a backend connection. A high-frequency token
+    /// [EN] Exercises the streaming pipeline without a backend connection. A high-frequency
+    /// [EN] token
     ///      burst is pushed into the shared buffer while the coalescing timer runs, then a final
     ///      fragment is appended after the last tick and the forced flush is verified to contain
     ///      it. The report additionally states whether the first-token indicator was present
     ///      before the first fragment, whether the caret existed during streaming, and whether
     ///      both have disappeared once the turn is completed.
     /// [ZH] 在不连接后端的前提下演练流式管线。在合并式定时器运行期间向共享缓冲区写入高频 Token
-    ///      突发，随后在最后一次定时器触发之后追加最后一个片段，并验证强制刷新结果包含该片段。
-    ///      报告同时说明首个片段到达之前是否存在首字指示器、光标在流式期间是否存在，以及二者在本轮
-    ///      结束后是否均已消失。
+    /// [ZH] 突发，随后在最后一次定时器触发之后追加最后一个片段，并验证强制刷新结果包含该片段。
+    /// [ZH] 报告同时说明首个片段到达之前是否存在首字指示器、光标在流式期间是否存在，以及二者在本轮
+    /// [ZH] 结束后是否均已消失。
     /// </summary>
     public async Task<string> ProbeStreamingAsync(int tokenCount)
     {
@@ -3922,7 +4559,7 @@ public partial class MainWindow : Window
     ///      and its resting transform must be a pure vertical offset, so that collapsing it can
     ///      never invalidate the layout of the conversation area.
     /// [ZH] 为主窗口的动效配置提供无人值守验证所需的报告。状态区必须同时携带不透明度过渡与渲染变换
-    ///      过渡，且其静息变换仅包含垂直偏移，从而保证折叠过程绝不会使对话区域的布局失效。
+    /// [ZH] 过渡，且其静息变换仅包含垂直偏移，从而保证折叠过程绝不会使对话区域的布局失效。
     /// </summary>
     public string ProbeMotionSnapshot()
     {
@@ -3941,7 +4578,7 @@ public partial class MainWindow : Window
     ///      expected visual state after the transition has elapsed. The persisted preference is
     ///      restored before the method returns.
     /// [ZH] 通过与切换按钮相同的代码路径演练状态区的折叠与展开，并报告该元素在过渡结束后是否稳定
-    ///      落入预期的视觉状态。方法返回之前会复原已持久化的偏好。
+    /// [ZH] 落入预期的视觉状态。方法返回之前会复原已持久化的偏好。
     /// </summary>
     /// <summary>
     /// [EN] Proves that the input field's hover state is render-only. The probe toggles the
@@ -3950,8 +4587,8 @@ public partial class MainWindow : Window
     ///      reports the transition types installed on the template border and underline, so a
     ///      future edit that reached for layout cannot pass unnoticed.
     /// [ZH] 证明输入框的悬停状态只影响渲染。探针通过与指针相同的样式引擎切换 <c>:pointerover</c>
-    ///      伪类，并比较切换前后的边界、外边距、内边距与描边宽度；同时报告模板边框与底线安装的过渡
-    ///      类型，使后续若有人改回布局属性会被立即发现。
+    /// [ZH] 伪类，并比较切换前后的边界、外边距、内边距与描边宽度；同时报告模板边框与底线安装的过渡
+    /// [ZH] 类型，使后续若有人改回布局属性会被立即发现。
     /// </summary>
     public async Task<string> ProbeInputHoverStabilityAsync()
     {
@@ -4000,7 +4637,7 @@ public partial class MainWindow : Window
     ///      to assert that the Avalonia strip carries the same items as WPF plus the memory
     ///      pressure item, and that no item silently keeps an empty placeholder.
     /// [ZH] 报告状态区的每一项及其当前本地化文本。探针据此断言 Avalonia 状态区包含与 WPF 相同的
-    ///      各项，并额外包含内存压力项，且没有任何一项静默保留空占位。
+    /// [ZH] 各项，并额外包含内存压力项，且没有任何一项静默保留空占位。
     /// </summary>
     public string ProbeStatusStripItemsSnapshot()
     {
@@ -4097,10 +4734,11 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// [EN] Flattens the rendered text of a control tree, including inline runs, so that a probe
+    /// [EN] Flattens the rendered text of a control tree, including inline runs, so that a
+    /// [EN] probe
     ///      can verify that the rendered content equals the buffered content.
     /// [ZH] 将控件树的已渲染文本（含行内片段）拼接为单一字符串，使探针能够验证渲染内容与缓冲区
-    ///      内容一致。
+    /// [ZH] 内容一致。
     /// </summary>
     private static string FlattenContentText(Control? root)
     {
@@ -4152,7 +4790,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// [EN] Finds a control by automation identifier without relying on the visual tree, so that
+    /// [EN] Finds a control by automation identifier without relying on the visual tree, so
+    /// [EN] that
     ///      the lookup also works before the window has been laid out.
     /// [ZH] 依据自动化标识查找控件，且不依赖可视化树，因此该查找在窗口完成布局之前同样有效。
     /// </summary>
@@ -4209,7 +4848,7 @@ public partial class MainWindow : Window
     ///      label rather than by an inline icon, which keeps the flattened layout free of
     ///      decorative prefixes.
     /// [ZH] 呈现用户与系统消息的纯文本。角色信息由标题行的标识传达，而不再使用行内图标，
-    ///      从而使平铺式布局不带有装饰性前缀。
+    /// [ZH] 从而使平铺式布局不带有装饰性前缀。
     /// </summary>
     private Control BuildPlainText(string role, string content)
     {
@@ -4218,26 +4857,30 @@ public partial class MainWindow : Window
             Text = Emoji.Prefer(content),
             TextWrapping = TextWrapping.Wrap,
             FontSize = _state.Settings.FontSize,
-            // WPF 用 ThemeService 把整段文字的 Foreground 绑到角色色上
+            // [EN] In WPF, ThemeService binds the Foreground of the whole text block to the
+            // [EN] role colour.
+            // [ZH] WPF 用 ThemeService 把整段文字的 Foreground 绑到角色色上
             Foreground = ResolveBrush(RoleBrushKey(role), Brushes.Black),
         };
         return selectable;
     }
 
     /// <summary>
-    /// [EN] Builds the flattened message container. Assistant output is rendered directly on the
+    /// [EN] Builds the flattened message container. Assistant output is rendered directly on
+    /// [EN] the
     ///      window surface, while a user message is presented as a light block indented from the
     ///      right edge. The action bar remains in the layout flow beneath the body and is revealed
     ///      on pointer entry, therefore it neither covers the text nor intercepts input while it
     ///      is hidden.
     /// [ZH] 构建平铺式消息容器。助手输出直接呈现于窗口表面，用户消息则以浅色块的形式自右缘缩进
-    ///      展示。操作条始终位于正文下方的布局流中，并在指针进入时浮现，因此既不会覆盖文本，
-    ///      也不会在隐藏期间拦截输入。
+    /// [ZH] 展示。操作条始终位于正文下方的布局流中，并在指针进入时浮现，因此既不会覆盖文本，
+    /// [ZH] 也不会在隐藏期间拦截输入。
     /// </summary>
     private (Border, ContentControl, SelectableTextBlock, Expander, TextBlock) BuildMessageControls(
         string role, string content, string reasoning, string metrics)
     {
-        // [EN] Probe anchors are preserved unchanged: AnswerBody, ReasoningRegion and RunMetrics.
+        // [EN] Probe anchors are preserved unchanged: AnswerBody, ReasoningRegion and
+        // [EN] RunMetrics.
         // [ZH] 界面探针锚点保持不变：AnswerBody、ReasoningRegion 与 RunMetrics。
         var contentHost = new ContentControl();
         AutomationProperties.SetAutomationId(contentHost, "AnswerBody");
@@ -4307,7 +4950,7 @@ public partial class MainWindow : Window
         // [EN] Action bar with the four established copy operations: copy, Markdown, code and
         //      select all. It is aligned to the bottom-right corner of the message.
         // [ZH] 操作条包含四项既有复制操作：复制、Markdown、代码与全选。其对齐方式为消息
-        //      右下角。
+        // [ZH] 右下角。
         var actionBar = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -4329,11 +4972,12 @@ public partial class MainWindow : Window
         AddCopyButton(actionBar, Loc.T("main.message.copy", "📋 复制"),
             Loc.T("main.message.copyPlainTip", "复制为纯文本"),
             async () => await CopyTextAsync(StripCodeFenceForPlain(content)));
-        // [EN] Only assistant messages expose the Markdown and code operations, because user and
+        // [EN] Only assistant messages expose the Markdown and code operations, because user
+        // [EN] and
         //      system messages have no Markdown source to copy. The operation count and position
         //      therefore depend on the role.
         // [ZH] 仅助手消息提供 Markdown 与代码两项操作，因为用户与系统消息没有可供复制的
-        //      Markdown 源文本。因此操作项的数量与位置随角色而定。
+        // [ZH] Markdown 源文本。因此操作项的数量与位置随角色而定。
         if (role == "assistant")
         {
             AddCopyButton(actionBar, Loc.T("main.message.copyMarkdown", "⧉ Markdown"),
@@ -4354,7 +4998,7 @@ public partial class MainWindow : Window
         //      painted directly on the window surface. The transparent background is retained
         //      because it makes the whole block a pointer hit-test target.
         // [ZH] 助手与系统消息的容器为透明，正文因此直接绘制于窗口表面。保留透明背景是因为
-        //      它使整个区块成为指针命中测试的目标。
+        // [ZH] 它使整个区块成为指针命中测试的目标。
         var bubble = new Border
         {
             Background = isUser
@@ -4371,11 +5015,12 @@ public partial class MainWindow : Window
             bubble.MaxWidth = 720;
         AutomationProperties.SetAutomationId(bubble, "MessageRoot");
 
-        // [EN] Hover reveal: the bar fades in when the pointer enters the message block and fades
+        // [EN] Hover reveal: the bar fades in when the pointer enters the message block and
+        // [EN] fades
         //      out when it leaves. The handlers are attached to the container itself, therefore
         //      moving the pointer onto the revealed buttons does not trigger a leave event.
         // [ZH] 悬停浮现：指针进入消息区块时操作条淡入，离开时淡出。处理器挂接在容器本身上，
-        //      因此指针移动到已浮现的按钮上不会触发离开事件。
+        // [ZH] 因此指针移动到已浮现的按钮上不会触发离开事件。
         bubble.PointerEntered += (_, _) => SetActionBarVisible(actionBar, true);
         bubble.PointerExited += (_, _) => SetActionBarVisible(actionBar, false);
 
@@ -4387,7 +5032,7 @@ public partial class MainWindow : Window
     ///      timestamp on the right. The single compact row separates the roles without competing
     ///      with the body typography.
     /// [ZH] 构建角色标题行：左侧为小号强调色角色标识，右侧为时间戳。该行紧凑且唯一，
-    ///      在不与正文排版争夺注意力的前提下区分角色。
+    /// [ZH] 在不与正文排版争夺注意力的前提下区分角色。
     /// </summary>
     private Grid BuildMessageHeader(string role)
     {
@@ -4420,7 +5065,7 @@ public partial class MainWindow : Window
     ///      excluded from hit testing, therefore the pointer passes through to the message body
     ///      and text selection remains unaffected.
     /// [ZH] 在不改变布局的前提下显示或隐藏操作条。隐藏期间该条不参与命中测试，
-    ///      因此指针可穿透至消息正文，文本选择不受影响。
+    /// [ZH] 因此指针可穿透至消息正文，文本选择不受影响。
     /// </summary>
     private static void SetActionBarVisible(StackPanel bar, bool visible)
     {
@@ -4442,14 +5087,21 @@ public partial class MainWindow : Window
     private void ScrollToBottom() => MessageScroll.ScrollToEnd();
 
     // -----------------------------------------------------------------
-    // 复制操作条（v0.2.2 第 3 批）
+    // [EN] Copy action bar (v0.2.2 batch 3)
+    // [ZH] 复制操作条（v0.2.2 第 3 批）
     // -----------------------------------------------------------------
 
-    /// <summary>往操作条上加一个复制类按钮（统一字号、内边距与失败提示）。</summary>
+    /// <summary>
+    /// [EN] Adds a copy-type button to the action bar (uniform font size, padding and failure
+    /// [EN] hints).
+    /// [ZH] 往操作条上加一个复制类按钮（统一字号、内边距与失败提示）。
+    /// </summary>
     private void AddCopyButton(StackPanel bar, string label, string tip,
                                Func<Task> action, string? successToast = null)
     {
-        // 尺寸照抄 WPF 的 MakeActionButton：10 号字、内边距 6,1、左边距 4、胶囊圆角 17。
+        // [EN] The dimensions are copied from MakeActionButton in WPF: 10 pt font, 6,1 padding,
+        // [EN] 4 left margin and a capsule corner radius of 17.
+        // [ZH] 尺寸照抄 WPF 的 MakeActionButton：10 号字、内边距 6,1、左边距 4、胶囊圆角 17。
         var button = new Button
         {
             Content = label,
@@ -4468,7 +5120,11 @@ public partial class MainWindow : Window
         bar.Children.Add(button);
     }
 
-    /// <summary>写剪贴板。空内容给一句提示，剪贴板被占用时静默（与 WPF 同样处理）。</summary>
+    /// <summary>
+    /// [EN] Writes to the clipboard. Empty content yields a hint, and an occupied clipboard
+    /// [EN] stays silent (the same handling as in WPF).
+    /// [ZH] 写剪贴板。空内容给一句提示，剪贴板被占用时静默（与 WPF 同样处理）。
+    /// </summary>
     private async Task CopyTextAsync(string text)
     {
         if (text.Length == 0)
@@ -4484,15 +5140,22 @@ public partial class MainWindow : Window
             }
             catch (Exception)
             {
-                // 剪贴板被别的进程占用：不打断用户，也不假装成功
+                // [EN] The clipboard is held by another process: do not interrupt the user and
+                // [EN] do not pretend that it succeeded.
+                // [ZH] 剪贴板被别的进程占用：不打断用户，也不假装成功
             }
         }
     }
 
     /// <summary>
-    /// 纯文本口径：把 Markdown 代码围栏（```）去掉，只留内容。
-    /// 「复制」按钮给的是**可读文本**，「Markdown」按钮才是带语法的原文 —— 两者必须有区别，
-    /// 否则多出来的按钮没有意义。
+    /// [EN] Plain-text convention: strip the Markdown code fences (```) and keep only the
+    /// [EN] content.
+    /// [ZH] 纯文本口径：把 Markdown 代码围栏（```）去掉，只留内容。
+    /// [EN] The "copy" button yields **readable text**, whereas the "Markdown" button yields
+    /// [EN] the original text with syntax; the two must differ, otherwise the extra button is
+    /// [EN] pointless.
+    /// [ZH] 「复制」按钮给的是**可读文本**，「Markdown」按钮才是带语法的原文 —— 两者必须有区别，
+    /// [ZH] 否则多出来的按钮没有意义。
     /// </summary>
     private static string StripCodeFenceForPlain(string content)
     {
@@ -4506,7 +5169,11 @@ public partial class MainWindow : Window
         return builder.ToString().Trim();
     }
 
-    /// <summary>把全部代码块拼成一段（「代码」按钮）。没有代码块时返回空串。</summary>
+    /// <summary>
+    /// [EN] Joins all code blocks into one text (the "code" button). Returns an empty string
+    /// [EN] when there are no code blocks.
+    /// [ZH] 把全部代码块拼成一段（「代码」按钮）。没有代码块时返回空串。
+    /// </summary>
     private static string ExtractCodeBlocks(string content)
     {
         var blocks = new List<string>();
@@ -4529,12 +5196,17 @@ public partial class MainWindow : Window
             if (inside)
                 current.AppendLine(line);
         }
+        // [EN] Unclosed code blocks must be collected as well (common while streaming).
+        // [ZH] 未闭合的代码块也要收（流式中常见）
         if (inside && current.Length > 0)
-            blocks.Add(current.ToString().TrimEnd());   // 未闭合的代码块也要收（流式中常见）
+            blocks.Add(current.ToString().TrimEnd());
         return string.Join(Environment.NewLine + Environment.NewLine, blocks);
     }
 
-    /// <summary>「全选」：把消息正文里所有可选文本控件选中。</summary>
+    /// <summary>
+    /// [EN] "Select all": selects every selectable text control in the message body.
+    /// [ZH] 「全选」：把消息正文里所有可选文本控件选中。
+    /// </summary>
     private static void SelectAllIn(Control root)
     {
         foreach (SelectableTextBlock block in EnumerateSelectable(root))
@@ -4552,16 +5224,23 @@ public partial class MainWindow : Window
                 yield return selectable;
             foreach (Control child in current.GetVisualDescendants().OfType<Control>())
                 stack.Push(child);
-            // ContentControl 的内容不在可视树里时（刚构造还没布局）也要能找到
+            // [EN] Content held by a ContentControl is not part of the visual tree (right after
+            // [EN] construction, before layout), but it must still be found.
+            // [ZH] ContentControl 的内容不在可视树里时（刚构造还没布局）也要能找到
             if (current is ContentControl { Content: Control content })
                 stack.Push(content);
         }
     }
 
     /// <summary>
-    /// 复制全部对话为纯文本（Ctrl+Shift+C，对齐 WPF 的 <c>CopyAllMessages</c>）。
-    /// 用 <c>_transcript</c> 而不是遍历可视树：可视树里还有 Agent 步骤区、占位文本等
-    /// 不属于"对话"的东西。
+    /// [EN] Copies the whole conversation as plain text (Ctrl+Shift+C, aligned with
+    /// [EN] <c>CopyAllMessages</c> in WPF).
+    /// [ZH] 复制全部对话为纯文本（Ctrl+Shift+C，对齐 WPF 的 <c>CopyAllMessages</c>）。
+    /// [EN] It uses <c>_transcript</c> instead of walking the visual tree: the visual tree also
+    /// [EN] holds the Agent step area, placeholder texts and other things that are not part of
+    /// [EN] the conversation.
+    /// [ZH] 用 <c>_transcript</c> 而不是遍历可视树：可视树里还有 Agent 步骤区、占位文本等
+    /// [ZH] 不属于"对话"的东西。
     /// </summary>
     private void CopyAllMessages()
     {
@@ -4587,12 +5266,24 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 取界面语义色画刷。**必须用 TryFindResource，不能 <c>(IBrush?)FindResource(key)</c>**：
-    /// 这些画刷放在 App.axaml 的 ThemeDictionaries 里，取不到时 <c>FindResource</c> 返回的是
-    /// <c>AvaloniaProperty.UnsetValue</c>（类型 UnsetValueType），它不是 IBrush —— 强转直接抛
-    /// InvalidCastException。后果不是"少一个颜色"，而是**第一条消息就把整个前端打断**
-    /// （实测：后端不可用时的横幅消息就足以让进程退出）。同一文件里 Toast 早就用了
-    /// TryFindResource，这里跟上，取不到就退回兜底色。
+    /// [EN] Fetches a semantic colour brush of the interface. **TryFindResource must be used;
+    /// [EN] <c>(IBrush?)FindResource(key)</c> must not**:
+    /// [ZH] 取界面语义色画刷。**必须用 TryFindResource，不能 <c>(IBrush?)FindResource(key)</c>**：
+    /// [EN] these brushes live in the ThemeDictionaries of App.axaml, and when the lookup fails
+    /// [EN] <c>FindResource</c> returns
+    /// [ZH] 这些画刷放在 App.axaml 的 ThemeDictionaries 里，取不到时 <c>FindResource</c> 返回的是
+    /// [EN] <c>AvaloniaProperty.UnsetValue</c> (of type UnsetValueType), which is not an
+    /// [EN] IBrush, so the cast throws
+    /// [ZH] <c>AvaloniaProperty.UnsetValue</c>（类型 UnsetValueType），它不是 IBrush —— 强转直接抛
+    /// [EN] InvalidCastException. The consequence is not "one colour missing" but **the very
+    /// [EN] first message tearing down the whole front end**
+    /// [ZH] InvalidCastException。后果不是"少一个颜色"，而是**第一条消息就把整个前端打断**
+    /// [EN] (measured: the banner message shown when the backend is unavailable is enough to
+    /// [EN] make the process exit). Toast in this same file has used
+    /// [ZH] （实测：后端不可用时的横幅消息就足以让进程退出）。同一文件里 Toast 早就用了
+    /// [EN] TryFindResource from the start; this method follows suit and falls back to the
+    /// [EN] fallback colour when the lookup fails.
+    /// [ZH] TryFindResource，这里跟上，取不到就退回兜底色。
     /// </summary>
     private static IBrush ResolveBrush(string key, IBrush fallback)
     {
@@ -4602,7 +5293,7 @@ public partial class MainWindow : Window
             //      ThemeVariant.Default while the palette is stored in the Light and Dark theme
             //      dictionaries. The overload without a variant does not resolve those entries.
             // [ZH] 由于应用程序请求 ThemeVariant.Default，而色板存放于 Light 与 Dark 两个主题字典中，
-            //      此处显式提供主题变体。不带变体的重载无法解析这些条目。
+            // [ZH] 此处显式提供主题变体。不带变体的重载无法解析这些条目。
             if (app.TryFindResource(key, app.ActualThemeVariant, out object? value) && value is IBrush brush)
                 return brush;
             if (app.TryFindResource(key, out value) && value is IBrush fallbackBrush)
@@ -4634,16 +5325,28 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 模型下载确认 / 退出倒计时 / 后端进度活消息（v0.2.2 第 3 批）
+    // [EN] Model download confirmation / exit countdown / backend progress live message (v0.2.2
+    // [EN] batch 3)
+    // [ZH] 模型下载确认 / 退出倒计时 / 后端进度活消息（v0.2.2 第 3 批）
     // -----------------------------------------------------------------
 
     /// <summary>
-    /// `/model` 需要一个还没下载的模型时，后端会回 <c>action = "confirm_model"</c>，
-    /// 由前端征得同意后再发下载动作（对齐 WPF 的 <c>ConfirmModelDownloadAsync</c>）。
+    /// [EN] When `/model` needs a model that has not been downloaded yet, the backend replies
+    /// [EN] with <c>action = "confirm_model"</c> and the front end sends the download action
+    /// [EN] only after obtaining consent (aligned with <c>ConfirmModelDownloadAsync</c> in
+    /// [EN] WPF).
+    /// [ZH] `/model` 需要一个还没下载的模型时，后端会回 <c>action = "confirm_model"</c>，
+    /// [ZH] 由前端征得同意后再发下载动作（对齐 WPF 的 <c>ConfirmModelDownloadAsync</c>）。
     ///
-    /// 同意的方式：Avalonia 没有 MessageBox，这里用**状态区的一次显式确认**——
-    /// 第二次按 Enter 才会真的下载（与危险指令的二次确认同一套做法），
-    /// 并同时打印一句"怎么确认"的系统消息，避免用户不知道要按第二次。
+    /// [EN] How consent works: Avalonia has no MessageBox, so this uses **one explicit
+    /// [EN] confirmation in the status area**;
+    /// [ZH] 同意的方式：Avalonia 没有 MessageBox，这里用**状态区的一次显式确认**——
+    /// [EN] the download starts only on the second Enter press (the same approach as the second
+    /// [EN] confirmation for destructive commands),
+    /// [ZH] 第二次按 Enter 才会真的下载（与危险指令的二次确认同一套做法），
+    /// [EN] and a system message explaining how to confirm is printed at the same time, so that
+    /// [EN] the user is not left unaware that a second press is needed.
+    /// [ZH] 并同时打印一句"怎么确认"的系统消息，避免用户不知道要按第二次。
     /// </summary>
     private void HandleConfirmModel(string modelName)
     {
@@ -4672,7 +5375,9 @@ public partial class MainWindow : Window
         SetStatus(Loc.T("main.status.downloadingModel", "正在下载模型……"));
         try
         {
-            // 流式：进度写进一条**活消息**（同一条系统气泡就地更新），而不是刷屏。
+            // [EN] Streaming: progress is written into one **live message** (the same system
+            // [EN] bubble updated in place) instead of flooding the view.
+            // [ZH] 流式：进度写进一条**活消息**（同一条系统气泡就地更新），而不是刷屏。
             StartProgressMessage();
             string final = await _state.Backend.SendStreamAsync(
                 new { action = "model_download", name = modelName },
@@ -4694,8 +5399,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// `/exit`：致谢 + 10 秒倒计时后自动关闭（对齐 WPF 的 <c>BeginExitCountdown</c>）。
-    /// 倒计时期间禁用输入，避免用户以为还能继续提问。
+    /// [EN] `/exit`: a thank-you note followed by a 10-second countdown and then an automatic
+    /// [EN] close (aligned with <c>BeginExitCountdown</c> in WPF).
+    /// [ZH] `/exit`：致谢 + 10 秒倒计时后自动关闭（对齐 WPF 的 <c>BeginExitCountdown</c>）。
+    /// [EN] Input is disabled during the countdown so that users do not think they can keep
+    /// [EN] asking.
+    /// [ZH] 倒计时期间禁用输入，避免用户以为还能继续提问。
     /// </summary>
     private void BeginExitCountdown(string thanksMessage)
     {
@@ -4722,7 +5431,8 @@ public partial class MainWindow : Window
         _exitTimer.Start();
     }
 
-    // ---- 进度"活消息"：同一条系统气泡就地更新，而不是每来一行就加一条 ----
+    // [EN] ---- Progress live message: update the same bubble in place ----
+    // [ZH] ---- 进度"活消息"：同一条系统气泡就地更新，而不是每来一行就加一条 ----
 
     private MessageView? _progressView;
 
@@ -4738,7 +5448,9 @@ public partial class MainWindow : Window
             return;
         string trimmed = text.Trim();
         _progressView.ContentHost.Content = BuildPlainText("system", trimmed);
-        // 同时更新最后一条 transcript，整屏重渲染（切字号/语言）时不会丢进度
+        // [EN] The last transcript entry is updated as well, so that a full re-render (font
+        // [EN] size or language change) does not lose the progress.
+        // [ZH] 同时更新最后一条 transcript，整屏重渲染（切字号/语言）时不会丢进度
         if (_transcript.Count > 0)
             _transcript[^1] = _transcript[^1] with { Content = trimmed };
         SetStatus(Trim(trimmed, 120));
@@ -4761,7 +5473,9 @@ public partial class MainWindow : Window
     }
 
     // -----------------------------------------------------------------
-    // 运行指标定时刷新（v0.2.2 第 3 批，对齐 WPF 的 StartMetricsTimer）
+    // [EN] Periodic runtime metric refresh (v0.2.2 batch 3, aligned with StartMetricsTimer in
+    // [EN] WPF)
+    // [ZH] 运行指标定时刷新（v0.2.2 第 3 批，对齐 WPF 的 StartMetricsTimer）
     // -----------------------------------------------------------------
 
     private void StartMetricsTimer()
@@ -4780,8 +5494,12 @@ public partial class MainWindow : Window
             _metricsTimer?.Stop();
             return;
         }
-        // 后端在生成过程中会把最新指标挂在 context 响应上；拿不到就保持上一次的值
-        // （**不清空**：清空会让指标行一闪一闪的，比"稍旧一点"更难看）。
+        // [EN] While generating, the backend attaches the latest metrics to the context
+        // [EN] response; if they cannot be obtained, the previous values are kept.
+        // [ZH] 后端在生成过程中会把最新指标挂在 context 响应上；拿不到就保持上一次的值
+        // [EN] They are (**not cleared**: clearing makes the metrics row flicker, which looks
+        // [EN] worse than slightly stale values).
+        // [ZH] （**不清空**：清空会让指标行一闪一闪的，比"稍旧一点"更难看）。
         JsonDocument? doc = await _state.Backend.SendAsync(new { action = "context" });
         if (doc is null)
             return;

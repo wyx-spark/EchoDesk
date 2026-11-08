@@ -6,7 +6,10 @@ using EchoDesk.Services;
 
 namespace EchoDesk.Utilities;
 
-/// <summary>批量确认框里的一行：一个待确认的本地插件。</summary>
+/// <summary>
+/// [EN] One row in the bulk confirmation dialog: a local plugin awaiting confirmation.
+/// [ZH] 批量确认框里的一行：一个待确认的本地插件。
+/// </summary>
 public sealed class TrustItem
 {
     public string Id { get; set; } = "";
@@ -17,28 +20,48 @@ public sealed class TrustItem
     public IReadOnlyDictionary<string, object?> Permissions { get; set; } =
         new Dictionary<string, object?>();
 
-    /// <summary>勾选 = 启用（信任并加载）。</summary>
+    /// <summary>
+    /// [EN] Checked means enabled (trusted and loaded).
+    /// [ZH] 勾选 = 启用（信任并加载）。
+    /// </summary>
     public bool Enabled { get; set; } = true;
 
-    /// <summary>界面上的复选框（构造时创建，便于"全部启用/全部禁用"批量改）。</summary>
+    /// <summary>
+    /// [EN] Check box shown in the UI (created during construction so that it can be changed in
+    /// [EN] bulk by “enable all” or “disable all”).
+    /// [ZH] 界面上的复选框（构造时创建，便于“全部启用/全部禁用”批量改）。
+    /// </summary>
     public CheckBox? Box { get; set; }
 }
 
 /// <summary>
-/// 本地插件批量信任确认框（任务书修复一）。
-///
-/// 修复前：<c>CheckTrustPending</c> 每发现一个未确认的插件就弹一次 <c>MessageBox</c>，
-/// 而每次答复又会触发 <c>LoadSkillsAsync</c> → 再弹下一个，于是 N 个插件就是 N 次弹窗，
-/// 数量多时形成"弹窗轰炸"。
-///
-/// 现在改为一次性列出全部待确认插件，用户可以逐个勾选或一键全部启用/禁用，
-/// 一次点确定即写盘（后端 <c>skills_trust_bulk</c>），此后再也不问。
+/// [EN] Bulk trust confirmation dialog for local plugins (fix one of the design specification).
+/// [EN]
+/// [EN] Before the fix, <c>CheckTrustPending</c> showed a <c>MessageBox</c> for each
+/// [EN] unconfirmed plugin, and each answer triggered <c>LoadSkillsAsync</c> again,
+/// [EN] which showed the next one; N plugins therefore meant N dialogs, forming a
+/// [EN] "dialog barrage" when there were many.
+/// [EN]
+/// [EN] The dialog now lists every plugin awaiting confirmation at once; the user can check
+/// [EN] them one by one or enable or disable all with one click, and a single confirmation
+/// [EN] writes them to disk (backend <c>skills_trust_bulk</c>); the user is never asked again.
+/// [ZH] 本地插件批量信任确认框（设计规范修复一）。
+/// [ZH]
+/// [ZH] 修复前：<c>CheckTrustPending</c> 每发现一个未确认的插件就弹一次
+/// [ZH] <c>MessageBox</c>，而每次答复又会触发 <c>LoadSkillsAsync</c> → 再弹下一个，
+/// [ZH] 于是 N 个插件就是 N 次弹窗，数量多时形成“弹窗轰炸”。
+/// [ZH]
+/// [ZH] 现在改为一次性列出全部待确认插件，用户可以逐个勾选或一键全部启用/禁用，
+/// [ZH] 一次点确定即写盘（后端 <c>skills_trust_bulk</c>），此后再也不问。
 /// </summary>
 public sealed class TrustDialog : Window
 {
     private readonly List<TrustItem> _items;
 
-    /// <summary>用户点"确定"后每项的最终启用状态；取消时为空。</summary>
+    /// <summary>
+    /// [EN] Final enabled state of each item after the user clicks "OK"; empty on cancel.
+    /// [ZH] 用户点“确定”后每项的最终启用状态；取消时为空。
+    /// </summary>
     public IReadOnlyDictionary<string, bool> Decisions { get; private set; } =
         new Dictionary<string, bool>();
 
@@ -111,7 +134,9 @@ public sealed class TrustDialog : Window
         root.Children.Add(buttons);
 
         Content = root;
-        // 确认框是模态的：必须在窗口显示后再抢焦点，避免 UIA 探针/自动截图时抓到空窗
+        // [EN] The dialog is modal, so focus must be taken only after the window is shown;
+        // [EN] otherwise a UIA probe or an automatic screenshot may capture an empty window.
+        // [ZH] 确认框是模态的：必须在窗口显示后再抢焦点，避免 UIA 探针/自动截图时抓到空窗
         Loaded += (_, _) => ok.Focus();
     }
 

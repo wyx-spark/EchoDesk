@@ -324,7 +324,8 @@ def api_version_ok(want: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# [EN] API available to skills / [ZH] 技能可用的 API
+# [EN] API available to skills
+# [ZH] 技能可用的 API
 # ---------------------------------------------------------------------------
 
 
@@ -405,7 +406,8 @@ class SkillAPI:
         self._lang_cache: Dict[str, Dict[str, str]] = {}
         self.log = record.logger.info
 
-    # ---- [EN] Metadata / [ZH] 元信息 ----
+    # [EN] ---- Metadata ----
+    # [ZH] ---- 元信息 ----
 
     @property
     def id(self) -> str:
@@ -457,7 +459,8 @@ class SkillAPI:
     def debug(self, message: str) -> None:
         self._record.logger.debug("%s", message)
 
-    # ---- [EN] 1. Command registration / [ZH] 1. 命令注册 ----
+    # [EN] ---- 1. Command registration ----
+    # [ZH] ---- 1. 命令注册 ----
 
     def register_command(
         self,
@@ -498,7 +501,8 @@ class SkillAPI:
             self.warn(f"指令 {name} 与内置指令或已注册指令重名，已跳过")
         return added
 
-    # ---- [EN] 2. UI panel registration / [ZH] 2. UI 面板注册 ----
+    # [EN] ---- 2. UI panel registration ----
+    # [ZH] ---- 2. UI 面板注册 ----
 
     def register_panel(
         self,
@@ -532,7 +536,8 @@ class SkillAPI:
             self._record.manifest["ui_panels"].append(key)
         return True
 
-    # ---- [EN] 3. Automation hooks / [ZH] 3. 自动化钩子 ----
+    # [EN] ---- 3. Automation hooks ----
+    # [ZH] ---- 3. 自动化钩子 ----
 
     def register_automation_hook(self, stage: str, handler: Callable[..., Any]) -> bool:
         """
@@ -557,7 +562,8 @@ class SkillAPI:
             self._record.hooks.append(key)
         return True
 
-    # ---- [EN] 4. File-parser extension / [ZH] 4. 文件解析扩展 ----
+    # [EN] ---- 4. File-parser extension ----
+    # [ZH] ---- 4. 文件解析扩展 ----
 
     def register_file_parser(self, ext: str, handler: Callable[[str], str]) -> bool:
         """
@@ -580,7 +586,8 @@ class SkillAPI:
             self.warn(f"扩展名 {ext} 已被内置解析器或其它技能占用，未注册")
         return ok
 
-    # ---- [EN] 5. Configuration I/O inside the skill directory / [ZH] 5. 技能目录内的配置读写 ----
+    # [EN] ---- 5. Configuration I/O inside the skill directory ----
+    # [ZH] ---- 5. 技能目录内的配置读写 ----
 
     def config_path(self) -> str:
         return os.path.join(self._record.path, "config.json")
@@ -594,7 +601,8 @@ class SkillAPI:
         current.update(values or {})
         return _write_json(self.config_path(), current)
 
-    # ---- [EN] 6. Localization resources / [ZH] 6. 多语言资源 ----
+    # [EN] ---- 6. Localization resources ----
+    # [ZH] ---- 6. 多语言资源 ----
 
     def locale(self) -> str:
         return _i18n().locale
@@ -674,7 +682,8 @@ def _flatten(node: Any, prefix: str, out: Dict[str, str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# [EN] Plugin record / [ZH] 插件记录
+# [EN] Plugin record
+# [ZH] 插件记录
 # ---------------------------------------------------------------------------
 
 
@@ -794,7 +803,8 @@ class SkillRecord:
 
 
 # ---------------------------------------------------------------------------
-# [EN] Loader / [ZH] 加载器
+# [EN] Loader
+# [ZH] 加载器
 # ---------------------------------------------------------------------------
 
 
@@ -826,7 +836,8 @@ class SkillLoader:
         self._manifest_cache: Optional[Dict[str, Any]] = None
         self._dev_mode_cache: Optional[bool] = None
 
-    # ---------- [EN] Paths / [ZH] 路径 ----------
+    # [EN] ---------- Paths ----------
+    # [ZH] ---------- 路径 ----------
 
     @property
     def dev_dir(self) -> str:
@@ -914,7 +925,8 @@ class SkillLoader:
         """
         return bool(getattr(self.cfg, "dev_mode_explicit", False))
 
-    # ---------- [EN] Logging / [ZH] 日志 ----------
+    # [EN] ---------- Logging ----------
+    # [ZH] ---------- 日志 ----------
 
     def _logwrite(self, level: str, message: str, exc: Optional[BaseException] = None) -> None:
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -966,7 +978,8 @@ class SkillLoader:
         except OSError as e:
             raise RuntimeError(_t("skill.log_export_failed", error=e)) from e
 
-    # ---------- [EN] Local plugin manifest / [ZH] 本地插件清单 ----------
+    # [EN] ---------- Local plugin manifest ----------
+    # [ZH] ---------- 本地插件清单 ----------
 
     def local_manifest(self) -> Dict[str, Any]:
         data = _read_json(self.local_manifest_file, None)
@@ -1107,7 +1120,8 @@ class SkillLoader:
                 return os.path.abspath(cand)
         return os.path.abspath(candidates[0])
 
-    # ---------- [EN] Discovery and source priority / [ZH] 发现与来源优先级 ----------
+    # [EN] ---------- Discovery and source priority ----------
+    # [ZH] ---------- 发现与来源优先级 ----------
 
     def _scan_dev_dirs(self) -> List[str]:
         try:
@@ -1118,7 +1132,8 @@ class SkillLoader:
         except OSError:
             return []
 
-    # ---------- [EN] Bundled example plugins / [ZH] 随包示例插件 ----------
+    # [EN] ---------- Bundled example plugins ----------
+    # [ZH] ---------- 随包示例插件 ----------
 
     def builtin_ids(self) -> set:
         """
@@ -1474,7 +1489,8 @@ class SkillLoader:
             return set()
         return {str(k).lower() for k in verified}
 
-    # ---------- [EN] Loading / [ZH] 加载 ----------
+    # [EN] ---------- Loading ----------
+    # [ZH] ---------- 加载 ----------
 
     def load_all(self) -> Dict[str, Any]:
         """
@@ -1609,7 +1625,8 @@ class SkillLoader:
                               f"格式 {rec.parsers or '无'}")
         return True
 
-    # ---------- [EN] Dependency and declaration consistency / [ZH] 依赖与声明一致性 ----------
+    # [EN] ---------- Dependency and declaration consistency ----------
+    # [ZH] ---------- 依赖与声明一致性 ----------
 
     def _check_dependencies(self, records: List[SkillRecord]) -> None:
         """
@@ -1857,7 +1874,8 @@ class SkillLoader:
                                    f"({', '.join(removed)})")
         return removed
 
-    # ---------- [EN] Integration with the host application / [ZH] 与主程序接线 ----------
+    # [EN] ---------- Integration with the host application ----------
+    # [ZH] ---------- 与主程序接线 ----------
 
     def register_skill_command(self, rec: SkillRecord, name: str, handler: Callable[..., Any], *,
                               label: str = "", usage: str = "", description: str = "",
@@ -2032,7 +2050,8 @@ class SkillLoader:
             },
         }
 
-    # ---------- [EN] Developer tools / [ZH] 开发者工具 ----------
+    # [EN] ---------- Developer tools ----------
+    # [ZH] ---------- 开发者工具 ----------
 
     def examples_dir(self) -> str:
         """

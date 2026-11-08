@@ -121,14 +121,14 @@ SNIPPET_CHARS = 400
 #: 400 characters each is about 2000, leaving 1000 characters for titles and
 #: numbered lines.
 #: [ZH] 注入上下文的总长上限（字符）。5 条 × 400 约 2000，另留 1000 字符给标题与
-#: 编号行。
+#: [ZH] 编号行。
 CONTEXT_CHARS = 3000
 
 #: [EN] Instruction supplied to the model with the injected results. It is
 #: intentionally hard-coded in Chinese: like the system prompt in conversation.py it
 #: is content sent to the model, not UI text, so it is not localized.
 #: [ZH] 注入结果时提供给模型的指令（刻意固定为中文：与 conversation.py 中的系统
-#: 提示词同属"发送给模型的内容"，而非界面文本，因此不进入语言包）。
+#: [ZH] 提示词同属"发送给模型的内容"，而非界面文本，因此不进入语言包）。
 _INSTRUCTION = (
     "【使用要求】1) 优先依据上述搜索结果作答，不要凭记忆编造；"
     "2) 引用某条结果时在句末标注编号，如 [1]；"
@@ -264,16 +264,16 @@ class SearchOutcome:
 # small set of categories, and the language pack provides user-facing wording for
 # each.
 # [ZH] 旧行为将 `outcome.error` 原样放入提示，用户看到的是
-#   "联网搜索失败（https://www.bing.com/search ConnectError: error sending
-#     request for url (https://www.bing.com/search?q=...)）"
-# 这类面向开发者的文本，既未告知用户应如何处理，也未区分"网络不通"与"搜索源改版"。
-# 此处将其归为有限的若干类别，由语言包为每一类提供面向用户的说法。
+# [ZH]   "联网搜索失败（https://www.bing.com/search ConnectError: error sending
+# [ZH]     request for url (https://www.bing.com/search?q=...)）"
+# [ZH] 这类面向开发者的文本，既未告知用户应如何处理，也未区分"网络不通"与"搜索源改版"。
+# [ZH] 此处将其归为有限的若干类别，由语言包为每一类提供面向用户的说法。
 
 #: [EN] Category code -> language-pack key holding a one-line user-facing message.
 #: Keys must exist in every language pack, and ``tools/check_lang.py`` validates
 #: their completeness.
 #: [ZH] 分类码 → 语言包键（面向用户的一句话）。各语言包中必须成对存在这些键，
-#: 由 ``tools/check_lang.py`` 校验完整性。
+#: [ZH] 由 ``tools/check_lang.py`` 校验完整性。
 FAIL_KIND_KEYS = {
     "network": "sys.search_failed_network",
     "timeout": "sys.search_failed_timeout",
@@ -355,24 +355,24 @@ def classify_error(text: str) -> str:
 #     the behavior of users with working network access unchanged.
 #
 # [ZH] 必须提供该备用源的原因：`duckduckgo_search` 8.1.1 在部分网络环境下必然失败，
-# 这不是用户操作问题，而是"库 + 地区重定向"的固有不兼容。三项证据：
+# [ZH] 这不是用户操作问题，而是"库 + 地区重定向"的固有不兼容。三项证据：
 #
-#   1. 该版本将后端硬编码为单一来源：
-#      ``backends = ["bing"]  # temporaly disable html and lite backends``
-#      （原文注释如此），因此报错 URL 是 ``bing.com`` 而非 duckduckgo.com；
-#      项目记录中写的"DuckDuckGo"并没有错，是该库自身切换到了 Bing；
-#   2. 它创建 primp 客户端时设置 ``follow_redirects=False``，而 ``www.bing.com``
-#      在该网络环境下会返回 302 重定向到 ``cn.bing.com``，库因此始终只拿到 302 并
-#      判定失败；
-#   3. 验证（2026-10-06，见 records）：库配置得到
-#      ``302 Location: https://cn.bing.com/search?q=test``；跟随重定向后得到
-#      ``200``，约 99 KB，包含 10 个 ``li.b_algo`` 结果块。
+# [ZH]   1. 该版本将后端硬编码为单一来源：
+# [ZH]      ``backends = ["bing"]  # temporaly disable html and lite backends``
+# [ZH]      （原文注释如此），因此报错 URL 是 ``bing.com`` 而非 duckduckgo.com；
+# [ZH]      项目记录中写的"DuckDuckGo"并没有错，是该库自身切换到了 Bing；
+# [ZH]   2. 它创建 primp 客户端时设置 ``follow_redirects=False``，而 ``www.bing.com``
+# [ZH]      在该网络环境下会返回 302 重定向到 ``cn.bing.com``，库因此始终只拿到 302 并
+# [ZH]      判定失败；
+# [ZH]   3. 验证（2026-10-06，见 records）：库配置得到
+# [ZH]      ``302 Location: https://cn.bing.com/search?q=test``；跟随重定向后得到
+# [ZH]      ``200``，约 99 KB，包含 10 个 ``li.b_algo`` 结果块。
 #
-# 因此此处内建一个"跟随重定向并自行解析"的 Bing 源作为兜底。三项刻意取舍：
-#   * 使用项目必需依赖 ``requests`` 发送请求（不新增依赖）；
-#   * 使用标准库 ``html.parser`` 解析（不依赖 lxml/bs4：它们是
-#     ``duckduckgo_search`` 的间接依赖，而搜索对本项目属于可选功能，不能假定其存在）；
-#   * 仅在主源不可用时启用，不改变网络正常用户的既有行为。
+# [ZH] 因此此处内建一个"跟随重定向并自行解析"的 Bing 源作为兜底。三项刻意取舍：
+# [ZH]   * 使用项目必需依赖 ``requests`` 发送请求（不新增依赖）；
+# [ZH]   * 使用标准库 ``html.parser`` 解析（不依赖 lxml/bs4：它们是
+# [ZH]     ``duckduckgo_search`` 的间接依赖，而搜索对本项目属于可选功能，不能假定其存在）；
+# [ZH]   * 仅在主源不可用时启用，不改变网络正常用户的既有行为。
 
 #: [EN] Bing search endpoint; requests follows the redirect to ``cn.bing.com``.
 #: [ZH] Bing 搜索入口（重定向到 ``cn.bing.com``，由 requests 自动跟随）。
@@ -382,7 +382,7 @@ _BING_URL = "https://www.bing.com/search"
 #: or redirects them to a verification page. This is the same constraint as the HF
 #: endpoints in ``model_hub.py``, which also require a dedicated UA.
 #: [ZH] 使用浏览器 User-Agent：Bing 会对无 UA 或爬虫 UA 的请求拒绝应答或重定向到
-#: 验证页。这与 ``model_hub.py`` 中 HF 端点"必须使用专用 UA"属于同一类约束。
+#: [ZH] 验证页。这与 ``model_hub.py`` 中 HF 端点"必须使用专用 UA"属于同一类约束。
 _BING_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
@@ -453,8 +453,8 @@ class _BingParser(HTMLParser):
         self._title: List[str] = []
         self._snippet: List[str] = []
 
-    # ---------- [EN] Internal helpers ----------
-    # ---------- [ZH] 内部方法 ----------
+    # [EN] ---------- Internal helpers ----------
+    # [ZH] ---------- 内部方法 ----------
 
     def _begin(self) -> None:
         self._in_li = True
@@ -476,8 +476,8 @@ class _BingParser(HTMLParser):
             if url and (title or snippet):
                 self.results.append(SearchResult(title=title, snippet=snippet, url=url))
 
-    # ---------- [EN] HTMLParser callbacks ----------
-    # ---------- [ZH] HTMLParser 回调 ----------
+    # [EN] ---------- HTMLParser callbacks ----------
+    # [ZH] ---------- HTMLParser 回调 ----------
 
     def handle_starttag(self, tag, attrs):
         attr = dict(attrs)
@@ -614,9 +614,9 @@ class SearchEngine:
         #: so the test would no longer exercise the intended subject. The product path
         #: keeps it enabled by default.
         #: [ZH] 主源失败时是否启用内建 Bing 源（见 :func:`search_bing`）。保留该开关
-        #: 是为了可测性：测试使用桩 DDGS 模拟各种主源情形时，兜底源会实际发起网络
-        #: 请求，把"模拟失败"变成"真实成功"，从而使测试偏离被测对象。产品路径保持
-        #: 默认开启。
+        #: [ZH] 是为了可测性：测试使用桩 DDGS 模拟各种主源情形时，兜底源会实际发起网络
+        #: [ZH] 请求，把"模拟失败"变成"真实成功"，从而使测试偏离被测对象。产品路径保持
+        #: [ZH] 默认开启。
         self.fallback_enabled = bool(fallback_enabled)
 
     def _search_ddgs(self, text: str) -> SearchOutcome:
@@ -721,11 +721,11 @@ class SearchEngine:
         # calls Bing (backends=["bing"]), the same engine as the fallback, so the
         # fallback adds nothing when the primary source is reachable.
         # [ZH] 判据是 ``ok`` 而非 ``usable``：主源连通时其答复即应被采信，包括"连通但
-        # 无结果"（ok=True, count=0）。这属于有效信息而非故障；若将其视为故障并回落到
-        # 第二个源，会让一次"确实未搜到"的查询额外发起一次网络请求，并把"未搜到"与
-        # "搜不通"这两种必须向用户给出不同说法的情形混为一谈（既有回归用例正是断言
-        # 两者需要区分）。另有一层原因：8.1.1 的主源实际调用的就是 Bing
-        # （backends=["bing"]），与兜底源为同一搜索引擎，主源连通时兜底不会有额外收益。
+        # [ZH] 无结果"（ok=True, count=0）。这属于有效信息而非故障；若将其视为故障并回落到
+        # [ZH] 第二个源，会让一次"确实未搜到"的查询额外发起一次网络请求，并把"未搜到"与
+        # [ZH] "搜不通"这两种必须向用户给出不同说法的情形混为一谈（既有回归用例正是断言
+        # [ZH] 两者需要区分）。另有一层原因：8.1.1 的主源实际调用的就是 Bing
+        # [ZH] （backends=["bing"]），与兜底源为同一搜索引擎，主源连通时兜底不会有额外收益。
         if primary.ok:
             return primary
 
@@ -750,13 +750,13 @@ class SearchEngine:
         # actual network condition; the primary source always fails on the affected
         # networks, so its category gives the user no actionable guidance.
         # [ZH] 分类以备用源为准：它才能真正反映当前网络状况（主源在相关网络环境下
-        # 必然失败，其分类对用户没有指导意义）。
+        # [ZH] 必然失败，其分类对用户没有指导意义）。
         outcome.error_kind = fallback.error_kind or primary.error_kind or "unknown"
         log.warning("两个搜索源都失败：%s", outcome.error)
         return outcome
 
-    # ---------- [EN] Legacy interface compatibility ----------
-    # ---------- [ZH] 兼容旧接口 ----------
+    # [EN] ---------- Legacy interface compatibility ----------
+    # [ZH] ---------- 兼容旧接口 ----------
 
     def search_text(self, query: str) -> str:
         """

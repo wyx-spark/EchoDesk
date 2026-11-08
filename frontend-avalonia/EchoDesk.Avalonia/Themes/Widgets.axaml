@@ -20,7 +20,8 @@
   <FontFamily x:Key="EchoControlFontFamily">Inter, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI Emoji, Segoe UI Symbol</FontFamily>
 
   <!-- ============================================================= -->
-  <!-- 按钮 / Button                                                  -->
+  <!-- [EN] Button -->
+  <!-- [ZH] 按钮                                                  -->
   <!-- ============================================================= -->
   <!--
     [EN] The default button is the secondary variant: a neutral translucent surface with a single
@@ -143,7 +144,8 @@
   </ControlTheme>
 
   <!-- ============================================================= -->
-  <!-- 输入框 / TextBox                                               -->
+  <!-- [EN] TextBox -->
+  <!-- [ZH] 输入框                                               -->
   <!-- ============================================================= -->
   <!--
     [EN] Borderless input: the field is expressed by a filled surface only. Focus is signalled by
@@ -296,7 +298,8 @@
   </ControlTheme>
 
   <!-- ============================================================= -->
-  <!-- 滑块 / Slider                                                  -->
+  <!-- [EN] Slider -->
+  <!-- [ZH] 滑块                                                  -->
   <!-- ============================================================= -->
   <!--
     [EN] Slider rail contract: a two-pixel rail with a twelve-pixel thumb. Both ends of the rail
@@ -456,7 +459,8 @@
   </ControlTheme>
 
   <!-- ============================================================= -->
-  <!-- 开关 / ToggleSwitch                                            -->
+  <!-- [EN] ToggleSwitch -->
+  <!-- [ZH] 开关                                            -->
   <!-- ============================================================= -->
   <!--
     [EN] Toggle contract: the knob travels through the Canvas.Left transition supplied by the
@@ -544,7 +548,8 @@
   </ControlTheme>
 
   <!-- ============================================================= -->
-  <!-- 复选框 / CheckBox                                              -->
+  <!-- [EN] CheckBox -->
+  <!-- [ZH] 复选框                                              -->
   <!-- ============================================================= -->
   <!--
     [EN] Check contract: the tick is a stroked path that scales from 0.6 to 1.0 while fading in,
@@ -620,7 +625,8 @@
   </ControlTheme>
 
   <!-- ============================================================= -->
-  <!-- 下拉框 / ComboBox                                              -->
+  <!-- [EN] ComboBox -->
+  <!-- [ZH] 下拉框                                              -->
   <!-- ============================================================= -->
   <!--
     [EN] Combo contract: the selection surface reuses the borderless input language, while the

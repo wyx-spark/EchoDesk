@@ -169,7 +169,8 @@ log = logging.getLogger("EchoDesk.Marketplace")
 
 
 # ---------------------------------------------------------------------------
-# [EN] Constants / [ZH] 常量
+# [EN] Constants
+# [ZH] 常量
 # ---------------------------------------------------------------------------
 
 #: [EN] Request timeout in seconds. Every network request must have one to avoid
@@ -306,9 +307,10 @@ def _read_json(path: str, default: Any) -> Any:
             return json.load(fh)
     except FileNotFoundError:
         return default
-    except Exception as exc:  # noqa: BLE001 - 文件损坏不能影响程序启动
-        # [EN] Treat a corrupt cache as empty; it will be rebuilt on the next write.
-        # [ZH] 将损坏的缓存视为空，并在下次写入时重建。
+    except Exception as exc:  # noqa: BLE001
+        # [EN] A corrupt file must not affect program startup: treat the corrupt
+        # [EN] cache as empty and rebuild it on the next write.
+        # [ZH] 文件损坏不能影响程序启动：将损坏的缓存视为空，并在下次写入时重建。
         log.warning("读取 %s 失败（视为空，将在下次写入时重建）：%s", path, exc)
         return default
 
@@ -674,7 +676,8 @@ def _sort_items(items: Sequence[Dict[str, Any]], sort_key: str) -> List[Dict[str
 
 
 # ---------------------------------------------------------------------------
-# [EN] Exceptions / [ZH] 异常
+# [EN] Exceptions
+# [ZH] 异常
 # ---------------------------------------------------------------------------
 
 class MarketplaceError(Exception):
@@ -689,7 +692,8 @@ class MarketplaceError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# [EN] Service layer / [ZH] 服务层
+# [EN] Service layer
+# [ZH] 服务层
 # ---------------------------------------------------------------------------
 
 class Marketplace:
@@ -713,8 +717,8 @@ class Marketplace:
         self.cfg = cfg
         self.log = logger or log
 
-        # ---- [EN] Configuration, read defensively by attribute or key ----
-        # ---- [ZH] 配置读取，按属性或键防御性读取 ----
+        # [EN] ---- Configuration, read defensively by attribute or key ----
+        # [ZH] ---- 配置读取，按属性或键防御性读取 ----
         self.enabled: bool = bool(_cfg_get(cfg, "enabled", True))
         self.github_token: str = str(_cfg_get(cfg, "github_token", "") or "").strip()
         try:
@@ -742,13 +746,14 @@ class Marketplace:
         except (TypeError, ValueError):
             self.timeout = float(REQUEST_TIMEOUT)
 
-        # ---- [EN] Path resolution: relative paths use the backend working directory ----
-        # ---- [ZH] 路径解析：相对路径以后端工作目录为基准 ----
+        # [EN] ---- Path resolution: relative paths use the backend working directory ----
+        # [ZH] ---- 路径解析：相对路径以后端工作目录为基准 ----
         self.cache_file: str = self._resolve_path(_cfg_get(cfg, "cache_file", "market_cache.json"))
         self.install_dir: str = self._resolve_path(_cfg_get(cfg, "install_dir", "skills"))
         self.registry_file: str = self._resolve_path(_cfg_get(cfg, "registry_file", "skills_registry.json"))
 
-        # ---- [EN] Internal state / [ZH] 内部状态 ----
+        # [EN] ---- Internal state ----
+        # [ZH] ---- 内部状态 ----
         # [EN] Protects read-modify-write sequences on cache and registry files.
         # [ZH] 保护缓存与注册表文件的读取—修改—写入序列。
         self._io_lock = threading.RLock()
@@ -760,7 +765,8 @@ class Marketplace:
         self._tls = threading.local()
 
     # ------------------------------------------------------------------
-    # [EN] Infrastructure / [ZH] 基础设施
+    # [EN] Infrastructure
+    # [ZH] 基础设施
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -962,7 +968,8 @@ class Marketplace:
             self.log.debug("进度回调异常（已忽略）：%s", exc)
 
     # ------------------------------------------------------------------
-    # [EN] Cache: read and write / [ZH] 缓存：读写
+    # [EN] Cache: read and write
+    # [ZH] 缓存：读写
     # ------------------------------------------------------------------
 
     def _empty_cache(self) -> Dict[str, Any]:
@@ -1067,7 +1074,8 @@ class Marketplace:
         return age < self.cache_ttl_hours * 3600
 
     # ------------------------------------------------------------------
-    # [EN] Cache: refresh and merge / [ZH] 缓存：刷新与合并
+    # [EN] Cache: refresh and merge
+    # [ZH] 缓存：刷新与合并
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -1264,7 +1272,9 @@ class Marketplace:
             # [EN] degrade to the cached snapshot.
             # [ZH] 网络或限流失败：不修改 synced_at；降级为缓存快照。
             return False, str(exc), True
-        except Exception as exc:  # noqa: BLE001 - 兜底，绝不让刷新把界面打崩
+        except Exception as exc:  # noqa: BLE001
+            # [EN] Catch-all: a refresh must never crash the UI.
+            # [ZH] 兜底，绝不让刷新把界面打崩。
             self.log.warning("刷新市场缓存时发生未预期错误：%s", exc, exc_info=True)
             return False, _t("market.refresh.unexpected", kind=type(exc).__name__), True
 
@@ -1488,7 +1498,9 @@ class Marketplace:
                 name = futures[future]
                 try:
                     outcome = future.result()
-                except Exception as exc:  # noqa: BLE001 - 单个仓库失败不影响其它仓库
+                except Exception as exc:  # noqa: BLE001
+                    # [EN] A single repository failure must not affect the others.
+                    # [ZH] 单个仓库失败不影响其它仓库。
                     self.log.debug("验证 %s 时异常：%s", name, exc)
                     continue
                 if outcome is not None:
@@ -1575,7 +1587,8 @@ class Marketplace:
         return data if isinstance(data, dict) else {}
 
     # ------------------------------------------------------------------
-    # [EN] Repository-name validation / [ZH] 仓库名校验
+    # [EN] Repository-name validation
+    # [ZH] 仓库名校验
     # ------------------------------------------------------------------
 
     def _normalize_repo(self, repo: Any) -> str:
@@ -1602,7 +1615,8 @@ class Marketplace:
         return raw
 
     # ------------------------------------------------------------------
-    # [EN] Registry / [ZH] 注册表
+    # [EN] Registry
+    # [ZH] 注册表
     # ------------------------------------------------------------------
 
     def _empty_registry(self) -> Dict[str, Any]:
@@ -1673,7 +1687,8 @@ class Marketplace:
         return keys
 
     # ------------------------------------------------------------------
-    # [EN] Public interface 1: search / [ZH] 公开接口 1：搜索
+    # [EN] Public interface 1: search
+    # [ZH] 公开接口 1：搜索
     # ------------------------------------------------------------------
 
     def search(self, keyword: str = "", sort: str = "best", page: int = 1) -> dict:
@@ -1713,7 +1728,9 @@ class Marketplace:
             return self._search_cached(sort_key, page_num, per_page)
         except MarketplaceError as exc:
             return self._degraded_result(sort_key, page_num, per_page, str(exc), kw)
-        except Exception as exc:  # noqa: BLE001 - 兜底：任何异常都不给用户看堆栈
+        except Exception as exc:  # noqa: BLE001
+            # [EN] Catch-all: never show a stack trace to the user.
+            # [ZH] 兜底：任何异常都不给用户看堆栈。
             self.log.warning("搜索市场时发生未预期错误：%s", exc, exc_info=True)
             return self._degraded_result(
                 sort_key, page_num, per_page,
@@ -1908,7 +1925,8 @@ class Marketplace:
         }
 
     # ------------------------------------------------------------------
-    # [EN] Public interface 2: detail / [ZH] 公开接口 2：详情
+    # [EN] Public interface 2: detail
+    # [ZH] 公开接口 2：详情
     # ------------------------------------------------------------------
 
     def detail(self, repo: str) -> dict:
@@ -2014,7 +2032,8 @@ class Marketplace:
         }
 
     # ------------------------------------------------------------------
-    # [EN] Public interface 3: install / [ZH] 公开接口 3：安装
+    # [EN] Public interface 3: install
+    # [ZH] 公开接口 3：安装
     # ------------------------------------------------------------------
 
     def install(self, repo: str, on_progress: Optional[Callable[[str], None]] = None) -> dict:
@@ -2107,7 +2126,8 @@ class Marketplace:
             loader = str(root_skill.get("loader") or root_skill.get("type") or "python")
             has_prepare = bool(root_skill.get("prepare"))
 
-            # ---- [EN] Copy into the installation directory / [ZH] 复制到安装目录 ----
+            # [EN] ---- Copy into the installation directory ----
+            # [ZH] ---- 复制到安装目录 ----
             os.makedirs(self.install_dir, exist_ok=True)
             dest = os.path.join(self.install_dir, skill_id)
             if not _is_within(dest, self.install_dir):
@@ -2120,7 +2140,8 @@ class Marketplace:
                 ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
             )
 
-            # ---- [EN] Register in the registry / [ZH] 注册到注册表 ----
+            # [EN] ---- Register in the registry ----
+            # [ZH] ---- 注册到注册表 ----
             entry_record = {
                 "id": skill_id,
                 "version": version,
@@ -2142,7 +2163,8 @@ class Marketplace:
                 registry["skills"].append(entry_record)
                 saved = self._save_registry(registry)
 
-            # ---- [EN] Post-install verification / [ZH] 安装后校验 ----
+            # [EN] ---- Post-install verification ----
+            # [ZH] ---- 安装后校验 ----
             notes: List[str] = []
             if not saved:
                 notes.append(_t("market.install.registry_write_failed", path=self.registry_file))
@@ -2167,8 +2189,8 @@ class Marketplace:
             else:
                 self.log.debug("入口检查：%s", import_note)
 
-            # ---- [EN] Dependency, prepare, license, and version notices; none are executed automatically ----
-            # ---- [ZH] 依赖、prepare、许可证与版本兼容提示；均不自动执行 ----
+            # [EN] ---- Dependency, prepare, license, and version notices; none are executed automatically ----
+            # [ZH] ---- 依赖、prepare、许可证与版本兼容提示；均不自动执行 ----
             if dependencies:
                 preview = _t("market.list_sep").join(dependencies[:10])
                 more = (_t("market.install.deps_more", count=len(dependencies))
@@ -2217,7 +2239,10 @@ class Marketplace:
             return dict(result)
         except MarketplaceError as exc:
             return _fail(str(exc))
-        except Exception as exc:  # noqa: BLE001 - 兜底：安装失败也要给可展示的说明
+        except Exception as exc:  # noqa: BLE001
+            # [EN] Catch-all: an installation failure must still produce a
+            # [EN] displayable explanation.
+            # [ZH] 兜底：安装失败也要给可展示的说明。
             self.log.warning("安装 %s 时发生未预期错误：%s", repo, exc, exc_info=True)
             return _fail(_t("market.install.unexpected", kind=type(exc).__name__, error=exc))
         finally:
@@ -2347,7 +2372,8 @@ class Marketplace:
                                 )
                 try:
                     tar.extractall(path=dest, filter="data")
-                except TypeError:  # 老版本 Python 不支持 filter 参数
+                except TypeError:  # [EN] Older Python versions lack the filter parameter.
+                                   # [ZH] 老版本 Python 不支持 filter 参数。
                     tar.extractall(path=dest)
         except MarketplaceError:
             raise
@@ -2431,7 +2457,8 @@ class Marketplace:
         return True, _t("market.entry.loadable", entry=entry)
 
     # ------------------------------------------------------------------
-    # [EN] Public interface 4: uninstall / [ZH] 公开接口 4：卸载
+    # [EN] Public interface 4: uninstall
+    # [ZH] 公开接口 4：卸载
     # ------------------------------------------------------------------
 
     def uninstall(self, skill_id: str) -> dict:
@@ -2520,7 +2547,8 @@ class Marketplace:
         return {"ok": True, "message": message}
 
     # ------------------------------------------------------------------
-    # [EN] Public interface 5: installed / [ZH] 公开接口 5：已安装列表
+    # [EN] Public interface 5: installed
+    # [ZH] 公开接口 5：已安装列表
     # ------------------------------------------------------------------
 
     def installed(self) -> list:
@@ -2556,7 +2584,8 @@ class Marketplace:
             return []
 
     # ------------------------------------------------------------------
-    # [EN] Public interface 6: status / [ZH] 公开接口 6：状态
+    # [EN] Public interface 6: status
+    # [ZH] 公开接口 6：状态
     # ------------------------------------------------------------------
 
     def status(self) -> dict:

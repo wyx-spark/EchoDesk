@@ -146,11 +146,11 @@ log = logging.getLogger("EchoDesk.Summarizer")
 # 3000-character chunks may have a dozen chunks). Only constraints that materially
 # affect summary quality are kept, with no elaborate role-play framing.
 # [ZH] 分段摘要的系统提示（与 conversation.MODES 使用同一套六要素写法，补齐输出格式、
-# 思维与语气）。
+# [ZH] 思维与语气）。
 #
-# 刻意保持简短：该提示词会随每一个分段一起送入模型，写得越长，上下文占用按分段数
-# 放大（3000 字符一段的长文档会有十几段）；因此只保留对摘要质量真正有约束力的几条，
-# 不做角色扮演式的铺陈。
+# [ZH] 刻意保持简短：该提示词会随每一个分段一起送入模型，写得越长，上下文占用按分段数
+# [ZH] 放大（3000 字符一段的长文档会有十几段）；因此只保留对摘要质量真正有约束力的几条，
+# [ZH] 不做角色扮演式的铺陈。
 _CHUNK_SYSTEM = (
     "【角色】你是文档分段摘要器，只提炼、不发挥。\n"
     "【输出格式】纯文本要点，每条一行，不加标题、不加评论。\n"
@@ -165,8 +165,8 @@ _CHUNK_SYSTEM = (
 # sections, and the previous prompt only required merging duplicates, so the model
 # frequently dropped one of the formulations.
 # [ZH] 合并阶段的系统提示：在压缩的同时防止关键要素丢失。新增"表述不一致时两者都
-# 保留"一条：合同或报告中同一事项在不同段落的写法不同属于常见情况，此前的提示词仅
-# 要求"合并重复"，模型容易丢弃其中一种说法。
+# [ZH] 保留"一条：合同或报告中同一事项在不同段落的写法不同属于常见情况，此前的提示词仅
+# [ZH] 要求"合并重复"，模型容易丢弃其中一种说法。
 _MERGE_SYSTEM = (
     "【角色】你是文档摘要合并器，把多段要点并成一份完整摘要。\n"
     "【输出格式】先一段总述，再按主题分组列出要点；合并重复项，不新增条目。\n"
@@ -184,7 +184,7 @@ _MAX_REDUCE_DEPTH = 4
 #: [EN] When a chunk summary fails, times out, or is skipped, fall back to the first
 #: characters of the chunk so that the final summary still covers that content.
 #: [ZH] 段摘要失败、超时或跳过时，用该段前若干字符兜底，以保证最终摘要仍覆盖该段
-#: 内容。
+#: [ZH] 内容。
 _FALLBACK_MIN_CHARS = 200
 
 
@@ -213,8 +213,8 @@ class SummaryResult:
     # truncated.
     # [ZH] 是否实际执行了摘要（否则为原样或截断）。
     summarized: bool = False
-    # ---------- [EN] Process and failure statistics ----------
-    # ---------- [ZH] 过程与故障统计 ----------
+    # [EN] ---------- Process and failure statistics ----------
+    # [ZH] ---------- 过程与故障统计 ----------
     # [EN] One of ok / partial / failed / aborted.
     # [ZH] ok / partial / failed / aborted。
     status: str = "ok"
@@ -245,8 +245,8 @@ class SummaryResult:
     # [EN] Short reason when status is failed (no document body).
     # [ZH] status=failed 时的简短原因（不含正文）。
     error: str = ""
-    # ---------- [EN] Extractive pre-filter statistics ----------
-    # ---------- [ZH] 抽取式预筛统计 ----------
+    # [EN] ---------- Extractive pre-filter statistics ----------
+    # [ZH] ---------- 抽取式预筛统计 ----------
     # [EN] Whether the pre-filter took effect cannot be inferred from the final
     # summary alone, so assertable numbers are recorded. The three fields must not be
     # conflated; tests assert their relative magnitudes:
@@ -258,12 +258,12 @@ class SummaryResult:
     # the compression ratio ``origin / input`` is directly comparable with the switch
     # on and off.
     # [ZH] 仅看最终摘要无法判断预筛是否生效，因此必须记录可断言的数字。三项口径不可
-    # 混淆，测试直接断言其相对大小：
-    #   extractive_origin_chars 所有段原文字符数之和；
-    #   extractive_input_chars  实际送入模型的字符数之和（预筛后）；
-    #   extractive_saved_chars  = origin - input，即预筛省下的字符数。
-    # 未做预筛的段三项均计入（origin == input），因此压缩比 ``origin / input`` 在
-    # 开关打开前后可直接对比。
+    # [ZH] 混淆，测试直接断言其相对大小：
+    # [ZH]   extractive_origin_chars 所有段原文字符数之和；
+    # [ZH]   extractive_input_chars  实际送入模型的字符数之和（预筛后）；
+    # [ZH]   extractive_saved_chars  = origin - input，即预筛省下的字符数。
+    # [ZH] 未做预筛的段三项均计入（origin == input），因此压缩比 ``origin / input`` 在
+    # [ZH] 开关打开前后可直接对比。
     # [EN] Chunks that actually underwent pre-filtering.
     # [ZH] 真正发生预筛的段数。
     extractive_chunks: int = 0
@@ -386,8 +386,8 @@ class DocumentSummarizer:
         self._dedicated = None
         self._dedicated_path = ""
 
-    # ---------- [EN] Trigger evaluation ----------
-    # ---------- [ZH] 触发判断 ----------
+    # [EN] ---------- Trigger evaluation ----------
+    # [ZH] ---------- 触发判断 ----------
 
     def needs_summary(self, text: str, n_ctx: int) -> bool:
         """
@@ -421,8 +421,8 @@ class DocumentSummarizer:
             return bool(text) and self.cfg.enabled
         return self.needs_summary(text, n_ctx)
 
-    # ---------- [EN] Main summarization flow ----------
-    # ---------- [ZH] 摘要主流程 ----------
+    # [EN] ---------- Main summarization flow ----------
+    # [ZH] ---------- 摘要主流程 ----------
 
     def summarize(
         self,
@@ -520,7 +520,7 @@ class DocumentSummarizer:
             # model, and any exception falls back to the original text; it must never
             # fail the whole summarization.
             # [ZH] 抽取式预筛：先压缩字数，再交给模型。该步骤为毫秒级，不占用模型；
-            # 任何异常都退回原文，绝不因此导致整篇摘要失败。
+            # [ZH] 任何异常都退回原文，绝不因此导致整篇摘要失败。
             model_input, raw_chars, kept_chars = self._prefilter(chunk)
             pf_origin += raw_chars
             pf_input += kept_chars
@@ -602,8 +602,8 @@ class DocumentSummarizer:
                 "stream": stream_capable, **self._counters(counters, pf()),
             })
 
-        # ---------- [EN] Finalization ----------
-        # ---------- [ZH] 收尾 ----------
+        # [EN] ---------- Finalization ----------
+        # [ZH] ---------- 收尾 ----------
         elapsed = time.perf_counter() - started
         if aborted:
             log.info("分段摘要已中止: %s（已完成 %d/%d 段，耗时 %.1f 秒）",
@@ -617,7 +617,7 @@ class DocumentSummarizer:
             # caller informs the user that a retry is possible, and the original file
             # content remains intact in the session.
             # [ZH] 已中止：不产出半份摘要（半份摘要静默进入上下文比失败更危险），由
-            # 调用方提示用户可重试；原文件内容仍完整保留在会话中。
+            # [ZH] 调用方提示用户可重试；原文件内容仍完整保留在会话中。
             return SummaryResult(
                 text="", chunk_count=total, segments=segments, origin_chars=origin_chars,
                 summarized=False, status="aborted", aborted=True,
@@ -635,7 +635,7 @@ class DocumentSummarizer:
             # keep the retry path, rather than injecting a fake summary composed only
             # of truncations.
             # [ZH] 所有段落均未能产出摘要：这属于真实故障（模型不可用、内存不足或引擎
-            # 异常）。应如实报错并保留重试路径，而不是注入一份"全是截断"的假摘要。
+            # [ZH] 异常）。应如实报错并保留重试路径，而不是注入一份"全是截断"的假摘要。
             log.error("分段摘要失败: %s（%d 段全部未能产出摘要，耗时 %.1f 秒）",
                       source_name or "(未命名)", total, elapsed)
             self._emit(on_progress, {
@@ -694,8 +694,8 @@ class DocumentSummarizer:
         })
         return result
 
-    # ---------- [EN] Extractive pre-filtering ----------
-    # ---------- [ZH] 抽取式预筛 ----------
+    # [EN] ---------- Extractive pre-filtering ----------
+    # [ZH] ---------- 抽取式预筛 ----------
 
     def _prefilter(self, chunk: str) -> Tuple[str, int, int]:
         """
@@ -748,8 +748,8 @@ class DocumentSummarizer:
             return chunk, len(chunk), len(chunk)
         return picked.text, len(chunk), len(picked.text)
 
-    # ---------- [EN] Single-chunk generation (heartbeat, timeout, interruption) ----------
-    # ---------- [ZH] 单段生成（含心跳、超时与中断） ----------
+    # [EN] ---------- Single-chunk generation (heartbeat, timeout, interruption) ----------
+    # [ZH] ---------- 单段生成（含心跳、超时与中断） ----------
 
     def _generate_chunk(
         self,
@@ -825,7 +825,7 @@ class DocumentSummarizer:
         [ZH]
         调用模型生成一段文本；流式优先，从而支持心跳、段内超时与段内中断。
 
-        非流式引擎（没有 ``chat_stream``，例如测试用的假引擎或第三方实现）退化为
+        非流式引擎（没有 ``chat_stream``，例如测试专用的假引擎或第三方实现）退化为
         "调用返回后再判定"：心跳与中断只能在段与段之间生效，事件里会带 ``stream=False``，
         调用方据此如实提示，而不是假装能中途打断。
         """
@@ -883,7 +883,9 @@ class DocumentSummarizer:
                     text = "".join(pieces).strip()
                     return (text, "ok") if text else ("", "failed")
                 except Exception:
-                    # 流式中途断开：已产出的内容仍可用，但如实标注为 partial
+                    # [EN] The stream broke mid-way: content produced so far is still usable,
+                    # [EN] but it is reported truthfully as partial.
+                    # [ZH] 流式中途断开：已产出的内容仍可用，但如实标注为 partial
                     log.warning("第 %d/%d 段流式生成中断（已产出 %d 字符）",
                                 index, total, produced, exc_info=True)
                     if slow_reported or (time.perf_counter() - started) >= slow_after:
@@ -891,7 +893,8 @@ class DocumentSummarizer:
                     text = "".join(pieces).strip()
                     return (text, "partial") if text else ("", "failed")
 
-        # ---- 非流式兜底 ----
+        # [EN] ---- Non-streaming fallback ----
+        # [ZH] ---- 非流式兜底 ----
         try:
             text = engine.chat_complete(messages, temperature=0.2, max_tokens=max_tokens).strip()
         except Exception:
@@ -964,7 +967,8 @@ class DocumentSummarizer:
         except Exception:
             log.debug("进度回调异常（已忽略）", exc_info=True)
 
-    # ---------- 内部实现 ----------
+    # [EN] ---------- Internal implementation ----------
+    # [ZH] ---------- 内部实现 ----------
 
     def _pick_engine(self):
         """
@@ -1054,8 +1058,12 @@ class DocumentSummarizer:
         merged: List[str] = []
         for i, group in enumerate(groups, 1):
             if should_stop is not None and should_stop():
-                # 归并阶段被中止：已归并的部分照常返回（段摘要本身是完整的，
-                # 归并只是二次压缩，截断兜底不会丢内容）
+                # [EN] The reduce phase was aborted: whatever was merged so far is
+                # [EN] returned as usual (chunk summaries are complete in themselves;
+                # [EN] merging is only a second compression pass, so the truncation
+                # [EN] fallback does not lose content).
+                # [ZH] 归并阶段被中止：已归并的部分照常返回（段摘要本身是完整的，
+                # [ZH] 归并只是二次压缩，截断兜底不会丢内容）
                 break
             self._emit(on_progress, {
                 "phase": "reduce", "status": "running", "index": i, "total": len(groups),

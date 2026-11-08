@@ -1,53 +1,97 @@
 <!--
-  EchoDesk 全局控件样式（修复二 / 修复六）
-
-  设计约束：
-  1. **颜色一律 {DynamicResource}**：切换主题时必须立即重绘，因此不能用
-     StaticResource（静态资源在加载时求值一次，切主题后残留旧色）。
-  2. **不硬编码色值**：所有颜色来自 Theme.Light.xaml / Theme.Dark.xaml 的语义色板。
-     tools/check_theme.py 会扫描本仓库的 xaml/cs，发现硬编码色值即报错。
-  3. **字体带回退链**：WPF 的 FontFamily 支持逗号分隔的家族列表，会**逐字形**回退。
-     这是修复六的关键——只写 "Segoe UI" 时它对该 emoji 覆盖率是 0/20，必然显示方块；
-     把 "Segoe UI Emoji" 放进链里才能正常渲染。
-  4. 深浅两套主题的色板键名必须完全一致（check_theme.py 校验），否则出现"取不到
-     资源 → 回退默认色"的浅色残留。
+  [EN] EchoDesk global control styles (fix 2 / fix 6).
+  [EN]
+  [EN] Design constraints:
+  [EN] 1. **Always use {DynamicResource} for colours**: a theme switch must repaint at once,
+  [EN]    so StaticResource cannot be used (a static resource is evaluated once at load time
+  [EN]    and keeps the old colour after the theme has changed).
+  [EN] 2. **No hard-coded colour values**: every colour comes from the semantic palette in
+  [EN]    Theme.Light.xaml / Theme.Dark.xaml. tools/check_theme.py scans the XAML and C#
+  [EN]    files of this repository and reports any hard-coded colour value.
+  [EN] 3. **Fonts carry a fallback chain**: WPF resolves a comma-separated family list glyph
+  [EN]    by glyph. This is the core of fix 6: with only "Segoe UI" the emoji coverage is
+  [EN]    0/20 and boxes are inevitable; adding "Segoe UI Emoji" to the chain renders them.
+  [EN] 4. The palette keys of the light and dark themes must match exactly (verified by
+  [EN]    check_theme.py); otherwise a missing resource falls back to the default colour and
+  [EN]    leaves light-theme residue in the dark theme.
+  [ZH] EchoDesk 全局控件样式（修复二 / 修复六）。
+  [ZH]
+  [ZH] 设计约束：
+  [ZH] 1. **颜色一律 {DynamicResource}**：切换主题时必须立即重绘，因此不能用
+  [ZH]    StaticResource（静态资源在加载时求值一次，切主题后残留旧色）。
+  [ZH] 2. **不硬编码色值**：所有颜色来自 Theme.Light.xaml / Theme.Dark.xaml 的语义色板。
+  [ZH]    tools/check_theme.py 会扫描本仓库的 xaml/cs，发现硬编码色值即报错。
+  [ZH] 3. **字体带回退链**：WPF 的 FontFamily 支持逗号分隔的家族列表，会**逐字形**回退。
+  [ZH]    这是修复六的关键——只写 "Segoe UI" 时它对该 emoji 覆盖率是 0/20，必然显示方块；
+  [ZH]    把 "Segoe UI Emoji" 放进链里才能正常渲染。
+  [ZH] 4. 深浅两套主题的色板键名必须完全一致（check_theme.py 校验），否则出现“取不到
+  [ZH]    资源 → 回退默认色”的浅色残留。
 -->
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <!-- ============ 字体（修复六） ============
-         UiFontFamily  ：正文。Segoe UI 打底，emoji 交给 Segoe UI Emoji，
-                         符号交给 Segoe UI Symbol，中文交给 Microsoft YaHei UI。
-                         顺序很重要：先命中的先渲染，所以把覆盖最广的放前面反而会
-                         让拉丁文字也用 emoji 字体（字形很怪），因此 Latin 家族必须排第一。
-         MonoFontFamily：代码等宽字体，同样带 emoji 回退（技能输出里常有 emoji）。
-         IconFontFamily：**纯图标按钮专用**。把 Segoe UI Symbol 排在 Segoe UI Emoji 前面，
-                         让 ⚙ 📎 ➤ 这类图标渲染成"跟随前景色的单色字形"而不是彩色 emoji ——
-                         彩色 emoji 有自己固定的灰色/彩色，落在浅色按钮上只有 2.4:1 对比度
-                         （实测：浅色主题下设置按钮的齿轮几乎看不清），而单色字形用
-                         ButtonForeground，对比度直接到 14:1。正文里的 emoji 仍走
-                         UiFontFamily 保持彩色。 -->
+    <!--
+         [EN] ============ Fonts (fix 6) ============
+         [EN] UiFontFamily  : body text. Segoe UI first, emoji go to Segoe UI Emoji,
+         [EN]                 symbols to Segoe UI Symbol, Chinese to Microsoft YaHei UI.
+         [EN]                 The order matters: the first match wins, so putting the widest
+         [EN]                 coverage first would render Latin text with the emoji font as
+         [EN]                 well (the glyphs look wrong); the Latin family must stay first.
+         [EN] MonoFontFamily: monospaced font for code, with the same emoji fallback
+         [EN]                 (skill output frequently contains emoji).
+         [EN] IconFontFamily: **for icon-only buttons**. Segoe UI Symbol comes before
+         [EN]                 Segoe UI Emoji so that icons such as ⚙ 📎 ➤ render as
+         [EN]                 "monochrome glyphs that follow the foreground colour" instead of
+         [EN]                 coloured emoji. Coloured emoji carry their own fixed grey/colour
+         [EN]                 and reach only 2.4:1 contrast on a light button (measured on the
+         [EN]                 light theme, the gear of the settings button is almost invisible),
+         [EN]                 while monochrome glyphs use ButtonForeground and reach 14:1.
+         [EN]                 Emoji in body text still use UiFontFamily and stay coloured.
+         [ZH] ============ 字体（修复六） ============
+         [ZH] UiFontFamily  ：正文。Segoe UI 打底，emoji 交给 Segoe UI Emoji，
+         [ZH]                 符号交给 Segoe UI Symbol，中文交给 Microsoft YaHei UI。
+         [ZH]                 顺序很重要：先命中的先渲染，所以把覆盖最广的放前面反而会
+         [ZH]                 让拉丁文字也用 emoji 字体（字形很怪），因此 Latin 家族必须排第一。
+         [ZH] MonoFontFamily：代码等宽字体，同样带 emoji 回退（技能输出里常有 emoji）。
+         [ZH] IconFontFamily：**纯图标按钮专用**。把 Segoe UI Symbol 排在 Segoe UI Emoji 前面，
+         [ZH]                 让 ⚙ 📎 ➤ 这类图标渲染成“跟随前景色的单色字形”而不是彩色 emoji ——
+         [ZH]                 彩色 emoji 有自己固定的灰色/彩色，落在浅色按钮上只有 2.4:1 对比度
+         [ZH]                 （实测：浅色主题下设置按钮的齿轮几乎看不清），而单色字形用
+         [ZH]                 ButtonForeground，对比度直接到 14:1。正文里的 emoji 仍走
+         [ZH]                 UiFontFamily 保持彩色。 -->
     <FontFamily x:Key="UiFontFamily">Segoe UI, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI</FontFamily>
     <FontFamily x:Key="MonoFontFamily">Consolas, Segoe UI Emoji, Segoe UI Symbol, Microsoft YaHei UI</FontFamily>
     <FontFamily x:Key="IconFontFamily">Segoe UI Symbol, Segoe UI Emoji, Segoe UI</FontFamily>
 
     <!--
-        纯图标按钮的内容样式。
-
-        为什么不能只给 Button 设 FontFamily：RoundButton 的模板用 ContentPresenter
-        显示字符串，WPF 会为它生成一个隐式 TextBlock，而本文件里的
-        <Style TargetType="TextBlock"> 已经设了 FontFamily=UiFontFamily —— 隐式样式
-        优先于继承，所以按钮上的 FontFamily 会被吃掉，图标仍然是彩色 emoji。
-        把图标写成 TextBlock 并套这个样式才是可靠做法。
-        （Foreground 故意不设：隐式 TextBlock 样式的 TextForeground 与
-          ButtonForeground 在两套色板里取值相同，交给继承链更省事。）
+         [EN] Content style for icon-only buttons.
+         [EN]
+         [EN] Why the FontFamily cannot simply be set on the Button: the RoundButton
+         [EN] template displays a string through a ContentPresenter, for which WPF
+         [EN] generates an implicit TextBlock, and the <Style TargetType="TextBlock"> in
+         [EN] this file already sets FontFamily=UiFontFamily. The implicit style wins over
+         [EN] inheritance, so the FontFamily of the button is overridden and the icon stays
+         [EN] a coloured emoji. Writing the icon as a TextBlock with this style is the
+         [EN] reliable approach. (Foreground is deliberately not set: TextForeground of the
+         [EN] implicit TextBlock style and ButtonForeground resolve to the same value in
+         [EN] both palettes, so leaving it to the inheritance chain is simpler.)
+         [ZH] 纯图标按钮的内容样式。
+         [ZH]
+         [ZH] 为什么不能只给 Button 设 FontFamily：RoundButton 的模板用 ContentPresenter
+         [ZH] 显示字符串，WPF 会为它生成一个隐式 TextBlock，而本文件里的
+         [ZH] <Style TargetType="TextBlock"> 已经设了 FontFamily=UiFontFamily —— 隐式样式
+         [ZH] 优先于继承，所以按钮上的 FontFamily 会被吃掉，图标仍然是彩色 emoji。
+         [ZH] 把图标写成 TextBlock 并套这个样式才是可靠做法。
+         [ZH] （Foreground 故意不设：隐式 TextBlock 样式的 TextForeground 与
+         [ZH]   ButtonForeground 在两套色板里取值相同，交给继承链更省事。）
     -->
     <Style x:Key="IconText" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{DynamicResource IconFontFamily}"/>
         <Setter Property="TextWrapping" Value="NoWrap"/>
     </Style>
 
-    <!-- ============ 基础文字 ============ -->
+    <!-- [EN] ============ Base text ============ -->
+<!-- [ZH] ============ 基础文字 ============ -->
     <Style TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{DynamicResource UiFontFamily}"/>
         <Setter Property="TextWrapping" Value="Wrap"/>
@@ -69,7 +113,8 @@
         <Setter Property="Background" Value="{DynamicResource SeparatorBrush}"/>
     </Style>
 
-    <!-- ============ 按钮（正常 / 悬停 / 按下 / 禁用） ============ -->
+    <!-- [EN] ============ Buttons (normal / hover / pressed / disabled) ============ -->
+<!-- [ZH] ============ 按钮（正常 / 悬停 / 按下 / 禁用） ============ -->
     <Style TargetType="Button">
         <Setter Property="Padding" Value="10,5"/>
         <Setter Property="Margin" Value="5"/>
@@ -112,7 +157,8 @@
         </Setter>
     </Style>
 
-    <!-- 圆形/胶囊按钮（仿 DeepSeek-Harness 输入栏） -->
+    <!-- [EN] Round / capsule buttons (modelled on the DeepSeek-Harness input bar) -->
+<!-- [ZH] 圆形/胶囊按钮（仿 DeepSeek-Harness 输入栏） -->
     <Style x:Key="RoundButton" TargetType="Button">
         <Setter Property="Margin" Value="2"/>
         <Setter Property="FontFamily" Value="{DynamicResource UiFontFamily}"/>
@@ -146,7 +192,8 @@
         </Setter>
     </Style>
 
-    <!-- ============ 输入框 ============ -->
+    <!-- [EN] ============ Text input ============ -->
+<!-- [ZH] ============ 输入框 ============ -->
     <Style TargetType="TextBox">
         <Setter Property="FontFamily" Value="{DynamicResource UiFontFamily}"/>
         <Setter Property="Background" Value="{DynamicResource InputBackground}"/>
@@ -200,7 +247,8 @@
         <Setter Property="SelectionBrush" Value="{DynamicResource SelectionBackground}"/>
     </Style>
 
-    <!-- ============ 下拉框 ============ -->
+    <!-- [EN] ============ Combo box ============ -->
+<!-- [ZH] ============ 下拉框 ============ -->
     <Style TargetType="ComboBoxItem">
         <Setter Property="FontFamily" Value="{DynamicResource UiFontFamily}"/>
         <Setter Property="Foreground" Value="{DynamicResource MenuForeground}"/>
@@ -298,7 +346,8 @@
         </Setter>
     </Style>
 
-    <!-- ============ 列表 ============ -->
+    <!-- [EN] ============ List ============ -->
+<!-- [ZH] ============ 列表 ============ -->
     <Style TargetType="ListBox">
         <Setter Property="FontFamily" Value="{DynamicResource UiFontFamily}"/>
         <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
@@ -333,7 +382,8 @@
         </Setter>
     </Style>
 
-    <!-- ============ 复选框 / 单选框 ============ -->
+    <!-- [EN] ============ Check box / radio button ============ -->
+<!-- [ZH] ============ 复选框 / 单选框 ============ -->
     <Style TargetType="CheckBox">
         <Setter Property="FontFamily" Value="{DynamicResource UiFontFamily}"/>
         <Setter Property="Foreground" Value="{DynamicResource TextForeground}"/>
@@ -440,7 +490,8 @@
         </Setter>
     </Style>
 
-    <!-- ============ 滚动条（默认模板走 SystemColors，深色下会是亮灰条） ============ -->
+    <!-- [EN] ============ Scroll bar (the default template uses SystemColors, which renders as a bright grey bar in the dark theme) ============ -->
+<!-- [ZH] ============ 滚动条（默认模板走 SystemColors，深色下会是亮灰条） ============ -->
     <Style x:Key="ScrollPageButtonStyle" TargetType="RepeatButton">
         <Setter Property="Focusable" Value="False"/>
         <Setter Property="IsTabStop" Value="False"/>
@@ -503,7 +554,8 @@
         </Setter>
     </Style>
 
-    <!-- ============ 浮层 ============ -->
+    <!-- [EN] ============ Overlays ============ -->
+<!-- [ZH] ============ 浮层 ============ -->
     <Style TargetType="ToolTip">
         <Setter Property="FontFamily" Value="{DynamicResource UiFontFamily}"/>
         <Setter Property="Background" Value="{DynamicResource TooltipBackground}"/>
@@ -538,7 +590,8 @@
         <Setter Property="Background" Value="{DynamicResource MenuBackground}"/>
     </Style>
 
-    <!-- ============ 进度条 / 滑块 ============ -->
+    <!-- [EN] ============ Progress bar / slider ============ -->
+<!-- [ZH] ============ 进度条 / 滑块 ============ -->
     <Style TargetType="ProgressBar">
         <Setter Property="Background" Value="{DynamicResource SurfaceAltBrush}"/>
         <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>

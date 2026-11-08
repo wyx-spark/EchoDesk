@@ -6,7 +6,10 @@ using EchoDesk.Services;
 
 namespace EchoDesk.Utilities;
 
-/// <summary>一条用户自定义的常用语。</summary>
+/// <summary>
+/// [EN] A user-defined snippet.
+/// [ZH] 一条用户自定义的常用语。
+/// </summary>
 public sealed class Snippet
 {
     public string Name { get; set; } = "";
@@ -14,8 +17,11 @@ public sealed class Snippet
 }
 
 /// <summary>
-/// 管理用户自定义常用语（<c>snippets.json</c>，修复七后存放在用户数据目录，
-/// 便携版布局下即外层目录，与 <c>app\</c> 里的程序文件分开）。
+/// [EN] Manages user-defined snippets (<c>snippets.json</c>; after fix seven the file lives in
+/// [EN] the user data directory, which is the outer folder in the portable layout, separate
+/// [EN] from the program files in <c>app\</c>).
+/// [ZH] 管理用户自定义常用语（<c>snippets.json</c>，修复七后存放在用户数据目录，
+/// [ZH] 便携版布局下即外层目录，与 <c>app\</c> 里的程序文件分开）。
 /// </summary>
 public sealed class SnippetManager
 {
@@ -49,11 +55,15 @@ public sealed class SnippetManager
         }
         catch
         {
-            // 保存失败不影响使用（仅本次会话生效）
+            // [EN] A failed save does not affect use (the change applies to this session only).
+            // [ZH] 保存失败不影响使用（仅本次会话生效）
         }
     }
 
-    /// <summary>新增常用语；名称已存在时返回 false。</summary>
+    /// <summary>
+    /// [EN] Adds a snippet; returns false when the name already exists.
+    /// [ZH] 新增常用语；名称已存在时返回 false。
+    /// </summary>
     public bool Add(string name, string text)
     {
         if (Items.Any(s => s.Name == name))

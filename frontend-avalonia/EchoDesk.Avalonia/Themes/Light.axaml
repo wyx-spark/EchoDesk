@@ -10,7 +10,8 @@
     [ZH] 色板约定：应用画布为 #F8F9FA，面板为纯白，层级通过柔和投影而非粗描边表达。
   -->
 
-  <!-- [EN] Semantic aliases retained for the WPF-aligned naming convention. / [ZH] 为兼容 WPF 命名约定而保留的语义别名。 -->
+  <!-- [EN] Semantic aliases retained for the WPF-aligned naming convention. -->
+  <!-- [ZH] 为兼容 WPF 命名约定而保留的语义别名。 -->
   <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FFF8F9FA" />
   <SolidColorBrush x:Key="PanelBackgroundBrush" Color="#FFFFFFFF" />
   <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFFFF" />
@@ -80,7 +81,8 @@
   <SolidColorBrush x:Key="SystemBrush" Color="#FF6E7781" />
   <SolidColorBrush x:Key="CodeForeground" Color="#FF1F2328" />
 
-  <!-- [EN] Markdown surfaces (code, rules, quotes, formulas and links). / [ZH] Markdown 载面（代码、分隔线、引用、公式与链接）。 -->
+  <!-- [EN] Markdown surfaces (code, rules, quotes, formulas and links). -->
+  <!-- [ZH] Markdown 载面（代码、分隔线、引用、公式与链接）。 -->
   <SolidColorBrush x:Key="MarkdownCodeBrush" Color="#FFF1F3F5" />
   <SolidColorBrush x:Key="MarkdownCodeForeground" Color="#FF1F2328" />
   <SolidColorBrush x:Key="MarkdownRuleBrush" Color="#FFE6E8EB" />

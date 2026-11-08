@@ -2,7 +2,18 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.InstalledPage">
   <!--
-    已安装页（视觉对齐版）：版式按 frontend/SettingsWindow.xaml 的「已安装」页签复刻。
+    [EN] Installed page (visual-alignment revision): the layout replicates the Installed tab of
+         frontend/SettingsWindow.xaml.
+           * the top is a 15 px bold accent heading, "loaded plugins", plus one line of
+             explanation;
+           * the action bar sits below that explanation (refresh / reload local plugins /
+             install from folder / new local plugin);
+           * the plugin list sits **inside a frame with radius 8 and a 1 px border** (WPF has
+             always drawn it this way; the Avalonia build previously showed a bare area without
+             a boundary);
+           * the status row (installed total=...) is below the list frame.
+         Control names and AutomationIds are unchanged.
+    [ZH] 已安装页（视觉对齐版）：版式按 frontend/SettingsWindow.xaml 的「已安装」页签复刻。
       · 顶部是 15 号加粗强调色的「已加载插件」标题 + 一行说明；
       · 操作条在说明下面（刷新 / 重载本地插件 / 从文件夹安装 / 新建本地插件）；
       · 插件列表放在**一个 8 圆角、1px 描边的框里**（WPF 一直是这个画法，
@@ -12,11 +23,13 @@
   -->
   <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Margin="14,12,14,10">
 
-    <!-- 标题 -->
+    <!-- [EN] Title. -->
+    <!-- [ZH] 标题。 -->
     <TextBlock x:Name="InstalledTitle" Grid.Row="0" FontSize="15" FontWeight="Bold"
                Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,6" />
 
-    <!-- 操作条 -->
+    <!-- [EN] Action bar. -->
+    <!-- [ZH] 操作条。 -->
     <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
       <Button x:Name="SkillsRefreshButton" Padding="10,4"
               AutomationProperties.AutomationId="SkillsRefreshButton" />
@@ -33,10 +46,18 @@
     <TextBlock x:Name="InstalledTipText" Grid.Row="1" Margin="0,2,0,8" FontSize="11"
                TextWrapping="Wrap" Opacity="0.7" />
 
-    <!-- 首次加载未知来源插件的信任确认（v0.2.2 第 4 批 3a）。
-         WPF 用 TrustDialog 模态窗口；Avalonia 没有对话框体系，改成**页内一块面板**：
-         一次性列出全部待确认插件、逐条勾选、整批提交（后端 skills_trust_bulk）——
-         与 WPF 同一语义（"只问一次、整批决定"），只是承载方式不同。 -->
+    <!--
+      [EN] Trust confirmation for plugins from unknown sources on first load (v0.2.2 batch 4,
+           item 3a). WPF uses the modal TrustDialog; Avalonia has no dialog framework, so this
+           becomes **an in-page panel**: every plugin awaiting confirmation is listed at once,
+           each one is checked individually and the whole batch is submitted together (backend
+           skills_trust_bulk). The semantics match WPF ("ask once, decide for the whole batch");
+           only the carrier differs.
+      [ZH] 首次加载未知来源插件的信任确认（v0.2.2 第 4 批 3a）。
+           WPF 用 TrustDialog 模态窗口；Avalonia 没有对话框体系，改成**页内一块面板**：
+           一次性列出全部待确认插件、逐条勾选、整批提交（后端 skills_trust_bulk）——
+           与 WPF 同一语义（“只问一次、整批决定”），只是承载方式不同。
+    -->
     <Border x:Name="TrustPanel" Grid.Row="3" IsVisible="False" Margin="0,10,0,0"
             Background="{DynamicResource WarningBannerBrush}"
             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
@@ -63,7 +84,10 @@
       </StackPanel>
     </Border>
 
-    <!-- 列表：与 WPF 一样放在一个描边框里 -->
+    <!--
+      [EN] List: it sits inside a bordered frame, as in WPF.
+      [ZH] 列表：与 WPF 一样放在一个描边框里。
+    -->
     <Border Grid.Row="4" Margin="0,10,0,0" CornerRadius="8" BorderThickness="1"
             BorderBrush="{DynamicResource InputBorderBrush}"
             Background="{DynamicResource InputBackgroundBrush}">
@@ -84,7 +108,8 @@
       </ScrollViewer>
     </Border>
 
-    <!-- 状态行 -->
+    <!-- [EN] Status row. -->
+    <!-- [ZH] 状态行。 -->
     <TextBlock x:Name="SkillStatusText" Grid.Row="5" Margin="0,6,0,0" FontSize="11"
                TextWrapping="Wrap" Opacity="0.8"
                AutomationProperties.AutomationId="SkillStatusText" />

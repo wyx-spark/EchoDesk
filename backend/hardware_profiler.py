@@ -64,14 +64,14 @@ log = logging.getLogger("EchoDesk.Hardware")
 #: allocation keeps the KV cache, and therefore idle memory usage, low; the
 #: window grows on demand up to the hardware ceiling.
 #: [ZH] 新加载模型时分配的初始上下文窗口。较小的初始分配可压低 KV Cache 占用，
-#: 从而降低空闲内存占用；该窗口按需增长，直至硬件上限。
+#: [ZH] 从而降低空闲内存占用；该窗口按需增长，直至硬件上限。
 DEFAULT_INITIAL_CONTEXT = 2048
 
 #: [EN] Absolute lower bound for any context window. Matches
 #: ``config.MIN_CONTEXT`` so that the planner never produces a value the
 #: configuration layer would reject.
 #: [ZH] 任何上下文窗口的绝对下界。与 ``config.MIN_CONTEXT`` 保持一致，使规划器
-#: 不会产出配置层会拒绝的取值。
+#: [ZH] 不会产出配置层会拒绝的取值。
 MIN_CONTEXT = 512
 
 #: [EN] Fallback ceiling used only when no configuration value is supplied.
@@ -82,7 +82,7 @@ DEFAULT_MAX_CONTEXT = 32768
 #: unallocated to absorb driver overhead, allocator fragmentation and transient
 #: compute buffers, preventing out-of-memory termination.
 #: [ZH] 显存安全水位线。刻意保留 20% 的空闲显存不予分配，用于吸收驱动开销、
-#: 分配器碎片与瞬时计算缓冲，避免显存耗尽导致的进程终止。
+#: [ZH] 分配器碎片与瞬时计算缓冲，避免显存耗尽导致的进程终止。
 VRAM_SAFETY_RATIO = 0.20
 
 #: [EN] RAM safety ratio applied to the currently available physical memory.
@@ -93,7 +93,7 @@ RAM_SAFETY_RATIO = 0.20
 #: created by llama.cpp during inference. It is applied to the **system-memory**
 #: context budget only; VRAM uses the separate, larger allowance below.
 #: [ZH] 为 llama.cpp 推理期间创建的计算图、logits 与临时缓冲预留的固定额度。
-#: 该额度只用于**系统内存**的上下文预算；显存使用下方单独且更大的额度。
+#: [ZH] 该额度只用于**系统内存**的上下文预算；显存使用下方单独且更大的额度。
 COMPUTE_BUFFER_BYTES = 256 * 1024 * 1024
 
 #: [EN] Fixed allowance reserved inside free VRAM for the computation graph,
@@ -101,8 +101,8 @@ COMPUTE_BUFFER_BYTES = 256 * 1024 * 1024
 #: v0.2.4 task 3: on 8 GiB cards the extra headroom avoids inference-time OOM at
 #: the cost of one or two offloaded layers, which is the intended trade.
 #: [ZH] 在空闲显存内为计算图、logits 与瞬时 CUDA/ROCm 缓冲预留的固定额度。
-#: v0.2.4 任务-3 从 256 MiB 提升到 512 MiB：8 GiB 显卡上多留的余量可避免推理期
-#: OOM，代价是少卸载一到两层 —— 这是刻意选择的取舍。
+#: [ZH] v0.2.4 任务-3 从 256 MiB 提升到 512 MiB：8 GiB 显卡上多留的余量可避免推理期
+#: [ZH] OOM，代价是少卸载一到两层 —— 这是刻意选择的取舍。
 VRAM_COMPUTE_BUFFER_BYTES = 512 * 1024 * 1024
 
 #: [EN] Context window values are rounded down to this granularity so that the

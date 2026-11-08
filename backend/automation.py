@@ -12,7 +12,7 @@ frontend, and persist them to disk for the record.
 
 Design trade-offs
 -----------------
-* **Headed mode (headless=False)**: the task specification requires the user to see what
+* **Headed mode (headless=False)**: the design specification requires the user to see what
   the browser actually does, and manual intervention must be possible when a CAPTCHA or a
   second verification step appears; therefore no unattended silent run is provided. When
   the channel fails to start, the engine falls back to the Chromium bundled with Playwright
@@ -59,7 +59,7 @@ EchoDesk 浏览器自动化引擎（任务四）。
 
 设计取舍
 --------
-* **有头模式（headless=False）**：任务书要求用户能看到浏览器实际操作过程，也便于在
+* **有头模式（headless=False）**：设计规范要求用户能看到浏览器实际操作过程，也便于在
   出现验证码/二次验证时人工介入，因此不提供无人值守的静默运行；通道启动失败时回退到
   Playwright 自带的默认 Chromium，并在进度里说明原因。
 * **临时文件策略**：每轮任务使用下载目录下的独立子目录，每个任务再使用自己的子目录；
@@ -116,7 +116,9 @@ if _HERE not in sys.path:
 # [EN] File parsing prefers the existing backend implementation; a missing optional
 # [EN] dependency (for example pywin32) must not make the whole module fail to import.
 # [ZH] 文件解析优先复用后端既有实现；pywin32 等依赖缺失时不让整个模块导入失败。
-try:  # pragma: no cover - 环境相关
+try:  # pragma: no cover
+    # [EN] Environment-dependent: the optional dependency may be missing at run time.
+    # [ZH] 环境相关：可选依赖在运行环境中可能缺失。
     from file_parser import parse_file_with_wps as _parse_file_with_wps
 except Exception:  # noqa: BLE001
     _parse_file_with_wps = None  # type: ignore[assignment]
@@ -124,7 +126,9 @@ except Exception:  # noqa: BLE001
 # [EN] Addition 3: the result file must be plain text, so model output is always written
 # [EN] to disk through markdown_to_plain.
 # [ZH] 新增三：结果文件必须是纯文本，因此模型输出统一经 markdown_to_plain 落盘。
-try:  # pragma: no cover - 环境相关
+try:  # pragma: no cover
+    # [EN] Environment-dependent: the optional dependency may be missing at run time.
+    # [ZH] 环境相关：可选依赖在运行环境中可能缺失。
     from plaintext import markdown_to_plain as _markdown_to_plain
 except Exception:  # noqa: BLE001
     def _markdown_to_plain(text: str) -> str:  # type: ignore[misc]
@@ -140,7 +144,9 @@ except Exception:  # noqa: BLE001
 
 # [EN] Addition 3: the default result location is the program root directory.
 # [ZH] 新增三：默认结果位置为程序根目录。
-try:  # pragma: no cover - 环境相关
+try:  # pragma: no cover
+    # [EN] Environment-dependent: the optional dependency may be missing at run time.
+    # [ZH] 环境相关：可选依赖在运行环境中可能缺失。
     from config import program_root as _program_root
 except Exception:  # noqa: BLE001
     def _program_root() -> str:  # type: ignore[misc]
@@ -155,7 +161,9 @@ from i18n import t as _t
 # [EN] Playwright is imported defensively as well: when it is absent, validate() and run()
 # [EN] report a clear message instead of failing during startup.
 # [ZH] Playwright 同样做容错导入：未安装时由 validate()/run() 给出明确提示，而不是启动即失败。
-try:  # pragma: no cover - 环境相关
+try:  # pragma: no cover
+    # [EN] Environment-dependent: the optional dependency may be missing at run time.
+    # [ZH] 环境相关：可选依赖在运行环境中可能缺失。
     from playwright.sync_api import TimeoutError as _PWTimeoutError
     from playwright.sync_api import sync_playwright as _sync_playwright
 except Exception:  # noqa: BLE001
@@ -188,7 +196,7 @@ MAX_FILE_BYTES = 200 * 1024 * 1024
 # [ZH] 浏览器选择（相关设计，自测问题修复-1）
 # ===========================================================================
 #
-# [EN] The task specification requires: "every feature that needs a browser (mainly
+# [EN] The design specification requires: "every feature that needs a browser (mainly
 # [EN] automation) must support at least Chrome and be extensible to more browsers", and
 # [EN] defines the ``automation.browser`` setting together with its ``auto`` semantics.
 # [ZH] 设计规范要求：「所有需要浏览器的功能（主要是自动化）应至少支持 Chrome，进而扩展到
@@ -445,10 +453,10 @@ _MAX_PAGES = 50
 # [ZH] 单个任务最多接受的附件数量（防止详情页有几百个链接时处理失控）。
 _MAX_FILES_PER_TASK = 20
 
-# [EN] System prompt for the automated review opinion (此前版本 prompt optimization: adds the
-# [EN] "Output format / Reasoning" sections and follows the same six-element structure used
-# [EN] by conversation.MODES).
-# [ZH] 自动化审核意见的系统提示（此前版本 提示词优化：补齐「输出格式 / 思维」，
+# [EN] System prompt for the automated review opinion (prompt optimization in an earlier
+# [EN] release: it adds the "Output format / Reasoning" sections and follows the same
+# [EN] six-element structure used by conversation.MODES).
+# [ZH] 自动化审核意见的系统提示（此前版本的提示词优化：补齐「输出格式 / 思维」，
 # [ZH] 与 conversation.MODES 用同一套六要素写法）。
 #
 # [EN] The language policy below is intentional and does not contradict the conversation
@@ -457,8 +465,8 @@ _MAX_FILES_PER_TASK = 20
 # [EN] conversation._REPLY_LANGUAGE). The scenarios differ: review opinions are written to
 # [EN] result.txt under results\ as retention material, i.e. they are business output rather
 # [EN] than UI copy, so a fixed Chinese language is a product decision. That conclusion is
-# [EN] recorded in the "Product-level observations" section of
-# [EN] records/此前版本-修复记录.md and is restated here to prevent a future change from
+# [EN] recorded in the "Product-level observations" section of the repair record of an
+# [EN] earlier release under records/ and is restated here to prevent a future change from
 # [EN] treating it as an inconsistency.
 # [ZH] 【语言策略是有意的，不是与对话层矛盾】这里写死「使用简体中文」，而交互对话的
 # [ZH] 回复语言**跟随界面语言**（见 conversation._REPLY_LANGUAGE）。两者场景不同：
@@ -528,7 +536,7 @@ def _today() -> str:
     Date used for the result directory (YYYY-MM-DD; addition 3 of the specification).
 
     [ZH]
-    结果目录用的日期（YYYY-MM-DD，任务书 新增三）。
+    结果目录用的日期（YYYY-MM-DD，设计规范 新增三）。
     """
     return datetime.now().strftime("%Y-%m-%d")
 
@@ -566,7 +574,8 @@ def _redact(text: Any, limit: int = 200) -> str:
         return ""
     s = str(text)
     s = _SENSITIVE_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}***", s)
-    # URL 里的用户信息（https://user:pass@host）同样抹掉
+    # [EN] User information inside a URL (https://user:pass@host) is masked as well.
+    # [ZH] URL 里的用户信息（https://user:pass@host）同样抹掉。
     s = re.sub(r"(?i)(https?://)[^/@\s]+@", r"\1***@", s)
     s = " ".join(s.split())
     return s if len(s) <= limit else s[:limit] + "…"
@@ -671,7 +680,7 @@ def _target_label(target: str) -> str:
     of scope problem.
 
     [ZH]
-    可视化选取时给用户看的目标名称（任务书 4.2 的四种选取目标）。
+    可视化选取时给用户看的目标名称（设计规范 4.2 的四种选取目标）。
 
     **必须是模块级函数**（2026-09 修复）：它原先定义在 ``AutomationEngine`` 的类体里，
     而调用点（``_stream_pick``）写的是裸名字 ``_target_label(target)`` ——
@@ -826,7 +835,7 @@ def _cdp_endpoint(port: Any = CDP_DEFAULT_PORT) -> str:
     **这里刻意不接受主机参数**：任何调用方都拼不出 ``http://0.0.0.0:9222`` 这种
     「局域网里谁都能连」的端点。调试端点等于那台浏览器的完全控制权（能读页面、能读
     Cookie、能执行脚本），所以「只连本机」不是调用方的注意事项，而是**函数签名层面
-    就做不到别的事**——这是任务书第 6 条「确认不会对外暴露」最可靠的实现方式。
+    就做不到别的事**——这是设计规范第 6 条「确认不会对外暴露」最可靠的实现方式。
 
     端口非法（配置被手改坏、超出范围）时回落到默认端口，而不是抛异常：
     一个坏掉的配置不该让整个自动化无法启动。
@@ -962,7 +971,9 @@ def choose_target_index(pages: Sequence[Any], probe: Optional[Callable[[Any], An
             try:
                 probed = probe(page)
                 info = dict(probed) if isinstance(probed, dict) else {}
-            except Exception:  # noqa: BLE001 - 探测失败按"读不出"处理
+            except Exception:  # noqa: BLE001
+                # [EN] A probe failure is treated as "unreadable".
+                # [ZH] 探测失败按“读不出”处理。
                 info = {}
         url = str(info.get("url") or "") or _page_url(page)
         if not url or _is_internal_url(url):
@@ -1114,7 +1125,7 @@ class _PickMachine:
     without a browser; the browser handle lives in :attr:`AutomationEngine._pick_session`.
 
     [ZH]
-    可视化选取的**两段式状态机**（任务书第 4 条）。
+    可视化选取的**两段式状态机**（设计规范第 4 条）。
 
     为什么要有它（用户的原始要求）：「可视化选取要加『开始选取』按钮，点击后才进入选取模式
     ——因为用户可能需要先登录、先导航到目标页面，再开始选。」
@@ -1131,7 +1142,7 @@ class _PickMachine:
     * 一轮结束（选到 / 取消 / 页面被关）后**回到 waiting**：可重选、可换页面再选；
     * ``close`` 才真正结束这次选取（断开浏览器连接）。
 
-    **状态放在后端而不是前端**是刻意的（任务书要求「可查询、可断言」）：选取脚本真正注入
+    **状态放在后端而不是前端**是刻意的（设计规范要求「可查询、可断言」）：选取脚本真正注入
     到了浏览器里，状态必须与那个事实一致；前端只是「反映状态」，刷新界面、切换设置页、
     甚至重开设置窗口都不会把状态弄丢。前端轮询 ``automation_pick_status`` 拿到的就是
     这里的快照。
@@ -1316,7 +1327,7 @@ class _PickMachine:
         [ZH]
         目标标签页被用户关掉了。
 
-        这是**明确错误**而不是「换一页继续」：任务书要求「不要误操作其他标签页」，
+        这是**明确错误**而不是「换一页继续」：设计规范要求「不要误操作其他标签页」，
         而「用户把页面关了」之后最危险的动作就是程序自己找一页替代。
         等价于取消，但结局记为 ``page_closed``，界面上会说清楚原因。
         """
@@ -1432,7 +1443,7 @@ class _HrefInfo:
     * ``other``      —— 有值但协议不可直接导航（如 ``mailto:``、``tel:``）。
 
     ``click_only`` 为真表示：**不要用 url 导航，改为点击元素触发跳转**。
-    任务书「任务二 特殊情况回退」要求程序自动完成这个回退，而不是直接失败。
+    设计规范「任务二 特殊情况回退」要求程序自动完成这个回退，而不是直接失败。
     """
 
     raw: str = ""
@@ -1468,7 +1479,7 @@ def _classify_href(raw: Any, base_url: str) -> _HrefInfo:
     [ZH]
     规范化 href 属性值：绝对 URL 直接用，相对路径拼 origin，伪链接标记为只能点击。
 
-    背景（任务书「任务二」）：XPath / CSS 选择器只负责**定位元素**，不负责读取属性。
+    背景（设计规范「任务二」）：XPath / CSS 选择器只负责**定位元素**，不负责读取属性。
     正确的流程是「定位 → 读取属性 → 规范化 → 特殊情况回退」，本函数负责后两步。
     """
     text = str(raw or "").strip()
@@ -1482,7 +1493,8 @@ def _classify_href(raw: Any, base_url: str) -> _HrefInfo:
         # [EN] fragment link as well, because an in-page anchor is likewise not a "task
         # [EN] detail page / attachment address" and navigating to it only stays on the list
         # [EN] page itself. This is an extension of the specification, recorded in
-        # [EN] records/此前版本-自动化优化记录.md.
+        # [EN] recorded in the automation optimization record of an earlier release under
+        # [EN] records/.
         # [ZH] 设计规范只列了裸 ``#``；这里把 ``#xxx`` 一并归入片段链接：页内锚点同样不是
         # [ZH] 「任务详情页 / 附件地址」，导航过去只会停在列表页自身（这属于对设计规范的扩展，
         # [ZH] 已记入 records/此前版本-自动化优化记录.md）。
@@ -1656,7 +1668,7 @@ class _BrowserSession:
     其所有窗口和标签页；而按 Chromium 的语义，``context.close()`` 在 CDP 场景下
     会连带关闭它管理的浏览器。
 
-    ``target_page`` 是「本次操作的那一个标签页」（任务书要求「不要误操作其他标签页」）：
+    ``target_page`` 是「本次操作的那一个标签页」（设计规范要求「不要误操作其他标签页」）：
     一旦确定就记在这里，后续所有动作只认它；它为 None 表示本次是新实例模式、
     需要调用方自己开一个新标签页（``AutomationEngine._work_page``）。
     """
@@ -1730,7 +1742,9 @@ class _BrowserSession:
             ):
                 try:
                     closer()
-                except Exception:  # noqa: BLE001 - 关闭失败不能影响主流程
+                except Exception:  # noqa: BLE001
+                    # [EN] A close failure must not affect the main flow.
+                    # [ZH] 关闭失败不能影响主流程。
                     pass
         try:
             if self.playwright is not None:
@@ -1778,8 +1792,8 @@ class AutomationEngine:
         # [EN] selector is wrong" from "the page contains no such element").
         # [ZH] 最近一次选择器解析失败的原因（用于把「选择器写错」和「页面里没有元素」区分开）。
         self._selector_error = ""
-        # [EN] Dispatcher for skill automation hooks (此前版本 Task 2.3): main injects
-        # [EN] SkillLoader.fire_hook here.
+        # [EN] Dispatcher for skill automation hooks (Task 2.3 in an earlier release): main
+        # [EN] injects SkillLoader.fire_hook here.
         # [ZH] 技能自动化钩子分发器（此前版本 相关设计 2.3）：由 main 注入 SkillLoader.fire_hook。
         self.hook_dispatcher: Optional[Callable[[str, Dict[str, Any]], Any]] = None
         # [EN] Whether a dry run of the test wizard is in progress (no result file and no
@@ -2074,7 +2088,9 @@ class AutomationEngine:
 
             if not platform_support.automation_available():
                 errors.append(_t("automation.validate.platform_unsupported"))
-        except Exception:  # noqa: BLE001 - 平台模块不可用时退回原有校验
+        except Exception:  # noqa: BLE001
+            # [EN] Fall back to the original checks when the platform module is unavailable.
+            # [ZH] 平台模块不可用时退回原有校验。
             pass
         if not self.safety_accepted:
             errors.append(_t("automation.validate.safety_not_accepted"))
@@ -2159,7 +2175,9 @@ class AutomationEngine:
             with self._audit_lock:
                 with open(path, "a", encoding="utf-8") as fh:
                     fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except Exception as exc:  # noqa: BLE001 - 审计失败不能影响主流程
+        except Exception as exc:  # noqa: BLE001
+            # [EN] An audit failure must not affect the main flow.
+            # [ZH] 审计失败不能影响主流程。
             self.logger.warning("写审计日志失败：%s", _redact(exc, 200))
 
     def _load_processed(self) -> Set[str]:
@@ -2254,7 +2272,7 @@ class AutomationEngine:
         自动化专用的**持久化用户数据目录**（v0.2.1 自动化优化 任务一）。
 
         位置：``automation.login_state_dir``；留空时取 ``browser_state.json`` 同级的
-        ``browser_profile``。任务书要求「独立数据目录，不与用户日常浏览器共用」——
+        ``browser_profile``。设计规范要求「独立数据目录，不与用户日常浏览器共用」——
         浏览器不允许两个实例共用同一个 user data dir，共用会直接启动失败。
         """
         raw = str(getattr(self.cfg, "login_state_dir", "") or "").strip()
@@ -2349,7 +2367,7 @@ class AutomationEngine:
         [ZH]
         清除自动化登录态：删除持久化数据目录（下次运行需重新登录）。
 
-        任务书「任务一 清除登录态」与「任务四 审计日志记录清除事件」。
+        设计规范「任务一 清除登录态」与「任务四 审计日志记录清除事件」。
         返回 ``{"ok", "profile_dir", "removed_files", "legacy_removed", "error"}``。
         删除失败（例如浏览器还开着、文件被占用）会如实返回错误而不是假装成功。
         """
@@ -2449,7 +2467,9 @@ class AutomationEngine:
             if spec["channel"]:
                 return engine.launch_persistent_context(channel=spec["channel"], **kwargs), ""
             return engine.launch_persistent_context(**kwargs), ""
-        except Exception as exc:  # noqa: BLE001 —— 没装/损坏/被策略拦截都会在这里
+        except Exception as exc:  # noqa: BLE001
+            # [EN] A missing, damaged or policy-blocked build all end up here.
+            # [ZH] 没装、损坏、被策略拦截都会在这里。
             return None, _redact(exc, 160)
 
     def _open_session(self) -> "_BrowserSession":
@@ -2677,7 +2697,7 @@ class AutomationEngine:
         读一个标签页的「自我介绍」（地址 / 标题 / 可见 / 是否聚焦）。
 
         只读这四项——**不读页面内容、不读 Cookie**：挑「用户正在看哪一页」只需要这四项，
-        而多读一眼用户的页面内容就多一分越界的风险（任务书第 6 条）。
+        而多读一眼用户的页面内容就多一分越界的风险（设计规范第 6 条）。
 
         ``evaluate`` 失败（页面正被关掉、正在导航、跨域帧）时返回「读不出来」，
         由 :func:`choose_target_index` 决定怎么用，**不抛异常**：
@@ -2742,7 +2762,9 @@ class AutomationEngine:
             browser = playwright.chromium.connect_over_cdp(
                 self.cdp_endpoint, timeout=CDP_CONNECT_TIMEOUT_MS
             )
-        except Exception as exc:  # noqa: BLE001 —— 端口没人监听是最常见的情况
+        except Exception as exc:  # noqa: BLE001
+            # [EN] The most common case is that no process listens on the port.
+            # [ZH] 端口没人监听是最常见的情况。
             log_user(self.logger, "sys.log_cdp_connect_failed",
                      port=self.cdp_port, error=_redact(exc, 200))
             if playwright is not None:
@@ -2794,7 +2816,7 @@ class AutomationEngine:
         [ZH]
         在会话里挑出本次操作的目标标签页，并把它的地址/标题记进会话。
 
-        挑完就**固定下来**（写进 ``session.target_page``）：任务书要求「限制在用户指定的
+        挑完就**固定下来**（写进 ``session.target_page``）：设计规范要求「限制在用户指定的
         页面上，不要误操作其他标签页」，而「每次都重新挑一次」正是误操作其他页的根源——
         用户切一下标签页，程序的下一个动作就会落到新页上。
         """
@@ -2848,7 +2870,7 @@ class AutomationEngine:
         [ZH]
         确认目标标签页还活着；被用户关掉时抛错（**不换别的页**）。
 
-        这是任务书「不要误操作其他标签页」的执行点：页面没了就明确报错，
+        这是设计规范「不要误操作其他标签页」的执行点：页面没了就明确报错，
         让用户自己决定下一步（重新开始选取 / 重新打开页面），
         而不是由程序在其多个标签页里挑一个「看起来差不多」的继续执行。
         """
@@ -2864,7 +2886,9 @@ class AutomationEngine:
         closed = False
         try:
             closed = bool(page.is_closed())
-        except Exception:  # noqa: BLE001 - 某些实现没有 is_closed，按"还活着"处理
+        except Exception:  # noqa: BLE001
+            # [EN] Some implementations have no is_closed; treat the page as "still alive".
+            # [ZH] 某些实现没有 is_closed，按“还活着”处理。
             closed = False
         if closed:
             raise AutomationError(_t("automation.reuse.target_closed"))
@@ -2886,7 +2910,7 @@ class AutomationEngine:
         把目标页当前的地址/标题同步到会话上（供界面显示「我现在在哪一页」）。
 
         为什么每次都要重读而不是记一次就结束：两段式流程里**用户会自己导航**
-        （这正是任务书第 4 条的设计），「准备阶段」显示的地址必须是其此刻真正打开的那一页，
+        （这正是设计规范第 4 条的设计），「准备阶段」显示的地址必须是其此刻真正打开的那一页，
         否则用户会以为程序还在看旧页面、不敢操作。
         """
         page = session.target_page
@@ -2922,13 +2946,13 @@ class AutomationEngine:
         [ZH]
         让目标页停在任务列表上；返回一句要告诉用户的话（可为空）。
 
-        规则（任务书：点击链接模拟手动点击、任务列表在已打开的标签页里找）：
+        规则（设计规范：点击链接模拟手动点击、任务列表在已打开的标签页里找）：
 
         * **复用模式**：用户当前这一页就是其日常用的那一页，**绝不导航**——
           导航会丢掉其筛选/表单/SPA 路由状态，还可能把已登录的页面换成登录页
           （这正是用户抱怨「又要重新登录」的来源）。只有当其那一页还是空白页
           （``about:blank``，读不出地址）时才 ``goto`` 配置里的任务列表网址，
-          这也是任务书允许的例外：「首次打开时仍可 goto」。
+          这也是设计规范允许的例外：「首次打开时仍可 goto」。
         * **兜底新实例**：老行为，``goto`` 任务列表网址（``url`` 优先于配置）。
 
         返回的说明用来让用户在界面上确认「程序正在哪一页上工作」。
@@ -2983,7 +3007,7 @@ class AutomationEngine:
 
         1. 浏览器选的是 ``firefox`` → 不碰 CDP。Firefox 没有 CDP 端点（协议层不支持），
            拿一个注定失败的连接去试只会白等 5 秒再抛出一个难以理解的错误；直接走兜底并在
-           note 里说明「Firefox 不支持复用已打开的浏览器」（任务书 F 条）；
+           note 里说明「Firefox 不支持复用已打开的浏览器」（设计规范 F 条）；
         2. ``browser_reuse=off`` → 用户明确要求别碰其浏览器，直接兜底；
         3. 连 ``127.0.0.1:<端口>`` 上的调试浏览器（用户自己开的或程序代启动的都一样）；
         4. 连不上：``required`` 就报错并给出引导（「请用调试模式启动浏览器」），
@@ -3132,8 +3156,8 @@ class AutomationEngine:
         try:
             creation = 0
             if os.name == "nt":
-                # [EN] DETACHED_PROCESS | NEW_PROCESS_GROUP
-                # [ZH] DETACHED_PROCESS | NEW_PROCESS_GROUP
+                # [EN] Windows process creation flags: DETACHED_PROCESS | NEW_PROCESS_GROUP.
+                # [ZH] Windows 进程创建标志：DETACHED_PROCESS | NEW_PROCESS_GROUP。
                 creation = 0x00000008 | 0x00000200
             elif hasattr(os, "setsid"):
                 # [EN] POSIX uses the setsid call below via preexec.
@@ -3318,7 +3342,9 @@ class AutomationEngine:
         if bool(getattr(self.cfg, "wait_network_idle", True)):
             try:
                 page.wait_for_load_state("networkidle", timeout=timeout)
-            except Exception:  # noqa: BLE001 - 长连接页面永远等不到空闲，忽略继续
+            except Exception:  # noqa: BLE001
+                # [EN] A page with long-lived connections never becomes idle; ignore it.
+                # [ZH] 长连接页面永远等不到空闲，忽略继续。
                 pass
         try:
             page.wait_for_timeout(300)
@@ -3389,7 +3415,7 @@ class AutomationEngine:
            —— 覆盖「用 ``<div data-href>`` / ``<li data-url>`` 承载地址」的站点；
         3. 都没有 → ``kind="empty"``，调用方据此走点击回退。
 
-        选择器只负责第 1 步（定位），属性读取必须单独做——这正是任务书要纠正的
+        选择器只负责第 1 步（定位），属性读取必须单独做——这正是设计规范要纠正的
         「概念混淆」。
         """
         raw = ""
@@ -3506,7 +3532,9 @@ class AutomationEngine:
             for scope in scopes:
                 try:
                     handles = scope.locator(norm).all()
-                except Exception as exc:  # noqa: BLE001 - 语法错误在这里暴露
+                except Exception as exc:  # noqa: BLE001
+                    # [EN] A syntax error in the selector surfaces here.
+                    # [ZH] 语法错误在这里暴露。
                     self._record_selector_error(_t("automation.selector.what_element"), norm, exc)
                     continue
                 base = ""
@@ -3634,7 +3662,8 @@ class AutomationEngine:
         yield self._event("delta", _t("automation.captcha.timeout", limit=limit))
         return False
 
-    # ---------- 登录态（此前版本 自动化优化 相关设计 / 相关设计） ----------
+    # [EN] ---------- Login state (automation optimization of an earlier release) ----------
+    # [ZH] ---------- 登录态（此前版本的自动化优化设计） ----------
 
     def _login_present(self, page: Any) -> Optional[bool]:
         """
@@ -3761,7 +3790,8 @@ class AutomationEngine:
                     profile=self.profile_dir)
         return False
 
-    # ---------- [EN] Download and parsing / [ZH] 下载与解析 ----------
+    # [EN] ---------- Download and parsing ----------
+    # [ZH] ---------- 下载与解析 ----------
 
     def _save_download(self, download: Any, dest_dir: str) -> str:
         """
@@ -3873,7 +3903,8 @@ class AutomationEngine:
         except Exception as exc:  # noqa: BLE001
             self.logger.debug("关闭标签页失败：%s", _redact(exc, 120))
 
-    # ---------- [EN] Link navigation: fall back to clicking when href is unusable / [ZH] 链接跳转：href 不可用时回退到点击 ----------
+    # [EN] ---------- Link navigation: fall back to clicking when href is unusable ----------
+    # [ZH] ---------- 链接跳转：href 不可用时回退到点击 ----------
 
     def _click_into(
         self,
@@ -3890,7 +3921,7 @@ class AutomationEngine:
         [ZH]
         点击元素触发跳转，返回跳转后的页面对象（失败返回 None）。
 
-        任务书「任务二 特殊情况回退」：href 是 ``javascript:void(0)`` / ``#`` / 空时，
+        设计规范「任务二 特殊情况回退」：href 是 ``javascript:void(0)`` / ``#`` / 空时，
         不能用 href 导航，必须回退到点击。点击后有两种可能，都要接住：
 
         1. **新标签页**（带 ``target="_blank"`` 或 JS ``window.open``）；
@@ -3899,7 +3930,7 @@ class AutomationEngine:
         ``reason`` 只影响**给用户看的那句话**（任务十七）：
 
         * ``fallback``（默认）：这次点击是"没有可用网址"的退路，提示里要点明原因；
-        * ``manual``：这次点击是**刻意的**——任务书要求"点击链接需要模拟手动点击，
+        * ``manual``：这次点击是**刻意的**——设计规范要求"点击链接需要模拟手动点击，
           这样跳转出的页面才无需登录"。此时不该说"没有可直接打开的网址"
           （那个链接明明有），否则用户会以为程序判断错了。
 
@@ -3927,12 +3958,15 @@ class AutomationEngine:
                                           error=_redact(exc, 150)))
             return None
 
-        # 1) 新标签页
+        # [EN] 1) A new tab page.
+        # [ZH] 1) 新标签页。
         for candidate in self._new_pages(context, pages_before):
             yield self._event("delta", _t("automation.link.opened_new_tab"))
             return candidate
 
-        # 2) 当前页跳转：给页面一点时间走完导航，再比对地址
+        # [EN] 2) In-page navigation: give the page a moment to finish navigating, then
+        # [EN] compare the address.
+        # [ZH] 2) 当前页跳转：给页面一点时间走完导航，再比对地址。
         try:
             page.wait_for_load_state("domcontentloaded",
                                      timeout=min(self.page_timeout_ms, 8000))
@@ -3949,7 +3983,8 @@ class AutomationEngine:
         yield self._event("delta", _t("automation.link.click_no_navigation"))
         return None
 
-    # ---------- 模拟手动点击进入页面（相关设计 C） ----------
+    # [EN] ---------- Enter the page through a simulated manual click (design spec C) ----------
+    # [ZH] ---------- 模拟手动点击进入页面（设计规范 C） ----------
 
     @staticmethod
     def _handle_alive(handle: Any) -> bool:
@@ -3970,7 +4005,9 @@ class AutomationEngine:
             return False
         try:
             return bool(handle.evaluate("el => !!(el && el.isConnected)"))
-        except Exception:  # noqa: BLE001 - 句柄失效/上下文销毁都是"不可用"
+        except Exception:  # noqa: BLE001
+            # [EN] A stale handle or a destroyed context both mean "unavailable".
+            # [ZH] 句柄失效、上下文销毁都是“不可用”。
             return False
 
     def _relocate_entry(self, page: Any, entry: _LinkEntry) -> Optional[Any]:
@@ -4071,7 +4108,9 @@ class AutomationEngine:
                 if self._collect_links(page, task_selector,
                                        str(getattr(self.cfg, "task_row_selector", "") or "")):
                     return True
-            except Exception as exc:  # noqa: BLE001 - 没有历史/超时/被站点拦截都要兜住
+            except Exception as exc:  # noqa: BLE001
+                # [EN] Missing history, timeouts and site blocking must all be caught here.
+                # [ZH] 没有历史、超时、被站点拦截都要兜住。
                 self.logger.debug("后退回列表失败：%s", _redact(exc, 150))
         if not self.task_list_url:
             return False
@@ -4152,7 +4191,9 @@ class AutomationEngine:
         """
         url = entry.href or ""
         hint = _safe_filename(entry.text or "", fallback="")
-        # 1) file:// 协议：浏览器下载事件常不触发，直接复制本地文件（本地自测/内网离线场景）
+        # [EN] 1) file:// protocol: browser download events are often not fired, so copy the
+        # [EN] local file directly (local self-test / intranet offline scenarios).
+        # [ZH] 1) file:// 协议：浏览器下载事件常不触发，直接复制本地文件（本地自测、内网离线场景）。
         if url and (urlparse(url).scheme or "").lower() == "file":
             source = _local_path_from_url(url)
             if not source or not os.path.isfile(source):
@@ -4170,7 +4211,8 @@ class AutomationEngine:
                 pass
             return dest, ""
 
-        # 2) 正常路径：点击链接并捕获下载事件
+        # [EN] 2) Normal path: click the link and capture the download event.
+        # [ZH] 2) 正常路径：点击链接并捕获下载事件。
         click_error = ""
         if entry.handle is not None:
             pages_before = list(getattr(context, "pages", []) or [])
@@ -4182,7 +4224,9 @@ class AutomationEngine:
                 return None, str(exc)
             except Exception as exc:  # noqa: BLE001
                 click_error = _redact(exc, 150)
-                # 3) 有些站点在新标签页里才触发下载：等价于 context.expect_page 的等待语义
+                # [EN] 3) Some sites trigger the download only in a new tab: this is the
+                # [EN] equivalent of the waiting semantics of context.expect_page.
+                # [ZH] 3) 有些站点在新标签页里才触发下载：等价于 context.expect_page 的等待语义。
                 new_page = None
                 for candidate in self._new_pages(context, pages_before):
                     new_page = candidate
@@ -4195,7 +4239,9 @@ class AutomationEngine:
                     if candidate is not None and not _is_internal_url(getattr(candidate, "url", "")):
                         new_page = candidate
                     elif candidate is not None:
-                        # 浏览器内部页面（如 Edge 下载中心）不是我们要找的新标签页
+                        # [EN] An internal browser page (for example the Edge download
+                        # [EN] center) is not the new tab page we are looking for.
+                        # [ZH] 浏览器内部页面（如 Edge 下载中心）不是我们要找的新标签页。
                         self._safe_close(candidate)
                 if new_page is not None:
                     try:
@@ -4205,7 +4251,8 @@ class AutomationEngine:
                     finally:
                         self._safe_close(new_page)
 
-        # 4) 最后兜底：直接请求链接本身
+        # [EN] 4) Last fallback: request the link itself directly.
+        # [ZH] 4) 最后兜底：直接请求链接本身。
         if url and (urlparse(url).scheme or "").lower() in ("http", "https"):
             return self._fetch_by_request(context, url, dest_dir, hint)
         return None, _t("automation.file.download_failed",
@@ -4235,7 +4282,8 @@ class AutomationEngine:
             return "", _t("automation.parse.failed", error=_redact(text, 150))
         return str(text), ""
 
-    # ---------- LLM 与结果落盘 ----------
+    # [EN] ---------- LLM and result persistence ----------
+    # [ZH] ---------- LLM 与结果落盘 ----------
 
     def _build_messages(self, docs: Sequence[Tuple[str, str]]) -> List[Dict[str, str]]:
         """
@@ -4281,7 +4329,9 @@ class AutomationEngine:
             try:
                 text = self.llm.chat_complete(messages, temperature=temperature, max_tokens=max_tokens)
             except TypeError:
-                # 兼容只接受 messages 的实现/测试替身
+                # [EN] Compatible with implementations and test doubles that accept only
+                # [EN] messages.
+                # [ZH] 兼容只接受 messages 的实现与测试替身。
                 text = self.llm.chat_complete(messages)
         except Exception as exc:  # noqa: BLE001
             raise AutomationError(_t("automation.llm.generate_failed",
@@ -4396,8 +4446,10 @@ class AutomationEngine:
         """
         try:
             os.makedirs(self.results_dir, exist_ok=True)
-            # 发布设计规范「全局要求一」：程序生成的文件名一律英文
-            # （原为 `失败截图_任务{index}_{stamp}.png`）。
+            # [EN] Release design specification, "Global requirement 1": file names generated
+            # [EN] by the program are always in English.
+            # [ZH] 发布设计规范「全局要求一」：程序生成的文件名一律英文
+            # [ZH] （原为 `失败截图_任务{index}_{stamp}.png`）。
             path = _unique_path(self.results_dir, f"failure-screenshot-task{index}-{_stamp()}.png")
             try:
                 page.screenshot(path=path, full_page=True, timeout=10000)
@@ -4443,7 +4495,9 @@ class AutomationEngine:
             page.set_default_timeout(self.page_timeout_ms)
             self._goto(page, url.strip())
             self._wait_loaded(page)
-            # 先做一次选择器语法探测：count() 对语法错误会直接抛错，对"无匹配"返回 0
+            # [EN] Probe the selector syntax first: count() raises directly on a syntax error
+            # [EN] and returns 0 for "no match".
+            # [ZH] 先做一次选择器语法探测：count() 对语法错误会直接抛错，对“无匹配”返回 0。
             try:
                 page.locator(_normalize_selector(selector)).count()
             except Exception as exc:  # noqa: BLE001
@@ -4469,14 +4523,25 @@ class AutomationEngine:
                 session.close()
         return result
 
-    # ---------- 可视化选取（此前版本 设计规范 4.2） ----------
+    # [EN] ---------- Visual selection (earlier release design specification 4.2) ----------
+    # [ZH] ---------- 可视化选取（此前版本的设计规范 4.2） ----------
 
-    #: 注入页面的拾取脚本。悬停高亮并实时预览选择器，点击即确定，Esc 取消。
-    #:
-    #: 参数 ``bannerText`` 是页面顶部提示条的文案（由后端按界面语言传入，脚本里不再
-    #: 硬编码中文——相关设计要求提示语与程序逻辑一致，硬编码会让英文界面出现中文提示）。
-    #: 返回值里除了选择器，还带上"这是不是链接元素"的判定依据：
-    #: ``isLink`` / ``hasHref`` / ``linksInside``，后端据此给出"你选中的不是链接"的提示。
+    #: [EN] Picker script injected into the page. It highlights on hover, previews the
+    #: [EN] selector in real time, confirms on click and cancels on Esc.
+    #: [EN]
+    #: [EN] The ``bannerText`` parameter is the text of the banner at the top of the page
+    #: [EN] (passed in by the backend according to the UI language; the script no longer
+    #: [EN] hard-codes Chinese - the design requires the hint text to be consistent with the
+    #: [EN] program logic, and hard-coding would show Chinese hints in an English UI).
+    #: [EN] Besides the selector, the return value also carries the evidence for "whether this
+    #: [EN] is a link element": ``isLink`` / ``hasHref`` / ``linksInside``, which the backend
+    #: [EN] uses to tell the user "what you selected is not a link".
+    #: [ZH] 注入页面的拾取脚本。悬停高亮并实时预览选择器，点击即确定，Esc 取消。
+    #: [ZH]
+    #: [ZH] 参数 ``bannerText`` 是页面顶部提示条的文案（由后端按界面语言传入，脚本里不再
+    #: [ZH] 硬编码中文——设计要求提示语与程序逻辑一致，硬编码会让英文界面出现中文提示）。
+    #: [ZH] 返回值里除了选择器，还带上“这是不是链接元素”的判定依据：
+    #: [ZH] ``isLink`` / ``hasHref`` / ``linksInside``，后端据此给出“你选中的不是链接”的提示。
     PICKER_JS = r"""
 (bannerText) => {
   const TEXT = bannerText || 'EchoDesk picker: hover and click the target element; press Esc to cancel';
@@ -4612,20 +4677,34 @@ class AutomationEngine:
 }
 """
 
-    #: 轮询页面上的拾取结果（相关设计把这段老代码里的内联表达式提出来共用）：
-    #: 两段式流程的"选取中"状态就是靠它把页面里的事实收回到后端状态机上的。
+    #: [EN] Poll the picker result on the page (the design extracts the inline expression of
+    #: [EN] this old code so that both callers can share it): the "selecting" state of the
+    #: [EN] two-stage flow relies on it to bring the facts from the page back into the backend
+    #: [EN] state machine.
+    #: [ZH] 轮询页面上的拾取结果（设计把这段老代码里的内联表达式提出来共用）：
+    #: [ZH] 两段式流程的“选取中”状态就是靠它把页面里的事实收回到后端状态机上的。
     PICKER_POLL_JS = (
         "() => { const s = window.__echodeskPick; if (!s) return null;"
         " return s.picked ? {picked: s.picked} : (s.cancelled ? {cancelled: true} : null); }"
     )
 
-    #: 停止/清理拾取脚本（相关设计新增）：把浮层摘掉、把状态标记为取消。
-    #:
-    #: 为什么要把它与 PICKER_JS 分开：取消是**独立的一步**（用户可能按 Esc、也可能在
-    #: 程序里点「取消选取」），而 PICKER_JS 的职责只是"装上"。分开之后，
-    #: "取消 → 再点开始选取"这条路径才干净：先清理、再完整重装。
-    #: ``__echodeskPickerInstalled`` 置回 false 是刻意的 —— 重装时 PICKER_JS 会重建节点，
-    #: 而旧监听器只操作已摘除的节点与已被替换的 state，不会再干扰页面。
+    #: [EN] Stop and clean up the picker script (added by the design): remove the overlay and
+    #: [EN] mark the state as cancelled.
+    #: [EN]
+    #: [EN] Why keep it separate from PICKER_JS: cancellation is an **independent step** (the
+    #: [EN] user may press Esc or click "cancel selection" in the program), while PICKER_JS
+    #: [EN] is only responsible for "installing". Once separated, the path "cancel -> click
+    #: [EN] start selection again" is clean: clean up first, then reinstall completely.
+    #: [EN] Resetting ``__echodeskPickerInstalled`` to false is deliberate - on reinstall
+    #: [EN] PICKER_JS rebuilds the nodes, and the old listeners only touch removed nodes and
+    #: [EN] replaced state, so they no longer interfere with the page.
+    #: [ZH] 停止、清理拾取脚本（设计新增）：把浮层摘掉、把状态标记为取消。
+    #: [ZH]
+    #: [ZH] 为什么要把它与 PICKER_JS 分开：取消是**独立的一步**（用户可能按 Esc、也可能在
+    #: [ZH] 程序里点「取消选取」），而 PICKER_JS 的职责只是“装上”。分开之后，
+    #: [ZH] “取消 → 再点开始选取”这条路径才干净：先清理、再完整重装。
+    #: [ZH] ``__echodeskPickerInstalled`` 置回 false 是刻意的 —— 重装时 PICKER_JS 会重建节点，
+    #: [ZH] 而旧监听器只操作已摘除的节点与已被替换的 state，不会再干扰页面。
     PICKER_STOP_JS = (
         "() => { const s = window.__echodeskPick;"
         " if (s) { s.cancelled = true; s.picked = null; }"
@@ -4635,15 +4714,25 @@ class AutomationEngine:
         " return 'stopped'; }"
     )
 
-    #: 四个可视化选取目标的**用途**语义（相关设计：选取语义与程序逻辑对应）。
-    #: ``requires_link`` 为真表示这个位置必须能读到网址（href），
-    #: 为假表示它是容器或按钮，程序在后续步骤里会对它做别的处理。
+    #: [EN] The **purpose** semantics of the four visual-selection targets (the design maps
+    #: [EN] selection semantics to program logic).
+    #: [EN] ``requires_link`` being true means this position must be able to read a URL
+    #: [EN] (href); being false means it is a container or a button and the program handles it
+    #: [EN] differently in later steps.
+    #: [ZH] 四个可视化选取目标的**用途**语义（设计：选取语义与程序逻辑对应）。
+    #: [ZH] ``requires_link`` 为真表示这个位置必须能读到网址（href），
+    #: [ZH] 为假表示它是容器或按钮，程序在后续步骤里会对它做别的处理。
     _PICK_PURPOSE: Dict[str, Tuple[str, bool]] = {
-        "task_list": ("jump", True),          # 读 href 作为跳转目标
-        "task_row": ("row", False),           # 行容器：在行内再找链接
-        "next_page": ("click", False),        # 按钮：只点击
-        "task_detail_file": ("download", True),   # 读 href 下载
-        "login_check": ("presence", False),   # 只判断"在不在"，不读网址
+        "task_list": ("jump", True),          # [EN] Read the href as the navigation target.
+                                              # [ZH] 读 href 作为跳转目标。
+        "task_row": ("row", False),           # [EN] Row container: find links inside the row.
+                                              # [ZH] 行容器：在行内再找链接。
+        "next_page": ("click", False),        # [EN] Button: click only.
+                                              # [ZH] 按钮：只点击。
+        "task_detail_file": ("download", True),   # [EN] Read the href for downloading.
+                                                  # [ZH] 读 href 下载。
+        "login_check": ("presence", False),   # [EN] Presence check only; the URL is not read.
+                                              # [ZH] 只判断“在不在”，不读网址。
     }
 
     def _preview_pick(
@@ -4696,7 +4785,8 @@ class AutomationEngine:
                 kinds.append(label)
         preview["kind_labels"] = kinds
 
-        # ---- 非链接元素识别（只对"必须能读网址"的位置拦） ----
+        # [EN] ---- Non-link element detection (only for positions that must read a URL) ----
+        # [ZH] ---- 非链接元素识别（只对“必须能读网址”的位置拦） ----
         is_link = bool(picked.get("isLink"))
         has_href_attr = bool(picked.get("hasHref"))
         links_inside = 0
@@ -4714,7 +4804,8 @@ class AutomationEngine:
             preview["warnings"].append(preview["blocking"])
             return preview
 
-        # ---- 预览文案 ----
+        # [EN] ---- Preview text ----
+        # [ZH] ---- 预览文案 ----
         lines: List[str] = []
         if purpose == "click":
             lines.append(_t("automation.link.preview_click_target"))
@@ -4739,9 +4830,15 @@ class AutomationEngine:
                         or _t("automation.value.empty_paren"))
             lines.append("\n" + notice)
             preview["warnings"].append(notice)
-        # 只匹配到 1 个元素时提醒一句：可视化选取生成的是"精确到这一个"的选择器，
-        # 而任务列表/附件位置通常需要匹配多条。这里不拦截（单个任务站点是合法用法），
-        # 但必须让用户在确认框里看得见——否则他会以为程序"只处理了第一条"是 bug。
+        # [EN] Warn when only one element matches: visual selection generates a selector that
+        # [EN] is "exact to this one element", while task list and attachment positions
+        # [EN] usually need to match several rows. It is not blocked here (a single-task site
+        # [EN] is a legitimate use), but the user must be able to see it in the confirmation
+        # [EN] dialog - otherwise the user would think that "only the first one was processed"
+        # [EN] is a bug.
+        # [ZH] 只匹配到 1 个元素时提醒一句：可视化选取生成的是“精确到这一个”的选择器，
+        # [ZH] 而任务列表/附件位置通常需要匹配多条。这里不拦截（单个任务站点是合法用法），
+        # [ZH] 但必须让用户在确认框里看得见——否则他会以为程序“只处理了第一条”是 bug。
         if purpose in ("jump", "download") and preview["matches"] == 1:
             single = _t("automation.link.preview_single_match")
             lines.append("\n" + single)
@@ -4762,13 +4859,13 @@ class AutomationEngine:
         Interactively pick an element in a real page and generate a CSS selector.
 
         [ZH]
-        可视化选取选择器（任务书 4.2）：在真实页面上点一下元素，生成 CSS 选择器。
+        可视化选取选择器（设计规范 4.2）：在真实页面上点一下元素，生成 CSS 选择器。
 
-        为什么用 Playwright 驱动本机 Edge 而不是内嵌 WebView2（对任务书的偏差，已记入
+        为什么用 Playwright 驱动本机 Edge 而不是内嵌 WebView2（对设计规范的偏差，已记入
         records/v0.2.1-研发记录.md）：
 
         * WebView2 需要额外引入 SDK 与系统运行时，与"尽量减小打包体积"的全局要求冲突；
-        * 任务书要求"登录态与自动化共享"——WebView2 有自己的用户数据目录，做不到；
+        * 设计规范要求"登录态与自动化共享"——WebView2 有自己的用户数据目录，做不到；
           Playwright 这套与自动化共用同一个持久化数据目录，登录态天然一致
           （v0.2.1 自动化优化后不再依赖 ``browser_state.json``，见 ``_open_session``）；
         * 自动化本来就用 Playwright 启动 Edge，复用同一引擎不增加任何新依赖，
@@ -4787,16 +4884,22 @@ class AutomationEngine:
         session: Optional[_BrowserSession] = None
         page = None
         try:
-            # 相关设计：与自动化走同一条"复用优先"的会话入口（老 WPF 界面用的就是这条
-            # 一次性流程）。复用时页面就是用户当前那一页，**不再新开标签页、不再导航**。
+            # [EN] Design: it uses the same "reuse first" session entry point as automation
+            # [EN] (the old WPF UI used this one-shot flow). When reused, the page is the one
+            # [EN] the user currently has open - **no new tab is opened and no navigation
+            # [EN] happens**.
+            # [ZH] 设计：与自动化走同一条“复用优先”的会话入口（老 WPF 界面用的就是这条
+            # [ZH] 一次性流程）。复用时页面就是用户当前那一页，**不再新开标签页、不再导航**。
             session = self._open_work_session()
             if session.note:
                 yield self._event("delta", session.note)
             page = self._work_page(session)
             page.set_default_timeout(self.page_timeout_ms)
             if not url and not session.reused:
-                # 兜底新实例又没有网址：连"打开哪里"都不知道，只能明确报错。
-                # （复用模式不需要网址——用户自己已经把页面开到想选的位置了。）
+                # [EN] The fallback new instance has no URL either: not even "where to open"
+                # [EN] is known, so report an explicit error.
+                # [ZH] 兜底新实例又没有网址：连“打开哪里”都不知道，只能明确报错。
+                # [ZH] （复用模式不需要网址——用户自己已经把页面开到想选的位置了。）
                 yield self._event("error", _t("automation.pick.no_url"))
                 return
             note = self._prepare_task_list_page(page, session, url)
@@ -4805,8 +4908,11 @@ class AutomationEngine:
             elif not session.reused:
                 yield self._event("delta", _t("automation.pick.opening", url=url))
             self._wait_loaded(page)
-            # 相关设计：可视化选取同样要能识别"没登录"——用户在这里登录一次，
-            # 登录态就进了持久化目录，后续自动化与再次选取都直接复用。
+            # [EN] Design: visual selection must also detect "not logged in" - the user logs
+            # [EN] in once here, the login state then goes into the persistent directory, and
+            # [EN] both the later automation and another selection reuse it directly.
+            # [ZH] 设计：可视化选取同样要能识别“没登录”——用户在这里登录一次，
+            # [ZH] 登录态就进了持久化目录，后续自动化与再次选取都直接复用。
             if not (yield from self._wait_login(page, lambda: self._stop.is_set(),
                                                 first_run=session.first_run)):
                 yield self._event("error", _t("automation.pick.login_required"))
@@ -4825,14 +4931,20 @@ class AutomationEngine:
                     return
                 first = entries[0]
                 if not first.href or first.handle is not None:
-                    # 相关设计：伪链接的第一个任务也能进——回退到点击；
-                    # 相关设计：**有可点句柄时一律点击**（模拟手动点击，跳出来的
-                    # 详情页沿用当前会话，不需要重新登录）。
+                    # [EN] Design: the first task may also be a pseudo link - fall back to a
+                    # [EN] click; **whenever a clickable handle exists, always click** (simulate
+                    # [EN] a manual click, and the detail page that opens reuses the current
+                    # [EN] session, so no new login is needed).
+                    # [ZH] 设计：伪链接的第一个任务也能进——回退到点击；
+                    # [ZH] 设计：**有可点句柄时一律点击**（模拟手动点击，跳出来的
+                    # [ZH] 详情页沿用当前会话，不需要重新登录）。
                     detail = yield from self._click_into(page.context, page, first,
                                                          session.pages, reason="manual")
                     if detail is None:
                         if first.href:
-                            # 点不动（句柄已失效等）才退回按地址导航
+                            # [EN] Only when the click fails (a stale handle and so on) does it
+                            # [EN] fall back to navigation by address.
+                            # [ZH] 点不动（句柄已失效等）才退回按地址导航。
                             self._goto(page, first.href)
                             self._wait_loaded(page)
                         else:
@@ -4869,7 +4981,9 @@ class AutomationEngine:
                     break
                 try:
                     state = page.evaluate(self.PICKER_POLL_JS)
-                except Exception:  # noqa: BLE001 —— 页面被关掉/跳转时视为取消
+                except Exception:  # noqa: BLE001
+                    # [EN] A page that was closed or navigated away is treated as cancelled.
+                    # [ZH] 页面被关掉、跳转时视为取消。
                     state = {"cancelled": True}
                 if isinstance(state, dict):
                     if state.get("picked"):
@@ -4888,10 +5002,13 @@ class AutomationEngine:
 
             selector = str(picked.get("selector") or "").strip()
             count = int(picked.get("count") or 0)
-            # ---- 相关设计：选取后预览 + 非链接元素识别 + 伪链接提示 ----
+            # [EN] ---- Design: preview + non-link detection + pseudo-link hint ----
+            # [ZH] ---- 设计：选取后预览 + 非链接元素识别 + 伪链接提示 ----
             preview = self._preview_pick(page, selector, target, picked)
             if preview.get("blocking"):
-                # 位置选错了（点到容器/按钮）：不改配置，直接请用户重选
+                # [EN] The wrong position was picked (a container or a button): do not change
+                # [EN] the configuration; ask the user to select again.
+                # [ZH] 位置选错了（点到容器/按钮）：不改配置，直接请用户重选。
                 self._audit("pick_rejected", url=url, result="not_a_link",
                             error=preview["blocking"], target=target)
                 yield self._event("error", preview["blocking"], preview=preview,
@@ -4923,14 +5040,23 @@ class AutomationEngine:
         finally:
             try:
                 if session is not None and session.context is not None:
-                    # 复用模式下**不导出**登录态：那是用户自己浏览器的凭据，
-                    # 我们没有理由把它复制到程序的数据目录里（设计规范第 6 条）。
+                    # [EN] The login state is **not exported** in reuse mode: those are the
+                    # [EN] credentials of the user's own browser, and there is no reason to
+                    # [EN] copy them into the program's data directory (design specification
+                    # [EN] item 6).
+                    # [ZH] 复用模式下**不导出**登录态：那是用户自己浏览器的凭据，
+                    # [ZH] 我们没有理由把它复制到程序的数据目录里（设计规范第 6 条）。
                     if not session.reused:
-                        self._save_storage_state(session.context)   # 导出备份（主机制是数据目录）
+                        # [EN] Export a backup (the main mechanism is the data directory).
+                        # [ZH] 导出备份（主机制是数据目录）。
+                        self._save_storage_state(session.context)
             except Exception:  # noqa: BLE001
                 pass
-            # 无论走哪条路径结束，都先把页面上的拾取脚本收干净：留着它会让用户的页面
-            # 一直有"点哪里都被拦下"的副作用（相关设计：取消/超时都要清理）。
+            # [EN] Whichever path ends the flow, clean up the picker script on the page first:
+            # [EN] leaving it there gives the user's page the side effect that "any click is
+            # [EN] intercepted" (design: both cancellation and timeout must clean up).
+            # [ZH] 无论走哪条路径结束，都先把页面上的拾取脚本收干净：留着它会让用户的页面
+            # [ZH] 一直有“点哪里都被拦下”的副作用（设计：取消、超时都要清理）。
             try:
                 if page is not None and not _is_internal_url(_page_url(page)):
                     page.evaluate(self.PICKER_STOP_JS)
@@ -4940,16 +5066,29 @@ class AutomationEngine:
                 session.close()
 
     # =====================================================================
-    # 可视化选取：两段式（相关设计 E）
+    # [EN] Visual selection: two-stage (design E)
+    # [ZH] 可视化选取：两段式（设计 E）
     # =====================================================================
     #
-    # 与上面的 ``pick_selector``（老的一次性生成器）并存，不是替代关系：
-    #   * ``pick_selector`` 把"打开页面 → 注入脚本 → 等点击 → 出结果"挤在一次调用里，
-    #     用户在浏览器里准备页面的那段时间**程序只是干等**，也无法告诉他"准备好再点"；
-    #   * 两段式把它拆成"准备好"与"开始选"两步，中间那段时间由用户掌控：
-    #     登录、翻页、点进某个任务，都发生在**注入脚本之前**，不会被打扰。
-    # 老接口保持原签名与返回格式不变（``main.py`` 的 ``_stream_automation_pick``
-    # 依赖 ``event["selector"]``），老界面照旧可用。
+    # [EN] It coexists with ``pick_selector`` above (the old one-shot generator) rather than
+    # [EN] replacing it:
+    # [EN]   * ``pick_selector`` squeezes "open the page -> inject the script -> wait for the
+    # [EN]     click -> return the result" into a single call, so **the program just waits**
+    # [EN]     while the user prepares the page in the browser, and it cannot tell the user
+    # [EN]     "get ready, then click";
+    # [EN]   * the two-stage flow splits it into "get ready" and "start selecting", and the time
+    # [EN]     in between is under the user's control: logging in, paging and clicking into a
+    # [EN]     task all happen **before the script is injected**, so the user is not disturbed.
+    # [EN] The old interface keeps its signature and return format unchanged (``main.py``'s
+    # [EN] ``_stream_automation_pick`` relies on ``event["selector"]``), so the old UI still
+    # [EN] works.
+    # [ZH] 与上面的 ``pick_selector``（老的一次性生成器）并存，不是替代关系：
+    # [ZH]   * ``pick_selector`` 把“打开页面 → 注入脚本 → 等点击 → 出结果”挤在一次调用里，
+    # [ZH]     用户在浏览器里准备页面的那段时间**程序只是干等**，也无法告诉他“准备好再点”；
+    # [ZH]   * 两段式把它拆成“准备好”与“开始选”两步，中间那段时间由用户掌控：
+    # [ZH]     登录、翻页、点进某个任务，都发生在**注入脚本之前**，不会被打扰。
+    # [ZH] 老接口保持原签名与返回格式不变（``main.py`` 的 ``_stream_automation_pick``
+    # [ZH] 依赖 ``event["selector"]``），老界面照旧可用。
 
     def pick_state(self) -> Dict[str, Any]:
         """
@@ -4987,7 +5126,7 @@ class AutomationEngine:
 
         文案为什么由后端给而不是前端硬编码：选取状态是后端的事实（脚本注入到了浏览器里），
         对应的提示（"准备阶段做什么 / 选取阶段做什么"）必须和这个事实一一对应；
-        放在后端还能一次性拿到中英双语（任务书要求所有面向用户文案走语言包），
+        放在后端还能一次性拿到中英双语（设计规范要求所有面向用户文案走语言包），
         前端不必为"我到底该显示哪句话"再判断一遍。
         """
         snap = self._pick_machine.snapshot()
@@ -5063,12 +5202,14 @@ class AutomationEngine:
         第一步：打开/连上目标页面，进入「等待准备」。
 
         打开之后程序**什么也不注入**，只把"当前在哪一页"告诉用户，让他自己完成登录与导航。
-        这正是任务书第 4 条要的两段式：把"准备页面"和"选取元素"分开。
+        这正是设计规范第 4 条要的两段式：把"准备页面"和"选取元素"分开。
         """
         with self._pick_lock:
             machine = self._pick_machine
             if machine.picking:
-                # 正在选取时不允许"重开"：那会让页面上已经装好的脚本与状态对不上
+                # [EN] Reopening is not allowed while picking: it would desync the script
+                # [EN] already installed in the page from the state.
+                # [ZH] 正在选取时不允许“重开”：那会让页面上已经装好的脚本与状态对不上。
                 raise AutomationError(_t("automation.picker.already_picking"))
             url = (url or "").strip() or self.task_list_url
             session = self._pick_session
@@ -5079,9 +5220,13 @@ class AutomationEngine:
                 page = self._work_page(session)
                 note = session.note
             else:
-                # 已经在会话里：重新按"用户当前活动的那一页"取一次目标页 ——
-                # 用户在准备阶段自己开了新标签页（例如从任务列表点进了某个页面）
-                # 是常有的事，这一步让他不必先关掉再重开。
+                # [EN] Already in a session: take the target page again as "the page the user
+                # [EN] is currently active on" - the user often opens a new tab during
+                # [EN] preparation (for example clicking into a page from the task list), and
+                # [EN] this step saves them from closing and reopening.
+                # [ZH] 已经在会话里：重新按“用户当前活动的那一页”取一次目标页 ——
+                # [ZH] 用户在准备阶段自己开了新标签页（例如从任务列表点进了某个页面）
+                # [ZH] 是常有的事，这一步让他不必先关掉再重开。
                 page = self._select_target_page(session)
                 if page is None:
                     raise AutomationError(_t("automation.reuse.no_usable_tab"))
@@ -5112,19 +5257,25 @@ class AutomationEngine:
         """
         with self._pick_lock:
             machine = self._pick_machine
-            machine.begin()          # 非法状态在这里直接抛错（含文案）
+            # [EN] An invalid state raises directly here (the message is included).
+            # [ZH] 非法状态在这里直接抛错（含文案）。
+            machine.begin()
             try:
                 page = self._pick_live_page()
             except AutomationError:
                 raise
             try:
                 page.bring_to_front()
-            except Exception:  # noqa: BLE001 - 置前失败不影响选取本身
+            except Exception:  # noqa: BLE001
+                # [EN] A failure to bring the page to the front does not affect picking.
+                # [ZH] 置前失败不影响选取本身。
                 pass
             try:
                 page.evaluate(self.PICKER_JS, _t("automation.pick.banner"))
             except Exception as exc:  # noqa: BLE001
-                # 注入失败：状态不能停在"选取中"（用户会以为在等他点，其实什么也点不到）
+                # [EN] Injection failed: the state must not stay at "picking", otherwise the
+                # [EN] user would think it is waiting for a click that can never happen.
+                # [ZH] 注入失败：状态不能停在“选取中”（用户会以为在等他点，其实什么也点不到）。
                 machine.finish("error", message=_t("automation.picker.inject_failed",
                                                    error=_redact(exc, 200)))
                 raise AutomationError(_t("automation.picker.inject_failed",
@@ -5149,11 +5300,18 @@ class AutomationEngine:
             session = self._pick_session
             if machine.active and session is not None:
                 try:
-                    # 页面被用户关掉时必须**立刻**反映出来（而不是等他点了「开始选取」
-                    # 才发现），并且绝不换一页继续 —— 设计规范"不要误操作其他标签页"。
+                    # [EN] A page closed by the user must be reflected **immediately** (not
+                    # [EN] only after the user clicks "start selecting"), and it must never
+                    # [EN] switch to another page and continue - the design specification says
+                    # [EN] "do not operate other tabs by mistake".
+                    # [ZH] 页面被用户关掉时必须**立刻**反映出来（而不是等他点了「开始选取」
+                    # [ZH] 才发现），并且绝不换一页继续 —— 设计规范“不要误操作其他标签页”。
                     self._enforce_target_page(session)
-                    # 用户会在准备阶段自己导航，所以每次查询都顺手刷新"当前目标页"，
-                    # 让界面显示的地址始终是他此刻真正打开的那一页。
+                    # [EN] The user may navigate during preparation, so every query also
+                    # [EN] refreshes "the current target page" to keep the address shown in the
+                    # [EN] UI at the page the user actually has open at that moment.
+                    # [ZH] 用户会在准备阶段自己导航，所以每次查询都顺手刷新“当前目标页”，
+                    # [ZH] 让界面显示的地址始终是他此刻真正打开的那一页。
                     self._refresh_target_info(session)
                     if machine.state == PICK_STATE_WAITING:
                         if session.target_url:
@@ -5163,7 +5321,9 @@ class AutomationEngine:
                 except AutomationError as exc:
                     if machine.state == PICK_STATE_WAITING:
                         machine.mark_page_gone(str(exc))
-                except Exception as exc:  # noqa: BLE001 - 读不到就保持上一次的值
+                except Exception as exc:  # noqa: BLE001
+                    # [EN] If it cannot be read, keep the previous value.
+                    # [ZH] 读不到就保持上一次的值。
                     self.logger.debug("刷新目标页信息失败：%s", _redact(exc, 120))
             if machine.picking:
                 self._collect_pick_result()
@@ -5190,7 +5350,9 @@ class AutomationEngine:
             return
         try:
             state = page.evaluate(self.PICKER_POLL_JS)
-        except Exception as exc:  # noqa: BLE001 —— 页面被关/跳转走了
+        except Exception as exc:  # noqa: BLE001
+            # [EN] The page was closed or navigated away.
+            # [ZH] 页面被关、跳转走了。
             log_user(self.logger, "sys.log_pick_result_read_failed",
                      error=_redact(exc, 150))
             machine.mark_page_gone(_t("automation.reuse.target_closed"))
@@ -5202,7 +5364,10 @@ class AutomationEngine:
             selector = str(picked.get("selector") or "").strip()
             preview = self._preview_pick(page, selector, machine.target, picked)
             if preview.get("blocking"):
-                # 位置选错了（点到容器/按钮）：不改配置，请用户重选（回到等待准备）
+                # [EN] The wrong position was picked (a container or a button): do not change
+                # [EN] the configuration; ask the user to select again (back to waiting for
+                # [EN] preparation).
+                # [ZH] 位置选错了（点到容器/按钮）：不改配置，请用户重选（回到等待准备）。
                 self._audit("pick_rejected", url=machine.url, result="not_a_link",
                             error=preview["blocking"], target=machine.target)
                 machine.finish("rejected", message=preview["blocking"], preview=preview)
@@ -5240,7 +5405,9 @@ class AutomationEngine:
                 try:
                     if page is not None and not page.is_closed():
                         page.evaluate(self.PICKER_STOP_JS)
-                except Exception:  # noqa: BLE001 - 页面已经没了就没什么可清理的
+                except Exception:  # noqa: BLE001
+                    # [EN] If the page is already gone there is nothing left to clean up.
+                    # [ZH] 页面已经没了就没什么可清理的。
                     pass
                 machine.finish("cancelled", message=_t("automation.picker.cancelled"))
                 self._audit("pick_cancel", url=machine.url, result="cancelled",
@@ -5274,7 +5441,9 @@ class AutomationEngine:
             self._audit("pick_close", result="ok")
             return self._pick_payload()
 
-    # ---------- 分步测试向导（此前版本 设计规范 4.5） ----------
+    # [EN] ---------- Step-by-step test wizard (design specification 4.5, earlier
+    # [EN] release) ----------
+    # [ZH] ---------- 分步测试向导（此前版本 设计规范 4.5） ----------
 
     def test_element(self, url: str, selector: str, *, click: bool = False) -> Dict[str, Any]:
         """
@@ -5356,7 +5525,7 @@ class AutomationEngine:
         Execute one step of the configuration wizard.
 
         [ZH]
-        测试选择器向导的单个步骤（任务书 4.5）。
+        测试选择器向导的单个步骤（设计规范 4.5）。
 
         step 1 任务列表元素 / 2 下一页按钮 / 3 详情页附件 / 4 试运行一个任务。
         每一步都给出可读的成功/失败原因与修正建议。
@@ -5473,8 +5642,12 @@ class AutomationEngine:
                     self._goto(page, entries[0].href)
                     self._wait_loaded(page)
                 elif entries[0].click_only and entries[0].handle is not None:
-                    # 相关设计回退：第一个任务是伪链接时走点击（进度事件在这里无人接收，
-                    # 因为 wizard_step 是同步 API；点击失败的结果由下面的提示语体现）
+                    # [EN] Design fallback: when the first task is a pseudo link, click it
+                    # [EN] instead (progress events have no receiver here because wizard_step
+                    # [EN] is a synchronous API; the result of a failed click is conveyed by
+                    # [EN] the message below).
+                    # [ZH] 设计回退：第一个任务是伪链接时走点击（进度事件在这里无人接收，
+                    # [ZH] 因为 wizard_step 是同步 API；点击失败的结果由下面的提示语体现）。
                     detail = _drive(self._click_into(page.context, page, entries[0],
                                                      session.pages))
                     if detail is None:
@@ -5499,8 +5672,11 @@ class AutomationEngine:
                         continue
                     if text:
                         samples.append(_clip(text, 120))
-                    # 相关设计：统一用 _classify_href 判定后缀，避免 javascript:# 之类的
-                    # 伪链接被 urljoin 拼成"看起来像地址"的东西后误判后缀
+                    # [EN] Design: decide the suffix through _classify_href uniformly, so that
+                    # [EN] javascript:# links are not turned by urljoin into fake addresses that
+                    # [EN] "look like an address" and then get the wrong suffix.
+                    # [ZH] 设计：统一用 _classify_href 判定后缀，避免 javascript:# 之类的
+                    # [ZH] 伪链接被 urljoin 拼成“看起来像地址”的东西后误判后缀。
                     info = _classify_href(
                         (locator.nth(index).get_attribute("href") or ""), page.url)
                     ext = _extension_of(info.url) or _extension_of(text)
@@ -5518,7 +5694,9 @@ class AutomationEngine:
                                        title=_clip(entries[0].text, 40), count=count,
                                        matched=matched_ext)
                     if click_only:
-                        # 相关设计：伪链接要明确告诉用户"后续会改成点击"
+                        # [EN] Design: for a pseudo link, tell the user explicitly that it
+                        # [EN] will be changed to a click later.
+                        # [ZH] 设计：伪链接要明确告诉用户“后续会改成点击”。
                         out["detail"] += "\n" + _t(
                             "automation.link.click_only_notice",
                             kinds=_t("automation.link.kind.javascript"))
@@ -5605,7 +5783,9 @@ class AutomationEngine:
                 "processed_count": int(self._processed_count),
                 "results": int(self._result_count),
                 "last_error": self._last_error,
-                # 新增三：结果目录信息，供设置窗口与状态栏展示
+                # [EN] Addition 3: information about the result directory, shown in the
+                # [EN] settings window and the status bar.
+                # [ZH] 新增三：结果目录信息，供设置窗口与状态栏展示。
                 "results_root": self.results_root,
                 "results_dir": self.results_dir,
                 "report_path": self.report_path if self._run_task_dir else "",
@@ -5643,7 +5823,8 @@ class AutomationEngine:
                     continue
         return removed
 
-    # ---------- 主流程 ----------
+    # [EN] ---------- Main flow ----------
+    # [ZH] ---------- 主流程 ----------
 
     def run(self, stop_event: Any = None, on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
             limit: int = 0, dry_run: bool = False) -> Iterator[dict]:
@@ -5670,7 +5851,9 @@ class AutomationEngine:
         """
         self._progress_cb = on_progress
         self._active_stop = stop_event
-        # 每次运行重置内部停止标志（外部 stop_event 保持调用方给定的状态）
+        # [EN] Reset the internal stop flag on every run (the external stop_event keeps the
+        # [EN] state given by the caller).
+        # [ZH] 每次运行重置内部停止标志（外部 stop_event 保持调用方给定的状态）。
         self._stop.clear()
 
         def stopped() -> bool:
@@ -5681,7 +5864,8 @@ class AutomationEngine:
             except Exception:  # noqa: BLE001
                 return False
 
-        # ---- 安全协议前置检查（必须在启动浏览器之前）----
+        # [EN] ---- Safety protocol pre-check (must happen before the browser starts) ----
+        # [ZH] ---- 安全协议前置检查（必须在启动浏览器之前）----
         if not self.enabled:
             message = _t("automation.run.disabled")
             if not self.safety_accepted:
@@ -5707,7 +5891,8 @@ class AutomationEngine:
             yield self._event("error", message)
             return
 
-        # ---- 运行状态与计数器 ----
+        # [EN] ---- Run state and counters ----
+        # [ZH] ---- 运行状态与计数器 ----
         with self._lock:
             self._running = True
             self._last_run = _now_iso()
@@ -5723,8 +5908,12 @@ class AutomationEngine:
         try:
             os.makedirs(self.download_dir, exist_ok=True)
             run_tmp = tempfile.mkdtemp(prefix="run_", dir=self.download_dir)
-            # ---- 新增三：本轮结果目录 = 结果根目录/日期/任务名（同名自动加序号）----
-            # 试运行（dry_run）只走流程，不建目录、不写结果文件、不记处理记录。
+            # [EN] ---- Addition 3: result directory of this run = result root / date / task
+            # [EN] name (a sequence number is appended when the name already exists) ----
+            # [ZH] ---- 新增三：本轮结果目录 = 结果根目录/日期/任务名（同名自动加序号）----
+            # [EN] A dry run only walks the flow: it creates no directory, writes no result
+            # [EN] file and records no processing record.
+            # [ZH] 试运行（dry_run）只走流程，不建目录、不写结果文件、不记处理记录。
             self._report_blocks = []
             self._dry_run = bool(dry_run)
             if bool(getattr(self.cfg, "save_results", True)) and not dry_run:
@@ -5741,11 +5930,17 @@ class AutomationEngine:
                         max_tasks=limit or getattr(self.cfg, "max_tasks", 20))
             yield self._event("delta", _t("automation.run.starting", url=self.task_list_url))
 
-            # ---- 启动/接管浏览器 ----
+            # [EN] ---- Start or take over the browser ----
+            # [ZH] ---- 启动/接管浏览器 ----
             #
-            # 相关设计：这里不再写死 `_open_session()`（那永远是新实例），而是走
-            # `_open_work_session()` —— 优先**连上用户已经打开的那个浏览器**，
-            # 连不上才按策略回退到新实例，并在 note 里把代价（要重新登录）说清楚。
+            # [EN] Design: this no longer hard-codes `_open_session()` (which always creates
+            # [EN] a new instance) but goes through `_open_work_session()` - preferring to
+            # [EN] **connect to the browser the user already has open**, and only falling back
+            # [EN] to a new instance by policy when that fails, stating the cost (logging in
+            # [EN] again) in the note.
+            # [ZH] 设计：这里不再写死 `_open_session()`（那永远是新实例），而是走
+            # [ZH] `_open_work_session()` —— 优先**连上用户已经打开的那个浏览器**，
+            # [ZH] 连不上才按策略回退到新实例，并在 note 里把代价（要重新登录）说清楚。
             yield self._event("delta", _t("automation.run.launching_browser"))
             session = self._open_work_session()
             if session.note:
@@ -5757,10 +5952,14 @@ class AutomationEngine:
             except Exception:  # noqa: BLE001
                 pass
 
-            # ---- 打开任务列表 ----
+            # [EN] ---- Open the task list ----
+            # [ZH] ---- 打开任务列表 ----
             yield self._event("delta", _t("automation.run.opening_task_list"))
-            # 复用模式下这一步**不会导航**（用户当前那一页就是他要处理的那一页），
-            # 只回一句"程序正在哪一页上干活"；只有兜底新实例才 goto 配置里的网址。
+            # [EN] In reuse mode this step **does not navigate** (the page the user has open
+            # [EN] is the page to process); it only reports which page the program is working
+            # [EN] on. Only the fallback new instance performs goto with the configured URL.
+            # [ZH] 复用模式下这一步**不会导航**（用户当前那一页就是他要处理的那一页），
+            # [ZH] 只回一句“程序正在哪一页上干活”；只有兜底新实例才 goto 配置里的网址。
             prepared = self._prepare_task_list_page(page, session)
             if prepared:
                 yield self._event("delta", prepared)
@@ -5768,9 +5967,15 @@ class AutomationEngine:
             if not manual_ok:
                 yield self._event("delta", _t("automation.run.manual_not_done"))
             self._wait_loaded(page)
-            # ---- 登录态检测（相关设计）：未登录则暂停等用户登录，超时中止本轮 ----
-            # 这里用 return 而不是"继续跑"：没登录的话后面每一个任务都会失败，
-            # 跑完再报 20 条失败对用户毫无帮助（设计规范要求"暂停并提示用户手动登录"）。
+            # [EN] ---- Login state detection (design): when not logged in, pause and wait
+            # [EN] for the user to log in; abort this run on timeout ----
+            # [ZH] ---- 登录态检测（设计）：未登录则暂停等用户登录，超时中止本轮 ----
+            # [EN] return is used here instead of "keep running": without a login every later
+            # [EN] task would fail, and reporting 20 failures at the end is of no help to the
+            # [EN] user (the design specification requires "pause and prompt the user to log
+            # [EN] in manually").
+            # [ZH] 这里用 return 而不是“继续跑”：没登录的话后面每一个任务都会失败，
+            # [ZH] 跑完再报 20 条失败对用户毫无帮助（设计规范要求“暂停并提示用户手动登录”）。
             if not (yield from self._wait_login(page, stopped, first_run=session.first_run)):
                 message = _t("automation.run.login_not_done",
                              seconds=getattr(self.cfg, "manual_login_wait_seconds", 180))
@@ -5781,7 +5986,8 @@ class AutomationEngine:
                 yield self._event("error", message)
                 return
 
-            # ---- 收集任务链接（含分页）----
+            # [EN] ---- Collect task links (including pagination) ----
+            # [ZH] ---- 收集任务链接（含分页）----
             task_selector = str(getattr(self.cfg, "task_list_selector", "") or "")
             row_selector = str(getattr(self.cfg, "task_row_selector", "") or "")
             next_selector = str(getattr(self.cfg, "next_page_selector", "") or "")
@@ -5792,8 +5998,11 @@ class AutomationEngine:
             for page_index in range(1, _MAX_PAGES + 1):
                 if stopped():
                     break
-                # 相关设计：伪链接（无 href）也要收进来——它们由点击回退处理，
-                # 以前用 `if e.href` 过滤会把整页"javascript:void(0)"的任务全部丢掉。
+                # [EN] Design: pseudo links (without an href) are collected as well - they are
+                # [EN] handled by the click fallback; the old `if e.href` filter used to drop
+                # [EN] every "javascript:void(0)" task on the page.
+                # [ZH] 设计：伪链接（无 href）也要收进来——它们由点击回退处理，
+                # [ZH] 以前用 `if e.href` 过滤会把整页“javascript:void(0)”的任务全部丢掉。
                 entries = [e for e in self._collect_links(page, task_selector, row_selector)
                            if e.href or e.handle is not None]
                 new_count = 0
@@ -5824,7 +6033,9 @@ class AutomationEngine:
             total_tasks = min(len(pending), max_tasks)
             if total_tasks == 0:
                 if stopped():
-                    # 运行刚开始就被要求停止：正常收尾，不算错误
+                    # [EN] Stopped right after the run started: this is a normal shutdown, not
+                    # [EN] an error.
+                    # [ZH] 运行刚开始就被要求停止：正常收尾，不算错误。
                     stop_text = _t("automation.run.stopped_no_task")
                     self._save_summary_block(stop_text)
                     yield self._event(
@@ -5840,7 +6051,9 @@ class AutomationEngine:
                 if self._selector_error:
                     message = _t("automation.run.list_selector_unusable", error=self._selector_error)
                 self._last_error = message
-                # 失败信息也写进 result.txt，避免"结果目录是空的、不知道发生了什么"
+                # [EN] The failure message is written to result.txt as well, to avoid "the
+                # [EN] result directory is empty and nobody knows what happened".
+                # [ZH] 失败信息也写进 result.txt，避免“结果目录是空的、不知道发生了什么”。
                 self._save_summary_block(_t("automation.run.summary_no_task", reason=message))
                 self._audit("run_end", url=self.task_list_url, result="failed", error=message, **counters)
                 yield self._event("error", message)
@@ -5848,7 +6061,8 @@ class AutomationEngine:
             yield self._event("delta", _t("automation.run.tasks_found", count=len(pending),
                                           total=total_tasks))
 
-            # ---- 逐个处理任务 ----
+            # [EN] ---- Process the tasks one by one ----
+            # [ZH] ---- 逐个处理任务 ----
             for index, entry in enumerate(pending[:total_tasks], 1):
                 if stopped():
                     yield self._event("delta", _t("automation.run.stop_requested"))
@@ -5866,7 +6080,8 @@ class AutomationEngine:
 
                 task_tmp = ""
                 outcome = _TaskOutcome(status="failed", error=_t("automation.task.not_executed"))
-                # 技能钩子：任务开始前（此前版本 相关设计 2.3）
+                # [EN] Skill hook: before the task starts (design 2.3 of an earlier release).
+                # [ZH] 技能钩子：任务开始前（此前版本 设计 2.3）。
                 self._fire("before_task", task=title, url=entry.href, index=index,
                            total=total_tasks, run_dir=self._run_task_dir)
                 try:
@@ -5886,7 +6101,9 @@ class AutomationEngine:
                         )
                         if outcome.status == "ok":
                             break
-                except Exception as exc:  # noqa: BLE001 - 单个任务异常不得中断整轮
+                except Exception as exc:  # noqa: BLE001
+                    # [EN] An exception in a single task must not interrupt the whole run.
+                    # [ZH] 单个任务异常不得中断整轮。
                     outcome = _TaskOutcome(status="failed",
                                            error=_t("automation.task.exception",
                                                     error=_redact(exc, 200)))
@@ -5920,7 +6137,9 @@ class AutomationEngine:
                 else:
                     counters["failed"] += 1
                     reason = outcome.error or _t("automation.result.unknown_error")
-                    # 失败信息同样写入 result.txt，并保留失败截图（设计规范 新增三）
+                    # [EN] The failure message is written to result.txt as well, and the failure
+                    # [EN] screenshot is kept (design specification, addition 3).
+                    # [ZH] 失败信息同样写入 result.txt，并保留失败截图（设计规范 新增三）。
                     self._save_failure(
                         title, entry.href, outcome.files, reason,
                         index=index, total=total_tasks, screenshot=outcome.screenshot,
@@ -5932,17 +6151,25 @@ class AutomationEngine:
                     )
                     self._audit("task", url=entry.href, files=outcome.files, result="failed", error=reason)
 
-                # ---- 回到任务列表，准备下一个任务（链接已在收集阶段缓存，无需重新分页定位）----
-                # 技能钩子：单个任务处理结束后
+                # [EN] ---- Back to the task list to prepare the next task (links are cached
+                # [EN] during collection, so no re-pagination is needed) ----
+                # [ZH] ---- 回到任务列表，准备下一个任务（链接已在收集阶段缓存，无需重新分页定位）----
+                # [EN] Skill hook: after a single task has been processed.
+                # [ZH] 技能钩子：单个任务处理结束后。
                 self._fire("after_task", task=title, url=entry.href, index=index,
                            total=total_tasks, status=outcome.status, files=list(outcome.files),
                            summary=outcome.summary, error=outcome.error,
                            result_path=outcome.result_path, run_dir=self._run_task_dir)
                 if index < total_tasks and not stopped():
                     try:
-                        # 相关设计：回列表优先用浏览器自己的"后退"（同会话内的历史导航，
-                        # 保留 Referer 与 SPA 状态），验不出列表时 _back_to_task_list 内部
-                        # 会自动改回按地址导航 —— 老行为是唯一的兜底，不会因此变差。
+                        # [EN] Design: returning to the list prefers the browser's own "back"
+                        # [EN] (history navigation within the same session, preserving the
+                        # [EN] Referer and SPA state); when the list cannot be verified,
+                        # [EN] _back_to_task_list falls back to navigation by address - the old
+                        # [EN] behavior is the only fallback, so nothing gets worse.
+                        # [ZH] 设计：回列表优先用浏览器自己的“后退”（同会话内的历史导航，
+                        # [ZH] 保留 Referer 与 SPA 状态），验不出列表时 _back_to_task_list 内部
+                        # [ZH] 会自动改回按地址导航 —— 老行为是唯一的兜底，不会因此变差。
                         self._back_to_task_list(page, task_selector)
                     except Exception as exc:  # noqa: BLE001
                         self.logger.debug("返回任务列表失败：%s", _redact(exc, 150))
@@ -5950,7 +6177,8 @@ class AutomationEngine:
             if bool(getattr(self.cfg, "dedupe", True)) and not dry_run:
                 self._save_processed(processed_urls)
 
-            # ---- 汇总 ----
+            # [EN] ---- Summary ----
+            # [ZH] ---- 汇总 ----
             header = _t("automation.run.summary_header", ok=counters["ok"],
                         skipped=counters["skipped"], failed=counters["failed"],
                         found=len(pending), limit=total_tasks)
@@ -5987,8 +6215,11 @@ class AutomationEngine:
             self._audit("run_end", url=self.task_list_url, result="failed", error=message, **counters)
             yield self._event("error", message)
         finally:
-            # 统一清理：导出登录态备份 → 关闭持久化上下文（浏览器随之关闭）→ 停 Playwright
-            #                          → 删本轮临时目录
+            # [EN] Unified cleanup: export the login-state backup -> close the persistent
+            # [EN] context (the browser closes with it) -> stop Playwright -> delete this run's
+            # [EN] temporary directory.
+            # [ZH] 统一清理：导出登录态备份 → 关闭持久化上下文（浏览器随之关闭）→ 停 Playwright
+            # [ZH]                          → 删本轮临时目录
             try:
                 if session is not None and session.context is not None:
                     self._save_storage_state(session.context)
@@ -6054,16 +6285,24 @@ class AutomationEngine:
         """
         title = entry.text or _t("automation.task.fallback_title", index=index)
         files_saved: List[str] = []
-        moved_paths: Set[str] = set()   # 已移入结果目录的文件（finally 不再删除）
+        # [EN] Files already moved into the result directory (not deleted in finally).
+        # [ZH] 已移入结果目录的文件（finally 不再删除）。
+        moved_paths: Set[str] = set()
         names: List[str] = []
         errors: List[str] = []
         pages_before = list(getattr(context, "pages", []) or [])
-        detail_page = page            # 伪链接走点击时，详情页可能是新标签页
+        # [EN] For a pseudo link handled by clicking, the detail page may be a new tab.
+        # [ZH] 伪链接走点击时，详情页可能是新标签页。
+        detail_page = page
         try:
             yield self._event("delta", _t("automation.task.opening_detail", index=index,
                                           total=total, title=_clip(title, 40)))
-            # 相关设计 C：**一律优先模拟手动点击**（伪链接本来就必须点击）。
-            # 点不动（句柄已随页面重载失效）时 _open_task_detail 内部会退回按地址导航。
+            # [EN] Design C: **always prefer a simulated manual click** (a pseudo link has to
+            # [EN] be clicked anyway).
+            # [EN] When the click does not work (the handle became stale after a page reload),
+            # [EN] _open_task_detail falls back to navigation by address internally.
+            # [ZH] 设计 C：**一律优先模拟手动点击**（伪链接本来就必须点击）。
+            # [ZH] 点不动（句柄已随页面重载失效）时 _open_task_detail 内部会退回按地址导航。
             opened = yield from self._open_task_detail(context, page, entry, pages_before)
             if opened is None:
                 return _TaskOutcome("failed", "", [], _t(
@@ -6079,7 +6318,8 @@ class AutomationEngine:
             if stop_fn():
                 return _TaskOutcome("failed", "", [], _t("automation.task.stopped"))
 
-            # ---- 定位附件链接并按后缀过滤 ----
+            # [EN] ---- Locate attachment links and filter by extension ----
+            # [ZH] ---- 定位附件链接并按后缀过滤 ----
             file_selector = str(getattr(self.cfg, "task_detail_file_selector", "") or "")
             entries = [e for e in self._collect_links(detail_page, file_selector)
                        if e.href or e.handle is not None]
@@ -6101,7 +6341,9 @@ class AutomationEngine:
                 yield self._event("delta", _t("automation.task.ignored_extensions",
                                               index=index, total=total, count=skipped_ext))
             if click_only_files:
-                # 相关设计：明确告诉用户"这些附件读不到网址，改为点击下载"
+                # [EN] Design: tell the user explicitly that "the URLs of these attachments
+                # [EN] cannot be read, so they are downloaded by clicking".
+                # [ZH] 设计：明确告诉用户“这些附件读不到网址，改为点击下载”。
                 yield self._event("delta", _t("automation.task.click_only_files",
                                               index=index, total=total,
                                               count=click_only_files))
@@ -6112,7 +6354,8 @@ class AutomationEngine:
                                 error=self._selector_error)
                 return _TaskOutcome("failed", "", [], reason)
 
-            # ---- 逐个下载并解析 ----
+            # [EN] ---- Download and parse them one by one ----
+            # [ZH] ---- 逐个下载并解析 ----
             documents: List[Tuple[str, str]] = []
             for order, candidate in enumerate(matched, 1):
                 if stop_fn():
@@ -6137,7 +6380,9 @@ class AutomationEngine:
                 names.append(name)
                 text, parse_err = self._parse_downloaded(path)
                 if parse_err:
-                    # 解析错误串绝不交给 LLM；该文件记为失败，其余文件继续
+                    # [EN] The parse error string is never handed to the LLM; this file is
+                    # [EN] recorded as failed and the remaining files continue.
+                    # [ZH] 解析错误串绝不交给 LLM；该文件记为失败，其余文件继续。
                     errors.append(_t("automation.task.file_error", label=name, error=parse_err))
                     yield self._event("delta", _t("automation.task.file_parse_failed",
                                                   index=index, total=total, name=name,
@@ -6146,27 +6391,36 @@ class AutomationEngine:
                 documents.append((name, text))
 
             if not documents:
-                # 技能钩子：文件下载完成（即使全部失败也通知，便于技能统计）
+                # [EN] Skill hook: the files have been downloaded (notified even when all of
+                # [EN] them failed, so that skills can keep statistics).
+                # [ZH] 技能钩子：文件下载完成（即使全部失败也通知，便于技能统计）。
                 self._fire("after_download", task=title, index=index, total=total,
                            files=list(names), errors=list(errors), run_dir=self._run_task_dir)
                 return _TaskOutcome("failed", "", names,
                                     _t("automation.list_sep_semicolon").join(errors)
                                     or _t("automation.task.no_usable_content"))
 
-            # 技能钩子：文件下载后（设计规范 2.3 的 after_download 阶段）
+            # [EN] Skill hook: after the files have been downloaded (the after_download stage
+            # [EN] of design specification 2.3).
+            # [ZH] 技能钩子：文件下载后（设计规范 2.3 的 after_download 阶段）。
             self._fire("after_download", task=title, index=index, total=total,
                        files=list(names), errors=list(errors), run_dir=self._run_task_dir)
 
-            # ---- 生成审核意见 ----
+            # [EN] ---- Generate the review opinion ----
+            # [ZH] ---- 生成审核意见 ----
             yield self._event("delta", _t("automation.task.generating", index=index, total=total))
             summary = self._generate(documents)
             if errors:
                 summary += _t("automation.task.unreadable_notice",
                               errors=_t("automation.list_sep_semicolon").join(errors))
-            # 技能钩子：摘要生成后（设计规范 2.3 的 after_summary 阶段）
+            # [EN] Skill hook: after the summary has been generated (the after_summary stage of
+            # [EN] design specification 2.3).
+            # [ZH] 技能钩子：摘要生成后（设计规范 2.3 的 after_summary 阶段）。
             self._fire("after_summary", task=title, index=index, total=total,
                        files=list(names), summary=summary, run_dir=self._run_task_dir)
-            # 新增三：把本轮下载的原始文件移入任务目录（不再随临时目录一起删除）
+            # [EN] Addition 3: move the raw files of this run into the task directory (they are
+            # [EN] no longer deleted together with the temporary directory).
+            # [ZH] 新增三：把本轮下载的原始文件移入任务目录（不再随临时目录一起删除）。
             kept = self._move_into_task_dir(files_saved)
             moved_paths.update(files_saved)
             for name in kept:
@@ -6180,7 +6434,9 @@ class AutomationEngine:
             return _TaskOutcome("ok", summary, names, "", result_path)
         except Exception as exc:  # noqa: BLE001
             shot = self._screenshot(detail_page, index)
-            # 新增三：失败时也保留下载到的原始文件与失败截图
+            # [EN] Addition 3: on failure, the downloaded raw files and the failure screenshot
+            # [EN] are kept as well.
+            # [ZH] 新增三：失败时也保留下载到的原始文件与失败截图。
             kept = self._move_into_task_dir(files_saved)
             moved_paths.update(files_saved)
             for name in kept:
@@ -6188,7 +6444,9 @@ class AutomationEngine:
                     names.append(name)
             return _TaskOutcome("failed", "", names, _redact(exc, 250), "", shot)
         finally:
-            # 只清理"没能移入结果目录"的临时文件（已保留的文件不能删）
+            # [EN] Only clean up the temporary files that were "not moved into the result
+            # [EN] directory" (retained files must not be deleted).
+            # [ZH] 只清理“没能移入结果目录”的临时文件（已保留的文件不能删）。
             for path in files_saved:
                 if path in moved_paths:
                     continue
@@ -6197,6 +6455,8 @@ class AutomationEngine:
                         os.remove(path)
                 except OSError:
                     continue
-            # 关闭本任务过程中新开出的标签页（避免标签页泄漏）；浏览器内部页面不碰
+            # [EN] Close the tabs opened during this task (to avoid tab leaks); internal
+            # [EN] browser pages are left untouched.
+            # [ZH] 关闭本任务过程中新开出的标签页（避免标签页泄漏）；浏览器内部页面不碰。
             for candidate in self._new_pages(context, pages_before):
                 self._safe_close(candidate)

@@ -9,29 +9,48 @@
         WindowDecorations="BorderOnly"
         DragDrop.AllowDrop="True">
   <!--
-    [EN] Borderless shell contract: WindowDecorations="BorderOnly" removes the operating-system
-         caption while preserving the native resize frame, drop shadow and maximise animation.
-         Window movement is delegated to BeginMoveDrag in the code-behind, which executes the
-         platform move loop and therefore inherits native snapping and DPI handling.
+    [EN] Borderless shell contract: WindowDecorations="BorderOnly" removes the operating-
+    [EN] system caption while preserving the native resize frame, drop shadow and maximise
+    [EN] animation. Window movement is delegated to BeginMoveDrag in the code-behind, which
+    [EN] executes the platform move loop and therefore inherits native snapping and DPI
+    [EN] handling.
     [ZH] 无边框外壳约定：WindowDecorations="BorderOnly" 移除操作系统标题栏，同时保留原生缩放边框、
-         投影与最大化动画。窗口移动交由代码隐藏文件中的 BeginMoveDrag 执行平台移动循环，
-         因此天然继承系统贴靠与 DPI 处理。
+    [ZH] 投影与最大化动画。窗口移动交由代码隐藏文件中的 BeginMoveDrag 执行平台移动循环，
+    [ZH] 因此天然继承系统贴靠与 DPI 处理。
     [EN] The historical visual-alignment notes below are retained unchanged for traceability.
     [ZH] 下方历史视觉对齐说明保持原样，以便追溯。
-    主窗口（视觉对齐版）：骨架、间距、字号、圆角全部按 frontend/MainWindow.xaml 复刻。
+    [EN] Main window (visual-alignment revision): the skeleton, spacing, font sizes and corner
+    [EN] radii are replicated from frontend/MainWindow.xaml.
+    [ZH] 主窗口（视觉对齐版）：骨架、间距、字号、圆角全部按 frontend/MainWindow.xaml 复刻。
 
-    与上一版的差别（都是"看得见"的差别，不是重构）：
-      · 窗口外边距 10（WPF 的 Grid Margin="10"），而不是整条通栏贴边；
-      · 标题行是**平铺**在窗口底色上的一行，没有独立底板、没有分隔线；
-      · 输入区是 12 圆角的白卡片，命令行是 8 圆角，状态区是 8 圆角；
-      · 底部提示固定在 42 高的区域里居中（原来塞在工具条中间）；
-      · 工具条按钮按 WPF 的尺寸：命令/常用语 170x34、上下文 130x30、
-        设置/上传 34x34、发送 40x40（圆形胶囊），不再是带文字的方块按钮。
+    [EN] Differences from the previous revision (all of them visible differences, not a
+    [EN] refactor):
+    [ZH] 与上一版的差别（都是"看得见"的差别，不是重构）：
+    [EN] * The window margin is 10 (Grid Margin="10" in WPF), not a full-bleed strip that
+    [EN]   runs edge to edge;
+    [ZH]   · 窗口外边距 10（WPF 的 Grid Margin="10"），而不是整条通栏贴边；
+    [EN] * The title row is a row **tiled** directly on the window background, with no
+    [EN]   separate backing plate and no divider line;
+    [ZH]   · 标题行是**平铺**在窗口底色上的一行，没有独立底板、没有分隔线；
+    [EN] * The input area is a white card with 12 px corners, the command row uses 8 px
+    [EN]   corners, and the status area uses 8 px corners;
+    [ZH]   · 输入区是 12 圆角的白卡片，命令行是 8 圆角，状态区是 8 圆角；
+    [EN] * The bottom hints are centered inside a fixed-height 42 px area (previously they
+    [EN]   were squeezed into the middle of the toolbar);
+    [ZH]   · 底部提示固定在 42 高的区域里居中（原来塞在工具条中间）；
+    [EN] * The toolbar buttons follow the WPF dimensions: command and snippets 170x34,
+    [EN]   context 130x30, settings and upload 34x34, send 40x40 (a circular capsule); they
+    [EN]   are no longer square buttons carrying text;
+    [ZH]   · 工具条按钮按 WPF 的尺寸：命令/常用语 170x34、上下文 130x30、
+    [ZH]     设置/上传 34x34、发送 40x40（圆形胶囊），不再是带文字的方块按钮。
 
-    功能面板与 WPF 版一一对应（指令面板、常用语面板、通知条、状态区、Agent 步骤区）。
+    [EN] The feature panels map one-to-one to the WPF build (command panel, snippet panel,
+    [EN] notification bar, status area, agent step area).
+    [ZH] 功能面板与 WPF 版一一对应（指令面板、常用语面板、通知条、状态区、Agent 步骤区）。
   -->
   <Window.Styles>
-    <!-- WPF RoundButton：Margin 2 · 圆角 17 · 1px 描边 · 灰底 -->
+    <!-- [EN] WPF RoundButton: margin 2, corner radius 17, a 1 px border and a gray fill. -->
+    <!-- [ZH] WPF RoundButton：Margin 2 · 圆角 17 · 1px 描边 · 灰底。 -->
     <Style Selector="Button.round">
       <Setter Property="Margin" Value="2" />
       <Setter Property="Padding" Value="0" />
@@ -41,7 +60,11 @@
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="FontSize" Value="12" />
     </Style>
-    <!-- 状态区/标题行的小胶囊：Padding 6,1 · 圆角 17 · 11 号字 -->
+    <!--
+      [EN] Small capsule shared by the status area and the title row: padding 6,1, corner radius
+           17, font size 11.
+      [ZH] 状态区/标题行的小胶囊：Padding 6,1 · 圆角 17 · 11 号字。
+    -->
     <Style Selector="Button.chip">
       <Setter Property="Margin" Value="0,0,4,0" />
       <Setter Property="Padding" Value="6,1" />
@@ -51,7 +74,11 @@
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="FontSize" Value="11" />
     </Style>
-    <!-- 纯图标按钮：字形走 Segoe UI Symbol，跟随前景色（彩色 emoji 在浅底上对比度不足） -->
+    <!--
+      [EN] Icon-only button: glyphs are drawn from Segoe UI Symbol and follow the foreground
+           color, because color emoji lack contrast on light backgrounds.
+      [ZH] 纯图标按钮：字形走 Segoe UI Symbol，跟随前景色（彩色 emoji 在浅底上对比度不足）。
+    -->
     <Style Selector="Button.icon">
       <Setter Property="Padding" Value="0" />
       <Setter Property="CornerRadius" Value="17" />
@@ -173,7 +200,11 @@
 
     <Grid Grid.Row="1" Margin="10" RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,42">
 
-    <!-- ① 顶部横幅区（平台降级 / 无模型引导）：单独占第 0 行，不与标题行重叠 -->
+    <!--
+      [EN] (1) Top banner area (platform degradation or missing model): it occupies row 0 on its
+           own and never overlaps the title row.
+      [ZH] ① 顶部横幅区（平台降级 / 无模型引导）：单独占第 0 行，不与标题行重叠。
+    -->
     <StackPanel Grid.Row="0" Spacing="4">
     <Border x:Name="PlatformBanner" Classes="elevated" IsVisible="False"
             Background="{DynamicResource WarningBannerBrush}"
@@ -185,7 +216,11 @@
       </StackPanel>
     </Border>
 
-    <!-- ② 无模型引导条：后端"无模型就绪"时把三条路径直白列出来 -->
+    <!--
+      [EN] (2) No-model guidance bar: when the backend reports that no model is ready, the three
+           available paths are listed plainly.
+      [ZH] ② 无模型引导条：后端“无模型就绪”时把三条路径直白列出来。
+    -->
     <Border x:Name="GuideBanner" Classes="elevated" IsVisible="False"
             Background="{DynamicResource PanelBackgroundBrush}"
             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
@@ -203,12 +238,12 @@
     -->
     <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
       <Grid ColumnDefinitions="Auto,Auto" IsVisible="False">
-        <TextBlock x:Name="BrandText" Grid.Column="0" Text="📡 EchoDesk" Classes="brand"
+        <TextBlock x:Name="BrandText" Grid.Column="0" Text="" Classes="brand"
                    VerticalAlignment="Bottom" />
-        <TextBlock x:Name="VersionText" Grid.Column="1" Text="v0.2.1" FontSize="10" Margin="4,0,0,0"
+        <TextBlock x:Name="VersionText" Grid.Column="1" Text="" FontSize="10" Margin="4,0,0,0"
                    VerticalAlignment="Bottom" Foreground="{DynamicResource SubTextBrush}" />
       </Grid>
-      <TextBlock x:Name="PoweredText" Text="由熵寂工作室出品" FontSize="11" Margin="14,8,0,0"
+      <TextBlock x:Name="PoweredText" Text="" FontSize="11" Margin="14,8,0,0"
                  IsVisible="False"
                  VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}" />
       <TextBlock x:Name="PlatformChip" IsVisible="False" />
@@ -217,27 +252,37 @@
                  TextTrimming="CharacterEllipsis" Foreground="{DynamicResource SubTextBrush}" />
       <Button x:Name="ModelChip" Margin="14,0,0,0" Padding="8,2" VerticalAlignment="Center"
               Classes="round">
-        <TextBlock x:Name="ModelText" Text="🧠 模型: ---" FontSize="11" MaxWidth="200" TextWrapping="NoWrap" />
+        <TextBlock x:Name="ModelText" Text="" FontSize="11" MaxWidth="200" TextWrapping="NoWrap" />
       </Button>
       <Button x:Name="ModeChip" Margin="8,0,0,0" Padding="8,2" VerticalAlignment="Center"
               Classes="round">
-        <TextBlock x:Name="ModeText" Text="MODE TEST" FontSize="11" TextWrapping="NoWrap" />
+        <TextBlock x:Name="ModeText" Text="" FontSize="11" TextWrapping="NoWrap" />
       </Button>
-      <!-- 以下四个控件在 WPF 版主窗口里**不存在**（只在设置-常规页）。保留为隐藏状态，
-           既不影响观感，也不丢键盘快捷方式（Ctrl+± / Ctrl+T 仍走同一批处理函数）。 -->
+      <!--
+        [EN] The following four controls do not exist in the WPF main window; they live only on
+             the Settings > General page. They stay hidden, which neither changes the visuals
+             nor drops the keyboard shortcuts (Ctrl+± and Ctrl+T still run the same handlers).
+        [ZH] 以下四个控件在 WPF 版主窗口里**不存在**（只在设置-常规页）。保留为隐藏状态，
+             既不影响观感，也不丢键盘快捷方式（Ctrl+± / Ctrl+T 仍走同一批处理函数）。
+      -->
       <Button x:Name="FontDownButton" IsVisible="False" Classes="chip" Content="A-" />
       <Button x:Name="FontUpButton" IsVisible="False" Classes="chip" Content="A+" />
       <Button x:Name="ThemeButton" IsVisible="False" Classes="chip" Content="🌓" />
       <ComboBox x:Name="LangCombo" IsVisible="False" MinWidth="118" />
     </StackPanel>
 
-    <!-- ④ 消息列表（支持 Ctrl+滚轮调节字号） -->
+    <!-- [EN] (4) Message list (Ctrl+wheel adjusts the font size). -->
+    <!-- [ZH] ④ 消息列表（支持 Ctrl+滚轮调节字号）。 -->
     <ScrollViewer x:Name="MessageScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto"
                   HorizontalScrollBarVisibility="Disabled">
       <StackPanel x:Name="MessagePanel" Orientation="Vertical" />
     </ScrollViewer>
 
-    <!-- ⑤ 指令输入行：默认隐藏，点击左下角命令按钮后显示 -->
+    <!--
+      [EN] (5) Command input row: hidden by default and revealed after the command button in the
+           lower left corner is clicked.
+      [ZH] ⑤ 指令输入行：默认隐藏，点击左下角命令按钮后显示。
+    -->
     <Border x:Name="CommandInputRow" Grid.Row="3" Margin="0,6,0,0" CornerRadius="8"
             IsVisible="False"
             Background="{DynamicResource InputBackgroundBrush}"
@@ -246,11 +291,12 @@
         <TextBox x:Name="CommandInputBox" MinHeight="30" Margin="8,4"
                  VerticalContentAlignment="Center" Padding="6,0"
                  AcceptsReturn="False" BorderThickness="0" Background="Transparent"
-                 PlaceholderText="在此处输入以“/”开头的指令 · 了解用法输入 /help" />
+                 PlaceholderText="" />
       </Grid>
     </Border>
 
-    <!-- ⑥ 输入区：上半无框文本输入，下半圆形按钮工具栏 -->
+    <!-- [EN] (6) Input area: borderless text input above, round-button toolbar below. -->
+    <!-- [ZH] ⑥ 输入区：上半无框文本输入，下半圆形按钮工具栏。 -->
     <Border x:Name="InputAreaBorder" Classes="elevated" Grid.Row="4" Margin="0,6,0,0" CornerRadius="12"
             Background="{DynamicResource InputBackgroundBrush}"
             BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
@@ -264,31 +310,40 @@
 
         <Grid Grid.Row="1" Margin="0,6,0,0" ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
 
-          <!-- 左侧：命令输入框开关按钮（加号旋转变叉号，固定宽度防跳动） -->
+          <!--
+            [EN] Left side: toggle button for the command input row (the plus sign rotates into
+                 a cross; a fixed width keeps the layout from jumping).
+            [ZH] 左侧：命令输入框开关按钮（加号旋转变叉号，固定宽度防跳动）。
+          -->
           <Button x:Name="CommandButton" Grid.Column="0" Width="170" Height="34" Classes="round">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
               <TextBlock x:Name="CommandIconText" Text="+" FontSize="18" FontWeight="Bold"
                          VerticalAlignment="Center" />
-              <TextBlock x:Name="CommandButtonText" Text="打开命令输入框" FontSize="12"
+              <TextBlock x:Name="CommandButtonText" Text="" FontSize="12"
                          Margin="8,0,0,0" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
 
-          <!-- 常用语按钮（同款开关文字，固定宽度） -->
+          <!-- [EN] Snippet button (same toggle-label style, fixed width). -->
+          <!-- [ZH] 常用语按钮（同款开关文字，固定宽度）。 -->
           <Button x:Name="SnippetButton" Grid.Column="1" Width="170" Height="34" Margin="6,2,2,2"
                   Classes="round">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
               <TextBlock Text="📋" FontSize="14" VerticalAlignment="Center" />
-              <TextBlock x:Name="SnippetButtonText" Text="打开常用语选择框" FontSize="12"
+              <TextBlock x:Name="SnippetButtonText" Text="" FontSize="12"
                          Margin="8,0,0,0" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
 
-          <!-- 右侧：上下文占用 + 设置 + 上传 + 发送（图标按钮按 WPF 尺寸） -->
+          <!--
+            [EN] Right side: context usage, settings, upload and send (the icon buttons follow
+                 the WPF dimensions).
+            [ZH] 右侧：上下文占用 + 设置 + 上传 + 发送（图标按钮按 WPF 尺寸）。
+          -->
           <Button x:Name="ContextChip" Grid.Column="3" Height="30" MinWidth="130" Padding="14,0"
                   HorizontalAlignment="Left" Classes="round"
                   AutomationProperties.AutomationId="ContextChip">
-            <TextBlock x:Name="ContextChipText" Text="上下文：---/---" FontSize="11" />
+            <TextBlock x:Name="ContextChipText" Text="" FontSize="11" />
           </Button>
           <Button x:Name="SettingsButton" Grid.Column="4" Width="34" Height="34" Classes="icon"
                   Content="⚙" FontSize="14" />
@@ -310,7 +365,11 @@
       </Grid>
     </Border>
 
-    <!-- ⑦ 轻量状态区：图标 + 简短短语，点击任一项跳到对应设置/动作；右侧按钮可折叠 -->
+    <!--
+      [EN] (7) Lightweight status area: an icon plus a short phrase; clicking any item jumps to
+           the matching setting or action, and the button on the right collapses the area.
+      [ZH] ⑦ 轻量状态区：图标 + 简短短语，点击任一项跳到对应设置/动作；右侧按钮可折叠。
+    -->
     <Border x:Name="StatusStrip" Classes="elevated" Grid.Row="5" Margin="0,4,0,0" CornerRadius="8"
             Background="{DynamicResource InputBackgroundBrush}"
             BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
@@ -368,10 +427,10 @@
             <TextBlock x:Name="StripCompactText" Text="" FontSize="11" />
           </Button>
           <Button x:Name="StripWarnButton" Classes="chip" IsVisible="False">
-            <TextBlock x:Name="StripWarnText" Text="⚠️ 能力提示" FontSize="11" />
+            <TextBlock x:Name="StripWarnText" Text="" FontSize="11" />
           </Button>
           <Button x:Name="StripUpdateButton" Classes="chip" Margin="6,0,0,0" IsVisible="False">
-            <TextBlock x:Name="StripUpdateText" Text="🎉 新版本" FontSize="11" />
+            <TextBlock x:Name="StripUpdateText" Text="" FontSize="11" />
           </Button>
           <!--
             [EN] Native ProgressBar for update downloads. It is hidden until a download
@@ -392,7 +451,11 @@
       </Grid>
     </Border>
 
-    <!-- ⑧ 底部提示（固定高度区）：通知提示与操作提示共用一行 -->
+    <!--
+      [EN] (8) Bottom hints (fixed-height area): notification hints and action hints share one
+           row.
+      [ZH] ⑧ 底部提示（固定高度区）：通知提示与操作提示共用一行。
+    -->
     <StackPanel Grid.Row="6" Margin="0,3,0,0" HorizontalAlignment="Center" VerticalAlignment="Top">
       <TextBlock x:Name="CommandBarHint" IsVisible="False" FontSize="12"
                  Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center" />
@@ -408,7 +471,11 @@
                  HorizontalAlignment="Center" Margin="0,2,0,0" />
     </StackPanel>
 
-    <!-- 常用语选择栏（Popup 不占布局；PlacementTarget 在代码里设，避免依赖名字绑定） -->
+    <!--
+      [EN] Snippet palette (the popup takes no layout space; PlacementTarget is assigned in code
+           to avoid relying on name binding).
+      [ZH] 常用语选择栏（Popup 不占布局；PlacementTarget 在代码里设，避免依赖名字绑定）。
+    -->
     <Popup x:Name="SnippetPalette" Placement="Top" IsOpen="False" MaxHeight="260">
       <Border Background="{DynamicResource AppBackgroundBrush}"
               BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
@@ -434,7 +501,11 @@
       </Border>
     </Popup>
 
-    <!-- 指令选择栏：在指令输入框或聊天输入框输入 "/" 后弹出（PlacementTarget 在代码里设） -->
+    <!--
+      [EN] Command palette: it opens after "/" is typed in the command input box or the chat
+           input box (PlacementTarget is assigned in code).
+      [ZH] 指令选择栏：在指令输入框或聊天输入框输入 "/" 后弹出（PlacementTarget 在代码里设）。
+    -->
     <Popup x:Name="CommandPalette" Placement="Top" IsOpen="False" MaxHeight="300">
       <Border Background="{DynamicResource AppBackgroundBrush}"
               BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
@@ -444,8 +515,12 @@
                    MaxHeight="240">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="svc:CommandItem">
-                <!-- 无障碍锚点：屏幕阅读器读到的应该是"这条指令是干什么的"，
-                     而不是把三个 TextBlock 拼起来念。 -->
+                <!--
+                  [EN] Accessibility anchor: a screen reader should announce what the command
+                       does, not read the three TextBlocks as one concatenated string.
+                  [ZH] 无障碍锚点：屏幕阅读器读到的应该是“这条指令是干什么的”，
+                       而不是把三个 TextBlock 拼起来念。
+                -->
                 <StackPanel Margin="4,2"
                             AutomationProperties.Name="{Binding Short}"
                             AutomationProperties.HelpText="{Binding Description}">

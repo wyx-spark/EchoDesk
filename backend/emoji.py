@@ -1,6 +1,6 @@
 """
 [EN]
-Emoji downgrade (task specification fix 6).
+Emoji downgrade (design specification fix 6).
 
 Background: emoji coverage of the fonts shipped with Windows varies widely.
 Measured coverage of the 20 emoji used by this project is 0/20 for ``Segoe UI``,
@@ -24,7 +24,7 @@ Downgrade conditions (any one of them triggers the downgrade):
     65001).
 
 [ZH]
-Emoji 降级（任务书修复六）。
+Emoji 降级（设计规范修复六）。
 
 背景：Windows 自带字体的 emoji 覆盖率差异极大——实测 ``Segoe UI`` 对本项目使用的
 20 个 emoji 覆盖率为 0/20，只有 ``Segoe UI Emoji`` 达到 20/20。因此：
@@ -67,9 +67,9 @@ ASCII_MAP: Dict[str, str] = {
     "⚙️": "[cfg]", "⚙": "[cfg]", "🔧": "[cfg]", "🔧️": "[cfg]",
     "📝": "[edit]", "👤": "[user]", "🤖": "[bot]", "ℹ️": "[i]", "ℹ": "[i]",
     # [EN] 🔁: used by the "timeout retry" line of segmented summarization
-    # [EN] (此前版本 general optimization, task 4).
-    # [EN] 📍: used by the "step N/M" line of agent steps (此前版本 capability
-    # [EN] extension, task 2).
+    # [EN] (general optimization in an earlier release, task 4).
+    # [EN] 📍: used by the "step N/M" line of agent steps (capability
+    # [EN] extension in an earlier release, task 2).
     # [EN] A new emoji must be added both to this table and to
     # [EN] frontend\Services\Emoji.cs; otherwise it degrades to "?" on terminals
     # [EN] without emoji fonts (tools\check_emoji.ps1 enforces this).
@@ -134,19 +134,19 @@ ASCII_MAP: Dict[str, str] = {
     "🧵": "[thread]",
     "🪟": "[window]",
     "📉": "[trend-down]",
-    # [EN] Added by the model-marketplace optimization (此前版本): filter-panel title
-    # [EN] and the "offline mode" notice. 🎛️ carries a variation selector
-    # [EN] (U+1F39B U+FE0F); both forms must be listed, otherwise the VS16 form still
-    # [EN] degrades to "?" on systems without emoji fonts (check_emoji.ps1 enforces
-    # [EN] this).
+    # [EN] Added by the model-marketplace optimization (an earlier release):
+    # [EN] filter-panel title and the "offline mode" notice. 🎛️ carries a
+    # [EN] variation selector (U+1F39B U+FE0F); both forms must be listed,
+    # [EN] otherwise the VS16 form still degrades to "?" on systems without
+    # [EN] emoji fonts (check_emoji.ps1 enforces this).
     # [ZH] 模型市场优化（此前版本）新增：筛选面板标题与"离线模式"提示。🎛️ 带变体
     # [ZH] 选择符（U+1F39B U+FE0F），两种写法都必须列出，否则带 VS16 的写法在无
     # [ZH] emoji 字体下仍会退化成 "?"（check_emoji.ps1 会拦截）。
     "🎛️": "[filter]", "🎛": "[filter]",
     "📴": "[offline]",
-    # [EN] Model tier feature (此前版本 default-model switch): the
-    # [EN] "🎚️ Model tier" title on the settings page. It also carries a variation
-    # [EN] selector (U+1F39A U+FE0F); both forms must be listed.
+    # [EN] Model tier feature (the default-model switch in an earlier
+    # [EN] release): the "🎚️ Model tier" title on the settings page. It also
+    # [EN] carries a variation selector (U+1F39A U+FE0F); both forms must be listed.
     # [ZH] 模型档位（此前版本 默认模型切换）：设置页"🎚️ 模型档位"标题。同样带变体
     # [ZH] 选择符（U+1F39A U+FE0F），两种写法都必须列出。
     "🎚️": "[tiers]", "🎚": "[tiers]",
@@ -298,7 +298,7 @@ def prefer(text: str) -> str:
 def configure_streams() -> None:
     """
     [EN]
-    Make standard output use UTF-8 where possible (task specification fix 6: keep
+    Make standard output use UTF-8 where possible (design specification fix 6: keep
     encoding consistent with display).
 
     After PyInstaller packaging, stdout may be cp936; ``reconfigure`` is the only
@@ -306,7 +306,7 @@ def configure_streams() -> None:
     must not prevent the backend from starting.
 
     [ZH]
-    尽量让标准输出使用 UTF-8（任务书修复六：编码与显示保持一致）。
+    尽量让标准输出使用 UTF-8（设计规范修复六：编码与显示保持一致）。
 
     PyInstaller 打包后 stdout 可能是 cp936；``reconfigure`` 是唯一无副作用的修改
     方式。失败时不抛出异常——输出编码问题不应导致后端无法启动。

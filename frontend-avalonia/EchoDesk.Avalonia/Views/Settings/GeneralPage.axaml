@@ -2,17 +2,30 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.GeneralPage">
   <!--
-    常规页（视觉对齐版）：版式按 frontend/SettingsWindow.xaml 的「常规」页签复刻。
+    [EN] General page (visual-alignment revision): the layout replicates the General tab of
+         frontend/SettingsWindow.xaml.
+           * StackPanel Margin="14,12" with no Spacing; blocks are arranged by the per-block
+             Margin used in WPF;
+           * the three section titles (appearance and defaults / language / language pack) are
+             15 px bold accent text;
+           * field labels are small sub-color text, and the controls are 200 wide (theme and
+             emoji), 260 (mode and language) and 320 (slider);
+           * the language pack and "interface and data locations" are cards with radius 8 and a
+             1 px border.
+         Control names (x:Name) and AutomationIds are unchanged, as both the probes and the code
+         locate controls by these names.
+    [ZH] 常规页（视觉对齐版）：版式按 frontend/SettingsWindow.xaml 的「常规」页签复刻。
       · StackPanel Margin="14,12"，不靠 Spacing，而是按 WPF 的逐块 Margin 排；
       · 三个区块标题（外观与默认行为 / 语言 / 语言包）是 15 号加粗强调色；
       · 字段标签是副色小字，控件宽度 200（主题/emoji）、260（模式/语言）、320（滑块）；
-      · 语言包与"界面与数据位置"都是 8 圆角、1px 描边的卡片。
+      · 语言包与“界面与数据位置”都是 8 圆角、1px 描边的卡片。
     控件名（x:Name）与 AutomationId 保持不变，探针与代码都按这些名字找控件。
   -->
   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
     <StackPanel Margin="14,12">
 
-      <!-- ① 外观与默认行为 -->
+      <!-- [EN] (1) Appearance and default behavior. -->
+      <!-- [ZH] ① 外观与默认行为。 -->
       <TextBlock x:Name="AppearanceTitle" FontSize="15" FontWeight="Bold"
                  Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10" />
 
@@ -56,7 +69,8 @@
       <CheckBox x:Name="ConfirmDestructiveCheck" Margin="0,14,0,0"
                 AutomationProperties.AutomationId="ConfirmDestructiveCheck" />
 
-      <!-- ② 语言 / Language -->
+      <!-- [EN] (2) Language. -->
+      <!-- [ZH] ② 语言 / Language。 -->
       <TextBlock x:Name="LanguageTitle" FontSize="15" FontWeight="Bold"
                  Foreground="{DynamicResource AccentBrush}" Margin="0,18,0,10" />
 
@@ -69,7 +83,8 @@
       <TextBlock x:Name="LanguageHelpText" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
                  Foreground="{DynamicResource SubTextBrush}" />
 
-      <!-- ③ 语言包 -->
+      <!-- [EN] (3) Language pack. -->
+      <!-- [ZH] ③ 语言包。 -->
       <TextBlock x:Name="LangPackTitle" FontSize="15" FontWeight="Bold"
                  Foreground="{DynamicResource AccentBrush}" Margin="0,18,0,10" />
       <Border CornerRadius="8" Padding="10,8" BorderThickness="1"
@@ -88,7 +103,8 @@
         </StackPanel>
       </Border>
 
-      <!-- ④ 界面与数据位置 -->
+      <!-- [EN] (4) Interface and data locations. -->
+      <!-- [ZH] ④ 界面与数据位置。 -->
       <Border Margin="0,18,0,0" CornerRadius="8" Padding="12,10" BorderThickness="1"
               Background="{DynamicResource CardBackgroundBrush}"
               BorderBrush="{DynamicResource CardBorderBrush}">

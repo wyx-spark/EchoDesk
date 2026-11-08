@@ -2,7 +2,15 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.MarketPage">
   <!--
-    技能市场页（视觉对齐版）：版式按 frontend/SettingsWindow.xaml 的「技能市场」页签复刻。
+    [EN] Skill marketplace page (visual-alignment revision): the layout replicates the "skill
+         marketplace" tab of frontend/SettingsWindow.xaml.
+           * the top is a 15 px bold accent heading, "search skills";
+           * the search bar is a single row: input box, sort order and buttons;
+           * the results sit **inside a frame with radius 8 and a 1 px border**, and the empty
+             state is centered inside that frame (previously a bare area without a border);
+           * the tip text is below the results frame and the status row comes last (same
+             positions as in WPF). Control names and AutomationIds are unchanged.
+    [ZH] 技能市场页（视觉对齐版）：版式按 frontend/SettingsWindow.xaml 的「技能市场」页签复刻。
       · 顶部是 15 号加粗强调色的「搜索技能」标题；
       · 搜索条一行：输入框 + 排序 + 按钮；
       · 结果是**一个 8 圆角、1px 描边的框**，空状态在框内居中（原来是没有边框的裸区域）；
@@ -11,11 +19,13 @@
   -->
   <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="14,12,14,10">
 
-    <!-- 标题 -->
+    <!-- [EN] Title. -->
+    <!-- [ZH] 标题。 -->
     <TextBlock x:Name="MarketTitle" Grid.Row="0" FontSize="15" FontWeight="Bold"
                Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10" />
 
-    <!-- 搜索条 -->
+    <!-- [EN] Search bar. -->
+    <!-- [ZH] 搜索条。 -->
     <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto,Auto">
       <TextBox x:Name="MarketSearchBox" Grid.Column="0" Padding="6,4"
                AutomationProperties.AutomationId="MarketSearchBox" />
@@ -27,7 +37,11 @@
               AutomationProperties.AutomationId="MarketRefreshButton" />
     </Grid>
 
-    <!-- 结果列表：与 WPF 一样放在一个描边框里，空状态在框内居中 -->
+    <!--
+      [EN] Result list: it sits inside a bordered frame, as in WPF, and the empty state is
+           centered inside that frame.
+      [ZH] 结果列表：与 WPF 一样放在一个描边框里，空状态在框内居中。
+    -->
     <Border Grid.Row="2" Margin="0,10,0,0" CornerRadius="8" BorderThickness="1"
             BorderBrush="{DynamicResource InputBorderBrush}"
             Background="{DynamicResource InputBackgroundBrush}">
@@ -48,11 +62,13 @@
       </ScrollViewer>
     </Border>
 
-    <!-- 说明（WPF 在结果框下方） -->
+    <!-- [EN] Tip (WPF places it below the results frame). -->
+    <!-- [ZH] 说明（WPF 在结果框下方）。 -->
     <TextBlock x:Name="MarketSearchTip" Grid.Row="3" Margin="0,6,0,0" FontSize="11"
                TextWrapping="Wrap" Opacity="0.7" />
 
-    <!-- 状态行 -->
+    <!-- [EN] Status row. -->
+    <!-- [ZH] 状态行。 -->
     <TextBlock x:Name="MarketStatusText" Grid.Row="4" Margin="0,4,0,0" FontSize="11"
                TextWrapping="Wrap" Opacity="0.85"
                AutomationProperties.AutomationId="MarketStatusText" />

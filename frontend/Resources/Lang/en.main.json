@@ -2,10 +2,10 @@
   "_meta": {
     "locale": "en",
     "module": "main",
-    "note": "Additional main-window strings (module fragment): merged with en.json, keys here win. Task book 3.5 asks for language packs split by module so several people can collaborate."
+    "note": "Additional main-window strings (module fragment): merged with en.json, keys here win. The design specification (3.5) asks for language packs split by module so several people can collaborate."
   },
   "cmd": {
-    "_note": "指令表（后端未就绪时的本地回退用）：与后端语言包 cmd.items.* **逐字一致**。两个前端只读本目录（后端包在 lang/），缺这一份时指令面板会整片显示中文（硬编码清查清单 §5.1）。",
+    "_note": "Command table (local fallback while the backend is not ready): must stay word-for-word identical to the backend language pack cmd.items.*. Both front ends read only this directory (the backend pack lives in lang/); without this fragment the command panel is displayed entirely in Chinese (hardcoded-text audit 5.1).",
     "items": {
       "/help": {
         "name": "Show this command reference",

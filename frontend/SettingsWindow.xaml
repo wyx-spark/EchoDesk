@@ -2,7 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:svc="clr-namespace:EchoDesk.Services"
-        Title="EchoDesk 设置"
+        Title=""
+        svc:Loc.Key="settings.title"
         Height="660" Width="780" MinHeight="520" MinWidth="680"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource WindowBackground}">
@@ -15,14 +16,14 @@
         <TabControl Grid.Row="0" x:Name="Tabs">
 
             <!-- ================= 常规 ================= -->
-            <TabItem Header="常规" svc:Loc.Key="settings.tab.general">
+            <TabItem Header="" svc:Loc.Key="settings.tab.general">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="14,12">
-                        <TextBlock Text="外观与默认行为" FontSize="15" FontWeight="Bold"
+                        <TextBlock Text="" FontSize="15" FontWeight="Bold"
                                    Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10"
                                    svc:Loc.Key="settings.general.sectionAppearance"/>
 
-                        <TextBlock Text="界面主题" Margin="0,4,0,4" Foreground="{DynamicResource SubTextBrush}"
+                        <TextBlock Text="" Margin="0,4,0,4" Foreground="{DynamicResource SubTextBrush}"
                                    svc:Loc.Key="settings.general.themeLabel"/>
                         <StackPanel Orientation="Horizontal">
                             <ComboBox x:Name="ThemeCombo" Width="200" HorizontalAlignment="Left"
@@ -31,12 +32,12 @@
                             <TextBlock x:Name="ThemeStatusText" Margin="12,0,0,0" VerticalAlignment="Center"
                                        FontSize="11" Foreground="{DynamicResource SubTextBrush}"/>
                         </StackPanel>
-                        <TextBlock Text="主题与 emoji 显示即时生效，无需重启"
+                        <TextBlock Text=""
                                    FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"
                                    svc:Loc.Key="settings.general.themeNote"/>
 
-                        <TextBlock Text="emoji 显示" Margin="0,12,0,4" Foreground="{DynamicResource SubTextBrush}"
+                        <TextBlock Text="" Margin="0,12,0,4" Foreground="{DynamicResource SubTextBrush}"
                                    svc:Loc.Key="settings.general.emojiLabel"/>
                         <StackPanel Orientation="Horizontal">
                             <ComboBox x:Name="EmojiCombo" Width="200" HorizontalAlignment="Left"
@@ -46,7 +47,7 @@
                                        FontSize="11" Foreground="{DynamicResource SubTextBrush}"/>
                         </StackPanel>
 
-                        <TextBlock Text="字体大小" Margin="0,14,0,4" Foreground="{DynamicResource SubTextBrush}"
+                        <TextBlock Text="" Margin="0,14,0,4" Foreground="{DynamicResource SubTextBrush}"
                                    svc:Loc.Key="settings.general.fontSize"/>
                         <StackPanel Orientation="Horizontal">
                             <Slider x:Name="FontSizeSlider" Width="320" Minimum="10" Maximum="24" Value="14"
@@ -57,33 +58,33 @@
                                        Foreground="{DynamicResource SubTextBrush}"/>
                         </StackPanel>
 
-                        <TextBlock Text="默认对话模式（下次启动生效，也可用 /mode 即时切换）"
+                        <TextBlock Text=""
                                    Margin="0,14,0,4" Foreground="{DynamicResource SubTextBrush}"
                                    svc:Loc.Key="settings.general.defaultMode"/>
                         <ComboBox x:Name="DefaultModeCombo" Width="260" HorizontalAlignment="Left"/>
 
                         <CheckBox x:Name="ConfirmDestructiveCheck" Margin="0,14,0,0"
-                                  Content="执行 /clear、/clearcache 等有副作用的指令前先确认（建议保持开启）"
+                                  Content=""
                                   Checked="ConfirmDestructiveCheck_Changed" Unchecked="ConfirmDestructiveCheck_Changed"
                                   svc:Loc.Key="settings.general.confirmDestructive"
                                   svc:Loc.TipKey="settings.general.confirmDestructiveHelp"/>
 
-                        <TextBlock Text="语言 / Language" FontSize="15" FontWeight="Bold"
+                        <TextBlock Text="" FontSize="15" FontWeight="Bold"
                                                    Foreground="{DynamicResource AccentBrush}" Margin="0,18,0,10"
                                                    svc:Loc.Key="settings.general.sectionLanguage"/>
 
-                        <TextBlock Text="界面语言" Margin="0,0,0,4" Foreground="{DynamicResource SubTextBrush}"
+                        <TextBlock Text="" Margin="0,0,0,4" Foreground="{DynamicResource SubTextBrush}"
                                    svc:Loc.Key="settings.general.language"/>
                         <StackPanel Orientation="Horizontal">
                             <ComboBox x:Name="LanguageCombo" Width="260" HorizontalAlignment="Left"
                                       SelectionChanged="LanguageCombo_SelectionChanged"/>
                         </StackPanel>
-                        <TextBlock Text="切换后界面、错误提示与指令帮助立即生效，无需重启"
+                        <TextBlock Text=""
                                    FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"
                                    svc:Loc.Key="settings.general.languageHelp"/>
 
-                        <TextBlock Text="语言包" FontSize="15" FontWeight="Bold"
+                        <TextBlock Text="" FontSize="15" FontWeight="Bold"
                                    Foreground="{DynamicResource AccentBrush}" Margin="0,18,0,10"
                                    svc:Loc.Key="settings.general.sectionLanguagePack"/>
                         <Border CornerRadius="8" Padding="10,8" Background="{DynamicResource InputBackground}"
@@ -92,10 +93,10 @@
                                 <TextBlock x:Name="LangPackText" FontSize="11" TextWrapping="Wrap"
                                            Foreground="{DynamicResource SubTextBrush}"/>
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                    <Button Content="↻ 重新加载语言包" svc:Loc.Key="settings.general.reloadLang" Padding="10,3" FontSize="11"
+                                    <Button Content="" svc:Loc.Key="settings.general.reloadLang" Padding="10,3" FontSize="11"
                                             Style="{StaticResource RoundButton}" Click="ReloadLangButton_Click"
-                                            ToolTip="翻译者改完语言包文件后无需重启即可看到效果" svc:Loc.TipKey="settings.general.reloadLangTip"/>
-                                    <Button Content="📂 打开语言包目录" svc:Loc.Key="settings.general.openLangDir" Padding="10,3" FontSize="11" Margin="8,0,0,0"
+                                            ToolTip="" svc:Loc.TipKey="settings.general.reloadLangTip"/>
+                                    <Button Content="" svc:Loc.Key="settings.general.openLangDir" Padding="10,3" FontSize="11" Margin="8,0,0,0"
                                             Style="{StaticResource RoundButton}" Click="OpenLangDirButton_Click"/>
                                 </StackPanel>
                             </StackPanel>
@@ -105,7 +106,7 @@
                                 Background="{DynamicResource InputBackground}"
                                 BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
                             <StackPanel>
-                                <TextBlock Text="📌 界面与数据位置" FontWeight="Bold" Margin="0,0,0,6"
+                                <TextBlock Text="" FontWeight="Bold" Margin="0,0,0,6"
                                            svc:Loc.Key="settings.general.sectionPaths"/>
                                 <TextBlock x:Name="PathsText" FontSize="11" TextWrapping="Wrap"
                                            Foreground="{DynamicResource SubTextBrush}"/>
@@ -116,7 +117,7 @@
             </TabItem>
 
             <!-- ================= 模型（新增四） ================= -->
-            <TabItem Header="模型" svc:Loc.Key="settings.tab.model">
+            <TabItem Header="" svc:Loc.Key="settings.tab.model">
                 <Grid Margin="14,12">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -134,7 +135,7 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="🧠 模型选择栏（Hugging Face GGUF 模型）" svc:Loc.Key="settings.model.sectionHub"
+                    <TextBlock Grid.Row="0" Text="" svc:Loc.Key="settings.model.sectionHub"
                                FontSize="15" FontWeight="Bold"
                                Foreground="{DynamicResource AccentBrush}"/>
 
@@ -148,22 +149,22 @@
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="数据源" svc:Loc.Key="settings.model.hubSource" VerticalAlignment="Center"
+                        <TextBlock Grid.Column="0" Text="" svc:Loc.Key="settings.model.hubSource" VerticalAlignment="Center"
                                    Foreground="{DynamicResource SubTextBrush}"/>
                         <ComboBox x:Name="HubSourceCombo" Grid.Column="1" Width="170" Margin="6,0,0,0"
                                   SelectionChanged="HubSourceCombo_SelectionChanged"
-                                  ToolTip="自动：优先镜像站，不可达时回退官方站" svc:Loc.TipKey="settings.model.hubSourceHelp"/>
+                                  ToolTip="" svc:Loc.TipKey="settings.model.hubSourceHelp"/>
                         <TextBlock Grid.Column="2" Text="Token" VerticalAlignment="Center" Margin="14,0,0,0"
                                    Foreground="{DynamicResource SubTextBrush}"/>
                         <PasswordBox x:Name="HubTokenBox" Grid.Column="3" Margin="6,0,0,0" Padding="6,4"
-                                     ToolTip="下载需授权的 Gated 模型时填写；留空则读环境变量 HF_TOKEN" svc:Loc.TipKey="settings.model.hubTokenTip"/>
+                                     ToolTip="" svc:Loc.TipKey="settings.model.hubTokenTip"/>
                         <Button x:Name="HubSaveTokenButton" Grid.Column="4" Margin="8,0,0,0" Padding="12,4"
-                                Content="保存 Token" svc:Loc.Key="settings.model.actionSaveToken" Style="{StaticResource RoundButton}"
+                                Content="" svc:Loc.Key="settings.model.actionSaveToken" Style="{StaticResource RoundButton}"
                                 Click="HubSaveTokenButton_Click"/>
                         <Button x:Name="HubOpenDirButton" Grid.Column="5" Margin="8,0,0,0" Padding="12,4"
-                                Content="模型目录" svc:Loc.Key="settings.model.actionModelsDir" Style="{StaticResource RoundButton}"
+                                Content="" svc:Loc.Key="settings.model.actionModelsDir" Style="{StaticResource RoundButton}"
                                 Click="HubOpenDirButton_Click"
-                                ToolTip="在文件资源管理器中打开本地模型库目录" svc:Loc.TipKey="settings.model.openModelsDirTip"/>
+                                ToolTip="" svc:Loc.TipKey="settings.model.openModelsDirTip"/>
                     </Grid>
 
                     <!-- 搜索行（任务二：关键字回车/按钮触发"取全部结果"） -->
@@ -209,7 +210,7 @@
                               IsExpanded="False">
                         <Expander.Header>
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="🎛️ 本地筛选与排序" FontWeight="Bold"
+                                <TextBlock Text="" FontWeight="Bold"
                                            svc:Loc.Key="settings.model.filterTitle"/>
                                 <TextBlock x:Name="HubFilterSummary" Margin="6,0,0,0" FontSize="11"
                                            VerticalAlignment="Center"
@@ -218,7 +219,7 @@
                         </Expander.Header>
                         <StackPanel Margin="0,6,0,0">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="本地筛选" VerticalAlignment="Center"
+                                <TextBlock Text="" VerticalAlignment="Center"
                                            Foreground="{DynamicResource SubTextBrush}"
                                            svc:Loc.Key="settings.model.localFilterLabel"/>
                                 <TextBox x:Name="HubFilterBox" Width="240" Margin="6,0,0,0" Padding="6,4"
@@ -233,14 +234,14 @@
                             <WrapPanel x:Name="HubQuantFacet" Margin="0,4,0,0"/>
                             <WrapPanel x:Name="HubUpdatedFacet" Margin="0,4,0,0"/>
                             <WrapPanel x:Name="HubFlagFacet" Margin="0,6,0,0">
-                                <TextBlock x:Name="HubInstalledLabel" Text="下载状态" VerticalAlignment="Center"
+                                <TextBlock x:Name="HubInstalledLabel" Text="" VerticalAlignment="Center"
                                            FontSize="11" Margin="0,0,6,0"
                                            Foreground="{DynamicResource SubTextBrush}"
                                            svc:Loc.Key="settings.model.facetInstalled"/>
                                 <ComboBox x:Name="HubInstalledCombo" Width="130" Margin="0,0,12,0"
                                           SelectionChanged="HubFacetCombo_Changed"/>
                                 <CheckBox x:Name="HubRecommendedCheck" VerticalAlignment="Center"
-                                          Content="只看推荐" svc:Loc.Key="settings.model.onlyRecommended" FontSize="11"
+                                          Content="" svc:Loc.Key="settings.model.onlyRecommended" FontSize="11"
                                           Checked="HubFacetCheck_Click" Unchecked="HubFacetCheck_Click"/>
                                 <Button x:Name="HubFilterResetButton" Padding="10,3"
                                         FontSize="11" Margin="12,0,0,0"
@@ -389,7 +390,7 @@
                                     <StackPanel x:Name="HubEmptyPanel"
                                                 HorizontalAlignment="Center" VerticalAlignment="Center">
                                         <TextBlock x:Name="HubEmptyText"
-                                                   Text="输入关键词搜索，或直接点「搜索」浏览热门 GGUF 模型" svc:Loc.Key="settings.model.hubIdle"
+                                                   Text="" svc:Loc.Key="settings.model.hubIdle"
                                                    Foreground="{DynamicResource SubTextBrush}"
                                                    TextWrapping="Wrap" MaxWidth="460" TextAlignment="Center"/>
                                         <Button x:Name="HubRemoteRetryButton" Margin="0,8,0,0" Padding="12,4"
@@ -421,7 +422,7 @@
                                     Margin="4,2,0,2" Style="{StaticResource RoundButton}"
                                     Click="HubPrevPage_Click"
                                     svc:Loc.Key="settings.model.pagePrev"/>
-                            <TextBlock x:Name="HubJumpLabel" Text="跳至" VerticalAlignment="Center" FontSize="11"
+                            <TextBlock x:Name="HubJumpLabel" Text="" VerticalAlignment="Center" FontSize="11"
                                        Margin="10,2,0,2" Foreground="{DynamicResource SubTextBrush}"
                                        svc:Loc.Key="settings.model.pageJumpLabel"/>
                             <TextBox x:Name="HubPageBox" Width="52" Padding="4,2" FontSize="11" Margin="4,2,0,2"
@@ -439,7 +440,7 @@
                                     Margin="4,2,0,2" Style="{StaticResource RoundButton}"
                                     Click="HubLastPage_Click"
                                     svc:Loc.Key="settings.model.pageLast"/>
-                            <TextBlock x:Name="HubPageSizeLabel" Text="每页" VerticalAlignment="Center" FontSize="11"
+                            <TextBlock x:Name="HubPageSizeLabel" Text="" VerticalAlignment="Center" FontSize="11"
                                        Margin="12,2,0,2" Foreground="{DynamicResource SubTextBrush}"
                                        svc:Loc.Key="settings.model.pageSizeLabel"/>
                             <ComboBox x:Name="HubPageSizeCombo" Width="66" Margin="4,2,0,2" FontSize="11"
@@ -469,7 +470,7 @@
                         </StackPanel>
                         <TextBlock x:Name="HubStatusText" Margin="0,4,0,0" FontSize="11"
                                    TextWrapping="Wrap" Foreground="{DynamicResource SubTextBrush}"
-                                   Text="尚未搜索。点「搜索」浏览热门 GGUF 模型，或在详情中选择量化版本下载。" svc:Loc.Key="settings.model.emptyHint"/>
+                                   Text="" svc:Loc.Key="settings.model.emptyHint"/>
                     </StackPanel>
 
                     <!-- 模型档位（多档默认模型）：一行胶囊，点即切换/下载。
@@ -479,7 +480,7 @@
                         <StackPanel Orientation="Horizontal">
                             <TextBlock FontWeight="Bold" VerticalAlignment="Center"
                                        svc:Loc.Key="settings.model.profileTitle"
-                                       Text="🎚️ 模型档位（可选默认模型）"/>
+                                       Text=""/>
                             <Button x:Name="ProfileRefreshButton" Padding="10,2" FontSize="11"
                                     Margin="8,0,0,0" VerticalAlignment="Center"
                                     Style="{StaticResource RoundButton}"
@@ -521,7 +522,7 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock x:Name="HubRegistryTitle" Grid.Column="0" FontWeight="Bold"
-                                       VerticalAlignment="Center" Text="📚 本地模型库" svc:Loc.Key="settings.model.localLibraryTitle"/>
+                                       VerticalAlignment="Center" Text="" svc:Loc.Key="settings.model.localLibraryTitle"/>
                             <StackPanel Grid.Column="1" Orientation="Horizontal">
                                 <!-- 任务二：手工放入 .gguf 后的入口（扫描到即可加载，无需重启程序） -->
                                 <Button x:Name="HubRescanButton" Padding="12,3" FontSize="11" Margin="0,0,8,0"
@@ -584,7 +585,7 @@
             <!-- 单独一页而不是塞进「模型」页：模型页的结果列表是 * 行，再插一块
                  "每个工具一行"的清单会把它挤没。本页自带 ScrollViewer，
                  工具条数随后端增减都不牵动别的页。 -->
-            <TabItem Header="智能体" svc:Loc.Key="settings.tab.agent">
+            <TabItem Header="" svc:Loc.Key="settings.tab.agent">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <!-- Agent 工具权限区块：控件由 SettingsWindow.Agent.cs 程序化生成
                          （工具清单是后端数据，条数不固定，XAML 里写不出来） -->
@@ -593,7 +594,7 @@
             </TabItem>
 
             <!-- ================= 自动化 ================= -->
-            <TabItem Header="自动化" svc:Loc.Key="settings.tab.automation">
+            <TabItem Header="" svc:Loc.Key="settings.tab.automation">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="14,12">
 
@@ -602,25 +603,25 @@
                                 Background="{DynamicResource InputBackground}"
                                 BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
                             <StackPanel>
-                                <TextBlock Text="🔒 安全协议（开启自动化前必须阅读并勾选）" svc:Loc.Key="settings.automation.safetyTitle"
+                                <TextBlock Text="" svc:Loc.Key="settings.automation.safetyTitle"
                                            FontWeight="Bold" Margin="0,0,0,6"/>
                                 <TextBlock x:Name="SafetyText" TextWrapping="Wrap" FontSize="12"
                                            Foreground="{DynamicResource SubTextBrush}"/>
                                 <CheckBox x:Name="SafetyCheck" Margin="0,10,0,0"
-                                          Content="我已阅读并理解上述安全协议，自愿承担使用责任" svc:Loc.Key="settings.automation.safetyAgree"
+                                          Content="" svc:Loc.Key="settings.automation.safetyAgree"
                                           Checked="SafetyCheck_Changed" Unchecked="SafetyCheck_Changed"/>
                             </StackPanel>
                         </Border>
 
                         <CheckBox x:Name="AutomationEnabledCheck" Margin="0,12,0,0" IsEnabled="False"
-                                  Content="启用自动化功能（运行前仍会要求安全协议已勾选）"
+                                  Content=""
                                   svc:Loc.Key="settings.automation.label.enabled"/>
 
                         <Border CornerRadius="8" Padding="12,10" Margin="0,0,0,12"
                                 Background="{DynamicResource InputBackground}"
                                 BorderBrush="{DynamicResource InputBorder}" BorderThickness="1">
                             <StackPanel>
-                                <TextBlock Text="🧩 配置模板（选一个一键填入，再按实际网站微调）" FontWeight="Bold"
+                                <TextBlock Text="" FontWeight="Bold"
                                            svc:Loc.Key="settings.automation.templates"/>
                                 <Grid Margin="0,8,0,0">
                                     <Grid.ColumnDefinitions>
@@ -630,15 +631,15 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <ComboBox x:Name="TemplateCombo" Grid.Column="0" Padding="6,4"
-                                              ToolTip="预置模板来自语言包，随界面语言切换" svc:Loc.TipKey="settings.automation.templateFromPackTip"/>
+                                              ToolTip="" svc:Loc.TipKey="settings.automation.templateFromPackTip"/>
                                     <Button x:Name="ApplyTemplateButton" Grid.Column="1" Margin="8,0,0,0" Padding="12,4"
-                                            Content="套用模板" Style="{StaticResource RoundButton}"
+                                            Content="" Style="{StaticResource RoundButton}"
                                             Click="ApplyTemplateButton_Click" svc:Loc.Key="settings.automation.applyTemplate"/>
                                     <Button x:Name="SaveTemplateButton" Grid.Column="2" Margin="8,0,0,0" Padding="12,4"
-                                            Content="存为自定义模板" Style="{StaticResource RoundButton}"
+                                            Content="" Style="{StaticResource RoundButton}"
                                             Click="SaveTemplateButton_Click" svc:Loc.Key="settings.automation.saveTemplate"/>
                                     <Button x:Name="AutomationGuideButton" Grid.Column="3" Margin="8,0,0,0" Padding="12,4"
-                                            Content="📖 填写帮助" Style="{StaticResource RoundButton}"
+                                            Content="" Style="{StaticResource RoundButton}"
                                             Click="AutomationGuideButton_Click"
                                             svc:Loc.Key="settings.automation.onlineHelp"
                                             svc:Loc.TipKey="settings.automation.onlineHelpTip"/>
@@ -660,24 +661,24 @@
                         </Border>
 
                         <StackPanel Orientation="Horizontal" Margin="0,4,0,4">
-                            <TextBlock Text="任务列表网址" Foreground="{DynamicResource SubTextBrush}"
+                            <TextBlock Text="" Foreground="{DynamicResource SubTextBrush}"
                                        VerticalAlignment="Center"
                                        svc:Loc.Key="settings.automation.label.taskListUrl"/>
                             <Button x:Name="HelpTaskListUrl" Content="?" Padding="5,0" Margin="6,0,0,0"
                                     FontSize="10" Height="18"
                                     Style="{StaticResource RoundButton}" Tag="task_list_url"
-                                    Click="FieldHelp_Click" ToolTip="查看填写说明" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
+                                    Click="FieldHelp_Click" ToolTip="" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
                         </StackPanel>
                         <TextBox x:Name="TaskUrlBox" Padding="6,4" TextWrapping="NoWrap"
                                  GotKeyboardFocus="AutomationField_GotFocus" Tag="task_list_url"/>
 
                         <StackPanel Orientation="Horizontal" Margin="0,12,0,4">
-                            <TextBlock Text="任务列表元素位置" Foreground="{DynamicResource SubTextBrush}"
+                            <TextBlock Text="" Foreground="{DynamicResource SubTextBrush}"
                                        VerticalAlignment="Center" svc:Loc.Key="settings.automation.label.taskListSelector"
-                                       ToolTip="你想让程序点击的「任务链接」在页面上的位置" svc:Loc.TipKey="settings.automation.pickTaskLinkTip"/>
+                                       ToolTip="" svc:Loc.TipKey="settings.automation.pickTaskLinkTip"/>
                             <Button Content="?" Padding="5,0" Margin="6,0,0,0" FontSize="10" Height="18"
                                     Style="{StaticResource RoundButton}" Tag="task_list_selector"
-                                    Click="FieldHelp_Click" ToolTip="查看填写说明" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
+                                    Click="FieldHelp_Click" ToolTip="" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
                         </StackPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -688,14 +689,14 @@
                             <TextBox x:Name="TaskSelectorBox" Grid.Column="0" Padding="6,4"
                                      GotKeyboardFocus="AutomationField_GotFocus" Tag="task_list_selector"/>
                             <Button x:Name="PickTaskListButton" Grid.Column="1" Margin="8,0,0,0" Padding="12,4"
-                                    Content="🎯 可视化选取" Style="{StaticResource RoundButton}"
+                                    Content="" Style="{StaticResource RoundButton}"
                                     Tag="task_list" Click="PickSelectorButton_Click"
                                     svc:Loc.Key="settings.automation.pick" svc:Loc.TipKey="settings.automation.pickTip"/>
                             <Button x:Name="TestSelectorButton" Grid.Column="2" Margin="8,0,0,0"
-                                    Padding="12,4" Content="测试选择器" svc:Loc.Key="settings.automation.testSelector"
+                                    Padding="12,4" Content="" svc:Loc.Key="settings.automation.testSelector"
                                     Style="{StaticResource RoundButton}"
                                     Click="TestSelectorButton_Click"
-                                    ToolTip="打开浏览器访问该网址，预览选择器匹配到的元素" svc:Loc.TipKey="settings.automation.testSelectorTip"/>
+                                    ToolTip="" svc:Loc.TipKey="settings.automation.testSelectorTip"/>
                         </Grid>
 
                         <Grid Margin="0,12,0,0">
@@ -706,14 +707,14 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="任务行容器（可选）" Foreground="{DynamicResource SubTextBrush}"
+                                    <TextBlock Text="" Foreground="{DynamicResource SubTextBrush}"
                                                svc:Loc.Key="settings.automation.label.taskRowSelector"/>
                                     <Button Content="?" Padding="5,0" Margin="6,0,0,0" FontSize="10" Height="18"
                                             Style="{StaticResource RoundButton}" Tag="task_row_selector"
-                                            Click="FieldHelp_Click" ToolTip="查看填写说明" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
+                                            Click="FieldHelp_Click" ToolTip="" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
                                     <Button Padding="6,0" Margin="6,0,0,0" Height="18"
                                             Style="{StaticResource RoundButton}" Tag="task_row"
-                                            Click="PickSelectorButton_Click" ToolTip="可视化选取这一行" svc:Loc.TipKey="settings.automation.pickRowTip">
+                                            Click="PickSelectorButton_Click" ToolTip="" svc:Loc.TipKey="settings.automation.pickRowTip">
                                         <TextBlock Style="{StaticResource IconText}" Text="🎯" FontSize="10"/>
                                     </Button>
                                 </StackPanel>
@@ -722,14 +723,14 @@
                             </StackPanel>
                             <StackPanel Grid.Column="2">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="下一页按钮（可选，用于分页）" Foreground="{DynamicResource SubTextBrush}"
+                                    <TextBlock Text="" Foreground="{DynamicResource SubTextBrush}"
                                                svc:Loc.Key="settings.automation.label.nextPageSelector"/>
                                     <Button Content="?" Padding="5,0" Margin="6,0,0,0" FontSize="10" Height="18"
                                             Style="{StaticResource RoundButton}" Tag="next_page_selector"
-                                            Click="FieldHelp_Click" ToolTip="查看填写说明" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
+                                            Click="FieldHelp_Click" ToolTip="" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
                                     <Button Padding="6,0" Margin="6,0,0,0" Height="18"
                                             Style="{StaticResource RoundButton}" Tag="next_page"
-                                            Click="PickSelectorButton_Click" ToolTip="可视化选取下一页按钮" svc:Loc.TipKey="settings.automation.pickNextPageTip">
+                                            Click="PickSelectorButton_Click" ToolTip="" svc:Loc.TipKey="settings.automation.pickNextPageTip">
                                         <TextBlock Style="{StaticResource IconText}" Text="🎯" FontSize="10"/>
                                     </Button>
                                 </StackPanel>
@@ -739,12 +740,12 @@
                         </Grid>
 
                         <StackPanel Orientation="Horizontal" Margin="0,12,0,4">
-                            <TextBlock Text="任务详情页文件元素位置" Foreground="{DynamicResource SubTextBrush}"
+                            <TextBlock Text="" Foreground="{DynamicResource SubTextBrush}"
                                        VerticalAlignment="Center"
                                        svc:Loc.Key="settings.automation.label.taskDetailFileSelector"/>
                             <Button Content="?" Padding="5,0" Margin="6,0,0,0" FontSize="10" Height="18"
                                     Style="{StaticResource RoundButton}" Tag="task_detail_file_selector"
-                                    Click="FieldHelp_Click" ToolTip="查看填写说明" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
+                                    Click="FieldHelp_Click" ToolTip="" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
                         </StackPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -754,20 +755,20 @@
                             <TextBox x:Name="FileSelectorBox" Grid.Column="0" Padding="6,4"
                                      GotKeyboardFocus="AutomationField_GotFocus" Tag="task_detail_file_selector"/>
                             <Button x:Name="PickDetailFileButton" Grid.Column="1" Padding="12,4" Margin="8,0,0,0"
-                                    Content="🎯 可视化选取" Style="{StaticResource RoundButton}"
+                                    Content="" Style="{StaticResource RoundButton}"
                                     Tag="task_detail_file" Click="PickSelectorButton_Click"
                                     svc:Loc.Key="settings.automation.pick"
                                     svc:Loc.TipKey="settings.automation.pickDetailTip"/>
                         </Grid>
 
                         <StackPanel Orientation="Horizontal" Margin="0,12,0,4">
-                            <TextBlock Text="需要预览的文件后缀（逗号分隔）" Foreground="{DynamicResource SubTextBrush}"
+                            <TextBlock Text="" Foreground="{DynamicResource SubTextBrush}"
                                        VerticalAlignment="Center"
                                        svc:Loc.Key="settings.automation.label.fileExtensions"/>
                             <Button Content="?" Padding="5,0" Margin="6,0,0,0" FontSize="10" Height="18"
                                     Style="{StaticResource RoundButton}" Tag="file_extensions"
-                                    Click="FieldHelp_Click" ToolTip="查看填写说明" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
-                            <TextBlock Text="常用：合同 pdf, docx · 表格 xlsx, xls" FontSize="11" Margin="10,0,0,0"
+                                    Click="FieldHelp_Click" ToolTip="" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
+                            <TextBlock Text="" FontSize="11" Margin="10,0,0,0"
                                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"
                                        svc:Loc.Key="settings.automation.extensionsHint"/>
                         </StackPanel>
@@ -775,19 +776,19 @@
                                  GotKeyboardFocus="AutomationField_GotFocus" Tag="file_extensions"/>
 
                         <StackPanel Orientation="Horizontal" Margin="0,12,0,4">
-                            <TextBlock Text="任务指令（与文件内容拼接后交给本地模型）"
+                            <TextBlock Text=""
                                        Foreground="{DynamicResource SubTextBrush}" VerticalAlignment="Center"
                                        svc:Loc.Key="settings.automation.label.instruction"/>
                             <Button Content="?" Padding="5,0" Margin="6,0,0,0" FontSize="10" Height="18"
                                     Style="{StaticResource RoundButton}" Tag="instruction"
-                                    Click="FieldHelp_Click" ToolTip="查看填写说明" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
+                                    Click="FieldHelp_Click" ToolTip="" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
                         </StackPanel>
                         <TextBox x:Name="InstructionBox" Padding="6,4" Height="58"
                                  AcceptsReturn="True" TextWrapping="Wrap"
                                  GotKeyboardFocus="AutomationField_GotFocus" Tag="instruction"
                                  VerticalScrollBarVisibility="Auto"/>
 
-                        <TextBlock Text="运行参数" svc:Loc.Key="settings.automation.sectionRun" FontWeight="Bold" Margin="0,16,0,6"/>
+                        <TextBlock Text="" svc:Loc.Key="settings.automation.sectionRun" FontWeight="Bold" Margin="0,16,0,6"/>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
@@ -799,35 +800,35 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="最多任务数" svc:Loc.Key="settings.automation.maxTasks" VerticalAlignment="Center"
+                            <TextBlock Grid.Column="0" Text="" svc:Loc.Key="settings.automation.maxTasks" VerticalAlignment="Center"
                                        Foreground="{DynamicResource SubTextBrush}"/>
                             <TextBox x:Name="MaxTasksBox" Grid.Column="1" Width="70" Margin="6,0,0,0" Padding="6,4"/>
-                            <TextBlock Grid.Column="3" Text="页面超时(ms)" svc:Loc.Key="settings.automation.pageTimeout" VerticalAlignment="Center"
+                            <TextBlock Grid.Column="3" Text="" svc:Loc.Key="settings.automation.pageTimeout" VerticalAlignment="Center"
                                        Foreground="{DynamicResource SubTextBrush}"/>
                             <TextBox x:Name="TimeoutBox" Grid.Column="4" Width="90" Margin="6,0,0,0" Padding="6,4"/>
-                            <TextBlock Grid.Column="6" Text="重试次数" svc:Loc.Key="settings.automation.retries" VerticalAlignment="Center"
+                            <TextBlock Grid.Column="6" Text="" svc:Loc.Key="settings.automation.retries" VerticalAlignment="Center"
                                        Foreground="{DynamicResource SubTextBrush}"/>
                             <TextBox x:Name="RetriesBox" Grid.Column="7" Width="50" Margin="6,0,0,0" Padding="6,4"/>
                         </Grid>
                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                            <CheckBox x:Name="DedupeCheck" Content="任务去重（跳过已处理过的任务）" svc:Loc.Key="settings.automation.dedupe"
+                            <CheckBox x:Name="DedupeCheck" Content="" svc:Loc.Key="settings.automation.dedupe"
                                       VerticalAlignment="Center"/>
-                            <CheckBox x:Name="SaveResultsCheck" Content="保存结果到本地文件" svc:Loc.Key="settings.automation.saveResults" Margin="20,0,0,0"
+                            <CheckBox x:Name="SaveResultsCheck" Content="" svc:Loc.Key="settings.automation.saveResults" Margin="20,0,0,0"
                                       VerticalAlignment="Center"/>
                         </StackPanel>
 
-                        <TextBlock Text="结果保存" svc:Loc.Key="settings.automation.sectionResults" FontWeight="Bold" Margin="0,16,0,6"/>
+                        <TextBlock Text="" svc:Loc.Key="settings.automation.sectionResults" FontWeight="Bold" Margin="0,16,0,6"/>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="任务名称" VerticalAlignment="Center"
+                            <TextBlock Grid.Column="0" Text="" VerticalAlignment="Center"
                                        Foreground="{DynamicResource SubTextBrush}"
                                        svc:Loc.Key="settings.automation.label.taskName"/>
                             <TextBox x:Name="TaskNameBox" Grid.Column="1" Margin="6,0,0,0" Padding="6,4" TextChanged="ResultsOption_TextChanged"
                                      GotKeyboardFocus="AutomationField_GotFocus" Tag="task_name"
-                                     ToolTip="结果的第三层目录名；同名任务会自动追加序号避免覆盖" svc:Loc.TipKey="settings.automation.resultsRootNameTip"/>
+                                     ToolTip="" svc:Loc.TipKey="settings.automation.resultsRootNameTip"/>
                         </Grid>
                         <Grid Margin="0,8,0,0">
                             <Grid.ColumnDefinitions>
@@ -835,16 +836,16 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="顶层文件夹名" svc:Loc.Key="settings.automation.resultsRootNameLabel" VerticalAlignment="Center"
+                            <TextBlock Grid.Column="0" Text="" svc:Loc.Key="settings.automation.resultsRootNameLabel" VerticalAlignment="Center"
                                        Foreground="{DynamicResource SubTextBrush}"/>
                             <TextBox x:Name="ResultsRootNameBox" Grid.Column="1" Margin="6,0,0,0" Padding="6,4" TextChanged="ResultsOption_TextChanged"
-                                     ToolTip="结果根目录下的第一层文件夹名，默认「results」" svc:Loc.TipKey="settings.automation.resultsRootNameHelp"/>
+                                     ToolTip="" svc:Loc.TipKey="settings.automation.resultsRootNameHelp"/>
                             <Button x:Name="OpenResultsButton" Grid.Column="2" Margin="8,0,0,0" Padding="12,4"
-                                    Content="打开结果目录" svc:Loc.Key="settings.automation.openResults" Style="{StaticResource RoundButton}"
+                                    Content="" svc:Loc.Key="settings.automation.openResults" Style="{StaticResource RoundButton}"
                                     Click="OpenResultsButton_Click"
-                                    ToolTip="在文件资源管理器中打开结果根目录" svc:Loc.TipKey="settings.automation.openResultsTip"/>
+                                    ToolTip="" svc:Loc.TipKey="settings.automation.openResultsTip"/>
                         </Grid>
-                        <TextBlock Text="保存位置（留空 = 程序根目录）" svc:Loc.Key="settings.automation.resultsLocation" Margin="0,10,0,4"
+                        <TextBlock Text="" svc:Loc.Key="settings.automation.resultsLocation" Margin="0,10,0,4"
                                    Foreground="{DynamicResource SubTextBrush}"/>
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -852,42 +853,42 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBox x:Name="ResultsLocationBox" Grid.Column="0" Padding="6,4" TextChanged="ResultsOption_TextChanged"
-                                     ToolTip="可为绝对路径（如 D:\合同结果）或相对于程序根目录的路径" svc:Loc.TipKey="settings.automation.resultsLocationTip"/>
+                                     ToolTip="" svc:Loc.TipKey="settings.automation.resultsLocationTip"/>
                             <Button x:Name="BrowseResultsButton" Grid.Column="1" Margin="8,0,0,0" Padding="12,4"
-                                    Content="浏览…" svc:Loc.Key="settings.automation.browseResults" Style="{StaticResource RoundButton}"
+                                    Content="" svc:Loc.Key="settings.automation.browseResults" Style="{StaticResource RoundButton}"
                                     Click="BrowseResultsButton_Click"/>
                         </Grid>
                         <TextBlock x:Name="ResultsPreviewText" FontSize="11" Margin="0,4,0,0"
                                    TextWrapping="Wrap" Foreground="{DynamicResource SubTextBrush}"
-                                   Text="目录结构：结果根目录 / YYYY-MM-DD / 任务名称 / result.txt + 原始文件" svc:Loc.Key="settings.automation.dirStructureNote"/>
+                                   Text="" svc:Loc.Key="settings.automation.dirStructureNote"/>
 
-                        <TextBlock Text="定时触发" svc:Loc.Key="settings.automation.sectionSchedule" FontWeight="Bold" Margin="0,16,0,6"/>                        <StackPanel Orientation="Horizontal">
-                            <CheckBox x:Name="ScheduleCheck" Content="启用定时" svc:Loc.Key="settings.automation.scheduleEnabled" VerticalAlignment="Center"/>
-                            <TextBlock Text="每天执行时刻（HH:MM，逗号分隔）" svc:Loc.Key="settings.automation.scheduleTimes" Margin="16,0,8,0"
+                        <TextBlock Text="" svc:Loc.Key="settings.automation.sectionSchedule" FontWeight="Bold" Margin="0,16,0,6"/>                        <StackPanel Orientation="Horizontal">
+                            <CheckBox x:Name="ScheduleCheck" Content="" svc:Loc.Key="settings.automation.scheduleEnabled" VerticalAlignment="Center"/>
+                            <TextBlock Text="" svc:Loc.Key="settings.automation.scheduleTimes" Margin="16,0,8,0"
                                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"/>
                             <TextBox x:Name="ScheduleTimesBox" Width="180" Padding="6,4"/>
                         </StackPanel>
-                        <TextBlock Text="说明：定时任务要求程序保持运行（后端后台线程调度）；开机自启需在系统「启动」文件夹中放入快捷方式。" svc:Loc.Key="settings.automation.scheduleNote"
+                        <TextBlock Text="" svc:Loc.Key="settings.automation.scheduleNote"
                                    FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"/>
 
                         <!-- 登录态（v0.2.1 自动化优化 任务一）：持久化数据目录 + 登录检测 + 清除 -->
-                        <TextBlock Text="登录态" FontWeight="Bold" Margin="0,16,0,6"
+                        <TextBlock Text="" FontWeight="Bold" Margin="0,16,0,6"
                                    svc:Loc.Key="settings.automation.loginSection"/>
                         <TextBlock FontSize="11" Margin="0,0,0,4" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"
-                                   Text="自动化使用一个独立的浏览器数据目录保存登录状态（Cookie 等），不与你的日常浏览器共用。第一次运行时程序会打开浏览器让你手动登录，之后自动复用，不用每次重新登录。"
+                                   Text=""
                                    svc:Loc.Key="settings.automation.loginHint"/>
                         <TextBlock x:Name="LoginStateText" FontSize="11" Margin="0,0,0,4" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"
-                                   Text="登录态：正在读取…" svc:Loc.Key="settings.automation.loginStateReading"/>
+                                   Text="" svc:Loc.Key="settings.automation.loginStateReading"/>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                            <TextBlock Text="数据目录（留空 = 程序目录下的 browser_profile）"
+                            <TextBlock Text=""
                                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"
                                        svc:Loc.Key="settings.automation.label.loginStateDir"/>
                             <Button Content="?" Padding="5,0" Margin="6,0,0,0" FontSize="10" Height="18"
                                     Style="{StaticResource RoundButton}" Tag="login_state_dir"
-                                    Click="FieldHelp_Click" ToolTip="查看填写说明" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
+                                    Click="FieldHelp_Click" ToolTip="" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
                         </StackPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -897,18 +898,18 @@
                             <TextBox x:Name="LoginStateDirBox" Grid.Column="0" Padding="6,4"
                                      GotKeyboardFocus="AutomationField_GotFocus" Tag="login_state_dir"/>
                             <Button x:Name="ClearLoginStateButton" Grid.Column="1" Padding="12,4" Margin="8,0,0,0"
-                                    Content="🗑 清除自动化登录态" Style="{StaticResource RoundButton}"
+                                    Content="" Style="{StaticResource RoundButton}"
                                     Click="ClearLoginStateButton_Click"
                                     svc:Loc.Key="settings.automation.clearLogin"
                                     svc:Loc.TipKey="settings.automation.clearLoginTip"/>
                         </Grid>
                         <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
-                            <TextBlock Text="登录后才出现的元素（可选，用于判断是否已登录）"
+                            <TextBlock Text=""
                                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"
                                        svc:Loc.Key="settings.automation.label.loginCheckSelector"/>
                             <Button Content="?" Padding="5,0" Margin="6,0,0,0" FontSize="10" Height="18"
                                     Style="{StaticResource RoundButton}" Tag="login_check_selector"
-                                    Click="FieldHelp_Click" ToolTip="查看填写说明" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
+                                    Click="FieldHelp_Click" ToolTip="" svc:Loc.TipKey="settings.automation.fieldHelpTip"/>
                         </StackPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -918,68 +919,68 @@
                             <TextBox x:Name="LoginCheckSelectorBox" Grid.Column="0" Padding="6,4"
                                      GotKeyboardFocus="AutomationField_GotFocus" Tag="login_check_selector"/>
                             <Button Grid.Column="1" Padding="12,4" Margin="8,0,0,0"
-                                    Content="🎯 可视化选取" Style="{StaticResource RoundButton}"
+                                    Content="" Style="{StaticResource RoundButton}"
                                     Tag="login_check" Click="PickSelectorButton_Click"
                                     svc:Loc.Key="settings.automation.pick"
                                     svc:Loc.TipKey="settings.automation.pickLoginTip"/>
                         </Grid>
                         <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
-                            <TextBlock Text="登录页网址关键词（逗号分隔，兜底判断）"
+                            <TextBlock Text=""
                                        VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}"
                                        svc:Loc.Key="settings.automation.label.loginKeywords"/>
                         </StackPanel>
                         <TextBox x:Name="LoginKeywordsBox" Padding="6,4"
                                  GotKeyboardFocus="AutomationField_GotFocus" Tag="login_url_keywords"
-                                 ToolTip="地址里出现这些词就认为跳到了登录页，例如 login, signin, sso" svc:Loc.TipKey="settings.automation.loginKeywordsTip"/>
+                                 ToolTip="" svc:Loc.TipKey="settings.automation.loginKeywordsTip"/>
                         <TextBlock FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"
-                                   Text="多个目标站点可以共用同一个数据目录（浏览器按域名分别保存 Cookie），无需为每个站点单独配置。"
+                                   Text=""
                                    svc:Loc.Key="settings.automation.loginMultiSite"/>
 
                         <!-- 运行控制 -->
                         <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
-                            <Button x:Name="RunOnceButton" Padding="14,6" Content="▶ 立即运行一次"
+                            <Button x:Name="RunOnceButton" Padding="14,6" Content=""
                                     Style="{StaticResource RoundButton}" Click="RunOnceButton_Click"
                                     svc:Loc.Key="settings.automation.runOnce"/>
                             <Button x:Name="StopAutomationButton" Padding="14,6" Margin="10,0,0,0"
-                                    Content="⏹ 停止自动化" IsEnabled="False"
+                                    Content="" IsEnabled="False"
                                     Style="{StaticResource RoundButton}" Click="StopAutomationButton_Click"
                                     svc:Loc.Key="settings.automation.stopRun"/>
                             <Button x:Name="WizardButton" Padding="14,6" Margin="10,0,0,0"
-                                    Content="🧪 测试向导" Style="{StaticResource RoundButton}"
+                                    Content="" Style="{StaticResource RoundButton}"
                                     Click="WizardButton_Click"
                                     svc:Loc.Key="settings.automation.wizard"
                                     svc:Loc.TipKey="settings.automation.wizardTip"/>
                             <TextBlock x:Name="AutomationStatusText" Margin="16,0,0,0" VerticalAlignment="Center"
-                                       Foreground="{DynamicResource SubTextBrush}" Text="状态：空闲" svc:Loc.Key="settings.automation.stateIdle"/>
+                                       Foreground="{DynamicResource SubTextBrush}" Text="" svc:Loc.Key="settings.automation.stateIdle"/>
                         </StackPanel>
 
                         <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                            <Button x:Name="WizardStep1Button" Padding="10,4" Content="第 1 步"
+                            <Button x:Name="WizardStep1Button" Padding="10,4" Content=""
                                     Style="{StaticResource RoundButton}" Tag="1" Click="WizardStep_Click"
                                     svc:Loc.Key="settings.automation.wizardStep1"/>
-                            <Button x:Name="WizardStep2Button" Padding="10,4" Margin="8,0,0,0" Content="第 2 步"
+                            <Button x:Name="WizardStep2Button" Padding="10,4" Margin="8,0,0,0" Content=""
                                     Style="{StaticResource RoundButton}" Tag="2" Click="WizardStep_Click"
                                     svc:Loc.Key="settings.automation.wizardStep2"/>
-                            <Button x:Name="WizardStep3Button" Padding="10,4" Margin="8,0,0,0" Content="第 3 步"
+                            <Button x:Name="WizardStep3Button" Padding="10,4" Margin="8,0,0,0" Content=""
                                     Style="{StaticResource RoundButton}" Tag="3" Click="WizardStep_Click"
                                     svc:Loc.Key="settings.automation.wizardStep3"/>
-                            <Button x:Name="WizardStep4Button" Padding="10,4" Margin="8,0,0,0" Content="第 4 步"
+                            <Button x:Name="WizardStep4Button" Padding="10,4" Margin="8,0,0,0" Content=""
                                     Style="{StaticResource RoundButton}" Tag="4" Click="WizardStep_Click"
                                     svc:Loc.Key="settings.automation.wizardStep4"/>
                             <Button x:Name="ExportConfigButton" Padding="10,4" Margin="16,0,0,0"
-                                    Content="导出配置" Style="{StaticResource RoundButton}"
+                                    Content="" Style="{StaticResource RoundButton}"
                                     Click="ExportConfigButton_Click"
                                     svc:Loc.Key="settings.automation.exportConfig"
                                     svc:Loc.TipKey="settings.automation.exportTip"/>
                             <Button x:Name="ImportConfigButton" Padding="10,4" Margin="8,0,0,0"
-                                    Content="导入配置" Style="{StaticResource RoundButton}"
+                                    Content="" Style="{StaticResource RoundButton}"
                                     Click="ImportConfigButton_Click"
                                     svc:Loc.Key="settings.automation.importConfig"
                                     svc:Loc.TipKey="settings.automation.importTip"/>
                         </StackPanel>
 
-                        <TextBlock Text="运行日志" svc:Loc.Key="settings.automation.runLog" Margin="0,12,0,4" Foreground="{DynamicResource SubTextBrush}"/>
+                        <TextBlock Text="" svc:Loc.Key="settings.automation.runLog" Margin="0,12,0,4" Foreground="{DynamicResource SubTextBrush}"/>
                         <TextBox x:Name="AutomationLogBox" Height="150" Padding="6,4" IsReadOnly="True"
                                  AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas"
                                  FontSize="11" VerticalScrollBarVisibility="Auto"
@@ -989,7 +990,7 @@
             </TabItem>
 
             <!-- ================= 技能市场 ================= -->
-            <TabItem Header="技能市场" svc:Loc.Key="settings.tab.market">
+            <TabItem Header="" svc:Loc.Key="settings.tab.market">
                 <Grid Margin="14,12">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -998,7 +999,7 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="🔌 技能市场（来自 GitHub topic: echodesk-plugin）"
+                    <TextBlock Grid.Row="0" Text=""
                                FontSize="15" FontWeight="Bold"
                                svc:Loc.Key="settings.market.sectionSearch"
                                Foreground="{DynamicResource AccentBrush}"/>
@@ -1012,17 +1013,17 @@
                         </Grid.ColumnDefinitions>
                         <TextBox x:Name="MarketSearchBox" Grid.Column="0" Padding="6,4"
                                  TextChanged="MarketSearchBox_TextChanged"
-                                 ToolTip="输入关键词搜索技能（输入后 300ms 自动搜索）" svc:Loc.TipKey="settings.market.searchAsYouType"/>
+                                 ToolTip="" svc:Loc.TipKey="settings.market.searchAsYouType"/>
                         <ComboBox x:Name="MarketSortCombo" Grid.Column="1" Width="130" Margin="8,0,0,0"
                                   SelectionChanged="MarketSortCombo_SelectionChanged"/>
                         <Button x:Name="MarketRefreshButton" Grid.Column="2" Margin="8,0,0,0" Padding="12,4"
-                                Content="刷新" Style="{StaticResource RoundButton}"
+                                Content="" Style="{StaticResource RoundButton}"
                                 Click="MarketRefreshButton_Click" svc:Loc.Key="settings.market.refresh"/>
                         <Button x:Name="MarketInstalledButton" Grid.Column="3" Margin="8,0,0,0" Padding="12,4"
-                                Content="已安装" Style="{StaticResource RoundButton}"
+                                Content="" Style="{StaticResource RoundButton}"
                                 Click="MarketInstalledButton_Click"
                                 svc:Loc.Key="settings.market.installed"
-                                ToolTip="查看本机已安装的技能" svc:Loc.TipKey="settings.market.refreshInstalledTip"/>
+                                ToolTip="" svc:Loc.TipKey="settings.market.refreshInstalledTip"/>
                     </Grid>
 
                     <Border Grid.Row="2" CornerRadius="8"
@@ -1056,7 +1057,7 @@
                                             </StackPanel>
                                             <StackPanel Grid.Column="1" Orientation="Horizontal"
                                                         VerticalAlignment="Center">
-                                                <Button Content="详情" svc:Loc.Key="settings.market.detail" Padding="10,3" FontSize="11"
+                                                <Button Content="" svc:Loc.Key="settings.market.detail" Padding="10,3" FontSize="11"
                                                         Style="{StaticResource RoundButton}"
                                                         Click="MarketDetail_Click" Tag="{Binding}"/>
                                                 <Button Content="{Binding ActionText}" Padding="10,3" FontSize="11"
@@ -1068,7 +1069,7 @@
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
-                            <TextBlock x:Name="MarketEmptyText" Text="输入关键词开始搜索，或点「刷新」浏览全部技能"
+                            <TextBlock x:Name="MarketEmptyText" Text=""
                                         svc:Loc.Key="settings.market.empty"
                                         HorizontalAlignment="Center" VerticalAlignment="Center"
                                        Foreground="{DynamicResource SubTextBrush}" TextWrapping="Wrap"
@@ -1081,7 +1082,7 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="已安装" svc:Loc.Key="settings.tab.installed">
+            <TabItem Header="" svc:Loc.Key="settings.tab.installed">
                 <Grid Margin="14,12">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -1090,7 +1091,7 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="🧩 已加载插件（技能）" FontSize="15" FontWeight="Bold"
+                    <TextBlock Grid.Row="0" Text="" FontSize="15" FontWeight="Bold"
                                Foreground="{DynamicResource AccentBrush}"
                                svc:Loc.Key="settings.installed.sectionPlugins"/>
 
@@ -1104,18 +1105,18 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-                            <Button x:Name="SkillsRefreshButton" Padding="10,4" Content="🔄 刷新"
+                            <Button x:Name="SkillsRefreshButton" Padding="10,4" Content=""
                                     Style="{StaticResource RoundButton}" Click="SkillsRefreshButton_Click"
                                     svc:Loc.Key="settings.installed.refresh"/>
                             <Button x:Name="SkillsReloadButton" Padding="10,4" Margin="8,0,0,0"
-                                    Content="🔄 重载本地插件" Style="{StaticResource RoundButton}"
+                                    Content="" Style="{StaticResource RoundButton}"
                                     Click="SkillsReloadButton_Click" svc:Loc.Key="settings.installed.reload"/>
                             <Button x:Name="SkillsInstallFolderButton" Padding="10,4" Margin="8,0,0,0"
-                                    Content="📥 从文件夹安装" Style="{StaticResource RoundButton}"
+                                    Content="" Style="{StaticResource RoundButton}"
                                     Click="SkillsInstallFolderButton_Click"
                                     svc:Loc.Key="settings.installed.installFolder"/>
                             <Button x:Name="SkillsScaffoldButton" Padding="10,4" Margin="8,0,0,0"
-                                    Content="➕ 新建本地插件" Style="{StaticResource RoundButton}"
+                                    Content="" Style="{StaticResource RoundButton}"
                                     Click="SkillsScaffoldButton_Click"
                                     svc:Loc.Key="settings.installed.newPlugin"/>
                         </StackPanel>
@@ -1159,7 +1160,7 @@
                                                                    Foreground="{DynamicResource ErrorBrush}"
                                                                    Visibility="{Binding ErrorVisibility}"/>
                                                         <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                                            <Button Content="错误详情" Padding="8,2" FontSize="11"
+                                                            <Button Content="" Padding="8,2" FontSize="11"
                                                                     Style="{StaticResource RoundButton}"
                                                                     Tag="{Binding}" Click="SkillDetail_Click"
                                                                     Visibility="{Binding ErrorVisibility}"
@@ -1206,18 +1207,18 @@
             </TabItem>
 
             <!-- ================= 开发者（任务 2B.10） ================= -->
-            <TabItem Header="开发者" svc:Loc.Key="settings.tab.developer">
+            <TabItem Header="" svc:Loc.Key="settings.tab.developer">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="14,12">
 
-                        <TextBlock Text="开发者模式" FontSize="15" FontWeight="Bold"
+                        <TextBlock Text="" FontSize="15" FontWeight="Bold"
                                    Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10"
                                    svc:Loc.Key="settings.developer.sectionMode"/>
                         <CheckBox x:Name="DevModeCheck" Margin="0,4,0,0"
-                                  Content="启用开发者模式（放宽验证 + 详细日志 + 热重载）"
+                                  Content=""
                                   Checked="DevModeCheck_Changed" Unchecked="DevModeCheck_Changed"
                                   svc:Loc.Key="settings.developer.mode"/>
-                        <TextBlock Text="放宽的是验证严格度，不是权限边界。"
+                        <TextBlock Text=""
                                    FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"
                                    svc:Loc.Key="settings.developer.modeShort"/>
@@ -1232,7 +1233,7 @@
                         <TextBlock x:Name="DevApiText" FontSize="11" Margin="0,6,0,0"
                                    Foreground="{DynamicResource SubTextBrush}"/>
 
-                        <TextBlock Text="插件目录" FontSize="15" FontWeight="Bold"
+                        <TextBlock Text="" FontSize="15" FontWeight="Bold"
                                    Foreground="{DynamicResource AccentBrush}" Margin="0,18,0,10"
                                    svc:Loc.Key="settings.developer.sectionDirs"/>
                         <Border CornerRadius="8" Padding="10,8" Background="{DynamicResource InputBackground}"
@@ -1241,16 +1242,16 @@
                                 <TextBlock x:Name="DevDirsText" FontSize="11" TextWrapping="Wrap"
                                            Foreground="{DynamicResource SubTextBrush}"/>
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                    <Button Content="📂 开发目录" svc:Loc.Key="settings.developer.openDevDir" Padding="10,3" FontSize="11"
+                                    <Button Content="" svc:Loc.Key="settings.developer.openDevDir" Padding="10,3" FontSize="11"
                                             Style="{StaticResource RoundButton}"
                                             Click="OpenDevDirButton_Click"/>
-                                    <Button Content="📂 安装目录" svc:Loc.Key="settings.developer.openInstallDir" Padding="10,3" FontSize="11" Margin="8,0,0,0"
+                                    <Button Content="" svc:Loc.Key="settings.developer.openInstallDir" Padding="10,3" FontSize="11" Margin="8,0,0,0"
                                             Style="{StaticResource RoundButton}"
                                             Click="OpenInstallDirButton_Click"/>
-                                    <Button Content="📂 示例插件" svc:Loc.Key="settings.developer.openExamplesDir" Padding="10,3" FontSize="11" Margin="8,0,0,0"
+                                    <Button Content="" svc:Loc.Key="settings.developer.openExamplesDir" Padding="10,3" FontSize="11" Margin="8,0,0,0"
                                             Style="{StaticResource RoundButton}"
                                             Click="OpenExamplesDirButton_Click"/>
-                                    <Button Content="📦 安装示例插件" Padding="10,3" FontSize="11" Margin="8,0,0,0"
+                                    <Button Content="" Padding="10,3" FontSize="11" Margin="8,0,0,0"
                                             Style="{StaticResource RoundButton}"
                                             Click="InstallExamplesButton_Click"
                                             svc:Loc.Key="settings.developer.installExamples"
@@ -1259,31 +1260,31 @@
                             </StackPanel>
                         </Border>
 
-                        <TextBlock Text="重载与日志" FontSize="15" FontWeight="Bold"
+                        <TextBlock Text="" FontSize="15" FontWeight="Bold"
                                    Foreground="{DynamicResource AccentBrush}" Margin="0,18,0,10"
                                    svc:Loc.Key="settings.developer.sectionReload"/>
                         <StackPanel Orientation="Horizontal">
-                            <Button x:Name="DevReloadButton" Content="🔄 重载本地插件" Padding="12,4"
+                            <Button x:Name="DevReloadButton" Content="" Padding="12,4"
                                     Style="{StaticResource RoundButton}" Click="DevReloadButton_Click"
                                     svc:Loc.Key="settings.developer.reload"
                                     svc:Loc.TipKey="settings.developer.reloadDevTip"/>
-                            <Button Content="导出日志" Padding="12,4" Margin="8,0,0,0"
+                            <Button Content="" Padding="12,4" Margin="8,0,0,0"
                                     Style="{StaticResource RoundButton}" Click="ExportDevLogButton_Click"
                                     svc:Loc.Key="settings.developer.exportLog"/>
-                            <Button Content="🗑 清空日志" Padding="12,4" Margin="8,0,0,0"
+                            <Button Content="" Padding="12,4" Margin="8,0,0,0"
                                     Style="{StaticResource RoundButton}" Click="ClearDevLogButton_Click"
                                     svc:Loc.Key="settings.developer.clearLog"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,10,0,4">
-                            <TextBlock Text="显示最后" VerticalAlignment="Center"
+                            <TextBlock Text="" VerticalAlignment="Center"
                                        Foreground="{DynamicResource SubTextBrush}"
                                        svc:Loc.Key="settings.developer.logLines"/>
                             <ComboBox x:Name="LogLinesCombo" Width="90" Margin="6,0,0,0"
                                       SelectionChanged="LogLinesCombo_SelectionChanged"/>
-                            <TextBlock Text="行" VerticalAlignment="Center" Margin="6,0,0,0"
+                            <TextBlock Text="" VerticalAlignment="Center" Margin="6,0,0,0"
                                        Foreground="{DynamicResource SubTextBrush}"
                                        svc:Loc.Key="settings.developer.logLinesUnit"/>
-                            <Button Content="🔄 刷新日志" Padding="10,3" Margin="14,0,0,0" FontSize="11"
+                            <Button Content="" Padding="10,3" Margin="14,0,0,0" FontSize="11"
                                     Style="{StaticResource RoundButton}" Click="RefreshDevLogButton_Click"
                                     svc:Loc.Key="settings.installed.refresh"/>
                         </StackPanel>
@@ -1293,7 +1294,7 @@
                                  HorizontalScrollBarVisibility="Auto"
                                  Background="{DynamicResource InputBackground}"/>
 
-                        <TextBlock Text="新建本地插件" FontSize="15" FontWeight="Bold"
+                        <TextBlock Text="" FontSize="15" FontWeight="Bold"
                                    Foreground="{DynamicResource AccentBrush}" Margin="0,18,0,10"
                                    svc:Loc.Key="settings.developer.sectionScaffold"/>
                         <Grid>
@@ -1306,55 +1307,55 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="插件 ID" VerticalAlignment="Center"
+                            <TextBlock Grid.Column="0" Text="" VerticalAlignment="Center"
                                        Foreground="{DynamicResource SubTextBrush}"
                                        svc:Loc.Key="settings.installed.scaffoldId"/>
                             <TextBox x:Name="ScaffoldIdBox" Grid.Column="1" Margin="6,0,0,0" Padding="6,4"/>
-                            <TextBlock Grid.Column="2" Text="显示名" VerticalAlignment="Center" Margin="12,0,0,0"
+                            <TextBlock Grid.Column="2" Text="" VerticalAlignment="Center" Margin="12,0,0,0"
                                        Foreground="{DynamicResource SubTextBrush}"
                                        svc:Loc.Key="settings.installed.scaffoldName"/>
                             <TextBox x:Name="ScaffoldNameBox" Grid.Column="3" Margin="6,0,0,0" Padding="6,4"/>
-                            <TextBlock Grid.Column="4" Text="作者" VerticalAlignment="Center" Margin="12,0,0,0"
+                            <TextBlock Grid.Column="4" Text="" VerticalAlignment="Center" Margin="12,0,0,0"
                                        Foreground="{DynamicResource SubTextBrush}"
                                        svc:Loc.Key="settings.installed.scaffoldAuthor"/>
                             <TextBox x:Name="ScaffoldAuthorBox" Grid.Column="5" Margin="6,0,0,0" Padding="6,4"/>
-                            <Button x:Name="ScaffoldCreateButton" Grid.Column="6" Content="➕ 创建" Margin="12,0,0,0"
+                            <Button x:Name="ScaffoldCreateButton" Grid.Column="6" Content="" Margin="12,0,0,0"
                                     Padding="12,4" Style="{StaticResource RoundButton}"
                                     Click="ScaffoldCreateButton_Click"
                                     svc:Loc.Key="settings.button.add"/>
                         </Grid>
-                        <TextBlock Text="生成 skill.json、入口文件、语言包与 README；放进 skills_dev/ 即可被识别。"
+                        <TextBlock Text=""
                                    FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"
                                    svc:Loc.Key="settings.developer.scaffoldTip"/>
 
-                        <TextBlock Text="本地插件清单（skills_local.json）" FontSize="15" FontWeight="Bold"
+                        <TextBlock Text="" FontSize="15" FontWeight="Bold"
                                    Foreground="{DynamicResource AccentBrush}" Margin="0,18,0,10"
                                    svc:Loc.Key="settings.developer.sectionManifest"/>
-                        <TextBlock Text="可指定任意路径的插件、设置别名与启用状态、调整加载顺序。相对路径以程序目录为基准。"
+                        <TextBlock Text=""
                                    FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"
                                    svc:Loc.Key="settings.developer.manifestTip"/>
                         <ItemsControl x:Name="ManifestList"/>
                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                            <Button x:Name="ManifestAddRow" Content="➕ 添加一行" Padding="12,4"
+                            <Button x:Name="ManifestAddRow" Content="" Padding="12,4"
                                     Style="{StaticResource RoundButton}" Click="ManifestAddRow_Click"
                                     svc:Loc.Key="settings.developer.manifestAdd"/>
-                            <Button Content="保存清单并重载" Padding="12,4" Margin="8,0,0,0"
+                            <Button Content="" Padding="12,4" Margin="8,0,0,0"
                                     Style="{StaticResource RoundButton}" Click="ManifestSave_Click"
                                     svc:Loc.Key="settings.developer.manifestSave"/>
-                            <Button Content="直接编辑 JSON 文件" Padding="12,4" Margin="8,0,0,0"
+                            <Button Content="" Padding="12,4" Margin="8,0,0,0"
                                     Style="{StaticResource RoundButton}" Click="ManifestOpenRaw_Click"
                                     svc:Loc.Key="settings.developer.manifestOpenRaw"/>
                         </StackPanel>
 
-                        <TextBlock Text="已挂接的自动化钩子" FontSize="15" FontWeight="Bold"
+                        <TextBlock Text="" FontSize="15" FontWeight="Bold"
                                    Foreground="{DynamicResource AccentBrush}" Margin="0,18,0,10"
                                    svc:Loc.Key="settings.developer.sectionHooks"/>
                         <TextBlock x:Name="HooksText" FontSize="11" TextWrapping="Wrap"
                                    Foreground="{DynamicResource SubTextBrush}"/>
 
-                        <TextBlock Text="插件面板" FontSize="15" FontWeight="Bold"
+                        <TextBlock Text="" FontSize="15" FontWeight="Bold"
                                    Foreground="{DynamicResource AccentBrush}" Margin="0,18,0,10"
                                    svc:Loc.Key="settings.developer.sectionPanels"/>
                         <ItemsControl x:Name="PanelList"/>
@@ -1369,10 +1370,10 @@
                  [EN] LTS status, the version, the project home and the licence, plus a button that
                  [EN] opens the latest GitHub Releases page (the same destination as the main window
                  [EN] notice bar).
-                 [ZH] 任务书 3.1 要求"在设置-关于页面增加显著说明"。WPF 版此前没有独立的「关于」页，
+                 [ZH] 设计规范 3.1 要求"在设置-关于页面增加显著说明"。WPF 版此前没有独立的「关于」页，
                  [ZH] 版本/许可信息只散落在 /about 指令输出里；这里补一个只读页：LTS 状态 + 版本 +
                  [ZH] 项目主页 + 许可，并提供直达 Releases 最新版的按钮（与主窗口提示条同一个入口）。 -->
-            <TabItem Header="关于" svc:Loc.Key="settings.tab.about">
+            <TabItem Header="" svc:Loc.Key="settings.tab.about">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="14,12">
                         <!-- 显著说明：警示色边框 + 加粗标题，放在整页最上方 -->
@@ -1380,13 +1381,13 @@
                                 Background="{DynamicResource InputBackground}"
                                 BorderBrush="{DynamicResource WarningBrush}" BorderThickness="2">
                             <StackPanel>
-                                <TextBlock Text="⚠️ 长期支持（LTS）状态" FontSize="15" FontWeight="Bold"
+                                <TextBlock Text="" FontSize="15" FontWeight="Bold"
                                            TextWrapping="Wrap" Margin="0,0,0,8"
                                            Foreground="{DynamicResource WarningBrush}"
                                            svc:Loc.Key="settings.about.sectionLts"/>
                                 <TextBlock x:Name="AboutLtsText" FontSize="12" TextWrapping="Wrap"
                                            LineHeight="20" Foreground="{DynamicResource TextForeground}"
-                                           Text="WPF 版本已进入长期支持（LTS）维护期……"
+                                           Text=""
                                            svc:Loc.Key="settings.about.ltsBody"/>
                                 <Button x:Name="AboutDownloadButton" Margin="0,12,0,0" Padding="14,5"
                                         HorizontalAlignment="Left" FontSize="12"
@@ -1398,7 +1399,7 @@
                         </Border>
 
                         <!-- 版本与许可信息：纯展示，不参与"保存设置" -->
-                        <TextBlock Text="版本信息" FontSize="15" FontWeight="Bold" Margin="0,18,0,10"
+                        <TextBlock Text="" FontSize="15" FontWeight="Bold" Margin="0,18,0,10"
                                    Foreground="{DynamicResource AccentBrush}"
                                    svc:Loc.Key="settings.about.sectionInfo"/>
                         <Border CornerRadius="8" Padding="12,10"
@@ -1430,14 +1431,14 @@
             </Grid.ColumnDefinitions>
             <TextBlock x:Name="LoadStateText" Grid.Column="0" VerticalAlignment="Center"
                        Margin="0,0,12,0" TextWrapping="Wrap" FontSize="11"
-                       Text="正在读取配置…" Foreground="{DynamicResource SubTextBrush}"/>
+                       Text="" Foreground="{DynamicResource SubTextBrush}"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                 <TextBlock x:Name="SaveHintText" VerticalAlignment="Center" Margin="0,0,14,0"
                            Foreground="{DynamicResource SubTextBrush}"/>
-                <Button x:Name="SaveButton" Padding="16,6" Content="保存设置"
+                <Button x:Name="SaveButton" Padding="16,6" Content=""
                         Style="{StaticResource RoundButton}" Click="SaveButton_Click"
                         svc:Loc.Key="settings.button.save"/>
-                <Button Padding="16,6" Margin="10,0,0,0" Content="关闭"
+                <Button Padding="16,6" Margin="10,0,0,0" Content=""
                         Style="{StaticResource RoundButton}" Click="CloseButton_Click"
                         svc:Loc.Key="settings.button.close"/>
             </StackPanel>

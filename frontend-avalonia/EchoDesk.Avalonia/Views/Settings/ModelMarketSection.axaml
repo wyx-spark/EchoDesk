@@ -2,11 +2,25 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.ModelMarketSection">
   <!--
-    模型市场区块（v0.2.2 收尾：把 WPF 侧的模型市场补全到跨平台版）。
+    [EN] Model marketplace section (v0.2.2 wrap-up: bringing the WPF model marketplace over to
+         the cross-platform build).
+
+    [EN] Why a separate UserControl instead of embedding it in ModelPage.axaml:
+      * the control count is high (search / sort / data source / filter panel / result list /
+        pager / progress / status) and the facets are **rebuilt at run time**, so it has no
+        coupling with the "model profile plus inference parameters" block;
+      * it matches how MarketPage and AutomationPage are split (one module file per tab), so
+        this file alone explains the whole marketplace interaction.
+
+    [EN] Control names and AutomationIds **deliberately mirror the WPF build** (HubSearchBox /
+         HubResultList / HubPageInfoText...): tools/ui_probe.ps1 drives the entire marketplace
+         interaction through these AutomationIds, so sharing the names means **one probe can
+         verify both front ends** and consistency checks use the same yardstick.
+    [ZH] 模型市场区块（v0.2.2 收尾：把 WPF 侧的模型市场补全到跨平台版）。
 
     为什么单独一个 UserControl 而不是塞进 ModelPage.axaml：
       * 控件多（搜索/排序/数据源/筛选面板/结果列表/分页条/进度/状态）且**分面是运行时重建**的，
-        与"模型档位 + 推理参数"那一块没有耦合；
+        与“模型档位 + 推理参数”那一块没有耦合；
       * 与 MarketPage / AutomationPage 的分法一致（一个页签一个模块的文件），
         以后单看这个文件就能读懂整块市场交互。
 
@@ -16,10 +30,12 @@
   -->
   <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto" Margin="14,12,14,8">
 
-    <!-- ① 区块标题（WPF 的 settings.model.sectionHub） -->
+    <!-- [EN] (1) Section title (settings.model.sectionHub in the WPF build). -->
+    <!-- [ZH] ① 区块标题（WPF 的 settings.model.sectionHub）。 -->
     <TextBlock x:Name="HubSectionTitle" Grid.Row="0" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10" />
 
-    <!-- ② 数据源 + Token -->
+    <!-- [EN] (2) Data source and token. -->
+    <!-- [ZH] ② 数据源 + Token。 -->
     <Grid Grid.Row="1" Margin="0,10,0,6" ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto">
       <TextBlock x:Name="HubSourceLabel" Grid.Column="0" VerticalAlignment="Center" FontSize="12" />
       <ComboBox x:Name="HubSourceCombo" Grid.Column="1" Width="170" Margin="6,0,0,0"
@@ -34,7 +50,8 @@
               AutomationProperties.AutomationId="HubOpenDirButton" />
     </Grid>
 
-    <!-- ③ 搜索行 -->
+    <!-- [EN] (3) Search row. -->
+    <!-- [ZH] ③ 搜索行。 -->
     <Grid Grid.Row="2" Margin="0,0,0,8" ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
       <TextBox x:Name="HubSearchBox" Grid.Column="0" Padding="6,4"
                AutomationProperties.AutomationId="HubSearchBox" />
@@ -50,7 +67,8 @@
               AutomationProperties.AutomationId="HubStopButton" />
     </Grid>
 
-    <!-- ④ 本地筛选 + 结构化筛选 -->
+    <!-- [EN] (4) Local filtering and structured filtering. -->
+    <!-- [ZH] ④ 本地筛选 + 结构化筛选。 -->
     <Expander x:Name="HubFilterExpander" Grid.Row="3" Margin="0,0,0,8" IsExpanded="False"
               AutomationProperties.AutomationId="HubFilterExpander">
       <Expander.Header>
@@ -84,7 +102,10 @@
       </StackPanel>
     </Expander>
 
-    <!-- ⑤ 结果列表 + 详情面板（列表区域独立滚动） -->
+    <!--
+      [EN] (5) Result list and detail panel (the list area scrolls on its own).
+      [ZH] ⑤ 结果列表 + 详情面板（列表区域独立滚动）。
+    -->
     <Border Grid.Row="4" CornerRadius="8" BorderThickness="1"
             BorderBrush="{DynamicResource CardBorderBrush}"
             Background="{DynamicResource CardBackgroundBrush}" MinHeight="0">
@@ -106,7 +127,11 @@
 
         <Grid Grid.Row="1">
           <Grid RowDefinitions="Auto,*">
-            <!-- 默认模型：钉在最上方、标注来源，**不计入下面的分页条数**（任务七） -->
+            <!--
+              [EN] Default model: pinned at the very top with its source labelled, and **not
+                   counted in the pager below** (development task 7).
+              [ZH] 默认模型：钉在最上方、标注来源，**不计入下面的分页条数**（研发任务 7）。
+            -->
             <Border x:Name="HubPinnedRow" Grid.Row="0" IsVisible="False" Margin="6,6,6,0"
                     CornerRadius="6" Padding="8,5" BorderThickness="1"
                     BorderBrush="{DynamicResource AccentBrush}"
@@ -140,7 +165,11 @@
             </Grid>
           </Grid>
         </Grid>
-    <!-- 分页控件：WPF 把它放在结果框内部的底部一行，不单独占一个框 -->
+    <!--
+      [EN] Pager: WPF places it inside the results frame as its bottom row, so it does not get a
+           frame of its own.
+      [ZH] 分页控件：WPF 把它放在结果框内部的底部一行，不单独占一个框。
+    -->
     <Border Grid.Row="2" BorderThickness="0,1,0,0"
             BorderBrush="{DynamicResource CardBorderBrush}" Padding="8,4">
             <WrapPanel x:Name="HubPagerPanel">
@@ -175,7 +204,8 @@
 
 
 
-    <!-- ⑦ 进度 -->
+    <!-- [EN] (7) Progress. -->
+    <!-- [ZH] ⑦ 进度。 -->
     <StackPanel Grid.Row="5" Spacing="4" Margin="0,4,0,0">
       <ProgressBar x:Name="HubLoadProgressBar" Height="4" Minimum="0" Maximum="100" IsVisible="False"
                    IsIndeterminate="True" AutomationProperties.AutomationId="HubLoadProgressBar" />
@@ -187,7 +217,8 @@
       </Grid>
     </StackPanel>
 
-    <!-- ⑧ 状态行 -->
+    <!-- [EN] (8) Status row. -->
+    <!-- [ZH] ⑧ 状态行。 -->
     <TextBlock x:Name="HubStatusText" Grid.Row="6" Margin="0,4,0,0" FontSize="11" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" MaxHeight="16"
                AutomationProperties.AutomationId="HubStatusText" />
   </Grid>

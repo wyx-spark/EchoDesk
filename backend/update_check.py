@@ -269,8 +269,8 @@ def check_for_update(cfg: Any, force: bool = False) -> Dict[str, Any]:
 #:   urllib follows redirects automatically, so only the initial host is checked
 #:   here and the redirect target is constrained by GitHub itself.
 #: [ZH] 发布附件可以合法重定向到的主机。GitHub 的 ``browser_download_url``
-#:   会重定向到这些 CDN 主机；urllib 自动跟随重定向，因此这里只检查初始主机，
-#:   重定向目标由 GitHub 自身约束。
+#:   [ZH] 会重定向到这些 CDN 主机；urllib 自动跟随重定向，因此这里只检查初始主机，
+#:   [ZH] 重定向目标由 GitHub 自身约束。
 _ALLOWED_DOWNLOAD_HOSTS = {
     "github.com",
     "api.github.com",
@@ -287,7 +287,7 @@ _MAX_ASSET_BYTES = 1024 * 1024 * 1024
 #:   copied: they are large, and a model file is never overwritten by the
 #:   installer because the installer excludes ``models\``.
 #: [ZH] 构成用户数据的小型运行期文件。刻意不复制模型：模型很大，而且安装程序
-#:   排除了 ``models\``，因此模型文件不会被覆盖。
+#:   [ZH] 排除了 ``models\``，因此模型文件不会被覆盖。
 _USER_DATA_FILES = (
     "config.json",
     "config.user.json",

@@ -1,25 +1,47 @@
 // [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/Settings/DeveloperPage.axaml.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/Settings/DeveloperPage.axaml.cs。类型与成员说明见下方注释。
-// 开发者页的交互逻辑（v0.2.1 跨平台-2 任务一，第 5 个迁移模块）。
+// [EN] Interaction logic of the Developer page (v0.2.1 cross-platform-2 development task 1, the
+// [EN] fifth migrated module).
+// [ZH] 开发者页的交互逻辑（v0.2.1 跨平台-2 研发任务 1，第 5 个迁移模块）。
 //
-// 数据来自后端 `skills_list`，其中与开发相关的字段（与 WPF 版一致）：
-//     dev_mode           开发者模式当前是否生效
-//     dev_mode_explicit  是"用户显式设置"还是"自动检测"决定的
-//     dev_detected       skills_dev 目录里是否有插件
-//     dev_count          skills_dev 里的插件数
-//     dev_enabled        [已启用的开发插件 id]
-//     api_version        技能 API 版本
-//     dirs               { dev, installed, manifest, registry, log, examples }
+// [EN] The data comes from the backend `skills_list`; the development-related fields (the same as
+// [EN] in the WPF version):
+// [EN]     dev_mode           whether developer mode is currently active
+// [EN]     dev_mode_explicit  whether it is decided by "the user explicitly set it" or by
+// [EN]                        "automatic detection"
+// [EN]     dev_detected       whether there are plugins in the skills_dev directory
+// [EN]     dev_count          number of plugins in skills_dev
+// [EN]     dev_enabled        [ids of enabled development plugins]
+// [EN]     api_version        skill API version
+// [EN]     dirs               { dev, installed, manifest, registry, log, examples }
+// [ZH] 数据来自后端 `skills_list`，其中与开发相关的字段（与 WPF 版一致）：
+// [ZH]     dev_mode           开发者模式当前是否生效
+// [ZH]     dev_mode_explicit  是“用户显式设置”还是“自动检测”决定的
+// [ZH]     dev_detected       skills_dev 目录里是否有插件
+// [ZH]     dev_count          skills_dev 里的插件数
+// [ZH]     dev_enabled        [已启用的开发插件 id]
+// [ZH]     api_version        技能 API 版本
+// [ZH]     dirs               各目录：{ dev, installed, manifest, registry, log, examples }
 //
-// 动作：skills_set_dev_mode / skills_log / skills_clear_log / skills_examples / skills_reload /
-//       skills_scaffold
+// [EN] Actions: skills_set_dev_mode / skills_log / skills_clear_log / skills_examples /
+// [EN]          skills_reload / skills_scaffold
+// [ZH] 动作：skills_set_dev_mode / skills_log / skills_clear_log / skills_examples / skills_reload /
+// [ZH]       skills_scaffold
 //
-// **为什么把"由谁决定"显示出来**（WPF 版修复一的做法，这里照做）：开发者模式既可能由用户
-// 显式打开，也可能因为 skills_dev 里有插件而自动生效。只显示"开/关"会让用户困惑
-// （"我没开它，为什么是开的？"），所以状态行同时说明依据。
+// [EN] **Why show "who decided it"** (the approach of fix 1 in the WPF version, followed here):
+// [EN] developer mode may be turned on explicitly by the user, or take effect automatically
+// [EN] because there are plugins in skills_dev. Showing only "on/off" confuses users ("I did not
+// [EN] turn it on, why is it on?"), so the status line also states the basis.
+// [ZH] **为什么把“由谁决定”显示出来**（WPF 版修复一的做法，这里照做）：开发者模式既可能由用户
+// [ZH] 显式打开，也可能因为 skills_dev 里有插件而自动生效。只显示“开/关”会让用户困惑
+// [ZH] （“我没开它，为什么是开的？”），所以状态行同时说明依据。
 //
-// **本轮未迁移**：本地插件清单（skills_manifest_get / skills_manifest_set）的可编辑表格。
-// 页面底部给出明确说明与替代做法（直接编辑 JSON 文件），而不是显示一个不能用的空表格。
+// [EN] **Not migrated in this round**: the editable table for the local plugin manifest
+// [EN] (skills_manifest_get / skills_manifest_set). The bottom of the page gives a clear
+// [EN] explanation and an alternative (edit the JSON file directly) instead of showing a
+// [EN] non-functional empty table.
+// [ZH] **本轮未迁移**：本地插件清单（skills_manifest_get / skills_manifest_set）的可编辑表格。
+// [ZH] 页面底部给出明确说明与替代做法（直接编辑 JSON 文件），而不是显示一个不能用的空表格。
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
@@ -40,7 +62,10 @@ public partial class DeveloperPage : UserControl, ISettingsPage
     private JsonElement? _status;
     private bool _syncing;
 
-    /// <summary>日志行数选项（与 WPF 版同口径）。</summary>
+    /// <summary>
+    /// [EN] Log line count options (same criterion as the WPF version).
+    /// [ZH] 日志行数选项（与 WPF 版同口径）。
+    /// </summary>
     private static readonly int[] LogLineOptions = { 100, 200, 500, 1000 };
 
     public DeveloperPage()
@@ -59,9 +84,13 @@ public partial class DeveloperPage : UserControl, ISettingsPage
         };
         DevReloadButton.Click += async (_, _) =>
         {
-            // v0.2.2 第 4 批 3a：**作用域改为 scope=dev**（与 WPF 的 DevReloadButton_Click 一致）。
-            // 开发者页的「重载」要的是"把我刚写的开发插件重读一遍"，
-            // 全量重载会把正式安装的插件也一起卸载重挂 —— 那既慢又不必要。
+            // [EN] v0.2.2 batch 4, 3a: **the scope is changed to scope=dev** (aligned with WPF's
+            // [EN] DevReloadButton_Click). The Developer page's "reload" means "re-read the
+            // [EN] development plugins I just wrote"; a full reload would also unload and
+            // [EN] re-register the formally installed plugins -- that is both slow and unnecessary.
+            // [ZH] v0.2.2 第 4 批 3a：**作用域改为 scope=dev**（与 WPF 的 DevReloadButton_Click 一致）。
+            // [ZH] 开发者页的「重载」要的是“把我刚写的开发插件重读一遍”，
+            // [ZH] 全量重载会把正式安装的插件也一起卸载重挂 —— 那既慢又不必要。
             await SendAsync(new { action = "skills_reload", scope = "dev" });
             await RefreshAsync();
             DevStatusText.Text = Loc.T("settings.developer.reloaded", "✅ 本地插件已重载");
@@ -72,7 +101,9 @@ public partial class DeveloperPage : UserControl, ISettingsPage
             await RefreshAsync();
             DevStatusText.Text = Loc.T("settings.developer.examplesInstalled", "✅ 示例插件已安装到 skills_dev/");
         };
-        // ---- v0.2.2 第 4 批 3a：三个目录按钮 + 导出日志 + 清单编辑 + 面板动作 ----
+        // [EN] ---- v0.2.2 batch 4, 3a: three directory buttons + export log + manifest editing +
+        // [EN]      panel actions ----
+        // [ZH] ---- v0.2.2 第 4 批 3a：三个目录按钮 + 导出日志 + 清单编辑 + 面板动作 ----
         OpenDevDirButton.Click += (_, _) => OpenSkillDir("dev");
         OpenInstallDirButton.Click += (_, _) => OpenSkillDir("installed");
         OpenExamplesDirButton.Click += (_, _) => OpenSkillDir("examples");
@@ -134,7 +165,9 @@ public partial class DeveloperPage : UserControl, ISettingsPage
             return;
         _status = status.Clone();
 
-        // 开发者模式开关：**同步时抑制事件**，否则会立刻把"回填"当成"用户改动"再发一次设置。
+        // [EN] Developer mode switch: **suppress events while syncing**, otherwise the "fill-in"
+        // [EN] would immediately be taken as a "user change" and the setting sent again.
+        // [ZH] 开发者模式开关：**同步时抑制事件**，否则会立刻把“回填”当成“用户改动”再发一次设置。
         bool devMode = GetBool(status, "dev_mode");
         bool explicitSet = GetBool(status, "dev_mode_explicit");
         bool detected = GetBool(status, "dev_detected");
@@ -152,7 +185,9 @@ public partial class DeveloperPage : UserControl, ISettingsPage
                 : Loc.T("settings.developer.modeOff", "开发者模式：已关闭"))
             + " · " + how;
 
-        // 已启用的开发插件清单：关闭后应为空，用户据此确认"确实关掉了"。
+        // [EN] List of enabled development plugins: it should be empty after turning developer
+        // [EN] mode off, which lets users confirm that it really is off.
+        // [ZH] 已启用的开发插件清单：关闭后应为空，用户据此确认“确实关掉了”。
         var enabled = new List<string>();
         if (status.TryGetProperty("dev_enabled", out JsonElement arr) && arr.ValueKind == JsonValueKind.Array)
         {
@@ -197,8 +232,10 @@ public partial class DeveloperPage : UserControl, ISettingsPage
         }
 
         await RefreshLogAsync();
-        // v0.2.2 第 4 批 3a：清单、钩子与面板这三块都来自同一份 skills_list 状态
-        // （清单要另外发 skills_manifest_get）。
+        // [EN] v0.2.2 batch 4, 3a: the manifest, hooks, and panels blocks all come from the same
+        // [EN] skills_list state (the manifest additionally sends skills_manifest_get).
+        // [ZH] v0.2.2 第 4 批 3a：清单、钩子与面板这三块都来自同一份 skills_list 状态
+        // [ZH] （清单要另外发 skills_manifest_get）。
         RenderHooks();
         RenderPanels();
         await LoadManifestAsync();
@@ -220,8 +257,11 @@ public partial class DeveloperPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 新建插件骨架。校验只做"必填 + 基本格式"——真正的规则在后端（它会再校验一次），
-    /// 前端校验只为给出更快的反馈。
+    /// [EN] Create a plugin skeleton. Validation covers only "required fields + basic format" --
+    /// [EN] the real rules live in the backend (which validates again); front-end validation
+    /// [EN] exists only to give faster feedback.
+    /// [ZH] 新建插件骨架。校验只做“必填 + 基本格式”——真正的规则在后端（它会再校验一次），
+    /// [ZH] 前端校验只为给出更快的反馈。
     /// </summary>
     private async Task ScaffoldAsync()
     {
@@ -266,10 +306,16 @@ public partial class DeveloperPage : UserControl, ISettingsPage
             : 0;
 
     // =================================================================
-    // v0.2.2 第 4 批 3a：目录按钮 / 导出日志 / 清单编辑 / 钩子与面板
+    // [EN] v0.2.2 batch 4, 3a: directory buttons / export log / manifest editing / hooks and
+    // [EN] panels
+    // [ZH] v0.2.2 第 4 批 3a：目录按钮 / 导出日志 / 清单编辑 / 钩子与面板
     // =================================================================
 
-    /// <summary>取状态里的某个目录（状态还没加载时返回空串，不抛异常）。</summary>
+    /// <summary>
+    /// [EN] Get one directory from the state (returns an empty string, without throwing, if the
+    /// [EN] state has not loaded yet).
+    /// [ZH] 取状态里的某个目录（状态还没加载时返回空串，不抛异常）。
+    /// </summary>
     private string SkillDir(string name)
     {
         if (_status is JsonElement status
@@ -288,7 +334,11 @@ public partial class DeveloperPage : UserControl, ISettingsPage
             DevStatusText.Text = Loc.T("settings.developer.openDirFailed", "⚠️ 无法打开目录：{0}", dir);
     }
 
-    /// <summary>导出开发日志（`skills_export_log`）。路径由系统保存对话框给出（WPF 用 SaveFileDialog）。</summary>
+    /// <summary>
+    /// [EN] Export the development log (`skills_export_log`). The path comes from the system save
+    /// [EN] dialog (WPF uses SaveFileDialog).
+    /// [ZH] 导出开发日志（`skills_export_log`）。路径由系统保存对话框给出（WPF 用 SaveFileDialog）。
+    /// </summary>
     private async Task ExportLogAsync()
     {
         TopLevel? top = TopLevel.GetTopLevel(this);
@@ -316,9 +366,14 @@ public partial class DeveloperPage : UserControl, ISettingsPage
             : GetString(doc.RootElement, "content");
     }
 
-    // ---- 本地插件清单（表格编辑） ----
+    // [EN] ---- Local plugin manifest (table editing) ----
+    // [ZH] ---- 本地插件清单（表格编辑） ----
 
-    /// <summary>清单里的一行（可编辑）。字段与 WPF 的 ManifestRow 逐一对齐。</summary>
+    /// <summary>
+    /// [EN] One row in the manifest (editable). Fields correspond one-to-one with WPF's
+    /// [EN] ManifestRow.
+    /// [ZH] 清单里的一行（可编辑）。字段与 WPF 的 ManifestRow 逐一对齐。
+    /// </summary>
     private sealed class ManifestRow
     {
         public string Id { get; set; } = "";
@@ -356,8 +411,11 @@ public partial class DeveloperPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 重排清单行。每行是"id / 路径 / 别名 / 顺序 / 启用 / 删除"一组控件，
-    /// 字段与 WPF 的 RenderManifestRows 逐一对齐（含 ✕ 删除按钮）。
+    /// [EN] Re-layout the manifest rows. Each row is a group of controls: "id / path / alias /
+    /// [EN] order / enabled / remove"; fields correspond one-to-one with WPF's RenderManifestRows
+    /// [EN] (including the ✕ remove button).
+    /// [ZH] 重排清单行。每行是“id / 路径 / 别名 / 顺序 / 启用 / 删除”一组控件，
+    /// [ZH] 字段与 WPF 的 RenderManifestRows 逐一对齐（含 ✕ 删除按钮）。
     /// </summary>
     private void RenderManifestRows()
     {
@@ -448,8 +506,11 @@ public partial class DeveloperPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 保存清单（`skills_manifest_set`）。只提交 id 与 path 都非空的行 ——
-    /// 与 WPF 的过滤条件一字不差（空行是"加了一行还没填"，不该被写进配置）。
+    /// [EN] Save the manifest (`skills_manifest_set`). Submit only rows where both id and path are
+    /// [EN] non-empty -- exactly the same filter condition as WPF (an empty row means "a row was
+    /// [EN] added but not filled in" and must not be written to the configuration).
+    /// [ZH] 保存清单（`skills_manifest_set`）。只提交 id 与 path 都非空的行 ——
+    /// [ZH] 与 WPF 的过滤条件一字不差（空行是“加了一行还没填”，不该被写进配置）。
     /// </summary>
     private async Task SaveManifestAsync()
     {
@@ -480,7 +541,11 @@ public partial class DeveloperPage : UserControl, ISettingsPage
         await RefreshAsync();
     }
 
-    /// <summary>直接打开清单 JSON 原文（文件存在时用系统默认程序；否则打开它所在目录）。</summary>
+    /// <summary>
+    /// [EN] Open the raw manifest JSON directly (with the system default program if the file
+    /// [EN] exists; otherwise open its directory).
+    /// [ZH] 直接打开清单 JSON 原文（文件存在时用系统默认程序；否则打开它所在目录）。
+    /// </summary>
     private void OpenManifestRaw()
     {
         string path = SkillDir("manifest");
@@ -503,12 +568,14 @@ public partial class DeveloperPage : UserControl, ISettingsPage
         }
         catch (Exception)
         {
-            // 没有关联程序：退回到打开所在目录
+            // [EN] No associated program: fall back to opening the containing directory.
+            // [ZH] 没有关联程序：退回到打开所在目录
         }
         ShellOpen.TryOpenDirectory(System.IO.Path.GetDirectoryName(path));
     }
 
-    // ---- 自动化钩子清单 ----
+    // [EN] ---- Automation hook list ----
+    // [ZH] ---- 自动化钩子清单 ----
 
     private void RenderHooks()
     {
@@ -530,7 +597,10 @@ public partial class DeveloperPage : UserControl, ISettingsPage
             }
             if (skills.Count == 0)
                 continue;
-            // 阶段名走语言包（`settings.developer.hookStages.<阶段>`），缺键时回落成阶段名本身
+            // [EN] Stage names go through the language pack
+            // [EN] (`settings.developer.hookStages.<stage>`), falling back to the stage name
+            // [EN] itself when the key is missing.
+            // [ZH] 阶段名走语言包（`settings.developer.hookStages.<阶段>`），缺键时回落成阶段名本身
             string stageName = Loc.T("settings.developer.hookStages." + property.Name, property.Name);
             lines.Add($"{stageName}: {string.Join(", ", skills)}");
         }
@@ -539,11 +609,15 @@ public partial class DeveloperPage : UserControl, ISettingsPage
             : Loc.T("settings.developer.hooksEmpty", "（没有插件挂接自动化钩子）");
     }
 
-    // ---- 插件面板（声明式 UI + 面板动作） ----
+    // [EN] ---- Plugin panels (declarative UI + panel actions) ----
+    // [ZH] ---- 插件面板（声明式 UI + 面板动作） ----
 
     /// <summary>
-    /// 渲染插件声明的面板：字段用原生控件生成（文本框 / 复选框），动作按钮发
-    /// `skills_panel_action`。与 WPF 的 RenderPanels 同一设计（技能不需要碰任何 UI 代码）。
+    /// [EN] Render the panels declared by plugins: fields are generated with native controls
+    /// [EN] (text box / check box), and action buttons send `skills_panel_action`. Same design as
+    /// [EN] WPF's RenderPanels (skills do not need to touch any UI code).
+    /// [ZH] 渲染插件声明的面板：字段用原生控件生成（文本框 / 复选框），动作按钮发
+    /// [ZH] `skills_panel_action`。与 WPF 的 RenderPanels 同一设计（技能不需要碰任何 UI 代码）。
     /// </summary>
     private void RenderPanels()
     {
@@ -580,7 +654,9 @@ public partial class DeveloperPage : UserControl, ISettingsPage
                     Text = description, FontSize = 11, Opacity = 0.75, TextWrapping = TextWrapping.Wrap,
                 });
 
-            // 取值表：面板动作要把它整份发给后端（与 WPF 的 values 字典同一用途）
+            // [EN] Value map: the panel action sends the whole map to the backend (same purpose as
+            // [EN] the values dictionary in WPF).
+            // [ZH] 取值表：面板动作要把它整份发给后端（与 WPF 的 values 字典同一用途）
             var values = new Dictionary<string, string>(StringComparer.Ordinal);
             if (panel.TryGetProperty("fields", out JsonElement fields) && fields.ValueKind == JsonValueKind.Array)
             {
@@ -643,7 +719,11 @@ public partial class DeveloperPage : UserControl, ISettingsPage
         }
     }
 
-    /// <summary>面板动作：把当前取值整份发给后端，返回的文本显示在日志框（与 WPF 一致）。</summary>
+    /// <summary>
+    /// [EN] Panel action: send the current values as a whole to the backend; the returned text is
+    /// [EN] shown in the log box (same as WPF).
+    /// [ZH] 面板动作：把当前取值整份发给后端，返回的文本显示在日志框（与 WPF 一致）。
+    /// </summary>
     private async Task RunPanelActionAsync(string skillId, string panelId, string actionKey,
                                            Dictionary<string, string> values)
     {
@@ -672,14 +752,23 @@ public partial class DeveloperPage : UserControl, ISettingsPage
         return null;
     }
 
-    /// <summary>供「已安装」页跳转过来时聚焦插件 ID 输入框（对齐 WPF 的 ScaffoldIdBox.Focus()）。</summary>
+    /// <summary>
+    /// [EN] Focus the plugin ID input box when jumping here from the "Installed" page (aligned with
+    /// [EN] WPF's ScaffoldIdBox.Focus()).
+    /// [ZH] 供「已安装」页跳转过来时聚焦插件 ID 输入框（对齐 WPF 的 ScaffoldIdBox.Focus()）。
+    /// </summary>
     public void FocusScaffoldId() => ScaffoldIdBox.Focus();
 
     // -----------------------------------------------------------------
-    // 探针接口（`EchoDesk --probe pages` 用：开发者页的三块新增功能）
+    // [EN] Probe interface (used by `EchoDesk --probe pages`: the three new feature blocks of the
+    // [EN] Developer page).
+    // [ZH] 探针接口（`EchoDesk --probe pages` 用：开发者页的三块新增功能）
     // -----------------------------------------------------------------
 
-    /// <summary>开发者页的可观测状态。</summary>
+    /// <summary>
+    /// [EN] Observable state of the Developer page.
+    /// [ZH] 开发者页的可观测状态。
+    /// </summary>
     public string DeveloperSnapshot()
     {
         return string.Join("; ", new[]
@@ -723,7 +812,9 @@ public partial class DeveloperPage : UserControl, ISettingsPage
         ScaffoldNameLabel.Text = Loc.T("settings.installed.scaffoldName", "插件显示名");
         ScaffoldAuthorLabel.Text = Loc.T("settings.installed.scaffoldAuthor", "作者");
         ScaffoldCreateButton.Content = Loc.T("settings.developer.scaffoldCreate", "➕ 创建");
-        // v0.2.2 第 4 批 3a：三个目录按钮、导出日志、清单与钩子/面板区块
+        // [EN] v0.2.2 batch 4, 3a: three directory buttons, export log, manifest and
+        // [EN] hooks/panels blocks.
+        // [ZH] v0.2.2 第 4 批 3a：三个目录按钮、导出日志、清单与钩子/面板区块
         OpenDevDirButton.Content = Loc.T("settings.developer.openDevDir", "📂 开发目录");
         OpenInstallDirButton.Content = Loc.T("settings.developer.openInstallDir", "📂 安装目录");
         OpenExamplesDirButton.Content = Loc.T("settings.developer.openExamplesDir", "📂 示例插件");
@@ -737,7 +828,9 @@ public partial class DeveloperPage : UserControl, ISettingsPage
         ManifestOpenRawButton.Content = Loc.T("settings.developer.manifestOpenRaw", "直接编辑 JSON");
         HooksSectionLabel.Text = Loc.T("settings.developer.sectionHooks", "已挂接的自动化钩子");
         PanelsSectionLabel.Text = Loc.T("settings.developer.sectionPanels", "插件面板");
-        // 已加载的数据要按新语言重排一遍（不重新请求后端之外的东西）。
+        // [EN] Loaded data must be re-laid out for the new language (without re-requesting anything
+        // [EN] beyond the backend).
+        // [ZH] 已加载的数据要按新语言重排一遍（不重新请求后端之外的东西）。
         if (_status is not null)
             _ = RefreshAsync();
     }

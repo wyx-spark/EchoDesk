@@ -150,7 +150,7 @@ class McpServer:
     #: minimal set is passed by default, so secrets from the parent process (such as
     #: HF_TOKEN) are not handed to third-party processes implicitly.
     #: [ZH] 额外允许注入的环境变量白名单。默认只传递最小集合，避免将父进程中的密钥
-    #: （如 HF_TOKEN）顺带交给第三方进程。
+    #: [ZH] （如 HF_TOKEN）顺带交给第三方进程。
     passthrough_env: List[str] = field(default_factory=list)
 
     def public(self) -> Dict[str, Any]:
@@ -217,13 +217,13 @@ class StdioMcpClient:
         # blocking read must run on a separate thread and be consumed with a
         # timeout.
         # [ZH] 读线程 + 队列：Windows 上管道的 readline() 会无限阻塞，仅在循环前检查
-        # deadline 无法拦截对端挂起（首轮实现导致测试一直挂起到超时）。这与 llm_engine
-        # 的流式心跳遵循同一约束：阻塞读必须放到独立线程，由消费者带超时读取。
+        # [ZH] deadline 无法拦截对端挂起（首轮实现导致测试一直挂起到超时）。这与 llm_engine
+        # [ZH] 的流式心跳遵循同一约束：阻塞读必须放到独立线程，由消费者带超时读取。
         self._lines: "queue.Queue[Optional[str]]" = queue.Queue()
         self._reader: Optional[threading.Thread] = None
 
-    # ---------- [EN] Lifecycle ----------
-    # ---------- [ZH] 生命周期 ----------
+    # [EN] ---------- Lifecycle ----------
+    # [ZH] ---------- 生命周期 ----------
 
     def _child_env(self) -> Dict[str, str]:
         """
@@ -344,8 +344,8 @@ class StdioMcpClient:
                 pass
         self._lines.put(None)
 
-    # ---------- [EN] JSON-RPC ----------
-    # ---------- [ZH] JSON-RPC ----------
+    # [EN] ---------- JSON-RPC ----------
+    # [ZH] ---------- JSON-RPC ----------
 
     def _send(self, payload: Dict[str, Any]) -> None:
         if self._proc is None or self._proc.stdin is None:
@@ -409,8 +409,8 @@ class StdioMcpClient:
             # [ZH] 通知发送失败不影响主流程。
             pass
 
-    # ---------- [EN] Capabilities ----------
-    # ---------- [ZH] 能力 ----------
+    # [EN] ---------- Capabilities ----------
+    # [ZH] ---------- 能力 ----------
 
     def list_tools(self) -> List[Dict[str, Any]]:
         """
@@ -514,8 +514,8 @@ class McpBridge:
         self.auto_connect = auto_connect
         self.last_error = ""
 
-    # ---------- [EN] Configuration ----------
-    # ---------- [ZH] 配置 ----------
+    # [EN] ---------- Configuration ----------
+    # [ZH] ---------- 配置 ----------
 
     @staticmethod
     def server_from_dict(raw: Dict[str, Any]) -> Optional[McpServer]:
@@ -534,8 +534,8 @@ class McpBridge:
             passthrough_env=[str(x) for x in passthrough] if isinstance(passthrough, list) else [],
         )
 
-    # ---------- [EN] Connection and discovery ----------
-    # ---------- [ZH] 连接与发现 ----------
+    # [EN] ---------- Connection and discovery ----------
+    # [ZH] ---------- 连接与发现 ----------
 
     def client(self, name: str) -> Optional[StdioMcpClient]:
         server = next((item for item in self.servers if item.name == name), None)

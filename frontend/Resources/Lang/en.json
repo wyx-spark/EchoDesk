@@ -172,7 +172,7 @@
       "sectionAppearance": "Appearance",
       "themeHelp": "Switch between the dark and light interface (also /darkmode on|off)",
       "fontSize": "Interface font size",
-      "sectionLanguage": "语言 / Language",
+      "sectionLanguage": "Language",
       "language": "Interface language",
       "languageHelp": "The interface, error messages and command help switch immediately — no restart needed. The choice is stored in ui_state.json.",
       "languageAuto": "Automatic (follow the system locale)",

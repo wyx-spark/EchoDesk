@@ -17,14 +17,14 @@ namespace EchoDesk;
 /// 一整套列表交互：远端加载（带进度）/ 本地实时筛选 / 结构化筛选器 / 分页控件 / 四种排序。
 ///
 /// ## 分工：数据变换在后端，前端只负责画
-/// 任务书里的"每页 20 条、本地实时筛选、结构化筛选、四种排序、分页控件"全是纯数据变换，
+/// 设计规范里的"每页 20 条、本地实时筛选、结构化筛选、四种排序、分页控件"全是纯数据变换，
 /// 而且边界条件（第一页/最后一页/非法页码/筛完为空）正是要验证的东西。
 /// 本仓库有 Python 测试体系、没有 C# 测试体系，所以这些逻辑放在
 /// `backend/model_query.py`（纯函数、有 100+ 条断言覆盖），前端通过
 /// `model_hub_query` 拿**算好的一页**。
 ///
 /// 为什么这不违背"本地实时筛选、不重新请求远端"：`model_hub_query` 是**进程内**往返
-/// （实测 5000 条筛选+排序+分页约 40ms），**一次网络请求都不发**。任务书要防的是
+/// （实测 5000 条筛选+排序+分页约 40ms），**一次网络请求都不发**。设计规范要防的是
 /// "每敲一个字就去搜一遍远端"，这条被 `model_hub_query` 与 `model_hub_load` 的分工挡住了。
 ///
 /// ## 三个动作
@@ -37,7 +37,7 @@ public partial class SettingsWindow
     /// <summary>每页条数选项（任务三：20 / 50 / 100，默认 20）。</summary>
     private static readonly int[] HubPageSizes = { 20, 50, 100 };
 
-    /// <summary>本地筛选防抖：任务书要求"输入停止后触发过滤（如 150ms）"。</summary>
+    /// <summary>本地筛选防抖：设计规范要求"输入停止后触发过滤（如 150ms）"。</summary>
     private static readonly TimeSpan HubFilterDebounce = TimeSpan.FromMilliseconds(150);
 
     // ---------- 市场状态 ----------
@@ -179,7 +179,7 @@ public partial class SettingsWindow
         }
     }
 
-    /// <summary>排序切换：任务书要求"排序切换时重新请求远端"（排序是服务端行为）。</summary>
+    /// <summary>排序切换：设计规范要求"排序切换时重新请求远端"（排序是服务端行为）。</summary>
     private void HubSortChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_uiReady || _loading || _suppressHubFilterEvents)
@@ -516,7 +516,7 @@ public partial class SettingsWindow
     private void JumpHubPage()
     {
         string text = HubPageBox.Text.Trim();
-        // 输入非法时给出提示，而不是默默跳到别的页（任务书：输入非法时给出提示）
+        // 输入非法时给出提示，而不是默默跳到别的页（设计规范：输入非法时给出提示）
         if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int page))
         {
             HubPagerHint.Text = Loc.T("settings.model.pageInvalid",
@@ -776,7 +776,7 @@ public partial class SettingsWindow
         HubQuantFacet.Children.Clear();
         HubQuantFacet.Children.Add(FacetLabel(Loc.T("settings.model.facetQuant", "量化格式")));
         // 选项**从数据里来**，而不是写死一份候选清单：写死的话，数据里出现没列到的量化
-        // （IQ2_XS / Q3_K_S / Q6_K …）就永远筛不出来，而任务书要求"从文件名解析"。
+        // （IQ2_XS / Q3_K_S / Q6_K …）就永远筛不出来，而设计规范要求"从文件名解析"。
         // 同一维度内的多选是"或"。按计数降序，最多 14 个，免得面板变成一堵墙。
         var codes = new List<(string Code, int Count)>();
         if (options.TryGetProperty("quant", out JsonElement node) && node.ValueKind == JsonValueKind.Object)

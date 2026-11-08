@@ -1,22 +1,41 @@
 // [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/Settings/MarketPage.axaml.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/Settings/MarketPage.axaml.cs。类型与成员说明见下方注释。
-// 技能市场页的交互逻辑（v0.2.1 跨平台-2 任务一，第 4 个迁移模块）。
-//
-// 后端动作（与 WPF 版一致）：
-//   market_search   { keyword, sort, page } → { market: { items: [ { full_name, name,
-//                     description, verified, installed, stars, pushed_at, license,
-//                     version, html_url } ] } }
-//   market_detail   { repo }                → 技能详情（skill.json 的内容）
-//   market_install  { repo }                → { content }（后端给的说明文本）
-//   market_uninstall{ repo }                → { content }
-//
-// 与 WPF 版的差异只有"跟着平台走"的部分：
-//   * **安装/卸载的确认**改成就地二次确认（按钮变「确认安装？/确认卸载？」）——
-//     Avalonia 没有内置 MessageBox。**但安全提示文本照旧显示**（在状态行），
-//     因为"第三方技能以你的本地账户权限运行"这句是产品要求必须让用户看到的，
-//     不能因为换前端就省掉。
-//   * **技能详情**用骨架右侧的字段帮助面板显示，而不是弹对话框 ——
-//     既不用再造窗口，又能让详情与列表同屏对照。
+// [EN] Interaction logic of the skill market page (v0.2.1 cross-platform batch 2,
+// [EN] development task 1; the fourth migrated module).
+// [ZH] 技能市场页的交互逻辑（v0.2.1 跨平台-2 任务一，第 4 个迁移模块）。
+// [EN]
+// [EN] Backend actions (consistent with the WPF version):
+// [ZH] 后端动作（与 WPF 版一致）：
+// [EN]   market_search   { keyword, sort, page } → { market: { items: [ { full_name, name,
+// [EN]                     description, verified, installed, stars, pushed_at, license,
+// [EN]                     version, html_url } ] } }
+// [ZH]   market_search   { keyword, sort, page } → { market: { items: [ { full_name, name,
+// [ZH]                     description, verified, installed, stars, pushed_at, license,
+// [ZH]                     version, html_url } ] } }
+// [EN]   market_detail   { repo }                → skill details (the content of skill.json)
+// [ZH]   market_detail   { repo }                → 技能详情（skill.json 的内容）
+// [EN]   market_install  { repo }                → { content } (backend explanation text)
+// [ZH]   market_install  { repo }                → { content }（后端给的说明文本）
+// [EN]   market_uninstall{ repo }                → { content }
+// [ZH]   market_uninstall{ repo }                → { content }
+// [EN]
+// [EN] The only differences from the WPF version are the parts that "follow the platform":
+// [ZH] 与 WPF 版的差异只有“跟着平台走”的部分：
+// [EN]   * **The install/uninstall confirmation** becomes an in-place second confirmation
+// [EN]     (the button turns into "Confirm install? / Confirm uninstall?") — Avalonia has
+// [EN]     no built-in MessageBox. **The safety notice text is still shown** (in the
+// [EN]     status line), because the sentence "third-party skills run with your local
+// [EN]     account privileges" is something the product requires the user to see and must
+// [EN]     not be dropped just because the front end changed.
+// [ZH]   * **安装/卸载的确认**改成就地二次确认（按钮变「确认安装？/确认卸载？」）——
+// [ZH]     Avalonia 没有内置 MessageBox。**但安全提示文本照旧显示**（在状态行），
+// [ZH]     因为“第三方技能以你的本地账户权限运行”这句是产品要求必须让用户看到的，
+// [ZH]     不能因为换前端就省掉。
+// [EN]   * **Skill details** are shown in the field help panel on the right of the shell
+// [EN]     instead of a dialog — no extra window to build, and the details and the list
+// [EN]     can be compared on the same screen.
+// [ZH]   * **技能详情**用骨架右侧的字段帮助面板显示，而不是弹对话框 ——
+// [ZH]     既不用再造窗口，又能让详情与列表同屏对照。
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
@@ -35,7 +54,11 @@ public partial class MarketPage : UserControl, ISettingsPage
 {
     private ISettingsHost? _host;
 
-    /// <summary>排序选项：Tag 是发给后端的 sort 值，文案在 ApplyTexts 里按语言取。</summary>
+    /// <summary>
+    /// [EN] Sort option: Tag is the sort value sent to the backend; the text is chosen by
+    /// [EN] language in ApplyTexts.
+    /// [ZH] 排序选项：Tag 是发给后端的 sort 值，文案在 ApplyTexts 里按语言取。
+    /// </summary>
     private sealed record SortOption(string Value, Func<string> Text)
     {
         public override string ToString() => Text();
@@ -43,7 +66,11 @@ public partial class MarketPage : UserControl, ISettingsPage
 
     private readonly List<JsonElement> _items = new();
 
-    /// <summary>等待二次确认的仓库全名（安装与卸载共用一套就地确认）。</summary>
+    /// <summary>
+    /// [EN] Full name of the repository awaiting the second confirmation (install and
+    /// [EN] uninstall share one in-place confirmation flow).
+    /// [ZH] 等待二次确认的仓库全名（安装与卸载共用一套就地确认）。
+    /// </summary>
     private string _pendingRepo = "";
     private string _pendingAction = "";
     private DispatcherTimer? _pendingTimer;
@@ -61,9 +88,14 @@ public partial class MarketPage : UserControl, ISettingsPage
                 await SearchAsync();
             }
         };
-        // 输入即搜（300ms 防抖）：与 WPF 侧的 MarketSearchBox_TextChanged 同一行为。
-        // 为什么要有：用户的心智是"边打边看结果"，按一次回车才搜会让人以为搜索框坏了；
-        // 防抖是为了不每敲一个字就打一次远端。
+        // [EN] Search as you type (300 ms debounce): the same behavior as
+        // [EN] MarketSearchBox_TextChanged on the WPF side. Why it is needed: users
+        // [EN] expect to "type and see results"; searching only on Enter makes them think
+        // [EN] the box is broken. The debounce avoids hitting the remote side on every
+        // [EN] keystroke.
+        // [ZH] 输入即搜（300ms 防抖）：与 WPF 侧的 MarketSearchBox_TextChanged 同一行为。
+        // [ZH] 为什么要有：用户的心智是“边打边看结果”，按一次回车才搜会让人以为搜索框坏了；
+        // [ZH] 防抖是为了不每敲一个字就打一次远端。
         MarketSearchBox.TextChanged += (_, _) =>
         {
             if (_suppressSearchEvents)
@@ -80,8 +112,11 @@ public partial class MarketPage : UserControl, ISettingsPage
         MarketSearchButton.Click += async (_, _) => await SearchAsync();
         MarketRefreshButton.Click += async (_, _) =>
         {
-            // 刷新 = 清空关键词再搜（与 WPF 一致）；清空会让 TextChanged 也触发一次，
-            // 用重入闸挡住重复请求。
+            // [EN] Refresh = clear the keyword and search again (consistent with WPF);
+            // [EN] clearing also raises TextChanged once, so a reentrancy gate blocks the
+            // [EN] duplicate request.
+            // [ZH] 刷新 = 清空关键词再搜（与 WPF 一致）；清空会让 TextChanged 也触发一次，
+            // [ZH] 用重入闸挡住重复请求。
             _suppressSearchEvents = true;
             MarketSearchBox.Text = "";
             _suppressSearchEvents = false;
@@ -119,7 +154,8 @@ public partial class MarketPage : UserControl, ISettingsPage
     }
 
     // -----------------------------------------------------------------
-    // 数据
+    // [EN] Data
+    // [ZH] 数据
     // -----------------------------------------------------------------
     private async Task<JsonDocument?> SendAsync(object request)
     {
@@ -187,8 +223,12 @@ public partial class MarketPage : UserControl, ISettingsPage
         bool empty = cards.Count == 0;
         MarketEmptyText.IsVisible = empty;
         MarketList.IsVisible = !empty;
-        // 双击条目打开详情（与 WPF 侧的 MarketList_MouseDoubleClick 同一行为）。
-        // 挂在列表上而不是逐项挂：卡片是运行时构建的，逐项挂会重复 N 次。
+        // [EN] Double-clicking an entry opens the details (the same behavior as
+        // [EN] MarketList_MouseDoubleClick on the WPF side). The handler is attached to
+        // [EN] the list rather than to each item: cards are built at runtime, and
+        // [EN] attaching per item would repeat the handler N times.
+        // [ZH] 双击条目打开详情（与 WPF 侧的 MarketList_MouseDoubleClick 同一行为）。
+        // [ZH] 挂在列表上而不是逐项挂：卡片是运行时构建的，逐项挂会重复 N 次。
         MarketList.DoubleTapped -= OnListDoubleTapped;
         MarketList.DoubleTapped += OnListDoubleTapped;
         if (empty)
@@ -199,8 +239,13 @@ public partial class MarketPage : UserControl, ISettingsPage
         }
         else
         {
-            // 包值要两个参数：「共 {0} 个结果，本页 {1} 个」。总数取后端回传的 total_count
-            //（与 WPF `SettingsWindow.xaml.cs:1469` 同一字段），取不到时退化为本页条数。
+            // [EN] The message-pack value takes two arguments ("{0} results in total,
+            // [EN] {1} on this page"). The total comes from the total_count returned by
+            // [EN] the backend (the same field as `SettingsWindow.xaml.cs:1469` in WPF);
+            // [EN] when unavailable it falls back to the number of items on this page.
+            // [ZH] 包值要两个参数：「共 {0} 个结果，本页 {1} 个」。总数取后端回传的
+            // [ZH] total_count（与 WPF `SettingsWindow.xaml.cs:1469` 同一字段），
+            // [ZH] 取不到时退化为本页条数。
             int total = market.TryGetProperty("total_count", out JsonElement tc)
                         && tc.ValueKind == JsonValueKind.Number ? tc.GetInt32() : cards.Count;
             MarketStatusText.Text = Loc.T("settings.market.resultCount",
@@ -209,7 +254,8 @@ public partial class MarketPage : UserControl, ISettingsPage
     }
 
     // -----------------------------------------------------------------
-    // 卡片
+    // [EN] Cards
+    // [ZH] 卡片
     // -----------------------------------------------------------------
     private Control BuildCard(JsonElement item)
     {
@@ -278,8 +324,13 @@ public partial class MarketPage : UserControl, ISettingsPage
         {
             Content = installed
                 ? Loc.T("settings.button.uninstall", "卸载")
-                // 未验证的技能**不允许安装**（与 WPF 侧同一规则：ActionText/CanAct）。
-                // 第三方技能以本地账户权限运行，未验证就放行等于把这个判断交给用户瞎猜。
+                // [EN] Unverified skills **cannot be installed** (the same rule as
+                // [EN] ActionText/CanAct on the WPF side): third-party skills run with
+                // [EN] local account privileges, so letting an unverified one through
+                // [EN] would leave that judgment to the user's guesswork.
+                // [ZH] 未验证的技能**不允许安装**（与 WPF 侧同一规则：ActionText/CanAct）。
+                // [ZH] 第三方技能以本地账户权限运行，未验证就放行等于把这个判断交给
+                // [ZH] 用户瞎猜。
                 : verified
                     ? Loc.T("settings.button.install", "安装")
                     : Loc.T("settings.market.unverified", "未验证"),
@@ -322,14 +373,20 @@ public partial class MarketPage : UserControl, ISettingsPage
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(12, 10),
             Child = panel,
-            // 双击详情要靠它找回这一条的数据（ItemsControl 没有 SelectedItem）
+            // [EN] Double-click details rely on it to find the data of this entry again
+            // [EN] (ItemsControl has no SelectedItem).
+            // [ZH] 双击详情要靠它找回这一条的数据（ItemsControl 没有 SelectedItem）
             Tag = item,
         };
     }
 
     /// <summary>
-    /// 安装 / 卸载。**就地二次确认**：第一次点击先显示安全提示（这是产品要求用户必须看到的
-    /// 信息，不能因为换前端就省掉），再点一次才真正执行。
+    /// [EN] Install / uninstall. **In-place second confirmation**: the first click only
+    /// [EN] shows the safety notice (information the product requires the user to see and
+    /// [EN] that must not be dropped just because the front end changed); a second click
+    /// [EN] actually performs the action.
+    /// [ZH] 安装 / 卸载。**就地二次确认**：第一次点击先显示安全提示（这是产品要求用户
+    /// [ZH] 必须看到的信息，不能因为换前端就省掉），再点一次才真正执行。
     /// </summary>
     private async Task OnActionAsync(string repo, bool installing, Button button)
     {
@@ -341,9 +398,17 @@ public partial class MarketPage : UserControl, ISettingsPage
             button.Content = installing
                 ? Loc.T("settings.market.confirmInstallShort", "确认安装？")
                 : Loc.T("settings.market.uninstallConfirmShort", "确认卸载？");
-            // 包值要 4 个参数（技能 / 仓库 / 版本 / 来源）：只传 repo 会抛 FormatException，
-            // Loc.T 返回模板原文 → 整段安全提示变成「技能：{0} 仓库：{1} …」（硬编码清查 §5.3 C-1）。
-            // 三个附加值从列表里按 full_name 反查（与 WPF 传 item.Name/Version/HtmlUrl 同一口径）。
+            // [EN] The message-pack value takes 4 arguments (skill / repository / version
+            // [EN] / source): passing only repo throws FormatException, and Loc.T then
+            // [EN] returns the raw template, turning the whole safety notice into
+            // [EN] "skill: {0} repository: {1} ..." (hardcoded-text audit §5.3 C-1).
+            // [EN] The three additional values are looked up in the list by full_name (the
+            // [EN] same convention as item.Name/Version/HtmlUrl in WPF).
+            // [ZH] 包值要 4 个参数（技能 / 仓库 / 版本 / 来源）：只传 repo 会抛
+            // [ZH] FormatException，Loc.T 返回模板原文 → 整段安全提示变成
+            // [ZH] 「技能：{0} 仓库：{1} …」（硬编码清查 §5.3 C-1）。
+            // [ZH] 三个附加值从列表里按 full_name 反查（与 WPF 传
+            // [ZH] item.Name/Version/HtmlUrl 同一口径）。
             string skillName = "", skillVersion = "", skillSource = "";
             foreach (JsonElement entry in _items)
             {
@@ -414,16 +479,25 @@ public partial class MarketPage : UserControl, ISettingsPage
             MarketStatusText.Text = Loc.T("settings.market.callFailed", "❌ {0}失败：{1}", verb, ex.Message);
             return;
         }
-        // 重新搜索以刷新「已安装」徽标（与 WPF 版一致）。
+        // [EN] Search again to refresh the "Installed" badge (consistent with the WPF
+        // [EN] version).
+        // [ZH] 重新搜索以刷新「已安装」徽标（与 WPF 版一致）。
         await RefreshAsync();
     }
 
-    /// <summary>双击列表项 → 打开该技能的详情（与点「详情」同一路径）。</summary>
+    /// <summary>
+    /// [EN] Double-clicks a list entry → opens the details of that skill (the same path
+    /// [EN] as clicking "Details").
+    /// [ZH] 双击列表项 → 打开该技能的详情（与点「详情」同一路径）。
+    /// </summary>
     private async void OnListDoubleTapped(object? sender, TappedEventArgs e)
     {
-        // MarketList 是 ItemsControl（不是 ListBox），没有 SelectedItem；
-        // 卡片容器上存了该条目的 JsonElement（见 BuildCard 的 Tag），
-        // 从被点的元素沿**逻辑父链**往上找即可。
+        // [EN] MarketList is an ItemsControl (not a ListBox) and has no SelectedItem; the
+        // [EN] card container stores the JsonElement of that entry (see Tag in BuildCard);
+        // [EN] walking up the **logical parent chain** from the clicked element is enough.
+        // [ZH] MarketList 是 ItemsControl（不是 ListBox），没有 SelectedItem；
+        // [ZH] 卡片容器上存了该条目的 JsonElement（见 BuildCard 的 Tag），
+        // [ZH] 从被点的元素沿**逻辑父链**往上找即可。
         Control? current = e.Source as Control;
         while (current is not null)
         {
@@ -439,7 +513,11 @@ public partial class MarketPage : UserControl, ISettingsPage
         }
     }
 
-    /// <summary>技能详情：复用骨架右侧的字段帮助面板，不另造对话框。</summary>
+    /// <summary>
+    /// [EN] Skill details: reuse the field help panel on the right of the shell instead of
+    /// [EN] creating another dialog.
+    /// [ZH] 技能详情：复用骨架右侧的字段帮助面板，不另造对话框。
+    /// </summary>
     private async Task ShowDetailAsync(string repo, string name)
     {
         if (_host is null)
@@ -452,7 +530,11 @@ public partial class MarketPage : UserControl, ISettingsPage
         {
             _host.ShowFieldHelp(
                 Loc.T("settings.market.detailDialogTitle", "技能详情"),
-                // 包值是「❌ 获取详情失败：{0}」：不传参会露出 {0}（硬编码清查 §5.3 C-1）
+                // [EN] The message-pack value is the "failed to get details" template:
+                // [EN] without arguments the UI would expose {0} (hardcoded-text audit
+                // [EN] §5.3 C-1).
+                // [ZH] 包值是「❌ 获取详情失败：{0}」：不传参会露出 {0}
+                // [ZH] （硬编码清查 §5.3 C-1）
                 Loc.T("settings.market.detailFailed", "❌ 获取详情失败：{0}",
                     Loc.T("main.error.noResponse", "无响应")));
             return;
@@ -462,7 +544,11 @@ public partial class MarketPage : UserControl, ISettingsPage
             ? c.GetString() ?? ""
             : root.ToString();
         _host.ShowFieldHelp(
-            // 包值是「技能：{0}」，冒号在语言包里，代码里不再补一个（否则出现「技能：{0}：名字」）
+            // [EN] The message-pack value is "skill: {0}"; the colon is in the language
+            // [EN] pack and is not appended again in code (otherwise it would read
+            // [EN] "skill: {0}: name").
+            // [ZH] 包值是「技能：{0}」，冒号在语言包里，代码里不再补一个
+            // [ZH] （否则出现「技能：{0}：名字」）
             Loc.T("settings.market.detailSkill", "技能：{0}", name.Length > 0 ? name : repo),
             body.Length > 0 ? body : Loc.T("settings.market.detailNone", "（该技能没有提供详情）"),
             repo);
@@ -486,17 +572,22 @@ public partial class MarketPage : UserControl, ISettingsPage
         item.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.True;
 
     // -----------------------------------------------------------------
-    // 文案
+    // [EN] Texts
+    // [ZH] 文案
     // -----------------------------------------------------------------
     public void ApplyTexts()
     {
-        // 区块标题：与 WPF 的「搜索技能」同一个键、同一个字号口径（15 号加粗强调色）。
+        // [EN] Section title: the same key and the same font-size convention as "Search
+        // [EN] skills" in WPF (15 pt, bold, accent color).
+        // [ZH] 区块标题：与 WPF 的「搜索技能」同一个键、同一个字号口径（15 号加粗强调色）。
         MarketTitle.Text = Loc.T("settings.market.title", "搜索技能");
         MarketSearchButton.Content = Loc.T("settings.market.search", "🔍 搜索");
         MarketRefreshButton.Content = Loc.T("settings.market.refresh", "🔄 刷新");
         MarketSearchTip.Text = Loc.T("settings.market.tip", "输入关键词后回车，也支持「作者/仓库」形式。");
         MarketSearchBox.PlaceholderText = Loc.T("settings.market.searchTip", "搜索技能（留空浏览全部）");
-        // 排序下拉项的文案是委托，重建后按值选回。
+        // [EN] The texts of the sort dropdown items are delegates; after rebuilding they
+        // [EN] are selected back by value.
+        // [ZH] 排序下拉项的文案是委托，重建后按值选回。
         string? current = (MarketSortCombo.SelectedItem as SortOption)?.Value;
         var options = new List<SortOption>();
         if (MarketSortCombo.ItemsSource is IEnumerable<SortOption> existing)
@@ -515,7 +606,9 @@ public partial class MarketPage : UserControl, ISettingsPage
             }
             MarketSortCombo.SelectedIndex = index;
         }
-        // 卡片文本是运行时构建的：语言变了要重排一次（不重新请求后端）。
+        // [EN] Card texts are built at runtime: when the language changes they must be
+        // [EN] rebuilt once (without requesting the backend again).
+        // [ZH] 卡片文本是运行时构建的：语言变了要重排一次（不重新请求后端）。
         if (_loaded && _items.Count > 0)
         {
             var cards = new List<Control>();

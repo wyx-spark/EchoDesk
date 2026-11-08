@@ -4,7 +4,7 @@ Agent invocation loop (v0.2.1 capability extension, task 2).
 
 Responsibility: drive the "model -> tool call -> observe result -> decide again"
 loop and emit every step explicitly instead of returning only the final answer,
-while preserving the four hard constraints required by the task specification:
+while preserving the four hard constraints required by the design specification:
 
 * Maximum step count: once ``max_steps`` (default 4) is reached, no further tool is
   executed; the model is instead instructed to conclude using the information
@@ -30,7 +30,7 @@ interface from appearing stalled (a 0.6B call takes a few seconds).
 Agent 调用循环（v0.2.1 能力扩展，任务二）。
 
 职责：驱动"模型 → 调用工具 → 观察结果 → 再次决策"这一循环，并显式输出每一步，
-而不是只返回最终答案；同时满足任务书规定的四条硬约束：
+而不是只返回最终答案；同时满足设计规范规定的四条硬约束：
 
 * 最大步数：达到 ``max_steps``（默认 4）后不再执行任何工具，改为让模型基于已有
   信息给出结论，因此循环必然终止。该约束用于防止模型反复调用同一工具并耗尽本地

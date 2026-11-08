@@ -2,24 +2,47 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.ModelPage">
   <!--
-    模型页（v0.2.1 跨平台-2 任务一，第 8 个迁移模块）。
-
-    覆盖：**模型档位**（胶囊切换 / 下载）与**推理参数**（采样参数 + 预设 + 上下文模式）。
-    控件名与 AutomationId 与 WPF 版同名。
-
-    **模型市场（搜索 / 筛选 / 分页 / 详情 / 下载）本轮未迁移** —— 那是 WPF 侧
-    908 行的一整块（含流式加载与本地查询分页），页面底部有明确说明与替代做法。
+    [EN] Model page (v0.2.1 cross-platform development task 1, the eighth migrated module).
+    [EN]
+    [EN] Covers: **model profiles** (chip switching / download) and **inference parameters**
+    [EN] (sampling parameters + preset + context mode). Control names and AutomationIds match
+    [EN] the WPF version.
+    [EN]
+    [EN] **The model market (search / filtering / paging / details / download) was not
+    [EN] migrated in this round** — it is a 908-line block on the WPF side (including
+    [EN] streaming load and local-query paging). The bottom of the page carries an explicit
+    [EN] note and an alternative.
+    [ZH] 模型页（v0.2.1 跨平台研发任务 1，第 8 个迁移模块）。
+    [ZH]
+    [ZH] 覆盖：**模型档位**（胶囊切换 / 下载）与**推理参数**（采样参数 + 预设 + 上下文模式）。
+    [ZH] 控件名与 AutomationId 与 WPF 版同名。
+    [ZH]
+    [ZH] **模型市场（搜索 / 筛选 / 分页 / 详情 / 下载）本轮未迁移** —— 那是 WPF 侧
+    [ZH] 908 行的一整块（含流式加载与本地查询分页），页面底部有明确说明与替代做法。
   -->
   <!--
-    版式与 WPF 版对齐（本轮补全模型市场时改的）：**上面两块自己滚动、模型市场不滚**。
-    为什么不把市场也塞进同一个 ScrollViewer：分页控件要求"固定在结果列表下方、不随列表滚动"
-    （任务三），整页滚动的话分页条会跟着跑出视野；WPF 版用的是同一个结构
-    （Row0 = Auto 的滚动区 + Row1 = * 的市场区）。
+    [EN] Layout aligned with the WPF page (changed when the model market was completed this
+    [EN] round): **the upper two blocks scroll on their own; the model market does not scroll.**
+    [EN] Why not put the market into the same ScrollViewer: the paging control must stay
+    [EN] "fixed below the result list and must not scroll with it" (development task 3); with
+    [EN] whole-page scrolling the pager leaves the viewport. The WPF version uses the same
+    [EN] structure (Row0 = Auto scroll area + Row1 = * market area).
+    [ZH] 版式与 WPF 版对齐（本轮补全模型市场时改的）：**上面两块自己滚动、模型市场不滚**。
+    [ZH] 为什么不把市场也塞进同一个 ScrollViewer：分页控件要求“固定在结果列表下方、不随列表滚动”
+    [ZH]（研发任务 3），整页滚动的话分页条会跟着跑出视野；WPF 版用的是同一个结构
+    [ZH]（Row0 = Auto 的滚动区 + Row1 = * 的市场区）。
   -->
   <Grid RowDefinitions="*,Auto">
-    <!-- 视觉对齐：WPF 的模型页把"模型市场"放在**顶部**、结果列表吃剩余高度，
-         档位与推理参数压在它下面（SettingsWindow.xaml 的行 0-4 是市场，行 5-8 是档位/推理）。
-         原来的 Avalonia 版是反过来的，截图里两页的阅读顺序完全不同。 -->
+    <!--
+      [EN] Visual alignment: the WPF model page puts the "model market" **at the top**, the
+      [EN] result list takes the remaining height, and the profile plus inference parameters
+      [EN] sit below it (SettingsWindow.xaml rows 0-4 are the market, rows 5-8 are the profile
+      [EN] and inference parameters). The earlier Avalonia version was reversed, so the reading
+      [EN] order of the two pages in screenshots was completely different.
+      [ZH] 视觉对齐：WPF 的模型页把“模型市场”放在**顶部**、结果列表吃剩余高度，
+      [ZH] 档位与推理参数压在它下面（SettingsWindow.xaml 的行 0-4 是市场，行 5-8 是档位/推理）。
+      [ZH] 原来的 Avalonia 版是反过来的，截图里两页的阅读顺序完全不同。
+    -->
     <Grid x:Name="MarketHostGrid" Grid.Row="0" RowDefinitions="*">
       <TextBlock x:Name="MarketNotMigratedText" IsVisible="False" />
     </Grid>
@@ -28,8 +51,11 @@
                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel Margin="14,6,14,8" Spacing="8">
 
-      <!-- ① 模型档位 -->
-      <!-- 与 WPF 同排法：标题与「刷新档位 / ＋新建档位」在同一行，省掉一整行高度 -->
+      <!-- [EN] (1) Model profiles -->
+      <!-- [ZH] ① 模型档位 -->
+      <!-- [EN] Same layout as WPF: the title and "Refresh profiles / + New profile" share one
+           row, saving a full row of height. -->
+      <!-- [ZH] 与 WPF 同排法：标题与「刷新档位 / ＋新建档位」在同一行，省掉一整行高度 -->
       <Grid ColumnDefinitions="Auto,Auto,Auto,*">
         <TextBlock x:Name="ProfileTitle" Grid.Column="0" FontWeight="Bold" FontSize="14"
                    VerticalAlignment="Center" Margin="0,0,10,0" />
@@ -44,9 +70,16 @@
       <TextBlock x:Name="ProfileStatusText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
                  AutomationProperties.AutomationId="ProfileStatusText" />
 
-      <!-- 档位编辑器（v0.2.2 补全：WPF 侧有「新建/编辑/删除档位」，跨平台版此前只能读）。
-           紧凑一行式表单：点胶囊上的「编辑」把该档读进来，点「＋ 新建档位」清空表单。
-           刻意**不做**弹窗：Avalonia 侧没有对话框体系，就地编辑还能与胶囊同屏对照。 -->
+      <!--
+        [EN] Profile editor (completed in v0.2.2: the WPF side has "New / Edit / Delete
+        [EN] profile", while the cross-platform version could previously only read).
+        [EN] Compact one-line form: clicking "Edit" on a chip loads that profile, clicking
+        [EN] "+ New profile" clears the form. Deliberately **no dialog**: the Avalonia side has
+        [EN] no dialog framework, and in-place editing keeps the form visible next to the chips.
+        [ZH] 档位编辑器（v0.2.2 补全：WPF 侧有「新建/编辑/删除档位」，跨平台版此前只能读）。
+        [ZH] 紧凑一行式表单：点胶囊上的「编辑」把该档读进来，点「＋ 新建档位」清空表单。
+        [ZH] 刻意**不做**弹窗：Avalonia 侧没有对话框体系，就地编辑还能与胶囊同屏对照。
+      -->
       <Border x:Name="ProfileEditorPanel" IsVisible="False" CornerRadius="6" Padding="10,8"
               BorderThickness="1" BorderBrush="{DynamicResource CardBorderBrush}"
               AutomationProperties.AutomationId="ProfileEditorPanel">
@@ -82,9 +115,16 @@
         </StackPanel>
       </Border>
 
-      <!-- ② 推理参数：WPF 把这一整块放在 8 圆角、1px 描边的卡片里，
-           而且**两列并排**（温度/核采样、重复惩罚/最大生成），预设与上下文策略在标题行上。
-           单列竖排在 660 高的窗口里必须滚动才能看全 —— 与 WPF 并排的排法差了一倍高度。 -->
+      <!--
+        [EN] (2) Inference parameters: WPF puts this whole block in a card with an 8 px radius
+        [EN] and a 1 px border, and lays it out in **two columns** (temperature / top-p,
+        [EN] repetition penalty / max tokens), with the preset and the context strategy on the
+        [EN] title row. A single vertical column needs scrolling in a 660-px-high window —
+        [EN] about twice the height of the WPF side-by-side layout.
+        [ZH] ② 推理参数：WPF 把这一整块放在 8 圆角、1px 描边的卡片里，
+        [ZH] 而且**两列并排**（温度/核采样、重复惩罚/最大生成），预设与上下文策略在标题行上。
+        [ZH] 单列竖排在 660 高的窗口里必须滚动才能看全 —— 与 WPF 并排的排法差了一倍高度。
+      -->
       <Border CornerRadius="8" Padding="12,10" BorderThickness="1"
               Background="{DynamicResource InputBackgroundBrush}"
               BorderBrush="{DynamicResource InputBorderBrush}">
@@ -103,11 +143,21 @@
                       AutomationProperties.AutomationId="ContextModeCombo" />
           </Grid>
 
-          <!-- 推理预设（v0.2.4 研发任务-2）：极速 / 均衡 / 质量三档。
-               与上面的「生成预设」是**两件不同的事**：生成预设只改采样参数（温度 / top_p /
-               重复惩罚 / 最大输出），推理预设改的是**构建期参数**（初始上下文、可用上限比例、
-               批大小与线程偏好），因此切换后必须重建引擎。两行并排会让用户以为它们是同一组，
-               所以单独占一行，右侧同时给出「原生上下文 / 实际可用」以及限制原因。 -->
+          <!--
+            [EN] Inference preset (v0.2.4 development task 2): fast / balanced / quality.
+            [EN] It is **a different thing** from the "generation preset" above: the generation
+            [EN] preset changes only sampling parameters (temperature / top_p / repetition
+            [EN] penalty / max output), while the inference preset changes **build-time
+            [EN] parameters** (initial context, usable-limit ratio, batch size and thread
+            [EN] preference), so switching it must rebuild the engine. Putting them side by side
+            [EN] would make users think they are one group, hence a separate row that also shows
+            [EN] "native context / actually available" and the limiting reason on the right.
+            [ZH] 推理预设（v0.2.4 研发任务 2）：极速 / 均衡 / 质量三档。
+            [ZH] 与上面的「生成预设」是**两件不同的事**：生成预设只改采样参数（温度 / top_p /
+            [ZH] 重复惩罚 / 最大输出），推理预设改的是**构建期参数**（初始上下文、可用上限比例、
+            [ZH] 批大小与线程偏好），因此切换后必须重建引擎。两行并排会让用户以为它们是同一组，
+            [ZH] 所以单独占一行，右侧同时给出「原生上下文 / 实际可用」以及限制原因。
+          -->
           <Grid ColumnDefinitions="Auto,160,*,Auto">
             <TextBlock x:Name="InferenceProfileLabel" Grid.Column="0" VerticalAlignment="Center"
                        FontSize="12" Margin="0,0,6,0" />
@@ -230,10 +280,18 @@
                      IsVisible="False" AutomationProperties.AutomationId="HardwareWarningsText" />
         </StackPanel>
       </Expander>
-      <!-- ③ 本地模型库（v0.2.2 第 2 批补全，对齐 WPF 的 HubRegistry* 那一块）。
-           「模型市场」列的是**能下载什么**，「本地模型库」列的是**磁盘上有什么** —— WPF 侧
-           一直是两块不同的东西，此前跨平台版只有市场、没有库。
-           控件名与 AutomationId 与 WPF 同名，同一份探针可以驱动两套界面。 -->
+      <!--
+        [EN] (3) Local model library (completed in v0.2.2 batch 2, aligned with the WPF
+        [EN] HubRegistry* block). The "model market" lists **what can be downloaded**; the
+        [EN] "local model library" lists **what is on disk** — on the WPF side these have always
+        [EN] been two different things, and the cross-platform version previously had only the
+        [EN] market and no library. Control names and AutomationIds match WPF, so one probe can
+        [EN] drive both interfaces.
+        [ZH] ③ 本地模型库（v0.2.2 第 2 批补全，对齐 WPF 的 HubRegistry* 那一块）。
+        [ZH]「模型市场」列的是**能下载什么**，「本地模型库」列的是**磁盘上有什么** —— WPF 侧
+        [ZH] 一直是两块不同的东西，此前跨平台版只有市场、没有库。
+        [ZH] 控件名与 AutomationId 与 WPF 同名，同一份探针可以驱动两套界面。
+      -->
       <Grid ColumnDefinitions="*,Auto" Margin="0,10,0,0">
         <TextBlock x:Name="HubRegistryTitle" Grid.Column="0" FontWeight="Bold" FontSize="14"
                    VerticalAlignment="Center"

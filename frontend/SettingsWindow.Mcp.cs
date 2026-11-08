@@ -391,7 +391,7 @@ public partial class SettingsWindow
         {
             Name = name,
             Command = command,
-            // 参数字符串按空格切分（任务书要求的最简形式）：用户要填带空格的参数时，
+            // 参数字符串按空格切分（设计规范要求的最简形式）：用户要填带空格的参数时，
             // 直接改 config.json 即可 —— 这里刻意不做引号解析，避免"我以为它懂"。
             Args = SplitMcpArgs(_mcpFormArgsBox?.Text ?? ""),
             Enabled = true,

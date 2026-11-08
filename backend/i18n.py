@@ -56,7 +56,8 @@ import sys
 import threading
 from typing import Any, Dict, List, Optional
 
-# ---------- [EN] Languages and fallback chain / [ZH] 语言与回退链 ----------
+# [EN] ---------- Languages and fallback chain ----------
+# [ZH] ---------- 语言与回退链 ----------
 
 #: [EN] Locales for which language packs are bundled at release time.
 #: [ZH] 发布时内置语言包的语言。
@@ -185,7 +186,8 @@ def detect_system_locale() -> str:
     return SOURCE_LOCALE
 
 
-# ---------- [EN] Language-pack discovery / [ZH] 语言包定位 ----------
+# [EN] ---------- Language-pack discovery ----------
+# [ZH] ---------- 语言包定位 ----------
 
 
 def _search_dirs() -> List[str]:
@@ -272,7 +274,8 @@ def available_locales() -> List[str]:
     return ordered
 
 
-# ---------- [EN] Language-pack parsing / [ZH] 语言包解析 ----------
+# [EN] ---------- Language-pack parsing ----------
+# [ZH] ---------- 语言包解析 ----------
 
 
 def _flatten(node: Any, prefix: str, out: Dict[str, str]) -> None:
@@ -407,7 +410,8 @@ class Translator:
         self.auto = auto
         self.set_locale(locale or ("auto" if auto else SOURCE_LOCALE))
 
-    # ---- [EN] Locale switching / [ZH] 语言切换 ----
+    # [EN] ---- Locale switching ----
+    # [ZH] ---- 语言切换 ----
 
     @property
     def locale(self) -> str:
@@ -485,7 +489,8 @@ class Translator:
         """
         return self.set_locale(self._requested or self._locale)
 
-    # ---- [EN] Text lookup / [ZH] 文案取用 ----
+    # [EN] ---- Text lookup ----
+    # [ZH] ---- 文案取用 ----
 
     def t(self, key: str, **kwargs: Any) -> str:
         """
@@ -598,7 +603,8 @@ def set_locale(locale: Optional[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# [EN] User-facing logging / [ZH] 面向用户的日志
+# [EN] User-facing logging
+# [ZH] 面向用户的日志
 # ---------------------------------------------------------------------------
 def log_user(logger: Any, key: str, *args: Any, locale: Optional[str] = None,
              level: str = "info", **kwargs: Any) -> str:

@@ -320,7 +320,10 @@ def capabilities() -> Dict[str, Dict[str, Any]]:
     wps = wps_com_available()
     wps_reason = _cap_reason("wps_com")
     if is_windows() and not wps:
-        # Windows 上也可能是"装了系统但没装 pywin32"：这与平台限制要分开说
+        # [EN] On Windows the cause may also be "the system is installed but
+        # [EN] pywin32 is not": this must be kept separate from a platform
+        # [EN] limitation.
+        # [ZH] Windows 上也可能是"装了系统但没装 pywin32"：这与平台限制要分开说。
         wps_reason = _cap_reason("wps_com_no_pywin32")
     out["wps_com"] = {
         "available": wps,

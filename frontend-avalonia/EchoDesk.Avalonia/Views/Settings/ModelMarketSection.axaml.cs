@@ -1,30 +1,60 @@
 // [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/Settings/ModelMarketSection.axaml.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/Settings/ModelMarketSection.axaml.cs。类型与成员说明见下方注释。
-// 模型市场区块的交互逻辑（v0.2.2：把 WPF 侧的模型市场补全到跨平台版）。
+// [EN] Interaction logic of the model market section (v0.2.2: completes the WPF model
+// [EN] market for the cross-platform build).
+// [ZH] 模型市场区块的交互逻辑（v0.2.2：把 WPF 侧的模型市场补全到跨平台版）。
 //
-// 这一块**以 WPF 版行为为准**（frontend/SettingsWindow.Market.cs，908 行），
-// 后端协议一个字都没改。分工与 WPF 完全一致：
+// [EN] This block **uses the WPF behavior as the reference**
+// [EN] (frontend/SettingsWindow.Market.cs, 908 lines); the backend protocol is unchanged.
+// [EN] The division of work is identical to WPF:
+// [ZH] 这一块**以 WPF 版行为为准**（frontend/SettingsWindow.Market.cs，908 行），
+// [ZH] 后端协议一个字都没改。分工与 WPF 完全一致：
 //
-//   * `model_hub_load`（流式）：按关键词取回结果集，边取边报 `hub_progress`；
-//     请求里带 `no_page=true`（结果集里不带第一页 —— 免得两处各算一遍、数字对不上）；
-//   * `model_hub_query`（普通）：在**后端内存里那份结果集**上做
-//     关键词筛选 → 结构化筛选 → 排序 → 分页，毫秒级进程内往返，**不重新请求远端**；
-//   * `model_hub_detail`：仓库里可下载的 GGUF 文件与体积；
-//   * `model_hub_download`（流式）：下载单个文件，带进度与取消；
+// [EN]   * `model_hub_load` (streaming): fetches the result set by keyword and reports
+// [EN]     `hub_progress` while fetching; the request carries `no_page=true` (the result
+// [EN]     set omits the first page so that it is not computed twice and the numbers
+// [EN]     cannot diverge);
+// [ZH]   * `model_hub_load`（流式）：按关键词取回结果集，边取边报 `hub_progress`；
+// [ZH]     请求里带 `no_page=true`（结果集里不带第一页 —— 免得两处各算一遍、数字对不上）；
+// [EN]   * `model_hub_query` (plain): runs keyword filtering, structured filtering,
+// [EN]     sorting, and paging on **the result set held in backend memory**, a
+// [EN]     millisecond in-process round trip that **never re-requests the remote side**;
+// [ZH]   * `model_hub_query`（普通）：在**后端内存里那份结果集**上做
+// [ZH]     关键词筛选 → 结构化筛选 → 排序 → 分页，毫秒级进程内往返，**不重新请求远端**；
+// [EN]   * `model_hub_detail`: the downloadable GGUF files in a repository and their sizes;
+// [ZH]   * `model_hub_detail`：仓库里可下载的 GGUF 文件与体积；
+// [EN]   * `model_hub_download` (streaming): downloads one file, with progress and cancel;
+// [ZH]   * `model_hub_download`（流式）：下载单个文件，带进度与取消；
 //   * `model_hub_registry` / `model_hub_uninstall` / `model_hub_status` / `model_hub_config_set`。
 //
-// 三处**与 WPF 不同的实现选择**（都是平台差异，不是行为差异，逐条写清楚）：
+// [EN] Three implementation choices **that differ from WPF** (all platform differences,
+// [EN] not behavioral ones, listed one by one):
+// [ZH] 三处**与 WPF 不同的实现选择**（都是平台差异，不是行为差异，逐条写清楚）：
 //
-// 1. **详情用就地展开的文件列表**（HubDetailPanel + HubFileList），不是弹对话框。
-//    WPF 版用的是模态对话框；Avalonia 没有内置 MessageBox/对话框体系，
-//    而骨架里也没有第三个窗口。就地展开还有个好处：详情与结果列表同屏可对照。
-// 2. **Token 输入框用 TextBox + PasswordChar**（WPF 用的是 PasswordBox）。
-//    Avalonia 的 TextBox 支持 PasswordChar，语义等价。
-// 3. **分面复选框与结果行都是运行时构建**（WPF 也是运行时构建分面，这里只是没有 DataTemplate）。
+// [EN] 1. **Details use an inline expanded file list** (HubDetailPanel + HubFileList)
+// [EN]    rather than a dialog box.
+// [ZH] 1. **详情用就地展开的文件列表**（HubDetailPanel + HubFileList），不是弹对话框。
+// [EN]    The WPF build uses a modal dialog; Avalonia has no built-in MessageBox or
+// [EN]    dialog system, and the skeleton has no third window either. Inline expansion has
+// [EN]    another benefit: details and the result list can be compared on one screen.
+// [ZH]    WPF 版用的是模态对话框；Avalonia 没有内置 MessageBox/对话框体系，
+// [ZH]    而骨架里也没有第三个窗口。就地展开还有个好处：详情与结果列表同屏可对照。
+// [EN] 2. **The token input uses TextBox + PasswordChar** (WPF uses PasswordBox).
+// [ZH] 2. **Token 输入框用 TextBox + PasswordChar**（WPF 用的是 PasswordBox）。
+// [EN]    Avalonia's TextBox supports PasswordChar, which is semantically equivalent.
+// [ZH]    Avalonia 的 TextBox 支持 PasswordChar，语义等价。
+// [EN] 3. **Facet checkboxes and result rows are built at run time** (WPF also builds
+// [EN]    facets at run time; here there is simply no DataTemplate).
+// [ZH] 3. **分面复选框与结果行都是运行时构建**（WPF 也是运行时构建分面，这里只是没有 DataTemplate）。
 //
-// 一处**刻意的行为保留**：结果区的最小高度 + 外层滚动由 XAML 的 MinHeight 与
-// 分页条独立成行保证 —— 任务八（窗口太小看不到搜索结果）在 WPF 侧的结论是
-// "结果区设最小高度 + 外层加滚动条"，这里同样处理。
+// [EN] One **deliberate behavior preserved**: the minimum height of the result area plus
+// [EN] the outer scrolling are provided by the XAML MinHeight and by the pager's own row —
+// [EN] the conclusion for development task 8 (search results invisible when the window is
+// [EN] too small) on the WPF side was "set a minimum height on the result area and add an
+// [EN] outer scrollbar", which is handled the same way here.
+// [ZH] 一处**刻意的行为保留**：结果区的最小高度 + 外层滚动由 XAML 的 MinHeight 与
+// [ZH] 分页条独立成行保证 —— 研发任务 8（窗口太小看不到搜索结果）在 WPF 侧的结论是
+// [ZH] "结果区设最小高度 + 外层加滚动条"，这里同样处理。
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -42,17 +72,32 @@ using EchoDesk.Avalonia.Services;
 
 namespace EchoDesk.Avalonia.Views.Settings;
 
-/// <summary>市场区块需要的那几个能力（由 ModelPage 提供，避免直接依赖整个设置骨架）。</summary>
+/// <summary>
+/// [EN] The few capabilities the market section needs (provided by ModelPage so that the
+/// [EN] whole settings shell is not a direct dependency).
+/// [ZH] 市场区块需要的那几个能力（由 ModelPage 提供，避免直接依赖整个设置骨架）。
+/// </summary>
 public interface IModelMarketHost
 {
-    /// <summary>发一个普通请求（内部会处理超时与异常类型）。</summary>
+    /// <summary>
+    /// [EN] Sends a plain request (timeouts and exception types are handled internally).
+    /// [ZH] 发一个普通请求（内部会处理超时与异常类型）。
+    /// </summary>
     Task<JsonDocument?> SendAsync(object request, TimeSpan? idleTimeout = null);
 
-    /// <summary>发一个流式请求（用于 model_hub_load / model_hub_download 的进度）。</summary>
+    /// <summary>
+    /// [EN] Sends a streaming request (used for model_hub_load / model_hub_download
+    /// [EN] progress).
+    /// [ZH] 发一个流式请求（用于 model_hub_load / model_hub_download 的进度）。
+    /// </summary>
     Task SendStreamAsync(object request, Action<string, JsonElement> onEvent,
                          TimeSpan? idleTimeout = null);
 
-    /// <summary>后端是否可用（不可用时市场给出明确说明，而不是一片空白）。</summary>
+    /// <summary>
+    /// [EN] Whether the backend is available (when it is not, the market states that
+    /// [EN] explicitly instead of showing a blank area).
+    /// [ZH] 后端是否可用（不可用时市场给出明确说明，而不是一片空白）。
+    /// </summary>
     bool BackendAvailable { get; }
 }
 
@@ -60,7 +105,8 @@ public partial class ModelMarketSection : UserControl
 {
     private IModelMarketHost? _host;
 
-    // ---------- 状态（字段名与 WPF 版一致，便于对照两个实现） ----------
+    // [EN] ---------- State (field names match the WPF build for easy comparison) ----------
+    // [ZH] ---------- 状态（字段名与 WPF 版一致，便于对照两个实现） ----------
     private readonly List<HubRow> _hubPage = new();
     private readonly HashSet<string> _hubParamSelected = new();
     private readonly HashSet<string> _hubQuantSelected = new();
@@ -89,10 +135,17 @@ public partial class ModelMarketSection : UserControl
     private string _hubStopReason = "";
     private string _hubDetailRepo = "";
 
-    /// <summary>每页条数（任务三：20 / 50 / 100，默认 20）。</summary>
+    /// <summary>
+    /// [EN] Rows per page (development task 3: 20 / 50 / 100, default 20).
+    /// [ZH] 每页条数（研发任务 3：20 / 50 / 100，默认 20）。
+    /// </summary>
     private static readonly int[] HubPageSizes = { 20, 50, 100 };
 
-    /// <summary>本地筛选防抖（任务书要求"输入停止后触发过滤，如 150ms"）。</summary>
+    /// <summary>
+    /// [EN] Local filter debounce (the design specification requires "trigger filtering
+    /// [EN] after the input stops, for example 150 ms").
+    /// [ZH] 本地筛选防抖（设计规范要求"输入停止后触发过滤，如 150ms"）。
+    /// </summary>
     private static readonly TimeSpan HubFilterDebounce = TimeSpan.FromMilliseconds(150);
 
     private sealed record Option(string Value, Func<string> Text)
@@ -100,11 +153,19 @@ public partial class ModelMarketSection : UserControl
         public override string ToString() => Text();
     }
 
-    /// <summary>结果行（值对象；文案在 BuildHubRow 里按当前语言拼好）。</summary>
+    /// <summary>
+    /// [EN] A result row (value object; the text is composed in BuildHubRow for the
+    /// [EN] current language).
+    /// [ZH] 结果行（值对象；文案在 BuildHubRow 里按当前语言拼好）。
+    /// </summary>
     private sealed record HubRow(string Repo, string Name, string Tag, string Badge, string Meta,
                                  bool Recommended, bool IsDefault);
 
-    /// <summary>详情面板里的一行（文件名 + 体积 + 是否已下载）。</summary>
+    /// <summary>
+    /// [EN] One row in the details panel (file name + size + whether it is already
+    /// [EN] downloaded).
+    /// [ZH] 详情面板里的一行（文件名 + 体积 + 是否已下载）。
+    /// </summary>
     private sealed record HubFile(string Repo, string FileName, long Size, string SizeText, bool Installed);
 
     public ModelMarketSection()
@@ -120,9 +181,8 @@ public partial class ModelMarketSection : UserControl
         _ = RefreshStatusAsync();
     }
 
-    // -----------------------------------------------------------------
-    // 初始化
-    // -----------------------------------------------------------------
+    // [EN] ---------- Initialization ----------
+    // [ZH] ---------- 初始化 ----------
     private void BuildStaticOptions()
     {
         HubSortCombo.ItemsSource = new List<Option>
@@ -205,8 +265,11 @@ public partial class ModelMarketSection : UserControl
                 || !int.TryParse(text, out int size) || size <= 0)
                 return;
             _hubPageSize = size;
-            // 任务三要求"切换每页条数后回到第 1 页"：不回到第 1 页的话，
-            // 页码可能直接超出新的总页数，看起来像"每页条数没生效"（WPF 侧踩过）。
+            // [EN] Development task 3 requires "return to page 1 after changing the rows per
+            // [EN] page": otherwise the page number may exceed the new total page count and
+            // [EN] look like "the page size did not take effect" (hit on the WPF side).
+            // [ZH] 研发任务 3 要求"切换每页条数后回到第 1 页"：不回到第 1 页的话，
+            // [ZH] 页码可能直接超出新的总页数，看起来像"每页条数没生效"（WPF 侧踩过）。
             await RefreshQueryAsync(resetPage: true, rebuildFacets: false);
         };
 
@@ -251,22 +314,34 @@ public partial class ModelMarketSection : UserControl
 
     private bool HasDataSet => _hubLoaded > 0 || _hubLastQuery is not null;
 
-    // -----------------------------------------------------------------
-    // 数据：加载（流式）/ 查询（本地）/ 详情 / 下载
-    // -----------------------------------------------------------------
+    // [EN] ---------- Data: load (streaming) / query (local) / details / download ----------
+    // [ZH] ---------- 数据：加载（流式）/ 查询（本地）/ 详情 / 下载 ----------
 
     /// <summary>
-    /// 让页面把「本地模型库」那一块的状态也写进**同一条**状态行
-    /// （v0.2.2 第 2 批）。
+    /// [EN] Lets the page write the state of the "local model library" block into **the
+    /// [EN] same** status line as well (v0.2.2, batch 2).
     ///
-    /// 为什么不给模型库另起一行：WPF 的模型页只有一条 `HubStatusText`，
-    /// 模型市场的搜索/下载与模型库的重扫/加载/删除都往上写。另起一行会让
-    /// **同一个 AutomationId 在自动化树里出现两次**（探针取到哪一个不确定），
-    /// 而且用户会看到两块各自"以为在说话"的状态 —— 与 WPF 行为不一致。
+    /// [EN] Why the model library does not get its own line: the WPF model page has a
+    /// [EN] single `HubStatusText`, and both the market's search/download and the library's
+    /// [EN] rescan/load/delete write to it. A second line would make **the same
+    /// [EN] AutomationId appear twice in the automation tree** (a probe would not know
+    /// [EN] which one it picked up), and users would see two blocks each "thinking it is
+    /// [EN] speaking" — inconsistent with WPF behavior.
+    /// [ZH] 让页面把「本地模型库」那一块的状态也写进**同一条**状态行
+    /// [ZH] （v0.2.2 第 2 批）。
+    ///
+    /// [ZH] 为什么不给模型库另起一行：WPF 的模型页只有一条 `HubStatusText`，
+    /// [ZH] 模型市场的搜索/下载与模型库的重扫/加载/删除都往上写。另起一行会让
+    /// [ZH] **同一个 AutomationId 在自动化树里出现两次**（探针取到哪一个不确定），
+    /// [ZH] 而且用户会看到两块各自"以为在说话"的状态 —— 与 WPF 行为不一致。
     /// </summary>
     public void SetStatus(string text) => HubStatusText.Text = text;
 
-    /// <summary>页面刷新时调用：只刷新状态与（已有的）当前页，**不自动搜索**。</summary>
+    /// <summary>
+    /// [EN] Called when the page refreshes: refreshes only the status and the current page
+    /// [EN] (if any) and **does not search automatically**.
+    /// [ZH] 页面刷新时调用：只刷新状态与（已有的）当前页，**不自动搜索**。
+    /// </summary>
     public async Task RefreshAsync()
     {
         if (_host is null)
@@ -305,7 +380,9 @@ public partial class ModelMarketSection : UserControl
         }
         catch (Exception)
         {
-            // 状态查询失败不影响市场主流程（搜索时会给出真正的错误）
+            // [EN] A failed status query does not affect the market's main flow (a search
+            // [EN] reports the real error).
+            // [ZH] 状态查询失败不影响市场主流程（搜索时会给出真正的错误）
         }
     }
 
@@ -346,7 +423,9 @@ public partial class ModelMarketSection : UserControl
                     page_size = _hubPageSize,
                     refresh,
                     resume,
-                    // 结果集里不带第一页（本地筛选/排序/分页统一走 model_hub_query）
+                    // [EN] The result set omits the first page (local filtering, sorting, and
+                    // [EN] paging all go through model_hub_query).
+                    // [ZH] 结果集里不带第一页（本地筛选/排序/分页统一走 model_hub_query）
                     no_page = true,
                 },
                 onEvent: (type, root) =>
@@ -385,31 +464,45 @@ public partial class ModelMarketSection : UserControl
             HubStopButton.IsVisible = false;
             HubLoadProgressBar.IsVisible = false;
             HubProgressText.Text = "";
-            // 数据集换了之后第一页要重新算：统一走本地查询，保证三层数字与分页一致
+            // [EN] After the data set changes, the first page must be recomputed: everything
+            // [EN] goes through the local query so that the three counts and paging agree.
+            // [ZH] 数据集换了之后第一页要重新算：统一走本地查询，保证三层数字与分页一致
             await RefreshQueryAsync(resetPage: true, rebuildFacets: true);
-            // 加载失败的原因补在最前面：上面那次查询会把状态行整条重写，把真正的错误盖掉
-            // （WPF 侧的 UI 探针实测到过：用户看到的是"怎么点都没反应"而不是"网络不可达"）
+            // [EN] The load failure reason is prepended: the query above rewrites the whole
+            // [EN] status line and would hide the real error.
+            // [EN] (Measured by the WPF UI probe: users saw "nothing happens on click"
+            // [EN] instead of "network unreachable".)
+            // [ZH] 加载失败的原因补在最前面：上面那次查询会把状态行整条重写，把真正的错误盖掉
+            // [ZH] （WPF 侧的 UI 探针实测到过：用户看到的是"怎么点都没反应"而不是"网络不可达"）
             if (loadNotice.Length > 0)
                 HubStatusText.Text = loadNotice + "　" + HubStatusText.Text;
         }
     }
 
-    /// <summary>把加载结果里与"列表之外"有关的状态记下来（排序/筛选/分页仍由查询动作给）。</summary>
+    /// <summary>
+    /// [EN] Records the state in the load result that concerns things "beyond the list"
+    /// [EN] (sorting, filtering, and paging still come from the query action).
+    /// [ZH] 把加载结果里与"列表之外"有关的状态记下来（排序/筛选/分页仍由查询动作给）。
+    /// </summary>
     private void ApplyDataset(JsonElement hub)
     {
         _hubOffline = GetBool(hub, "offline");
         _hubHasMore = GetBool(hub, "has_more");
         _hubStopReason = GetString(hub, "stop_reason");
         _hubFallbackCount = GetInt(hub, "downloads_fallback_count", 0);
-        _hubFacetSignature = "";               // 数据集变了，分面选项与计数都要重建
+        _hubFacetSignature = "";               // [EN] Data set changed; rebuild facets.
+                                               // [ZH] 数据集变了，分面选项与计数都要重建
         _hubTotalAvailable = hub.TryGetProperty("total_available", out JsonElement total)
                              && total.ValueKind == JsonValueKind.Number
             ? total.GetInt32() : null;
     }
 
     /// <summary>
-    /// 发一次本地查询。返回**是否真的发出去了** —— 调用方（尤其是探针）要能区分
-    /// "查询做完了"与"被闸门挡回去了"，否则断言会读到过期状态而误判。
+    /// [EN] Issues one local query. Returns **whether it was really issued**: the caller
+    /// [EN] (especially a probe) must be able to tell "the query finished" from "the gate
+    /// [EN] turned it back", otherwise an assertion reads stale state and misjudges.
+    /// [ZH] 发一次本地查询。返回**是否真的发出去了** —— 调用方（尤其是探针）要能区分
+    /// [ZH] "查询做完了"与"被闸门挡回去了"，否则断言会读到过期状态而误判。
     /// </summary>
     private async Task<bool> RefreshQueryAsync(bool resetPage, bool rebuildFacets)
     {
@@ -455,15 +548,27 @@ public partial class ModelMarketSection : UserControl
     }
 
     /// <summary>
-    /// 等到"没有别的查询在跑"再发这一次查询。
+    /// [EN] Waits until "no other query is running" before issuing this query.
     ///
-    /// 为什么探针需要它：界面上的每一次改动都会**自己**触发一次查询
-    /// （下拉框 SelectionChanged、筛选框 150ms 防抖），探针紧接着也发一次，
-    /// 两次撞在一起时后发的那次会被 <c>_hubQuerying</c> 闸门挡回去 ——
-    /// 于是探针读到的是**上一次**的状态，断言就会误判成"功能没生效"
-    /// （实测踩到：每页条数改成 50 之后总页数仍是 250）。
-    /// 真实用户不会遇到这个问题（他只是看到两次查询合成一次），所以这只是在
-    /// 探针侧补一个"等闸门放开"的动作，没有改任何产品行为。
+    /// [EN] Why a probe needs it: every change in the UI triggers a query **on its own**
+    /// [EN] (combo box SelectionChanged, 150 ms filter debounce), and the probe
+    /// [EN] immediately issues another one; when the two collide, the later one is turned
+    /// [EN] back by the <c>_hubQuerying</c> gate — so the probe reads the state of the
+    /// [EN] **previous** query and the assertion wrongly concludes "the feature did not
+    /// [EN] take effect" (hit in practice: after changing the rows per page to 50, the
+    /// [EN] total page count was still 250).
+    /// [EN] Real users never hit this (they only see two queries merged into one), so this
+    /// [EN] merely adds a "wait for the gate to open" action on the probe side and changes
+    /// [EN] no product behavior.
+    /// [ZH] 等到"没有别的查询在跑"再发这一次查询。
+    ///
+    /// [ZH] 为什么探针需要它：界面上的每一次改动都会**自己**触发一次查询
+    /// [ZH] （下拉框 SelectionChanged、筛选框 150ms 防抖），探针紧接着也发一次，
+    /// [ZH] 两次撞在一起时后发的那次会被 <c>_hubQuerying</c> 闸门挡回去 ——
+    /// [ZH] 于是探针读到的是**上一次**的状态，断言就会误判成"功能没生效"
+    /// [ZH] （实测踩到：每页条数改成 50 之后总页数仍是 250）。
+    /// [ZH] 真实用户不会遇到这个问题（他只是看到两次查询合成一次），所以这只是在
+    /// [ZH] 探针侧补一个"等闸门放开"的动作，没有改任何产品行为。
     /// </summary>
     private async Task<bool> QueryWhenIdleAsync(bool resetPage, bool rebuildFacets)
     {
@@ -478,7 +583,9 @@ public partial class ModelMarketSection : UserControl
 
     private object BuildFilters() => new
     {
-        // 同维度多选是"或"、不同维度之间是"与"（见 backend/model_query.py 的说明）
+        // [EN] Within one dimension multiple selections are an "or", across dimensions they
+        // [EN] are an "and" (see the notes in backend/model_query.py).
+        // [ZH] 同维度多选是"或"、不同维度之间是"与"（见 backend/model_query.py 的说明）
         @params = _hubParamSelected.ToArray(),
         quant = _hubQuantSelected.ToArray(),
         updated = _hubUpdatedSelected.ToArray(),
@@ -523,10 +630,16 @@ public partial class ModelMarketSection : UserControl
         string text = HubPageBox.Text?.Trim() ?? "";
         if (!int.TryParse(text, out int wanted))
         {
-            // 非法输入不跳页，并把原因写在分页条旁边（**不能**写进折叠的筛选面板里：
-            // 折叠内容不在 UIA 树里、用户也看不见 —— WPF 侧踩过）
-            // 包值是「⚠️ 请输入 {0}–{1} 之间的页码」：两个参数都要传，
-            // 只传一个会抛 FormatException、界面露出 {0}/{1}（硬编码清查 §5.3 C-1）
+            // [EN] Invalid input does not change the page, and the reason is written next to
+            // [EN] the pager (**not** inside the collapsible filter panel: collapsed content
+            // [EN] is not in the UIA tree and users cannot see it — hit on the WPF side).
+            // [EN] The resource value is the "enter a page between {0} and {1}" message: both
+            // [EN] arguments must be passed; passing only one throws FormatException and the
+            // [EN] UI shows the raw {0}/{1} (hardcoded-string audit §5.3 C-1).
+            // [ZH] 非法输入不跳页，并把原因写在分页条旁边（**不能**写进折叠的筛选面板里：
+            // [ZH] 折叠内容不在 UIA 树里、用户也看不见 —— WPF 侧踩过）
+            // [ZH] 包值是「⚠️ 请输入 {0}–{1} 之间的页码」：两个参数都要传，
+            // [ZH] 只传一个会抛 FormatException、界面露出 {0}/{1}（硬编码清查 §5.3 C-1）
             HubPagerHint.Text = Loc.T("settings.model.pageInvalid",
                 "⚠️ 请输入 {0}–{1} 之间的页码", 1, Math.Max(1, _hubPages));
             return;
@@ -575,7 +688,9 @@ public partial class ModelMarketSection : UserControl
             if (doc is not null && doc.RootElement.TryGetProperty("model_hub", out JsonElement st))
                 HubStatusText.Text += "　" + Loc.T("settings.model.statusSource", "数据源：{0}",
                     GetString(st, "source_note"));
-            // Token 保存完就清空输入框：口令留在界面上没有必要（WPF 侧同样处理）
+            // [EN] The input box is cleared once the token is saved: keeping the secret on
+            // [EN] screen serves no purpose (WPF does the same).
+            // [ZH] Token 保存完就清空输入框：口令留在界面上没有必要（WPF 侧同样处理）
             if (includeToken && token.Length > 0)
                 HubTokenBox.Text = "";
         }
@@ -600,8 +715,12 @@ public partial class ModelMarketSection : UserControl
                 HubStatusText.Text = Loc.T("settings.model.dirMissing", "⚠️ 未取到模型目录");
                 return;
             }
-            // 跨平台：交给平台自己打开（不 P/Invoke —— Avalonia 版刻意不引 Windows 专属能力，
-            // 见 EchoDesk.Avalonia.csproj 头部说明）。失败不抛，改成一行状态提示。
+            // [EN] Cross-platform: the platform opens it itself (no P/Invoke — the Avalonia
+            // [EN] build deliberately avoids Windows-only capabilities; see the header note
+            // [EN] in EchoDesk.Avalonia.csproj). Failures do not throw; they become a
+            // [EN] one-line status hint.
+            // [ZH] 跨平台：交给平台自己打开（不 P/Invoke —— Avalonia 版刻意不引 Windows 专属能力，
+            // [ZH] 见 EchoDesk.Avalonia.csproj 头部说明）。失败不抛，改成一行状态提示。
             if (!TryOpenDirectory(dir))
             {
                 HubStatusText.Text = Loc.T("settings.model.dirOpenFailed",
@@ -616,9 +735,8 @@ public partial class ModelMarketSection : UserControl
         }
     }
 
-    // -----------------------------------------------------------------
-    // 详情与下载
-    // -----------------------------------------------------------------
+    // [EN] ---------- Details and download ----------
+    // [ZH] ---------- 详情与下载 ----------
     private async Task ShowDetailAsync(HubRow row)
     {
         if (_host is null)
@@ -737,7 +855,9 @@ public partial class ModelMarketSection : UserControl
                 },
                 onEvent: (type, root) =>
                 {
-                    // 后端下载进度用 content 文本 + progress 字段（与 WPF 侧同一消费方式）
+                    // [EN] Backend download progress uses the content text plus the progress
+                    // [EN] field (the same consumption pattern as the WPF side).
+                    // [ZH] 后端下载进度用 content 文本 + progress 字段（与 WPF 侧同一消费方式）
                     if (type == "progress")
                     {
                         string content = GetString(root, "content");
@@ -751,7 +871,9 @@ public partial class ModelMarketSection : UserControl
                 },
                 idleTimeout: null);
             HubProgressText.Text = Loc.T("settings.model.downloadDone", "✅ 下载完成：{0}", file.FileName);
-            // 下载完刷新一次列表徽标（命中缓存时几乎瞬时）
+            // [EN] Refresh the list badges once after the download (almost instantaneous on a
+            // [EN] cache hit).
+            // [ZH] 下载完刷新一次列表徽标（命中缓存时几乎瞬时）
             await LoadMarketAsync(refresh: false, resume: false);
         }
         catch (Exception ex)
@@ -765,9 +887,8 @@ public partial class ModelMarketSection : UserControl
         }
     }
 
-    // -----------------------------------------------------------------
-    // 渲染：结果行 / 分面 / 分页 / 状态
-    // -----------------------------------------------------------------
+    // [EN] ---------- Rendering: result rows / facets / pager / status ----------
+    // [ZH] ---------- 渲染：结果行 / 分面 / 分页 / 状态 ----------
     private void RenderQuery(JsonElement query, bool rebuildFacets)
     {
         _hubLastQuery = query.Clone();
@@ -816,8 +937,12 @@ public partial class ModelMarketSection : UserControl
             ? Loc.T("settings.model.tagDefault", "(默认)")
             : (recommended ? Loc.T("settings.model.tagRecommended", "(推荐)") : "");
 
-        // 下载量口径（任务一）：历史总下载量；缺字段的条目注明已回退到 30 天口径，
-        // 本地/默认来源没有远端元数据，不显示成"0 次下载"。
+        // [EN] Download-count basis (development task 1): all-time downloads; entries missing
+        // [EN] the field are marked as having fallen back to the 30-day basis.
+        // [EN] Local/default sources have no remote metadata and are not shown as
+        // [EN] "0 downloads".
+        // [ZH] 下载量口径（研发任务 1）：历史总下载量；缺字段的条目注明已回退到 30 天口径，
+        // [ZH] 本地/默认来源没有远端元数据，不显示成"0 次下载"。
         string downloadsText = "";
         if (remote && downloads > 0)
         {
@@ -915,7 +1040,11 @@ public partial class ModelMarketSection : UserControl
         return grid;
     }
 
-    /// <summary>默认模型单独一行钉在结果上方，标注来源，且**不计入下面的分页条数**。</summary>
+    /// <summary>
+    /// [EN] The default model is pinned on its own row above the results, with its source
+    /// [EN] noted, and **is not counted in the paging of the list below**.
+    /// [ZH] 默认模型单独一行钉在结果上方，标注来源，且**不计入下面的分页条数**。
+    /// </summary>
     private void RenderPinned()
     {
         if (_hubPinned is null)
@@ -931,10 +1060,16 @@ public partial class ModelMarketSection : UserControl
     }
 
     /// <summary>
-    /// "共 N 条"的措辞（总条数显示与状态行共用，避免两处口径不一致）。
-    /// 三种情况分清楚：取完了 → 精确总数；撞上加载上限 → "N 条以上（远端还有更多）"；
-    /// **一条都没加载** → 什么都不编（早期版本这里会说"共 0 条以上（远端还有更多）"，
-    /// 两句话都是假的 —— WPF 侧的 UI 探针实测到过）。
+    /// [EN] The wording of "N results in total" (shared by the total count display and the
+    /// [EN] status line so that the two never disagree).
+    /// [EN] Three cases are kept apart: fully fetched -> the exact total; hit the load cap ->
+    /// [EN] "N or more (the remote side has more)"; **nothing loaded at all** -> invent
+    /// [EN] nothing (an earlier release said "0 or more in total (the remote side has more)"
+    /// [EN] here; both statements were false — measured by the WPF UI probe).
+    /// [ZH] "共 N 条"的措辞（总条数显示与状态行共用，避免两处口径不一致）。
+    /// [ZH] 三种情况分清楚：取完了 → 精确总数；撞上加载上限 → "N 条以上（远端还有更多）"；
+    /// [ZH] **一条都没加载** → 什么都不编（早期版本这里会说"共 0 条以上（远端还有更多）"，
+    /// [ZH] 两句话都是假的 —— WPF 侧的 UI 探针实测到过）。
     /// </summary>
     private string TotalText()
     {
@@ -986,20 +1121,27 @@ public partial class ModelMarketSection : UserControl
 
         var parts = new List<string>
         {
-            // 三层数字（任务四）：本地筛选后 / 已加载 / 共 N 条
+            // [EN] Three numbers (development task 4): after local filtering / loaded / total.
+            // [ZH] 三层数字（研发任务 4）：本地筛选后 / 已加载 / 共 N 条
             Loc.T("settings.model.stats", "本地筛选后 {0} 条 / 已加载 {1} 条 / {2}",
                 _hubFiltered, _hubLoaded, TotalText()),
         };
         string sourceNote = GetString(query, "source_note");
         if (sourceNote.Length > 0)
             parts.Add(Loc.T("settings.model.statusSource", "数据源：{0}", sourceNote));
-        // 加载结果里那句话**总是要显示**：它可能是"已取完全部 N 条"，也可能是
-        // "加载中断（已取回 0 条）：网络不可达"。只在 has_more 时才显示会把整轮失败的原因吞掉。
+        // [EN] The sentence in the load result **must always be shown**: it may be "all N
+        // [EN] results were fetched" or "load interrupted (0 results retrieved): network
+        // [EN] unreachable". Showing it only when has_more is set would swallow the reason
+        // [EN] for a whole failed round.
+        // [ZH] 加载结果里那句话**总是要显示**：它可能是"已取完全部 N 条"，也可能是
+        // [ZH] "加载中断（已取回 0 条）：网络不可达"。只在 has_more 时才显示会把整轮失败的原因吞掉。
         string datasetMessage = GetString(query, "message");
         if (datasetMessage.Length > 0)
             parts.Add(datasetMessage);
 
-        // 任务一：界面上必须说清展示的是"历史总下载量"（与 HF 网页的 30 天口径不同）
+        // [EN] Development task 1: the UI must state clearly that it shows "all-time
+        // [EN] downloads" (not the 30-day basis used on the Hugging Face website).
+        // [ZH] 研发任务 1：界面上必须说清展示的是"历史总下载量"（与 HF 网页的 30 天口径不同）
         parts.Add(Loc.T("settings.model.downloadsNote",
             "下载量口径：历史总下载量（与 Hugging Face 网页上的「30 天下载量」不是同一个数）"));
         if (_hubFallbackCount > 0)
@@ -1022,13 +1164,16 @@ public partial class ModelMarketSection : UserControl
         HubStatusText.Text = string.Join("　", parts);
     }
 
-    // -----------------------------------------------------------------
-    // 分面
-    // -----------------------------------------------------------------
+    // [EN] ---------- Facets ----------
+    // [ZH] ---------- 分面 ----------
 
     /// <summary>
-    /// 按后端给的分面计数重建筛选控件。**只在选项签名变化时重建**：
-    /// 每次查询都重建会让用户刚勾上的复选框被换掉（丢焦点、看起来像没勾上）。
+    /// [EN] Rebuilds the filter controls from the facet counts supplied by the backend.
+    /// [EN] **Rebuilds only when the option signature changes**: rebuilding on every query
+    /// [EN] would replace the checkboxes the user just checked (focus is lost and the box
+    /// [EN] looks unchecked).
+    /// [ZH] 按后端给的分面计数重建筛选控件。**只在选项签名变化时重建**：
+    /// [ZH] 每次查询都重建会让用户刚勾上的复选框被换掉（丢焦点、看起来像没勾上）。
     /// </summary>
     private void RebuildFacets(JsonElement query)
     {
@@ -1084,7 +1229,11 @@ public partial class ModelMarketSection : UserControl
         return box;
     }
 
-    /// <summary>把三个分面面板里勾上的复选框同步进筛选集合（勾选与取消共用一条路径）。</summary>
+    /// <summary>
+    /// [EN] Synchronizes the checked boxes of the three facet panels into the filter sets
+    /// [EN] (checking and unchecking share one path).
+    /// [ZH] 把三个分面面板里勾上的复选框同步进筛选集合（勾选与取消共用一条路径）。
+    /// </summary>
     private void SyncFacetState()
     {
         _hubParamSelected.Clear();
@@ -1135,9 +1284,15 @@ public partial class ModelMarketSection : UserControl
     {
         HubQuantFacet.Children.Clear();
         HubQuantFacet.Children.Add(FacetLabel(Loc.T("settings.model.facetQuant", "量化格式")));
-        // 选项**从数据里来**，不写死候选清单：写死的话，数据里出现没列到的量化
-        // （IQ2_XS / Q3_K_S / Q6_K …）就永远筛不出来。同一维度内多选是"或"。
-        // 按计数降序、最多 14 个，免得面板变成一堵墙。
+        // [EN] The options **come from the data**; no candidate list is hardcoded. If it
+        // [EN] were, a quantization that appeared in the data but was not listed
+        // [EN] (IQ2_XS / Q3_K_S / Q6_K ...) could never be filtered for. Within one
+        // [EN] dimension, multiple selections are an "or".
+        // [EN] Options are sorted by count in descending order, at most 14, so that the
+        // [EN] panel does not become a wall.
+        // [ZH] 选项**从数据里来**，不写死候选清单：写死的话，数据里出现没列到的量化
+        // [ZH] （IQ2_XS / Q3_K_S / Q6_K …）就永远筛不出来。同一维度内多选是"或"。
+        // [ZH] 按计数降序、最多 14 个，免得面板变成一堵墙。
         var codes = new List<(string Code, int Count)>();
         if (options.TryGetProperty("quant", out JsonElement node) && node.ValueKind == JsonValueKind.Object)
         {
@@ -1191,12 +1346,13 @@ public partial class ModelMarketSection : UserControl
             : Loc.T("settings.model.filterActive", "（已启用 {0} 项）", active);
     }
 
-    // -----------------------------------------------------------------
-    // 文案
-    // -----------------------------------------------------------------
+    // [EN] ---------- Text ----------
+    // [ZH] ---------- 文案 ----------
     public void ApplyTexts()
     {
-        // 区块标题（WPF 的 settings.model.sectionHub）：15 号加粗强调色，和常规页的区块标题同一口径。
+        // [EN] Section title (WPF's settings.model.sectionHub): size 15, bold, accent color,
+        // [EN] the same convention as section titles on regular pages.
+        // [ZH] 区块标题（WPF 的 settings.model.sectionHub）：15 号加粗强调色，和常规页的区块标题同一口径。
         HubSectionTitle.Text = Loc.T("settings.model.sectionHub", "🧠 模型选择栏（Hugging Face GGUF 模型）");
         HubSourceLabel.Text = Loc.T("settings.model.sourceLabel", "数据源");
         HubTokenLabel.Text = "Token";
@@ -1227,12 +1383,19 @@ public partial class ModelMarketSection : UserControl
         HubPinnedDetailButton.Content = Loc.T("settings.model.actionDetail", "详情");
         HubDetailCloseButton.Content = Loc.T("settings.button.close", "关闭");
         HubCancelButton.Content = Loc.T("settings.model.actionStop", "⏹ 停止");
-        // 市场这一块此前挂着"未迁移"的说明；本轮补全后那段说明只剩"后端不可用"一种用途，
-        // 而它属于 ModelPage 的外壳文本，不在这里设置。
-        // 筛选摘要由 UpdateFilterSummary() 按当前勾选状态渲染，这里不赋固定文案
+        // [EN] This market block previously carried a "not migrated" note; after this round
+        // [EN] of completion that note has only one remaining use, "backend unavailable", and
+        // [EN] it belongs to ModelPage's shell text, so it is not set here.
+        // [ZH] 市场这一块此前挂着"未迁移"的说明；本轮补全后那段说明只剩"后端不可用"一种用途，
+        // [ZH] 而它属于 ModelPage 的外壳文本，不在这里设置。
+        // [EN] The filter summary is rendered by UpdateFilterSummary() from the current
+        // [EN] checked state; no fixed text is assigned here.
+        // [ZH] 筛选摘要由 UpdateFilterSummary() 按当前勾选状态渲染，这里不赋固定文案
         UpdateFilterSummary();
 
-        // 排序 / 下载状态 / 每页条数：下拉项文本是委托，重建后按值选回
+        // [EN] Sort / download state / rows per page: the drop-down item text is a delegate,
+        // [EN] so after rebuilding the item is selected again by value.
+        // [ZH] 排序 / 下载状态 / 每页条数：下拉项文本是委托，重建后按值选回
         foreach ((ComboBox combo, string keep) in new[]
                  {
                      (HubSortCombo, CurrentSort()),
@@ -1242,8 +1405,11 @@ public partial class ModelMarketSection : UserControl
             RelocalizeCombo(combo, keep);
         RelocalizeCombo(HubPageSizeCombo, _hubPageSize.ToString(CultureInfo.InvariantCulture));
 
-        // 结果行、分面、钉住行的文本都是运行时拼的：语言变了要重排（**不重新问后端**，
-        // 与 WPF 的 RelocalizeHubMarket 同一做法）
+        // [EN] The text of result rows, facets, and the pinned row is composed at run time:
+        // [EN] a language change requires re-layout (**without asking the backend again**,
+        // [EN] the same approach as WPF's RelocalizeHubMarket).
+        // [ZH] 结果行、分面、钉住行的文本都是运行时拼的：语言变了要重排（**不重新问后端**，
+        // [ZH] 与 WPF 的 RelocalizeHubMarket 同一做法）
         _hubFacetSignature = "";
         if (_hubLastQuery is JsonElement query)
             RenderQuery(query, rebuildFacets: true);
@@ -1254,7 +1420,11 @@ public partial class ModelMarketSection : UserControl
         }
     }
 
-    /// <summary>重建下拉项并按键值选回原选项（ItemsSource 重置会丢选中项）。</summary>
+    /// <summary>
+    /// [EN] Rebuilds the drop-down items and selects the previous option by key
+    /// [EN] (resetting ItemsSource loses the selection).
+    /// [ZH] 重建下拉项并按键值选回原选项（ItemsSource 重置会丢选中项）。
+    /// </summary>
     private static void RelocalizeCombo(ComboBox combo, string keep)
     {
         if (combo.ItemsSource is not System.Collections.IEnumerable source)
@@ -1277,15 +1447,18 @@ public partial class ModelMarketSection : UserControl
             combo.SelectedIndex = index;
     }
 
-    // -----------------------------------------------------------------
-    // 小工具
-    // -----------------------------------------------------------------
+    // [EN] ---------- Small helpers ----------
+    // [ZH] ---------- 小工具 ----------
     private static Brush? TryBrush(string key)
     {
         if (Application.Current is null)
             return null;
-        // 必须带当前主题变体查找：不带变体时拿到的是**浅色**那份资源，
-        // 深色模式下结果行标题会被刷成浅色主题的深紫（#483D8B），在深底上几乎看不见。
+        // [EN] The lookup must carry the current theme variant: without it, the **light**
+        // [EN] resource is returned, and in dark mode the result row titles are painted dark
+        // [EN] purple (#483D8B) from the light theme and are almost invisible on the dark
+        // [EN] background.
+        // [ZH] 必须带当前主题变体查找：不带变体时拿到的是**浅色**那份资源，
+        // [ZH] 深色模式下结果行标题会被刷成浅色主题的深紫（#483D8B），在深底上几乎看不见。
         ThemeVariant variant = Application.Current.ActualThemeVariant;
         if (Application.Current.TryFindResource(key, variant, out object? value) && value is Brush brush)
             return brush;
@@ -1305,15 +1478,28 @@ public partial class ModelMarketSection : UserControl
         && item.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.True;
 
     /// <summary>
-    /// 读一个整数。
+    /// [EN] Reads an integer.
     ///
-    /// **必须容忍小数**：`JsonElement.GetInt32()` 对 `1.5` 这种浮点值会抛
-    /// `FormatException: One of the identified items was in an invalid format`，
-    /// 而 JSON.NET（WPF 侧用的）会自动截断 —— 同一个响应换到 System.Text.Json
-    /// 上就直接炸。后端的 `recommend_basis.ram_gb` / `returned` 之类字段是浮点，
-    /// 实测踩到：**整条状态行渲染失败**（错误显示成"本地筛选失败"），
-    /// 而且异常发生在 UI 线程的语言切换回调里，会连带把"切语言"整条路径打断。
-    /// 这里统一按 double 读再取整，**假值（非数字）走 fallback**。
+    /// [EN] **Decimals must be tolerated**: `JsonElement.GetInt32()` throws on a floating
+    /// [EN] point value such as `1.5`
+    /// [EN] (`FormatException: One of the identified items was in an invalid format`),
+    /// [EN] whereas JSON.NET (used on the WPF side) truncates automatically — the same
+    /// [EN] response moved to System.Text.Json blows up directly. Backend fields such as
+    /// [EN] `recommend_basis.ram_gb` / `returned` are floating point, and this was hit in
+    /// [EN] practice: **the whole status line failed to render** (the error appeared as
+    /// [EN] "local filtering failed"), and the exception occurred in the UI thread's
+    /// [EN] language-switch callback, which broke the entire "switch language" path.
+    /// [EN] Here the value is always read as double and then rounded, and **a bad value
+    /// [EN] (not a number) uses the fallback**.
+    /// [ZH] 读一个整数。
+    ///
+    /// [ZH] **必须容忍小数**：`JsonElement.GetInt32()` 对 `1.5` 这种浮点值会抛
+    /// [ZH] `FormatException: One of the identified items was in an invalid format`，
+    /// [ZH] 而 JSON.NET（WPF 侧用的）会自动截断 —— 同一个响应换到 System.Text.Json
+    /// [ZH] 上就直接炸。后端的 `recommend_basis.ram_gb` / `returned` 之类字段是浮点，
+    /// [ZH] 实测踩到：**整条状态行渲染失败**（错误显示成"本地筛选失败"），
+    /// [ZH] 而且异常发生在 UI 线程的语言切换回调里，会连带把"切语言"整条路径打断。
+    /// [ZH] 这里统一按 double 读再取整，**假值（非数字）走 fallback**。
     /// </summary>
     private static int GetInt(JsonElement item, string name, int fallback)
     {
@@ -1328,15 +1514,24 @@ public partial class ModelMarketSection : UserControl
         };
     }
 
-    // -----------------------------------------------------------------
-    // 探针接口（`EchoDesk --probe market` 用）
-    // -----------------------------------------------------------------
+    // [EN] ---------- Probe interface (used by `EchoDesk --probe market`) ----------
+    // [ZH] ---------- 探针接口（`EchoDesk --probe market` 用） ----------
 
-    /// <summary>当前市场的可观测状态（无人值守探针据此断言，不靠"看界面"）。</summary>
     /// <summary>
-    /// 探针：填入一组真实结构的市场结果，供 README 截图使用（`--probe shots`）。
-    /// 不联网、不依赖本机缓存；仍走 <see cref="RenderQuery"/> 这条正式渲染路径，
-    /// 所以列表、分面、分页、状态行都是产品自己的控件，不是截图时临时拼的。
+    /// [EN] The observable state of the current market (an unattended probe asserts on it
+    /// [EN] instead of "looking at the UI").
+    /// [ZH] 当前市场的可观测状态（无人值守探针据此断言，不靠"看界面"）。
+    /// </summary>
+    /// <summary>
+    /// [EN] Probe: fills in a set of market results with a realistic structure, for README
+    /// [EN] screenshots (`--probe shots`).
+    /// [EN] No network access and no dependence on the local cache; it still goes through
+    /// [EN] <see cref="RenderQuery"/>, the regular rendering path, so the list, facets,
+    /// [EN] pager, and status line are the product's own controls rather than controls
+    /// [EN] assembled just for the screenshot.
+    /// [ZH] 探针：填入一组真实结构的市场结果，供 README 截图使用（`--probe shots`）。
+    /// [ZH] 不联网、不依赖本机缓存；仍走 <see cref="RenderQuery"/> 这条正式渲染路径，
+    /// [ZH] 所以列表、分面、分页、状态行都是产品自己的控件，不是为截图另外拼出来的。
     /// </summary>
     public void ProbeShowDemo(bool english = false)
     {
@@ -1480,7 +1675,11 @@ public partial class ModelMarketSection : UserControl
         bool PinnedVisible, string PagerHint, bool NextEnabled, bool FirstEnabled,
         bool SearchEnabled, bool MoreVisible, string Status, int FileRows);
 
-    /// <summary>只读快照：把"界面看起来是什么样"变成一组可断言的值。</summary>
+    /// <summary>
+    /// [EN] Read-only snapshot: turns "what the UI looks like" into a set of assertable
+    /// [EN] values.
+    /// [ZH] 只读快照：把"界面看起来是什么样"变成一组可断言的值。
+    /// </summary>
     public MarketState Snapshot() => new(
         _hubPage.Count,
         CountFacetBoxes(),
@@ -1506,10 +1705,17 @@ public partial class ModelMarketSection : UserControl
         return count;
     }
 
-    /// <summary>触发一次"搜索"（等价于点 HubSearchButton）。</summary>
+    /// <summary>
+    /// [EN] Triggers one "search" (equivalent to clicking HubSearchButton).
+    /// [ZH] 触发一次"搜索"（等价于点 HubSearchButton）。
+    /// </summary>
     public Task<object?> ProbeSearchAsync() => RunProbeAsync(() => LoadMarketAsync(refresh: false, resume: false));
 
-    /// <summary>输入本地筛选关键词（走与真实输入同一条防抖路径，不等防抖）。</summary>
+    /// <summary>
+    /// [EN] Enters the local filter keyword (goes through the same debounce path as real
+    /// [EN] input, without waiting for the debounce).
+    /// [ZH] 输入本地筛选关键词（走与真实输入同一条防抖路径，不等防抖）。
+    /// </summary>
     public Task<object?> ProbeFilterAsync(string keyword)
         => RunProbeAsync(async () =>
         {
@@ -1519,7 +1725,11 @@ public partial class ModelMarketSection : UserControl
             await QueryWhenIdleAsync(resetPage: true, rebuildFacets: false);
         });
 
-    /// <summary>勾选分面里的第 <paramref name="index"/> 个复选框（0 基，按参数量→量化→更新时间的顺序）。</summary>
+    /// <summary>
+    /// [EN] Checks the facet checkbox at <paramref name="index"/> (zero-based, in the order
+    /// [EN] params, quantization, update time).
+    /// [ZH] 勾选分面里的第 <paramref name="index"/> 个复选框（0 基，按参数量→量化→更新时间的顺序）。
+    /// </summary>
     public Task<object?> ProbeToggleFacetAsync(int index)
         => RunProbeAsync(async () =>
         {
@@ -1533,7 +1743,8 @@ public partial class ModelMarketSection : UserControl
                     if (seen++ != index)
                         continue;
                     if (!box.IsEnabled)
-                        return;   // 计数为 0 的选项本来就不可勾（与 WPF 一致）
+                        return;   // [EN] Zero-count options cannot be checked (same as WPF).
+                                  // [ZH] 计数为 0 的选项本来就不可勾（与 WPF 一致）
                     box.IsChecked = true;
                     SyncFacetState();
                     UpdateFilterSummary();
@@ -1543,7 +1754,10 @@ public partial class ModelMarketSection : UserControl
             }
         });
 
-    /// <summary>翻页（与点分页按钮同一条路径）。</summary>
+    /// <summary>
+    /// [EN] Turns the page (the same path as clicking a paging button).
+    /// [ZH] 翻页（与点分页按钮同一条路径）。
+    /// </summary>
     public Task<object?> ProbeGoToPageAsync(int page)
         => RunProbeAsync(async () =>
         {
@@ -1551,21 +1765,31 @@ public partial class ModelMarketSection : UserControl
             await QueryWhenIdleAsync(resetPage: false, rebuildFacets: false);
         });
 
-    /// <summary>切换每页条数（20 / 50 / 100）。</summary>
+    /// <summary>
+    /// [EN] Changes the rows per page (20 / 50 / 100).
+    /// [ZH] 切换每页条数（20 / 50 / 100）。
+    /// </summary>
     public Task<object?> ProbeSetPageSizeAsync(int size)
         => RunProbeAsync(async () =>
         {
             int index = Array.IndexOf(HubPageSizes, size);
             if (index < 0)
                 return;
-            // 直接设选中项会触发 SelectionChanged 处理器（与用户选择同一条路径），
-            // 但探针不等"事件里那次查询"，而是自己再查一次，保证拿到的是最终状态。
+            // [EN] Setting the selected item directly triggers the SelectionChanged handler
+            // [EN] (the same path as a user selection), but the probe does not wait for "the
+            // [EN] query inside the event"; it issues its own query so that the final state
+            // [EN] is guaranteed.
+            // [ZH] 直接设选中项会触发 SelectionChanged 处理器（与用户选择同一条路径），
+            // [ZH] 但探针不等"事件里那次查询"，而是自己再查一次，保证拿到的是最终状态。
             HubPageSizeCombo.SelectedIndex = index;
             _hubPageSize = size;
             await QueryWhenIdleAsync(resetPage: true, rebuildFacets: false);
         });
 
-    /// <summary>重置筛选（与点「重置筛选」同一条路径）。</summary>
+    /// <summary>
+    /// [EN] Resets the filters (the same path as clicking the reset-filters button).
+    /// [ZH] 重置筛选（与点「重置筛选」同一条路径）。
+    /// </summary>
     public Task<object?> ProbeResetFiltersAsync()
         => RunProbeAsync(async () =>
         {
@@ -1593,7 +1817,11 @@ public partial class ModelMarketSection : UserControl
             await QueryWhenIdleAsync(resetPage: true, rebuildFacets: true);
         });
 
-    /// <summary>打开钉住行（默认模型）的详情；没有钉住行时什么都不做。</summary>
+    /// <summary>
+    /// [EN] Opens the details of the pinned row (the default model); does nothing when
+    /// [EN] there is no pinned row.
+    /// [ZH] 打开钉住行（默认模型）的详情；没有钉住行时什么都不做。
+    /// </summary>
     public Task<object?> ProbeOpenPinnedDetailAsync()
         => RunProbeAsync(async () =>
         {
@@ -1602,9 +1830,14 @@ public partial class ModelMarketSection : UserControl
         });
 
     /// <summary>
-    /// 把动作跑在 UI 线程上，并等它真的做完（探针里不能"发了就算"）。
-    /// 用 InvokeAsync 的异步重载：动作内部有 await（等后端响应），
-    /// 同步重载会把 UI 线程一起挡住、变成死锁。
+    /// [EN] Runs the action on the UI thread and waits until it is really done (a probe must
+    /// [EN] not "fire and forget").
+    /// [EN] The asynchronous overload of InvokeAsync is used because the action contains
+    /// [EN] awaits (it waits for backend responses); the synchronous overload would block
+    /// [EN] the UI thread as well and deadlock.
+    /// [ZH] 把动作跑在 UI 线程上，并等它真的做完（探针里不能"发了就算"）。
+    /// [ZH] 用 InvokeAsync 的异步重载：动作内部有 await（等后端响应），
+    /// [ZH] 同步重载会把 UI 线程一起挡住、变成死锁。
     /// </summary>
     private static async Task<object?> RunProbeAsync(Func<Task> action)
     {
@@ -1612,7 +1845,11 @@ public partial class ModelMarketSection : UserControl
         return null;
     }
 
-    /// <summary>用系统默认文件管理器打开目录。返回是否成功（失败只提示，不抛）。</summary>
+    /// <summary>
+    /// [EN] Opens the directory with the system default file manager. Returns whether it
+    /// [EN] succeeded (a failure only shows a hint and does not throw).
+    /// [ZH] 用系统默认文件管理器打开目录。返回是否成功（失败只提示，不抛）。
+    /// </summary>
     private static bool TryOpenDirectory(string dir)
     {
         try
@@ -1622,7 +1859,9 @@ public partial class ModelMarketSection : UserControl
             var info = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = dir,
-                UseShellExecute = true,   // 交给 shell：Windows 资源管理器 / macOS Finder / Linux xdg-open
+                // [EN] Left to the shell: Windows Explorer / macOS Finder / Linux xdg-open.
+                // [ZH] 交给 shell：Windows 资源管理器 / macOS Finder / Linux xdg-open
+                UseShellExecute = true,
             };
             System.Diagnostics.Process.Start(info);
             return true;
@@ -1633,7 +1872,11 @@ public partial class ModelMarketSection : UserControl
         }
     }
 
-    /// <summary>把数字（可能是浮点）显示成不带多余小数的文本；非数字返回空串。</summary>
+    /// <summary>
+    /// [EN] Displays a number (possibly a floating point value) as text without trailing
+    /// [EN] zeros in the fraction; returns an empty string for a non-number.
+    /// [ZH] 把数字（可能是浮点）显示成不带多余小数的文本；非数字返回空串。
+    /// </summary>
     private static string GetNumberText(JsonElement item, string name)
     {
         if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty(name, out JsonElement el))

@@ -10,7 +10,8 @@
     [ZH] 高程通过描边而非投影表达，以免低端 GPU 需要合成大面积模糊核。
   -->
 
-  <!-- [EN] Semantic aliases retained for the WPF-aligned naming convention. / [ZH] 为兼容 WPF 命名约定而保留的语义别名。 -->
+  <!-- [EN] Semantic aliases retained for the WPF-aligned naming convention. -->
+  <!-- [ZH] 为兼容 WPF 命名约定而保留的语义别名。 -->
   <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF0D1117" />
   <SolidColorBrush x:Key="PanelBackgroundBrush" Color="#FF161B22" />
   <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF161B22" />
@@ -72,7 +73,8 @@
   <SolidColorBrush x:Key="SystemBrush" Color="#FF8B949E" />
   <SolidColorBrush x:Key="CodeForeground" Color="#FFE6EDF3" />
 
-  <!-- [EN] Markdown surfaces (code, rules, quotes, formulas and links). / [ZH] Markdown 载面（代码、分隔线、引用、公式与链接）。 -->
+  <!-- [EN] Markdown surfaces (code, rules, quotes, formulas and links). -->
+  <!-- [ZH] Markdown 载面（代码、分隔线、引用、公式与链接）。 -->
   <SolidColorBrush x:Key="MarkdownCodeBrush" Color="#FF161B22" />
   <SolidColorBrush x:Key="MarkdownCodeForeground" Color="#FFE6EDF3" />
   <SolidColorBrush x:Key="MarkdownRuleBrush" Color="#FF21262D" />

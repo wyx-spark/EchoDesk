@@ -12,7 +12,7 @@
   重建 PE 映像并丢掉这段追加数据，导致启动时报
   「Could not load PyInstaller's embedded PKG archive」。
   因此后端的版本资源与图标改用 PyInstaller 原生的 version / icon 参数，
-  在追加归档**之前**写入（与任务书"rcedit 在构建完成后执行"的差别见交付文档）。
+  在追加归档**之前**写入（与设计规范“rcedit 在构建完成后执行”的差别见交付文档）。
   前端 .NET 程序没有追加数据，仍然用 rcedit 统一处理。
 
 使用方式（在项目根目录执行）：
@@ -64,7 +64,7 @@ COMMENTS = "Powered by Void Entropia Studio"
 #       (3) 其依赖链含 GPL/LGPL 组件，对外分发会产生著佐权义务。
 # 改用 backend/file_parser.py 中的轻量解析器（python-docx/openpyxl/python-pptx/
 # pypdf/xlrd，均为 MIT/BSD），行为更可预测、体积更小。
-# v0.2.1（任务书 1.3）：.pdf 解析由 pymupdf（AGPL-3.0）换成 pypdf（BSD-3-Clause），
+# v0.2.1（设计规范 1.3）：.pdf 解析由 pymupdf（AGPL-3.0）换成 pypdf（BSD-3-Clause），
 # 既消除对外分发时的著佐权义务，又把该依赖的安装体积从 52.9MB 降到约 1.4MB。
 # 说明：playwright 必须整包收集——它自带 Node 驱动（driver/ 约 102MB，含 node.exe
 # 与 playwright-core），自动化功能依赖该驱动启动本机 Edge，缺文件会在运行时才报错。

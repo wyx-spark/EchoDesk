@@ -76,7 +76,7 @@ public partial class MainWindow : Window
     // 指令数据（/help 第一行展示 /help 自身；Format 为参数格式，Description 用于完整帮助）
     // 说明（v0.2.1 任务三）：这张表是**后端不可用时的本地回退**。正常情况下
     // 指令面板的数据来自后端的 {"action":"commands"}，因此技能指令会自动出现在
-    // 候选列表里，且命令说明随界面语言切换（任务书 2.6）。
+    // 候选列表里，且命令说明随界面语言切换（设计规范 2.6）。
     //
     // v0.2.2 硬编码清查 §4.1 A-3（第 3 批）：回退表原先整表写死中文（23 行 / 56 条字面量），
     // 后端未就绪或降级运行时英文界面会整屏显示中文。现在**只保留结构**（命令名 + 是否破坏性），
@@ -282,7 +282,7 @@ public partial class MainWindow : Window
     private const string StudioName = "Void Entropia Studio";
 
     /// <summary>
-    /// 当前语言下的出品方**简称**（任务书「工作室名称敲定」）。
+    /// 当前语言下的出品方**简称**（设计规范「工作室名称敲定」）。
     ///
     /// 为什么不能直接用 <see cref="StudioName"/> 或后端 `ready` 里的 `studio` 字段：
     /// 那两个都是英文标识（法律主体、GitHub 账号、构建元数据一律保持英文），
@@ -439,7 +439,7 @@ public partial class MainWindow : Window
     private string _updateUrl = "";
 
     /// <summary>
-    /// 检查新版本（任务书 任务五 · 方案 A：只检查与提示）。
+    /// 检查新版本（设计规范 任务五 · 方案 A：只检查与提示）。
     /// 发现新版本时状态区出现一个可点条目，点击用系统浏览器打开 Releases 页面；
     /// 全程不下载、不替换文件，失败也不影响使用（只记一条日志）。
     /// </summary>
@@ -2133,7 +2133,7 @@ public partial class MainWindow : Window
     /// 记录后端上报的运行指标并刷新状态区。
     ///
     /// 指标**全部来自后端实测**（<c>done.stats</c> / 心跳 <c>progress.stats</c>），
-    /// 前端只做格式化，不做估算 —— 任务书明确要求"不能仅靠前端估算"。
+    /// 前端只做格式化，不做估算 —— 设计规范明确要求"不能仅靠前端估算"。
     /// 无模型时（后端报 model_ready=false）整个指标块隐藏，不显示 0 或占位符。
     /// </summary>
     private void ApplyStreamStats(JsonElement stats, string state)
@@ -2194,7 +2194,7 @@ public partial class MainWindow : Window
 
         if (_metricsState == "waiting")
         {
-            // 首 token 到达前：显示"等待首 token"而不是 0.0 秒（任务书明确要求）
+            // 首 token 到达前：显示"等待首 token"而不是 0.0 秒（设计规范明确要求）
             parts.Add(Loc.T("main.metrics.waitingFirstToken", "⏳ 等待首 token"));
             double waited = StatNumber(_lastStats, "elapsed_ms");
             if (waited >= 0)
@@ -2213,7 +2213,7 @@ public partial class MainWindow : Window
             {
                 bool estimated = _lastStats.TryGetValue("tokens_estimated", out string? est)
                                  && est == "true";
-                // 估算值必须标注（任务书要求），用 ≈ 与提示文本两种方式同时表达
+                // 估算值必须标注（设计规范要求），用 ≈ 与提示文本两种方式同时表达
                 string label = estimated
                     ? Loc.T("main.metrics.outputTokensEstimated", "≈{0} tokens", (int)tokens)
                     : Loc.T("main.metrics.outputTokens", "{0} tokens", (int)tokens);
@@ -2937,7 +2937,7 @@ public partial class MainWindow : Window
             await UploadFilesAsyncCore(list);
             return;
         }
-        // 文件过多时先问一次（任务书："文件过多或总大小过大时提示用户并询问是否继续"）
+        // 文件过多时先问一次（设计规范："文件过多或总大小过大时提示用户并询问是否继续"）
         long totalBytes = 0;
         foreach (string path in list)
         {

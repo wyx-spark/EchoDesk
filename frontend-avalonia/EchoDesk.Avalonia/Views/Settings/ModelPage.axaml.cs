@@ -1,25 +1,42 @@
 // [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/Settings/ModelPage.axaml.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/Settings/ModelPage.axaml.cs。类型与成员说明见下方注释。
-// 模型页的交互逻辑（v0.2.1 跨平台-2 任务一，第 8 个迁移模块）。
+// [EN] Interaction logic of the model page (v0.2.1 cross-platform-2 development task 1,
+// [EN] the eighth migrated module).
+// [ZH] 模型页的交互逻辑（v0.2.1 跨平台-2 研发任务 1，第 8 个迁移模块）。
 //
-// 后端动作：
+// [EN] Backend actions:
+// [ZH] 后端动作：
 //   model_profiles         → { current, items: [ { alias, name, repo, installed, current,
 //                             size_human, context_length, temperature, params, quantization } ] }
-//   model_profile_apply    { alias }      切换档位（热加载）
+// [EN]   model_profile_apply    { alias }      switches the profile (hot reload)
+// [ZH]   model_profile_apply    { alias }      切换档位（热加载）
 //   capability             → { settings: { temperature, top_p, repeat_penalty, max_tokens,
 //                             preset, context_mode, clarify_vague, summary_cache } }
 //   capability_settings    { preset, temperature, top_p, repeat_penalty, max_tokens,
 //                             context_mode, clarify_vague, summary_cache }
 //
-// 两处刻意照搬 WPF 版的设计（都不是随手写的）：
+// [EN] Two design decisions deliberately copied from the WPF build (neither is casual):
+// [ZH] 两处刻意照搬 WPF 版的设计（都不是随手写的）：
 //
-// 1. **胶囊用 TextBlock 承载文字**：某些框架会把按钮的字符串内容当访问键渲染，
-//    下划线被吃掉（"Q4_K_M" 显示成 "Q4KM"）。量化名里下划线是常态，用 TextBlock 包一层
-//    就一定原样显示。Avalonia 这边同样处理，behavior 一致、不依赖框架差异。
+// [EN] 1. **The pill uses a TextBlock to carry the text**: some frameworks render the
+// [EN]    string content of a button as an access key, so the underscore is eaten
+// [EN]    ("Q4_K_M" is displayed as "Q4KM"). Underscores are normal in quantization names;
+// [EN]    wrapping the text in a TextBlock guarantees verbatim display. The Avalonia build
+// [EN]    does the same, so behavior is consistent and independent of framework
+// [EN]    differences.
+// [ZH] 1. **胶囊用 TextBlock 承载文字**：某些框架会把按钮的字符串内容当访问键渲染，
+// [ZH]    下划线被吃掉（"Q4_K_M" 显示成 "Q4KM"）。量化名里下划线是常态，用 TextBlock 包一层
+// [ZH]    就一定原样显示。Avalonia 这边同样处理，behavior 一致、不依赖框架差异。
 //
-// 2. **滑块边界会被"撑开"**：config.json 是人手写的，max_tokens 常见 2048/4096/8192，
-//    而界面范围是 64–4096。若把 8192 硬裁成 4096，用户只是打开设置页、什么都没改就点保存，
-//    配置里的 8192 就被悄悄改成 4096 —— 典型的"读一下就写坏"。撑开边界让滑块如实表示现状。
+// [EN] 2. **The slider bounds are "expanded"**: config.json is hand-written and max_tokens
+// [EN]    is commonly 2048/4096/8192, while the UI range is 64-4096. If 8192 were hard
+// [EN]    clipped to 4096, a user who merely opens the settings page and clicks save
+// [EN]    without changing anything would have the 8192 in the configuration quietly
+// [EN]    rewritten as 4096 — the classic "a read corrupts the write". Expanding the bounds
+// [EN]    lets the slider reflect the actual state faithfully.
+// [ZH] 2. **滑块边界会被"撑开"**：config.json 是人手写的，max_tokens 常见 2048/4096/8192，
+// [ZH]    而界面范围是 64–4096。若把 8192 硬裁成 4096，用户只是打开设置页、什么都没改就点保存，
+// [ZH]    配置里的 8192 就被悄悄改成 4096 —— 典型的"读一下就写坏"。撑开边界让滑块如实表示现状。
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
@@ -47,7 +64,11 @@ public partial class ModelPage : UserControl, ISettingsPage
     private int _hardwareBudget;
     private readonly List<string> _backendWarnings = new();
 
-    /// <summary>默认值：读不到后端设置时用它（与 WPF 版同一组默认）。</summary>
+    /// <summary>
+    /// [EN] Default values: used when the backend settings cannot be read (the same set of
+    /// [EN] defaults as the WPF build).
+    /// [ZH] 默认值：读不到后端设置时用它（与 WPF 版同一组默认）。
+    /// </summary>
     private const double DefaultTemperature = 0.7;
     private const double DefaultTopP = 0.9;
     private const double DefaultRepeatPenalty = 1.1;
@@ -80,8 +101,11 @@ public partial class ModelPage : UserControl, ISettingsPage
         GpuLayersBox.TextChanged += (_, _) => UpdateOverrideWarnings();
         InferenceResetButton.Click += async (_, _) =>
         {
-            // 恢复默认：只是把滑块拨回默认值并提示"还要点保存"，
-            // 不直接写后端 —— 让用户能先看到结果再决定。
+            // [EN] Restore defaults: this only moves the sliders back to the default values
+            // [EN] and hints that "save is still required"; it does not write to the backend
+            // [EN] directly, so the user can see the result before deciding.
+            // [ZH] 恢复默认：只是把滑块拨回默认值并提示"还要点保存"，
+            // [ZH] 不直接写后端 —— 让用户能先看到结果再决定。
             _syncing = true;
             SetSlider(TempSlider, TempValueText, DefaultTemperature);
             SetSlider(TopPSlider, TopPValueText, DefaultTopP);
@@ -102,7 +126,8 @@ public partial class ModelPage : UserControl, ISettingsPage
                     RefreshSliderLabels();
             };
 
-        // 本地模型库（v0.2.2 第 2 批）：重扫 / 刷新
+        // [EN] Local model library (v0.2.2, batch 2): rescan / refresh
+        // [ZH] 本地模型库（v0.2.2 第 2 批）：重扫 / 刷新
         HubRescanButton.Click += async (_, _) => await RescanModelsAsync();
         HubRegistryRefreshButton.Click += async (_, _) => await LoadRegistryAsync();
     }
@@ -116,9 +141,13 @@ public partial class ModelPage : UserControl, ISettingsPage
     public void ApplyTo(AppSettings settings) { }
 
     /// <summary>
-    /// 骨架的保存按钮 → 保存推理参数。
-    /// 档位切换是**即时生效**的（胶囊点一下就热加载），不需要"保存"这一步；
-    /// 这一页真正需要落盘的只有推理参数。
+    /// [EN] The shell's save button -> saves the inference parameters.
+    /// [EN] Profile switching **takes effect immediately** (clicking a pill hot-reloads), so
+    /// [EN] it needs no "save" step; the only thing on this page that really has to be
+    /// [EN] persisted is the inference parameters.
+    /// [ZH] 骨架的保存按钮 → 保存推理参数。
+    /// [ZH] 档位切换是**即时生效**的（胶囊点一下就热加载），不需要"保存"这一步；
+    /// [ZH] 这一页真正需要落盘的只有推理参数。
     /// </summary>
     public async Task ApplyToBackendAsync() => await SaveInferenceAsync();
 
@@ -157,7 +186,11 @@ public partial class ModelPage : UserControl, ISettingsPage
         MaxTokensValueText.Text = ((int)Math.Round(MaxTokensSlider.Value)).ToString();
     }
 
-    /// <summary>填滑块值，必要时撑开边界（见文件头第 2 条）。</summary>
+    /// <summary>
+    /// [EN] Fills in a slider value and expands the bounds when necessary (see item 2 in the
+    /// [EN] file header).
+    /// [ZH] 填滑块值，必要时撑开边界（见文件头第 2 条）。
+    /// </summary>
     private void SetSlider(Slider slider, TextBlock label, double value)
     {
         if (double.IsNaN(value) || double.IsInfinity(value))
@@ -194,8 +227,10 @@ public partial class ModelPage : UserControl, ISettingsPage
     {
         if (_host is null)
             return null;
-        // ActiveBackend：运行时就是 App.State.Backend；探针模式下是探针自己那条连接
-        // （见 AppState.ProbeBackendOverride 的说明）。
+        // [EN] ActiveBackend: at run time this is App.State.Backend; in probe mode it is the
+        // [EN] probe's own connection (see the notes on AppState.ProbeBackendOverride).
+        // [ZH] ActiveBackend：运行时就是 App.State.Backend；探针模式下是探针自己那条连接
+        // [ZH] （见 AppState.ProbeBackendOverride 的说明）。
         return await _host.State.ActiveBackend.SendAsync(request, idleTimeout: idle ?? TimeSpan.FromSeconds(60));
     }
 
@@ -204,31 +239,49 @@ public partial class ModelPage : UserControl, ISettingsPage
         await LoadProfilesAsync();
         await LoadInferenceAsync();
         await LoadRegistryAsync();
-        // 模型市场只刷新"已有的那一页"，**不自动搜索**（与 WPF 版一致：
-        // 打开设置页不该凭空打一次远端请求，那是用户点「搜索」才做的事）
+        // [EN] The model market only refreshes "the page it already has" and **does not
+        // [EN] search automatically** (consistent with the WPF build: opening the settings
+        // [EN] page must not fire a remote request out of nowhere; that is what the user
+        // [EN] does by clicking "search").
+        // [ZH] 模型市场只刷新"已有的那一页"，**不自动搜索**（与 WPF 版一致：
+        // [ZH] 打开设置页不该凭空打一次远端请求，那是用户点「搜索」才做的事）
         await Market.RefreshAsync();
     }
 
-    // =================================================================
-    // ③ 本地模型库（v0.2.2 第 2 批补全，对齐 WPF 的 HubRegistry 那一块）
-    // =================================================================
+    // [EN] ---------- (3) Local model library (v0.2.2 batch 2, WPF HubRegistry) ----------
+    // [ZH] ---------- ③ 本地模型库（v0.2.2 第 2 批补全，对齐 WPF 的 HubRegistry 那一块） ----------
     //
-    // 与「模型市场」的分工（WPF 侧一直是两块不同的东西，此处逐项照抄）：
-    //   市场 = 远端"能下载什么"；模型库 = 本地磁盘"有什么"。
+    // [EN] Division of work with the "model market" (on the WPF side these have always been
+    // [EN] two different things; copied item by item here):
+    // [EN]   market = what the remote side "can download"; library = what the local disk
+    // [EN]   "has".
+    // [ZH] 与「模型市场」的分工（WPF 侧一直是两块不同的东西，此处逐项照抄）：
+    // [ZH]   市场 = 远端"能下载什么"；模型库 = 本地磁盘"有什么"。
     //
-    // 三个后端动作：
+    // [EN] Three backend actions:
+    // [ZH] 三个后端动作：
     //   model_hub_registry   → { registry: { count, total_size_human,
     //                            models: [ { name, size_human, quantization, repo,
     //                                        downloaded_at, last_used, current, exists } ] } }
-    //   model_scan           → 重新扫描模型文件夹（手工放进 .gguf 后不必重启）
-    //   model_load {name}    → 热加载该模型（成功后就是当前模型）
-    //   model_hub_uninstall {name} → 删除模型文件
+    // [EN]   model_scan           -> rescans the model folder (manual .gguf, no restart)
+    // [ZH]   model_scan           → 重新扫描模型文件夹（手工放进 .gguf 后不必重启）
+    // [EN]   model_load {name}    -> hot-loads that model (it becomes current on success)
+    // [ZH]   model_load {name}    → 热加载该模型（成功后就是当前模型）
+    // [EN]   model_hub_uninstall {name} -> deletes the model file
+    // [ZH]   model_hub_uninstall {name} → 删除模型文件
 
-    /// <summary>本地模型库里的一行。</summary>
+    /// <summary>
+    /// [EN] One row in the local model library.
+    /// [ZH] 本地模型库里的一行。
+    /// </summary>
     private sealed record RegistryRow(string Name, string SizeText, string Meta,
                                       bool InUse, bool Exists);
 
-    /// <summary>删除的二次确认状态：第一次点变「确认删除？」，再点一次才执行。</summary>
+    /// <summary>
+    /// [EN] Second-confirmation state for deletion: the first click turns the button into
+    /// [EN] "confirm delete?" and only a second click executes.
+    /// [ZH] 删除的二次确认状态：第一次点变「确认删除？」，再点一次才执行。
+    /// </summary>
     private string _registryDeletePending = "";
 
     private async Task LoadRegistryAsync(bool keepPendingDelete = false)
@@ -297,7 +350,10 @@ public partial class ModelPage : UserControl, ISettingsPage
         Market.SetStatus(Loc.T("settings.model.registryLoaded", "✅ 已读取本地模型库"));
     }
 
-    /// <summary>一行：名称 + 使用中徽标 / 元信息，右侧「加载」「删除」。</summary>
+    /// <summary>
+    /// [EN] One row: name + in-use badge / metadata, with "load" and "delete" on the right.
+    /// [ZH] 一行：名称 + 使用中徽标 / 元信息，右侧「加载」「删除」。
+    /// </summary>
     private Control BuildRegistryRow(RegistryRow row)
     {
         var info = new StackPanel { Spacing = 1 };
@@ -316,8 +372,11 @@ public partial class ModelPage : UserControl, ISettingsPage
         if (row.Meta.Length > 0)
             info.Children.Add(new TextBlock { Text = row.Meta, FontSize = 10, Opacity = 0.65 });
 
-        // 「加载」：使用中的模型不需要再点；文件不存在（登记残留）时也点不了 ——
-        // 与 WPF 的 CanLoad 同一口径。
+        // [EN] "Load": a model that is in use needs no further click, and the button is also
+        // [EN] disabled when the file is missing (a leftover registration) — the same rule as
+        // [EN] WPF's CanLoad.
+        // [ZH] 「加载」：使用中的模型不需要再点；文件不存在（登记残留）时也点不了 ——
+        // [ZH] 与 WPF 的 CanLoad 同一口径。
         var load = new Button
         {
             Content = Loc.T("settings.model.actionLoad", "加载"),
@@ -330,7 +389,9 @@ public partial class ModelPage : UserControl, ISettingsPage
             "热加载这个模型（成功后它就是当前模型，不需要重启程序）"));
         load.Click += async (_, _) => await LoadModelAsync(row);
 
-        // 「删除」：使用中的模型不允许删（后端也会再拦一次），且需要二次确认。
+        // [EN] "Delete": a model in use may not be deleted (the backend blocks it again),
+        // [EN] and a second confirmation is required.
+        // [ZH] 「删除」：使用中的模型不允许删（后端也会再拦一次），且需要二次确认。
         var delete = new Button
         {
             Content = row.Name == _registryDeletePending
@@ -371,7 +432,11 @@ public partial class ModelPage : UserControl, ISettingsPage
         return border;
     }
 
-    /// <summary>「重新扫描模型文件夹」：手工放进 .gguf 后不必重启即可加载。</summary>
+    /// <summary>
+    /// [EN] "Rescan model folder": after placing a .gguf by hand it can be loaded without a
+    /// [EN] restart.
+    /// [ZH] 「重新扫描模型文件夹」：手工放进 .gguf 后不必重启即可加载。
+    /// </summary>
     private async Task RescanModelsAsync()
     {
         HubRescanButton.IsEnabled = false;
@@ -393,8 +458,12 @@ public partial class ModelPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 热加载某个本地模型。超时给到 10 分钟：把几 GB 的权重读进内存本来就要等，
-    /// 用默认的 60 秒会让"模型其实加载成功了、界面却报失败"（WPF 侧同一取值）。
+    /// [EN] Hot-loads one local model. The timeout is set to 10 minutes because reading
+    /// [EN] several GB of weights into memory takes time; the default 60 seconds would make
+    /// [EN] "the model actually loaded successfully while the UI reports a failure" happen
+    /// [EN] (the same value as on the WPF side).
+    /// [ZH] 热加载某个本地模型。超时给到 10 分钟：把几 GB 的权重读进内存本来就要等，
+    /// [ZH] 用默认的 60 秒会让"模型其实加载成功了、界面却报失败"（WPF 侧同一取值）。
     /// </summary>
     private async Task LoadModelAsync(RegistryRow row)
     {
@@ -409,10 +478,17 @@ public partial class ModelPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 删除模型文件。两道保护，与 WPF 逐条对齐：
-    ///   ① **使用中的模型不给删**（先切走再删），后端也会再拦一次；
-    ///   ② **二次确认**，且确认文案里写明"删的是文件、不可撤销"。
-    /// Avalonia 侧没有对话框体系，用就地二次确认（与档位删除同一套做法）。
+    /// [EN] Deletes a model file. Two safeguards, aligned item by item with WPF:
+    /// [EN]   1. **A model in use cannot be deleted** (switch away first); the backend blocks
+    /// [EN]      it again;
+    /// [EN]   2. **A second confirmation**, whose text states that "the file is deleted and
+    /// [EN]      the action cannot be undone".
+    /// [EN] The Avalonia build has no dialog system, so the confirmation happens inline (the
+    /// [EN] same approach as profile deletion).
+    /// [ZH] 删除模型文件。两道保护，与 WPF 逐条对齐：
+    /// [ZH]   ① **使用中的模型不给删**（先切走再删），后端也会再拦一次；
+    /// [ZH]   ② **二次确认**，且确认文案里写明"删的是文件、不可撤销"。
+    /// [ZH] Avalonia 侧没有对话框体系，用就地二次确认（与档位删除同一套做法）。
     /// </summary>
     private async Task DeleteModelAsync(RegistryRow row)
     {
@@ -424,7 +500,9 @@ public partial class ModelPage : UserControl, ISettingsPage
         }
         if (!string.Equals(_registryDeletePending, row.Name, StringComparison.Ordinal))
         {
-            // 第一次点：只把这一行的按钮换成「确认删除？」并说明后果，不执行任何删除。
+            // [EN] First click: only turn this row's button into "confirm delete?" and state
+            // [EN] the consequences; no deletion is performed.
+            // [ZH] 第一次点：只把这一行的按钮换成「确认删除？」并说明后果，不执行任何删除。
             _registryDeletePending = row.Name;
             await LoadRegistryAsync(keepPendingDelete: true);
             Market.SetStatus(Loc.T("settings.model.deleteConfirmText",
@@ -450,12 +528,13 @@ public partial class ModelPage : UserControl, ISettingsPage
         await LoadRegistryAsync();
     }
 
-    // -----------------------------------------------------------------
-    // ① 档位
-    // -----------------------------------------------------------------
+    // [EN] ---------- (1) Model profiles ----------
+    // [ZH] ---------- ① 档位 ----------
     private async Task LoadProfilesAsync()
     {
-        // 包值带 {0}，必须传参（否则 Loc.T 返回未格式化模板、界面上露出 {0}）
+        // [EN] The resource value contains {0} and the argument must be passed (otherwise
+        // [EN] Loc.T returns an unformatted template and {0} shows up in the UI).
+        // [ZH] 包值带 {0}，必须传参（否则 Loc.T 返回未格式化模板、界面上露出 {0}）
         ProfileStatusText.Text = Loc.T("settings.model.profileHint",
             "当前使用：{0}　·　点胶囊即可切换（热加载，无需重启）；未下载的档位点一下会先下载。",
             _currentProfile.Length > 0 ? _currentProfile : UnknownText());
@@ -502,7 +581,10 @@ public partial class ModelPage : UserControl, ISettingsPage
 
         string caption = name.Length > 0 ? name : alias;
         var content = new StackPanel { Spacing = 1 };
-        // 用 TextBlock 而不是直接给按钮字符串内容：避免框架把下划线当访问键吃掉（见文件头第 1 条）。
+        // [EN] A TextBlock is used instead of putting the string content directly on the
+        // [EN] button: this keeps the framework from treating the underscore as an access key
+        // [EN] (see item 1 in the file header).
+        // [ZH] 用 TextBlock 而不是直接给按钮字符串内容：避免框架把下划线当访问键吃掉（见文件头第 1 条）。
         content.Children.Add(new TextBlock { Text = caption, FontSize = 11 });
         if (lines.Count > 0)
         {
@@ -522,20 +604,39 @@ public partial class ModelPage : UserControl, ISettingsPage
         {
             Content = content,
             Padding = new Thickness(12, 4),
-            // **v0.2.2 第 4 批（总策划裁定三）：判据从 `!current` 改成 `!(current && installed)`。**
+            // [EN] **v0.2.2 batch 4 (the lead planner's third ruling): the criterion changed
+            // [EN] from `!current` to `!(current && installed)`.**
             //
-            // 这条缺陷 **Avalonia 原样复刻了 WPF**（两边都是 `IsEnabled = !current`），
-            // 所以裁定要求"两边一起修"。触发条件：config 指着某个模型、而模型文件不在磁盘上
-            // （全新安装就是这样）→ 后端曾同时给出 `current=true` 与 `installed=false` →
-            // 胶囊显示"未下载"却被禁用 → **用户点不动它去下载**。
+            // [EN] **Avalonia reproduced this defect from WPF verbatim** (both sides used
+            // [EN] `IsEnabled = !current`), so the ruling requires "fix both sides together".
+            // [EN] Trigger condition: config points at a model whose file is not on disk (a
+            // [EN] fresh installation looks exactly like this) -> the backend once returned
+            // [EN] `current=true` together with `installed=false` -> the pill showed "not
+            // [EN] downloaded" but was disabled -> **the user could not click it to download**.
             //
-            // 后端已同步修正（`current` 现在要求文件真的存在），这里再兜一层：
-            // 只要没装到本地，胶囊就必须可点，点了走下载分支。
+            // [EN] The backend has been corrected in step (`current` now requires the file to
+            // [EN] really exist); this is one more safety net: as long as the model is not
+            // [EN] installed locally, the pill must be clickable, and clicking it takes the
+            // [EN] download branch.
+            // [ZH] **v0.2.2 第 4 批（总策划裁定三）：判据从 `!current` 改成 `!(current && installed)`。**
+            //
+            // [ZH] 这条缺陷 **Avalonia 原样复刻了 WPF**（两边都是 `IsEnabled = !current`），
+            // [ZH] 所以裁定要求"两边一起修"。触发条件：config 指着某个模型、而模型文件不在磁盘上
+            // [ZH] （全新安装就是这样）→ 后端曾同时给出 `current=true` 与 `installed=false` →
+            // [ZH] 胶囊显示"未下载"却被禁用 → **用户点不动它去下载**。
+            //
+            // [ZH] 后端已同步修正（`current` 现在要求文件真的存在），这里再兜一层：
+            // [ZH] 只要没装到本地，胶囊就必须可点，点了走下载分支。
             IsEnabled = !(current && installed),
         };
-        // Avalonia 的控件**没有** `ToolTip` 属性（WPF 的 Control 有），提示是**附加属性**：
-        // 在对象初始化器里写 `ToolTip = …` 会编译报 CS0117，必须用 `ToolTip.SetTip()`。
-        // 这是本轮第 5 处"WPF 有、Avalonia 没有"的差异（见记录里的坑列表）。
+        // [EN] Avalonia controls **do not have** a `ToolTip` property (WPF's Control does);
+        // [EN] the tip is an **attached property**: writing `ToolTip = ...` inside an object
+        // [EN] initializer fails to compile with CS0117, and `ToolTip.SetTip()` must be used.
+        // [EN] This is the fifth "WPF has it, Avalonia does not" difference in this round
+        // [EN] (see the pitfall list in the notes).
+        // [ZH] Avalonia 的控件**没有** `ToolTip` 属性（WPF 的 Control 有），提示是**附加属性**：
+        // [ZH] 在对象初始化器里写 `ToolTip = …` 会编译报 CS0117，必须用 `ToolTip.SetTip()`。
+        // [ZH] 这是本轮第 5 处"WPF 有、Avalonia 没有"的差异（见记录里的坑列表）。
         ToolTip.SetTip(chip, tip);
         chip.Click += async (_, _) =>
         {
@@ -545,7 +646,9 @@ public partial class ModelPage : UserControl, ISettingsPage
                 await DownloadProfileAsync(alias, repo, sizeText, caption);
         };
 
-        // 「编辑」按钮：把这一档读进编辑器（v0.2.2 补全，对齐 WPF 的档位编辑器）
+        // [EN] The "edit" button: reads this profile into the editor (completed in v0.2.2,
+        // [EN] aligned with the WPF profile editor).
+        // [ZH] 「编辑」按钮：把这一档读进编辑器（v0.2.2 补全，对齐 WPF 的档位编辑器）
         var edit = new Button
         {
             Content = Loc.T("settings.model.profileEdit", "编辑"),
@@ -560,24 +663,40 @@ public partial class ModelPage : UserControl, ISettingsPage
         return row;
     }
 
-    // -----------------------------------------------------------------
-    // 档位编辑器（新建 / 编辑 / 删除；对齐 WPF 的 SettingsWindow.Profiles.cs）
-    // -----------------------------------------------------------------
+    // [EN] ---------- Profile editor (new / edit / delete, WPF Profiles.cs) ----------
+    // [ZH] ---------- 档位编辑器（新建 / 编辑 / 删除；对齐 WPF 的 SettingsWindow.Profiles.cs） ----------
 
-    /// <summary>当前正在编辑的档位别名（空 = 新建）。改名时作为 rename_from 发给后端。</summary>
+    /// <summary>
+    /// [EN] Alias of the profile currently being edited (empty = creating a new one). On a
+    /// [EN] rename it is sent to the backend as rename_from.
+    /// [ZH] 当前正在编辑的档位别名（空 = 新建）。改名时作为 rename_from 发给后端。
+    /// </summary>
     private string _profileEditingAlias = "";
     private bool _profileDeletePending;
 
     /// <summary>
-    /// 当前正在使用的档位名（后端 <c>model_profiles</c> 的顶层 <c>current</c>）。
+    /// [EN] The alias of the profile currently in use (the top-level <c>current</c> of the
+    /// [EN] backend <c>model_profiles</c> response).
     ///
-    /// 为什么要存下来：`settings.model.profileHint` 的包值带 {0}（「当前使用：{0}…」），
-    /// 而 `ApplyTexts()`（语言切换时）也要用它——语言切换发生在数据之后，
-    /// 没有这个字段就只能写死或露出 {0}（硬编码清查 §5.3 C-1）。
+    /// [EN] Why it is stored: the resource value of `settings.model.profileHint` contains
+    /// [EN] {0} ("currently in use: {0}..."), and `ApplyTexts()` (on a language switch) needs
+    /// [EN] it too — the language switch happens after the data, so without this field the
+    /// [EN] text could only be hardcoded or would expose {0} (hardcoded-string audit §5.3
+    /// [EN] C-1).
+    /// [ZH] 当前正在使用的档位名（后端 <c>model_profiles</c> 的顶层 <c>current</c>）。
+    ///
+    /// [ZH] 为什么要存下来：`settings.model.profileHint` 的包值带 {0}（「当前使用：{0}…」），
+    /// [ZH] 而 `ApplyTexts()`（语言切换时）也要用它——语言切换发生在数据之后，
+    /// [ZH] 没有这个字段就只能写死或露出 {0}（硬编码清查 §5.3 C-1）。
     /// </summary>
     private string _currentProfile = "";
 
-    /// <summary>档位状态行用的「未知」：优先用语言包，取不到时回落中文（与 WPF 同一写法）。</summary>
+    /// <summary>
+    /// [EN] The "unknown" text used by the profile status line: the language pack is
+    /// [EN] preferred and Chinese is the fallback when it is unavailable (the same approach
+    /// [EN] as WPF).
+    /// [ZH] 档位状态行用的「未知」：优先用语言包，取不到时回落中文（与 WPF 同一写法）。
+    /// </summary>
     private static string UnknownText() => Loc.T("capability.unknown", "未知");
 
     private void OpenProfileEditor(JsonElement? profile)
@@ -618,10 +737,17 @@ public partial class ModelPage : UserControl, ISettingsPage
             ProfileEditorStatus.Text = Loc.T("settings.profile.aliasRequired", "⚠️ 别名不能为空");
             return;
         }
-        // 温度是界面上唯一"明知合法范围"的字段（0–1.5），先在客户端挡一道；
-        // 其余（上下文上限、别名长度、路径合法性）**一律不在这里夹紧** ——
-        // 把原值发给后端、显示后端返回的 ❌ 文案（接口夹紧=骗人，后端 main.py 的
-        // 同名注释写过这条教训，前端不重复第二套规则）。
+        // [EN] Temperature is the only field on this page whose legal range (0-1.5) is known,
+        // [EN] so it is guarded once on the client.
+        // [EN] Everything else (context cap, alias length, path validity) is **never clamped
+        // [EN] here** — the original value is sent to the backend and the backend's ❌ text is
+        // [EN] displayed (clamping in the API is lying; the comment of the same name in the
+        // [EN] backend main.py records this lesson, and the front end does not duplicate a
+        // [EN] second set of rules).
+        // [ZH] 温度是界面上唯一"明知合法范围"的字段（0–1.5），先在客户端挡一道；
+        // [ZH] 其余（上下文上限、别名长度、路径合法性）**一律不在这里夹紧** ——
+        // [ZH] 把原值发给后端、显示后端返回的 ❌ 文案（接口夹紧=骗人，后端 main.py 的
+        // [ZH] 同名注释写过这条教训，前端不重复第二套规则）。
         string tempText = ProfileTempBox.Text?.Trim() ?? "";
         if (tempText.Length > 0)
         {
@@ -641,8 +767,12 @@ public partial class ModelPage : UserControl, ISettingsPage
         }
 
         var patch = new Dictionary<string, object?> { ["action"] = "model_profile_save", ["alias"] = alias };
-        // 只发**填了内容**的字段：后端把空字符串当成"删掉这一项"，
-        // 而界面上空输入框更可能是"我没动它" —— 少发一个键 = 不覆盖已有值。
+        // [EN] Only fields **that have content** are sent: the backend treats an empty string
+        // [EN] as "delete this entry", while an empty input box in the UI more likely means
+        // [EN] "I did not touch it" — omitting a key means the existing value is not
+        // [EN] overwritten.
+        // [ZH] 只发**填了内容**的字段：后端把空字符串当成"删掉这一项"，
+        // [ZH] 而界面上空输入框更可能是"我没动它" —— 少发一个键 = 不覆盖已有值。
         AddProfileField(patch, "path", ProfilePathBox);
         AddProfileField(patch, "repo", ProfileRepoBox);
         AddProfileField(patch, "context_length", ProfileContextBox);
@@ -671,10 +801,16 @@ public partial class ModelPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 把响应里的一个数值字段读成文本（用于填输入框）。
-    /// 不能直接用 GetString：`context_length` / `temperature` 在 JSON 里是**数字**，
-    /// GetString 只认字符串，会返回空串 —— 表现是"编辑某档时这两个框是空的"，
-    /// 用户一保存就把已有值清掉了（比不显示更糟）。
+    /// [EN] Reads a numeric field from the response as text (used to fill an input box).
+    /// [EN] GetString cannot be used directly: `context_length` / `temperature` are
+    /// [EN] **numbers** in JSON and GetString only accepts strings, so it returns an empty
+    /// [EN] string — the symptom is "these two boxes are empty when editing a profile" and
+    /// [EN] the existing values are wiped as soon as the user saves (worse than not showing
+    /// [EN] them at all).
+    /// [ZH] 把响应里的一个数值字段读成文本（用于填输入框）。
+    /// [ZH] 不能直接用 GetString：`context_length` / `temperature` 在 JSON 里是**数字**，
+    /// [ZH] GetString 只认字符串，会返回空串 —— 表现是"编辑某档时这两个框是空的"，
+    /// [ZH] 用户一保存就把已有值清掉了（比不显示更糟）。
     /// </summary>
     private static string NumberText(JsonElement item, string name)
     {
@@ -696,7 +832,9 @@ public partial class ModelPage : UserControl, ISettingsPage
             ProfileEditorStatus.Text = content;
             return;
         }
-        // 后端把成功/失败都放在 model_profile_save 里：成功给 content，失败给 error
+        // [EN] The backend puts both success and failure under model_profile_save: content on
+        // [EN] success, error on failure.
+        // [ZH] 后端把成功/失败都放在 model_profile_save 里：成功给 content，失败给 error
         if (root.TryGetProperty("model_profile_save", out JsonElement saved))
         {
             bool ok = GetBool(saved, "ok");
@@ -714,9 +852,14 @@ public partial class ModelPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 删除档位登记（**不删磁盘上的模型文件**）。
-    /// 就地二次确认（与技能市场同一套做法）：第一次点变「确认删除？」，再点一次才执行。
-    /// 确认文案里必须写明"只删登记、不删文件" —— 那是用户最容易误解的一点。
+    /// [EN] Deletes a profile registration (**the model file on disk is not deleted**).
+    /// [EN] Inline second confirmation (the same approach as the skill market): the first
+    /// [EN] click turns the button into "confirm delete?" and only a second click executes.
+    /// [EN] The confirmation text must state "the registration is deleted, the file is not" —
+    /// [EN] that is the point users most easily misunderstand.
+    /// [ZH] 删除档位登记（**不删磁盘上的模型文件**）。
+    /// [ZH] 就地二次确认（与技能市场同一套做法）：第一次点变「确认删除？」，再点一次才执行。
+    /// [ZH] 确认文案里必须写明"只删登记、不删文件" —— 那是用户最容易误解的一点。
     /// </summary>
     private async Task DeleteProfileAsync()
     {
@@ -792,7 +935,10 @@ public partial class ModelPage : UserControl, ISettingsPage
                 repo, caption);
             return;
         }
-        // 详情里取第一个文件发下载请求（与 WPF 版同口径：档位胶囊只负责"下载这一档"）。
+        // [EN] The first file in the details is used to send the download request (the same
+        // [EN] rule as the WPF build: the profile pill is only responsible for "downloading
+        // [EN] this profile").
+        // [ZH] 详情里取第一个文件发下载请求（与 WPF 版同口径：档位胶囊只负责"下载这一档"）。
         string fileName = "";
         if (doc.RootElement.TryGetProperty("files", out JsonElement files)
             && files.ValueKind == JsonValueKind.Array && files.GetArrayLength() > 0)
@@ -811,9 +957,8 @@ public partial class ModelPage : UserControl, ISettingsPage
             "⬇ 已开始下载 {0}（可在「模型市场」观察进度）", fileName);
     }
 
-    // -----------------------------------------------------------------
-    // ② 推理参数
-    // -----------------------------------------------------------------
+    // [EN] ---------- (2) Inference parameters ----------
+    // [ZH] ---------- ② 推理参数 ----------
     private async Task LoadInferenceAsync()
     {
         InferenceStatusText.Text = Loc.T("settings.inference.readingNow", "正在读取推理参数…");
@@ -982,8 +1127,8 @@ public partial class ModelPage : UserControl, ISettingsPage
     /// configuration or preset) determined the final window; the interface must
     /// not re-derive it from numbers and risk naming the wrong cause.
     /// [ZH] 依据后端快照渲染「原生上下文 / 实际可用」描述。解释语句由后端生成，因为只有
-    /// 后端知道最终窗口由哪种约束（原生窗口、硬件内存、配置或预设）决定；界面不得
-    /// 从数值自行推导，以免把原因说错。
+    /// [ZH] 后端知道最终窗口由哪种约束（原生窗口、硬件内存、配置或预设）决定；界面不得
+    /// [ZH] 从数值自行推导，以免把原因说错。
     /// </summary>
     private void ApplyInferenceInfo(JsonElement inference)
     {
@@ -1026,9 +1171,13 @@ public partial class ModelPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// 保存。**全量发送**面板上的每一个值（而不是只发改动过的）：
-    /// 后端按"收到什么写什么"处理，全量发送让界面成为唯一事实来源，
-    /// 不会出现"某次改动没发出去、之后每次保存都把它漏掉"的隐性偏差。
+    /// [EN] Save. **Sends every value** on the panel in full (rather than only the changed
+    /// [EN] ones): the backend writes whatever it receives, so sending everything in full
+    /// [EN] makes the interface the single source of truth, and the hidden drift where "a
+    /// [EN] change was not sent once and is then missed by every later save" cannot occur.
+    /// [ZH] 保存。**全量发送**面板上的每一个值（而不是只发改动过的）：
+    /// [ZH] 后端按"收到什么写什么"处理，全量发送让界面成为唯一事实来源，
+    /// [ZH] 不会出现"某次改动没发出去、之后每次保存都把它漏掉"的隐性偏差。
     /// </summary>
     /// <summary>
     /// [EN] Read the editable override inputs, returning false when either box is
@@ -1328,7 +1477,9 @@ public partial class ModelPage : UserControl, ISettingsPage
         if (inference.ValueKind == JsonValueKind.Object)
             ApplyInferenceInfo(inference);
         InferenceStatusText.Text = Loc.T("settings.inference.saved", "✅ 已保存");
-        // 回读：后端会裁剪到合法范围，界面要跟上真实值（quiet 模式，不覆盖上面的提示）。
+        // [EN] Read back: the backend clamps to the legal range, so the UI must follow the
+        // [EN] real values (quiet mode, so the message above is not overwritten).
+        // [ZH] 回读：后端会裁剪到合法范围，界面要跟上真实值（quiet 模式，不覆盖上面的提示）。
         await LoadInferenceAsync();
         InferenceStatusText.Text = Loc.T("settings.inference.saved", "✅ 已保存");
     }
@@ -1379,7 +1530,11 @@ public partial class ModelPage : UserControl, ISettingsPage
             : $"{bytes / mib:0} MB";
     }
 
-    /// <summary>取主题画刷；主题里没有这个键时返回 null（控件用默认前景色，不崩）。</summary>
+    /// <summary>
+    /// [EN] Looks up a theme brush; returns null when the theme has no such key (controls
+    /// [EN] then use the default foreground color and do not crash).
+    /// [ZH] 取主题画刷；主题里没有这个键时返回 null（控件用默认前景色，不崩）。
+    /// </summary>
     private static Brush? TryBrush(string key)
     {
         if (Application.Current is null)
@@ -1428,15 +1583,20 @@ public partial class ModelPage : UserControl, ISettingsPage
         InferenceResetButton.Content = Loc.T("settings.inference.reset", "恢复默认");
         InferenceTestLoadButton.Content = Loc.T("settings.inference.testLoad", "🧪 测试加载");
 
-        // 本地模型库（v0.2.2 第 2 批）。标题会随数据重写（"（N 个 · 大小）"），
-        // 这里只保证"还没读到数据时它也不是空的"；两个按钮的文案是静态的。
+        // [EN] Local model library (v0.2.2, batch 2). The title is rewritten as data arrives
+        // [EN] ("(N items · size)"); the only guarantee here is that "it is not empty even
+        // [EN] before any data has been read". The text of both buttons is static.
+        // [ZH] 本地模型库（v0.2.2 第 2 批）。标题会随数据重写（"（N 个 · 大小）"），
+        // [ZH] 这里只保证"还没读到数据时它也不是空的"；两个按钮的文案是静态的。
         HubRegistryTitle.Text = Loc.T("settings.model.localRegistryTitle", "本地模型库");
         HubRescanButton.Content = Loc.T("settings.model.actionRescan", "重新扫描模型文件夹");
         HubRegistryRefreshButton.Content = Loc.T("settings.model.actionRefreshRegistry", "刷新本地模型库");
 
         MarketNotMigratedText.Text = "";
 
-        // 下拉项文案是委托，重建后按值选回。
+        // [EN] The drop-down item text is a delegate, so after rebuilding the item is
+        // [EN] selected again by value.
+        // [ZH] 下拉项文案是委托，重建后按值选回。
         string? preset = (PresetCombo.SelectedItem as Option)?.Value;
         string? profile = (InferenceProfileCombo.SelectedItem as Option)?.Value;
         string? mode = (ContextModeCombo.SelectedItem as Option)?.Value;
@@ -1452,15 +1612,17 @@ public partial class ModelPage : UserControl, ISettingsPage
         Market.ApplyTexts();
     }
 
-    // -----------------------------------------------------------------
-    // ③ 模型市场（本轮补全，v0.2.2）
-    // -----------------------------------------------------------------
+    // [EN] ---------- (3) Model market (completed in this round, v0.2.2) ----------
+    // [ZH] ---------- ③ 模型市场（本轮补全，v0.2.2） ----------
 
-    // -----------------------------------------------------------------
-    // 探针接口（`EchoDesk --probe market` 用：无人值守验整条市场交互）
-    // -----------------------------------------------------------------
+    // [EN] ---------- Probe interface (`EchoDesk --probe market`) ----------
+    // [ZH] ---------- 探针接口（`EchoDesk --probe market` 用：无人值守验整条市场交互） ----------
 
-    /// <summary>市场区块的可观测状态快照（见 ModelMarketSection.Snapshot）。</summary>
+    /// <summary>
+    /// [EN] Observable state snapshot of the market section (see
+    /// [EN] ModelMarketSection.Snapshot).
+    /// [ZH] 市场区块的可观测状态快照（见 ModelMarketSection.Snapshot）。
+    /// </summary>
     public ModelMarketSection.MarketState MarketSnapshot() => Market.Snapshot();
 
     public Task ProbeMarketSearchAsync() => Market.ProbeSearchAsync();
@@ -1471,14 +1633,21 @@ public partial class ModelPage : UserControl, ISettingsPage
     public Task ProbeMarketResetAsync() => Market.ProbeResetFiltersAsync();
     public Task ProbeMarketOpenPinnedDetailAsync() => Market.ProbeOpenPinnedDetailAsync();
 
-    /// <summary>探针：填入模型市场演示数据（README 截图用，可选英文）。</summary>
+    /// <summary>
+    /// [EN] Probe: fills in demonstration data for the model market (for README screenshots,
+    /// [EN] optionally in English).
+    /// [ZH] 探针：填入模型市场演示数据（README 截图用，可选英文）。
+    /// </summary>
     public void ProbeShowDemoMarket(bool english = false) => Market.ProbeShowDemo(english);
 
-    // -----------------------------------------------------------------
-    // 探针接口（`EchoDesk --probe pages` 用：本地模型库那一块）
-    // -----------------------------------------------------------------
+    // [EN] ---------- Probe interface (`EchoDesk --probe pages`: model library) ----------
+    // [ZH] ---------- 探针接口（`EchoDesk --probe pages` 用：本地模型库那一块） ----------
 
-    /// <summary>本地模型库的可观测状态（行数 / 空状态 / 两个按钮有没有文案）。</summary>
+    /// <summary>
+    /// [EN] Observable state of the local model library (row count / empty state / whether
+    /// [EN] both buttons have text).
+    /// [ZH] 本地模型库的可观测状态（行数 / 空状态 / 两个按钮有没有文案）。
+    /// </summary>
     public string RegistrySnapshot()
     {
         int rows = 0;
@@ -1503,15 +1672,21 @@ public partial class ModelPage : UserControl, ISettingsPage
         });
     }
 
-    /// <summary>探针：重扫模型文件夹 + 重读模型库（走真实后端动作）。</summary>
+    /// <summary>
+    /// [EN] Probe: rescans the model folder and re-reads the model library (through the real
+    /// [EN] backend actions).
+    /// [ZH] 探针：重扫模型文件夹 + 重读模型库（走真实后端动作）。
+    /// </summary>
     public async Task ProbeRescanAsync() => await RescanModelsAsync();
 
-    /// <summary>探针：只重读模型库（不重扫磁盘）。</summary>
+    /// <summary>
+    /// [EN] Probe: re-reads the model library only (no disk rescan).
+    /// [ZH] 探针：只重读模型库（不重扫磁盘）。
+    /// </summary>
     public async Task ProbeReloadRegistryAsync() => await LoadRegistryAsync();
 
-    // -----------------------------------------------------------------
-    // 探针接口（`EchoDesk --probe pages` 用：推理预设与上下文描述）
-    // -----------------------------------------------------------------
+    // [EN] ---------- Probe interface (`EchoDesk --probe pages`: presets, context) ----------
+    // [ZH] ---------- 探针接口（`EchoDesk --probe pages` 用：推理预设与上下文描述） ----------
 
     /// <summary>
     /// [EN] Observable state of the inference preset controls: number of options,
@@ -1568,7 +1743,11 @@ public partial class ModelPage : UserControl, ISettingsPage
     /// </summary>
     public async Task ProbeReloadInferenceAsync() => await LoadInferenceAsync();
 
-    /// <summary>市场区块（控件多，单独一个 UserControl；由这里负责"谁来发请求"）。</summary>
+    /// <summary>
+    /// [EN] The market section (many controls, so it is a separate UserControl; this page
+    /// [EN] decides "who sends the requests").
+    /// [ZH] 市场区块（控件多，单独一个 UserControl；由这里负责"谁来发请求"）。
+    /// </summary>
     private ModelMarketSection? _market;
 
     private ModelMarketSection Market => _market ??= CreateMarket();
@@ -1576,14 +1755,20 @@ public partial class ModelPage : UserControl, ISettingsPage
     private ModelMarketSection CreateMarket()
     {
         var section = new ModelMarketSection();
-        // 把"怎么发请求"交给这一页（页面已经持有后端连接），市场本身不碰 AppState 之外的全局
+        // [EN] Request sending is delegated to this page (which already holds the backend
+        // [EN] connection); the market itself touches nothing global beyond AppState.
+        // [ZH] 把"怎么发请求"交给这一页（页面已经持有后端连接），市场本身不碰 AppState 之外的全局
         section.Attach(new MarketHost(this));
         MarketHostGrid.Children.Add(section);
         Grid.SetRow(section, 0);
         return section;
     }
 
-    /// <summary>市场区块与页面之间的桥：只暴露它真正需要的三件事。</summary>
+    /// <summary>
+    /// [EN] The bridge between the market section and the page: it exposes only the three
+    /// [EN] things the section really needs.
+    /// [ZH] 市场区块与页面之间的桥：只暴露它真正需要的三件事。
+    /// </summary>
     private sealed class MarketHost : IModelMarketHost
     {
         private readonly ModelPage _page;

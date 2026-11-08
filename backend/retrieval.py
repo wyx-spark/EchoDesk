@@ -341,11 +341,14 @@ class BM25Index:
 
     def __init__(self) -> None:
         self.chunks: List[Chunk] = []
-        self._df: Dict[str, int] = {}          # 词元 → 出现在多少个块里
-        self._tf: List[Dict[str, int]] = []    # 每个块的词频
+        self._df: Dict[str, int] = {}          # [EN] Token → chunk count.
+                                               # [ZH] 词元 → 出现在多少个块里。
+        self._tf: List[Dict[str, int]] = []    # [EN] Term frequency for each chunk.
+                                               # [ZH] 每个块的词频
         self._total_len = 0
 
-    # ---------- 构建 ----------
+    # [EN] ---------- Build ----------
+    # [ZH] ---------- 构建 ----------
 
     def add_chunks(self, chunks: Sequence[Chunk]) -> None:
         for chunk in chunks:
@@ -363,7 +366,8 @@ class BM25Index:
     def avg_len(self) -> float:
         return (self._total_len / len(self.chunks)) if self.chunks else 1.0
 
-    # ---------- 检索 ----------
+    # [EN] ---------- Retrieval ----------
+    # [ZH] ---------- 检索 ----------
 
     def search(self, query: str, top_k: int = 4, min_score: float = 0.0
                ) -> List[ScoredChunk]:
@@ -460,9 +464,11 @@ class Retriever:
         self._chunks_by_file: Dict[str, List[Chunk]] = {}
         self._index = BM25Index()
         self.indexed_chars = 0
-        self.rebuilds = 0          # 诊断用：0 表示一直是增量添加
+        self.rebuilds = 0          # [EN] Diagnostic: 0 means adds have remained incremental.
+                                   # [ZH] 诊断用：0 表示一直是增量添加
 
-    # ---------- 构建 ----------
+    # [EN] ---------- Build ----------
+    # [ZH] ---------- 构建 ----------
 
     def add_file(self, name: str, text: str) -> int:
         """
@@ -511,7 +517,8 @@ class Retriever:
         self._index = BM25Index()
         self.indexed_chars = 0
 
-    # ---------- 查询 ----------
+    # [EN] ---------- Query ----------
+    # [ZH] ---------- 查询 ----------
 
     @property
     def files(self) -> List[str]:
