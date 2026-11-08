@@ -87,9 +87,12 @@ No cloud account. No API key. No telemetry.
    - **Portable zip** — unzip anywhere: desktop, another drive, even a USB stick. Nothing is written
      outside that folder, and deleting the folder uninstalls it.
 
-   > **Note:** EchoDesk is not currently signed with a commercial code-signing certificate, and
-   > Windows may show an "Unknown publisher" warning. This is normal for open-source projects —
-   > click **More info** → **Run anyway**. Our signing policy is documented in
+   > **Note:** EchoDesk is not code-signed. Our application for free open-source signing
+   > through SignPath Foundation was **not approved this time** — the project is not yet widely
+   > known enough to meet the programme's criteria — so Windows may show an "Unknown publisher"
+   > warning. This is expected: click **More info** → **Run anyway**, and verify the download
+   > against `SHA256SUMS.txt`. Every release is reproducible, so you can also rebuild the exact
+   > binary yourself. Current status and the intended signing scope are documented in
    > [CODE_SIGNING.md](CODE_SIGNING.md).
 
 3. Start EchoDesk: use the **Start Menu shortcut** (installer), or double-click

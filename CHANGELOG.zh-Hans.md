@@ -115,8 +115,20 @@
 - 验证：`selftest` 163/163、`test_update_check` 37/37、带标题栏/内存/进度断言的 Avalonia
   `--probe chat`、两次逐字节一致的可复现构建，以及不带任何 Skip 的全量 `verify_release.ps1`。
 
+### 发布后文档修正（2026-11-08）
+
+- **代码签名状态修正。** 本变更日志的早期版本、两份 README 与 `CODE_SIGNING.md` 曾把
+  Windows 交付物描述为已由 SignPath 签名。那是**目标状态**，不是实际状态：本次免费
+  SignPath Foundation 签名申请**未获批准**，理由是项目当前知名度不足。在证书签发之前，
+  Windows 构建一律视为未签名。`CODE_SIGNING.md` 现在以未签名状态开篇，并把目标签名范围与
+  流程放进明确标注的目标状态章节；两份 README 在 SmartScreen 提示旁写明了原因。
+- **没有任何二进制发生变化。** 本轮仅为文档修正：v0.2.4 的交付物、其 SHA-256 摘要与
+  可复现构建结果均不受影响。
+
 ### 已知限制
 
+- Windows 交付物未做 Authenticode 签名：本次免费 SignPath Foundation 签名申请未获批准，
+  首次运行可能触发 SmartScreen 提示。
 - GPU 卸载与三档预设已用合成显存档案与真实纯 CPU 宿主验证；尚未在真实 CUDA / ROCm /
   Metal 设备上执行长上下文压力测试。AMD 探测仅覆盖 Linux sysfs。
 - 量化 KV Cache（Q8_0 等）需要当前硬件集合尚未验证的 flash-attention 支持，因此三档预设

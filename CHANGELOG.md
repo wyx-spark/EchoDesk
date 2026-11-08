@@ -145,8 +145,22 @@ probes: hardware detection never writes a host identifier or absolute path into 
   new title/memory/progress assertions, two byte-identical reproducible builds, and the full
   `verify_release.ps1` gate with no skips.
 
+### Post-release documentation correction (2026-11-08)
+
+- **Code-signing status corrected.** Earlier revisions of this changelog, both READMEs and
+  `CODE_SIGNING.md` described the Windows deliverables as signed through SignPath. That was the
+  intended target state, not the actual state: the free SignPath Foundation application was
+  **not approved** this time, because the project is not yet widely known enough. Windows builds
+  are unsigned until a certificate is issued. `CODE_SIGNING.md` now leads with the unsigned
+  status and keeps the intended scope and workflow in a clearly labelled target-state section;
+  both READMEs state the reason next to the SmartScreen note.
+- **No binary changed.** This is a documentation-only correction: the v0.2.4 artifacts, their
+  SHA-256 digests and the reproducible-build result are unaffected.
+
 ### Known limitations
 
+- Windows artifacts are not Authenticode-signed: the free SignPath Foundation signing
+  application was not approved this time, so SmartScreen may warn on first run.
 - GPU offload and the three presets were validated with synthetic VRAM profiles and a real
   CPU-only host; a long-context stress test on real CUDA / ROCm / Metal hardware has not been
   executed. AMD probing covers the Linux sysfs interface only.
