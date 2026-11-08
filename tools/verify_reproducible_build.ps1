@@ -143,7 +143,7 @@ function Get-ArtifactHashes {
         "dist\EchoDesk-v$Version-linux-x64",
         "dist\EchoDesk-v$Version-osx-arm64"
     )
-    $hashArgs = @("-Out", $OutFile)
+    $hashArgs = @("--out", $OutFile)
     foreach ($item in $named) { $hashArgs += @("--file", $item) }
     foreach ($item in $trees) { $hashArgs += @("--tree", $item) }
     & python (Join-Path $PSScriptRoot "hash_manifest.py") @hashArgs
