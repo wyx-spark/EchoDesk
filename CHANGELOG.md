@@ -13,12 +13,46 @@ for traceability only; this changelog is the release-facing document.
 
 | Version | Type | Release date | Summary |
 | :--- | :--- | :--- | :--- |
+| [Unreleased](#unreleased) | Development | — | v0.2.5 P0: writable state paths for read-only `.app` / AppImage layouts |
 | [v0.2.4](#v024) | Stable Release | 2026-11-08 | Automatic hardware tuning, three inference presets, transparent override and diagnostics; release-time patch and final hotfix for streaming download progress, ignored-version memory, memory warnings, balanced title bar, Chinese installer and upgrade hygiene |
 | [v0.2.3](#v023) | Stable Release | 2026-11-07 | Reproducible builds, dependency locks, Avalonia main line, WPF LTS |
 | [v0.2.2](#v022) | Stable Release | 2026-11-04 | Cross-platform frontend, visual consistency, full bilingual coverage |
 | [v0.2.1](#v021) | Stable Release | 2026-10-05 | Capability consolidation, Agent platform, MCP, plugin ecosystem |
 | [v0.2.0](#v020) | Feature Release | 2026-09-23 | Long context and documents, automation, skill marketplace |
 | [v0.1.0](#v010) | Early Preview | 2026-08-29 | First public release: local inference with a desktop client |
+
+---
+
+## Unreleased
+
+### Development work (v0.2.5 P0 — writable state paths on read-only mounts)
+
+Preparatory work required before the macOS `.app` bundle and the Linux AppImage can run
+from read-only mount points. Both forms previously resolved `config.json` and `models/`
+against the current working directory; writing there either failed or invalidated the
+signed bundle.
+
+- **Writable state directory.** `backend/config.py` adds `state_dir()`: it honours
+  `ECHODESK_STATE`, then a writable current working directory, then falls back to
+  `user_data_root()`. A writable CWD is exactly the portable `tar.gz` layout, so existing
+  installations keep resolving every path as before; read-only mounts now silently use
+  the user data root.
+- **macOS `.app` data root.** `user_data_root()` recognises bundles
+  (`.../Contents/MacOS/...`) and returns `~/Library/Application Support/EchoDesk`,
+  matching the Avalonia `UserPaths.DataRoot` resolution.
+- **Configuration persistence.** `Config.load()` and `Config.save()` default to
+  `<state_dir>/config.json`. If the located file is a read-only packaged resource,
+  saving is redirected to the writable state directory instead of failing.
+- **Model repository.** `ModelHub.models_dir` and `registry_path` resolve relative
+  configured values against `state_dir()`; absolute paths are untouched.
+- **UI language packs.** Avalonia `UserPaths.LangDirectory` falls back to
+  `<program directory>/lang/ui` when `<data directory>/lang/ui` does not exist, so
+  packaged `.app` / AppImage builds no longer silently degrade the English UI to Chinese
+  fallback strings.
+- **Verification.** `selftest` 170/170, `check_lang` passes, and
+  `tools/verify_reproducible_build.ps1` produced two byte-identical builds. The portable
+  path behaviour is unchanged: with a writable CWD `state_dir()` returns the CWD, which
+  is the condition the `tar.gz` layout always satisfies.
 
 ---
 

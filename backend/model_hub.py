@@ -204,6 +204,30 @@ def _human(size: Optional[int]) -> str:
     return f"{value:.1f} TB"
 
 
+def _resolve_state_path(raw: Any) -> str:
+    """
+    [EN]
+    Resolve a configured path against the writable state directory.
+
+    Absolute paths (and ``~`` paths) are passed through unchanged. Relative paths are
+    joined to :func:`config.state_dir`: on a writable working directory (portable tar.gz)
+    that is exactly the legacy ``os.path.abspath`` behaviour, while on a read-only mount
+    point they are redirected to the user data root (v0.2.5 P0).
+
+    [ZH]
+    把配置里的路径按可写状态目录解析。
+
+    绝对路径（以及 ``~`` 路径）原样返回；相对路径拼到 :func:`config.state_dir` 上：
+    工作目录可写时（tar.gz 便携版）与旧的 ``os.path.abspath`` 行为完全一致，
+    只读挂载点上则改道到用户数据根（v0.2.5 P0）。
+    """
+    text = os.path.expanduser(str(raw or "").strip() or ".")
+    if os.path.isabs(text):
+        return os.path.abspath(text)
+    from config import state_dir  # [EN] deferred to avoid an import cycle at load time / [ZH] 延迟导入以避开加载期的循环依赖
+    return os.path.abspath(os.path.join(state_dir(), text))
+
+
 class ModelHub:
     """
     [EN]
@@ -281,13 +305,33 @@ class ModelHub:
 
     @property
     def models_dir(self) -> str:
-        raw = str(getattr(self.cfg, "models_dir", "models") or "models").strip()
-        return os.path.abspath(os.path.expanduser(raw))
+        """
+        [EN]
+        Model repository directory. Relative values are resolved against
+        :func:`config.state_dir` (v0.2.5 P0), which equals the working directory in the
+        portable tar.gz layout, so existing installations keep exactly the same path;
+        only read-only mount points (.app / .AppImage) fall back to the user data root.
+
+        [ZH]
+        模型库目录。相对路径以 :func:`config.state_dir` 为基准解析（v0.2.5 P0）：
+        在 tar.gz 便携版里它就等于工作目录，因此现有安装的路径完全不变；只有在只读
+        挂载点（.app / .AppImage）上才下沉到用户数据根。
+        """
+        return _resolve_state_path(getattr(self.cfg, "models_dir", "models") or "models")
 
     @property
     def registry_path(self) -> str:
-        raw = str(getattr(self.cfg, "registry_file", "models_registry.json") or "models_registry.json").strip()
-        return os.path.abspath(os.path.expanduser(raw))
+        """
+        [EN]
+        Model registry file. Relative values follow the same
+        :func:`config.state_dir` rule as :attr:`models_dir`.
+
+        [ZH]
+        模型注册表文件。相对路径与 :attr:`models_dir` 使用同一条
+        :func:`config.state_dir` 规则。
+        """
+        return _resolve_state_path(getattr(self.cfg, "registry_file", "models_registry.json")
+                                   or "models_registry.json")
 
     # [EN] Model downloads default to models/ under the program directory,
     # [EN] consistent with existing backend conventions.

@@ -103,7 +103,20 @@ public static class UserPaths
     /// <summary>
     /// [EN] UI language-pack directory, overridable through
     /// <c>ECHODESK_LANG_DIR</c> for translator testing.
+    ///
+    /// Read-only fallback (v0.2.5 P0): when the data directory has no <c>lang/ui</c>
+    /// (macOS <c>.app</c> and Linux AppImage keep their language packs as read-only
+    /// packaged resources), use <c>&lt;program directory&gt;/lang/ui</c> instead.
+    /// Without it the English UI silently degrades to the built-in Chinese fallback
+    /// strings on those layouts. The data directory always wins when it does exist, so
+    /// translators can still drop a pack there and see it immediately.
+    ///
     /// [ZH] 界面语言包目录，可通过 <c>ECHODESK_LANG_DIR</c> 覆盖，便于翻译者测试。
+    ///
+    /// 只读回落（v0.2.5 P0）：数据目录下没有 <c>lang/ui</c> 时（macOS <c>.app</c> 与
+    /// Linux AppImage 的语言包是随包的只读资源），改用
+    /// <c>&lt;程序目录&gt;/lang/ui</c>。没有这条回落，这些形态下的英文界面会静默退化
+    /// 成内置中文兜底文案。数据目录存在时始终优先，翻译者仍可把语言包放进去立即生效。
     /// </summary>
     public static string LangDirectory
     {
@@ -112,7 +125,24 @@ public static class UserPaths
             string? custom = Environment.GetEnvironmentVariable("ECHODESK_LANG_DIR");
             if (!string.IsNullOrWhiteSpace(custom))
                 return custom!;
-            return Path.Combine(DataRoot, "lang", "ui");
+
+            string dataDir = Path.Combine(DataRoot, "lang", "ui");
+            if (Directory.Exists(dataDir))
+                return dataDir;
+
+            // [EN] Program directory fallback: in a packaged .app this is
+            // [EN] Contents/MacOS; in the portable tree it is the directory that ships
+            // [EN] alongside app/lang/ui.
+            // [ZH] 程序目录回落：打包后的 .app 里就是 Contents/MacOS；便携版里则是
+            // [ZH] 与 app/lang/ui 同级的程序目录。
+            string programDir = Path.Combine(ProgramDirectory, "lang", "ui");
+            if (Directory.Exists(programDir))
+                return programDir;
+
+            // [EN] Neither exists: keep the historical answer so callers that display or
+            // [EN] open the path still point at the user data directory.
+            // [ZH] 两者都不存在：沿用历史答案，让展示/打开该路径的调用方仍指向用户数据目录。
+            return dataDir;
         }
     }
 

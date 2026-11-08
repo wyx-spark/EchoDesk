@@ -10,12 +10,39 @@
 
 | 版本 | 类型 | 发布日期 | 概要 |
 | :--- | :--- | :--- | :--- |
+| [Unreleased](#unreleased) | 开发中 | — | v0.2.5 P0：让只读挂载点（`.app` / AppImage）使用可写状态路径 |
 | [v0.2.4](#v024) | 稳定版 | 2026-11-08 | 自动硬件调优、三档推理预设、透明覆盖与诊断；发布前补丁与最终热修复：流式下载进度、忽略版本、内存预警、标题栏平衡、中文安装器与升级清理 |
 | [v0.2.3](#v023) | 稳定版 | 2026-11-07 | 可复现构建、依赖锁定、Avalonia 主线、WPF 转入长期支持 |
 | [v0.2.2](#v022) | 稳定版 | 2026-11-04 | 跨平台前端、视觉一致性、全面双语 |
 | [v0.2.1](#v021) | 稳定版 | 2026-10-05 | 能力体系收口、Agent 平台、MCP、插件生态 |
 | [v0.2.0](#v020) | 功能版 | 2026-09-23 | 长上下文与长文档、自动化、技能市场 |
 | [v0.1.0](#v010) | 早期预览 | 2026-08-29 | 首个公开版本：本地推理与桌面客户端 |
+
+---
+
+## Unreleased
+
+### 开发工作（v0.2.5 P0 —— 只读挂载点上的可写状态路径）
+
+这是 macOS `.app` 包与 Linux AppImage 能在只读挂载点上运行所必需的先行改造。此前两种形态
+都按当前工作目录解析 `config.json` 与 `models/`，写进去要么失败，要么让已签名的包失效。
+
+- **可写状态目录**：`backend/config.py` 新增 `state_dir()`，依次读取 `ECHODESK_STATE`、
+  可写的工作目录，最后回落到 `user_data_root()`。可写工作目录正是 tar.gz 便携版的情形，
+  因此现有安装的每条路径解析结果都不变；只读挂载点则静默改用用户数据根。
+- **macOS `.app` 数据根**：`user_data_root()` 识别包结构（`.../Contents/MacOS/...`），
+  返回 `~/Library/Application Support/EchoDesk`，与 Avalonia 的 `UserPaths.DataRoot`
+  判定一致。
+- **配置持久化**：`Config.load()` / `Config.save()` 默认使用
+  `<state_dir>/config.json`；若定位到的是随包分发的只读资源，保存会改写到可写状态目录，
+  而不是直接失败。
+- **模型库**：`ModelHub.models_dir` 与 `registry_path` 的相对路径改为按 `state_dir()`
+  解析；绝对路径保持不变。
+- **界面语言包**：Avalonia `UserPaths.LangDirectory` 在 `<数据目录>/lang/ui` 不存在时
+  回落到 `<程序目录>/lang/ui`，打包后的 `.app` / AppImage 不再把英文界面静默退化成中文兜底。
+- **验证**：`selftest` 170/170、`check_lang` 通过，`tools/verify_reproducible_build.ps1`
+  两次构建逐字节一致。便携版路径行为未变：工作目录可写时 `state_dir()` 就返回该目录，
+  而 tar.gz 布局始终满足这一条件。
 
 ---
 

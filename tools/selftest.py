@@ -604,6 +604,94 @@ def test_config_save_target() -> None:
 
 # ----------------------------------------------------------- 5. 自动化
 
+def test_state_paths() -> None:
+    """
+    [EN]
+    Writable-state resolution (v0.2.5 P0). The contract that must not regress is:
+    with a writable working directory (the tar.gz portable layout) state_dir() is
+    exactly the CWD, so config.json, models/ and the registry resolve to the same
+    absolute paths as before this change. Only a read-only CWD (or a macOS .app bundle)
+    falls back to the user data root.
+
+    [ZH]
+    可写状态目录解析（v0.2.5 P0）。绝不能回归的约定是：工作目录可写时（tar.gz 便携版）
+    state_dir() 就是 CWD，于是 config.json、models/ 与注册表解析出的绝对路径与改动前
+    完全一致；只有只读 CWD（或 macOS .app 包）才下沉到用户数据根。
+    """
+    section("可写状态目录（v0.2.5 P0）")
+    import tempfile
+
+    import config
+
+    # 1. 可写 CWD：必须原样沿用（便携版行为不变）
+    with tempfile.TemporaryDirectory() as tmp:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp)
+            resolved = config.state_dir()
+            check("工作目录可写时 state_dir 沿用 CWD（便携版行为不变）",
+                  os.path.normcase(resolved) == os.path.normcase(os.path.abspath(tmp)),
+                  resolved)
+            # 默认 load/save 也必须落在同一个基准上（先铺一份 cwd 配置，
+            # 避免 _find 回落到程序目录里的随包配置）
+            import json
+            probe = os.path.join(tmp, "config.json")
+            with open(probe, "w", encoding="utf-8") as handle:
+                json.dump(config.Config().model_dump(), handle, ensure_ascii=False)
+            loaded = config.Config.load()
+            loaded.temperature = 0.42
+            loaded.save()
+            with open(probe, encoding="utf-8") as handle:
+                check("默认 save() 写回 state_dir 的配置",
+                      abs(float(json.load(handle).get("temperature", -1)) - 0.42) < 1e-6,
+                      probe)
+        finally:
+            os.chdir(old_cwd)
+
+    # 2. ECHODESK_STATE 优先
+    with tempfile.TemporaryDirectory() as tmp:
+        old_state = os.environ.get("ECHODESK_STATE")
+        os.environ["ECHODESK_STATE"] = tmp
+        try:
+            resolved = config.state_dir()
+            check("ECHODESK_STATE 优先于工作目录",
+                  os.path.normcase(resolved) == os.path.normcase(os.path.abspath(tmp)),
+                  resolved)
+        finally:
+            if old_state is None:
+                os.environ.pop("ECHODESK_STATE", None)
+            else:
+                os.environ["ECHODESK_STATE"] = old_state
+
+    # 3. 只读 CWD：必须下沉到 user_data_root（用替身模拟只读挂载点，不改真实权限）
+    with tempfile.TemporaryDirectory() as tmp:
+        old_cwd = os.getcwd()
+        original_probe = config._is_writable_dir
+        try:
+            os.chdir(tmp)
+            config._is_writable_dir = lambda _path: False
+            resolved = config.state_dir()
+            expected = config.user_data_root()
+            check("只读工作目录下沉到 user_data_root",
+                  os.path.normcase(resolved) == os.path.normcase(expected),
+                  f"{resolved} != {expected}")
+        finally:
+            config._is_writable_dir = original_probe
+            os.chdir(old_cwd)
+
+    # 4. macOS .app 结构识别
+    check("识别 .app/Contents/MacOS 布局",
+          config._is_macos_app_bundle("/Applications/EchoDesk.app/Contents/MacOS/backend/app"))
+    check("普通便携目录不会被误判为 .app",
+          not config._is_macos_app_bundle(os.path.join(os.sep, "opt", "echodesk", "app", "backend")))
+    home = os.path.expanduser("~")
+    if home and home != "~" and os.path.isdir(home):
+        expected_support = os.path.join(home, "Library", "Application Support", "EchoDesk")
+        check("macOS .app 的数据根是 Application Support",
+              os.path.normcase(config._macos_application_support()) == os.path.normcase(expected_support),
+              config._macos_application_support())
+
+
 def test_automation() -> None:
     section("自动化")
     try:
@@ -797,8 +885,8 @@ def test_imports() -> None:
 def main() -> int:
     tests = [test_imports, test_config, test_plaintext, test_gguf, test_summarizer,
              test_conversation, test_file_injection, test_crash_log_scope,
-             test_config_save_target, test_automation, test_marketplace,
-             test_model_match, test_protocol_keys]
+             test_config_save_target, test_state_paths, test_automation,
+             test_marketplace, test_model_match, test_protocol_keys]
     for fn in tests:
         try:
             fn()

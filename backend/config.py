@@ -17,6 +17,7 @@ EchoDesk 后端配置管理。
 import json
 import os
 import sys
+import tempfile
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -92,6 +93,92 @@ def program_dir() -> str:
 #: [ZH] 形成两个数据目录。修法是逐级向上跳过容器目录，让两种布局得到同一答案。
 CONTAINER_DIRS = frozenset({"app", "backend"})
 
+#: [EN] Memoised write probes keyed by absolute directory. ``state_dir()`` is read on
+#: every model-hub access, so a probe per call would be pure filesystem churn; the
+#: cache keeps the answer stable for a given directory for the lifetime of the process
+#: (permissions are not expected to change mid-run, and tests that chdir get a new key).
+#: [ZH] 以绝对路径为键的写权限探测缓存。`state_dir()` 在每次模型库访问时都会被读取，
+#: 每调一次就探测一次纯属文件系统噪声；缓存让同一目录在进程生命周期内保持稳定答案
+#: （运行中不预期权限变化，切换 cwd 的测试会得到新的键）。
+_WRITABLE_DIR_CACHE: Dict[str, bool] = {}
+
+
+def _is_writable_dir(path: str) -> bool:
+    """
+    [EN]
+    Whether a directory can actually be written to.
+
+    ``os.access(..., os.W_OK)`` alone is not enough: on Windows it ignores most ACLs and
+    on some read-only media it reports success, while the subsequent write fails. The
+    check therefore performs a real (empty, hidden) probe write and deletes it again, so
+    "read-only mount" and "permission denied" are both detected before any user data is
+    redirected.
+
+    [ZH]
+    目录是否真的可写。
+
+    只调 ``os.access(..., os.W_OK)`` 不够：Windows 上它会忽略大部分 ACL，某些只读介质上
+    也会报"可写"，而随后的写入却失败。因此这里做一次真实的（空的、隐藏的）探针写入并
+    立即删除，"只读挂载点"与"权限不足"都会在用户数据被改道之前被发现。
+    """
+    try:
+        key = os.path.abspath(path or ".")
+    except (OSError, ValueError):
+        return False
+    cached = _WRITABLE_DIR_CACHE.get(key)
+    if cached is not None:
+        return cached
+    writable = False
+    try:
+        if os.path.isdir(key) and os.access(key, os.W_OK):
+            with tempfile.NamedTemporaryFile(prefix=".echodesk-write-", dir=key):
+                pass
+            writable = True
+    except OSError:
+        writable = False
+    if len(_WRITABLE_DIR_CACHE) > 64:
+        _WRITABLE_DIR_CACHE.clear()
+    _WRITABLE_DIR_CACHE[key] = writable
+    return writable
+
+
+def _is_macos_app_bundle(path: str) -> bool:
+    """
+    [EN]
+    Whether a path lives inside a macOS ``.app`` bundle (``.../Contents/MacOS/...``).
+    Code inside a bundle is a signed resource, never writable state.
+
+    [ZH]
+    路径是否位于 macOS ``.app`` 包内（``.../Contents/MacOS/...``）。
+    包内的代码是已签名资源，绝不能当作可写状态目录。
+    """
+    try:
+        parts = [part.lower() for part in os.path.normpath(path).replace("\\", "/").split("/") if part]
+    except (OSError, ValueError):
+        return False
+    return any(parts[index] == "contents" and parts[index + 1] == "macos"
+               for index in range(len(parts) - 1))
+
+
+def _macos_application_support() -> str:
+    """
+    [EN]
+    ``~/Library/Application Support/EchoDesk``, or an empty string when the home
+    directory is unavailable (containers, service accounts); the caller then keeps the
+    legacy location instead of inventing an unwritable path.
+
+    [ZH]
+    ``~/Library/Application Support/EchoDesk``；主目录不可用时（容器、服务账户）返回空
+    字符串，调用方沿用旧位置，而不是造出一个写不进去的路径。
+    """
+    try:
+        home = os.path.expanduser("~")
+        if home and home != "~" and os.path.isdir(home):
+            return os.path.join(home, "Library", "Application Support", "EchoDesk")
+    except (OSError, ValueError):
+        pass
+    return ""
+
 
 def user_data_root() -> str:
     """
@@ -113,7 +200,10 @@ def user_data_root() -> str:
        * installed/portable (Windows): ``<release>\\app\\backend`` -> ``<release>``;
        * standalone (Linux/macOS): ``<release>/app/backend/app`` -> ``<release>``;
        * source checkout: ``<repo>/backend`` -> ``<repo>`` (unchanged from before the
-         fix, so developer machine behaviour is unaffected).
+         fix, so developer machine behaviour is unaffected);
+    4. macOS ``.app`` bundle: ``.../Contents/MacOS/backend/app`` walks up only to
+       ``.../Contents/MacOS``, i.e. inside the signed bundle, so the result is redirected
+       to ``~/Library/Application Support/EchoDesk`` (v0.2.5 P0).
 
     [ZH]
     用户数据根目录（修复七；v0.2.2 修掉 standalone 布局下算错的问题）。
@@ -129,7 +219,10 @@ def user_data_root() -> str:
     3. 三种真实布局都落在同一处：
        * 安装/便携（Windows）：``<发布>\\app\\backend`` → ``<发布>``；
        * standalone（Linux/macOS）：``<发布>/app/backend/app`` → ``<发布>``；
-       * 源码检出：``<仓库>/backend`` → ``<仓库>``（与修复前一致，不改变开发机行为）。
+       * 源码检出：``<仓库>/backend`` → ``<仓库>``（与修复前一致，不改变开发机行为）；
+    4. macOS ``.app`` 包：``.../Contents/MacOS/backend/app`` 最多只能上跳到
+       ``.../Contents/MacOS``，仍在已签名的包内，因此改判为
+       ``~/Library/Application Support/EchoDesk``（v0.2.5 P0）。
     """
     override = (os.environ.get("ECHODESK_DATA") or "").strip()
     if override:
@@ -148,7 +241,66 @@ def user_data_root() -> str:
                                 # [ZH] 已经到文件系统根，不能再往上。
             break
         current = parent
+    # [EN] macOS .app bundle (v0.2.5 P0): walking up from Contents/MacOS/backend/app
+    # [EN] stops at Contents/MacOS, which is still inside the signed bundle. Anything
+    # [EN] written there invalidates the signature and is lost on the next update, so the
+    # [EN] data root moves to Application Support, matching the front end's UserPaths.
+    # [ZH] macOS .app 包（v0.2.5 P0）：从 Contents/MacOS/backend/app 上跳会停在
+    # [ZH] Contents/MacOS，它仍在已签名的包内。写进去会让签名失效、升级时还会丢失，
+    # [ZH] 所以数据根改到 Application Support，与前端 UserPaths 的判定一致。
+    if _is_macos_app_bundle(current):
+        support = _macos_application_support()
+        if support:
+            return support
     return current
+
+
+def state_dir() -> str:
+    """
+    [EN]
+    Directory for writable runtime state: ``config.json``, the model repository and its
+    registry.
+
+    Resolution order (v0.2.5 P0, so that read-only mount points work):
+    1. the ``ECHODESK_STATE`` environment variable (explicit override);
+    2. the current working directory **when it is writable** — this is what keeps the
+       existing ``tar.gz`` portable layout byte-for-byte compatible: its working
+       directory is always writable, so every path resolves exactly as before;
+    3. otherwise :func:`user_data_root` (read-only AppImage squashfs, macOS ``.app``).
+
+    A macOS ``.app`` bundle never counts as writable state even when the user owns the
+    file, because writing there breaks the code signature; that case is redirected
+    explicitly in the bundle branch below.
+
+    [ZH]
+    可写运行状态目录：``config.json``、模型库与其注册表。
+
+    判定顺序（v0.2.5 P0，目的就是让只读挂载点可用）：
+    1. 环境变量 ``ECHODESK_STATE``（显式覆盖）；
+    2. **当前工作目录可写时**沿用工作目录 —— 这正是让现有 ``tar.gz`` 便携版保持逐字节
+       兼容的原因：它的工作目录始终可写，于是每条路径的解析结果与改动前完全一致；
+    3. 否则退回 :func:`user_data_root`（只读的 AppImage squashfs、macOS ``.app``）。
+
+    macOS ``.app`` 包即使文件属主可写也绝不作为状态目录 —— 写进去会破坏代码签名；
+    这一情形在下面的包内分支里显式改道。
+    """
+    override = (os.environ.get("ECHODESK_STATE") or "").strip()
+    if override:
+        try:
+            return os.path.abspath(os.path.expanduser(override))
+        except Exception:  # noqa: BLE001 - [EN] invalid override falls back to automatic detection
+                           # [ZH] 覆盖值非法时退回自动判定
+            pass
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        # [EN] The working directory was deleted (possible in tests); there is no
+        # [EN] writable cwd to reuse, so fall through to the user data root.
+        # [ZH] 工作目录已被删除（测试里可能出现）；没有可复用的可写 cwd，退回用户数据根。
+        return user_data_root()
+    if not _is_macos_app_bundle(cwd) and _is_writable_dir(cwd):
+        return cwd
+    return user_data_root()
 
 
 def program_root() -> str:
@@ -1401,7 +1553,7 @@ class Config(BaseModel):
         return best
 
     @classmethod
-    def load(cls, path: str = "config.json") -> "Config":
+    def load(cls, path: Optional[str] = None) -> "Config":
         """
         [EN]
         Locate the configuration file by priority and overlay the user patch
@@ -1435,10 +1587,21 @@ class Config(BaseModel):
         容错：基础配置读不出来仍然抛异常（没有配置无法工作）；``config.user.json``
         是可选覆盖层，格式坏掉时只告警并忽略它，绝不因此让整个后端起不来 ——
         用户手改一个可选文件写出语法错误，代价不该是程序打不开。
+
+        默认路径（v0.2.5 P0）：``path`` 为 ``None`` 时以 :func:`state_dir` 为基准拼出
+        ``config.json``。工作目录可写时（tar.gz 便携版）结果与改动前完全相同；只读挂载点
+        下 ``_find`` 会先找状态目录、再回落到随包分发的只读配置。显式传入 ``path`` 的
+        调用方（测试、工具）行为不变。
         """
-        base_path = cls._find(path)
-        if base_path is None:
-            raise FileNotFoundError(f"找不到配置文件: {path}")
+        if path is None:
+            state_path = os.path.join(state_dir(), "config.json")
+            base_path = cls._find_state_config()
+            if base_path is None:
+                raise FileNotFoundError(f"找不到配置文件: {state_path}")
+        else:
+            base_path = cls._find(path)
+            if base_path is None:
+                raise FileNotFoundError(f"找不到配置文件: {path}")
         with open(base_path, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
 
@@ -1462,7 +1625,7 @@ class Config(BaseModel):
 
         return cls(**data)
 
-    def save(self, path: str = "config.json") -> None:
+    def save(self, path: Optional[str] = None) -> None:
         """
         [EN]
         Write the current configuration back to the file it was read from (not to the
@@ -1526,18 +1689,48 @@ class Config(BaseModel):
         逼出来的：`tools/test_model_admin.py` 之类会在临时目录里 chdir 之后 `save()`
         一份尚不存在的配置；若此时改写到程序目录，调用方按原路径就找不到文件了。
         首次运行与测试都属于这一类，保持旧行为才不制造回归。
+
+        默认路径（v0.2.5 P0）：``path`` 为 ``None`` 时以 :func:`state_dir` 为基准。
+        找到的配置若位于只读位置（随包分发的 ``config.json``、``.app`` 包内），写入会
+        改道到状态目录，避免"设置里改了、重启又变回去"；目录不存在时先建目录。
         """
-        try:
-            target = self._find(path)
-        except OSError:
-            # [EN] `_find` calls `os.getcwd()` internally, and cwd may already have
-            # [EN] been deleted (exactly the state at the end of a TemporaryDirectory
-            # [EN] in tests); fall back to the legacy behaviour.
-            # [ZH] `_find` 内部会取 `os.getcwd()`，而 cwd 可能已经被删掉
-            # [ZH] （测试里的 TemporaryDirectory 结束时正是这种状态）—— 退回旧行为。
-            target = None
-        if target is None:
-            target = path
+        explicit = path is not None
+        if path is None:
+            path = os.path.join(state_dir(), "config.json")
+            try:
+                target = self._find_state_config()
+            except OSError:
+                target = None
+            if target is None:
+                target = path
+            elif not _is_writable_dir(os.path.dirname(target) or "."):
+                # [EN] The located file is a read-only bundled resource: persist to the
+                # [EN] writable state directory instead of failing on a read-only mount.
+                # [ZH] 定位到的是随包分发的只读资源：改写到可写状态目录，而不是在只读
+                # [ZH] 挂载点上失败。
+                target = path
+        else:
+            try:
+                target = self._find(path)
+            except OSError:
+                # [EN] `_find` calls `os.getcwd()` internally, and cwd may already have
+                # [EN] been deleted (exactly the state at the end of a TemporaryDirectory
+                # [EN] in tests); fall back to the legacy behaviour.
+                # [ZH] `_find` 内部会取 `os.getcwd()`，而 cwd 可能已经被删掉
+                # [ZH] （测试里的 TemporaryDirectory 结束时正是这种状态）—— 退回旧行为。
+                target = None
+            if target is None:
+                target = path
+        if not explicit:
+            parent = os.path.dirname(os.path.abspath(target))
+            if parent:
+                try:
+                    os.makedirs(parent, exist_ok=True)
+                except OSError:
+                    # [EN] Let the write below report the real error (permissions,
+                    # [EN] read-only media) with its original context.
+                    # [ZH] 让下面的写入以原始上下文报告真实错误（权限、只读介质）。
+                    pass
         data = self.model_dump()
         # [EN] Task 15 (observed in this test round): the data MUST be self-validated
         # [EN] before writing.
@@ -1631,4 +1824,34 @@ class Config(BaseModel):
         for p in candidates:
             if p and os.path.exists(p):
                 return p
+        return None
+
+    @staticmethod
+    def _find_state_config() -> Optional[str]:
+        """
+        [EN]
+        Locate ``config.json`` for the default (state-based) path.
+
+        Unlike :meth:`_find`, the first candidate is the writable state directory
+        rather than an absolute path re-joined to the CWD; the remaining candidates are
+        the read-only locations the file ships in. That order is what lets a read-only
+        ``.app`` / AppImage load the bundled defaults while a portable layout keeps
+        reading ``<cwd>/config.json`` exactly as before.
+
+        [ZH]
+        按"状态目录优先"查找默认的 ``config.json``。
+
+        与 :meth:`_find` 不同，第一候选是可写状态目录，而不是把绝对路径再与 CWD 拼接；
+        其余候选才是随包分发的只读位置。正是这个顺序让只读的 ``.app`` / AppImage 能读到
+        包内默认配置，同时便携版仍然和以前一样读取 ``<cwd>/config.json``。
+        """
+        candidates = [os.path.join(state_dir(), "config.json")]
+        if getattr(sys, "frozen", False):
+            candidates.append(os.path.join(os.path.dirname(sys.executable), "config.json"))
+        if getattr(sys, "_MEIPASS", False):
+            candidates.append(os.path.join(sys._MEIPASS, "config.json"))
+        candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json"))
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                return candidate
         return None
