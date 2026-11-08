@@ -355,6 +355,31 @@ function Assert-PayloadMatchesSbom([string]$CaseDir) {
     为什么要解析源文件而不是"再抄一份清单"：清单抄两份必然漂移 ——
     改了一边忘了另一边，验收照样全绿，而用户装完卸载仍然留一地文件。
 #>
+function Get-IssSectionEntries([string]$SectionName) {
+    $iss = Join-Path $PSScriptRoot "installer.iss"
+    if (-not (Test-Path $iss)) { throw "找不到 installer.iss" }
+    $lines = Get-Content -LiteralPath $iss -Encoding UTF8
+    $inSection = $false
+    $entries = @()
+    foreach ($line in $lines) {
+        $t = $line.Trim()
+        if ($t -match ('^\[' + [regex]::Escape($SectionName) + '\]')) { $inSection = $true; continue }
+        if ($t -match '^\[') { $inSection = $false; continue }
+        if (-not $inSection) { continue }
+        if ($t -eq '' -or $t.StartsWith(';')) { continue }
+        if ($t -notmatch '^Type:\s*(\w+)\s*;\s*Name:\s*"(.*)"\s*$') { continue }
+        $rel = $Matches[2]
+        if ($rel -notlike '{app}*') { continue }
+        $rest = $rel.Substring(5).TrimStart('\')
+        $entries += [pscustomobject]@{ Type = $Matches[1].ToLower(); Rel = $rest }
+    }
+    return $entries
+}
+
+function Get-IssInstallDeleteEntries {
+    return @(Get-IssSectionEntries "InstallDelete")
+}
+
 function Get-IssUninstallEntries {
     $iss = Join-Path $PSScriptRoot "installer.iss"
     if (-not (Test-Path $iss)) { throw "找不到 installer.iss" }
@@ -589,6 +614,43 @@ Check "installer.iss 卸载清单覆盖全部运行期文件，且不整目录�
     }
     "$($entries.Count) 条卸载条目覆盖全部 $($RemovedArtifacts.Count) 个可再生文件；" +
         "$($PreservedArtifacts.Count) 个用户数据未被删除清单覆盖，且无整目录删除"
+}
+
+Check "安装器内置简体中文语言包（UTF-8 BOM）" {
+    $iss = Get-Content -LiteralPath (Join-Path $PSScriptRoot "installer.iss") -Raw -Encoding UTF8
+    if ($iss -notmatch 'InnoSetup\\ChineseSimplified\.isl') {
+        throw "installer.iss 的 [Languages] 没有引用内置 ChineseSimplified.isl"
+    }
+    $isl = Join-Path $PSScriptRoot "InnoSetup\ChineseSimplified.isl"
+    if (-not (Test-Path -LiteralPath $isl)) { throw "缺少 $isl" }
+    $bytes = [System.IO.File]::ReadAllBytes($isl)
+    if ($bytes.Length -lt 3 -or $bytes[0] -ne 0xEF -or $bytes[1] -ne 0xBB -or $bytes[2] -ne 0xBF) {
+        throw "ChineseSimplified.isl 不是 UTF-8 with BOM（Inno 会按 ANSI 读取导致乱码）"
+    }
+    $text = [System.IO.File]::ReadAllText($isl, [System.Text.Encoding]::UTF8)
+    if ($text -notmatch 'LanguageName=简体中文') { throw "语言包缺少 LanguageName=简体中文" }
+    "内置中文语言包存在、带 BOM，且 LanguageName 正确"
+}
+
+Check "installer.iss 升级清理只针对 bin/.cache，不碰模型与 config" {
+    $entries = @(Get-IssInstallDeleteEntries)
+    if ($entries.Count -eq 0) { throw "installer.iss 的 [InstallDelete] 没解析出任何条目" }
+    $rels = @($entries | ForEach-Object { $_.Rel })
+    foreach ($required in @("app\bin", "app\.cache", ".cache", "cache", "app\backend\.cache")) {
+        if (-not ($rels | Where-Object { $_ -eq $required })) {
+            throw "升级清理缺少 $required（旧版遗留垃圾不会被移除）"
+        }
+    }
+    $forbidden = @()
+    foreach ($rel in $rels) {
+        if ($rel -match '(^|\\)(models|config\.json|config\.user\.json|session\.json|skills|skills_dev|results)(\\|$)') {
+            $forbidden += $rel
+        }
+    }
+    if ($forbidden.Count -gt 0) {
+        throw "升级清理错误地包含了用户数据/模型路径：$($forbidden -join ', ')"
+    }
+    "$($entries.Count) 条升级清理条目只覆盖 bin/.cache，模型与 config 未受影响"
 }
 
 Check "安装程序：默认装到安装程序所在目录、结构齐全、无模型、快捷方式正确、可卸载、清缓存但保留用户数据" {

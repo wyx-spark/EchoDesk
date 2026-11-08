@@ -930,6 +930,10 @@ class UpdateConfig(BaseModel):
     # [ZH] 企业环境可关掉自动检查（设计规范 5.2「允许通过配置禁用自动检查」）。
     last_check: str = ""
     last_seen_version: str = ""
+    # [EN] Version the user explicitly chose to ignore; an equal release is not prompted
+    # [EN] again. A newer release still prompts.
+    # [ZH] 用户明确选择忽略的版本；相同版本不再提示，更新的版本仍会提示。
+    ignored_version: str = ""
 
 
 class McpServerConfig(BaseModel):

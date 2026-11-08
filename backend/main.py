@@ -1940,6 +1940,8 @@ class Backend:
             return self._handle_update_download(request)
         if action == "update_apply":
             return self._handle_update_apply(request)
+        if action == "update_ignore":
+            return self._handle_update_ignore(request)
         return {"type": "system", "content": _t("sys.unknown_action")}
 
     # ---------- 多语言（相关设计 3.4） ----------
@@ -2297,6 +2299,30 @@ class Backend:
                 log.debug("保存更新检查时间失败", exc_info=True)
         return {"type": "system", "content": result.get("message", ""), "update": result}
 
+    def _download_update_payload(self, request: Dict[str, Any],
+                                 progress=None) -> Dict[str, Any]:
+        """
+        [EN] Shared download path for the synchronous and streaming actions. It validates
+        the tag/asset pair, re-resolves the URL, optionally forwards byte progress, and
+        records the tag. Callers turn the result into their own response shape.
+        [ZH] 同步与流式动作共用的下载路径：校验标签/附件组合、重新解析 URL、可选转发字节进度，
+        并记录标签。调用方把结果包装成各自的响应形态。
+        """
+        tag = str(request.get("tag") or "").strip()
+        asset = str(request.get("asset") or "").strip()
+        if not tag or not asset:
+            raise ValueError(_t("update.download_missing"))
+        from update_check import download_update_asset
+
+        dest = os.path.join(user_data_root(), "updates")
+        result = download_update_asset(self.config.update, tag, asset, dest, progress=progress)
+        self.config.update.last_seen_version = tag
+        try:
+            self.config.save()
+        except Exception:
+            log.debug("保存更新版本失败", exc_info=True)
+        return result
+
     def _handle_update_download(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
         [EN]
@@ -2313,27 +2339,74 @@ class Backend:
         改名落位前校验大小与 SHA-256。文件落在 ``<用户数据根>/updates/``，绝不进入
         程序目录，因此中断的下载不会破坏正在运行的安装。
         """
-        tag = str(request.get("tag") or "").strip()
-        asset = str(request.get("asset") or "").strip()
-        if not tag or not asset:
-            return {"type": "system", "content": _t("update.download_missing"),
-                    "ok": False, "update_download": {"ok": False, "error": "missing tag or asset"}}
         try:
-            from update_check import download_update_asset
-
-            dest = os.path.join(user_data_root(), "updates")
-            result = download_update_asset(self.config.update, tag, asset, dest)
+            result = self._download_update_payload(request)
         except Exception as e:  # noqa: BLE001 - report, never crash the backend
             log.exception("下载更新失败")
             return {"type": "system", "content": _t("update.download_failed", error=e),
                     "ok": False, "update_download": {"ok": False, "error": str(e)}}
-        self.config.update.last_seen_version = tag
+        return {"type": "system", "content": _t("update.downloaded", name=result.get("name", "")),
+                "ok": True, "update_download": result}
+
+    def _stream_update_download(self, request: Dict[str, Any]):
+        """
+        [EN]
+        Streaming update download: emit one ``update_progress`` line per throttled
+        chunk (downloaded bytes, total bytes, percent) and a final ``done`` line with
+        the verified path. Progress is written through the same locked stdout writer
+        as every other protocol line, so it can never interleave with another response.
+        [ZH]
+        流式更新下载：每经过节流的一个块输出一条 ``update_progress`` 行（已下载字节、
+        总字节、百分比），最后输出带校验路径的 ``done`` 行。进度通过与其它协议行相同的
+        加锁 stdout 写入器发出，因此绝不会与另一个响应交错。
+        """
+        def on_progress(downloaded: int, total: int) -> None:
+            total = max(0, int(total or 0))
+            downloaded = max(0, int(downloaded or 0))
+            percent = int(round(downloaded * 100.0 / total)) if total > 0 else 0
+            _write({
+                "type": "update_progress",
+                "update_progress": {
+                    "downloaded": downloaded,
+                    "total": total,
+                    "percent": max(0, min(100, percent)),
+                },
+            })
+
+        try:
+            result = self._download_update_payload(request, progress=on_progress)
+        except Exception as e:  # noqa: BLE001 - report as a stream error, never crash
+            log.exception("下载更新失败")
+            yield {"type": "error", "content": _t("update.download_failed", error=e),
+                   "update_download": {"ok": False, "error": str(e)}}
+            return
+        yield {"type": "done",
+               "content": _t("update.downloaded", name=result.get("name", "")),
+               "update_download": result}
+
+    def _handle_update_ignore(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN] Persist the release version the user chose to ignore. The next startup
+        check returns ``status=ignored`` for the same version instead of prompting; a
+        newer release still prompts normally.
+        [ZH] 持久化用户选择忽略的发布版本。下次启动检查对相同版本返回 ``status=ignored``
+        而不再提示；更新的版本仍会正常提示。
+        """
+        from update_check import parse_version
+
+        version = str(request.get("version") or "").strip()
+        if not version or parse_version(version) == (0, 0, 0):
+            return {"type": "system", "content": _t("update.ignore_failed"),
+                    "ok": False, "ignored_version": ""}
+        self.config.update.ignored_version = version
         try:
             self.config.save()
-        except Exception:
-            log.debug("保存更新版本失败", exc_info=True)
-        return {"type": "system", "content": _t("update.downloaded", name=result.get("name", asset)),
-                "ok": True, "update_download": result}
+        except Exception as e:  # noqa: BLE001
+            log.exception("保存忽略版本失败")
+            return {"type": "system", "content": _t("update.ignore_failed") + f"：{e}",
+                    "ok": False, "ignored_version": ""}
+        return {"type": "system", "content": _t("update.ignore_saved", version=version),
+                "ok": True, "ignored_version": version}
 
     def _handle_update_apply(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -4281,6 +4354,9 @@ class Backend:
         action = request.get("action")
         if action == "model_download":
             yield from self._stream_model_download(request.get("name", ""))
+            return
+        if action == "update_download":
+            yield from self._stream_update_download(request)
             return
         if action == "automation_run":
             yield from self._stream_automation()
@@ -7032,9 +7108,10 @@ def main() -> None:
                 _write({"type": "system", "content": _t("sys.busy"), "busy": True})
                 continue
 
-        if action in ("chat_stream", "model_download", "automation_run", "model_hub_download",
-                      "automation_pick", "automation_wizard", "file_stream", "model_hub_load"):
-            # 八个长任务都走流式线程：进度实时输出，stop 可中断。
+        if action in ("chat_stream", "model_download", "update_download", "automation_run",
+                      "model_hub_download", "automation_pick", "automation_wizard",
+                      "file_stream", "model_hub_load"):
+            # 九个长任务都走流式线程：进度实时输出，stop 可中断。
             # automation_* 还会检查 stop_event 尽早退出并关闭浏览器；
             # file_stream（相关设计）在分段摘要期间持续报进度，stop 能真正打断生成；
             # model_hub_load（模型市场优化 相关设计）按页报告"已取回 N 条"。

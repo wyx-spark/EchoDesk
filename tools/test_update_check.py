@@ -58,7 +58,7 @@ def check(name, condition, detail=""):
 def cfg(**overrides):
     base = dict(enabled=True, repo="wyx-spark/EchoDesk",
                 api_base="https://api.github.com", check_interval_hours=24,
-                last_check="", include_prerelease=False)
+                last_check="", include_prerelease=False, ignored_version="")
     base.update(overrides)
     return SimpleNamespace(**base)
 
@@ -123,6 +123,37 @@ def test_check_available():
     check("返回附件清单", len(result.get("assets", [])) == 1, str(result))
     check("返回首选附件", result.get("asset", {}).get("name") == "EchoDesk-v0.2.5-Setup.exe",
           str(result.get("asset")))
+
+
+def test_ignored_version():
+    url = "https://github.com/wyx-spark/EchoDesk/releases/download/v0.2.5/x.exe"
+    fake = [release("v0.2.5", [asset("x.exe", url, 1)])]
+    with mock.patch.object(uc, "_fetch_releases", return_value=fake):
+        result = uc.check_for_update(cfg(ignored_version="v0.2.5"), force=True)
+    check("被忽略的相同版本返回 ignored 状态", result["status"] == "ignored", str(result))
+    check("ignored 结果带上被忽略版本", result.get("ignored_version") == "v0.2.5", str(result))
+    fake2 = [release("v0.2.6", [asset("x.exe", url, 1)])]
+    with mock.patch.object(uc, "_fetch_releases", return_value=fake2):
+        newer = uc.check_for_update(cfg(ignored_version="v0.2.5"), force=True)
+    check("更新版本不受忽略记录影响", newer["status"] == "available", str(newer))
+
+
+def test_progress_callback():
+    payload = b"x" * 4096
+    url = "https://github.com/wyx-spark/EchoDesk/releases/download/v0.2.5/x.exe"
+    fake = [release("v0.2.5", [asset("x.exe", url, len(payload))])]
+    samples = []
+    with tempfile.TemporaryDirectory() as tmp:
+        with mock.patch.object(uc, "_fetch_releases", return_value=fake), \
+             mock.patch.object(uc.urllib.request, "urlopen", return_value=FakeResponse(payload)):
+            uc.download_update_asset(cfg(), "v0.2.5", "x.exe", tmp,
+                                     progress=lambda done, total: samples.append((done, total)))
+    check("进度回调至少收到一次", len(samples) >= 1, str(samples))
+    check("进度回调的末尾等于总字节",
+          bool(samples) and samples[-1][0] == len(payload) and samples[-1][1] == len(payload),
+          str(samples[-3:]))
+    check("进度回调单调不减",
+          all(samples[i][0] <= samples[i + 1][0] for i in range(len(samples) - 1)), str(samples[-3:]))
 
 
 def test_url_guard():
@@ -223,6 +254,8 @@ def main():
     test_versions()
     test_asset_pick()
     test_check_available()
+    test_ignored_version()
+    test_progress_callback()
     test_url_guard()
     test_download_ok()
     test_download_truncated()

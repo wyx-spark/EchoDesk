@@ -677,8 +677,19 @@ public partial class MainWindow : Window
     /// <summary>把界面文案刷成当前语言（Avalonia 版用直接赋值，不用 WPF 的附加属性遍历）。</summary>
     private void ApplyTexts()
     {
-        Title = $"EchoDesk {_state.Backend.Version ?? "v0.2.1"}";
-        VersionText.Text = _state.Backend.Version ?? "v0.2.1";
+        // [EN] Never hard-code a version in the frontend: before the backend handshake
+        // [EN] the title is just the product name, and the version appears once the
+        // [EN] single source of truth (backend/version.py) reports it.
+        // [ZH] 前端绝不写死版本号：握手前标题只显示产品名，版本由唯一来源
+        // [ZH]（backend/version.py）上报后再出现。
+        string appVersion = _state.Backend.Version ?? "";
+        Title = appVersion.Length > 0 ? $"EchoDesk {appVersion}" : "EchoDesk";
+        VersionText.Text = appVersion;
+        // [EN] Custom title bar identity block: version from the backend handshake,
+        //      studio line from the language pack.
+        // [ZH] 自定义标题栏标识区：版本来自后端握手，出品方文案来自语言包。
+        TitleBarVersionText.Text = _state.Backend.Version ?? "";
+        TitleBarStudioText.Text = Loc.T("main.powered", "由熵寂工作室出品");
         BrandText.Text = Loc.T("main.brand", "📡 EchoDesk");
         PoweredText.Text = Loc.T("main.powered", "由熵寂工作室出品");
         PlatformChip.Text = $"🖥 {_state.Platform.DisplayName}";
@@ -979,7 +990,7 @@ public partial class MainWindow : Window
         AddMessage("system", restored > 0
             ? Loc.T("main.welcomeRestored", "📂 已自动恢复上次会话（{0} 轮）", restored)
             : Loc.T("main.welcome", "✨ 欢迎使用 EchoDesk {0} — 由{1}出品",
-                _state.Backend.Version ?? "v0.2.2",
+                _state.Backend.Version ?? "",
                 Loc.T("main.studioName", "熵寂工作室")));
     }
 
@@ -1207,6 +1218,21 @@ public partial class MainWindow : Window
                 if (!doc.RootElement.TryGetProperty("update", out JsonElement update))
                     return;
                 string status = update.TryGetProperty("status", out JsonElement st) ? st.GetString() ?? "" : "";
+                // [EN] An explicitly ignored version is not prompted again, but the chip
+                // [EN] stays available so the user can still open the release page.
+                // [ZH] 明确忽略的版本不再提示，但保留状态区入口，用户仍可打开发布页面。
+                if (string.Equals(status, "ignored", StringComparison.Ordinal))
+                {
+                    _updateTag = update.TryGetProperty("latest", out JsonElement il)
+                        ? il.GetString() ?? "" : "";
+                    _updateUrl = update.TryGetProperty("url", out JsonElement iu)
+                        ? iu.GetString() ?? "" : "";
+                    StripUpdateText.Text = Loc.T("main.update.ignoredChip", "🙈 已忽略 {0}", _updateTag);
+                    ToolTip.SetTip(StripUpdateButton, Loc.T("main.update.ignoredTip",
+                        "该版本已被你忽略；点击可打开发布页面") + "\n" + _updateUrl);
+                    StripUpdateButton.IsVisible = true;
+                    return;
+                }
                 if (!string.Equals(status, "available", StringComparison.Ordinal))
                     return;
                 _updateUrl = update.TryGetProperty("url", out JsonElement url) ? url.GetString() ?? "" : "";
@@ -1224,7 +1250,7 @@ public partial class MainWindow : Window
                     return;
                 _updateAvailable = true;
                 StripUpdateText.Text = Loc.T("main.update.notice", "🎉 发现新版本 {0}（当前 {1}）",
-                    latest, _state.Backend.Version ?? "v0.2.1");
+                    latest, _state.Backend.Version ?? "");
                 ToolTip.SetTip(StripUpdateButton, Loc.T("main.update.tip", "点击打开下载页面") + "\n" + _updateUrl);
                 StripUpdateButton.IsVisible = true;
             }
@@ -1257,16 +1283,19 @@ public partial class MainWindow : Window
             string message = Loc.T("main.update.downloadAsk",
                 "发现新版本 {0}（当前 {1}）。\n\n是否现在下载更新？\n下载完成后会提示重启以应用。",
                 _updateTag, _state.Backend.Version ?? "") + (notes.Length > 0 ? "\n\n" + notes : "");
-            bool yes = await ShowUpdateDialogAsync(
+            (bool download, bool ignore) = await ShowUpdateDownloadDialogAsync(
                 Loc.T("main.update.downloadTitle", "发现新版本"),
                 message,
                 Loc.T("main.update.downloadYes", "下载更新"),
-                Loc.T("main.update.downloadNo", "暂不下载"));
-            if (!yes)
+                Loc.T("main.update.downloadNo", "暂不下载"),
+                Loc.T("main.update.ignoreVersion", "忽略此版本（下次启动不再提示）"));
+            if (!download)
             {
                 // [EN] A refusal is honoured unconditionally: no download request is sent.
                 // [ZH] 拒绝会被无条件尊重：不会发出任何下载请求。
                 _updateDeclined = true;
+                if (ignore)
+                    await IgnoreUpdateVersionAsync();
                 return;
             }
             await DownloadUpdateAsync();
@@ -1289,38 +1318,47 @@ public partial class MainWindow : Window
             OpenUpdatePage();
             return;
         }
-        StripUpdateText.Text = Loc.T("main.update.downloading", "⏳ 正在下载更新…");
+        ShowUpdateProgress(0, 0);
         StripUpdateButton.IsVisible = true;
+        string downloadedPath = "";
         try
         {
-            JsonDocument? doc = await _state.Backend.SendAsync(
+            // [EN] Streaming request: the backend emits `update_progress` lines with
+            //      downloaded/total bytes, then a final `done` line carrying the path.
+            // [ZH] 流式请求：后端先输出带已下载/总字节的 `update_progress` 行，最后输出带
+            //      路径的 `done` 行。
+            await _state.Backend.SendStreamAsync(
                 new { action = "update_download", tag = _updateTag, asset = _updateAsset },
-                idleTimeout: TimeSpan.FromMinutes(45));
-            if (doc is null)
+                idleTimeout: TimeSpan.FromMinutes(45),
+                onEvent: (type, root) =>
+                {
+                    if (type == "update_progress"
+                        && root.TryGetProperty("update_progress", out JsonElement progressEl)
+                        && progressEl.ValueKind == JsonValueKind.Object)
+                    {
+                        long downloaded = GetLongField(progressEl, "downloaded");
+                        long total = GetLongField(progressEl, "total");
+                        Dispatcher.UIThread.Post(() => ShowUpdateProgress(downloaded, total));
+                    }
+                    else if (type == "done"
+                             && root.TryGetProperty("update_download", out JsonElement doneEl)
+                             && doneEl.ValueKind == JsonValueKind.Object)
+                    {
+                        downloadedPath = GetStringField(doneEl, "path");
+                    }
+                });
+            if (downloadedPath.Length == 0)
             {
+                HideUpdateProgress();
                 StripUpdateText.Text = Loc.T("main.update.downloadFailedShort", "⚠️ 下载失败，点击重试");
                 return;
             }
-            using (doc)
-            {
-                if (!doc.RootElement.TryGetProperty("update_download", out JsonElement download)
-                    || download.ValueKind != JsonValueKind.Object)
-                {
-                    StripUpdateText.Text = Loc.T("main.update.downloadFailedShort", "⚠️ 下载失败，点击重试");
-                    return;
-                }
-                string path = GetStringField(download, "path");
-                if (path.Length == 0)
-                {
-                    StripUpdateText.Text = Loc.T("main.update.downloadFailedShort", "⚠️ 下载失败，点击重试");
-                    return;
-                }
-                _downloadedUpdatePath = path;
-                _updateAvailable = false;
-                StripUpdateText.Text = Loc.T("main.update.downloadedChip", "✅ 更新已下载，重启以应用");
-                ToolTip.SetTip(StripUpdateButton, path);
-                StripUpdateButton.IsVisible = true;
-            }
+            _downloadedUpdatePath = downloadedPath;
+            _updateAvailable = false;
+            HideUpdateProgress();
+            StripUpdateText.Text = Loc.T("main.update.downloadedChip", "✅ 更新已下载，重启以应用");
+            ToolTip.SetTip(StripUpdateButton, downloadedPath);
+            StripUpdateButton.IsVisible = true;
             bool restart = await ShowUpdateDialogAsync(
                 Loc.T("main.update.downloadedTitle", "更新已下载"),
                 Loc.T("main.update.downloadedAsk",
@@ -1333,6 +1371,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            HideUpdateProgress();
             StripUpdateText.Text = Loc.T("main.update.downloadFailedShort", "⚠️ 下载失败，点击重试");
             Toast(Loc.T("main.update.downloadFailed", "下载更新失败：{0}", ex.Message), error: true);
         }
@@ -1438,6 +1477,136 @@ public partial class MainWindow : Window
         };
         await dialog.ShowDialog(this);
         return result;
+    }
+
+    /// <summary>
+    /// [EN] Download prompt with an "ignore this version" checkbox. The returned tuple
+    ///      distinguishes "download now" from "do not download", and carries the ignore
+    ///      choice so the caller can persist it only when the user declined.
+    /// [ZH] 带「忽略此版本」复选框的下载询问框。返回的元组区分「现在下载」与「不下载」，
+    ///      并携带忽略选择，使调用方只在用户拒绝时持久化该选择。
+    /// </summary>
+    private async Task<(bool download, bool ignore)> ShowUpdateDownloadDialogAsync(
+        string title, string message, string primary, string secondary, string ignoreLabel)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 560,
+            CanResize = false,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+        };
+        bool download = false;
+        var ignoreBox = new CheckBox
+        {
+            Content = ignoreLabel,
+            IsChecked = false,
+            FontSize = 12,
+        };
+        AutomationProperties.SetAutomationId(ignoreBox, "UpdateIgnoreCheckBox");
+        var primaryButton = new Button
+        {
+            Content = primary,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Padding = new Thickness(16, 5),
+        };
+        primaryButton.Classes.Add("primary");
+        primaryButton.Click += (_, _) => { download = true; dialog.Close(); };
+        var secondaryButton = new Button
+        {
+            Content = secondary,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Padding = new Thickness(16, 5),
+            IsVisible = secondary.Length > 0,
+        };
+        secondaryButton.Classes.Add("ghost");
+        secondaryButton.Click += (_, _) => { download = false; dialog.Close(); };
+        dialog.Content = new StackPanel
+        {
+            Margin = new Thickness(20, 18),
+            Spacing = 12,
+            Children =
+            {
+                new TextBlock { Text = title, FontSize = 15, FontWeight = FontWeight.SemiBold },
+                new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, FontSize = 12 },
+                ignoreBox,
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Spacing = 8,
+                    Children = { secondaryButton, primaryButton },
+                },
+            },
+        };
+        await dialog.ShowDialog(this);
+        return (download, !download && ignoreBox.IsChecked == true);
+    }
+
+    /// <summary>
+    /// [EN] Persist the ignored version through the backend, then leave the chip in a
+    ///      clearly ignored state. A failure is non-fatal: the session still declines.
+    /// [ZH] 通过后端持久化忽略版本，然后把状态项置为明确的「已忽略」。失败不影响本会
+    ///      话继续拒绝下载。
+    /// </summary>
+    private async Task IgnoreUpdateVersionAsync()
+    {
+        if (_updateTag.Length == 0)
+            return;
+        try
+        {
+            JsonDocument? doc = await _state.Backend.SendAsync(
+                new { action = "update_ignore", version = _updateTag },
+                idleTimeout: TimeSpan.FromSeconds(30));
+            if (doc is not null)
+            {
+                using (doc)
+                {
+                    if (doc.RootElement.TryGetProperty("ok", out JsonElement okEl)
+                        && okEl.ValueKind == JsonValueKind.True)
+                    {
+                        StripUpdateText.Text = Loc.T("main.update.ignoredChip", "🙈 已忽略 {0}", _updateTag);
+                        ToolTip.SetTip(StripUpdateButton, Loc.T("main.update.ignoredTip",
+                            "该版本已被你忽略；点击可打开发布页面"));
+                    }
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // [EN] Best effort; the in-session refusal is still honoured.
+            // [ZH] 尽力而为；本会话的拒绝仍然有效。
+        }
+    }
+
+    /// <summary>
+    /// [EN] Render one byte-progress sample. While the total is unknown the bar is
+    ///      indeterminate; once the backend reports a total it becomes determinate.
+    /// [ZH] 渲染一次字节进度。总字节未知时进度条为不确定态；后端上报总字节后切换为确定态。
+    /// </summary>
+    private void ShowUpdateProgress(long downloaded, long total)
+    {
+        int percent = total > 0 ? (int)Math.Round(downloaded * 100.0 / total) : 0;
+        percent = Math.Max(0, Math.Min(100, percent));
+        UpdateProgressBar.IsVisible = true;
+        UpdateProgressBar.IsIndeterminate = total <= 0;
+        UpdateProgressBar.Value = percent;
+        StripUpdateText.Text = total > 0
+            ? Loc.T("main.update.downloadingPercent", "⏳ 下载中 {0}%（{1}/{2}）",
+                percent, FormatMemoryBytes(downloaded), FormatMemoryBytes(total))
+            : Loc.T("main.update.downloading", "⏳ 正在下载更新…");
+    }
+
+    /// <summary>
+    /// [EN] Hide and reset the update progress bar after completion or failure.
+    /// [ZH] 下载完成或失败后隐藏并复位更新进度条。
+    /// </summary>
+    private void HideUpdateProgress()
+    {
+        UpdateProgressBar.IsVisible = false;
+        UpdateProgressBar.IsIndeterminate = false;
+        UpdateProgressBar.Value = 0;
     }
 
     private async void OpenUpdatePage()
@@ -1585,9 +1754,20 @@ public partial class MainWindow : Window
             available = total;
         long used = total - available;
         int percent = (int)Math.Round(used * 100.0 / total);
-        StripMemoryText.Text = Loc.T("main.strip.memoryStrip", "🧠 内存 {0}%", percent);
-        ToolTip.SetTip(StripMemoryButton, Loc.T("main.strip.memoryDetail",
-            "物理内存：已用 {0} / 共 {1}（{2}%）", FormatMemoryBytes(used), FormatMemoryBytes(total), percent));
+        bool critical = percent > 90;
+        StripMemoryText.Text = critical
+            ? Loc.T("main.strip.memoryCritical", "⚠️ 内存 {0}%", percent)
+            : Loc.T("main.strip.memoryStrip", "🧠 内存 {0}%", percent);
+        // [EN] The class drives the red error brush through the theme; removing it restores
+        // [EN] the normal foreground without hard-coding colours in code-behind.
+        // [ZH] 该类通过主题驱动红色错误画刷；移除后恢复普通前景色，代码里不写死颜色。
+        StripMemoryText.Classes.Set("memory-critical", critical);
+        ToolTip.SetTip(StripMemoryButton, critical
+            ? Loc.T("main.strip.memoryCriticalTip",
+                "内存极度紧张，可能影响推理速度：已用 {0} / 共 {1}（{2}%）",
+                FormatMemoryBytes(used), FormatMemoryBytes(total), percent)
+            : Loc.T("main.strip.memoryDetail",
+                "物理内存：已用 {0} / 共 {1}（{2}%）", FormatMemoryBytes(used), FormatMemoryBytes(total), percent));
     }
 
     private static string FormatMemoryBytes(long bytes)
@@ -3834,6 +4014,67 @@ public partial class MainWindow : Window
                + $"｜memory={StripMemoryText.Text}"
                + $"｜capability={StripCapabilityText.Text}"
                + $"｜compact={StripCompactText.Text}";
+    }
+
+    /// <summary>
+    /// [EN] Probe helper: set a synthetic version in the title bar so the layout and
+    ///      localisation can be asserted without a running backend.
+    /// [ZH] 探针辅助：在标题栏写入合成版本号，使布局与本地化在没有后端时也能断言。
+    /// </summary>
+    public void ProbeSetTitleBarVersion(string version) => TitleBarVersionText.Text = version;
+
+    /// <summary>
+    /// [EN] Reports the custom title bar's identity block: title, version, studio line
+    ///      and the measured title width. Used by `--probe chat`.
+    /// [ZH] 报告自定义标题栏标识区：标题、版本、出品方文案与实测标题宽度。供 `--probe chat` 使用。
+    /// </summary>
+    public string ProbeTitleBarSnapshot()
+        => $"title={TitleBarTitle.Text}｜version={TitleBarVersionText.Text}"
+           + $"｜studio={TitleBarStudioText.Text}"
+           + $"｜titleWidth={TitleBarTitle.Bounds.Width:0}";
+
+    /// <summary>
+    /// [EN] Drives the memory status with a synthetic 95% sample, reports whether the
+    ///      critical class/tooltip were applied, then restores the previous visual state.
+    /// [ZH] 用合成的 95% 样本驱动内存状态项，报告是否应用了红色警告类与提示，然后恢复原视觉状态。
+    /// </summary>
+    public string ProbeMemoryWarning()
+    {
+        string oldText = StripMemoryText.Text;
+        object? oldTip = ToolTip.GetTip(StripMemoryButton);
+        bool oldClass = StripMemoryText.Classes.Contains("memory-critical");
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(
+                "{\"total_bytes\":100,\"available_bytes\":5}");
+            SetMemoryStatus(doc.RootElement);
+            bool critical = StripMemoryText.Classes.Contains("memory-critical");
+            string text = StripMemoryText.Text ?? "";
+            string tip = ToolTip.GetTip(StripMemoryButton) as string ?? "";
+            return $"critical={critical}｜text={text}｜tip={tip}";
+        }
+        finally
+        {
+            StripMemoryText.Text = oldText;
+            StripMemoryText.Classes.Set("memory-critical", oldClass);
+            ToolTip.SetTip(StripMemoryButton, oldTip);
+        }
+    }
+
+    /// <summary>
+    /// [EN] Exercises the native update progress bar at a synthetic 25%, then verifies
+    ///      that completion hides and resets it.
+    /// [ZH] 用合成的 25% 驱动原生更新进度条，并验证完成后会隐藏并复位。
+    /// </summary>
+    public string ProbeUpdateProgressUi()
+    {
+        ShowUpdateProgress(25, 100);
+        bool visible = UpdateProgressBar.IsVisible;
+        double value = UpdateProgressBar.Value;
+        string text = StripUpdateText.Text ?? "";
+        HideUpdateProgress();
+        bool hidden = !UpdateProgressBar.IsVisible && Math.Abs(UpdateProgressBar.Value) < 0.001;
+        return $"visible={visible}｜value={value:0}｜text={text}｜hidden={hidden}";
     }
 
     public async Task<string> ProbeStatusStripMotionAsync()

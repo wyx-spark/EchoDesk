@@ -34,7 +34,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from i18n import t as _t
 from version import APP_VERSION
@@ -234,6 +234,18 @@ def check_for_update(cfg: Any, force: bool = False) -> Dict[str, Any]:
     if preferred is not None:
         result["asset"] = preferred
 
+    # [EN] A version the user explicitly chose to ignore is still reported, but with a
+    # [EN] dedicated status so the interface does not prompt again. A later release
+    # [EN] compares unequal and is offered normally.
+    # [ZH] 用户明确选择忽略的版本仍会上报，但使用独立状态，界面不再提示。更新的版本
+    # [ZH] 比较结果不相等，会照常提示。
+    ignored_version = str(getattr(cfg, "ignored_version", "") or "").strip()
+    if ignored_version and compare_versions(ignored_version, latest) == 0:
+        result["status"] = "ignored"
+        result["ignored_version"] = ignored_version
+        result["message"] = _t("update.ignored", version=latest)
+        return result
+
     delta = compare_versions(current, latest)
     if delta > 0:
         result["status"] = "available"
@@ -355,7 +367,8 @@ def _validate_download_url(url: str, cfg: Any) -> None:
         raise ValueError("更新附件不属于当前仓库的 Releases")
 
 
-def download_update_asset(cfg: Any, tag: str, asset_name: str, dest_dir: str) -> Dict[str, Any]:
+def download_update_asset(cfg: Any, tag: str, asset_name: str, dest_dir: str,
+                          progress: Optional[Callable[[int, int], None]] = None) -> Dict[str, Any]:
     """
     [EN]
     Download one asset of a specific release. The URL is re-resolved from the
@@ -392,6 +405,7 @@ def download_update_asset(cfg: Any, tag: str, asset_name: str, dest_dir: str) ->
     part_path = final_path + ".part"
     digest = hashlib.sha256()
     written = 0
+    last_report = 0.0
     request = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept": "application/octet-stream"})
     try:
         with urllib.request.urlopen(request, timeout=60) as resp, open(part_path, "wb") as handle:
@@ -404,6 +418,15 @@ def download_update_asset(cfg: Any, tag: str, asset_name: str, dest_dir: str) ->
                     raise ValueError("附件超过允许的最大体积")
                 digest.update(chunk)
                 handle.write(chunk)
+                # [EN] Throttled progress callback: at most one report per ~150 ms (plus the
+                # [EN] final report). The backend forwards these as structured stdout lines.
+                # [ZH] 节流的进度回调：约每 150 毫秒最多上报一次（外加最后一次）。后端把这些
+                # [ZH] 作为结构化 stdout 行转发给前端。
+                if progress is not None:
+                    now = time.monotonic()
+                    if now - last_report >= 0.15 or written >= size:
+                        progress(written, size)
+                        last_report = now
         if size and written != size:
             raise ValueError(f"下载不完整：期望 {size} 字节，实际 {written} 字节")
         got = digest.hexdigest()
@@ -413,6 +436,8 @@ def download_update_asset(cfg: Any, tag: str, asset_name: str, dest_dir: str) ->
             if want and want != got:
                 raise ValueError("SHA-256 校验失败，下载已丢弃")
         os.replace(part_path, final_path)
+        if progress is not None:
+            progress(written, size)
     except Exception:
         try:
             os.remove(part_path)

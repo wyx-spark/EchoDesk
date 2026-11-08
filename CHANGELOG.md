@@ -13,7 +13,7 @@ for traceability only; this changelog is the release-facing document.
 
 | Version | Type | Release date | Summary |
 | :--- | :--- | :--- | :--- |
-| [v0.2.4](#v024) | Stable Release | 2026-11-08 | Automatic hardware tuning, three inference presets, transparent override and diagnostics; release-time patch for input stability, status parity, user-consented updates and data-safe installation |
+| [v0.2.4](#v024) | Stable Release | 2026-11-08 | Automatic hardware tuning, three inference presets, transparent override and diagnostics; release-time patch and final hotfix for streaming download progress, ignored-version memory, memory warnings, balanced title bar, Chinese installer and upgrade hygiene |
 | [v0.2.3](#v023) | Stable Release | 2026-11-07 | Reproducible builds, dependency locks, Avalonia main line, WPF LTS |
 | [v0.2.2](#v022) | Stable Release | 2026-11-04 | Cross-platform frontend, visual consistency, full bilingual coverage |
 | [v0.2.1](#v021) | Stable Release | 2026-10-05 | Capability consolidation, Agent platform, MCP, plugin ecosystem |
@@ -116,6 +116,33 @@ probes: hardware detection never writes a host identifier or absolute path into 
   retained: removing it would strip legally required documents and break the release contract.
 - Verification: `selftest` 163/163, the new `test_update_check` 31/31, Avalonia `--probe chat`
   with the new assertions, two byte-identical reproducible builds, and the full
+  `verify_release.ps1` gate with no skips.
+
+### Final hotfix (2026-11-08)
+
+- **Streaming update download progress.** `update_download` is now a streaming action. The
+  backend emits `update_progress` lines containing downloaded bytes, total bytes and percent,
+  throttled to roughly one report per 150 ms; the Avalonia status strip renders a native
+  `ProgressBar` plus a live percentage/byte label. The final `done` line still carries the
+  verified path, and failure hides and resets the bar.
+- **Ignore this version.** The download prompt now offers an “Ignore this version” checkbox.
+  Choosing “No” with the box checked persists `update.ignored_version` through the backend; the
+  next startup check returns `status=ignored` for that version and does not prompt again. A
+  newer release still prompts normally.
+- **Critical memory warning.** The status-strip memory item turns red (localised `ErrorBrush`
+  class) and changes its icon to `⚠️` when usage exceeds 90%, with the tooltip
+  “Memory is critically low and may slow inference”. The class is removed again when pressure
+  drops.
+- **Balanced title bar.** The Avalonia custom title bar now shows the product mark, the version
+  reported by the backend handshake (single source: `backend/version.py`), and the localized
+  studio line in a centred identity block. No version is hard-coded in the frontend.
+- **Chinese installer and upgrade hygiene.** `tools/InnoSetup/ChineseSimplified.isl` (official
+  Inno Setup translation, UTF-8 with BOM) is bundled so every build produces a Chinese-capable
+  installer without relying on the compiler machine. `[InstallDelete]` removes stale
+  `bin/` and `.cache` paths during an upgrade while explicitly excluding models, config,
+  sessions, registries, user skills and results.
+- Verification: `selftest` 163/163, `test_update_check` 37/37, Avalonia `--probe chat` with the
+  new title/memory/progress assertions, two byte-identical reproducible builds, and the full
   `verify_release.ps1` gate with no skips.
 
 ### Known limitations

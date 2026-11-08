@@ -181,7 +181,8 @@
         "check_interval_hours": 24,
         "include_prerelease": false,
         "last_check": "",
-        "last_seen_version": ""
+        "last_seen_version": "",
+    "ignored_version": ""
     },
     "language": "auto",
     "max_history": 10,

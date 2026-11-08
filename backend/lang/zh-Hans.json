@@ -1152,7 +1152,10 @@
     "apply_unsupported": "应用更新失败：该附件不是可执行的安装包（.exe / .msi）",
     "backup_failed": "应用更新前备份用户数据失败：{error}",
     "apply_failed": "启动更新安装程序失败：{error}",
-    "apply_started": "安装程序已启动（{path}），应用即将退出"
+    "apply_started": "安装程序已启动（{path}），应用即将退出",
+    "ignored": "已忽略版本 {version}，不再提示（更新的版本仍会提示）",
+    "ignore_saved": "已忽略版本 {version}，下次启动不再提示",
+    "ignore_failed": "保存忽略版本失败"
   },
   "skill": {
     "install_bundle_missing": "skill.json 缺少 echodesk.bundle 字段，正式安装需要它（开发目录可放宽）。",

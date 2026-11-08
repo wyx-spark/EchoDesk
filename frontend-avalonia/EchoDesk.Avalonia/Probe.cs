@@ -832,6 +832,39 @@ internal static class Probe
             && System.Text.RegularExpressions.Regex.IsMatch(items, @"memory=[^｜]*%"),
             OneLine(items, 220));
 
+        // ---- 标题栏：品牌/版本/出品方齐全 ------------------------------
+        main.ProbeSetTitleBarVersion("v0.2.4");
+        string titleBar = main.ProbeTitleBarSnapshot();
+        Console.WriteLine($"  标题栏     : {titleBar}");
+        Check("标题栏显示版本号（来自后端版本源）",
+            titleBar.Contains("version=v0.2.4", StringComparison.Ordinal), OneLine(titleBar, 180));
+        int studioAt = titleBar.IndexOf("studio=", StringComparison.Ordinal);
+        string studioValue = studioAt < 0 ? "" : titleBar[(studioAt + "studio=".Length)..].Split('｜')[0];
+        Check("标题栏出品方文案非空", studioValue.Trim().Length > 0, $"studio='{studioValue}'");
+        Check("标题栏标题有实际宽度", ReadNumber(titleBar, "titleWidth") > 0, OneLine(titleBar, 180));
+
+        // ---- 内存 >90% 红色警告 ---------------------------------------
+        string memWarning = main.ProbeMemoryWarning();
+        Console.WriteLine($"  内存预警   : {memWarning}");
+        Check("内存使用率 95% 时触发红色警告类",
+            memWarning.Contains("critical=True", StringComparison.Ordinal), OneLine(memWarning, 200));
+        Check("内存使用率 95% 时文案带百分比",
+            memWarning.Contains("95", StringComparison.Ordinal), OneLine(memWarning, 200));
+        int memTipAt = memWarning.IndexOf("tip=", StringComparison.Ordinal);
+        string memTip = memTipAt < 0 ? "" : memWarning[(memTipAt + "tip=".Length)..];
+        Check("内存预警悬停提示非空", memTip.Trim().Length > 0, $"tip='{memTip}'");
+
+        // ---- 更新下载进度条 -------------------------------------------
+        string progress = main.ProbeUpdateProgressUi();
+        Console.WriteLine($"  更新进度   : {progress}");
+        Check("下载进度条可见且为 25%",
+            progress.Contains("visible=True", StringComparison.Ordinal)
+            && Math.Abs(ReadNumber(progress, "value") - 25) < 0.01, OneLine(progress, 200));
+        Check("下载进度文本显示百分比",
+            progress.Contains("%", StringComparison.Ordinal), OneLine(progress, 200));
+        Check("下载完成后进度条隐藏并复位",
+            progress.Contains("hidden=True", StringComparison.Ordinal), OneLine(progress, 200));
+
         return ok;
     }
 

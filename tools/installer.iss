@@ -155,14 +155,12 @@ VersionInfoOriginalFileName=EchoDesk-v{#MyAppVersion}-Setup.exe
 [Languages]
 ; 英文用编译器自带 Default.isl，永远可用。
 Name: "english"; MessagesFile: "compiler:Default.isl"
-; 简体中文：Inno Setup 6.7 自带的 Languages\ 目录里**没有** ChineseSimplified.isl
-; （官方把它列为需单独下载的第三方翻译）。这里用 ISPP 的 FileExists 做条件包含：
-; 机器上放了这个 .isl 就自动启用中文界面，没放就只出英文界面 —— 不会编译失败。
-; 注意：此前这里写的是 `Name: "chinese"; MessagesFile: "compiler:Default.isl"`，
-; 那只是把英文界面**标成**中文，属于误标，已改掉。
-#if FileExists(AddBackslash(CompilerPath) + "Languages\ChineseSimplified.isl")
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
-#endif
+; 简体中文：官方 Inno Setup 源码树里的 ChineseSimplified.isl 已随仓库内置到
+; tools\InnoSetup\ChineseSimplified.isl（来源：
+; https://github.com/jrsoftware/issrc/blob/main/Files/Languages/ChineseSimplified.isl）。
+; 不再依赖编译器目录里是否恰好存在该文件，因此任何构建机都能出中文安装界面。
+; 文件为 UTF-8 with BOM —— 没有 BOM 时 Inno 会按系统 ANSI 代码页读取，中文会乱码。
+Name: "chinesesimplified"; MessagesFile: "InnoSetup\ChineseSimplified.isl"
 
 [CustomMessages]
 ; v0.2.2 硬编码清查第 6 批收尾：卸载提示原先**写死中文**（见 [Code] 的 CurUninstallStepChanged），
@@ -171,16 +169,26 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 ; 没定义的语言回退到默认语言（english）。占位符用 %1，由 FmtMessage 传入路径。
 english.UninstallKeepResults=EchoDesk will keep the batch results folder as it is:%n%n%1%n%nFiles created while the program was running (sessions, models, caches, logs, ...) will be removed.
 english.UninstallKeepData=Your user data was backed up before uninstall:%n%n%1%n%nConfig, sessions, skills and model files are kept in place and are never deleted by the uninstaller. Batch results remain at:%n%n%2
-; 中文那一条也必须用同一个条件包起来 —— 否则在"没装 ChineseSimplified.isl"的机器上，
-; CustomMessages 引用了一个 [Languages] 里并不存在的语言名，编译直接失败
-; （实测报 `Unknown language name "chinesesimplified"`，破坏了本文件"没放 .isl 也能编译"的约定）。
-#if FileExists(AddBackslash(CompilerPath) + "Languages\ChineseSimplified.isl")
+; 中文语言文件已随仓库内置，因此中文 CustomMessages 可以无条件声明。
 chinesesimplified.UninstallKeepResults=批量处理结果目录会原样保留：%n%n%1%n%n其余由程序运行时产生的文件（会话、模型、缓存、日志等）会被删除。
 chinesesimplified.UninstallKeepData=卸载前已备份用户数据：%n%n%1%n%n配置、会话、插件与模型文件原样保留，卸载程序不会删除它们。批量处理结果仍在：%n%n%2
-#endif
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
+
+[InstallDelete]
+; [EN] Upgrade hygiene: remove old build/runtime garbage before the new payload is
+; [EN] written. These paths are regenerable. Models, config.json, sessions, registries,
+; [EN] user skills and results are deliberately absent: they must never be touched.
+; [ZH] 升级清理：写入新文件之前移除旧版遗留的构建/运行期垃圾。下列路径都可再生。
+; [ZH] 模型、config.json、会话、注册表、用户插件与 results 刻意不在此列：绝不触碰。
+Type: filesandordirs; Name: "{app}\app\bin"
+Type: filesandordirs; Name: "{app}\app\.cache"
+Type: filesandordirs; Name: "{app}\.cache"
+Type: filesandordirs; Name: "{app}\cache"
+Type: filesandordirs; Name: "{app}\app\backend\.cache"
+Type: filesandordirs; Name: "{app}\app\backend\__pycache__"
+Type: filesandordirs; Name: "{app}\app\backend\_internal\__pycache__"
 
 [Files]
 ; 无条件排除模型文件（本版只有一份安装程序，模型不进包；见文件头说明）。

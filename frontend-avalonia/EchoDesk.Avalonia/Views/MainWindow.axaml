@@ -85,6 +85,17 @@
       <Setter Property="Background" Value="{DynamicResource AccentPressedBrush}" />
       <Setter Property="BorderBrush" Value="{DynamicResource AccentPressedBrush}" />
     </Style>
+    <!--
+      [EN] Critical memory pressure. The class is toggled from SetMemoryStatus when the
+           measured usage exceeds 90%; the brush stays a DynamicResource so a theme switch
+           recolours it without touching the code.
+      [ZH] 内存极度紧张。使用率超过 90% 时由 SetMemoryStatus 切换该类；画刷保持
+           DynamicResource，因此切换主题会自动换色，无需改代码。
+    -->
+    <Style Selector="TextBlock.memory-critical">
+      <Setter Property="Foreground" Value="{DynamicResource ErrorBrush}" />
+      <Setter Property="FontWeight" Value="Bold" />
+    </Style>
   </Window.Styles>
 
   <Grid RowDefinitions="Auto,*">
@@ -112,6 +123,27 @@
                      LineHeight="16" TextWrapping="NoWrap"
                      Foreground="{DynamicResource TitleBarForegroundBrush}"
                      VerticalAlignment="Center" />
+        </StackPanel>
+
+        <!--
+          [EN] Centre identity block: the version comes from the backend `ready`
+               handshake (single source of truth: backend/version.py), and the studio
+               line is localised. Keeping it centred balances the title bar instead of
+               leaving a large empty middle column.
+          [ZH] 居中标识区：版本号来自后端 `ready` 握手（唯一来源是 backend/version.py），
+               出品方文案走语言包。居中放置使标题栏视觉平衡，而不是留下一大片空白中列。
+        -->
+        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center"
+                    VerticalAlignment="Center" Spacing="8">
+          <TextBlock x:Name="TitleBarVersionText" FontSize="11" VerticalAlignment="Center"
+                     Foreground="{DynamicResource SubTextBrush}"
+                     AutomationProperties.AutomationId="TitleBarVersionText" />
+          <TextBlock Text="·" FontSize="11" VerticalAlignment="Center"
+                     Foreground="{DynamicResource SubTextBrush}" />
+          <TextBlock x:Name="TitleBarStudioText" FontSize="11" VerticalAlignment="Center"
+                     Foreground="{DynamicResource SubTextBrush}" TextTrimming="CharacterEllipsis"
+                     MaxWidth="240"
+                     AutomationProperties.AutomationId="TitleBarStudioText" />
         </StackPanel>
 
         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
@@ -341,6 +373,16 @@
           <Button x:Name="StripUpdateButton" Classes="chip" Margin="6,0,0,0" IsVisible="False">
             <TextBlock x:Name="StripUpdateText" Text="🎉 新版本" FontSize="11" />
           </Button>
+          <!--
+            [EN] Native ProgressBar for update downloads. It is hidden until a download
+                 starts, becomes determinate as soon as the backend reports bytes, and is
+                 hidden again on completion or failure.
+            [ZH] 更新下载用的原生 ProgressBar。下载开始前隐藏；后端上报字节后切换为确定进度；
+                 完成或失败后再次隐藏。
+          -->
+          <ProgressBar x:Name="UpdateProgressBar" Width="96" Height="6" Minimum="0" Maximum="100"
+                       Value="0" IsVisible="False" Margin="6,0,0,0" VerticalAlignment="Center"
+                       AutomationProperties.AutomationId="UpdateProgressBar" />
           <TextBlock x:Name="MetricsText" FontSize="11" Margin="6,0,0,0" IsVisible="False"
                      VerticalAlignment="Center" Opacity="0.85" />
         </WrapPanel>

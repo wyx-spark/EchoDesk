@@ -506,15 +506,14 @@ else {
     Write-Ok "发布物内文件名/目录名全为 ASCII（无中文）"
 }
 
-# --- 1.10 安装界面语言（信息项，不阻断） ---
-$zhIsl = Join-Path $InnoDir "Languages\ChineseSimplified.isl"
+# --- 1.10 安装界面语言（内置中文包，必须存在） ---
+$zhIsl = Join-Path $PSScriptRoot "InnoSetup\ChineseSimplified.isl"
 if (Test-Path $zhIsl) {
-    Write-Ok "安装界面: 英文 + 简体中文（找到 $zhIsl）"
+    Write-Ok "安装界面: 英文 + 简体中文（内置 $zhIsl）"
 }
 else {
-    Write-Warn2 "安装界面只有英文：Inno Setup 自带的 Languages\ 目录里没有 ChineseSimplified.isl"
-    Write-Warn2 "  （官方把它列为需单独下载的第三方翻译）。把该 .isl 放进上面的目录即可自动启用中文界面，"
-    Write-Warn2 "  安装脚本用 ISPP 的 FileExists 做条件包含，不需要改任何代码。"
+    Add-Problem "缺少内置中文语言包：$zhIsl" `
+        "installer.iss 的 [Languages] 直接引用 tools\InnoSetup\ChineseSimplified.isl；请恢复该文件（UTF-8 with BOM）。"
 }
 
 # --- 统一判定 ---

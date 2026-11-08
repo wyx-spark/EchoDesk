@@ -1152,7 +1152,10 @@
     "apply_unsupported": "Applying the update failed: the asset is not an executable installer (.exe / .msi)",
     "backup_failed": "Backing up user data before the update failed: {error}",
     "apply_failed": "Starting the update installer failed: {error}",
-    "apply_started": "The installer has started ({path}); the application will exit now"
+    "apply_started": "The installer has started ({path}); the application will exit now",
+    "ignored": "Version {version} is ignored; it will not be offered again (newer versions still will)",
+    "ignore_saved": "Version {version} will be ignored from now on",
+    "ignore_failed": "Could not save the ignored version"
   },
   "skill": {
     "install_bundle_missing": "skill.json has no echodesk.bundle field, which a real install requires (development folders are lenient).",
