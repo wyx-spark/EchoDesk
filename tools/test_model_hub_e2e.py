@@ -21,19 +21,31 @@ import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "backend"))
+# 版本号唯一来源：``backend/version.py``。此前这里写死 ``publish/EchoDesk-v0.2.2``，
+# 升到 v0.2.4 后门禁会在"找不到后端"处失败，而不是验证真实行为。
+from version import APP_VERSION  # noqa: E402
 
 
 def _resolve_backend() -> str:
     """定位打包后的后端 exe：新布局（便携版三层）优先，其次兼容旧的扁平布局。
 
     修复七把程序本体收进了 app\\，这个脚本当时留在旧路径上，表现为"找不到后端"
-    而不是"测试失败"。同 test_backend_e2e.py 的处理保持一致。
+    而不是"测试失败"。同 test_backend_e2e.py 的处理保持一致：发布树从
+    ``backend/version.py`` 派生，升版本不再需要修改本脚本。
     """
-    candidates = [
-        os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "app", "backend", "EchoDeskBackend.exe"),
-        os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "backend", "EchoDeskBackend.exe"),
-        os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "EchoDeskBackend.exe"),
-    ]
+    publish = os.path.join(ROOT, "publish")
+    trees = [os.path.join(publish, f"EchoDesk-{APP_VERSION}")]
+    if os.path.isdir(publish):
+        trees += [os.path.join(publish, name) for name in sorted(os.listdir(publish), reverse=True)
+                  if name.startswith("EchoDesk-v") and os.path.isdir(os.path.join(publish, name))]
+    candidates = []
+    for tree in trees:
+        candidates += [
+            os.path.join(tree, "app", "backend", "EchoDeskBackend.exe"),
+            os.path.join(tree, "backend", "EchoDeskBackend.exe"),
+            os.path.join(tree, "EchoDeskBackend.exe"),
+        ]
     for path in candidates:
         if os.path.isfile(path):
             return path

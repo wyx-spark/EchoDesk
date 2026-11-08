@@ -382,7 +382,7 @@ try {
             $out -join ' · '
         }
 
-        Invoke-Check "安装程序：真装真卸（默认装到自身所在目录 / 结构 / 快捷方式 / %TEMP% / 卸载 / 运行期文件清干净且保留 results）" {
+        Invoke-Check "安装程序：真装真卸（默认目录 / 结构 / 快捷方式 / %TEMP% / 卸载清缓存 / 保留用户数据与 results）" {
             <#
                 这一项真的把安装程序装一遍、再卸一遍。验收内容：
                   * **不传 /DIR**，验证"默认装到安装程序自己所在的目录" —— 这是本方案的
@@ -664,6 +664,14 @@ try {
             Invoke-Native "ui-probe-avalonia" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
                                                              "-File", "tools\ui_probe_avalonia.ps1",
                                                              "-Exe", $avExe, "-Mode", "both")
+            # [EN] v0.2.4 patch: chat mode adds the render-only input-hover assertions and
+            # [EN] the status-strip item/memory assertions. It must be part of the release
+            # [EN] gate, otherwise those regressions could return unnoticed.
+            # [ZH] v0.2.4 补丁：chat 模式新增"输入框悬停零布局重排"与状态区各项/内存断言。
+            # [ZH] 它必须进入发布门禁，否则这些回归可以悄无声息地回来。
+            Invoke-Native "ui-probe-avalonia-chat" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
+                                                                  "-File", "tools\ui_probe_avalonia.ps1",
+                                                                  "-Exe", $avExe, "-Mode", "chat")
             # market 模式要真后端 + 一次远端搜索，单独给它更长的超时
             Invoke-Native "ui-probe-avalonia-market" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
                                                                     "-File", "tools\ui_probe_avalonia.ps1",

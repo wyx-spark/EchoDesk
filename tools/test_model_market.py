@@ -25,6 +25,9 @@ import urllib.parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "backend"))
+# 版本号唯一来源：``backend/version.py``。此前这里写死 ``publish/EchoDesk-v0.2.2``，
+# 升到 v0.2.4 后门禁会在"找不到后端"处失败，而不是验证真实行为。
+from version import APP_VERSION  # noqa: E402
 
 CHECKS = []
 
@@ -759,14 +762,18 @@ def resolve_backend():
     一路 4000 秒挂死在"等待 hub_result 超时"，日志里还看不出原因。）
     """
     if "--packaged" in sys.argv:
-        candidates = [
-            os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "app", "backend", "EchoDeskBackend.exe"),
-            os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "backend", "EchoDeskBackend.exe"),
-            os.path.join(ROOT, "publish", "EchoDesk-v0.2.2", "EchoDeskBackend.exe"),
-        ]
-        for path in candidates:
-            if os.path.isfile(path):
-                return [path], "打包发布物"
+        publish = os.path.join(ROOT, "publish")
+        trees = [os.path.join(publish, f"EchoDesk-{APP_VERSION}")]
+        if os.path.isdir(publish):
+            trees += [os.path.join(publish, name) for name in sorted(os.listdir(publish), reverse=True)
+                      if name.startswith("EchoDesk-v") and os.path.isdir(os.path.join(publish, name))]
+        for tree in trees:
+            for rel in (("app", "backend", "EchoDeskBackend.exe"),
+                        ("backend", "EchoDeskBackend.exe"),
+                        ("EchoDeskBackend.exe",)):
+                path = os.path.join(tree, *rel)
+                if os.path.isfile(path):
+                    return [path], "打包发布物"
         return None, "打包发布物（未找到）"
     return [sys.executable, "-X", "utf8", os.path.join(ROOT, "backend", "main.py")], "源码后端"
 

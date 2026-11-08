@@ -583,15 +583,13 @@ def _physical_core_count(logical: int, notes: List[str]) -> int:
     平台。当所有来源均失败时，返回逻辑核心数并记录该回落事实，因为线程数偏高
     优于处理器利用不足。
     """
-    try:
-        import psutil  # type: ignore
-
-        value = psutil.cpu_count(logical=False)
-        if value:
-            return max(1, int(value))
-    except Exception:  # noqa: BLE001 - optional dependency
-        pass
-
+    # [EN] No optional third-party probe here: ``psutil`` is not a declared runtime
+    # [EN] dependency, and the standard-library paths below cover every supported
+    # [EN] platform. Keeping an undeclared import would make a clean environment fail
+    # [EN] the dependency gate (and the import would silently fail at runtime anyway).
+    # [ZH] 这里不引入可选第三方探测：``psutil`` 不是已声明的运行期依赖，下面的标准库路径
+    # [ZH] 已覆盖全部受支持平台。保留未声明导入会让干净环境无法通过依赖门禁（而且运行期
+    # [ZH] 本来也会静默失败）。
     try:
         if os.name == "nt":
             return _windows_physical_cores(logical, notes)
