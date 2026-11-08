@@ -13,7 +13,7 @@ for traceability only; this changelog is the release-facing document.
 
 | Version | Type | Release date | Summary |
 | :--- | :--- | :--- | :--- |
-| [Unreleased](#unreleased) | Development | — | v0.2.5 P0: writable state paths for read-only `.app` / AppImage layouts |
+| [Unreleased](#unreleased) | Development | — | v0.2.5 P0: writable state paths for read-only `.app` / AppImage layouts; Unsloth offline model catalog and `models-qwen-v1` release strategy |
 | [v0.2.4](#v024) | Stable Release | 2026-11-08 | Automatic hardware tuning, three inference presets, transparent override and diagnostics; release-time patch and final hotfix for streaming download progress, ignored-version memory, memory warnings, balanced title bar, Chinese installer and upgrade hygiene |
 | [v0.2.3](#v023) | Stable Release | 2026-11-07 | Reproducible builds, dependency locks, Avalonia main line, WPF LTS |
 | [v0.2.2](#v022) | Stable Release | 2026-11-04 | Cross-platform frontend, visual consistency, full bilingual coverage |
@@ -53,6 +53,26 @@ signed bundle.
   `tools/verify_reproducible_build.ps1` produced two byte-identical builds. The portable
   path behaviour is unchanged: with a writable CWD `state_dir()` returns the CWD, which
   is the condition the `tar.gz` layout always satisfies.
+
+### Development work (v0.2.5 — Unsloth offline model catalog and external release strategy)
+
+- **Model catalog.** `tools/pack_model_addon.py` now carries a 14-family Unsloth GGUF
+  catalog: Qwen3, Qwen2.5, Qwen2.5-Coder, Llama-3.2, SmolLM2, gemma-2, gemma-3,
+  Qwen3-VL and Qwen3.5. `Q4_K_M` is required; `Q6_K` and `Q8_0` are fetched when the
+  upstream repository publishes them.
+- **Size guard.** A single file larger than 2 GiB is skipped with a `WARNING` in every
+  mode — local audit, upstream planning, verification and packing — and never aborts the
+  script.
+- **Projection layers.** Qwen3-VL entries bind `mmproj-Q8_0.gguf` (with `ggml-org`
+  fallback and F16/BF16 candidates); Qwen3.5 entries bind their separate
+  `mmproj-F16.gguf`. Upstream metadata confirms Qwen3.5 still publishes a standalone
+  projection layer, so it is not assumed to be embedded.
+- **Graceful missing models.** Missing local files print the manual download pointer for
+  GitHub Releases tag `models-qwen-v1` instead of raising; only a proven size/sha256
+  mismatch is a hard failure.
+- **Documentation.** Both READMEs add an "offline model bundle" section stating that all
+  weights live under the dedicated `models-qwen-v1` release tag and only need to be
+  extracted into `models`.
 
 ---
 

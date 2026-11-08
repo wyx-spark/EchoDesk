@@ -10,7 +10,7 @@
 
 | 版本 | 类型 | 发布日期 | 概要 |
 | :--- | :--- | :--- | :--- |
-| [Unreleased](#unreleased) | 开发中 | — | v0.2.5 P0：让只读挂载点（`.app` / AppImage）使用可写状态路径 |
+| [Unreleased](#unreleased) | 开发中 | — | v0.2.5 P0：让只读挂载点（`.app` / AppImage）使用可写状态路径；Unsloth 离线模型清单与 `models-qwen-v1` 发布策略 |
 | [v0.2.4](#v024) | 稳定版 | 2026-11-08 | 自动硬件调优、三档推理预设、透明覆盖与诊断；发布前补丁与最终热修复：流式下载进度、忽略版本、内存预警、标题栏平衡、中文安装器与升级清理 |
 | [v0.2.3](#v023) | 稳定版 | 2026-11-07 | 可复现构建、依赖锁定、Avalonia 主线、WPF 转入长期支持 |
 | [v0.2.2](#v022) | 稳定版 | 2026-11-04 | 跨平台前端、视觉一致性、全面双语 |
@@ -43,6 +43,21 @@
 - **验证**：`selftest` 170/170、`check_lang` 通过，`tools/verify_reproducible_build.ps1`
   两次构建逐字节一致。便携版路径行为未变：工作目录可写时 `state_dir()` 就返回该目录，
   而 tar.gz 布局始终满足这一条件。
+
+### 开发工作（v0.2.5 —— Unsloth 离线模型清单与外部发布策略）
+
+- **模型清单**：`tools/pack_model_addon.py` 新增 14 个 Unsloth GGUF 系列：Qwen3、
+  Qwen2.5、Qwen2.5-Coder、Llama-3.2、SmolLM2、gemma-2、gemma-3、Qwen3-VL 与 Qwen3.5。
+  `Q4_K_M` 为必需量化，`Q6_K` 与 `Q8_0` 在上游发布时一并获取。
+- **体积拦截**：单个文件超过 2 GiB 时，在本地清点、上游规划、核对与打包四条路径上
+  都输出 `WARNING` 并跳过，绝不中断脚本。
+- **投影层**：Qwen3-VL 绑定 `mmproj-Q8_0.gguf`（含 `ggml-org` 回退与 F16/BF16 候选）；
+  Qwen3.5 绑定独立的 `mmproj-F16.gguf`。上游元数据确认 Qwen3.5 仍单独发布投影层，
+  因此没有假设它已内嵌。
+- **缺模型容错**：本地缺少文件时打印 GitHub Releases 标签 `models-qwen-v1` 的手动下载
+  指引，而不是抛错；只有已证实的 size/sha256 不一致才作为硬失败。
+- **文档**：两份 README 新增「离线模型补充包」章节，说明全部权重托管在独立标签
+  `models-qwen-v1` 下，解压到 `models` 即可。
 
 ---
 

@@ -177,6 +177,24 @@ EchoDesk does **not** ship model weights and never downloads anything silently:
    then shows a short first-run guide. Per-machine settings can be kept out of version control by
    putting them in `app\backend\config.user.json`, which takes precedence over `config.json`.
 
+### Offline model bundle (`models-qwen-v1`)
+
+To keep the code repository lean, all model weights are hosted separately under the dedicated
+Release tag `models-qwen-v1`. Download the bundle for the models you need, extract it into the
+`models` directory (for a packaged build: `app\backend\models\`), and the program will find them —
+there is no need to re-download the models that ship with the program.
+
+> 为避免代码仓库臃肿，所有模型权重统一托管在独立的 Release 标签 `models-qwen-v1` 下。
+> 用户下载后解压到 models 目录即可，无需重新下载随程序打包的模型。
+
+The offline catalog follows Unsloth's GGUF releases: 14 model families (Qwen3, Qwen2.5,
+Qwen2.5-Coder, Llama-3.2, SmolLM2, gemma-2, gemma-3, Qwen3-VL and Qwen3.5). `Q4_K_M` is the
+required quantization; `Q6_K` and `Q8_0` are fetched when the upstream repository publishes them.
+A single file larger than 2 GiB is skipped with a warning instead of interrupting the packer. The
+Qwen3-VL entries bind `mmproj-Q8_0.gguf`, and the Qwen3.5 entries bind their separate
+`mmproj-F16.gguf` projection layer. If a local file is missing, the packer prints this download
+pointer instead of failing.
+
 ### What is inside the portable folder
 
 The portable build separates the program from your data: everything you may want to edit, back up
