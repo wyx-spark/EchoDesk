@@ -62,6 +62,7 @@ ASCII_MAP: Dict[str, str] = {
     "📡": "[net]", "🧠": "[model]", "🛠️": "[mode]", "🛠": "[mode]",
     "📂": "[folder]", "📁": "[folder]", "📄": "[file]", "📋": "[copy]",
     "🔍": "[search]", "🔎": "[search]", "📊": "[chart]", "📈": "[chart]", "📐": "[ruler]",
+    "🙈": "[ignore]",
     "💾": "[save]", "📥": "[in]", "📤": "[out]", "🚀": "[go]",
     "⚙️": "[cfg]", "⚙": "[cfg]", "🔧": "[cfg]", "🔧️": "[cfg]",
     "📝": "[edit]", "👤": "[user]", "🤖": "[bot]", "ℹ️": "[i]", "ℹ": "[i]",
