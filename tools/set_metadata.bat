@@ -41,6 +41,15 @@ set "ROOT=%CD%"
 popd
 
 set "RCEDIT=%ROOT%\tools\rcedit-x64.exe"
+rem 复制到 %TEMP% 再运行：仓库源码目录在部分环境（含 DSH 沙箱遗留）会被标成低完整性
+rem 级别（Low Mandatory Level）。rcedit 从低完整性目录启动时无法写回目标可执行文件，
+rem 报 "Fatal error: Unable to commit changes"；同一份二进制在 %TEMP% 下运行正常。
+rem 复制不改变产物字节，只绕过启动目录的完整性标签。
+set "RCEDIT_RUN=%TEMP%\echodesk-rcedit-x64.exe"
+if not "%TEMP%"=="" (
+    copy /y "%RCEDIT%" "%RCEDIT_RUN%" >nul 2>&1
+    if exist "%RCEDIT_RUN%" set "RCEDIT=%RCEDIT_RUN%"
+)
 set "ICON=%ROOT%\assets\EchoDesk.ico"
 
 rem 版本号从**调用方**传入（tools\build_release.ps1 会从 backend\version.py 读出后传进来）。
@@ -80,10 +89,16 @@ if not exist "%TARGET%" goto :no_target
 
 echo 正在写入版本资源与图标: %TARGET%
 set "COUNT=0"
+set "FAILED=0"
 
 call :apply "%TARGET%\EchoDesk.exe"
+if errorlevel 1 set "FAILED=1"
 
 echo 完成，共处理 %COUNT% 个可执行文件（后端由 PyInstaller version/icon 参数写入）。
+if "%FAILED%"=="1" (
+    echo [错误] 版本资源写入失败：发布构建必须中止，不能带着旧版本号继续打包。
+    exit /b 1
+)
 exit /b 0
 
 :apply
@@ -92,8 +107,19 @@ if not exist "%~1" (
     exit /b 0
 )
 echo   - %~nx1
+set "ATTEMPT=0"
+:apply_retry
+set /a ATTEMPT+=1
 "%RCEDIT%" "%~1" --set-icon "%ICON%" --set-version-string "CompanyName" "%COMPANY%" --set-version-string "LegalCopyright" "%COPYRIGHT%" --set-version-string "FileDescription" "%DESC%" --set-version-string "ProductName" "%PRODUCT%" --set-version-string "OriginalFilename" "%~nx1" --set-version-string "InternalName" "%~nx1" --set-version-string "Comments" "%COMMENTS%" --set-file-version "%VERSION%" --set-product-version "%VERSION%"
-if errorlevel 1 goto :apply_failed
+if not errorlevel 1 goto :apply_ok
+if %ATTEMPT% lss 3 (
+    echo   [重试] 第 %ATTEMPT% 次写入失败，2 秒后重试
+    ping -n 3 127.0.0.1 >nul
+    goto :apply_retry
+)
+goto :apply_failed
+
+:apply_ok
 set /a COUNT+=1
 exit /b 0
 
