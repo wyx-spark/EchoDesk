@@ -74,9 +74,9 @@ No cloud account. No API key. No telemetry.
 1. Get the release from the
    [Releases page](https://github.com/wyx-spark/EchoDesk/releases) of this repository
    (once a release has been published) or by building it yourself with Option B below;
-   the build lands in `publish\EchoDesk-v0.2.4\`.
+   the build lands in `publish\EchoDesk-v0.2.5\`.
 2. Install it or unpack it:
-   - **Installer** — double-click `EchoDesk-v0.2.4-Setup.exe` (the single installer; it does **not**
+   - **Installer** — double-click `EchoDesk-v0.2.5-Setup.exe` (the single installer; it does **not**
      bundle a model, and asks on first launch whether to download one). By default it installs into the
      folder the installer itself
      sits in; the wizard lets you pick another folder. It creates the Start Menu shortcut, a desktop
@@ -96,7 +96,7 @@ No cloud account. No API key. No telemetry.
    > [CODE_SIGNING.md](CODE_SIGNING.md).
 
 3. Start EchoDesk: use the **Start Menu shortcut** (installer), or double-click
-   **`Start-EchoDesk-v0.2.4.lnk`** inside the folder (portable zip — run `install-complete.bat`
+   **`Start-EchoDesk-v0.2.5.lnk`** inside the folder (portable zip — run `install-complete.bat`
    once if that shortcut is missing). Either shortcut points at *your* copy of the program.
    Whichever route you took, that shortcut is the only entry point you need;
    `app\EchoDesk.exe` is the UI and `app\backend\EchoDeskBackend.exe` is started automatically —
@@ -125,7 +125,7 @@ dotnet build frontend\EchoDesk.csproj -c Release
 python tools\selftest.py            # backend unit-level self-test, exit code 0/1
 python tools\test_file_parsers.py   # smoke test for every supported file format
 
-# 4) Full portable build -> publish\EchoDesk-v0.2.4\
+# 4) Full portable build -> publish\EchoDesk-v0.2.5\
 & tools\build_release.ps1
 & tools\build_release.ps1 -SkipBackend     # rebuild only the WPF frontend
 & tools\build_release.ps1 -SkipFrontend    # rebuild only the packaged backend
@@ -202,7 +202,7 @@ or move lives in the outer folder, while the program itself sits in `app\`.
 
 | Path | Contents |
 | --- | --- |
-| `Start-EchoDesk-v0.2.4.lnk` | The only entry point (targets `app\EchoDesk.exe`, working directory = this folder). |
+| `Start-EchoDesk-v0.2.5.lnk` | The only entry point (targets `app\EchoDesk.exe`, working directory = this folder). |
 | `results\` | Automation output (`date\task\` folders with plain-text reports and downloaded files). |
 | `ui_state.json`, `snippets.json` | Window state, font size, theme, language and reusable snippets. |
 | `lang\` | Backend language packs (system messages, errors, command help). Drop in a new `<locale>.json` to add a language. |
@@ -221,7 +221,7 @@ on managed machines where the program folder itself is read-only).
 
 ## Screenshots and demo
 
-Screenshots are **not part of the v0.2.4 release**. The only image assets that ship today are
+Screenshots are **not part of the v0.2.5 release**. The only image assets that ship today are
 `assets/EchoDesk.ico` (the application icon) and `assets/EchoDesk.png` (the logo). Nothing in
 this README links to an image that does not exist yet.
 

@@ -73,9 +73,9 @@ EchoDesk 是本地优先的 AI 桌面助手，提供原生 Windows（WPF）与�
 
 1. 获取发布物：可以从本仓库的
    [Releases 页面](https://github.com/wyx-spark/EchoDesk/releases) 下载（发布归档上线后），
-   也可以自己构建（本文“方案 B”一节），产物位于 `publish\EchoDesk-v0.2.4\`。
+   也可以自己构建（本文“方案 B”一节），产物位于 `publish\EchoDesk-v0.2.5\`。
 2. 安装或解压：
-   - **安装程序** —— 双击 `EchoDesk-v0.2.4-Setup.exe`（只有这一份，**不含内置模型**，
+   - **安装程序** —— 双击 `EchoDesk-v0.2.5-Setup.exe`（只有这一份，**不含内置模型**，
      首次启动会询问是否下载）。默认装到**安装程序自己所在的文件夹**，向导里可以改到别处。
      它会创建开始菜单快捷方式、勾选后创建桌面快捷方式，并登记卸载入口（之后可在
      「应用和功能」里卸载）。装出来的目录结构与便携版完全一致：程序本体在 `app\`，
@@ -91,7 +91,7 @@ EchoDesk 是本地优先的 AI 桌面助手，提供原生 Windows（WPF）与�
    > 签名范围见 [CODE_SIGNING.md](CODE_SIGNING.md)。
 
 3. 启动 EchoDesk：用**开始菜单快捷方式**（安装程序装的），或双击文件夹里的
-   **`Start-EchoDesk-v0.2.4.lnk`**（zip 免安装版；若没有这个快捷方式，先运行一次
+   **`Start-EchoDesk-v0.2.5.lnk`**（zip 免安装版；若没有这个快捷方式，先运行一次
    `install-complete.bat`）。两种方式创建的快捷方式都指向**你自己机器上的**这份程序。
    无论走哪条路，这个快捷方式都是唯一需要的入口；`app\EchoDesk.exe` 是界面主程序，
    `app\backend\EchoDeskBackend.exe` 由界面自动拉起，**请不要单独运行后端**。
@@ -118,7 +118,7 @@ dotnet build frontend\EchoDesk.csproj -c Release
 python tools\selftest.py            # 后端单元级自检，退出码 0/1
 python tools\test_file_parsers.py   # 全部支持格式的解析冒烟测试
 
-# 4) 完整便携构建 -> publish\EchoDesk-v0.2.4\
+# 4) 完整便携构建 -> publish\EchoDesk-v0.2.5\
 & tools\build_release.ps1
 & tools\build_release.ps1 -SkipBackend     # 只重建 WPF 前端
 & tools\build_release.ps1 -SkipFrontend    # 只重建打包后的后端
@@ -184,7 +184,7 @@ Llama-3.2、SmolLM2、gemma-2、gemma-3、Qwen3-VL 与 Qwen3.5）。`Q4_K_M` 为
 
 | 路径 | 内容 |
 | --- | --- |
-| `Start-EchoDesk-v0.2.4.lnk` | 唯一入口（指向 `app\EchoDesk.exe`，工作目录为本文件夹）。 |
+| `Start-EchoDesk-v0.2.5.lnk` | 唯一入口（指向 `app\EchoDesk.exe`，工作目录为本文件夹）。 |
 | `results\` | 自动化结果（按 `日期\任务名\` 分层的纯文本报告与下载的原始文件）。 |
 | `ui_state.json`、`snippets.json` | 窗口状态、字号、主题、语言与常用语。 |
 | `lang\` | 后端语言包（系统消息、错误提示、指令帮助）。丢一个新的 `<locale>.json` 进去即可加语言。 |
@@ -204,7 +204,7 @@ Llama-3.2、SmolLM2、gemma-2、gemma-3、Qwen3-VL 与 Qwen3.5）。`Q4_K_M` 为
 
 ## 截图与演示
 
-**v0.2.4 发布物不包含截图**。目前随包提供的图片资源只有 `assets/EchoDesk.ico`（程序图标）与
+**v0.2.5 发布物不包含截图**。目前随包提供的图片资源只有 `assets/EchoDesk.ico`（程序图标）与
 `assets/EchoDesk.png`（Logo）；本 README 里没有任何指向不存在图片的链接。
 
 界面预览图——主界面、长文档分段摘要、带「测试选择器」的自动化页、有头模式的自动化运行，

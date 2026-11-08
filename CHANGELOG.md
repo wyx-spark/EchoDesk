@@ -13,7 +13,7 @@ for traceability only; this changelog is the release-facing document.
 
 | Version | Type | Release date | Summary |
 | :--- | :--- | :--- | :--- |
-| [Unreleased](#unreleased) | Development | — | v0.2.5 P0: writable state paths for read-only `.app` / AppImage layouts; Unsloth offline model catalog and `models-qwen-v1` release strategy |
+| [v0.2.5](#v025) | Stable Release | 2026-11-08 | Release hardening: writable state paths for read-only `.app` / AppImage layouts, smaller and faster build pipeline, repository-wide bilingual normalization, Unsloth offline model catalog |
 | [v0.2.4](#v024) | Stable Release | 2026-11-08 | Automatic hardware tuning, three inference presets, transparent override and diagnostics; release-time patch and final hotfix for streaming download progress, ignored-version memory, memory warnings, balanced title bar, Chinese installer and upgrade hygiene |
 | [v0.2.3](#v023) | Stable Release | 2026-11-07 | Reproducible builds, dependency locks, Avalonia main line, WPF LTS |
 | [v0.2.2](#v022) | Stable Release | 2026-11-04 | Cross-platform frontend, visual consistency, full bilingual coverage |
@@ -23,9 +23,21 @@ for traceability only; this changelog is the release-facing document.
 
 ---
 
-## Unreleased
+## v0.2.5
 
-### Development work (v0.2.5 P0 — writable state paths on read-only mounts)
+### Release positioning
+
+A hardening release with no new user-facing feature surface. It makes the macOS `.app`
+bundle and the Linux AppImage able to run from read-only mount points, cuts the download
+size of the Linux and macOS archives, shortens the reproducible build pipeline, and
+normalizes every comment, docstring and UI string across the repository to bilingual
+`[EN]` / `[ZH]` form. The three-platform archives were regenerated and the Windows
+installer was rebuilt from the same commit; behaviour outside the documented changes is
+unchanged.
+
+### Key capabilities
+
+#### Writable state paths for read-only mounts
 
 Preparatory work required before the macOS `.app` bundle and the Linux AppImage can run
 from read-only mount points. Both forms previously resolved `config.json` and `models/`
@@ -49,12 +61,66 @@ signed bundle.
   `<program directory>/lang/ui` when `<data directory>/lang/ui` does not exist, so
   packaged `.app` / AppImage builds no longer silently degrade the English UI to Chinese
   fallback strings.
-- **Verification.** `selftest` 170/170, `check_lang` passes, and
-  `tools/verify_reproducible_build.ps1` produced two byte-identical builds. The portable
-  path behaviour is unchanged: with a writable CWD `state_dir()` returns the CWD, which
-  is the condition the `tar.gz` layout always satisfies.
 
-### Development work (v0.2.5 — Unsloth offline model catalog and external release strategy)
+#### Smaller release footprint
+
+- **Dead dependency removed.** The unused `schedule` package is gone from the
+  requirements files, the lock file, the PyInstaller hidden imports, the compliance
+  inventory and `NOTICE`.
+- **New pruning rules.** `tools/prune_release.py` now removes misplaced pip `--target`
+  library trees, byte-identical shared-library version aliases, non-Chinese/English
+  language packs, and foreign-platform `.exe` files from POSIX trees. Measured result:
+  the Linux standalone tree fell from 530.2 MB to 480.0 MB (-50.2 MB) and the macOS tree
+  from 372.9 MB to 339.6 MB (-33.4 MB); the Windows PyInstaller tree had no matches.
+- **Strict tree assertions.** `build_release.ps1` fails if `.pdb`, `.pyc`, `.lib` or test
+  directories appear at any depth, and if anything other than the `en` and `zh-Hans`
+  language packs is shipped.
+- **Resource audit.** The Avalonia resource set was audited: one `app.ico` and four theme
+  dictionaries, all referenced, with no orphan palette keys. `check_theme.py` now guards
+  against orphan resources.
+
+#### Faster build pipeline
+
+- **Native cleanup.** Build-state removal uses native `rd /s /q` instead of
+  `Remove-Item -Recurse`.
+- **Threaded hashing.** `hash_manifest.py` hashes one batch of about 12,900 files with a
+  thread pool: 20.3 s down to 9.6 s for the same batch.
+- **No intermediate backend archives.** The verification flow no longer creates
+  `publish/backend-<rid>` archives, because the same trees are already embedded in the
+  three compared dist archives.
+- **PyInstaller analysis cache.** The analysis result is keyed by HEAD, lock files, the
+  spec and the toolchain version; the stage output is always regenerated. A warm analysis
+  saves about 10% of PyInstaller's own runtime (52.6 s to 47.4 s), so the verifier keeps
+  both runs cold by default and offers `-ReuseAnalysisCache` for development checks.
+- **Pip cache.** Downloads are pinned to `artifacts/pip-cache`, and archive SHA-256
+  deduplication avoids repeated reads.
+
+#### Repository-wide bilingual normalization
+
+- **Backend.** All remaining Chinese comments and docstrings in 25 Python files were
+  converted to bilingual `[EN]` / `[ZH]` form, including whole-line comments, trailing
+  comments, Sphinx `#:` directives, section banners and `# noqa` / `# pragma`
+  explanations. Non-bilingual entries: 529 to 0.
+- **Frontends.** All comments and `/// <summary>` / `<param>` / `<returns>` XML
+  documentation in 44 C# files (WPF and Avalonia) were converted. Non-bilingual entries:
+  2,323 to 0. Probe output, JSON field names, regular expressions and `Loc.T` fallback
+  arguments were left untouched.
+- **XAML/AXAML.** All `<!-- -->` comments in 19 files were converted, single-line double
+  markers were split, and missing English paragraphs were added to two historical
+  comment blocks without changing the Chinese originals. Non-bilingual entries: 157
+  to 0.
+- **UI strings.** 175 WPF labels with `svc:Loc.Key` / `TipKey` / `HelpKey` and 12
+  Avalonia attribute values had their design-time Chinese text cleared; every runtime
+  string is now filled from the language packs by `Loc.Apply` / `Loc.T`.
+- **Reverse language audit.** `tools/audit_lang_keys.py` now also rejects Han characters
+  in English values, suspicious untranslated English in Chinese values, mismatched
+  placeholder sets and mismatched key sets. Two real leftovers were fixed; the audit
+  reports zero issues.
+- **Internal vocabulary.** `任务书` became `设计规范` (`the design specification`) in
+  backend and both frontends; an AST audit confirmed the replacement only touched
+  comments and docstrings, with zero functional string literals affected.
+
+#### Offline model catalog
 
 - **Model catalog.** `tools/pack_model_addon.py` now carries a 14-family Unsloth GGUF
   catalog: Qwen3, Qwen2.5, Qwen2.5-Coder, Llama-3.2, SmolLM2, gemma-2, gemma-3,
@@ -73,6 +139,44 @@ signed bundle.
 - **Documentation.** Both READMEs add an "offline model bundle" section stating that all
   weights live under the dedicated `models-qwen-v1` release tag and only need to be
   extracted into `models`.
+
+### Verification
+
+- `selftest` 170/170, `check_lang`, `audit_repo --check`, `audit_lang_keys`,
+  `check_line_endings`, `check_requirements`, `check_theme`,
+  `check_data_dir_consistency` and `gen_requirements_lock --check` all pass.
+- WPF and Avalonia `dotnet build -c Release` complete with zero errors; the Avalonia
+  headless probes report `PROBE-RESULT: PASS`.
+- `tools/verify_reproducible_build.ps1` ran two complete, independent cold builds and
+  the two SHA-256 manifests are byte-identical (one entry per release-tree file, per
+  installer and archive, plus the per-archive manifests).
+- `tools/verify_release.ps1` ran with no `-SkipGui` / `-SkipE2E` flags: real install and
+  uninstall, UI probes, pixel checks and the real Microsoft Edge end-to-end tests all
+  passed.
+
+### Known limitations
+
+- Windows artifacts are not Authenticode-signed: the free SignPath Foundation signing
+  application was not approved this time, so SmartScreen may warn on first run.
+- GPU offload and the three inference presets were validated with synthetic VRAM
+  profiles and a real CPU-only host; a long-context stress test on real CUDA / ROCm /
+  Metal hardware has not been executed. AMD probing covers the Linux sysfs interface
+  only.
+- Quantised KV caches (Q8_0 and similar) need flash-attention support that has not been
+  verified on the supported hardware set, so all three presets use F16.
+- Changing a preset or applying an override rebuilds the model; hot-swapping without
+  reloading the weights is not available in llama.cpp.
+- The “Test load” child process uses the same executable as the backend. It is bounded
+  by a 60-second timeout but adds one full model-load cycle when used.
+- The Avalonia `.app` bundle and Linux AppImage still need their platform signing and
+  packaging work (macOS notarization and the AppImage wrapper remain future work).
+
+### Artifacts
+
+`EchoDesk-v0.2.5-Setup.exe`, the portable Windows zip and the Linux/macOS archives are
+listed with their SHA-256 digests in `SHA256SUMS.txt` next to the release assets. The
+frozen copy and its `MANIFEST.json` live in `publish/archive/v0.2.5/` (not part of the
+repository).
 
 ---
 

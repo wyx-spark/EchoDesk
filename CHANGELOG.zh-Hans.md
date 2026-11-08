@@ -10,7 +10,7 @@
 
 | 版本 | 类型 | 发布日期 | 概要 |
 | :--- | :--- | :--- | :--- |
-| [Unreleased](#unreleased) | 开发中 | — | v0.2.5 P0：让只读挂载点（`.app` / AppImage）使用可写状态路径；Unsloth 离线模型清单与 `models-qwen-v1` 发布策略 |
+| [v0.2.5](#v025) | 稳定版 | 2026-11-08 | 发布加固：只读挂载点可写状态路径、更小更快的构建管线、全仓双语规范化、Unsloth 离线模型清单 |
 | [v0.2.4](#v024) | 稳定版 | 2026-11-08 | 自动硬件调优、三档推理预设、透明覆盖与诊断；发布前补丁与最终热修复：流式下载进度、忽略版本、内存预警、标题栏平衡、中文安装器与升级清理 |
 | [v0.2.3](#v023) | 稳定版 | 2026-11-07 | 可复现构建、依赖锁定、Avalonia 主线、WPF 转入长期支持 |
 | [v0.2.2](#v022) | 稳定版 | 2026-11-04 | 跨平台前端、视觉一致性、全面双语 |
@@ -20,9 +20,18 @@
 
 ---
 
-## Unreleased
+## v0.2.5
 
-### 开发工作（v0.2.5 P0 —— 只读挂载点上的可写状态路径）
+### 版本定位
+
+一次不新增用户可见功能的加固版本。它让 macOS `.app` 包与 Linux AppImage 能在只读挂载点上运行，
+缩小 Linux / macOS 归档的下载体积，缩短可复现构建流水线，并把全仓库的注释、docstring 与界面
+文案规范为中英双语 `[EN]` / `[ZH]` 形式。三平台归档与 Windows 安装程序都由同一提交重新生成；
+除下述明确改动外，行为不变。
+
+### 核心特性
+
+#### 只读挂载点上的可写状态路径
 
 这是 macOS `.app` 包与 Linux AppImage 能在只读挂载点上运行所必需的先行改造。此前两种形态
 都按当前工作目录解析 `config.json` 与 `models/`，写进去要么失败，要么让已签名的包失效。
@@ -40,11 +49,52 @@
   解析；绝对路径保持不变。
 - **界面语言包**：Avalonia `UserPaths.LangDirectory` 在 `<数据目录>/lang/ui` 不存在时
   回落到 `<程序目录>/lang/ui`，打包后的 `.app` / AppImage 不再把英文界面静默退化成中文兜底。
-- **验证**：`selftest` 170/170、`check_lang` 通过，`tools/verify_reproducible_build.ps1`
-  两次构建逐字节一致。便携版路径行为未变：工作目录可写时 `state_dir()` 就返回该目录，
-  而 tar.gz 布局始终满足这一条件。
 
-### 开发工作（v0.2.5 —— Unsloth 离线模型清单与外部发布策略）
+#### 更小的发布体积
+
+- **移除死依赖**：全仓库无 import 的 `schedule` 从 requirements、lock、PyInstaller
+  hiddenimport、合规清单与 `NOTICE` 中同步移除。
+- **新增裁剪规则**：`tools/prune_release.py` 现在会清理 pip `--target` 铺错位置的前缀
+  布局库目录、逐字节相同的完整版本共享库别名、非中英语言包，以及 POSIX 树中的异平台
+  `.exe`。实测 Linux standalone 树 **530.2 → 480.0 MB（-50.2）**，macOS
+  **372.9 → 339.6 MB（-33.4）**；Windows PyInstaller 树 0 命中。
+- **严格树断言**：`build_release.ps1` 在任意深度发现 `.pdb`、`.pyc`、`.lib` 或测试目录，
+  或除 `en` / `zh-Hans` 之外还打包了语言包时，直接失败。
+- **资源审计**：Avalonia 资源集经审计：1 个 `app.ico` 与 4 个主题字典，全部被引用，
+  0 个未引用色板键；`check_theme.py` 新增孤儿资源门禁。
+
+#### 更快的构建管线
+
+- **原生清理**：构建状态清除改用原生 `rd /s /q`，不再用 `Remove-Item -Recurse`。
+- **线程化哈希**：`hash_manifest.py` 用线程池对约 12,900 个文件做一次哈希：
+  同一批 20.3 s → 9.6 s。
+- **取消中间后端归档**：验证流程不再生成 `publish/backend-<rid>` 归档，因为同样的目录树
+  已嵌入参与比较的三个 dist 归档。
+- **PyInstaller 分析缓存**：分析结果按 HEAD、锁文件、spec 与工具链版本校验，stage 产物
+  始终重新生成。热分析约省 PyInstaller 自身耗时的 10%（52.6 s → 47.4 s），因此验证器
+  默认仍两次冷分析，仅 `-ReuseAnalysisCache` 用于开发期检查。
+- **pip 缓存**：下载缓存固定到 `artifacts/pip-cache`，归档 SHA-256 去重避免重复读取。
+
+#### 全仓双语规范化
+
+- **后端**：25 个 Python 文件中残留的中文注释与 docstring 全部改为 `[EN]` / `[ZH]` 双语，
+  覆盖整行注释、行尾注释、Sphinx `#:`、分节横幅与 `# noqa` / `# pragma` 说明。
+  非双语条目 **529 → 0**。
+- **前端**：44 个 C# 文件（WPF 与 Avalonia）中的注释与 `/// <summary>` / `<param>` /
+  `<returns>` XML 文档全部双语化。非双语条目 **2,323 → 0**。探针输出、JSON 字段名、
+  正则与 `Loc.T` 兜底参数一字未动。
+- **XAML/AXAML**：19 个文件中的 `<!-- -->` 注释全部双语化，单行双标记拆分，并补齐两个
+  历史注释块缺失的英文段（中文原文未改）。非双语条目 **157 → 0**。
+- **界面文案**：WPF 175 个带 `svc:Loc.Key` / `TipKey` / `HelpKey` 的标签与 12 个
+  Avalonia 属性值，其设计期中文文本已清空；运行期文案全部由 `Loc.Apply` / `Loc.T`
+  从语言包回填。
+- **语言包反向审计**：`tools/audit_lang_keys.py` 新增“英文值不得含汉字、中文值不得是
+  可疑未译英文、占位符集合一致、键集合一致”四项检查，修复 2 处真实残留，**0 问题**。
+- **内部词汇**：backend 与两个前端中的 `任务书` → `设计规范`
+  （英文 `the design specification`）；AST 审计确认替换只命中注释与 docstring，
+  **0 个函数式字符串字面量**受影响。
+
+#### 离线模型清单
 
 - **模型清单**：`tools/pack_model_addon.py` 新增 14 个 Unsloth GGUF 系列：Qwen3、
   Qwen2.5、Qwen2.5-Coder、Llama-3.2、SmolLM2、gemma-2、gemma-3、Qwen3-VL 与 Qwen3.5。
@@ -58,6 +108,37 @@
   指引，而不是抛错；只有已证实的 size/sha256 不一致才作为硬失败。
 - **文档**：两份 README 新增「离线模型补充包」章节，说明全部权重托管在独立标签
   `models-qwen-v1` 下，解压到 `models` 即可。
+
+### 验证
+
+- `selftest` 170/170，`check_lang`、`audit_repo --check`、`audit_lang_keys`、
+  `check_line_endings`、`check_requirements`、`check_theme`、
+  `check_data_dir_consistency` 与 `gen_requirements_lock --check` 全部通过。
+- WPF 与 Avalonia `dotnet build -c Release` 均 0 错误；Avalonia 无头探针输出
+  `PROBE-RESULT: PASS`。
+- `tools/verify_reproducible_build.ps1` 执行两次完整、独立的冷构建，两份 SHA-256 清单
+  逐字节一致（覆盖发布树每个文件、安装程序、三平台归档与各归档清单）。
+- `tools/verify_release.ps1` 未带 `-SkipGui` / `-SkipE2E`：真装真卸、UI 探针、像素校验
+  与真实 Microsoft Edge 端到端全部通过。
+
+### 已知限制
+
+- Windows 交付物未做 Authenticode 签名：本次免费 SignPath Foundation 签名申请未获批准，
+  首次运行可能触发 SmartScreen 提示。
+- GPU 卸载与三档预设已用合成显存档案与真实纯 CPU 宿主验证；尚未在真实 CUDA / ROCm /
+  Metal 设备上执行长上下文压力测试。AMD 探测仅覆盖 Linux sysfs。
+- 量化 KV Cache（Q8_0 等）需要当前硬件集合尚未验证的 flash-attention 支持，因此三档预设
+  统一使用 F16。
+- 切换预设或应用覆盖会重建模型；llama.cpp 不提供不重载权重的热切换。
+- 「测试加载」子进程与后端使用同一个可执行文件；有 60 秒上限，但会额外执行一次完整加载。
+- Avalonia `.app` 包与 Linux AppImage 的平台签名与打包工作（macOS 公证、AppImage 外壳）
+  仍属后续工作。
+
+### 交付物
+
+`EchoDesk-v0.2.5-Setup.exe`、Windows 便携 zip 以及 Linux/macOS 归档的名称与 SHA-256
+摘要列在发布资产旁的 `SHA256SUMS.txt` 中。冻结副本与其 `MANIFEST.json` 位于
+`publish/archive/v0.2.5/`（不随仓库分发）。
 
 ---
 

@@ -17,20 +17,20 @@ EchoDesk 版本与署名信息。
 远小于归属错误带来的长期代价。设计规范编号只在记录正文里引用，不进文件名。
 """
 APP_NAME = "EchoDesk"
-# [EN] v0.2.4 = "Hardware-adaptive runtime tuning". The inference engine now
-# [EN] profiles the host, derives the GPU layer count from free VRAM behind a
-# [EN] safety watermark, and grows the context window on demand from a small
-# [EN] initial allocation up to the hardware ceiling.
+# [EN] v0.2.5 = "Release hardening". Writable state paths for read-only mounts,
+# [EN] a smaller and faster release pipeline, and a repository-wide bilingual
+# [EN] normalization of comments, docstrings and UI strings. No user-facing
+# [EN] behaviour changed beyond the existing feature set.
 # [EN] Every downstream consumer derives its version from ``APP_VERSION``, so there is no
 # [EN] second source of truth. Windows file-version resources can only hold four numeric
 # [EN] fields, therefore ``app_version_4()`` below is the only place allowed to derive that
 # [EN] form; do not re-implement it downstream.
-# [ZH] v0.2.4 =「硬件自适应运行时调优」。推理引擎在启动时探测宿主硬件，依据空闲显存
-# [ZH] 与安全水位线推导 GPU 卸载层数，并以较小的初始分配为起点按需扩展上下文窗口，
-# [ZH] 直至硬件上限。
+# [ZH] v0.2.5 =「发布加固」。为只读挂载点提供可写状态路径，缩小并加速发布流水线，
+# [ZH] 并对全仓库的注释、docstring 与界面文案做双语规范化。除既有功能外不改变
+# [ZH] 用户可见行为。
 # [ZH] 下游全部按 ``APP_VERSION`` 派生，不再有第二处真相。注意：Windows 的**文件版本资源**
 # [ZH] 只能是四段纯数字，这件事只由下面的 ``app_version_4()`` 负责，不要在下游各写一份。
-APP_VERSION = "v0.2.4"
+APP_VERSION = "v0.2.5"
 
 
 def app_version_4() -> str:
