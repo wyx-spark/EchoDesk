@@ -1190,6 +1190,17 @@ if ($cnNames.Count -gt 0) {
 }
 Write-Ok "全英文命名（文件与目录名均无中文/日文/韩文）"
 
+# v0.2.4 补丁：开发者目录绝不进包。只检查发布树**顶层**——app\backend\_internal
+# 里的 playwright\driver\package\lib\tools 是运行期依赖，不能误删。
+$forbiddenTop = @("tools", "tests", "records", "prompts")
+$leakedDirs = @(Get-ChildItem $Out -Directory -Force -ErrorAction SilentlyContinue |
+    Where-Object { $forbiddenTop -contains $_.Name.ToLowerInvariant() } |
+    ForEach-Object { $_.Name })
+if ($leakedDirs.Count -gt 0) {
+    throw "发布树顶层出现开发者目录（tasks 要求只交付运行所需文件）: $($leakedDirs -join ', ')"
+}
+Write-Ok "发布树顶层无 tools\ / tests\ / records\ / prompts\"
+
 # 全局要求五：过程文档与运行期残留不得进包
 $devRecords = @(Get-ChildItem $Out -Recurse -File -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -match '^(v?0\.\d+\.\d+)-.*记录\.md$' })

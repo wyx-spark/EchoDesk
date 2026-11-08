@@ -29,6 +29,7 @@ using Avalonia.Animation;
 using Avalonia.Animation.Easings;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Controls.Documents;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
@@ -162,6 +163,19 @@ public partial class MainWindow : Window
     private List<string> _capabilityWarnings = new();
     private string _updateUrl = "";
     private bool _updateAvailable;
+    private string _updateTag = "";
+    private string _updateAsset = "";
+    private string _updateNotes = "";
+    private string _downloadedUpdatePath = "";
+    private bool _updateDeclined;
+    private bool _updatePromptVisible;
+    /// <summary>
+    /// [EN] True under <c>--probe</c>. Unattended probes must never block on a modal
+    ///      update prompt, so the startup check is skipped in that mode.
+    /// [ZH] 在 <c>--probe</c> 下为 true。无人值守探针绝不能阻塞在模态更新提示上，
+    ///      因此该模式下跳过启动检查。
+    /// </summary>
+    private readonly bool _probeMode;
 
     // Agent 步骤区（本轮迁移的功能面板之一）
     private Border? _agentRegion;
@@ -205,6 +219,7 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        _probeMode = Environment.GetCommandLineArgs().Any(a => a == "--probe");
         // 必须调生成的 InitializeComponent()，**不能**只调 AvaloniaXamlLoader.Load(this)。
         // 两个都在时以 InitializeComponent 为准：它除了 Load 还会把 x:Name 具名控件
         // 赋给字段（SettingsWindow 与 7 个设置页一直这么写，只有主窗口漏了）。
@@ -424,6 +439,7 @@ public partial class MainWindow : Window
         StripMarketButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.market");
         StripContextButton.Click += async (_, _) => await RefreshContextAsync();
         StripKvButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.model");
+        StripMemoryButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.model");
         StripCapabilityButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.model");
         StripCompactButton.Click += async (_, _) => await CompactContextAsync();
         StripWarnButton.Click += (_, _) => ShowWarnings();
@@ -684,6 +700,7 @@ public partial class MainWindow : Window
         MarketText.Text = Loc.T("main.strip.market", "🌐 市场：{0}",
             Loc.T("main.strip.marketUnconnected", "未连接"));
         StripContextText.Text = Loc.T("main.strip.contextStrip", "📊 Context {0}%", 0);
+        StripMemoryText.Text = Loc.T("main.strip.memoryStrip", "🧠 内存 {0}%", "--");
         StripCapabilityText.Text = Loc.T("main.strip.capability", "🧠 {0}", "---");
         StripCompactText.Text = Loc.T("main.strip.compact", "🗜 压缩上下文");
         // 视觉对齐：WPF 版的发送/上传是**纯图标圆形按钮**（➤ / 📎），不是带文字的方块按钮。
@@ -710,6 +727,7 @@ public partial class MainWindow : Window
         ToolTip.SetTip(StripMarketButton, Loc.T("main.strip.marketTip", "点击打开「设置 → 技能市场」"));
         ToolTip.SetTip(StripContextButton, Loc.T("main.strip.contextTip", "点击刷新上下文占用"));
         ToolTip.SetTip(StripKvButton, Loc.T("main.strip.kvTip", "点击打开「设置 → 模型」"));
+        ToolTip.SetTip(StripMemoryButton, Loc.T("main.strip.memoryTip", "点击打开「设置 → 模型」查看硬件诊断"));
         ToolTip.SetTip(StripCapabilityButton, Loc.T("main.strip.capabilityTip", "点击打开「设置 → 模型」"));
         ToolTip.SetTip(StripCompactButton, Loc.T("main.strip.compactTip", "立刻压缩上下文，腾出空间"));
         // 包值是「有 {0} 条能力提示，点击查看详情」——必须把条数传进去，否则 Loc.T 会返回
@@ -768,6 +786,7 @@ public partial class MainWindow : Window
         AutomationProperties.SetHelpText(StripMarketButton, Loc.T("main.strip.marketHelp", "技能市场连接状态"));
         AutomationProperties.SetHelpText(StripContextButton, Loc.T("main.strip.contextHelp", "上下文占用比例"));
         AutomationProperties.SetHelpText(StripKvButton, Loc.T("main.strip.kvHelp", "KV 缓存占用"));
+        AutomationProperties.SetHelpText(StripMemoryButton, Loc.T("main.strip.memoryHelp", "物理内存占用比例"));
         AutomationProperties.SetHelpText(StripCapabilityButton, Loc.T("main.strip.capabilityHelp", "模型能力信息"));
         AutomationProperties.SetHelpText(StripCompactButton, Loc.T("main.strip.compactHelp", "立刻压缩上下文"));
     }
@@ -1165,11 +1184,18 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 检查新版本（任务五 · 方案 A：只检查与提示，不自动下载替换）。
-    /// 失败静默 —— 检查更新不该影响正常使用。
+    /// [EN]
+    /// Silent startup check. A network failure or a disabled check never interrupts the
+    /// interface. When a newer release is found the user is asked **before** anything is
+    /// downloaded; answering "no" is final for this session and no request is sent.
+    /// [ZH]
+    /// 启动时静默检查。网络失败或检查被关闭都不会打断界面。发现新版本时，会在下载**之前**
+    /// 询问用户；选择「否」即在本会话内确定为不下载，且不会发出任何下载请求。
     /// </summary>
     private async Task CheckUpdateAsync()
     {
+        if (_probeMode || _updateDeclined || _downloadedUpdatePath.Length > 0)
+            return;
         try
         {
             JsonDocument? doc = await _state.Backend.SendAsync(new { action = "update_check" },
@@ -1184,7 +1210,16 @@ public partial class MainWindow : Window
                 if (!string.Equals(status, "available", StringComparison.Ordinal))
                     return;
                 _updateUrl = update.TryGetProperty("url", out JsonElement url) ? url.GetString() ?? "" : "";
-                string latest = update.TryGetProperty("latest", out JsonElement l) ? l.GetString() ?? "" : "";
+                _updateTag = update.TryGetProperty("latest", out JsonElement l) ? l.GetString() ?? "" : "";
+                _updateNotes = update.TryGetProperty("notes", out JsonElement notesEl)
+                    ? notesEl.GetString() ?? "" : "";
+                if (update.TryGetProperty("asset", out JsonElement assetEl)
+                    && assetEl.ValueKind == JsonValueKind.Object)
+                {
+                    _updateAsset = assetEl.TryGetProperty("name", out JsonElement nameEl)
+                        ? nameEl.GetString() ?? "" : "";
+                }
+                string latest = _updateTag;
                 if (_updateUrl.Length == 0)
                     return;
                 _updateAvailable = true;
@@ -1193,15 +1228,235 @@ public partial class MainWindow : Window
                 ToolTip.SetTip(StripUpdateButton, Loc.T("main.update.tip", "点击打开下载页面") + "\n" + _updateUrl);
                 StripUpdateButton.IsVisible = true;
             }
+            await PromptDownloadUpdateAsync();
         }
         catch (Exception)
         {
-            // 忽略：检查更新是尽力而为
+            // [EN] Best effort: a failed check must never affect normal use.
+            // [ZH] 尽力而为：检查失败绝不能影响正常使用。
         }
     }
 
-    private void OpenUpdatePage()
+    /// <summary>
+    /// [EN] Ask whether to download the detected update. The download request is only sent
+    ///      after an explicit "yes"; "no" leaves the chip in place so the user can still
+    ///      open the release page later.
+    /// [ZH] 询问是否下载检测到的更新。只有在明确选择「是」之后才发送下载请求；选择「否」时
+    ///      保留状态区入口，用户之后仍可打开发布页面。
+    /// </summary>
+    private async Task PromptDownloadUpdateAsync()
     {
+        if (_updatePromptVisible || _updateAsset.Length == 0 || _updateTag.Length == 0)
+            return;
+        _updatePromptVisible = true;
+        try
+        {
+            string notes = _updateNotes.Trim();
+            if (notes.Length > 900)
+                notes = notes[..900] + "…";
+            string message = Loc.T("main.update.downloadAsk",
+                "发现新版本 {0}（当前 {1}）。\n\n是否现在下载更新？\n下载完成后会提示重启以应用。",
+                _updateTag, _state.Backend.Version ?? "") + (notes.Length > 0 ? "\n\n" + notes : "");
+            bool yes = await ShowUpdateDialogAsync(
+                Loc.T("main.update.downloadTitle", "发现新版本"),
+                message,
+                Loc.T("main.update.downloadYes", "下载更新"),
+                Loc.T("main.update.downloadNo", "暂不下载"));
+            if (!yes)
+            {
+                // [EN] A refusal is honoured unconditionally: no download request is sent.
+                // [ZH] 拒绝会被无条件尊重：不会发出任何下载请求。
+                _updateDeclined = true;
+                return;
+            }
+            await DownloadUpdateAsync();
+        }
+        finally
+        {
+            _updatePromptVisible = false;
+        }
+    }
+
+    /// <summary>
+    /// [EN] Download the selected release asset into the isolated updates directory.
+    ///      A failure is reported and leaves the current installation untouched.
+    /// [ZH] 把选中的发布附件下载到隔离的 updates 目录。失败会被报告，当前安装保持不变。
+    /// </summary>
+    private async Task DownloadUpdateAsync()
+    {
+        if (_updateAsset.Length == 0 || _updateTag.Length == 0)
+        {
+            OpenUpdatePage();
+            return;
+        }
+        StripUpdateText.Text = Loc.T("main.update.downloading", "⏳ 正在下载更新…");
+        StripUpdateButton.IsVisible = true;
+        try
+        {
+            JsonDocument? doc = await _state.Backend.SendAsync(
+                new { action = "update_download", tag = _updateTag, asset = _updateAsset },
+                idleTimeout: TimeSpan.FromMinutes(45));
+            if (doc is null)
+            {
+                StripUpdateText.Text = Loc.T("main.update.downloadFailedShort", "⚠️ 下载失败，点击重试");
+                return;
+            }
+            using (doc)
+            {
+                if (!doc.RootElement.TryGetProperty("update_download", out JsonElement download)
+                    || download.ValueKind != JsonValueKind.Object)
+                {
+                    StripUpdateText.Text = Loc.T("main.update.downloadFailedShort", "⚠️ 下载失败，点击重试");
+                    return;
+                }
+                string path = GetStringField(download, "path");
+                if (path.Length == 0)
+                {
+                    StripUpdateText.Text = Loc.T("main.update.downloadFailedShort", "⚠️ 下载失败，点击重试");
+                    return;
+                }
+                _downloadedUpdatePath = path;
+                _updateAvailable = false;
+                StripUpdateText.Text = Loc.T("main.update.downloadedChip", "✅ 更新已下载，重启以应用");
+                ToolTip.SetTip(StripUpdateButton, path);
+                StripUpdateButton.IsVisible = true;
+            }
+            bool restart = await ShowUpdateDialogAsync(
+                Loc.T("main.update.downloadedTitle", "更新已下载"),
+                Loc.T("main.update.downloadedAsk",
+                    "更新已下载到：\n{0}\n\n现在重启以应用更新吗？\n用户数据（config.json、session.json、模型文件）会在更新前备份，安装程序不会覆盖它们。",
+                    _downloadedUpdatePath),
+                Loc.T("main.update.restartNow", "立即重启并安装"),
+                Loc.T("main.update.restartLater", "稍后"));
+            if (restart)
+                await ApplyUpdateAsync();
+        }
+        catch (Exception ex)
+        {
+            StripUpdateText.Text = Loc.T("main.update.downloadFailedShort", "⚠️ 下载失败，点击重试");
+            Toast(Loc.T("main.update.downloadFailed", "下载更新失败：{0}", ex.Message), error: true);
+        }
+    }
+
+    /// <summary>
+    /// [EN] Hand the downloaded installer to the backend, which backs up user data first
+    ///      and then starts the installer detached. The UI exits so the installer can
+    ///      replace program files without a file lock.
+    /// [ZH] 把已下载的安装程序交给后端：后端先备份用户数据，再分离启动安装程序。界面退出，
+    ///      使安装程序可以在没有文件锁的情况下替换程序文件。
+    /// </summary>
+    private async Task ApplyUpdateAsync()
+    {
+        try
+        {
+            JsonDocument? doc = await _state.Backend.SendAsync(
+                new { action = "update_apply", path = _downloadedUpdatePath, tag = _updateTag },
+                idleTimeout: TimeSpan.FromMinutes(2));
+            if (doc is null)
+            {
+                Toast(Loc.T("main.update.applyFailed", "应用更新失败：后端无响应"), error: true);
+                return;
+            }
+            using (doc)
+            {
+                if (!doc.RootElement.TryGetProperty("update_apply", out JsonElement apply)
+                    || apply.ValueKind != JsonValueKind.Object
+                    || !(apply.TryGetProperty("ok", out JsonElement okEl) && okEl.ValueKind == JsonValueKind.True))
+                {
+                    string error = apply.ValueKind == JsonValueKind.Object
+                        ? GetStringField(apply, "error") : "";
+                    await ShowUpdateDialogAsync(
+                        Loc.T("main.update.applyFailedTitle", "应用更新失败"),
+                        Loc.T("main.update.applyFailed", "应用更新失败：{0}", error),
+                        Loc.T("settings.inference.dialogOk", "确定"), "");
+                    return;
+                }
+            }
+            // [EN] The backend response already contains the backup directory; the app is
+            // [EN] about to exit, so the toast is the visible acknowledgement.
+            // [ZH] 后端响应已包含备份目录；应用即将退出，提示条就是可见的确认。
+            Toast(Loc.T("main.update.applying", "正在安装更新，应用即将退出…"));
+            await Task.Delay(900);
+            if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+                desktop.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            Toast(Loc.T("main.update.applyFailed", "应用更新失败：{0}", ex.Message), error: true);
+        }
+    }
+
+    /// <summary>
+    /// [EN] Minimal modal confirm/notice window (Avalonia has no MessageBox). Returns
+    ///      <c>true</c> only when the primary action was chosen.
+    /// [ZH] 极简模态确认/通知窗口（Avalonia 没有 MessageBox）。仅当选择主动作时返回 <c>true</c>。
+    /// </summary>
+    private async Task<bool> ShowUpdateDialogAsync(string title, string message, string primary, string secondary)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 540,
+            CanResize = false,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+        };
+        bool result = false;
+        var primaryButton = new Button
+        {
+            Content = primary,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Padding = new Thickness(16, 5),
+        };
+        primaryButton.Classes.Add("primary");
+        primaryButton.Click += (_, _) => { result = true; dialog.Close(); };
+        var secondaryButton = new Button
+        {
+            Content = secondary,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Padding = new Thickness(16, 5),
+            IsVisible = secondary.Length > 0,
+        };
+        secondaryButton.Classes.Add("ghost");
+        secondaryButton.Click += (_, _) => { result = false; dialog.Close(); };
+        dialog.Content = new StackPanel
+        {
+            Margin = new Thickness(20, 18),
+            Spacing = 12,
+            Children =
+            {
+                new TextBlock { Text = title, FontSize = 15, FontWeight = FontWeight.SemiBold },
+                new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, FontSize = 12 },
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Spacing = 8,
+                    Children = { secondaryButton, primaryButton },
+                },
+            },
+        };
+        await dialog.ShowDialog(this);
+        return result;
+    }
+
+    private async void OpenUpdatePage()
+    {
+        // [EN] A downloaded update turns the chip into the "apply" entry; an available
+        // [EN] update that was not yet answered re-opens the download prompt. Everything
+        // [EN] else keeps the historical behaviour: open the release page.
+        // [ZH] 已下载更新时，状态项变成「应用」入口；尚未回答的可用更新重新打开下载询问；
+        // [ZH] 其余情况保持历史行为：打开发布页面。
+        if (_downloadedUpdatePath.Length > 0)
+        {
+            await ApplyUpdateAsync();
+            return;
+        }
+        if (_updateAvailable && !_updateDeclined && _updateAsset.Length > 0)
+        {
+            await PromptDownloadUpdateAsync();
+            return;
+        }
         if (_updateUrl.Length == 0)
             return;
         try
@@ -1245,6 +1500,8 @@ public partial class MainWindow : Window
         }
         if (root.TryGetProperty("kv_cache_text", out JsonElement kvEl) && kvEl.ValueKind == JsonValueKind.String)
             SetKvCacheStatus(kvEl.GetString() ?? "");
+        if (root.TryGetProperty("memory", out JsonElement memEl) && memEl.ValueKind == JsonValueKind.Object)
+            SetMemoryStatus(memEl);
         if (root.TryGetProperty("capability", out JsonElement capEl) && capEl.ValueKind == JsonValueKind.Object)
             SetCapabilityStatus(capEl);
         if (root.TryGetProperty("context", out JsonElement ctxEl) && ctxEl.ValueKind == JsonValueKind.Object)
@@ -1308,6 +1565,40 @@ public partial class MainWindow : Window
             return;
         StripKvText.Text = Loc.T("main.strip.kv", "💾 KV: {0}", text);
     }
+
+    /// <summary>
+    /// [EN] Physical-memory pressure reported by the backend hardware snapshot. The percentage is
+    ///      used memory over total memory; the raw byte values remain in the tooltip so the
+    ///      figure can be audited instead of trusted blindly.
+    /// [ZH] 由后端硬件快照上报的物理内存压力。百分比为已用内存占总内存的比例；原始字节值保留在
+    ///      悬停提示中，便于核对而不是盲信一个数字。
+    /// </summary>
+    private void SetMemoryStatus(JsonElement memory)
+    {
+        long total = GetLongField(memory, "total_bytes");
+        long available = GetLongField(memory, "available_bytes");
+        if (total <= 0)
+            return;
+        if (available < 0)
+            available = 0;
+        if (available > total)
+            available = total;
+        long used = total - available;
+        int percent = (int)Math.Round(used * 100.0 / total);
+        StripMemoryText.Text = Loc.T("main.strip.memoryStrip", "🧠 内存 {0}%", percent);
+        ToolTip.SetTip(StripMemoryButton, Loc.T("main.strip.memoryDetail",
+            "物理内存：已用 {0} / 共 {1}（{2}%）", FormatMemoryBytes(used), FormatMemoryBytes(total), percent));
+    }
+
+    private static string FormatMemoryBytes(long bytes)
+    {
+        double gb = bytes / 1024.0 / 1024.0 / 1024.0;
+        return gb >= 1.0 ? $"{gb:0.0} GB" : $"{bytes / 1024.0 / 1024.0:0} MB";
+    }
+
+    private static long GetLongField(JsonElement node, string name)
+        => node.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.Number
+           && el.TryGetInt64(out long value) ? value : 0;
 
     private void SetAutomationStatus(bool running, bool enabled)
     {
@@ -3472,6 +3763,79 @@ public partial class MainWindow : Window
     /// [ZH] 通过与切换按钮相同的代码路径演练状态区的折叠与展开，并报告该元素在过渡结束后是否稳定
     ///      落入预期的视觉状态。方法返回之前会复原已持久化的偏好。
     /// </summary>
+    /// <summary>
+    /// [EN] Proves that the input field's hover state is render-only. The probe toggles the
+    ///      <c>:pointerover</c> pseudo-class through the same style engine the pointer uses and
+    ///      compares bounds, margin, padding and border thickness before and after. It also
+    ///      reports the transition types installed on the template border and underline, so a
+    ///      future edit that reached for layout cannot pass unnoticed.
+    /// [ZH] 证明输入框的悬停状态只影响渲染。探针通过与指针相同的样式引擎切换 <c>:pointerover</c>
+    ///      伪类，并比较切换前后的边界、外边距、内边距与描边宽度；同时报告模板边框与底线安装的过渡
+    ///      类型，使后续若有人改回布局属性会被立即发现。
+    /// </summary>
+    public async Task<string> ProbeInputHoverStabilityAsync()
+    {
+        TextBox box = InputBox;
+        var border = box.GetVisualDescendants().OfType<Border>()
+            .FirstOrDefault(b => b.Name == "PART_BorderElement");
+        var underline = box.GetVisualDescendants().OfType<Border>()
+            .FirstOrDefault(b => b.Name == "PART_Underline");
+
+        Rect beforeBounds = box.Bounds;
+        Thickness beforeMargin = box.Margin;
+        Thickness beforePadding = box.Padding;
+        Thickness beforeBorder = box.BorderThickness;
+
+        var pseudo = (IPseudoClasses)box.Classes;
+        pseudo.Set(":pointerover", true);
+        await Task.Delay(40);
+        Rect hoverBounds = box.Bounds;
+        Thickness hoverMargin = box.Margin;
+        Thickness hoverPadding = box.Padding;
+        Thickness hoverBorder = box.BorderThickness;
+        pseudo.Set(":pointerover", false);
+        await Task.Delay(40);
+
+        bool layoutStable = beforeBounds == hoverBounds
+                            && beforeMargin == hoverMargin
+                            && beforePadding == hoverPadding
+                            && beforeBorder == hoverBorder;
+
+        string borderKinds = border?.Transitions is null
+            ? ""
+            : string.Join(",", border.Transitions.Select(t => t.GetType().Name));
+        string underlineKinds = underline?.Transitions is null
+            ? ""
+            : string.Join(",", underline.Transitions.Select(t => t.GetType().Name));
+
+        return $"layoutStable={layoutStable}"
+               + $"｜borderBrushTransition={borderKinds.Contains("BrushTransition", StringComparison.Ordinal)}"
+               + $"｜boxShadowTransition={underlineKinds.Contains("BoxShadowsTransition", StringComparison.Ordinal)}"
+               + $"｜borderKinds={borderKinds}｜underlineKinds={underlineKinds}"
+               + $"｜bounds={beforeBounds.Width:0}x{beforeBounds.Height:0}";
+    }
+
+    /// <summary>
+    /// [EN] Reports every status-strip item and its current localized text. The probe uses this
+    ///      to assert that the Avalonia strip carries the same items as WPF plus the memory
+    ///      pressure item, and that no item silently keeps an empty placeholder.
+    /// [ZH] 报告状态区的每一项及其当前本地化文本。探针据此断言 Avalonia 状态区包含与 WPF 相同的
+    ///      各项，并额外包含内存压力项，且没有任何一项静默保留空占位。
+    /// </summary>
+    public string ProbeStatusStripItemsSnapshot()
+    {
+        int count = StatusStripItems.Children.Count;
+        return $"count={count}"
+               + $"｜search={SearchText.Text}"
+               + $"｜automation={AutoText.Text}"
+               + $"｜market={MarketText.Text}"
+               + $"｜context={StripContextText.Text}"
+               + $"｜kv={StripKvText.Text}"
+               + $"｜memory={StripMemoryText.Text}"
+               + $"｜capability={StripCapabilityText.Text}"
+               + $"｜compact={StripCompactText.Text}";
+    }
+
     public async Task<string> ProbeStatusStripMotionAsync()
     {
         bool original = _state.Settings.StatusStripCollapsed;

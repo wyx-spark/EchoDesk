@@ -847,4 +847,4 @@ foreach ($p in @($SetupExe, $SumsFile)) {
 }
 Write-Ok "安装程序不含模型（模型由程序按需下载，或用单独的模型补充包）"
 Write-Ok "默认安装位置 = 用户双击的那个安装程序所在目录；安装后可改路径，卸载走 unins000.exe"
-Write-Ok "卸载会清掉运行期文件（会话/模型/缓存/日志等），但 results\ 原样保留"
+Write-Ok "卸载只清缓存/日志/快捷方式；config、会话、模型、插件与 results\ 原样保留，并额外备份到 %LOCALAPPDATA%\EchoDesk\uninstall-backup\"

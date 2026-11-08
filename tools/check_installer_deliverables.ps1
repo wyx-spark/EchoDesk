@@ -49,21 +49,27 @@ $Sums = Join-Path $Publish "SHA256SUMS.txt"
 $ReleaseDir = Join-Path $Publish "EchoDesk-v$Version"
 
 <#
-    运行期新建的文件清单（相对安装根目录 {app}）。
-    来源：backend\config.py 的默认值（session_file / *_registry.json / cache_file /
-    audit_log_file / processed_file / dev_log_file）、backend\main.py 的崩溃日志与
-    summary_cache.json、model_hub 的缓存目录（{user_data_root}\cache\model_hub）、
-    frontend 的 ui_state.json / snippets.json / Start-*.lnk / frontend_crash.log。
+    运行期新建的文件清单（相对安装根目录 {app}），v0.2.4 补丁起拆成两组：
 
-    **这份清单是第 11 项断言的基准**：installer.iss 的 [UninstallDelete] 必须覆盖它。
-    以后程序新增了运行期文件，就先加到这儿 —— 断言会立刻告诉你 iss 漏了哪一项。
+    * $RemovedArtifacts：**可再生**的缓存、日志与快捷方式，卸载必须清掉；
+    * $PreservedArtifacts：**用户数据**（config、会话、注册表、模型、插件、界面偏好），
+      卸载必须原样保留。installer.iss 的 [UninstallDelete] 只允许覆盖前一组；
+      后一组由 [Code] 的 BackupUserData 额外复制到
+      %LOCALAPPDATA%\EchoDesk\uninstall-backup\<时间戳>\ 作为安全网。
+
+    **这份清单是第 11 项断言的基准**：以后程序新增运行期文件，先判断它属于哪一组。
 #>
-$RuntimeArtifacts = @(
-    "ui_state.json"
-    "snippets.json"
+$RemovedArtifacts = @(
     "Start-EchoDesk-v$Version.lnk"
     "cache\model_hub\search-cache.json"
     "app\frontend_crash.log"
+    "app\backend\backend_crash.log"
+    "app\backend\skills_dev.log"
+)
+
+$PreservedArtifacts = @(
+    "ui_state.json"
+    "snippets.json"
     "app\backend\config.user.json"
     "app\backend\session.json"
     "app\backend\browser_state.json"
@@ -74,8 +80,6 @@ $RuntimeArtifacts = @(
     "app\backend\summary_cache.json"
     "app\backend\automation_log.jsonl"
     "app\backend\automation_processed.json"
-    "app\backend\backend_crash.log"
-    "app\backend\skills_dev.log"
     "app\backend\models\Qwen3-0.6B-Q6_K.gguf"
     "app\backend\models\.cache\huggingface\blob"
     "app\backend\skills\my-skill\skill.json"
@@ -379,7 +383,7 @@ function Get-IssUninstallEntries {
 #>
 function New-RuntimeArtifacts([string]$CaseDir) {
     $created = @()
-    foreach ($rel in $RuntimeArtifacts) {
+    foreach ($rel in @($RemovedArtifacts + $PreservedArtifacts)) {
         $full = Join-Path $CaseDir $rel
         $dir = Split-Path -Parent $full
         if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
@@ -472,20 +476,31 @@ function Test-InstallerRound([string]$Exe, [string]$Label) {
     #   * results\（用户业务产出）原样保留。
     $unins = Join-Path $caseDir "unins000.exe"
     if (-not (Test-Path $unins)) { throw "安装目录里没有卸载程序（Uninstallable=no？）：$caseDir" }
+    $backupRoot = Join-Path $env:LOCALAPPDATA "EchoDesk\uninstall-backup"
+    $backupBefore = @(Get-ChildItem $backupRoot -Directory -ErrorAction SilentlyContinue).Count
     $ucode = Invoke-SilentUninstall $caseDir
     if ($ucode -ne 0) { throw "卸载失败（退出码 $ucode）" }
-    foreach ($gone in @("app", "docs")) {
-        if (Test-Path (Join-Path $caseDir $gone)) { throw "卸载后 $gone\ 仍在（$caseDir）" }
-    }
+    if (Test-Path (Join-Path $caseDir "docs")) { throw "卸载后 docs\ 仍在（$caseDir）" }
+    if (Test-Path (Join-Path $caseDir "app\EchoDesk.exe")) { throw "卸载后程序文件 app\EchoDesk.exe 仍在" }
     if (Test-Path (Join-Path $StartMenuDir "EchoDesk.lnk")) { throw "卸载后开始菜单快捷方式仍在" }
 
-    $staleRuntime = @()
-    foreach ($rel in $RuntimeArtifacts) {
-        if (Test-Path -LiteralPath (Join-Path $caseDir $rel)) { $staleRuntime += $rel }
+    # v0.2.4 补丁：可再生的缓存/日志/快捷方式必须清掉。
+    $staleRemoved = @()
+    foreach ($rel in $RemovedArtifacts) {
+        if (Test-Path -LiteralPath (Join-Path $caseDir $rel)) { $staleRemoved += $rel }
     }
-    if ($staleRuntime.Count -gt 0) {
-        throw ("卸载后仍留着 $($staleRuntime.Count) 个运行期文件（应补进 tools\installer.iss 的 [UninstallDelete]）：`n      " +
-            ($staleRuntime -join "`n      "))
+    if ($staleRemoved.Count -gt 0) {
+        throw ("卸载后仍留着 $($staleRemoved.Count) 个可再生文件（应补进 tools\installer.iss 的 [UninstallDelete]）：`n      " +
+            ($staleRemoved -join "`n      "))
+    }
+
+    # v0.2.4 补丁：用户数据一个都不能丢。
+    $lostUserData = @()
+    foreach ($rel in $PreservedArtifacts) {
+        if (-not (Test-Path -LiteralPath (Join-Path $caseDir $rel))) { $lostUserData += $rel }
+    }
+    if ($lostUserData.Count -gt 0) {
+        throw ("卸载把用户数据删掉了（必须保留）：`n      " + ($lostUserData -join "`n      "))
     }
     $keptMissing = @()
     foreach ($rel in $KeepAfterUninstall) {
@@ -495,11 +510,27 @@ function Test-InstallerRound([string]$Exe, [string]$Label) {
         throw "卸载把 results\ 里的用户结果删掉了（必须保留）：$($keptMissing -join ', ')"
     }
 
-    # 允许剩下的只有：安装程序本身（用户放的）+ results\（保留的用户结果）
+    # v0.2.4 补丁：卸载前必须把小型用户数据复制到隔离备份目录。
+    $backupAfter = @(Get-ChildItem $backupRoot -Directory -ErrorAction SilentlyContinue).Count
+    $latestBackup = @(Get-ChildItem $backupRoot -Directory -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1)
+    if ($latestBackup.Count -eq 0 -or $backupAfter -le $backupBefore) {
+        throw "卸载未在 $backupRoot 下创建新的用户数据备份（卸载前 $backupBefore 个，卸载后 $backupAfter 个）"
+    }
+    foreach ($name in @("config.user.json", "session.json", "models_registry.json")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $latestBackup[0].FullName $name))) {
+            throw "卸载备份目录缺少 $name：$($latestBackup[0].FullName)"
+        }
+    }
+
+    # 允许剩下的只有：安装程序本身（用户放的）+ results\ + 用户数据。
+    $allowed = @($KeepAfterUninstall + $PreservedArtifacts)
     $leftover = @(Get-ChildItem $caseDir -Recurse -File -Force -ErrorAction SilentlyContinue |
         Where-Object {
+            $rel = $_.FullName.Substring($caseDir.Length + 1)
             $_.Name -notlike "*Setup.exe" -and
-            $_.FullName.Substring($caseDir.Length + 1) -notlike "results\*"
+            $rel -notlike "results\*" -and
+            ($allowed | Where-Object { $rel -eq $_ -or $rel -like "$_\*" }).Count -eq 0
         } | ForEach-Object { $_.FullName.Substring($caseDir.Length + 1) })
     if ($leftover.Count -gt 0) { throw "卸载后目录里仍有多余文件: $($leftover -join ', ')" }
 
@@ -522,7 +553,7 @@ Check "installer.iss 卸载清单覆盖全部运行期文件，且不整目录�
         throw "installer.iss 里出现了删除整个安装根目录的写法（Name: `"{app}`"），会把 results\ 一起删掉"
     }
     $uncovered = @()
-    foreach ($rel in $RuntimeArtifacts) {
+    foreach ($rel in $RemovedArtifacts) {
         $hit = $false
         foreach ($e in $entries) {
             # 用 -like 而不是 -eq：iss 里允许通配（例如 "{app}\*.lnk"）。
@@ -539,15 +570,30 @@ Check "installer.iss 卸载清单覆盖全部运行期文件，且不整目录�
         if (-not $hit) { $uncovered += $rel }
     }
     if ($uncovered.Count -gt 0) {
-        throw ("这些运行期文件没被 [UninstallDelete] 覆盖，卸载后会留在用户机器上：`n      " +
+        throw ("这些可再生文件没被 [UninstallDelete] 覆盖，卸载后会留在用户机器上：`n      " +
             ($uncovered -join "`n      "))
     }
-    "$($entries.Count) 条卸载条目覆盖全部 $($RuntimeArtifacts.Count) 个运行期文件，且无整目录删除"
+    # v0.2.4 补丁：用户数据**不允许**出现在卸载删除清单里。
+    $wronglyDeleted = @()
+    foreach ($rel in $PreservedArtifacts) {
+        foreach ($e in $entries) {
+            if ($e.Type -eq 'files' -and $rel -like $e.Rel) { $wronglyDeleted += $rel; break }
+            elseif ($e.Type -eq 'filesandordirs' -and ($rel -like $e.Rel -or $rel -like ($e.Rel + '\*'))) {
+                $wronglyDeleted += $rel; break
+            }
+        }
+    }
+    if ($wronglyDeleted.Count -gt 0) {
+        throw ("这些用户数据出现在 [UninstallDelete] 里，卸载会删掉它们：`n      " +
+            ($wronglyDeleted -join "`n      "))
+    }
+    "$($entries.Count) 条卸载条目覆盖全部 $($RemovedArtifacts.Count) 个可再生文件；" +
+        "$($PreservedArtifacts.Count) 个用户数据未被删除清单覆盖，且无整目录删除"
 }
 
-Check "安装程序：默认装到安装程序所在目录、结构齐全、无模型、快捷方式正确、可卸载且清干净运行期文件（保留 results）" {
+Check "安装程序：默认装到安装程序所在目录、结构齐全、无模型、快捷方式正确、可卸载、清缓存但保留用户数据" {
     $r = Test-InstallerRound $Setup "single"
-    "$($r.Summary)；造了 $($r.Runtime) 个运行期文件，卸载后全部清除、results\ 保留"
+    "$($r.Summary)；造了 $($r.Runtime) 个运行期文件，卸载后可再生文件全清、用户数据与 results\ 保留、备份已生成"
 }
 
 # ---------- 8. install-complete.bat（zip 免安装用户）真跑一次 ----------

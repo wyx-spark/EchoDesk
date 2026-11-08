@@ -800,6 +800,38 @@ internal static class Probe
         Check("状态区展开后恢复可见并回到满不透明度",
             stripMotion.Contains("expandedVisible=True", StringComparison.Ordinal), OneLine(stripMotion, 160));
 
+        // ---- 输入框：悬停只能影响渲染 ----------------------------------
+        string hover = await main.ProbeInputHoverStabilityAsync();
+        Console.WriteLine($"  输入框悬停 : {hover}");
+        Check("输入框悬停不改变边界/边距/内边距/描边宽度（零布局重排）",
+            hover.Contains("layoutStable=True", StringComparison.Ordinal), OneLine(hover, 200));
+        Check("输入框背景与描边通过 BrushTransition 平滑过渡",
+            hover.Contains("borderBrushTransition=True", StringComparison.Ordinal), OneLine(hover, 200));
+        Check("输入框光晕通过 BoxShadowsTransition 平滑过渡",
+            hover.Contains("boxShadowTransition=True", StringComparison.Ordinal), OneLine(hover, 200));
+
+        // ---- 状态区：与 WPF 对齐并额外提供内存压力 ----------------------
+        string items = main.ProbeStatusStripItemsSnapshot();
+        Console.WriteLine($"  状态区各项 : {items}");
+        Check("状态区控件数量不少于 WPF（9 项 + 内存压力）",
+            ReadNumber(items, "count") >= 10, OneLine(items, 220));
+        foreach ((string key, string label) in new[]
+                 {
+                     ("search", "搜索"), ("automation", "自动化"), ("market", "市场"),
+                     ("context", "上下文"), ("kv", "KV"), ("memory", "内存"),
+                     ("capability", "模型能力"), ("compact", "压缩"),
+                 })
+        {
+            string marker = $"{key}=";
+            int start = items.IndexOf(marker, StringComparison.Ordinal);
+            string value = start < 0 ? "" : items[(start + marker.Length)..].Split('｜')[0];
+            Check($"状态区包含{label}项且文本非空", value.Trim().Length > 0, $"{key}='{value}'");
+        }
+        Check("状态区内存项已格式化为百分比",
+            items.Contains("memory=", StringComparison.Ordinal)
+            && System.Text.RegularExpressions.Regex.IsMatch(items, @"memory=[^｜]*%"),
+            OneLine(items, 220));
+
         return ok;
     }
 

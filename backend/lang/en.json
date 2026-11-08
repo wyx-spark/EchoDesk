@@ -1144,7 +1144,15 @@
     "not_due": "Skipped: less than {hours} hours since the last check (check manually from Settings)",
     "rate_limited": "⚠️ Update check failed: GitHub API rate limit reached, try again later",
     "repo_missing": "⚠️ Update check failed: repository {repo} does not exist or has no published releases",
-    "ahead": "Your version {current} is newer than the latest release {latest} (development or pre-release build)"
+    "ahead": "Your version {current} is newer than the latest release {latest} (development or pre-release build)",
+    "download_missing": "Update download failed: missing release tag or asset name",
+    "download_failed": "Update download failed: {error}",
+    "downloaded": "Update downloaded: {name} (restart to apply)",
+    "apply_missing": "Applying the update failed: the installer is missing or outside the updates directory",
+    "apply_unsupported": "Applying the update failed: the asset is not an executable installer (.exe / .msi)",
+    "backup_failed": "Backing up user data before the update failed: {error}",
+    "apply_failed": "Starting the update installer failed: {error}",
+    "apply_started": "The installer has started ({path}); the application will exit now"
   },
   "skill": {
     "install_bundle_missing": "skill.json has no echodesk.bundle field, which a real install requires (development folders are lenient).",

@@ -317,6 +317,18 @@
           <Button x:Name="StripKvButton" Classes="chip">
             <TextBlock x:Name="StripKvText" Text="💾 KV: ---" FontSize="11" />
           </Button>
+          <!--
+            [EN] Physical-memory pressure of the host. The value comes from the backend hardware
+                 snapshot, so the interface never estimates it locally. A refresh happens through
+                 the same context response as the other status items.
+            [ZH] 主机物理内存压力。数值来自后端硬件快照，界面从不本地估算；刷新与其他状态项一样，
+                 走同一条 context 响应。
+          -->
+          <Button x:Name="StripMemoryButton" Classes="chip"
+                  AutomationProperties.AutomationId="StripMemoryButton">
+            <TextBlock x:Name="StripMemoryText" Text="" FontSize="11"
+                       AutomationProperties.AutomationId="StripMemoryText" />
+          </Button>
           <Button x:Name="StripCapabilityButton" Classes="chip">
             <TextBlock x:Name="StripCapabilityText" Text="" FontSize="11" />
           </Button>

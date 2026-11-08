@@ -1932,6 +1932,14 @@ class Backend:
         # [ZH] 自动更新（相关设计 方案 A：只检查与提示）。
         if action == "update_check":
             return self._handle_update_check(request)
+        # [EN] v0.2.4 patch: the user must explicitly ask for a download; the backend
+        # [EN] never downloads on its own. Applying is a separate, equally explicit step.
+        # [ZH] v0.2.4 补丁：下载必须由用户显式触发，后端绝不自行下载。应用更新同样是
+        # [ZH] 一个独立的、同样需要显式触发的步骤。
+        if action == "update_download":
+            return self._handle_update_download(request)
+        if action == "update_apply":
+            return self._handle_update_apply(request)
         return {"type": "system", "content": _t("sys.unknown_action")}
 
     # ---------- 多语言（相关设计 3.4） ----------
@@ -2288,6 +2296,113 @@ class Backend:
             except Exception:
                 log.debug("保存更新检查时间失败", exc_info=True)
         return {"type": "system", "content": result.get("message", ""), "update": result}
+
+    def _handle_update_download(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Download one asset of an already-detected release. The caller supplies only
+        the tag and the asset name; ``update_check.download_update_asset`` re-resolves
+        the URL from the GitHub API and verifies size and SHA-256 before the file is
+        renamed into place. The file lands in ``<user_data_root>/updates/``, never in
+        the program directory, so an interrupted download cannot corrupt the running
+        installation.
+
+        [ZH]
+        下载已检测到的发布中的某个附件。调用方只提供标签与附件名称；
+        ``update_check.download_update_asset`` 会重新从 GitHub API 解析 URL，并在文件
+        改名落位前校验大小与 SHA-256。文件落在 ``<用户数据根>/updates/``，绝不进入
+        程序目录，因此中断的下载不会破坏正在运行的安装。
+        """
+        tag = str(request.get("tag") or "").strip()
+        asset = str(request.get("asset") or "").strip()
+        if not tag or not asset:
+            return {"type": "system", "content": _t("update.download_missing"),
+                    "ok": False, "update_download": {"ok": False, "error": "missing tag or asset"}}
+        try:
+            from update_check import download_update_asset
+
+            dest = os.path.join(user_data_root(), "updates")
+            result = download_update_asset(self.config.update, tag, asset, dest)
+        except Exception as e:  # noqa: BLE001 - report, never crash the backend
+            log.exception("下载更新失败")
+            return {"type": "system", "content": _t("update.download_failed", error=e),
+                    "ok": False, "update_download": {"ok": False, "error": str(e)}}
+        self.config.update.last_seen_version = tag
+        try:
+            self.config.save()
+        except Exception:
+            log.debug("保存更新版本失败", exc_info=True)
+        return {"type": "system", "content": _t("update.downloaded", name=result.get("name", asset)),
+                "ok": True, "update_download": result}
+
+    def _handle_update_apply(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Apply a previously downloaded update. Before anything is launched, the small
+        user-data files are copied into an isolated backup under
+        ``<user_data_root>/updates/``; models are intentionally left in place because
+        the installer excludes them. The installer is then started detached with the
+        current install root as ``/DIR`` so an upgrade overwrites program files only.
+
+        [ZH]
+        应用此前下载的更新。启动任何东西之前，先把小型用户数据文件复制到
+        ``<用户数据根>/updates/`` 下的隔离备份中；模型刻意保留在原位，因为安装程序
+        已排除它们。随后以当前安装根目录作为 ``/DIR`` 分离启动安装程序，使升级只覆盖
+        程序文件。
+        """
+        raw_path = str(request.get("path") or "").strip()
+        tag = str(request.get("tag") or "").strip()
+        updates_dir = os.path.abspath(os.path.join(user_data_root(), "updates"))
+        path = os.path.abspath(raw_path) if raw_path else ""
+        if (not path or not os.path.isfile(path)
+                or os.path.normcase(os.path.commonpath([path, updates_dir]))
+                != os.path.normcase(updates_dir)):
+            return {"type": "system", "content": _t("update.apply_missing"),
+                    "ok": False, "update_apply": {"ok": False, "error": "installer not found in updates dir"}}
+        if os.path.splitext(path)[1].lower() not in (".exe", ".msi"):
+            return {"type": "system", "content": _t("update.apply_unsupported"),
+                    "ok": False, "update_apply": {"ok": False, "error": "unsupported installer type"}}
+        try:
+            from update_check import backup_user_data
+
+            program = os.path.abspath(program_dir())
+            install_root = os.path.dirname(program) if os.path.basename(program).lower() == "app" else program
+            backup = backup_user_data(program, user_data_root(), tag or "update")
+        except Exception as e:  # noqa: BLE001
+            log.exception("更新前备份用户数据失败")
+            return {"type": "system", "content": _t("update.backup_failed", error=e),
+                    "ok": False, "update_apply": {"ok": False, "error": str(e)}}
+        try:
+            if path.lower().endswith(".msi"):
+                args = ["msiexec", "/i", path, "/qn"]
+            else:
+                # [EN] /SILENT keeps a progress window (the user asked to restart and
+                # [EN] should see that something is happening); /DIR pins the install
+                # [EN] root to the current one so a portable layout stays portable.
+                # [ZH] /SILENT 保留进度窗口（用户已选择重启，应当看到事情正在发生）；
+                # [ZH] /DIR 固定为当前安装根，使便携布局保持便携。
+                args = [path, "/SILENT", f'/DIR="{install_root}"']
+            creationflags = 0x00000008 if os.name == "nt" else 0  # DETACHED_PROCESS
+            subprocess.Popen(  # noqa: S603 - fixed, validated installer path
+                args, cwd=install_root, close_fds=True,
+                creationflags=creationflags, start_new_session=(os.name != "nt"))
+        except Exception as e:  # noqa: BLE001
+            log.exception("启动更新安装程序失败")
+            return {"type": "system", "content": _t("update.apply_failed", error=e),
+                    "ok": False, "update_apply": {"ok": False, "error": str(e)}}
+        return {
+            "type": "system",
+            "content": _t("update.apply_started", path=path),
+            "ok": True,
+            "update_apply": {
+                "ok": True,
+                "path": path,
+                "install_root": install_root,
+                "backup_dir": backup.get("dir", ""),
+                "backed_up": backup.get("copied", []),
+                "models_left_in_place": backup.get("models", 0),
+            },
+        }
 
     # ---------- 模型选择栏（新增四） ----------
     # [EN] Model selector (feature 4).
@@ -3577,6 +3692,18 @@ class Backend:
                 response["kv_cache_text"] = self.llm.kv_cache_text()
             except Exception:
                 response["kv_cache_text"] = ""
+            # [EN] Physical-memory pressure for the status strip. ``probe()`` caches its result,
+            # [EN] so this does not run GPU detection on every context refresh.
+            # [ZH] 状态区所需的物理内存压力。``probe()`` 会缓存结果，因此不会在每次上下文刷新时
+            # [ZH] 重复执行 GPU 探测。
+            try:
+                hw = hardware_profiler.probe()
+                response["memory"] = {
+                    "total_bytes": int(hw.ram_total_bytes),
+                    "available_bytes": int(hw.ram_available_bytes),
+                }
+            except Exception:
+                response["memory"] = {}
             try:
                 response["model"] = os.path.basename(self.config.model_path or "")
             except Exception:

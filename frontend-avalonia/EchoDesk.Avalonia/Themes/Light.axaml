@@ -23,6 +23,13 @@
   <SolidColorBrush x:Key="SurfaceAltBrush" Color="#FFF1F3F5" />
   <SolidColorBrush x:Key="InputBackgroundBrush" Color="#FFFFFFFF" />
   <SolidColorBrush x:Key="InputBorderBrush" Color="#FFD0D7DE" />
+  <!--
+    [EN] Hover outline of an input. It is a render-only colour: the border thickness never
+         changes between states, so hovering can never invalidate measure or arrange.
+    [ZH] 输入框的悬停描边。它只是一种渲染颜色：描边宽度在各状态之间从不改变，因此悬停永远不会
+         使测量或排列失效。
+  -->
+  <SolidColorBrush x:Key="InputHoverBorderBrush" Color="#FFB7C3CE" />
   <SolidColorBrush x:Key="FocusBorderBrush" Color="#FF007B8A" />
   <!--
     [EN] ToggleSwitch tokens: the off track reuses the neutral border tone and the knob is pure
@@ -107,4 +114,12 @@
     [ZH] 无边框输入框底线的焦点光晕。扩散半径刻意保持较小，使效果呈现为被点亮的线条而非悬浮光晕。
   -->
   <BoxShadows x:Key="InputUnderlineGlow">0 0 6 0 #59007B8A</BoxShadows>
+  <!--
+    [EN] Hover glow of the input underline. It is intentionally weaker than the focus glow and is
+         reached through a BoxShadows transition, so the pointer entering and leaving the field is
+         expressed without a single layout pass.
+    [ZH] 输入框底线的悬停光晕。它刻意弱于焦点光晕，并通过 BoxShadows 过渡到达，使指针进入与离开
+         输入框时完全不触发一次布局计算。
+  -->
+  <BoxShadows x:Key="InputHoverGlow">0 0 4 0 #33007B8A</BoxShadows>
 </ResourceDictionary>

@@ -49,14 +49,14 @@
 ;    "装完即用、模型按需下载"的单一形态，体积也从 608 MB 降到 114 MB 量级。
 ;    [Files] 里的 Excludes 因此是**无条件**的（那段匹配语义的实测结论保留在下方）。
 ;
-;  【卸载必须清干净运行期文件，但 results\ 一个都不能删】（同轮需求）
-;    只放在 [Files] 里的文件 Inno 会自己删，但**程序运行时新建的文件**它不知道，
-;    于是卸载后原地会留下 session.json、models\、ui_state.json、各种 *_registry.json
-;    与日志。这些都在 [UninstallDelete] 里逐项列明。
-;    唯一的例外是 {app}\results\（批量处理结果，是用户的业务产出）：整节都不列它，
-;    并且 [Code] 会在卸载开始时告知用户"它会被保留"（静默卸载不弹窗，见 UninstallSilent）。
+;  【卸载只清可再生文件；用户数据与 results\ 一律保留】（v0.2.4 补丁修订）
+;    v0.2.4 之前这里会删除 session.json、models\、ui_state.json 与各种 *_registry.json，
+;    升级/卸载都可能让用户丢数据。现在 [UninstallDelete] 只列缓存、日志与快捷方式；
+;    config、会话、注册表、模型、插件、界面偏好与 results\ 全部保留。
+;    [Code] 的 BackupUserData() 还会在卸载前把小型用户数据复制到
+;    %LOCALAPPDATA%\EchoDesk\uninstall-backup\<时间戳>\ 作为安全网。
 ;    注意：**不要**图省事写 `Type: filesandordirs; Name: "{app}"` —— 那会把 results\
-;    连同用户自己放在这个目录里的东西一起删掉。
+;    与全部用户数据一起删掉。
 ; ============================================================================
 
 #ifndef MyAppVersion
@@ -170,11 +170,13 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 ; 所以这里用 Inno 自己的多语言机制：CustomMessages 按 [Languages] 的当前语言取值，
 ; 没定义的语言回退到默认语言（english）。占位符用 %1，由 FmtMessage 传入路径。
 english.UninstallKeepResults=EchoDesk will keep the batch results folder as it is:%n%n%1%n%nFiles created while the program was running (sessions, models, caches, logs, ...) will be removed.
+english.UninstallKeepData=Your user data was backed up before uninstall:%n%n%1%n%nConfig, sessions, skills and model files are kept in place and are never deleted by the uninstaller. Batch results remain at:%n%n%2
 ; 中文那一条也必须用同一个条件包起来 —— 否则在"没装 ChineseSimplified.isl"的机器上，
 ; CustomMessages 引用了一个 [Languages] 里并不存在的语言名，编译直接失败
 ; （实测报 `Unknown language name "chinesesimplified"`，破坏了本文件"没放 .isl 也能编译"的约定）。
 #if FileExists(AddBackslash(CompilerPath) + "Languages\ChineseSimplified.isl")
 chinesesimplified.UninstallKeepResults=批量处理结果目录会原样保留：%n%n%1%n%n其余由程序运行时产生的文件（会话、模型、缓存、日志等）会被删除。
+chinesesimplified.UninstallKeepData=卸载前已备份用户数据：%n%n%1%n%n配置、会话、插件与模型文件原样保留，卸载程序不会删除它们。批量处理结果仍在：%n%n%2
 #endif
 
 [Tasks]
@@ -192,7 +194,16 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; [EN] last-write time of every source file inside the installation payload.
 ; [ZH] ``notimestamp`` 是可复现产物的必需项：缺少它时，Inno Setup 会把每个源文件的最后
 ; [ZH] 写入时间写入安装数据。
-Source: "{#MySourceDir}\*"; DestDir: "{app}"; Excludes: "app\backend\models\*,*\models\*,*.gguf"; Flags: ignoreversion recursesubdirs createallsubdirs notimestamp
+; [EN] User data must survive an upgrade. The wildcard therefore excludes every file the
+; [EN] program writes at runtime; the two explicit entries below copy a default config and the
+; [EN] example skills only when they do not exist yet (``onlyifdoesntexist``). An upgrade can
+; [EN] therefore never replace config.json, a session, a registry, a model or a user skill.
+; [ZH] 用户数据必须在升级后继续存在。因此通配条目排除了程序运行期写入的每一个文件；下方两条
+; [ZH] 显式条目只在目标不存在时复制默认配置与示例插件（``onlyifdoesntexist``）。升级因此
+; [ZH] 永远不会替换 config.json、会话、注册表、模型或用户插件。
+Source: "{#MySourceDir}\*"; DestDir: "{app}"; Excludes: "app\backend\models\*,*\models\*,*.gguf,app\backend\config.json,app\backend\config.user.json,app\backend\session.json,app\backend\browser_state.json,app\backend\models_registry.json,app\backend\skills_registry.json,app\backend\skills_local.json,app\backend\market_cache.json,app\backend\summary_cache.json,app\backend\automation_log.jsonl,app\backend\automation_processed.json,app\backend\skills_dev\*,ui_state.json,snippets.json,tools\*,tests\*,records\*,prompts\*"; Flags: ignoreversion recursesubdirs createallsubdirs notimestamp
+Source: "{#MySourceDir}\app\backend\config.json"; DestDir: "{app}\app\backend"; Flags: onlyifdoesntexist notimestamp
+Source: "{#MySourceDir}\app\backend\skills_dev\*"; DestDir: "{app}\app\backend\skills_dev"; Flags: onlyifdoesntexist recursesubdirs createallsubdirs notimestamp
 
 [Dirs]
 ; 便携版里 results\ 是个空目录（自动化结果默认位置），Inno 不会因为
@@ -213,39 +224,22 @@ Filename: "{app}\{#MyAppExeSubDir}\{#MyAppExeName}"; WorkingDir: "{app}"; Descri
 ; ===========================================================================
 ;  卸载清理：程序**运行时新建**的文件（Inno 只知道自己释放了什么，这些它不知道）
 ; ===========================================================================
-;  规则：
-;    * 下面逐项列出运行期产生的文件与目录（来源：backend\config.py 的默认值、
-;      frontend 的 AppSettings/SnippetManager/ShortcutService，以及实机跑一次
-;      安装版后对比安装前后多出来的文件）；
-;    * **{app}\results\ 一个都不列** —— 那是用户的批量处理结果（业务产出），
-;      卸载时必须原样留下，所以这里也没有任何 `Name: "{app}"` 这种"整目录删"的写法；
-;    * {app}\cache\ 是模型市场搜索结果缓存（{user_data_root}\cache\model_hub）。
+;  规则（v0.2.4 补丁修订：**用户数据绝不删除**）：
+;    * 下面只列"可再生"的缓存、日志与快捷方式；
+;    * config.json / config.user.json / session.json / 各注册表 / models\ / skills\ /
+;      skills_dev\ / ui_state.json / snippets.json 一律**不列** —— 它们是用户数据。
+;      卸载时 `[Code]` 会先把小型用户数据备份到
+;      `%LOCALAPPDATA%\EchoDesk\uninstall-backup\<时间戳>\`，然后这些文件原样留在安装目录里。
+;      **绝不写 `Name: "{app}"` 整目录删除**：那会连 results\ 与用户数据一起删掉。
+;    * **{app}\results\ 一个都不列** —— 用户的批量处理结果必须原样保留。
+;    * {app}\cache\ 是模型市场搜索结果缓存（{user_data_root}\cache\model_hub），可再生。
 ;
-;  ---- 外层（用户数据目录）----
-Type: files;          Name: "{app}\ui_state.json"
-Type: files;          Name: "{app}\snippets.json"
+;  ---- 可再生：缓存、日志、快捷方式 ----
 Type: files;          Name: "{app}\*.lnk"
 Type: filesandordirs; Name: "{app}\cache"
-;  ---- app\（程序目录里的崩溃日志）----
 Type: files;          Name: "{app}\app\frontend_crash.log"
-;  ---- app\backend\（会话、注册表、缓存、日志、下载的模型、装/写的插件）----
-Type: files;          Name: "{app}\app\backend\config.user.json"
-Type: files;          Name: "{app}\app\backend\session.json"
-Type: files;          Name: "{app}\app\backend\browser_state.json"
-Type: files;          Name: "{app}\app\backend\models_registry.json"
-Type: files;          Name: "{app}\app\backend\skills_registry.json"
-Type: files;          Name: "{app}\app\backend\skills_local.json"
-Type: files;          Name: "{app}\app\backend\market_cache.json"
-Type: files;          Name: "{app}\app\backend\summary_cache.json"
-Type: files;          Name: "{app}\app\backend\automation_log.jsonl"
-Type: files;          Name: "{app}\app\backend\automation_processed.json"
 Type: files;          Name: "{app}\app\backend\backend_crash.log"
 Type: files;          Name: "{app}\app\backend\skills_dev.log"
-Type: filesandordirs; Name: "{app}\app\backend\models"
-Type: filesandordirs; Name: "{app}\app\backend\skills"
-; 开发目录里的示例插件由安装程序释放（Inno 自己会删），但用户放进去的开发插件不会，
-; 所以整目录兜底；该目录不存在时 Inno 会自动忽略这一项，不会报错。
-Type: filesandordirs; Name: "{app}\app\backend\skills_dev"
 
 [Code]
 // 默认安装目录 = 安装程序（Setup.exe）自己所在的目录。
@@ -263,15 +257,59 @@ end;
 
 // 卸载开始时告知"结果目录会被保留"，避免用户以为卸载把结果也删了。
 // 静默卸载（/VERYSILENT，验收脚本走的就是这条路）不弹窗，否则会卡住自动化。
+// [EN] Copy one small user-data file into the isolated backup directory.
+// [ZH] 把一个小型用户数据文件复制到隔离备份目录。
+function BackupUserFile(const Src, DstDir: String): Boolean;
+begin
+  Result := False;
+  if not FileExists(Src) then
+    Exit;
+  ForceDirectories(DstDir);
+  Result := FileCopy(Src, AddBackslash(DstDir) + ExtractFileName(Src), False);
+  if Result then
+    Log('User data backed up: ' + Src);
+end;
+
+// [EN] Back up user data before uninstall. Models are large and are deliberately kept
+// [EN] in place (the installer never overwrites them); config, sessions, registries and
+// [EN] UI preferences are small and are copied to LocalAppData as a safety net.
+// [ZH] 卸载前备份用户数据。模型很大，刻意留在原位（安装程序从不覆盖它们）；配置、会话、
+// [ZH] 注册表与界面偏好体积小，复制到 LocalAppData 作为安全网。
+function BackupUserData(): String;
+var
+  Dst: String;
+begin
+  Dst := ExpandConstant('{localappdata}\EchoDesk\uninstall-backup\') +
+         GetDateTimeString('yyyymmdd-hhnnss', '-', '-');
+  ForceDirectories(Dst);
+  BackupUserFile(ExpandConstant('{app}\app\backend\config.json'), Dst);
+  BackupUserFile(ExpandConstant('{app}\app\backend\config.user.json'), Dst);
+  BackupUserFile(ExpandConstant('{app}\app\backend\session.json'), Dst);
+  BackupUserFile(ExpandConstant('{app}\app\backend\browser_state.json'), Dst);
+  BackupUserFile(ExpandConstant('{app}\app\backend\models_registry.json'), Dst);
+  BackupUserFile(ExpandConstant('{app}\app\backend\skills_registry.json'), Dst);
+  BackupUserFile(ExpandConstant('{app}\app\backend\skills_local.json'), Dst);
+  BackupUserFile(ExpandConstant('{app}\app\backend\market_cache.json'), Dst);
+  BackupUserFile(ExpandConstant('{app}\app\backend\summary_cache.json'), Dst);
+  BackupUserFile(ExpandConstant('{app}\app\backend\automation_log.jsonl'), Dst);
+  BackupUserFile(ExpandConstant('{app}\app\backend\automation_processed.json'), Dst);
+  BackupUserFile(ExpandConstant('{app}\ui_state.json'), Dst);
+  BackupUserFile(ExpandConstant('{app}\snippets.json'), Dst);
+  Result := Dst;
+end;
+
 function InitializeUninstall(): Boolean;
 var
   ResultsDir: String;
+  BackupDir: String;
 begin
   Result := True;
+  // [EN] The backup runs even in silent mode; it is data safety, not a prompt.
+  // [ZH] 备份在静默模式下也会执行；它是数据安全措施，不是提示。
+  BackupDir := BackupUserData();
   if UninstallSilent then
     Exit;
   ResultsDir := ExpandConstant('{app}\results');
-  if DirExists(ResultsDir) then
-    MsgBox(FmtMessage(CustomMessage('UninstallKeepResults'), [ResultsDir]),
-           mbInformation, MB_OK);
+  MsgBox(FmtMessage(CustomMessage('UninstallKeepData'), [BackupDir, ResultsDir]),
+         mbInformation, MB_OK);
 end;

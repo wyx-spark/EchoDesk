@@ -163,7 +163,18 @@
     <Setter Property="SelectionBrush" Value="{DynamicResource SelectionBackgroundBrush}" />
     <Setter Property="PlaceholderForeground" Value="{DynamicResource SubTextBrush}" />
     <Setter Property="BorderBrush" Value="Transparent" />
-    <Setter Property="BorderThickness" Value="0" />
+    <!--
+      [EN] The border thickness is a constant. It is never written by a state selector: changing
+           BorderThickness, Margin or Padding on :pointerover would invalidate measure and arrange
+           on every pointer crossing, which is exactly the flicker this theme must prevent. The
+           hover/focus feedback below is expressed exclusively through BorderBrush, Background and
+           BoxShadow transitions, all of which are render-only properties.
+      [ZH] 描边宽度是常量。任何状态选择器都不会写入它：在 :pointerover 上修改 BorderThickness、
+           Margin 或 Padding 会在每次指针穿越时使测量与排列失效，而这正是本主题必须杜绝的闪烁。
+           下方的悬停/焦点反馈只通过 BorderBrush、Background 与 BoxShadow 过渡表达，它们全部是
+           仅影响渲染的属性。
+    -->
+    <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="6" />
     <Setter Property="FocusAdorner" Value="{x:Null}" />
     <Setter Property="ScrollViewer.IsScrollChainingEnabled" Value="True" />
@@ -181,6 +192,8 @@
             <Border.Transitions>
               <Transitions>
                 <BrushTransition Property="Background" Duration="0:0:0.16" Easing="CubicEaseOut" />
+                <BrushTransition Property="BorderBrush" Duration="0:0:0.16" Easing="CubicEaseOut" />
+                <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.16" Easing="CubicEaseOut" />
               </Transitions>
             </Border.Transitions>
             <Grid RowDefinitions="*,2">
@@ -238,6 +251,7 @@
                 <Border.Transitions>
                   <Transitions>
                     <DoubleTransition Property="Opacity" Duration="0:0:0.18" Easing="CubicEaseOut" />
+                    <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.18" Easing="CubicEaseOut" />
                   </Transitions>
                 </Border.Transitions>
               </Border>
@@ -247,11 +261,26 @@
       </ControlTemplate>
     </Setter>
 
+    <!--
+      [EN] Hover and focus deliberately touch only render properties (Background, BorderBrush,
+           Opacity, BoxShadow). The two-pixel underline row is part of the fixed template grid, so
+           its opacity/shadow changes cannot resize the field. Focus wins over hover because its
+           selector is declared last, matching the pre-existing precedence.
+      [ZH] 悬停与焦点刻意只修改渲染属性（Background、BorderBrush、Opacity、BoxShadow）。两像素底线
+           是固定模板网格的一部分，因此其不透明度/光晕变化不会改变输入框尺寸。焦点选择器声明在最后，
+           因而优先于悬停，与既有优先级一致。
+    -->
     <Style Selector="^:pointerover /template/ Border#PART_BorderElement">
       <Setter Property="Background" Value="{DynamicResource SurfaceAltBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource InputHoverBorderBrush}" />
+    </Style>
+    <Style Selector="^:pointerover /template/ Border#PART_Underline">
+      <Setter Property="Opacity" Value="0.45" />
+      <Setter Property="BoxShadow" Value="{DynamicResource InputHoverGlow}" />
     </Style>
     <Style Selector="^:focus /template/ Border#PART_BorderElement">
       <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}" />
+      <Setter Property="BorderBrush" Value="Transparent" />
     </Style>
     <Style Selector="^:focus /template/ Border#PART_Underline">
       <Setter Property="Opacity" Value="1" />

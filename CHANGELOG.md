@@ -13,7 +13,7 @@ for traceability only; this changelog is the release-facing document.
 
 | Version | Type | Release date | Summary |
 | :--- | :--- | :--- | :--- |
-| [v0.2.4](#v024) | Stable Release | 2026-11-07 | Automatic hardware tuning, three inference presets, transparent override and diagnostics |
+| [v0.2.4](#v024) | Stable Release | 2026-11-08 | Automatic hardware tuning, three inference presets, transparent override and diagnostics; release-time patch for input stability, status parity, user-consented updates and data-safe installation |
 | [v0.2.3](#v023) | Stable Release | 2026-11-07 | Reproducible builds, dependency locks, Avalonia main line, WPF LTS |
 | [v0.2.2](#v022) | Stable Release | 2026-11-04 | Cross-platform frontend, visual consistency, full bilingual coverage |
 | [v0.2.1](#v021) | Stable Release | 2026-10-05 | Capability consolidation, Agent platform, MCP, plugin ecosystem |
@@ -84,6 +84,39 @@ probes: hardware detection never writes a host identifier or absolute path into 
   from the same commit and every deliverable hash matched. A dedicated gate (`selftest`,
   `test_hardware_profiler`, `test_inference_override`, Avalonia `--probe pages`) covers the new
   override, warning, diagnostics and test-load paths.
+
+### Release-time patch (2026-11-08)
+
+- **Stable input feedback.** The Avalonia `TextBox` theme now treats hover and focus as
+  render-only states. `BorderThickness`, `Margin` and `Padding` are constants; `Background`,
+  `BorderBrush`, `Opacity` and `BoxShadow` are animated with `BrushTransition` and
+  `BoxShadowsTransition`. The unattended probe toggles `:pointerover` and asserts that the
+  bounds, margin, padding and border thickness are unchanged, so a future edit cannot silently
+  reintroduce layout-driven flicker.
+- **Status-strip parity and memory pressure.** The Avalonia status strip now also reports host
+  physical-memory pressure from the backend hardware snapshot, alongside search, automation,
+  market, context percentage, KV cache, model capability and compaction. Every label is
+  bilingual, and `--probe chat` asserts the item count, that each item is non-empty and that
+  the memory value is percentage-formatted.
+- **User-consented updates.** At startup EchoDesk silently checks GitHub Releases. If a newer
+  release exists, it asks before downloading; choosing “no” sends no download request. A
+  successful download is written to `<user data>/updates/` and verified against the asset size
+  and SHA-256 digest before it is renamed into place. The user is then asked to restart; the
+  application exits only after the installer has started. Release asset URLs are re-resolved
+  from the GitHub API and restricted to this repository.
+- **Installation never destroys user data.** The installer excludes `config.json`, sessions,
+  registries, models, user skills and UI preferences from its overwrite set; `config.json` and
+  the example skills are copied only when absent. Uninstall keeps user data and model files in
+  place and additionally backs up the small configuration/session files to
+  `%LOCALAPPDATA%\EchoDesk\uninstall-backup\<timestamp>`. The installer gate was extended to
+  prove both behaviours with real install/uninstall cycles.
+- **Release-tree hygiene.** The build and full release gate now fail if the release tree
+  contains top-level `tools/`, `tests/`, `records/` or `prompts/`, and the installer excludes
+  those paths defensively. User-facing `docs/` (EULA, privacy, guides, SBOM) is deliberately
+  retained: removing it would strip legally required documents and break the release contract.
+- Verification: `selftest` 163/163, the new `test_update_check` 31/31, Avalonia `--probe chat`
+  with the new assertions, two byte-identical reproducible builds, and the full
+  `verify_release.ps1` gate with no skips.
 
 ### Known limitations
 

@@ -244,6 +244,10 @@
       "contextStrip": "📊 上下文 {0}%",
       "contextTipTwo": "上下文占用 {0:N0} / {1:N0} tokens（{2}%）\n其中常驻底数 {3:N0}，上一轮实际发出 {4:N0}\n点击刷新",
       "kvHelp": "KV Cache 内存占用估算，点击打开模型设置",
+      "memoryStrip": "🧠 内存 {0}%",
+      "memoryTip": "物理内存占用：点击打开「设置 → 模型」查看硬件诊断",
+      "memoryHelp": "当前主机物理内存占用比例，数值来自后端硬件快照",
+      "memoryDetail": "物理内存：已用 {0} / 共 {1}（{2}%）",
       "capability": "🧠 {0}",
       "capabilityTip": "模型能力：参数量 · 量化 · 可用窗口 · 实测生成速度",
       "capabilityHelp": "显示当前模型的参数量、量化格式、实际可用上下文窗口与最近一次实测生成速度。点击打开设置窗口的模型页查看完整能力与推荐配置。",
@@ -276,7 +280,8 @@
       "automation": "⚙️ 自动化：{0}",
       "market": "🌐 市场：{0}",
       "marketUnconnected": "未连接",
-      "kv": "💾 KV: {0}"
+      "kv": "💾 KV: {0}",
+      "memory": "🧠 内存 {0}%"
     },
     "snippet": {
       "empty": "（还没有常用语，输入 /snippet add 名称 文本 添加）",
@@ -427,7 +432,25 @@
       "buttonTip": "点击刷新上下文占用"
     },
     "update": {
-      "idle": "🎉 新版本"
+      "idle": "🎉 新版本",
+      "notice": "🎉 发现新版本 {0}（当前 {1}）",
+      "tip": "点击查看更新",
+      "checkFailed": "打开下载页面失败：{0}",
+      "downloadAsk": "发现新版本 {0}（当前 {1}）。\n\n是否现在下载更新？\n下载完成后会提示重启以应用。",
+      "downloadTitle": "发现新版本",
+      "downloadYes": "下载更新",
+      "downloadNo": "暂不下载",
+      "downloading": "⏳ 正在下载更新…",
+      "downloadFailedShort": "⚠️ 下载失败，点击重试",
+      "downloadFailed": "下载更新失败：{0}",
+      "downloadedChip": "✅ 更新已下载，重启以应用",
+      "downloadedTitle": "更新已下载",
+      "downloadedAsk": "更新已下载到：\n{0}\n\n现在重启以应用更新吗？\n用户数据（config.json、session.json、模型文件）会在更新前备份，安装程序不会覆盖它们。",
+      "restartNow": "立即重启并安装",
+      "restartLater": "稍后",
+      "applyFailedTitle": "应用更新失败",
+      "applyFailed": "应用更新失败：{0}",
+      "applying": "正在安装更新，应用即将退出…"
     },
     "noModel": {
       "guideFallback": "⚠️ 当前没有可用的本地模型，推理不可用（文件解析、设置、模型市场仍可正常使用）。\n可以点顶部的模型状态条打开「设置 → 模型 → 模型市场」下载，或把 .gguf 文件放进：\n{0}",

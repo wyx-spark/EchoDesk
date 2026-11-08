@@ -186,6 +186,14 @@ try {
                  Where-Object { $_.FullName -notlike "$AppOut*" })
         if ($bad.Count -gt 0) { throw "外层出现程序文件: $($bad[0].FullName)" }
 
+        # v0.2.4 补丁：开发者目录绝不进包（只检查顶层；app\backend\_internal 里
+        # playwright 自带的 tools 目录是运行期依赖，不能误判）。
+        $forbiddenTop = @("tools", "tests", "records", "prompts")
+        $leaked = @(Get-ChildItem $Out -Directory -Force -ErrorAction SilentlyContinue |
+                    Where-Object { $forbiddenTop -contains $_.Name.ToLowerInvariant() } |
+                    ForEach-Object { $_.Name })
+        if ($leaked.Count -gt 0) { throw "发布树顶层出现开发者目录: $($leaked -join ', ')" }
+
         # 必备文件（任务书「全局要求四」：根目录 + docs\ + 发布物额外必备）
         $need = @(
             "app\EchoDesk.exe", "app\EchoDesk.ico", "app\backend\EchoDeskBackend.exe",
@@ -464,6 +472,12 @@ try {
     # [ZH] v0.2.4 任务-3：显式覆盖、结构化失败与子进程「测试加载」路径用真实模型验证。
     Invoke-Check "推理覆盖与透明诊断（v0.2.4 任务-3）" {
         Invoke-Python "覆盖诊断" "tools\test_inference_override.py"; "通过"
+    }
+    # [EN] v0.2.4 patch: update asset guard, digest/size rejection and the isolated
+    # [EN] user-data backup are verified without network access.
+    # [ZH] v0.2.4 补丁：更新附件白名单、摘要/大小校验与隔离的用户数据备份，全部离线验证。
+    Invoke-Check "自动更新与数据保护（v0.2.4 补丁）" {
+        Invoke-Python "自动更新" "tools\test_update_check.py"; "通过"
     }
     Invoke-Check "后端协议端到端" { Invoke-Python "后端协议端到端" "tools\test_backend_e2e.py"; "通过" }
     # v0.2.1 模型市场优化：加载器（分页取全/上限/重试/缓存/离线降级）用本机 HTTP 桩验证，

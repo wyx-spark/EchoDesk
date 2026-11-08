@@ -244,6 +244,10 @@
       "contextStrip": "📊 Context {0}%",
       "contextTipTwo": "Context usage {0:N0} / {1:N0} tokens ({2}%)\nPersistent base {3:N0}, actually sent last turn {4:N0}\nClick to refresh",
       "kvHelp": "KV cache memory estimate; click to open the model settings",
+      "memoryStrip": "🧠 Memory {0}%",
+      "memoryTip": "Physical memory usage; click to open Settings → Model and view hardware diagnostics",
+      "memoryHelp": "Physical memory usage of the host, reported by the backend hardware snapshot",
+      "memoryDetail": "Physical memory: used {0} / {1} ({2}%)",
       "capability": "🧠 {0}",
       "capabilityTip": "Model capability: parameters · quantization · usable window · measured speed",
       "capabilityHelp": "Shows the parameter count, quantization format, usable context window and last measured generation speed of the current model. Click to open the Model tab for the full capability report and recommendations.",
@@ -276,7 +280,8 @@
       "automation": "⚙️ Automation: {0}",
       "market": "🌐 Market: {0}",
       "marketUnconnected": "not connected",
-      "kv": "💾 KV: {0}"
+      "kv": "💾 KV: {0}",
+      "memory": "🧠 Memory {0}%"
     },
     "snippet": {
       "empty": "(no snippets yet — add one with /snippet add <name> <text>)",
@@ -427,7 +432,25 @@
       "buttonTip": "Click to refresh the context usage"
     },
     "update": {
-      "idle": "🎉 New version"
+      "idle": "🎉 New version",
+      "notice": "🎉 New version {0} available (current {1})",
+      "tip": "Click to view the update",
+      "checkFailed": "Could not open the download page: {0}",
+      "downloadAsk": "A new version {0} is available (current {1}).\n\nDownload the update now?\nYou will be asked to restart after the download completes.",
+      "downloadTitle": "Update available",
+      "downloadYes": "Download update",
+      "downloadNo": "Not now",
+      "downloading": "⏳ Downloading update…",
+      "downloadFailedShort": "⚠️ Download failed; click to retry",
+      "downloadFailed": "Update download failed: {0}",
+      "downloadedChip": "✅ Update downloaded; restart to apply",
+      "downloadedTitle": "Update downloaded",
+      "downloadedAsk": "The update was downloaded to:\n{0}\n\nRestart now to apply it?\nUser data (config.json, session.json, model files) is backed up before the update and is never overwritten by the installer.",
+      "restartNow": "Restart and install",
+      "restartLater": "Later",
+      "applyFailedTitle": "Applying the update failed",
+      "applyFailed": "Applying the update failed: {0}",
+      "applying": "Installing the update; the application will exit shortly…"
     },
     "noModel": {
       "guideFallback": "⚠️ No local model is available, so inference is unavailable (file parsing, settings and the model market still work).\nClick the model chip at the top to open Settings → Model → Model market, or copy a .gguf file into:\n{0}",
