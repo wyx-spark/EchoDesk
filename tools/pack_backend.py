@@ -177,6 +177,11 @@ def _cached_release_from_archives() -> dict:
 #: 用途：钉 URL 的依赖可以复用这里**同一份、已逐成员校验过**的文件，避免重复下载。
 WHEEL_CACHE = os.path.join(ROOT, "artifacts", "wheels")
 
+#: pip 的下载缓存（v0.2.5）。默认位置在用户目录，换用户或清 profile 就失效；
+#: 固定在 artifacts\ 下可让同一台机器的两次可复现构建共享**已下载的 wheel**。
+#: 它只缓存下载结果，不缓存安装结果，因此不会把上一次的目录内容带进产物。
+PIP_CACHE = os.path.join(ROOT, "artifacts", "pip-cache")
+
 #: 构建工具，不进运行时依赖。改这里必须同时改注释与记录。
 BUILD_ONLY_PACKAGES = ("pyinstaller",)
 
@@ -915,6 +920,12 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
             "--platform", spec_target["pip_platform"],
             "--python-version", py_ver,
             "--implementation", "cp",
+            # [EN] Pin the download cache inside the workspace so both reproducible-build
+            # [EN] runs share the already-downloaded wheels; only downloads are cached, the
+            # [EN] installed tree is always rebuilt from wheels.
+            # [ZH] 把下载缓存固定在仓库内，使两次可复现构建共享已下载的 wheel；缓存只保存
+            # [ZH] 下载结果，安装目录始终由 wheel 重新解出。
+            "--cache-dir", PIP_CACHE,
             # 只收预编译 wheel：交叉下载时 pip 无法编译，静默退回 sdist 会得到"装不上"或
             # "装上了却是给打包机的二进制"这两种更糟的结果。
             "--only-binary=:all:",
@@ -986,7 +997,9 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
     # [ZH] 固定每个条目的时间。
     repro.normalize_tree(tree)
     archive = make_archive(tree, out_root, spec_target["archive"]) if args.archive != "none" else ""
+    archive_hash = ""
     if archive:
+        archive_hash = sha256_of(archive)
         log(f"[EN] archive: {os.path.relpath(archive, ROOT)} ({os.path.getsize(archive) / 1048576:.1f} MB)"
             f" / [ZH] 归档：{os.path.relpath(archive, ROOT)}（{os.path.getsize(archive) / 1048576:.1f} MB）")
         sums_path = os.path.join(out_root, "backend-SHA256SUMS.txt")
@@ -996,7 +1009,7 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
             with io.open(sums_path, encoding="utf-8") as existing:
                 kept = [line for line in existing.read().splitlines()
                         if line.strip() and not line.rstrip().endswith("  " + name)]
-        kept.append(f"{sha256_of(archive)}  {name}")
+        kept.append(f"{archive_hash}  {name}")
         with io.open(sums_path, "w", encoding="utf-8", newline="\n") as handle:
             handle.write("\n".join(kept) + "\n")
 
@@ -1013,7 +1026,7 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
         "tree": {"bytes": total_size, "files": total_files,
                  "path": os.path.relpath(tree, ROOT)},
         "archive": {"path": os.path.relpath(archive, ROOT) if archive else "",
-                    "sha256": sha256_of(archive) if archive else "",
+                    "sha256": archive_hash,
                     "bytes": os.path.getsize(archive) if archive else 0},
         "launcher": spec_target["launcher"],
         "generated_at": repro.utc_iso(),

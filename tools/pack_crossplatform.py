@@ -557,6 +557,7 @@ def main() -> int:
 
     # ---------- 6. 归档 + 校验和 + 清单 ----------
     archive_path = ""
+    archive_digest = ""
     if not args.plan and archive_fmt != "none":
         os.makedirs(args.out, exist_ok=True)
         # [EN] Normalise the tree before compression so every generated file carries the
@@ -569,7 +570,10 @@ def main() -> int:
 
     if not args.plan:
         if archive_path:
-            digest = sha256_of(archive_path)
+            # [EN] Hash the archive once: it is needed for SHA256SUMS.txt and for the
+            # [EN] manifest, and the archive is hundreds of megabytes.
+            # [ZH] 归档只哈希一次：SHA256SUMS.txt 与清单都要用，而归档有数百 MB。
+            archive_digest = sha256_of(archive_path)
             # **按文件名替换**而不是纯追加：同一个 rid 重跑打包（例如先打成 pyinstaller 形态、
             # 再改成 standalone 重打）会留下**两条同名、哈希不同**的记录，而门禁按文件名查表，
             # 命中旧的那条就报"摘要不一致" —— 实测踩到（v0.2.2 交付轮：win-x64 重打后
@@ -582,10 +586,10 @@ def main() -> int:
                 with io.open(sums_path, encoding="utf-8") as existing:
                     kept = [line for line in existing.read().splitlines()
                             if line.strip() and not line.rstrip().endswith("  " + name)]
-            kept.append(f"{digest}  {name}")
+            kept.append(f"{archive_digest}  {name}")
             with io.open(sums_path, "w", encoding="utf-8", newline="\n") as handle:
                 handle.write("\n".join(kept) + "\n")
-            log(f"SHA256：{digest}")
+            log(f"SHA256：{archive_digest}")
 
         total, count = dir_size(tree)
         manifest = {
@@ -597,7 +601,7 @@ def main() -> int:
             "app_bytes": total,
             "app_files": count,
             "archive": os.path.relpath(archive_path, ROOT) if archive_path else "",
-            "archive_sha256": sha256_of(archive_path) if archive_path else "",
+            "archive_sha256": archive_digest,
             "pdb_stripped": not args.keep_pdb,
             "backend_included": os.path.isdir(backend_out),
             # 后端是哪种形态（pyinstaller 的可执行文件 or standalone 的包内解释器）。

@@ -32,7 +32,6 @@ ROOT_PACKAGES = [
     "pywin32",
     "pyinstaller",
     "playwright",
-    "schedule",
     "pypdf",
     "python-docx",
     "openpyxl",

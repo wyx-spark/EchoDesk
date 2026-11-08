@@ -199,6 +199,73 @@ def iter_ui_sources():
             yield os.path.join(THEME_DIR, name)
 
 
+def iter_avalonia_sources() -> list[str]:
+    """[EN] Avalonia UI sources (XAML/C#/project) used for orphan-asset checks.
+
+    [ZH] 用于孤立资源检查的 Avalonia 界面源文件（XAML/C#/工程文件）。
+    """
+    sources: list[str] = []
+    base = os.path.join(ROOT, "frontend-avalonia")
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = [d for d in dirnames if d not in ("obj", "bin")]
+        for name in filenames:
+            if name.endswith((".axaml", ".cs", ".csproj")):
+                sources.append(os.path.join(dirpath, name))
+    return sources
+
+
+def check_avalonia_orphans() -> None:
+    """[EN] Fail when an Avalonia asset or theme dictionary is never referenced.
+
+    [ZH] 当 Avalonia 资源文件或主题字典从未被引用时失败。
+
+    The check exists because unreferenced files still get embedded by the SDK (or sit in
+    the source tree forever) and silently grow the release. It is intentionally narrow:
+    only files under ``Assets/`` and ``Themes/`` are considered, so generated or
+    runtime-loaded content cannot cause a false failure.
+    """
+    app = os.path.join(ROOT, "frontend-avalonia", "EchoDesk.Avalonia")
+    text_by_file: dict[str, str] = {}
+    for path in iter_avalonia_sources():
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                text_by_file[path] = handle.read()
+        except OSError:
+            continue
+
+    def referenced(name: str) -> list[str]:
+        return [path for path, text in text_by_file.items() if name in text]
+
+    missing_references: list[str] = []
+    assets_dir = os.path.join(app, "Assets")
+    asset_count = 0
+    if os.path.isdir(assets_dir):
+        for dirpath, _dirnames, filenames in os.walk(assets_dir):
+            for name in filenames:
+                asset_count += 1
+                if not referenced(name):
+                    missing_references.append(os.path.relpath(os.path.join(dirpath, name), ROOT))
+
+    themes_dir = os.path.join(app, "Themes")
+    theme_count = 0
+    if os.path.isdir(themes_dir):
+        for name in sorted(os.listdir(themes_dir)):
+            if not name.endswith(".axaml"):
+                continue
+            theme_count += 1
+            if not referenced(name):
+                missing_references.append(os.path.relpath(os.path.join(themes_dir, name), ROOT))
+
+    if missing_references:
+        failures.append(
+            "Avalonia 存在未被引用的资源文件（会随发布物一起变大）："
+            + "、".join(missing_references)
+        )
+    else:
+        print(f"  [OK] Avalonia 资源无孤儿：{asset_count} 个 Assets 文件、"
+              f"{theme_count} 个主题字典均被引用")
+
+
 def check_hardcoded(labels: dict) -> None:
     keys = set(labels["浅色"]) | set(labels["深色"])
     # 样式资源里额外定义的键（字体等）也算合法引用目标
@@ -266,6 +333,9 @@ def main() -> int:
 
     print("-- 界面代码")
     check_hardcoded(labels)
+
+    print("-- Avalonia 资源引用")
+    check_avalonia_orphans()
 
     if failures:
         print(f"\n✗ 发现 {len(failures)} 处问题：")

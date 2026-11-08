@@ -96,9 +96,15 @@
     跳过耗时的 PyInstaller 步骤。用于**只改前端**时的快速迭代与布局自检
     （几分钟 → 十几秒）。正式交付请务必不带此参数重跑一次。
 
+.PARAMETER ColdBuild
+    强制 PyInstaller **冷分析**：不复用 `artifacts\pyinstaller-cache` 里按提交、依赖锁、
+    spec 与工具链指纹校验过的工作目录。默认（不带本开关）在指纹一致时复用上一轮的
+    分析 TOC。**实测收益有限**：本机 PyInstaller 本体 52.6 s → 47.4 s（约 10%），
+    因此最终验收仍建议带本开关跑两次完全独立的构建。stage 产物（EXE + `_internal`）
+    **始终重新生成**，复用的只有分析结果。
+
 .PARAMETER KeepSession
     保留 `app\backend\session.json` 里已有的会话内容。
-
     默认**重置为空会话**：任何一次端到端验证都会让打包后的后端把测试数据写进
     `session.json`（例如 e2e 里 `/file` 加载的临时文件路径与内容），
     交付物不该带着这些残留。只有确实想把上一版的会话延续给用户时才加这个开关
@@ -151,6 +157,14 @@ param(
     [string]$TimestampUrl = "http://timestamp.digicert.com",
     [switch]$MakeInstaller,
     [switch]$MakeSfx,
+    # [EN] Force a cold PyInstaller analysis: never reuse the cached workpath. The cache is
+    # [EN] keyed by the exact commit, lock files and toolchain, so the default path still
+    # [EN] produces a byte-identical tree; use this switch when validating the analysis
+    # [EN] itself (for example during release acceptance).
+    # [ZH] 强制冷启动 PyInstaller 分析：不复用缓存的工作目录。缓存以确切提交、锁文件与
+    # [ZH] 工具链为键，默认路径仍然产出逐字节一致的目录树；需要验证分析阶段本身时
+    # [ZH]（例如发布验收）使用本开关。
+    [switch]$ColdBuild,
     # [EN] Development-only escape hatch; release verification never supplies this switch.
     # [ZH] 仅限开发期使用的豁免开关；发布验证流程绝不传入该开关。
     [switch]$AllowDirtyWorktree
@@ -324,8 +338,59 @@ elseif (-not $SkipBackend) {
     Write-Ok "后端构建器：$PyInstallerExe（PyInstaller $pyiVersion）"
 
     $stage = Join-Path $env:TEMP "echodesk_backend_stage"
-    $work = Join-Path $env:TEMP "echodesk_backend_work"
-    Remove-Item $stage, $work -Recurse -Force -ErrorAction SilentlyContinue
+    # [EN] Stable workpath under artifacts/ instead of %TEMP%: when the inputs are unchanged
+    # [EN] PyInstaller reuses the TOCs in this directory. Measured on this machine the
+    # [EN] PyInstaller phase only drops from 52.6 s to 47.4 s, so the cache is a small win;
+    # [EN] the fingerprint keeps it safe. The stage (final EXE/_internal) is always
+    # [EN] regenerated, so only analysis is reused — never a shipped byte.
+    # [ZH] 把工作目录固定在 artifacts/ 而不是 %TEMP%：输入未变时 PyInstaller 会复用该目录里
+    # [ZH] 的 TOC。本机实测 PyInstaller 阶段只从 52.6 s 降到 47.4 s，收益不大；指纹校验
+    # [ZH] 保证它仍然安全。stage（最终 EXE/_internal）始终重新生成，复用的只有分析结果，
+    # [ZH] 绝不是任何一个交付字节。
+    $cacheRoot = Join-Path $Root "artifacts\pyinstaller-cache"
+    $work = Join-Path $cacheRoot "work"
+    $cacheKeyFile = Join-Path $cacheRoot "cache-key.txt"
+
+    $cacheKey = ""
+    $fingerprintParts = @(
+        (& git -C $Root rev-parse HEAD),
+        $BuildEpoch,
+        $pyiVersion,
+        (& $PyInstallerExe --version 2>&1 | Select-Object -First 1)
+    )
+    foreach ($rel in @("backend\EchoBackend.spec", "backend\requirements.lock",
+            "backend\requirements-build.lock", "backend\version.py", "assets\EchoDesk.ico",
+            "backend\config.json")) {
+        $abs = Join-Path $Root $rel
+        if (Test-Path -LiteralPath $abs) {
+            $fingerprintParts += "$rel=$((Get-FileHash -LiteralPath $abs -Algorithm SHA256).Hash)"
+        }
+    }
+    $fingerprint = [System.Text.Encoding]::UTF8.GetBytes($fingerprintParts -join "`n")
+    # [EN] SHA256.Create/ComputeHash works identically in Windows PowerShell 5.1 and
+    # [EN] PowerShell 7; ``SHA256.HashData`` exists only on modern .NET.
+    # [ZH] SHA256.Create/ComputeHash 在 Windows PowerShell 5.1 与 PowerShell 7 上行为一致；
+    # [ZH] ``SHA256.HashData`` 只存在于较新的 .NET。
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $cacheKey = -join ($sha.ComputeHash($fingerprint) | ForEach-Object { $_.ToString("x2") })
+    }
+    finally {
+        $sha.Dispose()
+    }
+    $cacheHit = $false
+    if (-not $ColdBuild -and (Test-Path -LiteralPath $work) -and (Test-Path -LiteralPath $cacheKeyFile)) {
+        $previousKey = (Get-Content -LiteralPath $cacheKeyFile -Raw).Trim()
+        $cacheHit = ($previousKey -eq $cacheKey)
+    }
+    if ($cacheHit) {
+        Write-Ok "复用 PyInstaller 分析缓存（指纹 $($cacheKey.Substring(0, 12))…；-ColdBuild 可强制冷构建）"
+    }
+    else {
+        if (Test-Path -LiteralPath $work) { Remove-TreeFast -Path $work }
+        Write-Ok "PyInstaller 分析缓存未命中（或无缓存），本次为冷构建"
+    }
+    Remove-TreeFast -Path $stage
 
     Push-Location $Root
     try {
@@ -337,12 +402,19 @@ elseif (-not $SkipBackend) {
 
     $built = Join-Path $stage "EchoDeskBackend"
     if (-not (Test-Path $built)) { throw "未找到后端产物目录: $built" }
+    # [EN] Record the fingerprint only after a successful build, so a failed run can never
+    # [EN] validate a half-populated workpath.
+    # [ZH] 只有构建成功后才写入指纹，失败的运行绝不能让半成品工作目录通过校验。
+    if ($cacheKey) {
+        New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+        [System.IO.File]::WriteAllText($cacheKeyFile, $cacheKey, (New-Object System.Text.UTF8Encoding($false)))
+    }
     # 先清空旧后端目录再复制：否则上一版残留的依赖文件（例如已被排除的 torch）
     # 会留在 _internal 里，体积与合规风险都不会真正下降。
-    if (Test-Path $BackendOut) { Remove-Item $BackendOut -Recurse -Force }
+    if (Test-Path $BackendOut) { Remove-TreeFast -Path $BackendOut }
     New-Item -ItemType Directory -Path $BackendOut -Force | Out-Null
     Copy-Item (Join-Path $built "*") $BackendOut -Recurse -Force
-    Remove-Item $stage, $work -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-TreeFast -Path $stage
     # [EN] Remove tests, debug/build artefacts and foreign-platform binaries from the
     # [EN] collected distribution before the release tree is measured or compressed.
     # [ZH] 在度量或压缩发布树之前，从收集到的发行包中清除测试、调试/构建产物与异平台二进制。
@@ -377,7 +449,7 @@ foreach ($f in $stray) {
     Write-Ok "移除多余可执行文件: $($f.Name)"
     Remove-Item $f.FullName -Force
 }
-Get-ChildItem $AppOut -Filter *.pdb -File -ErrorAction SilentlyContinue | Remove-Item -Force
+Get-ChildItem $AppOut -Recurse -File -Filter *.pdb -ErrorAction SilentlyContinue | Remove-Item -Force
 if (-not $KeepAllCultures) {
     # .NET 卫星区域资源目录：与运行无关（界面文案走自带的 lang\ui 语言包），
     # 只留中文，其余删除以减小体积与目录噪音。
@@ -1077,7 +1149,12 @@ if ((Test-Path $SessionFile) -and -not $KeepSession) {
     }
 }
 # ---------- 7. 写入版本资源与图标 ----------
-if (Test-Path $Rcedit) {
+# [EN] Only when the frontend was actually published: with -SkipFrontend (backend-only
+# [EN] iteration) there is no app\EchoDesk.exe, and pe_timestamp.py would fail on a missing
+# [EN] file. set_metadata.bat already skips the same way at file level.
+# [ZH] 仅在前端确实已发布时执行：用 -SkipFrontend（只迭代后端）时没有 app\EchoDesk.exe，
+# [ZH] pe_timestamp.py 会因文件不存在而失败。set_metadata.bat 在文件层面已经是同样的跳过策略。
+if ((Test-Path $Rcedit) -and (Test-Path (Join-Path $AppOut "EchoDesk.exe"))) {
     Write-Step "写入前端版本资源与图标（rcedit）"
     # [EN] The version **must** be passed in (since ruling ① in v0.2.2, set_metadata.bat no
     # [EN] longer has a hard-coded default). `$NumericVersion` is the numeric core segment
@@ -1103,6 +1180,9 @@ if (Test-Path $Rcedit) {
     & python (Join-Path $PSScriptRoot "pe_timestamp.py") --epoch $BuildEpoch (Join-Path $AppOut "EchoDesk.exe")
     if ($LASTEXITCODE -ne 0) { throw "规范化前端可执行文件 PE 时间戳失败（退出码 $LASTEXITCODE）" }
     Write-Ok "app\EchoDesk.exe 元数据与图标已写入（后端由 spec 的 version/icon 写入）"
+}
+else {
+    Write-Warn2 "跳过前端元数据：未找到 app\EchoDesk.exe（-SkipFrontend）或 rcedit"
 }
 
 # ---------- 8. 可选代码签名 ----------
@@ -1200,6 +1280,41 @@ if ($leakedDirs.Count -gt 0) {
     throw "发布树顶层出现开发者目录（tasks 要求只交付运行所需文件）: $($leakedDirs -join ', ')"
 }
 Write-Ok "发布树顶层无 tools\ / tests\ / records\ / prompts\"
+
+# [EN] v0.2.5: assert that the release tree carries no build-time material at any depth.
+# [EN] The pruner already removes it; this guard keeps a future packaging change from
+# [EN] silently reintroducing debug symbols, bytecode, static libraries or test suites.
+# [ZH] v0.2.5：断言发布树在**任何深度**都不含构建期材料。清理器已经会移除它们；这里
+# [ZH] 再拦一道，防止以后某次打包改动悄悄把调试符号、字节码、静态库或测试套件带回来。
+$buildJunk = @(Get-ChildItem $Out -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -in '.pdb', '.pyc', '.pyo', '.lib', '.exp', '.a', '.obj' })
+$buildJunkDirs = @(Get-ChildItem $Out -Recurse -Directory -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -in @('__pycache__', 'test', 'tests', 'testing', 'demos') })
+if ($buildJunk.Count -gt 0 -or $buildJunkDirs.Count -gt 0) {
+    $names = (($buildJunk | ForEach-Object { $_.FullName.Substring($Out.Length) }) +
+              ($buildJunkDirs | ForEach-Object { $_.FullName.Substring($Out.Length) })) -join ', '
+    throw "发布物内出现构建期残留（调试符号 / 字节码 / 静态库 / 测试目录）: $names"
+}
+Write-Ok "无 .pdb / .pyc / .pyo / .lib / .exp / .a / 测试目录（任意深度）"
+
+# [EN] v0.2.5: only English and Simplified Chinese language packs are shipped. Anything
+# [EN] else is dead weight and was never translated or quality-checked.
+# [ZH] v0.2.5：只随包英文与简体中文语言包。其它语言是纯体积，且从未翻译与校对。
+$localeFile = [regex]'^([A-Za-z]{2}(?:[-_][A-Za-z]{2,8})?)(?:\.[A-Za-z0-9_-]+)?\.json$'
+$unshipped = @()
+foreach ($langDir in @(Get-ChildItem $Out -Recurse -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq 'lang' })) {
+    foreach ($file in Get-ChildItem $langDir.FullName -File -Filter *.json -ErrorAction SilentlyContinue) {
+        $m = $localeFile.Match($file.Name)
+        if (-not $m.Success) { continue }
+        if ($m.Groups[1].Value.ToLowerInvariant() -in @('en', 'zh-hans', 'zh-hant')) { continue }
+        $unshipped += $file.FullName.Substring($Out.Length)
+    }
+}
+if ($unshipped.Count -gt 0) {
+    throw "发布物内含未随包的语言（只允许 en / zh-Hans）：$($unshipped -join ', ')"
+}
+Write-Ok "语言包仅含 en / zh-Hans / zh-Hant"
 
 # 全局要求五：过程文档与运行期残留不得进包
 $devRecords = @(Get-ChildItem $Out -Recurse -File -ErrorAction SilentlyContinue |

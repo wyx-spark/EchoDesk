@@ -32,7 +32,6 @@
 | python-pptx | 1.0.2 | MIT |  |
 | pywin32 | 312 | PSF |  |
 | requests | 2.34.2 | Apache-2.0 |  |
-| schedule | 1.2.2 | MIT License |  |
 | tqdm | 4.70.1 | MPL-2.0 AND MIT |  |
 | urllib3 | 2.8.0 | MIT |  |
 | xlrd | 2.0.2 | BSD |  |
@@ -119,7 +118,6 @@
 | pywin32-ctypes | 0.2.3 | BSD-3-Clause |
 | PyYAML | 6.0.3 | MIT |
 | requests | 2.34.2 | Apache-2.0 |
-| schedule | 1.2.2 | MIT License |
 | setuptools | 84.0.0 | MIT |
 | tqdm | 4.70.1 | MPL-2.0 AND MIT |
 | truststore | 0.10.4 | MIT |

@@ -41,7 +41,6 @@ Backend runtime (Python 3.13)
 * huggingface_hub - Apache License 2.0
 * duckduckgo-search - MIT License
 * pywin32 - Python Software Foundation License (PSF)
-* schedule - MIT License
 
 --------------------------------------------------------------------------------
 Document parsing

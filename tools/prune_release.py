@@ -23,6 +23,30 @@ material that is useful to developers but never loaded at run time:
 * Playwright 随包的开发者工具（跟踪查看器、录制器、仪表盘、HTML 报告资源与 TypeScript
   声明），自动化功能从不打开这些内容。
 
+[EN] v0.2.5 adds three size rules that were found by auditing the real trees:
+
+* prefix-layout data inside ``site-packages`` (``lib64/`` on Linux, ``lib/`` on macOS)
+  installed by wheels that carry ``.data/data`` entries. ``pip install --target`` copies
+  them next to the package, but nothing in the application ever looks there; llama.cpp
+  loads its shared objects from ``llama_cpp/lib`` instead;
+* duplicate shared-library aliases inside one directory. The llama.cpp wheels ship the
+  unversioned name (what ``ctypes`` opens) and the ``SONAME`` name (what the loader
+  resolves) plus a full-version copy that no ``DT_NEEDED`` / ``LC_LOAD_DYLIB`` entry
+  references. Only byte-identical duplicates are removed;
+* language packs other than English and Chinese. Both frontends and the backend ship
+  exactly ``en`` and ``zh-Hans``; other locales are dead weight in the release archive.
+
+[ZH] v0.2.5 新增三条依据实测目录树制定的体积规则：
+
+* ``site-packages`` 中属于「前缀布局」的数据目录（Linux ``lib64/``、macOS ``lib/``）。
+  它们的来源是轮子的 ``.data/data`` 条目，``pip install --target`` 会把它们铺在包旁边，
+  但程序里没有任何代码路径引用；llama.cpp 实际从 ``llama_cpp/lib`` 加载共享库；
+* 同一目录内重复的共享库别名。llama.cpp 轮子同时提供无版本名（``ctypes`` 打开的）、
+  ``SONAME`` 名（加载器解析依赖时用的）与一个完整版本副本，而没有任何
+  ``DT_NEEDED`` / ``LC_LOAD_DYLIB`` 引用完整版本。只删除内容逐字节相同的重复项；
+* 英文与中文之外的语言包。两个前端与后端都只随包 ``en`` 与 ``zh-Hans``；其它语言在
+  发布归档里是纯体积。
+
 [EN] The pruning policy is explicit and platform-aware; it never removes an extension that
 the target platform can load.
 [ZH] 清理策略是显式且感知平台的；绝不删除目标平台能够加载的扩展。
@@ -30,7 +54,9 @@ the target platform can load.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
+import re
 import shutil
 import sys
 
@@ -54,10 +80,28 @@ COMMON_JUNK_SUFFIXES = (".pyc", ".pyo", ".pdb", ".lib", ".exp", ".a")
 #: [EN] Extensions that belong to a different platform than the target.
 #: [ZH] 与目标平台不符的扩展名。
 FOREIGN_SUFFIXES = {
+    # ``.exe`` on a POSIX tree is a pip console-script shim generated on the Windows build
+    # machine; the target platform can neither execute it nor import it.
     "win-x64": (".so", ".dylib"),
-    "linux-x64": (".pyd", ".dylib"),
-    "osx-arm64": (".pyd",),
+    "linux-x64": (".pyd", ".dylib", ".exe"),
+    "osx-arm64": (".pyd", ".exe"),
 }
+
+#: [EN] Prefix-layout library directories created by wheels with ``.data/data`` entries.
+#: [ZH] 由带 ``.data/data`` 条目的轮子生成的「前缀布局」库目录。
+PREFIX_DATA_DIRS = {
+    "linux-x64": ("lib64",),
+    "osx-arm64": ("lib",),
+}
+
+#: [EN] Languages actually shipped by both frontends and the backend.
+#: [ZH] 两个前端与后端实际随包的语言。
+SHIPPED_LOCALES = {"en", "zh-hans", "zh-hant"}
+
+#: [EN] Shared-library alias patterns whose full-version copy is never referenced.
+#: [ZH] 完整版本副本永不被引用的共享库别名模式。
+_FULL_VERSION_SO = re.compile(r"^(?P<base>lib[^/]+?\.so)\.(?P<major>\d+)\.\d+\.\d+$")
+_FULL_VERSION_DYLIB = re.compile(r"^(?P<base>lib[^/]+?)\.(?P<major>\d+)\.\d+\.\d+\.dylib$")
 
 
 def _dir_size(tree: str) -> tuple[int, int]:
@@ -70,6 +114,143 @@ def _dir_size(tree: str) -> tuple[int, int]:
             except OSError:
                 pass
     return total, files
+
+
+def _sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _looks_like_prefix_libs(path: str) -> bool:
+    """[EN] Is this directory prefix-layout library data rather than an importable package?
+
+    [ZH] 这个目录是「前缀布局」的库数据，而不是可导入的包吗？
+
+    The test is deliberately conservative: any Python source makes it a package we must
+    keep, and at least one shared object is required before removing anything.
+    """
+    has_library = False
+    for base, _dirs, names in os.walk(path):
+        for name in names:
+            if name.endswith((".py", ".pyi", ".pyx")):
+                return False
+            if name.endswith((".so", ".dylib")):
+                has_library = True
+    return has_library
+
+
+def _prune_prefix_data(tree: str, rid: str, removed: list[dict[str, object]]) -> None:
+    """[EN] Remove wheel ``.data/data`` libraries that ``pip --target`` misplaced.
+
+    [ZH] 删除被 ``pip --target`` 铺错位置的轮子 ``.data/data`` 库。
+
+    ``llama_cpp_python`` wheels carry a ``.data/data/lib64`` (Linux) or ``.data/data/lib``
+    (macOS) payload, which ``pip install --target`` materialises **inside**
+    ``site-packages``. Nothing on the target platform resolves that location: the package
+    itself ships the same libraries under ``llama_cpp/lib/``, and that is the path
+    ``llama_cpp.py`` passes to ``ctypes``.
+    """
+    names = PREFIX_DATA_DIRS.get(rid, ())
+    if not names:
+        return
+    for base, dirs, _files in os.walk(tree, topdown=False):
+        if os.path.basename(base) != "site-packages":
+            continue
+        for name in list(dirs):
+            if name not in names:
+                continue
+            target = os.path.join(base, name)
+            if not os.path.isdir(target) or not _looks_like_prefix_libs(target):
+                continue
+            size, count = _dir_size(target)
+            shutil.rmtree(target, ignore_errors=True)
+            removed.append({
+                "kind": "prefix-data-layout",
+                "path": os.path.relpath(target, tree).replace(os.sep, "/"),
+                "bytes": size,
+                "files": count,
+            })
+
+
+def _prune_duplicate_libs(tree: str, removed: list[dict[str, object]]) -> None:
+    """[EN] Remove full-version shared-library aliases that nothing references.
+
+    [ZH] 删除没有任何引用的「完整版本」共享库别名。
+
+    ``libllama.so.0`` is both the unversioned name's ``SONAME`` and the name every
+    ``DT_NEEDED`` entry uses; ``libllama.so.0.5.0`` is a third, byte-identical copy. On
+    macOS the equivalent is ``libllama.0.dylib`` (install name) versus
+    ``libllama.0.0.1.dylib``. Only a byte-identical sibling is ever removed.
+    """
+    for base, _dirs, files in os.walk(tree):
+        for name in files:
+            match = _FULL_VERSION_SO.match(name) or _FULL_VERSION_DYLIB.match(name)
+            if not match:
+                continue
+            if name.endswith(".dylib"):
+                canonical = f"{match.group('base')}.{match.group('major')}.dylib"
+            else:
+                canonical = f"{match.group('base')}.{match.group('major')}"
+            full = os.path.join(base, name)
+            keep = os.path.join(base, canonical)
+            if not (os.path.isfile(full) and os.path.isfile(keep)):
+                continue
+            try:
+                if os.path.getsize(full) != os.path.getsize(keep):
+                    continue
+                if _sha256(full) != _sha256(keep):
+                    continue
+                size = os.path.getsize(full)
+                os.remove(full)
+            except OSError:
+                continue
+            removed.append({
+                "kind": "duplicate-library-alias",
+                "path": os.path.relpath(full, tree).replace(os.sep, "/"),
+                "bytes": size,
+                "files": 1,
+            })
+
+
+_LOCALE_FILE = re.compile(
+    r"^(?P<locale>[A-Za-z]{2}(?:[-_][A-Za-z]{2,8})?)(?:\.[A-Za-z0-9_-]+)?\.json$"
+)
+
+
+def _prune_unshipped_locales(tree: str, removed: list[dict[str, object]]) -> None:
+    """[EN] Keep only English and Chinese packs inside ``lang`` directories.
+
+    [ZH] 在 ``lang`` 目录内只保留英文与中文语言包。
+
+    The rule is scoped to directories literally named ``lang`` so that unrelated JSON
+    (configuration, caches, skill metadata) is never touched, and it only recognises
+    two-letter locale prefixes (``ja.json``, ``pt-BR.json``) — so ``app.json`` is not
+    mistaken for a language.
+    """
+    for base, _dirs, files in os.walk(tree):
+        if os.path.basename(base).lower() != "lang":
+            continue
+        for name in files:
+            match = _LOCALE_FILE.match(name)
+            if not match:
+                continue
+            if match.group("locale").lower() in SHIPPED_LOCALES:
+                continue
+            full = os.path.join(base, name)
+            try:
+                size = os.path.getsize(full)
+                os.remove(full)
+            except OSError:
+                continue
+            removed.append({
+                "kind": "unshipped-locale",
+                "path": os.path.relpath(full, tree).replace(os.sep, "/"),
+                "bytes": size,
+                "files": 1,
+            })
 
 
 def prune_tree(tree: str, rid: str) -> dict[str, object]:
@@ -104,6 +285,12 @@ def prune_tree(tree: str, rid: str) -> dict[str, object]:
                 removed.append({"kind": "developer-tooling",
                                 "path": candidate_rel.lstrip("/"),
                                 "bytes": size, "files": count})
+
+    # [EN] v0.2.5 size rules: misplaced wheel data, dead library aliases, unshipped locales.
+    # [ZH] v0.2.5 体积规则：铺错位置的轮子数据、无引用的库别名、未随包的语言。
+    _prune_prefix_data(tree, rid, removed)
+    _prune_duplicate_libs(tree, removed)
+    _prune_unshipped_locales(tree, removed)
 
     for base, dirs, files in os.walk(tree, topdown=False):
         for name in list(dirs):

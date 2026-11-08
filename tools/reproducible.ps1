@@ -78,3 +78,36 @@ function Format-UtcTimestamp {
     param([Parameter(Mandatory = $true)][long]$Epoch)
     return [DateTimeOffset]::FromUnixTimeSeconds($Epoch).UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
 }
+
+<#
+    [EN] Remove a directory or file with the fastest correct primitive for its type.
+    [ZH] 按类型选用最快的正确原语删除目录或文件。
+
+    [EN] `Remove-Item -Recurse` walks the whole tree in PowerShell: on the release trees
+    (tens of thousands of files, deep dependency directories) it costs noticeably more than
+    the native `rd /s /q`. The fallback keeps the function correct where `cmd` is absent.
+    [ZH] `Remove-Item -Recurse` 会在 PowerShell 里逐项遍历整棵树；在发布树（数万文件、
+    很深的依赖目录）上明显慢于原生 `rd /s /q`。保留兜底分支，使函数在无 `cmd` 的环境下
+    依然正确。
+#>
+function Remove-TreeFast {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return }
+    if (-not $item.PSIsContainer) {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        return
+    }
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & cmd /c rd /s /q "$Path" 2>$null | Out-Null
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+    if (Test-Path -LiteralPath $Path) {
+        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}

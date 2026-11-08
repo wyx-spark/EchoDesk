@@ -54,7 +54,6 @@ python-pptx==1.0.2
 pywin32==312 ; sys_platform == "win32"
 PyYAML==6.0.3
 requests==2.34.2
-schedule==1.2.2
 tqdm==4.70.1
 truststore==0.10.5
 typing_extensions==4.16.0

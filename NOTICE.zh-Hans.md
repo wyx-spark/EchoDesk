@@ -41,7 +41,6 @@ EchoDesk 本身以 Apache License, Version 2.0 授权（见 `LICENSE`）。
 * huggingface_hub - Apache License 2.0
 * duckduckgo-search - MIT License
 * pywin32 - Python Software Foundation License (PSF)
-* schedule - MIT License
 
 --------------------------------------------------------------------------------
 文档解析

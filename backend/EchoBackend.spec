@@ -189,7 +189,8 @@ a = Analysis(
     pathex=[SPECPATH],
     binaries=binaries,
     datas=datas,
-    hiddenimports=hiddenimports + ["llama_cpp", "playwright", "schedule", "pypdf"]
+    # v0.2.5：`schedule` 已从依赖中移除（全仓库无 import，定时触发由 automation.py 自实现）。
+    hiddenimports=hiddenimports + ["llama_cpp", "playwright", "pypdf"]
     + (["win32com"] if IS_WINDOWS else []),
     hookspath=[],
     hooksconfig={},

@@ -812,7 +812,7 @@ def test_model_match() -> None:
 
 
 def test_protocol_keys() -> None:
-    """前后端协议键名交叉核对（v0.2.1 默认模型切换一轮新增）。
+    r"""前后端协议键名交叉核对（v0.2.1 默认模型切换一轮新增）。
 
     **起因是一个真实缺陷**：设置页「模型档位」的下载分支读响应里的 `hub_detail`，
     而后端 `_handle_model_hub_detail` 返回的键是 `detail` —— 后端明明把完整文件清单发了过来，

@@ -89,7 +89,11 @@ playwright==1.63.0        # 驱动本机 Microsoft Edge（Apache-2.0）
 # Linux/macOS 的 cp313 索引里没有 2.5.3（只到 2.2.x），只能交回索引解析。
 numpy==2.5.3 ; sys_platform == "win32"
 numpy ; sys_platform != "win32"
-schedule                  # 定时触发（MIT）
+# v0.2.5 发布链精简：移除 `schedule`。全仓库没有任何 `import schedule`，
+# 自动化的定时触发由 backend/automation.py 自己的线程与时间比较实现；
+# 它此前只作为 requirements 声明与 EchoBackend.spec 的 hiddenimport 存在，
+# 属于「声明了但从不加载」的死依赖（约 20 KB + 一个额外的分发组件）。
+# 依赖收紧后 `tools/check_requirements.py` 仍按「源码导入 → 声明」方向把关。
 
 # ---------- 构建工具 ----------
 pyinstaller>=6.0
