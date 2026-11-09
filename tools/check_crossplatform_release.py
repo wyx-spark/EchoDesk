@@ -29,11 +29,23 @@ import hashlib
 import io
 import json
 import os
+import re
 import sys
 import tarfile
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def current_version() -> str:
+    """[EN] Read the single version source without importing backend modules.
+
+    [ZH] 从唯一版本来源读取版本号，不导入 backend 模块。
+    """
+    path = os.path.join(ROOT, "backend", "version.py")
+    with io.open(path, encoding="utf-8") as handle:
+        match = re.search(r'APP_VERSION\s*=\s*["\']([^"\']+)["\']', handle.read())
+    return match.group(1).lstrip("vV") if match else ""
 
 #: 目标 RID → (归档扩展名, 需要的可执行路径相对发布目录根)。
 TARGETS: dict[str, dict[str, object]] = {
@@ -74,9 +86,17 @@ def sha256_of(path: str) -> str:
     return digest.hexdigest()
 
 
-def find_archive(out_dir: str, rid: str) -> str:
+def find_archive(out_dir: str, rid: str, version: str) -> str:
+    # [EN] Scope the lookup to the version being released. The old suffix-only match
+    # [EN] picked the first name in sorted order, so a stale older archive left in
+    # [EN] `dist/` (v0.2.4 < v0.2.5) was checked instead of the current one.
+    # [ZH] 必须按待发布版本限定查找。旧实现只匹配后缀并取排序后的第一个名字，
+    # [ZH] 于是 `dist/` 里残留的旧版本归档（v0.2.4 < v0.2.5）会被当成当前产物检查。
+    prefix = f"EchoDesk-v{version}-{rid}"
     for name in sorted(os.listdir(out_dir)):
-        if name.endswith(f"-{rid}.tar.gz") or name.endswith(f"-{rid}.zip"):
+        if not name.startswith(prefix + "."):
+            continue
+        if name.endswith(".tar.gz") or name.endswith(".zip"):
             return os.path.join(out_dir, name)
     return ""
 
@@ -160,10 +180,10 @@ def check_zip(path: str, spec: dict) -> None:
         fail(f"{prefix} 不含 SIGNING.txt（文档让用户去看它，归档里却没有）")
 
 
-def check_one(out_dir: str, rid: str) -> None:
+def check_one(out_dir: str, rid: str, version: str) -> None:
     print(f"\n== {rid} ==")
     spec = TARGETS[rid]
-    archive = find_archive(out_dir, rid)
+    archive = find_archive(out_dir, rid, version)
     if not archive:
         fail(f"{rid} 没有归档（期望 {rid}{spec['ext']}）")
         return
@@ -237,11 +257,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="跨平台发布物检查")
     parser.add_argument("--dir", default=os.path.join(ROOT, "dist"), help="发布物目录（默认 dist）")
     parser.add_argument("--rid", action="append", default=[], help="只检查指定 RID（可重复）")
+    parser.add_argument("--version", default="",
+                        help="只检查该版本的产物（默认取 backend/version.py）")
     parser.add_argument("--allow-missing", action="store_true",
                         help="某个 RID 的产物不存在时只提示不失败")
     args = parser.parse_args()
 
     out_dir = args.dir if os.path.isabs(args.dir) else os.path.join(ROOT, args.dir)
+    version = args.version.lstrip("vV") if args.version else current_version()
+    if not version:
+        raise SystemExit("读不出 APP_VERSION：backend/version.py（可用 --version 显式指定）")
     rids = args.rid or list(TARGETS)
     unknown = [rid for rid in rids if rid not in TARGETS]
     if unknown:
@@ -249,17 +274,18 @@ def main() -> int:
 
     print("== 跨平台发布物检查 ==")
     print(f"产物目录：{os.path.relpath(out_dir, ROOT)}")
+    print(f"版本：v{version}")
 
     for rid in rids:
-        if not find_archive(out_dir, rid):
+        if not find_archive(out_dir, rid, version):
             if args.allow_missing:
                 print(f"\n== {rid} ==")
-                note(f"{rid} 的产物不存在（--allow-missing）")
+                note(f"{rid} 的 v{version} 产物不存在（--allow-missing）")
                 continue
             print(f"\n== {rid} ==")
-            fail(f"{rid} 的产物不存在：先跑 python tools/pack_crossplatform.py --rid {rid}")
+            fail(f"{rid} 的 v{version} 产物不存在：先跑 python tools/pack_crossplatform.py --rid {rid}")
             continue
-        check_one(out_dir, rid)
+        check_one(out_dir, rid, version)
 
     print("\n" + "-" * 42)
     print(f"通过 {_passed} 项，失败 {_failed} 项")

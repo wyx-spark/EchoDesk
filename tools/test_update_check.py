@@ -39,6 +39,29 @@ if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
 
 import update_check as uc  # noqa: E402
+import version as app_version  # noqa: E402
+
+# [EN] Never hard-code the expected "latest" release: the suite must keep passing
+# [EN] after every version bump. Derive the next patch from the single version source.
+# [ZH] 不要写死期望的“最新版本”：每次升版本后测试必须仍然成立。从唯一版本来源
+# [ZH] 派生下一个补丁版本。
+CURRENT_VERSION = app_version.APP_VERSION
+
+
+def next_patch_version(current: str) -> str:
+    """[EN] Return the next patch tag, e.g. ``v0.2.5`` -> ``v0.2.6``.
+
+    [ZH] 返回下一个补丁版本标签，例如 ``v0.2.5`` -> ``v0.2.6``。
+    """
+    core = current.lstrip("vV").split("-")[0].split("+")[0]
+    parts = [int(part) for part in core.split(".")]
+    while len(parts) < 3:
+        parts.append(0)
+    parts[2] += 1
+    return "v" + ".".join(str(part) for part in parts[:3])
+
+
+LATEST_VERSION = next_patch_version(CURRENT_VERSION)
 
 PASSED = 0
 FAILED = []
@@ -115,26 +138,29 @@ def test_asset_pick():
 
 
 def test_check_available():
-    url = "https://github.com/wyx-spark/EchoDesk/releases/download/v0.2.5/EchoDesk-v0.2.5-Setup.exe"
-    fake = [release("v0.2.5", [asset("EchoDesk-v0.2.5-Setup.exe", url, 7)])]
+    latest = LATEST_VERSION
+    asset_name = f"EchoDesk-{latest}-Setup.exe"
+    url = f"https://github.com/wyx-spark/EchoDesk/releases/download/{latest}/{asset_name}"
+    fake = [release(latest, [asset(asset_name, url, 7)])]
     with mock.patch.object(uc, "_fetch_releases", return_value=fake):
         result = uc.check_for_update(cfg(), force=True)
     check("检测到新版本", result["status"] == "available", str(result))
     check("返回附件清单", len(result.get("assets", [])) == 1, str(result))
-    check("返回首选附件", result.get("asset", {}).get("name") == "EchoDesk-v0.2.5-Setup.exe",
+    check("返回首选附件", result.get("asset", {}).get("name") == asset_name,
           str(result.get("asset")))
 
 
 def test_ignored_version():
-    url = "https://github.com/wyx-spark/EchoDesk/releases/download/v0.2.5/x.exe"
-    fake = [release("v0.2.5", [asset("x.exe", url, 1)])]
+    ignored = CURRENT_VERSION
+    url = f"https://github.com/wyx-spark/EchoDesk/releases/download/{LATEST_VERSION}/x.exe"
+    fake = [release(ignored, [asset("x.exe", url, 1)])]
     with mock.patch.object(uc, "_fetch_releases", return_value=fake):
-        result = uc.check_for_update(cfg(ignored_version="v0.2.5"), force=True)
+        result = uc.check_for_update(cfg(ignored_version=ignored), force=True)
     check("被忽略的相同版本返回 ignored 状态", result["status"] == "ignored", str(result))
-    check("ignored 结果带上被忽略版本", result.get("ignored_version") == "v0.2.5", str(result))
-    fake2 = [release("v0.2.6", [asset("x.exe", url, 1)])]
+    check("ignored 结果带上被忽略版本", result.get("ignored_version") == ignored, str(result))
+    fake2 = [release(LATEST_VERSION, [asset("x.exe", url, 1)])]
     with mock.patch.object(uc, "_fetch_releases", return_value=fake2):
-        newer = uc.check_for_update(cfg(ignored_version="v0.2.5"), force=True)
+        newer = uc.check_for_update(cfg(ignored_version=ignored), force=True)
     check("更新版本不受忽略记录影响", newer["status"] == "available", str(newer))
 
 

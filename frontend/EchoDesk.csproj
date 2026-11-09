@@ -46,7 +46,7 @@
     <!-- 固定写全，避免 ProductVersion 带 "+commit" 后缀混进界面与版本资源
          Written out in full so ProductVersion does not pick up a "+commit" suffix that would
          leak into the interface and the version resource. -->
-    <InformationalVersion>0.2.4</InformationalVersion>
+    <InformationalVersion>0.2.5</InformationalVersion>
     <Product>EchoDesk</Product>
     <Company>Void Entropia Studio</Company>
     <Copyright>Copyright (C) Void Entropia Studio</Copyright>

@@ -165,6 +165,33 @@ function Wait-MainWindow([int]$procId, [int]$timeoutSec) {
     return $null
 }
 
+# [EN] Return a real top-level window of the process other than the main window.
+# [EN] Tooltips and other popups are also top-level children with a different handle, but
+# [EN] they are small and have no WindowPattern; filtering by ControlType + size keeps the
+# [EN] settings window from being replaced by a 53x28 tooltip.
+# [ZH] 返回进程内除主窗口之外的真正顶层窗口。tooltip 等弹出层也是不同的顶层句柄，
+# [ZH] 但尺寸很小且没有 WindowPattern；按控件类型 + 尺寸过滤，避免设置窗口被
+# [ZH] 53×28 的 tooltip 顶替。
+function Find-OtherWindow([int]$procId, [int]$mainHandle,
+                          [int]$minWidth = 300, [int]$minHeight = 200) {
+    $cond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $procId)
+    # [EN] Search descendants, not only root children: the WPF settings window is exposed
+    # [EN] as a nested Window element under the main window in the UIA tree (verified on the
+    # [EN] v0.2.5 build: 780x660, hwnd 3081358, only visible via Descendants).
+    # [ZH] 要搜索后代而不只是桌面根的直接子节点：WPF 设置窗口在 UIA 树里是主窗口下的
+    # [ZH] 嵌套 Window（v0.2.5 构建实测：780×660，hwnd 3081358，仅在 Descendants 里可见）。
+    foreach ($w in [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
+             [System.Windows.Automation.TreeScope]::Descendants, $cond)) {
+        if ($w.Current.NativeWindowHandle -eq $mainHandle) { continue }
+        if ($w.Current.ControlType -ne [System.Windows.Automation.ControlType]::Window) { continue }
+        $rect = $w.Current.BoundingRectangle
+        if ($rect.Width -lt $minWidth -or $rect.Height -lt $minHeight) { continue }
+        return $w
+    }
+    return $null
+}
+
 # 需要逐个量对比度的控件（AutomationId）。
 #   Text：测量前先填进去的内容（空输入框只有一种颜色，量出来必然是 1:1）
 #   Kind：text   → 文字，按 WCAG AA 4.5:1 硬性要求
@@ -215,15 +242,22 @@ function Test-Theme([string]$theme) {
         # 往禁用的输入框写测试文本会失败（The operation is not allowed on a nonenabled
         # element），于是截到的是空输入框 —— 量出来就是"输入框文字 1.05:1"这种
         # 与配色无关的假失败（本轮实测：浅色主题快了就过、深色主题慢一点就假失败）。
+        # [EN] Readiness means "the input box is enabled", not a fixed localized string.
+        # [EN] The status text is now a full sentence (e.g. "后端已就绪，但没有加载模型"),
+        # [EN] so the old equality check against "已就绪" never matched and wasted 180 s per
+        # [EN] theme while the application was in fact ready.
+        # [ZH] 就绪的判据是“输入框可用”，而不是某个固定中文字符串：状态文字现在是一整句
+        # [ZH]（如“后端已就绪，但没有加载模型”），旧的全等判断永远匹配不上，
+        # [ZH] 会在应用其实已就绪的情况下每个主题白等 180 秒。
         $ready = $false
         $swReady = [System.Diagnostics.Stopwatch]::StartNew()
         while ($swReady.Elapsed.TotalSeconds -lt $ReadyTimeoutSec) {
-            $st = Find-ById $proc.Id 'StatusText'
-            if ($null -ne $st -and $st.Current.Name -eq '已就绪') { $ready = $true; break }
+            $inputNow = Find-ById $proc.Id 'InputBox'
+            if ($null -ne $inputNow -and $inputNow.Current.IsEnabled) { $ready = $true; break }
             Start-Sleep -Milliseconds 300
         }
         if (-not $ready) {
-            Write-Output "[pixels]   [$theme] 警告：后端未在 $ReadyTimeoutSec 秒内就绪，输入框可能仍被禁用（该项可能量不到文字）"
+            Write-Output "[pixels]   [$theme] 警告：后端未在 $ReadyTimeoutSec 秒内就绪，输入框仍不可用（该项可能量不到文字）"
         }
         # 截图**之前**先把测试文本填进输入框：否则截到的空输入框只有一种颜色，
         # "输入框文字与输入框背景"这一项量不出任何东西（一直是 1:1）。
@@ -246,7 +280,7 @@ function Test-Theme([string]$theme) {
         $targetIds = @($TEXT_TARGETS | ForEach-Object { $_.Id })
         $rects = @{}
         $shot = $null
-        for ($attempt = 1; $attempt -le 3; $attempt++) {
+        for ($attempt = 1; $attempt -le 6; $attempt++) {
             $before = @{}
             foreach ($id in $targetIds) {
                 $el = Find-ById $proc.Id $id
@@ -254,6 +288,26 @@ function Test-Theme([string]$theme) {
             }
             $shot = Save-WindowShot $win "$theme-main"
             if ($null -eq $shot) { break }
+            # [EN] A freshly shown WPF window can be captured before its first frame is
+            # [EN] rendered (an all-black bitmap). Treat that as "not stable yet" and retry
+            # [EN] instead of reporting the theme as not applied.
+            # [ZH] 刚显示的 WPF 窗口可能在首帧渲染前被截到（整张全黑）。把它当作
+            # [ZH] “尚未稳定”重试，而不是把全黑误报成主题未生效。
+            $probeBmp = $shot.Bitmap
+            $seenInk = $false
+            for ($yy = 4; $yy -lt $probeBmp.Height - 4 -and -not $seenInk; $yy += 40) {
+                for ($xx = 4; $xx -lt $probeBmp.Width - 4 -and -not $seenInk; $xx += 40) {
+                    $c = $probeBmp.GetPixel($xx, $yy)
+                    if (($c.R + $c.G + $c.B) -gt 30) { $seenInk = $true }
+                }
+            }
+            if (-not $seenInk) {
+                Write-Output "[pixels]   （第 $attempt 次截图全黑，窗口首帧可能尚未渲染，重试）"
+                $shot.Bitmap.Dispose()
+                $shot = $null
+                Start-Sleep -Milliseconds 800
+                continue
+            }
             Start-Sleep -Milliseconds 250
             $stable = $true
             foreach ($id in $targetIds) {
@@ -346,16 +400,52 @@ function Test-Theme([string]$theme) {
         # 3) 设置窗口也在深/浅下截一张（供逐屏复核）
         $settingsBtn = Find-ById $proc.Id 'SettingsButton'
         if ($null -ne $settingsBtn) {
-            $settingsBtn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-            Start-Sleep -Milliseconds 1200
-            $setWin = $null
-            $cond = New-Object System.Windows.Automation.PropertyCondition(
-                [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $proc.Id)
-            foreach ($w in [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
-                     [System.Windows.Automation.TreeScope]::Children, $cond)) {
-                if ($w.Current.NativeWindowHandle -ne $win.Current.NativeWindowHandle) { $setWin = $w; break }
+            # [EN] Wait until the button is enabled: invoking it while the backend is still
+            # [EN] starting is silently ignored, which looked like "the settings window never
+            # [EN] opened". Also allow one retry after the first click.
+            # [ZH] 等按钮可用：后端仍在启动时点击会被静默忽略，现象就是“设置窗口一直不出现”；
+            # [ZH] 首次点击后仍未出现则再点一次。
+            $swBtn = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($swBtn.Elapsed.TotalSeconds -lt 10 -and
+                   $null -ne $settingsBtn -and -not $settingsBtn.Current.IsEnabled) {
+                Start-Sleep -Milliseconds 300
+                $settingsBtn = Find-ById $proc.Id 'SettingsButton'
             }
-            if ($null -ne $setWin) {
+            if ($null -eq $settingsBtn) {
+                Fail "[$theme] 设置按钮不可用（10 秒内消失）"
+            }
+            else {
+            $settingsBtn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+            # [EN] Do not take "the first other top-level window": invoking the button can
+            # [EN] surface a 53x28 tooltip first, which was screenshotted as if it were the
+            # [EN] settings window (average brightness 0.844) and later threw
+            # [EN] "Unsupported Pattern" because a tooltip has no WindowPattern. Wait for a
+            # [EN] real window (ControlType.Window, sane size).
+            # [ZH] 不能取“第一个其它顶层窗口”：点击按钮时可能先冒出 53×28 的 tooltip，
+            # [ZH] 它会被当成设置窗口截图（平均亮度 0.844），关闭时又因 tooltip 不支持
+            # [ZH] WindowPattern 抛 Unsupported Pattern。这里等一个真正的窗口。
+            $setWin = $null
+            $mainHandle = [int]$win.Current.NativeWindowHandle
+            $swSet = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($swSet.Elapsed.TotalSeconds -lt 10 -and $null -eq $setWin) {
+                $setWin = Find-OtherWindow $proc.Id $mainHandle
+                if ($null -eq $setWin) { Start-Sleep -Milliseconds 300 }
+            }
+            if ($null -eq $setWin) {
+                Write-Output "[pixels]   [$theme] 设置窗口 10 秒内未出现，重新点击一次"
+                try {
+                    $settingsBtn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+                } catch { }
+                $swSet.Restart()
+                while ($swSet.Elapsed.TotalSeconds -lt 10 -and $null -eq $setWin) {
+                    $setWin = Find-OtherWindow $proc.Id $mainHandle
+                    if ($null -eq $setWin) { Start-Sleep -Milliseconds 300 }
+                }
+            }
+            if ($null -eq $setWin) {
+                Fail "[$theme] 设置窗口未打开（两次点击、共 20 秒内没有找到尺寸正常的顶层窗口）"
+            }
+            else {
                 $s = Save-WindowShot $setWin "$theme-settings"
                 if ($null -ne $s) {
                     $set = $s.Bitmap
@@ -373,8 +463,13 @@ function Test-Theme([string]$theme) {
                     }
                     $set.Dispose()
                 }
-                $setWin.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+                $windowPattern = $null
+                if ($setWin.TryGetCurrentPattern(
+                        [System.Windows.Automation.WindowPattern]::Pattern, [ref]$windowPattern)) {
+                    ([System.Windows.Automation.WindowPattern]$windowPattern).Close()
+                }
                 Start-Sleep -Milliseconds 500
+            }
             }
         }
         $bmp.Dispose()

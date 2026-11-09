@@ -579,7 +579,7 @@ try {
                    Where-Object { $_.Name -like "*-*.tar.gz" -or $_.Name -like "*-*.zip" })
     if ($distReady.Count -gt 0) {
         Invoke-Check "跨平台完整发布物（归档格式/可执行位/目录顺序/签名说明）" {
-            Invoke-Native "跨平台发布物" "python" @("tools\check_crossplatform_release.py", "--dir", $distDir, "--allow-missing")
+            Invoke-Native "跨平台发布物" "python" @("tools\check_crossplatform_release.py", "--dir", $distDir, "--version", $Version, "--allow-missing")
             "通过"
         }
     }

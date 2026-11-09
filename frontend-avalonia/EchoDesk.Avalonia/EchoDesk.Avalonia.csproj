@@ -42,6 +42,7 @@
     <Version>0.2.5</Version>
     <FileVersion>0.2.5.0</FileVersion>
     <AssemblyVersion>0.2.5.0</AssemblyVersion>
+    <InformationalVersion>0.2.5</InformationalVersion>
     <Product>EchoDesk</Product>
     <Company>Void-Entropia-Studio</Company>
     <Copyright>Copyright (c) Void-Entropia-Studio</Copyright>

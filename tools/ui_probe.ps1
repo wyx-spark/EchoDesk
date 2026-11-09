@@ -39,6 +39,9 @@ param(
 #      supplied. Passing -Exe remains supported for release-tree regression runs.
 # [ZH] 未显式给出路径时，从唯一版本来源解析发布目录。显式传入 -Exe 仍然支持，用于针对冻结
 #      发布树执行回归。
+# [EN] Expected UI version when the release directory is derived from the version source.
+# [ZH] 由版本来源派生发布目录时，界面应显示的版本号。
+$expectedVersion = ""
 if (-not $Exe) {
     $ProbeRoot = Split-Path -Parent $PSScriptRoot
     $VersionFile = Join-Path $ProbeRoot "backend\version.py"
@@ -46,6 +49,7 @@ if (-not $Exe) {
                     Select-Object -First 1
     if (-not $versionMatch) { throw "读不出 APP_VERSION：$VersionFile（可用 -Exe 显式指定）" }
     $releaseVersion = $versionMatch.Matches[0].Groups[1].Value.TrimStart('v')
+    $expectedVersion = "v$releaseVersion"
     $Exe = Join-Path $ProbeRoot "publish\EchoDesk-v$releaseVersion\app\EchoDesk.exe"
 }
 
@@ -374,6 +378,28 @@ function Close-FirstRunDialogs([int]$procId, [int]$waitMs = 4000) {
     }
 }
 Close-FirstRunDialogs $proc.Id
+
+# ---------- 2a-0. 头部版本号必须与唯一版本来源一致 ----------
+# [EN] VersionText reads AssemblyInformationalVersion. If the csproj's
+# [EN] InformationalVersion is not bumped together with APP_VERSION, the title bar shows the
+# [EN] new version while the header keeps the old one (observed in v0.2.5: header "v0.2.4").
+# [ZH] VersionText 读的是程序集 InformationalVersion。若 csproj 没随 APP_VERSION 同步，
+# [ZH] 标题栏是新版本、正文头部却还是旧版本（v0.2.5 实测头部仍显示 v0.2.4）。直接断言。
+if ($expectedVersion) {
+    $versionEl = Find-AnyById $proc.Id 'VersionText'
+    if ($null -eq $versionEl) {
+        Fail '主窗口缺少版本号文本（VersionText）'
+    }
+    else {
+        $shownVersion = $versionEl.Current.Name.Trim()
+        if ($shownVersion -eq $expectedVersion) {
+            Ok "主窗口版本号 = $shownVersion（与 backend/version.py 一致）"
+        }
+        else {
+            Fail "主窗口版本号显示 '$shownVersion'，应为 '$expectedVersion'（检查 csproj 的 InformationalVersion）"
+        }
+    }
+}
 
 # ---------- 2a. v0.2.3：WPF 进入 LTS 的常驻提示条 ----------
 # [EN] Acceptance criterion for v0.2.3: "after starting the WPF edition, the LTS notice is
