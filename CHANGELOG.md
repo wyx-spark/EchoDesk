@@ -147,12 +147,22 @@ signed bundle.
   `check_data_dir_consistency` and `gen_requirements_lock --check` all pass.
 - WPF and Avalonia `dotnet build -c Release` complete with zero errors; the Avalonia
   headless probes report `PROBE-RESULT: PASS`.
-- `tools/verify_reproducible_build.ps1` ran two complete, independent cold builds and
-  the two SHA-256 manifests are byte-identical (one entry per release-tree file, per
-  installer and archive, plus the per-archive manifests).
-- `tools/verify_release.ps1` ran with no `-SkipGui` / `-SkipE2E` flags: real install and
-  uninstall, UI probes, pixel checks and the real Microsoft Edge end-to-end tests all
-  passed.
+- `tools/verify_reproducible_build.ps1` ran two complete, independent cold builds at
+  commit `a546de9`: **12,810 hashed entries, byte-identical**, total build time
+  **1,496.7 s**. Both manifests have SHA-256
+  `5F94655D8F04A914A278B54490A0CF917A986295568B5FCA543B23E618057913`.
+- `tools/verify_release.ps1` ran with no `-SkipGui` / `-SkipE2E` flags: **53/53 gates
+  passed in 533.6 s**, including real install/uninstall, the WPF UI probe, pixel
+  contrast checks, the real Microsoft Edge end-to-end runs and the networked model hub.
+- The WPF UI probe now asserts that the header version text equals `APP_VERSION`. This
+  caught `InformationalVersion` still being `0.2.4` in both project files; it was fixed
+  before the final build (header now shows `v0.2.5`).
+- Release-gate fixes made during this acceptance cycle: cross-platform archive checks are
+  scoped to the version being released (a stale older archive in `dist/` could otherwise
+  be checked instead); the update-check test derives its fake "latest" version from
+  `APP_VERSION`; the pixel check retries the first all-black frame and selects the real
+  settings window instead of a tooltip; the UI probe waits for asynchronous tab content
+  before reporting a control missing.
 
 ### Known limitations
 
@@ -173,10 +183,17 @@ signed bundle.
 
 ### Artifacts
 
-`EchoDesk-v0.2.5-Setup.exe`, the portable Windows zip and the Linux/macOS archives are
-listed with their SHA-256 digests in `SHA256SUMS.txt` next to the release assets. The
-frozen copy and its `MANIFEST.json` live in `publish/archive/v0.2.5/` (not part of the
-repository).
+| Asset | SHA-256 |
+| :--- | :--- |
+| `EchoDesk-v0.2.5-Setup.exe` | `590b19b366191f6d612791f4c043d578931f1c5d17e8e9202d49077d6747f61b` |
+| `EchoDesk-v0.2.5-win-x64.zip` | `a2b09c5e8b17793652c8a7f4b8540914fe6c0e8a4f8281d41302a9a655474f99` |
+| `EchoDesk-v0.2.5-linux-x64.tar.gz` | `6e676cab1f9a465bbbe36a0c900f85a4abe90d615effa0d8123abeca85814ef8` |
+| `EchoDesk-v0.2.5-osx-arm64.tar.gz` | `bf12f195979bf72ed16bd13036d17c6dc5856d0f7ffff8451f2e77ffac99bb4a` |
+
+`SHA256SUMS.txt` next to the release assets carries the same digests. The frozen copy
+and its `MANIFEST.json` live in `publish/archive/v0.2.5/` (not part of the repository);
+that frozen directory also contains `EchoDesk-v0.2.5-portable.zip` and the
+installer/compliance checksum list.
 
 ---
 

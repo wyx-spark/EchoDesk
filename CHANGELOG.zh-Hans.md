@@ -116,10 +116,17 @@
   `check_data_dir_consistency` 与 `gen_requirements_lock --check` 全部通过。
 - WPF 与 Avalonia `dotnet build -c Release` 均 0 错误；Avalonia 无头探针输出
   `PROBE-RESULT: PASS`。
-- `tools/verify_reproducible_build.ps1` 执行两次完整、独立的冷构建，两份 SHA-256 清单
-  逐字节一致（覆盖发布树每个文件、安装程序、三平台归档与各归档清单）。
-- `tools/verify_release.ps1` 未带 `-SkipGui` / `-SkipE2E`：真装真卸、UI 探针、像素校验
-  与真实 Microsoft Edge 端到端全部通过。
+- `tools/verify_reproducible_build.ps1` 在提交 `a546de9` 上执行两次完整、独立的冷构建：
+  **12,810 条哈希逐字节一致**，总耗时 **1,496.7 秒**；两份清单的 SHA-256 均为
+  `5F94655D8F04A914A278B54490A0CF917A986295568B5FCA543B23E618057913`。
+- `tools/verify_release.ps1` 未带 `-SkipGui` / `-SkipE2E`：**53/53 项通过，
+  总耗时 533.6 秒**，含真装真卸、WPF UI 探针、像素对比度校验、真实 Microsoft Edge
+  端到端与联网模型中心。
+- WPF UI 探针新增“头部版本号 = `APP_VERSION`”断言。该断言抓出两个工程文件的
+  `InformationalVersion` 仍是 `0.2.4`，已在最终构建前修正（头部现在显示 `v0.2.5`）。
+- 本轮发布门禁修复：跨平台归档检查按待发布版本限定（否则 `dist/` 里的旧版本归档会被
+  误检）；自动更新测试从 `APP_VERSION` 派生模拟的“最新版本”；像素校验会重试首帧全黑
+  并选择真正的设置窗口而不是 tooltip；UI 探针在切换页签后会等待异步内容再判缺失。
 
 ### 已知限制
 
@@ -136,9 +143,16 @@
 
 ### 交付物
 
-`EchoDesk-v0.2.5-Setup.exe`、Windows 便携 zip 以及 Linux/macOS 归档的名称与 SHA-256
-摘要列在发布资产旁的 `SHA256SUMS.txt` 中。冻结副本与其 `MANIFEST.json` 位于
-`publish/archive/v0.2.5/`（不随仓库分发）。
+| 产物 | SHA-256 |
+| :--- | :--- |
+| `EchoDesk-v0.2.5-Setup.exe` | `590b19b366191f6d612791f4c043d578931f1c5d17e8e9202d49077d6747f61b` |
+| `EchoDesk-v0.2.5-win-x64.zip` | `a2b09c5e8b17793652c8a7f4b8540914fe6c0e8a4f8281d41302a9a655474f99` |
+| `EchoDesk-v0.2.5-linux-x64.tar.gz` | `6e676cab1f9a465bbbe36a0c900f85a4abe90d615effa0d8123abeca85814ef8` |
+| `EchoDesk-v0.2.5-osx-arm64.tar.gz` | `bf12f195979bf72ed16bd13036d17c6dc5856d0f7ffff8451f2e77ffac99bb4a` |
+
+发布资产旁的 `SHA256SUMS.txt` 记录同样的摘要。冻结副本与其 `MANIFEST.json` 位于
+`publish/archive/v0.2.5/`（不随仓库分发）；该冻结目录还包含
+`EchoDesk-v0.2.5-portable.zip` 与安装程序/合规清单。
 
 ---
 
