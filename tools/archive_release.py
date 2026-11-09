@@ -258,7 +258,27 @@ def main() -> int:
             sums_text = handle.read()
         archived_names = [item["file"] for item in artifacts]
         if any(name in sums_text for name in archived_names):
-            shutil.copy2(sums_src, os.path.join(archive_dir, "SHA256SUMS.txt"))
+            # [EN] The no-overwrite rule must apply here too: `--extra dist/SHA256SUMS.txt`
+            # [EN] already archived the three-platform sums under this name. Overwriting it
+            # [EN] left MANIFEST recording the dist digest while the file on disk was the
+            # [EN] installer/compliance sums. Rename instead, and record what was written.
+            # [ZH] 防覆盖规则在这里同样适用：`--extra dist/SHA256SUMS.txt` 可能已把三平台
+            # [ZH] 清单放在同名位置，直接覆盖会让 MANIFEST 记 dist 的摘要、磁盘上却是安装
+            # [ZH] 程序/合规清单。改为改名，并把实际写出的文件登记进清单。
+            target_name = "SHA256SUMS.txt"
+            target = os.path.join(archive_dir, target_name)
+            if os.path.isfile(target) and sha256_of(target) != sha256_of(sums_src):
+                target_name = f"EchoDesk-{version}-SHA256SUMS.txt"
+                target = os.path.join(archive_dir, target_name)
+                log(f"同名但内容不同，安装程序清单改名为 {target_name}（不覆盖归档里的同名文件）")
+            shutil.copy2(sums_src, target)
+            artifacts.append({
+                "file": target_name,
+                "kind": "安装程序与合规文档的校验清单（publish/SHA256SUMS.txt）",
+                "source": "publish/SHA256SUMS.txt",
+                "bytes": os.path.getsize(target),
+                "sha256": sha256_of(target),
+            })
         else:
             log(f"校验清单与本次产物无关，未复制：{os.path.relpath(sums_src, ROOT)}"
                 "（它列的是别的版本的产物）")
