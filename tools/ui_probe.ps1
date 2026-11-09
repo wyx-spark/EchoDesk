@@ -553,8 +553,22 @@ if ($null -ne $saveButton) {
         foreach ($tabName in $perTab.Keys) {
             Select-Tab $win2 $tabName
             if (-not $script:elActionOk) { Fail "无法切到 Tab：$tabName"; continue }
+            # [EN] Tab content is populated asynchronously after the tab is selected. Poll
+            # [EN] briefly for each expected control before declaring it missing; the
+            # [EN] assertion is unchanged (the control must still exist).
+            # [ZH] 页签内容在切换后异步填充。逐个控件短暂轮询再判缺失；断言本身不变
+            # [ZH]（控件仍必须存在），只是不再把“还没渲染完”当成“没有这个控件”。
+            Start-Sleep -Milliseconds 350
             foreach ($id in $perTab[$tabName]) {
-                if ($null -eq (Find-AnyById $proc.Id $id)) { Fail "设置窗口「$tabName」缺少控件 $id" }
+                $el = Find-AnyById $proc.Id $id
+                if ($null -eq $el) {
+                    $swEl = [System.Diagnostics.Stopwatch]::StartNew()
+                    while ($null -eq $el -and $swEl.Elapsed.TotalSeconds -lt 3) {
+                        Start-Sleep -Milliseconds 250
+                        $el = Find-AnyById $proc.Id $id
+                    }
+                }
+                if ($null -eq $el) { Fail "设置窗口「$tabName」缺少控件 $id" }
             }
         }
 
