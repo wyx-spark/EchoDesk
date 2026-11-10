@@ -1233,6 +1233,98 @@ class AgentConfig(BaseModel):
     max_observation_chars: int = Field(default=1200, ge=200, le=8000)
 
 
+class MediaConfig(BaseModel):
+    """
+    [EN]
+    Multimodal and speech configuration (v0.2.6 Part 2).
+
+    Transport principle: the interface stage writes images and recordings into
+    ``<user data>/temp`` and only absolute paths cross the process boundary (see
+    :mod:`media`). This section therefore holds no payload and no size limit that
+    the interface would have to duplicate: the limits live in :mod:`media`.
+
+    Loading policy: vision and transcription are optional capabilities. Their
+    configuration is validated but never loaded at startup; the first action that
+    needs them performs the load, so a machine without a vision projector or a
+    Whisper binary starts exactly as before.
+
+    [ZH]
+    多模态与语音配置（v0.2.6 Part 2）。
+
+    传输原则：界面层把图片与录音写入 ``<用户数据>/temp``，仅绝对路径跨进程传递
+    （见 :mod:`media`）。因此本节不保存任何负载，也不重复界面必须复制的体积限制：
+    限制统一定义在 :mod:`media`。
+
+    加载策略：视觉与转写属于可选能力。其配置会被校验，但启动时从不加载；首个需要
+    它们的动作才执行加载，故缺少视觉投影或 Whisper 可执行文件的机器启动行为与
+    此前完全一致。
+    """
+
+    #: [EN] Master switch for the image interface. When false, ``image_chat``
+    #: [EN] reports a localized "disabled" message instead of loading a model.
+    #: [ZH] 图片接口总开关。关闭时 ``image_chat`` 返回已本地化的"已禁用"提示，
+    #: [ZH] 而不加载模型。
+    vision_enabled: bool = True
+    #: [EN] Vision model path. Empty means "use the active text model"; a dedicated
+    #: [EN] VL checkpoint can therefore be configured without replacing the text one.
+    #: [ZH] 视觉模型路径。为空表示"使用当前文本模型"；因此可以配置专用 VL 检查点
+    #: [ZH] 而无需替换文本模型。
+    vision_model: str = ""
+    #: [EN] Multimodal projector path. Empty means "auto-detect ``mmproj*.gguf``
+    #: [EN] next to the vision model".
+    #: [ZH] 多模态投影路径。为空表示"在视觉模型旁自动探测 ``mmproj*.gguf``"。
+    vision_mmproj: str = ""
+    #: [EN] Context window for one vision turn (image embeddings consume several
+    #: [EN] hundred tokens). 4096 is the smallest value that holds a screenshot plus
+    #: [EN] a medium answer.
+    #: [ZH] 单次视觉轮的上下文窗口（图像嵌入占用数百 token）。4096 是能容纳一张
+    #: [ZH] 截图加一段中等长度回答的最小取值。
+    vision_n_ctx: int = Field(default=4096, ge=1024, le=8192)
+    vision_max_tokens: int = Field(default=512, ge=64, le=2048)
+    vision_temperature: float = Field(default=0.3, ge=0.0, le=1.5)
+
+    #: [EN] Master switch for transcription. / [ZH] 转写总开关。
+    stt_enabled: bool = True
+    #: [EN] ``whisper.cpp`` executable. Empty means "probe ``PATH``".
+    #: [ZH] ``whisper.cpp`` 可执行文件。为空表示"在 ``PATH`` 上探测"。
+    stt_executable: str = ""
+    #: [EN] Whisper GGML model file. Empty means "probe the model directory".
+    #: [ZH] Whisper GGML 模型文件。为空表示"在模型目录中探测"。
+    stt_model: str = ""
+    #: [EN] Transcription language: ``auto`` (detect) or a Whisper language code.
+    #: [ZH] 转写语言：``auto``（自动检测）或 Whisper 语言代码。
+    stt_language: str = "auto"
+
+    #: [EN] Master switch for speech synthesis. / [ZH] 语音合成总开关。
+    tts_enabled: bool = True
+    #: [EN] Automatically read out each completed assistant answer. Off by default
+    #: [EN] so that a normal chat never starts speaking without an explicit request.
+    #: [ZH] 自动朗读每条完成的助手回答。默认关闭，使普通对话不会在用户未要求时发声。
+    tts_auto_read: bool = False
+    #: [EN] Voice name exactly as reported by the platform engine. Empty means the
+    #: [EN] engine's default voice.
+    #: [ZH] 平台引擎报告的精确音色名。为空表示使用引擎默认音色。
+    tts_voice: str = ""
+    #: [EN] SAPI-style rate step, ``-10 .. 10``. / [ZH] SAPI 风格语速档位，``-10 .. 10``。
+    tts_rate: int = Field(default=0, ge=-10, le=10)
+
+    #: [EN] Enable the push-to-talk global shortcut (Windows low-level keyboard hook).
+    #: [ZH] 启用按键说话全局快捷键（Windows 低级键盘钩子）。
+    ptt_enabled: bool = True
+    #: [EN] Push-to-talk key name agreed with the front end (for example
+    #: [EN] ``RightCtrl``). The backend stores it so that both front ends read one
+    #: [EN] value; the hook itself runs in the interface process.
+    #: [ZH] 与前端约定的按键说话键名（例如 ``RightCtrl``）。后端保存该值，使两个前端
+    #: [ZH] 读取同一份配置；钩子本身在界面进程中运行。
+    ptt_shortcut: str = "RightCtrl"
+    #: [EN] Hard limit for one recording, in seconds. / [ZH] 单次录音硬性上限（秒）。
+    max_record_seconds: int = Field(default=60, ge=5, le=600)
+
+    #: [EN] Retention of temporary images and audio, in days; ``0`` disables cleanup.
+    #: [ZH] 临时图片与音频的保留天数；``0`` 表示关闭清理。
+    temp_retention_days: int = Field(default=7, ge=0, le=365)
+
+
 class Config(BaseModel):
     """
     [EN]
@@ -1289,6 +1381,10 @@ class Config(BaseModel):
     # [EN] Agent platform (capability extension 1 in an earlier release, task 2).
     # [ZH] Agent 平台（此前版本，能力扩展 1，研发任务 2）
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    # [EN] Multimodal and speech (v0.2.6 Part 2). Optional capabilities, loaded
+    # [EN] only when the corresponding action is used.
+    # [ZH] 多模态与语音（v0.2.6 Part 2）。可选能力，仅在使用对应动作时加载。
+    media: MediaConfig = Field(default_factory=MediaConfig)
     # [EN] Local document retrieval (capability extension 1 in an earlier release, task 6).
     # [ZH] 本地文档检索（此前版本，能力扩展 1，研发任务 6）
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)

@@ -59,6 +59,26 @@
         "max_observation_chars": 1200,
         "confirm_timeout_seconds": 120
     },
+    "media": {
+        "vision_enabled": true,
+        "vision_model": "",
+        "vision_mmproj": "",
+        "vision_n_ctx": 4096,
+        "vision_max_tokens": 512,
+        "vision_temperature": 0.3,
+        "stt_enabled": true,
+        "stt_executable": "",
+        "stt_model": "",
+        "stt_language": "auto",
+        "tts_enabled": true,
+        "tts_auto_read": false,
+        "tts_voice": "",
+        "tts_rate": 0,
+        "ptt_enabled": true,
+        "ptt_shortcut": "RightCtrl",
+        "max_record_seconds": 60,
+        "temp_retention_days": 7
+    },
     "retrieval": {
         "enabled": true,
         "mode": "keyword",

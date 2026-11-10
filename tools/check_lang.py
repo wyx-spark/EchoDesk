@@ -416,6 +416,7 @@ BACKEND_SCAFFOLD_MODULES = (
     "app", "cmd", "sys", "file", "err", "market", "hub",
     "automation", "update", "skill",
     "capability", "task", "mode", "export", "summary", "inference",
+    "media",
 )
 
 

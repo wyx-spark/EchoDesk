@@ -205,6 +205,14 @@ with _suppress_stdout():
     from gguf_meta import resolve_context_window
     import hardware_profiler
     from llm_engine import LazyLLMEngine, LLMEngine, NoModelError, StreamStats
+    # [EN] v0.2.6 Part 2: multimodal path policy, vision adapter and speech
+    # [EN] services. All three are dependency-free with respect to the locked
+    # [EN] requirements (see the module notes of media/vision/speech).
+    # [ZH] v0.2.6 Part 2：多模态路径策略、视觉适配层与语音服务。三者相对已锁定的
+    # [ZH] 依赖清单均不新增依赖（见 media/vision/speech 的模块说明）。
+    import media as media_mod
+    import speech as speech_mod
+    import vision as vision_mod
     # [EN] Heartbeat channel marker (task 5): the engine emits it during prefill, see
     # [EN] llm_engine._iter_with_heartbeat.
     # [ZH] 心跳通道标记（相关设计）：引擎在 prefill 阶段产出，见 llm_engine._iter_with_heartbeat。
@@ -553,6 +561,16 @@ class Backend:
         else:
             self.llm = self._build_engine(config, "")
         self.conv = ConversationManager(config.max_history, config.default_mode)
+        # [EN] v0.2.6 Part 2: media services. Vision and transcription are created
+        # [EN] lazily (their modules load native libraries); the recorder is a plain
+        # [EN] state machine and costs nothing until started.
+        # [ZH] v0.2.6 Part 2：媒体服务。视觉与转写惰性创建（其模块会加载原生库）；
+        # [ZH] 录音器只是状态机，启动前没有开销。
+        self._vision_engine: Any = None
+        self._transcriber: Any = None
+        self._media_recorder = speech_mod.AudioRecorder(
+            max_seconds=int(getattr(getattr(config, "media", None),
+                                    "max_record_seconds", 60) or 60))
         # [EN] The two switches controlling reasoning content written to history (reasoning
         # [EN] separation in an earlier release): whether to persist it and how many
         # [EN] characters to keep per entry. They live here rather than inside
@@ -1668,6 +1686,344 @@ class Backend:
         self.llm.chat_complete(self.conv.build_messages("ping"), max_tokens=1)
         log.info("%s", _t("sys.log_model_preheated"))
 
+    # [EN] ---------- Multimodal and speech (v0.2.6 Part 2) ----------
+    # [ZH] ---------- 多模态与语音（v0.2.6 Part 2） ----------
+
+    def _media_cfg(self):
+        """
+        [EN]
+        Return the media configuration section, tolerating configs created before
+        this section existed (tests and third-party constructions).
+
+        [ZH]
+        返回媒体配置节；兼容该节存在之前构造的配置对象（测试与第三方构造）。
+        """
+        value = getattr(self.config, "media", None)
+        if value is None:
+            from config import MediaConfig
+            value = MediaConfig()
+            self.config.media = value
+        return value
+
+    def _vision_model_paths(self) -> tuple:
+        """
+        [EN]
+        Resolve the vision model and projector paths from configuration.
+
+        An empty ``vision_model`` means "use the active text model". Relative
+        configured values resolve against the model directory, so a user can write
+        a bare file name in ``config.json``.
+
+        [ZH]
+        由配置解析视觉模型与投影路径。
+
+        ``vision_model`` 为空表示"使用当前文本模型"。配置中的相对值按模型目录解析，
+        因此用户可以在 ``config.json`` 中只写文件名。
+        """
+        cfg = self._media_cfg()
+        raw_model = str(getattr(cfg, "vision_model", "") or "").strip()
+        if raw_model:
+            model = raw_model if os.path.isabs(raw_model) else os.path.join(self.models_dir(), raw_model)
+        else:
+            model = self._current_model_path()
+        raw_mmproj = str(getattr(cfg, "vision_mmproj", "") or "").strip()
+        if raw_mmproj and not os.path.isabs(raw_mmproj):
+            raw_mmproj = os.path.join(self.models_dir(), raw_mmproj)
+        mmproj = vision_mod.find_mmproj(model, raw_mmproj)
+        return model, mmproj
+
+    def _vision_service(self):
+        """
+        [EN]
+        Return the lazily created vision service, synchronized with the current
+        model selection and inference tuning.
+
+        [ZH]
+        返回惰性创建的视觉服务，并与当前模型选择及推理调优同步。
+        """
+        cfg = self._media_cfg()
+        model, mmproj = self._vision_model_paths()
+        n_ctx = int(getattr(cfg, "vision_n_ctx", vision_mod.DEFAULT_VISION_CONTEXT)
+                    or vision_mod.DEFAULT_VISION_CONTEXT)
+        n_threads = int(getattr(self.llm, "n_threads", 0) or 0)
+        n_gpu_layers = int(getattr(self.llm, "n_gpu_layers", 0) or 0)
+        if self._vision_engine is None:
+            self._vision_engine = vision_mod.VisionService(
+                model, mmproj, n_ctx=n_ctx, n_threads=n_threads,
+                n_gpu_layers=n_gpu_layers)
+        else:
+            self._vision_engine.configure(model, mmproj, n_ctx=n_ctx)
+        return self._vision_engine
+
+    def _stt_service(self):
+        """
+        [EN]
+        Build a transcription service from configuration. The object is cheap; the
+        underlying executable is started only by ``transcribe_audio``.
+
+        [ZH]
+        由配置构造转写服务。该对象代价很低；底层可执行文件只在
+        ``transcribe_audio`` 中启动。
+        """
+        cfg = self._media_cfg()
+        model = str(getattr(cfg, "stt_model", "") or "").strip()
+        if model and not os.path.isabs(model):
+            model = os.path.join(self.models_dir(), model)
+        return speech_mod.WhisperTranscriber(
+            executable=str(getattr(cfg, "stt_executable", "") or ""),
+            model=model,
+            models_dir=self.models_dir(),
+            language=str(getattr(cfg, "stt_language", "auto") or "auto"),
+        )
+
+    def _media_failure(self, code: str, message: str, **extra: Any) -> Dict[str, Any]:
+        """
+        [EN]
+        Uniform failure payload for media actions. ``error_code`` is stable and
+        machine-readable; ``content`` is already localized.
+
+        [ZH]
+        媒体动作的统一失败负载。``error_code`` 稳定且机器可读；``content`` 已本地化。
+        """
+        payload: Dict[str, Any] = {"type": "system", "ok": False,
+                                   "content": str(message), "error_code": str(code)}
+        payload.update(extra)
+        return payload
+
+    def media_state(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Report media capabilities, staging directories and current settings.
+
+        The interface uses this single response to learn where to write an image
+        or a recording, which voices exist, and which capability is unavailable.
+        Directories are created on demand, so an empty data directory is not an
+        error.
+
+        [ZH]
+        报告媒体能力、暂存目录与当前设置。
+
+        界面通过这一个响应获知图片/录音的写入位置、可用音色以及哪项能力不可用。
+        目录按需创建，因此空数据目录不视为错误。
+        """
+        cfg = self._media_cfg()
+        dirs = media_mod.ensure_media_dirs()
+        vision_status = self._vision_service().status()
+        stt_status = self._stt_service().status()
+        tts = speech_mod.list_voices()
+        return {
+            "type": "media_state",
+            "ok": True,
+            "content": "",
+            "dirs": {**media_mod.describe_dirs(), **dirs},
+            "vision": {**vision_status,
+                       "enabled": bool(getattr(cfg, "vision_enabled", True))},
+            "stt": {**stt_status,
+                    "enabled": bool(getattr(cfg, "stt_enabled", True))},
+            "tts": {
+                **tts,
+                "enabled": bool(getattr(cfg, "tts_enabled", True)),
+                "auto_read": bool(getattr(cfg, "tts_auto_read", False)),
+                "voice": str(getattr(cfg, "tts_voice", "") or ""),
+                "rate": int(getattr(cfg, "tts_rate", 0) or 0),
+            },
+            "ptt": {
+                "enabled": bool(getattr(cfg, "ptt_enabled", True)),
+                "shortcut": str(getattr(cfg, "ptt_shortcut", "RightCtrl") or "RightCtrl"),
+            },
+            "recording": {
+                "active": bool(self._media_recorder.active),
+                "max_seconds": int(getattr(cfg, "max_record_seconds", 60) or 60),
+            },
+            "retention_days": int(getattr(cfg, "temp_retention_days", 7) or 0),
+        }
+
+    def image_chat(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Answer a prompt about one staged local image.
+
+        The image itself never crosses the protocol: the request carries an
+        absolute path inside ``temp/images`` and this method validates it before
+        the vision backend reads it. On success both the user turn and the answer
+        are appended to the conversation history so that a follow-up question can
+        refer to the previous answer; the image is described to the text model
+        only through that history text (image bytes are not retained).
+
+        [ZH]
+        针对一张已暂存的本地图片回答提示词。
+
+        图片本身从不跨协议传递：请求携带 ``temp/images`` 内的绝对路径，本方法在
+        视觉后端读取之前完成校验。成功时用户轮与回答都追加进对话历史，使后续提问
+        可以引用上一轮回答；图片仅通过该历史文本被文本模型感知（不保留图片字节）。
+        """
+        cfg = self._media_cfg()
+        if not bool(getattr(cfg, "vision_enabled", True)):
+            return self._media_failure("vision_disabled", _t("media.vision_disabled"))
+        if not self.model_ready:
+            return self._media_failure("no_model", self.guide_text(), guide=True)
+        try:
+            image_path = media_mod.validate_image_path(str(request.get("path") or ""))
+        except media_mod.MediaError as exc:
+            return self._media_failure(exc.code, exc.localize(_t))
+        prompt = str(request.get("prompt") or "").strip() or _t("media.image_default_prompt")
+        service = self._vision_service()
+        reasons = service.status()
+        if not reasons.get("available"):
+            return self._media_failure(
+                "vision_unavailable", str(reasons.get("reason_text") or ""),
+                vision=reasons)
+        try:
+            max_tokens = int(request.get("max_tokens")
+                             or getattr(cfg, "vision_max_tokens", 512) or 512)
+            temperature = float(request.get("temperature")
+                                if request.get("temperature") is not None
+                                else getattr(cfg, "vision_temperature", 0.3))
+            answer = service.chat(image_path, prompt, max_tokens=max_tokens,
+                                  temperature=temperature)
+        except vision_mod.VisionError as exc:
+            return self._media_failure(exc.code, exc.localize(_t),
+                                       detail=str(exc.kwargs.get("detail") or ""))
+        if not answer:
+            return self._media_failure("vision_empty", _t("media.vision_empty"))
+        name = os.path.basename(image_path)
+        # [EN] Record the turn with an explicit marker, so a later text model call
+        # [EN] knows the content came from an image rather than from the user's typing.
+        # [ZH] 以显式标记记录该轮，使后续文本模型调用知道内容来自图片而非用户键入。
+        try:
+            self.conv.add_message("user", _t("media.image_user_message", name=name,
+                                             prompt=prompt))
+            self.conv.add_message("assistant", answer)
+            self._compact_history()
+        except Exception:  # noqa: BLE001 - [EN] history recording must not lose the answer
+                           # [ZH] 记录历史失败不得丢失回答
+            log.warning("记录图片对话历史失败", exc_info=True)
+        return {"type": "assistant", "ok": True, "content": answer,
+                "image": name, "image_path": image_path,
+                "vision": {k: reasons.get(k) for k in
+                           ("model", "mmproj", "handler", "loaded")}}
+
+    def transcribe_audio(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Transcribe a staged audio file with the local Whisper executable and return
+        the recognized text.
+
+        [ZH]
+        使用本地 Whisper 可执行文件转写已暂存的音频，并返回识别文本。
+        """
+        cfg = self._media_cfg()
+        if not bool(getattr(cfg, "stt_enabled", True)):
+            return self._media_failure("stt_disabled", _t("media.stt_disabled"))
+        try:
+            audio_path = media_mod.validate_audio_path(str(request.get("path") or ""))
+        except media_mod.MediaError as exc:
+            return self._media_failure(exc.code, exc.localize(_t))
+        transcriber = self._stt_service()
+        status = transcriber.status()
+        if not status.get("available"):
+            return self._media_failure(
+                "stt_unavailable", str(status.get("reason_text") or ""), stt=status)
+        try:
+            result = transcriber.transcribe(
+                audio_path, language=str(request.get("language") or "") or None)
+        except speech_mod.SpeechError as exc:
+            return self._media_failure(exc.code, exc.localize(_t),
+                                       detail=str(exc.kwargs.get("detail") or ""))
+        text = str(result.get("text") or "").strip()
+        if not text:
+            return self._media_failure("stt_empty", _t("media.stt_empty"))
+        return {"type": "transcription", "ok": True, "content": text, "text": text,
+                "path": audio_path, "elapsed_ms": int(result.get("elapsed_ms") or 0),
+                "stt": {k: status.get(k) for k in ("executable", "model", "language")}}
+
+    def tts_generate(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Synthesize speech for the supplied text and return the absolute audio path.
+
+        Playback belongs to the interface layer, which uses the platform's own
+        player; the backend only produces a file below ``temp/audio/tts``.
+
+        [ZH]
+        为给定文本合成语音并返回音频绝对路径。
+
+        播放由界面层使用平台自带播放器完成；后端只负责在 ``temp/audio/tts``
+        下产出文件。
+        """
+        cfg = self._media_cfg()
+        if not bool(getattr(cfg, "tts_enabled", True)):
+            return self._media_failure("tts_disabled", _t("media.tts_disabled"))
+        text = str(request.get("text") or "").strip()
+        if not text:
+            return self._media_failure("tts_empty", _t("media.tts_empty_text"))
+        voice = str(request.get("voice") or getattr(cfg, "tts_voice", "") or "")
+        try:
+            rate = int(request.get("rate")
+                       if request.get("rate") is not None
+                       else getattr(cfg, "tts_rate", 0))
+        except (TypeError, ValueError):
+            rate = int(getattr(cfg, "tts_rate", 0) or 0)
+        target = speech_mod.tts_output_path()
+        try:
+            speech_mod.ensure_media_dirs()
+            path = speech_mod.synthesize_speech(text, target, voice=voice, rate=rate)
+        except speech_mod.SpeechError as exc:
+            return self._media_failure(exc.code, exc.localize(_t),
+                                       detail=str(exc.kwargs.get("detail") or ""))
+        return {"type": "audio", "ok": True, "content": "", "path": path,
+                "format": os.path.splitext(path)[1].lstrip(".").lower(),
+                "voice": voice, "rate": rate}
+
+    def audio_record_start(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Start a push-to-talk recording. The interface sends this on key press and
+        receives the target path immediately.
+
+        [ZH]
+        开始按键录音。界面在按下按键时发送本动作，并立即收到目标路径。
+        """
+        try:
+            info = self._media_recorder.start()
+        except speech_mod.SpeechError as exc:
+            return self._media_failure(exc.code, exc.localize(_t),
+                                       detail=str(exc.kwargs.get("detail") or ""))
+        return {"type": "recording", "ok": True, "content": "",
+                "active": True, "path": info.get("path", ""),
+                "max_seconds": info.get("max_seconds", 0)}
+
+    def audio_record_stop(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Stop the active recording and return the finished WAV path. The interface
+        then calls ``transcribe_audio`` with that path.
+
+        [ZH]
+        停止当前录音并返回成品 WAV 路径。随后界面以该路径调用 ``transcribe_audio``。
+        """
+        try:
+            info = self._media_recorder.stop()
+        except speech_mod.SpeechError as exc:
+            return self._media_failure(exc.code, exc.localize(_t),
+                                       detail=str(exc.kwargs.get("detail") or ""))
+        return {"type": "recording", "ok": True, "content": "", "active": False,
+                "path": info.get("path", ""),
+                "duration_seconds": info.get("duration_seconds", 0),
+                "size_bytes": info.get("size_bytes", 0)}
+
+    def audio_record_cancel(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Abort the active recording and discard the captured data.
+
+        [ZH]
+        中止当前录音并丢弃已采集数据。
+        """
+        self._media_recorder.cancel()
+        return {"type": "recording", "ok": True, "content": "",
+                "active": False, "cancelled": True}
+
     # [EN] ---------- Request dispatch ----------
     # [ZH] ---------- 请求分发 ----------
 
@@ -1688,6 +2044,24 @@ class Backend:
         if action == "ping":
             return {"type": "pong", "ok": True, "busy": bool(self.stream_active),
                     "ts": time.time()}
+        # [EN] v0.2.6 Part 2: media protocol. Every request except image_chat and
+        # [EN] transcribe_audio is cheap and safe to answer while a long task runs.
+        # [ZH] v0.2.6 Part 2：媒体协议。除 image_chat 与 transcribe_audio 外，
+        # [ZH] 其余请求代价很低，长任务运行期间也可安全应答。
+        if action == "media_state":
+            return self.media_state()
+        if action == "image_chat":
+            return self.image_chat(request)
+        if action == "transcribe_audio":
+            return self.transcribe_audio(request)
+        if action == "tts_generate":
+            return self.tts_generate(request)
+        if action == "audio_record_start":
+            return self.audio_record_start()
+        if action == "audio_record_stop":
+            return self.audio_record_stop()
+        if action == "audio_record_cancel":
+            return self.audio_record_cancel()
         if action == "confirm_tool":
             return self._handle_tool_confirmation(request)
         if action == "file_async":
@@ -7597,7 +7971,9 @@ def main() -> None:
             # [ZH] 存活探测与后台作业轮询属于轻量请求，长任务运行期间必须保持
             # [ZH] 可用（v0.2.6 任务 2.1）。
             is_lightweight = action in ("ping", "file_job_status", "file_job_cancel",
-                                        "confirm_tool")
+                                        "confirm_tool", "media_state",
+                                        "audio_record_start", "audio_record_stop",
+                                        "audio_record_cancel")
             if not is_command and not is_lightweight:
                 # [EN] Busy flag (model marketplace optimization in an earlier release): the
                 # [EN] single stdout stream is shared, and two threads writing at once

@@ -857,6 +857,62 @@ def test_protocol_keys() -> None:
           f"前端读到 {sorted(detail_keys)}")
 
 
+def test_media_support() -> None:
+    """
+    [EN]
+    Multimodal and speech foundations (v0.2.6 Part 2): configuration defaults,
+    staging-directory containment, image magic-byte validation and the RIFF/WAVE
+    writer. The protocol-level behaviour of the actions is covered end to end by
+    ``tools/test_media_api.py``; this section guards the invariants that every
+    backend start depends on.
+
+    [ZH]
+    多模态与语音基础（v0.2.6 Part 2）：配置默认值、暂存目录包含关系、图片魔数校验
+    与 RIFF/WAVE 写出。动作的协议级行为由 ``tools/test_media_api.py`` 端到端覆盖；
+    本节守住每次后端启动都依赖的不变量。
+    """
+    section("多模态与语音基础（v0.2.6 Part 2）")
+    import tempfile
+
+    import config
+    import media
+
+    cfg = config.Config()
+    check("媒体配置存在 vision 开关", bool(cfg.media.vision_enabled))
+    check("媒体配置默认不自动朗读", cfg.media.tts_auto_read is False)
+    check("媒体配置默认按键为 RightCtrl", cfg.media.ptt_shortcut == "RightCtrl")
+    check("录音上限在允许范围内", 5 <= cfg.media.max_record_seconds <= 600,
+          str(cfg.media.max_record_seconds))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        old = os.environ.get("ECHODESK_DATA")
+        os.environ["ECHODESK_DATA"] = tmp
+        try:
+            check("暂存目录落在用户数据根内",
+                  media._is_under(media.images_dir(), tmp)
+                  and media._is_under(media.audio_dir(), tmp),
+                  media.images_dir())
+            check("暂存目录名不是前缀误判",
+                  not media._is_under(os.path.join(tmp, "temp", "images-old", "x.png"),
+                                      media.images_dir()))
+            media.ensure_media_dirs()
+            try:
+                media.validate_image_path("relative.png")
+                check("相对路径被拒绝", False, "未抛出异常")
+            except media.MediaError as exc:
+                check("相对路径被拒绝", exc.code == "not_absolute", exc.code)
+            wav = os.path.join(media.tts_dir(), "selftest.wav")
+            media.write_wav(wav, b"\x00\x00" * 1600)
+            check("WAV 写出且时长可读", os.path.isfile(wav)
+                  and abs(media.read_wav_duration(wav) - 0.1) < 0.02,
+                  str(media.read_wav_duration(wav)))
+        finally:
+            if old is None:
+                os.environ.pop("ECHODESK_DATA", None)
+            else:
+                os.environ["ECHODESK_DATA"] = old
+
+
 def test_imports() -> None:
     """真实导入每一个后端模块。
 
@@ -872,6 +928,7 @@ def test_imports() -> None:
         "file_parser", "gguf_meta", "plaintext", "skills_runtime", "summarizer",
         "download_utils", "search_engine", "llm_engine", "model_hub", "marketplace",
         "automation", "hardware_profiler", "main", "version",
+        "media", "vision", "speech",
     ]
     failures = []
     for name in modules:
@@ -886,7 +943,8 @@ def main() -> int:
     tests = [test_imports, test_config, test_plaintext, test_gguf, test_summarizer,
              test_conversation, test_file_injection, test_crash_log_scope,
              test_config_save_target, test_state_paths, test_automation,
-             test_marketplace, test_model_match, test_protocol_keys]
+             test_marketplace, test_model_match, test_protocol_keys,
+             test_media_support]
     for fn in tests:
         try:
             fn()
