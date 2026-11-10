@@ -3174,6 +3174,15 @@ public partial class MainWindow : Window
             case "tool_result":
                 HandleToolResult(root);
                 break;
+            case "confirm_tool":
+                // [EN] v0.2.6 task 2.4: a guard tool is waiting for the user's
+                // [EN] explicit approval. The dialog is opened on the UI thread and
+                // [EN] the answer is sent without acquiring the request gate (the
+                // [EN] agent stream is still holding it).
+                // [ZH] v0.2.6 任务 2.4：高危工具正在等待用户显式批准。对话框在 UI
+                // [ZH] 线程打开，答复不经过请求闸门发送（Agent 流仍持有该闸门）。
+                _ = HandleConfirmToolAsync(root);
+                break;
             case "done":
             {
                 if (root.TryGetProperty("reasoning", out JsonElement r))
@@ -3224,6 +3233,37 @@ public partial class MainWindow : Window
                 break;
             }
         }
+    }
+
+    /// <summary>
+    /// [EN] Shows the guard-tool confirmation dialog and answers the backend.
+    /// [ZH] 展示高危工具确认对话框并答复后端。
+    ///
+    /// [EN] The message body comes from the backend and already contains the exact
+    /// [EN] command that will run. The answer uses fire-and-forget because the agent
+    /// [EN] stream still owns the request gate; waiting for a normal response would
+    /// [EN] deadlock until the stream ends.
+    /// [ZH] 正文由后端给出，且已包含即将执行的确切命令。答复使用"只写不读"，因为
+    /// [ZH] Agent 流仍持有请求闸门；若等待普通响应，就会一直阻塞到流结束。
+    /// </summary>
+    private async Task HandleConfirmToolAsync(JsonElement root)
+    {
+        string requestId = GetStringField(root, "request_id");
+        string content = GetStringField(root, "content");
+        string title = Loc.T("main.agent.confirmToolTitle", "确认执行系统命令");
+        if (content.Length == 0)
+            content = Loc.T("main.agent.confirmToolFallback", "Agent 请求执行一个高危工具。");
+        bool approved = await Dispatcher.UIThread.InvokeAsync(() =>
+            ShowUpdateDialogAsync(
+                title, content,
+                Loc.T("main.agent.confirmToolAllow", "允许执行"),
+                Loc.T("main.agent.confirmToolDeny", "拒绝")));
+        await _state.Backend.SendFireAndForgetAsync(new
+        {
+            action = "confirm_tool",
+            request_id = requestId,
+            approved,
+        });
     }
 
     private static string FormatMetrics(JsonElement stats, bool stopped)

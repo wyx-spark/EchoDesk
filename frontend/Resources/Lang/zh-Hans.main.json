@@ -326,7 +326,11 @@
       "hitMax": "⚠️ 已达步数上限，改为直接给结论",
       "summary": "✅ 完成：{0} 步 · {1} ms",
       "summaryStopped": "⏹ 已中止：{0} 步 · {1} ms",
-      "toolsUsed": "工具：{0}"
+      "toolsUsed": "工具：{0}",
+    "confirmToolTitle": "确认执行系统命令",
+    "confirmToolFallback": "Agent 请求执行一个高危工具操作。",
+    "confirmToolAllow": "允许执行",
+    "confirmToolDeny": "拒绝"
     },
     "metrics": {
       "tip": "本次生成的运行指标（由后端实测上报）：首 token 延迟、输出速度、token 数、总耗时。带 ≈ 的数字为估算值。",

@@ -326,7 +326,11 @@
       "hitMax": "⚠️ Step limit reached — answering directly",
       "summary": "✅ Done: {0} step(s) · {1} ms",
       "summaryStopped": "⏹ Stopped: {0} step(s) · {1} ms",
-      "toolsUsed": "tools: {0}"
+      "toolsUsed": "tools: {0}",
+    "confirmToolTitle": "Confirm system command",
+    "confirmToolFallback": "The Agent requests a high-risk tool operation.",
+    "confirmToolAllow": "Allow execution",
+    "confirmToolDeny": "Deny"
     },
     "metrics": {
       "tip": "Live metrics for this run, measured and reported by the backend: time to first token, output speed, token counts and total elapsed time. Values marked with ≈ are estimates.",

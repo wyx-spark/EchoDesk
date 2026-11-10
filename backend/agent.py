@@ -52,10 +52,11 @@ from i18n import t as _t
 
 import json
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
-from agent_tools import ToolRegistry, extract_final_answer, parse_tool_call
+from agent_tools import RISK_GUARD, ToolRegistry, extract_final_answer, parse_tool_call
 from reasoning import split_text
 
 #: [EN] Maximum number of characters injected from a single tool result. Tool results
@@ -97,6 +98,10 @@ class AgentStep:
     args: Dict[str, Any] = field(default_factory=dict)
     why: str = ""
     ok: bool = False
+    #: [EN] Per-invocation confirmation decision for guard tools; ``None`` means
+    #: [EN] the tool did not require confirmation.
+    #: [ZH] 高危工具的逐次确认决定；``None`` 表示该工具无需确认。
+    confirmed: Optional[bool] = None
     observation: str = ""
     elapsed_ms: int = 0
 
@@ -138,6 +143,7 @@ class AgentRun:
         """
         return [
             {"index": step.index, "tool": step.tool, "args": step.args, "ok": step.ok,
+             "confirmed": step.confirmed,
              "observation": step.observation[:200], "elapsed_ms": step.elapsed_ms,
              "has_reasoning": bool(step.reasoning.strip())}
             for step in self.steps
@@ -169,6 +175,7 @@ class AgentLoop:
         stop_event: Any = None,
         max_tokens: int = 512,
         max_observation_chars: int = MAX_OBSERVATION_CHARS,
+        confirm_tool: Optional[Callable[[Dict[str, Any]], bool]] = None,
     ) -> None:
         self.llm = llm
         self.registry = registry
@@ -176,6 +183,12 @@ class AgentLoop:
         self.stop_event = stop_event
         self.max_tokens = max(64, int(max_tokens or 512))
         self.max_observation_chars = max(200, int(max_observation_chars or 200))
+        #: [EN] Callback that asks the user to approve a guard tool. It must
+        #: [EN] return only after the user decided, and returns ``False`` on
+        #: [EN] denial, timeout, or absence of a user interface.
+        #: [ZH] 请求用户批准高危工具的回调。必须等到用户作出决定后才返回；
+        #: [ZH] 拒绝、超时或无界面时返回 ``False``。
+        self.confirm_tool = confirm_tool
 
     # [EN] ---------- Internal helpers ----------
     # [ZH] ---------- 内部辅助方法 ----------
@@ -247,6 +260,45 @@ class AgentLoop:
         head = f"【工具结果：{tool}】" if ok else f"【工具不可用：{tool}】"
         return (f"{head}\n{observation}\n\n"
                 f"请继续：可以再调用一个工具，或用「最终答案：」开头给出结论。")
+
+    def _request_confirmation(self, step: AgentStep, index: int) -> bool:
+        """
+        [EN]
+        Ask the host to confirm one guard-tool invocation.
+
+        The request carries a fresh identifier plus the exact tool name and
+        arguments, so the confirmation shown to the user is the content that
+        will actually run. A missing callback, an exception, or a negative
+        answer all mean denial: the safe default is never to execute.
+
+        [ZH]
+        请求宿主确认一次高危工具调用。
+
+        请求携带全新标识、精确的工具名与参数，因此展示给用户的确认内容就是
+        即将执行的内容。回调缺失、抛出异常或给出否定答复均视为拒绝：安全默认值
+        永远是"不执行"。
+        """
+        if self.confirm_tool is None:
+            return False
+        if step.tool == "execute_shell":
+            preview = str(step.args.get("command") or step.args.get("cmd") or "")
+        elif step.tool == "git_command":
+            raw = step.args.get("args")
+            preview = " ".join(raw) if isinstance(raw, list) else str(raw or "")
+        else:
+            preview = json.dumps(step.args, ensure_ascii=False)
+        request = {
+            "type": "confirm_tool",
+            "request_id": uuid.uuid4().hex[:16],
+            "tool": step.tool,
+            "args": step.args,
+            "why": step.why,
+            "command": preview,
+        }
+        try:
+            return bool(self.confirm_tool(request))
+        except Exception:
+            return False
 
     # [EN] ---------- Main loop ----------
     # [ZH] ---------- 主循环 ----------
@@ -327,7 +379,21 @@ class AgentLoop:
                 break
 
             tool_started = time.time()
-            ok, observation = self.registry.run(step.tool, step.args)
+            # [EN] v0.2.6 task 2.4: guard tools require an explicit per-call
+            # [EN] confirmation. Without approval the tool is not invoked at all.
+            # [ZH] v0.2.6 任务 2.4：高危工具需要逐次显式确认。未获批准时完全不调用
+            # [ZH] 该工具。
+            tool_spec = self.registry.get(step.tool)
+            guard = tool_spec is not None and tool_spec.risk == RISK_GUARD
+            approved = True
+            if guard:
+                approved = self._request_confirmation(step, index)
+                step.confirmed = approved
+            if approved:
+                ok, observation = self.registry.run(
+                    step.tool, step.args, confirmed=guard)
+            else:
+                ok, observation = False, _t("tool.confirm_denied")
             step.elapsed_ms = int((time.time() - tool_started) * 1000)
             step.ok = ok
             step.observation = self._clip(observation, self.max_observation_chars)

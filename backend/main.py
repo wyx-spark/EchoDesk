@@ -131,6 +131,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from reasoning import ANSWER as _CH_ANSWER
@@ -576,6 +577,13 @@ class Backend:
         # [ZH] 保证模型推理串行，并使请求分发层可以立即应答。
         self._conv_lock = threading.RLock()
         self._document_jobs = DocumentJobManager(self._run_document_job)
+        # [EN] Pending per-invocation confirmations for guard tools (v0.2.6
+        # [EN] task 2.4). The agent worker registers a waiter, the dispatcher
+        # [EN] resolves it when the frontend answers.
+        # [ZH] 高危工具的待确认请求（v0.2.6 任务 2.4）。Agent 工作线程登记等待者，
+        # [ZH] 前端答复后由分发器解除。
+        self._pending_tool_confirmations: Dict[str, Dict[str, Any]] = {}
+        self._tool_confirm_lock = threading.Lock()
         self.commands = CommandHandler(
             self.conv, self.search, self.llm, config, summarizer=self.summarizer,
             file_loader=self.load_file_into_context, summarize_file=self.summarize_current_file,
@@ -1680,6 +1688,8 @@ class Backend:
         if action == "ping":
             return {"type": "pong", "ok": True, "busy": bool(self.stream_active),
                     "ts": time.time()}
+        if action == "confirm_tool":
+            return self._handle_tool_confirmation(request)
         if action == "file_async":
             return self._handle_file_async(request)
         if action == "file_job_status":
@@ -4841,6 +4851,84 @@ class Backend:
         thread.join(timeout=5)
         self._agent_run = box.get("run")
 
+    def _handle_tool_confirmation(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Resolve a pending guard-tool confirmation from the frontend.
+
+        [ZH]
+        解除前端发来的高危工具待确认请求。
+        """
+        request_id = str(request.get("request_id") or "")
+        approved = bool(request.get("approved"))
+        resolved = self.resolve_tool_confirmation(request_id, approved)
+        return {"type": "system", "content": "", "request_id": request_id,
+                "resolved": resolved, "approved": approved}
+
+    def resolve_tool_confirmation(self, request_id: str, approved: bool) -> bool:
+        """
+        [EN]
+        Record the user's decision and wake the waiting agent worker.
+
+        Returns whether the identifier matched a pending request.
+
+        [ZH]
+        记录用户决定并唤醒等待中的 Agent 工作线程。
+
+        返回标识是否匹配到待确认请求。
+        """
+        with self._tool_confirm_lock:
+            pending = self._pending_tool_confirmations.get(str(request_id or ""))
+            if pending is None:
+                return False
+            pending["approved"] = bool(approved)
+            pending["event"].set()
+            return True
+
+    def _confirm_agent_tool(self, request: Dict[str, Any]) -> bool:
+        """
+        [EN]
+        Emit a ``confirm_tool`` event and block until the user answers or the
+        configured timeout expires.
+
+        The event is written under the shared stdout lock, so it cannot
+        interleave with stream lines. The default answer is denial: a missing
+        frontend, a timeout, or a stop request never executes the command.
+
+        [ZH]
+        发出 ``confirm_tool`` 事件，并阻塞到用户答复或配置的超时到期。
+
+        事件在共享 stdout 锁内写出，不会与流式行交错。默认答复为拒绝：前端
+        缺失、超时或用户中止都不会执行命令。
+        """
+        request_id = str(request.get("request_id") or uuid.uuid4().hex[:16])
+        timeout = float(getattr(getattr(self.config, "agent", None),
+                                "confirm_timeout_seconds", 120) or 120)
+        pending: Dict[str, Any] = {"event": threading.Event(), "approved": False}
+        with self._tool_confirm_lock:
+            self._pending_tool_confirmations[request_id] = pending
+        tool = str(request.get("tool") or "")
+        command = str(request.get("command") or "")
+        payload = dict(request)
+        payload["request_id"] = request_id
+        payload["type"] = "confirm_tool"
+        payload["content"] = _t("agent.confirm_tool", tool=tool, command=command)
+        try:
+            _write(payload)
+        except Exception:
+            log.warning("发送工具确认事件失败", exc_info=True)
+        deadline = time.time() + max(1.0, timeout)
+        while time.time() < deadline:
+            if pending["event"].wait(0.2):
+                break
+            if self.stop_event.is_set():
+                break
+        with self._tool_confirm_lock:
+            self._pending_tool_confirmations.pop(request_id, None)
+        approved = bool(pending["approved"] and not self.stop_event.is_set())
+        log.info("高危工具确认 %s：%s", tool, "允许" if approved else "拒绝或超时")
+        return approved
+
     def _stream_agent(self, user_msg: str) -> Iterator[Dict[str, Any]]:
         """
         [EN]
@@ -4861,6 +4949,7 @@ class Backend:
             stop_event=self.stop_event,
             max_tokens=int(getattr(self.config, "max_tokens", 1024) or 1024),
             max_observation_chars=int(getattr(cfg, "max_observation_chars", 1200) or 1200),
+            confirm_tool=self._confirm_agent_tool,
         )
         temperature = float(getattr(self.commands, "temperature", 0.5) or 0.5)
 
@@ -7507,7 +7596,8 @@ def main() -> None:
             # [EN] must remain available while a long task runs (v0.2.6 task 2.1).
             # [ZH] 存活探测与后台作业轮询属于轻量请求，长任务运行期间必须保持
             # [ZH] 可用（v0.2.6 任务 2.1）。
-            is_lightweight = action in ("ping", "file_job_status", "file_job_cancel")
+            is_lightweight = action in ("ping", "file_job_status", "file_job_cancel",
+                                        "confirm_tool")
             if not is_command and not is_lightweight:
                 # [EN] Busy flag (model marketplace optimization in an earlier release): the
                 # [EN] single stdout stream is shared, and two threads writing at once

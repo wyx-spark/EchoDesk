@@ -98,6 +98,9 @@ import json
 import math
 import os
 import re
+import shlex
+import shutil
+import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -153,8 +156,10 @@ RISK_GUARD = "guard"
 _FAILURE_PREFIXES = (
     "计算失败", "换算失败", "日期计算失败", "检索失败", "摘要失败", "搜索失败",
     "读取失败", "MCP 工具调用失败", "MCP 工具调用异常", "工具执行出错",
+    "命令执行失败", "Git 执行失败",
+    "Command failed", "Git failed", "Command timed out",
 )
-_FAILURE_MARKERS = ("未启用", "已退出", "超时")
+_FAILURE_MARKERS = ("未启用", "已退出", "超时", "未确认", "需要确认")
 
 
 def looks_like_failure(text: str) -> bool:
@@ -811,6 +816,182 @@ def tool_file_read(args: Dict[str, Any], ctx: ToolContext) -> str:
 
 
 # ===========================================================================
+# [EN] Guarded system tools (v0.2.6 task 2.4)
+# [ZH] 高危系统工具（v0.2.6 任务 2.4）
+# ===========================================================================
+#
+# [EN] These tools have persistent side effects and are therefore classified as
+# [EN] ``guard``: the registry refuses to run them unless the caller explicitly
+# [EN] passes ``confirmed=True``. The Agent loop obtains that flag only after the
+# [EN] user approves the ``confirm_tool`` event in the UI. A direct call without
+# [EN] confirmation is denied, which is the defence-in-depth invariant tested by
+# [EN] ``tools/test_agent_guard.py``.
+# [ZH] 这些工具具有持久副作用，因此归类为 ``guard``：除非调用方显式传入
+# [ZH] ``confirmed=True``，注册表拒绝执行。Agent 循环仅在用户于界面批准
+# [ZH] ``confirm_tool`` 事件后才取得该标记。未经确认的直接调用一律拒绝，这是
+# [ZH] ``tools/test_agent_guard.py`` 断言的分层防御不变量。
+
+#: [EN] Maximum characters of command output echoed back into the model context.
+#: [ZH] 回灌到模型上下文的命令输出字符上限。
+_SYSTEM_OUTPUT_CHARS = 4000
+
+#: [EN] Command timeout bounds in seconds.
+#: [ZH] 命令超时上下限（秒）。
+_MIN_COMMAND_TIMEOUT = 5
+_MAX_COMMAND_TIMEOUT = 120
+
+
+def _clamp_timeout(value: Any) -> int:
+    """
+    [EN]
+    Clamp a caller-supplied timeout to the supported range.
+
+    [ZH]
+    把调用方给出的超时限制到支持区间。
+    """
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = 30
+    return max(_MIN_COMMAND_TIMEOUT, min(_MAX_COMMAND_TIMEOUT, seconds))
+
+
+def _run_system_command(argv: List[str], cwd: str, timeout: int):
+    """
+    [EN]
+    Run a process with captured output and no shell interpretation.
+
+    ``argv`` is always a list, so the executable and its arguments cannot be
+    altered by shell metacharacters. Only the command string handed to the
+    explicitly chosen shell is interpreted by that shell, which is the intended
+    semantics of ``execute_shell``.
+
+    [ZH]
+    以"参数列表、不经过 shell 解释"的方式运行进程。
+
+    ``argv`` 始终为列表，可执行文件与参数不会被 shell 元字符改写。只有交给
+    显式选定 shell 的命令字符串由该 shell 解释，这正是 ``execute_shell`` 的
+    预期语义。
+    """
+    kwargs: Dict[str, Any] = {
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": timeout,
+        "cwd": cwd,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return subprocess.run(argv, **kwargs)
+
+
+def _clip_output(text: str) -> str:
+    """
+    [EN]
+    Limit command output to the configured context budget.
+
+    [ZH]
+    把命令输出限制在上下文预算之内。
+    """
+    body = str(text or "").strip()
+    if len(body) <= _SYSTEM_OUTPUT_CHARS:
+        return body
+    return body[:_SYSTEM_OUTPUT_CHARS] + _t("tool.output_truncated",
+                                            chars=len(body))
+
+
+def tool_execute_shell(args: Dict[str, Any]) -> str:
+    """
+    [EN]
+    Execute one command in PowerShell (Windows) or Bash (POSIX).
+
+    The shell is selected from an explicit whitelist; no other interpreter is
+    used. The command string is the only shell-interpreted value, which is the
+    documented contract of this tool, and execution is gated by the per-call
+    confirmation described above.
+
+    [ZH]
+    在 PowerShell（Windows）或 Bash（POSIX）中执行一条命令。
+
+    shell 从显式白名单中选择，不使用其他解释器。命令字符串是唯一交由 shell
+    解释的值，这是本工具文档化的契约；执行受前述逐次确认闸门约束。
+    """
+    command = str(args.get("command") or args.get("cmd") or "").strip()
+    if not command:
+        return _t("tool.shell_need_command")
+    timeout = _clamp_timeout(args.get("timeout_seconds"))
+    cwd = str(args.get("cwd") or os.getcwd())
+    if not os.path.isdir(cwd):
+        return _t("tool.shell_bad_cwd", cwd=cwd)
+    if os.name == "nt":
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        argv = [shell, "-NoProfile", "-NonInteractive", "-Command", command]
+    else:
+        shell = shutil.which("bash") or shutil.which("sh")
+        argv = [shell, "-lc", command]
+    if not shell:
+        return _t("tool.shell_no_shell")
+    try:
+        completed = _run_system_command(argv, cwd, timeout)
+    except subprocess.TimeoutExpired:
+        return _t("tool.shell_timeout", seconds=timeout)
+    except OSError as exc:
+        return _t("tool.shell_failed", error=exc)
+    output = _clip_output(f"{completed.stdout or ''}{completed.stderr or ''}")
+    if completed.returncode != 0:
+        return _t("tool.shell_failed", error=_t(
+            "tool.shell_exit_code", code=completed.returncode, output=output))
+    return _t("tool.shell_result", code=completed.returncode,
+              output=output or _t("tool.shell_empty"))
+
+
+def tool_git_command(args: Dict[str, Any]) -> str:
+    """
+    [EN]
+    Run one Git command in a caller-specified working directory.
+
+    Arguments are supplied either as a list or as a shell-like string. The
+    string form is tokenized locally with ``shlex`` and never passed through a
+    shell, so quoting cannot introduce an additional command.
+
+    [ZH]
+    在调用方指定的工作目录中执行一条 Git 命令。
+
+    参数可以传列表或类 shell 字符串。字符串形式在本地用 ``shlex`` 分词，
+    绝不经过 shell，因此引号无法引入额外命令。
+    """
+    raw = args.get("args")
+    if raw is None:
+        raw = args.get("command")
+    if isinstance(raw, list):
+        parts = [str(item) for item in raw if str(item)]
+    else:
+        parts = shlex.split(str(raw or ""))
+    if not parts:
+        return _t("tool.git_need_args")
+    executable = shutil.which("git")
+    if not executable:
+        return _t("tool.git_no_git")
+    timeout = _clamp_timeout(args.get("timeout_seconds"))
+    cwd = str(args.get("cwd") or os.getcwd())
+    if not os.path.isdir(cwd):
+        return _t("tool.shell_bad_cwd", cwd=cwd)
+    try:
+        completed = _run_system_command([executable] + parts, cwd, timeout)
+    except subprocess.TimeoutExpired:
+        return _t("tool.git_timeout", seconds=timeout)
+    except OSError as exc:
+        return _t("tool.git_failed", error=exc)
+    output = _clip_output(f"{completed.stdout or ''}{completed.stderr or ''}")
+    if completed.returncode != 0:
+        return _t("tool.git_failed", error=_t(
+            "tool.shell_exit_code", code=completed.returncode, output=output))
+    return _t("tool.git_result", code=completed.returncode,
+              output=output or _t("tool.shell_empty"))
+
+
+# ===========================================================================
 # [EN] Registry
 # [ZH] 注册表
 # ===========================================================================
@@ -859,10 +1040,13 @@ class ToolRegistry:
         return [tool for tool in self.tools.values() if self.is_allowed(tool)]
 
     def is_allowed(self, tool: Tool) -> bool:
+        # [EN] Guard tools are listed and callable in principle, but
+        # [EN] ``run()`` refuses to execute them without an explicit
+        # [EN] per-invocation confirmation (v0.2.6 task 2.4).
+        # [ZH] 高危工具在原则上可见且可调用，但 ``run()`` 在没有逐次显式确认时
+        # [ZH] 拒绝执行（v0.2.6 任务 2.4）。
         if tool.risk == RISK_GUARD:
-            return False                              # [EN] This version provides no
-                                                       # [EN] tool with write side effects.
-                                                       # [ZH] 本版本不提供任何具有写入副作用的工具。
+            return True
         if tool.risk == RISK_SENSITIVE:
             return tool.name.lower() in self.allowed_sensitive
         return True
@@ -889,10 +1073,16 @@ class ToolRegistry:
     # [EN] ---------- Invocation ----------
     # [ZH] ---------- 调用 ----------
 
-    def run(self, name: str, args: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
+    def run(self, name: str, args: Optional[Dict[str, Any]] = None,
+            confirmed: bool = False) -> Tuple[bool, str]:
         """
         [EN]
         Execute a tool and return ``(succeeded, observation text)``.
+
+        ``confirmed`` is the per-invocation approval produced by the user's
+        response to a ``confirm_tool`` event. Guard tools are refused unless it
+        is true, so no code path can execute a system command merely by calling
+        ``run``.
 
         A text result is returned in every case (no exception, no silent failure):
         * Insufficient permission -> explains that the tool is not enabled and how to
@@ -902,6 +1092,10 @@ class ToolRegistry:
 
         [ZH]
         执行一个工具，返回 ``(是否成功, 观察结果文本)``。
+
+        ``confirmed`` 是用户对 ``confirm_tool`` 事件作出批准后产生的逐次授权。
+        高危工具在该值为真之前一律拒绝执行，因此不存在“仅调用 run 就能执行系统
+        命令”的代码路径。
 
         任何情况下都返回文本（不抛异常、不静默失败）：
         * 权限不足 → 说明"未启用 + 如何启用"，模型可据此改用其他办法；
@@ -920,6 +1114,9 @@ class ToolRegistry:
                                f"当前未启用。请在设置里或让用户用 /agent allow {name} 开启；"
                                f"现在请基于已有信息作答或换用其它工具。")
             return False, DENIED_MARK + _t("tool.unavailable", name=name)
+        if tool.risk == RISK_GUARD and not confirmed:
+            self.calls.append({"tool": name, "ok": False, "reason": "unconfirmed"})
+            return False, DENIED_MARK + _t("tool.confirm_required", name=name)
         try:
             if tool.name in _CTX_TOOLS:
                 result = tool.run(args, self.ctx)
@@ -1091,6 +1288,22 @@ def default_tools() -> List[Tool]:
             args_hint=_t("tool.read_args"),
             risk=RISK_SENSITIVE,
             run=tool_file_read,
+        ),
+        Tool(
+            name="execute_shell",
+            description=_t("tool.shell_desc"),
+            args_hint=_t("tool.shell_args"),
+            risk=RISK_GUARD,
+            run=tool_execute_shell,
+            example=_t("tool.shell_example"),
+        ),
+        Tool(
+            name="git_command",
+            description=_t("tool.git_desc"),
+            args_hint=_t("tool.git_args"),
+            risk=RISK_GUARD,
+            run=tool_git_command,
+            example=_t("tool.git_example"),
         ),
     ]
 

@@ -168,8 +168,9 @@ check("收回授权", _registry.allow("web_search", False) and
       "web_search" not in [t.name for t in _registry.available()])
 check("未知工具不抛异常、给出可用清单",
       _registry.run("nope", {})[0] is False and "没有名为" in _registry.run("nope", {})[1])
-check("本版不提供任何写盘/执行类工具（权限最小化）",
-      all(tool.risk != at.RISK_GUARD for tool in at.default_tools()))
+check("高危工具已提供但必须逐次确认",
+      any(tool.risk == at.RISK_GUARD for tool in at.default_tools())
+      and _registry.run("execute_shell", {"command": "echo x"})[0] is False)
 check("工具清单可给界面用",
       all({"name", "risk", "enabled", "description"} <= set(item)
           for item in _registry.public_list()))

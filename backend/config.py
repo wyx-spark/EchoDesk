@@ -1220,6 +1220,11 @@ class AgentConfig(BaseModel):
     #: [ZH] 允许使用的敏感工具名（联网搜索、读任意本地文件）。默认空 = 全部关闭，
     #: [ZH] 用户要在设置里或 /agent allow <工具> 显式打开；这样"数据不出本机"的默认承诺不变。
     allow_sensitive: List[str] = Field(default_factory=list)
+    #: [EN] Maximum wait for the user's answer to a ``confirm_tool`` event, in
+    #: [EN] seconds. On timeout the guard tool is denied, never executed.
+    #: [ZH] 用户回答 ``confirm_tool`` 事件的最长等待时间（秒）。超时即拒绝该
+    #: [ZH] 高危工具，绝不执行。
+    confirm_timeout_seconds: int = Field(default=120, ge=10, le=1800)
     #: [EN] Injection limit for a single tool result (characters). Tool results are fed
     #: [EN] back into the context; without a limit, a single file read can consume half
     #: [EN] the window.

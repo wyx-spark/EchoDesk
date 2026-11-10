@@ -1691,6 +1691,29 @@ public partial class MainWindow : Window
                         }
                         return;
                     }
+                    if (type == "confirm_tool")
+                    {
+                        // [EN] v0.2.6 task 2.4: guard-tool confirmation. The message body
+                        // [EN] comes from the backend and contains the exact command.
+                        // [EN] The answer is fire-and-forget because the agent stream
+                        // [EN] still owns the request gate.
+                        // [ZH] v0.2.6 任务 2.4：高危工具确认。正文由后端给出，包含即将
+                        // [ZH] 执行的确切命令。答复使用"只写不读"，因为 Agent 流仍持有
+                        // [ZH] 请求闸门。
+                        string requestId = GetStringField(root, "request_id");
+                        string body = GetStringField(root, "content");
+                        string title = Loc.T("main.agent.confirmToolTitle", "确认执行系统命令");
+                        bool approved = Dispatcher.Invoke(() =>
+                            MessageBox.Show(this, body, title, MessageBoxButton.YesNo,
+                                MessageBoxImage.Warning) == MessageBoxResult.Yes);
+                        _ = _backend!.SendFireAndForgetAsync(new
+                        {
+                            action = "confirm_tool",
+                            request_id = requestId,
+                            approved,
+                        });
+                        return;
+                    }
                     if (type != "done")
                         return;
                     // done 行带权威的运行指标（任务七）：以它为准（心跳期间的值是中间态）
