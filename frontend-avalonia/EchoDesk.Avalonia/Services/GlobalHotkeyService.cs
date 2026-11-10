@@ -252,15 +252,18 @@ public sealed class GlobalHotkeyService : IDisposable
     }
 
     /// <summary>
-    /// [EN] Remove the hook and stop the message loop.
-    /// [ZH] 移除钩子并停止消息循环。
+    /// [EN] Remove the hook and stop the message loop, keeping the service reusable
+    /// (the settings page restarts it after the push-to-talk switch changes).
+    /// [ZH] 移除钩子并停止消息循环，同时保持服务可复用（设置页在按键说话开关变化后
+    /// 重启它）。
     /// </summary>
-    public void Dispose()
+    public void Stop()
     {
         if (!_started)
             return;
         _started = false;
         _running = false;
+        _pushToTalkDown = false;
         if (_thread is not null && _threadId != 0)
         {
             Native.PostThreadMessage(_threadId, WmQuit, IntPtr.Zero, IntPtr.Zero);
@@ -272,6 +275,12 @@ public sealed class GlobalHotkeyService : IDisposable
         _installed = null;
         IsSupported = false;
     }
+
+    /// <summary>
+    /// [EN] Remove the hook and stop the message loop.
+    /// [ZH] 移除钩子并停止消息循环。
+    /// </summary>
+    public void Dispose() => Stop();
 
     private delegate IntPtr LowLevelKeyboardProc(int code, IntPtr wParam, IntPtr lParam);
 

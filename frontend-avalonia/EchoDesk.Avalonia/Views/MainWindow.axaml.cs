@@ -1300,6 +1300,23 @@ public partial class MainWindow : Window
             : Loc.T("main.media.visionUnavailable", "🖼 未配置视觉模型"));
     }
 
+    /// <summary>
+    /// [EN] Re-read media settings after the settings window closes and restart the
+    /// global hook so that a push-to-talk switch change takes effect without an
+    /// application restart.
+    /// [ZH] 设置窗口关闭后重新读取媒体设置并重启全局钩子，使按键说话开关的变化无需
+    /// 重启程序即可生效。
+    /// </summary>
+    private async Task ApplyMediaSettingsAsync()
+    {
+        if (!_mediaInitialized)
+            return;
+        await _media.LoadStateAsync(_state.Backend);
+        _hotkeys.Stop();
+        if (_media.State.PttEnabled)
+            _hotkeys.Start(_media.State.PttShortcut);
+    }
+
     private void RestoreHistory()
     {
         foreach ((string role, string content, string reasoning) in _state.Backend.RestoredHistory)
@@ -3032,6 +3049,7 @@ public partial class MainWindow : Window
             // [ZH] 回来后把可能被改动的业务设置反映到状态区
             ApplyTexts();
             await RefreshStatusAsync();
+            await ApplyMediaSettingsAsync();
         }
         catch (Exception ex)
         {
