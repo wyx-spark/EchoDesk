@@ -308,7 +308,7 @@
                  VerticalContentAlignment="Top"
                  BorderThickness="0" Background="Transparent" />
 
-        <Grid Grid.Row="1" Margin="0,6,0,0" ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
+        <Grid Grid.Row="1" Margin="0,6,0,0" ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
 
           <!--
             [EN] Left side: toggle button for the command input row (the plus sign rotates into
@@ -345,18 +345,36 @@
                   AutomationProperties.AutomationId="ContextChip">
             <TextBlock x:Name="ContextChipText" Text="" FontSize="11" />
           </Button>
+          <!--
+            [EN] v0.2.6 Part 2: live push-to-talk indicator. The transcribed text is
+                 inserted into the input box, so the indicator exists only while the
+                 recording is running and never changes the toolbar geometry.
+            [ZH] v0.2.6 Part 2：按键说话的实时指示。转写文本会写入输入框，因此该指示
+                 只在录音期间可见，且不改变工具栏几何。
+          -->
+          <TextBlock x:Name="RecordingHint" Grid.Column="2" Margin="12,0" FontSize="11"
+                     VerticalAlignment="Center" IsVisible="False"
+                     Foreground="{DynamicResource AccentBrush}"
+                     AutomationProperties.AutomationId="RecordingHint" />
           <Button x:Name="SettingsButton" Grid.Column="4" Width="34" Height="34" Classes="icon"
                   Content="⚙" FontSize="14" />
           <Button x:Name="UploadButton" Grid.Column="5" Width="34" Height="34" Classes="icon"
                   Content="📎" FontSize="14" />
-          <Button x:Name="StopButton" Grid.Column="6" Width="34" Height="34" Classes="icon"
+          <!--
+            [EN] Image attach (v0.2.6 Part 2): picks a screenshot and sends `image_chat`.
+            [ZH] 图片附加（v0.2.6 Part 2）：选择截图并发送 `image_chat`。
+          -->
+          <Button x:Name="ImageButton" Grid.Column="6" Width="34" Height="34" Classes="icon"
+                  Content="🖼" FontSize="14"
+                  AutomationProperties.AutomationId="ImageButton" />
+          <Button x:Name="StopButton" Grid.Column="7" Width="34" Height="34" Classes="icon"
                   Content="⏹" FontSize="14" IsVisible="False" />
           <!--
             [EN] The primary send affordance carries the accent fill as a local value, which is
                  immune to the neutral icon-button style overriding it.
             [ZH] 发送主操作以本地值承载强调色填充，避免被中性的图标按钮样式覆盖。
           -->
-          <Button x:Name="SendButton" Grid.Column="7" Width="40" Height="40" Margin="8,0,0,0"
+          <Button x:Name="SendButton" Grid.Column="8" Width="40" Height="40" Margin="8,0,0,0"
                   Classes="icon" Content="➤" FontSize="16"
                   Background="{DynamicResource AccentBrush}"
                   BorderBrush="{DynamicResource AccentBrush}"

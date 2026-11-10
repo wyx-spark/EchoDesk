@@ -85,6 +85,19 @@
       "hintWindows": "替代做法：在 Windows 上使用 WPF 版（正式安装包安装的那个），功能是完整的。",
       "hintOther": "替代做法：本页涉及的配置可以直接编辑 app/backend/config.json，或等待后续版本把该页迁移过来。"
     },
+    "media": {
+      "sectionTitle": "语音与多模态",
+      "ttsEnabled": "启用离线语音朗读（TTS）",
+      "ttsAutoRead": "自动朗读助手回答",
+      "voice": "音色",
+      "rate": "语速",
+      "voiceDefault": "默认音色（由系统选择）",
+      "rateValue": "语速 {0}",
+      "pttEnabled": "启用按键说话（长按右 Ctrl，松开自动转写）",
+      "hint": "语音与图片功能全部在本机离线运行；缺少本地模型或引擎时会明确提示，绝不调用云端服务。",
+      "saved": "✅ 语音设置已保存",
+      "saveFailed": "⚠️ 未能保存语音设置（后端未响应）"
+    },
     "model": {
       "hubTokenTip": "下载需授权的 Gated 模型时填写；留空则读环境变量 HF_TOKEN",
       "openModelsDirTip": "在文件资源管理器中打开本地模型库目录",

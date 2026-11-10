@@ -469,6 +469,29 @@
     "summary": {
       "preparing": "📝 正在解析文档并准备分段摘要…"
     },
+    "media": {
+      "imageTip": "附加图片并提问（jpg / png）",
+      "imageHelp": "把图片附加到当前提问，支持 jpg / png / webp / bmp",
+      "recording": "🔴 录音中…松开结束",
+      "recordingHelp": "按住按键说话：按下开始录音，松开后自动转写并填入输入框",
+      "hotkeyFallback": "⌨️ 本平台暂不支持全局快捷键：在本窗口内按住右 Ctrl 仍可录音，松开后自动转写。",
+      "hotkeyUnavailable": "⚠️ 全局快捷键不可用：{0}。可在窗口内按住右 Ctrl 录音。",
+      "visionReady": "🖼 图片对话可用",
+      "visionUnavailable": "🖼 未配置视觉模型",
+      "chooseTitle": "选择图片",
+      "filter": "图片",
+      "stageFailed": "❌ 无法暂存图片（格式不受支持或目标目录不可写）：{0}",
+      "visionUnavailableTip": "🖼 尚未配置可用的视觉模型：请在 config.json 的 media.vision_model 指定带 mmproj 的 VL 模型。",
+      "imageUser": "🖼 {0}",
+      "analyzing": "🔎 正在分析图片…",
+      "failed": "⚠️ 图片分析失败",
+      "recordFailed": "⚠️ 无法开始录音",
+      "recordingStatus": "🎙 录音中…松开结束",
+      "transcribing": "✍️ 正在转写语音…",
+      "sttFailed": "⚠️ 语音转写失败",
+      "sttEmpty": "没有识别到语音内容",
+      "transcribed": "✅ 已转写并填入输入框"
+    },
     "button": {
       "stopSummaryTip": "中止分段摘要 (Esc)",
       "send": "发送",

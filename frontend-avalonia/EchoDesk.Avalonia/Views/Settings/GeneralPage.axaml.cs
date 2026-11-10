@@ -38,6 +38,14 @@ public partial class GeneralPage : UserControl, ISettingsPage
     private ISettingsHost? _host;
 
     /// <summary>
+    /// [EN] Latest `media_state` snapshot (v0.2.6 Part 2). Null until the settings page
+    /// [EN] has asked the backend, so the controls keep their defaults on a failure.
+    /// [ZH] 最新的 `media_state` 快照（v0.2.6 Part 2）。在设置页向后端查询之前为 null，
+    /// [ZH] 因此后端失败时控件保持默认值。
+    /// </summary>
+    private MediaState? _mediaSnapshot;
+
+    /// <summary>
     /// [EN] Suppress "user changed" events while loading control values -- otherwise the settings
     /// [EN] page would show "unsaved changes" as soon as it opens.
     /// [ZH] 载入控件值时抑制“用户改动”事件 —— 否则一打开设置页就显示“有未保存改动”。
@@ -58,6 +66,7 @@ public partial class GeneralPage : UserControl, ISettingsPage
     {
         InitializeComponent();
         BuildOptions();
+        BuildRateOptions();
         HookEvents();
     }
 
@@ -193,6 +202,82 @@ public partial class GeneralPage : UserControl, ISettingsPage
                 return;
             _host.MarkDirty();
         };
+
+        // [EN] Media switches (v0.2.6 Part 2). Automatic reading is meaningful only
+        // [EN] while speech output is enabled, so the dependent control follows.
+        // [ZH] 媒体开关（v0.2.6 Part 2）。自动朗读仅在语音输出启用时才有意义，因此
+        // [ZH] 从属控件随之变化。
+        TtsEnabledCheck.IsCheckedChanged += (_, _) =>
+        {
+            if (_applying || _host is null)
+                return;
+            bool enabled = TtsEnabledCheck.IsChecked == true;
+            TtsAutoReadCheck.IsEnabled = enabled;
+            TtsVoiceCombo.IsEnabled = enabled;
+            TtsRateCombo.IsEnabled = enabled;
+            _host.MarkDirty();
+        };
+        TtsAutoReadCheck.IsCheckedChanged += (_, _) =>
+        {
+            if (_applying || _host is null)
+                return;
+            _host.MarkDirty();
+        };
+        PttEnabledCheck.IsCheckedChanged += (_, _) =>
+        {
+            if (_applying || _host is null)
+                return;
+            _host.MarkDirty();
+        };
+        TtsVoiceCombo.SelectionChanged += (_, _) =>
+        {
+            if (_applying || _host is null)
+                return;
+            _host.MarkDirty();
+        };
+        TtsRateCombo.SelectionChanged += (_, _) =>
+        {
+            if (_applying || _host is null)
+                return;
+            _host.MarkDirty();
+        };
+    }
+
+    /// <summary>
+    /// [EN] Speech-rate items. The stored value is the SAPI step (`-10..10`); only a
+    /// [EN] practical subset is offered, because a single step barely changes the rate.
+    /// [ZH] 语速选项。存储值为 SAPI 档位（`-10..10`）；只提供实用子集，因为单档
+    /// [ZH] 之间的差异几乎听不出来。
+    /// </summary>
+    private void BuildRateOptions()
+    {
+        var rates = new List<string>();
+        for (int step = -10; step <= 10; step += 2)
+            rates.Add(step.ToString());
+        TtsRateCombo.ItemsSource = rates.ConvertAll(value => new Option(value,
+            () => Loc.T("settings.media.rateValue", "语速 {0}", value)));
+    }
+
+    /// <summary>
+    /// [EN] Voice items from a `media_state` snapshot. The first item is always "engine
+    /// default" so that a machine with no voices still has a valid selection.
+    /// [ZH] 由 `media_state` 快照构造音色选项。首项始终是"引擎默认"，因此没有音色的
+    /// [ZH] 机器仍有合法选择。
+    /// </summary>
+    private void BuildVoiceOptions(MediaState? state)
+    {
+        string? current = (TtsVoiceCombo.SelectedItem as Option)?.Value;
+        var options = new List<Option>
+        {
+            new("", () => Loc.T("settings.media.voiceDefault", "默认音色（由系统选择）")),
+        };
+        if (state is not null)
+        {
+            foreach (string voice in state.Voices)
+                options.Add(new(voice, () => voice));
+        }
+        TtsVoiceCombo.ItemsSource = options;
+        Select(TtsVoiceCombo, current ?? state?.TtsVoice ?? "");
     }
 
     /// <summary>
@@ -335,6 +420,14 @@ public partial class GeneralPage : UserControl, ISettingsPage
             FontSizeSlider.Value = settings.FontSize;
             FontSizeValueText.Text = $"{settings.FontSize:0} pt";
             ConfirmDestructiveCheck.IsChecked = settings.ConfirmDestructiveCommands;
+            // [EN] Media controls start from safe defaults; the backend snapshot fills
+            // [EN] them in RefreshAsync.
+            // [ZH] 媒体控件从安全默认值开始；后端快照在 RefreshAsync 中回填。
+            TtsEnabledCheck.IsChecked = true;
+            TtsAutoReadCheck.IsChecked = false;
+            PttEnabledCheck.IsChecked = true;
+            Select(TtsRateCombo, "0");
+            BuildVoiceOptions(null);
         }
         finally
         {
@@ -362,6 +455,7 @@ public partial class GeneralPage : UserControl, ISettingsPage
     {
         if (_host is null)
             return;
+        await RefreshMediaAsync();
         // [EN] Default mode: the backend sets it from config.json at startup. The front end reads
         // [EN] it once to fill the control, so the display does not contradict reality.
         // [ZH] 默认模式：后端启动时按 config.json 设定。前端读一次回填，避免显示与实际不符。
@@ -392,6 +486,55 @@ public partial class GeneralPage : UserControl, ISettingsPage
         }
     }
 
+    /// <summary>
+    /// [EN] Load the media state and fill the speech controls (v0.2.6 Part 2).
+    ///
+    /// The backend is the single authority for "is a voice engine available" and for
+    /// the configured values, so the page never guesses. When the engine is missing
+    /// the switches stay visible but disabled, with the reason shown below them.
+    ///
+    /// [ZH] 载入媒体状态并回填语音控件（v0.2.6 Part 2）。
+    ///
+    /// "是否存在语音引擎"与已配置取值以后端为唯一权威，设置页不做猜测。引擎缺失时
+    /// 开关保持可见但禁用，并在下方说明原因。
+    /// </summary>
+    private async Task RefreshMediaAsync()
+    {
+        if (_host is null)
+            return;
+        try
+        {
+            var service = new MediaService();
+            _mediaSnapshot = await service.LoadStateAsync(_host.State.Backend);
+            _applying = true;
+            try
+            {
+                TtsEnabledCheck.IsChecked = _mediaSnapshot.TtsEnabled;
+                TtsAutoReadCheck.IsChecked = _mediaSnapshot.TtsAutoRead;
+                PttEnabledCheck.IsChecked = _mediaSnapshot.PttEnabled;
+                BuildVoiceOptions(_mediaSnapshot);
+                Select(TtsRateCombo,
+                    (Math.Clamp(_mediaSnapshot.TtsRate, -10, 10) % 2 == 0
+                        ? Math.Clamp(_mediaSnapshot.TtsRate, -10, 10)
+                        : 0).ToString());
+                bool engine = _mediaSnapshot.TtsEngineAvailable && _mediaSnapshot.TtsEnabled;
+                TtsEnabledCheck.IsEnabled = _mediaSnapshot.TtsEngineAvailable;
+                TtsAutoReadCheck.IsEnabled = engine;
+                TtsVoiceCombo.IsEnabled = engine;
+                TtsRateCombo.IsEnabled = engine;
+            }
+            finally
+            {
+                _applying = false;
+            }
+        }
+        catch (Exception)
+        {
+            // [EN] A backend that is down must not keep the settings window from opening.
+            // [ZH] 后端未启动不应阻止设置窗口打开。
+        }
+    }
+
     public async Task ApplyToBackendAsync()
     {
         if (_host is null)
@@ -408,6 +551,59 @@ public partial class GeneralPage : UserControl, ISettingsPage
         if (string.IsNullOrEmpty(mode))
             return;
         await _host.State.Backend.SendAsync(new { action = "chat", message = $"/mode {mode}" });
+        await ApplyMediaConfigAsync();
+    }
+
+    /// <summary>
+    /// [EN] Persist the speech switches through `media_config_set` (v0.2.6 Part 2).
+    ///
+    /// Values are sent to the backend rather than written into `config.json` from the
+    /// front end: the backend validates them and is the only writer, exactly like the
+    /// default-mode path above.
+    ///
+    /// [ZH] 通过 `media_config_set` 持久化语音开关（v0.2.6 Part 2）。
+    ///
+    /// 取值发送给后端，而不是由前端写入 `config.json`：后端负责校验且是唯一写入方，
+    /// 与上面的默认模式路径一致。
+    /// </summary>
+    private async Task ApplyMediaConfigAsync()
+    {
+        if (_host is null)
+            return;
+        int rate = int.TryParse(Selected(TtsRateCombo), out int parsed) ? parsed : 0;
+        try
+        {
+            using System.Text.Json.JsonDocument? doc = await _host.State.Backend.SendAsync(new
+            {
+                action = "media_config_set",
+                tts_enabled = TtsEnabledCheck.IsChecked == true,
+                tts_auto_read = TtsAutoReadCheck.IsChecked == true,
+                tts_voice = Selected(TtsVoiceCombo) ?? "",
+                tts_rate = rate,
+                ptt_enabled = PttEnabledCheck.IsChecked == true,
+            }, idleTimeout: TimeSpan.FromSeconds(30));
+            if (doc is null)
+            {
+                _host.ShowStatus(Loc.T("settings.media.saveFailed", "⚠️ 未能保存语音设置（后端未响应）"));
+                return;
+            }
+            if (doc.RootElement.TryGetProperty("ok", out System.Text.Json.JsonElement ok)
+                && ok.ValueKind == System.Text.Json.JsonValueKind.False)
+            {
+                string message = doc.RootElement.TryGetProperty("content",
+                    out System.Text.Json.JsonElement content)
+                    ? content.GetString() ?? "" : "";
+                _host.ShowStatus(string.IsNullOrWhiteSpace(message)
+                    ? Loc.T("settings.media.saveFailed", "⚠️ 未能保存语音设置（后端未响应）")
+                    : message);
+                return;
+            }
+            _host.ShowStatus(Loc.T("settings.media.saved", "✅ 语音设置已保存"));
+        }
+        catch (Exception ex)
+        {
+            _host.ShowStatus($"⚠️ {ex.Message}");
+        }
     }
 
     public void ApplyTexts()
@@ -440,6 +636,15 @@ public partial class GeneralPage : UserControl, ISettingsPage
         DefaultModeHint.Text = DefaultModeLabel.Text;
         ConfirmDestructiveCheck.Content = Loc.T("settings.general.confirmDestructive",
             "执行有副作用的指令（/clear、/clearcache）前二次确认");
+        MediaTitle.Text = Loc.T("settings.media.sectionTitle", "语音与多模态");
+        TtsEnabledCheck.Content = Loc.T("settings.media.ttsEnabled", "启用离线语音朗读（TTS）");
+        TtsAutoReadCheck.Content = Loc.T("settings.media.ttsAutoRead", "自动朗读助手回答");
+        TtsVoiceLabel.Text = Loc.T("settings.media.voice", "音色");
+        TtsRateLabel.Text = Loc.T("settings.media.rate", "语速");
+        PttEnabledCheck.Content = Loc.T("settings.media.pttEnabled",
+            "启用按键说话（长按右 Ctrl，松开自动转写）");
+        MediaHint.Text = Loc.T("settings.media.hint",
+            "语音与图片功能全部在本机离线运行；缺少本地模型或引擎时会明确提示，绝不调用云端服务。");
         LangPackTitle.Text = Loc.T("settings.general.langPackTitle", "语言包");
         ReloadLangButton.Content = Loc.T("settings.general.reloadLang", "↻ 重新加载语言包");
         OpenLangDirButton.Content = Loc.T("settings.general.openLangDir", "📂 打开语言包目录");
@@ -450,7 +655,8 @@ public partial class GeneralPage : UserControl, ISettingsPage
         // [EN] Drop-down text is provided by a delegate, so changing the language must refresh the
         // [EN] display of the currently selected item.
         // [ZH] 下拉项文案是委托，改了语言要把当前选中项显示刷新一遍。
-        RefreshComboTexts(ThemeCombo, EmojiCombo, LanguageCombo, DefaultModeCombo);
+        RefreshComboTexts(ThemeCombo, EmojiCombo, LanguageCombo, DefaultModeCombo,
+            TtsVoiceCombo, TtsRateCombo);
     }
 
     /// <summary>

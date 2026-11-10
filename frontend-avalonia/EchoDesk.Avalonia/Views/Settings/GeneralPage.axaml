@@ -69,6 +69,32 @@
       <CheckBox x:Name="ConfirmDestructiveCheck" Margin="0,14,0,0"
                 AutomationProperties.AutomationId="ConfirmDestructiveCheck" />
 
+      <!-- [EN] (1b) Multimodal and speech (v0.2.6 Part 2): switches and voice choice. -->
+      <!-- [ZH] ①b 多模态与语音（v0.2.6 Part 2）：开关与音色选择。 -->
+      <TextBlock x:Name="MediaTitle" FontSize="15" FontWeight="Bold"
+                 Foreground="{DynamicResource AccentBrush}" Margin="0,18,0,10" />
+
+      <CheckBox x:Name="TtsEnabledCheck" Margin="0,0,0,0"
+                AutomationProperties.AutomationId="TtsEnabledCheck" />
+      <CheckBox x:Name="TtsAutoReadCheck" Margin="0,8,0,0"
+                AutomationProperties.AutomationId="TtsAutoReadCheck" />
+
+      <TextBlock x:Name="TtsVoiceLabel" Margin="0,12,0,4"
+                 Foreground="{DynamicResource SubTextBrush}" />
+      <StackPanel Orientation="Horizontal">
+        <ComboBox x:Name="TtsVoiceCombo" Width="320" HorizontalAlignment="Left"
+                  AutomationProperties.AutomationId="TtsVoiceCombo" />
+        <TextBlock x:Name="TtsRateLabel" Margin="12,0,8,0" VerticalAlignment="Center"
+                   Foreground="{DynamicResource SubTextBrush}" />
+        <ComboBox x:Name="TtsRateCombo" Width="120" HorizontalAlignment="Left"
+                  AutomationProperties.AutomationId="TtsRateCombo" />
+      </StackPanel>
+
+      <CheckBox x:Name="PttEnabledCheck" Margin="0,12,0,0"
+                AutomationProperties.AutomationId="PttEnabledCheck" />
+      <TextBlock x:Name="MediaHint" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"
+                 Foreground="{DynamicResource SubTextBrush}" />
+
       <!-- [EN] (2) Language. -->
       <!-- [ZH] ② 语言 / Language。 -->
       <TextBlock x:Name="LanguageTitle" FontSize="15" FontWeight="Bold"

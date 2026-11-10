@@ -60,7 +60,8 @@
     "record_unavailable": "无法开始录音：{detail}",
     "record_already_active": "已有录音正在进行",
     "record_not_active": "当前没有正在进行的录音",
-    "record_empty": "录音为空，未产生有效音频"
+    "record_empty": "录音为空，未产生有效音频",
+    "config_save_failed": "保存媒体设置失败：{detail}"
   },
   "mcp": {
     "tool_reported_error": "（工具报告错误）{detail}",

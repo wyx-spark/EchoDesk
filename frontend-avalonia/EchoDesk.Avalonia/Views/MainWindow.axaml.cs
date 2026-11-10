@@ -89,6 +89,19 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _streamCts;
     private bool _busy;
 
+    // [EN] v0.2.6 Part 2 media state: staging directories, vision/STT availability,
+    //      speech configuration and the global push-to-talk hook. The service never
+    //      blocks construction; it is populated after the backend is ready.
+    // [ZH] v0.2.6 Part 2 媒体状态：暂存目录、视觉/转写可用性、语音配置与全局按键
+    //      说话钩子。服务不阻塞构造；后端就绪后填充。
+    private readonly MediaService _media = new();
+    private readonly GlobalHotkeyService _hotkeys = new();
+    private bool _recording;
+    private bool _pttPending;
+    private bool _pttReleasePending;
+    private bool _mediaInitialized;
+    private string _lastAssistantAnswer = "";
+
     // [EN] Streaming state. The answer and reasoning buffers are appended from the backend
     //      reader thread, therefore every access is serialised through the gate below while the
     //      rendering pass itself executes on the UI thread only.
@@ -501,6 +514,7 @@ public partial class MainWindow : Window
         SendButton.Click += async (_, _) => await SendAsync();
         StopButton.Click += async (_, _) => await StopAsync();
         UploadButton.Click += async (_, _) => await PickFilesAsync();
+        ImageButton.Click += async (_, _) => await PickImageAsync();
         SettingsButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.general");
         ModelChip.Click += async (_, _) => await OpenSettingsAsync("settings.tab.model");
         ModeChip.Click += async (_, _) => await OpenSettingsAsync("settings.tab.general");
@@ -567,6 +581,10 @@ public partial class MainWindow : Window
         // [ZH] 必须比输入框先看到按键，否则 Ctrl+L / Ctrl+M 会被输入框当普通字符吃掉，
         // [ZH] Esc 也永远轮不到“关面板 / 停生成”。
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
+        // [EN] Key-up accompanies the window-level push-to-talk fallback (platforms
+        // [EN] without a global hook), so releasing the key really ends the recording.
+        // [ZH] 松开事件用于窗口内按键说话回退（无全局钩子的平台），确保松键真正结束录音。
+        AddHandler(KeyUpEvent, OnWindowKeyUp, RoutingStrategies.Tunnel);
         // [EN] Message area: Ctrl+wheel adjusts the font size (the same behaviour as
         // [EN] MessageScroll_PreviewMouseWheel in WPF).
         // [ZH] 消息区 Ctrl+滚轮调字号（与 WPF 的 MessageScroll_PreviewMouseWheel 同一行为）
@@ -600,6 +618,18 @@ public partial class MainWindow : Window
     /// </summary>
     private void OnWindowKeyDown(object? sender, KeyEventArgs e)
     {
+        // [EN] Window-level push-to-talk fallback (v0.2.6 Part 2): when the platform
+        // [EN] has no global hook, holding the configured key inside the window still
+        // [EN] records. The global hook path is handled by GlobalHotkeyService.
+        // [ZH] 窗口内按键说话回退（v0.2.6 Part 2）：平台没有全局钩子时，在窗口内按住
+        // [ZH] 配置键仍可录音。全局钩子路径由 GlobalHotkeyService 处理。
+        if (!_hotkeys.IsSupported && _media.State.PttEnabled
+            && e.Key == Key.RightCtrl && !_recording)
+        {
+            e.Handled = true;
+            _ = StartPushToTalkAsync();
+            return;
+        }
         bool ctrl = e.KeyModifiers == KeyModifiers.Control;
         bool ctrlShift = e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift);
 
@@ -672,6 +702,19 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 _ = StopAsync();
             }
+        }
+    }
+
+    /// <summary>
+    /// [EN] Key-up half of the window-level push-to-talk fallback.
+    /// [ZH] 窗口内按键说话回退的松键半边。
+    /// </summary>
+    private void OnWindowKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (!_hotkeys.IsSupported && e.Key == Key.RightCtrl && _recording)
+        {
+            e.Handled = true;
+            _ = FinishPushToTalkAsync();
         }
     }
 
@@ -905,6 +948,8 @@ public partial class MainWindow : Window
         ToolTip.SetTip(SnippetButton, Loc.T("main.snippet.tip", "打开常用语选择框"));
         ToolTip.SetTip(SettingsButton, Loc.T("main.button.settingsTip", "打开设置"));
         ToolTip.SetTip(UploadButton, Loc.T("main.button.uploadTip", "上传文件加入上下文"));
+        ToolTip.SetTip(ImageButton, Loc.T("main.media.imageTip", "附加图片并提问（jpg / png）"));
+        RecordingHint.Text = Loc.T("main.media.recording", "🔴 录音中…松开结束");
         ToolTip.SetTip(SendButton, Loc.T("main.button.sendTip", "发送（Ctrl+Enter）"));
         ToolTip.SetTip(ModelChip, Loc.T("main.model.clickTip", "点击打开「设置 → 模型」"));
         ToolTip.SetTip(ModeChip, Loc.T("main.mode.clickTip", "点击打开「设置 → 常规」"));
@@ -994,6 +1039,10 @@ public partial class MainWindow : Window
         AutomationProperties.SetHelpText(StripMemoryButton, Loc.T("main.strip.memoryHelp", "物理内存占用比例"));
         AutomationProperties.SetHelpText(StripCapabilityButton, Loc.T("main.strip.capabilityHelp", "模型能力信息"));
         AutomationProperties.SetHelpText(StripCompactButton, Loc.T("main.strip.compactHelp", "立刻压缩上下文"));
+        AutomationProperties.SetHelpText(ImageButton, Loc.T("main.media.imageHelp",
+            "把图片附加到当前提问，支持 jpg / png / webp / bmp"));
+        AutomationProperties.SetHelpText(RecordingHint, Loc.T("main.media.recordingHelp",
+            "按住按键说话：按下开始录音，松开后自动转写并填入输入框"));
     }
 
     private void ApplyFontSize()
@@ -1205,6 +1254,50 @@ public partial class MainWindow : Window
         await RefreshAutomationStatusAsync();
         await RefreshMarketStatusAsync();
         await CheckUpdateAsync();
+        await InitializeMediaAsync();
+    }
+
+    /// <summary>
+    /// [EN] Load media capabilities and start the push-to-talk hook.
+    ///
+    /// Called once after the backend handshake. A failure in any part is non-fatal:
+    /// the image button and speech features each report their own localized reason
+    /// when used, and the hook degrades to the in-window shortcut.
+    ///
+    /// [ZH] 加载媒体能力并启动按键说话钩子。
+    ///
+    /// 后端握手完成后调用一次。任何一部分失败都不致命：图片按钮与语音功能在真正
+    /// 使用时各自报告已本地化原因，钩子降级为窗口内快捷键。
+    /// </summary>
+    private async Task InitializeMediaAsync()
+    {
+        if (_mediaInitialized)
+            return;
+        _mediaInitialized = true;
+        await _media.LoadStateAsync(_state.Backend);
+
+        _hotkeys.PushToTalkPressed += () => Dispatcher.UIThread.Post(() => _ = StartPushToTalkAsync());
+        _hotkeys.PushToTalkReleased += () => Dispatcher.UIThread.Post(() => _ = FinishPushToTalkAsync());
+        // [EN] The spotlight window is not part of this round's delivery, so the
+        // [EN] chord is deliberately left disabled instead of opening nothing.
+        // [ZH] 极速呼出窗口不在本轮交付范围，因此刻意不启用组合键，避免按下后没有反应。
+        _hotkeys.SetSpotlightEnabled(false);
+        if (_media.State.PttEnabled)
+            _hotkeys.Start(_media.State.PttShortcut);
+        if (!_hotkeys.IsSupported && !OperatingSystem.IsWindows())
+        {
+            AddMessage("system", Loc.T("main.media.hotkeyFallback",
+                "⌨️ 本平台暂不支持全局快捷键：在本窗口内按住右 Ctrl 仍可录音，松开后自动转写。"));
+        }
+        else if (!_hotkeys.IsSupported && _hotkeys.UnavailableReason.Length > 0)
+        {
+            AddMessage("system", Loc.T("main.media.hotkeyUnavailable",
+                "⚠️ 全局快捷键不可用：{0}。可在窗口内按住右 Ctrl 录音。",
+                _hotkeys.UnavailableReason));
+        }
+        SetStatus(_media.State.VisionAvailable
+            ? Loc.T("main.media.visionReady", "🖼 图片对话可用")
+            : Loc.T("main.media.visionUnavailable", "🖼 未配置视觉模型"));
     }
 
     private void RestoreHistory()
@@ -2989,7 +3082,8 @@ public partial class MainWindow : Window
                 return;
             }
 
-            await StreamChatAsync(text);
+            string answer = await StreamChatAsync(text);
+            await MaybeSpeakAsync(answer);
         }
         finally
         {
@@ -3031,7 +3125,7 @@ public partial class MainWindow : Window
     /// [ZH] 流式执行一轮对话：双通道增量、结构化事件与可中止能力。每个增量均通过流式闸门写入
     /// [ZH] 缓冲区，并由合并式定时器渲染，绝不直接在后端读取线程上渲染。
     /// </summary>
-    private async Task StreamChatAsync(string text)
+    private async Task<string> StreamChatAsync(string text)
     {
         ResetStreamBuffers();
         _live = AddMessageView("assistant", "", "");
@@ -3040,6 +3134,7 @@ public partial class MainWindow : Window
         _streamCts = new CancellationTokenSource();
 
         string finalText = "";
+        string answer = "";
         _liveMetrics = "";
         try
         {
@@ -3115,16 +3210,18 @@ public partial class MainWindow : Window
         finally
         {
             StopRenderTimer();
-            string answer = finalText.Length > 0 ? finalText : SnapshotAnswer();
+            answer = finalText.Length > 0 ? finalText : SnapshotAnswer();
             string reasoning = SnapshotReasoning();
             RemoveLiveMessage();
             AddMessage("assistant", answer, reasoning, _liveMetrics);
+            _lastAssistantAnswer = answer;
             _streamCts?.Dispose();
             _streamCts = null;
             _agentRegion = null;
             _agentRows = null;
             await RefreshContextAsync();
         }
+        return answer;
     }
 
     /// <summary>
@@ -3635,6 +3732,290 @@ public partial class MainWindow : Window
     // [EN] File upload
     // [ZH] 文件上传
     // -----------------------------------------------------------------
+
+    /// <summary>
+    /// [EN] Attach one local image and ask about it (`image_chat`, v0.2.6 Part 2).
+    ///
+    /// [EN] The picked file is copied into the backend staging directory first; only
+    /// the resulting absolute path crosses the protocol. The current input text (if
+    /// any) becomes the question, which makes "type a question, then attach a
+    /// screenshot" behave as expected.
+    ///
+    /// [ZH] 附加一张本地图片并对其提问（`image_chat`，v0.2.6 Part 2）。
+    ///
+    /// [ZH] 所选文件先复制到后端暂存目录，只有生成的绝对路径跨协议传递。当前输入
+    /// 框文本（如有）作为问题，使"先写问题、再附加截图"符合预期。
+    /// </summary>
+    private async Task PickImageAsync()
+    {
+        if (_busy)
+        {
+            Toast(Loc.T("main.error.busy", "⏳ 上一条回复仍在生成，请先停止或等待完成"));
+            return;
+        }
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = Loc.T("main.media.chooseTitle", "选择图片"),
+            AllowMultiple = false,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType(Loc.T("main.media.filter", "图片"))
+                {
+                    Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp" },
+                },
+            },
+        });
+        string? source = files.Select(f => f.TryGetLocalPath())
+            .FirstOrDefault(p => !string.IsNullOrEmpty(p));
+        if (string.IsNullOrEmpty(source))
+            return;
+
+        if (!_media.State.Loaded)
+            await _media.LoadStateAsync(_state.Backend);
+        string? staged = _media.StageImage(source!);
+        if (staged is null)
+        {
+            AddMessage("system", Loc.T("main.media.stageFailed",
+                "❌ 无法暂存图片（格式不受支持或目标目录不可写）：{0}", source));
+            return;
+        }
+        if (_media.State.Loaded && !_media.State.VisionAvailable)
+        {
+            AddMessage("system", string.IsNullOrWhiteSpace(_media.State.VisionReason)
+                ? Loc.T("main.media.visionUnavailableTip",
+                    "🖼 尚未配置可用的视觉模型：请在 config.json 的 media.vision_model 指定带 mmproj 的 VL 模型。")
+                : _media.State.VisionReason);
+            return;
+        }
+
+        string prompt = (InputBox.Text ?? "").Trim();
+        InputBox.Text = "";
+        AddMessage("user", prompt.Length > 0
+            ? Loc.T("main.media.imageUser", "🖼 {0}", Path.GetFileName(staged)) + Environment.NewLine + prompt
+            : Loc.T("main.media.imageUser", "🖼 {0}", Path.GetFileName(staged)));
+        AddMessage("system", Loc.T("main.media.analyzing", "🔎 正在分析图片…"));
+        SetBusy(true);
+        try
+        {
+            using JsonDocument? doc = await _state.Backend.SendAsync(
+                new { action = "image_chat", path = staged, prompt },
+                idleTimeout: TimeSpan.FromMinutes(15));
+            if (doc is null)
+            {
+                AddMessage("system", Loc.T("main.error.requestFailed",
+                    "❌ 请求失败: {0}", _state.Backend.LastError ?? ""));
+                return;
+            }
+            JsonElement root = doc.RootElement;
+            bool ok = !root.TryGetProperty("ok", out JsonElement okElement)
+                || okElement.ValueKind != JsonValueKind.False;
+            string content = root.TryGetProperty("content", out JsonElement contentElement)
+                ? contentElement.GetString() ?? "" : "";
+            if (!ok)
+            {
+                AddMessage("system", string.IsNullOrWhiteSpace(content)
+                    ? Loc.T("main.media.failed", "⚠️ 图片分析失败")
+                    : content);
+                return;
+            }
+            AddMessage("assistant", content);
+            _lastAssistantAnswer = content;
+            ApplyStatusFields(root);
+            await RefreshContextAsync();
+            await MaybeSpeakAsync(content);
+        }
+        catch (Exception ex)
+        {
+            AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    /// <summary>
+    /// [EN] Push-to-talk press handler: ask the backend to start recording.
+    /// [ZH] 按键说话按下处理：请求后端开始录音。
+    /// </summary>
+    private async Task StartPushToTalkAsync()
+    {
+        // [EN] The pending flag coalesces key auto-repeat: the hook reports repeated
+        // key-down events while the key is held, and only the first one may start a
+        // recording.
+        // [ZH] 待处理标记用于合并按键自动重复：按住期间钩子会重复上报按下事件，
+        // 只有第一个可以开始录音。
+        if (_busy || _recording || _pttPending || !_state.Backend.IsRunning)
+            return;
+        _pttPending = true;
+        try
+        {
+            using JsonDocument? doc = await _state.Backend.SendAsync(
+                new { action = "audio_record_start" },
+                idleTimeout: TimeSpan.FromSeconds(20));
+            if (doc is null || (doc.RootElement.TryGetProperty("ok", out JsonElement ok)
+                                && ok.ValueKind == JsonValueKind.False))
+            {
+                string message = doc is not null
+                    && doc.RootElement.TryGetProperty("content", out JsonElement content)
+                    ? content.GetString() ?? "" : _state.Backend.LastError ?? "";
+                Toast(string.IsNullOrWhiteSpace(message)
+                    ? Loc.T("main.media.recordFailed", "⚠️ 无法开始录音")
+                    : message);
+                return;
+            }
+            _recording = true;
+            _pttPending = false;
+            RecordingHint.IsVisible = true;
+            SetStatus(Loc.T("main.media.recordingStatus", "🎙 录音中…松开结束"));
+            // [EN] The key may have been released while the start request was in
+            // [EN] flight. Honour that release now instead of leaving a recording that
+            // [EN] would otherwise run until the watchdog fires.
+            // [ZH] 开始请求尚未返回时用户可能已经松键。此处兑现该松开事件，避免录音
+            // [ZH] 一直跑到看门狗触发。
+            if (_pttReleasePending)
+            {
+                _pttReleasePending = false;
+                await FinishPushToTalkAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast(Loc.T("main.media.recordFailed", "⚠️ 无法开始录音") + $" {ex.Message}");
+        }
+        finally
+        {
+            _pttPending = false;
+        }
+    }
+
+    /// <summary>
+    /// [EN] Push-to-talk release handler: stop recording, transcribe, and put the text
+    /// into the input box (never send it automatically: the user reviews first).
+    /// [ZH] 按键说话松开处理：停止录音、转写，并把文本写入输入框（绝不自动发送：
+    /// 由用户先确认）。
+    /// </summary>
+    private async Task FinishPushToTalkAsync()
+    {
+        if (_pttPending)
+        {
+            _pttReleasePending = true;
+            return;
+        }
+        if (!_recording)
+            return;
+        _recording = false;
+        RecordingHint.IsVisible = false;
+        SetStatus(Loc.T("main.media.transcribing", "✍️ 正在转写语音…"));
+        try
+        {
+            string path = "";
+            using (JsonDocument? stop = await _state.Backend.SendAsync(
+                       new { action = "audio_record_stop" },
+                       idleTimeout: TimeSpan.FromSeconds(30)))
+            {
+                if (stop is null)
+                {
+                    Toast(Loc.T("main.media.recordFailed", "⚠️ 无法结束录音"));
+                    return;
+                }
+                JsonElement root = stop.RootElement;
+                if (root.TryGetProperty("ok", out JsonElement ok)
+                    && ok.ValueKind == JsonValueKind.False)
+                {
+                    Toast(root.TryGetProperty("content", out JsonElement content)
+                        ? content.GetString() ?? "" : Loc.T("main.media.recordFailed", "⚠️ 无法结束录音"));
+                    return;
+                }
+                path = root.TryGetProperty("path", out JsonElement pathElement)
+                    ? pathElement.GetString() ?? "" : "";
+            }
+            if (string.IsNullOrEmpty(path))
+            {
+                Toast(Loc.T("main.media.recordFailed", "⚠️ 无法结束录音"));
+                return;
+            }
+            using JsonDocument? result = await _state.Backend.SendAsync(
+                new { action = "transcribe_audio", path },
+                idleTimeout: TimeSpan.FromMinutes(5));
+            if (result is null)
+            {
+                Toast(Loc.T("main.media.sttFailed", "⚠️ 语音转写失败"));
+                return;
+            }
+            JsonElement transcription = result.RootElement;
+            if (transcription.TryGetProperty("ok", out JsonElement okElement)
+                && okElement.ValueKind == JsonValueKind.False)
+            {
+                string message = transcription.TryGetProperty("content", out JsonElement content)
+                    ? content.GetString() ?? "" : Loc.T("main.media.sttFailed", "⚠️ 语音转写失败");
+                AddMessage("system", message);
+                Toast(Loc.T("main.media.sttFailed", "⚠️ 语音转写失败"));
+                return;
+            }
+            string text = transcription.TryGetProperty("text", out JsonElement textElement)
+                ? textElement.GetString() ?? "" : "";
+            if (text.Length == 0)
+            {
+                Toast(Loc.T("main.media.sttEmpty", "没有识别到语音内容"));
+                return;
+            }
+            string current = InputBox.Text ?? "";
+            InputBox.Text = current.Length > 0 && !current.EndsWith(' ')
+                ? current + " " + text
+                : current + text;
+            InputBox.CaretIndex = InputBox.Text.Length;
+            InputBox.Focus();
+            Toast(Loc.T("main.media.transcribed", "✅ 已转写并填入输入框"));
+            SetStatus(Loc.T("main.status.ready", "就绪"));
+        }
+        catch (Exception ex)
+        {
+            AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// [EN] Read an assistant answer aloud when automatic reading is enabled
+    /// (`media.tts_auto_read`). Failures stay silent: the text is already visible.
+    /// [ZH] 在开启自动朗读（`media.tts_auto_read`）时朗读助手回答。失败保持静默：
+    /// 文本已经可见。
+    /// </summary>
+    private async Task MaybeSpeakAsync(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || !_state.Backend.IsRunning)
+            return;
+        if (!_media.State.TtsEnabled || !_media.State.TtsAutoRead
+            || !_media.State.TtsEngineAvailable)
+            return;
+        string body = text.Length > 4000 ? text[..4000] : text;
+        try
+        {
+            using JsonDocument? doc = await _state.Backend.SendAsync(
+                new
+                {
+                    action = "tts_generate",
+                    text = body,
+                    voice = _media.State.TtsVoice,
+                    rate = _media.State.TtsRate,
+                },
+                idleTimeout: TimeSpan.FromMinutes(2));
+            if (doc is null)
+                return;
+            JsonElement root = doc.RootElement;
+            if (root.TryGetProperty("ok", out JsonElement ok) && ok.ValueKind == JsonValueKind.False)
+                return;
+            string path = root.TryGetProperty("path", out JsonElement pathElement)
+                ? pathElement.GetString() ?? "" : "";
+            if (path.Length > 0)
+                _media.PlayAudio(path);
+        }
+        catch (Exception)
+        {
+            // [EN] Speech is a convenience: never surface a dialog for it.
+            // [ZH] 语音只是便利功能：不为它弹窗。
+        }
+    }
 
     private async Task PickFilesAsync()
     {
@@ -5355,6 +5736,22 @@ public partial class MainWindow : Window
     private void OnClosing(object? sender, WindowClosingEventArgs e)
     {
         SaveWindowPlacement();
+        // [EN] Remove the global keyboard hook and abort an active recording, so the
+        // [EN] process does not keep a system-wide hook installed after the window closes.
+        // [ZH] 移除全局键盘钩子并中止进行中的录音，避免窗口关闭后进程仍保留系统级钩子。
+        try
+        {
+            _hotkeys.Dispose();
+        }
+        catch (Exception)
+        {
+        }
+        if (_recording)
+        {
+            _recording = false;
+            _ = _state.Backend.SendAsync(new { action = "audio_record_cancel" },
+                idleTimeout: TimeSpan.FromSeconds(10));
+        }
         try
         {
             _streamCts?.Cancel();

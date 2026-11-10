@@ -60,7 +60,8 @@
     "record_unavailable": "Recording could not start: {detail}",
     "record_already_active": "A recording is already in progress",
     "record_not_active": "No recording is currently in progress",
-    "record_empty": "The recording is empty and produced no usable audio"
+    "record_empty": "The recording is empty and produced no usable audio",
+    "config_save_failed": "The media settings could not be saved: {detail}"
   },
   "mcp": {
     "tool_reported_error": "(the tool reported an error) {detail}",

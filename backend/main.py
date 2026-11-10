@@ -2024,6 +2024,68 @@ class Backend:
         return {"type": "recording", "ok": True, "content": "",
                 "active": False, "cancelled": True}
 
+    def media_config_set(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Update the interface-facing subset of the media configuration.
+
+        Only switches and speech-generation choices are accepted here; model and
+        executable paths stay in ``config.json`` because changing them requires a
+        model load and a path policy decision that the settings page cannot make.
+        Unknown fields are ignored, and the persisted file is written through
+        :meth:`Config.save` so validation always runs.
+
+        [ZH]
+        更新媒体配置中面向界面的子集。
+
+        此处只接受开关与语音合成选项；模型与可执行文件路径仍留在
+        ``config.json``，因为更改它们需要加载模型并作出设置页无法完成的路径策略
+        决定。未知字段被忽略，持久化经 :meth:`Config.save` 完成，保证校验执行。
+        """
+        cfg = self._media_cfg()
+        changed: List[str] = []
+        switches = {
+            "vision_enabled": bool,
+            "stt_enabled": bool,
+            "tts_enabled": bool,
+            "tts_auto_read": bool,
+            "ptt_enabled": bool,
+        }
+        for key, caster in switches.items():
+            if key in request:
+                value = bool(request.get(key))
+                if getattr(cfg, key) != value:
+                    setattr(cfg, key, value)
+                    changed.append(key)
+        if "tts_voice" in request:
+            voice = str(request.get("tts_voice") or "").strip()
+            if str(getattr(cfg, "tts_voice", "")) != voice:
+                cfg.tts_voice = voice
+                changed.append("tts_voice")
+        if "tts_rate" in request:
+            try:
+                rate = max(-10, min(10, int(request.get("tts_rate") or 0)))
+            except (TypeError, ValueError):
+                rate = 0
+            if int(getattr(cfg, "tts_rate", 0)) != rate:
+                cfg.tts_rate = rate
+                changed.append("tts_rate")
+        if "ptt_shortcut" in request:
+            shortcut = str(request.get("ptt_shortcut") or "").strip()
+            if shortcut and shortcut != getattr(cfg, "ptt_shortcut", ""):
+                cfg.ptt_shortcut = shortcut
+                changed.append("ptt_shortcut")
+        if changed:
+            try:
+                self.config.save()
+            except Exception as exc:  # noqa: BLE001 - [EN] persist failure must be visible
+                                     # [ZH] 持久化失败必须可见
+                return self._media_failure("save_failed", _t("media.config_save_failed"),
+                                           detail=str(exc), changed=changed)
+        state = self.media_state()
+        state.update({"changed": changed})
+        return state
+
     # [EN] ---------- Request dispatch ----------
     # [ZH] ---------- 请求分发 ----------
 
@@ -2050,6 +2112,8 @@ class Backend:
         # [ZH] 其余请求代价很低，长任务运行期间也可安全应答。
         if action == "media_state":
             return self.media_state()
+        if action == "media_config_set":
+            return self.media_config_set(request)
         if action == "image_chat":
             return self.image_chat(request)
         if action == "transcribe_audio":

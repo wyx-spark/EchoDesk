@@ -469,6 +469,29 @@
     "summary": {
       "preparing": "📝 Parsing the document and preparing segmented summarization…"
     },
+    "media": {
+      "imageTip": "Attach an image and ask about it (jpg / png)",
+      "imageHelp": "Attach an image to the current question; jpg / png / webp / bmp are supported",
+      "recording": "🔴 Recording… release to stop",
+      "recordingHelp": "Push to talk: press to record, release to transcribe into the input box",
+      "hotkeyFallback": "⌨️ Global hotkeys are not available on this platform: hold Right Ctrl in this window to record; releasing transcribes automatically.",
+      "hotkeyUnavailable": "⚠️ Global hotkeys are unavailable: {0}. Hold Right Ctrl in this window to record.",
+      "visionReady": "🖼 Image chat available",
+      "visionUnavailable": "🖼 No vision model configured",
+      "chooseTitle": "Choose an image",
+      "filter": "Images",
+      "stageFailed": "❌ The image could not be staged (unsupported format or the target directory is not writable): {0}",
+      "visionUnavailableTip": "🖼 No usable vision model is configured: set media.vision_model in config.json to a VL model that ships an mmproj file.",
+      "imageUser": "🖼 {0}",
+      "analyzing": "🔎 Analysing the image…",
+      "failed": "⚠️ Image analysis failed",
+      "recordFailed": "⚠️ Recording could not start",
+      "recordingStatus": "🎙 Recording… release to stop",
+      "transcribing": "✍️ Transcribing speech…",
+      "sttFailed": "⚠️ Speech transcription failed",
+      "sttEmpty": "No speech was recognized",
+      "transcribed": "✅ Transcribed and inserted into the input box"
+    },
     "button": {
       "stopSummaryTip": "Abort segmented summarization (Esc)",
       "send": "Send",

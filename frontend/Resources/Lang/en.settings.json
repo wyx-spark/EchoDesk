@@ -85,6 +85,19 @@
       "hintWindows": "Workaround: on Windows use the WPF build (the one the installer ships) — it is feature complete.",
       "hintOther": "Workaround: edit app/backend/config.json directly for the settings this page would expose, or wait for a later release to migrate it."
     },
+    "media": {
+      "sectionTitle": "Speech and multimodal",
+      "ttsEnabled": "Enable offline speech output (TTS)",
+      "ttsAutoRead": "Read assistant answers aloud automatically",
+      "voice": "Voice",
+      "rate": "Rate",
+      "voiceDefault": "Default voice (chosen by the system)",
+      "rateValue": "Rate {0}",
+      "pttEnabled": "Enable push-to-talk (hold Right Ctrl; release to transcribe)",
+      "hint": "Speech and image features run entirely offline on this machine; when a local model or engine is missing the reason is shown explicitly, and no cloud service is ever called.",
+      "saved": "✅ Speech settings saved",
+      "saveFailed": "⚠️ The speech settings could not be saved (the backend did not respond)"
+    },
     "model": {
       "hubTokenTip": "Fill this in for gated models that need authorisation; leave it empty to read the HF_TOKEN environment variable.",
       "openModelsDirTip": "Open the local model library folder in the file manager.",
