@@ -1349,6 +1349,12 @@ class Config(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=1.5)
     max_tokens: int = 1024
     search_results: int = 3
+    #: [EN] Base URL of a locally deployed SearXNG instance, for the third
+    #: [EN] search provider. An empty value disables that provider; the cascade
+    #: [EN] then remains DuckDuckGo -> Bing.
+    #: [ZH] 本机部署 SearXNG 实例的基础地址，供第三个搜索提供方使用。为空时
+    #: [ZH] 该提供方不参与级联，顺序仍为 DuckDuckGo → Bing。
+    searxng_url: str = ""
     # [EN] ---------- Fix 4: generation presets and context management ----------
     # [ZH] ---------- 兼容性修正：生成参数预设与上下文管理 ----------
     # [EN] Current preset: light / balanced / quality (switched by /preset; determines

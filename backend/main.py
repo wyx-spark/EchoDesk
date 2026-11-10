@@ -563,7 +563,8 @@ class Backend:
         _reasoning_cfg = getattr(config, "reasoning", None)
         self.conv.persist_reasoning = bool(getattr(_reasoning_cfg, "persist", True))
         self.conv.reasoning_max_chars = int(getattr(_reasoning_cfg, "history_max_chars", 8000) or 0)
-        self.search = SearchEngine(config.search_results)
+        self.search = SearchEngine(config.search_results,
+                                   searxng_url=getattr(config, "searxng_url", ""))
         self.summarizer = DocumentSummarizer(
             self.llm, config.summarize, engine_factory=self._make_summary_engine,
         )

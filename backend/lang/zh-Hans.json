@@ -21,7 +21,9 @@
     "parse_failed": "解析失败: {error}",
     "primary_empty": "主源无结果",
     "fallback_empty": "无结果",
-    "both_sources_failed": "{primary} ｜ 备用源：{fallback}"
+    "both_sources_failed": "{primary} ｜ 备用源：{fallback}",
+    "all_sources_failed": "全部搜索源均失败：{details}",
+    "searxng_not_configured": "未配置 SearXNG 端点"
   },
   "mcp": {
     "tool_reported_error": "（工具报告错误）{detail}",

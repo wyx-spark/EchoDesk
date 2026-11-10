@@ -103,8 +103,10 @@ from __future__ import annotations
 from i18n import t as _t
 
 import base64
+import json
 import logging
 import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import List, Optional
@@ -588,36 +590,239 @@ def search_bing(query: str, max_results: int = 5, timeout: int = 15) -> SearchOu
     return outcome
 
 
+# ===========================================================================
+# [EN] Search provider interface and cascade (v0.2.6 task 2.3)
+# [ZH] 搜索提供方接口与级联（v0.2.6 任务 2.3）
+# ===========================================================================
+#
+# [EN] The previous implementation hard-coded two sources inside one class. The
+# [EN] cascade is now expressed as an ordered provider list: every provider
+# [EN] implements the same ``search`` contract, and the orchestrator moves to the
+# [EN] next provider whenever the current one times out, is rate-limited, or
+# [EN] otherwise fails. Provider failures are logged and do not surface to the
+# [EN] user until every provider has failed.
+# [ZH] 此前两种搜索源硬编码在同一个类中。现在级联被表达为有序提供方列表：每个
+# [ZH] 提供方实现同一 ``search`` 契约，当前提供方超时、被限流或出现其他失败时，
+# [ZH] 编排器自动切换到下一个。提供方失败仅记录日志，直到全部失败才向用户呈现。
+
+class SearchProvider(ABC):
+    """
+    [EN]
+    Contract implemented by every search source.
+
+    A provider must never raise: transient failures are reported through
+    ``SearchOutcome.ok`` and ``error_kind`` so the cascade can continue.
+
+    [ZH]
+    所有搜索源实现的统一契约。
+
+    提供方不得抛出异常：瞬时故障通过 ``SearchOutcome.ok`` 与 ``error_kind``
+    上报，使级联得以继续。
+    """
+
+    #: [EN] Stable provider identifier used in diagnostics and logs.
+    #: [ZH] 诊断与日志中使用的稳定提供方标识。
+    name = "provider"
+
+    def __init__(self, timeout: int = 15) -> None:
+        self.timeout = max(1, int(timeout or 15))
+
+    @abstractmethod
+    def search(self, query: str, max_results: int) -> SearchOutcome:
+        """
+        [EN]
+        Execute one query and return a structured outcome; never raises.
+
+        [ZH]
+        执行一次查询并返回结构化结果；不得抛出异常。
+        """
+
+
+class DuckDuckGoProvider(SearchProvider):
+    """
+    [EN]
+    Primary provider backed by the optional ``duckduckgo_search`` package.
+
+    [ZH]
+    基于可选依赖 ``duckduckgo_search`` 的主提供方。
+    """
+
+    name = "ddgs"
+
+    def search(self, query: str, max_results: int) -> SearchOutcome:
+        outcome = SearchOutcome(query=query, source=self.name)
+        started = time.perf_counter()
+        try:
+            from duckduckgo_search import DDGS
+
+            with DDGS(timeout=self.timeout) as ddgs:
+                raw = list(ddgs.text(query, max_results=max_results))
+        except ImportError:
+            outcome.error = _t("search.no_dependency_ddgs")
+            outcome.error_kind = "no_dependency"
+            outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
+            return outcome
+        except Exception as exc:  # noqa: BLE001 - cascade must continue
+            outcome.error = str(exc) or exc.__class__.__name__
+            outcome.error_kind = classify_error(outcome.error)
+            outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
+            log.warning("搜索提供方 %s 失败：%s", self.name, outcome.error)
+            return outcome
+        for item in raw or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                outcome.results.append(SearchResult(
+                    title=str(item.get("title") or ""),
+                    snippet=str(item.get("body") or ""),
+                    url=str(item.get("href") or ""),
+                ))
+            except Exception:
+                log.debug("搜索结果条目解析失败（已跳过）", exc_info=True)
+        outcome.ok = True
+        outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
+        log.info("搜索完成（%s）：%r → %d 条结果，%d ms", self.name, query[:40],
+                 outcome.count, outcome.elapsed_ms)
+        return outcome
+
+
+class BingProvider(SearchProvider):
+    """
+    [EN]
+    Secondary provider wrapping the built-in redirect-following Bing source.
+
+    [ZH]
+    包装内建"跟随重定向" Bing 源的次提供方。
+    """
+
+    name = "bing"
+
+    def search(self, query: str, max_results: int) -> SearchOutcome:
+        # [EN] The module-level function is resolved at call time so tests can
+        # [EN] replace it with a stub without patching the class.
+        # [ZH] 模块级函数在调用时解析，测试可在不打补丁到类的情况下替换为桩。
+        return search_bing(query, max_results, timeout=self.timeout)
+
+
+class SearXNGProvider(SearchProvider):
+    """
+    [EN]
+    Third provider for a locally deployed SearXNG instance.
+
+    The endpoint is supplied by configuration (``searxng_url``); when it is
+    empty the provider is not added to the cascade. JSON output is required
+    (``format=json``), which is the documented SearXNG API shape.
+
+    [ZH]
+    面向本机部署 SearXNG 实例的第三提供方。
+
+    端点由配置 ``searxng_url`` 提供；为空时该提供方不加入级联。要求 JSON 输出
+    （``format=json``），这是 SearXNG 文档化的接口形态。
+    """
+
+    name = "searxng"
+
+    def __init__(self, base_url: str, timeout: int = 15) -> None:
+        super().__init__(timeout)
+        self.base_url = str(base_url or "").strip().rstrip("/")
+
+    def search(self, query: str, max_results: int) -> SearchOutcome:
+        outcome = SearchOutcome(query=query, source=self.name)
+        started = time.perf_counter()
+        if not self.base_url:
+            outcome.error = _t("search.searxng_not_configured")
+            outcome.error_kind = "no_dependency"
+            return outcome
+        try:
+            import requests
+        except ImportError:
+            outcome.error = _t("search.no_dependency_requests")
+            outcome.error_kind = "no_dependency"
+            return outcome
+        headers = {
+            "User-Agent": _BING_UA,
+            "Accept": "application/json",
+        }
+        try:
+            response = requests.get(
+                f"{self.base_url}/search",
+                params={"q": query, "format": "json"},
+                headers=headers,
+                timeout=self.timeout,
+            )
+        except Exception as exc:  # noqa: BLE001 - cascade must continue
+            outcome.error = f"{type(exc).__name__}: {exc}"
+            outcome.error_kind = classify_error(outcome.error)
+            outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
+            log.warning("搜索提供方 %s 失败：%s", self.name, outcome.error)
+            return outcome
+        if response.status_code != 200:
+            outcome.error = f"HTTP {response.status_code}"
+            outcome.error_kind = ("rate_limit" if response.status_code in (403, 429)
+                                  else "source_changed")
+            outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
+            log.warning("搜索提供方 %s 返回 %s", self.name, outcome.error)
+            return outcome
+        try:
+            payload = response.json()
+        except Exception as exc:  # noqa: BLE001 - malformed payload is a source change
+            outcome.error = f"json: {exc}"
+            outcome.error_kind = "source_changed"
+            outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
+            return outcome
+        for item in list(payload.get("results") or [])[:max(1, int(max_results or 5))]:
+            if not isinstance(item, dict):
+                continue
+            outcome.results.append(SearchResult(
+                title=str(item.get("title") or ""),
+                snippet=str(item.get("content") or ""),
+                url=str(item.get("url") or ""),
+            ))
+        outcome.ok = True
+        outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
+        log.info("搜索完成（%s）：%r → %d 条结果，%d ms", self.name, query[:40],
+                 outcome.count, outcome.elapsed_ms)
+        return outcome
+
+
 class SearchEngine:
     """
     [EN]
-    Search orchestration: try the DuckDuckGo library first and fall back to the
-    built-in Bing source on failure.
+    Search orchestration with an ordered provider cascade.
 
-    No silent degradation occurs here: when results cannot be obtained, the outcome
-    reports ``ok=False`` and the reason, and the caller decides how to inform the
-    user.
+    Default order: DuckDuckGo -> Bing -> SearXNG (the last one only when
+    ``searxng_url`` is configured). A provider that times out or returns HTTP
+    429/403 is treated as unavailable and the next provider is tried without
+    interrupting the user. When every provider fails, the combined reasons are
+    returned in one structured outcome.
 
     [ZH]
-    搜索编排：优先使用 DuckDuckGo 库，失败时回落到内建 Bing 源。
+    使用有序提供方级联的搜索编排。
 
-    此处刻意不做静默降级：无法取得结果时如实返回 ``ok=False`` 及原因，由调用方决定
-    如何告知用户。
+    默认顺序：DuckDuckGo → Bing → SearXNG（仅当配置了 ``searxng_url``）。
+    超时或返回 HTTP 429/403 的提供方被视为不可用，自动尝试下一个，不打断用户。
+    全部失败时，将各提供方的失败原因合并到同一个结构化结果中返回。
     """
 
-    def __init__(self, max_results: int = 5, fallback_enabled: bool = True):
+    def __init__(self, max_results: int = 5, fallback_enabled: bool = True,
+                 timeout: int = 15, searxng_url: str = "",
+                 providers: Optional[List[SearchProvider]] = None):
         self.max_results = max(1, int(max_results or 5))
-        #: [EN] Whether to enable the built-in Bing source when the primary source
-        #: fails (see :func:`search_bing`). The switch exists for testability: when a
-        #: stub DDGS simulates primary-source conditions, the fallback would issue a
-        #: real network request and turn a simulated failure into an actual success,
-        #: so the test would no longer exercise the intended subject. The product path
-        #: keeps it enabled by default.
-        #: [ZH] 主源失败时是否启用内建 Bing 源（见 :func:`search_bing`）。保留该开关
-        #: [ZH] 是为了可测性：测试使用桩 DDGS 模拟各种主源情形时，兜底源会实际发起网络
-        #: [ZH] 请求，把"模拟失败"变成"真实成功"，从而使测试偏离被测对象。产品路径保持
-        #: [ZH] 默认开启。
+        self.timeout = max(1, int(timeout or 15))
+        self.searxng_url = str(searxng_url or "").strip()
+        #: [EN] Whether to enable fallback providers. Retained for testability:
+        #: when a stub simulates primary-source conditions, real fallback
+        #: providers would issue network requests and turn a simulated failure
+        #: into an actual success.
+        #: [ZH] 是否启用备用提供方。保留该开关是为了可测性：桩模拟主源情形时，
+        #: 真实备用提供方会发起网络请求，把"模拟失败"变成"真实成功"。
         self.fallback_enabled = bool(fallback_enabled)
+        self.providers: List[SearchProvider] = list(providers) if providers else [
+            DuckDuckGoProvider(self.timeout),
+            BingProvider(self.timeout),
+        ]
+        if providers is None and self.searxng_url:
+            self.providers.append(SearXNGProvider(self.searxng_url, self.timeout))
 
     def _search_ddgs(self, text: str) -> SearchOutcome:
         """
@@ -635,44 +840,13 @@ class SearchEngine:
         自 8.1.1 起，该库在相关网络环境下必然失败，原因见 :func:`search_bing` 的
         说明。保留它是由于在可直连 DuckDuckGo / Bing 的地区，它仍是更完整的解析器，
         不应直接删除。
+
+        [EN]
+        Returns the outcome of the DuckDuckGo provider. Retained as a
+        compatibility entry point for callers written before the provider
+        interface existed.
         """
-        outcome = SearchOutcome(query=text, source="ddgs")
-        started = time.perf_counter()
-        try:
-            from duckduckgo_search import DDGS
-
-            with DDGS() as ddgs:
-                raw = list(ddgs.text(text, max_results=self.max_results))
-        except ImportError:
-            outcome.error = _t("search.no_dependency_ddgs")
-            outcome.error_kind = "no_dependency"
-            outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
-            return outcome
-        # [EN] Network, parsing, and rate-limit failures are all possible here.
-        # [ZH] 网络、解析与限流均可能在此失败。
-        except Exception as exc:  # noqa: BLE001
-            outcome.error = str(exc) or exc.__class__.__name__
-            outcome.error_kind = classify_error(outcome.error)
-            outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
-            log.warning("搜索失败（%s）：%s", text[:40], outcome.error)
-            return outcome
-
-        for item in raw or []:
-            if not isinstance(item, dict):
-                continue
-            try:
-                outcome.results.append(SearchResult(
-                    title=str(item.get("title") or ""),
-                    snippet=str(item.get("body") or ""),
-                    url=str(item.get("href") or ""),
-                ))
-            except Exception:
-                log.debug("搜索结果条目解析失败（已跳过）", exc_info=True)
-        outcome.ok = True
-        outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
-        log.info("搜索完成（ddgs）：%r → %d 条结果，%d ms",
-                 text[:40], outcome.count, outcome.elapsed_ms)
-        return outcome
+        return DuckDuckGoProvider(self.timeout).search(text, self.max_results)
 
     def search(self, query: str) -> SearchOutcome:
         """
@@ -680,27 +854,18 @@ class SearchEngine:
         Execute one search and return a structured result. This method never raises;
         failures are reported in the return value.
 
-        Two sources are used:
-        1. ``duckduckgo_search``, used whenever it succeeds, preserving the existing
-           behavior;
-        2. :func:`search_bing`, the built-in source that follows redirects and parses
-           the page itself, using the required ``requests`` dependency and the
-           standard-library ``html.parser`` without adding dependencies.
-
-        When both fail, ``error`` carries the reason from each source, so the user or
-        a diagnostician can see which layer failed instead of only a generic failure
-        message.
+        Providers are tried in the configured order (DuckDuckGo -> Bing ->
+        SearXNG). The first provider that answers -- including a reachable
+        "no results" answer -- wins. Timeouts, HTTP 429/403, and other provider
+        failures cause a silent switch to the next provider; only when every
+        provider fails is the combined reason reported.
 
         [ZH]
         执行一次搜索并返回结构化结果（不抛出异常，失败信息也包含在返回值中）。
 
-        使用两级搜索源：
-        1. ``duckduckgo_search``：可用时优先使用，保持既有行为；
-        2. :func:`search_bing`：内建源，跟随重定向后自行解析，使用项目必需依赖
-           requests 与标准库 html.parser，不新增依赖。
-
-        两者均失败时，``error`` 会同时带回两个源各自的原因，使用户或排查者能直接看出
-        是哪一层不通，而不是只看到笼统的失败提示。
+        按配置顺序（DuckDuckGo → Bing → SearXNG）尝试提供方。第一个成功应答的
+        提供方胜出（包括"连通但无结果"）。超时、HTTP 429/403 及其他提供方故障
+        均静默切换到下一个；仅当全部提供方失败时，才合并上报原因。
         """
         text = (query or "").strip()
         outcome = SearchOutcome(query=text)
@@ -709,50 +874,65 @@ class SearchEngine:
             outcome.error_kind = "empty"
             return outcome
 
-        primary = self._search_ddgs(text)
-        # [EN] The criterion is ``ok``, not ``usable``: when the primary source is
-        # reachable, its answer must be accepted, including the "reachable but no
-        # results" case (ok=True, count=0). That is valid information rather than a
-        # failure. Treating it as a failure and falling back would waste a network
-        # request on a query that genuinely found nothing, and would merge "nothing
-        # found" with "could not search" into one case, although the two require
-        # different messages to the user (the existing regression cases assert that
-        # they remain distinct). A further reason: the 8.1.1 primary source actually
-        # calls Bing (backends=["bing"]), the same engine as the fallback, so the
-        # fallback adds nothing when the primary source is reachable.
-        # [ZH] 判据是 ``ok`` 而非 ``usable``：主源连通时其答复即应被采信，包括"连通但
-        # [ZH] 无结果"（ok=True, count=0）。这属于有效信息而非故障；若将其视为故障并回落到
-        # [ZH] 第二个源，会让一次"确实未搜到"的查询额外发起一次网络请求，并把"未搜到"与
-        # [ZH] "搜不通"这两种必须向用户给出不同说法的情形混为一谈（既有回归用例正是断言
-        # [ZH] 两者需要区分）。另有一层原因：8.1.1 的主源实际调用的就是 Bing
-        # [ZH] （backends=["bing"]），与兜底源为同一搜索引擎，主源连通时兜底不会有额外收益。
-        if primary.ok:
-            return primary
+        # [EN] The criterion is ``ok``, not ``usable``: a reachable provider's
+        # [EN] answer must be accepted, including the "reachable but no results"
+        # [EN] case (ok=True, count=0). That is valid information rather than a
+        # [EN] failure, and merging it with "could not search" would remove the
+        # [EN] different guidance the two cases require.
+        # [ZH] 判据是 ``ok`` 而非 ``usable``：提供方连通时其答复即应被采信，包括
+        # [ZH] "连通但无结果"（ok=True, count=0）。这属于有效信息而非故障；若与
+        # [ZH] "搜不通"混为一谈，就会丢失两种情形所需的差异化提示。
+        candidates = self.providers if self.fallback_enabled else self.providers[:1]
+        failures: List[SearchOutcome] = []
+        for provider in candidates:
+            try:
+                current = provider.search(text, self.max_results)
+            except Exception as exc:  # noqa: BLE001 - contract violation is isolated
+                current = SearchOutcome(query=text, source=provider.name)
+                current.error = f"{type(exc).__name__}: {exc}"
+                current.error_kind = classify_error(current.error)
+            if current.ok:
+                if failures:
+                    log.info("搜索已回退到 %s：%d 条结果", provider.name, current.count)
+                return current
+            failures.append(current)
+            log.info("搜索提供方 %s 不可用（%s），尝试下一个",
+                     provider.name, current.error_kind or current.error)
 
-        if not self.fallback_enabled:
-            # [EN] Fallback explicitly disabled (test path): return the primary
-            # source's reason unchanged.
-            # [ZH] 兜底已被显式关闭（测试路径）：如实带回主源的原因。
-            primary.source = primary.source or "ddgs"
-            primary.error_kind = primary.error_kind or classify_error(primary.error)
-            return primary
+        if not failures:
+            outcome.error = _t("search.both_sources_failed",
+                               primary=_t("search.primary_empty"),
+                               fallback=_t("search.fallback_empty"))
+            outcome.error_kind = "unknown"
+            return outcome
+        if not self.fallback_enabled or len(failures) == 1:
+            # [EN] Fallback explicitly disabled (test path) or only one provider
+            # [EN] configured: return its reason unchanged.
+            # [ZH] 兜底已显式关闭（测试路径）或只配置了一个提供方：如实带回其原因。
+            first = failures[0]
+            first.error_kind = first.error_kind or classify_error(first.error)
+            return first
 
-        fallback = search_bing(text, self.max_results)
-        if fallback.usable:
-            log.info("主搜索源不可用（%s），已回落到内建 Bing 源：%d 条结果",
-                     primary.error_kind or primary.error, fallback.count)
-            return fallback
-
-        outcome.error = _t("search.both_sources_failed",
-                           primary=primary.error or _t("search.primary_empty"),
-                           fallback=fallback.error or _t("search.fallback_empty"))
-        # [EN] The category is taken from the fallback source, which reflects the
-        # actual network condition; the primary source always fails on the affected
-        # networks, so its category gives the user no actionable guidance.
-        # [ZH] 分类以备用源为准：它才能真正反映当前网络状况（主源在相关网络环境下
-        # [ZH] 必然失败，其分类对用户没有指导意义）。
-        outcome.error_kind = fallback.error_kind or primary.error_kind or "unknown"
-        log.warning("两个搜索源都失败：%s", outcome.error)
+        if len(failures) == 2:
+            primary, fallback = failures
+            outcome.error = _t("search.both_sources_failed",
+                               primary=primary.error or _t("search.primary_empty"),
+                               fallback=fallback.error or _t("search.fallback_empty"))
+        else:
+            details = "; ".join(
+                f"{item.source or 'source'}: {item.error or _t('search.primary_empty')}"
+                for item in failures)
+            outcome.error = _t("search.all_sources_failed", details=details)
+        # [EN] The category is taken from the last provider, which reflects the
+        # [EN] actual network condition most closely; the primary source always
+        # [EN] fails on the affected networks, so its category gives no actionable
+        # [EN] guidance.
+        # [ZH] 分类以最后一个提供方为准：它最能反映当前网络状况；主源在相关网络
+        # [ZH] 环境下必然失败，其分类对用户没有指导意义。
+        outcome.error_kind = (failures[-1].error_kind
+                              or classify_error(failures[-1].error)
+                              or failures[0].error_kind or "unknown")
+        log.warning("全部搜索源都失败：%s", outcome.error)
         return outcome
 
     # [EN] ---------- Legacy interface compatibility ----------

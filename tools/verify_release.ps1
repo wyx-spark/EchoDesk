@@ -502,6 +502,12 @@ try {
     # 用桩 DDGS，不联网。
     Invoke-Check "联网搜索链路（任务二）" { Invoke-Python "搜索链路" "tools\test_search.py"; "通过" }
 
+    # [EN] v0.2.6 task 2.3: ordered provider cascade (DuckDuckGo -> Bing ->
+    # [EN] SearXNG), silent fallback on timeout/429, combined failure report.
+    # [ZH] v0.2.6 任务 2.3：有序提供方级联（DuckDuckGo → Bing → SearXNG），
+    # [ZH] 超时/429 静默回退，全部失败时合并上报。
+    Invoke-Check "多引擎级联搜索（v0.2.6）" { Invoke-Python "搜索级联" "tools\test_search_cascade.py"; "通过" }
+
     # v0.2.1 优化已知问题-2 任务九：上下文压缩策略（token 比例触发可配 / grace zone /
     # 摘要提示词与自定义重点 / 大块内容单独截断 / 压缩事件 JSONL 可追溯可回放 /
     # 手动触发与 focus 解析）。用桩引擎，不加载模型。

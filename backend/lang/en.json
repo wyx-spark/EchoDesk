@@ -21,7 +21,9 @@
     "parse_failed": "Parsing failed: {error}",
     "primary_empty": "the primary source returned no results",
     "fallback_empty": "no results",
-    "both_sources_failed": "{primary} | fallback source: {fallback}"
+    "both_sources_failed": "{primary} | fallback source: {fallback}",
+    "all_sources_failed": "All search sources failed: {details}",
+    "searxng_not_configured": "SearXNG endpoint is not configured"
   },
   "mcp": {
     "tool_reported_error": "(the tool reported an error) {detail}",
