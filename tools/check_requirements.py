@@ -117,7 +117,8 @@ def main() -> int:
     import_names = {DIST_TO_IMPORT.get(d, d.replace("-", "_")) for d in decl}
     # pywin32 提供多个顶层模块，逐个列出
     import_names.discard("win32api")
-    import_names |= {"win32api", "win32com", "win32con", "win32file", "win32gui", "win32clipboard"}
+    import_names |= {"win32api", "win32com", "win32con", "win32file", "win32gui",
+                     "win32clipboard", "pythoncom", "pywintypes"}
 
     third_party = []
     for mod in sorted(imports):

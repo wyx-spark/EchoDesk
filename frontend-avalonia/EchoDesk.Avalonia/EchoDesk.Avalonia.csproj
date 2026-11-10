@@ -7,7 +7,16 @@
       * **net10.0（不带 -windows 后缀）**：这是"能跨平台"的第一道硬门槛。
         WPF 版的目标框架是 `net10.0-windows`，一旦带上 `-windows` 就无法在
         Linux/macOS 上编译。本工程刻意用不带后缀的 TFM，并且**不引用任何
-        Windows 专属包**（WinForms/WPF/P-Invoke 到 user32）。
+        Windows 专属包**（WinForms/WPF）。
+      * [EN] The only Windows P/Invoke is in `Services/GlobalHotkeyService.cs` and
+        `Services/MediaService.cs`, both guarded by `OperatingSystem.IsWindows()`:
+        the global push-to-talk hook (user32) and WAV playback (winmm). No Windows-only
+        package is referenced, so the project still builds and runs on Linux/macOS,
+        where those features degrade to the in-window shortcut and the platform player.
+      * [ZH] 唯一的 Windows P/Invoke 位于 `Services/GlobalHotkeyService.cs` 与
+        `Services/MediaService.cs`，且均由 `OperatingSystem.IsWindows()` 保护：全局
+        按键说话钩子（user32）与 WAV 播放（winmm）。项目不引用任何 Windows 专属包，
+        因此在 Linux/macOS 上仍可构建与运行，相关功能降级为窗口内快捷键与平台播放器。
       * `AvaloniaUseCompiledBindingsByDefault=true`：编译期校验绑定路径，
         少一类"运行时才发现绑定写错"的问题（WPF 版靠手写事件处理绕过了绑定）。
       * `BuiltInComInteropSupport=false`：明确关掉 COM 互操作 —— 项目里**不应有**
