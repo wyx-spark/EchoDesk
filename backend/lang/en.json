@@ -51,6 +51,7 @@
     "stt_no_model": "No Whisper GGML model was found; place ggml-*.bin in the model directory or set media.stt_model",
     "stt_timeout": "Transcription timed out after {seconds} seconds",
     "stt_failed": "Transcription failed: {detail}",
+    "stt_wrong_executable": "The `{name}` found on this machine is not whisper.cpp: it does not accept whisper.cpp arguments ({detail}). Install whisper-cli, or point media.stt_executable at the real whisper.cpp executable",
     "stt_empty": "No speech was recognized; move closer to the microphone and try again",
     "tts_disabled": "Speech output is disabled in the configuration (media.tts_enabled in config.json)",
     "tts_empty_text": "There is no text to read aloud",

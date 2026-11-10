@@ -558,6 +558,23 @@ class WhisperTranscriber:
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "").strip().splitlines()
             self.last_error = (detail[-1] if detail else f"exit {completed.returncode}")[:400]
+            # [EN] A PATH can contain an unrelated `whisper` executable (for example the
+            # [EN] OpenAI Python CLI). It rejects whisper.cpp's ``-m`` flag with an argparse
+            # [EN] error; reporting that as "transcription failed" hides the real cause, so
+            # [EN] it is classified as "wrong executable" with actionable guidance.
+            # [ZH] PATH 上可能存在无关的 `whisper` 可执行文件（例如 OpenAI Python CLI）。
+            # [ZH] 它会以 argparse 错误拒绝 whisper.cpp 的 ``-m`` 参数；若按"转写失败"上报，
+            # [ZH] 会掩盖真实原因，因此归类为"可执行文件不匹配"并给出可操作指引。
+            joined = " ".join(detail).lower()
+            if "-m" in joined and (
+                    "unrecognized argument" in joined
+                    or "unknown option" in joined
+                    or "no such option" in joined
+                    or "invalid option" in joined
+                    or "unrecognized option" in joined):
+                raise SpeechError("wrong_executable", "media.stt_wrong_executable",
+                                  name=os.path.basename(self.executable),
+                                  detail=self.last_error)
             raise SpeechError("failed", "media.stt_failed", detail=self.last_error)
         text = _clean_transcript(completed.stdout)
         if not text:

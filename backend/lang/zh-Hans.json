@@ -51,6 +51,7 @@
     "stt_no_model": "未找到 Whisper GGML 模型；请把 ggml-*.bin 放进模型目录，或用 media.stt_model 指定",
     "stt_timeout": "语音转写超时（{seconds} 秒）",
     "stt_failed": "语音转写失败：{detail}",
+    "stt_wrong_executable": "找到的 `{name}` 不是 whisper.cpp：它不接受 whisper.cpp 的参数（{detail}）。请安装 whisper-cli，或用 media.stt_executable 指向真正的 whisper.cpp 可执行文件",
     "stt_empty": "没有识别到语音内容，请靠近麦克风重试",
     "tts_disabled": "语音朗读已在配置中关闭（config.json 的 media.tts_enabled）",
     "tts_empty_text": "没有可朗读的文本",

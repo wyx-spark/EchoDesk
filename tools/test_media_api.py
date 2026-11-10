@@ -299,6 +299,29 @@ def main():
     unavailable = backend.handle({"action": "transcribe_audio", "path": audio})
     check("STT 不可用时返回原因", unavailable.get("ok") is False
           and unavailable.get("error_code") == "stt_unavailable", str(unavailable))
+
+    # [EN] A PATH can contain an unrelated `whisper` (the OpenAI Python CLI). It must be
+    # [EN] reported as "wrong executable", not as a generic transcription failure.
+    # [ZH] PATH 上可能存在无关的 `whisper`（OpenAI Python CLI）。必须报告为
+    # [ZH] "可执行文件不匹配"，而不是笼统的转写失败。
+    real_run = speech.subprocess.run
+
+    class WrongCliResult:
+        returncode = 2
+        stdout = ""
+        stderr = "whisper: error: unrecognized arguments: -m model.bin -f clip.wav -nt"
+
+    speech.subprocess.run = lambda *a, **k: WrongCliResult()
+    try:
+        wrong = speech.WhisperTranscriber(executable=sys.executable, model=audio)
+        try:
+            wrong.transcribe(audio)
+            check("非 whisper.cpp 可执行文件被识别", False, "未抛出异常")
+        except SpeechError as exc:
+            check("非 whisper.cpp 可执行文件被识别", exc.code == "wrong_executable",
+                  exc.code)
+    finally:
+        speech.subprocess.run = real_run
     backend._stt_service = lambda: fake_stt
 
     print("\n=== 5. tts_generate ===")
