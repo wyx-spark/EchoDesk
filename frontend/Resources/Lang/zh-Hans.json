@@ -60,7 +60,11 @@
       "settingsTip": "设置（Ctrl+, 打开设置 · Ctrl+M 打开技能市场）",
       "uploadTip": "上传文件 (Ctrl+O)",
       "sendTip": "发送 (Ctrl+Enter)",
-      "stopTip": "停止生成 (Esc)"
+      "stopTip": "停止生成 (Esc)",
+      "knowledge": "知识库",
+      "knowledgeTip": "挂载本地文件夹到知识库",
+      "prompts": "模板库",
+      "promptsTip": "打开提示词模板库"
     },
     "strip": {
       "search": "🔍 搜索：{0}",
@@ -376,4 +380,3 @@
     }
   }
 }
-

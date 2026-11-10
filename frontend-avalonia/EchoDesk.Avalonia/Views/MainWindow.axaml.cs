@@ -535,6 +535,27 @@ public partial class MainWindow : Window
         CommandInputBox.TextChanged += (_, _) => UpdateCommandPalette(CommandInputBox);
         CommandButton.Click += (_, _) => ToggleCommandRow();
         SnippetButton.Click += (_, _) => ToggleSnippetPalette();
+        // [EN] v0.2.6 Part 3 panels.
+        // [ZH] v0.2.6 Part 3 面板。
+        KnowledgeButton.Click += async (_, _) => await ToggleKnowledgePanelAsync();
+        PromptLibraryButton.Click += async (_, _) => await TogglePromptLibraryPanelAsync();
+        KnowledgeMountButton.Click += async (_, _) => await MountKnowledgeFolderAsync();
+        KnowledgeReindexButton.Click += async (_, _) =>
+        {
+            if (_knowledgeLibraries.Count > 0)
+                await ReindexKnowledgeAsync(_knowledgeLibraries[0].Root);
+        };
+        PromptCategoryCombo.SelectionChanged += (_, _) =>
+        {
+            if (!_promptPanelLoading)
+                ApplyPromptCategoryFilter(resetSelection: true);
+        };
+        PromptTemplateList.SelectionChanged += (_, _) =>
+            LoadPromptEditor(PromptTemplateList.SelectedIndex);
+        PromptNewButton.Click += (_, _) => ClearPromptEditor();
+        PromptApplyButton.Click += async (_, _) => await ApplyPromptTemplateAsync();
+        PromptSaveButton.Click += async (_, _) => await SavePromptTemplateAsync();
+        PromptDeleteButton.Click += async (_, _) => await DeletePromptTemplateAsync();
 
         // [EN] Mouse selection in the command panel and the snippet panel.
         // [ZH] 指令面板 / 常用语面板的鼠标选择
@@ -946,6 +967,25 @@ public partial class MainWindow : Window
         CommandBarHint.Text = Loc.T("main.command.hint", "💡 检测到指令格式：点击左下角「打开命令输入框」按钮");
         ToolTip.SetTip(CommandButton, Loc.T("main.command.tip", "打开/关闭命令输入框"));
         ToolTip.SetTip(SnippetButton, Loc.T("main.snippet.tip", "打开常用语选择框"));
+        // [EN] v0.2.6 Part 3: knowledge base and template library entry points.
+        // [ZH] v0.2.6 Part 3：知识库与模板库入口。
+        ToolTip.SetTip(KnowledgeButton, Loc.T("main.button.knowledgeTip", "挂载本地文件夹到知识库"));
+        ToolTip.SetTip(PromptLibraryButton, Loc.T("main.button.promptsTip", "打开提示词模板库"));
+        KnowledgeTitleText.Text = Loc.T("knowledge.panel.title", "本地知识库");
+        KnowledgeMountButton.Content = Loc.T("knowledge.panel.mount", "挂载文件夹");
+        KnowledgeReindexButton.Content = Loc.T("knowledge.panel.reindex", "重建索引");
+        if (_knowledgeLibraries.Count == 0)
+            KnowledgeHintText.Text = Loc.T("knowledge.panel.empty", "尚未挂载文件夹");
+        else
+            RenderKnowledgeRows();
+        PromptLibraryTitleText.Text = Loc.T("prompt.panel.title", "提示词模板库");
+        PromptNewButton.Content = Loc.T("prompt.panel.new", "新建模板");
+        PromptApplyButton.Content = Loc.T("prompt.panel.apply", "应用");
+        PromptSaveButton.Content = Loc.T("prompt.panel.save", "保存");
+        PromptDeleteButton.Content = Loc.T("prompt.panel.delete", "删除");
+        PromptNameBox.PlaceholderText = Loc.T("prompt.panel.name", "名称");
+        PromptInstructionBox.PlaceholderText = Loc.T("prompt.panel.instruction", "指令正文");
+        PromptRoleBox.PlaceholderText = Loc.T("prompt.panel.role", "角色设定（可选）");
         ToolTip.SetTip(SettingsButton, Loc.T("main.button.settingsTip", "打开设置"));
         ToolTip.SetTip(UploadButton, Loc.T("main.button.uploadTip", "上传文件加入上下文"));
         ToolTip.SetTip(ImageButton, Loc.T("main.media.imageTip", "附加图片并提问（jpg / png）"));
@@ -2513,6 +2553,10 @@ public partial class MainWindow : Window
     {
         CommandPalette.IsOpen = false;
         SnippetPalette.IsOpen = false;
+        // [EN] v0.2.6 Part 3 panels share the same "one panel at a time" rule.
+        // [ZH] v0.2.6 Part 3 的两个面板遵循同一条“同时只开一个面板”规则。
+        KnowledgePanel.IsOpen = false;
+        PromptLibraryPanel.IsOpen = false;
         UpdateSnippetButtonText();
     }
 
@@ -5969,6 +6013,708 @@ public partial class MainWindow : Window
     }
 
     private void StopMetricsTimer() => _metricsTimer?.Stop();
+
+    // -----------------------------------------------------------------
+    // [EN] v0.2.6 Part 3: local knowledge base and prompt template library
+    // [ZH] v0.2.6 Part 3：本地知识库与提示词模板库
+    //
+    // [EN] Both panels talk to the backend with the ordinary single-response
+    // [EN] protocol. Indexing itself runs on the backend's serial document
+    // [EN] worker, so this window only polls `file_job_status`; nothing here
+    // [EN] blocks the conversation or performs file I/O on the UI thread.
+    // [ZH] 两个面板都走普通的单次应答协议。建索引本身在后端的串行文档工作线程上
+    // [ZH] 执行，因此本窗口只轮询 `file_job_status`；此处没有任何操作会阻塞对话
+    // [ZH] 或在界面线程上做文件 I/O。
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// [EN] One mounted library as displayed in the knowledge panel.
+    /// [ZH] 知识库面板中展示的单个已挂载库。
+    /// </summary>
+    private sealed class KnowledgeLibraryItem
+    {
+        public string Id { get; init; } = "";
+        public string Name { get; init; } = "";
+        public string Root { get; init; } = "";
+        public string Status { get; init; } = "";
+        public int Documents { get; init; }
+        public int Chunks { get; init; }
+    }
+
+    /// <summary>
+    /// [EN] One prompt template as displayed in the template panel. Built-in
+    /// templates are marked read-only; the editor still shows their body for
+    /// inspection and for copying into a user template.
+    /// [ZH] 模板面板中展示的单条提示词模板。内置模板标记为只读；编辑器仍显示其正文，
+    /// 以便查看并复制为用户模板。
+    /// </summary>
+    private sealed class PromptTemplateItem
+    {
+        public string Id { get; init; } = "";
+        public string Category { get; init; } = "";
+        public string Label { get; init; } = "";
+        public string Note { get; init; } = "";
+        public string Role { get; init; } = "";
+        public string Instruction { get; init; } = "";
+        public bool Editable { get; init; }
+    }
+
+    /// <summary>
+    /// [EN] One selectable category; the identifier is empty for "all".
+    /// [ZH] 一个可选分类；标识为空表示“全部”。
+    /// </summary>
+    private sealed class PromptCategoryItem
+    {
+        public string Id { get; init; } = "";
+        public string Label { get; init; } = "";
+        public override string ToString() => Label;
+    }
+
+    private readonly List<KnowledgeLibraryItem> _knowledgeLibraries = new();
+    private readonly List<PromptTemplateItem> _promptTemplates = new();
+    private readonly List<PromptTemplateItem> _visiblePromptTemplates = new();
+    private DispatcherTimer? _knowledgeTimer;
+    private string _knowledgeJobId = "";
+    private bool _knowledgePolling;
+    private string _editingPromptId = "";
+    private bool _promptDeleteArmed;
+    private bool _promptPanelLoading;
+
+    /// <summary>
+    /// [EN] Toggle the knowledge panel. Opening first closes every other palette,
+    /// then anchors the popup and refreshes the mounted-library list.
+    /// [ZH] 打开或关闭知识库面板。打开时先关闭其他浮层，再锚定弹出层并刷新已挂载库列表。
+    /// </summary>
+    private async Task ToggleKnowledgePanelAsync()
+    {
+        bool opening = !KnowledgePanel.IsOpen;
+        CloseAllPalettes();
+        if (!opening)
+            return;
+        KnowledgePanel.PlacementTarget = KnowledgeButton;
+        KnowledgePanel.IsOpen = true;
+        await RefreshKnowledgeAsync();
+    }
+
+    /// <summary>
+    /// [EN] Read the knowledge status and rebuild the library rows.
+    /// [ZH] 读取知识库状态并重建库列表行。
+    /// </summary>
+    private async Task RefreshKnowledgeAsync()
+    {
+        if (!_state.Backend.IsRunning)
+        {
+            KnowledgeHintText.Text = Loc.T("main.error.notRunning", "❌ 后端未运行，无法读取知识库状态");
+            return;
+        }
+        JsonDocument? doc = await _state.Backend.SendAsync(
+            new { action = "knowledge_status" }, idleTimeout: BackendService.HeavyIdleTimeout);
+        if (doc is null)
+            return;
+        using (doc)
+        {
+            JsonElement root = doc.RootElement;
+            _knowledgeLibraries.Clear();
+            if (root.TryGetProperty("libraries", out JsonElement libraries)
+                && libraries.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement library in libraries.EnumerateArray())
+                {
+                    _knowledgeLibraries.Add(new KnowledgeLibraryItem
+                    {
+                        Id = GetStringField(library, "id"),
+                        Name = GetStringField(library, "name"),
+                        Root = GetStringField(library, "root"),
+                        Status = GetStringField(library, "status"),
+                        Documents = GetIntField(library, "documents"),
+                        Chunks = GetIntField(library, "chunks"),
+                    });
+                }
+            }
+            int bound = 0;
+            if (root.TryGetProperty("knowledge_ids", out JsonElement ids)
+                && ids.ValueKind == JsonValueKind.Array)
+                bound = ids.GetArrayLength();
+            RenderKnowledgeRows();
+            KnowledgeHintText.Text = _knowledgeLibraries.Count == 0
+                ? Loc.T("knowledge.panel.empty", "尚未挂载文件夹")
+                : Loc.T("knowledge.panel.mounted", "已挂载：{0}", _knowledgeLibraries.Count)
+                  + " · " + Loc.T("knowledge.panel.bound", "本会话绑定 {0} 个", bound)
+                  + " · " + Loc.T("knowledge.panel.hint", "索引在后台建立，不影响对话");
+        }
+    }
+
+    /// <summary>
+    /// [EN] Rebuild the library rows: one row per library, with name, counts,
+    /// status and the two per-library actions. Rows are built in code because the
+    /// action buttons must carry the library identifier; a data template would
+    /// need a public view-model type for two private buttons.
+    /// [ZH] 重建库列表行：每个库一行，含名称、计数、状态与两个库级操作。行在代码中
+    /// 构建，因为操作按钮必须携带库标识；用数据模板则为两个私有按钮引入公开视图模型
+    /// 类型，得不偿失。
+    /// </summary>
+    private void RenderKnowledgeRows()
+    {
+        KnowledgeListPanel.Children.Clear();
+        if (_knowledgeLibraries.Count == 0)
+        {
+            KnowledgeListPanel.Children.Add(new TextBlock
+            {
+                Text = Loc.T("knowledge.panel.empty", "尚未挂载文件夹"),
+                FontSize = 11,
+                Foreground = (IBrush?)this.FindResource("SubTextBrush") ?? Brushes.Gray,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            return;
+        }
+        foreach (KnowledgeLibraryItem library in _knowledgeLibraries)
+        {
+            var row = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+                Margin = new Thickness(0, 1, 0, 1),
+            };
+            var text = new StackPanel { Spacing = 1 };
+            text.Children.Add(new TextBlock
+            {
+                Text = library.Name,
+                FontWeight = FontWeight.SemiBold,
+                FontSize = 12,
+            });
+            string statusText = library.Status switch
+            {
+                "ready" => Loc.T("knowledge.panel.ready", "已就绪"),
+                "indexing" => Loc.T("knowledge.panel.indexing", "索引中"),
+                "failed" => Loc.T("knowledge.panel.failed", "失败"),
+                _ => library.Status,
+            };
+            text.Children.Add(new TextBlock
+            {
+                Text = Loc.T("knowledge.panel.summary", "{0} 个文件 · {1} 个片段",
+                             library.Documents, library.Chunks) + " · " + statusText,
+                FontSize = 11,
+                Foreground = (IBrush?)this.FindResource("SubTextBrush") ?? Brushes.Gray,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            Grid.SetColumn(text, 0);
+            row.Children.Add(text);
+
+            var reindex = new Button
+            {
+                Content = Loc.T("knowledge.panel.reindex", "重建索引"),
+                FontSize = 11,
+                Padding = new Thickness(8, 2),
+                Margin = new Thickness(6, 0, 0, 0),
+                Tag = library,
+            };
+            reindex.Click += async (_, _) => await ReindexKnowledgeAsync(library.Root);
+            Grid.SetColumn(reindex, 1);
+            row.Children.Add(reindex);
+
+            var unmount = new Button
+            {
+                Content = Loc.T("knowledge.panel.unmount", "卸载"),
+                FontSize = 11,
+                Padding = new Thickness(8, 2),
+                Margin = new Thickness(6, 0, 0, 0),
+                Tag = library,
+            };
+            unmount.Click += async (_, _) => await UnmountKnowledgeAsync(library.Id);
+            Grid.SetColumn(unmount, 2);
+            row.Children.Add(unmount);
+
+            KnowledgeListPanel.Children.Add(row);
+        }
+    }
+
+    /// <summary>
+    /// [EN] Pick a folder and mount it, then poll the returned job.
+    /// [ZH] 选择文件夹并挂载，随后轮询返回的作业。
+    /// </summary>
+    private async Task MountKnowledgeFolderAsync()
+    {
+        if (!_state.Backend.IsRunning)
+        {
+            Toast(Loc.T("main.error.notRunning", "❌ 后端未运行"), error: true);
+            return;
+        }
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = Loc.T("knowledge.panel.pickTitle", "选择要挂载的文件夹"),
+            AllowMultiple = false,
+        });
+        if (folders.Count == 0)
+            return;
+        string? path = folders[0].TryGetLocalPath();
+        if (string.IsNullOrEmpty(path))
+            return;
+        await MountKnowledgePathAsync(path);
+    }
+
+    /// <summary>
+    /// [EN] Mount one folder. Mounting an already mounted path returns the
+    /// existing library and schedules a fresh incremental index, which is what
+    /// "re-index" uses as well, so both actions share one request shape.
+    /// [ZH] 挂载一个文件夹。挂载已存在的路径会返回既有库并重新调度一次增量索引，
+    /// “重建索引”正是复用它，因此两个操作用同一种请求形态。
+    /// </summary>
+    private async Task MountKnowledgePathAsync(string path)
+    {
+        JsonDocument? doc = await _state.Backend.SendAsync(
+            new { action = "knowledge_mount", path }, idleTimeout: BackendService.HeavyIdleTimeout);
+        if (doc is null)
+        {
+            Toast(Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
+                _state.Backend.LastError ?? ""), error: true);
+            return;
+        }
+        using (doc)
+        {
+            JsonElement root = doc.RootElement;
+            string content = GetStringField(root, "content");
+            if (content.Length > 0)
+                Toast(content);
+            string jobId = GetStringField(root, "job_id");
+            if (jobId.Length > 0)
+                StartKnowledgePolling(jobId);
+            await RefreshKnowledgeAsync();
+        }
+    }
+
+    /// <summary>
+    /// [EN] Re-index one library by re-mounting its path.
+    /// [ZH] 通过重新挂载其路径来重建单个库的索引。
+    /// </summary>
+    private async Task ReindexKnowledgeAsync(string root)
+    {
+        if (string.IsNullOrEmpty(root))
+            return;
+        await MountKnowledgePathAsync(root);
+    }
+
+    /// <summary>
+    /// [EN] Unmount one library and purge its index.
+    /// [ZH] 卸载单个库并清除其索引。
+    /// </summary>
+    private async Task UnmountKnowledgeAsync(string libraryId)
+    {
+        JsonDocument? doc = await _state.Backend.SendAsync(
+            new { action = "knowledge_unmount", library_id = libraryId },
+            idleTimeout: BackendService.HeavyIdleTimeout);
+        if (doc is null)
+            return;
+        using (doc)
+        {
+            string content = GetStringField(doc.RootElement, "content");
+            if (content.Length > 0)
+                Toast(content);
+            await RefreshKnowledgeAsync();
+        }
+    }
+
+    /// <summary>
+    /// [EN] Start polling one indexing job. A single timer is reused: starting a
+    /// new job replaces the previous identifier, and the timer stops itself when
+    /// the job reaches a terminal state.
+    /// [ZH] 开始轮询单个建索引作业。复用同一个计时器：新作业替换旧标识，作业到达终止
+    /// 状态后计时器自行停止。
+    /// </summary>
+    private void StartKnowledgePolling(string jobId)
+    {
+        _knowledgeJobId = jobId;
+        KnowledgeProgressRow.IsVisible = true;
+        KnowledgeProgressBar.IsIndeterminate = true;
+        KnowledgeProgressText.Text = Loc.T("knowledge.panel.indexing", "索引中");
+        if (_knowledgeTimer is null)
+        {
+            _knowledgeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+            _knowledgeTimer.Tick += async (_, _) => await PollKnowledgeJobAsync();
+        }
+        _knowledgeTimer.Start();
+    }
+
+    private void StopKnowledgePolling()
+    {
+        _knowledgeTimer?.Stop();
+        _knowledgeJobId = "";
+        KnowledgeProgressRow.IsVisible = false;
+    }
+
+    /// <summary>
+    /// [EN] Poll the active job once and update the progress row. A response
+    /// carrying "busy" (the backend is generating an answer) is ignored: the
+    /// next tick retries, and the index keeps advancing regardless.
+    /// [ZH] 轮询一次活动作业并刷新进度行。响应带 "busy"（后端正在生成回答）时忽略：
+    /// 下一个节拍会重试，索引本身仍在推进。
+    /// </summary>
+    private async Task PollKnowledgeJobAsync()
+    {
+        if (_knowledgePolling || _knowledgeJobId.Length == 0)
+            return;
+        _knowledgePolling = true;
+        try
+        {
+            JsonDocument? doc = await _state.Backend.SendAsync(
+                new { action = "file_job_status", job_id = _knowledgeJobId },
+                idleTimeout: TimeSpan.FromSeconds(30));
+            if (doc is null)
+                return;
+            using (doc)
+            {
+                JsonElement root = doc.RootElement;
+                if (!root.TryGetProperty("job", out JsonElement job)
+                    || job.ValueKind != JsonValueKind.Object)
+                {
+                    StopKnowledgePolling();
+                    return;
+                }
+                string status = GetStringField(job, "status");
+                UpdateKnowledgeProgress(job);
+                if (status is "done" or "failed" or "cancelled")
+                {
+                    if (status == "done")
+                    {
+                        JsonElement result = job.TryGetProperty("result", out JsonElement r)
+                            ? r : default;
+                        KnowledgeProgressBar.IsIndeterminate = false;
+                        KnowledgeProgressBar.Value = 100;
+                        KnowledgeProgressText.Text = Loc.T("knowledge.panel.ready", "已就绪")
+                            + (result.ValueKind == JsonValueKind.Object
+                                ? " · " + Loc.T("knowledge.panel.summary",
+                                    "{0} 个文件 · {1} 个片段",
+                                    GetIntField(result, "total"), GetIntField(result, "chunks"))
+                                : "");
+                    }
+                    else if (status == "failed")
+                    {
+                        KnowledgeProgressText.Text = Loc.T("knowledge.panel.indexFailed",
+                            "索引失败：{0}", GetStringField(job, "error"));
+                    }
+                    StopKnowledgePolling();
+                    await RefreshKnowledgeAsync();
+                }
+            }
+        }
+        finally
+        {
+            _knowledgePolling = false;
+        }
+    }
+
+    /// <summary>
+    /// [EN] Read the last progress event of a job into the progress bar and text.
+    /// [ZH] 将作业最后一条进度事件写入进度条与文字。
+    /// </summary>
+    private void UpdateKnowledgeProgress(JsonElement job)
+    {
+        if (!job.TryGetProperty("events", out JsonElement events)
+            || events.ValueKind != JsonValueKind.Array)
+            return;
+        JsonElement last = default;
+        foreach (JsonElement item in events.EnumerateArray())
+        {
+            if (GetStringField(item, "type") == "knowledge_progress")
+                last = item;
+        }
+        if (last.ValueKind != JsonValueKind.Object)
+            return;
+        int done = GetIntField(last, "index");
+        int total = GetIntField(last, "total");
+        KnowledgeProgressBar.IsIndeterminate = false;
+        KnowledgeProgressBar.Value = total > 0 ? Math.Min(100.0, done * 100.0 / total) : 0;
+        KnowledgeProgressText.Text = Loc.T("knowledge.panel.progress",
+            "索引进度：{0}/{1}", done, total);
+    }
+
+    /// <summary>
+    /// [EN] Toggle the prompt template panel.
+    /// [ZH] 打开或关闭提示词模板面板。
+    /// </summary>
+    private async Task TogglePromptLibraryPanelAsync()
+    {
+        bool opening = !PromptLibraryPanel.IsOpen;
+        CloseAllPalettes();
+        if (!opening)
+            return;
+        PromptLibraryPanel.PlacementTarget = PromptLibraryButton;
+        PromptLibraryPanel.IsOpen = true;
+        await RefreshPromptTemplatesAsync(resetSelection: true);
+    }
+
+    /// <summary>
+    /// [EN] Load the template list and the category list, then rebuild both the
+    /// filter and the visible rows.
+    /// [ZH] 载入模板清单与分类清单，随后重建过滤器与可见行。
+    /// </summary>
+    private async Task RefreshPromptTemplatesAsync(bool resetSelection = false)
+    {
+        if (!_state.Backend.IsRunning)
+        {
+            PromptStatusText.Text = Loc.T("main.error.notRunning", "❌ 后端未运行");
+            return;
+        }
+        JsonDocument? doc = await _state.Backend.SendAsync(
+            new { action = "promptlib_list" }, idleTimeout: BackendService.HeavyIdleTimeout);
+        if (doc is null)
+            return;
+        using (doc)
+        {
+            JsonElement root = doc.RootElement;
+            _promptPanelLoading = true;
+            try
+            {
+                _promptTemplates.Clear();
+                if (root.TryGetProperty("templates", out JsonElement templates)
+                    && templates.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement item in templates.EnumerateArray())
+                    {
+                        _promptTemplates.Add(new PromptTemplateItem
+                        {
+                            Id = GetStringField(item, "id"),
+                            Category = GetStringField(item, "category"),
+                            Label = GetStringField(item, "label"),
+                            Note = GetStringField(item, "note"),
+                            Role = GetStringField(item, "role"),
+                            Instruction = GetStringField(item, "format"),
+                            Editable = GetBoolField(item, "editable"),
+                        });
+                    }
+                }
+                BuildPromptCategoryItems(root);
+                ApplyPromptCategoryFilter(resetSelection);
+            }
+            finally
+            {
+                _promptPanelLoading = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// [EN] Fill the category combos from the response's localized category list.
+    /// The "all" entry is added first because it is a filter concept, not a
+    /// template category, and it therefore does not come from the backend.
+    /// [ZH] 用响应中的本地化分类清单填充两个分类框。“全部”作为筛选项而非模板分类排
+    /// 在最前，因此不来自后端。
+    /// </summary>
+    private void BuildPromptCategoryItems(JsonElement root)
+    {
+        var categories = new List<PromptCategoryItem>
+        {
+            new() { Id = "", Label = Loc.T("prompt.panel.all", "全部分类") },
+        };
+        if (root.TryGetProperty("categories", out JsonElement items)
+            && items.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in items.EnumerateArray())
+                categories.Add(new PromptCategoryItem
+                {
+                    Id = GetStringField(item, "id"),
+                    Label = GetStringField(item, "label"),
+                });
+        }
+        int previousFilter = PromptCategoryCombo.SelectedIndex;
+        int previousEdit = PromptEditCategoryCombo.SelectedIndex;
+        PromptCategoryCombo.ItemsSource = categories;
+        PromptEditCategoryCombo.ItemsSource = categories.Skip(1).ToList();
+        PromptCategoryCombo.SelectedIndex = previousFilter >= 0 && previousFilter < categories.Count
+            ? previousFilter : 0;
+        PromptEditCategoryCombo.SelectedIndex = previousEdit >= 0 ? previousEdit : 0;
+    }
+
+    /// <summary>
+    /// [EN] Filter the loaded templates by the selected category and rebuild the
+    /// list box. The box shows "label · note" strings; the parallel
+    /// ``_visiblePromptTemplates`` list is the authority for selection.
+    /// [ZH] 按所选分类过滤已载入模板并重建列表框。列表框展示“名称 · 说明”字符串；选中
+    /// 结果的权威来源是并行的 ``_visiblePromptTemplates`` 列表。
+    /// </summary>
+    private void ApplyPromptCategoryFilter(bool resetSelection)
+    {
+        string category = (PromptCategoryCombo.SelectedItem as PromptCategoryItem)?.Id ?? "";
+        _visiblePromptTemplates.Clear();
+        foreach (PromptTemplateItem item in _promptTemplates)
+        {
+            if (category.Length == 0 || item.Category == category)
+                _visiblePromptTemplates.Add(item);
+        }
+        PromptTemplateList.ItemsSource = _visiblePromptTemplates
+            .Select(item => item.Note.Length > 0 ? $"{item.Label} · {item.Note}" : item.Label)
+            .ToList();
+        PromptTemplateHintText.Text = _visiblePromptTemplates.Count == 0
+            ? Loc.T("prompt.panel.empty", "该分类下没有模板")
+            : "";
+        if (resetSelection)
+        {
+            PromptTemplateList.SelectedIndex = -1;
+            ClearPromptEditor();
+        }
+    }
+
+    /// <summary>
+    /// [EN] Load the selected template into the editor. Built-in templates fill
+    /// the fields but cannot be saved over or deleted.
+    /// [ZH] 将选中模板载入编辑器。内置模板会填充字段，但不能被覆盖保存或删除。
+    /// </summary>
+    private void LoadPromptEditor(int index)
+    {
+        if (_promptPanelLoading || index < 0 || index >= _visiblePromptTemplates.Count)
+            return;
+        PromptTemplateItem item = _visiblePromptTemplates[index];
+        _promptDeleteArmed = false;
+        _editingPromptId = item.Id;
+        PromptNameBox.Text = item.Label;
+        PromptInstructionBox.Text = item.Instruction;
+        PromptRoleBox.Text = item.Role;
+        SelectPromptCategory(item.Category);
+        bool editable = item.Editable;
+        PromptSaveButton.IsEnabled = editable;
+        PromptDeleteButton.IsEnabled = editable;
+        PromptStatusText.Text = editable
+            ? Loc.T("prompt.panel.user", "自定义")
+            : Loc.T("prompt.panel.readonly", "内置模板只读");
+    }
+
+    /// <summary>
+    /// [EN] Select one category in the editor combo by identifier.
+    /// [ZH] 按标识在编辑分类框中选中一个分类。
+    /// </summary>
+    private void SelectPromptCategory(string categoryId)
+    {
+        if (PromptEditCategoryCombo.ItemsSource is not IEnumerable<PromptCategoryItem> items)
+            return;
+        var list = items.ToList();
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (list[i].Id == categoryId)
+            {
+                PromptEditCategoryCombo.SelectedIndex = i;
+                return;
+            }
+        }
+        PromptEditCategoryCombo.SelectedIndex = list.Count > 0 ? 0 : -1;
+    }
+
+    /// <summary>
+    /// [EN] Reset the editor for a new custom template.
+    /// [ZH] 为新自定义模板重置编辑器。
+    /// </summary>
+    private void ClearPromptEditor()
+    {
+        _editingPromptId = "";
+        _promptDeleteArmed = false;
+        PromptNameBox.Text = "";
+        PromptInstructionBox.Text = "";
+        PromptRoleBox.Text = "";
+        PromptSaveButton.IsEnabled = true;
+        PromptDeleteButton.IsEnabled = false;
+        PromptStatusText.Text = "";
+    }
+
+    /// <summary>
+    /// [EN] Save the editor content as a user template.
+    /// [ZH] 将编辑器内容保存为用户模板。
+    /// </summary>
+    private async Task SavePromptTemplateAsync()
+    {
+        string label = PromptNameBox.Text?.Trim() ?? "";
+        string instruction = PromptInstructionBox.Text?.Trim() ?? "";
+        if (label.Length == 0 || instruction.Length == 0)
+        {
+            PromptStatusText.Text = Loc.T("prompt.panel.nameRequired", "请填写模板名称与指令正文");
+            return;
+        }
+        string category = (PromptEditCategoryCombo.SelectedItem as PromptCategoryItem)?.Id ?? "general";
+        var payload = new Dictionary<string, object?>
+        {
+            ["id"] = _editingPromptId,
+            ["label"] = label,
+            ["category"] = category,
+            ["format"] = instruction,
+            ["role"] = PromptRoleBox.Text?.Trim() ?? "",
+        };
+        JsonDocument? doc = await _state.Backend.SendAsync(
+            new { action = "promptlib_save", template = payload },
+            idleTimeout: BackendService.HeavyIdleTimeout);
+        if (doc is null)
+            return;
+        using (doc)
+        {
+            JsonElement root = doc.RootElement;
+            bool ok = GetBoolField(root, "ok");
+            string content = GetStringField(root, "content");
+            PromptStatusText.Text = content;
+            if (ok)
+            {
+                if (root.TryGetProperty("template", out JsonElement saved))
+                    _editingPromptId = GetStringField(saved, "id");
+                await RefreshPromptTemplatesAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// [EN] Delete the selected user template. A first click only arms the
+    /// action and states which template would be deleted: Avalonia has no message
+    /// box, and this mirrors the two-step confirmation used elsewhere in the
+    /// window.
+    /// [ZH] 删除选中的用户模板。首次点击只进入待确认状态并说明将删除哪一个：Avalonia
+    /// 没有消息框，这里沿用本窗口其他位置的两段式确认。
+    /// </summary>
+    private async Task DeletePromptTemplateAsync()
+    {
+        if (_editingPromptId.Length == 0)
+            return;
+        if (!_promptDeleteArmed)
+        {
+            _promptDeleteArmed = true;
+            PromptStatusText.Text = Loc.T("prompt.panel.deleteConfirm",
+                "确定删除模板「{0}」？", PromptNameBox.Text ?? "") + " " +
+                Loc.T("prompt.panel.confirmAgain", "再点一次「删除」确认");
+            return;
+        }
+        _promptDeleteArmed = false;
+        JsonDocument? doc = await _state.Backend.SendAsync(
+            new { action = "promptlib_delete", template_id = _editingPromptId },
+            idleTimeout: BackendService.HeavyIdleTimeout);
+        if (doc is null)
+            return;
+        using (doc)
+        {
+            JsonElement root = doc.RootElement;
+            PromptStatusText.Text = GetStringField(root, "content");
+            if (GetBoolField(root, "ok"))
+            {
+                ClearPromptEditor();
+                await RefreshPromptTemplatesAsync(resetSelection: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// [EN] Apply the selected template to the current conversation.
+    /// [ZH] 将选中模板应用到当前对话。
+    /// </summary>
+    private async Task ApplyPromptTemplateAsync()
+    {
+        int index = PromptTemplateList.SelectedIndex;
+        if (index < 0 || index >= _visiblePromptTemplates.Count)
+            return;
+        string templateId = _visiblePromptTemplates[index].Id;
+        JsonDocument? doc = await _state.Backend.SendAsync(
+            new { action = "promptlib_apply", template_id = templateId },
+            idleTimeout: BackendService.HeavyIdleTimeout);
+        if (doc is null)
+            return;
+        using (doc)
+        {
+            string content = GetStringField(doc.RootElement, "content");
+            PromptStatusText.Text = content;
+            if (GetBoolField(doc.RootElement, "ok"))
+                Toast(content);
+        }
+    }
 }
 
 

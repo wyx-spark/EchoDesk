@@ -308,7 +308,7 @@
                  VerticalContentAlignment="Top"
                  BorderThickness="0" Background="Transparent" />
 
-        <Grid Grid.Row="1" Margin="0,6,0,0" ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
+        <Grid Grid.Row="1" Margin="0,6,0,0" ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
 
           <!--
             [EN] Left side: toggle button for the command input row (the plus sign rotates into
@@ -356,25 +356,40 @@
                      VerticalAlignment="Center" IsVisible="False"
                      Foreground="{DynamicResource AccentBrush}"
                      AutomationProperties.AutomationId="RecordingHint" />
-          <Button x:Name="SettingsButton" Grid.Column="4" Width="34" Height="34" Classes="icon"
+          <!--
+            [EN] v0.2.6 Part 3: entry points for the local knowledge base (mount a
+                 folder and watch the index progress) and the prompt template library.
+                 Both open as floating panels anchored in code, like the snippet
+                 palette, so the toolbar geometry stays fixed.
+            [ZH] v0.2.6 Part 3：本地知识库入口（挂载文件夹并查看索引进度）与提示词
+                 模板库入口。两者都以浮层形式打开、在代码里锚定，与常用语面板一致，
+                 工具栏几何保持不变。
+          -->
+          <Button x:Name="KnowledgeButton" Grid.Column="4" Width="34" Height="34" Classes="icon"
+                  Content="📚" FontSize="14"
+                  AutomationProperties.AutomationId="KnowledgeButton" />
+          <Button x:Name="PromptLibraryButton" Grid.Column="5" Width="34" Height="34" Classes="icon"
+                  Content="🧩" FontSize="14"
+                  AutomationProperties.AutomationId="PromptLibraryButton" />
+          <Button x:Name="SettingsButton" Grid.Column="6" Width="34" Height="34" Classes="icon"
                   Content="⚙" FontSize="14" />
-          <Button x:Name="UploadButton" Grid.Column="5" Width="34" Height="34" Classes="icon"
+          <Button x:Name="UploadButton" Grid.Column="7" Width="34" Height="34" Classes="icon"
                   Content="📎" FontSize="14" />
           <!--
             [EN] Image attach (v0.2.6 Part 2): picks a screenshot and sends `image_chat`.
             [ZH] 图片附加（v0.2.6 Part 2）：选择截图并发送 `image_chat`。
           -->
-          <Button x:Name="ImageButton" Grid.Column="6" Width="34" Height="34" Classes="icon"
+          <Button x:Name="ImageButton" Grid.Column="8" Width="34" Height="34" Classes="icon"
                   Content="🖼" FontSize="14"
                   AutomationProperties.AutomationId="ImageButton" />
-          <Button x:Name="StopButton" Grid.Column="7" Width="34" Height="34" Classes="icon"
+          <Button x:Name="StopButton" Grid.Column="9" Width="34" Height="34" Classes="icon"
                   Content="⏹" FontSize="14" IsVisible="False" />
           <!--
             [EN] The primary send affordance carries the accent fill as a local value, which is
                  immune to the neutral icon-button style overriding it.
             [ZH] 发送主操作以本地值承载强调色填充，避免被中性的图标按钮样式覆盖。
           -->
-          <Button x:Name="SendButton" Grid.Column="8" Width="40" Height="40" Margin="8,0,0,0"
+          <Button x:Name="SendButton" Grid.Column="10" Width="40" Height="40" Margin="8,0,0,0"
                   Classes="icon" Content="➤" FontSize="16"
                   Background="{DynamicResource AccentBrush}"
                   BorderBrush="{DynamicResource AccentBrush}"
@@ -555,6 +570,100 @@
           </ListBox>
           <TextBlock x:Name="PaletteHint" FontSize="11" Margin="6,2,6,4"
                      Foreground="{DynamicResource SubTextBrush}" TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+    </Popup>
+
+    <!--
+      [EN] v0.2.6 Part 3 knowledge-base panel: mount a local folder, list the mounted
+           libraries with their document and passage counts, unmount or re-index one,
+           and show the live indexing progress. The progress row is populated from the
+           background job that `knowledge_mount` returns, polled through
+           `file_job_status`, so indexing never blocks the conversation.
+      [ZH] v0.2.6 Part 3 知识库面板：挂载本地文件夹、列出已挂载库及其文件与片段数、
+           卸载或重建索引，并显示实时索引进度。进度行由 `knowledge_mount` 返回的
+           后台作业经 `file_job_status` 轮询填充，因此建索引不会阻塞对话。
+    -->
+    <Popup x:Name="KnowledgePanel" Placement="Top" IsOpen="False" MaxHeight="440">
+      <Border Background="{DynamicResource AppBackgroundBrush}"
+              BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
+              CornerRadius="10" MinWidth="400" MaxWidth="580" Padding="10" Margin="0,0,0,4">
+        <StackPanel Spacing="6">
+          <TextBlock x:Name="KnowledgeTitleText" FontWeight="Bold" FontSize="13"
+                     Foreground="{DynamicResource AccentBrush}" />
+          <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="KnowledgeListPanel" Spacing="2" />
+          </ScrollViewer>
+          <StackPanel x:Name="KnowledgeProgressRow" Orientation="Horizontal" Spacing="8"
+                      IsVisible="False"
+                      AutomationProperties.AutomationId="KnowledgeProgressRow">
+            <ProgressBar x:Name="KnowledgeProgressBar" Width="240" Height="6"
+                         Minimum="0" Maximum="100"
+                         AutomationProperties.AutomationId="KnowledgeProgressBar" />
+            <TextBlock x:Name="KnowledgeProgressText" FontSize="11"
+                       VerticalAlignment="Center"
+                       Foreground="{DynamicResource SubTextBrush}" />
+          </StackPanel>
+          <TextBlock x:Name="KnowledgeHintText" FontSize="11" TextWrapping="Wrap"
+                     Foreground="{DynamicResource SubTextBrush}" />
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Button x:Name="KnowledgeMountButton" Classes="primary" Padding="12,3"
+                    AutomationProperties.AutomationId="KnowledgeMountButton" />
+            <Button x:Name="KnowledgeReindexButton" Padding="12,3"
+                    AutomationProperties.AutomationId="KnowledgeReindexButton" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Popup>
+
+    <!--
+      [EN] v0.2.6 Part 3 prompt template panel: category filter, template list,
+           apply, and an editor for user-defined templates. Built-in templates are
+           read-only: selecting one fills the editor but the save and delete actions
+           stay disabled, because the built-in table is versioned with the program.
+      [ZH] v0.2.6 Part 3 提示词模板面板：分类筛选、模板列表、应用，以及用户自定义
+           模板的编辑器。内置模板只读：选中后会填充编辑器，但保存与删除保持禁用，
+           因为内置模板表与程序一同版本化。
+    -->
+    <Popup x:Name="PromptLibraryPanel" Placement="Top" IsOpen="False" MaxHeight="600">
+      <Border Background="{DynamicResource AppBackgroundBrush}"
+              BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
+              CornerRadius="10" MinWidth="560" MaxWidth="760" Padding="10" Margin="0,0,0,4">
+        <StackPanel Spacing="6">
+          <TextBlock x:Name="PromptLibraryTitleText" FontWeight="Bold" FontSize="13"
+                     Foreground="{DynamicResource AccentBrush}" />
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+            <ComboBox x:Name="PromptCategoryCombo" Grid.Column="0"
+                      HorizontalAlignment="Stretch"
+                      AutomationProperties.AutomationId="PromptCategoryCombo" />
+            <Button x:Name="PromptNewButton" Grid.Column="1" Padding="12,3"
+                    AutomationProperties.AutomationId="PromptNewButton" />
+          </Grid>
+          <ListBox x:Name="PromptTemplateList" MaxHeight="170" Background="Transparent"
+                   BorderThickness="0"
+                   AutomationProperties.AutomationId="PromptTemplateList" />
+          <TextBlock x:Name="PromptTemplateHintText" FontSize="11" TextWrapping="Wrap"
+                     Foreground="{DynamicResource SubTextBrush}" />
+          <TextBox x:Name="PromptNameBox"
+                   AutomationProperties.AutomationId="PromptNameBox" />
+          <ComboBox x:Name="PromptEditCategoryCombo"
+                    AutomationProperties.AutomationId="PromptEditCategoryCombo" />
+          <TextBox x:Name="PromptInstructionBox" AcceptsReturn="True" MinHeight="72"
+                   MaxHeight="120" TextWrapping="Wrap"
+                   AutomationProperties.AutomationId="PromptInstructionBox" />
+          <TextBox x:Name="PromptRoleBox" MaxHeight="52" TextWrapping="Wrap"
+                   AutomationProperties.AutomationId="PromptRoleBox" />
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Button x:Name="PromptApplyButton" Classes="primary" Padding="12,3"
+                    AutomationProperties.AutomationId="PromptApplyButton" />
+            <Button x:Name="PromptSaveButton" Padding="12,3"
+                    AutomationProperties.AutomationId="PromptSaveButton" />
+            <Button x:Name="PromptDeleteButton" Padding="12,3"
+                    AutomationProperties.AutomationId="PromptDeleteButton" />
+          </StackPanel>
+          <TextBlock x:Name="PromptStatusText" FontSize="11" TextWrapping="Wrap"
+                     Foreground="{DynamicResource SubTextBrush}"
+                     AutomationProperties.AutomationId="PromptStatusText" />
         </StackPanel>
       </Border>
     </Popup>

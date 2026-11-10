@@ -327,10 +327,10 @@
       "summary": "✅ Done: {0} step(s) · {1} ms",
       "summaryStopped": "⏹ Stopped: {0} step(s) · {1} ms",
       "toolsUsed": "tools: {0}",
-    "confirmToolTitle": "Confirm system command",
-    "confirmToolFallback": "The Agent requests a high-risk tool operation.",
-    "confirmToolAllow": "Allow execution",
-    "confirmToolDeny": "Deny"
+      "confirmToolTitle": "Confirm system command",
+      "confirmToolFallback": "The Agent requests a high-risk tool operation.",
+      "confirmToolAllow": "Allow execution",
+      "confirmToolDeny": "Deny"
     },
     "metrics": {
       "tip": "Live metrics for this run, measured and reported by the backend: time to first token, output speed, token counts and total elapsed time. Values marked with ≈ are estimates.",
@@ -544,6 +544,50 @@
       "state": {
         "syncedEmpty": "synced (no matching skills yet)"
       }
+    }
+  },
+  "knowledge": {
+    "panel": {
+      "title": "Local knowledge base",
+      "empty": "No folder mounted",
+      "mount": "Mount folder",
+      "unmount": "Unmount",
+      "reindex": "Re-index",
+      "progress": "Indexing: {0}/{1}",
+      "ready": "Ready",
+      "indexing": "Indexing",
+      "failed": "Failed",
+      "pickTitle": "Select a folder to mount",
+      "summary": "{0} files · {1} passages",
+      "hint": "Indexing runs in the background and does not block chatting",
+      "mounted": "Mounted: {0}",
+      "indexFailed": "Indexing failed: {0}",
+      "bound": "bound to this conversation: {0}"
+    }
+  },
+  "prompt": {
+    "panel": {
+      "title": "Prompt template library",
+      "all": "All categories",
+      "new": "New template",
+      "save": "Save",
+      "delete": "Delete",
+      "apply": "Apply",
+      "name": "Name",
+      "category": "Category",
+      "instruction": "Instruction",
+      "role": "Role (optional)",
+      "note": "Description (optional)",
+      "empty": "No template in this category",
+      "readonly": "Built-in templates are read-only",
+      "saved": "Template saved",
+      "deleted": "Template deleted",
+      "applied": "Applied: {0}",
+      "deleteConfirm": "Delete template \"{0}\"?",
+      "nameRequired": "A template name and instruction are required",
+      "user": "Custom",
+      "builtin": "Built-in",
+      "confirmAgain": "Click \"Delete\" once more to confirm"
     }
   }
 }

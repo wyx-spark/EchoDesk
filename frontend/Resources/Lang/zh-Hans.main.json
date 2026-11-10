@@ -327,10 +327,10 @@
       "summary": "✅ 完成：{0} 步 · {1} ms",
       "summaryStopped": "⏹ 已中止：{0} 步 · {1} ms",
       "toolsUsed": "工具：{0}",
-    "confirmToolTitle": "确认执行系统命令",
-    "confirmToolFallback": "Agent 请求执行一个高危工具操作。",
-    "confirmToolAllow": "允许执行",
-    "confirmToolDeny": "拒绝"
+      "confirmToolTitle": "确认执行系统命令",
+      "confirmToolFallback": "Agent 请求执行一个高危工具操作。",
+      "confirmToolAllow": "允许执行",
+      "confirmToolDeny": "拒绝"
     },
     "metrics": {
       "tip": "本次生成的运行指标（由后端实测上报）：首 token 延迟、输出速度、token 数、总耗时。带 ≈ 的数字为估算值。",
@@ -544,6 +544,50 @@
       "state": {
         "syncedEmpty": "已同步（当前无匹配技能）"
       }
+    }
+  },
+  "knowledge": {
+    "panel": {
+      "title": "本地知识库",
+      "empty": "尚未挂载文件夹",
+      "mount": "挂载文件夹",
+      "unmount": "卸载",
+      "reindex": "重建索引",
+      "progress": "索引进度：{0}/{1}",
+      "ready": "已就绪",
+      "indexing": "索引中",
+      "failed": "失败",
+      "pickTitle": "选择要挂载的文件夹",
+      "summary": "{0} 个文件 · {1} 个片段",
+      "hint": "索引在后台建立，不影响对话",
+      "mounted": "已挂载：{0}",
+      "indexFailed": "索引失败：{0}",
+      "bound": "本会话绑定 {0} 个"
+    }
+  },
+  "prompt": {
+    "panel": {
+      "title": "提示词模板库",
+      "all": "全部分类",
+      "new": "新建模板",
+      "save": "保存",
+      "delete": "删除",
+      "apply": "应用",
+      "name": "名称",
+      "category": "分类",
+      "instruction": "指令正文",
+      "role": "角色设定（可选）",
+      "note": "说明（可选）",
+      "empty": "该分类下没有模板",
+      "readonly": "内置模板只读",
+      "saved": "模板已保存",
+      "deleted": "模板已删除",
+      "applied": "已应用：{0}",
+      "deleteConfirm": "确定删除模板「{0}」？",
+      "nameRequired": "请填写模板名称与指令正文",
+      "user": "自定义",
+      "builtin": "内置",
+      "confirmAgain": "再点一次「删除」确认"
     }
   }
 }

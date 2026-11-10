@@ -60,7 +60,11 @@
       "settingsTip": "Settings (Ctrl+, for settings · Ctrl+M for the skill marketplace)",
       "uploadTip": "Upload a file (Ctrl+O)",
       "sendTip": "Send (Ctrl+Enter)",
-      "stopTip": "Stop generating (Esc)"
+      "stopTip": "Stop generating (Esc)",
+      "knowledge": "Knowledge",
+      "knowledgeTip": "Mount a local folder as a knowledge library",
+      "prompts": "Templates",
+      "promptsTip": "Open the prompt template library"
     },
     "strip": {
       "search": "🔍 Search: {0}",
@@ -376,4 +380,3 @@
     }
   }
 }
-
