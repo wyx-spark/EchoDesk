@@ -131,7 +131,7 @@ Callback event fields (structured data only, no copy):
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from config import SummarizeConfig
 from extractive import extract as extractive_pick
@@ -431,6 +431,7 @@ class DocumentSummarizer:
         force: bool = False,
         on_progress: Optional[Callable[[Dict], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None,
+        conversation: Optional[Any] = None,
     ) -> SummaryResult:
         """
         [EN]
@@ -441,11 +442,23 @@ class DocumentSummarizer:
         module docstring) with no display text. ``should_stop`` aborts as soon as it
         returns true, so manual stop interrupts and cleans up correctly.
 
+        ``conversation`` is an optional, caller-owned temporary conversation
+        object. When supplied, every chunk prompt is written into that temporary
+        conversation instead of being assembled as an anonymous local list. This
+        makes context isolation explicit and testable: a background job passes a
+        private conversation, and the main conversation history is never touched
+        by chunking or intermediate prompts.
+
         [ZH]
         对文档执行分段摘要；文本较短或功能关闭时原样返回。
 
         ``on_progress`` 接收结构化事件（字段见模块头部注释），不含文案；
         ``should_stop`` 每次为真即中止（手动停止须能正确中断并清理）。
+
+        ``conversation`` 为可选的、由调用方持有的临时会话对象。提供后，每段
+        提示词写入该临时会话，而不是拼装为匿名局部列表。这样上下文隔离成为
+        显式且可断言的行为：后台作业传入私有会话，分段与中间提示词绝不触碰
+        主对话历史。
         """
         origin_chars = len(text)
         if not text:
@@ -538,6 +551,7 @@ class DocumentSummarizer:
                     chunk=chunk, index=index, total=total, start=start, end=end,
                     engine=engine, on_progress=on_progress, should_stop=should_stop,
                     run_started=started, counters=counters, model_input=model_input,
+                    conversation=conversation,
                 )
                 if status == "aborted":
                     aborted = True
@@ -764,6 +778,7 @@ class DocumentSummarizer:
         run_started: float,
         counters: Dict[str, int],
         model_input: str = "",
+        conversation: Optional[Any] = None,
     ) -> Tuple[str, str]:
         """
         [EN]
@@ -781,6 +796,10 @@ class DocumentSummarizer:
           characters of the original is preferable to presenting the filtered remnant
           as a summary.
 
+        ``conversation`` is the optional temporary conversation described in
+        :meth:`summarize`. Chunk prompts are recorded there and then handed to the
+        model; the main conversation history remains untouched.
+
         [ZH]
         生成一段摘要，返回 ``(文本, 状态)``；状态为 ok/partial/failed/timeout/aborted
         之一。
@@ -792,12 +811,32 @@ class DocumentSummarizer:
           哪一部分"，预筛只影响送入的字数，不改变出处；
         * 兜底文本使用 ``chunk``（原文）而非 ``model_input``：该段模型未给出结果时，
           宁可回退到原文前若干字符，也不能用"预筛后的残段"冒充摘要。
+
+        ``conversation`` 为 :meth:`summarize` 所述的临时会话。分段提示词先写入该
+        会话再交给模型；主对话历史保持不变。
         """
         body = model_input or chunk
+        prompt = f"【第 {index}/{total} 段，原文第 {start}-{end} 字符】\n{body}"
         messages = [
             {"role": "system", "content": _CHUNK_SYSTEM},
-            {"role": "user", "content": f"【第 {index}/{total} 段，原文第 {start}-{end} 字符】\n{body}"},
+            {"role": "user", "content": prompt},
         ]
+        if conversation is not None:
+            # [EN] Record the intermediate prompt in the caller-owned temporary
+            # [EN] conversation, then reuse its records to build the model request.
+            # [EN] The temporary history is cleared per chunk, so a long document
+            # [EN] cannot accumulate intermediate prompts in memory either.
+            # [ZH] 把中间提示词写入调用方持有的临时会话，再由其记录构造模型请求。
+            # [ZH] 临时历史按段清空，长文档也不会在内存中累积中间提示词。
+            try:
+                conversation.clear()
+                conversation.add_message("system", _CHUNK_SYSTEM)
+                conversation.add_message("user", prompt)
+                messages = [{"role": record.get("role", "user"),
+                             "content": record.get("content", "")}
+                            for record in conversation.history]
+            except Exception:
+                log.debug("临时会话记录失败，本段仍按直接构造的消息调用", exc_info=True)
         return self._call_model(
             messages=messages, max_tokens=self.cfg.max_summary_tokens, engine=engine,
             on_progress=on_progress, should_stop=should_stop, run_started=run_started,

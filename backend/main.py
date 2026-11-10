@@ -197,6 +197,7 @@ with _suppress_stdout():
     # [ZH] 相关设计（自测问题修复-1）：不再导入 FILE_INTENT —— 它曾作为"是否把文件正文
     # [ZH] 注入上下文"的开关，现已取消（详见 _stream_chat 中 include_file 的说明）。
     from conversation import ConversationManager, REPEAT_INTENT
+    from document_jobs import STATUS_CANCELLED, DocumentJobManager
     from download_utils import check_model, download_model, find_best_model
     from file_parser import is_parse_error, localize_error, parse_file_with_wps
     from gguf_meta import format_bytes as _format_bytes
@@ -566,6 +567,14 @@ class Backend:
         self.summarizer = DocumentSummarizer(
             self.llm, config.summarize, engine_factory=self._make_summary_engine,
         )
+        # [EN] Serial background queue for document parsing and chunked
+        # [EN] summarization (v0.2.6 task 2.1). A single worker keeps model
+        # [EN] inference serialized and lets the request dispatcher answer
+        # [EN] immediately.
+        # [ZH] 文档解析与分段摘要的串行后台队列（v0.2.6 任务 2.1）。单工作线程
+        # [ZH] 保证模型推理串行，并使请求分发层可以立即应答。
+        self._conv_lock = threading.RLock()
+        self._document_jobs = DocumentJobManager(self._run_document_job)
         self.commands = CommandHandler(
             self.conv, self.search, self.llm, config, summarizer=self.summarizer,
             file_loader=self.load_file_into_context, summarize_file=self.summarize_current_file,
@@ -1662,6 +1671,25 @@ class Backend:
         处理单行响应的请求。
         """
         action = request.get("action")
+        # [EN] Lightweight liveness probe (v0.2.6 task 2.1). It performs no model
+        # [EN] work and no conversation access, so it must answer immediately even
+        # [EN] while a background document job is running.
+        # [ZH] 轻量存活探测（v0.2.6 任务 2.1）。不调用模型、不访问会话，因此即使
+        # [ZH] 后台文档作业正在运行，也必须立即应答。
+        if action == "ping":
+            return {"type": "pong", "ok": True, "busy": bool(self.stream_active),
+                    "ts": time.time()}
+        if action == "file_async":
+            return self._handle_file_async(request)
+        if action == "file_job_status":
+            return self._handle_file_job_status(request)
+        if action == "file_job_cancel":
+            job_id = str(request.get("job_id") or "")
+            cancelled = self._document_jobs.cancel(job_id)
+            return {"type": "system", "content": "",
+                    "job_id": job_id, "cancelled": cancelled,
+                    "job": (self._document_jobs.get(job_id).snapshot()
+                            if self._document_jobs.get(job_id) else {})}
         if action == "chat":
             return self._handle_chat(request.get("message", ""))
         if action == "file":
@@ -5826,6 +5854,196 @@ class Backend:
             log.warning("大文件落盘失败，改为在内存中保留", exc_info=True)
             return ""
 
+    # [EN] ---------- Asynchronous document jobs (v0.2.6 tasks 2.1 / 2.2) ----------
+    # [ZH] ---------- 文档后台作业（v0.2.6 任务 2.1 / 2.2） ----------
+
+    def _handle_file_async(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Accept an upload and enqueue background parsing plus summarization.
+
+        The response is produced before any parsing work starts: the caller
+        receives the job identifier immediately and may continue chatting. The
+        final summary is injected into the main conversation only when the job
+        completes, and only as a single system message.
+
+        [ZH]
+        接收上传并将解析与摘要排入后台队列。
+
+        应答在任何解析工作开始前产生：调用方立即取得作业标识并可继续对话。
+        最终摘要仅在作业完成时注入主对话，且只作为一条系统消息。
+        """
+        raw = request.get("files")
+        if not isinstance(raw, list) or not raw:
+            raw = [request.get("path")] if request.get("path") else []
+        paths = [str(item) for item in raw if str(item or "").strip()]
+        if not paths:
+            return {"type": "system", "content": _t("sys.file_need_path")}
+        job = self._document_jobs.submit(paths)
+        return {"type": "system", "ok": True, "accepted": True, "job_id": job.id,
+                "status": job.status, "count": len(paths),
+                "content": _t("sys.file_async_accepted", count=len(paths),
+                              job_id=job.id)}
+
+    def _handle_file_job_status(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Return the current state of one background document job, together with
+        the events appended after the caller-supplied cursor.
+
+        [ZH]
+        返回单个后台文档作业的当前状态，以及调用方游标之后追加的事件。
+        """
+        job_id = str(request.get("job_id") or "")
+        job = self._document_jobs.get(job_id)
+        if job is None:
+            return {"type": "error", "ok": False,
+                    "content": _t("sys.file_job_not_found", job_id=job_id)}
+        cursor = int(request.get("cursor") or 0)
+        snapshot = job.snapshot(cursor)
+        return {"type": "file_job", "ok": True, "content": "",
+                "job_id": job.id, "job": snapshot,
+                "events": snapshot["events"], "cursor": snapshot["cursor"]}
+
+    def _run_document_job(self, job: Any) -> None:
+        """
+        [EN]
+        Background runner for one document job.
+
+        Invariants:
+        * The main conversation is never touched while parsing or summarizing.
+          Chunk prompts are recorded in a private temporary conversation object
+          (task 2.2), and the final summary is committed as one system message.
+        * A cancellation request is observed between files and inside the
+          summarizer, so a long document stops promptly.
+        * A parse failure for one file does not abort the remaining files.
+
+        [ZH]
+        单个文档作业的后台执行函数。
+
+        不变量：
+        * 解析与摘要期间绝不触碰主对话。分段提示词记录在私有临时会话对象中
+          （任务 2.2），最终摘要以一条系统消息提交。
+        * 取消请求在文件之间与摘要器内部均被检查，长文档可及时停止。
+        * 单份文件解析失败不会中止其余文件。
+        """
+        cfg = self._files_cfg()
+        limit = int(getattr(cfg, "max_count", 10) or 10)
+        accepted = list(job.paths[:limit])
+        ignored = list(job.paths[limit:])
+        total = len(accepted)
+        outcomes: List[Dict[str, Any]] = []
+        if ignored:
+            job.emit({"type": "file_status", "phase": "ignored",
+                      "content": _t("sys.files_too_many", limit=limit)})
+        if not accepted:
+            job.status = STATUS_CANCELLED
+            job.error = "no_accepted_paths"
+            return
+
+        for index, path in enumerate(accepted, 1):
+            if job.cancel_event.is_set():
+                job.status = STATUS_CANCELLED
+                return
+            name = os.path.basename(path) or path
+            job.emit({"type": "file_status", "phase": "start", "index": index,
+                      "total": total, "name": name,
+                      "content": _t("sys.file_status_start", index=index,
+                                    total=total, name=name)})
+            try:
+                content = parse_file_with_wps(path, self.config.file_max_chars)
+            except Exception as exc:  # noqa: BLE001 - one file must not abort the job
+                log.exception("后台解析文件失败: %s", path)
+                outcome = {"ok": False, "name": name, "chars": 0,
+                           "message": _t("sys.file_load_failed", error=exc)}
+                outcomes.append(outcome)
+                job.emit({"type": "file_status", "phase": "failed", "index": index,
+                          "total": total, "name": name, "ok": False,
+                          "content": outcome["message"]})
+                continue
+            if is_parse_error(content):
+                outcome = {"ok": False, "name": name, "chars": 0,
+                           "message": f"❌ {localize_error(content)}"}
+                outcomes.append(outcome)
+                job.emit({"type": "file_status", "phase": "failed", "index": index,
+                          "total": total, "name": name, "ok": False,
+                          "content": outcome["message"]})
+                continue
+
+            chars = len(content)
+            try:
+                tokens = self.llm.count_tokens(content)
+            except Exception:
+                tokens = chars // 2
+            stored = ""
+            threshold = int(getattr(cfg, "disk_threshold_chars", 0) or 0)
+            if threshold > 0 and chars > threshold:
+                stored = self._store_large_file(name, content)
+            effective_ctx = int(getattr(self.llm, "max_n_ctx", 0)
+                                or getattr(self.llm, "n_ctx", 0) or 0)
+            summary_text = ""
+            summary_meta: Dict[str, Any] = {}
+            result = None
+            if self.model_ready and self.summarizer.should_use_summary(content, effective_ctx):
+                # [EN] Task 2.2: a private conversation object owns every
+                # [EN] intermediate prompt. It is discarded when the job ends.
+                # [ZH] 任务 2.2：私有会话对象承载全部中间提示词，作业结束时丢弃。
+                temporary_conversation = ConversationManager(1, "chat")
+                result = self.summarizer.summarize(
+                    content, source_name=name, force=True,
+                    on_progress=job.emit,
+                    should_stop=job.cancel_event.is_set,
+                    conversation=temporary_conversation,
+                )
+                if result.aborted or job.cancel_event.is_set():
+                    job.status = STATUS_CANCELLED
+                    return
+                if result.summarized:
+                    summary_text = result.text
+                    summary_meta = {
+                        "chunks": result.chunk_count,
+                        "origin_chars": result.origin_chars,
+                        "pointer": result.pointer,
+                        "status": result.status,
+                        "async": True,
+                    }
+            if job.cancel_event.is_set():
+                job.status = STATUS_CANCELLED
+                return
+
+            if summary_text:
+                final_text = (_t("sys.file_async_summary_head", name=name) + "\n"
+                              + summary_text)
+            elif result is not None and result.status == "failed":
+                final_text = _t("sys.file_async_failed", name=name,
+                                error=result.error or "")
+            else:
+                final_text = _t("sys.file_async_ready", name=name, chars=chars,
+                                tokens=tokens)
+
+            # [EN] Commit point: the main conversation is modified only here,
+            # [EN] under a lock, and only with the final result.
+            # [ZH] 提交点：主对话仅在此处、持锁修改，且只写入最终结果。
+            with self._conv_lock:
+                entry = self.conv.add_file(path, content)
+                if stored:
+                    entry.stored_at = stored
+                    entry.content = ""
+                if summary_text:
+                    self.conv.set_entry_summary(entry, summary_text, summary_meta)
+                if summary_text:
+                    self.conv.add_message("system", final_text)
+                self.save_session()
+            outcome = {"ok": True, "name": name, "chars": chars, "tokens": tokens,
+                       "summary_chars": len(summary_text), "stored_at": stored,
+                       "message": final_text}
+            outcomes.append(outcome)
+            job.emit({"type": "file_ready", "index": index, "total": total,
+                      "name": name, "ok": True, "chars": chars,
+                      "summary_chars": len(summary_text),
+                      "summarized": bool(summary_text), "content": final_text})
+        job.result = {"files": outcomes, "ignored": ignored}
+
     def load_file_into_context(self, filepath: str, progress_sink=None) -> str:
         """
         [EN]
@@ -7284,7 +7502,12 @@ def main() -> None:
         # [ZH] 流式生成期间：指令类请求（以 / 开头）与 stop 允许；新的对话/文件请求提示忙碌
         if backend.stream_active and action != "stop":
             is_command = isinstance(request.get("message"), str) and request.get("message", "").startswith("/")
-            if not is_command:
+            # [EN] Liveness probes and background-job polling are lightweight and
+            # [EN] must remain available while a long task runs (v0.2.6 task 2.1).
+            # [ZH] 存活探测与后台作业轮询属于轻量请求，长任务运行期间必须保持
+            # [ZH] 可用（v0.2.6 任务 2.1）。
+            is_lightweight = action in ("ping", "file_job_status", "file_job_cancel")
+            if not is_command and not is_lightweight:
                 # [EN] Busy flag (model marketplace optimization in an earlier release): the
                 # [EN] single stdout stream is shared, and two threads writing at once
                 # [EN] interleave into broken JSON, so concurrent requests are refused while

@@ -512,6 +512,14 @@ try {
     # /file 多路径与引号感知分词）。用桩引擎，不加载模型。
     Invoke-Check "多文件上传（任务八）" { Invoke-Python "多文件" "tools\test_multifile.py"; "通过" }
 
+    # [EN] v0.2.6 task 2.1/2.2: asynchronous document processing and absolute
+    # [EN] context isolation (50-page document, ping under 100 ms, one final
+    # [EN] system summary only). Uses a stub engine; no model is loaded.
+    # [ZH] v0.2.6 任务 2.1/2.2：文档异步处理与上下文绝对隔离
+    # [ZH] （50 页长文档、ping 低于 100 毫秒、只注入一条最终 system 摘要）。
+    # [ZH] 使用桩引擎，不加载模型。
+    Invoke-Check "文档异步与上下文隔离（v0.2.6）" { Invoke-Python "文档异步" "tools\test_document_async.py"; "通过" }
+
     # v0.2.1 系统提示词重构：对比测试的**无模型**部分。客观指标函数（分点识别/
     # 引导话术判据/防编造判据/摘录重合度）+ 场景表覆盖 + extract 的硬格式不放松，
     # 并子进程跑 tools\prompt_compare.py --dry-run（从 git 历史取旧提示词做新旧对比）。
