@@ -510,6 +510,233 @@ def test_file_injection() -> None:
         check("没有文件时 has_file() 为假", empty.conv.has_file() is False)
 
 
+def test_knowledge_memory() -> None:
+    """v0.2.6 Part 3：本地知识库、长期记忆与提示词模板库。
+
+    覆盖三件验收必需的事：
+      1. 挂载文件夹后能完成索引（增量、切片、中文分词、FTS5 检索）；
+      2. 提问时检索结果注入上下文，且**未绑定知识库的会话不注入**（会话隔离）；
+      3. 对话结束时以**临时会话对象**提取长期记忆，主对话历史不被改动。
+
+    所有落盘路径都重定向到临时目录（``ECHODESK_STATE``），不污染仓库。
+    """
+    section("第二大脑：本地 RAG / 长期记忆 / 模板库（v0.2.6 Part 3）")
+    import json as _json
+    import tempfile as _tempfile
+    import time as _time
+
+    import knowledge
+    import memory
+    import prompt_library
+
+    check("中文分词按二元组切分",
+          knowledge.tokenize("违约金比例")[:3] == ["违约", "约金", "金比"],
+          str(knowledge.tokenize("违约金比例")))
+    pieces = knowledge.chunk_text("甲乙丙。" * 300, chunk_chars=300, overlap_chars=50)
+    check("切片长度有界且无空串",
+          bool(pieces) and all(0 < len(item) <= 300 for item in pieces),
+          str([len(item) for item in pieces][:6]))
+    check("相邻切片存在重叠",
+          len(pieces) > 1 and pieces[0][-20:] in pieces[1], pieces[1][:40])
+
+    previous_state = os.environ.get("ECHODESK_STATE")
+    with _tempfile.TemporaryDirectory() as tmp:
+        os.environ["ECHODESK_STATE"] = tmp
+        docs = os.path.join(tmp, "docs")
+        os.makedirs(docs)
+        contract_path = os.path.join(docs, "contract.md")
+        notes_path = os.path.join(docs, "notes.txt")
+        with open(contract_path, "w", encoding="utf-8") as handle:
+            handle.write("采购合同\n\n违约金：每逾期一日按合同额的 0.3% 计。\n\n"
+                         "付款条件：验收合格后三十个工作日内支付。\n\n质保期：验收后 24 个月。")
+        with open(notes_path, "w", encoding="utf-8") as handle:
+            handle.write("用户的名字是小王。用户的职业是中学教师。API key 每 90 天轮换。")
+
+        # ---------- 索引与检索 ----------
+        database = os.path.join(tmp, "kb.sqlite3")
+        base = knowledge.KnowledgeBase(database)
+        library = base.mount(docs)
+        stats = base.index_library(library["id"])
+        check("挂载文件夹并完成索引", stats["added"] == 2 and stats["failed"] == 0,
+              str(stats))
+        check("增量索引第二次全部跳过",
+              base.index_library(library["id"])["skipped"] == 2)
+        hits = base.search("违约金比例是多少")
+        check("中文检索命中合同文件",
+              bool(hits) and hits[0]["name"] == "contract.md", str(hits[:1]))
+        ascii_hits = base.search("API key rotation")
+        check("英文检索命中笔记文件",
+              bool(ascii_hits) and ascii_hits[0]["name"] == "notes.txt",
+              str(ascii_hits[:1]))
+        context = base.as_context("付款条件", top_k=2, max_chars=800)
+        check("注入块带编号与来源路径",
+              "[1] 来源：" in context and "contract.md" in context, context[:80])
+        os.remove(notes_path)
+        after_remove = base.index_library(library["id"])
+        check("磁盘上消失的文件会从索引移除", after_remove["removed"] == 1,
+              str(after_remove))
+
+        # ---------- 会话绑定与注入 ----------
+        import main as backend_main
+        from config import Config
+
+        class _MemoryEngine:
+            ready = True
+            n_ctx = 8192
+            n_ctx_train = 40960
+            model_path = "stub.gguf"
+
+            def __init__(self):
+                self.calls = []
+
+            def count_tokens(self, text):
+                return max(1, len(str(text)) // 2)
+
+            def chat_complete(self, messages, temperature=0.7, max_tokens=1024):
+                self.calls.append(messages)
+                return '[{"text": "用户的名字是小王", "category": "identity"}]'
+
+            def clear_cache(self):
+                return True
+
+        def _backend():
+            config = Config()
+            config.model_path = "stub.gguf"
+            config.session_file = ""
+            config.speed_hint = False
+            config.search_default = False
+            owner = backend_main.Backend(config)
+            owner.llm = _MemoryEngine()
+            return owner
+
+        owner = _backend()
+        mounted = owner.handle({"action": "knowledge_mount", "path": docs})
+        check("挂载动作立即返回作业标识",
+              mounted.get("ok") is True and bool(mounted.get("job_id")),
+              str(mounted)[:160])
+        deadline = _time.time() + 10
+        job = {}
+        while _time.time() < deadline:
+            job = owner.handle({"action": "file_job_status",
+                                "job_id": mounted["job_id"]}).get("job", {})
+            if job.get("status") in ("done", "failed", "cancelled"):
+                break
+            _time.sleep(0.05)
+        check("索引作业在后台完成", job.get("status") == "done", str(job)[:200])
+        check("挂载后会话自动绑定该库",
+              mounted["library"]["id"] in owner.conv.knowledge_ids,
+              str(owner.conv.knowledge_ids))
+        # 文件已被移除，重新入库后只剩合同
+        owner.knowledge_base().index_library(mounted["library"]["id"])
+        injected = owner._combined_retrieval_context("违约金比例")
+        check("提问时注入知识库片段", "contract.md" in injected, injected[:120])
+        check("检索状态被记录", bool(owner._last_knowledge),
+              str(owner._last_knowledge))
+
+        unbound = _backend()
+        check("未绑定知识库的会话不注入（会话隔离）",
+              unbound._combined_retrieval_context("违约金比例") == "")
+        owner.conv.bind_knowledge([])
+        check("解绑后不再注入", owner._combined_retrieval_context("违约金比例") == "")
+        restored = _backend()
+        restored.conv.bind_knowledge([mounted["library"]["id"]])
+        check("重新绑定后恢复注入",
+              "contract.md" in restored._combined_retrieval_context("违约金比例"))
+
+        # ---------- 长期记忆 ----------
+        store = memory.MemoryStore()
+        first = store.add("用户是一名中学教师", "identity")
+        check("长期记忆可写入", first is not None)
+        check("重复事实被去重",
+              store.add("用户是一名中学教师。", "identity") is None)
+        check("记忆注入块含该事实", "中学教师" in store.as_prompt(), store.as_prompt())
+
+        check("提取解析容忍代码块与说明文字",
+              memory.parse_extraction(
+                  '好的：\n```json\n[{"text": "用户喜欢深色主题", "category": "preference"}]\n```'
+              )[0]["text"] == "用户喜欢深色主题")
+        check("未知类别回落为 other",
+              memory.parse_extraction('[{"text": "x", "category": "unknown"}]')[0]["category"]
+              == "other")
+        check("调用失败不抛出",
+              memory.extract_memories(
+                  lambda _messages: (_ for _ in ()).throw(RuntimeError("boom")),
+                  "用户：你好")["ok"] is False)
+
+        # 关键隔离断言：提取用临时会话对象，主对话历史长度不变
+        history_before = len(owner.conv.history)
+        extracted = owner._extract_memories_now("用户：我的名字是小王。")
+        check("对话结束时完成一次记忆提取",
+              extracted.get("ok") is True and extracted.get("added") == 1,
+              str(extracted))
+        check("提取不改动主对话历史", len(owner.conv.history) == history_before,
+              f"{history_before} -> {len(owner.conv.history)}")
+        check("提取结果进入长期记忆",
+              any(item["text"] == "用户的名字是小王" for item in owner.memory_store().items()))
+        owner._apply_memory_context()
+        system_prompt = owner.conv.build_messages("问")[0]["content"]
+        check("长期记忆注入系统提示词", "用户的名字是小王" in system_prompt,
+              system_prompt[-160:])
+
+        # ---------- 提示词模板库 ----------
+        library_path = os.path.join(tmp, "user_prompts.json")
+        templates = prompt_library.PromptLibrary(library_path)
+        builtin_count = len(prompt_library.builtin_entries())
+        check(f"内置场景模板达到数十种（{builtin_count}）", builtin_count >= 30,
+              str(builtin_count))
+        check("模板分类为六类", len(prompt_library.categories()) == 6)
+        refactor = templates.get("xiaohongshu") or {}
+        check("内置模板带本地化名称与说明",
+              bool(refactor.get("label")) and bool(refactor.get("note")),
+              str(refactor)[:120])
+        saved = templates.save({"label": "测试模板", "category": "coding",
+                                "format": "只输出结论。", "role": "你是测试助手。"})
+        check("用户模板可保存", bool(saved.get("id")))
+        reloaded = prompt_library.PromptLibrary(library_path)
+        check("用户模板持久化后可重新读取",
+              reloaded.get(saved["id"]) is not None)
+        check("用户模板可生成系统提示词块",
+              "只输出结论。" in reloaded.system_prompt(saved["id"]))
+        check("内置模板不可覆盖",
+              _raises(lambda: templates.save({"id": "refactor", "label": "x",
+                                              "format": "y"})),
+              "")
+        check("内置模板不可删除", templates.delete("refactor") is False)
+        check("用户模板可删除", templates.delete(saved["id"]) is True)
+
+        applied = owner.handle({"action": "promptlib_apply",
+                                "template_id": "refactor"})
+        check("模板可通过协议应用为任务层",
+              applied.get("ok") is True and "代码重构" in owner.conv.task_prompt,
+              str(applied)[:120])
+        listing = owner.handle({"action": "promptlib_list"})
+        check("模板列表响应含分类与统计",
+              bool(listing.get("categories")) and listing.get("stats", {}).get("user")
+              is not None, str(listing)[:120])
+
+        # 卸载：索引与绑定一并清除
+        removed = owner.handle({"action": "knowledge_unmount",
+                                "library_id": mounted["library"]["id"]})
+        check("卸载知识库会移除索引与绑定",
+              removed.get("ok") is True and owner.conv.knowledge_ids == [])
+        check("卸载后索引为空",
+              owner.knowledge_base().stats()["documents"] == 0)
+
+    if previous_state is None:
+        os.environ.pop("ECHODESK_STATE", None)
+    else:
+        os.environ["ECHODESK_STATE"] = previous_state
+
+
+def _raises(action) -> bool:
+    """[EN] Whether ``action`` raises ValueError. [ZH] ``action`` 是否抛出 ValueError。"""
+    try:
+        action()
+    except ValueError:
+        return True
+    return False
+
+
 def test_crash_log_scope() -> None:
     """任务十五（自测问题修复-1）：进程级崩溃钩子不得在被 import 时安装。
 
@@ -929,6 +1156,9 @@ def test_imports() -> None:
         "download_utils", "search_engine", "llm_engine", "model_hub", "marketplace",
         "automation", "hardware_profiler", "main", "version",
         "media", "vision", "speech",
+        # [EN] v0.2.6 Part 3.
+        # [ZH] v0.2.6 Part 3。
+        "knowledge", "memory", "prompt_library",
     ]
     failures = []
     for name in modules:
@@ -941,10 +1171,10 @@ def test_imports() -> None:
 
 def main() -> int:
     tests = [test_imports, test_config, test_plaintext, test_gguf, test_summarizer,
-             test_conversation, test_file_injection, test_crash_log_scope,
-             test_config_save_target, test_state_paths, test_automation,
-             test_marketplace, test_model_match, test_protocol_keys,
-             test_media_support]
+             test_conversation, test_file_injection, test_knowledge_memory,
+             test_crash_log_scope, test_config_save_target, test_state_paths,
+             test_automation, test_marketplace, test_model_match,
+             test_protocol_keys, test_media_support]
     for fn in tests:
         try:
             fn()

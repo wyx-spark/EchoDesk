@@ -1259,7 +1259,12 @@ class MemoryConfig(BaseModel):
     #: [EN] for too many items at once.
     #: [ZH] 单次提取的条数上限；一次要求过多条目时小模型质量下降。
     extract_max_items: int = Field(default=12, ge=1, le=50)
-    extract_max_tokens: int = Field(default=512, ge=64, le=4096)
+    #: [EN] Token ceiling of one extraction reply. A dozen short facts plus the
+    #: [EN] JSON punctuation needs well under 1024 tokens; 768 leaves headroom
+    #: [EN] without allowing a runaway reply on a small model.
+    #: [ZH] 单次提取回复的 token 上限。十余条短事实加 JSON 标点远低于 1024 token；
+    #: [ZH] 768 保留余量，同时避免小模型失控输出。
+    extract_max_tokens: int = Field(default=768, ge=64, le=4096)
     #: [EN] Injection budget of the memory block in the system prompt.
     #: [ZH] 系统提示词中记忆块的注入预算。
     max_chars: int = Field(default=1200, ge=120, le=6000)

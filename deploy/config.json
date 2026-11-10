@@ -106,7 +106,7 @@
         "min_turns": 1,
         "max_items": 200,
         "extract_max_items": 12,
-        "extract_max_tokens": 512,
+        "extract_max_tokens": 768,
         "max_chars": 1200
     },
     "mcp": {
