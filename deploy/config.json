@@ -56,7 +56,8 @@
     "agent": {
         "max_steps": 4,
         "allow_sensitive": [],
-        "max_observation_chars": 1200
+        "max_observation_chars": 1200,
+        "confirm_timeout_seconds": 120
     },
     "retrieval": {
         "enabled": true,
