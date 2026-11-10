@@ -481,7 +481,7 @@
     "model_missing_size": " (about {mb} MB)",
     "model_missing_unknown_size": " (size unknown)",
     "repeat_intent": "You just said:\n{text}",
-    "log_missing_model": "Model {model} is missing locally; asking the front end to confirm with the user",
+    "log_missing_model": "Model file not found: {model} (starting in the no-model ready state)",
     "language_switched": "🌐 Interface language switched to {locale}",
     "preset_not_found": "❌ No preset named \"{name}\"",
     "context_mode_invalid": "❌ Context strategy must be summarize or slide; got: {mode}",
@@ -616,7 +616,6 @@
     "log_context_window": "Context window: {n_ctx} tokens (model trained window {trained} tokens, KV cache about {kv}, threads {threads}, GPU layers {gpu})",
     "log_skills_loaded": "Loaded {total} skill(s) (total={total}, failed={failed}, skipped={skipped})",
     "log_ready": "{app} {version} is ready — Powered by {studio}",
-    "log_missing_model": "Model file not found: {model} (starting in the no-model ready state)",
     "log_automation_selector_test_failed": "Testing the selector failed: {error}",
     "log_result_write_failed": "Failed to write the result file: {error}",
     "log_login_state_clear_failed": "Failed to clear the automation sign-in state: {error}",
@@ -711,7 +710,35 @@
     "mcp_unavailable": "❌ MCP configuration is unavailable (the backend exposes no MCP interface)",
     "mcp_bad_timeout": "❌ The timeout must be a number of seconds between 1 and 600.",
     "mcp_bad_server": "❌ Incomplete MCP server entry ({item}): both name and command are required.",
-    "mcp_no_servers": "No MCP server is configured. Add one under Settings → Agent → MCP, or edit mcp.servers in config.json."
+    "mcp_no_servers": "No MCP server is configured. Add one under Settings → Agent → MCP, or edit mcp.servers in config.json.",
+    "knowledge_mount_ok": "Knowledge library \"{name}\" mounted; indexing started in the background (job {job_id}).",
+    "knowledge_already": "This folder is already mounted: {name}",
+    "knowledge_mount_failed": "Failed to mount the knowledge library: {error}",
+    "knowledge_unmount_ok": "Knowledge library \"{name}\" unmounted and its index removed.",
+    "knowledge_unmount_missing": "Knowledge library not found: {id}",
+    "knowledge_library_missing": "Mounted knowledge library not found: {id}",
+    "knowledge_none": "No knowledge library is mounted.",
+    "knowledge_list_head": "Mounted knowledge libraries: {count}",
+    "knowledge_list_item": "  · {name} ({documents} files, {chunks} passages, {status})",
+    "knowledge_index_accepted": "Indexing job {job_id} queued for \"{name}\"",
+    "knowledge_index_failed": "Knowledge indexing failed: {error}",
+    "knowledge_bind_ok": "This conversation is bound to {count} knowledge libraries.",
+    "knowledge_bind_none": "This conversation is not bound to any knowledge library; local material is not searched.",
+    "knowledge_search_empty": "No matching content in the knowledge libraries.",
+    "knowledge_disabled": "The knowledge base is disabled in the configuration.",
+    "knowledge_need_folder": "A folder path is required.",
+    "knowledge_status_line": "Knowledge: {libraries} libraries, {documents} files, {chunks} passages",
+    "log_knowledge_index_start": "Indexing knowledge library \"{name}\" ({path})...",
+    "log_knowledge_index_done": "Knowledge library \"{name}\" indexed: {added} added, {updated} updated, {skipped} skipped, {removed} removed, {failed} failed, {chunks} passages, {elapsed} s.",
+    "log_knowledge_index_cancelled": "Indexing of knowledge library \"{name}\" was cancelled.",
+    "log_memory_extract": "Long-term memory extraction finished: {added} added, {skipped} duplicates.",
+    "log_memory_extract_failed": "Long-term memory extraction failed: {error}",
+    "promptlib_saved": "Template \"{label}\" saved.",
+    "promptlib_deleted": "Template \"{label}\" deleted.",
+    "promptlib_not_found": "Template not found: {id}",
+    "promptlib_applied": "Template \"{label}\" applied.",
+    "promptlib_invalid": "The template is incomplete: {error}",
+    "promptlib_builtin_readonly": "Built-in templates cannot be modified or deleted."
   },
   "file": {
     "wps_missing_pywin32": "pywin32 is missing on this machine ({error}), so WPS COM cannot be used to read the file",
@@ -1413,5 +1440,148 @@
     "automation": "Enterprise intranet automation (Windows only, requires local Edge)",
     "automation_unavailable": "Enterprise intranet automation is Windows-only (it needs a headed local Edge), so this page is unavailable on the current platform",
     "automation_alt": "Workaround: drive the same flow through an MCP server or a skill that calls an external tool/script, or run the automation on a Windows machine and export its results."
+  },
+  "memory": {
+    "none": "No long-term memory has been extracted yet.",
+    "list_head": "Long-term memory: {count} entries",
+    "list_item": "  · [{category}] {text}",
+    "extract_accepted": "Memory extraction job {job_id} queued.",
+    "extract_done": "Memory extraction finished: {added} added.",
+    "extract_failed": "Memory extraction failed: {error}",
+    "forgot": "Memory {id} forgotten.",
+    "forgot_missing": "Memory not found: {id}",
+    "cleared": "Cleared {count} memory entries.",
+    "need_conversation": "There is nothing to extract from this conversation.",
+    "disabled": "Long-term memory is disabled in the configuration.",
+    "category": {
+      "identity": "Identity",
+      "preference": "Preference",
+      "project": "Project",
+      "contact": "Contact",
+      "habit": "Habit",
+      "other": "Other"
+    }
+  },
+  "promptlib": {
+    "category": {
+      "coding": "Coding",
+      "writing": "Writing",
+      "office": "Office",
+      "learning": "Learning",
+      "life": "Life",
+      "general": "General"
+    },
+    "refactor": {
+      "label": "Code refactoring",
+      "note": "Restructure existing code without changing its external behaviour"
+    },
+    "code_review": {
+      "label": "Code review",
+      "note": "List defects and risks by severity"
+    },
+    "unit_test": {
+      "label": "Unit tests",
+      "note": "Add tests that can actually catch regressions"
+    },
+    "code_explain": {
+      "label": "Code walkthrough",
+      "note": "Explain a piece of code in execution order"
+    },
+    "debug": {
+      "label": "Error triage",
+      "note": "Derive causes from an error and order the checks"
+    },
+    "perf": {
+      "label": "Performance tuning",
+      "note": "Measure before optimising and state the trade-offs"
+    },
+    "api_doc": {
+      "label": "API documentation",
+      "note": "Produce caller-facing interface documentation"
+    },
+    "xiaohongshu": {
+      "label": "Xiaohongshu copy",
+      "note": "Scenario-driven titles and body with topic tags"
+    },
+    "wechat_article": {
+      "label": "WeChat article",
+      "note": "A structured long-form article backed by evidence"
+    },
+    "business_mail": {
+      "label": "Business email",
+      "note": "Make the required action clear within thirty seconds"
+    },
+    "weekly_report": {
+      "label": "Weekly report",
+      "note": "Only verifiable facts plus next week's plan"
+    },
+    "resume_polish": {
+      "label": "Résumé polishing",
+      "note": "Rewrite as action, method and measurable outcome"
+    },
+    "speech_draft": {
+      "label": "Speech draft",
+      "note": "Short-sentence structure for spoken delivery"
+    },
+    "product_copy": {
+      "label": "Product page copy",
+      "note": "Selling points drawn only from supplied specifications"
+    },
+    "meeting_minutes": {
+      "label": "Meeting minutes",
+      "note": "Separate decisions, action items and open questions"
+    },
+    "contract_translate": {
+      "label": "Contract translation",
+      "note": "Consistent terminology; numbering and figures preserved"
+    },
+    "table_clean": {
+      "label": "Table cleanup",
+      "note": "Report defects and output a clean table"
+    },
+    "data_report": {
+      "label": "Data report",
+      "note": "Conclusions with data, separating fact from inference"
+    },
+    "policy_review": {
+      "label": "Policy review",
+      "note": "Check enforceability and the boundary of responsibility"
+    },
+    "concept_explain": {
+      "label": "Concept explanation",
+      "note": "Definition, analogy, example and common misconceptions"
+    },
+    "study_plan": {
+      "label": "Study plan",
+      "note": "Weekly units that fit the available time"
+    },
+    "quiz_generate": {
+      "label": "Quiz generation",
+      "note": "Questions grounded in the supplied material with explanations"
+    },
+    "paper_summary": {
+      "label": "Paper summary",
+      "note": "Distinguish the authors' claims from the data"
+    },
+    "english_polish": {
+      "label": "English correction",
+      "note": "Correct the text and explain each grammar reason"
+    },
+    "travel_plan": {
+      "label": "Travel plan",
+      "note": "Day-by-day plan with slack and a fallback"
+    },
+    "recipe": {
+      "label": "Recipe",
+      "note": "Ingredients, steps, pitfalls and substitutions"
+    },
+    "fitness_plan": {
+      "label": "Fitness plan",
+      "note": "A sustainable training schedule that avoids injury"
+    },
+    "gift_advice": {
+      "label": "Gift advice",
+      "note": "Three options within the budget and relationship"
+    }
   }
 }

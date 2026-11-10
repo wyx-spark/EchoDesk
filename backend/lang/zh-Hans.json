@@ -481,7 +481,7 @@
     "model_missing_size": "（约 {mb} MB）",
     "model_missing_unknown_size": "（大小未知）",
     "repeat_intent": "您刚才说的是：\n{text}",
-    "log_missing_model": "本地未找到模型 {model}，请求前端征询用户",
+    "log_missing_model": "找不到模型文件：{model}（将进入无模型就绪状态）",
     "language_switched": "🌐 界面语言已切换为 {locale}",
     "preset_not_found": "❌ 未找到预设「{name}」",
     "context_mode_invalid": "❌ 上下文策略只支持 summarize 或 slide，收到：{mode}",
@@ -616,7 +616,6 @@
     "log_context_window": "上下文窗口: {n_ctx} tokens（模型训练窗口 {trained} tokens，KV Cache 约 {kv}，线程 {threads}，GPU 层 {gpu}）",
     "log_skills_loaded": "已加载技能 {total} 个 (total={total}, failed={failed}, skipped={skipped})",
     "log_ready": "{app} {version} 就绪 — 由{studio}出品",
-    "log_missing_model": "找不到模型文件：{model}（将进入无模型就绪状态）",
     "log_automation_selector_test_failed": "选择器测试失败：{error}",
     "log_result_write_failed": "写入结果文件失败：{error}",
     "log_login_state_clear_failed": "清除自动化登录态失败：{error}",
@@ -711,7 +710,35 @@
     "mcp_unavailable": "❌ MCP 配置不可用（后端未提供 MCP 接口）",
     "mcp_bad_timeout": "❌ 超时需要是 1~600 之间的秒数。",
     "mcp_bad_server": "❌ MCP Server 配置不完整（{item}）：name 与 command 都必须填写。",
-    "mcp_no_servers": "当前没有配置 MCP Server。在设置 → 智能体 → MCP，或直接改 config.json 的 mcp.servers。"
+    "mcp_no_servers": "当前没有配置 MCP Server。在设置 → 智能体 → MCP，或直接改 config.json 的 mcp.servers。",
+    "knowledge_mount_ok": "已挂载知识库「{name}」，后台开始建立索引（作业 {job_id}）。",
+    "knowledge_already": "该文件夹已挂载：{name}",
+    "knowledge_mount_failed": "挂载知识库失败：{error}",
+    "knowledge_unmount_ok": "已卸载知识库「{name}」，索引已清除。",
+    "knowledge_unmount_missing": "未找到该知识库：{id}",
+    "knowledge_library_missing": "未找到已挂载的知识库：{id}",
+    "knowledge_none": "当前没有挂载任何知识库。",
+    "knowledge_list_head": "已挂载 {count} 个知识库：",
+    "knowledge_list_item": "  · {name}（{documents} 个文件，{chunks} 个片段，{status}）",
+    "knowledge_index_accepted": "已提交索引作业 {job_id}：「{name}」",
+    "knowledge_index_failed": "知识库索引失败：{error}",
+    "knowledge_bind_ok": "本会话已绑定 {count} 个知识库。",
+    "knowledge_bind_none": "本会话未绑定知识库，提问时不会检索本地资料。",
+    "knowledge_search_empty": "知识库中没有匹配的内容。",
+    "knowledge_disabled": "知识库功能已在配置中关闭。",
+    "knowledge_need_folder": "请指定要挂载的文件夹路径。",
+    "knowledge_status_line": "知识库：{libraries} 个库，{documents} 个文件，{chunks} 个片段",
+    "log_knowledge_index_start": "开始为知识库「{name}」建立索引（{path}）…",
+    "log_knowledge_index_done": "知识库「{name}」索引完成：新增 {added}，更新 {updated}，跳过 {skipped}，移除 {removed}，失败 {failed}，共 {chunks} 个片段，用时 {elapsed} 秒。",
+    "log_knowledge_index_cancelled": "知识库「{name}」索引已取消。",
+    "log_memory_extract": "长期记忆提取完成：新增 {added} 条，重复 {skipped} 条。",
+    "log_memory_extract_failed": "长期记忆提取失败：{error}",
+    "promptlib_saved": "已保存模板「{label}」。",
+    "promptlib_deleted": "已删除模板「{label}」。",
+    "promptlib_not_found": "未找到模板：{id}",
+    "promptlib_applied": "已应用模板「{label}」。",
+    "promptlib_invalid": "模板内容不完整：{error}",
+    "promptlib_builtin_readonly": "内置模板不可修改或删除。"
   },
   "file": {
     "wps_missing_pywin32": "本机缺少 pywin32（{error}），无法使用 WPS COM 读取",
@@ -1413,5 +1440,148 @@
     "automation": "企业内网自动化（Windows 专属，依赖本机 Edge）",
     "automation_unavailable": "企业内网自动化仅 Windows 提供（需要本机 Edge 的有头模式），当前平台不提供该页面",
     "automation_alt": "替代做法：用 MCP 或技能接入外部工具/脚本完成同一流程；或在一台 Windows 机器上运行自动化后导出结果。"
+  },
+  "memory": {
+    "none": "还没有提取到长期记忆。",
+    "list_head": "长期记忆共 {count} 条：",
+    "list_item": "  · [{category}] {text}",
+    "extract_accepted": "已提交记忆提取作业 {job_id}。",
+    "extract_done": "记忆提取完成：新增 {added} 条。",
+    "extract_failed": "记忆提取失败：{error}",
+    "forgot": "已忘记记忆 {id}。",
+    "forgot_missing": "未找到记忆：{id}",
+    "cleared": "已清空 {count} 条长期记忆。",
+    "need_conversation": "当前对话没有可提取的内容。",
+    "disabled": "长期记忆功能已在配置中关闭。",
+    "category": {
+      "identity": "身份",
+      "preference": "偏好",
+      "project": "项目",
+      "contact": "联系方式",
+      "habit": "习惯",
+      "other": "其他"
+    }
+  },
+  "promptlib": {
+    "category": {
+      "coding": "编程",
+      "writing": "写作",
+      "office": "办公",
+      "learning": "学习",
+      "life": "生活",
+      "general": "通用"
+    },
+    "refactor": {
+      "label": "代码重构",
+      "note": "在不改变外部行为的前提下整理既有代码"
+    },
+    "code_review": {
+      "label": "代码审查",
+      "note": "按严重程度列出缺陷与风险"
+    },
+    "unit_test": {
+      "label": "单元测试",
+      "note": "为函数补上能发现回归的测试"
+    },
+    "code_explain": {
+      "label": "代码讲解",
+      "note": "按执行顺序讲清一段代码"
+    },
+    "debug": {
+      "label": "报错排查",
+      "note": "从报错信息反推原因与验证顺序"
+    },
+    "perf": {
+      "label": "性能优化",
+      "note": "先测量再优化，并说明代价"
+    },
+    "api_doc": {
+      "label": "接口文档",
+      "note": "输出面向调用方的接口说明"
+    },
+    "xiaohongshu": {
+      "label": "小红书文案",
+      "note": "场景化标题与正文，附话题标签"
+    },
+    "wechat_article": {
+      "label": "公众号推文",
+      "note": "有结构、有证据的中长文"
+    },
+    "business_mail": {
+      "label": "商务邮件",
+      "note": "三十秒内让对方知道要做什么"
+    },
+    "weekly_report": {
+      "label": "工作周报",
+      "note": "只写可核对的事实与下周计划"
+    },
+    "resume_polish": {
+      "label": "简历润色",
+      "note": "改写为动作、方法与可量化结果"
+    },
+    "speech_draft": {
+      "label": "演讲稿",
+      "note": "用于口头表达的短句结构"
+    },
+    "product_copy": {
+      "label": "产品详情页",
+      "note": "卖点只取自提供的参数"
+    },
+    "meeting_minutes": {
+      "label": "会议纪要",
+      "note": "结论、待办与未决事项分开记录"
+    },
+    "contract_translate": {
+      "label": "合同翻译",
+      "note": "术语一致，编号与数字保持不变"
+    },
+    "table_clean": {
+      "label": "表格整理",
+      "note": "指出问题并输出规整表格"
+    },
+    "data_report": {
+      "label": "数据报告",
+      "note": "结论附数据，区分事实与推测"
+    },
+    "policy_review": {
+      "label": "制度审查",
+      "note": "检查条款的可执行性与责任边界"
+    },
+    "concept_explain": {
+      "label": "概念解释",
+      "note": "定义、类比、例子与常见误解"
+    },
+    "study_plan": {
+      "label": "学习计划",
+      "note": "按周划分，可在给定时间内执行"
+    },
+    "quiz_generate": {
+      "label": "出题测验",
+      "note": "围绕给定材料出题并给出解析"
+    },
+    "paper_summary": {
+      "label": "论文摘要",
+      "note": "区分作者主张与数据支持"
+    },
+    "english_polish": {
+      "label": "英文批改",
+      "note": "改错并说明语法原因"
+    },
+    "travel_plan": {
+      "label": "旅行计划",
+      "note": "按天安排并留出机动与备选"
+    },
+    "recipe": {
+      "label": "菜谱整理",
+      "note": "用料、步骤、关键点与替代方案"
+    },
+    "fitness_plan": {
+      "label": "健身计划",
+      "note": "可持续且不受伤的训练表"
+    },
+    "gift_advice": {
+      "label": "送礼建议",
+      "note": "在预算与关系内给出三个方案"
+    }
   }
 }

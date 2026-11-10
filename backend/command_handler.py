@@ -292,6 +292,12 @@ class CommandHandler:
         # [ZH] = 启停；("connect",) = 拉起进程并拉取工具清单。同样只保留一个入口，
         # [ZH] 避免两边各维护一套实现。
         self.mcp_control: Optional[Callable[..., Dict[str, Any]]] = None
+        # [EN] Injected by main (v0.2.6 Part 3): conversation-end callback. It
+        # [EN] schedules long-term memory extraction **before** the history is
+        # [EN] discarded, because the transcript exists only up to that moment.
+        # [ZH] 由 main 注入（v0.2.6 Part 3）：对话结束回调。它在历史被丢弃**之前**
+        # [ZH] 调度长期记忆提取 —— 对话文本只存在于那一刻之前。
+        self.end_conversation_hook: Optional[Callable[[str], Any]] = None
         # [EN] Currently active task template id (fix 4, direction 1); empty means
         # [EN] none is active.
         # [ZH] 当前生效的任务模板 id（兼容性修正 方向一）；空串表示未启用。
@@ -1476,6 +1482,19 @@ class CommandHandler:
         return "\n".join(lines), None
 
     def _clear(self, _args: list) -> Response:
+        # [EN] v0.2.6 Part 3: long-term memory learns from a conversation when it
+        # [EN] ends, and `/clear` is one of the two endings (the other is exit).
+        # [EN] The callback runs first: once the history is cleared, the
+        # [EN] transcript is gone.
+        # [ZH] v0.2.6 Part 3：长期记忆在对话结束时从对话中学习，`/clear` 是两种
+        # [ZH] 结束方式之一（另一种是退出）。回调必须先执行：历史一旦清空，对话
+        # [ZH] 文本就不复存在。
+        if self.end_conversation_hook is not None:
+            try:
+                self.end_conversation_hook("clear")
+            except Exception:  # noqa: BLE001 - [EN] /clear must still work if extraction fails
+                                # [ZH] 提取失败时 /clear 仍必须生效
+                pass
         self.conv_mgr.clear()
         self.llm_engine.clear_cache()
         return t("cmd.resp.clear_done"), None

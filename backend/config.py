@@ -1187,6 +1187,84 @@ class RetrievalConfig(BaseModel):
     min_score: float = Field(default=0.0, ge=0.0, le=100.0)
 
 
+class KnowledgeConfig(BaseModel):
+    """
+    [EN]
+    Local folder knowledge base (v0.2.6 Part 3, task 3.1).
+
+    The index is SQLite plus the FTS5 extension, so the settings here govern
+    scanning and context injection rather than embedding parameters:
+
+    * ``chunk_chars`` / ``overlap_chars`` decide the granularity of retrieval;
+    * ``top_k`` / ``max_context_chars`` bound what one question may inject,
+      because the injected block shares the window with files and history;
+    * ``max_files`` / ``max_file_bytes`` bound the work one folder mount may
+      schedule; the scanning itself runs on the document worker, never on the
+      protocol thread.
+
+    [ZH]
+    本地文件夹知识库（v0.2.6 任务 3.1）。
+
+    索引由 SQLite 与 FTS5 扩展构成，因此这里的设置支配扫描与上下文注入，而不是
+    嵌入参数：
+
+    * ``chunk_chars`` / ``overlap_chars`` 决定检索粒度；
+    * ``top_k`` / ``max_context_chars`` 限制单次提问可注入的内容 —— 注入块与
+      文件、历史共享同一窗口；
+    * ``max_files`` / ``max_file_bytes`` 限制一次挂载可调度的作业量；扫描本身在
+      文档工作线程上执行，绝不在协议线程上执行。
+    """
+
+    enabled: bool = True
+    #: [EN] Container directory of the index database. Empty means
+    #: [EN] ``<state dir>/knowledge``; a relative path resolves against the state
+    #: [EN] directory.
+    #: [ZH] 索引数据库所在目录。空表示 ``<状态目录>/knowledge``；相对路径按状态目录
+    #: [ZH] 解析。
+    data_dir: str = ""
+    chunk_chars: int = Field(default=600, ge=200, le=4000)
+    overlap_chars: int = Field(default=100, ge=0, le=1000)
+    top_k: int = Field(default=4, ge=1, le=12)
+    max_context_chars: int = Field(default=2400, ge=200, le=12000)
+    max_files: int = Field(default=20000, ge=1, le=200000)
+    max_file_bytes: int = Field(default=12 * 1024 * 1024, ge=1024, le=1024 ** 3)
+    max_chars_per_file: int = Field(default=200000, ge=1000, le=2000000)
+    min_score: float = Field(default=0.0, ge=0.0, le=100.0)
+
+
+class MemoryConfig(BaseModel):
+    """
+    [EN]
+    Long-term memory (v0.2.6 Part 3, task 3.3).
+
+    Extraction is triggered when a conversation ends, runs on the document
+    worker, and is skipped when the conversation has fewer than ``min_turns``
+    completed turns: a single "hello" exchange carries nothing worth keeping.
+
+    [ZH]
+    长期记忆（v0.2.6 任务 3.3）。
+
+    提取在对话结束时触发，于文档工作线程上执行；对话完成的轮次少于 ``min_turns``
+    时跳过 —— 单独一句问候没有值得保留的内容。
+    """
+
+    enabled: bool = True
+    #: [EN] Run extraction automatically when a conversation ends. Disabling
+    #: [EN] keeps the explicit ``memory_extract`` action available.
+    #: [ZH] 对话结束时自动提取。关闭后仍可使用显式的 ``memory_extract`` 动作。
+    auto_extract: bool = True
+    min_turns: int = Field(default=1, ge=0, le=100)
+    max_items: int = Field(default=200, ge=1, le=5000)
+    #: [EN] Upper bound of one extraction pass; small models degrade when asked
+    #: [EN] for too many items at once.
+    #: [ZH] 单次提取的条数上限；一次要求过多条目时小模型质量下降。
+    extract_max_items: int = Field(default=12, ge=1, le=50)
+    extract_max_tokens: int = Field(default=512, ge=64, le=4096)
+    #: [EN] Injection budget of the memory block in the system prompt.
+    #: [ZH] 系统提示词中记忆块的注入预算。
+    max_chars: int = Field(default=1200, ge=120, le=6000)
+
+
 class AgentConfig(BaseModel):
     """
     [EN]
@@ -1388,6 +1466,15 @@ class Config(BaseModel):
     # [EN] Local document retrieval (capability extension 1 in an earlier release, task 6).
     # [ZH] 本地文档检索（此前版本，能力扩展 1，研发任务 6）
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    # [EN] Local folder knowledge base (v0.2.6 Part 3). Its index lives in SQLite
+    # [EN] under the state directory and is built on the background document
+    # [EN] worker.
+    # [ZH] 本地文件夹知识库（v0.2.6 Part 3）。索引位于状态目录下的 SQLite 中，
+    # [ZH] 由后台文档工作线程建立。
+    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
+    # [EN] Long-term memory (v0.2.6 Part 3).
+    # [ZH] 长期记忆（v0.2.6 Part 3）。
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     # [EN] MCP client (capability extension 1 in an earlier release, task 3).
     # [ZH] MCP 客户端（此前版本，能力扩展 1，研发任务 3）
     mcp: McpConfig = Field(default_factory=McpConfig)

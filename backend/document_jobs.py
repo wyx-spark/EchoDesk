@@ -71,6 +71,19 @@ class DocumentJob:
 
     id: str
     paths: List[str]
+    # [EN] Job kind (v0.2.6 Part 3). ``documents`` is the original upload path;
+    # [EN] ``knowledge_index`` and ``memory_extract`` share the same queue so
+    # [EN] that heavy local work never runs on the protocol thread.
+    # [ZH] 作业种类（v0.2.6 Part 3）。``documents`` 是原有的上传路径；
+    # [ZH] ``knowledge_index`` 与 ``memory_extract`` 共用同一队列，使繁重的本地
+    # [ZH] 工作绝不在协议线程上运行。
+    kind: str = "documents"
+    # [EN] Kind-specific input. ``documents`` ignores it; the knowledge job reads
+    # [EN] the library identifier and the memory job reads a transcript snapshot
+    # [EN] captured at conversation end.
+    # [ZH] 种类相关的输入。``documents`` 忽略该字段；知识库作业读取库标识，记忆
+    # [ZH] 作业读取对话结束时捕获的文本快照。
+    payload: Dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     status: str = STATUS_QUEUED
     started_at: float = 0.0
@@ -122,6 +135,7 @@ class DocumentJob:
         payload = self.events_since(cursor)
         return {
             "job_id": self.id,
+            "kind": self.kind,
             "status": self.status,
             "paths": list(self.paths),
             "created_at": self.created_at,
@@ -179,22 +193,35 @@ class DocumentJobManager:
     # [EN] ---------- Public API ----------
     # [ZH] ---------- 对外接口 ----------
 
-    def submit(self, paths: List[str]) -> DocumentJob:
+    def submit(self, paths: List[str], kind: str = "documents",
+               payload: Optional[Dict[str, Any]] = None) -> DocumentJob:
         """
         [EN]
         Enqueue a job and return it immediately.
 
+        ``kind`` selects the runner branch (document upload, knowledge indexing
+        or memory extraction); ``payload`` carries kind-specific input such as a
+        library identifier or a transcript snapshot. Both default to the
+        original behaviour, so existing callers need no change.
+
         [ZH]
         将作业入队并立即返回。
+
+        ``kind`` 选择执行分支（文档上传、知识库建索引或记忆提取）；``payload``
+        承载与种类相关的输入，例如库标识或对话文本快照。两者默认即原有行为，
+        因此既有调用方无需修改。
         """
         with self._lock:
             self._sequence += 1
             job_id = f"doc-{self._sequence}"
-            job = DocumentJob(id=job_id, paths=[str(p) for p in (paths or [])])
+            job = DocumentJob(id=job_id, paths=[str(p) for p in (paths or [])],
+                              kind=str(kind or "documents"),
+                              payload=dict(payload or {}))
             self._jobs[job_id] = job
             self._order.append(job_id)
         self._pending.put(job)
-        log.info("文档后台作业已入队: %s（%d 个文件）", job_id, len(job.paths))
+        log.info("后台作业已入队：%s（种类 %s，%d 个路径）",
+                 job_id, job.kind, len(job.paths))
         return job
 
     def get(self, job_id: str) -> Optional[DocumentJob]:

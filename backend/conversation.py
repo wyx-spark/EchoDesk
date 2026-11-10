@@ -555,6 +555,20 @@ class ConversationManager:
         # [EN] Current task-template id, used by /status and guidance short-circuit checks.
         # [ZH] 当前任务模板 id，供 /status 与引导短路判断使用。
         self.task_template = ""
+        # [EN] ---------- Knowledge libraries bound to this conversation (v0.2.6 task 3.2) ----------
+        # [ZH] ---------- 本会话绑定的知识库（v0.2.6 任务 3.2） ----------
+        # [EN] Only the listed libraries are searched for this conversation, so two
+        # [EN] conversations bound to different folders never share material. The
+        # [EN] list is persisted with the session, because the binding is part of
+        # [EN] "what this conversation knows".
+        # [ZH] 本会话只检索列出的知识库，因此绑定不同文件夹的两个会话不会互相串味。
+        # [ZH] 该清单随会话持久化 —— 绑定关系属于“这段对话知道什么”的一部分。
+        self.knowledge_ids: List[str] = []
+        # [EN] Long-term memory block injected into the system prompt. Set by the
+        # [EN] backend before each model call; empty means nothing is injected.
+        # [ZH] 注入系统提示词的长期记忆块。由后端在每次模型调用前设置；空串表示
+        # [ZH] 不注入任何内容。
+        self.memory_context = ""
         # [EN] Automatic summary of earlier turns, produced by long-session compaction.
         # [ZH] 早期对话的自动摘要，由长会话压缩生成。
         self.summary = ""
@@ -1006,6 +1020,43 @@ class ConversationManager:
         self.task_prompt = (text or "").strip()
         self.task_template = (template or "").strip() if self.task_prompt else ""
 
+    def set_memory_context(self, text: str) -> None:
+        """
+        [EN]
+        Set the long-term memory block appended to the system prompt.
+
+        The block is produced by ``memory.MemoryStore.as_prompt`` and carries the
+        facts extracted from previous conversations. It sits after the shared
+        rules and before the file inventory: it is background knowledge, so it
+        must not outrank this turn's task layer or the current question.
+
+        [ZH]
+        设置追加到系统提示词的长期记忆块。
+
+        该块由 ``memory.MemoryStore.as_prompt`` 产出，承载从以往对话中提取的事实。
+        它位于共享规则之后、文件清单之前：它属于背景知识，不得压过本轮任务层与
+        当前提问。
+        """
+        self.memory_context = (text or "").strip()
+
+    def bind_knowledge(self, library_ids: List[str]) -> None:
+        """
+        [EN]
+        Bind the conversation to a set of knowledge libraries (task 3.2).
+
+        Only the bound libraries are searched for this conversation. An empty
+        list means "search nothing", which is deliberate: a conversation that
+        was never bound must not silently start quoting unrelated private
+        material.
+
+        [ZH]
+        将会话绑定到一组知识库（任务 3.2）。
+
+        本会话只检索已绑定的库。空列表表示“不检索任何知识库”，这是刻意设计：
+        从未绑定过知识库的会话不得静默开始引用无关的私人材料。
+        """
+        self.knowledge_ids = [str(item) for item in (library_ids or []) if str(item or "").strip()]
+
     # [EN] ---------- File context ----------
     # [ZH] ---------- 文件上下文 ----------
 
@@ -1053,7 +1104,8 @@ class ConversationManager:
            the mode.
         4. Shared rules (``_CORE_RULES``).
         5. Language instruction from ``reply_language_instruction()``.
-        6. Early-conversation summary and uploaded-file pointers.
+        6. Early-conversation summary and the injected long-term memory block.
+        7. Uploaded-file pointers.
 
         The Chinese strings below are prompt content sent to the model, not
         interface text, so they intentionally remain outside the language pack.
@@ -1067,7 +1119,8 @@ class ConversationManager:
         3. ``/task`` 任务层，叠加在模式块之后，不替换模式。
         4. 共享规则（``_CORE_RULES``）。
         5. 来自 ``reply_language_instruction()`` 的语言指令。
-        6. 早期对话摘要与已上传文件指针。
+        6. 早期对话摘要与注入的长期记忆块。
+        7. 已上传文件指针。
 
         下方中文字符串是发送给模型的提示词内容，而非界面文本，因此刻意不放入
         语言包。只有第 5 层跟随界面语言。
@@ -1101,6 +1154,13 @@ class ConversationManager:
         prompt += reply_language_instruction()
         if self.summary:
             prompt += f"\n\n【早期对话摘要】\n{self.summary}"
+        # [EN] Long-term memory sits after the summary and before the file
+        # [EN] inventory: it is cross-conversation background, so it must not
+        # [EN] outrank this conversation's own summary or this turn's question.
+        # [ZH] 长期记忆位于摘要之后、文件清单之前：它属于跨对话的背景信息，
+        # [ZH] 不得压过本会话自身的摘要与本轮提问。
+        if self.memory_context:
+            prompt += "\n\n" + self.memory_context
         if self.files:
             # [EN] Keep only the file-name inventory, including the active file.
             # [EN] Full content is injected with the current question; the
@@ -1322,6 +1382,9 @@ class ConversationManager:
             "task_prompt": self.task_prompt,
             "summary": self.summary,
             "model_path": model_path,
+            # [EN] Knowledge libraries bound to this conversation (task 3.2).
+            # [ZH] 本会话绑定的知识库（任务 3.2）。
+            "knowledge_ids": list(self.knowledge_ids),
             "files": [entry.to_dict() for entry in self.files],
             "active_file": self.active_index,
             "file_name": self.file_name,
@@ -1380,6 +1443,15 @@ class ConversationManager:
             # [ZH] custom_prompt 中。字段缺失时默认为空串，旧会话仍可正常加载。
             self.task_prompt = data.get("task_prompt", "")
             self.summary = data.get("summary", "")
+            # [EN] Knowledge binding (task 3.2). Sessions written before this
+            # [EN] field existed simply carry no binding, which is the correct
+            # [EN] semantic: nothing was mounted for them.
+            # [ZH] 知识库绑定（任务 3.2）。该字段出现之前写入的会话自然没有绑定，
+            # [ZH] 这正是正确的语义：那段对话从未挂载知识库。
+            raw_knowledge = data.get("knowledge_ids")
+            self.knowledge_ids = ([str(item) for item in raw_knowledge
+                                   if str(item or "").strip()]
+                                  if isinstance(raw_knowledge, list) else [])
             self.files = []
             raw_files = data.get("files")
             if isinstance(raw_files, list) and raw_files:

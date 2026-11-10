@@ -199,6 +199,14 @@ with _suppress_stdout():
     # [ZH] 注入上下文"的开关，现已取消（详见 _stream_chat 中 include_file 的说明）。
     from conversation import ConversationManager, REPEAT_INTENT
     from document_jobs import STATUS_CANCELLED, DocumentJobManager
+    # [EN] v0.2.6 Part 3: the local folder knowledge base, long-term memory and
+    # [EN] the prompt template library. All three depend on the standard library
+    # [EN] only (knowledge uses SQLite plus its FTS5 extension).
+    # [ZH] v0.2.6 Part 3：本地文件夹知识库、长期记忆与提示词模板库。三者均只依赖
+    # [ZH] 标准库（知识库使用 SQLite 及其 FTS5 扩展）。
+    from knowledge import KnowledgeBase, KnowledgeCancelled
+    from memory import MemoryStore, extract_memories
+    from prompt_library import PromptLibrary
     from download_utils import check_model, download_model, find_best_model
     from file_parser import is_parse_error, localize_error, parse_file_with_wps
     from gguf_meta import format_bytes as _format_bytes
@@ -230,7 +238,7 @@ from i18n import t as _t
 # [EN] Emoji fallback (fix 6) and directory layout (fix 7).
 # [ZH] Emoji 降级（兼容性修正）与目录布局（兼容性修正）。
 import emoji as emoji_mod
-from config import program_dir, program_root as user_data_root
+from config import program_dir, program_root as user_data_root, state_dir
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("EchoDesk")
@@ -631,6 +639,21 @@ class Backend:
         self.commands.cache_clear_provider = self.clear_summary_cache
         self.commands.agent_configurator = self.configure_agent
         self.commands.mcp_control = self.mcp_control
+        # [EN] v0.2.6 Part 3: conversation-end hook. `/clear` must trigger memory
+        # [EN] extraction before the history is discarded, so the command handler
+        # [EN] calls back into the backend instead of clearing on its own.
+        # [ZH] v0.2.6 Part 3：对话结束回调。`/clear` 必须在历史被丢弃前触发记忆
+        # [ZH] 提取，因此指令处理器回调后端，而不是自行清空。
+        self.commands.end_conversation_hook = self.end_conversation
+        # [EN] Lazily created Part 3 services: the index database is opened, the
+        # [EN] memory file is read and the template file is read only when the
+        # [EN] corresponding feature is actually used.
+        # [ZH] Part 3 的惰性创建服务：只有对应功能真正被使用时，才打开索引数据库、
+        # [ZH] 读取记忆文件与模板文件。
+        self._knowledge: Any = None
+        self._memory: Any = None
+        self._prompt_library: Any = None
+        self._last_knowledge: Optional[Dict[str, Any]] = None
         self.stream_active = False
         self.stop_event = threading.Event()
         # [EN] Observable state of the search pipeline (known-issues optimization-2, task 2):
@@ -2340,6 +2363,39 @@ class Backend:
             return self._handle_mcp_apply(request)
         if action == "retrieval_state":
             return {"type": "system", "content": "", "retrieval": self.retrieval_diagnostics()}
+        # [EN] v0.2.6 Part 3: local knowledge base, long-term memory and the
+        # [EN] prompt template library. Every handler here is a single-response
+        # [EN] action; the heavy indexing runs on the document worker and is
+        # [EN] polled through file_job_status.
+        # [ZH] v0.2.6 Part 3：本地知识库、长期记忆与提示词模板库。此处每个处理函数
+        # [ZH] 都是单次应答动作；繁重的建索引在文档工作线程上运行，经
+        # [ZH] file_job_status 轮询。
+        if action == "knowledge_mount":
+            return self.knowledge_mount(request)
+        if action == "knowledge_unmount":
+            return self.knowledge_unmount(request)
+        if action == "knowledge_status":
+            return self.knowledge_status(request)
+        if action == "knowledge_bind":
+            return self.knowledge_bind(request)
+        if action == "knowledge_search":
+            return self.knowledge_search(request)
+        if action == "memory_state":
+            return self.memory_state(request)
+        if action == "memory_extract":
+            return self.memory_extract_request(request)
+        if action == "memory_forget":
+            return self.memory_forget(request)
+        if action == "memory_clear":
+            return self.memory_clear(request)
+        if action == "promptlib_list":
+            return self._handle_promptlib_list(request)
+        if action == "promptlib_save":
+            return self._handle_promptlib_save(request)
+        if action == "promptlib_delete":
+            return self._handle_promptlib_delete(request)
+        if action == "promptlib_apply":
+            return self._handle_promptlib_apply(request)
         if action == "context_compress":
             result = self.compact_context(force=bool(request.get("force", True)))
             return {"type": "system", "content": "", "compress": result,
@@ -4927,9 +4983,12 @@ class Backend:
         # [ZH] 旧写法中的 `bool(self.conv.file_content)` 对大文件同样不正确：正文超过
         # [ZH] files.disk_threshold_chars 会落盘、entry.content 被清空，开关随之恒为假。
         # [ZH] 现在改为"有文件即注入"，长度仍由 files.total_chars 预算约束。
+        # [EN] v0.2.6 Part 3: refresh the long-term memory block carried by the system prompt.
+        # [ZH] v0.2.6 Part 3：刷新系统提示词中的长期记忆块。
+        self._apply_memory_context()
         include_file = self.conv.has_file()
         messages = self.conv.build_messages(user_msg, search_context, include_file=include_file,
-                                            retrieval_context=self._retrieval_context_for(user_msg))
+                                            retrieval_context=self._combined_retrieval_context(user_msg))
         # [EN] Task 10 (self-test fix-1): record how large **the messages actually sent this
         # [EN] turn** were.
         # [ZH] 相关设计（自测问题修复-1）：记录**本轮真正发出的消息**的大小。
@@ -5483,7 +5542,10 @@ class Backend:
         # [ZH] files.disk_threshold_chars 会落盘、entry.content 被清空，开关随之恒为假。
         # [ZH] 现在改为"有文件即注入"，长度仍由 files.total_chars 预算约束。
         include_file = self.conv.has_file()
-        messages = self.conv.build_messages(user_msg, "", include_file=include_file)
+        self._apply_memory_context()
+        messages = self.conv.build_messages(
+            user_msg, "", include_file=include_file,
+            retrieval_context=self._combined_retrieval_context(user_msg))
         self._note_request_size(messages)
         messages[0] = {
             "role": "system",
@@ -5817,9 +5879,12 @@ class Backend:
         # [ZH] 旧写法中的 `bool(self.conv.file_content)` 对大文件同样不正确：正文超过
         # [ZH] files.disk_threshold_chars 会落盘、entry.content 被清空，开关随之恒为假。
         # [ZH] 现在改为"有文件即注入"，长度仍由 files.total_chars 预算约束。
+        # [EN] v0.2.6 Part 3: refresh the long-term memory block carried by the system prompt.
+        # [ZH] v0.2.6 Part 3：刷新系统提示词中的长期记忆块。
+        self._apply_memory_context()
         include_file = self.conv.has_file()
         messages = self.conv.build_messages(user_msg, search_context, include_file=include_file,
-                                            retrieval_context=self._retrieval_context_for(user_msg))
+                                            retrieval_context=self._combined_retrieval_context(user_msg))
         # [EN] Task 10 (self-test fix-1): this path must also record "how much was actually sent
         # [EN] this turn". It is the **non-streaming** answer path; omitting it leaves the status
         # [EN] area showing the result of the previous streaming request -- exactly the class of
@@ -6455,6 +6520,19 @@ class Backend:
         * 取消请求在文件之间与摘要器内部均被检查，长文档可及时停止。
         * 单份文件解析失败不会中止其余文件。
         """
+        # [EN] v0.2.6 Part 3: the same worker also runs knowledge indexing and
+        # [EN] memory extraction. Dispatching here keeps one serial queue, so the
+        # [EN] local model and the index writer never compete for the same
+        # [EN] resources.
+        # [ZH] v0.2.6 Part 3：同一工作线程还执行知识库建索引与记忆提取。在此分派
+        # [ZH] 保持单一串行队列，使本机模型与索引写入不会争用同一批资源。
+        kind = str(getattr(job, "kind", "documents") or "documents")
+        if kind == "knowledge_index":
+            self._run_knowledge_job(job)
+            return
+        if kind == "memory_extract":
+            self._run_memory_job(job)
+            return
         cfg = self._files_cfg()
         limit = int(getattr(cfg, "max_count", 10) or 10)
         accepted = list(job.paths[:limit])
@@ -6571,6 +6649,682 @@ class Backend:
                       "summary_chars": len(summary_text),
                       "summarized": bool(summary_text), "content": final_text})
         job.result = {"files": outcomes, "ignored": ignored}
+
+    # [EN] ---------- Local knowledge base (v0.2.6 Part 3, tasks 3.1 / 3.2) ----------
+    # [ZH] ---------- 本地知识库（v0.2.6 Part 3 任务 3.1 / 3.2） ----------
+
+    def _knowledge_cfg(self) -> Any:
+        """
+        [EN]
+        Knowledge-base settings, or ``None`` when the configuration predates
+        Part 3 (an old ``config.json`` loaded with an older model).
+        [ZH]
+        知识库设置；配置早于 Part 3（旧 ``config.json`` 由旧模型载入）时返回
+        ``None``。
+        """
+        return getattr(self.config, "knowledge", None)
+
+    def knowledge_base(self) -> KnowledgeBase:
+        """
+        [EN]
+        Lazily create the index handle. The database is opened on first use, so
+        a user who never mounts a folder pays no startup cost.
+        [ZH]
+        惰性创建索引句柄。数据库在首次使用时打开，从未挂载文件夹的用户不承担启动
+        开销。
+        """
+        if self._knowledge is None:
+            cfg = self._knowledge_cfg()
+            data_dir = str(getattr(cfg, "data_dir", "") or "").strip()
+            if data_dir:
+                base = data_dir if os.path.isabs(data_dir) else os.path.join(state_dir(), data_dir)
+            else:
+                base = os.path.join(state_dir(), "knowledge")
+            self._knowledge = KnowledgeBase(os.path.join(base, "index.sqlite3"))
+        return self._knowledge
+
+    def _run_knowledge_job(self, job: Any) -> None:
+        """
+        [EN]
+        Background runner for one knowledge-indexing job.
+
+        Every counter and terminal state is reported through the job object, so
+        the front end polls ``file_job_status`` with the job identifier returned
+        by ``knowledge_mount`` and renders progress without a dedicated
+        connection.
+        [ZH]
+        单个知识库建索引作业的后台执行函数。
+
+        全部计数与终止状态都经作业对象上报，因此前端用 ``knowledge_mount``
+        返回的作业标识轮询 ``file_job_status`` 即可渲染进度，无需专用连接。
+        """
+        cfg = self._knowledge_cfg()
+        library_id = str(job.payload.get("library_id") or "")
+        base = self.knowledge_base()
+        library = base.get_library(library_id)
+        if library is None:
+            job.status = STATUS_CANCELLED
+            job.error = "knowledge_library_missing"
+            return
+        name = str(library.get("name") or library_id)
+        path = str(library.get("root") or (job.paths[0] if job.paths else ""))
+        log_user(log, "sys.log_knowledge_index_start", name=name, path=path)
+        job.emit({"type": "knowledge_start", "phase": "indexing",
+                  "library_id": library_id, "name": name, "path": path})
+        try:
+            stats = base.index_library(
+                library_id,
+                progress=job.emit,
+                cancel_event=job.cancel_event,
+                chunk_chars=int(getattr(cfg, "chunk_chars", 600) or 600),
+                overlap_chars=int(getattr(cfg, "overlap_chars", 100) or 0),
+                max_files=int(getattr(cfg, "max_files", 20000) or 20000),
+                max_file_bytes=int(getattr(cfg, "max_file_bytes", 12 * 1024 * 1024)
+                                   or 12 * 1024 * 1024),
+                max_chars_per_file=int(getattr(cfg, "max_chars_per_file", 200000)
+                                       or 200000),
+            )
+        except KnowledgeCancelled:
+            job.status = STATUS_CANCELLED
+            log_user(log, "sys.log_knowledge_index_cancelled", name=name)
+            return
+        except Exception as exc:  # noqa: BLE001 - [EN] the worker must survive; state is reported
+                                  # [ZH] 工作线程必须存活；失败经作业状态上报
+            base.set_status(library_id, "failed", f"{type(exc).__name__}: {exc}")
+            raise
+        job.result = stats
+        log_user(log, "sys.log_knowledge_index_done", name=name,
+                 added=stats.get("added", 0), updated=stats.get("updated", 0),
+                 skipped=stats.get("skipped", 0), removed=stats.get("removed", 0),
+                 failed=stats.get("failed", 0), chunks=stats.get("chunks", 0),
+                 elapsed=stats.get("elapsed", 0.0))
+        job.emit({"type": "knowledge_done", "phase": "done",
+                  "library_id": library_id, "stats": dict(stats)})
+
+    def knowledge_mount(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Mount a folder and schedule indexing.
+
+        The reply is produced before scanning starts: the caller receives the
+        job identifier immediately, and the conversation is bound to the new
+        library so that subsequent questions retrieve from it (task 3.2).
+        [ZH]
+        挂载文件夹并调度建索引。
+
+        应答在扫描开始前产生：调用方立即取得作业标识，同时会话绑定到新库，使后续
+        提问检索该库（任务 3.2）。
+        """
+        cfg = self._knowledge_cfg()
+        if cfg is not None and not bool(getattr(cfg, "enabled", True)):
+            return {"type": "system", "ok": False, "content": _t("sys.knowledge_disabled")}
+        path = str(request.get("path") or request.get("folder") or "").strip()
+        if not path:
+            return {"type": "system", "ok": False, "content": _t("sys.knowledge_need_folder")}
+        base = self.knowledge_base()
+        try:
+            library = base.mount(path, name=str(request.get("name") or ""))
+        except (OSError, ValueError) as exc:
+            return {"type": "system", "ok": False,
+                    "content": _t("sys.knowledge_mount_failed", error=exc)}
+        with self._conv_lock:
+            bound = list(dict.fromkeys(list(self.conv.knowledge_ids) + [library["id"]]))
+            self.conv.bind_knowledge(bound)
+            self.save_session()
+        job = self._document_jobs.submit([str(library.get("root") or path)],
+                                         kind="knowledge_index",
+                                         payload={"library_id": library["id"]})
+        return {"type": "system", "ok": True, "job_id": job.id,
+                "library": library, "libraries": base.libraries(),
+                "knowledge_ids": bound,
+                "content": _t("sys.knowledge_mount_ok", name=library.get("name", ""),
+                              job_id=job.id)}
+
+    def knowledge_unmount(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Unmount a library, purge its index and remove the binding from the
+        current conversation.
+        [ZH]
+        卸载库、清除其索引并解除当前会话的绑定。
+        """
+        library_id = str(request.get("library_id") or request.get("id") or "").strip()
+        base = self.knowledge_base()
+        library = base.get_library(library_id)
+        if library is None:
+            return {"type": "system", "ok": False,
+                    "content": _t("sys.knowledge_unmount_missing", id=library_id)}
+        base.remove_library(library_id)
+        with self._conv_lock:
+            self.conv.bind_knowledge([item for item in self.conv.knowledge_ids
+                                      if item != library_id])
+            self.save_session()
+        return {"type": "system", "ok": True, "library_id": library_id,
+                "libraries": base.libraries(),
+                "knowledge_ids": list(self.conv.knowledge_ids),
+                "content": _t("sys.knowledge_unmount_ok",
+                              name=library.get("name", library_id))}
+
+    def knowledge_status(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Observable knowledge state: mounted libraries, aggregate counters, the
+        binding of the current conversation and the background job counters.
+        [ZH]
+        可观测的知识库状态：已挂载库、汇总计数、当前会话绑定与后台作业计数。
+        """
+        base = self.knowledge_base()
+        libraries = base.libraries()
+        stats = base.stats()
+        cfg = self._knowledge_cfg()
+        return {"type": "knowledge", "ok": True, "content": "",
+                "enabled": bool(getattr(cfg, "enabled", True)) if cfg else True,
+                "libraries": libraries,
+                "knowledge_ids": list(self.conv.knowledge_ids),
+                "stats": stats,
+                "config": {"top_k": int(getattr(cfg, "top_k", 4) or 4),
+                           "max_context_chars": int(getattr(cfg, "max_context_chars", 2400) or 2400),
+                           "chunk_chars": int(getattr(cfg, "chunk_chars", 600) or 600)},
+                "jobs": self._document_jobs.status(),
+                "last_retrieval": self._last_knowledge}
+
+    def knowledge_bind(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Bind the current conversation to a subset of the mounted libraries
+        (task 3.2). Unknown identifiers are dropped rather than kept: a stale
+        binding must not silently search nothing.
+        [ZH]
+        将当前会话绑定到已挂载库的子集（任务 3.2）。未知标识被丢弃而非保留：失效的
+        绑定不得静默变成“什么都检索不到”。
+        """
+        base = self.knowledge_base()
+        available = {item["id"] for item in base.libraries()}
+        raw = request.get("library_ids")
+        if raw is None:
+            raw = [item for item in available] if request.get("all") else []
+        wanted = [str(item) for item in (raw if isinstance(raw, list) else [])
+                  if str(item or "").strip() in available]
+        with self._conv_lock:
+            self.conv.bind_knowledge(wanted)
+            self.save_session()
+        content = (_t("sys.knowledge_bind_ok", count=len(wanted)) if wanted
+                   else _t("sys.knowledge_bind_none"))
+        return {"type": "system", "ok": True, "knowledge_ids": wanted,
+                "libraries": base.libraries(), "content": content}
+
+    def knowledge_search(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Explicit retrieval query, used by diagnostics and by the UI preview. The
+        same call path feeds question-time injection, so what the preview shows
+        is what the model receives.
+        [ZH]
+        显式检索查询，供诊断与界面预览使用。提问时的注入走同一条调用路径，因此预览
+        所见即模型所得。
+        """
+        query = str(request.get("query") or request.get("message") or "").strip()
+        if not query:
+            return {"type": "knowledge", "ok": False, "content": "",
+                    "hits": []}
+        cfg = self._knowledge_cfg()
+        library_ids = request.get("library_ids")
+        if not isinstance(library_ids, list):
+            library_ids = list(self.conv.knowledge_ids)
+        try:
+            hits = self.knowledge_base().search(
+                query, library_ids=[str(item) for item in library_ids],
+                top_k=int(getattr(cfg, "top_k", 4) or 4),
+                min_score=float(getattr(cfg, "min_score", 0.0) or 0.0))
+        except Exception as exc:  # noqa: BLE001 - [EN] a preview must never fail the request
+                                  # [ZH] 预览绝不得使请求失败
+            log.warning("知识库检索失败：%s", exc)
+            return {"type": "knowledge", "ok": False, "content": "", "hits": [],
+                    "error": f"{type(exc).__name__}: {exc}"}
+        content = "" if hits else _t("sys.knowledge_search_empty")
+        return {"type": "knowledge", "ok": True, "content": content, "hits": hits,
+                "query": query, "knowledge_ids": list(library_ids)}
+
+    def _knowledge_context_for(self, user_msg: str) -> str:
+        """
+        [EN]
+        Retrieval block injected before the question.
+
+        Only libraries bound to this conversation are searched. A conversation
+        with no binding injects nothing, which is the isolation requirement of
+        task 3.2: material from one folder must not appear in a conversation
+        that never opted into it. A retrieval failure is logged and degrades to
+        "no injection", never to a failed answer.
+        [ZH]
+        注入在提问之前的检索块。
+
+        只检索绑定到本会话的库。没有绑定的会话不注入任何内容，这正是任务 3.2 的
+        隔离要求：从未选择某个文件夹的对话不得出现该文件夹的材料。检索失败只记录
+        日志并退化为“不注入”，绝不让回答失败。
+        """
+        cfg = self._knowledge_cfg()
+        if cfg is None or not bool(getattr(cfg, "enabled", True)):
+            return ""
+        library_ids = list(self.conv.knowledge_ids)
+        if not library_ids:
+            return ""
+        try:
+            context = self.knowledge_base().as_context(
+                user_msg, library_ids=library_ids,
+                top_k=int(getattr(cfg, "top_k", 4) or 4),
+                max_chars=int(getattr(cfg, "max_context_chars", 2400) or 2400),
+                min_score=float(getattr(cfg, "min_score", 0.0) or 0.0))
+        except Exception as exc:  # noqa: BLE001 - [EN] retrieval must not break the answer
+                                  # [ZH] 检索不得连累作答
+            log.warning("知识库检索失败，本次不注入：%s", exc)
+            return ""
+        if not context:
+            self._last_knowledge = {"query": user_msg, "hits": 0,
+                                    "libraries": library_ids}
+            return ""
+        self._last_knowledge = {"query": user_msg, "hits": context.count("\n["),
+                                "chars": len(context), "libraries": library_ids}
+        return context
+
+    def _combined_retrieval_context(self, user_msg: str) -> str:
+        """
+        [EN]
+        Compose the knowledge-base block and the uploaded-document retrieval
+        block. Knowledge comes first because it is the user's long-term corpus;
+        the current conversation's own files follow.
+        [ZH]
+        组合知识库块与已上传文档的检索块。知识库在前 —— 它是用户的长期语料；本会话
+        自身的文件随后。
+        """
+        parts = [self._knowledge_context_for(user_msg),
+                 self._retrieval_context_for(user_msg)]
+        return "\n\n".join(part for part in parts if part)
+
+    # [EN] ---------- Long-term memory (v0.2.6 Part 3, task 3.3) ----------
+    # [ZH] ---------- 长期记忆（v0.2.6 Part 3 任务 3.3） ----------
+
+    def _memory_cfg(self) -> Any:
+        """
+        [EN]
+        Memory settings, or ``None`` when the configuration predates Part 3.
+        [ZH]
+        记忆设置；配置早于 Part 3 时返回 ``None``。
+        """
+        return getattr(self.config, "memory", None)
+
+    def memory_store(self) -> MemoryStore:
+        """
+        [EN]
+        Lazily create the memory store. The file is read on first use only.
+        [ZH]
+        惰性创建记忆存储。文件仅在首次使用时读取。
+        """
+        if self._memory is None:
+            cfg = self._memory_cfg()
+            self._memory = MemoryStore(
+                max_items=int(getattr(cfg, "max_items", 200) or 200))
+        return self._memory
+
+    def _conversation_transcript(self) -> str:
+        """
+        [EN]
+        Render the current conversation as a plain transcript snapshot.
+
+        Only role and content are emitted: timestamps and reasoning are not part
+        of "what the user said", and reasoning is deliberately excluded from the
+        model context elsewhere as well.
+        [ZH]
+        将当前对话渲染为纯文本快照。
+
+        只输出角色与正文：时间戳与思考内容不属于“用户说了什么”，且思考内容在其他
+        路径中同样刻意不进入模型上下文。
+        """
+        lines: List[str] = []
+        for message in self.conv.history:
+            role = "用户" if str(message.get("role")) == "user" else "助手"
+            body = str(message.get("content") or "").strip()
+            if body:
+                lines.append(f"{role}：{body}")
+        return "\n\n".join(lines)
+
+    def end_conversation(self, reason: str = "clear") -> Optional[Dict[str, Any]]:
+        """
+        [EN]
+        Conversation-end callback: schedule long-term memory extraction.
+
+        Two paths, both using a private temporary conversation object for the
+        prompt (see ``_extract_memories_now``):
+
+        * ``exit`` runs synchronously. The process is about to end, and a
+          background job would be killed with it; the acceptance criterion
+          "after a restart the assistant remembers the facts" therefore requires
+          the extraction to finish before shutdown.
+        * ``clear`` enqueues on the serial worker, so clearing the conversation
+          stays instant.
+
+        Returns a small diagnostic dictionary, or ``None`` when extraction is
+        disabled or the conversation carries nothing worth extracting.
+        [ZH]
+        对话结束回调：调度长期记忆提取。
+
+        两条路径都用私有临时会话对象承载提示词（见 ``_extract_memories_now``）：
+
+        * ``exit`` 同步执行。进程即将结束，后台作业会随之被终止；因此“重启后仍能
+          记起事实”这一验收标准要求提取在退出前完成。
+        * ``clear`` 入队到串行工作线程，使清空对话保持即时。
+
+        返回一份小型诊断字典；提取被关闭或对话没有可提取内容时返回 ``None``。
+        """
+        cfg = self._memory_cfg()
+        if cfg is None or not bool(getattr(cfg, "enabled", True)):
+            return None
+        if not bool(getattr(cfg, "auto_extract", True)) and reason != "manual":
+            return None
+        transcript = self._conversation_transcript()
+        turns = sum(1 for message in self.conv.history
+                    if str(message.get("role")) == "user")
+        if not transcript or turns < int(getattr(cfg, "min_turns", 1) or 0):
+            return None
+        if transcript == getattr(self, "_last_extracted_transcript", ""):
+            return {"skipped": "unchanged"}
+        self._last_extracted_transcript = transcript
+        if reason == "exit":
+            try:
+                return self._extract_memories_now(transcript)
+            except Exception as exc:  # noqa: BLE001 - [EN] shutdown must never fail on memory
+                                      # [ZH] 退出绝不得因记忆而失败
+                log_user(log, "sys.log_memory_extract_failed", error=exc)
+                return {"ok": False, "error": str(exc)}
+        job = self._document_jobs.submit([], kind="memory_extract",
+                                         payload={"transcript": transcript,
+                                                  "reason": reason, "turns": turns})
+        return {"ok": True, "job_id": job.id, "turns": turns}
+
+    def _run_memory_job(self, job: Any) -> None:
+        """
+        [EN]
+        Background runner for one memory-extraction job.
+
+        The job payload carries the transcript snapshot captured at conversation
+        end, so the live conversation may be cleared while the model is still
+        working.
+        [ZH]
+        单个记忆提取作业的后台执行函数。
+
+        作业负载携带对话结束时捕获的文本快照，因此模型仍在工作时在线对话即可被
+        清空。
+        """
+        cfg = self._memory_cfg()
+        transcript = str(job.payload.get("transcript") or "")
+        if (cfg is None or not bool(getattr(cfg, "enabled", True))
+                or not bool(getattr(cfg, "auto_extract", True))):
+            job.status = STATUS_CANCELLED
+            return
+        if not transcript.strip():
+            job.status = STATUS_CANCELLED
+            return
+        job.emit({"type": "memory_start", "phase": "extract",
+                  "reason": str(job.payload.get("reason") or "")})
+        result = self._extract_memories_now(transcript)
+        job.result = result
+        if not result.get("ok"):
+            job.status = STATUS_CANCELLED
+            return
+        job.emit({"type": "memory_done", "phase": "done",
+                  "added": result.get("added", 0),
+                  "skipped": result.get("skipped", 0)})
+
+    def _extract_memories_now(self, transcript: str) -> Dict[str, Any]:
+        """
+        [EN]
+        Run one extraction against the local model and persist the new facts.
+
+        Isolation requirement: the prompt is assembled on a **temporary**
+        conversation object, exactly as the segmented summarizer does for its
+        chunk prompts (v0.2.6 task 2.2). The main conversation history is never
+        passed to the model and is never modified by this method.
+        [ZH]
+        针对本机模型执行一次提取并持久化新事实。
+
+        隔离要求：提示词在**临时**会话对象上装配，与分段摘要在分段提示词上的做法
+        完全一致（v0.2.6 任务 2.2）。主对话历史绝不传给模型，本方法也不修改它。
+        """
+        cfg = self._memory_cfg()
+        if not self.model_ready:
+            return {"ok": False, "error": "model_not_ready", "added": 0, "skipped": 0}
+        max_tokens = int(getattr(cfg, "extract_max_tokens", 512) or 512)
+        max_items = int(getattr(cfg, "extract_max_items", 12) or 12)
+        temporary_conversation = ConversationManager(1, "chat")
+        result = extract_memories(
+            complete=lambda messages: self.llm.chat_complete(messages,
+                                                             max_tokens=max_tokens),
+            transcript=transcript,
+            max_items=max_items,
+            conversation=temporary_conversation,
+        )
+        if not result.get("ok"):
+            log_user(log, "sys.log_memory_extract_failed", error=result.get("error", ""))
+            return {"ok": False, "error": result.get("error", ""),
+                    "added": 0, "skipped": 0}
+        store = self.memory_store()
+        added = 0
+        skipped = 0
+        stored: List[Dict[str, Any]] = []
+        for item in result.get("items") or []:
+            entry = store.add(item.get("text", ""), item.get("category", "other"),
+                              source="conversation")
+            if entry is None:
+                skipped += 1
+            else:
+                added += 1
+                stored.append(entry)
+        log_user(log, "sys.log_memory_extract", added=added, skipped=skipped)
+        return {"ok": True, "added": added, "skipped": skipped, "items": stored}
+
+    def memory_state(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Observable memory state: every fact, aggregate counters and the
+        localized category labels used by the interface.
+        [ZH]
+        可观测的记忆状态：全部事实、汇总计数与界面使用的本地化分类名。
+        """
+        store = self.memory_store()
+        cfg = self._memory_cfg()
+        categories = [{"id": category,
+                       "label": _t(f"memory.category.{category}")}
+                      for category in ("identity", "preference", "project",
+                                       "contact", "habit", "other")]
+        return {"type": "memory", "ok": True, "content": "",
+                "enabled": bool(getattr(cfg, "enabled", True)) if cfg else True,
+                "items": store.items(), "stats": store.stats(),
+                "categories": categories,
+                "jobs": self._document_jobs.status()}
+
+    def memory_extract_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Explicit extraction entry point. Uses the current conversation unless a
+        transcript is supplied, which lets the interface trigger extraction
+        without ending the conversation.
+        [ZH]
+        显式提取入口。默认使用当前对话，除非显式提供对话文本 —— 这让界面无需结束
+        对话即可触发一次提取。
+        """
+        cfg = self._memory_cfg()
+        if cfg is None or not bool(getattr(cfg, "enabled", True)):
+            return {"type": "system", "ok": False, "content": _t("memory.disabled")}
+        transcript = str(request.get("transcript") or "").strip() \
+            or self._conversation_transcript()
+        if not transcript:
+            return {"type": "system", "ok": False,
+                    "content": _t("memory.need_conversation")}
+        if not self.model_ready:
+            return {"type": "system", "ok": False,
+                    "content": _t("memory.extract_failed", error="model_not_ready")}
+        job = self._document_jobs.submit([], kind="memory_extract",
+                                         payload={"transcript": transcript,
+                                                  "reason": "manual"})
+        return {"type": "system", "ok": True, "job_id": job.id,
+                "content": _t("memory.extract_accepted", job_id=job.id)}
+
+    def memory_forget(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Forget one fact by identifier.
+        [ZH]
+        按标识忘记一条事实。
+        """
+        memory_id = str(request.get("memory_id") or request.get("id") or "").strip()
+        if not self.memory_store().remove(memory_id):
+            return {"type": "system", "ok": False,
+                    "content": _t("memory.forgot_missing", id=memory_id)}
+        return {"type": "system", "ok": True, "memory_id": memory_id,
+                "items": self.memory_store().items(),
+                "content": _t("memory.forgot", id=memory_id)}
+
+    def memory_clear(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Forget every stored fact.
+        [ZH]
+        忘记全部已存事实。
+        """
+        count = self.memory_store().clear()
+        return {"type": "system", "ok": True, "cleared": count,
+                "items": [], "content": _t("memory.cleared", count=count)}
+
+    def _apply_memory_context(self) -> str:
+        """
+        [EN]
+        Refresh the memory block on the conversation before a model call.
+
+        Reading the store for every question keeps a forgotten fact from being
+        injected again, without restarting the program.
+        [ZH]
+        在模型调用前刷新会话上的记忆块。
+
+        每次提问都重新读取存储，使已忘记的事实不必重启程序就不再注入。
+        """
+        cfg = self._memory_cfg()
+        if cfg is None or not bool(getattr(cfg, "enabled", True)):
+            self.conv.set_memory_context("")
+            return ""
+        try:
+            block = self.memory_store().as_prompt(
+                int(getattr(cfg, "max_chars", 1200) or 1200))
+        except Exception as exc:  # noqa: BLE001 - [EN] memory must never break the answer
+                                  # [ZH] 记忆绝不得连累作答
+            log.warning("读取长期记忆失败，本次不注入：%s", exc)
+            block = ""
+        self.conv.set_memory_context(block)
+        return block
+
+    # [EN] ---------- Prompt template library (v0.2.6 Part 3, task 3.4) ----------
+    # [ZH] ---------- 提示词模板库（v0.2.6 Part 3 任务 3.4） ----------
+
+    def prompt_library(self) -> PromptLibrary:
+        """
+        [EN]
+        Lazily create the template library handle.
+        [ZH]
+        惰性创建模板库句柄。
+        """
+        if self._prompt_library is None:
+            self._prompt_library = PromptLibrary()
+        return self._prompt_library
+
+    def _handle_promptlib_list(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Template list with categories, for the front-end panel.
+        [ZH]
+        供前端面板使用的模板清单与分类。
+        """
+        from prompt_library import categories as prompt_categories  # noqa: PLC0415
+
+        library = self.prompt_library()
+        category = str(request.get("category") or "").strip()
+        return {"type": "prompt_library", "ok": True, "content": "",
+                "templates": library.list(category),
+                "categories": prompt_categories(),
+                "stats": library.stats()}
+
+    def _handle_promptlib_save(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Create or update one user template.
+        [ZH]
+        新建或更新一条用户模板。
+        """
+        payload = request.get("template")
+        if not isinstance(payload, dict):
+            payload = request
+        try:
+            entry = self.prompt_library().save(payload)
+        except ValueError as exc:
+            return {"type": "prompt_library", "ok": False,
+                    "content": _t("sys.promptlib_invalid", error=exc)}
+        return {"type": "prompt_library", "ok": True, "template": entry,
+                "templates": self.prompt_library().list(),
+                "content": _t("sys.promptlib_saved",
+                              label=entry.get("label", ""))}
+
+    def _handle_promptlib_delete(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Delete one user template; built-in templates are read-only.
+        [ZH]
+        删除一条用户模板；内置模板只读。
+        """
+        template_id = str(request.get("template_id") or request.get("id") or "").strip()
+        library = self.prompt_library()
+        entry = library.get(template_id, include_body=False)
+        if entry is not None and not entry.get("editable"):
+            return {"type": "prompt_library", "ok": False,
+                    "content": _t("sys.promptlib_builtin_readonly")}
+        if not library.delete(template_id):
+            return {"type": "prompt_library", "ok": False,
+                    "content": _t("sys.promptlib_not_found", id=template_id)}
+        return {"type": "prompt_library", "ok": True, "template_id": template_id,
+                "templates": library.list(),
+                "content": _t("sys.promptlib_deleted",
+                              label=(entry or {}).get("label", template_id))}
+
+    def _handle_promptlib_apply(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Apply one template to the current conversation as its task layer.
+
+        The generated block is identical to the text produced for ``/task``, so a
+        template applied from the panel and the same template applied by command
+        are indistinguishable to the model.
+        [ZH]
+        将单个模板作为本会话任务层应用。
+
+        生成的文本与 ``/task`` 产出完全一致，因此从面板应用的模板与用命令应用的
+        同一模板对模型而言没有差别。
+        """
+        template_id = str(request.get("template_id") or request.get("id") or "").strip()
+        library = self.prompt_library()
+        entry = library.get(template_id, include_body=False)
+        if entry is None:
+            return {"type": "prompt_library", "ok": False,
+                    "content": _t("sys.promptlib_not_found", id=template_id)}
+        text = library.system_prompt(template_id)
+        if not text:
+            return {"type": "prompt_library", "ok": False,
+                    "content": _t("sys.promptlib_not_found", id=template_id)}
+        with self._conv_lock:
+            self.conv.set_task_prompt(text, template_id)
+        try:
+            self.llm.clear_cache()
+        except Exception:  # noqa: BLE001 - [EN] a cache flush failure must not block applying
+                          # [ZH] 清缓存失败不得阻止应用
+            log.debug("应用模板后清理推理缓存失败", exc_info=True)
+        return {"type": "prompt_library", "ok": True, "template": entry,
+                "content": _t("sys.promptlib_applied",
+                              label=entry.get("label", template_id))}
 
     def load_file_into_context(self, filepath: str, progress_sink=None) -> str:
         """
@@ -8037,7 +8791,11 @@ def main() -> None:
             is_lightweight = action in ("ping", "file_job_status", "file_job_cancel",
                                         "confirm_tool", "media_state",
                                         "audio_record_start", "audio_record_stop",
-                                        "audio_record_cancel")
+                                        "audio_record_cancel",
+                                        # [EN] v0.2.6 Part 3: read-only state queries
+                                        # [ZH] v0.2.6 Part 3：只读状态查询
+                                        "knowledge_status", "knowledge_search",
+                                        "memory_state", "promptlib_list")
             if not is_command and not is_lightweight:
                 # [EN] Busy flag (model marketplace optimization in an earlier release): the
                 # [EN] single stdout stream is shared, and two threads writing at once
@@ -8088,6 +8846,15 @@ def main() -> None:
             # [ZH] 相关设计：退出只由用户主动触发。旧行为里"拒绝下载模型"也会走到这里，
             # [ZH] 现在缺模型时后端照常运行，这条路只剩前端"退出"按钮会用到。
             log_user(log, "sys.log_exit_requested")
+            # [EN] v0.2.6 Part 3: the conversation is ending, so long-term memory
+            # [EN] is extracted synchronously here. The process returns
+            # [EN] immediately afterwards, and a queued background job would be
+            # [EN] killed with it; a synchronous pass is what makes the facts
+            # [EN] available after a restart.
+            # [ZH] v0.2.6 Part 3：对话即将结束，长期记忆在此同步提取。进程随后立即
+            # [ZH] 返回，排入后台队列的作业会随之被终止；只有同步执行才能让这些事实
+            # [ZH] 在重启后可用。
+            backend.end_conversation("exit")
             backend.save_session()
             _write({"type": "system", "content": _t("sys.exit_ack")})
             return

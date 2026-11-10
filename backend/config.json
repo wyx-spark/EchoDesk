@@ -88,6 +88,27 @@
         "max_context_chars": 2400,
         "min_score": 0.0
     },
+    "knowledge": {
+        "enabled": true,
+        "data_dir": "",
+        "chunk_chars": 600,
+        "overlap_chars": 100,
+        "top_k": 4,
+        "max_context_chars": 2400,
+        "max_files": 20000,
+        "max_file_bytes": 12582912,
+        "max_chars_per_file": 200000,
+        "min_score": 0.0
+    },
+    "memory": {
+        "enabled": true,
+        "auto_extract": true,
+        "min_turns": 1,
+        "max_items": 200,
+        "extract_max_items": 12,
+        "extract_max_tokens": 512,
+        "max_chars": 1200
+    },
     "mcp": {
         "enabled": false,
         "timeout_seconds": 20.0,
