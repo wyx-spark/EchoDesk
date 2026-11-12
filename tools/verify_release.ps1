@@ -544,6 +544,11 @@ try {
     # [ZH] 拒绝时不执行任何命令。
     Invoke-Check "Agent 高危工具授权（v0.2.6）" { Invoke-Python "高危工具" "tools\test_agent_guard.py"; "通过" }
     Invoke-Check "MCP 客户端（任务三）" { Invoke-Python "MCP" "tools\test_mcp.py"; "通过" }
+    # [EN] v0.2.6 Part 4: provider routing, the consent red line and the local API.
+    # [EN] The test binds 127.0.0.1 only and needs no network or model.
+    # [ZH] v0.2.6 任务 4：多 Provider 路由、知情同意红线与本地 API。
+    # [ZH] 该测试只绑定 127.0.0.1，无需联网、不加载模型。
+    Invoke-Check "开放平台（v0.2.6 任务四）" { Invoke-Python "开放平台" "tools\test_ecosystem.py"; "通过" }
     Invoke-Check "本地检索（任务六）" { Invoke-Python "检索" "tools\test_retrieval.py"; "通过" }
     Invoke-Check "模型管理写路径（任务五）" { Invoke-Python "模型管理" "tools\test_model_admin.py"; "通过" }
 

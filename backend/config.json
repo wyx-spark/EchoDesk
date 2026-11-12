@@ -115,7 +115,19 @@
         "auto_connect": false,
         "servers": []
     },
-    "automation": {
+    "providers": {
+        "active": "llamacpp",
+        "timeout_seconds": 120.0,
+        "api_consent_granted": false,
+        "api_consent_at": "",
+        "providers": []
+    },
+    "local_api": {
+        "enabled": false,
+        "port": 8788,
+        "api_key": "",
+        "max_output_tokens": 1024
+    },    "automation": {
         "enabled": false,
         "safety_accepted": false,
         "safety_version": "1.0",

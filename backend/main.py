@@ -240,6 +240,13 @@ from i18n import t as _t
 import emoji as emoji_mod
 from config import program_dir, program_root as user_data_root, state_dir
 
+# [EN] v0.2.6 Part 4: the Open Platform layer. Both modules use only the standard
+# [EN] library (see their module notes for the dependency and security reasoning).
+# [ZH] v0.2.6 任务 4：开放平台层。两个模块都只使用标准库
+# [ZH] （依赖与安全的取舍见各自的模块说明）。
+import local_api
+import providers
+
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("EchoDesk")
 
@@ -688,6 +695,17 @@ class Backend:
         # [ZH] MCP 客户端（后续版本 相关设计）：惰性创建；配置签名变化时重建并关闭旧进程。
         self._mcp_bridge = None
         self._mcp_signature = ""
+        # [EN] v0.2.6 Part 4: the local OpenAI-compatible API server (lazily built,
+        # [EN] rebuilt when its configuration signature changes) and the flag that
+        # [EN] tells the protocol loop an external tool is currently generating.
+        # [EN] The flag is required because the engine is not re-entrant: a second
+        # [EN] concurrent generation would corrupt the shared llama.cpp context.
+        # [ZH] v0.2.6 任务 4：本地 OpenAI 兼容 API 服务器（惰性构建，配置签名变化时重建），
+        # [ZH] 以及告知协议循环"外部工具正在生成"的标志。该标志是必需的，因为引擎不可重入：
+        # [ZH] 第二个并发生成会破坏共享的 llama.cpp 上下文。
+        self._local_api: Any = None
+        self._local_api_signature = ""
+        self.api_busy = False
         # [EN] Total injected multi-file length: this value used to be set only in tests and
         # [EN] was never assigned on the production path. As a result
         # [EN] config.files.total_chars (default 60000) had no effect and injection was
@@ -2361,6 +2379,21 @@ class Backend:
             return {"type": "system", "content": "", "mcp": self.mcp_diagnostics()}
         if action == "mcp_apply":
             return self._handle_mcp_apply(request)
+        # [EN] v0.2.6 Part 4: open platform. `provider_state` and `local_api_state`
+        # [EN] are read-only; the save actions validate through the configuration
+        # [EN] models and enforce the informed-consent gate.
+        # [ZH] v0.2.6 任务 4：开放平台。`provider_state` 与 `local_api_state` 为只读；
+        # [ZH] 保存动作经配置模型校验，并强制知情同意门禁。
+        if action == "provider_state":
+            return {"type": "system", "content": "", "providers": self.provider_state()}
+        if action == "provider_save":
+            return self.handle_provider_save(request)
+        if action == "provider_test":
+            return self.handle_provider_test(request)
+        if action == "local_api_state":
+            return {"type": "system", "content": "", "local_api": self.local_api_state()}
+        if action == "local_api_apply":
+            return self.apply_local_api(request)
         if action == "retrieval_state":
             return {"type": "system", "content": "", "retrieval": self.retrieval_diagnostics()}
         # [EN] v0.2.6 Part 3: local knowledge base, long-term memory and the
@@ -5269,11 +5302,277 @@ class Backend:
             "error": bridge.last_error,
         }
 
+    # [EN] ---------- Open platform: local HTTP API and provider routing (v0.2.6 Part 4) ----------
+    # [ZH] ---------- 开放平台：本地 HTTP API 与多 Provider 路由（v0.2.6 任务 4） ----------
+
+    def provider_state(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Provider routing state for the settings page.
+
+        The state never contains an API key: only whether one is stored. This method
+        is read-only and therefore stays available while a long task runs.
+
+        [ZH]
+        供设置页使用的 Provider 路由状态。
+
+        状态中绝不含 API 密钥，只含"是否已保存"。本方法为只读，因此长任务运行期间
+        仍可应答。
+        """
+        try:
+            return providers.describe_config(self.config)
+        except Exception as exc:  # noqa: BLE001 - [EN] a broken state must not break settings
+                                  # [ZH] 状态构建失败不能让设置页不可用
+            log.warning("读取 Provider 状态失败：%s", exc)
+            return {"active": "llamacpp", "providers": [], "error": str(exc)}
+
+    def handle_provider_save(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Persist a provider configuration after enforcing the informed-consent gate.
+
+        A :class:`PermissionError` raised by :func:`providers.apply_settings` is
+        translated into a structured refusal. The exception is caught here rather
+        than allowed to escape because the protocol loop does not wrap
+        ``Backend.handle`` in a try/except: an uncaught exception would terminate the
+        backend process and leave the interface connected to a dead child. The
+        refusal still carries the original type name so the acceptance test and any
+        external harness can see that the raise really happened.
+
+        [ZH]
+        在强制执行知情同意门禁之后持久化提供方配置。
+
+        :func:`providers.apply_settings` 抛出的 :class:`PermissionError` 会转换为
+        结构化拒绝。异常在此捕获而不外泄，因为协议循环并未用 try/except 包裹
+        ``Backend.handle``：未捕获异常会终止后端进程，使界面连着一个已死的子进程。
+        拒绝结果仍携带原始类型名，因此验收测试与任何外部驱动都能看出确实发生了抛出。
+        """
+        try:
+            state = providers.apply_settings(self.config, request)
+        except PermissionError as exc:
+            log.warning("拒绝保存外部提供方配置（缺少知情同意）：%s", exc)
+            # [EN] ``error_type`` names the built-in base type required by the design
+            # [EN] specification (``PermissionError``); the concrete subclass is
+            # [EN] reported separately so the distinction is not lost.
+            # [ZH] ``error_type`` 使用设计规范要求的内置基类型（``PermissionError``）；
+            # [ZH] 具体子类另行上报，信息不丢失。
+            return {"type": "system", "content": str(exc), "ok": False,
+                    "error_type": "PermissionError", "error_class": type(exc).__name__,
+                    "permission_denied": True,
+                    "providers": self.provider_state()}
+        except Exception as exc:  # noqa: BLE001 - [EN] invalid input is a user error, not a crash
+                                  # [ZH] 输入非法属于用户错误，不是崩溃
+            log.warning("提供方配置保存失败：%s", exc)
+            return {"type": "system", "content": _t("sys.provider_bad_request", error=exc),
+                    "ok": False, "error_type": type(exc).__name__,
+                    "providers": self.provider_state()}
+        log_user(log, "sys.provider_saved", active=state.get("active", "llamacpp"))
+        return {"type": "system", "content": "", "ok": True, "providers": state}
+
+    def handle_provider_test(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Test one provider draft without activating it (settings "test connection").
+
+        [ZH]
+        测试一份提供方草稿而不激活它（设置页「测试连通性」）。
+        """
+        try:
+            report = providers.test_connection(self.config, request)
+        except PermissionError as exc:
+            return {"type": "system", "content": str(exc), "ok": False,
+                    "error_type": "PermissionError", "error_class": type(exc).__name__,
+                    "permission_denied": True,
+                    "report": {}}
+        except Exception as exc:  # noqa: BLE001
+            return {"type": "system", "content": _t("sys.provider_bad_request", error=exc),
+                    "ok": False, "error_type": type(exc).__name__, "report": {}}
+        return {"type": "system", "content": "", "ok": bool(report.get("ok")),
+                "report": report}
+
+    def local_api_server(self) -> Any:
+        """
+        [EN]
+        Build or reuse the local OpenAI-compatible API server.
+
+        The server is rebuilt when its configuration signature changes (port, token,
+        output budget or model name), so saving settings takes effect without a
+        process restart. Generation is delegated to this backend through the two
+        callbacks below, which keeps all model access on one serialised path.
+
+        [ZH]
+        构建或复用本地 OpenAI 兼容 API 服务器。
+
+        配置签名（端口、令牌、输出预算或模型名）变化时重建服务器，因此保存设置无需重启
+        进程即可生效。生成过程通过下面两个回调委托给本后端，使全部模型访问收敛到同一条
+        串行路径。
+        """
+        cfg = getattr(self.config, "local_api", None)
+        signature = json.dumps({
+            "enabled": bool(getattr(cfg, "enabled", False)),
+            "port": int(getattr(cfg, "port", local_api.DEFAULT_PORT) or local_api.DEFAULT_PORT),
+            "api_key": bool(str(getattr(cfg, "api_key", "") or "")),
+            "max_output_tokens": int(getattr(cfg, "max_output_tokens", 1024) or 1024),
+            "model": str(getattr(self.config, "model_path", "") or ""),
+        }, ensure_ascii=False, sort_keys=True)
+        if self._local_api is None or signature != self._local_api_signature:
+            if self._local_api is not None:
+                self._local_api.stop()
+            model_name = os.path.basename(str(getattr(self.config, "model_path", "") or ""))
+            self._local_api = local_api.LocalApiServer(
+                port=int(getattr(cfg, "port", local_api.DEFAULT_PORT) or local_api.DEFAULT_PORT),
+                api_key=str(getattr(cfg, "api_key", "") or ""),
+                model_name=model_name or "echodesk-local",
+                generate=self.local_api_generate,
+                stream=self.local_api_stream,
+                default_temperature=float(getattr(self.commands, "temperature", 0.7) or 0.7),
+                default_max_tokens=int(getattr(cfg, "max_output_tokens", 1024) or 1024),
+            )
+            self._local_api_signature = signature
+        return self._local_api
+
+    def local_api_state(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Local API state for the settings page.
+
+        [ZH]
+        供设置页使用的本地 API 状态。
+        """
+        try:
+            return self.local_api_server().status()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("读取本地 API 状态失败：%s", exc)
+            return {"enabled": False, "running": False, "error": str(exc)}
+
+    def apply_local_api(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Save and apply local API settings: enable/disable, port, token, output budget.
+
+        Validation goes through the :class:`config.LocalApiConfig` model rather than
+        ad-hoc checks, so the settings page, a hand-edited file and the tests all
+        enforce one rule set. The address is not a parameter: see
+        :mod:`local_api`.
+
+        [ZH]
+        保存并应用本地 API 设置：启停、端口、令牌、输出预算。
+
+        校验通过 :class:`config.LocalApiConfig` 模型完成，而不是临时检查，使设置页、
+        手改文件与测试遵守同一套规则。监听地址不是参数：见 :mod:`local_api`。
+        """
+        from config import LocalApiConfig
+
+        cfg = getattr(self.config, "local_api", None)
+        try:
+            candidate = LocalApiConfig(
+                enabled=bool(request.get("enabled", getattr(cfg, "enabled", False))),
+                port=int(request.get("port", getattr(cfg, "port", local_api.DEFAULT_PORT))),
+                api_key=str(request.get("api_key", getattr(cfg, "api_key", "")) or ""),
+                max_output_tokens=int(request.get(
+                    "max_output_tokens", getattr(cfg, "max_output_tokens", 1024))),
+            )
+        except Exception as exc:  # noqa: BLE001 - [EN] invalid input is a user error
+                                  # [ZH] 输入非法属于用户错误
+            return {"type": "system", "content": _t("sys.provider_bad_request", error=exc),
+                    "ok": False, "local_api": self.local_api_state()}
+        self.config.local_api = candidate
+        self.config.save()
+        server = self.local_api_server()
+        if candidate.enabled:
+            state = server.start()
+            if not state.get("running"):
+                log_user(log, "sys.localapi_failed", error=state.get("error", ""))
+            else:
+                log_user(log, "sys.localapi_started", url=state.get("base_url", ""))
+            return {"type": "system", "content": "", "ok": bool(state.get("running")),
+                    "local_api": state}
+        server.stop()
+        log_user(log, "sys.localapi_stopped")
+        return {"type": "system", "content": "", "ok": True,
+                "local_api": server.status()}
+
+    def start_local_api_if_enabled(self) -> Optional[Dict[str, Any]]:
+        """
+        [EN]
+        Start the local API at launch when the configuration enables it.
+
+        Failure is reported and swallowed: a port already in use must not prevent the
+        desktop application from starting.
+
+        [ZH]
+        配置启用时在启动阶段启动本地 API。
+
+        失败时只报告并吞掉异常：端口被占用绝不能让桌面程序无法启动。
+        """
+        cfg = getattr(self.config, "local_api", None)
+        if not bool(getattr(cfg, "enabled", False)):
+            return None
+        try:
+            return self.local_api_server().start()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("启动本地 API 失败：%s", exc)
+            return None
+
+    def local_api_generate(self, messages: List[Dict[str, Any]], *, temperature: float = 0.7,
+                           max_tokens: int = 1024, top_p: Optional[float] = None) -> str:
+        """
+        [EN]
+        Non-streaming generation entry point used by :mod:`local_api`.
+
+        ``api_busy`` is set for the whole call so the protocol loop refuses a
+        concurrent chat request instead of corrupting the shared engine state.
+
+        [ZH]
+        供 :mod:`local_api` 使用的非流式生成入口。
+
+        整个调用期间 ``api_busy`` 为真，使协议循环拒绝并发对话请求，而不是破坏共享的
+        引擎状态。
+        """
+        if not self.model_ready:
+            raise RuntimeError(_t("localapi.error_no_engine"))
+        self.api_busy = True
+        try:
+            return self.llm.chat_complete(
+                messages, temperature=temperature, max_tokens=max_tokens,
+                top_p=top_p,
+                repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1))
+        finally:
+            self.api_busy = False
+
+    def local_api_stream(self, messages: List[Dict[str, Any]], *, temperature: float = 0.7,
+                         max_tokens: int = 1024,
+                         top_p: Optional[float] = None) -> Iterator[str]:
+        """
+        [EN]
+        Streaming generation entry point used by :mod:`local_api`.
+
+        The stop event is deliberately not shared with the interface: an external
+        tool's request must not be interrupted by the desktop user pressing Stop on
+        an unrelated conversation. The client closing the HTTP connection ends the
+        generator instead.
+
+        [ZH]
+        供 :mod:`local_api` 使用的流式生成入口。
+
+        刻意不与界面共享停止事件：外部工具的请求不应因桌面用户停止另一段无关对话而
+        中断。客户端关闭 HTTP 连接即可结束该生成器。
+        """
+        if not self.model_ready:
+            raise RuntimeError(_t("localapi.error_no_engine"))
+        self.api_busy = True
+        try:
+            yield from self.llm.chat_stream(
+                messages, temperature=temperature, max_tokens=max_tokens,
+                stop_event=None, top_p=top_p,
+                repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1))
+        finally:
+            self.api_busy = False
+
     def agent_diagnostics(self) -> Dict[str, Any]:
         """
         [EN]
         Observable Agent state (for /agent, tests, and troubleshooting).
-
         The task requires "users can see every step of the Agent", so the backend must first
         retain "every step" as structured data before the frontend can display it correctly;
         otherwise troubleshooting depends on reading logs.
@@ -8727,6 +9026,14 @@ def main() -> None:
         })
 
     log_user(log, "sys.log_ready", app=APP_NAME, version=APP_VERSION, studio=STUDIO)
+    # [EN] v0.2.6 Part 4: start the local API before the ready declaration when the
+    # [EN] configuration enables it, so an IDE extension that starts with the program
+    # [EN] can connect as soon as the interface unlocks. A bind failure is logged and
+    # [EN] does not block startup (see start_local_api_if_enabled).
+    # [ZH] v0.2.6 任务 4：配置启用时在就绪声明之前启动本地 API，使随程序启动的 IDE 扩展
+    # [ZH] 能在界面放行后立即连接。绑定失败只记录日志，不阻塞启动
+    # [ZH] （见 start_local_api_if_enabled）。
+    backend.start_local_api_if_enabled()
     # [EN] Ready declaration: emitted only after warm-up and all other preparation have
     # [EN] finished; the front end uses it to unlock input. It also carries the restored
     # [EN] history for the front end to display.
@@ -8736,6 +9043,13 @@ def main() -> None:
             "locale": _i18n().locale, "i18n": _i18n().info(),
             "commands": backend.commands.all_commands(),
             "skills": backend.skills().status(),
+            # [EN] v0.2.6 Part 4: open-platform state at launch. The interface shows
+            # [EN] the active provider and the local API endpoint without a second round
+            # [EN] trip; both values are read-only snapshots.
+            # [ZH] v0.2.6 任务 4：启动时的开放平台状态。界面无需二次往返即可显示当前
+            # [ZH] 生效的提供方与本地 API 端点；两个取值均为只读快照。
+            "providers": backend.provider_state(),
+            "local_api": backend.local_api_state(),
             # [EN] Design specification: clearly distinguish "the backend is ready" from
             # [EN] "inference is available".
             # [ZH] 相关设计：明确区分"后端已就绪"与"推理可用"
@@ -8782,7 +9096,11 @@ def main() -> None:
         # [EN] While a stream is active: command requests (starting with /) and stop are
         # [EN] allowed; new conversation or file requests are told that the backend is busy.
         # [ZH] 流式生成期间：指令类请求（以 / 开头）与 stop 允许；新的对话/文件请求提示忙碌
-        if backend.stream_active and action != "stop":
+        # [EN] v0.2.6 Part 4: the same rule applies while the local API is generating for
+        # [EN] an external tool, because the engine cannot run two generations at once.
+        # [ZH] v0.2.6 任务 4：本地 API 正在为外部工具生成时同样适用，因为引擎无法同时运行
+        # [ZH] 两次生成。
+        if (backend.stream_active or getattr(backend, "api_busy", False)) and action != "stop":
             is_command = isinstance(request.get("message"), str) and request.get("message", "").startswith("/")
             # [EN] Liveness probes and background-job polling are lightweight and
             # [EN] must remain available while a long task runs (v0.2.6 task 2.1).
@@ -8795,7 +9113,10 @@ def main() -> None:
                                         # [EN] v0.2.6 Part 3: read-only state queries
                                         # [ZH] v0.2.6 Part 3：只读状态查询
                                         "knowledge_status", "knowledge_search",
-                                        "memory_state", "promptlib_list")
+                                        "memory_state", "promptlib_list",
+                                        # [EN] v0.2.6 Part 4: read-only platform state
+                                        # [ZH] v0.2.6 任务 4：只读平台状态
+                                        "provider_state", "local_api_state")
             if not is_command and not is_lightweight:
                 # [EN] Busy flag (model marketplace optimization in an earlier release): the
                 # [EN] single stdout stream is shared, and two threads writing at once
@@ -8805,7 +9126,13 @@ def main() -> None:
                 # [ZH] busy 标记（此前版本 模型市场优化）：单条 stdout 是共享流，
                 # [ZH] 两个线程同时写会交错成坏 JSON，所以长任务期间一律拒绝并发请求。
                 # [ZH] 带上结构化标记，界面才能说清"是后端忙"而不是"模型中心坏了"。
-                _write({"type": "system", "content": _t("sys.busy"), "busy": True})
+                # [EN] A local-API generation reports a distinct reason, so the user is not
+                # [EN] told to press Stop on a conversation that is not the one blocking.
+                # [ZH] 本地 API 生成中会给出不同原因，避免让用户去停止一段并非阻塞源的对话。
+                busy_text = (_t("sys.api_busy")
+                             if getattr(backend, "api_busy", False)
+                             else _t("sys.busy"))
+                _write({"type": "system", "content": busy_text, "busy": True})
                 continue
 
         if action in ("chat_stream", "model_download", "update_download", "automation_run",

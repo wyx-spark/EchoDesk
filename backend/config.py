@@ -1142,6 +1142,202 @@ class McpConfig(BaseModel):
     servers: List[McpServerConfig] = Field(default_factory=list)
 
 
+class LocalApiConfig(BaseModel):
+    """
+    [EN]
+    Local OpenAI-compatible HTTP API (v0.2.6 Part 4, task 2.1).
+
+    The listening address is deliberately absent: it is the module constant
+    ``local_api.BIND_HOST`` and can never be widened from configuration, because
+    exposing local inference to a local network would break the privacy promise in a
+    way no warning dialog could repair.
+
+    ``api_key`` is an optional bearer token. Empty means "no authentication", which
+    is acceptable only because the socket is loopback-only and the switch is off by
+    default; the settings page says so next to the field.
+
+    [ZH]
+    本地 OpenAI 兼容 HTTP API（v0.2.6 任务 2.1）。
+
+    此处刻意**没有**监听地址字段：它是模块常量 ``local_api.BIND_HOST``，
+    绝不可由配置放宽 —— 把本地推理暴露到局域网会以任何警告对话框都无法弥补的方式
+    破坏隐私承诺。
+
+    ``api_key`` 是可选的 bearer 令牌。为空表示"不鉴权"；这仅在套接字只监听环回、
+    且开关默认关闭时可以接受，设置页会在此字段旁明确说明。
+    """
+
+    #: [EN] Master switch. Off by default: a local server must never appear because
+    #: [EN] of an upgrade alone.
+    #: [ZH] 总开关。默认关闭：本地服务器绝不能仅因为一次升级就自行出现。
+    enabled: bool = False
+    port: int = Field(default=8788, ge=1024, le=65535)
+    #: [EN] Optional bearer token. Never echoed back to the interface.
+    #: [ZH] 可选 bearer 令牌。绝不回传给界面。
+    api_key: str = ""
+    #: [EN] Default output-token budget when a request omits ``max_tokens``; a
+    #: [EN] request may not exceed this value.
+    #: [ZH] 请求未提供 ``max_tokens`` 时的默认输出预算；请求不得超过该值。
+    max_output_tokens: int = Field(default=1024, ge=1, le=4096)
+
+    @field_validator("port")
+    @classmethod
+    def _check_port(cls, value: int) -> int:
+        """
+        [EN]
+        Reject port 0 and privileged ports: an operating-system assigned port could
+        not be communicated to the external tool, and binding below 1024 would
+        require elevated privileges on most systems.
+
+        [ZH]
+        拒绝端口 0 与特权端口：操作系统分配的端口无法告知外部工具，而绑定 1024 以下
+        在多数系统上需要提权。
+        """
+        number = int(value)
+        if number < 1024 or number > 65535:
+            raise ValueError("port must be within 1024-65535")
+        return number
+
+
+class ProviderConfig(BaseModel):
+    """
+    [EN]
+    One external inference provider declaration (v0.2.6 Part 4, task 2.3).
+
+    ``api_consent_granted`` is stored per provider as well as globally so that a
+    later global revocation cannot leave a stale approval behind: both values are
+    consulted, and the stricter one wins (see ``providers.build_provider``).
+
+    [ZH]
+    单个外部推理提供方声明（v0.2.6 任务 2.3）。
+
+    ``api_consent_granted`` 同时按提供方与全局保存，使之后全局撤销授权时不会遗留过期批准：
+    两处取值都会被检查，并按更严格的一侧生效（见 ``providers.build_provider``）。
+    """
+
+    kind: str = ""
+    api_base: str = ""
+    #: [EN] API key. Persisted in plain text inside ``config.json`` because the
+    #: [EN] program has no OS keychain integration in this version; the settings page
+    #: [EN] never echoes it back and the record documents this limitation.
+    #: [ZH] API 密钥。以明文保存在 ``config.json`` 中，因为本版程序未接入操作系统密钥
+    #: [ZH] 链；设置页不回显该值，记录中如实记载这一限制。
+    api_key: str = ""
+    model: str = ""
+    enabled: bool = True
+    api_consent_granted: bool = False
+
+
+class ProvidersConfig(BaseModel):
+    """
+    [EN]
+    Multi-provider routing configuration (v0.2.6 Part 4, task 2.3).
+
+    The consent gate lives here (see also :mod:`providers`): an enabled provider
+    whose endpoint is outside the loopback interface is **disabled at load time**
+    unless a grant is recorded. Raising instead would be worse -- a configuration
+    file the program refuses to load cannot be repaired from the interface -- so the
+    load path degrades while :func:`providers.apply_settings` refuses to save.
+
+    [ZH]
+    多 Provider 路由配置（v0.2.6 任务 2.3）。
+
+    同意门禁在此（另见 :mod:`providers`）：端点位于环回接口之外且未记录授权的已启用
+    提供方，会在**加载时被禁用**。改为抛异常反而更糟 —— 程序拒绝加载的配置文件无法从
+    界面修复 —— 因此加载路径降级，而 :func:`providers.apply_settings` 拒绝保存。
+    """
+
+    #: [EN] Active provider kind: ``llamacpp`` / ``ollama`` / ``openai_compatible``.
+    #: [ZH] 当前生效的提供方类型：``llamacpp`` / ``ollama`` / ``openai_compatible``。
+    active: str = "llamacpp"
+    timeout_seconds: float = Field(default=120.0, ge=5.0, le=600.0)
+    #: [EN] Global informed-consent grant. Must be true before any non-loopback
+    #: [EN] endpoint can be enabled, as required by the design specification.
+    #: [ZH] 全局知情同意授权。按设计规范，任何非环回端点启用之前它必须为真。
+    api_consent_granted: bool = False
+    #: [EN] When the grant was recorded (UTC ISO-8601), for the audit trail.
+    #: [ZH] 记录授权的时间（UTC ISO-8601），用于审计留痕。
+    api_consent_at: str = ""
+    providers: List[ProviderConfig] = Field(default_factory=list)
+
+    @field_validator("active", mode="before")
+    @classmethod
+    def _normalize_active(cls, value: Any) -> str:
+        """
+        [EN]
+        Normalise the provider identifier and accept the spellings used by the
+        interface and by hand-edited files. Unknown values fall back to the local
+        provider: an unknown identifier must never stop the program from starting.
+
+        [ZH]
+        规范化提供方标识，并接受界面与手改文件中出现的写法。未知值回落到本地提供方：
+        未知标识绝不能让程序无法启动。
+        """
+        text = str(value or "").strip().lower()
+        aliases = {
+            "local": "llamacpp", "llama.cpp": "llamacpp", "llama_cpp": "llamacpp",
+            "gguf": "llamacpp",
+            "openai": "openai_compatible", "openai-compatible": "openai_compatible",
+            "openai_compat": "openai_compatible", "oai": "openai_compatible",
+            "ollama": "ollama",
+        }
+        text = aliases.get(text, text)
+        return text if text in ("llamacpp", "ollama", "openai_compatible") else "llamacpp"
+
+    @model_validator(mode="after")
+    def _enforce_consent(self) -> "ProvidersConfig":
+        """
+        [EN]
+        Disable external providers that have no recorded consent, and fall back to
+        the local provider when the active one is no longer usable.
+
+        Both actions print a warning to stderr. A silent downgrade would make the
+        user believe an external model is answering while the local one is.
+
+        [ZH]
+        禁用未记录授权的提供方，并在当前生效的提供方不再可用时回落到本地提供方。
+
+        两个动作都会向 stderr 打印告警。静默降级会让用户以为在由外部模型作答，
+        而实际使用的是本地模型。
+        """
+        from providers import SUPPORTED_KINDS, is_loopback_endpoint
+
+        kept: List[ProviderConfig] = []
+        for item in self.providers:
+            kind = str(item.kind or "").strip().lower()
+            if kind not in ("ollama", "openai_compatible"):
+                print(
+                    f"⚠️ 忽略未知的提供方类型 {item.kind!r}（仅支持 ollama / "
+                    f"openai_compatible）",
+                    file=sys.stderr, flush=True,
+                )
+                continue
+            item.kind = kind
+            item.api_base = str(item.api_base or "").strip()
+            if not is_loopback_endpoint(item.api_base):
+                granted = bool(self.api_consent_granted or item.api_consent_granted)
+                if not granted and item.enabled:
+                    item.enabled = False
+                    print(
+                        f"⚠️ 外部 API {item.api_base} 未获得知情同意（api_consent_granted），"
+                        f"已禁用该提供方",
+                        file=sys.stderr, flush=True,
+                    )
+            kept.append(item)
+        self.providers = kept
+        if self.active != "llamacpp":
+            active = next((item for item in kept
+                           if item.kind == self.active and item.enabled), None)
+            if active is None:
+                print(
+                    f"⚠️ 提供方 {self.active} 不可用（未配置、未启用或未获授权），"
+                    f"已回落到本地 llama.cpp",
+                    file=sys.stderr, flush=True,
+                )
+                self.active = "llamacpp"
+        return self
+
+
 class RetrievalConfig(BaseModel):
     """
     [EN]
@@ -1483,6 +1679,15 @@ class Config(BaseModel):
     # [EN] MCP client (capability extension 1 in an earlier release, task 3).
     # [ZH] MCP 客户端（此前版本，能力扩展 1，研发任务 3）
     mcp: McpConfig = Field(default_factory=McpConfig)
+    # [EN] Multi-provider routing (v0.2.6 Part 4, task 2.3): the local llama.cpp
+    # [EN] engine is the default, and an external endpoint is enabled only with the
+    # [EN] informed-consent grant.
+    # [ZH] 多 Provider 路由（v0.2.6 任务 2.3）：默认使用本地 llama.cpp 引擎；
+    # [ZH] 外部端点只有在取得知情同意授权后才允许启用。
+    providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
+    # [EN] Local OpenAI-compatible HTTP API (v0.2.6 Part 4, task 2.1).
+    # [ZH] 本地 OpenAI 兼容 HTTP API（v0.2.6 任务 2.1）。
+    local_api: LocalApiConfig = Field(default_factory=LocalApiConfig)
     # [EN] Browser automation (task 4).
     # [ZH] 浏览器自动化（相关设计）
     automation: AutomationConfig = Field(default_factory=AutomationConfig)

@@ -1159,6 +1159,9 @@ def test_imports() -> None:
         # [EN] v0.2.6 Part 3.
         # [ZH] v0.2.6 Part 3。
         "knowledge", "memory", "prompt_library",
+        # [EN] v0.2.6 Part 4 (open platform).
+        # [ZH] v0.2.6 任务 4（开放平台）。
+        "providers", "local_api",
     ]
     failures = []
     for name in modules:
