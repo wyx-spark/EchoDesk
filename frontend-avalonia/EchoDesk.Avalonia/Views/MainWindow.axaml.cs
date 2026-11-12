@@ -114,6 +114,14 @@ public partial class MainWindow : Window
     private DispatcherTimer? _renderTimer;
     private volatile bool _renderDirty;
     private string _liveRendered = "";
+    // [EN] Reasoning is coalesced independently from the answer. Updating the thinking region on
+    //      every delta forces a full text layout of the expanded region per token, which is the
+    //      observed cause of the interface freezing while the region is open; the dirty flag makes
+    //      the update happen at most once per render tick.
+    // [ZH] 思考内容与回答分开做合并刷新。若每个增量都更新思考区，展开状态下每个 token 都会触发
+    // [ZH] 一次完整文本布局，这正是展开后界面卡死的实测原因；脏标记使更新至多每个渲染节拍一次。
+    private volatile bool _reasoningDirty;
+    private string _liveReasoningRendered = "";
     private int _renderCount;
     private Control? _liveCaret;
     private readonly Stopwatch _caretClock = Stopwatch.StartNew();
@@ -3223,8 +3231,12 @@ public partial class MainWindow : Window
                         AppendReasoningText(content);
                         if (_live is not null)
                         {
-                            _live.ThinkingText.Text = Emoji.Prefer(SnapshotReasoning());
+                            // [EN] Only reveal the region here; the text is applied by the
+                            //      coalescing render tick, never directly from a delta.
+                            // [ZH] 此处仅显示思考区；正文由合并式渲染节拍统一写入，绝不在增量
+                            // [ZH] 回调中直接赋值。
                             _live.ThinkingBox.IsVisible = true;
+                            RequestReasoningRender();
                         }
                     }
                     else
@@ -3242,8 +3254,8 @@ public partial class MainWindow : Window
                             }
                             if (_live is not null)
                             {
-                                _live.ThinkingText.Text = Emoji.Prefer(SnapshotReasoning());
                                 _live.ThinkingBox.IsVisible = true;
+                                RequestReasoningRender();
                             }
                         }
                         AppendAnswerText(content);
@@ -3354,8 +3366,8 @@ public partial class MainWindow : Window
                         {
                             if (_live is not null)
                             {
-                                _live.ThinkingText.Text = Emoji.Prefer(SnapshotReasoning());
                                 _live.ThinkingBox.IsVisible = true;
+                                RequestReasoningRender();
                             }
                         });
                     }
@@ -3412,11 +3424,39 @@ public partial class MainWindow : Window
         string title = Loc.T("main.agent.confirmToolTitle", "确认执行系统命令");
         if (content.Length == 0)
             content = Loc.T("main.agent.confirmToolFallback", "Agent 请求执行一个高危工具。");
-        bool approved = await Dispatcher.UIThread.InvokeAsync(() =>
-            ShowUpdateDialogAsync(
-                title, content,
-                Loc.T("main.agent.confirmToolAllow", "允许执行"),
-                Loc.T("main.agent.confirmToolDeny", "拒绝")));
+        bool approved = false;
+        try
+        {
+            // [EN] The stream callback may already execute on the UI thread; in that case the
+            //      dialog is opened directly. Otherwise it is marshalled through the dispatcher.
+            //      Either way the decision is answered below, so a dialog failure can never leave
+            //      the backend waiting for a reply until its confirmation timeout.
+            // [ZH] 流回调可能已经在界面线程上；此时直接打开对话框，否则经调度器转投。两种路径都会在
+            // [ZH] 下方回复决定，因此对话框失败绝不会让后端一直等待到确认超时。
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                approved = await ShowUpdateDialogAsync(
+                    title, content,
+                    Loc.T("main.agent.confirmToolAllow", "允许执行"),
+                    Loc.T("main.agent.confirmToolDeny", "拒绝"));
+            }
+            else
+            {
+                approved = await Dispatcher.UIThread.InvokeAsync(() => ShowUpdateDialogAsync(
+                    title, content,
+                    Loc.T("main.agent.confirmToolAllow", "允许执行"),
+                    Loc.T("main.agent.confirmToolDeny", "拒绝")));
+            }
+        }
+        catch (Exception ex)
+        {
+            // [EN] Fail closed: a dialog that cannot be shown is a denial, and the backend is
+            //      informed immediately instead of waiting for the confirmation timeout.
+            // [ZH] 失败即拒绝：无法显示对话框等同于拒绝，并立即告知后端，而不是等待确认超时。
+            approved = false;
+            AddMessage("system", Loc.T("main.agent.confirmToolFailed",
+                "⚠️ 无法显示确认对话框，已按拒绝处理：{0}", ex.Message));
+        }
         await _state.Backend.SendFireAndForgetAsync(new
         {
             action = "confirm_tool",
@@ -4635,6 +4675,10 @@ public partial class MainWindow : Window
         _renderTimer?.Stop();
         if (_renderDirty)
             RenderLive();
+        // [EN] Flush a pending reasoning update so the last reasoning fragment is never lost.
+        // [ZH] 刷新待处理的思考更新，确保最后一个思考片段不会丢失。
+        if (_reasoningDirty)
+            RenderLiveReasoning();
         // [EN] The caret and the first-token dots belong to the streaming state only;
         // [EN] completion
         //      removes both immediately.
@@ -4653,6 +4697,8 @@ public partial class MainWindow : Window
         // [ZH] 同一规则，并在同一次节拍内推进，因此不引入任何额外定时器。
         UpdateCaretOpacity();
         UpdateLoadingDotsOpacity();
+        if (_reasoningDirty)
+            RenderLiveReasoning();
         if (_renderDirty)
             RenderLive();
     }
@@ -4681,6 +4727,40 @@ public partial class MainWindow : Window
     {
         lock (_streamGate)
             _liveReasoning.Append(text);
+        // [EN] Mark the coalesced renderer instead of touching the text block; the fragment is
+        //      applied by the next render tick.
+        // [ZH] 标记合并式渲染器，而不直接改动文本控件；片段由下一个渲染节拍应用。
+        RequestReasoningRender();
+    }
+
+    /// <summary>
+    /// [EN] Requests one coalesced refresh of the reasoning region on the next render tick.
+    /// [ZH] 请求在下一个渲染节拍对思考区执行一次合并刷新。
+    /// </summary>
+    private void RequestReasoningRender()
+    {
+        _reasoningDirty = true;
+        MarkDirty();
+    }
+
+    /// <summary>
+    /// [EN] Applies the buffered reasoning to the live message at most once per render tick.
+    ///      The comparison against the last rendered text prevents a redundant layout pass when
+    ///      the buffer did not change.
+    /// [ZH] 每个渲染节拍至多把缓冲的思考内容写入实时消息一次。与上次渲染文本比较可避免缓冲区
+    /// [ZH] 未变化时的冗余布局过程。
+    /// </summary>
+    private void RenderLiveReasoning()
+    {
+        _reasoningDirty = false;
+        if (_live is null)
+            return;
+        string reasoning = SnapshotReasoning();
+        if (string.Equals(reasoning, _liveReasoningRendered, StringComparison.Ordinal))
+            return;
+        _liveReasoningRendered = reasoning;
+        _live.ThinkingText.Text = Emoji.Prefer(reasoning);
+        _live.ThinkingBox.IsVisible = reasoning.Length > 0;
     }
 
     /// <summary>
@@ -4712,6 +4792,8 @@ public partial class MainWindow : Window
             _liveReasoning.Clear();
         }
         _liveRendered = "";
+        _liveReasoningRendered = "";
+        _reasoningDirty = false;
     }
 
     /// <summary>

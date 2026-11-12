@@ -329,6 +329,7 @@
       "toolsUsed": "tools: {0}",
       "confirmToolTitle": "Confirm system command",
       "confirmToolFallback": "The Agent requests a high-risk tool operation.",
+      "confirmToolFailed": "⚠️ The confirmation dialog could not be shown; the request was denied: {0}",
       "confirmToolAllow": "Allow execution",
       "confirmToolDeny": "Deny"
     },

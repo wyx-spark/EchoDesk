@@ -329,6 +329,7 @@
       "toolsUsed": "工具：{0}",
       "confirmToolTitle": "确认执行系统命令",
       "confirmToolFallback": "Agent 请求执行一个高危工具操作。",
+      "confirmToolFailed": "⚠️ 无法显示确认对话框，已按拒绝处理：{0}",
       "confirmToolAllow": "允许执行",
       "confirmToolDeny": "拒绝"
     },
