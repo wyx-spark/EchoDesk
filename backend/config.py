@@ -1178,7 +1178,7 @@ class LocalApiConfig(BaseModel):
     #: [EN] Default output-token budget when a request omits ``max_tokens``; a
     #: [EN] request may not exceed this value.
     #: [ZH] 请求未提供 ``max_tokens`` 时的默认输出预算；请求不得超过该值。
-    max_output_tokens: int = Field(default=1024, ge=1, le=4096)
+    max_output_tokens: int = Field(default=1024, ge=1, le=8192)
 
     @field_validator("port")
     @classmethod

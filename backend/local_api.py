@@ -118,7 +118,12 @@ MAX_BODY_BYTES = 1024 * 1024
 #: [EN] rather than rejected so that an IDE sending its own default still works.
 #: [ZH] 接受客户端传入的 token 预算上限。调用方的取值会被钳制而不是拒绝，使 IDE 使用
 #: [ZH] 自身默认值时仍能工作。
-MAX_OUTPUT_TOKENS = 4096
+#: [EN] Hard upper bound for one completion issued through the local OpenAI-compatible
+#: [EN] API. Aligned with the main conversation budget (8192) so an external client
+#: [EN] cannot receive a shorter answer than the built-in interface.
+#: [ZH] 本地 OpenAI 兼容 API 单次补全的硬上限。与主对话预算（8192）对齐，使外部
+#: [ZH] 客户端不会比内置界面得到更短的输出。
+MAX_OUTPUT_TOKENS = 8192
 
 #: [EN] Default port. Chosen from the private range and away from common development
 #: [EN] ports (Ollama uses 11434, LM Studio 1234, vLLM 8000).

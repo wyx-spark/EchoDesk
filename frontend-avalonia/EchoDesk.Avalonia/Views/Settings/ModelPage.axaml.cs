@@ -72,6 +72,11 @@ public partial class ModelPage : UserControl, ISettingsPage
     private const double DefaultTemperature = 0.7;
     private const double DefaultTopP = 0.9;
     private const double DefaultRepeatPenalty = 1.1;
+    // [EN] Slider default and hard ceiling for the output budget. The backend computes the
+    //      effective budget dynamically (8% of the hardware window, capped at 8192); the
+    //      slider only lets the user raise it up to the same hard ceiling.
+    // [ZH] 输出预算的滑块默认值与硬上限。后端按硬件窗口的 8% 动态计算有效预算（上限 8192）；
+    // [ZH] 滑块只允许用户在同一硬上限内提高取值。
     private const int DefaultMaxTokens = 2048;
 
     private sealed record Option(string Value, Func<string> Text)

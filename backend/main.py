@@ -4275,6 +4275,31 @@ class Backend:
         self._attach_context(response)
         return response
 
+    def _output_token_budget(self) -> int:
+        """
+        [EN]
+        Compute the output-token budget for one generation.
+
+        The budget is the larger of the configured value and 8% of the hardware
+        context ceiling, clamped to ``[64, 8192]``. The percentage keeps a strong
+        model from being cut off on a large window without allowing the output to
+        consume the whole allocation; the fixed upper bound protects smaller
+        machines from an excessive reservation.
+
+        [ZH]
+        计算单次生成的输出 token 预算。
+
+        取配置值与硬件上下文上限 8% 中的较大者，并收敛到 ``[64, 8192]``。按比例
+        取值使强模型在大窗口下不会被截断，同时避免输出占满整个分配；固定上限则
+        防止较小机器做出过大的预留。
+        """
+        configured = int(getattr(self.config, "max_tokens", 0) or 0)
+        ceiling = int(getattr(self.llm, "max_n_ctx", 0)
+                      or getattr(self.llm, "n_ctx", 0) or 0)
+        dynamic = int(ceiling * 0.08) if ceiling > 0 else 0
+        dynamic = max(256, min(8192, dynamic)) if dynamic > 0 else 1024
+        return max(64, min(8192, max(configured, dynamic)))
+
     def _attach_context(self, response: Dict[str, Any]) -> None:
         """
         [EN]
@@ -5076,7 +5101,7 @@ class Backend:
             for channel, piece in self.llm.chat_stream_split(
                     messages,
                     temperature=self.commands.temperature,
-                    max_tokens=int(getattr(self.config, "max_tokens", 1024) or 1024),
+                    max_tokens=self._output_token_budget(),
                     stop_event=self.stop_event,
                     top_p=float(getattr(self.config, "top_p", 0.9) or 0.9),
                     repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1),
@@ -5775,7 +5800,7 @@ class Backend:
             self.llm, registry,
             max_steps=int(getattr(cfg, "max_steps", 4) or 4),
             stop_event=self.stop_event,
-            max_tokens=int(getattr(self.config, "max_tokens", 1024) or 1024),
+            max_tokens=self._output_token_budget(),
             max_observation_chars=int(getattr(cfg, "max_observation_chars", 1200) or 1200),
             confirm_tool=self._confirm_agent_tool,
         )
@@ -6228,7 +6253,7 @@ class Backend:
             thinking, response = self.llm.chat_complete_split(
                 messages,
                 temperature=self.commands.temperature,
-                max_tokens=int(getattr(self.config, "max_tokens", 1024) or 1024),
+                max_tokens=self._output_token_budget(),
                 top_p=float(getattr(self.config, "top_p", 0.9) or 0.9),
                 repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1),
             )

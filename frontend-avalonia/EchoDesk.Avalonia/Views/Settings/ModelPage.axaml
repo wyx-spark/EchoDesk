@@ -224,7 +224,7 @@
 
             <TextBlock x:Name="MaxTokensLabel" Grid.Row="1" Grid.Column="4" VerticalAlignment="Center"
                        FontSize="12" Margin="0,3" />
-            <Slider x:Name="MaxTokensSlider" Grid.Row="1" Grid.Column="5" Minimum="64" Maximum="4096"
+            <Slider x:Name="MaxTokensSlider" Grid.Row="1" Grid.Column="5" Minimum="64" Maximum="8192"
                     TickFrequency="64" IsSnapToTickEnabled="True"
                     AutomationProperties.AutomationId="MaxTokensSlider" />
             <TextBlock x:Name="MaxTokensValueText" Grid.Row="1" Grid.Column="6" VerticalAlignment="Center"
