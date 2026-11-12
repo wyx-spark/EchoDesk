@@ -1,5 +1,8 @@
 # EchoDesk
 
+> ⚠️ **Note / 注意**：We are actively developing v0.2.6 to fix known stability issues. If you encounter any bugs (e.g. UI freeze, file upload crash), please report them in Issues.  
+> 我们正在全力开发 v0.2.6 以修复已知的稳定性问题。如果您遇到任何 Bug，请在 Issues 中反馈。
+
 ![EchoDesk 主界面 —— 本地模型正在流式输出结构化合同审阅](docs/images/screenshot-main.zh-Hans.png)
 
 > 本文是 [README.md](README.md) 的中文参考译本。如两者有歧义，**以英文版为准**。

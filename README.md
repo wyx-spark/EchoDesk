@@ -1,5 +1,8 @@
 # EchoDesk
 
+> ⚠️ **Note / 注意**：We are actively developing v0.2.6 to fix known stability issues. If you encounter any bugs (e.g. UI freeze, file upload crash), please report them in Issues.  
+> 我们正在全力开发 v0.2.6 以修复已知的稳定性问题。如果您遇到任何 Bug，请在 Issues 中反馈。
+
 ![EchoDesk main window — a local model streaming a structured contract review](docs/images/screenshot-main.png)
 
 **A local, auditable, extensible AI desktop assistant for users working in strictly-controlled environments.**
