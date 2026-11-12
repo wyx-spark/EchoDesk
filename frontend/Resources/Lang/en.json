@@ -170,7 +170,8 @@
       "installed": "Installed",
       "market": "Marketplace",
       "developer": "Developer",
-      "about": "About"
+      "about": "About",
+      "ecosystem": "Ecosystem"
     },
     "general": {
       "sectionAppearance": "Appearance",

@@ -1,4 +1,4 @@
-﻿// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/SettingsWindow.axaml.cs. See type and member comments for details.
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Views/SettingsWindow.axaml.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Views/SettingsWindow.axaml.cs。类型与成员说明见下方注释。
 // [EN] Settings window skeleton (v0.2.1 cross-platform-2 development task 1, the first
 // [EN] migrated module).
@@ -114,6 +114,14 @@ public partial class SettingsWindow : Window, ISettingsHost
         RegisterPage(new MarketPage());
         RegisterPage(new InstalledPage());
         RegisterPage(new DeveloperPage());
+        // [EN] v0.2.6 Part 4: the Ecosystem page (local API + external providers) is
+        // [EN] Avalonia-only. It sits after the schedule shared with WPF because WPF has
+        // [EN] been in LTS since v0.2.3 and new features are implemented here only; the
+        // [EN] first seven tabs keep the WPF order unchanged.
+        // [ZH] v0.2.6 任务 4：生态页（本地 API + 外部提供方）只在 Avalonia 实现。
+        // [ZH] 它排在 WPF 共有的次序之后：WPF 自 v0.2.3 起处于 LTS，新功能只在此实现；
+        // [ZH] 前七个页签的次序保持不变。
+        RegisterPage(new EcosystemPage());
         foreach ((string key, string fallback) in NotMigratedTabs)
             AddNotMigratedTab(key, fallback);
 

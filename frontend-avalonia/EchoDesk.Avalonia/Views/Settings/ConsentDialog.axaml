@@ -1,0 +1,61 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="EchoDesk.Avalonia.Views.Settings.ConsentDialog"
+        Width="540" Height="360" CanResize="False" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
+  <!--
+    [EN] Informed-consent dialog (v0.2.6 Part 4, the red line for external providers).
+
+    Why a separate window instead of a checkbox on the settings page: the design
+    specification demands that configuring a non-localhost endpoint **forces a
+    warning dialog** and that the user explicitly acknowledges the data-disclosure
+    risk. A checkbox embedded in a page can be ticked once and then forgotten while
+    the endpoint changes; a fresh modal on every save is what keeps the decision
+    conscious. The backend enforces the same rule independently
+    (`providers.apply_settings` raises PermissionError), so the dialog is a
+    usability layer, not the only barrier.
+
+    Names: ConsentTitleText / ConsentBodyText / ConsentAcceptCheck /
+    ConsentRequiredText / ConsentConfirmButton / ConsentCancelButton. The confirm
+    button stays disabled until the acknowledgement is ticked, so an accidental
+    double-click cannot grant consent.
+
+    [ZH] 知情同意对话框（v0.2.6 任务 4，外部提供方的红线）。
+
+    为什么用独立窗口而不是设置页上的复选框：设计规范要求配置非 localhost 端点时
+    **强制弹窗警告**，并由用户显式确认数据外发风险。内嵌在页面里的复选框可能被勾选一次
+    后就被遗忘，而端点可能早已改变；每次保存都弹一次新窗口，才能让这个决定保持清醒。
+    后端独立执行同一条规则（`providers.apply_settings` 抛 PermissionError），
+    因此对话框是易用性层，而不是唯一防线。
+
+    控件名：ConsentTitleText / ConsentBodyText / ConsentAcceptCheck /
+    ConsentRequiredText / ConsentConfirmButton / ConsentCancelButton。勾选确认之前
+    确认按钮保持禁用，因此误双击不会授予同意。
+  -->
+  <Grid RowDefinitions="Auto,*,Auto" Margin="20">
+    <TextBlock x:Name="ConsentTitleText" Grid.Row="0" FontSize="16" FontWeight="Bold"
+               Foreground="{DynamicResource AccentBrush}" TextWrapping="Wrap"
+               AutomationProperties.AutomationId="ConsentTitleText" />
+
+    <ScrollViewer Grid.Row="1" Margin="0,12,0,12" VerticalScrollBarVisibility="Auto">
+      <StackPanel Spacing="10">
+        <TextBlock x:Name="ConsentBodyText" FontSize="13" TextWrapping="Wrap"
+                   AutomationProperties.AutomationId="ConsentBodyText" />
+        <CheckBox x:Name="ConsentAcceptCheck"
+                  AutomationProperties.AutomationId="ConsentAcceptCheck" />
+        <TextBlock x:Name="ConsentRequiredText" FontSize="11" TextWrapping="Wrap"
+                   Foreground="{DynamicResource ErrorBrush}" IsVisible="False"
+                   AutomationProperties.AutomationId="ConsentRequiredText" />
+      </StackPanel>
+    </ScrollViewer>
+
+    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right"
+                Spacing="8">
+      <Button x:Name="ConsentCancelButton" Padding="16,5"
+              AutomationProperties.AutomationId="ConsentCancelButton" />
+      <Button x:Name="ConsentConfirmButton" Classes="primary" Padding="16,5"
+              IsEnabled="False"
+              AutomationProperties.AutomationId="ConsentConfirmButton" />
+    </StackPanel>
+  </Grid>
+</Window>

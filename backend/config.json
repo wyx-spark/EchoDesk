@@ -56,8 +56,8 @@
     "agent": {
         "max_steps": 4,
         "allow_sensitive": [],
-        "max_observation_chars": 1200,
-        "confirm_timeout_seconds": 120
+        "confirm_timeout_seconds": 120,
+        "max_observation_chars": 1200
     },
     "media": {
         "vision_enabled": true,
@@ -116,18 +116,28 @@
         "servers": []
     },
     "providers": {
-        "active": "llamacpp",
-        "timeout_seconds": 120.0,
+        "active": "openai_compatible",
+        "timeout_seconds": 30.0,
         "api_consent_granted": false,
         "api_consent_at": "",
-        "providers": []
+        "providers": [
+            {
+                "kind": "openai_compatible",
+                "api_base": "http://127.0.0.1:1234/v1",
+                "api_key": "sk-local-keep",
+                "model": "m2",
+                "enabled": true,
+                "api_consent_granted": false
+            }
+        ]
     },
     "local_api": {
         "enabled": false,
         "port": 8788,
         "api_key": "",
         "max_output_tokens": 1024
-    },    "automation": {
+    },
+    "automation": {
         "enabled": false,
         "safety_accepted": false,
         "safety_version": "1.0",
@@ -236,7 +246,7 @@
         "include_prerelease": false,
         "last_check": "",
         "last_seen_version": "",
-    "ignored_version": ""
+        "ignored_version": ""
     },
     "language": "auto",
     "max_history": 10,
@@ -244,7 +254,9 @@
     "temperature": 0.7,
     "max_tokens": 1024,
     "search_results": 3,
+    "searxng_url": "",
     "preset": "balanced",
+    "inference_profile": "balanced",
     "top_p": 0.9,
     "repeat_penalty": 1.1,
     "context_mode": "summarize",
@@ -256,21 +268,9 @@
     "n_threads": 0,
     "n_batch": 512,
     "n_gpu_layers": 0,
+    "inference_override": false,
     "session_file": "session.json",
-    "models": {
-        "qwen3-0.6b": {
-            "path": "Qwen3-0.6B-Q6_K.gguf",
-            "repo": "unsloth/Qwen3-0.6B-GGUF",
-            "context_length": 8192,
-            "temperature": 0.7
-        },
-        "qwen3-1.7b": {
-            "path": "Qwen3-1.7B-Q4_K_M.gguf",
-            "repo": "unsloth/Qwen3-1.7B-GGUF",
-            "context_length": 8192,
-            "temperature": 0.7
-        }
-    },
+    "models": {},
     "speed_hint": true,
     "speed_min_tps": 3.0,
     "stream_heartbeat_seconds": 1.5,

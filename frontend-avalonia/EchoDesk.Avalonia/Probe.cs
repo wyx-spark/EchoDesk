@@ -629,6 +629,45 @@ internal static class Probe
             "行数或状态发生了变化");
         agent.ProbeDropServer("probe-server");
 
+        // [EN] ---------- Ecosystem page: local API, provider routing, consent dialog ----------
+        // [ZH] ---------- 生态页：本地 API、多 Provider 路由、知情同意对话框 ----------
+        if (!settings.SelectTab("settings.tab.ecosystem"))
+        {
+            Console.WriteLine("  [FAIL] 找不到「生态」页签");
+            return false;
+        }
+        var ecosystem = settings.FindPage<EcosystemPage>();
+        if (ecosystem is null)
+        {
+            Console.WriteLine("  [FAIL] 设置窗口里没有 EcosystemPage");
+            return false;
+        }
+        await ecosystem.ProbeRefreshAsync();
+        string ecoLocal = ecosystem.EcosystemSnapshot();
+        Console.WriteLine($"  生态页     : {ecoLocal}");
+        Check("本地 API 四个控件都有文案", ecoLocal.Contains("localApiControls=1111"), ecoLocal);
+        Check("本地 API 端点显示 127.0.0.1", ecoLocal.Contains("localApiEndpointHas127=1"), ecoLocal);
+        Check("本地 API 安全说明非空", ecoLocal.Contains("localApiSecurity=1"), ecoLocal);
+        Check("三种提供方都在下拉框中", ecoLocal.Contains("providerKinds=3"), ecoLocal);
+        Check("提供方字段标签齐全", ecoLocal.Contains("providerControls=1111"), ecoLocal);
+        Check("保存与测试按钮有文案", ecoLocal.Contains("providerButtons=11"), ecoLocal);
+        Check("本地提供方不显示同意面板", ecoLocal.Contains("consentPanelVisible=0"), ecoLocal);
+        // [EN] Presenting an external endpoint must reveal the warning panel; nothing is
+        // [EN] sent to the backend here, so the user configuration is untouched.
+        // [ZH] 呈现外部端点时必须显示警告面板；这里不向后端发送任何内容，用户配置不受影响。
+        ecosystem.ProbeShowExternal("https://api.example.com/v1");
+        string ecoExternal = ecosystem.EcosystemSnapshot();
+        Check("外部端点显示同意面板", ecoExternal.Contains("consentPanelVisible=1"), ecoExternal);
+        Check("外部端点显示风险说明", ecoExternal.Contains("consentWarning=1"), ecoExternal);
+        string consent = EcosystemPage.ProbeConsentSnapshot();
+        Console.WriteLine($"  同意书     : {consent}");
+        Check("同意书包含必须的中文风险警告",
+            consent.Contains("consentBodyIsTheRequiredWarning=1"), consent);
+        Check("同意书勾选框与取消按钮有文案",
+            consent.Contains("consentCheck=1") && consent.Contains("consentCancel=1"), consent);
+        Check("同意书确认按钮默认禁用",
+            consent.Contains("consentConfirmDisabled=1"), consent);
+
         // [EN] ---------- Automation page: templates, field help, safety interlock, result
         // [EN] preview ----------
         // [ZH] ---------- 自动化页：模板 / 字段帮助 / 安全联动 / 结果预览 ----------

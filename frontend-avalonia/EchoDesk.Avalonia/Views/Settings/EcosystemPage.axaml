@@ -1,0 +1,135 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="EchoDesk.Avalonia.Views.Settings.EcosystemPage">
+  <!--
+    [EN] Ecosystem page (v0.2.6 Part 4): local OpenAI-compatible API and external
+         model providers.
+
+    Layout rationale: the two features answer two different questions ("who may use
+    this machine's model" and "which model answers me"), so they are two clearly
+    separated sections rather than one mixed form. Both sections state their security
+    boundary in place, because this is the page where the user can weaken the
+    local-privacy guarantee and the consequence must be readable at the point of the
+    decision, not buried in documentation.
+
+    Dynamic parts: the provider list is a code-built ComboBox (`ProviderKindCombo`)
+    because its labels change with the language; the consent panel's visibility is
+    driven by whether the endpoint is on 127.0.0.1.
+
+    Control names double as AutomationIds so the headless probe finds them.
+
+    [ZH] 生态页（v0.2.6 任务 4）：本地 OpenAI 兼容 API 与外部模型提供方。
+
+    版式理由：这两个功能回答的是两个不同问题（"谁可以使用本机模型"与"由哪个模型来回答"），
+    因此拆成两个清晰分离的区块，而不是混在一张表单里。两个区块都在原地声明各自的安全边界 ——
+    本页正是用户可能削弱本地隐私承诺的地方，后果必须写在决策现场，而不是埋进文档。
+
+    动态部分：提供方列表是代码构建的 ComboBox（`ProviderKindCombo`），因为其文案随语言变化；
+    同意面板的可见性由端点是否位于 127.0.0.1 决定。
+
+    控件名同时用作 AutomationId，便于无头探针定位。
+  -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="14,12" Spacing="6">
+
+      <!-- [EN] (1) Title row. / [ZH] ① 标题行。 -->
+      <Grid ColumnDefinitions="Auto,Auto,*">
+        <TextBlock x:Name="EcosystemTitle" Grid.Column="0" FontSize="15" FontWeight="Bold"
+                   Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" />
+        <Button x:Name="EcosystemReloadButton" Grid.Column="1" Padding="10,3" FontSize="11"
+                Margin="10,0,0,0" VerticalAlignment="Center"
+                AutomationProperties.AutomationId="EcosystemReloadButton" />
+      </Grid>
+      <TextBlock x:Name="EcosystemIntro" FontSize="11" TextWrapping="Wrap" Opacity="0.8" />
+
+      <!--
+        [EN] (2) Local API: endpoint, switch, port, optional token.
+        [ZH] ② 本地 API：端点、开关、端口、可选令牌。
+      -->
+      <TextBlock x:Name="LocalApiTitle" FontSize="14" FontWeight="Bold" Margin="0,14,0,0" />
+      <TextBlock x:Name="LocalApiIntro" FontSize="11" TextWrapping="Wrap" Opacity="0.8" />
+
+      <CheckBox x:Name="LocalApiEnabledCheck" Margin="0,4,0,0"
+                AutomationProperties.AutomationId="LocalApiEnabledCheck" />
+
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+        <TextBlock x:Name="LocalApiPortLabel" VerticalAlignment="Center" FontSize="12" />
+        <TextBox x:Name="LocalApiPortBox" Width="72" Padding="6,4"
+                 AutomationProperties.AutomationId="LocalApiPortBox" />
+        <TextBlock x:Name="LocalApiKeyLabel" VerticalAlignment="Center" FontSize="12" />
+        <TextBox x:Name="LocalApiKeyBox" Width="200" Padding="6,4" PasswordChar="●"
+                 AutomationProperties.AutomationId="LocalApiKeyBox" />
+        <Button x:Name="LocalApiApplyButton" Padding="12,4"
+                AutomationProperties.AutomationId="LocalApiApplyButton" />
+      </StackPanel>
+      <TextBlock x:Name="LocalApiKeyHint" FontSize="11" TextWrapping="Wrap" Opacity="0.7" />
+
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,6,0,0">
+        <TextBlock x:Name="LocalApiEndpointLabel" VerticalAlignment="Center" FontSize="12" />
+        <SelectableTextBlock x:Name="LocalApiEndpointText" VerticalAlignment="Center"
+                             FontSize="12" FontFamily="Consolas,Menlo,monospace"
+                             AutomationProperties.AutomationId="LocalApiEndpointText" />
+      </StackPanel>
+      <TextBlock x:Name="LocalApiSecurity" FontSize="11" TextWrapping="Wrap"
+                 FontWeight="SemiBold" Opacity="0.85" />
+      <TextBlock x:Name="LocalApiStatusText" FontSize="11" TextWrapping="Wrap"
+                 AutomationProperties.AutomationId="LocalApiStatusText" />
+
+      <!--
+        [EN] (3) External provider: kind, endpoint, key, model, timeout.
+        [ZH] ③ 外部提供方：类型、端点、密钥、模型、超时。
+      -->
+      <TextBlock x:Name="ProviderTitle" FontSize="14" FontWeight="Bold" Margin="0,18,0,0" />
+      <TextBlock x:Name="ProviderIntro" FontSize="11" TextWrapping="Wrap" Opacity="0.8" />
+
+      <TextBlock x:Name="ProviderActiveLabel" FontSize="12" Margin="0,6,0,2" />
+      <ComboBox x:Name="ProviderKindCombo" Width="360" HorizontalAlignment="Left"
+                AutomationProperties.AutomationId="ProviderKindCombo" />
+
+      <TextBlock x:Name="ProviderBaseLabel" FontSize="12" Margin="0,8,0,2" />
+      <TextBox x:Name="ProviderBaseBox" Text="" Padding="6,4"
+               AutomationProperties.AutomationId="ProviderBaseBox" />
+
+      <TextBlock x:Name="ProviderKeyLabel" FontSize="12" Margin="0,8,0,2" />
+      <TextBox x:Name="ProviderKeyBox" Text="" Padding="6,4" PasswordChar="●"
+               AutomationProperties.AutomationId="ProviderKeyBox" />
+      <TextBlock x:Name="ProviderKeyHint" FontSize="11" TextWrapping="Wrap" Opacity="0.7" />
+
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+        <TextBlock x:Name="ProviderModelLabel" VerticalAlignment="Center" FontSize="12" />
+        <TextBox x:Name="ProviderModelBox" Width="220" Padding="6,4"
+                 AutomationProperties.AutomationId="ProviderModelBox" />
+        <TextBlock x:Name="ProviderTimeoutLabel" VerticalAlignment="Center" FontSize="12" />
+        <TextBox x:Name="ProviderTimeoutBox" Width="72" Padding="6,4"
+                 AutomationProperties.AutomationId="ProviderTimeoutBox" />
+      </StackPanel>
+
+      <!--
+        [EN] Consent panel: visible only when the endpoint is external. The save
+        [EN] button cannot bypass it: every external save opens the modal dialog.
+        [ZH] 同意面板：仅在端点位于外部时可见。保存按钮无法绕过它 —— 每次保存外部端点
+        [ZH] 都会弹出模态对话框。
+      -->
+      <Border x:Name="ProviderConsentPanel" Margin="0,10,0,0" Padding="10,8"
+              IsVisible="False" CornerRadius="6" BorderThickness="1"
+              BorderBrush="{DynamicResource CardBorderBrush}"
+              Background="{DynamicResource CardBackgroundBrush}">
+        <StackPanel Spacing="4">
+          <TextBlock x:Name="ProviderConsentTitle" FontSize="12" FontWeight="Bold" />
+          <TextBlock x:Name="ProviderConsentWarning" FontSize="11" TextWrapping="Wrap" />
+          <TextBlock x:Name="ProviderConsentState" FontSize="11" TextWrapping="Wrap"
+                     Opacity="0.75" />
+        </StackPanel>
+      </Border>
+
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,10,0,0">
+        <Button x:Name="ProviderSaveButton" Padding="12,4"
+                AutomationProperties.AutomationId="ProviderSaveButton" />
+        <Button x:Name="ProviderTestButton" Padding="12,4"
+                AutomationProperties.AutomationId="ProviderTestButton" />
+      </StackPanel>
+      <TextBlock x:Name="ProviderStatusText" FontSize="11" TextWrapping="Wrap"
+                 AutomationProperties.AutomationId="ProviderStatusText" />
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

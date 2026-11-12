@@ -1017,12 +1017,45 @@ def apply_settings(config: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
     providers_cfg = getattr(config, "providers", None)
     if providers_cfg is None:
         raise ProviderError(_t("provider.error_no_config"))
+    # [EN] Preserve stored keys when the request omits them. The interface never
+    # [EN] receives an API key back (see `describe_config`), so an empty value means
+    # [EN] "unchanged", not "delete". Without this merge, saving an unrelated field
+    # [EN] such as the timeout would silently erase the credentials of every provider
+    # [EN] the user was not currently editing -- the same data-loss path that MCP
+    # [EN] `env` had before it was fixed.
+    # [ZH] 请求省略密钥时保留已保存的值。界面从不回传 API 密钥（见 `describe_config`），
+    # [ZH] 因此空值表示"保持不变"而不是"删除"。没有这次合并，只保存超时之类的无关字段，
+    # [ZH] 就会静默清空所有用户当时并未编辑的提供方凭据 —— 与 MCP `env` 修好前
+    # [ZH] 完全相同的数据丢失路径。
+    existing = {
+        str(getattr(item, "kind", "")): item
+        for item in (getattr(providers_cfg, "providers", []) or [])
+    }
+    for item in normalized.providers:
+        if item.get("api_key"):
+            continue
+        old = existing.get(str(item.get("kind") or ""))
+        old_key = str(getattr(old, "api_key", "") or "") if old is not None else ""
+        if old_key:
+            item["api_key"] = old_key
     providers_cfg.active = normalized.active
     providers_cfg.timeout_seconds = normalized.timeout_seconds
     providers_cfg.api_consent_granted = normalized.api_consent_granted
     providers_cfg.api_consent_at = normalized.api_consent_at or getattr(
         providers_cfg, "api_consent_at", "")
-    providers_cfg.providers = list(normalized.providers)
+    # [EN] Rebuild the declarations as model objects rather than leaving the raw
+    # [EN] dictionaries in place: pydantic does not validate assignments by default, and
+    # [EN] the rest of the module (including :func:`describe_config`) reads attributes,
+    # [EN] not dictionary keys. A plain dict here would silently report an empty endpoint
+    # [EN] until the next restart, which is exactly the kind of "saved but the UI shows
+    # [EN] nothing" defect worth excluding by construction.
+    # [ZH] 把声明重建为模型对象，而不是留下原始字典：pydantic 默认不校验赋值，而本模块其余
+    # [ZH] 部分（含 :func:`describe_config`）读取的是属性而非字典键。留字典会让端点在下一次
+    # [ZH] 重启之前一直显示为空 —— 正是那种"保存了但界面什么都不显示"的缺陷，应当在构造上
+    # [ZH] 就排除。
+    from config import ProviderConfig
+
+    providers_cfg.providers = [ProviderConfig(**item) for item in normalized.providers]
     config.save()
     return describe_config(config)
 
