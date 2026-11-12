@@ -614,8 +614,21 @@ class LLMEngine:
         needed = self._prompt_token_estimate(messages) + max(0, int(max_tokens or 0)) + 64
         if needed <= current:
             return False
-        target = max(current * 2, needed)
-        target = min(ceiling, target - (target % 256) if target % 256 else target)
+        # [EN] Grow strictly by doubling: start at twice the current window and double
+        # [EN] again until the request fits, then clamp to the hardware ceiling. Jumping
+        # [EN] straight to ``needed`` would allocate far more memory than required.
+        # [ZH] 严格按倍扩展：从当前窗口的两倍开始，不足则继续翻倍，直到请求可容纳，再收敛
+        # [ZH] 到硬件上限。直接跳到 ``needed`` 会分配远超实际需要的内存。
+        target = max(current * 2, 256)
+        while target < needed and target < ceiling:
+            target *= 2
+        target = min(ceiling, target)
+        # [EN] Align upward to the context granularity so the final value never drops
+        # [EN] below the measured requirement.
+        # [ZH] 向上对齐到上下文粒度，确保最终值不会低于实测需求。
+        remainder = target % 256
+        if remainder:
+            target = min(ceiling, target + (256 - remainder))
         if target <= current:
             return False
         try:

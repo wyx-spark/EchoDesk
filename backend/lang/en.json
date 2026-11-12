@@ -1373,6 +1373,7 @@
     "preset_balanced_note": "The recommended default: balanced between the native and hardware ceilings, trading time to first token against long-context capacity.",
     "preset_quality_label": "Quality",
     "preset_quality_note": "Uses the full available context and reserves a larger initial window, with an F16 KV cache; suitable for long documents and careful review, at the highest memory cost.",
+    "warn_context_floor": "The memory estimate allowed only {detected} context tokens, which cannot hold the system prompt. The window was raised to the usable floor of {floor} tokens; responses may be slow or the model may fail to load if memory is truly insufficient.",
     "warn_context_over_budget": "The requested context of {requested} tokens exceeds the memory budget of {budget} tokens; loading may be extremely slow or may run out of memory.",
     "warn_context_over_native": "The requested context of {requested} tokens exceeds the model's native window of {native} tokens; output quality may degrade beyond that point.",
     "warn_gpu_unavailable": "n_gpu_layers={layers} was requested, but no usable accelerator was detected; loading will fail on this machine.",

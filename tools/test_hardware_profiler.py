@@ -328,7 +328,11 @@ def test_inference_presets():
 
     check("极速档上限为硬件/原生上限的一半", fast.n_ctx_max == 16384,
           str(fast.n_ctx_max))
-    check("极速档初始上下文为 1024", fast.n_ctx_initial == 1024,
+    # [EN] v0.2.6 task 4: the usable floor is 2048 tokens for every preset, because a
+    # [EN] 1024-token window overflows on the system prompt and cannot hold a full turn.
+    # [ZH] v0.2.6 任务 4：所有预设的可用下界均为 2048 token；1024 token 窗口会被系统提示
+    # [ZH] 占满，无法承载完整一轮对话。
+    check("极速档初始上下文提升至可用下界 2048", fast.n_ctx_initial == 2048,
           str(fast.n_ctx_initial))
     check("极速档批大小为 1024", fast.n_batch == 1024, str(fast.n_batch))
     check("极速档使用全部逻辑线程", fast.n_threads == 16, str(fast.n_threads))
@@ -461,6 +465,52 @@ def test_override_adopts_user_values_with_warnings():
           f"{overridden.n_ctx_requested}/{overridden.n_gpu_layers_requested}")
 
 
+def test_context_growth_doubles_on_demand():
+    """
+    [EN]
+    Verify that the runtime context growth is strictly doubling, reaches the
+    hardware ceiling, and never remains pinned at the former 512-token floor.
+
+    [ZH]
+    验证运行期上下文扩展严格按倍进行、能够到达硬件上限，且不会停留在旧的 512
+    token 下界。
+    """
+    from llm_engine import LLMEngine
+
+    class _FakeEngine(LLMEngine):
+        def __init__(self, current, ceiling):
+            # [EN] Deliberately skip the model load: only the growth arithmetic is
+            # [EN] under test.
+            # [ZH] 刻意跳过模型加载：本项只验证扩展算术。
+            self.n_ctx = int(current)
+            self.max_n_ctx = int(ceiling)
+            self._needed = int(current)
+
+        def _prompt_token_estimate(self, messages):
+            return self._needed
+
+        def reload(self, model_path=None, n_ctx=None):
+            self.n_ctx = int(n_ctx or self.n_ctx)
+
+    engine = _FakeEngine(2048, 32768)
+    engine._needed = 2049
+    grew = engine.maybe_grow_context([{"content": "x"}], 0)
+    check("首次扩展按倍到 4096", grew and engine.n_ctx == 4096, str(engine.n_ctx))
+
+    engine._needed = 4097
+    engine.maybe_grow_context([{"content": "x"}], 0)
+    check("再次扩展按倍到 8192", engine.n_ctx == 8192, str(engine.n_ctx))
+
+    engine._needed = 30000
+    engine.maybe_grow_context([{"content": "x"}], 0)
+    check("扩展收敛到硬件上限 32768", engine.n_ctx == 32768, str(engine.n_ctx))
+
+    pinned = _FakeEngine(512, 8192)
+    pinned._needed = 513
+    pinned.maybe_grow_context([{"content": "x"}], 0)
+    check("512 窗口可扩展到 1024", pinned.n_ctx == 1024, str(pinned.n_ctx))
+
+
 def main():
     tests = [
         test_cpu_only_degrades_silently,
@@ -479,6 +529,7 @@ def main():
         test_probe_and_plan_never_write_to_disk,
         test_model_path_is_not_serialized,
         test_override_adopts_user_values_with_warnings,
+        test_context_growth_doubles_on_demand,
     ]
     for test in tests:
         try:

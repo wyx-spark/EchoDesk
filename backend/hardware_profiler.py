@@ -67,6 +67,16 @@ log = logging.getLogger("EchoDesk.Hardware")
 #: [ZH] 从而降低空闲内存占用；该窗口按需增长，直至硬件上限。
 DEFAULT_INITIAL_CONTEXT = 2048
 
+#: [EN] Smallest context window that can carry the system prompt plus a short
+#: [EN] exchange. A 512-token window is below the usable floor: the system prompt
+#: [EN] alone consumes most of it, so the window would overflow immediately and
+#: [EN] could never grow. Memory-based estimates below this value are raised to it
+#: [EN] (with an explicit warning) unless the user configured a smaller ceiling.
+#: [ZH] 能够承载系统提示与一轮简短对话的最小上下文窗口。512 token 低于可用下界：
+#: [ZH] 仅系统提示就会占去大部分空间，窗口会立刻溢出且永远无法扩展。由内存预算
+#: [ZH] 得出的更低估值会被提升到该值（并给出明确警告），用户显式配置的更小上限除外。
+MIN_USABLE_CONTEXT = DEFAULT_INITIAL_CONTEXT
+
 #: [EN] Absolute lower bound for any context window. Matches
 #: ``config.MIN_CONTEXT`` so that the planner never produces a value the
 #: configuration layer would reject.
@@ -1520,7 +1530,10 @@ def plan_inference(
     else:
         recommended_cap = int(recommended_hardware_context)
     recommended_n_ctx = max(MIN_CONTEXT, int(recommended_cap))
-    preferred_initial = int(initial_context_preference or preset.initial_context)
+    preferred_initial = max(
+        MIN_USABLE_CONTEXT,
+        int(initial_context_preference or preset.initial_context),
+    )
     recommended_initial = initial_context_for(recommended_n_ctx, preferred_initial)
     recommended_kv_cache_bytes = _kv_cache_bytes(model_path, recommended_n_ctx)
 
@@ -1563,6 +1576,19 @@ def plan_inference(
         auto_context_limited_by = "hardware"
 
     warnings: List[str] = []
+    # [EN] A memory-derived ceiling below the usable floor would pin the window at a
+    # [EN] value that cannot even hold the system prompt. Raise it to the floor and
+    # [EN] report the correction; a user-configured ceiling is never overridden.
+    # [ZH] 由内存推导出的上限若低于可用下界，会把窗口钉在连系统提示都放不下的数值。
+    # [ZH] 此时提升到该下界并如实报告；用户显式配置的上限绝不被覆盖。
+    if auto_n_ctx_max < MIN_USABLE_CONTEXT and auto_context_limited_by == "hardware":
+        warnings.append(_t(
+            "inference.warn_context_floor",
+            detected=auto_n_ctx_max,
+            floor=MIN_USABLE_CONTEXT,
+        ))
+        auto_n_ctx_max = MIN_USABLE_CONTEXT
+        auto_context_limited_by = "floor"
     requested_ctx_value = int(requested_context or 0)
     if allow_override and requested_ctx_value > 0:
         n_ctx_max = max(MIN_CONTEXT, requested_ctx_value)

@@ -1373,6 +1373,7 @@
     "preset_balanced_note": "默认推荐档：在原生与硬件上限之间取得平衡，兼顾首字延迟与长上下文能力。",
     "preset_quality_label": "质量",
     "preset_quality_note": "使用完整可用上下文并预留更大的初始窗口，KV Cache 采用 F16 精度；适合长文档与严谨审查，内存占用最高。",
+    "warn_context_floor": "内存估算仅允许 {detected} 个上下文 token，连系统提示都无法容纳。窗口已提升至可用下界 {floor} tokens；若内存确实不足，响应可能变慢或模型加载失败。",
     "warn_context_over_budget": "请求的上下文 {requested} tokens 超出内存预算 {budget} tokens，实际使用可能导致极慢或 OOM。",
     "warn_context_over_native": "请求的上下文 {requested} tokens 超出模型原生窗口 {native} tokens；超出部分可能降低输出质量。",
     "warn_gpu_unavailable": "请求了 n_gpu_layers={layers}，但本机未探测到可用加速器；加载将会失败。",
