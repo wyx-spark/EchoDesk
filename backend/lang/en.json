@@ -743,6 +743,7 @@
     "file_stream_start": "📄 Parsing file {name}…",
     "file_load_failed": "Reading the file failed: {error}",
     "internal_error": "⚠️ An internal error occurred while handling the request; the backend kept running. Detail: {error}",
+    "empty_output": "⚠️ The model returned no answer content. Possible causes: the token budget was consumed by reasoning, the model was stopped early, or the output was filtered. Try increasing the output budget or rephrasing the question.",
     "summary_stopping": "⏹ Aborting segmented summarization…",
     "summary_aborted": "⏹ Segmented summarization aborted ({name}): {done}/{total} segments done in {elapsed}s.\nThe full text is still in context and no partial summary was injected. Run /summarize again to retry.",
     "summary_failed": "❌ Segmented summarization failed ({name}): none of the {chunks} segments produced a summary ({failed} call failures, {timeout} timeouts) after {elapsed}s.\nLikely causes: the model is not properly loaded, out of memory, or the summary model is unavailable. Fix that and retry /summarize.",

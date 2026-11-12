@@ -479,10 +479,34 @@ def _profile_quant_text(name: str) -> str:
         return ""
 
 
+_stdout_closed = False
+
+
 def _write(response: Dict[str, Any]) -> None:
-    with _io_lock:
-        sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
-        sys.stdout.flush()
+    """
+    [EN]
+    Write one protocol line to stdout.
+
+    A closed pipe means the front end has exited; the write is then abandoned
+    instead of raising ``BrokenPipeError`` and terminating the backend. The
+    failure is recorded once in the log, and every later write becomes a no-op.
+
+    [ZH]
+    向 stdout 写入一行协议数据。
+
+    管道关闭意味着前端已退出；此时放弃写入，而不是抛出 ``BrokenPipeError``
+    终止后端。失败仅记录一次日志，之后的写入均变为空操作。
+    """
+    global _stdout_closed
+    if _stdout_closed:
+        return
+    try:
+        with _io_lock:
+            sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
+    except (BrokenPipeError, ValueError, OSError) as exc:
+        _stdout_closed = True
+        log.warning("stdout 管道已关闭，停止写入协议行: %s", exc)
 
 
 # =====================================================================
@@ -5111,6 +5135,14 @@ class Backend:
             # [ZH] （否则 done.content 会把思考内容一并带上，测试 C2 正是这样发现的）。
             full = splitter.answer_text if splitter is not None else "".join(parts)
             thinking = splitter.reasoning_text.strip() if splitter is not None else ""
+            # [EN] P1 invariant: an empty model answer is a reportable outcome, not a silent
+            # [EN] success. Without this notice the interface renders an empty assistant bubble
+            # [EN] and the user cannot tell whether generation is still running or failed.
+            # [ZH] P1 不变量：模型回答为空属于必须如实报告的结局，不能当作静默成功。缺少这段
+            # [ZH] 提示时界面会渲染一个空的助手气泡，用户无法判断是仍在生成还是已经失败。
+            if not full.strip() and not self.stop_event.is_set():
+                full = _t("sys.empty_output")
+                yield {"type": "delta", "channel": _CH_ANSWER, "content": full}
             # [EN] Persist even on interruption: task 5 requires that "an aborted reasoning
             # [EN] process leaves no partial content in the answer area". The answer area stores
             # [EN] only the answer, and the reasoning is stored in a separate field, so the
@@ -9086,9 +9118,19 @@ def main() -> None:
             "paths": {"program": program_dir(), "data": user_data_root()}})
 
     def _stream_worker(request: Dict[str, Any]) -> None:
+        saw_terminal = False
         try:
             for response in backend.stream(request):
+                if response.get("type") in ("done", "error"):
+                    saw_terminal = True
                 _write(response)
+            # [EN] A generator that ends without a terminal line would leave the interface
+            # [EN] waiting for a completion that never arrives; report it explicitly.
+            # [ZH] 生成器未产出终止行就结束，会使界面一直等待永远不会到来的完成信号；此处
+            # [ZH] 必须显式报告。
+            if not saw_terminal:
+                _write({"type": "error", "ok": False,
+                        "content": _t("sys.empty_output")})
         except Exception as exc:  # noqa: BLE001
             # [EN] A failure inside a streaming generator must be reported as a structured
             # [EN] terminal event; otherwise the interface waits forever for a "done" line.
@@ -9097,12 +9139,13 @@ def main() -> None:
             log.exception("流式请求失败")
             _write({"type": "error", "ok": False,
                     "content": _t("sys.internal_error", error=exc)})
-            _write({"type": "done", "content": _t("sys.internal_error", error=exc),
-                    "error": str(exc)})
         finally:
             backend.stream_active = False
             backend.stop_event.clear()
-            backend.save_session()
+            try:
+                backend.save_session()
+            except Exception:  # noqa: BLE001
+                log.warning("流式请求结束后保存会话失败", exc_info=True)
 
     for line in sys.stdin:
         line = line.strip()

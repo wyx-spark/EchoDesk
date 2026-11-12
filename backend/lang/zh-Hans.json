@@ -743,6 +743,7 @@
     "file_stream_start": "📄 正在解析文件 {name}…",
     "file_load_failed": "读取文件失败：{error}",
     "internal_error": "⚠️ 处理请求时发生内部错误，后端已继续运行。详情：{error}",
+    "empty_output": "⚠️ 模型未返回任何回答内容。可能原因：token 预算被思考耗尽、生成被提前停止，或输出被过滤。可尝试提高输出预算或重新表述问题。",
     "summary_stopping": "⏹ 正在中止分段摘要…",
     "summary_aborted": "⏹ 分段摘要已中止（{name}）：完成 {done}/{total} 段，耗时 {elapsed} 秒。\n原文仍完整保留在上下文中，未注入半份摘要。可以重新触发 /summarize 再来一次。",
     "summary_failed": "❌ 分段摘要失败（{name}）：{chunks} 段全部未产出摘要（调用失败 {failed} 段、超时 {timeout} 段），耗时 {elapsed} 秒。\n可能原因：模型未正确加载、内存不足、或摘要模型不可用。可先解决模型问题再重试 /summarize。",
