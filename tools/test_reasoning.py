@@ -337,6 +337,37 @@ def test_splitter():
           channels(events, R.REASONING) == "特殊token思考"
           and channels(events, R.ANSWER) == "答案", repr(events))
 
+    # [EN] The canonical DeepSeek token keeps its surrounding angle brackets; the
+    # [EN] brackets must not leak into either channel.
+    # [ZH] DeepSeek 规范 token 保留首尾尖括号；尖括号不得泄漏到任一通道。
+    bracketed_begin = R._LT + R._DEEPSEEK_BEGIN + R._GT
+    bracketed_end = R._LT + R._DEEPSEEK_END + R._GT
+    splitter = R.ReasoningSplitter()
+    events = splitter.feed(bracketed_begin + "完整token思考" + bracketed_end + "答案")
+    events += splitter.close()
+    check("DeepSeek 完整 token（含尖括号）：分离且无残留",
+          channels(events, R.REASONING) == "完整token思考"
+          and channels(events, R.ANSWER) == "答案", repr(events))
+
+    # [EN] A mismatched inner closing tag must not end the outer reasoning region.
+    # [ZH] 内层不匹配的结束标签不得提前结束外层思考区域。
+    mismatched = "<think>外层<thinking>内层</think>仍然思考</thinking>答案</think>完成"
+    splitter = R.ReasoningSplitter()
+    events = splitter.feed(mismatched)
+    events += splitter.close()
+    check("嵌套标签不匹配时按栈配对",
+          channels(events, R.REASONING) == "外层内层仍然思考答案"
+          and channels(events, R.ANSWER) == "完成", repr(events))
+
+    # [EN] Chinese tag names emitted by domestic model templates.
+    # [ZH] 国内模型模板可能直接输出中文标签名。
+    splitter = R.ReasoningSplitter()
+    events = splitter.feed("<思考>先想</思考>答案")
+    events += splitter.close()
+    check("中文标签：也能分离",
+          channels(events, R.REASONING) == "先想"
+          and channels(events, R.ANSWER) == "答案", repr(events))
+
     # --- 一次性工具函数 ---
     check("strip_reasoning 只取回答",
           R.strip_reasoning(OPEN_THINK + "思考" + CLOSE_THINK + " 答案 ") == "答案",

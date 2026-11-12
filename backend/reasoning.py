@@ -72,7 +72,7 @@ Public interfaces:
 * :func:`split_text`：一次性拆分，供非流式路径与历史回填使用。
 * :func:`normalize_tags`：规范化配置中的标签表。
 """
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 #: [EN] Channel name for reasoning content.
 #: [ZH] 思考内容通道名。
@@ -110,11 +110,19 @@ _MARK = "\u2581"         # [EN] ▁ (SentencePiece word-initial space marker).
 #: [ZH] 默认识别的标签名。每个名称生成 ``<名字>`` / ``</名字>`` 一对标签。
 DEFAULT_TAG_NAMES: Tuple[str, ...] = (
     "think", "thinking", "reasoning", "thought", "reflection", "analysis",
+    # [EN] Chinese tag names emitted by domestic models whose templates spell the
+    # [EN] reasoning marker in the target language.
+    # [ZH] 部分国内模型模板直接以中文书写思考标记，因此同时识别中文标签名。
+    "思考", "推理", "分析",
 )
 
 #: [EN] Native DeepSeek reasoning-token forms. Some GGUF models decode them as
-#: [EN] ordinary text.
-#: [ZH] DeepSeek 原生思考 token 形式。部分 GGUF 模型会将其解码为普通文本。
+#: [EN] ordinary text. The canonical token includes the surrounding angle
+#: [EN] brackets; both the complete form and the bare inner form are recognized
+#: [EN] because different quantizations drop the brackets.
+#: [ZH] DeepSeek 原生思考 token 形式。部分 GGUF 模型会将其解码为普通文本。规范
+#: [ZH] token 含首尾尖括号；由于不同量化版本可能丢失尖括号，完整形式与裸内层
+#: [ZH] 形式均予识别。
 _DEEPSEEK_BEGIN = _BAR + "begin" + _MARK + "of" + _MARK + "thinking" + _BAR
 _DEEPSEEK_END = _BAR + "end" + _MARK + "of" + _MARK + "thinking" + _BAR
 _UNDERSCORE_THINKING = _MARK + "thinking"
@@ -122,8 +130,10 @@ _UNDERSCORE_THINKING = _MARK + "thinking"
 #: [EN] Additional tag pairs beyond the ASCII tag forms.
 #: [ZH] ASCII 标签形式之外的额外标签对。
 EXTRA_TAG_PAIRS: Tuple[Tuple[str, str], ...] = (
+    (_LT + _DEEPSEEK_BEGIN + _GT, _LT + _DEEPSEEK_END + _GT),
     (_DEEPSEEK_BEGIN, _DEEPSEEK_END),
     (_UNDERSCORE_THINKING, _DEEPSEEK_END),
+    (_LT + "|think|" + _GT, _LT + "|/think|" + _GT),
 )
 
 
@@ -296,6 +306,14 @@ class ReasoningSplitter:
         self._close_set = set(self._closes)
         self._all = sorted(self._opens + self._closes, key=len, reverse=True)
         self._max_tag_len = max((len(tag) for tag in self._all), default=0)
+        # [EN] Opening tag -> expected closing tag. Nested reasoning is matched by a
+        # [EN] stack, so a mismatched inner closing tag cannot end the outer region.
+        # [ZH] 起始标签到期望结束标签的映射。嵌套思考按栈配对，因此内层不匹配的
+        # [ZH] 结束标签无法提前结束外层思考区域。
+        self._pair_for_open: Dict[str, str] = {
+            open_tag: close_tag for open_tag, close_tag in self._tags
+        }
+        self._stack: List[Tuple[str, str]] = []
 
         # [EN] Held-back suffix that may contain a partial tag.
         # [ZH] 暂扣的尾部文本，可能包含半个标签。
@@ -388,7 +406,7 @@ class ReasoningSplitter:
             if index > 0:
                 events.extend(self._emit(self._buffer[:index]))
             self._buffer = self._buffer[index + len(tag):]
-            events.extend(self._handle_tag(is_open))
+            events.extend(self._handle_tag(tag, is_open))
 
     def close(self) -> List[Event]:
         """
@@ -412,6 +430,7 @@ class ReasoningSplitter:
             self.unclosed = True
             self._in_reasoning = False
             self._depth = 0
+            self._stack.clear()
         return events
 
     # [EN] ---------- Internal: splitting ----------
@@ -500,27 +519,39 @@ class ReasoningSplitter:
             events.append((ANSWER, chunk))
         return events
 
-    def _handle_tag(self, is_open: bool) -> List[Event]:
+    def _handle_tag(self, tag: str, is_open: bool) -> List[Event]:
         """
         [EN]
         Process one complete tag.
 
+        Opening tags are pushed onto a stack; a closing tag only ends the current
+        region when it matches the top of that stack. A mismatched inner closing
+        tag is therefore ignored instead of prematurely exposing inner reasoning
+        as the answer.
+
         [ZH]
         处理一个完整标签。
+
+        起始标签压入栈；只有与栈顶配对的结束标签才结束当前区域。因此内层不匹配
+        的结束标签会被忽略，不会提前把内层思考暴露为回答。
         """
         if is_open:
+            pair = (tag, self._pair_for_open.get(tag, ""))
             if not self._in_reasoning:
-                self._enter_reasoning()
-            else:
-                self._depth += 1
+                self._enter_reasoning(pair)
+            elif pair[1]:
+                self._stack.append(pair)
+                self._depth = len(self._stack)
             return []
         # [EN] Closing tag.
         # [ZH] 结束标签。
         if self._in_reasoning:
-            self._depth -= 1
-            if self._depth <= 0:
-                self._in_reasoning = False
-                self._depth = 0
+            if self._stack and self._stack[-1][1] == tag:
+                self._stack.pop()
+                self._depth = len(self._stack)
+                if not self._stack:
+                    self._in_reasoning = False
+                    self._depth = 0
             return []
         # [EN] A closing tag arrived without an opening tag: the opening tag was
         # [EN] part of the prompt.
@@ -546,9 +577,10 @@ class ReasoningSplitter:
         self.saw_reasoning = True
         return []
 
-    def _enter_reasoning(self) -> None:
+    def _enter_reasoning(self, pair: Tuple[str, str] = ("", "")) -> None:
         self._in_reasoning = True
-        self._depth = 1
+        self._stack = [pair] if pair[0] else []
+        self._depth = len(self._stack) or 1
         self.saw_reasoning = True
         # [EN] Insert a newline between reasoning segments so that adjacent
         # [EN] segments do not run together.

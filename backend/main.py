@@ -5165,7 +5165,7 @@ class Backend:
             # [EN] and the user cannot tell whether generation is still running or failed.
             # [ZH] P1 不变量：模型回答为空属于必须如实报告的结局，不能当作静默成功。缺少这段
             # [ZH] 提示时界面会渲染一个空的助手气泡，用户无法判断是仍在生成还是已经失败。
-            if not full.strip() and not self.stop_event.is_set():
+            if not full.strip() and not thinking.strip() and not self.stop_event.is_set():
                 full = _t("sys.empty_output")
                 yield {"type": "delta", "channel": _CH_ANSWER, "content": full}
             # [EN] Persist even on interruption: task 5 requires that "an aborted reasoning
