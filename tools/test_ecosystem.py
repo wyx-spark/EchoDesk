@@ -252,43 +252,57 @@ check("加载路径不抛异常（否则程序无法启动）", True)
 
 # [EN] apply_settings refuses without writing.
 with __import__("tempfile").TemporaryDirectory() as tmp:
-    saved_path = os.path.join(tmp, "config.json")
-    cfg = cfg_mod.Config()
-    cfg.save(saved_path)
-    before = json.load(open(saved_path, encoding="utf-8"))
+    # [EN] Run inside the temporary directory: `providers.apply_settings` calls
+    # [EN] `config.save()` without an explicit path, which resolves to the current
+    # [EN] working directory. Without this chdir the test would overwrite the
+    # [EN] developer's `backend/config.json`; that really happened during this round
+    # [EN] and the polluted file was committed and packaged before it was noticed.
+    # [ZH] 在临时目录内执行：`providers.apply_settings` 调用的 `config.save()` 未显式
+    # [ZH] 传路径，会落到当前工作目录。没有这次 chdir，测试会覆盖开发机的
+    # [ZH] `backend/config.json`；本轮真实发生过，被污染的配置曾被提交并打进包。
+    _previous_cwd = os.getcwd()
+    os.chdir(tmp)
     try:
-        pv.apply_settings(cfg, {"active": "openai_compatible", "providers": [external]})
-        check("apply_settings 未授权时抛 PermissionError", False, "竟然通过")
-    except PermissionError:
-        check("apply_settings 未授权时抛 PermissionError", True)
-    after = json.load(open(saved_path, encoding="utf-8"))
-    check("被拒绝时配置对象不变", cfg.providers.active == "llamacpp", cfg.providers.active)
-    check("被拒绝时磁盘配置不变", before["providers"] == after["providers"])
+        saved_path = os.path.join(tmp, "config.json")
+        cfg = cfg_mod.Config()
+        cfg.save(saved_path)
+        before = json.load(open(saved_path, encoding="utf-8"))
+        try:
+            pv.apply_settings(cfg, {"active": "openai_compatible", "providers": [external]})
+            check("apply_settings 未授权时抛 PermissionError", False, "竟然通过")
+        except PermissionError:
+            check("apply_settings 未授权时抛 PermissionError", True)
+        after = json.load(open(saved_path, encoding="utf-8"))
+        check("被拒绝时配置对象不变", cfg.providers.active == "llamacpp", cfg.providers.active)
+        check("被拒绝时磁盘配置不变", before["providers"] == after["providers"])
 
-    # [EN] Stored secrets must survive a save that omits them: the interface never
-    # [EN] receives an API key back, so an empty field means "unchanged". This is the
-    # [EN] data-loss path MCP `env` had; the merge in apply_settings is the fix.
-    # [ZH] 省略密钥的保存必须保留已存密钥：界面从不回传 API 密钥，因此空字段表示
-    # [ZH] "保持不变"。这正是 MCP `env` 曾出现的数据丢失路径，apply_settings 里的合并
-    # [ZH] 就是修法。
-    cfg.providers.active = "openai_compatible"
-    cfg.providers.providers = [cfg_mod.ProviderConfig(
-        kind="openai_compatible", api_base="http://127.0.0.1:1234/v1",
-        api_key="sk-local-keep", model="m1", enabled=True)]
-    state = pv.apply_settings(cfg, {
-        "active": "openai_compatible", "timeout_seconds": 30,
-        "providers": [{"kind": "openai_compatible",
-                       "api_base": "http://127.0.0.1:1234/v1",
-                       "api_key": "", "model": "m2", "enabled": True}]})
-    kept = cfg.providers.providers[0]
-    check("省略密钥保存后已存密钥仍保留", kept.api_key == "sk-local-keep", kept.api_key)
-    check("同一提供方的非密钥字段正常更新", kept.model == "m2", kept.model)
-    check("保存后状态回传端点（字典/模型混用不会丢字段）",
-          state["providers"][1]["api_base"] == "http://127.0.0.1:1234/v1",
-          str(state["providers"][1]))
-    check("状态只报告密钥是否存在，不回传密钥",
-          state["providers"][1]["api_key_set"] is True
-          and "sk-local-keep" not in json.dumps(state, ensure_ascii=False))
+        # [EN] Stored secrets must survive a save that omits them: the interface never
+        # [EN] receives an API key back, so an empty field means "unchanged". This is the
+        # [EN] data-loss path MCP `env` had; the merge in apply_settings is the fix.
+        # [ZH] 省略密钥的保存必须保留已存密钥：界面从不回传 API 密钥，因此空字段表示
+        # [ZH] "保持不变"。这正是 MCP `env` 曾出现的数据丢失路径，apply_settings 里的合并
+        # [ZH] 就是修法。
+        cfg.providers.active = "openai_compatible"
+        cfg.providers.providers = [cfg_mod.ProviderConfig(
+            kind="openai_compatible", api_base="http://127.0.0.1:1234/v1",
+            api_key="sk-local-keep", model="m1", enabled=True)]
+        state = pv.apply_settings(cfg, {
+            "active": "openai_compatible", "timeout_seconds": 30,
+            "providers": [{"kind": "openai_compatible",
+                           "api_base": "http://127.0.0.1:1234/v1",
+                           "api_key": "", "model": "m2", "enabled": True}]})
+        kept = cfg.providers.providers[0]
+        check("省略密钥保存后已存密钥仍保留", kept.api_key == "sk-local-keep", kept.api_key)
+        check("同一提供方的非密钥字段正常更新", kept.model == "m2", kept.model)
+        check("保存后状态回传端点（字典/模型混用不会丢字段）",
+              state["providers"][1]["api_base"] == "http://127.0.0.1:1234/v1",
+              str(state["providers"][1]))
+        check("状态只报告密钥是否存在，不回传密钥",
+              state["providers"][1]["api_key_set"] is True
+              and "sk-local-keep" not in json.dumps(state, ensure_ascii=False))
+
+    finally:
+        os.chdir(_previous_cwd)
 
 # [EN] build_provider re-checks consent even when validation was bypassed.
 bypassed = cfg_mod.Config()
