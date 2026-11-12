@@ -66,7 +66,10 @@ v0.2.1 变更（设计规范 1.3 合规与体积）：
 新增（v0.2.1 任务二 2.3）：技能可声明额外的文件扩展名解析器。未识别的扩展名会先
   询问已加载的技能，再回落到"不支持的文件类型"。
 """
+import html
 import os
+import re
+import zipfile
 from typing import Callable, Dict, Optional
 
 # [EN] pywin32 exists only on Windows. The import must be fault-tolerant: a
@@ -220,12 +223,44 @@ _WPS_PROGIDS: Dict[str, str] = {
     ".pptx": "KPPT.Application",
 }
 
-# [EN] Plain-text extensions (read as text, trying multiple encodings automatically)
-# [ZH] 纯文本类扩展名（直接按文本读取，自动尝试多种编码）
+# [EN] Plain-text extensions (read as text, trying multiple encodings automatically).
+# [EN] The list deliberately covers prose formats, source code, configuration files
+# [EN] and subtitle transcripts, because users routinely upload README files, code
+# [EN] snippets and exported logs. An extension missing from this list is still
+# [EN] accepted when the payload is detected as text (see ``_looks_like_text``).
+# [ZH] 纯文本类扩展名（直接按文本读取，自动尝试多种编码）。清单刻意覆盖文档、
+# [ZH] 源码、配置与字幕等常见类型，因为用户经常上传 README、代码片段与导出的日志。
+# [ZH] 未列入本清单的扩展名仍会在载荷被判定为文本时接受（见 ``_looks_like_text``）。
 _TEXT_EXTS = {
-    ".txt", ".md", ".markdown", ".csv", ".tsv", ".log", ".json", ".xml",
-    ".html", ".htm", ".ini", ".cfg", ".yaml", ".yml", ".srt", ".vtt",
+    # [EN] Prose and structured documents / [ZH] 文档与结构化文本
+    ".txt", ".text", ".md", ".markdown", ".mdown", ".mkd", ".rst", ".rest",
+    ".adoc", ".asciidoc", ".org", ".tex", ".latex", ".rtf",
+    ".csv", ".tsv", ".log", ".json", ".jsonl", ".ndjson", ".json5", ".xml",
+    ".html", ".htm", ".xhtml", ".svg", ".css", ".scss", ".sass", ".less",
+    ".ini", ".cfg", ".conf", ".properties", ".env", ".toml", ".yaml", ".yml",
+    ".srt", ".vtt", ".ass", ".sub",
+    # [EN] Source code / [ZH] 源码
+    ".py", ".pyi", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".vue",
+    ".svelte", ".java", ".kt", ".kts", ".scala", ".groovy", ".gradle",
+    ".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".cs", ".go", ".rs",
+    ".rb", ".php", ".swift", ".m", ".mm", ".lua", ".pl", ".pm", ".r",
+    ".jl", ".dart", ".ex", ".exs", ".erl", ".hrl", ".clj", ".cljs",
+    ".fs", ".fsx", ".vb", ".asm", ".s", ".sql", ".sh", ".bash", ".zsh",
+    ".fish", ".ps1", ".psm1", ".bat", ".cmd", ".dockerfile", ".make",
+    ".mk", ".cmake", ".diff", ".patch", ".graphql", ".gql", ".proto", ".thrift",
 }
+
+# [EN] Office Open XML variants that share the parser of their canonical format.
+# [ZH] 与标准格式共用同一解析器的 Office Open XML 变体。
+_OFFICE_ALIASES = {
+    ".docm": ".docx", ".dotx": ".docx", ".dotm": ".docx",
+    ".xltx": ".xlsx", ".xltm": ".xlsx", ".xlam": ".xlsx",
+    ".potx": ".pptx", ".potm": ".pptx", ".ppsx": ".pptx", ".pptm": ".pptx",
+}
+
+# [EN] Zip containers whose visible text lives in XML or XHTML members.
+# [ZH] 正文位于 XML 或 XHTML 成员中的压缩容器格式。
+_ARCHIVE_TEXT_EXTS = {".odt", ".ods", ".odp", ".epub"}
 
 # [EN] Legacy binary formats that require WPS COM (an explicit notice is produced
 # [EN] when WPS is not installed)
@@ -235,7 +270,8 @@ _LEGACY_ONLY_WPS = {".doc", ".ppt"}
 # [EN] Extensions supported directly by the built-in parsers. Skills must not
 # [EN] override them, so that the main program's behavior stays predictable.
 # [ZH] 内置解析器直接支持的扩展名（技能不得覆盖这些，保证主程序行为可预测）。
-_BUILTIN_EXTS = {".docx", ".xlsx", ".xlsm", ".xls", ".pptx", ".pdf"}
+_BUILTIN_EXTS = {".docx", ".xlsx", ".xlsm", ".xls", ".pptx", ".pdf"} | set(
+    _OFFICE_ALIASES) | _ARCHIVE_TEXT_EXTS
 
 # ---------------------------------------------------------------------------
 # [EN] Parse-error markers (multilingual explanation; earlier release)
@@ -441,17 +477,40 @@ def _read_office_with_wps(filepath: str, max_chars: int) -> str:
 # [EN] ---------- Built-in lightweight parsers ----------
 # [ZH] ---------- 内置轻量解析器 ----------
 
+def _canonical_ext(ext: str) -> str:
+    """
+    [EN]
+    Map an Office Open XML variant to the extension of its canonical parser.
+
+    [ZH]
+    把 Office Open XML 变体映射到其标准格式对应的解析器扩展名。
+    """
+    key = str(ext or "").lower()
+    return _OFFICE_ALIASES.get(key, key)
+
+
 def _parse_builtin(filepath: str, ext: str) -> str:
     """
     [EN]
     Parse a document using the built-in parser for its extension.
 
+    Unknown extensions are accepted when the payload is plain text; otherwise a
+    structured "unsupported file type" result is returned. No code path may
+    propagate an exception to the caller.
+
     [ZH]
     按扩展名分发到内置解析器；返回文本或形如「解析失败: ...」的错误串。
+
+    未知扩展名在载荷为纯文本时会被接受，否则返回结构化的「不支持的文件类型」结果。
+    任何代码路径都不得把异常抛给调用方。
     """
+    ext = _canonical_ext(ext)
     try:
         if ext in _TEXT_EXTS:
-            text = _read_text(filepath)
+            if ext == ".rtf":
+                text = _read_rtf(filepath)
+            else:
+                text = _read_text(filepath)
         elif ext == ".docx":
             text = _read_docx(filepath)
         elif ext == ".xlsx" or ext == ".xlsm":
@@ -462,6 +521,8 @@ def _parse_builtin(filepath: str, ext: str) -> str:
             text = _read_pptx(filepath)
         elif ext == ".pdf":
             text = _read_pdf(filepath)
+        elif ext in _ARCHIVE_TEXT_EXTS:
+            text = _read_archive_text(filepath, ext)
         elif ext in _SKILL_PARSERS:
             # [EN] Design specification 2.3: for an unknown extension, first ask the
             # [EN] parsers provided by loaded skills.
@@ -473,9 +534,20 @@ def _parse_builtin(filepath: str, ext: str) -> str:
                 return _err("[!PARSE]", "file.skill_parser_failed", skill=skill_id, ext=ext,
                             kind=type(e).__name__, error=e)
         else:
-            from i18n import t as _t
+            # [EN] Last resort for extension-less files and unrecognized suffixes: accept
+            # [EN] the payload when it is genuinely text, otherwise report the structured
+            # [EN] unsupported-type error instead of failing the request.
+            # [ZH] 无扩展名与未识别后缀的最后兜底：载荷确为文本时接受，否则返回结构化的
+            # [ZH] 「不支持的文件类型」错误，而不是让请求失败。
+            text = _read_unknown_text(filepath)
+            if text is None:
+                from i18n import t as _t
 
-            return _err("[!EXT]", "file.unsupported", ext=ext or _t("file.no_ext"))
+                return _err("[!EXT]", "file.unsupported", ext=ext or _t("file.no_ext"))
+    except FileNotFoundError as e:
+        return _err("[!PARSE]", "file.not_found", path=filepath, error=e)
+    except PermissionError as e:
+        return _err("[!PARSE]", "file.permission_denied", path=filepath, error=e)
     except ImportError as e:
         return _err("[!PARSE]", "file.missing_dep", error=e)
     except Exception as e:
@@ -484,6 +556,61 @@ def _parse_builtin(filepath: str, ext: str) -> str:
     if not text or not text.strip():
         return _err("[!EMPTY]", "file.empty")
     return text
+
+
+def _looks_like_text(raw: bytes) -> bool:
+    """
+    [EN]
+    Decide whether a byte payload is plausibly human-readable text.
+
+    A payload is rejected when it contains a NUL byte, a high proportion of
+    control characters, or bytes that no common encoding can decode. The check is
+    intentionally conservative: it only widens acceptance to plainly textual
+    content and never treats an archive or binary document as text.
+
+    [ZH]
+    判断字节载荷是否可合理地视为人类可读文本。
+
+    含 NUL 字节、控制字符比例过高，或常见编码均无法解码的载荷会被拒绝。该判定刻意
+    保守：只把明显属于文本的内容纳入接受范围，绝不把压缩包或二进制文档当作文本。
+    """
+    sample = raw[:16384]
+    if not sample:
+        return False
+    if b"\x00" in sample:
+        return False
+    control = sum(1 for byte in sample
+                  if byte < 9 or (13 < byte < 32) or byte == 127)
+    if control > max(4, len(sample) // 100):
+        return False
+    for encoding in ("utf-8-sig", "utf-8", "gb18030", "utf-16", "big5"):
+        try:
+            sample.decode(encoding)
+            return True
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return False
+
+
+def _read_unknown_text(filepath: str) -> Optional[str]:
+    """
+    [EN]
+    Read an unrecognized extension as text when the payload is textual; return
+    ``None`` when it is binary.
+
+    [ZH]
+    对未识别的扩展名：载荷为文本时按文本读取，二进制时返回 ``None``。
+    """
+    with open(filepath, "rb") as handle:
+        raw = handle.read()
+    if not _looks_like_text(raw):
+        return None
+    for encoding in _ENCODINGS:
+        try:
+            return raw.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")
 
 
 def _read_text(filepath: str) -> str:
@@ -502,6 +629,103 @@ def _read_text(filepath: str) -> str:
         except (UnicodeDecodeError, LookupError):
             continue
     return raw.decode("utf-8", errors="replace")
+
+
+def _read_rtf(filepath: str) -> str:
+    """
+    [EN]
+    Extract readable text from an RTF document without an external dependency.
+
+    The implementation strips control words and destinations, decodes the
+    ``\\'hh`` hexadecimal escapes and the ``\\uN`` Unicode escapes, and maps
+    paragraph and line breaks to newlines. Formatting is intentionally discarded:
+    only body text is needed for model context.
+
+    [ZH]
+    在不引入外部依赖的前提下从 RTF 文档提取可读文本。
+
+    实现会剥离控制字与目标组，解码 ``\\'hh`` 十六进制转义与 ``\\uN`` Unicode
+    转义，并把段落与换行映射为换行符。格式信息被刻意丢弃：模型上下文只需要正文。
+    """
+    with open(filepath, "rb") as handle:
+        raw = handle.read()
+    text = raw.decode("latin-1", errors="replace")
+
+    # [EN] Discard destinations whose content is metadata rather than prose.
+    # [ZH] 丢弃内容属于元数据而非正文的目标组。
+    text = re.sub(
+        r"\{\\\*?\\(?:fonttbl|colortbl|stylesheet|info|pict|header|footer|"
+        r"footnote|field|object|themedata|datastore|latentstyles)[^{}]*\}",
+        " ", text,
+    )
+    # [EN] Drop remaining braces and the RTF header/footer markers.
+    # [ZH] 去掉剩余的组花括号与 RTF 首尾标记。
+    text = text.replace("{", " ").replace("}", " ")
+
+    def _decode_hex(match: "re.Match[str]") -> str:
+        return bytes([int(match.group(1), 16)]).decode("cp1252", errors="replace")
+
+    text = re.sub(r"\\'([0-9a-fA-F]{2})", _decode_hex, text)
+
+    def _decode_unicode(match: "re.Match[str]") -> str:
+        value = int(match.group(1))
+        return chr(value) if value >= 0 else "\ufffd"
+
+    text = re.sub(r"\\u(-?\d+)\?", _decode_unicode, text)
+    text = text.replace("\\par", "\n").replace("\\line", "\n").replace("\\tab", "\t")
+    text = re.sub(r"\\[a-zA-Z]+-?\d* ?", "", text)
+    text = text.replace("\\", "")
+    return html.unescape(text)
+
+
+def _read_archive_text(filepath: str, ext: str) -> str:
+    """
+    [EN]
+    Extract visible text from a zip container whose body lives in XML/XHTML
+    members (ODT/ODS/ODP/EPUB).
+
+    Members are read in archive order and tags are stripped with a conservative
+    regular expression; this is sufficient for body-text extraction and avoids a
+    third-party office suite dependency.
+
+    [ZH]
+    从正文位于 XML/XHTML 成员中的压缩容器（ODT/ODS/ODP/EPUB）提取可见文本。
+
+    成员按压缩包顺序读取，标签以保守的正则剥离；这足以提取正文，且无需引入第三方
+    办公套件依赖。
+    """
+    parts = []
+    with zipfile.ZipFile(filepath) as archive:
+        names = archive.namelist()
+        if ext == ".epub":
+            wanted = [n for n in names
+                      if n.lower().endswith((".xhtml", ".html", ".htm", ".xml"))]
+        else:
+            # [EN] ODF stores the document body in content.xml; styles.xml is not prose.
+            # [ZH] ODF 的正文位于 content.xml；styles.xml 不属于正文。
+            wanted = [n for n in names if n.lower() == "content.xml"]
+            if not wanted:
+                wanted = [n for n in names
+                          if n.lower().endswith((".xhtml", ".html", ".htm", ".xml"))]
+        for name in wanted:
+            try:
+                data = archive.read(name)
+            except (KeyError, OSError):
+                continue
+            chunk = data.decode("utf-8", errors="replace")
+            chunk = re.sub(r"<script[^>]*>.*?</script>", " ", chunk,
+                           flags=re.IGNORECASE | re.DOTALL)
+            chunk = re.sub(r"<style[^>]*>.*?</style>", " ", chunk,
+                           flags=re.IGNORECASE | re.DOTALL)
+            chunk = re.sub(r"<(?:br|/p|/div|/h[1-6]|/li|/tr)[^>]*>", "\n", chunk,
+                           flags=re.IGNORECASE)
+            chunk = re.sub(r"<[^>]+>", " ", chunk)
+            chunk = html.unescape(chunk)
+            chunk = re.sub(r"[ \t]+", " ", chunk)
+            chunk = re.sub(r"\n\s*\n+", "\n", chunk).strip()
+            if chunk:
+                parts.append(chunk)
+    return "\n\n".join(parts)
 
 
 def _read_docx(filepath: str) -> str:

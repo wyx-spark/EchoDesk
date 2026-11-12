@@ -2920,8 +2920,13 @@ public partial class MainWindow : Window
             Title = Loc.T("main.upload.chooseTitle", "选择要上传的文件"),
             // 多选（任务八）：Ctrl / Shift 多选或框选；对话框与拖拽两条路径行为一致
             Multiselect = true,
+            // [EN] The filter mirrors the backend parsers, including plain-text, Markdown,
+            // [EN] source-code and configuration suffixes, so README.md is selectable directly.
+            // [ZH] 过滤器与后端解析器一致，包含纯文本、Markdown、源码与配置后缀，
+            // [ZH] 因此 README.md 可直接选中。
             Filter = Loc.T("main.upload.filter", "支持的文件")
-                     + " (*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt;*.pdf)|*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt;*.pdf|"
+                     + " (*.doc;*.docx;*.docm;*.xls;*.xlsx;*.xlsm;*.ppt;*.pptx;*.pdf;*.txt;*.md;*.markdown;*.rst;*.csv;*.tsv;*.json;*.jsonl;*.xml;*.html;*.htm;*.yaml;*.yml;*.toml;*.ini;*.log;*.srt;*.vtt;*.rtf;*.odt;*.ods;*.odp;*.epub;*.py;*.js;*.ts;*.java;*.cs;*.cpp;*.c;*.h;*.go;*.rs;*.sql;*.sh;*.ps1;*.bat)"
+                     + "|*.doc;*.docx;*.docm;*.xls;*.xlsx;*.xlsm;*.ppt;*.pptx;*.pdf;*.txt;*.md;*.markdown;*.rst;*.csv;*.tsv;*.json;*.jsonl;*.xml;*.html;*.htm;*.yaml;*.yml;*.toml;*.ini;*.log;*.srt;*.vtt;*.rtf;*.odt;*.ods;*.odp;*.epub;*.py;*.js;*.ts;*.java;*.cs;*.cpp;*.c;*.h;*.go;*.rs;*.sql;*.sh;*.ps1;*.bat|"
                      + Loc.T("main.upload.filterAll", "所有文件") + " (*.*)|*.*",
         };
         if (dialog.ShowDialog() == true)

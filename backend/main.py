@@ -6691,9 +6691,21 @@ class Backend:
             yield {"type": "error", "content": _t("sys.download_failed", error=e)}
 
     def _handle_file(self, filepath: str) -> Dict[str, Any]:
+        """
+        [EN]
+        Load one file into context and always answer with a structured result.
+
+        [ZH]
+        将单个文件载入上下文，并始终返回结构化结果。
+        """
         if not filepath:
             return {"type": "system", "content": _t("sys.file_need_path")}
-        return {"type": "system", "content": self.load_file_into_context(filepath)}
+        try:
+            return {"type": "system", "content": self.load_file_into_context(filepath)}
+        except Exception as exc:  # noqa: BLE001
+            log.exception("加载文件失败: %s", filepath)
+            return {"type": "error", "ok": False,
+                    "content": _t("sys.file_load_failed", error=exc)}
 
     # [EN] ---------- Multiple files (design specification) ----------
     # [ZH] ---------- 多文件（相关设计） ----------
@@ -6771,7 +6783,12 @@ class Backend:
         paths = [str(item) for item in raw if str(item or "").strip()]
         if not paths:
             return {"type": "system", "content": _t("sys.file_need_path")}
-        job = self._document_jobs.submit(paths)
+        try:
+            job = self._document_jobs.submit(paths)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("提交后台文件作业失败")
+            return {"type": "error", "ok": False,
+                    "content": _t("sys.file_load_failed", error=exc)}
         return {"type": "system", "ok": True, "accepted": True, "job_id": job.id,
                 "status": job.status, "count": len(paths),
                 "content": _t("sys.file_async_accepted", count=len(paths),
@@ -9072,6 +9089,16 @@ def main() -> None:
         try:
             for response in backend.stream(request):
                 _write(response)
+        except Exception as exc:  # noqa: BLE001
+            # [EN] A failure inside a streaming generator must be reported as a structured
+            # [EN] terminal event; otherwise the interface waits forever for a "done" line.
+            # [ZH] 流式生成器内部的失败必须转成结构化终止事件；否则界面会一直等待
+            # [ZH] "done" 行而永久挂起。
+            log.exception("流式请求失败")
+            _write({"type": "error", "ok": False,
+                    "content": _t("sys.internal_error", error=exc)})
+            _write({"type": "done", "content": _t("sys.internal_error", error=exc),
+                    "error": str(exc)})
         finally:
             backend.stream_active = False
             backend.stop_event.clear()
@@ -9198,6 +9225,18 @@ def main() -> None:
             _host_progress_sink = _emit_host_progress
             try:
                 response = backend.handle(request)
+            except Exception as exc:  # noqa: BLE001
+                # [EN] P0 invariant: no request handler may terminate the process. A
+                # [EN] single unparsed extension or a missing file used to raise through
+                # [EN] this loop and kill the backend; now the failure is logged and
+                # [EN] returned as a structured error the interface can display.
+                # [ZH] P0 不变量：任何请求处理函数都不得终止进程。此前单个未解析的扩展名
+                # [ZH] 或缺失文件会一路抛出本循环并杀死后端；现在记录日志并返回界面可
+                # [ZH] 显示的结构化错误。
+                log.exception("处理请求失败: action=%r", action)
+                response = {"type": "error", "ok": False,
+                            "content": _t("sys.internal_error", error=exc),
+                            "error": str(exc), "action": action}
             finally:
                 _host_progress_sink = None
             # [EN] Attach the context usage; it decreases in real time after /clear or /undo.

@@ -80,18 +80,49 @@ with open(os.path.join(T, "e.txt"), "w", encoding="utf-8") as f:
     f.write("纯文本内容 · 中文测试")
 with open(os.path.join(T, "f.csv"), "w", encoding="gb18030") as f:
     f.write("名称,数量\n螺丝,10\n")
+with open(os.path.join(T, "g.md"), "w", encoding="utf-8") as f:
+    f.write("# 标题\n\n正文 **加粗**\n")
+with open(os.path.join(T, "h.unknown"), "w", encoding="utf-8") as f:
+    f.write("未列入清单但属于纯文本的载荷")
+with open(os.path.join(T, "i.bin"), "wb") as f:
+    f.write(b"\x00\x01\x02binary payload")
+with open(os.path.join(T, "j.rtf"), "w", encoding="ascii") as f:
+    f.write(r"{\rtf1\ansi\par Hello \b RTF\b0\par Second}")
+
+import zipfile
+
+with zipfile.ZipFile(os.path.join(T, "k.odt"), "w") as z:
+    z.writestr("content.xml", "<office><text:p>ODT 正文</text:p></office>")
 
 # ---------- 逐个解析 ----------
-from file_parser import parse_file_with_wps
+from file_parser import is_parse_error, localize_error, parse_file_with_wps
 
 ok = True
-for name in ["a.docx", "b.xlsx", "c.pptx", "d.pdf", "e.txt", "f.csv"]:
+for name in ["a.docx", "b.xlsx", "c.pptx", "d.pdf", "e.txt", "f.csv",
+             "g.md", "h.unknown", "j.rtf", "k.odt"]:
     result = parse_file_with_wps(os.path.join(T, name), 0)
     flat = result[:150].replace("\n", " / ")
-    failed = result.startswith(("解析失败", "不支持的文件类型", "文件内容为空"))
+    failed = is_parse_error(result)
     if failed:
         ok = False
-    print(f"{'FAIL' if failed else 'OK  '} {name:8} -> {flat}")
+    print(f"{'FAIL' if failed else 'OK  '} {name:10} -> {flat}")
+
+# [EN] A binary payload with an unrecognized suffix must produce a structured error,
+# [EN] never an exception. [ZH] 未识别后缀的二进制载荷必须产生结构化错误，绝不抛出异常。
+binary = parse_file_with_wps(os.path.join(T, "i.bin"), 0)
+if not is_parse_error(binary) or "不支持" not in localize_error(binary):
+    ok = False
+    print(f"FAIL i.bin      -> {binary!r}")
+else:
+    print(f"OK   i.bin      -> {localize_error(binary)[:150]}")
+
+# [EN] A missing file must also be a structured error. [ZH] 缺失文件同样必须是结构化错误。
+missing = parse_file_with_wps(os.path.join(T, "missing.md"), 0)
+if not is_parse_error(missing):
+    ok = False
+    print(f"FAIL missing.md -> {missing!r}")
+else:
+    print(f"OK   missing.md -> {localize_error(missing)[:150]}")
 
 print("\n结果:", "全部通过" if ok else "存在失败项")
 sys.exit(0 if ok else 1)

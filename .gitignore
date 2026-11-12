@@ -203,3 +203,5 @@ desktop.ini
 *.orig
 *.rej
 *.bak
+
+/temp/

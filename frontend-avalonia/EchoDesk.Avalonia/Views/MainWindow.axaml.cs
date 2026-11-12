@@ -4101,13 +4101,25 @@ public partial class MainWindow : Window
             // [EN] Extension filter (v0.2.2 batch 4, item 3c): the WPF side always had one,
             // [EN] while the cross-platform version previously accepted "all files".
             // [ZH] 扩展名过滤器（v0.2.2 第 4 批 3c）：WPF 侧一直有，跨平台版此前是"所有文件"。
-            // [EN] The same list as in WPF (doc/docx/xls/xlsx/ppt/pptx/txt/pdf).
-            // [ZH] 与 WPF 同一份清单（doc/docx/xls/xlsx/ppt/pptx/txt/pdf）。
+            // [EN] Extension filter aligned with the backend parsers: office documents,
+            // [EN] PDF, plain text and the common prose/code/config suffixes are listed,
+            // [EN] so that files such as README.md are visible without choosing "all files".
+            // [ZH] 扩展名过滤器与后端解析器保持一致：列出 Office 文档、PDF、纯文本以及
+            // [ZH] 常见的文档/源码/配置后缀，使 README.md 等文件无需切换「所有文件」即可选中。
             FileTypeFilter = new[]
             {
                 new FilePickerFileType(Loc.T("main.upload.filter", "支持的文件"))
                 {
-                    Patterns = new[] { "*.doc", "*.docx", "*.xls", "*.xlsx", "*.ppt", "*.pptx", "*.txt", "*.pdf" },
+                    Patterns = new[]
+                    {
+                        "*.doc", "*.docx", "*.docm", "*.xls", "*.xlsx", "*.xlsm",
+                        "*.ppt", "*.pptx", "*.pdf", "*.txt", "*.md", "*.markdown", "*.rst",
+                        "*.csv", "*.tsv", "*.json", "*.jsonl", "*.xml", "*.html", "*.htm",
+                        "*.yaml", "*.yml", "*.toml", "*.ini", "*.log", "*.srt", "*.vtt",
+                        "*.rtf", "*.odt", "*.ods", "*.odp", "*.epub",
+                        "*.py", "*.js", "*.ts", "*.java", "*.cs", "*.cpp", "*.c", "*.h",
+                        "*.go", "*.rs", "*.sql", "*.sh", "*.ps1", "*.bat",
+                    },
                 },
                 new FilePickerFileType(Loc.T("main.upload.filterAll", "所有文件"))
                 {
@@ -4343,8 +4355,16 @@ public partial class MainWindow : Window
             else
             {
                 failedCount++;
-                lines.Add(Loc.T("main.upload.fileFailed", "❌ [{0}/{1}] {2} 解析失败",
-                    index, total, name));
+                // [EN] Prefer the structured message produced by the backend (unsupported
+                // [EN] extension, missing file, parse failure); fall back to the generic
+                // [EN] localized line only when the event carries no detail.
+                // [ZH] 优先显示后端产生的结构化消息（不支持的扩展名、文件缺失、解析失败）；
+                // [ZH] 仅当事件未携带细节时才回落到通用本地化文案。
+                string detail = GetStringField(root, "content");
+                lines.Add(detail.Length > 0
+                    ? detail
+                    : Loc.T("main.upload.fileFailed", "❌ [{0}/{1}] {2} 解析失败",
+                        index, total, name));
             }
             RenderUploadStatus(lines);
             return;
