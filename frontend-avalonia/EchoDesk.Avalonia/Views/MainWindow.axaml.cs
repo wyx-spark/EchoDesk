@@ -43,6 +43,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
@@ -101,6 +102,16 @@ public partial class MainWindow : Window
     private bool _pttReleasePending;
     private bool _mediaInitialized;
     private string _lastAssistantAnswer = "";
+
+    /// <summary>
+    /// [EN] Pattern of a backend operational log line (timestamp or level prefix). Such
+    ///      lines belong to the status bar and must never become a conversation bubble.
+    /// [ZH] 后端运行日志行的模式（时间戳或级别前缀）。此类行属于状态栏，绝不能成为
+    ///      对话气泡。
+    /// </summary>
+    private static readonly Regex BackendLogLine = new(
+        @"^\s*(?:\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}|(?:INFO|WARNING|ERROR|DEBUG|CRITICAL)\b)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // [EN] Streaming state. The answer and reasoning buffers are appended from the backend
     //      reader thread, therefore every access is serialised through the gate below while the
@@ -1209,28 +1220,15 @@ public partial class MainWindow : Window
         }
 
         _state.Backend.StderrReceived += line => Dispatcher.UIThread.Post(() => SetStatus(Trim(line, 120)));
-        // [EN] v0.2.2 batch 4 (the one protocol extension explicitly released by the lead
-        // [EN] designer): the host's **structured** progress events are rendered as a "live
-        // [EN] message" — the same system bubble is updated in place instead of only flashing
-        // [EN] in the status bar as stderr does.
-        // [ZH] v0.2.2 第 4 批（总策划定向放开的那一处协议扩展）：宿主的**结构化**进度事件
-        // [ZH] 渲染成"活消息"——同一条系统气泡就地更新，而不是像 stderr 那样只在状态栏闪一下。
-        // [EN] This fixes exactly item 3 of §F5 in the difference list: "the backend stderr
-        // [EN] line is still only written to the status bar".
-        // [ZH] 这修的正是差异清单 §F5 第 3 条："后端 stderr 那一行仍只写状态栏"。
+        // [EN] Structured host progress is a status-bar concern only. It used to create a
+        // [EN] live system bubble in the transcript, which mixed operational logs into the
+        // [EN] conversation area; the bottom status line is now the single destination.
+        // [ZH] 结构化宿主进度只属于状态栏。它此前会在对话区创建"活"系统气泡，把运行日志
+        // [ZH] 混入对话；现在统一只写底部状态栏。
         _state.Backend.HostProgressReceived += text => Dispatcher.UIThread.Post(() =>
         {
-            if (_progressView is null)
-            {
-                _transcript.Add(new Message("system", Emoji.Prefer(text), "", ""));
-                _progressView = AddMessageView("system", "", "", "");
-                _progressView.ContentHost.Content = BuildPlainText("system", text);
-            }
-            else
-            {
-                UpdateProgressMessage(text);
-            }
-            SetStatus(Trim(text, 120));
+            if (!string.IsNullOrWhiteSpace(text))
+                SetStatus(Trim(Emoji.Prefer(text), 120));
         });
         _state.Backend.ProcessExited += code => Dispatcher.UIThread.Post(() =>
         {
@@ -5052,6 +5050,15 @@ public partial class MainWindow : Window
 
     private void AddMessage(string role, string content, string reasoning = "", string metrics = "")
     {
+        // [EN] Operational log lines are diverted to the status bar even if a backend
+        //      path still emits them as system messages (including restored history).
+        // [ZH] 即使某条后端路径仍以系统消息发出运行日志（包括恢复的历史），也一律
+        //      转到底部状态栏。
+        if (role == "system" && BackendLogLine.IsMatch(content))
+        {
+            SetStatus(Trim(content, 120));
+            return;
+        }
         // [EN] Emoji degradation is applied to the message body at the single entry point,
         // [EN] before
         //      rendering, so that emoji inside code blocks and tables are degraded as well.
