@@ -185,7 +185,9 @@
       "hotLoaded": "✅ The model is ready; you can chat normally now.",
       "none": "🧠 No model",
       "chip": "🧠 Model: {0}",
-      "chipUnknown": "🧠 Model: ---"
+      "chipUnknown": "🧠 Model: ---",
+      "providerChip": "🌐 Provider: {0}",
+      "providerTip": "Generation currently runs on an external provider; click to switch providers"
     },
     "mode": {
       "clickTip": "Click to change the default conversation mode in Settings",

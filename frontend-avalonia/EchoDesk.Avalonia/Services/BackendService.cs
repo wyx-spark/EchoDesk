@@ -1,4 +1,4 @@
-﻿// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Services/BackendService.cs. See type and member comments for details.
+// [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Services/BackendService.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Services/BackendService.cs。类型与成员说明见下方注释。
 // [EN] Backend subprocess management and the JSON line protocol. Ported from
 // [EN] frontend/Services/BackendService.cs (development task 2 of the design
@@ -232,6 +232,27 @@ public sealed class BackendService : IDisposable
     public string ModelsDir { get; private set; } = "";
     public string ModelGuide { get; private set; } = "";
     public string LoadedModel { get; private set; } = "";
+
+    /// <summary>
+    /// [EN] Active generation provider reported by the backend (``llamacpp`` when the
+    /// [EN] local engine is in use). The main window reads this to decide whether the
+    /// [EN] model chip describes a local model or an external provider.
+    /// [ZH] 后端上报的当前生成提供方（使用本地引擎时为 ``llamacpp``）。主窗口据此
+    /// [ZH] 决定模型胶囊描述的是本地模型还是外部提供方。
+    /// </summary>
+    public string ProviderActive { get; private set; } = "llamacpp";
+
+    /// <summary>
+    /// [EN] Human-readable label of the active provider (empty for the local engine).
+    /// [ZH] 当前提供方的可读名称（本地引擎为空）。
+    /// </summary>
+    public string ProviderLabel { get; private set; } = "";
+
+    /// <summary>
+    /// [EN] Model identifier used by the active provider.
+    /// [ZH] 当前提供方使用的模型标识。
+    /// </summary>
+    public string ProviderModel { get; private set; } = "";
 
     /// <summary>
     /// [EN] Platform information reported by the backend (ready.platform) -- used to
@@ -1073,6 +1094,7 @@ public sealed class BackendService : IDisposable
         if (root.TryGetProperty("emoji", out JsonElement emojiEl)
             && emojiEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
             BackendEmoji = emojiEl.GetBoolean();
+        ApplyProviderState(root);
         if (root.TryGetProperty("platform", out JsonElement platform)
             && platform.ValueKind == JsonValueKind.Object
             && platform.TryGetProperty("kind", out JsonElement kindEl))
@@ -1085,8 +1107,33 @@ public sealed class BackendService : IDisposable
     /// [EN] must update immediately after model_scan / model_load).
     /// [ZH] 把响应里的模型状态同步到属性上（model_scan / model_load 后界面要立刻变）。
     /// </summary>
-    public void ApplyModelState(JsonElement root)
+    /// <summary>
+    /// [EN] Synchronizes provider routing state from a response containing a
+    ///      ``providers`` object (ready, provider_state and provider_save all use the
+    ///      same shape).
+    /// [ZH] 从包含 ``providers`` 对象的响应同步提供方路由状态（ready、provider_state
+    ///      与 provider_save 使用同一形状）。
+    /// </summary>
+    public void ApplyProviderState(JsonElement root)
     {
+        if (!root.TryGetProperty("providers", out JsonElement providers)
+            || providers.ValueKind != JsonValueKind.Object)
+            return;
+        if (providers.TryGetProperty("active", out JsonElement activeEl))
+            ProviderActive = activeEl.GetString() ?? "llamacpp";
+        ProviderLabel = "";
+        ProviderModel = "";
+        if (providers.TryGetProperty("active_provider", out JsonElement summary)
+            && summary.ValueKind == JsonValueKind.Object)
+        {
+            if (summary.TryGetProperty("label", out JsonElement labelEl))
+                ProviderLabel = labelEl.GetString() ?? "";
+            if (summary.TryGetProperty("model", out JsonElement modelEl))
+                ProviderModel = modelEl.GetString() ?? "";
+        }
+    }
+
+    public void ApplyModelState(JsonElement root)    {
         bool? ready = null;
         if (root.TryGetProperty("model_ready", out JsonElement mr)
             && mr.ValueKind is JsonValueKind.True or JsonValueKind.False)

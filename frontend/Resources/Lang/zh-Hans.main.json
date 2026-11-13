@@ -185,7 +185,9 @@
       "hotLoaded": "✅ 模型已就绪，现在可以正常对话了。",
       "none": "🧠 无模型",
       "chip": "🧠 模型: {0}",
-      "chipUnknown": "🧠 模型: ---"
+      "chipUnknown": "🧠 模型: ---",
+      "providerChip": "🌐 提供方: {0}",
+      "providerTip": "当前由外部提供方生成；点击切换提供方"
     },
     "mode": {
       "clickTip": "点击打开设置修改默认对话模式",

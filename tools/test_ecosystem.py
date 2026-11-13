@@ -552,6 +552,42 @@ try:
     api_state = backend.handle({"action": "local_api_state"})
     check("local_api_state 可读取且默认关闭",
           api_state["local_api"]["enabled"] is False, str(api_state)[:200])
+
+    # [EN] v0.2.6 task 13: the active external provider actually serves the main
+    # [EN] conversation, and its text passes through the same reasoning splitter.
+    # [ZH] v0.2.6 任务 13：生效的外部提供方真正服务主对话，其文本经同一思考分离器。
+    routed_cfg = cfg_mod.Config()
+    routed_cfg.providers.active = "openai_compatible"
+    routed_cfg.providers.api_consent_granted = True
+    routed_backend = backend_main.Backend(routed_cfg)
+
+    class _FakeProvider:
+        kind = "openai_compatible"
+        label = "Fake Provider"
+        model = "fake-model"
+        api_base = "http://127.0.0.1:9"
+        is_external = False
+
+        def describe(self):
+            return {"kind": self.kind, "label": self.label,
+                    "model": self.model, "api_base": self.api_base,
+                    "is_external": False}
+
+        def stream_chat(self, messages, **kwargs):
+            yield "<think>先想</think>你好"
+
+        def chat(self, messages, **kwargs):
+            return "<think>先想</think>你好"
+
+    lines = list(routed_backend._stream_external_chat(
+        _FakeProvider(), [{"role": "user", "content": "hi"}], "hi"))
+    channels = [line.get("channel") for line in lines if line.get("type") == "delta"]
+    done = next((line for line in lines if line.get("type") == "done"), {})
+    check("外部提供方接入流式主对话",
+          done.get("content") == "你好", str(done)[:200])
+    check("外部提供方文本按思考通道分离",
+          "reasoning" in channels and done.get("reasoning") == "先想",
+          str([(line.get("channel"), line.get("content")) for line in lines])[:200])
 except Exception as exc:  # noqa: BLE001
     check("后端动作层可构造并应答", False, f"{type(exc).__name__}: {exc}")
 

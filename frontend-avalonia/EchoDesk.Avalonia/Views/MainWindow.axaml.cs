@@ -548,7 +548,12 @@ public partial class MainWindow : Window
         MicButton.AddHandler(PointerCaptureLostEvent, MicButton_PointerCaptureLost,
             RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
         SettingsButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.general");
-        ModelChip.Click += async (_, _) => await OpenSettingsAsync("settings.tab.model");
+        // [EN] The model chip doubles as the provider switch entry: it opens the model
+        //      page for the local engine and the ecosystem page when an external
+        //      provider is active.
+        // [ZH] 模型胶囊同时是提供方切换入口：本地引擎打开模型页，外部提供方打开生态页。
+        ModelChip.Click += async (_, _) => await OpenSettingsAsync(
+            IsExternalProviderActive() ? "settings.tab.ecosystem" : "settings.tab.model");
         ModeChip.Click += async (_, _) => await OpenSettingsAsync("settings.tab.general");
         FontDownButton.Click += (_, _) => _state.SetFontSize(_state.Settings.FontSize - 1);
         FontUpButton.Click += (_, _) => _state.SetFontSize(_state.Settings.FontSize + 1);
@@ -959,6 +964,7 @@ public partial class MainWindow : Window
         ModelText.Text = _state.Backend.ModelReady
             ? Loc.T("main.model.chip", "🧠 模型: {0}", string.IsNullOrEmpty(_state.Backend.LoadedModel) ? "local" : _state.Backend.LoadedModel)
             : Loc.T("main.model.noModel", "🧠 模型: 无模型");
+        UpdateModelChipText();
         // [EN] The initial "unknown / not connected" values of the status bar must also come
         // [EN] from the language pack (v0.2.2 English UI scan): the XAML used to hard-code
         // [EN] Chinese, so an English interface showed Chinese in these fields whenever the
@@ -2117,17 +2123,76 @@ public partial class MainWindow : Window
     // [ZH] 状态区字段映射（字段名与 WPF 版完全一致）
     // -----------------------------------------------------------------
 
+    /// <summary>
+    /// [EN] Whether the backend currently routes generation to an external provider.
+    /// [ZH] 后端当前是否将生成路由到外部提供方。
+    /// </summary>
+    private bool IsExternalProviderActive()
+    {
+        string active = _state.Backend.ProviderActive;
+        return !string.IsNullOrEmpty(active)
+               && !string.Equals(active, "llamacpp", StringComparison.OrdinalIgnoreCase)
+               && !string.Equals(active, "local", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// [EN] Renders the model chip: an external provider is shown by its label/model,
+    ///      otherwise the local model state is shown as before.
+    /// [ZH] 渲染模型胶囊：外部提供方显示其名称/模型，否则沿用本地模型状态。
+    /// </summary>
+    private void UpdateModelChipText()
+    {
+        if (!IsExternalProviderActive())
+            return;
+        string label = _state.Backend.ProviderLabel;
+        string model = _state.Backend.ProviderModel;
+        string value = model.Length > 0
+            ? (label.Length > 0 ? label + " · " + model : model)
+            : (label.Length > 0 ? label : _state.Backend.ProviderActive);
+        ModelText.Text = Loc.T("main.model.providerChip", "🌐 提供方: {0}", value);
+    }
+
+    /// <summary>
+    /// [EN] Refresh the provider routing state after the settings window closes, so a
+    ///      switch made on the ecosystem page is reflected by the model chip at once.
+    /// [ZH] 设置窗口关闭后刷新提供方路由状态，使生态页上的切换立即反映到模型胶囊。
+    /// </summary>
+    private async Task RefreshProviderStatusAsync()
+    {
+        if (!_state.Backend.IsRunning)
+            return;
+        using JsonDocument? doc = await _state.Backend.SendAsync(new { action = "provider_state" });
+        if (doc is null)
+            return;
+        _state.Backend.ApplyProviderState(doc.RootElement);
+        UpdateModelChipText();
+        if (IsExternalProviderActive())
+        {
+            ToolTip.SetTip(ModelChip, Loc.T("main.model.providerTip",
+                "当前由外部提供方生成；点击切换提供方"));
+        }
+        else
+        {
+            ToolTip.SetTip(ModelChip, Loc.T("main.model.clickTip", "点击打开「设置 → 模型」"));
+        }
+    }
+
     private void ApplyStatusFields(JsonElement root)
     {
         if (root.TryGetProperty("model_ready", out JsonElement readyEl)
             && readyEl.ValueKind == JsonValueKind.False)
         {
-            ModelText.Text = Loc.T("main.model.noModel", "🧠 模型: 无模型");
+            if (IsExternalProviderActive())
+                UpdateModelChipText();
+            else
+                ModelText.Text = Loc.T("main.model.noModel", "🧠 模型: 无模型");
         }
         else if (root.TryGetProperty("model", out JsonElement modelEl) && modelEl.ValueKind == JsonValueKind.String)
         {
             string model = modelEl.GetString() ?? "";
-            if (model.Length > 0)
+            if (IsExternalProviderActive())
+                UpdateModelChipText();
+            else if (model.Length > 0)
                 ModelText.Text = Loc.T("main.model.chip", "🧠 模型: {0}", Shorten(model));
         }
         if (root.TryGetProperty("mode", out JsonElement modeEl) && modeEl.ValueKind == JsonValueKind.String)
@@ -3126,6 +3191,7 @@ public partial class MainWindow : Window
             ApplyTexts();
             await RefreshStatusAsync();
             await ApplyMediaSettingsAsync();
+            await RefreshProviderStatusAsync();
         }
         catch (Exception ex)
         {

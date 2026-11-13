@@ -517,6 +517,8 @@
     "localapi_failed": "❌ 本地 API 启动失败：{error}",
     "api_busy": "⏳ 本地 API 正在为外部工具生成回答，请等待完成",
     "provider_bad_request": "提供方设置不合法：{error}",
+    "provider_generate_failed": "外部提供方生成失败：{error}",
+    "provider_agent_local_required": "Agent 模式需要已加载的本地模型；当前外部提供方无法运行本地工具循环。请加载本地模型或切回 llama.cpp。",
     "stop_sent": "⏹ 已发送停止请求",
     "stop_none": "当前没有正在生成的内容",
     "exit_ack": "收到退出指令，进程退出",

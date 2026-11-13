@@ -517,6 +517,8 @@
     "localapi_failed": "❌ The local API could not start: {error}",
     "api_busy": "⏳ The local API is generating an answer for an external tool. Wait for it to finish",
     "provider_bad_request": "Provider settings are invalid: {error}",
+    "provider_generate_failed": "The external provider failed to generate a reply: {error}",
+    "provider_agent_local_required": "Agent mode requires a loaded local model; the active external provider cannot run the local tool loop. Load a local model or switch back to llama.cpp.",
     "stop_sent": "⏹ Stop request sent",
     "stop_none": "Nothing is currently being generated",
     "exit_ack": "Exit command received, quitting",

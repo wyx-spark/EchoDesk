@@ -137,6 +137,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional
 from reasoning import ANSWER as _CH_ANSWER
 from reasoning import REASONING as _CH_REASONING
 from reasoning import RESET as _CH_RESET
+from reasoning import split_text as _split_reasoning
 from version import APP_NAME, APP_VERSION, STUDIO
 # [EN] Platform detection and capability boundaries (scope tasks 3 / 5): the decision is
 # [EN] made here only, and every other module queries it for "does this platform support
@@ -4992,10 +4993,17 @@ class Backend:
             yield self._handle_chat(user_msg)
             return
 
+        # [EN] v0.2.6 task 13: an active external provider may serve the main chat even
+        # [EN] when no local GGUF model is loaded. Agent mode still requires the local
+        # [EN] tool loop, so it is reported separately rather than silently degraded.
+        # [ZH] v0.2.6 任务 13：即使未加载本地 GGUF 模型，生效的外部提供方也可服务主
+        # [ZH] 对话。Agent 模式仍需要本地工具循环，因此单独报告而不能静默降级。
+        provider = self.external_provider()
+
         # [EN] Task 1: provide guidance when no model is available instead of raising an
         # [EN] exception or letting the frontend see "inference failed".
         # [ZH] 相关设计：无模型时提供引导，而不是抛出异常或让前端看到"推理失败"。
-        if not self.model_ready:
+        if not self.model_ready and provider is None:
             guide = self.guide_text()
             self.conv.add_message("user", user_msg)
             self.conv.add_message("assistant", guide)
@@ -5037,6 +5045,10 @@ class Backend:
         # [ZH] 放在这里而不是聊天路径中，是因为它产出的是**多步事件流**
         # [ZH] （agent_step / tool_call / tool_result + 最终 done），与单次生成不同。
         if self.conv.get_mode() == "agent":
+            if provider is not None and not self.model_ready:
+                yield {"type": "error", "ok": False,
+                       "content": _t("sys.provider_agent_local_required")}
+                return
             yield from self._stream_agent(user_msg)
             return
 
@@ -5075,6 +5087,14 @@ class Backend:
         # [EN] turn** were.
         # [ZH] 相关设计（自测问题修复-1）：记录**本轮真正发出的消息**的大小。
         self._note_request_size(messages)
+        # [EN] v0.2.6 task 13: route the turn to the active external provider instead of
+        # [EN] the local engine. History, files and retrieval were already assembled by
+        # [EN] ``build_messages``, so switching providers does not change chat semantics.
+        # [ZH] v0.2.6 任务 13：把本轮路由到生效的外部提供方，而不是本地引擎。历史、
+        # [ZH] 文件与检索已由 ``build_messages`` 组装完成，因此切换提供方不改变对话语义。
+        if provider is not None:
+            yield from self._stream_external_chat(provider, messages, user_msg)
+            return
         # [EN] Task 2 (known-issues optimization-2): when search is enabled but no usable
         # [EN] result was obtained, **tell the user explicitly** instead of continuing silently
         # [EN] -- otherwise the user assumes "search did not work" or "the model ignored the
@@ -5382,6 +5402,141 @@ class Backend:
                                   # [ZH] 状态构建失败不能让设置页不可用
             log.warning("读取 Provider 状态失败：%s", exc)
             return {"active": "llamacpp", "providers": [], "error": str(exc)}
+
+    def external_provider(self) -> Any:
+        """
+        [EN]
+        Build the active external generation provider, or return ``None`` when the
+        local GGUF engine is active or the provider cannot be constructed.
+
+        The provider is intentionally rebuilt per request: the settings page may
+        change the endpoint, model or consent state between turns, and a cached
+        provider would keep sending data to a previously approved endpoint.
+
+        [ZH]
+        构造当前生效的外部生成提供方；本地 GGUF 引擎生效或提供方无法构造时返回
+        ``None``。
+
+        提供方刻意按请求重建：设置页可能在两轮之间更改端点、模型或同意状态，缓存
+        提供方会把数据继续发往先前批准的端点。
+        """
+        cfg = getattr(self.config, "providers", None)
+        active = str(getattr(cfg, "active", "llamacpp") or "llamacpp").lower()
+        if active in ("", "llamacpp", "local"):
+            return None
+        try:
+            return providers.build_provider(self.config, self.llm,
+                                            self._current_model_path())
+        except Exception as exc:  # noqa: BLE001 - [EN] surfaced as a chat error
+                                  # [ZH] 作为对话错误上报
+            log.warning("外部提供方构造失败（%s）：%s", active, exc)
+            return None
+
+    def _stream_external_chat(self, provider: Any, messages: List[dict],
+                              user_msg: str) -> Iterator[Dict[str, Any]]:
+        """
+        [EN]
+        Stream one chat turn through an external provider.
+
+        The provider yields plain text increments; the same reasoning splitter as
+        the local engine separates ``<think>`` blocks, so switching providers does
+        not change how thinking content is displayed.
+
+        [ZH]
+        经外部提供方流式执行一轮对话。
+
+        提供方产出纯文本增量；与本地引擎相同的思考分离器负责拆分 ``<think>``
+        区块，因此切换提供方不改变思考内容的显示方式。
+        """
+        splitter = self.llm.make_splitter() if hasattr(self.llm, "make_splitter") else None
+        parts: List[str] = []
+        full = ""
+        thinking = ""
+
+        def _emit(events: List[Any]) -> Iterator[Dict[str, Any]]:
+            for channel, text in events:
+                if channel == _CH_REASONING:
+                    yield {"type": "delta", "channel": _CH_REASONING, "content": text}
+                elif channel == _CH_RESET:
+                    yield {"type": "delta", "channel": _CH_ANSWER,
+                           "reset": True, "content": ""}
+                else:
+                    parts.append(text)
+                    yield {"type": "delta", "channel": _CH_ANSWER, "content": text}
+
+        try:
+            for piece in provider.stream_chat(
+                    messages,
+                    temperature=self.commands.temperature,
+                    max_tokens=self._output_token_budget(),
+                    top_p=float(getattr(self.config, "top_p", 0.9) or 0.9),
+                    repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1),
+                    stop_event=self.stop_event):
+                if not piece:
+                    continue
+                if splitter is not None:
+                    yield from _emit(splitter.feed(piece))
+                else:
+                    parts.append(piece)
+                    yield {"type": "delta", "channel": _CH_ANSWER, "content": piece}
+            if splitter is not None:
+                yield from _emit(splitter.close())
+                full = splitter.answer_text
+                thinking = splitter.reasoning_text.strip()
+            else:
+                full = "".join(parts)
+        except Exception as exc:  # noqa: BLE001 - [EN] provider failure is a chat error
+                                  # [ZH] 提供方失败属于对话错误
+            log.exception("外部提供方生成失败")
+            yield {"type": "error", "ok": False,
+                   "content": _t("sys.provider_generate_failed", error=exc)}
+            return
+        if not full.strip() and not thinking:
+            full = _t("sys.empty_output")
+            yield {"type": "delta", "channel": _CH_ANSWER, "content": full}
+        self.conv.add_message("user", user_msg)
+        self.conv.add_message("assistant", full, reasoning=thinking)
+        self._compact_history()
+        done: Dict[str, Any] = {"type": "done", "content": full,
+                                "stopped": self.stop_event.is_set(),
+                                "provider": provider.describe()}
+        if thinking:
+            done["reasoning"] = thinking
+        self._attach_context(done)
+        yield done
+
+    def _chat_external(self, provider: Any, messages: List[dict],
+                       user_msg: str) -> Dict[str, Any]:
+        """
+        [EN]
+        Non-streaming chat turn through an external provider.
+
+        [ZH]
+        经外部提供方执行非流式对话轮。
+        """
+        try:
+            text = provider.chat(
+                messages,
+                temperature=self.commands.temperature,
+                max_tokens=self._output_token_budget(),
+                top_p=float(getattr(self.config, "top_p", 0.9) or 0.9),
+                repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1),
+            )
+        except Exception as exc:  # noqa: BLE001 - [EN] provider failure is a chat error
+                                  # [ZH] 提供方失败属于对话错误
+            log.exception("外部提供方生成失败")
+            return {"type": "system", "ok": False,
+                    "content": _t("sys.provider_generate_failed", error=exc)}
+        thinking, response = _split_reasoning(str(text or ""))
+        self.conv.add_message("user", user_msg)
+        self.conv.add_message("assistant", response, reasoning=thinking)
+        self._compact_history()
+        result: Dict[str, Any] = {"type": "assistant", "content": response,
+                                  "provider": provider.describe()}
+        if thinking:
+            result["reasoning"] = thinking
+        self._attach_context(result)
+        return result
 
     def handle_provider_save(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -6174,10 +6329,13 @@ class Backend:
                 self._merge_action(response, action)
             return response
 
+        # [EN] v0.2.6 task 13: the non-streaming path also honours the active external
+        # [EN] provider. [ZH] v0.2.6 任务 13：非流式路径同样遵循生效的外部提供方。
+        provider = self.external_provider()
         # [EN] Task 1: with no model, skip inference and return guidance directly (and record
         # [EN] it in history so the user sees the context after switching back).
         # [ZH] 相关设计：无模型时不走推理，直接给出引导（并记入历史，用户切回后能看到上下文）。
-        if not self.model_ready:
+        if not self.model_ready and provider is None:
             guide = self.guide_text()
             self.conv.add_message("user", user_msg)
             self.conv.add_message("assistant", guide)
@@ -6249,6 +6407,8 @@ class Backend:
         # [ZH] 它是**非流式**回答路径，缺了它则状态区数字会一直停在上一次流式请求的结果上
         # [ZH] —— 这正是相关设计要消除的那类"显示与真实不符"。
         self._note_request_size(messages)
+        if provider is not None:
+            return self._chat_external(provider, messages, user_msg)
         try:
             thinking, response = self.llm.chat_complete_split(
                 messages,
