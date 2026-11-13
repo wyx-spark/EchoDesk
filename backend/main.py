@@ -7081,6 +7081,24 @@ class Backend:
             return
         name = str(library.get("name") or library_id)
         path = str(library.get("root") or (job.paths[0] if job.paths else ""))
+        # [EN] Audio files are indexed through container metadata plus a transcript
+        # [EN] when the configured speech engine is available. The hook is installed
+        # [EN] for this job only and cleared afterwards, so a later job never reuses
+        # [EN] a stale engine object.
+        # [ZH] 音频文件通过容器元数据建索引；配置的语音引擎可用时再追加转写文本。
+        # [ZH] 该钩子只为本作业安装并在结束后清除，避免后续作业复用已过期的引擎对象。
+        try:
+            from knowledge import set_audio_transcriber  # noqa: PLC0415
+
+            stt_enabled = bool(getattr(self._media_cfg(), "stt_enabled", True))
+            stt = self._stt_service() if stt_enabled else None
+            stt_ready = bool(stt is not None and stt.status().get("available"))
+            set_audio_transcriber(
+                (lambda audio: str(stt.transcribe(audio).get("text", "") or ""))
+                if stt_ready else None)
+        except Exception:  # noqa: BLE001 - [EN] audio transcription is optional
+                           # [ZH] 音频转写属于可选能力
+            log.debug("知识库音频转写钩子安装失败", exc_info=True)
         log_user(log, "sys.log_knowledge_index_start", name=name, path=path)
         job.emit({"type": "knowledge_start", "phase": "indexing",
                   "library_id": library_id, "name": name, "path": path})
@@ -7105,6 +7123,14 @@ class Backend:
                                   # [ZH] 工作线程必须存活；失败经作业状态上报
             base.set_status(library_id, "failed", f"{type(exc).__name__}: {exc}")
             raise
+        finally:
+            try:
+                from knowledge import set_audio_transcriber  # noqa: PLC0415
+
+                set_audio_transcriber(None)
+            except Exception:  # noqa: BLE001 - [EN] cleanup must not mask the result
+                               # [ZH] 清理不得掩盖结果
+                pass
         job.result = stats
         log_user(log, "sys.log_knowledge_index_done", name=name,
                  added=stats.get("added", 0), updated=stats.get("updated", 0),

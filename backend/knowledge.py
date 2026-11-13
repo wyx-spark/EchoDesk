@@ -89,6 +89,48 @@ TEXT_EXTENSIONS = {
 #: [ZH] WPS 可读；其余平台会记录为失败并跳过。
 DOCUMENT_EXTENSIONS = {".docx", ".doc", ".pdf", ".pptx", ".xlsx", ".xls", ".xlsm"}
 
+#: [EN] Image extensions indexed through metadata and best-effort OCR. OCR uses
+#: [EN] ``pytesseract`` only when that optional package and the Tesseract binary are
+#: [EN] available; otherwise the metadata alone is indexed, which still makes the
+#: [EN] file findable by name, format, dimensions and capture time.
+#: [ZH] 通过元数据与尽力而为的 OCR 建立索引的图片扩展名。仅当可选依赖
+#: [ZH] ``pytesseract`` 与 Tesseract 可执行文件均可用时才执行 OCR；否则只索引
+#: [ZH] 元数据，仍可按文件名、格式、尺寸与拍摄时间检索到该文件。
+IMAGE_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".heic",
+}
+
+#: [EN] Audio extensions indexed through container metadata and optional
+#: [EN] transcription. Transcription is supplied by the host application through
+#: [EN] :func:`set_audio_transcriber`, so this module keeps no dependency on a
+#: [EN] particular speech engine.
+#: [ZH] 通过容器元数据与可选转写建立索引的音频扩展名。转写由宿主应用经
+#: [ZH] :func:`set_audio_transcriber` 注入，因此本模块不依赖任何特定语音引擎。
+AUDIO_EXTENSIONS = {
+    ".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma",
+}
+
+MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | AUDIO_EXTENSIONS
+
+#: [EN] Optional host-provided audio transcriber: ``path -> text``. Returning an
+#: [EN] empty string is treated as "no transcript available" and only metadata is
+#: [EN] indexed.
+#: [ZH] 可选的宿主音频转写函数：``路径 -> 文本``。返回空串视为「无可用转写」，
+#: [ZH] 只索引元数据。
+_AUDIO_TRANSCRIBER: Optional[Callable[[str], str]] = None
+
+
+def set_audio_transcriber(transcriber: Optional[Callable[[str], str]]) -> None:
+    """
+    [EN]
+    Install or clear the host audio transcriber used while indexing audio files.
+
+    [ZH]
+    设置或清除建索引音频文件时使用的宿主转写函数。
+    """
+    global _AUDIO_TRANSCRIBER
+    _AUDIO_TRANSCRIBER = transcriber
+
 #: [EN] Directories never scanned: version-control metadata, virtual
 #: [EN] environments, build output and caches contain no user knowledge and can
 #: [EN] contain tens of thousands of files.
@@ -258,6 +300,129 @@ def default_db_path() -> str:
     return os.path.join(config.state_dir(), "knowledge", "index.sqlite3")
 
 
+def _ocr_image(path: str) -> str:
+    """
+    [EN]
+    Run best-effort OCR on an image and return the recognized text.
+
+    The implementation is optional and never raises: when ``pytesseract`` or the
+    Tesseract executable is missing, an empty string is returned and only the
+    metadata is indexed.
+
+    [ZH]
+    对图片执行尽力而为的 OCR 并返回识别文本。
+
+    该实现是可选的且绝不抛出异常：缺少 ``pytesseract`` 或 Tesseract 可执行文件时
+    返回空串，仅索引元数据。
+    """
+    try:
+        import pytesseract  # type: ignore[import-not-found]  # noqa: PLC0415
+        from PIL import Image  # noqa: PLC0415
+
+        with Image.open(path) as image:
+            text = pytesseract.image_to_string(image, lang="chi_sim+eng")
+        return str(text or "").strip()
+    except Exception:  # noqa: BLE001 - [EN] OCR is optional
+                      # [ZH] OCR 属于可选能力
+        return ""
+
+
+def _read_image_text(path: str, max_chars: int = 0) -> str:
+    """
+    [EN]
+    Build the indexable text of an image: file metadata, EXIF/PNG text and OCR.
+
+    Metadata is always available; OCR is appended only when it succeeds. This
+    makes screenshots and photos discoverable by name, format, dimensions and
+    capture time even on installations without an OCR engine.
+
+    [ZH]
+    构造图片的可索引文本：文件元数据、EXIF/PNG 文本与 OCR。
+
+    元数据始终可用；仅在 OCR 成功时追加识别结果。因此即使安装环境没有 OCR 引擎，
+    截图与照片仍可按文件名、格式、尺寸与拍摄时间检索。
+    """
+    parts: List[str] = [f"[图片] {os.path.basename(path)}"]
+    try:
+        parts.append(f"字节数: {os.path.getsize(path)}")
+    except OSError:
+        pass
+    try:
+        from PIL import Image  # noqa: PLC0415
+        from PIL.ExifTags import TAGS  # noqa: PLC0415
+
+        with Image.open(path) as image:
+            parts.append(f"格式: {image.format or ''}")
+            parts.append(f"尺寸: {image.width}x{image.height}")
+            parts.append(f"模式: {image.mode}")
+            # [EN] PNG text chunks (screenshots often carry the source application
+            # [EN] and a caption here).
+            # [ZH] PNG 文本块（截图常在此携带来源应用与说明文字）。
+            for key, value in (getattr(image, "text", {}) or {}).items():
+                if isinstance(value, str) and value.strip():
+                    parts.append(f"{key}: {value.strip()[:500]}")
+            try:
+                exif = image.getexif()
+            except Exception:  # noqa: BLE001 - [EN] malformed EXIF is not fatal
+                              # [ZH] EXIF 损坏不影响索引
+                exif = None
+            if exif:
+                for tag_id, value in exif.items():
+                    key = TAGS.get(tag_id, str(tag_id))
+                    if isinstance(value, bytes):
+                        value = value.decode("utf-8", errors="replace")
+                    text = str(value).strip()
+                    if text:
+                        parts.append(f"EXIF {key}: {text[:300]}")
+    except Exception as exc:  # noqa: BLE001 - [EN] metadata extraction is best effort
+                              # [ZH] 元数据提取属于尽力而为
+        parts.append(f"元数据读取失败: {type(exc).__name__}: {exc}")
+    ocr = _ocr_image(path)
+    if ocr:
+        parts.append(f"[OCR]\n{ocr}")
+    body = "\n".join(parts)
+    return body[:max_chars] if max_chars and len(body) > max_chars else body
+
+
+def _read_audio_text(path: str, max_chars: int = 0) -> str:
+    """
+    [EN]
+    Build the indexable text of an audio file: container metadata plus an
+    optional transcript supplied by the host transcriber.
+
+    [ZH]
+    构造音频文件的可索引文本：容器元数据，以及宿主转写函数提供的可选转写。
+    """
+    parts: List[str] = [f"[音频] {os.path.basename(path)}"]
+    try:
+        parts.append(f"字节数: {os.path.getsize(path)}")
+    except OSError:
+        pass
+    try:
+        import wave  # noqa: PLC0415
+
+        with wave.open(path, "rb") as handle:
+            frames = handle.getnframes()
+            rate = handle.getframerate() or 1
+            parts.append(f"时长: {frames / float(rate):.2f} 秒")
+            parts.append(f"采样率: {rate} Hz")
+            parts.append(f"声道数: {handle.getnchannels()}")
+    except Exception:  # noqa: BLE001 - [EN] non-WAV containers are indexed by metadata only
+                      # [ZH] 非 WAV 容器仅按元数据索引
+        pass
+    if _AUDIO_TRANSCRIBER is not None:
+        try:
+            transcript = str(_AUDIO_TRANSCRIBER(path) or "").strip()
+        except Exception as exc:  # noqa: BLE001 - [EN] one file must not abort the job
+                                  # [ZH] 单份文件不得中止作业
+            transcript = ""
+            parts.append(f"转写失败: {type(exc).__name__}: {exc}")
+        if transcript:
+            parts.append(f"[转写]\n{transcript}")
+    body = "\n".join(parts)
+    return body[:max_chars] if max_chars and len(body) > max_chars else body
+
+
 def read_document(path: str, max_chars: int = 0) -> Tuple[str, str]:
     """
     [EN]
@@ -307,6 +472,10 @@ def read_document(path: str, max_chars: int = 0) -> Tuple[str, str]:
         if is_parse_error(body):
             return "", body
         return body, ""
+    if ext in IMAGE_EXTENSIONS:
+        return _read_image_text(path, max_chars), ""
+    if ext in AUDIO_EXTENSIONS:
+        return _read_audio_text(path, max_chars), ""
     return "", "unsupported extension"
 
 
@@ -609,7 +778,8 @@ class KnowledgeBase:
                 if name.startswith("."):
                     continue
                 ext = os.path.splitext(name)[1].lower()
-                if ext not in TEXT_EXTENSIONS and ext not in DOCUMENT_EXTENSIONS:
+                if (ext not in TEXT_EXTENSIONS and ext not in DOCUMENT_EXTENSIONS
+                        and ext not in MEDIA_EXTENSIONS):
                     continue
                 path = os.path.join(current, name)
                 try:

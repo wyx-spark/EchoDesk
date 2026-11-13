@@ -539,6 +539,38 @@ def test_knowledge_memory() -> None:
     check("相邻切片存在重叠",
           len(pieces) > 1 and pieces[0][-20:] in pieces[1], pieces[1][:40])
 
+    # [EN] v0.2.6 task 10: images and audio are scanned and become indexable through
+    # [EN] metadata (plus OCR/transcript when available), instead of being skipped.
+    # [ZH] v0.2.6 任务 10：图片与音频会被扫描并通过元数据（以及可用的 OCR/转写）
+    # [ZH] 建立索引，而不是被跳过。
+    with _tempfile.TemporaryDirectory() as media_tmp:
+        from PIL import Image  # noqa: PLC0415
+        import wave  # noqa: PLC0415
+
+        image_path = os.path.join(media_tmp, "screenshot.png")
+        Image.new("RGB", (12, 8), "white").save(image_path)
+        image_text, image_error = knowledge.read_document(image_path)
+        check("图片纳入知识库：提取格式与尺寸",
+              not image_error and "[图片]" in image_text
+              and "尺寸: 12x8" in image_text, image_text[:80])
+
+        audio_path = os.path.join(media_tmp, "voice.wav")
+        with wave.open(audio_path, "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(8000)
+            handle.writeframes(b"\x00\x00" * 800)
+        audio_text, audio_error = knowledge.read_document(audio_path)
+        check("音频纳入知识库：提取时长与采样率",
+              not audio_error and "[音频]" in audio_text
+              and "时长:" in audio_text and "8000 Hz" in audio_text,
+              audio_text[:80])
+        check("扫描结果包含图片与音频扩展名",
+              {os.path.basename(item["path"])
+               for item in knowledge.KnowledgeBase(
+                   os.path.join(media_tmp, "media.sqlite3")).iter_files(media_tmp)}
+              == {"screenshot.png", "voice.wav"})
+
     previous_state = os.environ.get("ECHODESK_STATE")
     with _tempfile.TemporaryDirectory() as tmp:
         os.environ["ECHODESK_STATE"] = tmp
