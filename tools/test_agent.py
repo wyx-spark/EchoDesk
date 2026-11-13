@@ -225,7 +225,7 @@ check("执行了一次工具调用", len([s for s in _run.steps if s.tool]) == 1
       and _run.steps[0].tool == "calc",
       str([(s.index, s.tool) for s in _run.steps]))
 check("工具结果回灌给模型（第二次调用的上下文里有工具结果）",
-      any("工具结果" in str(m.get("content", "")) for m in _llm.calls[1]),
+      any("工具自动输出" in str(m.get("content", "")) for m in _llm.calls[1]),
       str(_llm.calls[1])[-200:])
 _types = [event["type"] for event in _events]
 check("事件序列：进度 → 工具调用 → 工具结果（每一步可见）",
@@ -361,6 +361,31 @@ check("对话历史记录了这一轮（用户 + 助手各一条）",
 check("诊断接口能看到每一步",
       (_backend.agent_diagnostics().get("last_run") or {}).get("tools") == ["calc"],
       str(_backend.agent_diagnostics().get("last_run")))
+
+# ---------------- 角色注入：历史别名归一化、系统备注前移、工具输出显式标注 ----------------
+from conversation import ConversationManager  # noqa: E402
+
+_convo = ConversationManager(10, "chat")
+_convo.add_message("human", "你好")
+_convo.add_message("ai", "你好，有什么可以帮你？")
+_convo.add_message("system", "【背景备注】用户上传了一份合同摘要。")
+_role_messages = _convo.build_messages("继续")
+check("角色别名归一化：human/ai 变为 user/assistant",
+      [m["role"] for m in _role_messages[1:3]] == ["user", "assistant"],
+      str([m["role"] for m in _role_messages]))
+check("历史中的 system 备注并入开头系统提示，不留在中途",
+      all(m["role"] != "system" for m in _role_messages[1:])
+      and "【背景备注】" in str(_role_messages[0]["content"]),
+      str([m["role"] for m in _role_messages]))
+
+_observation_msgs = [
+    m for call in _backend.llm.calls for m in call
+    if "工具自动输出" in str(m.get("content", ""))
+]
+check("工具观察结果显式声明为机器输出、不是用户发言",
+      bool(_observation_msgs)
+      and all("不是用户发言" in str(m.get("content", "")) for m in _observation_msgs),
+      str(len(_observation_msgs)))
 
 _sys_prompt_sent = _backend.llm.calls[0][0]["content"] if _backend.llm.calls else ""
 check("工具协议是**运行期追加**的（进了发给模型的系统提示词）",

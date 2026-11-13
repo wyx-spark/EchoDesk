@@ -7,6 +7,7 @@ persistence, and summary compaction.
 对话管理：模式、历史记录、文件上下文、撤回、导出、持久化与摘要压缩。
 """
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -19,6 +20,23 @@ from typing import Dict, List, Optional
 # [ZH] 界面文本（模式菜单与 Markdown 导出标题）通过语言包解析。i18n 仅依赖
 # [ZH] 标准库，因此可在此直接导入。
 from i18n import t as _t
+
+log = logging.getLogger("EchoDesk.Conversation")
+
+#: [EN] Role aliases accepted from historical sessions and third-party callers.
+#: [EN] They are normalized before a message reaches the model, so a legacy or
+#: [EN] mistyped role can never make the model confuse the user with the assistant.
+#: [ZH] 接受来自历史会话与第三方调用方的角色别名。消息进入模型前会先归一化，
+#: [ZH] 因此旧会话或拼写错误的角色不会让模型把用户与助手混为一谈。
+_ROLE_ALIASES = {
+    "human": "user",
+    "user": "user",
+    "ai": "assistant",
+    "bot": "assistant",
+    "assistant": "assistant",
+    "system": "system",
+}
+_MODEL_ROLES = ("user", "assistant")
 
 # ===========================================================================
 # [EN] System prompt composition:
@@ -880,7 +898,7 @@ class ConversationManager:
         不会因空字符串字段而增大。
         """
         record: Dict[str, object] = {
-            "role": role,
+            "role": self._normalize_role(role),
             "content": content,
             "timestamp": datetime.now().isoformat(),
         }
@@ -893,6 +911,29 @@ class ConversationManager:
         # [ZH] 硬上限保护；正常情况下后端会先将超出部分压缩为摘要。
         if len(self.history) > self.max_history * 4:
             self.history = self.history[-self.max_history * 4 :]
+
+    @staticmethod
+    def _normalize_role(role: str) -> str:
+        """
+        [EN]
+        Normalize a message role to one of ``user``, ``assistant`` or ``system``.
+
+        Unknown or empty roles are logged and treated as ``user`` because such a
+        record can only originate from a user-side injection; defaulting to
+        ``assistant`` would fabricate model speech.
+
+        [ZH]
+        将消息角色归一化为 ``user``、``assistant`` 或 ``system`` 之一。
+
+        未知或空角色会被记录日志并按 ``user`` 处理，因为此类记录只可能来自用户侧
+        注入；若默认为 ``assistant`` 则等同于伪造模型发言。
+        """
+        key = str(role or "").strip().lower()
+        normalized = _ROLE_ALIASES.get(key)
+        if normalized:
+            return normalized
+        log.warning("未知的消息角色 %r，按 user 处理", role)
+        return "user"
 
     def _trim_reasoning(self, reasoning: str) -> str:
         """
@@ -1279,11 +1320,41 @@ class ConversationManager:
         3. DeepSeek-R1 蒸馏版 GGUF 对话模板采用同一规则，只接受回答部分。
         """
         messages: List[dict] = [{"role": "system", "content": self.get_system_prompt()}]
+        # [EN] System notes created during the session (document summaries and
+        # [EN] automation results) are folded into the leading system prompt. A
+        # [EN] ``system`` role in the middle of the history breaks templates that
+        # [EN] only accept a leading system message and can make the model treat
+        # [EN] background material as if the user had said it.
+        # [ZH] 会话期间产生的系统备注（文档摘要与自动化结果）合并进开头的系统提示。
+        # [ZH] 历史中间出现 ``system`` 角色会破坏"仅允许开头一条系统消息"的模板，
+        # [ZH] 并可能让模型把背景材料当作 user 的发言。
+        system_notes: List[str] = []
         for msg in self.history:
+            raw_role = str(msg.get("role", "") or "")
+            content = str(msg.get("content", "") or "")
+            role = _ROLE_ALIASES.get(raw_role.strip().lower())
+            if role == "system":
+                if content.strip():
+                    system_notes.append(content)
+                continue
+            if role not in _MODEL_ROLES:
+                log.warning("跳过角色无法识别的历史消息：%r", raw_role)
+                continue
+            if not content:
+                # [EN] Empty records carry no information and some templates reject
+                # [EN] them; dropping them also avoids consecutive empty turns.
+                # [ZH] 空记录不携带信息且部分模板会拒绝；丢弃它同时避免连续空回合。
+                continue
             # [EN] Only role and content are model inputs; timestamp and
             # [EN] reasoning are excluded.
             # [ZH] 仅 role 与 content 属于模型输入；timestamp 与 reasoning 不参与。
-            messages.append({"role": msg["role"], "content": msg["content"]})
+            messages.append({"role": role, "content": content})
+        if system_notes:
+            messages[0]["content"] = (
+                str(messages[0].get("content", ""))
+                + "\n\n【会话中的系统备注】\n"
+                + "\n\n".join(system_notes)
+            )
 
         user_content = f"参考以下网络信息：\n{search_context}\n\n问题：{user_query}" if search_context else user_query
         if include_file and self.files:

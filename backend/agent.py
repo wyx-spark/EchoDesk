@@ -257,8 +257,17 @@ class AgentLoop:
         return body[:limit] + f"…（共 {len(body)} 字符，已截断）"
 
     def _observation_message(self, tool: str, observation: str, ok: bool) -> str:
-        head = f"【工具结果：{tool}】" if ok else f"【工具不可用：{tool}】"
+        # [EN] The observation is delivered as the user turn because several GGUF
+        # [EN] chat templates do not accept a ``tool`` role. It must therefore state
+        # [EN] explicitly that it is machine-generated output, otherwise the model
+        # [EN] can mistake tool text for the user's own words ("you and I" confusion).
+        # [ZH] 由于多种 GGUF 对话模板不接受 ``tool`` 角色，工具观察结果经 user 回合
+        # [ZH] 传递。因此必须显式声明这是机器生成的输出，否则模型可能把工具文本当作
+        # [ZH] 用户本人发言（即“你我不分”）。
+        head = (f"【工具自动输出｜结果：{tool}】" if ok
+                else f"【工具自动输出｜不可用：{tool}】")
         return (f"{head}\n{observation}\n\n"
+                f"【以上内容由工具自动生成，不是用户发言。】\n"
                 f"请继续：可以再调用一个工具，或用「最终答案：」开头给出结论。")
 
     def _request_confirmation(self, step: AgentStep, index: int) -> bool:
