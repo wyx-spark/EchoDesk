@@ -523,6 +523,19 @@ public partial class MainWindow : Window
         StopButton.Click += async (_, _) => await StopAsync();
         UploadButton.Click += async (_, _) => await PickFilesAsync();
         ImageButton.Click += async (_, _) => await PickImageAsync();
+        // [EN] Push-to-talk microphone: press starts a recording, release finishes and
+        //      transcribes. Capture loss also finishes, so releasing outside the button
+        //      never leaves a recording running. The button class marks pointer events as
+        //      handled, so the handlers are registered with handledEventsToo.
+        // [ZH] 按住说话麦克风：按下开始录音，松开结束并转写。指针捕获丢失同样结束录音，
+        //      因此按钮外松手不会让录音继续运行。按钮类会把指针事件标记为已处理，故
+        //      以 handledEventsToo 注册处理函数。
+        MicButton.AddHandler(PointerPressedEvent, MicButton_PointerPressed,
+            RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
+        MicButton.AddHandler(PointerReleasedEvent, MicButton_PointerReleased,
+            RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
+        MicButton.AddHandler(PointerCaptureLostEvent, MicButton_PointerCaptureLost,
+            RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
         SettingsButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.general");
         ModelChip.Click += async (_, _) => await OpenSettingsAsync("settings.tab.model");
         ModeChip.Click += async (_, _) => await OpenSettingsAsync("settings.tab.general");
@@ -997,6 +1010,9 @@ public partial class MainWindow : Window
         ToolTip.SetTip(SettingsButton, Loc.T("main.button.settingsTip", "打开设置"));
         ToolTip.SetTip(UploadButton, Loc.T("main.button.uploadTip", "上传文件加入上下文"));
         ToolTip.SetTip(ImageButton, Loc.T("main.media.imageTip", "附加图片并提问（jpg / png）"));
+        ToolTip.SetTip(MicButton, Loc.T("main.media.micTip", "按住说话（松开后转写）"));
+        AutomationProperties.SetHelpText(MicButton, Loc.T("main.media.micHelp",
+            "按住麦克风图标开始录音，松开后自动转写并填入输入框"));
         RecordingHint.Text = Loc.T("main.media.recording", "🔴 录音中…松开结束");
         ToolTip.SetTip(SendButton, Loc.T("main.button.sendTip", "发送（Ctrl+Enter）"));
         ToolTip.SetTip(ModelChip, Loc.T("main.model.clickTip", "点击打开「设置 → 模型」"));
@@ -1350,6 +1366,12 @@ public partial class MainWindow : Window
         //      after the user has already selected a file.
         // [ZH] 非 VLM 模型禁用图片入口，而不是等用户选完文件后再报错。
         ImageButton.IsEnabled = _media.State.VisionAvailable;
+        // [EN] Speech input is offered only when a transcription engine is available;
+        //      otherwise the microphone stays disabled with a status hint.
+        // [ZH] 仅在转写引擎可用时提供语音输入；否则麦克风保持禁用并显示状态提示。
+        MicButton.IsEnabled = _media.State.SttAvailable;
+        if (!_media.State.SttAvailable)
+            ToolTip.SetTip(MicButton, Loc.T("main.media.sttUnavailable", "🎙 语音识别不可用"));
     }
 
     /// <summary>
@@ -3950,6 +3972,46 @@ public partial class MainWindow : Window
     /// [EN] Push-to-talk press handler: ask the backend to start recording.
     /// [ZH] 按键说话按下处理：请求后端开始录音。
     /// </summary>
+    /// <summary>
+    /// [EN] Whether the microphone pointer is currently held. Used to make release and
+    ///      capture-loss idempotent so one press produces exactly one recording.
+    /// [ZH] 麦克风指针当前是否处于按住状态。用于让松开与捕获丢失幂等，确保一次按下
+    ///      只产生一次录音。
+    /// </summary>
+    private bool _micPointerActive;
+
+    private async void MicButton_PointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(MicButton).Properties.IsLeftButtonPressed)
+            return;
+        e.Handled = true;
+        if (_micPointerActive)
+            return;
+        _micPointerActive = true;
+        await StartPushToTalkAsync();
+    }
+
+    private async void MicButton_PointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (!_micPointerActive)
+            return;
+        _micPointerActive = false;
+        e.Handled = true;
+        await FinishPushToTalkAsync();
+    }
+
+    private async void MicButton_PointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        // [EN] Releasing outside the button removes the pointer capture; finish the
+        //      recording instead of leaving it active until the backend watchdog.
+        // [ZH] 在按钮外松手会移除指针捕获；此时结束录音，而不是让它一直运行到后端
+        //      看门狗触发。
+        if (!_micPointerActive)
+            return;
+        _micPointerActive = false;
+        await FinishPushToTalkAsync();
+    }
+
     private async Task StartPushToTalkAsync()
     {
         // [EN] The pending flag coalesces key auto-repeat: the hook reports repeated
