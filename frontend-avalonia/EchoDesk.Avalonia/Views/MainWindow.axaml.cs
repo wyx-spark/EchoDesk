@@ -3576,6 +3576,17 @@ public partial class MainWindow : Window
         else
         {
             StopMetricsTimer();
+            // [EN] Clear the transient "generating / waiting for first token" status when a
+            //      turn ends; otherwise the status bar keeps claiming generation is running
+            //      after the answer is complete.
+            // [ZH] 一轮结束时清除"正在生成 / 等待首 token"等瞬时状态；否则回答已完成，
+            //      状态栏仍会显示仍在生成。
+            if (_state.Backend.IsRunning)
+            {
+                SetStatus(_state.Backend.ModelReady
+                    ? Loc.T("main.status.ready", "就绪")
+                    : Loc.T("main.status.noModel", "后端已就绪，但没有加载模型"));
+            }
         }
     }
 
@@ -6291,38 +6302,56 @@ public partial class MainWindow : Window
         JsonDocument? doc = await _state.Backend.SendAsync(
             new { action = "knowledge_status" }, idleTimeout: BackendService.HeavyIdleTimeout);
         if (doc is null)
+        {
+            // [EN] A failed refresh must not leave the panel claiming "no folder mounted":
+            // [EN] report the request failure while preserving the previously known rows.
+            // [ZH] 刷新失败时面板不得继续声称「尚未挂载文件夹」：报告请求失败，同时保留
+            // [ZH] 上一次已知的库列表。
+            KnowledgeHintText.Text = Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
+                _state.Backend.LastError ?? "");
             return;
+        }
         using (doc)
         {
-            JsonElement root = doc.RootElement;
-            _knowledgeLibraries.Clear();
-            if (root.TryGetProperty("libraries", out JsonElement libraries)
-                && libraries.ValueKind == JsonValueKind.Array)
-            {
-                foreach (JsonElement library in libraries.EnumerateArray())
-                {
-                    _knowledgeLibraries.Add(new KnowledgeLibraryItem
-                    {
-                        Id = GetStringField(library, "id"),
-                        Name = GetStringField(library, "name"),
-                        Root = GetStringField(library, "root"),
-                        Status = GetStringField(library, "status"),
-                        Documents = GetIntField(library, "documents"),
-                        Chunks = GetIntField(library, "chunks"),
-                    });
-                }
-            }
-            int bound = 0;
-            if (root.TryGetProperty("knowledge_ids", out JsonElement ids)
-                && ids.ValueKind == JsonValueKind.Array)
-                bound = ids.GetArrayLength();
-            RenderKnowledgeRows();
-            KnowledgeHintText.Text = _knowledgeLibraries.Count == 0
-                ? Loc.T("knowledge.panel.empty", "尚未挂载文件夹")
-                : Loc.T("knowledge.panel.mounted", "已挂载：{0}", _knowledgeLibraries.Count)
-                  + " · " + Loc.T("knowledge.panel.bound", "本会话绑定 {0} 个", bound)
-                  + " · " + Loc.T("knowledge.panel.hint", "索引在后台建立，不影响对话");
+            ApplyKnowledgeLibraries(doc.RootElement);
         }
+    }
+
+    /// <summary>
+    /// [EN] Apply a knowledge response (from `knowledge_status` or `knowledge_mount`) to
+    ///      the panel. Returns false when the response carries no libraries array.
+    /// [ZH] 把知识库响应（来自 `knowledge_status` 或 `knowledge_mount`）应用到面板。
+    ///      响应不含 libraries 数组时返回 false。
+    /// </summary>
+    private bool ApplyKnowledgeLibraries(JsonElement root)
+    {
+        if (!root.TryGetProperty("libraries", out JsonElement libraries)
+            || libraries.ValueKind != JsonValueKind.Array)
+            return false;
+        _knowledgeLibraries.Clear();
+        foreach (JsonElement library in libraries.EnumerateArray())
+        {
+            _knowledgeLibraries.Add(new KnowledgeLibraryItem
+            {
+                Id = GetStringField(library, "id"),
+                Name = GetStringField(library, "name"),
+                Root = GetStringField(library, "root"),
+                Status = GetStringField(library, "status"),
+                Documents = GetIntField(library, "documents"),
+                Chunks = GetIntField(library, "chunks"),
+            });
+        }
+        int bound = 0;
+        if (root.TryGetProperty("knowledge_ids", out JsonElement ids)
+            && ids.ValueKind == JsonValueKind.Array)
+            bound = ids.GetArrayLength();
+        RenderKnowledgeRows();
+        KnowledgeHintText.Text = _knowledgeLibraries.Count == 0
+            ? Loc.T("knowledge.panel.empty", "尚未挂载文件夹")
+            : Loc.T("knowledge.panel.mounted", "已挂载：{0}", _knowledgeLibraries.Count)
+              + " · " + Loc.T("knowledge.panel.bound", "本会话绑定 {0} 个", bound)
+              + " · " + Loc.T("knowledge.panel.hint", "索引在后台建立，不影响对话");
+        return true;
     }
 
     /// <summary>
@@ -6455,6 +6484,12 @@ public partial class MainWindow : Window
             string content = GetStringField(root, "content");
             if (content.Length > 0)
                 Toast(content);
+            // [EN] The mount response already carries the authoritative library list, so the
+            //      panel is updated immediately; a later status refresh may fail while the
+            //      indexing job holds resources and must not erase this state.
+            // [ZH] 挂载响应本身已携带权威的库列表，因此立即更新面板；随后的状态刷新可能因
+            //      建索引作业占用资源而失败，不得抹掉这里已确认的状态。
+            ApplyKnowledgeLibraries(root);
             string jobId = GetStringField(root, "job_id");
             if (jobId.Length > 0)
                 StartKnowledgePolling(jobId);
