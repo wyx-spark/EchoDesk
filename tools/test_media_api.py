@@ -420,6 +420,31 @@ def main():
         else:
             skip("真实设备录音", "未检测到输入设备")
 
+    # [EN] Vision capability detection: native multimodal names must be recognized,
+    # [EN] and a plain text checkpoint must report "not a VL model" rather than
+    # [EN] "missing projector". [ZH] 视觉能力探测：原生多模态名称必须被识别；纯文本
+    # [ZH] 检查点应报告「不是 VL 模型」，而不是「缺少投影文件」。
+    import vision as vision_mod
+
+    check("Qwen3.5 被识别为视觉模型",
+          vision_mod.model_name_suggests_vision("Qwen3.5-8B-Instruct-Q4_K_M.gguf"))
+    check("纯文本 Qwen 不被识别为视觉模型",
+          not vision_mod.model_name_suggests_vision("Qwen2.5-7B-Instruct-Q4_K_M.gguf"))
+    text_model = os.path.join(root, "Qwen2.5-7B-Instruct-Q4_K_M.gguf")
+    with open(text_model, "wb") as handle:
+        handle.write(b"stub")
+    text_status = vision_mod.VisionService(text_model, "").status()
+    check("纯文本模型报告 not_vlm 且 is_vlm 为假",
+          text_status.get("reason") == "media.vision_not_vlm"
+          and text_status.get("is_vlm") is False, str(text_status))
+    vlm_model = os.path.join(root, "Qwen3.5-8B-Instruct-Q4_K_M.gguf")
+    with open(vlm_model, "wb") as handle:
+        handle.write(b"stub")
+    vlm_status = vision_mod.VisionService(vlm_model, "").status()
+    check("Qwen3.5 缺投影文件时提示补 mmproj",
+          vlm_status.get("reason") == "media.vision_no_mmproj"
+          and vlm_status.get("is_vlm") is True, str(vlm_status))
+
     print("\n================ 结果汇总 ================")
     print(f"共 {PASSED + len(FAILED)} 项，通过 {PASSED} 项，失败 {len(FAILED)} 项，"
           f"跳过 {len(SKIPPED)} 项")

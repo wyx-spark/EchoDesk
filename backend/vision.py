@@ -60,6 +60,34 @@ DEFAULT_VISION_CONTEXT = 4096
 #: [ZH] 视觉轮对配置上下文取值施加的上限。
 MAX_VISION_CONTEXT = 8192
 
+#: [EN] File-name markers that identify a vision-language checkpoint. The list is
+#: [EN] advisory only: an existing multimodal projector always proves vision
+#: [EN] capability regardless of the checkpoint name. It exists so that a
+#: [EN] text-only model is reported as "not a VL model" instead of "missing a
+#: [EN] projector", and so that native multimodal families such as Qwen3.5 are
+#: [EN] recognized even when their file name does not contain ``vl``.
+#: [ZH] 用于识别视觉语言检查点的文件名标记。该清单仅作提示：只要存在多模态投影
+#: [ZH] 文件，无论检查点名称如何都应视为具备视觉能力。它的作用是让纯文本模型
+#: [ZH] 报告为「不是 VL 模型」而非「缺少投影文件」，并识别 Qwen3.5 这类文件名中
+#: [ZH] 不含 ``vl`` 的原生多模态系列。
+VISION_NAME_HINTS = (
+    "vl", "vision", "multimodal", "mmproj", "llava", "minicpm", "internvl",
+    "pixtral", "mllama", "gemma3", "qwen3.5", "qwen3_5", "qwen35", "smolvlm",
+    "idefics", "cogvlm", "glm-4v", "glm4v",
+)
+
+
+def model_name_suggests_vision(model_path: str) -> bool:
+    """
+    [EN]
+    Return whether the checkpoint name indicates a vision-language model.
+
+    [ZH]
+    判断检查点名称是否指示视觉语言模型。
+    """
+    name = os.path.basename(model_path or "").lower()
+    return any(hint in name for hint in VISION_NAME_HINTS)
+
 
 class VisionError(Exception):
     """
@@ -135,7 +163,10 @@ def _handler_names(model_path: str) -> List[str]:
     """
     name = os.path.basename(model_path or "").lower()
     candidates: List[str] = []
-    if "qwen" in name and "vl" in name:
+    qwen_visual = "qwen" in name and (
+        "vl" in name or "qwen3.5" in name or "qwen3_5" in name or "qwen35" in name
+    )
+    if qwen_visual:
         candidates.extend(("Qwen3VLChatHandler", "Qwen25VLChatHandler"))
     elif "llava" in name:
         candidates.append("Llava15ChatHandler")
@@ -358,11 +389,19 @@ class VisionService:
         elif not os.path.isfile(self.model_path):
             reason = "media.vision_model_missing"
         elif not self.mmproj_path:
-            reason = "media.vision_no_mmproj"
+            # [EN] Without a projector, a text-only checkpoint is not a vision model;
+            # [EN] report that distinction instead of implying that a projector file is
+            # [EN] merely missing. The interface hides the image entry in this case.
+            # [ZH] 没有投影文件时，纯文本检查点并非视觉模型；应报告这一区别，而不是暗示
+            # [ZH] 只是缺少投影文件。此时界面会隐藏图片入口。
+            reason = ("media.vision_no_mmproj"
+                      if model_name_suggests_vision(self.model_path)
+                      else "media.vision_not_vlm")
         elif not os.path.isfile(self.mmproj_path):
             reason = "media.vision_mmproj_missing"
         return {
             "available": not reason,
+            "is_vlm": model_name_suggests_vision(self.model_path),
             "model": os.path.basename(self.model_path),
             "model_path": self.model_path,
             "mmproj": os.path.basename(self.mmproj_path),

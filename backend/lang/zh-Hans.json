@@ -40,6 +40,7 @@
     "vision_no_model": "未配置视觉模型；请在 config.json 的 media.vision_model 指定带 mmproj 的 VL 模型，或先加载一个多模态模型",
     "vision_model_missing": "视觉模型文件不存在：{name}",
     "vision_no_mmproj": "未找到多模态投影文件（mmproj-Q8_0.gguf）；请把它放在模型目录，或用 media.vision_mmproj 指定",
+    "vision_not_vlm": "当前模型不是视觉语言模型，无法输入图片。请加载 VL/多模态模型，或设置 media.vision_model。",
     "vision_mmproj_missing": "多模态投影文件不存在：{name}",
     "vision_handler_missing": "当前 llama-cpp-python 构建不支持多模态聊天处理器，无法加载视觉模型（已尝试：{detail}）",
     "vision_failed": "视觉推理失败：{detail}",

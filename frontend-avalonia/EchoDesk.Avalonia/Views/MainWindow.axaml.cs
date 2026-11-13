@@ -1346,6 +1346,10 @@ public partial class MainWindow : Window
         SetStatus(_media.State.VisionAvailable
             ? Loc.T("main.media.visionReady", "🖼 图片对话可用")
             : Loc.T("main.media.visionUnavailable", "🖼 未配置视觉模型"));
+        // [EN] Disable the image entry for non-VL models instead of showing an error
+        //      after the user has already selected a file.
+        // [ZH] 非 VLM 模型禁用图片入口，而不是等用户选完文件后再报错。
+        ImageButton.IsEnabled = _media.State.VisionAvailable;
     }
 
     /// <summary>
@@ -3855,6 +3859,18 @@ public partial class MainWindow : Window
             Toast(Loc.T("main.error.busy", "⏳ 上一条回复仍在生成，请先停止或等待完成"));
             return;
         }
+        // [EN] A non-VL model must not raise an error dialog: the entry is disabled and
+        //      an invocation from a keyboard shortcut only updates the status line.
+        // [ZH] 非 VLM 模型不得弹出错误框：入口已禁用，经快捷键触发时也只更新状态栏。
+        if (!_media.State.Loaded)
+            await _media.LoadStateAsync(_state.Backend);
+        if (_media.State.Loaded && !_media.State.VisionAvailable)
+        {
+            SetStatus(string.IsNullOrWhiteSpace(_media.State.VisionReason)
+                ? Loc.T("main.media.visionUnavailable", "🖼 未配置视觉模型")
+                : _media.State.VisionReason);
+            return;
+        }
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = Loc.T("main.media.chooseTitle", "选择图片"),
@@ -3882,13 +3898,7 @@ public partial class MainWindow : Window
             return;
         }
         if (_media.State.Loaded && !_media.State.VisionAvailable)
-        {
-            AddMessage("system", string.IsNullOrWhiteSpace(_media.State.VisionReason)
-                ? Loc.T("main.media.visionUnavailableTip",
-                    "🖼 尚未配置可用的视觉模型：请在 config.json 的 media.vision_model 指定带 mmproj 的 VL 模型。")
-                : _media.State.VisionReason);
             return;
-        }
 
         string prompt = (InputBox.Text ?? "").Trim();
         InputBox.Text = "";
