@@ -794,8 +794,12 @@ def test_crash_log_scope() -> None:
 
 
 def test_operational_log_sanitizer() -> None:
-    """v0.2.6 第 18 项：运行日志不得以 delta / system 进入对话区。"""
-    section("运行日志协议层清洗（第 18 项）")
+    """v0.2.6 第 18 项 / 第 21 项：日志分流策略。
+
+    第 21 项把策略收紧为"只拦高频调试日志"：delta 仍然全面拦截，
+    system 事件中有业务含义的 INFO 提示必须保留，只有分段进度一类被改投 progress。
+    """
+    section("运行日志协议层清洗（第 18 / 21 项）")
     import main as backend_main
 
     stamp = "2026-11-14 18:43:25,123 INFO 推理规划: n_ctx=2048"
@@ -807,11 +811,19 @@ def test_operational_log_sanitizer() -> None:
     reasoning_log = backend_main._sanitize_protocol_event(
         {"type": "delta", "channel": "reasoning", "content": stamp})
     check("思考通道的纯日志行被丢弃", reasoning_log is None, str(reasoning_log))
-    system_log = backend_main._sanitize_protocol_event(
-        {"type": "system", "content": "[2026-11-14 12:00:00] INFO: ready"})
-    check("system 事件中的日志行改为 progress",
-          isinstance(system_log, dict) and system_log.get("type") == "progress",
-          str(system_log))
+    # v0.2.6 第 21 项：有业务含义的 system INFO 提示不再被降级为 progress。
+    system_notice = {"type": "system",
+                     "content": "[2026-11-14 12:00:00] INFO: 未加载模型，进入无模型就绪状态"}
+    preserved = backend_main._sanitize_protocol_event(system_notice)
+    check("system 事件中的业务 INFO 提示保持 system",
+          preserved is system_notice,
+          str(preserved))
+    # 高频调试进度仍然改投 progress。
+    system_debug = backend_main._sanitize_protocol_event(
+        {"type": "system", "content": "2026-11-14 12:00:00,000 INFO ✅ Segment 2/5 done"})
+    check("system 事件中的高频分段进度改为 progress",
+          isinstance(system_debug, dict) and system_debug.get("type") == "progress",
+          str(system_debug))
     mixed = backend_main._sanitize_protocol_event(
         {"type": "delta", "channel": "answer", "content": "真实内容\n" + stamp})
     check("混排时保留真实内容并丢弃日志行",
@@ -1201,6 +1213,68 @@ def test_media_support() -> None:
                 os.environ["ECHODESK_DATA"] = old
 
 
+def test_windows_vl_soft_fuse() -> None:
+    """v0.2.6 第 22 项：Windows + VL 视觉推理软熔断。
+
+    Windows 上 llama.cpp 运行 VL 检查点可能在 C++ 层触发 ``access violation reading 0x0``，
+    Python 无法捕获。本节断言熔断判定先于任何 ``llama_cpp`` 导入 / ``Llama(...)`` 构造，
+    且不会影响非 Windows 平台或非 VL 模型。
+    """
+    section("Windows + VL 软熔断（第 22 项）")
+    import vision as vision_mod
+
+    original = vision_mod._is_windows
+    try:
+        vision_mod._is_windows = lambda: True
+
+        check("Windows 下 VL 模型命中软熔断",
+              vision_mod.windows_vl_blocked("Qwen3-VL-4B-Instruct-Q4_K_M.gguf"),
+              "windows_vl_blocked=False")
+        check("VL 判定不区分大小写",
+              vision_mod.windows_vl_blocked("qwen3-vl-2b.gguf"),
+              "小写 vl 未命中")
+        check("Windows 下非 VL 模型不受影响",
+              not vision_mod.windows_vl_blocked("Qwen2.5-7B-Instruct-Q4_K_M.gguf"))
+
+        service = vision_mod.VisionService(
+            os.path.join("models", "Qwen3-VL-4B-Instruct-Q4_K_M.gguf"),
+            "mmproj-F16.gguf")
+        status = service.status()
+        check("status 报告软熔断且不可用",
+              status["available"] is False
+              and status["reason"] == vision_mod.WINDOWS_VL_BLOCKED_REASON
+              and status["windows_vl_blocked"] is True,
+              f"reason={status['reason']} available={status['available']}")
+
+        try:
+            service.chat("does-not-matter.png", "describe this image")
+            check("chat 在原生调用前抛出结构化 VisionError", False, "未抛出异常")
+        except vision_mod.VisionError as exc:
+            check("chat 在原生调用前抛出结构化 VisionError",
+                  exc.code == "windows_vl_blocked"
+                  and exc.key == vision_mod.WINDOWS_VL_BLOCKED_REASON,
+                  f"code={exc.code} key={exc.key}")
+        check("熔断后未创建视觉引擎（没有触碰 Llama）", service._engine is None,
+              repr(service._engine))
+
+        try:
+            vision_mod.VisionEngine("Qwen3-VL-4B.gguf", "mmproj.gguf")
+            check("VisionEngine 构造前即熔断", False, "未抛出异常")
+        except vision_mod.VisionError as exc:
+            check("VisionEngine 构造前即熔断",
+                  exc.code == "windows_vl_blocked", exc.code)
+
+        text = vision_mod._t(vision_mod.WINDOWS_VL_BLOCKED_REASON)
+        check("语言包给出软熔断文案（含 Windows / VL）",
+              "Windows" in text and "VL" in text, text)
+
+        vision_mod._is_windows = lambda: False
+        check("非 Windows 平台下 VL 模型不受影响",
+              not vision_mod.windows_vl_blocked("Qwen3-VL-4B.gguf"))
+    finally:
+        vision_mod._is_windows = original
+
+
 def test_imports() -> None:
     """真实导入每一个后端模块。
 
@@ -1239,7 +1313,7 @@ def main() -> int:
              test_crash_log_scope, test_config_save_target,
              test_operational_log_sanitizer, test_state_paths,
              test_automation, test_marketplace, test_model_match,
-             test_protocol_keys, test_media_support]
+             test_protocol_keys, test_media_support, test_windows_vl_soft_fuse]
     for fn in tests:
         try:
             fn()

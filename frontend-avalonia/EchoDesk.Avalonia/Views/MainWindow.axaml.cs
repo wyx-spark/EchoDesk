@@ -106,16 +106,137 @@ public partial class MainWindow : Window
     //      response does not itself trigger a new backend request.
     // [ZH] v0.2.6 第 17 项：防止用后端响应回填上下文选择器时又触发一次后端请求。
     private bool _contextWindowUpdating;
+    // [EN] v0.2.6 item 21: the editable ComboBox's inner TextBox, cached once the template has
+    //      been applied so the Enter handler can be attached directly and the typed text can be
+    //      read even when `ComboBox.Text` has not caught up yet.
+    // [ZH] v0.2.6 第 21 项：可编辑 ComboBox 内部的 TextBox。模板应用后缓存，以便直接挂接
+    //      回车处理器，并在 `ComboBox.Text` 尚未同步时也能读到键入文本。
+    private TextBox? _contextWindowEditor;
     // [EN] Sizes offered by the context selector; the backend accepts a wider
     //      range, but the task book fixes these four user-facing choices.
     // [ZH] 上下文选择器提供的档位；后端接受更大范围，但任务书把这四档定为用户选项。
     private static readonly int[] ContextWindowSizes = { 4096, 8192, 16384, 32768 };
+    // [EN] v0.2.6 item 19: bounds for a manually typed context window. They mirror
+    //      `config.MIN_CONTEXT` and `config.MAX_CONTEXT_OVERRIDE` on the backend; the
+    //      backend remains the authority, these checks only avoid a pointless request.
+    // [ZH] v0.2.6 第 19 项：手动输入上下文窗口的边界，与后端 `config.MIN_CONTEXT` 和
+    //      `config.MAX_CONTEXT_OVERRIDE` 一致；后端仍是权威，这里只避免无意义的请求。
+    private const int MinContextWindow = 2048;
+    private const int MaxContextWindow = 4_194_304;
+
+    /// <summary>
+    /// [EN] v0.2.6 item 21: pattern of **high-frequency, purely engineering** log lines
+    ///      (segment merging, chunked-summary progress, "[x/x] ... done"). Such a line is the
+    ///      only kind that is still diverted away from the conversation: it would otherwise
+    ///      repeat dozens of times per document and bury the real dialogue.
+    /// [ZH] v0.2.6 第 21 项：**高频、纯工程性质**日志行的模式（分段合并、分块摘要进度、
+    ///      "[x/x] ... done"）。只有这一类仍被移出对话区：否则每份文档都会重复几十次，
+    ///      把真正的对话淹没。
+    /// </summary>
+    private static readonly Regex DebugLogLine = new(
+        @"(?:merging\s+segment|合并分段摘要"
+        + @"|(?:segment|chunk)\s+\d+\s*[/／]\s*\d+"
+        + @"|第\s*\d+\s*[/／]\s*\d+\s*段"
+        + @"|\[\s*\d+\s*[/／]\s*\d+\s*\]\s*.*(?:done|complete|完成))",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// [EN] Prefix of a backend logging line: an optional bracketed timestamp, an optional
+    ///      ISO timestamp, and the level token. Removing it turns
+    ///      "2026-11-14 18:43:25,123 INFO 未加载模型" into the readable notice "未加载模型".
+    /// [ZH] 后端日志行的前缀：可选的方括号时间戳、可选的 ISO 时间戳与级别标记。去掉它即可把
+    ///      "2026-11-14 18:43:25,123 INFO 未加载模型" 变成可读提示 "未加载模型"。
+    /// </summary>
+    private static readonly Regex LogPrefix = new(
+        @"^\s*(?:\[[^\]]{0,80}\]\s*)?"
+        + @"(?:\d{4}[-/]\d{2}[-/]\d{2}[ T][\d:.,]+\s*)?"
+        + @"(?:\[\s*)?(?:INFO|WARNING|ERROR|DEBUG|CRITICAL)(?:\s*\])?\s*:?\s*",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// [EN] Extracts the level token of a backend logging line. Used to keep DEBUG lines out of
+    ///      the conversation: they are engineering detail by definition.
+    /// [ZH] 提取后端日志行的级别标记。用于把 DEBUG 行挡在对话区之外：按定义它们只是工程细节。
+    /// </summary>
+    private static readonly Regex LogLevel = new(
+        @"^\s*(?:\[[^\]]{0,80}\]\s*)?(?:\d{4}[-/]\d{2}[-/]\d{2}[ T][\d:.,]+\s*)?"
+        + @"(?:\[\s*)?(INFO|WARNING|ERROR|DEBUG|CRITICAL)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// [EN] Returns true only when every non-empty line looks like high-frequency debug
+    ///      progress. A message that mixes a real notice with progress lines is therefore
+    ///      never classified as noise.
+    /// [ZH] 仅当每个非空行都像高频调试进度时才返回真。真实提示与进度行混排的消息因此
+    ///      绝不会被整体判为噪声。
+    /// </summary>
+    private static bool IsHighFrequencyLogText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        bool sawLine = false;
+        foreach (string raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+            sawLine = true;
+            if (!DebugLogLine.IsMatch(raw))
+                return false;
+        }
+        return sawLine;
+    }
+
+    /// <summary>
+    /// [EN] Removes the logging decoration from a line that must stay visible. The text is
+    ///      only touched when it really carries a logging prefix, so ordinary notices pass
+    ///      through byte for byte.
+    /// [ZH] 去掉需要保留的日志行的装饰前缀。仅在确实带有日志前缀时才改动文本，普通提示
+    ///      逐字节原样通过。
+    /// </summary>
+    private static string StripLogDecoration(string line)
+    {
+        if (!BackendLogLine.IsMatch(line))
+            return line;
+        string stripped = LogPrefix.Replace(line, "", 1).Trim();
+        return stripped.Length > 0 ? stripped : line.Trim();
+    }
+
+    /// <summary>
+    /// [EN] Splits one would-be system message into the content that stays in the
+    ///      conversation and the high-frequency noise that is diverted to the status strip.
+    ///      Meaningful log lines (for example "INFO 未加载模型") are **kept** and only lose
+    ///      their timestamp decoration, which is the v0.2.6 item 21 policy change.
+    /// [ZH] 把一条候选系统消息拆成"留在对话区的内容"与"转去状态区的高频噪声"。
+    ///      有业务含义的日志行（例如 "INFO 未加载模型"）**保留**，仅去掉时间戳装饰——
+    ///      这正是 v0.2.6 第 21 项的策略变更。
+    /// </summary>
+    private static string SplitSystemLogText(string text, out string diverted)
+    {
+        diverted = "";
+        if (string.IsNullOrWhiteSpace(text) || !BackendLogLine.IsMatch(text))
+            return text;
+        var kept = new List<string>();
+        foreach (string raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+            if (DebugLogLine.IsMatch(raw))
+            {
+                if (diverted.Length == 0)
+                    diverted = raw.Trim();
+                continue;
+            }
+            kept.Add(StripLogDecoration(raw));
+        }
+        return string.Join("\n", kept).Trim();
+    }
 
     /// <summary>
     /// [EN] Pattern of a backend operational log line (timestamp or level prefix). Such
-    ///      lines belong to the status bar and must never become a conversation bubble.
-    /// [ZH] 后端运行日志行的模式（时间戳或级别前缀）。此类行属于状态栏，绝不能成为
-    ///      对话气泡。
+    ///      lines keep their logging decoration; the decision whether they reach the
+    ///      conversation is made by <see cref="DebugLogLine"/>, not by this pattern.
+    /// [ZH] 后端运行日志行的模式（时间戳或级别前缀）。这类行保留日志装饰；是否进入
+    ///      对话区由 <see cref="DebugLogLine"/> 决定，而不是由本模式决定。
     /// </summary>
     private static readonly Regex BackendLogLine = new(
         // [EN] v0.2.6 item 17: accept both bare ISO timestamps and bracketed
@@ -214,9 +335,38 @@ public partial class MainWindow : Window
     private bool _commandRowOpen;
     private string _pendingDestructive = "";
 
-    // [EN] Notification bar and crash notice.
-    // [ZH] 通知条 / 崩溃提示。
-    private DispatcherTimer? _toastTimer;
+    // [EN] v0.2.6 item 21: the notification-bar timer was removed together with the bottom
+    //      toast. Operation feedback is now a persistent system bubble in the conversation.
+    // [ZH] v0.2.6 第 21 项：通知条计时器随底部 Toast 一同移除。操作反馈现在以持久的
+    //      系统气泡写入对话区。
+
+    /// <summary>
+    /// [EN] Deduplication ledger for backend notices promoted from stderr into the
+    ///      conversation (v0.2.6 item 21). A backend may repeat the same state line on every
+    ///      retry or poll; without the window the transcript would fill with copies.
+    /// [ZH] 由 stderr 提升到对话区的后端提示去重台账（v0.2.6 第 21 项）。后端可能在每次重试
+    ///      或轮询时重复同一行状态；没有时间窗，对话区会被副本填满。
+    /// </summary>
+    private readonly Dictionary<string, DateTime> _recentSystemNotices = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// [EN] How long an identical backend notice is suppressed after it has been shown once.
+    /// [ZH] 同一条后端提示展示一次后，在此时长内不再重复展示。
+    /// </summary>
+    private static readonly TimeSpan SystemNoticeWindow = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// [EN] Pure engineering log lines that must never become a conversation bubble even
+    ///      though they pass the level check: they describe internals (inference-plan tuning,
+    ///      crash-log setup, pipe teardown) and mean nothing to the end user.
+    /// [ZH] 即使通过级别检查也绝不能成为对话气泡的纯工程日志：它们描述内部细节（推理规划调参、
+    ///      崩溃日志启用、管道关闭），对最终用户没有意义。
+    /// </summary>
+    private static readonly string[] EngineeringNoiseMarkers =
+    {
+        "推理规划", "inference plan", "已启用崩溃日志", "crash log",
+        "stdout 管道已关闭", "stdout pipe closed",
+    };
 
     // [EN] Exit countdown (/exit, v0.2.2 batch 3): as in WPF, a thank-you note plus a 10-second
     // [EN] countdown.
@@ -489,7 +639,11 @@ public partial class MainWindow : Window
         bool maximized = WindowState == WindowState.Maximized;
         MaximizeGlyph.IsVisible = !maximized;
         RestoreGlyph.IsVisible = maximized;
-        TitleBarTitle.Text = Title;
+        // [EN] v0.2.6 item 21: the caption no longer renders the document title as a separate
+        //      text block. The identity block is icon + version only, so the window title stays
+        //      available to the task switcher without occupying title-bar width.
+        // [ZH] v0.2.6 第 21 项：标题栏不再单独渲染文档标题文本块。标识区只保留图标 + 版本号，
+        //      窗口标题仍供任务切换器使用，但不占用标题栏宽度。
 
         string minimize = Loc.T("main.window.minimize", "最小化");
         string maximize = maximized
@@ -693,6 +847,20 @@ public partial class MainWindow : Window
         //      ToolTip 承载。
         foreach (int size in ContextWindowSizes)
             ContextWindowCombo.Items.Add(size);
+        // [EN] v0.2.6 item 19: Enter inside the editable selector applies the typed value.
+        //      Tunnel routing is required because the editable TextBox consumes the key first.
+        // [ZH] v0.2.6 第 19 项：在可编辑选择器内按回车应用输入值。必须使用隧道路由，因为
+        //      内部可编辑 TextBox 会先消费该按键。
+        ContextWindowCombo.AddHandler(KeyDownEvent, OnContextWindowComboKeyDown,
+                                      RoutingStrategies.Tunnel);
+        // [EN] v0.2.6 item 21: also attach directly to the inner editor. The template is
+        //      applied eagerly so the editor exists before the first key press, and the
+        //      TemplateApplied hook covers a theme change or a late template realisation.
+        // [ZH] v0.2.6 第 21 项：同时直接挂到内部编辑器上。模板在此提前应用，确保编辑器在
+        //      第一次按键前就存在；TemplateApplied 钩子覆盖主题切换或模板延迟实例化的情况。
+        ContextWindowCombo.TemplateApplied += (_, _) => HookContextWindowEditor();
+        ContextWindowCombo.ApplyTemplate();
+        HookContextWindowEditor();
         ContextWindowCombo.SelectionChanged += async (_, _) =>
         {
             if (_contextWindowUpdating || ContextWindowCombo.SelectedItem is not int size)
@@ -990,15 +1158,12 @@ public partial class MainWindow : Window
         // [ZH]（backend/version.py）上报后再出现。
         string appVersion = _state.Backend.Version ?? "";
         Title = appVersion.Length > 0 ? $"EchoDesk {appVersion}" : "EchoDesk";
-        VersionText.Text = appVersion;
-        // [EN] Custom title bar identity block: version from the backend handshake,
-        //      studio line from the language pack.
-        // [ZH] 自定义标题栏标识区：版本来自后端握手，出品方文案来自语言包。
-        TitleBarVersionText.Text = _state.Backend.Version ?? "";
-        TitleBarStudioText.Text = Loc.T("main.powered", "由熵寂工作室出品");
-        BrandText.Text = Loc.T("main.brand", "📡 EchoDesk");
-        PoweredText.Text = Loc.T("main.powered", "由熵寂工作室出品");
-        PlatformChip.Text = $"🖥 {_state.Platform.DisplayName}";
+        // [EN] v0.2.6 item 21: the custom title bar carries the icon and the version only.
+        //      The studio line was retired with the status row; the language-pack entry stays
+        //      reusable for the About surface rather than being hard-coded anywhere.
+        // [ZH] v0.2.6 第 21 项：自定义标题栏只承载图标与版本号。出品方文案随状态行一同下线；
+        //      语言包条目保留给「关于」界面复用，而不是散落成硬编码。
+        TitleBarVersionText.Text = appVersion;
         // [EN] The wording of the model chip must match WPF exactly (same language pack, same
         // [EN] keys): not ready → main.model.noModel; ready → main.model.chip.
         // [ZH] 模型胶囊的文案口径必须与 WPF 完全一致（同一份语言包、同一批键）：
@@ -1040,7 +1205,10 @@ public partial class MainWindow : Window
         // [ZH] 所以这里不再往 Content 里写文案；含义靠 ToolTip 与无障碍 HelpText 传达，
         // [ZH] 与 WPF 完全一致（main.button.sendTip / uploadTip）。
         StopButton.Content = "⏹";
-        HintText.Text = Loc.T("main.hint", "💡 拖拽文件可上传 · Ctrl+Enter 发送 · Esc 停止 · A-/A+ 或 Ctrl+滚轮 调字号");
+        // [EN] v0.2.6 item 19: the permanent hint row below the input box is gone; shortcut
+        //      guidance lives in tooltips and the first-run guide instead.
+        // [ZH] v0.2.6 第 19 项：输入框下方的常驻提示行已删除；快捷键说明改由 ToolTip 与
+        //      首次使用引导承载。
         // [EN] The placeholder of the command input box uses the TextBox watermark: see the
         // [EN] comment on CommandInputRow in MainWindow.axaml (manually stacking a TextBlock is
         // [EN] neither aligned correctly nor self-hiding).
@@ -1141,6 +1309,12 @@ public partial class MainWindow : Window
             ContextChipText.Text = Loc.T("main.context.buttonIdle", "上下文：---/---");
         ShowCapabilityBanner();
         ApplyHelpText();
+        // [EN] v0.2.6 item 22: re-apply the image-entry availability and its explanatory
+        //      tooltip **after** ApplyHelpText, so the generic image description cannot
+        //      overwrite the Windows + VL soft-fuse notice on a language change.
+        // [ZH] v0.2.6 第 22 项：在 ApplyHelpText **之后**重新应用图片入口可用性与说明性提示，
+        //      避免语言切换时通用图片说明覆盖 Windows + VL 软熔断提示。
+        ApplyImageAvailability();
         // [EN] Caption text is language-dependent, therefore it is refreshed with the rest of
         // [EN] the interface strings.
         // [ZH] 标题栏文案依赖界面语言，因此随其余界面文案一并刷新。
@@ -1266,6 +1440,83 @@ public partial class MainWindow : Window
     // [ZH] 后端启动
     // -----------------------------------------------------------------
 
+    /// <summary>
+    /// [EN] Splits one backend stderr line between the two surfaces (v0.2.6 item 21).
+    ///
+    ///      * The status strip always shows the latest line, truncated, so a long-running
+    ///        operation still proves it is alive.
+    ///      * A line that came through the logging system at INFO/WARNING/ERROR, is not
+    ///        engineering detail, and has not been shown in the last
+    ///        <see cref="SystemNoticeWindow"/> seconds becomes a **system message** in the
+    ///        conversation. This is how "no model loaded" and similar state notices become
+    ///        persistent instead of flashing past at the bottom of the window.
+    ///
+    /// [ZH] 把一行后端 stderr 分流到两个位置（v0.2.6 第 21 项）。
+    ///
+    ///      · 状态区始终显示最新一行（截断），长耗时操作仍能证明自己还活着。
+    ///      · 经日志系统输出、级别为 INFO/WARNING/ERROR、不是工程细节，且最近
+    ///        <see cref="SystemNoticeWindow"/> 秒内未出现过的行，升级为对话区的**系统消息**。
+    ///        这正是"未加载模型"一类状态提示的落点：持久保留，而不再在窗口底部一闪而过。
+    /// </summary>
+    private void ShowBackendStderr(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+            return;
+        string raw = line.Trim();
+        string text = StripLogDecoration(raw);
+        if (text.Length == 0)
+            return;
+        // [EN] The status strip is a live indicator and therefore always refreshed.
+        // [ZH] 状态区是实时指示器，因此始终刷新。
+        SetStatus(Trim(Emoji.Prefer(text), 160));
+
+        // [EN] Conversation promotion is deliberately conservative: only logging-system
+        //      lines are considered, DEBUG is engineering detail, and the noise/duplicate
+        //      filters keep one backend fault from producing a wall of bubbles.
+        // [ZH] 提升到对话区刻意保守：只考虑日志系统输出的行，DEBUG 属工程细节，
+        //      噪声与去重过滤避免一次后端故障刷出一整屏气泡。
+        if (!BackendLogLine.IsMatch(raw) || text.Length > 500 || IsHighFrequencyLogText(raw))
+            return;
+        string level = LogLevel.Match(raw).Groups[1].Value.ToUpperInvariant();
+        if (level == "DEBUG")
+            return;
+        foreach (string marker in EngineeringNoiseMarkers)
+        {
+            if (text.Contains(marker, StringComparison.OrdinalIgnoreCase))
+                return;
+        }
+        if (IsRecentSystemNotice(text))
+            return;
+        AddMessage("system", text);
+    }
+
+    /// <summary>
+    /// [EN] Records a notice and reports whether the same text was already shown inside the
+    ///      deduplication window. Expired entries are pruned on every call, so the ledger is
+    ///      bounded by the number of distinct notices in the last 30 seconds.
+    /// [ZH] 记录一条提示，并报告相同文本是否已在去重时间窗内出现过。每次调用都会清理过期项，
+    ///      因此台账只受最近 30 秒内不同提示数量约束。
+    /// </summary>
+    private bool IsRecentSystemNotice(string text)
+    {
+        DateTime now = DateTime.UtcNow;
+        if (_recentSystemNotices.Count > 0)
+        {
+            List<string> expired = new();
+            foreach (KeyValuePair<string, DateTime> pair in _recentSystemNotices)
+            {
+                if (now - pair.Value > SystemNoticeWindow)
+                    expired.Add(pair.Key);
+            }
+            foreach (string key in expired)
+                _recentSystemNotices.Remove(key);
+        }
+        if (_recentSystemNotices.ContainsKey(text))
+            return true;
+        _recentSystemNotices[text] = now;
+        return false;
+    }
+
     private async Task StartBackendAsync()
     {
         SetStatus(Loc.T("main.connecting", "⏳ 正在连接后端，请稍候..."));
@@ -1283,7 +1534,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        _state.Backend.StderrReceived += line => Dispatcher.UIThread.Post(() => SetStatus(Trim(line, 120)));
+        // [EN] v0.2.6 item 21: backend stderr is split by meaning. High-frequency engineering
+        //      noise only refreshes the status strip; a notice with business meaning (the
+        //      backend's "INFO 未加载模型" family) is promoted into the conversation as a
+        //      persistent, copyable system bubble.
+        // [ZH] v0.2.6 第 21 项：后端 stderr 按含义分流。高频工程噪声只刷新状态区；
+        //      有业务含义的提示（后端 "INFO 未加载模型" 一类）提升到对话区，成为持久、
+        //      可复制的系统气泡。
+        _state.Backend.StderrReceived += line =>
+            Dispatcher.UIThread.Post(() => ShowBackendStderr(line));
         // [EN] Structured host progress is a status-bar concern only. It used to create a
         // [EN] live system bubble in the transcript, which mixed operational logs into the
         // [EN] conversation area; the bottom status line is now the single destination.
@@ -1316,8 +1575,11 @@ public partial class MainWindow : Window
             if (ready && _modelWasReady != true)
             {
                 string text = Loc.T("main.model.hotLoaded", "✅ 模型已就绪，现在可以正常对话了。");
+                // [EN] v0.2.6 item 21: one persistent system bubble replaces the former
+                //      "system message + bottom toast" pair, which showed the same sentence twice.
+                // [ZH] v0.2.6 第 21 项：用一条持久的系统气泡取代此前"系统消息 + 底部 Toast"
+                //      的双写，那会把同一句话显示两遍。
                 AddMessage("system", text);
-                Toast(text);
             }
             _modelWasReady = ready;
         });
@@ -1438,16 +1700,62 @@ public partial class MainWindow : Window
         SetStatus(_media.State.VisionAvailable
             ? Loc.T("main.media.visionReady", "🖼 图片对话可用")
             : Loc.T("main.media.visionUnavailable", "🖼 未配置视觉模型"));
-        // [EN] Disable the image entry for non-VL models instead of showing an error
-        //      after the user has already selected a file.
-        // [ZH] 非 VLM 模型禁用图片入口，而不是等用户选完文件后再报错。
-        ImageButton.IsEnabled = _media.State.VisionAvailable;
+        // [EN] v0.2.6 item 22: disable the image entry when the backend's soft fuse applies,
+        //      and explain the platform limitation in the tooltip. Merely leaving the button
+        //      greyed out with the generic text would let the user think a model is missing.
+        // [ZH] v0.2.6 第 22 项：后端软熔断生效时禁用图片入口，并在悬停提示中说明平台限制。
+        //      只置灰并沿用笼统文案会让用户误以为是模型缺失。
+        ApplyImageAvailability();
         // [EN] Speech input is offered only when a transcription engine is available;
         // [EN] otherwise the microphone is silently disabled (greyed out) with a
         // [EN] tooltip explaining why, and shortcut presses only update the status bar.
         // [ZH] 仅在转写引擎可用时提供语音输入；否则麦克风静默禁用（置灰），悬停说明
         // [ZH] 原因，快捷键按下时只更新底部状态栏。
         ApplyMicAvailability();
+    }
+
+    /// <summary>
+    /// [EN] Reflects the backend's vision capability on the image button (v0.2.6 item 22).
+    ///
+    ///      When the backend reports the Windows + VL soft fuse, the entry is disabled and the
+    ///      tooltip names the platform limitation in the current interface language. Other
+    ///      unavailability reasons keep using the backend-provided localized reason. The
+    ///      tooltip is explicitly shown on disabled controls, because a greyed-out button with
+    ///      no explanation is exactly the "dead entry" the task book asks to avoid.
+    ///
+    /// [ZH] 把后端视觉能力反映到图片按钮上（v0.2.6 第 22 项）。
+    ///
+    ///      后端报告 Windows + VL 软熔断时禁用入口，并用当前界面语言在悬停提示中说明平台
+    ///      限制。其他不可用原因沿用后端给出的已本地化原因。禁用控件显式允许显示提示，
+    ///      因为"置灰且无任何解释"正是任务书要求避免的死入口。
+    /// </summary>
+    private void ApplyImageAvailability()
+    {
+        if (!_media.State.Loaded)
+            return;
+        bool available = _media.State.VisionAvailable;
+        ImageButton.IsEnabled = available;
+        string tip;
+        if (available)
+        {
+            tip = Loc.T("main.media.imageTip", "附加图片并提问（jpg / png）");
+        }
+        else if (_media.State.VisionWindowsVlBlocked)
+        {
+            tip = Loc.T("main.media.windowsVlBlocked",
+                "当前版本在 Windows 下本地运行 VL 视觉模型不稳定，请使用纯文本或外部 API。");
+        }
+        else if (!string.IsNullOrWhiteSpace(_media.State.VisionReason))
+        {
+            tip = _media.State.VisionReason;
+        }
+        else
+        {
+            tip = Loc.T("main.media.visionUnavailable", "🖼 未配置视觉模型");
+        }
+        ToolTip.SetTip(ImageButton, tip);
+        ToolTip.SetShowOnDisabled(ImageButton, true);
+        AutomationProperties.SetHelpText(ImageButton, tip);
     }
 
     /// <summary>
@@ -1760,6 +2068,136 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// [EN] Parses and applies the editable context-window selector (v0.2.6 items 19 and 21).
+    ///      The value is read through <see cref="ReadContextWindowInput"/> rather than from a
+    ///      single property, validated against the same bounds as the backend, and an invalid
+    ///      entry is reported as a **system message in the conversation** — never as a
+    ///      transient toast.
+    /// [ZH] 解析并应用可编辑上下文窗口选择器（v0.2.6 第 19 项与第 21 项）。数值经
+    ///      <see cref="ReadContextWindowInput"/> 读取，而不是依赖单一属性；按与后端相同的边界
+    ///      校验；非法输入以**对话区系统消息**告知，绝不再用一闪而过的通知条。
+    /// </summary>
+    private async void OnContextWindowComboKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+            return;
+        // [EN] Mark the key handled so the internal editable TextBox does not open or
+        //      close the drop-down instead of applying the value.
+        // [ZH] 标记已处理，避免内部可编辑 TextBox 用该按键开合下拉框而不是应用数值。
+        e.Handled = true;
+        string raw = ReadContextWindowInput();
+        if (!int.TryParse(raw, out int size)
+            || size < MinContextWindow || size > MaxContextWindow)
+        {
+            string message = Loc.T("main.context.invalid",
+                "⚠️ 请输入 {0}–{1} 之间的整数（tokens）", MinContextWindow, MaxContextWindow);
+            AddMessage("system", message);
+            RestoreContextWindowText();
+            return;
+        }
+        await ApplyContextWindowAsync(size);
+    }
+
+    /// <summary>
+    /// [EN] v0.2.6 item 21: reads the text the user actually typed.
+    ///
+    ///      An editable Avalonia ComboBox keeps the typed string inside an inner TextBox; in
+    ///      some focus/template states <c>ComboBox.Text</c> still holds the previously selected
+    ///      preset. The editor is therefore the first source, the ComboBox text the second and
+    ///      the selected item the last fallback. The result is normalised (trim, thousands
+    ///      separators, full-width digits, stray spaces) so "65,536" and " 65536 " both parse.
+    /// [ZH] v0.2.6 第 21 项：读取用户真正键入的文本。
+    ///
+    ///      可编辑的 Avalonia ComboBox 把键入的字符串放在内部 TextBox 里；某些焦点/模板状态下
+    ///      <c>ComboBox.Text</c> 仍是上一次选中的档位。因此内部编辑器是第一来源，ComboBox 文本
+    ///      第二，选中项是最后回退。结果会规范化（去空白、去千位分隔符、全角数字转半角），
+    ///      使 "65,536" 与 " 65536 " 都能解析。
+    /// </summary>
+    private string ReadContextWindowInput()
+    {
+        TextBox? editor = _contextWindowEditor
+            ?? ContextWindowCombo.GetVisualDescendants().OfType<TextBox>().FirstOrDefault();
+        string raw = editor?.Text ?? "";
+        if (string.IsNullOrWhiteSpace(raw))
+            raw = ContextWindowCombo.Text ?? "";
+        if (string.IsNullOrWhiteSpace(raw))
+            raw = ContextWindowCombo.SelectedItem?.ToString() ?? "";
+        return NormalizeContextWindowInput(raw);
+    }
+
+    /// <summary>
+    /// [EN] Normalises a typed context-window value: trims, converts full-width digits to
+    ///      ASCII, and removes separators / whitespace. Any other character makes the value
+    ///      invalid (empty result), which keeps "65536 tokens" from being accepted by accident.
+    /// [ZH] 规范化手动输入的上下文窗口数值：去首尾空白、全角数字转半角，并移除分隔符与空白。
+    ///      出现其他字符即视为非法（返回空串），避免 "65536 tokens" 之类被误接受。
+    /// </summary>
+    private static string NormalizeContextWindowInput(string raw)
+    {
+        var builder = new StringBuilder(raw.Length);
+        foreach (char ch in raw.Trim())
+        {
+            if (ch >= '０' && ch <= '９')
+                builder.Append((char)('0' + (ch - '０')));
+            else if (ch is >= '0' and <= '9')
+                builder.Append(ch);
+            else if (ch is ',' or '，' or '_' or ' ' or '\t' or '\u00A0')
+                continue;
+            else
+                return "";
+        }
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// [EN] v0.2.6 item 21: attaches the Enter handler directly to the editable ComboBox's
+    ///      inner TextBox. The tunnel handler on the ComboBox normally sees the key first, but
+    ///      the direct registration removes any dependency on how the template routes focus,
+    ///      which was the reported cause of "Enter sometimes does nothing".
+    /// [ZH] v0.2.6 第 21 项：把回车处理直接挂到可编辑 ComboBox 的内部 TextBox 上。正常情况下
+    ///      ComboBox 上的隧道处理器先看到按键，但直接注册消除了对模板焦点路由的依赖——
+    ///      那正是"回车有时没反应"的上报原因。
+    /// </summary>
+    private void HookContextWindowEditor()
+    {
+        foreach (TextBox editor in ContextWindowCombo.GetVisualDescendants().OfType<TextBox>())
+        {
+            if (ReferenceEquals(editor, _contextWindowEditor))
+                continue;
+            _contextWindowEditor = editor;
+            editor.AddHandler(KeyDownEvent, OnContextWindowComboKeyDown,
+                              RoutingStrategies.Tunnel);
+            AutomationProperties.SetAutomationId(editor, "ContextWindowEditor");
+        }
+    }
+
+    /// <summary>
+    /// [EN] Restore the editable selector text to the last applied value.
+    /// [ZH] 把可编辑选择器的文本恢复为上次已应用的值。
+    /// </summary>
+    private void RestoreContextWindowText()
+    {
+        _contextWindowUpdating = true;
+        try
+        {
+            string text = ContextWindowCombo.SelectedItem?.ToString() ?? "";
+            ContextWindowCombo.Text = text;
+            // [EN] v0.2.6 item 21: the inner editor keeps its own text, so it must be reset
+            //      too; otherwise a rejected number would remain visible after the restore.
+            // [ZH] v0.2.6 第 21 项：内部编辑器维护自己的文本，因此必须一并复位；否则被拒的
+            //      数值在恢复后仍会显示。
+            TextBox? editor = _contextWindowEditor
+                ?? ContextWindowCombo.GetVisualDescendants().OfType<TextBox>().FirstOrDefault();
+            if (editor is not null)
+                editor.Text = text;
+        }
+        finally
+        {
+            _contextWindowUpdating = false;
+        }
+    }
+
+    /// <summary>
     /// [EN] Select one context-window entry without triggering a backend request.
     ///      A legacy value that is not one of the four task-book sizes is inserted
     ///      as an extra entry instead of being silently rounded to a neighbour.
@@ -1785,6 +2223,16 @@ public partial class MainWindow : Window
             if (!present)
                 ContextWindowCombo.Items.Insert(0, size);
             ContextWindowCombo.SelectedItem = size;
+            // [EN] An editable ComboBox keeps its own text; mirror the authoritative
+            //      value so a previously typed-but-rejected number cannot linger. The inner
+            //      editor is synchronised as well (v0.2.6 item 21).
+            // [ZH] 可编辑 ComboBox 维护自己的文本；同步权威值，避免上次被拒的输入残留。
+            //      内部编辑器一并同步（v0.2.6 第 21 项）。
+            ContextWindowCombo.Text = size.ToString();
+            TextBox? editor = _contextWindowEditor
+                ?? ContextWindowCombo.GetVisualDescendants().OfType<TextBox>().FirstOrDefault();
+            if (editor is not null)
+                editor.Text = size.ToString();
         }
         finally
         {
@@ -1804,9 +2252,25 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task ApplyContextWindowAsync(int size)
     {
+        // [EN] v0.2.6 item 19: a manually typed value reaches this method directly, so
+        //      the bounds are enforced here as well as in the key handler.
+        // [ZH] v0.2.6 第 19 项：手动输入的值会直接进入本方法，因此这里与按键处理器
+        //      一样强制边界。
+        if (size < MinContextWindow || size > MaxContextWindow)
+        {
+            string message = Loc.T("main.context.invalid",
+                "⚠️ 请输入 {0}–{1} 之间的整数（tokens）", MinContextWindow, MaxContextWindow);
+            // [EN] v0.2.6 item 21: validation failures are persisted as a system message; the
+            //      former transient status/toast pair is gone.
+            // [ZH] v0.2.6 第 21 项：校验失败改为持久化系统消息；此前的状态栏/Toast 双写已移除。
+            AddMessage("system", message);
+            RestoreContextWindowText();
+            return;
+        }
         if (!_state.Backend.IsRunning)
         {
-            SetStatus(Loc.T("main.error.notRunning", "❌ 后端未运行"));
+            string message = Loc.T("main.error.notRunning", "❌ 后端未运行");
+            AddMessage("system", message);
             await RefreshContextAsync();
             return;
         }
@@ -1818,8 +2282,10 @@ public partial class MainWindow : Window
                 idleTimeout: BackendService.HeavyIdleTimeout);
             if (doc is null)
             {
-                SetStatus(Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
-                    _state.Backend.LastError ?? ""));
+                string failure = Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
+                    _state.Backend.LastError ?? "");
+                SetStatus(failure);
+                AddMessage("system", failure);
                 await RefreshContextAsync();
                 return;
             }
@@ -1831,9 +2297,15 @@ public partial class MainWindow : Window
                 string content = GetStringField(root, "content");
                 if (ok)
                 {
-                    SetStatus(string.IsNullOrWhiteSpace(content)
+                    // [EN] v0.2.6 item 21: a successful application also leaves a copyable
+                    //      record, so the user can prove which window is actually active.
+                    // [ZH] v0.2.6 第 21 项：应用成功同样留下可复制记录，用户可据此确认
+                    //      实际生效的窗口大小。
+                    string applied = string.IsNullOrWhiteSpace(content)
                         ? Loc.T("main.context.applied", "✅ 上下文窗口已设为 {0}", size)
-                        : content);
+                        : content;
+                    SetStatus(applied);
+                    AddMessage("system", applied);
                 }
                 else
                 {
@@ -1841,13 +2313,15 @@ public partial class MainWindow : Window
                         ? Loc.T("main.context.applyFailed", "❌ 无法应用上下文窗口 {0}", size)
                         : content;
                     SetStatus(message);
-                    Toast(message, error: true);
+                    AddMessage("system", message);
                 }
             }
         }
         catch (Exception ex)
         {
-            SetStatus(Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
+            string failure = Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message);
+            SetStatus(failure);
+            AddMessage("system", failure);
         }
         await RefreshContextAsync();
     }
@@ -2062,7 +2536,7 @@ public partial class MainWindow : Window
         {
             HideUpdateProgress();
             StripUpdateText.Text = Loc.T("main.update.downloadFailedShort", "⚠️ 下载失败，点击重试");
-            Toast(Loc.T("main.update.downloadFailed", "下载更新失败：{0}", ex.Message), error: true);
+            AddMessage("system", Loc.T("main.update.downloadFailed", "下载更新失败：{0}", ex.Message));
         }
     }
 
@@ -2082,7 +2556,7 @@ public partial class MainWindow : Window
                 idleTimeout: TimeSpan.FromMinutes(2));
             if (doc is null)
             {
-                Toast(Loc.T("main.update.applyFailed", "应用更新失败：后端无响应"), error: true);
+                AddMessage("system", Loc.T("main.update.applyFailed", "应用更新失败：后端无响应"));
                 return;
             }
             using (doc)
@@ -2103,14 +2577,14 @@ public partial class MainWindow : Window
             // [EN] The backend response already contains the backup directory; the app is about
             // [EN] to exit, so the toast is the visible acknowledgement.
             // [ZH] 后端响应已包含备份目录；应用即将退出，提示条就是可见的确认。
-            Toast(Loc.T("main.update.applying", "正在安装更新，应用即将退出…"));
+            AddMessage("system", Loc.T("main.update.applying", "正在安装更新，应用即将退出…"));
             await Task.Delay(900);
             if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
                 desktop.Shutdown();
         }
         catch (Exception ex)
         {
-            Toast(Loc.T("main.update.applyFailed", "应用更新失败：{0}", ex.Message), error: true);
+            AddMessage("system", Loc.T("main.update.applyFailed", "应用更新失败：{0}", ex.Message));
         }
     }
 
@@ -2326,7 +2800,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Toast(Loc.T("main.update.checkFailed", "打开下载页面失败：{0}", ex.Message), error: true);
+            AddMessage("system", Loc.T("main.update.checkFailed", "打开下载页面失败：{0}", ex.Message));
         }
     }
 
@@ -2841,7 +3315,7 @@ public partial class MainWindow : Window
                 if (!exact && CommandList.Items.Count > 1)
                 {
                     ExecuteCommandItem(item, completeOnly: true);
-                    Toast(Loc.T("main.command.completed",
+                    AddMessage("system", Loc.T("main.command.completed",
                         "已补全为 {0}，确认无误后再按 Enter 执行", item.Command));
                     return true;
                 }
@@ -2953,7 +3427,7 @@ public partial class MainWindow : Window
         CommandInputBox.CaretIndex = command.Length;
         CommandInputBox.Focus();
         UpdateCommandButtonText();
-        Toast(Loc.T("main.command.confirmDestructive",
+        AddMessage("system", Loc.T("main.command.confirmDestructive",
             "⚠️ {0} 会改变现有状态：再按一次 Enter 确认执行", command));
         return false;
     }
@@ -3000,7 +3474,7 @@ public partial class MainWindow : Window
     {
         if (_busy)
         {
-            Toast(Loc.T("main.error.busy", "⏳ 上一条回复仍在生成，请先停止或等待完成"), error: true);
+            AddMessage("system", Loc.T("main.error.busy", "⏳ 上一条回复仍在生成，请先停止或等待完成"));
             return;
         }
 
@@ -3030,7 +3504,7 @@ public partial class MainWindow : Window
                 idleTimeout: BackendService.HeavyIdleTimeout);
             if (doc is null)
             {
-                Toast(Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", _state.Backend.LastError ?? ""), error: true);
+                AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", _state.Backend.LastError ?? ""));
                 return;
             }
             using (doc)
@@ -3064,7 +3538,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Toast(Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message), error: true);
+            AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
         }
         finally
         {
@@ -3224,7 +3698,7 @@ public partial class MainWindow : Window
         SnippetPalette.IsOpen = true;
         UpdateSnippetButtonText();
         if (_snippets.Items.Count == 0)
-            Toast(Loc.T("main.snippet.empty", "还没有常用语：用 /snippet add 名称 文本 添加"));
+            AddMessage("system", Loc.T("main.snippet.empty", "还没有常用语：用 /snippet add 名称 文本 添加"));
     }
 
     private void UpdateSnippetButtonText()
@@ -3261,43 +3735,21 @@ public partial class MainWindow : Window
         InputBox.Text = current[..caret] + piece + current[caret..];
         InputBox.CaretIndex = caret + piece.Length;
         InputBox.Focus();
-        Toast(Loc.T("main.snippet.inserted", "已插入常用语「{0}」，可直接编辑后发送", snippet.Name));
+        AddMessage("system", Loc.T("main.snippet.inserted", "已插入常用语「{0}」，可直接编辑后发送", snippet.Name));
     }
 
     // -----------------------------------------------------------------
-    // [EN] Notification bar
-    // [ZH] 通知条
+    // [EN] Operation feedback
+    // [ZH] 操作反馈
     // -----------------------------------------------------------------
-
-    /// <summary>
-    /// [EN] Bottom notification bar: it is shown briefly and then hides itself (6 seconds, as
-    /// [EN] in the WPF version).
-    /// [ZH] 底部通知条：短暂显示后自动隐藏（6 秒，与 WPF 版一致）。
-    /// </summary>
-    private void Toast(string message, bool error = false)
-    {
-        ToastText.Text = Emoji.Prefer(message);
-        if (Application.Current is not null
-            && Application.Current.TryFindResource(error ? "ErrorBrush" : "AccentBrush", out object? brush)
-            && brush is IBrush ib)
-        {
-            ToastText.Foreground = ib;
-        }
-        ToastBorder.IsVisible = true;
-        HintText.IsVisible = false;
-        _toastTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
-        _toastTimer.Stop();
-        _toastTimer.Tick -= OnToastTick;
-        _toastTimer.Tick += OnToastTick;
-        _toastTimer.Start();
-    }
-
-    private void OnToastTick(object? sender, EventArgs e)
-    {
-        _toastTimer?.Stop();
-        ToastBorder.IsVisible = false;
-        HintText.IsVisible = true;
-    }
+    //
+    // [EN] v0.2.6 item 21: the former bottom toast (a six-second transient bar) is retired.
+    //      Operation feedback is no longer flashed at the bottom of the window: every call
+    //      site writes a system message through AddMessage, so the feedback persists in the
+    //      conversation and can be selected, copied and screenshotted.
+    // [ZH] v0.2.6 第 21 项：原底部 Toast（6 秒一闪而过的通知条）已废除。操作反馈不再
+    //      在窗口底部闪过：所有调用点改为经 AddMessage 写入系统消息，反馈因此持久留在
+    //      对话区，可选中、可复制、可截图。
 
     // -----------------------------------------------------------------
     // [EN] Search toggle / context compression
@@ -3314,19 +3766,19 @@ public partial class MainWindow : Window
                 idleTimeout: TimeSpan.FromSeconds(60));
             if (doc is null)
             {
-                Toast(Loc.T("main.strip.searchToggleFailed", "切换搜索失败：{0}", _state.Backend.LastError ?? ""), error: true);
+                AddMessage("system", Loc.T("main.strip.searchToggleFailed", "切换搜索失败：{0}", _state.Backend.LastError ?? ""));
                 return;
             }
             using (doc)
             {
                 string content = doc.RootElement.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
                 ApplyStatusFields(doc.RootElement);
-                Toast(content.Length > 0 ? content : Loc.T("main.strip.searchToggled", "已切换联网搜索"));
+                AddMessage("system", content.Length > 0 ? content : Loc.T("main.strip.searchToggled", "已切换联网搜索"));
             }
         }
         catch (Exception ex)
         {
-            Toast(Loc.T("main.strip.searchToggleFailed", "切换搜索失败：{0}", ex.Message), error: true);
+            AddMessage("system", Loc.T("main.strip.searchToggleFailed", "切换搜索失败：{0}", ex.Message));
         }
     }
 
@@ -3350,7 +3802,7 @@ public partial class MainWindow : Window
                 idleTimeout: BackendService.HeavyIdleTimeout);
             if (doc is null)
             {
-                Toast(Loc.T("main.strip.compactFailed", "❌ 压缩上下文失败：{0}", _state.Backend.LastError ?? ""), error: true);
+                AddMessage("system", Loc.T("main.strip.compactFailed", "❌ 压缩上下文失败：{0}", _state.Backend.LastError ?? ""));
                 return;
             }
             using (doc)
@@ -3371,12 +3823,11 @@ public partial class MainWindow : Window
                         : Loc.T("main.strip.compactDoneShort", "已压缩：移出 {0} 条较早消息", dropped);
                 }
                 AddMessage("system", Loc.T("main.strip.compactResult", "🗜 {0}", message));
-                Toast(message);
             }
         }
         catch (Exception ex)
         {
-            Toast(Loc.T("main.strip.compactFailed", "❌ 压缩上下文失败：{0}", ex.Message), error: true);
+            AddMessage("system", Loc.T("main.strip.compactFailed", "❌ 压缩上下文失败：{0}", ex.Message));
         }
         finally
         {
@@ -3412,7 +3863,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Toast(Loc.T("main.error.settingsFailed", "⚠️ 无法打开设置窗口：{0}", ex.Message), error: true);
+            AddMessage("system", Loc.T("main.error.settingsFailed", "⚠️ 无法打开设置窗口：{0}", ex.Message));
         }
     }
 
@@ -3490,7 +3941,7 @@ public partial class MainWindow : Window
         CommandInputBox.CaretIndex = command.Length;
         CommandInputBox.Focus();
         UpdateCommandButtonText();
-        Toast(Loc.T("main.command.confirmDestructive",
+        AddMessage("system", Loc.T("main.command.confirmDestructive",
             "⚠️ {0} 会改变现有状态：再按一次 Enter 确认执行", command));
         return false;
     }
@@ -3664,15 +4115,19 @@ public partial class MainWindow : Window
             case "delta":
             case "system":
             {
-                // [EN] Defensive interception required by the task book: even if a
-                //      stream path reaches dispatch with a delta or system message,
-                //      a matching log line is redirected and never written to the UI.
-                // [ZH] 任务书要求的防御性拦截：即使某条流式路径把 delta 或 system
-                //      消息送到了分发层，命中的日志行也只改投状态栏，绝不写入界面。
+                // [EN] v0.2.6 item 21: only high-frequency debug progress is diverted to the
+                //      status strip. A meaningful system notice is rendered as a normal system
+                //      bubble so it can be copied and screenshotted.
+                // [ZH] v0.2.6 第 21 项：只有高频调试进度改投状态区。有业务含义的系统提示
+                //      按普通系统气泡渲染，因而可复制、可截图。
                 string content = root.TryGetProperty("content", out JsonElement contentEl)
                     ? contentEl.GetString() ?? "" : "";
-                if (IsOperationalLogText(content))
-                    SetStatus(Trim(Emoji.Prefer(content), 120));
+                if (content.Length == 0)
+                    break;
+                if (IsHighFrequencyLogText(content))
+                    SetStatus(Trim(Emoji.Prefer(content), 160));
+                else if (type == "system")
+                    AddMessage("system", content);
                 break;
             }
             case "progress":
@@ -4265,7 +4720,7 @@ public partial class MainWindow : Window
     {
         if (_busy)
         {
-            Toast(Loc.T("main.error.busy", "⏳ 上一条回复仍在生成，请先停止或等待完成"));
+            AddMessage("system", Loc.T("main.error.busy", "⏳ 上一条回复仍在生成，请先停止或等待完成"));
             return;
         }
         // [EN] A non-VL model must not raise an error dialog: the entry is disabled and
@@ -4432,7 +4887,7 @@ public partial class MainWindow : Window
                 string message = doc is not null
                     && doc.RootElement.TryGetProperty("content", out JsonElement content)
                     ? content.GetString() ?? "" : _state.Backend.LastError ?? "";
-                Toast(string.IsNullOrWhiteSpace(message)
+                AddMessage("system", string.IsNullOrWhiteSpace(message)
                     ? Loc.T("main.media.recordFailed", "⚠️ 无法开始录音")
                     : message);
                 return;
@@ -4454,7 +4909,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Toast(Loc.T("main.media.recordFailed", "⚠️ 无法开始录音") + $" {ex.Message}");
+            AddMessage("system", Loc.T("main.media.recordFailed", "⚠️ 无法开始录音") + $" {ex.Message}");
         }
         finally
         {
@@ -4489,14 +4944,14 @@ public partial class MainWindow : Window
             {
                 if (stop is null)
                 {
-                    Toast(Loc.T("main.media.recordFailed", "⚠️ 无法结束录音"));
+                    AddMessage("system", Loc.T("main.media.recordFailed", "⚠️ 无法结束录音"));
                     return;
                 }
                 JsonElement root = stop.RootElement;
                 if (root.TryGetProperty("ok", out JsonElement ok)
                     && ok.ValueKind == JsonValueKind.False)
                 {
-                    Toast(root.TryGetProperty("content", out JsonElement content)
+                    AddMessage("system", root.TryGetProperty("content", out JsonElement content)
                         ? content.GetString() ?? "" : Loc.T("main.media.recordFailed", "⚠️ 无法结束录音"));
                     return;
                 }
@@ -4505,7 +4960,7 @@ public partial class MainWindow : Window
             }
             if (string.IsNullOrEmpty(path))
             {
-                Toast(Loc.T("main.media.recordFailed", "⚠️ 无法结束录音"));
+                AddMessage("system", Loc.T("main.media.recordFailed", "⚠️ 无法结束录音"));
                 return;
             }
             // [EN] The capability may have changed while recording (for example the
@@ -4524,7 +4979,7 @@ public partial class MainWindow : Window
                 idleTimeout: TimeSpan.FromMinutes(5));
             if (result is null)
             {
-                Toast(Loc.T("main.media.sttFailed", "⚠️ 语音转写失败"));
+                AddMessage("system", Loc.T("main.media.sttFailed", "⚠️ 语音转写失败"));
                 return;
             }
             JsonElement transcription = result.RootElement;
@@ -4550,15 +5005,18 @@ public partial class MainWindow : Window
                     ApplyMicAvailability();
                     return;
                 }
+                // [EN] v0.2.6 item 21: a single error bubble is enough; writing the generic
+                //      failure line after the detailed one produced two bubbles for one fault.
+                // [ZH] v0.2.6 第 21 项：一条错误气泡即可；此前在详细原因之后再写一条通用失败
+                //      提示，会让同一次故障出现两个气泡。
                 AddMessage("system", message);
-                Toast(Loc.T("main.media.sttFailed", "⚠️ 语音转写失败"));
                 return;
             }
             string text = transcription.TryGetProperty("text", out JsonElement textElement)
                 ? textElement.GetString() ?? "" : "";
             if (text.Length == 0)
             {
-                Toast(Loc.T("main.media.sttEmpty", "没有识别到语音内容"));
+                AddMessage("system", Loc.T("main.media.sttEmpty", "没有识别到语音内容"));
                 return;
             }
             string current = InputBox.Text ?? "";
@@ -4567,7 +5025,7 @@ public partial class MainWindow : Window
                 : current + text;
             InputBox.CaretIndex = InputBox.Text.Length;
             InputBox.Focus();
-            Toast(Loc.T("main.media.transcribed", "✅ 已转写并填入输入框"));
+            AddMessage("system", Loc.T("main.media.transcribed", "✅ 已转写并填入输入框"));
             SetStatus(Loc.T("main.status.ready", "就绪"));
         }
         catch (Exception ex)
@@ -4762,7 +5220,7 @@ public partial class MainWindow : Window
                     + Environment.NewLine
                     + Loc.T("main.upload.confirmHint",
                         "再点一次「📎 上传文件」（或按 Ctrl+O）即继续；点别的地方则取消。"));
-                Toast(Loc.T("main.upload.confirmTitle", "文件较多"), error: true);
+                AddMessage("system", Loc.T("main.upload.confirmTitle", "文件较多"));
                 return;
             }
         }
@@ -4772,9 +5230,15 @@ public partial class MainWindow : Window
         // [EN] Per-file status and chunked summaries are both written into **the same** system
         // [EN] message (so eight files do not flood the conversation).
         // [ZH] 逐份状态与分段摘要都写进**同一条**系统消息（8 个文件也不会把对话刷满）
-        AddMessage("system", list.Count > 1
+        string uploadingText = list.Count > 1
             ? Loc.T("main.upload.uploadingMany", "📥 正在上传 {0} 个文件…", list.Count)
-            : Loc.T("main.upload.uploading", "📤 正在上传文件: {0} ...", Path.GetFileName(list[0])));
+            : Loc.T("main.upload.uploading", "📤 正在上传文件: {0} ...", Path.GetFileName(list[0]));
+        // [EN] v0.2.6 item 21: keep a handle to **this** bubble and its transcript slot, so
+        //      live status updates cannot land on a message that arrived meanwhile.
+        // [ZH] v0.2.6 第 21 项：记录**这一条**气泡及其会话槽位，使实时状态更新绝不会写到
+        //      期间新到达的其他消息上。
+        _uploadStatusView = AddMessage("system", uploadingText);
+        _uploadStatusIndex = _transcript.Count > 0 ? _transcript.Count - 1 : -1;
         var lines = new List<string>();
 
         SetBusy(true);
@@ -4839,6 +5303,19 @@ public partial class MainWindow : Window
     /// [ZH] 超限上传的待确认列表（再点一次「上传文件」即继续）。
     /// </summary>
     private List<string> _pendingUpload = new();
+
+    /// <summary>
+    /// [EN] v0.2.6 item 21: the exact system bubble that carries per-file upload status, plus
+    ///      its transcript index. Previously the updater wrote into "_transcript[^1]", which
+    ///      broke as soon as another system notice (for example a promoted stderr message)
+    ///      arrived during the upload: the upload bubble stopped updating and an unrelated
+    ///      message was overwritten.
+    /// [ZH] v0.2.6 第 21 项：承载逐份上传状态的那一条系统气泡及其在会话记录中的下标。此前的
+    ///      更新器写 "_transcript[^1]"，一旦上传期间有别的系统提示（例如由 stderr 提升的
+    ///      提示）到达就会失效：上传气泡停止更新，而无关消息被覆盖。
+    /// </summary>
+    private MessageView? _uploadStatusView;
+    private int _uploadStatusIndex = -1;
 
     /// <summary>
     /// [EN] Maximum number of files in one upload (the same as in WPF).
@@ -4933,12 +5410,15 @@ public partial class MainWindow : Window
         string text = string.Join(Environment.NewLine, lines);
         Dispatcher.UIThread.Post(() =>
         {
-            if (_transcript.Count > 0)
-                _transcript[^1] = _transcript[^1] with { Content = Emoji.Prefer(text) };
-            // [EN] The last view is exactly the system message that was just added (nothing
-            // [EN] else was appended after AddMessage).
-            // [ZH] 最后一条视图就是刚加的那条系统消息（AddMessage 之后没有追加别的）
-            if (_progressView is not null)
+            // [EN] v0.2.6 item 21: update the tracked upload bubble by index; never assume
+            //      that it is the last transcript entry.
+            // [ZH] v0.2.6 第 21 项：按下标更新被跟踪的上传气泡；绝不再假设它就是最后一条。
+            if (_uploadStatusIndex >= 0 && _uploadStatusIndex < _transcript.Count)
+                _transcript[_uploadStatusIndex] = _transcript[_uploadStatusIndex]
+                    with { Content = Emoji.Prefer(text) };
+            if (_uploadStatusView is not null)
+                _uploadStatusView.ContentHost.Content = BuildPlainText("system", text);
+            else if (_progressView is not null)
                 _progressView.ContentHost.Content = BuildPlainText("system", text);
             else if (MessagePanel.Children.Count > 0
                      && MessagePanel.Children[^1] is Control last)
@@ -5079,8 +5559,8 @@ public partial class MainWindow : Window
             InputBox.Text = "Raise the clause 8.1 penalty cap to 20% and draft a negotiation note.";
             InputBox.CaretIndex = InputBox.Text.Length;
 
-            VersionText.Text = "v0.2.2";
-            StatusText.Text = "⏳ Generating · 428 tokens written";
+            TitleBarVersionText.Text = "v0.2.2";
+            SetStatus("⏳ Generating · 428 tokens written");
             ModelText.Text = "🧠 Model: Qwen2.5-7B-Instruct-Q4_K_M";
             ModeText.Text = "MODE CONTRACT";
             ContextChipText.Text = "Context: 6,144/8,192";
@@ -5092,7 +5572,6 @@ public partial class MainWindow : Window
             StripCapabilityText.Text = "🖥 Capabilities: WPS ready";
             StripCompactText.Text = "🗜 Compaction: on";
             MetricsText.Text = "⚡ 18.4 tok/s · first token 0.8s";
-            HintText.Text = "Enter to send · Shift+Enter for a new line · Ctrl+O to upload";
         }
         else
         {
@@ -5120,8 +5599,8 @@ public partial class MainWindow : Window
             InputBox.Text = "把第 8.1 条的违约金上限改成 20%，再给我一版谈判口径。";
             InputBox.CaretIndex = InputBox.Text.Length;
 
-            VersionText.Text = "v0.2.2";
-            StatusText.Text = "⏳ 正在生成 · 已输出 428 tokens";
+            TitleBarVersionText.Text = "v0.2.2";
+            SetStatus("⏳ 正在生成 · 已输出 428 tokens");
             ModelText.Text = "🧠 模型: Qwen2.5-7B-Instruct-Q4_K_M";
             ModeText.Text = "MODE 合同审阅";
             ContextChipText.Text = "上下文：6,144/8,192";
@@ -5133,7 +5612,6 @@ public partial class MainWindow : Window
             StripCapabilityText.Text = "🖥 本机能力：WPS 可用";
             StripCompactText.Text = "🗜 压缩：开启";
             MetricsText.Text = "⚡ 18.4 tok/s · 首字 0.8s";
-            HintText.Text = "Enter 发送 · Shift+Enter 换行 · Ctrl+O 上传文档";
         }
 
         MetricsText.IsVisible = true;
@@ -5498,28 +5976,23 @@ public partial class MainWindow : Window
         return sawLine;
     }
 
-    private void AddMessage(string role, string content, string reasoning = "", string metrics = "")
+    private MessageView? AddMessage(string role, string content, string reasoning = "", string metrics = "")
     {
-        // [EN] Operational log lines are diverted to the status bar even if a backend
-        //      path still emits them as system messages (including restored history).
-        //      A message that mixes log lines with real content keeps only the real
-        //      content; every matching line is redirected, never rendered.
-        // [ZH] 即使某条后端路径仍以系统消息发出运行日志（包括恢复的历史），也一律
-        //      转到底部状态栏。日志行与真实内容混排时只保留真实内容；所有匹配行都被
-        //      重定向，绝不渲染。
-        if (role == "system" && BackendLogLine.IsMatch(content))
+        // [EN] v0.2.6 item 21 policy: only high-frequency debug progress is diverted to the
+        //      status strip. A meaningful backend notice (for example "INFO 未加载模型")
+        //      **stays** in the conversation as a copyable system bubble; its timestamp
+        //      decoration is stripped so the bubble reads like a message, not like a log.
+        // [ZH] v0.2.6 第 21 项策略：只有高频调试进度被改投状态区。有业务含义的后端提示
+        //      （例如 "INFO 未加载模型"）**保留**在对话区，作为可复制的系统气泡；其时间戳
+        //      装饰会被去除，使气泡读起来像一条消息，而不是一行日志。
+        if (role == "system")
         {
-            var kept = new List<string>();
-            foreach (string line in content.Replace("\r\n", "\n").Split('\n'))
-            {
-                if (BackendLogLine.IsMatch(line))
-                    SetStatus(Trim(line, 120));
-                else if (!string.IsNullOrWhiteSpace(line))
-                    kept.Add(line);
-            }
-            content = string.Join("\n", kept).Trim();
-            if (content.Length == 0)
-                return;
+            string normalized = SplitSystemLogText(content, out string diverted);
+            if (diverted.Length > 0)
+                SetStatus(Trim(Emoji.Prefer(diverted), 160));
+            if (normalized.Length == 0)
+                return null;
+            content = normalized;
         }
         // [EN] Emoji degradation is applied to the message body at the single entry point,
         // [EN] before
@@ -5539,6 +6012,7 @@ public partial class MainWindow : Window
             view.ContentHost.Content = MarkdownRenderer.Build(content, _state.Settings.FontSize);
         else
             view.ContentHost.Content = BuildPlainText(role, content);
+        return view;
     }
 
     /// <summary>
@@ -5787,14 +6261,104 @@ public partial class MainWindow : Window
     public void ProbeSetTitleBarVersion(string version) => TitleBarVersionText.Text = version;
 
     /// <summary>
-    /// [EN] Reports the custom title bar's identity block: title, version, studio line
-    ///      and the measured title width. Used by `--probe chat`.
-    /// [ZH] 报告自定义标题栏标识区：标题、版本、出品方文案与实测标题宽度。供 `--probe chat` 使用。
+    /// [EN] v0.2.6 item 22: drives the image-entry guard with synthetic media state and
+    ///      reports the resulting enablement and tooltip. The original state is restored, so
+    ///      the probe is side-effect free for later assertions.
+    /// [ZH] v0.2.6 第 22 项：用合成媒体状态驱动图片入口防呆，并报告最终的启用状态与悬停提示。
+    ///      原状态会被恢复，因此该探针对后续断言没有副作用。
+    /// </summary>
+    public string ProbeImageGuard(bool available, bool windowsVlBlocked, string reason)
+    {
+        bool oldLoaded = _media.State.Loaded;
+        bool oldAvailable = _media.State.VisionAvailable;
+        bool oldBlocked = _media.State.VisionWindowsVlBlocked;
+        string oldReason = _media.State.VisionReason;
+        bool oldEnabled = ImageButton.IsEnabled;
+        object? oldTip = ToolTip.GetTip(ImageButton);
+        try
+        {
+            _media.State.Loaded = true;
+            _media.State.VisionAvailable = available;
+            _media.State.VisionWindowsVlBlocked = windowsVlBlocked;
+            _media.State.VisionReason = reason;
+            ApplyImageAvailability();
+            string tip = ToolTip.GetTip(ImageButton)?.ToString() ?? "";
+            string expected = Loc.T("main.media.windowsVlBlocked",
+                "当前版本在 Windows 下本地运行 VL 视觉模型不稳定，请使用纯文本或外部 API。");
+            return $"enabled={ImageButton.IsEnabled}"
+                   + $"｜showOnDisabled={ToolTip.GetShowOnDisabled(ImageButton)}"
+                   + $"｜tooltipIsBlocked={string.Equals(tip, expected, StringComparison.Ordinal)}"
+                   + $"｜tip={tip}";
+        }
+        finally
+        {
+            _media.State.Loaded = oldLoaded;
+            _media.State.VisionAvailable = oldAvailable;
+            _media.State.VisionWindowsVlBlocked = oldBlocked;
+            _media.State.VisionReason = oldReason;
+            ImageButton.IsEnabled = oldEnabled;
+            ToolTip.SetTip(ImageButton, oldTip);
+            ApplyImageAvailability();
+        }
+    }
+
+    /// <summary>
+    /// [EN] v0.2.6 item 21: feeds one raw value through the same read/normalise path the
+    ///      Enter handler uses, without contacting the backend. The probe uses it to pin the
+    ///      acceptance rule that both "65,536" and " 65536 " resolve to 65536.
+    /// [ZH] v0.2.6 第 21 项：让一个原始输入走与回车处理器完全相同的读取/规范化路径，且不
+    ///      访问后端。探针据此钉住验收口径："65,536" 与 " 65536 " 都解析为 65536。
+    /// </summary>
+    public string ProbeContextWindowInput(string raw)
+    {
+        // [EN] Write both surfaces so the probe exercises the same precedence as real typing.
+        // [ZH] 两个载体同时写入，使探针覆盖与真实键入相同的优先级。
+        ContextWindowCombo.Text = raw;
+        ContextWindowCombo.ApplyTemplate();
+        HookContextWindowEditor();
+        if (_contextWindowEditor is not null)
+            _contextWindowEditor.Text = raw;
+        string normalized = ReadContextWindowInput();
+        bool parses = int.TryParse(normalized, out int size);
+        return $"raw={raw}｜normalized={normalized}｜parses={parses}｜size={(parses ? size : 0)}";
+    }
+
+    /// <summary>
+    /// [EN] v0.2.6 item 21: exposes the log-routing predicates to the unattended probe, so the
+    ///      "meaningful INFO passes, high-frequency debug is diverted" rule is asserted without
+    ///      having to provoke a real long-document summary.
+    /// [ZH] v0.2.6 第 21 项：把日志分流判据暴露给无人值守探针，从而无需真的触发一次长文档
+    ///      分段摘要，也能断言"有意义的 INFO 放行、高频调试拦截"。
+    /// </summary>
+    public static string ProbeLogRoutingSample(string text)
+        => $"debug={IsHighFrequencyLogText(text)}｜stripped={StripLogDecoration(text)}";
+
+    /// <summary>
+    /// [EN] v0.2.6 item 21: reports the custom title bar's structural contract for
+    ///      `--probe chat`: the version, the measured version width, and whether the model /
+    ///      mode capsules are inside the title bar while the transient status text is not.
+    /// [ZH] v0.2.6 第 21 项：为 `--probe chat` 报告自定义标题栏的结构契约：版本号、实测版本
+    ///      宽度，以及模型/模式胶囊是否位于标题栏内、临时状态文本是否已被移出。
     /// </summary>
     public string ProbeTitleBarSnapshot()
-        => $"title={TitleBarTitle.Text}｜version={TitleBarVersionText.Text}"
-           + $"｜studio={TitleBarStudioText.Text}"
-           + $"｜titleWidth={TitleBarTitle.Bounds.Width:0}";
+    {
+        // [EN] The probe writes the synthetic version right before reading the snapshot, so the
+        //      pending layout pass has not measured it yet. Measuring with an unbounded width
+        //      yields the real text width without waiting for the next frame.
+        // [ZH] 探针在读取快照前才写入合成版本号，此时待处理的布局过程尚未测量它。以无界宽度
+        //      测量可直接得到真实文本宽度，无需等待下一帧。
+        TitleBarVersionText.Measure(Size.Infinity);
+        double versionWidth = TitleBarVersionText.DesiredSize.Width;
+        bool modelInTitleBar = ModelChip.GetVisualAncestors().Contains(TitleBar);
+        bool modeInTitleBar = ModeChip.GetVisualAncestors().Contains(TitleBar);
+        bool statusInTitleBar = StatusText.GetVisualAncestors().Contains(TitleBar);
+        return $"version={TitleBarVersionText.Text}"
+               + $"｜versionWidth={versionWidth:0}"
+               + $"｜modelInTitleBar={modelInTitleBar}"
+               + $"｜modeInTitleBar={modeInTitleBar}"
+               + $"｜statusInTitleBar={statusInTitleBar}"
+               + $"｜modelWidth={ModelChip.Bounds.Width:0}";
+    }
 
     /// <summary>
     /// [EN] Drives the memory status with a synthetic 95% sample, reports whether the
@@ -6241,7 +6805,7 @@ public partial class MainWindow : Window
         {
             await action();
             if (successToast is not null)
-                Toast(successToast);
+                AddMessage("system", successToast);
         };
         bar.Children.Add(button);
     }
@@ -6255,7 +6819,7 @@ public partial class MainWindow : Window
     {
         if (text.Length == 0)
         {
-            Toast(Loc.T("main.message.nothingToCopy", "⚠️ 没有可复制的内容"), error: true);
+            AddMessage("system", Loc.T("main.message.nothingToCopy", "⚠️ 没有可复制的内容"));
             return;
         }
         if (TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
@@ -6372,7 +6936,7 @@ public partial class MainWindow : Window
     {
         if (_transcript.Count == 0)
         {
-            Toast(Loc.T("main.message.nothingToCopy", "⚠️ 没有可复制的内容"), error: true);
+            AddMessage("system", Loc.T("main.message.nothingToCopy", "⚠️ 没有可复制的内容"));
             return;
         }
         var builder = new StringBuilder();
@@ -6388,7 +6952,7 @@ public partial class MainWindow : Window
             builder.AppendLine();
         }
         _ = CopyTextAsync(builder.ToString().TrimEnd());
-        Toast(Loc.T("main.message.copiedAll", "已复制全部对话"));
+        AddMessage("system", Loc.T("main.message.copiedAll", "已复制全部对话"));
     }
 
     /// <summary>
@@ -6428,7 +6992,23 @@ public partial class MainWindow : Window
         return fallback;
     }
 
-    private void SetStatus(string text) => StatusText.Text = Emoji.Prefer(text);
+    /// <summary>
+    /// [EN] Writes the low-priority debug status into the bottom status strip. Since
+    ///      v0.2.6 item 21 this strip is the **only** transient status surface: the former
+    ///      title-row status sentence was removed, and business notices go through
+    ///      <see cref="AddMessage"/> instead. An empty value hides the text block so it never
+    ///      leaves a gap in the strip.
+    /// [ZH] 把低优先级调试状态写入底部状态区。自 v0.2.6 第 21 项起，该区域是**唯一**的
+    ///      临时状态载体：原标题行状态长句已移除，业务提示改走 <see cref="AddMessage"/>。
+    ///      空值会隐藏文本块，避免在状态区里留下空档。
+    /// </summary>
+    private void SetStatus(string text)
+    {
+        string value = Emoji.Prefer(text ?? "");
+        StatusText.Text = value;
+        StatusText.IsVisible = value.Length > 0;
+        ToolTip.SetTip(StatusText, value);
+    }
 
     private static string Trim(string text, int limit)
     {
@@ -6503,7 +7083,7 @@ public partial class MainWindow : Window
                     "{0}\n\n是否现在下载？下载需要联网且可能耗时较长。",
                     Loc.T("main.model.downloadConfirmHint",
                         "再按一次 Enter（或再点一次「发送」）即开始下载；输入别的内容则取消。")));
-            Toast(Loc.T("main.model.waitingConfirm", "⏳ 等待确认下载：再发送一次空消息即可开始"));
+            AddMessage("system", Loc.T("main.model.waitingConfirm", "⏳ 等待确认下载：再发送一次空消息即可开始"));
             return;
         }
         _pendingModelDownload = "";
@@ -6527,13 +7107,13 @@ public partial class MainWindow : Window
                 onContext: (_, _) => { },
                 idleTimeout: TimeSpan.FromMinutes(30));
             EndProgressMessage(final);
-            Toast(Loc.T("main.model.downloadDone", "✅ 模型下载完成：{0}", modelName));
+            AddMessage("system", Loc.T("main.model.downloadDone", "✅ 模型下载完成：{0}", modelName));
             await RefreshStatusAsync();
         }
         catch (Exception ex)
         {
             EndProgressMessage(Loc.T("main.model.operationFailed", "❌ 模型操作失败: {0}", ex.Message));
-            Toast(Loc.T("main.model.downloadFailed", "❌ 模型下载失败：{0}", ex.Message), error: true);
+            AddMessage("system", Loc.T("main.model.downloadFailed", "❌ 模型下载失败：{0}", ex.Message));
         }
         SetStatus(_state.Backend.ModelReady
             ? Loc.T("main.status.ready", "就绪")
@@ -6949,7 +7529,7 @@ public partial class MainWindow : Window
     {
         if (!_state.Backend.IsRunning)
         {
-            Toast(Loc.T("main.error.notRunning", "❌ 后端未运行"), error: true);
+            AddMessage("system", Loc.T("main.error.notRunning", "❌ 后端未运行"));
             return;
         }
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
@@ -6978,8 +7558,8 @@ public partial class MainWindow : Window
             new { action = "knowledge_mount", path }, idleTimeout: BackendService.HeavyIdleTimeout);
         if (doc is null)
         {
-            Toast(Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
-                _state.Backend.LastError ?? ""), error: true);
+            AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
+                _state.Backend.LastError ?? ""));
             return;
         }
         using (doc)
@@ -6987,7 +7567,7 @@ public partial class MainWindow : Window
             JsonElement root = doc.RootElement;
             string content = GetStringField(root, "content");
             if (content.Length > 0)
-                Toast(content);
+                AddMessage("system", content);
             // [EN] The mount response already carries the authoritative library list, so the
             //      panel is updated immediately; a later status refresh may fail while the
             //      indexing job holds resources and must not erase this state.
@@ -7027,7 +7607,7 @@ public partial class MainWindow : Window
         {
             string content = GetStringField(doc.RootElement, "content");
             if (content.Length > 0)
-                Toast(content);
+                AddMessage("system", content);
             await RefreshKnowledgeAsync();
         }
     }
@@ -7048,8 +7628,8 @@ public partial class MainWindow : Window
             idleTimeout: BackendService.HeavyIdleTimeout);
         if (doc is null)
         {
-            Toast(Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
-                _state.Backend.LastError ?? ""), error: true);
+            AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
+                _state.Backend.LastError ?? ""));
             await RefreshKnowledgeAsync();
             return;
         }
@@ -7064,7 +7644,7 @@ public partial class MainWindow : Window
             if (ok && ApplyKnowledgeLibraries(root))
                 return;
             if (!ok && content.Length > 0)
-                Toast(content, error: true);
+                AddMessage("system", content);
             await RefreshKnowledgeAsync();
         }
     }
@@ -7469,7 +8049,7 @@ public partial class MainWindow : Window
             string content = GetStringField(doc.RootElement, "content");
             PromptStatusText.Text = content;
             if (GetBoolField(doc.RootElement, "ok"))
-                Toast(content);
+                AddMessage("system", content);
         }
     }
 }

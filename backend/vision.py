@@ -53,6 +53,7 @@ import base64
 import glob
 import logging
 import os
+import sys
 from typing import Any, Dict, List, Optional
 
 from i18n import t as _t
@@ -74,6 +75,12 @@ DEFAULT_VISION_CONTEXT = 4096
 #: [EN] Upper bound applied to a configured context value for vision turns.
 #: [ZH] 视觉轮对配置上下文取值施加的上限。
 MAX_VISION_CONTEXT = 8192
+
+#: [EN] v0.2.6 item 22: language-pack key of the Windows + VL soft fuse. The message is
+#: [EN] rendered for both the status report and the structured :class:`VisionError`.
+#: [ZH] v0.2.6 第 22 项：Windows + VL 软熔断的语言包键。状态报告与结构化
+#: [ZH] :class:`VisionError` 共用这段文案。
+WINDOWS_VL_BLOCKED_REASON = "media.vision_windows_vl_blocked"
 
 #: [EN] File-name markers that identify a vision-language checkpoint. The list is
 #: [EN] advisory only: an existing multimodal projector always proves vision
@@ -126,6 +133,70 @@ class VisionError(Exception):
         except Exception:  # noqa: BLE001 - [EN] never mask the original reason
                            # [ZH] 绝不掩盖原始原因
             return self.code
+
+
+def _is_windows() -> bool:
+    """
+    [EN]
+    Return whether the backend currently runs on Windows.
+
+    Kept as a tiny function instead of an inline ``os.name`` comparison so the
+    self-test can substitute the platform verdict without monkey-patching the
+    standard library.
+
+    [ZH]
+    返回后端当前是否运行在 Windows 上。
+
+    刻意做成小函数而不是内联 ``os.name`` 比较，使自测可以在不改动标准库的
+    前提下替换平台判定。
+    """
+    return os.name == "nt" or sys.platform.startswith("win")
+
+
+def windows_vl_blocked(model_path: str) -> bool:
+    """
+    [EN]
+    Return whether the Windows + VL soft fuse applies to this checkpoint.
+
+    Background (v0.2.6 item 22): llama.cpp can raise ``access violation reading
+    0x0`` inside native code while running a Qwen3-VL checkpoint on Windows. A C++
+    access violation cannot be caught by Python, so the guard has to be decided
+    **before** any ``Llama(...)`` object or native symbol is touched. The rule is
+    deliberately narrow: Windows only, and the model file name must contain
+    ``VL`` (case-insensitive). Every other platform and every non-VL checkpoint
+    keeps using local inference unchanged.
+
+    [ZH]
+    判断该检查点是否适用 Windows + VL 软熔断。
+
+    背景（v0.2.6 第 22 项）：在 Windows 上运行 Qwen3-VL 检查点时，llama.cpp 原生
+    代码可能触发 ``access violation reading 0x0``。C++ 访问冲突无法被 Python
+    捕获，因此判定必须在触碰任何 ``Llama(...)`` 对象或原生符号**之前**完成。
+    规则刻意收窄：仅 Windows，且模型文件名必须包含 ``VL``（不区分大小写）。
+    其他平台与非 VL 检查点继续使用本地推理，行为不变。
+    """
+    if not _is_windows():
+        return False
+    return "vl" in os.path.basename(str(model_path or "")).lower()
+
+
+def require_windows_vl_safe(model_path: str) -> None:
+    """
+    [EN]
+    Raise the structured soft-fuse error when local VL inference must not start.
+
+    The exception carries :data:`WINDOWS_VL_BLOCKED_REASON`, so the protocol layer
+    and the interface render it through the language pack instead of inventing a
+    message here.
+
+    [ZH]
+    当本地 VL 推理不得启动时抛出结构化软熔断异常。
+
+    异常携带 :data:`WINDOWS_VL_BLOCKED_REASON`，因此协议层与界面都通过语言包
+    渲染该文案，而不是在这里拼写文本。
+    """
+    if windows_vl_blocked(model_path):
+        raise VisionError("windows_vl_blocked", WINDOWS_VL_BLOCKED_REASON)
 
 
 #: [EN] GGUF magic. The model and the multimodal projector are both GGUF files;
@@ -386,6 +457,12 @@ class VisionEngine:
         # [ZH] 时加载模型，会让 llama.cpp 解引用未初始化的视觉上下文，这正是上报的
         # [ZH] ``access violation reading 0x0``。在下列前置条件全部成立之前，本类
         # [ZH] 不触碰任何原生符号。
+        # [EN] v0.2.6 item 22: the Windows + VL soft fuse runs before every other
+        # [EN] precondition and before any native symbol is imported. A C++ access
+        # [EN] violation cannot be caught in Python, so this is the only safe layer.
+        # [ZH] v0.2.6 第 22 项：Windows + VL 软熔断先于其他所有前置条件、也先于任何原生
+        # [ZH] 符号的导入执行。C++ 访问冲突无法在 Python 中捕获，因此这是唯一安全的层次。
+        require_windows_vl_safe(self.model_path)
         if not os.path.isfile(self.model_path):
             raise VisionError("model_missing", "media.vision_model_missing",
                               name=os.path.basename(self.model_path))
@@ -584,7 +661,14 @@ class VisionService:
         供 ``media_state`` 使用的机器可读可用性报告。
         """
         reason = ""
-        if not self.model_path:
+        # [EN] v0.2.6 item 22: report the soft fuse first. It is a platform verdict, not a
+        # [EN] missing-file verdict, and the interface uses this reason to disable the image
+        # [EN] entry with an explanatory tooltip instead of letting the user pick a file.
+        # [ZH] v0.2.6 第 22 项：优先报告软熔断。它是平台判定而非缺文件判定；界面据此禁用
+        # [ZH] 图片入口并给出说明性悬停提示，而不是等用户选完文件才报错。
+        if windows_vl_blocked(self.model_path):
+            reason = WINDOWS_VL_BLOCKED_REASON
+        elif not self.model_path:
             reason = "media.vision_no_model"
         elif not os.path.isfile(self.model_path):
             reason = "media.vision_model_missing"
@@ -618,6 +702,9 @@ class VisionService:
             "handler": getattr(self._engine, "handler_name", ""),
             "reason": reason,
             "reason_text": _t(reason) if reason else "",
+            # [EN] v0.2.6 item 22: machine-readable platform verdict for the UI guard.
+            # [ZH] v0.2.6 第 22 项：供界面防呆使用的机器可读平台判定。
+            "windows_vl_blocked": windows_vl_blocked(self.model_path),
             "last_error": self.last_error,
         }
 
@@ -632,6 +719,12 @@ class VisionService:
         """
         if not self.model_path:
             raise VisionError("no_model", "media.vision_no_model")
+        # [EN] v0.2.6 item 22: the Windows + VL soft fuse runs before every other
+        # [EN] precondition and before any native symbol is imported. A C++ access
+        # [EN] violation cannot be caught in Python, so this is the only safe layer.
+        # [ZH] v0.2.6 第 22 项：Windows + VL 软熔断先于其他所有前置条件、也先于任何原生
+        # [ZH] 符号的导入执行。C++ 访问冲突无法在 Python 中捕获，因此这是唯一安全的层次。
+        require_windows_vl_safe(self.model_path)
         if not os.path.isfile(self.model_path):
             raise VisionError("model_missing", "media.vision_model_missing",
                               name=os.path.basename(self.model_path))

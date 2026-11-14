@@ -1,4 +1,4 @@
-﻿<UserControl xmlns="https://github.com/avaloniaui"
+<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.ModelMarketSection">
   <!--
@@ -126,44 +126,22 @@
         </Border>
 
         <Grid Grid.Row="1">
-          <Grid RowDefinitions="Auto,*">
-            <!--
-              [EN] Default model: pinned at the very top with its source labelled, and **not
-                   counted in the pager below** (development task 7).
-              [ZH] 默认模型：钉在最上方、标注来源，**不计入下面的分页条数**（研发任务 7）。
-            -->
-            <Border x:Name="HubPinnedRow" Grid.Row="0" IsVisible="False" Margin="6,6,6,0"
-                    CornerRadius="6" Padding="8,5" BorderThickness="1"
-                    BorderBrush="{DynamicResource AccentBrush}"
-                    AutomationProperties.AutomationId="HubPinnedRow">
-              <Grid ColumnDefinitions="*,Auto">
-                <StackPanel Grid.Column="0">
-                  <StackPanel Orientation="Horizontal">
-                    <TextBlock x:Name="HubPinnedTag" FontSize="11" FontWeight="Bold" Margin="0,0,4,0"
-                               VerticalAlignment="Center" />
-                    <TextBlock x:Name="HubPinnedName" FontWeight="Bold"
-                               AutomationProperties.AutomationId="HubPinnedName" />
-                  </StackPanel>
-                  <TextBlock x:Name="HubPinnedMeta" FontSize="10" TextWrapping="Wrap"
-                             AutomationProperties.AutomationId="HubPinnedMeta" />
-                </StackPanel>
-                <Button x:Name="HubPinnedDetailButton" Grid.Column="1" Padding="10,3" FontSize="11"
-                        VerticalAlignment="Center" AutomationProperties.AutomationId="HubPinnedDetailButton" />
-              </Grid>
-            </Border>
-
-            <Grid Grid.Row="1">
-              <ListBox x:Name="HubResultList" Background="Transparent" BorderThickness="0" Margin="2"
-                       AutomationProperties.AutomationId="HubResultList" />
-              <StackPanel x:Name="HubEmptyPanel" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock x:Name="HubEmptyText" TextWrapping="Wrap" MaxWidth="460" TextAlignment="Center"
-                           Opacity="0.75" AutomationProperties.AutomationId="HubEmptyText" />
-                <Button x:Name="HubRemoteRetryButton" Margin="0,8,0,0" Padding="12,4"
-                        HorizontalAlignment="Center" IsVisible="False"
-                        AutomationProperties.AutomationId="HubRemoteRetryButton" />
-              </StackPanel>
-            </Grid>
-          </Grid>
+          <!--
+            [EN] v0.2.6 item 19 follow-up: the default model (for example Qwen3-0.6B) is no
+                 longer pinned above the results. The model market shows only the real result
+                 list, so no fixed entry can sit on top of every search.
+            [ZH] v0.2.6 第 19 项补充：默认模型（例如 Qwen3-0.6B）不再固定在结果上方。
+                 模型市场只展示真实结果列表，任何搜索都不会被固定的条目压住。
+          -->
+          <ListBox x:Name="HubResultList" Background="Transparent" BorderThickness="0" Margin="2"
+                   AutomationProperties.AutomationId="HubResultList" />
+          <StackPanel x:Name="HubEmptyPanel" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <TextBlock x:Name="HubEmptyText" TextWrapping="Wrap" MaxWidth="460" TextAlignment="Center"
+                       Opacity="0.75" AutomationProperties.AutomationId="HubEmptyText" />
+            <Button x:Name="HubRemoteRetryButton" Margin="0,8,0,0" Padding="12,4"
+                    HorizontalAlignment="Center" IsVisible="False"
+                    AutomationProperties.AutomationId="HubRemoteRetryButton" />
+          </StackPanel>
         </Grid>
     <!--
       [EN] Pager: WPF places it inside the results frame as its bottom row, so it does not get a

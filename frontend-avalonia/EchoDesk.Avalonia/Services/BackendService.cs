@@ -152,6 +152,43 @@ public sealed class BackendService : IDisposable
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>
+    /// [EN] v0.2.6 item 21: pattern of high-frequency, purely engineering progress lines
+    ///      (segment merging, chunked-summary progress, "[x/x] ... done"). Only these are
+    ///      rerouted to "status"; a system notice that merely carries a logging prefix
+    ///      ("INFO 未加载模型") must stay a conversation message.
+    /// [ZH] v0.2.6 第 21 项：高频、纯工程性质进度行的模式（分段合并、分块摘要进度、
+    ///      "[x/x] ... done"）。只有这类行改投 "status"；仅带日志前缀的系统提示
+    ///      （"INFO 未加载模型"）必须留在对话区。
+    /// </summary>
+    private static readonly Regex HighFrequencyLogLine = new(
+        @"(?:merging\s+segment|合并分段摘要"
+        + @"|(?:segment|chunk)\s+\d+\s*[/／]\s*\d+"
+        + @"|第\s*\d+\s*[/／]\s*\d+\s*段"
+        + @"|\[\s*\d+\s*[/／]\s*\d+\s*\]\s*.*(?:done|complete|完成))",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// [EN] Returns true only when every non-empty line is high-frequency debug progress,
+    ///      so a mixed message is never degraded to a status line.
+    /// [ZH] 仅当每个非空行都是高频调试进度时返回真，混排消息绝不会被降级成状态行。
+    /// </summary>
+    public static bool IsHighFrequencyLogText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        bool sawLine = false;
+        foreach (string raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+            sawLine = true;
+            if (!HighFrequencyLogLine.IsMatch(raw))
+                return false;
+        }
+        return sawLine;
+    }
+
+    /// <summary>
     /// [EN] Returns true only when every non-empty line is an operational log
     ///      line, so a mixed text notice is never discarded.
     /// [ZH] 仅当每个非空行都是运行日志行时返回真，避免把混排的真实提示一并丢弃。
@@ -971,12 +1008,12 @@ public sealed class BackendService : IDisposable
                     case "error":
                         throw new InvalidOperationException(content);
                     case "system":
-                        // [EN] v0.2.6 item 18: system messages that are actually
-                        //      operational logs are shown in the status bar only.
-                        //      Real system notices keep their existing dispatch.
-                        // [ZH] v0.2.6 第 18 项：实为运行日志的系统消息只显示在状态
-                        //      栏；真实的系统提示保持原有分发路径。
-                        onEvent?.Invoke(IsBackendLogText(content) ? "status" : type, root);
+                        // [EN] v0.2.6 item 21: only high-frequency debug progress is
+                        //      rerouted to the status bar. A meaningful system notice keeps
+                        //      its dispatch path so it becomes a copyable conversation bubble.
+                        // [ZH] v0.2.6 第 21 项：只有高频调试进度改投状态栏。有业务含义的
+                        //      系统提示保持原有分发路径，成为可复制的对话气泡。
+                        onEvent?.Invoke(IsHighFrequencyLogText(content) ? "status" : type, root);
                         break;
                     default:
                         onEvent?.Invoke(type, root);

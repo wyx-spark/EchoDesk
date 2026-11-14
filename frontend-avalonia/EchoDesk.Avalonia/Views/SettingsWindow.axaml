@@ -5,13 +5,19 @@
         Icon="/Assets/app.ico"
         Width="844" Height="581" MinWidth="680" MinHeight="520"
         Background="{DynamicResource AppBackgroundBrush}"
-        WindowDecorations="BorderOnly">
+        WindowDecorations="BorderOnly"
+        CanResize="True" CanMinimize="True" CanMaximize="True">
   <!--
     [EN] Borderless settings shell. The native caption is removed while the resize frame and
     [EN] drop shadow remain, and window movement is performed by the platform move loop in the
     [EN] code-behind, so that drag, snap and DPI behaviour match the main window.
     [ZH] 无边框设置外壳。移除原生标题栏，同时保留缩放边框与投影；窗口移动由代码隐藏文件中的
     [ZH] 平台移动循环执行，使拖动、贴靠与 DPI 行为与主窗口一致。
+    [EN] v0.2.6 item 19: resize, minimise and maximise are explicitly enabled so the model
+    [EN] hub's star-sized result list can grow with the window instead of being frozen at the
+    [EN] initial height.
+    [ZH] v0.2.6 第 19 项：显式启用拉伸、最小化与最大化，使模型市场的星号行结果列表能够
+    [ZH] 随窗口一起变高，而不是被冻结在初始高度。
     [EN] Settings window skeleton (v0.2.1 cross-platform track 2, development task 1, first
     [EN] migrated module).
 

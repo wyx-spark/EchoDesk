@@ -47,7 +47,14 @@
       <TextBlock x:Name="MarketNotMigratedText" IsVisible="False" />
     </Grid>
 
-    <ScrollViewer Grid.Row="1" MaxHeight="280"
+    <!--
+      [EN] v0.2.6 item 19: no hard-coded height here. The page code caps this settings
+           block at a fraction of the available height, so the model-hub result list in
+           row 0 keeps growing as the settings window is resized.
+      [ZH] v0.2.6 第 19 项：此处不再写死高度。页面代码按可用高度的比例限制这块设置区，
+           使第 0 行的模型市场结果列表随设置窗口拉伸而继续变高。
+    -->
+    <ScrollViewer x:Name="ModelSettingsScroll" Grid.Row="1"
                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel Margin="14,6,14,8" Spacing="8">
 

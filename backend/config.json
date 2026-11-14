@@ -56,8 +56,8 @@
     "agent": {
         "max_steps": 4,
         "allow_sensitive": [],
-        "max_observation_chars": 1200,
-        "confirm_timeout_seconds": 120
+        "confirm_timeout_seconds": 120,
+        "max_observation_chars": 1200
     },
     "media": {
         "vision_enabled": true,
@@ -127,7 +127,8 @@
         "port": 8788,
         "api_key": "",
         "max_output_tokens": 1024
-    },    "automation": {
+    },
+    "automation": {
         "enabled": false,
         "safety_accepted": false,
         "safety_version": "1.0",
@@ -236,7 +237,7 @@
         "include_prerelease": false,
         "last_check": "",
         "last_seen_version": "",
-    "ignored_version": ""
+        "ignored_version": ""
     },
     "language": "auto",
     "max_history": 10,
@@ -244,7 +245,9 @@
     "temperature": 0.7,
     "max_tokens": 1024,
     "search_results": 3,
+    "searxng_url": "",
     "preset": "balanced",
+    "inference_profile": "balanced",
     "top_p": 0.9,
     "repeat_penalty": 1.1,
     "context_mode": "summarize",
@@ -256,6 +259,7 @@
     "n_threads": 0,
     "n_batch": 512,
     "n_gpu_layers": 0,
+    "inference_override": false,
     "session_file": "session.json",
     "models": {
         "qwen3-0.6b": {

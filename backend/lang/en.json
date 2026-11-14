@@ -37,6 +37,7 @@
     "error.too_large": "The {kind} exceeds the size limit of {limit}: {path}",
     "error.bad_image": "The file is not a valid image: {path}",
     "vision_disabled": "Image chat is disabled in the configuration (media.vision_enabled in config.json)",
+    "vision_windows_vl_blocked": "Local visual inference for VL models is currently unstable on Windows. Please use text mode or an external API.",
     "vision_no_model": "No vision model is configured; set media.vision_model in config.json to a VL model with an mmproj file, or load a multimodal model first",
     "vision_model_missing": "The vision model file does not exist: {name}",
     "vision_no_mmproj": "No multimodal projector (mmproj-Q8_0.gguf) was found; place it next to the model or set media.vision_mmproj",

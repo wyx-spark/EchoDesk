@@ -128,52 +128,70 @@
   <Grid RowDefinitions="Auto,*">
 
     <!--
-      [EN] Custom title bar. It hosts the brand mark, the window title and the three caption
-           controls; pointer input is handled centrally so that dragging the strip feels identical
-           to an operating-system caption area.
-      [ZH] 自定义标题栏。承载品牌标记、窗口标题与三个窗口控制按钮；指针输入集中处理，
-           使条带拖动的手感与操作系统标题栏完全一致。
+      [EN] Custom title bar, v0.2.6 item 21 revision: the strip carries **only** the identity
+           on the left (icon + version) and the interaction state on the right (model capsule,
+           mode capsule, caption controls). Every dynamic status sentence was removed, because
+           a long status text used to push the model capsule rightwards and was itself clipped.
+      [ZH] 自定义标题栏（v0.2.6 第 21 项修订）：条带**只**承载左侧标识（图标 + 版本号）与
+           右侧交互状态（模型胶囊、模式胶囊、窗口按钮）。所有动态状态长句一律移除，
+           因为此前过长的状态文本会把模型胶囊向右挤压，而且它自身也显示不全。
     -->
     <Border x:Name="TitleBar" Grid.Row="0" Height="44"
             Background="{DynamicResource TitleBarBackgroundBrush}"
             BorderBrush="{DynamicResource TitleBarBorderBrush}" BorderThickness="0,0,0,1"
             PointerPressed="OnTitleBarPointerPressed">
       <Grid ColumnDefinitions="Auto,*,Auto" Margin="12,0,0,0">
-        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
           <!--
             [EN] Application identity mark: the official application icon is rendered directly,
                  so that the title bar and the operating-system task switcher present one identity.
             [ZH] 应用标识：直接渲染官方应用程序图标，使标题栏与操作系统任务切换器呈现同一标识。
           -->
-          <Image Width="22" Height="22" Source="/Assets/app.ico" Stretch="Uniform" />
-          <TextBlock x:Name="TitleBarTitle" Text="EchoDesk" FontSize="13" FontWeight="SemiBold"
-                     LineHeight="16" TextWrapping="NoWrap"
-                     Foreground="{DynamicResource TitleBarForegroundBrush}"
-                     VerticalAlignment="Center" />
+          <Image Width="22" Height="22" Source="/Assets/app.ico" Stretch="Uniform"
+                 ToolTip.Tip="EchoDesk" />
+          <!--
+            [EN] Version only. It comes from the backend `ready` handshake (single source of
+                 truth: backend/version.py) and is never hard-coded in the front end.
+            [ZH] 仅显示版本号。版本来自后端 `ready` 握手（唯一来源是 backend/version.py），
+                 前端绝不写死。
+          -->
+          <TextBlock x:Name="TitleBarVersionText" FontSize="11" VerticalAlignment="Center"
+                     Foreground="{DynamicResource SubTextBrush}" TextWrapping="NoWrap"
+                     AutomationProperties.AutomationId="TitleBarVersionText" />
         </StackPanel>
 
         <!--
-          [EN] Centre identity block: the version comes from the backend `ready`
-               handshake (single source of truth: backend/version.py), and the studio
-               line is localised. Keeping it centred balances the title bar instead of
-               leaving a large empty middle column.
-          [ZH] 居中标识区：版本号来自后端 `ready` 握手（唯一来源是 backend/version.py），
-               出品方文案走语言包。居中放置使标题栏视觉平衡，而不是留下一大片空白中列。
+          [EN] The middle column is deliberately an empty star column: it absorbs all free
+               width, so no text can ever push the model and mode capsules towards the caption
+               controls. Width changes are therefore handled by this spacer alone.
+          [ZH] 中列刻意留空并设为星号列：它吸收全部剩余宽度，任何文本都无法再把模型/模式
+               胶囊推向窗口按钮。宽度变化只由这个留白列承担。
         -->
-        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center"
-                    VerticalAlignment="Center" Spacing="8">
-          <TextBlock x:Name="TitleBarVersionText" FontSize="11" VerticalAlignment="Center"
-                     Foreground="{DynamicResource SubTextBrush}"
-                     AutomationProperties.AutomationId="TitleBarVersionText" />
-          <TextBlock Text="·" FontSize="11" VerticalAlignment="Center"
-                     Foreground="{DynamicResource SubTextBrush}" />
-          <TextBlock x:Name="TitleBarStudioText" FontSize="11" VerticalAlignment="Center"
-                     Foreground="{DynamicResource SubTextBrush}" TextTrimming="CharacterEllipsis"
-                     MaxWidth="240"
-                     AutomationProperties.AutomationId="TitleBarStudioText" />
-        </StackPanel>
 
         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+          <!--
+            [EN] Model capsule (moved out of the content row in v0.2.6 item 21). The width is
+                 capped and long names are trimmed so that a long model name cannot deform the
+                 caption strip either.
+            [ZH] 模型胶囊（v0.2.6 第 21 项从内容行迁入）。宽度封顶且超长名称省略显示，
+                 因此再长的模型名也不会使窗口按钮条带变形。
+          -->
+          <Button x:Name="ModelChip" Margin="0,0,6,0" Padding="8,2" Height="26"
+                  VerticalAlignment="Center" Classes="round"
+                  AutomationProperties.AutomationId="ModelChip">
+            <TextBlock x:Name="ModelText" Text="" FontSize="11" MaxWidth="170"
+                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+          </Button>
+          <Button x:Name="ModeChip" Margin="0,0,6,0" Padding="8,2" Height="26"
+                  VerticalAlignment="Center" Classes="round"
+                  AutomationProperties.AutomationId="ModeChip">
+            <TextBlock x:Name="ModeText" Text="" FontSize="11" MaxWidth="130"
+                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+          </Button>
+          <!-- [EN] Hairline separating interactive state from the caption controls. -->
+          <!-- [ZH] 用于分隔交互状态与窗口控制按钮的极细分隔线。 -->
+          <Border Width="1" Height="20" Margin="2,0,6,0"
+                  Background="{DynamicResource TitleBarBorderBrush}" />
           <Button x:Name="TitleBarMinimizeButton" Classes="chrome"
                   AutomationProperties.AutomationId="TitleBarMinimizeButton">
             <Path Data="M1,5.5 L11,5.5" Stroke="{DynamicResource TitleBarForegroundBrush}"
@@ -230,45 +248,23 @@
     </StackPanel>
 
     <!--
-      [EN] Status row: run state, model and conversation mode. The brand mark and version moved
-           to the custom title bar, therefore the duplicate brand block is retired while its
-           named controls are retained for the existing localisation bindings.
-      [ZH] 状态行：运行状态、模型与对话模式。品牌标记与版本已迁移至自定义标题栏，因此重复的
-           品牌区块不再展示，但其具名控件予以保留，以维持既有本地化绑定的完整性。
+      [EN] v0.2.6 item 21: the former status row (brand mark, run-state sentence, model and mode
+           capsules) is gone. The capsules moved into the custom title bar, the run-state text
+           moved into the bottom status strip, and the brand block had been hidden since v0.2.3.
+           What remains below is a **zero-space legacy scaffold**: four controls that exist only
+           on Settings > General but whose named handlers keep Ctrl+± , Ctrl+T and the language
+           reflection working. Because the parent is collapsed it consumes no layout and cannot
+           deform the title row.
+      [ZH] v0.2.6 第 21 项：原状态行（品牌、运行状态长句、模型与模式胶囊）整体移除。胶囊迁入
+           自定义标题栏，运行状态文本迁入底部状态区，品牌区块自 v0.2.3 起本就隐藏。下面保留的
+           是**零占位旧版脚手架**：四个只属于“设置-常规”的控件，其具名处理器仍支撑 Ctrl+±、
+           Ctrl+T 与语言反射。父容器已折叠，因此不占布局，也不会使标题行变形。
     -->
-    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
-      <Grid ColumnDefinitions="Auto,Auto" IsVisible="False">
-        <TextBlock x:Name="BrandText" Grid.Column="0" Text="" Classes="brand"
-                   VerticalAlignment="Bottom" />
-        <TextBlock x:Name="VersionText" Grid.Column="1" Text="" FontSize="10" Margin="4,0,0,0"
-                   VerticalAlignment="Bottom" Foreground="{DynamicResource SubTextBrush}" />
-      </Grid>
-      <TextBlock x:Name="PoweredText" Text="" FontSize="11" Margin="14,8,0,0"
-                 IsVisible="False"
-                 VerticalAlignment="Center" Foreground="{DynamicResource SubTextBrush}" />
-      <TextBlock x:Name="PlatformChip" IsVisible="False" />
-      <TextBlock x:Name="StatusText" Grid.Column="4" FontSize="12" FontWeight="Bold"
-                 VerticalAlignment="Center" Margin="0,0,0,0"
-                 TextTrimming="CharacterEllipsis" Foreground="{DynamicResource SubTextBrush}" />
-      <Button x:Name="ModelChip" Margin="14,0,0,0" Padding="8,2" VerticalAlignment="Center"
-              Classes="round">
-        <TextBlock x:Name="ModelText" Text="" FontSize="11" MaxWidth="200" TextWrapping="NoWrap" />
-      </Button>
-      <Button x:Name="ModeChip" Margin="8,0,0,0" Padding="8,2" VerticalAlignment="Center"
-              Classes="round">
-        <TextBlock x:Name="ModeText" Text="" FontSize="11" TextWrapping="NoWrap" />
-      </Button>
-      <!--
-        [EN] The following four controls do not exist in the WPF main window; they live only on
-             the Settings > General page. They stay hidden, which neither changes the visuals
-             nor drops the keyboard shortcuts (Ctrl+± and Ctrl+T still run the same handlers).
-        [ZH] 以下四个控件在 WPF 版主窗口里**不存在**（只在设置-常规页）。保留为隐藏状态，
-             既不影响观感，也不丢键盘快捷方式（Ctrl+± / Ctrl+T 仍走同一批处理函数）。
-      -->
-      <Button x:Name="FontDownButton" IsVisible="False" Classes="chip" Content="A-" />
-      <Button x:Name="FontUpButton" IsVisible="False" Classes="chip" Content="A+" />
-      <Button x:Name="ThemeButton" IsVisible="False" Classes="chip" Content="🌓" />
-      <ComboBox x:Name="LangCombo" IsVisible="False" MinWidth="118" />
+    <StackPanel x:Name="LegacyControlScaffold" Grid.Row="1" IsVisible="False">
+      <Button x:Name="FontDownButton" Classes="chip" Content="A-" />
+      <Button x:Name="FontUpButton" Classes="chip" Content="A+" />
+      <Button x:Name="ThemeButton" Classes="chip" Content="🌓" />
+      <ComboBox x:Name="LangCombo" MinWidth="118" />
     </StackPanel>
 
     <!-- [EN] (4) Message list (Ctrl+wheel adjusts the font size). -->
@@ -398,6 +394,7 @@
           -->
           <Button x:Name="ImageButton" Width="34" Height="34" Margin="2" Classes="icon"
                   Content="🖼" FontSize="14"
+                  ToolTip.ShowOnDisabled="True"
                   AutomationProperties.AutomationId="ImageButton" />
           <!--
             [EN] v0.2.6 task 9: push-to-talk microphone entry next to the input box.
@@ -453,6 +450,21 @@
                                              Easing="CubicEaseOut" />
             </Transitions>
           </WrapPanel.Transitions>
+          <!--
+            [EN] v0.2.6 item 21: low-priority debug status, relocated from the title row. Only
+                 high-frequency engineering noise (segment merging / batch progress) lands here;
+                 anything with business meaning goes to the conversation area as a system
+                 bubble instead. The width is capped and the full text stays in the tooltip,
+                 so a long line can never stretch the status strip.
+            [ZH] v0.2.6 第 21 项：从标题行迁入的低优先级调试状态。只有高频工程噪声（分段合并 /
+                 批量进度）落在这里；具有业务含义的提示一律作为系统气泡进入对话区。宽度封顶，
+                 完整文本放在悬停提示里，因此再长的行也不会撑开状态区。
+          -->
+          <TextBlock x:Name="StatusText" FontSize="11" Margin="4,0,8,0" IsVisible="False"
+                     VerticalAlignment="Center" MaxWidth="300"
+                     TextTrimming="CharacterEllipsis"
+                     Foreground="{DynamicResource SubTextBrush}"
+                     AutomationProperties.AutomationId="StatusText" />
           <Button x:Name="StripSearchButton" Classes="chip">
             <TextBlock x:Name="SearchText" Text="" FontSize="11" />
           </Button>
@@ -473,8 +485,15 @@
             [ZH] v0.2.6 第 17 项：上下文窗口由用户决定。该选择器位于 Context 标识旁，
                  提供四档受支持的大小。改动会立即持久化并生效；后端绝不会在后台篡改。
           -->
-          <ComboBox x:Name="ContextWindowCombo" Width="88" Height="24" Margin="2,0,6,0"
+          <!--
+            [EN] v0.2.6 item 19: editable selector. The four presets remain in the drop-down,
+                 while a custom value (for example 65536) can be typed and applied with Enter.
+            [ZH] v0.2.6 第 19 项：可编辑选择器。四档预设仍在下拉列表中，同时可输入自定义
+                 数值（例如 65536）并按回车应用。
+          -->
+          <ComboBox x:Name="ContextWindowCombo" Width="104" Height="24" Margin="2,0,6,0"
                     VerticalAlignment="Center" FontSize="11"
+                    IsEditable="True"
                     AutomationProperties.AutomationId="ContextWindowCombo" />
           <Button x:Name="StripKvButton" Classes="chip">
             <TextBlock x:Name="StripKvText" Text="💾 KV: ---" FontSize="11" />
@@ -523,23 +542,24 @@
     </Border>
 
     <!--
-      [EN] (8) Bottom hints (fixed-height area): notification hints and action hints share one
-           row.
-      [ZH] ⑧ 底部提示（固定高度区）：通知提示与操作提示共用一行。
+      [EN] (8) Bottom transient area: only the command-format hint remains.
+           v0.2.6 item 21 removed the notification toast entirely: operation feedback is now
+           written into the conversation area as a copyable system bubble, so nothing flashes
+           past at the bottom of the window any more.
+      [ZH] ⑧ 底部临时区域：只剩指令格式提示。
+           v0.2.6 第 21 项彻底移除通知条：操作反馈改为写入对话区的可复制系统气泡，
+           窗口底部不再有一闪而过的文字。
     -->
     <StackPanel Grid.Row="6" Margin="0,3,0,0" HorizontalAlignment="Center" VerticalAlignment="Top">
       <TextBlock x:Name="CommandBarHint" IsVisible="False" FontSize="12"
                  Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center" />
-      <Border x:Name="ToastBorder" Classes="elevated" IsVisible="False" CornerRadius="10" Padding="12,4"
-              HorizontalAlignment="Center" Margin="0,2,0,0"
-              Background="{DynamicResource InputBackgroundBrush}"
-              BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1">
-        <TextBlock x:Name="ToastText" FontSize="12" TextTrimming="CharacterEllipsis"
-                   MaxWidth="760" Foreground="{DynamicResource AccentBrush}" />
-      </Border>
-      <TextBlock x:Name="HintText" FontSize="12"
-                 Foreground="{DynamicResource SubTextBrush}"
-                 HorizontalAlignment="Center" Margin="0,2,0,0" />
+      <!--
+        [EN] v0.2.6 item 19: the permanent shortcut hint row was removed. It duplicated
+             information already available through tooltips and the first-run guide, and it
+             occupied a fixed slice of vertical space below the input box.
+        [ZH] v0.2.6 第 19 项：常驻快捷键提示行已删除。它与 ToolTip 和首次使用引导重复，
+             且在输入框下方长期占用一块固定高度。
+      -->
     </StackPanel>
 
     <!--

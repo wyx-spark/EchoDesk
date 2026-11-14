@@ -547,6 +547,38 @@ def _is_operational_log_line(line: str) -> bool:
     return bool(str(line or "").strip()) and bool(_OPERATIONAL_LOG_RE.match(str(line)))
 
 
+#: [EN] v0.2.6 item 21: high-frequency, purely engineering progress (segment merging,
+#: [EN] chunked-summary progress, "[x/x] ... done"). Only these lines are still kept out of
+#: [EN] the conversation. A meaningful system notice that merely carries a logging prefix
+#: [EN] (for example "INFO 未加载模型") must be allowed through.
+#: [ZH] v0.2.6 第 21 项：高频、纯工程性质进度（分段合并、分块摘要进度、
+#: [ZH] "[x/x] ... done"）。只有这类行仍被挡在对话区之外。仅带日志前缀的有业务含义
+#: [ZH] 系统提示（例如 "INFO 未加载模型"）必须放行。
+_HIGH_FREQUENCY_LOG_RE = re.compile(
+    r"(?:merging\s+segment|合并分段摘要"
+    r"|(?:segment|chunk)\s+\d+\s*[/／]\s*\d+"
+    r"|第\s*\d+\s*[/／]\s*\d+\s*段"
+    r"|\[\s*\d+\s*[/／]\s*\d+\s*\]\s*.*(?:done|complete|完成))",
+    re.IGNORECASE,
+)
+
+
+def _is_high_frequency_log_text(text: str) -> bool:
+    """
+    [EN] Return whether every non-empty line is high-frequency engineering progress.
+    [ZH] 判断每一非空行是否都是高频工程进度。
+    """
+    saw_line = False
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    for line in normalized.split("\n"):
+        if not line.strip():
+            continue
+        saw_line = True
+        if not _HIGH_FREQUENCY_LOG_RE.search(line):
+            return False
+    return saw_line
+
+
 def _scrub_operational_log_lines(text: str) -> tuple:
     """
     [EN]
@@ -574,19 +606,28 @@ def _scrub_operational_log_lines(text: str) -> tuple:
 def _sanitize_protocol_event(response: Dict[str, Any]):
     """
     [EN]
-    Convert operational log lines carried by a ``delta`` or ``system`` event into
-    a ``progress`` (status-bar) event, or drop them entirely.
+    Keep engineering log traffic out of the answer pane and route high-frequency debug
+    progress to the status bar.
 
-    A log line must never reach the answer or reasoning pane. The sanitizer runs
-    at the single stdout choke point, so it covers the streaming path and every
-    non-streaming ``system`` response alike.
+    v0.2.6 item 21 refined the policy:
+
+    * ``delta`` (answer / reasoning): every operational log line is still diverted or
+      dropped, because generated chat content must never contain log text.
+    * ``system``: only **high-frequency** engineering progress (segment merging,
+      "[x/x] ... done") is diverted. A meaningful notice that happens to carry a logging
+      prefix (for example "INFO 未加载模型") is preserved and rendered as a system bubble,
+      so the user can read, copy and screenshot it.
 
     [ZH]
-    把 ``delta`` 或 ``system`` 事件携带的运行日志行转换为 ``progress``（状态栏）
-    事件，或直接丢弃。
+    把工程日志挡在回答区之外，并把高频调试进度改投状态栏。
 
-    日志行绝不能进入回答区或思考区。该清洗位于 stdout 的唯一出口，因此同时覆盖
-    流式路径与所有非流式的 ``system`` 响应。
+    v0.2.6 第 21 项细化了策略：
+
+    * ``delta``（回答 / 思考）：仍然转移或丢弃所有运行日志行，因为生成的对话内容
+      绝不能混入日志文本。
+    * ``system``：只有**高频**工程进度（分段合并、"[x/x] ... done"）被转移。仅带日志
+      前缀的有业务含义提示（例如 "INFO 未加载模型"）予以保留，并渲染为系统气泡，
+      便于用户阅读、复制与截图。
     """
     if not isinstance(response, dict):
         return response
@@ -595,6 +636,10 @@ def _sanitize_protocol_event(response: Dict[str, Any]):
         return response
     content = response.get("content")
     if not isinstance(content, str) or not content:
+        return response
+    # [EN] v0.2.6 item 21: a system event survives unless the whole body is debug progress.
+    # [ZH] v0.2.6 第 21 项：系统事件只在整段正文都是调试进度时才被改投。
+    if event_type == "system" and not _is_high_frequency_log_text(content):
         return response
     cleaned, dropped = _scrub_operational_log_lines(content)
     if not dropped:
@@ -639,10 +684,13 @@ def _write(response: Dict[str, Any]) -> None:
     global _stdout_closed
     if _stdout_closed:
         return
-    # [EN] Last line of defence: no operational log may be written as a chat
-    # [EN] delta or system message, regardless of which handler produced it.
-    # [ZH] 最后一道防线：无论哪个处理函数产生，运行日志都不得以对话 delta 或
-    # [ZH] system 消息写出。
+    # [EN] v0.2.6 item 21: chat deltas must never carry log text; system events are only
+    # [EN] scrubbed when the whole body is high-frequency debug progress (see
+    # [EN] `_sanitize_protocol_event`), so a meaningful "INFO 未加载模型" notice still
+    # [EN] reaches the conversation.
+    # [ZH] v0.2.6 第 21 项：对话 delta 绝不能携带日志文本；系统事件仅在整段正文都是高频
+    # [ZH] 调试进度时才清洗（见 `_sanitize_protocol_event`），因此有业务含义的
+    # [ZH] "INFO 未加载模型" 提示仍能进入对话区。
     response = _sanitize_protocol_event(response)
     if response is None:
         return
@@ -2093,8 +2141,16 @@ class Backend:
         service = self._vision_service()
         reasons = service.status()
         if not reasons.get("available"):
+            # [EN] v0.2.6 item 22: the Windows + VL soft fuse is a platform limitation, not
+            # [EN] a generic "vision unavailable" state. It keeps its own stable error code so
+            # [EN] the interface and the records can tell the two apart.
+            # [ZH] v0.2.6 第 22 项：Windows + VL 软熔断属于平台限制，而不是笼统的"视觉不可用"。
+            # [ZH] 它保留独立的稳定错误码，使界面与记录能够区分两者。
+            code = ("windows_vl_blocked"
+                    if reasons.get("reason") == vision_mod.WINDOWS_VL_BLOCKED_REASON
+                    else "vision_unavailable")
             return self._media_failure(
-                "vision_unavailable", str(reasons.get("reason_text") or ""),
+                code, str(reasons.get("reason_text") or ""),
                 vision=reasons)
         try:
             max_tokens = int(request.get("max_tokens")

@@ -78,6 +78,11 @@ public partial class ModelPage : UserControl, ISettingsPage
     // [ZH] 输出预算的滑块默认值与硬上限。后端按硬件窗口的 8% 动态计算有效预算（上限 8192）；
     // [ZH] 滑块只允许用户在同一硬上限内提高取值。
     private const int DefaultMaxTokens = 2048;
+    // [EN] v0.2.6 item 19: share of the page height reserved for the profile/inference
+    //      settings block. The remaining height belongs to the model-hub result list.
+    // [ZH] v0.2.6 第 19 项：设置块占页面高度的比例；剩余高度全部分给模型市场结果列表。
+    private const double SettingsBlockHeightRatio = 0.42;
+    private const double SettingsBlockMinHeight = 200;
 
     private sealed record Option(string Value, Func<string> Text)
     {
@@ -88,6 +93,12 @@ public partial class ModelPage : UserControl, ISettingsPage
     {
         InitializeComponent();
         BuildOptions();
+        // [EN] v0.2.6 item 19: recompute the adaptive cap whenever the page is resized.
+        //      The model-hub list itself lives in a `*` row and has no fixed height.
+        // [ZH] v0.2.6 第 19 项：页面尺寸变化时重算自适应上限。模型市场列表本身位于
+        //      星号行，没有固定高度。
+        SizeChanged += (_, _) => UpdateSettingsBlockHeight();
+        UpdateSettingsBlockHeight();
 
         ProfileRefreshButton.Click += async (_, _) => await LoadProfilesAsync();
         ProfileNewButton.Click += (_, _) => OpenProfileEditor(null);
@@ -135,6 +146,28 @@ public partial class ModelPage : UserControl, ISettingsPage
         // [ZH] 本地模型库（v0.2.2 第 2 批）：重扫 / 刷新
         HubRescanButton.Click += async (_, _) => await RescanModelsAsync();
         HubRegistryRefreshButton.Click += async (_, _) => await LoadRegistryAsync();
+    }
+
+    /// <summary>
+    /// [EN] Cap the profile/inference settings block at a fraction of the page height.
+    ///      A concrete pixel value was removed in v0.2.6 item 19: it made the model-hub
+    ///      result list stop growing once the settings window was enlarged.
+    /// [ZH] 按页面高度的比例限制档位/推理设置块。v0.2.6 第 19 项删除了具体像素值：
+    ///      旧值会让模型市场结果列表在放大设置窗口后停止增长。
+    /// </summary>
+    private void UpdateSettingsBlockHeight()
+    {
+        double available = Bounds.Height;
+        // [EN] Before the first layout the bounds are zero: use the minimum cap so the
+        //      settings block cannot measure without a limit and starve the market list.
+        // [ZH] 首次布局前边界为零：使用最小上限，避免设置块无约束测量并挤掉市场列表。
+        if (available <= 0)
+        {
+            ModelSettingsScroll.MaxHeight = SettingsBlockMinHeight;
+            return;
+        }
+        ModelSettingsScroll.MaxHeight = Math.Max(
+            SettingsBlockMinHeight, available * SettingsBlockHeightRatio);
     }
 
     public string TabKey => "settings.tab.model";
@@ -1636,7 +1669,6 @@ public partial class ModelPage : UserControl, ISettingsPage
     public Task ProbeMarketGoToPageAsync(int page) => Market.ProbeGoToPageAsync(page);
     public Task ProbeMarketSetPageSizeAsync(int size) => Market.ProbeSetPageSizeAsync(size);
     public Task ProbeMarketResetAsync() => Market.ProbeResetFiltersAsync();
-    public Task ProbeMarketOpenPinnedDetailAsync() => Market.ProbeOpenPinnedDetailAsync();
 
     /// <summary>
     /// [EN] Probe: fills in demonstration data for the model market (for README screenshots,

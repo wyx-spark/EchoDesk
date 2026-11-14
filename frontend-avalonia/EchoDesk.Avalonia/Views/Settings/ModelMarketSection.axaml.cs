@@ -115,7 +115,6 @@ public partial class ModelMarketSection : UserControl
     private DispatcherTimer? _hubProgressTimer;
 
     private JsonElement? _hubLastQuery;
-    private HubRow? _hubPinned;
     private string _hubInstalled = "any";
     private bool _hubRecommendedOnly;
     private int _hubPageNo = 1;
@@ -218,11 +217,6 @@ public partial class ModelMarketSection : UserControl
         HubRemoteRetryButton.Click += async (_, _) => await LoadMarketAsync(refresh: false, resume: false);
         HubFilterResetButton.Click += async (_, _) => await ResetFiltersAsync();
         HubCancelButton.Click += async (_, _) => await CancelAsync();
-        HubPinnedDetailButton.Click += async (_, _) =>
-        {
-            if (_hubPinned is not null)
-                await ShowDetailAsync(_hubPinned);
-        };
     }
 
     private void HookEvents()
@@ -909,11 +903,11 @@ public partial class ModelMarketSection : UserControl
             foreach (JsonElement item in items.EnumerateArray())
                 _hubPage.Add(BuildHubRow(item));
 
-        if (query.TryGetProperty("pinned", out JsonElement pinned)
-            && pinned.ValueKind == JsonValueKind.Array && pinned.GetArrayLength() > 0)
-            _hubPinned = BuildHubRow(pinned[0]);
-        RenderPinned();
-
+        // [EN] v0.2.6 item 19 follow-up: the backend still reports its default model in
+        //      ``pinned`` for other consumers, but the model market no longer renders a
+        //      fixed row above the results.
+        // [ZH] v0.2.6 第 19 项补充：后端仍会在 ``pinned`` 中报告默认模型供其它调用方使用，
+        //      但模型市场不再在结果上方渲染固定行。
         HubResultList.ItemsSource = _hubPage.Select(BuildResultRow).ToList<Control>();
 
         if (rebuildFacets)
@@ -1038,25 +1032,6 @@ public partial class ModelMarketSection : UserControl
         grid.Children.Add(left);
         grid.Children.Add(detail);
         return grid;
-    }
-
-    /// <summary>
-    /// [EN] The default model is pinned on its own row above the results, with its source
-    /// [EN] noted, and **is not counted in the paging of the list below**.
-    /// [ZH] 默认模型单独一行钉在结果上方，标注来源，且**不计入下面的分页条数**。
-    /// </summary>
-    private void RenderPinned()
-    {
-        if (_hubPinned is null)
-        {
-            HubPinnedRow.IsVisible = false;
-            return;
-        }
-        HubPinnedTag.Text = Loc.T("settings.model.pinnedTag", "📌 默认模型");
-        HubPinnedName.Text = _hubPinned.Name;
-        HubPinnedMeta.Text = Loc.T("settings.model.pinnedMeta",
-            "来源：config.json 里的默认模型仓库 {0}　·　固定显示，不计入下方的分页条数", _hubPinned.Repo);
-        HubPinnedRow.IsVisible = true;
     }
 
     /// <summary>
@@ -1380,7 +1355,6 @@ public partial class ModelMarketSection : UserControl
         HubGoPageButton.Content = Loc.T("settings.model.pageGo", "跳转");
         HubJumpLabel.Text = Loc.T("settings.model.pageJumpLabel", "跳至");
         HubPageSizeLabel.Text = Loc.T("settings.model.pageSizeLabel", "每页");
-        HubPinnedDetailButton.Content = Loc.T("settings.model.actionDetail", "详情");
         HubDetailCloseButton.Content = Loc.T("settings.button.close", "关闭");
         HubCancelButton.Content = Loc.T("settings.model.actionStop", "⏹ 停止");
         // [EN] This market block previously carried a "not migrated" note; after this round
@@ -1405,19 +1379,16 @@ public partial class ModelMarketSection : UserControl
             RelocalizeCombo(combo, keep);
         RelocalizeCombo(HubPageSizeCombo, _hubPageSize.ToString(CultureInfo.InvariantCulture));
 
-        // [EN] The text of result rows, facets, and the pinned row is composed at run time:
-        // [EN] a language change requires re-layout (**without asking the backend again**,
-        // [EN] the same approach as WPF's RelocalizeHubMarket).
-        // [ZH] 结果行、分面、钉住行的文本都是运行时拼的：语言变了要重排（**不重新问后端**，
+        // [EN] The text of result rows and facets is composed at run time: a language change
+        // [EN] requires re-layout (**without asking the backend again**, the same approach as
+        // [EN] WPF's RelocalizeHubMarket).
+        // [ZH] 结果行与分面的文本都是运行时拼的：语言变了要重排（**不重新问后端**，
         // [ZH] 与 WPF 的 RelocalizeHubMarket 同一做法）
         _hubFacetSignature = "";
         if (_hubLastQuery is JsonElement query)
             RenderQuery(query, rebuildFacets: true);
         else
-        {
             UpdateFilterSummary();
-            RenderPinned();
-        }
     }
 
     /// <summary>
@@ -1559,14 +1530,6 @@ public partial class ModelMarketSection : UserControl
               "total_available": 246,
               "source_note": "__SOURCE_NOTE__",
               "message": "__MESSAGE__",
-              "pinned": [
-                {
-                  "repo": "Qwen/Qwen2.5-7B-Instruct-GGUF",
-                  "name": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
-                  "is_default": true,
-                  "installed": true
-                }
-              ],
               "items": [
                 {
                   "repo": "bartowski/Qwen2.5-7B-Instruct-GGUF",
@@ -1672,7 +1635,7 @@ public partial class ModelMarketSection : UserControl
 
     public sealed record MarketState(
         int ItemCount, int FacetOptions, string PageInfo, string Total, bool EmptyVisible,
-        bool PinnedVisible, string PagerHint, bool NextEnabled, bool FirstEnabled,
+        string PagerHint, bool NextEnabled, bool FirstEnabled,
         bool SearchEnabled, bool MoreVisible, string Status, int FileRows);
 
     /// <summary>
@@ -1686,7 +1649,6 @@ public partial class ModelMarketSection : UserControl
         HubPageInfoText.Text ?? "",
         HubTotalText.Text ?? "",
         HubEmptyPanel.IsVisible,
-        HubPinnedRow.IsVisible,
         HubPagerHint.Text ?? "",
         HubNextPageButton.IsEnabled,
         HubFirstPageButton.IsEnabled,
@@ -1815,18 +1777,6 @@ public partial class ModelMarketSection : UserControl
             }
             UpdateFilterSummary();
             await QueryWhenIdleAsync(resetPage: true, rebuildFacets: true);
-        });
-
-    /// <summary>
-    /// [EN] Opens the details of the pinned row (the default model); does nothing when
-    /// [EN] there is no pinned row.
-    /// [ZH] 打开钉住行（默认模型）的详情；没有钉住行时什么都不做。
-    /// </summary>
-    public Task<object?> ProbeOpenPinnedDetailAsync()
-        => RunProbeAsync(async () =>
-        {
-            if (_hubPinned is not null)
-                await ShowDetailAsync(_hubPinned);
         });
 
     /// <summary>

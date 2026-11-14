@@ -493,7 +493,7 @@ internal static class Probe
     /// [EN] take effect" becomes a decidable number rather than something judged by eye.
     ///
     /// [EN] The coverage order deliberately matches the design specification: fetch search
-    /// [EN] results, paging, page size, local filtering, reset, pinned row. Every item prints
+    /// [EN] results, paging, page size, local filtering, reset. Every item prints
     /// [EN] `[PASS]/[FAIL]`, and a summary follows at the end (a partial failure does not hide
     /// [EN] earlier conclusions).
     /// [ZH] 模型市场的端到端验证（v0.2.2：把 WPF 侧市场补全到跨平台版这一轮的验收）。
@@ -504,7 +504,7 @@ internal static class Probe
     /// [ZH] 于是“分页/筛选/三层数字有没有生效”是可判定的数字，不靠肉眼。
     ///
     /// [ZH] 覆盖顺序刻意与设计规范一致：搜索取回 → 分页 → 每页条数 → 本地筛选 →
-    /// [ZH] 重置 → 钉住行。每一条都打印 `[PASS]/[FAIL]`，最后统一汇总
+    /// [ZH] 重置。每一条都打印 `[PASS]/[FAIL]`，最后统一汇总
     /// [ZH] （部分失败不掩盖前面的结论）。
     /// </summary>
     /// <summary>
@@ -1043,17 +1043,78 @@ internal static class Probe
             && System.Text.RegularExpressions.Regex.IsMatch(items, @"memory=[^｜]*%"),
             OneLine(items, 220));
 
-        // [EN] ---- Title bar: brand, version and studio are all present -------------------
-        // [ZH] ---- 标题栏：品牌/版本/出品方齐全 ------------------------------
+        // [EN] ---- Title bar: identity on the left, capsules on the right, no status text ----
+        // [ZH] ---- 标题栏：左侧标识、右侧胶囊、不含状态文本 --------------------------
         main.ProbeSetTitleBarVersion("v0.2.4");
         string titleBar = main.ProbeTitleBarSnapshot();
         Console.WriteLine($"  标题栏     : {titleBar}");
         Check("标题栏显示版本号（来自后端版本源）",
             titleBar.Contains("version=v0.2.4", StringComparison.Ordinal), OneLine(titleBar, 180));
-        int studioAt = titleBar.IndexOf("studio=", StringComparison.Ordinal);
-        string studioValue = studioAt < 0 ? "" : titleBar[(studioAt + "studio=".Length)..].Split('｜')[0];
-        Check("标题栏出品方文案非空", studioValue.Trim().Length > 0, $"studio='{studioValue}'");
-        Check("标题栏标题有实际宽度", ReadNumber(titleBar, "titleWidth") > 0, OneLine(titleBar, 180));
+        Check("标题栏版本文字有实际宽度",
+            ReadNumber(titleBar, "versionWidth") > 0, OneLine(titleBar, 180));
+        Check("模型胶囊位于标题栏内",
+            titleBar.Contains("modelInTitleBar=True", StringComparison.Ordinal), OneLine(titleBar, 180));
+        Check("模式胶囊位于标题栏内",
+            titleBar.Contains("modeInTitleBar=True", StringComparison.Ordinal), OneLine(titleBar, 180));
+        // [EN] v0.2.6 item 21: the long run-state sentence must not sit in the caption strip;
+        //      it lives in the bottom status strip, so it can no longer squeeze the capsules.
+        // [ZH] v0.2.6 第 21 项：运行状态长句不得位于标题条带内；它已迁至底部状态区，因此
+        //      不可能再挤压模型/模式胶囊。
+        Check("标题栏不含运行状态文本",
+            titleBar.Contains("statusInTitleBar=False", StringComparison.Ordinal), OneLine(titleBar, 180));
+
+        // [EN] ---- v0.2.6 item 21: context-window input parsing and log routing ----
+        // [ZH] ---- v0.2.6 第 21 项：上下文窗口输入解析与日志分流 ----------
+        string ctxComma = main.ProbeContextWindowInput("65,536");
+        Console.WriteLine($"  上下文输入 : {ctxComma}");
+        Check("手动输入 65,536 解析为 65536",
+            ctxComma.Contains("normalized=65536", StringComparison.Ordinal)
+            && ctxComma.Contains("size=65536", StringComparison.Ordinal), OneLine(ctxComma, 160));
+        string ctxSpaced = main.ProbeContextWindowInput(" 65536 ");
+        Check("手动输入 65536（含首尾空格）解析为 65536",
+            ctxSpaced.Contains("normalized=65536", StringComparison.Ordinal)
+            && ctxSpaced.Contains("size=65536", StringComparison.Ordinal), OneLine(ctxSpaced, 160));
+        string ctxFullWidth = main.ProbeContextWindowInput("６５５３６");
+        Check("全角数字 ６５５３６ 解析为 65536",
+            ctxFullWidth.Contains("size=65536", StringComparison.Ordinal), OneLine(ctxFullWidth, 160));
+        string ctxBad = main.ProbeContextWindowInput("six");
+        Check("非法输入解析失败",
+            !ctxBad.Contains("parses=True", StringComparison.Ordinal), OneLine(ctxBad, 160));
+
+        string debugSample = MainWindow.ProbeLogRoutingSample("Merging segment summaries (group 1/3), 2s elapsed…");
+        Check("高频分段合并进度被判为调试日志",
+            debugSample.Contains("debug=True", StringComparison.Ordinal), OneLine(debugSample, 160));
+        string progressSample = MainWindow.ProbeLogRoutingSample("2026-11-14 18:43:25,123 INFO ✅ [2/5] done");
+        Check("高频 [x/x] done 进度被判为调试日志",
+            progressSample.Contains("debug=True", StringComparison.Ordinal), OneLine(progressSample, 160));
+        string noticeSample = MainWindow.ProbeLogRoutingSample(
+            "2026-11-14 18:43:25,123 INFO 未加载模型：进入无模型就绪状态（其余功能正常）");
+        Check("有业务含义的“未加载模型”不被判为调试日志",
+            noticeSample.Contains("debug=False", StringComparison.Ordinal)
+            && noticeSample.Contains("stripped=未加载模型", StringComparison.Ordinal),
+            OneLine(noticeSample, 180));
+        string mixedNotice = MainWindow.ProbeLogRoutingSample("真实提示\nMerging segment summaries (group 1/3)");
+        Check("真实提示与进度混排时不整体判为调试日志",
+            mixedNotice.Contains("debug=False", StringComparison.Ordinal), OneLine(mixedNotice, 180));
+
+        // [EN] ---- v0.2.6 item 22: Windows + VL image-entry guard ----
+        // [ZH] ---- v0.2.6 第 22 项：Windows + VL 图片入口防呆 ----------
+        string guardBlocked = main.ProbeImageGuard(false, true, "");
+        Console.WriteLine($"  图片防呆   : {OneLine(guardBlocked, 160)}");
+        Check("Windows + VL 时图片按钮被禁用",
+            guardBlocked.Contains("enabled=False", StringComparison.Ordinal), OneLine(guardBlocked, 160));
+        Check("禁用态仍允许显示软熔断 Tooltip",
+            guardBlocked.Contains("showOnDisabled=True", StringComparison.Ordinal), OneLine(guardBlocked, 160));
+        Check("Tooltip 文案为 Windows + VL 专属提示",
+            guardBlocked.Contains("tooltipIsBlocked=True", StringComparison.Ordinal), OneLine(guardBlocked, 200));
+        string guardGeneric = main.ProbeImageGuard(false, false, "generic vision reason");
+        Check("非软熔断的不可用原因沿用后端文案",
+            guardGeneric.Contains("enabled=False", StringComparison.Ordinal)
+            && guardGeneric.Contains("tooltipIsBlocked=False", StringComparison.Ordinal),
+            OneLine(guardGeneric, 200));
+        string guardReady = main.ProbeImageGuard(true, false, "");
+        Check("视觉可用时图片按钮恢复启用",
+            guardReady.Contains("enabled=True", StringComparison.Ordinal), OneLine(guardReady, 160));
 
         // [EN] ---- Memory above 90% triggers the red warning -----------------------------
         // [ZH] ---- 内存 >90% 红色警告 ---------------------------------------
@@ -1676,18 +1737,11 @@ internal static class Probe
             Console.WriteLine("  [SKIP] 没有可选分面（后端未给 options）");
         }
 
-        // [EN] ---- (6) Pinned row of the default model plus its details ----
-        // [ZH] ---- ⑥ 默认模型钉住行 + 详情 ----
-        var s8 = page.MarketSnapshot();
-        Check("默认模型钉住行可见", s8.PinnedVisible, $"PinnedVisible={s8.PinnedVisible}");
-        if (s8.PinnedVisible)
-        {
-            await page.ProbeMarketOpenPinnedDetailAsync();
-            var s9 = page.MarketSnapshot();
-            Check("钉住行的详情能列出文件", s9.FileRows > 0, $"详情行 {s9.FileRows}");
-        }
+        // [EN] v0.2.6 item 19 follow-up: the pinned default-model row was removed, so there
+        //      is no fixed entry above the result list any more.
+        // [ZH] v0.2.6 第 19 项补充：默认模型钉住行已删除，结果列表上方不再有固定条目。
 
-        // [EN] ---- (7) After switching the language the market texts follow, without asking
+        // [EN] ---- (6) After switching the language the market texts follow, without asking
         // [EN] the backend again ----
         // [ZH] ---- ⑦ 语言切换后市场文案跟着走（不重新问后端）----
         App.State.SetLanguage("en");
