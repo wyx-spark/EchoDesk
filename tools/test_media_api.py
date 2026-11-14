@@ -445,6 +445,29 @@ def main():
           vlm_status.get("reason") == "media.vision_no_mmproj"
           and vlm_status.get("is_vlm") is True, str(vlm_status))
 
+    # [EN] v0.2.6 item 18: a present but non-GGUF projector must be rejected
+    # [EN] before any native call; handing it to clip_model_load is the reported
+    # [EN] access violation. [ZH] v0.2.6 第 18 项：存在但并非 GGUF 的投影文件必须在
+    # [ZH] 任何原生调用之前拒绝；把它交给 clip_model_load 正是上报的访问冲突。
+    bad_model = os.path.join(root, "Qwen3.5-8B-Bad-Q4_K_M.gguf")
+    bad_mmproj = os.path.join(root, "mmproj-Qwen3.5-Bad-f16.gguf")
+    with open(bad_model, "wb") as handle:
+        handle.write(b"GGUF" + b"\x00" * 64)
+    with open(bad_mmproj, "wb") as handle:
+        handle.write(b"not-a-gguf")
+    bad_status = vision_mod.VisionService(bad_model, bad_mmproj).status()
+    check("非 GGUF 投影文件在状态层即报告 invalid",
+          bad_status.get("reason") == "media.vision_mmproj_invalid",
+          str(bad_status))
+    try:
+        vision_mod.VisionEngine(bad_model, bad_mmproj)
+        engine_rejected = False
+    except vision_mod.VisionError as exc:
+        engine_rejected = (exc.key == "media.vision_mmproj_invalid"
+                           and exc.code == "bad_mmproj")
+    check("非 GGUF 投影文件在加载前抛出结构化 VisionError",
+          engine_rejected, "VisionEngine 未按预期拒绝非 GGUF 投影文件")
+
     print("\n================ 结果汇总 ================")
     print(f"共 {PASSED + len(FAILED)} 项，通过 {PASSED} 项，失败 {len(FAILED)} 项，"
           f"跳过 {len(SKIPPED)} 项")

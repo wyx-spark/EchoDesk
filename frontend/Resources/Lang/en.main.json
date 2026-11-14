@@ -438,7 +438,12 @@
     },
     "context": {
       "buttonIdle": "Context: ---/---",
-      "buttonTip": "Click to refresh the context usage"
+      "buttonTip": "Click to refresh the context usage",
+      "selectorTip": "Context window (4096 / 8192 / 16384 / 32768). The change is applied immediately and the model is reloaded; the backend never alters this value in the background.",
+      "selectorHelp": "Choose the context window size available to the model",
+      "applying": "⏳ Applying the context window {0}…",
+      "applied": "✅ Context window set to {0}",
+      "applyFailed": "❌ Could not apply the context window {0}"
     },
     "update": {
       "idle": "🎉 New version",
@@ -570,7 +575,8 @@
       "hint": "Indexing runs in the background and does not block chatting",
       "mounted": "Mounted: {0}",
       "indexFailed": "Indexing failed: {0}",
-      "bound": "bound to this conversation: {0}"
+      "bound": "bound to this conversation: {0}",
+      "toggleTip": "Enable or disable this folder: when disabled it is excluded from this conversation's retrieval but keeps its index"
     }
   },
   "prompt": {

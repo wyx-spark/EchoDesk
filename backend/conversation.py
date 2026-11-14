@@ -1400,6 +1400,20 @@ class ConversationManager:
             # [EN] traceability.
             # [ZH] 检索片段位于所有前置材料之前：模型先看到定位到的依据，再看文件
             # [ZH] 摘要或全文，最后看到问题。该顺序支持引用溯源。
+            # [EN] v0.2.6 item 17: mounted knowledge is supplementary reference
+            # [EN] material, not a replacement for the model's own common sense.
+            # [EN] The rule is appended to the system prompt (not to the user turn)
+            # [EN] so that it outranks the passage block and cannot be mistaken for
+            # [EN] an instruction contained in the retrieved text.
+            # [ZH] v0.2.6 第 17 项：挂载知识库属于附加参考资料，不能取代模型自身的常识。
+            # [ZH] 该规则追加到系统提示（而非用户轮），使其优先级高于参考块，也不会被
+            # [ZH] 误读为检索正文中夹带的指令。
+            messages[0]["content"] = (
+                str(messages[0].get("content", ""))
+                + "\n\n【附加参考资料使用规则】你的自身常识是基础。只有在参考内容与用户"
+                  "提问明确相关时，才予以引用；绝不因为参考内容而否定你的常识。"
+                  "如果参考内容与你的常识冲突，以你的常识为准，并简要说明差异。"
+            )
             user_content = f"{retrieval_context}\n\n{user_content}"
         messages.append({"role": "user", "content": user_content})
         return messages

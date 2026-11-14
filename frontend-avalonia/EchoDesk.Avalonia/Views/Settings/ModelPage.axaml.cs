@@ -1193,7 +1193,7 @@ public partial class ModelPage : UserControl, ISettingsPage
     {
         bool ctxOk = int.TryParse((NctxBox.Text ?? "").Trim(), out int nctx);
         bool gpuOk = int.TryParse((GpuLayersBox.Text ?? "").Trim(), out int gpu);
-        return (nctx, gpu, ctxOk && gpuOk && nctx >= 512 && gpu >= -1);
+        return (nctx, gpu, ctxOk && gpuOk && nctx >= 2048 && gpu >= -1);
     }
 
     /// <summary>
@@ -1212,7 +1212,7 @@ public partial class ModelPage : UserControl, ISettingsPage
         if (!ok)
         {
             warnings.Add(Loc.T("settings.inference.overrideInvalid",
-                "⚠️ 请输入整数：n_ctx ≥ 512，n_gpu_layers ≥ -1"));
+                "⚠️ 请输入整数：n_ctx ≥ 2048，n_gpu_layers ≥ -1"));
         }
         else
         {
@@ -1316,7 +1316,7 @@ public partial class ModelPage : UserControl, ISettingsPage
             await ShowErrorDialogAsync(
                 Loc.T("settings.inference.testLoadFailedTitle", "测试加载失败"),
                 Loc.T("settings.inference.overrideInvalid",
-                    "⚠️ 请输入整数：n_ctx ≥ 512，n_gpu_layers ≥ -1"));
+                    "⚠️ 请输入整数：n_ctx ≥ 2048，n_gpu_layers ≥ -1"));
             return;
         }
         InferenceTestLoadButton.IsEnabled = false;
@@ -1385,7 +1385,7 @@ public partial class ModelPage : UserControl, ISettingsPage
         if (!inputsOk)
         {
             string invalid = Loc.T("settings.inference.overrideInvalid",
-                "⚠️ 请输入整数：n_ctx ≥ 512，n_gpu_layers ≥ -1");
+                "⚠️ 请输入整数：n_ctx ≥ 2048，n_gpu_layers ≥ -1");
             InferenceStatusText.Text = invalid;
             await ShowErrorDialogAsync(
                 Loc.T("settings.inference.saveFailedTitle", "保存失败"), invalid);

@@ -793,6 +793,35 @@ def test_crash_log_scope() -> None:
           repr(backend_main._crash))
 
 
+def test_operational_log_sanitizer() -> None:
+    """v0.2.6 第 18 项：运行日志不得以 delta / system 进入对话区。"""
+    section("运行日志协议层清洗（第 18 项）")
+    import main as backend_main
+
+    stamp = "2026-11-14 18:43:25,123 INFO 推理规划: n_ctx=2048"
+    answer_log = backend_main._sanitize_protocol_event(
+        {"type": "delta", "channel": "answer", "content": stamp})
+    check("答案通道的纯日志行改为 progress",
+          isinstance(answer_log, dict) and answer_log.get("type") == "progress",
+          str(answer_log))
+    reasoning_log = backend_main._sanitize_protocol_event(
+        {"type": "delta", "channel": "reasoning", "content": stamp})
+    check("思考通道的纯日志行被丢弃", reasoning_log is None, str(reasoning_log))
+    system_log = backend_main._sanitize_protocol_event(
+        {"type": "system", "content": "[2026-11-14 12:00:00] INFO: ready"})
+    check("system 事件中的日志行改为 progress",
+          isinstance(system_log, dict) and system_log.get("type") == "progress",
+          str(system_log))
+    mixed = backend_main._sanitize_protocol_event(
+        {"type": "delta", "channel": "answer", "content": "真实内容\n" + stamp})
+    check("混排时保留真实内容并丢弃日志行",
+          isinstance(mixed, dict) and mixed.get("content") == "真实内容",
+          str(mixed))
+    normal = {"type": "delta", "channel": "answer", "content": "正常回答"}
+    check("正常回答不被改写",
+          backend_main._sanitize_protocol_event(normal) is normal, "对象被替换")
+
+
 def test_config_save_target() -> None:
     """任务十五（自测问题修复-1）：配置的写入目标与合法性。
 
@@ -1207,7 +1236,8 @@ def test_imports() -> None:
 def main() -> int:
     tests = [test_imports, test_config, test_plaintext, test_gguf, test_summarizer,
              test_conversation, test_file_injection, test_knowledge_memory,
-             test_crash_log_scope, test_config_save_target, test_state_paths,
+             test_crash_log_scope, test_config_save_target,
+             test_operational_log_sanitizer, test_state_paths,
              test_automation, test_marketplace, test_model_match,
              test_protocol_keys, test_media_support]
     for fn in tests:

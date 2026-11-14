@@ -332,7 +332,7 @@
       "hardwareNative": "📄 Model native window: {0} tokens",
       "hardwareBudget": "📐 Hardware budget ceiling: {0} tokens",
       "hardwareRecommended": "⭐ Recommendation: n_ctx {0} · n_gpu_layers {1} · n_batch {2} · profile {3}",
-      "overrideInvalid": "⚠️ Enter integers: n_ctx ≥ 512, n_gpu_layers ≥ -1",
+      "overrideInvalid": "⚠️ Enter integers: n_ctx ≥ 2048, n_gpu_layers ≥ -1",
       "warnContextOverBudget": "⚠️ n_ctx {0} exceeds the hardware budget of {1} tokens; saving will try your value and report an explicit error if loading fails.",
       "warnGpuUnavailable": "⚠️ No usable GPU accelerator was detected; n_gpu_layers={0} will fail at load time.",
       "warnGpuLayersOver": "⚠️ n_gpu_layers {0} is above the safe recommendation of {1}; VRAM may be insufficient.",

@@ -378,6 +378,39 @@ def _recommendation() -> Dict[str, Any]:
     return recommend_config(ram, cores)
 
 
+#: [EN] Long-text budget routing (v0.2.6 item 17). A document whose token count
+#: is below this fraction of the user-selected context window is injected in full;
+#: segmented summarization is attempted only above it, so short and medium files
+#: keep 100% of their facts. The threshold is fixed at 70% by the task book and
+#: must not be derived from the model's advertised window.
+#: [ZH] 长文本预算路由（v0.2.6 第 17 项）。token 数低于用户所选上下文窗口该比例的
+#: 文档直接全量注入；只有超出该比例才尝试分段摘要，因此短、中等文件的事实 100%
+#: 保留。阈值按任务书固定为 70%，不得改用模型标称窗口来推导。
+_LONG_TEXT_FULL_INJECT_RATIO = 0.70
+
+
+def _summary_failure_is_transient(result: Any) -> bool:
+    """
+    [EN]
+    Whether a failed summary may succeed on a retry because the model was busy.
+    A concurrency-lock failure is not evidence that the file is too large for the
+    window, so the "increase the context / upload in batches" guidance must not
+    replace the retry path for it (v0.2.6 item 17).
+
+    ``result`` may be a summary result object or the error string itself.
+    [ZH]
+    判断一次失败的摘要是否属于“模型忙、重试可成功”的暂时故障。并发锁失败并不能
+    证明文件超出窗口，因此不得用“调大上下文 / 分批次上传”的提示取代其重试路径
+    （v0.2.6 第 17 项）。
+
+    ``result`` 可以是摘要结果对象，也可以直接是错误字符串。
+    """
+    text = (result if isinstance(result, str)
+            else str(getattr(result, "error", "") or "")).lower()
+    return any(marker in text for marker in
+               ("lock", "busy", "concurrent", "in use", "another request"))
+
+
 def _override_blocking_error(plan) -> str:
     """
     [EN]
@@ -483,6 +516,111 @@ def _profile_quant_text(name: str) -> str:
 _stdout_closed = False
 
 
+#: [EN] Pattern of an operational log line that must never be rendered as chat
+#: [EN] content. It accepts the formats emitted by ``logging.basicConfig``
+#: [EN] (``2026-11-14 18:43:25,123 INFO ...``) as well as bracketed prefixes and
+#: [EN] the ``INFO:`` form that some libraries use. The same expression is
+#: [EN] mirrored in the Avalonia front end so either side blocks the line.
+#: [ZH] 绝不能作为对话内容渲染的运行日志行模式。该表达式接受
+#: [ZH] ``logging.basicConfig`` 输出的格式（``2026-11-14 18:43:25,123 INFO ...``）、
+#: [ZH] 方括号前缀，以及部分库使用的 ``INFO:`` 形式。Avalonia 前端镜像了同一
+#: [ZH] 表达式，因此任一侧都能拦截。
+_OPERATIONAL_LOG_RE = re.compile(
+    r"^\s*(?:"
+    r"(?:\[?\d{4}[-/]\d{2}[-/]\d{2}.*?\]?\s*)?"
+    r"(?:INFO|WARNING|ERROR|DEBUG|CRITICAL)\s*:"
+    r"|\[\s*\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s*\]"
+    r"|\[\s*(?:INFO|WARNING|ERROR|DEBUG|CRITICAL)\s*\]"
+    r"|\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s+"
+    r"(?:INFO|WARNING|ERROR|DEBUG|CRITICAL)\b"
+    r"|\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _is_operational_log_line(line: str) -> bool:
+    """
+    [EN] Return whether one line is an operational log line.
+    [ZH] 判断单行是否为运行日志行。
+    """
+    return bool(str(line or "").strip()) and bool(_OPERATIONAL_LOG_RE.match(str(line)))
+
+
+def _scrub_operational_log_lines(text: str) -> tuple:
+    """
+    [EN]
+    Split text into kept content and diverted log lines.
+
+    Filtering is per line so a message that mixes a real notice with a log line
+    keeps the notice instead of being discarded wholesale.
+
+    [ZH]
+    把文本拆分为保留内容与被转移的日志行。
+
+    按行过滤，因此真实提示与日志行混排时会保留提示，而不是整条丢弃。
+    """
+    kept: List[str] = []
+    dropped: List[str] = []
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    for line in normalized.split("\n"):
+        if _is_operational_log_line(line):
+            dropped.append(line.strip())
+        else:
+            kept.append(line)
+    return "\n".join(kept).strip("\n"), dropped
+
+
+def _sanitize_protocol_event(response: Dict[str, Any]):
+    """
+    [EN]
+    Convert operational log lines carried by a ``delta`` or ``system`` event into
+    a ``progress`` (status-bar) event, or drop them entirely.
+
+    A log line must never reach the answer or reasoning pane. The sanitizer runs
+    at the single stdout choke point, so it covers the streaming path and every
+    non-streaming ``system`` response alike.
+
+    [ZH]
+    把 ``delta`` 或 ``system`` 事件携带的运行日志行转换为 ``progress``（状态栏）
+    事件，或直接丢弃。
+
+    日志行绝不能进入回答区或思考区。该清洗位于 stdout 的唯一出口，因此同时覆盖
+    流式路径与所有非流式的 ``system`` 响应。
+    """
+    if not isinstance(response, dict):
+        return response
+    event_type = response.get("type")
+    if event_type not in ("delta", "system"):
+        return response
+    content = response.get("content")
+    if not isinstance(content, str) or not content:
+        return response
+    cleaned, dropped = _scrub_operational_log_lines(content)
+    if not dropped:
+        return response
+    if event_type == "delta" and cleaned.strip():
+        updated = dict(response)
+        updated["content"] = cleaned
+        return updated
+    if cleaned.strip():
+        updated = dict(response)
+        updated["content"] = cleaned
+        return updated
+    if event_type == "delta" and response.get("channel") != _CH_ANSWER:
+        return None
+    # [EN] Keep the auxiliary fields (context, model_state, ...) that the caller
+    # [EN] attached to the original event; only the type and body change.
+    # [ZH] 保留调用方附加在原始事件上的辅助字段（context、model_state 等），
+    # [ZH] 只改变类型与正文。
+    redirected = dict(response)
+    redirected["type"] = "progress"
+    redirected["content"] = dropped[0][:500]
+    redirected.pop("channel", None)
+    redirected.pop("reset", None)
+    return redirected
+
+
 def _write(response: Dict[str, Any]) -> None:
     """
     [EN]
@@ -500,6 +638,13 @@ def _write(response: Dict[str, Any]) -> None:
     """
     global _stdout_closed
     if _stdout_closed:
+        return
+    # [EN] Last line of defence: no operational log may be written as a chat
+    # [EN] delta or system message, regardless of which handler produced it.
+    # [ZH] 最后一道防线：无论哪个处理函数产生，运行日志都不得以对话 delta 或
+    # [ZH] system 消息写出。
+    response = _sanitize_protocol_event(response)
+    if response is None:
         return
     try:
         with _io_lock:
@@ -1118,7 +1263,14 @@ class Backend:
             n_threads_override=int(cfg.n_threads or 0),
             inference_profile=str(getattr(cfg, "inference_profile", "")),
             requested_n_batch=int(cfg.n_batch or 0),
-            allow_override=bool(getattr(cfg, "inference_override", False)),
+            # [EN] v0.2.6 item 17: the configured context window is an explicit
+            # [EN] user decision and is adopted verbatim. The previous code let
+            # [EN] the planner shrink it unless `inference_override` happened to
+            # [EN] be set, which made the numeric setting look advisory.
+            # [ZH] v0.2.6 第 17 项：配置中的上下文窗口属于用户的显式决定，原样采纳。
+            # [ZH] 旧代码只有在 `inference_override` 恰好为真时才不收缩，使数字设置
+            # [ZH] 看起来只是建议值。
+            allow_override=True,
         )
         snapshot = {
             "n_threads": getattr(self.llm, "n_threads", None),
@@ -1281,7 +1433,9 @@ class Backend:
                 n_threads_override=int(self.config.n_threads or 0),
                 inference_profile=str(getattr(self.config, "inference_profile", "")),
                 requested_n_batch=int(self.config.n_batch or 0),
-                allow_override=bool(getattr(self.config, "inference_override", False)),
+                # [EN] v0.2.6 item 17: adopt the explicit window verbatim.
+                # [ZH] v0.2.6 第 17 项：原样采纳显式窗口。
+                allow_override=True,
             )
             blocking = _override_blocking_error(plan) or _preflight_context_error(plan)
             if blocking:
@@ -1568,11 +1722,10 @@ class Backend:
         [EN]
         Create the inference engine from the hardware profile and the selected model.
 
-        The initial window is the planned small allocation, while the hardware ceiling is
-        retained by the engine for on-demand growth (see
-        ``llm_engine.LLMEngine.maybe_grow_context``). The thread count, accelerator choice
-        and GPU layer count all come from ``hardware_profiler.plan_inference``; no tuning
-        value is hard-coded in this method.
+        The context window is exactly the configured user value (v0.2.6 item 17):
+        the planner is used only for the thread count, accelerator choice and GPU
+        layer count, never to shrink or grow the window behind the user's back.
+        No tuning value is hard-coded in this method.
 
         When ``model_path`` is empty, :class:`LazyLLMEngine` (an empty engine) is returned:
         that is the carrier of the "no model ready" state -- the backend starts as usual and
@@ -1581,9 +1734,9 @@ class Backend:
         [ZH]
         依据硬件档案与所选模型创建推理引擎。
 
-        初始窗口取规划后的较小分配值，硬件上限则保留在引擎内供按需扩展（见
-        ``llm_engine.LLMEngine.maybe_grow_context``）。线程数、加速器选择与 GPU 层数
-        全部来自 ``hardware_profiler.plan_inference``；本方法不再硬编码任何调优值。
+        上下文窗口严格等于配置中的用户数值（v0.2.6 第 17 项）：规划器只用于线程数、
+        加速器选择与 GPU 层数，绝不在用户背后收缩或扩展窗口。本方法不硬编码任何
+        调优值。
 
         ``model_path`` 为空时返回 :class:`LazyLLMEngine`（空引擎）：这是"无模型就绪"
         的载体，后端照常启动，等模型到位后由 :meth:`Backend.load_model` **原地加载**。
@@ -1599,7 +1752,9 @@ class Backend:
                 n_threads_override=int(config.n_threads or 0),
                 inference_profile=str(getattr(config, "inference_profile", "")),
                 requested_n_batch=int(config.n_batch or 0),
-                allow_override=bool(getattr(config, "inference_override", False)),
+                # [EN] v0.2.6 item 17: adopt the explicit window verbatim.
+                # [ZH] v0.2.6 第 17 项：原样采纳显式窗口。
+                allow_override=True,
             )
             log.info("%s", _t("sys.log_model_none_state"))
             engine = LazyLLMEngine(
@@ -1622,7 +1777,9 @@ class Backend:
             n_threads_override=int(config.n_threads or 0),
             inference_profile=str(getattr(config, "inference_profile", "")),
             requested_n_batch=int(config.n_batch or 0),
-            allow_override=bool(getattr(config, "inference_override", False)),
+            # [EN] v0.2.6 item 17: adopt the explicit window verbatim.
+            # [ZH] v0.2.6 第 17 项：原样采纳显式窗口。
+            allow_override=True,
         )
         blocking = _override_blocking_error(plan) or _preflight_context_error(plan)
         if blocking:
@@ -2434,6 +2591,8 @@ class Backend:
             return self.knowledge_unmount(request)
         if action == "knowledge_status":
             return self.knowledge_status(request)
+        if action == "knowledge_toggle":
+            return self.knowledge_toggle(request)
         if action == "knowledge_bind":
             return self.knowledge_bind(request)
         if action == "knowledge_search":
@@ -4338,16 +4497,20 @@ class Backend:
             # [ZH] 用户报告的"占用远未到 1/3"就是因为原先只有前者；只看它等于漏掉了最大的一块。
             # [ZH] 不覆盖 ``used`` 是刻意的：既有显示与回归断言都基于它，并列给出信息更全。
             response["used_last_request"] = int(getattr(self, "_last_request_tokens", 0) or 0)
-            # [EN] Report the hardware ceiling rather than the currently allocated
-            # [EN] window: the engine grows on demand up to that ceiling, so the
-            # [EN] front-end progress bar must be scaled against it; otherwise a
-            # [EN] modest history would display as over 100% before compaction runs.
-            # [ZH] 上报硬件上限而非当前已分配的窗口：引擎按需扩展至该上限，因此
-            # [ZH] 前端进度条必须以其为分母；否则一段不长的历史在压缩触发之前就会
-            # [ZH] 显示为超过 100%。
+            # [EN] v0.2.6 item 17: report the window actually allocated, which is
+            # [EN] exactly the user's choice. The engine no longer grows on demand,
+            # [EN] so the progress bar must be scaled against this fixed value.
+            # [ZH] v0.2.6 第 17 项：上报实际分配的窗口，它严格等于用户选择值。引擎已
+            # [ZH] 不再按需扩展，因此进度条必须以这个固定值为分母。
             effective_ctx = int(getattr(self.llm, "max_n_ctx", 0) or self.llm.n_ctx or 0)
             response["limit"] = int(effective_ctx * 0.8)
             response["n_ctx"] = effective_ctx
+            # [EN] v0.2.6 item 17: expose the user's explicit setting separately
+            # [EN] from the effective window so the front end can preselect the
+            # [EN] correct entry in the 4096/8192/16384/32768 selector.
+            # [ZH] v0.2.6 第 17 项：把用户显式设置与生效窗口分开上报，使前端能在
+            # [ZH] 4096/8192/16384/32768 选择器中预选正确项。
+            response["context_length"] = int(getattr(self.config, "context_length", 0) or 0)
             # [EN] Native and planned context are reported alongside the effective
             # [EN] ceiling so that the interface can distinguish "the model cannot
             # [EN] exceed this window" from "this machine cannot afford a larger
@@ -4773,6 +4936,12 @@ class Backend:
         """
         changed: List[str] = []
         cfg = self.config
+        # [EN] v0.2.6 item 17: remember the context value so a failed reload can
+        # [EN] restore it. The interface must never keep showing a window that the
+        # [EN] engine refused to allocate.
+        # [ZH] v0.2.6 第 17 项：记住原上下文值，使重载失败时可以恢复。界面绝不能
+        # [ZH] 继续显示一个引擎拒绝分配的窗口。
+        previous_context = int(getattr(cfg, "context_length", 0) or 0)
         values, value_error = self._parse_override_request(request)
         if value_error:
             return {"type": "system", "content": value_error, "ok": False,
@@ -4923,6 +5092,19 @@ class Backend:
         if inference_changed:
             result = self._rebuild_inference()
             if not result.get("ok"):
+                # [EN] v0.2.6 item 17: restore the previous context value so the
+                # [EN] persisted configuration and the running engine agree. The
+                # [EN] error payload still explains why the requested size failed.
+                # [ZH] v0.2.6 第 17 项：恢复原上下文值，使持久化配置与运行中的引擎
+                # [ZH] 保持一致。错误负载仍会说明请求值失败的原因。
+                if "n_ctx" in values and previous_context > 0:
+                    cfg.context_length = previous_context
+                    changed = [item for item in changed if item != "n_ctx"]
+                    try:
+                        cfg.save()
+                    except Exception:  # noqa: BLE001 - [EN] the returned error is primary
+                                       # [ZH] 返回的错误才是主要信息
+                        log.warning("恢复上下文设置后保存失败", exc_info=True)
                 return {
                     "type": "system",
                     "content": _t("sys.inference_override_failed",
@@ -7120,10 +7302,25 @@ class Backend:
                 stored = self._store_large_file(name, content)
             effective_ctx = int(getattr(self.llm, "max_n_ctx", 0)
                                 or getattr(self.llm, "n_ctx", 0) or 0)
+            # [EN] Budget routing (v0.2.6 item 17): under 70% of the user's window
+            # [EN] the body is injected in full and summary is never attempted.
+            # [ZH] 预算路由（v0.2.6 第 17 项）：低于用户窗口 70% 时直接全量注入，
+            # [ZH] 绝不尝试摘要。
+            budget_tokens = int(effective_ctx * _LONG_TEXT_FULL_INJECT_RATIO)
+            needs_summary_no_model = (effective_ctx > 0 and tokens >= budget_tokens
+                                      and not self.model_ready)
             summary_text = ""
             summary_meta: Dict[str, Any] = {}
             result = None
-            if self.model_ready and self.summarizer.should_use_summary(content, effective_ctx):
+            if (self.model_ready and effective_ctx > 0
+                    and tokens >= budget_tokens):
+                # [EN] Tell the user why summarization is being used before the
+                # [EN] long-running model calls begin (v0.2.6 item 17).
+                # [ZH] 在长时间模型调用开始前告知用户为何启用摘要（v0.2.6 第 17 项）。
+                job.emit({"type": "file_status", "phase": "summarizing",
+                          "index": index, "total": total, "name": name,
+                          "content": _t("sys.file_summary_mode", name=name,
+                                        tokens=tokens, n_ctx=effective_ctx)})
                 # [EN] Task 2.2: a private conversation object owns every
                 # [EN] intermediate prompt. It is discarded when the job ends.
                 # [ZH] 任务 2.2：私有会话对象承载全部中间提示词，作业结束时丢弃。
@@ -7150,9 +7347,37 @@ class Backend:
                 job.status = STATUS_CANCELLED
                 return
 
+            # [EN] v0.2.6 item 17: a genuine summarization failure (not a
+            # [EN] concurrency lock) means the file cannot be represented within
+            # [EN] the current window. Report exactly that and do not register the
+            # [EN] file, so the interface never shows a fake success. The user can
+            # [EN] raise the context window or upload in batches and retry.
+            # [ZH] v0.2.6 第 17 项：真正的摘要失败（非并发锁）意味着该文件无法在当前
+            # [ZH] 窗口内表达。如实报告该结论且不登记文件，界面绝不显示假成功。用户可
+            # [ZH] 调大上下文或分批次上传后重试。
+            if (result is not None and result.status == "failed"
+                    and not _summary_failure_is_transient(result)):
+                final_text = _t("sys.file_exceeds_context",
+                                name=name, tokens=tokens, n_ctx=effective_ctx)
+                outcomes.append({"ok": False, "name": name, "chars": chars,
+                                 "tokens": tokens, "message": final_text})
+                job.emit({"type": "file_status", "phase": "failed", "index": index,
+                          "total": total, "name": name, "ok": False,
+                          "content": final_text})
+                continue
+
             if summary_text:
-                final_text = (_t("sys.file_async_summary_head", name=name) + "\n"
-                              + summary_text)
+                final_text = (_t("sys.file_summary_mode", name=name, tokens=tokens,
+                                 n_ctx=effective_ctx) + "\n" + summary_text)
+            elif needs_summary_no_model:
+                # [EN] The file needs a summary but no model is loaded: keep the
+                # [EN] parsed body and tell the user how to proceed instead of
+                # [EN] claiming it was fully injected.
+                # [ZH] 文件需要摘要但当前没有模型：保留已解析正文并说明如何继续，
+                # [ZH] 而不是声称已全量注入。
+                final_text = _t("sys.file_loaded_no_model", name=name, chars=chars,
+                                tokens=tokens,
+                                guide=_t("sys.no_model_guide", dir=self.models_dir()))
             elif result is not None and result.status == "failed":
                 final_text = _t("sys.file_async_failed", name=name,
                                 error=result.error or "")
@@ -7387,6 +7612,40 @@ class Backend:
                 "jobs": self._document_jobs.status(),
                 "last_retrieval": self._last_knowledge}
 
+    def knowledge_toggle(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Enable or disable one mounted library (v0.2.6 item 17). A disabled
+        library keeps its index but is excluded from every retrieval path, so the
+        per-folder switch behaves like an on-demand plug-in rather than an
+        unmount. The reply carries the refreshed library table so the panel can
+        re-render without a second round trip.
+        [ZH]
+        启用或禁用一个已挂载库（v0.2.6 第 17 项）。被禁用的库保留索引，但会从全部
+        检索路径中排除，因此按文件夹的开关更像按需插件而不是卸载。应答携带刷新后的
+        库列表，面板无需第二次往返即可重绘。
+        """
+        library_id = str(request.get("library_id") or request.get("id") or "").strip()
+        if not library_id:
+            return {"type": "system", "ok": False,
+                    "content": _t("sys.knowledge_toggle_missing")}
+        base = self.knowledge_base()
+        library = base.get_library(library_id)
+        if library is None:
+            return {"type": "system", "ok": False,
+                    "content": _t("sys.knowledge_unmount_missing", id=library_id)}
+        enabled = bool(request.get("enabled", True))
+        base.set_enabled(library_id, enabled)
+        with self._conv_lock:
+            self.save_session()
+        return {"type": "system", "ok": True, "library_id": library_id,
+                "enabled": enabled, "libraries": base.libraries(),
+                "knowledge_ids": list(self.conv.knowledge_ids),
+                "content": _t("sys.knowledge_toggle_ok",
+                              name=library.get("name", library_id),
+                              state=_t("sys.knowledge_enabled") if enabled
+                              else _t("sys.knowledge_disabled_state"))}
+
     def knowledge_bind(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
         [EN]
@@ -7465,6 +7724,20 @@ class Backend:
         if cfg is None or not bool(getattr(cfg, "enabled", True)):
             return ""
         library_ids = list(self.conv.knowledge_ids)
+        if not library_ids:
+            return ""
+        # [EN] v0.2.6 item 17: a disabled folder is a detached plug-in. Filtering
+        # [EN] here as well as in the SQL keeps the retrieval report honest: a
+        # [EN] disabled library is not counted as a searched source.
+        # [ZH] v0.2.6 第 17 项：被禁用的文件夹是已拔下的插件。除 SQL 之外在这里再过
+        # [ZH] 滤一次，使检索报告保持诚实：被禁用的库不计入本次检索来源。
+        try:
+            enabled_ids = {str(item.get("id")) for item in self.knowledge_base().libraries()
+                           if int(item.get("enabled", 1) or 0)}
+            library_ids = [item for item in library_ids if item in enabled_ids]
+        except Exception:  # noqa: BLE001 - [EN] fall back to the SQL-level filter
+                           # [ZH] 回退到 SQL 层过滤
+            enabled_ids = set()
         if not library_ids:
             return ""
         try:
@@ -7949,17 +8222,20 @@ class Backend:
                 entry.stored_at = stored
                 entry.content = ""
                 log_user(log, "sys.log_file_stored", name=name, threshold=threshold, path=stored)
-        # [EN] The summarisation trigger is evaluated against the hardware
-        # [EN] ceiling, not the small initial window: a file that fits within the
-        # [EN] ceiling expands the window on demand and must not be summarised
-        # [EN] prematurely.
-        # [ZH] 摘要触发判断以硬件上限为基准，而非较小的初始窗口：能够容纳在上限
-        # [ZH] 之内的文件会按需扩展窗口，不得被提前摘要。
+        # [EN] Budget routing (v0.2.6 item 17). The threshold is 70% of the
+        # [EN] user-selected window; below it the parsed body is injected in full
+        # [EN] and summarization is never attempted, so no fact is lost. The
+        # [EN] previous implementation consulted the summarizer's own min_chars /
+        # [EN] trigger_ratio pair, which could summarize a file that already fitted.
+        # [ZH] 预算路由（v0.2.6 第 17 项）。阈值为用户所选窗口的 70%；低于该值时
+        # [ZH] 解析后的正文直接全量注入，绝不尝试摘要，因此不会丢事实。旧实现使用
+        # [ZH] 摘要器自己的 min_chars / trigger_ratio，可能对本可容纳的文件也做摘要。
         effective_ctx = int(getattr(self.llm, "max_n_ctx", 0) or self.llm.n_ctx or 0)
-        if allow_summary and self.summarizer.should_use_summary(content, effective_ctx):
+        budget_tokens = int(effective_ctx * _LONG_TEXT_FULL_INJECT_RATIO)
+        if allow_summary and effective_ctx > 0 and tokens >= budget_tokens:
             log.info(
-                "文件 %s 约 %d tokens，超过窗口 %d 的 %.0f%%：转入分段摘要",
-                name, tokens, effective_ctx, self.config.summarize.trigger_ratio * 100,
+                "文件 %s 约 %d tokens，达到窗口 %d 的 %.0f%%：启用分段摘要",
+                name, tokens, effective_ctx, _LONG_TEXT_FULL_INJECT_RATIO * 100,
             )
             # [EN] Design specification: file parsing **does not depend on the model** and
             # [EN] must still complete; only the "chunked summary" step needs the model. So
@@ -7973,15 +8249,35 @@ class Backend:
                         "message": _t("sys.file_loaded_no_model", name=name,
                                       chars=len(content), tokens=tokens,
                                       guide=_t("sys.no_model_guide", dir=self.models_dir()))}
-            head = _t("sys.file_auto_summary_head", name=name, tokens=tokens,
-                      n_ctx=effective_ctx,
-                      ratio=f"{self.config.summarize.trigger_ratio:.0%}") + "\n"
+            head = _t("sys.file_summary_mode", name=name, tokens=tokens,
+                      n_ctx=effective_ctx) + "\n"
+            outcome: Dict[str, Any] = {}
+            summary_message = self.summarize_entry(
+                entry, force=True, source_name=name,
+                trigger=_t("sys.summarize_trigger_auto"),
+                progress_sink=progress_sink, outcome=outcome)
+            # [EN] A genuine failure means the file cannot be represented in the
+            # [EN] current window. Remove the just-registered entry and report the
+            # [EN] actionable limit instead of a success message. A concurrency-lock
+            # [EN] failure keeps the retry path because the file may still fit.
+            # [ZH] 真正的失败意味着文件无法在当前窗口内表达：撤销刚登记的文件并给出
+            # [ZH] 可操作的超限提示，而不是成功文案。并发锁失败保留重试路径，因为文件
+            # [ZH] 仍可能装得下。
+            if (outcome.get("status") == "failed"
+                    and not outcome.get("aborted")
+                    and not _summary_failure_is_transient(outcome.get("error", ""))):
+                try:
+                    self.conv.remove_file_by_name(name)
+                except Exception:  # noqa: BLE001 - [EN] cleanup must not mask the report
+                                   # [ZH] 清理不得掩盖报告
+                    log.debug("撤销超限文件登记失败：%s", name, exc_info=True)
+                return {"ok": False, "name": name, "chars": len(content),
+                        "tokens": tokens, "needs_summary": True,
+                        "message": _t("sys.file_exceeds_context",
+                                      name=name, tokens=tokens, n_ctx=effective_ctx)}
             return {"ok": True, "name": name, "chars": len(content), "tokens": tokens,
                     "needs_summary": True,
-                    "message": head + self.summarize_entry(
-                        entry, force=True, source_name=name,
-                        trigger=_t("sys.summarize_trigger_auto"),
-                        progress_sink=progress_sink)}
+                    "message": head + summary_message}
         return {"ok": True, "name": name, "chars": len(content), "tokens": tokens,
                 "needs_summary": False,
                 "message": _t("sys.file_loaded", name=name, chars=len(content), tokens=tokens)}
@@ -8206,13 +8502,24 @@ class Backend:
                                     trigger=trigger, progress_sink=progress_sink)
 
     def summarize_entry(self, entry, force: bool = True, source_name: str = "",
-                        trigger: str = "", progress_sink=None) -> str:
+                        trigger: str = "", progress_sink=None,
+                        outcome: Optional[Dict[str, Any]] = None) -> str:
         """
         [EN]
         Summarize a specific file entry.
 
+        ``outcome`` is an optional caller-owned dictionary. When supplied it is
+        filled with the machine-readable terminal state (``status``, ``error``,
+        ``summarized``) so the upload path can distinguish a genuine window
+        overflow from a concurrency-lock retry without parsing localized text
+        (v0.2.6 item 17).
+
         [ZH]
         对**指定文件条目**做分段摘要（多文件下必须能指名道姓，相关设计）。
+
+        ``outcome`` 为可选的、由调用方持有的字典。提供时写入机器可读的终态
+        （``status`` / ``error`` / ``summarized``），使上传路径无需解析本地化文案
+        即可区分“窗口溢出”与“并发锁重试”（v0.2.6 第 17 项）。
 
         与 ``summarize_current_file`` 的差别只有"作用于哪一份"：
         后者取当前活动文件，前者由调用方指定条目。
@@ -8261,6 +8568,9 @@ class Backend:
                 })
                 self.llm.clear_cache()
                 log_user(log, "sys.log_summary_cache_hit", name=name, hits=hit.get("hits"))
+                if outcome is not None:
+                    outcome.update({"status": "ok", "error": "",
+                                    "summarized": True, "aborted": False})
                 return (
                     _t("sys.summary_cache_hit", trigger=trigger, name=name) + "\n"
                     + _t("sys.summary_cache_hit_detail", chars=hit.get('origin_chars') or 0,
@@ -8301,6 +8611,13 @@ class Backend:
             entry.content, source_name=name, force=force, on_progress=_progress,
             should_stop=lambda: self.stop_event.is_set(),
         )
+        if outcome is not None:
+            outcome.update({
+                "status": str(getattr(result, "status", "") or ""),
+                "error": str(getattr(result, "error", "") or ""),
+                "summarized": bool(getattr(result, "summarized", False)),
+                "aborted": bool(getattr(result, "aborted", False)),
+            })
         # [EN] Design specification: report "slow" and "broken" separately. Neither an abort
         # [EN] nor a failure injects half a summary, and the retry path is preserved.
         # [ZH] 相关设计：把"慢"与"坏"分开报。中止/失败都不注入半份摘要，并保留重试路径。

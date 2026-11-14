@@ -239,12 +239,13 @@ class LLMEngine:
         # [ZH] （见 ``hardware_profiler.KV_CACHE_TYPE_F16``）；在此记录，使当前生效的
         # [ZH] 配置在诊断与日志中可完整观测。
         self.kv_cache_type = "f16"
-        # [EN] Hardware profile and planning bounds supplied by the startup
-        # [EN] planner. ``max_n_ctx`` is the ceiling to which :meth:`maybe_grow_context`
-        # [EN] may expand the window on demand; it is never smaller than ``n_ctx``.
-        # [ZH] 由启动规划器提供的硬件档案与规划边界。``max_n_ctx`` 是
-        # [ZH] :meth:`maybe_grow_context` 按需扩展窗口时可达到的上限，且永不小于
-        # [ZH] ``n_ctx``。
+        # [EN] Hardware profile supplied by the startup planner. ``max_n_ctx`` is
+        # [EN] recorded for diagnostics only; since v0.2.6 item 17 the engine never
+        # [EN] grows the window at runtime and always runs with the user-selected
+        # [EN] value, so this field never exceeds ``n_ctx`` in a strict plan.
+        # [ZH] 由启动规划器提供的硬件档案。``max_n_ctx`` 仅用于诊断；自 v0.2.6 第 17
+        # [ZH] 项起引擎运行期不再扩展窗口，始终使用用户选定的数值，因此在严格规划下
+        # [ZH] 该字段不会大于 ``n_ctx``。
         self.profile = profile
         self.max_n_ctx = max(int(n_ctx), int(max_n_ctx or n_ctx))
         self.backend_label = str(
@@ -648,66 +649,6 @@ class LLMEngine:
                 total += max(0, len(text) // 2)
         return total
 
-    def maybe_grow_context(self, messages: List[dict], max_tokens: int = 0) -> bool:
-        """
-        [EN]
-        Expand the context window on demand when the next request would exceed
-        the currently allocated window.
-
-        The initial window is deliberately small (see
-        :data:`hardware_profiler.DEFAULT_INITIAL_CONTEXT`) so that an idle model
-        occupies little memory. Growth is performed by reloading the model with a
-        larger window, doubling the current value and clamping it to the
-        hardware ceiling. A reload failure is logged and the request proceeds
-        with the existing window, because refusing to answer would be a worse
-        user-visible outcome than a possible allocation failure.
-
-        [ZH]
-        当下一次请求将超出当前已分配的窗口时，按需扩展上下文窗口。
-
-        初始窗口刻意较小（见 :data:`hardware_profiler.DEFAULT_INITIAL_CONTEXT`），
-        使空闲模型占用较少内存。扩展通过以更大窗口重新加载模型完成：将当前值
-        翻倍，并收敛到硬件上限。重新加载失败时记录日志并沿用既有窗口继续请求，
-        因为拒绝回答对用户而言比一次可能的内存分配失败更糟。
-        """
-        ceiling = int(getattr(self, "max_n_ctx", 0) or 0)
-        current = int(self.n_ctx or 0)
-        if ceiling <= current or not messages:
-            return False
-        needed = self._prompt_token_estimate(messages) + max(0, int(max_tokens or 0)) + 64
-        if needed <= current:
-            return False
-        # [EN] Grow strictly by doubling: start at twice the current window and double
-        # [EN] again until the request fits, then clamp to the hardware ceiling. Jumping
-        # [EN] straight to ``needed`` would allocate far more memory than required.
-        # [ZH] 严格按倍扩展：从当前窗口的两倍开始，不足则继续翻倍，直到请求可容纳，再收敛
-        # [ZH] 到硬件上限。直接跳到 ``needed`` 会分配远超实际需要的内存。
-        target = max(current * 2, 256)
-        while target < needed and target < ceiling:
-            target *= 2
-        target = min(ceiling, target)
-        # [EN] Align upward to the context granularity so the final value never drops
-        # [EN] below the measured requirement.
-        # [ZH] 向上对齐到上下文粒度，确保最终值不会低于实测需求。
-        remainder = target % 256
-        if remainder:
-            target = min(ceiling, target + (256 - remainder))
-        if target <= current:
-            return False
-        try:
-            self.reload(n_ctx=target)
-        except Exception:  # noqa: BLE001 - keep the session usable on failure
-            log.warning(
-                "上下文按需扩展失败（沿用 %d tokens）: target=%d", current, target,
-                exc_info=True,
-            )
-            return False
-        log_user(
-            log, "sys.log_context_expanded",
-            old=current, new=int(self.n_ctx or target), max_ctx=ceiling,
-        )
-        return True
-
     def _chat_complete_raw(
         self,
         messages: List[dict],
@@ -720,14 +661,16 @@ class LLMEngine:
         [EN]
         Low-level non-streaming completion. Returns the raw model output, which may
         contain reasoning tags.
+
+        The context window is never expanded here (v0.2.6 item 17): ``n_ctx`` is
+        exactly the value the user selected, and a request that does not fit fails
+        visibly instead of silently reallocating the model behind the user's back.
         [ZH]
         底层非流式补全，返回模型原样输出（可能包含思考标签）。
+
+        此处绝不扩展上下文窗口（v0.2.6 第 17 项）：``n_ctx`` 严格等于用户选择的
+        数值；放不下的请求会显式失败，而不是在用户背后静默重分配模型。
         """
-        # [EN] Grow the window before building the request so the allocation
-        # [EN] matches the conversation length; see :meth:`maybe_grow_context`.
-        # [ZH] 在构建请求之前扩展窗口，使分配值与对话长度相匹配；见
-        # [ZH] :meth:`maybe_grow_context`。
-        self.maybe_grow_context(messages, max_tokens)
         kwargs: Dict[str, object] = {
             "messages": messages,
             "stream": False,
@@ -1060,11 +1003,10 @@ class LLMEngine:
         速度统计刻意将思考内容计入 ``last_tokens``：思考同样属于模型生成的输出，
         "变慢"必须如实反映，不能因分流而少计一部分。
         """
-        # [EN] Grow the window before dispatching the request; the expansion is
-        # [EN] part of the caller-visible latency and must precede prefill.
-        # [ZH] 在派发请求之前扩展窗口；扩展耗时属于调用方可见的延迟，必须发生在
-        # [ZH] prefill 之前。
-        self.maybe_grow_context(messages, max_tokens)
+        # [EN] The context window is fixed to the user's explicit value (v0.2.6
+        # [EN] item 17). No growth happens before dispatch; see `_chat_complete_raw`.
+        # [ZH] 上下文窗口固定为用户显式选择的值（v0.2.6 第 17 项）。派发前不做任何
+        # [ZH] 扩展；见 `_chat_complete_raw`。
         started = time.perf_counter()
         produced = 0
         if stats is not None:

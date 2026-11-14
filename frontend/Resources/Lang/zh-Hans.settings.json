@@ -332,7 +332,7 @@
       "hardwareNative": "📄 模型原生窗口：{0} tokens",
       "hardwareBudget": "📐 硬件预算上限：{0} tokens",
       "hardwareRecommended": "⭐ 推荐：n_ctx {0} · n_gpu_layers {1} · n_batch {2} · 档位 {3}",
-      "overrideInvalid": "⚠️ 请输入整数：n_ctx ≥ 512，n_gpu_layers ≥ -1",
+      "overrideInvalid": "⚠️ 请输入整数：n_ctx ≥ 2048，n_gpu_layers ≥ -1",
       "warnContextOverBudget": "⚠️ n_ctx {0} 超出硬件预算 {1} tokens；保存后会按你的选择尝试加载，失败时会明确报错。",
       "warnGpuUnavailable": "⚠️ 本机未探测到可用 GPU 加速器；n_gpu_layers={0} 会在加载时失败。",
       "warnGpuLayersOver": "⚠️ n_gpu_layers {0} 高于安全推荐值 {1}；可能显存不足。",

@@ -102,6 +102,14 @@ public partial class MainWindow : Window
     private bool _pttReleasePending;
     private bool _mediaInitialized;
     private string _lastAssistantAnswer = "";
+    // [EN] v0.2.6 item 17: guard so writing the context selector from a backend
+    //      response does not itself trigger a new backend request.
+    // [ZH] v0.2.6 第 17 项：防止用后端响应回填上下文选择器时又触发一次后端请求。
+    private bool _contextWindowUpdating;
+    // [EN] Sizes offered by the context selector; the backend accepts a wider
+    //      range, but the task book fixes these four user-facing choices.
+    // [ZH] 上下文选择器提供的档位；后端接受更大范围，但任务书把这四档定为用户选项。
+    private static readonly int[] ContextWindowSizes = { 4096, 8192, 16384, 32768 };
 
     /// <summary>
     /// [EN] Pattern of a backend operational log line (timestamp or level prefix). Such
@@ -110,7 +118,25 @@ public partial class MainWindow : Window
     ///      对话气泡。
     /// </summary>
     private static readonly Regex BackendLogLine = new(
-        @"^\s*(?:\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}|(?:INFO|WARNING|ERROR|DEBUG|CRITICAL)\b)",
+        // [EN] v0.2.6 item 17: accept both bare ISO timestamps and bracketed
+        //      timestamps / levels, plus the "INFO:" / "ERROR:" prefixes that the
+        //      backend logging configuration emits. The previous pattern anchored
+        //      only on a bare timestamp or level, so "[2026-11-14 12:00:00] INFO:"
+        //      slipped through into the transcript.
+        // [ZH] v0.2.6 第 17 项：同时接受裸 ISO 时间戳、方括号包裹的时间戳/级别，
+        //      以及后端日志配置输出的 "INFO:" / "ERROR:" 前缀。旧模式只锚定裸时间戳
+        //      或级别，导致 "[2026-11-14 12:00:00] INFO:" 漏进对话区。
+        @"^\s*(?:"
+        // [EN] v0.2.6 item 18: the exact combined form required by the task book,
+        //      e.g. "[2026-11-14 12:00:00] INFO:" or "2026-11-14 INFO:".
+        // [ZH] v0.2.6 第 18 项：任务书要求的组合形式，例如
+        //      "[2026-11-14 12:00:00] INFO:" 或 "2026-11-14 INFO:"。
+        + @"(?:\[?\d{4}[-/]\d{2}[-/]\d{2}.*?\]?\s*)?(?:INFO|WARNING|ERROR|DEBUG|CRITICAL)\s*:"
+        + @"|\[\s*\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s*\]"
+        + @"|\[\s*(?:INFO|WARNING|ERROR|DEBUG|CRITICAL)\s*\]"
+        + @"|\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?"
+        + @"|(?:INFO|WARNING|ERROR|DEBUG|CRITICAL)\s*:"
+        + @")",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // [EN] Streaming state. The answer and reasoning buffers are appended from the backend
@@ -661,6 +687,18 @@ public partial class MainWindow : Window
         // [ZH] 而 ApplyTexts 每次切语言都会跑一遍，于是每切一次语言就多一个处理器
         // [ZH] （点一下发 N 次 context 请求）。
         ContextChip.Click += async (_, _) => await RefreshContextAsync();
+        // [EN] v0.2.6 item 17: persistent selector for the context window. Items
+        //      are numbers only; the tooltip carries the localized explanation.
+        // [ZH] v0.2.6 第 17 项：上下文窗口的常驻选择器。条目只含数字，说明文案由
+        //      ToolTip 承载。
+        foreach (int size in ContextWindowSizes)
+            ContextWindowCombo.Items.Add(size);
+        ContextWindowCombo.SelectionChanged += async (_, _) =>
+        {
+            if (_contextWindowUpdating || ContextWindowCombo.SelectedItem is not int size)
+                return;
+            await ApplyContextWindowAsync(size);
+        };
     }
 
     /// <summary>
@@ -1052,6 +1090,12 @@ public partial class MainWindow : Window
         ToolTip.SetTip(StripAutomationButton, Loc.T("main.strip.automationTip", "点击打开「设置 → 自动化」"));
         ToolTip.SetTip(StripMarketButton, Loc.T("main.strip.marketTip", "点击打开「设置 → 技能市场」"));
         ToolTip.SetTip(StripContextButton, Loc.T("main.strip.contextTip", "点击刷新上下文占用"));
+        // [EN] v0.2.6 item 17: explain that the selector is the user's decision.
+        // [ZH] v0.2.6 第 17 项：说明该选择器由用户决定，后端不会私自修改。
+        ToolTip.SetTip(ContextWindowCombo, Loc.T("main.context.selectorTip",
+            "上下文窗口（4096 / 8192 / 16384 / 32768）。选定后立即生效并重载模型；后端不会在后台修改该值。"));
+        AutomationProperties.SetHelpText(ContextWindowCombo, Loc.T("main.context.selectorHelp",
+            "选择模型可用的上下文窗口大小"));
         ToolTip.SetTip(StripKvButton, Loc.T("main.strip.kvTip", "点击打开「设置 → 模型」"));
         ToolTip.SetTip(StripMemoryButton, Loc.T("main.strip.memoryTip", "点击打开「设置 → 模型」查看硬件诊断"));
         ToolTip.SetTip(StripCapabilityButton, Loc.T("main.strip.capabilityTip", "点击打开「设置 → 模型」"));
@@ -1715,6 +1759,99 @@ public partial class MainWindow : Window
             ApplyContextFields(doc.RootElement);
     }
 
+    /// <summary>
+    /// [EN] Select one context-window entry without triggering a backend request.
+    ///      A legacy value that is not one of the four task-book sizes is inserted
+    ///      as an extra entry instead of being silently rounded to a neighbour.
+    /// [ZH] 选中一个上下文窗口档位且不触发后端请求。不属于任务书四档的历史值会作为
+    ///      额外条目插入，而不是被静默取整到相邻档位。
+    /// </summary>
+    private void SelectContextWindow(int size)
+    {
+        if (size <= 0)
+            return;
+        _contextWindowUpdating = true;
+        try
+        {
+            bool present = false;
+            foreach (object? item in ContextWindowCombo.Items)
+            {
+                if (item is int value && value == size)
+                {
+                    present = true;
+                    break;
+                }
+            }
+            if (!present)
+                ContextWindowCombo.Items.Insert(0, size);
+            ContextWindowCombo.SelectedItem = size;
+        }
+        finally
+        {
+            _contextWindowUpdating = false;
+        }
+    }
+
+    /// <summary>
+    /// [EN] Persist and apply a user-selected context window (v0.2.6 item 17).
+    ///      The backend saves the value and reloads the model with exactly this
+    ///      window; on failure it keeps the previous engine, restores the previous
+    ///      setting and reports why. The selector is re-synchronised from the
+    ///      configuration afterwards, so UI and engine stay consistent.
+    /// [ZH] 持久化并应用用户选择的上下文窗口（v0.2.6 第 17 项）。后端保存该值并以
+    ///      完全相同的窗口重载模型；失败时保留旧引擎、恢复原设置并说明原因。随后
+    ///      选择器按配置重新同步，使界面与引擎保持一致。
+    /// </summary>
+    private async Task ApplyContextWindowAsync(int size)
+    {
+        if (!_state.Backend.IsRunning)
+        {
+            SetStatus(Loc.T("main.error.notRunning", "❌ 后端未运行"));
+            await RefreshContextAsync();
+            return;
+        }
+        SetStatus(Loc.T("main.context.applying", "⏳ 正在应用上下文窗口 {0}…", size));
+        try
+        {
+            JsonDocument? doc = await _state.Backend.SendAsync(
+                new { action = "capability_settings", n_ctx = size, allow_override = true },
+                idleTimeout: BackendService.HeavyIdleTimeout);
+            if (doc is null)
+            {
+                SetStatus(Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
+                    _state.Backend.LastError ?? ""));
+                await RefreshContextAsync();
+                return;
+            }
+            using (doc)
+            {
+                JsonElement root = doc.RootElement;
+                bool ok = !(root.TryGetProperty("ok", out JsonElement okElement)
+                            && okElement.ValueKind == JsonValueKind.False);
+                string content = GetStringField(root, "content");
+                if (ok)
+                {
+                    SetStatus(string.IsNullOrWhiteSpace(content)
+                        ? Loc.T("main.context.applied", "✅ 上下文窗口已设为 {0}", size)
+                        : content);
+                }
+                else
+                {
+                    string message = string.IsNullOrWhiteSpace(content)
+                        ? Loc.T("main.context.applyFailed", "❌ 无法应用上下文窗口 {0}", size)
+                        : content;
+                    SetStatus(message);
+                    Toast(message, error: true);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus(Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
+        }
+        await RefreshContextAsync();
+    }
+
     private async Task RefreshAutomationStatusAsync()
     {
         JsonDocument? doc = await _state.Backend.SendAsync(new { action = "automation_status" });
@@ -2300,6 +2437,11 @@ public partial class MainWindow : Window
     {
         int used = GetIntField(context, "used");
         int limit = GetIntField(context, "limit");
+        // [EN] v0.2.6 item 17: keep the selector in sync with the persisted user
+        //      setting, never with a derived/effective value.
+        // [ZH] v0.2.6 第 17 项：选择器只同步持久化的用户设置，绝不同步推导值或
+        //      生效值。
+        SelectContextWindow(GetIntField(context, "context_length"));
         if (limit <= 0)
             return;
         // [EN] Development task 10 (self-test fix 1): the displayed value now uses **what was
@@ -3391,6 +3533,18 @@ public partial class MainWindow : Window
                 onEvent: DispatchStreamEvent,
                 onDeltaChannel: (channel, content, reset) => Dispatcher.UIThread.Post(() =>
                 {
+                    // [EN] v0.2.6 item 18: an operational log line carried by a
+                    //      delta is shown in the status bar and never appended to
+                    //      the answer or reasoning buffers. BackendService already
+                    //      blocks the common case; this is the UI-side guard.
+                    // [ZH] v0.2.6 第 18 项：delta 携带的运行日志行只显示在状态栏，
+                    //      绝不追加到回答或思考缓冲区。BackendService 已拦截常见
+                    //      情形；此处是界面侧防线。
+                    if (IsOperationalLogText(content))
+                    {
+                        SetStatus(Trim(Emoji.Prefer(content), 120));
+                        return;
+                    }
                     if (channel == "reasoning")
                     {
                         AppendReasoningText(content);
@@ -3495,6 +3649,32 @@ public partial class MainWindow : Window
     {
         switch (type)
         {
+            case "status":
+            {
+                // [EN] v0.2.6 item 18: BackendService reroutes operational log
+                //      lines to this event so they reach the status bar only.
+                // [ZH] v0.2.6 第 18 项：BackendService 把运行日志行改投到本事件，
+                //      使其只到达状态栏。
+                string status = root.TryGetProperty("content", out JsonElement statusEl)
+                    ? statusEl.GetString() ?? "" : "";
+                if (status.Length > 0)
+                    SetStatus(Trim(Emoji.Prefer(status), 120));
+                break;
+            }
+            case "delta":
+            case "system":
+            {
+                // [EN] Defensive interception required by the task book: even if a
+                //      stream path reaches dispatch with a delta or system message,
+                //      a matching log line is redirected and never written to the UI.
+                // [ZH] 任务书要求的防御性拦截：即使某条流式路径把 delta 或 system
+                //      消息送到了分发层，命中的日志行也只改投状态栏，绝不写入界面。
+                string content = root.TryGetProperty("content", out JsonElement contentEl)
+                    ? contentEl.GetString() ?? "" : "";
+                if (IsOperationalLogText(content))
+                    SetStatus(Trim(Emoji.Prefer(content), 120));
+                break;
+            }
             case "progress":
             {
                 // [EN] Heartbeat: states "still computing" so that the interface does not look
@@ -5297,16 +5477,49 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// [EN] Returns true only when every non-empty line is a backend log line, so
+    ///      a message that mixes a real notice with a log keeps the notice.
+    /// [ZH] 仅当每个非空行都是后端日志行时返回真，使真实提示与日志混排时保留提示。
+    /// </summary>
+    private static bool IsOperationalLogText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        bool sawLine = false;
+        foreach (string raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+            sawLine = true;
+            if (!BackendLogLine.IsMatch(raw))
+                return false;
+        }
+        return sawLine;
+    }
+
     private void AddMessage(string role, string content, string reasoning = "", string metrics = "")
     {
         // [EN] Operational log lines are diverted to the status bar even if a backend
         //      path still emits them as system messages (including restored history).
+        //      A message that mixes log lines with real content keeps only the real
+        //      content; every matching line is redirected, never rendered.
         // [ZH] 即使某条后端路径仍以系统消息发出运行日志（包括恢复的历史），也一律
-        //      转到底部状态栏。
+        //      转到底部状态栏。日志行与真实内容混排时只保留真实内容；所有匹配行都被
+        //      重定向，绝不渲染。
         if (role == "system" && BackendLogLine.IsMatch(content))
         {
-            SetStatus(Trim(content, 120));
-            return;
+            var kept = new List<string>();
+            foreach (string line in content.Replace("\r\n", "\n").Split('\n'))
+            {
+                if (BackendLogLine.IsMatch(line))
+                    SetStatus(Trim(line, 120));
+                else if (!string.IsNullOrWhiteSpace(line))
+                    kept.Add(line);
+            }
+            content = string.Join("\n", kept).Trim();
+            if (content.Length == 0)
+                return;
         }
         // [EN] Emoji degradation is applied to the message body at the single entry point,
         // [EN] before
@@ -6469,6 +6682,9 @@ public partial class MainWindow : Window
         public string Status { get; init; } = "";
         public int Documents { get; init; }
         public int Chunks { get; init; }
+        // [EN] v0.2.6 item 17: whether this folder participates in retrieval.
+        // [ZH] v0.2.6 第 17 项：该文件夹是否参与检索。
+        public bool Enabled { get; init; } = true;
     }
 
     /// <summary>
@@ -6569,6 +6785,21 @@ public partial class MainWindow : Window
         _knowledgeLibraries.Clear();
         foreach (JsonElement library in libraries.EnumerateArray())
         {
+            // [EN] The backend serializes the SQLite flag as 1/0. A missing field
+            // [EN] (older backend) means enabled, never disabled.
+            // [ZH] 后端把 SQLite 标志序列化为 1/0。缺少字段（旧后端）表示启用，
+            // [ZH] 绝不能默认禁用。
+            bool enabled = true;
+            if (library.TryGetProperty("enabled", out JsonElement enabledElement))
+            {
+                enabled = enabledElement.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    JsonValueKind.Number => enabledElement.GetInt32() != 0,
+                    _ => true,
+                };
+            }
             _knowledgeLibraries.Add(new KnowledgeLibraryItem
             {
                 Id = GetStringField(library, "id"),
@@ -6577,6 +6808,7 @@ public partial class MainWindow : Window
                 Status = GetStringField(library, "status"),
                 Documents = GetIntField(library, "documents"),
                 Chunks = GetIntField(library, "chunks"),
+                Enabled = enabled,
             });
         }
         int bound = 0;
@@ -6624,7 +6856,7 @@ public partial class MainWindow : Window
         {
             var row = new Grid
             {
-                ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+                ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"),
                 Margin = new Thickness(0, 1, 0, 1),
             };
             var text = new StackPanel { Spacing = 1 };
@@ -6655,6 +6887,32 @@ public partial class MainWindow : Window
             Grid.SetColumn(text, 0);
             row.Children.Add(text);
 
+            // [EN] v0.2.6 item 17: per-folder plug-in switch. Disabled folders keep
+            // [EN] their index but are excluded from the current conversation's
+            // [EN] retrieval; the state is persisted by the backend.
+            // [ZH] v0.2.6 第 17 项：按文件夹的插件式开关。禁用的文件夹保留索引，但
+            // [ZH] 不参与当前对话的检索；状态由后端持久化。
+            var toggle = new ToggleSwitch
+            {
+                IsChecked = library.Enabled,
+                OnContent = "",
+                OffContent = "",
+                MinWidth = 0,
+                Margin = new Thickness(6, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Tag = library,
+            };
+            ToolTip.SetTip(toggle, Loc.T("knowledge.panel.toggleTip",
+                "启用或禁用该文件夹：禁用后不参与当前对话的检索，索引仍保留"));
+            AutomationProperties.SetAutomationId(toggle, "KnowledgeToggle");
+            toggle.IsCheckedChanged += async (_, _) =>
+            {
+                if (toggle.IsChecked is bool enabled && enabled != library.Enabled)
+                    await ToggleKnowledgeEnabledAsync(library.Id, enabled);
+            };
+            Grid.SetColumn(toggle, 1);
+            row.Children.Add(toggle);
+
             var reindex = new Button
             {
                 Content = Loc.T("knowledge.panel.reindex", "重建索引"),
@@ -6664,7 +6922,7 @@ public partial class MainWindow : Window
                 Tag = library,
             };
             reindex.Click += async (_, _) => await ReindexKnowledgeAsync(library.Root);
-            Grid.SetColumn(reindex, 1);
+            Grid.SetColumn(reindex, 2);
             row.Children.Add(reindex);
 
             var unmount = new Button
@@ -6676,7 +6934,7 @@ public partial class MainWindow : Window
                 Tag = library,
             };
             unmount.Click += async (_, _) => await UnmountKnowledgeAsync(library.Id);
-            Grid.SetColumn(unmount, 2);
+            Grid.SetColumn(unmount, 3);
             row.Children.Add(unmount);
 
             KnowledgeListPanel.Children.Add(row);
@@ -6770,6 +7028,43 @@ public partial class MainWindow : Window
             string content = GetStringField(doc.RootElement, "content");
             if (content.Length > 0)
                 Toast(content);
+            await RefreshKnowledgeAsync();
+        }
+    }
+
+    /// <summary>
+    /// [EN] Enable or disable one mounted library (v0.2.6 item 17). The backend
+    ///      persists the flag; the panel is re-rendered from the authoritative
+    ///      response so the switch cannot drift away from the actual state.
+    /// [ZH] 启用或禁用一个已挂载库（v0.2.6 第 17 项）。后端持久化该标志；面板按
+    ///      权威响应重绘，使开关不会与实际状态不一致。
+    /// </summary>
+    private async Task ToggleKnowledgeEnabledAsync(string libraryId, bool enabled)
+    {
+        if (string.IsNullOrEmpty(libraryId) || !_state.Backend.IsRunning)
+            return;
+        JsonDocument? doc = await _state.Backend.SendAsync(
+            new { action = "knowledge_toggle", library_id = libraryId, enabled },
+            idleTimeout: BackendService.HeavyIdleTimeout);
+        if (doc is null)
+        {
+            Toast(Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
+                _state.Backend.LastError ?? ""), error: true);
+            await RefreshKnowledgeAsync();
+            return;
+        }
+        using (doc)
+        {
+            JsonElement root = doc.RootElement;
+            bool ok = !(root.TryGetProperty("ok", out JsonElement okElement)
+                        && okElement.ValueKind == JsonValueKind.False);
+            string content = GetStringField(root, "content");
+            if (content.Length > 0)
+                SetStatus(content);
+            if (ok && ApplyKnowledgeLibraries(root))
+                return;
+            if (!ok && content.Length > 0)
+                Toast(content, error: true);
             await RefreshKnowledgeAsync();
         }
     }

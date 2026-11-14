@@ -25,9 +25,11 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from i18n import t as _t
 
 # [EN] Hard lower bound for the context window (below this, normal conversation is
-# [EN] not possible).
-# [ZH] 上下文窗口的硬性下限（低于此值无法正常对话）。
-MIN_CONTEXT = 512
+# [EN] not possible). Raised from 512 to 2048 in v0.2.6 item 18 so that the
+# [EN] system prompt plus one short exchange always fits.
+# [ZH] 上下文窗口的硬性下限（低于此值无法正常对话）。v0.2.6 第 18 项从 512
+# [ZH] 提升到 2048，确保系统提示加一轮简短对话始终放得下。
+MIN_CONTEXT = 2048
 
 #: [EN] Sanity ceiling for an explicit user override of the context window. The
 #: planner never silently narrows an override, so the configuration layer alone
@@ -1625,16 +1627,14 @@ class Config(BaseModel):
     # [ZH] 旧值（general/summary/…）仍然能读进来 —— conversation.canonical_mode 会把它们
     # [ZH] 迁移成新名字，所以老用户的 config.json 不需要手工改。
     default_mode: str = "chat"
-    # [EN] Requested context ceiling (maximum permitted window). The actual
-    # [EN] initial allocation is derived by ``hardware_profiler`` from the CPU,
-    # [EN] RAM and GPU profile and starts at 2048 tokens; the engine expands it
-    # [EN] on demand up to this ceiling or the hardware limit, whichever is
-    # [EN] smaller. The previous global constant of 8192 is therefore no longer
-    # [EN] a hard limit on the allocated window.
-    # [ZH] 请求的上下文上限（允许的最大窗口）。实际初始分配由
-    # [ZH] ``hardware_profiler`` 依据 CPU、内存与 GPU 档案推导，起始值为 2048
-    # [ZH] token；引擎按需扩展至该上限与硬件上限中的较小者。因此，此前的全局
-    # [ZH] 常量 8192 不再是已分配窗口的硬性限制。
+    # [EN] Context window explicitly selected by the user. Since v0.2.6 item 17
+    # [EN] the engine allocation equals this value exactly: the planner no longer
+    # [EN] starts small and grows on demand, and it does not silently shrink the
+    # [EN] value either. A window the machine cannot serve fails loudly at load
+    # [EN] time instead of being replaced behind the user's back.
+    # [ZH] 用户显式选择的上下文窗口。自 v0.2.6 第 17 项起，引擎分配严格等于该值：
+    # [ZH] 规划器不再“先小后按需扩展”，也不会静默收窄；机器无法承载时在加载阶段
+    # [ZH] 明确报错，而不是在用户背后替换取值。
     context_length: int = 32768
     # [EN] Configuration ceiling for the context window, used for validation; no value
     # [EN] from any source can exceed it.

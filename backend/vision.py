@@ -128,6 +128,65 @@ class VisionError(Exception):
             return self.code
 
 
+#: [EN] GGUF magic. The model and the multimodal projector are both GGUF files;
+#: [EN] handing a non-GGUF file to the native loader is undefined behaviour in
+#: [EN] llama.cpp and has been observed as an access violation (0x0) on Windows.
+#: [ZH] GGUF 魔数。模型与多模态投影都是 GGUF 文件；把非 GGUF 文件交给原生加载器
+#: [ZH] 在 llama.cpp 中属于未定义行为，在 Windows 上曾表现为 0x0 访问冲突。
+GGUF_MAGIC = b"GGUF"
+
+
+def is_gguf_file(path: str) -> bool:
+    """
+    [EN]
+    Return whether ``path`` starts with the GGUF magic.
+
+    Only the first four bytes are read, so the check is cheap enough for
+    ``status()``. An unreadable path is reported as "not GGUF" here; callers that
+    need the exact I/O reason use :func:`require_gguf_file`.
+
+    [ZH]
+    判断 ``path`` 是否以 GGUF 魔数开头。
+
+    只读取前四个字节，因此该检查对 ``status()`` 而言足够轻量。不可读取的路径在
+    此报告为「不是 GGUF」；需要精确 I/O 原因的调用方使用 :func:`require_gguf_file`。
+    """
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(4) == GGUF_MAGIC
+    except OSError:
+        return False
+
+
+def require_gguf_file(path: str, code: str, key: str) -> None:
+    """
+    [EN]
+    Reject a file that is not a readable GGUF container before any native call.
+
+    The multimodal path must never reach ``clip_model_load`` with a truncated or
+    unrelated file: the C++ loader does not validate the header defensively and
+    dereferences a null context, which terminates the process instead of raising
+    a Python exception. This function converts that precondition into a
+    :class:`VisionError` carrying a language-pack key.
+
+    [ZH]
+    在进入任何原生调用之前，拒绝不可读或非 GGUF 容器的文件。
+
+    多模态链路绝不能带着被截断或无关的文件进入 ``clip_model_load``：C++ 加载器
+    不会防御性地校验文件头，而是解引用空上下文，导致进程终止而不是抛出 Python
+    异常。本函数把该前置条件转换为携带语言包键的 :class:`VisionError`。
+    """
+    name = os.path.basename(path or "")
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(4)
+    except OSError as exc:
+        raise VisionError("unreadable", "media.error.unreadable",
+                          path=path, reason=str(exc)) from exc
+    if header != GGUF_MAGIC:
+        raise VisionError(code, key, name=name)
+
+
 def find_mmproj(model_path: str, explicit: str = "") -> str:
     """
     [EN]
@@ -318,6 +377,25 @@ class VisionEngine:
         self.n_ctx = max(1024, int(n_ctx))
         self.handler_name = ""
         self.llm: Any = None
+        # [EN] Validate the complete native input set first. Loading the model
+        # [EN] without a projector (or with a foreign file renamed to .gguf)
+        # [EN] makes llama.cpp dereference an uninitialised vision context, which
+        # [EN] is the reported ``access violation reading 0x0``. No native symbol
+        # [EN] is touched until every precondition below holds.
+        # [ZH] 先校验完整的原生输入集合。缺少投影文件（或把无关文件改名为 .gguf）
+        # [ZH] 时加载模型，会让 llama.cpp 解引用未初始化的视觉上下文，这正是上报的
+        # [ZH] ``access violation reading 0x0``。在下列前置条件全部成立之前，本类
+        # [ZH] 不触碰任何原生符号。
+        if not os.path.isfile(self.model_path):
+            raise VisionError("model_missing", "media.vision_model_missing",
+                              name=os.path.basename(self.model_path))
+        if not self.mmproj_path:
+            raise VisionError("no_mmproj", "media.vision_no_mmproj")
+        if not os.path.isfile(self.mmproj_path):
+            raise VisionError("mmproj_missing", "media.vision_mmproj_missing",
+                              name=os.path.basename(self.mmproj_path))
+        require_gguf_file(self.model_path, "bad_model", "media.vision_model_invalid")
+        require_gguf_file(self.mmproj_path, "bad_mmproj", "media.vision_mmproj_invalid")
         self._load(verbose=verbose, n_threads=n_threads, n_gpu_layers=n_gpu_layers)
 
     def _load(self, verbose: bool, n_threads: int, n_gpu_layers: int) -> None:
@@ -362,36 +440,58 @@ class VisionEngine:
         会把非 ``data:`` 值当作 URL 的处理器将尝试打开 ``C:\\...``，并以
         ``unknown url type: c`` 失败。
         """
-        if self.llm is None:
-            raise VisionError("not_loaded", "media.vision_failed", detail="engine not loaded")
-        # [EN] Encode before building the request so a read/format failure is
-        # [EN] reported as a VisionError instead of an opaque handler exception.
-        # [ZH] 在构造请求前完成编码，使读取/格式失败以 VisionError 上报，而不是
-        # [ZH] 变成处理器内部的不透明异常。
-        image_url = image_data_uri(image_path)
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": str(prompt)},
-                {"type": "image_url", "image_url": {"url": image_url}},
-            ],
-        }]
-        # [EN] A vision completion runs prefill and decode in one native call, so
-        # [EN] the mutex covers the whole call and queues behind chat/summarization.
-        # [ZH] 视觉补全在单次原生调用内完成 prefill 与 decode，因此互斥锁覆盖全程，
-        # [ZH] 并在聊天/摘要之后排队。
-        with _INFERENCE_LOCK:
-            result = self.llm.create_chat_completion(
-                messages=messages,
-                max_tokens=max(16, int(max_tokens)),
-                temperature=float(temperature),
-            )
+        # [EN] Outermost boundary of the inference entry point: every failure that
+        # [EN] can be represented in Python becomes a structured VisionError. A
+        # [EN] native access violation cannot be caught here, which is exactly why
+        # [EN] the constructor performs the GGUF/projector preconditions above;
+        # [EN] this boundary covers the remaining OSErrors (truncated image files,
+        # [EN] pipe failures, DLL I/O) and unexpected handler exceptions.
+        # [ZH] 推理入口最外层的边界：所有能在 Python 中表达的失败都转为结构化
+        # [ZH] VisionError。原生访问冲突无法在此捕获，这正是构造函数必须先完成
+        # [ZH] GGUF/投影前置校验的原因；本边界覆盖其余的 OSError（图片被截断、管道
+        # [ZH] 失败、DLL I/O）与处理器的未预期异常。
         try:
-            content = result["choices"][0]["message"]["content"]
-        except Exception as exc:  # noqa: BLE001 - [EN] malformed runtime response
-                                 # [ZH] 运行时返回结构异常
-            raise VisionError("bad_response", "media.vision_failed", detail=str(exc)) from exc
-        return str(content or "").strip()
+            if self.llm is None:
+                raise VisionError("not_loaded", "media.vision_failed",
+                                  detail="engine not loaded")
+            # [EN] Encode before building the request so a read/format failure is
+            # [EN] reported as a VisionError instead of an opaque handler exception.
+            # [ZH] 在构造请求前完成编码，使读取/格式失败以 VisionError 上报，而不是
+            # [ZH] 变成处理器内部的不透明异常。
+            image_url = image_data_uri(image_path)
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": str(prompt)},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            }]
+            # [EN] A vision completion runs prefill and decode in one native call, so
+            # [EN] the mutex covers the whole call and queues behind chat/summarization.
+            # [ZH] 视觉补全在单次原生调用内完成 prefill 与 decode，因此互斥锁覆盖全程，
+            # [ZH] 并在聊天/摘要之后排队。
+            with _INFERENCE_LOCK:
+                result = self.llm.create_chat_completion(
+                    messages=messages,
+                    max_tokens=max(16, int(max_tokens)),
+                    temperature=float(temperature),
+                )
+            try:
+                content = result["choices"][0]["message"]["content"]
+            except Exception as exc:  # noqa: BLE001 - [EN] malformed runtime response
+                                     # [ZH] 运行时返回结构异常
+                raise VisionError("bad_response", "media.vision_failed",
+                                  detail=str(exc)) from exc
+            return str(content or "").strip()
+        except VisionError:
+            raise
+        except OSError as exc:
+            raise VisionError("vision_os_error", "media.vision_os_error",
+                              detail=f"{type(exc).__name__}: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 - [EN] native binding failure
+                                 # [ZH] 原生绑定层失败
+            raise VisionError("chat_failed", "media.vision_failed",
+                              detail=f"{type(exc).__name__}: {exc}") from exc
 
     def close(self) -> None:
         """[EN] Release the native model. / [ZH] 释放原生模型。"""
@@ -499,6 +599,14 @@ class VisionService:
                       else "media.vision_not_vlm")
         elif not os.path.isfile(self.mmproj_path):
             reason = "media.vision_mmproj_missing"
+        elif not is_gguf_file(self.model_path):
+            # [EN] A present but foreign file must be reported before the native
+            # [EN] loader is allowed to dereference it; see require_gguf_file.
+            # [ZH] 文件存在但并非 GGUF 时，必须在原生加载器解引用之前报告；
+            # [ZH] 见 require_gguf_file。
+            reason = "media.vision_model_invalid"
+        elif not is_gguf_file(self.mmproj_path):
+            reason = "media.vision_mmproj_invalid"
         return {
             "available": not reason,
             "is_vlm": model_name_suggests_vision(self.model_path),
@@ -532,6 +640,8 @@ class VisionService:
         if not os.path.isfile(self.mmproj_path):
             raise VisionError("mmproj_missing", "media.vision_mmproj_missing",
                               name=os.path.basename(self.mmproj_path))
+        require_gguf_file(self.model_path, "bad_model", "media.vision_model_invalid")
+        require_gguf_file(self.mmproj_path, "bad_mmproj", "media.vision_mmproj_invalid")
         if self._engine is None:
             try:
                 self._engine = VisionEngine(
@@ -540,6 +650,11 @@ class VisionService:
                 )
             except VisionError:
                 raise
+            except OSError as exc:  # [EN] DLL / projector I/O failure
+                                    # [ZH] DLL / 投影文件 I/O 失败
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                raise VisionError("vision_os_error", "media.vision_os_error",
+                                  detail=self.last_error) from exc
             except Exception as exc:  # noqa: BLE001 - [EN] surface the runtime reason
                                      # [ZH] 上报运行时原因
                 self.last_error = f"{type(exc).__name__}: {exc}"
@@ -550,6 +665,10 @@ class VisionService:
                                      temperature=temperature)
         except VisionError:
             raise
+        except OSError as exc:  # [EN] outermost I/O boundary / [ZH] 最外层 I/O 边界
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            raise VisionError("vision_os_error", "media.vision_os_error",
+                              detail=self.last_error) from exc
         except Exception as exc:  # noqa: BLE001
             self.last_error = f"{type(exc).__name__}: {exc}"
             raise VisionError("chat_failed", "media.vision_failed",

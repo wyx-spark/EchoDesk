@@ -51,6 +51,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -131,6 +132,46 @@ public sealed class StartResult
 
 public sealed class BackendService : IDisposable
 {
+    /// <summary>
+    /// [EN] Operational log line (v0.2.6 item 18). Such a line belongs to the
+    ///      status bar, never to the answer pane. The expression mirrors the one
+    ///      in `backend/main.py` and in `MainWindow.axaml.cs`, so the backend and
+    ///      either front end can block the line independently.
+    /// [ZH] 运行日志行（v0.2.6 第 18 项）。此类行属于状态栏，绝不进入回答区。该
+    ///      表达式与 `backend/main.py`、`MainWindow.axaml.cs` 中的一致，因此后端
+    ///      与任一侧前端都能独立拦截。
+    /// </summary>
+    private static readonly Regex StreamLogLine = new(
+        @"^\s*(?:"
+        + @"(?:\[?\d{4}[-/]\d{2}[-/]\d{2}.*?\]?\s*)?(?:INFO|WARNING|ERROR|DEBUG|CRITICAL)\s*:"
+        + @"|\[\s*\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s*\]"
+        + @"|\[\s*(?:INFO|WARNING|ERROR|DEBUG|CRITICAL)\s*\]"
+        + @"|\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s+(?:INFO|WARNING|ERROR|DEBUG|CRITICAL)\b"
+        + @"|\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?"
+        + @")",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// [EN] Returns true only when every non-empty line is an operational log
+    ///      line, so a mixed text notice is never discarded.
+    /// [ZH] 仅当每个非空行都是运行日志行时返回真，避免把混排的真实提示一并丢弃。
+    /// </summary>
+    public static bool IsBackendLogText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        bool sawLine = false;
+        foreach (string raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+            sawLine = true;
+            if (!StreamLogLine.IsMatch(raw))
+                return false;
+        }
+        return sawLine;
+    }
+
     private Process? _process;
     private StreamWriter? _writer;
     private StreamReader? _reader;
@@ -894,6 +935,16 @@ public sealed class BackendService : IDisposable
                 switch (type)
                 {
                     case "delta":
+                        // [EN] v0.2.6 item 18: a log line carried by a delta must
+                        //      be diverted to the status bar at the parsing layer.
+                        //      Dropping it here also keeps `full` free of log text.
+                        // [ZH] v0.2.6 第 18 项：delta 携带的日志行必须在解析层转入
+                        //      状态栏。在此丢弃同时保证 `full` 不混入日志文本。
+                        if (IsBackendLogText(content))
+                        {
+                            onEvent?.Invoke("status", root);
+                            break;
+                        }
                         if (root.TryGetProperty("channel", out JsonElement channelEl)
                             && channelEl.ValueKind == JsonValueKind.String)
                         {
@@ -919,6 +970,14 @@ public sealed class BackendService : IDisposable
                         return content.Length > 0 ? content : full.ToString();
                     case "error":
                         throw new InvalidOperationException(content);
+                    case "system":
+                        // [EN] v0.2.6 item 18: system messages that are actually
+                        //      operational logs are shown in the status bar only.
+                        //      Real system notices keep their existing dispatch.
+                        // [ZH] v0.2.6 第 18 项：实为运行日志的系统消息只显示在状态
+                        //      栏；真实的系统提示保持原有分发路径。
+                        onEvent?.Invoke(IsBackendLogText(content) ? "status" : type, root);
+                        break;
                     default:
                         onEvent?.Invoke(type, root);
                         break;

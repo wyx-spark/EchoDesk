@@ -308,14 +308,28 @@
                  VerticalContentAlignment="Top"
                  BorderThickness="0" Background="Transparent" />
 
-        <Grid Grid.Row="1" Margin="0,6,0,0" ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+        <Grid Grid.Row="1" Margin="0,6,0,0" ColumnDefinitions="Auto,*">
+          <!--
+            [EN] v0.2.6 item 17: the former 12-column Auto row summed to more than
+                 the minimum window width, so the send button could be pushed past the
+                 card border while resizing. The left actions now live in an Auto
+                 column and the right cluster in a star column whose WrapPanel wraps
+                 instead of overflowing. The send action is the last item and therefore
+                 always stays inside the border at any window width.
+            [ZH] v0.2.6 第 17 项：原来的 12 个 Auto 列在最小窗口宽度下总和超界，缩放时
+                 发送按钮会被挤出卡片边框。现在左侧操作放进 Auto 列，右侧按钮簇放进
+                星号列，由 WrapPanel 换行而不是溢出。发送按钮是最后一项，因此在任何
+                 窗口宽度下都留在边框之内。
+          -->
+          <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center"
+                      Spacing="4">
 
           <!--
             [EN] Left side: toggle button for the command input row (the plus sign rotates into
                  a cross; a fixed width keeps the layout from jumping).
             [ZH] 左侧：命令输入框开关按钮（加号旋转变叉号，固定宽度防跳动）。
           -->
-          <Button x:Name="CommandButton" Grid.Column="0" Width="170" Height="34" Classes="round">
+          <Button x:Name="CommandButton" MinWidth="118" MaxWidth="170" Height="34" Classes="round">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
               <TextBlock x:Name="CommandIconText" Text="+" FontSize="18" FontWeight="Bold"
                          VerticalAlignment="Center" />
@@ -326,7 +340,7 @@
 
           <!-- [EN] Snippet button (same toggle-label style, fixed width). -->
           <!-- [ZH] 常用语按钮（同款开关文字，固定宽度）。 -->
-          <Button x:Name="SnippetButton" Grid.Column="1" Width="170" Height="34" Margin="6,2,2,2"
+          <Button x:Name="SnippetButton" MinWidth="118" MaxWidth="170" Height="34" Margin="0,2,2,2"
                   Classes="round">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
               <TextBlock Text="📋" FontSize="14" VerticalAlignment="Center" />
@@ -334,14 +348,17 @@
                          Margin="8,0,0,0" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
+          </StackPanel>
 
+          <WrapPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
+                     VerticalAlignment="Center">
           <!--
             [EN] Right side: context usage, settings, upload and send (the icon buttons follow
                  the WPF dimensions).
             [ZH] 右侧：上下文占用 + 设置 + 上传 + 发送（图标按钮按 WPF 尺寸）。
           -->
-          <Button x:Name="ContextChip" Grid.Column="3" Height="30" MinWidth="130" Padding="14,0"
-                  HorizontalAlignment="Left" Classes="round"
+          <Button x:Name="ContextChip" Height="30" MinWidth="118" Padding="14,0"
+                  Margin="2" HorizontalAlignment="Left" Classes="round"
                   AutomationProperties.AutomationId="ContextChip">
             <TextBlock x:Name="ContextChipText" Text="" FontSize="11" />
           </Button>
@@ -352,7 +369,7 @@
             [ZH] v0.2.6 Part 2：按键说话的实时指示。转写文本会写入输入框，因此该指示
                  只在录音期间可见，且不改变工具栏几何。
           -->
-          <TextBlock x:Name="RecordingHint" Grid.Column="2" Margin="12,0" FontSize="11"
+          <TextBlock x:Name="RecordingHint" Margin="8,0" FontSize="11"
                      VerticalAlignment="Center" IsVisible="False"
                      Foreground="{DynamicResource AccentBrush}"
                      AutomationProperties.AutomationId="RecordingHint" />
@@ -365,21 +382,21 @@
                  模板库入口。两者都以浮层形式打开、在代码里锚定，与常用语面板一致，
                  工具栏几何保持不变。
           -->
-          <Button x:Name="KnowledgeButton" Grid.Column="4" Width="34" Height="34" Classes="icon"
+          <Button x:Name="KnowledgeButton" Width="34" Height="34" Margin="2" Classes="icon"
                   Content="📚" FontSize="14"
                   AutomationProperties.AutomationId="KnowledgeButton" />
-          <Button x:Name="PromptLibraryButton" Grid.Column="5" Width="34" Height="34" Classes="icon"
+          <Button x:Name="PromptLibraryButton" Width="34" Height="34" Margin="2" Classes="icon"
                   Content="🧩" FontSize="14"
                   AutomationProperties.AutomationId="PromptLibraryButton" />
-          <Button x:Name="SettingsButton" Grid.Column="6" Width="34" Height="34" Classes="icon"
+          <Button x:Name="SettingsButton" Width="34" Height="34" Margin="2" Classes="icon"
                   Content="⚙" FontSize="14" />
-          <Button x:Name="UploadButton" Grid.Column="7" Width="34" Height="34" Classes="icon"
+          <Button x:Name="UploadButton" Width="34" Height="34" Margin="2" Classes="icon"
                   Content="📎" FontSize="14" />
           <!--
             [EN] Image attach (v0.2.6 Part 2): picks a screenshot and sends `image_chat`.
             [ZH] 图片附加（v0.2.6 Part 2）：选择截图并发送 `image_chat`。
           -->
-          <Button x:Name="ImageButton" Grid.Column="8" Width="34" Height="34" Classes="icon"
+          <Button x:Name="ImageButton" Width="34" Height="34" Margin="2" Classes="icon"
                   Content="🖼" FontSize="14"
                   AutomationProperties.AutomationId="ImageButton" />
           <!--
@@ -388,21 +405,22 @@
             [ZH] v0.2.6 任务 9：输入框旁的“按住说话”麦克风入口。按下开始录音，松开
                  结束并转写进输入框。
           -->
-          <Button x:Name="MicButton" Grid.Column="9" Width="34" Height="34" Classes="icon"
+          <Button x:Name="MicButton" Width="34" Height="34" Margin="2" Classes="icon"
                   Content="🎙" FontSize="14"
                   AutomationProperties.AutomationId="MicButton" />
-          <Button x:Name="StopButton" Grid.Column="10" Width="34" Height="34" Classes="icon"
+          <Button x:Name="StopButton" Width="34" Height="34" Margin="2" Classes="icon"
                   Content="⏹" FontSize="14" IsVisible="False" />
           <!--
             [EN] The primary send affordance carries the accent fill as a local value, which is
                  immune to the neutral icon-button style overriding it.
             [ZH] 发送主操作以本地值承载强调色填充，避免被中性的图标按钮样式覆盖。
           -->
-          <Button x:Name="SendButton" Grid.Column="11" Width="40" Height="40" Margin="8,0,0,0"
+          <Button x:Name="SendButton" Width="40" Height="40" Margin="6,0,0,0"
                   Classes="icon" Content="➤" FontSize="16"
                   Background="{DynamicResource AccentBrush}"
                   BorderBrush="{DynamicResource AccentBrush}"
                   Foreground="{DynamicResource AccentForegroundBrush}" />
+          </WrapPanel>
         </Grid>
       </Grid>
     </Border>
@@ -447,6 +465,17 @@
           <Button x:Name="StripContextButton" Classes="chip">
             <TextBlock x:Name="StripContextText" Text="" FontSize="11" />
           </Button>
+          <!--
+            [EN] v0.2.6 item 17: the context window is the user's decision. This
+                 selector sits next to the Context indicator and offers the four
+                 supported sizes. A change is persisted and applied immediately;
+                 the backend never alters it in the background.
+            [ZH] v0.2.6 第 17 项：上下文窗口由用户决定。该选择器位于 Context 标识旁，
+                 提供四档受支持的大小。改动会立即持久化并生效；后端绝不会在后台篡改。
+          -->
+          <ComboBox x:Name="ContextWindowCombo" Width="88" Height="24" Margin="2,0,6,0"
+                    VerticalAlignment="Center" FontSize="11"
+                    AutomationProperties.AutomationId="ContextWindowCombo" />
           <Button x:Name="StripKvButton" Classes="chip">
             <TextBlock x:Name="StripKvText" Text="💾 KV: ---" FontSize="11" />
           </Button>

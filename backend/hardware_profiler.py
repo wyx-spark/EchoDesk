@@ -60,11 +60,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger("EchoDesk.Hardware")
 
-#: [EN] Context window allocated for a freshly loaded model. A small initial
-#: allocation keeps the KV cache, and therefore idle memory usage, low; the
-#: window grows on demand up to the hardware ceiling.
-#: [ZH] 新加载模型时分配的初始上下文窗口。较小的初始分配可压低 KV Cache 占用，
-#: [ZH] 从而降低空闲内存占用；该窗口按需增长，直至硬件上限。
+#: [EN] Context window used when no explicit user value is supplied. The
+#: application always supplies ``config.context_length`` (v0.2.6 item 17), so this
+#: constant only serves callers and tests that plan without a request; it is not
+#: a runtime growth floor any more.
+#: [ZH] 未提供用户显式数值时使用的上下文窗口。应用始终传入
+#: ``config.context_length``（v0.2.6 第 17 项），因此该常量只服务于未带请求值的
+#: 调用方与测试；它不再是运行期扩展下界。
 DEFAULT_INITIAL_CONTEXT = 2048
 
 #: [EN] Smallest context window that can carry the system prompt plus a short
@@ -79,10 +81,14 @@ MIN_USABLE_CONTEXT = DEFAULT_INITIAL_CONTEXT
 
 #: [EN] Absolute lower bound for any context window. Matches
 #: ``config.MIN_CONTEXT`` so that the planner never produces a value the
-#: configuration layer would reject.
+#: configuration layer would reject. Raised from 512 to 2048 in v0.2.6 item 18:
+#: a 512-token window is consumed by the system prompt before the user's first
+#: sentence, and a diagnostic that reports "budget: 512" is never actionable.
 #: [ZH] 任何上下文窗口的绝对下界。与 ``config.MIN_CONTEXT`` 保持一致，使规划器
-#: [ZH] 不会产出配置层会拒绝的取值。
-MIN_CONTEXT = 512
+#: [ZH] 不会产出配置层会拒绝的取值。v0.2.6 第 18 项从 512 提升到 2048：512 token
+#: [ZH] 的窗口在用户说出第一句话之前就被系统提示占满，诊断里出现「预算 512」
+#: [ZH] 也从不具备可操作性。
+MIN_CONTEXT = 2048
 
 #: [EN] Fallback ceiling used only when no configuration value is supplied.
 #: [ZH] 仅在未提供配置取值时使用的后备上限。
@@ -434,17 +440,20 @@ class InferencePlan:
     [EN]
     Complete set of runtime tuning values derived from a hardware profile.
 
-    ``n_ctx_initial`` governs the first model load and ``n_ctx_max`` is the
-    ceiling to which the engine may expand on demand. ``n_gpu_layers`` follows
-    the llama.cpp convention: ``-1`` requests full offload, ``0`` forces CPU
-    inference, and a positive value offloads exactly that many layers.
+    ``n_ctx_initial`` is the window used for the next model load. When the caller
+    supplies an explicit request (the application always does, v0.2.6 item 17),
+    both ``n_ctx_initial`` and ``n_ctx_max`` equal that request; the engine does
+    not grow the window at runtime. ``n_gpu_layers`` follows the llama.cpp
+    convention: ``-1`` requests full offload, ``0`` forces CPU inference, and a
+    positive value offloads exactly that many layers.
 
     [ZH]
     由硬件档案推导出的完整运行时调优参数。
 
-    ``n_ctx_initial`` 决定首次加载模型时的窗口，``n_ctx_max`` 是引擎可按需扩展
-    至的上限。``n_gpu_layers`` 遵循 llama.cpp 的约定：``-1`` 表示全量卸载，
-    ``0`` 表示强制纯 CPU 推理，正数表示精确卸载该数量的网络层。
+    ``n_ctx_initial`` 是下一次加载模型使用的窗口。调用方提供显式请求时（应用始终
+    提供，v0.2.6 第 17 项），``n_ctx_initial`` 与 ``n_ctx_max`` 都等于该请求值；
+    引擎在运行期不再扩展窗口。``n_gpu_layers`` 遵循 llama.cpp 的约定：``-1`` 表示
+    全量卸载，``0`` 表示强制纯 CPU 推理，正数表示精确卸载该数量的网络层。
     """
 
     n_ctx_initial: int
@@ -1259,9 +1268,24 @@ def _context_limit_detail(
     per_token = _kv_bytes_per_token(model_path)
     if per_token > 0 and profile.ram_available_bytes > 0:
         _, model_bytes = _model_shape(model_path)
+        # [EN] v0.2.6 item 18: do not deduct the whole model file twice. When the
+        # [EN] planner runs while the model is already loaded, ``ram_available``
+        # [EN] has already excluded its resident pages; subtracting the full file
+        # [EN] size again drove the budget negative and pinned the reported
+        # [EN] "hardware budget" to 512 tokens even on a machine with ample RAM.
+        # [EN] The page cache may also reclaim clean, memory-mapped model pages,
+        # [EN] so only the part of the file not already accounted for as used
+        # [EN] memory is reserved here.
+        # [ZH] v0.2.6 第 18 项：不要把整个模型文件重复扣减两次。模型已加载时规划器
+        # [ZH] 拿到的 ``ram_available`` 已经排除了其常驻页；再次减去完整文件大小会
+        # [ZH] 把预算算成负数，使内存充裕的机器也把「硬件预算」钉在 512 token。
+        # [ZH] 页面缓存也可以回收干净的只读映射页，因此这里只预留尚未计入已用内存
+        # [ZH] 的那一部分文件。
+        used_memory = max(0, int(profile.ram_total_bytes) - int(profile.ram_available_bytes))
+        model_reserve = max(0, int(model_bytes) - used_memory)
         budget = (
             int(profile.ram_available_bytes * (1.0 - RAM_SAFETY_RATIO))
-            - int(model_bytes)
+            - model_reserve
             - COMPUTE_BUFFER_BYTES
         )
         memory_cap = int(budget // per_token) if budget > 0 else 0
@@ -1270,7 +1294,13 @@ def _context_limit_detail(
                 cap = memory_cap
                 reason = "hardware"
         else:
-            cap = MIN_CONTEXT
+            # [EN] The memory estimate is below one usable turn. Report the
+            # [EN] usable floor instead of the old 512-token value; a 512-token
+            # [EN] ceiling cannot hold the system prompt and is misleading in the
+            # [EN] diagnostics panel.
+            # [ZH] 内存估算不足一轮可用对话。上报可用下界而不是旧的 512 token；512
+            # [ZH] 上限连系统提示都放不下，出现在诊断面板中会误导用户。
+            cap = MIN_USABLE_CONTEXT
             reason = "hardware"
     elif per_token <= 0:
         # [EN] Without metadata, an 8192-token ceiling is the conservative

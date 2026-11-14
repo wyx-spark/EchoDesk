@@ -72,6 +72,7 @@ def gpu(backend, free_gib, total_gib=None, available=True):
 
 
 GIB = hp._GIB
+MIB = 1024 * 1024
 
 
 def test_cpu_only_degrades_silently():
@@ -172,8 +173,12 @@ def test_context_planner_and_reserve():
     check("内存预算收敛到 24064 tokens", limit == 24064, str(limit))
 
     check("初始上下文固定为 2048", hp.initial_context_for(32768) == 2048)
-    check("上限小于 2048 时初始值随之收敛",
-          hp.initial_context_for(1024) == 1024, str(hp.initial_context_for(1024)))
+    # [EN] v0.2.6 item 18: the usable floor is 2048, so a ceiling below it is
+    # [EN] raised to that floor instead of producing a 512/1024-token window.
+    # [ZH] v0.2.6 第 18 项：可用下界为 2048，因此更低的上限会被提升到该下界，
+    # [ZH] 而不是产出 512/1024 token 的窗口。
+    check("上限小于 2048 时提升到可用下界",
+          hp.initial_context_for(1024) == 2048, str(hp.initial_context_for(1024)))
     check("训练窗口小于请求值时取训练窗口",
           hp.plan_inference(profile=cpu_only, train_context=4096,
                             requested_context=32768, max_context=32768).n_ctx_max == 4096)
@@ -310,6 +315,66 @@ def test_hardware_memory_limits_context():
           plan.context_limited_by)
     check("原生上下文仍如实上报 32768", plan.native_context == 32768,
           str(plan.native_context))
+
+
+def test_memory_budget_does_not_double_count_loaded_model():
+    """
+    [EN]
+    v0.2.6 item 18: an already-loaded model must not be subtracted twice. The
+    available RAM reported by the OS already excludes the model's resident pages,
+    so the old formula could produce a negative budget and report "512 tokens"
+    on a VM with plenty of memory. The same rule guarantees the usable floor of
+    2048 tokens and keeps an explicit 8192-token choice from being reported as a
+    512-token budget.
+
+    [ZH]
+    v0.2.6 第 18 项：已加载的模型不得被重复扣减。操作系统上报的可用内存已经排除
+    模型常驻页，旧公式因此可能算出负预算，并在内存充裕的虚拟机上报告「512
+    token」。同一规则同时保证 2048 token 的可用下界，并使用户显式选择的 8192
+    token 不再被报告为 512 token 预算。
+    """
+    check("绝对下界已提升到 2048", hp.MIN_CONTEXT >= 2048, str(hp.MIN_CONTEXT))
+    check("可用下界仍为 2048", hp.MIN_USABLE_CONTEXT >= 2048,
+          str(hp.MIN_USABLE_CONTEXT))
+
+    vm = profile(hp.GpuProfile("none", False, "", 0, 0),
+                 ram_total=16 * GIB, ram_available=4 * GIB)
+    with mock.patch.object(hp, "_kv_bytes_per_token", return_value=131072.0), \
+            mock.patch.object(hp, "_model_shape",
+                              return_value=(32, 8 * GIB)):
+        resident = hp.plan_inference(profile=vm, model_path="synthetic.gguf",
+                                     train_context=32768, requested_context=32768,
+                                     max_context=32768)
+    check("已加载模型不重复扣减（预算不再是 512）",
+          resident.n_ctx_max == 24064, str(resident.n_ctx_max))
+    check("硬件预算保持可用窗口而不是 512",
+          resident.hardware_budget == 24064, str(resident.hardware_budget))
+
+    tiny = profile(hp.GpuProfile("none", False, "", 0, 0),
+                   ram_total=2 * GIB, ram_available=512 * MIB)
+    with mock.patch.object(hp, "_kv_bytes_per_token", return_value=131072.0), \
+            mock.patch.object(hp, "_model_shape", return_value=(32, 0)):
+        floored = hp.plan_inference(profile=tiny, model_path="synthetic.gguf",
+                                    train_context=32768, requested_context=32768,
+                                    max_context=32768)
+    check("内存极小估值提升到 2048 token",
+          floored.n_ctx_max == hp.MIN_USABLE_CONTEXT, str(floored.n_ctx_max))
+    check("极小估值不再报告 512 预算",
+          floored.hardware_budget == hp.MIN_USABLE_CONTEXT,
+          str(floored.hardware_budget))
+
+    ample_vm = profile(hp.GpuProfile("none", False, "", 0, 0),
+                       ram_total=16 * GIB, ram_available=8 * GIB)
+    with mock.patch.object(hp, "_kv_bytes_per_token", return_value=131072.0), \
+            mock.patch.object(hp, "_model_shape", return_value=(32, 8 * GIB)):
+        chosen = hp.plan_inference(profile=ample_vm, model_path="synthetic.gguf",
+                                   train_context=32768, requested_context=8192,
+                                   max_context=32768, allow_override=True)
+    check("用户手动 8192 不被误报为 512 预算",
+          chosen.hardware_budget >= 8192, str(chosen.hardware_budget))
+    check("用户手动 8192 不产生预算警告",
+          not any("8192" in warning for warning in chosen.warnings),
+          str(chosen.warnings))
 
 
 def test_inference_presets():
@@ -465,50 +530,40 @@ def test_override_adopts_user_values_with_warnings():
           f"{overridden.n_ctx_requested}/{overridden.n_gpu_layers_requested}")
 
 
-def test_context_growth_doubles_on_demand():
+def test_context_window_is_not_grown_at_runtime():
     """
     [EN]
-    Verify that the runtime context growth is strictly doubling, reaches the
-    hardware ceiling, and never remains pinned at the former 512-token floor.
+    Verify that v0.2.6 item 17 removed runtime context growth: the engine has no
+    growth entry point and a long request cannot silently reallocate the model.
+    The explicit window is the only source of truth and a reload adopts it
+    verbatim.
 
     [ZH]
-    验证运行期上下文扩展严格按倍进行、能够到达硬件上限，且不会停留在旧的 512
-    token 下界。
+    验证 v0.2.6 第 17 项已移除运行期上下文扩展：引擎不再提供扩展入口，长请求
+    不可能在用户背后静默重分配模型。显式窗口是唯一事实来源，重载时原样采纳。
     """
     from llm_engine import LLMEngine
 
-    class _FakeEngine(LLMEngine):
-        def __init__(self, current, ceiling):
-            # [EN] Deliberately skip the model load: only the growth arithmetic is
-            # [EN] under test.
-            # [ZH] 刻意跳过模型加载：本项只验证扩展算术。
-            self.n_ctx = int(current)
-            self.max_n_ctx = int(ceiling)
-            self._needed = int(current)
+    check("运行期按需扩展入口已移除",
+          not hasattr(LLMEngine, "maybe_grow_context"))
 
-        def _prompt_token_estimate(self, messages):
-            return self._needed
+    class _FakeEngine(LLMEngine):
+        def __init__(self, current):
+            # [EN] Deliberately skip the model load: only the explicit reload
+            # [EN] value is under test.
+            # [ZH] 刻意跳过模型加载：本项只验证显式重载值。
+            self.n_ctx = int(current)
 
         def reload(self, model_path=None, n_ctx=None):
             self.n_ctx = int(n_ctx or self.n_ctx)
 
-    engine = _FakeEngine(2048, 32768)
-    engine._needed = 2049
-    grew = engine.maybe_grow_context([{"content": "x"}], 0)
-    check("首次扩展按倍到 4096", grew and engine.n_ctx == 4096, str(engine.n_ctx))
-
-    engine._needed = 4097
-    engine.maybe_grow_context([{"content": "x"}], 0)
-    check("再次扩展按倍到 8192", engine.n_ctx == 8192, str(engine.n_ctx))
-
-    engine._needed = 30000
-    engine.maybe_grow_context([{"content": "x"}], 0)
-    check("扩展收敛到硬件上限 32768", engine.n_ctx == 32768, str(engine.n_ctx))
-
-    pinned = _FakeEngine(512, 8192)
-    pinned._needed = 513
-    pinned.maybe_grow_context([{"content": "x"}], 0)
-    check("512 窗口可扩展到 1024", pinned.n_ctx == 1024, str(pinned.n_ctx))
+    engine = _FakeEngine(2048)
+    engine.reload(n_ctx=16384)
+    check("显式设置 16384 后窗口严格等于 16384",
+          engine.n_ctx == 16384, str(engine.n_ctx))
+    engine.reload(n_ctx=32768)
+    check("显式设置 32768 后窗口严格等于 32768",
+          engine.n_ctx == 32768, str(engine.n_ctx))
 
 
 def main():
@@ -525,11 +580,12 @@ def main():
         test_real_probe_never_raises,
         test_native_context_is_hard_ceiling,
         test_hardware_memory_limits_context,
+        test_memory_budget_does_not_double_count_loaded_model,
         test_inference_presets,
         test_probe_and_plan_never_write_to_disk,
         test_model_path_is_not_serialized,
         test_override_adopts_user_values_with_warnings,
-        test_context_growth_doubles_on_demand,
+        test_context_window_is_not_grown_at_runtime,
     ]
     for test in tests:
         try:

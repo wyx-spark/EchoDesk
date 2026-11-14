@@ -562,7 +562,8 @@ class KnowledgeBase:
                         created_at REAL NOT NULL,
                         updated_at REAL NOT NULL,
                         status TEXT NOT NULL DEFAULT 'idle',
-                        last_error TEXT NOT NULL DEFAULT ''
+                        last_error TEXT NOT NULL DEFAULT '',
+                        enabled INTEGER NOT NULL DEFAULT 1
                     );
                     CREATE TABLE IF NOT EXISTS kb_document (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -594,6 +595,16 @@ class KnowledgeBase:
                     );
                     """
                 )
+                # [EN] Migration for indexes created before v0.2.6 item 17: the
+                # [EN] `enabled` column did not exist, so add it in place instead of
+                # [EN] dropping the user's index. Every existing library starts enabled.
+                # [ZH] 针对 v0.2.6 第 17 项之前创建的索引做迁移：当时没有 `enabled` 列，
+                # [ZH] 因此原地补列而不是丢弃用户索引。既有库默认全部启用。
+                columns = {str(row["name"]) for row in connection.execute(
+                    "PRAGMA table_info(kb_library)")}
+                if "enabled" not in columns:
+                    connection.execute(
+                        "ALTER TABLE kb_library ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
                 connection.commit()
                 self._schema_ready = True
             finally:
@@ -631,7 +642,7 @@ class KnowledgeBase:
                 rows = connection.execute(
                     """
                     SELECT l.id, l.name, l.root, l.created_at, l.updated_at,
-                           l.status, l.last_error,
+                           l.status, l.last_error, l.enabled,
                            (SELECT COUNT(*) FROM kb_document d
                              WHERE d.library_id = l.id) AS documents,
                            (SELECT COUNT(*) FROM kb_chunk c
@@ -695,7 +706,7 @@ class KnowledgeBase:
                 connection.close()
         return {"id": library_id, "name": label, "root": path,
                 "created_at": now, "updated_at": now, "status": "idle",
-                "last_error": "", "documents": 0, "chunks": 0}
+                "last_error": "", "enabled": 1, "documents": 0, "chunks": 0}
 
     def set_status(self, library_id: str, status: str, error: str = "") -> None:
         """
@@ -716,6 +727,35 @@ class KnowledgeBase:
                 connection.commit()
             finally:
                 connection.close()
+
+    def set_enabled(self, library_id: str, enabled: bool) -> bool:
+        """
+        [EN]
+        Enable or disable one mounted library (v0.2.6 item 17: per-folder plug-in
+        toggle). A disabled library keeps its index on disk but contributes no
+        passage to retrieval, which is the "load on demand" contract of the panel.
+
+        Returns whether the library exists.
+        [ZH]
+        启用或禁用一个已挂载库（v0.2.6 第 17 项：按文件夹的插件式开关）。被禁用的库
+        保留磁盘上的索引，但不向检索贡献任何片段，这正是面板“按需加载”的约定。
+
+        返回该库是否存在。
+        """
+        with self._lock:
+            connection = self._connect()
+            try:
+                if connection.execute("SELECT 1 FROM kb_library WHERE id=?",
+                                      (str(library_id),)).fetchone() is None:
+                    return False
+                connection.execute(
+                    "UPDATE kb_library SET enabled=?, updated_at=? WHERE id=?",
+                    (1 if enabled else 0, time.time(), str(library_id)),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+        return True
 
     def remove_library(self, library_id: str) -> bool:
         """
@@ -1053,7 +1093,8 @@ class KnowledgeBase:
             " FROM kb_fts"
             " JOIN kb_chunk c ON c.id = kb_fts.chunk_id"
             " JOIN kb_document d ON d.id = c.document_id"
-            " WHERE kb_fts MATCH ?"
+            " JOIN kb_library l ON l.id = c.library_id"
+            " WHERE kb_fts MATCH ? AND l.enabled = 1"
         )
         parameters: List[Any] = [expression]
         if selected is not None:
@@ -1101,8 +1142,12 @@ class KnowledgeBase:
         Render the retrieved passages as an injectable context block.
 
         The block is Chinese prompt content, consistent with the rest of the
-        prompt text, and is deliberately outside the language pack. An empty
-        string means no usable hit; the caller must not inject an empty block.
+        prompt text, and is deliberately outside the language pack. It is marked
+        as supplementary reference material (v0.2.6 item 17): the user's own
+        common sense and the model's built-in knowledge stay authoritative, and
+        a passage may only be quoted when it is clearly relevant to the question.
+        An empty string means no usable hit; the caller must not inject an empty
+        block.
 
         [ZH]
         将检索到的片段渲染为可注入的上下文块。
@@ -1114,8 +1159,9 @@ class KnowledgeBase:
                            min_score=min_score)
         if not hits:
             return ""
-        lines = ["【本地知识库检索结果】（来自用户挂载的本地资料；回答时请用 [编号] 标注依据，"
-                 "没有依据的内容不要写成引用）"]
+        lines = ["【附加参考资料】（来自用户挂载的本地知识库，仅作补充；你的自身常识是基础，"
+                 "只有与当前提问明确相关时才引用，绝不因为本段内容而否定你的常识。"
+                 "引用时请用 [编号] 标注依据，没有依据的内容不要写成引用）"]
         used = 0
         picked = 0
         for hit in hits:
