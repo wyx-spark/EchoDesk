@@ -21,6 +21,11 @@ checkpoint through the Qwen2.5-VL handler; if the bundled llama.cpp build lacks
 the required vision projector implementation, the handler raises and this module
 reports ``media.vision_failed`` instead of crashing the backend.
 
+Image transport: the local file is read with the standard library and encoded as
+a base64 ``data:`` URI before it reaches the chat handler. A raw Windows path is
+never passed as ``image_url.url``, because handlers that resolve non-``data:``
+values through ``urllib`` fail with ``unknown url type: c``.
+
 [ZH]
 本地视觉语言推理（VLM）适配层。
 
@@ -37,15 +42,25 @@ reports ``media.vision_failed`` instead of crashing the backend.
 Qwen3-VL 支持的运行时仍可通过 Qwen2.5-VL 处理器加载 Qwen3-VL 检查点；若随包
 llama.cpp 构建缺少所需的视觉投影实现，处理器会抛出异常，本模块上报
 ``media.vision_failed``，而不是令后端崩溃。
+
+图片传输：本地文件由标准库读取并编码为 base64 ``data:`` URI 后才交给聊天处理器。
+绝不把原始 Windows 路径作为 ``image_url.url`` 传入，因为经 ``urllib`` 解析非
+``data:`` 值的处理器会以 ``unknown url type: c`` 失败。
 """
 from __future__ import annotations
 
+import base64
 import glob
 import logging
 import os
 from typing import Any, Dict, List, Optional
 
 from i18n import t as _t
+# [EN] Reuse the process-wide inference mutex from the text engine: a vision turn
+# [EN] decodes on the same llama.cpp runtime, and llama.cpp is not thread-safe.
+# [ZH] 复用文本引擎的进程级推理互斥锁：视觉轮解码同样运行在同一套 llama.cpp
+# [ZH] 运行时之上，而 llama.cpp 不是线程安全的。
+from llm_engine import _INFERENCE_LOCK
 
 log = logging.getLogger("EchoDesk.Vision")
 
@@ -219,6 +234,70 @@ def resolve_chat_handler(model_path: str, mmproj_path: str):
                       detail=", ".join(tried))
 
 
+#: [EN] MIME types for the image formats accepted by the vision path. A data URI
+#: [EN] needs an explicit media type; the extension is mapped here instead of being
+#: [EN] guessed, so an unsupported suffix is rejected deterministically.
+#: [ZH] 视觉链路接受格式的 MIME 类型。data URI 必须携带明确的媒体类型；此处按扩展名
+#: [ZH] 映射而非猜测，使不受支持的后缀被确定性地拒绝。
+_IMAGE_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+}
+
+
+def image_data_uri(image_path: str) -> str:
+    """
+    [EN]
+    Encode a local image as a ``data:`` URI for the chat handler.
+
+    The image bytes are read with the standard library and base64-encoded; the
+    filesystem path never reaches the handler. This is required because some
+    llama-cpp-python chat handlers pass ``image_url.url`` to ``urllib`` when it does
+    not start with ``data:``: a Windows path such as ``C:\\Users\\...png`` is then
+    interpreted as a URL with scheme ``c`` and raises
+    ``URLError: <urlopen error unknown url type: c>``. A data URI is unambiguous for
+    every handler, keeps the image local, and does not change the line protocol
+    (only the path still travels between the frontend and backend).
+
+    The size, containment and magic-byte policy is applied earlier by
+    :func:`media.validate_image_path`; this helper still rejects a missing,
+    empty or unsupported file so it is safe when called directly.
+
+    [ZH]
+    把本地图片编码为 ``data:`` URI 供聊天处理器使用。
+
+    图片字节由标准库读取并做 base64 编码；文件系统路径绝不会到达处理器。这是必需
+    的：部分 llama-cpp-python 聊天处理器在 ``image_url.url`` 不以 ``data:`` 开头时
+    会把它交给 ``urllib``，于是 ``C:\\Users\\...png`` 被当作 scheme 为 ``c`` 的 URL，
+    抛出 ``URLError: <urlopen error unknown url type: c>``。data URI 对任何处理器都
+    无歧义、图片始终留在本机，且不改变行协议（前端与后端之间仍只传路径）。
+
+    尺寸、目录包含关系与魔数策略已由 :func:`media.validate_image_path` 先行施加；
+    本函数仍会拒绝缺失、空文件或不受支持的后缀，因此可被直接安全调用。
+    """
+    raw_path = str(image_path or "").strip()
+    resolved = os.path.abspath(raw_path) if raw_path else ""
+    if not resolved or not os.path.isfile(resolved):
+        raise VisionError("image_missing", "media.error.not_found", path=raw_path)
+    extension = os.path.splitext(resolved)[1].lower()
+    mime = _IMAGE_MIME.get(extension)
+    if not mime:
+        raise VisionError("bad_image", "media.error.bad_image", path=resolved)
+    try:
+        with open(resolved, "rb") as handle:
+            raw = handle.read()
+    except OSError as exc:
+        raise VisionError("image_unreadable", "media.error.unreadable",
+                          path=resolved, reason=str(exc)) from exc
+    if not raw:
+        raise VisionError("image_empty", "media.error.empty", path=resolved)
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
 class VisionEngine:
     """
     [EN]
@@ -256,7 +335,11 @@ class VisionEngine:
             kwargs["n_threads"] = int(n_threads)
         if n_gpu_layers:
             kwargs["n_gpu_layers"] = int(n_gpu_layers)
-        self.llm = Llama(**kwargs)
+        # [EN] Constructing a native model mutates shared backend state and must
+        # [EN] not overlap with an in-flight decode elsewhere.
+        # [ZH] 构建原生模型会改变共享后端状态，绝不能与其他正在进行的解码重叠。
+        with _INFERENCE_LOCK:
+            self.llm = Llama(**kwargs)
         log.info("视觉模型已加载：%s（处理器 %s）",
                  os.path.basename(self.model_path), self.handler_name)
 
@@ -264,32 +347,45 @@ class VisionEngine:
              temperature: float = 0.3) -> str:
         """
         [EN]
-        Run one vision turn: the user prompt plus the local image path.
+        Run one vision turn: the user prompt plus the local image.
 
-        The image is passed as a filesystem path inside ``image_url.url``. Both
-        supported handlers accept a local path and read it themselves, so the
-        image bytes never travel through the protocol or this function.
+        The image is read locally and passed to the handler as a base64 ``data:``
+        URI (see :func:`image_data_uri`). A raw filesystem path must not be placed
+        in ``image_url.url``: handlers that treat a non-``data:`` value as a URL
+        would try to open ``C:\\...`` and fail with ``unknown url type: c``.
 
         [ZH]
-        执行一次视觉轮：用户提示词加本地图片路径。
+        执行一次视觉轮：用户提示词加本地图片。
 
-        图片以文件系统路径放入 ``image_url.url``。两个受支持的处理器都接受本地
-        路径并自行读取，因此图片字节既不经过协议，也不经过本函数。
+        图片在本地读取，并以 base64 ``data:`` URI 交给处理器（见
+        :func:`image_data_uri`）。绝不能把原始文件系统路径放进 ``image_url.url``：
+        会把非 ``data:`` 值当作 URL 的处理器将尝试打开 ``C:\\...``，并以
+        ``unknown url type: c`` 失败。
         """
         if self.llm is None:
             raise VisionError("not_loaded", "media.vision_failed", detail="engine not loaded")
+        # [EN] Encode before building the request so a read/format failure is
+        # [EN] reported as a VisionError instead of an opaque handler exception.
+        # [ZH] 在构造请求前完成编码，使读取/格式失败以 VisionError 上报，而不是
+        # [ZH] 变成处理器内部的不透明异常。
+        image_url = image_data_uri(image_path)
         messages = [{
             "role": "user",
             "content": [
                 {"type": "text", "text": str(prompt)},
-                {"type": "image_url", "image_url": {"url": image_path}},
+                {"type": "image_url", "image_url": {"url": image_url}},
             ],
         }]
-        result = self.llm.create_chat_completion(
-            messages=messages,
-            max_tokens=max(16, int(max_tokens)),
-            temperature=float(temperature),
-        )
+        # [EN] A vision completion runs prefill and decode in one native call, so
+        # [EN] the mutex covers the whole call and queues behind chat/summarization.
+        # [ZH] 视觉补全在单次原生调用内完成 prefill 与 decode，因此互斥锁覆盖全程，
+        # [ZH] 并在聊天/摘要之后排队。
+        with _INFERENCE_LOCK:
+            result = self.llm.create_chat_completion(
+                messages=messages,
+                max_tokens=max(16, int(max_tokens)),
+                temperature=float(temperature),
+            )
         try:
             content = result["choices"][0]["message"]["content"]
         except Exception as exc:  # noqa: BLE001 - [EN] malformed runtime response
@@ -299,15 +395,19 @@ class VisionEngine:
 
     def close(self) -> None:
         """[EN] Release the native model. / [ZH] 释放原生模型。"""
-        llm = self.llm
-        self.llm = None
-        close = getattr(llm, "close", None)
-        if callable(close):
-            try:
-                close()
-            except Exception:  # noqa: BLE001 - [EN] cleanup must not mask errors
-                               # [ZH] 清理过程不得掩盖错误
-                log.debug("释放视觉模型失败（忽略）", exc_info=True)
+        # [EN] Freeing the model while another thread decodes would be a
+        # [EN] use-after-free; wait for any in-flight native operation.
+        # [ZH] 在另一线程解码时释放模型会造成释放后使用；必须等待进行中的原生操作。
+        with _INFERENCE_LOCK:
+            llm = self.llm
+            self.llm = None
+            close = getattr(llm, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001 - [EN] cleanup must not mask errors
+                                       # [ZH] 清理过程不得掩盖错误
+                    log.debug("释放视觉模型失败（忽略）", exc_info=True)
 
 
 class VisionService:

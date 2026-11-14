@@ -551,7 +551,7 @@ class DocumentSummarizer:
                     chunk=chunk, index=index, total=total, start=start, end=end,
                     engine=engine, on_progress=on_progress, should_stop=should_stop,
                     run_started=started, counters=counters, model_input=model_input,
-                    conversation=conversation,
+                    conversation=conversation, prefilter=pf(),
                 )
                 if status == "aborted":
                     aborted = True
@@ -675,6 +675,7 @@ class DocumentSummarizer:
         merged = self._reduce(
             [s for _, _, s in segments], engine, started=started,
             on_progress=on_progress, should_stop=should_stop, counters=counters,
+            prefilter=pf(),
         )
         body = self._format(source_name, origin_chars, segments, merged)
         elapsed = time.perf_counter() - started
@@ -779,6 +780,7 @@ class DocumentSummarizer:
         counters: Dict[str, int],
         model_input: str = "",
         conversation: Optional[Any] = None,
+        prefilter: Optional[Dict[str, int]] = None,
     ) -> Tuple[str, str]:
         """
         [EN]
@@ -800,6 +802,11 @@ class DocumentSummarizer:
         :meth:`summarize`. Chunk prompts are recorded there and then handed to the
         model; the main conversation history remains untouched.
 
+        ``prefilter`` is the accumulated extractive pre-filter statistic snapshot
+        (see :meth:`_counters`). It is forwarded unchanged into every progress event
+        of this call so that heartbeat events carry the same counters as the
+        surrounding map/done events.
+
         [ZH]
         生成一段摘要，返回 ``(文本, 状态)``；状态为 ok/partial/failed/timeout/aborted
         之一。
@@ -814,6 +821,9 @@ class DocumentSummarizer:
 
         ``conversation`` 为 :meth:`summarize` 所述的临时会话。分段提示词先写入该
         会话再交给模型；主对话历史保持不变。
+
+        ``prefilter`` 是抽取式预筛的累计统计快照（见 :meth:`_counters`）。它被原样
+        传入本次调用的每个进度事件，使心跳事件与周围的 map/done 事件携带同一组计数。
         """
         body = model_input or chunk
         prompt = f"【第 {index}/{total} 段，原文第 {start}-{end} 字符】\n{body}"
@@ -841,6 +851,7 @@ class DocumentSummarizer:
             messages=messages, max_tokens=self.cfg.max_summary_tokens, engine=engine,
             on_progress=on_progress, should_stop=should_stop, run_started=run_started,
             phase="map", index=index, total=total, chars=len(body), counters=counters,
+            prefilter=prefilter,
         )
 
     def _call_model(
@@ -856,13 +867,25 @@ class DocumentSummarizer:
         total: int,
         chars: int,
         counters: Dict[str, int],
+        prefilter: Optional[Dict[str, int]] = None,
     ) -> Tuple[str, str]:
         """
         [EN]
         Call the local model to produce a summary.
 
+        ``prefilter`` is the accumulated pre-filter snapshot built by
+        :meth:`summarize`. It must be passed in explicitly: this method is not
+        lexically nested inside ``summarize``, so referring to the latter's local
+        helper directly raised ``NameError`` on every heartbeat and every reduce
+        event, which (for any document long enough to be chunked) turned a healthy
+        summarization into a permanent failure.
+
         [ZH]
         调用模型生成一段文本；流式优先，从而支持心跳、段内超时与段内中断。
+
+        ``prefilter`` 是 :meth:`summarize` 构建的预筛累计快照，必须显式传入：本方法
+        并不词法嵌套在 ``summarize`` 内部，直接引用后者的局部函数会在每次心跳与每个
+        reduce 事件上抛 ``NameError``，从而使任何长到需要分段的文档都恒告失败。
 
         非流式引擎（没有 ``chat_stream``，例如测试专用的假引擎或第三方实现）退化为
         "调用返回后再判定"：心跳与中断只能在段与段之间生效，事件里会带 ``stream=False``，
@@ -891,7 +914,7 @@ class DocumentSummarizer:
                 "chars": chars, "tokens": produced, "chunk_elapsed": chunk_elapsed,
                 "elapsed": time.perf_counter() - run_started,
                 "tps": (produced / chunk_elapsed) if chunk_elapsed > 0 else 0.0,
-                "slow": is_slow, "stream": True, **self._counters(counters, pf()),
+                "slow": is_slow, "stream": True, **self._counters(counters, prefilter),
             })
 
         stream_fn = getattr(engine, "chat_stream", None)
@@ -947,7 +970,7 @@ class DocumentSummarizer:
                 "chars": chars, "tokens": len(text), "chunk_elapsed": chunk_elapsed,
                 "elapsed": time.perf_counter() - run_started,
                 "tps": (len(text) / chunk_elapsed) if chunk_elapsed > 0 else 0.0,
-                "slow": True, "stream": False, **self._counters(counters, pf()),
+                "slow": True, "stream": False, **self._counters(counters, prefilter),
             })
         if should_stop is not None and should_stop():
             return text, "aborted"
@@ -1075,13 +1098,25 @@ class DocumentSummarizer:
         on_progress: Optional[Callable[[Dict], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None,
         counters: Optional[Dict[str, int]] = None,
+        prefilter: Optional[Dict[str, int]] = None,
     ) -> str:
         """
         [EN]
         Reduce partial summaries into a final summary.
 
+        ``prefilter`` is the pre-filter snapshot owned by :meth:`summarize`. It is
+        forwarded recursively because the reduce events are emitted from this
+        method's own scope, which has no access to ``summarize``'s local helper;
+        passing it explicitly is what keeps the merge phase runnable (an undefined
+        reference here previously aborted every long-document summarization).
+
         [ZH]
         把多段摘要递归归并到 merge_max_tokens 以内。
+
+        ``prefilter`` 是 :meth:`summarize` 持有的预筛快照。归并事件在本方法自身的
+        作用域内产出，无法访问 ``summarize`` 的局部函数，因此必须逐层显式传递；
+        这也正是归并阶段能够跑通的前提（此前该处引用未定义名称，使每一次长文档
+        摘要都在归并阶段中止）。
         """
         if not summaries:
             return ""
@@ -1109,7 +1144,7 @@ class DocumentSummarizer:
                 "chars": sum(len(x) for x in group),
                 "elapsed": (time.perf_counter() - started) if started else 0.0,
                 "stream": False,
-                **(self._counters(counters, pf()) if counters is not None else {}),
+                **(self._counters(counters, prefilter) if counters is not None else {}),
             })
             merged.append(self._summarize_block(
                 "\n".join(f"- {s}" for s in group),
@@ -1120,7 +1155,8 @@ class DocumentSummarizer:
             ))
         if not merged:
             return self._truncate_to_tokens(joined, self.cfg.merge_max_tokens, engine)
-        return self._reduce(merged, engine, depth + 1, started, on_progress, should_stop, counters)
+        return self._reduce(merged, engine, depth + 1, started, on_progress, should_stop,
+                            counters, prefilter)
 
     def _group_by_tokens(self, items: List[str], budget: int, engine) -> List[List[str]]:
         """

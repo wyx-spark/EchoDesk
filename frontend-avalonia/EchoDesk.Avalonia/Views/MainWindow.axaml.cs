@@ -681,11 +681,21 @@ public partial class MainWindow : Window
         // [EN] records. The global hook path is handled by GlobalHotkeyService.
         // [ZH] 窗口内按键说话回退（v0.2.6 Part 2）：平台没有全局钩子时，在窗口内按住
         // [ZH] 配置键仍可录音。全局钩子路径由 GlobalHotkeyService 处理。
-        if (!_hotkeys.IsSupported && _media.State.PttEnabled
-            && e.Key == Key.RightCtrl && !_recording)
+        if (!_hotkeys.IsSupported && _media.State.PttEnabled && e.Key == Key.RightCtrl)
         {
             e.Handled = true;
-            _ = StartPushToTalkAsync();
+            if (!_recording)
+            {
+                // [EN] Intercept the shortcut even when STT is unavailable: the key
+                // [EN] must not fall through to other handlers, and the only feedback
+                // [EN] is the status bar (never a conversation-area error).
+                // [ZH] 即使 STT 不可用也拦截快捷键：按键不得穿透到其他处理器，且反馈
+                // [ZH] 仅限状态栏（绝不在对话区报错）。
+                if (_media.State.SttAvailable)
+                    _ = StartPushToTalkAsync();
+                else
+                    SetStatus(SttUnavailableStatus());
+            }
             return;
         }
         bool ctrl = e.KeyModifiers == KeyModifiers.Control;
@@ -1030,6 +1040,10 @@ public partial class MainWindow : Window
         ToolTip.SetTip(MicButton, Loc.T("main.media.micTip", "按住说话（松开后转写）"));
         AutomationProperties.SetHelpText(MicButton, Loc.T("main.media.micHelp",
             "按住麦克风图标开始录音，松开后自动转写并填入输入框"));
+        // [EN] A language change must not silently re-enable or re-label a
+        // [EN] microphone that is unavailable; re-apply the capability state.
+        // [ZH] 语言切换不得悄然重新启用或改写不可用麦克风的提示；重新应用能力状态。
+        ApplyMicAvailability();
         RecordingHint.Text = Loc.T("main.media.recording", "🔴 录音中…松开结束");
         ToolTip.SetTip(SendButton, Loc.T("main.button.sendTip", "发送（Ctrl+Enter）"));
         ToolTip.SetTip(ModelChip, Loc.T("main.model.clickTip", "点击打开「设置 → 模型」"));
@@ -1350,18 +1364,32 @@ public partial class MainWindow : Window
         // [EN] chord is deliberately left disabled instead of opening nothing.
         // [ZH] 极速呼出窗口不在本轮交付范围，因此刻意不启用组合键，避免按下后没有反应。
         _hotkeys.SetSpotlightEnabled(false);
-        if (_media.State.PttEnabled)
+        // [EN] Do not install the global push-to-talk hook when no transcription
+        // [EN] engine is available: the key press would otherwise be captured and
+        // [EN] then fail, which is the noise this degradation removes.
+        // [ZH] 没有可用转写引擎时不安装全局按键说话钩子：否则按键会被捕获随后失败，
+        // [ZH] 正是本次降级要消除的噪音。
+        if (_media.State.PttEnabled && _media.State.SttAvailable)
             _hotkeys.Start(_media.State.PttShortcut);
-        if (!_hotkeys.IsSupported && !OperatingSystem.IsWindows())
+        // [EN] The hotkey fallback/unavailable hints are only relevant when speech
+        // [EN] input is usable. With no STT engine the microphone is already
+        // [EN] silently disabled, so adding these conversation-area messages would
+        // [EN] be exactly the noise this degradation removes.
+        // [ZH] 只有在语音输入可用时，快捷键回退/不可用提示才有意义。没有 STT 引擎时
+        // [ZH] 麦克风已静默禁用，再往对话区追加这些消息正是本次降级要消除的噪音。
+        if (_media.State.SttAvailable)
         {
-            AddMessage("system", Loc.T("main.media.hotkeyFallback",
-                "⌨️ 本平台暂不支持全局快捷键：在本窗口内按住右 Ctrl 仍可录音，松开后自动转写。"));
-        }
-        else if (!_hotkeys.IsSupported && _hotkeys.UnavailableReason.Length > 0)
-        {
-            AddMessage("system", Loc.T("main.media.hotkeyUnavailable",
-                "⚠️ 全局快捷键不可用：{0}。可在窗口内按住右 Ctrl 录音。",
-                _hotkeys.UnavailableReason));
+            if (!_hotkeys.IsSupported && !OperatingSystem.IsWindows())
+            {
+                AddMessage("system", Loc.T("main.media.hotkeyFallback",
+                    "⌨️ 本平台暂不支持全局快捷键：在本窗口内按住右 Ctrl 仍可录音，松开后自动转写。"));
+            }
+            else if (!_hotkeys.IsSupported && _hotkeys.UnavailableReason.Length > 0)
+            {
+                AddMessage("system", Loc.T("main.media.hotkeyUnavailable",
+                    "⚠️ 全局快捷键不可用：{0}。可在窗口内按住右 Ctrl 录音。",
+                    _hotkeys.UnavailableReason));
+            }
         }
         SetStatus(_media.State.VisionAvailable
             ? Loc.T("main.media.visionReady", "🖼 图片对话可用")
@@ -1371,11 +1399,57 @@ public partial class MainWindow : Window
         // [ZH] 非 VLM 模型禁用图片入口，而不是等用户选完文件后再报错。
         ImageButton.IsEnabled = _media.State.VisionAvailable;
         // [EN] Speech input is offered only when a transcription engine is available;
-        //      otherwise the microphone stays disabled with a status hint.
-        // [ZH] 仅在转写引擎可用时提供语音输入；否则麦克风保持禁用并显示状态提示。
-        MicButton.IsEnabled = _media.State.SttAvailable;
-        if (!_media.State.SttAvailable)
-            ToolTip.SetTip(MicButton, Loc.T("main.media.sttUnavailable", "🎙 语音识别不可用"));
+        // [EN] otherwise the microphone is silently disabled (greyed out) with a
+        // [EN] tooltip explaining why, and shortcut presses only update the status bar.
+        // [ZH] 仅在转写引擎可用时提供语音输入；否则麦克风静默禁用（置灰），悬停说明
+        // [ZH] 原因，快捷键按下时只更新底部状态栏。
+        ApplyMicAvailability();
+    }
+
+    /// <summary>
+    /// [EN] Reflect the current STT capability on the microphone button.
+    ///
+    /// The button is disabled and dimmed (not merely "disabled by theme") when the
+    /// backend reports no usable transcription engine. No error bubble is created:
+    /// the tooltip and the status bar are the only feedback, so a missing STT
+    /// component never pollutes the conversation area.
+    ///
+    /// [ZH] 把当前 STT 能力反映到麦克风按钮上。
+    ///
+    /// 后端报告没有可用转写引擎时，按钮被禁用并降低不透明度（不只依赖主题的禁用
+    /// 外观）。不产生任何错误气泡：只有悬停提示与状态栏反馈，因此缺少 STT 组件
+    /// 绝不会污染对话区。
+    /// </summary>
+    private void ApplyMicAvailability()
+    {
+        bool available = _media.State.Loaded && _media.State.SttAvailable;
+        MicButton.IsEnabled = available;
+        MicButton.Opacity = available ? 1.0 : 0.45;
+        if (available)
+        {
+            ToolTip.SetTip(MicButton, Loc.T("main.media.micTip", "按住说话（松开后转写）"));
+            AutomationProperties.SetHelpText(MicButton, Loc.T("main.media.micHelp",
+                "按住麦克风图标开始录音，松开后自动转写并填入输入框"));
+            return;
+        }
+        string tip = Loc.T("main.media.sttUnsupportedTip", "当前模型或环境不支持语音转写");
+        ToolTip.SetTip(MicButton, tip);
+        AutomationProperties.SetHelpText(MicButton, tip);
+    }
+
+    /// <summary>
+    /// [EN] Status-bar text for "speech input is unavailable". Prefers the
+    /// localized reason reported by the backend, so the user can see whether the
+    /// executable or the Whisper model is missing.
+    /// [ZH] "语音输入不可用"的状态栏文案。优先使用后端上报的已本地化原因，使用户能
+    /// 看出缺失的是可执行文件还是 Whisper 模型。
+    /// </summary>
+    private string SttUnavailableStatus()
+    {
+        string reason = _media.State.Loaded ? _media.State.SttReason : "";
+        return string.IsNullOrWhiteSpace(reason)
+            ? Loc.T("main.media.sttUnsupportedStatus", "🎙 语音转写不可用（未配置 STT 引擎）")
+            : reason;
     }
 
     /// <summary>
@@ -1390,8 +1464,9 @@ public partial class MainWindow : Window
         if (!_mediaInitialized)
             return;
         await _media.LoadStateAsync(_state.Backend);
+        ApplyMicAvailability();
         _hotkeys.Stop();
-        if (_media.State.PttEnabled)
+        if (_media.State.PttEnabled && _media.State.SttAvailable)
             _hotkeys.Start(_media.State.PttShortcut);
     }
 
@@ -3406,6 +3481,15 @@ public partial class MainWindow : Window
     /// [EN] there.
     /// [ZH] 内联在 lambda 里时这条路径**没有任何办法在无人值守下验证**，
     /// [ZH] 而 v0.2.2 记录 §10 第 3 条（Agent 步骤行渲染）正是卡在这里。
+    ///
+    /// [EN] **Lifetime contract**: <paramref name="root"/> belongs to a <c>JsonDocument</c>
+    /// [EN] owned and disposed by the stream reader. Anything posted to the UI thread must be
+    /// [EN] an extracted value (string / number / immutable snapshot), never the
+    /// [EN] <c>JsonElement</c> itself; this dispatch runs synchronously while the document is
+    /// [EN] still alive.
+    /// [ZH] **生命周期契约**：<paramref name="root"/> 属于流读取线程持有并释放的
+    /// [ZH] <c>JsonDocument</c>。任何投递到界面线程的对象都必须是已提取的数值/字符串/
+    /// [ZH] 不可变快照，绝不能是 <c>JsonElement</c> 本身；本分发方法在文档仍然存活时同步执行。
     /// </summary>
     public void DispatchStreamEvent(string type, JsonElement root)
     {
@@ -3420,7 +3504,16 @@ public partial class MainWindow : Window
                 {
                     bool waiting = root.TryGetProperty("waiting_first_token", out JsonElement w)
                                    && w.ValueKind == JsonValueKind.True;
-                    Dispatcher.UIThread.Post(() => ShowMetrics(FormatMetrics(beat, waiting)));
+                    // [EN] Extract the numbers **here**, while the owning JsonDocument is
+                    // [EN] still alive, and post only the immutable snapshot. Closing over
+                    // [EN] the JsonElement itself made the UI callback throw
+                    // [EN] ObjectDisposedException after the stream reader disposed the
+                    // [EN] document, which is the reported FormatMetrics failure.
+                    // [ZH] 在此处、即所属 JsonDocument 仍然存活时提取数值，只把不可变快照
+                    // [ZH] 投递给界面线程。若闭包直接捕获 JsonElement，流读取线程释放文档后
+                    // [ZH] 界面回调就会抛 ObjectDisposedException —— 正是上报的 FormatMetrics 故障。
+                    StreamMetrics metrics = ReadMetrics(beat, waiting);
+                    Dispatcher.UIThread.Post(() => ShowMetrics(FormatMetrics(metrics)));
                 }
                 string content = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
                 Dispatcher.UIThread.Post(() => SetStatus(Trim(Emoji.Prefer(content), 120)));
@@ -3466,7 +3559,7 @@ public partial class MainWindow : Window
                 {
                     bool stopped = root.TryGetProperty("stopped", out JsonElement st)
                                    && st.ValueKind == JsonValueKind.True;
-                    _liveMetrics = FormatMetrics(stats, stopped);
+                    _liveMetrics = FormatMetrics(ReadMetrics(stats, stopped));
                     string text = _liveMetrics;
                     Dispatcher.UIThread.Post(() => ShowMetrics(text));
                 }
@@ -3555,23 +3648,62 @@ public partial class MainWindow : Window
         });
     }
 
-    private static string FormatMetrics(JsonElement stats, bool stopped)
+    /// <summary>
+    /// [EN] Immutable snapshot of the runtime metrics carried by a stream event.
+    /// [EN] The values are copied out of the JSON tree while the owning
+    /// [EN] <c>JsonDocument</c> is still alive, so a later UI-thread callback never
+    /// [EN] touches a disposed <c>JsonElement</c>.
+    /// [ZH] 流式事件中运行指标的不可变快照。数值在所属 <c>JsonDocument</c> 仍然存活时
+    /// [ZH] 即被复制出来，因此后续界面线程回调绝不会访问已释放的 <c>JsonElement</c>。
+    /// </summary>
+    private readonly record struct StreamMetrics(
+        int FirstTokenMs,
+        double? Tps,
+        int? Tokens,
+        bool TokensEstimated,
+        int? ElapsedMs,
+        bool Stopped);
+
+    /// <summary>
+    /// [EN] Copy the metrics out of a JSON object. This method must run synchronously,
+    /// [EN] before the stream reader disposes the <c>JsonDocument</c> that owns the element.
+    /// [ZH] 从 JSON 对象中复制指标。必须在流读取线程释放拥有该元素的
+    /// [ZH] <c>JsonDocument</c> 之前同步执行。
+    /// </summary>
+    private static StreamMetrics ReadMetrics(JsonElement stats, bool stopped)
+    {
+        // [EN] Absent properties stay null so the formatter keeps the previous
+        // [EN] "only render what the backend actually reported" behaviour.
+        // [ZH] 缺失的属性保持为 null，使格式化器维持"只渲染后端实际上报的字段"这一既有行为。
+        int firstTokenMs = stats.TryGetProperty("first_token_ms", out JsonElement ft)
+                           && ft.ValueKind == JsonValueKind.Number ? ft.GetInt32() : 0;
+        double? tps = stats.TryGetProperty("tps", out JsonElement tpsEl)
+                      && tpsEl.ValueKind == JsonValueKind.Number ? tpsEl.GetDouble() : null;
+        int? tokens = stats.TryGetProperty("tokens", out JsonElement tokensEl)
+                      && tokensEl.ValueKind == JsonValueKind.Number ? tokensEl.GetInt32() : null;
+        bool tokensEstimated = stats.TryGetProperty("tokens_estimated", out JsonElement est)
+                               && est.ValueKind == JsonValueKind.True;
+        int? elapsedMs = stats.TryGetProperty("elapsed_ms", out JsonElement el)
+                         && el.ValueKind == JsonValueKind.Number ? el.GetInt32() : null;
+        return new StreamMetrics(firstTokenMs, tps, tokens, tokensEstimated, elapsedMs, stopped);
+    }
+
+    private static string FormatMetrics(StreamMetrics metrics)
     {
         var parts = new List<string>();
-        if (stats.TryGetProperty("first_token_ms", out JsonElement ft) && ft.ValueKind == JsonValueKind.Number && ft.GetInt32() > 0)
-            parts.Add(Loc.T("main.metrics.ttft", "⚡ 首 token {0}", FormatMs(ft.GetInt32())));
-        if (stats.TryGetProperty("tps", out JsonElement tps) && tps.ValueKind == JsonValueKind.Number)
-            parts.Add(Loc.T("main.metrics.tps", "🚀 {0:0.#} token/s", tps.GetDouble()));
-        if (stats.TryGetProperty("tokens", out JsonElement tokens) && tokens.ValueKind == JsonValueKind.Number)
+        if (metrics.FirstTokenMs > 0)
+            parts.Add(Loc.T("main.metrics.ttft", "⚡ 首 token {0}", FormatMs(metrics.FirstTokenMs)));
+        if (metrics.Tps is { } tps)
+            parts.Add(Loc.T("main.metrics.tps", "🚀 {0:0.#} token/s", tps));
+        if (metrics.Tokens is { } tokens)
         {
-            bool estimated = stats.TryGetProperty("tokens_estimated", out JsonElement est) && est.ValueKind == JsonValueKind.True;
-            parts.Add(estimated
-                ? Loc.T("main.metrics.outputTokensEstimated", "≈{0} tokens", tokens.GetInt32())
-                : Loc.T("main.metrics.outputTokens", "{0} tokens", tokens.GetInt32()));
+            parts.Add(metrics.TokensEstimated
+                ? Loc.T("main.metrics.outputTokensEstimated", "≈{0} tokens", tokens)
+                : Loc.T("main.metrics.outputTokens", "{0} tokens", tokens));
         }
-        if (stats.TryGetProperty("elapsed_ms", out JsonElement el) && el.ValueKind == JsonValueKind.Number)
-            parts.Add(Loc.T("main.metrics.elapsed", "⏱️ {0}", FormatMs(el.GetInt32())));
-        if (stopped)
+        if (metrics.ElapsedMs is { } elapsedMs)
+            parts.Add(Loc.T("main.metrics.elapsed", "⏱️ {0}", FormatMs(elapsedMs)));
+        if (metrics.Stopped)
             parts.Add(Loc.T("main.metrics.stopped", "⏹ 已中止"));
         return string.Join(" · ", parts);
     }
@@ -4089,6 +4221,18 @@ public partial class MainWindow : Window
 
     private async Task StartPushToTalkAsync()
     {
+        // [EN] Silent degradation: without a usable STT engine nothing is recorded,
+        // [EN] no request is sent and no error bubble is created; only the status
+        // [EN] bar states the reason. This covers pointer clicks (the button is
+        // [EN] disabled) and any hotkey path that still reaches this method.
+        // [ZH] 静默降级：没有可用 STT 引擎时不录音、不发请求、不产生错误气泡，只在
+        // [ZH] 状态栏说明原因。这覆盖指针点击（按钮已禁用）与任何仍会到达此处的
+        // [ZH] 快捷键路径。
+        if (!_media.State.SttAvailable)
+        {
+            SetStatus(SttUnavailableStatus());
+            return;
+        }
         // [EN] The pending flag coalesces key auto-repeat: the hook reports repeated
         // key-down events while the key is held, and only the first one may start a
         // recording.
@@ -4184,6 +4328,17 @@ public partial class MainWindow : Window
                 Toast(Loc.T("main.media.recordFailed", "⚠️ 无法结束录音"));
                 return;
             }
+            // [EN] The capability may have changed while recording (for example the
+            // [EN] STT engine was removed or disabled in settings). Do not send a
+            // [EN] transcription request that is known to fail; report in the status
+            // [EN] bar only.
+            // [ZH] 录音期间能力可能已变化（例如设置中移除或关闭了 STT 引擎）。不要发送
+            // [ZH] 已知会失败的转写请求，只在状态栏说明。
+            if (!_media.State.SttAvailable)
+            {
+                SetStatus(SttUnavailableStatus());
+                return;
+            }
             using JsonDocument? result = await _state.Backend.SendAsync(
                 new { action = "transcribe_audio", path },
                 idleTimeout: TimeSpan.FromMinutes(5));
@@ -4198,6 +4353,23 @@ public partial class MainWindow : Window
             {
                 string message = transcription.TryGetProperty("content", out JsonElement content)
                     ? content.GetString() ?? "" : Loc.T("main.media.sttFailed", "⚠️ 语音转写失败");
+                // [EN] A missing/disabled STT component is a capability degradation,
+                // [EN] not an operation error: update the status bar and grey out the
+                // [EN] microphone instead of adding a red system message.
+                // [ZH] STT 组件缺失/关闭属于能力降级而非操作错误：更新状态栏并把麦克风
+                // [ZH] 置灰，不在对话区追加红色系统消息。
+                string code = transcription.TryGetProperty("error_code", out JsonElement codeEl)
+                    ? codeEl.GetString() ?? "" : "";
+                if (code is "stt_unavailable" or "stt_disabled")
+                {
+                    SetStatus(string.IsNullOrWhiteSpace(message)
+                        ? Loc.T("main.media.sttUnsupportedStatus",
+                            "🎙 语音转写不可用（未配置 STT 引擎）")
+                        : message);
+                    _media.State.SttAvailable = false;
+                    ApplyMicAvailability();
+                    return;
+                }
                 AddMessage("system", message);
                 Toast(Loc.T("main.media.sttFailed", "⚠️ 语音转写失败"));
                 return;
@@ -6265,7 +6437,7 @@ public partial class MainWindow : Window
             if (doc.RootElement.TryGetProperty("metrics", out JsonElement metrics)
                 && metrics.ValueKind == JsonValueKind.Object)
             {
-                ShowMetrics(FormatMetrics(metrics, _metricsStoppedState));
+                ShowMetrics(FormatMetrics(ReadMetrics(metrics, _metricsStoppedState)));
             }
         }
     }
@@ -6438,7 +6610,12 @@ public partial class MainWindow : Window
             {
                 Text = Loc.T("knowledge.panel.empty", "尚未挂载文件夹"),
                 FontSize = 11,
-                Foreground = (IBrush?)this.FindResource("SubTextBrush") ?? Brushes.Gray,
+                // [EN] Resolve through TryFindResource: a failed lookup yields
+                // [EN] AvaloniaProperty.UnsetValue, and casting that value to IBrush
+                // [EN] throws InvalidCastException. ResolveBrush supplies the fallback.
+                // [ZH] 经 TryFindResource 解析：查找失败时返回 AvaloniaProperty.UnsetValue，
+                // [ZH] 将其强转为 IBrush 会抛 InvalidCastException；ResolveBrush 负责兜底色。
+                Foreground = ResolveBrush("SubTextBrush", Brushes.Gray),
                 TextWrapping = TextWrapping.Wrap,
             });
             return;
@@ -6469,7 +6646,10 @@ public partial class MainWindow : Window
                 Text = Loc.T("knowledge.panel.summary", "{0} 个文件 · {1} 个片段",
                              library.Documents, library.Chunks) + " · " + statusText,
                 FontSize = 11,
-                Foreground = (IBrush?)this.FindResource("SubTextBrush") ?? Brushes.Gray,
+                // [EN] Same defensive lookup as the empty-row label above; never cast
+                // [EN] the raw resource result to IBrush.
+                // [ZH] 与上方空列表标签相同的防御性取色；绝不把资源原始返回值强转为 IBrush。
+                Foreground = ResolveBrush("SubTextBrush", Brushes.Gray),
                 TextWrapping = TextWrapping.Wrap,
             });
             Grid.SetColumn(text, 0);

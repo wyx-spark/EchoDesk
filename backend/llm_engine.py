@@ -19,6 +19,10 @@ It is additionally responsible for:
     returning only the final answer, so summarization and automation callers
     never receive reasoning content by construction.
 
+It also serializes every native inference operation with a process-wide mutex:
+llama.cpp is not thread-safe, and the chat thread and the background document
+summarizer share one model instance.
+
 [ZH]
 基于 llama-cpp-python 的 LLM 推理引擎封装，支持流式与非流式补全、中断以及缓存管理。
 
@@ -32,13 +36,16 @@ It is additionally responsible for:
     :mod:`reasoning` 的标签分离器完成：``chat_stream_split`` / ``chat_complete_split``
     暴露双通道，``chat_stream`` / ``chat_complete`` 则保持"只返回最终回答"的兼容语义
     （摘要、自动化等调用方天然拿不到思考内容）。
+
+此外，所有原生推理操作都由进程级互斥锁串行化：llama.cpp 不是线程安全的，而聊天线程
+与后台文档摘要器共享同一个模型实例。
 """
 import logging
 import queue
 import threading
 import time
 from dataclasses import dataclass
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Tuple
 
 from gguf_meta import describe_model, estimate_kv_cache_bytes, format_bytes, resolve_context_window
 from hardware_profiler import DEFAULT_INITIAL_CONTEXT
@@ -47,6 +54,41 @@ from i18n import t as _t
 from reasoning import ANSWER, ReasoningSplitter, normalize_tags, split_text
 
 log = logging.getLogger("EchoDesk.LLM")
+
+#: [EN] Process-wide inference mutex.
+#:
+#: The underlying llama.cpp extension is **not thread-safe**: a native model
+#: instance may only be decoded by one thread at a time. The chat path and the
+#: background document summarizer are independent threads that share one engine
+#: object, so without serialization two ``llama_cpp.decode`` calls can run
+#: concurrently and crash the process with an access violation
+#: (``0xC0000005`` / exit code ``-1073741819``). Every entry point that starts,
+#: stops, or mutates native inference (streaming and non-streaming completion,
+#: model load/reload/close, KV-cache reset) must hold this mutex for the whole
+#: native operation. The lock is module level, not per instance, because a
+#: dedicated summary engine is a second ``LLMEngine`` that shares the same native
+#: backend resources.
+#:
+#: The tokenizer (``Llama.tokenize``) is deliberately **not** covered: it only
+#: reads the vocabulary and does not touch the KV cache, and the streaming reader
+#: thread holds this mutex for the lifetime of a generation, so locking token
+#: counting would deadlock callers that count tokens after a stream (for example
+#: the ``done`` metrics path) while the reader waits on a full delivery queue.
+#:
+#: [ZH] 进程级推理互斥锁。
+#:
+#: 底层 llama.cpp 扩展**不是线程安全的**：同一个原生模型实例在同一时刻只能由
+#: 一个线程解码。聊天路径与后台文档摘要器是两个独立线程，却共享同一个引擎对象；
+#: 若不串行化，两次 ``llama_cpp.decode`` 会并发执行，并以访问违例
+#: （``0xC0000005`` / 退出码 ``-1073741819``）使进程崩溃。所有会启动、停止或改变
+#: 原生推理状态的入口（流式/非流式补全、模型加载/重载/释放、KV Cache 重置）都
+#: 必须在整个原生操作期间持有该互斥锁。锁定义在模块级而非实例级：专用摘要引擎
+#: 是第二个 ``LLMEngine``，它与主引擎共享同一批原生后端资源。
+#:
+#: 分词器（``Llama.tokenize``）刻意**不**纳入该锁：它只读取词表、不触碰 KV Cache；
+#: 而流式读者线程在整个生成期间持有该锁，若把 token 计数也加锁，流结束后的计数
+#: 调用方（例如 ``done`` 指标路径）会与"读者线程等待已满的交付队列"互相等待而死锁。
+_INFERENCE_LOCK = threading.Lock()
 
 #: [EN] Default interval (seconds) for emitting a heartbeat while a streaming read
 #: produces no new tokens. Prefill is slow and decode is fast, so the first token
@@ -227,7 +269,12 @@ class LLMEngine:
         self.last_tps: float = 0.0
         self.last_elapsed: float = 0.0
         self.last_tokens: int = 0
-        self.llm = self._create(verbose=verbose)
+        # [EN] Native model construction touches shared llama.cpp backend state,
+        # [EN] so it also runs under the process-wide inference mutex.
+        # [ZH] 原生模型构建同样会访问共享的 llama.cpp 后端状态，因此也在进程级
+        # [ZH] 推理互斥锁的保护下执行。
+        with _INFERENCE_LOCK:
+            self.llm = self._create(verbose=verbose)
 
     def _create(self, verbose: bool = False):
         from llama_cpp import Llama
@@ -388,15 +435,21 @@ class LLMEngine:
         ``Llama.close()`` 可用时调用它，并清空引用。
         """
         llm = getattr(self, "llm", None)
-        self.llm = None
-        if llm is None:
-            return
-        close = getattr(llm, "close", None)
-        if callable(close):
-            try:
-                close()
-            except Exception:  # noqa: BLE001 - cleanup must never mask the real error
-                log.debug("释放 llama.cpp 模型失败（忽略）", exc_info=True)
+        # [EN] Releasing native memory while another thread is decoding is exactly
+        # [EN] the use-after-free this mutex exists to prevent, so closing waits for
+        # [EN] the current native operation to finish.
+        # [ZH] 在另一线程解码时释放原生内存正是该互斥锁要防止的释放后使用，因此
+        # [ZH] 释放操作会等待当前原生操作结束。
+        with _INFERENCE_LOCK:
+            self.llm = None
+            if llm is None:
+                return
+            close = getattr(llm, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001 - cleanup must never mask the real error
+                    log.debug("释放 llama.cpp 模型失败（忽略）", exc_info=True)
 
     def __enter__(self):
         """
@@ -420,20 +473,26 @@ class LLMEngine:
         [ZH]
         重新加载模型，可更换模型路径或上下文长度。
         """
-        if model_path:
-            self.model_path = model_path
-            self.n_ctx_train = resolve_context_window(model_path, default=0)
-        if n_ctx:
-            self.n_ctx = n_ctx
-        previous = getattr(self, "llm", None)
-        self.llm = self._create(verbose=False)
-        if previous is not None and previous is not self.llm:
-            close = getattr(previous, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception:  # noqa: BLE001
-                    log.debug("释放旧 llama.cpp 模型失败（忽略）", exc_info=True)
+        # [EN] Loading, swapping and closing native models is serialized with
+        # [EN] inference: a reload triggered by context growth must never replace
+        # [EN] the model underneath an in-flight decode.
+        # [ZH] 模型加载、替换与释放都与推理串行化：由上下文扩展触发的重载绝不能在
+        # [ZH] 正在解码的模型之下把模型换掉。
+        with _INFERENCE_LOCK:
+            if model_path:
+                self.model_path = model_path
+                self.n_ctx_train = resolve_context_window(model_path, default=0)
+            if n_ctx:
+                self.n_ctx = n_ctx
+            previous = getattr(self, "llm", None)
+            self.llm = self._create(verbose=False)
+            if previous is not None and previous is not self.llm:
+                close = getattr(previous, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:  # noqa: BLE001
+                        log.debug("释放旧 llama.cpp 模型失败（忽略）", exc_info=True)
 
     def load(self, model_path: str, n_ctx: Optional[int] = None) -> None:
         """
@@ -532,10 +591,14 @@ class LLMEngine:
         清空 KV 缓存与输入历史。模式、提示词或历史结构发生变化后应调用。
         """
         try:
-            reset = getattr(self.llm, "reset", None)
-            if callable(reset):
-                reset()
-                return True
+            # [EN] Resetting the KV cache mutates native context state; it must
+            # [EN] wait until any in-flight generation has finished.
+            # [ZH] 重置 KV Cache 会改变原生上下文状态，必须等待进行中的生成结束。
+            with _INFERENCE_LOCK:
+                reset = getattr(self.llm, "reset", None)
+                if callable(reset):
+                    reset()
+                    return True
         except Exception:
             pass
         return False
@@ -680,7 +743,14 @@ class LLMEngine:
             kwargs["top_p"] = float(top_p)
         if repeat_penalty is not None:
             kwargs["repeat_penalty"] = float(repeat_penalty)
-        response = self.llm.create_chat_completion(**kwargs)
+        # [EN] A non-streaming completion executes prefill and decode inside this
+        # [EN] single call, so the mutex is held for its whole duration. Concurrent
+        # [EN] callers (the chat path and the background summarizer) therefore queue
+        # [EN] here instead of corrupting the native model.
+        # [ZH] 非流式补全在这一次调用内完成 prefill 与 decode，因此互斥锁覆盖其
+        # [ZH] 全程。并发调用方（聊天路径与后台摘要器）会在此排队，而不是破坏原生模型。
+        with _INFERENCE_LOCK:
+            response = self.llm.create_chat_completion(**kwargs)
         return response["choices"][0]["message"]["content"]
 
     def chat_complete_split(
@@ -732,7 +802,7 @@ class LLMEngine:
 
     @staticmethod
     def _iter_with_heartbeat(
-        stream,
+        stream_factory: Callable[[], Iterator[dict]],
         stop_event: Optional[threading.Event],
         heartbeat_seconds: float,
     ) -> Iterator[Tuple[str, Optional[str]]]:
@@ -801,9 +871,31 @@ class LLMEngine:
         退化为"停止显示"，并改变"停止时已发出的内容截止到哪一段"的既有语义
         （``tools/test_reasoning.py`` 的中断用例对此有断言）。因此读者线程在每次
         取块之前都检查 ``stop_event``，一旦置位立即结束，不再向底层请求新 token。
+
+        ``stream_factory`` 在读者线程持有 :data:`_INFERENCE_LOCK` 之后才被调用：
+        原生流只会被一个线程驱动，且模型创建、整段解码、直到流结束都在同一临界区
+        内完成，聊天线程与后台摘要线程因此严格排队。消费者若提前放弃迭代（用户
+        停止、调用方关闭生成器），读者线程通过 ``abandoned`` 事件立即停止向队列
+        投递并释放互斥锁，避免"消费者已退出、读者却持锁阻塞在满队列上"的死锁。
+
+        [EN]
+        ``stream_factory`` is invoked by the reader thread only after it has acquired
+        :data:`_INFERENCE_LOCK`: exactly one thread drives the native stream, and
+        model creation, the whole decode and end-of-stream all happen in one critical
+        section, so the chat thread and the background summarizer queue strictly
+        behind each other. If the consumer abandons iteration early (the user pressed
+        stop, or the caller closes the generator), the reader thread observes the
+        ``abandoned`` event, stops delivering, and releases the mutex, which prevents
+        the deadlock where the consumer exits while the reader keeps the lock blocked
+        on a full delivery queue.
         """
         pending: "queue.Queue" = queue.Queue(maxsize=256)
         error_box: List[BaseException] = []
+        # [EN] Set when the consumer stops iterating; the reader must then release
+        # [EN] the inference mutex instead of blocking on a queue nobody drains.
+        # [ZH] 消费者停止迭代时置位；读者线程据此释放推理互斥锁，而不是阻塞在无人
+        # [ZH] 消费的队列上。
+        abandoned = threading.Event()
 
         def stopped() -> bool:
             return stop_event is not None and stop_event.is_set()
@@ -828,31 +920,72 @@ class LLMEngine:
         #: [ZH] 要么多交付一块用户根本来不及看到的内容（使停止语义变慢）。
         drop_from: List[int] = []
 
+        def deliver(item) -> bool:
+            """
+            [EN]
+            Put one item into the bounded delivery queue, giving up when the user
+            stops generation or the consumer abandons the generator. A timed put is
+            used instead of a blocking one so the reader can observe both signals
+            even when the queue is full; a blocking put would keep the inference
+            mutex forever.
+
+            [ZH]
+            向有界交付队列放入一项；用户停止生成或消费者放弃生成器时立即放弃。
+            使用带超时的 put 而非阻塞式 put，使读者线程在队列已满时仍能观测这两种
+            信号；阻塞式 put 会让推理互斥锁被永久占用。
+            """
+            while not abandoned.is_set() and not stopped():
+                try:
+                    pending.put(item, timeout=0.2)
+                    return True
+                except queue.Full:
+                    continue
+            return False
+
         def reader() -> None:
             try:
-                index = 0
-                for chunk in stream:
-                    if stopped():
-                        drop_from.append(index)
-                        break
-                    choice = chunk.get("choices", [{}])[0]
-                    delta = choice.get("delta", {}).get("content") or choice.get("text")
-                    if not delta:
-                        continue
-                    # [EN] Bounded queue: when the model produces faster than the UI
-                    # consumes, this briefly blocks the reader thread and bounds
-                    # memory usage (otherwise a fast model would grow the queue
-                    # without limit).
-                    # [ZH] 有界队列：模型产出快于界面消费时，此处会短暂阻塞读者线程，
-                    # [ZH] 从而限制内存占用（否则高速模型会使队列无限增长）。
-                    pending.put(("delta", delta, index))
-                    index += 1
+                # [EN] One thread owns the native stream for its whole lifetime; the
+                # [EN] mutex is released by this same thread, including when the
+                # [EN] consumer has already gone away.
+                # [ZH] 原生流在其整个生命周期内只由一个线程驱动；互斥锁也由该线程
+                # [ZH] 释放，消费者提前离开时同样如此。
+                with _INFERENCE_LOCK:
+                    stream = stream_factory()
+                    index = 0
+                    for chunk in stream:
+                        if stopped() or abandoned.is_set():
+                            drop_from.append(index)
+                            break
+                        choice = chunk.get("choices", [{}])[0]
+                        delta = choice.get("delta", {}).get("content") or choice.get("text")
+                        if not delta:
+                            continue
+                        # [EN] Bounded queue: when the model produces faster than the UI
+                        # consumes, this briefly blocks the reader thread and bounds
+                        # memory usage (otherwise a fast model would grow the queue
+                        # without limit).
+                        # [ZH] 有界队列：模型产出快于界面消费时，此处会短暂阻塞读者线程，
+                        # [ZH] 从而限制内存占用（否则高速模型会使队列无限增长）。
+                        if not deliver(("delta", delta, index)):
+                            return
+                        index += 1
             # [EN] Rethrown unchanged on the consumer side.
             # [ZH] 原样在消费者侧抛出。
             except BaseException as exc:  # noqa: BLE001
                 error_box.append(exc)
             finally:
-                pending.put((_EOF, None, -1))
+                # [EN] The end-of-stream marker is only meaningful while a consumer
+                # [EN] still exists; an abandoned queue must not block the reader.
+                # [ZH] 结束标记仅在消费者仍然存在时有意义；已被放弃的队列不得阻塞
+                # [ZH] 读者线程。
+                if not abandoned.is_set():
+                    while True:
+                        try:
+                            pending.put((_EOF, None, -1), timeout=0.2)
+                            break
+                        except queue.Full:
+                            if abandoned.is_set():
+                                break
 
         worker = threading.Thread(target=reader, name="EchoDesk-LLM-Reader", daemon=True)
         worker.start()
@@ -860,37 +993,43 @@ class LLMEngine:
         # any timeout wake-up in that case.
         # [ZH] heartbeat_seconds <= 0 表示关闭心跳：此时使用无限等待，不做任何超时唤醒。
         wait = max(0.1, float(heartbeat_seconds)) if heartbeat_seconds and heartbeat_seconds > 0 else None
-        while True:
-            try:
-                item = pending.get(timeout=wait) if wait else pending.get()
-            except queue.Empty:
-                if stopped():
-                    # [EN] Stop signal set and the queue is empty: end immediately
-                    # without waiting for the model to finish.
-                    # [ZH] 停止信号已置位且队列为空：立即结束，不再等待模型生成完毕。
+        try:
+            while True:
+                try:
+                    item = pending.get(timeout=wait) if wait else pending.get()
+                except queue.Empty:
+                    if stopped():
+                        # [EN] Stop signal set and the queue is empty: end immediately
+                        # without waiting for the model to finish.
+                        # [ZH] 停止信号已置位且队列为空：立即结束，不再等待模型生成完毕。
+                        return
+                    # [EN] No new token: the silence may be prefill or slow decoding. A
+                    # heartbeat only indicates that work is still in progress; how it is
+                    # displayed is decided by the frontend.
+                    # [ZH] 无新 token：这段静默可能来自 prefill，也可能是模型解码较慢。心跳
+                    # [ZH] 仅表示仍在工作，具体展示方式由前端决定。
+                    if error_box:
+                        raise error_box[0]
+                    yield ("heartbeat", None)
+                    continue
+                kind, text, index = item
+                # [EN] Queued items may already extend past the chunk identified when the
+                # stop signal was observed: truncate at drop_from, delivering content
+                # produced before the stop and discarding everything after it.
+                # [ZH] 队列中的内容可能已排到"发现停止信号时的那个块"之后：按 drop_from
+                # [ZH] 截断，如实交付停止前产出的内容，丢弃其后的内容。
+                if kind == _EOF:
+                    if error_box:
+                        raise error_box[0]
                     return
-                # [EN] No new token: the silence may be prefill or slow decoding. A
-                # heartbeat only indicates that work is still in progress; how it is
-                # displayed is decided by the frontend.
-                # [ZH] 无新 token：这段静默可能来自 prefill，也可能是模型解码较慢。心跳
-                # [ZH] 仅表示仍在工作，具体展示方式由前端决定。
-                if error_box:
-                    raise error_box[0]
-                yield ("heartbeat", None)
-                continue
-            kind, text, index = item
-            # [EN] Queued items may already extend past the chunk identified when the
-            # stop signal was observed: truncate at drop_from, delivering content
-            # produced before the stop and discarding everything after it.
-            # [ZH] 队列中的内容可能已排到"发现停止信号时的那个块"之后：按 drop_from
-            # [ZH] 截断，如实交付停止前产出的内容，丢弃其后的内容。
-            if kind == _EOF:
-                if error_box:
-                    raise error_box[0]
-                return
-            if drop_from and index >= drop_from[0]:
-                return
-            yield (kind, text)
+                if drop_from and index >= drop_from[0]:
+                    return
+                yield (kind, text)
+        finally:
+            # [EN] Covers normal return, stop, exceptions and generator close: from
+            # [EN] this point the reader must not wait for a consumer any more.
+            # [ZH] 覆盖正常返回、停止、异常与生成器关闭：自此读者线程不再等待消费者。
+            abandoned.set()
 
     def _chat_stream_raw(
         self,
@@ -940,9 +1079,22 @@ class LLMEngine:
             kwargs["top_p"] = float(top_p)
         if repeat_penalty is not None:
             kwargs["repeat_penalty"] = float(repeat_penalty)
-        stream = self.llm.create_chat_completion(**kwargs)
+
+        def open_stream() -> Iterator[dict]:
+            """
+            [EN]
+            Create the native stream. Invoked by the reader thread inside the
+            inference critical section, so model creation and every subsequent
+            decode step belong to the same mutex ownership window.
+
+            [ZH]
+            创建原生流。由读者线程在推理临界区内调用，使模型创建与随后的每一步
+            解码处于同一段互斥锁持有窗口内。
+            """
+            return self.llm.create_chat_completion(**kwargs)
+
         try:
-            for kind, text in self._iter_with_heartbeat(stream, stop_event, heartbeat_seconds):
+            for kind, text in self._iter_with_heartbeat(open_stream, stop_event, heartbeat_seconds):
                 if kind == "heartbeat":
                     # [EN] Refresh metrics while a heartbeat is pending; the frontend
                     # uses them to display "N characters generated / N seconds
@@ -1273,28 +1425,34 @@ class LazyLLMEngine(LLMEngine):
         if self.max_n_ctx > 0:
             target_ctx = min(target_ctx, int(self.max_n_ctx))
         train = resolve_context_window(path, default=0)
-        llm = Llama(
-            model_path=path,
-            n_ctx=target_ctx,
-            verbose=False,
-            n_threads=self.n_threads,
-            n_batch=self.n_batch,
-            n_gpu_layers=self.n_gpu_layers,
-        )
-        self.llm = llm
-        self.model_path = path
-        self.n_ctx = target_ctx
-        self.n_ctx_train = train
-        try:
-            self.n_ctx = int(llm.n_ctx())
-        except Exception:
-            pass
-        try:
-            self.n_ctx_train = int(llm.n_ctx_train()) or self.n_ctx_train
-        except Exception:
-            pass
-        self.kv_cache_bytes = estimate_kv_cache_bytes(self.model_path, self.n_ctx)
-        self.log_window()
+        # [EN] Same rule as the parent engine: constructing the native model is a
+        # [EN] mutating operation on shared llama.cpp backend state; it must not run
+        # [EN] concurrently with a decode in the background summarizer.
+        # [ZH] 与父类引擎相同：构建原生模型会改变共享的 llama.cpp 后端状态，绝不能
+        # [ZH] 与后台摘要器的解码并发执行。
+        with _INFERENCE_LOCK:
+            llm = Llama(
+                model_path=path,
+                n_ctx=target_ctx,
+                verbose=False,
+                n_threads=self.n_threads,
+                n_batch=self.n_batch,
+                n_gpu_layers=self.n_gpu_layers,
+            )
+            self.llm = llm
+            self.model_path = path
+            self.n_ctx = target_ctx
+            self.n_ctx_train = train
+            try:
+                self.n_ctx = int(llm.n_ctx())
+            except Exception:
+                pass
+            try:
+                self.n_ctx_train = int(llm.n_ctx_train()) or self.n_ctx_train
+            except Exception:
+                pass
+            self.kv_cache_bytes = estimate_kv_cache_bytes(self.model_path, self.n_ctx)
+            self.log_window()
 
     def reload(self, model_path: Optional[str] = None, n_ctx: Optional[int] = None) -> None:
         """

@@ -480,6 +480,8 @@
       "micTip": "Hold to talk (release to transcribe)",
       "micHelp": "Press and hold the microphone to record; release to transcribe into the input box",
       "sttUnavailable": "🎙 Speech recognition is unavailable",
+      "sttUnsupportedTip": "The current model or environment does not support speech transcription",
+      "sttUnsupportedStatus": "🎙 Speech transcription is unavailable (no STT engine configured)",
       "hotkeyFallback": "⌨️ Global hotkeys are not available on this platform: hold Right Ctrl in this window to record; releasing transcribes automatically.",
       "hotkeyUnavailable": "⚠️ Global hotkeys are unavailable: {0}. Hold Right Ctrl in this window to record.",
       "visionReady": "🖼 Image chat available",

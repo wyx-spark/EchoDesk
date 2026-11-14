@@ -271,6 +271,13 @@ def _headers(api_key: str, extra: Optional[Dict[str, str]] = None) -> Dict[str, 
     """
     out = {"Content-Type": "application/json", "Accept": "application/json"}
     key = str(api_key or "").strip()
+    # [EN] Accept a key that already carries the "Bearer " prefix: users often
+    # [EN] paste the whole header value, and sending "Bearer Bearer <key>" makes
+    # [EN] strict servers reject the request.
+    # [ZH] 接受已带 "Bearer " 前缀的密钥：用户常直接粘贴整个头值，若再拼一次
+    # [ZH] "Bearer Bearer <key>"，严格的服务器会拒绝请求。
+    if key.lower().startswith("bearer "):
+        key = key[7:].strip()
     if key:
         out["Authorization"] = f"Bearer {key}"
     if extra:
@@ -298,6 +305,51 @@ def _read_json(response: Any) -> Dict[str, Any]:
     return data
 
 
+def _http_error_detail(exc: urllib.error.HTTPError, limit: int = 400) -> str:
+    """
+    [EN]
+    Extract a human-readable reason from an HTTP error body.
+
+    OpenAI-compatible services put the useful text in ``{"error": {"message": ...}}``;
+    other gateways use ``{"error": "..."}``, ``{"message": ...}`` or ``{"detail": ...}``.
+    The raw body is the last fallback. Only a bounded prefix is returned so a large
+    HTML error page cannot be pasted into the chat transcript.
+
+    [ZH]
+    从 HTTP 错误响应体中提取可读原因。
+
+    OpenAI 兼容服务把有用文本放在 ``{"error": {"message": ...}}``；其他网关使用
+    ``{"error": "..."}``、``{"message": ...}`` 或 ``{"detail": ...}``。原始响应体作为
+    最后兜底。只返回限长前缀，避免把巨大的 HTML 错误页整段塞进对话区。
+    """
+    try:
+        raw = exc.read(4096)
+    except Exception:  # noqa: BLE001 - [EN] the body is best-effort diagnostics
+                        # [ZH] 响应体仅用于尽力诊断
+        raw = b""
+    text = raw.decode("utf-8", errors="replace").strip() if raw else ""
+    detail = ""
+    if text:
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            error = data.get("error")
+            if isinstance(error, dict):
+                detail = str(error.get("message") or error.get("code") or "")
+            elif error:
+                detail = str(error)
+            if not detail:
+                detail = str(data.get("message") or data.get("detail") or "")
+        if not detail:
+            detail = text
+    # [EN] Collapse whitespace so multi-line bodies stay readable in one status line.
+    # [ZH] 合并空白，使多行响应体在单行状态区中仍然可读。
+    detail = " ".join(detail.split())
+    return detail[:limit] or str(exc.reason)
+
+
 def _post_json(url: str, payload: Dict[str, Any], *, api_key: str,
                timeout: float) -> Dict[str, Any]:
     """
@@ -313,14 +365,8 @@ def _post_json(url: str, payload: Dict[str, Any], *, api_key: str,
         with urllib.request.urlopen(request, timeout=max(1.0, float(timeout))) as response:
             return _read_json(response)
     except urllib.error.HTTPError as exc:
-        detail = ""
-        try:
-            detail = exc.read(4096).decode("utf-8", errors="replace")
-        except Exception:  # noqa: BLE001 - [EN] the body is best-effort diagnostics
-                            # [ZH] 响应体仅用于尽力诊断
-            detail = ""
         raise ProviderError(_t("provider.error_http", code=exc.code,
-                               detail=detail.strip()[:400] or exc.reason)) from exc
+                               detail=_http_error_detail(exc))) from exc
     except urllib.error.URLError as exc:
         raise ProviderError(_t("provider.error_unreachable", url=url,
                                error=exc.reason)) from exc
@@ -342,7 +388,7 @@ def _get_json(url: str, *, api_key: str, timeout: float) -> Dict[str, Any]:
             return _read_json(response)
     except urllib.error.HTTPError as exc:
         raise ProviderError(_t("provider.error_http", code=exc.code,
-                               detail=exc.reason)) from exc
+                               detail=_http_error_detail(exc))) from exc
     except urllib.error.URLError as exc:
         raise ProviderError(_t("provider.error_unreachable", url=url,
                                error=exc.reason)) from exc
@@ -634,15 +680,15 @@ class OpenAICompatibleProvider(InferenceProvider):
         }
         if top_p is not None:
             payload["top_p"] = float(top_p)
-        # [EN] ``repeat_penalty`` is not part of the OpenAI schema. It is forwarded
-        # [EN] because llama.cpp-based servers (including EchoDesk's own local API)
-        # [EN] accept it as an extension, and silently dropping a user setting is
-        # [EN] worse than letting an incompatible server ignore an unknown field.
-        # [ZH] ``repeat_penalty`` 不属于 OpenAI 模式。此处仍转发，因为基于 llama.cpp
-        # [ZH] 的服务器（包括 EchoDesk 自己的本地 API）把它作为扩展接受；静默丢弃用户
-        # [ZH] 设置，比让不兼容的服务器忽略未知字段更糟。
-        if repeat_penalty is not None:
-            payload["repeat_penalty"] = float(repeat_penalty)
+        # [EN] Only fields defined by the OpenAI chat-completions schema are sent.
+        # [EN] Local-only tuning such as ``n_ctx`` or llama.cpp's
+        # [EN] ``repeat_penalty`` must never be forwarded: strict providers reject
+        # [EN] unknown arguments with ``HTTP 400: Bad Request``. The setting is
+        # [EN] accepted by the method and intentionally ignored for this provider.
+        # [ZH] 只发送 OpenAI 聊天补全模式定义的字段。``n_ctx`` 或 llama.cpp 的
+        # [ZH] ``repeat_penalty`` 这类本地专用参数绝不透传：严格的提供方会因未知参数
+        # [ZH] 返回 ``HTTP 400: Bad Request``。该方法仍接受此设置，但在此提供方中
+        # [ZH] 有意忽略。
         return payload
 
     def chat(self, messages: List[Dict[str, Any]], *, temperature: float = 0.7,
@@ -671,8 +717,11 @@ class OpenAICompatibleProvider(InferenceProvider):
         try:
             response = urllib.request.urlopen(request, timeout=self.timeout)
         except urllib.error.HTTPError as exc:
+            # [EN] Streaming failures happen before the first byte of the stream, so
+            # [EN] the body can still be read here and surfaced verbatim to the UI.
+            # [ZH] 流式失败发生在流首字节之前，此处仍可读取响应体并原样上报界面。
             raise ProviderError(_t("provider.error_http", code=exc.code,
-                                   detail=exc.reason)) from exc
+                                   detail=_http_error_detail(exc))) from exc
         except urllib.error.URLError as exc:
             raise ProviderError(_t("provider.error_unreachable", url=self.api_base,
                                    error=exc.reason)) from exc
@@ -781,8 +830,11 @@ class OllamaProvider(InferenceProvider):
         try:
             response = urllib.request.urlopen(request, timeout=self.timeout)
         except urllib.error.HTTPError as exc:
+            # [EN] Surface the gateway body (for example "model not found") instead
+            # [EN] of only the generic status line.
+            # [ZH] 上报网关响应体（例如 "model not found"），而不是只有通用状态行。
             raise ProviderError(_t("provider.error_http", code=exc.code,
-                                   detail=exc.reason)) from exc
+                                   detail=_http_error_detail(exc))) from exc
         except urllib.error.URLError as exc:
             raise ProviderError(_t("provider.error_unreachable", url=self.api_base,
                                    error=exc.reason)) from exc

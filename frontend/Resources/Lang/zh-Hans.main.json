@@ -480,6 +480,8 @@
       "micTip": "按住说话（松开后转写）",
       "micHelp": "按住麦克风图标开始录音，松开后自动转写并填入输入框",
       "sttUnavailable": "🎙 语音识别不可用",
+      "sttUnsupportedTip": "当前模型或环境不支持语音转写",
+      "sttUnsupportedStatus": "🎙 语音转写不可用（未配置 STT 引擎）",
       "hotkeyFallback": "⌨️ 本平台暂不支持全局快捷键：在本窗口内按住右 Ctrl 仍可录音，松开后自动转写。",
       "hotkeyUnavailable": "⚠️ 全局快捷键不可用：{0}。可在窗口内按住右 Ctrl 录音。",
       "visionReady": "🖼 图片对话可用",
