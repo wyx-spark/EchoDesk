@@ -87,6 +87,11 @@ public static class Emoji
         // [ZH] 暂停符号：MCP server“已停用”状态行。它不在 check_emoji.ps1 的扫描范围
         // [ZH] 内，但仍主动加入，因为未检查的符号也可能显示为方块。
         ["⏸"] = "[pause]",
+        // [EN] v0.2.6 media interface: recording indicator, push-to-talk microphone, image
+        // [EN] entry and speech-transcription progress line (front-end language packs).
+        // [ZH] v0.2.6 媒体界面：录音指示、按住说话麦克风、图片入口与语音转写进度行
+        // [ZH]（前端语言包使用）。
+        ["🔴"] = "[rec]", ["🎙"] = "[mic]", ["🖼"] = "[image]", ["✍"] = "[write]",
         ["🔗"] = "[link]", ["🧩"] = "[plugin]", ["🔒"] = "[lock]", ["🔓"] = "[unlock]",
         ["⏹️"] = "[stop]", ["⏹"] = "[stop]", ["▶️"] = "[run]", ["▶"] = "[run]",
         ["↻"] = "[reload]", ["⧉"] = "[md]", ["✓"] = "[v]", ["✗"] = "[x]",

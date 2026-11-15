@@ -66,6 +66,11 @@ public static class Emoji
         ["🔁"] = "[retry]",
         ["📍"] = "[step]",
         ["⏸"] = "[pause]",
+        // [EN] v0.2.6 media interface: recording indicator, push-to-talk microphone, image
+        // [EN] entry and speech-transcription progress line (front-end language packs).
+        // [ZH] v0.2.6 媒体界面：录音指示、按住说话麦克风、图片入口与语音转写进度行
+        // [ZH]（前端语言包使用）。
+        ["🔴"] = "[rec]", ["🎙"] = "[mic]", ["🖼"] = "[image]", ["✍"] = "[write]",
         ["🔗"] = "[link]", ["🧩"] = "[plugin]", ["🔒"] = "[lock]", ["🔓"] = "[unlock]",
         ["⏹️"] = "[stop]", ["▶️"] = "[run]", ["▶"] = "[run]",
         ["↻"] = "[reload]", ["⧉"] = "[md]", ["✓"] = "[v]", ["✗"] = "[x]",

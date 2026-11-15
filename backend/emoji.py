@@ -89,6 +89,12 @@ ASCII_MAP: Dict[str, str] = {
     # [ZH] "门禁未检查"不等于"不会显示成方块"——在无 emoji 字体的机器上它同样需要
     # [ZH] 降级。
     "⏸": "[pause]",
+    # [EN] v0.2.6 media interface: the recording indicator, the push-to-talk microphone,
+    # [EN] the image-chat entry and the speech-transcription progress line. All four come
+    # [EN] from the front-end language packs, so they must degrade cleanly in a terminal.
+    # [ZH] v0.2.6 媒体界面：录音指示、按住说话麦克风、图片对话入口与语音转写进度行。
+    # [ZH] 这四者都来自前端语言包，因此必须能在终端里干净降级。
+    "🔴": "[rec]", "🎙": "[mic]", "🖼": "[image]", "✍": "[write]",
     "🔗": "[link]", "🧩": "[plugin]", "🔒": "[lock]", "🔓": "[unlock]",
     "⏹️": "[stop]", "⏹": "[stop]", "▶️": "[run]", "▶": "[run]",
     "↻": "[reload]", "⧉": "[md]", "✓": "[v]", "✗": "[x]",
