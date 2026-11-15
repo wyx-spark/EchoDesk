@@ -1,0 +1,1 @@
+# Python dependencies are pinned in backend/requirements.txt
