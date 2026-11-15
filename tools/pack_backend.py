@@ -932,6 +932,20 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
             # [ZH] 把下载缓存固定在仓库内，使两次可复现构建共享已下载的 wheel；缓存只保存
             # [ZH] 下载结果，安装目录始终由 wheel 重新解出。
             "--cache-dir", PIP_CACHE,
+            # [EN] Prefer wheels already promoted into ``artifacts/wheels`` before any index
+            # [EN] or URL download. That directory is the same verified cache used by
+            # [EN] ``local_wheel_override``; adding it as a find-links source lets the release
+            # [EN] pipeline install large pinned wheels (Playwright, llama-cpp-python, numpy)
+            # [EN] offline instead of re-downloading them at the build machine's link speed.
+            # [EN] The cache is an input pinned by ``backend/requirements.lock``, so using it
+            # [EN] does not change any output byte: the same wheel is unpacked either way.
+            # [ZH] 优先使用已经放进 ``artifacts/wheels`` 的轮子，而不是走索引或 URL 下载。
+            # [ZH] 该目录正是 ``local_wheel_override`` 使用的同一份已校验缓存；把它作为
+            # [ZH] find-links 来源，可让发布流水线离线安装体积大、版本被钉死的轮子
+            # [ZH] （Playwright、llama-cpp-python、numpy），不再受构建机链路速度拖累。
+            # [ZH] 该缓存由 ``backend/requirements.lock`` 钉死，属于输入；无论从缓存还是从
+            # [ZH] 网络取得，解出的都是同一个轮子，因此不会改变任何输出字节。
+            *(["--find-links", WHEEL_CACHE] if os.path.isdir(WHEEL_CACHE) else []),
             # 只收预编译 wheel：交叉下载时 pip 无法编译，静默退回 sdist 会得到"装不上"或
             # "装上了却是给打包机的二进制"这两种更糟的结果。
             "--only-binary=:all:",
@@ -1057,6 +1071,42 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
     return result
 
 
+def guard_playwright_browsers() -> None:
+    """[EN] Point Playwright at an existing local browser bundle; never install one.
+    [ZH] 让 Playwright 指向本地已存在的浏览器目录；绝不安装浏览器。
+
+    [EN] Packaging installs the ``playwright`` Python wheel only. Browser binaries are not a
+    [EN] distribution asset: EchoDesk drives the user's Microsoft Edge. Some hosts still run
+    [EN] ``playwright install`` implicitly through post-install hooks, so when a bundle already
+    [EN] exists (``ms-playwright`` on Windows, ``~/.cache/ms-playwright`` on Linux,
+    [EN] ``~/Library/Caches/ms-playwright`` on macOS) this pins ``PLAYWRIGHT_BROWSERS_PATH`` to
+    [EN] it. The function never creates a browser directory and never downloads anything.
+    [ZH] 打包只安装 ``playwright`` 的 Python 轮子；浏览器二进制不是发布资产 —— EchoDesk 驱动
+    [ZH] 用户系统上的 Microsoft Edge。某些主机的安装钩子会隐式触发 ``playwright install``，
+    [ZH] 因此当本地已有浏览器目录时（Windows 的 ``ms-playwright``、Linux 的
+    [ZH] ``~/.cache/ms-playwright``、macOS 的 ``~/Library/Caches/ms-playwright``），把
+    [ZH] ``PLAYWRIGHT_BROWSERS_PATH`` 钉到该目录。本函数不创建目录，也不下载任何内容。
+    """
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        log(f"[EN] honouring PLAYWRIGHT_BROWSERS_PATH={os.environ['PLAYWRIGHT_BROWSERS_PATH']}"
+            f" / [ZH] 沿用已有的 PLAYWRIGHT_BROWSERS_PATH")
+        return
+    home = os.path.expanduser("~")
+    candidates = [
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright"),
+        os.path.join(home, ".cache", "ms-playwright"),
+        os.path.join(home, "Library", "Caches", "ms-playwright"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isdir(candidate):
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = candidate
+            log(f"[EN] reusing local Playwright browsers: {candidate} (no download, no install)"
+                f" / [ZH] 复用本地 Playwright 浏览器目录：{candidate}（不下载、不安装）")
+            return
+    log("[EN] no local Playwright browser bundle; the wheel is installed without browsers"
+        " / [ZH] 未发现本地 Playwright 浏览器目录；只安装 Python 轮子，不安装浏览器")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="EchoDesk 三平台后端打包（standalone Python）")
     parser.add_argument("--platform", action="append", default=[],
@@ -1077,6 +1127,7 @@ def main() -> int:
 
     repro.require_clean_worktree(args.allow_dirty)
     repro.source_date_epoch()
+    guard_playwright_browsers()
 
     targets = args.platform or list(PLATFORMS)
     unknown = [t for t in targets if t not in PLATFORMS]
