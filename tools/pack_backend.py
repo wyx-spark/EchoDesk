@@ -58,6 +58,18 @@ uvbox 首次运行要联网下载依赖，与 EchoDesk"数据不出本机、断�
 
 产物：publish/backend-<rid>/ 与 publish/EchoDesk-backend-<rid>-<版本>.zip|.tar.gz
       publish/backend-SHA256SUMS.txt、publish/backend-manifest-<rid>.json
+
+## 依赖下载与镜像（v0.2.6 发布期补充）
+
+* 轮子优先来自 `artifacts/wheels`（`--find-links`），其次是 `artifacts/pip-cache`
+  （`--cache-dir`）：两者都是**由 `backend/requirements.lock` 钉死的输入**，不会改变
+  产物字节，只避免重复下载。
+* 网络较慢时可导出 `ECHODESK_PIP_INDEX_URL` 指向镜像（例如
+  `https://pypi.tuna.tsinghua.edu.cn/simple`）；未设置时沿用 pip 自身配置。
+  镜像只改变下载位置，版本仍由锁文件决定。
+* Playwright 只安装 Python 轮子，**绝不执行 `playwright install`**；若本机已有浏览器
+  目录（`%LOCALAPPDATA%\ms-playwright` 等），会自动把 `PLAYWRIGHT_BROWSERS_PATH`
+  指向它，复用而不是下载。
 """
 from __future__ import annotations
 
@@ -946,6 +958,17 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
             # [ZH] 该缓存由 ``backend/requirements.lock`` 钉死，属于输入；无论从缓存还是从
             # [ZH] 网络取得，解出的都是同一个轮子，因此不会改变任何输出字节。
             *(["--find-links", WHEEL_CACHE] if os.path.isdir(WHEEL_CACHE) else []),
+            # [EN] Optional mirror override for networks where the upstream index is slow.
+            # [EN] CI and maintainers may export ECHODESK_PIP_INDEX_URL (for example
+            # [EN] ``https://pypi.tuna.tsinghua.edu.cn/simple``); an empty value keeps pip's
+            # [EN] own configuration. Versions are still pinned by ``requirements.lock``: a
+            # [EN] mirror changes where a wheel is fetched from, never which version is used.
+            # [ZH] 可选镜像源覆盖，用于上游索引很慢的网络。CI 与维护者可以导出
+            # [ZH] ECHODESK_PIP_INDEX_URL（例如 ``https://pypi.tuna.tsinghua.edu.cn/simple``）；
+            # [ZH] 空值时沿用 pip 自身的配置。版本仍由 ``requirements.lock`` 钉死：镜像只改变
+            # [ZH] 轮子的获取位置，绝不改变使用的版本。
+            *(["--index-url", os.environ["ECHODESK_PIP_INDEX_URL"].strip()]
+              if os.environ.get("ECHODESK_PIP_INDEX_URL", "").strip() else []),
             # 只收预编译 wheel：交叉下载时 pip 无法编译，静默退回 sdist 会得到"装不上"或
             # "装上了却是给打包机的二进制"这两种更糟的结果。
             "--only-binary=:all:",
