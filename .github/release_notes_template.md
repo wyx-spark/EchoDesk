@@ -48,7 +48,7 @@ Windows 上核对：`certutil -hashfile <文件名> SHA256`。
 - **安装程序界面目前只有英文**：Inno Setup 自带的语言目录里没有简体中文语言文件（官方把它列为需单独下载的第三方翻译）；把 `ChineseSimplified.isl` 放进 Inno Setup 的 `Languages\` 目录即可自动启用中文界面。
 - **模型不随包分发（不含模型的包）**：首次启动会询问是否下载模型（约 508MB），也可以自行把 `.gguf` 放到 `backend\models\`。
 - **自动化对目标站点的兼容性有限**：页面改版、验证码、二次验证需要人工介入；建议先用设置窗口里的「测试选择器」向导验证再批量运行。
-- **界面截图暂缺**：v0.2.2 未随包提供截图，文档中写的是"在屏幕上该看什么"；界面预览会在后续版本放入 `assets/screenshots/`。
+- **界面截图**：仓库自带当前发布版的真实截图（`assets/screenshots/`，README 内嵌的是 `docs/images/` 里的同一批文件），由前端的截图模式生成，含演示数据。
 - **结果目录名在本版改为 `results\`**（原 `批量处理结果\`），程序不会自动迁移旧目录 —— 见下方升级指引第 4 步。
 - **自动化登录态改为独立数据目录**：登录状态存在 `app\backend\browser_profile\`（可在「设置 → 自动化 → 登录态」里改），不再只依赖 `browser_state.json`；升级后首次运行仍会自动导入旧 Cookie，通常不用重新登录。
 
@@ -165,7 +165,7 @@ On Windows, check with `certutil -hashfile <file name> SHA256`.
 - **The installer interface is English only for now**: Inno Setup's own language directory has no Simplified Chinese language file (upstream lists it as a third-party translation to download separately); put `ChineseSimplified.isl` into Inno Setup's `Languages\` directory and the Chinese interface is enabled automatically.
 - **Models are not distributed with the packages that omit them**: the first start asks whether to download the model (about 508MB), and you can also put a `.gguf` file into `backend\models\` yourself.
 - **Automation copes only so far with a target site**: page redesigns, captchas and two-factor verification need a human; verify with the "Test selectors" wizard in the Settings window before running in bulk.
-- **No interface screenshots yet**: v0.2.2 ships without screenshots, so the documents describe "what to look at on screen"; interface previews will go into `assets/screenshots/` in a later version.
+- **Interface screenshots**: the repository carries real captures of the current release (`assets/screenshots/`; the README embeds the same six files from `docs/images/`), produced by the front end's screenshot mode and containing demo data.
 - **The results folder is renamed in this version to `results\`** (it was `批量处理结果\`), and the program does not migrate the old folder automatically — see step 4 of the upgrade instructions below.
 - **Automation sign-in state moved to a data directory of its own**: the sign-in state is stored in `app\backend\browser_profile\` (change it under "Settings → Automation → Sign-in state") instead of relying on `browser_state.json` alone; after upgrading, the first run still imports the old cookies automatically, so you normally do not sign in again.
 

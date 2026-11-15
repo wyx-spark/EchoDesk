@@ -207,14 +207,25 @@ Llama-3.2、SmolLM2、gemma-2、gemma-3、Qwen3-VL 与 Qwen3.5）。`Q4_K_M` 为
 
 ## 截图与演示
 
-**v0.2.6 发布物不包含截图**。目前随包提供的图片资源只有 `assets/EchoDesk.ico`（程序图标）与
-`assets/EchoDesk.png`（Logo）；本 README 里没有任何指向不存在图片的链接。
+本 README 里的每一张图都是 **v0.2.6 界面的真实截图**，不是示意图。Avalonia 前端自带截图模式
+（`EchoDesk --probe shots`）：固定深色主题与语言、走产品自己的渲染路径、以 2 倍像素写成 PNG，
+一次运行同时产出英文与简体中文两套。
 
-界面预览图——主界面、长文档分段摘要、带「测试选择器」的自动化页、有头模式的自动化运行，
-以及双语界面下的技能市场——将在后续版本中放进 `assets/screenshots/`，届时本节会直接嵌入这些图片。
+| 文件 | 展示的内容 | 尺寸 |
+| --- | --- | --- |
+| [`docs/images/screenshot-main.zh-Hans.png`](docs/images/screenshot-main.zh-Hans.png) | 主窗口正在流式输出结构化合同审阅 | 2560×1640 |
+| [`docs/images/screenshot-model-market.zh-Hans.png`](docs/images/screenshot-model-market.zh-Hans.png) | 设置 → 模型：GGUF 市场结果，含分面、分页条与状态行 | 2560×1840 |
+| [`docs/images/screenshot-automation.zh-Hans.png`](docs/images/screenshot-automation.zh-Hans.png) | 设置 → 自动化：已接受安全协议，任务与选择器字段已填写 | 2560×1840 |
 
-在那之前，想尽快看到界面，直接运行便携版即可：无需安装、无需云端账号，本地对话也不需要联网
-（本文“快速上手”一节）。
+同一批文件另有英文版（无 `.zh-Hans` 后缀），英文 README 用的就是那一套。这六张 PNG 在
+[`assets/screenshots/`](assets/screenshots/) 也留了一份，并附重新生成的步骤；它们与其他资源一样
+按本仓库的许可证发布。
+
+两条如实的边界：图里是演示数据（示例合同、示例市场结果），因为截图流程既不拉后端也不加载模型；
+自动化那张展示的是设置界面，不是一次有头运行。
+
+想尽快看到活的界面，仍然直接运行便携版最简单：无需安装、无需云端账号，本地对话也不需要联网
+（见下文“快速上手”）。
 
 ## 多语言
 

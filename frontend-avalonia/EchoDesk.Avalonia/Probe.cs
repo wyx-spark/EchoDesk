@@ -1896,6 +1896,15 @@ internal static class Probe
         await Task.Delay(900);
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
         ok &= CheckShowcase($"主界面（{language}）", main.Icon is not null, "Window.Icon 已解析（非 null）");
+        // [EN] The title bar must carry the **current** version. This image used to be baked with a
+        // [EN] hard-coded "v0.2.2" long after the release had moved on, so the README advertised a
+        // [EN] version that no longer existed; the check pins the derived value.
+        // [ZH] 标题栏必须带上**当前**版本号。这张图曾经长期印着写死的 "v0.2.2"，而发布版早已向前，
+        // [ZH] 等于 README 在宣传一个并不存在的版本；这条检查钉住派生出来的值。
+        string shownVersion = main.ProbeTitleBarVersionText;
+        Console.WriteLine($"  [info] 标题栏版本号：{(shownVersion.Length > 0 ? shownVersion : "(空)")}");
+        ok &= CheckShowcase($"主界面（{language}）", shownVersion.Length > 0,
+            "标题栏版本号非空（取自握手或程序集 InformationalVersion）");
         ok &= SaveShot(main, Path.Combine(ShowcaseDir, $"screenshot-main{suffix}.png"), scale: 2) == 1;
 
         // [EN] ---------- (2) Settings - Model market ----------
@@ -1926,6 +1935,27 @@ internal static class Probe
                 await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
                 var settledState = modelPage.MarketSnapshot();
                 Console.WriteLine($"  [info] 截图前市场状态：{settledState.ItemCount} 行｜{settledState.PageInfo}｜{settledState.Total}");
+                // [EN] The demo set must still be on screen when the shutter fires. The model page
+                // [EN] kicks off a real backend query when it opens; its reply used to land after
+                // [EN] the injection and blank the rows, so the README image showed "0 results"
+                // [EN] with the pager sitting on the empty-state text. The demo lock inside the
+                // [EN] market section now prevents that, and this check proves it: if the rows are
+                // [EN] ever blanked again the run fails instead of shipping an empty screenshot.
+                // [ZH] 按下快门时演示数据集必须还在屏幕上。模型页打开时会触发一次真实后端查询，
+                // [ZH] 该响应此前会在注入之后返回并把行清空，于是 README 图上是「0 条结果」、
+                // [ZH] 分页条压在空状态文案上。市场区块里的演示锁已杜绝此因，这条检查负责证明
+                // [ZH] 它仍然生效：万一再次被清空，本次运行直接失败，而不是把空图发出去。
+                if (settledState.ItemCount == 0)
+                {
+                    Console.WriteLine("  [warn] 演示数据被清空，重新注入一次");
+                    modelPage.ProbeShowDemoMarket(english);
+                    await Task.Delay(600);
+                    await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+                    settledState = modelPage.MarketSnapshot();
+                    Console.WriteLine($"  [info] 重新注入后：{settledState.ItemCount} 行｜{settledState.PageInfo}｜{settledState.Total}");
+                }
+                ok &= CheckShowcase($"模型市场（{language}）", settledState.ItemCount > 0,
+                    $"演示结果仍在屏上（{settledState.ItemCount} 行）");
                 ok &= CheckShowcase($"模型市场（{language}）", marketSettings.Icon is not null,
                     "Window.Icon 已解析（非 null）");
                 ok &= SaveShot(marketSettings,

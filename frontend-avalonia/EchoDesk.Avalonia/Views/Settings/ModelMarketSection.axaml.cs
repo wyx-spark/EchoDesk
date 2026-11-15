@@ -130,6 +130,14 @@ public partial class ModelMarketSection : UserControl
     private bool _hubLoading;
     private bool _hubQuerying;
     private bool _hubSuppressFilterEvents;
+    // [EN] Set while a screenshot demo data set is on screen (`--probe shots`). Any real load or
+    // [EN] query started earlier would otherwise land afterwards and blank the demo rows, so both
+    // [EN] paths bail out while this is set. It is only ever set by the probe; user code never
+    // [EN] touches it.
+    // [ZH] 屏幕上正显示截图演示数据集时置位（`--probe shots`）。此前进发的真实加载/查询会在
+    // [ZH] 之后返回并把演示行清空，所以两条路径在该标志置位时都直接返回。只有探针会设置它，
+    // [ZH] 用户代码从不触碰。
+    private bool _probeDemoActive;
     private string _hubFacetSignature = "";
     private string _hubStopReason = "";
     private string _hubDetailRepo = "";
@@ -382,6 +390,12 @@ public partial class ModelMarketSection : UserControl
 
     private async Task LoadMarketAsync(bool refresh, bool resume)
     {
+        // [EN] A screenshot demo data set must survive: an in-flight load or any later load would
+        // [EN] replace it with "0 results" while the image is being rendered.
+        // [ZH] 截图用的演示数据集必须能留得住：在途的加载或之后任何一次加载都会把它换成
+        // [ZH] "0 条结果"，而那时正在出图。
+        if (_probeDemoActive)
+            return;
         if (_host is null || _hubLoading)
             return;
         _hubLoading = true;
@@ -461,14 +475,18 @@ public partial class ModelMarketSection : UserControl
             // [EN] After the data set changes, the first page must be recomputed: everything
             // [EN] goes through the local query so that the three counts and paging agree.
             // [ZH] 数据集换了之后第一页要重新算：统一走本地查询，保证三层数字与分页一致
-            await RefreshQueryAsync(resetPage: true, rebuildFacets: true);
+            // [EN] A screenshot demo set is exempt: it is self-consistent and must not be
+            // [EN] recomputed from the (empty) real backend data set.
+            // [ZH] 截图演示数据集例外：它自身前后一致，绝不能再拿（空的）真实数据集重算。
+            if (!_probeDemoActive)
+                await RefreshQueryAsync(resetPage: true, rebuildFacets: true);
             // [EN] The load failure reason is prepended: the query above rewrites the whole
             // [EN] status line and would hide the real error.
             // [EN] (Measured by the WPF UI probe: users saw "nothing happens on click"
             // [EN] instead of "network unreachable".)
             // [ZH] 加载失败的原因补在最前面：上面那次查询会把状态行整条重写，把真正的错误盖掉
             // [ZH] （WPF 侧的 UI 探针实测到过：用户看到的是"怎么点都没反应"而不是"网络不可达"）
-            if (loadNotice.Length > 0)
+            if (loadNotice.Length > 0 && !_probeDemoActive)
                 HubStatusText.Text = loadNotice + "　" + HubStatusText.Text;
         }
     }
@@ -500,6 +518,11 @@ public partial class ModelMarketSection : UserControl
     /// </summary>
     private async Task<bool> RefreshQueryAsync(bool resetPage, bool rebuildFacets)
     {
+        // [EN] Same reasoning as LoadMarketAsync: a screenshot demo data set is never overwritten
+        // [EN] by a real query.
+        // [ZH] 理由同 LoadMarketAsync：截图演示数据集绝不被真实查询覆盖。
+        if (_probeDemoActive)
+            return false;
         if (_host is null || _hubQuerying)
             return false;
         _hubQuerying = true;
@@ -524,6 +547,13 @@ public partial class ModelMarketSection : UserControl
                     "❌ 本地筛选没有响应（后端可能正忙）");
                 return false;
             }
+            // [EN] A query that was already in flight when the screenshot demo set was injected
+            // [EN] comes back here; rendering it would blank the demo rows, which is exactly how
+            // [EN] the README image ended up showing "0 results". The response is dropped instead.
+            // [ZH] 注入截图演示数据集时已经发出、之后才返回的查询会走到这里；若渲染它就会把演示行
+            // [ZH] 清空 —— README 图里显示「0 条结果」正是这么来的。这里直接丢弃该响应。
+            if (_probeDemoActive)
+                return false;
             if (doc.RootElement.TryGetProperty("hub_query", out JsonElement query))
                 RenderQuery(query, rebuildFacets);
             else if (GetBool(doc.RootElement, "busy"))
@@ -1506,12 +1536,20 @@ public partial class ModelMarketSection : UserControl
     /// </summary>
     public void ProbeShowDemo(bool english = false)
     {
+        _probeDemoActive = true;
         _hubSuppressFilterEvents = true;
         try
         {
             HubSearchBox.Text = "qwen2.5 gguf";
             HubFilterBox.Text = "qwen2.5";
-            HubFilterExpander.IsExpanded = true;
+            // [EN] The facet panel stays collapsed, which is the product's default state. Expanding
+            // [EN] it (~250 px) leaves the result area no height at all, so the pager overlaps the
+            // [EN] pinned row — visible in the screenshots taken before this was corrected. The
+            // [EN] summary line still reports "4 filters enabled", so nothing is hidden.
+            // [ZH] 分面面板保持收起，这是产品的默认态。展开它（约 250 px）会把结果区高度吃光，
+            // [ZH] 分页条于是压在钉住行上 —— 修正前出的图里就能看到。摘要行仍显示“已启用 4 项”，
+            // [ZH] 并没有藏掉信息。
+            HubFilterExpander.IsExpanded = false;
             _hubParamSelected.Clear();
             _hubParamSelected.Add("p_3_8");
             _hubQuantSelected.Clear();

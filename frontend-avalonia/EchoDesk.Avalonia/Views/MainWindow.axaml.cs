@@ -41,6 +41,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -5463,6 +5464,46 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// [EN] The version text a showcase screenshot must carry.
+    ///
+    /// [EN] The showcase runs without a backend handshake, so `_state.Backend.Version` is empty
+    /// [EN] and the title bar would show nothing. This used to be worked around by hard-coding
+    /// [EN] "v0.2.2" here, which then shipped inside the README image long after the version had
+    /// [EN] moved on — a screenshot claiming a release that no longer exists. The value is now
+    /// [EN] derived: the handshake version when there is one, otherwise the assembly's
+    /// [EN] InformationalVersion, which the project file keeps equal to ``APP_VERSION`` in
+    /// [EN] backend/version.py (the single source of truth). Nothing is hard-coded.
+    ///
+    /// [ZH] 宣传截图必须携带的版本文本。
+    ///
+    /// [ZH] 截图会话没有后端握手，`_state.Backend.Version` 为空，标题栏会什么都没有。此前这里
+    /// [ZH] 直接写死 "v0.2.2" 兜底，于是 README 用的图里长期印着一个早已过去的版本号 —— 截图
+    /// [ZH] 声称的发布版并不存在。现在改为派生：有握手版本就用它，否则用程序集的
+    /// [ZH] InformationalVersion（工程文件按约定与 backend/version.py 的 ``APP_VERSION`` 保持一致，
+    /// [ZH] 那是唯一真相）。任何地方都不写死版本号。
+    /// </summary>
+    private string ShowcaseVersionText()
+    {
+        string handshake = _state.Backend.Version ?? "";
+        if (handshake.Length > 0)
+            return handshake;
+
+        string informational = typeof(MainWindow).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
+        // [EN] Build metadata ("1.2.3+<commit>") is not part of the product version.
+        // [ZH] 构建元数据（"1.2.3+<commit>"）不属于产品版本号，去掉。
+        int plus = informational.IndexOf('+');
+        if (plus >= 0)
+            informational = informational[..plus];
+        informational = informational.Trim();
+        if (informational.Length == 0)
+            return "";
+        return informational.StartsWith("v", StringComparison.OrdinalIgnoreCase)
+            ? informational
+            : "v" + informational;
+    }
+
+    /// <summary>
     /// [EN] Probe: fills in a set of **demo data** for the README screenshots (`--probe
     /// [EN] shots`).
     /// [ZH] 探针：填入一组**演示数据**，供 README 截图使用（`--probe shots`）。
@@ -5507,7 +5548,7 @@ public partial class MainWindow : Window
             InputBox.Text = "Raise the clause 8.1 penalty cap to 20% and draft a negotiation note.";
             InputBox.CaretIndex = InputBox.Text.Length;
 
-            TitleBarVersionText.Text = "v0.2.2";
+            TitleBarVersionText.Text = ShowcaseVersionText();
             SetStatus("⏳ Generating · 428 tokens written");
             ModelText.Text = "🧠 Model: Qwen2.5-7B-Instruct-Q4_K_M";
             ModeText.Text = "MODE CONTRACT";
@@ -5547,7 +5588,7 @@ public partial class MainWindow : Window
             InputBox.Text = "把第 8.1 条的违约金上限改成 20%，再给我一版谈判口径。";
             InputBox.CaretIndex = InputBox.Text.Length;
 
-            TitleBarVersionText.Text = "v0.2.2";
+            TitleBarVersionText.Text = ShowcaseVersionText();
             SetStatus("⏳ 正在生成 · 已输出 428 tokens");
             ModelText.Text = "🧠 模型: Qwen2.5-7B-Instruct-Q4_K_M";
             ModeText.Text = "MODE 合同审阅";
@@ -6207,6 +6248,14 @@ public partial class MainWindow : Window
     /// [ZH] 探针辅助：在标题栏写入合成版本号，使布局与本地化在没有后端时也能断言。
     /// </summary>
     public void ProbeSetTitleBarVersion(string version) => TitleBarVersionText.Text = version;
+
+    /// <summary>
+    /// [EN] Probe helper: the version text the title bar currently shows, so `--probe shots` can
+    ///      assert that the screenshot carries the current version instead of a stale literal.
+    /// [ZH] 探针辅助：标题栏当前显示的版本文本，供 `--probe shots` 断言截图携带的是当前版本，
+    ///      而不是某个过时的字面量。
+    /// </summary>
+    public string ProbeTitleBarVersionText => TitleBarVersionText.Text ?? "";
 
     /// <summary>
     /// [EN] v0.2.6 item 21: feeds one raw value through the same read/normalise path the

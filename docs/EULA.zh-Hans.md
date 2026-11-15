@@ -6,7 +6,7 @@
 > This is the Chinese translation of the English [`EULA.md`](EULA.md). If the two ever
 > disagree, the English version prevails.
 
-版本：v0.2.2
+版本：v0.2.6
 版权：版权所有 (C) 熵寂工作室（Void-Entropia-Studio）
 出品方：熵寂工作室（Void-Entropia-Studio）, Online only（下称"本工作室"）
 澄清：Void Entropia Studio 是维护者 wyx-spark 的个人工作室名称。
@@ -52,7 +52,7 @@
 1. 本软件包含第三方开源组件。**完整清单、版本与许可证**随包分发的第三方组件与其许可证逐项列在 `docs/THIRD_PARTY_LICENSES.md`，机器可读版本为 `docs/SBOM.json`，机器可读版本软件物料清单为 `docs/SBOM.json`，按随包分发的分发版生成（SPDX 风格物料清单，可用 `python tools/gen_sbom.py` 重新生成）。
 2. 第三方组件按其各自许可证授权，**本协议不改变你依这些许可证享有的权利**，
    也不免除你依这些许可证应承担的义务。
-3. 当前发布物（v0.2.2）的许可证状况：
+3. 当前发布物（v0.2.6）的许可证状况：
    - 发布物中**不含 AGPL 组件**。PDF 文本提取自 v0.2.1 起由 AGPL-3.0 的 PyMuPDF
      换成 **BSD-3-Clause** 的 `pypdf`；文件解析链路（Word/Excel/PPT/PDF/TXT）其余组件
      均为 MIT / BSD 类宽松许可。

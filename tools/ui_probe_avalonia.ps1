@@ -1,4 +1,4 @@
-﻿# 适用平台：Avalonia 跨平台前端（三平台通用；Windows 上本机即可跑）
+# 适用平台：Avalonia 跨平台前端（三平台通用；Windows 上本机即可跑）
 # EchoDesk Avalonia 界面探针 —— 回答"窗口到底能不能打开"
 #
 # 为什么需要它：v0.2.2 记录 §7.4 明写"Avalonia 前端这套代码此前从未被真正跑起来过"：
@@ -21,13 +21,17 @@
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode chat           # 不开后端：断言平铺式消息布局与流式节流
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode upload         # 程序内自拉后端：真实上传两份临时文件
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode theme          # 真的改系统主题，验证跟随系统即时响应（会还原）
+#   powershell -File tools\ui_probe_avalonia.ps1 -Mode shots          # 生成 README 用的中英双语截图（2 倍像素、深色主题）
 #   powershell -File tools\ui_probe_avalonia.ps1 -Exe <发布树>\app\EchoDesk.exe
 param(
     # 默认指向本仓库的 Debug 构建（开发机跑得最快）。发布树里的自包含产物也可以直接传进来，
     # 那条路径才是"发布出去的东西到底能不能开"的证据。
     [string]$Exe = "$PSScriptRoot\..\frontend-avalonia\EchoDesk.Avalonia\bin\Debug\net10.0\EchoDesk.exe",
-    [ValidateSet('main', 'settings', 'both', 'agent', 'market', 'pages', 'markdown', 'chat', 'upload', 'theme')]
+    [ValidateSet('main', 'settings', 'both', 'agent', 'market', 'pages', 'markdown', 'chat', 'upload', 'theme', 'shots')]
     [string]$Mode = 'both',
+    # [EN] Output directory for `-Mode shots`; empty keeps the probe default (docs\images).
+    # [ZH] `-Mode shots` 的图片输出目录；留空则用探针默认值（docs\images）。
+    [string]$OutDir = '',
     [int]$TimeoutSec = 120
 )
 
@@ -35,6 +39,12 @@ $ErrorActionPreference = 'Stop'
 $failures = New-Object System.Collections.ArrayList
 function Fail([string]$msg) { [void]$failures.Add($msg); Write-Output "[avalonia-probe] FAIL $msg" }
 function Ok([string]$msg) { Write-Output "[avalonia-probe] OK   $msg" }
+
+# [EN] `shots` renders six 2x PNGs and its own watchdog is 120 s, which is exactly this script's
+# [EN] default: a run that finishes right at the boundary would be killed and reported as a hang.
+# [ZH] `shots` 要渲染六张 2 倍像素 PNG，它自己的看门狗是 120 秒，正好等于本脚本的默认超时：
+# [ZH] 恰好在边界上跑完的那次会被强制结束，并被误报成挂死。
+if ($Mode -eq 'shots' -and -not $PSBoundParameters.ContainsKey('TimeoutSec')) { $TimeoutSec = 180 }
 
 if (-not (Test-Path $Exe)) {
     Fail "被测程序不存在：$Exe（先 dotnet build frontend-avalonia\EchoDesk.Avalonia）"
@@ -48,8 +58,10 @@ Write-Output "[avalonia-probe] 模式：$Mode（超时 $TimeoutSec 秒）"
 $outFile = [System.IO.Path]::GetTempFileName()
 $errFile = [System.IO.Path]::GetTempFileName()
 $exit = $null
+$probeArgs = @('--probe', $Mode)
+if ($OutDir) { $probeArgs += @('--out', $OutDir) }
 try {
-    $proc = Start-Process -FilePath $Exe -ArgumentList @('--probe', $Mode) -PassThru -NoNewWindow `
+    $proc = Start-Process -FilePath $Exe -ArgumentList $probeArgs -PassThru -NoNewWindow `
         -RedirectStandardOutput $outFile -RedirectStandardError $errFile
     if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
         # 探针自己也有 60 秒看门狗；走到这里说明连看门狗都没能收场（例如启动阶段就卡住）。

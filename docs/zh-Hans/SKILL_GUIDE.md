@@ -6,7 +6,7 @@ English version: [`docs/en/SKILL_GUIDE.md`](../en/SKILL_GUIDE.md)（本文为英
 
 **平台**：技能是纯 Python，在 **Windows、macOS、Linux** 三平台上一样运行，因此本文内容不含平台专属步骤：
 下面路径统一用正斜杠（`app/backend/skills/`）书写——macOS 与 Linux 上就是这样显示的，Windows 上同一条路径
-写作 `app\backend\skills\`，而程序目录就是你安装或解压发布物的那个目录（`EchoDesk-v0.2.2/app/`）。
+写作 `app\backend\skills\`，而程序目录就是你安装或解压发布物的那个目录（`EchoDesk-v0.2.6/app/`）。
 确实与平台有关的是两项 EchoDesk 能力，技能可能会碰到：通过 COM 读取 WPS/Office 的**加密文档**
 （含旧版 `.doc` / `.xls`）与企业内网浏览器自动化，这两项**仅 Windows 提供**。如果你的技能本身依赖
 Windows 专属的东西（比如通过 COM 调 WPS），请在 README 里写明（市场卡片会展示它）——EchoDesk 没法让那个

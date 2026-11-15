@@ -224,17 +224,27 @@ on managed machines where the program folder itself is read-only).
 
 ## Screenshots and demo
 
-Screenshots are **not part of the v0.2.6 release**. The only image assets that ship today are
-`assets/EchoDesk.ico` (the application icon) and `assets/EchoDesk.png` (the logo). Nothing in
-this README links to an image that does not exist yet.
+Every image in this README is a **real capture of the v0.2.6 interface**, not an illustration. The
+Avalonia front end has a screenshot mode (`EchoDesk --probe shots`) that fixes the dark theme and
+the language, drives the product's own rendering path and writes PNGs at 2× pixels; the same run
+produces the English and the Simplified Chinese set.
 
-Interface previews — the main window, long-document summarization, the automation tab with the
-selector test, a headed automation run and the skill marketplace in both languages — will be
-added to `assets/screenshots/` in a future update, and this section will embed them then.
+| File | What it shows | Size |
+| --- | --- | --- |
+| [`docs/images/screenshot-main.png`](docs/images/screenshot-main.png) | the main window streaming a structured contract review | 2560×1640 |
+| [`docs/images/screenshot-model-market.png`](docs/images/screenshot-model-market.png) | Settings → Model: GGUF marketplace results with facets, pager and status line | 2560×1840 |
+| [`docs/images/screenshot-automation.png`](docs/images/screenshot-automation.png) | Settings → Automation: safety protocol accepted, task and selector fields filled in | 2560×1840 |
 
-Until they arrive, the quickest way to see the interface is to run the portable build: it needs
-no installation, no cloud account and no network for local chat (see
-[Quick start](#quick-start)).
+Each file also exists with a `.zh-Hans` suffix for the Chinese README. The same six PNGs are kept in
+[`assets/screenshots/`](assets/screenshots/) together with the regeneration steps; they are released
+under the repository's licence like any other asset.
+
+Two honest boundaries: the captures contain demo data (a sample contract, sample marketplace rows)
+because no backend and no model are involved, and the automation capture shows the settings surface
+rather than a headed browser run.
+
+The quickest way to see the live interface is still to run the portable build: it needs no
+installation, no cloud account and no network for local chat (see [Quick start](#quick-start)).
 
 ## Languages
 

@@ -1,6 +1,6 @@
 # EchoDesk 常见问题与故障排除（FAQ）
 
-适用版本：v0.2.2
+适用版本：v0.2.6
 English version: [`docs/en/FAQ.md`](../en/FAQ.md)（本文为英文版的中文参考译本，如两者有歧义，**以英文版为准**）。
 
 **平台**：EchoDesk 支持 **Windows、macOS、Linux** 三平台。其中**两项能力是 Windows 专属**——通过 COM 读取
@@ -15,7 +15,7 @@ WPS/Office 的**加密文档**（含旧版 `.doc` / `.xls`），以及企业内�
 ```
 # Windows —— 程序目录本身（便携版就是 app/ 所在的外层目录）；
 #            若就装在 %APPDATA%\EchoDesk 下，那它就是 %APPDATA%\EchoDesk
-C:\Users\<用户名>\EchoDesk-v0.2.2\
+C:\Users\<用户名>\EchoDesk-v0.2.6\
 %APPDATA%\EchoDesk\
 
 # macOS
@@ -35,7 +35,7 @@ macOS 与 Linux 上程序本体就是解压出来的压缩包，用 `./start.sh`
 
 | 我想做的事 | 怎么做 |
 | --- | --- |
-| 启动程序 | **Windows**：安装程序装的用开始菜单（或桌面）快捷方式；zip 免安装版双击程序文件夹内的「Start-EchoDesk-v0.2.2.lnk」（没有就先运行一次 `install-complete.bat`）。**macOS / Linux**：发布物是解压即可用的压缩包，`cd` 进解压出来的目录后执行 `./start.sh`（可执行位丢了就先 `chmod +x start.sh app/EchoDesk`） |
+| 启动程序 | **Windows**：安装程序装的用开始菜单（或桌面）快捷方式；zip 免安装版双击程序文件夹内的「Start-EchoDesk-v0.2.6.lnk」（没有就先运行一次 `install-complete.bat`）。**macOS / Linux**：发布物是解压即可用的压缩包，`cd` 进解压出来的目录后执行 `./start.sh`（可执行位丢了就先 `chmod +x start.sh app/EchoDesk`） |
 | 查看全部指令 | 在输入框输入 `/help` |
 | 让 AI 读一份文档 | 把文件拖进窗口，或用 `/file <路径>`，例如 `/file "C:\My Documents\采购合同 2026.docx"`（Windows）、`/file "/Users/<用户名>/Documents/采购合同-2026.docx"`（macOS）、`/file "/home/<用户名>/docs/采购合同-2026.docx"`（Linux） |
 | 让 AI 自己算数、查已上传的文件 | 切到智能体模式：`/mode agent`、`/mode 3` 或 `/agent on`，模型会自己决定调哪个工具（见「三、对话模式、Agent 与 MCP」） |
@@ -157,7 +157,7 @@ v0.2.1 起这种情况下程序**照常运行**——不退出、不阻塞、也
 - 小模型（0.5B~1.5B）的思考质量本身不稳定，换个更大的量化版本通常更划算。
 
 ### 想让 EchoDesk 开机自动启动
-把「Start-EchoDesk-v0.2.2.lnk」复制到系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）即可。
+把「Start-EchoDesk-v0.2.6.lnk」复制到系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）即可。
 配置项 `automation.start_with_windows` **尚未实现**：程序目前不会读取它，写成 `true` 也不会开机自启，
 请用上面的快捷方式办法（定时自动化要求程序在运行）。
 
@@ -369,12 +369,12 @@ results/2026-09-23/合同审查/     ← 顶层文件夹名、日期、任务名
 下载过程中的临时副本保存在系统临时目录的专用子目录，处理完即清理。
 若把「保存结果到本地文件」关掉，就不写 `result.txt` 与截图，只把结果输出到日志。
 「保存位置」留空时，结果根目录 = **用户数据目录** + 顶层文件夹名，因此跟着平台走
-（Windows 上就是程序目录所在的**外层**文件夹 `EchoDesk-v0.2.2/`，不在 `app/` 里）：
+（Windows 上就是程序目录所在的**外层**文件夹 `EchoDesk-v0.2.6/`，不在 `app/` 里）：
 
 ```
 # Windows
 %APPDATA%\EchoDesk\results\
-C:\Users\<用户名>\EchoDesk-v0.2.2\results\      ← 解压在哪儿，就是那儿的这个目录
+C:\Users\<用户名>\EchoDesk-v0.2.6\results\      ← 解压在哪儿，就是那儿的这个目录
 
 # macOS
 ~/Library/Application Support/EchoDesk/results/
@@ -431,7 +431,7 @@ GitHub 匿名 API 限流（每小时 60 次）或网络不可达。解决办法�
 
 ### 窗口大小/位置/主题/字号会记住吗
 会，存在**用户数据目录**里的 `ui_state.json`（窗口位置与大小、字号、主题三态、emoji 显示策略、
-界面语言等）。这个目录在 Windows 上就是便携版**外层**文件夹 `EchoDesk-v0.2.2/`，
+界面语言等）。这个目录在 Windows 上就是便携版**外层**文件夹 `EchoDesk-v0.2.6/`，
 macOS 上是 `~/Library/Application Support/EchoDesk/`，Linux 上是 `~/.local/share/EchoDesk/`
 （本文开头有完整说明）。窗口若被还原到已拔掉的显示器上，程序会自动回退到屏幕内。
 删除该文件即可重置（含"首次引导已读"标记）。

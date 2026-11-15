@@ -36,8 +36,8 @@ own interpreter and runtime bundled. The target machine needs neither Python nor
 
 ```bash
 # 1) 解压 / unpack
-tar -xzf EchoDesk-v0.2.2-linux-x64.tar.gz
-cd EchoDesk-v0.2.2-linux-x64
+tar -xzf EchoDesk-v0.2.6-linux-x64.tar.gz
+cd EchoDesk-v0.2.6-linux-x64
 
 # 2) 校验（可选但建议）/ verify (optional but recommended)
 sha256sum -c SHA256SUMS.txt     # 该文件随发布物一起提供 / ships next to the archive
