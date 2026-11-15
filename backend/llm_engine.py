@@ -61,6 +61,51 @@ from i18n import log_user
 from i18n import t as _t
 from reasoning import ANSWER, ReasoningSplitter, normalize_tags, split_text
 
+# [EN] Reader hardening: every llama.cpp context is created with an 8-bit KV cache.
+# [EN] A 128K window at F16 needs roughly twice the memory of Q8_0, which is the
+# [EN] difference between "loads on a 32 GB machine" and "out of memory". The value
+# [EN] is forced regardless of any inference preset, so no configuration path can
+# [EN] silently fall back to F16.
+# [ZH] Reader 加固：所有 llama.cpp 上下文一律使用 8 位 KV Cache。128K 窗口在 F16 下
+# [ZH] 约占 Q8_0 的两倍内存，这正是"32GB 机器能加载"与"内存不足"的分界。该值不随
+# [ZH] 任何推理预设变化，任何配置路径都不能静默退回 F16。
+KV_CACHE_Q8_0 = "q8_0"
+# [EN] ``ggml_type`` enum value for Q8_0; used when the llama.cpp bindings do not
+# [EN] export their enum through a stable import path.
+# [ZH] Q8_0 的 ``ggml_type`` 枚举值；当 llama.cpp 绑定未通过稳定路径导出枚举时使用。
+KV_CACHE_Q8_0_TYPE = 8
+# [EN] Token budget reserved for the answer and the safety margin added on top of
+# [EN] the document body when the window is allocated.
+# [ZH] 为回答预留的 token 预算，以及在文档正文之外追加的安全余量。
+DEFAULT_OUTPUT_TOKEN_BUDGET = 4096
+CONTEXT_SAFETY_MARGIN = 512
+# [EN] Hard ceiling of the document-driven allocation (Phi-3-Mini-128K).
+# [ZH] 文档驱动分配的硬上限（Phi-3-Mini-128K）。
+MAX_DYNAMIC_CONTEXT = 131072
+
+
+def kv_cache_q8_0_type() -> int:
+    """
+    [EN]
+    Return the integer ``ggml_type`` for an 8-bit KV cache.
+
+    llama-cpp-python exposes the enum as ``llama_cpp._ggml.GGMLType`` in the
+    pinned version; older or newer builds may move it, so the literal fallback is
+    used instead of failing the model load.
+
+    [ZH]
+    返回 8 位 KV Cache 对应的整数 ``ggml_type``。
+
+    当前锁定版本把枚举放在 ``llama_cpp._ggml.GGMLType``；不同版本可能移动位置，因此
+    以字面量兜底，绝不因为枚举导入失败而阻断模型加载。
+    """
+    try:
+        from llama_cpp._ggml import GGMLType  # noqa: PLC0415 - optional native import
+
+        return int(GGMLType.GGML_TYPE_Q8_0)
+    except Exception:  # noqa: BLE001 - fall back to the documented enum value
+        return KV_CACHE_Q8_0_TYPE
+
 log = logging.getLogger("EchoDesk.LLM")
 
 #: [EN] Process-wide inference mutex.
@@ -246,7 +291,11 @@ class LLMEngine:
         # [ZH] 由推理预设选择的 KV Cache 存储宽度。F16 是预设表当前唯一产出的取值
         # [ZH] （见 ``hardware_profiler.KV_CACHE_TYPE_F16``）；在此记录，使当前生效的
         # [ZH] 配置在诊断与日志中可完整观测。
-        self.kv_cache_type = "f16"
+        self.kv_cache_type = KV_CACHE_Q8_0
+        # [EN] Reader: token count of the document the window is sized for. ``None``
+        # [EN] means no document has been parsed yet.
+        # [ZH] Reader：窗口所适配文档的 token 数。``None`` 表示尚未解析任何文档。
+        self.document_tokens: Optional[int] = None
         # [EN] Hardware profile supplied by the startup planner. ``max_n_ctx`` is
         # [EN] recorded for diagnostics only; since v0.2.6 item 17 the engine never
         # [EN] grows the window at runtime and always runs with the user-selected
@@ -293,6 +342,9 @@ class LLMEngine:
         cuda_bootstrap.ensure()
         from llama_cpp import Llama
 
+        # [EN] Force Q8_0 for both K and V so the 128K window fits in 32 GB.
+        # [ZH] K 与 V 均强制 Q8_0，使 128K 窗口可容纳于 32GB 内存。
+        kv_type = kv_cache_q8_0_type()
         llm = Llama(
             model_path=self.model_path,
             n_ctx=self.n_ctx,
@@ -300,6 +352,8 @@ class LLMEngine:
             n_threads=self.n_threads,
             n_batch=self.n_batch,
             n_gpu_layers=self.n_gpu_layers,
+            type_k=kv_type,
+            type_v=kv_type,
         )
         # [EN] llama.cpp reports the effective and training context values; use them
         # to calibrate the metadata parsing result.
@@ -346,9 +400,10 @@ class LLMEngine:
                 # [ZH] ``n_batch`` 是构建期参数：只有重建 llama.cpp 对象才会生效，
                 # [ZH] 调用方随后执行的重新加载保证了这一点。
                 self.n_batch = batch
-            kv_type = str(getattr(plan, "kv_cache_type", "") or "")
-            if kv_type:
-                self.kv_cache_type = kv_type
+            # [EN] Reader: the preset's KV-cache width is deliberately ignored; Q8_0
+            # [EN] is a hard requirement, not a tuning choice.
+            # [ZH] Reader：刻意忽略预设的 KV Cache 宽度；Q8_0 是硬性要求，而非调优选项。
+            self.kv_cache_type = KV_CACHE_Q8_0
             self.n_gpu_layers = int(
                 getattr(plan, "n_gpu_layers", self.n_gpu_layers)
             )
@@ -429,6 +484,11 @@ class LLMEngine:
             threads=self.n_threads,
             gpu=self.n_gpu_layers,
         )
+        # [EN] Reader acceptance: the startup log must state the KV-cache data type
+        # [EN] explicitly, so an operator can verify Q8_0 without opening diagnostics.
+        # [ZH] Reader 验收：启动日志必须明确写出 KV Cache 数据类型，使运维无需打开
+        # [ZH] 诊断面板即可确认 Q8_0。
+        log_user(log, "sys.log_kv_cache_type", kv=self.kv_cache_type)
 
     def close(self) -> None:
         """
@@ -546,6 +606,74 @@ class LLMEngine:
         无需改动。
         """
         self.reload(model_path, n_ctx)
+
+    @staticmethod
+    def plan_context_for_tokens(
+        file_tokens: int,
+        output_budget: int = DEFAULT_OUTPUT_TOKEN_BUDGET,
+        margin: int = CONTEXT_SAFETY_MARGIN,
+    ) -> int:
+        """
+        [EN]
+        Document-driven window allocation: ``file_tokens + output_budget + margin``.
+
+        The result is clamped to ``[DEFAULT_INITIAL_CONTEXT, MAX_DYNAMIC_CONTEXT]``.
+        A document whose token count would exceed the hard ceiling is rejected by
+        the caller rather than silently truncated, so the user always knows why
+        the file cannot be opened.
+
+        [ZH]
+        文档驱动的窗口分配：``file_tokens + output_budget + margin``。
+
+        结果收敛到 ``[DEFAULT_INITIAL_CONTEXT, MAX_DYNAMIC_CONTEXT]``。若文档 token
+        数会突破硬上限，由调用方直接拒绝而不是静默截断，使用户始终知道文件为何打不开。
+        """
+        # [EN] Sanitize: a negative or missing count must never produce a negative
+        # [EN] window, because llama.cpp treats a non-positive n_ctx as invalid.
+        # [ZH] 防御：负数或缺失的计数绝不能产生负窗口，llama.cpp 视非正 n_ctx 为非法。
+        requested = max(0, int(file_tokens or 0))
+        requested += max(0, int(output_budget or 0)) + max(0, int(margin or 0))
+        return max(DEFAULT_INITIAL_CONTEXT, min(requested, MAX_DYNAMIC_CONTEXT))
+
+    def document_exceeds_capacity(self, file_tokens: int) -> bool:
+        """
+        [EN]
+        Whether the document alone cannot fit even after reserving nothing.
+
+        [ZH]
+        文档本身是否已无法容纳（即使不预留任何输出预算）。
+        """
+        return int(file_tokens or 0) > MAX_DYNAMIC_CONTEXT
+
+    def set_document_tokens(self, file_tokens: int) -> int:
+        """
+        [EN]
+        Record the document token count and grow the window when necessary.
+
+        Called as soon as a file has been parsed. The window only ever grows
+        within one process, so repeatedly adding files does not reload the model
+        for a smaller value; a document beyond ``MAX_DYNAMIC_CONTEXT`` is
+        reported through :meth:`document_exceeds_capacity` before this method is
+        reached.
+
+        [ZH]
+        记录文档 token 数，并在需要时扩展窗口。
+
+        文件解析完成后立即调用。同一进程内窗口只增不减，因此连续添加文件不会为更小的
+        数值重建模型；超过 ``MAX_DYNAMIC_CONTEXT`` 的文档会在调用本方法之前由
+        :meth:`document_exceeds_capacity` 报告。
+        """
+        self.document_tokens = int(file_tokens or 0)
+        target = self.plan_context_for_tokens(self.document_tokens)
+        if self.llm is None:
+            # [EN] Not loaded yet: the next ``load`` reads ``document_tokens``.
+            # [ZH] 尚未加载：下一次 ``load`` 会读取 ``document_tokens``。
+            self.n_ctx = target
+            return target
+        if target > int(getattr(self, "n_ctx", 0) or 0) and getattr(self, "model_path", ""):
+            self.reload(self.model_path, target)
+            return target
+        return int(getattr(self, "n_ctx", target) or target)
 
     # [EN] ---------- Model information and cache management ----------
     # [ZH] ---------- 模型信息与缓存管理 ----------
@@ -1311,7 +1439,10 @@ class LazyLLMEngine(LLMEngine):
         # [EN] that the settings page can display the active preset immediately.
         # [ZH] 在加载模型之前即记录规划得到的 KV Cache 宽度，使设置页可以立即显示
         # [ZH] 当前生效的预设。
-        self.kv_cache_type = "f16"
+        self.kv_cache_type = KV_CACHE_Q8_0
+        # [EN] Reader: token count of the document that drives the window size.
+        # [ZH] Reader：驱动窗口大小的文档 token 数。
+        self.document_tokens: Optional[int] = None
         # [EN] Preserve the planned bounds so a later hot load applies the same
         # [EN] accelerator and context decisions.
         # [ZH] 保留规划边界，使后续热加载沿用相同的加速器与上下文决策。
@@ -1347,7 +1478,8 @@ class LazyLLMEngine(LLMEngine):
         """
         return self.llm is not None
 
-    def load(self, model_path: str, n_ctx: Optional[int] = None) -> None:
+    def load(self, model_path: str, n_ctx: Optional[int] = None,
+             file_tokens: Optional[int] = None) -> None:
         """
         [EN]
         Load the model into the current object (hot-load entry point).
@@ -1375,12 +1507,28 @@ class LazyLLMEngine(LLMEngine):
         cuda_bootstrap.ensure()
         from llama_cpp import Llama
 
-        # [EN] Use the planned initial window instead of a global constant, and
-        # [EN] never exceed the planned hardware ceiling.
-        # [ZH] 使用规划后的初始窗口而非全局常量，并且绝不超出规划得到的硬件上限。
-        target_ctx = int(n_ctx or self.n_ctx or DEFAULT_INITIAL_CONTEXT)
-        if self.max_n_ctx > 0:
-            target_ctx = min(target_ctx, int(self.max_n_ctx))
+        # [EN] Reader: document-driven allocation. When a file token count is
+        # [EN] supplied, the window is ``file_tokens + output budget + margin`` and
+        # [EN] the preset ceiling is deliberately bypassed, because the ceiling is
+        # [EN] a generic default rather than a contract for this profile.
+        # [ZH] Reader：文档驱动分配。传入文档 token 数时，窗口为
+        # [ZH] ``file_tokens + 输出预算 + 余量``，并刻意绕过预设上限 —— 该上限是通用
+        # [ZH] 默认值，不构成本版本的硬性约定。
+        if file_tokens is not None:
+            self.document_tokens = int(file_tokens)
+        if n_ctx is not None:
+            target_ctx = int(n_ctx)
+        elif self.document_tokens is not None:
+            target_ctx = self.plan_context_for_tokens(self.document_tokens)
+        else:
+            target_ctx = int(self.n_ctx or DEFAULT_INITIAL_CONTEXT)
+            if self.max_n_ctx > 0:
+                target_ctx = min(target_ctx, int(self.max_n_ctx))
+        if self.document_tokens is not None and n_ctx is None:
+            # [EN] Keep the diagnostic ceiling consistent with the real window so
+            # [EN] the status strip and the budget routing see the same value.
+            # [ZH] 使诊断上限与真实窗口一致，状态栏与预算路由才能读到同一数值。
+            self.max_n_ctx = max(int(self.max_n_ctx or 0), target_ctx)
         train = resolve_context_window(path, default=0)
         # [EN] Same rule as the parent engine: constructing the native model is a
         # [EN] mutating operation on shared llama.cpp backend state; it must not run
@@ -1388,6 +1536,9 @@ class LazyLLMEngine(LLMEngine):
         # [ZH] 与父类引擎相同：构建原生模型会改变共享的 llama.cpp 后端状态，绝不能
         # [ZH] 与后台摘要器的解码并发执行。
         with _INFERENCE_LOCK:
+            # [EN] Force Q8_0 for both K and V (Reader requirement).
+            # [ZH] K 与 V 均强制 Q8_0（Reader 要求）。
+            kv_type = kv_cache_q8_0_type()
             llm = Llama(
                 model_path=path,
                 n_ctx=target_ctx,
@@ -1395,6 +1546,8 @@ class LazyLLMEngine(LLMEngine):
                 n_threads=self.n_threads,
                 n_batch=self.n_batch,
                 n_gpu_layers=self.n_gpu_layers,
+                type_k=kv_type,
+                type_v=kv_type,
             )
             self.llm = llm
             self.model_path = path

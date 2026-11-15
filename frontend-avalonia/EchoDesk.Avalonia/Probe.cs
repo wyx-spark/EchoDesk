@@ -668,48 +668,6 @@ internal static class Probe
         Check("同意书确认按钮默认禁用",
             consent.Contains("consentConfirmDisabled=1"), consent);
 
-        // [EN] ---------- Automation page: templates, field help, safety interlock, result
-        // [EN] preview ----------
-        // [ZH] ---------- 自动化页：模板 / 字段帮助 / 安全联动 / 结果预览 ----------
-        if (!settings.SelectTab("settings.tab.automation"))
-        {
-            Console.WriteLine("  [FAIL] 找不到「自动化」页签");
-            return false;
-        }
-        var automation = settings.FindPage<AutomationPage>();
-        if (automation is null)
-        {
-            Console.WriteLine("  [FAIL] 设置窗口里没有 AutomationPage");
-            return false;
-        }
-        await Dispatcher.UIThread.InvokeAsync(async () => await automation.RefreshAsync());
-        string automationSnapshot = automation.AutomationSnapshot();
-        Console.WriteLine($"  自动化页   : {automationSnapshot}");
-        Console.WriteLine($"  字段帮助键 : {OneLine(automation.FieldHelpKeys(), 150)}");
-        Check("配置模板已从后端读到", automationSnapshot.Contains("templateCount=") &&
-            !automationSnapshot.Contains("templateCount=0"), automationSnapshot);
-        Check("字段级帮助已从后端读到", automationSnapshot.Contains("fieldHelpCount=") &&
-            !automationSnapshot.Contains("fieldHelpCount=0"), automationSnapshot);
-        Check("结果预览没有裸露的占位符", automationSnapshot.Contains("previewPlaceholders=0"),
-            "string.Format 参数个数已修对");
-        Check("结果预览含日期层", automationSnapshot.Contains("previewHasDate=1"), "对齐 WPF 的 4 参数");
-        Check("打开结果目录/浏览/测试选择器有文案", automationSnapshot.Contains("openResultsButton=1")
-            && automationSnapshot.Contains("browseResultsButton=1")
-            && automationSnapshot.Contains("testSelectorButton=1"), automationSnapshot);
-        Check("测试向导与导入导出有文案", automationSnapshot.Contains("wizardAndIoButtons=1111"),
-            automationSnapshot);
-        Check("登录态已显示", automationSnapshot.Contains("loginStateText=1"), "login_state 已渲染");
-        // [EN] Safety-protocol interlock: accepting makes the master switch editable;
-        // [EN] cancelling cancels it automatically and disables the switch.
-        // [ZH] 安全协议联动：接受 → 总开关可编辑；取消 → 自动取消并禁用
-        automation.ProbeSetSafety(true);
-        string safetyOn = automation.AutomationSnapshot();
-        Check("接受协议后总开关可编辑", safetyOn.Contains("enabledEditable=1"), safetyOn);
-        automation.ProbeSetSafety(false);
-        string safetyOff = automation.AutomationSnapshot();
-        Check("取消协议后总开关被禁用", safetyOff.Contains("enabledEditable=0"), safetyOff);
-        Check("取消协议后总开关被强制关掉", safetyOff.Contains("safetyAccepted=0"), safetyOff);
-
         // [EN] ---------- Model page: local model registry ----------
         // [ZH] ---------- 模型页：本地模型库 ----------
         if (!settings.SelectTab("settings.tab.model"))
@@ -1002,12 +960,6 @@ internal static class Probe
             && motion.Contains("TransformOperationsTransition", StringComparison.Ordinal),
             OneLine(motion, 200));
 
-        string stripMotion = await main.ProbeStatusStripMotionAsync();
-        Console.WriteLine($"  状态区收放 : {stripMotion}");
-        Check("状态区折叠后完成隐藏并复位不透明度",
-            stripMotion.Contains("collapsedHidden=True", StringComparison.Ordinal), OneLine(stripMotion, 160));
-        Check("状态区展开后恢复可见并回到满不透明度",
-            stripMotion.Contains("expandedVisible=True", StringComparison.Ordinal), OneLine(stripMotion, 160));
 
         // [EN] ---- Input box: hover may only affect rendering -------------------------------
         // [ZH] ---- 输入框：悬停只能影响渲染 ----------------------------------
@@ -1020,28 +972,6 @@ internal static class Probe
         Check("输入框光晕通过 BoxShadowsTransition 平滑过渡",
             hover.Contains("boxShadowTransition=True", StringComparison.Ordinal), OneLine(hover, 200));
 
-        // [EN] ---- Status area: aligned with WPF plus an extra memory-pressure item -------
-        // [ZH] ---- 状态区：与 WPF 对齐并额外提供内存压力 ----------------------
-        string items = main.ProbeStatusStripItemsSnapshot();
-        Console.WriteLine($"  状态区各项 : {items}");
-        Check("状态区控件数量不少于 WPF（9 项 + 内存压力）",
-            ReadNumber(items, "count") >= 10, OneLine(items, 220));
-        foreach ((string key, string label) in new[]
-                 {
-                     ("search", "搜索"), ("automation", "自动化"), ("market", "市场"),
-                     ("context", "上下文"), ("kv", "KV"), ("memory", "内存"),
-                     ("capability", "模型能力"), ("compact", "压缩"),
-                 })
-        {
-            string marker = $"{key}=";
-            int start = items.IndexOf(marker, StringComparison.Ordinal);
-            string value = start < 0 ? "" : items[(start + marker.Length)..].Split('｜')[0];
-            Check($"状态区包含{label}项且文本非空", value.Trim().Length > 0, $"{key}='{value}'");
-        }
-        Check("状态区内存项已格式化为百分比",
-            items.Contains("memory=", StringComparison.Ordinal)
-            && System.Text.RegularExpressions.Regex.IsMatch(items, @"memory=[^｜]*%"),
-            OneLine(items, 220));
 
         // [EN] ---- Title bar: identity on the left, capsules on the right, no status text ----
         // [ZH] ---- 标题栏：左侧标识、右侧胶囊、不含状态文本 --------------------------
@@ -1063,23 +993,6 @@ internal static class Probe
         Check("标题栏不含运行状态文本",
             titleBar.Contains("statusInTitleBar=False", StringComparison.Ordinal), OneLine(titleBar, 180));
 
-        // [EN] ---- v0.2.6 item 21: context-window input parsing and log routing ----
-        // [ZH] ---- v0.2.6 第 21 项：上下文窗口输入解析与日志分流 ----------
-        string ctxComma = main.ProbeContextWindowInput("65,536");
-        Console.WriteLine($"  上下文输入 : {ctxComma}");
-        Check("手动输入 65,536 解析为 65536",
-            ctxComma.Contains("normalized=65536", StringComparison.Ordinal)
-            && ctxComma.Contains("size=65536", StringComparison.Ordinal), OneLine(ctxComma, 160));
-        string ctxSpaced = main.ProbeContextWindowInput(" 65536 ");
-        Check("手动输入 65536（含首尾空格）解析为 65536",
-            ctxSpaced.Contains("normalized=65536", StringComparison.Ordinal)
-            && ctxSpaced.Contains("size=65536", StringComparison.Ordinal), OneLine(ctxSpaced, 160));
-        string ctxFullWidth = main.ProbeContextWindowInput("６５５３６");
-        Check("全角数字 ６５５３６ 解析为 65536",
-            ctxFullWidth.Contains("size=65536", StringComparison.Ordinal), OneLine(ctxFullWidth, 160));
-        string ctxBad = main.ProbeContextWindowInput("six");
-        Check("非法输入解析失败",
-            !ctxBad.Contains("parses=True", StringComparison.Ordinal), OneLine(ctxBad, 160));
 
         string debugSample = MainWindow.ProbeLogRoutingSample("Merging segment summaries (group 1/3), 2s elapsed…");
         Check("高频分段合并进度被判为调试日志",
@@ -1097,17 +1010,6 @@ internal static class Probe
         Check("真实提示与进度混排时不整体判为调试日志",
             mixedNotice.Contains("debug=False", StringComparison.Ordinal), OneLine(mixedNotice, 180));
 
-        // [EN] ---- Memory above 90% triggers the red warning -----------------------------
-        // [ZH] ---- 内存 >90% 红色警告 ---------------------------------------
-        string memWarning = main.ProbeMemoryWarning();
-        Console.WriteLine($"  内存预警   : {memWarning}");
-        Check("内存使用率 95% 时触发红色警告类",
-            memWarning.Contains("critical=True", StringComparison.Ordinal), OneLine(memWarning, 200));
-        Check("内存使用率 95% 时文案带百分比",
-            memWarning.Contains("95", StringComparison.Ordinal), OneLine(memWarning, 200));
-        int memTipAt = memWarning.IndexOf("tip=", StringComparison.Ordinal);
-        string memTip = memTipAt < 0 ? "" : memWarning[(memTipAt + "tip=".Length)..];
-        Check("内存预警悬停提示非空", memTip.Trim().Length > 0, $"tip='{memTip}'");
 
         // [EN] ---- Update download progress bar -------------------------------------------
         // [ZH] ---- 更新下载进度条 -------------------------------------------
@@ -1933,35 +1835,6 @@ internal static class Probe
             }
         }
 
-        // [EN] ---------- (3) Settings - Automation (safety protocol accepted, scrape task
-        // [EN] filled in) ----------
-        // [ZH] ---------- ③ 设置 → 自动化（已接受安全协议 + 填好抓取任务） ----------
-        var automationSettings = new SettingsWindow(App.State) { Width = 1280, Height = 920 };
-        windows.Add(automationSettings);
-        automationSettings.Show();
-        await Task.Delay(1200);
-        if (!automationSettings.SelectTab("settings.tab.automation"))
-        {
-            Console.WriteLine("  [FAIL] 找不到「自动化」页签");
-            ok = false;
-        }
-        else
-        {
-            AutomationPage? automationPage = automationSettings.FindPage<AutomationPage>();
-            if (automationPage is null)
-            {
-                Console.WriteLine("  [FAIL] 设置窗口里没有 AutomationPage");
-                ok = false;
-            }
-            else
-            {
-                automationPage.ProbeShowDemo(english);
-                await Task.Delay(900);
-                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-                ok &= SaveShot(automationSettings,
-                    Path.Combine(ShowcaseDir, $"screenshot-automation{suffix}.png"), scale: 2) == 1;
-            }
-        }
 
         return ok;
     }

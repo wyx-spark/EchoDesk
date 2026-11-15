@@ -90,39 +90,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _streamCts;
     private bool _busy;
 
-    // [EN] v0.2.6 Part 2 media state: staging directories, vision/STT availability,
-    //      speech configuration and the global push-to-talk hook. The service never
-    //      blocks construction; it is populated after the backend is ready.
-    // [ZH] v0.2.6 Part 2 媒体状态：暂存目录、视觉/转写可用性、语音配置与全局按键
-    //      说话钩子。服务不阻塞构造；后端就绪后填充。
-    private readonly MediaService _media = new();
-    private readonly GlobalHotkeyService _hotkeys = new();
-    private bool _recording;
-    private bool _pttPending;
-    private bool _pttReleasePending;
-    private bool _mediaInitialized;
     private string _lastAssistantAnswer = "";
-    // [EN] v0.2.6 item 17: guard so writing the context selector from a backend
-    //      response does not itself trigger a new backend request.
-    // [ZH] v0.2.6 第 17 项：防止用后端响应回填上下文选择器时又触发一次后端请求。
-    private bool _contextWindowUpdating;
-    // [EN] v0.2.6 item 21: the editable ComboBox's inner TextBox, cached once the template has
-    //      been applied so the Enter handler can be attached directly and the typed text can be
-    //      read even when `ComboBox.Text` has not caught up yet.
-    // [ZH] v0.2.6 第 21 项：可编辑 ComboBox 内部的 TextBox。模板应用后缓存，以便直接挂接
-    //      回车处理器，并在 `ComboBox.Text` 尚未同步时也能读到键入文本。
-    private TextBox? _contextWindowEditor;
-    // [EN] Sizes offered by the context selector; the backend accepts a wider
-    //      range, but the task book fixes these four user-facing choices.
-    // [ZH] 上下文选择器提供的档位；后端接受更大范围，但任务书把这四档定为用户选项。
-    private static readonly int[] ContextWindowSizes = { 4096, 8192, 16384, 32768 };
-    // [EN] v0.2.6 item 19: bounds for a manually typed context window. They mirror
-    //      `config.MIN_CONTEXT` and `config.MAX_CONTEXT_OVERRIDE` on the backend; the
-    //      backend remains the authority, these checks only avoid a pointless request.
-    // [ZH] v0.2.6 第 19 项：手动输入上下文窗口的边界，与后端 `config.MIN_CONTEXT` 和
-    //      `config.MAX_CONTEXT_OVERRIDE` 一致；后端仍是权威，这里只避免无意义的请求。
-    private const int MinContextWindow = 2048;
-    private const int MaxContextWindow = 4_194_304;
 
     /// <summary>
     /// [EN] v0.2.6 item 21: pattern of **high-frequency, purely engineering** log lines
@@ -713,27 +681,11 @@ public partial class MainWindow : Window
         SendButton.Click += async (_, _) => await SendAsync();
         StopButton.Click += async (_, _) => await StopAsync();
         UploadButton.Click += async (_, _) => await PickFilesAsync();
-        ImageButton.Click += async (_, _) => await PickImageAsync();
-        // [EN] Push-to-talk microphone: press starts a recording, release finishes and
-        //      transcribes. Capture loss also finishes, so releasing outside the button
-        //      never leaves a recording running. The button class marks pointer events as
-        //      handled, so the handlers are registered with handledEventsToo.
-        // [ZH] 按住说话麦克风：按下开始录音，松开结束并转写。指针捕获丢失同样结束录音，
-        //      因此按钮外松手不会让录音继续运行。按钮类会把指针事件标记为已处理，故
-        //      以 handledEventsToo 注册处理函数。
-        MicButton.AddHandler(PointerPressedEvent, MicButton_PointerPressed,
-            RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
-        MicButton.AddHandler(PointerReleasedEvent, MicButton_PointerReleased,
-            RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
-        MicButton.AddHandler(PointerCaptureLostEvent, MicButton_PointerCaptureLost,
-            RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
         SettingsButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.general");
-        // [EN] The model chip doubles as the provider switch entry: it opens the model
-        //      page for the local engine and the ecosystem page when an external
-        //      provider is active.
-        // [ZH] 模型胶囊同时是提供方切换入口：本地引擎打开模型页，外部提供方打开生态页。
-        ModelChip.Click += async (_, _) => await OpenSettingsAsync(
-            IsExternalProviderActive() ? "settings.tab.ecosystem" : "settings.tab.model");
+        // [EN] Reader: the model chip is read-only. The branch binds one model and the
+        //      context window is derived from the document, so there is nothing to switch.
+        // [ZH] Reader：模型胶囊为只读。本分支只绑定一个模型，上下文窗口由文档推导，
+        //      因此没有可切换项。
         ModeChip.Click += async (_, _) => await OpenSettingsAsync("settings.tab.general");
         FontDownButton.Click += (_, _) => _state.SetFontSize(_state.Settings.FontSize - 1);
         FontUpButton.Click += (_, _) => _state.SetFontSize(_state.Settings.FontSize + 1);
@@ -752,16 +704,6 @@ public partial class MainWindow : Window
         CommandInputBox.TextChanged += (_, _) => UpdateCommandPalette(CommandInputBox);
         CommandButton.Click += (_, _) => ToggleCommandRow();
         SnippetButton.Click += (_, _) => ToggleSnippetPalette();
-        // [EN] v0.2.6 Part 3 panels.
-        // [ZH] v0.2.6 Part 3 面板。
-        KnowledgeButton.Click += async (_, _) => await ToggleKnowledgePanelAsync();
-        PromptLibraryButton.Click += async (_, _) => await TogglePromptLibraryPanelAsync();
-        KnowledgeMountButton.Click += async (_, _) => await MountKnowledgeFolderAsync();
-        KnowledgeReindexButton.Click += async (_, _) =>
-        {
-            if (_knowledgeLibraries.Count > 0)
-                await ReindexKnowledgeAsync(_knowledgeLibraries[0].Root);
-        };
         PromptCategoryCombo.SelectionChanged += (_, _) =>
         {
             if (!_promptPanelLoading)
@@ -787,18 +729,6 @@ public partial class MainWindow : Window
                 InsertSnippet(snippet);
         };
 
-        // [EN] Status area.
-        // [ZH] 状态区
-        StripSearchButton.Click += async (_, _) => await ToggleSearchAsync();
-        StripAutomationButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.automation");
-        StripMarketButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.market");
-        StripContextButton.Click += async (_, _) => await RefreshContextAsync();
-        StripKvButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.model");
-        StripMemoryButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.model");
-        StripCapabilityButton.Click += async (_, _) => await OpenSettingsAsync("settings.tab.model");
-        StripCompactButton.Click += async (_, _) => await CompactContextAsync();
-        StripWarnButton.Click += (_, _) => ShowWarnings();
-        StripUpdateButton.Click += (_, _) => OpenUpdatePage();
         StripToggleButton.Click += (_, _) =>
         {
             _state.Settings.StatusStripCollapsed = !_state.Settings.StatusStripCollapsed;
@@ -819,10 +749,6 @@ public partial class MainWindow : Window
         // [ZH] 必须比输入框先看到按键，否则 Ctrl+L / Ctrl+M 会被输入框当普通字符吃掉，
         // [ZH] Esc 也永远轮不到“关面板 / 停生成”。
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
-        // [EN] Key-up accompanies the window-level push-to-talk fallback (platforms
-        // [EN] without a global hook), so releasing the key really ends the recording.
-        // [ZH] 松开事件用于窗口内按键说话回退（无全局钩子的平台），确保松键真正结束录音。
-        AddHandler(KeyUpEvent, OnWindowKeyUp, RoutingStrategies.Tunnel);
         // [EN] Message area: Ctrl+wheel adjusts the font size (the same behaviour as
         // [EN] MessageScroll_PreviewMouseWheel in WPF).
         // [ZH] 消息区 Ctrl+滚轮调字号（与 WPF 的 MessageScroll_PreviewMouseWheel 同一行为）
@@ -833,40 +759,6 @@ public partial class MainWindow : Window
         // [ZH] 输入框获得焦点时关掉全部面板（WPF 的 InputBox_GotFocus 同一行为）：
         // [ZH] 面板浮在输入框上方，用户点了输入框还留着面板会挡住刚输入的内容。
         InputBox.GotFocus += (_, _) => CloseAllPalettes();
-
-        // [EN] The click handler of the context chip may be registered **only once**. It used
-        // [EN] to live in ApplyTexts(), which runs on every language change, so each language
-        // [EN] switch added another handler (one click then sent N context requests).
-        // [ZH] 上下文胶囊的点击处理器**只能注册一次**。它原先挂在 ApplyTexts() 里 ——
-        // [ZH] 而 ApplyTexts 每次切语言都会跑一遍，于是每切一次语言就多一个处理器
-        // [ZH] （点一下发 N 次 context 请求）。
-        ContextChip.Click += async (_, _) => await RefreshContextAsync();
-        // [EN] v0.2.6 item 17: persistent selector for the context window. Items
-        //      are numbers only; the tooltip carries the localized explanation.
-        // [ZH] v0.2.6 第 17 项：上下文窗口的常驻选择器。条目只含数字，说明文案由
-        //      ToolTip 承载。
-        foreach (int size in ContextWindowSizes)
-            ContextWindowCombo.Items.Add(size);
-        // [EN] v0.2.6 item 19: Enter inside the editable selector applies the typed value.
-        //      Tunnel routing is required because the editable TextBox consumes the key first.
-        // [ZH] v0.2.6 第 19 项：在可编辑选择器内按回车应用输入值。必须使用隧道路由，因为
-        //      内部可编辑 TextBox 会先消费该按键。
-        ContextWindowCombo.AddHandler(KeyDownEvent, OnContextWindowComboKeyDown,
-                                      RoutingStrategies.Tunnel);
-        // [EN] v0.2.6 item 21: also attach directly to the inner editor. The template is
-        //      applied eagerly so the editor exists before the first key press, and the
-        //      TemplateApplied hook covers a theme change or a late template realisation.
-        // [ZH] v0.2.6 第 21 项：同时直接挂到内部编辑器上。模板在此提前应用，确保编辑器在
-        //      第一次按键前就存在；TemplateApplied 钩子覆盖主题切换或模板延迟实例化的情况。
-        ContextWindowCombo.TemplateApplied += (_, _) => HookContextWindowEditor();
-        ContextWindowCombo.ApplyTemplate();
-        HookContextWindowEditor();
-        ContextWindowCombo.SelectionChanged += async (_, _) =>
-        {
-            if (_contextWindowUpdating || ContextWindowCombo.SelectedItem is not int size)
-                return;
-            await ApplyContextWindowAsync(size);
-        };
     }
 
     /// <summary>
@@ -882,28 +774,6 @@ public partial class MainWindow : Window
     /// </summary>
     private void OnWindowKeyDown(object? sender, KeyEventArgs e)
     {
-        // [EN] Window-level push-to-talk fallback (v0.2.6 Part 2): when the platform
-        // [EN] has no global hook, holding the configured key inside the window still
-        // [EN] records. The global hook path is handled by GlobalHotkeyService.
-        // [ZH] 窗口内按键说话回退（v0.2.6 Part 2）：平台没有全局钩子时，在窗口内按住
-        // [ZH] 配置键仍可录音。全局钩子路径由 GlobalHotkeyService 处理。
-        if (!_hotkeys.IsSupported && _media.State.PttEnabled && e.Key == Key.RightCtrl)
-        {
-            e.Handled = true;
-            if (!_recording)
-            {
-                // [EN] Intercept the shortcut even when STT is unavailable: the key
-                // [EN] must not fall through to other handlers, and the only feedback
-                // [EN] is the status bar (never a conversation-area error).
-                // [ZH] 即使 STT 不可用也拦截快捷键：按键不得穿透到其他处理器，且反馈
-                // [ZH] 仅限状态栏（绝不在对话区报错）。
-                if (_media.State.SttAvailable)
-                    _ = StartPushToTalkAsync();
-                else
-                    SetStatus(SttUnavailableStatus());
-            }
-            return;
-        }
         bool ctrl = e.KeyModifiers == KeyModifiers.Control;
         bool ctrlShift = e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift);
 
@@ -976,19 +846,6 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 _ = StopAsync();
             }
-        }
-    }
-
-    /// <summary>
-    /// [EN] Key-up half of the window-level push-to-talk fallback.
-    /// [ZH] 窗口内按键说话回退的松键半边。
-    /// </summary>
-    private void OnWindowKeyUp(object? sender, KeyEventArgs e)
-    {
-        if (!_hotkeys.IsSupported && e.Key == Key.RightCtrl && _recording)
-        {
-            e.Handled = true;
-            _ = FinishPushToTalkAsync();
         }
     }
 
@@ -1186,16 +1043,7 @@ public partial class MainWindow : Window
         // [ZH] 状态栏的"未知/未连接"初值也必须走语言包（v0.2.2 UI 英文扫描）：
         // [ZH] XAML 里原先写死中文，后端没连上时英文界面会整条露出中文；
         // [ZH] 这里给全套初值，随后的状态事件会把它们覆盖成实时值。
-        ContextChipText.Text = Loc.T("main.context.buttonIdle", "上下文：---/---");
         ModeText.Text = Loc.T("main.mode.chip", "🛠️ 模式: {0}", "general");
-        SearchText.Text = Loc.T("main.strip.search", "🔍 搜索：{0}", Loc.T("main.strip.off", "关"));
-        AutoText.Text = Loc.T("main.strip.automation", "⚙️ 自动化：{0}", Loc.T("main.strip.off", "关"));
-        MarketText.Text = Loc.T("main.strip.market", "🌐 市场：{0}",
-            Loc.T("main.strip.marketUnconnected", "未连接"));
-        StripContextText.Text = Loc.T("main.strip.contextStrip", "📊 Context {0}%", 0);
-        StripMemoryText.Text = Loc.T("main.strip.memoryStrip", "🧠 内存 {0}%", "--");
-        StripCapabilityText.Text = Loc.T("main.strip.capability", "🧠 {0}", "---");
-        StripCompactText.Text = Loc.T("main.strip.compact", "🗜 压缩上下文");
         // [EN] Visual alignment: in the WPF version, send and upload are **icon-only round
         // [EN] buttons** (➤ / 📎), not square buttons with text.
         // [ZH] 视觉对齐：WPF 版的发送/上传是**纯图标圆形按钮**（➤ / 📎），不是带文字的方块按钮。
@@ -1221,17 +1069,7 @@ public partial class MainWindow : Window
         CommandBarHint.Text = Loc.T("main.command.hint", "💡 检测到指令格式：点击左下角「打开命令输入框」按钮");
         ToolTip.SetTip(CommandButton, Loc.T("main.command.tip", "打开/关闭命令输入框"));
         ToolTip.SetTip(SnippetButton, Loc.T("main.snippet.tip", "打开常用语选择框"));
-        // [EN] v0.2.6 Part 3: knowledge base and template library entry points.
-        // [ZH] v0.2.6 Part 3：知识库与模板库入口。
-        ToolTip.SetTip(KnowledgeButton, Loc.T("main.button.knowledgeTip", "挂载本地文件夹到知识库"));
         ToolTip.SetTip(PromptLibraryButton, Loc.T("main.button.promptsTip", "打开提示词模板库"));
-        KnowledgeTitleText.Text = Loc.T("knowledge.panel.title", "本地知识库");
-        KnowledgeMountButton.Content = Loc.T("knowledge.panel.mount", "挂载文件夹");
-        KnowledgeReindexButton.Content = Loc.T("knowledge.panel.reindex", "重建索引");
-        if (_knowledgeLibraries.Count == 0)
-            KnowledgeHintText.Text = Loc.T("knowledge.panel.empty", "尚未挂载文件夹");
-        else
-            RenderKnowledgeRows();
         PromptLibraryTitleText.Text = Loc.T("prompt.panel.title", "提示词模板库");
         PromptNewButton.Content = Loc.T("prompt.panel.new", "新建模板");
         PromptApplyButton.Content = Loc.T("prompt.panel.apply", "应用");
@@ -1242,42 +1080,9 @@ public partial class MainWindow : Window
         PromptRoleBox.PlaceholderText = Loc.T("prompt.panel.role", "角色设定（可选）");
         ToolTip.SetTip(SettingsButton, Loc.T("main.button.settingsTip", "打开设置"));
         ToolTip.SetTip(UploadButton, Loc.T("main.button.uploadTip", "上传文件加入上下文"));
-        ToolTip.SetTip(ImageButton, Loc.T("main.media.imageTip", "附加图片并提问（jpg / png）"));
-        ToolTip.SetTip(MicButton, Loc.T("main.media.micTip", "按住说话（松开后转写）"));
-        AutomationProperties.SetHelpText(MicButton, Loc.T("main.media.micHelp",
-            "按住麦克风图标开始录音，松开后自动转写并填入输入框"));
-        // [EN] A language change must not silently re-enable or re-label a
-        // [EN] microphone that is unavailable; re-apply the capability state.
-        // [ZH] 语言切换不得悄然重新启用或改写不可用麦克风的提示；重新应用能力状态。
-        ApplyMicAvailability();
-        RecordingHint.Text = Loc.T("main.media.recording", "🔴 录音中…松开结束");
         ToolTip.SetTip(SendButton, Loc.T("main.button.sendTip", "发送（Ctrl+Enter）"));
-        ToolTip.SetTip(ModelChip, Loc.T("main.model.clickTip", "点击打开「设置 → 模型」"));
+        ToolTip.SetTip(ModelChip, Loc.T("main.model.readonlyTip", "当前绑定的模型（只读）"));
         ToolTip.SetTip(ModeChip, Loc.T("main.mode.clickTip", "点击打开「设置 → 常规」"));
-        ToolTip.SetTip(StripSearchButton, Loc.T("main.strip.searchTip", "点击切换联网搜索"));
-        ToolTip.SetTip(StripAutomationButton, Loc.T("main.strip.automationTip", "点击打开「设置 → 自动化」"));
-        ToolTip.SetTip(StripMarketButton, Loc.T("main.strip.marketTip", "点击打开「设置 → 技能市场」"));
-        ToolTip.SetTip(StripContextButton, Loc.T("main.strip.contextTip", "点击刷新上下文占用"));
-        // [EN] v0.2.6 item 17: explain that the selector is the user's decision.
-        // [ZH] v0.2.6 第 17 项：说明该选择器由用户决定，后端不会私自修改。
-        ToolTip.SetTip(ContextWindowCombo, Loc.T("main.context.selectorTip",
-            "上下文窗口（4096 / 8192 / 16384 / 32768）。选定后立即生效并重载模型；后端不会在后台修改该值。"));
-        AutomationProperties.SetHelpText(ContextWindowCombo, Loc.T("main.context.selectorHelp",
-            "选择模型可用的上下文窗口大小"));
-        ToolTip.SetTip(StripKvButton, Loc.T("main.strip.kvTip", "点击打开「设置 → 模型」"));
-        ToolTip.SetTip(StripMemoryButton, Loc.T("main.strip.memoryTip", "点击打开「设置 → 模型」查看硬件诊断"));
-        ToolTip.SetTip(StripCapabilityButton, Loc.T("main.strip.capabilityTip", "点击打开「设置 → 模型」"));
-        ToolTip.SetTip(StripCompactButton, Loc.T("main.strip.compactTip", "立刻压缩上下文，腾出空间"));
-        // [EN] The bundled value is "there are {0} capability warnings, click for details", so
-        // [EN] the count must be passed in; otherwise Loc.T returns the unformatted template
-        // [EN] and the tooltip shows {0} literally (hard-code audit §5.3 C-1). The button is
-        // [EN] hidden when there are no warnings (see the IsVisible at :1102), so the "0
-        // [EN] warnings" case is never actually visible.
-        // [ZH] 包值是「有 {0} 条能力提示，点击查看详情」——必须把条数传进去，否则 Loc.T 会返回
-        // [ZH] 未格式化模板、悬停提示直接露出 {0}（硬编码清查 §5.3 C-1）。无告警时该按钮隐藏
-        // [ZH]（见 :1102 的 IsVisible），所以「0 条」这一档不会真的被看到。
-        ToolTip.SetTip(StripWarnButton, Loc.T("main.strip.warnTip",
-            "有 {0} 条能力提示，点击查看详情", _capabilityWarnings.Count));
         // [EN] Tooltips of the four title bar buttons: they used to live only in ToolTip.Tip in
         // [EN] MainWindow.axaml and **there was no override in code**, so hovering in an
         // [EN] English interface always showed Chinese (hard-code audit §5.1).
@@ -1293,20 +1098,10 @@ public partial class MainWindow : Window
             "dark" => "🌙",
             _ => "🌓",
         };
-        // [EN] Fixed, language-dependent texts in the status area (the numeric parts are driven
-        // [EN] by backend data and are not overridden here).
-        // [ZH] 状态区里与语言相关的固定文案（数值部分由后端数据驱动，不在这里覆盖）
-        if (!_updateAvailable)
-            StripUpdateText.Text = Loc.T("main.update.idle", "🎉 新版本");
-        StripWarnText.Text = _capabilityWarnings.Count > 0
-            ? Loc.T("main.strip.warn", "⚠️ 能力提示 {0}", _capabilityWarnings.Count)
-            : Loc.T("main.strip.warnIdle", "⚠️ 能力提示");
         UpdateCommandButtonText();
         UpdateSnippetButtonText();
         UpdateCommandUi(InputBox.Text ?? "");
         ApplyStatusStripState();
-        if (string.IsNullOrEmpty(ContextChipText.Text))
-            ContextChipText.Text = Loc.T("main.context.buttonIdle", "上下文：---/---");
         ShowCapabilityBanner();
         ApplyHelpText();
         // [EN] Caption text is language-dependent, therefore it is refreshed with the rest of
@@ -1335,21 +1130,9 @@ public partial class MainWindow : Window
     {
         AutomationProperties.SetHelpText(StatusText, Loc.T("main.status.help",
             "运行状态：正在启动后端 / 已就绪 / 处理中 / 后端已退出"));
-        AutomationProperties.SetHelpText(ModelChip, Loc.T("main.model.help", "当前模型与切换入口"));
+        AutomationProperties.SetHelpText(ModelChip, Loc.T("main.model.help", "当前绑定的模型（只读）"));
         AutomationProperties.SetHelpText(ModeChip, Loc.T("main.mode.help", "当前对话模式与切换入口"));
         AutomationProperties.SetHelpText(StatusStrip, Loc.T("main.strip.help", "轻量状态区：各项可点击"));
-        AutomationProperties.SetHelpText(StripSearchButton, Loc.T("main.strip.searchHelp", "联网搜索开关"));
-        AutomationProperties.SetHelpText(StripAutomationButton, Loc.T("main.strip.autoHelp", "自动化状态"));
-        AutomationProperties.SetHelpText(StripMarketButton, Loc.T("main.strip.marketHelp", "技能市场连接状态"));
-        AutomationProperties.SetHelpText(StripContextButton, Loc.T("main.strip.contextHelp", "上下文占用比例"));
-        AutomationProperties.SetHelpText(StripKvButton, Loc.T("main.strip.kvHelp", "KV 缓存占用"));
-        AutomationProperties.SetHelpText(StripMemoryButton, Loc.T("main.strip.memoryHelp", "物理内存占用比例"));
-        AutomationProperties.SetHelpText(StripCapabilityButton, Loc.T("main.strip.capabilityHelp", "模型能力信息"));
-        AutomationProperties.SetHelpText(StripCompactButton, Loc.T("main.strip.compactHelp", "立刻压缩上下文"));
-        AutomationProperties.SetHelpText(ImageButton, Loc.T("main.media.imageHelp",
-            "把图片附加到当前提问，支持 jpg / png / webp / bmp"));
-        AutomationProperties.SetHelpText(RecordingHint, Loc.T("main.media.recordingHelp",
-            "按住按键说话：按下开始录音，松开后自动转写并填入输入框"));
     }
 
     private void ApplyFontSize()
@@ -1633,141 +1416,7 @@ public partial class MainWindow : Window
         await LoadCommandsAsync();
         await RefreshStatusAsync();
         await RefreshContextAsync();
-        await RefreshAutomationStatusAsync();
-        await RefreshMarketStatusAsync();
         await CheckUpdateAsync();
-        await InitializeMediaAsync();
-    }
-
-    /// <summary>
-    /// [EN] Load media capabilities and start the push-to-talk hook.
-    ///
-    /// Called once after the backend handshake. A failure in any part is non-fatal:
-    /// the image button and speech features each report their own localized reason
-    /// when used, and the hook degrades to the in-window shortcut.
-    ///
-    /// [ZH] 加载媒体能力并启动按键说话钩子。
-    ///
-    /// 后端握手完成后调用一次。任何一部分失败都不致命：图片按钮与语音功能在真正
-    /// 使用时各自报告已本地化原因，钩子降级为窗口内快捷键。
-    /// </summary>
-    private async Task InitializeMediaAsync()
-    {
-        if (_mediaInitialized)
-            return;
-        _mediaInitialized = true;
-        await _media.LoadStateAsync(_state.Backend);
-
-        _hotkeys.PushToTalkPressed += () => Dispatcher.UIThread.Post(() => _ = StartPushToTalkAsync());
-        _hotkeys.PushToTalkReleased += () => Dispatcher.UIThread.Post(() => _ = FinishPushToTalkAsync());
-        // [EN] The spotlight window is not part of this round's delivery, so the
-        // [EN] chord is deliberately left disabled instead of opening nothing.
-        // [ZH] 极速呼出窗口不在本轮交付范围，因此刻意不启用组合键，避免按下后没有反应。
-        _hotkeys.SetSpotlightEnabled(false);
-        // [EN] Do not install the global push-to-talk hook when no transcription
-        // [EN] engine is available: the key press would otherwise be captured and
-        // [EN] then fail, which is the noise this degradation removes.
-        // [ZH] 没有可用转写引擎时不安装全局按键说话钩子：否则按键会被捕获随后失败，
-        // [ZH] 正是本次降级要消除的噪音。
-        if (_media.State.PttEnabled && _media.State.SttAvailable)
-            _hotkeys.Start(_media.State.PttShortcut);
-        // [EN] The hotkey fallback/unavailable hints are only relevant when speech
-        // [EN] input is usable. With no STT engine the microphone is already
-        // [EN] silently disabled, so adding these conversation-area messages would
-        // [EN] be exactly the noise this degradation removes.
-        // [ZH] 只有在语音输入可用时，快捷键回退/不可用提示才有意义。没有 STT 引擎时
-        // [ZH] 麦克风已静默禁用，再往对话区追加这些消息正是本次降级要消除的噪音。
-        if (_media.State.SttAvailable)
-        {
-            if (!_hotkeys.IsSupported && !OperatingSystem.IsWindows())
-            {
-                AddMessage("system", Loc.T("main.media.hotkeyFallback",
-                    "⌨️ 本平台暂不支持全局快捷键：在本窗口内按住右 Ctrl 仍可录音，松开后自动转写。"));
-            }
-            else if (!_hotkeys.IsSupported && _hotkeys.UnavailableReason.Length > 0)
-            {
-                AddMessage("system", Loc.T("main.media.hotkeyUnavailable",
-                    "⚠️ 全局快捷键不可用：{0}。可在窗口内按住右 Ctrl 录音。",
-                    _hotkeys.UnavailableReason));
-            }
-        }
-        SetStatus(_media.State.VisionAvailable
-            ? Loc.T("main.media.visionReady", "🖼 图片对话可用")
-            : Loc.T("main.media.visionUnavailable", "🖼 未配置视觉模型"));
-        // [EN] Disable the image entry for non-VL models instead of showing an error
-        //      after the user has already selected a file.
-        // [ZH] 非 VLM 模型禁用图片入口，而不是等用户选完文件后再报错。
-        ImageButton.IsEnabled = _media.State.VisionAvailable;
-        // [EN] Speech input is offered only when a transcription engine is available;
-        // [EN] otherwise the microphone is silently disabled (greyed out) with a
-        // [EN] tooltip explaining why, and shortcut presses only update the status bar.
-        // [ZH] 仅在转写引擎可用时提供语音输入；否则麦克风静默禁用（置灰），悬停说明
-        // [ZH] 原因，快捷键按下时只更新底部状态栏。
-        ApplyMicAvailability();
-    }
-
-    /// <summary>
-    /// [EN] Reflect the current STT capability on the microphone button.
-    ///
-    /// The button is disabled and dimmed (not merely "disabled by theme") when the
-    /// backend reports no usable transcription engine. No error bubble is created:
-    /// the tooltip and the status bar are the only feedback, so a missing STT
-    /// component never pollutes the conversation area.
-    ///
-    /// [ZH] 把当前 STT 能力反映到麦克风按钮上。
-    ///
-    /// 后端报告没有可用转写引擎时，按钮被禁用并降低不透明度（不只依赖主题的禁用
-    /// 外观）。不产生任何错误气泡：只有悬停提示与状态栏反馈，因此缺少 STT 组件
-    /// 绝不会污染对话区。
-    /// </summary>
-    private void ApplyMicAvailability()
-    {
-        bool available = _media.State.Loaded && _media.State.SttAvailable;
-        MicButton.IsEnabled = available;
-        MicButton.Opacity = available ? 1.0 : 0.45;
-        if (available)
-        {
-            ToolTip.SetTip(MicButton, Loc.T("main.media.micTip", "按住说话（松开后转写）"));
-            AutomationProperties.SetHelpText(MicButton, Loc.T("main.media.micHelp",
-                "按住麦克风图标开始录音，松开后自动转写并填入输入框"));
-            return;
-        }
-        string tip = Loc.T("main.media.sttUnsupportedTip", "当前模型或环境不支持语音转写");
-        ToolTip.SetTip(MicButton, tip);
-        AutomationProperties.SetHelpText(MicButton, tip);
-    }
-
-    /// <summary>
-    /// [EN] Status-bar text for "speech input is unavailable". Prefers the
-    /// localized reason reported by the backend, so the user can see whether the
-    /// executable or the Whisper model is missing.
-    /// [ZH] "语音输入不可用"的状态栏文案。优先使用后端上报的已本地化原因，使用户能
-    /// 看出缺失的是可执行文件还是 Whisper 模型。
-    /// </summary>
-    private string SttUnavailableStatus()
-    {
-        string reason = _media.State.Loaded ? _media.State.SttReason : "";
-        return string.IsNullOrWhiteSpace(reason)
-            ? Loc.T("main.media.sttUnsupportedStatus", "🎙 语音转写不可用（未配置 STT 引擎）")
-            : reason;
-    }
-
-    /// <summary>
-    /// [EN] Re-read media settings after the settings window closes and restart the
-    /// global hook so that a push-to-talk switch change takes effect without an
-    /// application restart.
-    /// [ZH] 设置窗口关闭后重新读取媒体设置并重启全局钩子，使按键说话开关的变化无需
-    /// 重启程序即可生效。
-    /// </summary>
-    private async Task ApplyMediaSettingsAsync()
-    {
-        if (!_mediaInitialized)
-            return;
-        await _media.LoadStateAsync(_state.Backend);
-        ApplyMicAvailability();
-        _hotkeys.Stop();
-        if (_media.State.PttEnabled && _media.State.SttAvailable)
-            _hotkeys.Start(_media.State.PttShortcut);
     }
 
     private void RestoreHistory()
@@ -2013,296 +1662,6 @@ public partial class MainWindow : Window
             return;
         using (doc)
             ApplyContextFields(doc.RootElement);
-    }
-
-    /// <summary>
-    /// [EN] Parses and applies the editable context-window selector (v0.2.6 items 19 and 21).
-    ///      The value is read through <see cref="ReadContextWindowInput"/> rather than from a
-    ///      single property, validated against the same bounds as the backend, and an invalid
-    ///      entry is reported as a **system message in the conversation** — never as a
-    ///      transient toast.
-    /// [ZH] 解析并应用可编辑上下文窗口选择器（v0.2.6 第 19 项与第 21 项）。数值经
-    ///      <see cref="ReadContextWindowInput"/> 读取，而不是依赖单一属性；按与后端相同的边界
-    ///      校验；非法输入以**对话区系统消息**告知，绝不再用一闪而过的通知条。
-    /// </summary>
-    private async void OnContextWindowComboKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.Key != Key.Enter)
-            return;
-        // [EN] Mark the key handled so the internal editable TextBox does not open or
-        //      close the drop-down instead of applying the value.
-        // [ZH] 标记已处理，避免内部可编辑 TextBox 用该按键开合下拉框而不是应用数值。
-        e.Handled = true;
-        string raw = ReadContextWindowInput();
-        if (!int.TryParse(raw, out int size)
-            || size < MinContextWindow || size > MaxContextWindow)
-        {
-            string message = Loc.T("main.context.invalid",
-                "⚠️ 请输入 {0}–{1} 之间的整数（tokens）", MinContextWindow, MaxContextWindow);
-            AddMessage("system", message);
-            RestoreContextWindowText();
-            return;
-        }
-        await ApplyContextWindowAsync(size);
-    }
-
-    /// <summary>
-    /// [EN] v0.2.6 item 21: reads the text the user actually typed.
-    ///
-    ///      An editable Avalonia ComboBox keeps the typed string inside an inner TextBox; in
-    ///      some focus/template states <c>ComboBox.Text</c> still holds the previously selected
-    ///      preset. The editor is therefore the first source, the ComboBox text the second and
-    ///      the selected item the last fallback. The result is normalised (trim, thousands
-    ///      separators, full-width digits, stray spaces) so "65,536" and " 65536 " both parse.
-    /// [ZH] v0.2.6 第 21 项：读取用户真正键入的文本。
-    ///
-    ///      可编辑的 Avalonia ComboBox 把键入的字符串放在内部 TextBox 里；某些焦点/模板状态下
-    ///      <c>ComboBox.Text</c> 仍是上一次选中的档位。因此内部编辑器是第一来源，ComboBox 文本
-    ///      第二，选中项是最后回退。结果会规范化（去空白、去千位分隔符、全角数字转半角），
-    ///      使 "65,536" 与 " 65536 " 都能解析。
-    /// </summary>
-    private string ReadContextWindowInput()
-    {
-        TextBox? editor = _contextWindowEditor
-            ?? ContextWindowCombo.GetVisualDescendants().OfType<TextBox>().FirstOrDefault();
-        string raw = editor?.Text ?? "";
-        if (string.IsNullOrWhiteSpace(raw))
-            raw = ContextWindowCombo.Text ?? "";
-        if (string.IsNullOrWhiteSpace(raw))
-            raw = ContextWindowCombo.SelectedItem?.ToString() ?? "";
-        return NormalizeContextWindowInput(raw);
-    }
-
-    /// <summary>
-    /// [EN] Normalises a typed context-window value: trims, converts full-width digits to
-    ///      ASCII, and removes separators / whitespace. Any other character makes the value
-    ///      invalid (empty result), which keeps "65536 tokens" from being accepted by accident.
-    /// [ZH] 规范化手动输入的上下文窗口数值：去首尾空白、全角数字转半角，并移除分隔符与空白。
-    ///      出现其他字符即视为非法（返回空串），避免 "65536 tokens" 之类被误接受。
-    /// </summary>
-    private static string NormalizeContextWindowInput(string raw)
-    {
-        var builder = new StringBuilder(raw.Length);
-        foreach (char ch in raw.Trim())
-        {
-            if (ch >= '０' && ch <= '９')
-                builder.Append((char)('0' + (ch - '０')));
-            else if (ch is >= '0' and <= '9')
-                builder.Append(ch);
-            else if (ch is ',' or '，' or '_' or ' ' or '\t' or '\u00A0')
-                continue;
-            else
-                return "";
-        }
-        return builder.ToString();
-    }
-
-    /// <summary>
-    /// [EN] v0.2.6 item 21: attaches the Enter handler directly to the editable ComboBox's
-    ///      inner TextBox. The tunnel handler on the ComboBox normally sees the key first, but
-    ///      the direct registration removes any dependency on how the template routes focus,
-    ///      which was the reported cause of "Enter sometimes does nothing".
-    /// [ZH] v0.2.6 第 21 项：把回车处理直接挂到可编辑 ComboBox 的内部 TextBox 上。正常情况下
-    ///      ComboBox 上的隧道处理器先看到按键，但直接注册消除了对模板焦点路由的依赖——
-    ///      那正是"回车有时没反应"的上报原因。
-    /// </summary>
-    private void HookContextWindowEditor()
-    {
-        foreach (TextBox editor in ContextWindowCombo.GetVisualDescendants().OfType<TextBox>())
-        {
-            if (ReferenceEquals(editor, _contextWindowEditor))
-                continue;
-            _contextWindowEditor = editor;
-            editor.AddHandler(KeyDownEvent, OnContextWindowComboKeyDown,
-                              RoutingStrategies.Tunnel);
-            AutomationProperties.SetAutomationId(editor, "ContextWindowEditor");
-        }
-    }
-
-    /// <summary>
-    /// [EN] Restore the editable selector text to the last applied value.
-    /// [ZH] 把可编辑选择器的文本恢复为上次已应用的值。
-    /// </summary>
-    private void RestoreContextWindowText()
-    {
-        _contextWindowUpdating = true;
-        try
-        {
-            string text = ContextWindowCombo.SelectedItem?.ToString() ?? "";
-            ContextWindowCombo.Text = text;
-            // [EN] v0.2.6 item 21: the inner editor keeps its own text, so it must be reset
-            //      too; otherwise a rejected number would remain visible after the restore.
-            // [ZH] v0.2.6 第 21 项：内部编辑器维护自己的文本，因此必须一并复位；否则被拒的
-            //      数值在恢复后仍会显示。
-            TextBox? editor = _contextWindowEditor
-                ?? ContextWindowCombo.GetVisualDescendants().OfType<TextBox>().FirstOrDefault();
-            if (editor is not null)
-                editor.Text = text;
-        }
-        finally
-        {
-            _contextWindowUpdating = false;
-        }
-    }
-
-    /// <summary>
-    /// [EN] Select one context-window entry without triggering a backend request.
-    ///      A legacy value that is not one of the four task-book sizes is inserted
-    ///      as an extra entry instead of being silently rounded to a neighbour.
-    /// [ZH] 选中一个上下文窗口档位且不触发后端请求。不属于任务书四档的历史值会作为
-    ///      额外条目插入，而不是被静默取整到相邻档位。
-    /// </summary>
-    private void SelectContextWindow(int size)
-    {
-        if (size <= 0)
-            return;
-        _contextWindowUpdating = true;
-        try
-        {
-            bool present = false;
-            foreach (object? item in ContextWindowCombo.Items)
-            {
-                if (item is int value && value == size)
-                {
-                    present = true;
-                    break;
-                }
-            }
-            if (!present)
-                ContextWindowCombo.Items.Insert(0, size);
-            ContextWindowCombo.SelectedItem = size;
-            // [EN] An editable ComboBox keeps its own text; mirror the authoritative
-            //      value so a previously typed-but-rejected number cannot linger. The inner
-            //      editor is synchronised as well (v0.2.6 item 21).
-            // [ZH] 可编辑 ComboBox 维护自己的文本；同步权威值，避免上次被拒的输入残留。
-            //      内部编辑器一并同步（v0.2.6 第 21 项）。
-            ContextWindowCombo.Text = size.ToString();
-            TextBox? editor = _contextWindowEditor
-                ?? ContextWindowCombo.GetVisualDescendants().OfType<TextBox>().FirstOrDefault();
-            if (editor is not null)
-                editor.Text = size.ToString();
-        }
-        finally
-        {
-            _contextWindowUpdating = false;
-        }
-    }
-
-    /// <summary>
-    /// [EN] Persist and apply a user-selected context window (v0.2.6 item 17).
-    ///      The backend saves the value and reloads the model with exactly this
-    ///      window; on failure it keeps the previous engine, restores the previous
-    ///      setting and reports why. The selector is re-synchronised from the
-    ///      configuration afterwards, so UI and engine stay consistent.
-    /// [ZH] 持久化并应用用户选择的上下文窗口（v0.2.6 第 17 项）。后端保存该值并以
-    ///      完全相同的窗口重载模型；失败时保留旧引擎、恢复原设置并说明原因。随后
-    ///      选择器按配置重新同步，使界面与引擎保持一致。
-    /// </summary>
-    private async Task ApplyContextWindowAsync(int size)
-    {
-        // [EN] v0.2.6 item 19: a manually typed value reaches this method directly, so
-        //      the bounds are enforced here as well as in the key handler.
-        // [ZH] v0.2.6 第 19 项：手动输入的值会直接进入本方法，因此这里与按键处理器
-        //      一样强制边界。
-        if (size < MinContextWindow || size > MaxContextWindow)
-        {
-            string message = Loc.T("main.context.invalid",
-                "⚠️ 请输入 {0}–{1} 之间的整数（tokens）", MinContextWindow, MaxContextWindow);
-            // [EN] v0.2.6 item 21: validation failures are persisted as a system message; the
-            //      former transient status/toast pair is gone.
-            // [ZH] v0.2.6 第 21 项：校验失败改为持久化系统消息；此前的状态栏/Toast 双写已移除。
-            AddMessage("system", message);
-            RestoreContextWindowText();
-            return;
-        }
-        if (!_state.Backend.IsRunning)
-        {
-            string message = Loc.T("main.error.notRunning", "❌ 后端未运行");
-            AddMessage("system", message);
-            await RefreshContextAsync();
-            return;
-        }
-        SetStatus(Loc.T("main.context.applying", "⏳ 正在应用上下文窗口 {0}…", size));
-        try
-        {
-            JsonDocument? doc = await _state.Backend.SendAsync(
-                new { action = "capability_settings", n_ctx = size, allow_override = true },
-                idleTimeout: BackendService.HeavyIdleTimeout);
-            if (doc is null)
-            {
-                string failure = Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
-                    _state.Backend.LastError ?? "");
-                SetStatus(failure);
-                AddMessage("system", failure);
-                await RefreshContextAsync();
-                return;
-            }
-            using (doc)
-            {
-                JsonElement root = doc.RootElement;
-                bool ok = !(root.TryGetProperty("ok", out JsonElement okElement)
-                            && okElement.ValueKind == JsonValueKind.False);
-                string content = GetStringField(root, "content");
-                if (ok)
-                {
-                    // [EN] v0.2.6 item 21: a successful application also leaves a copyable
-                    //      record, so the user can prove which window is actually active.
-                    // [ZH] v0.2.6 第 21 项：应用成功同样留下可复制记录，用户可据此确认
-                    //      实际生效的窗口大小。
-                    string applied = string.IsNullOrWhiteSpace(content)
-                        ? Loc.T("main.context.applied", "✅ 上下文窗口已设为 {0}", size)
-                        : content;
-                    SetStatus(applied);
-                    AddMessage("system", applied);
-                }
-                else
-                {
-                    string message = string.IsNullOrWhiteSpace(content)
-                        ? Loc.T("main.context.applyFailed", "❌ 无法应用上下文窗口 {0}", size)
-                        : content;
-                    SetStatus(message);
-                    AddMessage("system", message);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            string failure = Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message);
-            SetStatus(failure);
-            AddMessage("system", failure);
-        }
-        await RefreshContextAsync();
-    }
-
-    private async Task RefreshAutomationStatusAsync()
-    {
-        JsonDocument? doc = await _state.Backend.SendAsync(new { action = "automation_status" });
-        if (doc is null)
-            return;
-        using (doc)
-        {
-            if (!doc.RootElement.TryGetProperty("automation", out JsonElement st))
-                return;
-            bool running = st.TryGetProperty("running", out JsonElement r) && r.ValueKind == JsonValueKind.True;
-            bool enabled = st.TryGetProperty("enabled", out JsonElement en) && en.ValueKind == JsonValueKind.True;
-            SetAutomationStatus(running, enabled);
-        }
-    }
-
-    private async Task RefreshMarketStatusAsync()
-    {
-        JsonDocument? doc = await _state.Backend.SendAsync(new { action = "market_status" });
-        if (doc is null)
-            return;
-        using (doc)
-        {
-            if (!doc.RootElement.TryGetProperty("market_status", out JsonElement st))
-                return;
-            bool enabled = st.TryGetProperty("enabled", out JsonElement en) && en.ValueKind == JsonValueKind.True;
-            SetMarketStatus(enabled
-                ? Loc.T("main.strip.marketConnected", "🌐 市场：已启用")
-                : Loc.T("main.strip.market", "🌐 市场：{0}", Loc.T("settings.market.state.disabled", "未启用")));
-        }
     }
 
     /// <summary>
@@ -2705,7 +2064,7 @@ public partial class MainWindow : Window
         UpdateProgressBar.Value = percent;
         StripUpdateText.Text = total > 0
             ? Loc.T("main.update.downloadingPercent", "⏳ 下载中 {0}%（{1}/{2}）",
-                percent, FormatMemoryBytes(downloaded), FormatMemoryBytes(total))
+                percent, FormatBytes(downloaded), FormatBytes(total))
             : Loc.T("main.update.downloading", "⏳ 正在下载更新…");
     }
 
@@ -2807,7 +2166,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            ToolTip.SetTip(ModelChip, Loc.T("main.model.clickTip", "点击打开「设置 → 模型」"));
+            ToolTip.SetTip(ModelChip, Loc.T("main.model.readonlyTip", "当前绑定的模型（只读）"));
         }
     }
 
@@ -2835,17 +2194,6 @@ public partial class MainWindow : Window
             if (mode.Length > 0)
                 ModeText.Text = Loc.T("main.mode.chip", "🛠️ 模式: {0}", mode);
         }
-        if (root.TryGetProperty("search", out JsonElement searchEl)
-            && searchEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
-        {
-            SetSearchStatus(searchEl.GetBoolean());
-        }
-        if (root.TryGetProperty("kv_cache_text", out JsonElement kvEl) && kvEl.ValueKind == JsonValueKind.String)
-            SetKvCacheStatus(kvEl.GetString() ?? "");
-        if (root.TryGetProperty("memory", out JsonElement memEl) && memEl.ValueKind == JsonValueKind.Object)
-            SetMemoryStatus(memEl);
-        if (root.TryGetProperty("capability", out JsonElement capEl) && capEl.ValueKind == JsonValueKind.Object)
-            SetCapabilityStatus(capEl);
         if (root.TryGetProperty("context", out JsonElement ctxEl) && ctxEl.ValueKind == JsonValueKind.Object)
             ApplyContextFields(ctxEl);
     }
@@ -2859,11 +2207,6 @@ public partial class MainWindow : Window
     {
         int used = GetIntField(context, "used");
         int limit = GetIntField(context, "limit");
-        // [EN] v0.2.6 item 17: keep the selector in sync with the persisted user
-        //      setting, never with a derived/effective value.
-        // [ZH] v0.2.6 第 17 项：选择器只同步持久化的用户设置，绝不同步推导值或
-        //      生效值。
-        SelectContextWindow(GetIntField(context, "context_length"));
         if (limit <= 0)
             return;
         // [EN] Development task 10 (self-test fix 1): the displayed value now uses **what was
@@ -2885,21 +2228,15 @@ public partial class MainWindow : Window
         // [EN] only" item B7 of the difference list).
         // [ZH] 数字缩写（v0.2.2 第 3 批）：1.2k / 3.4m 这类写法在窄胶囊里比
         // [ZH] "12000/131072" 可读得多，也与 WPF 一致（差异清单 B7 的「仅文案」一条）。
-        ContextChipText.Text = Loc.T("main.context.button", "上下文：{0}/{1}",
-            AbbreviateNumber(shown), AbbreviateNumber(limit));
+        // [EN] Reader status: the document token count and the allocated window.
+        // [ZH] Reader 状态：文档 token 数与已分配的窗口。
         int percent = (int)Math.Round(shown * 100.0 / limit);
-        StripContextText.Text = Loc.T("main.strip.context", "📊 上下文 {0}%", percent);
-        ToolTip.SetTip(StripContextButton, Loc.T("main.strip.contextHelpBoth",
-            "上下文已用 {0} / {1} tokens（{2}%）。其中常驻底数 {3}，上一轮实际发出 {4}。点击刷新。",
-            shown, limit, percent, used, lastRequest));
-        // [EN] The chip itself needs a ToolTip as well (previously only the status area button
-        // [EN] had one): when the pointer rests on "context: …" in the title bar, the first
-        // [EN] feedback the user gets should be the full picture.
-        // [ZH] 胶囊本身也要有 ToolTip（此前只有状态区那个按钮有）：鼠标停在标题栏的
-        // [ZH] 「上下文：…」上时，用户看到的第一个反馈就应该是完整口径。
-        ToolTip.SetTip(ContextChip, Loc.T("main.context.chipTip",
-            "上下文已用 {0} / {1} tokens（{2}%）。常驻底数 {3}，上一轮实际发出 {4}。点击刷新。",
-            shown, limit, percent, used, lastRequest));
+        FileTokensText.IsVisible = true;
+        FileTokensText.Text = Loc.T("main.file.tokens", "📄 文档 {0} tokens · 窗口 {1}",
+            AbbreviateNumber(shown), AbbreviateNumber(limit));
+        ToolTip.SetTip(FileTokensText, Loc.T("main.file.tokensTip",
+            "已用 {0} / {1} tokens（{2}%）。窗口由上传文档大小自动分配。",
+            shown, limit, percent));
     }
 
     /// <summary>
@@ -2920,122 +2257,9 @@ public partial class MainWindow : Window
         return (value / 1000000.0).ToString("0.#") + "m";
     }
 
-    private void SetSearchStatus(bool on)
-    {
-        string state = on ? Loc.T("main.strip.on", "开") : Loc.T("main.strip.off", "关");
-        SearchText.Text = Loc.T("main.strip.search", "🔍 搜索：{0}", state);
-    }
-
-    private void SetKvCacheStatus(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text) || text == "---")
-            return;
-        StripKvText.Text = Loc.T("main.strip.kv", "💾 KV: {0}", text);
-    }
-
-    /// <summary>
-    /// [EN] Physical-memory pressure reported by the backend hardware snapshot. The percentage
-    /// [EN] is
-    ///      used memory over total memory; the raw byte values remain in the tooltip so the
-    ///      figure can be audited instead of trusted blindly.
-    /// [ZH] 由后端硬件快照上报的物理内存压力。百分比为已用内存占总内存的比例；原始字节值保留在
-    /// [ZH] 悬停提示中，便于核对而不是盲信一个数字。
-    /// </summary>
-    private void SetMemoryStatus(JsonElement memory)
-    {
-        long total = GetLongField(memory, "total_bytes");
-        long available = GetLongField(memory, "available_bytes");
-        if (total <= 0)
-            return;
-        if (available < 0)
-            available = 0;
-        if (available > total)
-            available = total;
-        long used = total - available;
-        int percent = (int)Math.Round(used * 100.0 / total);
-        bool critical = percent > 90;
-        StripMemoryText.Text = critical
-            ? Loc.T("main.strip.memoryCritical", "⚠️ 内存 {0}%", percent)
-            : Loc.T("main.strip.memoryStrip", "🧠 内存 {0}%", percent);
-        // [EN] The class drives the red error brush through the theme; removing it restores the
-        // [EN] normal foreground without hard-coding colours in code-behind.
-        // [ZH] 该类通过主题驱动红色错误画刷；移除后恢复普通前景色，代码里不写死颜色。
-        StripMemoryText.Classes.Set("memory-critical", critical);
-        ToolTip.SetTip(StripMemoryButton, critical
-            ? Loc.T("main.strip.memoryCriticalTip",
-                "内存极度紧张，可能影响推理速度：已用 {0} / 共 {1}（{2}%）",
-                FormatMemoryBytes(used), FormatMemoryBytes(total), percent)
-            : Loc.T("main.strip.memoryDetail",
-                "物理内存：已用 {0} / 共 {1}（{2}%）", FormatMemoryBytes(used), FormatMemoryBytes(total), percent));
-    }
-
-    private static string FormatMemoryBytes(long bytes)
-    {
-        double gb = bytes / 1024.0 / 1024.0 / 1024.0;
-        return gb >= 1.0 ? $"{gb:0.0} GB" : $"{bytes / 1024.0 / 1024.0:0} MB";
-    }
-
     private static long GetLongField(JsonElement node, string name)
         => node.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.Number
            && el.TryGetInt64(out long value) ? value : 0;
-
-    private void SetAutomationStatus(bool running, bool enabled)
-    {
-        string state = running
-            ? Loc.T("main.strip.autoRunning", "运行中")
-            : enabled ? Loc.T("main.strip.autoReady", "已启用") : Loc.T("main.strip.off", "关");
-        AutoText.Text = Loc.T("main.strip.automation", "⚙️ 自动化：{0}", state);
-    }
-
-    private void SetMarketStatus(string text) => MarketText.Text = text;
-
-    /// <summary>
-    /// [EN] Status area: model capabilities (parameter count · quantization · usable window ·
-    /// [EN] measured speed).
-    /// [ZH] 状态区：模型能力（参数量 · 量化 · 可用窗口 · 实测速度）。
-    /// [EN] When all four are missing, the placeholder text is kept; blank fields would make
-    /// [EN] people think the interface is broken.
-    /// [ZH] 四项都缺时保持占位文本 —— 空白会让人以为界面坏了。
-    /// </summary>
-    private void SetCapabilityStatus(JsonElement capability)
-    {
-        string parameters = GetStringField(capability, "parameters_text");
-        string quantization = GetStringField(capability, "quantization");
-        int usable = GetIntField(capability, "usable_context");
-        double tps = GetDoubleField(capability, "last_tps");
-
-        var parts = new List<string>();
-        if (parameters.Length > 0)
-            parts.Add(parameters);
-        if (quantization.Length > 0)
-            parts.Add(quantization);
-        if (usable > 0)
-            parts.Add($"{usable / 1024}k");
-        if (tps > 0)
-            parts.Add(Loc.T("main.strip.capabilityTps", "{0:0.#} 字/秒", tps));
-        if (parts.Count > 0)
-            StripCapabilityText.Text = Loc.T("main.strip.capability", "🧠 {0}", string.Join(" · ", parts));
-
-        _capabilityWarnings = GetStringListField(capability, "warnings");
-        StripWarnButton.IsVisible = _capabilityWarnings.Count > 0;
-        StripWarnText.Text = Loc.T("main.strip.warn", "⚠️ 能力提示 {0}", _capabilityWarnings.Count);
-        if (_capabilityWarnings.Count > 0)
-            ToolTip.SetTip(StripWarnButton, string.Join("\n", _capabilityWarnings.Select(w => "• " + w)));
-    }
-
-    /// <summary>
-    /// [EN] Spells out all capability warnings (the status area has room for only one number).
-    /// [ZH] 把全部能力提示讲清楚（状态区只放得下一个数字）。
-    /// </summary>
-    private void ShowWarnings()
-    {
-        if (_capabilityWarnings.Count == 0)
-            return;
-        var lines = new List<string> { Loc.T("main.strip.warnTitle", "模型能力提示"), "" };
-        for (int i = 0; i < _capabilityWarnings.Count; i++)
-            lines.Add($"{i + 1}. {_capabilityWarnings[i]}");
-        AddMessage("system", string.Join("\n", lines));
-    }
 
     private static string GetStringField(JsonElement node, string name)
         => node.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.String
@@ -3291,7 +2515,6 @@ public partial class MainWindow : Window
         SnippetPalette.IsOpen = false;
         // [EN] v0.2.6 Part 3 panels share the same "one panel at a time" rule.
         // [ZH] v0.2.6 Part 3 的两个面板遵循同一条“同时只开一个面板”规则。
-        KnowledgePanel.IsOpen = false;
         PromptLibraryPanel.IsOpen = false;
         UpdateSnippetButtonText();
     }
@@ -3730,60 +2953,6 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>
-    /// [EN] Manual context compression: it runs context_compress instead of making the user
-    /// [EN] wait for an automatic trigger.
-    /// [ZH] 手动压缩上下文：走 context_compress 而不是让用户等自动触发 ——
-    /// [EN] When about to upload a large file, or when the context is already at 70%, the user
-    /// [EN] needs a "free up space right now" button.
-    /// [ZH] 准备上传大文件、或上下文已经 70% 时，用户需要一个"立刻腾地方"的按钮。
-    /// </summary>
-    private async Task CompactContextAsync()
-    {
-        if (!_state.Backend.IsRunning)
-            return;
-        StripCompactButton.IsEnabled = false;
-        StripCompactText.Text = Loc.T("main.strip.compacting", "🗜 压缩中…");
-        try
-        {
-            JsonDocument? doc = await _state.Backend.SendAsync(new { action = "context_compress", force = true },
-                idleTimeout: BackendService.HeavyIdleTimeout);
-            if (doc is null)
-            {
-                AddMessage("system", Loc.T("main.strip.compactFailed", "❌ 压缩上下文失败：{0}", _state.Backend.LastError ?? ""));
-                return;
-            }
-            using (doc)
-            {
-                if (doc.RootElement.TryGetProperty("context", out JsonElement context))
-                    ApplyContextFields(context);
-                string message = Loc.T("main.strip.compactNone", "上下文无需压缩");
-                if (doc.RootElement.TryGetProperty("compress", out JsonElement compress)
-                    && compress.ValueKind == JsonValueKind.Object
-                    && compress.TryGetProperty("compressed", out JsonElement c)
-                    && c.ValueKind == JsonValueKind.True)
-                {
-                    int dropped = GetIntField(compress, "dropped");
-                    int before = GetIntField(compress, "used_before");
-                    int after = GetIntField(compress, "used_after");
-                    message = after > 0
-                        ? Loc.T("main.strip.compactDone", "已压缩：移出 {0} 条（{1} → {2} tokens）", dropped, before, after)
-                        : Loc.T("main.strip.compactDoneShort", "已压缩：移出 {0} 条较早消息", dropped);
-                }
-                AddMessage("system", Loc.T("main.strip.compactResult", "🗜 {0}", message));
-            }
-        }
-        catch (Exception ex)
-        {
-            AddMessage("system", Loc.T("main.strip.compactFailed", "❌ 压缩上下文失败：{0}", ex.Message));
-        }
-        finally
-        {
-            StripCompactText.Text = Loc.T("main.strip.compact", "🗜 压缩上下文");
-            StripCompactButton.IsEnabled = true;
-        }
-    }
-
     // -----------------------------------------------------------------
     // [EN] Settings window
     // [ZH] 设置窗口
@@ -3806,7 +2975,6 @@ public partial class MainWindow : Window
             // [ZH] 回来后把可能被改动的业务设置反映到状态区
             ApplyTexts();
             await RefreshStatusAsync();
-            await ApplyMediaSettingsAsync();
             await RefreshProviderStatusAsync();
         }
         catch (Exception ex)
@@ -3858,8 +3026,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            string answer = await StreamChatAsync(text);
-            await MaybeSpeakAsync(answer);
+            await StreamChatAsync(text);
         }
         finally
         {
@@ -4651,379 +3818,6 @@ public partial class MainWindow : Window
     // [ZH] 文件上传
     // -----------------------------------------------------------------
 
-    /// <summary>
-    /// [EN] Attach one local image and ask about it (`image_chat`, v0.2.6 Part 2).
-    ///
-    /// [EN] The picked file is copied into the backend staging directory first; only
-    /// the resulting absolute path crosses the protocol. The current input text (if
-    /// any) becomes the question, which makes "type a question, then attach a
-    /// screenshot" behave as expected.
-    ///
-    /// [ZH] 附加一张本地图片并对其提问（`image_chat`，v0.2.6 Part 2）。
-    ///
-    /// [ZH] 所选文件先复制到后端暂存目录，只有生成的绝对路径跨协议传递。当前输入
-    /// 框文本（如有）作为问题，使"先写问题、再附加截图"符合预期。
-    /// </summary>
-    private async Task PickImageAsync()
-    {
-        if (_busy)
-        {
-            AddMessage("system", Loc.T("main.error.busy", "⏳ 上一条回复仍在生成，请先停止或等待完成"));
-            return;
-        }
-        // [EN] A non-VL model must not raise an error dialog: the entry is disabled and
-        //      an invocation from a keyboard shortcut only updates the status line.
-        // [ZH] 非 VLM 模型不得弹出错误框：入口已禁用，经快捷键触发时也只更新状态栏。
-        if (!_media.State.Loaded)
-            await _media.LoadStateAsync(_state.Backend);
-        if (_media.State.Loaded && !_media.State.VisionAvailable)
-        {
-            SetStatus(string.IsNullOrWhiteSpace(_media.State.VisionReason)
-                ? Loc.T("main.media.visionUnavailable", "🖼 未配置视觉模型")
-                : _media.State.VisionReason);
-            return;
-        }
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = Loc.T("main.media.chooseTitle", "选择图片"),
-            AllowMultiple = false,
-            FileTypeFilter = new[]
-            {
-                new FilePickerFileType(Loc.T("main.media.filter", "图片"))
-                {
-                    Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp" },
-                },
-            },
-        });
-        string? source = files.Select(f => f.TryGetLocalPath())
-            .FirstOrDefault(p => !string.IsNullOrEmpty(p));
-        if (string.IsNullOrEmpty(source))
-            return;
-
-        if (!_media.State.Loaded)
-            await _media.LoadStateAsync(_state.Backend);
-        string? staged = _media.StageImage(source!);
-        if (staged is null)
-        {
-            AddMessage("system", Loc.T("main.media.stageFailed",
-                "❌ 无法暂存图片（格式不受支持或目标目录不可写）：{0}", source));
-            return;
-        }
-        if (_media.State.Loaded && !_media.State.VisionAvailable)
-            return;
-
-        string prompt = (InputBox.Text ?? "").Trim();
-        InputBox.Text = "";
-        AddMessage("user", prompt.Length > 0
-            ? Loc.T("main.media.imageUser", "🖼 {0}", Path.GetFileName(staged)) + Environment.NewLine + prompt
-            : Loc.T("main.media.imageUser", "🖼 {0}", Path.GetFileName(staged)));
-        AddMessage("system", Loc.T("main.media.analyzing", "🔎 正在分析图片…"));
-        SetBusy(true);
-        try
-        {
-            using JsonDocument? doc = await _state.Backend.SendAsync(
-                new { action = "image_chat", path = staged, prompt },
-                idleTimeout: TimeSpan.FromMinutes(15));
-            if (doc is null)
-            {
-                AddMessage("system", Loc.T("main.error.requestFailed",
-                    "❌ 请求失败: {0}", _state.Backend.LastError ?? ""));
-                return;
-            }
-            JsonElement root = doc.RootElement;
-            bool ok = !root.TryGetProperty("ok", out JsonElement okElement)
-                || okElement.ValueKind != JsonValueKind.False;
-            string content = root.TryGetProperty("content", out JsonElement contentElement)
-                ? contentElement.GetString() ?? "" : "";
-            if (!ok)
-            {
-                AddMessage("system", string.IsNullOrWhiteSpace(content)
-                    ? Loc.T("main.media.failed", "⚠️ 图片分析失败")
-                    : content);
-                return;
-            }
-            AddMessage("assistant", content);
-            _lastAssistantAnswer = content;
-            ApplyStatusFields(root);
-            await RefreshContextAsync();
-            await MaybeSpeakAsync(content);
-        }
-        catch (Exception ex)
-        {
-            AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
-        }
-        finally
-        {
-            SetBusy(false);
-        }
-    }
-
-    /// <summary>
-    /// [EN] Push-to-talk press handler: ask the backend to start recording.
-    /// [ZH] 按键说话按下处理：请求后端开始录音。
-    /// </summary>
-    /// <summary>
-    /// [EN] Whether the microphone pointer is currently held. Used to make release and
-    ///      capture-loss idempotent so one press produces exactly one recording.
-    /// [ZH] 麦克风指针当前是否处于按住状态。用于让松开与捕获丢失幂等，确保一次按下
-    ///      只产生一次录音。
-    /// </summary>
-    private bool _micPointerActive;
-
-    private async void MicButton_PointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (!e.GetCurrentPoint(MicButton).Properties.IsLeftButtonPressed)
-            return;
-        e.Handled = true;
-        if (_micPointerActive)
-            return;
-        _micPointerActive = true;
-        await StartPushToTalkAsync();
-    }
-
-    private async void MicButton_PointerReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (!_micPointerActive)
-            return;
-        _micPointerActive = false;
-        e.Handled = true;
-        await FinishPushToTalkAsync();
-    }
-
-    private async void MicButton_PointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
-    {
-        // [EN] Releasing outside the button removes the pointer capture; finish the
-        //      recording instead of leaving it active until the backend watchdog.
-        // [ZH] 在按钮外松手会移除指针捕获；此时结束录音，而不是让它一直运行到后端
-        //      看门狗触发。
-        if (!_micPointerActive)
-            return;
-        _micPointerActive = false;
-        await FinishPushToTalkAsync();
-    }
-
-    private async Task StartPushToTalkAsync()
-    {
-        // [EN] Silent degradation: without a usable STT engine nothing is recorded,
-        // [EN] no request is sent and no error bubble is created; only the status
-        // [EN] bar states the reason. This covers pointer clicks (the button is
-        // [EN] disabled) and any hotkey path that still reaches this method.
-        // [ZH] 静默降级：没有可用 STT 引擎时不录音、不发请求、不产生错误气泡，只在
-        // [ZH] 状态栏说明原因。这覆盖指针点击（按钮已禁用）与任何仍会到达此处的
-        // [ZH] 快捷键路径。
-        if (!_media.State.SttAvailable)
-        {
-            SetStatus(SttUnavailableStatus());
-            return;
-        }
-        // [EN] The pending flag coalesces key auto-repeat: the hook reports repeated
-        // key-down events while the key is held, and only the first one may start a
-        // recording.
-        // [ZH] 待处理标记用于合并按键自动重复：按住期间钩子会重复上报按下事件，
-        // 只有第一个可以开始录音。
-        if (_busy || _recording || _pttPending || !_state.Backend.IsRunning)
-            return;
-        _pttPending = true;
-        try
-        {
-            using JsonDocument? doc = await _state.Backend.SendAsync(
-                new { action = "audio_record_start" },
-                idleTimeout: TimeSpan.FromSeconds(20));
-            if (doc is null || (doc.RootElement.TryGetProperty("ok", out JsonElement ok)
-                                && ok.ValueKind == JsonValueKind.False))
-            {
-                string message = doc is not null
-                    && doc.RootElement.TryGetProperty("content", out JsonElement content)
-                    ? content.GetString() ?? "" : _state.Backend.LastError ?? "";
-                AddMessage("system", string.IsNullOrWhiteSpace(message)
-                    ? Loc.T("main.media.recordFailed", "⚠️ 无法开始录音")
-                    : message);
-                return;
-            }
-            _recording = true;
-            _pttPending = false;
-            RecordingHint.IsVisible = true;
-            SetStatus(Loc.T("main.media.recordingStatus", "🎙 录音中…松开结束"));
-            // [EN] The key may have been released while the start request was in
-            // [EN] flight. Honour that release now instead of leaving a recording that
-            // [EN] would otherwise run until the watchdog fires.
-            // [ZH] 开始请求尚未返回时用户可能已经松键。此处兑现该松开事件，避免录音
-            // [ZH] 一直跑到看门狗触发。
-            if (_pttReleasePending)
-            {
-                _pttReleasePending = false;
-                await FinishPushToTalkAsync();
-            }
-        }
-        catch (Exception ex)
-        {
-            AddMessage("system", Loc.T("main.media.recordFailed", "⚠️ 无法开始录音") + $" {ex.Message}");
-        }
-        finally
-        {
-            _pttPending = false;
-        }
-    }
-
-    /// <summary>
-    /// [EN] Push-to-talk release handler: stop recording, transcribe, and put the text
-    /// into the input box (never send it automatically: the user reviews first).
-    /// [ZH] 按键说话松开处理：停止录音、转写，并把文本写入输入框（绝不自动发送：
-    /// 由用户先确认）。
-    /// </summary>
-    private async Task FinishPushToTalkAsync()
-    {
-        if (_pttPending)
-        {
-            _pttReleasePending = true;
-            return;
-        }
-        if (!_recording)
-            return;
-        _recording = false;
-        RecordingHint.IsVisible = false;
-        SetStatus(Loc.T("main.media.transcribing", "✍️ 正在转写语音…"));
-        try
-        {
-            string path = "";
-            using (JsonDocument? stop = await _state.Backend.SendAsync(
-                       new { action = "audio_record_stop" },
-                       idleTimeout: TimeSpan.FromSeconds(30)))
-            {
-                if (stop is null)
-                {
-                    AddMessage("system", Loc.T("main.media.recordFailed", "⚠️ 无法结束录音"));
-                    return;
-                }
-                JsonElement root = stop.RootElement;
-                if (root.TryGetProperty("ok", out JsonElement ok)
-                    && ok.ValueKind == JsonValueKind.False)
-                {
-                    AddMessage("system", root.TryGetProperty("content", out JsonElement content)
-                        ? content.GetString() ?? "" : Loc.T("main.media.recordFailed", "⚠️ 无法结束录音"));
-                    return;
-                }
-                path = root.TryGetProperty("path", out JsonElement pathElement)
-                    ? pathElement.GetString() ?? "" : "";
-            }
-            if (string.IsNullOrEmpty(path))
-            {
-                AddMessage("system", Loc.T("main.media.recordFailed", "⚠️ 无法结束录音"));
-                return;
-            }
-            // [EN] The capability may have changed while recording (for example the
-            // [EN] STT engine was removed or disabled in settings). Do not send a
-            // [EN] transcription request that is known to fail; report in the status
-            // [EN] bar only.
-            // [ZH] 录音期间能力可能已变化（例如设置中移除或关闭了 STT 引擎）。不要发送
-            // [ZH] 已知会失败的转写请求，只在状态栏说明。
-            if (!_media.State.SttAvailable)
-            {
-                SetStatus(SttUnavailableStatus());
-                return;
-            }
-            using JsonDocument? result = await _state.Backend.SendAsync(
-                new { action = "transcribe_audio", path },
-                idleTimeout: TimeSpan.FromMinutes(5));
-            if (result is null)
-            {
-                AddMessage("system", Loc.T("main.media.sttFailed", "⚠️ 语音转写失败"));
-                return;
-            }
-            JsonElement transcription = result.RootElement;
-            if (transcription.TryGetProperty("ok", out JsonElement okElement)
-                && okElement.ValueKind == JsonValueKind.False)
-            {
-                string message = transcription.TryGetProperty("content", out JsonElement content)
-                    ? content.GetString() ?? "" : Loc.T("main.media.sttFailed", "⚠️ 语音转写失败");
-                // [EN] A missing/disabled STT component is a capability degradation,
-                // [EN] not an operation error: update the status bar and grey out the
-                // [EN] microphone instead of adding a red system message.
-                // [ZH] STT 组件缺失/关闭属于能力降级而非操作错误：更新状态栏并把麦克风
-                // [ZH] 置灰，不在对话区追加红色系统消息。
-                string code = transcription.TryGetProperty("error_code", out JsonElement codeEl)
-                    ? codeEl.GetString() ?? "" : "";
-                if (code is "stt_unavailable" or "stt_disabled")
-                {
-                    SetStatus(string.IsNullOrWhiteSpace(message)
-                        ? Loc.T("main.media.sttUnsupportedStatus",
-                            "🎙 语音转写不可用（未配置 STT 引擎）")
-                        : message);
-                    _media.State.SttAvailable = false;
-                    ApplyMicAvailability();
-                    return;
-                }
-                // [EN] v0.2.6 item 21: a single error bubble is enough; writing the generic
-                //      failure line after the detailed one produced two bubbles for one fault.
-                // [ZH] v0.2.6 第 21 项：一条错误气泡即可；此前在详细原因之后再写一条通用失败
-                //      提示，会让同一次故障出现两个气泡。
-                AddMessage("system", message);
-                return;
-            }
-            string text = transcription.TryGetProperty("text", out JsonElement textElement)
-                ? textElement.GetString() ?? "" : "";
-            if (text.Length == 0)
-            {
-                AddMessage("system", Loc.T("main.media.sttEmpty", "没有识别到语音内容"));
-                return;
-            }
-            string current = InputBox.Text ?? "";
-            InputBox.Text = current.Length > 0 && !current.EndsWith(' ')
-                ? current + " " + text
-                : current + text;
-            InputBox.CaretIndex = InputBox.Text.Length;
-            InputBox.Focus();
-            AddMessage("system", Loc.T("main.media.transcribed", "✅ 已转写并填入输入框"));
-            SetStatus(Loc.T("main.status.ready", "就绪"));
-        }
-        catch (Exception ex)
-        {
-            AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}", ex.Message));
-        }
-    }
-
-    /// <summary>
-    /// [EN] Read an assistant answer aloud when automatic reading is enabled
-    /// (`media.tts_auto_read`). Failures stay silent: the text is already visible.
-    /// [ZH] 在开启自动朗读（`media.tts_auto_read`）时朗读助手回答。失败保持静默：
-    /// 文本已经可见。
-    /// </summary>
-    private async Task MaybeSpeakAsync(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text) || !_state.Backend.IsRunning)
-            return;
-        if (!_media.State.TtsEnabled || !_media.State.TtsAutoRead
-            || !_media.State.TtsEngineAvailable)
-            return;
-        string body = text.Length > 4000 ? text[..4000] : text;
-        try
-        {
-            using JsonDocument? doc = await _state.Backend.SendAsync(
-                new
-                {
-                    action = "tts_generate",
-                    text = body,
-                    voice = _media.State.TtsVoice,
-                    rate = _media.State.TtsRate,
-                },
-                idleTimeout: TimeSpan.FromMinutes(2));
-            if (doc is null)
-                return;
-            JsonElement root = doc.RootElement;
-            if (root.TryGetProperty("ok", out JsonElement ok) && ok.ValueKind == JsonValueKind.False)
-                return;
-            string path = root.TryGetProperty("path", out JsonElement pathElement)
-                ? pathElement.GetString() ?? "" : "";
-            if (path.Length > 0)
-                _media.PlayAudio(path);
-        }
-        catch (Exception)
-        {
-            // [EN] Speech is a convenience: never surface a dialog for it.
-            // [ZH] 语音只是便利功能：不为它弹窗。
-        }
-    }
-
     private async Task PickFilesAsync()
     {
         // [EN] An over-limit upload awaiting confirmation: clicking "upload files" once more
@@ -5511,14 +4305,6 @@ public partial class MainWindow : Window
             SetStatus("⏳ Generating · 428 tokens written");
             ModelText.Text = "🧠 Model: Qwen2.5-7B-Instruct-Q4_K_M";
             ModeText.Text = "MODE CONTRACT";
-            ContextChipText.Text = "Context: 6,144/8,192";
-            SearchText.Text = "🔎 Search: off";
-            AutoText.Text = "🤖 Automation: on";
-            MarketText.Text = "🧩 Skills: 12";
-            StripContextText.Text = "📚 Context: 6,144/8,192";
-            StripKvText.Text = "💾 KV: ~0.34 GB";
-            StripCapabilityText.Text = "🖥 Capabilities: WPS ready";
-            StripCompactText.Text = "🗜 Compaction: on";
             MetricsText.Text = "⚡ 18.4 tok/s · first token 0.8s";
         }
         else
@@ -5551,14 +4337,6 @@ public partial class MainWindow : Window
             SetStatus("⏳ 正在生成 · 已输出 428 tokens");
             ModelText.Text = "🧠 模型: Qwen2.5-7B-Instruct-Q4_K_M";
             ModeText.Text = "MODE 合同审阅";
-            ContextChipText.Text = "上下文：6,144/8,192";
-            SearchText.Text = "🔎 搜索：关闭";
-            AutoText.Text = "🤖 自动化：已启用";
-            MarketText.Text = "🧩 技能市场：12 个";
-            StripContextText.Text = "📚 上下文：6,144/8,192";
-            StripKvText.Text = "💾 KV：约 0.34 GB";
-            StripCapabilityText.Text = "🖥 本机能力：WPS 可用";
-            StripCompactText.Text = "🗜 压缩：开启";
             MetricsText.Text = "⚡ 18.4 tok/s · 首字 0.8s";
         }
 
@@ -6181,53 +4959,11 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// [EN] Reports every status-strip item and its current localized text. The probe uses this
-    ///      to assert that the Avalonia strip carries the same items as WPF plus the memory
-    ///      pressure item, and that no item silently keeps an empty placeholder.
-    /// [ZH] 报告状态区的每一项及其当前本地化文本。探针据此断言 Avalonia 状态区包含与 WPF 相同的
-    /// [ZH] 各项，并额外包含内存压力项，且没有任何一项静默保留空占位。
-    /// </summary>
-    public string ProbeStatusStripItemsSnapshot()
-    {
-        int count = StatusStripItems.Children.Count;
-        return $"count={count}"
-               + $"｜search={SearchText.Text}"
-               + $"｜automation={AutoText.Text}"
-               + $"｜market={MarketText.Text}"
-               + $"｜context={StripContextText.Text}"
-               + $"｜kv={StripKvText.Text}"
-               + $"｜memory={StripMemoryText.Text}"
-               + $"｜capability={StripCapabilityText.Text}"
-               + $"｜compact={StripCompactText.Text}";
-    }
-
-    /// <summary>
     /// [EN] Probe helper: set a synthetic version in the title bar so the layout and
     ///      localisation can be asserted without a running backend.
     /// [ZH] 探针辅助：在标题栏写入合成版本号，使布局与本地化在没有后端时也能断言。
     /// </summary>
     public void ProbeSetTitleBarVersion(string version) => TitleBarVersionText.Text = version;
-
-    /// <summary>
-    /// [EN] v0.2.6 item 21: feeds one raw value through the same read/normalise path the
-    ///      Enter handler uses, without contacting the backend. The probe uses it to pin the
-    ///      acceptance rule that both "65,536" and " 65536 " resolve to 65536.
-    /// [ZH] v0.2.6 第 21 项：让一个原始输入走与回车处理器完全相同的读取/规范化路径，且不
-    ///      访问后端。探针据此钉住验收口径："65,536" 与 " 65536 " 都解析为 65536。
-    /// </summary>
-    public string ProbeContextWindowInput(string raw)
-    {
-        // [EN] Write both surfaces so the probe exercises the same precedence as real typing.
-        // [ZH] 两个载体同时写入，使探针覆盖与真实键入相同的优先级。
-        ContextWindowCombo.Text = raw;
-        ContextWindowCombo.ApplyTemplate();
-        HookContextWindowEditor();
-        if (_contextWindowEditor is not null)
-            _contextWindowEditor.Text = raw;
-        string normalized = ReadContextWindowInput();
-        bool parses = int.TryParse(normalized, out int size);
-        return $"raw={raw}｜normalized={normalized}｜parses={parses}｜size={(parses ? size : 0)}";
-    }
 
     /// <summary>
     /// [EN] v0.2.6 item 21: exposes the log-routing predicates to the unattended probe, so the
@@ -6267,34 +5003,6 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// [EN] Drives the memory status with a synthetic 95% sample, reports whether the
-    ///      critical class/tooltip were applied, then restores the previous visual state.
-    /// [ZH] 用合成的 95% 样本驱动内存状态项，报告是否应用了红色警告类与提示，然后恢复原视觉状态。
-    /// </summary>
-    public string ProbeMemoryWarning()
-    {
-        string oldText = StripMemoryText.Text;
-        object? oldTip = ToolTip.GetTip(StripMemoryButton);
-        bool oldClass = StripMemoryText.Classes.Contains("memory-critical");
-        try
-        {
-            using JsonDocument doc = JsonDocument.Parse(
-                "{\"total_bytes\":100,\"available_bytes\":5}");
-            SetMemoryStatus(doc.RootElement);
-            bool critical = StripMemoryText.Classes.Contains("memory-critical");
-            string text = StripMemoryText.Text ?? "";
-            string tip = ToolTip.GetTip(StripMemoryButton) as string ?? "";
-            return $"critical={critical}｜text={text}｜tip={tip}";
-        }
-        finally
-        {
-            StripMemoryText.Text = oldText;
-            StripMemoryText.Classes.Set("memory-critical", oldClass);
-            ToolTip.SetTip(StripMemoryButton, oldTip);
-        }
-    }
-
-    /// <summary>
     /// [EN] Exercises the native update progress bar at a synthetic 25%, then verifies
     ///      that completion hides and resets it.
     /// [ZH] 用合成的 25% 驱动原生更新进度条，并验证完成后会隐藏并复位。
@@ -6308,25 +5016,6 @@ public partial class MainWindow : Window
         HideUpdateProgress();
         bool hidden = !UpdateProgressBar.IsVisible && Math.Abs(UpdateProgressBar.Value) < 0.001;
         return $"visible={visible}｜value={value:0}｜text={text}｜hidden={hidden}";
-    }
-
-    public async Task<string> ProbeStatusStripMotionAsync()
-    {
-        bool original = _state.Settings.StatusStripCollapsed;
-
-        _state.Settings.StatusStripCollapsed = true;
-        ApplyStatusStripState(animate: true);
-        await Task.Delay(260);
-        bool collapsedHidden = !StatusStripItems.IsVisible && StatusStripItems.Opacity <= 0.01;
-
-        _state.Settings.StatusStripCollapsed = false;
-        ApplyStatusStripState(animate: true);
-        await Task.Delay(260);
-        bool expandedVisible = StatusStripItems.IsVisible && StatusStripItems.Opacity >= 0.99;
-
-        _state.Settings.StatusStripCollapsed = original;
-        ApplyStatusStripState();
-        return $"collapsedHidden={collapsedHidden}｜expandedVisible={expandedVisible}";
     }
 
     /// <summary>
@@ -6927,22 +5616,6 @@ public partial class MainWindow : Window
     private void OnClosing(object? sender, WindowClosingEventArgs e)
     {
         SaveWindowPlacement();
-        // [EN] Remove the global keyboard hook and abort an active recording, so the
-        // [EN] process does not keep a system-wide hook installed after the window closes.
-        // [ZH] 移除全局键盘钩子并中止进行中的录音，避免窗口关闭后进程仍保留系统级钩子。
-        try
-        {
-            _hotkeys.Dispose();
-        }
-        catch (Exception)
-        {
-        }
-        if (_recording)
-        {
-            _recording = false;
-            _ = _state.Backend.SendAsync(new { action = "audio_record_cancel" },
-                idleTimeout: TimeSpan.FromSeconds(10));
-        }
         try
         {
             _streamCts?.Cancel();
@@ -7143,35 +5816,7 @@ public partial class MainWindow : Window
 
     private void StopMetricsTimer() => _metricsTimer?.Stop();
 
-    // -----------------------------------------------------------------
-    // [EN] v0.2.6 Part 3: local knowledge base and prompt template library
-    // [ZH] v0.2.6 Part 3：本地知识库与提示词模板库
-    //
-    // [EN] Both panels talk to the backend with the ordinary single-response
-    // [EN] protocol. Indexing itself runs on the backend's serial document
-    // [EN] worker, so this window only polls `file_job_status`; nothing here
-    // [EN] blocks the conversation or performs file I/O on the UI thread.
-    // [ZH] 两个面板都走普通的单次应答协议。建索引本身在后端的串行文档工作线程上
-    // [ZH] 执行，因此本窗口只轮询 `file_job_status`；此处没有任何操作会阻塞对话
-    // [ZH] 或在界面线程上做文件 I/O。
-    // -----------------------------------------------------------------
 
-    /// <summary>
-    /// [EN] One mounted library as displayed in the knowledge panel.
-    /// [ZH] 知识库面板中展示的单个已挂载库。
-    /// </summary>
-    private sealed class KnowledgeLibraryItem
-    {
-        public string Id { get; init; } = "";
-        public string Name { get; init; } = "";
-        public string Root { get; init; } = "";
-        public string Status { get; init; } = "";
-        public int Documents { get; init; }
-        public int Chunks { get; init; }
-        // [EN] v0.2.6 item 17: whether this folder participates in retrieval.
-        // [ZH] v0.2.6 第 17 项：该文件夹是否参与检索。
-        public bool Enabled { get; init; } = true;
-    }
 
     /// <summary>
     /// [EN] One prompt template as displayed in the template panel. Built-in
@@ -7202,472 +5847,11 @@ public partial class MainWindow : Window
         public override string ToString() => Label;
     }
 
-    private readonly List<KnowledgeLibraryItem> _knowledgeLibraries = new();
     private readonly List<PromptTemplateItem> _promptTemplates = new();
     private readonly List<PromptTemplateItem> _visiblePromptTemplates = new();
-    private DispatcherTimer? _knowledgeTimer;
-    private string _knowledgeJobId = "";
-    private bool _knowledgePolling;
     private string _editingPromptId = "";
     private bool _promptDeleteArmed;
     private bool _promptPanelLoading;
-
-    /// <summary>
-    /// [EN] Toggle the knowledge panel. Opening first closes every other palette,
-    /// then anchors the popup and refreshes the mounted-library list.
-    /// [ZH] 打开或关闭知识库面板。打开时先关闭其他浮层，再锚定弹出层并刷新已挂载库列表。
-    /// </summary>
-    private async Task ToggleKnowledgePanelAsync()
-    {
-        bool opening = !KnowledgePanel.IsOpen;
-        CloseAllPalettes();
-        if (!opening)
-            return;
-        KnowledgePanel.PlacementTarget = KnowledgeButton;
-        KnowledgePanel.IsOpen = true;
-        await RefreshKnowledgeAsync();
-    }
-
-    /// <summary>
-    /// [EN] Read the knowledge status and rebuild the library rows.
-    /// [ZH] 读取知识库状态并重建库列表行。
-    /// </summary>
-    private async Task RefreshKnowledgeAsync()
-    {
-        if (!_state.Backend.IsRunning)
-        {
-            KnowledgeHintText.Text = Loc.T("main.error.notRunning", "❌ 后端未运行，无法读取知识库状态");
-            return;
-        }
-        JsonDocument? doc = await _state.Backend.SendAsync(
-            new { action = "knowledge_status" }, idleTimeout: BackendService.HeavyIdleTimeout);
-        if (doc is null)
-        {
-            // [EN] A failed refresh must not leave the panel claiming "no folder mounted":
-            // [EN] report the request failure while preserving the previously known rows.
-            // [ZH] 刷新失败时面板不得继续声称「尚未挂载文件夹」：报告请求失败，同时保留
-            // [ZH] 上一次已知的库列表。
-            KnowledgeHintText.Text = Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
-                _state.Backend.LastError ?? "");
-            return;
-        }
-        using (doc)
-        {
-            ApplyKnowledgeLibraries(doc.RootElement);
-        }
-    }
-
-    /// <summary>
-    /// [EN] Apply a knowledge response (from `knowledge_status` or `knowledge_mount`) to
-    ///      the panel. Returns false when the response carries no libraries array.
-    /// [ZH] 把知识库响应（来自 `knowledge_status` 或 `knowledge_mount`）应用到面板。
-    ///      响应不含 libraries 数组时返回 false。
-    /// </summary>
-    private bool ApplyKnowledgeLibraries(JsonElement root)
-    {
-        if (!root.TryGetProperty("libraries", out JsonElement libraries)
-            || libraries.ValueKind != JsonValueKind.Array)
-            return false;
-        _knowledgeLibraries.Clear();
-        foreach (JsonElement library in libraries.EnumerateArray())
-        {
-            // [EN] The backend serializes the SQLite flag as 1/0. A missing field
-            // [EN] (older backend) means enabled, never disabled.
-            // [ZH] 后端把 SQLite 标志序列化为 1/0。缺少字段（旧后端）表示启用，
-            // [ZH] 绝不能默认禁用。
-            bool enabled = true;
-            if (library.TryGetProperty("enabled", out JsonElement enabledElement))
-            {
-                enabled = enabledElement.ValueKind switch
-                {
-                    JsonValueKind.True => true,
-                    JsonValueKind.False => false,
-                    JsonValueKind.Number => enabledElement.GetInt32() != 0,
-                    _ => true,
-                };
-            }
-            _knowledgeLibraries.Add(new KnowledgeLibraryItem
-            {
-                Id = GetStringField(library, "id"),
-                Name = GetStringField(library, "name"),
-                Root = GetStringField(library, "root"),
-                Status = GetStringField(library, "status"),
-                Documents = GetIntField(library, "documents"),
-                Chunks = GetIntField(library, "chunks"),
-                Enabled = enabled,
-            });
-        }
-        int bound = 0;
-        if (root.TryGetProperty("knowledge_ids", out JsonElement ids)
-            && ids.ValueKind == JsonValueKind.Array)
-            bound = ids.GetArrayLength();
-        RenderKnowledgeRows();
-        KnowledgeHintText.Text = _knowledgeLibraries.Count == 0
-            ? Loc.T("knowledge.panel.empty", "尚未挂载文件夹")
-            : Loc.T("knowledge.panel.mounted", "已挂载：{0}", _knowledgeLibraries.Count)
-              + " · " + Loc.T("knowledge.panel.bound", "本会话绑定 {0} 个", bound)
-              + " · " + Loc.T("knowledge.panel.hint", "索引在后台建立，不影响对话");
-        return true;
-    }
-
-    /// <summary>
-    /// [EN] Rebuild the library rows: one row per library, with name, counts,
-    /// status and the two per-library actions. Rows are built in code because the
-    /// action buttons must carry the library identifier; a data template would
-    /// need a public view-model type for two private buttons.
-    /// [ZH] 重建库列表行：每个库一行，含名称、计数、状态与两个库级操作。行在代码中
-    /// 构建，因为操作按钮必须携带库标识；用数据模板则为两个私有按钮引入公开视图模型
-    /// 类型，得不偿失。
-    /// </summary>
-    private void RenderKnowledgeRows()
-    {
-        KnowledgeListPanel.Children.Clear();
-        if (_knowledgeLibraries.Count == 0)
-        {
-            KnowledgeListPanel.Children.Add(new TextBlock
-            {
-                Text = Loc.T("knowledge.panel.empty", "尚未挂载文件夹"),
-                FontSize = 11,
-                // [EN] Resolve through TryFindResource: a failed lookup yields
-                // [EN] AvaloniaProperty.UnsetValue, and casting that value to IBrush
-                // [EN] throws InvalidCastException. ResolveBrush supplies the fallback.
-                // [ZH] 经 TryFindResource 解析：查找失败时返回 AvaloniaProperty.UnsetValue，
-                // [ZH] 将其强转为 IBrush 会抛 InvalidCastException；ResolveBrush 负责兜底色。
-                Foreground = ResolveBrush("SubTextBrush", Brushes.Gray),
-                TextWrapping = TextWrapping.Wrap,
-            });
-            return;
-        }
-        foreach (KnowledgeLibraryItem library in _knowledgeLibraries)
-        {
-            var row = new Grid
-            {
-                ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"),
-                Margin = new Thickness(0, 1, 0, 1),
-            };
-            var text = new StackPanel { Spacing = 1 };
-            text.Children.Add(new TextBlock
-            {
-                Text = library.Name,
-                FontWeight = FontWeight.SemiBold,
-                FontSize = 12,
-            });
-            string statusText = library.Status switch
-            {
-                "ready" => Loc.T("knowledge.panel.ready", "已就绪"),
-                "indexing" => Loc.T("knowledge.panel.indexing", "索引中"),
-                "failed" => Loc.T("knowledge.panel.failed", "失败"),
-                _ => library.Status,
-            };
-            text.Children.Add(new TextBlock
-            {
-                Text = Loc.T("knowledge.panel.summary", "{0} 个文件 · {1} 个片段",
-                             library.Documents, library.Chunks) + " · " + statusText,
-                FontSize = 11,
-                // [EN] Same defensive lookup as the empty-row label above; never cast
-                // [EN] the raw resource result to IBrush.
-                // [ZH] 与上方空列表标签相同的防御性取色；绝不把资源原始返回值强转为 IBrush。
-                Foreground = ResolveBrush("SubTextBrush", Brushes.Gray),
-                TextWrapping = TextWrapping.Wrap,
-            });
-            Grid.SetColumn(text, 0);
-            row.Children.Add(text);
-
-            // [EN] v0.2.6 item 17: per-folder plug-in switch. Disabled folders keep
-            // [EN] their index but are excluded from the current conversation's
-            // [EN] retrieval; the state is persisted by the backend.
-            // [ZH] v0.2.6 第 17 项：按文件夹的插件式开关。禁用的文件夹保留索引，但
-            // [ZH] 不参与当前对话的检索；状态由后端持久化。
-            var toggle = new ToggleSwitch
-            {
-                IsChecked = library.Enabled,
-                OnContent = "",
-                OffContent = "",
-                MinWidth = 0,
-                Margin = new Thickness(6, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                Tag = library,
-            };
-            ToolTip.SetTip(toggle, Loc.T("knowledge.panel.toggleTip",
-                "启用或禁用该文件夹：禁用后不参与当前对话的检索，索引仍保留"));
-            AutomationProperties.SetAutomationId(toggle, "KnowledgeToggle");
-            toggle.IsCheckedChanged += async (_, _) =>
-            {
-                if (toggle.IsChecked is bool enabled && enabled != library.Enabled)
-                    await ToggleKnowledgeEnabledAsync(library.Id, enabled);
-            };
-            Grid.SetColumn(toggle, 1);
-            row.Children.Add(toggle);
-
-            var reindex = new Button
-            {
-                Content = Loc.T("knowledge.panel.reindex", "重建索引"),
-                FontSize = 11,
-                Padding = new Thickness(8, 2),
-                Margin = new Thickness(6, 0, 0, 0),
-                Tag = library,
-            };
-            reindex.Click += async (_, _) => await ReindexKnowledgeAsync(library.Root);
-            Grid.SetColumn(reindex, 2);
-            row.Children.Add(reindex);
-
-            var unmount = new Button
-            {
-                Content = Loc.T("knowledge.panel.unmount", "卸载"),
-                FontSize = 11,
-                Padding = new Thickness(8, 2),
-                Margin = new Thickness(6, 0, 0, 0),
-                Tag = library,
-            };
-            unmount.Click += async (_, _) => await UnmountKnowledgeAsync(library.Id);
-            Grid.SetColumn(unmount, 3);
-            row.Children.Add(unmount);
-
-            KnowledgeListPanel.Children.Add(row);
-        }
-    }
-
-    /// <summary>
-    /// [EN] Pick a folder and mount it, then poll the returned job.
-    /// [ZH] 选择文件夹并挂载，随后轮询返回的作业。
-    /// </summary>
-    private async Task MountKnowledgeFolderAsync()
-    {
-        if (!_state.Backend.IsRunning)
-        {
-            AddMessage("system", Loc.T("main.error.notRunning", "❌ 后端未运行"));
-            return;
-        }
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-        {
-            Title = Loc.T("knowledge.panel.pickTitle", "选择要挂载的文件夹"),
-            AllowMultiple = false,
-        });
-        if (folders.Count == 0)
-            return;
-        string? path = folders[0].TryGetLocalPath();
-        if (string.IsNullOrEmpty(path))
-            return;
-        await MountKnowledgePathAsync(path);
-    }
-
-    /// <summary>
-    /// [EN] Mount one folder. Mounting an already mounted path returns the
-    /// existing library and schedules a fresh incremental index, which is what
-    /// "re-index" uses as well, so both actions share one request shape.
-    /// [ZH] 挂载一个文件夹。挂载已存在的路径会返回既有库并重新调度一次增量索引，
-    /// “重建索引”正是复用它，因此两个操作用同一种请求形态。
-    /// </summary>
-    private async Task MountKnowledgePathAsync(string path)
-    {
-        JsonDocument? doc = await _state.Backend.SendAsync(
-            new { action = "knowledge_mount", path }, idleTimeout: BackendService.HeavyIdleTimeout);
-        if (doc is null)
-        {
-            AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
-                _state.Backend.LastError ?? ""));
-            return;
-        }
-        using (doc)
-        {
-            JsonElement root = doc.RootElement;
-            string content = GetStringField(root, "content");
-            if (content.Length > 0)
-                AddMessage("system", content);
-            // [EN] The mount response already carries the authoritative library list, so the
-            //      panel is updated immediately; a later status refresh may fail while the
-            //      indexing job holds resources and must not erase this state.
-            // [ZH] 挂载响应本身已携带权威的库列表，因此立即更新面板；随后的状态刷新可能因
-            //      建索引作业占用资源而失败，不得抹掉这里已确认的状态。
-            ApplyKnowledgeLibraries(root);
-            string jobId = GetStringField(root, "job_id");
-            if (jobId.Length > 0)
-                StartKnowledgePolling(jobId);
-            await RefreshKnowledgeAsync();
-        }
-    }
-
-    /// <summary>
-    /// [EN] Re-index one library by re-mounting its path.
-    /// [ZH] 通过重新挂载其路径来重建单个库的索引。
-    /// </summary>
-    private async Task ReindexKnowledgeAsync(string root)
-    {
-        if (string.IsNullOrEmpty(root))
-            return;
-        await MountKnowledgePathAsync(root);
-    }
-
-    /// <summary>
-    /// [EN] Unmount one library and purge its index.
-    /// [ZH] 卸载单个库并清除其索引。
-    /// </summary>
-    private async Task UnmountKnowledgeAsync(string libraryId)
-    {
-        JsonDocument? doc = await _state.Backend.SendAsync(
-            new { action = "knowledge_unmount", library_id = libraryId },
-            idleTimeout: BackendService.HeavyIdleTimeout);
-        if (doc is null)
-            return;
-        using (doc)
-        {
-            string content = GetStringField(doc.RootElement, "content");
-            if (content.Length > 0)
-                AddMessage("system", content);
-            await RefreshKnowledgeAsync();
-        }
-    }
-
-    /// <summary>
-    /// [EN] Enable or disable one mounted library (v0.2.6 item 17). The backend
-    ///      persists the flag; the panel is re-rendered from the authoritative
-    ///      response so the switch cannot drift away from the actual state.
-    /// [ZH] 启用或禁用一个已挂载库（v0.2.6 第 17 项）。后端持久化该标志；面板按
-    ///      权威响应重绘，使开关不会与实际状态不一致。
-    /// </summary>
-    private async Task ToggleKnowledgeEnabledAsync(string libraryId, bool enabled)
-    {
-        if (string.IsNullOrEmpty(libraryId) || !_state.Backend.IsRunning)
-            return;
-        JsonDocument? doc = await _state.Backend.SendAsync(
-            new { action = "knowledge_toggle", library_id = libraryId, enabled },
-            idleTimeout: BackendService.HeavyIdleTimeout);
-        if (doc is null)
-        {
-            AddMessage("system", Loc.T("main.error.requestFailed", "❌ 请求失败: {0}",
-                _state.Backend.LastError ?? ""));
-            await RefreshKnowledgeAsync();
-            return;
-        }
-        using (doc)
-        {
-            JsonElement root = doc.RootElement;
-            bool ok = !(root.TryGetProperty("ok", out JsonElement okElement)
-                        && okElement.ValueKind == JsonValueKind.False);
-            string content = GetStringField(root, "content");
-            if (content.Length > 0)
-                SetStatus(content);
-            if (ok && ApplyKnowledgeLibraries(root))
-                return;
-            if (!ok && content.Length > 0)
-                AddMessage("system", content);
-            await RefreshKnowledgeAsync();
-        }
-    }
-
-    /// <summary>
-    /// [EN] Start polling one indexing job. A single timer is reused: starting a
-    /// new job replaces the previous identifier, and the timer stops itself when
-    /// the job reaches a terminal state.
-    /// [ZH] 开始轮询单个建索引作业。复用同一个计时器：新作业替换旧标识，作业到达终止
-    /// 状态后计时器自行停止。
-    /// </summary>
-    private void StartKnowledgePolling(string jobId)
-    {
-        _knowledgeJobId = jobId;
-        KnowledgeProgressRow.IsVisible = true;
-        KnowledgeProgressBar.IsIndeterminate = true;
-        KnowledgeProgressText.Text = Loc.T("knowledge.panel.indexing", "索引中");
-        if (_knowledgeTimer is null)
-        {
-            _knowledgeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
-            _knowledgeTimer.Tick += async (_, _) => await PollKnowledgeJobAsync();
-        }
-        _knowledgeTimer.Start();
-    }
-
-    private void StopKnowledgePolling()
-    {
-        _knowledgeTimer?.Stop();
-        _knowledgeJobId = "";
-        KnowledgeProgressRow.IsVisible = false;
-    }
-
-    /// <summary>
-    /// [EN] Poll the active job once and update the progress row. A response
-    /// carrying "busy" (the backend is generating an answer) is ignored: the
-    /// next tick retries, and the index keeps advancing regardless.
-    /// [ZH] 轮询一次活动作业并刷新进度行。响应带 "busy"（后端正在生成回答）时忽略：
-    /// 下一个节拍会重试，索引本身仍在推进。
-    /// </summary>
-    private async Task PollKnowledgeJobAsync()
-    {
-        if (_knowledgePolling || _knowledgeJobId.Length == 0)
-            return;
-        _knowledgePolling = true;
-        try
-        {
-            JsonDocument? doc = await _state.Backend.SendAsync(
-                new { action = "file_job_status", job_id = _knowledgeJobId },
-                idleTimeout: TimeSpan.FromSeconds(30));
-            if (doc is null)
-                return;
-            using (doc)
-            {
-                JsonElement root = doc.RootElement;
-                if (!root.TryGetProperty("job", out JsonElement job)
-                    || job.ValueKind != JsonValueKind.Object)
-                {
-                    StopKnowledgePolling();
-                    return;
-                }
-                string status = GetStringField(job, "status");
-                UpdateKnowledgeProgress(job);
-                if (status is "done" or "failed" or "cancelled")
-                {
-                    if (status == "done")
-                    {
-                        JsonElement result = job.TryGetProperty("result", out JsonElement r)
-                            ? r : default;
-                        KnowledgeProgressBar.IsIndeterminate = false;
-                        KnowledgeProgressBar.Value = 100;
-                        KnowledgeProgressText.Text = Loc.T("knowledge.panel.ready", "已就绪")
-                            + (result.ValueKind == JsonValueKind.Object
-                                ? " · " + Loc.T("knowledge.panel.summary",
-                                    "{0} 个文件 · {1} 个片段",
-                                    GetIntField(result, "total"), GetIntField(result, "chunks"))
-                                : "");
-                    }
-                    else if (status == "failed")
-                    {
-                        KnowledgeProgressText.Text = Loc.T("knowledge.panel.indexFailed",
-                            "索引失败：{0}", GetStringField(job, "error"));
-                    }
-                    StopKnowledgePolling();
-                    await RefreshKnowledgeAsync();
-                }
-            }
-        }
-        finally
-        {
-            _knowledgePolling = false;
-        }
-    }
-
-    /// <summary>
-    /// [EN] Read the last progress event of a job into the progress bar and text.
-    /// [ZH] 将作业最后一条进度事件写入进度条与文字。
-    /// </summary>
-    private void UpdateKnowledgeProgress(JsonElement job)
-    {
-        if (!job.TryGetProperty("events", out JsonElement events)
-            || events.ValueKind != JsonValueKind.Array)
-            return;
-        JsonElement last = default;
-        foreach (JsonElement item in events.EnumerateArray())
-        {
-            if (GetStringField(item, "type") == "knowledge_progress")
-                last = item;
-        }
-        if (last.ValueKind != JsonValueKind.Object)
-            return;
-        int done = GetIntField(last, "index");
-        int total = GetIntField(last, "total");
-        KnowledgeProgressBar.IsIndeterminate = false;
-        KnowledgeProgressBar.Value = total > 0 ? Math.Min(100.0, done * 100.0 / total) : 0;
-        KnowledgeProgressText.Text = Loc.T("knowledge.panel.progress",
-            "索引进度：{0}/{1}", done, total);
-    }
 
     /// <summary>
     /// [EN] Toggle the prompt template panel.

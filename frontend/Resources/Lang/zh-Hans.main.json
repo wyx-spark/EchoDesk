@@ -284,8 +284,7 @@
       "automation": "⚙️ 自动化：{0}",
       "market": "🌐 市场：{0}",
       "marketUnconnected": "未连接",
-      "kv": "💾 KV: {0}",
-      "memory": "🧠 内存 {0}%"
+      "kv": "💾 KV: {0}"
     },
     "snippet": {
       "empty": "（还没有常用语，输入 /snippet add 名称 文本 添加）",
@@ -478,34 +477,6 @@
     "summary": {
       "preparing": "📝 正在解析文档并准备分段摘要…"
     },
-    "media": {
-      "imageTip": "附加图片并提问（jpg / png）",
-      "imageHelp": "把图片附加到当前提问，支持 jpg / png / webp / bmp",
-      "recording": "🔴 录音中…松开结束",
-      "recordingHelp": "按住按键说话：按下开始录音，松开后自动转写并填入输入框",
-      "micTip": "按住说话（松开后转写）",
-      "micHelp": "按住麦克风图标开始录音，松开后自动转写并填入输入框",
-      "sttUnavailable": "🎙 语音识别不可用",
-      "sttUnsupportedTip": "当前模型无语音能力，需在设置中配置 Whisper 或语音引擎",
-      "sttUnsupportedStatus": "🎙 语音转写不可用（未配置 STT 引擎）",
-      "hotkeyFallback": "⌨️ 本平台暂不支持全局快捷键：在本窗口内按住右 Ctrl 仍可录音，松开后自动转写。",
-      "hotkeyUnavailable": "⚠️ 全局快捷键不可用：{0}。可在窗口内按住右 Ctrl 录音。",
-      "visionReady": "🖼 图片对话可用",
-      "visionUnavailable": "🖼 未配置视觉模型",
-      "chooseTitle": "选择图片",
-      "filter": "图片",
-      "stageFailed": "❌ 无法暂存图片（格式不受支持或目标目录不可写）：{0}",
-      "visionUnavailableTip": "🖼 尚未配置可用的视觉模型：请在 config.json 的 media.vision_model 指定带 mmproj 的 VL 模型。",
-      "imageUser": "🖼 {0}",
-      "analyzing": "🔎 正在分析图片…",
-      "failed": "⚠️ 图片分析失败",
-      "recordFailed": "⚠️ 无法开始录音",
-      "recordingStatus": "🎙 录音中…松开结束",
-      "transcribing": "✍️ 正在转写语音…",
-      "sttFailed": "⚠️ 语音转写失败",
-      "sttEmpty": "没有识别到语音内容",
-      "transcribed": "✅ 已转写并填入输入框"
-    },
     "button": {
       "stopSummaryTip": "中止分段摘要 (Esc)",
       "send": "发送",
@@ -558,26 +529,6 @@
       "state": {
         "syncedEmpty": "已同步（当前无匹配技能）"
       }
-    }
-  },
-  "knowledge": {
-    "panel": {
-      "title": "本地知识库",
-      "empty": "尚未挂载文件夹",
-      "mount": "挂载文件夹",
-      "unmount": "卸载",
-      "reindex": "重建索引",
-      "progress": "索引进度：{0}/{1}",
-      "ready": "已就绪",
-      "indexing": "索引中",
-      "failed": "失败",
-      "pickTitle": "选择要挂载的文件夹",
-      "summary": "{0} 个文件 · {1} 个片段",
-      "hint": "索引在后台建立，不影响对话",
-      "mounted": "已挂载：{0}",
-      "indexFailed": "索引失败：{0}",
-      "bound": "本会话绑定 {0} 个",
-      "toggleTip": "启用或禁用该文件夹：禁用后不参与当前对话的检索，索引仍保留"
     }
   },
   "prompt": {

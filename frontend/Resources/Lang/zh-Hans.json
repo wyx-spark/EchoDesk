@@ -20,7 +20,8 @@
     },
     "model": {
       "chip": "🧠 模型: {0}",
-      "tip": "当前模型：{0}\n点击打开模型选择栏（设置 → 模型）"
+      "tip": "当前模型：{0}\n点击打开模型选择栏（设置 → 模型）",
+      "readonlyTip": "当前绑定的模型（只读）"
     },
     "mode": {
       "chip": "🛠️ 模式: {0}",
@@ -61,7 +62,6 @@
       "uploadTip": "上传文件 (Ctrl+O)",
       "sendTip": "发送 (Ctrl+Enter)",
       "stopTip": "停止生成 (Esc)",
-      "knowledge": "知识库",
       "knowledgeTip": "挂载本地文件夹到知识库",
       "prompts": "模板库",
       "promptsTip": "打开提示词模板库"
@@ -136,6 +136,10 @@
       "banner": "WPF 版本已进入长期支持（LTS）维护期，不再新增功能。建议下载并体验更现代、更流畅的跨平台（Avalonia）版本。",
       "download": "⬇ 下载 Avalonia 版本",
       "help": "WPF 版今后只修复安全缺陷与崩溃问题，不再新增功能；Avalonia 版支持 Windows / macOS / Linux，界面与交互持续更新。"
+    },
+    "file": {
+      "tokens": "📄 文档 {0} tokens · 窗口 {1}",
+      "tokensTip": "已用 {0} / {1} tokens（{2}%）。窗口由上传文档大小自动分配。"
     }
   },
   "settings": {
@@ -216,24 +220,12 @@
       "maxContext": "上下文上限 max_context"
     },
     "automation": {
-      "sectionBasic": "任务与选择器",
-      "sectionDetail": "详情页与文件",
       "sectionRun": "运行参数",
-      "sectionResult": "结果与审计",
-      "sectionSafety": "安全协议",
       "pick": "🎯 可视化选取",
       "pickTip": "打开浏览器，在页面上直接点一下目标元素，自动生成选择器",
       "pickRunning": "⏳ 等待你在浏览器里点击目标元素（按 Esc 取消）…",
-      "pickCancel": "⏹ 取消选取",
-      "pickTarget": "选取目标",
-      "pickTaskList": "任务列表里的任务链接",
-      "pickTaskRow": "任务所在的那一整行",
-      "pickNextPage": "「下一页」按钮",
-      "pickDetailFile": "任务详情页里的附件名称",
-      "pickLoginCheck": "登录后才出现的元素（例如右上角的用户名）",
       "pickDone": "✅ 已填入选择器：{0}",
       "templates": "配置模板",
-      "templateTip": "选一个模板一键填入常用配置，再按实际网站微调。",
       "applyTemplate": "套用模板",
       "saveTemplate": "存为自定义模板",
       "saveTemplatePrompt": "模板名称",

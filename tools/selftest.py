@@ -129,24 +129,6 @@ def test_config() -> None:
             absent = sorted(expected - set(data[name]))
             check(f"{rel} 的 {name} 段含全部字段", not absent, f"缺少 {absent}")
 
-    # 安全协议：未勾选时强制关闭自动化
-    auto = config.AutomationConfig(enabled=True, safety_accepted=False)
-    check("未勾选安全协议 → 自动化开关被强制关闭", auto.enabled is False, f"得到 {auto.enabled}")
-    auto = config.AutomationConfig(enabled=True, safety_accepted=True)
-    check("已勾选安全协议 → 开关保持开启", auto.enabled is True)
-
-    # 仅允许有头模式
-    auto = config.AutomationConfig(headless=True)
-    check("headless 被强制纠正为 False", auto.headless is False)
-
-    # 后缀规范化：大写、前导点、中文逗号
-    auto = config.AutomationConfig(file_extensions="PDF, .Docx ，xlsx , ")
-    check("文件后缀规范化", auto.file_extensions == ["pdf", "docx", "xlsx"], f"得到 {auto.file_extensions}")
-
-    # 定时时间规范化与非法项剔除
-    auto = config.AutomationConfig(schedule_times="7:30, 18:05, 25:00, abc")
-    check("定时时间补零并剔除非法项", auto.schedule_times == ["07:30", "18:05"], f"得到 {auto.schedule_times}")
-
     # 摘要配置默认值
     cfg = config.Config()
     check("摘要触发比例默认 0.5", abs(cfg.summarize.trigger_ratio - 0.5) < 1e-9)
@@ -157,11 +139,7 @@ def test_config() -> None:
     # [ZH] 起步并按需扩展。因此默认上限与 max_context 一致。
     check("默认上下文上限 32768", cfg.context_length == 32768, f"得到 {cfg.context_length}")
 
-    # 新增三：results目录的配置默认值与程序根目录解析
-    check("结果顶层文件夹默认「results」", auto.results_root_name == "results",
-          f"得到 {auto.results_root_name}")
-    check("结果保存位置默认为空（= 程序根目录）", auto.results_location == "", f"得到 {auto.results_location}")
-    check("任务名称有默认值", bool(auto.task_name), f"得到 {auto.task_name}")
+    # 程序根目录解析
     check("program_root() 指向存在的目录", os.path.isdir(config.program_root()),
           f"得到 {config.program_root()}")
 
@@ -265,11 +243,11 @@ class _FakeEngine:
 
 
 def test_summarizer() -> None:
-    section("分段摘要")
+    section("文档文本准备（Reader 直通）")
     from config import SummarizeConfig
     from summarizer import DocumentSummarizer, split_chunks
 
-    # 分段：覆盖全文、段间有重叠、不产生空段
+    # 分段工具仍保留：覆盖全文、段间有重叠、不产生空段
     text = "".join(f"第{i}段内容。数字 {i} 金额 {i * 100} 元。\n" for i in range(200))
     chunks = split_chunks(text, 300, 50)
     check("分段覆盖全文末尾", chunks[-1][1] == len(text), f"末段结束 {chunks[-1][1]} / {len(text)}")
@@ -278,32 +256,18 @@ def test_summarizer() -> None:
     check("无空段", all(a < b for a, b, _ in chunks))
     check("空文本返回空列表", split_chunks("", 300, 50) == [])
 
-    # 触发判断
-    cfg = SummarizeConfig(min_chars=100, trigger_ratio=0.5)
+    # Reader 依据文档大小分配窗口，不再触发降级摘要
     engine = _FakeEngine()
-    summ = DocumentSummarizer(engine, cfg)
+    summ = DocumentSummarizer(engine, SummarizeConfig())
     long_text = "内容" * 500
-    check("超过窗口比例时触发摘要", summ.needs_summary(long_text, 512) is True)
-    check("远小于窗口时不触发", summ.needs_summary("短文本", 8192) is False)
-    check("低于 min_chars 不触发", summ.needs_summary("短" * 20, 64) is False)
+    check("不再触发分段摘要", summ.needs_summary(long_text, 512) is False)
+    check("should_use_summary 恒为假", summ.should_use_summary(long_text, 512, force=True) is False)
 
-    # 完整 map-reduce：应产生多段摘要 + 归并（文本要足够长才能切出多段）
-    long_text = "".join(f"第{i}条：金额 {i * 137} 元，日期 2026-01-{(i % 28) + 1:02d}。\n" for i in range(400))
-    check("测试文本长度足以分段", len(long_text) > cfg.chunk_chars * 2, f"得到 {len(long_text)} 字符")
     result = summ.summarize(long_text, source_name="长文档.docx", force=True)
-    check("摘要结果标记为已摘要", result.summarized is True)
-    check("分段数 > 1", result.chunk_count > 1, f"得到 {result.chunk_count}")
-    check("输出含原文指针", "【原文指针】" in result.text)
-    check("输出含长文档摘要标题", "【长文档摘要】" in result.text)
-    check("保留了源文件名", "长文档.docx" in result.text)
-    check("调用了模型（map 至少一次）", len(engine.calls) >= result.chunk_count,
-          f"调用 {len(engine.calls)} 次，段数 {result.chunk_count}")
-    check("原文指针记录了各段字符区间", result.pointer.startswith("chars=") and "-" in result.pointer)
-
-    # 关闭摘要时原样返回
-    off = DocumentSummarizer(_FakeEngine(), SummarizeConfig(enabled=False))
-    plain = off.summarize(long_text, force=True)
-    check("关闭摘要时原样返回", plain.summarized is False and plain.text == long_text)
+    check("直通结果原样返回", result.text == long_text)
+    check("直通结果标记为未摘要", result.summarized is False)
+    check("直通结果不调用模型", engine.calls == [], f"调用 {len(engine.calls)} 次")
+    check("直通结果状态为 ok", result.status == "ok")
 
 
 # --------------------------------------------------------- 4. 对话管理
@@ -510,254 +474,6 @@ def test_file_injection() -> None:
         check("没有文件时 has_file() 为假", empty.conv.has_file() is False)
 
 
-def test_knowledge_memory() -> None:
-    """v0.2.6 Part 3：本地知识库、长期记忆与提示词模板库。
-
-    覆盖三件验收必需的事：
-      1. 挂载文件夹后能完成索引（增量、切片、中文分词、FTS5 检索）；
-      2. 提问时检索结果注入上下文，且**未绑定知识库的会话不注入**（会话隔离）；
-      3. 对话结束时以**临时会话对象**提取长期记忆，主对话历史不被改动。
-
-    所有落盘路径都重定向到临时目录（``ECHODESK_STATE``），不污染仓库。
-    """
-    section("第二大脑：本地 RAG / 长期记忆 / 模板库（v0.2.6 Part 3）")
-    import json as _json
-    import tempfile as _tempfile
-    import time as _time
-
-    import knowledge
-    import memory
-    import prompt_library
-
-    check("中文分词按二元组切分",
-          knowledge.tokenize("违约金比例")[:3] == ["违约", "约金", "金比"],
-          str(knowledge.tokenize("违约金比例")))
-    pieces = knowledge.chunk_text("甲乙丙。" * 300, chunk_chars=300, overlap_chars=50)
-    check("切片长度有界且无空串",
-          bool(pieces) and all(0 < len(item) <= 300 for item in pieces),
-          str([len(item) for item in pieces][:6]))
-    check("相邻切片存在重叠",
-          len(pieces) > 1 and pieces[0][-20:] in pieces[1], pieces[1][:40])
-
-    # [EN] v0.2.6 task 10: images and audio are scanned and become indexable through
-    # [EN] metadata (plus OCR/transcript when available), instead of being skipped.
-    # [ZH] v0.2.6 任务 10：图片与音频会被扫描并通过元数据（以及可用的 OCR/转写）
-    # [ZH] 建立索引，而不是被跳过。
-    with _tempfile.TemporaryDirectory() as media_tmp:
-        from PIL import Image  # noqa: PLC0415
-        import wave  # noqa: PLC0415
-
-        image_path = os.path.join(media_tmp, "screenshot.png")
-        Image.new("RGB", (12, 8), "white").save(image_path)
-        image_text, image_error = knowledge.read_document(image_path)
-        check("图片纳入知识库：提取格式与尺寸",
-              not image_error and "[图片]" in image_text
-              and "尺寸: 12x8" in image_text, image_text[:80])
-
-        audio_path = os.path.join(media_tmp, "voice.wav")
-        with wave.open(audio_path, "wb") as handle:
-            handle.setnchannels(1)
-            handle.setsampwidth(2)
-            handle.setframerate(8000)
-            handle.writeframes(b"\x00\x00" * 800)
-        audio_text, audio_error = knowledge.read_document(audio_path)
-        check("音频纳入知识库：提取时长与采样率",
-              not audio_error and "[音频]" in audio_text
-              and "时长:" in audio_text and "8000 Hz" in audio_text,
-              audio_text[:80])
-        check("扫描结果包含图片与音频扩展名",
-              {os.path.basename(item["path"])
-               for item in knowledge.KnowledgeBase(
-                   os.path.join(media_tmp, "media.sqlite3")).iter_files(media_tmp)}
-              == {"screenshot.png", "voice.wav"})
-
-    previous_state = os.environ.get("ECHODESK_STATE")
-    with _tempfile.TemporaryDirectory() as tmp:
-        os.environ["ECHODESK_STATE"] = tmp
-        docs = os.path.join(tmp, "docs")
-        os.makedirs(docs)
-        contract_path = os.path.join(docs, "contract.md")
-        notes_path = os.path.join(docs, "notes.txt")
-        with open(contract_path, "w", encoding="utf-8") as handle:
-            handle.write("采购合同\n\n违约金：每逾期一日按合同额的 0.3% 计。\n\n"
-                         "付款条件：验收合格后三十个工作日内支付。\n\n质保期：验收后 24 个月。")
-        with open(notes_path, "w", encoding="utf-8") as handle:
-            handle.write("用户的名字是小王。用户的职业是中学教师。API key 每 90 天轮换。")
-
-        # ---------- 索引与检索 ----------
-        database = os.path.join(tmp, "kb.sqlite3")
-        base = knowledge.KnowledgeBase(database)
-        library = base.mount(docs)
-        stats = base.index_library(library["id"])
-        check("挂载文件夹并完成索引", stats["added"] == 2 and stats["failed"] == 0,
-              str(stats))
-        check("增量索引第二次全部跳过",
-              base.index_library(library["id"])["skipped"] == 2)
-        hits = base.search("违约金比例是多少")
-        check("中文检索命中合同文件",
-              bool(hits) and hits[0]["name"] == "contract.md", str(hits[:1]))
-        ascii_hits = base.search("API key rotation")
-        check("英文检索命中笔记文件",
-              bool(ascii_hits) and ascii_hits[0]["name"] == "notes.txt",
-              str(ascii_hits[:1]))
-        context = base.as_context("付款条件", top_k=2, max_chars=800)
-        check("注入块带编号与来源路径",
-              "[1] 来源：" in context and "contract.md" in context, context[:80])
-        os.remove(notes_path)
-        after_remove = base.index_library(library["id"])
-        check("磁盘上消失的文件会从索引移除", after_remove["removed"] == 1,
-              str(after_remove))
-
-        # ---------- 会话绑定与注入 ----------
-        import main as backend_main
-        from config import Config
-
-        class _MemoryEngine:
-            ready = True
-            n_ctx = 8192
-            n_ctx_train = 40960
-            model_path = "stub.gguf"
-
-            def __init__(self):
-                self.calls = []
-
-            def count_tokens(self, text):
-                return max(1, len(str(text)) // 2)
-
-            def chat_complete(self, messages, temperature=0.7, max_tokens=1024):
-                self.calls.append(messages)
-                return '[{"text": "用户的名字是小王", "category": "identity"}]'
-
-            def clear_cache(self):
-                return True
-
-        def _backend():
-            config = Config()
-            config.model_path = "stub.gguf"
-            config.session_file = ""
-            config.speed_hint = False
-            config.search_default = False
-            owner = backend_main.Backend(config)
-            owner.llm = _MemoryEngine()
-            return owner
-
-        owner = _backend()
-        mounted = owner.handle({"action": "knowledge_mount", "path": docs})
-        check("挂载动作立即返回作业标识",
-              mounted.get("ok") is True and bool(mounted.get("job_id")),
-              str(mounted)[:160])
-        deadline = _time.time() + 10
-        job = {}
-        while _time.time() < deadline:
-            job = owner.handle({"action": "file_job_status",
-                                "job_id": mounted["job_id"]}).get("job", {})
-            if job.get("status") in ("done", "failed", "cancelled"):
-                break
-            _time.sleep(0.05)
-        check("索引作业在后台完成", job.get("status") == "done", str(job)[:200])
-        check("挂载后会话自动绑定该库",
-              mounted["library"]["id"] in owner.conv.knowledge_ids,
-              str(owner.conv.knowledge_ids))
-        # 文件已被移除，重新入库后只剩合同
-        owner.knowledge_base().index_library(mounted["library"]["id"])
-        injected = owner._combined_retrieval_context("违约金比例")
-        check("提问时注入知识库片段", "contract.md" in injected, injected[:120])
-        check("检索状态被记录", bool(owner._last_knowledge),
-              str(owner._last_knowledge))
-
-        unbound = _backend()
-        check("未绑定知识库的会话不注入（会话隔离）",
-              unbound._combined_retrieval_context("违约金比例") == "")
-        owner.conv.bind_knowledge([])
-        check("解绑后不再注入", owner._combined_retrieval_context("违约金比例") == "")
-        restored = _backend()
-        restored.conv.bind_knowledge([mounted["library"]["id"]])
-        check("重新绑定后恢复注入",
-              "contract.md" in restored._combined_retrieval_context("违约金比例"))
-
-        # ---------- 长期记忆 ----------
-        store = memory.MemoryStore()
-        first = store.add("用户是一名中学教师", "identity")
-        check("长期记忆可写入", first is not None)
-        check("重复事实被去重",
-              store.add("用户是一名中学教师。", "identity") is None)
-        check("记忆注入块含该事实", "中学教师" in store.as_prompt(), store.as_prompt())
-
-        check("提取解析容忍代码块与说明文字",
-              memory.parse_extraction(
-                  '好的：\n```json\n[{"text": "用户喜欢深色主题", "category": "preference"}]\n```'
-              )[0]["text"] == "用户喜欢深色主题")
-        check("未知类别回落为 other",
-              memory.parse_extraction('[{"text": "x", "category": "unknown"}]')[0]["category"]
-              == "other")
-        check("调用失败不抛出",
-              memory.extract_memories(
-                  lambda _messages: (_ for _ in ()).throw(RuntimeError("boom")),
-                  "用户：你好")["ok"] is False)
-
-        # 关键隔离断言：提取用临时会话对象，主对话历史长度不变
-        history_before = len(owner.conv.history)
-        extracted = owner._extract_memories_now("用户：我的名字是小王。")
-        check("对话结束时完成一次记忆提取",
-              extracted.get("ok") is True and extracted.get("added") == 1,
-              str(extracted))
-        check("提取不改动主对话历史", len(owner.conv.history) == history_before,
-              f"{history_before} -> {len(owner.conv.history)}")
-        check("提取结果进入长期记忆",
-              any(item["text"] == "用户的名字是小王" for item in owner.memory_store().items()))
-        owner._apply_memory_context()
-        system_prompt = owner.conv.build_messages("问")[0]["content"]
-        check("长期记忆注入系统提示词", "用户的名字是小王" in system_prompt,
-              system_prompt[-160:])
-
-        # ---------- 提示词模板库 ----------
-        library_path = os.path.join(tmp, "user_prompts.json")
-        templates = prompt_library.PromptLibrary(library_path)
-        builtin_count = len(prompt_library.builtin_entries())
-        check(f"内置场景模板达到数十种（{builtin_count}）", builtin_count >= 30,
-              str(builtin_count))
-        check("模板分类为六类", len(prompt_library.categories()) == 6)
-        refactor = templates.get("xiaohongshu") or {}
-        check("内置模板带本地化名称与说明",
-              bool(refactor.get("label")) and bool(refactor.get("note")),
-              str(refactor)[:120])
-        saved = templates.save({"label": "测试模板", "category": "coding",
-                                "format": "只输出结论。", "role": "你是测试助手。"})
-        check("用户模板可保存", bool(saved.get("id")))
-        reloaded = prompt_library.PromptLibrary(library_path)
-        check("用户模板持久化后可重新读取",
-              reloaded.get(saved["id"]) is not None)
-        check("用户模板可生成系统提示词块",
-              "只输出结论。" in reloaded.system_prompt(saved["id"]))
-        check("内置模板不可覆盖",
-              _raises(lambda: templates.save({"id": "refactor", "label": "x",
-                                              "format": "y"})),
-              "")
-        check("内置模板不可删除", templates.delete("refactor") is False)
-        check("用户模板可删除", templates.delete(saved["id"]) is True)
-
-        applied = owner.handle({"action": "promptlib_apply",
-                                "template_id": "refactor"})
-        check("模板可通过协议应用为任务层",
-              applied.get("ok") is True and "代码重构" in owner.conv.task_prompt,
-              str(applied)[:120])
-        listing = owner.handle({"action": "promptlib_list"})
-        check("模板列表响应含分类与统计",
-              bool(listing.get("categories")) and listing.get("stats", {}).get("user")
-              is not None, str(listing)[:120])
-
-        # 卸载：索引与绑定一并清除
-        removed = owner.handle({"action": "knowledge_unmount",
-                                "library_id": mounted["library"]["id"]})
-        check("卸载知识库会移除索引与绑定",
-              removed.get("ok") is True and owner.conv.knowledge_ids == [])
-        check("卸载后索引为空",
-              owner.knowledge_base().stats()["documents"] == 0)
-
-    if previous_state is None:
-        os.environ.pop("ECHODESK_STATE", None)
-    else:
-        os.environ["ECHODESK_STATE"] = previous_state
 
 
 def _raises(action) -> bool:
@@ -992,37 +708,6 @@ def test_state_paths() -> None:
               config._macos_application_support())
 
 
-def test_automation() -> None:
-    section("自动化")
-    try:
-        import automation
-    except ImportError as e:
-        check("导入 automation（缺失，跳过）", True, f"skipped: {e}")
-        return
-
-    from config import AutomationConfig
-
-    engine = automation.AutomationEngine(AutomationConfig())
-    errors = engine.validate()
-    check("未配置网址时校验报错", len(errors) > 0, f"得到 {errors}")
-
-    # 未勾选安全协议时 run() 必须直接报错且不启动浏览器
-    events = list(engine.run())
-    kinds = [e.get("type") for e in events]
-    check("未勾选安全协议时 run() 直接报错", "error" in kinds, f"事件类型 {kinds}")
-    check("报错信息提到安全协议",
-          any("安全协议" in str(e.get("content", "")) for e in events))
-
-    # 脱敏：token/password/secret 的值应被替换
-    redacted = automation._redact("token=abcdef123 password=hunter2 secret=xyz key=qqq 正常文本")
-    check("审计脱敏替换 token 值", "abcdef123" not in redacted, f"得到 {redacted}")
-    check("审计脱敏替换 password 值", "hunter2" not in redacted)
-    check("审计脱敏保留普通文本", "正常文本" in redacted)
-    check("审计脱敏限制长度", len(automation._redact("很长的内容" * 200, 50)) <= 60)
-
-    # 状态接口
-    status = engine.status()
-    check("status() 含 running 字段", "running" in status, f"得到 {status}")
 
 
 # --------------------------------------------------------- 6. 技能市场
@@ -1157,60 +842,6 @@ def test_protocol_keys() -> None:
           f"前端读到 {sorted(detail_keys)}")
 
 
-def test_media_support() -> None:
-    """
-    [EN]
-    Multimodal and speech foundations (v0.2.6 Part 2): configuration defaults,
-    staging-directory containment, image magic-byte validation and the RIFF/WAVE
-    writer. The protocol-level behaviour of the actions is covered end to end by
-    ``tools/test_media_api.py``; this section guards the invariants that every
-    backend start depends on.
-
-    [ZH]
-    多模态与语音基础（v0.2.6 Part 2）：配置默认值、暂存目录包含关系、图片魔数校验
-    与 RIFF/WAVE 写出。动作的协议级行为由 ``tools/test_media_api.py`` 端到端覆盖；
-    本节守住每次后端启动都依赖的不变量。
-    """
-    section("多模态与语音基础（v0.2.6 Part 2）")
-    import tempfile
-
-    import config
-    import media
-
-    cfg = config.Config()
-    check("媒体配置存在 vision 开关", bool(cfg.media.vision_enabled))
-    check("媒体配置默认不自动朗读", cfg.media.tts_auto_read is False)
-    check("媒体配置默认按键为 RightCtrl", cfg.media.ptt_shortcut == "RightCtrl")
-    check("录音上限在允许范围内", 5 <= cfg.media.max_record_seconds <= 600,
-          str(cfg.media.max_record_seconds))
-
-    with tempfile.TemporaryDirectory() as tmp:
-        old = os.environ.get("ECHODESK_DATA")
-        os.environ["ECHODESK_DATA"] = tmp
-        try:
-            check("暂存目录落在用户数据根内",
-                  media._is_under(media.images_dir(), tmp)
-                  and media._is_under(media.audio_dir(), tmp),
-                  media.images_dir())
-            check("暂存目录名不是前缀误判",
-                  not media._is_under(os.path.join(tmp, "temp", "images-old", "x.png"),
-                                      media.images_dir()))
-            media.ensure_media_dirs()
-            try:
-                media.validate_image_path("relative.png")
-                check("相对路径被拒绝", False, "未抛出异常")
-            except media.MediaError as exc:
-                check("相对路径被拒绝", exc.code == "not_absolute", exc.code)
-            wav = os.path.join(media.tts_dir(), "selftest.wav")
-            media.write_wav(wav, b"\x00\x00" * 1600)
-            check("WAV 写出且时长可读", os.path.isfile(wav)
-                  and abs(media.read_wav_duration(wav) - 0.1) < 0.02,
-                  str(media.read_wav_duration(wav)))
-        finally:
-            if old is None:
-                os.environ.pop("ECHODESK_DATA", None)
-            else:
-                os.environ["ECHODESK_DATA"] = old
 
 
 def test_cuda_bootstrap() -> None:
@@ -1219,12 +850,10 @@ def test_cuda_bootstrap() -> None:
     第 22 项的 Windows + VL 软熔断已随底层依赖加固一并移除，本节同时断言：
       * ``cuda_bootstrap`` 可导入、``ensure()`` 幂等且不抛异常；
       * 预加载顺序严格为 ggml-base -> ggml -> ggml-cpu -> ggml-cuda -> llama；
-      * ``main.py`` 中的 ``import cuda_bootstrap`` 位于任何 ``llama_cpp`` 导入之前；
-      * ``vision`` 模块不再保留软熔断判定，视觉状态恢复为常规检查。
+      * ``main.py`` 中的 ``import cuda_bootstrap`` 位于任何 ``llama_cpp`` 导入之前。
     """
     section("CUDA DLL 预加载与软熔断移除（第 23 项）")
     import cuda_bootstrap
-    import vision as vision_mod
 
     check("预加载顺序符合依赖链",
           cuda_bootstrap._PRELOAD_ORDER == [
@@ -1288,36 +917,6 @@ def test_cuda_bootstrap() -> None:
           bootstrap_line > 0 and (engine_line == 0 or bootstrap_line < engine_line),
           f"bootstrap={bootstrap_line} llm_engine={engine_line}")
 
-    # [EN] v0.2.6 item 23 removes the item 22 interlock: neither the function nor
-    # [EN] the status field may survive, otherwise a stale UI could still grey out
-    # [EN] the image entry on Windows.
-    # [ZH] v0.2.6 第 23 项移除第 22 项的软熔断：判定函数与状态字段都不得残留，否则
-    # [ZH] 过期界面仍会在 Windows 上置灰图片入口。
-    check("vision 不再提供 windows_vl_blocked 判定",
-          not hasattr(vision_mod, "windows_vl_blocked")
-          and not hasattr(vision_mod, "WINDOWS_VL_BLOCKED_REASON"))
-    service = vision_mod.VisionService(
-        os.path.join("models", "Qwen3-VL-4B-Instruct-Q4_K_M.gguf"),
-        "mmproj-F16.gguf")
-    status = service.status()
-    check("视觉状态不再携带 windows_vl_blocked 字段",
-          "windows_vl_blocked" not in status, str(sorted(status)))
-    check("缺模型时按常规原因报告而非平台熔断",
-          status["available"] is False
-          and status["reason"] == "media.vision_model_missing"
-          and status["is_vlm"] is True,
-          f"reason={status['reason']} available={status['available']}")
-
-    # [EN] The mutex-protected native call must keep the `with ... try/finally`
-    # [EN] shape: a future edit that drops the lock would otherwise go unnoticed.
-    # [ZH] 受互斥锁保护的原生调用必须保持 `with ... try/finally` 形态，否则将来删除
-    # [ZH] 锁的改动不会被发现。
-    vision_source = open(os.path.join(os.path.abspath(BACKEND), "vision.py"),
-                         encoding="utf-8").read()
-    check("视觉推理原生调用由互斥锁与 try/finally 包裹",
-          "with _INFERENCE_LOCK:" in vision_source
-          and "finally:" in vision_source
-          and "create_chat_completion" in vision_source)
 
 
 def test_imports() -> None:
@@ -1334,14 +933,13 @@ def test_imports() -> None:
         "i18n", "update_check", "config", "command_handler", "conversation",
         "file_parser", "gguf_meta", "plaintext", "skills_runtime", "summarizer",
         "download_utils", "search_engine", "llm_engine", "model_hub", "marketplace",
-        "automation", "hardware_profiler", "main", "version",
-        "media", "vision", "speech",
+        "hardware_profiler", "main", "version",
         # [EN] v0.2.6 item 23: the DLL preload bootstrap.
         # [ZH] v0.2.6 第 23 项：DLL 预加载引导。
         "cuda_bootstrap",
-        # [EN] v0.2.6 Part 3.
-        # [ZH] v0.2.6 Part 3。
-        "knowledge", "memory", "prompt_library",
+        # [EN] Prompt template library retained by the Reader profile.
+        # [ZH] Reader 保留的提示词模板库。
+        "prompt_library",
         # [EN] v0.2.6 Part 4 (open platform).
         # [ZH] v0.2.6 任务 4（开放平台）。
         "providers", "local_api",
@@ -1357,11 +955,11 @@ def test_imports() -> None:
 
 def main() -> int:
     tests = [test_imports, test_config, test_plaintext, test_gguf, test_summarizer,
-             test_conversation, test_file_injection, test_knowledge_memory,
+             test_conversation, test_file_injection,
              test_crash_log_scope, test_config_save_target,
              test_operational_log_sanitizer, test_state_paths,
-             test_automation, test_marketplace, test_model_match,
-             test_protocol_keys, test_media_support, test_cuda_bootstrap]
+             test_marketplace, test_model_match,
+             test_protocol_keys, test_cuda_bootstrap]
     for fn in tests:
         try:
             fn()

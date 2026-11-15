@@ -573,20 +573,6 @@ class ConversationManager:
         # [EN] Current task-template id, used by /status and guidance short-circuit checks.
         # [ZH] 当前任务模板 id，供 /status 与引导短路判断使用。
         self.task_template = ""
-        # [EN] ---------- Knowledge libraries bound to this conversation (v0.2.6 task 3.2) ----------
-        # [ZH] ---------- 本会话绑定的知识库（v0.2.6 任务 3.2） ----------
-        # [EN] Only the listed libraries are searched for this conversation, so two
-        # [EN] conversations bound to different folders never share material. The
-        # [EN] list is persisted with the session, because the binding is part of
-        # [EN] "what this conversation knows".
-        # [ZH] 本会话只检索列出的知识库，因此绑定不同文件夹的两个会话不会互相串味。
-        # [ZH] 该清单随会话持久化 —— 绑定关系属于“这段对话知道什么”的一部分。
-        self.knowledge_ids: List[str] = []
-        # [EN] Long-term memory block injected into the system prompt. Set by the
-        # [EN] backend before each model call; empty means nothing is injected.
-        # [ZH] 注入系统提示词的长期记忆块。由后端在每次模型调用前设置；空串表示
-        # [ZH] 不注入任何内容。
-        self.memory_context = ""
         # [EN] Automatic summary of earlier turns, produced by long-session compaction.
         # [ZH] 早期对话的自动摘要，由长会话压缩生成。
         self.summary = ""
@@ -1061,42 +1047,6 @@ class ConversationManager:
         self.task_prompt = (text or "").strip()
         self.task_template = (template or "").strip() if self.task_prompt else ""
 
-    def set_memory_context(self, text: str) -> None:
-        """
-        [EN]
-        Set the long-term memory block appended to the system prompt.
-
-        The block is produced by ``memory.MemoryStore.as_prompt`` and carries the
-        facts extracted from previous conversations. It sits after the shared
-        rules and before the file inventory: it is background knowledge, so it
-        must not outrank this turn's task layer or the current question.
-
-        [ZH]
-        设置追加到系统提示词的长期记忆块。
-
-        该块由 ``memory.MemoryStore.as_prompt`` 产出，承载从以往对话中提取的事实。
-        它位于共享规则之后、文件清单之前：它属于背景知识，不得压过本轮任务层与
-        当前提问。
-        """
-        self.memory_context = (text or "").strip()
-
-    def bind_knowledge(self, library_ids: List[str]) -> None:
-        """
-        [EN]
-        Bind the conversation to a set of knowledge libraries (task 3.2).
-
-        Only the bound libraries are searched for this conversation. An empty
-        list means "search nothing", which is deliberate: a conversation that
-        was never bound must not silently start quoting unrelated private
-        material.
-
-        [ZH]
-        将会话绑定到一组知识库（任务 3.2）。
-
-        本会话只检索已绑定的库。空列表表示“不检索任何知识库”，这是刻意设计：
-        从未绑定过知识库的会话不得静默开始引用无关的私人材料。
-        """
-        self.knowledge_ids = [str(item) for item in (library_ids or []) if str(item or "").strip()]
 
     # [EN] ---------- File context ----------
     # [ZH] ---------- 文件上下文 ----------
@@ -1195,13 +1145,6 @@ class ConversationManager:
         prompt += reply_language_instruction()
         if self.summary:
             prompt += f"\n\n【早期对话摘要】\n{self.summary}"
-        # [EN] Long-term memory sits after the summary and before the file
-        # [EN] inventory: it is cross-conversation background, so it must not
-        # [EN] outrank this conversation's own summary or this turn's question.
-        # [ZH] 长期记忆位于摘要之后、文件清单之前：它属于跨对话的背景信息，
-        # [ZH] 不得压过本会话自身的摘要与本轮提问。
-        if self.memory_context:
-            prompt += "\n\n" + self.memory_context
         if self.files:
             # [EN] Keep only the file-name inventory, including the active file.
             # [EN] Full content is injected with the current question; the
@@ -1254,8 +1197,8 @@ class ConversationManager:
         lines.append("（如需基于某一份文件回答，请在问题里点名文件名）")
         return "\n".join(lines)
 
-    def build_messages(self, user_query: str, search_context: str = "", include_file: bool = False,
-                       retrieval_context: str = "") -> List[dict]:
+    def build_messages(self, user_query: str, search_context: str = "",
+                       include_file: bool = False) -> List[dict]:
         """
         [EN]
         Build the complete message list sent to the model: system prompt,
@@ -1272,12 +1215,6 @@ class ConversationManager:
         through :meth:`last_injection_note`. Silently omitting files is worse
         than reporting the omission.
 
-        ``retrieval_context`` contains retrieved passages and locations produced
-        by ``retrieval.Retriever`` and is placed before file blocks. The caller
-        passes it only when retrieval is enabled and the document is long
-        (stored on disk or summarized). Full-text injection is more accurate for
-        short documents, and retrieval would discard information. This division
-        of responsibility is documented in ``backend/retrieval.py``.
 
         The ``【{label}】`` and ``参考以下网络信息：`` prefixes are prompt content,
         not interface text, so they remain Chinese and outside the language pack.
@@ -1303,11 +1240,6 @@ class ConversationManager:
         ``config.files.total_chars`` 限制。后上传的文件优先放入，因为它们通常是
         当前请求所需材料。无法放入的文件会被省略，调用方通过
         :meth:`last_injection_note` 如实报告。静默省略文件比报告省略更糟。
-
-        ``retrieval_context`` 包含 ``retrieval.Retriever`` 产出的相关片段与位置，
-        位于文件块之前。仅当启用检索且文档为长文档（已落盘或已有摘要）时，调用方
-        才传入该参数。短文档全文注入更准确，检索反而会丢弃信息。该分工记录在
-        ``backend/retrieval.py`` 中。
 
         ``【{label}】`` 与 ``参考以下网络信息：`` 前缀属于提示词内容，不是界面
         文本，因此保持中文且不进入语言包。
@@ -1393,28 +1325,6 @@ class ConversationManager:
                                           total=total, chars=used)
             if blocks:
                 user_content = "\n\n".join(blocks) + "\n\n" + user_content
-        if retrieval_context:
-            # [EN] Retrieved passages precede all other material: the model sees
-            # [EN] the located evidence first, then file summaries or full text,
-            # [EN] and finally the question. This ordering supports citation
-            # [EN] traceability.
-            # [ZH] 检索片段位于所有前置材料之前：模型先看到定位到的依据，再看文件
-            # [ZH] 摘要或全文，最后看到问题。该顺序支持引用溯源。
-            # [EN] v0.2.6 item 17: mounted knowledge is supplementary reference
-            # [EN] material, not a replacement for the model's own common sense.
-            # [EN] The rule is appended to the system prompt (not to the user turn)
-            # [EN] so that it outranks the passage block and cannot be mistaken for
-            # [EN] an instruction contained in the retrieved text.
-            # [ZH] v0.2.6 第 17 项：挂载知识库属于附加参考资料，不能取代模型自身的常识。
-            # [ZH] 该规则追加到系统提示（而非用户轮），使其优先级高于参考块，也不会被
-            # [ZH] 误读为检索正文中夹带的指令。
-            messages[0]["content"] = (
-                str(messages[0].get("content", ""))
-                + "\n\n【附加参考资料使用规则】你的自身常识是基础。只有在参考内容与用户"
-                  "提问明确相关时，才予以引用；绝不因为参考内容而否定你的常识。"
-                  "如果参考内容与你的常识冲突，以你的常识为准，并简要说明差异。"
-            )
-            user_content = f"{retrieval_context}\n\n{user_content}"
         messages.append({"role": "user", "content": user_content})
         return messages
 
@@ -1467,9 +1377,6 @@ class ConversationManager:
             "task_prompt": self.task_prompt,
             "summary": self.summary,
             "model_path": model_path,
-            # [EN] Knowledge libraries bound to this conversation (task 3.2).
-            # [ZH] 本会话绑定的知识库（任务 3.2）。
-            "knowledge_ids": list(self.knowledge_ids),
             "files": [entry.to_dict() for entry in self.files],
             "active_file": self.active_index,
             "file_name": self.file_name,
@@ -1528,15 +1435,6 @@ class ConversationManager:
             # [ZH] custom_prompt 中。字段缺失时默认为空串，旧会话仍可正常加载。
             self.task_prompt = data.get("task_prompt", "")
             self.summary = data.get("summary", "")
-            # [EN] Knowledge binding (task 3.2). Sessions written before this
-            # [EN] field existed simply carry no binding, which is the correct
-            # [EN] semantic: nothing was mounted for them.
-            # [ZH] 知识库绑定（任务 3.2）。该字段出现之前写入的会话自然没有绑定，
-            # [ZH] 这正是正确的语义：那段对话从未挂载知识库。
-            raw_knowledge = data.get("knowledge_ids")
-            self.knowledge_ids = ([str(item) for item in raw_knowledge
-                                   if str(item or "").strip()]
-                                  if isinstance(raw_knowledge, list) else [])
             self.files = []
             raw_files = data.get("files")
             if isinstance(raw_files, list) and raw_files:

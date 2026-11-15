@@ -94,8 +94,10 @@ pypdf                     # .pdf（BSD-3-Clause）
 #   * 代价：不处理无文本层的扫描件，复杂排版阅读顺序还原弱于 MuPDF。
 xlrd                      # .xls（BSD）
 
-# ---------- 自动化（任务四） ----------
-playwright==1.63.0        # 驱动本机 Microsoft Edge（Apache-2.0）
+# [EN] Reader: Playwright and the browser-automation stack were removed with
+# [EN] backend/automation.py; no browser driver is part of this profile.
+# [ZH] Reader：Playwright 与浏览器自动化栈已随 backend/automation.py 一并移除；
+# [ZH] 本分支不包含任何浏览器驱动。
 # numpy：Windows 曾被钉回随包 SBOM 校验的版本（2.5.3）；
 # Linux/macOS 的 cp313 索引里没有 2.5.3（只到 2.2.x），只能交回索引解析。
 # 【v0.2.6 第 23 项】JamePeng 轮子的 METADATA 明确声明 `numpy<=2.3.2`。Windows 端

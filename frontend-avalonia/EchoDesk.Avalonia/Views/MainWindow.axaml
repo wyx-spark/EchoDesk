@@ -177,6 +177,7 @@
                  因此再长的模型名也不会使窗口按钮条带变形。
           -->
           <Button x:Name="ModelChip" Margin="0,0,6,0" Padding="8,2" Height="26"
+                IsHitTestVisible="False" Focusable="False"
                   VerticalAlignment="Center" Classes="round"
                   AutomationProperties.AutomationId="ModelChip">
             <TextBlock x:Name="ModelText" Text="" FontSize="11" MaxWidth="170"
@@ -353,34 +354,6 @@
                  the WPF dimensions).
             [ZH] 右侧：上下文占用 + 设置 + 上传 + 发送（图标按钮按 WPF 尺寸）。
           -->
-          <Button x:Name="ContextChip" Height="30" MinWidth="118" Padding="14,0"
-                  Margin="2" HorizontalAlignment="Left" Classes="round"
-                  AutomationProperties.AutomationId="ContextChip">
-            <TextBlock x:Name="ContextChipText" Text="" FontSize="11" />
-          </Button>
-          <!--
-            [EN] v0.2.6 Part 2: live push-to-talk indicator. The transcribed text is
-                 inserted into the input box, so the indicator exists only while the
-                 recording is running and never changes the toolbar geometry.
-            [ZH] v0.2.6 Part 2：按键说话的实时指示。转写文本会写入输入框，因此该指示
-                 只在录音期间可见，且不改变工具栏几何。
-          -->
-          <TextBlock x:Name="RecordingHint" Margin="8,0" FontSize="11"
-                     VerticalAlignment="Center" IsVisible="False"
-                     Foreground="{DynamicResource AccentBrush}"
-                     AutomationProperties.AutomationId="RecordingHint" />
-          <!--
-            [EN] v0.2.6 Part 3: entry points for the local knowledge base (mount a
-                 folder and watch the index progress) and the prompt template library.
-                 Both open as floating panels anchored in code, like the snippet
-                 palette, so the toolbar geometry stays fixed.
-            [ZH] v0.2.6 Part 3：本地知识库入口（挂载文件夹并查看索引进度）与提示词
-                 模板库入口。两者都以浮层形式打开、在代码里锚定，与常用语面板一致，
-                 工具栏几何保持不变。
-          -->
-          <Button x:Name="KnowledgeButton" Width="34" Height="34" Margin="2" Classes="icon"
-                  Content="📚" FontSize="14"
-                  AutomationProperties.AutomationId="KnowledgeButton" />
           <Button x:Name="PromptLibraryButton" Width="34" Height="34" Margin="2" Classes="icon"
                   Content="🧩" FontSize="14"
                   AutomationProperties.AutomationId="PromptLibraryButton" />
@@ -388,22 +361,6 @@
                   Content="⚙" FontSize="14" />
           <Button x:Name="UploadButton" Width="34" Height="34" Margin="2" Classes="icon"
                   Content="📎" FontSize="14" />
-          <!--
-            [EN] Image attach (v0.2.6 Part 2): picks a screenshot and sends `image_chat`.
-            [ZH] 图片附加（v0.2.6 Part 2）：选择截图并发送 `image_chat`。
-          -->
-          <Button x:Name="ImageButton" Width="34" Height="34" Margin="2" Classes="icon"
-                  Content="🖼" FontSize="14"
-                  AutomationProperties.AutomationId="ImageButton" />
-          <!--
-            [EN] v0.2.6 task 9: push-to-talk microphone entry next to the input box.
-                 Press starts recording; release stops and transcribes into the input box.
-            [ZH] v0.2.6 任务 9：输入框旁的“按住说话”麦克风入口。按下开始录音，松开
-                 结束并转写进输入框。
-          -->
-          <Button x:Name="MicButton" Width="34" Height="34" Margin="2" Classes="icon"
-                  Content="🎙" FontSize="14"
-                  AutomationProperties.AutomationId="MicButton" />
           <Button x:Name="StopButton" Width="34" Height="34" Margin="2" Classes="icon"
                   Content="⏹" FontSize="14" IsVisible="False" />
           <!--
@@ -464,63 +421,17 @@
                      TextTrimming="CharacterEllipsis"
                      Foreground="{DynamicResource SubTextBrush}"
                      AutomationProperties.AutomationId="StatusText" />
-          <Button x:Name="StripSearchButton" Classes="chip">
-            <TextBlock x:Name="SearchText" Text="" FontSize="11" />
-          </Button>
-          <Button x:Name="StripAutomationButton" Classes="chip">
-            <TextBlock x:Name="AutoText" Text="" FontSize="11" />
-          </Button>
-          <Button x:Name="StripMarketButton" Classes="chip">
-            <TextBlock x:Name="MarketText" Text="" FontSize="11" />
-          </Button>
-          <Button x:Name="StripContextButton" Classes="chip">
-            <TextBlock x:Name="StripContextText" Text="" FontSize="11" />
-          </Button>
           <!--
-            [EN] v0.2.6 item 17: the context window is the user's decision. This
-                 selector sits next to the Context indicator and offers the four
-                 supported sizes. A change is persisted and applied immediately;
-                 the backend never alters it in the background.
-            [ZH] v0.2.6 第 17 项：上下文窗口由用户决定。该选择器位于 Context 标识旁，
-                 提供四档受支持的大小。改动会立即持久化并生效；后端绝不会在后台篡改。
+            [EN] Reader status: only the current document token count and the model
+                 ready state remain. Engineering metrics (KV cache, GPU layers,
+                 physical memory, context ratio) were removed with their features.
+            [ZH] Reader 状态区：仅保留当前文档 token 数与模型就绪状态。KV Cache、GPU
+                 层数、物理内存、上下文占比等工程指标已随对应功能一并移除。
           -->
-          <!--
-            [EN] v0.2.6 item 19: editable selector. The four presets remain in the drop-down,
-                 while a custom value (for example 65536) can be typed and applied with Enter.
-            [ZH] v0.2.6 第 19 项：可编辑选择器。四档预设仍在下拉列表中，同时可输入自定义
-                 数值（例如 65536）并按回车应用。
-          -->
-          <ComboBox x:Name="ContextWindowCombo" Width="104" Height="24" Margin="2,0,6,0"
-                    VerticalAlignment="Center" FontSize="11"
-                    IsEditable="True"
-                    AutomationProperties.AutomationId="ContextWindowCombo" />
-          <Button x:Name="StripKvButton" Classes="chip">
-            <TextBlock x:Name="StripKvText" Text="💾 KV: ---" FontSize="11" />
-          </Button>
-          <!--
-            [EN] Physical-memory pressure of the host. The value comes from the backend hardware
-                 snapshot, so the interface never estimates it locally. A refresh happens through
-                 the same context response as the other status items.
-            [ZH] 主机物理内存压力。数值来自后端硬件快照，界面从不本地估算；刷新与其他状态项一样，
-                 走同一条 context 响应。
-          -->
-          <Button x:Name="StripMemoryButton" Classes="chip"
-                  AutomationProperties.AutomationId="StripMemoryButton">
-            <TextBlock x:Name="StripMemoryText" Text="" FontSize="11"
-                       AutomationProperties.AutomationId="StripMemoryText" />
-          </Button>
-          <Button x:Name="StripCapabilityButton" Classes="chip">
-            <TextBlock x:Name="StripCapabilityText" Text="" FontSize="11" />
-          </Button>
-          <Button x:Name="StripCompactButton" Classes="chip">
-            <TextBlock x:Name="StripCompactText" Text="" FontSize="11" />
-          </Button>
-          <Button x:Name="StripWarnButton" Classes="chip" IsVisible="False">
-            <TextBlock x:Name="StripWarnText" Text="" FontSize="11" />
-          </Button>
-          <Button x:Name="StripUpdateButton" Classes="chip" Margin="6,0,0,0" IsVisible="False">
-            <TextBlock x:Name="StripUpdateText" Text="" FontSize="11" />
-          </Button>
+          <TextBlock x:Name="FileTokensText" FontSize="11" Margin="10,0,8,0"
+                     IsVisible="False" VerticalAlignment="Center"
+                     Foreground="{DynamicResource SubTextBrush}"
+                     AutomationProperties.AutomationId="FileTokensText" />
           <!--
             [EN] Native ProgressBar for update downloads. It is hidden until a download
                  starts, becomes determinate as soon as the backend reports bytes, and is
@@ -528,6 +439,9 @@
             [ZH] 更新下载用的原生 ProgressBar。下载开始前隐藏；后端上报字节后切换为确定进度；
                  完成或失败后再次隐藏。
           -->
+          <Button x:Name="StripUpdateButton" Classes="chip" Margin="6,0,0,0" IsVisible="False">
+            <TextBlock x:Name="StripUpdateText" FontSize="11" />
+          </Button>
           <ProgressBar x:Name="UpdateProgressBar" Width="96" Height="6" Minimum="0" Maximum="100"
                        Value="0" IsVisible="False" Margin="6,0,0,0" VerticalAlignment="Center"
                        AutomationProperties.AutomationId="UpdateProgressBar" />
@@ -627,48 +541,6 @@
           </ListBox>
           <TextBlock x:Name="PaletteHint" FontSize="11" Margin="6,2,6,4"
                      Foreground="{DynamicResource SubTextBrush}" TextWrapping="Wrap" />
-        </StackPanel>
-      </Border>
-    </Popup>
-
-    <!--
-      [EN] v0.2.6 Part 3 knowledge-base panel: mount a local folder, list the mounted
-           libraries with their document and passage counts, unmount or re-index one,
-           and show the live indexing progress. The progress row is populated from the
-           background job that `knowledge_mount` returns, polled through
-           `file_job_status`, so indexing never blocks the conversation.
-      [ZH] v0.2.6 Part 3 知识库面板：挂载本地文件夹、列出已挂载库及其文件与片段数、
-           卸载或重建索引，并显示实时索引进度。进度行由 `knowledge_mount` 返回的
-           后台作业经 `file_job_status` 轮询填充，因此建索引不会阻塞对话。
-    -->
-    <Popup x:Name="KnowledgePanel" Placement="Top" IsOpen="False" MaxHeight="440">
-      <Border Background="{DynamicResource AppBackgroundBrush}"
-              BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
-              CornerRadius="10" MinWidth="400" MaxWidth="580" Padding="10" Margin="0,0,0,4">
-        <StackPanel Spacing="6">
-          <TextBlock x:Name="KnowledgeTitleText" FontWeight="Bold" FontSize="13"
-                     Foreground="{DynamicResource AccentBrush}" />
-          <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto">
-            <StackPanel x:Name="KnowledgeListPanel" Spacing="2" />
-          </ScrollViewer>
-          <StackPanel x:Name="KnowledgeProgressRow" Orientation="Horizontal" Spacing="8"
-                      IsVisible="False"
-                      AutomationProperties.AutomationId="KnowledgeProgressRow">
-            <ProgressBar x:Name="KnowledgeProgressBar" Width="240" Height="6"
-                         Minimum="0" Maximum="100"
-                         AutomationProperties.AutomationId="KnowledgeProgressBar" />
-            <TextBlock x:Name="KnowledgeProgressText" FontSize="11"
-                       VerticalAlignment="Center"
-                       Foreground="{DynamicResource SubTextBrush}" />
-          </StackPanel>
-          <TextBlock x:Name="KnowledgeHintText" FontSize="11" TextWrapping="Wrap"
-                     Foreground="{DynamicResource SubTextBrush}" />
-          <StackPanel Orientation="Horizontal" Spacing="6">
-            <Button x:Name="KnowledgeMountButton" Classes="primary" Padding="12,3"
-                    AutomationProperties.AutomationId="KnowledgeMountButton" />
-            <Button x:Name="KnowledgeReindexButton" Padding="12,3"
-                    AutomationProperties.AutomationId="KnowledgeReindexButton" />
-          </StackPanel>
         </StackPanel>
       </Border>
     </Popup>

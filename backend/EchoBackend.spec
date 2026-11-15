@@ -66,9 +66,11 @@ COMMENTS = "Powered by Void Entropia Studio"
 # pypdf/xlrd，均为 MIT/BSD），行为更可预测、体积更小。
 # v0.2.1（设计规范 1.3）：.pdf 解析由 pymupdf（AGPL-3.0）换成 pypdf（BSD-3-Clause），
 # 既消除对外分发时的著佐权义务，又把该依赖的安装体积从 52.9MB 降到约 1.4MB。
-# 说明：playwright 必须整包收集——它自带 Node 驱动（driver/ 约 102MB，含 node.exe
-# 与 playwright-core），自动化功能依赖该驱动启动本机 Edge，缺文件会在运行时才报错。
-PACKAGES = ["llama_cpp", "pydantic", "huggingface_hub", "duckduckgo_search", "playwright"]
+# [EN] Reader: Playwright is no longer collected; the browser automation stack was
+# [EN] removed with backend/automation.py (approximately 102 MB of Node driver).
+# [ZH] Reader：不再收集 Playwright；浏览器自动化栈已随 backend/automation.py 移除
+# [ZH] （约 102MB 的 Node 驱动）。
+PACKAGES = ["llama_cpp", "pydantic", "huggingface_hub", "duckduckgo_search"]
 if IS_WINDOWS:
     # WPS/Office COM 只在 Windows 上存在（非 Windows 上装了也没有这个包）
     PACKAGES.append("win32com")
@@ -102,6 +104,12 @@ EXCLUDES = [
     # tzdata / tzlocal：tzlocal（开发机残留，来自与本项目无关的包）的依赖，
     #   纯时区数据；干净环境里 pydantic 只在 `timezone` extra 下才需要 tzdata。
     "chardet", "bidi", "arabic_reshaper", "tzdata", "tzlocal",
+    # ---------- Reader：已删除模块的残留，显式从打包结果中排除 ----------
+    # [EN] Modules removed from the Reader profile. Listing them here guarantees a
+    # [EN] stale import in a third-party package cannot drag them back into the build.
+    # [ZH] Reader 已删除的模块。在此列出可确保第三方包的陈旧导入无法把它们带回产物。
+    "vision", "knowledge", "speech", "media", "extractive", "memory", "retrieval",
+    "automation", "playwright", "pyee", "greenlet",
 ]
 
 datas = []
@@ -206,14 +214,14 @@ a = Analysis(
     pathex=[SPECPATH],
     binaries=binaries,
     datas=datas,
-    # v0.2.5：`schedule` 已从依赖中移除（全仓库无 import，定时触发由 automation.py 自实现）。
+    # v0.2.5：`schedule` 已从依赖中移除（全仓库无 import）。
     # [EN] v0.2.6 item 23: the two llama.cpp extension modules are listed explicitly
-    # [EN] because they are imported lazily by the engine and the vision adapter, so
-    # [EN] static analysis can miss them; cuda_bootstrap is listed for the same reason.
-    # [ZH] v0.2.6 第 23 项：这两个 llama.cpp 扩展模块由引擎与视觉适配层惰性导入，
-    # [ZH] 静态分析可能漏掉，故显式列出；cuda_bootstrap 同理。
+    # [EN] because they are imported lazily by the engine, so static analysis can miss
+    # [EN] them; cuda_bootstrap is listed for the same reason.
+    # [ZH] v0.2.6 第 23 项：这两个 llama.cpp 扩展模块由引擎惰性导入，静态分析可能
+    # [ZH] 漏掉，故显式列出；cuda_bootstrap 同理。
     hiddenimports=hiddenimports + ["llama_cpp", "llama_cpp.llama_cpp", "llama_cpp._ggml",
-                                   "cuda_bootstrap", "playwright", "pypdf"]
+                                   "cuda_bootstrap", "pypdf"]
     + (["win32com"] if IS_WINDOWS else []),
     hookspath=[],
     hooksconfig={},

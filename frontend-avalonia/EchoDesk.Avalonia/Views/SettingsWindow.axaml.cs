@@ -110,7 +110,6 @@ public partial class SettingsWindow : Window, ISettingsHost
         // [ZH] 顺序不同的时候，同一份界面在两边看起来就像两套产品。
         RegisterPage(new ModelPage());
         RegisterPage(new AgentPage());
-        RegisterPage(new AutomationPage());
         RegisterPage(new MarketPage());
         RegisterPage(new InstalledPage());
         RegisterPage(new DeveloperPage());

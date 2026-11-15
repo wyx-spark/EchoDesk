@@ -20,7 +20,8 @@
     },
     "model": {
       "chip": "🧠 Model: {0}",
-      "tip": "Current model: {0}\nClick to open the model picker (Settings → Model)"
+      "tip": "Current model: {0}\nClick to open the model picker (Settings → Model)",
+      "readonlyTip": "Currently bound model (read-only)"
     },
     "mode": {
       "chip": "🛠️ Mode: {0}",
@@ -61,7 +62,6 @@
       "uploadTip": "Upload a file (Ctrl+O)",
       "sendTip": "Send (Ctrl+Enter)",
       "stopTip": "Stop generating (Esc)",
-      "knowledge": "Knowledge",
       "knowledgeTip": "Mount a local folder as a knowledge library",
       "prompts": "Templates",
       "promptsTip": "Open the prompt template library"
@@ -136,6 +136,10 @@
       "banner": "The WPF edition has entered long-term support (LTS): no new features will be added. We recommend the more modern and smoother cross-platform (Avalonia) edition.",
       "download": "⬇ Download the Avalonia edition",
       "help": "The WPF edition now receives security and crash fixes only, with no new features. The Avalonia edition runs on Windows, macOS and Linux and keeps receiving interface and interaction updates."
+    },
+    "file": {
+      "tokens": "📄 Document {0} tokens · window {1}",
+      "tokensTip": "Used {0} / {1} tokens ({2}%). The window is allocated from the uploaded document size."
     }
   },
   "settings": {
@@ -216,24 +220,12 @@
       "maxContext": "Context cap (max_context)"
     },
     "automation": {
-      "sectionBasic": "Task and selectors",
-      "sectionDetail": "Detail page and files",
       "sectionRun": "Run settings",
-      "sectionResult": "Results and audit",
-      "sectionSafety": "Safety protocol",
       "pick": "🎯 Pick on page",
       "pickTip": "Open a browser and click the element you want; the selector is generated for you",
       "pickRunning": "⏳ Waiting for you to click the element in the browser (press Esc to cancel)…",
-      "pickCancel": "⏹ Cancel picking",
-      "pickTarget": "What to pick",
-      "pickTaskList": "The task links in the task list",
-      "pickTaskRow": "The whole row that holds one task",
-      "pickNextPage": "The “Next page” button",
-      "pickDetailFile": "The attachment name on the task detail page",
-      "pickLoginCheck": "An element that appears only after signing in (for example the user name in the corner)",
       "pickDone": "✅ Selector filled in: {0}",
       "templates": "Configuration templates",
-      "templateTip": "Pick a template to fill in a typical configuration, then adjust it to your site.",
       "applyTemplate": "Apply template",
       "saveTemplate": "Save as custom template",
       "saveTemplatePrompt": "Template name",

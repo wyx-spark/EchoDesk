@@ -284,8 +284,7 @@
       "automation": "⚙️ Automation: {0}",
       "market": "🌐 Market: {0}",
       "marketUnconnected": "not connected",
-      "kv": "💾 KV: {0}",
-      "memory": "🧠 Memory {0}%"
+      "kv": "💾 KV: {0}"
     },
     "snippet": {
       "empty": "(no snippets yet — add one with /snippet add <name> <text>)",
@@ -478,34 +477,6 @@
     "summary": {
       "preparing": "📝 Parsing the document and preparing segmented summarization…"
     },
-    "media": {
-      "imageTip": "Attach an image and ask about it (jpg / png)",
-      "imageHelp": "Attach an image to the current question; jpg / png / webp / bmp are supported",
-      "recording": "🔴 Recording… release to stop",
-      "recordingHelp": "Push to talk: press to record, release to transcribe into the input box",
-      "micTip": "Hold to talk (release to transcribe)",
-      "micHelp": "Press and hold the microphone to record; release to transcribe into the input box",
-      "sttUnavailable": "🎙 Speech recognition is unavailable",
-      "sttUnsupportedTip": "The current model has no speech capability; configure Whisper or a speech engine in Settings",
-      "sttUnsupportedStatus": "🎙 Speech transcription is unavailable (no STT engine configured)",
-      "hotkeyFallback": "⌨️ Global hotkeys are not available on this platform: hold Right Ctrl in this window to record; releasing transcribes automatically.",
-      "hotkeyUnavailable": "⚠️ Global hotkeys are unavailable: {0}. Hold Right Ctrl in this window to record.",
-      "visionReady": "🖼 Image chat available",
-      "visionUnavailable": "🖼 No vision model configured",
-      "chooseTitle": "Choose an image",
-      "filter": "Images",
-      "stageFailed": "❌ The image could not be staged (unsupported format or the target directory is not writable): {0}",
-      "visionUnavailableTip": "🖼 No usable vision model is configured: set media.vision_model in config.json to a VL model that ships an mmproj file.",
-      "imageUser": "🖼 {0}",
-      "analyzing": "🔎 Analysing the image…",
-      "failed": "⚠️ Image analysis failed",
-      "recordFailed": "⚠️ Recording could not start",
-      "recordingStatus": "🎙 Recording… release to stop",
-      "transcribing": "✍️ Transcribing speech…",
-      "sttFailed": "⚠️ Speech transcription failed",
-      "sttEmpty": "No speech was recognized",
-      "transcribed": "✅ Transcribed and inserted into the input box"
-    },
     "button": {
       "stopSummaryTip": "Abort segmented summarization (Esc)",
       "send": "Send",
@@ -558,26 +529,6 @@
       "state": {
         "syncedEmpty": "synced (no matching skills yet)"
       }
-    }
-  },
-  "knowledge": {
-    "panel": {
-      "title": "Local knowledge base",
-      "empty": "No folder mounted",
-      "mount": "Mount folder",
-      "unmount": "Unmount",
-      "reindex": "Re-index",
-      "progress": "Indexing: {0}/{1}",
-      "ready": "Ready",
-      "indexing": "Indexing",
-      "failed": "Failed",
-      "pickTitle": "Select a folder to mount",
-      "summary": "{0} files · {1} passages",
-      "hint": "Indexing runs in the background and does not block chatting",
-      "mounted": "Mounted: {0}",
-      "indexFailed": "Indexing failed: {0}",
-      "bound": "bound to this conversation: {0}",
-      "toggleTip": "Enable or disable this folder: when disabled it is excluded from this conversation's retrieval but keeps its index"
     }
   },
   "prompt": {
