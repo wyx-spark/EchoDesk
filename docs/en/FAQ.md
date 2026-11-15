@@ -1,6 +1,6 @@
 # EchoDesk Frequently Asked Questions and Troubleshooting (FAQ)
 
-Applies to version: v0.2.2
+Applies to version: v0.2.6-reader
 Chinese version: [`docs/zh-Hans/FAQ.md`](../zh-Hans/FAQ.md).
 
 **Platforms.** EchoDesk runs on **Windows, macOS and Linux**. Two capabilities are **Windows-only** — reading
@@ -17,7 +17,7 @@ uses backslashes (`app\backend\config.json`). Only the **user data folder** (ses
 ```
 # Windows — the program folder itself (portable layout: the outer folder that holds app/);
 # %APPDATA%\EchoDesk when that is where EchoDesk was installed or unpacked
-C:\Users\<user>\EchoDesk-v0.2.2\
+C:\Users\<user>\EchoDesk-v0.2.6\
 %APPDATA%\EchoDesk\
 
 # macOS
@@ -38,7 +38,7 @@ installation/startup in full is in [`USER_GUIDE.md`](USER_GUIDE.md).
 
 | What I want to do | How to do it |
 | --- | --- |
-| Start the program | **Windows**: the Start Menu (or desktop) shortcut created by the installer; for the portable zip, double-click "Start-EchoDesk-v0.2.2.lnk" inside the program folder (run `install-complete.bat` once if it is missing). **macOS / Linux**: the bundle is a plain archive — `cd` into the unpacked folder and run `./start.sh` (`chmod +x start.sh app/EchoDesk` first if the executable bit was lost) |
+| Start the program | **Windows**: the Start Menu (or desktop) shortcut created by the installer; for the portable zip, double-click "Start-EchoDesk-v0.2.6.lnk" inside the program folder (run `install-complete.bat` once if it is missing). **macOS / Linux**: the bundle is a plain archive — `cd` into the unpacked folder and run `./start.sh` (`chmod +x start.sh app/EchoDesk` first if the executable bit was lost) |
 | See every command | Type `/help` in the input box |
 | Have the AI read a document | Drag the file into the window, or use `/file <path>` — e.g. `/file "C:\My Documents\contract 2026.docx"` (Windows), `/file "/Users/<user>/Documents/contract-2026.docx"` (macOS), `/file "/home/<user>/docs/contract-2026.docx"` (Linux) |
 | Have the AI do arithmetic or look inside uploaded files | switch to agent mode: `/mode agent`, `/mode 3` or `/agent on` — the model picks the tool (see "3. Modes, agent and MCP") |
@@ -174,7 +174,7 @@ the **generation length limit** ran out — thinking used up the token budget be
 - small models (0.5B–1.5B) are not reliable reasoners anyway; a larger quantized model usually pays off more.
 
 ### How do I make EchoDesk start with Windows
-Copy "Start-EchoDesk-v0.2.2.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
+Copy "Start-EchoDesk-v0.2.6.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
 The `automation.start_with_windows` setting is **not implemented yet**: the program does not read it, so
 setting it to `true` will not start EchoDesk at sign-in — use the shortcut above instead (scheduled automation
 requires the program to be running).
@@ -414,12 +414,12 @@ If you turn off "Save results to local files", no `result.txt` and no screenshot
 to the log only.
 With "Where to save results" left empty the results root is the **user data folder** plus the result root
 folder name, so it follows the platform (Windows keeps it in the program folder — the portable **outer**
-folder `EchoDesk-v0.2.2/`, not inside `app/`):
+folder `EchoDesk-v0.2.6/`, not inside `app/`):
 
 ```
 # Windows
 %APPDATA%\EchoDesk\results\
-C:\Users\<user>\EchoDesk-v0.2.2\results\      ← the same folder when the bundle is unpacked there
+C:\Users\<user>\EchoDesk-v0.2.6\results\      ← the same folder when the bundle is unpacked there
 
 # macOS
 ~/Library/Application Support/EchoDesk/results/
@@ -485,7 +485,7 @@ restart, unloading the development plugins and clearing the development log `app
 ### Are window size/position/theme/font size remembered?
 Yes, they are stored in `ui_state.json` in the **user data folder** (window position and size, font size,
 the three-way theme, the emoji display policy, the interface language, ...). That folder is the portable
-**outer** one on Windows (`EchoDesk-v0.2.2/`) and the per-platform location listed at the top of this file on
+**outer** one on Windows (`EchoDesk-v0.2.6/`) and the per-platform location listed at the top of this file on
 macOS (`~/Library/Application Support/EchoDesk/`) and Linux (`~/.local/share/EchoDesk/`). If the window is
 restored onto a monitor that has since been unplugged, the program falls back to a position on screen
 automatically. Delete that file to reset everything (this also clears the "onboarding already read" marker).

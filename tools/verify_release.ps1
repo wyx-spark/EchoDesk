@@ -492,10 +492,18 @@ try {
     # 真实模型的端到端（用 --model 指定）在 CI 里跳过：机器上不一定有推理模型。
     Invoke-Check "思考内容分离" { Invoke-Python "思考分离" "tools\test_reasoning.py"; "通过" }
 
-    # v0.2.1 优化已知问题-2 任务四：抽取式预筛（TextRank 选句 + 稀有度加权）。
-    # 覆盖切句/特征/图/抽取边界/关键事实保留下界/密度自适应/性能上限/
-    # 摘要器接线（可开关、可统计、异常安全降级）/配置项。纯统计，无模型无网络。
-    Invoke-Check "抽取式预筛（任务四）" { Invoke-Python "抽取式预筛" "tools\test_extractive.py"; "通过" }
+    # [EN] Reader profile gate (this branch). It replaces the upstream checks for the
+    # [EN] stacks that were deleted here: the extractive pre-selection, the BM25 retrieval
+    # [EN] pipeline, the vision/speech/media modules and the browser automation. Instead of
+    # [EN] verifying them it asserts that they are gone **and** that the two capabilities this
+    # [EN] edition actually adds still hold — document-driven dynamic context planning and the
+    # [EN] Q8_0 KV cache.
+    # [ZH] Reader 版本门禁（本分支）。它取代上游针对这里已删栈的检查：抽取式预筛、BM25 检索
+    # [ZH] 链路、视/听/媒体模块与浏览器自动化。它不再验证这些能力，而是断言它们确实已被删除，
+    # [ZH] 同时断言本版真正新增的两件事仍然成立 —— 文档驱动的动态上下文规划与 Q8_0 KV 缓存。
+    Invoke-Check "Reader 版本（动态上下文 / KV 量化 / 已删模块）" {
+        Invoke-Python "Reader 版本" "tools\test_reader_profile.py"; "通过"
+    }
 
     # v0.2.1 优化已知问题-2 任务二：联网搜索链路（结构化结果 / 精简上限 /
     # 编号注入 + 引用指令 / 失败与空结果明确告知 / 四个环节可观测 / 双语文案）。
@@ -549,7 +557,10 @@ try {
     # [ZH] v0.2.6 任务 4：多 Provider 路由、知情同意红线与本地 API。
     # [ZH] 该测试只绑定 127.0.0.1，无需联网、不加载模型。
     Invoke-Check "开放平台（v0.2.6 任务四）" { Invoke-Python "开放平台" "tools\test_ecosystem.py"; "通过" }
-    Invoke-Check "本地检索（任务六）" { Invoke-Python "检索" "tools\test_retrieval.py"; "通过" }
+    # [EN] The BM25 retrieval pipeline (``tools\test_retrieval.py``) is removed from the Reader
+    # [EN] profile; ``tools\test_reader_profile.py`` above asserts the whole stack is gone.
+    # [ZH] BM25 检索链路（``tools\test_retrieval.py``）已从 Reader 版移除；上面的
+    # [ZH] ``tools\test_reader_profile.py`` 断言整条栈确实不存在。
     Invoke-Check "模型管理写路径（任务五）" { Invoke-Python "模型管理" "tools\test_model_admin.py"; "通过" }
 
     # v0.2.1 跨平台（任务三 / 任务五）：平台探测（kind/RID/数据目录）、能力清单、
@@ -759,14 +770,13 @@ try {
     }
 
     # ---------- 5. 需要真实浏览器 / 联网的项 ----------
+    # [EN] On the Reader branch there is no browser automation left to drive, so this section
+    # [EN] keeps only the networked model-hub end-to-end run.
+    # [ZH] Reader 分支已不再有浏览器自动化可驱动，因此本节只保留需要联网的模型中心端到端。
     if ($SkipE2E) {
-        Write-Host "[SKIP] 自动化端到端 / 模型中心端到端（-SkipE2E）" -ForegroundColor Yellow
+        Write-Host "[SKIP] 模型中心端到端（-SkipE2E）" -ForegroundColor Yellow
     }
     else {
-        Invoke-Check "自动化端到端（真实 Edge）" { Invoke-Python "自动化端到端" "tools\test_automation_e2e.py"; "通过" }
-        # v0.2.1 自动化优化：登录态复用 / href 提取 / 可视化选取语义。
-        # 它自己起一个回环 HTTP 站点并在真实浏览器里跑，同样需要 -SkipE2E 之外的机器。
-        Invoke-Check "自动化登录态与链接提取（真实 Edge）" { Invoke-Python "自动化登录态" "tools\test_automation_login.py"; "通过" }
         Invoke-Check "模型中心端到端（联网）" { Invoke-Python "模型中心端到端" "tools\test_model_hub_e2e.py"; "通过" }
     }
 }

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- EchoDesk AppStream 元数据（由 tools/gen_platform_icons.py 生成）。
-     安装：cp 到 /usr/share/metainfo/ ；截图目录是 assets/screenshots/（本版暂无截图）。 -->
+     安装：cp 到 /usr/share/metainfo/ ；界面截图见仓库的 docs/images/ 与 assets/screenshots/。 -->
 <component type="desktop-application">
   <id>com.voidentropia.echodesk</id>
   <metadata_license>CC0-1.0</metadata_license>
@@ -28,6 +28,6 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="0.2.3" date="2026-11-07"/>
+    <release version="0.2.6-reader" date="2026-11-15"/>
   </releases>
 </component>

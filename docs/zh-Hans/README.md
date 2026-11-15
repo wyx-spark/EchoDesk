@@ -18,9 +18,9 @@ WPS/Office 的**加密文档**（含旧版 `.doc` / `.xls`），以及**企业�
 
 | 平台 | 下载哪个文件 | 怎么启动 |
 | --- | --- | --- |
-| Windows | `EchoDesk-v0.2.2-Setup.exe`（安装程序）或便携版 `…-win-x64.zip` | 开始菜单 / 桌面快捷方式，或程序文件夹里的便携版启动器 |
-| Linux x86-64 | `EchoDesk-v0.2.2-linux-x64.tar.gz` | 解压目录里执行 `./start.sh` |
-| macOS（Apple 芯片） | `EchoDesk-v0.2.2-osx-arm64.tar.gz` | 解压目录里执行 `./start.sh` |
+| Windows | `EchoDesk-v0.2.6-Setup.exe`（安装程序）或便携版 `…-win-x64.zip` | 开始菜单 / 桌面快捷方式，或程序文件夹里的便携版启动器 |
+| Linux x86-64 | `EchoDesk-v0.2.6-linux-x64.tar.gz` | 解压目录里执行 `./start.sh` |
+| macOS（Apple 芯片） | `EchoDesk-v0.2.6-osx-arm64.tar.gz` | 解压目录里执行 `./start.sh` |
 
 Linux 与 macOS 的发布物是**免安装的自包含压缩包**：界面运行时与后端解释器都在包里，
 目标机器不需要预装 .NET 或 Python。
@@ -28,15 +28,15 @@ Linux 与 macOS 的发布物是**免安装的自包含压缩包**：界面运行
 ```bash
 # Linux / macOS：校验、解压、启动
 sha256sum -c SHA256SUMS.txt                    # macOS 用：shasum -a 256 -c SHA256SUMS.txt
-tar -xzf EchoDesk-v0.2.2-linux-x64.tar.gz
-cd EchoDesk-v0.2.2-linux-x64 && ./start.sh     # 权限位丢了就先 chmod +x start.sh app/EchoDesk
+tar -xzf EchoDesk-v0.2.6-linux-x64.tar.gz
+cd EchoDesk-v0.2.6-linux-x64 && ./start.sh     # 权限位丢了就先 chmod +x start.sh app/EchoDesk
 ```
 
 用户数据（对话记录、设置、`results/`）存放在**用户数据目录**里，各平台按各自的惯例解析这个目录：
 
 ```
 # Windows —— 程序目录本身（若装在 %APPDATA%\EchoDesk 下，那就是 %APPDATA%\EchoDesk）
-C:\Users\<用户名>\EchoDesk-v0.2.2\
+C:\Users\<用户名>\EchoDesk-v0.2.6\
 %APPDATA%\EchoDesk\
 
 # macOS

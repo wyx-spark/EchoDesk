@@ -1768,9 +1768,14 @@ internal static class Probe
     }
 
     /// <summary>
-    /// [EN] Generate the three images for one language; English uses bare file names and
-    /// [EN] Chinese gets a .zh-Hans suffix.
-    /// [ZH] 生成一个语言版本的三张图；英文用裸文件名，中文加 .zh-Hans 后缀。
+    /// [EN] Generate the three Reader scenes for one language; English uses the bare file names
+    /// [EN] and Chinese gets a `.zh-Hans` suffix.
+    /// [ZH] 生成一个语言版本的 Reader 三幕；英文用裸文件名，中文加 `.zh-Hans` 后缀。
+    /// [EN] A fresh window per scene keeps the scenes independent: chips, the stop button and the
+    /// [EN] status strip are all rebuilt from the scene's demo data, so no state can leak from one
+    /// [EN] image into the next.
+    /// [ZH] 每一幕都用新窗口，三幕互不影响：胶囊、停止按钮与状态区全部由该幕的演示数据重建，
+    /// [ZH] 一张图的状态不会渗进下一张。
     /// </summary>
     private static async Task<bool> CaptureLanguageAsync(IClassicDesktopStyleApplicationLifetime desktop,
         List<Window> windows, string language, bool english, string suffix)
@@ -1780,61 +1785,42 @@ internal static class Probe
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
         Console.WriteLine($"  [info] 生成 {language} 截图{suffix}");
 
-        // [EN] ---------- (1) Main screen: a contract summary is streaming ----------
-        // [ZH] ---------- ① 主界面：合同摘要正在流式输出 ----------
-        var main = new MainWindow
+        foreach ((string scene, string file) in new[]
+                 {
+                     ("main", "screenshot-main"),
+                     ("parse", "screenshot-file-parse"),
+                     ("chat", "screenshot-chat"),
+                 })
         {
-            ProbeSuppressBackendStart = true,
-            Width = 1280,
-            Height = 820,
-        };
-        windows.Add(main);
-        desktop.MainWindow = main;
-        main.Show();
-        await Task.Delay(800);
-        main.Width = 1280;
-        main.Height = 820;
-        main.ProbePrepareShowcase(english);
-        await Task.Delay(900);
-        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-        ok &= CheckShowcase($"主界面（{language}）", main.Icon is not null, "Window.Icon 已解析（非 null）");
-        ok &= SaveShot(main, Path.Combine(ShowcaseDir, $"screenshot-main{suffix}.png"), scale: 2) == 1;
-
-        // [EN] ---------- (2) Settings - Model market ----------
-        // [ZH] ---------- ② 设置 → 模型市场 ----------
-        var marketSettings = new SettingsWindow(App.State) { Width = 1280, Height = 920 };
-        windows.Add(marketSettings);
-        marketSettings.Show();
-        await Task.Delay(1200);
-        if (!marketSettings.SelectTab("settings.tab.model"))
-        {
-            Console.WriteLine("  [FAIL] 找不到「模型」页签");
-            ok = false;
-        }
-        else
-        {
-            ModelPage? modelPage = marketSettings.FindPage<ModelPage>();
-            if (modelPage is null)
+            var main = new MainWindow
             {
-                Console.WriteLine("  [FAIL] 设置窗口里没有 ModelPage");
-                ok = false;
-            }
-            else
-            {
-                modelPage.ProbeShowDemoMarket(english);
-                var demoState = modelPage.MarketSnapshot();
-                Console.WriteLine($"  [info] 市场演示数据：{demoState.ItemCount} 行｜{demoState.PageInfo}｜{demoState.Total}");
-                await Task.Delay(900);
-                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-                var settledState = modelPage.MarketSnapshot();
-                Console.WriteLine($"  [info] 截图前市场状态：{settledState.ItemCount} 行｜{settledState.PageInfo}｜{settledState.Total}");
-                ok &= CheckShowcase($"模型市场（{language}）", marketSettings.Icon is not null,
-                    "Window.Icon 已解析（非 null）");
-                ok &= SaveShot(marketSettings,
-                    Path.Combine(ShowcaseDir, $"screenshot-model-market{suffix}.png"), scale: 2) == 1;
-            }
-        }
+                ProbeSuppressBackendStart = true,
+                Width = 1280,
+                Height = 820,
+            };
+            windows.Add(main);
+            desktop.MainWindow = main;
+            main.Show();
+            await Task.Delay(800);
+            main.Width = 1280;
+            main.Height = 820;
+            main.ProbePrepareShowcase(english, scene);
+            await Task.Delay(900);
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
 
+            string shownVersion = main.ProbeTitleBarVersionText;
+            Console.WriteLine($"  [info] {scene} 标题栏版本号：{(shownVersion.Length > 0 ? shownVersion : "(空)")}");
+            ok &= CheckShowcase($"{scene}（{language}）", main.Icon is not null, "Window.Icon 已解析（非 null）");
+            // [EN] The title bar must carry the **current** version. The old image was baked with a
+            // [EN] hard-coded "v0.2.2" long after the release had moved on, so the README advertised
+            // [EN] a version that no longer existed; this check pins the derived value.
+            // [ZH] 标题栏必须带上**当前**版本号。旧图里长期印着写死的 "v0.2.2"，而发布版早已向前，
+            // [ZH] 等于 README 在宣传一个并不存在的版本；这条检查钉住派生出来的值。
+            ok &= CheckShowcase($"{scene}（{language}）", shownVersion.Length > 0,
+                "标题栏版本号非空（取自握手或程序集 InformationalVersion）");
+            ok &= SaveShot(main, Path.Combine(ShowcaseDir, $"{file}{suffix}.png"), scale: 2) == 1;
+            main.Close();
+        }
 
         return ok;
     }

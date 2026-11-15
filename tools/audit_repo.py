@@ -448,6 +448,13 @@ PS1_ALLOWLIST: dict[str, str] = {
                                           "platform packagers; the packagers themselves are Python and "
                                           "cross-platform / [ZH] 编排 Windows 安装程序与三平台打包器；"
                                           "打包器本身是跨平台 Python 脚本，因此该编排脚本仅限 Windows 发布链",
+    "tools/build_reader.ps1": "[EN] Reader edition build entry point: PyInstaller onedir plus an "
+                              "optional Inno Setup wrapper, so it is tied to the Windows release "
+                              "chain exactly like tools/build_release.ps1; there is no POSIX "
+                              "equivalent because this branch ships no POSIX installer / "
+                              "[ZH] Reader 版构建入口：PyInstaller onedir 加可选的 Inno Setup "
+                              "封装，和 tools/build_release.ps1 一样绑定 Windows 发布链；"
+                              "该分支不产出 POSIX 安装包，因此不需要 .sh 等价物",
 }
 
 

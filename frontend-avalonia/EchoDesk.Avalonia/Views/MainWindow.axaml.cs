@@ -41,6 +41,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -4257,17 +4258,58 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// [EN] Probe: fills in a set of **demo data** for the README screenshots (`--probe
-    /// [EN] shots`).
-    /// [ZH] 探针：填入一组**演示数据**，供 README 截图使用（`--probe shots`）。
-    /// [EN] Only the real message rendering path is used (AddMessage / MarkdownRenderer /
-    /// [EN] status bar); no controls are assembled ad hoc for the screenshot,
-    /// [ZH] 只走真实的消息渲染路径（AddMessage / MarkdownRenderer / 状态条），不截图临时拼的控件，
-    /// [EN] so the layout, font size and status area in the screenshot are exactly what the
-    /// [EN] user sees.
-    /// [ZH] 因此截图里的排版、字号、状态区与用户实际看到的完全一致。
+    /// [EN] The version text a showcase screenshot must carry.
+    ///
+    /// [EN] A showcase runs without a backend handshake, so `_state.Backend.Version` is empty and
+    /// [EN] the title bar would show nothing. This used to be patched by hard-coding "v0.2.2"
+    /// [EN] here, which then shipped inside the README image long after the release had moved on:
+    /// [EN] a screenshot advertising a version that no longer exists. The value is derived instead
+    /// [EN] — the handshake version when there is one, otherwise the assembly's
+    /// [EN] InformationalVersion, which the project file keeps equal to ``APP_VERSION`` in
+    /// [EN] backend/version.py (the single source of truth). Nothing is hard-coded.
+    ///
+    /// [ZH] 宣传截图必须携带的版本文本。
+    ///
+    /// [ZH] 截图会话没有后端握手，`_state.Backend.Version` 为空，标题栏会什么都没有。此前这里直接
+    /// [ZH] 写死 "v0.2.2" 兜底，于是 README 用的图里长期印着一个早已过去的版本号 —— 截图在宣传一个
+    /// [ZH] 并不存在的发布版。现在改为派生：有握手版本就用它，否则用程序集的
+    /// [ZH] InformationalVersion（工程文件按约定与 backend/version.py 的 ``APP_VERSION`` 保持一致，
+    /// [ZH] 那是唯一真相）。任何地方都不写死版本号。
     /// </summary>
-    public void ProbePrepareShowcase(bool english = false)
+    private string ShowcaseVersionText()
+    {
+        string handshake = _state.Backend.Version ?? "";
+        if (handshake.Length > 0)
+            return handshake;
+
+        string informational = typeof(MainWindow).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
+        // [EN] Build metadata ("1.2.3+<commit>") is not part of the product version.
+        // [ZH] 构建元数据（"1.2.3+<commit>"）不属于产品版本号，去掉。
+        int plus = informational.IndexOf('+');
+        if (plus >= 0)
+            informational = informational[..plus];
+        informational = informational.Trim();
+        if (informational.Length == 0)
+            return "";
+        return informational.StartsWith("v", StringComparison.OrdinalIgnoreCase)
+            ? informational
+            : "v" + informational;
+    }
+
+    /// <summary>
+    /// [EN] Probe: fills in the **demo data** of one README screenshot scene (`--probe shots`).
+    /// [EN] The Reader edition documents three scenes — the idle main window, a document being
+    /// [EN] parsed, and a streaming conversation — because those are the three things this build
+    /// [EN] is for. Only the real rendering path is used (AddMessage / MarkdownRenderer / the
+    /// [EN] status strip), so the layout, font size and wording in the image are exactly what the
+    /// [EN] user sees; nothing is assembled ad hoc for the screenshot.
+    /// [ZH] 探针：为一幕 README 截图填入**演示数据**（`--probe shots`）。Reader 版记录三幕 ——
+    /// [ZH] 空闲主界面、文档解析、流式对话 —— 因为这一版就做这三件事。只走真实渲染路径
+    /// [ZH] （AddMessage / MarkdownRenderer / 状态区），图上的排版、字号与文案就是用户看到的样子，
+    /// [ZH] 不为截图另拼控件。
+    /// </summary>
+    public void ProbePrepareShowcase(bool english = false, string scene = "chat")
     {
         MessagePanel.Children.Clear();
         _transcript.Clear();
@@ -4275,71 +4317,176 @@ public partial class MainWindow : Window
         _agentRows = null;
         _live = null;
 
+        // [EN] Every scene starts from the same idle state, so a chip or a stop button left over
+        // [EN] from the previous scene can never leak into the next image.
+        // [ZH] 每一幕都从同一个空闲态开始，上一幕遗留的胶囊或停止按钮不会渗进下一张图。
+        TitleBarVersionText.Text = ShowcaseVersionText();
+        ModelText.Text = english
+            ? "🧠 Model: Phi-3-Mini-128K-Q4_K_M"
+            : "🧠 模型: Phi-3-Mini-128K-Q4_K_M";
+        FileTokensText.IsVisible = false;
+        MetricsText.IsVisible = false;
+        StopButton.IsVisible = false;
+        SetStatus("");
+
+        if (scene == "main")
+        {
+            // [EN] ---------- Scene 1: the idle main window ----------
+            // [ZH] ---------- 第一幕：空闲的主界面 ----------
+            AddMessage("system", Loc.T("main.welcome", "✨ 欢迎使用 EchoDesk {0} — 由{1}出品",
+                ShowcaseVersionText(), Loc.T("main.studioName", "熵寂工作室")));
+
+            if (english)
+            {
+                AddMessage("user",
+                    "What qualification requirements does this 42-page tender document impose?");
+                AddMessage("assistant",
+                    "Parsed **Tender Notice (North District, 2026).pdf** (42 pages / 58,600 characters) "
+                    + "and pulled out the qualification chapter:\n\n"
+                    + "### Qualification requirements\n"
+                    + "1. **Business licence** valid and within the scope of the bid;\n"
+                    + "2. **Financials**: audited statements for the last three years, no loss in two "
+                    + "consecutive years;\n"
+                    + "3. **Track record**: at least two comparable contracts above 5,000,000 in the last "
+                    + "three years;\n"
+                    + "4. **Personnel**: one certificated project manager, on site full time;\n"
+                    + "5. **Clean record**: no serious breach in the last three years.\n\n"
+                    + "Source pointer: Chapter 3 “Bidder qualification” · characters 8,120–11,940");
+                InputBox.Text = "Turn the qualification requirements into a checklist I can tick off.";
+            }
+            else
+            {
+                AddMessage("user", "这份 42 页的招标文件对被投标人有哪些资格要求？");
+                AddMessage("assistant",
+                    "已解析 **《招标公告（北区，2026 年度）》.pdf**（42 页 / 58,600 字），"
+                    + "并抽出了资格要求一章：\n\n"
+                    + "### 资格要求\n"
+                    + "1. **营业执照**有效，且经营范围覆盖本次标的；\n"
+                    + "2. **财务状况**：近三年审计报告齐全，不得连续两年亏损；\n"
+                    + "3. **业绩**：近三年至少两个 500 万元以上的同类合同；\n"
+                    + "4. **人员**：一名持证项目经理，须全程在岗；\n"
+                    + "5. **无不良记录**：近三年无重大违约。\n\n"
+                    + "原文指针：第 3 章「投标人资格」· 字符区间 8,120–11,940");
+                InputBox.Text = "把资格要求整理成一份可以逐条打勾的核对清单。";
+            }
+            InputBox.CaretIndex = InputBox.Text.Length;
+            ModeText.Text = english ? "MODE CHAT" : "MODE 对话";
+            SetStatus(english
+                ? "✅ Ready · local model loaded · nothing leaves this machine"
+                : "✅ 就绪 · 本地模型已加载 · 数据不出本机");
+            return;
+        }
+
+        if (scene == "parse")
+        {
+            // [EN] ---------- Scene 2: a document being parsed ----------
+            // [ZH] ---------- 第二幕：文档解析 ----------
+            if (english)
+            {
+                AddMessage("user",
+                    "Parse this contract and extract the payment terms and the liability clauses.");
+                AddMessage("assistant",
+                    "Parsed **Equipment Purchase Agreement (2026 revision).docx** (18 pages / 21,480 characters, "
+                    + "2.4 s). Structure first, then the extraction:\n\n"
+                    + "### Document structure\n"
+                    + "| Chapter | Pages | Characters |\n"
+                    + "| --- | --- | --- |\n"
+                    + "| 4 · Payment | 4–7 | 5,180 |\n"
+                    + "| 8 · Liability | 11–14 | 4,920 |\n"
+                    + "| 11 · Termination | 16–17 | 2,340 |\n\n"
+                    + "### Payment terms\n"
+                    + "- **30%** advance within 10 days of signing;\n"
+                    + "- **60%** on acceptance, 30 days after the invoice;\n"
+                    + "- **10%** retention, released 12 months after commissioning.\n\n"
+                    + "Source pointers: Chapter 4 · characters 3,120–8,300; Chapter 8 · characters 12,840–15,206");
+                InputBox.Text = "Compare the payment terms with our standard 3-6-1 schedule.";
+            }
+            else
+            {
+                AddMessage("user", "帮我解析这份合同，抽取付款条款和违约责任。");
+                AddMessage("assistant",
+                    "已解析 **《设备采购合同（2026 修订版）》.docx**（18 页 / 21,480 字，用时 2.4 秒）。"
+                    + "先给结构，再给抽取结果：\n\n"
+                    + "### 文档结构\n"
+                    + "| 章节 | 页码 | 字符数 |\n"
+                    + "| --- | --- | --- |\n"
+                    + "| 第 4 章 · 付款 | 4–7 | 5,180 |\n"
+                    + "| 第 8 章 · 违约责任 | 11–14 | 4,920 |\n"
+                    + "| 第 11 章 · 解除 | 16–17 | 2,340 |\n\n"
+                    + "### 付款条款\n"
+                    + "- **30%** 预付款，合同签订后 10 日内支付；\n"
+                    + "- **60%** 验收款，发票开具后 30 日内支付；\n"
+                    + "- **10%** 质保金，投运满 12 个月后支付。\n\n"
+                    + "原文指针：第 4 章 · 字符区间 3,120–8,300；第 8 章 · 字符区间 12,840–15,206");
+                InputBox.Text = "把付款条款和我们标准的 3-6-1 账期对一下，差多少。";
+            }
+            InputBox.CaretIndex = InputBox.Text.Length;
+            ModeText.Text = english ? "MODE CONTRACT" : "MODE 合同审阅";
+            // [EN] The document token chip is the Reader edition's own status field: the parsed text
+            // [EN] length and the window the backend allocated for it.
+            // [ZH] 文档 token 胶囊是 Reader 版自己的状态字段：已解析正文长度与后端为它分配的窗口。
+            FileTokensText.IsVisible = true;
+            FileTokensText.Text = Loc.T("main.file.tokens", "📄 文档 {0} tokens · 窗口 {1}",
+                "21.5k", "32.8k");
+            SetStatus(english
+                ? "✅ Parsed · 18 pages / 21,480 characters · 2.4 s · all on this machine"
+                : "✅ 已解析 · 18 页 / 21,480 字 · 2.4 秒 · 全程本机");
+            return;
+        }
+
+        // [EN] ---------- Scene 3: a conversation being streamed ----------
+        // [ZH] ---------- 第三幕：正在流式输出的对话 ----------
         if (english)
         {
-            AddMessage("user", "Summarize the liability clauses in this contract, especially the penalty cap and termination terms.");
+            AddMessage("user",
+                "Rewrite clause 4 as a commitment letter, stressing that the project manager stays on site.");
             AddMessage("assistant",
-                "Parsed **Equipment Purchase Agreement (2026 revision).docx** (18 pages / 21,480 characters) "
-                + "and used Contract mode to locate the liability clauses:\n\n"
-                + "### Key liability terms\n"
-                + "| Clause | Term | Risk |\n"
-                + "| --- | --- | --- |\n"
-                + "| 8.1 · Late delivery | 0.05% of contract value per day, capped at 10% | Medium |\n"
-                + "| 8.3 · Quality defect | Replace within 15 days; 10% of defective value after that | High |\n"
-                + "| 9.2 · Unilateral termination | Buyer may terminate, but must reimburse reasonable costs | Low |\n\n"
-                + "### Findings\n"
-                + "- **Penalty cap is low**: 10% is below the 15%–20% range common for equipment purchases.\n"
-                + "- **Quality remedy is incomplete**: clause 8.3 covers replacement only, not line-down losses or third-party inspection fees.\n"
-                + "- **Termination favours the buyer**, but “reasonable costs” is undefined; add a calculation basis.\n\n"
-                + "### Suggested rewrite (clause 8.1)\n"
-                + "> For each day of delay, Seller shall pay 0.05% of the contract value as liquidated damages. "
-                + "If cumulative damages reach 20% of the contract value, Buyer may terminate and claim actual losses.\n\n"
-                + "Source pointer: Chapter 8 “Liability” · characters 12,840–15,206 ▍",
+                "Here is the commitment letter paragraph, in the contract's own register:\n\n"
+                + "### Clause 4 · Commitment letter on personnel\n"
+                + "> The Bidder hereby undertakes that the certificated project manager named in the bid "
+                + "will be stationed on site for the whole construction period, will not be replaced "
+                + "without the Buyer's written consent, and that any replacement approved in writing "
+                + "will hold an equivalent certificate and no lower qualification.\n\n"
+                + "Two points worth checking before you sign:\n"
+                + "- the phrase “whole construction period” should be defined by the milestone dates in "
+                + "Annex B;\n"
+                + "- add a penalty line, otherwise the commitment has no teeth:\n\n"
+                + "| Breach | Consequence |\n"
+                + "| --- | --- |\n"
+                + "| Manager absent more than 5 days | 0.1% of contract value per day |\n"
+                + "| Unapproved replacement | 2% of contract value, once |\n\n"
+                + "Source pointer: Chapter 3 “Bidder qualification” · characters 8,120–11,940 ▍",
                 "",
-                "Output 428 tokens · 18.4 tok/s · first token 0.8s · context 6,144/8,192");
-
-            InputBox.Text = "Raise the clause 8.1 penalty cap to 20% and draft a negotiation note.";
-            InputBox.CaretIndex = InputBox.Text.Length;
-
-            TitleBarVersionText.Text = "v0.2.2";
-            SetStatus("⏳ Generating · 428 tokens written");
-            ModelText.Text = "🧠 Model: Qwen2.5-7B-Instruct-Q4_K_M";
+                "Output 428 tokens · 12.6 tok/s · first token 0.6 s · context 21,480 / 32,768");
+            InputBox.Text = "Add the penalty table to clause 4 as well, then export the letter.";
             ModeText.Text = "MODE CONTRACT";
-            MetricsText.Text = "⚡ 18.4 tok/s · first token 0.8s";
+            SetStatus("⏳ Generating · 428 tokens written");
+            MetricsText.Text = "⚡ 12.6 tok/s · first token 0.6 s";
         }
         else
         {
-            AddMessage("user", "帮我总结这份合同的违约责任，重点看违约金上限和解除条件。");
+            AddMessage("user", "把第 4 条改写成承诺函，强调项目经理全程在岗。");
             AddMessage("assistant",
-                "已解析 **《设备采购合同（2026 修订版）.docx》**（18 页 / 21,480 字），"
-                + "并用合同模式定位到违约责任相关条款：\n\n"
-                + "### 违约责任要点\n"
-                + "| 条款 | 约定 | 风险 |\n"
-                + "| --- | --- | --- |\n"
-                + "| 第 8.1 条 · 逾期交付 | 每逾期 1 日按合同总价 0.05% 计违约金，累计上限 10% | 中 |\n"
-                + "| 第 8.3 条 · 质量不符 | 乙方 15 日内更换；逾期按不合格品金额 10% 赔偿 | 高 |\n"
-                + "| 第 9.2 条 · 单方解除 | 甲方可解除，但须赔偿乙方已发生的合理成本 | 低 |\n\n"
-                + "### 关键结论\n"
-                + "- **违约金上限偏低**：10% 的上限低于同类设备采购常见的 15%–20%。\n"
-                + "- **质量责任缺少兜底**：第 8.3 条只约定更换，未覆盖停线损失与第三方检测费用。\n"
-                + "- **解除权对甲方有利**，但“合理成本”未定义，建议补充计价口径。\n\n"
-                + "### 建议改写（第 8.1 条）\n"
-                + "> 每逾期一日，乙方按合同总价的 0.05% 向甲方支付违约金；累计违约金达到合同总价 20% 时，"
-                + "甲方有权解除合同并要求赔偿实际损失。\n\n"
-                + "原文指针：第 8 章「违约责任」· 字符区间 12,840–15,206 ▍",
+                "按合同自身的语体写好这段承诺函：\n\n"
+                + "### 第 4 条 · 人员承诺函\n"
+                + "> 投标人承诺：投标文件中所列的持证项目经理，将在整个施工期内全程驻场，未经采购人书面同意"
+                + "不得更换；经书面同意更换的，接替人员须持有同等证书且资格不低于原人员。\n\n"
+                + "签署前有两处建议核对：\n"
+                + "- “整个施工期”应以附件 B 的里程碑日期界定，否则口径可变；\n"
+                + "- 补一条违约责任，否则承诺没有约束力：\n\n"
+                + "| 违约情形 | 后果 |\n"
+                + "| --- | --- |\n"
+                + "| 项目经理离场超过 5 日 | 每日按合同总价 0.1% 计违约金 |\n"
+                + "| 未经批准更换 | 按合同总价 2% 一次性赔偿 |\n\n"
+                + "原文指针：第 3 章「投标人资格」· 字符区间 8,120–11,940 ▍",
                 "",
-                "输出 428 tokens · 18.4 tok/s · 首字 0.8s · 上下文 6,144/8,192");
-
-            InputBox.Text = "把第 8.1 条的违约金上限改成 20%，再给我一版谈判口径。";
-            InputBox.CaretIndex = InputBox.Text.Length;
-
-            TitleBarVersionText.Text = "v0.2.2";
-            SetStatus("⏳ 正在生成 · 已输出 428 tokens");
-            ModelText.Text = "🧠 模型: Qwen2.5-7B-Instruct-Q4_K_M";
+                "输出 428 tokens · 12.6 tok/s · 首字 0.6 秒 · 上下文 21,480 / 32,768");
+            InputBox.Text = "把违约金那张表也补进第 4 条，然后导出这封承诺函。";
             ModeText.Text = "MODE 合同审阅";
-            MetricsText.Text = "⚡ 18.4 tok/s · 首字 0.8s";
+            SetStatus("⏳ 正在生成 · 已输出 428 tokens");
+            MetricsText.Text = "⚡ 12.6 tok/s · 首字 0.6 秒";
         }
-
+        InputBox.CaretIndex = InputBox.Text.Length;
         MetricsText.IsVisible = true;
         StopButton.IsVisible = true;
     }
@@ -4964,6 +5111,14 @@ public partial class MainWindow : Window
     /// [ZH] 探针辅助：在标题栏写入合成版本号，使布局与本地化在没有后端时也能断言。
     /// </summary>
     public void ProbeSetTitleBarVersion(string version) => TitleBarVersionText.Text = version;
+
+    /// <summary>
+    /// [EN] Probe helper: the version text the title bar currently shows, so `--probe shots` can
+    ///      assert that the screenshot carries the current version instead of a stale literal.
+    /// [ZH] 探针辅助：标题栏当前显示的版本文本，供 `--probe shots` 断言截图携带的是当前版本，
+    ///      而不是某个过时的字面量。
+    /// </summary>
+    public string ProbeTitleBarVersionText => TitleBarVersionText.Text ?? "";
 
     /// <summary>
     /// [EN] v0.2.6 item 21: exposes the log-routing predicates to the unattended probe, so the

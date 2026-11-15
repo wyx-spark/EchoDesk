@@ -1,6 +1,6 @@
 # EchoDesk 企业环境适配与合规说明
 
-版本：v0.2.2
+版本：v0.2.6
 出品方：熵寂工作室（Void-Entropia-Studio）
 适用对象：在受管企业环境中部署 EchoDesk 桌面版（便携版或安装版）的 IT 管理员与合规审查人员
 
@@ -212,9 +212,9 @@ export NO_PROXY="localhost,127.0.0.1,.corp.example"
 便携版默认是这样的三层结构：
 
 ```text
-EchoDesk-v0.2.2\
+EchoDesk-v0.2.6\
 ├── install-complete.bat         ← 解压后的收尾脚本（负责创建下面这个快捷方式）
-├── Start-EchoDesk-v0.2.2.lnk          ← 启动快捷方式，由上面那个脚本在**你的机器上**创建
+├── Start-EchoDesk-v0.2.6.lnk          ← 启动快捷方式，由上面那个脚本在**你的机器上**创建
 │                                  （工作目录 = 用户数据目录）
 ├── ui_state.json                ← 界面状态
 ├── snippets.json                ← 常用语
@@ -251,7 +251,7 @@ EchoDesk-v0.2.2\
 **Linux 与 macOS 的发布包**同样是三层结构，只是用 POSIX 名字，而且完全不创建快捷方式：
 
 ```text
-EchoDesk-v0.2.2/
+EchoDesk-v0.2.6/
 ├── start.sh                     ← 顶层启动脚本（接管并运行 app/EchoDesk）
 ├── SIGNING.txt                  ← macOS 签名/公证还缺什么
 ├── docs/  README*.md  LICENSE*

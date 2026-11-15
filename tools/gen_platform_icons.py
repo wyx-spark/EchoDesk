@@ -42,6 +42,28 @@ ICNS = os.path.join(ROOT, "assets", "EchoDesk.icns")
 HICOLOR = os.path.join(ROOT, "assets", "icons", "hicolor")
 DESKTOP = os.path.join(ROOT, "deploy", "linux", "echodesk.desktop")
 METAINFO = os.path.join(ROOT, "deploy", "linux", "com.voidentropia.echodesk.metainfo.xml")
+#: [EN] Version source (the single source of truth) and the release date AppStream needs.
+#: [ZH] 版本号来源（唯一真相）以及 AppStream 需要的发布日期。
+VERSION_FILE = os.path.join(ROOT, "backend", "version.py")
+RELEASE_DATE = "2026-11-15"
+
+
+def app_version() -> str:
+    """[EN] Read APP_VERSION from backend/version.py and strip the ``v`` prefix.
+    [ZH] 从 backend/version.py 读取 APP_VERSION（版本号唯一来源），去掉前缀 ``v``。
+
+    [EN] The version used to be typed into the metainfo by hand, so the AppStream
+    [EN] ``<release>`` entry stayed at 0.2.3 long after the release had moved on. Deriving it
+    [EN] here keeps software-centre metadata from advertising a version that no longer exists.
+    [ZH] 版本号此前是手工写进 metainfo 的，于是 AppStream 的 ``<release>`` 在发布版早已前进之后
+    [ZH] 仍停在 0.2.3。这里改为派生，避免软件中心的元数据去宣传一个并不存在的版本。
+    """
+    with io.open(VERSION_FILE, "r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.startswith("APP_VERSION"):
+                value = line.split("=", 1)[1].strip().strip("\"'")
+                return value[1:] if value.lower().startswith("v") else value
+    raise SystemExit("读不出 APP_VERSION：backend/version.py")
 
 #: icns 里"内嵌 PNG"的块类型 → 该块应当承载的像素尺寸。
 #: 命名规则：ic07=128、ic08=256、ic09=512、ic10=1024，ic11~ic14 是它们的 @2x 变体。
@@ -148,7 +170,7 @@ def metainfo() -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         "<!-- EchoDesk AppStream 元数据（由 tools/gen_platform_icons.py 生成）。\n"
-        "     安装：cp 到 /usr/share/metainfo/ ；截图目录是 assets/screenshots/（本版暂无截图）。 -->\n"
+        "     安装：cp 到 /usr/share/metainfo/ ；界面截图见仓库的 docs/images/ 与 assets/screenshots/。 -->\n"
         '<component type="desktop-application">\n'
         "  <id>com.voidentropia.echodesk</id>\n"
         "  <metadata_license>CC0-1.0</metadata_license>\n"
@@ -176,7 +198,7 @@ def metainfo() -> str:
         "  </developer>\n"
         "  <content_rating type=\"oars-1.1\"/>\n"
         "  <releases>\n"
-        "    <release version=\"0.2.3\" date=\"2026-11-07\"/>\n"
+        f'    <release version="{app_version()}" date="{RELEASE_DATE}"/>\n'
         "  </releases>\n"
         "</component>\n"
     )

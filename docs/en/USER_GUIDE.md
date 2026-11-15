@@ -1,4 +1,4 @@
-# EchoDesk User Guide (v0.2.2)
+# EchoDesk User Guide (v0.2.6)
 
 A hands-on manual for real-world use. For a quick start and troubleshooting, see
 [`FAQ.md`](FAQ.md); for field-by-field instructions on the automation settings, see
@@ -7,10 +7,26 @@ Chinese version: [`docs/zh-Hans/USER_GUIDE.md`](../zh-Hans/USER_GUIDE.md).
 
 ---
 
+---
+
+> ## Scope of this edition (Reader)
+>
+> This branch publishes **EchoDesk Reader 0.2.6-reader**, built from the Avalonia front end. Where
+> this guide says `EchoDesk-v0.2.6\`, read `EchoDesk-Reader-v0.2.6-reader\`; where it says
+> `EchoDesk-v0.2.6-Setup.exe`, read `EchoDesk-Reader-Setup.exe`. There is no `.lnk` launcher in this
+> build: the program offers to create `EchoDesk 启动.cmd` on Windows, `EchoDesk.command` on macOS and
+> `echodesk.desktop` on Linux instead.
+>
+> **Not shipped in this build**, so the passages that describe them do not apply: browser automation
+> (§4, and `AUTOMATION_GUIDE.md` in its entirety), local vision / speech / media, the SQLite FTS5
+> knowledge base, long-term memory, BM25 retrieval and the extractive summariser (the retrieval half
+> of §9). Chunked summarisation with its source pointers (§9.2) still applies, as does the
+> document-driven context allocation described in the README.
+
 ## 1. Installation and startup
 
 ### Installed version (recommended)
-1. Double-click `EchoDesk-v0.2.2-Setup.exe` (there is only this one installer; it does **not** bundle a
+1. Double-click `EchoDesk-v0.2.6-Setup.exe` (there is only this one installer; it does **not** bundle a
    model, and asks on first launch whether to download one). It needs no administrator rights.
 2. **By default it installs into the folder the installer itself sits in** — so a copy of the installer
    dropped into `D:\Tools\EchoDesk\` installs into `D:\Tools\EchoDesk\`. The wizard shows the path page, so
@@ -22,9 +38,9 @@ The installed layout is **exactly the same** as the portable build: the program 
 data and `results\` stay in the install folder.
 
 ### Portable version (plain zip)
-1. Unzip the whole `EchoDesk-v0.2.2` folder anywhere you like (desktop, D: drive or USB stick all work) —
+1. Unzip the whole `EchoDesk-v0.2.6` folder anywhere you like (desktop, D: drive or USB stick all work) —
    nothing is written outside it, and deleting the folder uninstalls it;
-2. Double-click **"Start-EchoDesk-v0.2.2.lnk"** inside that folder — this is the only entry point, so you never have
+2. Double-click **"Start-EchoDesk-v0.2.6.lnk"** inside that folder — this is the only entry point, so you never have
    to work out the difference between `app\EchoDesk.exe` and `app\backend\EchoDeskBackend.exe`
    (the latter is launched automatically by the UI; never run it on its own).
    The zip contains no shortcut (a shortcut stores an absolute path, so one created on the maintainer's
@@ -35,13 +51,13 @@ data and `results\` stay in the install folder.
    - If the folder has no shortcut → it asks whether to create one;
    - It shows the onboarding guide once.
 
-**Two layers**: the outer folder (`EchoDesk-v0.2.2\`) holds only the shortcut, your user data and the docs,
+**Two layers**: the outer folder (`EchoDesk-v0.2.6\`) holds only the shortcut, your user data and the docs,
 while **the program itself lives entirely in `app\`** — no exe/dll ever shows up in the outer folder, and
 uninstalling simply means deleting the whole folder.
 
 ### Directory layout and the locations you need to know
 
-The paths below are relative to the portable **outer** folder (`EchoDesk-v0.2.2\`). **`app\` is the program
+The paths below are relative to the portable **outer** folder (`EchoDesk-v0.2.6\`). **`app\` is the program
 itself and is not meant for your own files; the outer folder is your data directory**, so back up and clean up
 from there.
 
@@ -470,7 +486,7 @@ above" (the backend enforces this). The agreement version and the time you accep
 ### 4.4 Scheduling
 Tick "Enable schedule" and enter the times of day it should run (for example `09:00, 18:30`).
 Scheduled tasks are fired by a backend thread while the program is running. If you want them to run at
-startup, copy "Start-EchoDesk-v0.2.2.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
+startup, copy "Start-EchoDesk-v0.2.6.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
 
 ### 4.5 Login state
 The first time, you need to log in manually once in the browser; the program stores the login state in

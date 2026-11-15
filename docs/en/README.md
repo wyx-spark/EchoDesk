@@ -20,9 +20,9 @@ management) behaves the same on all three platforms.
 
 | Platform | What you download | How you start it |
 | --- | --- | --- |
-| Windows | `EchoDesk-v0.2.2-Setup.exe` (installer) or the portable `…-win-x64.zip` | Start Menu / desktop shortcut, or the portable launcher inside the program folder |
-| Linux x86-64 | `EchoDesk-v0.2.2-linux-x64.tar.gz` | `./start.sh` inside the unpacked directory |
-| macOS (Apple silicon) | `EchoDesk-v0.2.2-osx-arm64.tar.gz` | `./start.sh` inside the unpacked directory |
+| Windows | `EchoDesk-v0.2.6-Setup.exe` (installer) or the portable `…-win-x64.zip` | Start Menu / desktop shortcut, or the portable launcher inside the program folder |
+| Linux x86-64 | `EchoDesk-v0.2.6-linux-x64.tar.gz` | `./start.sh` inside the unpacked directory |
+| macOS (Apple silicon) | `EchoDesk-v0.2.6-osx-arm64.tar.gz` | `./start.sh` inside the unpacked directory |
 
 The Linux and macOS builds are self-contained archives with **no installer**: the UI runtime and the backend
 interpreter are both inside, so the target machine needs neither .NET nor Python.
@@ -30,8 +30,8 @@ interpreter are both inside, so the target machine needs neither .NET nor Python
 ```bash
 # Linux / macOS: verify, extract, start
 sha256sum -c SHA256SUMS.txt                    # macOS: shasum -a 256 -c SHA256SUMS.txt
-tar -xzf EchoDesk-v0.2.2-linux-x64.tar.gz
-cd EchoDesk-v0.2.2-linux-x64 && ./start.sh     # chmod +x start.sh app/EchoDesk first if the bits were lost
+tar -xzf EchoDesk-v0.2.6-linux-x64.tar.gz
+cd EchoDesk-v0.2.6-linux-x64 && ./start.sh     # chmod +x start.sh app/EchoDesk first if the bits were lost
 ```
 
 User data (conversation history, settings, `results/`) lives in the **user data folder**, which each platform
@@ -39,7 +39,7 @@ resolves its own way:
 
 ```
 # Windows — the program folder itself (%APPDATA%\EchoDesk when that is where you installed or unpacked it)
-C:\Users\<user>\EchoDesk-v0.2.2\
+C:\Users\<user>\EchoDesk-v0.2.6\
 %APPDATA%\EchoDesk\
 
 # macOS
