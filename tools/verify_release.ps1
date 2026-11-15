@@ -457,7 +457,9 @@ try {
     Invoke-Check "后端 selftest" { Invoke-Python "selftest" "tools\selftest.py"; "通过" }
     Invoke-Check "文件解析" { Invoke-Python "文件解析" "tools\test_file_parsers.py"; "通过" }
     Invoke-Check "纯文本落盘" { Invoke-Python "纯文本落盘" "tools\test_plaintext.py"; "通过" }
-    Invoke-Check "结果目录结构" { Invoke-Python "结果目录" "tools\test_results_dir.py"; "通过" }
+    # [EN] The automation result-folder test went with the automation stack: the Reader edition
+    # [EN] writes no per-task result folders.
+    # [ZH] 自动化结果目录结构的测试已随自动化栈一同删除；Reader 版不产出逐任务结果目录。
     Invoke-Check "技能运行期加载器" { Invoke-Python "技能" "tools\test_skills_runtime.py"; "通过" }
     Invoke-Check "多语言机制" { Invoke-Python "多语言" "tools\test_i18n.py"; "通过" }
     Invoke-Check "开发者模式（修复一）" { Invoke-Python "开发者模式" "tools\test_dev_mode.py"; "通过" }

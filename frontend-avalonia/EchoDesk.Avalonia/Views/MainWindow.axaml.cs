@@ -4351,7 +4351,7 @@ public partial class MainWindow : Window
                     + "three years;\n"
                     + "4. **Personnel**: one certificated project manager, on site full time;\n"
                     + "5. **Clean record**: no serious breach in the last three years.\n\n"
-                    + "Source pointer: Chapter 3 “Bidder qualification” · characters 8,120–11,940");
+                    + "Checked against: Chapter 3 “Bidder qualification” · pages 9–12.");
                 InputBox.Text = "Turn the qualification requirements into a checklist I can tick off.";
             }
             else
@@ -4366,7 +4366,7 @@ public partial class MainWindow : Window
                     + "3. **业绩**：近三年至少两个 500 万元以上的同类合同；\n"
                     + "4. **人员**：一名持证项目经理，须全程在岗；\n"
                     + "5. **无不良记录**：近三年无重大违约。\n\n"
-                    + "原文指针：第 3 章「投标人资格」· 字符区间 8,120–11,940");
+                    + "核对依据：第 3 章「投标人资格」· 第 9–12 页。");
                 InputBox.Text = "把资格要求整理成一份可以逐条打勾的核对清单。";
             }
             InputBox.CaretIndex = InputBox.Text.Length;
@@ -4398,7 +4398,7 @@ public partial class MainWindow : Window
                     + "- **30%** advance within 10 days of signing;\n"
                     + "- **60%** on acceptance, 30 days after the invoice;\n"
                     + "- **10%** retention, released 12 months after commissioning.\n\n"
-                    + "Source pointers: Chapter 4 · characters 3,120–8,300; Chapter 8 · characters 12,840–15,206");
+                    + "Checked against: Chapter 4 (payment, pages 4–7) and Chapter 8 (liability, pages 11–14).");
                 InputBox.Text = "Compare the payment terms with our standard 3-6-1 schedule.";
             }
             else
@@ -4417,7 +4417,7 @@ public partial class MainWindow : Window
                     + "- **30%** 预付款，合同签订后 10 日内支付；\n"
                     + "- **60%** 验收款，发票开具后 30 日内支付；\n"
                     + "- **10%** 质保金，投运满 12 个月后支付。\n\n"
-                    + "原文指针：第 4 章 · 字符区间 3,120–8,300；第 8 章 · 字符区间 12,840–15,206");
+                    + "核对依据：第 4 章（付款，第 4–7 页）与第 8 章（违约责任，第 11–14 页）。");
                 InputBox.Text = "把付款条款和我们标准的 3-6-1 账期对一下，差多少。";
             }
             InputBox.CaretIndex = InputBox.Text.Length;
@@ -4455,7 +4455,7 @@ public partial class MainWindow : Window
                 + "| --- | --- |\n"
                 + "| Manager absent more than 5 days | 0.1% of contract value per day |\n"
                 + "| Unapproved replacement | 2% of contract value, once |\n\n"
-                + "Source pointer: Chapter 3 “Bidder qualification” · characters 8,120–11,940 ▍",
+                + "Checked against: Chapter 3 “Bidder qualification” · pages 9–12 ▍",
                 "",
                 "Output 428 tokens · 12.6 tok/s · first token 0.6 s · context 21,480 / 32,768");
             InputBox.Text = "Add the penalty table to clause 4 as well, then export the letter.";
@@ -4478,7 +4478,7 @@ public partial class MainWindow : Window
                 + "| --- | --- |\n"
                 + "| 项目经理离场超过 5 日 | 每日按合同总价 0.1% 计违约金 |\n"
                 + "| 未经批准更换 | 按合同总价 2% 一次性赔偿 |\n\n"
-                + "原文指针：第 3 章「投标人资格」· 字符区间 8,120–11,940 ▍",
+                + "核对依据：第 3 章「投标人资格」· 第 9–12 页 ▍",
                 "",
                 "输出 428 tokens · 12.6 tok/s · 首字 0.6 秒 · 上下文 21,480 / 32,768");
             InputBox.Text = "把违约金那张表也补进第 4 条，然后导出这封承诺函。";

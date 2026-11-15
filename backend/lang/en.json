@@ -1172,9 +1172,7 @@
     "models": "Local model management and inference (available on all platforms)",
     "wps_com": "Reading encrypted documents via WPS COM (Windows only)",
     "wps_com_no_pywin32": "WPS COM requires pywin32, which is not installed here; encrypted documents fall back to the generic parser",
-    "wps_com_alt": "Workaround: password-free encrypted files may still open with the generic parser; otherwise save an unencrypted copy on a Windows machine with WPS installed.",
-    "automation_unavailable": "Enterprise intranet automation is Windows-only (it needs a headed local Edge), so this page is unavailable on the current platform",
-    "automation_alt": "Workaround: drive the same flow through an MCP server or a skill that calls an external tool/script, or run the automation on a Windows machine and export its results."
+    "wps_com_alt": "Workaround: password-free encrypted files may still open with the generic parser; otherwise save an unencrypted copy on a Windows machine with WPS installed."
   },
   "promptlib": {
     "category": {

@@ -111,9 +111,12 @@ formats. Legacy `.doc` / `.ppt` and encrypted files are read through WPS/Office 
 WPS/Office is absent, the built-in parsers handle the modern formats and the legacy ones are
 reported as unavailable instead of failing silently.
 
-Long documents are never truncated and fed in whole: they are split, summarised chunk by chunk
-(map-reduce) and merged, keeping **source pointers** (file name plus character ranges) so an answer
-can be traced back to the original text.
+Long documents are **read whole rather than compressed**: the window is grown to fit the document
+(see [Dynamic context](#dynamic-context-the-reason-this-edition-exists)) and the parsed body goes to
+the model in one pass. There is deliberately no chunk-by-chunk summarisation on this branch — that
+pipeline needed a small model to compress the material, and compressing it was exactly what made
+answers about specific clauses unreliable. A document that cannot fit even at the ceiling is refused
+with an explanation, so nothing is silently dropped.
 
 ## Privacy and networking
 

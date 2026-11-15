@@ -107,9 +107,36 @@ def main():
     section("5. 模块分片合并（任务书 3.5）")
     packs = i18n.load_pack("zh-Hans")
     check("合并后含主文件键", "cmd.unknown" in packs)
-    check("合并后含模块分片键（automation.help.*）",
-          any(k.startswith("automation.help.task_list_url") for k in packs))
-    check("模块分片覆盖主文件同名键", packs.get("automation.disabled", "") != "")
+    # [EN] The Reader edition ships no module shards (the automation one went with the
+    # [EN] automation stack), so the merge **mechanism** is exercised on a synthetic locale
+    # [EN] instead of depending on a shard that no longer exists.
+    # [ZH] Reader 版不再随包提供模块分片（自动化那份随自动化栈一同删除），因此改为在合成的
+    # [ZH] 语言上验证合并**机制**，而不是依赖一个已经不存在的分片文件。
+    # [EN] `find_locale_file` is redirected for the duration of this check and restored right
+    # [EN] after, so no other section sees the synthetic pack.
+    # [ZH] 仅在本次检查期间重定向 `find_locale_file`，检查完立即还原，其他小节看不到合成包。
+    shard_dir = tempfile.mkdtemp(prefix="echodesk-shard-")
+    try:
+        main_path = os.path.join(shard_dir, "zz-Shard.json")
+        shard_path = os.path.join(shard_dir, "zz-Shard.probe.json")
+        with io.open(main_path, "w", encoding="utf-8") as f:
+            json.dump({"probe": {"base": "主文件值", "keep": "只出现在主文件"}},
+                      f, ensure_ascii=False)
+        with io.open(shard_path, "w", encoding="utf-8") as f:
+            json.dump({"probe": {"base": "分片覆盖值", "shard": "只在分片里"}},
+                      f, ensure_ascii=False)
+        original_find = i18n.find_locale_file
+        i18n.find_locale_file = lambda locale: main_path
+        try:
+            merged = i18n.load_pack("zz-Shard")
+        finally:
+            i18n.find_locale_file = original_find
+        check("合并后含模块分片键", merged.get("probe.shard") == "只在分片里", str(merged))
+        check("模块分片覆盖主文件同名键", merged.get("probe.base") == "分片覆盖值", str(merged))
+        check("主文件独有键仍然保留", merged.get("probe.keep") == "只出现在主文件", str(merged))
+    finally:
+        import shutil
+        shutil.rmtree(shard_dir, ignore_errors=True)
 
     # ---------------------------------------------------------------
     section("6. 外置语言包优先（社区贡献路径，任务书 3.9）")

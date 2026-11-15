@@ -88,24 +88,20 @@ check("能力说明不是裸键（i18n 命中了）",
       all(not str(v.get("reason", "")).startswith("platform.") for v in _caps.values()),
       str({k: v.get("reason") for k, v in _caps.items()})[:200])
 
-print("=== 3. 强制 Linux：两个 Windows 专属能力都要降级且给替代做法 ===")
+print("=== 3. 强制 Linux：Windows 专属能力要降级且给替代做法 ===")
 force("linux")
 _linux = ps.report()
 check("强制后 kind=linux 且 forced=True", _linux["kind"] == "linux" and _linux["forced"] is True,
       f"{_linux['kind']} forced={_linux['forced']}")
 check("RID 变成 linux-*", _linux["rid"].startswith("linux-"), _linux["rid"])
 check("WPS COM 标记不可用", _linux["capabilities"]["wps_com"]["available"] is False)
-check("自动化标记不可用", _linux["capabilities"]["automation"]["available"] is False)
-check("降级清单列出两项", sorted(_linux["degraded"]) == sorted(ps.WINDOWS_ONLY_FEATURES),
+check("降级清单与 Windows 专属能力清单一致", sorted(_linux["degraded"]) == sorted(ps.WINDOWS_ONLY_FEATURES),
       str(_linux["degraded"]))
 check("WPS 降级说明指出平台限制",
       "Windows" in _linux["capabilities"]["wps_com"]["reason"], _linux["capabilities"]["wps_com"]["reason"])
 check("WPS 降级给了替代做法",
       len(_linux["capabilities"]["wps_com"]["alternative"]) > 10,
       _linux["capabilities"]["wps_com"]["alternative"])
-check("自动化降级给了替代做法（MCP/插件）",
-      "MCP" in _linux["capabilities"]["automation"]["alternative"],
-      _linux["capabilities"]["automation"]["alternative"])
 check("跨平台能力在 Linux 上仍然可用",
       all(_linux["capabilities"][f]["available"] for f in ps.PORTABLE_FEATURES))
 
@@ -115,16 +111,17 @@ _mac = ps.report()
 check("kind=macos", _mac["kind"] == "macos", _mac["kind"])
 check("RID 是 osx-*", _mac["rid"].startswith("osx-"), _mac["rid"])
 check("macOS 上 WPS COM 不可用", _mac["capabilities"]["wps_com"]["available"] is False)
-check("macOS 上自动化不可用", _mac["capabilities"]["automation"]["available"] is False)
 
 print("=== 5. 未知平台：不假装认识，但也不阻止启动 ===")
 force("unknown")
 _unknown = ps.report()
 check("kind=unknown", _unknown["kind"] == "unknown", _unknown["kind"])
 check("未知平台也不崩（RID 仍可拼出）", bool(_unknown["rid"]), _unknown["rid"])
-check("未知平台按「能力最少」处理（两个 Windows 专属能力都不可用）",
-      not _unknown["capabilities"]["wps_com"]["available"]
-      and not _unknown["capabilities"]["automation"]["available"])
+check("未知平台按「能力最少」处理（Windows 专属能力都不可用）",
+      not _unknown["capabilities"]["wps_com"]["available"])
+check("已删能力不出现在任何平台的清单里",
+      all(name not in _unknown["capabilities"] and name not in _mac["capabilities"]
+          for name in ("automation", "retrieval")))
 force(None)
 
 print("=== 6. 文件解析：非 Windows 上读旧版格式给出「平台不支持 + 替代做法」 ===")
@@ -178,29 +175,16 @@ check("不支持的扩展名照常报「不支持」",
       fp.is_parse_error(_zzz) and "不支持" in fp.localize_error(_zzz),
       _zzz[:60])
 
-print("=== 7. 自动化：非 Windows 上 validate() 说明原因，不是「没装 Playwright」 ===")
-import automation as am           # noqa: E402
-import config as cf               # noqa: E402
-
-# AutomationEngine 的字段是只读属性（代理到 cfg），所以配置要设在 cfg 上
-_cfg = cf.AutomationConfig()
-_cfg.enabled = True
-_cfg.safety_accepted = True
-_cfg.task_list_url = "https://example.invalid/tasks"
-_engine = am.AutomationEngine(_cfg)
-force("linux")
-_linux_errors = _engine.validate()
-check("非 Windows 上给出平台不支持的错误",
-      any("Windows" in e for e in _linux_errors), str(_linux_errors))
-check("并且说明这不是依赖缺失",
-      any("不是依赖缺失" in e for e in _linux_errors), str(_linux_errors))
-force(None)
-_win_errors = _engine.validate()
-if REAL_IS_WINDOWS:
-    check("Windows 上不会出现平台不支持这条",
-          not any("平台不支持" in e for e in _win_errors), str(_win_errors))
+# [EN] Section 7 used to exercise AutomationEngine.validate() on a forced non-Windows
+# [EN] platform. The Reader edition deletes the automation stack, so there is no such
+# [EN] validator left to check; the removed-module gate (tools\test_reader_profile.py)
+# [EN] now asserts the whole stack is gone instead.
+# [ZH] 第 7 节原先在强制非 Windows 平台上验证 AutomationEngine.validate()。Reader 版删除了
+# [ZH] 自动化栈，已经没有这个校验器可测；"已删模块"门禁（tools\test_reader_profile.py）
+# [ZH] 改为断言整条栈确实不存在。
 
 print("=== 8. 后端接线：platform 动作返回同一份报告（协议层不变）===")
+import config as cf               # noqa: E402
 import main as backend_main       # noqa: E402
 
 os.chdir(workdir)
@@ -220,12 +204,18 @@ check("ready 行里带 platform 字段（前端启动即可拿到降级依据）
 print("=== 9. 语言包：新增的 platform.* 文案两套语言都有 ===")
 _zh = i18n.load_pack("zh-Hans")
 _en = i18n.load_pack("en")
-for key in ("platform.wps_com", "platform.wps_com_alt", "platform.automation",
-            "platform.automation_unavailable", "platform.automation_alt"):
+# [EN] The automation entries are gone with the stack itself (Reader edition); the WPS COM
+# [EN] pair is what remains Windows-only.
+# [ZH] 自动化那几条文案已随该栈一并移除（Reader 版）；如今仍是 Windows 专属的只剩 WPS COM。
+for key in ("platform.wps_com", "platform.wps_com_alt"):
     check(f"zh-Hans 有 {key}", key in _zh)
     check(f"en 有 {key}", key in _en)
-check("en 的自动化替代做法是英文（没有漏译成中文）",
-      "Workaround" in _en.get("platform.automation_alt", ""), _en.get("platform.automation_alt", "")[:80])
+check("en 的 WPS 替代做法是英文（没有漏译成中文）",
+      "Workaround" in _en.get("platform.wps_com_alt", ""), _en.get("platform.wps_com_alt", "")[:80])
+check("已删能力不再出现在能力清单里",
+      "automation" not in ps.capabilities()
+      and "retrieval" not in ps.capabilities(),
+      str(sorted(ps.capabilities())))
 
 print()
 print("=" * 60)

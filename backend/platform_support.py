@@ -44,7 +44,6 @@ UNKNOWN = "unknown"
 #: [ZH] 文档从同一份来源获取。
 WINDOWS_ONLY_FEATURES = (
     "wps_com",       # [EN] Read encrypted documents through the WPS COM API. / [ZH] 通过 WPS COM 接口读取加密文档。
-    "automation",    # [EN] Enterprise browser automation (headed Edge via Playwright). / [ZH] 企业内网自动化（Playwright 驱动本机 Edge，有头模式）。
 )
 
 #: [EN] Capabilities available on every platform. They are listed explicitly so
@@ -54,7 +53,6 @@ WINDOWS_ONLY_FEATURES = (
 PORTABLE_FEATURES = (
     "chat",          # [EN] Chat and streaming output. / [ZH] 对话与流式输出。
     "files",         # [EN] File parsing through the generic parser. / [ZH] 通用解析器文件解析。
-    "retrieval",     # [EN] Local retrieval (RAG). / [ZH] 本地检索（RAG）。
     "agent",         # [EN] Agent execution platform. / [ZH] Agent 执行平台。
     "mcp",           # [EN] MCP client. / [ZH] MCP 客户端。
     "skills",        # [EN] Plugins and skills. / [ZH] 插件与技能。
@@ -240,27 +238,6 @@ def wps_com_available() -> bool:
     return True
 
 
-def automation_available() -> bool:
-    """
-    [EN]
-    Return whether enterprise browser automation is available. It is Windows-only
-    because it depends on a headed instance of the locally installed Edge.
-
-    This function deliberately does not check whether Playwright is installed.
-    A missing dependency has its own explicit error message and is distinct from
-    a capability that cannot exist on the current platform; conflating the two
-    would suggest that installing a package enables automation on macOS.
-
-    [ZH]
-    返回企业内网自动化是否可用。该能力仅限 Windows，因为它依赖本机已安装 Edge
-    的有头实例。
-
-    本函数刻意不检查 Playwright 是否安装。依赖缺失具有独立的明确错误文案，
-    与当前平台不支持该能力是两类问题；混淆二者会使用户误以为安装依赖即可在
-    macOS 上运行自动化。
-    """
-    return is_windows()
-
 
 def _cap_reason(feature: str) -> str:
     """
@@ -329,14 +306,6 @@ def capabilities() -> Dict[str, Dict[str, Any]]:
         "available": wps,
         "reason": wps_reason,
         "alternative": "" if wps else _cap_alternative("wps_com"),
-        "windows_only": True,
-    }
-
-    automation = automation_available()
-    out["automation"] = {
-        "available": automation,
-        "reason": _cap_reason("automation") if automation else _cap_reason("automation_unavailable"),
-        "alternative": "" if automation else _cap_alternative("automation"),
         "windows_only": True,
     }
     return out

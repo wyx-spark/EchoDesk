@@ -1172,9 +1172,7 @@
     "models": "本地模型管理与推理（全平台可用）",
     "wps_com": "WPS COM 读加密文档（Windows 专属）",
     "wps_com_no_pywin32": "WPS COM 需要 pywin32（本机未安装），加密文档将改用通用解析器",
-    "wps_com_alt": "替代做法：若是空口令加密，可用通用解析器试读；否则请在装有 WPS 的 Windows 机器上另存为未加密文件后重试。",
-    "automation_unavailable": "企业内网自动化仅 Windows 提供（需要本机 Edge 的有头模式），当前平台不提供该页面",
-    "automation_alt": "替代做法：用 MCP 或技能接入外部工具/脚本完成同一流程；或在一台 Windows 机器上运行自动化后导出结果。"
+    "wps_com_alt": "替代做法：若是空口令加密，可用通用解析器试读；否则请在装有 WPS 的 Windows 机器上另存为未加密文件后重试。"
   },
   "promptlib": {
     "category": {
