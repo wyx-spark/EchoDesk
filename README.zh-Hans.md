@@ -74,7 +74,7 @@ Reader 的上下文窗口**按文档分配，而不是按固定设置**：文件
 | `app\backend\models\` | 本地 `.gguf` 模型 |
 | `app\backend\session.json` | 对话记录（自动保存与恢复） |
 
-可选的 `-MakeInstaller` 步骤会产出 `EchoDesk-Reader-Setup.exe`，装出来的目录结构与此相同。
+可选的 `-MakeInstaller` 步骤会产出 `EchoDesk-Reader-v0.2.6-Setup.exe`，装出来的目录结构与此相同。
 
 设置环境变量 `ECHODESK_DATA` 可以把外层数据目录挪到别处（适用于程序目录只读的被管机器）。
 

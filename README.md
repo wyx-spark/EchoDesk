@@ -84,7 +84,7 @@ The layout is:
 | `app\backend\models\` | Local `.gguf` models |
 | `app\backend\session.json` | Conversation history (auto-saved and restored) |
 
-The optional `-MakeInstaller` step produces `EchoDesk-Reader-Setup.exe`, which installs the same
+The optional `-MakeInstaller` step produces `EchoDesk-Reader-v0.2.6-Setup.exe`, which installs the same
 layout.
 
 Set the `ECHODESK_DATA` environment variable to move the outer data folder elsewhere (useful on

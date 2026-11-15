@@ -3,7 +3,7 @@
 # This script is the Reader-profile counterpart of tools/build_release.ps1. It
 # produces a portable folder that contains only the text-processing backend and
 # the Avalonia front end, and optionally wraps that folder into
-# EchoDesk-Reader-Setup.exe through Inno Setup.
+# EchoDesk-Reader-v<version>-Setup.exe through Inno Setup.
 #
 # Design constraints:
 #   * No browser automation, multimodal or RAG assets are shipped. After the
@@ -18,7 +18,7 @@
 # [ZH] EchoDesk Reader Windows 构建入口。
 #
 # 本脚本是 tools/build_release.ps1 的 Reader 版本：只产出文本处理后端与 Avalonia
-# 前端组成的便携目录，并可选通过 Inno Setup 封装为 EchoDesk-Reader-Setup.exe。
+# 前端组成的便携目录，并可选通过 Inno Setup 封装为 EchoDesk-Reader-v<版本>-Setup.exe。
 #
 # 设计约束：
 #   * 不随包分发浏览器自动化、多模态与 RAG 资源。后端收集完成后会删除被删模块的
@@ -48,8 +48,8 @@ param(
     # [EN] Existing backend folder when -SkipBackend is set.
     # [ZH] 设置 -SkipBackend 时使用的既有后端目录。
     [string]$ReuseBackendFrom = "",
-    # [EN] Also compile EchoDesk-Reader-Setup.exe through Inno Setup.
-    # [ZH] 同时通过 Inno Setup 编译 EchoDesk-Reader-Setup.exe。
+    # [EN] Also compile EchoDesk-Reader-v<version>-Setup.exe through Inno Setup.
+    # [ZH] 同时通过 Inno Setup 编译 EchoDesk-Reader-v<版本>-Setup.exe。
     [switch]$MakeInstaller,
     # [EN] Explicit path to ISCC.exe. / [ZH] ISCC.exe 的显式路径。
     [string]$ISCC = "",
@@ -88,7 +88,14 @@ if (-not $Version) {
     if (-not $VersionLine) {
         throw "无法从 backend/version.py 解析 APP_VERSION / Cannot parse APP_VERSION"
     }
-    $Version = $VersionLine.Matches[0].Groups[1].Value
+    # [EN] APP_VERSION carries the display prefix ("v0.2.6-reader"), but the output
+    # [EN] folder and the ISCC define use the bare form, otherwise the tree would be
+    # [EN] named EchoDesk-Reader-vv0.2.6-reader. The main release chain strips the
+    # [EN] prefix for exactly the same reason (see verify_release.ps1).
+    # [ZH] APP_VERSION 带展示用前缀（"v0.2.6-reader"），而输出目录与 ISCC 定义要用
+    # [ZH] 无前缀形式，否则目录会变成 EchoDesk-Reader-vv0.2.6-reader。主线发布链
+    # [ZH] 出于同一原因也做了去前缀（见 verify_release.ps1）。
+    $Version = $VersionLine.Matches[0].Groups[1].Value.TrimStart('v')
 }
 Write-Ok "版本 / Version: $Version"
 
@@ -111,7 +118,17 @@ if ($SkipBackend) {
     if (-not $ReuseBackendFrom -or -not (Test-Path $ReuseBackendFrom)) {
         throw "-SkipBackend 需要有效的 -ReuseBackendFrom / -SkipBackend requires -ReuseBackendFrom"
     }
-    Copy-Item -Recurse -Force (Join-Path $ReuseBackendFrom "*") $BackendTarget
+    # [EN] Accept either the PyInstaller dist root (publish\reader\backend, which holds the
+    # [EN] EchoDeskBackend folder) or the onedir folder itself (…\EchoDeskBackend, whose
+    # [EN] contents are the backend). Copying the dist root verbatim would nest an extra
+    # [EN] EchoDeskBackend level inside app\backend and the installed exe would be missing.
+    # [ZH] 同时接受两种来源：PyInstaller 的 dist 根（publish\reader\backend，下面是
+    # [ZH] EchoDeskBackend 目录）或 onedir 目录本身（…\EchoDeskBackend，其内容就是后端）。
+    # [ZH] 若把 dist 根整份拷进去，app\backend 下会多套一层 EchoDeskBackend，安装后找不到 exe。
+    $ReuseSrc = $ReuseBackendFrom
+    $NestedOnedir = Join-Path $ReuseBackendFrom "EchoDeskBackend"
+    if (Test-Path $NestedOnedir) { $ReuseSrc = $NestedOnedir }
+    Copy-Item -Recurse -Force (Join-Path $ReuseSrc "*") $BackendTarget
 } else {
     Write-Step "构建后端 / Build backend (PyInstaller onedir)"
     $VenvRoot = if ([System.IO.Path]::IsPathRooted($CleanVenv)) { $CleanVenv } else { Join-Path $Root $CleanVenv }
@@ -213,6 +230,32 @@ foreach ($Doc in @("LICENSE", "LICENSE.zh-Hans.md", "NOTICE", "NOTICE.zh-Hans.md
     if (Test-Path $Src) { Copy-Item -Force $Src $ReaderRoot }
 }
 
+# [EN] The shipped layout documented in README needs three more things the frontend
+# [EN] publish does not carry: the default configuration (README lists
+# [EN] app\backend\config.json as "All configuration"), the bundled example skills and
+# [EN] the program icon that installer.iss points its shortcuts at. Omitting them makes
+# [EN] ISCC abort at [Files]/[Icons] and leaves a portable tree that contradicts the docs.
+# [ZH] README 记录的交付布局还需要三样前端产物里没有的东西：默认配置（README 把
+# [ZH] app\backend\config.json 写作"全部配置"）、随包示例插件，以及 installer.iss 给
+# [ZH] 快捷方式指定的程序图标。缺任何一样，ISCC 都会在 [Files]/[Icons] 处中断，
+# [ZH] 或者产出一个与文档不符的便携目录。
+$ConfigSrc = Join-Path $Root "backend\config.json"
+if (Test-Path $ConfigSrc) {
+    Copy-Item -Force $ConfigSrc (Join-Path $BackendTarget "config.json")
+    Write-Ok "app\backend\config.json"
+}
+$ExampleSkills = Join-Path $Root "examples\skills"
+if (Test-Path $ExampleSkills) {
+    Copy-Item -Recurse -Force $ExampleSkills (Join-Path $BackendTarget "skills_dev")
+    Write-Ok "app\backend\skills_dev\"
+}
+$IconSrc = Join-Path $Root "assets\EchoDesk.ico"
+if (-not (Test-Path $IconSrc)) {
+    throw "未找到图标 $IconSrc，请先执行: python tools\make_icon.py / Missing $IconSrc"
+}
+Copy-Item -Force $IconSrc (Join-Path $AppDir "EchoDesk.ico")
+Write-Ok "app\EchoDesk.ico"
+
 # ---------------------------------------------------------------------------
 # 5. Optional installer
 # ---------------------------------------------------------------------------
@@ -222,7 +265,12 @@ if ($MakeInstaller) {
     if (-not $Iscc) {
         $Candidates = @(
             "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            # [EN] Inno Setup 6 installs per-user by default ("Install for me only"),
+            # [EN] which lands here and is invisible to the two Program Files lookups.
+            # [ZH] Inno Setup 6 默认按「仅为我安装」落到用户目录，上面两个 Program Files
+            # [ZH] 路径都看不到它。
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
         )
         $Iscc = $Candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
     }
@@ -235,19 +283,39 @@ if ($MakeInstaller) {
     $IssText = Get-Content -Raw -LiteralPath $Template
     $IssText = $IssText.Replace('#define MyAppName "EchoDesk"',
                                 '#define MyAppName "EchoDesk Reader"')
+    # [EN] The installer carries the numeric version so several Reader builds can sit in
+    # [EN] the same publish\ folder without one silently overwriting another; the
+    # [EN] prerelease suffix stays in the display version only.
+    # [ZH] 安装包名带数字版本号，使多个 Reader 构建可以并存在 publish\ 里而不互相覆盖；
+    # [ZH] 预发布后缀只保留在展示用版本号里。
+    $SetupVersion = ($Version -split '[-+]')[0]
     $IssText = $IssText.Replace('OutputBaseFilename=EchoDesk-v{#MyAppVersion}-Setup',
-                                'OutputBaseFilename=EchoDesk-Reader-Setup')
+                                "OutputBaseFilename=EchoDesk-Reader-v$SetupVersion-Setup")
     $IssText = $IssText.Replace('OutputDir=..\publish',
                                 "OutputDir=$OutRoot")
     $IssText = $IssText.Replace('Source: "{#MySourceDir}\*";',
                                 'Source: "{#MySourceDir}\*";')
     Set-Content -LiteralPath $Generated -Value $IssText -Encoding UTF8
+    # [EN] installer.iss references its language file as InnoSetup\ChineseSimplified.isl,
+    # [EN] relative to the .iss itself. The main chain compiles the template in place
+    # [EN] (tools\), but this script generates a copy under temp\, so the companion
+    # [EN] directory must be copied next to it or ISCC aborts at [Languages].
+    # [ZH] installer.iss 用相对自身位置的 InnoSetup\ChineseSimplified.isl 引用语言文件。
+    # [ZH] 主线链在 tools\ 原地编译模板；本脚本把模板生成到 temp\，因此必须把配套目录
+    # [ZH] 一并拷过去，否则 ISCC 会在 [Languages] 处中断。
+    $IslSrc = Join-Path $Root "tools\InnoSetup"
+    $IslDst = Join-Path $Root "temp\InnoSetup"
+    if (-not (Test-Path $IslSrc)) {
+        throw "找不到 tools\InnoSetup / Missing tools\InnoSetup"
+    }
+    New-Item -ItemType Directory -Force -Path $IslDst | Out-Null
+    Copy-Item -Force (Join-Path $IslSrc "*.isl") $IslDst
     Invoke-Native $Iscc @(
         "/DMyAppVersion=$Version",
         "/DMySourceDir=$ReaderRoot",
         $Generated
     ) "ISCC"
-    $Setup = Join-Path $OutRoot "EchoDesk-Reader-Setup.exe"
+    $Setup = Join-Path $OutRoot "EchoDesk-Reader-v$SetupVersion-Setup.exe"
     if (-not (Test-Path $Setup)) {
         throw "安装包未生成 / Installer not produced: $Setup"
     }

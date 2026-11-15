@@ -12,7 +12,7 @@ Chinese version: [`docs/zh-Hans/USER_GUIDE.md`](../zh-Hans/USER_GUIDE.md).
 >
 > This branch publishes **EchoDesk Reader 0.2.6-reader**, built from the Avalonia front end. Where
 > this guide says `EchoDesk-v0.2.6\`, read `EchoDesk-Reader-v0.2.6-reader\`; where it says
-> `EchoDesk-v0.2.6-Setup.exe`, read `EchoDesk-Reader-Setup.exe`. There is no `.lnk` launcher in this
+> `EchoDesk-v0.2.6-Setup.exe`, read `EchoDesk-Reader-v0.2.6-Setup.exe`. There is no `.lnk` launcher in this
 > build: the program offers to create `EchoDesk 启动.cmd` on Windows, `EchoDesk.command` on macOS and
 > `echodesk.desktop` on Linux instead.
 >

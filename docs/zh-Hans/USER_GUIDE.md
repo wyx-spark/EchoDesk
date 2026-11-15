@@ -9,7 +9,7 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 >
 > 本分支发布 **EchoDesk Reader 0.2.6-reader**，由 Avalonia 前端构建。本手册里的
 > `EchoDesk-v0.2.6\` 请读作 `EchoDesk-Reader-v0.2.6-reader\`；`EchoDesk-v0.2.6-Setup.exe` 请读作
-> `EchoDesk-Reader-Setup.exe`。本构建**没有** `.lnk` 启动器：程序会询问是否创建
+> `EchoDesk-Reader-v0.2.6-Setup.exe`。本构建**没有** `.lnk` 启动器：程序会询问是否创建
 > `EchoDesk 启动.cmd`（Windows）、`EchoDesk.command`（macOS）或 `echodesk.desktop`（Linux）。
 >
 > **本构建不包含**下列能力，描述它们的段落不再适用：浏览器自动化（§4）、本地视觉 / 语音 / 媒体、SQLite FTS5 知识库、长期记忆、BM25 检索、
