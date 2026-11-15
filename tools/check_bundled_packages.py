@@ -70,7 +70,30 @@ def app_version() -> str:
     return match.group(1).lstrip("v")
 
 
-INTERNAL = os.path.join(ROOT, "publish", f"EchoDesk-v{app_version()}", "app", "backend", "_internal")
+def release_internal() -> str:
+    """定位发布树里的 ``app/backend/_internal``。
+
+    [EN] Two release layouts coexist on this branch: the Reader tree produced by
+    ``tools/build_reader.ps1`` (``publish/EchoDesk-Reader-v<version>/``) and the
+    master/WPF tree produced by ``tools/build_release.ps1``
+    (``publish/EchoDesk-v<version>/``). Probe the Reader one first — on the reader
+    branch the packaged backend under test is the Reader one — and fall back to the
+    master path so the script stays usable on master.
+    [ZH] 本分支存在两种发布布局：``tools/build_reader.ps1`` 产出的 Reader 树
+    （``publish/EchoDesk-Reader-v<版本>/``）与 ``tools/build_release.ps1`` 产出的
+    master/WPF 树（``publish/EchoDesk-v<版本>/``）。先找 Reader 树 —— reader 分支上
+    被测的打包后端就是它 —— 再回落到 master 路径，使脚本在 master 上同样可用。
+    """
+    publish = os.path.join(ROOT, "publish")
+    version = app_version()
+    for tree in (f"EchoDesk-Reader-v{version}", f"EchoDesk-v{version}"):
+        candidate = os.path.join(publish, tree, "app", "backend", "_internal")
+        if os.path.isdir(candidate):
+            return candidate
+    return os.path.join(publish, f"EchoDesk-Reader-v{version}", "app", "backend", "_internal")
+
+
+INTERNAL = release_internal()
 
 # PyInstaller 自身的运行时与 Python 标准库（不属第三方发行包）
 PYINSTALLER_RUNTIME = {
@@ -201,6 +224,7 @@ def main() -> int:
         return 2
     if not os.path.isdir(args.internal):
         print(f"未找到 _internal 目录：{args.internal}")
+        print("请先执行: & tools\\build_reader.ps1 -MakeInstaller（Reader 发布树）")
         print("请先跑 tools\\build_release.ps1 构建后端。")
         return 2
 

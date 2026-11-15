@@ -53,13 +53,20 @@ def _publish_trees() -> "list[str]":
     found = []
     for name in sorted(os.listdir(publish), reverse=True):
         path = os.path.join(publish, name)
-        if name.startswith("EchoDesk-v") and os.path.isdir(path):
+        # [EN] Reader branch: the delivery tree is ``EchoDesk-Reader-v<version>``
+        # [EN] (tools/build_reader.ps1); master keeps ``EchoDesk-v<version>``.
+        # [ZH] reader 分支：交付树是 ``EchoDesk-Reader-v<版本>``
+        # [ZH]（tools/build_reader.ps1 产出）；master 仍是 ``EchoDesk-v<版本>``。
+        if os.path.isdir(path) and (name.startswith("EchoDesk-v")
+                                    or name.startswith("EchoDesk-Reader-v")):
             found.append(path)
-    # [EN] Release trees are named ``EchoDesk-vX.Y.Z``; APP_VERSION already
-    # [EN] carries the leading ``v``.
-    # [ZH] 发布树命名为 ``EchoDesk-vX.Y.Z``；APP_VERSION 本身已带前导 ``v``。
-    preferred = os.path.join(publish, f"EchoDesk-{APP_VERSION}")
-    ordered = [preferred] if preferred in found else []
+    # [EN] Release trees are named ``EchoDesk[-Reader]-vX.Y.Z``; APP_VERSION already
+    # [EN] carries the leading ``v``. The Reader tree wins on this branch.
+    # [ZH] 发布树命名为 ``EchoDesk[-Reader]-vX.Y.Z``；APP_VERSION 本身已带前导 ``v``。
+    # [ZH] 本分支优先使用 Reader 树。
+    preferred = [os.path.join(publish, f"EchoDesk-Reader-{APP_VERSION}"),
+                 os.path.join(publish, f"EchoDesk-{APP_VERSION}")]
+    ordered = [path for path in preferred if path in found]
     ordered.extend(path for path in found if path not in ordered)
     return ordered
 
@@ -99,7 +106,7 @@ def _resolve_backend() -> str:
     # [ZH] 返回第一个预期路径，使失败信息能给出具体位置；完整搜索列表由调用方的
     # [ZH] 诊断信息打印。
     return searched[0] if searched else os.path.join(
-        ROOT, "publish", f"EchoDesk-{APP_VERSION}", "app", "backend",
+        ROOT, "publish", f"EchoDesk-Reader-{APP_VERSION}", "app", "backend",
         "EchoDeskBackend.exe")
 
 
@@ -192,7 +199,7 @@ def main():
     exe = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_BACKEND
     if not os.path.isfile(exe):
         print(f"未找到后端可执行文件：{exe}")
-        print("先执行 tools\\build_release.ps1 生成发布物。")
+        print("先执行 tools\\build_reader.ps1 -MakeInstaller 生成 Reader 发布物。")
         return 1
     print(f"后端：{exe}")
 

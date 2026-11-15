@@ -763,10 +763,16 @@ def resolve_backend():
     """
     if "--packaged" in sys.argv:
         publish = os.path.join(ROOT, "publish")
-        trees = [os.path.join(publish, f"EchoDesk-{APP_VERSION}")]
+        # [EN] Reader tree first (tools/build_reader.ps1), then the master/WPF tree, then
+        # [EN] any remaining release tree newest-name first.
+        # [ZH] 先查 Reader 树（tools/build_reader.ps1 产出），再查 master/WPF 树，
+        # [ZH] 最后按名称从新到旧遍历其余发布树。
+        trees = [os.path.join(publish, f"EchoDesk-Reader-{APP_VERSION}"),
+                 os.path.join(publish, f"EchoDesk-{APP_VERSION}")]
         if os.path.isdir(publish):
             trees += [os.path.join(publish, name) for name in sorted(os.listdir(publish), reverse=True)
-                      if name.startswith("EchoDesk-v") and os.path.isdir(os.path.join(publish, name))]
+                      if (name.startswith("EchoDesk-v") or name.startswith("EchoDesk-Reader-v"))
+                      and os.path.isdir(os.path.join(publish, name))]
         for tree in trees:
             for rel in (("app", "backend", "EchoDeskBackend.exe"),
                         ("backend", "EchoDeskBackend.exe"),
@@ -782,7 +788,7 @@ def test_packaged_backend():
     section("后端协议：model_hub_load 流式进度 + model_hub_query 本地筛选/翻页（真联网）")
     command, label = resolve_backend()
     if command is None:
-        check(f"找到后端（{label}）", False, "请先跑 tools/build_release.ps1 或去掉 --packaged")
+        check(f"找到后端（{label}）", False, "请先跑 tools/build_reader.ps1 -MakeInstaller 或去掉 --packaged")
         return
     print(f"   后端（{label}）：{' '.join(command)}")
     # 源码模式下 cwd 必须是干净的临时目录：models/ 与 registry 都是相对 cwd 解析的，

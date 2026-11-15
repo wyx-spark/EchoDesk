@@ -35,10 +35,16 @@ def _resolve_backend() -> str:
     ``backend/version.py`` 派生，升版本不再需要修改本脚本。
     """
     publish = os.path.join(ROOT, "publish")
-    trees = [os.path.join(publish, f"EchoDesk-{APP_VERSION}")]
+    # [EN] Try the Reader delivery tree first (tools/build_reader.ps1), then the
+    # [EN] master/WPF tree, then any remaining release tree newest-name first.
+    # [ZH] 先查 Reader 交付树（tools/build_reader.ps1 产出），再查 master/WPF 树，
+    # [ZH] 最后按名称从新到旧遍历其余发布树。
+    trees = [os.path.join(publish, f"EchoDesk-Reader-{APP_VERSION}"),
+             os.path.join(publish, f"EchoDesk-{APP_VERSION}")]
     if os.path.isdir(publish):
         trees += [os.path.join(publish, name) for name in sorted(os.listdir(publish), reverse=True)
-                  if name.startswith("EchoDesk-v") and os.path.isdir(os.path.join(publish, name))]
+                  if (name.startswith("EchoDesk-v") or name.startswith("EchoDesk-Reader-v"))
+                  and os.path.isdir(os.path.join(publish, name))]
     candidates = []
     for tree in trees:
         candidates += [
