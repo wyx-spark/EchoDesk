@@ -85,10 +85,19 @@ $BackendExe = Join-Path $AppOut "backend\EchoDeskBackend.exe"
 #   * 界面检查跑完再清一次。
 # 断言**没有放宽**：白名单之外的任何残留依旧会被那条断言抓住。
 # 白名单必须与那条断言里列的名字一致（两处同源，改一处要改两处）。
+# [EN] The Reader portable build offers to create a launcher named `EchoDesk 启动.cmd`
+# [EN] (documented in USER_GUIDE: on Windows, iOS-style Chinese-named start script). It is
+# [EN] produced by the program itself at runtime, so it belongs to this whitelist — without
+# [EN] it the "all-English file names" assertion below would flag a file the product creates
+# [EN] on purpose, and the gate would be non-reentrant.
+# [ZH] Reader 便携版会询问创建名为 `EchoDesk 启动.cmd` 的启动器（USER_GUIDE 里写明：Windows
+# [ZH] 上用这个中文名脚本）。它是**程序自己运行期产生的**，因此属于本白名单 —— 否则下面
+# [ZH] "全英文命名"那条断言会把产品刻意创建的文件判红，门禁也不可重入。
 $RuntimeStateNames = @('ui_state.json', 'snippets.json', 'browser_state.json',
                        'frontend_crash.log', 'backend_crash.log', 'automation_log.jsonl',
                        'skills_local.json', 'summary_cache.json', 'market_cache.json',
-                       'skills_dev.log', 'automation_templates.json', 'models_registry.json')
+                       'skills_dev.log', 'automation_templates.json', 'models_registry.json',
+                       'EchoDesk 启动.cmd')
 function Clear-ReleaseRuntimeState {
     param([string]$ReleaseRoot)
     $removed = @()
@@ -259,7 +268,8 @@ try {
                       Where-Object { $_.Name -in @('ui_state.json', 'snippets.json', 'browser_state.json',
                               'backend_crash.log', 'frontend_crash.log', 'automation_log.jsonl',
                               'skills_local.json', 'summary_cache.json', 'market_cache.json',
-                              'skills_dev.log', 'automation_templates.json', 'models_registry.json') })
+                              'skills_dev.log', 'automation_templates.json', 'models_registry.json',
+                              'EchoDesk 启动.cmd') })
         if ($leftover.Count -gt 0) { throw "运行期残留: $($leftover[0].Name)" }
         "无中文名/无过程文档/无运行期残留"
     }

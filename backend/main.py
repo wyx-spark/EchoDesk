@@ -290,6 +290,49 @@ def _crash_log_path() -> str:
     return os.path.join(base, "backend_crash.log")
 
 
+def _is_pyinstaller_exit_flush(tb) -> bool:
+    """
+    [EN]
+    Recognise PyInstaller's own exit-time stream flush.
+
+    Why this exists (measured on the Reader release tree, 2026-11-15): the PyInstaller
+    bootloader runs two one-liners after the entry script returns —
+    ``import sys; sys.stdout.flush(); ...`` and the ``stderr`` twin — compiled with the
+    filename ``<string>``. When the parent process has already closed the child's pipes
+    (the front end stops the backend by cancelling the stdout pump and then killing the
+    process tree), that flush raises ``OSError: [Errno 22] Invalid argument``. It is
+    **not application code**: nothing in ``backend/`` runs at that point. Recording it in
+    ``backend_crash.log`` makes a normal shutdown look like a backend crash and makes the
+    release gate non-deterministic (same build, same probe: sometimes one entry,
+    sometimes none).
+
+    The condition is deliberately narrow: the frame must be the bootloader's ``<string>``
+    module whose code loads ``sys`` and calls ``flush`` on ``stdout``/``stderr``.
+
+    [ZH]
+    识别 PyInstaller 自身的"退出时刷新标准流"。
+
+    为什么需要（2026-11-15 在 Reader 发布树上实测）：PyInstaller bootloader 在入口脚本
+    返回后会执行两条一行式代码 —— ``import sys; sys.stdout.flush(); ...`` 及其 stderr
+    版本，文件名为 ``<string>``。当父进程已经关闭子进程管道时（前端停止后端的方式是
+    先取消 stdout 读取泵、再结束进程树），这次 flush 会抛出
+    ``OSError: [Errno 22] Invalid argument``。它**不是应用代码**：那一刻 ``backend/`` 里
+    没有任何代码在跑。把它记进 ``backend_crash.log`` 会让一次正常关闭看起来像后端崩溃，
+    并让发布门禁变得不确定（同一个构建、同一个探针：有时一条、有时没有）。
+
+    判定刻意收得很窄：必须是 bootloader 的 ``<string>`` 模块，且字节码里引用了 ``sys``、
+    对 ``stdout``/``stderr`` 调用了 ``flush``。
+    """
+    if tb is None:
+        return False
+    code = tb.tb_frame.f_code
+    if code.co_filename != "<string>" or code.co_name != "<module>":
+        return False
+    names = code.co_names
+    return ("sys" in names and "flush" in names
+            and ("stdout" in names or "stderr" in names))
+
+
 def _excepthook(etype, value, tb):
     """
     [EN]
@@ -300,6 +343,11 @@ def _excepthook(etype, value, tb):
     未捕获的 Python 异常也写入崩溃日志，避免进程静默退出。
     """
     import traceback
+    if isinstance(value, OSError) and _is_pyinstaller_exit_flush(tb):
+        # [EN] Parent already closed our pipes: expected during shutdown, never a crash.
+        # [ZH] 父进程已关闭我们的管道：关闭阶段属预期行为，绝不是崩溃。
+        log.debug("退出时刷新标准流失败（父进程已关闭管道），不记入崩溃日志", exc_info=False)
+        return
     try:
         with open(_crash_log_path(), "a", encoding="utf-8") as f:
             f.write("\n==== 未捕获异常 ====\n")
