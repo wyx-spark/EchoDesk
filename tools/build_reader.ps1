@@ -291,6 +291,12 @@ if ($MakeInstaller) {
     $SetupVersion = ($Version -split '[-+]')[0]
     $IssText = $IssText.Replace('OutputBaseFilename=EchoDesk-v{#MyAppVersion}-Setup',
                                 "OutputBaseFilename=EchoDesk-Reader-v$SetupVersion-Setup")
+    # [EN] The version resource's OriginalFilename is a literal in the template; leaving it
+    # [EN] alone makes the Reader installer claim it is EchoDesk-v<full version>-Setup.exe.
+    # [ZH] 版本资源里的 OriginalFilename 在模板中是字面量；不改它，Reader 安装包会声称自己叫
+    # [ZH] EchoDesk-v<完整版本>-Setup.exe。
+    $IssText = $IssText.Replace('VersionInfoOriginalFileName=EchoDesk-v{#MyAppVersion}-Setup.exe',
+                                "VersionInfoOriginalFileName=EchoDesk-Reader-v$SetupVersion-Setup.exe")
     $IssText = $IssText.Replace('OutputDir=..\publish',
                                 "OutputDir=$OutRoot")
     $IssText = $IssText.Replace('Source: "{#MySourceDir}\*";',
@@ -312,6 +318,14 @@ if ($MakeInstaller) {
     Copy-Item -Force (Join-Path $IslSrc "*.isl") $IslDst
     Invoke-Native $Iscc @(
         "/DMyAppVersion=$Version",
+        # [EN] Four-part numeric version for the PE version resource: without this define
+        # [EN] installer.iss falls back to its stale literal (0.2.4.0) and the shipped
+        # [EN] installer reports an old version. Same value as backend/version.py's
+        # [EN] app_version_4().
+        # [ZH] PE 版本资源用的四段纯数字：不传这个定义，installer.iss 会回落到过时的字面量
+        # [ZH]（0.2.4.0），安装包就会报着旧版本号。取值与 backend/version.py 的
+        # [ZH] app_version_4() 一致。
+        "/DMyAppNumericVersion=$SetupVersion",
         "/DMySourceDir=$ReaderRoot",
         $Generated
     ) "ISCC"

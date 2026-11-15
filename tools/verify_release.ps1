@@ -1,17 +1,31 @@
-# 适用平台：顶层编排，内含 Windows 专属项（安装包/UI 探针）
-# EchoDesk 发布物验证编排（v0.2.1 修复版）
+# 适用平台：顶层编排，内含 Windows 专属项（安装包/界面探针）
+# EchoDesk Reader 发布物验证编排
 #
 # 把"对着最终发布物跑一遍全部检查"固定成一条命令，避免人工漏项。
 # 每项打印 [OK]/[FAIL] 与耗时，最后给一张汇总表；有任何 FAIL 时退出码非 0。
 #
+# [EN] Scope (reader branch): the release tree under test is the one produced by
+# [EN] tools/build_reader.ps1 (EchoDesk-Reader-v<version>), whose front end is Avalonia and
+# [EN] which ships no browser automation, no docs\ tree and no WPF. Checks that only made
+# [EN] sense for the WPF/master tree (WPF UI probe, WPF pixel-contrast sweep, the real
+# [EN] install/uninstall script and the master SHA256SUMS manifest) are therefore not part
+# [EN] of this gate; the Avalonia probes and the three-scene screenshot check take their
+# [EN] place for the front end.
+# [ZH] 适用范围（reader 分支）：被测发布树由 tools/build_reader.ps1 产出
+# [ZH]（EchoDesk-Reader-v<版本>），前端是 Avalonia，不随包分发浏览器自动化、docs\ 目录与
+# [ZH] WPF。只对 WPF/master 树成立的检查（WPF UI 探针、WPF 像素对比度扫描、真装真卸脚本、
+# [ZH] master 的 SHA256SUMS 清单）因此不在本门禁内；前端覆盖改由 Avalonia 探针与三幕截图
+# [ZH] 断言承担。
+#
 # 覆盖：
-#   * 发布目录结构（修复七）：外层无 exe/dll、app\ 就位、快捷方式指向与工作目录正确
+#   * Reader 便携目录结构：外层无 exe/dll、app\ 就位、无模型、无预置快捷方式
 #   * 版本资源：前端 exe 与后端 exe 的文件版本
-#   * 后端自检与各专题测试（selftest / 文件解析 / 纯文本 / 结果目录 / 技能 / 多语言 /
-#     开发者模式 / 模型能力 / 后端协议端到端）
+#   * 安装程序：版本资源、图标与追加数据（安装包名带数字版本号）
+#   * 后端自检与各专题测试（selftest / 文件解析 / 纯文本 / 技能 / 多语言 / 开发者模式 /
+#     模型能力 / 后端协议端到端 / Reader 版本断言）
 #   * 静态检查：语言包完整性、反向语言键审计、主题色板与对比度、emoji 字形覆盖、文档链接
-#   * 图形与真实渲染：UI 探针、像素对比度校验（需交互式桌面）
-#   * 需要真实浏览器/联网：自动化端到端、模型中心端到端
+#   * 图形与真实渲染：Avalonia 探针（窗口/聊天/市场/设置页）+ Reader 三幕截图（需交互式桌面）
+#   * 需要联网：模型中心端到端
 #
 # 实现说明：判定用**抛异常**而不是 `exit`。在 scriptblock 里 `exit` 会终止整个
 # PowerShell 会话（脚本会在这里静默结束，只剩第一项的结果），踩过一次。
@@ -22,10 +36,10 @@
 param(
     # 默认版本从 backend\version.py 读（v0.2.2 改造）：原来这里写死 "0.2.1"，
     # 版本一升，门禁就会去一个**不存在**的发布目录找打包好的后端，然后以退出码 2 结束并提示
-    # "请先执行 build_release.ps1" —— 看起来像"还没打包"，实际是"路径过时了"。
+    # "请先执行 build_reader.ps1" —— 看起来像"还没打包"，实际是"路径过时了"。
     # 这类"默认值写死版本号"的地方，改一次版本就要全文搜一遍，所以统一改成派生。
     [string]$Version = "",
-    [switch]$SkipGui,          # 跳过需要交互式桌面的两项（UI 探针 / 像素校验）
+    [switch]$SkipGui,          # 跳过需要交互式桌面的两项（Avalonia 探针 / 三幕截图）
     [switch]$SkipE2E           # 跳过需要联网或真实 Edge 的端到端项
 )
 
@@ -49,7 +63,12 @@ if (-not $Version) {
 # [ZH] 于是这条断言会拿一个**永远不可能出现**的期望值去比对（门禁自己变瞎）。
 # [ZH] 口径与 backend\version.py 的 app_version_4() 一致，两处必须同步改。
 $NumericVersion = ($Version -split '[-+]')[0].Trim()
-$Out = Join-Path $Root "publish\EchoDesk-v$Version"
+# [EN] Reader branch: the shipped tree is produced by tools/build_reader.ps1, not by the WPF
+# [EN] release chain. The folder name is derived from backend/version.py exactly like the
+# [EN] build script does it ("0.2.6-reader" -> EchoDesk-Reader-v0.2.6-reader).
+# [ZH] Reader 分支：交付树由 tools/build_reader.ps1 产出，而不是 WPF 发布链。目录名与构建
+# [ZH] 脚本一样从 backend/version.py 派生（"0.2.6-reader" → EchoDesk-Reader-v0.2.6-reader）。
+$Out = Join-Path $Root "publish\EchoDesk-Reader-v$Version"
 $AppOut = Join-Path $Out "app"
 $BackendExe = Join-Path $AppOut "backend\EchoDeskBackend.exe"
 
@@ -174,14 +193,14 @@ Write-Host "== EchoDesk 发布物验证（v$Version）==" -ForegroundColor Cyan
 Write-Host "发布目录: $Out"
 if (-not (Test-Path -LiteralPath $BackendExe)) {
     Write-Host "未找到打包后的后端: $BackendExe" -ForegroundColor Red
-    Write-Host "请先执行: & tools\build_release.ps1 -IncludeModels -MigrateFrom publish\EchoDesk-v0.2.0" -ForegroundColor Red
+    Write-Host "请先执行: & tools\build_reader.ps1 -MakeInstaller" -ForegroundColor Red
     exit 2
 }
 
 Push-Location $Root
 try {
     # ---------- 1. 目录结构与元数据 ----------
-    Invoke-Check "发布目录结构（修复七 + 发布任务书全局要求一/四/五）" {
+    Invoke-Check "Reader 发布目录结构（便携布局）" {
         $bad = @(Get-ChildItem $Out -Recurse -File -Include *.exe, *.dll, *.pdb |
                  Where-Object { $_.FullName -notlike "$AppOut*" })
         if ($bad.Count -gt 0) { throw "外层出现程序文件: $($bad[0].FullName)" }
@@ -194,40 +213,35 @@ try {
                     ForEach-Object { $_.Name })
         if ($leaked.Count -gt 0) { throw "发布树顶层出现开发者目录: $($leaked -join ', ')" }
 
-        # 必备文件（任务书「全局要求四」：根目录 + docs\ + 发布物额外必备）
+        # [EN] Reader portable layout, as documented in README: the outer folder holds only the
+        # [EN] licences/readme, app\ holds the Avalonia front end, app\backend\ the packaged
+        # [EN] Python backend plus its configuration, language packs and bundled skills.
+        # [ZH] Reader 便携布局（README 记录的口径）：外层只放许可证与 README，app\ 是 Avalonia
+        # [ZH] 前端，app\backend\ 是打包后的 Python 后端及其配置、语言包与随包示例插件。
         $need = @(
-            "app\EchoDesk.exe", "app\EchoDesk.ico", "app\backend\EchoDeskBackend.exe",
-            "app\lang\ui", "lang", "examples\skills", "results", "docs",
-            "USAGE.txt", "install-complete.bat",
-            "README.md", "README.zh-Hans.md",
-            "CHANGELOG.md", "CHANGELOG.zh-Hans.md",
-            "CONTRIBUTING.md", "CONTRIBUTING.zh-Hans.md",
-            "LICENSE", "LICENSE.zh-Hans.md", "NOTICE", "NOTICE.zh-Hans.md",
-            "SECURITY.md", "SECURITY.zh-Hans.md",
-            "config.example.json", "install-complete.bat",
-            "docs\PRIVACY.md", "docs\PRIVACY.zh-Hans.md",
-            "docs\EULA.md", "docs\EULA.zh-Hans.md", "docs\SECURITY.md",
-            "docs\THIRD_PARTY_LICENSES.md", "docs\THIRD_PARTY_LICENSES.zh-Hans.md",
-            "docs\SBOM.json", "docs\DEVELOPER.md",
-            "docs\en\DEVELOPER.md", "docs\zh-Hans\DEVELOPER.md",
-            "docs\zh-Hans\COMPLIANCE.md", "docs\en\COMPLIANCE.md",
-            "docs\zh-Hans\README.md", "docs\en\README.md",
-            "docs\zh-Hans\USER_GUIDE.md", "docs\en\USER_GUIDE.md",
-            "docs\zh-Hans\FAQ.md", "docs\en\FAQ.md"
+            "app\EchoDesk.exe", "app\EchoDesk.ico", "app\EchoDesk.dll",
+            "app\backend\EchoDeskBackend.exe",
+            "app\backend\config.json", "app\backend\lang", "app\backend\skills_dev",
+            "README.md",
+            "LICENSE", "LICENSE.zh-Hans.md", "NOTICE", "NOTICE.zh-Hans.md"
         )
         foreach ($n in $need) {
             if (-not (Test-Path -LiteralPath (Join-Path $Out $n))) { throw "缺少 $n" }
         }
+        # [EN] A shipped model is forbidden: the release never bundles .gguf files.
+        # [ZH] 发布物不含模型：一个 .gguf 都不应有。
+        $models = @(Get-ChildItem $Out -Recurse -File -Filter *.gguf -ErrorAction SilentlyContinue)
+        if ($models.Count -gt 0) { throw "发布树内出现模型文件: $($models[0].FullName)" }
 
         # 发布物里**不应该**有预置快捷方式：.lnk 记的是绝对路径，在构建机上生成
         # 就会把维护者的个人路径（C:\Users\<用户名>\...）带进发布物，
         # 而任务书「全局要求五」把个人绝对路径列为绝对禁止项。
-        # 快捷方式由 install-complete.bat 在目标机器上创建（见第 12 节的功能验证）。
+        # 快捷方式由安装程序在目标机器上创建（见 installer.iss）。
         $links = @(Get-ChildItem $Out -Recurse -File -Filter *.lnk -ErrorAction SilentlyContinue)
         if ($links.Count -gt 0) {
             throw "发布物内出现预置 .lnk（会泄露构建机绝对路径）: $($links[0].FullName)"
         }
-        "结构正确（必备文件 $($need.Count) 项）· 无预置 .lnk"
+        "结构正确（必备文件 $($need.Count) 项 + 无模型 + 无预置 .lnk）"
     }
 
     Invoke-Check "全英文命名 + 无过程文档 + 无运行期残留" {
@@ -268,35 +282,22 @@ try {
     # ---------- 1b. 安装程序交付物（Inno Setup） ----------
     # 这些只在跑过 -MakeInstaller 之后存在；没跑就明确跳过（而不是静默通过）。
     $PublishDir = Join-Path $Root "publish"
-    $SetupWith = Join-Path $PublishDir "EchoDesk-v$Version-Setup.exe"
-    $Sums = Join-Path $PublishDir "SHA256SUMS.txt"
+    # [EN] Reader installer name (tools/build_reader.ps1): numeric version only, prerelease
+    # [EN] suffix stays in the display version.
+    # [ZH] Reader 安装包名（tools/build_reader.ps1）：只用数字版本号，预发布后缀只留在展示版本里。
+    $SetupWith = Join-Path $PublishDir "EchoDesk-Reader-v$NumericVersion-Setup.exe"
 
     if (-not (Test-Path $SetupWith)) {
         Write-Host "[SKIP] 安装程序检查（未跑 -MakeInstaller，缺 $SetupWith）" -ForegroundColor Yellow
     }
     else {
-        Invoke-Check "安装程序：SHA256 与 SHA256SUMS.txt 一致" {
-            if (-not (Test-Path $Sums)) { throw "缺少 SHA256SUMS.txt" }
-            $changed = @()
-            $checked = 0
-            foreach ($line in Get-Content -LiteralPath $Sums -Encoding UTF8) {
-                if ($line.Trim().Length -eq 0) { continue }
-                $parts = $line -split '\s+', 2
-                if ($parts.Count -lt 2) { throw "SHA256SUMS.txt 行格式不对: $line" }
-                $want = $parts[0].Trim().ToLower()
-                $name = $parts[1].Trim()
-                # 清单里的资产可能在本机两个位置（publish\ 或 docs\），依次找
-                $cand = @((Join-Path $PublishDir $name), (Join-Path $Root $name),
-                          (Join-Path $Root "docs\$name")) | Where-Object { Test-Path $_ } | Select-Object -First 1
-                if (-not $cand) { throw "清单里的资产找不到: $name" }
-                $got = (Get-FileHash -LiteralPath $cand -Algorithm SHA256).Hash.ToLower()
-                $checked++
-                if ($got -ne $want) { $changed += $name }
-            }
-            if ($changed.Count -gt 0) { throw "哈希不一致: $($changed -join ', ')" }
-            "校验 $checked 个资产，全部与清单一致"
-        }
-
+        # [EN] The Reader build chain writes no SHA256SUMS.txt: make_installer.ps1 (the WPF
+        # [EN] chain) is the one that emits that manifest, and it lists the master assets.
+        # [EN] Comparing the Reader installer against it would assert the wrong file set, so
+        # [EN] the remaining checks below cover the Reader installer's own claims instead.
+        # [ZH] Reader 构建链不产出 SHA256SUMS.txt：那是 make_installer.ps1（WPF 链）为 master
+        # [ZH] 资产写的清单，拿它来核对 Reader 安装包等于断言错的文件集；因此改由下面的检查
+        # [ZH] 覆盖 Reader 安装包自身该成立的事实。
         Invoke-Check "安装程序：版本资源与图标（Inno 编译器写入）" {
             <#
                 这里**故意不调用 rcedit**。版本资源由 tools\installer.iss 的
@@ -315,7 +316,7 @@ try {
                     ProductVersionRaw = "$NumericVersion.0"
                     CompanyName       = "Void Entropia Studio"
                     LegalCopyright    = "Copyright (C) Void Entropia Studio"
-                    ProductName       = "EchoDesk"
+                    ProductName       = "EchoDesk Reader"
                     OriginalFilename  = (Split-Path -Leaf $exe)
                 }
                 foreach ($k in $checks.Keys) {
@@ -327,7 +328,7 @@ try {
                         throw "$(Split-Path -Leaf $exe) 的 $k = '$($vi.$k)'，期望 '$($checks[$k])'"
                     }
                 }
-                if ("$($vi.FileDescription)" -notlike "EchoDesk v$Version Portable Setup*") {
+                if ("$($vi.FileDescription)" -notlike "EchoDesk Reader v$Version Portable Setup*") {
                     throw "$(Split-Path -Leaf $exe) 的 FileDescription 不对: $($vi.FileDescription)"
                 }
                 # 图标：真的从 PE 里取一次关联图标，确认资源存在
@@ -381,35 +382,16 @@ try {
             $out -join ' · '
         }
 
-        Invoke-Check "安装程序：真装真卸（默认目录 / 结构 / 快捷方式 / %TEMP% / 卸载清缓存 / 保留用户数据与 results）" {
-            <#
-                这一项真的把安装程序装一遍、再卸一遍。验收内容：
-                  * **不传 /DIR**，验证"默认装到安装程序自己所在的目录" —— 这是本方案的
-                    核心行为，也正是虚拟机实测暴露的旧问题（用户双击后全盘找不到文件）；
-                  * 安装后当前目录出现 app\ docs\ lang\ examples\ results\ 等结构；
-                  * 安装程序里确无 .gguf（本版只有一份不含模型的安装程序）；
-                  * 开始菜单快捷方式指向 {app}\app\EchoDesk.exe，工作目录 = {app}（外层，
-                    保证 results\ 与用户数据生成在外层）；
-                  * 安装后 %TEMP% 下无 EchoDesk 残留；
-                  * 卸载后 app\ docs\ 与快捷方式全部清掉，**运行期新建的文件**
-                    （session.json / models\ / ui_state.json / 缓存 / 日志…）一个不留，
-                    而 **results\ 里的用户结果原样保留**；
-                  * 不留孤儿安装记录。
-
-                实现放在 tools\check_installer_deliverables.ps1，可独立运行：
-                  powershell -NoProfile -ExecutionPolicy Bypass -File tools\check_installer_deliverables.ps1
-            #>
-            $checker = Join-Path $Root "tools\check_installer_deliverables.ps1"
-            if (-not (Test-Path $checker)) { throw "未找到 $checker" }
-            # 已知 Inno 卸载竞态（v0.2.2 收尾裁定）：卸载器退出瞬间后台进程未死透时，
-            # 注册表可能残留一条安装记录。这**不影响实际使用**（重装覆盖、再卸载即清），
-            # 按裁定不修 Inno 脚本，只在本门禁编排里把它降级为告警 —— 单独运行
-            # check_installer_deliverables.ps1 时仍是硬失败，避免把真回归一起放过。
-            $env:ECHODESK_KNOWN_UNINSTALL_LEFTOVER = "1"
-            Invoke-Native "交付物验收" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
-                                                      "-File", "tools\check_installer_deliverables.ps1")
-            "安装程序已真实安装并卸载：默认目录/结构/快捷方式/%TEMP%/卸载/运行期文件清理全部通过（results\ 保留）"
-        }
+        # [EN] The "really install and uninstall" verification lives in
+        # [EN] tools\check_installer_deliverables.ps1, which is written against the master
+        # [EN] (WPF) release tree: it asserts docs\, lang\, examples\, results\,
+        # [EN] Start-EchoDesk-*.lnk and the automation runtime files, none of which the
+        # [EN] Reader tree carries. Keeping it here would fail on a layout this branch
+        # [EN] deliberately does not ship, so it is not part of the Reader gate.
+        # [ZH] "真装真卸"那段验收写在 tools\check_installer_deliverables.ps1 里，而它按 master
+        # [ZH]（WPF）发布树编写：断言 docs\、lang\、examples\、results\、Start-EchoDesk-*.lnk
+        # [ZH] 与自动化运行期文件 —— Reader 树一个都没有。留在这里只会因为"本分支刻意不发
+        # [ZH] 那些目录"而变红，因此不属于 Reader 门禁。
     }
 
     # ---------- 1c. 发布门禁（任务书 任务四 第 1–4 步的自动化部分） ----------
@@ -679,24 +661,21 @@ try {
     # 可重入性隔离见文件头部 `Clear-ReleaseRuntimeState` 的说明：**跑前**那一次已经在
     # 所有检查之前做了（脚本开头、无条件），这里只负责**跑后**再清一次。
     if ($SkipGui) {
-        Write-Host "[SKIP] UI 探针 / 像素校验（-SkipGui）" -ForegroundColor Yellow
+        Write-Host "[SKIP] Avalonia 探针 / 三幕截图（-SkipGui）" -ForegroundColor Yellow
     }
     else {
-        # Avalonia 侧的门禁（本轮加回来，且**指向开发机构建而不是发布树**）。
-        #
-        # 为什么必须指向开发构建：本发布树里在 app\ 下的是 **WPF** 前端
-        # （dotnet publish frontend\EchoDesk.csproj），Avalonia 是**另一条交付线**
-        # （tools\pack_crossplatform.py 的三平台包，由 check_crossplatform_release.py 校验
-        # start.sh / app/EchoDesk）。两者都在本仓库里，不是二选一。
+        # [EN] Reader ships the Avalonia front end inside the release tree (app\EchoDesk.exe).
+        # [EN] That is the binary the probes must testify about — not a developer build, and
+        # [EN] certainly not the WPF tree the upstream gate used to build.
+        # [ZH] Reader 交付的是发布树里的 Avalonia 前端（app\EchoDesk.exe）。探针要证明的就是
+        # [ZH] 这个二进制 —— 不是开发机构建，更不是上游门禁过去构建的 WPF 树。
         #
         # 为什么必须有这一条：记录 §7.4 的"Avalonia 前端这套代码此前从未被真正跑起来过"
         # 就是因为**没有任何门禁会去构造窗口** —— 而 GUI 缺陷全都是"一构造/一显示就死"。
-        # 没有构建产物时跳过而不是失败：本机器的发布验证不该因为"没编过跨平台前端"而红。
-        Invoke-Check "Avalonia 界面探针（跨平台前端：窗口 + 模型市场整条交互）" {
-            $avExe = Join-Path $Root "frontend-avalonia\EchoDesk.Avalonia\bin\Debug\net10.0\EchoDesk.exe"
+        Invoke-Check "Avalonia 界面探针（发布树的 Reader 前端：窗口 + 聊天 + 市场 + 设置页）" {
+            $avExe = Join-Path $AppOut "EchoDesk.exe"
             if (-not (Test-Path $avExe)) {
-                Write-Host "    [跳过] 没有跨平台前端的 Debug 构建：先 dotnet build frontend-avalonia\EchoDesk.Avalonia" -ForegroundColor Yellow
-                return "跳过（未构建）"
+                throw "发布树里没有 Avalonia 前端：$avExe（先跑 tools\build_reader.ps1）"
             }
             Invoke-Native "ui-probe-avalonia" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
                                                              "-File", "tools\ui_probe_avalonia.ps1",
@@ -723,41 +702,36 @@ try {
                                                                    "-TimeoutSec", "300")
             "通过"
         }
-        Invoke-Check "UI 探针（窗口/页签/字段帮助/思考区）" {
-            <#
-                发布物**不含模型**（本版安装程序与便携目录都不带 .gguf，见 tools\installer.iss
-                头部说明），而"思考内容分离"那一节需要一个真模型才测得到折叠区。
-                所以这里从开发机的 backend\models 里挑一个模型（优先默认模型）传给探针：
-                ui_probe.ps1 自己有"临时装进被测程序 + 写 config.user.json 覆盖 + 收尾清理"
-                的机制，跑完不会在发布目录里留下残留。
-                找不到模型时照常跑（其余检查不受影响），并明确告警说明思考区测不到。
-            #>
-            $probeModel = ""
-            $devModels = Join-Path $Root "backend\models"
-            if (Test-Path $devModels) {
-                $ggufs = @(Get-ChildItem $devModels -Filter *.gguf -File -ErrorAction SilentlyContinue |
-                    Sort-Object Name)
-                $preferred = @($ggufs | Where-Object { $_.Name -eq "Qwen3-0.6B-Q6_K.gguf" })
-                if ($preferred.Count -gt 0) { $probeModel = $preferred[0].FullName }
-                elseif ($ggufs.Count -gt 0) { $probeModel = $ggufs[0].FullName }
+
+        # [EN] The Reader edition's entire user-visible surface is three scenes. The screenshot
+        # [EN] mode renders them from the shipped binary through the product's own render path
+        # [EN] (no backend, no network), so this check pins "the thing we ship can produce the
+        # [EN] three scenes the README advertises", in both languages.
+        # [ZH] Reader 版对用户可见的全部内容就是三幕。截图模式从**发布树里的二进制**出发、
+        # [ZH] 走产品自己的渲染路径（不拉后端、不联网）把它们渲染出来，因此这条检查钉住的是
+        # [ZH] "发出去的程序确实能产出 README 宣传的三幕"，且中英各一套。
+        Invoke-Check "Avalonia 三幕截图（主界面 / 文档解析 / 流式对话 × 中英）" {
+            $avExe = Join-Path $AppOut "EchoDesk.exe"
+            if (-not (Test-Path $avExe)) {
+                throw "发布树里没有 Avalonia 前端：$avExe（先跑 tools\build_reader.ps1）"
             }
-            if ($probeModel) {
-                Write-Host "    探针模型: $probeModel" -ForegroundColor DarkGray
-                Invoke-Native "ui-probe" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
-                                                        "-File", "tools\ui_probe.ps1",
-                                                        "-ThinkingModel", $probeModel)
+            $shotDir = Join-Path $Root "artifacts\verify-shots"
+            if (Test-Path $shotDir) { Remove-Item -Recurse -Force $shotDir }
+            Invoke-Native "ui-probe-avalonia-shots" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
+                                                                   "-File", "tools\ui_probe_avalonia.ps1",
+                                                                   "-Exe", $avExe, "-Mode", "shots",
+                                                                   "-OutDir", $shotDir,
+                                                                   "-TimeoutSec", "300")
+            $missing = @()
+            foreach ($scene in @("screenshot-main", "screenshot-file-parse", "screenshot-chat")) {
+                foreach ($suffix in @("", ".zh-Hans")) {
+                    if (-not (Test-Path (Join-Path $shotDir ("{0}{1}.png" -f $scene, $suffix)))) {
+                        $missing += "$scene$suffix.png"
+                    }
+                }
             }
-            else {
-                Write-Host "    [警告] backend\models 下没有 .gguf：发布物不含模型，思考区检查将跳过" -ForegroundColor Yellow
-                Invoke-Native "ui-probe" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
-                                                        "-File", "tools\ui_probe.ps1")
-            }
-            "通过"
-        }
-        Invoke-Check "像素校验（修复二/六）" {
-            Invoke-Native "ui-pixels" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
-                                                     "-File", "tools\check_ui_pixels.ps1", "-Theme", "both")
-            "通过"
+            if ($missing.Count -gt 0) { throw "缺少截图: $($missing -join ', ')" }
+            "6 张截图（3 幕 × 中英）已从发布树生成"
         }
 
         # 跑后再清一次：上面几个检查都启动过被测程序，便携布局下会把界面状态写回发布树根。

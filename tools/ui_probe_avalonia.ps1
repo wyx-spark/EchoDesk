@@ -1,4 +1,4 @@
-﻿# 适用平台：Avalonia 跨平台前端（三平台通用；Windows 上本机即可跑）
+# 适用平台：Avalonia 跨平台前端（三平台通用；Windows 上本机即可跑）
 # EchoDesk Avalonia 界面探针 —— 回答"窗口到底能不能打开"
 #
 # 为什么需要它：v0.2.2 记录 §7.4 明写"Avalonia 前端这套代码此前从未被真正跑起来过"：
@@ -21,14 +21,19 @@
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode chat           # 不开后端：断言平铺式消息布局与流式节流
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode upload         # 程序内自拉后端：真实上传两份临时文件
 #   powershell -File tools\ui_probe_avalonia.ps1 -Mode theme          # 真的改系统主题，验证跟随系统即时响应（会还原）
+#   powershell -File tools\ui_probe_avalonia.ps1 -Mode shots -OutDir artifacts\verify-shots
+#                                                                     # Reader 三幕截图（中英各一套，断言六张图都生成）
 #   powershell -File tools\ui_probe_avalonia.ps1 -Exe <发布树>\app\EchoDesk.exe
 param(
     # 默认指向本仓库的 Debug 构建（开发机跑得最快）。发布树里的自包含产物也可以直接传进来，
     # 那条路径才是"发布出去的东西到底能不能开"的证据。
     [string]$Exe = "$PSScriptRoot\..\frontend-avalonia\EchoDesk.Avalonia\bin\Debug\net10.0\EchoDesk.exe",
-    [ValidateSet('main', 'settings', 'both', 'agent', 'market', 'pages', 'markdown', 'chat', 'upload', 'theme')]
+    [ValidateSet('main', 'settings', 'both', 'agent', 'market', 'pages', 'markdown', 'chat', 'upload', 'theme', 'shots')]
     [string]$Mode = 'both',
-    [int]$TimeoutSec = 120
+    [int]$TimeoutSec = 120,
+    # [EN] --probe shots output directory; the six Reader scene images land here.
+    # [ZH] --probe shots 的图片输出目录；Reader 三幕的六张图写到这里。
+    [string]$OutDir = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,7 +54,9 @@ $outFile = [System.IO.Path]::GetTempFileName()
 $errFile = [System.IO.Path]::GetTempFileName()
 $exit = $null
 try {
-    $proc = Start-Process -FilePath $Exe -ArgumentList @('--probe', $Mode) -PassThru -NoNewWindow `
+    $probeArgs = @('--probe', $Mode)
+    if ($OutDir) { $probeArgs += @('--out', "`"$OutDir`"") }
+    $proc = Start-Process -FilePath $Exe -ArgumentList $probeArgs -PassThru -NoNewWindow `
         -RedirectStandardOutput $outFile -RedirectStandardError $errFile
     if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
         # 探针自己也有 60 秒看门狗；走到这里说明连看门狗都没能收场（例如启动阶段就卡住）。
@@ -81,6 +88,31 @@ try {
     }
 
     if ($null -ne $exit -and $exit -ne 0) { Fail "退出码非 0：$exit" }
+
+    # [EN] shots mode: the probe already fails when a title bar carries no version, but the
+    # [EN] gate also needs proof that all three scenes were written for both languages.
+    # [ZH] shots 模式：探针自己会因"标题栏没有版本号"失败，但门禁还需要"三幕 × 中英"
+    # [ZH] 六张图确实都写出来了的证据。
+    if ($Mode -eq 'shots') {
+        if (-not $OutDir) {
+            Fail 'shots 模式需要 -OutDir（否则图片会写进 docs\images）'
+        }
+        else {
+            $scenes = @('screenshot-main', 'screenshot-file-parse', 'screenshot-chat')
+            foreach ($scene in $scenes) {
+                foreach ($suffix in @('', '.zh-Hans')) {
+                    $shot = Join-Path $OutDir ("{0}{1}.png" -f $scene, $suffix)
+                    if (-not (Test-Path -LiteralPath $shot)) {
+                        Fail "缺少截图 $([System.IO.Path]::GetFileName($shot))"
+                    }
+                    elseif ((Get-Item -LiteralPath $shot).Length -lt 10KB) {
+                        Fail "截图过小（疑似空图）：$([System.IO.Path]::GetFileName($shot))"
+                    }
+                }
+            }
+            if ($failures.Count -eq 0) { Ok "Reader 三幕截图齐全（3 幕 × 中英，共 6 张）" }
+        }
+    }
 }
 finally {
     Start-Sleep -Milliseconds 200   # 让子进程真正释放重定向的文件句柄
