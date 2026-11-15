@@ -96,7 +96,7 @@ SINGLE_FILE_BILINGUAL: dict[str, str] = {
     ".github/ISSUE_TEMPLATE/feature_request.yml": "同上",
     ".github/ISSUE_TEMPLATE/skill_submission.yml": "同上",
     ".github/release_notes_template.md": "发布说明模板，中英两半同在一个文件里（Release 正文本身也是双语的）",
-    "assets/screenshots/README.md": "目录使用约定，中英并排；拆两份会让「该放哪些图」出现两个版本",
+    "docs/images/README.md": "截图目录使用约定，中英并排；拆两份会让「该放哪些图」出现两个版本",
     "docs/SECURITY.md": "指针文件：策略正文只保留在根目录两个文件里，本文件中英并排说明「去哪里读」",
     "deploy/linux/README.md": "Linux 安装说明，一屏长度，中英并排比拆两份更好对照",
     "assets/icons/README.md": "生成物说明，中英并排（图标由工具产出，改源 ico 后要重跑）",

@@ -6,8 +6,8 @@ JSON-line stdin/stdout protocol, so another toolkit's frontend drives the same b
 
 Windows is the complete, shipped product today; Linux and macOS are served by the **cross-platform
 frontend**. This document says what works where, what is Windows-only, what a user on another platform
-actually sees, and how far verification goes. Related reading: `USER_GUIDE.md`, `AUTOMATION_GUIDE.md`
-(the feature in section 3.2), `FAQ.md`, `SKILL_GUIDE.md`. Chinese: `docs/zh-Hans/CROSS_PLATFORM.md`.
+actually sees, and how far verification goes. Related reading: `USER_GUIDE.md`, `FAQ.md`,
+`SKILL_GUIDE.md`. Chinese: `docs/zh-Hans/CROSS_PLATFORM.md`.
 
 > **Version naming**: **v0.2.1 is pre-cross-platform** (no `frontend-avalonia/`, no platform
 > abstraction); **v0.2.2 is the cross-platform version** (frontend migration, platform-isation of the

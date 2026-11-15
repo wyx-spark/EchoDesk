@@ -1,7 +1,7 @@
 # EchoDesk Developer Documentation
 
 Chinese version: [`docs/zh-Hans/DEVELOPER.md`](../zh-Hans/DEVELOPER.md).
-Related documents: [Automation guide](AUTOMATION_GUIDE.md) · [User guide](USER_GUIDE.md) · [FAQ](FAQ.md) · [Skill development guide](SKILL_GUIDE.md) · [Cross-platform reference](CROSS_PLATFORM.md).
+Related documents: [User guide](USER_GUIDE.md) · [FAQ](FAQ.md) · [Skill development guide](SKILL_GUIDE.md) · [Cross-platform reference](CROSS_PLATFORM.md).
 
 This document is for frontend, backend and skill developers. It explains the architecture, the communication
 protocol, the module layout, the build process and how to extend the program.
@@ -637,6 +637,20 @@ Host github.com
 `https://` (an SSH address cannot be opened in a browser). The gate checks git operation
 examples only, not web links, and it does not rewrite the historical notes under
 `records/`, which record what was true at the time.
+
+### Screenshots
+
+The shipped screenshots live in `docs/images/` — six PNGs, one set in English and one set in
+Simplified Chinese (`.zh-Hans`). They are **real captures of the current release**, not mockups:
+the Avalonia front end's screenshot mode (`EchoDesk.exe --probe shots --out <dir>`) fixes the dark
+theme and the language, drives the normal rendering path and writes 2× PNGs, so no backend, network
+or installed model is involved. The READMEs embed these files directly; there is no second copy.
+
+To regenerate them, build the Avalonia front end, run the probe in `shots` mode against an output
+directory (the exit code is 0 only when every image was written), and copy the six PNGs into
+`docs/images/`. A capture that would show no version in the title bar makes the run fail on purpose.
+Redact personal data — paths, user names, document content, URLs, tokens — before committing any
+capture; see [`../SECURITY.md`](../SECURITY.md).
 
 ---
 

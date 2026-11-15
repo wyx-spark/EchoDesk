@@ -1,7 +1,6 @@
 # EchoDesk 用户手册（v0.2.6）
 
-面向实际使用场景的操作手册。快速上手与故障排除见 `docs/zh-Hans/FAQ.md`；
-自动化字段的逐项填写说明自动化指南逐字段说明任务链接、登录判定、翻页与结果目录的填写方法，并提供选择器可视化选取
+面向实际使用场景的操作手册。快速上手与故障排除见 [`docs/zh-Hans/FAQ.md`](FAQ.md)。
 English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 
 ---
@@ -13,8 +12,7 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 > `EchoDesk-Reader-Setup.exe`。本构建**没有** `.lnk` 启动器：程序会询问是否创建
 > `EchoDesk 启动.cmd`（Windows）、`EchoDesk.command`（macOS）或 `echodesk.desktop`（Linux）。
 >
-> **本构建不包含**下列能力，描述它们的段落不再适用：浏览器自动化（§4 与整份
-> `AUTOMATION_GUIDE.md`）、本地视觉 / 语音 / 媒体、SQLite FTS5 知识库、长期记忆、BM25 检索、
+> **本构建不包含**下列能力，描述它们的段落不再适用：浏览器自动化（§4）、本地视觉 / 语音 / 媒体、SQLite FTS5 知识库、长期记忆、BM25 检索、
 > 抽取式摘要器，以及逐段摘要与它那种"字符区间原文指针"（整个 §9）。取而代之的是：本构建按文档
 > 扩张上下文窗口、把正文一次送入模型 —— 见 README 的"动态上下文"一节。
 

@@ -115,7 +115,8 @@ Windows 上，旧式 `.doc` / `.ppt` 与加密文档借本机已授权的 WPS/Of
 - [`docs/zh-Hans/CROSS_PLATFORM.md`](docs/zh-Hans/CROSS_PLATFORM.md) —— 各平台的差异。
 - [`CHANGELOG.zh-Hans.md`](CHANGELOG.zh-Hans.md) —— 版本历史。
 - [`SECURITY.zh-Hans.md`](SECURITY.zh-Hans.md) —— 如何私下报告安全问题。
-- [`assets/screenshots/`](assets/screenshots/) —— 上面的截图，以及重新生成的步骤。
+- [`docs/images/`](docs/images/) —— 上面内嵌的截图；重新生成的步骤见
+  [`docs/zh-Hans/DEVELOPER.md`](docs/zh-Hans/DEVELOPER.md)。
 
 ## 出品方
 

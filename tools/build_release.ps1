@@ -1358,9 +1358,8 @@ $mustHave = @(
     "docs\SBOM.json", "docs\DEVELOPER.md",
     "docs\en\DEVELOPER.md", "docs\zh-Hans\DEVELOPER.md",
     "docs\en\COMPLIANCE.md", "docs\zh-Hans\COMPLIANCE.md",
-    "docs\en\README.md", "docs\en\USER_GUIDE.md", "docs\en\FAQ.md", "docs\en\AUTOMATION_GUIDE.md",
+    "docs\en\README.md", "docs\en\USER_GUIDE.md", "docs\en\FAQ.md",
     "docs\zh-Hans\README.md", "docs\zh-Hans\USER_GUIDE.md", "docs\zh-Hans\FAQ.md",
-    "docs\zh-Hans\AUTOMATION_GUIDE.md",
     "lang", "examples\skills", "results"
 )
 $missing = @($mustHave | Where-Object { -not (Test-Path (Join-Path $Out $_)) })

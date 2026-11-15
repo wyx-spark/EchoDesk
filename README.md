@@ -135,7 +135,8 @@ with an explanation, so nothing is silently dropped.
 - [`docs/en/CROSS_PLATFORM.md`](docs/en/CROSS_PLATFORM.md) — what differs per platform.
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.
 - [`SECURITY.md`](SECURITY.md) — how to report a vulnerability privately.
-- [`assets/screenshots/`](assets/screenshots/) — the screenshots above plus how to regenerate them.
+- [`docs/images/`](docs/images/) — the screenshots embedded above; regeneration steps are in
+  [`docs/en/DEVELOPER.md`](docs/en/DEVELOPER.md).
 
 ## Organization
 

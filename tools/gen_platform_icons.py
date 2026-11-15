@@ -170,7 +170,7 @@ def metainfo() -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         "<!-- EchoDesk AppStream 元数据（由 tools/gen_platform_icons.py 生成）。\n"
-        "     安装：cp 到 /usr/share/metainfo/ ；界面截图见仓库的 docs/images/ 与 assets/screenshots/。 -->\n"
+        "     安装：cp 到 /usr/share/metainfo/ ；界面截图见仓库的 docs/images/。 -->\n"
         '<component type="desktop-application">\n'
         "  <id>com.voidentropia.echodesk</id>\n"
         "  <metadata_license>CC0-1.0</metadata_license>\n"

@@ -55,7 +55,6 @@ $XDG_DATA_HOME/EchoDesk/
 | --- | --- | --- |
 | [`USER_GUIDE.md`](USER_GUIDE.md) | 用户手册：安装启动、日常问答、长合同审查、批量自动化、技能市场、快捷键 | 所有用户 |
 | [`FAQ.md`](FAQ.md) | 常见问题与故障排除：启动、模型、文件解析、自动化、技能市场、界面 | 遇到问题时先看这里 |
-| [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md) | **自动化配置填写指南**：字段总览、逐项填写说明、合同审核完整示例、测试选择器流程、常见错误排查、预置模板、导入导出 | 想用浏览器批量处理网页任务的用户 |
 | [`SKILL_GUIDE.md`](SKILL_GUIDE.md) | 技能（插件）开发指南：清单规范、发布到市场、安全要求与审核流程 | 技能开发者 |
 | [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md) | **跨平台支持与降级参考**：Windows / macOS / Linux 上分别能做什么、两项 Windows 专属能力及其替代做法、数据目录约定、打包与验证证据 | 所有用户，macOS/Linux 用户必读 |
 | [`COMPLIANCE.md`](COMPLIANCE.md) | **企业环境适配与合规说明**：代理、证书、防火墙域名白名单、组策略/受限环境、审计与留痕 | IT 管理员、合规与安全审查人员 |

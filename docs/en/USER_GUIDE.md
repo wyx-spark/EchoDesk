@@ -1,8 +1,7 @@
 # EchoDesk User Guide (v0.2.6)
 
 A hands-on manual for real-world use. For a quick start and troubleshooting, see
-[`FAQ.md`](FAQ.md); for field-by-field instructions on the automation settings, see
-[`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md).
+[`FAQ.md`](FAQ.md).
 Chinese version: [`docs/zh-Hans/USER_GUIDE.md`](../zh-Hans/USER_GUIDE.md).
 
 ---
@@ -18,7 +17,7 @@ Chinese version: [`docs/zh-Hans/USER_GUIDE.md`](../zh-Hans/USER_GUIDE.md).
 > `echodesk.desktop` on Linux instead.
 >
 > **Not shipped in this build**, so the passages that describe them do not apply: browser automation
-> (§4, and `AUTOMATION_GUIDE.md` in its entirety), local vision / speech / media, the SQLite FTS5
+> (§4), local vision / speech / media, the SQLite FTS5
 > knowledge base, long-term memory, BM25 retrieval, the extractive summariser and the chunk-by-chunk
 > summariser with its character-range source pointers (all of §9). In their place this build grows
 > the context window from the document and feeds the whole body in one pass — see the dynamic-context

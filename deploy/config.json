@@ -25,15 +25,7 @@
     "merge_max_tokens": 800,
     "model": "",
     "min_chars": 4000,
-    "keep_pointer": true,
-    "extractive": true,
-    "extractive_ratio": 0.35,
-    "extractive_min_chars": 600,
-    "progress_events": true,
-    "heartbeat_seconds": 5.0,
-    "slow_chunk_seconds": 60,
-    "chunk_timeout_seconds": 0,
-    "chunk_timeout_action": "skip"
+    "keep_pointer": true
   },
   "compact": {
     "trigger_ratio": 0.7,

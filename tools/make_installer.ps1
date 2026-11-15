@@ -403,9 +403,9 @@ foreach ($pair in $bilingualPairs) {
 }
 # docs/ 与语言子目录单列，便于一次看清缺哪份
 foreach ($rel in @("docs/SBOM.json", "docs/en/COMPLIANCE.md", "docs/zh-Hans/COMPLIANCE.md",
-        "docs/en/README.md", "docs/en/USER_GUIDE.md", "docs/en/FAQ.md", "docs/en/AUTOMATION_GUIDE.md",
+        "docs/en/README.md", "docs/en/USER_GUIDE.md", "docs/en/FAQ.md",
         "docs/zh-Hans/README.md", "docs/zh-Hans/USER_GUIDE.md", "docs/zh-Hans/FAQ.md",
-        "docs/zh-Hans/AUTOMATION_GUIDE.md", "docs/DEVELOPER.md")) {
+        "docs/DEVELOPER.md")) {
     $inRepo = Join-Path $Root ($rel -replace "/", "\")
     $inRel = Join-Path $ReleaseDir ($rel -replace "/", "\")
     if (-not (Test-Path $inRepo) -and -not (Test-Path $inRel)) { $missingDocs += $rel }
@@ -415,7 +415,7 @@ if ($missingDocs.Count -gt 0) {
         "补齐后重跑构建脚本（docs\ 下的文档会整份复制进发布物）。"
 }
 else {
-    Write-Ok "双语合规文档 $($bilingualPairs.Count) 对 + docs\ 必备 12 份齐全"
+    Write-Ok "双语合规文档 $($bilingualPairs.Count) 对 + docs\ 必备 10 份齐全"
 }
 
 # --- 1.8 无调试内容残留（任务书「全局要求五」） ---

@@ -30,7 +30,6 @@ working while the full text lives next to the other localised documents.
 
 | Document | 说明 |
 | --- | --- |
-| [`en/AUTOMATION_GUIDE.md`](en/AUTOMATION_GUIDE.md) | Automation configuration, sign-in state reuse, href extraction / 自动化配置、登录态复用、href 提取 |
 | [`en/SKILL_GUIDE.md`](en/SKILL_GUIDE.md) | Skill (plugin) development / 技能（插件）开发 |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Development environment, tests, pull requests / 开发环境、测试、拉取请求 |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | What changed in each version / 各版本变更记录 |

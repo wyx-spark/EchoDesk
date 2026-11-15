@@ -1,7 +1,7 @@
 # EchoDesk 开发者文档（v0.2.0）
 
 English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)（本文为英文版的中文参考译本，如两者有歧义，**以英文版为准**）。
-相关文档：[自动化指南](AUTOMATION_GUIDE.md) · [用户手册](USER_GUIDE.md) · [常见问题](FAQ.md) · [技能开发指南](SKILL_GUIDE.md) · [跨平台参考](CROSS_PLATFORM.md)。
+相关文档：[用户手册](USER_GUIDE.md) · [常见问题](FAQ.md) · [技能开发指南](SKILL_GUIDE.md) · [跨平台参考](CROSS_PLATFORM.md)。
 
 本文面向前端/后端/技能开发者，说明架构、通信协议、模块划分、构建流程与扩展方式。
 
@@ -591,6 +591,18 @@ Host github.com
 **网页链接仍是 HTTPS**：Issues / Discussions / Releases / Advisories 这类链接保持
 `https://` 是正确的（SSH 地址在浏览器里打不开）。门禁只检查"git 操作示例"，
 不检查网页链接；`records/` 下的历史记录也不改写（那里记的是当时的事实）。
+
+### 截图
+
+随包的界面截图放在 `docs/images/` —— 六张 PNG，英文一套、简体中文（`.zh-Hans`）一套。它们是
+**当前发布版的真实截图**，不是示意图：由 Avalonia 前端的截图模式
+（`EchoDesk.exe --probe shots --out <目录>`）固定深色主题与语言、走正常渲染路径、以 2 倍像素
+写出，全程不拉后端、不联网、不依赖本机装了哪个模型。README 直接内嵌这些文件，不存在第二份副本。
+
+重新生成时：先构建 Avalonia 前端，再以 `shots` 模式对某输出目录跑一次探针（只有每张图都写成功
+退出码才是 0），最后把六张 PNG 拷进 `docs/images/`。若某张图的标题栏会没有版本号，这次运行会
+刻意失败。提交前先处理掉个人信息 —— 文件路径、用户名、文档内容、网址、Token —— 见
+[`../SECURITY.md`](../SECURITY.md)。
 
 ---
 

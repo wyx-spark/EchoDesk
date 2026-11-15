@@ -493,28 +493,24 @@ class CompactionConfig(BaseModel):
 class SummarizeConfig(BaseModel):
     """
     [EN]
-    Long-document segmented summarization (preprocessing) configuration.
+    Document text preparation configuration.
 
-    When the full text of a file exceeds a certain proportion of the window, summaries
-    are generated segment by segment and merged before injection, rather than
-    truncating the document directly.
-
-    v0.2.1 general optimization (task 4) adds progress feedback, heartbeats, timeouts,
-    and interruption. With a small model on CPU only, summarizing a long document can
-    take over ten minutes; previously only "segment i of N" was printed to stderr, so
-    the front-end conversation view showed nothing and the user could not distinguish
-    "running" from "hung". The parameters below decide how long silence counts as
-    abnormal and what to do when a single segment is too slow.
+    Historical context: upstream this section also carried the segmented
+    summarization controls (trigger ratio, chunk length, per-chunk timeout,
+    heartbeat, extractive pre-filtering). The Reader profile allocates the
+    context window from the uploaded document and injects the whole body in one
+    pass, so the map-reduce summarizer is a pass-through and those controls have
+    no consumer. They were removed in v0.2.6-reader; what remains is the
+    parameter subset still read by the request dispatcher and the settings
+    protocol.
 
     [ZH]
-    长文档分段摘要（预处理）配置。
+    文档文本准备配置。
 
-    文件全文超出窗口一定比例时，先分段生成摘要再合并注入，而不是直接截断。
-
-    v0.2.1 综合优化（任务四）新增：过程反馈、心跳、超时与中断。
-    小模型 + 纯 CPU 下长文档摘要可能跑十几分钟，此前只把"第 i/N 段"打到 stderr，
-    前端对话框里什么都看不到，用户无法区分"正在跑"与"已经卡死"。
-    下面这组参数决定"多久没动静算异常"以及"单段太慢怎么办"。
+    历史背景：上游这一节还承载分段摘要控制项（触发比例、段长、单段超时、心跳、
+    抽取式预筛）。Reader 版按上传文档动态分配上下文窗口、正文一次注入，map-reduce
+    摘要器已退化为直通实现，这些控制项不再有任何消费方。v0.2.6-reader 已将其删除，
+    只保留请求分发层与设置协议仍在读取的参数子集。
     """
 
     enabled: bool = True
@@ -543,71 +539,6 @@ class SummarizeConfig(BaseModel):
     # [EN] original text can be looked up on demand.
     # [ZH] 摘要中保留原文指针（文件名 + 段落区间），便于按需回查原文
     keep_pointer: bool = True
-
-    # [EN] ---------- Task 4: progress feedback ----------
-    # [ZH] ---------- 研发任务 4：过程反馈 ----------
-    # [EN] Whether to emit progress events (summary_progress) to the front end.
-    # [EN] Disabling this only affects visibility, not the summary result; unattended or
-    # [EN] scripted callers can disable it to reduce protocol noise.
-    # [ZH] 是否向前端发进度事件（summary_progress）。关掉只影响"看不看得见"，不影响摘要结果；
-    # [ZH] 无人值守/脚本化调用时可以关掉以减少协议噪音。
-    progress_events: bool = True
-    # [EN] Heartbeat interval in seconds: a status is emitted at least this often while
-    # [EN] a segment is being processed, preventing long periods without any output.
-    # [EN] The 1-second lower bound prevents a value of 0 from flooding the protocol.
-    # [ZH] 心跳间隔（秒）：单段处理中每隔这么久至少发一次状态，避免长时间无任何输出。
-    # [ZH] 下限 1 秒是防止有人配成 0 把协议刷爆。
-    heartbeat_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
-    # [EN] If a single segment remains incomplete for longer than this, the progress
-    # [EN] entry is marked "abnormally slow" and a hint is emitted (hint only, no
-    # [EN] interruption: slowness is not failure, and the design specification requires
-    # [EN] distinguishing the two).
-    # [ZH] 单段超过这么多秒仍未完成，就在进度里标记为"异常缓慢"并给出提示
-    # [ZH] （只提示、不打断：慢不等于故障，设计规范要求区分这两种情况）。
-    slow_chunk_seconds: int = Field(default=60, ge=10, le=3600)
-    # [EN] Per-segment timeout in seconds; 0 = unlimited. The decision is based on
-    # [EN] wall-clock time elapsed since the segment started.
-    # [ZH] 单段超时（秒）；0 = 不限。判定依据是"该段从开始到现在"的墙钟时间。
-    chunk_timeout_seconds: int = Field(default=0, ge=0, le=7200)
-    # [EN] Behaviour after a per-segment timeout: skip (skip the segment and continue,
-    # [EN] default) / retry (retry once) / abort (abort the entire summary).
-    # [ZH] 单段超时后的行为：skip（跳过该段并继续，默认）/ retry（重试一次）/ abort（中止整个摘要）
-    chunk_timeout_action: str = "skip"
-
-    # [EN] ---------- Task 4: extractive pre-filtering (earlier release, known-issue optimization 2) ----------
-    # [ZH] ---------- 研发任务 4：抽取式预筛（此前版本，优化已知问题 2） ----------
-    # [EN] Before sending to the model, TextRank compresses each segment to roughly
-    # [EN] extractive_ratio. It is purely statistical and model-free; a 3000-character
-    # [EN] segment takes about 8 ms (see artifacts/probe_extractive.py).
-    # [ZH] 送给模型之前，先用 TextRank 把每一段压到 extractive_ratio 左右。
-    # [ZH] 纯统计、不用模型，验证 3000 字符的段约 8 ms（见 artifacts/probe_extractive.py）。
-    extractive: bool = True
-    # [EN] Extraction ratio. Smaller is not better: at 0.18 key facts (contract amount,
-    # [EN] dates) were largely lost in testing, whereas 0.35 clearly improved retention
-    # [EN] while still achieving a 2.8x compression ratio. See records/ for the measured
-    # [EN] results behind this field.
-    # [ZH] 抽取比例。不是越小越好：0.18 时验证关键事实（合同金额、日期）大量丢失，
-    # [ZH] 0.35 时保留率明显提升而压缩比仍有 2.8 倍。详见 records/ 与本字段的验证记录。
-    extractive_ratio: float = Field(default=0.35, ge=0.10, le=0.70)
-    # [EN] Segments below this character count skip pre-filtering (the segment is
-    # [EN] already short enough that the savings do not justify the risk of losing
-    # [EN] information).
-    # [ZH] 低于该字符数的段不做预筛（段本身够短，抽省的时抵不上丢信息的风险）
-    extractive_min_chars: int = Field(default=600, ge=0, le=20000)
-
-    @field_validator("chunk_timeout_action")
-    @classmethod
-    def _check_timeout_action(cls, value: str) -> str:
-        """
-        [EN]
-        Validate the timeout behaviour; an invalid value falls back to skip (the
-        configuration file may have been corrupted by hand).
-
-        [ZH]
-        校验超时行为，非法值回落到默认的 skip（配置文件可能被手改坏）。
-        """
-        text = str(value or "").strip().lower()
-        return text if text in ("skip", "retry", "abort") else "skip"
 
 
 

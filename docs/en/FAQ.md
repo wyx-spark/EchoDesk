@@ -430,8 +430,6 @@ $XDG_DATA_HOME/EchoDesk/results/
 
 To move all user data (including `ui_state.json` and `snippets.json`), set the `ECHODESK_DATA` environment
 variable.
-For how to set the save location, the top-level folder name and the task name, see
-[`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md).
 
 ### Login state
 You need to log in manually the first time; the program stores cookies/localStorage in

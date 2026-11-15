@@ -213,8 +213,7 @@ try {
             "docs\zh-Hans\COMPLIANCE.md", "docs\en\COMPLIANCE.md",
             "docs\zh-Hans\README.md", "docs\en\README.md",
             "docs\zh-Hans\USER_GUIDE.md", "docs\en\USER_GUIDE.md",
-            "docs\zh-Hans\FAQ.md", "docs\en\FAQ.md",
-            "docs\zh-Hans\AUTOMATION_GUIDE.md", "docs\en\AUTOMATION_GUIDE.md"
+            "docs\zh-Hans\FAQ.md", "docs\en\FAQ.md"
         )
         foreach ($n in $need) {
             if (-not (Test-Path -LiteralPath (Join-Path $Out $n))) { throw "缺少 $n" }

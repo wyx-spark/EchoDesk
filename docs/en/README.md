@@ -59,7 +59,6 @@ the macOS Gatekeeper note and running without a graphical environment — is in
 | --- | --- | --- |
 | [`USER_GUIDE.md`](USER_GUIDE.md) | User guide: install and start, everyday Q&A, long contract review, batch automation, skill marketplace, keyboard shortcuts | Everyone |
 | [`FAQ.md`](FAQ.md) | Frequently asked questions and troubleshooting: startup, models, file parsing, automation, marketplace, UI | Check here first when something breaks |
-| [`AUTOMATION_GUIDE.md`](AUTOMATION_GUIDE.md) | **Automation configuration guide**: field overview, field-by-field instructions, a complete contract-review example, the selector-test wizard, a troubleshooting table, preset templates, config import/export | Users who want to batch-process web tasks in a browser |
 | [`SKILL_GUIDE.md`](SKILL_GUIDE.md) | Skill (plugin) development guide: manifest rules, publishing to the marketplace, security requirements and review process | Skill developers |
 | [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md) | **Cross-platform support and degradation reference**: what works on Windows / macOS / Linux, the two Windows-only capabilities and their alternatives, data-directory conventions, packaging and verification evidence | Everyone; essential on macOS or Linux |
 | [`COMPLIANCE.md`](COMPLIANCE.md) | **Enterprise deployment and compliance guide**: proxy, certificates, firewall domain allow-list, Group Policy and restricted environments, auditing and retained evidence | IT administrators, compliance and security reviewers |

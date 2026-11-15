@@ -586,14 +586,18 @@ def check(locales, quiet):
         print(f"\n提示：源语言包里有 {len(unused)} 条未被代码直接引用的键")
         print("（动态拼接的键、技能示例里的键或保留键都可能出现在这里，仅供参考）")
 
-    # 本地化文档同步（任务书修复三：docs/<locale>/ 下至少 README、用户手册、FAQ、
-    # 自动化指南四份）。语言包完整但文档缺一份，英文用户仍然看不懂怎么用。
+    # 本地化文档同步（任务书修复三：docs/<locale>/ 下至少 README、用户手册、FAQ
+    # 三份）。语言包完整但文档缺一份，英文用户仍然看不懂怎么用。
+    # [EN] The automation guide is gone: the Reader edition has no browser automation,
+    # [EN] so a localized copy would only mislead. The requirement is three documents.
+    # [ZH] 自动化指南已删除：Reader 版没有浏览器自动化，留一份本地化副本只会误导。
+    # [ZH] 因此这里要求三份文档。
     print("\n-- 本地化文档（docs/<locale>/）")
     docs_root = os.path.join(ROOT, "docs")
     if not os.path.isdir(docs_root):
         print("   docs/ 不存在，跳过")
     else:
-        required_docs = ("README.md", "USER_GUIDE.md", "FAQ.md", "AUTOMATION_GUIDE.md")
+        required_docs = ("README.md", "USER_GUIDE.md", "FAQ.md")
         locale_dirs = {}
         for name in sorted(os.listdir(docs_root)):
             path = os.path.join(docs_root, name)
@@ -610,7 +614,7 @@ def check(locales, quiet):
                 problems += len(missing)
                 print(f"   ✗ docs/{locale}/ 缺少：{', '.join(missing)}")
             else:
-                print(f"   ✓ docs/{locale}/ 四份必需文档齐全")
+                print(f"   ✓ docs/{locale}/ 三份必需文档齐全")
         # 各语言目录之间必须一一对应（避免"中文更新了英文没跟上"）
         if len(locale_dirs) > 1:
             names = list(locale_dirs)
