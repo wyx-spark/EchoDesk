@@ -118,6 +118,21 @@ Windows 上，旧式 `.doc` / `.ppt` 与加密文档借本机已授权的 WPS/Of
 - [`docs/images/`](docs/images/) —— 上面内嵌的截图；重新生成的步骤见
   [`docs/zh-Hans/DEVELOPER.md`](docs/zh-Hans/DEVELOPER.md)。
 
+## 获取帮助与参与贡献
+
+欢迎各种形式的贡献——缺陷报告、代码修复、技能、翻译与文档都算。所有公开渠道都在 GitHub 上：
+本项目**不提供**支持邮箱、电话或邮寄地址。
+
+- **反馈问题或提功能请求** —— 请开 GitHub Issue：
+  <https://github.com/wyx-spark/EchoDesk/issues>。请写明版本、操作系统、复现步骤与相关日志。
+- **提问或分享想法** —— 到
+  [GitHub Discussions](https://github.com/wyx-spark/EchoDesk/discussions) 发帖。
+- **提交改动** —— 开 Pull Request；开发环境、代码风格、提交约定与评审流程见
+  [CONTRIBUTING.zh-Hans.md](CONTRIBUTING.zh-Hans.md)。
+- **安全问题** —— 请**不要**开公开 Issue，按 [SECURITY.zh-Hans.md](SECURITY.zh-Hans.md)
+  里的私下报告流程处理。
+- **社区行为** —— [CODE_OF_CONDUCT.zh-Hans.md](CODE_OF_CONDUCT.zh-Hans.md)。
+
 ## 出品方
 
 [Void-Entropia-Studio](https://github.com/Void-Entropia-Studio)。EchoDesk 是独立项目，与任何使用相同

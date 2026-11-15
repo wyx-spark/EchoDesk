@@ -138,6 +138,23 @@ with an explanation, so nothing is silently dropped.
 - [`docs/images/`](docs/images/) — the screenshots embedded above; regeneration steps are in
   [`docs/en/DEVELOPER.md`](docs/en/DEVELOPER.md).
 
+## Getting help and contributing
+
+Contributions are welcome — bug reports, fixes, skills, translations and documentation alike.
+Every public channel is on GitHub; the project publishes **no support email address, no phone
+number and no postal address**.
+
+- **Report a problem or request a feature** — open a GitHub Issue:
+  <https://github.com/wyx-spark/EchoDesk/issues>. Include your version, operating system, exact
+  steps and the relevant log.
+- **Ask a question or share an idea** — start a thread in
+  [GitHub Discussions](https://github.com/wyx-spark/EchoDesk/discussions).
+- **Send a change** — open a pull request; [CONTRIBUTING.md](CONTRIBUTING.md) covers the
+  development environment, code style, commit conventions and the review flow.
+- **Security problems** — please do **not** open a public issue; follow the private reporting
+  process in [SECURITY.md](SECURITY.md) instead.
+- **Community behaviour** — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
 ## Organization
 
 [Void-Entropia-Studio](https://github.com/Void-Entropia-Studio). EchoDesk is an independent project
