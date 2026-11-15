@@ -17,20 +17,24 @@ EchoDesk 版本与署名信息。
 远小于归属错误带来的长期代价。设计规范编号只在记录正文里引用，不进文件名。
 """
 APP_NAME = "EchoDesk"
-# [EN] v0.2.5 = "Release hardening". Writable state paths for read-only mounts,
-# [EN] a smaller and faster release pipeline, and a repository-wide bilingual
-# [EN] normalization of comments, docstrings and UI strings. No user-facing
-# [EN] behaviour changed beyond the existing feature set.
+# [EN] v0.2.6 = "Experience overhaul". Twenty-three user-reported defects in the
+# [EN] v0.2.5 line are fixed end to end: document upload robustness, UI deadlocks,
+# [EN] Agent pipe handling, context/output budgets, reasoning separation, role
+# [EN] normalization, local multimodal inference, the knowledge base, status
+# [EN] synchronisation, external provider routing, and the Windows native VLM
+# [EN] dependency chain. It also lands the asynchronous document queue, the local
+# [EN] OpenAI-compatible API and the MCP client boundaries that the overhaul relied on.
 # [EN] Every downstream consumer derives its version from ``APP_VERSION``, so there is no
 # [EN] second source of truth. Windows file-version resources can only hold four numeric
 # [EN] fields, therefore ``app_version_4()`` below is the only place allowed to derive that
 # [EN] form; do not re-implement it downstream.
-# [ZH] v0.2.5 =「发布加固」。为只读挂载点提供可写状态路径，缩小并加速发布流水线，
-# [ZH] 并对全仓库的注释、docstring 与界面文案做双语规范化。除既有功能外不改变
-# [ZH] 用户可见行为。
+# [ZH] v0.2.6 =「体验大修」。逐条修复 v0.2.5 之后用户反馈的 23 项缺陷：文档上传健壮性、
+# [ZH] 界面死锁、Agent 管道处理、上下文与输出预算、思考内容分离、角色归一化、本地多模态
+# [ZH] 推理、知识库、状态同步、外部提供方路由，以及 Windows 原生视觉依赖链。同时落地
+# [ZH] 大修所依赖的异步文档队列、本地 OpenAI 兼容 API 与 MCP 客户端边界。
 # [ZH] 下游全部按 ``APP_VERSION`` 派生，不再有第二处真相。注意：Windows 的**文件版本资源**
 # [ZH] 只能是四段纯数字，这件事只由下面的 ``app_version_4()`` 负责，不要在下游各写一份。
-APP_VERSION = "v0.2.5"
+APP_VERSION = "v0.2.6"
 
 
 def app_version_4() -> str:

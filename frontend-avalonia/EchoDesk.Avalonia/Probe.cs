@@ -1097,25 +1097,6 @@ internal static class Probe
         Check("真实提示与进度混排时不整体判为调试日志",
             mixedNotice.Contains("debug=False", StringComparison.Ordinal), OneLine(mixedNotice, 180));
 
-        // [EN] ---- v0.2.6 item 22: Windows + VL image-entry guard ----
-        // [ZH] ---- v0.2.6 第 22 项：Windows + VL 图片入口防呆 ----------
-        string guardBlocked = main.ProbeImageGuard(false, true, "");
-        Console.WriteLine($"  图片防呆   : {OneLine(guardBlocked, 160)}");
-        Check("Windows + VL 时图片按钮被禁用",
-            guardBlocked.Contains("enabled=False", StringComparison.Ordinal), OneLine(guardBlocked, 160));
-        Check("禁用态仍允许显示软熔断 Tooltip",
-            guardBlocked.Contains("showOnDisabled=True", StringComparison.Ordinal), OneLine(guardBlocked, 160));
-        Check("Tooltip 文案为 Windows + VL 专属提示",
-            guardBlocked.Contains("tooltipIsBlocked=True", StringComparison.Ordinal), OneLine(guardBlocked, 200));
-        string guardGeneric = main.ProbeImageGuard(false, false, "generic vision reason");
-        Check("非软熔断的不可用原因沿用后端文案",
-            guardGeneric.Contains("enabled=False", StringComparison.Ordinal)
-            && guardGeneric.Contains("tooltipIsBlocked=False", StringComparison.Ordinal),
-            OneLine(guardGeneric, 200));
-        string guardReady = main.ProbeImageGuard(true, false, "");
-        Check("视觉可用时图片按钮恢复启用",
-            guardReady.Contains("enabled=True", StringComparison.Ordinal), OneLine(guardReady, 160));
-
         // [EN] ---- Memory above 90% triggers the red warning -----------------------------
         // [ZH] ---- 内存 >90% 红色警告 ---------------------------------------
         string memWarning = main.ProbeMemoryWarning();

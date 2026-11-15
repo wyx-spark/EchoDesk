@@ -14,7 +14,10 @@ accepted only when all three conditions hold:
 Dependency evaluation (v0.2.6 Part 2): no new Python distribution is introduced.
 The multimodal projector and the vision model are ordinary GGUF files downloaded
 through the existing model hub, and the chat handler ships with the already
-locked ``llama-cpp-python``. ``Qwen25VLChatHandler`` is selected for Qwen-family
+locked ``llama-cpp-python``. v0.2.6 item 23 moves the Windows runtime to the
+JamePeng fork wheel, which ships ``Qwen3VLChatHandler`` together with the full
+``ggml-cuda.dll`` set; ``cuda_bootstrap`` preloads those DLLs before the native
+module is imported. ``Qwen25VLChatHandler`` remains selected for Qwen-family
 VL checkpoints, and ``Llava15ChatHandler`` is the fallback for LLaVA-format
 checkpoints. Older runtimes that predate Qwen3-VL support still load a Qwen3-VL
 checkpoint through the Qwen2.5-VL handler; if the bundled llama.cpp build lacks
@@ -37,11 +40,13 @@ values through ``urllib`` fail with ``unknown url type: c``.
 
 依赖评估（v0.2.6 Part 2）：不引入任何新的 Python 发行包。多模态投影与视觉模型
 都是普通 GGUF 文件，经由既有模型中心下载；聊天处理器随已锁定的
-``llama-cpp-python`` 一同发布。Qwen 系列 VL 检查点选用
-``Qwen25VLChatHandler``，LLaVA 格式检查点回退到 ``Llava15ChatHandler``。早于
-Qwen3-VL 支持的运行时仍可通过 Qwen2.5-VL 处理器加载 Qwen3-VL 检查点；若随包
-llama.cpp 构建缺少所需的视觉投影实现，处理器会抛出异常，本模块上报
-``media.vision_failed``，而不是令后端崩溃。
+``llama-cpp-python`` 一同发布。v0.2.6 第 23 项把 Windows 运行时改为 JamePeng
+fork 的轮子，它同时提供 ``Qwen3VLChatHandler`` 与完整的 ``ggml-cuda.dll`` 集合；
+``cuda_bootstrap`` 会在导入原生模块之前预加载这些 DLL。Qwen 系列 VL 检查点仍
+优先选用 ``Qwen25VLChatHandler``，LLaVA 格式检查点回退到
+``Llava15ChatHandler``。早于 Qwen3-VL 支持的运行时仍可通过 Qwen2.5-VL 处理器
+加载 Qwen3-VL 检查点；若随包 llama.cpp 构建缺少所需的视觉投影实现，处理器会
+抛出异常，本模块上报 ``media.vision_failed``，而不是令后端崩溃。
 
 图片传输：本地文件由标准库读取并编码为 base64 ``data:`` URI 后才交给聊天处理器。
 绝不把原始 Windows 路径作为 ``image_url.url`` 传入，因为经 ``urllib`` 解析非
@@ -53,10 +58,15 @@ import base64
 import glob
 import logging
 import os
-import sys
 from typing import Any, Dict, List, Optional
 
 from i18n import t as _t
+# [EN] v0.2.6 item 23: import the Windows DLL preload bootstrap next to the text
+# [EN] engine import. Every native import site below calls ``ensure()`` first, so
+# [EN] the vision path can no longer depend on the caller's import order.
+# [ZH] v0.2.6 第 23 项：紧随文本引擎导入引入 Windows DLL 预加载引导。下方每个原生
+# [ZH] 导入点都先调用 ``ensure()``，视觉链路因此不再依赖调用方的导入顺序。
+import cuda_bootstrap
 # [EN] Reuse the process-wide inference mutex from the text engine: a vision turn
 # [EN] decodes on the same llama.cpp runtime, and llama.cpp is not thread-safe.
 # [ZH] 复用文本引擎的进程级推理互斥锁：视觉轮解码同样运行在同一套 llama.cpp
@@ -75,12 +85,6 @@ DEFAULT_VISION_CONTEXT = 4096
 #: [EN] Upper bound applied to a configured context value for vision turns.
 #: [ZH] 视觉轮对配置上下文取值施加的上限。
 MAX_VISION_CONTEXT = 8192
-
-#: [EN] v0.2.6 item 22: language-pack key of the Windows + VL soft fuse. The message is
-#: [EN] rendered for both the status report and the structured :class:`VisionError`.
-#: [ZH] v0.2.6 第 22 项：Windows + VL 软熔断的语言包键。状态报告与结构化
-#: [ZH] :class:`VisionError` 共用这段文案。
-WINDOWS_VL_BLOCKED_REASON = "media.vision_windows_vl_blocked"
 
 #: [EN] File-name markers that identify a vision-language checkpoint. The list is
 #: [EN] advisory only: an existing multimodal projector always proves vision
@@ -133,70 +137,6 @@ class VisionError(Exception):
         except Exception:  # noqa: BLE001 - [EN] never mask the original reason
                            # [ZH] 绝不掩盖原始原因
             return self.code
-
-
-def _is_windows() -> bool:
-    """
-    [EN]
-    Return whether the backend currently runs on Windows.
-
-    Kept as a tiny function instead of an inline ``os.name`` comparison so the
-    self-test can substitute the platform verdict without monkey-patching the
-    standard library.
-
-    [ZH]
-    返回后端当前是否运行在 Windows 上。
-
-    刻意做成小函数而不是内联 ``os.name`` 比较，使自测可以在不改动标准库的
-    前提下替换平台判定。
-    """
-    return os.name == "nt" or sys.platform.startswith("win")
-
-
-def windows_vl_blocked(model_path: str) -> bool:
-    """
-    [EN]
-    Return whether the Windows + VL soft fuse applies to this checkpoint.
-
-    Background (v0.2.6 item 22): llama.cpp can raise ``access violation reading
-    0x0`` inside native code while running a Qwen3-VL checkpoint on Windows. A C++
-    access violation cannot be caught by Python, so the guard has to be decided
-    **before** any ``Llama(...)`` object or native symbol is touched. The rule is
-    deliberately narrow: Windows only, and the model file name must contain
-    ``VL`` (case-insensitive). Every other platform and every non-VL checkpoint
-    keeps using local inference unchanged.
-
-    [ZH]
-    判断该检查点是否适用 Windows + VL 软熔断。
-
-    背景（v0.2.6 第 22 项）：在 Windows 上运行 Qwen3-VL 检查点时，llama.cpp 原生
-    代码可能触发 ``access violation reading 0x0``。C++ 访问冲突无法被 Python
-    捕获，因此判定必须在触碰任何 ``Llama(...)`` 对象或原生符号**之前**完成。
-    规则刻意收窄：仅 Windows，且模型文件名必须包含 ``VL``（不区分大小写）。
-    其他平台与非 VL 检查点继续使用本地推理，行为不变。
-    """
-    if not _is_windows():
-        return False
-    return "vl" in os.path.basename(str(model_path or "")).lower()
-
-
-def require_windows_vl_safe(model_path: str) -> None:
-    """
-    [EN]
-    Raise the structured soft-fuse error when local VL inference must not start.
-
-    The exception carries :data:`WINDOWS_VL_BLOCKED_REASON`, so the protocol layer
-    and the interface render it through the language pack instead of inventing a
-    message here.
-
-    [ZH]
-    当本地 VL 推理不得启动时抛出结构化软熔断异常。
-
-    异常携带 :data:`WINDOWS_VL_BLOCKED_REASON`，因此协议层与界面都通过语言包
-    渲染该文案，而不是在这里拼写文本。
-    """
-    if windows_vl_blocked(model_path):
-        raise VisionError("windows_vl_blocked", WINDOWS_VL_BLOCKED_REASON)
 
 
 #: [EN] GGUF magic. The model and the multimodal projector are both GGUF files;
@@ -342,6 +282,11 @@ def resolve_chat_handler(model_path: str, mmproj_path: str):
     返回 ``(handler, class_name)`` 元组。若已安装运行时不暴露任何候选处理器，
     抛出代码为 ``media.vision_handler_missing`` 的 :class:`VisionError`。
     """
+    # [EN] v0.2.6 item 23: the handler module import pulls in the native binding,
+    # [EN] so the DLL bootstrap has to run first here as well.
+    # [ZH] v0.2.6 第 23 项：处理器模块的导入会带入原生绑定，因此这里同样必须先执行
+    # [ZH] DLL 引导。
+    cuda_bootstrap.ensure()
     try:
         from llama_cpp import llama_chat_format
     except Exception as exc:  # noqa: BLE001 - [EN] report the runtime, never crash
@@ -457,12 +402,6 @@ class VisionEngine:
         # [ZH] 时加载模型，会让 llama.cpp 解引用未初始化的视觉上下文，这正是上报的
         # [ZH] ``access violation reading 0x0``。在下列前置条件全部成立之前，本类
         # [ZH] 不触碰任何原生符号。
-        # [EN] v0.2.6 item 22: the Windows + VL soft fuse runs before every other
-        # [EN] precondition and before any native symbol is imported. A C++ access
-        # [EN] violation cannot be caught in Python, so this is the only safe layer.
-        # [ZH] v0.2.6 第 22 项：Windows + VL 软熔断先于其他所有前置条件、也先于任何原生
-        # [ZH] 符号的导入执行。C++ 访问冲突无法在 Python 中捕获，因此这是唯一安全的层次。
-        require_windows_vl_safe(self.model_path)
         if not os.path.isfile(self.model_path):
             raise VisionError("model_missing", "media.vision_model_missing",
                               name=os.path.basename(self.model_path))
@@ -477,6 +416,11 @@ class VisionEngine:
 
     def _load(self, verbose: bool, n_threads: int, n_gpu_layers: int) -> None:
         """[EN] Construct the llama.cpp object with the multimodal handler. / [ZH] 以多模态处理器构建 llama.cpp 对象。"""
+        # [EN] v0.2.6 item 23: register the CUDA runtime directories and preload
+        # [EN] the llama.cpp DLLs in dependency order before the native import.
+        # [ZH] v0.2.6 第 23 项：在原生导入之前注册 CUDA 运行时目录，并按依赖顺序
+        # [ZH] 预加载 llama.cpp DLL。
+        cuda_bootstrap.ensure()
         from llama_cpp import Llama
 
         handler, self.handler_name = resolve_chat_handler(self.model_path, self.mmproj_path)
@@ -545,14 +489,26 @@ class VisionEngine:
             }]
             # [EN] A vision completion runs prefill and decode in one native call, so
             # [EN] the mutex covers the whole call and queues behind chat/summarization.
+            # [EN] The ``finally`` is the explicit closure point demanded by v0.2.6
+            # [EN] item 23: the ``with`` block already releases the mutex on any
+            # [EN] exception, and keeping the ``finally`` here documents that the
+            # [EN] native call can never leave the lock held after a failure.
             # [ZH] 视觉补全在单次原生调用内完成 prefill 与 decode，因此互斥锁覆盖全程，
             # [ZH] 并在聊天/摘要之后排队。
+            # [ZH] ``finally`` 是 v0.2.6 第 23 项要求的显式收口点：``with`` 块在发生任何
+            # [ZH] 异常时本就已释放互斥锁，此处保留 ``finally`` 是为了明确记录"原生调用
+            # [ZH] 失败后绝不会遗留持锁状态"。
             with _INFERENCE_LOCK:
-                result = self.llm.create_chat_completion(
-                    messages=messages,
-                    max_tokens=max(16, int(max_tokens)),
-                    temperature=float(temperature),
-                )
+                try:
+                    result = self.llm.create_chat_completion(
+                        messages=messages,
+                        max_tokens=max(16, int(max_tokens)),
+                        temperature=float(temperature),
+                    )
+                finally:
+                    # [EN] Intentionally empty: released by the `with` block above.
+                    # [ZH] 刻意留空：由上方 `with` 块负责释放。
+                    pass
             try:
                 content = result["choices"][0]["message"]["content"]
             except Exception as exc:  # noqa: BLE001 - [EN] malformed runtime response
@@ -661,14 +617,7 @@ class VisionService:
         供 ``media_state`` 使用的机器可读可用性报告。
         """
         reason = ""
-        # [EN] v0.2.6 item 22: report the soft fuse first. It is a platform verdict, not a
-        # [EN] missing-file verdict, and the interface uses this reason to disable the image
-        # [EN] entry with an explanatory tooltip instead of letting the user pick a file.
-        # [ZH] v0.2.6 第 22 项：优先报告软熔断。它是平台判定而非缺文件判定；界面据此禁用
-        # [ZH] 图片入口并给出说明性悬停提示，而不是等用户选完文件才报错。
-        if windows_vl_blocked(self.model_path):
-            reason = WINDOWS_VL_BLOCKED_REASON
-        elif not self.model_path:
+        if not self.model_path:
             reason = "media.vision_no_model"
         elif not os.path.isfile(self.model_path):
             reason = "media.vision_model_missing"
@@ -702,9 +651,6 @@ class VisionService:
             "handler": getattr(self._engine, "handler_name", ""),
             "reason": reason,
             "reason_text": _t(reason) if reason else "",
-            # [EN] v0.2.6 item 22: machine-readable platform verdict for the UI guard.
-            # [ZH] v0.2.6 第 22 项：供界面防呆使用的机器可读平台判定。
-            "windows_vl_blocked": windows_vl_blocked(self.model_path),
             "last_error": self.last_error,
         }
 
@@ -719,12 +665,6 @@ class VisionService:
         """
         if not self.model_path:
             raise VisionError("no_model", "media.vision_no_model")
-        # [EN] v0.2.6 item 22: the Windows + VL soft fuse runs before every other
-        # [EN] precondition and before any native symbol is imported. A C++ access
-        # [EN] violation cannot be caught in Python, so this is the only safe layer.
-        # [ZH] v0.2.6 第 22 项：Windows + VL 软熔断先于其他所有前置条件、也先于任何原生
-        # [ZH] 符号的导入执行。C++ 访问冲突无法在 Python 中捕获，因此这是唯一安全的层次。
-        require_windows_vl_safe(self.model_path)
         if not os.path.isfile(self.model_path):
             raise VisionError("model_missing", "media.vision_model_missing",
                               name=os.path.basename(self.model_path))

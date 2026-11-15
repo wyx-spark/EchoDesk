@@ -59,22 +59,6 @@ public sealed class MediaState
     /// <summary>[EN] Localized reason when vision is unavailable. / [ZH] 视觉不可用时的已本地化原因。</summary>
     public string VisionReason { get; set; } = "";
 
-    /// <summary>
-    /// [EN] Stable reason key reported by the backend (for example
-    ///      `media.vision_windows_vl_blocked`). v0.2.6 item 22 uses it to choose the
-    ///      dedicated soft-fuse tooltip instead of the generic "no vision model" text.
-    /// [ZH] 后端上报的稳定原因键（例如 `media.vision_windows_vl_blocked`）。v0.2.6 第 22 项
-    ///      用它选择专属软熔断提示，而不是笼统的"未配置视觉模型"。
-    /// </summary>
-    public string VisionReasonCode { get; set; } = "";
-
-    /// <summary>
-    /// [EN] Whether the backend applied the Windows + VL soft fuse. The image entry is
-    ///      disabled in that case; the tooltip explains the platform limitation.
-    /// [ZH] 后端是否已应用 Windows + VL 软熔断。此时图片入口禁用，悬停提示说明平台限制。
-    /// </summary>
-    public bool VisionWindowsVlBlocked { get; set; }
-
     /// <summary>[EN] Whether transcription is available. / [ZH] 转写是否可用。</summary>
     public bool SttAvailable { get; set; }
 
@@ -149,8 +133,6 @@ public sealed class MediaService
                 {
                     State.VisionAvailable = ReadBool(vision, "available", false);
                     State.VisionReason = ReadString(vision, "reason_text", "");
-                    State.VisionReasonCode = ReadString(vision, "reason", "");
-                    State.VisionWindowsVlBlocked = ReadBool(vision, "windows_vl_blocked", false);
                 }
                 if (root.TryGetProperty("stt", out JsonElement stt))
                 {

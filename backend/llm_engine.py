@@ -49,6 +49,14 @@ from typing import Callable, Dict, Iterator, List, Optional, Tuple
 
 from gguf_meta import describe_model, estimate_kv_cache_bytes, format_bytes, resolve_context_window
 from hardware_profiler import DEFAULT_INITIAL_CONTEXT
+# [EN] v0.2.6 item 23: the DLL preload bootstrap must run before any
+# [EN] ``from llama_cpp import Llama`` in this module. Importing it here is cheap
+# [EN] (standard library only) and lets every load path below call ``ensure()``
+# [EN] without relying on the entry point having done it first.
+# [ZH] v0.2.6 第 23 项：DLL 预加载引导必须早于本模块任何
+# [ZH] ``from llama_cpp import Llama``。此处的导入很轻（仅标准库），使下方每条加载
+# [ZH] 路径都能自行调用 ``ensure()``，不依赖入口点先行完成。
+import cuda_bootstrap
 from i18n import log_user
 from i18n import t as _t
 from reasoning import ANSWER, ReasoningSplitter, normalize_tags, split_text
@@ -278,6 +286,11 @@ class LLMEngine:
             self.llm = self._create(verbose=verbose)
 
     def _create(self, verbose: bool = False):
+        # [EN] v0.2.6 item 23: register the CUDA runtime directories and preload
+        # [EN] the llama.cpp DLLs in dependency order before the native import.
+        # [ZH] v0.2.6 第 23 项：在原生导入之前注册 CUDA 运行时目录，并按依赖顺序
+        # [ZH] 预加载 llama.cpp DLL。
+        cuda_bootstrap.ensure()
         from llama_cpp import Llama
 
         llm = Llama(
@@ -1356,8 +1369,10 @@ class LazyLLMEngine(LLMEngine):
         path = str(model_path or "").strip()
         if not path:
             raise NoModelError("模型路径为空")
-        # [EN] Import deferred until the model is actually loaded.
-        # [ZH] 延迟到真正加载模型时才 import。
+        # [EN] Import deferred until the model is actually loaded, but the DLL
+        # [EN] bootstrap must still run first (v0.2.6 item 23).
+        # [ZH] 延迟到真正加载模型时才 import，但 DLL 引导仍必须先执行（v0.2.6 第 23 项）。
+        cuda_bootstrap.ensure()
         from llama_cpp import Llama
 
         # [EN] Use the planned initial window instead of a global constant, and

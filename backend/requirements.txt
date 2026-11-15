@@ -35,9 +35,20 @@
 #   linux-x64 的 cpu 索引从 **0.3.21** 起才有轮子（没有 0.3.19），
 #   写成 `sys_platform != "darwin"` 会让 `pack_backend.py --platform linux-x64`
 #   直接失败（pip：Could not find a version that satisfies llama-cpp-python==0.3.19
-#   from versions: 0.3.21 … 0.3.36）。所以按平台分开钉：Windows 钉 0.3.19，Linux 交回
-#   索引解析（本地 artifacts/wheels 里已有 manylinux 的 0.3.36，可离线复用）。
-llama-cpp-python==0.3.19 ; sys_platform == "win32"
+#   from versions: 0.3.21 … 0.3.36）。所以按平台分开：Windows 走下方 JamePeng
+#   直接 URL，Linux 交回索引解析（本地 artifacts/wheels 里已有 manylinux 的 0.3.36，
+#   可离线复用）。
+# 【v0.2.6 第 23 项：Windows 改用 JamePeng fork 的预编译 CUDA 轮子】
+#   官方 abetlen 轮子缺失 Qwen3-VL / Qwen2.5-VL 视觉处理器，且 Windows 下
+#   CUDA DLL 解析顺序有问题，运行 Qwen3-VL 会触发 access violation（0xC0000005）。
+#   JamePeng fork 的 Release 轮子包含 `Qwen3VLChatHandler` / `Qwen25VLChatHandler`，
+#   并打包了 ggml-cuda.dll 全套动态库。按**直接 URL** 钉死（不使用索引），
+#   原因与 macOS 相同：同名文件可能存在于多个索引，钉 URL 才是确定的。
+#   轮子文件名里的 cu132 必须与本机 NVIDIA 驱动/运行时匹配；不匹配时
+#   backend/cuda_bootstrap.py 会按依赖顺序预加载并注册 nvidia site-packages 的 bin 目录。
+#   完整性：sha256 016476a46d5569189d90ed201f67782ffe0873d619281dd343d0806163a10670。
+#   安装验证：python -c "from llama_cpp.llama_chat_format import Qwen3VLChatHandler"
+llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.4.7-cu132-win-20261113/llama_cpp_python-0.4.7%2Bcu132-cp313-cp313-win_amd64.whl ; sys_platform == "win32"
 llama-cpp-python ; sys_platform == "linux"
 llama-cpp-python @ https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30-metal/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl ; sys_platform == "darwin"
 # 版本钉死以与随包 docs/SBOM.json 一致（v0.2.2 收尾裁定 (a)）：
@@ -85,9 +96,13 @@ xlrd                      # .xls（BSD）
 
 # ---------- 自动化（任务四） ----------
 playwright==1.63.0        # 驱动本机 Microsoft Edge（Apache-2.0）
-# numpy：Windows 钉回 SBOM 版本（随包 SBOM 校验的是 Windows 的 PyInstaller 后端）；
+# numpy：Windows 曾被钉回随包 SBOM 校验的版本（2.5.3）；
 # Linux/macOS 的 cp313 索引里没有 2.5.3（只到 2.2.x），只能交回索引解析。
-numpy==2.5.3 ; sys_platform == "win32"
+# 【v0.2.6 第 23 项】JamePeng 轮子的 METADATA 明确声明 `numpy<=2.3.2`。Windows 端
+# 必须随之下调到 2.3.2：打包走 --no-deps 不受影响，但 `pip install -r requirements.txt`
+# 的开发环境与干净环境收口会因 2.5.3 与上限冲突而直接失败。仅 Windows 改变，
+# Linux/macOS 仍走索引解析；SBOM 将在下次发布构建时重新生成。
+numpy==2.3.2 ; sys_platform == "win32"
 numpy ; sys_platform != "win32"
 # v0.2.5 发布链精简：移除 `schedule`。全仓库没有任何 `import schedule`，
 # 自动化的定时触发由 backend/automation.py 自己的线程与时间比较实现；

@@ -13,6 +13,7 @@ for traceability only; this changelog is the release-facing document.
 
 | Version | Type | Release date | Summary |
 | :--- | :--- | :--- | :--- |
+| [v0.2.6](#v026) | Stable Release | 2026-11-15 | Experience overhaul: twenty-three user-reported defects fixed end to end — upload robustness, UI deadlocks, Agent pipes, context and output budgets, reasoning separation, role normalization, local vision, knowledge base, state synchronisation, external providers and the Windows native VLM dependency chain |
 | [v0.2.5](#v025) | Stable Release | 2026-11-08 | Release hardening: writable state paths for read-only `.app` / AppImage layouts, smaller and faster build pipeline, repository-wide bilingual normalization, Unsloth offline model catalog |
 | [v0.2.4](#v024) | Stable Release | 2026-11-08 | Automatic hardware tuning, three inference presets, transparent override and diagnostics; release-time patch and final hotfix for streaming download progress, ignored-version memory, memory warnings, balanced title bar, Chinese installer and upgrade hygiene |
 | [v0.2.3](#v023) | Stable Release | 2026-11-07 | Reproducible builds, dependency locks, Avalonia main line, WPF LTS |
@@ -20,6 +21,188 @@ for traceability only; this changelog is the release-facing document.
 | [v0.2.1](#v021) | Stable Release | 2026-10-05 | Capability consolidation, Agent platform, MCP, plugin ecosystem |
 | [v0.2.0](#v020) | Feature Release | 2026-09-23 | Long context and documents, automation, skill marketplace |
 | [v0.1.0](#v010) | Early Preview | 2026-08-29 | First public release: local inference with a desktop client |
+
+---
+
+## v0.2.6
+
+### Release positioning
+
+An experience-overhaul release. It closes the twenty-three defects that were catalogued
+after v0.2.5 and reproduced on a clean virtual machine: crashes on document upload, UI
+freezes, Agent pipe failures, truncated context and output budgets, reasoning leaking into
+the answer, role confusion, local vision misdetection, missing knowledge-base coverage,
+stale interface state, log lines polluting the transcript, external providers that never
+reached the main conversation, and the Windows native vision dependency chain that used to
+terminate the backend process. The release is deliberately narrow: the JSON line protocol
+keeps its shape, no new third-party runtime dependency is introduced, and every core
+capability still runs without a network connection.
+
+### Key capabilities
+
+#### The twenty-three-item experience overhaul
+
+1. **Document upload crash and error reporting (P0).** `backend/file_parser.py` now accepts a
+   much wider set of plain-text extensions (documentation, data and configuration, source
+   code and subtitles), maps the Office Open XML variants (`.docm`, `.dotx`, `.xltx`,
+   `.potx`, …) to their canonical parsers, reads ODF/EPUB containers and RTF without an
+   external dependency, and never propagates an exception to the request dispatcher.
+   Unrecognized suffixes are accepted only when the payload is genuinely text; binary
+   payloads (including the OLE2 signature used by legacy `.doc`) return a structured
+   "unsupported file type" result. Missing-file and permission failures have dedicated
+   error keys.
+2. **UI freeze and deadlock (P0).** Reasoning output is coalesced: each streaming delta only
+   sets a dirty flag and the reasoning pane is written at most once per render tick, instead
+   of re-laying out the full text for every token. Tool-confirmation dialogs are marshalled
+   onto the UI thread, and a failing dialog is answered as a rejection immediately instead of
+   leaving the backend waiting for a timeout.
+3. **Agent pipe closure and empty output (P0).** Writes to a closed stdout no longer crash
+   the backend: `BrokenPipeError`, `ValueError` and `OSError` set a process-wide
+   `_stdout_closed` flag and later writes become no-ops. A terminal sentinel guarantees that
+   every stream ends with `done` or a structured `error`, generator failures surface as
+   `sys.internal_error`, and an empty model answer is replaced with the localized
+   `sys.empty_output` notice.
+4. **Context window auto-expansion (P1).** The usable context floor is 2048 tokens (512
+   cannot even hold the system prompt) and growth is strictly multiplicative — doubling from
+   the current window and converging on the hardware ceiling — instead of jumping to the
+   requested size. A floor warning is reported through `inference.warn_context_floor`.
+5. **Truncated model output (P1).** A single `_output_token_budget()` now derives the answer
+   budget as the larger of the configured value and 8% of the hardware context, clamped to
+   `[64, 8192]`; the streaming path, the non-streaming path and the Agent path all use it.
+   The local API ceiling rises to 8192 and the settings slider exposes the same range.
+6. **Reasoning separation (P1).** `backend/reasoning.py` matches the complete DeepSeek
+   tokens including their angle brackets, recognizes the Chinese tag names (`思考` / `推理` /
+   `分析`) and `<|think|>`, and tracks nested regions with an open/close tag stack so an
+   unmatched inner close cannot leak reasoning into the answer.
+7. **Role confusion (P1).** `backend/conversation.py` normalizes role aliases (`human` →
+   `user`, `ai`/`bot` → `assistant`) before persisting a message, merges mid-session system
+   notes into the leading system prompt, drops empty turns, and never fabricates an
+   `assistant` turn from an unknown role.
+8. **Local vision misdetection (P2).** Vision-language families are recognized from the file
+   name (`vl`, `vision`, `multimodal`, `llava`, `minicpm`, `internvl`, `pixtral`, `mllama`,
+   `gemma3`, `qwen3.5`), so a native multimodal checkpoint such as Qwen3.5 is no longer
+   reported as text-only. `status()` exposes `is_vlm` and distinguishes a missing projection
+   layer from a genuine text-only model, and the image picker refuses non-VLM models before
+   opening the file dialog.
+9. **Microphone entry (P2).** The Avalonia toolbar gains a push-to-talk button (`MicButton`)
+   wired with pointer capture: pressing starts recording, releasing transcribes into the
+   input box without sending, and losing capture outside the button also ends the recording.
+   The button follows speech-to-text availability and explains the reason when unavailable.
+10. **Knowledge base and uploads (P2).** Images (PNG/JPEG/WebP/BMP/GIF/TIFF/HEIC) and audio
+    (WAV/MP3/M4A/AAC/FLAC/OGG/Opus/WMA) are now indexed. Image entries carry format,
+    dimensions, mode, PNG text chunks, EXIF fields and best-effort OCR; audio entries carry
+    duration, sample rate and channels plus host-provided transcription. A failing file is
+    recorded on its own and never aborts the batch.
+11. **Top-of-window log pollution (P3).** Structured host progress is written to the status
+    strip only, and system messages whose text matches an operational log line are diverted
+    before they enter the transcript — including when a historical session is restored.
+12. **State desync (P3).** The knowledge panel is rendered directly from the mount response,
+    a failed status refresh keeps the existing list, and the terminal status text is restored
+    when generation ends instead of leaving "generating" on screen.
+13. **External API never reached the main conversation (P3).** The active external provider is
+    rebuilt per request, so endpoint, model and consent changes take effect immediately.
+    Streaming and non-streaming chat both pass through the same reasoning splitter, the
+    "no local model" gate is bypassed while a provider is active, and Agent mode reports a
+    clear error when it cannot run on a provider.
+14. **Concurrent-inference crash and constant long-text summary failure (P0 regression).** A
+    process-wide inference lock serializes model construction, reload, close, cache clear and
+    every decode, because the summariser is a second engine instance. Streaming decodes under
+    the lock in a reader thread, and an abandoned stream is released with a timeout instead of
+    blocking the runtime forever.
+15. **Avalonia knowledge rendering and JSON lifetime.** Brush lookups go through
+    `TryFindResource` with a theme variant instead of a hard cast that threw
+    `InvalidCastException`, and streaming metrics are copied into an immutable `StreamMetrics`
+    snapshot before the `JsonDocument` is disposed, removing the
+    `ObjectDisposedException`.
+16. **Multimodal parsing, provider HTTP 400 and microphone degradation.** Local images are
+    read with the standard library and sent as a base64 data URI, so a Windows path is never
+    parsed as a URL (`URLError: unknown url type: c`). External requests carry only
+    OpenAI-schema fields, and HTTP error bodies are surfaced for both streaming and
+    non-streaming calls. Without a speech engine the microphone is disabled and explains why.
+17. **RAG pluginization, user-selected context, long-text budget routing and UI overflow.**
+    Injected reference material is framed so it cannot override the model's own knowledge;
+    knowledge libraries gain an `enabled` flag that is migrated in place. The runtime
+    auto-growth of `n_ctx` is removed: the window is exactly what the user selected and an
+    oversized request fails explicitly. Uploads below 70% of the window are injected whole and
+    only larger ones enter chunked summarisation. The input toolbar switches to
+    `Auto, *` + `WrapPanel`, so controls wrap instead of overflowing the card.
+18. **VLM crash, 512-token budget misjudgement and log penetration.** Both GGUF files are
+    validated by magic number before any native symbol is imported, and failures become
+    structured `VisionError`s. The hardware context floor is 2048 and already-used memory is
+    no longer counted twice against the model reserve. Operational log lines are scrubbed at
+    the protocol layer and re-emitted as status progress, with a second guard in the
+    interface layer.
+19. **Settings window resizing, hint row removal and manual context input.** The settings
+    window is resizable and maximisable, the model settings block grows with the window
+    instead of a fixed 280 px, the permanent hint row under the input box is gone, the
+    context selector accepts typed values with the same 2048–4,194,304 bounds as the backend,
+    and the microphone tooltip states that a Whisper or speech engine must be configured. The
+    pinned default-model row at the top of the model market is removed.
+20. **Skipped item.** The twentieth item of the review list required no code change: it was
+    resolved entirely during the virtual-machine test pass, so no patch and no engineering
+    record exist for it. It is listed here for completeness so the numbering matches the
+    published review list.
+21. **Title bar cleanup, persistent system bubbles and context input fix.** The custom title
+    bar keeps only the application icon and version on the left and the model/mode capsules
+    plus window buttons on the right, with an elastic spacer in between. The transient bottom
+    toast is retired: operation feedback and meaningful notices become persistent, copyable
+    system messages, while high-frequency engineering progress stays in the status strip. The
+    editable context selector reads through its inner `TextBox`, normalizes separators and
+    full-width digits, and reports validation failures as system messages.
+22. **VLM soft fuse and image-entry guard.** While the native vision crash was under
+    investigation, a Windows + VL fuse rejected the call before any `llama.cpp` symbol was
+    imported and reported a structured reason; the image entry was disabled with a localized
+    tooltip. This fuse was removed again in item 23 once the underlying dependency was fixed.
+23. **Windows local vision rescue and native dependency hardening.** Windows now installs the
+    JamePeng `llama-cpp-python` wheel (`0.4.7+cu132`, pinned by direct URL), which ships the
+    `Qwen3VLChatHandler` / `Qwen25VLChatHandler` families and the complete `ggml-cuda.dll`
+    set. A new `backend/cuda_bootstrap.py` registers the CUDA runtime directories and
+    preloads `ggml-base` → `ggml` → `ggml-cpu` → `ggml-cuda` → `llama` in order before any
+    native import, on every entry point. PyInstaller now collects the `llama_cpp` dynamic
+    libraries explicitly. The Windows `numpy` pin follows the wheel's `<= 2.3.2` requirement,
+    and the item-22 soft fuse is gone: Windows users get local vision back.
+
+### Verification
+
+- `python tools/selftest.py` 249/249, `check_lang`, `audit_repo --check`,
+  `audit_lang_keys`, `check_line_endings`, `check_requirements`, `check_theme` and the
+  Avalonia probes all pass.
+- The complete backend suite passes, including file parsing, multi-file upload, document
+  async, reasoning, hardware planning, media API, Agent guard, MCP, ecosystem, platform
+  boundaries and the search cascade.
+- `tools/verify_release.ps1` ran without `-SkipGui` or `-SkipE2E`: every gate green,
+  including real install/uninstall, the WPF and Avalonia UI probes, pixel contrast, the real
+  Microsoft Edge end-to-end runs and the networked model hub.
+- `tools/verify_reproducible_build.ps1` ran two complete, independent cold builds from the
+  tagged commit and every hashed entry matched byte for byte.
+- The Windows build environment matches both locks (54 distributions), and the SBOM and
+  third-party inventory were regenerated from that environment after the dependency change.
+
+### Known limitations
+
+- [EN] Local visual inference (VLM) currently requires an NVIDIA GPU with CUDA runtime on Windows. CPU-only VLM will be supported in future mainline EchoDesk builds. / [ZH] 当前 Windows 下的本地视觉模型推理需依赖 NVIDIA 显卡及 CUDA 环境，纯 CPU 视觉支持将在未来的主线 EchoDesk 版本中提供。
+- Windows artifacts are not Authenticode-signed: the free SignPath Foundation signing
+  application was not approved, so SmartScreen may warn on first run. Verify the SHA-256
+  digests or rebuild from the tag instead; the current status and the intended scope are
+  documented in `CODE_SIGNING.md`.
+- The Windows wheel pins `numpy` at 2.3.2 (the wheel declares `numpy <= 2.3.2`); Linux and
+  macOS keep their own pins. A single wheel does not serve all three platforms.
+- GPU offload, the inference presets and local vision were validated with synthetic VRAM
+  profiles and a real CPU-only Windows host. A long-context Qwen3-VL stress test on a real
+  NVIDIA GPU has not been executed, and the CUDA runtime itself is still supplied by the
+  user's NVIDIA environment rather than bundled.
+- A preset change or an override rebuilds the model; hot-swapping weights without a reload
+  is not available in llama.cpp.
+- The Avalonia `.app` bundle and Linux AppImage still need their platform signing,
+  notarization and packaging work.
+- Item 20 of the review list had no code change (see above); it is recorded here so the
+  numbering is complete rather than implied.
+
+### Artifacts
+
+`EchoDesk-v0.2.6-Setup.exe`, the portable Windows zip and the Linux/macOS archives are
+published together with `SHA256SUMS.txt`; each archive also carries its own `MANIFEST.json`
+with the full file list and digests.
 
 ---
 

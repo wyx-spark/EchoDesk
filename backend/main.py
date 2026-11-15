@@ -134,6 +134,22 @@ import time
 import uuid
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
+# [EN] v0.2.6 item 23: preload the local llama.cpp / CUDA DLLs before any module
+# [EN] below can import ``llama_cpp``. Windows resolves native dependencies through
+# [EN] the process DLL search path, not through an ``RTLD_GLOBAL`` symbol table, so
+# [EN] ``ggml-cuda.dll`` must be loaded in dependency order (and the ``nvidia/*/bin``
+# [EN] directories registered) *before* ``llama.dll`` is touched. This call is placed
+# [EN] ahead of every backend import on purpose: it is the only position that is
+# [EN] guaranteed to run before the lazy ``from llama_cpp import Llama`` statements.
+# [ZH] v0.2.6 第 23 项：在下方任何模块导入 ``llama_cpp`` 之前预加载本地 llama.cpp /
+# [ZH] CUDA DLL。Windows 通过进程 DLL 搜索路径解析原生依赖，而不是 ``RTLD_GLOBAL``
+# [ZH] 全局符号表，因此必须在触碰 ``llama.dll`` **之前** 按依赖顺序加载
+# [ZH] ``ggml-cuda.dll`` 并注册 ``nvidia/*/bin`` 目录。本调用刻意放在所有后端导入
+# [ZH] 之前：只有这个位置才能保证早于各模块内惰性的 ``from llama_cpp import Llama``。
+import cuda_bootstrap
+
+cuda_bootstrap.ensure()
+
 from reasoning import ANSWER as _CH_ANSWER
 from reasoning import REASONING as _CH_REASONING
 from reasoning import RESET as _CH_RESET
@@ -2141,16 +2157,8 @@ class Backend:
         service = self._vision_service()
         reasons = service.status()
         if not reasons.get("available"):
-            # [EN] v0.2.6 item 22: the Windows + VL soft fuse is a platform limitation, not
-            # [EN] a generic "vision unavailable" state. It keeps its own stable error code so
-            # [EN] the interface and the records can tell the two apart.
-            # [ZH] v0.2.6 第 22 项：Windows + VL 软熔断属于平台限制，而不是笼统的"视觉不可用"。
-            # [ZH] 它保留独立的稳定错误码，使界面与记录能够区分两者。
-            code = ("windows_vl_blocked"
-                    if reasons.get("reason") == vision_mod.WINDOWS_VL_BLOCKED_REASON
-                    else "vision_unavailable")
             return self._media_failure(
-                code, str(reasons.get("reason_text") or ""),
+                "vision_unavailable", str(reasons.get("reason_text") or ""),
                 vision=reasons)
         try:
             max_tokens = int(request.get("max_tokens")

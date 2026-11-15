@@ -44,9 +44,75 @@ def own_modules() -> set[str]:
     return out
 
 
-def imported_top_level() -> dict[str, set[str]]:
-    """返回 {顶层模块名: {出现位置}}，只取后端自身代码的绝对导入。"""
+def _guards_import_error(handlers: list[ast.ExceptHandler]) -> bool:
+    """[EN] Judge whether a ``try`` block degrades gracefully when an import is missing.
+    [ZH] 判断某个 ``try`` 块在导入缺失时是否会优雅降级。
+
+    [EN] A handler qualifies when it is bare or catches ``ImportError`` / ``ModuleNotFoundError``
+    [EN] / ``Exception`` / ``BaseException``. Anything narrower (for example ``ValueError``)
+    [ZH] cannot turn a missing optional dependency into a clean fallback, so it is not treated as
+    [ZH] a guard.
+    [ZH] 无类型或捕获 ``ImportError`` / ``ModuleNotFoundError`` / ``Exception`` / ``BaseException``
+    [ZH] 的处理器才算数；更窄的（如 ``ValueError``）无法把缺失的可选依赖变成优雅降级，不算保护。
+    """
+    for handler in handlers:
+        if handler.type is None:
+            return True
+        names = set()
+        candidates = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        for candidate in candidates:
+            if isinstance(candidate, ast.Name):
+                names.add(candidate.id)
+            elif isinstance(candidate, ast.Attribute):
+                names.add(candidate.attr)
+        if names & {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"}:
+            return True
+    return False
+
+
+def imported_top_level() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """返回 ({顶层模块名: {出现位置}}, {可选导入名: {出现位置}})。
+
+    [EN] Imports are classified as optional when they execute inside a ``try`` block whose
+    [EN] handlers tolerate ``ImportError`` (or broader). The guard must be in the same dynamic
+    [EN] scope: entering a function/class/lambda resets the state, because a ``try`` around a
+    [EN] ``def`` does not guard the ``import`` inside its body. This keeps the gate honest:
+    [EN] an unconditionally imported module is still reported as undeclared, while documented
+    [EN] optional integrations (OCR through ``pytesseract``/``Pillow``) are listed separately.
+    [ZH] 若导入位于一个能容忍 ``ImportError``（或更宽）的 ``try`` 块内，则判定为可选导入。
+    [ZH] 保护必须处于同一动态作用域：进入函数/类/lambda 会重置状态，因为包住 ``def`` 的
+    [ZH] ``try`` 并不保护其函数体里的 ``import``。这样门禁仍然严格：无保护地导入的模块
+    [ZH] 依旧报「未声明」，而文档化的可选集成（经 ``pytesseract``/``Pillow`` 的 OCR）
+    [ZH] 单独列出。
+    """
     found: dict[str, set[str]] = {}
+    optional: dict[str, set[str]] = {}
+
+    def visit(node: ast.AST, rel: str, guarded: bool) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            for child in ast.iter_child_nodes(node):
+                visit(child, rel, False)
+            return
+        if isinstance(node, ast.Try):
+            inner = _guards_import_error(node.handlers)
+            for child in node.body:
+                visit(child, rel, guarded or inner)
+            for child in node.handlers + node.orelse + node.finalbody:
+                visit(child, rel, guarded)
+            return
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.name.split(".")[0]
+                target = optional if guarded else found
+                target.setdefault(name, set()).add(f"{rel}:{node.lineno}")
+        elif isinstance(node, ast.ImportFrom):
+            if not node.level and node.module:
+                name = node.module.split(".")[0]
+                target = optional if guarded else found
+                target.setdefault(name, set()).add(f"{rel}:{node.lineno}")
+        for child in ast.iter_child_nodes(node):
+            visit(child, rel, guarded)
+
     for root, dirs, files in os.walk(BACKEND):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for fname in files:
@@ -60,18 +126,8 @@ def imported_top_level() -> dict[str, set[str]]:
             except (SyntaxError, UnicodeDecodeError, OSError) as exc:
                 print(f"  (跳过无法解析的文件 {rel}: {exc})")
                 continue
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        found.setdefault(alias.name.split(".")[0], set()).add(
-                            f"{rel}:{node.lineno}")
-                elif isinstance(node, ast.ImportFrom):
-                    if node.level:      # 相对导入属于包内模块
-                        continue
-                    if node.module:
-                        found.setdefault(node.module.split(".")[0], set()).add(
-                            f"{rel}:{node.lineno}")
-    return found
+            visit(tree, rel, False)
+    return found, optional
 
 
 def declared() -> set[str]:
@@ -110,7 +166,7 @@ def main() -> int:
     parser.add_argument("--venv", default="", help="用该解释器实测能否导入")
     args = parser.parse_args()
 
-    imports = imported_top_level()
+    imports, optional = imported_top_level()
     decl = declared()
     own = own_modules()
 
@@ -132,6 +188,14 @@ def main() -> int:
         places = sorted(imports[mod])
         mark = "OK " if mod in import_names else "缺失"
         print(f"  [{mark}] {mod:<22} {places[0]}" + (f"  (+{len(places) - 1} 处)" if len(places) > 1 else ""))
+
+    optional_used = [(m, sorted(optional[m])) for m in sorted(optional)
+                     if m not in STDLIB and m not in own and not m.startswith("_")]
+    if optional_used:
+        print("\n可选集成（位于捕获 ImportError 的 try 块内，缺失时按设计降级，不要求声明）:")
+        for mod, places in optional_used:
+            declared_mark = "已声明" if mod in import_names else "可缺省"
+            print(f"  [{declared_mark}] {mod:<20} {places[0]}")
 
     print()
     if missing:

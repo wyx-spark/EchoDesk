@@ -1213,66 +1213,111 @@ def test_media_support() -> None:
                 os.environ["ECHODESK_DATA"] = old
 
 
-def test_windows_vl_soft_fuse() -> None:
-    """v0.2.6 第 22 项：Windows + VL 视觉推理软熔断。
+def test_cuda_bootstrap() -> None:
+    """v0.2.6 第 23 项：Windows 下 llama.cpp / CUDA 的 DLL 预加载引导。
 
-    Windows 上 llama.cpp 运行 VL 检查点可能在 C++ 层触发 ``access violation reading 0x0``，
-    Python 无法捕获。本节断言熔断判定先于任何 ``llama_cpp`` 导入 / ``Llama(...)`` 构造，
-    且不会影响非 Windows 平台或非 VL 模型。
+    第 22 项的 Windows + VL 软熔断已随底层依赖加固一并移除，本节同时断言：
+      * ``cuda_bootstrap`` 可导入、``ensure()`` 幂等且不抛异常；
+      * 预加载顺序严格为 ggml-base -> ggml -> ggml-cpu -> ggml-cuda -> llama；
+      * ``main.py`` 中的 ``import cuda_bootstrap`` 位于任何 ``llama_cpp`` 导入之前；
+      * ``vision`` 模块不再保留软熔断判定，视觉状态恢复为常规检查。
     """
-    section("Windows + VL 软熔断（第 22 项）")
+    section("CUDA DLL 预加载与软熔断移除（第 23 项）")
+    import cuda_bootstrap
     import vision as vision_mod
 
-    original = vision_mod._is_windows
+    check("预加载顺序符合依赖链",
+          cuda_bootstrap._PRELOAD_ORDER == [
+              "ggml-base.dll", "ggml.dll", "ggml-cpu.dll", "ggml-cuda.dll", "llama.dll"],
+          str(cuda_bootstrap._PRELOAD_ORDER))
+
+    # [EN] ensure() must be total: it may run on machines without CUDA, without the
+    # [EN] JamePeng wheel, and outside Windows; none of those may raise.
+    # [ZH] ensure() 必须是全函数：没有 CUDA、没有 JamePeng 轮子、非 Windows 的机器
+    # [ZH] 都可能执行它，任何一种情况都不得抛异常。
     try:
-        vision_mod._is_windows = lambda: True
+        cuda_bootstrap.ensure()
+        cuda_bootstrap.ensure()
+        check("ensure() 幂等且不抛异常", True)
+    except Exception as exc:  # noqa: BLE001
+        check("ensure() 幂等且不抛异常", False, f"{type(exc).__name__}: {exc}")
 
-        check("Windows 下 VL 模型命中软熔断",
-              vision_mod.windows_vl_blocked("Qwen3-VL-4B-Instruct-Q4_K_M.gguf"),
-              "windows_vl_blocked=False")
-        check("VL 判定不区分大小写",
-              vision_mod.windows_vl_blocked("qwen3-vl-2b.gguf"),
-              "小写 vl 未命中")
-        check("Windows 下非 VL 模型不受影响",
-              not vision_mod.windows_vl_blocked("Qwen2.5-7B-Instruct-Q4_K_M.gguf"))
+    loaded = cuda_bootstrap.loaded_libraries()
+    check("loaded_libraries() 返回副本",
+          isinstance(loaded, list) and (loaded is not cuda_bootstrap._loaded),
+          type(loaded).__name__)
+    if loaded:
+        for path in loaded:
+            check(f"预加载文件存在：{os.path.basename(path)}", os.path.isfile(path), path)
+    else:
+        check("本机未预加载 DLL（无 ggml-cuda.dll 或不支持 Windows）", True,
+              "cuda_bootstrap.loaded_libraries() 为空，符合纯 CPU 环境预期")
 
-        service = vision_mod.VisionService(
-            os.path.join("models", "Qwen3-VL-4B-Instruct-Q4_K_M.gguf"),
-            "mmproj-F16.gguf")
-        status = service.status()
-        check("status 报告软熔断且不可用",
-              status["available"] is False
-              and status["reason"] == vision_mod.WINDOWS_VL_BLOCKED_REASON
-              and status["windows_vl_blocked"] is True,
-              f"reason={status['reason']} available={status['available']}")
+    main_path = os.path.join(os.path.abspath(BACKEND), "main.py")
+    with open(main_path, encoding="utf-8") as handle:
+        source = handle.read()
+    # [EN] Compare real import statements, not substrings: the comments that explain
+    # [EN] this very rule contain the words "from llama_cpp", so a textual search
+    # [EN] would report a false failure.
+    # [ZH] 比较真正的 import 语句而不是子串：解释本规则的注释本身就含有
+    # [ZH] "from llama_cpp" 字样，文本搜索会误报失败。
+    import ast
 
-        try:
-            service.chat("does-not-matter.png", "describe this image")
-            check("chat 在原生调用前抛出结构化 VisionError", False, "未抛出异常")
-        except vision_mod.VisionError as exc:
-            check("chat 在原生调用前抛出结构化 VisionError",
-                  exc.code == "windows_vl_blocked"
-                  and exc.key == vision_mod.WINDOWS_VL_BLOCKED_REASON,
-                  f"code={exc.code} key={exc.key}")
-        check("熔断后未创建视觉引擎（没有触碰 Llama）", service._engine is None,
-              repr(service._engine))
+    tree = ast.parse(source)
+    bootstrap_lines = [
+        node.lineno for node in ast.walk(tree)
+        if (isinstance(node, ast.Import) and any(a.name == "cuda_bootstrap" for a in node.names))
+        or (isinstance(node, ast.ImportFrom) and node.module == "cuda_bootstrap")
+    ]
+    llama_lines = [
+        node.lineno for node in ast.walk(tree)
+        if (isinstance(node, ast.Import) and any(a.name.split(".")[0] == "llama_cpp" for a in node.names))
+        or (isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "llama_cpp")
+    ]
+    engine_lines = [
+        node.lineno for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "llm_engine"
+    ]
+    bootstrap_line = min(bootstrap_lines) if bootstrap_lines else 0
+    llama_line = min(llama_lines) if llama_lines else 0
+    engine_line = min(engine_lines) if engine_lines else 0
+    check("main.py 在导入 llama_cpp 之前调用引导",
+          bootstrap_line > 0 and (llama_line == 0 or bootstrap_line < llama_line),
+          f"bootstrap={bootstrap_line} llama_cpp={llama_line}")
+    check("main.py 在导入 llm_engine 之前调用引导",
+          bootstrap_line > 0 and (engine_line == 0 or bootstrap_line < engine_line),
+          f"bootstrap={bootstrap_line} llm_engine={engine_line}")
 
-        try:
-            vision_mod.VisionEngine("Qwen3-VL-4B.gguf", "mmproj.gguf")
-            check("VisionEngine 构造前即熔断", False, "未抛出异常")
-        except vision_mod.VisionError as exc:
-            check("VisionEngine 构造前即熔断",
-                  exc.code == "windows_vl_blocked", exc.code)
+    # [EN] v0.2.6 item 23 removes the item 22 interlock: neither the function nor
+    # [EN] the status field may survive, otherwise a stale UI could still grey out
+    # [EN] the image entry on Windows.
+    # [ZH] v0.2.6 第 23 项移除第 22 项的软熔断：判定函数与状态字段都不得残留，否则
+    # [ZH] 过期界面仍会在 Windows 上置灰图片入口。
+    check("vision 不再提供 windows_vl_blocked 判定",
+          not hasattr(vision_mod, "windows_vl_blocked")
+          and not hasattr(vision_mod, "WINDOWS_VL_BLOCKED_REASON"))
+    service = vision_mod.VisionService(
+        os.path.join("models", "Qwen3-VL-4B-Instruct-Q4_K_M.gguf"),
+        "mmproj-F16.gguf")
+    status = service.status()
+    check("视觉状态不再携带 windows_vl_blocked 字段",
+          "windows_vl_blocked" not in status, str(sorted(status)))
+    check("缺模型时按常规原因报告而非平台熔断",
+          status["available"] is False
+          and status["reason"] == "media.vision_model_missing"
+          and status["is_vlm"] is True,
+          f"reason={status['reason']} available={status['available']}")
 
-        text = vision_mod._t(vision_mod.WINDOWS_VL_BLOCKED_REASON)
-        check("语言包给出软熔断文案（含 Windows / VL）",
-              "Windows" in text and "VL" in text, text)
-
-        vision_mod._is_windows = lambda: False
-        check("非 Windows 平台下 VL 模型不受影响",
-              not vision_mod.windows_vl_blocked("Qwen3-VL-4B.gguf"))
-    finally:
-        vision_mod._is_windows = original
+    # [EN] The mutex-protected native call must keep the `with ... try/finally`
+    # [EN] shape: a future edit that drops the lock would otherwise go unnoticed.
+    # [ZH] 受互斥锁保护的原生调用必须保持 `with ... try/finally` 形态，否则将来删除
+    # [ZH] 锁的改动不会被发现。
+    vision_source = open(os.path.join(os.path.abspath(BACKEND), "vision.py"),
+                         encoding="utf-8").read()
+    check("视觉推理原生调用由互斥锁与 try/finally 包裹",
+          "with _INFERENCE_LOCK:" in vision_source
+          and "finally:" in vision_source
+          and "create_chat_completion" in vision_source)
 
 
 def test_imports() -> None:
@@ -1291,6 +1336,9 @@ def test_imports() -> None:
         "download_utils", "search_engine", "llm_engine", "model_hub", "marketplace",
         "automation", "hardware_profiler", "main", "version",
         "media", "vision", "speech",
+        # [EN] v0.2.6 item 23: the DLL preload bootstrap.
+        # [ZH] v0.2.6 第 23 项：DLL 预加载引导。
+        "cuda_bootstrap",
         # [EN] v0.2.6 Part 3.
         # [ZH] v0.2.6 Part 3。
         "knowledge", "memory", "prompt_library",
@@ -1313,7 +1361,7 @@ def main() -> int:
              test_crash_log_scope, test_config_save_target,
              test_operational_log_sanitizer, test_state_paths,
              test_automation, test_marketplace, test_model_match,
-             test_protocol_keys, test_media_support, test_windows_vl_soft_fuse]
+             test_protocol_keys, test_media_support, test_cuda_bootstrap]
     for fn in tests:
         try:
             fn()

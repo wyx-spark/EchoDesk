@@ -44,6 +44,23 @@ LLAMA_MACOS_URL = (
     "v0.3.30-metal/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl"
 )
 
+#: [EN] v0.2.6 item 23: Windows uses the JamePeng fork instead of the upstream wheel.
+#: [EN] The upstream Windows build has no Qwen3-VL / Qwen2.5-VL vision handler and its
+#: [EN] CUDA DLL resolution crashes Qwen3-VL with 0xC0000005. The fork's Release wheel
+#: [EN] ships those handlers plus the complete ggml-cuda.dll set, so it is pinned by
+#: [EN] direct URL exactly like the macOS wheel (same file name in several indexes is
+#: [EN] not a stable identity).
+#: [ZH] v0.2.6 第 23 项：Windows 改用 JamePeng fork，而非上游轮子。上游 Windows 构建
+#: [ZH] 没有 Qwen3-VL / Qwen2.5-VL 视觉处理器，且 CUDA DLL 解析问题会让 Qwen3-VL 以
+#: [ZH] 0xC0000005 崩溃。该 fork 的 Release 轮子同时提供这些处理器与完整的
+#: [ZH] ggml-cuda.dll 集合，因此与 macOS 轮子一样按直接 URL 钉死（同名文件出现在多个
+#: [ZH] 索引里并不能作为稳定身份）。
+LLAMA_WINDOWS_URL = (
+    "https://github.com/JamePeng/llama-cpp-python/releases/download/"
+    "v0.4.7-cu132-win-20261113/"
+    "llama_cpp_python-0.4.7%2Bcu132-cp313-cp313-win_amd64.whl"
+)
+
 
 def log(message: str) -> None:
     print(f"[lock] {message}", flush=True)
@@ -119,6 +136,8 @@ def build_lock() -> str:
                 continue
             if key == "llama-cpp-python" and rid == "osx-arm64":
                 requirement = f"{display} @ {LLAMA_MACOS_URL}"
+            elif key == "llama-cpp-python" and rid == "win-x64":
+                requirement = f"{display} @ {LLAMA_WINDOWS_URL}"
             else:
                 requirement = f"{display}=={version}"
             entries.append((rid, requirement))

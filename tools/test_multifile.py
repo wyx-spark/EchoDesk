@@ -69,6 +69,22 @@ def make_file(directory, name, body):
     return path
 
 
+def make_binary_file(directory, name, body=b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1binary"):
+    """[EN] Write a genuinely binary file (legacy OLE2 signature) for unsupported-type tests.
+    [ZH] 写入真正的二进制文件（旧版 OLE2 特征），用于「不支持的类型」用例。
+
+    [EN] v0.2.6 item 1 accepts unknown extensions whose payload is plain text, so a
+    [EN] "whatever" text payload no longer represents an unsupported type: the fixture has
+    [EN] to be binary for the failure contract to be tested.
+    [ZH] v0.2.6 第 1 项会接受载荷为纯文本的未知扩展名，因此 "whatever" 这样的文本载荷
+    [ZH] 不再代表「不支持的类型」；只有二进制载荷才能验证该失败约定。
+    """
+    path = os.path.join(directory, name)
+    with open(path, "wb") as handle:
+        handle.write(body)
+    return path
+
+
 # ---------------------------------------------------------------- 桩
 
 class StubEngine:
@@ -265,7 +281,7 @@ def test_partial_failure():
     check("成功的那份内容可读", "正常内容" in backend.conv.file_content)
 
     # 不支持的类型
-    bad = make_file(directory, "坏.xyz", "whatever")
+    bad = make_binary_file(directory, "坏.xyz")
     result2 = backend.load_files_into_context([bad, good])
     check("不支持的类型被判失败且不影响好的那份",
           result2["failed"] >= 1 and result2["ok"] >= 1, str(result2)[:200])

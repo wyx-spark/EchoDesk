@@ -73,6 +73,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import urllib.parse
 import urllib.request
 
 import reproducible as repro
@@ -463,7 +464,12 @@ def local_wheel_override(line: str) -> tuple[str, str]:
     reference = reference.strip()
     if not reference.lower().startswith(("http://", "https://")):
         return line, ""
-    name = os.path.basename(reference.split("?", 1)[0].rstrip("/"))
+    # [EN] The JamePeng Windows wheel URL escapes the local version separator
+    # [EN] (``0.4.7%2Bcu132``); percent-decoding is required before comparing the
+    # [EN] name with the cached file, whose name contains a literal ``+``.
+    # [ZH] JamePeng 的 Windows 轮子 URL 转义了本地版本分隔符（``0.4.7%2Bcu132``）；
+    # [ZH] 在与缓存文件名比较之前必须做百分号解码，缓存文件名里是字面量 ``+``。
+    name = urllib.parse.unquote(os.path.basename(reference.split("?", 1)[0].rstrip("/")))
     if not name.endswith(".whl"):
         return line, ""
     cached = os.path.join(WHEEL_CACHE, name)

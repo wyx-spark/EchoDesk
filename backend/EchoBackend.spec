@@ -33,7 +33,7 @@ import os
 import sys
 import tempfile
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs
 
 IS_WINDOWS = sys.platform.startswith("win")
 
@@ -116,6 +116,23 @@ for pkg in PACKAGES:
     except Exception:
         pass
 
+# ---------- v0.2.6 第 23 项：llama.cpp 动态库显式收集 ----------
+# collect_all('llama_cpp') 通常已经按 `llama_cpp/lib` 收集了 DLL，但那是"依赖分析恰好
+# 命中"的结果：一旦某个模块改为惰性导入（本项目正是如此），PyInstaller 就可能漏掉
+# ggml-cuda.dll / llama.dll，打包后的 exe 启动才报加载失败。这里显式再收集一次，
+# 并在去重后写入 binaries，确保动态库落在 llama_cpp/lib —— backend/cuda_bootstrap.py
+# 正是按该目录注册 DLL 搜索路径并按依赖顺序预加载。
+_llama_libs = collect_dynamic_libs("llama_cpp")
+_seen_binaries = {
+    (os.path.normcase(os.path.abspath(src)), dest) for src, dest in binaries
+}
+for _src, _dest in _llama_libs:
+    _key = (os.path.normcase(os.path.abspath(_src)), _dest)
+    if _key in _seen_binaries:
+        continue
+    _seen_binaries.add(_key)
+    binaries.append((_src, _dest))
+
 # 配置文件随包内置（onedir 下即位于 exe 同级目录，用户可直接编辑）
 datas.append((os.path.join(SPECPATH, "config.json"), "."))
 
@@ -190,7 +207,13 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     # v0.2.5：`schedule` 已从依赖中移除（全仓库无 import，定时触发由 automation.py 自实现）。
-    hiddenimports=hiddenimports + ["llama_cpp", "playwright", "pypdf"]
+    # [EN] v0.2.6 item 23: the two llama.cpp extension modules are listed explicitly
+    # [EN] because they are imported lazily by the engine and the vision adapter, so
+    # [EN] static analysis can miss them; cuda_bootstrap is listed for the same reason.
+    # [ZH] v0.2.6 第 23 项：这两个 llama.cpp 扩展模块由引擎与视觉适配层惰性导入，
+    # [ZH] 静态分析可能漏掉，故显式列出；cuda_bootstrap 同理。
+    hiddenimports=hiddenimports + ["llama_cpp", "llama_cpp.llama_cpp", "llama_cpp._ggml",
+                                   "cuda_bootstrap", "playwright", "pypdf"]
     + (["win32com"] if IS_WINDOWS else []),
     hookspath=[],
     hooksconfig={},

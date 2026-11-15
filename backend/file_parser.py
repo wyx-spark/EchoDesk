@@ -376,6 +376,104 @@ def localize_error(text: str) -> str:
 
 _ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "utf-16", "big5", "latin-1")
 
+# [EN] Binary container signatures. A byte sequence that starts with one of these must
+# [EN] never be accepted as text by the unknown-extension fallback: the earlier
+# [EN] implementation validated a payload by trying gb18030/big5/utf-16, and those
+# [EN] encodings can decode almost any byte sequence, so a legacy OLE2 `.doc` (which the
+# [EN] platform cannot open without WPS COM) was silently turned into mojibake instead of
+# [EN] the structured "unsupported / platform boundary" message.
+# [ZH] 二进制容器特征。以这些字节开头的载荷绝不能被"未知扩展名兜底"当成文本：旧实现用
+# [ZH] gb18030/big5/utf-16 去试探解码，而这些编码几乎能解出任何字节序列，于是非
+# [ZH] Windows 上无法用 WPS COM 打开的旧版 OLE2 `.doc` 会被静默变成乱码，而不是给出
+# [ZH] 结构化的「不支持 / 平台能力边界」提示。
+_BINARY_MAGIC = (
+    b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",  # [EN] OLE2: legacy .doc/.xls/.ppt / [ZH] 旧版 Office 复合文档
+    b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08",  # [EN] ZIP / OOXML / ODF / EPUB / [ZH] 压缩包与 OOXML
+    b"%PDF", b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a", b"BM",
+    b"RIFF", b"OggS", b"fLaC", b"ID3", b"\x1f\x8b", b"7z\xbc\xaf\x27\x1c",
+    b"Rar!\x1a\x07", b"MZ", b"\x7fELF", b"\xca\xfe\xba\xbe",
+)
+
+
+def _detect_text_encoding(raw: bytes) -> Optional[str]:
+    """
+    [EN]
+    Return the encoding to use when a payload is genuinely text, else ``None``.
+
+    Acceptance is deliberately narrow for **unrecognized extensions**: UTF-16 with a
+    BOM, or a payload that decodes as strict UTF-8 (pure ASCII included). Legacy
+    single/double-byte encodings (gb18030, big5, latin-1) are *not* accepted here
+    because they cannot reject binary data; files with a known text extension still go
+    through ``_read_text`` and keep the full encoding list.
+
+    [ZH]
+    载荷确为文本时返回应使用的编码，否则返回 ``None``。
+
+    **未识别扩展名**的接受范围刻意收窄：带 BOM 的 UTF-16，或能按严格 UTF-8 解码的
+    载荷（纯 ASCII 自然包含在内）。这里不接受 gb18030 / big5 / latin-1 这类旧编码，
+    因为它们无法排除二进制数据；已知文本扩展名仍走 ``_read_text``，保留完整编码列表。
+    """
+    sample = raw[:16384]
+    if not sample:
+        return None
+    if sample.startswith(_BINARY_MAGIC):
+        return None
+    if b"\x00" in sample:
+        # [EN] NUL bytes are legitimate only in BOM-marked UTF-16 text.
+        # [ZH] 只有带 BOM 的 UTF-16 文本才允许出现 NUL 字节。
+        if sample.startswith((b"\xff\xfe", b"\xfe\xff")):
+            return "utf-16"
+        return None
+    control = sum(1 for byte in sample
+                  if byte < 9 or (13 < byte < 32) or byte == 127)
+    if control > max(4, len(sample) // 100):
+        return None
+    for encoding in ("utf-8-sig", "utf-8"):
+        try:
+            sample.decode(encoding)
+            return encoding
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+def _looks_like_text(raw: bytes) -> bool:
+    """
+    [EN]
+    Decide whether a byte payload is plausibly human-readable text.
+
+    A payload is rejected when it carries a known binary signature, contains a NUL byte
+    without a UTF-16 BOM, has a high proportion of control characters, or does not
+    decode as strict UTF-8. The check is intentionally conservative: it only widens
+    acceptance to plainly textual content and never treats an archive or binary document
+    as text.
+
+    [ZH]
+    判断字节载荷是否可合理地视为人类可读文本。
+
+    带已知二进制特征、无 UTF-16 BOM 却含 NUL 字节、控制字符比例过高，或无法按严格
+    UTF-8 解码的载荷会被拒绝。该判定刻意保守：只把明显属于文本的内容纳入接受范围，
+    绝不把压缩包或二进制文档当作文本。
+    """
+    return _detect_text_encoding(raw) is not None
+
+
+def _read_unknown_text(filepath: str) -> Optional[str]:
+    """
+    [EN]
+    Read an unrecognized extension as text when the payload is textual; return
+    ``None`` when it is binary.
+
+    [ZH]
+    对未识别的扩展名：载荷为文本时按文本读取，二进制时返回 ``None``。
+    """
+    with open(filepath, "rb") as handle:
+        raw = handle.read()
+    encoding = _detect_text_encoding(raw)
+    if encoding is None:
+        return None
+    return raw.decode(encoding, errors="replace")
+
 
 def parse_file_with_wps(filepath: str, max_chars: int = 0) -> str:
     """
@@ -556,61 +654,6 @@ def _parse_builtin(filepath: str, ext: str) -> str:
     if not text or not text.strip():
         return _err("[!EMPTY]", "file.empty")
     return text
-
-
-def _looks_like_text(raw: bytes) -> bool:
-    """
-    [EN]
-    Decide whether a byte payload is plausibly human-readable text.
-
-    A payload is rejected when it contains a NUL byte, a high proportion of
-    control characters, or bytes that no common encoding can decode. The check is
-    intentionally conservative: it only widens acceptance to plainly textual
-    content and never treats an archive or binary document as text.
-
-    [ZH]
-    判断字节载荷是否可合理地视为人类可读文本。
-
-    含 NUL 字节、控制字符比例过高，或常见编码均无法解码的载荷会被拒绝。该判定刻意
-    保守：只把明显属于文本的内容纳入接受范围，绝不把压缩包或二进制文档当作文本。
-    """
-    sample = raw[:16384]
-    if not sample:
-        return False
-    if b"\x00" in sample:
-        return False
-    control = sum(1 for byte in sample
-                  if byte < 9 or (13 < byte < 32) or byte == 127)
-    if control > max(4, len(sample) // 100):
-        return False
-    for encoding in ("utf-8-sig", "utf-8", "gb18030", "utf-16", "big5"):
-        try:
-            sample.decode(encoding)
-            return True
-        except (UnicodeDecodeError, LookupError):
-            continue
-    return False
-
-
-def _read_unknown_text(filepath: str) -> Optional[str]:
-    """
-    [EN]
-    Read an unrecognized extension as text when the payload is textual; return
-    ``None`` when it is binary.
-
-    [ZH]
-    对未识别的扩展名：载荷为文本时按文本读取，二进制时返回 ``None``。
-    """
-    with open(filepath, "rb") as handle:
-        raw = handle.read()
-    if not _looks_like_text(raw):
-        return None
-    for encoding in _ENCODINGS:
-        try:
-            return raw.decode(encoding)
-        except (UnicodeDecodeError, LookupError):
-            continue
-    return raw.decode("utf-8", errors="replace")
 
 
 def _read_text(filepath: str) -> str:

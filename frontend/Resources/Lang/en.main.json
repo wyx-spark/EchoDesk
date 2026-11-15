@@ -492,7 +492,6 @@
       "hotkeyUnavailable": "⚠️ Global hotkeys are unavailable: {0}. Hold Right Ctrl in this window to record.",
       "visionReady": "🖼 Image chat available",
       "visionUnavailable": "🖼 No vision model configured",
-      "windowsVlBlocked": "Local visual inference for VL models is currently unstable on Windows. Please use text mode or an external API.",
       "chooseTitle": "Choose an image",
       "filter": "Images",
       "stageFailed": "❌ The image could not be staged (unsupported format or the target directory is not writable): {0}",

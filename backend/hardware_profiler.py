@@ -988,6 +988,14 @@ def _llama_gpu_offload_supported() -> Optional[bool]:
     此时以探测到的加速器为准。
     """
     try:
+        # [EN] v0.2.6 item 23: preload the local llama.cpp / CUDA DLLs before the
+        # [EN] capability probe imports the native module; otherwise the probe can
+        # [EN] trip the same unresolved-symbol crash as a real model load.
+        # [ZH] v0.2.6 第 23 项：在能力探测导入原生模块之前预加载本地 llama.cpp /
+        # [ZH] CUDA DLL；否则探测本身就可能触发与真实模型加载相同的未解析符号崩溃。
+        import cuda_bootstrap
+
+        cuda_bootstrap.ensure()
         import llama_cpp  # type: ignore
 
         probe = getattr(llama_cpp, "llama_supports_gpu_offload", None)

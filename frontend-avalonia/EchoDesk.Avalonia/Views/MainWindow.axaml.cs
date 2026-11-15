@@ -1309,12 +1309,6 @@ public partial class MainWindow : Window
             ContextChipText.Text = Loc.T("main.context.buttonIdle", "上下文：---/---");
         ShowCapabilityBanner();
         ApplyHelpText();
-        // [EN] v0.2.6 item 22: re-apply the image-entry availability and its explanatory
-        //      tooltip **after** ApplyHelpText, so the generic image description cannot
-        //      overwrite the Windows + VL soft-fuse notice on a language change.
-        // [ZH] v0.2.6 第 22 项：在 ApplyHelpText **之后**重新应用图片入口可用性与说明性提示，
-        //      避免语言切换时通用图片说明覆盖 Windows + VL 软熔断提示。
-        ApplyImageAvailability();
         // [EN] Caption text is language-dependent, therefore it is refreshed with the rest of
         // [EN] the interface strings.
         // [ZH] 标题栏文案依赖界面语言，因此随其余界面文案一并刷新。
@@ -1700,62 +1694,16 @@ public partial class MainWindow : Window
         SetStatus(_media.State.VisionAvailable
             ? Loc.T("main.media.visionReady", "🖼 图片对话可用")
             : Loc.T("main.media.visionUnavailable", "🖼 未配置视觉模型"));
-        // [EN] v0.2.6 item 22: disable the image entry when the backend's soft fuse applies,
-        //      and explain the platform limitation in the tooltip. Merely leaving the button
-        //      greyed out with the generic text would let the user think a model is missing.
-        // [ZH] v0.2.6 第 22 项：后端软熔断生效时禁用图片入口，并在悬停提示中说明平台限制。
-        //      只置灰并沿用笼统文案会让用户误以为是模型缺失。
-        ApplyImageAvailability();
+        // [EN] Disable the image entry for non-VL models instead of showing an error
+        //      after the user has already selected a file.
+        // [ZH] 非 VLM 模型禁用图片入口，而不是等用户选完文件后再报错。
+        ImageButton.IsEnabled = _media.State.VisionAvailable;
         // [EN] Speech input is offered only when a transcription engine is available;
         // [EN] otherwise the microphone is silently disabled (greyed out) with a
         // [EN] tooltip explaining why, and shortcut presses only update the status bar.
         // [ZH] 仅在转写引擎可用时提供语音输入；否则麦克风静默禁用（置灰），悬停说明
         // [ZH] 原因，快捷键按下时只更新底部状态栏。
         ApplyMicAvailability();
-    }
-
-    /// <summary>
-    /// [EN] Reflects the backend's vision capability on the image button (v0.2.6 item 22).
-    ///
-    ///      When the backend reports the Windows + VL soft fuse, the entry is disabled and the
-    ///      tooltip names the platform limitation in the current interface language. Other
-    ///      unavailability reasons keep using the backend-provided localized reason. The
-    ///      tooltip is explicitly shown on disabled controls, because a greyed-out button with
-    ///      no explanation is exactly the "dead entry" the task book asks to avoid.
-    ///
-    /// [ZH] 把后端视觉能力反映到图片按钮上（v0.2.6 第 22 项）。
-    ///
-    ///      后端报告 Windows + VL 软熔断时禁用入口，并用当前界面语言在悬停提示中说明平台
-    ///      限制。其他不可用原因沿用后端给出的已本地化原因。禁用控件显式允许显示提示，
-    ///      因为"置灰且无任何解释"正是任务书要求避免的死入口。
-    /// </summary>
-    private void ApplyImageAvailability()
-    {
-        if (!_media.State.Loaded)
-            return;
-        bool available = _media.State.VisionAvailable;
-        ImageButton.IsEnabled = available;
-        string tip;
-        if (available)
-        {
-            tip = Loc.T("main.media.imageTip", "附加图片并提问（jpg / png）");
-        }
-        else if (_media.State.VisionWindowsVlBlocked)
-        {
-            tip = Loc.T("main.media.windowsVlBlocked",
-                "当前版本在 Windows 下本地运行 VL 视觉模型不稳定，请使用纯文本或外部 API。");
-        }
-        else if (!string.IsNullOrWhiteSpace(_media.State.VisionReason))
-        {
-            tip = _media.State.VisionReason;
-        }
-        else
-        {
-            tip = Loc.T("main.media.visionUnavailable", "🖼 未配置视觉模型");
-        }
-        ToolTip.SetTip(ImageButton, tip);
-        ToolTip.SetShowOnDisabled(ImageButton, true);
-        AutomationProperties.SetHelpText(ImageButton, tip);
     }
 
     /// <summary>
@@ -6259,48 +6207,6 @@ public partial class MainWindow : Window
     /// [ZH] 探针辅助：在标题栏写入合成版本号，使布局与本地化在没有后端时也能断言。
     /// </summary>
     public void ProbeSetTitleBarVersion(string version) => TitleBarVersionText.Text = version;
-
-    /// <summary>
-    /// [EN] v0.2.6 item 22: drives the image-entry guard with synthetic media state and
-    ///      reports the resulting enablement and tooltip. The original state is restored, so
-    ///      the probe is side-effect free for later assertions.
-    /// [ZH] v0.2.6 第 22 项：用合成媒体状态驱动图片入口防呆，并报告最终的启用状态与悬停提示。
-    ///      原状态会被恢复，因此该探针对后续断言没有副作用。
-    /// </summary>
-    public string ProbeImageGuard(bool available, bool windowsVlBlocked, string reason)
-    {
-        bool oldLoaded = _media.State.Loaded;
-        bool oldAvailable = _media.State.VisionAvailable;
-        bool oldBlocked = _media.State.VisionWindowsVlBlocked;
-        string oldReason = _media.State.VisionReason;
-        bool oldEnabled = ImageButton.IsEnabled;
-        object? oldTip = ToolTip.GetTip(ImageButton);
-        try
-        {
-            _media.State.Loaded = true;
-            _media.State.VisionAvailable = available;
-            _media.State.VisionWindowsVlBlocked = windowsVlBlocked;
-            _media.State.VisionReason = reason;
-            ApplyImageAvailability();
-            string tip = ToolTip.GetTip(ImageButton)?.ToString() ?? "";
-            string expected = Loc.T("main.media.windowsVlBlocked",
-                "当前版本在 Windows 下本地运行 VL 视觉模型不稳定，请使用纯文本或外部 API。");
-            return $"enabled={ImageButton.IsEnabled}"
-                   + $"｜showOnDisabled={ToolTip.GetShowOnDisabled(ImageButton)}"
-                   + $"｜tooltipIsBlocked={string.Equals(tip, expected, StringComparison.Ordinal)}"
-                   + $"｜tip={tip}";
-        }
-        finally
-        {
-            _media.State.Loaded = oldLoaded;
-            _media.State.VisionAvailable = oldAvailable;
-            _media.State.VisionWindowsVlBlocked = oldBlocked;
-            _media.State.VisionReason = oldReason;
-            ImageButton.IsEnabled = oldEnabled;
-            ToolTip.SetTip(ImageButton, oldTip);
-            ApplyImageAvailability();
-        }
-    }
 
     /// <summary>
     /// [EN] v0.2.6 item 21: feeds one raw value through the same read/normalise path the

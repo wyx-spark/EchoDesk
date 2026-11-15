@@ -492,7 +492,6 @@
       "hotkeyUnavailable": "⚠️ 全局快捷键不可用：{0}。可在窗口内按住右 Ctrl 录音。",
       "visionReady": "🖼 图片对话可用",
       "visionUnavailable": "🖼 未配置视觉模型",
-      "windowsVlBlocked": "当前版本在 Windows 下本地运行 VL 视觉模型不稳定，请使用纯文本或外部 API。",
       "chooseTitle": "选择图片",
       "filter": "图片",
       "stageFailed": "❌ 无法暂存图片（格式不受支持或目标目录不可写）：{0}",

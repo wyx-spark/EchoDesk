@@ -394,7 +394,6 @@
           -->
           <Button x:Name="ImageButton" Width="34" Height="34" Margin="2" Classes="icon"
                   Content="🖼" FontSize="14"
-                  ToolTip.ShowOnDisabled="True"
                   AutomationProperties.AutomationId="ImageButton" />
           <!--
             [EN] v0.2.6 task 9: push-to-talk microphone entry next to the input box.

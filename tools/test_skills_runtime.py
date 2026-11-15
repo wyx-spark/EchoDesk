@@ -374,13 +374,23 @@ def run_all(workdir):
     check("注册 .ofd 解析器", register_skill_parser(".ofd", ofd_reader, "ext-plugin"))
     check("扩展名列表包含 ofd", ".ofd" in skill_parser_extensions())
     check("内置扩展名不可被占用", not register_skill_parser(".pdf", ofd_reader, "ext-plugin"))
-    open(os.path.join(workdir, "样例.ofd"), "w", encoding="utf-8").write("x")
+    # [EN] v0.2.6 item 1: an unknown extension is accepted when its payload is genuinely
+    # [EN] text, so the fixtures below must be binary for the "unsupported" contract to be
+    # [EN] exercised. The assertion itself is unchanged: a binary unknown file still has to
+    # [EN] produce the structured "unsupported file type" error.
+    # [ZH] v0.2.6 第 1 项：未知扩展名在载荷确为文本时会被接受，因此下面的样本必须写成
+    # [ZH] 二进制，才能真正走到「不支持」这条约定。断言本身不变：二进制未知文件仍必须
+    # [ZH] 返回结构化的「不支持的文件类型」错误。
+    with io.open(os.path.join(workdir, "样例.ofd"), "wb") as _handle:
+        _handle.write(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1binary-ofd")
     from file_parser import is_parse_error, localize_error, parse_file_with_wps
     parsed = parse_file_with_wps(os.path.join(workdir, "样例.ofd"))
     check("技能解析器被真正调用", parsed == "OFD 内容：测试", repr(parsed))
     # v0.2.2 硬编码清查第 6 批（一）：解析失败串改成「语言无关标记 + 语言包正文」，
     # 所以不能再按中文前缀断言（英文界面下正文不是中文）。改用 is_parse_error() 判"是失败串"、
     # 再用 localize_error() 取当前语言正文来断言内容 —— 意图不变、判据更精确。
+    with io.open(os.path.join(workdir, "x.zzz"), "wb") as _handle:
+        _handle.write(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1binary-zzz")
     _unsupported = parse_file_with_wps(os.path.join(workdir, "x.zzz"))
     check("未知扩展名仍报不支持",
           is_parse_error(_unsupported) and "不支持" in localize_error(_unsupported),

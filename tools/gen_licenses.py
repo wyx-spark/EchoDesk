@@ -73,7 +73,16 @@ def declared_direct() -> List[str]:
                 line = raw.split("#", 1)[0].strip()
                 if not line or line.startswith("-"):
                     continue
-                name = re.split(r"[<>=!\[;]", line, maxsplit=1)[0].strip()
+                # [EN] Split on the PEP 508 separators **and** on the direct-URL marker
+                # [EN] (``name @ https://...``): without ``@`` a pinned wheel URL was parsed as
+                # [EN] part of the distribution name, so the release got a bogus
+                # [EN] "not installed" warning and the generated inventory carried a
+                # [EN] corrupted entry. Neither ``@`` nor ``=<>![];`` may appear in a name.
+                # [ZH] 除 PEP 508 的版本/extras/标记分隔符外，必须同时按**直接 URL 标记**
+                # [ZH] （``name @ https://...``）切分：以前没切 ``@``，被钉死的轮子 URL 会被
+                # [ZH] 当成包名的一部分，于是发布清单出现"未安装"的假告警并把网址写进表格。
+                # [ZH] 合法的发行包名不允许包含 ``@`` 或 ``=<>![];``。
+                name = re.split(r"[<>=!\[;@]", line, maxsplit=1)[0].strip()
                 if name and _norm(name) not in {_norm(n) for n in names}:
                     names.append(name)
     except OSError as exc:  # noqa: BLE001 - 读不到就退化为 ROOT_PACKAGES
@@ -255,7 +264,13 @@ def main() -> None:
     ]
 
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
-    with open(OUT_PATH, "w", encoding="utf-8") as f:
+    # [EN] ``newline=""`` keeps the generated Markdown at LF on Windows: ``.gitattributes``
+    # [EN] declares ``*.md text eol=lf``, and the default text mode would otherwise write
+    # [EN] CRLF and make the line-ending gate fail right after regeneration.
+    # [ZH] ``newline=""`` 让生成的 Markdown 在 Windows 上仍以 LF 落盘：``.gitattributes``
+    # [ZH] 规定 ``*.md text eol=lf``，默认文本模式会写成 CRLF，刚重新生成就会被
+    # [ZH] 换行符门禁判红。
+    with open(OUT_PATH, "w", encoding="utf-8", newline="") as f:
         f.write("\n".join(lines))
     print(f"已生成 {os.path.normpath(OUT_PATH)}（{len(rows)} 个包，高风险 {len(hits)} 个）")
 

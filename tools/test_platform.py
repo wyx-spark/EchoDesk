@@ -165,7 +165,15 @@ check("普通文本文件照常解析",
       fp.parse_file_with_wps(txt_path)[:80])
 # v0.2.2 硬编码清查第 6 批（一）：解析失败串改成「语言无关标记 + 语言包正文」，
 # 所以不能按中文前缀断言（英文界面下正文不是中文）。改成先判"是失败串"、再取当前语言正文来断言。
-_zzz = fp.parse_file_with_wps(os.path.join(workdir, "x.zzz"))
+# [EN] v0.2.6 item 1: unknown extensions are accepted when the payload is plain text, so the
+# [EN] unsupported-type fixture must be binary; a missing path would now (correctly) report
+# [EN] "file not found" instead of exercising the extension contract.
+# [ZH] v0.2.6 第 1 项：未知扩展名在载荷为纯文本时会被接受，因此「不支持的类型」样本必须
+# [ZH] 是二进制；不存在的路径现在会（正确地）报「文件不存在」，测不到扩展名约定。
+_zzz_path = os.path.join(workdir, "x.zzz")
+with io.open(_zzz_path, "wb") as handle:
+    handle.write(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1binary-zzz")
+_zzz = fp.parse_file_with_wps(_zzz_path)
 check("不支持的扩展名照常报「不支持」",
       fp.is_parse_error(_zzz) and "不支持" in fp.localize_error(_zzz),
       _zzz[:60])
