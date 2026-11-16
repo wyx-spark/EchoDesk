@@ -1,6 +1,6 @@
 // [EN] EchoDesk Avalonia frontend module: frontend-avalonia/EchoDesk.Avalonia/Probe.cs. See type and member comments for details.
 // [ZH] EchoDesk 前端模块：frontend-avalonia/EchoDesk.Avalonia/Probe.cs。类型与成员说明见下方注释。
-// [EN] Headless (unattended) UI probe — `EchoDesk --probe [main|settings|agent|both]`.
+// [EN] Headless (unattended) UI probe — `EchoDesk --probe [main|settings|both]`.
 //
 // [EN] Why it exists: `--selftest` deliberately opens no window and verifies only the
 // [EN] "startup chain + protocol", so **whether a window can be opened at all had no
@@ -16,11 +16,6 @@
 // [EN]   * `--probe settings` : only the settings window (all 7 settings pages constructed
 // [EN]                          plus first-frame layout)
 // [EN]   * `--probe both`     : the main window first, then the settings window (default)
-// [EN]   * `--probe agent`    : start the real backend, run one Agent round, and feed the
-// [EN]                         agent_step / tool_call / tool_result / done events actually
-// [EN]                         emitted by the backend into the main window's event
-// [EN]                         dispatch one by one, then assert that the step rows really
-// [EN]                         rendered
 //
 // [EN] Exit code: 0 = everything passed; 1 = some window did not open (or the process did
 // [EN] not live long enough to print the conclusion). A crash (including a stack overflow)
@@ -30,10 +25,9 @@
 // [EN] try/catch in .NET, so the only reliable signal is whether the conclusion line exists.
 //
 // [EN] The main / settings / both modes do **not** start a backend process (they verify the
-// [EN] UI itself); agent mode must start the backend — it verifies the end-to-end chain
-// [EN] "backend events to UI rendering".
+// [EN] UI itself).
 //
-// [ZH] 无头（无人值守）界面探针 —— `EchoDesk --probe [main|settings|agent|both]`。
+// [ZH] 无头（无人值守）界面探针 —— `EchoDesk --probe [main|settings|both]`。
 //
 // [ZH] 为什么需要它：`--selftest` 刻意不开窗口，只验证“启动链路 + 协议”，于是
 // [ZH] **“窗口到底能不能打开”这件事一直没有任何可判定的证据**。记录里那句
@@ -45,17 +39,13 @@
 // [ZH]   * `--probe main`     ：只开主窗口（主窗口构造 + 首帧布局）
 // [ZH]   * `--probe settings` ：只开设置窗口（7 个设置页全部构造 + 首帧布局）
 // [ZH]   * `--probe both`     ：先主窗口、再设置窗口（默认）
-// [ZH]   * `--probe agent`    ：拉真后端 → Agent 模式跑一轮 → 把后端真实发出的
-// [ZH]                          agent_step / tool_call / tool_result / done 事件
-// [ZH]                          逐条喂进主窗口的事件分发，再断言“步骤行真的渲染了”
 //
 // [ZH] 退出码：0 = 全部通过；1 = 有窗口没开起来（或整个进程没活到输出结论那一步）。
 // [ZH] 崩溃（含 Stack overflow）会直接杀死进程 —— 那就**没有** `PROBE-RESULT: PASS`
 // [ZH] 这一行，判定脚本按“进程消失且无结论”记为失败。这是刻意的：栈溢出这类
 // [ZH] 进程级崩溃在 .NET 里无法被 try/catch 兜住，唯一可靠的信号就是“结论行在不在”。
 //
-// [ZH] main / settings / both 三种模式**不**开后端进程（验的是界面本身）；
-// [ZH] agent 模式必须开后端 —— 它验的是“后端事件 → 界面渲染”这条端到端链路。
+// [ZH] main / settings / both 三种模式**不**开后端进程（验的是界面本身）。
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -119,12 +109,10 @@ internal static class Probe
             }
         }
 
-        // [EN] Agent mode runs one real model inference round; market / pages mode really
-        // [EN] talks to the backend for a round (tens of seconds).
-        // [ZH] agent 模式要跑一轮真模型推理；market / pages 模式要真跟后端说一轮话（几十秒）。
-        Budget = target.Equals("agent", StringComparison.OrdinalIgnoreCase)
-            ? TimeSpan.FromSeconds(300)
-            : target.Equals("sweep", StringComparison.OrdinalIgnoreCase) ? TimeSpan.FromSeconds(240)
+        // [EN] Market / pages mode really talks to the backend for a round (tens of
+        // [EN] seconds).
+        // [ZH] market / pages 模式要真跟后端说一轮话（几十秒）。
+        Budget = target.Equals("sweep", StringComparison.OrdinalIgnoreCase) ? TimeSpan.FromSeconds(240)
             : target.Equals("market", StringComparison.OrdinalIgnoreCase) ? TimeSpan.FromSeconds(300)
             : target.Equals("pages", StringComparison.OrdinalIgnoreCase) ? TimeSpan.FromSeconds(300)
             : target.Equals("shots", StringComparison.OrdinalIgnoreCase) ? TimeSpan.FromSeconds(120)
@@ -179,11 +167,7 @@ internal static class Probe
             bool ok = true;
             try
             {
-                if (target.Equals("agent", StringComparison.OrdinalIgnoreCase))
-                {
-                    ok = await RunAgentProbeAsync(desktop);
-                }
-                else if (target.Equals("market", StringComparison.OrdinalIgnoreCase))
+                if (target.Equals("market", StringComparison.OrdinalIgnoreCase))
                 {
                     ok = await RunMarketProbeAsync(desktop);
                 }
@@ -279,208 +263,6 @@ internal static class Probe
         }, DispatcherPriority.Background);
     }
 
-    /// <summary>
-    /// [EN] End-to-end rendering verification of Agent step rows (v0.2.2 record §10, item 3).
-    ///
-    /// [EN] A key trade-off in the approach: **do not fabricate events**. The probe starts the
-    /// [EN] real backend and runs one real Agent round, takes the event lines the backend
-    /// [EN] **actually emitted** (already in JSON), and feeds them into
-    /// [EN] <see cref="MainWindow.DispatchStreamEvent"/> one by one — the same dispatch path
-    /// [EN] used at real runtime. Whether step rows render is therefore an assertable number
-    /// [EN] rather than something judged by eye.
-    ///
-    /// [EN] Why not call the send button in the UI directly: that would require simulating
-    /// [EN] keyboard input, and the failure reason would be mixed up with "did the backend
-    /// [EN] come up" and "is there a model". The two concerns are verified separately here:
-    /// [EN] the backend receiving events is one thing (this method prints each event type),
-    /// [EN] and UI rendering is another (it asserts AgentStepRowCount).
-    /// [ZH] Agent 步骤行的端到端渲染验证（v0.2.2 记录 §10 第 3 条）。
-    ///
-    /// [ZH] 做法上的一个关键取舍：**不伪造事件**。这里拉起真后端、真跑一轮 Agent，
-    /// [ZH] 把后端**实际发出的**那些事件行（已经在 JSON 里）取出来，再逐条喂进
-    /// [ZH] <see cref="MainWindow.DispatchStreamEvent"/> —— 也就是真实运行时走的那条
-    /// [ZH] 分发路径。于是“步骤行有没有渲染”不再靠肉眼看，而是一个可断言的数字。
-    ///
-    /// [ZH] 为什么不直接调 UI 里的发送按钮：那需要模拟键盘输入，且失败原因会被
-    /// [ZH] “后端起没起来”“有没有模型”搅在一起。这里把两件事分开验：
-    /// [ZH] 后端拿到事件是一件事（本方法逐条打印事件类型），界面渲染是另一件事
-    /// [ZH] （断言 AgentStepRowCount）。
-    /// </summary>
-    private static async Task<bool> RunAgentProbeAsync(IClassicDesktopStyleApplicationLifetime desktop)
-    {
-        bool ok = true;
-        var main = new MainWindow();
-        desktop.MainWindow = main;
-        main.Show();
-        Console.WriteLine("  [PASS] 主窗口已构造并显示");
-
-        var launch = BackendService.ResolveLaunch();
-        if (launch is null)
-        {
-            Console.WriteLine("  [FAIL] 找不到后端（开发布局下需要 backend/main.py 或已发布的 EchoDeskBackend.exe）");
-            return false;
-        }
-        Console.WriteLine($"  后端启动   : {launch.CommandLine}（工作目录 {launch.WorkDirectory}）");
-
-        // [EN] **The probe holds its own backend connection** instead of borrowing
-        // [EN] App.State.Backend (that one belongs to the main window). Reason: a lesson from
-        // [EN] actual runs — stdout is a **single shared stream**, and one BackendService
-        // [EN] should have exactly one read pump; when the probe and the main window share an
-        // [EN] instance, both wait for ready, the side that reads first takes the line, and
-        // [EN] the other side waits forever (the symptom is "no ready handshake within 120
-        // [EN] seconds"). Separate connections do not interfere with each other.
-        // [ZH] **探针自己持有一个后端连接**，不借用 App.State.Backend（那是主窗口的）。
-        // [ZH] 原因是一条实测教训：stdout 是**单条共享流**，一个 BackendService 只应该有一个
-        // [ZH] 读泵；探针与主窗口共用同一个实例时，两边都在等 ready，先读到的那一方把行取走，
-        // [ZH] 另一方就永远等不到（现象是“120 秒没有 ready 握手”）。各持一个连接则互不干扰。
-        using var backend = new BackendService();
-        var started = await backend.StartAsync(verbose: true);
-        if (!started.Ok)
-        {
-            Console.WriteLine($"  [FAIL] 后端没能起来：{started.Error}");
-            return false;
-        }
-
-        // [EN] Diagnostics: print the line counts of the backend stderr and stdout. Without
-        // [EN] them, "ready never arrived" can only be guessed at (did the process not start?
-        // [EN] was the model not loaded? or was the pump not running?).
-        // [ZH] 诊断用：把后端的 stderr 与 stdout 行数打出来。
-        // [ZH] 没有它时“ready 没来”只能靠猜（是进程没起来？模型没加载？还是泵没跑？）。
-        int stdoutLines = 0;
-        int stderrLines = 0;
-        backend.LineReceived += _ => Interlocked.Increment(ref stdoutLines);
-        backend.StderrReceived += line =>
-        {
-            Interlocked.Increment(ref stderrLines);
-            if (stderrLines <= 8)
-                Console.WriteLine($"  [backend stderr] {line}");
-        };
-        backend.ProcessExited += code =>
-            Console.WriteLine($"  [backend] 进程已退出，退出码 {code}");
-
-        var ready = await backend.WaitForReadyAsync(TimeSpan.FromSeconds(120));
-        if (ready is null)
-        {
-            Console.WriteLine($"  [FAIL] 120 秒内没有 ready 握手（stdout 行数={stdoutLines}，stderr 行数={stderrLines}）");
-            return false;
-        }
-        using (ready)
-        {
-            bool modelReady = ready.RootElement.TryGetProperty("model_ready", out JsonElement mr)
-                              && mr.ValueKind == JsonValueKind.True;
-            Console.WriteLine($"  [INFO] 后端 ready，model_ready={modelReady}");
-            if (!modelReady)
-            {
-                // [EN] Release builds ship no model by design (PROJECT.md hard constraint 4).
-                // [EN] Without a model no Agent events can be produced, so this item is
-                // [EN] **skipped as it is** rather than passed falsely — the same principle as
-                // [EN] "report honestly when it cannot be reproduced" in the record.
-                // [ZH] 发布物不含模型是设计如此（PROJECT.md 硬约束 4）。没有模型就跑不出
-                // [ZH] Agent 事件，这一项**如实跳过**而不是假通过 —— 与记录里
-                // [ZH] “无法复现就如实报告”同一条原则。
-                Console.WriteLine("  [SKIP] 没有可用模型：Agent 事件链路测不到（不是失败，是前提不满足）");
-                return true;
-            }
-        }
-
-        // [EN] Switch to Agent mode: slash commands are parsed by the backend in the chat
-        // [EN] branch (main._handle_chat), so the front end needs no second convention. An
-        // [EN] earlier version sent action="command" and got "unknown action" back.
-        //
-        // [EN] **It must be switched back to chat**: `/mode agent` writes default_mode into
-        // [EN] config.json, which is a **tracked file in the repository** — a probe not
-        // [EN] touching the user's configuration is a basic requirement (observed in an
-        // [EN] actual run: afterwards `git status` listed an extra `M backend/config.json`).
-        // [ZH] 切到 Agent 模式：斜杠指令由后端在 chat 分支里解析（main._handle_chat），
-        // [ZH] 前端不需要第二套约定。早先写成 action="command" 会被回一句“未知动作”。
-        //
-        // [ZH] **必须切回 chat**：`/mode agent` 会把 default_mode 写进 config.json，
-        // [ZH] 那是**仓库里被跟踪的文件** —— 探针不改用户配置是它的基本要求
-        // [ZH] （实测踩到：跑完 `git status` 里多了一条 `M backend/config.json`）。
-        using (var modeReply = await backend.SendAsync(new { action = "chat", message = "/mode agent" },
-                                                      TimeSpan.FromSeconds(60)))
-        {
-            Console.WriteLine($"  [INFO] /mode agent → {(modeReply is null ? "无响应" : modeReply.RootElement.ToString()[..Math.Min(160, modeReply.RootElement.ToString().Length)])}");
-        }
-
-        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-        int stepRowsBefore = main.AgentStepRowCount;
-        string finalAnswer = "";
-        try
-        {
-            finalAnswer = await backend.SendStreamAsync(
-                new { action = "chat_stream", message = "请用工具确认一下当前系统平台的名称，然后一句话回答。" },
-                onDelta: _ => { },
-                onContext: (_, _) => { },
-                idleTimeout: null,
-                cancellationToken: default,
-                onEvent: (type, root) =>
-                {
-                    counts[type] = counts.TryGetValue(type, out int n) ? n + 1 : 1;
-                    // [EN] Go through the **real** UI dispatch path (the same one as onEvent in
-                    // [EN] StreamChatAsync).
-                    // [ZH] 走**真实**的 UI 分发路径（与 StreamChatAsync 里的 onEvent 同一条）。
-                    main.DispatchStreamEvent(type, root);
-                },
-                onDeltaChannel: (_, _, _) => { });
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"  [FAIL] Agent 流式请求抛异常：{ex.GetType().Name}: {ex.Message}");
-            return false;
-        }
-
-        // [EN] Events are posted asynchronously to the UI thread (AddAgentRow and ShowMetrics
-        // [EN] both use Dispatcher.Post), so let the UI thread drain the queue before reading
-        // [EN] the row count — otherwise a "not rendered yet" 0 would be misread as a defect.
-        // [ZH] 事件是异步 Post 到 UI 线程的（AddAgentRow/ShowMetrics 都用了 Dispatcher.Post），
-        // [ZH] 让 UI 线程把队列跑完再读行数 —— 否则会读到“还没渲染”的 0，误判成缺陷。
-        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-        int stepRows = main.AgentStepRowCount;
-
-        Console.WriteLine($"  事件统计   : {string.Join(", ", counts.Keys)}"
-                          + $"（{string.Join(" / ", Counts(counts))}）");
-        Console.WriteLine($"  回答长度   : {finalAnswer.Length} 字符");
-
-        int agentSteps = counts.TryGetValue("agent_step", out int s) ? s : 0;
-        int expectedRows = agentSteps;   // [EN] Each thinking/finalize of an agent_step yields one row.
-                                         // [ZH] 每条 agent_step 的 thinking/finalize 各产出一行。
-        if (agentSteps == 0)
-        {
-            ok = false;
-            Console.WriteLine("  [FAIL] 后端一个 agent_step 都没发出 —— 无法验证渲染路径（先查 Agent 循环本身）");
-        }
-        else if (stepRows <= stepRowsBefore)
-        {
-            ok = false;
-            Console.WriteLine($"  [FAIL] 后端发了 {agentSteps} 条 agent_step，但界面一行都没渲染"
-                              + $"（AgentStepRowCount 仍是 {stepRows}）");
-        }
-        else
-        {
-            Console.WriteLine($"  [PASS] Agent 步骤行已渲染：后端 agent_step {agentSteps} 条 → 界面 {stepRows} 行"
-                              + $"（expected≥{Math.Min(expectedRows, 1)}）");
-        }
-
-        // [EN] Switch default_mode back to chat: a probe must not change the user's persisted
-        // [EN] configuration (see the note above). A failure here does not affect the verdict —
-        // [EN] this is only cleanup; the real verdict was already made and printed above.
-        // [ZH] 把 default_mode 切回 chat：探针不许改用户的持久配置（见上面那段说明）。
-        // [ZH] 失败不影响判定 —— 这只是收尾，真正的判定在上面已经做完并打印了。
-        try
-        {
-            using var back = await backend.SendAsync(new { action = "chat", message = "/mode chat" },
-                                                     TimeSpan.FromSeconds(60));
-            Console.WriteLine("  [INFO] 已把 default_mode 切回 chat（探针不改用户持久配置）");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"  [INFO] 收尾切回 chat 失败（不影响结论）：{ex.Message}");
-        }
-
-        try { backend.Dispose(); } catch (Exception) { }
-        return ok;
-    }
 
     /// <summary>
     /// [EN] End-to-end verification of the model market (v0.2.2: the acceptance for the round
@@ -595,39 +377,6 @@ internal static class Probe
             && generalSnapshot.Contains("openLangDirButton=1"), "重新加载 / 打开目录");
         Check("路径说明含后端目录", generalSnapshot.Contains("pathsHasBackend=1"), "DescribePaths 已补全");
         Check("路径说明含语言包目录", generalSnapshot.Contains("pathsHasLangDir=1"), "语言包目录在列");
-
-        // [EN] ---------- Agent page: editable MCP ----------
-        // [ZH] ---------- 智能体页：MCP 可编辑 ----------
-        if (!settings.SelectTab("settings.tab.agent"))
-        {
-            Console.WriteLine("  [FAIL] 找不到「智能体」页签");
-            return false;
-        }
-        var agent = settings.FindPage<AgentPage>();
-        if (agent is null)
-        {
-            Console.WriteLine("  [FAIL] 设置窗口里没有 AgentPage");
-            return false;
-        }
-        await agent.ProbeReloadMcpAsync();
-        string mcpBefore = agent.McpSnapshot();
-        Console.WriteLine($"  MCP（读后）: {mcpBefore}");
-        Check("MCP 总开关已按后端回填", mcpBefore.Contains("mcpEnabled="), "读到了 enabled");
-        Check("MCP 超时框已按后端回填", mcpBefore.Contains("mcpTimeout=1"), "读到了 timeout_seconds");
-        Check("MCP 三个操作按钮有文案", mcpBefore.Contains("mcpSaveButton=1")
-            && mcpBefore.Contains("mcpConnectButton=1") && mcpBefore.Contains("mcpAddButton=1"),
-            "保存 / 连接并取工具 / 添加服务器");
-        Check("MCP 说明与安全提示都在", mcpBefore.Contains("mcpSecurityText=1"), "安全提示非空");
-        // [EN] Walk through the local "add server" form (it only lands in the local list,
-        // [EN] **save is not clicked**, and the user configuration is untouched).
-        // [ZH] 走一遍“添加服务器”的本地表单（只落本地列表，**不点保存**，不碰用户配置）
-        agent.ProbeOpenAddForm();
-        agent.ProbeSubmitAddForm();
-        string mcpAfter = agent.McpSnapshot();
-        Console.WriteLine($"  MCP（加行）: {mcpAfter}");
-        Check("添加服务器表单能落成一行", mcpAfter.Contains("mcpServerRows=") && mcpAfter != mcpBefore,
-            "行数或状态发生了变化");
-        agent.ProbeDropServer("probe-server");
 
         // [EN] ---------- Ecosystem page: local API, provider routing, consent dialog ----------
         // [ZH] ---------- 生态页：本地 API、多 Provider 路由、知情同意对话框 ----------
@@ -748,42 +497,14 @@ internal static class Probe
         await Dispatcher.UIThread.InvokeAsync(async () => await installed.RefreshAsync());
         string plugins = installed.PluginSnapshot();
         Console.WriteLine($"  已安装页   : {plugins}");
-        Check("从文件夹安装 / 新建本地插件入口在",
-            plugins.Contains("installFolderButton=1") && plugins.Contains("scaffoldButton=1"), plugins);
+        Check("从文件夹安装入口在",
+            plugins.Contains("installFolderButton=1"), plugins);
         Check("插件卡片或空状态二选一可见",
             plugins.Contains("cards=0") || plugins.Contains("emptyVisible=0"), plugins);
         Check("信任确认面板的文案齐备",
             plugins.Contains("trustTitle=1") && plugins.Contains("trustButtons=1111"), plugins);
         installed.ProbeShowTrust();
         Console.WriteLine($"  信任面板后 : {installed.PluginSnapshot()}");
-
-        // [EN] ---------- Developer page: directory buttons, manifest editing, hooks and
-        // [EN] panels (3a) ----------
-        // [ZH] ---------- 开发者页：目录按钮 / 清单编辑 / 钩子与面板（3a）----------
-        if (!settings.SelectTab("settings.tab.developer"))
-        {
-            Console.WriteLine("  [FAIL] 找不到「开发者」页签");
-            return false;
-        }
-        var developer = settings.FindPage<DeveloperPage>();
-        if (developer is null)
-        {
-            Console.WriteLine("  [FAIL] 设置窗口里没有 DeveloperPage");
-            return false;
-        }
-        await Dispatcher.UIThread.InvokeAsync(async () => await developer.RefreshAsync());
-        string dev = developer.DeveloperSnapshot();
-        Console.WriteLine($"  开发者页   : {dev}");
-        Check("三个目录按钮都有文案", dev.Contains("dirButtons=111"), dev);
-        Check("导出日志按钮有文案", dev.Contains("exportLogButton=1"), dev);
-        Check("重载按钮已改为「只重载开发插件」", dev.Contains("reloadIsDevOnly=1"), dev);
-        Check("本地插件清单表格已渲染（含空状态说明）", dev.Contains("manifestNodes=")
-            && (dev.Contains("manifestNodes=0") ? false : true), dev);
-        Check("清单三个按钮有文案", dev.Contains("manifestButtons=111"), dev);
-        Check("钩子清单已渲染", dev.Contains("hooksText=1"), dev);
-        Check("插件面板区块已渲染", dev.Contains("panelNodes=")
-            && (dev.Contains("panelNodes=0") ? false : true), dev);
-        Check("目录清单含 skills_dev", dev.Contains("dirsTextHasDev=1"), dev);
 
         return ok;
     }
@@ -1009,19 +730,15 @@ internal static class Probe
         string mixedNotice = MainWindow.ProbeLogRoutingSample("真实提示\nMerging segment summaries (group 1/3)");
         Check("真实提示与进度混排时不整体判为调试日志",
             mixedNotice.Contains("debug=False", StringComparison.Ordinal), OneLine(mixedNotice, 180));
+        string httpGet = MainWindow.ProbeLogRoutingSample(
+            "2026-11-14 18:43:25,123 INFO HTTP Request: GET https://hf-mirror.com/api/models?limit=1 \"HTTP/1.1 200 OK\"");
+        Check("HTTP Request 日志被强制丢弃（GET）",
+            httpGet.Contains("dropped=True", StringComparison.Ordinal), OneLine(httpGet, 200));
+        string httpPost = MainWindow.ProbeLogRoutingSample(
+            "HTTP Request: POST https://example.com/v1/chat/completions \"HTTP/1.1 200 OK\"");
+        Check("HTTP Request 日志被强制丢弃（POST）",
+            httpPost.Contains("dropped=True", StringComparison.Ordinal), OneLine(httpPost, 200));
 
-
-        // [EN] ---- Update download progress bar -------------------------------------------
-        // [ZH] ---- 更新下载进度条 -------------------------------------------
-        string progress = main.ProbeUpdateProgressUi();
-        Console.WriteLine($"  更新进度   : {progress}");
-        Check("下载进度条可见且为 25%",
-            progress.Contains("visible=True", StringComparison.Ordinal)
-            && Math.Abs(ReadNumber(progress, "value") - 25) < 0.01, OneLine(progress, 200));
-        Check("下载进度文本显示百分比",
-            progress.Contains("%", StringComparison.Ordinal), OneLine(progress, 200));
-        Check("下载完成后进度条隐藏并复位",
-            progress.Contains("hidden=True", StringComparison.Ordinal), OneLine(progress, 200));
 
         return ok;
     }
@@ -1669,7 +1386,7 @@ internal static class Probe
     // [EN] Why it exists (a maintainer requirement): static scans (check_lang /
     // [EN] audit_lang_keys) can only see **literals in the source**; they miss Chinese that is
     // [EN] composed dynamically or only exists at render time — for example
-    // [EN]   whole sentences built as $"{Loc.T("a", "…")}（{x}）",
+    // [EN]   whole sentences built as $"{Loc.T(key, "…")}（{x}）",
     // [EN]   items inserted into a ComboBox at runtime, text supplied by ToolTip templates, and
     // [EN]   AutomationProperties.Name.
     // [EN] So the probe collects the text of every visible control in **real windows** and
@@ -1683,7 +1400,7 @@ internal static class Probe
     //
     // [ZH] 存在理由（维护者要求）：静态扫描（check_lang / audit_lang_keys）只能看到**源码里的字面量**，
     // [ZH] 抓不到“动态拼接”和“渲染期才存在”的中文 —— 例如
-    // [ZH]   $"{Loc.T("a", "…")}（{x}）" 拼出来的整句、
+    // [ZH]   $"{Loc.T(key, "…")}（{x}）" 拼出来的整句、
     // [ZH]   ComboBox 运行时塞进去的 Items、ToolTip 在模板里给的文本、AutomationProperties.Name。
     // [ZH] 所以在**真实窗口**里把所有可见控件的文本抓一遍，用 [\u4e00-\u9fa5] 判定。
     //
@@ -1879,8 +1596,7 @@ internal static class Probe
         string[] tabs =
         {
             "settings.tab.general", "settings.tab.model", "settings.tab.installed",
-            "settings.tab.market", "settings.tab.automation", "settings.tab.agent",
-            "settings.tab.developer",
+            "settings.tab.market", "settings.tab.ecosystem",
         };
         Console.WriteLine($"  [info] 设置窗口有 {settings.Tabs.ItemCount} 个页签，逐个扫描");
         for (int i = 0; i < tabs.Length; i++)

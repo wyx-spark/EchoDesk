@@ -62,8 +62,6 @@ public static class CommandCatalog
     {
         ("/help", false),
         ("/mode", false),
-        ("/agent", false),
-        ("/mcp", false),
         ("/task", false),
         ("/preset", false),
         ("/compact", false),

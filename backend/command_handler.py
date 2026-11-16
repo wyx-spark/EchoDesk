@@ -78,8 +78,6 @@ COMMAND_SPEC: List[Dict[str, Any]] = [
     {"name": "/about", "category": "core"},
     {"name": "/mode", "category": "chat"},
     {"name": "/task", "category": "chat"},
-    {"name": "/agent", "category": "chat"},
-    {"name": "/mcp", "category": "chat"},
     {"name": "/preset", "category": "chat"},
     {"name": "/compact", "category": "chat"},
     {"name": "/search", "category": "chat"},
@@ -235,8 +233,6 @@ class CommandHandler:
             "/help": self._help,
             "/mode": self._mode,
             "/task": self._task,
-            "/agent": self._agent,
-            "/mcp": self._mcp,
             "/preset": self._preset,
             "/compact": self._compact,
             "/file": self._file,
@@ -275,23 +271,6 @@ class CommandHandler:
         # [EN] number of entries removed (used by /clearcache).
         # [ZH] 由 main 注入：清空分段摘要缓存并返回清掉的条目数（/clearcache 用）。
         self.cache_clear_provider: Optional[Callable[[], int]] = None
-        # [EN] Injected by main: reads Agent state (no argument) or adjusts it via
-        # [EN] ``writer(tool_name, allowed)``; when tool_name is ``"__steps__"`` the
-        # [EN] second argument is the new step limit. The Agent registry and its
-        # [EN] configuration live in main, so only a callback is kept here to avoid
-        # [EN] maintaining the tool list in two places.
-        # [ZH] 由 main 注入：读取 Agent 状态（无参）或调整它（``writer(工具名, 是否允许)``；
-        # [ZH] 工具名传 ``"__steps__"`` 时第二参是新的步数上限）。Agent 的注册表与配置
-        # [ZH] 都在 main 手里，这里只留回调，避免在两边各维护一份工具清单。
-        self.agent_configurator: Optional[Callable[..., Dict[str, Any]]] = None
-        # [EN] Injected by main: MCP control callback. No argument = read state;
-        # [EN] ("enable"|"disable", name) = toggle; ("connect",) = launch the process
-        # [EN] and fetch its tool list. A single entry point again avoids maintaining
-        # [EN] two parallel implementations.
-        # [ZH] 由 main 注入：MCP 控制回调。无参 = 读状态；("enable"|"disable", 名称)
-        # [ZH] = 启停；("connect",) = 拉起进程并拉取工具清单。同样只保留一个入口，
-        # [ZH] 避免两边各维护一套实现。
-        self.mcp_control: Optional[Callable[..., Dict[str, Any]]] = None
         # [EN] Injected by main (v0.2.6 Part 3): conversation-end callback. It
         # [EN] schedules long-term memory extraction **before** the history is
         # [EN] discarded, because the transcript exists only up to that moment.
@@ -1063,159 +1042,6 @@ class CommandHandler:
         if self.conv_mgr.custom_prompt:
             reply += "\n" + t("cmd.resp.task_overridden_by_prompt")
         return reply, None
-
-    def _agent(self, args: list) -> Response:
-        """
-        [EN]
-        ``/agent``: inspect and adjust the Agent platform (capability extension 1,
-        task 2).
-
-        * No argument / ``list``: current mode, step limit, and tool list (including
-          permission tier and enabled state);
-        * ``allow <tool>`` / ``deny <tool>``: pre-authorization switches. Sensitive
-          tools (web search, local file reading) are disabled by default and enabled
-          explicitly here; the setting is persisted in config.json. This removes the
-          need to confirm every single invocation: the design specification permits a
-          session-level authorization tier, and it suits the fast loop of a local
-          small model better than per-call confirmation.
-        * ``steps <1-8>``: tool-call step limit.
-        * ``on`` / ``off``: equivalent to ``/mode agent`` and ``/mode chat`` (Agent is
-          an interaction form, so switching mode is the most intuitive control).
-
-        [ZH]
-        ``/agent``：查看与调整 Agent 平台（能力扩展-1 任务二）。
-
-        * 无参数 / ``list``：当前模式、步数上限、工具清单（含权限与启用状态）；
-        * ``allow <工具>`` / ``deny <工具>``：预授权开关。敏感工具（联网搜索、
-          读本机文件）默认关闭，用户在这里显式打开；写进 config.json 持久生效。
-          这样"每一次调用都弹窗确认"就不需要了 —— 设计规范允许"会话级授权"这一档，
-          而它比每次确认更适合本地小模型的快节奏循环。
-        * ``steps <1-8>``：工具调用步数上限。
-        * ``on`` / ``off``：等价于 ``/mode agent`` 与 ``/mode chat``（Agent 是一种
-          交互形态，用模式切换最直观）。
-        """
-        writer = getattr(self, "agent_configurator", None)
-        state = writer() if writer is not None else {}
-        sub = (args[0].strip().lower() if args else "list")
-        rest = args[1:]
-
-        if sub in ("on", "off"):
-            target = "agent" if sub == "on" else "chat"
-            if not self.conv_mgr.set_mode(target):
-                return t("cmd.resp.mode_unknown", name=target), None
-            self.config.default_mode = self.conv_mgr.get_mode()
-            self.config.save()
-            self.llm_engine.clear_cache()
-            return t("cmd.resp.agent_mode", state=sub, mode=self.conv_mgr.get_mode()), None
-
-        if sub in ("allow", "deny") and rest:
-            name = rest[0].strip()
-            if writer is None:
-                return t("cmd.resp.agent_unavailable"), None
-            result = writer(name, sub == "allow")
-            if not result.get("ok"):
-                return t("cmd.resp.agent_unknown_tool", name=name,
-                         tools=", ".join(result.get("tools", []) or [])), None
-            return t("cmd.resp.agent_permission", tool=name,
-                     state=t("cmd.status.search_on") if sub == "allow"
-                     else t("cmd.status.search_off")), None
-
-        if sub in ("steps", "max") and rest:
-            if writer is None:
-                return t("cmd.resp.agent_unavailable"), None
-            try:
-                value = int(rest[0])
-            except (TypeError, ValueError):
-                return t("cmd.resp.agent_bad_steps"), None
-            result = writer("__steps__", value)
-            return t("cmd.resp.agent_steps", steps=result.get("max_steps", "")), None
-
-        if sub not in ("list", "?", "help", ""):
-            return t("cmd.resp.agent_usage"), None
-        if not state:
-            return t("cmd.resp.agent_unavailable"), None
-        lines = [t("cmd.resp.agent_state", mode=state.get("mode", ""),
-                   steps=state.get("max_steps", ""),
-                   enabled=len(state.get("enabled_tools", []) or []) or 0,
-                   total=len(state.get("tools", []) or []) or 0)]
-        for tool in state.get("tools", []) or []:
-            mark = "✅" if tool.get("enabled") else "🔒"
-            lines.append(t("cmd.resp.agent_tool_line", mark=mark, name=tool.get("name", ""),
-                           risk=tool.get("risk", ""), desc=tool.get("description", "")))
-        lines.append(t("cmd.resp.agent_hint"))
-        return "\n".join(lines), None
-
-    def _mcp(self, args: list) -> Response:
-        """
-        [EN]
-        ``/mcp``: inspect and start/stop MCP servers (capability extension 1, task
-        3).
-
-        * No argument / ``list``: start/stop state, connection state, tool count, and
-          error for every server;
-        * ``enable <name>`` / ``disable <name>``: takes effect immediately, no restart
-          required;
-        * ``connect``: actually launches the process and fetches its tool list (a
-          costly action, so it is not performed automatically).
-        Permissions are not handled here: MCP tools are always treated as sensitive,
-        and authorization goes through ``/agent allow``.
-
-        [ZH]
-        ``/mcp``：查看与启停 MCP Server（能力扩展-1 任务三）。
-
-        * 无参数 / ``list``：每个 server 的启停状态、连接状态、工具数与错误；
-        * ``enable <名称>`` / ``disable <名称>``：立即生效（无需重启）；
-        * ``connect``：真的拉起进程并拉取工具清单（这是有代价的动作，所以不自动做）。
-        权限不在这里管：MCP 工具一律按敏感工具处理，授权走 ``/agent allow``。
-        """
-        control = getattr(self, "mcp_control", None)
-        if control is None:
-            return t("cmd.resp.mcp_unavailable"), None
-        state = control() or {}
-        sub = (args[0].strip().lower() if args else "list")
-        rest = args[1:]
-
-        if sub in ("enable", "disable") and rest:
-            name = rest[0].strip()
-            result = control("enable" if sub == "enable" else "disable", name)
-            if not result.get("ok"):
-                return t("cmd.resp.mcp_unknown_server", name=name), None
-            return t("cmd.resp.mcp_toggled", name=name,
-                     state=t("cmd.status.search_on") if sub == "enable"
-                     else t("cmd.status.search_off")), None
-
-        if sub == "connect":
-            result = control("connect") or {}
-            state = result.get("state") or state
-            if result.get("registered"):
-                return t("cmd.resp.mcp_connected", count=result.get("registered")), None
-            return t("cmd.resp.mcp_connect_failed",
-                     error=state.get("error") or t("cmd.resp.mcp_no_tools")), None
-
-        if sub not in ("list", "?", "help", ""):
-            return t("cmd.resp.mcp_usage"), None
-
-        if not state.get("enabled"):
-            return t("cmd.resp.mcp_disabled"), None
-        servers = state.get("servers") or []
-        if not servers:
-            return t("cmd.resp.mcp_no_servers"), None
-        lines = [t("cmd.resp.mcp_state", count=len(servers),
-                   tools=len(state.get("tools") or []))]
-        for server in servers:
-            mark = "✅" if server.get("connected") else ("⏸" if not server.get("enabled") else "⚠️")
-            detail = t("cmd.resp.mcp_server_line",
-                       mark=mark, name=server.get("name", ""),
-                       state=t("cmd.status.search_on") if server.get("enabled")
-                       else t("cmd.status.search_off"),
-                       tools=server.get("tool_count", 0))
-            lines.append(detail)
-            if server.get("error"):
-                lines.append("    ⚠️ " + str(server.get("error")))
-            for tool in (server.get("tools") or [])[:8]:
-                lines.append("    - " + str(tool))
-        lines.append(t("cmd.resp.mcp_hint"))
-        return "\n".join(lines), None
 
     def _preset(self, args: list) -> Response:
         """

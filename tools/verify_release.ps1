@@ -453,7 +453,6 @@ try {
     # [ZH] 自动化结果目录结构的测试已随自动化栈一同删除；Reader 版不产出逐任务结果目录。
     Invoke-Check "技能运行期加载器" { Invoke-Python "技能" "tools\test_skills_runtime.py"; "通过" }
     Invoke-Check "多语言机制" { Invoke-Python "多语言" "tools\test_i18n.py"; "通过" }
-    Invoke-Check "开发者模式（修复一）" { Invoke-Python "开发者模式" "tools\test_dev_mode.py"; "通过" }
     Invoke-Check "模型能力辅助（修复四）" { Invoke-Python "模型能力" "tools\test_capability.py"; "通过" }
     # [EN] v0.2.4: synthetic 8 GiB / 12 GiB profiles assert the GPU layer count,
     # [EN] the VRAM safety watermark and the silent CPU degradation path.
@@ -533,18 +532,11 @@ try {
     # 真模型的对比要几百 MB GGUF 与数分钟，因此不在门禁里跑（见该文件头部说明）。
     Invoke-Check "提示词重构对比（无模型）" { Invoke-Python "提示词对比" "tools\test_prompt_compare.py"; "通过" }
 
-    # v0.2.1 能力扩展-1：Agent 平台（工具接口/工具集/调用循环/最大步数/权限分级/
-    # 可见性/可中断）+ MCP 客户端（真拉起 examples\mcp\echo_server.py 走 stdio JSON-RPC）
-    # + 本地检索（BM25/引用溯源/多文档/增量索引）+ 模型管理写路径（采样参数、自定义档位）。
-    # 四者都不联网、不加载模型；MCP 会起一个本机 python 子进程（标准库脚本）。
-    Invoke-Check "Agent 平台（能力扩展-1 任务二）" { Invoke-Python "Agent" "tools\test_agent.py"; "通过" }
-
-    # [EN] v0.2.6 task 2.4: guarded shell/git tools require a per-invocation
-    # [EN] confirm_tool approval; denial executes nothing.
-    # [ZH] v0.2.6 任务 2.4：高危 shell/git 工具需要逐次 confirm_tool 批准；
-    # [ZH] 拒绝时不执行任何命令。
-    Invoke-Check "Agent 高危工具授权（v0.2.6）" { Invoke-Python "高危工具" "tools\test_agent_guard.py"; "通过" }
-    Invoke-Check "MCP 客户端（任务三）" { Invoke-Python "MCP" "tools\test_mcp.py"; "通过" }
+    # [EN] The Agent platform and the MCP client were removed from the Reader edition;
+    # [EN] ``tools\test_reader_profile.py`` asserts that both are gone. The open-platform
+    # [EN] check below still covers provider routing and the local API.
+    # [ZH] Agent 平台与 MCP 客户端已从 Reader 版删除；``tools\test_reader_profile.py``
+    # [ZH] 断言两者确实不存在。下面的开放平台检查仍覆盖 Provider 路由与本地 API。
     # [EN] v0.2.6 Part 4: provider routing, the consent red line and the local API.
     # [EN] The test binds 127.0.0.1 only and needs no network or model.
     # [ZH] v0.2.6 任务 4：多 Provider 路由、知情同意红线与本地 API。

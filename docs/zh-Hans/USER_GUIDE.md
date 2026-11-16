@@ -13,7 +13,8 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 > `EchoDesk 启动.cmd`（Windows）、`EchoDesk.command`（macOS）或 `echodesk.desktop`（Linux）。
 >
 > **本构建不包含**下列能力，描述它们的段落不再适用：浏览器自动化（§4）、本地视觉 / 语音 / 媒体、SQLite FTS5 知识库、长期记忆、BM25 检索、
-> 抽取式摘要器，以及逐段摘要与它那种"字符区间原文指针"（整个 §9）。取而代之的是：本构建按文档
+> 抽取式摘要器，以及逐段摘要与它那种"字符区间原文指针"（整个 §9）、**Agent 智能体平台与 MCP 客户端（§6）**、
+> **开发者模式与开发者页**。取而代之的是：本构建按文档
 > 扩张上下文窗口、把正文一次送入模型 —— 见 README 的"动态上下文"一节。
 
 ## 一、安装与启动

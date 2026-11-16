@@ -168,6 +168,24 @@ public sealed class BackendService : IDisposable
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>
+    /// [EN] Reader edition: HTTP request log lines (``HTTP Request: GET/POST ...``) are
+    ///      suppressed at the parsing layer. They are pure transport noise, never
+    ///      business content, and must never reach a conversation bubble.
+    /// [ZH] Reader 版：HTTP 请求日志行（``HTTP Request: GET/POST ...``）在解析层直接丢弃。
+    ///      它们是纯传输噪声，没有任何业务含义，绝不能进入对话气泡。
+    /// </summary>
+    private static readonly Regex HttpRequestLogLine = new(
+        @"\bHTTP\s+Request\s*:\s*(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// [EN] True when a line is an HTTP request log line that must be dropped.
+    /// [ZH] 该行是必须丢弃的 HTTP 请求日志行时返回真。
+    /// </summary>
+    public static bool IsHttpRequestLogText(string text)
+        => !string.IsNullOrEmpty(text) && HttpRequestLogLine.IsMatch(text);
+
+    /// <summary>
     /// [EN] Returns true only when every non-empty line is high-frequency debug progress,
     ///      so a mixed message is never degraded to a status line.
     /// [ZH] 仅当每个非空行都是高频调试进度时返回真，混排消息绝不会被降级成状态行。
@@ -968,6 +986,11 @@ public sealed class BackendService : IDisposable
                 JsonElement root = doc.RootElement;
                 string type = root.TryGetProperty("type", out JsonElement t) ? t.GetString() ?? "" : "";
                 string content = root.TryGetProperty("content", out JsonElement c) ? c.GetString() ?? "" : "";
+                // [EN] Reader edition: transport request logs are dropped before any dispatch,
+                // [EN] so neither the status bar nor a conversation bubble can receive them.
+                // [ZH] Reader 版：传输层请求日志在任何分发之前丢弃，状态栏与对话气泡都不会收到。
+                if (IsHttpRequestLogText(content))
+                    continue;
                 ApplyModelState(root);
                 switch (type)
                 {

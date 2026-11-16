@@ -224,12 +224,35 @@ def scan(root, patterns, exts):
     return used
 
 
+def is_reader_profile() -> bool:
+    """[EN] True when the checked tree is the Reader profile.
+
+    The Reader edition ships only the Avalonia front end; the WPF tree is kept
+    as LTS history and its references must not be demanded of the shipped packs.
+
+    [ZH] 被检查的代码树是否为 Reader 版。Reader 只交付 Avalonia 前端；WPF 树作为
+    LTS 历史保留，不能用它的引用去要求交付语言包。
+    """
+    path = os.path.join(ROOT, "backend", "version.py")
+    try:
+        with io.open(path, encoding="utf-8") as handle:
+            source = handle.read()
+    except OSError:
+        return False
+    return "APP_VERSION" in source and "-reader" in source
+
+
 extra_problems = 0
 summary = {}
-for label, root, patterns, exts, lang_dir in (
-    ("WPF（frontend/**）", WPF_DIR, WPF_PATTERNS, (".cs", ".xaml"), LANG_DIR),
+audit_targets = [
     ("后端（backend/*.py）", BACKEND_DIR, BACKEND_PATTERNS, (".py",), BACKEND_LANG_DIR),
-):
+]
+if not is_reader_profile():
+    audit_targets.insert(
+        0, ("WPF（frontend/**）", WPF_DIR, WPF_PATTERNS, (".cs", ".xaml"), LANG_DIR))
+else:
+    print("Reader 版：WPF（frontend/**）不参与反向键审计（仅交付 Avalonia 前端）。")
+for label, root, patterns, exts, lang_dir in audit_targets:
     pack = build_lang(lang_dir)
     if not pack:
         print("\n反向审计（%s）无法进行：找不到语言包目录 %s" % (label, lang_dir))

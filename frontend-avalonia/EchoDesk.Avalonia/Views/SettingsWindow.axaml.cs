@@ -101,25 +101,18 @@ public partial class SettingsWindow : Window, ISettingsHost
         InitializeComponent();
 
         RegisterPage(new GeneralPage());
-        // [EN] The tab order must match the TabItem order in SettingsWindow.xaml on the WPF
-        // [EN] side (General → Model → Agent → Automation → Skill market → Installed →
-        // [EN] Developer): when the order differs, the same UI looks like two different
-        // [EN] products on the two sides.
-        // [ZH] 页签顺序必须与 WPF SettingsWindow.xaml 的 TabItem 顺序一致
-        // [ZH] （常规 → 模型 → 智能体 → 自动化 → 技能市场 → 已安装 → 开发者）：
-        // [ZH] 顺序不同的时候，同一份界面在两边看起来就像两套产品。
+        // [EN] Page order: General → Model → Skill market → Installed → Ecosystem.
+        // [EN] The Agent, Automation and Developer tabs were physically removed from the
+        // [EN] Reader edition together with their backends.
+        // [ZH] 页签顺序：常规 → 模型 → 技能市场 → 已安装 → 生态。
+        // [ZH] 智能体、自动化与开发者页签已随其后端在 Reader 版中物理删除。
         RegisterPage(new ModelPage());
-        RegisterPage(new AgentPage());
         RegisterPage(new MarketPage());
         RegisterPage(new InstalledPage());
-        RegisterPage(new DeveloperPage());
         // [EN] v0.2.6 Part 4: the Ecosystem page (local API + external providers) is
-        // [EN] Avalonia-only. It sits after the schedule shared with WPF because WPF has
-        // [EN] been in LTS since v0.2.3 and new features are implemented here only; the
-        // [EN] first seven tabs keep the WPF order unchanged.
-        // [ZH] v0.2.6 任务 4：生态页（本地 API + 外部提供方）只在 Avalonia 实现。
-        // [ZH] 它排在 WPF 共有的次序之后：WPF 自 v0.2.3 起处于 LTS，新功能只在此实现；
-        // [ZH] 前七个页签的次序保持不变。
+        // [EN] Avalonia-only. It follows the shared tabs.
+        // [ZH] v0.2.6 任务 4：生态页（本地 API + 外部提供方）只在 Avalonia 实现，
+        // [ZH] 排在共有页签之后。
         RegisterPage(new EcosystemPage());
         foreach ((string key, string fallback) in NotMigratedTabs)
             AddNotMigratedTab(key, fallback);

@@ -53,13 +53,12 @@ internal static class SelfTest
         Console.WriteLine($"  架构 / RID   : {platform.Architecture} / {platform.RuntimeIdentifier}");
         Console.WriteLine($"  .NET         : {Environment.Version}");
         Console.WriteLine($"  WPS COM 加密文档 : {(platform.SupportsWpsCom ? "可用" : "不可用（平台限制）")}");
-        Console.WriteLine($"  企业内网自动化   : {(platform.SupportsAutomation ? "可用" : "不可用（平台限制）")}");
         Console.WriteLine();
 
         Check("平台探测给出结论（不是「未知」）", platform.Kind != PlatformKind.Unknown, platform.Kind.ToString());
         Check("能力标记与平台一致",
-            platform.SupportsWpsCom == platform.IsWindows && platform.SupportsAutomation == platform.IsWindows,
-            $"wps={platform.SupportsWpsCom} automation={platform.SupportsAutomation}");
+            platform.SupportsWpsCom == platform.IsWindows,
+            $"wps={platform.SupportsWpsCom}");
         Check("RID 不是空的", !string.IsNullOrWhiteSpace(platform.RuntimeIdentifier), platform.RuntimeIdentifier);
 
         // [EN] Backend startup (it starts without a model too: the backend enters a "ready
@@ -119,12 +118,10 @@ internal static class SelfTest
                         Check("平台报告带能力清单", hasCaps);
                         int degraded = plat.TryGetProperty("degraded", out var deg) && deg.ValueKind == JsonValueKind.Array
                             ? deg.GetArrayLength() : -1;
-                        // [EN] Windows must have no degraded items; non-Windows must list at
-                        // [EN] least two (WPS COM + automation).
-                        // [ZH] Windows 上不应有降级项；非 Windows 上必须至少列出两项
-                        // [ZH] （WPS COM + 自动化）。
+                        // [EN] Windows must have no degraded items; non-Windows must list WPS COM.
+                        // [ZH] Windows 上不应有降级项；非 Windows 上必须列出 WPS COM。
                         Check(platform.IsWindows ? "Windows 上降级项为空" : "非 Windows 上列出了降级项",
-                            platform.IsWindows ? degraded == 0 : degraded >= 2,
+                            platform.IsWindows ? degraded == 0 : degraded >= 1,
                             $"degraded={degraded}");
                     }
                 }

@@ -6,10 +6,9 @@
 //
 // [EN] Migration strategy: **the event-handling logic is carried over from the WPF version**
 // [EN] (send, dual streaming channels, stop, file upload, status refresh, command panel,
-// [EN] snippets, notification bar, status area, Agent step rows); only the UI APIs are
-// [EN] replaced.
+// [EN] snippets, notification bar, status area); only the UI APIs are replaced.
 // [ZH] 迁移策略：**事件处理逻辑照搬 WPF 版**（发送、流式双通道、停止、文件上传、状态刷新、
-// [ZH] 指令面板、常用语、通知条、状态区、Agent 步骤行），只替换界面 API。
+// [ZH] 指令面板、常用语、通知条、状态区），只替换界面 API。
 //
 // [EN] **Behaviours** aligned with the WPF version (identical criteria and text sources, not
 // [EN] merely a similar look):
@@ -27,10 +26,9 @@
 // [EN] * The notification bar hides itself after 6 seconds and suppresses the action hint while
 // [EN] it is visible.
 // [ZH]   · 通知条 6 秒后自动隐藏，显示时压掉操作提示；
-// [EN] * Each agent_step / tool_call / tool_result event of the Agent renders as **its own
-// [EN] row** and scales with the font size.
-// [ZH]   · Agent 的 agent_step / tool_call / tool_result 各渲染成**独立一行**，
-// [ZH]     且随字号一起缩放；
+// [EN] * Notification bar behaviour and destructive-command confirmation follow the WPF
+// [EN]   version.
+// [ZH]   · 通知条行为与危险指令二次确认与 WPF 版一致。
 // [EN] * Destructive commands require a second confirmation. Avalonia has no MessageBox, so the
 // [EN] check becomes "press Enter again in the same input box", matching the "click once more
 // [EN] to confirm" pattern used by the settings pages.
@@ -107,6 +105,15 @@ public partial class MainWindow : Window
         + @"|(?:segment|chunk)\s+\d+\s*[/／]\s*\d+"
         + @"|第\s*\d+\s*[/／]\s*\d+\s*段"
         + @"|\[\s*\d+\s*[/／]\s*\d+\s*\]\s*.*(?:done|complete|完成))",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// [EN] Reader edition: HTTP request log lines are dropped unconditionally. They are
+    ///      transport noise and must never populate the transcript or the status strip.
+    /// [ZH] Reader 版：HTTP 请求日志行无条件丢弃。它们是传输噪声，绝不能进入对话区或状态区。
+    /// </summary>
+    private static readonly Regex HttpRequestLogLine = new(
+        @"\bHTTP\s+Request\s*:\s*(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>
@@ -188,6 +195,8 @@ public partial class MainWindow : Window
         foreach (string raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
         {
             if (string.IsNullOrWhiteSpace(raw))
+                continue;
+            if (HttpRequestLogLine.IsMatch(raw))
                 continue;
             if (DebugLogLine.IsMatch(raw))
             {
@@ -393,14 +402,6 @@ public partial class MainWindow : Window
     // [EN] Status area.
     // [ZH] 状态区。
     private List<string> _capabilityWarnings = new();
-    private string _updateUrl = "";
-    private bool _updateAvailable;
-    private string _updateTag = "";
-    private string _updateAsset = "";
-    private string _updateNotes = "";
-    private string _downloadedUpdatePath = "";
-    private bool _updateDeclined;
-    private bool _updatePromptVisible;
     /// <summary>
     /// [EN] True under <c>--probe</c>. Unattended probes must never block on a modal
     ///      update prompt, so the startup check is skipped in that mode.
@@ -408,11 +409,6 @@ public partial class MainWindow : Window
     /// [ZH] 因此该模式下跳过启动检查。
     /// </summary>
     private readonly bool _probeMode;
-
-    // [EN] Agent step area (one of the functional panels migrated in this round).
-    // [ZH] Agent 步骤区（本轮迁移的功能面板之一）。
-    private Border? _agentRegion;
-    private StackPanel? _agentRows;
 
     // [EN] Runtime metrics: reported by the backend (done.stats / progress.stats); the front
     // [EN] end does not estimate them.
@@ -428,16 +424,6 @@ public partial class MainWindow : Window
     // [ZH] 它原先只是 StreamChatAsync 里的一个局部变量，改成字段是为了让事件分发
     // [ZH] （DispatchStreamEvent）能独立成一个可被探针直接调用的方法 —— 见那里的说明。
     private string _liveMetrics = "";
-
-    /// <summary>
-    /// [EN] Current number of rows in the Agent step area (**used by probes**: unattended runs
-    /// [EN] cannot "look" at the interface, so a readable number is the only way to assert that
-    /// [EN] the step rows really rendered). Returns 0 when there is no step area.
-    /// [ZH] Agent 步骤区当前的行数（**探针用**：无人值守时无法“看”界面，
-    /// [ZH] 只能靠可读的数字断言“步骤行确实渲染了”）。没有步骤区时返回 0。
-    /// </summary>
-    public int AgentStepRowCount
-        => _agentRegion is null ? 0 : EnumerateAgentRows(_agentRegion).Count();
 
     /// <summary>
     /// [EN] Probe and screenshot mode: when true, Opened does not start the backend.
@@ -1144,10 +1130,6 @@ public partial class MainWindow : Window
         // [EN] style container that applies one font size to the whole document).
         // [ZH] 消息区字号：逐条重建（Avalonia 没有 FlowDocument 那种"整篇一个字号"的容器）
         RenderTranscript();
-        // [EN] The Agent step area and the thinking area follow as well, so that Ctrl+wheel
-        // [EN] does not leave them behind.
-        // [ZH] Agent 步骤区与思考区同样跟随（Ctrl+滚轮调字号时才不会落下它们）
-        ScaleAgentTrace();
     }
 
     /// <summary>
@@ -1241,6 +1223,11 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(line))
             return;
         string raw = line.Trim();
+        // [EN] Reader edition: HTTP request logs are dropped before they can reach either
+        // [EN] the status strip or the conversation.
+        // [ZH] Reader 版：HTTP 请求日志在进入状态区或对话区之前就丢弃。
+        if (HttpRequestLogLine.IsMatch(raw))
+            return;
         string text = StripLogDecoration(raw);
         if (text.Length == 0)
             return;
@@ -1417,7 +1404,6 @@ public partial class MainWindow : Window
         await LoadCommandsAsync();
         await RefreshStatusAsync();
         await RefreshContextAsync();
-        await CheckUpdateAsync();
     }
 
     private void RestoreHistory()
@@ -1665,452 +1651,6 @@ public partial class MainWindow : Window
             ApplyContextFields(doc.RootElement);
     }
 
-    /// <summary>
-    /// [EN]
-    /// Silent startup check. A network failure or a disabled check never interrupts the
-    /// interface. When a newer release is found the user is asked **before** anything is
-    /// downloaded; answering "no" is final for this session and no request is sent.
-    /// [ZH]
-    /// [ZH] 启动时静默检查。网络失败或检查被关闭都不会打断界面。发现新版本时，会在下载**之前**
-    /// [ZH] 询问用户；选择「否」即在本会话内确定为不下载，且不会发出任何下载请求。
-    /// </summary>
-    private async Task CheckUpdateAsync()
-    {
-        if (_probeMode || _updateDeclined || _downloadedUpdatePath.Length > 0)
-            return;
-        try
-        {
-            JsonDocument? doc = await _state.Backend.SendAsync(new { action = "update_check" },
-                idleTimeout: TimeSpan.FromSeconds(60));
-            if (doc is null)
-                return;
-            using (doc)
-            {
-                if (!doc.RootElement.TryGetProperty("update", out JsonElement update))
-                    return;
-                string status = update.TryGetProperty("status", out JsonElement st) ? st.GetString() ?? "" : "";
-                // [EN] An explicitly ignored version is not prompted again, but the chip stays
-                // [EN] available so the user can still open the release page.
-                // [ZH] 明确忽略的版本不再提示，但保留状态区入口，用户仍可打开发布页面。
-                if (string.Equals(status, "ignored", StringComparison.Ordinal))
-                {
-                    _updateTag = update.TryGetProperty("latest", out JsonElement il)
-                        ? il.GetString() ?? "" : "";
-                    _updateUrl = update.TryGetProperty("url", out JsonElement iu)
-                        ? iu.GetString() ?? "" : "";
-                    StripUpdateText.Text = Loc.T("main.update.ignoredChip", "🙈 已忽略 {0}", _updateTag);
-                    ToolTip.SetTip(StripUpdateButton, Loc.T("main.update.ignoredTip",
-                        "该版本已被你忽略；点击可打开发布页面") + "\n" + _updateUrl);
-                    StripUpdateButton.IsVisible = true;
-                    return;
-                }
-                if (!string.Equals(status, "available", StringComparison.Ordinal))
-                    return;
-                _updateUrl = update.TryGetProperty("url", out JsonElement url) ? url.GetString() ?? "" : "";
-                _updateTag = update.TryGetProperty("latest", out JsonElement l) ? l.GetString() ?? "" : "";
-                _updateNotes = update.TryGetProperty("notes", out JsonElement notesEl)
-                    ? notesEl.GetString() ?? "" : "";
-                if (update.TryGetProperty("asset", out JsonElement assetEl)
-                    && assetEl.ValueKind == JsonValueKind.Object)
-                {
-                    _updateAsset = assetEl.TryGetProperty("name", out JsonElement nameEl)
-                        ? nameEl.GetString() ?? "" : "";
-                }
-                string latest = _updateTag;
-                if (_updateUrl.Length == 0)
-                    return;
-                _updateAvailable = true;
-                StripUpdateText.Text = Loc.T("main.update.notice", "🎉 发现新版本 {0}（当前 {1}）",
-                    latest, _state.Backend.Version ?? "");
-                ToolTip.SetTip(StripUpdateButton, Loc.T("main.update.tip", "点击打开下载页面") + "\n" + _updateUrl);
-                StripUpdateButton.IsVisible = true;
-            }
-            await PromptDownloadUpdateAsync();
-        }
-        catch (Exception)
-        {
-            // [EN] Best effort: a failed check must never affect normal use.
-            // [ZH] 尽力而为：检查失败绝不能影响正常使用。
-        }
-    }
-
-    /// <summary>
-    /// [EN] Ask whether to download the detected update. The download request is only sent
-    ///      after an explicit "yes"; "no" leaves the chip in place so the user can still
-    ///      open the release page later.
-    /// [ZH] 询问是否下载检测到的更新。只有在明确选择「是」之后才发送下载请求；选择「否」时
-    /// [ZH] 保留状态区入口，用户之后仍可打开发布页面。
-    /// </summary>
-    private async Task PromptDownloadUpdateAsync()
-    {
-        if (_updatePromptVisible || _updateAsset.Length == 0 || _updateTag.Length == 0)
-            return;
-        _updatePromptVisible = true;
-        try
-        {
-            string notes = _updateNotes.Trim();
-            if (notes.Length > 900)
-                notes = notes[..900] + "…";
-            string message = Loc.T("main.update.downloadAsk",
-                "发现新版本 {0}（当前 {1}）。\n\n是否现在下载更新？\n下载完成后会提示重启以应用。",
-                _updateTag, _state.Backend.Version ?? "") + (notes.Length > 0 ? "\n\n" + notes : "");
-            (bool download, bool ignore) = await ShowUpdateDownloadDialogAsync(
-                Loc.T("main.update.downloadTitle", "发现新版本"),
-                message,
-                Loc.T("main.update.downloadYes", "下载更新"),
-                Loc.T("main.update.downloadNo", "暂不下载"),
-                Loc.T("main.update.ignoreVersion", "忽略此版本（下次启动不再提示）"));
-            if (!download)
-            {
-                // [EN] A refusal is honoured unconditionally: no download request is sent.
-                // [ZH] 拒绝会被无条件尊重：不会发出任何下载请求。
-                _updateDeclined = true;
-                if (ignore)
-                    await IgnoreUpdateVersionAsync();
-                return;
-            }
-            await DownloadUpdateAsync();
-        }
-        finally
-        {
-            _updatePromptVisible = false;
-        }
-    }
-
-    /// <summary>
-    /// [EN] Download the selected release asset into the isolated updates directory.
-    ///      A failure is reported and leaves the current installation untouched.
-    /// [ZH] 把选中的发布附件下载到隔离的 updates 目录。失败会被报告，当前安装保持不变。
-    /// </summary>
-    private async Task DownloadUpdateAsync()
-    {
-        if (_updateAsset.Length == 0 || _updateTag.Length == 0)
-        {
-            OpenUpdatePage();
-            return;
-        }
-        ShowUpdateProgress(0, 0);
-        StripUpdateButton.IsVisible = true;
-        string downloadedPath = "";
-        try
-        {
-            // [EN] Streaming request: the backend emits `update_progress` lines with
-            //      downloaded/total bytes, then a final `done` line carrying the path.
-            // [ZH] 流式请求：后端先输出带已下载/总字节的 `update_progress` 行，最后输出带
-            // [ZH] 路径的 `done` 行。
-            await _state.Backend.SendStreamAsync(
-                new { action = "update_download", tag = _updateTag, asset = _updateAsset },
-                idleTimeout: TimeSpan.FromMinutes(45),
-                onEvent: (type, root) =>
-                {
-                    if (type == "update_progress"
-                        && root.TryGetProperty("update_progress", out JsonElement progressEl)
-                        && progressEl.ValueKind == JsonValueKind.Object)
-                    {
-                        long downloaded = GetLongField(progressEl, "downloaded");
-                        long total = GetLongField(progressEl, "total");
-                        Dispatcher.UIThread.Post(() => ShowUpdateProgress(downloaded, total));
-                    }
-                    else if (type == "done"
-                             && root.TryGetProperty("update_download", out JsonElement doneEl)
-                             && doneEl.ValueKind == JsonValueKind.Object)
-                    {
-                        downloadedPath = GetStringField(doneEl, "path");
-                    }
-                });
-            if (downloadedPath.Length == 0)
-            {
-                HideUpdateProgress();
-                StripUpdateText.Text = Loc.T("main.update.downloadFailedShort", "⚠️ 下载失败，点击重试");
-                return;
-            }
-            _downloadedUpdatePath = downloadedPath;
-            _updateAvailable = false;
-            HideUpdateProgress();
-            StripUpdateText.Text = Loc.T("main.update.downloadedChip", "✅ 更新已下载，重启以应用");
-            ToolTip.SetTip(StripUpdateButton, downloadedPath);
-            StripUpdateButton.IsVisible = true;
-            bool restart = await ShowUpdateDialogAsync(
-                Loc.T("main.update.downloadedTitle", "更新已下载"),
-                Loc.T("main.update.downloadedAsk",
-                    "更新已下载到：\n{0}\n\n现在重启以应用更新吗？\n用户数据（config.json、session.json、模型文件）会在更新前备份，安装程序不会覆盖它们。",
-                    _downloadedUpdatePath),
-                Loc.T("main.update.restartNow", "立即重启并安装"),
-                Loc.T("main.update.restartLater", "稍后"));
-            if (restart)
-                await ApplyUpdateAsync();
-        }
-        catch (Exception ex)
-        {
-            HideUpdateProgress();
-            StripUpdateText.Text = Loc.T("main.update.downloadFailedShort", "⚠️ 下载失败，点击重试");
-            AddMessage("system", Loc.T("main.update.downloadFailed", "下载更新失败：{0}", ex.Message));
-        }
-    }
-
-    /// <summary>
-    /// [EN] Hand the downloaded installer to the backend, which backs up user data first
-    ///      and then starts the installer detached. The UI exits so the installer can
-    ///      replace program files without a file lock.
-    /// [ZH] 把已下载的安装程序交给后端：后端先备份用户数据，再分离启动安装程序。界面退出，
-    /// [ZH] 使安装程序可以在没有文件锁的情况下替换程序文件。
-    /// </summary>
-    private async Task ApplyUpdateAsync()
-    {
-        try
-        {
-            JsonDocument? doc = await _state.Backend.SendAsync(
-                new { action = "update_apply", path = _downloadedUpdatePath, tag = _updateTag },
-                idleTimeout: TimeSpan.FromMinutes(2));
-            if (doc is null)
-            {
-                AddMessage("system", Loc.T("main.update.applyFailed", "应用更新失败：后端无响应"));
-                return;
-            }
-            using (doc)
-            {
-                if (!doc.RootElement.TryGetProperty("update_apply", out JsonElement apply)
-                    || apply.ValueKind != JsonValueKind.Object
-                    || !(apply.TryGetProperty("ok", out JsonElement okEl) && okEl.ValueKind == JsonValueKind.True))
-                {
-                    string error = apply.ValueKind == JsonValueKind.Object
-                        ? GetStringField(apply, "error") : "";
-                    await ShowUpdateDialogAsync(
-                        Loc.T("main.update.applyFailedTitle", "应用更新失败"),
-                        Loc.T("main.update.applyFailed", "应用更新失败：{0}", error),
-                        Loc.T("settings.inference.dialogOk", "确定"), "");
-                    return;
-                }
-            }
-            // [EN] The backend response already contains the backup directory; the app is about
-            // [EN] to exit, so the toast is the visible acknowledgement.
-            // [ZH] 后端响应已包含备份目录；应用即将退出，提示条就是可见的确认。
-            AddMessage("system", Loc.T("main.update.applying", "正在安装更新，应用即将退出…"));
-            await Task.Delay(900);
-            if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-                desktop.Shutdown();
-        }
-        catch (Exception ex)
-        {
-            AddMessage("system", Loc.T("main.update.applyFailed", "应用更新失败：{0}", ex.Message));
-        }
-    }
-
-    /// <summary>
-    /// [EN] Minimal modal confirm/notice window (Avalonia has no MessageBox). Returns
-    ///      <c>true</c> only when the primary action was chosen.
-    /// [ZH] 极简模态确认/通知窗口（Avalonia 没有 MessageBox）。仅当选择主动作时返回 <c>true</c>。
-    /// </summary>
-    private async Task<bool> ShowUpdateDialogAsync(string title, string message, string primary, string secondary)
-    {
-        var dialog = new Window
-        {
-            Title = title,
-            Width = 540,
-            CanResize = false,
-            SizeToContent = SizeToContent.Height,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        };
-        bool result = false;
-        var primaryButton = new Button
-        {
-            Content = primary,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Padding = new Thickness(16, 5),
-        };
-        primaryButton.Classes.Add("primary");
-        primaryButton.Click += (_, _) => { result = true; dialog.Close(); };
-        var secondaryButton = new Button
-        {
-            Content = secondary,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Padding = new Thickness(16, 5),
-            IsVisible = secondary.Length > 0,
-        };
-        secondaryButton.Classes.Add("ghost");
-        secondaryButton.Click += (_, _) => { result = false; dialog.Close(); };
-        dialog.Content = new StackPanel
-        {
-            Margin = new Thickness(20, 18),
-            Spacing = 12,
-            Children =
-            {
-                new TextBlock { Text = title, FontSize = 15, FontWeight = FontWeight.SemiBold },
-                new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, FontSize = 12 },
-                new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    Spacing = 8,
-                    Children = { secondaryButton, primaryButton },
-                },
-            },
-        };
-        await dialog.ShowDialog(this);
-        return result;
-    }
-
-    /// <summary>
-    /// [EN] Download prompt with an "ignore this version" checkbox. The returned tuple
-    ///      distinguishes "download now" from "do not download", and carries the ignore
-    ///      choice so the caller can persist it only when the user declined.
-    /// [ZH] 带「忽略此版本」复选框的下载询问框。返回的元组区分「现在下载」与「不下载」，
-    /// [ZH] 并携带忽略选择，使调用方只在用户拒绝时持久化该选择。
-    /// </summary>
-    private async Task<(bool download, bool ignore)> ShowUpdateDownloadDialogAsync(
-        string title, string message, string primary, string secondary, string ignoreLabel)
-    {
-        var dialog = new Window
-        {
-            Title = title,
-            Width = 560,
-            CanResize = false,
-            SizeToContent = SizeToContent.Height,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        };
-        bool download = false;
-        var ignoreBox = new CheckBox
-        {
-            Content = ignoreLabel,
-            IsChecked = false,
-            FontSize = 12,
-        };
-        AutomationProperties.SetAutomationId(ignoreBox, "UpdateIgnoreCheckBox");
-        var primaryButton = new Button
-        {
-            Content = primary,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Padding = new Thickness(16, 5),
-        };
-        primaryButton.Classes.Add("primary");
-        primaryButton.Click += (_, _) => { download = true; dialog.Close(); };
-        var secondaryButton = new Button
-        {
-            Content = secondary,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Padding = new Thickness(16, 5),
-            IsVisible = secondary.Length > 0,
-        };
-        secondaryButton.Classes.Add("ghost");
-        secondaryButton.Click += (_, _) => { download = false; dialog.Close(); };
-        dialog.Content = new StackPanel
-        {
-            Margin = new Thickness(20, 18),
-            Spacing = 12,
-            Children =
-            {
-                new TextBlock { Text = title, FontSize = 15, FontWeight = FontWeight.SemiBold },
-                new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, FontSize = 12 },
-                ignoreBox,
-                new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    Spacing = 8,
-                    Children = { secondaryButton, primaryButton },
-                },
-            },
-        };
-        await dialog.ShowDialog(this);
-        return (download, !download && ignoreBox.IsChecked == true);
-    }
-
-    /// <summary>
-    /// [EN] Persist the ignored version through the backend, then leave the chip in a
-    ///      clearly ignored state. A failure is non-fatal: the session still declines.
-    /// [ZH] 通过后端持久化忽略版本，然后把状态项置为明确的「已忽略」。失败不影响本会
-    /// [ZH] 话继续拒绝下载。
-    /// </summary>
-    private async Task IgnoreUpdateVersionAsync()
-    {
-        if (_updateTag.Length == 0)
-            return;
-        try
-        {
-            JsonDocument? doc = await _state.Backend.SendAsync(
-                new { action = "update_ignore", version = _updateTag },
-                idleTimeout: TimeSpan.FromSeconds(30));
-            if (doc is not null)
-            {
-                using (doc)
-                {
-                    if (doc.RootElement.TryGetProperty("ok", out JsonElement okEl)
-                        && okEl.ValueKind == JsonValueKind.True)
-                    {
-                        StripUpdateText.Text = Loc.T("main.update.ignoredChip", "🙈 已忽略 {0}", _updateTag);
-                        ToolTip.SetTip(StripUpdateButton, Loc.T("main.update.ignoredTip",
-                            "该版本已被你忽略；点击可打开发布页面"));
-                    }
-                }
-            }
-        }
-        catch (Exception)
-        {
-            // [EN] Best effort; the in-session refusal is still honoured.
-            // [ZH] 尽力而为；本会话的拒绝仍然有效。
-        }
-    }
-
-    /// <summary>
-    /// [EN] Render one byte-progress sample. While the total is unknown the bar is
-    ///      indeterminate; once the backend reports a total it becomes determinate.
-    /// [ZH] 渲染一次字节进度。总字节未知时进度条为不确定态；后端上报总字节后切换为确定态。
-    /// </summary>
-    private void ShowUpdateProgress(long downloaded, long total)
-    {
-        int percent = total > 0 ? (int)Math.Round(downloaded * 100.0 / total) : 0;
-        percent = Math.Max(0, Math.Min(100, percent));
-        UpdateProgressBar.IsVisible = true;
-        UpdateProgressBar.IsIndeterminate = total <= 0;
-        UpdateProgressBar.Value = percent;
-        StripUpdateText.Text = total > 0
-            ? Loc.T("main.update.downloadingPercent", "⏳ 下载中 {0}%（{1}/{2}）",
-                percent, FormatBytes(downloaded), FormatBytes(total))
-            : Loc.T("main.update.downloading", "⏳ 正在下载更新…");
-    }
-
-    /// <summary>
-    /// [EN] Hide and reset the update progress bar after completion or failure.
-    /// [ZH] 下载完成或失败后隐藏并复位更新进度条。
-    /// </summary>
-    private void HideUpdateProgress()
-    {
-        UpdateProgressBar.IsVisible = false;
-        UpdateProgressBar.IsIndeterminate = false;
-        UpdateProgressBar.Value = 0;
-    }
-
-    private async void OpenUpdatePage()
-    {
-        // [EN] A downloaded update turns the chip into the "apply" entry; an available update
-        // [EN] that was not yet answered re-opens the download prompt. Everything else keeps
-        // [EN] the historical behaviour: open the release page.
-        // [ZH] 已下载更新时，状态项变成「应用」入口；尚未回答的可用更新重新打开下载询问；
-        // [ZH] 其余情况保持历史行为：打开发布页面。
-        if (_downloadedUpdatePath.Length > 0)
-        {
-            await ApplyUpdateAsync();
-            return;
-        }
-        if (_updateAvailable && !_updateDeclined && _updateAsset.Length > 0)
-        {
-            await PromptDownloadUpdateAsync();
-            return;
-        }
-        if (_updateUrl.Length == 0)
-            return;
-        try
-        {
-            // [EN] UseShellExecute hands the URL to the system default browser on all three
-            // [EN] platforms.
-            // [ZH] UseShellExecute 在三大平台上都会交给系统默认浏览器
-            Process.Start(new ProcessStartInfo { FileName = _updateUrl, UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            AddMessage("system", Loc.T("main.update.checkFailed", "打开下载页面失败：{0}", ex.Message));
-        }
-    }
 
     // -----------------------------------------------------------------
     // [EN] Status area field mapping (field names exactly as in the WPF version)
@@ -3177,31 +2717,19 @@ public partial class MainWindow : Window
             _lastAssistantAnswer = answer;
             _streamCts?.Dispose();
             _streamCts = null;
-            _agentRegion = null;
-            _agentRows = null;
             await RefreshContextAsync();
         }
         return answer;
     }
 
     /// <summary>
-    /// [EN] Streaming event dispatch (progress / agent_step / tool_call / tool_result / done).
-    /// [ZH] 流式事件分发（progress / agent_step / tool_call / tool_result / done）。
+    /// [EN] Streaming event dispatch (progress / delta / system / done).
+    /// [ZH] 流式事件分发（progress / delta / system / done）。
     ///
     /// [EN] **Why it is a separate method instead of a lambda inlined in StreamChatAsync**:
+    /// [EN] the dispatch path has to stay testable and inspectable in isolation.
     /// [ZH] **为什么它是一个独立方法而不是内联在 StreamChatAsync 的 lambda 里**：
-    /// [EN] an unattended interface probe (Probe.cs) cannot "click the interface" to trigger
-    /// [EN] Agent step rows, but it can feed the event lines the backend really emitted into
-    /// [EN] this method one by one and then read <see cref="AgentStepRowCount"/> to assert that
-    /// [EN] "the step rows really rendered".
-    /// [ZH] 无人值守的界面探针（Probe.cs）无法"点一下界面"来触发 Agent 步骤行，
-    /// [ZH] 但它可以把后端真实发出的那些事件行逐条喂进这个方法，再读
-    /// [ZH] <see cref="AgentStepRowCount"/> 断言"步骤行确实渲染出来了"。
-    /// [EN] When inlined in the lambda there was **no way to verify this path unattended**, and
-    /// [EN] item 3 of §10 in the v0.2.2 records (Agent step row rendering) was blocked exactly
-    /// [EN] there.
-    /// [ZH] 内联在 lambda 里时这条路径**没有任何办法在无人值守下验证**，
-    /// [ZH] 而 v0.2.2 记录 §10 第 3 条（Agent 步骤行渲染）正是卡在这里。
+    /// [ZH] 分发路径需要保持可独立测试、可独立排查。
     ///
     /// [EN] **Lifetime contract**: <paramref name="root"/> belongs to a <c>JsonDocument</c>
     /// [EN] owned and disposed by the stream reader. Anything posted to the UI thread must be
@@ -3270,24 +2798,6 @@ public partial class MainWindow : Window
                 Dispatcher.UIThread.Post(() => SetStatus(Trim(Emoji.Prefer(content), 120)));
                 break;
             }
-            case "agent_step":
-                HandleAgentStep(root);
-                break;
-            case "tool_call":
-                HandleToolCall(root);
-                break;
-            case "tool_result":
-                HandleToolResult(root);
-                break;
-            case "confirm_tool":
-                // [EN] v0.2.6 task 2.4: a guard tool is waiting for the user's
-                // [EN] explicit approval. The dialog is opened on the UI thread and
-                // [EN] the answer is sent without acquiring the request gate (the
-                // [EN] agent stream is still holding it).
-                // [ZH] v0.2.6 任务 2.4：高危工具正在等待用户显式批准。对话框在 UI
-                // [ZH] 线程打开，答复不经过请求闸门发送（Agent 流仍持有该闸门）。
-                _ = HandleConfirmToolAsync(root);
-                break;
             case "done":
             {
                 if (root.TryGetProperty("reasoning", out JsonElement r))
@@ -3334,69 +2844,9 @@ public partial class MainWindow : Window
                         }
                     });
                 }
-                HandleAgentSummary(root);
                 break;
             }
         }
-    }
-
-    /// <summary>
-    /// [EN] Shows the guard-tool confirmation dialog and answers the backend.
-    /// [ZH] 展示高危工具确认对话框并答复后端。
-    ///
-    /// [EN] The message body comes from the backend and already contains the exact
-    /// [EN] command that will run. The answer uses fire-and-forget because the agent
-    /// [EN] stream still owns the request gate; waiting for a normal response would
-    /// [EN] deadlock until the stream ends.
-    /// [ZH] 正文由后端给出，且已包含即将执行的确切命令。答复使用"只写不读"，因为
-    /// [ZH] Agent 流仍持有请求闸门；若等待普通响应，就会一直阻塞到流结束。
-    /// </summary>
-    private async Task HandleConfirmToolAsync(JsonElement root)
-    {
-        string requestId = GetStringField(root, "request_id");
-        string content = GetStringField(root, "content");
-        string title = Loc.T("main.agent.confirmToolTitle", "确认执行系统命令");
-        if (content.Length == 0)
-            content = Loc.T("main.agent.confirmToolFallback", "Agent 请求执行一个高危工具。");
-        bool approved = false;
-        try
-        {
-            // [EN] The stream callback may already execute on the UI thread; in that case the
-            //      dialog is opened directly. Otherwise it is marshalled through the dispatcher.
-            //      Either way the decision is answered below, so a dialog failure can never leave
-            //      the backend waiting for a reply until its confirmation timeout.
-            // [ZH] 流回调可能已经在界面线程上；此时直接打开对话框，否则经调度器转投。两种路径都会在
-            // [ZH] 下方回复决定，因此对话框失败绝不会让后端一直等待到确认超时。
-            if (Dispatcher.UIThread.CheckAccess())
-            {
-                approved = await ShowUpdateDialogAsync(
-                    title, content,
-                    Loc.T("main.agent.confirmToolAllow", "允许执行"),
-                    Loc.T("main.agent.confirmToolDeny", "拒绝"));
-            }
-            else
-            {
-                approved = await Dispatcher.UIThread.InvokeAsync(() => ShowUpdateDialogAsync(
-                    title, content,
-                    Loc.T("main.agent.confirmToolAllow", "允许执行"),
-                    Loc.T("main.agent.confirmToolDeny", "拒绝")));
-            }
-        }
-        catch (Exception ex)
-        {
-            // [EN] Fail closed: a dialog that cannot be shown is a denial, and the backend is
-            //      informed immediately instead of waiting for the confirmation timeout.
-            // [ZH] 失败即拒绝：无法显示对话框等同于拒绝，并立即告知后端，而不是等待确认超时。
-            approved = false;
-            AddMessage("system", Loc.T("main.agent.confirmToolFailed",
-                "⚠️ 无法显示确认对话框，已按拒绝处理：{0}", ex.Message));
-        }
-        await _state.Backend.SendFireAndForgetAsync(new
-        {
-            action = "confirm_tool",
-            request_id = requestId,
-            approved,
-        });
     }
 
     /// <summary>
@@ -3537,281 +2987,6 @@ public partial class MainWindow : Window
                     : Loc.T("main.status.noModel", "后端已就绪，但没有加载模型"));
             }
         }
-    }
-
-    // -----------------------------------------------------------------
-    // [EN] Agent step area (one row each for agent_step / tool_call / tool_result)
-    // [ZH] Agent 步骤区（agent_step / tool_call / tool_result 各一行）
-    // -----------------------------------------------------------------
-
-    private void HandleAgentStep(JsonElement root)
-    {
-        string phase = GetStringField(root, "phase");
-        int stepIndex = GetIntField(root, "index");
-        int maxSteps = GetIntField(root, "max_steps");
-        if (phase == "finalize")
-        {
-            // [EN] One extra "convergence" round after the step budget is exhausted: the user
-            // [EN] needs to know why a conclusion suddenly appeared.
-            // [ZH] 步数用完后的"收敛"补一轮：用户要知道为什么突然出结论了
-            AddAgentRow(Loc.T("main.agent.finalize", "🧩 正在汇总结论"), "MutedForegroundBrush");
-        }
-        else if (phase == "thinking")
-        {
-            AddAgentRow(maxSteps > 0
-                    ? Loc.T("main.agent.step", "📍 第 {0}/{1} 步", stepIndex, maxSteps)
-                    : Loc.T("main.agent.stepNoMax", "📍 第 {0} 步", stepIndex),
-                "MutedForegroundBrush");
-        }
-        else if (phase == "thought")
-        {
-            // [EN] Development task 13 (self-test fix 1): after separating the reasoning
-            // [EN] content of this step, the backend sends it with the phase="thought" event.
-            // [EN] The WPF version renders that row; the Avalonia migration missed it, so the
-            // [EN] "Agent reasoning" was still invisible on the cross-platform version (found
-            // [EN] during this round's item-by-item comparison).
-            // [ZH] 任务十三（自测问题修复-1）：后端把这一步的思考内容分离出来后，随
-            // [ZH] phase="thought" 事件发过来。WPF 版把这一行渲染出来，Avalonia 迁移时漏了
-            // [ZH] —— 于是跨平台版上"Agent 的思考过程"仍然看不见（本轮逐项比对时发现）。
-            // [EN] When there is reasoning it is rendered as one row (truncated to 200
-            // [EN] characters, the same convention as the tool_result observation); when there
-            // [EN] is none nothing is printed, so that every step does not gain an empty row.
-            // [ZH] 有思考就渲染成一行（截断到 200 字符，与 tool_result 的观察结果同一口径），
-            // [ZH] 没有就什么都不打，避免每步都多出一行空的。
-            string reasoning = GetStringField(root, "reasoning");
-            if (reasoning.Trim().Length > 0)
-                AddAgentRow(Loc.T("main.agent.thought", "💭 {0}", OneLineText(reasoning, 200)),
-                    "MutedForegroundBrush");
-        }
-        // [EN] phase == "answer": the model has decided to answer directly and the answer
-        // [EN] appears in the reply area immediately, so no extra row is printed here (the step
-        // [EN] area only covers "which tools were used").
-        // [ZH] phase == "answer"：模型已决定直接作答，答案马上出现在回答区，
-        // [ZH] 这里不再多打一行（步骤区只讲"用了什么工具"）
-    }
-
-    private void HandleToolCall(JsonElement root)
-    {
-        string tool = GetStringField(root, "tool");
-        string why = GetStringField(root, "why");
-        string args = root.TryGetProperty("args", out JsonElement argsEl)
-            ? OneLineText(argsEl.GetRawText(), 120) : "";
-        var line = new StringBuilder(Loc.T("main.agent.call", "🔧 调用 {0}", tool));
-        if (args.Length > 0)
-            line.Append(' ').Append(Loc.T("main.agent.args", "参数 {0}", args));
-        if (why.Length > 0)
-            line.Append(' ').Append(Loc.T("main.agent.why", "· 理由：{0}", why));
-        AddAgentRow(line.ToString(), "AccentBrush");
-    }
-
-    private void HandleToolResult(JsonElement root)
-    {
-        string tool = GetStringField(root, "tool");
-        string observation = GetStringField(root, "observation");
-        int elapsedMs = GetIntField(root, "elapsed_ms");
-        bool ok = root.TryGetProperty("ok", out JsonElement okEl) && okEl.ValueKind == JsonValueKind.True;
-        if (!ok && IsAgentDeniedObservation(observation))
-        {
-            // [EN] Insufficient permission is a separate case with a heavier font weight: this
-            // [EN] is not "the tool is broken" but "the user has not authorised it".
-            // [ZH] 权限不足单独一档、且加重字重：这不是"工具坏了"，而是"用户没授权"
-            AddAgentRow(Loc.T("main.agent.denied",
-                    "🔒 {0} 未启用（用 /agent allow {1} 授权后可用）", tool, tool),
-                "WarningBannerBrush", strong: true);
-        }
-        else if (!ok)
-        {
-            AddAgentRow(Loc.T("main.agent.failed", "❌ {0} 失败：{1}", tool, OneLineText(observation, 200)),
-                "MutedForegroundBrush");
-        }
-        else
-        {
-            AddAgentRow(Loc.T("main.agent.result", "↩ {0} 返回：{1}", tool, OneLineText(observation, 200))
-                        + " " + Loc.T("main.agent.elapsed", "（{0} ms）", elapsedMs),
-                "MutedForegroundBrush");
-        }
-    }
-
-    /// <summary>
-    /// [EN] Summary of an Agent round (steps / tools / total time). The criterion is "the Agent
-    /// [EN] really ran".
-    /// [ZH] Agent 轮的汇总（步数 / 工具 / 总耗时）。判据是"真的跑过 Agent"。
-    /// </summary>
-    private void HandleAgentSummary(JsonElement root)
-    {
-        if (!root.TryGetProperty("agent", out JsonElement agent) || agent.ValueKind != JsonValueKind.Object)
-            return;
-        int steps = GetIntField(agent, "steps");
-        if (steps <= 0 && _agentRegion is null)
-            return;   // [EN] An ordinary conversation must not get a "0 steps in total" row.
-                      // [ZH] 普通对话不该被塞进一行"共 0 步"
-        if (agent.TryGetProperty("hit_max_steps", out JsonElement hit) && hit.ValueKind == JsonValueKind.True)
-            AddAgentRow(Loc.T("main.agent.hitMax", "⚠️ 已达步数上限，改为直接给结论"), "WarningBannerBrush");
-        bool stopped = root.TryGetProperty("stopped", out JsonElement st) && st.ValueKind == JsonValueKind.True;
-        string summary = stopped
-            ? Loc.T("main.agent.summaryStopped", "⏹ 已中止：{0} 步 · {1} ms", steps, GetIntField(agent, "elapsed_ms"))
-            : Loc.T("main.agent.summary", "✅ 完成：{0} 步 · {1} ms", steps, GetIntField(agent, "elapsed_ms"));
-        List<string> tools = GetStringListField(agent, "tools");
-        if (tools.Count > 0)
-            summary += " · " + Loc.T("main.agent.toolsUsed", "工具：{0}", string.Join(", ", tools));
-        AddAgentRow(summary, "MutedForegroundBrush");
-    }
-
-    private void EnsureAgentRegion()
-    {
-        if (_agentRows is not null)
-            return;
-        (_agentRegion, _agentRows) = CreateAgentTraceRegion();
-        MessagePanel.Children.Add(_agentRegion);
-    }
-
-    private void AddAgentRow(string text, string brushKey, bool strong = false)
-    {
-        if (string.IsNullOrEmpty(text))
-            return;
-        Dispatcher.UIThread.Post(() =>
-        {
-            EnsureAgentRegion();
-            if (_agentRows is null)
-                return;
-            AppendAgentTraceRow(_agentRows, text, brushKey, strong);
-            ScrollToBottom();
-        });
-    }
-
-    private (Border Root, StackPanel Rows) CreateAgentTraceRegion()
-    {
-        var title = new TextBlock
-        {
-            Text = Loc.T("main.agent.title", "🛠️ Agent 步骤"),
-            FontSize = Math.Max(9, _state.Settings.FontSize - 2),
-            Opacity = 0.7,
-        };
-        var rows = new StackPanel { Spacing = 1 };
-        var body = new StackPanel { Spacing = 2 };
-        body.Children.Add(title);
-        body.Children.Add(rows);
-
-        var border = new Border
-        {
-            Margin = new Thickness(0, 0, 40, 4),
-            Padding = new Thickness(10, 6, 10, 6),
-            CornerRadius = new CornerRadius(8),
-            BorderThickness = new Thickness(1),
-            Background = ResolveBrush("CardBackgroundBrush", Brushes.Transparent),
-            BorderBrush = ResolveBrush("CardBorderBrush", Brushes.Gray),
-            Child = body,
-        };
-        ToolTip.SetTip(border, Loc.T("main.agent.tip",
-            "模型自己决定的每一步：调用哪个工具、参数是什么、返回了什么、耗时多久。按 Esc 可随时停止。"));
-        // [EN] Used by the interface probe: it locates the Agent step area by this
-        // [EN] AutomationId.
-        // [ZH] 界面探针用：按这个 AutomationId 找 Agent 步骤区
-        AutomationProperties.SetAutomationId(border, "AgentTrace");
-        return (border, rows);
-    }
-
-    private void AppendAgentTraceRow(StackPanel rows, string text, string brushKey, bool strong)
-    {
-        var row = new TextBlock
-        {
-            // [EN] Emoji degradation is applied consistently with the message text (text
-            // [EN] markers are used when the local machine has no emoji font).
-            // [ZH] 与消息文本一致地做 emoji 降级（本机没有 emoji 字体时换成纯文本标记）
-            Text = Emoji.Prefer(text),
-            FontSize = Math.Max(9, _state.Settings.FontSize - 2),
-            TextWrapping = TextWrapping.Wrap,
-            FontWeight = strong ? FontWeight.SemiBold : FontWeight.Normal,
-            Foreground = ResolveBrush(brushKey, ResolveBrush("MutedForegroundBrush", Brushes.Gray)),
-        };
-        rows.Children.Add(row);
-    }
-
-    /// <summary>
-    /// [EN] The font size of the Agent step area follows the global font size, so that
-    /// [EN] Ctrl+wheel does not leave it behind.
-    /// [ZH] Agent 步骤区的字号跟随全局字号（Ctrl+滚轮调字号时才不会落下它）。
-    /// </summary>
-    private void ScaleAgentTrace()
-    {
-        if (_agentRegion is null)
-            return;
-        double size = Math.Max(9, _state.Settings.FontSize - 2);
-        foreach (TextBlock row in EnumerateAgentRows(_agentRegion))
-            row.FontSize = size;
-    }
-
-    private static IEnumerable<TextBlock> EnumerateAgentRows(Border region)
-    {
-        if (region.Child is not StackPanel body)
-            yield break;
-        foreach (object child in body.Children)
-        {
-            if (child is TextBlock label)
-                yield return label;
-            else if (child is StackPanel rows)
-                foreach (object row in rows.Children)
-                    if (row is TextBlock text)
-                        yield return text;
-        }
-    }
-
-    /// <summary>
-    /// [EN] Criterion for a tool returning "no permission" rather than "execution failed".
-    /// [ZH] 工具返回「没权限」而不是「执行失败」的判据。
-    ///
-    /// [EN] The backend wording consists of two fixed Chinese sentences
-    /// [EN] (agent_tools.ToolRegistry.run: "…not enabled at present…" when a sensitive tool is
-    /// [EN] not authorised, and "…not available at present" for protection tools this release
-    /// [EN] does not provide). That text is the raw observation the model sees and does not
-    /// [EN] vary with the interface language, so matching on the original text is stable.
-    /// [ZH] 后端的措辞是固定的两句中文（agent_tools.ToolRegistry.run：敏感工具未授权时
-    /// [ZH] 「…当前未启用…」，本版不提供的保护类工具「…当前不可用」），而它就是模型看到的
-    /// [ZH] 原始观察结果、不随界面语言变 —— 所以按原文匹配是稳的。
-    /// </summary>
-    private static bool IsAgentDeniedObservation(string observation)
-        => observation.Contains(AgentDeniedMark, StringComparison.Ordinal)
-           // [EN] Compatibility with older strings: before v0.2.2 those two backend sentences
-           // [EN] were hard-coded Chinese (an older backend may still send them).
-           // [ZH] 兼容旧串：v0.2.2 之前后端那两句是写死中文的（旧版后端仍可能这么发）
-           || observation.Contains("未启用", StringComparison.Ordinal)
-           || observation.Contains("当前不可用", StringComparison.Ordinal);
-
-    /// <summary>
-    /// [EN] **Language-independent marker** for the backend's "denied" observation string
-    /// [EN] (v0.2.2 hard-code audit, batch 6).
-    /// [ZH] 后端"被拒绝"观察串的**语言无关标记**（v0.2.2 硬编码清查第 6 批）。
-    ///
-    /// [EN] Previously the match could only use the Chinese original (see the comment above),
-    /// [EN] but after localisation those two backend sentences are **no longer always
-    /// [EN] Chinese**, so matching on the original text necessarily fails in an English
-    /// [EN] interface.
-    /// [ZH] 原先只能按中文原文匹配（见上面注释），但后端那两句本地化后**不再固定是中文**，
-    /// [ZH] 按原文匹配在英文界面下必然失效。现在后端在观察串前加这个 ASCII 标记，
-    /// [EN] The backend now prefixes the observation string with this ASCII marker; the front
-    /// [EN] end decides from it and strips it before display (see <see cref="OneLineText"/>).
-    /// [ZH] 前端据此判定，显示前剥掉（见 <see cref="OneLineText"/>）。
-    /// </summary>
-    private const string AgentDeniedMark = "[!DENIED] ";
-
-    /// <summary>
-    /// [EN] Collapses multi-line text into one line and truncates it: step row arguments and
-    /// [EN] tool results are often multi-line or very long JSON.
-    /// [ZH] 把多行文本压成一行并截断：步骤行的参数与工具返回常是多行/很长的 JSON。
-    /// </summary>
-    private static string OneLineText(string text, int max)
-    {
-        if (string.IsNullOrEmpty(text))
-            return "";
-        string flat = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
-        // [EN] Strip the "denied" marker: it exists only for the decision and must not be shown
-        // [EN] to the user.
-        // [ZH] 剥掉"被拒绝"标记：它只给判定用，不该显示给用户
-        if (flat.StartsWith(AgentDeniedMark, StringComparison.Ordinal))
-            flat = flat[AgentDeniedMark.Length..].Trim();
-        while (flat.Contains("  ", StringComparison.Ordinal))
-            flat = flat.Replace("  ", " ", StringComparison.Ordinal);
-        return flat.Length <= max ? flat : flat[..max] + "…";
     }
 
     // -----------------------------------------------------------------
@@ -4313,8 +3488,6 @@ public partial class MainWindow : Window
     {
         MessagePanel.Children.Clear();
         _transcript.Clear();
-        _agentRegion = null;
-        _agentRows = null;
         _live = null;
 
         // [EN] Every scene starts from the same idle state, so a chip or a stop button left over
@@ -4896,20 +4069,6 @@ public partial class MainWindow : Window
     private void RenderTranscript()
     {
         MessagePanel.Children.Clear();
-        // [EN] The Agent step area is not part of _transcript (it is "process information"
-        // [EN] stored separately from the message bodies),
-        // [ZH] Agent 步骤区不在 _transcript 里（它是"过程信息"，与消息正文分开存），
-        // [EN] so a full rebuild removes it from the visual tree. **Its reference must be
-        // [EN] cleared at the same time**: otherwise, if the font size happens to change
-        // [EN] mid-stream,
-        // [ZH] 整屏重建会把它从可视树上摘掉。**必须同时把引用清空**：否则流式过程中若刚好
-        // [EN] subsequent step rows are appended to a container that is no longer in the visual
-        // [EN] tree, and the interface looks as if "the Agent steps suddenly stopped halfway
-        // [EN] through thinking".
-        // [ZH] 切了字号，后续的步骤行会往一个已经脱离可视树的容器里追加 —— 界面看起来就像
-        // [ZH] "思考到一半 Agent 步骤突然不动了"。
-        _agentRegion = null;
-        _agentRows = null;
         foreach (Message message in _transcript)
         {
             MessageView view = AddMessageView(message.Role, message.Content, message.Reasoning, message.Metrics);
@@ -5128,7 +4287,8 @@ public partial class MainWindow : Window
     ///      分段摘要，也能断言"有意义的 INFO 放行、高频调试拦截"。
     /// </summary>
     public static string ProbeLogRoutingSample(string text)
-        => $"debug={IsHighFrequencyLogText(text)}｜stripped={StripLogDecoration(text)}";
+        => $"debug={IsHighFrequencyLogText(text)}｜dropped={HttpRequestLogLine.IsMatch(text)}"
+           + $"｜stripped={StripLogDecoration(text)}";
 
     /// <summary>
     /// [EN] v0.2.6 item 21: reports the custom title bar's structural contract for
@@ -5157,21 +4317,6 @@ public partial class MainWindow : Window
                + $"｜modelWidth={ModelChip.Bounds.Width:0}";
     }
 
-    /// <summary>
-    /// [EN] Exercises the native update progress bar at a synthetic 25%, then verifies
-    ///      that completion hides and resets it.
-    /// [ZH] 用合成的 25% 驱动原生更新进度条，并验证完成后会隐藏并复位。
-    /// </summary>
-    public string ProbeUpdateProgressUi()
-    {
-        ShowUpdateProgress(25, 100);
-        bool visible = UpdateProgressBar.IsVisible;
-        double value = UpdateProgressBar.Value;
-        string text = StripUpdateText.Text ?? "";
-        HideUpdateProgress();
-        bool hidden = !UpdateProgressBar.IsVisible && Math.Abs(UpdateProgressBar.Value) < 0.001;
-        return $"visible={visible}｜value={value:0}｜text={text}｜hidden={hidden}";
-    }
 
     /// <summary>
     /// [EN] Flattens the rendered text of a control tree, including inline runs, so that a
@@ -5677,10 +4822,8 @@ public partial class MainWindow : Window
     /// [EN] <c>CopyAllMessages</c> in WPF).
     /// [ZH] 复制全部对话为纯文本（Ctrl+Shift+C，对齐 WPF 的 <c>CopyAllMessages</c>）。
     /// [EN] It uses <c>_transcript</c> instead of walking the visual tree: the visual tree also
-    /// [EN] holds the Agent step area, placeholder texts and other things that are not part of
-    /// [EN] the conversation.
-    /// [ZH] 用 <c>_transcript</c> 而不是遍历可视树：可视树里还有 Agent 步骤区、占位文本等
-    /// [ZH] 不属于"对话"的东西。
+    /// [EN] holds placeholder texts and other things that are not part of the conversation.
+    /// [ZH] 用 <c>_transcript</c> 而不是遍历可视树：可视树里还有占位文本等不属于"对话"的东西。
     /// </summary>
     private void CopyAllMessages()
     {

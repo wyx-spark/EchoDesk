@@ -58,7 +58,7 @@ FAILED = []
 #: [ZH] Reader 版删除的模块；既不可被导入，也不可出现在导入语句里。
 REMOVED_MODULES = (
     "vision", "knowledge", "speech", "media", "extractive",
-    "memory", "retrieval", "automation",
+    "memory", "retrieval", "automation", "agent", "agent_tools", "mcp_client",
 )
 #: [EN] The same names plus the Playwright chain, banned from packaged sources.
 #: [ZH] 同一批名字再加上 Playwright 依赖链，禁止出现在打包源码里。
@@ -157,6 +157,10 @@ def test_frontend_residue():
     removed_files = (
         "frontend-avalonia/EchoDesk.Avalonia/Views/Settings/AutomationPage.axaml",
         "frontend-avalonia/EchoDesk.Avalonia/Views/Settings/AutomationPage.axaml.cs",
+        "frontend-avalonia/EchoDesk.Avalonia/Views/Settings/AgentPage.axaml",
+        "frontend-avalonia/EchoDesk.Avalonia/Views/Settings/AgentPage.axaml.cs",
+        "frontend-avalonia/EchoDesk.Avalonia/Views/Settings/DeveloperPage.axaml",
+        "frontend-avalonia/EchoDesk.Avalonia/Views/Settings/DeveloperPage.axaml.cs",
         "frontend-avalonia/EchoDesk.Avalonia/Services/MediaService.cs",
         "frontend-avalonia/EchoDesk.Avalonia/Services/GlobalHotkeyService.cs",
         "backend/lang/en.automation.json",

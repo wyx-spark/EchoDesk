@@ -373,14 +373,38 @@ def load_dir(directory):
     return packs
 
 
+def frontend_source_dirs():
+    """[EN] Front-end trees whose key references must resolve.
+
+    The Reader profile ships only the Avalonia front end; the WPF tree stays in
+    the repository as LTS history and is not part of the delivered product, so
+    its references must not be demanded of the shipped language packs.
+
+    [ZH] 需要解析键引用的前端源码树。Reader 版只交付 Avalonia 前端；WPF 树作为
+    LTS 历史保留在仓库里、不属于交付物，因此不能用它的引用去要求交付语言包。
+    """
+    reader = False
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "backend"))
+        import version  # noqa: PLC0415 - [EN] local probe / [ZH] 局部探测
+        reader = str(getattr(version, "APP_VERSION", "")).endswith("-reader")
+    except Exception:  # noqa: BLE001 - [EN] fall back to the shared tree
+                      # [ZH] 探测失败则回落到共用前端树
+        reader = False
+    name = "frontend-avalonia" if reader else "frontend"
+    return [os.path.join(ROOT, name)]
+
+
 def collect_used_keys():
     """扫描代码里实际用到的语言键，返回 {键: 出现位置列表}。"""
     used = {}
     targets = []
     # 注意：不扫描 examples/skills —— 示例插件是独立的技能包，语言键属于它们
     # 自己的 lang/*.json，与主程序语言包无关（由 tools/test_skills_runtime.py 覆盖）。
-    for base, patterns in ((os.path.join(ROOT, "backend"), BACKEND_KEY_PATTERNS),
-                           (os.path.join(ROOT, "frontend"), FRONTEND_KEY_PATTERNS)):
+    frontends = frontend_source_dirs()
+    bases = [(os.path.join(ROOT, "backend"), BACKEND_KEY_PATTERNS)]
+    bases.extend((path, FRONTEND_KEY_PATTERNS) for path in frontends)
+    for base, patterns in bases:
         if not os.path.isdir(base):
             continue
         for current, dirs, files in os.walk(base):
@@ -414,9 +438,8 @@ BACKEND_SCAFFOLD_MODULES = (
     # v0.2.1 综合优化又新增了 summary.*（长文档分段摘要的进度与故障提示，
     # 任务四），同样的道理必须同步加进来，否则新语言模板会整组缺失。
     "app", "cmd", "sys", "file", "err", "market", "hub",
-    "automation", "update", "skill",
+    "update", "skill",
     "capability", "task", "mode", "export", "summary", "inference",
-    "media",
 )
 
 

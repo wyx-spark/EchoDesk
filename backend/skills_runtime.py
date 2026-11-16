@@ -834,7 +834,6 @@ class SkillLoader:
         self._path_entries: Dict[str, str] = {}
         self._last_error = ""
         self._manifest_cache: Optional[Dict[str, Any]] = None
-        self._dev_mode_cache: Optional[bool] = None
 
     # [EN] ---------- Paths ----------
     # [ZH] ---------- 路径 ----------
@@ -865,65 +864,13 @@ class SkillLoader:
     def dev_mode(self) -> bool:
         """
         [EN]
-        Return whether developer mode is active.
-
-        The switch must work in both directions. The previous implementation
-        returned True when the configuration enabled it **or** a plugin existed
-        in ``skills_dev/``. Because bundled examples live there, turning the
-        switch off immediately produced "enabled" again, so it could not be
-        disabled.
-
-        Current behaviour:
-        * If the user set the switch explicitly (``dev_mode_explicit``), the
-          configuration is authoritative.
-        * If the user never set it, plugins in the directory enable developer
-          mode automatically, and :attr:`dev_detected` exposes the automatic
-          result for display.
+        Always True: the Reader edition has no developer-mode switch, so the
+        development directory is treated as an ordinary plugin source.
 
         [ZH]
-        返回开发者模式是否生效。
-
-        开关必须双向可用。原实现只要配置开启 **或** ``skills_dev/`` 中存在插件
-        就返回 True。由于随包示例插件位于该目录，用户关闭开关后状态立即再次变为
-        “开启”，表现为无法关闭。
-
-        当前行为：
-        * 若用户显式设置过开关（``dev_mode_explicit``），以配置为准。
-        * 若从未设置，目录中存在插件时自动启用开发者模式，并通过
-          :attr:`dev_detected` 暴露自动判定结果供界面显示。
+        恒为 True：Reader 版不再提供开发者模式开关，开发目录按普通插件来源处理。
         """
-        configured = bool(getattr(self.cfg, "dev_mode", False))
-        if bool(getattr(self.cfg, "dev_mode_explicit", False)):
-            return configured
-        if configured:
-            return True
-        return self.dev_detected
-
-    @property
-    def dev_detected(self) -> bool:
-        """
-        [EN]
-        Return whether any plugin exists under ``skills_dev/``, based only on
-        disk contents and not on the switch.
-
-        [ZH]
-        返回 ``skills_dev/`` 下是否存在插件，仅依据磁盘内容，不考虑开关状态。
-        """
-        if self._dev_mode_cache is None:
-            self._dev_mode_cache = bool(self._scan_dev_dirs())
-        return self._dev_mode_cache
-
-    @property
-    def dev_mode_explicit(self) -> bool:
-        """
-        [EN]
-        Return whether the user explicitly set the switch, so the interface can
-        distinguish automatic directory-based enabling from an explicit choice.
-
-        [ZH]
-        返回用户是否显式设置过开关，使界面能够区分按目录自动启用与用户明确选择。
-        """
-        return bool(getattr(self.cfg, "dev_mode_explicit", False))
+        return True
 
     # [EN] ---------- Logging ----------
     # [ZH] ---------- 日志 ----------
@@ -1284,7 +1231,6 @@ class SkillLoader:
         优先级从高到低为 ``skills_dev/``、``skills_local.json``、``skills/``。
         同一 id 仅保留最高优先级记录，其余记录在 ``overrode`` 中。
         """
-        self._dev_mode_cache = None
         manifest_data = self.local_manifest()
         self._manifest_cache = manifest_data
         trusted = set(manifest_data.get("trusted") or [])
@@ -2014,12 +1960,6 @@ class SkillLoader:
         records = sorted(self.records.values(), key=lambda r: (r.order, r.id))
         enabled_dev = [r.id for r in records if r.enabled and r.source in ("dev", "local") and r.loaded]
         return {
-            "dev_mode": self.dev_mode,
-            # [EN] Report whether the switch was set explicitly so the interface
-            # [EN] can explain its current state.
-            # [ZH] 报告开关是否为显式设置，使界面能够解释当前状态。
-            "dev_mode_explicit": self.dev_mode_explicit,
-            "dev_detected": self.dev_detected,
             "dev_enabled": enabled_dev,
             "dev_count": len(self._scan_dev_dirs()),
             "trust_pending_ids": [r.id for r in records if r.trust_pending],

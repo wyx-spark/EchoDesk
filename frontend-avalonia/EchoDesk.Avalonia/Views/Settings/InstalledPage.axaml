@@ -1,4 +1,4 @@
-﻿<UserControl xmlns="https://github.com/avaloniaui"
+<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EchoDesk.Avalonia.Views.Settings.InstalledPage">
   <!--
@@ -37,8 +37,6 @@
               AutomationProperties.AutomationId="SkillsReloadButton" />
       <Button x:Name="SkillsInstallFolderButton" Padding="10,4"
               AutomationProperties.AutomationId="SkillsInstallFolderButton" />
-      <Button x:Name="SkillsScaffoldButton" Padding="10,4"
-              AutomationProperties.AutomationId="SkillsScaffoldButton" />
       <Button x:Name="SkillsExamplesButton" Padding="10,4"
               AutomationProperties.AutomationId="SkillsExamplesButton" />
     </StackPanel>

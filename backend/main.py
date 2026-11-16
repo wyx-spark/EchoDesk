@@ -220,7 +220,7 @@ with _suppress_stdout():
     # [EN] reuses the same template surface.
     # [ZH] 提示词模板库。Reader 保留它：合同审查沿用同一套模板接口。
     from prompt_library import PromptLibrary
-    from download_utils import check_model, download_model, find_best_model
+    from download_utils import check_model, download_model
     from file_parser import is_parse_error, localize_error, parse_file_with_wps
     from gguf_meta import format_bytes as _format_bytes
     from gguf_meta import resolve_context_window
@@ -871,13 +871,6 @@ class Backend:
         # [ZH] 保证模型推理串行，并使请求分发层可以立即应答。
         self._conv_lock = threading.RLock()
         self._document_jobs = DocumentJobManager(self._run_document_job)
-        # [EN] Pending per-invocation confirmations for guard tools (v0.2.6
-        # [EN] task 2.4). The agent worker registers a waiter, the dispatcher
-        # [EN] resolves it when the frontend answers.
-        # [ZH] 高危工具的待确认请求（v0.2.6 任务 2.4）。Agent 工作线程登记等待者，
-        # [ZH] 前端答复后由分发器解除。
-        self._pending_tool_confirmations: Dict[str, Dict[str, Any]] = {}
-        self._tool_confirm_lock = threading.Lock()
         self.commands = CommandHandler(
             self.conv, self.search, self.llm, config, summarizer=self.summarizer,
             file_loader=self.load_file_into_context, summarize_file=self.summarize_current_file,
@@ -902,8 +895,6 @@ class Backend:
         self.commands.compact_provider = self.compact_context
         self.commands.profile_provider = self.model_capability
         self.commands.cache_clear_provider = self.clear_summary_cache
-        self.commands.agent_configurator = self.configure_agent
-        self.commands.mcp_control = self.mcp_control
         # [EN] Lazily created prompt template library: the template file is read
         # [EN] only when the feature is actually used.
         # [ZH] 惰性创建的提示词模板库：只有对应功能真正被使用时才读取模板文件。
@@ -921,19 +912,6 @@ class Backend:
         # [EN] Compaction event log (task 9): created lazily, see compact_log().
         # [ZH] 压缩事件日志（相关设计）：惰性创建，见 compact_log()。
         self._compact_log = None
-        # [EN] Agent tool registry (capability extension-1, task 2): created lazily; the trace
-        # [EN] of the last run is retained so /agent and agent_diagnostics() can show "what
-        # [EN] each step did".
-        # [ZH] Agent 工具注册表（后续版本 相关设计）：惰性创建；上一次运行的轨迹留档，
-        # [ZH] 供 /agent 与 agent_diagnostics() 显示"每一步做了什么"。
-        self._agent_registry = None
-        self._last_agent_run = None
-        self._agent_run = None
-        # [EN] MCP client (capability extension-1, task 3): created lazily; rebuilt and the
-        # [EN] old process closed when the config signature changes.
-        # [ZH] MCP 客户端（后续版本 相关设计）：惰性创建；配置签名变化时重建并关闭旧进程。
-        self._mcp_bridge = None
-        self._mcp_signature = ""
         # [EN] v0.2.6 Part 4: the local OpenAI-compatible API server (lazily built,
         # [EN] rebuilt when its configuration signature changes) and the flag that
         # [EN] tells the protocol loop an external tool is currently generating.
@@ -1670,11 +1648,10 @@ class Backend:
     def skills(self):
         """
         [EN]
-        Create the skill loader on demand and wire it into the command table, file parsing,
-        and automation hooks (task 2, 2.2).
+        Create the skill loader on demand and wire it into the command table and file parsing.
 
         [ZH]
-        按需创建技能加载器，并把它接入指令表 / 文件解析 / 自动化钩子（任务二 2.2）。
+        按需创建技能加载器，并把它接入指令表 / 文件解析（任务二 2.2）。
         """
         if self._skills is None:
             from skills_runtime import SkillLoader
@@ -1966,8 +1943,6 @@ class Backend:
         if action == "ping":
             return {"type": "pong", "ok": True, "busy": bool(self.stream_active),
                     "ts": time.time()}
-        if action == "confirm_tool":
-            return self._handle_tool_confirmation(request)
         if action == "file_async":
             return self._handle_file_async(request)
         if action == "file_job_status":
@@ -2108,16 +2083,6 @@ class Backend:
                             "enabled": self.config.summarize.enabled,
                         },
                     }}
-        # [EN] ---------- Agent and MCP (capability extension-1, tasks 2 / 3) ----------
-        # [ZH] ---------- Agent 与 MCP（后续版本 相关设计 / 三） ----------
-        if action == "agent_state":
-            return {"type": "system", "content": "", "agent": self.agent_diagnostics()}
-        if action == "agent_configure":
-            return self._handle_agent_config(request)
-        if action == "mcp_state":
-            return {"type": "system", "content": "", "mcp": self.mcp_diagnostics()}
-        if action == "mcp_apply":
-            return self._handle_mcp_apply(request)
         # [EN] v0.2.6 Part 4: open platform. `provider_state` and `local_api_state`
         # [EN] are read-only; the save actions validate through the configuration
         # [EN] models and enforce the informed-consent gate.
@@ -2158,8 +2123,6 @@ class Backend:
             return {"type": "system", "content": "", "skills": self.skills().status()}
         if action == "skills_reload":
             return self._handle_skills_reload(request)
-        if action == "skills_set_dev_mode":
-            return self._handle_skills_dev_mode(request)
         if action == "skills_log":
             return {"type": "system", "content": "", "log": self.skills().read_log(
                 int(request.get("lines") or 200))}
@@ -2284,61 +2247,6 @@ class Backend:
             text += "\n" + _t("skill.reload_dev_scope")
         return {"type": "system", "content": text, "skills": self.skills().status(),
                 "commands": self.commands.all_commands(), "summary": summary}
-
-    def _handle_skills_dev_mode(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Developer-mode toggle (fix 1: must work in both directions).
-
-        Disabling must perform four steps; missing any one makes the user believe it is still
-        enabled:
-        1. Record that "the user set this explicitly"; otherwise the dev_mode property turns
-           True again automatically while ``skills_dev/`` still contains plugins (this was the
-           root cause of "once enabled, it cannot be disabled").
-        2. Unload the loaded development plugins and remove their commands from the command
-           table.
-        3. Stop hot reloading (once ``dev_mode`` is False, the dev directory no longer
-           participates in discovery).
-        4. Clear the development log.
-
-        [ZH]
-        开发者模式开关（修复一：必须双向可用）。
-
-        关闭时需完成四件事，缺一件用户就会认为"未关闭"：
-        1. 记录"用户显式设置过"，否则 ``skills_dev/`` 中仍有插件时 dev_mode 属性会自动
-           重新变为 True（这是原先"一旦开启就关不掉"的根因）；
-        2. 卸载已加载的开发插件，并把它们的指令从指令表移除；
-        3. 停止热重载（``dev_mode`` 为 False 后 dev 目录不再参与发现）；
-        4. 清理开发日志。
-        """
-        enabled = bool(request.get("enabled"))
-        self.config.marketplace.dev_mode = enabled
-        self.config.marketplace.dev_mode_explicit = True
-        try:
-            self.config.save()
-        except Exception:
-            log.warning("保存开发者模式开关失败", exc_info=True)
-        loader = self.skills()
-        loader._dev_mode_cache = None
-        unloaded: List[str] = []
-        cleared = False
-        if enabled:
-            # [EN] On enable, rescan so that plugins in skills_dev/ take effect immediately.
-            # [ZH] 开启时重新发现，使 skills_dev/ 中的插件立即生效。
-            loader.reload_all()
-            content = _t("skill.dev_mode_on")
-        else:
-            unloaded = loader.unload_dev()
-            cleared = loader.clear_log()
-            content = _t("skill.dev_mode_off")
-            if unloaded:
-                content += "\n" + _t("skill.dev_mode_unloaded", count=len(unloaded),
-                                     ids=", ".join(unloaded))
-        commands = self.commands.all_commands()
-        return {"type": "system", "content": content,
-                "skills": loader.status(), "commands": commands,
-                "dev_mode": enabled, "unloaded": unloaded,
-                "log_cleared": cleared}
 
     def _handle_skills_trust_bulk(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -3682,167 +3590,6 @@ class Backend:
         snapshot.pop("type", None)
         return snapshot
 
-    def mcp_control(self, action: str = "", name: str = "") -> Dict[str, Any]:
-        """
-        [EN]
-        Unified entry point for ``/mcp``: read state, enable/disable a server, or force a
-        connection.
-
-        Enabling/disabling is written to ``config.json`` (a single user press persists) and
-        **rebuilds the tool table immediately**, satisfying the task's "enable/disable at
-        runtime without restart".
-
-        [ZH]
-        ``/mcp`` 的统一入口：读取状态、启停某个 server、或强制连接。
-
-        启停会写入 ``config.json``（用户按一次即长期生效）并**立即重建工具表**，
-        满足设计规范"运行时启停，无需重启"。
-        """
-        cfg = getattr(self.config, "mcp", None)
-        if cfg is None:
-            return {}
-        if not action:
-            return self.mcp_diagnostics()
-        if action in ("enable", "disable"):
-            target = None
-            for server in (cfg.servers or []):
-                if str(getattr(server, "name", "")).strip() == str(name).strip():
-                    target = server
-                    break
-            if target is None:
-                return {"ok": False, "state": self.mcp_diagnostics()}
-            target.enabled = (action == "enable")
-            self.config.save()
-            # [EN] A disabled server must actually have its process terminated; an enabled one
-            # [EN] connects immediately only if auto_connect says so.
-            # [ZH] 被关闭的 server 必须真正终止进程；被开启的按 auto_connect 决定是否立即连接。
-            if self._mcp_bridge is not None:
-                self._mcp_bridge.close()
-            self._mcp_bridge = None
-            self._agent_registry = None
-            if action == "enable" and bool(getattr(cfg, "auto_connect", False)):
-                self.refresh_agent_tools(discover_mcp=True)
-            else:
-                self.refresh_agent_tools(discover_mcp=False)
-            return {"ok": True, "state": self.mcp_diagnostics()}
-        if action == "connect":
-            summary = self.refresh_agent_tools(discover_mcp=True)
-            return {"ok": bool(summary.get("registered")),
-                    "registered": summary.get("registered", 0),
-                    "state": self.mcp_diagnostics()}
-        return {"ok": False, "state": self.mcp_diagnostics()}
-
-    def _handle_agent_config(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Agent configuration writes from the settings page or commands (tool authorization, step
-        limit).
-
-        It uses the same ``configure_agent`` as the ``/agent`` command: the UI and the command
-        **must not have two separate permission implementations**, otherwise inconsistencies
-        such as "the UI shows enabled but it is not actually enabled" are inevitable.
-
-        [ZH]
-        设置页/指令的 Agent 配置写入（工具授权、步数上限）。
-
-        与 ``/agent`` 指令共用同一个 ``configure_agent`` —— 界面与指令**不能各有一套
-        权限逻辑**，否则必然出现"界面显示已启用、实际未启用"这类不一致。
-        """
-        if "steps" in request:
-            result = self.configure_agent("__steps__", request.get("steps"))
-        elif request.get("tool"):
-            result = self.configure_agent(str(request.get("tool")),
-                                          bool(request.get("allowed", True)))
-        else:
-            result = self.configure_agent()
-        return {"type": "system", "content": "", "agent_config": result,
-                "agent": self.agent_diagnostics()}
-
-    def _handle_mcp_apply(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Apply the MCP configuration (enable/disable servers, change commands and timeouts) with
-        **immediate effect at runtime**.
-
-        The task requires "users can enable/disable an MCP server in settings without a
-        restart": ``refresh_agent_tools`` rebuilds the tool registry and (when enabled) starts
-        the newly configured server processes and attaches their tools to the Agent; a disabled
-        server is ``close()``-ed and its tools disappear from the list immediately.
-
-        [ZH]
-        应用 MCP 配置（启用/禁用 server、修改命令与超时），并**在运行时立即生效**。
-
-        设计规范要求"用户可在设置中启用/禁用某个 MCP Server，无需重启"：
-        ``refresh_agent_tools`` 会重建工具注册表，并在启用时拉起新配置的 server
-        进程、把工具挂入 Agent；被停用的 server 会被 ``close()``，
-        其工具立即从清单中消失。
-        """
-        cfg = getattr(self.config, "mcp", None)
-        if cfg is None:
-            return {"type": "system", "content": _t("sys.mcp_unavailable")}
-        if "enabled" in request:
-            cfg.enabled = bool(request.get("enabled"))
-        if "auto_connect" in request:
-            cfg.auto_connect = bool(request.get("auto_connect"))
-        if request.get("timeout_seconds") is not None:
-            try:
-                cfg.timeout_seconds = max(1.0, min(600.0, float(request["timeout_seconds"])))
-            except (TypeError, ValueError):
-                return {"type": "system", "content": _t("sys.mcp_bad_timeout")}
-        servers = request.get("servers")
-        if isinstance(servers, list):
-            from config import McpServerConfig
-            from mcp_client import McpBridge
-
-            # [EN] Merge with the existing configuration by name: entries sent back by the UI
-            # [EN] may omit env / passthrough_env (older frontends do not return them). Without
-            # [EN] merging, "change a timeout and save" would erase environment variables the
-            # [EN] user wrote by hand in config.json -- silent data loss that must be prevented
-            # [EN] at the source.
-            # [ZH] 按 name 与既有配置合并：界面回传的条目可能省略 env / passthrough_env
-            # [ZH] （老版本前端不回传它们）。不合并的话，"改个超时再保存"会抹掉用户手写在
-            # [ZH] config.json 中的环境变量 —— 属于静默数据丢失，必须从根源上阻止。
-            existing = {str(getattr(item, "name", "")): item for item in (cfg.servers or [])}
-            cleaned = []
-            for item in servers:
-                if not isinstance(item, dict):
-                    continue
-                parsed = McpBridge.server_from_dict(item)
-                if parsed is None:
-                    return {"type": "system",
-                            "content": _t("sys.mcp_bad_server",
-                                          item=str(item.get("name") or item.get("command") or ""))}
-                old = existing.get(parsed.name)
-                if old is not None:
-                    if "env" not in item:
-                        parsed.env = dict(getattr(old, "env", {}) or {})
-                    if "passthrough_env" not in item:
-                        parsed.passthrough_env = list(getattr(old, "passthrough_env", []) or [])
-                # [EN] Store the **model object** rather than a dict back into the config:
-                # [EN] pydantic warns at serialization time about a declared type receiving a
-                # [EN] dict, and the emitted JSON may disagree with the declaration.
-                # [ZH] 使用**模型对象**而不是 dict 存回配置：pydantic 对"声明了类型却塞入
-                # [ZH] dict"会给出序列化警告，写出的 JSON 也可能与声明不一致。
-                cleaned.append(McpServerConfig(
-                    name=parsed.name, command=parsed.command, args=list(parsed.args),
-                    env=dict(parsed.env), enabled=bool(parsed.enabled),
-                    passthrough_env=list(parsed.passthrough_env),
-                ))
-            cfg.servers = cleaned
-        self.config.save()
-        # [EN] Configuration changed -> rebuild the bridge and the tool table; a process is
-        # [EN] actually started only when "enabled + connect required".
-        # [ZH] 配置已变化 → 重建桥接器与工具表；仅当"已启用 + 要求连接"时才真正拉起进程。
-        if self._mcp_bridge is not None:
-            self._mcp_bridge.close()
-        self._mcp_bridge = None
-        self._agent_registry = None
-        should_connect = bool(cfg.enabled) and bool(cfg.auto_connect) and bool(cfg.servers)
-        summary = self.refresh_agent_tools(discover_mcp=should_connect)
-        return {"type": "system", "content": "",
-                "mcp_apply": {"ok": True, "registered": summary.get("registered", 0),
-                              "connected": should_connect},
-                "mcp": self.mcp_diagnostics(), "agent": self.agent_diagnostics()}
 
     def _parse_override_request(self, request: Dict[str, Any]) -> tuple:
         """
@@ -4242,10 +3989,8 @@ class Backend:
             return
 
         # [EN] v0.2.6 task 13: an active external provider may serve the main chat even
-        # [EN] when no local GGUF model is loaded. Agent mode still requires the local
-        # [EN] tool loop, so it is reported separately rather than silently degraded.
-        # [ZH] v0.2.6 任务 13：即使未加载本地 GGUF 模型，生效的外部提供方也可服务主
-        # [ZH] 对话。Agent 模式仍需要本地工具循环，因此单独报告而不能静默降级。
+        # [EN] when no local GGUF model is loaded.
+        # [ZH] v0.2.6 任务 13：即使未加载本地 GGUF 模型，生效的外部提供方也可服务主对话。
         provider = self.external_provider()
 
         # [EN] Task 1: provide guidance when no model is available instead of raising an
@@ -4284,21 +4029,6 @@ class Backend:
             yield vague_done
             return
 
-        # [EN] Agent mode (capability extension-1, task 2): the loop in which the model calls
-        # [EN] tools autonomously, carried on a dedicated channel. It is dispatched here rather
-        # [EN] than in the chat path because it produces a **multi-step event stream**
-        # [EN] (agent_step / tool_call / tool_result + a final done), unlike a single
-        # [EN] generation.
-        # [ZH] Agent 模式（后续版本 相关设计）：模型自主调用工具的循环，走独立通道。
-        # [ZH] 放在这里而不是聊天路径中，是因为它产出的是**多步事件流**
-        # [ZH] （agent_step / tool_call / tool_result + 最终 done），与单次生成不同。
-        if self.conv.get_mode() == "agent":
-            if provider is not None and not self.model_ready:
-                yield {"type": "error", "ok": False,
-                       "content": _t("sys.provider_agent_local_required")}
-                return
-            yield from self._stream_agent(user_msg)
-            return
 
         search_context = self._search_if_enabled(user_msg)
         # [EN] Task 1 (self-test fix-1): **the gate "the question mentions a file" is removed**.
@@ -4488,141 +4218,6 @@ class Backend:
         except Exception as e:
             log.exception("流式推理失败")
             yield {"type": "error", "content": _t("sys.inference_failed", error=e)}
-
-    # [EN] ---------- Agent (capability extension-1, task 2) ----------
-    # [ZH] ---------- Agent（后续版本 相关设计） ----------
-
-    def agent_registry(self) -> Any:
-        """
-        [EN]
-        The current tool registry (including permission state).
-
-        Created lazily and **rebuilt after configuration changes**: ``_agent_registry`` is a
-        cache, and ``refresh_agent_tools()`` clears it (that path is taken by MCP
-        enable/disable and permission changes).
-
-        [ZH]
-        当前的工具注册表（含权限状态）。
-
-        惰性创建，且**配置变更后重建**：``_agent_registry`` 是缓存，
-        ``refresh_agent_tools()`` 会清除它（MCP 启停、权限变更都走该路径）。
-        """
-        from agent_tools import ToolContext, ToolRegistry
-
-        if self._agent_registry is not None:
-            return self._agent_registry
-        cfg = getattr(self.config, "agent", None)
-        allowed = list(getattr(cfg, "allow_sensitive", []) or [])
-        registry = ToolRegistry(
-            allowed_sensitive=allowed,
-            ctx=ToolContext(
-                conv=self.conv,
-                search=self.search,
-                summarizer=self.summarizer,
-                count_tokens=self._estimate_tokens,
-                files_dir=os.path.dirname(os.path.abspath(self.config.model_path or ".")),
-            ),
-        )
-        self._agent_registry = registry
-        return registry
-
-    def refresh_agent_tools(self, discover_mcp: bool = False) -> Dict[str, Any]:
-        """
-        [EN]
-        Rebuild the tool registry (called after MCP enable/disable or configuration changes).
-
-        ``discover_mcp=True`` actually starts the configured MCP server processes and fetches
-        their tool lists. This is an action that is **both costly and risky** (external
-        processes, possibly network access), so it must be requested explicitly and is never
-        performed implicitly on every question.
-
-        [ZH]
-        重建工具注册表（MCP 启停、配置变更后调用）。
-
-        ``discover_mcp=True`` 会真正拉起配置中的 MCP Server 进程并拉取工具清单 ——
-        这是**有代价也有风险**的动作（外部进程、可能联网），因此必须显式请求，
-        不会在每次提问时隐式执行。
-        """
-        self._agent_registry = None
-        registry = self.agent_registry()
-        registered = 0
-        if discover_mcp:
-            bridge = self.mcp_bridge()
-            bridge.auto_connect = True
-            try:
-                from mcp_client import register_mcp_tools
-
-                registered = register_mcp_tools(registry, bridge)
-            # [EN] MCP unavailability must not affect the Agent itself.
-            # [ZH] MCP 不可用不得影响 Agent 本身。
-            except Exception as exc:
-                log.warning("注册 MCP 工具失败：%s", exc)
-        return {"registered": registered,
-                "tools": registry.names(),
-                "enabled": [tool.name for tool in registry.available()]}
-
-    def mcp_bridge(self) -> Any:
-        """
-        [EN]
-        Build or reuse the MCP bridge for ``config.mcp`` (lazily).
-
-        [ZH]
-        按 ``config.mcp`` 构造/复用 MCP 桥接器（惰性）。
-        """
-        from mcp_client import McpBridge, McpServer
-
-        cfg = getattr(self.config, "mcp", None)
-        if self._mcp_bridge is None or self._mcp_signature != self._mcp_config_signature():
-            if self._mcp_bridge is not None:
-                # [EN] The configuration changed: close the old process first.
-                # [ZH] 配置已变化：先关闭旧进程。
-                self._mcp_bridge.close()
-            servers: List[Any] = []
-            for raw in (getattr(cfg, "servers", []) or []):
-                item = raw if isinstance(raw, dict) else raw.model_dump()
-                server = McpBridge.server_from_dict(item)
-                if server is not None:
-                    servers.append(server)
-            self._mcp_bridge = McpBridge(
-                servers=servers,
-                timeout=float(getattr(cfg, "timeout_seconds", 20.0) or 20.0),
-                auto_connect=bool(getattr(cfg, "auto_connect", False)),
-            )
-            self._mcp_signature = self._mcp_config_signature()
-        return self._mcp_bridge
-
-    def _mcp_config_signature(self) -> str:
-        cfg = getattr(self.config, "mcp", None)
-        try:
-            return json.dumps({
-                "enabled": bool(getattr(cfg, "enabled", False)),
-                "servers": [
-                    (item if isinstance(item, dict) else item.model_dump())
-                    for item in (getattr(cfg, "servers", []) or [])
-                ],
-                "timeout": float(getattr(cfg, "timeout_seconds", 20.0) or 20.0),
-            }, ensure_ascii=False, sort_keys=True)
-        except Exception:
-            return ""
-
-    def mcp_diagnostics(self) -> Dict[str, Any]:
-        """
-        [EN]
-        Observable MCP state (for /mcp, the settings page, and tests).
-
-        [ZH]
-        MCP 的可观测状态（供 /mcp、设置页与测试使用）。
-        """
-        cfg = getattr(self.config, "mcp", None)
-        bridge = self.mcp_bridge()
-        return {
-            "enabled": bool(getattr(cfg, "enabled", False)),
-            "auto_connect": bool(getattr(cfg, "auto_connect", False)),
-            "timeout_seconds": float(getattr(cfg, "timeout_seconds", 20.0) or 20.0),
-            "servers": bridge.status(),
-            "tools": bridge.tool_names(),
-            "error": bridge.last_error,
-        }
 
     # [EN] ---------- Open platform: local HTTP API and provider routing (v0.2.6 Part 4) ----------
     # [ZH] ---------- 开放平台：本地 HTTP API 与多 Provider 路由（v0.2.6 任务 4） ----------
@@ -5026,338 +4621,8 @@ class Backend:
         finally:
             self.api_busy = False
 
-    def agent_diagnostics(self) -> Dict[str, Any]:
-        """
-        [EN]
-        Observable Agent state (for /agent, tests, and troubleshooting).
-        The task requires "users can see every step of the Agent", so the backend must first
-        retain "every step" as structured data before the frontend can display it correctly;
-        otherwise troubleshooting depends on reading logs.
 
-        [ZH]
-        Agent 的可观测状态（供 /agent、测试与排查使用）。
 
-        设计规范要求"用户能看到 Agent 的每一步"，后端必须先把"每一步"留存为结构化数据，
-        前端才有可能正确显示；否则排查时只能依靠翻阅日志。
-        """
-        registry = self._agent_registry or self.agent_registry()
-        cfg = getattr(self.config, "agent", None)
-        return {
-            "mode": self.conv.get_mode(),
-            "max_steps": int(getattr(cfg, "max_steps", 4) or 4),
-            "tools": registry.public_list(),
-            "enabled_tools": [tool.name for tool in registry.available()],
-            "last_run": getattr(self, "_last_agent_run", None),
-        }
-
-    def _iter_agent_events(self, runner: Any) -> Iterator[Dict[str, Any]]:
-        """
-        [EN]
-        Turn the Agent loop (synchronous and blocking) into a generator that can yield in a
-        streaming fashion.
-
-        Why a thread plus a queue: every step of the loop calls the model (several seconds) and
-        executes tools, so running it synchronously inside the generator would leave the UI
-        silent for a long time. This follows the existing approach of the streaming path
-        (``llm_engine._iter_with_heartbeat``): a reader thread plus a queue, with heartbeats
-        emitted while waiting. The stop flag is passed to the loop (checked at every step) and
-        also returns immediately here.
-
-        [ZH]
-        把 Agent 循环（同步、会阻塞）转为可流式产出的生成器。
-
-        为什么使用线程 + 队列：循环中每一步都要调用模型（数秒）并执行工具，
-        若在生成器内同步运行，界面上会出现长时间无任何输出 —— 与流式路径的
-        既有做法（``llm_engine._iter_with_heartbeat``）保持一致：读者线程 + 队列，
-        等待期间发送心跳。停止信号既传给循环（每步检查），也在此处立即返回。
-        """
-        import queue as _queue
-        import threading
-
-        events: "_queue.Queue[Any]" = _queue.Queue()
-        box: Dict[str, Any] = {}
-
-        def worker() -> None:
-            try:
-                box["run"] = runner(lambda event: events.put(event))
-            # [EN] A failure of the loop itself must still report its cause.
-            # [ZH] 循环本身失败也必须给出原因。
-            except Exception as exc:
-                box["error"] = str(exc)
-            finally:
-                events.put(None)
-
-        thread = threading.Thread(target=worker, daemon=True, name="echodesk-agent")
-        thread.start()
-        heartbeat = float(getattr(self.config, "stream_heartbeat_seconds", 1.5) or 1.5)
-        while True:
-            if self.stop_event.is_set():
-                break
-            try:
-                event = events.get(timeout=max(0.2, heartbeat))
-            except _queue.Empty:
-                yield {"type": "progress", "channel": _CH_HEARTBEAT, "agent": True}
-                continue
-            if event is None:
-                break
-            yield event
-        thread.join(timeout=5)
-        self._agent_run = box.get("run")
-
-    def _handle_tool_confirmation(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Resolve a pending guard-tool confirmation from the frontend.
-
-        [ZH]
-        解除前端发来的高危工具待确认请求。
-        """
-        request_id = str(request.get("request_id") or "")
-        approved = bool(request.get("approved"))
-        resolved = self.resolve_tool_confirmation(request_id, approved)
-        return {"type": "system", "content": "", "request_id": request_id,
-                "resolved": resolved, "approved": approved}
-
-    def resolve_tool_confirmation(self, request_id: str, approved: bool) -> bool:
-        """
-        [EN]
-        Record the user's decision and wake the waiting agent worker.
-
-        Returns whether the identifier matched a pending request.
-
-        [ZH]
-        记录用户决定并唤醒等待中的 Agent 工作线程。
-
-        返回标识是否匹配到待确认请求。
-        """
-        with self._tool_confirm_lock:
-            pending = self._pending_tool_confirmations.get(str(request_id or ""))
-            if pending is None:
-                return False
-            pending["approved"] = bool(approved)
-            pending["event"].set()
-            return True
-
-    def _confirm_agent_tool(self, request: Dict[str, Any]) -> bool:
-        """
-        [EN]
-        Emit a ``confirm_tool`` event and block until the user answers or the
-        configured timeout expires.
-
-        The event is written under the shared stdout lock, so it cannot
-        interleave with stream lines. The default answer is denial: a missing
-        frontend, a timeout, or a stop request never executes the command.
-
-        [ZH]
-        发出 ``confirm_tool`` 事件，并阻塞到用户答复或配置的超时到期。
-
-        事件在共享 stdout 锁内写出，不会与流式行交错。默认答复为拒绝：前端
-        缺失、超时或用户中止都不会执行命令。
-        """
-        request_id = str(request.get("request_id") or uuid.uuid4().hex[:16])
-        timeout = float(getattr(getattr(self.config, "agent", None),
-                                "confirm_timeout_seconds", 120) or 120)
-        pending: Dict[str, Any] = {"event": threading.Event(), "approved": False}
-        with self._tool_confirm_lock:
-            self._pending_tool_confirmations[request_id] = pending
-        tool = str(request.get("tool") or "")
-        command = str(request.get("command") or "")
-        payload = dict(request)
-        payload["request_id"] = request_id
-        payload["type"] = "confirm_tool"
-        payload["content"] = _t("agent.confirm_tool", tool=tool, command=command)
-        try:
-            _write(payload)
-        except Exception:
-            log.warning("发送工具确认事件失败", exc_info=True)
-        deadline = time.time() + max(1.0, timeout)
-        while time.time() < deadline:
-            if pending["event"].wait(0.2):
-                break
-            if self.stop_event.is_set():
-                break
-        with self._tool_confirm_lock:
-            self._pending_tool_confirmations.pop(request_id, None)
-        approved = bool(pending["approved"] and not self.stop_event.is_set())
-        log.info("高危工具确认 %s：%s", tool, "允许" if approved else "拒绝或超时")
-        return approved
-
-    def _stream_agent(self, user_msg: str) -> Iterator[Dict[str, Any]]:
-        """
-        [EN]
-        Streaming handling of Agent mode: multi-step events plus a final done.
-
-        [ZH]
-        Agent 模式的流式处理：多步事件 + 最终 done。
-        """
-        from agent import AgentLoop
-
-        cfg = getattr(self.config, "agent", None)
-        registry = self.agent_registry()
-        self._last_agent_run = None
-        messages = self._agent_messages(user_msg, registry)
-        loop = AgentLoop(
-            self.llm, registry,
-            max_steps=int(getattr(cfg, "max_steps", 4) or 4),
-            stop_event=self.stop_event,
-            max_tokens=self._output_token_budget(),
-            max_observation_chars=int(getattr(cfg, "max_observation_chars", 1200) or 1200),
-            confirm_tool=self._confirm_agent_tool,
-        )
-        temperature = float(getattr(self.commands, "temperature", 0.5) or 0.5)
-
-        for event in self._iter_agent_events(
-                lambda emit: loop.run(messages, temperature=temperature, on_event=emit)):
-            if event.get("type") in ("agent_step", "tool_call", "tool_result"):
-                yield event
-            else:
-                # [EN] Other events such as heartbeats are passed through unchanged (the
-                # [EN] frontend only inspects type; extra fields are harmless).
-                # [ZH] 心跳等其它事件原样透传（前端只识别 type，多余字段无影响）。
-                yield event
-
-        run = self._agent_run
-        answer = str(getattr(run, "answer", "") or "") if run is not None else ""
-        if run is None:
-            answer = _t("sys.inference_failed", error="agent loop did not return")
-        # [EN] Send the final answer once as streaming deltas: the frontend's existing render
-        # [EN] path can display the conclusion without changes, while the done line remains the
-        # [EN] authoritative content (consistent with the chat_stream contract).
-        # [ZH] 把最终答案按流式 delta 发送一遍：前端既有的渲染路径无需改动即可显示结论，
-        # [ZH] done 行仍是权威内容（与 chat_stream 的约定一致）。
-        if answer:
-            yield {"type": "delta", "channel": _CH_ANSWER, "content": answer}
-
-        self.conv.add_message("user", user_msg)
-        self.conv.add_message("assistant", answer)
-        self._compact_history()
-
-        if run is not None:
-            self._last_agent_run = {
-                "steps": run.trace(),
-                "stopped": run.stopped,
-                "hit_max_steps": run.hit_max_steps,
-                "elapsed_ms": run.elapsed_ms,
-                "tools": [step.tool for step in run.steps if step.tool],
-            }
-
-        done: Dict[str, Any] = {
-            "type": "done",
-            "content": answer,
-            "stopped": bool(getattr(run, "stopped", False)),
-            "agent": {
-                "steps": len(getattr(run, "steps", []) or []),
-                "tools": [step.tool for step in getattr(run, "steps", []) if step.tool],
-                "hit_max_steps": bool(getattr(run, "hit_max_steps", False)),
-                "elapsed_ms": int(getattr(run, "elapsed_ms", 0) or 0),
-            },
-        }
-        self._attach_context(done)
-        yield done
-
-    def _agent_messages(self, user_msg: str, registry: Any) -> List[dict]:
-        """
-        [EN]
-        Messages for an Agent turn: system prompt + **tool protocol appended at runtime** +
-        history + question.
-
-        The tool protocol and the available tool list are **dynamic** (they depend on
-        permission switches), so they are appended here rather than written into
-        ``MODES["agent"]``: the mode block must respect the 700-character audit limit, and the
-        prompt must not list "tools that are currently disabled".
-
-        [ZH]
-        Agent 轮的 messages：系统提示词 + **运行期追加的工具协议** + 历史 + 问题。
-
-        工具协议与可用工具清单是**动态的**（受权限开关影响），因此在此处追加，
-        而不是写进 ``MODES["agent"]``：模式块必须遵守 700 字符的审计上限，
-        也不能在提示词中列出"当前未启用的工具"。
-        """
-        # [EN] Task 1 (self-test fix-1): **the gate "the question mentions a file" is removed**.
-        # [EN] The old form `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
-        # [EN] caused "the model does not see the file content after a file is uploaded": for
-        # [EN] questions such as "summarize this", "analyze this", or "who is the counterparty"
-        # [EN] no FILE_INTENT keyword matches, so not a single character of the file body
-        # [EN] entered the context; the model saw only the file name in the system prompt and
-        # [EN] truthfully answered that no content was visible. The retrieval path had already
-        # [EN] reached the same conclusion (see _retrieval_context_for: that gate prevented
-        # [EN] unnamed questions such as "what is the penalty rate" from retrieving), but the
-        # [EN] full-text injection path had not followed. The old
-        # [EN] `bool(self.conv.file_content)` is also wrong for large files: a body above
-        # [EN] files.disk_threshold_chars is spilled to disk and entry.content is cleared, so
-        # [EN] the gate was permanently false. The rule is now "inject whenever a file exists",
-        # [EN] and the length is still bounded by the files.total_chars budget.
-        # [ZH] 相关设计（自测问题修复-1）：**不再以"问题中是否提到文件"作为注入开关**。
-        # [ZH] 旧写法 `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
-        # [ZH] 直接造成"上传文件后模型回答看不到文件内容"：用户提问「帮我总结一下」
-        # [ZH] 「分析一下」「甲方是谁」时不包含任何 FILE_INTENT 关键词，文件正文便一个字
-        # [ZH] 都未进入上下文，模型只能看到系统提示中的文件名，于是如实回答"没有看到内容"。
-        # [ZH] 检索路径早已得出同一结论（见 _retrieval_context_for 的说明：该开关会使
-        # [ZH] "违约金比例是多少"这类不点名的提问检索不到），只是全文注入这条路径未同步。
-        # [ZH] 旧写法中的 `bool(self.conv.file_content)` 对大文件同样不正确：正文超过
-        # [ZH] files.disk_threshold_chars 会落盘、entry.content 被清空，开关随之恒为假。
-        # [ZH] 现在改为"有文件即注入"，长度仍由 files.total_chars 预算约束。
-        include_file = self.conv.has_file()
-        messages = self.conv.build_messages(
-            user_msg, "", include_file=include_file)
-        self._note_request_size(messages)
-        messages[0] = {
-            "role": "system",
-            "content": str(messages[0].get("content", "")) + "\n\n" + registry.protocol_text(),
-        }
-        return messages
-
-    # [EN] ---------- Concrete actions ----------
-    # [ZH] ---------- 具体动作 ----------
-
-    # [EN] ---------- Local retrieval (capability extension-1, task 6) ----------
-    # [ZH] ---------- 本地检索（后续版本 相关设计） ----------
-
-    def configure_agent(self, tool: str = "", allowed: Any = True) -> Dict[str, Any]:
-        """
-        [EN]
-        Write entry point for ``/agent``: read state, toggle a tool's permission, or change the
-        step limit.
-
-        Call shapes (decided by ``CommandHandler._agent``):
-          * ``configure_agent()``                    -> read state only
-          * ``configure_agent("web_search", True)``  -> authorize
-          * ``configure_agent("__steps__", 5)``      -> change the step limit
-
-        Permissions and the step limit are written to ``config.json`` (``config.save()``): one
-        user press persists them. Otherwise every restart would require re-authorization,
-        which would in practice be criticized and lead to the whole feature being disabled.
-
-        [ZH]
-        ``/agent`` 的写入口：读取状态、开关某个工具的权限、修改步数上限。
-
-        调用形式（由 ``CommandHandler._agent`` 决定）：
-          * ``configure_agent()``                    → 只读状态
-          * ``configure_agent("web_search", True)``  → 授权
-          * ``configure_agent("__steps__", 5)``      → 修改步数上限
-
-        权限与步数均写入 ``config.json``（``config.save()``）：用户按一次即长期生效，
-        否则每次重启都要重新授权，实际使用中必然引发不满并导致该功能被整体关闭。
-        """
-        registry = self.agent_registry()
-        cfg = getattr(self.config, "agent", None)
-        if tool == "__steps__":
-            try:
-                steps = max(1, min(8, int(allowed)))
-            except (TypeError, ValueError):
-                return {"ok": False, "max_steps": getattr(cfg, "max_steps", 4)}
-            if cfg is not None:
-                cfg.max_steps = steps
-                self.config.save()
-            return {"ok": True, "max_steps": steps}
-        if tool:
-            if not registry.allow(tool, bool(allowed)):
-                return {"ok": False, "tools": registry.names()}
-            if cfg is not None:
-                cfg.allow_sensitive = sorted(registry.allowed_sensitive)
-                self.config.save()
-            return {"ok": True, "enabled": registry.is_allowed(registry.get(tool))}
-        return self.agent_diagnostics()
 
     def _vague_guide(self, user_msg: str) -> str:
         """
@@ -5374,11 +4639,8 @@ class Backend:
         "what should I do about this" usually refers to the preceding content, and guidance
         would be redundant.
 
-        **Two cases are not intercepted** (after capability extension-1, task 1, guide is no
-        longer a mode but a task template): ``/task guide`` (the user explicitly wants the model
-        to list directions) and agent mode (the model is already meant to decide what to do).
-        The predicate changed from "mode name equals guide" to "the task layer is the guide
-        template".
+        **One case is not intercepted**: ``/task guide`` (the user explicitly wants the model
+        to list directions). The predicate is "the task layer is the guide template".
 
         It is a method because **the two call sites must agree**: an earlier round of
         integration testing found that this check existed only in `_handle_chat`, while normal
@@ -5396,9 +4658,8 @@ class Backend:
         仅在"没有文件上下文、也没有历史"时触发：已有上下文时"这个怎么办"
         往往指代上文内容，引导反而多余。
 
-        **两种情况下不拦截**（能力扩展-1 任务一之后，guide 不再是模式而是任务模板）：
-        ``/task guide``（用户明确要模型自行列出方向）与 agent 模式（模型本来就要自行
-        决定做什么）。判据从"模式名等于 guide"改为"任务层就是 guide 模板"。
+        **一种情况下不拦截**（能力扩展-1 任务一之后，guide 不再是模式而是任务模板）：
+        ``/task guide``（用户明确要模型自行列出方向）。判据是"任务层就是 guide 模板"。
 
         抽成方法是因为**两个调用点必须一致**：上一轮集成测试发现该判断原先只写在
         `_handle_chat` 中，而前端正常对话走的是 `stream()` 的 `chat_stream` ——
@@ -5409,8 +4670,6 @@ class Backend:
         if not bool(getattr(self.config, "clarify_vague", True)):
             return ""
         if getattr(self.conv, "task_template", "") == "guide":
-            return ""
-        if self.conv.get_mode() == "agent":
             return ""
         if self.conv.history or self.conv.file_content:
             return ""
@@ -5537,26 +4796,20 @@ class Backend:
     #: [EN] Persistence field for the "login check element" in two-phase selection.
     #:
     #: [EN] It **must be a class attribute and accessed via ``self.``**: a bare name inside
-    #: [EN] a method body follows LEGB and cannot see the class scope (automation.py's
-    #: [EN] ``_target_label`` hit exactly this problem). The mapping table of the existing
-    #: [EN] ``_apply_picked_selector`` has no login_check entry, so it would **silently
-    #: [EN] discard** this selector even though the configuration does have
+    #: [EN] a method body follows LEGB and cannot see the class scope. The mapping table of
+    #: [EN] the existing ``_apply_picked_selector`` has no login_check entry, so it would
+    #: [EN] **silently discard** this selector even though the configuration does have
     #: [EN] ``login_check_selector``; the mapping is added here.
     #: [ZH] 两段式选取中"登录检测元素"的落盘字段。
     #:
-    #: [ZH] **必须是类属性、且通过 ``self.`` 访问**：方法体中的裸名字走 LEGB，找不到类作用域
-    #: [ZH] （automation.py 的 ``_target_label`` 曾因此出现问题）。既有
-    #: [ZH] ``_apply_picked_selector`` 的映射表没有 login_check，会**静默丢弃**该选择器，
+    #: [ZH] **必须是类属性、且通过 ``self.`` 访问**：方法体中的裸名字走 LEGB，找不到类作用域。
+    #: [ZH] 既有 ``_apply_picked_selector`` 的映射表没有 login_check，会**静默丢弃**该选择器，
     #: [ZH] 而配置中确实有 ``login_check_selector`` 这一项，因此在此补充映射。
     _PICK_EXTRA_FIELDS: Dict[str, str] = {"login_check": "login_check_selector"}
 
     # [EN] This group consists of **additional** handlers; no existing function body was
-    # [EN] changed: the old streaming ``automation_pick`` / ``_stream_automation_pick`` /
-    # [EN] ``_apply_picked_selector`` are kept as-is, and the WPF UI and the existing tests
-    # [EN] keep working as before.
-    # [ZH] 这一组是**新增**的处理器，没有改动任何既有函数的函数体：
-    # [ZH] 老的流式 ``automation_pick`` / ``_stream_automation_pick`` / ``_apply_picked_selector``
-    # [ZH] 原样保留，WPF 界面与既有测试继续照旧工作。
+    # [EN] changed.
+    # [ZH] 这一组是**新增**的处理器，没有改动任何既有函数的函数体。
 
     def _stream_model_hub_download(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
         """
@@ -7306,7 +6559,7 @@ class Backend:
     def _merge_action(response: Dict[str, Any], action: Dict[str, Any]) -> None:
         """
         [EN]
-        Merge an automation action into the pending action map.
+        Merge a command action into the response map.
 
         [ZH]
         把动作字段并入响应（不覆盖 type）。
@@ -7514,18 +6767,13 @@ def main() -> None:
     # [ZH] 拒绝就退出"的强制选择。放在 ready 之前，前端渲染就绪状态时一次就能拿到全部信息。
     model_missing: Dict[str, Any] = {}
     if not backend.model_ready:
+        # [EN] Reader edition: **no network request during startup**. The model repository
+        # [EN] lookup is dropped; the guidance only offers the in-app model library and
+        # [EN] manual placement, and any online lookup happens only after the user opens
+        # [EN] the model library and asks for it.
+        # [ZH] Reader 版：**启动阶段不发任何网络请求**。这里不再查询模型仓库；引导只给出
+        # [ZH] 程序内模型库与手动放置两条路径，任何联网查询都只在用户主动打开模型库后发生。
         target, size, repo_error = "", 0, ""
-        try:
-            target, size = find_best_model(config.model_repo, config.model_path,
-                                           hf_endpoint=config.hf_endpoint)
-        except Exception as e:  # noqa: BLE001
-            # [EN] A failed repository lookup (offline / unreachable mirror) does not affect
-            # [EN] no-model startup: the guidance still offers both the model marketplace and
-            # [EN] manual placement, only without an "expected size" to display.
-            # [ZH] 查仓库失败（离线/镜像不可达）不影响无模型启动：引导里仍给出模型市场与
-            # [ZH] 手动放置两条路径，只是没有"预计体积"可显示。
-            log.warning("查询模型仓库失败（不影响无模型启动）: %s", e)
-            repo_error = str(e)
         model_missing = {
             "model": config.model_path,
             "repo": config.model_repo,
@@ -7661,7 +6909,6 @@ def main() -> None:
             # [ZH] 存活探测与后台作业轮询属于轻量请求，长任务运行期间必须保持
             # [ZH] 可用（v0.2.6 任务 2.1）。
             is_lightweight = action in ("ping", "file_job_status", "file_job_cancel",
-                                        "confirm_tool",
                                         # [EN] Read-only state queries.
                                         # [ZH] 只读状态查询。
                                         "promptlib_list",

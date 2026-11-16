@@ -313,9 +313,9 @@ def test_conversation() -> None:
     check("恢复后记录了上次模型", prev == "model.gguf")
     os.remove(path)
 
-    # 模式别名（能力扩展-1 任务一之后只有 3 个模式：chat/contract/agent）
+    # 模式别名（Reader 版只有 2 个模式：chat/contract）
     check("模式别名可切换（编号）", conv2.set_mode("2") and conv2.get_mode() == "contract")
-    check("模式别名可切换（缩写）", conv2.set_mode("ag") and conv2.get_mode() == "agent")
+    check("模式别名可切换（缩写）", conv2.set_mode("ct") and conv2.get_mode() == "contract")
     check("旧模式名仍可切换（映射到 chat）", conv2.set_mode("summary") and conv2.get_mode() == "chat")
     check("旧模式名给出要套用的任务模板", conv2.migrated_template("summary") == "summary"
           and conv2.migrated_template("chat") == "")
@@ -345,7 +345,7 @@ def test_file_injection() -> None:
     main_src = open(os.path.join(os.path.abspath(BACKEND), "main.py"), encoding="utf-8").read()
     gate_lines = [ln.strip() for ln in main_src.splitlines()
                   if ln.strip().startswith("include_file = ")]
-    check("include_file 的三处闸门都在", len(gate_lines) == 3, str(gate_lines))
+    check("include_file 的两处闸门都在", len(gate_lines) == 2, str(gate_lines))
     check("闸门一律是 has_file()（不再看问题里有没有提到文件）",
           all(ln == "include_file = self.conv.has_file()" for ln in gate_lines),
           str(gate_lines))
@@ -360,14 +360,11 @@ def test_file_injection() -> None:
           f"出现 {main_src.count('def load_file_into_context(')} 次")
 
     # 任务十：**每一处**注入之后都要记下"本轮真正发出去多少"。
-    # 为什么要有这条：这三处的后续代码形状并不一样（两处后面跟着同一行注释、
-    # 第三处后面是 try:），本轮用"替换全部"时就**静默漏掉了第三处**，
-    # 而工具报的是"全部替换成功"。所以这里按行号逐个核对窗口，
-    # 而不是数一下总数是否相等 —— 数总数在这里恰好也会是 3 对 3 而看不出漏。
+    # Reader 版删除 Agent 通道后只剩流式与非流式两处。
     src_lines = main_src.splitlines()
     gate_rows = [i for i, ln in enumerate(src_lines)
                  if ln.strip() == "include_file = self.conv.has_file()"]
-    check("三处注入闸门都在", len(gate_rows) == 3, str(gate_rows))
+    check("两处注入闸门都在", len(gate_rows) == 2, str(gate_rows))
     no_note = [i + 1 for i in gate_rows
                if not any("_note_request_size" in ln for ln in src_lines[i:i + 12])]
     check("每处闸门之后都记了本轮请求大小（任务十）", not no_note, str(no_note))

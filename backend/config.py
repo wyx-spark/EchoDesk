@@ -679,23 +679,6 @@ class MarketplaceConfig(BaseModel):
     # [EN] load order, and notes may be specified).
     # [ZH] 显式本地插件清单（可指定任意路径、别名、启用状态、加载顺序、备注）。
     local_manifest: str = "skills_local.json"
-    # [EN] Developer mode: verbose logging plus hot reload.
-    # [ZH] 开发模式：详细日志 + 热重载。
-    dev_mode: bool = False
-    # [EN] Fix 1: whether the developer-mode switch was explicitly set by the user.
-    # [EN] When False, the mode is derived as "enabled if skills_dev/ contains any
-    # [EN] plug-in" (works out of the box on first use); when True, dev_mode is
-    # [EN] authoritative. Otherwise disabling the switch would be undone automatically
-    # [EN] because the directory does contain plug-ins, making developer mode
-    # [EN] impossible to turn off.
-    # [ZH] 兼容性修正：开发者模式开关是否由用户显式设置过。
-    # [ZH] False 时按"skills_dev/ 里有插件就自动启用"处理（首次开箱即用），
-    # [ZH] True 时完全以 dev_mode 为准 —— 否则"关掉开关"会因为目录里确实有插件而被
-    # [ZH] 自动重新打开，表现为"开发者模式一旦开启就关不掉"。
-    dev_mode_explicit: bool = False
-    # [EN] Development log (the developer tab displays the last N lines inline).
-    # [ZH] 开发日志（开发者 Tab 内嵌展示最后 N 行）。
-    dev_log_file: str = "skills_dev.log"
     # [EN] Formal loading accepts only skills with verified=true in the registry
     # [EN] (task 2, item 2.4: load whitelist).
     # [ZH] 正式加载只接受注册表中 verified=true 的技能（相关设计 2.4 加载白名单）。
@@ -736,60 +719,6 @@ class UpdateConfig(BaseModel):
     # [EN] again. A newer release still prompts.
     # [ZH] 用户明确选择忽略的版本；相同版本不再提示，更新的版本仍会提示。
     ignored_version: str = ""
-
-
-class McpServerConfig(BaseModel):
-    """
-    [EN]
-    Declaration of one MCP server (v0.2.1 capability extension 1, task 3).
-
-    MCP is configured explicitly by the user: EchoDesk does not auto-discover or
-    auto-connect to any address, and does not decide which server to connect to. This
-    is also part of the privacy commitment: tools may transmit data externally, so the
-    data flow is chosen by the user and the main program only launches the command
-    that the user wrote.
-
-    [ZH]
-    一个 MCP Server 的声明（v0.2.1 能力扩展-1 任务三）。
-
-    MCP 是用户主动配置的：EchoDesk 不会自动发现、不会自动连接任何地址，
-    也不会替用户决定连哪个 server。这一条同时是隐私承诺的一部分 ——
-    工具可能把数据带出去，所以数据流向由用户选择，主程序只负责拉起他写的命令。
-    """
-
-    name: str = ""
-    command: str = ""
-    args: List[str] = Field(default_factory=list)
-    env: Dict[str, str] = Field(default_factory=dict)
-    enabled: bool = True
-    #: [EN] Parent-process environment variables allowed to pass through to the child
-    #: [EN] process (by default none are passed through, so secrets such as HF_TOKEN are
-    #: [EN] not handed to third-party processes by accident).
-    #: [ZH] 允许透传给子进程的父进程环境变量（默认一个都不透传，
-    #: [ZH] 避免把 HF_TOKEN 之类的密钥顺手交给第三方进程）。
-    passthrough_env: List[str] = Field(default_factory=list)
-
-
-class McpConfig(BaseModel):
-    """
-    [EN]
-    MCP client configuration (stdio transport, zero new dependencies; the trade-off
-    is documented in ``backend/mcp_client.py``).
-
-    [ZH]
-    MCP 客户端配置（stdio 传输，零新依赖；取舍见 ``backend/mcp_client.py``）。
-    """
-
-    enabled: bool = False
-    #: [EN] Timeout for a single request to one server (seconds). An external process
-    #: [EN] may hang, so a limit is mandatory.
-    #: [ZH] 单个 server 的一次请求超时（秒）。外部进程可能卡死，必须有上限。
-    timeout_seconds: float = Field(default=20.0, ge=1.0, le=600.0)
-    #: [EN] Connect and fetch the tool list at startup (default no: launching external
-    #: [EN] processes happens only when the user actually needs them).
-    #: [ZH] 启动时就连上并拉取工具清单（默认否：拉起外部进程只在用户真要用时发生）。
-    auto_connect: bool = False
-    servers: List[McpServerConfig] = Field(default_factory=list)
 
 
 class LocalApiConfig(BaseModel):
@@ -989,53 +918,6 @@ class ProvidersConfig(BaseModel):
 
 
 
-class AgentConfig(BaseModel):
-    """
-    [EN]
-    Agent platform configuration (v0.2.1 capability extension 1, task 2).
-
-    Permission model (see the module notes of :mod:`agent_tools`): no tool with side
-    effects is provided in this version. Tools are only split into "pure local
-    computation / read-only access to uploaded content" (``safe``, enabled by default)
-    and "transmits data externally or reads arbitrary local content" (``sensitive``,
-    which requires explicit authorization).
-
-    [ZH]
-    Agent 平台配置（v0.2.1 能力扩展-1 任务二）。
-
-    权限模型（详见 :mod:`agent_tools` 的模块说明）：有副作用的工具本版一个都不提供，
-    只把工具分成"纯本地计算/只读已上传内容"（``safe``，默认可用）与"会把数据带出去或
-    读本机任意内容"（``sensitive``，必须显式授权）两类。
-    """
-
-    #: [EN] Tool-call step limit. Once reached, the loop switches to "conclude from the
-    #: [EN] available information" rather than invoking tools indefinitely. The limit of
-    #: [EN] 8 is empirical: small models rarely need more steps, and every extra step is
-    #: [EN] a full model call.
-    #: [ZH] 工具调用步数上限。到顶之后循环会改成"用已有信息给结论"，不会无限调下去。
-    #: [ZH] 上限 8 是经验值：小模型很少需要更多步，而每多一步都是一次完整的模型调用。
-    max_steps: int = Field(default=4, ge=1, le=8)
-    #: [EN] Names of the sensitive tools that are allowed (web search, reading
-    #: [EN] arbitrary local files). The default is empty, meaning all are disabled; the
-    #: [EN] user must enable them explicitly in settings or with /agent allow <tool>, so
-    #: [EN] the default promise "data does not leave this machine" is preserved.
-    #: [ZH] 允许使用的敏感工具名（联网搜索、读任意本地文件）。默认空 = 全部关闭，
-    #: [ZH] 用户要在设置里或 /agent allow <工具> 显式打开；这样"数据不出本机"的默认承诺不变。
-    allow_sensitive: List[str] = Field(default_factory=list)
-    #: [EN] Maximum wait for the user's answer to a ``confirm_tool`` event, in
-    #: [EN] seconds. On timeout the guard tool is denied, never executed.
-    #: [ZH] 用户回答 ``confirm_tool`` 事件的最长等待时间（秒）。超时即拒绝该
-    #: [ZH] 高危工具，绝不执行。
-    confirm_timeout_seconds: int = Field(default=120, ge=10, le=1800)
-    #: [EN] Injection limit for a single tool result (characters). Tool results are fed
-    #: [EN] back into the context; without a limit, a single file read can consume half
-    #: [EN] the window.
-    #: [ZH] 单条工具结果注入上下文的上限（字符）。工具结果会回灌进上下文，不设上限时
-    #: [ZH] 一次读文件就能吃掉半个窗口。
-    max_observation_chars: int = Field(default=1200, ge=200, le=8000)
-
-
-
 class Config(BaseModel):
     """
     [EN]
@@ -1048,14 +930,6 @@ class Config(BaseModel):
     model_path: str = "Qwen3-0.6B-Q6_K.gguf"
     model_repo: str = "unsloth/Qwen3-0.6B-GGUF"
     hf_endpoint: str = "https://hf-mirror.com"
-    # [EN] Default conversation mode. After the mode simplification (capability
-    # [EN] extension 1, task 1) only chat/contract/agent remain; legacy values
-    # [EN] (general/summary/...) can still be read, because conversation.canonical_mode
-    # [EN] migrates them to the new names, so existing config.json files need no manual
-    # [EN] edit.
-    # [ZH] 默认对话模式。模式简化（后续版本 相关设计）后只剩 chat/contract/agent；
-    # [ZH] 旧值（general/summary/…）仍然能读进来 —— conversation.canonical_mode 会把它们
-    # [ZH] 迁移成新名字，所以老用户的 config.json 不需要手工改。
     default_mode: str = "chat"
     # [EN] Context window explicitly selected by the user. Since v0.2.6 item 17
     # [EN] the engine allocation equals this value exactly: the planner no longer
@@ -1087,12 +961,6 @@ class Config(BaseModel):
     # [EN] Multi-file upload (known-issue optimization 2 in an earlier release, task 8).
     # [ZH] 多文件上传（此前版本，优化已知问题 2，研发任务 8）
     files: FilesConfig = Field(default_factory=FilesConfig)
-    # [EN] Agent platform (capability extension 1 in an earlier release, task 2).
-    # [ZH] Agent 平台（此前版本，能力扩展 1，研发任务 2）
-    agent: AgentConfig = Field(default_factory=AgentConfig)
-    # [EN] MCP client (capability extension 1 in an earlier release, task 3).
-    # [ZH] MCP 客户端（此前版本，能力扩展 1，研发任务 3）
-    mcp: McpConfig = Field(default_factory=McpConfig)
     # [EN] Multi-provider routing (v0.2.6 Part 4, task 2.3): the local llama.cpp
     # [EN] engine is the default, and an external endpoint is enabled only with the
     # [EN] informed-consent grant.

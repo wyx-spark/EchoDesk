@@ -117,18 +117,8 @@
         "usage": "/compact [focus on <what matters>]",
         "desc": "Compact the context right away: older turns become a summary (or are dropped in sliding-window mode), freeing room for new content without waiting for the automatic trigger."
       },
-      "/agent": {
-        "name": "Agent tools and permissions",
-        "usage": "/agent [list|allow <tool>|deny <tool>|steps <1-8>|on|off]",
-        "desc": "See which tools the agent may call and which are authorised, pre-authorise sensitive tools (web search, reading local files), or change the step limit; on/off is the same as switching to agent mode",
-        "detail": "    In agent mode the model decides which tool to call and in what order until it reaches a conclusion;\n    every step (which tool, which arguments, what came back) is shown in the conversation, and Esc stops it.\n\n    Tools come in two tiers:\n      ✅ safe: calculator, dates, unit conversion, lookup/summary inside uploaded files — enabled by default;\n      🔒 sensitive: web search and reading arbitrary local files — these send data out or read local\n         content, so they are off by default; enable them with /agent allow web_search.\n    This version ships **no tool that writes files or runs commands** (least privilege).\n\n    Common uses:\n      /agent                    show the tool list and permission state\n      /agent allow web_search   allow web search (written to config.json, persists)\n      /agent deny web_search    revoke it\n      /agent steps 5            force a conclusion after at most 5 tool calls\n      /agent on                 switch to agent mode (same as /mode agent)"
-      },
-      "/mcp": {
-        "name": "MCP servers",
-        "usage": "/mcp [list|enable <name>|disable <name>|connect]",
-        "desc": "Show MCP server status and the tools they expose; enabling or disabling a server takes effect immediately (no restart); connect actually starts the process and fetches its tool list",
-        "detail": "    MCP (Model Context Protocol) lets the agent use tools provided by **external processes**\n    (databases, APIs, file systems, …). EchoDesk ships a stdio client: declare one\n    command per server under mcp.servers in config.json.\n\n    Security boundary: an MCP server is a process you configured and EchoDesk cannot\n    control what it does, so its tools are **always treated as sensitive** and must be\n    authorised with /agent allow first. Secret environment variables are **not**\n    passed through by default — name them in passthrough_env if you need to.\n\n    Common uses:\n      /mcp                     show status and tools\n      /mcp enable echo         enable a server (written to config.json)\n      /mcp disable echo        disable it (takes effect immediately)\n      /mcp connect             connect now and fetch the tool list\n\n    Example: examples\\mcp\\echo_server.py (standard library only; configure it to\n    verify the plumbing end to end)."
-      }
+      "/agent": {},
+      "/mcp": {}
     }
   },
   "main": {
@@ -195,10 +185,7 @@
       "placeholder": "🛠️ Mode: general",
       "chip": "🛠️ Mode: {0}"
     },
-    "automation": {
-      "disabled": "off",
-      "running": "running"
-    },
+    "automation": {},
     "command": {
       "move": "Move into the command box",
       "completed": "Completed to {0}; check it and press Enter to run",
@@ -281,7 +268,6 @@
       "on": "On",
       "off": "Off",
       "search": "🔍 Search: {0}",
-      "automation": "⚙️ Automation: {0}",
       "market": "🌐 Market: {0}",
       "marketUnconnected": "not connected",
       "kv": "💾 KV: {0}"
@@ -310,30 +296,7 @@
     "loading": {
       "waitFirstToken": "Waiting for the first token…"
     },
-    "agent": {
-      "title": "🛠️ Agent steps",
-      "tip": "Every step the model decided on: which tool it called, with what arguments, what came back and how long it took. Press Esc to stop at any time.",
-      "step": "📍 Step {0}/{1}",
-      "stepNoMax": "📍 Step {0}",
-      "thought": "💭 {0}",
-      "call": "🔧 Call {0}",
-      "args": "args {0}",
-      "why": "· why: {0}",
-      "result": "↩ {0} returned: {1}",
-      "elapsed": " ({0} ms)",
-      "denied": "🔒 {0} is not enabled (run /agent allow {1} to allow it)",
-      "failed": "❌ {0} failed: {1}",
-      "finalize": "🧩 Finalising the answer",
-      "hitMax": "⚠️ Step limit reached — answering directly",
-      "summary": "✅ Done: {0} step(s) · {1} ms",
-      "summaryStopped": "⏹ Stopped: {0} step(s) · {1} ms",
-      "toolsUsed": "tools: {0}",
-      "confirmToolTitle": "Confirm system command",
-      "confirmToolFallback": "The Agent requests a high-risk tool operation.",
-      "confirmToolFailed": "⚠️ The confirmation dialog could not be shown; the request was denied: {0}",
-      "confirmToolAllow": "Allow execution",
-      "confirmToolDeny": "Deny"
-    },
+    "agent": {},
     "metrics": {
       "tip": "Live metrics for this run, measured and reported by the backend: time to first token, output speed, token counts and total elapsed time. Values marked with ≈ are estimates.",
       "waitingFirstToken": "⏳ Waiting for first token",
@@ -501,10 +464,7 @@
         "extendedNote": "Available on every platform, implemented in pure Python",
         "wps": "WPS COM for encrypted documents",
         "wpsNote": "Windows only: uses the local WPS COM interface",
-        "wpsDegraded": "Windows only: on other platforms encrypted documents fall back to the generic parser, which turns ciphertext into garbage",
-        "automation": "Enterprise intranet automation (Playwright/Edge)",
-        "automationNote": "Windows only: uses the local Edge",
-        "automationDegraded": "Windows only: this page is not available here — use MCP/plugins to drive external tools instead"
+        "wpsDegraded": "Windows only: on other platforms encrypted documents fall back to the generic parser, which turns ciphertext into garbage"
       }
     },
     "thinking": {

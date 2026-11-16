@@ -180,6 +180,42 @@ def check_zip(path: str, spec: dict) -> None:
         fail(f"{prefix} 不含 SIGNING.txt（文档让用户去看它，归档里却没有）")
 
 
+def archive_names(path: str) -> list[str]:
+    """[EN] List the member paths of a published archive.
+    [ZH] 列出发布归档内的成员路径。
+    """
+    if path.endswith(".zip"):
+        with zipfile.ZipFile(path) as archive:
+            return archive.namelist()
+    names: list[str] = []
+    with tarfile.open(path, "r:gz") as archive:
+        for member in archive.getmembers():
+            names.append(member.name)
+    return names
+
+
+def check_reader_payload(path: str, version: str) -> None:
+    """[EN] Reader packaging must not ship models, CUDA or debug symbols.
+
+    [ZH] Reader 打包不得随包模型、CUDA 或调试符号。
+    """
+    if not version.endswith("-reader"):
+        return
+    names = archive_names(path)
+    lowered = [name.lower() for name in names]
+    checks = (
+        ("模型文件（.gguf）", any(name.endswith(".gguf") for name in lowered)),
+        ("CUDA 后端（ggml-cuda.dll）", any(name.endswith("/ggml-cuda.dll") for name in lowered)),
+        ("调试符号（.pdb）", any(name.endswith(".pdb") for name in lowered)),
+        ("图像栈（site-packages/PIL/）", any("/site-packages/pil/" in name + "/" for name in lowered)),
+    )
+    for label, present in checks:
+        if present:
+            fail(f"{os.path.basename(path)} 里含 Reader 不应随包的{label}")
+        else:
+            ok(f"{os.path.basename(path)} 不含{label}")
+
+
 def check_one(out_dir: str, rid: str, version: str) -> None:
     print(f"\n== {rid} ==")
     spec = TARGETS[rid]
@@ -197,6 +233,7 @@ def check_one(out_dir: str, rid: str, version: str) -> None:
         check_tar(archive, spec)
     else:
         check_zip(archive, spec)
+    check_reader_payload(archive, version)
 
     # 校验清单里必须有这个归档，且摘要一致。
     #

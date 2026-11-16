@@ -122,13 +122,6 @@ public sealed class PlatformInfo
     /// </summary>
     public bool SupportsWpsCom => IsWindows;
 
-    /// <summary>
-    /// [EN] Enterprise intranet automation (Playwright/Edge): not provided on non-Windows
-    /// [EN] platforms (the degradation boundary of development task 5).
-    /// [ZH] 企业内网自动化（Playwright/Edge）：非 Windows 上不提供（研发任务 5 的降级边界）。
-    /// </summary>
-    public bool SupportsAutomation => IsWindows;
-
     // [EN] Previously this file had
     // [EN] `UserDataDirectoryName => IsWindows ? "EchoDesk" : "EchoDesk"`; both branches
     // [EN] were identical, and **nothing in the whole repository called it** (the v0.2.2
@@ -164,22 +157,18 @@ public sealed class PlatformInfo
         {
             (Loc.T("main.platform.cap.local", "对话 / 流式输出 / 文件解析"), true,
              Loc.T("main.platform.cap.localNote", "全平台可用")),
-            (Loc.T("main.platform.cap.extended", "本地检索（RAG）/ Agent 平台 / MCP / 插件"), true,
+            (Loc.T("main.platform.cap.extended", "本地插件与文档解析"), true,
              Loc.T("main.platform.cap.extendedNote", "全平台可用，纯 Python 实现")),
         };
         string wps = Loc.T("main.platform.cap.wps", "WPS COM 读加密文档");
-        string automation = Loc.T("main.platform.cap.automation", "企业内网自动化（Playwright/Edge）");
         if (IsWindows)
         {
             list.Add((wps, true, Loc.T("main.platform.cap.wpsNote", "Windows 专属：依赖本机 WPS 的 COM 接口")));
-            list.Add((automation, true, Loc.T("main.platform.cap.automationNote", "Windows 专属：依赖本机 Edge")));
         }
         else
         {
             list.Add((wps, false, Loc.T("main.platform.cap.wpsDegraded",
                 "仅 Windows：非 Windows 上加密文档改用通用解析器，密文会解析成乱码")));
-            list.Add((automation, false, Loc.T("main.platform.cap.automationDegraded",
-                "仅 Windows：本平台不提供该页面，可用 MCP/插件接入外部工具替代")));
         }
         return list;
     }

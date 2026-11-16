@@ -432,19 +432,6 @@
                      IsVisible="False" VerticalAlignment="Center"
                      Foreground="{DynamicResource SubTextBrush}"
                      AutomationProperties.AutomationId="FileTokensText" />
-          <!--
-            [EN] Native ProgressBar for update downloads. It is hidden until a download
-                 starts, becomes determinate as soon as the backend reports bytes, and is
-                 hidden again on completion or failure.
-            [ZH] 更新下载用的原生 ProgressBar。下载开始前隐藏；后端上报字节后切换为确定进度；
-                 完成或失败后再次隐藏。
-          -->
-          <Button x:Name="StripUpdateButton" Classes="chip" Margin="6,0,0,0" IsVisible="False">
-            <TextBlock x:Name="StripUpdateText" FontSize="11" />
-          </Button>
-          <ProgressBar x:Name="UpdateProgressBar" Width="96" Height="6" Minimum="0" Maximum="100"
-                       Value="0" IsVisible="False" Margin="6,0,0,0" VerticalAlignment="Center"
-                       AutomationProperties.AutomationId="UpdateProgressBar" />
           <TextBlock x:Name="MetricsText" FontSize="11" Margin="6,0,0,0" IsVisible="False"
                      VerticalAlignment="Center" Opacity="0.85" />
         </WrapPanel>

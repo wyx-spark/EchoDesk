@@ -116,6 +116,61 @@ def dir_size(path: str) -> tuple[int, int]:
     return total, count
 
 
+#: [EN] Reader-profile payloads that must not be shipped: the CUDA backend of
+#: llama.cpp and the Pillow image stack. The Reader edition runs Phi-3-Mini on CPU
+#: (``n_gpu_layers=0``) and removed the vision/RAG stacks, so both are dead weight.
+#: [ZH] Reader 版不得随包的负载：llama.cpp 的 CUDA 后端与 Pillow 图像栈。
+#: Reader 在 CPU 上跑 Phi-3-Mini（``n_gpu_layers=0``）并删除了视觉/RAG 栈，
+#: 两者都是纯体积。
+READER_BLOAT_FILES = (
+    ("site-packages", "llama_cpp", "lib", "ggml-cuda.dll"),
+)
+READER_BLOAT_DIRS = (
+    ("site-packages", "PIL"),
+)
+READER_BLOAT_DIST_PREFIXES = ("pillow-",)
+
+
+def strip_reader_payload(backend_out: str, version: str) -> list[str]:
+    """[EN] Remove CUDA/Pillow payloads from a Reader backend tree.
+
+    Root cause of the Windows archive bloat: ``backend/requirements.lock`` pins the
+    Windows llama.cpp wheel to the JamePeng CUDA build (needed by the mainline VLM
+    stack, removed here). That wheel alone carries a 190 MB ``ggml-cuda.dll`` and
+    inflated the win-x64 archive far beyond the Linux/macOS ones.
+
+    [ZH] 从 Reader 后端树移除 CUDA/Pillow 负载。
+
+    Windows 归档膨胀的根因：``backend/requirements.lock`` 把 Windows 的 llama.cpp
+    轮子钉在 JamePeng CUDA 构建上（主线 VLM 需要，本分支已删除）。仅这一个轮子就带
+    190 MB 的 ``ggml-cuda.dll``，使 win-x64 归档远超 Linux/macOS。
+    """
+    removed: list[str] = []
+    if not str(version or "").endswith("-reader"):
+        return removed
+    for parts in READER_BLOAT_FILES:
+        path = os.path.join(backend_out, *parts)
+        if os.path.isfile(path):
+            removed.append(f"{os.path.relpath(path, backend_out)} ({os.path.getsize(path) / 1048576:.1f} MB)")
+            os.remove(path)
+    for parts in READER_BLOAT_DIRS:
+        path = os.path.join(backend_out, *parts)
+        if os.path.isdir(path):
+            total = dir_size(path)[0]
+            removed.append(f"{os.path.relpath(path, backend_out)}/ ({total / 1048576:.1f} MB)")
+            shutil.rmtree(path)
+    site_packages = os.path.join(backend_out, "site-packages")
+    if os.path.isdir(site_packages):
+        for name in os.listdir(site_packages):
+            lowered = name.lower()
+            if any(lowered.startswith(prefix) for prefix in READER_BLOAT_DIST_PREFIXES):
+                path = os.path.join(site_packages, name)
+                if os.path.isdir(path):
+                    removed.append(f"site-packages/{name}/")
+                    shutil.rmtree(path)
+    return removed
+
+
 def strip_binaries(app_dir: str, keep_pdb: bool) -> list[str]:
     """清掉打包机带出来的调试符号文件。
 
@@ -491,6 +546,13 @@ def main() -> int:
             for path in (work, stage):
                 if os.path.isdir(path):
                     shutil.rmtree(path)
+
+    # ---------- 2b. Reader 负载裁剪（CUDA / Pillow） ----------
+    if not args.plan:
+        stripped = strip_reader_payload(backend_out, version)
+        if stripped:
+            log(f"[EN] Reader payload stripped: {len(stripped)} item(s) / [ZH] 已剔除 Reader 无关负载 "
+                f"{len(stripped)} 项：" + "、".join(stripped))
 
     # ---------- 3. 文档与语言包（与安装包的信息面一致） ----------
     if not args.plan:

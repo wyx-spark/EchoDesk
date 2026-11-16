@@ -97,10 +97,9 @@ public partial class InstalledPage : UserControl, ISettingsPage
             await SendAsync(new { action = "skills_examples" });
             await RefreshAsync();
         };
-        // [EN] v0.2.2 batch 4 3a: install from a folder / create a local plugin
-        // [ZH] v0.2.2 第 4 批 3a：从文件夹安装 / 新建本地插件
+        // [EN] v0.2.2 batch 4 3a: install from a folder.
+        // [ZH] v0.2.2 第 4 批 3a：从文件夹安装。
         SkillsInstallFolderButton.Click += async (_, _) => await InstallFromFolderAsync();
-        SkillsScaffoldButton.Click += (_, _) => GoToScaffold();
 
         TrustEnableAllButton.Click += (_, _) => SetAllTrust(true);
         TrustDisableAllButton.Click += (_, _) => SetAllTrust(false);
@@ -459,9 +458,9 @@ public partial class InstalledPage : UserControl, ISettingsPage
         builder.AppendLine(Loc.T("settings.installed.publishLine", "{0}：{1}",
             Loc.T("settings.installed.publishResult", "发布自检结果"), GetString(check, "message")));
         builder.AppendLine(Loc.T("settings.installed.publishLine", "{0}：{1}",
-            Loc.T("settings.developer.topicLabel", "市场 topic"), GetString(check, "topic")));
+            Loc.T("settings.installed.topicLabel", "市场 topic"), GetString(check, "topic")));
         builder.AppendLine(Loc.T("settings.installed.publishLine", "{0}：{1}",
-            Loc.T("settings.developer.repoLabel", "建议仓库名"), GetString(check, "repo_name")));
+            Loc.T("settings.installed.repoLabel", "建议仓库名"), GetString(check, "repo_name")));
         if (check.TryGetProperty("checks", out JsonElement checks) && checks.ValueKind == JsonValueKind.Array)
         {
             foreach (JsonElement entry in checks.EnumerateArray())
@@ -501,25 +500,6 @@ public partial class InstalledPage : UserControl, ISettingsPage
         if (doc is not null && doc.RootElement.TryGetProperty("content", out JsonElement c))
             SkillStatusText.Text = c.GetString() ?? "";
         await RefreshAsync();
-    }
-
-    /// <summary>
-    /// [EN] "➕ create local plugin": switches to the developer page and focuses the plugin
-    /// [EN] ID input (aligned with SkillsScaffoldButton_Click in WPF).
-    /// [ZH] 「➕ 新建本地插件」：跳到「开发者」页并聚焦到插件 ID 输入框（对齐 WPF 的
-    /// [ZH] SkillsScaffoldButton_Click）。
-    /// </summary>
-    private void GoToScaffold()
-    {
-        if (_host is null)
-            return;
-        if (!_host.ShowTab("settings.tab.developer"))
-        {
-            SkillStatusText.Text = Loc.T("settings.installed.scaffoldJumpFailed",
-                "⚠️ 找不到「开发者」页签，请手动切过去再新建插件");
-            return;
-        }
-        _host.FindPage<DeveloperPage>()?.FocusScaffoldId();
     }
 
     /// <summary>
@@ -742,7 +722,7 @@ public partial class InstalledPage : UserControl, ISettingsPage
             $"cards={cards}",
             $"emptyVisible={(SkillEmptyText.IsVisible ? 1 : 0)}",
             $"installFolderButton={(string.IsNullOrEmpty(SkillsInstallFolderButton.Content as string) ? 0 : 1)}",
-            $"scaffoldButton={(string.IsNullOrEmpty(SkillsScaffoldButton.Content as string) ? 0 : 1)}",
+            $"scaffoldButton=0",
             $"trustPanel={(TrustPanel.IsVisible ? 1 : 0)}",
             $"trustTitle={(string.IsNullOrEmpty(TrustTitle.Text) ? 0 : 1)}",
             $"trustButtons={(string.IsNullOrEmpty(TrustConfirmButton.Content as string) ? 0 : 1)}"
@@ -777,8 +757,7 @@ public partial class InstalledPage : UserControl, ISettingsPage
         SkillsRefreshButton.Content = Loc.T("settings.installed.refresh", "🔄 刷新");
         SkillsReloadButton.Content = Loc.T("settings.installed.reload", "🔄 重载本地插件");
         SkillsInstallFolderButton.Content = Loc.T("settings.installed.installFolder", "📥 从文件夹安装");
-        SkillsScaffoldButton.Content = Loc.T("settings.installed.newPlugin", "➕ 新建本地插件");
-        SkillsExamplesButton.Content = Loc.T("settings.developer.installExamples", "📦 安装示例插件");
+        SkillsExamplesButton.Content = Loc.T("settings.installed.installExamples", "📦 安装示例插件");
         InstalledTipText.Text = Loc.T("settings.installed.tip",
             "这里列出市场安装、本地安装与开发目录中的全部插件及其加载状态。");
         SkillEmptyText.Text = Loc.T("settings.installed.empty",

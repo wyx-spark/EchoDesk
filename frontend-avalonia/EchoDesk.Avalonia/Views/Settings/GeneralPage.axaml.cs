@@ -89,7 +89,6 @@ public partial class GeneralPage : UserControl, ISettingsPage
         {
             new("chat", () => Loc.T("mode.chat", "对话")),
             new("contract", () => Loc.T("mode.contract", "合同")),
-            new("agent", () => Loc.T("mode.agent", "智能体")),
         };
 
         // [EN] Language items: auto plus the languages whose language packs actually exist

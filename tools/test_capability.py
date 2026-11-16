@@ -314,8 +314,8 @@ check("共享主干仍保留防编造底线", "不编造事实、数据、法条
 check("模式块里不再有「必须分点」式的无条件格式要求",
       not any("分点时写" in block for block in conv.MODES.values()))
 
-# --- 模式简化（v0.2.1 能力扩展-1 任务一）：3 个模式 + 旧名迁移 ---
-check("模式收敛到 3 个", set(conv.MODES) == {"chat", "contract", "agent"}, str(sorted(conv.MODES)))
+# --- 模式简化（Reader 版）：2 个模式 + 旧名迁移 ---
+check("模式收敛到 2 个", set(conv.MODES) == {"chat", "contract"}, str(sorted(conv.MODES)))
 check("每个模式都有别名与缩写",
       all(name in conv.MODE_ALIASES.values() or name in conv.MODE_ALIASES for name in conv.MODES)
       and set(conv.MODE_SHORT_NAMES) == set(conv.MODES))
@@ -334,19 +334,18 @@ check("留在模式位的 contract 不再被当成旧名", conv.legacy_template(
       and conv.canonical_mode("contract") == "contract")
 check("旧温度预设被沿用（合并后回答风格不突变）",
       conv.LEGACY_TEMPERATURES.get("code") == 0.2 and conv.LEGACY_TEMPERATURES.get("creative") == 0.9)
-check("模式菜单只剩 3 项（用户一眼能选）",
-      len([line for line in conv.ConversationManager.mode_menu().splitlines() if line.strip()]) == 3)
+check("模式菜单只剩 2 项（用户一眼能选）",
+      len([line for line in conv.ConversationManager.mode_menu().splitlines() if line.strip()]) == 2)
 check("模式菜单附旧名迁移说明", "/task" in conv.ConversationManager.legacy_mode_note())
-check("新编号 1/2/3 指向三个模式（与旧编号表分开维护）",
-      conv.MODE_NUMBERS == {"1": "chat", "2": "contract", "3": "agent"},
+check("新编号 1/2 指向两个模式（与旧编号表分开维护）",
+      conv.MODE_NUMBERS == {"1": "chat", "2": "contract"},
       str(conv.MODE_NUMBERS))
-check("三个模式的语言包说明非空（中英都要）",
+check("两个模式的语言包说明非空（中英都要）",
       all(_t_mode_desc(loc, mode) for loc in ("zh-Hans", "en") for mode in conv.MODES),
       str([_t_mode_desc("en", m)[:20] for m in conv.MODES]))
 check("contract 保留专业角色与硬输出要求",
       "财务专员" in conv.MODES["contract"] and "逐字一致" in conv.MODES["contract"])
-check("agent 模式写明工具 JSON 协议与收敛要求",
-      '"tool"' in conv.MODES["agent"] and "最终答案" in conv.MODES["agent"])
+check("agent 模式已随 Agent 栈删除", "agent" not in conv.MODES)
 
 # 关键格式硬要求不得因放松而丢失（任务书"防止改过头"）
 check("合同模式仍要求摘录逐字一致", "逐字一致" in conv.MODES["contract"])

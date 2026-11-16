@@ -53,8 +53,6 @@ WINDOWS_ONLY_FEATURES = (
 PORTABLE_FEATURES = (
     "chat",          # [EN] Chat and streaming output. / [ZH] 对话与流式输出。
     "files",         # [EN] File parsing through the generic parser. / [ZH] 通用解析器文件解析。
-    "agent",         # [EN] Agent execution platform. / [ZH] Agent 执行平台。
-    "mcp",           # [EN] MCP client. / [ZH] MCP 客户端。
     "skills",        # [EN] Plugins and skills. / [ZH] 插件与技能。
     "models",        # [EN] Model management and local inference. / [ZH] 模型管理与本地推理。
 )

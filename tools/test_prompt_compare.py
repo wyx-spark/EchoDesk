@@ -254,12 +254,6 @@ _guide_system = str((_seen_guide.get("messages") or [{}])[0].get("content", ""))
 check("套用 /task guide 后系统提示词里带上了任务层", "引导模板正文" in _guide_system,
       _guide_system[:80])
 
-_agent, _seen_agent = make_backend(mode="agent")
-_agent_lines = _run(_agent, "这个怎么办")
-check("agent 模式也不走模糊提问短路（模型本来就要自己决定做什么）",
-      not any(x.get("clarify") for x in _agent_lines),
-      "".join(str(x.get("content", "")) for x in _agent_lines)[:80])
-
 _off, _seen_off = make_backend(clarify_vague=False)
 _off_lines = _run(_off, "这个怎么办")
 check("关掉 clarify_vague 后不再拦截", not any(x.get("clarify") for x in _off_lines))

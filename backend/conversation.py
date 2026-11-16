@@ -47,7 +47,7 @@ _MODEL_ROLES = ("user", "assistant")
 # [EN]    level of detail, reasoning procedure, examples, tone, and scenario
 # [EN]    boundaries. The level-of-detail element returns control over response
 # [EN]    length to the model instead of forcing every answer into a template.
-# [EN]    The mode set was reduced from seven to three (chat, contract, agent);
+# [EN]    The mode set was reduced to two (chat, contract);
 # [EN]    migration details are documented next to ``MODE_ALIASES``.
 # [EN] 2. Shared rules (``_CORE_RULES``): seven invariants common to every mode
 # [EN]    (perspective, boundaries, verbosity, answer-before-question,
@@ -73,9 +73,9 @@ _MODEL_ROLES = ("user", "assistant")
 #
 # [ZH] 系统提示词组合：模式块、共享规则、语言指令、可选任务层与可选自定义指令。
 #
-# [ZH] 1. 模式块（``MODES``）：三个模式，分别定义角色、输出格式、详略程度、推理步骤、
+# [ZH] 1. 模式块（``MODES``）：两个模式，分别定义角色、输出格式、详略程度、推理步骤、
 # [ZH]    示例、语气与场景边界。“详略程度”将回答长度的控制权交还模型，避免所有回答
-# [ZH]    被模板化。模式集合由七个收敛为三个（chat、contract、agent）；迁移细节见
+# [ZH]    被模板化。模式集合收敛为两个（chat、contract）；迁移细节见
 # [ZH]    ``MODE_ALIASES`` 附近的说明。
 # [ZH] 2. 共享规则（``_CORE_RULES``）：所有模式共用的七条约束（视角、边界、详略、
 # [ZH]    先答后问、显式假设、引导与输出纪律）。共享的目的是避免在每个模式中重复，
@@ -114,18 +114,6 @@ MODES: Dict[str, str] = {
         "【边界】没有原文依据的结论不写；找不到的条款写「未见相关约定」，不要臆测；"
         "金额、比例、期限照抄不换算。\n"
         "【语气】严谨保守，不夸大。"
-    ),
-    "agent": (
-        "【角色】你是能调用工具的智能体：自己决定用哪个工具、按什么顺序，直到把任务做完。\n"
-        "【输出格式】需要外部信息或计算时，按下面「工具协议」输出一行 JSON；"
-        "任务完成时以「最终答案：」开头给结论。\n"
-        "【详略】工具能查到的别凭记忆写；一次只调一个工具，看到结果再决定下一步。\n"
-        "【思维】判断缺什么 → 挑工具 → 看结果 → 不够就换工具或改参数重试 → 收敛到结论。\n"
-        "【示例】要算 3000×7.2 时输出 "
-        '{"tool": "calc", "args": {"expr": "3000*7.2"}, "why": "算金额"}。\n'
-        "【边界】工具缺失、失败或结果为空时如实说明并给出基于已知信息的结论，"
-        "绝不编造工具返回内容。\n"
-        "【语气】每一步一句话说明在做什么，不复述工具结果全文。"
     ),
 }
 
@@ -206,11 +194,10 @@ def reply_language_instruction() -> str:
     return _REPLY_LANGUAGE.get(locale, _REPLY_LANGUAGE_FALLBACK)
 
 # ===========================================================================
-# [EN] Mode simplification: three modes with distinct semantics.
+# [EN] Mode simplification: two modes with distinct semantics.
 # [EN]
-# [EN] chat: general conversation; contract: clause review; agent: tool-using
-# [EN] agent. The criterion is whether a user can identify the appropriate mode
-# [EN] without reasoning about prompt design.
+# [EN] chat: general conversation; contract: clause review. The criterion is whether a
+# [EN] user can identify the appropriate mode without reasoning about prompt design.
 # [EN]
 # [EN] The previous seven modes (general, summary, translate, code, contract,
 # [EN] creative, guide) were reduced for these reasons:
@@ -223,16 +210,14 @@ def reply_language_instruction() -> str:
 # [EN] * contract remains a separate mode because it defines a specialist role
 # [EN]   and strict output requirements (verbatim excerpts and mandatory human
 # [EN]   review), producing distinct tone and boundaries.
-# [EN] * agent is a new semantic category: the model selects tools
-# [EN]   autonomously, which is distinct from predefined batch automation.
 # [EN]
 # [EN] Legacy mode names remain available through ``LEGACY_MODES``. For example,
 # [EN] ``/mode summary`` switches to chat, applies the summary template, and keeps
 # [EN] the legacy temperature preset. Behaviour is preserved without consuming a
 # [EN] separate mode slot.
-# [ZH] 模式简化：三个具有不同语义的模式。
+# [ZH] 模式简化：两个具有不同语义的模式。
 #
-# [ZH] chat：通用对话；contract：条款审查；agent：可调用工具的智能体。判定标准是
+# [ZH] chat：通用对话；contract：条款审查。判定标准是
 # [ZH] 用户能否在不理解提示词设计的前提下确定应使用哪个模式。
 #
 # [ZH] 此前的七个模式（general、summary、translate、code、contract、creative、
@@ -244,7 +229,6 @@ def reply_language_instruction() -> str:
 # [ZH]   ``/task guide``。
 # [ZH] * contract 保留为独立模式，因为它定义专业角色与严格输出要求（逐字摘录与强制
 # [ZH]   人工复核），语气与边界均不同。
-# [ZH] * agent 是新的语义类别：由模型自主选择工具，与预定义流程的批量自动化不同。
 #
 # [ZH] 旧模式名仍可通过 ``LEGACY_MODES`` 使用。例如 ``/mode summary`` 会切换到 chat、
 # [ZH] 套用 summary 模板并沿用旧温度预设。行为得以保留，同时不再占用独立模式位。
@@ -252,19 +236,18 @@ def reply_language_instruction() -> str:
 #: [EN] Mode aliases: numeric identifiers, abbreviations, full names, and legacy
 #: [EN] mode names are accepted.
 #: [EN]
-#: [EN] Numeric identifiers are only 1/2/3 (chat/contract/agent). The previous
+#: [EN] Numeric identifiers are only 1/2 (chat/contract). The previous
 #: [EN] 4/5/6/7 values are not mapped because their semantics conflict with the
 #: [EN] new numbering. ``/mode 4`` therefore reports a migration hint instead of
 #: [EN] silently selecting a different mode.
 #: [ZH] 模式别名：接受数字标识、缩写、全称与旧模式名。
 #: [ZH]
-#: [ZH] 数字标识仅包括 1/2/3（chat、contract、agent）。旧的 4/5/6/7 不再映射，
+#: [ZH] 数字标识仅包括 1/2（chat、contract）。旧的 4/5/6/7 不再映射，
 #: [ZH] 因为其语义与新编号冲突。``/mode 4`` 会返回迁移提示，而不会静默选择
 #: [ZH] 语义不同的模式。
 MODE_ALIASES: Dict[str, str] = {
     "1": "chat", "c": "chat", "chat": "chat",
     "2": "contract", "ct": "contract", "contract": "contract",
-    "3": "agent", "ag": "agent", "agent": "agent",
     # [EN] ---- Previous-version mode names: still available; switching mode also applies
     # [EN] the template of the same name (see ``LEGACY_MODES``). ----
     # [ZH] ---- 上一版的模式名：仍然可用，会自动切模式并套上同名模板（见 LEGACY_MODES） ----
@@ -289,22 +272,22 @@ LEGACY_MODES: Dict[str, str] = {
     "general": "",
 }
 
-#: [EN] Current numeric identifiers (1/2/3). Kept separate so that the distinction
+#: [EN] Current numeric identifiers (1/2). Kept separate so that the distinction
 #: [EN] between current and legacy numbers has a single source of truth.
-#: [ZH] 当前数字标识（1/2/3）。单独维护，使“当前编号与旧编号”的判定只有一个
+#: [ZH] 当前数字标识（1/2）。单独维护，使“当前编号与旧编号”的判定只有一个
 #: [ZH] 事实来源。
-MODE_NUMBERS: Dict[str, str] = {"1": "chat", "2": "contract", "3": "agent"}
+MODE_NUMBERS: Dict[str, str] = {"1": "chat", "2": "contract"}
 
 #: [EN] Legacy numeric identifier to legacy mode name. This mapping is used only
 #: [EN] to produce a helpful error; it does not switch modes or apply templates.
 #: [EN] In the previous numbering, 2 meant summary and 6 meant creative; in the
-#: [EN] current numbering, 2 means contract and 3 means agent. Automatic migration
+#: [EN] current numbering, 2 means contract. Automatic migration
 #: [EN] of numbers would produce a state matching neither semantics. Numbers are
 #: [EN] therefore accepted only for the current numbering; legacy numbers report a
 #: [EN] migration hint, while unambiguous legacy mode names migrate automatically.
 #: [ZH] 旧数字标识到旧模式名的映射。该映射仅用于生成明确的错误提示，不用于切换
 #: [ZH] 模式或套用模板。旧编号中 2 表示 summary、6 表示 creative；当前编号中
-#: [ZH] 2 表示 contract、3 表示 agent。自动迁移数字会产生既不匹配旧语义也不匹配
+#: [ZH] 2 表示 contract。自动迁移数字会产生既不匹配旧语义也不匹配
 #: [ZH] 新语义的状态。因此数字仅接受当前编号；旧编号返回迁移提示，而无歧义的旧
 #: [ZH] 模式名可自动迁移。
 LEGACY_NUMBERS: Dict[str, str] = {
@@ -322,7 +305,7 @@ LEGACY_TEMPERATURES: Dict[str, float] = {
 # [EN] Display abbreviation for each mode, used by /mode list.
 # [ZH] 每个模式的展示缩写，用于 /mode list。
 MODE_SHORT_NAMES: Dict[str, str] = {
-    "chat": "c", "contract": "ct", "agent": "ag",
+    "chat": "c", "contract": "ct",
 }
 
 # [EN] Mode temperature presets. A manual /temp setting takes precedence.
@@ -332,11 +315,6 @@ MODE_TEMPERATURES: Dict[str, float] = {
     # [EN] Contract review prioritizes stability over creativity.
     # [ZH] 合同审查优先保证稳定性，而非创造性。
     "contract": 0.3,
-    # [EN] The agent should use tools but not act erratically: 0.5 is more
-    # [EN] exploratory than code (0.2) and more controlled than creative (0.9).
-    # [ZH] 智能体应使用工具但不得行为失稳：0.5 比 code（0.2）更具探索性，
-    # [ZH] 比 creative（0.9）更受约束。
-    "agent": 0.5,
 }
 
 
@@ -1253,11 +1231,11 @@ class ConversationManager:
         """
         messages: List[dict] = [{"role": "system", "content": self.get_system_prompt()}]
         # [EN] System notes created during the session (document summaries and
-        # [EN] automation results) are folded into the leading system prompt. A
+        # [EN] parsing results) are folded into the leading system prompt. A
         # [EN] ``system`` role in the middle of the history breaks templates that
         # [EN] only accept a leading system message and can make the model treat
         # [EN] background material as if the user had said it.
-        # [ZH] 会话期间产生的系统备注（文档摘要与自动化结果）合并进开头的系统提示。
+        # [ZH] 会话期间产生的系统备注（文档摘要与解析结果）合并进开头的系统提示。
         # [ZH] 历史中间出现 ``system`` 角色会破坏"仅允许开头一条系统消息"的模板，
         # [ZH] 并可能让模型把背景材料当作 user 的发言。
         system_notes: List[str] = []

@@ -45,18 +45,6 @@
     "total_chars": 60000,
     "disk_threshold_chars": 20000
   },
-  "agent": {
-    "max_steps": 4,
-    "allow_sensitive": [],
-    "max_observation_chars": 1200,
-    "confirm_timeout_seconds": 120
-  },
-  "mcp": {
-    "enabled": false,
-    "timeout_seconds": 20.0,
-    "auto_connect": false,
-    "servers": []
-  },
   "providers": {
     "active": "llamacpp",
     "timeout_seconds": 120.0,
@@ -83,9 +71,6 @@
     "api_base": "https://api.github.com",
     "dev_dir": "skills_dev",
     "local_manifest": "skills_local.json",
-    "dev_mode": false,
-    "dev_mode_explicit": false,
-    "dev_log_file": "skills_dev.log",
     "require_verified": true
   },
   "model_hub": {

@@ -19,7 +19,8 @@ Chinese version: [`docs/zh-Hans/USER_GUIDE.md`](../zh-Hans/USER_GUIDE.md).
 > **Not shipped in this build**, so the passages that describe them do not apply: browser automation
 > (§4), local vision / speech / media, the SQLite FTS5
 > knowledge base, long-term memory, BM25 retrieval, the extractive summariser and the chunk-by-chunk
-> summariser with its character-range source pointers (all of §9). In their place this build grows
+> summariser with its character-range source pointers (all of §9), the **Agent platform and MCP client
+> (§6)**, and the **developer mode / developer page**. In their place this build grows
 > the context window from the document and feeds the whole body in one pass — see the dynamic-context
 > section of the README.
 
