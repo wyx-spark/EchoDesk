@@ -50,4 +50,34 @@ public static class ShellOpen
             return false;
         }
     }
+
+    /// <summary>
+    /// [EN] Open an HTTP(S) link in the user's default browser. This is deliberately a
+    /// [EN] user-triggered action only: the Reader profile promises that startup never
+    /// [EN] performs a network request, so callers must wire this to an explicit click.
+    /// [EN] Failures return false instead of throwing; the caller displays the message.
+    /// [ZH] 用系统默认浏览器打开 HTTP(S) 链接。该方法只允许由用户操作触发：Reader 版承诺
+    /// [ZH] 启动阶段绝不发起网络请求，因此调用方必须把它接到明确的点击事件上。
+    /// [ZH] 失败返回 false 而不抛出异常；由调用方显示提示。
+    /// </summary>
+    public static bool TryOpenUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return false;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            return false;
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = uri.AbsoluteUri, UseShellExecute = true });
+            return true;
+        }
+        catch (Exception)
+        {
+            // [EN] No default browser or the shell rejected the target: the caller
+            // [EN] turns false into a user-facing notice.
+            // [ZH] 没有默认浏览器或 shell 拒绝该目标：调用方将 false 转换为用户提示。
+            return false;
+        }
+    }
 }

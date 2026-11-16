@@ -292,9 +292,34 @@
       </Grid>
     </Border>
 
-    <!-- [EN] (6) Input area: borderless text input above, round-button toolbar below. -->
-    <!-- [ZH] ⑥ 输入区：上半无框文本输入，下半圆形按钮工具栏。 -->
-    <Border x:Name="InputAreaBorder" Classes="elevated" Grid.Row="4" Margin="0,6,0,0" CornerRadius="12"
+    <!--
+      [EN] (6) Input area plus the missing-model guide that sits directly above it.
+           The guide is a separate banner, not a transient toast: the Reader build ships
+           without any model, so "Model: none" alone is not actionable. The button opens
+           the official Hugging Face GGUF page in the user's browser and is the only
+           network-touching control here; nothing is probed until it is clicked.
+      [ZH] ⑥ 输入区，以及紧贴其上的“缺少模型”引导。
+           引导是一个独立横幅而非一闪而过的提示条：Reader 版不随包分发模型，
+           只显示“模型：无模型”并不构成可执行的下一步。按钮在浏览器中打开官方
+           Hugging Face GGUF 页面，是这里唯一会触网的控件；点击之前不做任何探测。
+    -->
+    <StackPanel Grid.Row="4" Margin="0,6,0,0" Spacing="6">
+    <Border x:Name="ModelGuideBanner" Classes="elevated" IsVisible="False"
+            Background="{DynamicResource WarningBannerBrush}"
+            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+            CornerRadius="8" Padding="12,9">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Grid.Column="0" Spacing="2">
+          <TextBlock x:Name="ModelGuideTitle" FontWeight="SemiBold" TextWrapping="Wrap" />
+          <TextBlock x:Name="ModelGuideText" FontSize="12" Opacity="0.85" TextWrapping="Wrap" />
+        </StackPanel>
+        <Button x:Name="ModelGuideActionButton" Grid.Column="1" Classes="chip"
+                VerticalAlignment="Center" Margin="10,0,0,0"
+                AutomationProperties.AutomationId="ModelGuideActionButton" />
+      </Grid>
+    </Border>
+
+    <Border x:Name="InputAreaBorder" Classes="elevated" CornerRadius="12"
             Background="{DynamicResource InputBackgroundBrush}"
             BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"
             Padding="12,8">
@@ -377,6 +402,7 @@
         </Grid>
       </Grid>
     </Border>
+    </StackPanel>
 
     <!--
       [EN] (7) Lightweight status area: an icon plus a short phrase; clicking any item jumps to

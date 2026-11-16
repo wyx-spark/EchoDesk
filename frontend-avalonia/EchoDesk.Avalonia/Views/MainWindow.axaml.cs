@@ -346,6 +346,24 @@ public partial class MainWindow : Window
         "stdout 管道已关闭", "stdout pipe closed",
     };
 
+    /// <summary>
+    /// [EN] Official GGUF download page of the single model the Reader profile binds. The
+    ///      value is a plain constant: no request is made at startup, and it is opened only
+    ///      after the user clicks the guide button.
+    /// [ZH] Reader 版唯一绑定模型的官方 GGUF 下载页。该值只是常量：启动阶段不发起任何请求，
+    ///      仅在用户点击引导按钮后才打开。
+    /// </summary>
+    private const string Phi3ModelDownloadUrl =
+        "https://huggingface.co/microsoft/Phi-3-mini-128k-instruct-GGUF";
+
+    /// <summary>
+    /// [EN] File-name markers that identify a local copy of the bound model. Matching is
+    ///      intentionally case-insensitive and accepts both spellings used by HF uploads.
+    /// [ZH] 用于识别本地已有所绑定模型的文件名标记。匹配不区分大小写，并同时接受 HF 上传中
+    ///      的两种写法。
+    /// </summary>
+    private static readonly string[] Phi3FileNameMarkers = { "phi-3", "phi3" };
+
     // [EN] Exit countdown (/exit, v0.2.2 batch 3): as in WPF, a thank-you note plus a 10-second
     // [EN] countdown.
     // [ZH] 退出倒计时（/exit，v0.2.2 第 3 批）：与 WPF 同样是“致谢 + 10 秒倒计时”。
@@ -674,6 +692,10 @@ public partial class MainWindow : Window
         // [ZH] Reader：模型胶囊为只读。本分支只绑定一个模型，上下文窗口由文档推导，
         //      因此没有可切换项。
         ModeChip.Click += async (_, _) => await OpenSettingsAsync("settings.tab.general");
+        // [EN] Missing-model guide: opening the official download page is the single
+        //      user-triggered network action; startup never reaches this path.
+        // [ZH] 缺模型引导：打开官方下载页是唯一的用户触发网络动作；启动阶段绝不会走到这里。
+        ModelGuideActionButton.Click += (_, _) => OpenModelDownloadPage();
         FontDownButton.Click += (_, _) => _state.SetFontSize(_state.Settings.FontSize - 1);
         FontUpButton.Click += (_, _) => _state.SetFontSize(_state.Settings.FontSize + 1);
         ThemeButton.Click += (_, _) => CycleTheme();
@@ -1090,6 +1112,7 @@ public partial class MainWindow : Window
         UpdateCommandUi(InputBox.Text ?? "");
         ApplyStatusStripState();
         ShowCapabilityBanner();
+        UpdateModelGuideBanner();
         ApplyHelpText();
         // [EN] Caption text is language-dependent, therefore it is refreshed with the rest of
         // [EN] the interface strings.
@@ -1120,6 +1143,83 @@ public partial class MainWindow : Window
         AutomationProperties.SetHelpText(ModelChip, Loc.T("main.model.help", "当前绑定的模型（只读）"));
         AutomationProperties.SetHelpText(ModeChip, Loc.T("main.mode.help", "当前对话模式与切换入口"));
         AutomationProperties.SetHelpText(StatusStrip, Loc.T("main.strip.help", "轻量状态区：各项可点击"));
+    }
+
+    /// <summary>
+    /// [EN] Shows or hides the missing-model guide above the input area. It is visible only
+    ///      when the backend reports no ready model **and** no local GGUF copy of
+    ///      Phi-3-Mini-128K was found, which is exactly the "Model: none" state the guide
+    ///      explains. Everything here is local; the download page is opened on click only.
+    /// [ZH] 显示或隐藏输入区上方的缺模型引导。仅在“后端没有就绪模型”且“本地未找到
+    ///      Phi-3-Mini-128K 的 GGUF 副本”时可见，这正是引导要解释的“模型：无模型”状态。
+    ///      这里全部是本地判断，下载页只在点击时打开。
+    /// </summary>
+    private void UpdateModelGuideBanner()
+    {
+        string modelsDir = _state.Backend.ModelsDir;
+        if (string.IsNullOrWhiteSpace(modelsDir))
+            modelsDir = Path.Combine(UserPaths.ProgramDirectory, "backend", "models");
+
+        bool show = !_state.Backend.ModelReady && !HasLocalPhi3Model(modelsDir);
+        ModelGuideBanner.IsVisible = show;
+        if (!show)
+            return;
+
+        ModelGuideTitle.Text = Loc.T("main.model.missingGuideTitle", "⚠️ 缺少本地模型");
+        ModelGuideText.Text = Loc.T("main.model.missingGuideText",
+            "当前为极简文本版，需手动放置或下载 Phi-3-Mini-128K 模型。\n模型目录：{0}", modelsDir);
+        ModelGuideActionButton.Content = Loc.T("main.model.missingGuideAction", "前往 Hugging Face 下载");
+        ToolTip.SetTip(ModelGuideActionButton,
+            Loc.T("main.model.missingGuideTip", "在浏览器中打开 microsoft/Phi-3-mini-128k-instruct-GGUF 下载页面"));
+        AutomationProperties.SetHelpText(ModelGuideActionButton,
+            Loc.T("main.model.missingGuideTip", "在浏览器中打开 microsoft/Phi-3-mini-128k-instruct-GGUF 下载页面"));
+    }
+
+    /// <summary>
+    /// [EN] Reports whether the model folder already contains a GGUF whose name marks it as
+    ///      the bound Phi-3-Mini family. Only the top level of the models directory is
+    ///      scanned: that is where the backend's registry places downloads, and a recursive
+    ///      walk of a managed drive would be needless startup I/O.
+    /// [ZH] 判断模型目录里是否已有文件名标记为所绑定 Phi-3-Mini 家族的 GGUF。只扫描模型目录
+    ///      顶层：后端登记表把下载文件放在这里，递归遍历受管盘只会在启动时做无谓 I/O。
+    /// </summary>
+    private static bool HasLocalPhi3Model(string modelsDir)
+    {
+        try
+        {
+            if (!Directory.Exists(modelsDir))
+                return false;
+            foreach (string path in Directory.EnumerateFiles(modelsDir, "*.gguf", SearchOption.TopDirectoryOnly))
+            {
+                string name = Path.GetFileName(path).ToLowerInvariant();
+                foreach (string marker in Phi3FileNameMarkers)
+                {
+                    if (name.Contains(marker, StringComparison.Ordinal))
+                        return true;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // [EN] Unreadable or invalid path: treat as "not found" so the guide still
+            // [EN] offers the download path instead of failing silently.
+            // [ZH] 路径不可读或非法：按“未找到”处理，让引导仍提供下载入口而不是静默失败。
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// [EN] Explicit user action behind the guide button: hand the official GGUF page to the
+    ///      default browser. A failure becomes a normal system bubble, never a crash.
+    /// [ZH] 引导按钮背后的明确用户操作：把官方 GGUF 页交给默认浏览器。失败时变成普通系统
+    ///      气泡，绝不崩溃。
+    /// </summary>
+    private void OpenModelDownloadPage()
+    {
+        if (ShellOpen.TryOpenUrl(Phi3ModelDownloadUrl))
+            return;
+        AddMessage("system", Loc.T("main.model.missingGuideOpenFailed",
+            "❌ 无法打开下载页面，请手动访问：{0}", Phi3ModelDownloadUrl));
     }
 
     private void ApplyFontSize()
