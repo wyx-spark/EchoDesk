@@ -267,6 +267,10 @@ class ReasoningSplitter:
       tag cannot close the reasoning region prematurely.
     * Multiple segments: reasoning blocks in
       ``<think>a</think>answer<think>b</think>`` are merged for display.
+    * Whitespace contract: apart from the line breaks immediately following a
+      tag, the emitted fragments are byte-identical to the input. ``strip()`` /
+      ``lstrip()`` without an argument is **forbidden** here -- it removes the
+      inter-word spaces of English output and glues the words together.
 
     [ZH]
     使用配置的标签将文本流拆分为思考通道与回答通道。
@@ -293,6 +297,8 @@ class ReasoningSplitter:
     * 嵌套：思考区域内再次出现起始标签只增加嵌套深度，不改变通道。结束标签
       按深度配对，避免内层标签提前关闭思考区域。
     * 多段：``<think>a</think>answer<think>b</think>`` 中的多个思考块合并显示。
+    * 空白约定：除紧随标签之后的换行外，产出的片段与输入逐字节一致。此处**禁止**
+      不带参数的 ``strip()`` / ``lstrip()`` —— 它会删除英文单词之间的空格，使单词粘连。
     """
 
     def __init__(self, tags: Optional[Sequence[Tuple[str, str]]] = None) -> None:
@@ -497,22 +503,27 @@ class ReasoningSplitter:
             return []
         if self._in_reasoning:
             # [EN] Reasoning often begins with a newline immediately after the
-            # [EN] opening tag; strip it so the expanded region does not start
-            # [EN] with a blank line.
-            # [ZH] 思考内容常在起始标签后紧跟一个换行；将其去除，避免展开区域
-            # [ZH] 以空行开头。
-            chunk = text.lstrip() if not self._reasoning else text
+            # [EN] opening tag; drop **only line breaks** so the expanded region
+            # [EN] does not start with a blank line. A leading space or tab is
+            # [EN] real token content and must be preserved: stripping it glues
+            # [EN] the first English word to whatever precedes it.
+            # [ZH] 思考内容常在起始标签后紧跟一个换行；此处**只**丢弃换行，避免展开
+            # [ZH] 区域以空行开头。行首的空格/Tab 属于模型真实产出的 token 内容，
+            # [ZH] 必须保留：将其剥掉会让英文首词与前面的内容粘连。
+            chunk = text.lstrip("\r\n") if not self._reasoning else text
             if not chunk:
                 return []
             self._reasoning.append(chunk)
             return [(REASONING, chunk)]
         events: List[Event] = []
         # [EN] The answer region may start with a blank line after the closing
-        # [EN] tag; strip it to avoid leading whitespace above the answer.
-        # [ZH] 回答区域可能在结束标签后以空行开头；去除该空行以避免答案上方留白。
+        # [EN] tag; drop only those line breaks. Whitespace that the tokenizer
+        # [EN] produced is streamed verbatim -- see the module contract above.
+        # [ZH] 回答区域可能在结束标签后以空行开头；此处只丢弃这些换行。分词器产出的
+        # [ZH] 空白一律原样转发 —— 见上方模块约定。
         chunk = text
         if not self._answer:
-            chunk = chunk.lstrip()
+            chunk = chunk.lstrip("\r\n")
         if chunk:
             self._answer.append(chunk)
             self._answer_pending += chunk
