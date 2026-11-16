@@ -353,7 +353,7 @@ public partial class MainWindow : Window
     /// [ZH] Reader 版唯一绑定模型的仓库路径。主机在点击时选择（见
     ///      <see cref="Phi3ModelDownloadUrl"/>），因此这里仍是纯常量：启动阶段不发起任何请求。
     /// </summary>
-    private const string Phi3ModelRepoPath = "/microsoft/Phi-3-mini-128k-instruct-GGUF";
+    private const string Phi3ModelRepoPath = "/Dhptl/Phi-3-mini-128k-instruct-GGUF";
 
     /// <summary>
     /// [EN] Official Hugging Face host (used for non-Chinese UI).
@@ -1182,12 +1182,13 @@ public partial class MainWindow : Window
 
         ModelGuideTitle.Text = Loc.T("main.model.missingGuideTitle", "⚠️ 缺少本地模型");
         ModelGuideText.Text = Loc.T("main.model.missingGuideText",
-            "当前为极简文本版，需手动放置或下载 Phi-3-Mini-128K 模型。\n模型目录：{0}", modelsDir);
+            "当前为极简文本版，需手动放置或下载 Phi-3-Mini-128K 模型。\n模型目录：{0}\n\n提示：点击 “Files and versions” 之后下拉选择自己最合适的模型下载。如果显示 “Failed to fetch”，点击这段报错上方文字中带下划线的 “download” 即可下载。",
+            modelsDir);
         ModelGuideActionButton.Content = Loc.T("main.model.missingGuideAction", "前往 Hugging Face 下载");
         ToolTip.SetTip(ModelGuideActionButton,
-            Loc.T("main.model.missingGuideTip", "在浏览器中打开 microsoft/Phi-3-mini-128k-instruct-GGUF 下载页面"));
+            Loc.T("main.model.missingGuideTip", "在浏览器中打开 Dhptl/Phi-3-mini-128k-instruct-GGUF 下载页面"));
         AutomationProperties.SetHelpText(ModelGuideActionButton,
-            Loc.T("main.model.missingGuideTip", "在浏览器中打开 microsoft/Phi-3-mini-128k-instruct-GGUF 下载页面"));
+            Loc.T("main.model.missingGuideTip", "在浏览器中打开 Dhptl/Phi-3-mini-128k-instruct-GGUF 下载页面"));
     }
 
     /// <summary>
