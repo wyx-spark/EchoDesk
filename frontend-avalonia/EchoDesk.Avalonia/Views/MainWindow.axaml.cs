@@ -347,14 +347,29 @@ public partial class MainWindow : Window
     };
 
     /// <summary>
-    /// [EN] Official GGUF download page of the single model the Reader profile binds. The
-    ///      value is a plain constant: no request is made at startup, and it is opened only
-    ///      after the user clicks the guide button.
-    /// [ZH] Reader 版唯一绑定模型的官方 GGUF 下载页。该值只是常量：启动阶段不发起任何请求，
-    ///      仅在用户点击引导按钮后才打开。
+    /// [EN] Repository path of the single model the Reader profile binds. The host is chosen
+    ///      at click time (see <see cref="Phi3ModelDownloadUrl"/>), so the value here stays a
+    ///      plain constant: no request is made at startup.
+    /// [ZH] Reader 版唯一绑定模型的仓库路径。主机在点击时选择（见
+    ///      <see cref="Phi3ModelDownloadUrl"/>），因此这里仍是纯常量：启动阶段不发起任何请求。
     /// </summary>
-    private const string Phi3ModelDownloadUrl =
-        "https://huggingface.co/microsoft/Phi-3-mini-128k-instruct-GGUF";
+    private const string Phi3ModelRepoPath = "/microsoft/Phi-3-mini-128k-instruct-GGUF";
+
+    /// <summary>
+    /// [EN] Official Hugging Face host (used for non-Chinese UI).
+    /// [ZH] Hugging Face 官方站（非中文界面使用）。
+    /// </summary>
+    private const string Phi3ModelOfficialHost = "https://huggingface.co";
+
+    /// <summary>
+    /// [EN] Mainland-friendly mirror of the same repository (used for Chinese UI). The mirror
+    ///      selection deliberately follows the interface language instead of probing
+    ///      reachability: the Reader build promises that startup performs no network request,
+    ///      and a probe here would break that promise before the user clicks anything.
+    /// [ZH] 同一仓库的国内友好镜像（中文界面使用）。镜像选择刻意跟随界面语言，而不是探测
+    ///      可达性：Reader 版承诺启动阶段不发起网络请求，在这里探测会在用户点击之前就破坏该承诺。
+    /// </summary>
+    private const string Phi3ModelMirrorHost = "https://hf-mirror.com";
 
     /// <summary>
     /// [EN] File-name markers that identify a local copy of the bound model. Matching is
@@ -1209,17 +1224,32 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// [EN] Explicit user action behind the guide button: hand the official GGUF page to the
+    /// [EN] Picks the download page for the bound model. Chinese interfaces use the
+    ///      mainland-friendly mirror; every other locale keeps the official Hugging Face
+    ///      host. This mirrors the model market's "auto" intent without its reachability
+    ///      probe, which is not allowed on the startup path.
+    /// [ZH] 为所绑定模型选择下载页。中文界面使用国内友好镜像，其余语言保持 Hugging Face
+    ///      官方站。这与模型市场的“自动”取向一致，但不做可达性探测 —— 启动路径不允许探测。
+    /// </summary>
+    private static string Phi3ModelDownloadUrl()
+    {
+        bool chineseUi = Loc.Locale.StartsWith("zh", StringComparison.OrdinalIgnoreCase);
+        return (chineseUi ? Phi3ModelMirrorHost : Phi3ModelOfficialHost) + Phi3ModelRepoPath;
+    }
+
+    /// <summary>
+    /// [EN] Explicit user action behind the guide button: hand the selected GGUF page to the
     ///      default browser. A failure becomes a normal system bubble, never a crash.
-    /// [ZH] 引导按钮背后的明确用户操作：把官方 GGUF 页交给默认浏览器。失败时变成普通系统
+    /// [ZH] 引导按钮背后的明确用户操作：把选定的 GGUF 页交给默认浏览器。失败时变成普通系统
     ///      气泡，绝不崩溃。
     /// </summary>
     private void OpenModelDownloadPage()
     {
-        if (ShellOpen.TryOpenUrl(Phi3ModelDownloadUrl))
+        string url = Phi3ModelDownloadUrl();
+        if (ShellOpen.TryOpenUrl(url))
             return;
         AddMessage("system", Loc.T("main.model.missingGuideOpenFailed",
-            "❌ 无法打开下载页面，请手动访问：{0}", Phi3ModelDownloadUrl));
+            "❌ 无法打开下载页面，请手动访问：{0}", url));
     }
 
     private void ApplyFontSize()
