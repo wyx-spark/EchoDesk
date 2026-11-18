@@ -53,7 +53,11 @@ WINDOWS_ONLY_FEATURES = (
 PORTABLE_FEATURES = (
     "chat",          # [EN] Chat and streaming output. / [ZH] 对话与流式输出。
     "files",         # [EN] File parsing through the generic parser. / [ZH] 通用解析器文件解析。
-    "skills",        # [EN] Plugins and skills. / [ZH] 插件与技能。
+    # [EN] Reader: the "skills" capability is removed together with the plugin runtime.
+    # [EN] A capability list that still advertises plugins would promise a feature the
+    # [EN] backend can no longer serve.
+    # [ZH] Reader："skills" 能力已随插件运行期一并移除。仍宣称支持插件的能力清单会承诺
+    # [ZH] 后端已无法提供的能力。
     "models",        # [EN] Model management and local inference. / [ZH] 模型管理与本地推理。
 )
 

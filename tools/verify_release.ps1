@@ -451,7 +451,13 @@ try {
     # [EN] The automation result-folder test went with the automation stack: the Reader edition
     # [EN] writes no per-task result folders.
     # [ZH] 自动化结果目录结构的测试已随自动化栈一同删除；Reader 版不产出逐任务结果目录。
-    Invoke-Check "技能运行期加载器" { Invoke-Python "技能" "tools\test_skills_runtime.py"; "通过" }
+    # [EN] Reader: the skill runtime (``backend/skills_runtime.py``) is physically removed
+    # [EN] by the pure-reader refactor, so its check is removed instead of being left to
+    # [EN] fail on a missing module. Recorded in
+    # [EN] records/v0.2.6-reader-后端裁剪与引擎调优记录.md.
+    # [ZH] Reader：技能运行期（``backend/skills_runtime.py``）已被纯阅读器重构物理删除，
+    # [ZH] 因此该检查被移除，而不是留着对一个不存在的模块报错。记录见
+    # [ZH] records/v0.2.6-reader-后端裁剪与引擎调优记录.md。
     Invoke-Check "多语言机制" { Invoke-Python "多语言" "tools\test_i18n.py"; "通过" }
     Invoke-Check "模型能力辅助（修复四）" { Invoke-Python "模型能力" "tools\test_capability.py"; "通过" }
     # [EN] v0.2.4: synthetic 8 GiB / 12 GiB profiles assert the GPU layer count,
@@ -465,20 +471,18 @@ try {
     Invoke-Check "推理覆盖与透明诊断（v0.2.4 任务-3）" {
         Invoke-Python "覆盖诊断" "tools\test_inference_override.py"; "通过"
     }
-    # [EN] v0.2.4 patch: update asset guard, digest/size rejection and the isolated
-    # [EN] user-data backup are verified without network access.
-    # [ZH] v0.2.4 补丁：更新附件白名单、摘要/大小校验与隔离的用户数据备份，全部离线验证。
-    Invoke-Check "自动更新与数据保护（v0.2.4 补丁）" {
-        Invoke-Python "自动更新" "tools\test_update_check.py"; "通过"
-    }
+    # [EN] Reader: the update checker (``backend/update_check.py``) is physically
+    # [EN] removed -- a zero-network build cannot check for updates. The gate step goes
+    # [EN] with it.
+    # [ZH] Reader：更新检查器（``backend/update_check.py``）已物理删除 —— 零联网构建无法
+    # [ZH] 检查更新。对应的门禁步骤随之移除。
     Invoke-Check "后端协议端到端" { Invoke-Python "后端协议端到端" "tools\test_backend_e2e.py"; "通过" }
-    # v0.2.1 模型市场优化：加载器（分页取全/上限/重试/缓存/离线降级）用本机 HTTP 桩验证，
-    # 不依赖真实网络；再驱动**打包后的后端**验证流式加载与本地查询协议。
-    # 这里必须用 --packaged：验证的是"发出去的那份后端"，而不是源码后端。
-    Invoke-Check "模型市场（加载/分页/筛选/排序）" {
-        Invoke-Native "模型市场" "python" @("tools\test_model_market.py", "--packaged")
-        "通过"
-    }
+    # [EN] Reader: the model market (``backend/model_hub.py`` / ``backend/model_query.py``)
+    # [EN] and its downloader are physically removed, so the model-market gate step is
+    # [EN] removed as well. ``tools\test_reader_profile.py`` asserts the modules are gone.
+    # [ZH] Reader：模型市场（``backend/model_hub.py`` / ``backend/model_query.py``）与其
+    # [ZH] 下载器已物理删除，因此模型市场门禁步骤一并移除。
+    # [ZH] ``tools\test_reader_profile.py`` 断言这些模块确实不存在。
     # v0.2.1 模型思考内容分离：分离器边界 + 引擎双通道 + 流式协议（channel/reset/done）
     # + 历史持久化，全部在进程内驱动真后端代码，不依赖网络也不依赖模型。
     # 真实模型的端到端（用 --model 指定）在 CI 里跳过：机器上不一定有推理模型。
@@ -497,16 +501,13 @@ try {
         Invoke-Python "Reader 版本" "tools\test_reader_profile.py"; "通过"
     }
 
-    # v0.2.1 优化已知问题-2 任务二：联网搜索链路（结构化结果 / 精简上限 /
-    # 编号注入 + 引用指令 / 失败与空结果明确告知 / 四个环节可观测 / 双语文案）。
-    # 用桩 DDGS，不联网。
-    Invoke-Check "联网搜索链路（任务二）" { Invoke-Python "搜索链路" "tools\test_search.py"; "通过" }
-
-    # [EN] v0.2.6 task 2.3: ordered provider cascade (DuckDuckGo -> Bing ->
-    # [EN] SearXNG), silent fallback on timeout/429, combined failure report.
-    # [ZH] v0.2.6 任务 2.3：有序提供方级联（DuckDuckGo → Bing → SearXNG），
-    # [ZH] 超时/429 静默回退，全部失败时合并上报。
-    Invoke-Check "多引擎级联搜索（v0.2.6）" { Invoke-Python "搜索级联" "tools\test_search_cascade.py"; "通过" }
+    # [EN] Reader: the web-search stack (``backend/search_engine.py`` and its ordered
+    # [EN] provider cascade) is physically removed. Both gate steps go with it; the
+    # [EN] remaining guarantee is stronger than "search still works" -- the build has no
+    # [EN] outbound network code at all.
+    # [ZH] Reader：联网搜索栈（``backend/search_engine.py`` 及其有序提供方级联）已物理删除。
+    # [ZH] 两个门禁步骤随之移除；留下的保证比"搜索仍可用"更强 —— 本构建根本不存在对外
+    # [ZH] 网络代码。
 
     # v0.2.1 优化已知问题-2 任务九：上下文压缩策略（token 比例触发可配 / grace zone /
     # 摘要提示词与自定义重点 / 大块内容单独截断 / 压缩事件 JSONL 可追溯可回放 /
@@ -537,11 +538,11 @@ try {
     # [EN] check below still covers provider routing and the local API.
     # [ZH] Agent 平台与 MCP 客户端已从 Reader 版删除；``tools\test_reader_profile.py``
     # [ZH] 断言两者确实不存在。下面的开放平台检查仍覆盖 Provider 路由与本地 API。
-    # [EN] v0.2.6 Part 4: provider routing, the consent red line and the local API.
-    # [EN] The test binds 127.0.0.1 only and needs no network or model.
-    # [ZH] v0.2.6 任务 4：多 Provider 路由、知情同意红线与本地 API。
-    # [ZH] 该测试只绑定 127.0.0.1，无需联网、不加载模型。
-    Invoke-Check "开放平台（v0.2.6 任务四）" { Invoke-Python "开放平台" "tools\test_ecosystem.py"; "通过" }
+    # [EN] Reader: the open-platform layer (``backend/providers.py`` and
+    # [EN] ``backend/local_api.py``) is physically removed, so the ecosystem gate step is
+    # [EN] removed too. The only inbound channel left is stdin/stdout.
+    # [ZH] Reader：开放平台层（``backend/providers.py`` 与 ``backend/local_api.py``）已物理
+    # [ZH] 删除，因此生态门禁步骤一并移除。剩下的唯一入站通道是 stdin/stdout。
     # [EN] The BM25 retrieval pipeline (``tools\test_retrieval.py``) is removed from the Reader
     # [EN] profile; ``tools\test_reader_profile.py`` above asserts the whole stack is gone.
     # [ZH] BM25 检索链路（``tools\test_retrieval.py``）已从 Reader 版移除；上面的
@@ -754,7 +755,9 @@ try {
         Write-Host "[SKIP] 模型中心端到端（-SkipE2E）" -ForegroundColor Yellow
     }
     else {
-        Invoke-Check "模型中心端到端（联网）" { Invoke-Python "模型中心端到端" "tools\test_model_hub_e2e.py"; "通过" }
+        # [EN] Reader: the networked model-centre end-to-end test went with the model
+    # [EN] library itself.
+    # [ZH] Reader：需要联网的模型中心端到端测试已随模型库一并移除。
     }
 }
 finally {

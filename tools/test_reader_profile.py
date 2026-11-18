@@ -59,6 +59,16 @@ FAILED = []
 REMOVED_MODULES = (
     "vision", "knowledge", "speech", "media", "extractive",
     "memory", "retrieval", "automation", "agent", "agent_tools", "mcp_client",
+    # [EN] Pure-reader backend refactor (first stage): the market, model library,
+    # [EN] provider routing, local HTTP API, web search, update checker, slash-command
+    # [EN] layer and prompt-template library are physically deleted. Asserting their
+    # [EN] absence here makes "the backend can never reach the network" a gate.
+    # [ZH] 纯阅读器后端重构（第一阶段）：市场、模型库、Provider 路由、本地 HTTP API、
+    # [ZH] 联网搜索、更新检查、斜杠指令层与提示词模板库已物理删除。在此断言它们不存在，
+    # [ZH] 使"后端不可能触达网络"成为一条门禁。
+    "marketplace", "skills_runtime", "model_hub", "model_query", "download_utils",
+    "providers", "local_api", "search_engine", "update_check",
+    "command_handler", "prompt_library",
 )
 #: [EN] The same names plus the Playwright chain, banned from packaged sources.
 #: [ZH] 同一批名字再加上 Playwright 依赖链，禁止出现在打包源码里。

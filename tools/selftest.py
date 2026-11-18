@@ -408,7 +408,10 @@ def test_file_injection() -> None:
         config = Config()
         config.model_path = "stub.gguf"
         config.speed_hint = False
-        config.search_default = False
+        # [EN] Reader: ``search_default`` no longer exists (the web-search layer is
+        # [EN] physically removed), so the stub no longer toggles it.
+        # [ZH] Reader：``search_default`` 已不存在（联网搜索层已物理删除），
+        # [ZH] 因此桩对象不再设置它。
         config.summary_cache = False
         if overrides:
             config.files = FilesConfig(**overrides)
@@ -707,90 +710,41 @@ def test_state_paths() -> None:
 
 
 
-# --------------------------------------------------------- 6. 技能市场
-
-def test_marketplace() -> None:
-    section("技能市场")
-    try:
-        import marketplace
-    except ImportError as e:
-        check("导入 marketplace（缺失，跳过）", True, f"skipped: {e}")
-        return
-
-    os.environ["ECHODESK_SELFTEST_TOKEN"] = "should-be-removed"
-    os.environ["ECHODESK_SELFTEST_PASSWORD"] = "should-be-removed"
-    os.environ["ECHODESK_SELFTEST_PLAIN"] = "keep-me"
-    from config import MarketplaceConfig
-
-    market = marketplace.Marketplace(MarketplaceConfig())
-    env = market._sanitized_env()
-    check("环境变量清洗移除 TOKEN", "ECHODESK_SELFTEST_TOKEN" not in env)
-    check("环境变量清洗移除 PASSWORD", "ECHODESK_SELFTEST_PASSWORD" not in env)
-    check("环境变量清洗保留普通变量", env.get("ECHODESK_SELFTEST_PLAIN") == "keep-me")
-    for key in ("ECHODESK_SELFTEST_TOKEN", "ECHODESK_SELFTEST_PASSWORD", "ECHODESK_SELFTEST_PLAIN"):
-        os.environ.pop(key, None)
-
-    # 仓库名校验：拒绝 URL 与非法形式，接受 owner/name
-    normalize = getattr(market, "_normalize_repo", None)
-    if normalize is not None:
-        for bad in ("https://github.com/a/b", "a", "a/b/c", "ftp://x", ""):
-            try:
-                value = normalize(bad)
-                rejected = not value
-            except Exception:
-                rejected = True
-            check(f"非法仓库名被拒绝: {bad!r}", rejected)
-        check("合法仓库名通过校验", bool(normalize("owner/name")) is True,
-              f"得到 {normalize('owner/name')!r}")
+# --------------------------------------------------------- 6. 技能市场 / 模型匹配（已删除）
+#
+# [EN] Reader: ``test_marketplace`` verified ``backend/marketplace.py`` (env-var
+# [EN] sanitisation and repository-name validation) and ``test_model_match`` verified
+# [EN] the pure matching helpers of ``backend/download_utils.py``. Both modules are
+# [EN] physically deleted by the Reader backend refactor, so the two test functions are
+# [EN] removed instead of silently degrading into "module missing, skipped" passes.
+# [EN] The quantization label that the model scan still needs now lives in
+# [EN] ``main._profile_quant_text`` and is asserted by ``test_quant_label`` below.
+# [ZH] Reader：``test_marketplace`` 检验的是 ``backend/marketplace.py``（环境变量清洗与
+# [ZH] 仓库名校验），``test_model_match`` 检验的是 ``backend/download_utils.py`` 的纯匹配
+# [ZH] 辅助函数。两个模块均已被 Reader 后端裁剪物理删除，因此这两个测试函数被**删除**，
+# [ZH] 而不是静默退化成"模块缺失、跳过"的假通过。模型扫描仍需要的量化标注现位于
+# [ZH] ``main._profile_quant_text``，由下面的 ``test_quant_label`` 断言。
 
 
-def test_model_match() -> None:
-    """仓库内模型文件匹配（download_utils 的纯函数部分，不联网）。
+def test_quant_label() -> None:
+    """[EN] Quantization label used by the model scan / [ZH] 模型扫描使用的量化标注。
 
-    v0.2.1 默认模型切换时发现：原来的评分给含 ``q4_k_m`` 的候选**无条件加 0.3**，
-    于是显式配置 Q6_K 也会被解析成 Q4_K_M（下错文件、且没有任何提示）。
-    这里的候选列表就是当时实测的真实仓库文件清单，作为回归夹具。
+    [EN] After the model library was removed, the scan labels a local ``.gguf`` file by
+    [EN] parsing its name. This keeps that behaviour covered.
+    [ZH] 模型库删除后，扫描通过解析文件名来标注本地 ``.gguf`` 文件。本用例继续覆盖该行为。
     """
-    section("模型文件匹配")
-    try:
-        import download_utils as du
-    except ImportError as e:
-        check("导入 download_utils（缺失，跳过）", True, f"skipped: {e}")
-        return
+    section("模型量化标注")
+    import main as backend_main
 
-    check("量化代码提取", du.quant_of("Qwen3-0.6B-Q6_K.gguf") == "q6_k",
-          f"得到 {du.quant_of('Qwen3-0.6B-Q6_K.gguf')!r}")
-    check("IQ 量化代码提取", du.quant_of("x-IQ4_XS.gguf") == "iq4_xs",
-          f"得到 {du.quant_of('x-IQ4_XS.gguf')!r}")
-    check("无量化代码时返回空串", du.quant_of("Qwen3-0.6B.gguf") == "",
-          f"得到 {du.quant_of('Qwen3-0.6B.gguf')!r}")
-    # 回归：取主干必须幂等。模型名里的版本号带点（Qwen3.5），用 os.path.splitext
-    # 会按最后一个点切，把量化代码切掉 —— 于是"提示里点名了 Q6_K"被判成未点名。
-    stem = du._stem("Qwen3.5-0.8B-Q6_K.gguf")
-    check("主干提取幂等", du._stem(stem) == stem, f"{stem!r} → {du._stem(stem)!r}")
-    check("不带扩展名也能取出量化", du.quant_of("qwen3.5-0.8b-q6_k") == "q6_k",
-          f"得到 {du.quant_of('qwen3.5-0.8b-q6_k')!r}")
-
-    bartowski = ["Qwen_Qwen3.5-0.8B-Q4_K_M.gguf", "Qwen_Qwen3.5-0.8B-Q6_K.gguf",
-                 "Qwen_Qwen3.5-0.8B-Q8_0.gguf", "mmproj-Qwen_Qwen3.5-0.8B-f16.gguf"]
-    unsloth_06 = ["Qwen3-0.6B-Q4_K_M.gguf", "Qwen3-0.6B-Q5_K_M.gguf",
-                  "Qwen3-0.6B-Q6_K.gguf", "Qwen3-0.6B-Q8_0.gguf"]
-
-    # 回归：显式点名量化时必须给到那个量化（修复前这里会返回 Q4_K_M）
-    picked = du.rank_model_files(bartowski, "Qwen_Qwen3.5-0.8B-Q6_K.gguf")
-    check("显式 Q6_K 提示解析到 Q6_K", picked == "Qwen_Qwen3.5-0.8B-Q6_K.gguf", f"得到 {picked}")
-    picked = du.rank_model_files(bartowski, "Qwen3.5-0.8B-Q6_K.gguf")
-    check("带前缀差异的 Q6_K 提示解析到 Q6_K", picked == "Qwen_Qwen3.5-0.8B-Q6_K.gguf", f"得到 {picked}")
-    picked = du.rank_model_files(unsloth_06, "Qwen3-0.6B-Q6_K.gguf")
-    check("自身默认模型文件解析到自身", picked == "Qwen3-0.6B-Q6_K.gguf", f"得到 {picked}")
-
-    # 未点名量化时，通用档位的偏好仍然保留（历史行为）
-    picked = du.rank_model_files(unsloth_06, "Qwen3-0.6B")
-    check("未点名量化时仍优先 Q4_K_M", picked == "Qwen3-0.6B-Q4_K_M.gguf", f"得到 {picked}")
-
-    # 仓库里没有该量化时退化为最接近的一个（并仍会回报给用户确认）
-    picked = du.rank_model_files(unsloth_06, "Qwen3-0.6B-Q3_K_M.gguf")
-    check("量化不存在时退化为最接近的候选", picked.endswith(".gguf"), f"得到 {picked}")
+    label = backend_main._profile_quant_text
+    check("Q6_K 被识别", label("Qwen3-0.6B-Q6_K.gguf") == "Q6_K",
+          f"得到 {label('Qwen3-0.6B-Q6_K.gguf')!r}")
+    check("IQ4_XS 被识别", label("x-IQ4_XS.gguf") == "IQ4_XS",
+          f"得到 {label('x-IQ4_XS.gguf')!r}")
+    check("Q4_K_M 被识别", label("Qwen3-0.6B-Q4_K_M.gguf") == "Q4_K_M",
+          f"得到 {label('Qwen3-0.6B-Q4_K_M.gguf')!r}")
+    check("无量化代码时返回空串", label("Qwen3-0.6B.gguf") == "",
+          f"得到 {label('Qwen3-0.6B.gguf')!r}")
 
 
 def test_protocol_keys() -> None:
@@ -831,11 +785,29 @@ def test_protocol_keys() -> None:
                 pairs.append((os.path.basename(path), m.group(1), prop.group(1)))
 
     check("找到前端读取 model_* 响应键的位置", len(pairs) > 0, f"找到 {len(pairs)} 处")
-    unknown = [f"{f}: {a} → {k}" for f, a, k in pairs if k not in backend_keys]
+    # [EN] Reader: the WPF front end (LTS, not built for this profile) still contains the
+    # [EN] model-library pages, while the backend actions behind them are physically
+    # [EN] removed. Those action names are therefore excluded from the cross-check and
+    # [EN] verified in the opposite direction instead: they must NOT appear in the
+    # [EN] backend any more.
+    # [ZH] Reader：WPF 前端（LTS，本分支不构建）仍保留模型库页面，而支撑它们的后端
+    # [ZH] 动作已被物理删除。因此这些动作名不再参与交叉核对，而是改为反向校验：它们
+    # [ZH] 绝不能再出现在后端。
+    removed_actions = {
+        "model_download", "model_hub_search", "model_hub_query", "model_hub_detail",
+        "model_hub_registry", "model_hub_uninstall", "model_hub_status",
+        "model_hub_config_set", "model_hub_download", "model_hub_load",
+    }
+    unknown = [f"{f}: {a} → {k}" for f, a, k in pairs
+               if k not in backend_keys and a not in removed_actions]
     check("前端读的响应键都在后端出现过", not unknown, "；".join(unknown))
+    still_there = sorted({a for a in removed_actions
+                          if f'"{a}"' in backend_src})
+    check("已删除的模型库动作不再出现在后端", not still_there, "；".join(still_there))
     # 反向锚定：模型详情这一个键必须两边一致（本轮就是这里错的）
-    detail_keys = {k for _, a, k in pairs if a == "model_hub_detail"}
-    check("model_hub_detail 的响应键一致（detail）", detail_keys == {"detail"},
+    detail_keys = {k for _, a, k in pairs
+                   if a == "model_hub_detail" and a not in removed_actions}
+    check("model_hub_detail 的响应键一致（detail）", detail_keys in (set(), {"detail"}),
           f"前端读到 {sorted(detail_keys)}")
 
 
@@ -927,19 +899,20 @@ def test_imports() -> None:
     import importlib
 
     modules = [
-        "i18n", "update_check", "config", "command_handler", "conversation",
-        "file_parser", "gguf_meta", "plaintext", "skills_runtime", "summarizer",
-        "download_utils", "search_engine", "llm_engine", "model_hub", "marketplace",
-        "hardware_profiler", "main", "version",
+        "i18n", "config", "conversation",
+        "file_parser", "gguf_meta", "plaintext", "summarizer",
+        "llm_engine", "hardware_profiler", "main", "version",
         # [EN] v0.2.6 item 23: the DLL preload bootstrap.
         # [ZH] v0.2.6 第 23 项：DLL 预加载引导。
         "cuda_bootstrap",
-        # [EN] Prompt template library retained by the Reader profile.
-        # [ZH] Reader 保留的提示词模板库。
-        "prompt_library",
-        # [EN] v0.2.6 Part 4 (open platform).
-        # [ZH] v0.2.6 任务 4（开放平台）。
-        "providers", "local_api",
+        # [EN] Reader: the externalised inference configuration and the hardware
+        # [EN] auto-tuner added by the pure-reader refactor.
+        # [ZH] Reader：纯阅读器重构新增的外部推理配置与硬件自动调优模块。
+        "inference_config", "inference_tuner",
+        # [EN] Reader: the document queue and the remaining local-only helpers.
+        # [ZH] Reader：文档队列与其余纯本地辅助模块。
+        "document_jobs", "model_profile", "prompts", "reasoning",
+        "platform_support", "compact_log", "emoji",
     ]
     failures = []
     for name in modules:
@@ -955,7 +928,7 @@ def main() -> int:
              test_conversation, test_file_injection,
              test_crash_log_scope, test_config_save_target,
              test_operational_log_sanitizer, test_state_paths,
-             test_marketplace, test_model_match,
+             test_quant_label,
              test_protocol_keys, test_cuda_bootstrap]
     for fn in tests:
         try:

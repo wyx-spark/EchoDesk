@@ -134,7 +134,8 @@ def make_backend(**files_overrides):
     config = Config()
     config.model_path = "stub.gguf"
     config.speed_hint = False
-    config.search_default = False
+    # [EN] Reader: search_default no longer exists (web search removed).
+    # [ZH] Reader：search_default 已不存在（联网搜索已删除）。
     config.summary_cache = False
     if files_overrides:
         config.files = FilesConfig(**files_overrides)
@@ -404,56 +405,60 @@ def test_backward_compat():
 
 
 def test_file_command():
-    section("九、/file 指令：多个路径一次加载")
+    """[EN] Multi-path loading through the backend entry point.
+
+    [EN] Reader: the ``/file`` slash command belonged to ``command_handler``, which is
+    [EN] physically removed. The assertions are kept and now drive the very method that
+    [EN] the command delegated to (``Backend.load_files_into_context``), so multi-file
+    [EN] loading is still verified end to end.
+    [ZH] 多路径加载经由后端入口点验证。
+
+    [ZH] Reader：``/file`` 斜杠指令属于已物理删除的 ``command_handler``。断言本身保留，
+    改为直接调用它当时委托的方法（``Backend.load_files_into_context``），因此多文件
+    加载依然是端到端被验证的。
+    """
+    section("九、多路径一次加载（/file 的底层实现）")
     directory = workdir()
     a = make_file(directory, "x.txt", "X 内容。" * 5)
     b = make_file(directory, "y.txt", "Y 内容。" * 5)
-    import command_handler
 
     backend = make_backend()
-    handler = command_handler.CommandHandler.__new__(command_handler.CommandHandler)
-    handler.config = backend.config
-    handler.conv_mgr = backend.conv
-    handler.llm_engine = backend.llm
-    handler.file_loader = backend.load_file_into_context
-    handler.files_loader = backend.load_files_into_context
-    handler.temp_manual = False
-
-    reply, _ = handler._file([a, b])
-    check("/file 接受多个路径", backend.conv.file_names() == ["x.txt", "y.txt"],
-          f"{backend.conv.file_names()} | 回执 {str(reply)[:80]}")
-    check("回执说明了加载结果", "已加载" in str(reply) or "x.txt" in str(reply), str(reply)[:120])
+    result = backend.load_files_into_context([a, b])
+    check("接受多个路径", backend.conv.file_names() == ["x.txt", "y.txt"],
+          f"{backend.conv.file_names()} | 结果 {str(result)[:80]}")
+    check("回执说明了加载结果", bool(result.get("names")) or "x.txt" in str(result.get("text")),
+          str(result.get("text"))[:120])
 
     # 兼容：老的单个路径参数
     backend2 = make_backend()
-    handler2 = command_handler.CommandHandler.__new__(command_handler.CommandHandler)
-    handler2.config = backend2.config
-    handler2.conv_mgr = backend2.conv
-    handler2.llm_engine = backend2.llm
-    handler2.file_loader = backend2.load_file_into_context
-    handler2.files_loader = backend2.load_files_into_context
-    handler2.temp_manual = False
-    reply2, _ = handler2._file([a])
-    check("/file 单路径仍然可用", backend2.conv.file_names() == ["x.txt"], str(reply2)[:80])
+    result2 = backend2.load_files_into_context([a])
+    check("单路径仍然可用", backend2.conv.file_names() == ["x.txt"], str(result2)[:80])
 
-    reply3, _ = handler2._file([])
-    check("/file 无参数给出用法", len(reply3) > 0)
-
-    # 参数分词：引号包裹的路径（含空格）必须保持完整。
-    # 这是打开多文件路径解析时暴露出来的**既有缺陷**：旧实现用 str.split()，
-    # `C:\My Documents\合同 2026.docx` 会被切成 4 段 —— 单文件时代表现为
-    # "路径含空格就加载失败"，多文件时代会变成"一次加载 4 个不存在的路径"。
-    check("引号包裹的路径保持完整",
-          command_handler.CommandHandler.split_args('"C:\\a b\\x.txt"') == ["C:\\a b\\x.txt"],
-          str(command_handler.CommandHandler.split_args('"C:\\a b\\x.txt"')))
-    check("单引号同样支持",
-          command_handler.CommandHandler.split_args("'C:\\a b\\x.txt'") == ["C:\\a b\\x.txt"])
-    check("引号与裸路径混用",
-          command_handler.CommandHandler.split_args('"a b.txt" c.txt') == ["a b.txt", "c.txt"])
-    check("普通参数分词不变（不影响 /compact focus on …）",
-          command_handler.CommandHandler.split_args("focus on 合同金额")
-          == ["focus", "on", "合同金额"])
-    check("空参数返回空列表", command_handler.CommandHandler.split_args("") == [])
+    # [EN] Reader: the following two groups of assertions tested the slash-command
+    # [EN] surface of ``command_handler`` (empty-argument usage text and the quoted
+    # [EN] argument tokenizer). That module is physically deleted, so the assertions are
+    # [EN] commented out rather than rewritten: no fragment of the command parser
+    # [EN] survives in this profile to assert against. The behaviour they protected is
+    # [EN] recorded in records/v0.2.6-reader-后端裁剪与引擎调优记录.md.
+    # [ZH] Reader：下面两组断言检验的是 ``command_handler`` 的斜杠指令层（空参数用法提示
+    # [ZH] 与带引号参数的分词器）。该模块已物理删除，因此断言被**注释**而不是改写：本
+    # [ZH] 分支里已不存在可断言的指令解析代码。它们守护的行为记录在
+    # [ZH] records/v0.2.6-reader-后端裁剪与引擎调优记录.md 中。
+    #
+    # reply3, _ = handler2._file([])
+    # check("/file 无参数给出用法", len(reply3) > 0)
+    #
+    # check("引号包裹的路径保持完整",
+    #       command_handler.CommandHandler.split_args('"C:\\a b\\x.txt"') == ["C:\\a b\\x.txt"],
+    #       str(command_handler.CommandHandler.split_args('"C:\\a b\\x.txt"')))
+    # check("单引号同样支持",
+    #       command_handler.CommandHandler.split_args("'C:\\a b\\x.txt'") == ["C:\\a b\\x.txt"])
+    # check("引号与裸路径混用",
+    #       command_handler.CommandHandler.split_args('"a b.txt" c.txt') == ["a b.txt", "c.txt"])
+    # check("普通参数分词不变（不影响 /compact focus on …）",
+    #       command_handler.CommandHandler.split_args("focus on 合同金额")
+    #       == ["focus", "on", "合同金额"])
+    # check("空参数返回空列表", command_handler.CommandHandler.split_args("") == [])
 
 
 def main():

@@ -68,13 +68,18 @@ def find_model() -> str:
 
 
 def build_backend(model: str):
-    """[EN] Build a backend with the recommended values / [ZH] 以推荐值构建后端。"""
+    """[EN] Build a backend with the recommended values / [ZH] 以推荐值构建后端。
+
+    [EN] Reader: ``n_gpu_layers`` and ``n_batch`` moved out of ``Config`` into
+    [EN] ``inference_config.json``; the backend reads them from there, so the test no
+    [EN] longer assigns them on the application config.
+    [ZH] Reader：``n_gpu_layers`` 与 ``n_batch`` 已从 ``Config`` 迁移到
+    [ZH] ``inference_config.json``，后端从那里读取，因此本测试不再在应用配置上赋值。
+    """
     cfg = config.Config()
     cfg.model_path = os.path.basename(model)
     cfg.inference_override = False
     cfg.context_length = 2048
-    cfg.n_gpu_layers = 0
-    cfg.n_batch = 512
     return backend_main.Backend(cfg, model)
 
 

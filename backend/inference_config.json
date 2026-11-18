@@ -1,0 +1,46 @@
+{
+  "n_threads": 9,
+  "n_batch": 512,
+  "n_ubatch": 512,
+  "use_mlock": true,
+  "use_mmap": false,
+  "flash_attn": true,
+  "type_k": "q8_0",
+  "type_v": "q8_0",
+  "n_gpu_layers": 0,
+  "n_ctx_default": 2048,
+  "n_ctx_max": 131072,
+  "output_token_budget": 4096,
+  "context_safety_margin": 512,
+  "tuning": {
+    "prompt_tokens": 512,
+    "gen_tokens": 128,
+    "repeats": 2,
+    "min_improvement_ratio": 0.05,
+    "max_trials": 8
+  },
+  "tuned_at": "2026-11-18T20:42:56",
+  "tuned_model": "Qwen3-0.6B-Q6_K.gguf",
+  "tuned_baseline": {
+    "label": "baseline",
+    "n_threads": 9,
+    "n_batch": 512,
+    "ttft_ms": 740.7,
+    "tps": 41.58,
+    "tokens": 128,
+    "load_ms": 234.6,
+    "ok": true,
+    "error": ""
+  },
+  "tuned_best": {
+    "label": "baseline",
+    "n_threads": 9,
+    "n_batch": 512,
+    "ttft_ms": 740.7,
+    "tps": 41.58,
+    "tokens": 128,
+    "load_ms": 234.6,
+    "ok": true,
+    "error": ""
+  }
+}

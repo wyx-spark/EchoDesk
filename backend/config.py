@@ -545,59 +545,30 @@ class SummarizeConfig(BaseModel):
 class ModelHubConfig(BaseModel):
     """
     [EN]
-    Model selection panel configuration (design specification, addition 4).
+    Local model directory configuration.
 
-    The data source can be switched between auto / mirror / official; ``hf_token`` is
-    only required for downloading gated models and should be placed in
-    config.user.json (already ignored by .gitignore) rather than in the base
-    configuration.
+    Reader: the section no longer describes a model *library*. The former data-source
+    switch, Hugging Face token, download retries, verification flags and search-result
+    cache are removed, so this model now carries exactly one piece of information --
+    where local ``.gguf`` files are looked up.
 
     [ZH]
-    模型选择栏配置（设计规范 新增四）。
+    本地模型目录配置。
 
-    数据源可在「自动 / 镜像 / 官方」之间切换；``hf_token`` 仅在下载 Gated 模型时需要，
-    建议放在 config.user.json（已被 .gitignore 忽略）而不是基础配置里。
+    Reader：本段不再描述"模型库"。原先的数据源切换、Hugging Face 令牌、下载重试、
+    校验开关与搜索结果缓存均已删除，因此本模型现在只承载一条信息 —— 本地 ``.gguf``
+    文件从哪里查找。
     """
 
-    enabled: bool = True
-    # [EN] auto: prefer the mirror (usually faster in mainland China), falling back to
-    # [EN] the official site when unreachable.
-    # [ZH] auto：优先镜像站（国内通常更快），不可达时回退官方站。
-    source: str = "auto"                    # [EN] auto | mirror | official
-                                            # [ZH] auto | mirror | official
-    hf_token: str = ""                      # [EN] Required for gated models; when empty the HF_TOKEN environment variable is used.
-                                            # [ZH] Gated 模型所需，留空则读 HF_TOKEN 环境变量。
-    models_dir: str = "models"              # [EN] Model repository directory (relative to the backend working directory).
-                                            # [ZH] 模型库目录（相对后端工作目录）。
-    registry_file: str = "models_registry.json"
-    # [EN] Once the download is complete, compare sizes; if a sha256 is available and
-    # [EN] the file is at most 2 GB, compare hashes as well.
-    # [ZH] 下载完整后比对大小；拿得到 sha256 且文件 ≤2GB 时再比对哈希。
-    verify_sha256: bool = True
-    download_retries: int = Field(default=3, ge=1, le=10)
-    search_limit: int = Field(default=20, ge=1, le=100)
-
-    # [EN] ---------- Model marketplace optimization of an earlier release ----------
-    # [ZH] ---------- 此前版本的模型市场优化 ----------
-    # [EN] Safety limits for loading all results automatically (task 2): any one of the
-    # [EN] three gates stops the operation and reports "N entries loaded, more
-    # [EN] available". This prevents runaway behaviour when a keyword is very broad
-    # [EN] (an empty keyword means the entire model repository).
-    # [ZH] 自动加载全部结果时的安全上限（相关设计）：三个闸门任一触发即停并告知
-    # [ZH] "已加载 N 条，还有更多"。关键词过宽（如空关键词 = 整个模型库）时不至于失控。
-    max_items: int = Field(default=5000, ge=20, le=20000)
-    max_requests: int = Field(default=8, ge=1, le=50)
-    max_seconds: float = Field(default=90.0, ge=5.0, le=600.0)
-    # [EN] Local page size (task 3: default 20; the interface offers 20/50/100).
-    # [ZH] 本地分页每页条数（相关设计：默认 20，界面可选 20/50/100）
-    page_size: int = Field(default=20, ge=5, le=200)
-    # [EN] On-disk search result cache (task 2): empty = <user data directory>/cache/
-    # [EN] model_hub. 0 means every search fetches again (the cache expires
-    # [EN] immediately).
-    # [ZH] 搜索结果磁盘缓存（相关设计）：留空 = <用户数据目录>/cache/model_hub。
-    # [ZH] 0 表示每次搜索都重新拉取（缓存立即过期）。
-    search_cache_dir: str = ""
-    search_cache_ttl_hours: int = Field(default=6, ge=0, le=168)
+    # [EN] Reader: only the on-disk model directory survives. Every other field of this
+    # [EN] section described the removed model library (mirror source, Hugging Face
+    # [EN] token, download retries, verification hashes and the search-result cache), so
+    # [EN] nothing here can describe or trigger a network transfer any more.
+    # [ZH] Reader：本段只保留磁盘上的模型目录。其余字段都属于已删除的模型库（镜像源、
+    # [ZH] Hugging Face 令牌、下载重试、校验哈希与搜索结果缓存），因此这里不再有任何
+    # [ZH] 能描述或触发网络传输的配置。
+    models_dir: str = "models"              # [EN] Local model directory (relative to the state directory).
+                                            # [ZH] 本地模型目录（相对状态目录）。
 
 
 class ReasoningConfig(BaseModel):
@@ -648,273 +619,14 @@ class ReasoningConfig(BaseModel):
     tags: List[List[str]] = Field(default_factory=list)
 
 
-class MarketplaceConfig(BaseModel):
-    """
-    [EN]
-    Skill/plug-in marketplace configuration (task 5, item 5.6).
-
-    [ZH]
-    技能/插件市场配置（任务五 5.6）。
-    """
-
-    enabled: bool = True
-    github_token: str = ""                                  # [EN] Optional: raises the GitHub API rate limit.
-                                                            # [ZH] 可选：提高 GitHub API 限额。
-    cache_ttl_hours: int = Field(default=6, ge=1, le=168)
-    skill_topic: str = "echodesk-plugin"                    # [EN] Single unified topic; no other tags are mixed in.
-                                                            # [ZH] 统一 topic，不混用其它标签。
-    auto_update_check: bool = True
-    cache_file: str = "market_cache.json"
-    per_page: int = Field(default=20, ge=1, le=100)
-    install_dir: str = "skills"
-    registry_file: str = "skills_registry.json"
-    api_base: str = "https://api.github.com"
-    # [EN] ---------- Local plug-in interface (task 2, supplement 2B) ----------
-    # [ZH] ---------- 本地插件接口（相关设计·补 2B） ----------
-    # [EN] In-development plug-in directory: files placed here are discovered with more
-    # [EN] lenient loading and are not written to the formal registry.
-    # [ZH] 开发中的插件目录：放进去即被识别，加载更宽松，不写入正式注册表。
-    dev_dir: str = "skills_dev"
-    # [EN] Explicit local plug-in manifest (arbitrary paths, aliases, enabled state,
-    # [EN] load order, and notes may be specified).
-    # [ZH] 显式本地插件清单（可指定任意路径、别名、启用状态、加载顺序、备注）。
-    local_manifest: str = "skills_local.json"
-    # [EN] Formal loading accepts only skills with verified=true in the registry
-    # [EN] (task 2, item 2.4: load whitelist).
-    # [ZH] 正式加载只接受注册表中 verified=true 的技能（相关设计 2.4 加载白名单）。
-    require_verified: bool = True
 
 
-class UpdateConfig(BaseModel):
-    """
-    [EN]
-    Automatic updates (design specification, task 5, option A: check and notify only;
-    no automatic download or replacement).
-
-    Options B and C (automatic download/replacement and incremental manifests) are
-    not implemented in this version; the rationale is in
-    records/v0.2.1-研发记录.md.
-
-    [ZH]
-    自动更新（设计规范 任务五 方案 A：只检查与提示，不自动下载替换）。
-
-    方案 B/C（自动下载替换、增量清单）本版不实现，理由见 records/v0.2.1-研发记录.md。
-    """
-
-    enabled: bool = True
-    # [EN] owner/name; the maintainer changes this to the real repository after the
-    # [EN] open-source release. Empty means the check is skipped.
-    # [ZH] owner/name；开源发布后由维护者改为真实仓库。留空则跳过检查。
-    repo: str = "wyx-spark/EchoDesk"
-    api_base: str = "https://api.github.com"
-    check_on_startup: bool = True
-    check_interval_hours: int = Field(default=24, ge=1, le=720)
-    include_prerelease: bool = False
-    # [EN] Enterprises can disable automatic checks (design specification 5.2, "allow
-    # [EN] disabling automatic checks via configuration").
-    # [ZH] 企业环境可关掉自动检查（设计规范 5.2「允许通过配置禁用自动检查」）。
-    last_check: str = ""
-    last_seen_version: str = ""
-    # [EN] Version the user explicitly chose to ignore; an equal release is not prompted
-    # [EN] again. A newer release still prompts.
-    # [ZH] 用户明确选择忽略的版本；相同版本不再提示，更新的版本仍会提示。
-    ignored_version: str = ""
 
 
-class LocalApiConfig(BaseModel):
-    """
-    [EN]
-    Local OpenAI-compatible HTTP API (v0.2.6 Part 4, task 2.1).
-
-    The listening address is deliberately absent: it is the module constant
-    ``local_api.BIND_HOST`` and can never be widened from configuration, because
-    exposing local inference to a local network would break the privacy promise in a
-    way no warning dialog could repair.
-
-    ``api_key`` is an optional bearer token. Empty means "no authentication", which
-    is acceptable only because the socket is loopback-only and the switch is off by
-    default; the settings page says so next to the field.
-
-    [ZH]
-    本地 OpenAI 兼容 HTTP API（v0.2.6 任务 2.1）。
-
-    此处刻意**没有**监听地址字段：它是模块常量 ``local_api.BIND_HOST``，
-    绝不可由配置放宽 —— 把本地推理暴露到局域网会以任何警告对话框都无法弥补的方式
-    破坏隐私承诺。
-
-    ``api_key`` 是可选的 bearer 令牌。为空表示"不鉴权"；这仅在套接字只监听环回、
-    且开关默认关闭时可以接受，设置页会在此字段旁明确说明。
-    """
-
-    #: [EN] Master switch. Off by default: a local server must never appear because
-    #: [EN] of an upgrade alone.
-    #: [ZH] 总开关。默认关闭：本地服务器绝不能仅因为一次升级就自行出现。
-    enabled: bool = False
-    port: int = Field(default=8788, ge=1024, le=65535)
-    #: [EN] Optional bearer token. Never echoed back to the interface.
-    #: [ZH] 可选 bearer 令牌。绝不回传给界面。
-    api_key: str = ""
-    #: [EN] Default output-token budget when a request omits ``max_tokens``; a
-    #: [EN] request may not exceed this value.
-    #: [ZH] 请求未提供 ``max_tokens`` 时的默认输出预算；请求不得超过该值。
-    max_output_tokens: int = Field(default=1024, ge=1, le=8192)
-
-    @field_validator("port")
-    @classmethod
-    def _check_port(cls, value: int) -> int:
-        """
-        [EN]
-        Reject port 0 and privileged ports: an operating-system assigned port could
-        not be communicated to the external tool, and binding below 1024 would
-        require elevated privileges on most systems.
-
-        [ZH]
-        拒绝端口 0 与特权端口：操作系统分配的端口无法告知外部工具，而绑定 1024 以下
-        在多数系统上需要提权。
-        """
-        number = int(value)
-        if number < 1024 or number > 65535:
-            raise ValueError("port must be within 1024-65535")
-        return number
 
 
-class ProviderConfig(BaseModel):
-    """
-    [EN]
-    One external inference provider declaration (v0.2.6 Part 4, task 2.3).
-
-    ``api_consent_granted`` is stored per provider as well as globally so that a
-    later global revocation cannot leave a stale approval behind: both values are
-    consulted, and the stricter one wins (see ``providers.build_provider``).
-
-    [ZH]
-    单个外部推理提供方声明（v0.2.6 任务 2.3）。
-
-    ``api_consent_granted`` 同时按提供方与全局保存，使之后全局撤销授权时不会遗留过期批准：
-    两处取值都会被检查，并按更严格的一侧生效（见 ``providers.build_provider``）。
-    """
-
-    kind: str = ""
-    api_base: str = ""
-    #: [EN] API key. Persisted in plain text inside ``config.json`` because the
-    #: [EN] program has no OS keychain integration in this version; the settings page
-    #: [EN] never echoes it back and the record documents this limitation.
-    #: [ZH] API 密钥。以明文保存在 ``config.json`` 中，因为本版程序未接入操作系统密钥
-    #: [ZH] 链；设置页不回显该值，记录中如实记载这一限制。
-    api_key: str = ""
-    model: str = ""
-    enabled: bool = True
-    api_consent_granted: bool = False
 
 
-class ProvidersConfig(BaseModel):
-    """
-    [EN]
-    Multi-provider routing configuration (v0.2.6 Part 4, task 2.3).
-
-    The consent gate lives here (see also :mod:`providers`): an enabled provider
-    whose endpoint is outside the loopback interface is **disabled at load time**
-    unless a grant is recorded. Raising instead would be worse -- a configuration
-    file the program refuses to load cannot be repaired from the interface -- so the
-    load path degrades while :func:`providers.apply_settings` refuses to save.
-
-    [ZH]
-    多 Provider 路由配置（v0.2.6 任务 2.3）。
-
-    同意门禁在此（另见 :mod:`providers`）：端点位于环回接口之外且未记录授权的已启用
-    提供方，会在**加载时被禁用**。改为抛异常反而更糟 —— 程序拒绝加载的配置文件无法从
-    界面修复 —— 因此加载路径降级，而 :func:`providers.apply_settings` 拒绝保存。
-    """
-
-    #: [EN] Active provider kind: ``llamacpp`` / ``ollama`` / ``openai_compatible``.
-    #: [ZH] 当前生效的提供方类型：``llamacpp`` / ``ollama`` / ``openai_compatible``。
-    active: str = "llamacpp"
-    timeout_seconds: float = Field(default=120.0, ge=5.0, le=600.0)
-    #: [EN] Global informed-consent grant. Must be true before any non-loopback
-    #: [EN] endpoint can be enabled, as required by the design specification.
-    #: [ZH] 全局知情同意授权。按设计规范，任何非环回端点启用之前它必须为真。
-    api_consent_granted: bool = False
-    #: [EN] When the grant was recorded (UTC ISO-8601), for the audit trail.
-    #: [ZH] 记录授权的时间（UTC ISO-8601），用于审计留痕。
-    api_consent_at: str = ""
-    providers: List[ProviderConfig] = Field(default_factory=list)
-
-    @field_validator("active", mode="before")
-    @classmethod
-    def _normalize_active(cls, value: Any) -> str:
-        """
-        [EN]
-        Normalise the provider identifier and accept the spellings used by the
-        interface and by hand-edited files. Unknown values fall back to the local
-        provider: an unknown identifier must never stop the program from starting.
-
-        [ZH]
-        规范化提供方标识，并接受界面与手改文件中出现的写法。未知值回落到本地提供方：
-        未知标识绝不能让程序无法启动。
-        """
-        text = str(value or "").strip().lower()
-        aliases = {
-            "local": "llamacpp", "llama.cpp": "llamacpp", "llama_cpp": "llamacpp",
-            "gguf": "llamacpp",
-            "openai": "openai_compatible", "openai-compatible": "openai_compatible",
-            "openai_compat": "openai_compatible", "oai": "openai_compatible",
-            "ollama": "ollama",
-        }
-        text = aliases.get(text, text)
-        return text if text in ("llamacpp", "ollama", "openai_compatible") else "llamacpp"
-
-    @model_validator(mode="after")
-    def _enforce_consent(self) -> "ProvidersConfig":
-        """
-        [EN]
-        Disable external providers that have no recorded consent, and fall back to
-        the local provider when the active one is no longer usable.
-
-        Both actions print a warning to stderr. A silent downgrade would make the
-        user believe an external model is answering while the local one is.
-
-        [ZH]
-        禁用未记录授权的提供方，并在当前生效的提供方不再可用时回落到本地提供方。
-
-        两个动作都会向 stderr 打印告警。静默降级会让用户以为在由外部模型作答，
-        而实际使用的是本地模型。
-        """
-        from providers import SUPPORTED_KINDS, is_loopback_endpoint
-
-        kept: List[ProviderConfig] = []
-        for item in self.providers:
-            kind = str(item.kind or "").strip().lower()
-            if kind not in ("ollama", "openai_compatible"):
-                print(
-                    f"⚠️ 忽略未知的提供方类型 {item.kind!r}（仅支持 ollama / "
-                    f"openai_compatible）",
-                    file=sys.stderr, flush=True,
-                )
-                continue
-            item.kind = kind
-            item.api_base = str(item.api_base or "").strip()
-            if not is_loopback_endpoint(item.api_base):
-                granted = bool(self.api_consent_granted or item.api_consent_granted)
-                if not granted and item.enabled:
-                    item.enabled = False
-                    print(
-                        f"⚠️ 外部 API {item.api_base} 未获得知情同意（api_consent_granted），"
-                        f"已禁用该提供方",
-                        file=sys.stderr, flush=True,
-                    )
-            kept.append(item)
-        self.providers = kept
-        if self.active != "llamacpp":
-            active = next((item for item in kept
-                           if item.kind == self.active and item.enabled), None)
-            if active is None:
-                print(
-                    f"⚠️ 提供方 {self.active} 不可用（未配置、未启用或未获授权），"
-                    f"已回落到本地 llama.cpp",
-                    file=sys.stderr, flush=True,
-                )
-                self.active = "llamacpp"
-        return self
 
 
 
@@ -927,9 +639,11 @@ class Config(BaseModel):
     应用配置，字段与 config.json 一一对应。
     """
 
+    # [EN] Reader: ``model_repo`` and ``hf_endpoint`` are removed -- the backend never
+    # [EN] resolves a repository and never downloads. Only the local file name remains.
+    # [ZH] Reader：``model_repo`` 与 ``hf_endpoint`` 已删除 —— 后端不再解析仓库、也不再
+    # [ZH] 下载。只保留本地文件名。
     model_path: str = "Qwen3-0.6B-Q6_K.gguf"
-    model_repo: str = "unsloth/Qwen3-0.6B-GGUF"
-    hf_endpoint: str = "https://hf-mirror.com"
     default_mode: str = "chat"
     # [EN] Context window explicitly selected by the user. Since v0.2.6 item 17
     # [EN] the engine allocation equals this value exactly: the planner no longer
@@ -961,27 +675,17 @@ class Config(BaseModel):
     # [EN] Multi-file upload (known-issue optimization 2 in an earlier release, task 8).
     # [ZH] 多文件上传（此前版本，优化已知问题 2，研发任务 8）
     files: FilesConfig = Field(default_factory=FilesConfig)
-    # [EN] Multi-provider routing (v0.2.6 Part 4, task 2.3): the local llama.cpp
-    # [EN] engine is the default, and an external endpoint is enabled only with the
-    # [EN] informed-consent grant.
-    # [ZH] 多 Provider 路由（v0.2.6 任务 2.3）：默认使用本地 llama.cpp 引擎；
-    # [ZH] 外部端点只有在取得知情同意授权后才允许启用。
-    providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
-    # [EN] Local OpenAI-compatible HTTP API (v0.2.6 Part 4, task 2.1).
-    # [ZH] 本地 OpenAI 兼容 HTTP API（v0.2.6 任务 2.1）。
-    local_api: LocalApiConfig = Field(default_factory=LocalApiConfig)
-    # [EN] Skill/plug-in marketplace (task 5).
-    # [ZH] 技能/插件市场（相关设计）
-    marketplace: MarketplaceConfig = Field(default_factory=MarketplaceConfig)
+    # [EN] Reader: the multi-provider routing, the local HTTP API and the skill
+    # [EN] marketplace configuration sections are physically removed together with the
+    # [EN] modules that consumed them.
+    # [ZH] Reader：多 Provider 路由、本地 HTTP API 与技能市场三节配置已随消费它们的
+    # [ZH] 模块一并物理删除。
     # [EN] Model selection panel (addition 4).
     # [ZH] 模型选择栏（新增四）
     model_hub: ModelHubConfig = Field(default_factory=ModelHubConfig)
     # [EN] Reasoning content separation (model reasoning separation in an earlier release).
     # [ZH] 思考内容分离（此前版本，模型思考内容分离）
     reasoning: ReasoningConfig = Field(default_factory=ReasoningConfig)
-    # [EN] Automatic updates (task 5, option A).
-    # [ZH] 自动更新（相关设计 方案 A）
-    update: UpdateConfig = Field(default_factory=UpdateConfig)
     # [EN] UI language (task 3, item 3.4): auto = select from the system locale on first
     # [EN] launch; explicit values include "zh-Hans" / "en" / "zh-Hant" / "ja"... The
     # [EN] same field in the front-end ui_state.json takes precedence.
@@ -989,7 +693,6 @@ class Config(BaseModel):
     # [ZH] 也可写 "zh-Hans" / "en" / "zh-Hant" / "ja" …；前端 ui_state.json 同名字段优先。
     language: str = "auto"
     max_history: int = 10
-    search_default: bool = False
     # [EN] Temperature ceiling is 1.5 and MUST stay consistent with two other places:
     # [EN]   * the sampling-parameter clamp in `main._handle_capability_settings` is
     # [EN]     `("temperature", 0.0, 1.5)`;
@@ -1025,13 +728,10 @@ class Config(BaseModel):
     # [ZH] 新加的"写入前自我校验"把这条潜伏的不一致立刻暴露了出来（这正是加它的目的）。
     temperature: float = Field(default=0.7, ge=0.0, le=1.5)
     max_tokens: int = 1024
-    search_results: int = 3
-    #: [EN] Base URL of a locally deployed SearXNG instance, for the third
-    #: [EN] search provider. An empty value disables that provider; the cascade
-    #: [EN] then remains DuckDuckGo -> Bing.
-    #: [ZH] 本机部署 SearXNG 实例的基础地址，供第三个搜索提供方使用。为空时
-    #: [ZH] 该提供方不参与级联，顺序仍为 DuckDuckGo → Bing。
-    searxng_url: str = ""
+    # [EN] Reader: ``search_default``, ``search_results`` and ``searxng_url`` are
+    # [EN] removed together with the web-search module.
+    # [ZH] Reader：``search_default``、``search_results`` 与 ``searxng_url`` 已随联网
+    # [ZH] 搜索模块一并删除。
     # [EN] ---------- Fix 4: generation presets and context management ----------
     # [ZH] ---------- 兼容性修正：生成参数预设与上下文管理 ----------
     # [EN] Current preset: light / balanced / quality (switched by /preset; determines
@@ -1078,15 +778,11 @@ class Config(BaseModel):
     file_max_chars: int = 200000
     theme: str = "dark"
     warmup: bool = True
-    # [EN] Inference performance: 0 means derive the thread count from the local CPU
-    # [EN] core count.
-    # [ZH] 推理性能：0 表示按本机 CPU 核数自动设置
-    n_threads: int = 0
-    n_batch: int = 512
-    # [EN] Number of GPU acceleration layers: 0 = CPU only (with an NVIDIA GPU this
-    # [EN] can be raised, e.g. 99 for all layers).
-    # [ZH] GPU 加速层数：0 = 纯 CPU（有 NVIDIA 显卡可调大，如 99=全部）
-    n_gpu_layers: int = 0
+    # [EN] Reader: ``n_threads``, ``n_batch`` and ``n_gpu_layers`` moved to
+    # [EN] ``inference_config.json``. The engine no longer reads them from here, so the
+    # [EN] hardware-facing parameters have exactly one home.
+    # [ZH] Reader：``n_threads``、``n_batch`` 与 ``n_gpu_layers`` 已迁移到
+    # [ZH] ``inference_config.json``。引擎不再从这里读取，因此硬件相关参数只有一处归属。
     # [EN] Explicit inference override (v0.2.4 task 3). When true, the values
     # [EN] in ``context_length``, ``n_gpu_layers`` and ``n_batch`` are treated as
     # [EN] the user's decision: the planner adopts them verbatim and returns

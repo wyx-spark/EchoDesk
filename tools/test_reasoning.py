@@ -169,7 +169,8 @@ def make_backend(script, reasoning_cfg=None, on_piece=None, model_path="",
     config = Config()
     config.model_path = model_path or "stub.gguf"
     config.speed_hint = False
-    config.search_default = False
+    # [EN] Reader: search_default no longer exists (the web-search layer is removed).
+    # [ZH] Reader：search_default 已不存在（联网搜索层已删除）。
     config.context_mode = "slide"
     if heartbeat_seconds is not None:
         config.stream_heartbeat_seconds = heartbeat_seconds

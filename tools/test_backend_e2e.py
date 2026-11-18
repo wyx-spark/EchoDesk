@@ -477,23 +477,14 @@ def run_all(backend, exe):
         shutil.rmtree(workdir, ignore_errors=True)
 
     # ---------------------------------------------------------------
-    section("8. 自动更新检查（任务五 方案 A）")
-    backend.send({"action": "update_check"})
-    resp = backend.read_until({"system", "error"}, timeout=90)
-    update = (resp or {}).get("update") or {}
-    check("更新检查有返回结构", "status" in update, str(update)[:200])
-    check("状态取值为预期之一",
-          update.get("status") in ("available", "up_to_date", "disabled", "skipped", "error", "ahead"),
-          str(update.get("status")))
-    check("当前版本正确", update.get("current") == APP_VERSION, str(update.get("current")))
-    check("绝不自动下载替换（只返回提示与链接）",
-          "url" in update and "downloaded" not in update and "replaced" not in update,
-          str(sorted(update)))
-    if update.get("status") == "available":
-        check("发现新版本时给出发布页链接", str(update.get("url", "")).startswith("http"),
-              str(update.get("url")))
-    else:
-        print(f"  （当前状态 {update.get('status')}：{str(update.get('message'))[:80]}）")
+    # [EN] Section 8 (automatic update check, design spec task 5 option A) is removed:
+    # [EN] the ``update_check`` action and ``backend/update_check.py`` were physically
+    # [EN] deleted by the Reader backend refactor, because a zero-network build cannot
+    # [EN] check for updates. Recorded in
+    # [EN] records/v0.2.6-reader-后端裁剪与引擎调优记录.md.
+    # [ZH] 第 8 节（自动更新检查，设计规范 任务五 方案 A）已移除：``update_check`` 动作与
+    # [ZH] ``backend/update_check.py`` 已被 Reader 后端裁剪物理删除 —— 零联网构建无法检查
+    # [ZH] 更新。记录见 records/v0.2.6-reader-后端裁剪与引擎调优记录.md。
 
     # ---------------------------------------------------------------
     section("9. 上下文与状态字段（任务三：前端不再解析中文）")

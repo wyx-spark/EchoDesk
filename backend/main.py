@@ -9,7 +9,7 @@ Protocol:
   {"action": "stop"}                           -> interrupts the current streaming generation
   {"action": "file", "path": "..."}            -> one response line
   {"action": "file_stream", "path": "..."}     -> streamed: summary_progress lines + done (task 4)
-  {"action": "model_download", "name": "..."}  -> downloads a model and hot-swaps it: delta progress + done
+  {"action": "inference_tune_stream"}            -> live hardware benchmark: tune progress + done
   {"action": "model_scan"}                     -> rescans the model directory
   {"action": "model_load", "name": "..."}      -> hot-loads the named model without restarting the process
 
@@ -49,10 +49,14 @@ If no local model is present at startup, the backend **neither blocks nor exits*
 running in a "no model ready" state: it initializes a Backend whose ``llm`` is left empty and
 serves the main loop as usual. Behaviour boundaries are defined by :meth:`Backend.model_state`:
 reasoning requests return guidance text (without crashing), while the model-independent
-features -- file parsing, skill marketplace, settings read/write, model marketplace search and
-download, session-history inspection -- **remain fully available**. After the user downloads a
-model in settings, or places a ``.gguf`` file into the model directory manually, the backend
-**hot-loads it in place** (same engine object, no process restart).
+features -- file parsing, settings read/write, session-history inspection -- **remain fully
+available**. After the user places a ``.gguf`` file into the model directory manually, the
+backend **hot-loads it in place** (same engine object, no process restart).
+
+Reader scope: the only actions this module serves are the file-upload, model-load and
+text-generation paths plus read-only state queries. Web search, the model library, the
+plugin marketplace, update checking, the local HTTP API and external provider routing are
+**physically removed**, so no code path here can reach the network.
 
 Startup sequence: ``need_download`` (**non-blocking**; reports only which model is missing,
 with ``blocking: false``) -> ``ready`` (with ``model_ready: false`` and ``model_missing``
@@ -68,7 +72,7 @@ EchoDesk 后端主程序：与前端通过 stdin/stdout 以 JSON 行协议通信
   {"action": "stop"}                           -> 中断当前流式生成
   {"action": "file", "path": "..."}            -> 一行响应
   {"action": "file_stream", "path": "..."}     -> 流式：summary_progress 进度行 + done（任务四）
-  {"action": "model_download", "name": "..."}  -> 下载模型并热切换：delta 进度 + done
+  {"action": "inference_tune_stream"}            -> 实时硬件基准测试：调优进度 + done
   {"action": "model_scan"}                     -> 重新扫描模型文件夹
   {"action": "model_load", "name": "..."}      -> 热加载指定模型（不重启进程）
 
@@ -198,15 +202,12 @@ def _suppress_stdout():
 
 with _suppress_stdout():
     from config import Config
-    # [EN] Switch the Hugging Face endpoint to the mirror before importing
-    # [EN] huggingface_hub modules; otherwise huggingface_hub connects to huggingface.co by
-    # [EN] default (unreachable in some regions) and downloads/queries time out.
-    # [ZH] 在导入 huggingface_hub 相关模块前把 HF 端点切换到镜像，
-    # [ZH] 否则 huggingface_hub 默认连接 huggingface.co（部分地区不可达），下载/查询都会超时。
+    # [EN] Reader purity: the Hugging Face endpoint environment variable is no longer
+    # [EN] set at start-up. Nothing in this backend reaches the network, so no mirror
+    # [EN] has to be configured before importing anything.
+    # [ZH] Reader 纯净性：启动阶段不再设置 Hugging Face 端点环境变量。本后端没有任何
+    # [ZH] 联网路径，因此无需在导入前配置镜像。
     _cfg = Config.load()
-    if _cfg.hf_endpoint and not os.environ.get("HF_ENDPOINT"):
-        os.environ["HF_ENDPOINT"] = _cfg.hf_endpoint
-    from command_handler import CommandHandler
     from compact_log import EVENT_SKIP, EVENT_SUMMARY, CompactEvent, CompactLog, replay
     from config import CompactionConfig
     # [EN] Task 1 (self-test fix-1): FILE_INTENT is no longer imported. It used to gate
@@ -216,22 +217,18 @@ with _suppress_stdout():
     # [ZH] 注入上下文"的开关，现已取消（详见 _stream_chat 中 include_file 的说明）。
     from conversation import ConversationManager, REPEAT_INTENT
     from document_jobs import STATUS_CANCELLED, DocumentJobManager
-    # [EN] Prompt template library. Reader keeps it because contract review
-    # [EN] reuses the same template surface.
-    # [ZH] 提示词模板库。Reader 保留它：合同审查沿用同一套模板接口。
-    from prompt_library import PromptLibrary
-    from download_utils import check_model, download_model
     from file_parser import is_parse_error, localize_error, parse_file_with_wps
     from gguf_meta import format_bytes as _format_bytes
     from gguf_meta import resolve_context_window
     import hardware_profiler
+    from inference_config import InferenceConfig
+    import inference_tuner
     from llm_engine import (LazyLLMEngine, LLMEngine, MAX_DYNAMIC_CONTEXT,
                             NoModelError, StreamStats)
     # [EN] Heartbeat channel marker (task 5): the engine emits it during prefill, see
     # [EN] llm_engine._iter_with_heartbeat.
     # [ZH] 心跳通道标记（相关设计）：引擎在 prefill 阶段产出，见 llm_engine._iter_with_heartbeat。
     from llm_engine import HEARTBEAT as _CH_HEARTBEAT
-    from search_engine import FAIL_KIND_KEYS, SearchEngine
     from summarizer import DocumentSummarizer
 
 # [EN] Multilingual support (task 3): must be imported after Config.load so that i18n
@@ -246,12 +243,10 @@ from i18n import t as _t
 import emoji as emoji_mod
 from config import program_dir, program_root as user_data_root, state_dir
 
-# [EN] v0.2.6 Part 4: the Open Platform layer. Both modules use only the standard
-# [EN] library (see their module notes for the dependency and security reasoning).
-# [ZH] v0.2.6 任务 4：开放平台层。两个模块都只使用标准库
-# [ZH] （依赖与安全的取舍见各自的模块说明）。
-import local_api
-import providers
+# [EN] Reader: the open-platform layer (local HTTP API and external provider routing)
+# [EN] is physically removed. No module imported here opens an outbound connection.
+# [ZH] Reader：开放平台层（本地 HTTP API 与外部 Provider 路由）已物理删除。此处导入的
+# [ZH] 任何模块都不会发起对外连接。
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("EchoDesk")
@@ -388,6 +383,82 @@ def install_crash_handlers() -> None:
 # [EN] stdout write lock: the main loop and streaming background threads share stdout.
 # [ZH] stdout 写锁：主循环与流式后台线程共用 stdout。
 _io_lock = threading.Lock()
+
+
+def _context_ceiling(config: Any, inference: Any) -> int:
+    """
+    [EN]
+    Upper bound handed to the hardware planner.
+
+    Two independent limits meet here and the **smaller** one wins: the user's
+    configured window (``config.context_length``) and the hard ceiling of the
+    inference configuration file (``inference_config.json: n_ctx_max``). Keeping the
+    intersection explicit is what makes the bottom layer of the dynamic-context
+    contract predictable: no document can ever ask the engine for more than either
+    limit.
+
+    [ZH]
+    交给硬件规划器的上限。
+
+    此处汇合两个彼此独立的限制，取**较小者**：用户在 ``config.context_length`` 中
+    配置的窗口，以及推理配置文件（``inference_config.json: n_ctx_max``）中的硬上限。
+    把这个交集写清楚，动态上下文契约的底层才是可预测的：任何文档都不可能向引擎申请
+    超过这两个限制中任一个的窗口。
+    """
+    try:
+        configured = int(getattr(config, "context_length", 0) or 0)
+    except (TypeError, ValueError):
+        configured = 0
+    try:
+        hard = int(getattr(inference, "n_ctx_max", 0) or 0)
+    except (TypeError, ValueError):
+        hard = 0
+    candidates = [value for value in (configured, hard) if value > 0]
+    return min(candidates) if candidates else 0
+
+
+def check_model(model_name: str, local_dir: str = "./models") -> Optional[str]:
+    """
+    [EN]
+    Resolve a configured model name to an absolute path on disk.
+
+    Reader: this helper replaces the former download-backed implementation. It is
+    deliberately limited to local lookups -- it creates the model directory so the
+    guidance text can name a real path, then returns the exact match, or the single
+    ``*.gguf`` file present when the configured name is absent (tolerating dots and
+    hyphens that users rename). An empty string means "no model available".
+
+    [ZH]
+    把配置中的模型名解析为磁盘上的绝对路径。
+
+    Reader：本函数取代原先依赖下载模块的实现，**只做本地查找** —— 先创建模型目录，
+    使引导文案能给出真实路径；随后返回精确匹配路径，或在配置名缺失时返回目录下唯一的
+    ``*.gguf`` 文件（兼容用户改名时点号与连字符的差异）。返回空串表示"没有可用模型"。
+    """
+    name = str(model_name or "").strip()
+    directory = str(local_dir or "./models")
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except OSError:
+        return ""
+    if name:
+        exact = os.path.join(directory, name)
+        if os.path.isfile(exact):
+            return os.path.abspath(exact)
+    try:
+        entries = sorted(
+            entry for entry in os.listdir(directory) if entry.lower().endswith(".gguf")
+        )
+    except OSError:
+        return ""
+    if name:
+        for entry in entries:
+            print(f"ℹ️ {name} not found, using {entry}", file=sys.stderr)
+            return os.path.abspath(os.path.join(directory, entry))
+        return ""
+    if len(entries) == 1:
+        return os.path.abspath(os.path.join(directory, entries[0]))
+    return ""
 
 
 def _preset_list() -> List[Dict[str, Any]]:
@@ -556,14 +627,20 @@ def _profile_quant_text(name: str) -> str:
     Infer the quantization text from the file name (Q6_K / Q4_K_M); return an empty string
     when it cannot be determined.
 
+    Reader: the regular expression lives here instead of in the removed model-library
+    module, so a model scan can still label a file without importing anything that
+    knows about repositories or downloads.
+
     [ZH]
     按文件名推断量化文本（Q6_K / Q4_K_M）；无法获取时返回空串。
+
+    Reader：正则表达式随模型库模块一起移除后移到了这里，使模型扫描仍能标注文件，而
+    不必导入任何"知道仓库与下载"的模块。
     """
-    try:
-        from model_hub import guess_quantization
-        return guess_quantization(name)
-    except Exception:  # noqa: BLE001
-        return ""
+    text = os.path.basename(str(name or ""))
+    matches = re.findall(r"(?:IQ\d+_[A-Z0-9]+|Q\d+_K(?:_[A-Z0-9]+)?|Q\d+_[01]|BF16|F16|F32)",
+                         text, re.IGNORECASE)
+    return str(matches[-1]).upper() if matches else ""
 
 
 _stdout_closed = False
@@ -858,8 +935,6 @@ class Backend:
         _reasoning_cfg = getattr(config, "reasoning", None)
         self.conv.persist_reasoning = bool(getattr(_reasoning_cfg, "persist", True))
         self.conv.reasoning_max_chars = int(getattr(_reasoning_cfg, "history_max_chars", 8000) or 0)
-        self.search = SearchEngine(config.search_results,
-                                   searxng_url=getattr(config, "searxng_url", ""))
         self.summarizer = DocumentSummarizer(
             self.llm, config.summarize, engine_factory=self._make_summary_engine,
         )
@@ -871,58 +946,30 @@ class Backend:
         # [ZH] 保证模型推理串行，并使请求分发层可以立即应答。
         self._conv_lock = threading.RLock()
         self._document_jobs = DocumentJobManager(self._run_document_job)
-        self.commands = CommandHandler(
-            self.conv, self.search, self.llm, config, summarizer=self.summarizer,
-            file_loader=self.load_file_into_context, summarize_file=self.summarize_current_file,
-            files_loader=self.load_files_into_context,
-        )
-        # [EN] Skill marketplace: also created lazily.
-        # [ZH] 技能市场：同样惰性创建。
-        self._market = None
-        # [EN] Model selector (feature 4): created lazily.
-        # [ZH] 模型选择栏（新增四）：惰性创建。
-        self._model_hub = None
-        # [EN] Skill runtime loader (task 2): also created lazily; the directory is scanned
-        # [EN] only on first use.
-        # [ZH] 技能运行期加载器（相关设计）：同样惰性创建，首次使用时才扫描目录。
-        self._skills = None
         # [EN] Fix 4: chunked-summary cache (direction 8) and the wiring of the "manual
         # [EN] context compaction" callback.
         # [ZH] 兼容性修正：分段摘要缓存（方向八）与"手动压缩上下文"回调接线。
         self._summary_cache = None
         self._capability_cache = None
         self._capability_key = None
-        self.commands.compact_provider = self.compact_context
-        self.commands.profile_provider = self.model_capability
-        self.commands.cache_clear_provider = self.clear_summary_cache
-        # [EN] Lazily created prompt template library: the template file is read
-        # [EN] only when the feature is actually used.
-        # [ZH] 惰性创建的提示词模板库：只有对应功能真正被使用时才读取模板文件。
-        self._prompt_library: Any = None
         self.stream_active = False
         self.stop_event = threading.Event()
-        # [EN] Observable state of the search pipeline (known-issues optimization-2, task 2):
-        # [EN] the result object of the last search and the explanation of "why it was not
-        # [EN] used". The task requires per-stage investigation, so this state is retained for
-        # [EN] inspection.
-        # [ZH] 搜索链路可观测状态（优化已知问题-2 相关设计）：上一次搜索的结果对象与
-        # [ZH] "为什么未使用"的说明。设计规范要求逐环节排查，因此状态需保留以便查询。
-        self._last_search = None
-        self._last_search_note = ""
+        # [EN] Reader: one benchmark at a time. The native runtime is not re-entrant, so
+        # [EN] a second tuning run while the first is loading models would corrupt it.
+        # [ZH] Reader：同一时刻只允许一次基准测试。原生运行时不可重入，第二次调优若在
+        # [ZH] 第一次加载模型期间启动会破坏共享状态。
+        self._tuner_running = False
+        # [EN] Reader: the inference-configuration file is the single source of truth for
+        # [EN] every llama.cpp construction parameter (threads, batch, mlock, KV cache,
+        # [EN] FlashAttention). It is read once here and re-read after every optimisation
+        # [EN] run, so a tuned file takes effect on the next model load.
+        # [ZH] Reader：推理配置文件是全部 llama.cpp 构建参数的唯一来源（线程、批大小、
+        # [ZH] 内存锁定、KV Cache、FlashAttention）。此处读取一次，每次优化运行后重新
+        # [ZH] 读取，因此调优后的文件在下次加载模型时生效。
+        self.inference_config = InferenceConfig.load()
         # [EN] Compaction event log (task 9): created lazily, see compact_log().
         # [ZH] 压缩事件日志（相关设计）：惰性创建，见 compact_log()。
         self._compact_log = None
-        # [EN] v0.2.6 Part 4: the local OpenAI-compatible API server (lazily built,
-        # [EN] rebuilt when its configuration signature changes) and the flag that
-        # [EN] tells the protocol loop an external tool is currently generating.
-        # [EN] The flag is required because the engine is not re-entrant: a second
-        # [EN] concurrent generation would corrupt the shared llama.cpp context.
-        # [ZH] v0.2.6 任务 4：本地 OpenAI 兼容 API 服务器（惰性构建，配置签名变化时重建），
-        # [ZH] 以及告知协议循环"外部工具正在生成"的标志。该标志是必需的，因为引擎不可重入：
-        # [ZH] 第二个并发生成会破坏共享的 llama.cpp 上下文。
-        self._local_api: Any = None
-        self._local_api_signature = ""
-        self.api_busy = False
         # [EN] Total injected multi-file length: this value used to be set only in tests and
         # [EN] was never assigned on the production path. As a result
         # [EN] config.files.total_chars (default 60000) had no effect and injection was
@@ -966,11 +1013,24 @@ class Backend:
         Actual path of the model directory (the guidance text must show the real path, not a
         placeholder).
 
+        Reader: the path comes from ``config.model_hub.models_dir`` and is resolved
+        against the writable state directory. The former model-library manager
+        (which also reconciled a download registry) is removed, so this method is
+        now the single place that answers "where do local .gguf files live".
+
         [ZH]
         模型文件夹的实际路径（引导文案中必须给出真实路径，不能使用占位符）。
+
+        Reader：路径来自 ``config.model_hub.models_dir``，并相对可写状态目录解析。
+        原先的模型库管理器（还负责核对下载登记表）已被删除，因此"本地 .gguf 放在哪里"
+        现在由本方法统一回答。
         """
         try:
-            return self.model_hub().models_dir
+            value = str(getattr(getattr(self.config, "model_hub", None),
+                               "models_dir", "models") or "models")
+            if os.path.isabs(value):
+                return value
+            return os.path.abspath(os.path.join(state_dir(), value))
         except Exception:
             return os.path.abspath("models")
 
@@ -1246,7 +1306,7 @@ class Backend:
             requested_context=0,
             max_context=int(cfg.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
             requested_gpu_layers=0,
-            n_threads_override=int(cfg.n_threads or 0),
+            n_threads_override=int(self.inference_config.resolve_n_threads()),
             inference_profile=str(getattr(cfg, "inference_profile", "")),
             requested_n_batch=0,
             allow_override=False,
@@ -1306,10 +1366,10 @@ class Backend:
             train_context=resolve_context_window(path, 0) if path else 0,
             requested_context=int(cfg.context_length or 0),
             max_context=int(cfg.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
-            requested_gpu_layers=int(cfg.n_gpu_layers or 0),
-            n_threads_override=int(cfg.n_threads or 0),
+            requested_gpu_layers=int(self.inference_config.n_gpu_layers),
+            n_threads_override=int(self.inference_config.resolve_n_threads()),
             inference_profile=str(getattr(cfg, "inference_profile", "")),
-            requested_n_batch=int(cfg.n_batch or 0),
+            requested_n_batch=int(self.inference_config.n_batch),
             # [EN] v0.2.6 item 17: the configured context window is an explicit
             # [EN] user decision and is adopted verbatim. The previous code let
             # [EN] the planner shrink it unless `inference_override` happened to
@@ -1399,7 +1459,12 @@ class Backend:
         cfg = self.config
         cfg.inference_profile = preset.name
         if not bool(getattr(cfg, "inference_override", False)):
-            cfg.n_batch = int(preset.n_batch)
+            # [EN] Reader: the batch size is a hardware parameter, so it is written to
+            # [EN] ``inference_config.json`` rather than to the application config.
+            # [ZH] Reader：批大小属于硬件参数，因此写入 ``inference_config.json``，
+            # [ZH] 而不是应用配置。
+            self.inference_config.n_batch = int(preset.n_batch)
+            self.inference_config.save()
         error = ""
         try:
             cfg.save()
@@ -1476,10 +1541,10 @@ class Backend:
                 train_context=train_ctx,
                 requested_context=int(requested or self.config.context_length or 0),
                 max_context=int(self.config.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
-                requested_gpu_layers=int(self.config.n_gpu_layers or 0),
-                n_threads_override=int(self.config.n_threads or 0),
+                requested_gpu_layers=int(self.inference_config.n_gpu_layers),
+                n_threads_override=int(self.inference_config.resolve_n_threads()),
                 inference_profile=str(getattr(self.config, "inference_profile", "")),
-                requested_n_batch=int(self.config.n_batch or 0),
+                requested_n_batch=int(self.inference_config.n_batch),
                 # [EN] v0.2.6 item 17: adopt the explicit window verbatim.
                 # [ZH] v0.2.6 第 17 项：原样采纳显式窗口。
                 allow_override=True,
@@ -1535,30 +1600,52 @@ class Backend:
         [EN]
         Rescan the model directory (task 2: a manually placed ``.gguf`` is then recognized).
 
-        The scan results come from ``model_hub.registry()`` (which also registers files
-        placed into the directory by hand). With exactly one model it is loaded automatically
-        and reported; with several models only the list is returned and the user chooses.
+        Reader: the scan is a plain directory listing. The former registry-based
+        implementation is removed together with the model library, so nothing here
+        can reach the network or a download index. With exactly one model it is
+        loaded automatically and reported; with several models only the list is
+        returned and the user chooses.
 
         [ZH]
         重新扫描模型文件夹（任务二：手动放置 ``.gguf`` 后能被识别）。
 
-        扫描结果来自 ``model_hub.registry()``（它会把手工放入目录的文件一并登记）。
-        只有一个模型时自动加载并提示；多个模型时只返回清单，由用户选择。
+        Reader：扫描就是普通的目录列举。原先基于登记表的实现已随模型库一并删除，
+        因此此处不可能触达网络或下载索引。只有一个模型时自动加载并提示；多个模型时
+        只返回清单，由用户选择。
         """
-        hub = self.model_hub()
-        info = hub.registry(current_model=str(getattr(self.llm, "model_path", "") or ""))
-        models = [m for m in info.get("models", []) if m.get("exists")]
+        directory = self.models_dir()
+        entries: List[Dict[str, Any]] = []
+        try:
+            names = sorted(os.listdir(directory)) if os.path.isdir(directory) else []
+        except OSError:
+            names = []
+        for name in names:
+            if not name.lower().endswith(".gguf"):
+                continue
+            full = os.path.join(directory, name)
+            if not os.path.isfile(full):
+                continue
+            try:
+                size = os.path.getsize(full)
+            except OSError:
+                size = 0
+            entries.append({
+                "name": name,
+                "size_human": _format_bytes(size),
+                "quantization": _profile_quant_text(name),
+            })
+        current = os.path.basename(str(getattr(self.llm, "model_path", "") or ""))
         loaded = ""
         error = ""
-        if auto_load and not self.model_ready and len(models) == 1:
-            result = self.load_model(str(models[0].get("name") or ""))
+        if auto_load and not self.model_ready and len(entries) == 1:
+            result = self.load_model(str(entries[0].get("name") or ""))
             loaded = result.get("name", "") if result.get("ok") else ""
             error = str(result.get("error") or "")
         return {
-            "count": len(models),
-            "models": [{"name": m.get("name"), "size_human": m.get("size_human"),
-                        "quantization": m.get("quantization")} for m in models],
-            "models_dir": info.get("models_dir", self.models_dir()),
+            "count": len(entries),
+            "models": entries,
+            "models_dir": directory,
+            "current": current,
             "auto_loaded": loaded,
             "error": error,
             "state": self.model_state(),
@@ -1645,76 +1732,9 @@ class Backend:
             self._summary_cache = SummaryCache(path)
         return self._summary_cache
 
-    def skills(self):
-        """
-        [EN]
-        Create the skill loader on demand and wire it into the command table and file parsing.
 
-        [ZH]
-        按需创建技能加载器，并把它接入指令表 / 文件解析（任务二 2.2）。
-        """
-        if self._skills is None:
-            from skills_runtime import SkillLoader
 
-            self._skills = SkillLoader(self.config.marketplace, self.commands, logger=log)
-            try:
-                from file_parser import skill_parser_extensions
 
-                self.commands.skill_parsers_provider = skill_parser_extensions
-            except Exception:
-                self.commands.skill_parsers_provider = None
-        else:
-            self._skills.cfg = self.config.marketplace
-            self._skills.commands = self.commands
-        return self._skills
-
-    def load_skills(self) -> dict:
-        """
-        [EN]
-        Load all plugins at startup or on reload; every failure is isolated and does not
-        affect backend startup.
-
-        [ZH]
-        启动时/重载时加载全部插件；任何失败都被隔离，不影响后端启动。
-        """
-        try:
-            return self.skills().load_all()
-        except Exception as e:  # noqa: BLE001
-            log.exception("技能加载失败（已忽略，后端继续启动）")
-            return {"total": 0, "loaded": 0, "failed": 0, "skipped": 0, "error": str(e)}
-
-    def model_hub(self):
-        """
-        [EN]
-        Create the model hub on demand (feature 4).
-
-        [ZH]
-        按需创建模型中心（新增四）。
-        """
-        if self._model_hub is None:
-            from model_hub import ModelHub
-
-            self._model_hub = ModelHub(self.config.model_hub, app_config=self.config)
-        else:
-            self._model_hub.cfg = self.config.model_hub
-        return self._model_hub
-
-    def market(self):
-        """
-        [EN]
-        Create the skill marketplace on demand (avoids loading network dependencies when the
-        marketplace is not used).
-
-        [ZH]
-        按需创建技能市场（避免未使用市场时也加载网络相关依赖）。
-        """
-        if self._market is None:
-            from marketplace import Marketplace
-
-            self._market = Marketplace(self.config.marketplace)
-        else:
-            self._market.cfg = self.config.marketplace
-        return self._market
 
     def _make_summary_engine(self, model_path: str):
         """
@@ -1734,9 +1754,11 @@ class Backend:
         Create the inference engine from the hardware profile and the selected model.
 
         The context window is exactly the configured user value (v0.2.6 item 17):
-        the planner is used only for the thread count, accelerator choice and GPU
-        layer count, never to shrink or grow the window behind the user's back.
-        No tuning value is hard-coded in this method.
+        the planner supplies the accelerator decision and the context ceiling only.
+        Reader: **thread count, batch size, mlock, mmap, FlashAttention, KV-cache
+        width and GPU layers are no longer passed from here** -- the engine reads
+        them from ``inference_config.json``, so this method hard-codes no tuning
+        value at all.
 
         When ``model_path`` is empty, :class:`LazyLLMEngine` (an empty engine) is returned:
         that is the carrier of the "no model ready" state -- the backend starts as usual and
@@ -1745,35 +1767,43 @@ class Backend:
         [ZH]
         依据硬件档案与所选模型创建推理引擎。
 
-        上下文窗口严格等于配置中的用户数值（v0.2.6 第 17 项）：规划器只用于线程数、
-        加速器选择与 GPU 层数，绝不在用户背后收缩或扩展窗口。本方法不硬编码任何
-        调优值。
+        上下文窗口严格等于配置中的用户数值（v0.2.6 第 17 项）：规划器只提供加速器决策与
+        上下文上限。Reader：**线程数、批大小、mlock、mmap、FlashAttention、KV Cache 宽度
+        与 GPU 层数都不再从本方法传入** —— 引擎统一从 ``inference_config.json`` 读取，
+        因此本方法不硬编码任何调优值。
 
         ``model_path`` 为空时返回 :class:`LazyLLMEngine`（空引擎）：这是"无模型就绪"
         的载体，后端照常启动，等模型到位后由 :meth:`Backend.load_model` **原地加载**。
         """
         profile = hardware_profiler.probe()
+        # [EN] Reader: the configuration file is the single source of truth for every
+        # [EN] hardware-facing parameter, including the ones the planner used to derive.
+        # [ZH] Reader：配置文件是所有硬件相关参数的唯一来源，包括过去由规划器推导的那些。
+        inference = InferenceConfig.load()
         path = str(model_path or "").strip()
         if not path:
             plan = hardware_profiler.plan_inference(
                 profile=profile,
-                requested_context=int(config.context_length or 0),
-                max_context=int(config.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
+                requested_context=0,
+                max_context=_context_ceiling(config, inference),
                 requested_gpu_layers=0,
-                n_threads_override=int(config.n_threads or 0),
+                n_threads_override=int(inference.resolve_n_threads()),
                 inference_profile=str(getattr(config, "inference_profile", "")),
-                requested_n_batch=int(config.n_batch or 0),
-                # [EN] v0.2.6 item 17: adopt the explicit window verbatim.
-                # [ZH] v0.2.6 第 17 项：原样采纳显式窗口。
-                allow_override=True,
+                initial_context_preference=int(inference.n_ctx_default),
+                requested_n_batch=int(inference.n_batch),
+                # [EN] Reader: the planner is not making a decision here -- it only
+                # [EN] reports the machine's ceiling. The initial window is the small
+                # [EN] value from ``inference_config.json`` and grows with the document.
+                # [ZH] Reader：此处规划器不做决策，只报告机器上限。初始窗口取
+                # [ZH] ``inference_config.json`` 中的小值，随后随文档增长。
+                allow_override=False,
             )
             log.info("%s", _t("sys.log_model_none_state"))
             engine = LazyLLMEngine(
-                plan.n_ctx_initial, n_threads=plan.n_threads,
-                n_batch=plan.n_batch, n_gpu_layers=plan.n_gpu_layers,
+                plan.n_ctx_initial,
                 reasoning=getattr(config, "reasoning", None),
                 profile=profile, max_n_ctx=plan.n_ctx_max,
-                backend_label=plan.backend,
+                backend_label=plan.backend, inference=inference,
             )
             engine.inference_plan = plan.to_dict()
             return engine
@@ -1782,15 +1812,19 @@ class Backend:
             profile=profile,
             model_path=path,
             train_context=train_ctx,
-            requested_context=int(config.context_length or 0),
-            max_context=int(config.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
-            requested_gpu_layers=int(config.n_gpu_layers or 0),
-            n_threads_override=int(config.n_threads or 0),
+            requested_context=0,
+            max_context=_context_ceiling(config, inference),
+            requested_gpu_layers=0,
+            n_threads_override=int(inference.resolve_n_threads()),
             inference_profile=str(getattr(config, "inference_profile", "")),
-            requested_n_batch=int(config.n_batch or 0),
-            # [EN] v0.2.6 item 17: adopt the explicit window verbatim.
-            # [ZH] v0.2.6 第 17 项：原样采纳显式窗口。
-            allow_override=True,
+            initial_context_preference=int(inference.n_ctx_default),
+            requested_n_batch=int(inference.n_batch),
+            # [EN] Reader: same rule as the no-model branch -- the ceiling comes from the
+            # [EN] configuration file, the initial window is small and document-driven
+            # [EN] growth happens through ``set_document_tokens``.
+            # [ZH] Reader：与无模型分支同一规则 —— 上限来自配置文件，初始窗口取小值，
+            # [ZH] 之后由 ``set_document_tokens`` 按文档驱动扩展。
+            allow_override=False,
         )
         blocking = _override_blocking_error(plan) or _preflight_context_error(plan)
         if blocking:
@@ -1827,11 +1861,9 @@ class Backend:
         )
         engine = LLMEngine(
             path, plan.n_ctx_initial,
-            n_threads=plan.n_threads, n_batch=plan.n_batch,
-            n_gpu_layers=plan.n_gpu_layers,
             reasoning=getattr(config, "reasoning", None),
             profile=profile, max_n_ctx=plan.n_ctx_max,
-            backend_label=plan.backend,
+            backend_label=plan.backend, inference=inference,
         )
         engine.inference_plan = plan.to_dict()
         return engine
@@ -1859,19 +1891,193 @@ class Backend:
             except Exception:
                 log.warning("会话保存失败", exc_info=True)
 
+    # [EN] ---------- Hardware auto-tuning (Reader benchmark module) ----------
+    # [ZH] ---------- 硬件自动调优（Reader 基准测试模块） ----------
+
+    def _current_model_file(self) -> str:
+        """
+        [EN]
+        Absolute path of the model currently in use, or an empty string. Used by the
+        tuner, which must benchmark the very file the reader will load.
+
+        [ZH]
+        当前使用中的模型绝对路径，没有则为空串。调优模块需要基准测试阅读器真正会加载的
+        那个文件。
+        """
+        path = str(getattr(self.llm, "model_path", "") or "").strip()
+        if path and os.path.isfile(path):
+            return os.path.abspath(path)
+        return ""
+
+    def _tune_progress_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Convert one tuner progress event into a protocol ``delta`` line with the
+        ``tune`` channel, so the interface can render the benchmark live without
+        knowing the tuner's internal stages.
+
+        [ZH]
+        把一条调优进度事件转换成带 ``tune`` 通道的协议 ``delta`` 行，使界面无需了解
+        调优器内部阶段即可实时渲染基准测试。
+        """
+        stage = str(event.get("stage") or "")
+        if stage == "start":
+            text = _t("sys.tune_started", model=event.get("model", ""))
+        elif stage == "baseline":
+            trial = event.get("trial") or {}
+            text = _t("sys.tune_baseline", threads=trial.get("n_threads", 0),
+                      batch=trial.get("n_batch", 0), tps=trial.get("tps", 0),
+                      ttft=trial.get("ttft_ms", 0))
+        elif stage == "trial":
+            trial = event.get("trial") or {}
+            text = _t("sys.tune_trial", threads=trial.get("n_threads", 0),
+                      batch=trial.get("n_batch", 0), tps=trial.get("tps", 0),
+                      verdict=("adopt" if event.get("improved") else "keep"))
+        elif stage == "persisted":
+            text = _t("sys.tune_persisted", path=event.get("path", ""))
+        elif stage == "done":
+            report = event.get("report") or {}
+            text = _t("sys.tune_done", reason=report.get("reason", ""),
+                      tps=(report.get("best") or {}).get("tps", 0))
+        else:
+            text = ""
+        # [EN] Private keys (``_report`` holds the live Python object) must not reach the
+        # [EN] protocol: they are not JSON serialisable and exist only for in-process
+        # [EN] callers.
+        # [ZH] 私有键（``_report`` 持有活的 Python 对象）绝不能进入协议：它们不可 JSON
+        # [ZH] 序列化，只服务于进程内调用方。
+        public = {key: value for key, value in event.items() if not key.startswith("_")}
+        return {"type": "delta", "channel": "tune", "stage": stage,
+                "content": text, "event": public}
+
+    def _tune_events(self, model_path: str,
+                     should_stop=None) -> Iterator[Dict[str, Any]]:
+        """
+        [EN]
+        Yield the progress events of one benchmark round.
+
+        The benchmark runs **in this process** and, for every trial, takes the engine's
+        process-wide inference lock (see ``llm_engine._INFERENCE_LOCK``). That is what
+        makes it safe to keep the measurement off the protocol loop: the lock serialises
+        the trial against any conversation turn, so a chat request during tuning waits for
+        one trial instead of corrupting the shared llama.cpp state, while status queries
+        (``ping``, ``context``, ``inference_config``) are answered immediately because
+        they never touch the native runtime.
+
+        A child process was evaluated and rejected: on this Windows console layout the
+        grandchild's redirected stdout handle is not reliably usable (its ``flush()``
+        raises ``OSError: [Errno 22]``) and a file-based event channel hung the spawn
+        itself, so the measurement would have been silently lost. The in-process design
+        keeps a single, verified code path.
+
+        [ZH]
+        产出一次基准测试的进度事件。
+
+        基准测试**在本进程内**运行，并且每次试探都会获取引擎的进程级推理锁
+        （见 ``llm_engine._INFERENCE_LOCK``）。这正是把测量移出协议循环后仍然安全的原因：
+        该锁把试探与任何对话轮次串行化，因此调优期间的对话请求会等待一次试探，而不是
+        破坏共享的 llama.cpp 状态；而状态查询（``ping``、``context``、
+        ``inference_config``）因为根本不触碰原生运行时，可以立即应答。
+
+        已评估并否决了子进程方案：在当前 Windows 控制台布局下，孙进程被重定向的 stdout
+        句柄并不可靠（其 ``flush()`` 抛 ``OSError: [Errno 22]``），而改用文件事件通道后
+        连进程创建本身都挂起，测量会被静默丢失。进程内方案只保留一条经过验证的路径。
+        """
+        yield from inference_tuner.iter_tune(
+            model_path,
+            config=self.inference_config,
+            should_stop=should_stop,
+        )
+
+    def _handle_inference_tune(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [EN]
+        Start the hardware benchmark on a background worker and answer at once. The worker
+        only drains the tuner's events, so neither the protocol loop nor the reading
+        session is blocked; a conversation turn started meanwhile waits for one trial
+        because both sides use the same inference lock.
+
+        [ZH]
+        在后台工作线程上启动硬件基准测试并立即应答。工作线程只负责排空调优事件，因此
+        协议循环与阅读会话都不会被阻塞；期间发起的对话轮次会等待一次试探，因为两侧使用
+        同一把推理锁。
+        """
+        model_path = self._current_model_file()
+        if not model_path:
+            return {"type": "system", "content": _t("sys.tune_no_model"),
+                    "tune": {"ok": False, "reason": "model_missing"}}
+        if getattr(self, "_tuner_running", False):
+            return {"type": "system", "content": _t("sys.tune_running"),
+                    "tune": {"ok": False, "reason": "already_running"}}
+
+        def _run() -> None:
+            self._tuner_running = True
+            try:
+                for event in self._tune_events(model_path,
+                                               should_stop=lambda: self.stop_event.is_set()):
+                    log.info("[tune] %s", event.get("stage"))
+            except Exception:  # noqa: BLE001 - the worker must never kill the process
+                log.exception("硬件调优失败")
+            finally:
+                self.inference_config = InferenceConfig.load()
+                self._tuner_running = False
+
+        threading.Thread(target=_run, name="inference-tune", daemon=True).start()
+        return {"type": "system", "content": _t("sys.tune_scheduled"),
+                "tune": {"ok": True, "scheduled": True,
+                         "model": os.path.basename(model_path)}}
+
+    def _stream_inference_tune(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+        """
+        [EN]
+        Streaming variant of the benchmark: every trial is forwarded as soon as it is
+        measured, so the operator watches the tuning happen instead of waiting for one
+        opaque result. Runs on the streaming worker thread, so the protocol loop stays
+        free as well.
+
+        [ZH]
+        基准测试的流式版本：每次试探测完即转发，操作者能看到调优过程，而不是等待一个
+        不透明的最终结果。运行在流式工作线程上，因此协议循环同样空闲。
+        """
+        model_path = self._current_model_file()
+        if not model_path:
+            yield {"type": "error", "content": _t("sys.tune_no_model"),
+                   "tune": {"ok": False, "reason": "model_missing"}}
+            return
+        self._tuner_running = True
+        report: Dict[str, Any] = {}
+        try:
+            for event in self._tune_events(
+                    model_path, should_stop=lambda: self.stop_event.is_set()):
+                if event.get("stage") == "done":
+                    payload = event.get("report")
+                    if isinstance(payload, dict):
+                        report = payload
+                yield self._tune_progress_event(event)
+        except Exception as exc:  # noqa: BLE001 - report, never crash the worker
+            log.exception("流式硬件调优失败")
+            yield {"type": "error", "content": _t("sys.internal_error", error=exc)}
+            return
+        finally:
+            self._tuner_running = False
+            # [EN] Re-read the file so the next model load uses the tuned values.
+            # [ZH] 重新读取文件，以便下次加载模型即采用调优后的数值。
+            self.inference_config = InferenceConfig.load()
+        yield {"type": "done", "content": _t("sys.tune_finished"),
+               "tune": report, "inference_config": self.inference_config.describe()}
+
     def touch_model_usage(self) -> None:
         """
         [EN]
-        Record the "last used" time of the current model (feature 4: the model library list
-        displays it).
+        Retained no-op. The model library that stored the "last used" timestamp is
+        physically removed; keeping the method (instead of deleting its call sites)
+        keeps the loading path stable and costs nothing.
 
         [ZH]
-        记录当前模型的"最后使用时间"（新增四：模型库列表需要显示该信息）。
+        保留的空实现。记录"最后使用时间"的模型库已被物理删除；保留本方法（而不是
+        逐个删除调用点）可让加载路径保持稳定，且不产生任何成本。
         """
-        try:
-            self.model_hub().touch(os.path.basename(self.config.model_path or ""))
-        except Exception:
-            log.debug("更新模型最后使用时间失败", exc_info=True)
+        return None
 
     def warmup(self) -> None:
         """
@@ -1972,38 +2178,13 @@ class Backend:
                         ],
                         "names": result["names"], "failed": result["failed"]}
             return self._handle_file(request.get("path", ""))
-        if action == "model_download":
-            return self._handle_model_download(request.get("name", ""))
+        # [EN] Context snapshot: the reading pipeline's single most important status
+        # [EN] query (window usage, remaining budget), so it is kept in the slim
+        # [EN] dispatch alongside the file and generation paths.
+        # [ZH] 上下文快照：阅读链路最重要的状态查询（窗口占用与剩余预算），因此与文件、
+        # [ZH] 生成两条路径一起保留在精简后的分发中。
         if action == "context":
             return self._handle_context()
-        if action == "market_search":
-            return self._handle_market_search(request)
-        if action == "market_detail":
-            return self._handle_market_detail(request)
-        if action == "market_install":
-            return self._handle_market_install(request)
-        if action == "market_uninstall":
-            return self._handle_market_uninstall(request)
-        if action == "market_installed":
-            return self._handle_market_installed()
-        if action == "market_status":
-            return self._handle_market_status()
-        # [EN] ---------- Model selector (feature 4) ----------
-        # [ZH] ---------- 模型选择栏（新增四） ----------
-        if action == "model_hub_search":
-            return self._handle_model_hub_search(request)
-        if action == "model_hub_query":
-            return self._handle_model_hub_query(request)
-        if action == "model_hub_detail":
-            return self._handle_model_hub_detail(request)
-        if action == "model_hub_registry":
-            return self._handle_model_hub_registry()
-        if action == "model_hub_uninstall":
-            return self._handle_model_hub_uninstall(request)
-        if action == "model_hub_status":
-            return self._handle_model_hub_status()
-        if action == "model_hub_config_set":
-            return self._handle_model_hub_config_set(request)
         # [EN] ---------- No-model-ready state and hot loading (general optimization in an
         # [EN] earlier release, design sections II and V, tasks 1/2/5) ----------
         # [ZH] ---------- 无模型就绪 / 热加载（此前版本 综合优化 相关设计、二、五） ----------
@@ -2032,7 +2213,7 @@ class Backend:
         # [EN] ---------- Command palette data source (task 2, 2.6) ----------
         # [ZH] ---------- 指令面板数据源（相关设计 2.6） ----------
         if action == "commands":
-            return {"type": "system", "content": "", "commands": self.commands.all_commands()}
+            return {"type": "system", "content": "", "commands": []}
         # [EN] ---------- Cross-platform: platform and capability boundaries ----------
         # [ZH] ---------- 跨平台（相关设计 / 相关设计）：平台与能力边界 ----------
         # [EN] The frontend receives the same report from ready.platform at startup; this
@@ -2066,7 +2247,7 @@ class Backend:
                         "n_batch": int(getattr(self.config, "n_batch", 0) or 0),
                         "inference_override": bool(
                             getattr(self.config, "inference_override", False)),
-                        "temperature": float(self.commands.temperature),
+                        "temperature": float(getattr(self.config, "temperature", 0.7) or 0.7),
                         "top_p": float(getattr(self.config, "top_p", 0.9)),
                         "repeat_penalty": float(getattr(self.config, "repeat_penalty", 1.1)),
                         "max_tokens": int(getattr(self.config, "max_tokens", 1024)),
@@ -2083,29 +2264,6 @@ class Backend:
                             "enabled": self.config.summarize.enabled,
                         },
                     }}
-        # [EN] v0.2.6 Part 4: open platform. `provider_state` and `local_api_state`
-        # [EN] are read-only; the save actions validate through the configuration
-        # [EN] models and enforce the informed-consent gate.
-        # [ZH] v0.2.6 任务 4：开放平台。`provider_state` 与 `local_api_state` 为只读；
-        # [ZH] 保存动作经配置模型校验，并强制知情同意门禁。
-        if action == "provider_state":
-            return {"type": "system", "content": "", "providers": self.provider_state()}
-        if action == "provider_save":
-            return self.handle_provider_save(request)
-        if action == "provider_test":
-            return self.handle_provider_test(request)
-        if action == "local_api_state":
-            return {"type": "system", "content": "", "local_api": self.local_api_state()}
-        if action == "local_api_apply":
-            return self.apply_local_api(request)
-        if action == "promptlib_list":
-            return self._handle_promptlib_list(request)
-        if action == "promptlib_save":
-            return self._handle_promptlib_save(request)
-        if action == "promptlib_delete":
-            return self._handle_promptlib_delete(request)
-        if action == "promptlib_apply":
-            return self._handle_promptlib_apply(request)
         if action == "context_compress":
             result = self.compact_context(force=bool(request.get("force", True)))
             return {"type": "system", "content": "", "compress": result,
@@ -2117,772 +2275,16 @@ class Backend:
             cleared = cache.clear() if cache else 0
             return {"type": "system", "content": "", "cleared": cleared,
                     "summary_cache": (cache.stats() if cache else {})}
-        # [EN] ---------- Skills and local plugins (task 2 / task 2 supplement) ----------
-        # [ZH] ---------- 技能与本地插件（相关设计 / 相关设计·补） ----------
-        if action == "skills_list":
-            return {"type": "system", "content": "", "skills": self.skills().status()}
-        if action == "skills_reload":
-            return self._handle_skills_reload(request)
-        if action == "skills_log":
-            return {"type": "system", "content": "", "log": self.skills().read_log(
-                int(request.get("lines") or 200))}
-        if action == "skills_clear_log":
-            return {"type": "system", "content": "", "ok": self.skills().clear_log()}
-        if action == "skills_export_log":
-            return self._handle_skills_export_log(request)
-        if action == "skills_scaffold":
-            return self._handle_skills_scaffold(request)
-        if action == "skills_install_folder":
-            return self._handle_skills_install_folder(request)
-        if action == "skills_uninstall":
-            return self._handle_skills_uninstall(request)
-        if action == "skills_export_zip":
-            return self._handle_skills_export_zip(request)
-        if action == "skills_publish_check":
-            return self._handle_skills_publish_check(request)
-        if action == "skills_trust":
-            return self._handle_skills_trust(request)
-        if action == "skills_trust_bulk":
-            return self._handle_skills_trust_bulk(request)
-        if action == "skills_pending_review":
-            # [EN] Fix 1: data source for the bulk confirmation dialog (lists only the
-            # [EN] plugins that need asking and have not been answered yet).
-            # [ZH] 兼容性修正：批量确认框的数据源（只列出"需要询问且尚未答复"的插件）。
-            return {"type": "system", "content": "",
-                    "pending": self.skills().pending_review(),
-                    "skills": self.skills().status()}
-        if action == "skills_manifest_get":
-            return {"type": "system", "content": "", "manifest": self.skills().local_manifest()}
-        if action == "skills_manifest_set":
-            return self._handle_skills_manifest_set(request)
-        if action == "skills_panel_render":
-            return {"type": "system", "content": "", "panel_result": self.skills().panel_render(
-                str(request.get("skill_id") or ""), str(request.get("panel_id") or ""))}
-        if action == "skills_panel_action":
-            return self._handle_skills_panel_action(request)
-        if action == "skills_examples":
-            return self._handle_skills_examples(request)
-        # [EN] ---------- Auto-update (task 5, option A: check and notify only) ----------
-        # [ZH] ---------- 自动更新（相关设计 方案 A：只检查与提示） ----------
-        if action == "update_check":
-            return self._handle_update_check(request)
-        # [EN] v0.2.4 patch: the user must explicitly ask for a download; the backend
-        # [EN] never downloads on its own. Applying is a separate, equally explicit step.
-        # [ZH] v0.2.4 补丁：下载必须由用户显式触发，后端绝不自行下载。应用更新同样是
-        # [ZH] 一个独立的、同样需要显式触发的步骤。
-        if action == "update_download":
-            return self._handle_update_download(request)
-        if action == "update_apply":
-            return self._handle_update_apply(request)
-        if action == "update_ignore":
-            return self._handle_update_ignore(request)
+        # [EN] Reader: inference configuration and hardware auto-tuning.
+        # [EN] ``inference_config`` reports the active file, ``inference_tune``
+        # [EN] runs the benchmark and persists the winning combination.
+        # [ZH] Reader：推理配置与硬件自动调优。``inference_config`` 报告当前生效文件，
+        # [ZH] ``inference_tune`` 运行基准测试并把胜出的参数组合落盘。
+        if action == "inference_config":
+            return {"type": "system", "content": "", "inference_config": self.inference_config.describe()}
+        if action == "inference_tune":
+            return self._handle_inference_tune(request)
         return {"type": "system", "content": _t("sys.unknown_action")}
-
-    # [EN] ---------- Multilingual support (task 3, 3.4) ----------
-    # [ZH] ---------- 多语言（相关设计 3.4） ----------
-
-    def _handle_set_language(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Switch the backend language: affects system messages, error messages, and command
-        help.
-
-        The selection is written to ui_state.json by the frontend (task 3.4 persistence
-        requirement); the backend applies it only for the current run, so switching language
-        does not rewrite config.json.
-
-        [ZH]
-        切换后端语言：影响系统消息、错误提示与指令帮助。
-
-        选择结果由前端写入 ui_state.json（设计规范 3.4 持久化要求），
-        后端只在本次运行内生效，避免为了切换语言而改写 config.json。
-        """
-        locale = str(request.get("locale") or "auto")
-        effective = _i18n().set_locale(locale)
-        log_user(log, "sys.log_language_switched", effective=effective, locale=locale)
-        info = _i18n().info()
-        # [EN] After a language change, command help and skill panel titles must follow.
-        # [ZH] 语言变化后指令帮助与技能面板标题都需要随之变化。
-        return {"type": "system", "content": _t("sys.language_switched", locale=effective),
-                "i18n": info, "commands": self.commands.all_commands()}
-
-    def _handle_language(self) -> Dict[str, Any]:
-        return {"type": "system", "content": "", "i18n": _i18n().info()}
-
-    # [EN] ---------- Skills and local plugins (task 2 / task 2 supplement) ----------
-    # [ZH] ---------- 技能与本地插件（相关设计 / 相关设计·补） ----------
-
-    def _handle_skills_reload(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Hot-reload plugins (task 2B.5): changes in skills_dev/ become visible without a
-        restart.
-
-        The ``scope`` parameter (capability extension-1, task 4): ``"dev"`` reloads only
-        plugins in the development directory and the local manifest (the "reload local
-        plugins" button on the developer page takes this path); the default ``"all"`` reloads
-        everything. The two entry points map to ``SkillLoader.reload_dev()`` and
-        ``reload_all()``. A single action with a parameter is exposed instead of two actions
-        so that no new protocol action is added (existing frontend buttons only need one extra
-        field).
-
-        [ZH]
-        热重载插件（设计规范 2B.5）：无需重启即可看到 skills_dev/ 中的改动。
-
-        ``scope`` 参数（能力扩展-1 任务四）：``"dev"`` 只重载开发目录与本地清单中的插件
-        （开发者页的「重载本地插件」按钮即走这条路径），缺省 ``"all"`` 重载全部。
-        两个入口对应 ``SkillLoader.reload_dev()`` 与 ``reload_all()`` —— 后端只暴露一个
-        动作、用参数区分，是为了不新增协议动作（前端已存在的按钮只需多带一个字段）。
-        """
-        scope = str(request.get("scope") or "all").strip().lower()
-        try:
-            loader = self.skills()
-            summary = loader.reload_dev() if scope == "dev" else loader.reload_all()
-        except Exception as e:  # noqa: BLE001
-            log.exception("重载插件失败")
-            return {"type": "system", "content": _t("err.skill_failed", error=e)}
-        text = _t("skill.reload_summary", loaded=summary.get("loaded", 0),
-                  total=summary.get("total", 0), failed=summary.get("failed", 0))
-        if scope == "dev":
-            text += "\n" + _t("skill.reload_dev_scope")
-        return {"type": "system", "content": text, "skills": self.skills().status(),
-                "commands": self.commands.all_commands(), "summary": summary}
-
-    def _handle_skills_trust_bulk(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Record trust decisions for local plugins in bulk (fix 1: one aggregated confirmation
-        instead of one dialog per plugin).
-
-        Request body: ``{"decisions": [{"id": "...", "trusted": true|false}, ...]}``. The
-        shorthand ``{"ids": [...], "trusted": true}`` ("enable all / disable all") is also
-        accepted.
-
-        [ZH]
-        批量记录本地插件的信任选择（修复一：一次汇总确认，不再逐个弹窗）。
-
-        请求体：``{"decisions": [{"id": "...", "trusted": true|false}, ...]}``
-        也接受 ``{"ids": [...], "trusted": true}`` 的简写形式（"全部启用/全部禁用"）。
-        """
-        raw = request.get("decisions")
-        decisions: List[Dict[str, Any]] = []
-        if isinstance(raw, list):
-            for item in raw:
-                if not isinstance(item, dict):
-                    continue
-                skill_id = str(item.get("id") or "").strip()
-                if not skill_id:
-                    continue
-                decisions.append({"id": skill_id, "trusted": bool(item.get("trusted", True))})
-        elif isinstance(request.get("ids"), list):
-            trusted = bool(request.get("trusted", True))
-            decisions = [{"id": str(x), "trusted": trusted}
-                         for x in request["ids"] if str(x).strip()]
-        if not decisions:
-            return {"type": "system", "content": _t("skill.trust_nothing"),
-                    "skills": self.skills().status()}
-
-        loader = self.skills()
-        for decision in decisions:
-            loader.trust_plugin(decision["id"], decision["trusted"])
-        # [EN] Denied plugins must be unloaded immediately; newly trusted plugins must be
-        # [EN] loaded immediately.
-        # [ZH] 被拒绝的插件需立即卸载；新信任的插件需立即加载。
-        for decision in decisions:
-            if not decision["trusted"]:
-                try:
-                    loader.unload(decision["id"])
-                except Exception:  # noqa: BLE001
-                    log.warning("卸载被拒绝的插件 %s 失败", decision["id"], exc_info=True)
-        loader.reload_all()
-        approved = sum(1 for d in decisions if d["trusted"])
-        return {"type": "system",
-                "content": _t("skill.trust_saved", approved=approved,
-                              denied=len(decisions) - approved),
-                "skills": loader.status(), "commands": self.commands.all_commands()}
-
-    def _handle_skills_export_log(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        dest = str(request.get("path") or "").strip()
-        if not dest:
-            dest = os.path.join(os.path.expanduser("~"), "Desktop", "skills_dev.log")
-        try:
-            path = self.skills().export_log(dest)
-        except Exception as e:  # noqa: BLE001
-            return {"type": "system", "content": _t("err.skill_failed", error=e)}
-        return {"type": "system", "content": _t("skill.log_exported", path=path)}
-
-    def _handle_skills_scaffold(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Create a local plugin skeleton (task 2B.6, new-plugin wizard).
-
-        [ZH]
-        新建本地插件骨架（设计规范 2B.6 新建插件向导）。
-        """
-        result = self.skills().scaffold(
-            str(request.get("id") or ""), str(request.get("name") or ""),
-            str(request.get("author") or ""), str(request.get("target") or ""),
-        )
-        if not result.get("ok"):
-            return {"type": "system", "content": f"❌ {result.get('message', '')}"}
-        summary = self.skills().reload_all()
-        return {"type": "system", "content": f"✅ {result.get('message', '')}",
-                "scaffold": result, "skills": self.skills().status(),
-                "commands": self.commands.all_commands(), "summary": summary}
-
-    def _handle_skills_install_folder(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        result = self.skills().install_from_folder(
-            str(request.get("path") or ""), dev=bool(request.get("dev")))
-        if not result.get("ok"):
-            return {"type": "system", "content": f"❌ {result.get('message', '')}"}
-        self.skills().reload_all()
-        return {"type": "system", "content": f"✅ {result.get('message', '')}",
-                "install": result, "skills": self.skills().status(),
-                "commands": self.commands.all_commands()}
-
-    def _handle_skills_uninstall(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        result = self.skills().uninstall(str(request.get("id") or ""),
-                                        delete_files=bool(request.get("delete_files", True)))
-        if not result.get("ok"):
-            return {"type": "system", "content": f"❌ {result.get('message', '')}"}
-        return {"type": "system", "content": f"✅ {result.get('message', '')}",
-                "skills": self.skills().status(), "commands": self.commands.all_commands()}
-
-    def _handle_skills_export_zip(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        result = self.skills().export_zip(str(request.get("id") or ""), str(request.get("path") or ""))
-        if not result.get("ok"):
-            return {"type": "system", "content": f"❌ {result.get('message', '')}"}
-        return {"type": "system", "content": f"✅ {result.get('message', '')}", "export": result}
-
-    def _handle_skills_publish_check(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        result = self.skills().publish_checklist(str(request.get("id") or ""))
-        return {"type": "system", "content": "", "publish_check": result}
-
-    def _handle_skills_trust(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Record or revoke trust in a local plugin (task 2B.9, first-load confirmation dialog).
-
-        [ZH]
-        记录/撤销对本地插件的信任（设计规范 2B.9 首次加载确认框）。
-        """
-        skill_id = str(request.get("id") or "")
-        trusted = bool(request.get("trusted", True))
-        ok = self.skills().trust_plugin(skill_id, trusted)
-        if not trusted:
-            self.skills().unload(skill_id)
-        return {"type": "system", "content": "" if ok else _t("sys.trust_write_failed"),
-                "skills": self.skills().status(), "commands": self.commands.all_commands()}
-
-    def _handle_skills_manifest_set(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Write the local plugin manifest (task 2B.3 / 2B.10, plugin manifest editing).
-
-        [ZH]
-        写入本地插件清单（设计规范 2B.3 / 2B.10 插件清单编辑）。
-        """
-        payload = request.get("manifest")
-        if not isinstance(payload, dict):
-            return {"type": "system", "content": _t("sys.skill_manifest_invalid")}
-        ok = self.skills().save_local_manifest(payload)
-        if not ok:
-            return {"type": "system", "content": _t("skill.manifest_save_failed",
-                                                    path=self.skills().local_manifest_file)}
-        self.skills().reload_all()
-        return {"type": "system", "content": _t("skill.manifest_saved"),
-                "manifest": self.skills().local_manifest(), "skills": self.skills().status(),
-                "commands": self.commands.all_commands()}
-
-    def _handle_skills_panel_action(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        result = self.skills().panel_action(
-            str(request.get("skill_id") or ""), str(request.get("panel_id") or ""),
-            str(request.get("panel_action") or ""),
-            request.get("values") if isinstance(request.get("values"), dict) else {},
-        )
-        return {"type": "system", "content": result.get("text") or result.get("message") or "",
-                "panel_result": result}
-
-    def _handle_skills_examples(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Copy the bundled example plugins into skills_dev/ (task 2.5, example skills).
-
-        [ZH]
-        把随包附带的示例插件复制到 skills_dev/（设计规范 2.5 示例技能）。
-        """
-        loader = self.skills()
-        src_root = loader.examples_dir()
-        if not os.path.isdir(src_root):
-            return {"type": "system", "content": _t("skill.examples_missing", path=src_root)}
-        names = [d for d in sorted(os.listdir(src_root))
-                 if os.path.isdir(os.path.join(src_root, d)) and not d.startswith(".")]
-        only = str(request.get("id") or "").strip()
-        if only:
-            names = [n for n in names if n == only]
-        copied: List[str] = []
-        errors: List[str] = []
-        os.makedirs(loader.dev_dir, exist_ok=True)
-        for name in names:
-            dest = os.path.join(loader.dev_dir, name)
-            try:
-                if os.path.exists(dest):
-                    shutil.rmtree(dest, ignore_errors=True)
-                shutil.copytree(os.path.join(src_root, name), dest,
-                                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-                copied.append(name)
-            except OSError as e:
-                errors.append(f"{name}: {e}")
-        if copied:
-            loader.reload_all()
-        if not copied and errors:
-            return {"type": "system", "content": _t("sys.skill_examples_copy_failed",
-                                                    error="; ".join(errors))}
-        text = _t("skill.examples_copied", names=", ".join(copied), dir=loader.dev_dir)
-        if errors:
-            text += " ⚠️ " + "; ".join(errors)
-        return {"type": "system", "content": text, "copied": copied,
-                "skills": loader.status(), "commands": self.commands.all_commands()}
-
-    # [EN] ---------- Auto-update (task 5, option A) ----------
-    # [ZH] ---------- 自动更新（相关设计 方案 A） ----------
-
-    def _handle_update_check(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Check GitHub Releases for a newer version; notify only, do not download or replace.
-
-        [ZH]
-        检查 GitHub Releases 是否有新版本；只提示，不下载、不替换。
-        """
-        try:
-            from update_check import check_for_update
-
-            result = check_for_update(self.config.update, force=bool(request.get("force")))
-        except Exception as e:  # noqa: BLE001
-            log.exception("检查更新失败")
-            return {"type": "system", "content": _t("update.check_failed", error=e),
-                    "update": {"ok": False, "error": str(e)}}
-        # [EN] Record the time of this check so GitHub is not queried on every startup
-        # [EN] (task 5.2, enterprise-network friendliness).
-        # [ZH] 记录本次检查时间，避免每次启动都请求 GitHub（设计规范 5.2 企业环境友好）。
-        if result.get("checked_at"):
-            self.config.update.last_check = result["checked_at"]
-            self.config.update.last_seen_version = result.get("latest") or ""
-            try:
-                self.config.save()
-            except Exception:
-                log.debug("保存更新检查时间失败", exc_info=True)
-        return {"type": "system", "content": result.get("message", ""), "update": result}
-
-    def _download_update_payload(self, request: Dict[str, Any],
-                                 progress=None) -> Dict[str, Any]:
-        """
-        [EN] Shared download path for the synchronous and streaming actions. It validates
-        the tag/asset pair, re-resolves the URL, optionally forwards byte progress, and
-        records the tag. Callers turn the result into their own response shape.
-        [ZH] 同步与流式动作共用的下载路径：校验标签/附件组合、重新解析 URL、可选转发字节进度，
-        并记录标签。调用方把结果包装成各自的响应形态。
-        """
-        tag = str(request.get("tag") or "").strip()
-        asset = str(request.get("asset") or "").strip()
-        if not tag or not asset:
-            raise ValueError(_t("update.download_missing"))
-        from update_check import download_update_asset
-
-        dest = os.path.join(user_data_root(), "updates")
-        result = download_update_asset(self.config.update, tag, asset, dest, progress=progress)
-        self.config.update.last_seen_version = tag
-        try:
-            self.config.save()
-        except Exception:
-            log.debug("保存更新版本失败", exc_info=True)
-        return result
-
-    def _handle_update_download(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Download one asset of an already-detected release. The caller supplies only
-        the tag and the asset name; ``update_check.download_update_asset`` re-resolves
-        the URL from the GitHub API and verifies size and SHA-256 before the file is
-        renamed into place. The file lands in ``<user_data_root>/updates/``, never in
-        the program directory, so an interrupted download cannot corrupt the running
-        installation.
-
-        [ZH]
-        下载已检测到的发布中的某个附件。调用方只提供标签与附件名称；
-        ``update_check.download_update_asset`` 会重新从 GitHub API 解析 URL，并在文件
-        改名落位前校验大小与 SHA-256。文件落在 ``<用户数据根>/updates/``，绝不进入
-        程序目录，因此中断的下载不会破坏正在运行的安装。
-        """
-        try:
-            result = self._download_update_payload(request)
-        except Exception as e:  # noqa: BLE001 - report, never crash the backend
-            log.exception("下载更新失败")
-            return {"type": "system", "content": _t("update.download_failed", error=e),
-                    "ok": False, "update_download": {"ok": False, "error": str(e)}}
-        return {"type": "system", "content": _t("update.downloaded", name=result.get("name", "")),
-                "ok": True, "update_download": result}
-
-    def _stream_update_download(self, request: Dict[str, Any]):
-        """
-        [EN]
-        Streaming update download: emit one ``update_progress`` line per throttled
-        chunk (downloaded bytes, total bytes, percent) and a final ``done`` line with
-        the verified path. Progress is written through the same locked stdout writer
-        as every other protocol line, so it can never interleave with another response.
-        [ZH]
-        流式更新下载：每经过节流的一个块输出一条 ``update_progress`` 行（已下载字节、
-        总字节、百分比），最后输出带校验路径的 ``done`` 行。进度通过与其它协议行相同的
-        加锁 stdout 写入器发出，因此绝不会与另一个响应交错。
-        """
-        def on_progress(downloaded: int, total: int) -> None:
-            total = max(0, int(total or 0))
-            downloaded = max(0, int(downloaded or 0))
-            percent = int(round(downloaded * 100.0 / total)) if total > 0 else 0
-            _write({
-                "type": "update_progress",
-                "update_progress": {
-                    "downloaded": downloaded,
-                    "total": total,
-                    "percent": max(0, min(100, percent)),
-                },
-            })
-
-        try:
-            result = self._download_update_payload(request, progress=on_progress)
-        except Exception as e:  # noqa: BLE001 - report as a stream error, never crash
-            log.exception("下载更新失败")
-            yield {"type": "error", "content": _t("update.download_failed", error=e),
-                   "update_download": {"ok": False, "error": str(e)}}
-            return
-        yield {"type": "done",
-               "content": _t("update.downloaded", name=result.get("name", "")),
-               "update_download": result}
-
-    def _handle_update_ignore(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN] Persist the release version the user chose to ignore. The next startup
-        check returns ``status=ignored`` for the same version instead of prompting; a
-        newer release still prompts normally.
-        [ZH] 持久化用户选择忽略的发布版本。下次启动检查对相同版本返回 ``status=ignored``
-        而不再提示；更新的版本仍会正常提示。
-        """
-        from update_check import parse_version
-
-        version = str(request.get("version") or "").strip()
-        if not version or parse_version(version) == (0, 0, 0):
-            return {"type": "system", "content": _t("update.ignore_failed"),
-                    "ok": False, "ignored_version": ""}
-        self.config.update.ignored_version = version
-        try:
-            self.config.save()
-        except Exception as e:  # noqa: BLE001
-            log.exception("保存忽略版本失败")
-            return {"type": "system", "content": _t("update.ignore_failed") + f"：{e}",
-                    "ok": False, "ignored_version": ""}
-        return {"type": "system", "content": _t("update.ignore_saved", version=version),
-                "ok": True, "ignored_version": version}
-
-    def _handle_update_apply(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Apply a previously downloaded update. Before anything is launched, the small
-        user-data files are copied into an isolated backup under
-        ``<user_data_root>/updates/``; models are intentionally left in place because
-        the installer excludes them. The installer is then started detached with the
-        current install root as ``/DIR`` so an upgrade overwrites program files only.
-
-        [ZH]
-        应用此前下载的更新。启动任何东西之前，先把小型用户数据文件复制到
-        ``<用户数据根>/updates/`` 下的隔离备份中；模型刻意保留在原位，因为安装程序
-        已排除它们。随后以当前安装根目录作为 ``/DIR`` 分离启动安装程序，使升级只覆盖
-        程序文件。
-        """
-        raw_path = str(request.get("path") or "").strip()
-        tag = str(request.get("tag") or "").strip()
-        updates_dir = os.path.abspath(os.path.join(user_data_root(), "updates"))
-        path = os.path.abspath(raw_path) if raw_path else ""
-        if (not path or not os.path.isfile(path)
-                or os.path.normcase(os.path.commonpath([path, updates_dir]))
-                != os.path.normcase(updates_dir)):
-            return {"type": "system", "content": _t("update.apply_missing"),
-                    "ok": False, "update_apply": {"ok": False, "error": "installer not found in updates dir"}}
-        if os.path.splitext(path)[1].lower() not in (".exe", ".msi"):
-            return {"type": "system", "content": _t("update.apply_unsupported"),
-                    "ok": False, "update_apply": {"ok": False, "error": "unsupported installer type"}}
-        try:
-            from update_check import backup_user_data
-
-            program = os.path.abspath(program_dir())
-            install_root = os.path.dirname(program) if os.path.basename(program).lower() == "app" else program
-            backup = backup_user_data(program, user_data_root(), tag or "update")
-        except Exception as e:  # noqa: BLE001
-            log.exception("更新前备份用户数据失败")
-            return {"type": "system", "content": _t("update.backup_failed", error=e),
-                    "ok": False, "update_apply": {"ok": False, "error": str(e)}}
-        try:
-            if path.lower().endswith(".msi"):
-                args = ["msiexec", "/i", path, "/qn"]
-            else:
-                # [EN] /SILENT keeps a progress window (the user asked to restart and
-                # [EN] should see that something is happening); /DIR pins the install
-                # [EN] root to the current one so a portable layout stays portable.
-                # [ZH] /SILENT 保留进度窗口（用户已选择重启，应当看到事情正在发生）；
-                # [ZH] /DIR 固定为当前安装根，使便携布局保持便携。
-                args = [path, "/SILENT", f'/DIR="{install_root}"']
-            creationflags = 0x00000008 if os.name == "nt" else 0  # DETACHED_PROCESS
-            subprocess.Popen(  # noqa: S603 - fixed, validated installer path
-                args, cwd=install_root, close_fds=True,
-                creationflags=creationflags, start_new_session=(os.name != "nt"))
-        except Exception as e:  # noqa: BLE001
-            log.exception("启动更新安装程序失败")
-            return {"type": "system", "content": _t("update.apply_failed", error=e),
-                    "ok": False, "update_apply": {"ok": False, "error": str(e)}}
-        return {
-            "type": "system",
-            "content": _t("update.apply_started", path=path),
-            "ok": True,
-            "update_apply": {
-                "ok": True,
-                "path": path,
-                "install_root": install_root,
-                "backup_dir": backup.get("dir", ""),
-                "backed_up": backup.get("copied", []),
-                "models_left_in_place": backup.get("models", 0),
-            },
-        }
-
-    # [EN] ---------- Model selector (feature 4) ----------
-    # [ZH] ---------- 模型选择栏（新增四） ----------
-
-    def _model_hub_error(self, e: Exception, verb: str) -> Dict[str, Any]:
-        log.exception("模型中心%s失败", verb)
-        return {"type": "system", "content": _t("err.hub_failed", verb=verb, error=e)}
-
-    def _handle_model_hub_search(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Search downloadable GGUF models (mirror and official sources, with automatic
-        fallback).
-
-        After the v0.2.1 model-marketplace optimization, **one call fetches all results for the
-        keyword** (bounded by a safety limit); filtering, sorting, and pagination are then done
-        locally, returning page ``page``. This is the synchronous version; the UI uses the
-        streaming version ``model_hub_load`` with progress feedback.
-
-        [ZH]
-        搜索可下载的 GGUF 模型（镜像/官方双源，自动回退）。
-
-        v0.2.1 模型市场优化后：**一次调用即取回该关键词的全部结果**
-        （受安全上限约束），再在本地做筛选/排序/分页，返回第 ``page`` 页。
-        这是同步版本；界面走的是带进度反馈的流式版本 ``model_hub_load``。
-        """
-        try:
-            result = self.model_hub().search(
-                keyword=str(request.get("keyword") or ""),
-                sort=str(request.get("sort") or "downloads"),
-                page=int(request.get("page") or 1),
-                limit=int(request.get("limit") or 0),
-                page_size=int(request.get("page_size") or 0),
-                source=request.get("source"),
-                min_downloads=int(request.get("min_downloads") or 0),
-                quant=str(request.get("quant") or ""),
-                filters=request.get("filters") if isinstance(request.get("filters"), dict) else None,
-                refresh=bool(request.get("refresh")),
-                resume=bool(request.get("resume")),
-            )
-        except Exception as e:
-            return self._model_hub_error(e, _t("sys.verb_search"))
-        return {"type": "system", "content": result.get("message", ""), "model_hub": result}
-
-    def _handle_model_hub_query(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Apply local filtering/sorting/paging to the **already loaded result set** (no new
-        remote request).
-
-        This is the delivery point for tasks 3/4/5/6: the paging control, live local
-        filtering, structured filters, and the four sort orders all send only this action, so
-        changing a filter does not trigger another network round trip.
-
-        [ZH]
-        在**已加载的结果集**上做本地筛选/排序/翻页（不重新请求远端）。
-
-        设计规范任务三/四/五/六的落点：分页控件、本地实时筛选、结构化筛选器、四种排序
-        都只发这一个动作，因此不会因为"筛选条件改了一下"就重新发起网络请求。
-        """
-        try:
-            result = self.model_hub().query_session(request)
-        except Exception as e:
-            return self._model_hub_error(e, _t("sys.verb_read_status"))
-        return {"type": "system", "content": "", "hub_query": result}
-
-    def _stream_model_hub_load(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
-        """
-        [EN]
-        Stream the model-marketplace results: report progress while fetching, then hand the
-        complete dataset to the UI.
-
-        This must stream because task 2 requires "progress feedback during loading (e.g.
-        loading 500 / 4356) to avoid a long blank wait", while fetching 5000 entries requires
-        5 page requests and takes tens of seconds. Progress lines use a dedicated type
-        (``hub_progress``); like the existing ``summary_progress`` they are consumed by the
-        frontend onEvent callback and do not disturb the existing delta/done semantics.
-
-        [ZH]
-        流式加载模型市场结果：边取边报进度，最后把完整数据集交给界面。
-
-        必须是流式的：任务二要求"加载过程需有进度反馈（如正在加载 500 / 4356），
-        避免用户长时间等待"，而一次取回 5000 条需要 5 页请求、耗时数十秒。
-        进度行使用独立 type（``hub_progress``），与既有的 ``summary_progress`` 一样，
-        由前端 onEvent 回调消费，不干扰 delta/done 的既有语义。
-        """
-        hub = self.model_hub()
-        state: Dict[str, Any] = {}
-
-        def on_progress(event: Dict[str, Any]) -> None:
-            state["last"] = event
-            _write({"type": "hub_progress", "hub_progress": event,
-                    "content": _t("hub.load.progress", loaded=event.get("loaded", 0),
-                                  pages=event.get("pages", 0),
-                                  elapsed=event.get("elapsed", 0))})
-
-        try:
-            dataset = hub.load_all(
-                keyword=str(request.get("keyword") or ""),
-                sort=str(request.get("sort") or "downloads"),
-                source=request.get("source"),
-                resume=bool(request.get("resume")),
-                refresh=bool(request.get("refresh")),
-                on_progress=on_progress,
-                should_stop=lambda: self.stop_event.is_set(),
-            )
-        except Exception as e:  # noqa: BLE001
-            log.exception("模型市场加载失败")
-            dataset = hub.offline_dataset(error=e, keyword=str(request.get("keyword") or ""),
-                                          sort=str(request.get("sort") or "downloads"),
-                                          source=request.get("source"))
-        if not bool(request.get("no_page")):
-            dataset["query"] = hub.query_dataset(
-                dataset,
-                page=request.get("page") or 1,
-                page_size=int(request.get("page_size") or 0) or None,
-                filters=request.get("filters") if isinstance(request.get("filters"), dict) else None,
-            )
-        message = str(dataset.get("message") or "")
-        # [EN] The result set uses its own type: the frontend's SendStreamRequestAsync only
-        # [EN] returns content on done, so structured data must occupy its own message (the
-        # [EN] same approach as file_stream).
-        # [ZH] 结果集走独立 type：前端 SendStreamRequestAsync 的 done 只返回 content，
-        # [ZH] 结构化数据必须单独占用一条消息（与 file_stream 的做法一致）。
-        yield {"type": "hub_result", "model_hub": dataset}
-        yield {"type": "done", "content": message, "model_hub": dataset}
-
-    def _handle_model_hub_detail(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Model details: all available GGUF quantization files and their sizes.
-
-        [ZH]
-        模型详情：所有可用的 GGUF 量化文件与大小。
-        """
-        try:
-            detail = self.model_hub().detail(str(request.get("repo") or ""), request.get("source"))
-        except Exception as e:
-            return self._model_hub_error(e, _t("sys.verb_read_detail"))
-        return {"type": "system", "content": "", "detail": detail}
-
-    def _handle_model_hub_registry(self) -> Dict[str, Any]:
-        """
-        [EN]
-        Model library listing (including the marker for the model currently in use).
-
-        "Currently in use" is taken from the model **actually loaded in the engine**, not from
-        the name written in the configuration: in the no-model-ready state the configuration
-        still holds a default file name although that file does not exist and was never
-        loaded, so marking by configuration would display a false "in use" state (task 1:
-        status must reflect reality).
-
-        [ZH]
-        模型库列表（含当前正在使用的模型标记）。
-
-        "当前使用中"取自**引擎中实际加载的**模型，而不是配置中写的名称：
-        无模型就绪状态下配置里仍有默认文件名，但该文件并不存在、也未被加载，
-        按配置标记会显示出"正在使用中"的假象（任务一：状态必须反映真实情况）。
-        """
-        current = str(getattr(self.llm, "model_path", "") or "")
-        try:
-            data = self.model_hub().registry(current_model=current)
-        except Exception as e:
-            return self._model_hub_error(e, _t("sys.verb_read_registry"))
-        data["model_ready"] = self.model_ready
-        return {"type": "system", "content": "", "registry": data}
-
-    def _handle_model_hub_uninstall(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Delete a model file (already confirmed by the frontend).
-
-        [ZH]
-        删除模型文件（前端已确认）。
-        """
-        try:
-            result = self.model_hub().uninstall(
-                str(request.get("name") or ""), current_model=self.config.model_path
-            )
-        except Exception as e:
-            return self._model_hub_error(e, _t("sys.verb_uninstall_model"))
-        return {"type": "system", "content": f"✅ {result.get('message', '')}"}
-
-    def _handle_model_hub_status(self) -> Dict[str, Any]:
-        """
-        [EN]
-        Model hub status (for the status bar and settings window to show the current data
-        source).
-
-        [ZH]
-        模型中心状态（供状态栏与设置窗口显示当前数据源）。
-        """
-        try:
-            state = self.model_hub().status()
-        except Exception as e:
-            return self._model_hub_error(e, _t("sys.verb_read_status"))
-        return {"type": "system", "content": "", "model_hub_status": state}
-
-    def _handle_model_hub_config_set(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Save the model selector configuration (data source / token / model library directory).
-
-        [ZH]
-        保存模型选择栏配置（数据源 / Token / 模型库目录）。
-        """
-        patch = request.get("model_hub") or {}
-        if not isinstance(patch, dict):
-            return {"type": "system", "content": _t("sys.model_hub_must_be_object")}
-        changed: List[str] = []
-        for key in ("enabled", "source", "hf_token", "models_dir", "registry_file", "verify_sha256"):
-            if key in patch:
-                setattr(self.config.model_hub, key, patch[key])
-                changed.append(key)
-        try:
-            self.config.save()
-        except Exception as e:
-            return {"type": "system", "content": _t("sys.config_save_failed", error=e)}
-        # [EN] Rebuild the instance after data-source or similar changes so stale settings
-        # [EN] are not cached.
-        # [ZH] 数据源等信息变化后重建实例，避免缓存旧设置。
-        self._model_hub = None
-        if changed:
-            note = _t("sys.model_hub_saved", fields=_t("sys.list_sep").join(changed))
-        else:
-            note = _t("sys.model_hub_no_change")
-        return {"type": "system", "content": note, "model_hub": self.model_hub().status()}
-
-    # [EN] ---------- No-model-ready state, rescan, and hot loading (general optimization
-    # [EN] in an earlier release, design section V, tasks 2/5) ----------
-    # [ZH] ---------- 无模型就绪 / 重新扫描 / 热加载（此前版本 综合优化 相关设计、五） ----------
 
     def _handle_model_scan(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -3255,155 +2657,13 @@ class Backend:
     # [EN] ---------- Skill marketplace (task 5) ----------
     # [ZH] ---------- 技能市场（相关设计） ----------
 
-    def _market_error(self, e: Exception, verb: str) -> Dict[str, Any]:
-        log.exception("技能市场%s失败", verb)
-        return {"type": "system", "content": _t("err.market_failed", verb=verb, error=e)}
 
-    def _handle_market_search(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Search skills: keyword + sort order + page number (a cached snapshot is returned
-        directly on a cache hit).
 
-        [ZH]
-        搜索技能：关键词 + 排序 + 页码（缓存命中时直接返回快照）。
-        """
-        try:
-            keyword = str(request.get("keyword") or "").strip()
-            sort = str(request.get("sort") or "best").strip().lower()
-            if sort not in ("best", "stars", "updated"):
-                sort = "best"
-            try:
-                page = max(1, int(request.get("page") or 1))
-            except (TypeError, ValueError):
-                page = 1
-            result = self.market().search(keyword, sort, page)
-        except Exception as e:
-            return self._market_error(e, _t("sys.verb_search"))
-        return {"type": "system", "content": result.get("message", ""), "market": result}
 
-    def _handle_market_detail(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Skill details: full skill.json, README excerpt, version, dependencies, and entry files.
 
-        [ZH]
-        技能详情：完整 skill.json、README 摘要、版本、依赖与入口文件。
-        """
-        repo = str(request.get("repo") or "").strip()
-        if not repo:
-            return {"type": "system", "content": _t("sys.market_missing_repo")}
-        try:
-            detail = self.market().detail(repo)
-        except Exception as e:
-            return self._market_error(e, _t("sys.verb_get_detail"))
-        return {"type": "system", "content": "", "detail": detail}
 
-    def _handle_market_install(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Install a skill (the user has confirmed in the frontend) and **hot-reload
-        immediately after installation**.
 
-        Capability extension-1, task 4: the audit found that "install and it works" was
-        missing its last step -- the old implementation only returned a message, and the user
-        had to click "reload local plugins" or restart, otherwise the new command did not
-        appear in the command palette (this is the concrete manifestation of the task
-        statement's "runtime loader wiring is not complete"). Success now calls
-        ``skills().reload_all()`` directly and returns the load result to the UI.
 
-        [ZH]
-        安装技能（用户已在前端确认），**安装完成后立即热重载**。
-
-        能力扩展-1 任务四：审计发现"安装后即可使用"缺少最后一步 —— 旧实现只返回一句文案，
-        用户必须自行点击「重载本地插件」或重启，否则指令面板中看不到新指令
-        （这正是设计规范所述"运行期加载器接线尚未完成"的实际表现）。
-        现在安装成功后直接调用 ``skills().reload_all()``，并把加载结果一并返回界面。
-        """
-        repo = str(request.get("repo") or "").strip()
-        if not repo:
-            return {"type": "system", "content": _t("sys.market_missing_repo")}
-        try:
-            result = self.market().install(repo)
-        except Exception as e:
-            return self._market_error(e, _t("sys.verb_install"))
-        ok = bool(result.get("ok"))
-        icon = "✅" if ok else "❌"
-        response: Dict[str, Any] = {"type": "system",
-                                    "content": f"{icon} {result.get('message', '')}",
-                                    "market_install": result}
-        if ok:
-            response["content"] += "\n" + self._reload_skills_note()
-            response["model_skills"] = self.skills().status()
-        return response
-
-    def _reload_skills_note(self) -> str:
-        """
-        [EN]
-        Hot-reload plugins and describe the result clearly (reused after install/uninstall).
-
-        [ZH]
-        热重载插件并把结果说明清楚（供安装/卸载后复用）。
-        """
-        try:
-            summary = self.skills().reload_all()
-        # [EN] A reload failure must not mask a successful install.
-        # [ZH] 重载失败不得掩盖安装成功。
-        except Exception as e:
-            log.exception("安装后热重载插件失败")
-            return _t("sys.skills_reload_failed", error=e)
-        return _t("sys.skills_reloaded", loaded=summary.get("loaded", 0),
-                  total=summary.get("total", 0), failed=summary.get("failed", 0))
-
-    def _handle_market_uninstall(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Uninstall a skill: remove the registry entry and delete the skill directory, then
-        read back to confirm (and hot-reload immediately as well).
-
-        [ZH]
-        卸载技能：移除注册表条目并删除技能目录，再回读确认（同样立即热重载）。
-        """
-        skill_id = str(request.get("id") or request.get("repo") or "").strip()
-        if not skill_id:
-            return {"type": "system", "content": _t("sys.market_missing_skill_id")}
-        try:
-            result = self.market().uninstall(skill_id)
-        except Exception as e:
-            return self._market_error(e, _t("sys.verb_uninstall"))
-        ok = bool(result.get("ok"))
-        icon = "✅" if ok else "❌"
-        response: Dict[str, Any] = {"type": "system",
-                                    "content": f"{icon} {result.get('message', '')}",
-                                    "market_uninstall": result}
-        if ok:
-            # [EN] A reload is mandatory after uninstall: otherwise the deleted plugin's
-            # [EN] commands remain in the command table and fail only when invoked.
-            # [ZH] 卸载后必须重载：否则被删插件的指令仍留在指令表中，点击后才报错。
-            response["content"] += "\n" + self._reload_skills_note()
-            response["model_skills"] = self.skills().status()
-        return response
-
-    def _handle_market_installed(self) -> Dict[str, Any]:
-        try:
-            items = self.market().installed()
-        except Exception as e:
-            return self._market_error(e, _t("sys.verb_read_installed"))
-        return {"type": "system", "content": "", "installed": items}
-
-    def _handle_market_status(self) -> Dict[str, Any]:
-        """
-        [EN]
-        Marketplace connection status (for the main window status bar).
-
-        [ZH]
-        市场连接状态（供主窗口状态栏显示）。
-        """
-        try:
-            state = self.market().status()
-        except Exception as e:
-            return self._market_error(e, _t("sys.verb_query_status"))
-        return {"type": "system", "content": "", "market_status": state}
 
     def _handle_context(self) -> Dict[str, Any]:
         """
@@ -3458,7 +2718,17 @@ class Backend:
 
         优化五：额外给出 KV Cache 估算与上下文窗口，供输入框下方的轻量状态区显示
         （前端不必再去解析 /status 中的中文文本）。
+
+        Reader：基准测试运行期间**跳过**这里。`_estimate_tokens` 会调用当前模型的
+        原生分词器，而基准测试正持有推理锁并操作另一个原生模型实例；此时读取会让
+        协议应答一直等到整轮调优结束（实测：异步调优动作 30 秒内拿不到应答）。跳过
+        上下文块的代价只是状态区短暂缺少占用数字，换来的是一条永远不会被测量阻塞的
+        应答通道。
         """
+        # [EN] Never touch the native runtime while a benchmark owns it.
+        # [ZH] 基准测试持有时绝不触碰原生运行时。
+        if getattr(self, "_tuner_running", False):
+            return
         try:
             messages = [{"role": "system", "content": self.conv.get_system_prompt()}] + self.conv.history
             response["used"] = self._estimate_tokens(messages)
@@ -3536,7 +2806,7 @@ class Backend:
             # [ZH] 转为引导，而不是等用户提交后才报错。缺少该字段时前端只能推测。
             response["model_ready"] = self.model_ready
             try:
-                response["search"] = bool(self.commands.search_enabled)
+                response["search"] = False
             except Exception:
                 response["search"] = False
             # [EN] Development task 3 in an earlier release: the mode is also exposed as a
@@ -3549,7 +2819,7 @@ class Backend:
             except Exception:
                 response["mode"] = ""
             try:
-                response["temperature"] = float(self.commands.temperature)
+                response["temperature"] = float(getattr(self.config, "temperature", 0.7) or 0.7)
             except Exception:
                 response["temperature"] = None
             # [EN] Fix 4 (direction 7: capability transparency): include how fast the model can
@@ -3664,7 +2934,7 @@ class Backend:
             requested_context=int(values.get("n_ctx", 0)),
             max_context=int(self.config.max_context or hardware_profiler.DEFAULT_MAX_CONTEXT),
             requested_gpu_layers=int(values.get("n_gpu_layers", 0)),
-            n_threads_override=int(self.config.n_threads or 0),
+            n_threads_override=int(self.inference_config.resolve_n_threads()),
             inference_profile=str(getattr(self.config, "inference_profile", "")),
             requested_n_batch=int(values.get("n_batch", 0)),
             allow_override=True,
@@ -3679,7 +2949,7 @@ class Backend:
             "n_gpu_layers": int(values.get("n_gpu_layers", 0)),
             "n_batch": int(values.get("n_batch", 0)),
             "profile": str(getattr(self.config, "inference_profile", "balanced")),
-            "threads": int(self.config.n_threads or 0),
+            "threads": int(self.inference_config.resolve_n_threads()),
         }
         if getattr(sys, "frozen", False):
             command = [sys.executable, "--inference-test-load", json.dumps(payload)]
@@ -3786,8 +3056,6 @@ class Backend:
             cfg.top_p = float(values_preset["top_p"])
             cfg.repeat_penalty = float(values_preset["repeat_penalty"])
             cfg.max_tokens = int(values_preset["max_tokens"])
-            self.commands.temperature = cfg.temperature
-            self.commands.temp_manual = False
             changed.append("preset")
 
         inference_changed = False
@@ -3802,8 +3070,9 @@ class Backend:
                 changed.append("inference_profile")
                 inference_changed = True
             if "n_batch" not in values and not bool(getattr(cfg, "inference_override", False)):
-                if int(cfg.n_batch or 0) != int(preset_values.n_batch):
-                    cfg.n_batch = int(preset_values.n_batch)
+                if int(self.inference_config.n_batch) != int(preset_values.n_batch):
+                    self.inference_config.n_batch = int(preset_values.n_batch)
+                    self.inference_config.save()
                     inference_changed = True
 
         if "n_ctx" in values:
@@ -3811,19 +3080,23 @@ class Backend:
             changed.append("n_ctx")
             inference_changed = True
         if "n_gpu_layers" in values:
-            cfg.n_gpu_layers = int(values["n_gpu_layers"])
+            self.inference_config.n_gpu_layers = int(values["n_gpu_layers"])
             changed.append("n_gpu_layers")
             inference_changed = True
         if "n_batch" in values:
-            cfg.n_batch = int(values["n_batch"])
+            self.inference_config.n_batch = int(values["n_batch"])
             changed.append("n_batch")
             inference_changed = True
+        if "n_gpu_layers" in values or "n_batch" in values:
+            # [EN] Persist hardware overrides in the inference configuration file.
+            # [ZH] 硬件覆盖值持久化到推理配置文件。
+            self.inference_config.save()
         if values or "allow_override" in request:
             recommendation = self._recommended_plan()
             differs = (
                 int(cfg.context_length or 0) != int(recommendation.n_ctx_max)
-                or int(cfg.n_gpu_layers or 0) != int(recommendation.n_gpu_layers)
-                or int(cfg.n_batch or 0) != int(recommendation.n_batch)
+                or int(self.inference_config.n_gpu_layers) != int(recommendation.n_gpu_layers)
+                or int(self.inference_config.n_batch) != int(recommendation.n_batch)
             )
             override = bool(request.get("allow_override", False)) or differs
             if override != bool(getattr(cfg, "inference_override", False)):
@@ -3856,9 +3129,6 @@ class Backend:
                 except (TypeError, ValueError):
                     continue
                 setattr(cfg, key, max(low, min(high, value)))
-                if key == "temperature":
-                    self.commands.temperature = cfg.temperature
-                    self.commands.temp_manual = True
                 changed.append(key)
 
         if request.get("max_tokens") is not None:
@@ -3959,17 +3229,12 @@ class Backend:
         流式对话：逐个产出 delta 行，最后产出 done 行（支持 stop 中断）。
         """
         action = request.get("action")
-        if action == "model_download":
-            yield from self._stream_model_download(request.get("name", ""))
-            return
-        if action == "update_download":
-            yield from self._stream_update_download(request)
-            return
-        if action == "model_hub_download":
-            yield from self._stream_model_hub_download(request)
-            return
-        if action == "model_hub_load":
-            yield from self._stream_model_hub_load(request)
+        if action == "inference_tune_stream":
+            # [EN] Reader: live hardware benchmark. Every trial is streamed, so the
+            # [EN] operator sees the tuning happen instead of a frozen interface.
+            # [ZH] Reader：实时硬件基准测试。每次试探都流式上报，操作者看到的是调优过程，
+            # [ZH] 而不是一个卡住的界面。
+            yield from self._stream_inference_tune(request)
             return
         if action == "file_stream":
             # [EN] Multi-file (task 8): the files array takes precedence; stage=true means
@@ -3984,19 +3249,14 @@ class Backend:
             return
 
         user_msg = request.get("message", "")
-        if user_msg.startswith("/"):
-            yield self._handle_chat(user_msg)
-            return
 
-        # [EN] v0.2.6 task 13: an active external provider may serve the main chat even
-        # [EN] when no local GGUF model is loaded.
-        # [ZH] v0.2.6 任务 13：即使未加载本地 GGUF 模型，生效的外部提供方也可服务主对话。
-        provider = self.external_provider()
-
+        # [EN] Reader: no external provider can serve the turn -- the local GGUF engine
+        # [EN] is the only inference path by construction.
+        # [ZH] Reader：本地 GGUF 引擎是构造上唯一的推理路径，本层不存在外部提供方。
         # [EN] Task 1: provide guidance when no model is available instead of raising an
         # [EN] exception or letting the frontend see "inference failed".
         # [ZH] 相关设计：无模型时提供引导，而不是抛出异常或让前端看到"推理失败"。
-        if not self.model_ready and provider is None:
+        if not self.model_ready:
             guide = self.guide_text()
             self.conv.add_message("user", user_msg)
             self.conv.add_message("assistant", guide)
@@ -4030,7 +3290,10 @@ class Backend:
             return
 
 
-        search_context = self._search_if_enabled(user_msg)
+        # [EN] Reader: the web-search layer is physically removed, so the context is
+        # [EN] built from the conversation and the uploaded document only.
+        # [ZH] Reader：联网搜索层已物理删除，上下文只由对话与已上传文档构成。
+        search_context = ""
         # [EN] Task 1 (self-test fix-1): **the gate "the question mentions a file" is removed**.
         # [EN] The old form `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
         # [EN] caused "the model does not see the file content after a file is uploaded": for
@@ -4067,9 +3330,6 @@ class Backend:
         # [EN] ``build_messages``, so switching providers does not change chat semantics.
         # [ZH] v0.2.6 任务 13：把本轮路由到生效的外部提供方，而不是本地引擎。历史、
         # [ZH] 文件与检索已由 ``build_messages`` 组装完成，因此切换提供方不改变对话语义。
-        if provider is not None:
-            yield from self._stream_external_chat(provider, messages, user_msg)
-            return
         # [EN] Task 2 (known-issues optimization-2): when search is enabled but no usable
         # [EN] result was obtained, **tell the user explicitly** instead of continuing silently
         # [EN] -- otherwise the user assumes "search did not work" or "the model ignored the
@@ -4078,10 +3338,6 @@ class Backend:
         # [ZH] 相关设计（优化已知问题-2）：搜索已开启但未取得可用结果时，**明确告知用户**，
         # [ZH] 而不是静默继续 —— 否则用户会认为"搜索未生效"或"模型忽略了搜索结果"，
         # [ZH] 实际是该层未取得任何内容。该提示作为回答区的首段前缀发出。
-        search_note = self._search_note()
-        if search_note:
-            yield {"type": "delta", "channel": _CH_ANSWER, "content": search_note + "\n\n"}
-
         parts: list = []
         # [EN] Reasoning content and the answer travel on two channels (task 3): the channel
         # [EN] names are agreed with the frontend in the module header protocol description.
@@ -4095,7 +3351,7 @@ class Backend:
         try:
             for channel, piece in self.llm.chat_stream_split(
                     messages,
-                    temperature=self.commands.temperature,
+                    temperature=float(getattr(self.config, "temperature", 0.7) or 0.7),
                     max_tokens=self._output_token_budget(),
                     stop_event=self.stop_event,
                     top_p=float(getattr(self.config, "top_p", 0.9) or 0.9),
@@ -4222,404 +3478,17 @@ class Backend:
     # [EN] ---------- Open platform: local HTTP API and provider routing (v0.2.6 Part 4) ----------
     # [ZH] ---------- 开放平台：本地 HTTP API 与多 Provider 路由（v0.2.6 任务 4） ----------
 
-    def provider_state(self) -> Dict[str, Any]:
-        """
-        [EN]
-        Provider routing state for the settings page.
 
-        The state never contains an API key: only whether one is stored. This method
-        is read-only and therefore stays available while a long task runs.
 
-        [ZH]
-        供设置页使用的 Provider 路由状态。
 
-        状态中绝不含 API 密钥，只含"是否已保存"。本方法为只读，因此长任务运行期间
-        仍可应答。
-        """
-        try:
-            return providers.describe_config(self.config)
-        except Exception as exc:  # noqa: BLE001 - [EN] a broken state must not break settings
-                                  # [ZH] 状态构建失败不能让设置页不可用
-            log.warning("读取 Provider 状态失败：%s", exc)
-            return {"active": "llamacpp", "providers": [], "error": str(exc)}
 
-    def external_provider(self) -> Any:
-        """
-        [EN]
-        Build the active external generation provider, or return ``None`` when the
-        local GGUF engine is active or the provider cannot be constructed.
 
-        The provider is intentionally rebuilt per request: the settings page may
-        change the endpoint, model or consent state between turns, and a cached
-        provider would keep sending data to a previously approved endpoint.
 
-        [ZH]
-        构造当前生效的外部生成提供方；本地 GGUF 引擎生效或提供方无法构造时返回
-        ``None``。
 
-        提供方刻意按请求重建：设置页可能在两轮之间更改端点、模型或同意状态，缓存
-        提供方会把数据继续发往先前批准的端点。
-        """
-        cfg = getattr(self.config, "providers", None)
-        active = str(getattr(cfg, "active", "llamacpp") or "llamacpp").lower()
-        if active in ("", "llamacpp", "local"):
-            return None
-        try:
-            return providers.build_provider(self.config, self.llm,
-                                            self._current_model_path())
-        except Exception as exc:  # noqa: BLE001 - [EN] surfaced as a chat error
-                                  # [ZH] 作为对话错误上报
-            log.warning("外部提供方构造失败（%s）：%s", active, exc)
-            return None
 
-    def _stream_external_chat(self, provider: Any, messages: List[dict],
-                              user_msg: str) -> Iterator[Dict[str, Any]]:
-        """
-        [EN]
-        Stream one chat turn through an external provider.
 
-        The provider yields plain text increments; the same reasoning splitter as
-        the local engine separates ``<think>`` blocks, so switching providers does
-        not change how thinking content is displayed.
 
-        [ZH]
-        经外部提供方流式执行一轮对话。
 
-        提供方产出纯文本增量；与本地引擎相同的思考分离器负责拆分 ``<think>``
-        区块，因此切换提供方不改变思考内容的显示方式。
-        """
-        splitter = self.llm.make_splitter() if hasattr(self.llm, "make_splitter") else None
-        parts: List[str] = []
-        full = ""
-        thinking = ""
-
-        def _emit(events: List[Any]) -> Iterator[Dict[str, Any]]:
-            for channel, text in events:
-                if channel == _CH_REASONING:
-                    yield {"type": "delta", "channel": _CH_REASONING, "content": text}
-                elif channel == _CH_RESET:
-                    yield {"type": "delta", "channel": _CH_ANSWER,
-                           "reset": True, "content": ""}
-                else:
-                    parts.append(text)
-                    yield {"type": "delta", "channel": _CH_ANSWER, "content": text}
-
-        try:
-            for piece in provider.stream_chat(
-                    messages,
-                    temperature=self.commands.temperature,
-                    max_tokens=self._output_token_budget(),
-                    top_p=float(getattr(self.config, "top_p", 0.9) or 0.9),
-                    repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1),
-                    stop_event=self.stop_event):
-                if not piece:
-                    continue
-                if splitter is not None:
-                    yield from _emit(splitter.feed(piece))
-                else:
-                    parts.append(piece)
-                    yield {"type": "delta", "channel": _CH_ANSWER, "content": piece}
-            if splitter is not None:
-                yield from _emit(splitter.close())
-                full = splitter.answer_text
-                thinking = splitter.reasoning_text.strip()
-            else:
-                full = "".join(parts)
-        except Exception as exc:  # noqa: BLE001 - [EN] provider failure is a chat error
-                                  # [ZH] 提供方失败属于对话错误
-            log.exception("外部提供方生成失败")
-            yield {"type": "error", "ok": False,
-                   "content": _t("sys.provider_generate_failed", error=exc)}
-            return
-        if not full.strip() and not thinking:
-            full = _t("sys.empty_output")
-            yield {"type": "delta", "channel": _CH_ANSWER, "content": full}
-        self.conv.add_message("user", user_msg)
-        self.conv.add_message("assistant", full, reasoning=thinking)
-        self._compact_history()
-        done: Dict[str, Any] = {"type": "done", "content": full,
-                                "stopped": self.stop_event.is_set(),
-                                "provider": provider.describe()}
-        if thinking:
-            done["reasoning"] = thinking
-        self._attach_context(done)
-        yield done
-
-    def _chat_external(self, provider: Any, messages: List[dict],
-                       user_msg: str) -> Dict[str, Any]:
-        """
-        [EN]
-        Non-streaming chat turn through an external provider.
-
-        [ZH]
-        经外部提供方执行非流式对话轮。
-        """
-        try:
-            text = provider.chat(
-                messages,
-                temperature=self.commands.temperature,
-                max_tokens=self._output_token_budget(),
-                top_p=float(getattr(self.config, "top_p", 0.9) or 0.9),
-                repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1),
-            )
-        except Exception as exc:  # noqa: BLE001 - [EN] provider failure is a chat error
-                                  # [ZH] 提供方失败属于对话错误
-            log.exception("外部提供方生成失败")
-            return {"type": "system", "ok": False,
-                    "content": _t("sys.provider_generate_failed", error=exc)}
-        thinking, response = _split_reasoning(str(text or ""))
-        self.conv.add_message("user", user_msg)
-        self.conv.add_message("assistant", response, reasoning=thinking)
-        self._compact_history()
-        result: Dict[str, Any] = {"type": "assistant", "content": response,
-                                  "provider": provider.describe()}
-        if thinking:
-            result["reasoning"] = thinking
-        self._attach_context(result)
-        return result
-
-    def handle_provider_save(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Persist a provider configuration after enforcing the informed-consent gate.
-
-        A :class:`PermissionError` raised by :func:`providers.apply_settings` is
-        translated into a structured refusal. The exception is caught here rather
-        than allowed to escape because the protocol loop does not wrap
-        ``Backend.handle`` in a try/except: an uncaught exception would terminate the
-        backend process and leave the interface connected to a dead child. The
-        refusal still carries the original type name so the acceptance test and any
-        external harness can see that the raise really happened.
-
-        [ZH]
-        在强制执行知情同意门禁之后持久化提供方配置。
-
-        :func:`providers.apply_settings` 抛出的 :class:`PermissionError` 会转换为
-        结构化拒绝。异常在此捕获而不外泄，因为协议循环并未用 try/except 包裹
-        ``Backend.handle``：未捕获异常会终止后端进程，使界面连着一个已死的子进程。
-        拒绝结果仍携带原始类型名，因此验收测试与任何外部驱动都能看出确实发生了抛出。
-        """
-        try:
-            state = providers.apply_settings(self.config, request)
-        except PermissionError as exc:
-            log.warning("拒绝保存外部提供方配置（缺少知情同意）：%s", exc)
-            # [EN] ``error_type`` names the built-in base type required by the design
-            # [EN] specification (``PermissionError``); the concrete subclass is
-            # [EN] reported separately so the distinction is not lost.
-            # [ZH] ``error_type`` 使用设计规范要求的内置基类型（``PermissionError``）；
-            # [ZH] 具体子类另行上报，信息不丢失。
-            return {"type": "system", "content": str(exc), "ok": False,
-                    "error_type": "PermissionError", "error_class": type(exc).__name__,
-                    "permission_denied": True,
-                    "providers": self.provider_state()}
-        except Exception as exc:  # noqa: BLE001 - [EN] invalid input is a user error, not a crash
-                                  # [ZH] 输入非法属于用户错误，不是崩溃
-            log.warning("提供方配置保存失败：%s", exc)
-            return {"type": "system", "content": _t("sys.provider_bad_request", error=exc),
-                    "ok": False, "error_type": type(exc).__name__,
-                    "providers": self.provider_state()}
-        log_user(log, "sys.provider_saved", active=state.get("active", "llamacpp"))
-        return {"type": "system", "content": "", "ok": True, "providers": state}
-
-    def handle_provider_test(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Test one provider draft without activating it (settings "test connection").
-
-        [ZH]
-        测试一份提供方草稿而不激活它（设置页「测试连通性」）。
-        """
-        try:
-            report = providers.test_connection(self.config, request)
-        except PermissionError as exc:
-            return {"type": "system", "content": str(exc), "ok": False,
-                    "error_type": "PermissionError", "error_class": type(exc).__name__,
-                    "permission_denied": True,
-                    "report": {}}
-        except Exception as exc:  # noqa: BLE001
-            return {"type": "system", "content": _t("sys.provider_bad_request", error=exc),
-                    "ok": False, "error_type": type(exc).__name__, "report": {}}
-        return {"type": "system", "content": "", "ok": bool(report.get("ok")),
-                "report": report}
-
-    def local_api_server(self) -> Any:
-        """
-        [EN]
-        Build or reuse the local OpenAI-compatible API server.
-
-        The server is rebuilt when its configuration signature changes (port, token,
-        output budget or model name), so saving settings takes effect without a
-        process restart. Generation is delegated to this backend through the two
-        callbacks below, which keeps all model access on one serialised path.
-
-        [ZH]
-        构建或复用本地 OpenAI 兼容 API 服务器。
-
-        配置签名（端口、令牌、输出预算或模型名）变化时重建服务器，因此保存设置无需重启
-        进程即可生效。生成过程通过下面两个回调委托给本后端，使全部模型访问收敛到同一条
-        串行路径。
-        """
-        cfg = getattr(self.config, "local_api", None)
-        signature = json.dumps({
-            "enabled": bool(getattr(cfg, "enabled", False)),
-            "port": int(getattr(cfg, "port", local_api.DEFAULT_PORT) or local_api.DEFAULT_PORT),
-            "api_key": bool(str(getattr(cfg, "api_key", "") or "")),
-            "max_output_tokens": int(getattr(cfg, "max_output_tokens", 1024) or 1024),
-            "model": str(getattr(self.config, "model_path", "") or ""),
-        }, ensure_ascii=False, sort_keys=True)
-        if self._local_api is None or signature != self._local_api_signature:
-            if self._local_api is not None:
-                self._local_api.stop()
-            model_name = os.path.basename(str(getattr(self.config, "model_path", "") or ""))
-            self._local_api = local_api.LocalApiServer(
-                port=int(getattr(cfg, "port", local_api.DEFAULT_PORT) or local_api.DEFAULT_PORT),
-                api_key=str(getattr(cfg, "api_key", "") or ""),
-                model_name=model_name or "echodesk-local",
-                generate=self.local_api_generate,
-                stream=self.local_api_stream,
-                default_temperature=float(getattr(self.commands, "temperature", 0.7) or 0.7),
-                default_max_tokens=int(getattr(cfg, "max_output_tokens", 1024) or 1024),
-            )
-            self._local_api_signature = signature
-        return self._local_api
-
-    def local_api_state(self) -> Dict[str, Any]:
-        """
-        [EN]
-        Local API state for the settings page.
-
-        [ZH]
-        供设置页使用的本地 API 状态。
-        """
-        try:
-            return self.local_api_server().status()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("读取本地 API 状态失败：%s", exc)
-            return {"enabled": False, "running": False, "error": str(exc)}
-
-    def apply_local_api(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Save and apply local API settings: enable/disable, port, token, output budget.
-
-        Validation goes through the :class:`config.LocalApiConfig` model rather than
-        ad-hoc checks, so the settings page, a hand-edited file and the tests all
-        enforce one rule set. The address is not a parameter: see
-        :mod:`local_api`.
-
-        [ZH]
-        保存并应用本地 API 设置：启停、端口、令牌、输出预算。
-
-        校验通过 :class:`config.LocalApiConfig` 模型完成，而不是临时检查，使设置页、
-        手改文件与测试遵守同一套规则。监听地址不是参数：见 :mod:`local_api`。
-        """
-        from config import LocalApiConfig
-
-        cfg = getattr(self.config, "local_api", None)
-        try:
-            candidate = LocalApiConfig(
-                enabled=bool(request.get("enabled", getattr(cfg, "enabled", False))),
-                port=int(request.get("port", getattr(cfg, "port", local_api.DEFAULT_PORT))),
-                api_key=str(request.get("api_key", getattr(cfg, "api_key", "")) or ""),
-                max_output_tokens=int(request.get(
-                    "max_output_tokens", getattr(cfg, "max_output_tokens", 1024))),
-            )
-        except Exception as exc:  # noqa: BLE001 - [EN] invalid input is a user error
-                                  # [ZH] 输入非法属于用户错误
-            return {"type": "system", "content": _t("sys.provider_bad_request", error=exc),
-                    "ok": False, "local_api": self.local_api_state()}
-        self.config.local_api = candidate
-        self.config.save()
-        server = self.local_api_server()
-        if candidate.enabled:
-            state = server.start()
-            if not state.get("running"):
-                log_user(log, "sys.localapi_failed", error=state.get("error", ""))
-            else:
-                log_user(log, "sys.localapi_started", url=state.get("base_url", ""))
-            return {"type": "system", "content": "", "ok": bool(state.get("running")),
-                    "local_api": state}
-        server.stop()
-        log_user(log, "sys.localapi_stopped")
-        return {"type": "system", "content": "", "ok": True,
-                "local_api": server.status()}
-
-    def start_local_api_if_enabled(self) -> Optional[Dict[str, Any]]:
-        """
-        [EN]
-        Start the local API at launch when the configuration enables it.
-
-        Failure is reported and swallowed: a port already in use must not prevent the
-        desktop application from starting.
-
-        [ZH]
-        配置启用时在启动阶段启动本地 API。
-
-        失败时只报告并吞掉异常：端口被占用绝不能让桌面程序无法启动。
-        """
-        cfg = getattr(self.config, "local_api", None)
-        if not bool(getattr(cfg, "enabled", False)):
-            return None
-        try:
-            return self.local_api_server().start()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("启动本地 API 失败：%s", exc)
-            return None
-
-    def local_api_generate(self, messages: List[Dict[str, Any]], *, temperature: float = 0.7,
-                           max_tokens: int = 1024, top_p: Optional[float] = None) -> str:
-        """
-        [EN]
-        Non-streaming generation entry point used by :mod:`local_api`.
-
-        ``api_busy`` is set for the whole call so the protocol loop refuses a
-        concurrent chat request instead of corrupting the shared engine state.
-
-        [ZH]
-        供 :mod:`local_api` 使用的非流式生成入口。
-
-        整个调用期间 ``api_busy`` 为真，使协议循环拒绝并发对话请求，而不是破坏共享的
-        引擎状态。
-        """
-        if not self.model_ready:
-            raise RuntimeError(_t("localapi.error_no_engine"))
-        self.api_busy = True
-        try:
-            return self.llm.chat_complete(
-                messages, temperature=temperature, max_tokens=max_tokens,
-                top_p=top_p,
-                repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1))
-        finally:
-            self.api_busy = False
-
-    def local_api_stream(self, messages: List[Dict[str, Any]], *, temperature: float = 0.7,
-                         max_tokens: int = 1024,
-                         top_p: Optional[float] = None) -> Iterator[str]:
-        """
-        [EN]
-        Streaming generation entry point used by :mod:`local_api`.
-
-        The stop event is deliberately not shared with the interface: an external
-        tool's request must not be interrupted by the desktop user pressing Stop on
-        an unrelated conversation. The client closing the HTTP connection ends the
-        generator instead.
-
-        [ZH]
-        供 :mod:`local_api` 使用的流式生成入口。
-
-        刻意不与界面共享停止事件：外部工具的请求不应因桌面用户停止另一段无关对话而
-        中断。客户端关闭 HTTP 连接即可结束该生成器。
-        """
-        if not self.model_ready:
-            raise RuntimeError(_t("localapi.error_no_engine"))
-        self.api_busy = True
-        try:
-            yield from self.llm.chat_stream(
-                messages, temperature=temperature, max_tokens=max_tokens,
-                stop_event=None, top_p=top_p,
-                repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1))
-        finally:
-            self.api_busy = False
 
 
 
@@ -4680,20 +3549,15 @@ class Backend:
         return clarification_prompt(user_msg)
 
     def _handle_chat(self, user_msg: str) -> Dict[str, Any]:
-        if user_msg.startswith("/"):
-            content, action = self.commands.handle(user_msg)
-            response = {"type": "system", "content": content}
-            if action:
-                self._merge_action(response, action)
-            return response
-
-        # [EN] v0.2.6 task 13: the non-streaming path also honours the active external
-        # [EN] provider. [ZH] v0.2.6 任务 13：非流式路径同样遵循生效的外部提供方。
-        provider = self.external_provider()
+        # [EN] Reader: the slash-command registry is physically removed. A leading "/"
+        # [EN] is treated as ordinary text, so the model sees exactly what the user
+        # [EN] typed instead of a silently swallowed command.
+        # [ZH] Reader：斜杠指令表已物理删除。以 "/" 开头的内容按普通文本处理，模型看到的
+        # [ZH] 就是用户原样输入，而不会被静默吞掉。
         # [EN] Task 1: with no model, skip inference and return guidance directly (and record
         # [EN] it in history so the user sees the context after switching back).
         # [ZH] 相关设计：无模型时不走推理，直接给出引导（并记入历史，用户切回后能看到上下文）。
-        if not self.model_ready and provider is None:
+        if not self.model_ready:
             guide = self.guide_text()
             self.conv.add_message("user", user_msg)
             self.conv.add_message("assistant", guide)
@@ -4726,7 +3590,10 @@ class Backend:
             self._compact_history()
             return {"type": "assistant", "content": guide, "clarify": True}
 
-        search_context = self._search_if_enabled(user_msg)
+        # [EN] Reader: the web-search layer is physically removed, so the context is
+        # [EN] built from the conversation and the uploaded document only.
+        # [ZH] Reader：联网搜索层已物理删除，上下文只由对话与已上传文档构成。
+        search_context = ""
         # [EN] Task 1 (self-test fix-1): **the gate "the question mentions a file" is removed**.
         # [EN] The old form `bool(FILE_INTENT.search(user_msg)) and bool(self.conv.file_content)`
         # [EN] caused "the model does not see the file content after a file is uploaded": for
@@ -4762,12 +3629,10 @@ class Backend:
         # [ZH] 它是**非流式**回答路径，缺了它则状态区数字会一直停在上一次流式请求的结果上
         # [ZH] —— 这正是相关设计要消除的那类"显示与真实不符"。
         self._note_request_size(messages)
-        if provider is not None:
-            return self._chat_external(provider, messages, user_msg)
         try:
             thinking, response = self.llm.chat_complete_split(
                 messages,
-                temperature=self.commands.temperature,
+                temperature=float(getattr(self.config, 'temperature', 0.7) or 0.7),
                 max_tokens=self._output_token_budget(),
                 top_p=float(getattr(self.config, "top_p", 0.9) or 0.9),
                 repeat_penalty=float(getattr(self.config, "repeat_penalty", 1.1) or 1.1),
@@ -4811,130 +3676,6 @@ class Backend:
     # [EN] changed.
     # [ZH] 这一组是**新增**的处理器，没有改动任何既有函数的函数体。
 
-    def _stream_model_hub_download(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
-        """
-        [EN]
-        Stream a model-hub download with progress events.
-
-        [ZH]
-        下载模型库中选定的 GGUF 文件（新增四）。
-
-        进度以 delta 行输出（百分比 + 速度 + 剩余时间），前端实时显示；
-        前端发送 action=stop 可取消，取消时保留 ``.part`` 断点，下次继续。
-        """
-        repo = str(request.get("repo") or "").strip()
-        filename = str(request.get("filename") or "").strip()
-        try:
-            expected = int(request.get("size") or 0)
-        except (TypeError, ValueError):
-            expected = 0
-        source = request.get("source")
-        hub = self.model_hub()
-
-        # [EN] Final manual confirmation before the download starts (size and expected disk
-        # [EN] usage).
-        # [ZH] 下载前的最后一次人工确认信息（大小与预计磁盘占用）
-        yield {
-            "type": "delta",
-            "content": _t("sys.hub_download_prepare", repo=repo, filename=filename,
-                          size=(_t("sys.hub_download_size", mb=f"{expected / 1048576:.1f}")
-                                if expected else "")),
-        }
-        self.stop_event.clear()
-
-        # [EN] The download runs in a worker thread (urllib blocks); the main thread polls
-        # [EN] the progress cache and pushes changes to the front end.
-        # [ZH] 下载在子线程里进行（urllib 阻塞），主线程轮询进度缓存并把变化推给前端
-        latest: Dict[str, str] = {"line": ""}
-
-        def _progress(info: Dict[str, Any]) -> None:
-            """
-            [EN]
-            Report progress for a long-running operation.
-
-            [ZH]
-            字节级进度 → 一行人类可读文本（速度与剩余时间，设计规范要求）。
-            """
-            if "retry" in info:
-                latest["line"] = _t("sys.hub_download_retry", attempt=info.get("attempt"),
-                                    retries=info.get("retries"), error=info.get("error"))
-                return
-            done = int(info.get("done") or 0)
-            total = int(info.get("total") or 0)
-            speed = float(info.get("speed") or 0)
-            eta = int(info.get("eta") or 0)
-            pct = float(info.get("percent") or 0)
-            line = f"📥 {pct:5.1f}%  {done / 1048576:.1f}/{total / 1048576:.1f} MB"
-            if speed > 0:
-                line += f"  {speed / 1048576:.2f} MB/s"
-            if eta > 0:
-                line += _t("sys.hub_download_eta", time=f"{eta // 60:02d}:{eta % 60:02d}")
-            latest["line"] = line
-
-        result: Dict[str, Any] = {}
-        done_flag = threading.Event()
-
-        def _worker() -> None:
-            try:
-                result.update(hub.download(
-                    repo, filename, expected_size=expected, source=source,
-                    on_progress=_progress,
-                    should_stop=lambda: self.stop_event.is_set(),
-                    retries=int(getattr(self.config.model_hub, "download_retries", 3) or 3),
-                ))
-            except Exception as exc:  # noqa: BLE001
-                result.update({"ok": False,
-                               "message": _t("sys.hub_download_failed", error=exc), "path": ""})
-            finally:
-                done_flag.set()
-
-        try:
-            thread = threading.Thread(target=_worker, daemon=True)
-            thread.start()
-            reported = ""
-            while not done_flag.wait(0.4):
-                if latest["line"] and latest["line"] != reported:
-                    reported = latest["line"]
-                    yield {"type": "delta", "content": reported}
-                if self.stop_event.is_set():
-                    yield {"type": "delta", "content": _t("sys.hub_download_cancelling")}
-            if latest["line"] and latest["line"] != reported:
-                yield {"type": "delta", "content": latest["line"]}
-            thread.join(timeout=10)
-
-            if result.get("ok"):
-                path = str(result.get("path") or "")
-                self.conv.add_message("user", _t("sys.model_download_user_marker", filename=filename))
-                self.conv.add_message("assistant", _t("sys.model_downloaded_to_library",
-                                                     name=os.path.basename(path)))
-                self._compact_history()
-                # [EN] Design specification: after the download completes the model is
-                # [EN] **hot-loaded in place**, so the user does not have to restart the
-                # [EN] process or the front end. On failure (corrupt file, unsupported
-                # [EN] format, insufficient memory) the backend stays in the no-model state
-                # [EN] and reports the reason plus a retry path.
-                # [ZH] 相关设计：下载完成后**就地热加载**，用户不必重启进程/前端。
-                # [ZH] 失败（损坏、格式不支持、内存不足）时保持无模型状态并给出原因与重试路径。
-                yield {"type": "delta", "content": _t("sys.model_hot_loading",
-                                                      name=os.path.basename(path))}
-                load = self.load_model(os.path.basename(path))
-                if load.get("ok"):
-                    content = (f"✅ {result.get('message') or _t('sys.download_done')} · "
-                               + _t("sys.model_hot_loaded", name=load.get("name", "")))
-                else:
-                    content = (f"⚠️ {result.get('message') or _t('sys.download_done')} · "
-                               + _t("sys.model_hot_load_failed", error=load.get("error", "")))
-                yield {"type": "done", "content": content,
-                       "model": path if load.get("ok") else "",
-                       "model_load": load, "model_state": self.model_state()}
-            else:
-                icon = "⏹" if result.get("cancelled") else "❌"
-                yield {"type": "done",
-                       "content": f"{icon} {result.get('message') or _t('sys.download_incomplete')}",
-                       "cancelled": bool(result.get("cancelled"))}
-        except Exception as e:
-            log.exception("模型下载失败")
-            yield {"type": "error", "content": _t("sys.download_failed", error=e)}
 
     def _handle_file(self, filepath: str) -> Dict[str, Any]:
         """
@@ -5264,108 +4005,10 @@ class Backend:
     # [EN] ---------- Prompt template library (v0.2.6 Part 3, task 3.4) ----------
     # [ZH] ---------- 提示词模板库（v0.2.6 Part 3 任务 3.4） ----------
 
-    def prompt_library(self) -> PromptLibrary:
-        """
-        [EN]
-        Lazily create the template library handle.
-        [ZH]
-        惰性创建模板库句柄。
-        """
-        if self._prompt_library is None:
-            self._prompt_library = PromptLibrary()
-        return self._prompt_library
 
-    def _handle_promptlib_list(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Template list with categories, for the front-end panel.
-        [ZH]
-        供前端面板使用的模板清单与分类。
-        """
-        from prompt_library import categories as prompt_categories  # noqa: PLC0415
 
-        library = self.prompt_library()
-        category = str(request.get("category") or "").strip()
-        return {"type": "prompt_library", "ok": True, "content": "",
-                "templates": library.list(category),
-                "categories": prompt_categories(),
-                "stats": library.stats()}
 
-    def _handle_promptlib_save(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Create or update one user template.
-        [ZH]
-        新建或更新一条用户模板。
-        """
-        payload = request.get("template")
-        if not isinstance(payload, dict):
-            payload = request
-        try:
-            entry = self.prompt_library().save(payload)
-        except ValueError as exc:
-            return {"type": "prompt_library", "ok": False,
-                    "content": _t("sys.promptlib_invalid", error=exc)}
-        return {"type": "prompt_library", "ok": True, "template": entry,
-                "templates": self.prompt_library().list(),
-                "content": _t("sys.promptlib_saved",
-                              label=entry.get("label", ""))}
 
-    def _handle_promptlib_delete(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Delete one user template; built-in templates are read-only.
-        [ZH]
-        删除一条用户模板；内置模板只读。
-        """
-        template_id = str(request.get("template_id") or request.get("id") or "").strip()
-        library = self.prompt_library()
-        entry = library.get(template_id, include_body=False)
-        if entry is not None and not entry.get("editable"):
-            return {"type": "prompt_library", "ok": False,
-                    "content": _t("sys.promptlib_builtin_readonly")}
-        if not library.delete(template_id):
-            return {"type": "prompt_library", "ok": False,
-                    "content": _t("sys.promptlib_not_found", id=template_id)}
-        return {"type": "prompt_library", "ok": True, "template_id": template_id,
-                "templates": library.list(),
-                "content": _t("sys.promptlib_deleted",
-                              label=(entry or {}).get("label", template_id))}
-
-    def _handle_promptlib_apply(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        [EN]
-        Apply one template to the current conversation as its task layer.
-
-        The generated block is identical to the text produced for ``/task``, so a
-        template applied from the panel and the same template applied by command
-        are indistinguishable to the model.
-        [ZH]
-        将单个模板作为本会话任务层应用。
-
-        生成的文本与 ``/task`` 产出完全一致，因此从面板应用的模板与用命令应用的
-        同一模板对模型而言没有差别。
-        """
-        template_id = str(request.get("template_id") or request.get("id") or "").strip()
-        library = self.prompt_library()
-        entry = library.get(template_id, include_body=False)
-        if entry is None:
-            return {"type": "prompt_library", "ok": False,
-                    "content": _t("sys.promptlib_not_found", id=template_id)}
-        text = library.system_prompt(template_id)
-        if not text:
-            return {"type": "prompt_library", "ok": False,
-                    "content": _t("sys.promptlib_not_found", id=template_id)}
-        with self._conv_lock:
-            self.conv.set_task_prompt(text, template_id)
-        try:
-            self.llm.clear_cache()
-        except Exception:  # noqa: BLE001 - [EN] a cache flush failure must not block applying
-                          # [ZH] 清缓存失败不得阻止应用
-            log.debug("应用模板后清理推理缓存失败", exc_info=True)
-        return {"type": "prompt_library", "ok": True, "template": entry,
-                "content": _t("sys.promptlib_applied",
-                              label=entry.get("label", template_id))}
 
     def load_file_into_context(self, filepath: str, progress_sink=None) -> str:
         """
@@ -6004,80 +4647,7 @@ class Backend:
         self._attach_context(done)
         yield done
 
-    def _handle_model_download(self, name: str) -> Dict[str, Any]:
-        """
-        [EN]
-        Handle a model download request.
 
-        [ZH]
-        用户已同意后下载模型并热切换。
-        """
-        if not name:
-            return {"type": "system", "content": _t("sys.model_need_name")}
-        try:
-            path = download_model(name, self.config.model_repo, hf_endpoint=self.config.hf_endpoint)
-        except Exception as e:
-            return {"type": "system", "content": _t("sys.download_failed", error=e)}
-        try:
-            self.llm.reload(path)
-        except Exception as e:
-            return {"type": "system", "content": _t("sys.model_load_after_download_failed", error=e)}
-        self.config.model_path = name
-        self.config.save()
-        return {"type": "system", "content": _t("sys.model_downloaded_and_loaded", name=name)}
-
-    def _stream_model_download(self, name: str) -> Iterator[Dict[str, Any]]:
-        """
-        [EN]
-        Stream model-download progress and completion.
-
-        [ZH]
-        流式下载模型：后台线程下载，逐条 yield 进度，最后 yield done/error。
-
-        进度来自 download_model 的 on_progress 回调（字节 → 百分比）。
-        """
-        if not name:
-            yield {"type": "error", "content": _t("sys.model_need_name")}
-            return
-        q: queue.Queue = queue.Queue()
-
-        def worker() -> None:
-            try:
-                path = download_model(
-                    name,
-                    self.config.model_repo,
-                    hf_endpoint=self.config.hf_endpoint,
-                    on_progress=lambda done, total: q.put(("progress", done, total)),
-                )
-                q.put(("path", path, 0, 0))
-            except Exception as e:
-                q.put(("error", None, 0, 0, str(e)))
-
-        threading.Thread(target=worker, daemon=True).start()
-        while True:
-            kind, a, b, *_ = q.get()
-            if kind == "progress":
-                total = b
-                pct = int(a * 100 / total) if total > 0 else 0
-                yield {"type": "delta", "content": _t(
-                    "sys.model_downloading_progress", name=name, pct=pct,
-                    done=self._fmt_mb(a), total=self._fmt_mb(total))}
-            elif kind == "path":
-                break
-            else:  # error
-                yield {"type": "error", "content": _t("sys.download_failed", error=a)}
-                return
-
-        # [EN] Download complete -> load and hot-switch.
-        # [ZH] 下载完成 → 加载并热切换
-        try:
-            self.llm.reload(a)
-        except Exception as e:
-            yield {"type": "error", "content": _t("sys.model_load_after_download_failed", error=e)}
-            return
-        self.config.model_path = name
-        self.config.save()
-        yield {"type": "done", "content": _t("sys.model_downloaded_and_loaded", name=name)}
 
     def _estimate_tokens(self, messages) -> int:
         """
@@ -6459,101 +5029,8 @@ class Backend:
             info["last_event"] = (events[-1].to_dict() if events else {})
         return info
 
-    def _search_if_enabled(self, query: str) -> str:
-        """
-        [EN]
-        Run a web search when search is enabled.
 
-        [ZH]
-        按开关执行搜索并返回**可注入上下文**的文本（不可用时为空串）。
 
-        优化已知问题-2 相关设计：失败与"没搜到"都**如实记录**，并且把不可用的原因
-        记进 ``self._last_search_note``，由 :meth:`_search_note` 转成给用户的一句话
-        —— 旧实现把失败静默成空串，用户完全看不出"搜索其实没生效"，只看得出
-        "回答里没有搜索结果"。
-        """
-        self._last_search_note = ""
-        if not self.commands.search_enabled:
-            return ""
-        outcome = self.search.search(query)
-        if outcome.usable:
-            self._last_search = outcome
-            return outcome.as_context()
-        self._last_search = outcome
-        # [EN] Unavailable: distinguish "failed" from "no results"; the two need different
-        # [EN] wording for the user.
-        # [ZH] 不可用：区分"失败"与"没有结果"，两者要给用户不同的说法
-        if not outcome.ok:
-            # [EN] Item 4 of the design specification (self-test fix-1): **translate the
-            # [EN] underlying exception into a category the user can understand**. The old
-            # [EN] code put outcome.error straight into the message, so the user saw
-            # [EN] "web search failed (https://www.bing.com/search ConnectError: error
-            # [EN] sending request for url (...))" -- wording meant for developers that
-            # [EN] neither said what to do nor distinguished "the network is down" from
-            # [EN] "the search source changed". Categories now produce user-facing wording;
-            # [EN] the original error still goes to the log and to search_diagnostics, so it
-            # [EN] is available when troubleshooting.
-            # [ZH] 相关设计第 4 条（自测问题修复-1）：把底层异常**翻译成用户能理解的一类**。
-            # [ZH] 旧写法直接把 outcome.error 塞进提示，用户看到的是
-            # [ZH] 「联网搜索失败（https://www.bing.com/search ConnectError: error sending
-            # [ZH]   request for url (…)）」—— 那是给开发者看的话，既没告诉他该怎么办，
-            # [ZH] 也没区分"网络不通"和"搜索源改版"。现在按类别给面向用户的说法；
-            # [ZH] 原始错误仍进日志与 search_diagnostics，排查时拿得到。
-            kind = getattr(outcome, "error_kind", "") or "unknown"
-            key = FAIL_KIND_KEYS.get(kind, "sys.search_failed")
-            if key == "sys.search_failed":
-                self._last_search_note = _t(key, error=outcome.error[:120])
-            else:
-                self._last_search_note = _t(key)
-            log.warning("搜索失败（类别=%s 源=%s）：%s",
-                        kind, getattr(outcome, "source", ""), outcome.error)
-        else:
-            self._last_search_note = _t("sys.search_empty")
-        log_user(log, "sys.log_search_no_result",
-                 ok=outcome.ok, count=outcome.count, reason=self._last_search_note)
-        return ""
-
-    def _search_note(self) -> str:
-        """
-        [EN]
-        Build the note describing search results.
-
-        [ZH]
-        取出上一次搜索的"为什么没用上"说明（无则空串）。
-        """
-        return str(getattr(self, "_last_search_note", "") or "")
-
-    def search_diagnostics(self) -> Dict[str, Any]:
-        """
-        [EN]
-        Return diagnostics about the search subsystem.
-
-        [ZH]
-        搜索链路的可观测快照（供状态区与测试断言四个环节）。
-
-        设计规范要求"逐环节排查"，所以这里把每个环节的结果都暴露出来：
-        是否开启、是否执行、返回条数、注入字符数、失败原因。
-        """
-        outcome = getattr(self, "_last_search", None)
-        return {
-            "enabled": bool(self.commands.search_enabled),
-            "executed": outcome is not None,
-            "ok": bool(outcome.ok) if outcome is not None else False,
-            "results": int(outcome.count) if outcome is not None else 0,
-            "elapsed_ms": int(outcome.elapsed_ms) if outcome is not None else 0,
-            "error": str(outcome.error) if outcome is not None else "",
-            # [EN] Design specification: also expose the "failure category" and the search
-            # [EN] source that actually took effect. On networks in mainland China, "the
-            # [EN] primary source always fails and the built-in Bing source does the work"
-            # [EN] must be visible in diagnostics; otherwise troubleshooting keeps chasing
-            # [EN] duckduckgo.
-            # [ZH] 相关设计：把"失败类别"与"实际生效的搜索源"也暴露出来，
-            # [ZH] 国内网络下"主源永远失败、真正干活的是内建 Bing 源"这件事
-            # [ZH] 必须能从诊断里看出来，否则排查会一直盯着 duckduckgo 打转。
-            "error_kind": str(getattr(outcome, "error_kind", "")) if outcome is not None else "",
-            "source": str(getattr(outcome, "source", "")) if outcome is not None else "",
-            "note": self._search_note(),
-        }
 
     @staticmethod
     def _merge_action(response: Dict[str, Any], action: Dict[str, Any]) -> None:
@@ -6723,7 +5200,15 @@ def main() -> None:
     # [ZH] 相关设计：模型缺失**不再征询后退出**，而是以"无模型就绪"状态继续跑。
     # [ZH] 这里只做一次"模型在不在"的判断；缺模型时先把 Backend 建起来（引擎留空），
     # [ZH] 稍后在 ready 之前发一条**非阻塞**的 need_download 告知前端。
-    model_path = check_model(config.model_path)
+    # [EN] Reader: the model directory is resolved exactly like Backend.models_dir()
+    # [EN] (config.model_hub.models_dir, relative to the writable state directory).
+    # [ZH] Reader：模型目录的解析方式与 Backend.models_dir() 完全一致
+    # [ZH] （config.model_hub.models_dir，相对可写状态目录解析）。
+    _models_setting = str(
+        getattr(getattr(config, "model_hub", None), "models_dir", "models") or "models")
+    _models_dir = (_models_setting if os.path.isabs(_models_setting)
+                   else os.path.join(state_dir(), _models_setting))
+    model_path = check_model(config.model_path, _models_dir)
     if not model_path:
         log.warning("%s", _t("sys.log_missing_model", model=config.model_path))
 
@@ -6743,21 +5228,11 @@ def main() -> None:
                          ensure_ascii=False), flush=True)
         return
 
-    # [EN] Design specification in an earlier release: load installed skills and local
-    # [EN] plugins (discovery / import / registration commands). Placed after warm-up so a
-    # [EN] skill-loading failure cannot slow down or block application startup, and the
-    # [EN] exceptions are already isolated.
-    # [ZH] 此前版本 相关设计：加载已安装技能与本地插件（发现/导入/注册命令）。
-    # [ZH] 放在预热之后：技能加载失败不会拖慢或阻塞主程序启动，且异常已被隔离。
-    try:
-        skill_summary = backend.load_skills()
-        if skill_summary.get("total"):
-            log_user(log, "sys.log_skills_loaded",
-                     total=skill_summary.get("total"), failed=skill_summary.get("failed"),
-                     skipped=skill_summary.get("skipped"))
-    except Exception:
-        log.exception("技能加载阶段异常（已忽略）")
-        skill_summary = {}
+    # [EN] Reader: the skill runtime is physically removed, so there is nothing to load
+    # [EN] at start-up. The stage is kept as an explicit no-op comment instead of being
+    # [EN] silently deleted, so a future re-introduction is an obvious edit.
+    # [ZH] Reader：技能运行期已物理删除，启动阶段无任何可加载内容。该阶段保留为显式空
+    # [ZH] 注释而不是被静默删除，使将来若重新引入也是一处显而易见的改动。
 
     # [EN] Design specification: tell the front end when the model is missing
     # [EN] (**non-blocking**) so that it shows guidance instead of a forced choice such as
@@ -6767,20 +5242,19 @@ def main() -> None:
     # [ZH] 拒绝就退出"的强制选择。放在 ready 之前，前端渲染就绪状态时一次就能拿到全部信息。
     model_missing: Dict[str, Any] = {}
     if not backend.model_ready:
-        # [EN] Reader edition: **no network request during startup**. The model repository
-        # [EN] lookup is dropped; the guidance only offers the in-app model library and
-        # [EN] manual placement, and any online lookup happens only after the user opens
-        # [EN] the model library and asks for it.
-        # [ZH] Reader 版：**启动阶段不发任何网络请求**。这里不再查询模型仓库；引导只给出
-        # [ZH] 程序内模型库与手动放置两条路径，任何联网查询都只在用户主动打开模型库后发生。
-        target, size, repo_error = "", 0, ""
+        # [EN] Reader edition: **no network request during startup**. There is no model
+        # [EN] repository, no mirror and no download path in this build, so the notice
+        # [EN] only names the missing local file and the real models directory; the user
+        # [EN] places a ``.gguf`` file there manually.
+        # [ZH] Reader 版：**启动阶段不发任何网络请求**。本构建没有模型仓库、没有镜像、
+        # [ZH] 也没有下载路径，因此这条告知只说明缺失的本地文件与真实的模型目录；用户
+        # [ZH] 把 ``.gguf`` 文件手动放进去即可。
         model_missing = {
             "model": config.model_path,
-            "repo": config.model_repo,
-            "target": target or config.model_path,
-            "size": int(size or 0),
+            "target": config.model_path,
+            "size": 0,
             "models_dir": backend.models_dir(),
-            "error": repo_error,
+            "error": "",
         }
         _write({
             "type": "need_download",
@@ -6792,29 +5266,23 @@ def main() -> None:
             # [ZH] 现在它只是一条告知，后端已就绪并继续服务（见模块头部的说明）。
             "blocking": False,
             "model": config.model_path,
-            "size": int(size or 0),
-            "repo": config.model_repo,
+            "size": 0,
             "current": config.model_path,
-            "target": target or config.model_path,
+            "target": config.model_path,
             "models_dir": backend.models_dir(),
             "content": _t(
-                "sys.model_missing_ask", model=config.model_path, repo=config.model_repo,
-                target=target or config.model_path,
-                size=(_t("sys.model_missing_size", mb=f"{size / 1048576:.0f}")
-                      if size else _t("sys.model_missing_unknown_size")),
+                "sys.model_missing_ask", model=config.model_path, repo="",
+                target=config.model_path,
+                size=_t("sys.model_missing_unknown_size"),
                 dir=backend.models_dir(),
             ),
         })
 
     log_user(log, "sys.log_ready", app=APP_NAME, version=APP_VERSION, studio=STUDIO)
-    # [EN] v0.2.6 Part 4: start the local API before the ready declaration when the
-    # [EN] configuration enables it, so an IDE extension that starts with the program
-    # [EN] can connect as soon as the interface unlocks. A bind failure is logged and
-    # [EN] does not block startup (see start_local_api_if_enabled).
-    # [ZH] v0.2.6 任务 4：配置启用时在就绪声明之前启动本地 API，使随程序启动的 IDE 扩展
-    # [ZH] 能在界面放行后立即连接。绑定失败只记录日志，不阻塞启动
-    # [ZH] （见 start_local_api_if_enabled）。
-    backend.start_local_api_if_enabled()
+    # [EN] Reader: no local HTTP server is started. The only inbound channel is the
+    # [EN] stdin/stdout JSON protocol handled by the loop below.
+    # [ZH] Reader：不启动任何本地 HTTP 服务。唯一入站通道就是下方循环处理的 stdin/stdout
+    # [ZH] JSON 行协议。
     # [EN] Ready declaration: emitted only after warm-up and all other preparation have
     # [EN] finished; the front end uses it to unlock input. It also carries the restored
     # [EN] history for the front end to display.
@@ -6822,15 +5290,12 @@ def main() -> None:
     _write({"type": "ready", "version": APP_VERSION, "studio": STUDIO, "restored": restored,
             "history": backend.conv.history,
             "locale": _i18n().locale, "i18n": _i18n().info(),
-            "commands": backend.commands.all_commands(),
-            "skills": backend.skills().status(),
-            # [EN] v0.2.6 Part 4: open-platform state at launch. The interface shows
-            # [EN] the active provider and the local API endpoint without a second round
-            # [EN] trip; both values are read-only snapshots.
-            # [ZH] v0.2.6 任务 4：启动时的开放平台状态。界面无需二次往返即可显示当前
-            # [ZH] 生效的提供方与本地 API 端点；两个取值均为只读快照。
-            "providers": backend.provider_state(),
-            "local_api": backend.local_api_state(),
+            "commands": [],
+            "skills": {},
+            # [EN] Reader: the inference configuration in force at launch, so the status
+            # [EN] area can show the tuned parameters without a second round trip.
+            # [ZH] Reader：启动时生效的推理配置，使状态区无需二次往返即可显示调优参数。
+            "inference_config": backend.inference_config.describe(),
             # [EN] Design specification: clearly distinguish "the backend is ready" from
             # [EN] "inference is available".
             # [ZH] 相关设计：明确区分"后端已就绪"与"推理可用"
@@ -6895,15 +5360,13 @@ def main() -> None:
 
         action = request.get("action")
 
-        # [EN] While a stream is active: command requests (starting with /) and stop are
-        # [EN] allowed; new conversation or file requests are told that the backend is busy.
-        # [ZH] 流式生成期间：指令类请求（以 / 开头）与 stop 允许；新的对话/文件请求提示忙碌
-        # [EN] v0.2.6 Part 4: the same rule applies while the local API is generating for
-        # [EN] an external tool, because the engine cannot run two generations at once.
-        # [ZH] v0.2.6 任务 4：本地 API 正在为外部工具生成时同样适用，因为引擎无法同时运行
-        # [ZH] 两次生成。
-        if (backend.stream_active or getattr(backend, "api_busy", False)) and action != "stop":
-            is_command = isinstance(request.get("message"), str) and request.get("message", "").startswith("/")
+        # [EN] While a stream is active only ``stop`` and lightweight read-only probes
+        # [EN] are accepted; any new conversation or file request is told that the
+        # [EN] backend is busy. Reader: the local API is removed, so the stream flag is
+        # [EN] the only source of "busy".
+        # [ZH] 流式生成期间只接受 ``stop`` 与轻量只读探测；新的对话/文件请求提示忙碌。
+        # [ZH] Reader：本地 API 已删除，因此"忙碌"只由流式标志决定。
+        if backend.stream_active and action != "stop":
             # [EN] Liveness probes and background-job polling are lightweight and
             # [EN] must remain available while a long task runs (v0.2.6 task 2.1).
             # [ZH] 存活探测与后台作业轮询属于轻量请求，长任务运行期间必须保持
@@ -6911,12 +5374,9 @@ def main() -> None:
             is_lightweight = action in ("ping", "file_job_status", "file_job_cancel",
                                         # [EN] Read-only state queries.
                                         # [ZH] 只读状态查询。
-                                        "promptlib_list",
-                                        # [EN] v0.2.6 Part 4: read-only platform state
-                                        # [ZH] v0.2.6 任务 4：只读平台状态
-                                        "provider_state", "local_api_state")
-            if not is_command and not is_lightweight:
-                # [EN] Busy flag (model marketplace optimization in an earlier release): the
+                                        "inference_config", "model_state")
+            if not is_lightweight:
+                # [EN] Busy flag: the
                 # [EN] single stdout stream is shared, and two threads writing at once
                 # [EN] interleave into broken JSON, so concurrent requests are refused while
                 # [EN] long tasks run. The structured flag lets the UI say "the backend is
@@ -6924,22 +5384,15 @@ def main() -> None:
                 # [ZH] busy 标记（此前版本 模型市场优化）：单条 stdout 是共享流，
                 # [ZH] 两个线程同时写会交错成坏 JSON，所以长任务期间一律拒绝并发请求。
                 # [ZH] 带上结构化标记，界面才能说清"是后端忙"而不是"模型中心坏了"。
-                # [EN] A local-API generation reports a distinct reason, so the user is not
-                # [EN] told to press Stop on a conversation that is not the one blocking.
-                # [ZH] 本地 API 生成中会给出不同原因，避免让用户去停止一段并非阻塞源的对话。
-                busy_text = (_t("sys.api_busy")
-                             if getattr(backend, "api_busy", False)
-                             else _t("sys.busy"))
-                _write({"type": "system", "content": busy_text, "busy": True})
+                _write({"type": "system", "content": _t("sys.busy"), "busy": True})
                 continue
 
-        if action in ("chat_stream", "model_download", "update_download",
-                      "model_hub_download", "file_stream", "model_hub_load"):
-            # [EN] All long tasks run on streaming threads: progress is emitted live and
-            # [EN] stop can interrupt them. file_stream keeps reporting progress during
-            # [EN] parsing, and model_hub_load reports "N entries fetched" page by page.
-            # [ZH] 所有长任务都走流式线程：进度实时输出，stop 可中断。
-            # [ZH] file_stream 在解析期间持续报进度；model_hub_load 按页报告"已取回 N 条"。
+        if action in ("chat_stream", "file_stream", "inference_tune_stream"):
+            # [EN] Long tasks run on streaming threads: progress is emitted live and
+            # [EN] stop can interrupt them. ``inference_tune_stream`` streams each
+            # [EN] benchmark trial, so the operator sees the tuning progress immediately.
+            # [ZH] 长任务都走流式线程：进度实时输出，stop 可中断。
+            # [ZH] ``inference_tune_stream`` 逐个试验流式上报基准测试，操作者可即时看到调优进度。
             backend.stop_event.clear()
             backend.stream_active = True
             threading.Thread(target=_stream_worker, args=(request,), daemon=True).start()

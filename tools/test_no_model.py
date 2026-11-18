@@ -207,8 +207,16 @@ def test_boundary(be):
     check("capability（设置页数据源）可用", bool((cap or {}).get("capability")) or "recommendation" in str(cap),
           str(cap)[:160])
 
-    reg = be.request({"action": "model_hub_registry"}, timeout=60)
-    check("模型库列表可用（空库也要能打开）", "registry" in str(reg), str(reg)[:160])
+    # [EN] Reader: ``model_hub_registry`` -- the model-library listing -- is physically
+    # [EN] removed together with the model library module, so the assertion is commented
+    # [EN] out rather than pointed at a different action. Recorded in
+    # [EN] records/v0.2.6-reader-后端裁剪与引擎调优记录.md.
+    # [ZH] Reader：``model_hub_registry``（模型库列表）已随模型库模块物理删除，因此该
+    # [ZH] 断言被**注释**而不是改指向别的动作。记录见
+    # [ZH] records/v0.2.6-reader-后端裁剪与引擎调优记录.md。
+    #
+    # reg = be.request({"action": "model_hub_registry"}, timeout=60)
+    # check("模型库列表可用（空库也要能打开）", "registry" in str(reg), str(reg)[:160])
 
     ctx = be.request({"action": "context"},
                      types=("context", "system", "error", "done"), timeout=60)
@@ -217,7 +225,13 @@ def test_boundary(be):
           str((ctx or {}).get("model_ready")))
 
     cmds = be.request({"action": "commands"}, timeout=60)
-    check("指令清单可用（会话历史/设置不受影响）", bool((cmds or {}).get("commands")), str(cmds)[:120])
+    # [EN] Reader: the slash-command registry is physically removed, so the action now
+    # [EN] answers with an empty list. The assertion checks the shape (a list is present)
+    # [EN] instead of a non-empty catalogue, because "no commands" is the correct state.
+    # [ZH] Reader：斜杠指令表已物理删除，因此该动作现在返回空列表。断言改为检查结构
+    # [ZH] （列表存在）而不是要求非空清单，因为"没有指令"正是正确状态。
+    check("指令清单可用（空清单是正确状态）",
+          isinstance((cmds or {}).get("commands"), list), str(cmds)[:120])
 
     check("上述请求之后进程仍存活", be.alive())
 
@@ -287,6 +301,25 @@ def test_scan_and_hotload(python, workdir, be):
 
 
 def test_market(python, workdir):
+    """[EN] REMOVED with the model library / [ZH] 随模型库删除。
+
+    [EN] This section built a ``ModelHub`` in a child process and asserted the offline
+    [EN] list source merge, the recommendation marks and "the default model is always
+    [EN] listed". ``backend/model_hub.py`` is physically deleted by the Reader backend
+    [EN] refactor, therefore the whole body is commented out; there is no implementation
+    [EN] left to assert against. Recorded in
+    [EN] records/v0.2.6-reader-后端裁剪与引擎调优记录.md.
+    [ZH] 本节在子进程中构造 ``ModelHub``，断言离线列表源合并、推荐标记与"默认模型必须
+    [ZH] 出现在列表里"。Reader 后端裁剪已物理删除 ``backend/model_hub.py``，因此整段
+    [ZH] 函数体被**注释**：已不存在可供断言的实现。记录见
+    [ZH] records/v0.2.6-reader-后端裁剪与引擎调优记录.md。
+    """
+    section("任务三：模型市场列表（已随模型库删除，跳过）")
+    skip("模型市场列表", "backend/model_hub.py 已物理删除")
+    return
+
+
+def _test_market_removed(python, workdir):
     section("任务三：模型市场列表（显示全部 + 推荐标记 + 默认模型必现）")
     # 这一段用**进程内**方式直接测 ModelHub：不联网也能验证"列表源合并 + 推荐标记"，
     # 而且能精确断言"默认模型一定在列表里"。

@@ -668,7 +668,16 @@
     "promptlib_invalid": "The template is incomplete: {error}",
     "promptlib_builtin_readonly": "Built-in templates cannot be modified or deleted.",
     "file_too_long": "❌ {name} is too long ({tokens} tokens), beyond the Reader limit of {limit} tokens. Split it and try again.",
-    "log_kv_cache_type": "KV Cache type: {kv} (K/V are 8-bit; this is what makes a 128K window fit in 32 GB)"
+    "log_kv_cache_type": "KV Cache type: {kv} (K/V are 8-bit; this is what makes a 128K window fit in 32 GB)",
+    "tune_started": "🔧 Hardware tuning started: {model}",
+    "tune_baseline": "Baseline: n_threads={threads}, n_batch={batch}, {tps} tok/s, TTFT {ttft} ms",
+    "tune_trial": "Trial: n_threads={threads}, n_batch={batch}, {tps} tok/s ({verdict})",
+    "tune_persisted": "✅ Best parameters written to {path}",
+    "tune_done": "Tuning finished ({reason}): best {tps} tok/s",
+    "tune_finished": "Hardware tuning finished",
+    "tune_no_model": "No local model is available, so hardware tuning cannot run. Download one in the model library or place a .gguf file manually.",
+    "tune_running": "Hardware tuning is already running; wait for the current benchmark to finish.",
+    "tune_scheduled": "Hardware tuning started in the background: it will measure several thread counts and batch sizes, log every trial, and persist the result when done."
   },
   "file": {
     "wps_missing_pywin32": "pywin32 is missing on this machine ({error}), so WPS COM cannot be used to read the file",

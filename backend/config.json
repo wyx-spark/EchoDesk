@@ -1,7 +1,5 @@
 {
   "model_path": "Qwen3-0.6B-Q6_K.gguf",
-  "model_repo": "unsloth/Qwen3-0.6B-GGUF",
-  "hf_endpoint": "https://hf-mirror.com",
   "default_mode": "chat",
   "context_length": 32768,
   "max_context": 32768,
@@ -45,49 +43,8 @@
     "total_chars": 60000,
     "disk_threshold_chars": 20000
   },
-  "providers": {
-    "active": "llamacpp",
-    "timeout_seconds": 120.0,
-    "api_consent_granted": false,
-    "api_consent_at": "",
-    "providers": []
-  },
-  "local_api": {
-    "enabled": false,
-    "port": 8788,
-    "api_key": "",
-    "max_output_tokens": 1024
-  },
-  "marketplace": {
-    "enabled": true,
-    "github_token": "",
-    "cache_ttl_hours": 6,
-    "skill_topic": "echodesk-plugin",
-    "auto_update_check": true,
-    "cache_file": "market_cache.json",
-    "per_page": 20,
-    "install_dir": "skills",
-    "registry_file": "skills_registry.json",
-    "api_base": "https://api.github.com",
-    "dev_dir": "skills_dev",
-    "local_manifest": "skills_local.json",
-    "require_verified": true
-  },
   "model_hub": {
-    "enabled": true,
-    "source": "auto",
-    "hf_token": "",
-    "models_dir": "models",
-    "registry_file": "models_registry.json",
-    "verify_sha256": true,
-    "download_retries": 3,
-    "search_limit": 20,
-    "max_items": 5000,
-    "max_requests": 8,
-    "max_seconds": 90.0,
-    "page_size": 20,
-    "search_cache_dir": "",
-    "search_cache_ttl_hours": 6
+    "models_dir": "models"
   },
   "reasoning": {
     "enabled": true,
@@ -95,24 +52,10 @@
     "history_max_chars": 8000,
     "tags": []
   },
-  "update": {
-    "enabled": true,
-    "repo": "wyx-spark/EchoDesk",
-    "api_base": "https://api.github.com",
-    "check_on_startup": true,
-    "check_interval_hours": 24,
-    "include_prerelease": false,
-    "last_check": "",
-    "last_seen_version": "",
-    "ignored_version": ""
-  },
   "language": "auto",
   "max_history": 10,
-  "search_default": false,
   "temperature": 0.7,
   "max_tokens": 1024,
-  "search_results": 3,
-  "searxng_url": "",
   "preset": "balanced",
   "inference_profile": "balanced",
   "top_p": 0.9,
@@ -123,9 +66,6 @@
   "file_max_chars": 200000,
   "theme": "dark",
   "warmup": true,
-  "n_threads": 0,
-  "n_batch": 512,
-  "n_gpu_layers": 0,
   "inference_override": false,
   "session_file": "session.json",
   "models": {

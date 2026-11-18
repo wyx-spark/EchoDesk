@@ -59,6 +59,7 @@ from hardware_profiler import DEFAULT_INITIAL_CONTEXT
 import cuda_bootstrap
 from i18n import log_user
 from i18n import t as _t
+from inference_config import InferenceConfig
 from reasoning import ANSWER, ReasoningSplitter, normalize_tags, split_text
 
 # [EN] Reader hardening: every llama.cpp context is created with an 8-bit KV cache.
@@ -272,26 +273,41 @@ class LLMEngine:
         n_ctx: int = DEFAULT_INITIAL_CONTEXT,
         verbose: bool = False,
         n_threads: Optional[int] = None,
-        n_batch: int = 512,
-        n_gpu_layers: int = 0,
+        n_batch: Optional[int] = None,
+        n_gpu_layers: Optional[int] = None,
         reasoning=None,
         profile=None,
         max_n_ctx: Optional[int] = None,
         backend_label: str = "",
+        inference: Optional[InferenceConfig] = None,
     ) -> None:
+        # [EN] Reader: every construction parameter now comes from
+        # [EN] ``inference_config.json``. Explicit constructor arguments remain
+        # [EN] supported for tests and for the "test load" child process, but the
+        # [EN] application path passes none of them, so no tuning value is hard-coded
+        # [EN] in Python.
+        # [ZH] Reader：所有构建参数现在都来自 ``inference_config.json``。构造函数参数
+        # [ZH] 仍为测试与"测试加载"子进程保留，但应用路径不再传入任何一个，因此 Python
+        # [ZH] 代码中不硬编码任何调优值。
+        self.inference = inference or InferenceConfig.load()
         self.model_path = model_path
         self.n_ctx = int(n_ctx)
-        self.n_threads = n_threads
-        self.n_batch = n_batch
-        self.n_gpu_layers = n_gpu_layers
-        # [EN] KV-cache storage width selected by the inference preset. F16 is the
-        # [EN] only value currently produced by the preset table (see
-        # [EN] ``hardware_profiler.KV_CACHE_TYPE_F16``); it is recorded here so the
-        # [EN] active configuration is fully observable in diagnostics and logs.
-        # [ZH] 由推理预设选择的 KV Cache 存储宽度。F16 是预设表当前唯一产出的取值
-        # [ZH] （见 ``hardware_profiler.KV_CACHE_TYPE_F16``）；在此记录，使当前生效的
-        # [ZH] 配置在诊断与日志中可完整观测。
-        self.kv_cache_type = KV_CACHE_Q8_0
+        self.n_threads = (int(n_threads) if n_threads is not None
+                          else int(self.inference.resolve_n_threads()))
+        self.n_batch = (int(n_batch) if n_batch is not None
+                        else int(self.inference.n_batch))
+        self.n_ubatch = int(self.inference.n_ubatch)
+        self.use_mlock = bool(self.inference.use_mlock)
+        self.use_mmap = bool(self.inference.use_mmap)
+        self.flash_attn = bool(self.inference.flash_attn)
+        self.n_gpu_layers = (int(n_gpu_layers) if n_gpu_layers is not None
+                             else int(self.inference.n_gpu_layers))
+        # [EN] KV-cache storage width selected by the configuration file. The Reader
+        # [EN] ships q8_0, and the file is the only place that value can change.
+        # [ZH] 由配置文件选择的 KV Cache 存储宽度。Reader 随包为 q8_0，该取值只能在
+        # [ZH] 配置文件中修改。
+        self.kv_cache_type = str(self.inference.type_k or KV_CACHE_Q8_0)
+        self.kv_cache_type_v = str(self.inference.type_v or KV_CACHE_Q8_0)
         # [EN] Reader: token count of the document the window is sized for. ``None``
         # [EN] means no document has been parsed yet.
         # [ZH] Reader：窗口所适配文档的 token 数。``None`` 表示尚未解析任何文档。
@@ -342,18 +358,29 @@ class LLMEngine:
         cuda_bootstrap.ensure()
         from llama_cpp import Llama
 
-        # [EN] Force Q8_0 for both K and V so the 128K window fits in 32 GB.
-        # [ZH] K 与 V 均强制 Q8_0，使 128K 窗口可容纳于 32GB 内存。
-        kv_type = kv_cache_q8_0_type()
+        # [EN] Every performance parameter (threads, batch, mlock, mmap, FlashAttention,
+        # [EN] KV-cache width, GPU layers) is taken from ``inference_config.json`` via
+        # [EN] :meth:`InferenceConfig.llama_kwargs`. Only the model path and the context
+        # [EN] window are decided here, because both follow the document being read.
+        # [ZH] 所有性能参数（线程、批大小、mlock、mmap、FlashAttention、KV Cache 宽度、
+        # [ZH] GPU 层数）都经 :meth:`InferenceConfig.llama_kwargs` 取自
+        # [ZH] ``inference_config.json``。此处只决定模型路径与上下文窗口，因为二者随
+        # [ZH] 正在阅读的文档变化。
+        kwargs = self.inference.llama_kwargs()
+        kwargs.update({
+            "n_threads": int(self.n_threads),
+            "n_batch": int(self.n_batch),
+            "n_ubatch": int(self.n_ubatch),
+            "n_gpu_layers": int(self.n_gpu_layers),
+            "use_mlock": bool(self.use_mlock),
+            "use_mmap": bool(self.use_mmap),
+            "flash_attn": bool(self.flash_attn),
+        })
         llm = Llama(
             model_path=self.model_path,
             n_ctx=self.n_ctx,
             verbose=verbose,
-            n_threads=self.n_threads,
-            n_batch=self.n_batch,
-            n_gpu_layers=self.n_gpu_layers,
-            type_k=kv_type,
-            type_v=kv_type,
+            **kwargs,
         )
         # [EN] llama.cpp reports the effective and training context values; use them
         # to calibrate the metadata parsing result.
@@ -389,24 +416,27 @@ class LLMEngine:
         静默沿用上一个模型的调优参数。
         """
         try:
-            threads = int(getattr(plan, "n_threads", 0) or 0)
-            if threads > 0:
-                self.n_threads = threads
-            batch = int(getattr(plan, "n_batch", 0) or 0)
-            if batch > 0:
-                # [EN] ``n_batch`` is a construction-time parameter: it only takes
-                # [EN] effect when the llama.cpp object is rebuilt, which the reload
-                # [EN] performed by the caller guarantees.
-                # [ZH] ``n_batch`` 是构建期参数：只有重建 llama.cpp 对象才会生效，
-                # [ZH] 调用方随后执行的重新加载保证了这一点。
-                self.n_batch = batch
-            # [EN] Reader: the preset's KV-cache width is deliberately ignored; Q8_0
-            # [EN] is a hard requirement, not a tuning choice.
-            # [ZH] Reader：刻意忽略预设的 KV Cache 宽度；Q8_0 是硬性要求，而非调优选项。
-            self.kv_cache_type = KV_CACHE_Q8_0
-            self.n_gpu_layers = int(
-                getattr(plan, "n_gpu_layers", self.n_gpu_layers)
-            )
+            # [EN] Reader: thread count and batch size come from
+            # [EN] ``inference_config.json`` (and from the auto-tuner that writes it), not
+            # [EN] from the hardware plan. The plan is still applied for the accelerator
+            # [EN] decision and the context ceiling, which depend on the model being
+            # [EN] loaded rather than on the machine.
+            # [ZH] Reader：线程数与批大小来自 ``inference_config.json``（以及写入该文件的
+            # [ZH] 自动调优模块），不取自硬件规划。规划仍用于加速器决策与上下文上限 ——
+            # [ZH] 这两者取决于所加载的模型，而不是机器本身。
+            self.n_threads = int(self.inference.resolve_n_threads())
+            self.n_batch = int(self.inference.n_batch)
+            self.n_ubatch = int(self.inference.n_ubatch)
+            self.use_mlock = bool(self.inference.use_mlock)
+            self.use_mmap = bool(self.inference.use_mmap)
+            self.flash_attn = bool(self.inference.flash_attn)
+            # [EN] Reader: the configured KV-cache width is authoritative; the preset's
+            # [EN] choice is deliberately ignored.
+            # [ZH] Reader：配置的 KV Cache 宽度具有权威性；刻意忽略预设的选择。
+            self.kv_cache_type = str(self.inference.type_k or KV_CACHE_Q8_0)
+            self.kv_cache_type_v = str(self.inference.type_v or KV_CACHE_Q8_0)
+            self.n_gpu_layers = (int(self.n_gpu_layers) if self.n_gpu_layers
+                                 else int(self.inference.n_gpu_layers))
             ceiling = int(getattr(plan, "n_ctx_max", 0) or 0)
             if ceiling > 0:
                 # [EN] The ceiling belongs to the planned model and replaces the
@@ -489,6 +519,20 @@ class LLMEngine:
         # [ZH] Reader 验收：启动日志必须明确写出 KV Cache 数据类型，使运维无需打开
         # [ZH] 诊断面板即可确认 Q8_0。
         log_user(log, "sys.log_kv_cache_type", kv=self.kv_cache_type)
+        # [EN] Reader acceptance: one plain line stating every tuned parameter, so the
+        # [EN] effective configuration is verifiable from the captured stderr alone:
+        # [EN] "Inference engine loaded with n_threads=..., n_batch=..., kv_cache=...,
+        # [EN] mlock=..., flash_attn=...".
+        # [ZH] Reader 验收：用一行明文写出全部生效参数，使仅凭抓取到的 stderr 即可核对
+        # [ZH] 当前配置："Inference engine loaded with n_threads=..., n_batch=...,
+        # [ZH] kv_cache=..., mlock=..., flash_attn=..."。
+        log.info(
+            "Inference engine loaded with n_threads=%d, n_batch=%d, kv_cache=%s, "
+            "mlock=%s, flash_attn=%s, n_ctx=%d",
+            int(self.n_threads), int(self.n_batch), str(self.kv_cache_type),
+            "true" if self.use_mlock else "false",
+            "true" if self.flash_attn else "false", int(self.n_ctx),
+        )
 
     def close(self) -> None:
         """
@@ -610,30 +654,40 @@ class LLMEngine:
     @staticmethod
     def plan_context_for_tokens(
         file_tokens: int,
-        output_budget: int = DEFAULT_OUTPUT_TOKEN_BUDGET,
-        margin: int = CONTEXT_SAFETY_MARGIN,
+        output_budget: Optional[int] = None,
+        margin: Optional[int] = None,
+        inference: Optional[InferenceConfig] = None,
     ) -> int:
         """
         [EN]
         Document-driven window allocation: ``file_tokens + output_budget + margin``.
 
-        The result is clamped to ``[DEFAULT_INITIAL_CONTEXT, MAX_DYNAMIC_CONTEXT]``.
-        A document whose token count would exceed the hard ceiling is rejected by
-        the caller rather than silently truncated, so the user always knows why
-        the file cannot be opened.
+        The result is clamped to ``[n_ctx_default, n_ctx_max]`` and **both bounds, the
+        output budget and the safety margin are read from the inference configuration
+        file** -- they are the bottom layer of the front end's dynamic context
+        calculation. A document whose token count would exceed the hard ceiling is
+        rejected by the caller rather than silently truncated, so the user always knows
+        why the file cannot be opened.
 
         [ZH]
         文档驱动的窗口分配：``file_tokens + output_budget + margin``。
 
-        结果收敛到 ``[DEFAULT_INITIAL_CONTEXT, MAX_DYNAMIC_CONTEXT]``。若文档 token
-        数会突破硬上限，由调用方直接拒绝而不是静默截断，使用户始终知道文件为何打不开。
+        结果收敛到 ``[n_ctx_default, n_ctx_max]``，且**上下界、输出预算与安全余量全部
+        取自推理配置文件** —— 它们就是前端动态上下文计算的底层对齐点。若文档 token 数
+        会突破硬上限，由调用方直接拒绝而不是静默截断，使用户始终知道文件为何打不开。
         """
+        cfg = inference or InferenceConfig.load()
+        budget = (int(cfg.output_token_budget) if output_budget is None
+                  else int(output_budget))
+        guard = (int(cfg.context_safety_margin) if margin is None else int(margin))
+        floor_ctx = max(1, int(cfg.n_ctx_default))
+        ceiling = max(floor_ctx, int(cfg.n_ctx_max))
         # [EN] Sanitize: a negative or missing count must never produce a negative
         # [EN] window, because llama.cpp treats a non-positive n_ctx as invalid.
         # [ZH] 防御：负数或缺失的计数绝不能产生负窗口，llama.cpp 视非正 n_ctx 为非法。
         requested = max(0, int(file_tokens or 0))
-        requested += max(0, int(output_budget or 0)) + max(0, int(margin or 0))
-        return max(DEFAULT_INITIAL_CONTEXT, min(requested, MAX_DYNAMIC_CONTEXT))
+        requested += max(0, budget) + max(0, guard)
+        return max(floor_ctx, min(requested, ceiling))
 
     def document_exceeds_capacity(self, file_tokens: int) -> bool:
         """
@@ -642,8 +696,12 @@ class LLMEngine:
 
         [ZH]
         文档本身是否已无法容纳（即使不预留任何输出预算）。
+
+        上限取自推理配置文件的 ``n_ctx_max``；对象未经 ``__init__`` 构造（测试中通过
+        ``__new__`` 创建）时回落到配置文件当前值，而不是抛 ``AttributeError``。
         """
-        return int(file_tokens or 0) > MAX_DYNAMIC_CONTEXT
+        config = getattr(self, "inference", None) or InferenceConfig.load()
+        return int(file_tokens or 0) > int(config.n_ctx_max)
 
     def set_document_tokens(self, file_tokens: int) -> int:
         """
@@ -652,19 +710,22 @@ class LLMEngine:
 
         Called as soon as a file has been parsed. The window only ever grows
         within one process, so repeatedly adding files does not reload the model
-        for a smaller value; a document beyond ``MAX_DYNAMIC_CONTEXT`` is
+        for a smaller value; a document beyond the configured ceiling is
         reported through :meth:`document_exceeds_capacity` before this method is
-        reached.
+        reached. The requested window is aligned with the configuration file, so the
+        front end's token budget and the engine's allocation can never disagree.
 
         [ZH]
         记录文档 token 数，并在需要时扩展窗口。
 
         文件解析完成后立即调用。同一进程内窗口只增不减，因此连续添加文件不会为更小的
-        数值重建模型；超过 ``MAX_DYNAMIC_CONTEXT`` 的文档会在调用本方法之前由
-        :meth:`document_exceeds_capacity` 报告。
+        数值重建模型；超过配置上限的文档会在调用本方法之前由
+        :meth:`document_exceeds_capacity` 报告。申请的窗口与配置文件对齐，因此前端的
+        token 预算与引擎的分配绝不会互相矛盾。
         """
         self.document_tokens = int(file_tokens or 0)
-        target = self.plan_context_for_tokens(self.document_tokens)
+        target = self.plan_context_for_tokens(self.document_tokens,
+                                              inference=self.inference)
         if self.llm is None:
             # [EN] Not loaded yet: the next ``load`` reads ``document_tokens``.
             # [ZH] 尚未加载：下一次 ``load`` 会读取 ``document_tokens``。
@@ -1424,22 +1485,35 @@ class LazyLLMEngine(LLMEngine):
     """
 
     def __init__(self, n_ctx: int = DEFAULT_INITIAL_CONTEXT, verbose: bool = False,
-                 n_threads: Optional[int] = None, n_batch: int = 512,
-                 n_gpu_layers: int = 0, reasoning=None, profile=None,
-                 max_n_ctx: Optional[int] = None, backend_label: str = "") -> None:
+                 n_threads: Optional[int] = None, n_batch: Optional[int] = None,
+                 n_gpu_layers: Optional[int] = None, reasoning=None, profile=None,
+                 max_n_ctx: Optional[int] = None, backend_label: str = "",
+                 inference: Optional[InferenceConfig] = None) -> None:
         # [EN] Deliberately does not call super().__init__: that path would import
         # llama_cpp and load the model immediately.
         # [ZH] 刻意不调用 super().__init__：该路径会立即 import llama_cpp 并加载模型。
         self.model_path = ""
         self.n_ctx = int(n_ctx or DEFAULT_INITIAL_CONTEXT)
-        self.n_threads = n_threads
-        self.n_batch = n_batch
-        self.n_gpu_layers = n_gpu_layers
-        # [EN] Record the planned KV-cache width even before a model is loaded, so
-        # [EN] that the settings page can display the active preset immediately.
-        # [ZH] 在加载模型之前即记录规划得到的 KV Cache 宽度，使设置页可以立即显示
-        # [ZH] 当前生效的预设。
-        self.kv_cache_type = KV_CACHE_Q8_0
+        # [EN] Reader: the same configuration-file authority as the parent engine, so a
+        # [EN] hot load cannot apply different tuning values than a cold load.
+        # [ZH] Reader：与父类引擎相同的配置文件权威性，使热加载与冷加载不会采用不同的
+        # [ZH] 调优参数。
+        self.inference = inference or InferenceConfig.load()
+        self.n_threads = (int(n_threads) if n_threads is not None
+                          else int(self.inference.resolve_n_threads()))
+        self.n_batch = (int(n_batch) if n_batch is not None
+                        else int(self.inference.n_batch))
+        self.n_ubatch = int(self.inference.n_ubatch)
+        self.use_mlock = bool(self.inference.use_mlock)
+        self.use_mmap = bool(self.inference.use_mmap)
+        self.flash_attn = bool(self.inference.flash_attn)
+        self.n_gpu_layers = (int(n_gpu_layers) if n_gpu_layers is not None
+                             else int(self.inference.n_gpu_layers))
+        # [EN] Record the configured KV-cache width even before a model is loaded, so
+        # [EN] that the settings page can display the active value immediately.
+        # [ZH] 在加载模型之前即记录配置的 KV Cache 宽度，使设置页可以立即显示当前生效值。
+        self.kv_cache_type = str(self.inference.type_k or KV_CACHE_Q8_0)
+        self.kv_cache_type_v = str(self.inference.type_v or KV_CACHE_Q8_0)
         # [EN] Reader: token count of the document that drives the window size.
         # [ZH] Reader：驱动窗口大小的文档 token 数。
         self.document_tokens: Optional[int] = None
@@ -1519,7 +1593,8 @@ class LazyLLMEngine(LLMEngine):
         if n_ctx is not None:
             target_ctx = int(n_ctx)
         elif self.document_tokens is not None:
-            target_ctx = self.plan_context_for_tokens(self.document_tokens)
+            target_ctx = self.plan_context_for_tokens(self.document_tokens,
+                                                      inference=self.inference)
         else:
             target_ctx = int(self.n_ctx or DEFAULT_INITIAL_CONTEXT)
             if self.max_n_ctx > 0:
@@ -1536,18 +1611,24 @@ class LazyLLMEngine(LLMEngine):
         # [ZH] 与父类引擎相同：构建原生模型会改变共享的 llama.cpp 后端状态，绝不能
         # [ZH] 与后台摘要器的解码并发执行。
         with _INFERENCE_LOCK:
-            # [EN] Force Q8_0 for both K and V (Reader requirement).
-            # [ZH] K 与 V 均强制 Q8_0（Reader 要求）。
-            kv_type = kv_cache_q8_0_type()
+            # [EN] Every performance parameter comes from the configuration file, as in
+            # [EN] the parent engine; only the path and the window are per-document.
+            # [ZH] 与父类引擎一致，所有性能参数均来自配置文件；只有路径与窗口随文档变化。
+            kwargs = self.inference.llama_kwargs()
+            kwargs.update({
+                "n_threads": int(self.n_threads),
+                "n_batch": int(self.n_batch),
+                "n_ubatch": int(self.n_ubatch),
+                "n_gpu_layers": int(self.n_gpu_layers),
+                "use_mlock": bool(self.use_mlock),
+                "use_mmap": bool(self.use_mmap),
+                "flash_attn": bool(self.flash_attn),
+            })
             llm = Llama(
                 model_path=path,
                 n_ctx=target_ctx,
                 verbose=False,
-                n_threads=self.n_threads,
-                n_batch=self.n_batch,
-                n_gpu_layers=self.n_gpu_layers,
-                type_k=kv_type,
-                type_v=kv_type,
+                **kwargs,
             )
             self.llm = llm
             self.model_path = path

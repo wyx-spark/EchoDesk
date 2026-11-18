@@ -123,7 +123,8 @@ def build_backend():
     config.model_path = "stub.gguf"
     config.session_file = ""
     config.speed_hint = False
-    config.search_default = False
+    # [EN] Reader: search_default no longer exists (the web-search layer is removed).
+    # [ZH] Reader：search_default 已不存在（联网搜索层已删除）。
     config.summary_cache = False
     config.files = FilesConfig()
     backend = backend_main.Backend(config)

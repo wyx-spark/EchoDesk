@@ -668,7 +668,16 @@
     "promptlib_invalid": "模板内容不完整：{error}",
     "promptlib_builtin_readonly": "内置模板不可修改或删除。",
     "file_too_long": "❌ 文件 {name} 过长（{tokens} tokens），超过 Reader 的 {limit} tokens 上限，请拆分后重试。",
-    "log_kv_cache_type": "KV Cache type: {kv}（K/V 均为 8 位，32GB 内存跑 128K 窗口的基础）"
+    "log_kv_cache_type": "KV Cache type: {kv}（K/V 均为 8 位，32GB 内存跑 128K 窗口的基础）",
+    "tune_started": "🔧 硬件调优开始：{model}",
+    "tune_baseline": "基线：n_threads={threads}, n_batch={batch}, {tps} tok/s, 首字 {ttft} ms",
+    "tune_trial": "试探：n_threads={threads}, n_batch={batch}, {tps} tok/s（{verdict}）",
+    "tune_persisted": "✅ 最优参数已写入 {path}",
+    "tune_done": "调优结束（{reason}）：最优 {tps} tok/s",
+    "tune_finished": "硬件调优已完成",
+    "tune_no_model": "没有可用的本地模型，无法进行硬件调优。请先在模型库下载或手动放入 .gguf 文件。",
+    "tune_running": "硬件调优正在进行中，请等待当前基准测试结束。",
+    "tune_scheduled": "硬件调优已在后台开始：将依次测量不同线程数与批大小，过程写入日志，结束后自动落盘。"
   },
   "file": {
     "wps_missing_pywin32": "本机缺少 pywin32（{error}），无法使用 WPS COM 读取",
