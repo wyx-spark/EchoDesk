@@ -72,11 +72,11 @@ def ggml_type_value(name: Any) -> int:
     """
     [EN]
     Translate a KV-cache type name (``q8_0``) or a literal enum value into the integer
-    llama-cpp-python expects. An unknown name falls back to Q8_0, which is the Reader's
+    the native llama.cpp API expects. An unknown name falls back to Q8_0, which is the Reader's
     hard baseline, rather than failing the model load.
 
     [ZH]
-    把 KV Cache 类型名（``q8_0``）或字面枚举值转换成 llama-cpp-python 期望的整数。
+    把 KV Cache 类型名（``q8_0``）或字面枚举值转换成原生 llama.cpp 期望的整数。
     未知名称回退到 Q8_0（Reader 的硬性基线），而不是让模型加载失败。
     """
     if isinstance(name, int):
@@ -84,14 +84,10 @@ def ggml_type_value(name: Any) -> int:
     key = str(name or "").strip().lower()
     if key in GGML_TYPE_VALUES:
         return GGML_TYPE_VALUES[key]
-    try:
-        from llama_cpp._ggml import GGMLType  # noqa: PLC0415 - optional native import
-
-        member = getattr(GGMLType, "GGML_TYPE_" + key.upper(), None)
-        if member is not None:
-            return int(member)
-    except Exception:  # noqa: BLE001 - fall back to the documented ordinal
-        pass
+    # [EN] The Reader edition has no Python binding to read the enum from; the numeric
+    # [EN] values above are the stable ``ggml_type`` ordinals and Q8_0 is the fallback.
+    # [ZH] Reader 版没有可读取枚举的 Python 绑定；上表数值就是稳定的 ``ggml_type``
+    # [ZH] 序号，未知名称回退到 Q8_0。
     return GGML_TYPE_VALUES["q8_0"]
 
 

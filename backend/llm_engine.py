@@ -1,6 +1,6 @@
 """
 [EN]
-LLM inference engine wrapper built on llama-cpp-python. It supports streaming and
+LLM inference engine built directly on the native llama.cpp runtime. It supports streaming and
 non-streaming completion, interruption, and cache management.
 
 It is additionally responsible for:
@@ -11,7 +11,7 @@ It is additionally responsible for:
     hint;
   * Separating reasoning content from the final answer. Reasoning models (Qwen3
     thinking mode, DeepSeek-R1, and similar) emit the reasoning trace inside
-    ``content``, wrapped in tags. llama-cpp-python 0.3.x exposes neither a
+    ``content``, wrapped in tags. The native C API exposes neither a
     ``reasoning_format`` option nor a ``reasoning_content`` field, so the split is
     performed in this layer by the tag splitter in :mod:`reasoning`:
     ``chat_stream_split`` and ``chat_complete_split`` expose both channels, while
@@ -24,14 +24,14 @@ llama.cpp is not thread-safe, and the chat thread and the background document
 summarizer share one model instance.
 
 [ZH]
-基于 llama-cpp-python 的 LLM 推理引擎封装，支持流式与非流式补全、中断以及缓存管理。
+直接基于原生 llama.cpp 运行期的 LLM 推理引擎，支持流式与非流式补全、中断以及缓存管理。
 
 同时负责：
   * 模型加载/重载时输出当前上下文窗口（配置值与模型训练窗口）；
   * 依据 GGUF 元数据估算 KV Cache 内存占用；
   * 记录生成速度，供"扩展上下文后变慢"的提示使用；
   * 思考内容与最终回答的分流：推理模型（Qwen3 thinking 模式、DeepSeek-R1 等）会把
-    思考过程写在 ``content`` 内并以标签包裹，而 llama-cpp-python 0.3.x 既没有
+    思考过程写在 ``content`` 内并以标签包裹，而原生 C API 既没有
     ``reasoning_format`` 选项，也没有 ``reasoning_content`` 字段，因此分流在本层由
     :mod:`reasoning` 的标签分离器完成：``chat_stream_split`` / ``chat_complete_split``
     暴露双通道，``chat_stream`` / ``chat_complete`` 则保持"只返回最终回答"的兼容语义
@@ -49,13 +49,11 @@ from typing import Callable, Dict, Iterator, List, Optional, Tuple
 
 from gguf_meta import describe_model, estimate_kv_cache_bytes, format_bytes, resolve_context_window
 from hardware_profiler import DEFAULT_INITIAL_CONTEXT
-# [EN] v0.2.6 item 23: the DLL preload bootstrap must run before any
-# [EN] ``from llama_cpp import Llama`` in this module. Importing it here is cheap
-# [EN] (standard library only) and lets every load path below call ``ensure()``
-# [EN] without relying on the entry point having done it first.
-# [ZH] v0.2.6 第 23 项：DLL 预加载引导必须早于本模块任何
-# [ZH] ``from llama_cpp import Llama``。此处的导入很轻（仅标准库），使下方每条加载
-# [ZH] 路径都能自行调用 ``ensure()``，不依赖入口点先行完成。
+# [EN] The DLL bootstrap registers the native library directory before the C ABI is
+# [EN] imported. Importing it here is cheap (standard library only) and lets every
+# [EN] load path below call ``ensure()`` without relying on the entry point.
+# [ZH] DLL 引导会在导入 C ABI 之前注册原生库目录。此处的导入很轻（仅标准库），
+# [ZH] 使下方每条加载路径都能自行调用 ``ensure()``，不依赖入口点先行完成。
 import cuda_bootstrap
 from i18n import log_user
 from i18n import t as _t
@@ -88,24 +86,22 @@ MAX_DYNAMIC_CONTEXT = 131072
 def kv_cache_q8_0_type() -> int:
     """
     [EN]
-    Return the integer ``ggml_type`` for an 8-bit KV cache.
+    Return the ``ggml_type`` numeric value for the Q8_0 KV-cache width.
 
-    llama-cpp-python exposes the enum as ``llama_cpp._ggml.GGMLType`` in the
-    pinned version; older or newer builds may move it, so the literal fallback is
-    used instead of failing the model load.
+    The native C ABI exposes the enum only as a constant table, and this module
+    deliberately does not import any Python wrapper to obtain it. Q8_0 is the
+    Reader default and its numeric value is stable upstream (8), so it is returned
+    directly; the configuration file may still select another width through
+    ``InferenceConfig.type_k``.
 
     [ZH]
-    返回 8 位 KV Cache 对应的整数 ``ggml_type``。
+    返回 Q8_0 这一 KV Cache 宽度的 ``ggml_type`` 数值。
 
-    当前锁定版本把枚举放在 ``llama_cpp._ggml.GGMLType``；不同版本可能移动位置，因此
-    以字面量兜底，绝不因为枚举导入失败而阻断模型加载。
+    原生 C ABI 只以常量表形式给出枚举，而本模块刻意不导入任何 Python 包装包来获取它。
+    Q8_0 是 Reader 默认值，其数值在上游稳定（8），因此直接返回；配置文件仍可通过
+    ``InferenceConfig.type_k`` 选择其他宽度。
     """
-    try:
-        from llama_cpp._ggml import GGMLType  # noqa: PLC0415 - optional native import
-
-        return int(GGMLType.GGML_TYPE_Q8_0)
-    except Exception:  # noqa: BLE001 - fall back to the documented enum value
-        return KV_CACHE_Q8_0_TYPE
+    return KV_CACHE_Q8_0_TYPE
 
 log = logging.getLogger("EchoDesk.LLM")
 
@@ -114,7 +110,7 @@ log = logging.getLogger("EchoDesk.LLM")
 #: The underlying llama.cpp extension is **not thread-safe**: a native model
 #: instance may only be decoded by one thread at a time. The chat path and the
 #: background document summarizer are independent threads that share one engine
-#: object, so without serialization two ``llama_cpp.decode`` calls can run
+#: object, so without serialization two native ``decode`` calls can run
 #: concurrently and crash the process with an access violation
 #: (``0xC0000005`` / exit code ``-1073741819``). Every entry point that starts,
 #: stops, or mutates native inference (streaming and non-streaming completion,
@@ -133,7 +129,7 @@ log = logging.getLogger("EchoDesk.LLM")
 #:
 #: 底层 llama.cpp 扩展**不是线程安全的**：同一个原生模型实例在同一时刻只能由
 #: 一个线程解码。聊天路径与后台文档摘要器是两个独立线程，却共享同一个引擎对象；
-#: 若不串行化，两次 ``llama_cpp.decode`` 会并发执行，并以访问违例
+#: 若不串行化，两次原生 ``decode`` 会并发执行，并以访问违例
 #: （``0xC0000005`` / 退出码 ``-1073741819``）使进程崩溃。所有会启动、停止或改变
 #: 原生推理状态的入口（流式/非流式补全、模型加载/重载/释放、KV Cache 重置）都
 #: 必须在整个原生操作期间持有该互斥锁。锁定义在模块级而非实例级：专用摘要引擎
@@ -356,7 +352,7 @@ class LLMEngine:
         # [ZH] v0.2.6 第 23 项：在原生导入之前注册 CUDA 运行时目录，并按依赖顺序
         # [ZH] 预加载 llama.cpp DLL。
         cuda_bootstrap.ensure()
-        from llama_cpp import Llama
+        from llama_native import NativeLlama
 
         # [EN] Every performance parameter (threads, batch, mlock, mmap, FlashAttention,
         # [EN] KV-cache width, GPU layers) is taken from ``inference_config.json`` via
@@ -376,7 +372,7 @@ class LLMEngine:
             "use_mmap": bool(self.use_mmap),
             "flash_attn": bool(self.flash_attn),
         })
-        llm = Llama(
+        llm = NativeLlama(
             model_path=self.model_path,
             n_ctx=self.n_ctx,
             verbose=verbose,
@@ -958,7 +954,7 @@ class LLMEngine:
 
         ## Why a separate thread is required
 
-        The ``llama_cpp`` streaming generator blocks for tens of seconds during
+        The native streaming generator blocks for tens of seconds during
         prefill; measured on CPU-only hardware, a 3000-character prompt takes more
         than ten seconds to emit its first token. If the consumer iterates
         ``for chunk in stream`` directly, nothing can be sent during that interval:
@@ -995,7 +991,7 @@ class LLMEngine:
 
         ## 必须另起线程的原因
 
-        ``llama_cpp`` 的流式生成器在 prefill 阶段会阻塞数十秒（纯 CPU 环境下，
+        原生流式生成器在 prefill 阶段会阻塞数十秒（纯 CPU 环境下，
         3000 字符的提示词实测需要十几秒才产出首个 token）。若消费者直接
         ``for chunk in stream``，该时间段内无法发出任何数据，flush 也无法解决，因为
         根本没有数据可 flush。观察到的"生成中途卡住、稍后一次性出现大量内容"现象，
@@ -1490,8 +1486,8 @@ class LazyLLMEngine(LLMEngine):
                  max_n_ctx: Optional[int] = None, backend_label: str = "",
                  inference: Optional[InferenceConfig] = None) -> None:
         # [EN] Deliberately does not call super().__init__: that path would import
-        # llama_cpp and load the model immediately.
-        # [ZH] 刻意不调用 super().__init__：该路径会立即 import llama_cpp 并加载模型。
+        # [EN] the native runtime and load the model immediately.
+        # [ZH] 刻意不调用 super().__init__：该路径会立即导入原生运行期并加载模型。
         self.model_path = ""
         self.n_ctx = int(n_ctx or DEFAULT_INITIAL_CONTEXT)
         # [EN] Reader: the same configuration-file authority as the parent engine, so a
@@ -1576,10 +1572,10 @@ class LazyLLMEngine(LLMEngine):
         if not path:
             raise NoModelError("模型路径为空")
         # [EN] Import deferred until the model is actually loaded, but the DLL
-        # [EN] bootstrap must still run first (v0.2.6 item 23).
-        # [ZH] 延迟到真正加载模型时才 import，但 DLL 引导仍必须先执行（v0.2.6 第 23 项）。
+        # [EN] bootstrap must still run first.
+        # [ZH] 延迟到真正加载模型时才导入，但 DLL 引导仍必须先执行。
         cuda_bootstrap.ensure()
-        from llama_cpp import Llama
+        from llama_native import NativeLlama
 
         # [EN] Reader: document-driven allocation. When a file token count is
         # [EN] supplied, the window is ``file_tokens + output budget + margin`` and
@@ -1624,7 +1620,7 @@ class LazyLLMEngine(LLMEngine):
                 "use_mmap": bool(self.use_mmap),
                 "flash_attn": bool(self.flash_attn),
             })
-            llm = Llama(
+            llm = NativeLlama(
                 model_path=path,
                 n_ctx=target_ctx,
                 verbose=False,

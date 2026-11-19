@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Generate or verify the cross-platform Python dependency lock.
-
+"""
 [EN]
-The lock records every runtime distribution that was actually installed into the three
-standalone backend trees. Versions are expressed exactly; platform-specific differences
-(most notably ``llama-cpp-python`` and ``numpy``) are expressed with environment markers so
-that a single ``backend/requirements.lock`` remains the authoritative input for every RID.
+Regenerate ``backend/requirements.lock`` from a clean virtual environment.
+
+The Reader edition no longer installs an inference wheel: ``llama-cpp-python`` (and its
+``numpy`` dependency) were removed with the native llama.cpp rewrite, so the lock is a
+plain dependency closure of ``backend/requirements.txt``. The script reads every
+installed ``*.dist-info`` directory, follows ``Requires-Dist`` from the direct
+requirements and writes exact pins, using environment markers only where a package is
+genuinely platform-specific (``pywin32`` and its ``pywin32-ctypes`` companion).
+
+Usage:
+    python tools/gen_requirements_lock.py --site-packages <clean-venv>/Lib/site-packages
+    python tools/gen_requirements_lock.py --check
 
 [ZH]
-本工具记录三个 standalone 后端产物中实际安装的每一个运行期发行包。版本一律精确表达；
-平台差异（尤其是 ``llama-cpp-python`` 与 ``numpy``）通过环境标记表达，使单一文件
-``backend/requirements.lock`` 成为所有 RID 的权威输入。
+从干净虚拟环境重新生成 ``backend/requirements.lock``。
 
-Usage / 用法：
-    python tools/gen_requirements_lock.py            # regenerate from the built trees
-    python tools/gen_requirements_lock.py --check    # fail if the lock is stale
+Reader 版不再安装推理轮子：``llama-cpp-python``（及其 ``numpy`` 依赖）已随原生
+llama.cpp 换血一并移除，因此锁文件就是 ``backend/requirements.txt`` 的普通依赖闭包。
+脚本读取每个已安装的 ``*.dist-info`` 目录，从直接依赖出发沿 ``Requires-Dist`` 求解，
+输出精确版本；只有真正平台专属的包（``pywin32`` 及其伴随包 ``pywin32-ctypes``）才使用
+环境标记。
+
+用法：
+    python tools/gen_requirements_lock.py --site-packages <干净venv>/Lib/site-packages
+    python tools/gen_requirements_lock.py --check
 """
 from __future__ import annotations
 
@@ -27,182 +38,191 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCK = os.path.join(ROOT, "backend", "requirements.lock")
+REQUIREMENTS = os.path.join(ROOT, "backend", "requirements.txt")
 
-#: [EN] RID -> environment marker used in the lock file. / [ZH] RID 到锁文件中环境标记的映射。
-RID_MARKERS = {
-    "win-x64": 'sys_platform == "win32"',
-    "linux-x64": 'sys_platform == "linux"',
-    "osx-arm64": 'sys_platform == "darwin"',
+# [EN] Packages that only exist on one platform; everything else is expected to resolve
+# [EN] to the same version on every RID.
+# [ZH] 只存在于单一平台的包；其余包在所有 RID 上都应解析到同一版本。
+PLATFORM_ONLY = {
+    "pywin32": 'sys_platform == "win32"',
+    "pywin32-ctypes": 'sys_platform == "win32"',
 }
 
-#: [EN] llama-cpp-python is pinned to a direct wheel URL on macOS because the upstream index
-#: [EN] publishes a broken macOS arm64 wheel for the versions this project can use.
-#: [ZH] 由于上游索引为 macOS arm64 发布的轮子在本项目可用版本范围内已损坏，
-#: [ZH] macOS 上的 llama-cpp-python 固定为直接轮子 URL。
-LLAMA_MACOS_URL = (
-    "https://github.com/abetlen/llama-cpp-python/releases/download/"
-    "v0.3.30-metal/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl"
-)
-
-#: [EN] v0.2.6 item 23: Windows uses the JamePeng fork instead of the upstream wheel.
-#: [EN] The upstream Windows build has no Qwen3-VL / Qwen2.5-VL vision handler and its
-#: [EN] CUDA DLL resolution crashes Qwen3-VL with 0xC0000005. The fork's Release wheel
-#: [EN] ships those handlers plus the complete ggml-cuda.dll set, so it is pinned by
-#: [EN] direct URL exactly like the macOS wheel (same file name in several indexes is
-#: [EN] not a stable identity).
-#: [ZH] v0.2.6 第 23 项：Windows 改用 JamePeng fork，而非上游轮子。上游 Windows 构建
-#: [ZH] 没有 Qwen3-VL / Qwen2.5-VL 视觉处理器，且 CUDA DLL 解析问题会让 Qwen3-VL 以
-#: [ZH] 0xC0000005 崩溃。该 fork 的 Release 轮子同时提供这些处理器与完整的
-#: [ZH] ggml-cuda.dll 集合，因此与 macOS 轮子一样按直接 URL 钉死（同名文件出现在多个
-#: [ZH] 索引里并不能作为稳定身份）。
-LLAMA_WINDOWS_URL = (
-    "https://github.com/JamePeng/llama-cpp-python/releases/download/"
-    "v0.4.7-cu132-win-20261113/"
-    "llama_cpp_python-0.4.7%2Bcu132-cp313-cp313-win_amd64.whl"
-)
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
+_REQ_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 
-def log(message: str) -> None:
-    print(f"[lock] {message}", flush=True)
+def normalize(name: str) -> str:
+    """[EN] PEP 503 name normalisation. [ZH] PEP 503 名称归一化。"""
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def read_distributions(site_packages: str) -> dict[str, str]:
-    """[EN] Read ``Name``/``Version`` pairs from every ``*.dist-info`` directory.
+def read_declared() -> list[str]:
+    """[EN] Direct requirement names from requirements.txt. [ZH] 从 requirements.txt 读直接依赖名。"""
+    names: list[str] = []
+    with io.open(REQUIREMENTS, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.split("#", 1)[0].strip()
+            if not line or line.startswith("-"):
+                continue
+            match = _REQ_RE.match(line)
+            if match:
+                names.append(normalize(match.group(1)))
+    return names
 
-    [ZH] 从每个 ``*.dist-info`` 目录读取 ``Name`` 与 ``Version``。
-    """
-    result: dict[str, str] = {}
+
+def read_distributions(site_packages: str) -> dict[str, dict[str, object]]:
+    """[EN] Read name/version/requires from every dist-info. [ZH] 读取每个 dist-info 的名称/版本/依赖。"""
+    result: dict[str, dict[str, object]] = {}
     if not os.path.isdir(site_packages):
-        return result
+        raise SystemExit(f"site-packages not found: {site_packages}")
     for entry in sorted(os.listdir(site_packages)):
         if not entry.endswith(".dist-info"):
             continue
         metadata = os.path.join(site_packages, entry, "METADATA")
-        name = version = ""
-        if os.path.isfile(metadata):
-            with io.open(metadata, encoding="utf-8", errors="replace") as handle:
-                for line in handle:
-                    if line.startswith("Name: ") and not name:
-                        name = line[6:].strip()
-                    elif line.startswith("Version: ") and not version:
-                        version = line[8:].strip()
-                    if name and version:
-                        break
-        if not name:
-            name = entry[: -len(".dist-info")]
-        if name and version:
-            result[name] = version
+        if not os.path.isfile(metadata):
+            continue
+        info: dict[str, object] = {"name": "", "version": "", "requires": []}
+        with io.open(metadata, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if line.startswith("Name: ") and not info["name"]:
+                    info["name"] = line[6:].strip()
+                elif line.startswith("Version: ") and not info["version"]:
+                    info["version"] = line[8:].strip()
+                elif line.startswith("Requires-Dist: "):
+                    info["requires"].append(line[14:].strip())
+                elif not line.strip() and info["name"] and info["version"]:
+                    # [EN] Metadata header ends at the first blank line.
+                    # [ZH] 元数据头在第一个空行结束。
+                    break
+        if info["name"] and info["version"]:
+            result[normalize(str(info["name"]))] = info
     return result
 
 
-def canonical(name: str) -> str:
-    return re.sub(r"[-_.]+", "-", name).lower()
+def requirement_name(requirement: str) -> str:
+    """[EN] Extract the distribution name from a Requires-Dist line.
+    [ZH] 从 Requires-Dist 行中取出分发名。"""
+    match = _REQ_RE.match(requirement)
+    return normalize(match.group(1)) if match else ""
 
 
-def build_lock() -> str:
-    trees: dict[str, dict[str, str]] = {}
-    for rid in RID_MARKERS:
-        tree = os.path.join(ROOT, "publish", f"backend-{rid}", "site-packages")
-        trees[rid] = read_distributions(tree)
-        if not trees[rid]:
-            raise SystemExit(
-                f"[EN] No installed distributions found for {rid}: {tree}\n"
-                f"[ZH] 未找到 {rid} 的已安装发行包：{tree}\n"
-                "[EN] Build the standalone backend before regenerating the lock.\n"
-                "[ZH] 请在重新生成锁文件之前先构建 standalone 后端。"
-            )
-    all_names: dict[str, str] = {}
-    for rid, packages in trees.items():
-        for name in packages:
-            all_names.setdefault(canonical(name), name)
+def marker_allows(requirement: str) -> bool:
+    """[EN] Evaluate the subset of markers this project uses, for the current platform.
+    [ZH] 按当前平台求值本项目用到的标记子集。"""
+    if ";" not in requirement:
+        return True
+    marker = requirement.split(";", 1)[1].strip()
+    # [EN] Optional features of a dependency are not part of this closure.
+    # [ZH] 依赖的可选特性不属于本闭包。
+    if "extra ==" in marker:
+        return False
+    if "sys_platform" in marker:
+        wanted = re.findall(r"sys_platform\s*==\s*[\"']([^\"']+)[\"']", marker)
+        if wanted:
+            return sys.platform == wanted[0]
+        not_wanted = re.findall(r"sys_platform\s*!=\s*[\"']([^\"']+)[\"']", marker)
+        if not_wanted:
+            return sys.platform != not_wanted[0]
+    # [EN] Version-gated backports (for example ``importlib-metadata`` on older
+    # [EN] interpreters) must not enter a 3.13 closure.
+    # [ZH] 版本门控的向后移植包（例如旧解释器上的 ``importlib-metadata``）不得进入
+    # [ZH] 3.13 的闭包。
+    for match in re.finditer(
+            r"(python_full_version|python_version)\s*(<=|>=|==|!=|<|>)\s*[\"']([\d.]+)[\"']",
+            marker):
+        kind, operator, wanted = match.group(1), match.group(2), match.group(3)
+        current = ".".join(str(part) for part in sys.version_info[:3])
+        left = current if kind == "python_full_version" else f"{sys.version_info[0]}.{sys.version_info[1]}"
+        right = wanted if kind == "python_full_version" else ".".join(wanted.split(".")[:2])
+        try:
+            left_key = tuple(int(part) for part in left.split("."))
+            right_key = tuple(int(part) for part in right.split("."))
+        except ValueError:
+            continue
+        checks = {
+            "<": left_key < right_key,
+            "<=": left_key <= right_key,
+            ">": left_key > right_key,
+            ">=": left_key >= right_key,
+            "==": left_key == right_key,
+            "!=": left_key != right_key,
+        }
+        if not checks[operator]:
+            return False
+    return True
 
+
+def closure(site_packages: str) -> list[tuple[str, str]]:
+    """[EN] Dependency closure of the direct requirements. [ZH] 直接依赖的依赖闭包。"""
+    dists = read_distributions(site_packages)
+    seeds = read_declared()
+    pending = list(seeds)
+    seen: set[str] = set()
+    result: list[tuple[str, str]] = []
+    while pending:
+        name = pending.pop(0)
+        if name in seen:
+            continue
+        seen.add(name)
+        info = dists.get(name)
+        if info is None:
+            raise SystemExit(f"declared dependency is not installed: {name}")
+        result.append((str(info["name"]), str(info["version"])))
+        for requirement in info["requires"]:  # type: ignore[union-attr]
+            if not marker_allows(str(requirement)):
+                continue
+            dep = requirement_name(str(requirement))
+            if dep and dep not in seen:
+                pending.append(dep)
+    return sorted(result, key=lambda item: item[0].lower())
+
+
+def render(packages: list[tuple[str, str]]) -> str:
+    """[EN] Render the lock file text. [ZH] 渲染锁文件文本。"""
     lines = [
         "# EchoDesk runtime dependency lock (Python 3.13).",
         "# Generated by tools/gen_requirements_lock.py; do not edit by hand.",
-        "# [EN] Exact transitive pins for all three standalone backend trees. Platform",
-        "# [EN] differences are expressed with environment markers; pack_backend.py evaluates",
-        "# [EN] them against the target RID, never against the build machine.",
-        "# [ZH] 三个 standalone 后端产物的全部传递依赖精确锁定。平台差异以环境标记表达；",
-        "# [ZH] pack_backend.py 按目标 RID 求值，绝不按构建机求值。",
+        "#",
+        "# [EN] Exact transitive pins for the Reader backend. There is no inference wheel:",
+        "# [EN] llama.cpp is loaded natively from backend/native/ through the vendored C ABI.",
+        "# [EN] No package in this file (and no code path in the backend) needs an outbound",
+        "# [EN] network connection at runtime.",
+        "# [ZH] Reader 后端全部传递依赖的精确锁定。本文件不含推理轮子：llama.cpp 由",
+        "# [ZH] backend/native/ 通过就地内置的 C ABI 原生加载。本文件中的任何包（以及后端的",
+        "# [ZH] 任何代码路径）在运行期都不需要对外网络连接。",
         "",
     ]
-    for key in sorted(all_names):
-        display = all_names[key]
-        entries: list[tuple[str, str]] = []
-        for rid in RID_MARKERS:
-            version = trees[rid].get(display) or next(
-                (value for name, value in trees[rid].items() if canonical(name) == key), "")
-            if not version:
-                continue
-            if key == "llama-cpp-python" and rid == "osx-arm64":
-                requirement = f"{display} @ {LLAMA_MACOS_URL}"
-            elif key == "llama-cpp-python" and rid == "win-x64":
-                requirement = f"{display} @ {LLAMA_WINDOWS_URL}"
-            else:
-                requirement = f"{display}=={version}"
-            entries.append((rid, requirement))
-        versions = {line.split("==", 1)[-1] for _rid, line in entries if "==" in line}
-        all_platforms = len(entries) == len(RID_MARKERS)
-        same_version = len(versions) == 1 and all("==" in line for _rid, line in entries)
-        if all_platforms and same_version:
-            lines.append(entries[0][1])
-            continue
-        for rid, requirement in entries:
-            lines.append(f"{requirement} ; {RID_MARKERS[rid]}")
+    for name, version in packages:
+        marker = PLATFORM_ONLY.get(normalize(name))
+        line = f"{name}=={version}"
+        if marker:
+            line += f" ; {marker}"
+        lines.append(line)
     return "\n".join(lines) + "\n"
 
 
-def validate_lock_only() -> int:
-    """[EN] Validate lock syntax without the built trees (used on machines that only have sources).
-
-    [ZH] 在缺少已构建目录树的机器上仅校验锁文件语法。
-    """
-    if not os.path.isfile(LOCK):
-        log("[EN] lock file is missing / [ZH] 锁文件缺失")
-        return 1
-    with io.open(LOCK, encoding="utf-8") as handle:
-        lines = [raw.split("#", 1)[0].strip() for raw in handle]
-    for line in lines:
-        if not line:
-            continue
-        requirement, _, marker = line.partition(";")
-        requirement = requirement.strip()
-        if "@" not in requirement and "==" not in requirement:
-            log(f"[EN] unpinned requirement: {requirement!r} / [ZH] 未钉死版本的依赖：{requirement!r}")
-            return 1
-        if marker.strip() and marker.strip() not in RID_MARKERS.values():
-            log(f"[EN] unknown environment marker: {marker.strip()!r} / [ZH] 未知环境标记：{marker.strip()!r}")
-            return 1
-    log("[EN] lock syntax is valid (built trees unavailable) / [ZH] 锁文件语法有效（已构建目录树不可用）")
-    return 0
-
-
-def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="Generate or verify backend/requirements.lock")
-    parser.add_argument("--check", action="store_true")
-    args = parser.parse_args(argv)
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--site-packages", help="clean virtual environment site-packages")
+    parser.add_argument("--check", action="store_true",
+                        help="fail when the lock differs from the generated text")
+    args = parser.parse_args()
+    if not args.site_packages:
+        parser.error("--site-packages is required")
+    text = render(closure(args.site_packages))
     if args.check:
-        try:
-            generated = build_lock()
-        except SystemExit:
-            return validate_lock_only()
-        if not os.path.isfile(LOCK):
-            log("[EN] lock file is missing / [ZH] 锁文件缺失")
+        current = io.open(LOCK, encoding="utf-8").read() if os.path.isfile(LOCK) else ""
+        if current != text:
+            print("[lock] stale: backend/requirements.lock differs from the clean environment")
             return 1
-        with io.open(LOCK, encoding="utf-8", newline="") as handle:
-            current = handle.read()
-        if current != generated:
-            log("[EN] lock file is stale; run tools/gen_requirements_lock.py / "
-                "[ZH] 锁文件已过期；请运行 tools/gen_requirements_lock.py")
-            return 1
-        log("[EN] lock file is current / [ZH] 锁文件为最新")
+        print("[lock] up to date")
         return 0
-    generated = build_lock()
     with io.open(LOCK, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(generated)
-    log(f"[EN] wrote {os.path.relpath(LOCK, ROOT)} / [ZH] 已写入 {os.path.relpath(LOCK, ROOT)}")
+        handle.write(text)
+    print(f"[lock] wrote {LOCK}")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(main())

@@ -996,13 +996,12 @@ def _llama_gpu_offload_supported() -> Optional[bool]:
         import cuda_bootstrap
 
         cuda_bootstrap.ensure()
-        import llama_cpp  # type: ignore
+        # [EN] Native runtime: the Python binding is gone, so the capability probe goes
+        # [EN] through the same vendored C ABI the engine uses.
+        # [ZH] 原生运行期：Python 绑定已移除，能力探测与引擎走同一套就地内置的 C ABI。
+        import llama_capi
 
-        probe = getattr(llama_cpp, "llama_supports_gpu_offload", None)
-        if callable(probe):
-            return bool(probe())
-        inner = getattr(llama_cpp, "llama_cpp", None)
-        probe = getattr(inner, "llama_supports_gpu_offload", None)
+        probe = getattr(llama_capi, "llama_supports_gpu_offload", None)
         if callable(probe):
             return bool(probe())
     except Exception:  # noqa: BLE001 - a missing backend is a normal deployment

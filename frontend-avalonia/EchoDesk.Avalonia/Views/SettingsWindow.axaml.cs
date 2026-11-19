@@ -99,21 +99,19 @@ public partial class SettingsWindow : Window, ISettingsHost
     {
         _state = state;
         InitializeComponent();
+        // [EN] Same native chrome adaptation as the main window: macOS traffic lights,
+        // [EN] Windows Mica/Acrylic rounding and shadow.
+        // [ZH] 与主窗口相同的原生窗口质感适配：macOS 红绿灯、Windows Mica/Acrylic 圆角与投影。
+        WindowChrome.Apply(this, TitleBarTitle,
+            TitleBarMinimizeButton, TitleBarMaximizeButton, TitleBarCloseButton);
 
         RegisterPage(new GeneralPage());
-        // [EN] Page order: General → Model → Skill market → Installed → Ecosystem.
-        // [EN] The Agent, Automation and Developer tabs were physically removed from the
-        // [EN] Reader edition together with their backends.
-        // [ZH] 页签顺序：常规 → 模型 → 技能市场 → 已安装 → 生态。
-        // [ZH] 智能体、自动化与开发者页签已随其后端在 Reader 版中物理删除。
+        // [EN] Page order: General → Model. The Agent, Automation, Developer, skill
+        // [EN] marketplace, "installed" and ecosystem tabs are physically deleted from the
+        // [EN] Reader edition together with their backends and navigation routes.
+        // [ZH] 页签顺序：常规 → 模型。智能体、自动化、开发者、技能市场、「已安装」与生态
+        // [ZH] 页签已随其后端与导航路由在 Reader 版中物理删除。
         RegisterPage(new ModelPage());
-        RegisterPage(new MarketPage());
-        RegisterPage(new InstalledPage());
-        // [EN] v0.2.6 Part 4: the Ecosystem page (local API + external providers) is
-        // [EN] Avalonia-only. It follows the shared tabs.
-        // [ZH] v0.2.6 任务 4：生态页（本地 API + 外部提供方）只在 Avalonia 实现，
-        // [ZH] 排在共有页签之后。
-        RegisterPage(new EcosystemPage());
         foreach ((string key, string fallback) in NotMigratedTabs)
             AddNotMigratedTab(key, fallback);
 

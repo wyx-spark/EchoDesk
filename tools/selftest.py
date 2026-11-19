@@ -26,6 +26,27 @@ def check(name: str, condition: bool, detail: str = "") -> None:
     RESULTS.append((name, bool(condition), detail))
 
 
+# [EN] The backend was physically split into single-responsibility modules. Source
+# [EN] shape assertions must consider the whole backend package, not only main.py.
+# [ZH] 后端已按职责物理拆分。源码形状断言必须覆盖整个后端子包，而不只是 main.py。
+BACKEND_MODULES = (
+    "main.py", "backend_support.py", "backend_router.py", "backend_model.py",
+    "backend_profiles.py", "backend_chat.py", "backend_documents.py",
+)
+
+
+def read_backend_source(*names) -> str:
+    """[EN] Concatenate backend module sources for shape assertions.
+    [ZH] 拼接后端模块源码，供源码形状断言使用。"""
+    parts = []
+    for name in (names or BACKEND_MODULES):
+        path = os.path.join(os.path.abspath(BACKEND), name)
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as handle:
+                parts.append(handle.read())
+    return "\n".join(parts)
+
+
 def section(title: str) -> None:
     print(f"\n=== {title} ===")
 
@@ -342,7 +363,7 @@ def test_file_injection() -> None:
     section("文件上下文注入（任务一）")
     import tempfile
 
-    main_src = open(os.path.join(os.path.abspath(BACKEND), "main.py"), encoding="utf-8").read()
+    main_src = read_backend_source()
     gate_lines = [ln.strip() for ln in main_src.splitlines()
                   if ln.strip().startswith("include_file = ")]
     check("include_file 的两处闸门都在", len(gate_lines) == 2, str(gate_lines))
@@ -496,13 +517,14 @@ def test_crash_log_scope() -> None:
     section("崩溃日志作用域（任务十五）")
     import main as backend_main
 
-    main_src = open(os.path.join(os.path.abspath(BACKEND), "main.py"), encoding="utf-8").read()
+    main_src = read_backend_source("main.py")
+    all_src = read_backend_source()
     # 顶格（模块级）不得出现 sys.excepthook 赋值
-    top_level = [ln for ln in main_src.splitlines()
+    top_level = [ln for ln in all_src.splitlines()
                  if ln.startswith("sys.excepthook") and "=" in ln]
     check("模块级不再安装进程异常钩子", not top_level, str(top_level))
     check("崩溃钩子改为显式安装函数",
-          "def install_crash_handlers()" in main_src)
+          "def install_crash_handlers()" in all_src)
     check("程序入口处调用 install_crash_handlers",
           "install_crash_handlers()" in main_src.split('if __name__ == "__main__":')[-1])
     check("import main 不打开崩溃日志句柄", backend_main._crash is None,
@@ -765,12 +787,10 @@ def test_protocol_keys() -> None:
     import glob
     import re
 
-    main_py = os.path.join(BACKEND, "main.py")
-    if not os.path.isfile(main_py):
-        check("读取 backend/main.py（缺失，跳过）", True, "skipped")
+    backend_src = read_backend_source()
+    if not backend_src:
+        check("读取后端源码（缺失，跳过）", True, "skipped")
         return
-    with open(main_py, encoding="utf-8") as fh:
-        backend_src = fh.read()
     backend_keys = set(re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)":', backend_src))
 
     pairs = []
@@ -851,8 +871,8 @@ def test_cuda_bootstrap() -> None:
         check("本机未预加载 DLL（无 ggml-cuda.dll 或不支持 Windows）", True,
               "cuda_bootstrap.loaded_libraries() 为空，符合纯 CPU 环境预期")
 
-    main_path = os.path.join(os.path.abspath(BACKEND), "main.py")
-    with open(main_path, encoding="utf-8") as handle:
+    support_path = os.path.join(os.path.abspath(BACKEND), "backend_support.py")
+    with open(support_path, encoding="utf-8") as handle:
         source = handle.read()
     # [EN] Compare real import statements, not substrings: the comments that explain
     # [EN] this very rule contain the words "from llama_cpp", so a textual search
@@ -867,11 +887,20 @@ def test_cuda_bootstrap() -> None:
         if (isinstance(node, ast.Import) and any(a.name == "cuda_bootstrap" for a in node.names))
         or (isinstance(node, ast.ImportFrom) and node.module == "cuda_bootstrap")
     ]
-    llama_lines = [
-        node.lineno for node in ast.walk(tree)
-        if (isinstance(node, ast.Import) and any(a.name.split(".")[0] == "llama_cpp" for a in node.names))
-        or (isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "llama_cpp")
-    ]
+    llama_lines = []
+    for module_name in BACKEND_MODULES:
+        module_path = os.path.join(os.path.abspath(BACKEND), module_name)
+        if not os.path.isfile(module_path):
+            continue
+        with open(module_path, encoding="utf-8") as handle:
+            module_tree = ast.parse(handle.read())
+        llama_lines += [
+            node.lineno for node in ast.walk(module_tree)
+            if (isinstance(node, ast.Import) and any(
+                a.name.split(".")[0] in ("llama_cpp", "llama_capi") for a in node.names))
+            or (isinstance(node, ast.ImportFrom) and
+                (node.module or "").split(".")[0] in ("llama_cpp", "llama_capi"))
+        ]
     engine_lines = [
         node.lineno for node in ast.walk(tree)
         if isinstance(node, ast.ImportFrom) and node.module == "llm_engine"
@@ -879,10 +908,13 @@ def test_cuda_bootstrap() -> None:
     bootstrap_line = min(bootstrap_lines) if bootstrap_lines else 0
     llama_line = min(llama_lines) if llama_lines else 0
     engine_line = min(engine_lines) if engine_lines else 0
-    check("main.py 在导入 llama_cpp 之前调用引导",
-          bootstrap_line > 0 and (llama_line == 0 or bootstrap_line < llama_line),
-          f"bootstrap={bootstrap_line} llama_cpp={llama_line}")
-    check("main.py 在导入 llm_engine 之前调用引导",
+    # [EN] The Python binding is physically gone; the support layer imports the
+    # [EN] native loader lazily, so no backend module may import the old package.
+    # [ZH] Python 绑定已物理移除；支撑层惰性导入原生加载器，任何后端模块都不得
+    # [ZH] 再导入旧包。
+    check("后端不再导入 llama_cpp 或 llama_capi（仅 llama_native 惰性加载）",
+          not llama_lines, str(llama_lines))
+    check("backend_support.py 在导入 llm_engine 之前调用引导",
           bootstrap_line > 0 and (engine_line == 0 or bootstrap_line < engine_line),
           f"bootstrap={bootstrap_line} llm_engine={engine_line}")
 
@@ -902,6 +934,10 @@ def test_imports() -> None:
         "i18n", "config", "conversation",
         "file_parser", "gguf_meta", "plaintext", "summarizer",
         "llm_engine", "hardware_profiler", "main", "version",
+        # [EN] Second-stage refactor: native runtime + single-responsibility modules.
+        # [ZH] 第二阶段重构：原生运行期 + 单一职责模块。
+        "llama_native", "backend_support", "backend_router", "backend_model",
+        "backend_profiles", "backend_chat", "backend_documents",
         # [EN] v0.2.6 item 23: the DLL preload bootstrap.
         # [ZH] v0.2.6 第 23 项：DLL 预加载引导。
         "cuda_bootstrap",

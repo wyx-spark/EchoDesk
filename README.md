@@ -24,7 +24,9 @@ isolated networks, and anyone who simply wants their files to stay put.
 - **Platform**: Windows 10/11 (x64) first; the same Avalonia front end builds and runs on macOS and
   Linux. The WPF front end is still in the tree for the Windows LTS line but is **not** part of the
   Reader build.
-- **Inference**: local GGUF models through llama.cpp (`llama-cpp-python`), CPU by default
+- **Inference**: local GGUF models through the **native llama.cpp runtime** — the Python
+  `llama-cpp-python` binding is gone; the C ABI is called directly from `backend/llama_native.py`,
+  CPU by default
 - **Model profile**: tuned for Phi-3-Mini-128K — its 128K window is the ceiling the document
   allocation is bounded by; any GGUF model still loads
 - **KV cache**: quantised to 8-bit (`Q8_0`) instead of F16, which roughly halves the cache footprint
@@ -32,6 +34,20 @@ isolated networks, and anyone who simply wants their files to stay put.
 - **Interface**: Avalonia (C#) desktop app, packaged Python 3.13 backend
 - **Languages**: Simplified Chinese and English
 - **License**: [Apache-2.0](LICENSE)
+
+## Zero network: a checked promise
+
+**This build makes no network request, and the tree has been screened to confirm that there is no
+request code at all.** There is no model downloader, no model marketplace, no update check, no
+telemetry, no external provider routing and no local HTTP server. The model is a `.gguf` file the
+user places in the models folder (download it from the GitHub Release page in a browser, if you
+wish); opening that page is the only browser navigation the interface can trigger, and it is
+initiated by an explicit click.
+
+The promise is enforced by `python tools/audit_network.py`, which scans every backend Python
+source and every Avalonia C# source for outbound network APIs and fails when it finds one. The
+dependency lock (`backend/requirements.lock`) contains no HTTP client, no model-hub client and no
+inference wheel.
 
 ## Dynamic context, the reason this edition exists
 

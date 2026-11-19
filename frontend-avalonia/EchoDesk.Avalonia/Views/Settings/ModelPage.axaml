@@ -43,8 +43,22 @@
       [ZH] 档位与推理参数压在它下面（SettingsWindow.xaml 的行 0-4 是市场，行 5-8 是档位/推理）。
       [ZH] 原来的 Avalonia 版是反过来的，截图里两页的阅读顺序完全不同。
     -->
+    <!--
+      [EN] Reader edition: the model marketplace (remote search / download) is physically
+      [EN] removed. This area now carries static guidance only: the user downloads the GGUF
+      [EN] from the GitHub Release page and places it into the models folder. No code path
+      [EN] in this page can start a network request.
+      [ZH] Reader 版：模型市场（远端搜索 / 下载）已物理移除。此处只保留静态引导：
+      [ZH] 用户从 GitHub Release 页面下载 GGUF 并放入模型文件夹。本页任何代码路径都不会
+      [ZH] 发起网络请求。
+    -->
     <Grid x:Name="MarketHostGrid" Grid.Row="0" RowDefinitions="*">
-      <TextBlock x:Name="MarketNotMigratedText" IsVisible="False" />
+      <Border Margin="14,10,14,4" Padding="12,10" CornerRadius="8"
+              Background="{DynamicResource CardBackgroundBrush}"
+              BorderBrush="{DynamicResource ButtonBorderBrush}" BorderThickness="1">
+        <TextBlock x:Name="MarketOfflineText" FontSize="12" TextWrapping="Wrap"
+                   AutomationProperties.AutomationId="MarketOfflineText" />
+      </Border>
     </Grid>
 
     <!--
@@ -313,8 +327,12 @@
       <Border CornerRadius="6" BorderThickness="1" MaxHeight="160"
               BorderBrush="{DynamicResource CardBorderBrush}">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <StackPanel x:Name="HubRegistryList" Spacing="2" Margin="6,4"
-                      AutomationProperties.AutomationId="HubRegistryList" />
+          <StackPanel Spacing="2">
+            <TextBlock x:Name="HubStatusText" FontSize="11" TextWrapping="Wrap" Opacity="0.85"
+                       AutomationProperties.AutomationId="HubStatusText" />
+            <StackPanel x:Name="HubRegistryList" Spacing="2" Margin="6,4"
+                        AutomationProperties.AutomationId="HubRegistryList" />
+          </StackPanel>
         </ScrollViewer>
       </Border>
 

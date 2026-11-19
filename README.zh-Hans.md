@@ -20,12 +20,24 @@ EchoDesk Reader 把整条链路留在你的机器上：模型经 llama.cpp 在�
 
 - **平台**：Windows 10/11（x64）优先；同一套 Avalonia 前端可在 macOS 与 Linux 上构建与运行。
   WPF 前端仍留在仓库里服务 Windows 长期支持线，但**不参与** Reader 的构建。
-- **推理**：本地 GGUF 模型，经 llama.cpp（`llama-cpp-python`），默认走 CPU
+- **推理**：本地 GGUF 模型，经**原生 llama.cpp 运行期** —— Python 的 `llama-cpp-python` 绑定已
+  物理移除，由 `backend/llama_native.py` 直接调用 C ABI，默认走 CPU
 - **模型画像**：按 Phi-3-Mini-128K 调优 —— 它的 128K 窗口是文档分配的硬上限；任意 GGUF 模型仍可加载
 - **KV 缓存**：量化为 8 位（`Q8_0`）而非 F16，同一窗口下缓存占用约减半
 - **界面**：Avalonia（C#）桌面程序 + Python 3.13 打包后端
 - **语言**：简体中文与英语
 - **许可证**：[Apache-2.0](LICENSE)
+
+## 零联网：一项可核查的承诺
+
+**本版本不会发出任何联网请求，且已筛查源码确认不存在任何请求 API 的代码。** 没有模型下载器、没有
+模型市场、没有更新检查、没有遥测、没有外部 Provider 路由，也不启动本地 HTTP 服务。模型是用户自行
+放入模型目录的 `.gguf` 文件（如需下载，可在浏览器中前往 GitHub Release 页面）；打开该页面是界面
+唯一能触发的浏览器跳转，且必须由用户明确点击。
+
+该承诺由 `python tools/audit_network.py` 强制执行：它扫描后端的全部 Python 源码与 Avalonia 的
+全部 C# 源码，发现任何对外网络 API 即判定失败。依赖锁（`backend/requirements.lock`）中不含任何
+HTTP 客户端、模型仓库客户端或推理轮子。
 
 ## 动态上下文：本版存在的理由
 

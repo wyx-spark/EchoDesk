@@ -272,6 +272,15 @@ public partial class ModelPage : UserControl, ISettingsPage
         return await _host.State.ActiveBackend.SendAsync(request, idleTimeout: idle ?? TimeSpan.FromSeconds(60));
     }
 
+    /// <summary>
+    /// [EN] Status line of the local model library. The former model-market section had its
+    /// [EN] own status strip; after the market was removed the local library keeps a single
+    /// [EN] line here, so every "reading / scanned / failed" message still has a home.
+    /// [ZH] 本地模型库的状态行。此前的模型市场区块自带状态条；市场移除后本地模型库在这里
+    /// [ZH] 保留一行，使"读取中 / 已扫描 / 失败"等消息仍有落点。
+    /// </summary>
+    private void SetHubStatus(string text) => HubStatusText.Text = text;
+
     public async Task RefreshAsync()
     {
         await LoadProfilesAsync();
@@ -283,30 +292,18 @@ public partial class ModelPage : UserControl, ISettingsPage
         // [EN] does by clicking "search").
         // [ZH] 模型市场只刷新"已有的那一页"，**不自动搜索**（与 WPF 版一致：
         // [ZH] 打开设置页不该凭空打一次远端请求，那是用户点「搜索」才做的事）
-        await Market.RefreshAsync();
     }
 
-    // [EN] ---------- (3) Local model library (v0.2.2 batch 2, WPF HubRegistry) ----------
-    // [ZH] ---------- ③ 本地模型库（v0.2.2 第 2 批补全，对齐 WPF 的 HubRegistry 那一块） ----------
+    // [EN] ---------- (3) Local model library (Reader edition) ----------
+    // [ZH] ---------- ③ 本地模型库（Reader 版） ----------
     //
-    // [EN] Division of work with the "model market" (on the WPF side these have always been
-    // [EN] two different things; copied item by item here):
-    // [EN]   market = what the remote side "can download"; library = what the local disk
-    // [EN]   "has".
-    // [ZH] 与「模型市场」的分工（WPF 侧一直是两块不同的东西，此处逐项照抄）：
-    // [ZH]   市场 = 远端"能下载什么"；模型库 = 本地磁盘"有什么"。
-    //
-    // [EN] Three backend actions:
-    // [ZH] 三个后端动作：
-    //   model_hub_registry   → { registry: { count, total_size_human,
-    //                            models: [ { name, size_human, quantization, repo,
-    //                                        downloaded_at, last_used, current, exists } ] } }
-    // [EN]   model_scan           -> rescans the model folder (manual .gguf, no restart)
-    // [ZH]   model_scan           → 重新扫描模型文件夹（手工放进 .gguf 后不必重启）
-    // [EN]   model_load {name}    -> hot-loads that model (it becomes current on success)
-    // [ZH]   model_load {name}    → 热加载该模型（成功后就是当前模型）
-    // [EN]   model_hub_uninstall {name} -> deletes the model file
-    // [ZH]   model_hub_uninstall {name} → 删除模型文件
+    // [EN] The document library is a plain directory listing: ``model_scan`` returns the
+    // [EN] ``.gguf`` files found in the configured model folder, and ``model_load`` hot-loads
+    // [EN] one of them. There is no registry, no remote index and no download action here —
+    // [EN] the model marketplace was physically removed with its backend.
+    // [ZH] 模型库就是普通的目录列举：``model_scan`` 返回配置的模型目录里的 ``.gguf`` 文件，
+    // [ZH] ``model_load`` 热加载其中一个。这里没有登记表、没有远端索引、也没有下载动作 ——
+    // [ZH] 模型市场已随其后端物理删除。
 
     /// <summary>
     /// [EN] One row in the local model library.
@@ -315,63 +312,45 @@ public partial class ModelPage : UserControl, ISettingsPage
     private sealed record RegistryRow(string Name, string SizeText, string Meta,
                                       bool InUse, bool Exists);
 
-    /// <summary>
-    /// [EN] Second-confirmation state for deletion: the first click turns the button into
-    /// [EN] "confirm delete?" and only a second click executes.
-    /// [ZH] 删除的二次确认状态：第一次点变「确认删除？」，再点一次才执行。
-    /// </summary>
-    private string _registryDeletePending = "";
-
     private async Task LoadRegistryAsync(bool keepPendingDelete = false)
     {
-        Market.SetStatus(Loc.T("settings.model.registryLoading", "正在读取本地模型库…"));
-        using JsonDocument? doc = await SendAsync(new { action = "model_hub_registry" });
-        if (doc is null || !doc.RootElement.TryGetProperty("registry", out JsonElement registry))
+        _ = keepPendingDelete;  // [EN] retained for signature compatibility. [ZH] 保留以兼容调用点。
+        SetHubStatus(Loc.T("settings.model.registryLoading", "正在读取本地模型库…"));
+        using JsonDocument? doc = await SendAsync(new { action = "model_scan" },
+            TimeSpan.FromMinutes(10));
+        if (doc is null)
         {
-            Market.SetStatus(Loc.T("settings.model.registryLoadFailed",
+            SetHubStatus(Loc.T("settings.model.registryLoadFailed",
                 "❌ 读取模型库失败：{0}", Loc.T("settings.model.backendUnavailableShort", "后端未响应")));
             return;
         }
 
         var rows = new List<RegistryRow>();
-        if (registry.TryGetProperty("models", out JsonElement models) && models.ValueKind == JsonValueKind.Array)
+        string current = GetString(doc.RootElement, "current");
+        if (doc.RootElement.TryGetProperty("models", out JsonElement models)
+            && models.ValueKind == JsonValueKind.Array)
         {
             foreach (JsonElement model in models.EnumerateArray())
             {
-                bool current = GetBool(model, "current");
-                bool exists = !model.TryGetProperty("exists", out JsonElement ex) || ex.ValueKind == JsonValueKind.True;
-                string downloaded = GetString(model, "downloaded_at").Replace('T', ' ');
-                string used = GetString(model, "last_used").Replace('T', ' ');
-                var parts = new List<string>();
-                foreach (string piece in new[]
-                         {
-                             GetString(model, "quantization"),
-                             GetString(model, "repo") is { Length: > 0 } repo
-                                 ? repo : Loc.T("settings.model.localFile", "本地文件"),
-                             downloaded.Length > 0
-                                 ? Loc.T("settings.model.downloadedAt", "下载于 {0}", downloaded) : "",
-                             used.Length > 0
-                                 ? Loc.T("settings.model.lastUsed", "最后使用 {0}", used)
-                                 : Loc.T("settings.model.neverUsed", "尚未使用"),
-                         })
-                {
-                    if (piece.Length > 0)
-                        parts.Add(piece);
-                }
-                rows.Add(new RegistryRow(GetString(model, "name"), GetString(model, "size_human"),
-                    string.Join(" · ", parts), current, exists));
+                string name = GetString(model, "name");
+                if (name.Length == 0)
+                    continue;
+                rows.Add(new RegistryRow(
+                    name,
+                    GetString(model, "size_human"),
+                    GetString(model, "quantization"),
+                    name == current,
+                    true));
             }
         }
 
         HubRegistryList.Children.Clear();
-        if (!keepPendingDelete)
-            _registryDeletePending = "";
         if (rows.Count == 0)
         {
             HubRegistryList.Children.Add(new TextBlock
             {
                 Text = Loc.T("settings.model.registryEmpty",
-                    "（本地模型库还是空的：可在「模型市场」里下载，或把 .gguf 放进 models 目录后点「重新扫描模型文件夹」）"),
+                    "（模型库还是空的：请到 GitHub Release 页面下载 .gguf，放进 models 目录后点「重新扫描模型文件夹」。本程序不会自行联网下载）"),
                 FontSize = 11, Opacity = 0.7, TextWrapping = TextWrapping.Wrap,
             });
         }
@@ -381,16 +360,19 @@ public partial class ModelPage : UserControl, ISettingsPage
                 HubRegistryList.Children.Add(BuildRegistryRow(row));
         }
 
-        int count = GetInt(registry, "count", rows.Count);
-        string total = GetString(registry, "total_size_human");
         HubRegistryTitle.Text = Loc.T("settings.model.registryTitle", "📚 本地模型库（{0} 个 · {1}）",
-            count, total);
-        Market.SetStatus(Loc.T("settings.model.registryLoaded", "✅ 已读取本地模型库"));
+            rows.Count, rows.Count > 0 ? rows[0].SizeText : "");
+        string content = GetString(doc.RootElement, "content");
+        SetHubStatus(content.Length > 0
+            ? content
+            : Loc.T("settings.model.registryLoaded", "✅ 已读取本地模型库"));
     }
 
     /// <summary>
-    /// [EN] One row: name + in-use badge / metadata, with "load" and "delete" on the right.
-    /// [ZH] 一行：名称 + 使用中徽标 / 元信息，右侧「加载」「删除」。
+    /// [EN] One row: name + in-use badge / metadata, with a single "load" button on the
+    /// right. Deletion is gone with the registry backend; the user owns the model folder.
+    /// [ZH] 一行：名称 + 使用中徽标 / 元信息，右侧只有一个「加载」按钮。删除已随登记表后端
+    /// 一并移除；模型目录由用户自己管理。
     /// </summary>
     private Control BuildRegistryRow(RegistryRow row)
     {
@@ -410,11 +392,6 @@ public partial class ModelPage : UserControl, ISettingsPage
         if (row.Meta.Length > 0)
             info.Children.Add(new TextBlock { Text = row.Meta, FontSize = 10, Opacity = 0.65 });
 
-        // [EN] "Load": a model that is in use needs no further click, and the button is also
-        // [EN] disabled when the file is missing (a leftover registration) — the same rule as
-        // [EN] WPF's CanLoad.
-        // [ZH] 「加载」：使用中的模型不需要再点；文件不存在（登记残留）时也点不了 ——
-        // [ZH] 与 WPF 的 CanLoad 同一口径。
         var load = new Button
         {
             Content = Loc.T("settings.model.actionLoad", "加载"),
@@ -427,30 +404,12 @@ public partial class ModelPage : UserControl, ISettingsPage
             "热加载这个模型（成功后它就是当前模型，不需要重启程序）"));
         load.Click += async (_, _) => await LoadModelAsync(row);
 
-        // [EN] "Delete": a model in use may not be deleted (the backend blocks it again),
-        // [EN] and a second confirmation is required.
-        // [ZH] 「删除」：使用中的模型不允许删（后端也会再拦一次），且需要二次确认。
-        var delete = new Button
-        {
-            Content = row.Name == _registryDeletePending
-                ? Loc.T("settings.model.actionDeleteConfirm", "确认删除？")
-                : Loc.T("settings.model.actionDelete", "删除"),
-            Padding = new Thickness(10, 3),
-            FontSize = 11,
-            IsEnabled = !row.InUse,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        ToolTip.SetTip(delete, Loc.T("settings.model.deleteTip",
-            "删除模型文件并从模型库移除（不可撤销，之后要重新下载）"));
-        delete.Click += async (_, _) => await DeleteModelAsync(row);
-
         var actions = new StackPanel
         {
             Orientation = Orientation.Horizontal, Spacing = 8,
             VerticalAlignment = VerticalAlignment.Center,
         };
         actions.Children.Add(load);
-        actions.Children.Add(delete);
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         Grid.SetColumn(info, 0);
@@ -472,21 +431,17 @@ public partial class ModelPage : UserControl, ISettingsPage
 
     /// <summary>
     /// [EN] "Rescan model folder": after placing a .gguf by hand it can be loaded without a
-    /// [EN] restart.
-    /// [ZH] 「重新扫描模型文件夹」：手工放进 .gguf 后不必重启即可加载。
+    /// restart. One backend action (``model_scan``) does the listing; the result reloads the
+    /// rows below.
+    /// [ZH] 「重新扫描模型文件夹」：手工放进 .gguf 后不必重启即可加载。目录列举由后端
+    /// ``model_scan`` 完成，结果刷新下方列表。
     /// </summary>
     private async Task RescanModelsAsync()
     {
         HubRescanButton.IsEnabled = false;
-        Market.SetStatus(Loc.T("settings.model.rescanning", "正在扫描模型文件夹…"));
+        SetHubStatus(Loc.T("settings.model.rescanning", "正在扫描模型文件夹…"));
         try
         {
-            using JsonDocument? doc = await SendAsync(new { action = "model_scan" },
-                TimeSpan.FromSeconds(180));
-            Market.SetStatus(doc is null
-                ? Loc.T("settings.model.rescanFailed", "❌ 扫描失败：{0}",
-                    Loc.T("settings.model.backendUnavailableShort", "后端未响应"))
-                : GetString(doc.RootElement, "content"));
             await LoadRegistryAsync();
         }
         finally
@@ -496,73 +451,21 @@ public partial class ModelPage : UserControl, ISettingsPage
     }
 
     /// <summary>
-    /// [EN] Hot-loads one local model. The timeout is set to 10 minutes because reading
-    /// [EN] several GB of weights into memory takes time; the default 60 seconds would make
-    /// [EN] "the model actually loaded successfully while the UI reports a failure" happen
-    /// [EN] (the same value as on the WPF side).
-    /// [ZH] 热加载某个本地模型。超时给到 10 分钟：把几 GB 的权重读进内存本来就要等，
-    /// [ZH] 用默认的 60 秒会让"模型其实加载成功了、界面却报失败"（WPF 侧同一取值）。
+    /// [EN] Hot-loads one local model. The timeout is 10 minutes because reading several GB
+    /// of weights into memory takes time; the default 60 seconds would make "the model
+    /// actually loaded successfully while the UI reports a failure" happen.
+    /// [ZH] 热加载某个本地模型。超时给到 10 分钟：把几 GB 的权重读进内存本来就要等，用默认的
+    /// 60 秒会让"模型其实加载成功了、界面却报失败"。
     /// </summary>
     private async Task LoadModelAsync(RegistryRow row)
     {
-        Market.SetStatus(Loc.T("settings.model.loadingModel", "正在加载模型 {0}…", row.Name));
+        SetHubStatus(Loc.T("settings.model.loadingModel", "正在加载模型 {0}…", row.Name));
         using JsonDocument? doc = await SendAsync(
             new { action = "model_load", name = row.Name }, TimeSpan.FromMinutes(10));
-        Market.SetStatus(doc is null
+        SetHubStatus(doc is null
             ? Loc.T("settings.model.loadModelFailed", "❌ 加载失败：{0}",
                 Loc.T("settings.model.backendUnavailableShort", "后端未响应"))
             : GetString(doc.RootElement, "content"));
-        await LoadRegistryAsync();
-    }
-
-    /// <summary>
-    /// [EN] Deletes a model file. Two safeguards, aligned item by item with WPF:
-    /// [EN]   1. **A model in use cannot be deleted** (switch away first); the backend blocks
-    /// [EN]      it again;
-    /// [EN]   2. **A second confirmation**, whose text states that "the file is deleted and
-    /// [EN]      the action cannot be undone".
-    /// [EN] The Avalonia build has no dialog system, so the confirmation happens inline (the
-    /// [EN] same approach as profile deletion).
-    /// [ZH] 删除模型文件。两道保护，与 WPF 逐条对齐：
-    /// [ZH]   ① **使用中的模型不给删**（先切走再删），后端也会再拦一次；
-    /// [ZH]   ② **二次确认**，且确认文案里写明"删的是文件、不可撤销"。
-    /// [ZH] Avalonia 侧没有对话框体系，用就地二次确认（与档位删除同一套做法）。
-    /// </summary>
-    private async Task DeleteModelAsync(RegistryRow row)
-    {
-        if (row.InUse)
-        {
-            Market.SetStatus(Loc.T("settings.model.inUseCannotDelete",
-                "该模型正在使用中，请先用 /model 切换到其它模型再删除。"));
-            return;
-        }
-        if (!string.Equals(_registryDeletePending, row.Name, StringComparison.Ordinal))
-        {
-            // [EN] First click: only turn this row's button into "confirm delete?" and state
-            // [EN] the consequences; no deletion is performed.
-            // [ZH] 第一次点：只把这一行的按钮换成「确认删除？」并说明后果，不执行任何删除。
-            _registryDeletePending = row.Name;
-            await LoadRegistryAsync(keepPendingDelete: true);
-            Market.SetStatus(Loc.T("settings.model.deleteConfirmText",
-                "确定删除模型「{0}」吗？\n\n将删除文件（{1}）并从模型库移除，此操作不可撤销。\n若之后还需要，必须重新下载。",
-                row.Name, row.SizeText));
-            return;
-        }
-        _registryDeletePending = "";
-        Market.SetStatus(Loc.T("settings.model.deletingModel", "正在删除 {0}…", row.Name));
-        using JsonDocument? doc = await SendAsync(
-            new { action = "model_hub_uninstall", name = row.Name }, TimeSpan.FromSeconds(60));
-        if (doc is null)
-        {
-            Market.SetStatus(Loc.T("settings.model.deleteFailed", "❌ 删除失败：{0}",
-                Loc.T("settings.model.backendUnavailableShort", "后端未响应")));
-        }
-        else
-        {
-            string content = GetString(doc.RootElement, "content");
-            Market.SetStatus(content.Length > 0
-                ? content : Loc.T("settings.model.deleted", "已删除"));
-        }
         await LoadRegistryAsync();
     }
 
@@ -679,9 +582,17 @@ public partial class ModelPage : UserControl, ISettingsPage
         chip.Click += async (_, _) =>
         {
             if (installed)
+            {
                 await ApplyProfileAsync(alias, caption);
+            }
             else
-                await DownloadProfileAsync(alias, repo, sizeText, caption);
+            {
+                // [EN] No download path exists any more: point the user at the GitHub
+                // [EN] Release page and the models folder instead.
+                // [ZH] 不再有下载路径：引导用户前往 GitHub Release 页面并查看模型目录。
+                ProfileStatusText.Text = Loc.T("settings.model.profileNotInstalled",
+                    "⚠️ 该档位的模型文件不在本地。请到 GitHub Release 页面下载 .gguf 后放入模型目录，再点「重新扫描模型文件夹」。");
+            }
         };
 
         // [EN] The "edit" button: reads this profile into the editor (completed in v0.2.2,
@@ -952,47 +863,6 @@ public partial class ModelPage : UserControl, ISettingsPage
             ? content
             : Loc.T("settings.model.profileApplied", "✅ 已切换到 {0}", caption);
         await LoadProfilesAsync();
-    }
-
-    private async Task DownloadProfileAsync(string alias, string repo, string sizeText, string caption)
-    {
-        if (repo.Length == 0)
-        {
-            ProfileStatusText.Text = Loc.T("settings.model.profileNoRepo",
-                "❌ 该档位没有登记仓库（config.json 的 models.{0}.repo），请到模型市场里手动下载。", alias);
-            return;
-        }
-        ProfileStatusText.Text = Loc.T("settings.model.profileResolving",
-            "🔍 正在仓库 {0} 里查找 {1} …", repo, caption);
-        using JsonDocument? doc = await SendAsync(
-            new { action = "model_hub_detail", repo, source = "auto" }, TimeSpan.FromSeconds(120));
-        if (doc is null)
-        {
-            ProfileStatusText.Text = Loc.T("settings.model.profileFileMissing",
-                "⚠️ 仓库 {0} 里没有找到 {1}。请到「模型市场」里挑一个量化版本下载，或改 config.json 里的档位声明。",
-                repo, caption);
-            return;
-        }
-        // [EN] The first file in the details is used to send the download request (the same
-        // [EN] rule as the WPF build: the profile pill is only responsible for "downloading
-        // [EN] this profile").
-        // [ZH] 详情里取第一个文件发下载请求（与 WPF 版同口径：档位胶囊只负责"下载这一档"）。
-        string fileName = "";
-        if (doc.RootElement.TryGetProperty("files", out JsonElement files)
-            && files.ValueKind == JsonValueKind.Array && files.GetArrayLength() > 0)
-        {
-            fileName = GetString(files[0], "name");
-        }
-        if (fileName.Length == 0)
-        {
-            ProfileStatusText.Text = Loc.T("settings.model.profileFileMissing",
-                "⚠️ 仓库 {0} 里没有找到 {1}。请到「模型市场」里挑一个量化版本下载，或改 config.json 里的档位声明。",
-                repo, caption);
-            return;
-        }
-        await SendAsync(new { action = "model_hub_download", repo, filename = fileName, source = "auto" });
-        ProfileStatusText.Text = Loc.T("settings.model.profileDownloadStarted",
-            "⬇ 已开始下载 {0}（可在「模型市场」观察进度）", fileName);
     }
 
     // [EN] ---------- (2) Inference parameters ----------
@@ -1630,7 +1500,8 @@ public partial class ModelPage : UserControl, ISettingsPage
         HubRescanButton.Content = Loc.T("settings.model.actionRescan", "重新扫描模型文件夹");
         HubRegistryRefreshButton.Content = Loc.T("settings.model.actionRefreshRegistry", "刷新本地模型库");
 
-        MarketNotMigratedText.Text = "";
+        MarketOfflineText.Text = Loc.T("settings.model.marketOffline",
+            "本版本不内置模型下载：请到 GitHub Release 下载 .gguf 文件，手动放入下方模型文件夹。");
 
         // [EN] The drop-down item text is a delegate, so after rebuilding the item is
         // [EN] selected again by value.
@@ -1647,35 +1518,7 @@ public partial class ModelPage : UserControl, ISettingsPage
             : Loc.T("settings.inference.contextNoModel",
                 "尚未加载模型：原生上下文与实际可用上下文将在模型就绪后显示。");
         RefreshSliderLabels();
-        Market.ApplyTexts();
     }
-
-    // [EN] ---------- (3) Model market (completed in this round, v0.2.2) ----------
-    // [ZH] ---------- ③ 模型市场（本轮补全，v0.2.2） ----------
-
-    // [EN] ---------- Probe interface (`EchoDesk --probe market`) ----------
-    // [ZH] ---------- 探针接口（`EchoDesk --probe market` 用：无人值守验整条市场交互） ----------
-
-    /// <summary>
-    /// [EN] Observable state snapshot of the market section (see
-    /// [EN] ModelMarketSection.Snapshot).
-    /// [ZH] 市场区块的可观测状态快照（见 ModelMarketSection.Snapshot）。
-    /// </summary>
-    public ModelMarketSection.MarketState MarketSnapshot() => Market.Snapshot();
-
-    public Task ProbeMarketSearchAsync() => Market.ProbeSearchAsync();
-    public Task ProbeMarketFilterAsync(string keyword) => Market.ProbeFilterAsync(keyword);
-    public Task ProbeMarketToggleFacetAsync(int index) => Market.ProbeToggleFacetAsync(index);
-    public Task ProbeMarketGoToPageAsync(int page) => Market.ProbeGoToPageAsync(page);
-    public Task ProbeMarketSetPageSizeAsync(int size) => Market.ProbeSetPageSizeAsync(size);
-    public Task ProbeMarketResetAsync() => Market.ProbeResetFiltersAsync();
-
-    /// <summary>
-    /// [EN] Probe: fills in demonstration data for the model market (for README screenshots,
-    /// [EN] optionally in English).
-    /// [ZH] 探针：填入模型市场演示数据（README 截图用，可选英文）。
-    /// </summary>
-    public void ProbeShowDemoMarket(bool english = false) => Market.ProbeShowDemo(english);
 
     // [EN] ---------- Probe interface (`EchoDesk --probe pages`: model library) ----------
     // [ZH] ---------- 探针接口（`EchoDesk --probe pages` 用：本地模型库那一块） ----------
@@ -1705,7 +1548,6 @@ public partial class ModelPage : UserControl, ISettingsPage
             $"registryTitleHasParen={(HubRegistryTitle.Text?.Contains('（') == true ? 1 : 0)}",
             $"rescanButton={(string.IsNullOrEmpty(HubRescanButton.Content as string) ? 0 : 1)}",
             $"refreshRegistryButton={(string.IsNullOrEmpty(HubRegistryRefreshButton.Content as string) ? 0 : 1)}",
-            $"statusLine={(string.IsNullOrEmpty(Market.Snapshot().Status) ? 0 : 1)}",
         });
     }
 
@@ -1780,57 +1622,8 @@ public partial class ModelPage : UserControl, ISettingsPage
     /// </summary>
     public async Task ProbeReloadInferenceAsync() => await LoadInferenceAsync();
 
-    /// <summary>
-    /// [EN] The market section (many controls, so it is a separate UserControl; this page
-    /// [EN] decides "who sends the requests").
-    /// [ZH] 市场区块（控件多，单独一个 UserControl；由这里负责"谁来发请求"）。
-    /// </summary>
-    private ModelMarketSection? _market;
 
-    private ModelMarketSection Market => _market ??= CreateMarket();
 
-    private ModelMarketSection CreateMarket()
-    {
-        var section = new ModelMarketSection();
-        // [EN] Request sending is delegated to this page (which already holds the backend
-        // [EN] connection); the market itself touches nothing global beyond AppState.
-        // [ZH] 把"怎么发请求"交给这一页（页面已经持有后端连接），市场本身不碰 AppState 之外的全局
-        section.Attach(new MarketHost(this));
-        MarketHostGrid.Children.Add(section);
-        Grid.SetRow(section, 0);
-        return section;
-    }
 
-    /// <summary>
-    /// [EN] The bridge between the market section and the page: it exposes only the three
-    /// [EN] things the section really needs.
-    /// [ZH] 市场区块与页面之间的桥：只暴露它真正需要的三件事。
-    /// </summary>
-    private sealed class MarketHost : IModelMarketHost
-    {
-        private readonly ModelPage _page;
-        public MarketHost(ModelPage page) => _page = page;
 
-        public bool BackendAvailable => _page._host?.State.ActiveBackend.IsRunning == true;
-
-        public async Task<JsonDocument?> SendAsync(object request, TimeSpan? idleTimeout = null)
-            => await _page.SendAsync(request, idleTimeout);
-
-        public async Task SendStreamAsync(object request, Action<string, JsonElement> onEvent,
-                                          TimeSpan? idleTimeout = null)
-        {
-            if (_page._host is null)
-                return;
-            await _page._host.State.ActiveBackend.SendStreamAsync(
-                request,
-                onDelta: _ => { },
-                onContext: (_, _) => { },
-                idleTimeout: idleTimeout,
-                onEvent: onEvent,
-                onDeltaChannel: (_, _, _) => { });
-        }
-    }
 }
-
-
-

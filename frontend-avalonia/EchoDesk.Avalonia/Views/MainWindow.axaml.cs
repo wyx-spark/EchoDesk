@@ -346,39 +346,6 @@ public partial class MainWindow : Window
         "stdout 管道已关闭", "stdout pipe closed",
     };
 
-    /// <summary>
-    /// [EN] Repository path of the single model the Reader profile binds. The host is chosen
-    ///      at click time (see <see cref="Phi3ModelDownloadUrl"/>), so the value here stays a
-    ///      plain constant: no request is made at startup.
-    /// [ZH] Reader 版唯一绑定模型的仓库路径。主机在点击时选择（见
-    ///      <see cref="Phi3ModelDownloadUrl"/>），因此这里仍是纯常量：启动阶段不发起任何请求。
-    /// </summary>
-    private const string Phi3ModelRepoPath = "/Dhptl/Phi-3-mini-128k-instruct-GGUF";
-
-    /// <summary>
-    /// [EN] Official Hugging Face host (used for non-Chinese UI).
-    /// [ZH] Hugging Face 官方站（非中文界面使用）。
-    /// </summary>
-    private const string Phi3ModelOfficialHost = "https://huggingface.co";
-
-    /// <summary>
-    /// [EN] Mainland-friendly mirror of the same repository (used for Chinese UI). The mirror
-    ///      selection deliberately follows the interface language instead of probing
-    ///      reachability: the Reader build promises that startup performs no network request,
-    ///      and a probe here would break that promise before the user clicks anything.
-    /// [ZH] 同一仓库的国内友好镜像（中文界面使用）。镜像选择刻意跟随界面语言，而不是探测
-    ///      可达性：Reader 版承诺启动阶段不发起网络请求，在这里探测会在用户点击之前就破坏该承诺。
-    /// </summary>
-    private const string Phi3ModelMirrorHost = "https://hf-mirror.com";
-
-    /// <summary>
-    /// [EN] File-name markers that identify a local copy of the bound model. Matching is
-    ///      intentionally case-insensitive and accepts both spellings used by HF uploads.
-    /// [ZH] 用于识别本地已有所绑定模型的文件名标记。匹配不区分大小写，并同时接受 HF 上传中
-    ///      的两种写法。
-    /// </summary>
-    private static readonly string[] Phi3FileNameMarkers = { "phi-3", "phi3" };
-
     // [EN] Exit countdown (/exit, v0.2.2 batch 3): as in WPF, a thank-you note plus a 10-second
     // [EN] countdown.
     // [ZH] 退出倒计时（/exit，v0.2.2 第 3 批）：与 WPF 同样是“致谢 + 10 秒倒计时”。
@@ -401,12 +368,6 @@ public partial class MainWindow : Window
     /// </summary>
     private bool _firstRunShown;
 
-    /// <summary>
-    /// [EN] Name of the model awaiting download confirmation (the download starts only after
-    /// [EN] the second confirmation; see HandleConfirmModel).
-    /// [ZH] 待确认下载的模型名（第二次确认才真的下载，见 HandleConfirmModel）。
-    /// </summary>
-    private string _pendingModelDownload = "";
 
     /// <summary>
     /// [EN] Whether the metrics of the current generation are in the failed state (v0.2.2 batch
@@ -505,6 +466,12 @@ public partial class MainWindow : Window
         // [ZH] 只调 Load 的后果不是“少几个字段”，而是构造到下面第 N 行就 NullReferenceException，
         // [ZH] **整个前端起不来**（实测：dotnet build 与 dotnet publish 的产物都如此）。
         InitializeComponent();
+        // [EN] Native chrome: macOS restores the system traffic lights, Windows asks for
+        // [EN] Mica/Acrylic rounding and shadow; all other platforms keep the current look.
+        // [ZH] 原生窗口质感：macOS 恢复系统红绿灯，Windows 请求 Mica/Acrylic 圆角与投影；
+        // [ZH] 其余平台保持现状。
+        WindowChrome.Apply(this, TitleBar,
+            TitleBarMinimizeButton, TitleBarMaximizeButton, TitleBarCloseButton);
         _state.Initialize();
 
         Width = _state.Settings.WindowWidth;
@@ -707,10 +674,6 @@ public partial class MainWindow : Window
         // [ZH] Reader：模型胶囊为只读。本分支只绑定一个模型，上下文窗口由文档推导，
         //      因此没有可切换项。
         ModeChip.Click += async (_, _) => await OpenSettingsAsync("settings.tab.general");
-        // [EN] Missing-model guide: opening the official download page is the single
-        //      user-triggered network action; startup never reaches this path.
-        // [ZH] 缺模型引导：打开官方下载页是唯一的用户触发网络动作；启动阶段绝不会走到这里。
-        ModelGuideActionButton.Click += (_, _) => OpenModelDownloadPage();
         FontDownButton.Click += (_, _) => _state.SetFontSize(_state.Settings.FontSize - 1);
         FontUpButton.Click += (_, _) => _state.SetFontSize(_state.Settings.FontSize + 1);
         ThemeButton.Click += (_, _) => CycleTheme();
@@ -1161,13 +1124,14 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// [EN] Shows or hides the missing-model guide above the input area. It is visible only
-    ///      when the backend reports no ready model **and** no local GGUF copy of
-    ///      Phi-3-Mini-128K was found, which is exactly the "Model: none" state the guide
-    ///      explains. Everything here is local; the download page is opened on click only.
-    /// [ZH] 显示或隐藏输入区上方的缺模型引导。仅在“后端没有就绪模型”且“本地未找到
-    ///      Phi-3-Mini-128K 的 GGUF 副本”时可见，这正是引导要解释的“模型：无模型”状态。
-    ///      这里全部是本地判断，下载页只在点击时打开。
+    /// [EN] Shows or hides the missing-model notice above the input area. It is visible
+    ///      only while the backend reports no ready model, and it states the one action
+    ///      the user has to take: place a ``.gguf`` file into the models folder. The
+    ///      banner deliberately has no button and no link — the Reader edition does not
+    ///      download models and must not contain any control that could open the network.
+    /// [ZH] 显示或隐藏输入区上方的缺模型提示。仅在“后端没有就绪模型”时可见，并说明用户
+    ///      唯一需要做的动作：把 ``.gguf`` 文件放进模型文件夹。横幅刻意不带按钮、不带链接
+    ///      —— Reader 版不下载模型，也不应包含任何可能打开网络的控件。
     /// </summary>
     private void UpdateModelGuideBanner()
     {
@@ -1175,82 +1139,14 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(modelsDir))
             modelsDir = Path.Combine(UserPaths.ProgramDirectory, "backend", "models");
 
-        bool show = !_state.Backend.ModelReady && !HasLocalPhi3Model(modelsDir);
+        bool show = !_state.Backend.ModelReady;
         ModelGuideBanner.IsVisible = show;
         if (!show)
             return;
 
-        ModelGuideTitle.Text = Loc.T("main.model.missingGuideTitle", "⚠️ 缺少本地模型");
+        ModelGuideTitle.Text = Loc.T("main.model.missingGuideTitle", "⚠️ 未检测到本地模型");
         ModelGuideText.Text = Loc.T("main.model.missingGuideText",
-            "当前为极简文本版，需手动放置或下载 Phi-3-Mini-128K 模型。\n模型目录：{0}\n\n提示：点击 “Files and versions” 之后下拉选择自己最合适的模型下载。如果显示 “Failed to fetch”，点击这段报错上方文字中带下划线的 “download” 即可下载。",
-            modelsDir);
-        ModelGuideActionButton.Content = Loc.T("main.model.missingGuideAction", "前往 Hugging Face 下载");
-        ToolTip.SetTip(ModelGuideActionButton,
-            Loc.T("main.model.missingGuideTip", "在浏览器中打开 Dhptl/Phi-3-mini-128k-instruct-GGUF 下载页面"));
-        AutomationProperties.SetHelpText(ModelGuideActionButton,
-            Loc.T("main.model.missingGuideTip", "在浏览器中打开 Dhptl/Phi-3-mini-128k-instruct-GGUF 下载页面"));
-    }
-
-    /// <summary>
-    /// [EN] Reports whether the model folder already contains a GGUF whose name marks it as
-    ///      the bound Phi-3-Mini family. Only the top level of the models directory is
-    ///      scanned: that is where the backend's registry places downloads, and a recursive
-    ///      walk of a managed drive would be needless startup I/O.
-    /// [ZH] 判断模型目录里是否已有文件名标记为所绑定 Phi-3-Mini 家族的 GGUF。只扫描模型目录
-    ///      顶层：后端登记表把下载文件放在这里，递归遍历受管盘只会在启动时做无谓 I/O。
-    /// </summary>
-    private static bool HasLocalPhi3Model(string modelsDir)
-    {
-        try
-        {
-            if (!Directory.Exists(modelsDir))
-                return false;
-            foreach (string path in Directory.EnumerateFiles(modelsDir, "*.gguf", SearchOption.TopDirectoryOnly))
-            {
-                string name = Path.GetFileName(path).ToLowerInvariant();
-                foreach (string marker in Phi3FileNameMarkers)
-                {
-                    if (name.Contains(marker, StringComparison.Ordinal))
-                        return true;
-                }
-            }
-        }
-        catch (Exception)
-        {
-            // [EN] Unreadable or invalid path: treat as "not found" so the guide still
-            // [EN] offers the download path instead of failing silently.
-            // [ZH] 路径不可读或非法：按“未找到”处理，让引导仍提供下载入口而不是静默失败。
-        }
-        return false;
-    }
-
-    /// <summary>
-    /// [EN] Picks the download page for the bound model. Chinese interfaces use the
-    ///      mainland-friendly mirror; every other locale keeps the official Hugging Face
-    ///      host. This mirrors the model market's "auto" intent without its reachability
-    ///      probe, which is not allowed on the startup path.
-    /// [ZH] 为所绑定模型选择下载页。中文界面使用国内友好镜像，其余语言保持 Hugging Face
-    ///      官方站。这与模型市场的“自动”取向一致，但不做可达性探测 —— 启动路径不允许探测。
-    /// </summary>
-    private static string Phi3ModelDownloadUrl()
-    {
-        bool chineseUi = Loc.Locale.StartsWith("zh", StringComparison.OrdinalIgnoreCase);
-        return (chineseUi ? Phi3ModelMirrorHost : Phi3ModelOfficialHost) + Phi3ModelRepoPath;
-    }
-
-    /// <summary>
-    /// [EN] Explicit user action behind the guide button: hand the selected GGUF page to the
-    ///      default browser. A failure becomes a normal system bubble, never a crash.
-    /// [ZH] 引导按钮背后的明确用户操作：把选定的 GGUF 页交给默认浏览器。失败时变成普通系统
-    ///      气泡，绝不崩溃。
-    /// </summary>
-    private void OpenModelDownloadPage()
-    {
-        string url = Phi3ModelDownloadUrl();
-        if (ShellOpen.TryOpenUrl(url))
-            return;
-        AddMessage("system", Loc.T("main.model.missingGuideOpenFailed",
-            "❌ 无法打开下载页面，请手动访问：{0}", url));
+            "请将 .gguf 模型文件放入模型文件夹：{0}", modelsDir);
     }
 
     private void ApplyFontSize()
@@ -2369,12 +2265,6 @@ public partial class MainWindow : Window
                 if (content.Length > 0)
                     AddMessage("assistant", content);
                 ApplyStatusFields(doc.RootElement);
-                // [EN] When `/model` needs a download, the backend replies confirm_model; the
-                // [EN] front end asks for consent first and only then sends the download
-                // [EN] request.
-                // [ZH] `/model` 需要下载时后端回 confirm_model，由前端征得同意后再发下载
-                if (action == "confirm_model")
-                    HandleConfirmModel(GetStringField(doc.RootElement, "model"));
                 if (doc.RootElement.TryGetProperty("context", out JsonElement ctx) && ctx.ValueKind == JsonValueKind.Object)
                     ApplyContextFields(ctx);
             }
@@ -5059,74 +4949,6 @@ public partial class MainWindow : Window
     // [EN] batch 3)
     // [ZH] 模型下载确认 / 退出倒计时 / 后端进度活消息（v0.2.2 第 3 批）
     // -----------------------------------------------------------------
-
-    /// <summary>
-    /// [EN] When `/model` needs a model that has not been downloaded yet, the backend replies
-    /// [EN] with <c>action = "confirm_model"</c> and the front end sends the download action
-    /// [EN] only after obtaining consent (aligned with <c>ConfirmModelDownloadAsync</c> in
-    /// [EN] WPF).
-    /// [ZH] `/model` 需要一个还没下载的模型时，后端会回 <c>action = "confirm_model"</c>，
-    /// [ZH] 由前端征得同意后再发下载动作（对齐 WPF 的 <c>ConfirmModelDownloadAsync</c>）。
-    ///
-    /// [EN] How consent works: Avalonia has no MessageBox, so this uses **one explicit
-    /// [EN] confirmation in the status area**;
-    /// [ZH] 同意的方式：Avalonia 没有 MessageBox，这里用**状态区的一次显式确认**——
-    /// [EN] the download starts only on the second Enter press (the same approach as the second
-    /// [EN] confirmation for destructive commands),
-    /// [ZH] 第二次按 Enter 才会真的下载（与危险指令的二次确认同一套做法），
-    /// [EN] and a system message explaining how to confirm is printed at the same time, so that
-    /// [EN] the user is not left unaware that a second press is needed.
-    /// [ZH] 并同时打印一句"怎么确认"的系统消息，避免用户不知道要按第二次。
-    /// </summary>
-    private void HandleConfirmModel(string modelName)
-    {
-        if (string.IsNullOrEmpty(modelName))
-            return;
-        if (!string.Equals(_pendingModelDownload, modelName, StringComparison.Ordinal))
-        {
-            _pendingModelDownload = modelName;
-            AddMessage("system", Loc.T("main.model.downloadQuestion",
-                "确定要下载模型 '{0}' 吗？", modelName) + Environment.NewLine
-                + Loc.T("main.dialog.modelDownloadText",
-                    "{0}\n\n是否现在下载？下载需要联网且可能耗时较长。",
-                    Loc.T("main.model.downloadConfirmHint",
-                        "再按一次 Enter（或再点一次「发送」）即开始下载；输入别的内容则取消。")));
-            AddMessage("system", Loc.T("main.model.waitingConfirm", "⏳ 等待确认下载：再发送一次空消息即可开始"));
-            return;
-        }
-        _pendingModelDownload = "";
-        _ = DownloadModelAsync(modelName);
-    }
-
-    private async Task DownloadModelAsync(string modelName)
-    {
-        AddMessage("system", Loc.T("main.model.downloadingNamed",
-            "⏳ 正在下载并加载模型 '{0}'，请稍候...", modelName));
-        SetStatus(Loc.T("main.status.downloadingModel", "正在下载模型……"));
-        try
-        {
-            // [EN] Streaming: progress is written into one **live message** (the same system
-            // [EN] bubble updated in place) instead of flooding the view.
-            // [ZH] 流式：进度写进一条**活消息**（同一条系统气泡就地更新），而不是刷屏。
-            StartProgressMessage();
-            string final = await _state.Backend.SendStreamAsync(
-                new { action = "model_download", name = modelName },
-                onDelta: delta => Dispatcher.UIThread.Post(() => UpdateProgressMessage(delta)),
-                onContext: (_, _) => { },
-                idleTimeout: TimeSpan.FromMinutes(30));
-            EndProgressMessage(final);
-            AddMessage("system", Loc.T("main.model.downloadDone", "✅ 模型下载完成：{0}", modelName));
-            await RefreshStatusAsync();
-        }
-        catch (Exception ex)
-        {
-            EndProgressMessage(Loc.T("main.model.operationFailed", "❌ 模型操作失败: {0}", ex.Message));
-            AddMessage("system", Loc.T("main.model.downloadFailed", "❌ 模型下载失败：{0}", ex.Message));
-        }
-        SetStatus(_state.Backend.ModelReady
-            ? Loc.T("main.status.ready", "就绪")
-            : Loc.T("main.status.noModel", "后端已就绪，但没有加载模型"));
-    }
 
     /// <summary>
     /// [EN] `/exit`: a thank-you note followed by a 10-second countdown and then an automatic

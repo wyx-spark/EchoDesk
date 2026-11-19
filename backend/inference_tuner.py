@@ -264,10 +264,10 @@ def _measure_once(
         guard = _inference_guard()
         guard.acquire()
         try:
-            from llama_cpp import Llama  # local import: keeps the module importable anywhere
+            from llama_native import NativeLlama  # local import: keeps the module importable anywhere
 
             load_started = time.perf_counter()
-            llm = Llama(
+            llm = NativeLlama(
                 model_path=model_path,
                 n_ctx=int(override.n_ctx_default),
                 verbose=False,
@@ -279,7 +279,7 @@ def _measure_once(
             started = time.perf_counter()
             first_token_at = 0.0
             produced = 0
-            stream = llm(
+            stream = llm.create_completion(
                 prompt,
                 max_tokens=int(gen_tokens),
                 temperature=0.0,

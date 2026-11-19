@@ -300,23 +300,18 @@
            network-touching control here; nothing is probed until it is clicked.
       [ZH] ⑥ 输入区，以及紧贴其上的“缺少模型”引导。
            引导是一个独立横幅而非一闪而过的提示条：Reader 版不随包分发模型，
-           只显示“模型：无模型”并不构成可执行的下一步。按钮在浏览器中打开官方
-           Hugging Face GGUF 页面，是这里唯一会触网的控件；点击之前不做任何探测。
+           只提示“把 .gguf 放进模型文件夹”。横幅内没有任何按钮或跳转，
+           界面因此不存在可触网的控件。
     -->
     <StackPanel Grid.Row="4" Margin="0,6,0,0" Spacing="6">
     <Border x:Name="ModelGuideBanner" Classes="elevated" IsVisible="False"
             Background="{DynamicResource WarningBannerBrush}"
             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
             CornerRadius="8" Padding="12,9">
-      <Grid ColumnDefinitions="*,Auto">
-        <StackPanel Grid.Column="0" Spacing="2">
-          <TextBlock x:Name="ModelGuideTitle" FontWeight="SemiBold" TextWrapping="Wrap" />
-          <TextBlock x:Name="ModelGuideText" FontSize="12" Opacity="0.85" TextWrapping="Wrap" />
-        </StackPanel>
-        <Button x:Name="ModelGuideActionButton" Grid.Column="1" Classes="chip"
-                VerticalAlignment="Center" Margin="10,0,0,0"
-                AutomationProperties.AutomationId="ModelGuideActionButton" />
-      </Grid>
+      <StackPanel Spacing="2">
+        <TextBlock x:Name="ModelGuideTitle" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock x:Name="ModelGuideText" FontSize="12" Opacity="0.85" TextWrapping="Wrap" />
+      </StackPanel>
     </Border>
 
     <Border x:Name="InputAreaBorder" Classes="elevated" CornerRadius="12"

@@ -70,7 +70,7 @@ COMMENTS = "Powered by Void Entropia Studio"
 # [EN] removed with backend/automation.py (approximately 102 MB of Node driver).
 # [ZH] Reader：不再收集 Playwright；浏览器自动化栈已随 backend/automation.py 移除
 # [ZH] （约 102MB 的 Node 驱动）。
-PACKAGES = ["llama_cpp", "pydantic", "huggingface_hub", "duckduckgo_search"]
+PACKAGES = ["pydantic"]
 if IS_WINDOWS:
     # WPS/Office COM 只在 Windows 上存在（非 Windows 上装了也没有这个包）
     PACKAGES.append("win32com")
@@ -124,22 +124,20 @@ for pkg in PACKAGES:
     except Exception:
         pass
 
-# ---------- v0.2.6 第 23 项：llama.cpp 动态库显式收集 ----------
-# collect_all('llama_cpp') 通常已经按 `llama_cpp/lib` 收集了 DLL，但那是"依赖分析恰好
-# 命中"的结果：一旦某个模块改为惰性导入（本项目正是如此），PyInstaller 就可能漏掉
-# ggml-cuda.dll / llama.dll，打包后的 exe 启动才报加载失败。这里显式再收集一次，
-# 并在去重后写入 binaries，确保动态库落在 llama_cpp/lib —— backend/cuda_bootstrap.py
-# 正是按该目录注册 DLL 搜索路径并按依赖顺序预加载。
-_llama_libs = collect_dynamic_libs("llama_cpp")
-_seen_binaries = {
-    (os.path.normcase(os.path.abspath(src)), dest) for src, dest in binaries
-}
-for _src, _dest in _llama_libs:
-    _key = (os.path.normcase(os.path.abspath(_src)), _dest)
-    if _key in _seen_binaries:
-        continue
-    _seen_binaries.add(_key)
-    binaries.append((_src, _dest))
+# ---------- Reader 第二阶段：原生 llama.cpp 动态库 ----------
+# [EN] The Python inference wheel is gone. The native shared libraries live under
+# [EN] ``backend/native/`` and are loaded by ``llama_capi`` at model-load time. They are
+# [EN] collected as data files and flattened into ``_internal/native`` so that
+# [EN] ``llama_ctypes.load_shared_library`` finds them next to the frozen backend.
+# [ZH] Python 推理轮子已移除。原生动态库位于 ``backend/native/``，由 ``llama_capi`` 在
+# [ZH] 加载模型时读取。此处把它们作为数据文件收集并摊平到 ``_internal/native``，使
+# [ZH] ``llama_ctypes.load_shared_library`` 能在冻结后的后端旁边找到它们。
+_NATIVE_DIR = os.path.join(SPECPATH, "native")
+if os.path.isdir(_NATIVE_DIR):
+    for _name in sorted(os.listdir(_NATIVE_DIR)):
+        _path = os.path.join(_NATIVE_DIR, _name)
+        if os.path.isfile(_path) and not _name.lower().endswith((".lib", ".exp", ".pdb")):
+            datas.append((_path, "native"))
 
 # 配置文件随包内置（onedir 下即位于 exe 同级目录，用户可直接编辑）
 datas.append((os.path.join(SPECPATH, "config.json"), "."))
@@ -215,12 +213,12 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     # v0.2.5：`schedule` 已从依赖中移除（全仓库无 import）。
-    # [EN] v0.2.6 item 23: the two llama.cpp extension modules are listed explicitly
-    # [EN] because they are imported lazily by the engine, so static analysis can miss
-    # [EN] them; cuda_bootstrap is listed for the same reason.
-    # [ZH] v0.2.6 第 23 项：这两个 llama.cpp 扩展模块由引擎惰性导入，静态分析可能
-    # [ZH] 漏掉，故显式列出；cuda_bootstrap 同理。
-    hiddenimports=hiddenimports + ["llama_cpp", "llama_cpp.llama_cpp", "llama_cpp._ggml",
+    # [EN] The native runtime and the split backend modules are imported lazily or by
+    # [EN] name only, so they are listed explicitly.
+    # [ZH] 原生运行期与拆分后的后端模块属于惰性导入或仅按名导入，故显式列出。
+    hiddenimports=hiddenimports + ["llama_native", "llama_capi", "llama_ctypes",
+                                   "backend_support", "backend_router", "backend_model",
+                                   "backend_profiles", "backend_chat", "backend_documents",
                                    "cuda_bootstrap", "pypdf"]
     + (["win32com"] if IS_WINDOWS else []),
     hookspath=[],
