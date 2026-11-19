@@ -19,6 +19,78 @@ from typing import (
 from typing import TypeAlias
 
 
+#: [EN] RID -> directory name under ``backend/native``. The packaging pipeline builds one
+#: [EN] directory per target and keeps only that target's libraries.
+#: [ZH] RID 到 ``backend/native`` 下目录名的映射。打包流水线按目标平台构建，只保留该目标
+#: [ZH] 的动态库。
+NATIVE_RID_DIRS = {
+    "win-x64": "win-x64",
+    "win-arm64": "win-arm64",
+    "linux-x64": "linux-x64",
+    "linux-arm64": "linux-arm64",
+    "osx-arm64": "osx-arm64",
+    "osx-x64": "osx-x64",
+}
+
+
+def current_native_rid() -> str:
+    """
+    [EN]
+    RID of the running interpreter, in the same vocabulary as the packaging scripts.
+    Unknown platforms return an empty string so callers can fall back to the flat
+    ``native`` directory used by older development trees.
+
+    [ZH]
+    当前解释器的 RID，命名与打包脚本一致。未知平台返回空串，使调用方可以回退到旧开发树
+    使用的扁平 ``native`` 目录。
+    """
+    import platform  # noqa: PLC0415 - only needed when locating the native directory
+
+    machine = (platform.machine() or "").lower()
+    if sys.platform == "win32":
+        return "win-x64" if machine in ("amd64", "x86_64") else "win-arm64"
+    if sys.platform == "darwin":
+        return "osx-arm64" if machine in ("arm64", "aarch64") else "osx-x64"
+    if sys.platform.startswith("linux"):
+        return "linux-x64" if machine in ("x86_64", "amd64") else "linux-arm64"
+    return ""
+
+
+def native_library_dir() -> pathlib.Path:
+    """
+    [EN]
+    Directory holding the native llama.cpp libraries for this process.
+
+    Search order:
+      1. ``ECHODESK_LLAMA_LIB`` (explicit override, used by tests and packaging);
+      2. ``backend/native/<rid>`` (the release layout);
+      3. ``backend/native`` flat (legacy development layout).
+
+    A missing directory is returned as-is: the loader raises a precise error when it
+    cannot find the library, and the backend can still start without a model.
+
+    [ZH]
+    本进程使用的 llama.cpp 原生库目录。
+
+    查找顺序：
+      1. ``ECHODESK_LLAMA_LIB``（显式覆盖，测试与打包使用）；
+      2. ``backend/native/<rid>``（发布布局）；
+      3. ``backend/native`` 扁平目录（旧开发布局）。
+
+    目录不存在时原样返回：加载器找不到库时会给出精确错误，而后端仍可在无模型状态下启动。
+    """
+    override = os.environ.get("ECHODESK_LLAMA_LIB")
+    if override:
+        return pathlib.Path(override)
+    base = pathlib.Path(os.path.abspath(os.path.dirname(__file__))) / "native"
+    rid = current_native_rid()
+    if rid:
+        candidate = base / NATIVE_RID_DIRS.get(rid, rid)
+        if candidate.is_dir():
+            return candidate
+    return base
+
+
 # Load the library
 def load_shared_library(lib_base_name: str, base_path: pathlib.Path):
     """Platform independent shared library loader"""

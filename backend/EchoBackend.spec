@@ -132,11 +132,33 @@ for pkg in PACKAGES:
 # [ZH] Python 推理轮子已移除。原生动态库位于 ``backend/native/``，由 ``llama_capi`` 在
 # [ZH] 加载模型时读取。此处把它们作为数据文件收集并摊平到 ``_internal/native``，使
 # [ZH] ``llama_ctypes.load_shared_library`` 能在冻结后的后端旁边找到它们。
-_NATIVE_DIR = os.path.join(SPECPATH, "native")
+_native_root = os.path.join(SPECPATH, "native")
+
+
+def _native_rid() -> str:
+    """[EN] RID of the build host; the spec is executed on the target platform.
+    [ZH] 构建机的 RID；spec 在目标平台上执行。"""
+    import platform
+
+    machine = (platform.machine() or "").lower()
+    if sys.platform == "win32":
+        return "win-x64" if machine in ("amd64", "x86_64") else "win-arm64"
+    if sys.platform == "darwin":
+        return "osx-arm64" if machine in ("arm64", "aarch64") else "osx-x64"
+    return "linux-x64" if machine in ("x86_64", "amd64") else "linux-arm64"
+
+
+# [EN] Prefer the per-RID directory; fall back to the legacy flat directory so an older
+# [EN] development tree still builds. Only dynamic libraries are collected.
+# [ZH] 优先使用按 RID 的目录；回退到旧扁平目录，使旧开发树仍可构建。只收集动态库。
+_NATIVE_DIR = os.path.join(_native_root, _native_rid())
+if not os.path.isdir(_NATIVE_DIR):
+    _NATIVE_DIR = _native_root
 if os.path.isdir(_NATIVE_DIR):
     for _name in sorted(os.listdir(_NATIVE_DIR)):
         _path = os.path.join(_NATIVE_DIR, _name)
-        if os.path.isfile(_path) and not _name.lower().endswith((".lib", ".exp", ".pdb")):
+        if os.path.isfile(_path) and not _name.lower().endswith(
+                (".lib", ".exp", ".pdb", ".a")):
             datas.append((_path, "native"))
 
 # 配置文件随包内置（onedir 下即位于 exe 同级目录，用户可直接编辑）

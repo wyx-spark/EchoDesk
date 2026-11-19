@@ -40,10 +40,10 @@ uvbox 首次运行要联网下载依赖，与 EchoDesk"数据不出本机、断�
   于是为 Linux 准备依赖时，`pywin32; sys_platform == "win32"` 会被算成"需要"，
   接着 pip 去找 pywin32 的 Linux wheel（不存在）而整体失败 —— 实测确认过。
   因此本脚本自己解析 requirements，按**目标平台**过滤标记（见 `_marker_holds`）。
-* **不要**给 pip 传 `--abi cp313`：`llama-cpp-python 0.3.35/0.3.36` 发布的是
+* **不要**给 pip 传 `--abi cp313`：部分预编译包只发布 `py3-none-any` 轮子，
   `py3-none-<platform>` wheel（平台相关、Python 版本无关），限定 abi 会把它们滤掉，
   于是退回 PyPI 的源码包（只有 sdist）→ `--only-binary` 下直接失败。
-* `llama-cpp-python` 必须走 `--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu`：
+* 运行期不再安装任何推理轮子：原生 llama.cpp 动态库来自 `backend/native/<rid>/`，
   该索引才有三平台的预编译 wheel（PyPI 上只有源码包，装了就要现场编译）。
 * `pyinstaller` **不装**：它是构建工具，standalone 方案下目标机不需要它。
 
@@ -68,7 +68,7 @@ uvbox 首次运行要联网下载依赖，与 EchoDesk"数据不出本机、断�
   `https://pypi.tuna.tsinghua.edu.cn/simple`）；未设置时沿用 pip 自身配置。
   镜像只改变下载位置，版本仍由锁文件决定。
 * Playwright 只安装 Python 轮子，**绝不执行 `playwright install`**；若本机已有浏览器
-  目录（`%LOCALAPPDATA%\ms-playwright` 等），会自动把 `PLAYWRIGHT_BROWSERS_PATH`
+  目录（`%LOCALAPPDATA%\\ms-playwright` 等），会自动把 `PLAYWRIGHT_BROWSERS_PATH`
   指向它，复用而不是下载。
 """
 from __future__ import annotations
@@ -199,6 +199,33 @@ PIP_CACHE = os.path.join(ROOT, "artifacts", "pip-cache")
 BUILD_ONLY_PACKAGES = ("pyinstaller",)
 
 #: 后端代码里**不该**随包分发的东西（开发期产物与本地环境）。
+#: [EN] Native llama.cpp runtime layout: ``backend/native/<rid>/*``. The loader resolves
+#: [EN] this directory at run time; the packager copies exactly one RID into ``app/native``
+#: [EN] (flat) so the frozen tree keeps the same relative path.
+#: [ZH] 原生 llama.cpp 运行期布局：``backend/native/<rid>/*``。加载器在运行期解析该目录；
+#: [ZH] 打包器只把目标 RID 复制到 ``app/native``（摊平），使冻结后的目录保持同一相对路径。
+NATIVE_DIR = os.path.join(BACKEND, "native")
+
+#: [EN] Libraries without which the native runtime cannot load on that target. Versioned
+#: [EN] aliases and optional backends (mtmd / metal / blas) are copied when present.
+#: [ZH] 缺少即无法在该目标上加载原生运行期的库。带版本别名与可选后端（mtmd / metal /
+#: [ZH] blas）在存在时一并复制。
+REQUIRED_NATIVE_LIBS = {
+    "win-x64": ("llama.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu.dll"),
+    "linux-x64": ("libllama.so", "libggml.so", "libggml-base.so", "libggml-cpu.so"),
+    "osx-arm64": ("libllama.dylib", "libggml.dylib", "libggml-base.dylib",
+                  "libggml-cpu.dylib"),
+}
+
+#: [EN] Dynamic-library extensions per RID; anything else in the native directory is not a
+#: [EN] runtime dependency and is not copied.
+#: [ZH] 各 RID 的动态库扩展名；原生目录里其余文件不是运行期依赖，不复制。
+NATIVE_SUFFIXES = {
+    "win-x64": (".dll",),
+    "linux-x64": (".so",),
+    "osx-arm64": (".dylib",),
+}
+
 BACKEND_EXCLUDE_DIRS = {".idea", ".venv", "venv", "__pycache__", "models", ".git", "_internal"}
 BACKEND_EXCLUDE_FILES = {"EchoBackend.spec", "requirements.txt"}
 BACKEND_EXCLUDE_SUFFIX = (".pyc", ".pyo", ".log", ".spec")
@@ -356,7 +383,7 @@ def resolve_requirements(spec_target: dict[str, str]) -> tuple[list[str], list[s
     [ZH] 从锁文件解析目标平台的运行期依赖集合。
 
     The lock file is authoritative for versions. ``requirements.txt`` is still read for the
-    pip options it carries (for example the llama-cpp-python CPU wheel index). Every lock
+    pip options it carries (index mirrors and timeouts). Every lock
     line is expected to be an exact pin or a direct wheel URL; ranges are rejected because
     they would reintroduce dependency drift.
     """
@@ -450,9 +477,8 @@ def pinned_local_override(line: str, pip_platform: str) -> tuple[str, str]:
 def requirement_name(line: str) -> str:
     """取出依赖行的包名（用于与 BUILD_ONLY_PACKAGES 比较），小写。
 
-    要同时处理 `包名>=x` 与 `包名 @ https://…whl` 两种形式：后者是 macOS 上钉死
-    llama-cpp-python 那个完好轮子的写法（见 backend/requirements.txt 的说明），
-    不先按 `@` 切开就会把整条 URL 当包名，构建工具过滤因此静默失效。
+    要同时处理 `包名>=x` 与 `包名 @ https://…whl` 两种形式：后者是直接 URL 钉死的
+    写法，不先按 `@` 切开就会把整条 URL 当包名，构建工具过滤因此静默失效。
     """
     name = re.split(r"[@<>=!\[;]", line, maxsplit=1)[0].strip()
     return name.lower().replace("_", "-")
@@ -461,10 +487,9 @@ def requirement_name(line: str) -> str:
 def local_wheel_override(line: str) -> tuple[str, str]:
     """把 `包名 @ https://…/foo.whl` 换成**本地已缓存的同名 wheel**，返回 (新行, 说明)。
 
-    动机（实测）：macOS 上必须用直接 URL 钉死 llama-cpp-python 那个**唯一完好**的轮子
-    （见 backend/requirements.txt），而本机到 github.com 的链路又慢又断 —— pip 反复
-    `ConnectionResetError` / `ConnectTimeout`。同一个文件我们已经用
-    `tools/fetch_wheel.py` 下好、并**逐成员解压校验过**放在 `artifacts/wheels/` 里，
+    动机：依赖锁里的直接 URL（以及部分镜像上的大轮子）在本机链路上容易反复
+    `ConnectionResetError` / `ConnectTimeout`。同一个文件只要已经用
+    `tools/fetch_wheel.py` 下好并**逐成员解压校验过**放在 `artifacts/wheels/` 里，
     再让 pip 从网上重下一遍没有意义，只是多一次"下到一半断掉"的风险。
 
     只在**同名文件确实存在**时才替换（wheel 文件名唯一标识版本与平台，不做模糊匹配）；
@@ -750,7 +775,69 @@ def strip_python(python_dir: str, version: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # 组装
 # ---------------------------------------------------------------------------
-def copy_backend_code(dest_dir: str) -> int:
+def native_source_dir(rid: str) -> str:
+    """[EN] Source directory of the native libraries for one target.
+    [ZH] 某个目标平台的原生库源目录。"""
+    return os.path.join(NATIVE_DIR, rid)
+
+
+def native_libraries(rid: str) -> list[tuple[str, str, int]]:
+    """[EN] ``(name, path, bytes)`` of every dynamic library for the target.
+    [ZH] 目标平台全部动态库的 ``(名称, 路径, 字节数)``。"""
+    directory = native_source_dir(rid)
+    suffixes = NATIVE_SUFFIXES.get(rid, ())
+    found: list[tuple[str, str, int]] = []
+    if not os.path.isdir(directory):
+        return found
+    for name in sorted(os.listdir(directory)):
+        path = os.path.join(directory, name)
+        if not os.path.isfile(path) or not name.lower().endswith(suffixes):
+            continue
+        found.append((name, path, os.path.getsize(path)))
+    return found
+
+
+def verify_native_libraries(rid: str) -> list[tuple[str, str, int]]:
+    """[EN] Validate that the target's native runtime is complete before packaging.
+    [ZH] 打包前校验目标平台的原生运行期是否完整。"""
+    directory = native_source_dir(rid)
+    libraries = native_libraries(rid)
+    names = {name for name, _path, _size in libraries}
+    required = REQUIRED_NATIVE_LIBS.get(rid)
+    if required is None:
+        raise SystemExit(
+            f"[EN] No native runtime mapping for {rid}; update REQUIRED_NATIVE_LIBS.\n"
+            f"[ZH] 没有 {rid} 的原生运行期映射；请更新 REQUIRED_NATIVE_LIBS。")
+    if not os.path.isdir(directory):
+        raise SystemExit(
+            f"[EN] Native runtime directory missing for {rid}: {directory}\n"
+            f"[EN] Build it from a llama.cpp version that matches backend/llama_capi.py.\n"
+            f"[ZH] {rid} 的原生运行期目录缺失：{directory}\n"
+            f"[ZH] 请用与 backend/llama_capi.py 匹配的 llama.cpp 版本构建该目录。")
+    missing = [name for name in required if name not in names]
+    if missing:
+        raise SystemExit(
+            f"[EN] Native runtime for {rid} is incomplete; missing: {', '.join(missing)}\n"
+            f"[ZH] {rid} 的原生运行期不完整；缺少：{', '.join(missing)}")
+    return libraries
+
+
+def copy_native_libraries(rid: str, dest_dir: str) -> dict[str, object]:
+    """[EN] Copy one target's dynamic libraries into ``app/native`` (flat).
+    [ZH] 把目标平台的动态库复制到 ``app/native``（摊平）。"""
+    libraries = verify_native_libraries(rid)
+    if os.path.isdir(dest_dir):
+        shutil.rmtree(dest_dir)
+    os.makedirs(dest_dir, exist_ok=True)
+    total = 0
+    for name, path, size in libraries:
+        shutil.copy2(path, os.path.join(dest_dir, name))
+        total += size
+    return {"rid": rid, "count": len(libraries), "bytes": total,
+            "libraries": [name for name, _path, _size in libraries]}
+
+
+def copy_backend_code(dest_dir: str, rid: str) -> int:
     """把 backend/ 的内容复制成 app/（排除开发期产物与运行期状态文件）。"""
     if os.path.isdir(dest_dir):
         shutil.rmtree(dest_dir)
@@ -760,6 +847,16 @@ def copy_backend_code(dest_dir: str) -> int:
         src = os.path.join(BACKEND, name)
         if os.path.isdir(src):
             if name in BACKEND_EXCLUDE_DIRS:
+                continue
+            if name == "native":
+                # [EN] Only the target RID's dynamic libraries belong in this package.
+                # [ZH] 本包只携带目标 RID 的动态库。
+                info = copy_native_libraries(rid, os.path.join(dest_dir, name))
+                log(f"[EN] native runtime: {info['count']} libraries, "
+                    f"{info['bytes'] / 1048576:.1f} MB → app/native/"
+                    f" / [ZH] 原生运行期：{info['count']} 个动态库，"
+                    f"{info['bytes'] / 1048576:.1f} MB → app/native/")
+                copied += 1
                 continue
             if name == "lang":
                 # 语言包要进（后端 i18n 依赖它），但排除缓存。
@@ -897,6 +994,24 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
     log("")
     log(f"===== {rid}（{spec_target['triple']}）=====")
 
+    # [EN] Validate the native runtime before downloading Python or installing packages:
+    # [EN] a platform without ABI-matching llama.cpp libraries must fail in seconds with a
+    # [EN] clear message, not after hundreds of megabytes and then produce a broken tree.
+    # [ZH] 在下载 Python、安装依赖之前先校验原生运行期：缺少 ABI 匹配的 llama.cpp 动态库
+    # [ZH] 的平台必须在数秒内明确失败，而不是先下载数百 MB、最后产出一个不可用的目录树。
+    try:
+        native_preview = verify_native_libraries(rid)
+    except SystemExit as exc:
+        if not args.plan:
+            raise
+        log(str(exc))
+        log("[EN] (plan mode: the failure above would stop a real build for this target)"
+            " / [ZH]（演练模式：上面的失败会在真实构建中阻止该目标）")
+    else:
+        if args.plan:
+            log(f"[EN] native runtime ready: {len(native_preview)} libraries"
+                f" / [ZH] 原生运行期就绪：{len(native_preview)} 个动态库")
+
     # ---------- 1. standalone Python ----------
     python_dir = os.path.join(tree, "python")
     if args.reuse_python and os.path.isdir(python_dir):
@@ -947,14 +1062,14 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
             # [EN] Prefer wheels already promoted into ``artifacts/wheels`` before any index
             # [EN] or URL download. That directory is the same verified cache used by
             # [EN] ``local_wheel_override``; adding it as a find-links source lets the release
-            # [EN] pipeline install large pinned wheels (Playwright, llama-cpp-python, numpy)
+            # [EN] pipeline install large pinned wheels (Playwright, cryptography, Pillow)
             # [EN] offline instead of re-downloading them at the build machine's link speed.
             # [EN] The cache is an input pinned by ``backend/requirements.lock``, so using it
             # [EN] does not change any output byte: the same wheel is unpacked either way.
             # [ZH] 优先使用已经放进 ``artifacts/wheels`` 的轮子，而不是走索引或 URL 下载。
             # [ZH] 该目录正是 ``local_wheel_override`` 使用的同一份已校验缓存；把它作为
             # [ZH] find-links 来源，可让发布流水线离线安装体积大、版本被钉死的轮子
-            # [ZH] （Playwright、llama-cpp-python、numpy），不再受构建机链路速度拖累。
+            # [ZH] （Playwright、cryptography、Pillow），不再受构建机链路速度拖累。
             # [ZH] 该缓存由 ``backend/requirements.lock`` 钉死，属于输入；无论从缓存还是从
             # [ZH] 网络取得，解出的都是同一个轮子，因此不会改变任何输出字节。
             *(["--find-links", WHEEL_CACHE] if os.path.isdir(WHEEL_CACHE) else []),
@@ -976,9 +1091,8 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
             "--upgrade",
             "--no-warn-script-location",
             "--disable-pip-version-check",
-            # 慢/抖动网络下的必需项：本机到 github.com 的连接时通时断，而
-            # llama-cpp-python 的 wheel 下载地址**重定向到 github.com 的 Releases**
-            # （实测 pip 默认 15 秒连接超时会让它直接整轮失败）。放宽超时与重试，
+            # 慢/抖动网络下的必需项：本机到上游索引与 GitHub Releases 的连接时通时断，
+            # pip 默认 15 秒连接超时会让整轮直接失败。放宽超时与重试，
             # 避免"已经下了几十 MB 却因为一次抖动全部作废"。
             # 平衡值：pip 默认 15 秒在本机链路上"一抖就死"；而 120 秒会让**卡住变得看不出来**
             # ——单次超时 120 秒 × 8 次重试 = 最长 16 分钟才失败，实测就是这样静悄悄地等。
@@ -1002,7 +1116,7 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
 
     # ---------- 3. 后端代码 ----------
     if not args.plan:
-        count = copy_backend_code(os.path.join(tree, "app"))
+        count = copy_backend_code(os.path.join(tree, "app"), rid)
         log(f"复制后端代码 {count} 个顶层条目 → app/")
 
     # ---------- 4. 启动脚本 ----------
@@ -1033,6 +1147,13 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
     deps_size, deps_files = dir_size(site_packages)
     app_size, app_files = dir_size(os.path.join(tree, "app"))
     total_size, total_files = dir_size(tree)
+    # [EN] Record the native runtime explicitly: a package without it starts but cannot
+    # [EN] run inference, and the manifest is the only per-platform evidence kept next to
+    # [EN] the archive.
+    # [ZH] 显式记录原生运行期：缺少它的包能启动却无法推理，而清单是归档旁边唯一保留的
+    # [ZH] 分平台证据。
+    native_payload = native_libraries(rid)
+    native_bytes = sum(size for _name, _path, size in native_payload)
 
     # [EN] Fixed timestamps before archiving make the tree itself independent of the moment
     # [EN] at which each step ran. The archive writers also stamp every entry explicitly.
@@ -1066,6 +1187,8 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
         "dependencies": {"count": len(packages), "bytes": deps_size, "files": deps_files,
                          "packages": packages},
         "app": {"bytes": app_size, "files": app_files},
+        "native": {"rid": rid, "count": len(native_payload), "bytes": native_bytes,
+                   "libraries": [name for name, _path, _size in native_payload]},
         "tree": {"bytes": total_size, "files": total_files,
                  "path": os.path.relpath(tree, ROOT)},
         "archive": {"path": os.path.relpath(archive, ROOT) if archive else "",
@@ -1147,6 +1270,12 @@ def main() -> int:
                         help="[EN] development only: bypass the clean-worktree guard "
                              "/ [ZH] 仅限开发：绕过干净工作区校验")
     args = parser.parse_args()
+    # [EN] Normalise the output root once: every later path is joined onto it, while
+    # [EN] ``run()`` executes pip with cwd=ROOT. A relative --out would otherwise resolve
+    # [EN] differently in those two places and install dependencies outside the tree.
+    # [ZH] 只在这里归一化输出根目录：后续路径都拼接在它上面，而 ``run()`` 以 ROOT 为工作
+    # [ZH] 目录执行 pip。相对 --out 会在两处解析出不同结果，把依赖装到目录树之外。
+    args.out = os.path.abspath(args.out)
 
     repro.require_clean_worktree(args.allow_dirty)
     repro.source_date_epoch()

@@ -119,11 +119,16 @@ def dir_size(path: str) -> tuple[int, int]:
 #: [EN] Reader-profile payloads that must not be shipped: the CUDA backend of
 #: llama.cpp and the Pillow image stack. The Reader edition runs Phi-3-Mini on CPU
 #: (``n_gpu_layers=0``) and removed the vision/RAG stacks, so both are dead weight.
+#: The CUDA entry is checked in both layouts: the legacy Python wheel copied it to
+#: ``site-packages/llama_cpp/lib`` and the native runtime would put it in
+#: ``app/native``. Missing entries are simply skipped.
 #: [ZH] Reader 版不得随包的负载：llama.cpp 的 CUDA 后端与 Pillow 图像栈。
 #: Reader 在 CPU 上跑 Phi-3-Mini（``n_gpu_layers=0``）并删除了视觉/RAG 栈，
-#: 两者都是纯体积。
+#: 两者都是纯体积。CUDA 条目在两种布局下都会检查：旧 Python 轮子放在
+#: ``site-packages/llama_cpp/lib``，原生运行期会放在 ``app/native``。不存在的条目直接跳过。
 READER_BLOAT_FILES = (
     ("site-packages", "llama_cpp", "lib", "ggml-cuda.dll"),
+    ("app", "native", "ggml-cuda.dll"),
 )
 READER_BLOAT_DIRS = (
     ("site-packages", "PIL"),

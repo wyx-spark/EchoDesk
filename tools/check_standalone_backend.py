@@ -435,51 +435,135 @@ def check_one(tree: str, rid: str, strict: bool) -> None:
     check_native_binaries(tree, site, rid)
 
 
-#: Mach-O 文件头魔数（macOS 的动态库）。用来判定"这个 .dylib 到底是不是一个真的动态库"。
+#: [EN] File-header magics used to prove that a shipped library is really a dynamic
+#: [EN] library for the target platform, even when the checker runs on another OS.
+#: [ZH] 文件头魔数：即使检查器运行在其它系统上，也能证明随包库确实是目标平台的动态库。
+PE_MAGIC = b"MZ"
+ELF_MAGIC = b"\x7fELF"
 MACHO_MAGIC = {
     b"\xcf\xfa\xed\xfe": "Mach-O 64 位小端",
     b"\xfe\xed\xfa\xcf": "Mach-O 64 位大端",
     b"\xca\xfe\xba\xbe": "Mach-O 通用（fat）",
 }
 
+#: [EN] Native runtime expectations per RID, identical to tools/pack_backend.py.
+#: [ZH] 各 RID 的原生运行期期望，与 tools/pack_backend.py 保持一致。
+REQUIRED_NATIVE_LIBS = {
+    "win-x64": ("llama.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu.dll"),
+    "linux-x64": ("libllama.so", "libggml.so", "libggml-base.so", "libggml-cpu.so"),
+    "osx-arm64": ("libllama.dylib", "libggml.dylib", "libggml-base.dylib",
+                  "libggml-cpu.dylib"),
+}
+NATIVE_SUFFIXES = {
+    "win-x64": (".dll",),
+    "linux-x64": (".so",),
+    "osx-arm64": (".dylib",),
+}
+NATIVE_ROOT = os.path.join(ROOT, "backend", "native")
 
-def check_native_binaries(tree: str, site: str, rid: str) -> None:
-    """非本机平台唯一能做的"二进制级"证据：原生依赖是不是**结构完整**的动态库。
 
-    为什么需要这一层（实测踩到的坑）：llama-cpp-python 的 macOS arm64 轮子在**上游就是坏的**
-    —— 字节数与官方 digest 完全一致（"下完了、也没被篡改"），但包内 `lib/*.dylib` 大面积
-    压缩流损坏。这种缺陷在 Windows 打包机上**没有任何运行级证据能发现**（那是 macOS 的
-    .so/.dylib，跑不起来也 import 不了），只能靠静态检查兜住。
+def _read_magic(path: str, length: int = 4) -> bytes:
+    with open(path, "rb") as handle:
+        return handle.read(length)
 
-    检查项：`llama_cpp/lib/*.dylib` 的**文件头魔数**必须是合法的 Mach-O。
-    只对 osx-arm64 做（其他平台的原生扩展要么能在本机验证，要么是本机平台）。
-    """
-    if rid != "osx-arm64":
-        return
-    lib_dir = os.path.join(site, "llama_cpp", "lib")
-    if not os.path.isdir(lib_dir):
-        fail(f"{rid} 的 site-packages 里没有 llama_cpp/lib（本地推理会 ImportError）")
-        return
-    dylibs = [n for n in sorted(os.listdir(lib_dir)) if n.endswith(".dylib")]
-    if not dylibs:
-        fail(f"{rid} 的 llama_cpp/lib 下一个 .dylib 都没有（轮子不完整）")
-        return
+
+def _native_library_names(directory: str, rid: str) -> list[str]:
+    suffixes = NATIVE_SUFFIXES.get(rid, ())
+    if not os.path.isdir(directory):
+        return []
+    return [name for name in sorted(os.listdir(directory))
+            if name.lower().endswith(suffixes)
+            and os.path.isfile(os.path.join(directory, name))]
+
+
+def _check_native_directory(directory: str, rid: str, where: str) -> bool:
+    """[EN] Shared validation of a native runtime directory (source or packaged).
+    [ZH] 原生运行期目录（源码目录或打包产物）的共用校验。"""
+    if not os.path.isdir(directory):
+        fail(f"{rid} 缺少原生运行期目录 {where}（本地推理无法启动）")
+        return False
+    names = _native_library_names(directory, rid)
+    required = REQUIRED_NATIVE_LIBS.get(rid, ())
+    missing = [name for name in required if name not in names]
+    if missing:
+        fail(f"{rid} 的原生运行期不完整（{where}）：缺少 {', '.join(missing)}")
+        return False
     bad: list[str] = []
-    for name in dylibs:
-        path = os.path.join(lib_dir, name)
+    total = 0
+    for name in names:
+        path = os.path.join(directory, name)
+        total += os.path.getsize(path)
         try:
-            with open(path, "rb") as handle:
-                head = handle.read(4)
+            head = _read_magic(path)
         except OSError as exc:
             bad.append(f"{name}（读取失败：{exc}）")
             continue
-        if head not in MACHO_MAGIC:
-            bad.append(f"{name}（文件头 {head!r} 不是 Mach-O）")
+        if rid == "win-x64":
+            valid = head.startswith(PE_MAGIC)
+            expected = "PE/COFF（MZ）"
+        elif rid == "linux-x64":
+            valid = head == ELF_MAGIC
+            expected = "ELF"
+        else:
+            valid = head in MACHO_MAGIC
+            expected = "Mach-O"
+        if not valid:
+            bad.append(f"{name}（文件头 {head!r} 不是 {expected}）")
     if bad:
-        fail(f"{rid} 的 llama_cpp 动态库有 {len(bad)} 个不是合法 Mach-O：{bad[0]}")
+        fail(f"{rid} 的原生库有 {len(bad)} 个文件头非法（{where}）：{bad[0]}")
+        return False
+    optional = [name for name in names if name not in required]
+    ok(f"{rid} 原生运行期完整（{where}）：{len(names)} 个库，{total / 1048576:.1f} MB"
+       f"{'，可选后端 ' + ', '.join(optional) if optional else ''}")
+    return True
+
+
+def check_native_source() -> None:
+    """[EN] Validate the repository's ``backend/native/<rid>`` tree before packaging.
+    [ZH] 打包前校验仓库里的 ``backend/native/<rid>`` 目录树。"""
+    print("\n== 原生 llama.cpp 运行期（源码目录）==")
+    for rid in EXPECTED:
+        directory = os.path.join(NATIVE_ROOT, rid)
+        if not os.path.isdir(directory):
+            note(f"{rid} 没有 backend/native/{rid}（该平台原生库暂缺，"
+                 f"打包该平台会明确失败而不是静默产出不可用包）")
+            continue
+        _check_native_directory(directory, rid, f"backend/native/{rid}")
+
+
+def check_native_binaries(tree: str, site: str, rid: str) -> None:
+    """[EN] Validate the native runtime inside one packaged tree.
+    [ZH] 校验某个打包产物内的原生运行期。
+
+    The release tree is laid out as ``backend-<rid>/app/native/*`` (flat). This check no
+    longer looks at ``site-packages/llama_cpp``: the Python binding was removed and must
+    not reappear in a release artefact.
+    """
+    _check_native_directory(os.path.join(tree, "app", "native"), rid, "app/native")
+    if os.path.isdir(os.path.join(site, "llama_cpp")):
+        fail(f"{rid} 的 site-packages 里仍有 llama_cpp（旧 Python 绑定不该进入发布物）")
+    else:
+        ok(f"{rid} 的 site-packages 不含旧 llama_cpp 绑定")
+
+    manifest_path = os.path.join(os.path.dirname(tree), f"backend-manifest-{rid}.json")
+    if not os.path.isfile(manifest_path):
         return
-    metal = sum(1 for n in dylibs if "metal" in n.lower())
-    ok(f"{rid} 的 llama_cpp 动态库全部是合法 Mach-O（{len(dylibs)} 个，其中 Metal 后端 {metal} 个）")
+    try:
+        with open(manifest_path, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (OSError, ValueError):
+        return
+    declared = manifest.get("native")
+    if not isinstance(declared, dict):
+        note(f"{rid} 的 manifest 没有 native 字段（旧产物，跳过清单交叉核对）")
+        return
+    names = set(_native_library_names(os.path.join(tree, "app", "native"), rid))
+    listed = set(declared.get("libraries") or [])
+    if names == listed:
+        ok(f"{rid} 的 manifest 与 app/native 内容一致（{len(names)} 个库）")
+    else:
+        fail(f"{rid} 的 manifest 与 app/native 不一致："
+             f"多出 {sorted(names - listed)}，缺少 {sorted(listed - names)}")
 
 
 def main() -> int:
@@ -494,6 +578,7 @@ def main() -> int:
     print(f"产物根目录：{os.path.relpath(args.dir, ROOT)}　本机 RID：{local_rid() or '(未知)'}")
 
     targets = args.platform or list(EXPECTED)
+    check_native_source()
     found = False
     for rid in targets:
         tree = os.path.join(args.dir, f"backend-{rid}")

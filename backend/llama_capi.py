@@ -39,16 +39,15 @@ if TYPE_CHECKING:
 
 # Specify the base name of the shared library to load
 _lib_base_name = "llama"
-# [EN] Reader native runtime: the shared library lives in ``backend/native`` (per-RID
-# [EN] sub-directory is flattened at build time). No Python wrapper package is involved.
-# [ZH] Reader 原生运行期：动态库位于 ``backend/native``（构建时按 RID 子目录摊平）。
-# [ZH] 此路径不涉及任何 Python 包装包。
-_override_base_path = os.environ.get("ECHODESK_LLAMA_LIB")
-_base_path = (
-    pathlib.Path(os.path.abspath(os.path.dirname(__file__))) / "native"
-    if _override_base_path is None
-    else pathlib.Path(_override_base_path)
-)
+# [EN] Reader native runtime: the shared library lives in ``backend/native/<rid>`` and is
+# [EN] resolved by ``llama_ctypes.native_library_dir`` (explicit override, per-RID
+# [EN] directory, then the legacy flat directory). No Python wrapper package is involved.
+# [ZH] Reader 原生运行期：动态库位于 ``backend/native/<rid>``，由
+# [ZH] ``llama_ctypes.native_library_dir`` 解析（显式覆盖、按 RID 目录、旧扁平目录）。此路径
+# [ZH] 不涉及任何 Python 包装包。
+from llama_ctypes import native_library_dir
+
+_base_path = native_library_dir()
 # Load the library
 _lib = load_shared_library(_lib_base_name, _base_path)
 
