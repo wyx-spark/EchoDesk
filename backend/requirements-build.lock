@@ -20,6 +20,7 @@
 # Generated from artifacts/clean-venv; regenerate deliberately when the build toolchain
 # is upgraded. / 由 artifacts/clean-venv 生成；升级构建工具链时须显式重新生成。
 altgraph==0.17.5
+packaging==26.3
 pefile==2024.8.26
 pip==26.3
 pyinstaller==6.22.3

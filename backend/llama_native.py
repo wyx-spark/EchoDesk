@@ -49,6 +49,7 @@ import ctypes
 import logging
 import math
 import os
+import sys
 import time
 from typing import Dict, Iterator, List, Optional
 
@@ -183,8 +184,25 @@ class NativeLlama:
 
         params = api.llama_model_default_params()
         params.n_gpu_layers = self.n_gpu_layers
-        params.use_mmap = self.use_mmap
-        params.use_mlock = self.use_mlock
+        # [EN] Windows/macOS wheels expose separate ``use_mmap`` / ``use_mlock`` flags;
+        # [EN] the Linux wheel replaced them with a single ``load_mode`` enum. Mapping the
+        # [EN] configuration onto whichever shape the loaded ABI declares keeps the
+        # [EN] documented behaviour identical on all three platforms.
+        # [ZH] Windows/macOS 轮子分别暴露 ``use_mmap`` / ``use_mlock`` 开关；Linux 轮子改为
+        # [ZH] 单一的 ``load_mode`` 枚举。把配置映射到当前载入的 ABI 所声明的形状，使三个
+        # [ZH] 平台的行为与文档一致。
+        if hasattr(params, "use_mmap"):
+            params.use_mmap = self.use_mmap
+            params.use_mlock = self.use_mlock
+        else:
+            if self.use_mlock and self.use_mmap:
+                params.load_mode = 3   # LLAMA_LOAD_MODE_MMAP_MLOCK
+            elif self.use_mlock:
+                params.load_mode = 2   # LLAMA_LOAD_MODE_MLOCK
+            elif self.use_mmap:
+                params.load_mode = 1   # LLAMA_LOAD_MODE_MMAP
+            else:
+                params.load_mode = 0   # LLAMA_LOAD_MODE_NONE
         # [EN] No split / tensor override: a single model file on one device.
         # [ZH] 不做分片或张量覆盖：单个模型文件、单个设备。
         model = api.llama_model_load_from_file(self.model_path.encode("utf-8"), params)
@@ -424,9 +442,15 @@ class NativeLlama:
         chain = api.llama_sampler_chain_init(api.llama_sampler_chain_default_params())
         penalty = float(repeat_penalty or 1.0)
         if math.isfinite(penalty) and penalty != 1.0:
-            api.llama_sampler_chain_add(
-                chain, api.llama_sampler_init_penalties(
-                    DEFAULT_REPEAT_LAST_N, penalty, 0.0, 0.0))
+            # [EN] The Linux llama.cpp revision prepends ``n_vocab`` to this sampler.
+            # [ZH] Linux 所用的 llama.cpp 修订为该采样器在前面增加了 ``n_vocab``。
+            if sys.platform.startswith("linux"):
+                sampler = api.llama_sampler_init_penalties(
+                    self._n_vocab, DEFAULT_REPEAT_LAST_N, penalty, 0.0, 0.0)
+            else:
+                sampler = api.llama_sampler_init_penalties(
+                    DEFAULT_REPEAT_LAST_N, penalty, 0.0, 0.0)
+            api.llama_sampler_chain_add(chain, sampler)
         k = int(top_k if top_k is not None else DEFAULT_TOP_K)
         if k > 0:
             api.llama_sampler_chain_add(chain, api.llama_sampler_init_top_k(k))

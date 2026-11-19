@@ -1,12 +1,16 @@
 # [EN] Vendored llama.cpp C ABI declarations (MIT, derived from llama-cpp-python's
 # [EN] ctypes bindings) with the package import removed. This module only declares the
-# [EN] native ABI; the runtime wrapper is ``llama_native.NativeLlama``.
+# [EN] native ABI; the runtime wrapper is ``llama_native.NativeLlama``. The model/context
+# [EN] parameter structs and the penalty sampler signature are selected per platform,
+# [EN] because the three shipped wheels were built against different llama.cpp revisions.
 # [ZH] 就地内置的 llama.cpp C ABI 声明（MIT，源自 llama-cpp-python 的 ctypes 绑定），
 # [ZH] 去除了对包装包的导入。本模块只声明原生 ABI；运行期封装见
-# [ZH] ``llama_native.NativeLlama``。
+# [ZH] ``llama_native.NativeLlama``。模型/上下文参数结构体与惩罚采样器签名按平台选择，
+# [ZH] 因为随包的三个轮子针对不同的 llama.cpp 修订构建。
 from __future__ import annotations
 
 import os
+import sys
 import ctypes
 import pathlib
 import warnings
@@ -764,7 +768,7 @@ class llama_model_kv_override(ctypes.Structure):
 #     bool no_host;         // bypass host buffer allowing extra buffers to be used
 #     bool no_alloc;        // only load metadata and simulate memory allocations
 # };
-class llama_model_params(ctypes.Structure):
+class _llama_model_params_legacy(ctypes.Structure):
     """Parameters for llama_model
 
     Attributes:
@@ -895,7 +899,7 @@ class llama_sampler_seq_config(ctypes.Structure):
 #     struct llama_sampler_seq_config * samplers;
 #     size_t                            n_samplers;
 # };
-class llama_context_params(ctypes.Structure):
+class _llama_context_params_legacy(ctypes.Structure):
     """Parameters for llama_context
 
     Attributes:
@@ -1036,6 +1040,146 @@ It might not exist for progress report where '.' is output repeatedly."""
 #     void * tensor_types;                  // pointer to vector containing tensor types
 #     void * prune_layers;                  // pointer to vector containing layer indices to prune
 # } llama_model_quantize_params;
+# [EN] Platform ABI variants. The three wheels this project ships were built against
+# [EN] different llama.cpp revisions: the Windows wheel (0.3.19) uses the legacy
+# [EN] ``use_mmap/use_mlock`` model parameters and the compact context parameters, while
+# [EN] the Linux (0.3.36) and macOS (0.3.30) wheels use ``load_mode`` plus the extended
+# [EN] context parameter layout. The fields below are copied verbatim from each wheel's own
+# [EN] ctypes declarations; tools/check_native_abi.py verifies size and offset parity.
+# [ZH] 平台 ABI 变体。本项目随包的三个轮子针对不同 llama.cpp 修订构建：Windows 轮子
+# [ZH] （0.3.19）使用旧的 ``use_mmap/use_mlock`` 模型参数与紧凑的上下文参数；Linux 轮子
+# [ZH] （0.3.36）与 macOS 轮子（0.3.30）使用 ``load_mode`` 与扩展后的上下文参数布局。
+# [ZH] 下列字段逐项抄自各轮子自身的 ctypes 声明；tools/check_native_abi.py 负责校验
+# [ZH] 结构体大小与字段偏移一致。
+class _llama_model_params_linux(ctypes.Structure):
+    _fields_ = [
+        ("devices", ctypes.c_void_p),
+        ("tensor_buft_overrides", ctypes.c_void_p),
+        ("n_gpu_layers", ctypes.c_int32),
+        ("split_mode", ctypes.c_int),
+        ("load_mode", ctypes.c_int),
+        ("lazy_mode", ctypes.c_int),
+        ("main_gpu", ctypes.c_int32),
+        ("tensor_split", ctypes.POINTER(ctypes.c_float)),
+        ("progress_callback", llama_progress_callback),
+        ("progress_callback_user_data", ctypes.c_void_p),
+        ("kv_overrides", ctypes.POINTER(llama_model_kv_override)),
+        ("vocab_only", ctypes.c_bool),
+        ("check_tensors", ctypes.c_bool),
+        ("use_extra_bufts", ctypes.c_bool),
+        ("no_host", ctypes.c_bool),
+        ("no_alloc", ctypes.c_bool),
+        ("load_mtp", ctypes.c_bool),
+    ]
+
+
+class _llama_context_params_macos(ctypes.Structure):
+    _fields_ = [
+        ("n_ctx", ctypes.c_uint32),
+        ("n_batch", ctypes.c_uint32),
+        ("n_ubatch", ctypes.c_uint32),
+        ("n_seq_max", ctypes.c_uint32),
+        ("n_rs_seq", ctypes.c_uint32),
+        ("n_outputs_max", ctypes.c_uint32),
+        ("n_threads", ctypes.c_int32),
+        ("n_threads_batch", ctypes.c_int32),
+        ("ctx_type", ctypes.c_int),
+        ("rope_scaling_type", ctypes.c_int),
+        ("pooling_type", ctypes.c_int),
+        ("attention_type", ctypes.c_int),
+        ("flash_attn_type", ctypes.c_int),
+        ("rope_freq_base", ctypes.c_float),
+        ("rope_freq_scale", ctypes.c_float),
+        ("yarn_ext_factor", ctypes.c_float),
+        ("yarn_attn_factor", ctypes.c_float),
+        ("yarn_beta_fast", ctypes.c_float),
+        ("yarn_beta_slow", ctypes.c_float),
+        ("yarn_orig_ctx", ctypes.c_uint32),
+        ("defrag_thold", ctypes.c_float),
+        ("cb_eval", ggml_backend_sched_eval_callback),
+        ("cb_eval_user_data", ctypes.c_void_p),
+        ("type_k", ctypes.c_int),
+        ("type_v", ctypes.c_int),
+        ("abort_callback", ggml_abort_callback),
+        ("abort_callback_data", ctypes.c_void_p),
+        ("embeddings", ctypes.c_bool),
+        ("offload_kqv", ctypes.c_bool),
+        ("no_perf", ctypes.c_bool),
+        ("op_offload", ctypes.c_bool),
+        ("swa_full", ctypes.c_bool),
+        ("kv_unified", ctypes.c_bool),
+        ("samplers", ctypes.POINTER(llama_sampler_seq_config)),
+        ("n_samplers", ctypes.c_size_t),
+        ("ctx_other", llama_context_p_ctypes),
+    ]
+
+
+class _llama_context_params_linux(ctypes.Structure):
+    _fields_ = [
+        ("n_ctx", ctypes.c_uint32),
+        ("n_batch", ctypes.c_uint32),
+        ("n_ubatch", ctypes.c_uint32),
+        ("n_seq_max", ctypes.c_uint32),
+        ("n_rs_seq", ctypes.c_uint32),
+        ("n_outputs_max", ctypes.c_uint32),
+        ("n_outputs_max_per_seq", ctypes.c_uint32),
+        ("n_threads", ctypes.c_int32),
+        ("n_threads_batch", ctypes.c_int32),
+        ("ctx_type", ctypes.c_int),
+        ("rope_scaling_type", ctypes.c_int),
+        ("pooling_type", ctypes.c_int),
+        ("attention_type", ctypes.c_int),
+        ("flash_attn_type", ctypes.c_int),
+        ("rope_freq_base", ctypes.c_float),
+        ("rope_freq_scale", ctypes.c_float),
+        ("yarn_ext_factor", ctypes.c_float),
+        ("yarn_attn_factor", ctypes.c_float),
+        ("yarn_beta_fast", ctypes.c_float),
+        ("yarn_beta_slow", ctypes.c_float),
+        ("yarn_orig_ctx", ctypes.c_uint32),
+        ("defrag_thold", ctypes.c_float),
+        ("cb_eval", ggml_backend_sched_eval_callback),
+        ("cb_eval_user_data", ctypes.c_void_p),
+        ("type_k", ctypes.c_int),
+        ("type_v", ctypes.c_int),
+        ("abort_callback", ggml_abort_callback),
+        ("abort_callback_data", ctypes.c_void_p),
+        ("embeddings", ctypes.c_bool),
+        ("offload_kqv", ctypes.c_bool),
+        ("no_perf", ctypes.c_bool),
+        ("op_offload", ctypes.c_bool),
+        ("swa_full", ctypes.c_bool),
+        ("kv_unified", ctypes.c_bool),
+        ("samplers", ctypes.POINTER(llama_sampler_seq_config)),
+        ("n_samplers", ctypes.c_size_t),
+        ("ctx_other", llama_context_p_ctypes),
+    ]
+
+
+# [EN] The selected alias is what every prototype below binds against.
+# [ZH] 下面所有函数原型都绑定到此处选定的别名。
+if sys.platform.startswith("linux"):
+    llama_model_params = _llama_model_params_linux
+    llama_context_params = _llama_context_params_linux
+elif sys.platform == "darwin":
+    llama_model_params = _llama_model_params_legacy
+    llama_context_params = _llama_context_params_macos
+else:
+    llama_model_params = _llama_model_params_legacy
+    llama_context_params = _llama_context_params_legacy
+
+
+# [EN] ``llama_sampler_init_penalties`` gained an ``n_vocab`` first argument in the
+# [EN] llama.cpp revision used by the Linux wheel; macOS and Windows keep four arguments.
+# [ZH] Linux 轮子所用的 llama.cpp 修订为 ``llama_sampler_init_penalties`` 增加了一个
+# [ZH] ``n_vocab`` 首参；macOS 与 Windows 仍是四个参数。
+_PENALTY_ARGTYPES = (
+    [ctypes.c_int32, ctypes.c_int32, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+    if sys.platform.startswith("linux")
+    else [ctypes.c_int32, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+)
+
+
 class llama_model_quantize_params(ctypes.Structure):
     """Parameters for llama_model_quantize
 
@@ -4197,7 +4341,7 @@ def llama_sampler_init_grammar_lazy_patterns(
 #                            float   penalty_present); // 0.0 = disabled
 @ctypes_function(
     "llama_sampler_init_penalties",
-    [ctypes.c_int32, ctypes.c_float, ctypes.c_float, ctypes.c_float],
+    _PENALTY_ARGTYPES,
     llama_sampler_p_ctypes,
 )
 def llama_sampler_init_penalties(

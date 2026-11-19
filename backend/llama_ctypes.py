@@ -117,6 +117,25 @@ def load_shared_library(lib_base_name: str, base_path: pathlib.Path):
 
     cdll_args = dict()  # type: ignore
 
+    # [EN] POSIX: preload the ggml dependencies in dependency order with RTLD_GLOBAL so
+    # [EN] that libllama can resolve them even when the wheel did not record an rpath.
+    # [EN] Best effort: a missing optional backend (Metal/BLAS/mtmd) is not an error.
+    # [ZH] POSIX：按依赖顺序以 RTLD_GLOBAL 预加载 ggml 依赖，使 libllama 在轮子未记录
+    # [ZH] rpath 时也能解析它们。尽力而为：缺少可选后端（Metal/BLAS/mtmd）不算错误。
+    if sys.platform.startswith(("linux", "darwin")):
+        extension = ".so" if sys.platform.startswith("linux") else ".dylib"
+        for base in ("libggml-base", "libggml", "libggml-cpu",
+                     "libggml-metal", "libggml-blas", "libmtmd"):
+            for candidate in (base + extension, base + ".0" + extension):
+                dependency = base_path / candidate
+                if not dependency.exists():
+                    continue
+                try:
+                    ctypes.CDLL(str(dependency), mode=ctypes.RTLD_GLOBAL)
+                except OSError:
+                    pass
+                break
+
     # Add the library directory to the DLL search path on Windows (if needed)
     if sys.platform == "win32":
         os.add_dll_directory(str(base_path))

@@ -718,7 +718,17 @@ try {
             if (-not (Test-Path $avExe)) {
                 throw "发布树里没有 Avalonia 前端：$avExe（先跑 tools\build_reader.ps1）"
             }
-            $shotDir = Join-Path $Root "artifacts\verify-shots"
+            # [EN] Write the screenshots to the system temp directory. Windows Defender's
+            # [EN] Controlled Folder Access protects the user's Documents tree and denies
+            # [EN] *unsigned, freshly built* executables -- including this packaged
+            # [EN] EchoDesk.exe -- permission to create directories or files there, while
+            # [EN] Python and PowerShell are trusted. The probe only needs a writable
+            # [EN] directory, not a repository path.
+            # [ZH] 截图写入系统临时目录。Windows Defender 的"受控文件夹访问"保护用户的
+            # [ZH] Documents 目录，会拒绝**未签名、刚构建**的可执行文件（包括这里的
+            # [ZH] EchoDesk.exe）在其中创建目录或文件，而 Python 与 PowerShell 受信任。
+            # [ZH] 探针只需要一个可写目录，并不需要仓库路径。
+            $shotDir = Join-Path ([System.IO.Path]::GetTempPath()) "echodesk-verify-shots"
             if (Test-Path $shotDir) { Remove-Item -Recurse -Force $shotDir }
             Invoke-Native "ui-probe-avalonia-shots" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
                                                                    "-File", "tools\ui_probe_avalonia.ps1",

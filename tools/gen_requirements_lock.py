@@ -43,9 +43,27 @@ REQUIREMENTS = os.path.join(ROOT, "backend", "requirements.txt")
 # [EN] Packages that only exist on one platform; everything else is expected to resolve
 # [EN] to the same version on every RID.
 # [ZH] 只存在于单一平台的包；其余包在所有 RID 上都应解析到同一版本。
+#: [EN] Build-only distributions declared in requirements.txt but never needed at run
+#: [EN] time. They are pinned separately by backend/requirements-build.lock; keeping them
+#: [EN] out of the runtime lock is what lets the two locks be installed together.
+#: [ZH] requirements.txt 中声明、但运行期永远不需要的仅构建期发行包。它们由
+#: [ZH] backend/requirements-build.lock 单独钉死；排除在运行期锁之外，两份锁才能一起安装
+#: [ZH] 而不冲突。
+BUILD_ONLY = {"pyinstaller"}
+
+
 PLATFORM_ONLY = {
     "pywin32": 'sys_platform == "win32"',
     "pywin32-ctypes": 'sys_platform == "win32"',
+}
+
+#: [EN] Packages whose available version differs per platform. The clean environment is
+#: [EN] built on the maintainer's Windows host, so a single resolved version would pin a
+#: [EN] wheel that does not exist for Linux. Keys are (normalised name, sys_platform).
+#: [ZH] 各平台可用版本不同的包。干净环境在维护者的 Windows 机器上构建，单一解析版本会
+#: [ZH] 钉住 Linux 上并不存在的轮子。键为（归一化包名, sys_platform）。
+PLATFORM_VERSION_OVERRIDES = {
+    ("pillow", "linux"): "12.2.0",
 }
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -156,7 +174,7 @@ def marker_allows(requirement: str) -> bool:
 def closure(site_packages: str) -> list[tuple[str, str]]:
     """[EN] Dependency closure of the direct requirements. [ZH] 直接依赖的依赖闭包。"""
     dists = read_distributions(site_packages)
-    seeds = read_declared()
+    seeds = [name for name in read_declared() if name not in BUILD_ONLY]
     pending = list(seeds)
     seen: set[str] = set()
     result: list[tuple[str, str]] = []
@@ -194,7 +212,21 @@ def render(packages: list[tuple[str, str]]) -> str:
         "",
     ]
     for name, version in packages:
-        marker = PLATFORM_ONLY.get(normalize(name))
+        normalized = normalize(name)
+        overrides = {platform: pinned
+                     for (package, platform), pinned in PLATFORM_VERSION_OVERRIDES.items()
+                     if package == normalized}
+        if overrides:
+            versions = {platform: overrides.get(platform, version)
+                        for platform in ("win32", "darwin", "linux")}
+            if len(set(versions.values())) == 1:
+                lines.append(f"{name}=={version}")
+            else:
+                for platform in ("win32", "darwin", "linux"):
+                    lines.append(
+                        f'{name}=={versions[platform]} ; sys_platform == "{platform}"')
+            continue
+        marker = PLATFORM_ONLY.get(normalized)
         line = f"{name}=={version}"
         if marker:
             line += f" ; {marker}"
@@ -209,7 +241,18 @@ def main() -> int:
                         help="fail when the lock differs from the generated text")
     args = parser.parse_args()
     if not args.site_packages:
-        parser.error("--site-packages is required")
+        # [EN] The release gate calls this with --check only. Default to the build
+        # [EN] environment when present; its closure is the runtime lock (build-only
+        # [EN] packages are excluded by BUILD_ONLY).
+        # [ZH] 发布门禁只传 --check。存在构建环境时以其为默认来源：其闭包就是运行期锁
+        # [ZH]（仅构建期包已由 BUILD_ONLY 排除）。
+        candidates = [
+            os.path.join(ROOT, "artifacts", "clean-venv", "Lib", "site-packages"),
+            os.path.join(ROOT, "artifacts", "clean-venv", "lib", "python3.13", "site-packages"),
+        ]
+        args.site_packages = next((path for path in candidates if os.path.isdir(path)), "")
+        if not args.site_packages:
+            parser.error("--site-packages is required (no artifacts/clean-venv found)")
     text = render(closure(args.site_packages))
     if args.check:
         current = io.open(LOCK, encoding="utf-8").read() if os.path.isfile(LOCK) else ""

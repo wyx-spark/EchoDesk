@@ -10,7 +10,12 @@ Reader 后端：模型生命周期。自原先的单文件 ``main.py`` 拆出；
 """
 from __future__ import annotations
 
-from backend_support import *  # noqa: F401,F403 - shared backend support layer
+from backend_support import *
+# [EN] Explicit re-imports: the reverse language-key audit checks each
+# [EN] module for its own i18n imports, and star imports are not visible to it.
+# [ZH] 显式重新导入：反向语言键审计按文件检查 i18n 导入，星号导入对它不可见。
+from i18n import log_user
+from i18n import t as _t  # noqa: F401,F403 - shared backend support layer
 
 
 class ModelMixin:

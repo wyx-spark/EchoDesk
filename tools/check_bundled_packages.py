@@ -108,7 +108,9 @@ PYINSTALLER_RUNTIME = {
 NOT_A_MODULE_SUFFIX = (".dist-info", ".data", ".libs", ".egg-info")
 DATA_DIRS = {"pywin32_system32", "numpy.libs", "certifi", "tzdata", "setuptools"}
 # 本项目自己的资源目录（随 datas 打进去的），不属第三方组件
-OWN_RESOURCE_DIRS = {"lang", "docs", "examples", "skills", "skills_dev", "models"}
+# [EN] ``native`` holds the shipped llama.cpp dynamic libraries (collected as data).
+# [ZH] ``native`` 存放随包的 llama.cpp 动态库（作为 data 收集）。
+OWN_RESOURCE_DIRS = {"lang", "docs", "examples", "skills", "skills_dev", "models", "native"}
 
 # 发行包名与顶层模块名不一致的少数情况（importlib.metadata 的
 # packages_distributions() 偶尔映射不到，例如 pywin32 的 win32/*）

@@ -1548,6 +1548,7 @@ public partial class ModelPage : UserControl, ISettingsPage
             $"registryTitleHasParen={(HubRegistryTitle.Text?.Contains('（') == true ? 1 : 0)}",
             $"rescanButton={(string.IsNullOrEmpty(HubRescanButton.Content as string) ? 0 : 1)}",
             $"refreshRegistryButton={(string.IsNullOrEmpty(HubRegistryRefreshButton.Content as string) ? 0 : 1)}",
+            $"statusLine={(string.IsNullOrEmpty(HubStatusText.Text) ? 0 : 1)}",
         });
     }
 

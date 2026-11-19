@@ -164,6 +164,17 @@ def ensure() -> None:
     if sys.platform != "win32":
         return
 
+    # [EN] The Reader backend ships its own native runtime under ``backend/native/<rid>``.
+    # [EN] When it exists it is the only directory that may be registered: preloading a
+    # [EN] different ``llama_cpp/lib`` left over in the build interpreter's site-packages
+    # [EN] would put a mismatched ggml.dll into the process and make model loading fail.
+    # [ZH] Reader 后端自带 ``backend/native/<rid>`` 运行期。它存在时就是唯一允许注册的
+    # [ZH] 目录：若预加载构建解释器 site-packages 里遗留的另一个 ``llama_cpp/lib``，
+    # [ZH] 会把版本不匹配的 ggml.dll 带进进程，导致模型加载失败。
+    import llama_ctypes  # noqa: PLC0415 - local import keeps this module dependency-free
+
+    rid = llama_ctypes.current_native_rid()
+    native_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "native", rid) if rid else ""
     lib_dirs: list[str] = []
     roots = list(_site_packages_dirs()) + list(_frozen_roots())
     for root in roots:
@@ -171,9 +182,13 @@ def ensure() -> None:
         if os.path.isdir(nvidia_root):
             for bin_dir in glob.glob(os.path.join(nvidia_root, "*", "bin")):
                 _register(bin_dir)
-        candidate = os.path.join(root, "llama_cpp", "lib")
-        if os.path.isdir(candidate):
-            lib_dirs.append(candidate)
+    if native_dir and os.path.isdir(native_dir):
+        lib_dirs.append(native_dir)
+    else:
+        for root in roots:
+            candidate = os.path.join(root, "llama_cpp", "lib")
+            if os.path.isdir(candidate):
+                lib_dirs.append(candidate)
 
     seen_dirs: set[str] = set()
     for lib_dir in lib_dirs:
@@ -186,7 +201,13 @@ def ensure() -> None:
         # [EN] does carry the CUDA backend is still handled.
         # [ZH] 纯 CPU 构建没有 ``ggml-cuda.dll``；对该目录跳过预加载而不是终止整轮，
         # [ZH] 使另一个确实带有 CUDA 后端的根目录仍会被处理。
-        if not os.path.exists(os.path.join(lib_dir, "ggml-cuda.dll")):
+        # [EN] A directory that is the app's native runtime carries exactly the backends
+        # [EN] it ships; preload what exists. Legacy wheel directories are skipped when
+        # [EN] they are CPU-only, as before.
+        # [ZH] 应用自带运行期目录只包含它随包的 backend，存在即预加载。旧轮子目录仍按
+        # [ZH] 纯 CPU 情况跳过。
+        if os.path.normcase(lib_dir) != os.path.normcase(native_dir) and \
+                not os.path.exists(os.path.join(lib_dir, "ggml-cuda.dll")):
             continue
         for name in _PRELOAD_ORDER:
             path = os.path.join(lib_dir, name)

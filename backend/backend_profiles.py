@@ -10,7 +10,12 @@ Reader 后端：模型档案、上下文报告与能力设置。自原先的单�
 """
 from __future__ import annotations
 
-from backend_support import *  # noqa: F401,F403 - shared backend support layer
+from backend_support import *
+# [EN] Explicit re-imports: the reverse language-key audit checks each
+# [EN] module for its own i18n imports, and star imports are not visible to it.
+# [ZH] 显式重新导入：反向语言键审计按文件检查 i18n 导入，星号导入对它不可见。
+from i18n import log_user
+from i18n import t as _t  # noqa: F401,F403 - shared backend support layer
 
 
 class ProfileMixin:
@@ -624,7 +629,11 @@ class ProfileMixin:
         if getattr(sys, "frozen", False):
             command = [sys.executable, "--inference-test-load", json.dumps(payload)]
         else:
-            command = [sys.executable, os.path.abspath(__file__),
+            # [EN] The child entry point is main.py (the module that parses the hidden
+            # [EN] flag), not this mixin file.
+            # [ZH] 子进程入口是 main.py（解析隐藏参数的那个模块），不是本 mixin 文件。
+            command = [sys.executable,
+                       os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py"),
                        "--inference-test-load", json.dumps(payload)]
         env = dict(os.environ)
         env["PYTHONUTF8"] = "1"
