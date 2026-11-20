@@ -6,7 +6,7 @@
 > 专注于阅读与分析本机的长篇文档。下面每一句关于功能的描述都适用于**这一个**构建；被移除的部分在
 > [本版不包含什么](#本版不包含什么) 里逐项列出。
 >
-> **该用哪个版本？** `master` 是完整版 EchoDesk（浏览器自动化、多模态、检索栈）；`reader`（本分支）是长篇文档阅读版，当前 [Releases 页面](https://github.com/wyx-spark/EchoDesk/releases/latest) 发布的就是本分支构建。两个分支版本号相同，Reader 的产物标签是 `v0.2.6-reader`。
+> **该用哪个版本？** `master` 是完整版 EchoDesk（浏览器自动化、多模态、检索栈）；`reader`（本分支）是长篇文档阅读版，其构建在 [Releases 页面](https://github.com/wyx-spark/EchoDesk/releases) 上的标签是 `v0.2.6-reader`；当前 Latest 发布属于 `master`。两个分支版本号相同。
 >
 > **第一次使用？** 请按 [下载、安装与配置指南（Issue #7）](https://github.com/wyx-spark/EchoDesk/issues/7) 逐步操作：选版本、核对 SHA-256、使用离线模型包、完成首次配置。
 

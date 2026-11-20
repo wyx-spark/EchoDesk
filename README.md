@@ -9,7 +9,7 @@
 >
 > **Which edition should I use?** `master` is the full EchoDesk assistant (browser automation,
 > multimodal, retrieval). `reader` — this branch — is the long-document reading edition, and its
-> builds are the ones currently published on the [Releases page](https://github.com/wyx-spark/EchoDesk/releases/latest).
+> builds are tagged `v0.2.6-reader` on the [Releases page](https://github.com/wyx-spark/EchoDesk/releases); the current Latest release belongs to `master`.
 > Both branches keep the same version number; Reader artifacts are tagged `v0.2.6-reader`.
 >
 > **New here?** Follow the step-by-step [download, install and configure guide](https://github.com/wyx-spark/EchoDesk/issues/7); it covers edition choice, SHA-256 verification, the offline model bundle and first-run settings.
