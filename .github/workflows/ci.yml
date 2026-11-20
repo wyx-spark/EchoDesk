@@ -16,7 +16,7 @@ name: CI / 持续集成（轻量）
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, reader]
   pull_request:
   workflow_dispatch:
 
@@ -54,3 +54,8 @@ jobs:
 
       - name: Theme palette and contrast / 主题色板与对比度
         run: python tools/check_theme.py
+
+      # [EN] Context page configuration layer (Reader only): scaling math and round trip.
+      # [ZH] 上下文页配置层（仅 Reader）：缩放推导与配置往返。
+      - name: Context extension configuration / 上下文扩展配置（RoPE 缩放）
+        run: python tools/test_rope_config.py

@@ -17,6 +17,8 @@
 
 目标签名服务为 SignPath.io 提供的免费开源代码签名，证书由 SignPath Foundation 颁发（**这是申请计划中的服务与证书来源，不是当前状态**）：Free code signing provided by SignPath.io, certificate by SignPath Foundation.
 
+> 发布说明（Release）正文若以这句签名声明开头，指的是本计划申请的服务与证书来源，**不代表当前构建已完成签名**。当前所有 Windows 构建一律未签名，请以发布页的 SHA-256 与可复现构建核验为准。
+
 ### 这对下载和使用意味着什么
 
 - Windows 可能显示「未知发布者」，SmartScreen 可能提示「Windows 已保护你的电脑」。这是未签名程序的预期行为：点击「更多信息」→「仍要运行」。
@@ -89,6 +91,8 @@ We applied for free open-source code signing through SignPath Foundation. **The 
 Sections below that describe digital signatures — “Intended scope”, “Release and signing workflow” and “Verification” — therefore describe the **target state after a certificate is issued**, not the current state. We will not present a planned capability as an existing one; please read the rest of this document with that in mind.
 
 The intended service is free code signing provided by SignPath.io, with the certificate issued by SignPath Foundation (**this is the service and certificate source in the application, not the current state**): Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+
+> If a release note opens with that sentence, it names the service and certificate source the project applied for; it does **not** mean the build is signed. Every current Windows build is unsigned — verify downloads against the published SHA-256 and the reproducible-build script instead.
 
 ### What this means for downloads
 
