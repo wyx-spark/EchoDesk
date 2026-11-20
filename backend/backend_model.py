@@ -212,6 +212,14 @@ class ModelMixin:
                 "profile": str(getattr(self.config, "inference_profile", "balanced")),
                 "n_ctx": int(getattr(self.llm, "n_ctx", 0) or 0),
                 "n_ctx_max": usable,
+                # [EN] Context page: the configured ceiling and the effective RoPE mode,
+                # [EN] reported next to the window so the interface can explain "how far
+                # [EN] the window can be extended" without reading the file.
+                # [ZH] 上下文页：已配置的上限与生效的 RoPE 模式，与窗口一并上报，
+                # [ZH] 使界面不必读文件也能说明"窗口还能扩到多大"。
+                "n_ctx_hard_limit": int(
+                    getattr(self.inference_config, "n_ctx_max", 0) or 0),
+                "rope": self.inference_config.resolve_rope(),
                 "n_ctx_native": int(
                     plan.get("native_context")
                     or getattr(self.llm, "n_ctx_train", 0)

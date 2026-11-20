@@ -448,7 +448,8 @@
     "developer": {},
     "button": {
       "cancel": "Cancel",
-      "uninstall": "Uninstall"
+      "uninstall": "Uninstall",
+      "save": "Save"
     },
     "installed": {
       "trustBulkIntro": "Found {0} new local plugin(s). They run with your account's privileges, so only tick the ones you trust.\nYour choices are remembered and will not be asked again.",
@@ -541,6 +542,35 @@
       "saving": "Applying…",
       "testing": "Testing connectivity…",
       "localApiApplied": "✅ Local API settings applied"
+    },
+    "tab": {
+      "context": "Context"
+    },
+    "context": {
+      "title": "📐 Context window",
+      "tierLabel": "How much a single read can hold",
+      "tierAuto": "Follow recommendation ({0} tokens)",
+      "tier32k": "32K tokens (~20k words)",
+      "tier64k": "64K tokens (~40k words)",
+      "tier128k": "128K tokens (~80k words)",
+      "tier256k": "256K tokens (~160k words)",
+      "tierModel": "Model hard limit ({0} tokens)",
+      "tierCustom": "Custom",
+      "customLabel": "Custom size (tokens)",
+      "extendLabel": "Automatically enable long-context extension",
+      "extendHint": "Only applies when the window exceeds what the model handles on its own",
+      "currentText": "Current window: {0} tokens",
+      "nativeText": "Model capability: {0} tokens",
+      "limitText": "Configurable ceiling: {0} tokens",
+      "modelMissing": "No model detected yet. The setting takes effect once a model is loaded.",
+      "note1": "A larger window holds a longer document in one read, but uses more memory.",
+      "note2": "Beyond what the model handles on its own, answer quality may drop; the app picks a suitable extension automatically, so you do not need the technical details.",
+      "note3": "If the model file already carries long-context settings, the app ignores the extra setting to avoid garbled output.",
+      "rebuilding": "⏳ Rebuilding the engine for the new window (may take a few minutes)…",
+      "saved": "✅ Saved: window {0} tokens{1}",
+      "saveFailed": "❌ Save failed: {0}",
+      "invalidCustom": "⚠️ The custom size must be an integer of at least 2048",
+      "restoreRecommended": "Restore recommendation"
     }
   }
 }

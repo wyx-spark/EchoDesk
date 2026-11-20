@@ -471,6 +471,13 @@ try {
     Invoke-Check "推理覆盖与透明诊断（v0.2.4 任务-3）" {
         Invoke-Python "覆盖诊断" "tools\test_inference_override.py"; "通过"
     }
+    # [EN] Context page (v0.2.6-reader): the rope scaling configuration layer. Added as its
+    # [EN] own gate so a regression names the concern instead of hiding in a larger test.
+    # [ZH] 上下文页（v0.2.6-reader）：RoPE 缩放配置层。单独成门禁，回归时能直接指出关注点，
+    # [ZH] 而不是藏在更大的测试里。
+    Invoke-Check "上下文扩展配置（RoPE 缩放）" {
+        Invoke-Python "RoPE 配置" "tools\test_rope_config.py"; "通过"
+    }
     # [EN] Reader: the update checker (``backend/update_check.py``) is physically
     # [EN] removed -- a zero-network build cannot check for updates. The gate step goes
     # [EN] with it.

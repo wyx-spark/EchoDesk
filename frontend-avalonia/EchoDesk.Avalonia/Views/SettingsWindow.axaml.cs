@@ -106,12 +106,13 @@ public partial class SettingsWindow : Window, ISettingsHost
             TitleBarMinimizeButton, TitleBarMaximizeButton, TitleBarCloseButton);
 
         RegisterPage(new GeneralPage());
-        // [EN] Page order: General → Model. The Agent, Automation, Developer, skill
-        // [EN] marketplace, "installed" and ecosystem tabs are physically deleted from the
-        // [EN] Reader edition together with their backends and navigation routes.
-        // [ZH] 页签顺序：常规 → 模型。智能体、自动化、开发者、技能市场、「已安装」与生态
-        // [ZH] 页签已随其后端与导航路由在 Reader 版中物理删除。
+        // [EN] Page order: General → Model → Context. The Agent, Automation, Developer,
+        // [EN] skill marketplace, "installed" and ecosystem tabs are physically deleted
+        // [EN] from the Reader edition together with their backends and navigation routes.
+        // [ZH] 页签顺序：常规 → 模型 → 上下文。智能体、自动化、开发者、技能市场、
+        // [ZH] 「已安装」与生态页签已随其后端与导航路由在 Reader 版中物理删除。
         RegisterPage(new ModelPage());
+        RegisterPage(new ContextPage());
         foreach ((string key, string fallback) in NotMigratedTabs)
             AddNotMigratedTab(key, fallback);
 

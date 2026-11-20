@@ -396,6 +396,35 @@ internal static class Probe
             && registry.Contains("refreshRegistryButton=1"), registry);
         Check("模型页状态行有内容", registry.Contains("statusLine=1"), registry);
 
+        // [EN] ---------- Context page (v0.2.6-reader): tier list and plain-language notes ----------
+        // [ZH] ---------- 上下文页（v0.2.6-reader）：档位列表与通俗说明 ----------
+        if (!settings.SelectTab("settings.tab.context"))
+        {
+            Console.WriteLine("  [FAIL] 找不到「上下文」页签");
+            return false;
+        }
+        var contextPage = settings.FindPage<ContextPage>();
+        if (contextPage is null)
+        {
+            Console.WriteLine("  [FAIL] 设置窗口里没有 ContextPage");
+            return false;
+        }
+        await contextPage.RefreshQuietlyAsync();
+        string contextSnapshot = contextPage.ProbeSnapshot();
+        Console.WriteLine($"  上下文页   : {contextSnapshot}");
+        Check("上下文档位已列出（含模型硬上限）",
+            contextSnapshot.Contains("tierCount=6"), contextSnapshot);
+        Check("扩展开关与提示有文案",
+            contextSnapshot.Contains("extendHint=1") && contextSnapshot.Contains("extendLabel=1"),
+            contextSnapshot);
+        Check("上下文页说明已渲染",
+            contextSnapshot.Contains("noteCount=3"), contextSnapshot);
+        if (!settings.SelectTab("settings.tab.model"))
+        {
+            Console.WriteLine("  [FAIL] 回到「模型」页签失败");
+            return false;
+        }
+
         // [EN] ---------- Model page: inference presets and context description (v0.2.4
         // [EN] development task 2) ----------
         // [ZH] ---------- 模型页：推理预设与上下文描述（v0.2.4 研发任务 2）----------
@@ -1359,7 +1388,7 @@ internal static class Probe
         await Task.Delay(600);
         string[] tabs =
         {
-            "settings.tab.general", "settings.tab.model",
+            "settings.tab.general", "settings.tab.model", "settings.tab.context",
         };
         Console.WriteLine($"  [info] 设置窗口有 {settings.Tabs.ItemCount} 个页签，逐个扫描");
         for (int i = 0; i < tabs.Length; i++)

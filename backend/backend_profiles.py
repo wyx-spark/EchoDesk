@@ -446,6 +446,19 @@ class ProfileMixin:
             # [ZH] 无法超出该窗口"与"本机无法承担更大的窗口"。解释语句由后端本地化后
             # [ZH] 由界面原样展示。
             response["n_ctx_native"] = int(getattr(self.llm, "n_ctx_train", 0) or 0)
+            # [EN] Context page inputs: the stored hard ceiling, the active RoPE mode and
+            # [EN] whether the model file brings its own scaling (so the page can explain
+            # [EN] instead of letting the user stack two extensions).
+            # [ZH] 上下文页所需的输入：已存硬上限、当前生效的 RoPE 模式，以及模型文件是否
+            # [ZH] 自带缩放参数（页面据此解释，而不是让用户叠加两套扩展）。
+            try:
+                rope_cfg = self.inference_config.resolve_rope()
+            except Exception:  # noqa: BLE001 - diagnostics must never break the snapshot
+                rope_cfg = {"type": "none", "scale": 1.0, "freq_scale": 0.0, "orig_ctx": 0}
+            response["n_ctx_hard_limit"] = int(
+                getattr(self.inference_config, "n_ctx_max", 0) or 0)
+            response["rope"] = rope_cfg
+            response["model_rope"] = self._model_embedded_rope()
             response["inference_profile"] = str(
                 getattr(self.config, "inference_profile", "balanced"))
             response["n_batch"] = int(getattr(self.llm, "n_batch", 0) or 0)
@@ -535,6 +548,41 @@ class ProfileMixin:
         return snapshot
 
 
+    def _model_embedded_rope(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Return the RoPE scaling recorded inside the current model file, or an empty
+        mapping when the file carries none.
+
+        Why this matters: a GGUF that already declares ``rope.scaling.*`` is extended by
+        llama.cpp on its own. Writing our own factors on top produce a double scaling,
+        whose symptom is garbled output on long prompts. The context page therefore
+        needs to know before it offers to "extend" such a model.
+
+        [ZH]
+        返回当前模型文件内记录的 RoPE 缩放参数；文件未携带时返回空映射。
+
+        为什么需要它：已经声明 ``rope.scaling.*`` 的 GGUF 会被 llama.cpp 自动扩展。
+        在此之上再写一份自己的系数会造成双重缩放，症状是长提示词输出乱码。上下文页
+        因此必须先知道这一点，才谈得上"扩展"该模型。
+        """
+        try:
+            path = self._current_model_path()
+            if not path:
+                return {}
+            from gguf_meta import architecture, read_metadata
+
+            meta = read_metadata(path)
+            if not meta:
+                return {}
+            prefix = f"{architecture(meta)}.rope.scaling."
+            found = {key[len(prefix):]: value for key, value in meta.items()
+                     if str(key).startswith(prefix)}
+            return found
+        except Exception:  # noqa: BLE001 - metadata is advisory, never fatal
+            return {}
+
+
     def _parse_override_request(self, request: Dict[str, Any]) -> tuple:
         """
         [EN]
@@ -556,7 +604,10 @@ class ProfileMixin:
             except (TypeError, ValueError):
                 return {}, _t("inference.invalid_value", field="n_ctx",
                               error=request.get("n_ctx"))
-            if value < MIN_CONTEXT or value > MAX_CONTEXT_OVERRIDE:
+            # [EN] 0 is the documented "give me the recommendation again" sentinel used by the
+            # EN] context page's restore button; any other value must stay above MIN_CONTEXT.
+            # [ZH] 0 是上下文页「恢复推荐值」使用的哨兵值；其余取值必须不小于 MIN_CONTEXT。
+            if value != 0 and (value < MIN_CONTEXT or value > MAX_CONTEXT_OVERRIDE):
                 return {}, _t("inference.value_out_of_range", field="n_ctx",
                               low=MIN_CONTEXT, high=MAX_CONTEXT_OVERRIDE)
             values["n_ctx"] = value
@@ -580,6 +631,50 @@ class ProfileMixin:
                 return {}, _t("inference.value_out_of_range", field="n_batch",
                               low=1, high=65536)
             values["n_batch"] = value
+        # [EN] Hard ceiling of the context allocation (``inference_config.json:
+        # EN] n_ctx_max``). It is now editable from the context page so a user who
+        # [EN] picks 256K is not silently cut back to the shipped 128K.
+        # [ZH] 上下文分配的硬上限（``inference_config.json: n_ctx_max``）。现在可以从
+        # [ZH] 上下文页修改，选 256K 的用户不会被随包的 128K 悄悄截断。
+        if "n_ctx_max" in request and request.get("n_ctx_max") is not None:
+            try:
+                value = int(request["n_ctx_max"])
+            except (TypeError, ValueError):
+                return {}, _t("inference.invalid_value", field="n_ctx_max",
+                              error=request.get("n_ctx_max"))
+            if value < MIN_CONTEXT or value > MAX_CONTEXT_OVERRIDE:
+                return {}, _t("inference.value_out_of_range", field="n_ctx_max",
+                              low=MIN_CONTEXT, high=MAX_CONTEXT_OVERRIDE)
+            values["n_ctx_max"] = value
+        # [EN] RoPE scaling fields. ``scale`` is validated as a float so a reciprocal
+        # [EN] can be derived; ``orig_ctx`` of 0 means "read from the model file".
+        # [ZH] RoPE 缩放字段。``scale`` 按浮点校验以便推导倒数；``orig_ctx`` 为 0
+        # [ZH] 表示"从模型文件读取"。
+        if "rope_type" in request and request.get("rope_type") is not None:
+            mode = str(request["rope_type"] or "none").strip().lower()
+            if mode not in ("none", "linear", "yarn"):
+                return {}, _t("inference.rope_type_invalid", mode=mode)
+            values["rope_type"] = mode
+        if "rope_scale" in request and request.get("rope_scale") is not None:
+            try:
+                value = float(request["rope_scale"])
+            except (TypeError, ValueError):
+                return {}, _t("inference.invalid_value", field="rope_scale",
+                              error=request.get("rope_scale"))
+            if value < 1.0 or value > 64.0:
+                return {}, _t("inference.value_out_of_range", field="rope_scale",
+                              low=1, high=64)
+            values["rope_scale"] = value
+        if "rope_orig_ctx" in request and request.get("rope_orig_ctx") is not None:
+            try:
+                value = int(request["rope_orig_ctx"])
+            except (TypeError, ValueError):
+                return {}, _t("inference.invalid_value", field="rope_orig_ctx",
+                              error=request.get("rope_orig_ctx"))
+            if value < 0 or value > MAX_CONTEXT_OVERRIDE:
+                return {}, _t("inference.value_out_of_range", field="rope_orig_ctx",
+                              low=0, high=MAX_CONTEXT_OVERRIDE)
+            values["rope_orig_ctx"] = value
         return values, ""
 
 
@@ -767,7 +862,78 @@ class ProfileMixin:
             self.inference_config.n_batch = int(values["n_batch"])
             changed.append("n_batch")
             inference_changed = True
-        if "n_gpu_layers" in values or "n_batch" in values:
+        # [EN] Context ceiling and RoPE scaling (v0.2.6-reader context page).
+        # [EN] Two rules keep this predictable for non-technical users:
+        # [EN]   1. choosing a window larger than the stored ceiling raises the ceiling,
+        # [EN]      so the choice is never silently clamped back;
+        # [EN]   2. if the model file already carries its own long-context settings, the
+        # [EN]      requested scaling is ignored instead of being stacked on top, because
+        # [EN]      double scaling garbles long output.
+        # [ZH] 上下文上限与 RoPE 缩放（v0.2.6-reader 上下文页）。
+        # [ZH] 两条规则让非技术用户也能预期结果：
+        # [ZH]   1. 选的窗口大于已存上限时自动抬高上限，用户的选择不会被悄悄截回；
+        # [ZH]   2. 若模型文件自带长上下文设置，则忽略本次缩放而不是叠加 —— 双重缩放会让
+        # [ZH]      长文本输出变成乱码。
+        previous_rope = {
+            "type": str(self.inference_config.rope_type),
+            "scale": float(self.inference_config.rope_scale),
+            "freq_scale": float(self.inference_config.rope_freq_scale),
+            "orig_ctx": int(self.inference_config.rope_orig_ctx),
+            "n_ctx_max": int(self.inference_config.n_ctx_max),
+        }
+        rope_notice = ""
+        if "n_ctx" in values:
+            requested_ctx = int(values["n_ctx"])
+            if requested_ctx <= 0:
+                # [EN] Restore path: re-plan from the hardware recommendation and drop the
+                # [EN] explicit override, which is exactly "back to the recommended window".
+                # [ZH] 恢复路径：按硬件推荐重新规划并清除显式覆盖，即"回到推荐窗口"。
+                recommendation = self._recommended_plan()
+                cfg.context_length = int(recommendation.n_ctx_max)
+                cfg.inference_override = False
+                self.inference_config.n_ctx_max = int(recommendation.n_ctx_max)
+                self.inference_config.rope_type = "none"
+                self.inference_config.rope_scale = 1.0
+                self.inference_config.rope_freq_scale = 1.0
+                self.inference_config.rope_orig_ctx = 0
+                for item in ("n_ctx_max", "rope"):
+                    if item not in changed:
+                        changed.append(item)
+                inference_changed = True
+                requested_ctx = 0
+            if requested_ctx > int(self.inference_config.n_ctx_max):
+                self.inference_config.n_ctx_max = requested_ctx
+                changed.append("n_ctx_max")
+                inference_changed = True
+        if "n_ctx_max" in values:
+            ceiling = int(values["n_ctx_max"])
+            if ceiling < int(cfg.context_length or 0):
+                # [EN] A ceiling below the current window would make the planner
+                # [EN] contradict the user's saved choice; clamp the ceiling up and say so.
+                # [ZH] 上限低于当前窗口会让规划器与用户已保存的选择矛盾；因此把上限抬到
+                # [ZH] 窗口大小，并明确提示。
+                ceiling = int(cfg.context_length or 0)
+                rope_notice = _t("inference.rope_ceiling_raised")
+            if ceiling != int(self.inference_config.n_ctx_max):
+                self.inference_config.n_ctx_max = max(1, ceiling)
+                changed.append("n_ctx_max")
+                inference_changed = True
+        if any(key in values for key in ("rope_type", "rope_scale", "rope_orig_ctx")):
+            mode = str(values.get("rope_type", previous_rope["type"]) or "none").lower()
+            scale = float(values.get("rope_scale", previous_rope["scale"]) or 1.0)
+            orig = int(values.get("rope_orig_ctx", previous_rope["orig_ctx"]) or 0)
+            embedded = self._model_embedded_rope()
+            if mode != "none" and embedded:
+                mode = "none"
+                rope_notice = _t("inference.rope_embedded_ignored")
+            self.inference_config.rope_type = mode
+            self.inference_config.rope_scale = max(1.0, scale) if mode != "none" else 1.0
+            self.inference_config.rope_freq_scale = (
+                1.0 / scale if mode != "none" and scale > 1.0 else 1.0)
+            self.inference_config.rope_orig_ctx = max(0, orig) if mode != "none" else 0
+            changed.append("rope")
+            inference_changed = True
+        if "n_gpu_layers" in values or "n_batch" in values or inference_changed:
             # [EN] Persist hardware overrides in the inference configuration file.
             # [ZH] 硬件覆盖值持久化到推理配置文件。
             self.inference_config.save()
@@ -872,6 +1038,21 @@ class ProfileMixin:
                 if "n_ctx" in values and previous_context > 0:
                     cfg.context_length = previous_context
                     changed = [item for item in changed if item != "n_ctx"]
+                # [EN] Restore the previous RoPE mode and ceiling as well: a rejected
+                # [EN] window must not leave the file describing an extension the
+                # [EN] running engine never adopted.
+                # [ZH] 同时恢复原 RoPE 模式与上限：被拒绝的窗口不应让配置文件描述一个
+                # [ZH] 运行中的引擎从未采用的扩展。
+                self.inference_config.rope_type = previous_rope["type"]
+                self.inference_config.rope_scale = previous_rope["scale"]
+                self.inference_config.rope_freq_scale = previous_rope["freq_scale"]
+                self.inference_config.rope_orig_ctx = previous_rope["orig_ctx"]
+                self.inference_config.n_ctx_max = previous_rope["n_ctx_max"]
+                try:
+                    self.inference_config.save()
+                except Exception:  # noqa: BLE001 - the returned error is primary
+                    log.warning("恢复上下文设置后保存推理配置失败", exc_info=True)
+                if "n_ctx" in values and previous_context > 0:
                     try:
                         cfg.save()
                     except Exception:  # noqa: BLE001 - [EN] the returned error is primary
@@ -897,6 +1078,7 @@ class ProfileMixin:
                 "changed": changed, "capability": self.model_capability(),
                 "inference": self.inference_summary(),
                 "hardware": self.hardware_diagnostics(),
-                "context": self._context_snapshot()}
+                "context": self._context_snapshot(),
+                "notice": rope_notice}
 
 

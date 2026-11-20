@@ -91,6 +91,27 @@ def ggml_type_value(name: Any) -> int:
     return GGML_TYPE_VALUES["q8_0"]
 
 
+#: [EN] Supported RoPE scaling modes and the numeric ``llama_rope_scaling_type`` values
+#: [EN] they map onto (``none`` = 0, ``linear`` = 1, ``yarn`` = 2).
+#: [ZH] 支持的 RoPE 缩放模式，以及它们对应的 ``llama_rope_scaling_type`` 数值
+#: [ZH] （``none`` = 0，``linear`` = 1，``yarn`` = 2）。
+ROPE_TYPE_VALUES: Dict[str, int] = {"none": 0, "linear": 1, "yarn": 2}
+
+
+def normalize_rope_type(value: Any) -> str:
+    """
+    [EN]
+    Normalise the RoPE mode name. Anything unknown falls back to ``none``, because
+    guessing an extension mode would silently change generation quality.
+
+    [ZH]
+    归一化 RoPE 模式名。未知取值回退到 ``none``：猜一个扩展模式会在用户不知情时
+    改变生成质量。
+    """
+    key = str(value or "none").strip().lower()
+    return key if key in ROPE_TYPE_VALUES else "none"
+
+
 #: [EN] File name used when no explicit path is supplied.
 #: [ZH] 未显式提供路径时使用的文件名。
 FILENAME = "inference_config.json"
@@ -142,6 +163,19 @@ DEFAULTS: Dict[str, Any] = {
     # [ZH] 初始上下文窗口，以及文档驱动分配的硬上限。
     "n_ctx_default": 2048,
     "n_ctx_max": 131072,
+    # [EN] RoPE scaling: the switch that lets a model accept a window larger than the
+    # [EN] one it was trained for. ``none`` keeps the model's own behaviour; ``linear``
+    # [EN] and ``yarn`` extend it. ``scale`` is the extension factor (2 = twice the
+    # [EN] original), ``freq_scale`` is its reciprocal and is derived when left at 0,
+    # [EN] and ``orig_ctx`` is the model's original window (0 = read from the file).
+    # [ZH] RoPE 缩放：让模型接受比训练窗口更大的上下文的开关。``none`` 保持模型自身
+    # [ZH] 行为；``linear`` 与 ``yarn`` 用于扩展。``scale`` 是扩展倍数（2 = 两倍），
+    # [ZH] ``freq_scale`` 是其倒数、留 0 时自动推导，``orig_ctx`` 是模型原始窗口
+    # [ZH] （0 = 从模型文件读取）。
+    "rope_type": "none",
+    "rope_scale": 1.0,
+    "rope_freq_scale": 1.0,
+    "rope_orig_ctx": 0,
     # [EN] Token budget reserved for the answer, plus the safety margin added on top of
     # [EN] the document body when the window is allocated.
     # [ZH] 为回答预留的 token 预算，以及分配窗口时在文档正文之外追加的安全余量。
@@ -223,6 +257,12 @@ class InferenceConfig:
     n_gpu_layers: int = 0
     n_ctx_default: int = 2048
     n_ctx_max: int = 131072
+    # [EN] RoPE scaling block (see ``DEFAULTS`` above for the semantics).
+    # [ZH] RoPE 缩放参数块（语义见上方 ``DEFAULTS``）。
+    rope_type: str = "none"
+    rope_scale: float = 1.0
+    rope_freq_scale: float = 1.0
+    rope_orig_ctx: int = 0
     output_token_budget: int = 4096
     context_safety_margin: int = 512
     tuning: Dict[str, Any] = field(default_factory=dict)
@@ -294,6 +334,12 @@ class InferenceConfig:
                 return value.strip().lower() in ("1", "true", "yes", "on")
             return bool(value)
 
+        def as_float(key: str) -> float:
+            try:
+                return float(merged.get(key) or DEFAULTS[key])
+            except (TypeError, ValueError):
+                return float(DEFAULTS[key])
+
         tuning = merged.get("tuning")
         return cls(
             n_threads=as_int("n_threads"),
@@ -307,6 +353,10 @@ class InferenceConfig:
             n_gpu_layers=as_int("n_gpu_layers"),
             n_ctx_default=max(1, as_int("n_ctx_default")),
             n_ctx_max=max(1, as_int("n_ctx_max")),
+            rope_type=normalize_rope_type(merged.get("rope_type")),
+            rope_scale=max(1.0, as_float("rope_scale")),
+            rope_freq_scale=min(1.0, max(0.0, as_float("rope_freq_scale"))),
+            rope_orig_ctx=max(0, as_int("rope_orig_ctx")),
             output_token_budget=max(0, as_int("output_token_budget")),
             context_safety_margin=max(0, as_int("context_safety_margin")),
             tuning=tuning if isinstance(tuning, dict) else {},
@@ -338,6 +388,10 @@ class InferenceConfig:
             "n_gpu_layers": int(self.n_gpu_layers),
             "n_ctx_default": int(self.n_ctx_default),
             "n_ctx_max": int(self.n_ctx_max),
+            "rope_type": str(self.rope_type),
+            "rope_scale": float(self.rope_scale),
+            "rope_freq_scale": float(self.rope_freq_scale),
+            "rope_orig_ctx": int(self.rope_orig_ctx),
             "output_token_budget": int(self.output_token_budget),
             "context_safety_margin": int(self.context_safety_margin),
             "tuning": dict(self.tuning),
@@ -418,6 +472,51 @@ class InferenceConfig:
         except (TypeError, ValueError):
             return float(fallback)
 
+    def resolve_rope(self) -> Dict[str, Any]:
+        """
+        [EN]
+        Effective RoPE scaling handed to the native runtime.
+
+        ``scale`` is the human-facing extension factor (a window of 64K on a 32K model
+        uses 2), while llama.cpp expects its reciprocal in ``rope_freq_scale``. When
+        the reciprocal is left at 0 the native library keeps the model's own value,
+        which is exactly what ``none`` needs. ``orig_ctx`` of 0 also means "read from
+        the model file".
+
+        [ZH]
+        交给原生运行时的生效 RoPE 缩放参数。
+
+        ``scale`` 是给人看的扩展倍数（32K 模型开 64K 窗口即 2 倍），而 llama.cpp 需要
+        它的倒数 ``rope_freq_scale``。倒数留 0 时原生库沿用模型自带取值，这正是
+        ``none`` 所需；``orig_ctx`` 为 0 同样表示"从模型文件读取"。
+        """
+        mode = normalize_rope_type(self.rope_type)
+        if mode == "none":
+            # [EN] A disabled mode must not leak a stale factor into the engine.
+            # [ZH] 关闭状态下绝不能把残留的倍数带进引擎。
+            return {"type": "none", "scale": 1.0, "freq_scale": 0.0, "orig_ctx": 0}
+        scale = float(self.rope_scale or 1.0)
+        if scale < 1.0:
+            scale = 1.0
+        # [EN] The extension factor is authoritative: 4x always means 1/4 frequency, even
+        # [EN] when the stored frequency is stale (a hand-edited file, or a value left over
+        # [EN] from a previous tier). A stored frequency is only honoured when no factor is
+        # [EN] in play, and even then it stays inside the meaningful (0, 1] range.
+        # [ZH] 扩展倍数是权威：4 倍永远对应 1/4 频率，即使存下来的频率已经过时（手改文件，
+        # [ZH] 或上一次档位残留）。只有没有倍数时才采用存下来的频率，且仍限制在 (0, 1]。
+        if scale > 1.0:
+            freq = 1.0 / scale
+        else:
+            freq = float(self.rope_freq_scale or 0.0)
+            if freq <= 0.0 or freq > 1.0:
+                freq = 0.0
+        return {
+            "type": mode,
+            "scale": round(scale, 4),
+            "freq_scale": round(freq, 6),
+            "orig_ctx": max(0, int(self.rope_orig_ctx or 0)),
+        }
+
     def llama_kwargs(self) -> Dict[str, Any]:
         """
         [EN]
@@ -428,6 +527,7 @@ class InferenceConfig:
         交给 ``llama_cpp.Llama`` 的构建关键字参数。``n_ctx`` 与 ``model_path`` 由调用方
         提供，因为它们随文档变化。
         """
+        rope = self.resolve_rope()
         return {
             "n_threads": self.resolve_n_threads(),
             "n_batch": int(self.n_batch),
@@ -438,6 +538,10 @@ class InferenceConfig:
             "flash_attn": bool(self.flash_attn),
             "type_k": ggml_type_value(self.type_k),
             "type_v": ggml_type_value(self.type_v),
+            "rope_type": rope["type"],
+            "rope_scale": rope["scale"],
+            "rope_freq_scale": rope["freq_scale"],
+            "rope_orig_ctx": rope["orig_ctx"],
         }
 
     def describe(self) -> Dict[str, Any]:
@@ -463,6 +567,7 @@ class InferenceConfig:
             "n_gpu_layers": int(self.n_gpu_layers),
             "n_ctx_default": int(self.n_ctx_default),
             "n_ctx_max": int(self.n_ctx_max),
+            "rope": self.resolve_rope(),
             "output_token_budget": int(self.output_token_budget),
             "context_safety_margin": int(self.context_safety_margin),
             "tuned_at": str(self.tuned_at),

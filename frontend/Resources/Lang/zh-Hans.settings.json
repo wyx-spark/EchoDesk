@@ -448,7 +448,8 @@
     "developer": {},
     "button": {
       "cancel": "取消",
-      "uninstall": "卸载"
+      "uninstall": "卸载",
+      "save": "保存"
     },
     "installed": {
       "trustBulkIntro": "发现 {0} 个新的本地插件。它们将以你的账户权限运行，只勾选你信任的插件。\n你的选择会被记住，之后不再询问。",
@@ -541,6 +542,35 @@
       "saving": "正在应用…",
       "testing": "正在测试连通性…",
       "localApiApplied": "✅ 本地 API 设置已应用"
+    },
+    "tab": {
+      "context": "上下文"
+    },
+    "context": {
+      "title": "📐 上下文窗口",
+      "tierLabel": "一次能读多长的文档",
+      "tierAuto": "跟随推荐（{0} tokens）",
+      "tier32k": "32K tokens（约 2 万字）",
+      "tier64k": "64K tokens（约 4 万字）",
+      "tier128k": "128K tokens（约 8 万字）",
+      "tier256k": "256K tokens（约 16 万字）",
+      "tierModel": "模型硬上限（{0} tokens）",
+      "tierCustom": "自定义",
+      "customLabel": "自定义大小（tokens）",
+      "extendLabel": "自动启用长上下文扩展",
+      "extendHint": "窗口超过模型自带能力时才会生效",
+      "currentText": "当前窗口：{0} tokens",
+      "nativeText": "模型自带能力：{0} tokens",
+      "limitText": "可设置上限：{0} tokens",
+      "modelMissing": "尚未检测到模型。窗口设置会在载入模型后生效。",
+      "note1": "窗口越大，一次能读的文档越长，但占用的内存也越多。",
+      "note2": "超过模型自带能力时，回答质量可能下降；程序会自动选用合适的扩展方式，你无需了解技术细节。",
+      "note3": "如果模型文件已自带长上下文设置，程序会自动忽略额外设置，避免输出乱码。",
+      "rebuilding": "⏳ 正在按新窗口重建引擎（可能需要几分钟）…",
+      "saved": "✅ 已保存：窗口 {0} tokens{1}",
+      "saveFailed": "❌ 保存失败：{0}",
+      "invalidCustom": "⚠️ 自定义大小需为不小于 2048 的整数",
+      "restoreRecommended": "恢复推荐值"
     }
   }
 }

@@ -998,7 +998,10 @@
     "value_out_of_range": "提交的 {field} 超出允许范围 {low}-{high}。",
     "test_no_model": "没有可测试加载的本地模型文件。",
     "test_timeout": "测试加载在 {seconds} 秒内未完成，已终止（通常是上下文超出可用内存）。请降低 n_ctx 或 n_gpu_layers 后重试。",
-    "save_failed": "保存推理设置失败：{error}"
+    "save_failed": "保存推理设置失败：{error}",
+    "rope_type_invalid": "无效的上下文扩展方式：{mode}（可选：none / linear / yarn）",
+    "rope_ceiling_raised": "上限低于当前窗口，已自动抬高到当前窗口大小",
+    "rope_embedded_ignored": "该模型已自带长上下文设置，本次未叠加额外设置（叠加会导致乱码）"
   },
   "capability": {
     "unknown": "未知",

@@ -160,6 +160,10 @@ class NativeLlama:
         flash_attn: bool = False,
         type_k: int = 8,
         type_v: int = 8,
+        rope_type: str = "none",
+        rope_scale: float = 1.0,
+        rope_freq_scale: float = 0.0,
+        rope_orig_ctx: int = 0,
         verbose: bool = False,
         **_ignored,
     ) -> None:
@@ -179,6 +183,27 @@ class NativeLlama:
         self.flash_attn = bool(flash_attn)
         self.type_k = int(type_k)
         self.type_v = int(type_v)
+        # [EN] RoPE scaling: stored so the status line can report the effective mode.
+        # [EN] The numeric enum values come from ``llama_rope_scaling_type``
+        # [EN] (none = 0, linear = 1, yarn = 2); an unknown name keeps ``none``.
+        # [ZH] RoPE 缩放：保存下来供状态行报告生效模式。数值枚举取自
+        # [ZH] ``llama_rope_scaling_type``（none = 0，linear = 1，yarn = 2）；
+        # [ZH] 未知名称按 ``none`` 处理。
+        self.rope_type = str(rope_type or "none").strip().lower()
+        if self.rope_type not in ("none", "linear", "yarn"):
+            self.rope_type = "none"
+        self.rope_scale = float(rope_scale or 1.0)
+        if self.rope_scale < 1.0:
+            self.rope_scale = 1.0
+        # [EN] ``rope_freq_scale`` is the reciprocal of the extension factor. A value of
+        # [EN] 0 means "keep whatever the model file declares", which is what ``none``
+        # [EN] needs and also the safest default when the file already carries scaling.
+        # [ZH] ``rope_freq_scale`` 是扩展倍数的倒数。取 0 表示"沿用模型文件自带取值"，
+        # [ZH] 这既是 ``none`` 所需，也是文件自带缩放时最安全的默认。
+        self.rope_freq_scale = float(rope_freq_scale or 0.0)
+        if self.rope_type != "none" and self.rope_freq_scale <= 0.0:
+            self.rope_freq_scale = 1.0 / self.rope_scale if self.rope_scale > 1.0 else 0.0
+        self.rope_orig_ctx = max(0, int(rope_orig_ctx or 0))
         self._loaded = False
         self._t0 = time.perf_counter()
 
@@ -228,6 +253,30 @@ class NativeLlama:
         # [ZH] 才能退回 F16。
         ctx_params.type_k = self.type_k
         ctx_params.type_v = self.type_v
+        # [EN] RoPE scaling (v0.2.6-reader context extension). Every ABI variant in
+        # [EN] ``llama_capi`` declares these fields, but they are applied defensively:
+        # [EN] if a future library drops one, the runtime keeps its own default instead
+        # [EN] of failing the model load. Only the three fields we actually control are
+        # [EN] written; YaRN's mixing factors keep the library defaults so an untouched
+        # [EN] configuration behaves exactly as before this feature existed.
+        # [ZH] RoPE 缩放（v0.2.6-reader 上下文扩展）。``llama_capi`` 的三个 ABI 变体都
+        # [ZH] 声明了这些字段，但这里仍做防御处理：若将来的库去掉某一项，运行时沿用自身
+        # [ZH] 默认值，而不是让模型加载失败。只写我们真正控制的三个字段；YaRN 的混合
+        # [ZH] 系数沿用库默认值，因此未启用该功能时行为与本功能存在之前完全一致。
+        rope_mode = {"none": 0, "linear": 1, "yarn": 2}.get(self.rope_type, 0)
+        if hasattr(ctx_params, "rope_scaling_type"):
+            ctx_params.rope_scaling_type = rope_mode
+        if self.rope_type != "none":
+            if hasattr(ctx_params, "rope_freq_scale") and self.rope_freq_scale > 0.0:
+                ctx_params.rope_freq_scale = self.rope_freq_scale
+            if self.rope_orig_ctx > 0 and hasattr(ctx_params, "yarn_orig_ctx"):
+                ctx_params.yarn_orig_ctx = int(self.rope_orig_ctx)
+            if self.rope_scale > 1.0 and hasattr(ctx_params, "rope_freq_scale"):
+                # [EN] The factor is the authoritative input: rewrite the reciprocal so a
+                # [EN] hand-edited ``scale`` cannot disagree with ``freq_scale``.
+                # [ZH] 倍数是权威输入：重写倒数，避免手改的 ``scale`` 与
+                # [ZH] ``freq_scale`` 互相矛盾。
+                ctx_params.rope_freq_scale = 1.0 / self.rope_scale
         ctx = api.llama_init_from_model(model, ctx_params)
         if not ctx:
             api.llama_model_free(model)

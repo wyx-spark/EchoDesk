@@ -998,7 +998,10 @@
     "value_out_of_range": "The value submitted for {field} is outside the allowed range {low}-{high}.",
     "test_no_model": "No local model file is available to test-load.",
     "test_timeout": "The test load did not finish within {seconds} seconds and was terminated (usually the context exceeds available memory). Lower n_ctx or n_gpu_layers and try again.",
-    "save_failed": "Failed to save the inference settings: {error}"
+    "save_failed": "Failed to save the inference settings: {error}",
+    "rope_type_invalid": "Invalid context extension mode: {mode} (expected none / linear / yarn)",
+    "rope_ceiling_raised": "The ceiling was below the current window, so it was raised to match it",
+    "rope_embedded_ignored": "This model already carries its own long-context settings; the extra setting was ignored (stacking them garbles output)"
   },
   "capability": {
     "unknown": "Unknown",
