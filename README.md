@@ -1,5 +1,7 @@
 # EchoDesk
 
+[![CI](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml) [![Latest release](https://img.shields.io/github/v/release/wyx-spark/EchoDesk?label=release)](https://github.com/wyx-spark/EchoDesk/releases/latest)
+
 > ✅ **Note / 注意**：v0.2.6 is released. It includes the twenty-three-item experience overhaul described in the [changelog](CHANGELOG.md). If you still encounter a bug (for example a UI freeze or a file upload error), please report it in Issues.
 > 我们已发布 v0.2.6，其中包含 [变更日志](CHANGELOG.zh-Hans.md) 所述 23 项体验大修。如果仍然遇到 Bug，请在 Issues 中反馈。
 >
@@ -9,6 +11,8 @@
 > the [Releases page](https://github.com/wyx-spark/EchoDesk/releases/latest) currently publishes
 > (tagged `v0.2.6-reader`). Choose `master` for automation and the marketplace, Reader for the
 > smallest reading-focused build.
+>
+> **New here?** Follow the step-by-step [download, install and configure guide](https://github.com/wyx-spark/EchoDesk/issues/7): edition choice, SHA-256 verification, the offline model bundle and first-run settings.
 
 ![EchoDesk main window — a local model streaming a structured contract review](docs/images/screenshot-main.png)
 
@@ -35,6 +39,17 @@ No cloud account. No API key. No telemetry.
 - **Languages**: Simplified Chinese and English shipped; more via community language packs
 - **License**: [Apache-2.0](LICENSE)
 - **Organization**: [Void-Entropia-Studio](https://github.com/Void-Entropia-Studio)
+
+## Editions and front ends
+
+| | `master` (this branch) | `reader` |
+| --- | --- | --- |
+| Inference | llama.cpp through the `llama-cpp-python` binding | native llama.cpp C ABI; the Python binding is removed |
+| Front end | WPF for the Windows LTS line, Avalonia for cross-platform | Avalonia only |
+| Network | optional networked features, off by default | no network code path at all |
+| Best for | automation, model marketplace, multimodal, retrieval | reading and analysing long local documents |
+
+The two editions share one backend protocol and one language-pack tree; only the layer above the protocol differs. Build instructions for each live in that branch's README.
 
 ## Why EchoDesk
 

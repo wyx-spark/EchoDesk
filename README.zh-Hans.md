@@ -1,5 +1,7 @@
 # EchoDesk
 
+[![CI](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml) [![Latest release](https://img.shields.io/github/v/release/wyx-spark/EchoDesk?label=release)](https://github.com/wyx-spark/EchoDesk/releases/latest)
+
 > ✅ **Note / 注意**：v0.2.6 is released. It includes the twenty-three-item experience overhaul described in the [changelog](CHANGELOG.md).
 > 我们已发布 v0.2.6，其中包含 [变更日志](CHANGELOG.zh-Hans.md) 所述 23 项体验大修。如果仍然遇到 Bug，请在 Issues 中反馈。
 >
@@ -7,6 +9,8 @@
 > 技能与模型市场。`reader` 分支是移除上述扩展栈的长篇文档阅读版，当前
 > [Releases 页面](https://github.com/wyx-spark/EchoDesk/releases/latest) 发布的就是它的构建
 > （标签 `v0.2.6-reader`）。需要自动化与模型市场选 `master`，需要最小化的阅读版选 Reader。
+>
+> **第一次使用？** 请按 [下载、安装与配置指南（Issue #7）](https://github.com/wyx-spark/EchoDesk/issues/7) 逐步操作：选版本、核对 SHA-256、使用离线模型包、完成首次配置。
 
 ![EchoDesk 主界面 —— 本地模型正在流式输出结构化合同审阅](docs/images/screenshot-main.zh-Hans.png)
 
@@ -33,6 +37,17 @@ EchoDesk 是本地优先的 AI 桌面助手，提供原生 Windows（WPF）与�
 - **语言**：内置简体中文与英语，其他语言由社区语言包补齐
 - **许可证**：[Apache-2.0](LICENSE)
 - **组织**：[Void-Entropia-Studio](https://github.com/Void-Entropia-Studio)
+
+## 版本与前端
+
+| | `master`（本分支） | `reader` |
+| --- | --- | --- |
+| 推理 | 经 `llama-cpp-python` 绑定调用 llama.cpp | 原生 llama.cpp C ABI，Python 绑定已移除 |
+| 前端 | Windows 长期支持线用 WPF，跨平台用 Avalonia | 仅 Avalonia |
+| 网络 | 可选联网功能，默认关闭 | 不存在任何联网代码路径 |
+| 适合 | 自动化、模型市场、多模态、检索 | 阅读与分析本机长篇文档 |
+
+两个版本共用同一套后端协议与语言包，差异只存在于协议之上的一层；各自的构建说明见对应分支的 README。
 
 ## 与同类工具的差异
 

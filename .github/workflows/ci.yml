@@ -54,3 +54,8 @@ jobs:
 
       - name: Theme palette and contrast / 主题色板与对比度
         run: python tools/check_theme.py
+
+      # [EN] Syntax check: catches a broken backend module without installing dependencies.
+      # [ZH] 语法检查：无需安装依赖即可发现后端模块的语法错误。
+      - name: Backend syntax check / 后端语法检查
+        run: python -m compileall -q backend
