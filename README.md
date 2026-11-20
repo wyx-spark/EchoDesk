@@ -2,6 +2,13 @@
 
 > ✅ **Note / 注意**：v0.2.6 is released. It includes the twenty-three-item experience overhaul described in the [changelog](CHANGELOG.md). If you still encounter a bug (for example a UI freeze or a file upload error), please report it in Issues.
 > 我们已发布 v0.2.6，其中包含 [变更日志](CHANGELOG.zh-Hans.md) 所述 23 项体验大修。如果仍然遇到 Bug，请在 Issues 中反馈。
+>
+> **Two editions.** `master` (this branch) is the full assistant: local chat, document parsing,
+> encrypted-document support, browser automation, skills and the model marketplace. The `reader`
+> branch is a long-document reading edition with those extra stacks removed; its builds are what
+> the [Releases page](https://github.com/wyx-spark/EchoDesk/releases/latest) currently publishes
+> (tagged `v0.2.6-reader`). Choose `master` for automation and the marketplace, Reader for the
+> smallest reading-focused build.
 
 ![EchoDesk main window — a local model streaming a structured contract review](docs/images/screenshot-main.png)
 

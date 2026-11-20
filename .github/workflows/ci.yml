@@ -16,7 +16,7 @@ name: CI / 持续集成（轻量）
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, reader]
   pull_request:
   workflow_dispatch:
 
