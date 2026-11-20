@@ -6,9 +6,9 @@
 > 我们已发布 v0.2.6，其中包含 [变更日志](CHANGELOG.zh-Hans.md) 所述 23 项体验大修。如果仍然遇到 Bug，请在 Issues 中反馈。
 >
 > **两个版本的分工。** `master`（本分支）是完整版：本地对话、文档解析、加密文档支持、浏览器自动化、
-> 技能与模型市场。`reader` 分支是移除上述扩展栈的长篇文档阅读版，当前
-> [Releases 页面](https://github.com/wyx-spark/EchoDesk/releases/latest) 发布的就是它的构建
-> （标签 `v0.2.6-reader`）。需要自动化与模型市场选 `master`，需要最小化的阅读版选 Reader。
+> 技能与模型市场。`reader` 分支是移除上述扩展栈的长篇文档阅读版，其构建在
+> [Releases 页面](https://github.com/wyx-spark/EchoDesk/releases) 上的标签是 `v0.2.6-reader`；
+> 当前 Latest 发布属于本分支（`v0.2.6`）。需要自动化与模型市场选 `master`，需要最小化的阅读版选 Reader。
 >
 > **第一次使用？** 请按 [下载、安装与配置指南（Issue #7）](https://github.com/wyx-spark/EchoDesk/issues/7) 逐步操作：选版本、核对 SHA-256、使用离线模型包、完成首次配置。
 

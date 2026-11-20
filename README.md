@@ -7,10 +7,10 @@
 >
 > **Two editions.** `master` (this branch) is the full assistant: local chat, document parsing,
 > encrypted-document support, browser automation, skills and the model marketplace. The `reader`
-> branch is a long-document reading edition with those extra stacks removed; its builds are what
-> the [Releases page](https://github.com/wyx-spark/EchoDesk/releases/latest) currently publishes
-> (tagged `v0.2.6-reader`). Choose `master` for automation and the marketplace, Reader for the
-> smallest reading-focused build.
+> branch is a long-document reading edition with those extra stacks removed; its builds are tagged
+> `v0.2.6-reader` on the [Releases page](https://github.com/wyx-spark/EchoDesk/releases). The Latest
+> release currently belongs to `master` (`v0.2.6`). Choose `master` for automation and the
+> marketplace, Reader for the smallest reading-focused build.
 >
 > **New here?** Follow the step-by-step [download, install and configure guide](https://github.com/wyx-spark/EchoDesk/issues/7): edition choice, SHA-256 verification, the offline model bundle and first-run settings.
 
