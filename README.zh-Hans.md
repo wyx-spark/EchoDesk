@@ -1,10 +1,14 @@
 # EchoDesk Reader
 
+[![CI](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml/badge.svg?branch=reader)](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml) [![Latest Reader release](https://img.shields.io/github/v/release/wyx-spark/EchoDesk?label=reader)](https://github.com/wyx-spark/EchoDesk/releases/tag/v0.2.6-reader)
+
 > **版本 0.2.6-reader。** 本分支发布 Reader 版：在 v0.2.6 代码基上移除浏览器自动化、多模态与检索栈，
 > 专注于阅读与分析本机的长篇文档。下面每一句关于功能的描述都适用于**这一个**构建；被移除的部分在
 > [本版不包含什么](#本版不包含什么) 里逐项列出。
 >
 > **该用哪个版本？** `master` 是完整版 EchoDesk（浏览器自动化、多模态、检索栈）；`reader`（本分支）是长篇文档阅读版，当前 [Releases 页面](https://github.com/wyx-spark/EchoDesk/releases/latest) 发布的就是本分支构建。两个分支版本号相同，Reader 的产物标签是 `v0.2.6-reader`。
+>
+> **第一次使用？** 请按 [下载、安装与配置指南（Issue #7）](https://github.com/wyx-spark/EchoDesk/issues/7) 逐步操作：选版本、核对 SHA-256、使用离线模型包、完成首次配置。
 
 ![EchoDesk Reader 主界面 —— 本地模型正在回答关于一份 42 页招标文件的提问](docs/images/screenshot-main.zh-Hans.png)
 
@@ -77,15 +81,15 @@ RoPE 缩放；模型文件已自带缩放时绝不叠加（叠加会让长文输
 
 | 你的情况 | 下载 |
 | --- | --- |
-| Windows，要安装程序 | `EchoDesk-Reader-<版本>-Setup.exe` |
-| Windows，要免安装文件夹 | `EchoDesk-<版本>-reader-win-x64.zip` |
-| Linux x64 | `EchoDesk-<版本>-reader-linux-x64.tar.gz` |
-| macOS Apple Silicon | `EchoDesk-<版本>-reader-osx-arm64.tar.gz` |
+| Windows，要安装程序 | `EchoDesk-Reader-v0.2.6-Setup.exe` |
+| Windows，要免安装文件夹 | `EchoDesk-v0.2.6-reader-win-x64.zip` |
+| Linux x64 | `EchoDesk-v0.2.6-reader-linux-x64.tar.gz` |
+| macOS Apple Silicon | `EchoDesk-v0.2.6-reader-osx-arm64.tar.gz` |
 | 任何平台，还没有模型 | `models-qwen-v1` 发布（Q4_K_M 的 GGUF 模型包） |
 
 ### 便携版（无需安装）
 
-1. 把 `EchoDesk-Reader-v0.2.6-reader` 整个文件夹解压到任意位置 —— 不往文件夹外写任何东西，
+1. 把 `EchoDesk-v0.2.6-reader-win-x64` 整个文件夹解压到任意位置 —— 不往文件夹外写任何东西，
    删掉文件夹即完成卸载。
 2. 双击 **`app\EchoDesk.exe`**。它会自己启动旁边的后端；**不要**单独运行
    `app\backend\EchoDeskBackend.exe`，它只会说 JSON 行协议。

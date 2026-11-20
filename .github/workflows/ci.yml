@@ -59,3 +59,13 @@ jobs:
       # [ZH] 上下文页配置层（仅 Reader）：缩放推导与配置往返。
       - name: Context extension configuration / 上下文扩展配置（RoPE 缩放）
         run: python tools/test_rope_config.py
+
+      # [EN] Syntax check: catches a broken backend module without installing dependencies.
+      # [ZH] 语法检查：无需安装依赖即可发现后端模块的语法错误。
+      - name: Backend syntax check / 后端语法检查
+        run: python -m compileall -q backend
+
+      # [EN] Reader-only promise: no outbound network API anywhere in the tree.
+      # [ZH] Reader 专属承诺：全仓不存在对外网络 API。
+      - name: Zero-network audit / 断网审计
+        run: python tools/audit_network.py

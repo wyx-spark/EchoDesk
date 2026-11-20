@@ -1,5 +1,7 @@
 # EchoDesk Reader
 
+[![CI](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml/badge.svg?branch=reader)](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml) [![Latest Reader release](https://img.shields.io/github/v/release/wyx-spark/EchoDesk?label=reader)](https://github.com/wyx-spark/EchoDesk/releases/tag/v0.2.6-reader)
+
 > **Version 0.2.6-reader.** This branch publishes the Reader edition: the v0.2.6 code base with the
 > browser-automation, multimodal and retrieval stacks removed, tuned for reading and analysing long
 > local documents. Every user-facing statement below is true of **this** build; the parts that are
@@ -9,6 +11,8 @@
 > multimodal, retrieval). `reader` — this branch — is the long-document reading edition, and its
 > builds are the ones currently published on the [Releases page](https://github.com/wyx-spark/EchoDesk/releases/latest).
 > Both branches keep the same version number; Reader artifacts are tagged `v0.2.6-reader`.
+>
+> **New here?** Follow the step-by-step [download, install and configure guide](https://github.com/wyx-spark/EchoDesk/issues/7); it covers edition choice, SHA-256 verification, the offline model bundle and first-run settings.
 
 ![EchoDesk Reader main window — a local model answering a question about a 42-page tender document](docs/images/screenshot-main.png)
 
@@ -97,15 +101,15 @@ imported or packaged, instead of checking them.
 
 | If you are on… | Download |
 | --- | --- |
-| Windows, installer | `EchoDesk-Reader-<version>-Setup.exe` |
-| Windows, portable folder | `EchoDesk-<version>-reader-win-x64.zip` |
-| Linux x64 | `EchoDesk-<version>-reader-linux-x64.tar.gz` |
-| macOS Apple Silicon | `EchoDesk-<version>-reader-osx-arm64.tar.gz` |
+| Windows, installer | `EchoDesk-Reader-v0.2.6-Setup.exe` |
+| Windows, portable folder | `EchoDesk-v0.2.6-reader-win-x64.zip` |
+| Linux x64 | `EchoDesk-v0.2.6-reader-linux-x64.tar.gz` |
+| macOS Apple Silicon | `EchoDesk-v0.2.6-reader-osx-arm64.tar.gz` |
 | Any platform, needs a model | the `models-qwen-v1` release (Q4_K_M GGUF bundle) |
 
 ### Portable build (no installer needed)
 
-1. Unpack the whole `EchoDesk-Reader-v0.2.6-reader` folder anywhere you like — nothing is written
+1. Unpack the whole `EchoDesk-v0.2.6-reader-win-x64` folder anywhere you like — nothing is written
    outside it, and deleting the folder uninstalls it.
 2. Double-click **`app\EchoDesk.exe`**. It starts the backend next to it by itself; never run
    `app\backend\EchoDeskBackend.exe` on its own, it only speaks the JSON-lines protocol.
