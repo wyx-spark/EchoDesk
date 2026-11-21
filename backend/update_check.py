@@ -69,6 +69,42 @@ def parse_version(text: str) -> Tuple[int, ...]:
     return tuple(parts[:4])
 
 
+def version_line_suffix(text: str) -> str:
+    """
+    [EN]
+    Return the release-line suffix of a version string, lower-cased.
+
+    ``parse_version`` deliberately drops suffixes because it only needs numeric
+    ordering. That is exactly why it cannot decide *which line* a release belongs
+    to: ``v0.2.7-reader`` and ``v0.2.7`` both parse to ``(0, 2, 7)``. This function
+    keeps the part after the first ``-`` / ``+`` so the two can be told apart:
+    ``v0.2.6`` -> ``""`` (the master line), ``v0.2.7-reader`` -> ``"reader"``.
+    A new line such as ``-lts`` therefore needs no code change.
+
+    [ZH]
+    返回版本串的版本线后缀（小写）。
+
+    ``parse_version`` 刻意丢弃后缀，因为它只做数字排序 —— 这正是它无法判断发布属于
+    **哪条线**的原因：``v0.2.7-reader`` 与 ``v0.2.7`` 都会解析成 ``(0, 2, 7)``。
+    本函数保留第一个 ``-`` / ``+`` 之后的部分，使两者可区分：``v0.2.6`` -> ``""``
+    （master 线），``v0.2.7-reader`` -> ``"reader"``。以后新增 ``-lts`` 等线无需改代码。
+    """
+    raw = str(text or "").strip()
+    if raw[:1] in ("v", "V"):
+        raw = raw[1:]
+    parts = re.split(r"[-+]", raw, maxsplit=1)
+    return parts[1].strip().lower() if len(parts) > 1 else ""
+
+
+#: [EN] Known release-line names that are *not* interchangeable with the line this
+#: [EN] build belongs to. Used only as the reverse insurance in
+#: [EN] :func:`pick_update_asset`; keeping it short and explicit avoids treating an
+#: [EN] arbitrary word in an asset name as a line marker.
+#: [ZH] 与本构建所属版本线**不可互换**的已知线名，仅用于 :func:`pick_update_asset`
+#: [ZH] 的反向保险；保持精简明确，避免把附件名里的任意单词当成线标识。
+_OTHER_VERSION_LINE_MARKERS = ("reader",)
+
+
 def compare_versions(current: str, latest: str) -> int:
     """
     [EN]
@@ -203,6 +239,14 @@ def check_for_update(cfg: Any, force: bool = False) -> Dict[str, Any]:
     result["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     include_pre = bool(getattr(cfg, "include_prerelease", False))
 
+    # [EN] Only releases from this build's own line are candidates. Comparing numbers
+    # [EN] alone would offer ``v0.2.7-reader`` to a ``v0.2.6`` master install, i.e. a
+    # [EN] different product; the GitHub "Latest" flag is not consulted, so the line
+    # [EN] must be enforced here.
+    # [ZH] 只有与本单位于同一版本线的发布才是候选。只比数字会把 ``v0.2.7-reader``
+    # [ZH] 推给 ``v0.2.6`` 的 master 安装（那是另一个产品）；这里不读 GitHub 的
+    # [ZH] Latest 标记，因此必须在代码里守住版本线。
+    own_line = version_line_suffix(current)
     candidates: List[Dict[str, Any]] = []
     for release in releases:
         if release.get("draft"):
@@ -210,7 +254,7 @@ def check_for_update(cfg: Any, force: bool = False) -> Dict[str, Any]:
         if release.get("prerelease") and not include_pre:
             continue
         tag = str(release.get("tag_name") or release.get("name") or "").strip()
-        if tag:
+        if tag and version_line_suffix(tag) == own_line:
             candidates.append({**release, "_tag": tag})
     if not candidates:
         result["status"] = "up_to_date"
@@ -327,22 +371,40 @@ def _release_assets(release: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
-def pick_update_asset(assets: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def pick_update_asset(assets: List[Dict[str, Any]],
+                      version_line: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     [EN]
     Pick the asset a normal user needs: the Windows setup first, then a portable
     archive for the other platforms. Returns ``None`` when the release carries no
     downloadable artifact.
 
+    Assets that carry another release line's marker (``reader`` today) are skipped,
+    unless this build itself belongs to that line -- a Reader install must of course
+    keep picking the Reader package. This is the second line of defence behind the
+    version-line filter in :func:`check_for_update`; it protects the manual download
+    path as well.
+
     [ZH]
     选择普通用户需要的附件：优先 Windows 安装包，其次其他平台的便携归档。
     发布没有任何可下载产物时返回 ``None``。
+
+    带其它版本线标识（当前为 ``reader``）的附件会被跳过，除非本构建本身属于该线 ——
+    Reader 安装当然要继续选 Reader 包。这是 :func:`check_for_update` 版本线过滤之外
+    的第二道保险，同时保护手动下载路径。
     """
+    own_line = version_line_suffix(APP_VERSION) if version_line is None else version_line
+    skipped_markers = tuple(
+        marker for marker in _OTHER_VERSION_LINE_MARKERS if marker not in str(own_line).lower()
+    )
     lowered = [(str(a.get("name") or "").lower(), a) for a in assets]
+
+    def same_line(name: str) -> bool:
+        return not any(marker in name for marker in skipped_markers)
 
     def first(predicate) -> Optional[Dict[str, Any]]:
         for name, asset in lowered:
-            if predicate(name):
+            if same_line(name) and predicate(name):
                 return asset
         return None
 

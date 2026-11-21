@@ -275,11 +275,72 @@ def test_backup_user_data():
         check("模型原文件仍在原位", os.path.isfile(os.path.join(program, "models", "qwen.gguf")))
 
 
+def other_line_suffix() -> str:
+    """[EN] A release-line suffix that is guaranteed different from this build's.
+
+    [ZH] 保证与本构建不同的版本线后缀。
+    """
+    return "lts" if "reader" in uc.version_line_suffix(CURRENT_VERSION) else "reader"
+
+
+def test_version_line():
+    check("版本线后缀：master 为空", uc.version_line_suffix("v0.2.6") == "")
+    check("版本线后缀：Reader 线", uc.version_line_suffix("v0.2.7-reader") == "reader")
+    check("版本线后缀：大小写归一", uc.version_line_suffix("V0.2.7-READER") == "reader")
+    check("版本线后缀：与数字解析相互独立",
+          uc.parse_version("v0.2.7-reader") == uc.parse_version("v0.2.7"))
+
+
+def test_other_line_ignored():
+    other = other_line_suffix()
+    other_tag = f"{LATEST_VERSION}-{other}"
+    other_asset = f"EchoDesk-{other_tag}-Setup.exe"
+    url = f"https://github.com/wyx-spark/EchoDesk/releases/download/{other_tag}/{other_asset}"
+
+    # [EN] A higher version from another line must never be offered.
+    # [ZH] 其它线上的更高版本绝不能上报。
+    fake = [release(other_tag, [asset(other_asset, url, 7)])]
+    with mock.patch.object(uc, "_fetch_releases", return_value=fake):
+        result = uc.check_for_update(cfg(), force=True)
+    check("更高版本的其它线 release 被忽略", result["status"] == "up_to_date", str(result))
+    check("本线无更新时不得报 available", result["status"] != "available", str(result))
+    check("被忽略的其它线版本不写入 latest", not result.get("latest"), str(result))
+
+    # [EN] A same-line candidate next to a higher foreign one is still selected.
+    # [ZH] 与更高异线版本并存时，本线候选仍被正确选中。
+    same_asset = f"EchoDesk-{LATEST_VERSION}-Setup.exe"
+    same_url = f"https://github.com/wyx-spark/EchoDesk/releases/download/{LATEST_VERSION}/{same_asset}"
+    fake = [
+        release(other_tag, [asset(other_asset, url, 7)]),
+        release(LATEST_VERSION, [asset(same_asset, same_url, 7)]),
+    ]
+    with mock.patch.object(uc, "_fetch_releases", return_value=fake):
+        result = uc.check_for_update(cfg(), force=True)
+    check("同线候选不被其它线挤掉", result["status"] == "available", str(result))
+    check("选中的是本线 tag", result.get("latest") == LATEST_VERSION, str(result))
+
+
+def test_asset_pick_line_guard():
+    reader_asset = {"name": "EchoDesk-Reader-v0.2.7-Setup.exe", "size": 1,
+                    "url": "https://github.com/a"}
+    own_asset = {"name": "EchoDesk-v0.2.7-Setup.exe", "size": 1,
+                 "url": "https://github.com/b"}
+    chosen = uc.pick_update_asset([reader_asset, own_asset])
+    check("附件挑选不得跨线",
+          chosen is not None and chosen["name"] == "EchoDesk-v0.2.7-Setup.exe", str(chosen))
+    check("只有其它线附件时不选", uc.pick_update_asset([reader_asset]) is None)
+    check("本线为 Reader 时保留 Reader 安装包",
+          uc.pick_update_asset([reader_asset], version_line="reader") is not None)
+
+
 def main():
     print("== 自动更新补丁测试 (test_update_check) ==")
     test_versions()
+    test_version_line()
     test_asset_pick()
+    test_asset_pick_line_guard()
     test_check_available()
+    test_other_line_ignored()
     test_ignored_version()
     test_progress_callback()
     test_url_guard()
