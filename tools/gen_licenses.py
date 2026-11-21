@@ -15,30 +15,19 @@ import re
 from importlib.metadata import distributions
 from typing import Dict, List, Tuple
 
-# 后端实际依赖的顶层包（与 backend/requirements.txt 对应，含传递依赖）
-#
-# v0.2.1（任务书 1.3）变更：
-#   * 移除 pymupdf —— 它是 AGPL-3.0，对外分发会产生著佐权义务，已换成 BSD 的 pypdf；
-#   * pyxtxt 在 v0.2.0 就已移除（其依赖链含 GPL/LGPL：extract-msg、pcodedmp、
-#     RTFDE、python-bidi、pygame、pynput），这里不再列出；
-#   * 新增 pypdf 与文件解析相关包（python-docx / openpyxl / python-pptx / xlrd），
-#     它们此前虽被使用但漏登记在清单里。
-ROOT_PACKAGES = [
-    "llama-cpp-python",
-    "duckduckgo-search",
-    "pydantic",
-    "huggingface_hub",
-    "requests",
-    "pywin32",
-    "pyinstaller",
-    "playwright",
-    "pypdf",
-    "python-docx",
-    "openpyxl",
-    "python-pptx",
-    "xlrd",
-    "tqdm",
-]
+# [EN] There is deliberately **no** hand-written root-package list here any more. The
+# [EN] direct dependencies come from ``backend/requirements.txt`` -- the only place that
+# [EN] declares what this backend actually needs -- and are filled in by
+# [EN] ``declared_direct()`` below. A hand-copied list survived the Reader strip and kept
+# [EN] claiming dependencies the build no longer ships, so the generated inventory
+# [EN] described components that are not there. Deriving the list makes any future strip
+# [EN] automatically correct; the transitive closure still comes from the installed
+# [EN] environment inside ``collect()``.
+# [ZH] 这里**刻意不再有**手写的根包清单。直接依赖来自 ``backend/requirements.txt`` ——
+# [ZH] "本后端实际依赖什么"的唯一声明处 —— 由下面的 ``declared_direct()`` 填充。此前那份
+# [ZH] 手抄列表在 Reader 裁剪后没有同步，一直声明着构建早已不随包分发的依赖，于是生成的
+# [ZH] 清单描述了根本不存在的组件。改为派生后，任何一次裁剪都会自动正确；传递闭包仍由
+# [ZH] ``collect()`` 遍历已安装环境得到。
 
 OUT_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "docs", "THIRD_PARTY_LICENSES.md"
@@ -49,13 +38,11 @@ REQUIREMENTS_PATH = os.path.join(
 
 
 def _norm(name: str) -> str:
-    """依赖名归一化（PEP 503）：比较 `llama-cpp-python` 与 `llama_cpp_python` 时必需。
+    """依赖名归一化（PEP 503）：比较发行名与 ``importlib.metadata`` 报的 Name 时必需。
 
-    为什么必须有它：ROOT_PACKAGES 里写的是发行名（连字符），
-    而 importlib.metadata 报的是 `Name` 字段，很多包用下划线
-    （llama_cpp_python / duckduckgo_search）。此前用 `name.lower()` 直接比字符串，
-    导致这两个包**明明是直接依赖，却在「一、后端直接依赖」表里被漏掉** ——
-    合规清单少列直接依赖，比多列更危险（实测由发布复核发现）。
+    为什么必须有它：``requirements.txt`` 写的是发行名（连字符），而 ``metadata['Name']``
+    常用下划线，两条字符串直接比较会把**明明是直接依赖的包**漏掉 —— 合规清单少列直接依赖，
+    比多列更危险（实测由发布复核发现）。
     """
     return name.strip().lower().replace("_", "-").replace(".", "-")
 
@@ -64,7 +51,8 @@ def declared_direct() -> List[str]:
     """从 backend/requirements.txt 读出**直接声明**的依赖名。
 
     清单的「直接依赖」一节必须由这个文件驱动，而不是靠一份手抄的列表：
-    手抄列表会随着 requirements.txt 增删而悄悄过期（本轮就漏了 requests/urllib3/tqdm）。
+    手抄列表会随着 requirements.txt 增删而悄悄过期（Reader 裁剪后仍残留已删组件，
+    就是这条路径造成的），而派生只会在源文件变化时变化。
     """
     names: List[str] = []
     try:
@@ -85,9 +73,25 @@ def declared_direct() -> List[str]:
                 name = re.split(r"[<>=!\[;@]", line, maxsplit=1)[0].strip()
                 if name and _norm(name) not in {_norm(n) for n in names}:
                     names.append(name)
-    except OSError as exc:  # noqa: BLE001 - 读不到就退化为 ROOT_PACKAGES
-        print(f"（无法读取 {REQUIREMENTS_PATH}: {exc}，回退到内置 ROOT_PACKAGES）")
+    except OSError as exc:  # noqa: BLE001 - 读不到就没有直接依赖可列
+        # [EN] No hand-written fallback list exists any more: silently inventing one is what
+        # [EN] produced a stale inventory. The caller still emits the installed closure, and
+        # [EN] this line tells the operator to fix the source file and re-run.
+        # [ZH] 不再回退到手写清单：凭空补一份正是过期清单的来源。调用方仍会按已安装环境输出
+        # [ZH] 传递闭包，这一行提示操作者修好源文件后重跑。
+        print(f"（无法读取 {REQUIREMENTS_PATH}: {exc}；直接依赖为空，请修复后重跑）")
     return names
+
+
+# [EN] The former hard-coded root-package list is gone; this name is kept as the derived
+# [EN] view so nothing downstream has to change its vocabulary.
+# [ZH] 原硬编码根包清单已删除；保留该名字作为派生视图，下游用词无需改动。
+def root_packages() -> List[str]:
+    """[EN] Direct dependencies of this build, derived from requirements.txt. [ZH] 由 requirements.txt 派生的直接依赖。"""
+    return declared_direct()
+
+
+ROOT_PACKAGES: List[str] = declared_direct()
 
 
 # 需要人工关注的高风险许可证（会影响分发方式）
@@ -169,10 +173,11 @@ def main() -> None:
         "| 组件 | 版本 | 许可证 | 说明 |",
         "| --- | --- | --- | --- |",
     ]
-    # 直接依赖集合 = backend/requirements.txt 里声明的（权威来源）+ 内置 ROOT_PACKAGES 的并集。
-    # 两边都留：requirements.txt 是"实际声明了什么"，ROOT_PACKAGES 里还有构建期/历史条目，
-    # 合并后既不会漏报（本轮修的就是漏报），也不会因为某次改动把条目删掉而静默变少。
-    direct = {_norm(n) for n in declared_direct()} | {_norm(n) for n in ROOT_PACKAGES}
+    # [EN] Direct dependencies come from exactly one place: requirements.txt. The former
+    # [EN] union with a hand-written list is what let removed components linger.
+    # [ZH] 直接依赖只有一个来源：requirements.txt。以前与手写清单取并集，正是过期条目残留的
+    # [ZH] 原因。
+    direct = {_norm(n) for n in declared_direct()}
     listed = 0
     for dist in distributions():
         name = (dist.metadata.get("Name") or "").strip()
@@ -238,9 +243,8 @@ def main() -> None:
         "",
         "## 四、随包分发的原生库",
         "",
-        "- llama.cpp（llama-cpp-python 内嵌的 llama.dll / ggml 系列）：MIT 许可。",
-        "- Playwright 驱动：Apache-2.0；其驱动的浏览器（Microsoft Edge）由用户系统安装，",
-        "  EchoDesk 不重新分发浏览器本体。",
+        "- 随包分发的 llama.cpp 原生库（llama / ggml / ggml-base / ggml-cpu / mtmd）：MIT 许可。",
+        "  该动态库随 ``backend/native/`` 分发，不通过任何 Python 推理轮子引入。",
         "",
         "<!-- sbom:python-detail -->",
         "## 五、全部 Python 发行包明细",
