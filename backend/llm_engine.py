@@ -97,6 +97,16 @@ log = logging.getLogger("EchoDesk.LLM")
 #: 分词器（``Llama.tokenize``）刻意**不**纳入该锁：它只读取词表、不触碰 KV Cache；
 #: 而流式读者线程在整个生成期间持有该锁，若把 token 计数也加锁，流结束后的计数
 #: 调用方（例如 ``done`` 指标路径）会与"读者线程等待已满的交付队列"互相等待而死锁。
+#:
+#: [EN] HARD RULE: no code may use this lock directly. Every acquisition must go
+#: [EN] through :func:`acquire_inference_lock`, which refuses same-thread re-entry
+#: [EN] with an immediate ``RuntimeError``. A bare ``with _INFERENCE_LOCK``
+#: [EN] statement reintroduces the silent, traceback-free deadlock that already
+#: [EN] cost one full debugging round (vision queued behind its own lock).
+#: [ZH] 硬规则：任何代码都不得直接使用本锁。所有获取必须经
+#: [ZH] :func:`acquire_inference_lock`，它会以 ``RuntimeError`` 立刻拒绝同线程重入。
+#: [ZH] 裸写 ``with _INFERENCE_LOCK`` 语句会把"无回溯、无日志的静默死锁"带回来，
+#: [ZH] 该失效模式已经消耗过一整轮排查（视觉排在自身持有的锁后面）。
 _INFERENCE_LOCK = threading.Lock()
 
 #: [EN] Ident of the thread currently holding :data:`_INFERENCE_LOCK`, protected by
@@ -330,7 +340,7 @@ class LLMEngine:
         # [EN] so it also runs under the process-wide inference mutex.
         # [ZH] 原生模型构建同样会访问共享的 llama.cpp 后端状态，因此也在进程级
         # [ZH] 推理互斥锁的保护下执行。
-        with _INFERENCE_LOCK:
+        with acquire_inference_lock():
             self.llm = self._create(verbose=verbose)
 
     def _create(self, verbose: bool = False):
@@ -527,7 +537,7 @@ class LLMEngine:
         # [EN] the current native operation to finish.
         # [ZH] 在另一线程解码时释放原生内存正是该互斥锁要防止的释放后使用，因此
         # [ZH] 释放操作会等待当前原生操作结束。
-        with _INFERENCE_LOCK:
+        with acquire_inference_lock():
             self.llm = None
             if llm is None:
                 return
@@ -565,7 +575,7 @@ class LLMEngine:
         # [EN] the model underneath an in-flight decode.
         # [ZH] 模型加载、替换与释放都与推理串行化：由上下文扩展触发的重载绝不能在
         # [ZH] 正在解码的模型之下把模型换掉。
-        with _INFERENCE_LOCK:
+        with acquire_inference_lock():
             if model_path:
                 self.model_path = model_path
                 self.n_ctx_train = resolve_context_window(model_path, default=0)
@@ -681,7 +691,7 @@ class LLMEngine:
             # [EN] Resetting the KV cache mutates native context state; it must
             # [EN] wait until any in-flight generation has finished.
             # [ZH] 重置 KV Cache 会改变原生上下文状态，必须等待进行中的生成结束。
-            with _INFERENCE_LOCK:
+            with acquire_inference_lock():
                 reset = getattr(self.llm, "reset", None)
                 if callable(reset):
                     reset()
@@ -778,7 +788,7 @@ class LLMEngine:
         # [EN] here instead of corrupting the native model.
         # [ZH] 非流式补全在这一次调用内完成 prefill 与 decode，因此互斥锁覆盖其
         # [ZH] 全程。并发调用方（聊天路径与后台摘要器）会在此排队，而不是破坏原生模型。
-        with _INFERENCE_LOCK:
+        with acquire_inference_lock():
             response = self.llm.create_chat_completion(**kwargs)
         return response["choices"][0]["message"]["content"]
 
@@ -978,7 +988,7 @@ class LLMEngine:
                 # [EN] consumer has already gone away.
                 # [ZH] 原生流在其整个生命周期内只由一个线程驱动；互斥锁也由该线程
                 # [ZH] 释放，消费者提前离开时同样如此。
-                with _INFERENCE_LOCK:
+                with acquire_inference_lock():
                     stream = stream_factory()
                     index = 0
                     for chunk in stream:
@@ -1465,7 +1475,7 @@ class LazyLLMEngine(LLMEngine):
         # [EN] concurrently with a decode in the background summarizer.
         # [ZH] 与父类引擎相同：构建原生模型会改变共享的 llama.cpp 后端状态，绝不能
         # [ZH] 与后台摘要器的解码并发执行。
-        with _INFERENCE_LOCK:
+        with acquire_inference_lock():
             llm = create_llama(
                 model_path=path,
                 n_ctx=target_ctx,

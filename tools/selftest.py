@@ -1308,21 +1308,57 @@ def test_cuda_bootstrap() -> None:
           and status["is_vlm"] is True,
           f"reason={status['reason']} available={status['available']}")
 
-    # [EN] The mutex-protected native call must keep the `with ... try/finally`
-    # [EN] shape: a future edit that drops the lock would otherwise go unnoticed.
-    # [EN] The guarded entry point ``acquire_inference_lock()`` is the preferred form
-    # [EN] (it also turns same-thread re-entry into an immediate error), so either
-    # [EN] spelling is accepted here.
-    # [ZH] 受互斥锁保护的原生调用必须保持 `with ... try/finally` 形态，否则将来删除
-    # [ZH] 锁的改动不会被发现。带重入检测的 ``acquire_inference_lock()`` 是首选形态
-    # [ZH] （它还会把同线程重入变成立即报错），因此两种写法都接受。
-    vision_source = open(os.path.join(os.path.abspath(BACKEND), "vision.py"),
-                         encoding="utf-8").read()
-    check("视觉推理原生调用由互斥锁与 try/finally 包裹",
-          ("with _INFERENCE_LOCK:" in vision_source
-           or "with acquire_inference_lock():" in vision_source)
+    # [EN] Lock invariant, checked structurally (AST) instead of textually. Three
+    # [EN] properties must hold at once:
+    # [EN]   1. llm_engine has no bare ``with _INFERENCE_LOCK`` statement -- every
+    # [EN]      acquisition goes through acquire_inference_lock(), so a same-thread
+    # [EN]      re-entry raises instead of hanging (that hang already burned a full
+    # [EN]      debugging round);
+    # [EN]   2. vision still performs its native call inside that guarded lock and
+    # [EN]      never takes the raw lock;
+    # [EN]   3. the guard itself still refuses re-entry with RuntimeError.
+    # [EN] Text matching is deliberately rejected: the module comments name both
+    # [EN] spellings, so a substring search passes even when the code is wrong.
+    # [ZH] 锁的不变式改用 AST 结构化检查，而不是文本匹配。三条性质必须同时成立：
+    # [ZH]   1. llm_engine 里不得存在裸 ``with _INFERENCE_LOCK`` 语句 —— 所有获取都要
+    # [ZH]      经 acquire_inference_lock()，使同线程重入立刻报错而不是卡死（那次卡死
+    # [ZH]      消耗了整整一轮排查）；
+    # [ZH]   2. vision 的原生调用仍在该带保护的锁内，且绝不直接取原始锁；
+    # [ZH]   3. 保护器本身仍以 RuntimeError 拒绝重入。
+    # [ZH] 刻意不用文本搜索：模块注释里两种写法都会出现，代码写错时子串匹配照样通过。
+    def _lock_context_names(path: str) -> List[str]:
+        with open(path, encoding="utf-8") as handle:
+            module_tree = ast.parse(handle.read())
+        names = []
+        for node in ast.walk(module_tree):
+            if not isinstance(node, ast.With):
+                continue
+            for item in node.items:
+                expr = item.context_expr
+                if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name):
+                    names.append(expr.func.id)
+                elif isinstance(expr, ast.Name):
+                    names.append(expr.id)
+        return names
+
+    engine_path = os.path.join(os.path.abspath(BACKEND), "llm_engine.py")
+    vision_path = os.path.join(os.path.abspath(BACKEND), "vision.py")
+    engine_locks = _lock_context_names(engine_path)
+    vision_locks = _lock_context_names(vision_path)
+    with open(engine_path, encoding="utf-8") as handle:
+        engine_source = handle.read()
+    with open(vision_path, encoding="utf-8") as handle:
+        vision_source = handle.read()
+    check("推理互斥锁全部经 acquire_inference_lock（引擎无裸锁、视觉在锁内、重入即报错）",
+          "_INFERENCE_LOCK" not in engine_locks
+          and engine_locks.count("acquire_inference_lock") >= 7
+          and "raise RuntimeError(" in engine_source
+          and "_INFERENCE_LOCK.acquire()" in engine_source
+          and "_INFERENCE_LOCK" not in vision_locks
+          and vision_locks.count("acquire_inference_lock") >= 1
           and "finally:" in vision_source
-          and "create_chat_completion" in vision_source)
+          and "create_chat_completion" in vision_source,
+          f"engine={engine_locks} vision={vision_locks}")
 
 
 def test_imports() -> None:
