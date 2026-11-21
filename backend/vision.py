@@ -67,11 +67,12 @@ from i18n import t as _t
 # [ZH] v0.2.6 第 23 项：紧随文本引擎导入引入 Windows DLL 预加载引导。下方每个原生
 # [ZH] 导入点都先调用 ``ensure()``，视觉链路因此不再依赖调用方的导入顺序。
 import cuda_bootstrap
-# [EN] Reuse the process-wide inference mutex from the text engine: a vision turn
-# [EN] decodes on the same llama.cpp runtime, and llama.cpp is not thread-safe.
-# [ZH] 复用文本引擎的进程级推理互斥锁：视觉轮解码同样运行在同一套 llama.cpp
-# [ZH] 运行时之上，而 llama.cpp 不是线程安全的。
-from llm_engine import acquire_inference_lock
+# [EN] v0.2.7 T3-3: the vision engine has its own engine lock. Vision and text no
+# [EN] longer serialize against each other; only lifecycle work (backend
+# [EN] registration, model load/free) is shared and takes the lifecycle lock first.
+# [ZH] v0.2.7 T3-3：视觉引擎拥有自己的引擎锁。视觉与文本不再互相串行化；只有生命周期
+# [ZH] 操作（后端注册、模型加载/释放）是共享的，且必须最先取生命周期锁。
+from llm_engine import acquire_inference_lock, acquire_model_lifecycle
 # [EN] Runtime-policy gate. ``llm_backend`` is a stdlib-only module, so importing it
 # [EN] here cannot load the native DLLs; the gate must be able to refuse before any
 # [EN] runtime is touched. ``vision_runtime()`` is the single decision point (§12.2).
@@ -472,10 +473,11 @@ class VisionEngine:
             kwargs["n_threads"] = int(n_threads)
         if n_gpu_layers:
             kwargs["n_gpu_layers"] = int(n_gpu_layers)
-        # [EN] Constructing a native model mutates shared backend state and must
-        # [EN] not overlap with an in-flight decode elsewhere.
-        # [ZH] 构建原生模型会改变共享后端状态，绝不能与其他正在进行的解码重叠。
-        with acquire_inference_lock():
+        # [EN] Constructing a native model is lifecycle work (backend registration
+        # [EN] plus model load): lifecycle lock first, then the vision engine lock.
+        # [ZH] 构建原生模型属于生命周期操作（后端注册 + 模型加载）：先取生命周期锁，
+        # [ZH] 再取视觉引擎锁。
+        with acquire_model_lifecycle("vision"):
             self.llm = Llama(**kwargs)
         log.info("视觉模型已加载：%s（处理器 %s）",
                  os.path.basename(self.model_path), self.handler_name)
@@ -484,10 +486,11 @@ class VisionEngine:
         """[EN] Native path: the mtmd engine. / [ZH] 原生路径：mtmd 引擎。"""
         from vision_native import NativeVLM  # noqa: PLC0415 - avoids importing mtmd eagerly
 
-        # [EN] Do NOT wrap this in ``_INFERENCE_LOCK``: ``NativeVLM`` takes the same
-        # [EN] non-reentrant lock while loading, and nesting it deadlocks the process.
-        # [ZH] 切勿在此再套 ``_INFERENCE_LOCK``：``NativeVLM`` 加载时取的是同一把
-        # [ZH] 非可重入锁，嵌套会直接死锁。
+        # [EN] Do NOT wrap this in the engine lock: ``NativeVLM`` takes the
+        # [EN] lifecycle lock and the vision engine lock itself while loading, and
+        # [EN] nesting the same non-reentrant engine lock deadlocks the process.
+        # [ZH] 切勿在此再套引擎锁：``NativeVLM`` 加载时自己会按「生命周期锁 → 视觉
+        # [ZH] 引擎锁」获取，重复嵌套同一把非可重入引擎锁会直接死锁。
         self.native = NativeVLM(
             self.model_path, self.mmproj_path, n_ctx=self.n_ctx,
             n_threads=n_threads, n_gpu_layers=n_gpu_layers, verbose=verbose,
@@ -567,12 +570,12 @@ class VisionEngine:
             # [EN] item 23: the ``with`` block already releases the mutex on any
             # [EN] exception, and keeping the ``finally`` here documents that the
             # [EN] native call can never leave the lock held after a failure.
-            # [ZH] 视觉补全在单次原生调用内完成 prefill 与 decode，因此互斥锁覆盖全程，
-            # [ZH] 并在聊天/摘要之后排队。
+            # [ZH] 视觉补全在单次原生调用内完成 prefill 与 decode，因此视觉引擎锁
+            # [ZH] 覆盖全程；它只与其它视觉调用排队，不再阻塞文本聊天。
             # [ZH] ``finally`` 是 v0.2.6 第 23 项要求的显式收口点：``with`` 块在发生任何
-            # [ZH] 异常时本就已释放互斥锁，此处保留 ``finally`` 是为了明确记录"原生调用
+            # [ZH] 异常时本就已释放锁，此处保留 ``finally`` 是为了明确记录"原生调用
             # [ZH] 失败后绝不会遗留持锁状态"。
-            with acquire_inference_lock():
+            with acquire_inference_lock("vision"):
                 try:
                     result = self.llm.create_chat_completion(
                         messages=messages,
@@ -603,9 +606,11 @@ class VisionEngine:
     def close(self) -> None:
         """[EN] Release the native model. / [ZH] 释放原生模型。"""
         # [EN] Freeing the model while another thread decodes would be a
-        # [EN] use-after-free; wait for any in-flight native operation.
-        # [ZH] 在另一线程解码时释放模型会造成释放后使用；必须等待进行中的原生操作。
-        with acquire_inference_lock():
+        # [EN] use-after-free, and free is process-global lifecycle work: lifecycle
+        # [EN] lock first, then the vision engine lock.
+        # [ZH] 在另一线程解码时释放模型会造成释放后使用，且释放属于进程级生命周期
+        # [ZH] 操作：先取生命周期锁，再取视觉引擎锁。
+        with acquire_model_lifecycle("vision"):
             llm = self.llm
             self.llm = None
             close = getattr(llm, "close", None)
@@ -615,10 +620,10 @@ class VisionEngine:
                 except Exception:  # noqa: BLE001 - [EN] cleanup must not mask errors
                                        # [ZH] 清理过程不得掩盖错误
                     log.debug("释放视觉模型失败（忽略）", exc_info=True)
-        # [EN] Native close runs outside the outer lock for the same reentrancy
-        # [EN] reason: ``NativeVLM.close`` takes ``_INFERENCE_LOCK`` itself.
-        # [ZH] 原生关闭放在外层锁之外，原因同样是不可重入：``NativeVLM.close`` 自己会取
-        # [ZH] ``_INFERENCE_LOCK``。
+        # [EN] Native close runs outside the outer critical section for the same
+        # [EN] reentrancy reason: ``NativeVLM.close`` takes the ordered pair itself.
+        # [ZH] 原生关闭放在外层临界区之外，原因同样是不可重入：``NativeVLM.close``
+        # [ZH] 自己会按「生命周期锁 → 视觉引擎锁」获取。
         native = self.native
         self.native = None
         native_close = getattr(native, "close", None)

@@ -64,97 +64,198 @@ from reasoning import ANSWER, ReasoningSplitter, normalize_tags, split_text
 
 log = logging.getLogger("EchoDesk.LLM")
 
-#: [EN] Process-wide inference mutex.
+#: [EN] Per-file concurrency model (v0.2.7 T3-3): two engine locks + one lifecycle lock.
 #:
-#: The underlying llama.cpp extension is **not thread-safe**: a native model
-#: instance may only be decoded by one thread at a time. The chat path and the
-#: background document summarizer are independent threads that share one engine
-#: object, so without serialization two ``llama_cpp.decode`` calls can run
-#: concurrently and crash the process with an access violation
-#: (``0xC0000005`` / exit code ``-1073741819``). Every entry point that starts,
-#: stops, or mutates native inference (streaming and non-streaming completion,
-#: model load/reload/close, KV-cache reset) must hold this mutex for the whole
-#: native operation. The lock is module level, not per instance, because a
-#: dedicated summary engine is a second ``LLMEngine`` that shares the same native
-#: backend resources.
+#: The underlying llama.cpp library is **not thread-safe per model context**: one
+#: native model instance (or one ``llama_context``) may only be driven by one thread
+#: at a time. Two such calls at once crash with an access violation
+#: (``0xC0000005`` / exit code ``-1073741819``). What is *not* shared, however, is
+#: the model itself: the text engine (``NativeLlama``) and the vision engine
+#: (``NativeVLM``) each call ``llama_model_load_from_file`` /
+#: ``llama_init_from_model`` on their own files, so their model weights and KV
+#: caches are already separate. A single process-wide lock therefore serialized two
+#: unrelated runtimes and made one vision turn freeze the chat window for over a
+#: minute (measured: 68 s of text wait on a 2 MP image, v0.2.7 T3-3 record). The
+#: lock is now split by runtime:
 #:
-#: The tokenizer (``Llama.tokenize``) is deliberately **not** covered: it only
-#: reads the vocabulary and does not touch the KV cache, and the streaming reader
-#: thread holds this mutex for the lifetime of a generation, so locking token
-#: counting would deadlock callers that count tokens after a stream (for example
-#: the ``done`` metrics path) while the reader waits on a full delivery queue.
+#: * ``_ENGINE_LOCKS["text"]``   -- decode/state of the text engine;
+#: * ``_ENGINE_LOCKS["vision"]`` -- decode/state of the vision engine;
+#: * ``_LIFECYCLE_LOCK``         -- operations that can never overlap with
+#:   **anything**: ggml backend registration, every model load and free, and the
+#:   process-exit/close cleanup.
 #:
-#: [ZH] 进程级推理互斥锁。
+#: [ZH] 本文件的并发模型（v0.2.7 T3-3）：两把引擎锁 + 一把生命周期锁。
 #:
-#: 底层 llama.cpp 扩展**不是线程安全的**：同一个原生模型实例在同一时刻只能由
-#: 一个线程解码。聊天路径与后台文档摘要器是两个独立线程，却共享同一个引擎对象；
-#: 若不串行化，两次 ``llama_cpp.decode`` 会并发执行，并以访问违例
-#: （``0xC0000005`` / 退出码 ``-1073741819``）使进程崩溃。所有会启动、停止或改变
-#: 原生推理状态的入口（流式/非流式补全、模型加载/重载/释放、KV Cache 重置）都
-#: 必须在整个原生操作期间持有该互斥锁。锁定义在模块级而非实例级：专用摘要引擎
-#: 是第二个 ``LLMEngine``，它与主引擎共享同一批原生后端资源。
+#: 底层 llama.cpp 库**按模型上下文不线程安全**：同一个原生模型实例（或同一个
+#: ``llama_context``）同一时刻只能由一个线程驱动，两次并发调用会以访问违例
+#: （``0xC0000005`` / 退出码 ``-1073741819``）崩溃。但**模型本身并不共享**：文本引擎
+#: （``NativeLlama``）与视觉引擎（``NativeVLM``）各自对各自的文件调用
+#: ``llama_model_load_from_file`` / ``llama_init_from_model``，权重与 KV Cache 本来就是
+#: 分开的。原先那把进程级锁因此把两个无关的运行期串行化了，一次识图就能让聊天窗冻结
+#: 一分多钟（实测：2 MP 图文本等待 68 s，见 v0.2.7 T3-3 记录）。现按运行期分锁：
 #:
-#: 分词器（``Llama.tokenize``）刻意**不**纳入该锁：它只读取词表、不触碰 KV Cache；
-#: 而流式读者线程在整个生成期间持有该锁，若把 token 计数也加锁，流结束后的计数
-#: 调用方（例如 ``done`` 指标路径）会与"读者线程等待已满的交付队列"互相等待而死锁。
+#: * ``_ENGINE_LOCKS["text"]``   —— 文本引擎的解码与状态变更；
+#: * ``_ENGINE_LOCKS["vision"]`` —— 视觉引擎的解码与状态变更；
+#: * ``_LIFECYCLE_LOCK``         —— 绝不能与**任何**操作重叠的部分：ggml 后端注册、
+#:   所有模型的加载与释放、进程退出/关闭清理。
 #:
-#: [EN] HARD RULE: no code may use this lock directly. Every acquisition must go
-#: [EN] through :func:`acquire_inference_lock`, which refuses same-thread re-entry
-#: [EN] with an immediate ``RuntimeError``. A bare ``with _INFERENCE_LOCK``
-#: [EN] statement reintroduces the silent, traceback-free deadlock that already
-#: [EN] cost one full debugging round (vision queued behind its own lock).
-#: [ZH] 硬规则：任何代码都不得直接使用本锁。所有获取必须经
-#: [ZH] :func:`acquire_inference_lock`，它会以 ``RuntimeError`` 立刻拒绝同线程重入。
-#: [ZH] 裸写 ``with _INFERENCE_LOCK`` 语句会把"无回溯、无日志的静默死锁"带回来，
-#: [ZH] 该失效模式已经消耗过一整轮排查（视觉排在自身持有的锁后面）。
-_INFERENCE_LOCK = threading.Lock()
+#: [EN] LOCK ORDER (the single deadlock defence -- read this before editing):
+#: [EN]   1. ``_LIFECYCLE_LOCK`` is always acquired **first**, an engine lock second.
+#: [EN]      The reverse order is refused at runtime with ``RuntimeError``.
+#: [EN]   2. A thread must never hold one engine lock and then request the other:
+#: [EN]      two threads doing that in opposite orders would deadlock. Also refused.
+#: [EN]   3. Same-thread re-acquisition of the same lock is refused immediately;
+#: [EN]      ``threading.Lock`` is not reentrant and the failure would otherwise be a
+#: [EN]      silent, traceback-free hang. Never switch these to ``RLock``.
+#: [EN]   4. No code may touch the raw locks: use ``acquire_inference_lock(kind)``,
+#: [EN]      ``acquire_lifecycle_lock()`` or ``acquire_model_lifecycle(kind)`` (the
+#: [EN]      ordered pair used by load/free paths). A gate in ``tools/selftest.py``
+#: [EN]      enforces this structurally.
+#:
+#: [ZH] 加锁顺序（唯一的死锁防线 —— 改动前必读）：
+#: [ZH]   1. **先取** ``_LIFECYCLE_LOCK``，再取引擎锁。反向顺序在运行期直接抛
+#: [ZH]      ``RuntimeError`` 拒绝。
+#: [ZH]   2. 同一线程不得在持有一把引擎锁后再请求另一把：两个线程反向持有时会死锁。
+#: [ZH]      同样在运行期拒绝。
+#: [ZH]   3. 同一线程重复获取同一把锁立即拒绝；``threading.Lock`` 不可重入，否则失效
+#: [ZH]      模式是"无回溯、无日志的静默卡死"。**不要**改成 ``RLock``。
+#: [ZH]   4. 任何代码都不得直接碰原始锁：用 ``acquire_inference_lock(kind)``、
+#: [ZH]      ``acquire_lifecycle_lock()`` 或 ``acquire_model_lifecycle(kind)``（加载/释放
+#: [ZH]      路径使用的有序组合）。``tools/selftest.py`` 的门槛以结构化方式守着这条。
+_ENGINE_LOCK_KINDS = ("text", "vision")
+_ENGINE_LOCKS: Dict[str, "threading.Lock"] = {
+    kind: threading.Lock() for kind in _ENGINE_LOCK_KINDS
+}
+_LIFECYCLE_LOCK = threading.Lock()
 
-#: [EN] Ident of the thread currently holding :data:`_INFERENCE_LOCK`, protected by
-#: [EN] :data:`_INFERENCE_OWNER_GUARD`. Used by :func:`acquire_inference_lock` to turn
-#: [EN] a same-thread re-entry into an immediate error instead of a silent hang.
-#: [ZH] 当前持有 :data:`_INFERENCE_LOCK` 的线程 ident，由 :data:`_INFERENCE_OWNER_GUARD`
-#: [ZH] 保护。:func:`acquire_inference_lock` 据此把同线程重入变成立即报错，而不是静默卡死。
-_INFERENCE_OWNER: Optional[int] = None
-_INFERENCE_OWNER_GUARD = threading.Lock()
+#: [EN] Bookkeeping for re-entry / lock-order enforcement, keyed by thread ident.
+#: [EN] Each thread's list records the locks it currently holds, outermost first.
+#: [ZH] 重入与加锁顺序判定的簿记，按线程 ident 索引；每个线程的列表按"最外层在前"
+#: [ZH] 记录其当前持有的锁。
+_HELD_LOCKS: Dict[int, List[str]] = {}
+_LOCK_BOOKKEEPING = threading.Lock()
+
+
+def _acquire_checked(name: str, lock, *, outermost: bool = False) -> int:
+    """
+    [EN]
+    Take ``lock`` after proving the acquisition cannot deadlock, and record it.
+
+    ``outermost`` marks the lifecycle lock: it must not be taken while the thread
+    already holds anything, which is exactly the "lifecycle after engine" reverse
+    order the model forbids.
+
+    [ZH]
+    在证明本次获取不会死锁之后取得 ``lock`` 并登记。
+
+    ``outermost`` 标记生命周期锁：线程已持有任何锁时都不得再取它，这正是模型禁止的
+    「引擎锁之后再取生命周期锁」的反向顺序。
+    """
+    ident = threading.get_ident()
+    with _LOCK_BOOKKEEPING:
+        held = list(_HELD_LOCKS.get(ident, ()))
+        if outermost:
+            if held:
+                raise RuntimeError(
+                    "lifecycle lock must be acquired BEFORE any engine lock: "
+                    "thread=%s already holds %s; the reverse order deadlocks"
+                    % (ident, held))
+        elif name in held:
+            raise RuntimeError(
+                "inference lock %r re-entered on thread=%s: the same thread already "
+                "holds it; nested acquisition would deadlock" % (name, ident))
+        else:
+            crossed = [kind for kind in _ENGINE_LOCK_KINDS
+                       if kind != name and kind in held]
+            if crossed:
+                raise RuntimeError(
+                    "thread=%s holds engine lock %r and now requests %r: two threads "
+                    "doing this in opposite orders deadlock; finish one runtime first"
+                    % (ident, crossed[0], name))
+    lock.acquire()
+    with _LOCK_BOOKKEEPING:
+        _HELD_LOCKS.setdefault(ident, []).append(name)
+    return ident
+
+
+def _release_recorded(name: str, lock, ident: int) -> None:
+    """[EN] Drop the bookkeeping entry, then release. / [ZH] 先撤簿记，再释放。"""
+    with _LOCK_BOOKKEEPING:
+        stack = _HELD_LOCKS.get(ident)
+        if stack and stack[-1] == name:
+            stack.pop()
+        if not stack:
+            _HELD_LOCKS.pop(ident, None)
+    lock.release()
 
 
 @contextlib.contextmanager
-def acquire_inference_lock():
+def acquire_inference_lock(kind: str):
     """
     [EN]
-    Acquire the process-wide inference lock, refusing same-thread re-entry.
+    Acquire one engine lock (``"text"`` or ``"vision"``), refusing re-entry and
+    cross-engine nesting.
 
     ``threading.Lock`` is not reentrant: a second acquisition from the same thread
     blocks forever with no traceback, no log line and no CPU use. That failure mode
     already cost one full debugging round when the vision engine wrapped a call that
-    took the lock again internally. Re-entering is a design error, so it is raised
-    immediately rather than hidden -- do **not** switch this lock to ``RLock``: that
-    would let a nested acquisition silently interleave state changes.
+    took the same lock again internally. Re-entering is a design error, so it is
+    raised immediately rather than hidden -- do **not** switch these locks to
+    ``RLock``: that would let a nested acquisition silently interleave state changes.
 
     [ZH]
-    获取进程级推理锁，并拒绝同线程重入。
+    获取一把引擎锁（``"text"`` 或 ``"vision"``），拒绝重入与跨引擎嵌套。
 
     ``threading.Lock`` 不可重入：同一线程二次获取会永远阻塞，没有回溯、没有日志、不占
-    CPU。视觉引擎曾在外层又套了一次内部会取锁的调用，正是这个失效模式消耗了整整一轮
-    排查。重入属于设计错误，因此立即抛出而不是隐藏 —— **不要**改用 ``RLock``：那会让
-    嵌套获取静默交错状态变更。
+    CPU。视觉引擎曾在外层又套了一次内部会取同一把锁的调用，正是这个失效模式消耗了整整
+    一轮排查。重入属于设计错误，因此立即抛出而不是隐藏 —— **不要**改为 ``RLock``：
+    那会让嵌套获取静默交错状态变更。
     """
-    global _INFERENCE_OWNER
-    ident = threading.get_ident()
-    with _INFERENCE_OWNER_GUARD:
-        if _INFERENCE_OWNER == ident:
-            raise RuntimeError(
-                "inference lock re-entered on thread=%s: the same thread already "
-                "holds it; nested acquisition would deadlock" % ident)
-    _INFERENCE_LOCK.acquire()
-    with _INFERENCE_OWNER_GUARD:
-        _INFERENCE_OWNER = ident
+    if kind not in _ENGINE_LOCKS:
+        raise ValueError("unknown inference lock kind %r; expected one of %s"
+                         % (kind, ", ".join(_ENGINE_LOCK_KINDS)))
+    ident = _acquire_checked(kind, _ENGINE_LOCKS[kind])
     try:
         yield
     finally:
-        with _INFERENCE_OWNER_GUARD:
-            _INFERENCE_OWNER = None
-        _INFERENCE_LOCK.release()
+        _release_recorded(kind, _ENGINE_LOCKS[kind], ident)
+
+
+@contextlib.contextmanager
+def acquire_lifecycle_lock():
+    """
+    [EN]
+    Acquire the lifecycle lock: ggml backend registration, model load/free and
+    process-exit cleanup. It must be taken before any engine lock, never after.
+
+    [ZH]
+    获取生命周期锁：ggml 后端注册、模型加载/释放与进程退出清理。必须在任何引擎锁之前
+    获取，绝不可在其后。
+    """
+    ident = _acquire_checked("lifecycle", _LIFECYCLE_LOCK, outermost=True)
+    try:
+        yield
+    finally:
+        _release_recorded("lifecycle", _LIFECYCLE_LOCK, ident)
+
+
+@contextlib.contextmanager
+def acquire_model_lifecycle(kind: str):
+    """
+    [EN]
+    The ordered pair for model load/free paths: lifecycle lock first, engine lock
+    second. Load and free are both "must not overlap with anything" and "must not
+    run underneath an in-flight decode of this engine", so they need both; routing
+    every such site through this helper is what keeps the order in one place.
+
+    [ZH]
+    模型加载/释放路径使用的有序组合：先生命周期锁，再引擎锁。加载与释放既"不能与任何
+    操作重叠"，又"不能在同一引擎正在解码时发生"，因此两把都要；把所有此类入口都收敛到
+    这个辅助器，顺序才只有一处定义。
+    """
+    with acquire_lifecycle_lock():
+        with acquire_inference_lock(kind):
+            yield
 
 #: [EN] Default interval (seconds) for emitting a heartbeat while a streaming read
 #: produces no new tokens. Prefill is slow and decode is fast, so the first token
@@ -336,11 +437,12 @@ class LLMEngine:
         self.last_tps: float = 0.0
         self.last_elapsed: float = 0.0
         self.last_tokens: int = 0
-        # [EN] Native model construction touches shared llama.cpp backend state,
-        # [EN] so it also runs under the process-wide inference mutex.
-        # [ZH] 原生模型构建同样会访问共享的 llama.cpp 后端状态，因此也在进程级
-        # [ZH] 推理互斥锁的保护下执行。
-        with acquire_inference_lock():
+        # [EN] Native model construction registers ggml backends and calls
+        # [EN] ``llama_model_load_from_file``: lifecycle work, and it must not run
+        # [EN] underneath an in-flight decode of this engine either.
+        # [ZH] 原生模型构建会注册 ggml 后端并调用 ``llama_model_load_from_file``：
+        # [ZH] 属于生命周期操作，也不能在本引擎正在解码时发生。
+        with acquire_model_lifecycle("text"):
             self.llm = self._create(verbose=verbose)
 
     def _create(self, verbose: bool = False):
@@ -533,11 +635,11 @@ class LLMEngine:
         """
         llm = getattr(self, "llm", None)
         # [EN] Releasing native memory while another thread is decoding is exactly
-        # [EN] the use-after-free this mutex exists to prevent, so closing waits for
-        # [EN] the current native operation to finish.
-        # [ZH] 在另一线程解码时释放原生内存正是该互斥锁要防止的释放后使用，因此
-        # [ZH] 释放操作会等待当前原生操作结束。
-        with acquire_inference_lock():
+        # [EN] the use-after-free the lifecycle lock exists to prevent; freeing is
+        # [EN] also process-global, so it takes lifecycle first and engine second.
+        # [ZH] 在另一线程解码时释放原生内存正是生命周期锁要防止的释放后使用；释放又是
+        # [ZH] 进程级操作，因此按「先生命周期锁、后引擎锁」获取。
+        with acquire_model_lifecycle("text"):
             self.llm = None
             if llm is None:
                 return
@@ -570,12 +672,12 @@ class LLMEngine:
         [ZH]
         重新加载模型，可更换模型路径或上下文长度。
         """
-        # [EN] Loading, swapping and closing native models is serialized with
-        # [EN] inference: a reload triggered by context growth must never replace
-        # [EN] the model underneath an in-flight decode.
-        # [ZH] 模型加载、替换与释放都与推理串行化：由上下文扩展触发的重载绝不能在
-        # [ZH] 正在解码的模型之下把模型换掉。
-        with acquire_inference_lock():
+        # [EN] Loading, swapping and closing native models is lifecycle work: it is
+        # [EN] serialized with every other runtime, and it must never replace the
+        # [EN] model underneath an in-flight decode of this engine.
+        # [ZH] 模型加载、替换与释放属于生命周期操作：与所有运行期串行化，且绝不能在
+        # [ZH] 本引擎正在解码的模型之下把模型换掉。
+        with acquire_model_lifecycle("text"):
             if model_path:
                 self.model_path = model_path
                 self.n_ctx_train = resolve_context_window(model_path, default=0)
@@ -688,10 +790,11 @@ class LLMEngine:
         清空 KV 缓存与输入历史。模式、提示词或历史结构发生变化后应调用。
         """
         try:
-            # [EN] Resetting the KV cache mutates native context state; it must
-            # [EN] wait until any in-flight generation has finished.
-            # [ZH] 重置 KV Cache 会改变原生上下文状态，必须等待进行中的生成结束。
-            with acquire_inference_lock():
+            # [EN] Resetting the KV cache mutates this engine's native context
+            # [EN] state; it must wait until any in-flight text generation ends.
+            # [ZH] 重置 KV Cache 会改变本引擎的原生上下文状态，必须等待进行中的文本
+            # [ZH] 生成结束。
+            with acquire_inference_lock("text"):
                 reset = getattr(self.llm, "reset", None)
                 if callable(reset):
                     reset()
@@ -783,12 +886,14 @@ class LLMEngine:
         if repeat_penalty is not None:
             kwargs["repeat_penalty"] = float(repeat_penalty)
         # [EN] A non-streaming completion executes prefill and decode inside this
-        # [EN] single call, so the mutex is held for its whole duration. Concurrent
-        # [EN] callers (the chat path and the background summarizer) therefore queue
-        # [EN] here instead of corrupting the native model.
-        # [ZH] 非流式补全在这一次调用内完成 prefill 与 decode，因此互斥锁覆盖其
-        # [ZH] 全程。并发调用方（聊天路径与后台摘要器）会在此排队，而不是破坏原生模型。
-        with acquire_inference_lock():
+        # [EN] single call, so the text engine lock is held for its whole duration.
+        # [EN] Concurrent text callers (the chat path and the background summarizer)
+        # [EN] therefore queue here instead of corrupting the native model; the
+        # [EN] vision engine no longer waits behind them.
+        # [ZH] 非流式补全在这一次调用内完成 prefill 与 decode，因此文本引擎锁覆盖其
+        # [ZH] 全程。并发的文本调用方（聊天路径与后台摘要器）会在此排队，而不是破坏原生
+        # [ZH] 模型；视觉引擎不再排在他们后面。
+        with acquire_inference_lock("text"):
             response = self.llm.create_chat_completion(**kwargs)
         return response["choices"][0]["message"]["content"]
 
@@ -911,20 +1016,23 @@ class LLMEngine:
         （``tools/test_reasoning.py`` 的中断用例对此有断言）。因此读者线程在每次
         取块之前都检查 ``stop_event``，一旦置位立即结束，不再向底层请求新 token。
 
-        ``stream_factory`` 在读者线程持有 :data:`_INFERENCE_LOCK` 之后才被调用：
-        原生流只会被一个线程驱动，且模型创建、整段解码、直到流结束都在同一临界区
+        ``stream_factory`` 在读者线程持有文本引擎锁（``acquire_inference_lock("text")``）
+        之后才被调用：原生流只会被一个线程驱动，且模型创建、整段解码、直到流结束都在
+        同一临界区
         内完成，聊天线程与后台摘要线程因此严格排队。消费者若提前放弃迭代（用户
         停止、调用方关闭生成器），读者线程通过 ``abandoned`` 事件立即停止向队列
-        投递并释放互斥锁，避免"消费者已退出、读者却持锁阻塞在满队列上"的死锁。
+        投递并释放引擎锁，避免"消费者已退出、读者却持锁阻塞在满队列上"的死锁。
 
         [EN]
         ``stream_factory`` is invoked by the reader thread only after it has acquired
-        :data:`_INFERENCE_LOCK`: exactly one thread drives the native stream, and
+        the text engine lock (``acquire_inference_lock("text")``): exactly one thread
+        drives the native stream, and
         model creation, the whole decode and end-of-stream all happen in one critical
         section, so the chat thread and the background summarizer queue strictly
         behind each other. If the consumer abandons iteration early (the user pressed
         stop, or the caller closes the generator), the reader thread observes the
-        ``abandoned`` event, stops delivering, and releases the mutex, which prevents
+        ``abandoned`` event, stops delivering, and releases the engine lock, which
+        prevents
         the deadlock where the consumer exits while the reader keeps the lock blocked
         on a full delivery queue.
         """
@@ -984,11 +1092,11 @@ class LLMEngine:
         def reader() -> None:
             try:
                 # [EN] One thread owns the native stream for its whole lifetime; the
-                # [EN] mutex is released by this same thread, including when the
-                # [EN] consumer has already gone away.
-                # [ZH] 原生流在其整个生命周期内只由一个线程驱动；互斥锁也由该线程
+                # [EN] text engine lock is released by this same thread, including
+                # [EN] when the consumer has already gone away.
+                # [ZH] 原生流在其整个生命周期内只由一个线程驱动；文本引擎锁也由该线程
                 # [ZH] 释放，消费者提前离开时同样如此。
-                with acquire_inference_lock():
+                with acquire_inference_lock("text"):
                     stream = stream_factory()
                     index = 0
                     for chunk in stream:
@@ -1470,12 +1578,12 @@ class LazyLLMEngine(LLMEngine):
         if self.max_n_ctx > 0:
             target_ctx = min(target_ctx, int(self.max_n_ctx))
         train = resolve_context_window(path, default=0)
-        # [EN] Same rule as the parent engine: constructing the native model is a
-        # [EN] mutating operation on shared llama.cpp backend state; it must not run
+        # [EN] Same rule as the parent engine: constructing the native model is
+        # [EN] lifecycle work on process-global backend state, and it must not run
         # [EN] concurrently with a decode in the background summarizer.
-        # [ZH] 与父类引擎相同：构建原生模型会改变共享的 llama.cpp 后端状态，绝不能
+        # [ZH] 与父类引擎相同：构建原生模型属于进程级后端状态的生命周期操作，绝不能
         # [ZH] 与后台摘要器的解码并发执行。
-        with acquire_inference_lock():
+        with acquire_model_lifecycle("text"):
             llm = create_llama(
                 model_path=path,
                 n_ctx=target_ctx,

@@ -1308,24 +1308,29 @@ def test_cuda_bootstrap() -> None:
           and status["is_vlm"] is True,
           f"reason={status['reason']} available={status['available']}")
 
-    # [EN] Lock invariant, checked structurally (AST) instead of textually. Three
-    # [EN] properties must hold at once:
-    # [EN]   1. llm_engine has no bare ``with _INFERENCE_LOCK`` statement -- every
-    # [EN]      acquisition goes through acquire_inference_lock(), so a same-thread
-    # [EN]      re-entry raises instead of hanging (that hang already burned a full
-    # [EN]      debugging round);
-    # [EN]   2. vision still performs its native call inside that guarded lock and
-    # [EN]      never takes the raw lock;
-    # [EN]   3. the guard itself still refuses re-entry with RuntimeError.
-    # [EN] Text matching is deliberately rejected: the module comments name both
-    # [EN] spellings, so a substring search passes even when the code is wrong.
-    # [ZH] 锁的不变式改用 AST 结构化检查，而不是文本匹配。三条性质必须同时成立：
-    # [ZH]   1. llm_engine 里不得存在裸 ``with _INFERENCE_LOCK`` 语句 —— 所有获取都要
-    # [ZH]      经 acquire_inference_lock()，使同线程重入立刻报错而不是卡死（那次卡死
-    # [ZH]      消耗了整整一轮排查）；
-    # [ZH]   2. vision 的原生调用仍在该带保护的锁内，且绝不直接取原始锁；
-    # [ZH]   3. 保护器本身仍以 RuntimeError 拒绝重入。
-    # [ZH] 刻意不用文本搜索：模块注释里两种写法都会出现，代码写错时子串匹配照样通过。
+    # [EN] Concurrency-model gate (v0.2.7 T3-3), checked structurally and at run
+    # [EN] time. Four properties must hold at once:
+    # [EN]   1. llm_engine has exactly two engine locks (text, vision) plus one
+    # [EN]      lifecycle lock, and no ``with`` statement touches a raw lock -- every
+    # [EN]      acquisition goes through the guarded helpers;
+    # [EN]   2. every model load/free path uses the ordered pair, so the lifecycle
+    # [EN]      lock always precedes the engine lock;
+    # [EN]   3. the runtime still refuses a same-thread re-entry, the reverse order
+    # [EN]      (engine then lifecycle) and cross-engine nesting -- each with
+    # [EN]      ``RuntimeError`` and without leaving the lock held;
+    # [EN]   4. vision still performs its native call inside its own engine lock.
+    # [EN] Substring matching is deliberately not used for the positive assertions:
+    # [EN] the module comments name the raw locks, so a text search passes even when
+    # [EN] the code is wrong (that is exactly how the earlier gate failed).
+    # [ZH] 并发模型门槛（v0.2.7 T3-3），同时做结构化与运行期检查。四条必须同时成立：
+    # [ZH]   1. llm_engine 恰好有两把引擎锁（text / vision）加一把生命周期锁，且不存在
+    # [ZH]      直接对原始锁写 ``with`` 的地方 —— 所有获取都走带保护的辅助器；
+    # [ZH]   2. 所有模型加载/释放路径都使用有序组合，生命周期锁永远在引擎锁之前；
+    # [ZH]   3. 运行期仍拒绝同线程重入、反向顺序（先引擎后生命周期）与跨引擎嵌套 ——
+    # [ZH]      三者都以 ``RuntimeError`` 拒绝且不遗留持锁状态；
+    # [ZH]   4. vision 的原生调用仍在该视觉引擎锁内。
+    # [ZH] 正向断言刻意不用子串匹配：模块注释里会点名原始锁，代码写错时文本搜索照样通过
+    # [ZH] （上一版门槛正是这样失效的）。
     def _lock_context_names(path: str) -> List[str]:
         with open(path, encoding="utf-8") as handle:
             module_tree = ast.parse(handle.read())
@@ -1339,6 +1344,8 @@ def test_cuda_bootstrap() -> None:
                     names.append(expr.func.id)
                 elif isinstance(expr, ast.Name):
                     names.append(expr.id)
+                elif isinstance(expr, ast.Subscript) and isinstance(expr.value, ast.Name):
+                    names.append(expr.value.id)
         return names
 
     engine_path = os.path.join(os.path.abspath(BACKEND), "llm_engine.py")
@@ -1349,16 +1356,67 @@ def test_cuda_bootstrap() -> None:
         engine_source = handle.read()
     with open(vision_path, encoding="utf-8") as handle:
         vision_source = handle.read()
-    check("推理互斥锁全部经 acquire_inference_lock（引擎无裸锁、视觉在锁内、重入即报错）",
-          "_INFERENCE_LOCK" not in engine_locks
-          and engine_locks.count("acquire_inference_lock") >= 7
-          and "raise RuntimeError(" in engine_source
-          and "_INFERENCE_LOCK.acquire()" in engine_source
-          and "_INFERENCE_LOCK" not in vision_locks
-          and vision_locks.count("acquire_inference_lock") >= 1
+
+    import llm_engine as _engine
+
+    guarded = {"acquire_inference_lock", "acquire_lifecycle_lock",
+               "acquire_model_lifecycle"}
+    # [EN] ``_LOCK_BOOKKEEPING`` is the module-internal leaf mutex that records
+    # [EN] held locks; it is deliberately never held across a native call and is
+    # [EN] the only raw lock the engine may name in a ``with`` statement.
+    # [ZH] ``_LOCK_BOOKKEEPING`` 是模块内部记录持锁状态的叶子互斥锁，刻意不跨越任何
+    # [ZH] 原生调用持有，也是引擎里唯一允许出现在 ``with`` 中的原始锁。
+    allowed = guarded | {"_LOCK_BOOKKEEPING"}
+    engine_lock_names = [name for name in engine_locks
+                         if name.startswith("acquire_") or name.startswith("_")]
+    vision_lock_names = [name for name in vision_locks
+                         if name.startswith("acquire_") or name.startswith("_")]
+
+    import threading as _threading
+
+    runtime_ok = {}
+    held = _engine._HELD_LOCKS
+
+    def _depth() -> int:
+        return len(held.get(_threading.get_ident(), ()))
+
+    def _refuses(action) -> bool:
+        before = _depth()
+        try:
+            with action():
+                pass
+        except RuntimeError:
+            return _depth() == before
+        return False
+
+    with _engine.acquire_inference_lock("text"):
+        runtime_ok["reentry"] = _refuses(
+            lambda: _engine.acquire_inference_lock("text"))
+        runtime_ok["reverse_order"] = _refuses(_engine.acquire_lifecycle_lock)
+        runtime_ok["cross_engine"] = _refuses(
+            lambda: _engine.acquire_inference_lock("vision"))
+    try:
+        with _engine.acquire_model_lifecycle("text"):
+            runtime_ok["ordered_pair"] = True
+    except Exception:  # noqa: BLE001 - the failure is reported through the check
+        runtime_ok["ordered_pair"] = False
+    check("并发模型：双引擎锁 + 生命周期锁、顺序强制、重入即报错、无裸锁",
+          len(getattr(_engine, "_ENGINE_LOCKS", {})) == 2
+          and set(_engine._ENGINE_LOCKS) == {"text", "vision"}
+          and hasattr(_engine, "_LIFECYCLE_LOCK")
+          and set(engine_lock_names) <= allowed
+          and engine_lock_names.count("acquire_inference_lock") >= 3
+          and engine_lock_names.count("acquire_model_lifecycle") >= 4
+          and "with _ENGINE_LOCKS" not in engine_source
+          and "with _LIFECYCLE_LOCK" not in engine_source
+          and all(runtime_ok.values())
+          and not held
+          and set(vision_lock_names) <= allowed
+          and vision_lock_names.count("acquire_inference_lock") >= 1
+          and "with acquire_model_lifecycle(\"vision\")" in vision_source
           and "finally:" in vision_source
           and "create_chat_completion" in vision_source,
-          f"engine={engine_locks} vision={vision_locks}")
+          f"engine={engine_locks} vision={vision_locks} runtime={runtime_ok}")
 
 
 def test_imports() -> None:

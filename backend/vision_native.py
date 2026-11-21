@@ -17,9 +17,11 @@ Two lessons from the earlier steps are encoded here as hard rules, not comments:
    T3-2 step 2. The only supported sequence is
    ``llama_native._register_backends()``, which loads the backends explicitly from
    the library directory.
-2. **Every native call runs inside the engine's process-wide mutex**
-   (``llm_engine._INFERENCE_LOCK``, PROJECT.md hard constraint 11). Vision and text
-   share one llama.cpp runtime in the same process; llama.cpp is not thread-safe.
+2. **Every native call runs inside the vision engine lock**
+   (``llm_engine.acquire_inference_lock("vision")``, PROJECT.md hard constraint 11).
+   Since v0.2.7 T3-3 the vision runtime no longer shares a lock with the text
+   engine, so a vision turn cannot block chat; only model load/free additionally
+   takes the lifecycle lock, always first.
 
 [ZH]
 直接建立在 vendored ``mtmd`` 绑定之上的原生多模态（VLM）引擎。
@@ -33,9 +35,9 @@ Two lessons from the earlier steps are encoded here as hard rules, not comments:
    ggml 后端，裸调用会留下空注册表；紧接着的 ``llama_model_load_from_file`` 对任何
    模型都返回 NULL —— 这个不透明失败在 T3-2 第二步已经消耗过一轮排查。唯一受支持的
    序列是 ``llama_native._register_backends()``，它从库目录显式加载后端。
-2. **所有原生调用都在引擎的进程级互斥锁内**（``llm_engine._INFERENCE_LOCK``，
-   PROJECT.md 硬约束 11）。同一进程内视觉与文本共用一套 llama.cpp 运行期，而
-   llama.cpp 不是线程安全的。
+2. **所有原生调用都在视觉引擎锁内**（``llm_engine.acquire_inference_lock("vision")``，
+   PROJECT.md 硬约束 11）。自 v0.2.7 T3-3 起视觉运行期不再与文本引擎共用一把锁，
+   因此一次识图不会阻塞聊天；只有模型加载/释放额外需要生命周期锁，且永远先取。
 """
 from __future__ import annotations
 
@@ -48,7 +50,7 @@ from ctypes import byref, c_float, c_int32
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from gguf_meta import MAGIC as GGUF_MAGIC, read_metadata
-from llm_engine import acquire_inference_lock
+from llm_engine import acquire_inference_lock, acquire_model_lifecycle
 from vision_errors import (
     CODE_ASSET_MISSING,
     CODE_IMAGE_DECODE_ERROR,
@@ -326,14 +328,14 @@ class NativeVLM:
     One loaded native vision model plus its mtmd projector.
 
     Construction loads both; :meth:`chat` runs one non-streaming turn and returns
-    the generated text. Every native call is serialized by the shared inference
-    mutex.
+    the generated text. Every native call is serialized by the vision engine lock,
+    which no longer blocks the text engine.
 
     [ZH]
     一个已加载的原生视觉模型及其 mtmd 投影器。
 
     构造即加载两者；:meth:`chat` 执行一次非流式视觉轮并返回生成文本。所有原生调用都由
-    共享推理互斥锁串行化。
+    视觉引擎锁串行化，且不再阻塞文本引擎。
     """
 
     def __init__(self, model_path: str, mmproj_path: str,
@@ -345,6 +347,16 @@ class NativeVLM:
         self.mmproj_path = os.path.abspath(mmproj_path) if mmproj_path else ""
         self.n_ctx = max(1024, int(n_ctx or DEFAULT_VISION_CONTEXT))
         self.n_threads = int(n_threads or 0)
+        # [EN] v0.2.7 T3-3 thread budget: the vision engine now decodes concurrently
+        # [EN] with the text engine, so it must leave at least one core available to
+        # [EN] text instead of taking every core for itself. ``0`` means automatic,
+        # [EN] mirroring ``NativeLlama``'s default of ``cpu_count - 1``.
+        # [ZH] v0.2.7 T3-3 线程预算：视觉引擎现在与文本引擎并发解码，因此必须至少给
+        # [ZH] 文本留 1 个核，而不是把核全部占满。``0`` 表示自动，对齐
+        # [ZH] ``NativeLlama`` 的 ``cpu_count - 1`` 默认值。
+        requested_threads = self.n_threads or max(1, os.cpu_count() or 2)
+        self.vision_threads = max(1, requested_threads - 1)
+        self.reserved_cores = max(0, requested_threads - self.vision_threads)
         self.n_gpu_layers = int(n_gpu_layers or 0)
         self.verbose = bool(verbose)
         self._n_batch = min(max(64, self.n_ctx), 512)
@@ -397,7 +409,11 @@ class NativeVLM:
         self._lib = llama_abi
         self._mtmd = mtmd_cpp
         started = time.time()
-        with acquire_inference_lock():
+        # [EN] Model load touches process-global backend state and this engine's own
+        # [EN] context: lifecycle lock first, then the vision engine lock.
+        # [ZH] 模型加载会触及进程级后端状态与本引擎上下文：先取生命周期锁，再取视觉
+        # [ZH] 引擎锁。
+        with acquire_model_lifecycle("vision"):
             # [EN] Hard rule 1: register the ggml backends through the tested
             # [EN] sequence; a bare llama_backend_init() leaves the registry empty.
             # [ZH] 硬规则 1：经已验证的序列注册 ggml 后端；裸 llama_backend_init()
@@ -418,16 +434,34 @@ class NativeVLM:
             ctx_params.n_batch = min(self.n_ctx, 512)
             if hasattr(ctx_params, "n_ubatch"):
                 ctx_params.n_ubatch = min(self.n_ctx, 512)
-            ctx_params.n_threads = self.n_threads
+            ctx_params.n_threads = self.vision_threads
+            if hasattr(ctx_params, "n_threads_batch"):
+                ctx_params.n_threads_batch = self.vision_threads
             self._ctx = llama_abi.llama_init_from_model(self._model, ctx_params)
             if not self._ctx:
                 raise VisionError(CODE_RUNTIME_UNAVAILABLE, "media.vision_failed", detail=(
                     "llama_init_from_model returned NULL: %s" % self.model_path))
+            # [EN] Pin the decode thread count explicitly as well: some revisions
+            # [EN] reset the pool when the context is created, and the budget (one
+            # [EN] core left for text) must survive that. Missing setter or a
+            # [EN] rejected value is logged, not fatal.
+            # [ZH] 再显式钉住解码线程数：部分修订在创建上下文时会重置线程池，而线程预算
+            # [ZH] （给文本留 1 个核）必须在重置后仍然有效。缺少该设置函数或取值被拒绝
+            # [ZH] 只记日志，不致命。
+            setter = getattr(llama_abi, "llama_set_n_threads", None)
+            if callable(setter):
+                try:
+                    setter(self._ctx, self.vision_threads, self.vision_threads)
+                except Exception:  # noqa: BLE001 - [EN] keep the loaded context
+                                   # [ZH] 保留已加载的上下文
+                    log.debug("llama_set_n_threads 调用失败，沿用当前线程数", exc_info=True)
+            else:
+                log.debug("llama_set_n_threads 不可用，沿用已下发线程数")
 
             mtmd_params = mtmd_cpp.mtmd_context_params_default()
             mtmd_params.use_gpu = bool(self.n_gpu_layers)
             mtmd_params.print_timings = self.verbose
-            mtmd_params.n_threads = self.n_threads
+            mtmd_params.n_threads = self.vision_threads
             mtmd_params.warmup = True
             if self.image_min_tokens > 0:
                 mtmd_params.image_min_tokens = self.image_min_tokens
@@ -501,7 +535,11 @@ class NativeVLM:
                               path="", detail="no image was supplied")
 
         started = time.time()
-        with acquire_inference_lock():
+        # [EN] A vision turn mutates only this engine's context and KV cache, so the
+        # [EN] vision engine lock alone is enough; text keeps running concurrently.
+        # [ZH] 视觉轮只改变本引擎的上下文与 KV Cache，因此视觉引擎锁足够；文本仍可
+        # [ZH] 并发运行。
+        with acquire_inference_lock("vision"):
             # [EN] Every ``chat`` is an independent turn: the caller keeps the
             # [EN] conversation as text, not as KV state. Without clearing, the
             # [EN] second call starts at position 0 while the cache still holds the
@@ -544,7 +582,11 @@ class NativeVLM:
         if self._closed:
             return
         self._closed = True
-        with acquire_inference_lock():
+        # [EN] Freeing the projector/context/model is process-global lifecycle work
+        # [EN] and must not overlap with a decode on this engine: ordered pair.
+        # [ZH] 释放投影器/上下文/模型属于进程级生命周期操作，且不能与本引擎的解码重叠：
+        # [ZH] 使用有序组合锁。
+        with acquire_model_lifecycle("vision"):
             for name, closer, arg in (
                     ("mtmd", getattr(self._mtmd, "mtmd_free", None), self._mctx),
                     ("context", getattr(self._lib, "llama_free", None), self._ctx),

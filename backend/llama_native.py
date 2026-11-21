@@ -50,6 +50,7 @@ import logging
 import math
 import os
 import sys
+import threading
 import time
 from typing import Dict, Iterator, List, Optional
 
@@ -112,10 +113,19 @@ class NativeLlamaAborted(NativeLlamaError):
 
 #: [EN] Keeps the log callback alive for the lifetime of the process: ctypes
 #: [EN] function pointers are garbage collected like any other object, and a
-#: [EN] collected callback would make llama.cpp jump into freed memory.
+#: [EN] collected callback would make llama.cpp jump into freed memory. The log
+#: [EN] callback is **process-global** in llama.cpp, so the install is guarded and
+#: [EN] every created callback is retained in :data:`_LOG_CALLBACK_REFS`: a second
+#: [EN] engine starting concurrently must never replace (and thereby free) a
+#: [EN] callback that the native side may be invoking right now.
 #: [ZH] 保证日志回调在整个进程生命周期内存活：ctypes 函数指针与普通对象一样会被
-#: [ZH] 垃圾回收，回调被回收会让 llama.cpp 跳进已释放的内存。
+#: [ZH] 垃圾回收，回调被回收会让 llama.cpp 跳进已释放的内存。日志回调在 llama.cpp 里是
+#: [ZH] **进程全局**的，因此安装过程加了锁，且每个创建过的回调都保留在
+#: [ZH] :data:`_LOG_CALLBACK_REFS` 中：并发启动的第二个引擎绝不能替换（从而释放）
+#: [ZH] 原生侧此刻可能正在调用的回调。
 _LOG_CALLBACK_REF = None
+_LOG_CALLBACK_REFS = []
+_LOG_CALLBACK_LOCK = threading.Lock()
 _LOG_VERBOSE = False
 
 #: [EN] One-shot guard for the ggml backend registry. The registry is process
@@ -556,42 +566,48 @@ def _install_log_filter(verbose: bool) -> None:
     """
     global _LOG_CALLBACK_REF, _LOG_VERBOSE
     _LOG_VERBOSE = bool(verbose)
-    if _LOG_CALLBACK_REF is not None:
-        return
-    api = _ffi()
-
-    def _callback(level, text, _user_data):  # noqa: ANN001 - ctypes signature
-        message = (text or b"").decode("utf-8", "replace").rstrip()
-        if not message:
+    with _LOG_CALLBACK_LOCK:
+        if _LOG_CALLBACK_REF is not None:
             return
-        # [EN] The native logger is fully silent unless verbose mode is requested:
-        # [EN] load failures always surface as a NULL return / raised exception with
-        # [EN] an explicit message, while the loader's progress chatter would
-        # [EN] otherwise flood the interface (the backend forwards stderr to the
-        # [EN] status strip). Level numbers differ between llama.cpp revisions, so
-        # [EN] the gate is the verbose flag rather than a numeric threshold.
-        # [ZH] 除非显式开启 verbose，原生日志完全静默：加载失败一定以 NULL 返回 /
-        # [ZH] 抛出带明确文案的异常呈现，而加载器的进度噪声否则会淹没界面（后端会把
-        # [ZH] stderr 转发到状态栏）。不同 llama.cpp 版本的级别数值并不一致，因此
-        # [ZH] 以 verbose 开关而不是数值阈值作为闸门。
-        if _LOG_VERBOSE:
-            log.info("llama.cpp[%s]: %s", int(level), message)
-        else:
-            log.debug("llama.cpp: %s", message)
+        api = _ffi()
 
-    # [EN] The callback typedef moved between llama.cpp revisions: older builds export
-    # [EN] ``llama_log_callback``, newer ones expose the same shape as
-    # [EN] ``ggml_log_callback``. Pick whichever the loaded build provides instead of
-    # [EN] pinning one name.
-    # [ZH] 回调类型在 llama.cpp 不同修订间搬过家：旧构建导出 ``llama_log_callback``，
-    # [ZH] 新构建以 ``ggml_log_callback`` 暴露同一形状。按已加载构建实际提供的名字取，
-    # [ZH] 不把其中一个写死。
-    callback_type = (getattr(api, "llama_log_callback", None)
-                     or getattr(api, "ggml_log_callback", None))
-    if callback_type is None:
-        return
-    _LOG_CALLBACK_REF = callback_type(_callback)
-    api.llama_log_set(_LOG_CALLBACK_REF, None)
+        def _callback(level, text, _user_data):  # noqa: ANN001 - ctypes signature
+            message = (text or b"").decode("utf-8", "replace").rstrip()
+            if not message:
+                return
+            # [EN] The native logger is fully silent unless verbose mode is requested:
+            # [EN] load failures always surface as a NULL return / raised exception with
+            # [EN] an explicit message, while the loader's progress chatter would
+            # [EN] otherwise flood the interface (the backend forwards stderr to the
+            # [EN] status strip). Level numbers differ between llama.cpp revisions, so
+            # [EN] the gate is the verbose flag rather than a numeric threshold.
+            # [ZH] 除非显式开启 verbose，原生日志完全静默：加载失败一定以 NULL 返回 /
+            # [ZH] 抛出带明确文案的异常呈现，而加载器的进度噪声否则会淹没界面（后端会把
+            # [ZH] stderr 转发到状态栏）。不同 llama.cpp 版本的级别数值并不一致，因此
+            # [ZH] 以 verbose 开关而不是数值阈值作为闸门。
+            if _LOG_VERBOSE:
+                log.info("llama.cpp[%s]: %s", int(level), message)
+            else:
+                log.debug("llama.cpp: %s", message)
+
+        # [EN] The callback typedef moved between llama.cpp revisions: older builds
+        # [EN] export ``llama_log_callback``, newer ones expose the same shape as
+        # [EN] ``ggml_log_callback``. Pick whichever the loaded build provides instead
+        # [EN] of pinning one name.
+        # [ZH] 回调类型在 llama.cpp 不同修订间搬过家：旧构建导出 ``llama_log_callback``，
+        # [ZH] 新构建以 ``ggml_log_callback`` 暴露同一形状。按已加载构建实际提供的名字
+        # [ZH] 取，不把其中一个写死。
+        callback_type = (getattr(api, "llama_log_callback", None)
+                         or getattr(api, "ggml_log_callback", None))
+        if callback_type is None:
+            return
+        callback = callback_type(_callback)
+        # [EN] Retain every callback ever created so a concurrent second engine can
+        # [EN] never free one that the native side is invoking.
+        # [ZH] 保留所有创建过的回调，使并发的第二个引擎绝不会释放原生侧正在调用的那个。
+        _LOG_CALLBACK_REFS.append(callback)
+        _LOG_CALLBACK_REF = callback
+        api.llama_log_set(_LOG_CALLBACK_REF, None)
 
 
 def _ffi():
