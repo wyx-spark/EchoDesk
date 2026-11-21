@@ -121,29 +121,12 @@ def model_name_suggests_vision(model_path: str) -> bool:
     return any(hint in name for hint in VISION_NAME_HINTS)
 
 
-class VisionError(Exception):
-    """
-    [EN]
-    A rejected or failed vision operation, carrying a language-pack key.
-
-    [ZH]
-    被拒绝或失败的视觉操作，携带语言包键。
-    """
-
-    def __init__(self, code: str, key: str, **kwargs: object) -> None:
-        super().__init__(code)
-        self.code = str(code)
-        self.key = str(key)
-        self.kwargs = dict(kwargs)
-
-    def localize(self, translate) -> str:
-        """[EN] Render through the supplied translator. / [ZH] 通过给定翻译函数渲染。"""
-        try:
-            return str(translate(self.key, **self.kwargs))
-        except Exception:  # noqa: BLE001 - [EN] never mask the original reason
-                           # [ZH] 绝不掩盖原始原因
-            return self.code
-
+# [EN] The error type lives in a neutral module so the wheel path and the native
+# [EN] path raise the *same* class; re-exported here to keep this module's public
+# [EN] surface (``vision.VisionError``) unchanged for the dispatcher.
+# [ZH] 错误类型放在中立模块，使轮子路径与原生路径抛出**同一个**类；此处重新导出以保持
+# [ZH] 本模块的公开面（``vision.VisionError``）对分发层不变。
+from vision_errors import VisionError  # noqa: E402,F401
 
 #: [EN] GGUF magic. The model and the multimodal projector are both GGUF files;
 #: [EN] handing a non-GGUF file to the native loader is undefined behaviour in

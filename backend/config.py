@@ -1563,6 +1563,16 @@ class MediaConfig(BaseModel):
     vision_n_ctx: int = Field(default=4096, ge=1024, le=8192)
     vision_max_tokens: int = Field(default=512, ge=64, le=2048)
     vision_temperature: float = Field(default=0.3, ge=0.0, le=1.5)
+    #: [EN] Image token budget per image for the vision projector. The Qwen-VL
+    #: [EN] tokenizer warns that below 1024 image tokens the image grid is too coarse
+    #: [EN] and the model answers with fluent garbage instead of failing, so 1024 is
+    #: [EN] the floor and 2048 the default ceiling. The values apply to known and
+    #: [EN] unknown VLM families alike: "unknown" must never mean "silently degraded".
+    #: [ZH] 每张图片的视觉投影 token 预算。Qwen-VL 分词器警告低于 1024 时图像网格过粗，
+    #: [ZH] 模型会以通顺的垃圾作答而不是失败，因此下限为 1024、默认上限 2048。已知与
+    #: [ZH] 未知 VLM 家族使用同一组值：「未知」绝不得等于「静默降级」。
+    vision_image_min_tokens: int = Field(default=1024, ge=64, le=8192)
+    vision_image_max_tokens: int = Field(default=2048, ge=64, le=16384)
 
     #: [EN] Master switch for transcription. / [ZH] 转写总开关。
     stt_enabled: bool = True

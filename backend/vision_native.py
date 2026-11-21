@@ -47,74 +47,59 @@ import time
 from ctypes import byref, c_float, c_int32
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from gguf_meta import read_metadata
+from gguf_meta import MAGIC as GGUF_MAGIC, read_metadata
 from llm_engine import _INFERENCE_LOCK
+from vision_errors import VisionError
 
 log = logging.getLogger("EchoDesk.VisionNative")
 
-#: [EN] GGUF magic; a non-GGUF file must never reach the native loader.
-#: [ZH] GGUF 魔数；非 GGUF 文件绝不能交给原生加载器。
-GGUF_MAGIC = b"GGUF"
+#: [EN] Error codes for :class:`vision_errors.VisionError`. They are plain strings,
+#: [EN] not subclasses: the dispatcher distinguishes failures by ``code``, exactly
+#: [EN] like the wheel path does, so no mapping table can drift between the two.
+#: [ZH] 供 :class:`vision_errors.VisionError` 使用的错误码。它们是普通字符串而不是
+#: [ZH] 子类：分发层按 ``code`` 区分失败，与轮子路径完全一致，两条实现之间不会出现
+#: [ZH] 会漂移的映射表。
+CODE_RUNTIME_UNAVAILABLE = "runtime_unavailable"
+CODE_ASSET_MISSING = "asset_missing"
+CODE_PAIR_MISMATCH = "pair_mismatch"
+CODE_IMAGE_DECODE_ERROR = "image_decode_error"
 
 #: [EN] Default context window for one vision turn.
 #: [ZH] 单次视觉轮的默认上下文窗口。
 DEFAULT_VISION_CONTEXT = 4096
 
+#: [EN] Pairing states. ``verified`` / ``mismatch`` / ``unverified``: metadata can
+#: [EN] prove the pair right or wrong, or say nothing at all. "Unknown" must not be
+#: [EN] treated as "wrong" -- that would reject models that actually work -- but it
+#: [EN] must be visible in status so support can tell the two apart.
+#: [ZH] 配对三态。``verified`` / ``mismatch`` / ``unverified``：元数据可以证明配对正确、
+#: [ZH] 错误，或什么也证明不了。「未知」不能当成「错误」——那会挡死本来可用的模型——
+#: [ZH] 但必须出现在状态里，使支持人员能区分二者。
+PAIRING_VERIFIED = "verified"
+PAIRING_MISMATCH = "mismatch"
+PAIRING_UNVERIFIED = "unverified"
 
-class NativeVisionError(RuntimeError):
-    """
-    [EN]
-    Base class for every failure of the native vision path.
+#: [EN] The only exception to "family must match": a projector type whose family
+#: [EN] token differs from a text architecture that is nevertheless known-good.
+#: [EN] Every row is evidence-backed; adding a family means adding a row here.
+#: [ZH] 「家族必须一致」的唯一例外：投影器类型的家族标记与文本架构不同、但已被证实
+#: [ZH] 可用的组合。每一行都有实测依据；新增家族必须在此加一行。
+PROJECTOR_FAMILY_WHITELIST: Dict[str, tuple] = {
+    # [EN] Qwen3.5 (arch ``qwen35``) reuses the Qwen3-VL merger; verified end-to-end.
+    # [ZH] Qwen3.5（arch ``qwen35``）复用 Qwen3-VL 的 merger；已端到端实测通过。
+    "qwen3vl_merger": ("qwen3vl", "qwen35"),
+}
 
-    ``code`` is stable and machine-readable so the future routing layer can map it
-    to a distinct user-facing message instead of collapsing every problem into
-    "vision failed".
-
-    [ZH]
-    原生视觉路径所有失败的基类。
-
-    ``code`` 稳定且机器可读，使将来的路由层能映射成不同的用户提示，而不是把所有问题
-    都塌缩成「视觉失败」。
-    """
-
-    code = "vision_native_error"
-
-
-class NativeVisionRuntimeUnavailable(NativeVisionError):
-    """[EN] No usable native runtime (backend registry / model / context). / [ZH] 没有可用的原生运行期（后端注册表/模型/上下文）。"""
-
-    code = "runtime_unavailable"
-
-
-class NativeVisionAssetMissing(NativeVisionError):
-    """[EN] The model or projector file is absent or not a GGUF file. / [ZH] 模型或投影文件缺失，或不是 GGUF 文件。"""
-
-    code = "asset_missing"
-
-
-class NativeVisionPairMismatch(NativeVisionError):
-    """
-    [EN]
-    The projector does not belong to the text model.
-
-    A mismatched pair does not fail loudly in llama.cpp: it produces fluent-looking
-    garbage, which is the most expensive class of defect to diagnose downstream.
-    Therefore the pairing is checked from GGUF metadata *before* loading.
-
-    [ZH]
-    投影文件不属于该文本模型。
-
-    配对错误在 llama.cpp 中不会显式失败：它会产出一段看起来通顺的垃圾，这是下游最难
-    诊断的一类缺陷。因此在加载前就依据 GGUF 元数据完成配对校验。
-    """
-
-    code = "pair_mismatch"
-
-
-class NativeVisionImageDecodeError(NativeVisionError):
-    """[EN] The image bytes could not be decoded by the mtmd bitmap helper. / [ZH] mtmd 位图辅助函数无法解码图片字节。"""
-
-    code = "image_decode_failed"
+#: [EN] Image token budget defaults. 1024/2048 is the range the Qwen-VL tokenizer
+#: [EN] itself warns about: below 1024 the image grid is too coarse and the model
+#: [EN] answers with fluent garbage instead of failing. Correctness beats latency, and
+#: [EN] the same values apply to known and unknown families -- "unknown" must not mean
+#: [EN] "silently degraded".
+#: [ZH] 图像 token 预算默认值。1024/2048 正是 Qwen-VL 分词器自己警告的区间：低于 1024
+#: [ZH] 时图像网格过粗，模型会以通顺的垃圾作答而不是失败。正确性优先于延迟；已知家族与
+#: [ZH] 未知家族使用同一组值 ——「未知」不得等于「静默降级」。
+DEFAULT_IMAGE_MIN_TOKENS = 1024
+DEFAULT_IMAGE_MAX_TOKENS = 2048
 
 
 def _gguf_magic_ok(path: str) -> bool:
@@ -129,9 +114,9 @@ def _gguf_magic_ok(path: str) -> bool:
 def _require_asset(path: str, label: str) -> None:
     """[EN] Raise ``AssetMissing`` unless ``path`` is a readable GGUF. / [ZH] 除非 ``path`` 是可读 GGUF，否则抛 ``AssetMissing``。"""
     if not path or not os.path.isfile(path):
-        raise NativeVisionAssetMissing("%s not found: %s" % (label, path))
+        raise VisionError(CODE_ASSET_MISSING, "media.vision_model_missing" if label == "model" else "media.vision_mmproj_missing", name=os.path.basename(path or ""), detail="%s not found: %s" % (label, path))
     if not _gguf_magic_ok(path):
-        raise NativeVisionAssetMissing("%s is not a GGUF file: %s" % (label, path))
+        raise VisionError(CODE_ASSET_MISSING, "media.vision_model_missing" if label == "model" else "media.vision_mmproj_missing", name=os.path.basename(path or ""), detail="%s is not a GGUF file: %s" % (label, path))
 
 
 def _leading_family(projector_type: str) -> str:
@@ -152,104 +137,179 @@ def _leading_family(projector_type: str) -> str:
     return token if any(ch.isdigit() for ch in token) else ""
 
 
-def check_pairing(model_path: str, mmproj_path: str) -> Dict[str, Any]:
+def classify_pairing(model_meta: Dict[str, Any],
+                     mmproj_meta: Dict[str, Any]) -> "tuple[str, Dict[str, Any]]":
     """
     [EN]
-    Verify that ``mmproj_path`` belongs to ``model_path`` using GGUF metadata only.
+    Pure tri-state pairing classifier: no files, no native calls, no exceptions.
 
-    Two independent checks:
+    Returns ``(state, evidence)`` where ``state`` is one of :data:`PAIRING_VERIFIED`,
+    :data:`PAIRING_MISMATCH` or :data:`PAIRING_UNVERIFIED`.
 
-    * **shape** -- ``clip.vision.projection_dim`` must equal the text model's
-      ``<arch>.embedding_length``. This is the real tensor contract: the projector
-      emits vectors of that width into the text model's residual stream.
-    * **family** -- when ``clip.projector_type`` carries a family token (e.g.
-      ``qwen3vl_merger``), it is compared with ``general.architecture``. A token
-      without digits (``mlp``, ``merger``) carries no family information and is
-      skipped rather than guessed. A family mismatch is only fatal when the shape
-      evidence is unavailable: real pairs exist whose projector token differs
-      (Qwen3.5 uses ``qwen3vl_merger``), and rejecting those would be a false
-      negative.
+    The asymmetry is deliberate:
 
-    Returns the evidence used, so a caller can log it. Raises
-    :class:`NativeVisionPairMismatch` on any violation.
+    * known mismatch -> ``mismatch`` (llama.cpp would emit fluent garbage);
+    * known match -> ``verified``;
+    * metadata silent -> ``unverified`` and the caller may still load. Failing
+      closed here would reject models that actually work; failing open silently
+      would ship garbage. "Known-bad blocks, unknown loads and is labelled" is the
+      only rule that is correct on both ends.
 
     [ZH]
-    仅用 GGUF 元数据校验 ``mmproj_path`` 是否属于 ``model_path``。
+    纯三态配对分类器：不读文件、不调原生、不抛异常。
 
-    两项独立校验：
+    返回 ``(state, evidence)``，``state`` 取 :data:`PAIRING_VERIFIED`、
+    :data:`PAIRING_MISMATCH` 或 :data:`PAIRING_UNVERIFIED` 之一。
 
-    * **形状** —— ``clip.vision.projection_dim`` 必须等于文本模型的
-      ``<arch>.embedding_length``。这是真实的张量契约：投影器输出的向量宽度要接进
-      文本模型的残差流。
-    * **家族** —— 当 ``clip.projector_type`` 带家族标记（如 ``qwen3vl_merger``）时，
-      必须与 ``general.architecture`` 匹配。不含数字的标记（``mlp``、``merger``）不
-      携带家族信息，此时跳过而不是猜测。
+    这种不对称是刻意的：
 
-    返回所用证据，便于调用方记录日志。任一违反即抛
-    :class:`NativeVisionPairMismatch`。
+    * 已知不匹配 -> ``mismatch``（llama.cpp 会输出通顺的垃圾）；
+    * 已知匹配 -> ``verified``；
+    * 元数据沉默 -> ``unverified``，调用方仍可加载。此处 fail-closed 会拒绝本来可用的
+      模型，fail-open 又会静默出垃圾；只有「已知错就拦、未知则放行并标记」在两端都正确。
     """
-    try:
-        model_meta = read_metadata(model_path)
-    except Exception as exc:  # noqa: BLE001 - [EN] unreadable metadata is an asset fault
-                             # [ZH] 元数据不可读属于资产故障
-        raise NativeVisionAssetMissing(
-            "cannot read metadata from model %s: %s" % (model_path, exc)) from exc
-    try:
-        mmproj_meta = read_metadata(mmproj_path)
-    except Exception as exc:  # noqa: BLE001
-        raise NativeVisionAssetMissing(
-            "cannot read metadata from mmproj %s: %s" % (mmproj_path, exc)) from exc
-
     arch = str(model_meta.get("general.architecture") or "").strip().lower()
     projector_type = str(mmproj_meta.get("clip.projector_type") or "").strip().lower()
+    vision_key_present = "clip.has_vision_encoder" in mmproj_meta
     has_vision = bool(mmproj_meta.get("clip.has_vision_encoder"))
     hidden = model_meta.get(("%s.embedding_length" % arch) if arch else "")
     if hidden is None:
         hidden = model_meta.get("general.embedding_length")
     projection_dim = mmproj_meta.get("clip.vision.projection_dim")
+    family = _leading_family(projector_type)
+    allowed_families = PROJECTOR_FAMILY_WHITELIST.get(projector_type)
 
     evidence: Dict[str, Any] = {
         "architecture": arch,
         "projector_type": projector_type,
-        "has_vision_encoder": has_vision,
+        "has_vision_encoder": has_vision if vision_key_present else None,
         "embedding_length": hidden,
         "projection_dim": projection_dim,
+        "whitelisted_families": list(allowed_families) if allowed_families else None,
     }
-    if not has_vision:
-        raise NativeVisionPairMismatch(
-            "mmproj has no vision encoder (clip.has_vision_encoder is false): %s"
-            % os.path.basename(mmproj_path))
+    if vision_key_present and not has_vision:
+        evidence["reason"] = "mmproj declares no vision encoder"
+        return PAIRING_MISMATCH, evidence
+    # [EN] Rule 1: unequal widths are always a mismatch. A width says how wide the
+    # [EN] vectors the projector emits are; if they do not fit the residual stream
+    # [EN] the pair is wrong no matter what the names say.
+    # [ZH] 规则 1：宽度不等一律不匹配。宽度表示投影器输出向量有多宽；接不进残差流时，
+    # [ZH] 名字怎么说都不对。
     if hidden is not None and projection_dim is not None:
-        if int(hidden) != int(projection_dim):
-            raise NativeVisionPairMismatch(
-                "projector width does not match the text model: %s=%s but "
-                "clip.vision.projection_dim=%s (%s + %s)"
-                % ("%s.embedding_length" % arch, hidden, projection_dim,
-                   os.path.basename(model_path), os.path.basename(mmproj_path)))
-        # [EN] The width matched, so the pair is physically compatible even if the
-        # [EN] projector family token differs: Qwen3.5 (arch ``qwen35``) legitimately
-        # [EN] reuses the ``qwen3vl_merger`` projector. A mismatch is recorded as a
-        # [EN] warning instead of a rejection; rejecting here would refuse a real pair.
-        # [ZH] 宽度已匹配，说明这一对在物理上兼容，即使投影器家族标记不同：Qwen3.5
-        # [ZH]（arch ``qwen35``）确实复用 ``qwen3vl_merger`` 投影器。此时只记录警告而
-        # [ZH] 不拒绝；在此拒绝会误杀真实可用的一对。
-        family = _leading_family(projector_type)
-        if family and arch and family != arch:
-            evidence["family_warning"] = (
-                "projector family %r != text architecture %r; accepted because the "
-                "projection width matches" % (family, arch))
-            log.warning("视觉配对家族标记不一致但宽度一致，按可用处理：%s", evidence["family_warning"])
-        return evidence
-    # [EN] Shape evidence is incomplete, so the family token is the only signal left.
-    # [ZH] 形状证据不完整，此时家族标记是唯一可用的判据。
-    family = _leading_family(projector_type)
-    if family and arch and family != arch:
-        raise NativeVisionPairMismatch(
-            "projector family %r does not match text architecture %r and the "
-            "projection width is unavailable (%s + %s)"
-            % (family, arch, os.path.basename(model_path),
-               os.path.basename(mmproj_path)))
+        try:
+            same = int(hidden) == int(projection_dim)
+        except (TypeError, ValueError):
+            same = None
+        if same is False:
+            evidence["reason"] = (
+                "projection width %s != %s.embedding_length %s"
+                % (projection_dim, arch, hidden))
+            return PAIRING_MISMATCH, evidence
+    # [EN] Rule 2: a family mismatch is a mismatch *regardless of width*. Two
+    # [EN] unrelated families often share 2048 hidden size, and accepting that pair
+    # [EN] is exactly the silent-garbage case this check exists to stop.
+    # [EN] Rule 3: the only escape is the explicit whitelist table -- adding a family
+    # [EN] means adding a row here, never widening the comparison.
+    # [ZH] 规则 2：家族不匹配一律不匹配，**与宽度是否相同无关**。两个互不相关的家族
+    # [ZH] 常常同为 2048，放行这种配对正是本校验要拦的静默垃圾。
+    # [ZH] 规则 3：唯一例外是显式白名单表 —— 新增家族必须加一行，绝不放宽比较逻辑。
+    if allowed_families is not None:
+        family_ok = bool(arch) and arch in allowed_families
+        if not family_ok:
+            evidence["reason"] = (
+                "text architecture %r is not whitelisted for projector %r "
+                "(allowed: %s)" % (arch, projector_type, sorted(allowed_families)))
+            return PAIRING_MISMATCH, evidence
+    elif family and arch:
+        if family != arch:
+            evidence["reason"] = (
+                "projector family %r != text architecture %r" % (family, arch))
+            return PAIRING_MISMATCH, evidence
+        family_ok = True
+    else:
+        family_ok = None
+    # [EN] Everything the metadata can prove is consistent. Width equality on its own
+    # [EN] is not proof (any two families can share 2048), so a pair with no family
+    # [EN] signal stays "unverified" and is allowed with a warning.
+    # [ZH] 元数据能证明的部分都一致。仅凭宽度相等不构成证明（任意两个家族都可能同为
+    # [ZH] 2048），因此缺少家族信号的配对保持 "unverified"，放行并告警。
+    if family_ok is True:
+        return PAIRING_VERIFIED, evidence
+    evidence["reason"] = "metadata is not sufficient to verify the pair"
+    return PAIRING_UNVERIFIED, evidence
+
+
+def check_pairing(model_path: str, mmproj_path: str) -> Dict[str, Any]:
+    """
+    [EN]
+    Read both GGUF metadata blocks, classify the pair and raise on a known mismatch.
+
+    Returns ``{"state": ..., ...evidence}``. A known mismatch raises
+    :class:`vision_errors.VisionError` with ``code == "pair_mismatch"``; an
+    unverifiable pair returns ``state == "unverified"`` so the caller can load it
+    and warn once.
+
+    [ZH]
+    读取两个 GGUF 元数据块、分类配对，并在已知不匹配时抛出。
+
+    返回 ``{"state": ..., ...evidence}``。已知不匹配抛
+    :class:`vision_errors.VisionError`（``code == "pair_mismatch"``）；无法判定的配对
+    返回 ``state == "unverified"``，由调用方加载并告警一次。
+    """
+    try:
+        model_meta = read_metadata(model_path)
+    except Exception as exc:  # noqa: BLE001 - [EN] unreadable metadata is an asset fault
+                             # [ZH] 元数据不可读属于资产故障
+        raise VisionError(CODE_ASSET_MISSING, "media.vision_model_missing",
+                          name=os.path.basename(model_path),
+                          detail="cannot read metadata from model %s: %s"
+                                 % (model_path, exc)) from exc
+    try:
+        mmproj_meta = read_metadata(mmproj_path)
+    except Exception as exc:  # noqa: BLE001
+        raise VisionError(CODE_ASSET_MISSING, "media.vision_mmproj_missing",
+                          name=os.path.basename(mmproj_path),
+                          detail="cannot read metadata from mmproj %s: %s"
+                                 % (mmproj_path, exc)) from exc
+
+    state, evidence = classify_pairing(model_meta, mmproj_meta)
+    if state == PAIRING_MISMATCH:
+        evidence["state"] = state
+        raise VisionError(
+            CODE_PAIR_MISMATCH, "media.vision_failed",
+            detail=("%s: %s + %s" % (evidence.get("reason", "pair mismatch"),
+                                     os.path.basename(model_path),
+                                     os.path.basename(mmproj_path))),
+            pairing=evidence)
+    evidence["state"] = state
     return evidence
+
+
+def image_budget_from_config(media_cfg: Any) -> "tuple[int, int]":
+    """
+    [EN]
+    Resolve the effective ``(image_min_tokens, image_max_tokens)`` from the media
+    configuration.
+
+    The wiring step passes the result to :class:`NativeVLM`; keeping the resolution
+    here means the defaults live in exactly one place and ``status()`` can report
+    what was actually used, which is the only way support can distinguish "slow" or
+    "garbage output" from "misconfigured" after the fact.
+
+    [ZH]
+    从媒体配置解析实际生效的 ``(image_min_tokens, image_max_tokens)``。
+
+    接线步把结果传给 :class:`NativeVLM`；把解析放在这里意味着默认值只有一处定义，且
+    ``status()`` 能报告真正使用的值 —— 这是支持人员事后区分「慢」/「输出垃圾」与
+    「配置错误」的唯一依据。
+    """
+    minimum = getattr(media_cfg, "vision_image_min_tokens", DEFAULT_IMAGE_MIN_TOKENS)
+    maximum = getattr(media_cfg, "vision_image_max_tokens", DEFAULT_IMAGE_MAX_TOKENS)
+    minimum = int(minimum) if minimum else DEFAULT_IMAGE_MIN_TOKENS
+    maximum = int(maximum) if maximum else DEFAULT_IMAGE_MAX_TOKENS
+    if maximum < minimum:
+        maximum = minimum
+    return minimum, maximum
 
 
 class NativeVLM:
@@ -271,7 +331,8 @@ class NativeVLM:
     def __init__(self, model_path: str, mmproj_path: str,
                  n_ctx: int = DEFAULT_VISION_CONTEXT, n_threads: int = 0,
                  n_gpu_layers: int = 0, verbose: bool = False,
-                 image_min_tokens: int = 0, image_max_tokens: int = 0) -> None:
+                 image_min_tokens: int = DEFAULT_IMAGE_MIN_TOKENS,
+                 image_max_tokens: int = DEFAULT_IMAGE_MAX_TOKENS) -> None:
         self.model_path = os.path.abspath(model_path) if model_path else ""
         self.mmproj_path = os.path.abspath(mmproj_path) if mmproj_path else ""
         self.n_ctx = max(1024, int(n_ctx or DEFAULT_VISION_CONTEXT))
@@ -280,12 +341,17 @@ class NativeVLM:
         self.verbose = bool(verbose)
         self._n_batch = min(max(64, self.n_ctx), 512)
         # [EN] Qwen-VL tokenizers warn that the default grid is too coarse for
-        # [EN] grounding ("at minimum 1024 image tokens"); 0 keeps the build default.
-        # [ZH] Qwen-VL 分词器警告默认网格对 grounding 过粗（"至少 1024 image tokens"）；
-        # [ZH] 取 0 表示沿用构建默认值。
-        self.image_min_tokens = int(image_min_tokens or 0)
-        self.image_max_tokens = int(image_max_tokens or 0)
+        # [EN] grounding; 0 means "use the module default", never "disable".
+        # [ZH] Qwen-VL 分词器警告默认网格对 grounding 过粗；0 表示「使用模块默认值」，
+        # [ZH] 而不是「关闭」。
+        self.image_min_tokens = (int(image_min_tokens) if image_min_tokens
+                                 else DEFAULT_IMAGE_MIN_TOKENS)
+        self.image_max_tokens = (int(image_max_tokens) if image_max_tokens
+                                 else DEFAULT_IMAGE_MAX_TOKENS)
+        if self.image_max_tokens < self.image_min_tokens:
+            self.image_max_tokens = self.image_min_tokens
         self.pairing: Dict[str, Any] = {}
+        self.pairing_state = PAIRING_UNVERIFIED
         self._lib = None
         self._model = None
         self._ctx = None
@@ -302,6 +368,16 @@ class NativeVLM:
         _require_asset(self.model_path, "model")
         _require_asset(self.mmproj_path, "mmproj")
         self.pairing = check_pairing(self.model_path, self.mmproj_path)
+        self.pairing_state = str(self.pairing.get("state") or PAIRING_UNVERIFIED)
+        if self.pairing_state == PAIRING_UNVERIFIED:
+            # [EN] Unknown is not wrong: load it, but make the state visible and say
+            # [EN] it once in the log so a later "garbage output" report is traceable.
+            # [ZH] 未知不等于错误：仍然加载，但让状态可见并在日志里说一次，使日后
+            # [ZH] 「输出是垃圾」的反馈可以追溯。
+            log.warning(
+                "视觉配对无法从元数据判定（pairing=unverified），按可用处理：%s + %s；原因：%s",
+                os.path.basename(self.model_path), os.path.basename(self.mmproj_path),
+                self.pairing.get("reason", ""))
 
         # [EN] Imported here so merely importing this module never loads a DLL.
         # [ZH] 在此导入，使「仅导入本模块」绝不加载任何 DLL。
@@ -325,8 +401,8 @@ class NativeVLM:
             self._model = llama_abi.llama_model_load_from_file(
                 self.model_path.encode("utf-8"), model_params)
             if not self._model:
-                raise NativeVisionRuntimeUnavailable(
-                    "llama_model_load_from_file returned NULL: %s" % self.model_path)
+                raise VisionError(CODE_RUNTIME_UNAVAILABLE, "media.vision_failed", detail=(
+                    "llama_model_load_from_file returned NULL: %s" % self.model_path))
             self.timings["model_load_ms"] = (time.time() - started) * 1000
 
             ctx_params = llama_abi.llama_context_default_params()
@@ -337,8 +413,8 @@ class NativeVLM:
             ctx_params.n_threads = self.n_threads
             self._ctx = llama_abi.llama_init_from_model(self._model, ctx_params)
             if not self._ctx:
-                raise NativeVisionRuntimeUnavailable(
-                    "llama_init_from_model returned NULL: %s" % self.model_path)
+                raise VisionError(CODE_RUNTIME_UNAVAILABLE, "media.vision_failed", detail=(
+                    "llama_init_from_model returned NULL: %s" % self.model_path))
 
             mtmd_params = mtmd_cpp.mtmd_context_params_default()
             mtmd_params.use_gpu = bool(self.n_gpu_layers)
@@ -354,14 +430,14 @@ class NativeVLM:
                 self.mmproj_path.encode("utf-8"), self._model, mtmd_params)
             self.timings["mmproj_load_ms"] = (time.time() - started) * 1000
             if not self._mctx:
-                raise NativeVisionPairMismatch(
+                raise VisionError(CODE_PAIR_MISMATCH, "media.vision_failed", detail=(
                     "mtmd_init_from_file rejected the projector for this model: "
                     "%s + %s" % (os.path.basename(self.model_path),
-                                 os.path.basename(self.mmproj_path)))
+                                 os.path.basename(self.mmproj_path))))
             if not bool(mtmd_cpp.mtmd_support_vision(self._mctx)):
-                raise NativeVisionPairMismatch(
+                raise VisionError(CODE_PAIR_MISMATCH, "media.vision_failed", detail=(
                     "projector reports no vision support: %s"
-                    % os.path.basename(self.mmproj_path))
+                    % os.path.basename(self.mmproj_path)))
             self._marker = mtmd_cpp.mtmd_default_marker().decode("utf-8")
             self._bitmap_opt = mtmd_cpp.mtmd_helper_init_opt_default()
         log.info("原生视觉模型已加载：%s + %s（projector=%s）",
@@ -383,6 +459,9 @@ class NativeVLM:
             "handler": "mtmd",
             "marker": self._marker,
             "pairing": dict(self.pairing),
+            "pairing_state": self.pairing_state,
+            "image_min_tokens": self.image_min_tokens,
+            "image_max_tokens": self.image_max_tokens,
             "last_error": "",
         }
 
@@ -403,13 +482,15 @@ class NativeVLM:
         解码错误，而不是静默重排。
         """
         if self._closed:
-            raise NativeVisionRuntimeUnavailable("native vision engine is closed")
+            raise VisionError(CODE_RUNTIME_UNAVAILABLE, "media.vision_failed",
+                              detail="native vision engine is closed")
         if isinstance(image_path, (str, bytes, os.PathLike)):
             paths: List[str] = [os.fspath(image_path)]
         else:
             paths = [os.fspath(item) for item in image_path]
         if not paths:
-            raise NativeVisionImageDecodeError("no image was supplied")
+            raise VisionError(CODE_IMAGE_DECODE_ERROR, "media.error.bad_image",
+                              path="", detail="no image was supplied")
 
         started = time.time()
         with _INFERENCE_LOCK:
@@ -439,8 +520,8 @@ class NativeVLM:
                     self._n_batch, True, byref(n_past))
                 self.timings["eval_ms"] = (time.time() - eval_started) * 1000
                 if rc != 0:
-                    raise NativeVisionRuntimeUnavailable(
-                        "mtmd_helper_eval_chunks failed with code %d" % rc)
+                    raise VisionError(CODE_RUNTIME_UNAVAILABLE, "media.vision_failed", detail=(
+                        "mtmd_helper_eval_chunks failed with code %d" % rc))
                 text = self._generate(int(n_past.value), max_tokens, temperature)
             finally:
                 try:
@@ -485,22 +566,24 @@ class NativeVLM:
     def _decode_bitmap(self, path: str):
         """[EN] Decode image bytes through the vendored mtmd helper. / [ZH] 经 vendored mtmd 辅助函数解码图片字节。"""
         if not path or not os.path.isfile(path):
-            raise NativeVisionImageDecodeError("image not found: %s" % path)
+            raise VisionError(CODE_IMAGE_DECODE_ERROR, "media.error.bad_image",
+                              path=path, detail="image not found: %s" % path)
         try:
             with open(path, "rb") as handle:
                 data = handle.read()
         except OSError as exc:
-            raise NativeVisionImageDecodeError(
-                "cannot read image %s: %s" % (path, exc)) from exc
+            raise VisionError(CODE_IMAGE_DECODE_ERROR, "media.error.bad_image",
+                              path=path,
+                              detail="cannot read image %s: %s" % (path, exc)) from exc
         if not data:
-            raise NativeVisionImageDecodeError("image is empty: %s" % path)
+            raise VisionError(CODE_IMAGE_DECODE_ERROR, "media.error.bad_image", path=path, detail=("image is empty: %s" % path))
         buffer = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
         wrapper = self._mtmd.mtmd_helper_bitmap_init_from_buf(
             self._mctx, buffer, len(data), False, self._bitmap_opt)
         bitmap = wrapper.bitmap if wrapper else None
         if not bitmap:
-            raise NativeVisionImageDecodeError(
-                "mtmd could not decode %s (unsupported or corrupt image)" % path)
+            raise VisionError(CODE_IMAGE_DECODE_ERROR, "media.error.bad_image", path=path, detail=(
+                "mtmd could not decode %s (unsupported or corrupt image)" % path))
         return bitmap
 
     def _tokenize(self, bitmaps, prompt: str):
@@ -508,7 +591,8 @@ class NativeVLM:
         text = "".join(self._marker + "\n" for _ in bitmaps) + str(prompt or "")
         chunks = self._mtmd.mtmd_input_chunks_init()
         if not chunks:
-            raise NativeVisionRuntimeUnavailable("mtmd_input_chunks_init returned NULL")
+            raise VisionError(CODE_RUNTIME_UNAVAILABLE, "media.vision_failed",
+                              detail="mtmd_input_chunks_init returned NULL")
         input_text = self._mtmd.mtmd_input_text()
         encoded = text.encode("utf-8")
         input_text.text = encoded
@@ -525,9 +609,9 @@ class NativeVLM:
             try:
                 self._mtmd.mtmd_input_chunks_free(chunks)
             finally:
-                raise NativeVisionImageDecodeError(
+                raise VisionError(CODE_IMAGE_DECODE_ERROR, "media.error.bad_image", path=path, detail=(
                     "mtmd_tokenize rejected the input (code %d): %d marker(s) / "
-                    "%d bitmap(s)" % (rc, text.count(self._marker), count))
+                    "%d bitmap(s)" % (rc, text.count(self._marker), count)))
         self.timings["prompt_tokens"] = float(
             self._mtmd.mtmd_helper_get_n_tokens(chunks))
         return chunks
@@ -600,3 +684,4 @@ class NativeVLM:
         buffer = ctypes.create_string_buffer(256)
         written = int(self._lib.llama_token_to_piece(vocab, token, buffer, 256, 0, True))
         return buffer.raw[:written] if written > 0 else b""
+
