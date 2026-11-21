@@ -158,8 +158,37 @@ def test_version_is_reader():
     """[EN] Version binding / [ZH] 版本号绑定。"""
     check("APP_VERSION 带 reader 后缀", version.APP_VERSION.endswith("-reader"),
           f"APP_VERSION={version.APP_VERSION}")
-    check("四段式版本号仍为纯数字", version.app_version_4() == "0.2.6.0",
-          f"app_version_4()={version.app_version_4()}")
+    # [EN] Derived expectation, not a literal: this check exists to prove the four-part
+    # [EN] form is still purely numeric **and** still derived from APP_VERSION, so a
+    # [EN] version bump must not require editing the test. Three constraints, all
+    # [EN] stronger than the old equality against one hard-coded string:
+    # [EN]   1. shape  -- exactly four dot-separated non-empty numeric segments;
+    # [EN]   2. derived -- it equals the four-part form computed from APP_VERSION here
+    # [EN]      (strip the v/V prefix, cut at - or +, split on dots, pad to four);
+    # [EN]   3. consistency -- APP_VERSION's numeric core equals the first three segments,
+    # [EN]      so a number edited in version.py without the derivation following it (or
+    # [EN]      the reverse) fails immediately.
+    # [ZH] 这里是**派生期望**而不是字面量：该断言要证明的是"四段式仍是纯数字"**且**"仍由
+    # [ZH] APP_VERSION 派生"，因此升版不需要改测试。三条约束都比原先"等于某个写死字符串"
+    # [ZH] 更严：
+    # [ZH]   1. 形状 —— 恰好四段、以点分隔、每段非空且全为数字；
+    # [ZH]   2. 派生 —— 等于此处现场由 APP_VERSION 推导的四段（去 v/V 前缀、按 - 或 + 截断、
+    # [ZH]      按点切分、不足四位补 0）；
+    # [ZH]   3. 一致性 —— APP_VERSION 的数字核心等于四段式的前三段，因此"只改了 version.py
+    # [ZH]      的数字而 app_version_4 的算法没跟上"（或反之）会立刻红。
+    four = version.app_version_4()
+    raw = version.APP_VERSION.lstrip("vV").strip()
+    for separator in ("-", "+"):
+        raw = raw.split(separator, 1)[0]
+    parts = four.split(".")
+    shape_ok = len(parts) == 4 and all(part.isdigit() for part in parts)
+    derived = ".".join((raw.split(".") + ["0", "0", "0", "0"])[:4])
+    app_core = ".".join(raw.split(".")[:3])
+    four_core = ".".join(parts[:3])
+    check("四段式版本号（形状 / 派生 / 一致性）",
+          shape_ok and four == derived and app_core == four_core,
+          f"实际 app_version_4()={four} 期望派生={derived} 形状={shape_ok} "
+          f"核心 APP_VERSION={app_core} 四段前三段={four_core}")
 
 
 def test_frontend_residue():
