@@ -71,7 +71,7 @@ import cuda_bootstrap
 # [EN] decodes on the same llama.cpp runtime, and llama.cpp is not thread-safe.
 # [ZH] 复用文本引擎的进程级推理互斥锁：视觉轮解码同样运行在同一套 llama.cpp
 # [ZH] 运行时之上，而 llama.cpp 不是线程安全的。
-from llm_engine import _INFERENCE_LOCK
+from llm_engine import acquire_inference_lock
 # [EN] Runtime-policy gate. ``llm_backend`` is a stdlib-only module, so importing it
 # [EN] here cannot load the native DLLs; the gate must be able to refuse before any
 # [EN] runtime is touched. ``vision_runtime()`` is the single decision point (§12.2).
@@ -475,7 +475,7 @@ class VisionEngine:
         # [EN] Constructing a native model mutates shared backend state and must
         # [EN] not overlap with an in-flight decode elsewhere.
         # [ZH] 构建原生模型会改变共享后端状态，绝不能与其他正在进行的解码重叠。
-        with _INFERENCE_LOCK:
+        with acquire_inference_lock():
             self.llm = Llama(**kwargs)
         log.info("视觉模型已加载：%s（处理器 %s）",
                  os.path.basename(self.model_path), self.handler_name)
@@ -572,7 +572,7 @@ class VisionEngine:
             # [ZH] ``finally`` 是 v0.2.6 第 23 项要求的显式收口点：``with`` 块在发生任何
             # [ZH] 异常时本就已释放互斥锁，此处保留 ``finally`` 是为了明确记录"原生调用
             # [ZH] 失败后绝不会遗留持锁状态"。
-            with _INFERENCE_LOCK:
+            with acquire_inference_lock():
                 try:
                     result = self.llm.create_chat_completion(
                         messages=messages,
@@ -605,7 +605,7 @@ class VisionEngine:
         # [EN] Freeing the model while another thread decodes would be a
         # [EN] use-after-free; wait for any in-flight native operation.
         # [ZH] 在另一线程解码时释放模型会造成释放后使用；必须等待进行中的原生操作。
-        with _INFERENCE_LOCK:
+        with acquire_inference_lock():
             llm = self.llm
             self.llm = None
             close = getattr(llm, "close", None)

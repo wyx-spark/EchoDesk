@@ -1310,12 +1310,17 @@ def test_cuda_bootstrap() -> None:
 
     # [EN] The mutex-protected native call must keep the `with ... try/finally`
     # [EN] shape: a future edit that drops the lock would otherwise go unnoticed.
+    # [EN] The guarded entry point ``acquire_inference_lock()`` is the preferred form
+    # [EN] (it also turns same-thread re-entry into an immediate error), so either
+    # [EN] spelling is accepted here.
     # [ZH] 受互斥锁保护的原生调用必须保持 `with ... try/finally` 形态，否则将来删除
-    # [ZH] 锁的改动不会被发现。
+    # [ZH] 锁的改动不会被发现。带重入检测的 ``acquire_inference_lock()`` 是首选形态
+    # [ZH] （它还会把同线程重入变成立即报错），因此两种写法都接受。
     vision_source = open(os.path.join(os.path.abspath(BACKEND), "vision.py"),
                          encoding="utf-8").read()
     check("视觉推理原生调用由互斥锁与 try/finally 包裹",
-          "with _INFERENCE_LOCK:" in vision_source
+          ("with _INFERENCE_LOCK:" in vision_source
+           or "with acquire_inference_lock():" in vision_source)
           and "finally:" in vision_source
           and "create_chat_completion" in vision_source)
 

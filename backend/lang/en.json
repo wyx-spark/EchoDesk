@@ -38,7 +38,7 @@
     "error.bad_image": "The file is not a valid image: {path}",
     "vision_disabled": "Image chat is disabled in the configuration (media.vision_enabled in config.json)",
     "vision_runtime_unavailable": "The active llama.cpp runtime cannot serve vision yet. Set ECHODESK_LLAMA_RUNTIME=wheel to fall back to the llama-cpp-python runtime.",
-    "vision_progress": "Reading the image... (the native engine runs on CPU and can take about 20 seconds)",
+    "vision_progress": "Reading the image... (the native engine runs on CPU and can take about 20 seconds; this cannot be interrupted)",
     "vision_no_model": "No vision model is configured; set media.vision_model in config.json to a VL model with an mmproj file, or load a multimodal model first",
     "vision_model_missing": "The vision model file does not exist: {name}",
     "vision_no_mmproj": "No multimodal projector (mmproj-Q8_0.gguf) was found; place it next to the model or set media.vision_mmproj",

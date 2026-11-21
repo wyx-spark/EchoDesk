@@ -48,7 +48,7 @@ from ctypes import byref, c_float, c_int32
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from gguf_meta import MAGIC as GGUF_MAGIC, read_metadata
-from llm_engine import _INFERENCE_LOCK
+from llm_engine import acquire_inference_lock
 from vision_errors import (
     CODE_ASSET_MISSING,
     CODE_IMAGE_DECODE_ERROR,
@@ -397,7 +397,7 @@ class NativeVLM:
         self._lib = llama_abi
         self._mtmd = mtmd_cpp
         started = time.time()
-        with _INFERENCE_LOCK:
+        with acquire_inference_lock():
             # [EN] Hard rule 1: register the ggml backends through the tested
             # [EN] sequence; a bare llama_backend_init() leaves the registry empty.
             # [ZH] 硬规则 1：经已验证的序列注册 ggml 后端；裸 llama_backend_init()
@@ -501,7 +501,7 @@ class NativeVLM:
                               path="", detail="no image was supplied")
 
         started = time.time()
-        with _INFERENCE_LOCK:
+        with acquire_inference_lock():
             # [EN] Every ``chat`` is an independent turn: the caller keeps the
             # [EN] conversation as text, not as KV state. Without clearing, the
             # [EN] second call starts at position 0 while the cache still holds the
@@ -544,7 +544,7 @@ class NativeVLM:
         if self._closed:
             return
         self._closed = True
-        with _INFERENCE_LOCK:
+        with acquire_inference_lock():
             for name, closer, arg in (
                     ("mtmd", getattr(self._mtmd, "mtmd_free", None), self._mctx),
                     ("context", getattr(self._lib, "llama_free", None), self._ctx),

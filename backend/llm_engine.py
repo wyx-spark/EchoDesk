@@ -42,6 +42,7 @@ summarizer share one model instance.
 """
 import logging
 import queue
+import contextlib
 import threading
 import time
 from dataclasses import dataclass
@@ -97,6 +98,53 @@ log = logging.getLogger("EchoDesk.LLM")
 #: 而流式读者线程在整个生成期间持有该锁，若把 token 计数也加锁，流结束后的计数
 #: 调用方（例如 ``done`` 指标路径）会与"读者线程等待已满的交付队列"互相等待而死锁。
 _INFERENCE_LOCK = threading.Lock()
+
+#: [EN] Ident of the thread currently holding :data:`_INFERENCE_LOCK`, protected by
+#: [EN] :data:`_INFERENCE_OWNER_GUARD`. Used by :func:`acquire_inference_lock` to turn
+#: [EN] a same-thread re-entry into an immediate error instead of a silent hang.
+#: [ZH] 当前持有 :data:`_INFERENCE_LOCK` 的线程 ident，由 :data:`_INFERENCE_OWNER_GUARD`
+#: [ZH] 保护。:func:`acquire_inference_lock` 据此把同线程重入变成立即报错，而不是静默卡死。
+_INFERENCE_OWNER: Optional[int] = None
+_INFERENCE_OWNER_GUARD = threading.Lock()
+
+
+@contextlib.contextmanager
+def acquire_inference_lock():
+    """
+    [EN]
+    Acquire the process-wide inference lock, refusing same-thread re-entry.
+
+    ``threading.Lock`` is not reentrant: a second acquisition from the same thread
+    blocks forever with no traceback, no log line and no CPU use. That failure mode
+    already cost one full debugging round when the vision engine wrapped a call that
+    took the lock again internally. Re-entering is a design error, so it is raised
+    immediately rather than hidden -- do **not** switch this lock to ``RLock``: that
+    would let a nested acquisition silently interleave state changes.
+
+    [ZH]
+    获取进程级推理锁，并拒绝同线程重入。
+
+    ``threading.Lock`` 不可重入：同一线程二次获取会永远阻塞，没有回溯、没有日志、不占
+    CPU。视觉引擎曾在外层又套了一次内部会取锁的调用，正是这个失效模式消耗了整整一轮
+    排查。重入属于设计错误，因此立即抛出而不是隐藏 —— **不要**改用 ``RLock``：那会让
+    嵌套获取静默交错状态变更。
+    """
+    global _INFERENCE_OWNER
+    ident = threading.get_ident()
+    with _INFERENCE_OWNER_GUARD:
+        if _INFERENCE_OWNER == ident:
+            raise RuntimeError(
+                "inference lock re-entered on thread=%s: the same thread already "
+                "holds it; nested acquisition would deadlock" % ident)
+    _INFERENCE_LOCK.acquire()
+    with _INFERENCE_OWNER_GUARD:
+        _INFERENCE_OWNER = ident
+    try:
+        yield
+    finally:
+        with _INFERENCE_OWNER_GUARD:
+            _INFERENCE_OWNER = None
+        _INFERENCE_LOCK.release()
 
 #: [EN] Default interval (seconds) for emitting a heartbeat while a streaming read
 #: produces no new tokens. Prefill is slow and decode is fast, so the first token
