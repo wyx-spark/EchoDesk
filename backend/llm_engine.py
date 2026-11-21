@@ -290,10 +290,16 @@ class LLMEngine:
         # [EN] the llama.cpp DLLs in dependency order before the native import.
         # [ZH] v0.2.6 第 23 项：在原生导入之前注册 CUDA 运行时目录，并按依赖顺序
         # [ZH] 预加载 llama.cpp DLL。
-        cuda_bootstrap.ensure()
-        from llama_cpp import Llama
+        # [EN] The wheel's DLL preload bootstrap must not run for the native runtime:
+        # [EN] it would let the native llama.dll bind to the wheel's ggml.dll.
+        # [ZH] 原生运行期不能执行轮子的 DLL 预加载引导：否则原生 llama.dll 会绑定到
+        # [ZH] 轮子的 ggml.dll 上。
+        from llm_backend import create_llama, will_use_wheel
 
-        llm = Llama(
+        if will_use_wheel():
+            cuda_bootstrap.ensure()
+
+        llm = create_llama(
             model_path=self.model_path,
             n_ctx=self.n_ctx,
             verbose=verbose,
@@ -384,7 +390,19 @@ class LLMEngine:
         [ZH]
         返回当前生效的推理配置，供诊断与测试使用。
         """
-        return {
+        # [EN] Runtime provenance is reported here (not in the UI) so a ticket can be
+        # [EN] answered from one status query: which runtime served the model and why,
+        # [EN] what ggml devices it registered, and whether flash attention was forced.
+        # [ZH] 运行期溯源在此上报（不接界面），使一张工单能凭一次状态查询回答：模型由哪套
+        # [ZH] 运行期服务、原因、注册了哪些 ggml 设备，以及 flash attention 是否被强制启用。
+        try:
+            import llm_backend  # noqa: PLC0415 - avoids an import cycle at module load
+
+            selection = llm_backend.last_selection()
+        except Exception:  # noqa: BLE001 - status must always answer
+            selection = {}
+        llm = getattr(self, "llm", None)
+        status = {
             "backend": self.backend_label,
             "n_gpu_layers": int(self.n_gpu_layers),
             "n_ctx": int(self.n_ctx),
@@ -394,7 +412,14 @@ class LLMEngine:
             "n_batch": int(self.n_batch or 0),
             "kv_cache_type": str(self.kv_cache_type),
             "plan": dict(self.inference_plan),
+            "runtime": str(selection.get("runtime") or ""),
+            "runtime_mode": str(selection.get("mode") or ""),
+            "runtime_reason": str(selection.get("reason") or ""),
+            "backend_devices": list(getattr(llm, "backend_devices", []) or []),
+            "effective_flash_attn": bool(getattr(llm, "effective_flash_attn", False)),
+            "flash_attn_reason": str(getattr(llm, "flash_attn_reason", "") or ""),
         }
+        return status
 
     def log_window(self) -> None:
         """
@@ -1372,8 +1397,13 @@ class LazyLLMEngine(LLMEngine):
         # [EN] Import deferred until the model is actually loaded, but the DLL
         # [EN] bootstrap must still run first (v0.2.6 item 23).
         # [ZH] 延迟到真正加载模型时才 import，但 DLL 引导仍必须先执行（v0.2.6 第 23 项）。
-        cuda_bootstrap.ensure()
-        from llama_cpp import Llama
+        # [EN] Same DLL-contamination rule as the parent engine: only the wheel
+        # [EN] runtime may run its preload bootstrap.
+        # [ZH] 与父类引擎相同的 DLL 污染规则：只有轮子运行期可以执行其预加载引导。
+        from llm_backend import create_llama, will_use_wheel
+
+        if will_use_wheel():
+            cuda_bootstrap.ensure()
 
         # [EN] Use the planned initial window instead of a global constant, and
         # [EN] never exceed the planned hardware ceiling.
@@ -1388,7 +1418,7 @@ class LazyLLMEngine(LLMEngine):
         # [ZH] 与父类引擎相同：构建原生模型会改变共享的 llama.cpp 后端状态，绝不能
         # [ZH] 与后台摘要器的解码并发执行。
         with _INFERENCE_LOCK:
-            llm = Llama(
+            llm = create_llama(
                 model_path=path,
                 n_ctx=target_ctx,
                 verbose=False,
