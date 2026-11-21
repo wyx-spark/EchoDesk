@@ -24,6 +24,22 @@ for traceability only; this changelog is the release-facing document.
 
 ---
 
+## v0.2.7
+
+### Release positioning
+
+Work in progress; entries are recorded as they land. This section is not a published release yet.
+
+### Known limitations
+
+- **CPU-only vision is now supported**: visual inference gained a native `mtmd` path and no longer
+  requires an NVIDIA GPU or the CUDA runtime. The v0.2.6 limitation "local visual inference currently
+  requires an NVIDIA GPU ... CPU-only VLM will be supported in future mainline EchoDesk builds" no longer
+  applies as of this version. GPU-accelerated vision is still provided by the `llama-cpp-python` runtime,
+  which remains the preferred path by default in this release.
+- Remaining limitation: long-context Qwen3-VL stress testing on a real NVIDIA GPU has not been executed
+  (no CUDA runtime on the build host).
+
 ## v0.2.6
 
 ### Release positioning
