@@ -1,0 +1,2604 @@
+# -*- coding: utf-8 -*-
+# [EN] VENDORED from llama-cpp-python 0.4.7+cu132 ``llama_cpp/mtmd_cpp.py``.
+# [EN] Do not edit by hand: the struct layouts must stay byte-identical to the
+# [EN] revision that produced ``backend/native/<rid>`` (see temp/t3-2/vendor_mtmd.py).
+# [EN] Only the package references and the library-pin lever were rewritten.
+# [ZH] 自 llama-cpp-python 0.4.7+cu132 的 ``llama_cpp/mtmd_cpp.py`` vendor 而来。
+# [ZH] 请勿手改：结构体布局必须与产出 ``backend/native/<rid>`` 的修订逐字节一致
+# [ZH]（见 temp/t3-2/vendor_mtmd.py）。仅改写包引用与库路径钉法。
+# fmt: off
+from __future__ import annotations
+
+import enum
+import os
+from ctypes import (
+    c_bool,
+    c_char_p,
+    c_int,
+    c_uint,
+    c_uint8,
+    c_int32,
+    c_uint32,
+    c_int64,
+    c_float,
+    c_void_p,
+    c_size_t,
+    POINTER,
+    _Pointer,  # type: ignore
+    Structure,
+    CFUNCTYPE
+)
+import pathlib
+from typing import (
+    Union,
+    NewType,
+    Optional,
+    TYPE_CHECKING,
+)
+
+import llama_abi.llama_cpp as llama_cpp_lib
+
+from llama_abi._ctypes_extensions import (
+    load_shared_library,
+    ctypes_function_for_shared_library,
+)
+
+from llama_abi._ggml import (
+    ggml_backend_sched_eval_callback,
+    ggml_log_callback,
+)
+
+if TYPE_CHECKING:
+    from llama_abi._ctypes_extensions import (
+        CtypesArray,
+    )
+
+
+# --- mtmd library loading ---
+_libmtmd_base_name = "mtmd"
+_libmtmd_override_path = os.environ.get("LLAMA_CPP_LIB_PATH")
+_libmtmd_base_path = pathlib.Path(os.path.abspath(os.path.dirname(__file__))) / "lib" if _libmtmd_override_path is None else pathlib.Path(_libmtmd_override_path)
+
+# Load the mtmd library
+_libmtmd = load_shared_library(_libmtmd_base_name, _libmtmd_base_path)
+ctypes_function_mtmd = ctypes_function_for_shared_library(_libmtmd)
+
+
+################################################
+# mtmd.h
+# /**
+#  * libmtmd: A library for multimodal support in llama.cpp.
+#  *
+#  * WARNING: This API is experimental and subject to many BREAKING CHANGES.
+#  *          Issues related to API usage may receive lower priority support.
+#  *
+#  * For the usage, see an example in mtmd-cli.cpp
+#  */
+################################################
+
+
+# enum mtmd_input_chunk_type {
+#     MTMD_INPUT_CHUNK_TYPE_TEXT,
+#     MTMD_INPUT_CHUNK_TYPE_IMAGE,
+#     MTMD_INPUT_CHUNK_TYPE_AUDIO,
+#     MTMD_INPUT_CHUNK_TYPE_COUNT, // for validation
+# };
+class mtmd_input_chunk_type(enum.IntEnum):
+    MTMD_INPUT_CHUNK_TYPE_TEXT  = 0
+    MTMD_INPUT_CHUNK_TYPE_IMAGE = 1
+    MTMD_INPUT_CHUNK_TYPE_AUDIO = 2
+    MTMD_INPUT_CHUNK_TYPE_COUNT = 3
+
+
+class mtmd_video_template(enum.IntEnum):
+    """Native video frame/timestamp layout, including optional Omni soundtrack."""
+
+    MTMD_VIDEO_TEMPLATE_DEFAULT = 0
+    MTMD_VIDEO_TEMPLATE_LFM3 = 1
+    MTMD_VIDEO_TEMPLATE_LFM3_OMNI = 2
+    MTMD_VIDEO_TEMPLATE_QWEN3VL = 3
+
+# // position indexing for decoder model
+# enum mtmd_pos_type {
+#     MTMD_POS_TYPE_NORMAL,    // number of positions equals to number of tokens
+#     MTMD_POS_TYPE_MROPE,     // qwen-vl mrope style, each image takes max(t,h,w) position indexes
+#     MTMD_POS_TYPE_HUNYUANVL, // HunyuanVL mrope + BOI/EOI/newline layout with XD-RoPE dim-3
+#     MTMD_POS_TYPE_COUNT,     // for validation
+# };
+class mtmd_pos_type(enum.IntEnum):
+    MTMD_POS_TYPE_NORMAL    = 0  # number of positions equals to number of tokens
+    MTMD_POS_TYPE_MROPE     = 1  # qwen-vl mrope style, each image takes max(t,h,w) position indexes
+    MTMD_POS_TYPE_HUNYUANVL = 2  # HunyuanVL mrope + BOI/EOI/newline layout with XD-RoPE dim-3
+    MTMD_POS_TYPE_COUNT     = 3  # for validation
+
+# // opaque types
+
+# struct mtmd_context;
+mtmd_context_p = NewType("mtmd_context_p", int)
+mtmd_context_p_ctypes = c_void_p
+
+# // represents raw image data, layout is RGBRGBRGB...
+# // length of data must be nx * ny * 3
+# struct mtmd_bitmap {
+#     uint32_t nx;
+#     uint32_t ny;
+#     std::vector<unsigned char> data;
+#     std::string id; // optional user-defined id, for ex: can be set to image hash, useful for KV cache tracking
+#     bool is_audio = false; // true if the bitmap is audio
+# };
+mtmd_bitmap_p = NewType("mtmd_bitmap_p", int)
+mtmd_bitmap_p_ctypes = c_void_p
+
+# struct mtmd_image_tokens {
+#     uint32_t nx; // number of tokens in x direction
+#     uint32_t ny; // number of tokens in y direction
+#     mtmd_pos_type pos = MTMD_POS_TYPE_NORMAL;
+#     uint32_t n_tokens() const { return nx * ny; }
+#     clip_image_f32_batch batch_f32; // preprocessed image patches
+#     std::string id; // optional user-defined ID, useful for KV cache tracking
+#     mtmd_image_tokens clone() {
+#         return mtmd_image_tokens{
+#             nx,
+#             ny,
+#             use_mrope_pos,
+#             batch_f32.clone(),
+#             id
+#         };
+#     }
+# };
+mtmd_image_tokens_p = NewType("mtmd_image_tokens_p", int)
+mtmd_image_tokens_p_ctypes = c_void_p
+
+# struct mtmd_audio_tokens {
+#     uint32_t n_tokens; // number of tokens
+#     clip_image_f32_batch batch_f32; // preprocessed image patches
+#     std::string id; // optional user-defined ID, useful for KV cache tracking
+#     mtmd_audio_tokens clone() {
+#         return mtmd_audio_tokens{
+#             n_tokens,
+#             batch_f32.clone(),
+#             id
+#         };
+#     }
+# };
+mtmd_audio_tokens_p = NewType("mtmd_audio_tokens_p", int)
+mtmd_audio_tokens_p_ctypes = c_void_p
+
+# struct mtmd_input_chunk {
+#     mtmd_input_chunk_type type;
+#     std::vector<llama_token> tokens_text;
+#     mtmd_image_tokens_ptr tokens_image;
+#     mtmd_audio_tokens_ptr tokens_audio;
+# };
+mtmd_input_chunk_p = NewType("mtmd_input_chunk_p", int)
+mtmd_input_chunk_p_ctypes = c_void_p
+
+# struct mtmd_input_chunks;
+mtmd_input_chunks_p = NewType("mtmd_input_chunks_p", int)
+mtmd_input_chunks_p_ctypes = c_void_p
+
+# struct mtmd_batch {
+#     mtmd_context * ctx;
+#     std::vector<const mtmd_input_chunk *> entries;
+#     std::vector<float> output_embd; // aggregated output embedding for the whole batch
+#     mtmd_batch(mtmd_context * ctx): ctx(ctx) {}
+#     int32_t n_tokens() const {
+#         int32_t n = 0;
+#         for (const auto * chunk : entries) {
+#             n += mtmd_input_chunk_get_n_tokens(chunk);
+#         }
+#         return n;
+#     }
+# };
+mtmd_batch_p = NewType("mtmd_batch_p", int)
+mtmd_batch_p_ctypes = c_void_p
+
+# struct mtmd_gen_state;
+mtmd_gen_state_p = NewType("mtmd_gen_state_p", int)
+mtmd_gen_state_p_ctypes = c_void_p
+
+# typedef bool (*mtmd_progress_callback)(float progress, void * user_data);
+mtmd_progress_callback = CFUNCTYPE(
+    c_bool,
+    c_float,                  # progress
+    c_void_p,                 # user_data
+)
+
+# struct mtmd_input_text {
+#     const char * text;
+#     size_t text_len;
+#     bool add_special;
+#     bool parse_special;
+# };
+class mtmd_input_text(Structure):
+    _fields_ = [
+        ("text", c_char_p),
+        ("text_len", c_size_t),
+        ("add_special", c_bool),
+        ("parse_special", c_bool),
+    ]
+mtmd_input_text_p = NewType("mtmd_input_text_p", int)
+mtmd_input_text_p_ctypes = POINTER(mtmd_input_text)
+
+# struct mtmd_input_part {
+#     // only text or bitmap can be set, not both
+#     const struct mtmd_input_text * text;
+#     const struct mtmd_bitmap * bitmap;
+# };
+class mtmd_input_part(Structure):
+    _fields_ = [
+        ("text", mtmd_input_text_p_ctypes),
+        ("bitmap", mtmd_bitmap_p_ctypes),
+    ]
+
+mtmd_input_part_p = NewType("mtmd_input_part_p", int)
+mtmd_input_part_p_ctypes = POINTER(mtmd_input_part)
+
+# struct mtmd_context_params {
+#     bool use_gpu;
+#     ggml_backend_dev_t device;
+#     bool print_timings;
+#     int n_threads;
+#     const char * image_marker; // deprecated, use media_marker instead
+#     const char * media_marker;
+#     enum llama_flash_attn_type flash_attn_type;
+#     bool warmup; // whether to run a warmup encode pass after initialization
+
+#     // limit number of image tokens, only for vision models with dynamic resolution
+#     int image_min_tokens; // minimum number of tokens for image input (default: read from metadata)
+#     int image_max_tokens; // maximum number of tokens for image input (default: read from metadata)
+
+#     // callback function passed over to mtmd proper
+#     ggml_backend_sched_eval_callback cb_eval;
+#     void * cb_eval_user_data;
+
+#     // batching params
+#     int32_t batch_max_tokens; // maximum number of output tokens in a batch
+#                               // (note: this is not a hard-limit, the first image will always be added even if it exceeds this limit)
+#                               // (default: 1024)
+
+#     // Called with a progress value between 0.0 and 1.0. Pass NULL to disable.
+#     // If the provided progress_callback returns true, model loading continues.
+#     // If it returns false, model loading is immediately aborted.
+#     mtmd_progress_callback progress_callback;
+#     void * progress_callback_user_data;
+# };
+class mtmd_context_params(Structure):
+    _fields_ = [
+        ("use_gpu", c_bool),
+        ("device", c_void_p),
+        ("print_timings", c_bool),
+        ("n_threads", c_int),
+        ("image_marker", c_char_p),
+        ("media_marker", c_char_p),
+        ("flash_attn_type", c_int),
+        ("warmup", c_bool),
+        ("image_min_tokens", c_int),
+        ("image_max_tokens", c_int),
+        ("cb_eval", ggml_backend_sched_eval_callback),
+        ("cb_eval_user_data", c_void_p),
+        ("batch_max_tokens", c_int32),
+        ("progress_callback", mtmd_progress_callback),
+        ("progress_callback_user_data", c_void_p)
+    ]
+
+mtmd_context_params_p_ctypes = POINTER(mtmd_context_params)
+
+# MTMD_API const char * mtmd_default_marker(void);
+@ctypes_function_mtmd(
+    "mtmd_default_marker",
+    [],
+    c_char_p,
+)
+def mtmd_default_marker() -> c_char_p:
+    ...
+
+
+# MTMD_API struct mtmd_context_params mtmd_context_params_default(void);
+@ctypes_function_mtmd(
+    "mtmd_context_params_default",
+    [],
+    mtmd_context_params,
+)
+def mtmd_context_params_default() -> mtmd_context_params:
+    ...
+
+
+# // initialize the mtmd context
+# // return nullptr on failure
+# MTMD_API mtmd_context * mtmd_init_from_file(const char * mmproj_fname,
+#                                             const struct llama_model * text_model,
+#                                             const struct mtmd_context_params ctx_params);
+@ctypes_function_mtmd(
+    "mtmd_init_from_file", [
+        c_char_p,
+        llama_cpp_lib.llama_model_p_ctypes,
+        mtmd_context_params,
+    ],
+    mtmd_context_p_ctypes,
+)
+def mtmd_init_from_file(
+    mmproj_fname: c_char_p,
+    text_model: llama_cpp_lib.llama_model_p,
+    ctx_params: mtmd_context_params,
+    /,
+) -> mtmd_context_p:
+    """
+    initialize the mtmd context
+    return nullptr on failure
+    """
+    ...
+
+
+# MTMD_API void mtmd_free(mtmd_context * ctx);
+@ctypes_function_mtmd("mtmd_free", [mtmd_context_p_ctypes], None)
+def mtmd_free(ctx: mtmd_context_p):
+    ...
+
+# // whether we need to set non-causal mask before llama_decode
+# // if chunk is nullptr, we assume the default case where chunk is an image chunk
+# MTMD_API bool mtmd_decode_use_non_causal(const mtmd_context * ctx, const mtmd_input_chunk * chunk);
+@ctypes_function_mtmd(
+    "mtmd_decode_use_non_causal", [mtmd_context_p_ctypes, mtmd_input_chunk_p_ctypes], c_bool)
+def mtmd_decode_use_non_causal(ctx: mtmd_context_p, chunk: mtmd_input_chunk_p) -> c_bool:
+    ...
+
+# // whether the current model use M-RoPE for llama_decode
+# MTMD_API bool mtmd_decode_use_mrope(const mtmd_context * ctx);
+@ctypes_function_mtmd(
+    "mtmd_decode_use_mrope", [mtmd_context_p_ctypes], c_bool)
+def mtmd_decode_use_mrope(ctx: mtmd_context_p) -> c_bool:
+    ...
+
+# // whether the current model supports vision input
+# MTMD_API bool mtmd_support_vision(const mtmd_context * ctx);
+@ctypes_function_mtmd(
+    "mtmd_support_vision", [mtmd_context_p_ctypes], c_bool)
+def mtmd_support_vision(ctx: mtmd_context_p) -> c_bool:
+    ...
+
+# // whether the current model supports audio input
+# MTMD_API bool mtmd_support_audio(const mtmd_context * ctx);
+@ctypes_function_mtmd(
+    "mtmd_support_audio", [mtmd_context_p_ctypes], c_bool)
+def mtmd_support_audio(ctx: mtmd_context_p) -> c_bool:
+    ...
+
+# // get audio sample rate in Hz, for example 16000 for Whisper
+# // return -1 if audio is not supported
+# MTMD_API int mtmd_get_audio_sample_rate(const mtmd_context * ctx);
+@ctypes_function_mtmd(
+    "mtmd_get_audio_sample_rate", [mtmd_context_p_ctypes], c_int)
+def mtmd_get_audio_sample_rate(ctx: mtmd_context_p) -> c_int:
+    """
+    get audio sample rate in Hz, for example 16000 for Whisper
+    return -1 if audio is not supported
+    """
+    ...
+
+class mtmd_video_config(Structure):
+    """Model-recommended video sampling; zero fields leave caller defaults."""
+
+    _fields_ = [
+        ("tmpl", c_int),
+        ("fps", c_float),
+        ("n_frames", c_int32),
+        ("frame_width", c_int32),
+        ("frame_height", c_int32),
+    ]
+
+    if TYPE_CHECKING:
+        tmpl: int
+        fps: float
+        n_frames: int
+        frame_width: int
+        frame_height: int
+
+
+# MTMD_API struct mtmd_video_config mtmd_get_video_config(const mtmd_context * ctx, int32_t src_width, int32_t src_height, int32_t src_n_frames, float src_fps);
+@ctypes_function_mtmd(
+    "mtmd_get_video_config", [mtmd_context_p_ctypes, c_int32, c_int32, c_int32, c_float],
+    mtmd_video_config,
+)
+def mtmd_get_video_config(
+    ctx: mtmd_context_p, src_width: int, src_height: int,
+    src_n_frames: int, src_fps: float,
+) -> mtmd_video_config:
+    """Return recommended sampling/layout; source count and FPS may be unknown (<=0)."""
+    ...
+
+
+# // get the current marker string
+# MTMD_API const char * mtmd_get_marker(const mtmd_context * ctx);
+@ctypes_function_mtmd(
+    "mtmd_get_marker", [mtmd_context_p_ctypes], c_char_p)
+def mtmd_get_marker(ctx: mtmd_context_p) -> c_char_p:
+    """
+    get the current marker string
+    """
+    ...
+
+# // mtmd_bitmap
+# //
+# // if bitmap is image:
+# //     length of data must be nx * ny * 3
+# //     the data is in RGBRGBRGB... format
+# //     note: some video-capable models (i.e. qwen-vl) can merge consecutive bitmaps
+# //           into one chunk; mtmd_tokenize() handles this, but remember to set
+# //           mtmd_bitmap_set_mergeable(true) and mtmd_bitmap_set_is_video(true) for every frame
+# // if bitmap is audio:
+# //     length of data must be n_samples * sizeof(float)
+# //     the data is in float format (PCM F32)
+# //
+# // if data == nullptr:
+# //     the bitmap is considered "empty", and will be treated as a placeholder for counting tokens
+# //     you can pass the bitmap via mtmd_tokenize(), then call mtmd_*_get_n_tokens() to count the tokens
+# //     note: passing a placeholder bitmap to mtmd_encode() will return an error
+# MTMD_API mtmd_bitmap *         mtmd_bitmap_init           (uint32_t nx, uint32_t ny, const unsigned char * data);
+@ctypes_function_mtmd(
+    "mtmd_bitmap_init", [
+        c_uint32,
+        c_uint32,
+        POINTER(c_uint8),
+    ],
+    mtmd_bitmap_p_ctypes,
+)
+def mtmd_bitmap_init(
+    nx: c_uint32,
+    ny: c_uint32,
+    data: POINTER(c_uint8), # type: ignore
+    /,
+) -> mtmd_bitmap_p:
+    ...
+
+
+# MTMD_API mtmd_bitmap *         mtmd_bitmap_init_from_audio(size_t n_samples,         const float         * data);
+@ctypes_function_mtmd(
+    "mtmd_bitmap_init_from_audio", [
+        c_size_t,
+        POINTER(c_float)
+    ],
+    mtmd_bitmap_p_ctypes,
+)
+def mtmd_bitmap_init_from_audio(
+    n_samples: c_size_t,
+    data: POINTER(c_float), # type: ignore
+    /,
+) -> mtmd_bitmap_p:
+    ...
+
+
+# MTMD_API uint32_t              mtmd_bitmap_get_nx     (const mtmd_bitmap * bitmap);
+@ctypes_function_mtmd("mtmd_bitmap_get_nx", [mtmd_bitmap_p_ctypes], c_uint32)
+def mtmd_bitmap_get_nx(bitmap: mtmd_bitmap_p) -> c_uint32:
+    ...
+
+# MTMD_API uint32_t              mtmd_bitmap_get_ny     (const mtmd_bitmap * bitmap);
+@ctypes_function_mtmd("mtmd_bitmap_get_ny", [mtmd_bitmap_p_ctypes], c_uint32)
+def mtmd_bitmap_get_ny(bitmap: mtmd_bitmap_p) -> c_uint32:
+    ...
+
+# MTMD_API const unsigned char * mtmd_bitmap_get_data   (const mtmd_bitmap * bitmap);
+@ctypes_function_mtmd("mtmd_bitmap_get_data", [mtmd_bitmap_p_ctypes], POINTER(c_uint8))
+def mtmd_bitmap_get_data(bitmap: mtmd_bitmap_p) -> POINTER(c_uint8):  # type: ignore
+    ...
+
+# MTMD_API size_t                mtmd_bitmap_get_n_bytes(const mtmd_bitmap * bitmap);
+@ctypes_function_mtmd("mtmd_bitmap_get_n_bytes", [mtmd_bitmap_p_ctypes], c_size_t)
+def mtmd_bitmap_get_n_bytes(bitmap: mtmd_bitmap_p) -> c_size_t:
+    ...
+
+# MTMD_API bool                  mtmd_bitmap_is_audio   (const mtmd_bitmap * bitmap);
+@ctypes_function_mtmd("mtmd_bitmap_is_audio", [mtmd_bitmap_p_ctypes], c_bool)
+def mtmd_bitmap_is_audio(bitmap: mtmd_bitmap_p) -> c_bool:
+    ...
+
+# MTMD_API void                  mtmd_bitmap_free       (mtmd_bitmap * bitmap);
+@ctypes_function_mtmd("mtmd_bitmap_free", [mtmd_bitmap_p_ctypes], None)
+def mtmd_bitmap_free(bitmap: mtmd_bitmap_p):
+    ...
+
+# // bitmap ID is optional, but useful for KV cache tracking
+# // these getters/setters are dedicated functions, so you can for example calculate the hash of the image based on mtmd_bitmap_get_data()
+# MTMD_API const char * mtmd_bitmap_get_id(const mtmd_bitmap * bitmap);
+@ctypes_function_mtmd("mtmd_bitmap_get_id", [mtmd_bitmap_p_ctypes], c_char_p)
+def mtmd_bitmap_get_id(bitmap: mtmd_bitmap_p) -> c_char_p:
+    """
+    bitmap ID is optional, but useful for KV cache tracking
+    these getters/setters are dedicated functions, so you can for example calculate the hash of the image based on mtmd_bitmap_get_data()
+    """
+    ...
+
+
+# MTMD_API void         mtmd_bitmap_set_id(mtmd_bitmap * bitmap, const char * id);
+@ctypes_function_mtmd(
+    "mtmd_bitmap_set_id", [
+        mtmd_bitmap_p_ctypes,
+        c_char_p,
+    ], None)
+def mtmd_bitmap_set_id(
+    bitmap: mtmd_bitmap_p,
+    id: c_char_p,
+    /,
+):
+    ...
+
+
+# // if true, this bitmap can be merged (temporal merge) with an adjacent mergeable bitmap by certain video input models
+# MTMD_API void         mtmd_bitmap_set_mergeable(mtmd_bitmap * bitmap, bool mergeable);
+@ctypes_function_mtmd(
+    "mtmd_bitmap_set_mergeable", [
+        mtmd_bitmap_p_ctypes,
+        c_bool,
+    ], None)
+def mtmd_bitmap_set_mergeable(
+    bitmap: mtmd_bitmap_p,
+    mergeable: bool,
+    /,
+):
+    """
+    if true, this bitmap can be merged (temporal merge) with an adjacent mergeable bitmap by certain video input models
+    """
+    ...
+
+
+# MTMD_API void mtmd_bitmap_set_is_video(mtmd_bitmap * bitmap, bool is_video);
+@ctypes_function_mtmd("mtmd_bitmap_set_is_video", [mtmd_bitmap_p_ctypes, c_bool], None)
+def mtmd_bitmap_set_is_video(bitmap: mtmd_bitmap_p, is_video: bool, /) -> None:
+    """Mark a frame or lazy video; manual frames also need mergeable=True.
+
+    Lazy videos receive model-specific begin/end tokens and group their
+    expanded audio chunks into one soundtrack for LFM3-Omni.
+    """
+    ...
+
+
+# // mtmd_bitmap lazy
+# //
+# // this is a special bitmap that:
+# // - does not hold the actual data
+# // - can be expanded into one or more chunks (either media to text chunks)
+# // user must provide a callback to fill in the data when mtmd_tokenize() is called
+# // this is useful for large video inputs:
+# // - allow reading video frame by frame, without loading the entire video into memory
+# // - allow tracking the whole video with a single ID (for example, the file hash)
+
+# // set (*out_bitmap) to non-nullptr to emit a bitmap chunk; it will be freed automatically
+# // set (*out_text) to non-nullptr to emit a text chunk; it must be heap-allocated, null-terminated and will be freed automatically
+# // either out_bitmap or out_text can be set, but not both
+# // out_bitmap cannot be another lazy bitmap (no nested lazy allowed)
+# // return value:
+# //    0 on success
+# //   -1 on EOF (signal to mtmd_tokenize to move on)
+# //   -2 on error (signal to mtmd_tokenize to abort)
+# typedef int(* mtmd_bitmap_lazy_callback)(
+#     size_t chunk_idx,
+#     void * user_data,
+#     mtmd_bitmap ** out_bitmap,
+#     char ** out_text);
+mtmd_bitmap_lazy_callback = CFUNCTYPE(
+    c_int,
+    c_size_t,                 # chunk_idx
+    c_void_p,                 # user_data
+    POINTER(mtmd_bitmap_p_ctypes),   # mtmd_bitmap ** out_bitmap
+    POINTER(c_char_p),               # char ** out_text
+)
+
+# MTMD_API mtmd_bitmap * mtmd_bitmap_init_lazy(mtmd_context * ctx,
+#                                              const char * id, // usually set to file hash
+#                                              void * user_data,
+#                                              mtmd_bitmap_lazy_callback callback);
+@ctypes_function_mtmd(
+    "mtmd_bitmap_init_lazy", [
+        mtmd_context_p_ctypes,
+        c_char_p,
+        c_void_p,
+        mtmd_bitmap_lazy_callback,
+    ], mtmd_bitmap_p_ctypes)
+def mtmd_bitmap_init_lazy(
+    ctx: mtmd_context_p,
+    id: c_char_p,
+    user_data: c_void_p,
+    callback: Optional[mtmd_bitmap_lazy_callback],  # type: ignore
+    /,
+) -> mtmd_bitmap_p:
+    ...
+
+
+# // mtmd_input_chunks
+# //
+# // this is simply a list of mtmd_input_chunk
+# // the elements can only be populated via mtmd_tokenize()
+# MTMD_API mtmd_input_chunks *      mtmd_input_chunks_init(void);
+@ctypes_function_mtmd("mtmd_input_chunks_init", [], mtmd_input_chunks_p_ctypes)
+def mtmd_input_chunks_init() -> mtmd_input_chunks_p:
+    """
+    this is simply a list of mtmd_input_chunk
+    the elements can only be populated via mtmd_tokenize()
+    """
+    ...
+
+
+# MTMD_API size_t                   mtmd_input_chunks_size(const mtmd_input_chunks * chunks);
+@ctypes_function_mtmd("mtmd_input_chunks_size", [mtmd_input_chunks_p_ctypes], c_size_t)
+def mtmd_input_chunks_size(chunks: mtmd_input_chunks_p) -> c_size_t:
+    ...
+
+
+# MTMD_API const mtmd_input_chunk * mtmd_input_chunks_get (const mtmd_input_chunks * chunks, size_t idx);
+@ctypes_function_mtmd(
+    "mtmd_input_chunks_get", [
+        mtmd_input_chunks_p_ctypes,
+        c_size_t,
+    ], mtmd_input_chunk_p_ctypes)
+def mtmd_input_chunks_get(
+    chunks: mtmd_input_chunks_p,
+    idx: c_size_t,
+    /,
+) -> mtmd_input_chunk_p:
+    ...
+
+
+# MTMD_API void                     mtmd_input_chunks_free(mtmd_input_chunks * chunks);
+@ctypes_function_mtmd("mtmd_input_chunks_free", [mtmd_input_chunks_p_ctypes], None)
+def mtmd_input_chunks_free(chunks: mtmd_input_chunks_p):
+    ...
+
+
+# // mtmd_input_chunk
+# //
+# // the instance will be constructed via mtmd_tokenize()
+# // it will be freed along with mtmd_input_chunks
+# MTMD_API enum mtmd_input_chunk_type mtmd_input_chunk_get_type        (const mtmd_input_chunk * chunk);
+@ctypes_function_mtmd("mtmd_input_chunk_get_type", [mtmd_input_chunk_p_ctypes], c_int32)
+def mtmd_input_chunk_get_type(chunk: mtmd_input_chunk_p) -> c_int32:
+    """
+    the instance will be constructed via mtmd_tokenize()
+    it will be freed along with mtmd_input_chunks
+    """
+    ...
+
+# MTMD_API const llama_token * mtmd_input_chunk_get_tokens_text(const mtmd_input_chunk * chunk, size_t * n_tokens_output);
+@ctypes_function_mtmd(
+    "mtmd_input_chunk_get_tokens_text",
+    [mtmd_input_chunk_p_ctypes, POINTER(c_size_t)],
+    POINTER(llama_cpp_lib.llama_token)
+)
+def mtmd_input_chunk_get_tokens_text(
+    chunk: mtmd_input_chunk_p, n_tokens_output: "_Pointer[c_size_t]", /
+) -> Optional["_Pointer[llama_cpp_lib.llama_token]"]:
+    ...
+
+# MTMD_API const mtmd_image_tokens *  mtmd_input_chunk_get_tokens_image(const mtmd_input_chunk * chunk);
+@ctypes_function_mtmd("mtmd_input_chunk_get_tokens_image", [mtmd_input_chunk_p_ctypes], mtmd_image_tokens_p_ctypes)
+def mtmd_input_chunk_get_tokens_image(chunk: mtmd_input_chunk_p) -> mtmd_image_tokens_p:
+    ...
+
+# MTMD_API size_t                     mtmd_input_chunk_get_n_tokens    (const mtmd_input_chunk * chunk);
+@ctypes_function_mtmd("mtmd_input_chunk_get_n_tokens", [mtmd_input_chunk_p_ctypes], c_size_t)
+def mtmd_input_chunk_get_n_tokens(chunk: mtmd_input_chunk_p) -> c_size_t:
+    ...
+
+# // returns nullptr for ID on text chunk
+# MTMD_API const char *               mtmd_input_chunk_get_id          (const mtmd_input_chunk * chunk);
+@ctypes_function_mtmd("mtmd_input_chunk_get_id", [mtmd_input_chunk_p_ctypes], c_char_p)
+def mtmd_input_chunk_get_id(chunk: mtmd_input_chunk_p) -> c_char_p:
+    """
+    returns nullptr for ID on text chunk
+    """
+    ...
+
+# // number of temporal positions (equals to max(t,h,w) for M-RoPE; equals to n_tokens otherwise)
+# MTMD_API llama_pos                  mtmd_input_chunk_get_n_pos       (const mtmd_input_chunk * chunk);
+@ctypes_function_mtmd("mtmd_input_chunk_get_n_pos", [mtmd_input_chunk_p_ctypes], c_int32)
+def mtmd_input_chunk_get_n_pos(chunk: mtmd_input_chunk_p) -> c_int32:
+    """
+    number of temporal positions (equals to max(t,h,w) for M-RoPE; equals to n_tokens otherwise)
+    """
+    ...
+
+# // in case you want to use custom logic to handle the chunk (i.e. KV cache management)
+# // you can move the chunk ownership to your own code by copying it
+# // remember to free the chunk when you are done with it
+# MTMD_API mtmd_input_chunk * mtmd_input_chunk_copy(const mtmd_input_chunk * chunk);
+@ctypes_function_mtmd("mtmd_input_chunk_copy", [mtmd_input_chunk_p_ctypes], mtmd_input_chunk_p_ctypes)
+def mtmd_input_chunk_copy(chunk: mtmd_input_chunk_p) -> mtmd_input_chunk_p:
+    """
+    in case you want to use custom logic to handle the chunk (i.e. KV cache management)
+    you can move the chunk ownership to your own code by copying it
+    remember to free the chunk when you are done with it
+    """
+    ...
+
+# MTMD_API void               mtmd_input_chunk_free(mtmd_input_chunk * chunk);
+@ctypes_function_mtmd("mtmd_input_chunk_free", [mtmd_input_chunk_p_ctypes], None)
+def mtmd_input_chunk_free(chunk: mtmd_input_chunk_p):
+    """
+    remember to free the chunk when you are done with it
+    """
+    ...
+
+# // similar to mtmd_input_chunk_copy, but returns a placeholder chunk
+# MTMD_API mtmd_input_chunk * mtmd_input_chunk_get_placeholder(const mtmd_input_chunk * chunk);
+@ctypes_function_mtmd("mtmd_input_chunk_get_placeholder", [mtmd_input_chunk_p_ctypes], mtmd_input_chunk_p_ctypes)
+def mtmd_input_chunk_get_placeholder(chunk: mtmd_input_chunk_p) -> mtmd_input_chunk_p:
+    """
+    similar to mtmd_input_chunk_copy, but returns a placeholder chunk
+    """
+    ...
+
+# // save/load an input chunk to/from a buffer (useful for KV save/load)
+# // important: only chunk's metadata will be saved, the actual image/audio data will not be saved
+# // the loaded chunk will always be a placeholder, cannot be used for mtmd_encode() or mtmd_batch_encode()
+# // out_buf can be nullptr (to query expected_out_len)
+# // returns 0 on success, non-zero on failure
+# MTMD_API int32_t            mtmd_input_chunk_save(const mtmd_input_chunk * chunk, char * out_buf, size_t out_len, size_t * expected_out_len);
+@ctypes_function_mtmd("mtmd_input_chunk_save",
+    [
+        mtmd_input_chunk_p_ctypes,
+        POINTER(c_uint8),  # Writable byte storage; reject immutable Python bytes.
+        c_size_t,
+        POINTER(c_size_t),
+    ],
+    c_int32,
+)
+def mtmd_input_chunk_save(
+    chunk: mtmd_input_chunk_p,
+    out_buf: Optional[CtypesArray[c_uint8]],
+    out_len: c_size_t,
+    expected_out_len: POINTER(c_size_t),  # type: ignore
+) -> int:
+    """
+    save an input chunk to/from a buffer (useful for KV save)
+    important: only chunk's metadata will be saved, the actual image/audio data will not be saved
+    the loaded chunk will always be a placeholder, cannot be used for mtmd_encode() or mtmd_batch_encode()
+    out_buf can be nullptr (to query expected_out_len)
+    Otherwise pass a c_uint8 array/pointer with at least out_len writable bytes.
+    returns 0 on success, non-zero on failure
+    """
+    ...
+
+# // returns nullptr on failure
+# MTMD_API mtmd_input_chunk * mtmd_input_chunk_load(const char * buf, size_t len);
+@ctypes_function_mtmd("mtmd_input_chunk_load",
+    [
+        c_char_p,
+        c_size_t
+    ],
+    mtmd_input_chunk_p_ctypes,
+)
+def mtmd_input_chunk_load(
+    buf: bytes,
+    len: c_size_t,
+) -> mtmd_input_chunk_p:
+    """
+    load an input chunk from a buffer (useful for KV load)
+    important: only chunk's metadata will be saved, the actual image/audio data will not be saved
+    the loaded chunk will always be a placeholder, cannot be used for mtmd_encode() or mtmd_batch_encode()
+    returns nullptr on failure
+    """
+    ...
+
+# // mtmd_image_tokens
+# //
+# // the instance will be constructed via mtmd_tokenize()
+# // it will be freed along with mtmd_input_chunk
+# MTMD_API size_t       mtmd_image_tokens_get_n_tokens(const mtmd_image_tokens * image_tokens); // TODO: deprecate
+@ctypes_function_mtmd(
+    "mtmd_image_tokens_get_n_tokens", [mtmd_image_tokens_p_ctypes], c_size_t)
+def mtmd_image_tokens_get_n_tokens(image_tokens: mtmd_image_tokens_p) -> c_size_t:
+    ...
+
+# MTMD_API const char * mtmd_image_tokens_get_id      (const mtmd_image_tokens * image_tokens); // TODO: deprecate
+@ctypes_function_mtmd(
+    "mtmd_image_tokens_get_id", [mtmd_image_tokens_p_ctypes], c_char_p)
+def mtmd_image_tokens_get_id(image_tokens: mtmd_image_tokens_p) -> c_char_p:
+    ...
+
+# // number of temporal positions (equals to max(t,h,w) for M-RoPE; equals to n_tokens otherwise)
+# MTMD_API llama_pos    mtmd_image_tokens_get_n_pos   (const mtmd_image_tokens * image_tokens); // TODO: deprecate
+@ctypes_function_mtmd(
+    "mtmd_image_tokens_get_n_pos", [mtmd_image_tokens_p_ctypes], c_int32)
+def mtmd_image_tokens_get_n_pos(image_tokens: mtmd_image_tokens_p) -> c_int32:
+    """number of temporal positions (equals to max(t,h,w) for M-RoPE; equals to n_tokens otherwise)"""
+    ...
+
+# DEPRECATED(MTMD_API size_t mtmd_image_tokens_get_nx(const mtmd_image_tokens * image_tokens),
+#            "use mtmd_image_tokens_get_decoder_pos() instead");
+@ctypes_function_mtmd(
+    "mtmd_image_tokens_get_nx", [mtmd_image_tokens_p_ctypes], c_size_t)
+def mtmd_image_tokens_get_nx(image_tokens: mtmd_image_tokens_p) -> c_size_t:
+    """
+    use mtmd_image_tokens_get_decoder_pos() instead
+    """
+    ...
+
+# DEPRECATED(MTMD_API size_t mtmd_image_tokens_get_ny(const mtmd_image_tokens * image_tokens),
+#            "use mtmd_image_tokens_get_decoder_pos() instead");
+@ctypes_function_mtmd(
+    "mtmd_image_tokens_get_ny", [mtmd_image_tokens_p_ctypes], c_size_t)
+def mtmd_image_tokens_get_ny(image_tokens: mtmd_image_tokens_p) -> c_size_t:
+    """
+    use mtmd_image_tokens_get_decoder_pos() instead
+    """
+    ...
+
+# struct mtmd_decoder_pos {
+#     uint32_t t;
+#     uint32_t x;
+#     uint32_t y;
+#     uint32_t z;
+# };
+class mtmd_decoder_pos(Structure):
+    _fields_ = [
+        ("t", c_uint32),
+        ("x", c_uint32),
+        ("y", c_uint32),
+        ("z", c_uint32),
+    ]
+
+    if TYPE_CHECKING:
+        t: c_uint32
+        x: c_uint32
+        y: c_uint32
+        z: c_uint32
+
+mtmd_decoder_pos_p_ctypes = POINTER(mtmd_decoder_pos)
+
+# // get position for decoder attention, to be used by M-RoPE models
+# // i is the index of the embedding token, ranging from 0 to mtmd_image_tokens_get_n_tokens() - 1
+# // pos_0 is the absolute position of the first token
+# // return relative position (for example, embedding 0 will have position (0, 0, 0); remember to adjust it to the current absolute position)
+# MTMD_API struct mtmd_decoder_pos mtmd_image_tokens_get_decoder_pos(const mtmd_image_tokens * image_tokens, llama_pos pos_0, size_t i);
+@ctypes_function_mtmd(
+    "mtmd_image_tokens_get_decoder_pos", [mtmd_image_tokens_p_ctypes, c_int32, c_size_t], mtmd_decoder_pos)
+def mtmd_image_tokens_get_decoder_pos(image_tokens: mtmd_image_tokens_p, pos_0: c_int32, i: c_size_t) -> mtmd_decoder_pos:
+    """
+    get position for decoder attention, to be used by M-RoPE models
+    i is the index of the embedding token, ranging from 0 to mtmd_image_tokens_get_n_tokens() - 1
+    pos_0 is the absolute position of the first token
+    return relative position (for example, embedding 0 will have position (0, 0, 0); remember to adjust it to the current absolute position)
+    """
+    ...
+
+# // tokenize an input text prompt and a list of bitmaps (image/audio)
+# // the prompt must have the input media marker (default: "<__media__>") in it
+# // the default marker is defined by mtmd_default_marker()
+# // the marker will be replaced with the media chunk
+# // for example:
+# //   "here is an image: <__media__>\ndescribe it in detail."
+# //   this will gives 3 chunks:
+# //   1. "here is an image: <start_of_image>"
+# //   2. (image/audio tokens)
+# //   3. "<end_of_image>\ndescribe it in detail."
+# // number of bitmaps must be equal to the number of markers in the prompt
+# // this function is thread-safe (shared ctx)
+# // return values:
+# //   0 on success
+# //   1 on number of bitmaps not matching the number of markers
+# //   2 on media preprocessing error
+# MTMD_API int32_t mtmd_tokenize(mtmd_context * ctx,
+#                                mtmd_input_chunks * output,
+#                                const mtmd_input_text * text,
+#                                const mtmd_bitmap ** bitmaps,
+#                                size_t n_bitmaps);
+@ctypes_function_mtmd(
+    "mtmd_tokenize", [
+        mtmd_context_p_ctypes,
+        mtmd_input_chunks_p_ctypes,
+        mtmd_input_text_p_ctypes,
+        POINTER(mtmd_bitmap_p_ctypes),
+        c_size_t,
+    ],
+    c_int32,
+)
+def mtmd_tokenize(
+    ctx: mtmd_context_p,
+    output: mtmd_input_chunks_p,
+    text: mtmd_input_text_p,
+    bitmaps: POINTER(mtmd_bitmap_p_ctypes), # type: ignore
+    n_bitmaps: c_size_t,
+    /,
+) -> c_int32:
+    """
+    tokenize an input text prompt and a list of bitmaps (image/audio)
+    the prompt must have the input media marker (default: "<__media__>") in it
+    the default marker is defined by mtmd_default_marker()
+    the marker will be replaced with the media chunk
+
+    for example:
+     "here is an image: <__media__>\ndescribe it in detail."
+      this will gives 3 chunks:
+       1. "here is an image: <start_of_image>"
+       2. (image/audio tokens)
+       3. "<end_of_image>\\ndescribe it in detail."
+
+     number of bitmaps must be equal to the number of markers in the prompt
+     this function is thread-safe (shared ctx)
+
+    return values:
+      0 on success
+      1 on number of bitmaps not matching the number of markers
+      2 on media preprocessing error
+    """
+    ...
+
+
+# // same as mtmd_tokenize(), but takes an array of mtmd_input_part
+# // use cases:
+# // - when you don't want to use media markers (they will be tokenized as normal text)
+# // - when you want to control parse_special for each text part
+# // note: per-part add_special will be ignored
+# // return 1 if a part has both text and bitmap set (or neither)
+# MTMD_API int32_t mtmd_tokenize_from_parts(mtmd_context * ctx,
+#                                           mtmd_input_chunks * output,
+#                                           const mtmd_input_part ** parts,
+#                                           size_t n_parts,
+#                                           bool add_special);
+@ctypes_function_mtmd(
+    "mtmd_tokenize_from_parts", [
+        mtmd_context_p_ctypes,
+        mtmd_input_chunks_p_ctypes,
+        POINTER(mtmd_input_part_p_ctypes),
+        c_size_t,
+        c_bool,
+    ],
+    c_int32,
+)
+def mtmd_tokenize_from_parts(
+    ctx: mtmd_context_p,
+    output: mtmd_input_chunks_p,
+    parts: POINTER(mtmd_input_part_p_ctypes), # type: ignore
+    n_parts: c_size_t,
+    add_special: c_bool,
+    /,
+) -> c_int32:
+    """
+    same as mtmd_tokenize(), but takes an array of mtmd_input_part
+
+    use cases:
+     - when you don't want to use media markers (they will be tokenized as normal text)
+     - when you want to control parse_special for each text part
+
+    note: per-part add_special will be ignored.
+    return 1 if a part has both text and bitmap set (or neither)
+    """
+    ...
+
+# // returns 0 on success
+# // TODO: deprecate
+# DEPRECATED(MTMD_API int32_t mtmd_encode(mtmd_context * ctx, const mtmd_image_tokens * image_tokens),
+#            "use mtmd_encode_chunk() instead");
+@ctypes_function_mtmd(
+    "mtmd_encode", [
+        mtmd_context_p_ctypes,
+        mtmd_image_tokens_p_ctypes
+    ],
+    c_int32,
+)
+def mtmd_encode(
+    ctx: mtmd_context_p,
+    image_tokens: mtmd_image_tokens_p,
+    /,
+) -> c_int32:
+    """
+    DEPRECATED: use mtmd_encode_chunk() instead
+    """
+    ...
+
+
+# // text chunk will be ignored silently, only media chunk will be encoded
+# // the output is stored in ctx: do not call it from several threads at once
+# // returns 0 on success
+# // returns 1 on generic error
+# MTMD_API int32_t mtmd_encode_chunk(mtmd_context * ctx,
+#                                    const mtmd_input_chunk * chunk);
+@ctypes_function_mtmd(
+    "mtmd_encode_chunk", [
+        mtmd_context_p_ctypes,
+        mtmd_input_chunk_p_ctypes
+    ],
+    c_int32,
+)
+def mtmd_encode_chunk(
+    ctx: mtmd_context_p,
+    chunk: mtmd_input_chunk_p,
+    /,
+) -> c_int32:
+    """
+    text chunk will be ignored silently, only media chunk will be encoded
+    Output is stored in ctx; do not encode concurrently on the same context.
+    returns 0 on success
+    returns 1 on generic error
+    """
+    ...
+
+# // get output embeddings from the last encode pass
+# // the reading size (in bytes) is equal to:
+# // llama_model_n_embd_inp(model) * mtmd_input_chunk_get_n_tokens(chunk) * sizeof(float)
+# MTMD_API float * mtmd_get_output_embd(mtmd_context * ctx);
+@ctypes_function_mtmd(
+    "mtmd_get_output_embd", [mtmd_context_p_ctypes], POINTER(c_float))
+def mtmd_get_output_embd(ctx: mtmd_context_p) -> POINTER(c_float): # type: ignore
+    """
+    get output embeddings from the last encode pass
+    """
+    ...
+
+
+# // batch encoding API
+# // chunks are not owned by the batch, they will not be freed by mtmd_batch_free()
+# // batch is valid for a given context, cannot be shared across contexts
+# MTMD_API mtmd_batch * mtmd_batch_init(mtmd_context * ctx);
+@ctypes_function_mtmd(
+    "mtmd_batch_init",
+    [mtmd_context_p_ctypes],
+    mtmd_batch_p_ctypes,
+)
+def mtmd_batch_init(ctx: mtmd_context_p, /) -> mtmd_batch_p:
+    ...
+
+
+# MTMD_API void         mtmd_batch_free(mtmd_batch * batch);
+@ctypes_function_mtmd(
+    "mtmd_batch_free",
+    [mtmd_batch_p_ctypes],
+    None,
+)
+def mtmd_batch_free(batch: mtmd_batch_p, /):
+    """
+    chunks are not owned by the batch, they will not be freed by mtmd_batch_free()
+    batch is valid for a given context, cannot be shared across contexts
+    """
+    ...
+
+
+# // only media chunks are allowed, text chunks will be rejected
+# // returns 0 on success
+# // returns 1 on generic error
+# // returns 2 if the batch is too large (chunk won't be added)
+# // returns 3 if it cannot be batched with the existing chunks in the batch
+# MTMD_API int32_t mtmd_batch_add_chunk(mtmd_batch * batch, const mtmd_input_chunk * chunk);
+@ctypes_function_mtmd(
+    "mtmd_batch_add_chunk",
+    [
+        mtmd_batch_p_ctypes,
+        mtmd_input_chunk_p_ctypes,
+    ],
+    c_int32,
+)
+def mtmd_batch_add_chunk(
+    batch: mtmd_batch_p,
+    chunk: mtmd_input_chunk_p,
+    /,
+) -> c_int32:
+    """
+    only media chunks are allowed, text chunks will be rejected
+    returns 0 on success
+    returns 1 on generic error
+    returns 2 if the batch is too large (chunk won't be added)
+    returns 3 if it cannot be batched with the existing chunks in the batch
+    """
+    ...
+
+
+# // returns 0 on success
+# // returns 1 on generic error
+# // thread-safe, the output is stored in the batch
+# MTMD_API int32_t mtmd_batch_encode(mtmd_batch * batch);
+@ctypes_function_mtmd(
+    "mtmd_batch_encode",
+    [mtmd_batch_p_ctypes],
+    c_int32,
+)
+def mtmd_batch_encode(batch: mtmd_batch_p, /) -> c_int32:
+    """
+    Thread-safe across batches; output is stored in the batch.
+    returns 0 on success
+    returns 1 on generic error
+    """
+    ...
+
+
+# MTMD_API float * mtmd_batch_get_output_embd(mtmd_batch * batch, const mtmd_input_chunk * chunk);
+@ctypes_function_mtmd(
+    "mtmd_batch_get_output_embd",
+    [
+        mtmd_batch_p_ctypes,
+        mtmd_input_chunk_p_ctypes,
+    ],
+    POINTER(c_float),
+)
+def mtmd_batch_get_output_embd(
+    batch: mtmd_batch_p,
+    chunk: mtmd_input_chunk_p,
+    /,
+) -> POINTER(c_float):  # type: ignore
+    ...
+
+
+# // Set callback for all future logging events.
+# // If this is not called, or NULL is supplied, everything is output on stderr.
+# MTMD_API void mtmd_log_set(ggml_log_callback log_callback, void * user_data);
+@ctypes_function_mtmd(
+    "mtmd_log_set", [ggml_log_callback, c_void_p], None)
+def mtmd_log_set(log_callback: ggml_log_callback, user_data: c_void_p): # type: ignore
+    """
+    Set callback for all future logging events.
+    """
+    ...
+
+
+# // EXPERIMENTAL API to get mmproj's capabilities without initializing the full context
+# // This is only intended to be used by llama-server, breaking changes is expected
+# struct mtmd_caps {
+#     bool inp_vision;
+#     bool inp_audio;
+#     bool gen_audio;
+# };
+class mtmd_caps(Structure):
+    _fields_ = [
+        ("inp_vision", c_bool),
+        ("inp_audio", c_bool),
+        ("gen_audio", c_bool),
+    ]
+
+    if TYPE_CHECKING:
+        inp_vision: c_bool
+        inp_audio: c_bool
+        gen_audio: c_bool
+
+
+# MTMD_API struct mtmd_caps mtmd_get_cap_from_file(const char * mmproj_fname);
+@ctypes_function_mtmd(
+    "mtmd_get_cap_from_file", [c_char_p], mtmd_caps)
+def mtmd_get_cap_from_file(mmproj_fname: c_char_p) -> mtmd_caps:
+    """
+    EXPERIMENTAL API to get mmproj's capabilities without initializing the full context.
+    This is only intended to be used by llama-server, breaking changes is expected
+    """
+    ...
+
+
+# // EXPERIMENTAL API for realtime audio input, subjected to breaking changes
+
+mtmd_audio_stream_p = NewType("mtmd_audio_stream_p", int)
+mtmd_audio_stream_p_ctypes = c_void_p
+
+# struct mtmd_audio_stream_params {
+#     int32_t step_ms; // audio encoded per encoder call, rounded up to the model step (default: 320)
+#     const llama_token * prompt;
+#     size_t n_prompt;
+# };
+class mtmd_audio_stream_params(Structure):
+    """Encoder step size and optional opening tokens for realtime ASR."""
+
+    _fields_ = [
+        ("step_ms", c_int32),
+        ("prompt", POINTER(llama_cpp_lib.llama_token)),
+        ("n_prompt", c_size_t),
+    ]
+
+    if TYPE_CHECKING:
+        step_ms: int
+        prompt: _Pointer[llama_cpp_lib.llama_token]
+        n_prompt: int
+
+
+# MTMD_API struct mtmd_audio_stream_params mtmd_audio_stream_params_default(void);
+@ctypes_function_mtmd(
+    "mtmd_audio_stream_params_default", [], mtmd_audio_stream_params, required=False
+)
+def mtmd_audio_stream_params_default() -> mtmd_audio_stream_params:
+    """Return default stream parameters (step_ms=320)."""
+    ...
+
+
+# // whether the current model supports mtmd_audio_stream
+# MTMD_API bool mtmd_support_audio_stream(const mtmd_context * ctx);
+@ctypes_function_mtmd(
+    "mtmd_support_audio_stream", [mtmd_context_p_ctypes], c_bool, required=False
+)
+def mtmd_support_audio_stream(ctx: mtmd_context_p) -> bool:
+    """Whether the model supports realtime audio input with decoder feedback."""
+    ...
+
+
+# // returns nullptr on failure
+# MTMD_API mtmd_audio_stream * mtmd_audio_stream_init(mtmd_context * ctx, struct mtmd_audio_stream_params params);
+@ctypes_function_mtmd(
+    "mtmd_audio_stream_init",
+    [mtmd_context_p_ctypes, mtmd_audio_stream_params],
+    mtmd_audio_stream_p_ctypes,
+    required=False,
+)
+def mtmd_audio_stream_init(
+    ctx: mtmd_context_p, params: mtmd_audio_stream_params
+) -> mtmd_audio_stream_p:
+    """Create a stream, or return NULL on failure.
+
+    The MTMD context must have been initialized with a text model. Keep both
+    alive until the stream is released with mtmd_audio_stream_free().
+    prompt/n_prompt optionally supply the model's ASR template tokens.
+    """
+    ...
+
+
+# MTMD_API void mtmd_audio_stream_free(mtmd_audio_stream * stream);
+@ctypes_function_mtmd(
+    "mtmd_audio_stream_free", [mtmd_audio_stream_p_ctypes], None, required=False
+)
+def mtmd_audio_stream_free(stream: mtmd_audio_stream_p) -> None:
+    """Release a stream and its encoder state."""
+    ...
+
+
+# // samples are PCM F32 at mtmd_get_audio_sample_rate()
+# // returns 0 on success, 1 if the stream has ended
+# MTMD_API int32_t mtmd_audio_stream_push(mtmd_audio_stream * stream, const float * samples, size_t n_samples);
+@ctypes_function_mtmd(
+    "mtmd_audio_stream_push",
+    [mtmd_audio_stream_p_ctypes, POINTER(c_float), c_size_t],
+    c_int32,
+    required=False,
+)
+def mtmd_audio_stream_push(
+    stream: mtmd_audio_stream_p, samples: _Pointer[c_float], n_samples: int
+) -> int:
+    """Copy PCM F32 samples at mtmd_get_audio_sample_rate() into the stream.
+
+    Return 0 on success, or 1 if the stream has ended.
+    """
+    ...
+
+
+# // pad the stream so that all pending rows can be produced
+# // end = false: the stream stays open (use it on a pause, to get a partial transcript)
+# // end = true:  no more push() is accepted
+# // thread-safe across streams
+# // returns 0 on success, 1 if the stream has ended
+# MTMD_API int32_t mtmd_audio_stream_flush(mtmd_audio_stream * stream, bool end);
+@ctypes_function_mtmd(
+    "mtmd_audio_stream_flush", [mtmd_audio_stream_p_ctypes, c_bool], c_int32,
+    required=False,
+)
+def mtmd_audio_stream_flush(stream: mtmd_audio_stream_p, end: bool) -> int:
+    """Pad pending audio for decoding; end=True also prevents further pushes.
+
+    Use end=False on a pause to get a partial transcript and keep the stream
+    open. Return 0 on success, or 1 if it has already ended.
+    Thread-safe across distinct streams.
+    """
+    ...
+
+
+# // produce the next decoder rows
+# // last_token is the token sampled from the previous row, LLAMA_TOKEN_NULL before the first sample
+# // thread-safe across streams
+# // return value:
+# //   > 0 number of rows ready, read them with mtmd_audio_stream_get_output_embd()
+# //   0   more audio is needed
+# //   -1  end of stream, nothing more will be produced
+# //   -2  error
+# MTMD_API int32_t mtmd_audio_stream_step(mtmd_audio_stream * stream, llama_token last_token);
+@ctypes_function_mtmd(
+    "mtmd_audio_stream_step",
+    [mtmd_audio_stream_p_ctypes, llama_cpp_lib.llama_token],
+    c_int32,
+    required=False,
+)
+def mtmd_audio_stream_step(stream: mtmd_audio_stream_p, last_token: int) -> int:
+    """Produce decoder rows using the token sampled from the previous step.
+
+    Pass LLAMA_TOKEN_NULL before the first sample. Return a positive row
+    count, 0 for more audio, -1 for end of stream, or -2 on error.
+    Thread-safe across distinct streams.
+    """
+    ...
+
+
+# // rows of the last step, the reading size (in bytes) is n_rows * llama_model_n_embd_inp(model) * sizeof(float)
+# MTMD_API const float * mtmd_audio_stream_get_output_embd(const mtmd_audio_stream * stream);
+@ctypes_function_mtmd(
+    "mtmd_audio_stream_get_output_embd", [mtmd_audio_stream_p_ctypes],
+    POINTER(c_float), required=False,
+)
+def mtmd_audio_stream_get_output_embd(stream: mtmd_audio_stream_p) -> _Pointer[c_float]:
+    """Borrow the rows produced by the last step; copy before the next step.
+
+    Read n_rows * llama_model_n_embd_inp(model) floats. The stream owns the
+    buffer; it also becomes invalid when the stream is freed.
+    """
+    ...
+
+
+# MTMD_API bool mtmd_audio_stream_is_seq_start(const mtmd_audio_stream * stream);
+@ctypes_function_mtmd(
+    "mtmd_audio_stream_is_seq_start", [mtmd_audio_stream_p_ctypes],
+    c_bool, required=False,
+)
+def mtmd_audio_stream_is_seq_start(stream: mtmd_audio_stream_p) -> bool:
+    """Whether the last step starts a sequence; clear the decoder sequence first."""
+    ...
+
+
+# MTMD_API int64_t mtmd_audio_stream_get_n_rows(const mtmd_audio_stream * stream);
+@ctypes_function_mtmd(
+    "mtmd_audio_stream_get_n_rows", [mtmd_audio_stream_p_ctypes],
+    c_int64, required=False,
+)
+def mtmd_audio_stream_get_n_rows(stream: mtmd_audio_stream_p) -> int:
+    """Return audio rows whose text has been sampled, including prefix rows.
+
+    step() commits this progress from last_token.
+    """
+    ...
+
+
+# MTMD_API int64_t mtmd_audio_stream_get_n_rows_flushed(const mtmd_audio_stream * stream);
+@ctypes_function_mtmd(
+    "mtmd_audio_stream_get_n_rows_flushed", [mtmd_audio_stream_p_ctypes],
+    c_int64, required=False,
+)
+def mtmd_audio_stream_get_n_rows_flushed(stream: mtmd_audio_stream_p) -> int:
+    """Return the row target through the last flush for a live stream.
+
+    Once get_n_rows reaches this target, the flushed audio's text has been sampled.
+    """
+    ...
+
+
+# // EXPERIMENTAL API for audio generation, subjected to breaking changes
+
+# // represent the pipeline type
+# enum mtmd_gen_audio_type {
+#     MTMD_GEN_AUDIO_TYPE_NONE, // not supported
+#     MTMD_GEN_AUDIO_TYPE_QWEN3TTS,
+#     MTMD_GEN_AUDIO_TYPE_POCKETTTS,
+#     MTMD_GEN_AUDIO_TYPE_SOPRANO,
+#     MTMD_GEN_AUDIO_TYPE_LFM3A,
+#     MTMD_GEN_AUDIO_TYPE_CHATTERBOX,
+#     MTMD_GEN_AUDIO_TYPE_DRAMA3,
+# };
+class mtmd_gen_audio_type(enum.IntEnum):
+    """Generated audio pipeline type."""
+    MTMD_GEN_AUDIO_TYPE_NONE      = 0
+    MTMD_GEN_AUDIO_TYPE_QWEN3TTS  = 1
+    MTMD_GEN_AUDIO_TYPE_POCKETTTS = 2
+    MTMD_GEN_AUDIO_TYPE_SOPRANO   = 3
+    MTMD_GEN_AUDIO_TYPE_LFM3A     = 4
+    MTMD_GEN_AUDIO_TYPE_CHATTERBOX = 5
+    MTMD_GEN_AUDIO_TYPE_DRAMA3    = 6
+
+# struct mtmd_gen_audio_info {
+#     enum mtmd_gen_audio_type type;
+#     int32_t sample_rate; // in Hz, for example 24000 for qwen3tts
+#     const char * model_variant; // name of the weight variant, can be nullptr if not applicable
+#     int32_t n_voices; // predefined voices
+# };
+class mtmd_gen_audio_info(Structure):
+    """Audio generation pipeline information."""
+
+    _fields_ = [
+        ("type", c_int),
+        ("sample_rate", c_int32),
+        ("model_variant", c_char_p),
+        ("n_voices", c_int32),
+    ]
+
+    if TYPE_CHECKING:
+        type: int
+        sample_rate: int
+        model_variant: Optional[bytes]
+        n_voices: int
+
+# MTMD_API struct mtmd_gen_audio_info mtmd_gen_audio_get_info(const mtmd_context * ctx);
+@ctypes_function_mtmd(
+    "mtmd_gen_audio_get_info",
+    [
+        mtmd_context_p_ctypes,
+    ],
+    mtmd_gen_audio_info,
+)
+def mtmd_gen_audio_get_info(
+    ctx: mtmd_context_p,
+) -> mtmd_gen_audio_info:
+    ...
+
+
+# MTMD_API size_t mtmd_gen_audio_read_tensor(mtmd_context * ctx, const char * name, float * out, size_t n_max);
+@ctypes_function_mtmd("mtmd_gen_audio_read_tensor",
+    [mtmd_context_p_ctypes, c_char_p, POINTER(c_float), c_size_t], c_size_t)
+def mtmd_gen_audio_read_tensor(ctx: mtmd_context_p, name: bytes, out, n_max: int) -> int:
+    """Read F32 elements; NULL queries the count. Missing/undersized returns zero."""
+    ...
+
+
+@ctypes_function_mtmd("mtmd_gen_audio_voice_name", [mtmd_context_p_ctypes, c_int32], c_char_p)
+def mtmd_gen_audio_voice_name(ctx: mtmd_context_p, index: int) -> Optional[bytes]:
+    """Return the borrowed name of a predefined voice, or None."""
+    ...
+
+
+@ctypes_function_mtmd("mtmd_gen_audio_get_voice", [mtmd_context_p_ctypes, c_char_p], mtmd_bitmap_p_ctypes)
+def mtmd_gen_audio_get_voice(ctx: mtmd_context_p, name: bytes) -> mtmd_bitmap_p:
+    """Return a voice bitmap owned by the caller, or NULL."""
+    ...
+
+
+@ctypes_function_mtmd("mtmd_bitmap_is_voice", [mtmd_bitmap_p_ctypes], c_bool)
+def mtmd_bitmap_is_voice(bitmap: mtmd_bitmap_p) -> bool:
+    ...
+
+# enum mtmd_gen_process_type {
+#     MTMD_GEN_PROCESS_TYPE_GEN_CODE, // h_state to semantic (codes, mel-spectrogram, etc.)
+#     MTMD_GEN_PROCESS_TYPE_GEN_WAV,  // convert semantic to PCM audio
+#                                     // for qwen3tts, this is code2wav
+#                                     // for pocket-tts, this is mimi decoder
+#                                     // for lfm3a, n_codes == 0 flushes the codec tail
+# };
+class mtmd_gen_process_type(enum.IntEnum):
+    """Generated audio processing stage."""
+    # hidden state -> semantic codes
+    MTMD_GEN_PROCESS_TYPE_GEN_CODE = 0
+    # semantic codes -> PCM audio
+    MTMD_GEN_PROCESS_TYPE_GEN_WAV = 1
+
+# struct mtmd_gen_inp {
+#     enum mtmd_gen_process_type type;
+
+#     // for MTMD_GEN_PROCESS_TYPE_GEN_CODE
+#     int32_t code0;  // the sampled codebook 0 entry from backbone
+#     float * embd;   // the hidden state from backbone, must have n_text_embd elements
+#     int32_t top_k;
+#     float   top_p;
+#     float   temp; // sampling temperature, or noise scale for flow-matching decoders
+#     float   penalty_repeat; // <= 1 disables code repetition penalty
+#     int32_t penalty_last_n; // history window in frames
+
+#     // for MTMD_GEN_PROCESS_TYPE_GEN_WAV
+#     // pass either codes (discrete) or feats (continuous), depending on the pipeline
+#     int32_t * codes;
+#     size_t    n_codes;
+#     const float * feats;
+#     size_t        n_feats;
+# };
+class mtmd_gen_inp(Structure):
+    """Audio generation input."""
+
+    _fields_ = [
+        ("type", c_int),
+        # GEN_CODE
+        ("code0", c_int32),
+        ("embd", POINTER(c_float)),
+        ("top_k", c_int32),
+        ("top_p", c_float),
+        ("temp", c_float),
+        ("penalty_repeat", c_float),
+        ("penalty_last_n", c_int32),
+        # GEN_WAV
+        ("codes", POINTER(c_int32)),
+        ("n_codes", c_size_t),
+        ("feats", POINTER(c_float)),
+        ("n_feats", c_size_t),
+    ]
+
+    if TYPE_CHECKING:
+        # GEN_CODE
+        type: int
+        code0: int
+        embd: POINTER[c_float]
+        top_k: int
+        top_p: float
+        temp: float
+        penalty_repeat: float
+        penalty_last_n: int
+        # GEN_WAV
+        codes: POINTER[c_int32]
+        n_codes: int
+        feats: POINTER[c_float]
+        n_feats: int
+
+# struct mtmd_gen_out {
+#     // note: output memory is owned by the state, valid until the next process() call with this state
+#     // for MTMD_GEN_PROCESS_TYPE_GEN_CODE
+#     const int32_t * codes;
+#     size_t          n_codes;
+#     const float * feats; // continuous counterpart of codes
+#     size_t        n_feats;
+#     const float * embd; // the generated hidden state, to be fed back to backbone
+#                         // it must have n_text_embd elements
+#     bool is_eos; // only set by pipelines having the EOS head inside mmproj
+#     // for MTMD_GEN_PROCESS_TYPE_GEN_WAV
+#     const float * audio;
+#     size_t        n_samples;
+# };
+class mtmd_gen_out(Structure):
+    """Audio generation output.
+    Memory is owned by mtmd_gen_state and valid until
+    the next mtmd_gen_audio_process() call with this state, or state destruction.
+    """
+
+    _fields_ = [
+        ("codes", POINTER(c_int32)),
+        ("n_codes", c_size_t),
+        ("feats", POINTER(c_float)),
+        ("n_feats", c_size_t),
+        ("embd", POINTER(c_float)),
+        ("is_eos", c_bool),
+        ("audio", POINTER(c_float)),
+        ("n_samples", c_size_t),
+    ]
+
+    if TYPE_CHECKING:
+        codes: POINTER[c_int32]
+        n_codes: int
+        feats: POINTER[c_float]
+        n_feats: int
+        embd: POINTER[c_float]
+        is_eos: bool
+        audio: POINTER[c_float]
+        n_samples: int
+
+# struct mtmd_gen_state_params {
+#     uint32_t seed; // UINT32_MAX for random
+# };
+class mtmd_gen_state_params(Structure):
+    """Per-generation state parameters; UINT32_MAX selects a random seed."""
+
+    _fields_ = [("seed", c_uint32)]
+
+    if TYPE_CHECKING:
+        seed: int
+
+
+# MTMD_API struct mtmd_gen_state_params mtmd_gen_state_params_default(void);
+@ctypes_function_mtmd("mtmd_gen_state_params_default", [], mtmd_gen_state_params)
+def mtmd_gen_state_params_default() -> mtmd_gen_state_params:
+    ...
+
+
+# MTMD_API mtmd_gen_state * mtmd_gen_state_init(mtmd_context * ctx, struct mtmd_gen_state_params params);
+@ctypes_function_mtmd(
+    "mtmd_gen_state_init",
+    [mtmd_context_p_ctypes, mtmd_gen_state_params],
+    mtmd_gen_state_p_ctypes,
+)
+def mtmd_gen_state_init(
+    ctx: mtmd_context_p, params: mtmd_gen_state_params,
+) -> Optional[mtmd_gen_state_p]:
+    """Create a generation state; returns null if audio generation is unsupported.
+
+    Use the state only with its originating context and free it before that context.
+    """
+    ...
+
+
+# MTMD_API void mtmd_gen_state_free(mtmd_gen_state * state);
+@ctypes_function_mtmd("mtmd_gen_state_free", [mtmd_gen_state_p_ctypes], None)
+def mtmd_gen_state_free(state: Optional[mtmd_gen_state_p]):
+    """Free a generation state and its output buffers."""
+    ...
+
+
+# MTMD_API void mtmd_gen_state_reset(mtmd_gen_state * state);
+@ctypes_function_mtmd("mtmd_gen_state_reset", [mtmd_gen_state_p_ctypes], None)
+def mtmd_gen_state_reset(state: mtmd_gen_state_p):
+    """Clear decoder state for a cold start, keeping the RNG stream."""
+    ...
+
+
+# MTMD_API int32_t mtmd_gen_state_set_ref(mtmd_context * ctx, mtmd_gen_state * state);
+@ctypes_function_mtmd("mtmd_gen_state_set_ref", [mtmd_context_p_ctypes, mtmd_gen_state_p_ctypes], c_int32)
+def mtmd_gen_state_set_ref(ctx: mtmd_context_p, state: mtmd_gen_state_p) -> int:
+    """Copy the last encoded reference to this model's state; nonzero means failure."""
+    ...
+
+# // defaults tuned for the loaded pipeline, callers override only what they care about
+# MTMD_API struct mtmd_gen_inp mtmd_gen_inp_default(const mtmd_context * ctx);
+@ctypes_function_mtmd(
+    "mtmd_gen_inp_default",
+    [
+        mtmd_context_p_ctypes,
+    ],
+    mtmd_gen_inp,
+)
+def mtmd_gen_inp_default(
+    ctx: mtmd_context_p,
+) -> mtmd_gen_inp:
+    """
+    defaults tuned for the loaded pipeline, callers override only what they care about
+    """
+    ...
+
+# // run one step and update the state in place
+# // thread-safe across gen states
+# // the caller drives the backbone and collects the audio frames
+# MTMD_API int32_t mtmd_gen_audio_process(mtmd_context * ctx,
+#                                 mtmd_gen_state * state,
+#                                 const struct mtmd_gen_inp * inp,
+#                                 struct mtmd_gen_out * out);
+@ctypes_function_mtmd(
+    "mtmd_gen_audio_process",
+    [
+        mtmd_context_p_ctypes,
+        mtmd_gen_state_p_ctypes,
+        POINTER(mtmd_gen_inp),
+        POINTER(mtmd_gen_out),
+    ],
+    c_int32,
+)
+def mtmd_gen_audio_process(
+    ctx: mtmd_context_p,
+    state: mtmd_gen_state_p,
+    inp: POINTER(mtmd_gen_inp),  # type: ignore
+    out: POINTER(mtmd_gen_out),  # type: ignore
+) -> int:
+    """Thread-safe across distinct generation states.
+
+    Run one step and update state in place; the caller drives the backbone
+    and collects the audio frames before the next call with this state.
+    """
+    ...
+
+# // test function, to be used in test-mtmd-c-api.c
+# MTMD_API mtmd_input_chunks * mtmd_test_create_input_chunks(void);
+@ctypes_function_mtmd(
+    "mtmd_test_create_input_chunks",
+    [],
+    mtmd_input_chunks_p_ctypes,
+)
+def mtmd_test_create_input_chunks() -> mtmd_input_chunks_p:
+    ...
+
+
+# //
+# // libmtmd helper functions
+# //
+# // Please note that these helpers are not guaranteed to be stable.
+# // BREAKING CHANGES are expected.
+# //
+
+# struct mtmd_helper_video;
+mtmd_helper_video_p = NewType("mtmd_helper_video_p", int)
+mtmd_helper_video_p_ctypes = c_void_p
+
+
+# struct mtmd_helper_video_init_params {
+#     float fps_target;            // desired output fps; <= 0 means use the video's native fps, defaulted to 4.0f
+#     const char * ffmpeg_bin_dir; // directory containing ffmpeg/ffprobe binaries; NULL means search PATH
+#     int64_t timestamp_interval_ms; // interval for adding timestamp as text chunk (example: "[10m50.5s]"); <= 0 means no timestamp, defaulted to 5000ms
+#     bool no_soundtrack; // suppress video audio for models that support it
+#     // TODO @ngxson : allow "placeholder" bitmap output for counting tokens
+# };
+class mtmd_helper_video_init_params(Structure):
+    _fields_ = [
+        ("fps_target", c_float),
+        ("ffmpeg_bin_dir", c_char_p),
+        ("timestamp_interval_ms", c_int64),
+        ("no_soundtrack", c_bool),
+    ]
+mtmd_helper_video_init_params_p_ctypes = POINTER(mtmd_helper_video_init_params)
+
+
+# MTMD_API struct mtmd_helper_video_init_params mtmd_helper_video_init_params_default(void);
+@ctypes_function_mtmd(
+    "mtmd_helper_video_init_params_default",
+    [],
+    mtmd_helper_video_init_params,
+)
+def mtmd_helper_video_init_params_default() -> mtmd_helper_video_init_params:
+    """Get the default initialization parameters for mtmd_helper_video."""
+    ...
+
+
+# struct mtmd_helper_init_opt {
+#     struct mtmd_helper_video_init_params video_params;
+# };
+class mtmd_helper_init_opt(Structure):
+    _fields_ = [
+        ("video_params", mtmd_helper_video_init_params),
+    ]
+mtmd_helper_init_opt_p_ctypes = POINTER(mtmd_helper_init_opt)
+
+
+# MTMD_API struct mtmd_helper_init_opt mtmd_helper_init_opt_default(void);
+@ctypes_function_mtmd(
+    "mtmd_helper_init_opt_default",
+    [],
+    mtmd_helper_init_opt,
+)
+def mtmd_helper_init_opt_default() -> mtmd_helper_init_opt:
+    """Get the default options for mtmd_helper_bitmap_init_from_*()."""
+    ...
+
+
+# // Set callback for all future logging events.
+# // If this is not called, or NULL is supplied, everything is output on stderr.
+# // Note: this also call mtmd_log_set() internally
+# MTMD_API void mtmd_helper_log_set(ggml_log_callback log_callback, void * user_data);
+@ctypes_function_mtmd(
+    "mtmd_helper_log_set", [ggml_log_callback, c_void_p], None)
+def mtmd_helper_log_set(log_callback: ggml_log_callback, user_data: c_void_p): # type: ignore
+    """
+    Set callback for all future logging events.
+    """
+    ...
+
+
+# // Deprecated: requires both vision support and an MTMD_VIDEO build.
+# MTMD_API bool mtmd_helper_support_video(mtmd_context * ctx);
+@ctypes_function_mtmd(
+    "mtmd_helper_support_video", [mtmd_context_p_ctypes], c_bool)
+def mtmd_helper_support_video(ctx: mtmd_context_p) -> c_bool:
+    """Deprecated: use mtmd_helper_get_capabilities().video instead."""
+    ...
+
+
+# struct mtmd_helper_bitmap_wrapper {
+#     mtmd_bitmap * bitmap;
+#     mtmd_helper_video * video_ctx;
+# };
+class mtmd_helper_bitmap_wrapper(Structure):
+    _fields_ = [
+        ("bitmap", mtmd_bitmap_p_ctypes),
+        ("video_ctx", mtmd_helper_video_p_ctypes),
+    ]
+mtmd_helper_bitmap_wrapper_p_ctypes = POINTER(mtmd_helper_bitmap_wrapper)
+
+# // helper function to construct a mtmd_bitmap from a file
+# // it calls mtmd_helper_bitmap_init_from_buf() internally
+# // returns nullptr on failure
+# // this function is thread-safe
+# MTMD_API struct mtmd_helper_bitmap_wrapper mtmd_helper_bitmap_init_from_file(
+#                     mtmd_context * ctx,
+#                     const char * fname,
+#                     bool placeholder,
+#                     struct mtmd_helper_init_opt opt);
+
+@ctypes_function_mtmd(
+    "mtmd_helper_bitmap_init_from_file", [
+        mtmd_context_p_ctypes,
+        c_char_p,
+        c_bool,
+        mtmd_helper_init_opt,
+    ],
+    mtmd_helper_bitmap_wrapper
+)
+def mtmd_helper_bitmap_init_from_file(
+    ctx: mtmd_context_p,
+    fname: c_char_p,
+    placeholder: c_bool,
+    opt: mtmd_helper_init_opt,
+    /,
+) -> mtmd_helper_bitmap_wrapper:
+    """
+    helper function to construct a mtmd_bitmap from a file
+    it calls mtmd_helper_bitmap_init_from_buf() internally
+    returns nullptr on failure
+    """
+    ...
+
+
+# // helper function to construct a mtmd_bitmap from a buffer containing a file
+# // supported formats:
+# //     image: formats supported by stb_image: jpg, png, bmp, gif, etc.
+# //            webp is decoded via ffmpeg, requires MTMD_VIDEO build with ffmpeg in PATH
+# //     audio: formats supported by miniaudio: wav, mp3, flac
+# // note:
+# //   - for now, video input is only supported via C++ helper functions
+# //   - audio files will be auto-detected based on magic bytes
+# //   - output bitmap will have SHA-256 hash (hex string) as the ID
+# // returns nullptr on failure
+# // this function is thread-safe
+# MTMD_API struct mtmd_helper_bitmap_wrapper mtmd_helper_bitmap_init_from_buf(
+#                     mtmd_context * ctx,
+#                     const unsigned char * buf, size_t len,
+#                     bool placeholder,
+#                     struct mtmd_helper_init_opt opt);
+@ctypes_function_mtmd(
+    "mtmd_helper_bitmap_init_from_buf", [
+        mtmd_context_p_ctypes,
+        POINTER(c_uint8),
+        c_size_t,
+        c_bool,
+        mtmd_helper_init_opt,
+    ],
+    mtmd_helper_bitmap_wrapper
+)
+def mtmd_helper_bitmap_init_from_buf(
+    ctx: mtmd_context_p,
+    buf: CtypesArray[c_uint8],
+    len: c_size_t,
+    placeholder: c_bool,
+    opt: mtmd_helper_init_opt,
+    /,
+) -> mtmd_helper_bitmap_wrapper:
+    """
+    helper function to construct a mtmd_bitmap from a buffer containing a file
+    supported formats:
+        image: formats supported by stb_image: jpg, png, bmp, gif, etc.
+        audio: formats supported by miniaudio: wav, mp3, flac
+    note:
+        - for now, video input is only supported via C++ helper functions
+        - audio files will be auto-detected based on magic bytes
+        - output bitmap will have SHA-256 hash as the ID
+    returns nullptr on failure
+    """
+    ...
+
+
+# // streaming resampler for raw mono F32 PCM (e.g. realtime input), to match mtmd_get_audio_sample_rate()
+# // it keeps state between calls, use one per stream
+# struct mtmd_helper_resampler;
+# typedef struct mtmd_helper_resampler mtmd_helper_resampler;
+mtmd_helper_resampler_p = NewType("mtmd_helper_resampler_p", int)
+mtmd_helper_resampler_p_ctypes = c_void_p
+
+
+# // returns NULL on failure
+# MTMD_API mtmd_helper_resampler * mtmd_helper_resampler_init(int32_t rate_in, int32_t rate_out);
+@ctypes_function_mtmd(
+    "mtmd_helper_resampler_init", [c_int32, c_int32], mtmd_helper_resampler_p_ctypes,
+    required=False,
+)
+def mtmd_helper_resampler_init(rate_in: int, rate_out: int) -> mtmd_helper_resampler_p:
+    """Create a mono F32 PCM resampler; return NULL on failure.
+
+    Rates must be positive. Use one context per stream and free it when done.
+    """
+    ...
+
+
+# MTMD_API void mtmd_helper_resampler_free(mtmd_helper_resampler * ctx);
+@ctypes_function_mtmd(
+    "mtmd_helper_resampler_free", [mtmd_helper_resampler_p_ctypes], None, required=False,
+)
+def mtmd_helper_resampler_free(ctx: mtmd_helper_resampler_p) -> None:
+    """Free the context and its output buffer. NULL is accepted."""
+    ...
+
+
+# // *out is valid until the next call
+# // returns the number of output samples (can be 0), < 0 on error
+# MTMD_API int64_t mtmd_helper_resampler_process(mtmd_helper_resampler * ctx, const float * in, size_t n_in, const float ** out);
+@ctypes_function_mtmd(
+    "mtmd_helper_resampler_process",
+    [mtmd_helper_resampler_p_ctypes, POINTER(c_float), c_size_t, POINTER(POINTER(c_float))],
+    c_int64, required=False,
+)
+def mtmd_helper_resampler_process(
+    ctx: mtmd_helper_resampler_p, samples: _Pointer[c_float], n_in: int,
+    out: _Pointer[_Pointer[c_float]],
+) -> int:
+    """Consume a PCM chunk; return the output sample count, or < 0 on error.
+
+    Pass a live context and writable output-pointer storage. Copy output before
+    the next call or freeing the context. Equal-rate passthrough aliases the
+    input, so keep the input buffer alive while reading it. Do not free out.
+    An empty chunk produces no samples; it does not flush the resampler tail.
+    """
+    ...
+
+
+# // helper to count the total number of tokens from a list of chunks, useful to keep track of KV cache
+# MTMD_API size_t mtmd_helper_get_n_tokens(const mtmd_input_chunks * chunks);
+@ctypes_function_mtmd(
+    "mtmd_helper_get_n_tokens", [mtmd_input_chunks_p_ctypes], c_size_t)
+def mtmd_helper_get_n_tokens(chunks: mtmd_input_chunks_p) -> c_size_t:
+    """
+    helper to count the total number of tokens from a list of chunks, useful to keep track of KV cache
+    """
+    ...
+
+
+# // helper to count the total position of tokens from a list of chunks, useful to keep track of n_past
+# // normally, n_pos is equal to n_tokens, but for M-RoPE it is different
+# MTMD_API llama_pos mtmd_helper_get_n_pos(const mtmd_input_chunks * chunks);
+@ctypes_function_mtmd(
+    "mtmd_helper_get_n_pos", [mtmd_input_chunks_p_ctypes], c_int32)
+def mtmd_helper_get_n_pos(chunks: mtmd_input_chunks_p) -> c_int32:
+    """
+    helper to count the total position of tokens from a list of chunks, useful to keep track of n_past
+    normally, n_pos is equal to n_tokens, but for M-RoPE it is different
+    """
+    ...
+
+
+# // helper to get the list of relative positions corresponding to the embedding tokens, to be used by M-RoPE
+# // out_pos must have length == mtmd_helper_get_n_tokens(image)
+# MTMD_API void mtmd_helper_image_get_decoder_pos(const mtmd_image_tokens * image, llama_pos pos_0, struct mtmd_decoder_pos * out_pos);
+@ctypes_function_mtmd("mtmd_helper_image_get_decoder_pos", [
+                        mtmd_image_tokens_p_ctypes,
+                        c_int32,
+                        mtmd_decoder_pos_p_ctypes,
+                    ],
+                    None)
+def mtmd_helper_image_get_decoder_pos(
+    image: mtmd_image_tokens_p,
+    pos_0: c_int32,
+    out_pos: POINTER(mtmd_decoder_pos) # type: ignore
+):
+    """
+    helper to get the list of relative positions corresponding to the embedding tokens, to be used by M-RoPE
+    out_pos must have length == mtmd_helper_get_n_tokens(image)
+    """
+    ...
+
+
+# // helper function that automatically:
+# // 1. run llama_decode() on text chunks
+# // 2. run mtmd_encode_chunk() on image chunks, then mtmd_get_output_embd() and then llama_decode()
+# // if any of the mtmd_encode_chunk() or llama_decode() calls return non-zero, stop and forward the error
+# // otherwise, returns 0 on success
+# // this function is NOT thread-safe
+# MTMD_API int32_t mtmd_helper_eval_chunks(mtmd_context * ctx,
+#                                          struct llama_context * lctx,
+#                                          const mtmd_input_chunks * chunks,
+#                                          llama_pos n_past,
+#                                          llama_seq_id seq_id,
+#                                          int32_t n_batch,
+#                                          bool logits_last,
+#                                          llama_pos * new_n_past);
+@ctypes_function_mtmd(
+    "mtmd_helper_eval_chunks", [
+        mtmd_context_p_ctypes,
+        llama_cpp_lib.llama_context_p_ctypes,
+        mtmd_input_chunks_p_ctypes,
+        c_int32,
+        c_int32,
+        c_int32,
+        c_bool,
+        POINTER(c_int32),
+    ],
+    c_int32)
+def mtmd_helper_eval_chunks(
+    ctx: mtmd_context_p,
+    lctx: llama_cpp_lib.llama_context_p,
+    chunks: mtmd_input_chunks_p,
+    n_past: c_int32,
+    seq_id: c_int32,
+    n_batch: c_int32,
+    logits_last: c_bool,
+    new_n_past: POINTER(c_int32), # type: ignore
+    /,
+) -> c_int32:
+    """
+    helper function that automatically:
+    1. run llama_decode() on text chunks
+    2. run mtmd_encode() on image chunks, then mtmd_get_output_embd() and then llama_decode()
+    if any of the mtmd_encode() or llama_decode() calls return non-zero, stop and forward the error
+    otherwise, returns 0 on success
+    """
+    ...
+
+
+# // works like mtmd_helper_eval_chunks(), but only for a single chunk
+# // this function is NOT thread-safe
+# MTMD_API int32_t mtmd_helper_eval_chunk_single(mtmd_context * ctx,
+#                                                struct llama_context * lctx,
+#                                                const mtmd_input_chunk * chunk,
+#                                                llama_pos n_past,
+#                                                llama_seq_id seq_id,
+#                                                int32_t n_batch,
+#                                                bool logits_last,
+#                                                llama_pos * new_n_past);
+@ctypes_function_mtmd(
+    "mtmd_helper_eval_chunk_single", [
+        mtmd_context_p_ctypes,
+        llama_cpp_lib.llama_context_p_ctypes,
+        mtmd_input_chunk_p_ctypes,
+        c_int32,
+        c_int32,
+        c_int32,
+        c_bool,
+        POINTER(c_int32),
+    ],
+    c_int32)
+def mtmd_helper_eval_chunk_single(
+    ctx: mtmd_context_p,
+    lctx: llama_cpp_lib.llama_context_p,
+    chunks: mtmd_input_chunk_p,
+    n_past: c_int32,
+    seq_id: c_int32,
+    n_batch: c_int32,
+    logits_last: c_bool,
+    new_n_past: POINTER(c_int32), # type: ignore
+    /,
+) -> c_int32:
+    """
+    works like mtmd_helper_eval_chunks(), but only for a single chunk
+    """
+    ...
+
+
+class mtmd_helper_embd_batch(Structure):
+    """Borrowed embedding sub-batch, valid only during the decode callback.
+
+    ``embd`` has shape [n_tokens, n_embd]; ``pos`` has shape
+    [n_pos, n_tokens] in section-major order.
+    """
+
+    _fields_ = [
+        ("n_tokens", c_int32),
+        ("embd", POINTER(c_float)),
+        ("n_embd", c_int32),
+        ("pos", POINTER(c_int32)),
+        ("n_pos", c_int32),
+        ("seq_id", c_int32),
+    ]
+
+
+# typedef int32_t (*mtmd_helper_post_decode_callback)(const struct mtmd_helper_embd_batch * batch, void * user_data);
+mtmd_helper_post_decode_callback = CFUNCTYPE(
+    c_int32,
+    POINTER(mtmd_helper_embd_batch),
+    c_void_p,
+)
+
+# // helper function to decode an image whose embeddings have already been calculated
+# // this helper will handle batching and pre/post decoding setup (for ex. gemma 3 requires non-causal attention)
+# // ret 0 on success, -1 on chunk not being a valid image chunk, 1 on decode failure
+# MTMD_API int32_t mtmd_helper_decode_image_chunk(mtmd_context * ctx,
+#                                                 struct llama_context * lctx,
+#                                                 const mtmd_input_chunk * chunk,
+#                                                 float * encoded_embd,
+#                                                 llama_pos n_past,
+#                                                 llama_seq_id seq_id,
+#                                                 int32_t n_batch,
+#                                                 llama_pos * new_n_past,
+#                                                 mtmd_helper_post_decode_callback callback,
+#                                                 void * user_data);
+@ctypes_function_mtmd(
+    "mtmd_helper_decode_image_chunk", [
+        mtmd_context_p_ctypes,
+        llama_cpp_lib.llama_context_p_ctypes,
+        mtmd_input_chunk_p_ctypes,
+        POINTER(c_float),
+        c_int32,
+        c_int32,
+        c_int32,
+        POINTER(c_int32),
+        mtmd_helper_post_decode_callback,
+        c_void_p,
+    ],
+    c_int32)
+def mtmd_helper_decode_image_chunk(
+    ctx: mtmd_context_p,
+    lctx: llama_cpp_lib.llama_context_p,
+    chunk: mtmd_input_chunk_p,
+    encoded_embd: POINTER(c_float), # type: ignore
+    n_past: c_int32,
+    seq_id: c_int32,
+    n_batch: c_int32,
+    new_n_past: POINTER(c_int32),   # type: ignore
+    callback: Optional[mtmd_helper_post_decode_callback], # type: ignore
+    user_data: c_void_p,
+    /,
+) -> c_int32:
+    """
+    helper function to decode an image whose embeddings have already been calculated
+    this helper will handle batching and pre/post decoding setup (for ex. gemma 3 requires non-causal attention)
+    ret 0 on success, -1 on chunk not being a valid image chunk, 1 on decode failure
+    """
+    ...
+
+# //
+# // video input helpers (requires ffmpeg/ffprobe installed on the system)
+# // the notion of video only exists at the helper level, it is not visible to the core mtmd library
+# //
+# // NOTE: this implementation is model-agnostic, it can be used with any vision-capable model
+# //       however, it may not be accurate for some specific models
+# //       (this is expected for now, to keep the implementation simple)
+# //
+
+# struct mtmd_helper_video_info {
+#     uint32_t width;
+#     uint32_t height;
+#     float    fps;      // effective fps (fps_target if set, else original video fps)
+#     int32_t  n_frames; // estimated total frames at effective fps (-1 if unknown)
+# };
+class mtmd_helper_video_info(Structure):
+    _fields_ = [
+        ("width", c_uint32),
+        ("height", c_uint32),
+        ("fps", c_float),
+        ("n_frames", c_int32),
+    ]
+mtmd_helper_video_info_p_ctypes = POINTER(mtmd_helper_video_info)
+
+
+# // returns NULL on failure (ffprobe not found, file unreadable, etc.)
+# MTMD_API mtmd_helper_video * mtmd_helper_video_init(
+#                     struct mtmd_context * mctx,
+#                     const char * path,
+#                     struct mtmd_helper_video_init_params params);
+@ctypes_function_mtmd(
+    "mtmd_helper_video_init", [
+        mtmd_context_p_ctypes,
+        c_char_p,
+        mtmd_helper_video_init_params,
+    ],
+    mtmd_helper_video_p_ctypes)
+def mtmd_helper_video_init(
+    mctx: mtmd_context_p,
+    path: c_char_p,
+    params: mtmd_helper_video_init_params,
+    /,
+) -> mtmd_helper_video_p:
+    """
+    helper function to init an mtmd_helper_video object
+    returns NULL on failure (ffprobe not found, file unreadable, etc.)
+    """
+    ...
+
+
+# // Same as mtmd_helper_video_init(), but reads from an in-memory buffer.
+# // The buffer is copied internally; the caller does not need to keep it alive.
+# // Note: pipe input is not seekable, so seeking will use output-side seeking
+# // (ffmpeg decodes and discards frames up to the target position).
+# MTMD_API mtmd_helper_video * mtmd_helper_video_init_from_buf(
+#                     struct mtmd_context * mctx,
+#                     const unsigned char * buf, size_t len,
+#                     struct mtmd_helper_video_init_params params);
+@ctypes_function_mtmd(
+    "mtmd_helper_video_init_from_buf",
+    [
+        mtmd_context_p_ctypes,
+        POINTER(c_uint8),
+        c_size_t,
+        mtmd_helper_video_init_params,
+    ],
+    mtmd_helper_video_p_ctypes,
+)
+def mtmd_helper_video_init_from_buf(
+    mctx: mtmd_context_p,
+    buf: CtypesArray[c_uint8],
+    len: c_size_t,
+    params: mtmd_helper_video_init_params,
+    /,
+) -> mtmd_helper_video_p:
+    """
+    helper function to init an mtmd_helper_video object from an in-memory video buffer
+
+    The buffer is copied internally, so the caller does not need to keep it alive
+    after this function returns.
+    """
+    ...
+
+
+# MTMD_API void mtmd_helper_video_free(mtmd_helper_video * ctx);
+@ctypes_function_mtmd("mtmd_helper_video_free", [mtmd_helper_video_p_ctypes], None)
+def mtmd_helper_video_free(
+    ctx: mtmd_helper_video_p,
+    /,
+) -> None:
+    """
+    free an mtmd_helper_video object
+    """
+    ...
+
+
+# MTMD_API struct mtmd_helper_video_info mtmd_helper_video_get_info(const mtmd_helper_video * ctx);
+@ctypes_function_mtmd("mtmd_helper_video_get_info", [mtmd_helper_video_p_ctypes], mtmd_helper_video_info)
+def mtmd_helper_video_get_info(
+    ctx: mtmd_helper_video_p,
+    /,
+) -> mtmd_helper_video_info:
+    """
+    get video information from an mtmd_helper_video object
+    """
+    ...
+
+
+# // Read the next item from the video stream; exactly one of out_bitmap or out_text is set per call.
+# // *out_bitmap - heap-allocated; caller must free with mtmd_bitmap_free()
+# // *out_text   - heap-allocated (always via strdup/malloc); caller must free with free()
+# // returns 0 on success, -1 on EOF, -2 on error
+# MTMD_API int32_t mtmd_helper_video_read_next(mtmd_helper_video * ctx,
+#             mtmd_bitmap ** out_bitmap,
+#             char ** out_text);
+@ctypes_function_mtmd(
+    "mtmd_helper_video_read_next",
+    [
+        mtmd_helper_video_p_ctypes,
+        POINTER(mtmd_bitmap_p_ctypes),
+        POINTER(c_char_p),
+    ],
+    c_int32,
+)
+def mtmd_helper_video_read_next(
+    ctx: mtmd_helper_video_p,
+    out_bitmap: POINTER(mtmd_bitmap_p_ctypes),  # type: ignore
+    out_text:   POINTER(c_char_p),              # type: ignore
+    /,
+) -> int:
+    """
+    read the next item from the video stream
+
+    Exactly one of out_bitmap or out_text is set per successful call.
+
+    out_bitmap:
+        heap-allocated bitmap; caller must free it with mtmd_bitmap_free()
+
+    out_text:
+        heap-allocated string via strdup/malloc; caller must free it with free()
+
+    returns:
+        0  on success
+        -1 on EOF
+        -2 on error
+    """
+    ...
+
+class mtmd_helper_cap(Structure):
+    """Input/output capabilities; realtime token delay can disable chat.
+
+    text_gen is false for TTS-only models without a chat template.
+    audio_stream describes realtime input, not streaming audio output.
+    """
+
+    _fields_ = [
+        ("chat", c_bool),
+        ("vision", c_bool),
+        ("audio", c_bool),
+        ("video", c_bool),
+        ("audio_stream", c_bool),
+        ("text_gen", c_bool),
+        ("audio_gen", c_bool),
+        ("audio_gen_spk_ref", c_bool),
+    ]
+
+    if TYPE_CHECKING:
+        chat: bool
+        vision: bool
+        audio: bool
+        video: bool
+        audio_stream: bool
+        text_gen: bool
+        audio_gen: bool
+        audio_gen_spk_ref: bool
+
+
+# MTMD_API struct mtmd_helper_cap mtmd_helper_get_capabilities(const struct llama_model * model, const struct mtmd_context * mctx);
+@ctypes_function_mtmd(
+    "mtmd_helper_get_capabilities",
+    [llama_cpp_lib.llama_model_p_ctypes, mtmd_context_p_ctypes],
+    mtmd_helper_cap, required=False,
+)
+def mtmd_helper_get_capabilities(
+    model: llama_cpp_lib.llama_model_p, mctx: mtmd_context_p, /,
+) -> mtmd_helper_cap:
+    """Return capabilities by value; mctx may be NULL for a text-only model."""
+    ...
+
+
+# // return true if model can be used for chat (deprecated)
+# MTMD_API bool mtmd_helper_model_can_chat(struct llama_context * lctx, struct mtmd_context * mctx);
+@ctypes_function_mtmd(
+    "mtmd_helper_model_can_chat", [
+        llama_cpp_lib.llama_context_p_ctypes,
+        mtmd_context_p_ctypes,
+    ],
+    c_bool,
+)
+def mtmd_helper_model_can_chat(
+    lctx: llama_cpp_lib.llama_context_p,
+    mctx: mtmd_context_p,
+    /,
+) -> bool:
+    """
+    Deprecated: use mtmd_helper_get_capabilities().chat instead.
+    """
+    ...
+
+# //
+# // Audio generation helpers
+# // (early-stage experimental, subjected to breaking changes)
+# //
+
+# // audio generation helper context
+# // contains accumulator for generated audio features and PCM audio
+# struct mtmd_helper_gen_audio {
+#     std::unique_ptr<mtmd_gen_audio_pipeline> pipeline;
+# };
+# typedef struct mtmd_helper_gen_audio mtmd_helper_gen_audio;
+mtmd_helper_gen_audio_p = NewType("mtmd_helper_gen_audio_p", int)
+mtmd_helper_gen_audio_p_ctypes = c_void_p
+
+# enum mtmd_helper_gen_audio_outtype {
+#     MTMD_HELPER_GEN_AUDIO_OUTTYPE_PCM, // raw PCM
+#     MTMD_HELPER_GEN_AUDIO_OUTTYPE_WAV, // WAV PCM 16-bit LE, mono
+# };
+class mtmd_helper_gen_audio_outtype(enum.IntEnum):
+    MTMD_HELPER_GEN_AUDIO_OUTTYPE_PCM = 0  # raw PCM
+    MTMD_HELPER_GEN_AUDIO_OUTTYPE_WAV = 1  # WAV PCM 16-bit LE, mono
+
+
+class mtmd_helper_gen_audio_out_mode(enum.IntEnum):
+    """Output mode when continuing an existing sequence (n_past > 0)."""
+
+    MTMD_HELPER_GEN_AUDIO_OUT_AUTO = 0
+    MTMD_HELPER_GEN_AUDIO_OUT_TEXT = 1
+    MTMD_HELPER_GEN_AUDIO_OUT_AUDIO = 2
+    MTMD_HELPER_GEN_AUDIO_OUT_MIXED = 3
+
+# struct mtmd_helper_gen_audio_inp {
+#     bool stream; // if true, output() must be called after each step_gen()
+#     llama_seq_id seq_id;
+#     const char * prompt;
+#     size_t       prompt_len;
+#     int32_t n_past; // > 0 continues an existing sequence (LFM3A only)
+#     enum mtmd_helper_gen_audio_out_mode out_mode;
+#     mtmd_bitmap * speaker_ref; // optional, can be NULL
+#     const char * lang; // optional, can be NULL
+#     int32_t  top_k;
+#     float    top_p;
+#     float    temp; // audio frame temperature if supported, < 0 = model default, 0 = greedy
+#     uint32_t seed; // UINT32_MAX for random (default: random)
+#     enum mtmd_helper_gen_audio_outtype out_type;
+# };
+class mtmd_helper_gen_audio_inp(Structure):
+    _fields_ = [
+        ("stream", c_bool),
+        ("seq_id", c_int32),
+        ("prompt", c_char_p),
+        ("prompt_len", c_size_t),
+        ("n_past", c_int32),
+        ("out_mode", c_int),
+        ("speaker_ref", mtmd_bitmap_p_ctypes),
+        ("lang", c_char_p),
+        ("top_k", c_int32),
+        ("top_p", c_float),
+        ("temp", c_float),
+        ("seed", c_uint32),
+        ("out_type", c_int),
+    ]
+
+    if TYPE_CHECKING:
+        stream: bool
+        seq_id: int
+        prompt: bytes
+        prompt_len: int
+        n_past: int
+        out_mode: int
+        speaker_ref: mtmd_bitmap_p
+        lang: Optional[bytes]
+        top_k: int
+        top_p: float
+        temp: float
+        seed: int
+        out_type: int
+
+# MTMD_API struct mtmd_helper_gen_audio_inp mtmd_helper_gen_audio_inp_default(void);
+@ctypes_function_mtmd("mtmd_helper_gen_audio_inp_default", [], mtmd_helper_gen_audio_inp)
+def mtmd_helper_gen_audio_inp_default() -> mtmd_helper_gen_audio_inp:
+    """Return native defaults for audio generation requests."""
+    ...
+
+
+# MTMD_API mtmd_helper_gen_audio * mtmd_helper_gen_audio_init(
+#                                     struct llama_context * lctx,
+#                                     struct mtmd_context * mctx);
+@ctypes_function_mtmd(
+    "mtmd_helper_gen_audio_init",
+    [
+        llama_cpp_lib.llama_context_p_ctypes,
+        mtmd_context_p_ctypes,
+    ],
+    mtmd_helper_gen_audio_p_ctypes,
+)
+def mtmd_helper_gen_audio_init(
+    lctx: llama_cpp_lib.llama_context_p,
+    mctx: mtmd_context_p,
+    /,
+) -> mtmd_helper_gen_audio_p:
+    """
+    Initialize the experimental audio generation helper context.
+    """
+    ...
+
+# MTMD_API void mtmd_helper_gen_audio_free(mtmd_helper_gen_audio * ctx);
+@ctypes_function_mtmd(
+    "mtmd_helper_gen_audio_free",
+    [mtmd_helper_gen_audio_p_ctypes],
+    None,
+)
+def mtmd_helper_gen_audio_free(
+    ctx: mtmd_helper_gen_audio_p,
+    /,
+):
+    ...
+
+# MTMD_API void mtmd_helper_gen_audio_reset(mtmd_helper_gen_audio * ctx);
+@ctypes_function_mtmd(
+    "mtmd_helper_gen_audio_reset",
+    [mtmd_helper_gen_audio_p_ctypes],
+    None,
+)
+def mtmd_helper_gen_audio_reset(
+    ctx: mtmd_helper_gen_audio_p,
+    /,
+):
+    ...
+
+# MTMD_API int32_t mtmd_helper_gen_audio_set_input(
+#                         mtmd_helper_gen_audio * ctx,
+#                         const struct mtmd_helper_gen_audio_inp * inp);
+@ctypes_function_mtmd(
+    "mtmd_helper_gen_audio_set_input",
+    [
+        mtmd_helper_gen_audio_p_ctypes,
+        POINTER(mtmd_helper_gen_audio_inp),
+    ],
+    c_int32,
+)
+def mtmd_helper_gen_audio_set_input(
+    ctx: mtmd_helper_gen_audio_p,
+    inp: POINTER(mtmd_helper_gen_audio_inp),  # type: ignore
+    /,
+) -> c_int32:
+    ...
+
+# // processes at most n_batch prompt tokens per call
+# // returns: >0 = number of prompt tokens remaining, 0 = done, <0 = error
+# MTMD_API int32_t mtmd_helper_gen_audio_step_prompt(
+#                         mtmd_helper_gen_audio * ctx,
+#                         int32_t n_batch);
+@ctypes_function_mtmd(
+    "mtmd_helper_gen_audio_step_prompt",
+    [
+        mtmd_helper_gen_audio_p_ctypes,
+        c_int32,
+    ],
+    c_int32,
+)
+def mtmd_helper_gen_audio_step_prompt(
+    ctx: mtmd_helper_gen_audio_p,
+    n_batch: c_int32,
+    /,
+) -> c_int32:
+    """
+    Process at most n_batch prompt tokens per call.
+    Returns: >0 = number of prompt tokens remaining, 0 = done, <0 = error
+    """
+    ...
+
+# // generates one frame; must only be called after step_prompt() has returned 0
+# // sampled can be LLAMA_TOKEN_NULL for pipelines with no discrete backbone token
+# // out_stop (optional) is set on end-of-speech, the caller must then stop the loop
+# // h_state_out is valid until next step_gen() or reset() call, null if no frame is generated
+# MTMD_API int32_t mtmd_helper_gen_audio_step_gen(
+#                         mtmd_helper_gen_audio * ctx,
+#                         llama_token sampled,
+#                         const float *  h_state_in,
+#                         const float ** h_state_out,
+#                         bool * out_stop);
+@ctypes_function_mtmd(
+    "mtmd_helper_gen_audio_step_gen",
+    [
+        mtmd_helper_gen_audio_p_ctypes,
+        llama_cpp_lib.llama_token,
+        POINTER(c_float),
+        POINTER(POINTER(c_float)),
+        POINTER(c_bool),
+    ],
+    c_int32,
+)
+def mtmd_helper_gen_audio_step_gen(
+    ctx: mtmd_helper_gen_audio_p,
+    sampled: llama_cpp_lib.llama_token,
+    h_state_in: POINTER(c_float),           # type: ignore
+    h_state_out: POINTER(POINTER(c_float)), # type: ignore
+    out_stop: POINTER(c_bool),              # type: ignore
+    /,
+) -> c_int32:
+    """
+    Generate one audio frame.
+
+    Must only be called after mtmd_helper_gen_audio_step_prompt() returns 0.
+
+    sampled can be LLAMA_TOKEN_NULL for pipelines with no discrete backbone token.
+
+    out_stop (optional) is set on end-of-speech, the caller must then stop the loop.
+
+    h_state_out is owned by the helper context and remains valid until the
+    next step_gen() or reset() call, null if no frame is generated.
+    """
+    ...
+
+# MTMD_API bool mtmd_helper_gen_audio_next_is_text(mtmd_helper_gen_audio * ctx);
+@ctypes_function_mtmd(
+    "mtmd_helper_gen_audio_next_is_text", [mtmd_helper_gen_audio_p_ctypes],
+    c_bool, required=False,
+)
+def mtmd_helper_gen_audio_next_is_text(ctx: mtmd_helper_gen_audio_p) -> bool:
+    """Whether the next step needs a text token in a text/audio-switching pipeline.
+
+    False does not replace the existing token-sampling rules for Qwen3-TTS
+    or Soprano, which still require a sampled token for audio generation.
+    """
+    ...
+
+
+# MTMD_API const llama_logit_bias * mtmd_helper_gen_audio_get_logit_bias(mtmd_helper_gen_audio * ctx, size_t * n_bias);
+@ctypes_function_mtmd(
+    "mtmd_helper_gen_audio_get_logit_bias",
+    [mtmd_helper_gen_audio_p_ctypes, POINTER(c_size_t)],
+    POINTER(llama_cpp_lib.llama_logit_bias), required=False,
+)
+def mtmd_helper_gen_audio_get_logit_bias(
+    ctx: mtmd_helper_gen_audio_p, n_bias: _Pointer[c_size_t],
+) -> _Pointer[llama_cpp_lib.llama_logit_bias]:
+    """Borrow text-token biases; n_bias receives the count, zero returns NULL.
+
+    Copy before resetting, reconfiguring or freeing the helper.
+    """
+    ...
+
+
+# MTMD_API int32_t mtmd_helper_audio_stream_get_logit_bias(const mtmd_context * mctx, const struct llama_model * model, llama_logit_bias * out, int32_t n_max);
+@ctypes_function_mtmd(
+    "mtmd_helper_audio_stream_get_logit_bias",
+    [mtmd_context_p_ctypes, llama_cpp_lib.llama_model_p_ctypes,
+     POINTER(llama_cpp_lib.llama_logit_bias), c_int32],
+    c_int32, required=False,
+)
+def mtmd_helper_audio_stream_get_logit_bias(
+    mctx: mtmd_context_p, model: llama_cpp_lib.llama_model_p,
+    out: _Pointer[llama_cpp_lib.llama_logit_bias], n_max: int,
+) -> int:
+    """Return the total live-ASR bias count, writing at most n_max entries.
+
+    Query with out=NULL, n_max=0, then supply a caller-owned array of that size.
+    """
+    ...
+
+
+# // out_data valid until next get_output() or reset() call
+# // out_n_samples (optional, can be NULL) receives the number of generated PCM samples
+# // in stream mode, returns only new audio; out_data_len is zero until a window is ready
+# MTMD_API int32_t mtmd_helper_gen_audio_get_output(
+#                         mtmd_helper_gen_audio * ctx,
+#                         int32_t * out_sample_rate,
+#                         const char ** out_data,
+#                         size_t * out_data_len,
+#                         int64_t * out_n_samples);
+@ctypes_function_mtmd(
+    "mtmd_helper_gen_audio_get_output",
+    [
+        mtmd_helper_gen_audio_p_ctypes,
+        POINTER(c_int32),
+        POINTER(c_char_p),
+        POINTER(c_size_t),
+        POINTER(c_int64),
+    ],
+    c_int32,
+)
+def mtmd_helper_gen_audio_get_output(
+    ctx: mtmd_helper_gen_audio_p,
+    out_sample_rate: POINTER(c_int32),  # type: ignore
+    out_data: POINTER(c_char_p),        # type: ignore
+    out_data_len: POINTER(c_size_t),    # type: ignore
+    out_n_samples: POINTER(c_int64),    # type: ignore
+    /,
+) -> c_int32:
+    """
+    Get accumulated generated audio output.
+
+    out_data is owned by the helper context and remains valid until the next
+    get_output() or reset() call.
+
+    out_n_samples (optional, can be NULL) receives the number of generated PCM samples.
+    In stream mode, returns only new audio; out_data_len is zero until a window is ready.
+    """
+    ...
+
+
+# MTMD_API int32_t mtmd_helper_gen_audio_flush(mtmd_helper_gen_audio * ctx);
+@ctypes_function_mtmd(
+    "mtmd_helper_gen_audio_flush", [mtmd_helper_gen_audio_p_ctypes], c_int32,
+)
+def mtmd_helper_gen_audio_flush(ctx: mtmd_helper_gen_audio_p, /) -> int:
+    """Decode buffered frames; call before the final get_output() in stream mode."""
+    ...
