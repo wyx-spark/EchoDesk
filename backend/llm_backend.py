@@ -48,6 +48,35 @@ RUNTIME_ENV = "ECHODESK_LLAMA_RUNTIME"
 #: [ZH] 合法取值；其它值按 ``auto`` 处理。
 MODES = ("auto", "native", "wheel")
 
+
+class NativeVisionUnsupported(RuntimeError):
+    """
+    [EN]
+    Raised when no available runtime can serve a vision request.
+
+    Vision still goes through ``llama-cpp-python`` until ``mtmd`` is wired up, so the
+    only runtime that can answer an image is the wheel. When the policy forbids the
+    wheel (``native``) or the wheel is not installed at all (the post-T3-3 ``auto``
+    case), the request must fail loudly: silently degrading to a text-only answer
+    would make the user believe the image was read.
+
+    The class lives here rather than in :mod:`llama_native` because the routing layer
+    has to import it without importing the native runtime: ``llama_native`` loads the
+    native DLLs at import time, and the vision path must be able to refuse *before*
+    any runtime DLL is loaded. :mod:`llama_native` re-exports this class.
+
+    [ZH]
+    没有任何可用运行期能承载视觉请求时抛出。
+
+    在 ``mtmd`` 接通之前，视觉仍走 ``llama-cpp-python``，因此唯一能回答图片的运行期是
+    轮子。当策略禁止轮子（``native``）或轮子根本没安装（T3-3 之后的 ``auto`` 情形）时，
+    请求必须显式失败：静默降级成纯文本回答会让用户误以为图片真的被读了。
+
+    该类放在此处而不是 :mod:`llama_native`，是因为路由层必须能在**不导入原生运行期**的
+    前提下导入它：``llama_native`` 在导入时就会加载原生 DLL，而视觉路径必须能在任何
+    运行期 DLL 加载**之前**就拒绝。:mod:`llama_native` 重新导出该类。
+    """
+
 _SELECTION_LOCK = threading.Lock()
 #: [EN] Result of the most recent decision, readable for diagnostics/status.
 #: [ZH] 最近一次决策的结果，供诊断/状态读取。
@@ -113,6 +142,57 @@ def will_use_wheel(**kwargs) -> bool:
     if mode == "native":
         return False
     return kwargs.get("chat_handler") is not None
+
+
+def vision_runtime() -> str:
+    """
+    [EN]
+    Return the runtime that can serve a vision request, or raise.
+
+    This is the single decision point for "can vision run at all" (task book §12.2:
+    one place decides, nobody re-decides). It deliberately does not look at
+    ``runtime_mode() == "native"`` alone: after ``llama-cpp-python`` is removed,
+    ``auto`` will have no vision runtime either, and that is the more dangerous
+    case because ``auto`` is the default. The real question is whether the wheel is
+    *available*, not which policy string is set.
+
+    ``importlib.util.find_spec`` is used instead of ``import llama_cpp`` so this
+    check has no side effect: importing the wheel loads its DLLs, which would break
+    the native-only rule that no wheel DLL may be preloaded.
+
+    [ZH]
+    返回能够承载视觉请求的运行期，或抛出。
+
+    这是"视觉到底能不能跑"的唯一判定点（任务书 §12.2：一处判定，不得在别处重复判定）。
+    它刻意不只看 ``runtime_mode() == "native"``：``llama-cpp-python`` 被移除后，
+    ``auto`` 同样没有视觉运行期，而那是更危险的情形，因为 ``auto`` 是默认值。真正的问题
+    是轮子**是否可用**，而不是策略字符串是什么。
+
+    ``importlib.util.find_spec`` 代替 ``import llama_cpp``，使本检查没有副作用：导入轮子
+    会加载它的 DLL，那会破坏"原生模式下不得预加载任何轮子 DLL"的规则。
+    """
+    mode = runtime_mode()
+    if mode == "wheel":
+        return "wheel"
+    if mode == "native":
+        raise NativeVisionUnsupported(
+            "vision cannot run under %s=native: the native runtime has no mtmd vision "
+            "support yet. Set %s=wheel to fall back to the llama-cpp-python runtime."
+            % (RUNTIME_ENV, RUNTIME_ENV))
+    # [EN] ``auto``: vision still needs the wheel, and after T3-3 it may be gone.
+    # [ZH] ``auto``：视觉仍需轮子，而 T3-3 之后轮子可能已不存在。
+    try:
+        import importlib.util  # noqa: PLC0415 - cheap, but keep the module graph flat
+
+        available = importlib.util.find_spec("llama_cpp") is not None
+    except (ImportError, ValueError):  # noqa: BLE001 - a broken path is "not available"
+        available = False
+    if not available:
+        raise NativeVisionUnsupported(
+            "vision requires the llama-cpp-python runtime, which is not installed; "
+            "the native runtime has no mtmd vision support yet. Set %s=wheel after "
+            "installing it, or load a text-only model." % RUNTIME_ENV)
+    return "wheel"
 
 
 def _record(runtime: str, mode: str, reason: str) -> None:

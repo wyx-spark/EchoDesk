@@ -37,6 +37,7 @@
     "error.too_large": "{kind}超出大小上限 {limit}：{path}",
     "error.bad_image": "文件内容不是有效的图片：{path}",
     "vision_disabled": "图片对话已在配置中关闭（config.json 的 media.vision_enabled）",
+    "vision_runtime_unavailable": "当前 llama.cpp 运行期尚不能承载视觉。设置 ECHODESK_LLAMA_RUNTIME=wheel 可退回 llama-cpp-python 运行期。",
     "vision_no_model": "未配置视觉模型；请在 config.json 的 media.vision_model 指定带 mmproj 的 VL 模型，或先加载一个多模态模型",
     "vision_model_missing": "视觉模型文件不存在：{name}",
     "vision_no_mmproj": "未找到多模态投影文件（mmproj-Q8_0.gguf）；请把它放在模型目录，或用 media.vision_mmproj 指定",

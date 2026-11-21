@@ -83,19 +83,12 @@ class NativeRuntimeUnavailable(NativeLlamaError):
     """
 
 
-class NativeVisionUnsupported(RuntimeError):
-    """
-    [EN]
-    Raised when a vision model (``chat_handler`` / mmproj) is handed to the native
-    runtime. Vision still goes through ``llama-cpp-python`` until T3-2 wires up
-    ``mtmd``, and silently degrading to a text-only model would be worse than
-    failing: the user would believe the image was read.
-
-    [ZH]
-    视觉模型（``chat_handler`` / mmproj）被交给原生运行期时抛出。视觉在 T3-2 接通
-    ``mtmd`` 之前仍走 ``llama-cpp-python``；静默降级成纯文本比失败更糟 —— 用户会以为
-    图片真的被读了。
-    """
+# [EN] Re-exported from ``llm_backend`` so the routing layer can import the type
+# [EN] without importing this module: importing ``llama_native`` loads the native
+# [EN] DLLs, and the vision gate must be able to refuse before any DLL is loaded.
+# [ZH] 从 ``llm_backend`` 重新导出：路由层需要导入该类型，但不应为此导入本模块 ——
+# [ZH] 导入 ``llama_native`` 会加载原生 DLL，而视觉闸门必须能在任何 DLL 加载之前拒绝。
+from llm_backend import NativeVisionUnsupported  # noqa: E402,F401
 
 
 class NativeLlamaAborted(NativeLlamaError):

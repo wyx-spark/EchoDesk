@@ -2168,6 +2168,15 @@ class Backend:
                                 else getattr(cfg, "vision_temperature", 0.3))
             answer = service.chat(image_path, prompt, max_tokens=max_tokens,
                                   temperature=temperature)
+        except vision_mod.NativeVisionUnsupported as exc:
+            # [EN] No available runtime can serve vision (native policy, or the wheel
+            # [EN] is gone after T3-3). Report a localized, actionable failure instead
+            # [EN] of letting the raw exception escape the protocol loop.
+            # [ZH] 没有可用运行期能承载视觉（native 策略，或 T3-3 之后轮子已不存在）。
+            # [ZH] 返回已本地化、可操作的失败，而不是让原始异常逸出协议循环。
+            return self._media_failure("vision_runtime_unavailable",
+                                       _t("media.vision_runtime_unavailable"),
+                                       detail=str(exc))
         except vision_mod.VisionError as exc:
             return self._media_failure(exc.code, exc.localize(_t),
                                        detail=str(exc.kwargs.get("detail") or ""))

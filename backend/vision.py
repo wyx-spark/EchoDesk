@@ -72,6 +72,12 @@ import cuda_bootstrap
 # [ZH] 复用文本引擎的进程级推理互斥锁：视觉轮解码同样运行在同一套 llama.cpp
 # [ZH] 运行时之上，而 llama.cpp 不是线程安全的。
 from llm_engine import _INFERENCE_LOCK
+# [EN] Runtime-policy gate. ``llm_backend`` is a stdlib-only module, so importing it
+# [EN] here cannot load the native DLLs; the gate must be able to refuse before any
+# [EN] runtime is touched. ``vision_runtime()`` is the single decision point (§12.2).
+# [ZH] 运行期策略闸门。``llm_backend`` 只依赖标准库，在此导入不会加载原生 DLL；闸门
+# [ZH] 必须能在任何运行期被触碰之前拒绝。``vision_runtime()`` 是唯一判定点（§12.2）。
+from llm_backend import NativeVisionUnsupported, vision_runtime  # noqa: E402,F401
 
 log = logging.getLogger("EchoDesk.Vision")
 
@@ -663,6 +669,15 @@ class VisionService:
         [ZH]
         确保引擎已加载，并执行一次视觉轮。
         """
+        # [EN] Gate first, before the path checks and before any model load: when no
+        # [EN] available runtime can serve vision, the request must fail with a
+        # [EN] typed error instead of degrading into a text-only answer. The check
+        # [EN] stays outside the ``try`` below so the exception type survives to the
+        # [EN] dispatcher (``VisionEngine`` would wrap it into a generic VisionError).
+        # [ZH] 先过闸门，再走路径校验与模型加载：没有可用运行期能承载视觉时，请求必须
+        # [ZH] 以带类型的错误失败，而不是退化成纯文本回答。该检查位于下方 ``try`` 之外，
+        # [ZH] 使异常类型能传到分发层（放进 ``VisionEngine`` 会被包成通用 VisionError）。
+        vision_runtime()
         if not self.model_path:
             raise VisionError("no_model", "media.vision_no_model")
         if not os.path.isfile(self.model_path):
