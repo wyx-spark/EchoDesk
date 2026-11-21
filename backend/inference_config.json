@@ -13,12 +13,22 @@
   "output_token_budget": 4096,
   "context_safety_margin": 512,
   "tuning": {
-    "prompt_tokens": 512,
+    "prompt_tokens_short": 512,
+    "prompt_tokens_long": 4096,
+    "prompt_tokens_xlong": 16384,
     "gen_tokens": 128,
-    "repeats": 2,
-    "min_improvement_ratio": 0.05,
-    "max_trials": 8
+    "repeats": 5,
+    "min_improvement_ratio": 0.03,
+    "max_trials": 8,
+    "max_seconds": 900,
+    "decode_regression_ratio": 0.02,
+    "responsiveness_p95_ms": 50,
+    "primary_target_seconds": 10,
+    "long_guard_ratio": 0.02,
+    "long_guard_seconds": 300,
+    "long_scope_min_rung": 8192
   },
+  "tuned_metrics_version": 2,
   "tuned_at": "2026-11-18T20:42:56",
   "tuned_model": "Qwen3-0.6B-Q6_K.gguf",
   "tuned_baseline": {

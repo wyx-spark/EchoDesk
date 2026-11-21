@@ -314,7 +314,10 @@
       "elapsed": "⏱️ {0}",
       "stopped": "⏹ 已中止",
       "failed": "⚠️ 失败",
-      "reasoningUnclosed": "⚠️ 思考未闭合（token 预算可能被思考用完）"
+      "reasoningUnclosed": "⚠️ 思考未闭合（token 预算可能被思考用完）",
+      "prefill": "正在通读合同文本 {0}%（{1}/{2} token）",
+      "prefillEta": "预计还需 {0}s",
+      "prefillStalled": "⏹ 已停止：文本过长"
     },
     "message": {
       "copy": "复制",

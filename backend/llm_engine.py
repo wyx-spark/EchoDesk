@@ -152,6 +152,13 @@ _INFERENCE_LOCK = threading.Lock()
 #: [ZH] 消息量失控（一次长回复的心跳数量上限约为数百条）。
 DEFAULT_HEARTBEAT_SECONDS = 1.5
 
+#: [EN] Fallback for the prefill no-progress watchdog when the inference configuration
+#: [EN] cannot be read. It matches the shipped ``prefill_stall_seconds`` default, so an
+#: [EN] unreadable configuration still enables the protection instead of disabling it.
+#: [ZH] 推理配置不可读时预填充无进展看门狗的兜底阈值。它与随包
+#: [ZH] ``prefill_stall_seconds`` 默认值一致，因此配置读不出来时保护仍然生效，而不是被关掉。
+DEFAULT_PREFILL_STALL_SECONDS = 45.0
+
 #: [EN] Dedicated marker for heartbeat events in the channel stream:
 #: ``(HEARTBEAT, "")``. It is not model output;
 #: :meth:`LLMEngine.chat_stream_split` only forwards it as a signal, and the
@@ -190,6 +197,14 @@ class StreamStats:
     ``tps``              Tokens per second (tokens / generation time);
     ``prefill_done``     Whether the first token has been emitted; the frontend
                          uses it to display "waiting for first token";
+    ``prefill_tokens``   Tokens already read by the prefill loop of the current
+                         request (v0.2.7; live value while prefill runs);
+    ``prefill_total``    Total prompt tokens the prefill loop has to read (0 when no
+                         prefill is running);
+    ``prefill_tps``      Measured prefill throughput in tokens per second;
+    ``eta_seconds``      Estimated seconds until prefill finishes, derived from the
+                         measured throughput (0 = not estimable);
+    ``stalled``          Whether the no-progress watchdog ended the stream;
     ``stopped``          Whether the user aborted generation.
 
     [ZH]
@@ -204,6 +219,11 @@ class StreamStats:
     ``tokens_estimated`` tokens 是否为估算值（分词器不可用时为 True）；
     ``tps``              token/s（tokens / 生成耗时）；
     ``prefill_done``     是否已产出首个 token（前端据此显示"等待首 token"）；
+    ``prefill_tokens``   当前请求预填充已通读的 token 数（v0.2.7，预填充期间实时变化）；
+    ``prefill_total``    预填充总共要通读的 token 数（没有预填充时为 0）；
+    ``prefill_tps``      实测预填充吞吐（token/s）；
+    ``eta_seconds``      按实测吞吐反算的预填充剩余秒数（0 = 不可估算）；
+    ``stalled``          是否由无进展看门狗结束了本次流；
     ``stopped``          是否被用户中止。
     """
 
@@ -215,6 +235,15 @@ class StreamStats:
     tokens_estimated: bool = False
     tps: float = 0.0
     prefill_done: bool = False
+    # [EN] v0.2.7 prefill telemetry. They are reset by every request and only filled
+    # [EN] while the request is running; a finished stream keeps the last snapshot.
+    # [ZH] v0.2.7 预填充遥测。每个请求开始时归零，仅在请求运行期间填充；流结束后保留
+    # [ZH] 最后一次快照。
+    prefill_tokens: int = 0
+    prefill_total: int = 0
+    prefill_tps: float = 0.0
+    eta_seconds: float = 0.0
+    stalled: bool = False
     stopped: bool = False
 
     def to_dict(self) -> Dict[str, object]:
@@ -227,8 +256,109 @@ class StreamStats:
             "tokens_estimated": bool(self.tokens_estimated),
             "tps": round(float(self.tps), 2),
             "prefill_done": bool(self.prefill_done),
+            "prefill_tokens": int(self.prefill_tokens),
+            "prefill_total": int(self.prefill_total),
+            "prefill_tps": round(float(self.prefill_tps), 2),
+            "eta_seconds": round(float(self.eta_seconds), 2),
+            "stalled": bool(self.stalled),
             "stopped": bool(self.stopped),
         }
+
+
+class _PrefillProgress:
+    """
+    [EN]
+    Lock-guarded progress slot shared by the native prefill loop and the consumer.
+
+    Thread rule (v0.2.7 step 3): :meth:`update` is called from the reader thread, inside
+    the native prefill loop, and must stay I/O-free -- no protocol writes, no printing,
+    no logging. Protocol lines may only be written by the consumer thread, otherwise
+    two writers would interleave the JSON-line stream. The callback therefore copies
+    four numbers under a very short lock; the consumer takes a :meth:`snapshot` when a
+    heartbeat is due and merges it into the stream statistics.
+
+    ``updated`` is a ``time.monotonic`` stamp of the last write and feeds the
+    no-progress watchdog.
+
+    [ZH]
+    原生预填充循环与消费线程共享的带锁进度槽。
+
+    线程铁律（v0.2.7 步 3）：:meth:`update` 由读者线程在原生预填充循环内调用，必须保持
+    无 I/O —— 不写协议、不打印、不记日志。协议行只能由消费线程写，否则两个写者会把
+    JSON 行流交错。因此回调只在极短的锁内拷贝四个数字；消费线程在心跳到期时取
+    :meth:`snapshot` 并入统计。
+
+    ``updated`` 是最近一次写入的 ``time.monotonic`` 时间戳，供无进展看门狗使用。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._tokens = 0
+        self._total = 0
+        self._tps = 0.0
+        self._elapsed = 0.0
+        self._updated = time.monotonic()
+
+    def mark_started(self) -> None:
+        """
+        [EN] Write the initial baseline before generation starts, so the watchdog cannot
+        fire merely because no chunk has completed yet.
+        [ZH] 生成开始前写入初始基线，避免"还没开始就判超时"。
+        """
+        with self._lock:
+            self._tokens = 0
+            self._total = 0
+            self._tps = 0.0
+            self._elapsed = 0.0
+            self._updated = time.monotonic()
+
+    def update(self, done: int, total: int, elapsed_s: float, tps: float) -> None:
+        """
+        [EN] ``on_prefill_progress`` callback body: memory writes only.
+        [ZH] ``on_prefill_progress`` 回调体：只做内存写入。
+        """
+        with self._lock:
+            self._tokens = int(done)
+            self._total = int(total)
+            self._tps = float(tps)
+            self._elapsed = float(elapsed_s)
+            self._updated = time.monotonic()
+
+    def snapshot(self) -> Dict[str, float]:
+        """[EN] Consistent copy for the consumer thread. [ZH] 供消费线程使用的快照。"""
+        with self._lock:
+            return {
+                "tokens": self._tokens,
+                "total": self._total,
+                "tps": self._tps,
+                "elapsed": self._elapsed,
+                "updated": self._updated,
+            }
+
+
+def _is_prefill_abort(exc: BaseException) -> bool:
+    """
+    [EN]
+    Whether ``exc`` is the native "the caller asked to stop" signal.
+
+    The import is deferred on purpose: this module must not hard-depend on the native
+    layer (it is also imported by tests and by the no-model path), but a genuine abort
+    must be recognised so the engine can end the stream silently instead of reporting
+    it as a fault. If the native module cannot be imported at all, the class-name check
+    keeps the behaviour correct for the common case.
+
+    [ZH]
+    判断 ``exc`` 是否为原生层"调用方要求停止"的信号。
+
+    延迟导入是有意为之：本模块不得硬依赖原生层（测试与无模型路径也会导入它），但真实的
+    中止必须被识别出来，才能让引擎静默收尾而不是把它当故障上报。若原生模块完全无法导入，
+    则退回类名判断，常见情形下行为仍然正确。
+    """
+    try:
+        from llama_native import NativeLlamaAborted
+    except Exception:  # noqa: BLE001 - optional dependency
+        return exc.__class__.__name__ == "NativeLlamaAborted"
+    return isinstance(exc, NativeLlamaAborted)
 
 
 class NoModelError(RuntimeError):
@@ -371,6 +501,15 @@ class LLMEngine:
             "use_mlock": bool(self.use_mlock),
             "use_mmap": bool(self.use_mmap),
             "flash_attn": bool(self.flash_attn),
+            # [EN] v0.2.7: the prefill granularity and the inter-chunk yield are resolved
+            # [EN] here (configuration -> concrete values) and handed to the native layer,
+            # [EN] which never guesses them. ``llama_kwargs`` deliberately carries only the
+            # [EN] construction parameters, so these two are added at this seam.
+            # [ZH] v0.2.7：预填充分块粒度与块间让核在这里完成"配置 -> 具体值"的解析并交给
+            # [ZH] 原生层，原生层不自行猜测。``llama_kwargs`` 刻意只带构造参数，因此这两项
+            # [ZH] 在此接缝处补上。
+            "prefill_chunk_tokens": int(self.inference.resolve_prefill_chunk_tokens()),
+            "prefill_yield_ms": int(self.inference.resolve_prefill_yield_ms()),
         })
         llm = NativeLlama(
             model_path=self.model_path,
@@ -1113,7 +1252,16 @@ class LLMEngine:
             # [EN] Rethrown unchanged on the consumer side.
             # [ZH] 原样在消费者侧抛出。
             except BaseException as exc:  # noqa: BLE001
-                error_box.append(exc)
+                # [EN] v0.2.7 step 3: a prefill abort is the user's stop request, not a
+                # [EN] fault. Swallow it here so the consumer sees a clean end of stream:
+                # [EN] no error channel, no crash log, and the stats' ``stopped`` flag is
+                # [EN] already set from the stop signal. Everything else is rethrown
+                # [EN] unchanged, exactly as before.
+                # [ZH] v0.2.7 步 3：预填充中止是用户的停止请求，不是故障。在此吞掉，使
+                # [ZH] 消费者看到干净的流结束：不进错误通道、不写崩溃日志，统计中的
+                # [ZH] ``stopped`` 已由停止信号置位。其余异常仍原样上抛，与之前完全一致。
+                if not _is_prefill_abort(exc):
+                    error_box.append(exc)
             finally:
                 # [EN] The end-of-stream marker is only meaningful while a consumer
                 # [EN] still exists; an abandoned queue must not block the reader.
@@ -1172,6 +1320,23 @@ class LLMEngine:
             # [ZH] 覆盖正常返回、停止、异常与生成器关闭：自此读者线程不再等待消费者。
             abandoned.set()
 
+    def _prefill_stall_seconds(self) -> float:
+        """
+        [EN]
+        Resolve the no-progress threshold from the inference configuration, where it is
+        already clamped into ``[10, 300]`` seconds. A configuration that is missing or
+        unreadable falls back to :data:`DEFAULT_PREFILL_STALL_SECONDS` so the protection
+        never silently disappears.
+
+        [ZH]
+        从推理配置解析无进展阈值；该值在那里已钳制在 ``[10, 300]`` 秒内。配置缺失或
+        不可读时回退到 :data:`DEFAULT_PREFILL_STALL_SECONDS`，使保护不会悄悄消失。
+        """
+        try:
+            return float(self.inference.resolve_prefill_stall_seconds())
+        except Exception:  # noqa: BLE001 - a broken config must not disable the guard
+            return float(DEFAULT_PREFILL_STALL_SECONDS)
+
     def _chat_stream_raw(
         self,
         messages: List[dict],
@@ -1207,7 +1372,28 @@ class LLMEngine:
         # [ZH] 扩展；见 `_chat_complete_raw`。
         started = time.perf_counter()
         produced = 0
+        # [EN] v0.2.7 step 3: the prefill loop reports into this slot and asks the stop
+        # [EN] signal between chunks. The slot is written only by the reader thread and
+        # [EN] read only here, under its own lock; the baseline is written before the
+        # [EN] native stream exists so the watchdog cannot fire before the first chunk.
+        # [ZH] v0.2.7 步 3：预填充循环把进度写进这个槽，并在块与块之间查询停止信号。槽只由
+        # [ZH] 读者线程写、只在这里被读，读写都在它自己的锁内；基线在原生流创建之前写入，
+        # [ZH] 因此看门狗不会在首块完成前误判超时。
+        progress = _PrefillProgress()
+        progress.mark_started()
+        stall_seconds = self._prefill_stall_seconds()
+
+        def should_abort() -> bool:
+            # [EN] Cheap read of the caller's stop signal; runs between prefill chunks.
+            # [ZH] 只读一次调用方的停止信号，运行于预填充块与块之间。
+            return bool(stop_event is not None and stop_event.is_set())
+
         if stats is not None:
+            stats.prefill_tokens = 0
+            stats.prefill_total = 0
+            stats.prefill_tps = 0.0
+            stats.eta_seconds = 0.0
+            stats.stalled = False
             stats.prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
         kwargs: Dict[str, object] = {
             "messages": messages,
@@ -1219,6 +1405,12 @@ class LLMEngine:
             kwargs["top_p"] = float(top_p)
         if repeat_penalty is not None:
             kwargs["repeat_penalty"] = float(repeat_penalty)
+        # [EN] The two prefill hooks travel as their own keywords, never as sampler
+        # [EN] parameters; the native layer pops them before building the sampler chain.
+        # [ZH] 两个预填充钩子以独立关键字传入，绝不进入采样器参数；原生层在构建采样链
+        # [ZH] 之前就把它们取出。
+        kwargs["on_prefill_progress"] = progress.update
+        kwargs["should_abort"] = should_abort
 
         def open_stream() -> Iterator[dict]:
             """
@@ -1233,6 +1425,14 @@ class LLMEngine:
             """
             return self.llm.create_chat_completion(**kwargs)
 
+        # [EN] v0.2.7: at most one "prefill finished" notice per request. It reuses the
+        # [EN] existing heartbeat signal (``None``) so the caller emits one ``progress``
+        # [EN] line and the metrics row repaints right at the first token -- no new event
+        # [EN] type and never a per-token event stream.
+        # [ZH] v0.2.7：每个请求最多一条"预填充完成"通知。它复用既有心跳信号（``None``），
+        # [ZH] 使上层产出一条 ``progress`` 行、在首 token 当刻重绘指标区 —— 不新增事件类型，
+        # [ZH] 也绝不会变成逐 token 的事件流。
+        prefill_notice_sent = False
         try:
             for kind, text in self._iter_with_heartbeat(open_stream, stop_event, heartbeat_seconds):
                 if kind == "heartbeat":
@@ -1244,8 +1444,36 @@ class LLMEngine:
                     # [ZH] 产出空串仅用于向上层发出"需要刷新指标"的信号，上层按 kind
                     # [ZH] 处理。
                     if stats is not None:
+                        snapshot = progress.snapshot()
+                        stats.prefill_tokens = int(snapshot["tokens"])
+                        stats.prefill_total = int(snapshot["total"])
+                        stats.prefill_tps = float(snapshot["tps"])
+                        remaining = int(snapshot["total"]) - int(snapshot["tokens"])
+                        # [EN] ETA = remaining / measured tok/s; a non-positive rate
+                        # [EN] means "not estimable" and is reported as 0 instead of
+                        # [EN] pretending to be precise (v0.2.7 step 3).
+                        # [ZH] ETA = 剩余 token / 实测 tok/s；速率非正表示"不可估算"，
+                        # [ZH] 上报 0，而不是冒充精确值（v0.2.7 步 3）。
+                        stats.eta_seconds = (
+                            round(remaining / float(snapshot["tps"]), 2)
+                            if snapshot["tps"] > 0.0 and remaining > 0 else 0.0)
                         stats.elapsed_ms = int((time.perf_counter() - started) * 1000)
                         stats.output_chars = produced
+                        # [EN] No-progress watchdog: only armed while prefill has not
+                        # [EN] produced its first token and actually has work to do. It
+                        # [EN] sets the stop signal and ends the stream normally -- no
+                        # [EN] exception, no crash log; the upper layer turns ``stalled``
+                        # [EN] into an actionable message.
+                        # [ZH] 无进展看门狗：仅在预填充尚未产出首 token 且确实有工作量时
+                        # [ZH] 生效。它置停止信号并正常结束流 —— 不抛异常、不写崩溃日志；
+                        # [ZH] 上层据 ``stalled`` 给出可操作提示。
+                        if not stats.prefill_done and int(snapshot["total"]) > 0:
+                            idle = time.monotonic() - float(snapshot["updated"])
+                            if idle >= stall_seconds:
+                                stats.stalled = True
+                                if stop_event is not None:
+                                    stop_event.set()
+                                return
                     yield None
                     continue
                 produced += len(text)
@@ -1257,8 +1485,40 @@ class LLMEngine:
                         # [ZH] 首 token 延迟：从开始生成（含 prefill）到首个 token 到达的时间。
                         stats.prefill_done = True
                         stats.first_token_ms = int((now - started) * 1000)
+                        # [EN] v0.2.7 close-out: the first token proves prefill is over, so
+                        # [EN] publish the progress slot's final snapshot right here. Waiting
+                        # [EN] for the next heartbeat left ``prefill_tokens`` one chunk short
+                        # [EN] (observed 1024/1080), and the progress line then survived the
+                        # [EN] whole answer. Assignments only -- heartbeat cadence and stop
+                        # [EN] handling are untouched.
+                        # [ZH] v0.2.7 收口：首 token 出现即证明预填充已结束，因此在这里就发布
+                        # [ZH] 进度槽的最终快照。若等下一次心跳，``prefill_tokens`` 会落后一个
+                        # [ZH] 分块（实测 1024/1080），进度行随后会一直残留到回答结束。
+                        # [ZH] 这里只做赋值，不改变心跳节奏与停止处理。
+                        final = progress.snapshot()
+                        stats.prefill_tokens = int(final["tokens"])
+                        stats.prefill_total = int(final["total"])
+                        stats.prefill_tps = float(final["tps"])
+                        remaining = int(final["total"]) - int(final["tokens"])
+                        stats.eta_seconds = (
+                            round(remaining / float(final["tps"]), 2)
+                            if final["tps"] > 0.0 and remaining > 0 else 0.0)
                     stats.elapsed_ms = int((now - started) * 1000)
                     stats.output_chars = produced
+                    # [EN] One-shot notice at the first token: the snapshot above is the
+                    # [EN] final one, so the progress line can be dropped immediately
+                    # [EN] instead of waiting for the next heartbeat (which may not come
+                    # [EN] while tokens flow continuously). ``prefill_total > 0`` is the
+                    # [EN] gate -- a prompt fully served from cache has nothing to
+                    # [EN] announce. Yielding ``None`` before the delta keeps the order
+                    # [EN] "progress, then content".
+                    # [ZH] 首 token 处的一次性通知：上面的快照就是最终快照，因此进度行可以
+                    # [ZH] 立即撤下，而不必等下一次心跳（持续出 token 时那一次可能永远不来）。
+                    # [ZH] 闸门是 ``prefill_total > 0`` —— 整段命中缓存的提示词没有任何可播报
+                    # [ZH] 的内容。在 delta 之前产出 ``None``，保持"先进度、后正文"的顺序。
+                    if not prefill_notice_sent and stats.prefill_total > 0:
+                        prefill_notice_sent = True
+                        yield None
                 yield text
         finally:
             self.last_elapsed = time.perf_counter() - started
@@ -1268,6 +1528,21 @@ class LLMEngine:
                 stats.elapsed_ms = int(self.last_elapsed * 1000)
                 stats.output_chars = produced
                 stats.stopped = bool(stop_event is not None and stop_event.is_set())
+                # [EN] v0.2.7 close-out: the slot always holds the last known prefill
+                # [EN] progress, so this finally -- which also runs for user aborts, the
+                # [EN] no-progress watchdog and genuine exceptions -- publishes it into the
+                # [EN] terminal payload instead of leaving a half-baked value behind.
+                # [ZH] v0.2.7 收口：进度槽始终保存着最后已知的预填充进度，因此这个 finally
+                # [ZH] （用户中止、无进展看门狗与真实异常路径同样经过）把它写入终态载荷，
+                # [ZH] 而不是留下半截数值。
+                final = progress.snapshot()
+                stats.prefill_tokens = int(final["tokens"])
+                stats.prefill_total = int(final["total"])
+                stats.prefill_tps = float(final["tps"])
+                remaining = int(final["total"]) - int(final["tokens"])
+                stats.eta_seconds = (
+                    round(remaining / float(final["tps"]), 2)
+                    if final["tps"] > 0.0 and remaining > 0 else 0.0)
                 self._finish_stats(stats)
 
     def _finish_stats(self, stats: StreamStats) -> None:

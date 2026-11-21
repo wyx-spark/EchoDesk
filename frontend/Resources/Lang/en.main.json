@@ -314,7 +314,10 @@
       "elapsed": "⏱️ {0}",
       "stopped": "⏹ Stopped",
       "failed": "⚠️ Failed",
-      "reasoningUnclosed": "⚠️ Reasoning was not closed (token budget may have been consumed by reasoning)"
+      "reasoningUnclosed": "⚠️ Reasoning was not closed (token budget may have been consumed by reasoning)",
+      "prefill": "Reading the document {0}% ({1} of {2} tokens)",
+      "prefillEta": "~{0}s remaining",
+      "prefillStalled": "⏹ Stopped: the text is too long"
     },
     "message": {
       "copy": "Copy",

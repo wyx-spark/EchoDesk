@@ -2884,7 +2884,17 @@ public partial class MainWindow : Window
         int? Tokens,
         bool TokensEstimated,
         int? ElapsedMs,
-        bool Stopped);
+        bool Stopped,
+        // [EN] v0.2.7 prefill telemetry: tokens read / tokens to read / whether prefill is
+        // [EN] over (the backend's ``prefill_done``, first token emitted) / estimated
+        // [EN] seconds left / whether the no-progress watchdog ended the stream.
+        // [ZH] v0.2.7 预填充遥测：已通读 token / 总 token / 预填充是否结束（后端
+        // [ZH] ``prefill_done``，即已产出首 token）/ 预计剩余秒数 / 无进展看门狗是否结束本次流。
+        int PrefillTokens,
+        int PrefillTotal,
+        bool PrefillDone,
+        double? EtaSeconds,
+        bool Stalled);
 
     /// <summary>
     /// [EN] Copy the metrics out of a JSON object. This method must run synchronously,
@@ -2907,17 +2917,82 @@ public partial class MainWindow : Window
                                && est.ValueKind == JsonValueKind.True;
         int? elapsedMs = stats.TryGetProperty("elapsed_ms", out JsonElement el)
                          && el.ValueKind == JsonValueKind.Number ? el.GetInt32() : null;
-        return new StreamMetrics(firstTokenMs, tps, tokens, tokensEstimated, elapsedMs, stopped);
+        // [EN] v0.2.7: prefill telemetry, copied here for the same reason -- the document
+        // [EN] dies with the stream reader. A missing field keeps 0 / null / false so the
+        // [EN] formatter still renders only what the backend actually reported.
+        // [ZH] v0.2.7：预填充遥测，同样在此复制 —— 文档会随流读取线程释放。字段缺失时保持
+        // [ZH] 0 / null / false，使格式化器仍只渲染后端实际上报的内容。
+        int prefillTokens = stats.TryGetProperty("prefill_tokens", out JsonElement pfTokens)
+                            && pfTokens.ValueKind == JsonValueKind.Number
+            ? pfTokens.GetInt32() : 0;
+        int prefillTotal = stats.TryGetProperty("prefill_total", out JsonElement pfTotal)
+                           && pfTotal.ValueKind == JsonValueKind.Number
+            ? pfTotal.GetInt32() : 0;
+        double? etaSeconds = stats.TryGetProperty("eta_seconds", out JsonElement eta)
+                             && eta.ValueKind == JsonValueKind.Number ? eta.GetDouble() : null;
+        // [EN] ``prefill_done`` already exists in the protocol (StreamStats.to_dict): the
+        // [EN] backend sets it the moment the first token is emitted, which is exactly the
+        // [EN] signal the status line needs. No new field is introduced.
+        // [ZH] ``prefill_done`` 协议里本来就有（StreamStats.to_dict）：后端在首个 token 产出
+        // [ZH] 的那一刻置真，正是状态行需要的信号。这里不新增任何协议字段。
+        bool prefillDone = stats.TryGetProperty("prefill_done", out JsonElement pfDone)
+                           && pfDone.ValueKind == JsonValueKind.True;
+        bool stalled = stats.TryGetProperty("stalled", out JsonElement stalledEl)
+                       && stalledEl.ValueKind == JsonValueKind.True;
+        return new StreamMetrics(firstTokenMs, tps, tokens, tokensEstimated, elapsedMs, stopped,
+                                 prefillTokens, prefillTotal, prefillDone, etaSeconds, stalled);
     }
 
     private static string FormatMetrics(StreamMetrics metrics)
     {
+        // [EN] v0.2.7 display priority: ``stalled`` > prefill progress > the existing
+        // [EN] metrics. Only one of them owns the status line at a time: while prefill
+        // [EN] runs there is no token output to report, and after a stall the backend has
+        // [EN] already given up, so mixing them would show a contradictory state.
+        // [ZH] v0.2.7 展示优先级：``stalled`` > 预填充进度 > 既有指标。三者同一时刻只有一项
+        // [ZH] 占用状态行：预填充期间还没有 token 产出，而 stalled 时后端已放弃，
+        // [ZH] 混排会显示自相矛盾的状态。
+        if (metrics.Stalled)
+            return Loc.T("main.metrics.prefillStalled", "⏹ 已停止：文本过长");
+
+        // [EN] ``prefill_total <= 0`` means "no prefill is running" (a fully cached prompt);
+        // [EN] ``prefill_done`` (the backend's own field, set when the first token is
+        // [EN] emitted) means prefill finished, so the progress line disappears and the
+        // [EN] normal metrics take over again -- immediately, without waiting for ``done``.
+        // [ZH] ``prefill_total <= 0`` 表示没有预填充在跑（提示词整段命中缓存）；
+        // [ZH] ``prefill_done``（后端自己的字段，首个 token 产出时置真）表示预填充已结束，
+        // [ZH] 进度行随即消失并恢复既有的指标展示 —— 立即生效，不必等到 ``done``。
+        if (metrics.PrefillTotal > 0 && !metrics.PrefillDone && !metrics.Stalled)
+        {
+            long percent = Math.Clamp(
+                metrics.PrefillTokens * 100L / metrics.PrefillTotal, 0L, 100L);
+            string progress = Loc.T("main.metrics.prefill",
+                "正在通读合同文本 {0}%（{1}/{2} token）",
+                percent, metrics.PrefillTokens, metrics.PrefillTotal);
+            if (metrics.EtaSeconds is { } eta && eta > 0)
+            {
+                // [EN] Round up: a countdown that shows "0s" while work remains reads as a
+                // [EN] hang. The wording says "estimated" so it is never mistaken for exact.
+                // [ZH] 向上取整：还剩工作却显示 "0s" 会被读成卡死。文案本身写明"预计"，
+                // [ZH] 因此不会被当成精确值。
+                long seconds = Math.Max(1L, (long)Math.Ceiling(eta));
+                progress += "  " + Loc.T("main.metrics.prefillEta", "预计还需 {0}s", seconds);
+            }
+            return progress;
+        }
+
         var parts = new List<string>();
         if (metrics.FirstTokenMs > 0)
             parts.Add(Loc.T("main.metrics.ttft", "⚡ 首 token {0}", FormatMs(metrics.FirstTokenMs)));
-        if (metrics.Tps is { } tps)
+        // [EN] v0.2.7 step 0: with no token produced yet there is nothing to report, so
+        // [EN] ``tokens <= 0`` suppresses both the throughput and the token count; the line no
+        // [EN] longer flashes "🚀 0 token/s · 0 tokens" at the first-token instant.
+        // [ZH] v0.2.7 步 0：还没有 token 产出时没有可报内容，``tokens <= 0`` 同时不渲染吞吐与
+        // [ZH] token 数；状态行不再在首 token 那一瞬闪 "🚀 0 token/s · 0 tokens"。
+        bool hasTokens = metrics.Tokens is > 0;
+        if (hasTokens && metrics.Tps is { } tps)
             parts.Add(Loc.T("main.metrics.tps", "🚀 {0:0.#} token/s", tps));
-        if (metrics.Tokens is { } tokens)
+        if (hasTokens && metrics.Tokens is { } tokens)
         {
             parts.Add(metrics.TokensEstimated
                 ? Loc.T("main.metrics.outputTokensEstimated", "≈{0} tokens", tokens)

@@ -67,6 +67,25 @@ class NativeLlamaError(RuntimeError):
     [ZH] 原生 llama.cpp 层无法完成请求时抛出。"""
 
 
+class NativeLlamaAborted(NativeLlamaError):
+    """
+    [EN]
+    Raised when the caller asked to stop during prefill.
+
+    It is deliberately a distinct type rather than a plain ``RuntimeError``: an abort is
+    a normal user action, so the engine can stay silent about it, while a genuine code
+    failure must still surface as a diagnostic. ``isinstance(exc, NativeLlamaError)``
+    keeps the two distinguishable without changing the existing error contract.
+
+    [ZH]
+    调用方在预填充期间要求停止时抛出。
+
+    这里刻意使用独立类型而不是普通的 ``RuntimeError``：中止是正常的用户操作，引擎可以
+    对它保持静默，而真正的代码故障仍必须作为诊断信息呈现。它仍继承
+    ``NativeLlamaError``，因此在不改变既有错误契约的前提下两者可 ``isinstance`` 区分。
+    """
+
+
 #: [EN] Keeps the log callback alive for the lifetime of the process: ctypes
 #: [EN] function pointers are garbage collected like any other object, and a
 #: [EN] collected callback would make llama.cpp jump into freed memory.
@@ -152,8 +171,11 @@ class NativeLlama:
         model_path: str,
         n_ctx: int = 2048,
         n_threads: Optional[int] = None,
+        n_threads_batch: Optional[int] = None,
         n_batch: int = 512,
         n_ubatch: int = 512,
+        prefill_chunk_tokens: int = 0,
+        prefill_yield_ms: int = 8,
         n_gpu_layers: int = 0,
         use_mlock: bool = False,
         use_mmap: bool = True,
@@ -177,6 +199,27 @@ class NativeLlama:
         self.n_batch = max(1, int(n_batch))
         self.n_ubatch = max(1, int(n_ubatch))
         self.n_threads = int(n_threads or max(1, (os.cpu_count() or 4) - 1))
+        # [EN] Prefill gets its own, usually smaller, thread pool. ``<= 0`` (including the
+        # [EN] ``None`` default) falls back to the decode thread count so an old caller
+        # [EN] that never heard of this parameter keeps the historical behaviour.
+        # [ZH] 预填充拥有自己（通常更小）的线程池。``<= 0``（含 ``None`` 默认）回落到
+        # [ZH] decode 线程数，使不认识该参数的旧调用方保持历史行为。
+        self.n_threads_batch = int(n_threads_batch or 0)
+        if self.n_threads_batch <= 0:
+            self.n_threads_batch = self.n_threads
+        # [EN] Prefill chunk size: 0 follows ``n_batch``; otherwise clamped into
+        # [EN] ``[32, n_batch]`` because a single ``llama_decode`` cannot exceed the batch.
+        # [ZH] 预填充分块大小：0 跟随 ``n_batch``；否则钳制在 ``[32, n_batch]``，
+        # [ZH] 因为单次 ``llama_decode`` 不能超过批大小。
+        self.prefill_chunk_tokens = int(prefill_chunk_tokens or 0)
+        # [EN] Inter-chunk yield. 0 means "do not sleep", which is what a benchmark needs
+        # [EN] in order to measure the real prefill speed.
+        # [ZH] 块间让核。0 表示"不睡"，基准测试需要它才能量到真实的预填充速度。
+        self.prefill_yield_ms = max(0, min(50, int(prefill_yield_ms or 0)))
+        #: [EN] Result of the most recent prefill, read by the engine and the tuner but
+        #: [EN] never part of the wire protocol.
+        #: [ZH] 最近一次预填充的测量结果，供引擎与调优器读取，不参与协议。
+        self.last_prefill = {"tokens": 0, "seconds": 0.0, "tps": 0.0}
         self.n_gpu_layers = int(n_gpu_layers or 0)
         self.use_mlock = bool(use_mlock)
         self.use_mmap = bool(use_mmap)
@@ -243,7 +286,10 @@ class NativeLlama:
         ctx_params.n_batch = self.n_batch
         ctx_params.n_ubatch = self.n_ubatch
         ctx_params.n_threads = self.n_threads
-        ctx_params.n_threads_batch = self.n_threads
+        # [EN] Created with the prefill pool already in place; the switch helpers only
+        # [EN] move between the two pools at request boundaries.
+        # [ZH] 创建时就带上预填充线程池；切换辅助函数只负责在请求边界上往返两组线程。
+        ctx_params.n_threads_batch = self.n_threads_batch
         ctx_params.flash_attn_type = (
             api.LLAMA_FLASH_ATTN_TYPE_ENABLED if self.flash_attn
             else api.LLAMA_FLASH_ATTN_TYPE_DISABLED)
@@ -465,25 +511,168 @@ class NativeLlama:
             index += 1
         return index
 
-    def _prefill(self, tokens: List[int]) -> None:
-        api = self._api
-        if not tokens:
+    def _prefill_chunk_size(self) -> int:
+        """
+        [EN]
+        Tokens fed to one ``llama_decode`` call during prefill: ``prefill_chunk_tokens``
+        when it is a positive value inside ``[32, n_batch]``, otherwise ``n_batch``.
+
+        [ZH]
+        预填充时单次 ``llama_decode`` 喂入的 token 数：``prefill_chunk_tokens`` 落在
+        ``[32, n_batch]`` 内时用它，否则用 ``n_batch``。
+        """
+        limit = max(1, int(self.n_batch))
+        chunk = int(self.prefill_chunk_tokens or 0)
+        if chunk <= 0:
+            return limit
+        return int(min(limit, max(32, chunk)))
+
+    def _record_prefill(self, tokens: int, seconds: float) -> None:
+        """
+        [EN] Publish the latest prefill measurement on the instance.
+        [ZH] 把最近一次预填充的测量结果挂到实例上。
+        """
+        seconds = max(0.0, float(seconds))
+        tps = (float(tokens) / seconds) if seconds > 0.0 else 0.0
+        self.last_prefill = {
+            "tokens": int(tokens),
+            "seconds": round(seconds, 6),
+            "tps": round(tps, 3),
+        }
+
+    def _yield_cores(self) -> None:
+        """
+        [EN] Hand the CPU back to the system between chunks, honouring
+        ``prefill_yield_ms`` (0 sleeps not at all, which keeps benchmarks honest).
+        [ZH] 在块与块之间把 CPU 交还系统，遵守 ``prefill_yield_ms``（0 表示完全不睡，
+        以保持基准测试的真实性）。
+        """
+        delay_ms = int(self.prefill_yield_ms or 0)
+        if delay_ms <= 0:
             return
-        position = 0
+        time.sleep(delay_ms / 1000.0)
+
+    def _apply_n_threads(self, count: int) -> None:
+        """
+        [EN]
+        Ask the context to run with ``count`` threads. Some ABI variants do not export
+        ``llama_set_n_threads`` at all; the switch is then skipped instead of crashing
+        the whole inference, and a failed call is only logged at debug level for the
+        same reason -- the thread split is a responsiveness optimisation, not a
+        correctness requirement.
+
+        [ZH]
+        要求上下文以 ``count`` 个线程运行。部分 ABI 变体根本没有导出
+        ``llama_set_n_threads``；此时跳过切换，而不是把整个推理打崩。调用失败同样只在
+        debug 级别记录，原因相同 —— 线程拆分是响应性优化，不是正确性前提。
+        """
+        setter = getattr(self._api, "llama_set_n_threads", None)
+        if not callable(setter):
+            log.debug("llama_set_n_threads 不可用，跳过线程切换")
+            return
+        try:
+            value = max(1, int(count))
+            setter(self._ctx, value, value)
+        except Exception as exc:  # noqa: BLE001 - never break a reading session
+            log.debug("llama_set_n_threads 调用失败，沿用当前线程数: %s", exc)
+
+    def _run_prefill(self, tokens: List[int], on_prefill_progress=None,
+                     should_abort=None) -> None:
+        """
+        [EN]
+        Run one prefill with the prefill thread pool, then hand the cores back to the
+        decode pool. The switch back lives in ``finally`` so that a completed prefill,
+        an abort and a genuine ``llama_decode`` failure all leave the context on the
+        decode thread count.
+
+        [ZH]
+        用预填充线程池跑一次预填充，然后把核心交回 decode 线程池。切回动作放在
+        ``finally`` 里，因此正常完成、中止与真正的 ``llama_decode`` 失败三条路径都会让
+        上下文回到 decode 线程数。
+        """
+        if not tokens:
+            # [EN] A fully cached prompt has no prefill: no callback, no thread switch.
+            # [ZH] 整段命中缓存时没有预填充：不回调、不切线程。
+            return
+        self._apply_n_threads(self.n_threads_batch)
+        try:
+            self._prefill(tokens, on_prefill_progress=on_prefill_progress,
+                          should_abort=should_abort)
+        finally:
+            self._apply_n_threads(self.n_threads)
+
+    def _prefill(self, tokens: List[int], on_prefill_progress=None,
+                 should_abort=None) -> None:
+        """
+        [EN]
+        Feed ``tokens`` into the context in ``_prefill_chunk_size()`` chunks.
+
+        Three exits were added for the Reader prefill work (v0.2.7 step 2):
+
+        * ``should_abort`` is consulted once before every chunk; a truthy answer raises
+          :class:`NativeLlamaAborted`, which the engine can tell apart from a real fault;
+        * ``on_prefill_progress(done, total, elapsed_s, tps)`` fires after every chunk so
+          the caller can report progress; a callback that throws is logged at debug level
+          and never interrupts the inference;
+        * the loop yields the cores between chunks according to ``prefill_yield_ms``.
+
+        Bookkeeping is unchanged: a chunk is added to ``_cached_tokens`` only after its
+        ``llama_decode`` succeeded, so the native memory and the Python view agree even
+        when a later chunk fails or aborts.
+
+        [ZH]
+        按 ``_prefill_chunk_size()`` 分块把 ``tokens`` 喂入上下文。
+
+        v0.2.7 步 2 为 Reader 的预填充新增了三个出口：
+
+        * 每块开始前查询一次 ``should_abort``；命中即抛 :class:`NativeLlamaAborted`，
+          引擎可将其与真实故障区分开；
+        * 每块结束后调用 ``on_prefill_progress(done, total, elapsed_s, tps)`` 上报进度；
+          回调抛异常只记 debug 日志，绝不打断推理；
+        * 块间按 ``prefill_yield_ms`` 让出核心。
+
+        记账语义保持不变：只有 ``llama_decode`` 成功的分块才追加进 ``_cached_tokens``，
+        因此即使后续分块失败或中止，原生内存与 Python 侧视图仍保持一致。
+        """
+        api = self._api
         total = len(tokens)
-        while position < total:
-            chunk = tokens[position:position + self.n_batch]
-            array = (api.llama_token * len(chunk))(*chunk)
-            batch = api.llama_batch_get_one(array, len(chunk))
-            rc = api.llama_decode(self._ctx, batch)
-            if rc != 0:
-                raise NativeLlamaError(f"llama_decode failed during prefill (rc={rc})")
-            position += len(chunk)
-            # [EN] Keep the cache bookkeeping in step with the native memory even when
-            # [EN] a later chunk fails: what has been decoded is decoded.
-            # [ZH] 即使后续分块失败，也让缓存记录与原生内存保持一致：已解码的部分就是
-            # [ZH] 已解码。
-            self._cached_tokens.extend(chunk)
+        if not total:
+            self._record_prefill(0, 0.0)
+            return
+        chunk_size = self._prefill_chunk_size()
+        started = time.perf_counter()
+        position = 0
+        try:
+            while position < total:
+                if should_abort is not None and should_abort():
+                    raise NativeLlamaAborted(
+                        f"prefill aborted at {position}/{total} tokens")
+                chunk = tokens[position:position + chunk_size]
+                array = (api.llama_token * len(chunk))(*chunk)
+                batch = api.llama_batch_get_one(array, len(chunk))
+                rc = api.llama_decode(self._ctx, batch)
+                if rc != 0:
+                    raise NativeLlamaError(f"llama_decode failed during prefill (rc={rc})")
+                position += len(chunk)
+                # [EN] Keep the cache bookkeeping in step with the native memory even when
+                # [EN] a later chunk fails: what has been decoded is decoded.
+                # [ZH] 即使后续分块失败，也让缓存记录与原生内存保持一致：已解码的部分就是
+                # [ZH] 已解码。
+                self._cached_tokens.extend(chunk)
+                elapsed = time.perf_counter() - started
+                self._record_prefill(position, elapsed)
+                if on_prefill_progress is not None:
+                    try:
+                        on_prefill_progress(position, total, elapsed,
+                                            position / elapsed if elapsed > 0.0 else 0.0)
+                    except Exception as exc:  # noqa: BLE001 - reporting must not fail
+                        log.debug("prefill 进度回调异常，已忽略: %s", exc)
+                self._yield_cores()
+        finally:
+            # [EN] Also covers the abort path: the caller still gets the partial
+            # [EN] measurement, which is what the engine reports as "stopped early".
+            # [ZH] 中止路径同样覆盖：调用方仍拿到部分测量结果，引擎据此上报"提前停止"。
+            self._record_prefill(position, time.perf_counter() - started)
 
     def _make_sampler(self, temperature: float, top_p: Optional[float],
                       top_k: Optional[int], repeat_penalty: Optional[float]):
@@ -531,11 +720,13 @@ class NativeLlama:
         top_p: Optional[float],
         top_k: Optional[int],
         repeat_penalty: Optional[float],
+        on_prefill_progress=None,
+        should_abort=None,
     ) -> Iterator[str]:
         prompt = self.apply_chat_template(messages, add_assistant=True)
         tokens = self.tokenize(prompt, add_bos=True, special=True)
         yield from self._generate(tokens, max_tokens, temperature, top_p, top_k,
-                                   repeat_penalty)
+                                   repeat_penalty, on_prefill_progress, should_abort)
 
     def _generate(
         self,
@@ -545,6 +736,8 @@ class NativeLlama:
         top_p: Optional[float],
         top_k: Optional[int],
         repeat_penalty: Optional[float],
+        on_prefill_progress=None,
+        should_abort=None,
     ) -> Iterator[str]:
         api = self._api
         if len(tokens) >= self._n_ctx:
@@ -558,7 +751,13 @@ class NativeLlama:
         # [ZH] 若不这样做，每一轮都会重算全部历史；在 CPU 上这会是响应时间的主要部分。
         common = self._common_prefix(tokens, self._cached_tokens)
         self._trim_cache(common)
-        self._prefill(tokens[common:])
+        suffix = tokens[common:]
+        if suffix:
+            # [EN] Only a real prefill switches thread pools: a fully cached prompt has
+            # [EN] no prefill phase, so there is nothing to report and nothing to switch.
+            # [ZH] 只有真正发生预填充才切换线程池：整段命中缓存时没有预填充阶段，
+            # [ZH] 既没有可上报的进度，也没有可切换的线程。
+            self._run_prefill(suffix, on_prefill_progress, should_abort)
         sampler = self._make_sampler(temperature, top_p, top_k, repeat_penalty)
         decoder = codecs.getincrementaldecoder("utf-8")("ignore")
         produced = 0
@@ -580,7 +779,8 @@ class NativeLlama:
 
     def create_completion(self, prompt: str, max_tokens: int = 128,
                           temperature: float = 0.0, stream: bool = True,
-                          echo: bool = False, **kwargs) -> object:
+                          echo: bool = False, on_prefill_progress=None,
+                          should_abort=None, **kwargs) -> object:
         """
         [EN]
         Plain-text completion, used by the hardware auto-tuner. It shares the decode and
@@ -597,12 +797,14 @@ class NativeLlama:
             def generator() -> Iterator[Dict[str, object]]:
                 for text in self._generate(tokens, int(max_tokens), float(temperature),
                                            kwargs.get("top_p"), kwargs.get("top_k"),
-                                           kwargs.get("repeat_penalty")):
+                                           kwargs.get("repeat_penalty"),
+                                           on_prefill_progress, should_abort):
                     yield {"choices": [{"text": text, "index": 0}]}
             return generator()
         return {"choices": [{"text": "".join(self._generate(
             tokens, int(max_tokens), float(temperature), kwargs.get("top_p"),
-            kwargs.get("top_k"), kwargs.get("repeat_penalty"))), "index": 0}]}
+            kwargs.get("top_k"), kwargs.get("repeat_penalty"),
+            on_prefill_progress, should_abort)), "index": 0}]}
 
     def create_chat_completion(self, **kwargs) -> Dict[str, object]:
         """
@@ -624,12 +826,17 @@ class NativeLlama:
         top_p = kwargs.get("top_p")
         top_k = kwargs.get("top_k")
         repeat_penalty = kwargs.get("repeat_penalty")
+        # [EN] v0.2.7 prefill hooks. They are pulled out here and passed to the prefill
+        # [EN] loop only, so they never become part of the sampler parameters.
+        # [ZH] v0.2.7 的预填充钩子。在这里单独取出并只传给预填充循环，绝不进入采样器参数。
+        on_prefill_progress = kwargs.get("on_prefill_progress")
+        should_abort = kwargs.get("should_abort")
 
         if stream:
             def generator() -> Iterator[Dict[str, object]]:
                 for text in self._stream_tokens(
                         messages, max_tokens, temperature, top_p, top_k,
-                        repeat_penalty):
+                        repeat_penalty, on_prefill_progress, should_abort):
                     yield {
                         "choices": [{"delta": {"content": text}, "index": 0}],
                         "object": "text_completion",
@@ -637,7 +844,8 @@ class NativeLlama:
             return generator()
 
         text = "".join(self._stream_tokens(
-            messages, max_tokens, temperature, top_p, top_k, repeat_penalty))
+            messages, max_tokens, temperature, top_p, top_k, repeat_penalty,
+            on_prefill_progress, should_abort))
         return {
             "choices": [{"message": {"role": "assistant", "content": text},
                          "finish_reason": "stop", "index": 0}],
