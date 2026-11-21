@@ -13,6 +13,7 @@ for traceability only; this changelog is the release-facing document.
 
 | Version | Type | Release date | Summary |
 | :--- | :--- | :--- | :--- |
+| [v0.2.7](#v027) | Reader Release | 2026-11-21 | Prefill progress with ETA, dedicated prefill thread pool, interruptible prefill, no-progress watchdog, and calibrator v2 (adaptive workload, long-text guard, winner confirmation, environment-noise probe) |
 | [v0.2.6](#v026) | Stable Release | 2026-11-15 | Experience overhaul: twenty-three user-reported defects fixed end to end — upload robustness, UI deadlocks, Agent pipes, context and output budgets, reasoning separation, role normalization, local vision, knowledge base, state synchronisation, external providers and the Windows native VLM dependency chain |
 | [v0.2.5](#v025) | Stable Release | 2026-11-08 | Release hardening: writable state paths for read-only `.app` / AppImage layouts, smaller and faster build pipeline, repository-wide bilingual normalization, Unsloth offline model catalog |
 | [v0.2.4](#v024) | Stable Release | 2026-11-08 | Automatic hardware tuning, three inference presets, transparent override and diagnostics; release-time patch and final hotfix for streaming download progress, ignored-version memory, memory warnings, balanced title bar, Chinese installer and upgrade hygiene |
@@ -21,6 +22,43 @@ for traceability only; this changelog is the release-facing document.
 | [v0.2.1](#v021) | Stable Release | 2026-10-05 | Capability consolidation, Agent platform, MCP, plugin ecosystem |
 | [v0.2.0](#v020) | Feature Release | 2026-09-23 | Long context and documents, automation, skill marketplace |
 | [v0.1.0](#v010) | Early Preview | 2026-08-29 | First public release: local inference with a desktop client |
+
+---
+
+## v0.2.7
+
+### Release positioning
+
+The Reader edition's prefill release. Long-document reading is dominated by prompt
+processing, so v0.2.7 makes that phase observable and interruptible instead of an opaque
+pause before the first token. It also replaces the fixed-workload benchmark with a
+calibrator that adapts the measured workload to the host, guards against wins that exist
+only on short prompts, and refuses to adopt numbers it cannot reproduce.
+
+### Key capabilities
+
+- **Prefill progress and ETA**: the status line reports how much of the document has been
+  read and an estimated time to the first token, instead of an empty screen.
+- **Dedicated prefill thread pool**: prompt processing runs on its own thread count
+  (`n_threads_batch`), so the interface keeps a core and stays responsive.
+- **Interruptible prefill**: a running read can be stopped while the prompt is still being
+  processed, without waiting for the first token.
+- **No-progress watchdog**: if prefill stops making progress, the stream ends with an
+  actionable message instead of appearing hung.
+- **Calibrator v2**: adaptive workload selection (the rung is chosen from a 512-token
+  probe), a long-text guard that vetoes candidates winning only on short prompts, winner
+  confirmation (one independent re-measurement before adoption), and an environment-noise
+  probe that aborts with `noisy_environment` before scanning candidates on an unstable
+  host.
+
+### Known limitations
+
+- Sequence snapshot paging is **not implemented** in this release: the KV cache is still
+  recomputed for every new question.
+- Local vision (VLM) remains unavailable in the Reader edition, because the multimodal
+  stack is removed from this build.
+- Windows and macOS artifacts are not code-signed; SmartScreen / Gatekeeper may warn on
+  first run.
 
 ---
 

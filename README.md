@@ -1,16 +1,17 @@
 # EchoDesk Reader
 
-[![CI](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml/badge.svg?branch=reader)](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml) [![Latest Reader release](https://img.shields.io/github/v/release/wyx-spark/EchoDesk?label=reader)](https://github.com/wyx-spark/EchoDesk/releases/tag/v0.2.6-reader)
+[![CI](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml/badge.svg?branch=reader)](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml) [![Latest Reader release](https://img.shields.io/github/v/release/wyx-spark/EchoDesk?label=reader)](https://github.com/wyx-spark/EchoDesk/releases/tag/v0.2.7-reader)
 
-> **Version 0.2.6-reader.** This branch publishes the Reader edition: the v0.2.6 code base with the
-> browser-automation, multimodal and retrieval stacks removed, tuned for reading and analysing long
-> local documents. Every user-facing statement below is true of **this** build; the parts that are
-> gone are listed explicitly in [What this edition leaves out](#what-this-edition-leaves-out).
+> **Version 0.2.7-reader.** This branch publishes the Reader edition: the v0.2.6 code base with the
+> browser-automation, multimodal and retrieval stacks removed, plus the v0.2.7 prefill and
+> calibration work, tuned for reading and analysing long local documents. Every user-facing
+> statement below is true of **this** build; the parts that are gone are listed explicitly in
+> [What this edition leaves out](#what-this-edition-leaves-out).
 >
 > **Which edition should I use?** `master` is the full EchoDesk assistant (browser automation,
 > multimodal, retrieval). `reader` — this branch — is the long-document reading edition, and its
-> builds are tagged `v0.2.6-reader` on the [Releases page](https://github.com/wyx-spark/EchoDesk/releases); the current Latest release belongs to `master`.
-> Both branches keep the same version number; Reader artifacts are tagged `v0.2.6-reader`.
+> builds are tagged `v0.2.7-reader` on the [Releases page](https://github.com/wyx-spark/EchoDesk/releases); the current Latest release belongs to `master`.
+> Both branches keep the same version number; Reader artifacts are tagged `v0.2.7-reader`.
 >
 > **New here?** Follow the step-by-step [download, install and configure guide](https://github.com/wyx-spark/EchoDesk/issues/7); it covers edition choice, SHA-256 verification, the offline model bundle and first-run settings.
 
@@ -36,8 +37,12 @@ isolated networks, and anyone who simply wants their files to stay put.
 - **Inference**: local GGUF models through the **native llama.cpp runtime** — the Python
   `llama-cpp-python` binding is gone; the C ABI is called directly from `backend/llama_native.py`,
   CPU by default
-- **Model profile**: tuned for Phi-3-Mini-128K — its 128K window is the ceiling the document
-  allocation is bounded by; any GGUF model still loads
+- **Prefill**: prompt processing runs on its own thread pool (`n_threads_batch`), reports live
+  progress and an ETA, can be stopped while it runs, and ends with an actionable message if it
+  stops making progress instead of appearing hung
+- **Calibration**: thread and batch parameters are measured on your machine by the built-in
+  calibrator rather than assumed; the shipped calibration targets a Qwen3-0.6B GGUF, and any GGUF
+  model still loads
 - **KV cache**: quantised to 8-bit (`Q8_0`) instead of F16, which roughly halves the cache footprint
   at the same window
 - **Interface**: Avalonia (C#) desktop app, packaged Python 3.13 backend
@@ -101,15 +106,15 @@ imported or packaged, instead of checking them.
 
 | If you are on… | Download |
 | --- | --- |
-| Windows, installer | `EchoDesk-Reader-v0.2.6-Setup.exe` |
-| Windows, portable folder | `EchoDesk-v0.2.6-reader-win-x64.zip` |
-| Linux x64 | `EchoDesk-v0.2.6-reader-linux-x64.tar.gz` |
-| macOS Apple Silicon | `EchoDesk-v0.2.6-reader-osx-arm64.tar.gz` |
+| Windows, installer | `EchoDesk-Reader-v0.2.7-Setup.exe` |
+| Windows, portable folder | `EchoDesk-v0.2.7-reader-win-x64.zip` |
+| Linux x64 | `EchoDesk-v0.2.7-reader-linux-x64.tar.gz` |
+| macOS Apple Silicon | `EchoDesk-v0.2.7-reader-osx-arm64.tar.gz` |
 | Any platform, needs a model | the `models-qwen-v1` release (Q4_K_M GGUF bundle) |
 
 ### Portable build (no installer needed)
 
-1. Unpack the whole `EchoDesk-v0.2.6-reader-win-x64` folder anywhere you like — nothing is written
+1. Unpack the whole `EchoDesk-v0.2.7-reader-win-x64` folder anywhere you like — nothing is written
    outside it, and deleting the folder uninstalls it.
 2. Double-click **`app\EchoDesk.exe`**. It starts the backend next to it by itself; never run
    `app\backend\EchoDeskBackend.exe` on its own, it only speaks the JSON-lines protocol.
@@ -131,7 +136,7 @@ The layout is:
 | `app\backend\models\` | Local `.gguf` models |
 | `app\backend\session.json` | Conversation history (auto-saved and restored) |
 
-The optional `-MakeInstaller` step produces `EchoDesk-Reader-v0.2.6-Setup.exe`, which installs the same
+The optional `-MakeInstaller` step produces `EchoDesk-Reader-v0.2.7-Setup.exe`, which installs the same
 layout.
 
 Set the `ECHODESK_DATA` environment variable to move the outer data folder elsewhere (useful on
@@ -172,6 +177,18 @@ with an explanation, so nothing is silently dropped.
 - **Removed entirely**: web search, model download, update check and external model providers.
   This build contains no code path that performs them, which is what `tools/audit_network.py`
   enforces.
+
+## Known limitations
+
+- **Sequence snapshot paging is not implemented in this release.** The KV cache is still
+  recomputed for every new question, so a second question about the same document pays the
+  prefill cost again; only the model reload is avoided.
+- **Local vision (VLM) is still unavailable.** The multimodal stack is removed from the
+  Reader build, so image and scanned-PDF input is not supported.
+- **The artifacts are not code-signed.** Windows may show a SmartScreen prompt and macOS may
+  require manual approval on first run; verify the SHA-256 digests or rebuild from the tag.
+- Prefill progress and the no-progress watchdog bound a hang, they do not make prefill free:
+  on a CPU-only host a very long document still takes minutes before the first token.
 
 ## Documentation
 

@@ -45,10 +45,10 @@
          these four fields must be kept in sync: `<Version>` may carry a prerelease suffix,
          while `AssemblyVersion`/`FileVersion` must be four purely numeric fields (same rule
          as app_version_4()). -->
-    <Version>0.2.6-reader</Version>
-    <FileVersion>0.2.6.0</FileVersion>
-    <AssemblyVersion>0.2.6.0</AssemblyVersion>
-    <InformationalVersion>0.2.6-reader</InformationalVersion>
+    <Version>0.2.7-reader</Version>
+    <FileVersion>0.2.7.0</FileVersion>
+    <AssemblyVersion>0.2.7.0</AssemblyVersion>
+    <InformationalVersion>0.2.7-reader</InformationalVersion>
     <Product>EchoDesk</Product>
     <Company>Void-Entropia-Studio</Company>
     <Copyright>Copyright (c) Void-Entropia-Studio</Copyright>

@@ -18,13 +18,15 @@ EchoDesk 版本与署名信息。
 """
 APP_NAME = "EchoDesk"
 # [EN] The ``reader`` prerelease suffix marks the Reader profile: the v0.2.6 code base with the
-# [EN] multimodal, retrieval and browser-automation stacks removed, bound to Phi-3-Mini-128K and a
-# [EN] quantised KV cache. The numeric core stays 0.2.6, so ``app_version_4()`` still yields
-# [EN] 0.2.6.0 and every downstream consumer keeps deriving from this one line. The profile is
-# [EN] published from its own branch, never merged into ``master``.
+# [EN] multimodal, retrieval and browser-automation stacks removed. It is bound to the native
+# [EN] llama.cpp shared library, and its thread and batch parameters are calibrated on the host by
+# [EN] measurement. The numeric core is 0.2.7, so ``app_version_4()`` yields 0.2.7.0 and every
+# [EN] downstream consumer keeps deriving from this one line. The profile is published from its
+# [EN] own branch, never merged into ``master``.
 # [ZH] ``reader`` 预发布后缀标记 Reader 版本：v0.2.6 代码基移除多模态、检索与浏览器自动化栈，
-# [ZH] 绑定 Phi-3-Mini-128K 并启用 KV 缓存量化。数字核心仍是 0.2.6，因此 ``app_version_4()``
-# [ZH] 仍得到 0.2.6.0，下游一律继续从这一行派生。该版由独立分支发布，绝不并入 ``master``。
+# [ZH] 绑定原生 llama.cpp 动态库；线程与批参数可按本机实测标定。数字核心是 0.2.7，因此
+# [ZH] ``app_version_4()`` 得到 0.2.7.0，下游一律继续从这一行派生。该版由独立分支发布，
+# [ZH] 绝不并入 ``master``。
 # [EN] v0.2.6 = "Experience overhaul". Twenty-three user-reported defects in the
 # [EN] v0.2.5 line are fixed end to end: document upload robustness, UI deadlocks,
 # [EN] Agent pipe handling, context/output budgets, reasoning separation, role
@@ -42,7 +44,7 @@ APP_NAME = "EchoDesk"
 # [ZH] 大修所依赖的异步文档队列、本地 OpenAI 兼容 API 与 MCP 客户端边界。
 # [ZH] 下游全部按 ``APP_VERSION`` 派生，不再有第二处真相。注意：Windows 的**文件版本资源**
 # [ZH] 只能是四段纯数字，这件事只由下面的 ``app_version_4()`` 负责，不要在下游各写一份。
-APP_VERSION = "v0.2.6-reader"
+APP_VERSION = "v0.2.7-reader"
 
 
 def app_version_4() -> str:

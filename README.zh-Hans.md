@@ -1,12 +1,12 @@
 # EchoDesk Reader
 
-[![CI](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml/badge.svg?branch=reader)](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml) [![Latest Reader release](https://img.shields.io/github/v/release/wyx-spark/EchoDesk?label=reader)](https://github.com/wyx-spark/EchoDesk/releases/tag/v0.2.6-reader)
+[![CI](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml/badge.svg?branch=reader)](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml) [![Latest Reader release](https://img.shields.io/github/v/release/wyx-spark/EchoDesk?label=reader)](https://github.com/wyx-spark/EchoDesk/releases/tag/v0.2.7-reader)
 
-> **版本 0.2.6-reader。** 本分支发布 Reader 版：在 v0.2.6 代码基上移除浏览器自动化、多模态与检索栈，
-> 专注于阅读与分析本机的长篇文档。下面每一句关于功能的描述都适用于**这一个**构建；被移除的部分在
-> [本版不包含什么](#本版不包含什么) 里逐项列出。
+> **版本 0.2.7-reader。** 本分支发布 Reader 版：在 v0.2.6 代码基上移除浏览器自动化、多模态与检索栈，
+> 并在 v0.2.7 完成预填充与校准器工作，专注于阅读与分析本机的长篇文档。下面每一句关于功能的描述都
+> 适用于**这一个**构建；被移除的部分在 [本版不包含什么](#本版不包含什么) 里逐项列出。
 >
-> **该用哪个版本？** `master` 是完整版 EchoDesk（浏览器自动化、多模态、检索栈）；`reader`（本分支）是长篇文档阅读版，其构建在 [Releases 页面](https://github.com/wyx-spark/EchoDesk/releases) 上的标签是 `v0.2.6-reader`；当前 Latest 发布属于 `master`。两个分支版本号相同。
+> **该用哪个版本？** `master` 是完整版 EchoDesk（浏览器自动化、多模态、检索栈）；`reader`（本分支）是长篇文档阅读版，其构建在 [Releases 页面](https://github.com/wyx-spark/EchoDesk/releases) 上的标签是 `v0.2.7-reader`；当前 Latest 发布属于 `master`。两个分支版本号相同。
 >
 > **第一次使用？** 请按 [下载、安装与配置指南（Issue #7）](https://github.com/wyx-spark/EchoDesk/issues/7) 逐步操作：选版本、核对 SHA-256、使用离线模型包、完成首次配置。
 
@@ -28,7 +28,10 @@ EchoDesk Reader 把整条链路留在你的机器上：模型经 llama.cpp 在�
   WPF 前端仍留在仓库里服务 Windows 长期支持线，但**不参与** Reader 的构建。
 - **推理**：本地 GGUF 模型，经**原生 llama.cpp 运行期** —— Python 的 `llama-cpp-python` 绑定已
   物理移除，由 `backend/llama_native.py` 直接调用 C ABI，默认走 CPU
-- **模型画像**：任意 GGUF 模型均可加载；文档分配以所选模型自身上下文上限为界，并可在 **设置 → 上下文** 中选择 32K–256K / 模型硬上限 / 自定义，无需修改配置文件
+- **预填充**：Prompt 处理使用独立线程池（`n_threads_batch`），实时上报进度与预计剩余，运行期间
+  可中止；若停止推进则以可操作的提示收尾，而不是看起来像卡死
+- **标定**：线程与批参数由内置校准器在本机实测，而不是照搬默认值；随包标定以 Qwen3-0.6B 的 GGUF
+  为基准，任意 GGUF 模型仍可加载
 - **KV 缓存**：量化为 8 位（`Q8_0`）而非 F16，同一窗口下缓存占用约减半
 - **界面**：Avalonia（C#）桌面程序 + Python 3.13 打包后端
 - **语言**：简体中文与英语
@@ -81,15 +84,15 @@ RoPE 缩放；模型文件已自带缩放时绝不叠加（叠加会让长文输
 
 | 你的情况 | 下载 |
 | --- | --- |
-| Windows，要安装程序 | `EchoDesk-Reader-v0.2.6-Setup.exe` |
-| Windows，要免安装文件夹 | `EchoDesk-v0.2.6-reader-win-x64.zip` |
-| Linux x64 | `EchoDesk-v0.2.6-reader-linux-x64.tar.gz` |
-| macOS Apple Silicon | `EchoDesk-v0.2.6-reader-osx-arm64.tar.gz` |
+| Windows，要安装程序 | `EchoDesk-Reader-v0.2.7-Setup.exe` |
+| Windows，要免安装文件夹 | `EchoDesk-v0.2.7-reader-win-x64.zip` |
+| Linux x64 | `EchoDesk-v0.2.7-reader-linux-x64.tar.gz` |
+| macOS Apple Silicon | `EchoDesk-v0.2.7-reader-osx-arm64.tar.gz` |
 | 任何平台，还没有模型 | `models-qwen-v1` 发布（Q4_K_M 的 GGUF 模型包） |
 
 ### 便携版（无需安装）
 
-1. 把 `EchoDesk-v0.2.6-reader-win-x64` 整个文件夹解压到任意位置 —— 不往文件夹外写任何东西，
+1. 把 `EchoDesk-v0.2.7-reader-win-x64` 整个文件夹解压到任意位置 —— 不往文件夹外写任何东西，
    删掉文件夹即完成卸载。
 2. 双击 **`app\EchoDesk.exe`**。它会自己启动旁边的后端；**不要**单独运行
    `app\backend\EchoDeskBackend.exe`，它只会说 JSON 行协议。
@@ -109,7 +112,7 @@ RoPE 缩放；模型文件已自带缩放时绝不叠加（叠加会让长文输
 | `app\backend\models\` | 本地 `.gguf` 模型 |
 | `app\backend\session.json` | 对话记录（自动保存与恢复） |
 
-可选的 `-MakeInstaller` 步骤会产出 `EchoDesk-Reader-v0.2.6-Setup.exe`，装出来的目录结构与此相同。
+可选的 `-MakeInstaller` 步骤会产出 `EchoDesk-Reader-v0.2.7-Setup.exe`，装出来的目录结构与此相同。
 
 设置环境变量 `ECHODESK_DATA` 可以把外层数据目录挪到别处（适用于程序目录只读的被管机器）。
 
@@ -142,6 +145,16 @@ Windows 上，旧式 `.doc` / `.ppt` 与加密文档借本机已授权的 WPS/Of
 - 没有遥测、没有账号、不监听任何端口，也**没有任何联网功能**：本构建无法把文档发送到任何地方。
 - **已整体移除**：联网搜索、模型下载、更新检查与外部模型服务。本构建里不存在执行它们的代码路径，
   这一点由 `tools/audit_network.py` 强制执行。
+
+## 已知限制
+
+- **本版本未实现序列快照分页。** 每个新问题仍会重新计算 KV 缓存，因此对同一文档的第二个问题仍要
+  再付一次预填充代价；省下的只是模型重载。
+- **本地视觉（VLM）仍不可用。** 多模态栈已从 Reader 构建中移除，因此不支持图片与扫描版 PDF 输入。
+- **产物均未做代码签名。** Windows 可能弹出 SmartScreen 提示、macOS 首次运行可能需要手动放行；
+  请核对 SHA-256 或按标签自行重建。
+- 预填充进度与无进展看门狗只是把"卡死"变成有界、可见的过程，并不让预填充免费：纯 CPU 主机上
+  超长文档仍需要数分钟才出首字。
 
 ## 文档
 

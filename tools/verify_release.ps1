@@ -508,6 +508,27 @@ try {
         Invoke-Python "Reader 版本" "tools\test_reader_profile.py"; "通过"
     }
 
+    # [EN] Reader v0.2.7 (T1/T2): the prefill configuration block, prefill progress with
+    # [EN] its abort and no-progress watchdog contract, the dedicated prefill thread pool,
+    # [EN] and the v2 calibrator (adaptive rung, long-text guard, winner confirmation,
+    # [EN] environment-noise probe). All four suites drive stub models, so they never load
+    # [EN] real weights and stay inside the gate's time budget.
+    # [ZH] Reader v0.2.7（T1/T2）：预填充配置块、带中止与无进展看门狗契约的预填充进度、
+    # [ZH] 独立预填充线程池，以及 v2 校准器（自适应选档 / 长文本守卫 / 胜者复测 / 环境噪声
+    # [ZH] 探测）。四套用例都使用桩模型，不加载真实权重，因此不会撑破门禁的时间预算。
+    Invoke-Check "预填充配置（v0.2.7 步 1）" {
+        Invoke-Python "预填充配置" "tools\test_prefill_config.py"; "通过"
+    }
+    Invoke-Check "预填充进度与看门狗（v0.2.7 步 2）" {
+        Invoke-Python "预填充进度" "tools\test_prefill_progress.py"; "通过"
+    }
+    Invoke-Check "预填充线程池与中止（v0.2.7 步 2）" {
+        Invoke-Python "预填充引擎" "tools\test_prefill_engine.py"; "通过"
+    }
+    Invoke-Check "校准器 v2（v0.2.7 步 1.1/1.2）" {
+        Invoke-Python "校准器 v2" "tools\test_tuning_v2.py"; "通过"
+    }
+
     # [EN] Reader: the web-search stack (``backend/search_engine.py`` and its ordered
     # [EN] provider cascade) is physically removed. Both gate steps go with it; the
     # [EN] remaining guarantee is stronger than "search still works" -- the build has no
