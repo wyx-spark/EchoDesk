@@ -77,6 +77,7 @@ from llm_engine import _INFERENCE_LOCK
 # [EN] runtime is touched. ``vision_runtime()`` is the single decision point (§12.2).
 # [ZH] 运行期策略闸门。``llm_backend`` 只依赖标准库，在此导入不会加载原生 DLL；闸门
 # [ZH] 必须能在任何运行期被触碰之前拒绝。``vision_runtime()`` 是唯一判定点（§12.2）。
+import llm_backend
 from llm_backend import NativeVisionUnsupported, vision_runtime  # noqa: E402,F401
 
 log = logging.getLogger("EchoDesk.Vision")
@@ -376,12 +377,21 @@ class VisionEngine:
     def __init__(self, model_path: str, mmproj_path: str,
                  n_ctx: int = DEFAULT_VISION_CONTEXT,
                  n_threads: int = 0, n_gpu_layers: int = 0,
-                 verbose: bool = False) -> None:
+                 verbose: bool = False, image_min_tokens: int = 0,
+                 image_max_tokens: int = 0) -> None:
         self.model_path = os.path.abspath(model_path)
         self.mmproj_path = os.path.abspath(mmproj_path)
         self.n_ctx = max(1024, int(n_ctx))
         self.handler_name = ""
+        #: [EN] Which runtime actually serves this engine: "wheel" or "native".
+        #: [ZH] 实际服务该引擎的运行期："wheel" 或 "native"。
+        self.runtime = ""
         self.llm: Any = None
+        self.native: Any = None
+        #: [EN] Image token budget passed to the native engine (0 = module default).
+        #: [ZH] 传给原生引擎的图像 token 预算（0 = 模块默认值）。
+        self.image_min_tokens = int(image_min_tokens or 0)
+        self.image_max_tokens = int(image_max_tokens or 0)
         # [EN] Validate the complete native input set first. Loading the model
         # [EN] without a projector (or with a foreign file renamed to .gguf)
         # [EN] makes llama.cpp dereference an uninitialised vision context, which
@@ -404,7 +414,46 @@ class VisionEngine:
         self._load(verbose=verbose, n_threads=n_threads, n_gpu_layers=n_gpu_layers)
 
     def _load(self, verbose: bool, n_threads: int, n_gpu_layers: int) -> None:
-        """[EN] Construct the llama.cpp object with the multimodal handler. / [ZH] 以多模态处理器构建 llama.cpp 对象。"""
+        """
+        [EN]
+        Select the runtime and build the engine.
+
+        Selection happens exactly once, here (task book §12.2). ``auto`` prefers the
+        wheel because on a GPU machine it is faster and field-proven; the only
+        permitted fallback is *at selection time* -- a wheel that cannot even be
+        constructed. Once an engine is chosen it owns its failures: there is no
+        "native failed, quietly retry the wheel" path, because that would paint a
+        native defect as "it works".
+
+        [ZH]
+        选择运行期并构建引擎。
+
+        选择只在此处发生一次（任务书 §12.2）。``auto`` 优先轮子，因为它在 GPU 机器上
+        更快且久经验证；唯一允许的回落发生在**选路阶段** —— 轮子连构造都不行时。一旦选定
+        引擎，失败就由该引擎自己承担：不存在「原生失败后悄悄重试轮子」的路径，那会把原生
+        缺陷伪装成「能跑」。
+        """
+        choice = llm_backend.vision_runtime()
+        if choice == "wheel":
+            try:
+                self._load_wheel(verbose=verbose, n_threads=n_threads,
+                                 n_gpu_layers=n_gpu_layers)
+                self.runtime = "wheel"
+                return
+            except Exception as exc:  # noqa: BLE001 - fallback only in auto selection
+                if llm_backend.runtime_mode() != "auto":
+                    raise
+                reason = ("auto: llama-cpp-python is importable but the vision engine "
+                          "could not be constructed (%s: %s); using the native mtmd "
+                          "engine" % (type(exc).__name__, exc))
+                llm_backend.record_vision_fallback(reason)
+                log.warning("%s", reason)
+        self._load_native(verbose=verbose, n_threads=n_threads,
+                          n_gpu_layers=n_gpu_layers)
+        self.runtime = "native"
+
+    def _load_wheel(self, verbose: bool, n_threads: int, n_gpu_layers: int) -> None:
+        """[EN] Wheel path, unchanged: ``llama_cpp.Llama`` plus a chat handler. / [ZH] 轮子路径保持不变：``llama_cpp.Llama`` 加聊天处理器。"""
         # [EN] v0.2.6 item 23: register the CUDA runtime directories and preload
         # [EN] the llama.cpp DLLs in dependency order before the native import.
         # [ZH] v0.2.6 第 23 项：在原生导入之前注册 CUDA 运行时目录，并按依赖顺序
@@ -431,6 +480,24 @@ class VisionEngine:
         log.info("视觉模型已加载：%s（处理器 %s）",
                  os.path.basename(self.model_path), self.handler_name)
 
+    def _load_native(self, verbose: bool, n_threads: int, n_gpu_layers: int) -> None:
+        """[EN] Native path: the mtmd engine. / [ZH] 原生路径：mtmd 引擎。"""
+        from vision_native import NativeVLM  # noqa: PLC0415 - avoids importing mtmd eagerly
+
+        # [EN] Do NOT wrap this in ``_INFERENCE_LOCK``: ``NativeVLM`` takes the same
+        # [EN] non-reentrant lock while loading, and nesting it deadlocks the process.
+        # [ZH] 切勿在此再套 ``_INFERENCE_LOCK``：``NativeVLM`` 加载时取的是同一把
+        # [ZH] 非可重入锁，嵌套会直接死锁。
+        self.native = NativeVLM(
+            self.model_path, self.mmproj_path, n_ctx=self.n_ctx,
+            n_threads=n_threads, n_gpu_layers=n_gpu_layers, verbose=verbose,
+            image_min_tokens=self.image_min_tokens,
+            image_max_tokens=self.image_max_tokens)
+        self.handler_name = "mtmd"
+        log.info("视觉模型已加载（原生 mtmd）：%s + %s",
+                 os.path.basename(self.model_path),
+                 os.path.basename(self.mmproj_path))
+
     def chat(self, image_path: str, prompt: str, max_tokens: int = 512,
              temperature: float = 0.3) -> str:
         """
@@ -450,6 +517,24 @@ class VisionEngine:
         会把非 ``data:`` 值当作 URL 的处理器将尝试打开 ``C:\\...``，并以
         ``unknown url type: c`` 失败。
         """
+        # [EN] Native engine first: it owns its own error codes (pair_mismatch,
+        # [EN] image_decode_error ...) and only non-VisionError exceptions are wrapped,
+        # [EN] so the dispatcher still receives the precise code.
+        # [ZH] 先走原生引擎：它自带错误码（pair_mismatch、image_decode_error …），
+        # [ZH] 只有非 VisionError 的异常才被包装，分发层因此仍能收到精确的 code。
+        if self.runtime == "native":
+            try:
+                return self.native.chat(image_path, prompt, max_tokens=max_tokens,
+                                        temperature=temperature)
+            except VisionError:
+                raise
+            except OSError as exc:
+                raise VisionError("vision_os_error", "media.vision_os_error",
+                                  detail=f"{type(exc).__name__}: {exc}") from exc
+            except Exception as exc:  # noqa: BLE001 - [EN] native binding failure
+                                     # [ZH] 原生绑定层失败
+                raise VisionError("chat_failed", "media.vision_failed",
+                                  detail=f"{type(exc).__name__}: {exc}") from exc
         # [EN] Outermost boundary of the inference entry point: every failure that
         # [EN] can be represented in Python becomes a structured VisionError. A
         # [EN] native access violation cannot be caught here, which is exactly why
@@ -530,6 +615,18 @@ class VisionEngine:
                 except Exception:  # noqa: BLE001 - [EN] cleanup must not mask errors
                                        # [ZH] 清理过程不得掩盖错误
                     log.debug("释放视觉模型失败（忽略）", exc_info=True)
+        # [EN] Native close runs outside the outer lock for the same reentrancy
+        # [EN] reason: ``NativeVLM.close`` takes ``_INFERENCE_LOCK`` itself.
+        # [ZH] 原生关闭放在外层锁之外，原因同样是不可重入：``NativeVLM.close`` 自己会取
+        # [ZH] ``_INFERENCE_LOCK``。
+        native = self.native
+        self.native = None
+        native_close = getattr(native, "close", None)
+        if callable(native_close):
+            try:
+                native_close()
+            except Exception:  # noqa: BLE001
+                log.debug("释放原生视觉引擎失败（忽略）", exc_info=True)
 
 
 class VisionService:
@@ -550,12 +647,17 @@ class VisionService:
 
     def __init__(self, model_path: str = "", mmproj_path: str = "",
                  n_ctx: int = DEFAULT_VISION_CONTEXT,
-                 n_threads: int = 0, n_gpu_layers: int = 0) -> None:
+                 n_threads: int = 0, n_gpu_layers: int = 0,
+                 image_min_tokens: int = 0, image_max_tokens: int = 0) -> None:
         self.model_path = os.path.abspath(model_path) if model_path else ""
         self.mmproj_path = os.path.abspath(mmproj_path) if mmproj_path else ""
         self.n_ctx = min(MAX_VISION_CONTEXT, max(1024, int(n_ctx or DEFAULT_VISION_CONTEXT)))
         self.n_threads = int(n_threads or 0)
         self.n_gpu_layers = int(n_gpu_layers or 0)
+        #: [EN] Image token budget for the native engine (0 = module default).
+        #: [ZH] 原生引擎的图像 token 预算（0 = 模块默认值）。
+        self.image_min_tokens = int(image_min_tokens or 0)
+        self.image_max_tokens = int(image_max_tokens or 0)
         self._engine: Optional[VisionEngine] = None
         self.last_error = ""
 
@@ -637,11 +739,64 @@ class VisionService:
             "mmproj": os.path.basename(self.mmproj_path),
             "mmproj_path": self.mmproj_path,
             "loaded": self._engine is not None,
-            "handler": getattr(self._engine, "handler_name", ""),
+            "handler": (getattr(self._engine, "handler_name", "")
+                        or self._handler_hint()),
+            "runtime": (getattr(self._engine, "runtime", "") or self._runtime_hint()),
+            "pairing_state": self._pairing_state(),
+            "image_min_tokens": self._budget()[0],
+            "image_max_tokens": self._budget()[1],
+            "fallback_reason": llm_backend.vision_fallback_reason(),
             "reason": reason,
             "reason_text": _t(reason) if reason else "",
             "last_error": self.last_error,
         }
+
+    # [EN] The helpers below keep ``status()`` accurate *before* a load: they ask the
+    # [EN] single selection point instead of guessing, and they never raise.
+    # [ZH] 下面的辅助方法使 ``status()`` 在加载**之前**也准确：它们询问唯一判定点而不是
+    # [ZH] 猜测，且绝不抛异常。
+    def _runtime_hint(self) -> str:
+        try:
+            return llm_backend.vision_runtime()
+        except Exception:  # noqa: BLE001 - status must never raise
+            return "unavailable"
+
+    def _handler_hint(self) -> str:
+        return "mtmd" if self._runtime_hint() == "native" else "wheel"
+
+    def _pairing_state(self) -> str:
+        if self._engine is not None and getattr(self._engine, "runtime", "") == "native":
+            return str(getattr(self._engine.native, "pairing_state", "") or "unverified")
+        if not (self.model_path and self.mmproj_path):
+            return ""
+        if not (os.path.isfile(self.model_path) and os.path.isfile(self.mmproj_path)):
+            return ""
+        if self._runtime_hint() != "native":
+            return ""
+        # [EN] Metadata-only classification: no model load, no native call.
+        # [ZH] 仅基于元数据的分类：不加载模型、不调用原生。
+        try:
+            from gguf_meta import read_metadata  # noqa: PLC0415
+            from vision_native import classify_pairing  # noqa: PLC0415
+
+            state, _evidence = classify_pairing(
+                read_metadata(self.model_path), read_metadata(self.mmproj_path))
+            return state
+        except Exception:  # noqa: BLE001
+            return "unverified"
+
+    def _budget(self) -> "tuple[int, int]":
+        try:
+            from vision_native import (  # noqa: PLC0415
+                DEFAULT_IMAGE_MAX_TOKENS, DEFAULT_IMAGE_MIN_TOKENS)
+
+            minimum = self.image_min_tokens or DEFAULT_IMAGE_MIN_TOKENS
+            maximum = self.image_max_tokens or DEFAULT_IMAGE_MAX_TOKENS
+            if maximum < minimum:
+                maximum = minimum
+            return int(minimum), int(maximum)
+        except Exception:  # noqa: BLE001
+            return self.image_min_tokens or 0, self.image_max_tokens or 0
 
     def chat(self, image_path: str, prompt: str, max_tokens: int = 512,
              temperature: float = 0.3) -> str:
@@ -652,15 +807,11 @@ class VisionService:
         [ZH]
         确保引擎已加载，并执行一次视觉轮。
         """
-        # [EN] Gate first, before the path checks and before any model load: when no
-        # [EN] available runtime can serve vision, the request must fail with a
-        # [EN] typed error instead of degrading into a text-only answer. The check
-        # [EN] stays outside the ``try`` below so the exception type survives to the
-        # [EN] dispatcher (``VisionEngine`` would wrap it into a generic VisionError).
-        # [ZH] 先过闸门，再走路径校验与模型加载：没有可用运行期能承载视觉时，请求必须
-        # [ZH] 以带类型的错误失败，而不是退化成纯文本回答。该检查位于下方 ``try`` 之外，
-        # [ZH] 使异常类型能传到分发层（放进 ``VisionEngine`` 会被包成通用 VisionError）。
-        vision_runtime()
+        # [EN] The runtime is decided exactly once, inside ``VisionEngine``. Doing it
+        # [EN] here as well (a second call) is what §12.2 forbids: two decision points
+        # [EN] drift, and a status probe must never preselect for the engine.
+        # [ZH] 运行期只在 ``VisionEngine`` 内部判定一次。此处再判一次正是 §12.2 禁止的：
+        # [ZH] 两个判定点会漂移，而且状态查询绝不能替引擎做预选。
         if not self.model_path:
             raise VisionError("no_model", "media.vision_no_model")
         if not os.path.isfile(self.model_path):
@@ -678,6 +829,8 @@ class VisionService:
                 self._engine = VisionEngine(
                     self.model_path, self.mmproj_path, n_ctx=self.n_ctx,
                     n_threads=self.n_threads, n_gpu_layers=self.n_gpu_layers,
+                    image_min_tokens=self.image_min_tokens,
+                    image_max_tokens=self.image_max_tokens,
                 )
             except VisionError:
                 raise

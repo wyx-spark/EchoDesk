@@ -38,6 +38,8 @@ import os
 import threading
 from typing import Any, Dict
 
+from vision_errors import CODE_RUNTIME_UNAVAILABLE, VisionError
+
 log = logging.getLogger("echodesk.llm_backend")
 
 #: [EN] Environment variable selecting the runtime policy.
@@ -82,6 +84,9 @@ _SELECTION_LOCK = threading.Lock()
 #: [ZH] 最近一次决策的结果，供诊断/状态读取。
 _LAST_SELECTION: Dict[str, Any] = {}
 _WARNED_BAD_MODE = False
+#: [EN] Cached result of "can llama_cpp be imported"; ``None`` means not probed yet.
+#: [ZH] 「llama_cpp 能否导入」的缓存结果；``None`` 表示尚未探测。
+_WHEEL_STATE: "bool | None" = None
 
 
 def runtime_mode() -> str:
@@ -147,57 +152,161 @@ def will_use_wheel(**kwargs) -> bool:
 def vision_runtime() -> str:
     """
     [EN]
-    Return the runtime that can serve a vision request, or raise.
+    Return the runtime that must serve a vision request, or raise.
 
-    This is the single decision point for "can vision run at all" (task book §12.2:
-    one place decides, nobody re-decides). It deliberately does not look at
-    ``runtime_mode() == "native"`` alone: after ``llama-cpp-python`` is removed,
-    ``auto`` will have no vision runtime either, and that is the more dangerous
-    case because ``auto`` is the default. The real question is whether the wheel is
-    *available*, not which policy string is set.
+    This is the single decision point for vision routing (task book §12.2: one place
+    decides, nobody re-decides). The policy is fixed and asymmetric on purpose:
 
-    ``importlib.util.find_spec`` is used instead of ``import llama_cpp`` so this
-    check has no side effect: importing the wheel loads its DLLs, which would break
-    the native-only rule that no wheel DLL may be preloaded.
+    * ``wheel``  -> the wheel, or a loud failure if it cannot even be imported;
+    * ``native`` -> the native mtmd engine, or a loud failure if its DLLs are absent;
+    * ``auto``   -> **the wheel whenever it works**, because on a GPU machine it is
+      both faster and field-proven; only when the wheel cannot be imported at all
+      does it fall back to the native engine. This is what makes T3-3 safe: once
+      ``llama-cpp-python`` is deleted, ``auto`` keeps working by itself instead of
+      erroring out.
+
+    "Usable" is decided by actually importing ``llama_cpp``: a shadow/broken package
+    must count as unavailable, and the import is needed anyway when the wheel is
+    chosen. The native side is probed by file presence only, because importing the
+    native runtime loads its DLLs and that must not happen while the wheel serves.
 
     [ZH]
-    返回能够承载视觉请求的运行期，或抛出。
+    返回必须承载视觉请求的运行期，或抛出。
 
-    这是"视觉到底能不能跑"的唯一判定点（任务书 §12.2：一处判定，不得在别处重复判定）。
-    它刻意不只看 ``runtime_mode() == "native"``：``llama-cpp-python`` 被移除后，
-    ``auto`` 同样没有视觉运行期，而那是更危险的情形，因为 ``auto`` 是默认值。真正的问题
-    是轮子**是否可用**，而不是策略字符串是什么。
+    这是视觉路由的唯一判定点（任务书 §12.2：一处判定，不得在别处重复判定）。策略是刻意
+    不对称的：
 
-    ``importlib.util.find_spec`` 代替 ``import llama_cpp``，使本检查没有副作用：导入轮子
-    会加载它的 DLL，那会破坏"原生模式下不得预加载任何轮子 DLL"的规则。
+    * ``wheel`` —— 用轮子；连导入都不行就明确失败；
+    * ``native`` —— 用原生 mtmd 引擎；DLL 缺失就明确失败；
+    * ``auto`` —— **轮子能用就用轮子**：在 GPU 机器上它更快且久经验证；只有轮子完全
+      无法导入时才回落到原生引擎。这条正是 T3-3 的安全垫：一旦删除
+      ``llama-cpp-python``，``auto`` 会自己继续工作而不是报错。
+
+    「可用」以真正导入 ``llama_cpp`` 为准：影子包/损坏包必须算作不可用，而且选中轮子时
+    本来就需要这次导入。原生侧只做文件存在性探测，因为导入原生运行期会加载它的 DLL，
+    而在轮子服务时那绝不能发生。
     """
     mode = runtime_mode()
     if mode == "wheel":
+        if not _wheel_importable():
+            raise VisionError(
+                CODE_RUNTIME_UNAVAILABLE, "media.vision_failed",
+                detail="%s=wheel but llama-cpp-python cannot be imported"
+                       % RUNTIME_ENV)
+        _record("wheel", mode, "forced by %s=wheel" % RUNTIME_ENV)
         return "wheel"
     if mode == "native":
-        raise NativeVisionUnsupported(
-            "vision cannot run under %s=native: the native runtime has no mtmd vision "
-            "support yet. Set %s=wheel to fall back to the llama-cpp-python runtime."
-            % (RUNTIME_ENV, RUNTIME_ENV))
-    # [EN] ``auto``: vision still needs the wheel, and after T3-3 it may be gone.
-    # [ZH] ``auto``：视觉仍需轮子，而 T3-3 之后轮子可能已不存在。
+        if not _native_available():
+            raise VisionError(
+                CODE_RUNTIME_UNAVAILABLE, "media.vision_failed",
+                detail="%s=native but the native mtmd runtime is not present"
+                       % RUNTIME_ENV)
+        _record("native", mode, "forced by %s=native" % RUNTIME_ENV)
+        return "native"
+    # [EN] ``auto``: the wheel is the default; only a missing wheel falls back.
+    # [ZH] ``auto``：默认用轮子；只有轮子缺失才回落。
+    if _wheel_importable():
+        _record("wheel", mode, "auto: llama-cpp-python is available")
+        return "wheel"
+    if _native_available():
+        reason = ("auto: llama-cpp-python is not importable, falling back to the "
+                  "native mtmd engine")
+        _record("native", mode, reason, fallback=True)
+        return "native"
+    _record("none", mode, "auto: neither the wheel nor the native runtime is usable")
+    raise VisionError(
+        CODE_RUNTIME_UNAVAILABLE, "media.vision_failed",
+        detail="no vision runtime is available under %s=auto: llama-cpp-python is "
+               "not importable and backend/native/<rid> is missing" % RUNTIME_ENV)
+
+
+def _wheel_importable() -> bool:
+    """
+    [EN] Whether ``llama_cpp`` can actually be imported (cached per process).
+
+    A shadow package on ``PYTHONPATH`` that raises on import must count as unusable,
+    which ``find_spec`` alone would miss.
+
+    [ZH]
+    ``llama_cpp`` 是否真的可以导入（按进程缓存）。
+
+    ``PYTHONPATH`` 上导入即抛错的影子包必须算作不可用，仅靠 ``find_spec`` 会漏掉这种情况。
+    """
+    global _WHEEL_STATE
+    if _WHEEL_STATE is not None:
+        return _WHEEL_STATE
     try:
-        import importlib.util  # noqa: PLC0415 - cheap, but keep the module graph flat
-
-        available = importlib.util.find_spec("llama_cpp") is not None
-    except (ImportError, ValueError):  # noqa: BLE001 - a broken path is "not available"
-        available = False
-    if not available:
-        raise NativeVisionUnsupported(
-            "vision requires the llama-cpp-python runtime, which is not installed; "
-            "the native runtime has no mtmd vision support yet. Set %s=wheel after "
-            "installing it, or load a text-only model." % RUNTIME_ENV)
-    return "wheel"
+        import llama_cpp  # noqa: F401,PLC0415 - the import IS the probe
+        _WHEEL_STATE = True
+    except Exception:  # noqa: BLE001 - any import failure means "unusable"
+        _WHEEL_STATE = False
+    return _WHEEL_STATE
 
 
-def _record(runtime: str, mode: str, reason: str) -> None:
+def _native_available() -> bool:
+    """
+    [EN] Whether the native mtmd runtime exists for this platform.
+
+    Deliberately file-based: importing ``llama_native`` would load the native DLLs,
+    which must not happen while the wheel is the selected runtime.
+
+    [ZH]
+    本平台是否存在原生 mtmd 运行期。
+
+    刻意只查文件：导入 ``llama_native`` 会加载原生 DLL，而在选中轮子时那绝不能发生。
+    """
+    try:
+        import llama_ctypes  # noqa: PLC0415 - lightweight, no DLL load
+        rid = llama_ctypes.current_native_rid()
+    except Exception:  # noqa: BLE001
+        rid = ""
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "native")
+    candidates = [os.path.join(root, rid)] if rid else []
+    candidates.append(root)
+    for directory in candidates:
+        if os.path.isfile(os.path.join(directory, "mtmd.dll")):
+            return True
+        if os.path.isfile(os.path.join(directory, "libmtmd.so")):
+            return True
+        if os.path.isfile(os.path.join(directory, "libmtmd.dylib")):
+            return True
+    return False
+
+
+def record_vision_fallback(reason: str) -> None:
+    """
+    [EN] Record that ``auto`` had to move from the wheel to the native engine.
+
+    Called only from the selection stage in :mod:`vision`; the reason is surfaced by
+    ``VisionService.status()`` so support can see *why* the slower engine is active.
+
+    [ZH]
+    记录 ``auto`` 从轮子回落到原生引擎这一事实。
+
+    仅由 :mod:`vision` 的选路阶段调用；原因通过 ``VisionService.status()`` 暴露，使
+    支持人员能看到较慢引擎**为何**生效。
+    """
     with _SELECTION_LOCK:
+        _LAST_SELECTION.update({
+            "runtime": "native", "mode": "auto", "reason": str(reason),
+            "fallback": True,
+        })
+
+
+def vision_fallback_reason() -> str:
+    """[EN] Why ``auto`` fell back to native (empty when it did not). / [ZH] ``auto`` 回落到原生的原因（未回落时为空）。"""
+    with _SELECTION_LOCK:
+        if not _LAST_SELECTION.get("fallback"):
+            return ""
+        return str(_LAST_SELECTION.get("reason") or "")
+
+
+def _record(runtime: str, mode: str, reason: str, **extra: Any) -> None:
+    with _SELECTION_LOCK:
+        _LAST_SELECTION.pop("fallback", None)
         _LAST_SELECTION.update({"runtime": runtime, "mode": mode, "reason": reason})
+        if extra:
+            _LAST_SELECTION.update(extra)
 
 
 def create_llama(**kwargs):

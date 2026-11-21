@@ -49,20 +49,28 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from gguf_meta import MAGIC as GGUF_MAGIC, read_metadata
 from llm_engine import _INFERENCE_LOCK
-from vision_errors import VisionError
+from vision_errors import (
+    CODE_ASSET_MISSING,
+    CODE_IMAGE_DECODE_ERROR,
+    CODE_PAIR_MISMATCH,
+    CODE_RUNTIME_UNAVAILABLE,
+    VisionError,
+)
 
 log = logging.getLogger("EchoDesk.VisionNative")
 
-#: [EN] Error codes for :class:`vision_errors.VisionError`. They are plain strings,
-#: [EN] not subclasses: the dispatcher distinguishes failures by ``code``, exactly
-#: [EN] like the wheel path does, so no mapping table can drift between the two.
-#: [ZH] 供 :class:`vision_errors.VisionError` 使用的错误码。它们是普通字符串而不是
-#: [ZH] 子类：分发层按 ``code`` 区分失败，与轮子路径完全一致，两条实现之间不会出现
-#: [ZH] 会漂移的映射表。
-CODE_RUNTIME_UNAVAILABLE = "runtime_unavailable"
-CODE_ASSET_MISSING = "asset_missing"
-CODE_PAIR_MISMATCH = "pair_mismatch"
-CODE_IMAGE_DECODE_ERROR = "image_decode_error"
+#: [EN] Error codes are defined in :mod:`vision_errors` and re-exported here so
+#: [EN] existing callers/tests keep one import site; the vocabulary itself must stay
+#: [EN] shared with the wheel path.
+#: [ZH] 错误码定义在 :mod:`vision_errors` 并在此重新导出，使现有调用方/测试保持单一
+#: [ZH] 导入点；词表本身必须与轮子路径共用。
+__all__ = [
+    "CODE_RUNTIME_UNAVAILABLE", "CODE_ASSET_MISSING", "CODE_PAIR_MISMATCH",
+    "CODE_IMAGE_DECODE_ERROR", "NativeVLM", "classify_pairing", "check_pairing",
+    "image_budget_from_config", "PAIRING_VERIFIED", "PAIRING_MISMATCH",
+    "PAIRING_UNVERIFIED", "PROJECTOR_FAMILY_WHITELIST",
+    "DEFAULT_IMAGE_MIN_TOKENS", "DEFAULT_IMAGE_MAX_TOKENS",
+]
 
 #: [EN] Default context window for one vision turn.
 #: [ZH] 单次视觉轮的默认上下文窗口。

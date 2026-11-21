@@ -147,8 +147,22 @@ from typing import Any, Callable, Dict, Iterator, List, Optional
 # [ZH] ``ggml-cuda.dll`` 并注册 ``nvidia/*/bin`` 目录。本调用刻意放在所有后端导入
 # [ZH] 之前：只有这个位置才能保证早于各模块内惰性的 ``from llama_cpp import Llama``。
 import cuda_bootstrap
+import llm_backend
 
-cuda_bootstrap.ensure()
+# [EN] Task book §12.2 rule 1: an action that prepares the environment *for the
+# [EN] wheel* must first decide whether the wheel will be used. This bootstrap
+# [EN] preloads the wheel's ``llama.dll``/``ggml.dll``; running it under
+# [EN] ``ECHODESK_LLAMA_RUNTIME=native`` binds the native ``llama.dll`` to the wheel's
+# [EN] ``ggml.dll`` and every model load then fails with "no backends are loaded".
+# [EN] It is therefore skipped for the native-only policy; ``auto`` still runs it
+# [EN] because vision may select the wheel later.
+# [ZH] 任务书 §12.2 规则 1：为轮子准备环境的动作必须先判定是否要走轮子。本引导会预加载
+# [ZH] 轮子的 ``llama.dll``/``ggml.dll``；在 ``ECHODESK_LLAMA_RUNTIME=native`` 下执行会
+# [ZH] 让原生 ``llama.dll`` 绑定到轮子的 ``ggml.dll``，之后每次加载模型都报
+# [ZH] "no backends are loaded"。因此纯原生策略下跳过；``auto`` 仍然执行，因为视觉之后
+# [ZH] 可能选择轮子。
+if llm_backend.will_use_wheel():
+    cuda_bootstrap.ensure()
 
 from reasoning import ANSWER as _CH_ANSWER
 from reasoning import REASONING as _CH_REASONING
@@ -2037,7 +2051,13 @@ class Backend:
         if self._vision_engine is None:
             self._vision_engine = vision_mod.VisionService(
                 model, mmproj, n_ctx=n_ctx, n_threads=n_threads,
-                n_gpu_layers=n_gpu_layers)
+                n_gpu_layers=n_gpu_layers,
+                # [EN] Image token budget: configurable, and reported verbatim by
+                # [EN] status() so support can tell "slow/garbage" from "misconfigured".
+                # [ZH] 图像 token 预算：可配置，并由 status() 原样报告，使支持人员能区分
+                # [ZH]「慢/输出垃圾」与「配置错误」。
+                image_min_tokens=int(getattr(cfg, "vision_image_min_tokens", 0) or 0),
+                image_max_tokens=int(getattr(cfg, "vision_image_max_tokens", 0) or 0))
         else:
             self._vision_engine.configure(model, mmproj, n_ctx=n_ctx)
         return self._vision_engine
@@ -2166,6 +2186,17 @@ class Backend:
             temperature = float(request.get("temperature")
                                 if request.get("temperature") is not None
                                 else getattr(cfg, "vision_temperature", 0.3))
+            # [EN] Visible progress before the first token: native CPU vision takes
+            # [EN] ~20 s per image and the interface must not look frozen. The
+            # [EN] host_progress channel is the existing non-streaming event path.
+            # [EN] Abort is NOT supported: the native eval is one blocking call, so
+            # [EN] claiming /stop support here would be a lie (see NativeVLM.status).
+            # [ZH] 首 token 之前的可见进度：原生 CPU 视觉每张图约 20 秒，界面不能看起来
+            # [ZH] 卡死。host_progress 是既有的非流式事件通道。**不支持中止**：原生求值是
+            # [ZH] 一次阻塞调用，在此声称支持 /stop 就是撒谎（见 NativeVLM.status）。
+            sink = _host_progress_sink
+            if callable(sink):
+                sink(_t("media.vision_progress"))
             answer = service.chat(image_path, prompt, max_tokens=max_tokens,
                                   temperature=temperature)
         except vision_mod.NativeVisionUnsupported as exc:

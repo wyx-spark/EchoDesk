@@ -31,6 +31,16 @@ import it without importing each other (no circular import, no runtime DLL load)
 """
 from __future__ import annotations
 
+#: [EN] Stable codes carried by :class:`VisionError`. They are plain strings, not
+#: [EN] subclasses: the dispatcher distinguishes failures by ``code``, so the wheel
+#: [EN] path and the native path share one vocabulary and no mapping table is needed.
+#: [ZH] :class:`VisionError` 携带的稳定错误码。它们是普通字符串而不是子类：分发层按
+#: [ZH] ``code`` 区分失败，因此轮子路径与原生路径共用一套词表，不需要任何映射表。
+CODE_RUNTIME_UNAVAILABLE = "runtime_unavailable"
+CODE_ASSET_MISSING = "asset_missing"
+CODE_PAIR_MISMATCH = "pair_mismatch"
+CODE_IMAGE_DECODE_ERROR = "image_decode_error"
+
 
 class VisionError(Exception):
     """
