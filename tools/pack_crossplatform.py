@@ -33,6 +33,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import io
 import json
@@ -45,6 +46,7 @@ import tempfile
 import reproducible as repro
 import prune_release as pruner
 import runtime_state
+import pipeline_lock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKEND = os.path.join(ROOT, "backend")
@@ -366,6 +368,15 @@ def main() -> int:
                         help="[EN] development only: bypass the clean-worktree guard "
                              "/ [ZH] 仅限开发：绕过干净工作区校验")
     args = parser.parse_args()
+
+    # [EN] Take the pipeline lock: packaging must not overlap the release gate or another packaging
+    # [EN] run (v0.2.7 archived runtime state because of exactly such an overlap). atexit releases
+    # [EN] it on normal completion; a crashed process is taken over by the stale-PID rule.
+    # [ZH] 取得流水线锁：打包不得与发布门禁或另一次打包并发（v0.2.7 正是这样把运行期状态归档的）。
+    # [ZH] 正常结束时由 atexit 释放；崩溃进程由"PID 失效即接管"规则处理。
+    pack_lock = pipeline_lock.PipelineLock("pack-crossplatform")
+    pack_lock.acquire()
+    atexit.register(pack_lock.release)
 
     repro.require_clean_worktree(args.allow_dirty)
     repro.source_date_epoch()

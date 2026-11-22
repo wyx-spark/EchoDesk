@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import io
 import json
@@ -33,6 +34,8 @@ import re
 import sys
 import tarfile
 import zipfile
+
+import pipeline_lock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -262,6 +265,12 @@ def main() -> int:
     parser.add_argument("--allow-missing", action="store_true",
                         help="某个 RID 的产物不存在时只提示不失败")
     args = parser.parse_args()
+
+    # [EN] Same pipeline lock as packaging/gate: this check reads archives that packaging writes.
+    # [ZH] 与打包/门禁同一把流水线锁：本检查读取的文件正是打包写的归档。
+    check_lock = pipeline_lock.PipelineLock("check-crossplatform")
+    check_lock.acquire()
+    atexit.register(check_lock.release)
 
     out_dir = args.dir if os.path.isabs(args.dir) else os.path.join(ROOT, args.dir)
     version = args.version.lstrip("vV") if args.version else current_version()

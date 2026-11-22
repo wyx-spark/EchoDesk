@@ -1,4 +1,4 @@
-# 适用平台：顶层编排，内含 Windows 专属项（安装包/UI 探针）
+﻿# 适用平台：顶层编排，内含 Windows 专属项（安装包/UI 探针）
 # EchoDesk 发布物验证编排（v0.2.1 修复版）
 #
 # 把"对着最终发布物跑一遍全部检查"固定成一条命令，避免人工漏项。
@@ -135,6 +135,18 @@ $results = New-Object System.Collections.ArrayList
 # 之前用 `> $null` 丢掉了子工具输出，结果只看到"退出码 1"而无法定位（实测踩到过）。
 $LogDir = Join-Path $Root "artifacts\verify-logs"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+
+# [EN] Pipeline lock: packaging and the release gate must never run concurrently -- they read and
+# [EN] write the same publish/ and dist/ trees. v0.2.7 archived runtime state because a packaging
+# [EN] run overlapped a gate run that executed a backend inside dist/.
+# [ZH] 流水线互斥锁：打包与发布门禁不得并发运行 —— 两者读写同一份 publish/ 与 dist/ 树。v0.2.7 就
+# [ZH] 因为打包与门禁并发（门禁正在 dist/ 里跑后端）而把运行期状态归档进了资产。
+. (Join-Path $Root "tools\pipeline_lock.ps1")
+Enter-PipelineLock -Role "release-gate"
+function Exit-Gate([int]$Code) {
+    Exit-PipelineLock
+    exit $Code
+}
 
 # [EN] The development model used by the checks that need real inference. Release artifacts never
 # [EN] contain a model, so it is always taken from the development tree; absence is a hard failure
@@ -338,7 +350,7 @@ Write-Host "发布目录: $Out"
 if (-not (Test-Path -LiteralPath $BackendExe)) {
     Write-Host "未找到打包后的后端: $BackendExe" -ForegroundColor Red
     Write-Host "请先执行: & tools\build_release.ps1 -IncludeModels -MigrateFrom publish\EchoDesk-v0.2.0" -ForegroundColor Red
-    exit 2
+    Exit-Gate 2
 }
 
 Push-Location $Root
@@ -1200,12 +1212,12 @@ if ($failed.Count -gt 0) {
         Write-Host "`n[WARN] 另有 $($skipped.Count) 项跳过，发布前必须补齐：" -ForegroundColor Yellow
         $skipped | ForEach-Object { Write-Host "  - $($_.Name)：$($_.Detail)" -ForegroundColor Yellow }
     }
-    exit 1
+    Exit-Gate 1
 }
 if ($skipped.Count -gt 0) {
     Write-Host "`n[WARN] 有 $($skipped.Count) 项跳过，发布前必须补齐：" -ForegroundColor Yellow
     $skipped | ForEach-Object { Write-Host "  - $($_.Name)：$($_.Detail)" -ForegroundColor Yellow }
-    exit 0
+    Exit-Gate 0
 }
 Write-Host "`n✓ 发布物验证全部通过" -ForegroundColor Green
-exit 0
+Exit-Gate 0

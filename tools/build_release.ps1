@@ -1,4 +1,4 @@
-# 适用平台：Windows 发布链（PyInstaller + rcedit + Inno Setup），三平台各自有别的打包脚本
+﻿# 适用平台：Windows 发布链（PyInstaller + rcedit + Inno Setup），三平台各自有别的打包脚本
 <#
 .SYNOPSIS
     EchoDesk 发布构建脚本：产出「便携版三层结构」的发布物。
@@ -184,10 +184,15 @@ trap {
     Write-Host ""
     Write-Host "!! 发布构建失败：$($_.Exception.Message)" -ForegroundColor Red
     Write-Host "   （位置：$($_.InvocationInfo.PositionMessage -replace "`r?`n", ' ')）" -ForegroundColor DarkGray
+    Exit-PipelineLock
     exit 1
 }
 
 $Root = Split-Path -Parent $PSScriptRoot
+# [EN] Pipeline lock: packaging must never overlap the release gate or another packaging run.
+# [ZH] 流水线互斥锁：打包不得与发布门禁或另一次打包并发运行。
+. (Join-Path $Root "tools\pipeline_lock.ps1")
+Enter-PipelineLock -Role "build-release"
 # [EN] Load the shared reproducible-build helpers. The clean-worktree guard and the
 # [EN] canonical SOURCE_DATE_EPOCH must be established before any output path is touched.
 # [ZH] 加载共享的可复现构建辅助函数。干净工作区校验与规范 SOURCE_DATE_EPOCH 必须在触碰
@@ -1495,3 +1500,7 @@ else {
     Write-Warn2 "未生成安装程序。要产出交付物（EchoDesk-v$Version-Setup.exe + SHA256SUMS.txt），加 -MakeInstaller："
     Write-Warn2 "  & tools\build_release.ps1 -MakeInstaller   # 安装程序不含模型，故不需要 -IncludeModels"
 }
+
+# [EN] Release the pipeline lock on the normal completion path.
+# [ZH] 正常完成路径上释放流水线锁。
+Exit-PipelineLock

@@ -45,6 +45,47 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # [ZH] 与打包器、发布门禁共用的运行期状态策略。
 import runtime_state  # noqa: E402
 
+
+def tree_fingerprint(tree: str) -> dict[str, tuple[int, str]]:
+    """[EN] File list + sizes, plus content digests for the code layer.
+    [EN] Used as before/after evidence that a check did not mutate the tree it inspects.
+    [ZH] 文件清单 + 大小，并对代码层计算内容摘要。
+    [ZH] 用作"检查没有改动被检查对象"的前后证据。"""
+    import hashlib
+
+    fingerprint: dict[str, tuple[int, str]] = {}
+    for dirpath, _dirnames, filenames in os.walk(tree):
+        for name in filenames:
+            full = os.path.join(dirpath, name)
+            rel = os.path.relpath(full, tree).replace("\\", "/")
+            try:
+                size = os.path.getsize(full)
+            except OSError:
+                continue
+            digest = ""
+            if rel.startswith("app/backend/") or rel.startswith("app/native/"):
+                try:
+                    with open(full, "rb") as handle:
+                        digest = hashlib.sha256(handle.read()).hexdigest()
+                except OSError:
+                    digest = "unreadable"
+            fingerprint[rel] = (size, digest)
+    return fingerprint
+
+
+def describe_tree_diff(before: dict[str, tuple[int, str]],
+                       after: dict[str, tuple[int, str]], limit: int = 10) -> list[str]:
+    """[EN] Human-readable differences between two fingerprints.
+    [ZH] 两份指纹之间的可读差异列表。"""
+    added = sorted(set(after) - set(before))
+    removed = sorted(set(before) - set(after))
+    changed = sorted(k for k in set(before) & set(after) if before[k] != after[k])
+    lines = []
+    for label, items in (("新增", added), ("删除", removed), ("变更", changed)):
+        if items:
+            lines.append(f"{label} {len(items)} 个：" + ", ".join(items[:limit]))
+    return lines
+
 #: RID → 该平台的解释器相对路径与启动脚本名（与 tools/pack_backend.py 的 PLATFORMS 一致）。
 EXPECTED = {
     "win-x64": {"python": "python/python.exe", "launcher": "run-backend.bat"},
@@ -250,6 +291,13 @@ def check_protocol(python: str, rid: str, tree: str) -> None:
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     data_dir = tempfile.mkdtemp(prefix="echodesk-verify-")
     env["ECHODESK_DATA"] = data_dir
+    # [EN] Observer-effect guard: snapshot the tree before running anything inside it. The file
+    # [EN] list, sizes and code-layer digests must be identical afterwards; otherwise this check
+    # [EN] has modified the artifact it is supposed to inspect, and the next packaging step would
+    # [EN] archive whatever it left behind.
+    # [ZH] 观察者效应守卫：在树内运行任何东西之前先拍指纹。结束后的文件清单、大小与代码层摘要必须
+    # [ZH] 完全一致；否则就等于"检查改动了被检查的产物"，而下一步打包会把残留一起归档。
+    before = tree_fingerprint(tree)
 
     proc = None
     try:
@@ -325,6 +373,12 @@ def check_protocol(python: str, rid: str, tree: str) -> None:
         removed = runtime_state.sweep(tree)
         if removed:
             ok(f"{rid} 运行后清理运行期残留 {len(removed)} 个（例如 {removed[0]}）")
+        after = tree_fingerprint(tree)
+        diff = describe_tree_diff(before, after)
+        if diff:
+            fail(f"{rid} 检查过程改动了发布树（观察者效应）：" + "；".join(diff))
+        else:
+            ok(f"{rid} 检查前后发布树指纹一致（未污染被测对象）")
         shutil.rmtree(data_dir, ignore_errors=True)
 
 
