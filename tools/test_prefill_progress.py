@@ -8,6 +8,12 @@ Two modes:
 * default (unit): a fake ``_api`` records every native call, so chunk boundaries,
   progress callbacks, the abort type, thread-pool switching and the yield are checked
   without a model. No SKIP is allowed here.
+
+The fully-cached case follows the v0.2.7 cache-hit contract: exactly one token (the last
+prompt token) is re-evaluated to refresh the logits, never the whole prompt. The pre-fix
+expectation of "zero decode / zero callback / zero thread switch" is gone because it
+described the defect, not the requirement.
+
 * ``--live``: loads a real GGUF and measures the prefill wake-up latency with an
   independent watcher thread (one 50 ms sleep per sample, the overshoot is recorded).
 
@@ -21,6 +27,11 @@ Reader 原生层的预填充循环检查（v0.2.7-reader 步 2）。
 
 * 默认（单元）：用假 ``_api`` 记录每一次原生调用，因此无需模型即可检查分块边界、进度
   回调、中止类型、线程池切换与让核。该模式不允许 SKIP。
+
+整段命中用例遵循 v0.2.7 的缓存命中契约：只重算末位 prompt token 以刷新 logits，
+绝不重算整段提示词。修复前"零解码 / 零回调 / 零线程切换"的期望已被移除——它描述的是
+缺陷本身，而不是需求。
+
 * ``--live``：加载真实 GGUF，并用独立 watcher 线程测量预填充期间的唤醒延迟（每样本睡
   50ms，记录超出目标时长的部分）。
 
@@ -81,10 +92,16 @@ class FakeApi:
 
     def __init__(self):
         self.decoded = []       # [EN] sizes of the chunks actually decoded / [ZH] 实际解码的分块大小
+        self.batches = []       # [EN] token ids fed to each decode, in order / [ZH] 每次解码喂入的 token
         self.thread_calls = []  # [EN] (n_threads, n_threads_batch) per switch / [ZH] 每次切换的参数
 
     # [EN] --- prefill path --- [ZH] --- 预填充路径 ---
     def llama_batch_get_one(self, array, count):
+        # [EN] Keep the token ids so a test can assert *which* token was re-evaluated,
+        # [EN] not merely how many: re-evaluating the wrong position must be caught too.
+        # [ZH] 保留 token id，使测试能断言**哪个** token 被重算，而不只是数量：
+        # [ZH] 重算到错误位置同样必须被抓住。
+        self.batches.append([int(array[i]) for i in range(int(count))])
         return ("batch", int(count))
 
     def llama_decode(self, ctx, batch):
@@ -246,20 +263,38 @@ def run_unit() -> int:
           llama._api.thread_calls == [(4, 4), (8, 8)], llama._api.thread_calls)
     check("中止前没有解码任何块", llama._api.decoded == [], llama._api.decoded)
 
-    # [EN] 7. Fully cached prompt: no prefill, so no callback and no thread switch.
-    # [ZH] 7. 整段命中缓存：没有预填充，因此不回调也不切线程。
+    # [EN] 7. Fully cached prompt: exactly one token is re-evaluated (the last prompt
+    # [EN]    token), and it is emphatically NOT a full recompute. Before v0.2.7 the
+    # [EN]    full-hit path skipped every decode and sampled stale logits, so the old
+    # [EN]    contract was "zero decode / zero callback / zero thread switch". That was
+    # [EN]    the defect written down as a contract; the fix re-evaluates the last token
+    # [EN]    to refresh the logits, which produces one decode, one callback and one
+    # [EN]    thread-pool pair. The guard against abuse is the count: one token, never all.
+    # [ZH] 7. 整段命中缓存：恰好重算 1 个 token（末位 prompt token），且**明确不是全量重算**。
+    # [ZH]    v0.2.7 之前完整命中会跳过所有解码、直接采样残留 logits，因此旧契约写的是
+    # [ZH]    "零解码 / 零回调 / 零线程切换" —— 那等于把缺陷写成了契约。修复改为重算末位
+    # [ZH]    token 以刷新 logits，必然产生 1 次解码、1 次回调与一对线程池切换；真正的
+    # [ZH]    守卫是数量：恰好 1 个 token，绝不允许全量。
     llama = make_llama(n_batch=10, n_threads=8, n_threads_batch=4)
     tokens = list(range(10))
     llama._cached_tokens = list(tokens)
     progress = []
     list(llama._generate(tokens, 4, 0.0, None, None, 1.0,
                          on_prefill_progress=lambda *row: progress.append(row)))
-    check("common 全命中时零线程切换", llama._api.thread_calls == [],
-          llama._api.thread_calls)
-    check("common 全命中时零回调", progress == [], progress)
-    check("common 全命中时零解码", llama._api.decoded == [], llama._api.decoded)
-    check("common 全命中时不产出伪进度", llama.last_prefill["tokens"] == 0,
-          llama.last_prefill)
+    check("整段命中时只重算 1 个 token（decoded == [1]）",
+          llama._api.decoded == [1], llama._api.decoded)
+    check("整段命中未退化为全量重算（1 < 提示词 token 数）",
+          sum(llama._api.decoded) == 1 and sum(llama._api.decoded) < len(tokens),
+          f"{llama._api.decoded} vs {len(tokens)} token")
+    check("整段命中时重算的是末位 prompt token",
+          llama._api.batches == [[tokens[-1]]], llama._api.batches)
+    check("整段命中时进度回调恰好 1 次且 (done,total)==(1,1)",
+          len(progress) == 1 and progress[0][0] == 1 and progress[0][1] == 1,
+          progress)
+    check("整段命中时线程切换恰好一对（预填充池 -> decode 池）",
+          llama._api.thread_calls == [(4, 4), (8, 8)], llama._api.thread_calls)
+    check("整段命中时 last_prefill 记录 1 个 token",
+          llama.last_prefill["tokens"] == 1, llama.last_prefill)
 
     # [EN] 8. A throwing callback is logged, never propagated, and the loop finishes.
     # [ZH] 8. 回调抛异常只记日志、不外传，循环照常跑完。
