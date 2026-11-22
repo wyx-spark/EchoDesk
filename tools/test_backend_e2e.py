@@ -15,6 +15,7 @@
 用法：python tools\\test_backend_e2e.py [后端 exe 路径]
 退出码：0 = 全部通过，1 = 存在失败项。
 """
+import collections
 import io
 import json
 import os
@@ -32,6 +33,21 @@ sys.path.insert(0, os.path.join(ROOT, "backend"))
 # 这里原先写死 "v0.2.1"：v0.2.2 发布后门禁一直在报"✗ 版本为 v0.2.1 v0.2.2"，
 # 也就是**守着旧版本号报错**，反而把真实的版本升级当成了失败。导入常量即可根治。
 from version import APP_VERSION  # noqa: E402
+
+# [EN] Explicit, short timeouts: a silent 254 s wait that then reports an empty payload is the
+# [EN] worst failure mode (slow and unexplained). Startup gets 30 s, every action 15 s.
+# [ZH] 显式短超时：静默等 254 秒再报"空数据"是最差的失败方式（又慢又说不清）。
+# [ZH] 启动 30 秒，每个动作 15 秒。
+STARTUP_TIMEOUT = 30
+ACTION_TIMEOUT = 15
+
+# [EN] Model used to keep the end-to-end test offline and deterministic. It exists in the
+# [EN] repository (backend/models, usually a junction); the release tree is never modified --
+# [EN] the test writes its own config.json into a temporary ECHODESK_STATE directory.
+# [ZH] 让端到端测试离线、可复现所用的模型。它存在于仓库内（backend/models，通常是 junction）；
+# [ZH] 发布树永不修改 —— 测试把自己的 config.json 写进临时的 ECHODESK_STATE 目录。
+DEFAULT_TEST_MODEL = os.path.join(ROOT, "backend", "models", "Qwen3-0.6B-Q6_K.gguf")
+
 
 
 def _publish_trees() -> "list[str]":
@@ -131,16 +147,30 @@ class Backend:
     超时是真正生效的，读不到的响应会被如实报告为失败。
     """
 
-    def __init__(self, exe):
+    def __init__(self, exe, env=None):
         self.exe = exe
         self.proc = subprocess.Popen(
-            [exe], cwd=os.path.dirname(exe),
+            [exe], cwd=os.path.dirname(exe), env=env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
         )
         self.lines = queue.Queue()
         self.reader = threading.Thread(target=self._pump, daemon=True)
         self.reader.start()
+        # [EN] Drain stderr continuously: an unread pipe fills up and deadlocks the child.
+        # [EN] The last lines are used by the timeout diagnostic.
+        # [ZH] 持续抽干 stderr：管道不读会写满并让子进程假死；最后几行用于超时诊断。
+        self.stderr_lines = collections.deque(maxlen=200)
+        self.stderr_reader = threading.Thread(target=self._pump_stderr, daemon=True)
+        self.stderr_reader.start()
+        self.last_line = ""
+
+    def _pump_stderr(self):
+        try:
+            for line in self.proc.stderr:
+                self.stderr_lines.append(line.rstrip())
+        except Exception:
+            pass
 
     def _pump(self):
         try:
@@ -154,12 +184,14 @@ class Backend:
         self.proc.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
         self.proc.stdin.flush()
 
-    def read_until(self, types, timeout=120):
+    def read_until(self, types, timeout=ACTION_TIMEOUT):
         """读到指定 type 的响应为止（跳过 delta 之类的中间行）。超时返回 None。"""
         deadline = time.time() + timeout
+        started = time.time()
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
+                self._report_timeout(types, time.time() - started)
                 return None
             try:
                 line = self.lines.get(timeout=remaining)
@@ -170,12 +202,18 @@ class Backend:
             line = line.strip()
             if not line:
                 continue
+            self.last_line = line
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
             if obj.get("type") in types:
                 return obj
+
+    def _report_timeout(self, types, waited):
+        tail = " | ".join(list(self.stderr_lines)[-3:])
+        print(f"  [TIMEOUT] 等待 {waited:.1f}s 未收到 {sorted(types)}；"
+              f"最后收到：{self.last_line[:200] or '(无)'}；stderr 尾部：{tail[:300] or '(空)'}")
 
     def close(self):
         try:
@@ -196,11 +234,45 @@ def main():
         return 1
     print(f"后端：{exe}")
 
-    backend = Backend(exe)
+    # [EN] Offline-deterministic config: ECHODESK_STATE points at a temporary directory whose
+    # [EN] config.json is the released base config with model_path pointing at the repository
+    # [EN] model. The release tree is not touched; the temporary directory is removed afterwards.
+    # [ZH] 离线可复现配置：ECHODESK_STATE 指向临时目录，其中的 config.json 是发布版基础配置，
+    # [ZH] 只把 model_path 指向仓库内模型。发布树不动；临时目录跑完删除。
+    state_dir = tempfile.mkdtemp(prefix="echodesk-e2e-state-")
+    base_config = os.path.join(os.path.dirname(exe), "config.json")
+    config = {}
+    if os.path.isfile(base_config):
+        with open(base_config, encoding="utf-8-sig") as handle:
+            config = json.load(handle)
+    model = os.environ.get("ECHODESK_E2E_MODEL") or DEFAULT_TEST_MODEL
+    if os.path.isfile(model):
+        config["model_path"] = os.path.abspath(model)
+        print(f"测试配置：model_path -> {config['model_path']}（仓库内模型，发布树未改）")
+    else:
+        print(f"警告：找不到测试模型 {model}，后端会走 need_download 分支")
+    with open(os.path.join(state_dir, "config.json"), "w", encoding="utf-8") as handle:
+        json.dump(config, handle, ensure_ascii=False, indent=2)
+    data_dir = os.path.join(state_dir, "data")
+    env = dict(os.environ)
+    env["ECHODESK_STATE"] = state_dir
+    env["ECHODESK_DATA"] = data_dir
+    # [EN] The skills-example action resolves examples/skills under the data root. Copy the
+    # [EN] release tree's examples into the temporary data root so the test stays offline AND
+    # [EN] never writes into the release tree.
+    # [ZH] 示例插件动作在数据根下解析 examples/skills。把发布树的 examples 复制进临时数据根，
+    # [ZH] 既有真实样例可用，又不会往发布树里写东西。
+    release_examples = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(exe))), "examples")
+    if os.path.isdir(release_examples):
+        os.makedirs(data_dir, exist_ok=True)
+        shutil.copytree(release_examples, os.path.join(data_dir, "examples"), dirs_exist_ok=True)
+
+    backend = Backend(exe, env)
     try:
         run_all(backend, exe)
     finally:
         backend.close()
+        shutil.rmtree(state_dir, ignore_errors=True)
 
     print(f"\n{'=' * 60}")
     print(f"通过 {PASSED} 项，失败 {len(FAILED)} 项")
@@ -214,7 +286,7 @@ def run_all(backend, exe):
 
     # ---------------------------------------------------------------
     section("1. 启动握手（ready 里带多语言与技能信息，任务三 / 任务二）")
-    ready = backend.read_until({"ready", "need_download", "system", "error"}, timeout=300)
+    ready = backend.read_until({"ready", "need_download", "system", "error"}, timeout=STARTUP_TIMEOUT)
     if ready is None:
         check("后端在 300 秒内输出 ready", False, "没有读到任何响应")
         return
@@ -259,7 +331,7 @@ def run_all(backend, exe):
     # ---------------------------------------------------------------
     section("2. 指令帮助（中文）")
     backend.send({"action": "chat", "message": "/help"})
-    resp = backend.read_until({"system", "error", "assistant"}, timeout=60)
+    resp = backend.read_until({"system", "error", "assistant"}, timeout=ACTION_TIMEOUT)
     help_zh = (resp or {}).get("content", "")
     check("/help 返回中文帮助", "完整指令介绍" in help_zh, help_zh[:120])
     check("帮助里列出内置指令", "/clearcache" in help_zh)
@@ -269,7 +341,7 @@ def run_all(backend, exe):
     # ---------------------------------------------------------------
     section("3. 语言切换（任务三 3.4）—— 切完帮助立刻变英文")
     backend.send({"action": "set_language", "locale": "en"})
-    resp = backend.read_until({"system", "error"}, timeout=60)
+    resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     check("set_language 返回成功", resp is not None and "en" in str((resp or {}).get("i18n", {})),
           str(resp)[:200])
     check("返回里带新的指令表", bool((resp or {}).get("commands")))
@@ -283,40 +355,40 @@ def run_all(backend, exe):
           str(en_cmds.get("/clear", {}).get("label")))
 
     backend.send({"action": "chat", "message": "/help"})
-    resp = backend.read_until({"system", "error", "assistant"}, timeout=60)
+    resp = backend.read_until({"system", "error", "assistant"}, timeout=ACTION_TIMEOUT)
     help_en = (resp or {}).get("content", "")
     check("/help 现在是英文", "complete command reference" in help_en, help_en[:120])
     check("英文帮助里仍有技能指令", "/hello" in help_en and "/ofd" in help_en)
 
     # 英文下的错误提示
     backend.send({"action": "chat", "message": "/file Z:\\definitely\\missing.docx"})
-    resp = backend.read_until({"system", "error"}, timeout=60)
+    resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     check("错误提示也变英文", "File not found" in (resp or {}).get("content", ""),
           (resp or {}).get("content", "")[:120])
 
     # 切回中文
     backend.send({"action": "set_language", "locale": "zh-Hans"})
-    resp = backend.read_until({"system", "error"}, timeout=60)
+    resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     check("能切回简体中文",
           "zh-Hans" in str((resp or {}).get("i18n", {}).get("locale", "")), str(resp)[:160])
     backend.send({"action": "chat", "message": "/help"})
-    resp = backend.read_until({"system", "error", "assistant"}, timeout=60)
+    resp = backend.read_until({"system", "error", "assistant"}, timeout=ACTION_TIMEOUT)
     check("帮助切回中文", "完整指令介绍" in (resp or {}).get("content", ""))
 
     # 请求一个没有语言包的语言 → 按回退链落到 en
     backend.send({"action": "set_language", "locale": "ja-JP"})
-    resp = backend.read_until({"system", "error"}, timeout=60)
+    resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     got = str((resp or {}).get("i18n", {}).get("locale", ""))
     check("没有语言包时回退到 en", got == "en", got)
     backend.send({"action": "set_language", "locale": "auto"})
-    backend.read_until({"system", "error"}, timeout=60)
+    backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     backend.send({"action": "set_language", "locale": "zh-Hans"})
-    backend.read_until({"system", "error"}, timeout=60)
+    backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
 
     # ---------------------------------------------------------------
     section("4. 技能指令真的能跑（任务二 2.2）")
     backend.send({"action": "chat", "message": "/hello 测试同学"})
-    resp = backend.read_until({"system", "error", "assistant"}, timeout=60)
+    resp = backend.read_until({"system", "error", "assistant"}, timeout=ACTION_TIMEOUT)
     content = (resp or {}).get("content", "")
     check("技能命令可执行并拿到参数", "测试同学" in content, content[:120])
     check("技能用自己的语言包输出", "插件" in content, content[:120])
@@ -327,12 +399,12 @@ def run_all(backend, exe):
         ofd = os.path.join(workdir, "样例发票.ofd")
         write_minimal_ofd(ofd, "电子发票 号码 12345678 金额 99.00")
         backend.send({"action": "chat", "message": f"/ofd {ofd}"})
-        resp = backend.read_until({"system", "error", "assistant"}, timeout=60)
+        resp = backend.read_until({"system", "error", "assistant"}, timeout=ACTION_TIMEOUT)
         content = (resp or {}).get("content", "")
         check("技能扩展的 .ofd 解析生效", "12345678" in content, content[:200])
         # /file 也应能读它（说明 file_parser 真的把扩展名交给了技能）
         backend.send({"action": "file", "path": ofd})
-        resp = backend.read_until({"system", "error"}, timeout=60)
+        resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
         content = (resp or {}).get("content", "")
         # /file 成功时只回一行状态（不回正文），因此以"没有报读取失败"作为接线成功的判据；
         # 若技能解析器没接上，file_parser 会回「不支持的文件类型: .ofd」。
@@ -344,7 +416,7 @@ def run_all(backend, exe):
     # ---------------------------------------------------------------
     section("5. 技能管理动作（任务 2B.7 / 2B.10）")
     backend.send({"action": "skills_list"})
-    resp = backend.read_until({"system", "error"}, timeout=60)
+    resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     check("skills_list 可用", bool((resp or {}).get("skills")), str(resp)[:120])
 
     backend.send({"action": "skills_reload"})
@@ -354,28 +426,28 @@ def run_all(backend, exe):
     check("重载后指令表仍然完整", any(c["name"] == "/hello" for c in (resp or {}).get("commands", [])))
 
     backend.send({"action": "skills_log", "lines": 50})
-    resp = backend.read_until({"system", "error"}, timeout=60)
+    resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     check("skills_log 能读到开发日志", "hello-world" in ((resp or {}).get("log") or ""),
           str((resp or {}).get("log"))[:120])
 
     backend.send({"action": "skills_panel_render", "skill_id": "hello-world", "panel_id": "hello-panel"})
-    resp = backend.read_until({"system", "error"}, timeout=60)
+    resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     panel_result = (resp or {}).get("panel_result") or {}
     check("面板渲染可用", panel_result.get("ok") is True, str(panel_result)[:160])
 
     backend.send({"action": "skills_panel_action", "skill_id": "hello-world",
                   "panel_id": "hello-panel", "panel_action": "greet", "values": {"name": "面板测试"}})
-    resp = backend.read_until({"system", "error"}, timeout=60)
+    resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     check("面板动作可用", "面板测试" in ((resp or {}).get("content") or ""),
           str((resp or {}).get("content"))[:120])
 
     backend.send({"action": "skills_publish_check", "id": "hello-world"})
-    resp = backend.read_until({"system", "error"}, timeout=60)
+    resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     check("发布自检可用", bool(((resp or {}).get("publish_check") or {}).get("checks")),
           str((resp or {}).get("publish_check"))[:160])
 
     backend.send({"action": "skills_manifest_get"})
-    resp = backend.read_until({"system", "error"}, timeout=60)
+    resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     check("本地插件清单可读", isinstance((resp or {}).get("manifest"), dict), str(resp)[:120])
 
     # 安装示例插件（幂等）→ 确认仍在
@@ -387,7 +459,7 @@ def run_all(backend, exe):
     # ---------------------------------------------------------------
     section("6. 自动化字段帮助与模板（任务四 4.3 / 4.4）")
     backend.send({"action": "automation_field_help"})
-    resp = backend.read_until({"system", "error"}, timeout=60)
+    resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     help_items = (resp or {}).get("help") or []
     check("字段帮助覆盖 27 个字段", len(help_items) >= 25, f"{len(help_items)} 条")
     by_field = {h["field"]: h for h in help_items}
@@ -405,7 +477,7 @@ def run_all(backend, exe):
           all(h.get("example") for h in help_items if h["field"] != "task_name") or True)
 
     backend.send({"action": "automation_templates"})
-    resp = backend.read_until({"system", "error"}, timeout=60)
+    resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     templates = (resp or {}).get("templates") or []
     ids = sorted(t["id"] for t in templates)
     check("四个预置模板都在", ids == ["contract", "invoice", "report", "table"], str(ids))
@@ -428,7 +500,7 @@ def run_all(backend, exe):
             "file_extensions": "pdf,docx",
             "safety_accepted": True,
         }})
-        resp = backend.read_until({"system", "error"}, timeout=60)
+        resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
         check("能写入自动化配置", "已保存" in ((resp or {}).get("content") or ""),
               str((resp or {}).get("content"))[:120])
         check("勾选安全协议时记录了同意时间",
@@ -436,7 +508,7 @@ def run_all(backend, exe):
               str((resp or {}).get("automation"))[:200])
 
         backend.send({"action": "automation_config_export", "path": export_path})
-        resp = backend.read_until({"system", "error"}, timeout=60)
+        resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
         check("导出成功", os.path.isfile(export_path), str((resp or {}).get("content"))[:200])
         payload = json.load(io.open(export_path, encoding="utf-8"))
         check("导出文件带格式标记", payload.get("format") == "echodesk-automation")
@@ -449,9 +521,9 @@ def run_all(backend, exe):
         # 改掉配置再导入，验证往返
         backend.send({"action": "automation_config_set",
                       "automation": {"task_list_selector": "CHANGED"}})
-        backend.read_until({"system", "error"}, timeout=60)
+        backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
         backend.send({"action": "automation_config_import", "path": export_path})
-        resp = backend.read_until({"system", "error"}, timeout=60)
+        resp = backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
         cfg = (resp or {}).get("automation") or {}
         check("导入把选择器恢复回来", cfg.get("task_list_selector") == "table a.link",
               str(cfg.get("task_list_selector")))
@@ -465,7 +537,7 @@ def run_all(backend, exe):
             "task_list_url": "", "task_list_selector": "", "instruction": "摘取合同的主要信息并生成财务审核意见",
             "file_extensions": "pdf,docx,doc,xlsx,xls,pptx,ppt,txt", "safety_accepted": False,
         }})
-        backend.read_until({"system", "error"}, timeout=60)
+        backend.read_until({"system", "error"}, timeout=ACTION_TIMEOUT)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -491,7 +563,7 @@ def run_all(backend, exe):
     # ---------------------------------------------------------------
     section("9. 上下文与状态字段（任务三：前端不再解析中文）")
     backend.send({"action": "context"})
-    resp = backend.read_until({"context"}, timeout=60) or {}
+    resp = backend.read_until({"context"}, timeout=ACTION_TIMEOUT) or {}
     for field in ("used", "limit", "n_ctx", "kv_cache_text", "model", "search", "mode", "temperature"):
         check(f"context 响应含机器可读字段 {field}", field in resp, str(sorted(resp.keys())))
 
