@@ -1,4 +1,4 @@
-﻿# [EN] Exclusive lock for the release pipeline (PowerShell side). Packaging and the release gate
+# [EN] Exclusive lock for the release pipeline (PowerShell side). Packaging and the release gate
 # [EN] must never run at the same time; both touch publish/ and dist/. Dot-source this file and
 # [EN] call Enter-PipelineLock -Role <name> / Exit-PipelineLock.
 # [ZH] 发布流水线的互斥锁（PowerShell 侧）。打包与发布门禁不得同时运行；两者都读写 publish/ 与 dist/。
@@ -7,6 +7,11 @@ $script:PipelineLockPath = Join-Path $PSScriptRoot "..\artifacts\.pipeline.lock"
 $script:PipelineLockOwned = $false
 
 function Enter-PipelineLock([string]$Role) {
+    # [EN] Children of the lock owner inherit this marker (the gate runs its checks through a
+    # [EN] wrapper shell, so the parent-PID test cannot see the gate); they must not re-acquire.
+    # [ZH] 锁持有者的子进程会继承此标记（门禁通过包装 shell 跑检查，父 PID 检测看不到门禁本身），
+    # [ZH] 不得重复抢锁。
+    if ($env:ECHODESK_PIPELINE_LOCK_INHERITED -eq "1") { $script:PipelineLockOwned = $false; return }
     $dir = Split-Path -Parent $script:PipelineLockPath
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     for ($i = 0; $i -lt 2; $i++) {

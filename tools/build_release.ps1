@@ -1,4 +1,4 @@
-﻿# 适用平台：Windows 发布链（PyInstaller + rcedit + Inno Setup），三平台各自有别的打包脚本
+# 适用平台：Windows 发布链（PyInstaller + rcedit + Inno Setup），三平台各自有别的打包脚本
 <#
 .SYNOPSIS
     EchoDesk 发布构建脚本：产出「便携版三层结构」的发布物。
@@ -193,6 +193,9 @@ $Root = Split-Path -Parent $PSScriptRoot
 # [ZH] 流水线互斥锁：打包不得与发布门禁或另一次打包并发运行。
 . (Join-Path $Root "tools\pipeline_lock.ps1")
 Enter-PipelineLock -Role "build-release"
+# [EN] Children inherit the marker: they must not fight this build for the lock.
+# [ZH] 子进程继承该标记：不得与本次构建争抢同一把锁。
+$env:ECHODESK_PIPELINE_LOCK_INHERITED = "1"
 # [EN] Load the shared reproducible-build helpers. The clean-worktree guard and the
 # [EN] canonical SOURCE_DATE_EPOCH must be established before any output path is touched.
 # [ZH] 加载共享的可复现构建辅助函数。干净工作区校验与规范 SOURCE_DATE_EPOCH 必须在触碰

@@ -77,6 +77,14 @@ class PipelineLock:
         self.owned = False
 
     def acquire(self) -> None:
+        # [EN] Child processes of the lock owner (the gate/build_release run their checks through a
+        # [EN] wrapper shell) inherit this marker and must not try to take the lock again; they also
+        # [EN] must not release it.
+        # [ZH] 锁持有者的子进程（门禁/build_release 通过包装 shell 跑检查）继承此标记，不得重复抢锁，
+        # [ZH] 也不得释放锁。
+        if os.environ.get("ECHODESK_PIPELINE_LOCK_INHERITED") == "1":
+            self.owned = False
+            return
         os.makedirs(os.path.dirname(LOCK_PATH), exist_ok=True)
         payload = json.dumps({
             "pid": os.getpid(),

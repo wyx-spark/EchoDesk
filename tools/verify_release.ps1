@@ -1,4 +1,4 @@
-﻿# 适用平台：顶层编排，内含 Windows 专属项（安装包/UI 探针）
+# 适用平台：顶层编排，内含 Windows 专属项（安装包/UI 探针）
 # EchoDesk 发布物验证编排（v0.2.1 修复版）
 #
 # 把"对着最终发布物跑一遍全部检查"固定成一条命令，避免人工漏项。
@@ -143,6 +143,9 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 # [ZH] 因为打包与门禁并发（门禁正在 dist/ 里跑后端）而把运行期状态归档进了资产。
 . (Join-Path $Root "tools\pipeline_lock.ps1")
 Enter-PipelineLock -Role "release-gate"
+# [EN] Children inherit the marker: they must not fight the gate for the lock.
+# [ZH] 子进程继承该标记：不得与门禁争抢同一把锁。
+$env:ECHODESK_PIPELINE_LOCK_INHERITED = "1"
 function Exit-Gate([int]$Code) {
     Exit-PipelineLock
     exit $Code
