@@ -45,10 +45,38 @@ log = logging.getLogger("echodesk.llm_backend")
 #: [EN] Environment variable selecting the runtime policy.
 #: [ZH] 选择运行期策略的环境变量。
 RUNTIME_ENV = "ECHODESK_LLAMA_RUNTIME"
-
 #: [EN] Accepted values; anything else is treated as ``auto``.
 #: [ZH] 合法取值；其它值按 ``auto`` 处理。
 MODES = ("auto", "native", "wheel")
+
+#: [EN] Shared explanation for every "wheel requested but absent" failure. v0.2.7
+#: [EN] physically removed the llama-cpp-python dependency, so asking for it can only
+#: [EN] fail; the message must say so instead of surfacing a bare ImportError.
+#: [ZH] 所有「请求轮子但轮子不存在」失败的统一说明。v0.2.7 已物理移除
+#: [ZH] llama-cpp-python 依赖，请求它必然失败；消息必须说明这一点，而不是抛出裸
+#: [ZH] ImportError。
+WHEEL_REMOVED_HINT = (
+    "this build no longer bundles llama-cpp-python; set %s=native or %s=auto to use "
+    "the built-in native llama.cpp runtime" % (RUNTIME_ENV, RUNTIME_ENV)
+)
+
+
+class LlamaWheelUnavailable(RuntimeError):
+    """
+    [EN]
+    Raised when the wheel runtime is requested but ``llama_cpp`` cannot be imported.
+
+    v0.2.7 removed the Python inference binding from the shipped build, so this is a
+    configuration error, not a transient fault: the message names the removed package
+    and the working alternatives. It is never swallowed and never degraded to an empty
+    answer.
+
+    [ZH]
+    请求轮子运行期但 ``llama_cpp`` 无法导入时抛出。
+
+    v0.2.7 已把 Python 推理绑定从交付物中移除，因此这属于配置错误而不是瞬时故障：
+    消息里点明被移除的包与可用的替代运行期。该异常绝不被吞掉，也绝不降级成空回答。
+    """
 
 
 class NativeVisionUnsupported(RuntimeError):
@@ -56,11 +84,10 @@ class NativeVisionUnsupported(RuntimeError):
     [EN]
     Raised when no available runtime can serve a vision request.
 
-    Vision still goes through ``llama-cpp-python`` until ``mtmd`` is wired up, so the
-    only runtime that can answer an image is the wheel. When the policy forbids the
-    wheel (``native``) or the wheel is not installed at all (the post-T3-3 ``auto``
-    case), the request must fail loudly: silently degrading to a text-only answer
-    would make the user believe the image was read.
+    Vision routing is decided by :func:`vision_runtime` alone; this class is what
+    :func:`create_llama` raises when a caller asks for a chat handler directly instead of
+    going through ``VisionEngine``. Silently degrading to a text-only answer would make
+    the user believe the image was read.
 
     The class lives here rather than in :mod:`llama_native` because the routing layer
     has to import it without importing the native runtime: ``llama_native`` loads the
@@ -70,9 +97,9 @@ class NativeVisionUnsupported(RuntimeError):
     [ZH]
     没有任何可用运行期能承载视觉请求时抛出。
 
-    在 ``mtmd`` 接通之前，视觉仍走 ``llama-cpp-python``，因此唯一能回答图片的运行期是
-    轮子。当策略禁止轮子（``native``）或轮子根本没安装（T3-3 之后的 ``auto`` 情形）时，
-    请求必须显式失败：静默降级成纯文本回答会让用户误以为图片真的被读了。
+    视觉路由只由 :func:`vision_runtime` 决定；当调用方绕过 ``VisionEngine`` 直接向
+    :func:`create_llama` 索取聊天处理器时抛出本异常。静默降级成纯文本回答会让用户
+    误以为图片真的被读了。
 
     该类放在此处而不是 :mod:`llama_native`，是因为路由层必须能在**不导入原生运行期**的
     前提下导入它：``llama_native`` 在导入时就会加载原生 DLL，而视觉路径必须能在任何
@@ -191,8 +218,7 @@ def vision_runtime() -> str:
         if not _wheel_importable():
             raise VisionError(
                 CODE_RUNTIME_UNAVAILABLE, "media.vision_failed",
-                detail="%s=wheel but llama-cpp-python cannot be imported"
-                       % RUNTIME_ENV)
+                detail="%s=wheel but %s" % (RUNTIME_ENV, WHEEL_REMOVED_HINT))
         _record("wheel", mode, "forced by %s=wheel" % RUNTIME_ENV)
         return "wheel"
     if mode == "native":
@@ -314,9 +340,10 @@ def create_llama(**kwargs):
     [EN]
     Construct the llama object for ``kwargs`` according to the runtime policy.
 
-    ``chat_handler`` is the vision signal: ``auto`` keeps such calls on the wheel,
-    while ``native`` lets :class:`NativeVisionUnsupported` escape immediately -- a
-    text-only answer for an image would be worse than a failure.
+    ``chat_handler`` is the vision signal. Vision is served by ``VisionEngine``, whose
+    routing goes through :func:`vision_runtime`; asking this function for a chat handler
+    directly is no longer a supported path and raises :class:`NativeVisionUnsupported`
+    instead of silently building a text-only engine.
 
     A ``NativeLlama`` construction failure in ``auto`` is re-raised with the rollback
     hint and the original exception chained; no fallback happens.
@@ -345,18 +372,34 @@ def create_llama(**kwargs):
                 "%s=native forbids a chat_handler on NativeLlama" % RUNTIME_ENV)
         runtime, reason = "native", "forced by %s=native" % RUNTIME_ENV
     elif vision:
-        # [EN] Vision has no native implementation yet, so auto keeps it on the wheel.
-        # [ZH] 视觉尚无原生实现，因此 auto 让它留在轮子上。
-        runtime, reason = "wheel", "auto: chat_handler supplied, vision stays on llama-cpp-python"
+        # [EN] A chat handler cannot be built here: vision is served by ``VisionEngine``,
+        # [EN] whose routing goes through ``vision_runtime`` (the single decision point,
+        # [EN] task book §12.2). Reaching this branch means the caller bypassed that
+        # [EN] engine, so refuse loudly instead of guessing a runtime.
+        # [ZH] 此处无法构造聊天处理器：视觉由 ``VisionEngine`` 承载，其路由统一走
+        # [ZH] ``vision_runtime``（唯一判定点，任务书 §12.2）。走到这里说明调用方绕过了
+        # [ZH] 该引擎，因此显式拒绝，而不是替它猜一个运行期。
+        raise NativeVisionUnsupported(
+            "vision must go through VisionEngine; %s=%s cannot build a vision engine "
+            "here" % (RUNTIME_ENV, mode))
     else:
         runtime, reason = "native", "auto: text model on the native runtime"
 
     _record(runtime, mode, reason)
 
     if runtime == "wheel":
-        # [EN] Imported lazily so native-only deployments never touch the wheel.
-        # [ZH] 延迟导入，使只用原生的部署完全不碰轮子。
-        from llama_cpp import Llama  # noqa: PLC0415
+        # [EN] Imported lazily so native-only deployments never touch the wheel. Guarded
+        # [EN] because v0.2.7 no longer ships llama-cpp-python: the failure must be a
+        # [EN] structured error naming the removal, never a bare ImportError.
+        # [ZH] 延迟导入，使只用原生的部署完全不碰轮子。v0.2.7 已不再随包
+        # [ZH] llama-cpp-python，因此导入失败必须是点明"已移除"的结构化错误，
+        # [ZH] 而不是裸 ImportError。
+        try:
+            from llama_cpp import Llama  # noqa: PLC0415
+        except Exception as exc:  # noqa: BLE001 - re-raised as a structured error
+            raise LlamaWheelUnavailable(
+                "%s=wheel but %s. Import failed: %s: %s"
+                % (RUNTIME_ENV, WHEEL_REMOVED_HINT, type(exc).__name__, exc)) from exc
 
         return Llama(**kwargs)
 

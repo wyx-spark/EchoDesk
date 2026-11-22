@@ -460,7 +460,17 @@ class VisionEngine:
         # [ZH] v0.2.6 第 23 项：在原生导入之前注册 CUDA 运行时目录，并按依赖顺序
         # [ZH] 预加载 llama.cpp DLL。
         cuda_bootstrap.ensure()
-        from llama_cpp import Llama
+        # [EN] v0.2.7 removed the wheel from the shipped build; keep the import lazy and
+        # [EN] turn a missing package into a structured error instead of an ImportError.
+        # [ZH] v0.2.7 已把轮子从交付物中移除；保持惰性导入，并把"包不存在"转成结构化
+        # [ZH] 错误，而不是裸 ImportError。
+        try:
+            from llama_cpp import Llama
+        except Exception as exc:  # noqa: BLE001 - re-raised as a structured error
+            raise VisionError(
+                "runtime_unavailable", "media.vision_failed",
+                detail="llama-cpp-python cannot be imported: %s: %s"
+                       % (type(exc).__name__, exc)) from exc
 
         handler, self.handler_name = resolve_chat_handler(self.model_path, self.mmproj_path)
         kwargs: Dict[str, Any] = {

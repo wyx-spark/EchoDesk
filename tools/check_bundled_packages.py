@@ -83,7 +83,7 @@ PYINSTALLER_RUNTIME = {
 # 不过滤掉它们会让输出里一半是噪音（实测第一版 19 项"可疑"里 14 项是这个原因），
 # 噪音一多就没人看结论了，门禁等于没做。
 NOT_A_MODULE_SUFFIX = (".dist-info", ".data", ".libs", ".egg-info")
-DATA_DIRS = {"pywin32_system32", "numpy.libs", "certifi", "tzdata", "setuptools"}
+DATA_DIRS = {"pywin32_system32", "certifi", "tzdata", "setuptools"}
 # 本项目自己的资源目录（随 datas 打进去的），不属第三方组件
 OWN_RESOURCE_DIRS = {"lang", "docs", "examples", "skills", "skills_dev", "models"}
 

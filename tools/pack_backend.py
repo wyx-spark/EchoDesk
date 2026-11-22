@@ -40,11 +40,11 @@ uvbox 首次运行要联网下载依赖，与 EchoDesk"数据不出本机、断�
   于是为 Linux 准备依赖时，`pywin32; sys_platform == "win32"` 会被算成"需要"，
   接着 pip 去找 pywin32 的 Linux wheel（不存在）而整体失败 —— 实测确认过。
   因此本脚本自己解析 requirements，按**目标平台**过滤标记（见 `_marker_holds`）。
-* **不要**给 pip 传 `--abi cp313`：`llama-cpp-python 0.3.35/0.3.36` 发布的是
-  `py3-none-<platform>` wheel（平台相关、Python 版本无关），限定 abi 会把它们滤掉，
-  于是退回 PyPI 的源码包（只有 sdist）→ `--only-binary` 下直接失败。
-* `llama-cpp-python` 必须走 `--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu`：
-  该索引才有三平台的预编译 wheel（PyPI 上只有源码包，装了就要现场编译）。
+* **不要**给 pip 传 `--abi cp313`：部分依赖发布的是 `py3-none-<platform>` wheel
+  （平台相关、Python 版本无关），限定 abi 会把它们滤掉，于是退回源码包（只有 sdist）
+  → `--only-binary` 下直接失败。
+* **推理运行期不再来自 pip**：v0.2.7 起 llama.cpp 以随仓库的 `backend/native/<rid>/`
+  动态库形式交付，依赖里既没有 Python 推理绑定，也没有为它服务的轮子索引。
 * `pyinstaller` **不装**：它是构建工具，standalone 方案下目标机不需要它。
 
 ## 用法
@@ -356,9 +356,9 @@ def resolve_requirements(spec_target: dict[str, str]) -> tuple[list[str], list[s
     [ZH] 从锁文件解析目标平台的运行期依赖集合。
 
     The lock file is authoritative for versions. ``requirements.txt`` is still read for the
-    pip options it carries (for example the llama-cpp-python CPU wheel index). Every lock
-    line is expected to be an exact pin or a direct wheel URL; ranges are rejected because
-    they would reintroduce dependency drift.
+    pip options it carries (for example an extra package index). Every lock line is
+    expected to be an exact pin or a direct wheel URL; ranges are rejected because they
+    would reintroduce dependency drift.
     """
     pip_args: list[str] = []
     decisions: list[tuple[str, str]] = []
@@ -450,9 +450,8 @@ def pinned_local_override(line: str, pip_platform: str) -> tuple[str, str]:
 def requirement_name(line: str) -> str:
     """取出依赖行的包名（用于与 BUILD_ONLY_PACKAGES 比较），小写。
 
-    要同时处理 `包名>=x` 与 `包名 @ https://…whl` 两种形式：后者是 macOS 上钉死
-    llama-cpp-python 那个完好轮子的写法（见 backend/requirements.txt 的说明），
-    不先按 `@` 切开就会把整条 URL 当包名，构建工具过滤因此静默失效。
+    要同时处理 `包名>=x` 与 `包名 @ https://…whl` 两种形式（直接 URL 钉死某个发行包的
+    写法），不先按 `@` 切开就会把整条 URL 当包名，构建工具过滤因此静默失效。
     """
     name = re.split(r"[@<>=!\[;]", line, maxsplit=1)[0].strip()
     return name.lower().replace("_", "-")
@@ -461,9 +460,8 @@ def requirement_name(line: str) -> str:
 def local_wheel_override(line: str) -> tuple[str, str]:
     """把 `包名 @ https://…/foo.whl` 换成**本地已缓存的同名 wheel**，返回 (新行, 说明)。
 
-    动机（实测）：macOS 上必须用直接 URL 钉死 llama-cpp-python 那个**唯一完好**的轮子
-    （见 backend/requirements.txt），而本机到 github.com 的链路又慢又断 —— pip 反复
-    `ConnectionResetError` / `ConnectTimeout`。同一个文件我们已经用
+    动机（实测）：直接 URL 钉死的发行包走的是外网，而本机到外网的链路又慢又断 —— pip
+    反复 `ConnectionResetError` / `ConnectTimeout`。同一个文件我们已经用
     `tools/fetch_wheel.py` 下好、并**逐成员解压校验过**放在 `artifacts/wheels/` 里，
     再让 pip 从网上重下一遍没有意义，只是多一次"下到一半断掉"的风险。
 
@@ -476,11 +474,11 @@ def local_wheel_override(line: str) -> tuple[str, str]:
     reference = reference.strip()
     if not reference.lower().startswith(("http://", "https://")):
         return line, ""
-    # [EN] The JamePeng Windows wheel URL escapes the local version separator
-    # [EN] (``0.4.7%2Bcu132``); percent-decoding is required before comparing the
-    # [EN] name with the cached file, whose name contains a literal ``+``.
-    # [ZH] JamePeng 的 Windows 轮子 URL 转义了本地版本分隔符（``0.4.7%2Bcu132``）；
-    # [ZH] 在与缓存文件名比较之前必须做百分号解码，缓存文件名里是字面量 ``+``。
+    # [EN] Wheel URLs may percent-escape the local version separator (``+``);
+    # [EN] percent-decoding is required before comparing the name with the cached file,
+    # [EN] whose name contains a literal ``+``.
+    # [ZH] 轮子 URL 可能会对本地版本分隔符（``+``）做百分号转义；在与缓存文件名比较之前
+    # [ZH] 必须解码，缓存文件名里是字面量 ``+``。
     name = urllib.parse.unquote(os.path.basename(reference.split("?", 1)[0].rstrip("/")))
     if not name.endswith(".whl"):
         return line, ""
@@ -947,14 +945,14 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
             # [EN] Prefer wheels already promoted into ``artifacts/wheels`` before any index
             # [EN] or URL download. That directory is the same verified cache used by
             # [EN] ``local_wheel_override``; adding it as a find-links source lets the release
-            # [EN] pipeline install large pinned wheels (Playwright, llama-cpp-python, numpy)
-            # [EN] offline instead of re-downloading them at the build machine's link speed.
+            # [EN] pipeline install large pinned wheels (Playwright, Pillow) offline instead of
+            # [EN] re-downloading them at the build machine's link speed.
             # [EN] The cache is an input pinned by ``backend/requirements.lock``, so using it
             # [EN] does not change any output byte: the same wheel is unpacked either way.
             # [ZH] 优先使用已经放进 ``artifacts/wheels`` 的轮子，而不是走索引或 URL 下载。
             # [ZH] 该目录正是 ``local_wheel_override`` 使用的同一份已校验缓存；把它作为
             # [ZH] find-links 来源，可让发布流水线离线安装体积大、版本被钉死的轮子
-            # [ZH] （Playwright、llama-cpp-python、numpy），不再受构建机链路速度拖累。
+            # [ZH] （Playwright、Pillow），不再受构建机链路速度拖累。
             # [ZH] 该缓存由 ``backend/requirements.lock`` 钉死，属于输入；无论从缓存还是从
             # [ZH] 网络取得，解出的都是同一个轮子，因此不会改变任何输出字节。
             *(["--find-links", WHEEL_CACHE] if os.path.isdir(WHEEL_CACHE) else []),
@@ -976,9 +974,8 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
             "--upgrade",
             "--no-warn-script-location",
             "--disable-pip-version-check",
-            # 慢/抖动网络下的必需项：本机到 github.com 的连接时通时断，而
-            # llama-cpp-python 的 wheel 下载地址**重定向到 github.com 的 Releases**
-            # （实测 pip 默认 15 秒连接超时会让它直接整轮失败）。放宽超时与重试，
+            # 慢/抖动网络下的必需项：直接 URL 钉死的发行包走外网，而本机到外网的连接
+            # 时通时断（实测 pip 默认 15 秒连接超时会让它直接整轮失败）。放宽超时与重试，
             # 避免"已经下了几十 MB 却因为一次抖动全部作废"。
             # 平衡值：pip 默认 15 秒在本机链路上"一抖就死"；而 120 秒会让**卡住变得看不出来**
             # ——单次超时 120 秒 × 8 次重试 = 最长 16 分钟才失败，实测就是这样静悄悄地等。

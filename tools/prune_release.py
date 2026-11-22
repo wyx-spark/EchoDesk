@@ -27,12 +27,11 @@ material that is useful to developers but never loaded at run time:
 
 * prefix-layout data inside ``site-packages`` (``lib64/`` on Linux, ``lib/`` on macOS)
   installed by wheels that carry ``.data/data`` entries. ``pip install --target`` copies
-  them next to the package, but nothing in the application ever looks there; llama.cpp
-  loads its shared objects from ``llama_cpp/lib`` instead;
-* duplicate shared-library aliases inside one directory. The llama.cpp wheels ship the
-  unversioned name (what ``ctypes`` opens) and the ``SONAME`` name (what the loader
-  resolves) plus a full-version copy that no ``DT_NEEDED`` / ``LC_LOAD_DYLIB`` entry
-  references. Only byte-identical duplicates are removed;
+  them next to the package, but nothing in the application ever looks there;
+* duplicate shared-library aliases inside one directory. Some wheels ship the unversioned
+  name (what ``ctypes`` opens), the ``SONAME`` name (what the loader resolves) and a
+  full-version copy that no ``DT_NEEDED`` / ``LC_LOAD_DYLIB`` entry references. Only
+  byte-identical duplicates are removed;
 * language packs other than English and Chinese. Both frontends and the backend ship
   exactly ``en`` and ``zh-Hans``; other locales are dead weight in the release archive.
 
@@ -40,8 +39,8 @@ material that is useful to developers but never loaded at run time:
 
 * ``site-packages`` 中属于「前缀布局」的数据目录（Linux ``lib64/``、macOS ``lib/``）。
   它们的来源是轮子的 ``.data/data`` 条目，``pip install --target`` 会把它们铺在包旁边，
-  但程序里没有任何代码路径引用；llama.cpp 实际从 ``llama_cpp/lib`` 加载共享库；
-* 同一目录内重复的共享库别名。llama.cpp 轮子同时提供无版本名（``ctypes`` 打开的）、
+  但程序里没有任何代码路径引用这些位置；
+* 同一目录内重复的共享库别名。部分轮子同时提供无版本名（``ctypes`` 打开的）、
   ``SONAME`` 名（加载器解析依赖时用的）与一个完整版本副本，而没有任何
   ``DT_NEEDED`` / ``LC_LOAD_DYLIB`` 引用完整版本。只删除内容逐字节相同的重复项；
 * 英文与中文之外的语言包。两个前端与后端都只随包 ``en`` 与 ``zh-Hans``；其它语言在
@@ -147,11 +146,10 @@ def _prune_prefix_data(tree: str, rid: str, removed: list[dict[str, object]]) ->
 
     [ZH] 删除被 ``pip --target`` 铺错位置的轮子 ``.data/data`` 库。
 
-    ``llama_cpp_python`` wheels carry a ``.data/data/lib64`` (Linux) or ``.data/data/lib``
-    (macOS) payload, which ``pip install --target`` materialises **inside**
-    ``site-packages``. Nothing on the target platform resolves that location: the package
-    itself ships the same libraries under ``llama_cpp/lib/``, and that is the path
-    ``llama_cpp.py`` passes to ``ctypes``.
+    Some wheels carry a ``.data/data/lib64`` (Linux) or ``.data/data/lib`` (macOS)
+    payload, which ``pip install --target`` materialises **inside** ``site-packages``.
+    Nothing on the target platform resolves that location: importable extension modules
+    live beside the package, not under the prefix-layout directory.
     """
     names = PREFIX_DATA_DIRS.get(rid, ())
     if not names:
@@ -180,10 +178,10 @@ def _prune_duplicate_libs(tree: str, removed: list[dict[str, object]]) -> None:
 
     [ZH] 删除没有任何引用的「完整版本」共享库别名。
 
-    ``libllama.so.0`` is both the unversioned name's ``SONAME`` and the name every
-    ``DT_NEEDED`` entry uses; ``libllama.so.0.5.0`` is a third, byte-identical copy. On
-    macOS the equivalent is ``libllama.0.dylib`` (install name) versus
-    ``libllama.0.0.1.dylib``. Only a byte-identical sibling is ever removed.
+    ``libfoo.so.0`` is both the unversioned name's ``SONAME`` and the name every
+    ``DT_NEEDED`` entry uses; ``libfoo.so.0.5.0`` is a third, byte-identical copy. On
+    macOS the equivalent is ``libfoo.0.dylib`` (install name) versus
+    ``libfoo.0.0.1.dylib``. Only a byte-identical sibling is ever removed.
     """
     for base, _dirs, files in os.walk(tree):
         for name in files:

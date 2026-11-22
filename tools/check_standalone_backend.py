@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """standalone 后端产物的结构与可运行性检查（v0.2.1 跨平台-2 任务五）。
 
@@ -431,55 +431,6 @@ def check_one(tree: str, rid: str, strict: bool) -> None:
     if strict:
         check_runtime(python, rid, tree)
         check_protocol(python, rid, tree)
-
-    check_native_binaries(tree, site, rid)
-
-
-#: Mach-O 文件头魔数（macOS 的动态库）。用来判定"这个 .dylib 到底是不是一个真的动态库"。
-MACHO_MAGIC = {
-    b"\xcf\xfa\xed\xfe": "Mach-O 64 位小端",
-    b"\xfe\xed\xfa\xcf": "Mach-O 64 位大端",
-    b"\xca\xfe\xba\xbe": "Mach-O 通用（fat）",
-}
-
-
-def check_native_binaries(tree: str, site: str, rid: str) -> None:
-    """非本机平台唯一能做的"二进制级"证据：原生依赖是不是**结构完整**的动态库。
-
-    为什么需要这一层（实测踩到的坑）：llama-cpp-python 的 macOS arm64 轮子在**上游就是坏的**
-    —— 字节数与官方 digest 完全一致（"下完了、也没被篡改"），但包内 `lib/*.dylib` 大面积
-    压缩流损坏。这种缺陷在 Windows 打包机上**没有任何运行级证据能发现**（那是 macOS 的
-    .so/.dylib，跑不起来也 import 不了），只能靠静态检查兜住。
-
-    检查项：`llama_cpp/lib/*.dylib` 的**文件头魔数**必须是合法的 Mach-O。
-    只对 osx-arm64 做（其他平台的原生扩展要么能在本机验证，要么是本机平台）。
-    """
-    if rid != "osx-arm64":
-        return
-    lib_dir = os.path.join(site, "llama_cpp", "lib")
-    if not os.path.isdir(lib_dir):
-        fail(f"{rid} 的 site-packages 里没有 llama_cpp/lib（本地推理会 ImportError）")
-        return
-    dylibs = [n for n in sorted(os.listdir(lib_dir)) if n.endswith(".dylib")]
-    if not dylibs:
-        fail(f"{rid} 的 llama_cpp/lib 下一个 .dylib 都没有（轮子不完整）")
-        return
-    bad: list[str] = []
-    for name in dylibs:
-        path = os.path.join(lib_dir, name)
-        try:
-            with open(path, "rb") as handle:
-                head = handle.read(4)
-        except OSError as exc:
-            bad.append(f"{name}（读取失败：{exc}）")
-            continue
-        if head not in MACHO_MAGIC:
-            bad.append(f"{name}（文件头 {head!r} 不是 Mach-O）")
-    if bad:
-        fail(f"{rid} 的 llama_cpp 动态库有 {len(bad)} 个不是合法 Mach-O：{bad[0]}")
-        return
-    metal = sum(1 for n in dylibs if "metal" in n.lower())
-    ok(f"{rid} 的 llama_cpp 动态库全部是合法 Mach-O（{len(dylibs)} 个，其中 Metal 后端 {metal} 个）")
 
 
 def main() -> int:

@@ -1,4 +1,4 @@
-# EchoDesk 后端依赖（Python 3.13）
+﻿# EchoDesk 后端依赖（Python 3.13）
 #
 # 说明：v0.2.0 起不再依赖 pyxtxt。原因：
 #   1) 其 estrattori 子包用 os.listdir 自动导入同目录全部解析器，打包时必须整目录
@@ -8,49 +8,9 @@
 #      RTFDE、python-bidi、pygame、pynput），对外分发会产生著佐权义务。
 # 现改为按格式直接使用轻量、宽松许可的解析库（见 backend/file_parser.py）。
 
---extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
-# llama-cpp-python：本地推理（llama.cpp）。
-#
-# ⚠️ macOS 必须单独处理（v0.2.1 跨平台-2 实测，证据见 records/v0.2.2-跨平台-2记录.md）：
-#   上游 cpu 索引发布的 **macOS arm64 轮子是坏的** —— wheel 字节数与上游 digest 完全
-#   一致（也就是说"下完了、也没被篡改"），但包内 `lib/*.dylib` 大面积 CRC/魔数错误，
-#   pip 安装必然失败。实测 0.3.21 / 0.3.30 / 0.3.35 / 0.3.36 的 cpu 索引 macOS arm64
-#   轮子全部损坏；metal 索引（macOS 专用，对应 `vX.Y.Z-metal` 这些 Release tag）里
-#   0.3.31 及以后同样损坏，**0.3.30 是最后一个完好的**（103 个成员全部可解压）。
-#   因此 macOS 上用**直接 URL 钉死**这一个轮子：
-#     * 直接 URL 而不是"索引 + 版本号"：两个索引里存在**同名但内容不同**的文件，
-#       按索引挑是不确定的；钉 URL 才是确定的。
-#     * 用 metal 而不是 cpu 构建对 macOS 本来也更正确 —— 它启用 Metal（Apple GPU）后端。
-#   Intel Mac（x86_64）不在本轮三平台目标内（目标为 osx-arm64），换机器时把 URL 里的
-#   `macosx_11_0_arm64` 换成 `macosx_10_9_x86_64` 并重新校验完整性即可。
-# Linux / Windows 仍走 cpu 索引的常规解析（这两个平台的轮子实测完好）。
-# Linux / Windows 必须装**官方 prebuilt wheel**，不能落到 sdist 源码编译：
-#   cpu 索引 https://abetlen.github.io/llama-cpp-python/whl/cpu 上，
-#   cp313-win_amd64 的轮子最高只到 **0.3.19**（0.3.20 及以后没有 cp313 的 Windows 轮子），
-#   而不钉版本时 pip 会解析到最新版的 sdist 并触发本地 CMake/MSVC 编译。
-#   装法：pip install -r requirements.txt --only-binary=llama-cpp-python
-#   若将来换 Python 3.11/3.12（cp311/cp312 轮子更新更全），可放宽本 pin。
-#
-# 【v0.2.2 收尾实测修正】这个 pin **只能给 Windows**：
-#   linux-x64 的 cpu 索引从 **0.3.21** 起才有轮子（没有 0.3.19），
-#   写成 `sys_platform != "darwin"` 会让 `pack_backend.py --platform linux-x64`
-#   直接失败（pip：Could not find a version that satisfies llama-cpp-python==0.3.19
-#   from versions: 0.3.21 … 0.3.36）。所以按平台分开：Windows 走下方 JamePeng
-#   直接 URL，Linux 交回索引解析（本地 artifacts/wheels 里已有 manylinux 的 0.3.36，
-#   可离线复用）。
-# 【v0.2.6 第 23 项：Windows 改用 JamePeng fork 的预编译 CUDA 轮子】
-#   官方 abetlen 轮子缺失 Qwen3-VL / Qwen2.5-VL 视觉处理器，且 Windows 下
-#   CUDA DLL 解析顺序有问题，运行 Qwen3-VL 会触发 access violation（0xC0000005）。
-#   JamePeng fork 的 Release 轮子包含 `Qwen3VLChatHandler` / `Qwen25VLChatHandler`，
-#   并打包了 ggml-cuda.dll 全套动态库。按**直接 URL** 钉死（不使用索引），
-#   原因与 macOS 相同：同名文件可能存在于多个索引，钉 URL 才是确定的。
-#   轮子文件名里的 cu132 必须与本机 NVIDIA 驱动/运行时匹配；不匹配时
-#   backend/cuda_bootstrap.py 会按依赖顺序预加载并注册 nvidia site-packages 的 bin 目录。
-#   完整性：sha256 016476a46d5569189d90ed201f67782ffe0873d619281dd343d0806163a10670。
-#   安装验证：python -c "from llama_cpp.llama_chat_format import Qwen3VLChatHandler"
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.4.7-cu132-win-20261113/llama_cpp_python-0.4.7%2Bcu132-cp313-cp313-win_amd64.whl ; sys_platform == "win32"
-llama-cpp-python ; sys_platform == "linux"
-llama-cpp-python @ https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30-metal/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl ; sys_platform == "darwin"
+# 本地推理只走 backend/llama_native.py 对原生 llama.cpp 动态库的调用（backend/native/<rid>/）。
+# 不再声明 llama-cpp-python 或 numpy：v0.2.7 起两者都已物理移除，任何顶层导入都会让后端起不来。
+
 # 版本钉死以与随包 docs/SBOM.json 一致（v0.2.2 收尾裁定 (a)）：
 # 干净 venv 重建时装到了最新版（2.14.2 / 1.64.1 / 2.5.4），与合规清单不符。
 pydantic==2.13.5          # 配置模型与校验
@@ -96,14 +56,6 @@ xlrd                      # .xls（BSD）
 
 # ---------- 自动化（任务四） ----------
 playwright==1.63.0        # 驱动本机 Microsoft Edge（Apache-2.0）
-# numpy：Windows 曾被钉回随包 SBOM 校验的版本（2.5.3）；
-# Linux/macOS 的 cp313 索引里没有 2.5.3（只到 2.2.x），只能交回索引解析。
-# 【v0.2.6 第 23 项】JamePeng 轮子的 METADATA 明确声明 `numpy<=2.3.2`。Windows 端
-# 必须随之下调到 2.3.2：打包走 --no-deps 不受影响，但 `pip install -r requirements.txt`
-# 的开发环境与干净环境收口会因 2.5.3 与上限冲突而直接失败。仅 Windows 改变，
-# Linux/macOS 仍走索引解析；SBOM 将在下次发布构建时重新生成。
-numpy==2.3.2 ; sys_platform == "win32"
-numpy ; sys_platform != "win32"
 # v0.2.5 发布链精简：移除 `schedule`。全仓库没有任何 `import schedule`，
 # 自动化的定时触发由 backend/automation.py 自己的线程与时间比较实现；
 # 它此前只作为 requirements 声明与 EchoBackend.spec 的 hiddenimport 存在，

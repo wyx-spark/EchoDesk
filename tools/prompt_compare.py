@@ -691,7 +691,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     print(f"旧提示词来源：{args.old_ref}")
     print(f"模型：{args.model}")
-    from llama_cpp import Llama
+    # [EN] v0.2.7 removed llama-cpp-python; this dev tool therefore cannot load a model.
+    # [EN] Report it explicitly instead of dying on a bare ImportError.
+    # [ZH] v0.2.7 已移除 llama-cpp-python，因此这个开发工具无法再加载模型；
+    # [ZH] 显式报告，而不是死在裸 ImportError 上。
+    try:
+        from llama_cpp import Llama
+    except Exception as exc:  # noqa: BLE001 - reported to the operator, never silent
+        print("!! 本构建已不再随包 llama-cpp-python，prompt_compare 无法运行：%s: %s"
+              % (type(exc).__name__, exc))
+        return 2
     print("加载模型…", flush=True)
     started = time.time()
     llm = Llama(model_path=args.model, n_ctx=4096, n_threads=args.threads, verbose=False)
