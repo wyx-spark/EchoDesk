@@ -43,6 +43,7 @@ import sys
 
 import reproducible as repro
 import prune_release as pruner
+import runtime_state
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKEND = os.path.join(ROOT, "backend")
@@ -560,6 +561,20 @@ def main() -> int:
     archive_digest = ""
     if not args.plan and archive_fmt != "none":
         os.makedirs(args.out, exist_ok=True)
+        # [EN] Generating ``config.example.json`` imports backend modules, and importing them can
+        # [EN] create runtime state inside the tree (``session.json``, ``skills_dev.log``, crash
+        # [EN] logs). Those files are not build products; v0.2.7 shipped three of them in the
+        # [EN] Windows zip because they were created after the clean step and before compression.
+        # [EN] The policy lives in ``tools/runtime_state.py``, shared with the release gate.
+        # [ZH] 生成 ``config.example.json`` 会导入后端模块，而导入会产生运行期状态
+        # [ZH] （``session.json``、``skills_dev.log``、崩溃日志）。它们不是构建产物；v0.2.7 的
+        # [ZH] Windows zip 就因此带进了三个：它们在清理步骤之后、压缩之前被创建。
+        # [ZH] 策略在 ``tools/runtime_state.py``，与发布门禁共用。
+        removed_state = runtime_state.sweep(tree)
+        if removed_state:
+            log(f"[EN] swept {len(removed_state)} runtime state file(s) before archiving "
+                f"(e.g. {removed_state[0]}) / [ZH] 归档前清扫 {len(removed_state)} 个运行期状态文件"
+                f"（例如 {removed_state[0]}）")
         # [EN] Normalise the tree before compression so every generated file carries the
         # [EN] same timestamp regardless of when its individual step completed.
         # [ZH] 压缩前统一目录树时间戳，使每个生成文件无论其步骤何时完成都携带同一时间。

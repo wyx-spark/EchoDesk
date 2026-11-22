@@ -45,27 +45,11 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-#: [EN] Mutable per-user state files that must never be packaged.
-#: [ZH] 绝不能随包分发的用户运行期可变状态文件。
-FORBIDDEN_BASENAMES = {
-    "session.json",
-    "market_cache.json",
-    "backend_crash.log",
-    "skills_dev.log",
-    "config.user.json",
-    "ui_state.json",
-    "snippets.json",
-    "automation_log.jsonl",
-}
-
-#: [EN] Suffixes that mark generated state (checked case-insensitively).
-#: [ZH] 表示生成状态的后缀（不区分大小写检查）。
-FORBIDDEN_SUFFIXES = (".log", ".db", ".sqlite", ".sqlite3", ".cache")
-
-#: [EN] Filename globs that mark generated state.
-#: [ZH] 表示生成状态的文件名通配。
-FORBIDDEN_GLOBS = ("*_cache.json",)
+# [EN] The forbidden-name policy lives in one module shared with the packager.
+# [ZH] 禁止名单与打包器共用同一个模块。
+from runtime_state import is_forbidden  # noqa: E402
 
 #: [EN] The shipped config template, and its authoritative source in the repository.
 #: [ZH] 随包配置模板，以及仓库里的权威来源。
@@ -87,19 +71,6 @@ def scan_roots(version: str) -> list[str]:
     for rid in ("win-x64", "linux-x64", "osx-arm64"):
         roots.append(os.path.join(ROOT, "dist", f"EchoDesk-v{version}-{rid}", "app", "backend"))
     return roots
-
-
-def is_forbidden(name: str) -> str:
-    if name in FORBIDDEN_BASENAMES:
-        return "禁止的文件名"
-    lowered = name.lower()
-    for suffix in FORBIDDEN_SUFFIXES:
-        if lowered.endswith(suffix):
-            return f"禁止的后缀 {suffix}"
-    for pattern in FORBIDDEN_GLOBS:
-        if re.fullmatch(re.escape(pattern).replace(r"\*", ".*"), name, re.IGNORECASE):
-            return f"禁止的通配 {pattern}"
-    return ""
 
 
 def sha256(path: str) -> str:
