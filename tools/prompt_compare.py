@@ -15,6 +15,10 @@
   的新旧对比（那条路径本来就不调用模型），供 CI/门禁使用；
   ``tools/test_prompt_compare.py`` 复用本模块的指标函数做无模型断言。
 
+**本工具依赖 llama-cpp-python 与原生输出逐字对比，本版已无轮子，工具暂不可用**：
+v0.2.7 起交付物不再随包 ``llama-cpp-python``，``--model`` 真跑路径会显式报错并以退出码 2
+结束（见 ``main`` 内的导入守卫）；只有不加载模型的 ``--dry-run`` 路径仍可运行。
+
 用法::
 
     python tools\\prompt_compare.py --dry-run                  # 不用模型，秒级
