@@ -13,14 +13,14 @@ EchoDesk 支持 **Windows、macOS、Linux** 三平台。Windows 版是完整的�
 **跨平台前端**（Avalonia）在同一条 Python 后端之上支持。有**两项能力仅 Windows 提供**——通过 COM 读取
 WPS/Office 的**加密文档**（含旧版 `.doc` / `.xls`），以及**企业内网浏览器自动化**。这两项都会明确降级：
 说明平台原因并给出替代做法，而不是静默失败。
-能力边界共两条：加密文档（带密码或 DRM）仅 Windows 可通过本机 WPS 在内存中解密读取，Linux / macOS 使用内置通用解析器、只能读未加密文档；浏览器自动化仅 Windows 驱动本机 Microsoft Edge，另外两个平台不提供该功能。此外三项差异来自平台本身：数据目录分别位于 `%APPDATA%\EchoDesk`、`~/Library/Application Support/EchoDesk` 与 `~/.config/EchoDesk`；Windows 前端为 WPF（`net10.0-windows`），另外两平台为 Avalonia（`net10.0`）；安装形式分别为 Inno Setup 安装程序、`.tar.gz` 与 `.zip` 便携包。
+能力边界共两条：加密文档（带密码或 DRM）仅 Windows 可通过本机 WPS 在内存中解密读取，Linux / macOS 使用内置通用解析器、只能读未加密文档；浏览器自动化仅 Windows 驱动本机 Microsoft Edge，另外两个平台不提供该功能。此外三项差异来自平台本身：数据目录在便携布局下就是发布目录外层（不写 `%APPDATA%\`），非便携布局时 macOS 回退到 `~/Library/Application Support/EchoDesk`、Linux 回退到 `$XDG_DATA_HOME/EchoDesk`（未设置时为 `~/.local/share/EchoDesk`）；Windows 前端为 WPF（`net10.0-windows`），另外两平台为 Avalonia（`net10.0`）；安装形式分别为 Inno Setup 安装程序、`.tar.gz` 与 `.zip` 便携包。
 其余功能（对话与流式输出、文件解析、本地检索、Agent、MCP、技能、模型管理）三平台表现一致。
 
 | 平台 | 下载哪个文件 | 怎么启动 |
 | --- | --- | --- |
-| Windows | `EchoDesk-v0.2.6-Setup.exe`（安装程序）或便携版 `…-win-x64.zip` | 开始菜单 / 桌面快捷方式，或程序文件夹里的便携版启动器 |
-| Linux x86-64 | `EchoDesk-v0.2.6-linux-x64.tar.gz` | 解压目录里执行 `./start.sh` |
-| macOS（Apple 芯片） | `EchoDesk-v0.2.6-osx-arm64.tar.gz` | 解压目录里执行 `./start.sh` |
+| Windows | `EchoDesk-v0.2.7-Setup.exe`（安装程序）或便携版 `…-win-x64.zip` | 开始菜单 / 桌面快捷方式，或程序文件夹里的便携版启动器 |
+| Linux x86-64 | `EchoDesk-v0.2.7-linux-x64.tar.gz` | 解压目录里执行 `./start.sh` |
+| macOS（Apple 芯片） | `EchoDesk-v0.2.7-osx-arm64.tar.gz` | 解压目录里执行 `./start.sh` |
 
 Linux 与 macOS 的发布物是**免安装的自包含压缩包**：界面运行时与后端解释器都在包里，
 目标机器不需要预装 .NET 或 Python。
@@ -28,21 +28,20 @@ Linux 与 macOS 的发布物是**免安装的自包含压缩包**：界面运行
 ```bash
 # Linux / macOS：校验、解压、启动
 sha256sum -c SHA256SUMS.txt                    # macOS 用：shasum -a 256 -c SHA256SUMS.txt
-tar -xzf EchoDesk-v0.2.6-linux-x64.tar.gz
-cd EchoDesk-v0.2.6-linux-x64 && ./start.sh     # 权限位丢了就先 chmod +x start.sh app/EchoDesk
+tar -xzf EchoDesk-v0.2.7-linux-x64.tar.gz
+cd EchoDesk-v0.2.7-linux-x64 && ./start.sh     # 权限位丢了就先 chmod +x start.sh app/EchoDesk
 ```
 
 用户数据（对话记录、设置、`results/`）存放在**用户数据目录**里，各平台按各自的惯例解析这个目录：
 
 ```
-# Windows —— 程序目录本身（若装在 %APPDATA%\EchoDesk 下，那就是 %APPDATA%\EchoDesk）
-C:\Users\<用户名>\EchoDesk-v0.2.6\
-%APPDATA%\EchoDesk\
+# Windows —— 发布目录本身（含 app\ 的那一层）；绝不写 %APPDATA%
+C:\Users\<用户名>\EchoDesk-v0.2.7\
 
-# macOS
+# macOS —— 仅非便携布局（.app 包）才用这里；便携目录把数据放在程序旁边
 ~/Library/Application Support/EchoDesk/
 
-# Linux（未设置 XDG_DATA_HOME 时为 ~/.local/share/EchoDesk）
+# Linux —— 同一条规则；未设置 XDG_DATA_HOME 时为 ~/.local/share/EchoDesk
 $XDG_DATA_HOME/EchoDesk/
 ```
 

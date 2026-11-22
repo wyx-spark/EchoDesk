@@ -1,4 +1,4 @@
-# EchoDesk Skill Development Guide (v0.2.0)
+# EchoDesk Skill Development Guide (v0.2.7)
 
 This guide explains how to write, submit and publish an EchoDesk skill (plugin), together with the review process and the publishing rules.
 Chinese version: [`docs/zh-Hans/SKILL_GUIDE.md`](../zh-Hans/SKILL_GUIDE.md).
@@ -7,7 +7,7 @@ To submit a skill, use the repository's "Skill submission" issue template.
 **Platforms.** A skill is pure Python, so it runs on **Windows, macOS and Linux** alike, and nothing in this
 guide is platform-specific: the paths below are written with forward slashes (`app/backend/skills/`), which is
 how they read on macOS and Linux — on Windows the same path uses backslashes (`app\backend\skills\`), and the
-program folder is wherever you installed or unpacked the bundle (`EchoDesk-v0.2.6/app/`). Two EchoDesk
+program folder is wherever you installed or unpacked the bundle (`EchoDesk-v0.2.7/app/`). Two EchoDesk
 capabilities a skill can run into *are* platform-specific: reading WPS/Office **encrypted** documents through
 COM (legacy `.doc` / `.xls` included) and the enterprise-intranet browser automation are **Windows-only**.
 If your skill itself depends on something Windows-only — calling WPS through COM, say — say

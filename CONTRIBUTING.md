@@ -181,7 +181,7 @@ probes. The portable bundles for all three platforms are built by plain Python t
 so a contributor on macOS or Linux builds and packages with those:
 
 ```powershell
-# Windows: full portable build -> publish\EchoDesk-v0.2.2\
+# Windows: full portable build -> publish\EchoDesk-v0.2.7\
 & tools\build_release.ps1
 
 & tools\build_release.ps1 -SkipBackend     # only rebuild the WPF frontend
@@ -212,16 +212,16 @@ Installing a build you just produced (or downloaded) is different per platform:
 
 ```powershell
 # Windows: run the installer, or unpack the portable zip and start the program
-.\publish\EchoDesk-v0.2.2-Setup.exe
+.\publish\EchoDesk-v0.2.7-Setup.exe
 
-.\publish\EchoDesk-v0.2.2\app\EchoDesk.exe
+.\publish\EchoDesk-v0.2.7\app\EchoDesk.exe
 ```
 
 ```bash
 # macOS / Linux: the bundles are plain archives, with no installer
-tar -xzf dist/EchoDesk-v0.2.2-linux-x64.tar.gz
-chmod +x EchoDesk-v0.2.2-linux-x64/start.sh EchoDesk-v0.2.2-linux-x64/app/EchoDesk   # only if the executable bit was lost
-cd EchoDesk-v0.2.2-linux-x64 && ./start.sh
+tar -xzf dist/EchoDesk-v0.2.7-linux-x64.tar.gz
+chmod +x EchoDesk-v0.2.7-linux-x64/start.sh EchoDesk-v0.2.7-linux-x64/app/EchoDesk   # only if the executable bit was lost
+cd EchoDesk-v0.2.7-linux-x64 && ./start.sh
 ```
 
 Two things about the build are easy to get wrong, and both are commented in the scripts:

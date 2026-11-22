@@ -136,7 +136,7 @@ comments.
 The backend prints `ready` only after **session restore + warm-up have finished**:
 
 ```json
-{"type":"ready","version":"v0.2.1","studio":"Void Entropia Studio","restored":3,
+{"type":"ready","version":"v0.2.7","studio":"Void Entropia Studio","restored":3,
  "model_ready":true,"model_state":{"ready":true,"model":"Qwen3-0.6B-Q6_K.gguf","models_dir":"...","n_ctx":8192,"guide":""},
  "model_missing":{},"history":[{"role":"user","content":"..."}]}
 ```

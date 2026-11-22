@@ -21,9 +21,9 @@ actually sees, and how far verification goes. Related reading: `USER_GUIDE.md`, 
 
 | Platform | Status | Frontend | Packaging |
 | --- | --- | --- | --- |
-| **Windows** | Complete shipped product | WPF, in `frontend/` | Inno Setup installer (`publish\EchoDesk-v0.2.6-Setup.exe`), plus `…-win-x64.zip` from the three-platform bundle |
-| **Linux** | Supported (portable bundle) | Avalonia, in `frontend-avalonia/`; self-contained publish for `linux-x64` | `EchoDesk-v0.2.6-linux-x64.tar.gz` — no installer, no Python needed on the target machine |
-| **macOS** | Supported (portable bundle) | Avalonia, in `frontend-avalonia/`; self-contained publish for `osx-arm64` | `EchoDesk-v0.2.6-osx-arm64.tar.gz`, plus signing/notarization (needs the maintainer's Apple credentials) |
+| **Windows** | Complete shipped product | WPF, in `frontend/` | Inno Setup installer (`publish\EchoDesk-v0.2.7-Setup.exe`), plus `…-win-x64.zip` from the three-platform bundle |
+| **Linux** | Supported (portable bundle) | Avalonia, in `frontend-avalonia/`; self-contained publish for `linux-x64` | `EchoDesk-v0.2.7-linux-x64.tar.gz` — no installer, no Python needed on the target machine |
+| **macOS** | Supported (portable bundle) | Avalonia, in `frontend-avalonia/`; self-contained publish for `osx-arm64` | `EchoDesk-v0.2.7-osx-arm64.tar.gz`, plus signing/notarization (needs the maintainer's Apple credentials) |
 
 The Avalonia frontend now covers **the main window and the whole settings window**: the feature panels
 (command palette, snippets, toast, status strip, Agent step rows) and all seven settings tabs are
@@ -129,7 +129,7 @@ the backend that is actually answering.
 The data root is resolved in this order; the first rule that applies wins.
 
 1. The `ECHODESK_DATA` environment variable, if set.
-2. If the **program directory is named `app`**, its parent (portable layout `EchoDesk-v0.2.6\app\`).
+2. If the **program directory is named `app`**, its parent (portable layout `EchoDesk-v0.2.7\app\`).
 3. **Windows**: the program directory itself.
 4. **macOS**: `~/Library/Application Support/EchoDesk`.
 5. **Linux**: `$XDG_DATA_HOME/EchoDesk`, or `~/.local/share/EchoDesk` when `XDG_DATA_HOME` is unset.
@@ -229,7 +229,7 @@ The points below are conclusions from things that actually went wrong:
 
 | Target | Tooling | Output |
 | --- | --- | --- |
-| Windows | Inno Setup, driven by `tools/build_release.ps1` | `publish\EchoDesk-v0.2.6-Setup.exe` |
+| Windows | Inno Setup, driven by `tools/build_release.ps1` | `publish\EchoDesk-v0.2.7-Setup.exe` |
 | Linux | `tools/pack_crossplatform.py` | `.tar.gz` |
 | macOS | `tools/pack_crossplatform.py` + signing/notarization | `.tar.gz` |
 

@@ -1,4 +1,4 @@
-# EchoDesk 开发者文档（v0.2.0）
+# EchoDesk 开发者文档
 
 English version: [`docs/en/DEVELOPER.md`](../en/DEVELOPER.md)（本文为英文版的中文参考译本，如两者有歧义，**以英文版为准**）。
 相关文档：[自动化指南](AUTOMATION_GUIDE.md) · [用户手册](USER_GUIDE.md) · [常见问题](FAQ.md) · [技能开发指南](SKILL_GUIDE.md) · [跨平台参考](CROSS_PLATFORM.md)。
@@ -397,8 +397,8 @@ Windows 上就是程序目录本身；macOS 与 Linux 上，当程序目录不�
 `app/`、`backend/` 这些容器目录，得到的答案与前端一致。配置项里写了**相对路径**的后端产物
 （会话文件、模型、审计日志、已安装技能）仍落在后端工作目录，即发布包里的 `app/backend/`，
 不受 `ECHODESK_DATA` 影响；这些配置项都接受 `~` 与绝对路径，因此企业部署可以把它们指到受管盘。
-三个平台的默认数据目录分别是：Windows `%APPDATA%\EchoDesk`，macOS `~/Library/Application Support/EchoDesk`，
-Linux `~/.config/EchoDesk`；设置环境变量 `ECHODESK_DATA` 可整体改写该位置，前后端对同一变量的解析结果
+三个平台的默认数据目录分别是：Windows 程序目录本身（发布物布局下即外层目录），macOS `~/Library/Application Support/EchoDesk`（仅非便携布局），
+Linux `$XDG_DATA_HOME/EchoDesk`（未设置时为 `~/.local/share/EchoDesk`）；设置环境变量 `ECHODESK_DATA` 可整体改写该位置，前后端对同一变量的解析结果
 由 `tools/check_data_dir_consistency.py` 断言一致。
 
 ---

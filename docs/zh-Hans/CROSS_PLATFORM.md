@@ -13,7 +13,7 @@
 
 | | Windows | Linux | macOS |
 | --- | --- | --- | --- |
-| 正式交付物 | 安装包 `EchoDesk-v0.2.6-Setup.exe`；另有三平台便携包里的 `…-win-x64.zip` | 便携包 `EchoDesk-v0.2.6-linux-x64.tar.gz`（免安装、自带解释器；暂无系统级安装包与 AppImage） | 便携包 `EchoDesk-v0.2.6-osx-arm64.tar.gz`（同上；`.dmg` 与公证需 Apple 证书） |
+| 正式交付物 | 安装包 `EchoDesk-v0.2.7-Setup.exe`；另有三平台便携包里的 `…-win-x64.zip` | 便携包 `EchoDesk-v0.2.7-linux-x64.tar.gz`（免安装、自带解释器；暂无系统级安装包与 AppImage） | 便携包 `EchoDesk-v0.2.7-osx-arm64.tar.gz`（同上；`.dmg` 与公证需 Apple 证书） |
 | 前端 | WPF（`frontend/`，功能完整） | Avalonia（`frontend-avalonia/`：主窗口 + 设置窗口 7 个页签 + 各功能面板均已迁移） | 同左 |
 | 后端 | Python（与前端通过 stdin/stdout 的 JSON 行协议通信） | 同一份后端代码，无需改动 | 同一份后端代码，无需改动 |
 
@@ -80,7 +80,7 @@
     "wps_com": {"available": true, "reason": "...", "alternative": "", "windows_only": true}
   },
   "degraded": [],                    // 本平台不可用的 Windows 专属能力
-  "user_data_root": "C:\\...\\EchoDesk-v0.2.6"
+  "user_data_root": "C:\\...\\EchoDesk-v0.2.7"
 }
 ```
 
@@ -93,7 +93,7 @@
 用户数据根目录的判定顺序（三方一致：Avalonia 前端、WPF 前端、Python 后端）：
 
 1. 环境变量 `ECHODESK_DATA`；
-2. 程序目录名为 `app` → 取它上一级（发布物布局 `EchoDesk-v0.2.6\app\`）；
+2. 程序目录名为 `app` → 取它上一级（发布物布局 `EchoDesk-v0.2.7\app\`）；
 3. Windows：程序目录本身（保持既有发布行为不变）；
 4. macOS：`~/Library/Application Support/EchoDesk`；
 5. Linux：`$XDG_DATA_HOME/EchoDesk` 或 `~/.local/share/EchoDesk`。

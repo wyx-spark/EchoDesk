@@ -5,7 +5,7 @@
 感谢你抽出时间提供帮助。EchoDesk 是一款本地优先的 AI 桌面助手，任何形式的贡献都有价值：
 缺陷报告、修复、文档、翻译与新的技能。Windows 是完整的正式交付平台；Linux 与 macOS 由同一套
 Python 后端之上的跨平台（Avalonia）前端提供支持，因此贡献时请把三个平台都考虑进去。
-平台支持矩阵与"哪些能力仅限 Windows"的准确边界Windows 具备全部能力；macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属功能，其中加密文档读取退为"仅未加密文档"，浏览器自动化不可用；三平台默认数据目录分别为 `%APPDATA%\EchoDesk`、`~/Library/Application Support/EchoDesk`、`~/.config/EchoDesk`
+平台支持矩阵与"哪些能力仅限 Windows"的准确边界见 [`docs/zh-Hans/CROSS_PLATFORM.md`](docs/zh-Hans/CROSS_PLATFORM.md)。Windows 具备全部能力；macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属功能，其中加密文档读取退为"仅未加密文档"，浏览器自动化不可用；数据目录在便携布局下就是发布目录外层（不写 `%APPDATA%\`），非便携布局时 macOS 回退到 `~/Library/Application Support/EchoDesk`、Linux 回退到 `$XDG_DATA_HOME/EchoDesk`（未设置时为 `~/.local/share/EchoDesk`）。
 
 参与本项目即表示你同意遵守[行为准则](CODE_OF_CONDUCT.md)。
 
@@ -168,7 +168,7 @@ Windows 的发布链只能用 PowerShell 与 `cmd`（它调用 Inno Setup、`rce
 三平台的便携包由纯 Python 工具构建，在任何平台上都能跑，因此 macOS/Linux 贡献者用后者打包：
 
 ```powershell
-# Windows：完整便携构建 -> publish\EchoDesk-v0.2.2\
+# Windows：完整便携构建 -> publish\EchoDesk-v0.2.7\
 & tools\build_release.ps1
 
 & tools\build_release.ps1 -SkipBackend     # 只重建 WPF 前端
@@ -198,16 +198,16 @@ macOS 分发还需要代码签名与公证，这需要维护者的 Apple 凭据�
 
 ```powershell
 # Windows：运行安装包，或解压便携 zip 后直接启动
-.\publish\EchoDesk-v0.2.2-Setup.exe
+.\publish\EchoDesk-v0.2.7-Setup.exe
 
-.\publish\EchoDesk-v0.2.2\app\EchoDesk.exe
+.\publish\EchoDesk-v0.2.7\app\EchoDesk.exe
 ```
 
 ```bash
 # macOS / Linux：发布包就是普通归档，没有安装程序
-tar -xzf dist/EchoDesk-v0.2.2-linux-x64.tar.gz
-chmod +x EchoDesk-v0.2.2-linux-x64/start.sh EchoDesk-v0.2.2-linux-x64/app/EchoDesk   # 仅在可执行位丢失时需要
-cd EchoDesk-v0.2.2-linux-x64 && ./start.sh
+tar -xzf dist/EchoDesk-v0.2.7-linux-x64.tar.gz
+chmod +x EchoDesk-v0.2.7-linux-x64/start.sh EchoDesk-v0.2.7-linux-x64/app/EchoDesk   # 仅在可执行位丢失时需要
+cd EchoDesk-v0.2.7-linux-x64 && ./start.sh
 ```
 
 构建中有两点容易出错，脚本里都加了注释：
