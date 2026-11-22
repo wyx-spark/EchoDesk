@@ -49,7 +49,6 @@ import ctypes
 import logging
 import math
 import os
-import sys
 import threading
 import time
 from typing import Dict, Iterator, List, Optional
@@ -1266,14 +1265,30 @@ class NativeLlama:
         chain = api.llama_sampler_chain_init(api.llama_sampler_chain_default_params())
         penalty = float(repeat_penalty or 1.0)
         if math.isfinite(penalty) and penalty != 1.0:
-            # [EN] The Linux llama.cpp revision prepends ``n_vocab`` to this sampler.
-            # [ZH] Linux 所用的 llama.cpp 修订为该采样器在前面增加了 ``n_vocab``。
-            if sys.platform.startswith("linux"):
-                sampler = api.llama_sampler_init_penalties(
-                    self._n_vocab, DEFAULT_REPEAT_LAST_N, penalty, 0.0, 0.0)
-            else:
-                sampler = api.llama_sampler_init_penalties(
-                    DEFAULT_REPEAT_LAST_N, penalty, 0.0, 0.0)
+            # [EN] v0.2.7: from the 0.4.7 revision on, all three vendored builds take
+            # [EN] ``n_vocab`` as the first parameter of this sampler. The ABI declaration in
+            # [EN] ``llama_abi`` is generated from that revision, so it declares five parameters
+            # [EN] on every platform. The 0.3.x builds (still used by the reader line) take four
+            # [EN] parameters; that line keeps its own matching declaration. Comment history: the
+            # [EN] old comment here said "macOS and Windows still take four" -- that was true for
+            # [EN] 0.3.x and became wrong when master raised its libraries to 0.4.7, because the
+            # [EN] ABI declaration follows the library revision, not the code base. Calling the
+            # [EN] four-parameter shape on 0.4.7 raised ``TypeError: this function takes at least
+            # [EN] 5 arguments (4 given)`` and broke every completion that used a repeat penalty
+            # [EN] (the application default); forcing four parameters through a doctored
+            # [EN] ``argtypes`` made the native side read a shifted argument list and produce
+            # [EN] gibberish. ``tools/check_abi_arity.py`` now catches this class mechanically.
+            # [ZH] v0.2.7：自 0.4.7 修订起，三平台随包构建的该采样器首参都是 ``n_vocab``。
+            # [ZH] ``llama_abi`` 的声明由该修订生成，因此每个平台都声明五个参数。0.3.x 构建
+            # [ZH] （reader 线仍在使用）是四个参数，该线保留与其匹配的声明。注释沿革：此处旧注释
+            # [ZH] 写的是"macOS 与 Windows 仍是四个参数"——那对 0.3.x 成立，master 把库升到 0.4.7
+            # [ZH] 之后就变成错的，因为**ABI 声明跟着原生库修订走，不跟着代码库走**。在 0.4.7 上
+            # [ZH] 按四参调用会抛 ``TypeError: this function takes at least 5 arguments
+            # [ZH] (4 given)``，凡使用重复惩罚（应用默认值）的补全都失败；把 ``argtypes`` 改成
+            # [ZH] 四参强行调用，原生侧读到的参数整体错位并输出乱码。该缺陷类别现由
+            # [ZH] ``tools/check_abi_arity.py`` 机械拦截。
+            sampler = api.llama_sampler_init_penalties(
+                self._n_vocab, DEFAULT_REPEAT_LAST_N, penalty, 0.0, 0.0)
             api.llama_sampler_chain_add(chain, sampler)
         k = int(top_k if top_k is not None else DEFAULT_TOP_K)
         if k > 0:

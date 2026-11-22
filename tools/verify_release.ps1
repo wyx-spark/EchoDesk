@@ -35,8 +35,23 @@ param(
     # [ZH] v0.2.7：WPF UI 探针的硬超时。挂死的门禁比失败的门禁更糟 —— 失败会说话，挂死只烧时间。
     # [ZH] 超时后杀掉探针与被测程序，并按最后状态行记为 failed。取 600 秒而不是 180 秒，因为实测
     # [ZH] 有一次正常运行就超过 5 分钟（加载模型 + 逐页签检查）；180 秒会把健康运行判死。
-    [int]$ProbeTimeoutSec = 600
+    [int]$ProbeTimeoutSec = 600,
+    # [EN] Diagnostic switch: when set, every external command whose gate item name contains this
+    # [EN] text streams its output to the console live while still writing the full log file.
+    # [EN] Default off: echoing all sub-process output drowns the one-line-per-item result stream.
+    # [ZH] 排查开关：设置后，凡门禁项名包含该文本的外部命令，其输出会实时打到终端（日志仍然完整）。
+    # [ZH] 默认关闭：把所有子进程输出都打出来会淹掉"每项一行"的结果流。
+    [string]$ShowOutput = ""
 )
+
+# [EN] Hard ceiling for one external command. It is a safety net against a wedged child, not a
+# [EN] performance budget: 1800 s is longer than the slowest healthy item observed (the WPF UI
+# [EN] probe, ~400 s), so a timeout here means "this really hung".
+# [ZH] 单个外部命令的硬上限。它是防止子进程卡死的兜底，不是性能预算：1800 秒比实测最慢的健康项
+# [ZH] （WPF UI 探针约 400 秒）长得多，因此触发超时即意味着"真的挂住了"。
+$script:ItemTimeoutSec = 1800
+$script:ItemLogs = New-Object System.Collections.ArrayList
+$script:CurrentItemName = ""
 
 $ErrorActionPreference = 'Continue'
 $Root = Split-Path -Parent $PSScriptRoot
@@ -121,9 +136,105 @@ $results = New-Object System.Collections.ArrayList
 $LogDir = Join-Path $Root "artifacts\verify-logs"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-# 断言外部命令成功（用退出码），失败即抛异常
-function Assert-Exit([string]$What) {
-    if ($LASTEXITCODE -ne 0) { throw "$What 退出码 $LASTEXITCODE" }
+# [EN] The development model used by the checks that need real inference. Release artifacts never
+# [EN] contain a model, so it is always taken from the development tree; absence is a hard failure
+# [EN] for the checks that require it (they must not silently pass without running).
+# [ZH] 需要真实推理的检查所用的开发机模型。发布物从不含模型，因此一律取自开发树；缺失时对需要它的
+# [ZH] 检查是硬失败（不得在未执行的情况下静默通过）。
+function Find-GateModel {
+    $dev = Join-Path $Root "backend\models"
+    if (-not (Test-Path $dev)) { return "" }
+    $ggufs = @(Get-ChildItem $dev -Filter *.gguf -File -ErrorAction SilentlyContinue | Sort-Object Name)
+    if ($ggufs.Count -eq 0) { return "" }
+    $preferred = @($ggufs | Where-Object { $_.Name -eq "Qwen3-0.6B-Q6_K.gguf" })
+    if ($preferred.Count -gt 0) { return $preferred[0].FullName }
+    return $ggufs[0].FullName
+}
+$script:GateModel = Find-GateModel
+
+#: [EN] Every external command goes through a tiny generated wrapper script. The wrapper writes the
+#: [EN] full output to its own log and then exits with the child's real exit code, which the gate
+#: [EN] reads from a .NET ``Process`` object. Two failure modes made the old implementation wrong:
+#: [EN]   * ``Start-Process -PassThru`` does not report ``ExitCode`` in PowerShell 5.1 (only the
+#: [EN]     ``-Wait`` form populates it), so a probe that printed "all passed" was recorded as
+#: [EN]     "exit code <empty>" and failed the gate. That false failure appeared in the v0.2.7 run.
+#: [EN]   * The same call gave the gate no way to bound a wedged child.
+#: [ZH] 所有外部命令都经一个即时生成的包装脚本执行：包装脚本把完整输出写进自己的日志，再以子进程
+#: [ZH] 的真实退出码退出，门禁从 .NET ``Process`` 对象读取该退出码。旧实现有两个错误：
+#: [ZH]   * PowerShell 5.1 的 ``Start-Process -PassThru`` 不返回 ``ExitCode``（只有 ``-Wait`` 形式
+#: [ZH]     会填），于是一个打印"全部通过"的探针被记成"退出码 <空>"并判红 —— v0.2.7 本轮就撞到了；
+#: [ZH]   * 同一个调用也让门禁无法给卡死的子进程设上限。
+function Get-NativeLogPath([string]$Name) {
+    return (Join-Path $LogDir (($Name -replace '[^\w\u4e00-\u9fff\-]', '_') + ".log"))
+}
+
+function ConvertTo-PSLiteral([string]$Value) {
+    # [EN] Single-quoted PowerShell literal: only the quote itself needs doubling.
+    # [ZH] PowerShell 单引号字面量：只需把引号自身写两遍。
+    return "'" + ($Value -replace "'", "''") + "'"
+}
+
+function Show-FailureTail([string]$Path, [int]$Lines = 20) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return }
+    Write-Host ("    ----- {0} 尾部 {1} 行 -----" -f (Split-Path -Leaf $Path), $Lines) -ForegroundColor DarkRed
+    Get-Content -LiteralPath $Path -Tail $Lines -ErrorAction SilentlyContinue |
+        ForEach-Object { Write-Host ("    | " + $_) -ForegroundColor DarkRed }
+}
+
+function Invoke-NativeCore([string]$Name, [string]$Exe, [string[]]$CmdArgs, [int]$TimeoutSec) {
+    $log = Get-NativeLogPath $Name
+    [void]$script:ItemLogs.Add($log)
+    $live = $false
+    if ($ShowOutput) {
+        $live = ($script:CurrentItemName -and $script:CurrentItemName.Contains($ShowOutput))
+    }
+
+    $safe = ($Name -replace '[^\w\u4e00-\u9fff\-]', '_')
+    $wrapper = Join-Path $LogDir ("_run-" + $safe + ".ps1")
+    $call = (ConvertTo-PSLiteral $Exe)
+    if ($CmdArgs.Count -gt 0) {
+        $call += " " + (($CmdArgs | ForEach-Object { ConvertTo-PSLiteral $_ }) -join " ")
+    }
+    $scriptText = "& $call *> " + (ConvertTo-PSLiteral $log) + "`r`n" +
+                  "if (`$null -eq `$LASTEXITCODE) { exit 1 }`r`n" +
+                  "exit `$LASTEXITCODE" + "`r`n"
+    [System.IO.File]::WriteAllText($wrapper, $scriptText, (New-Object System.Text.UTF8Encoding($false)))
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = (Get-Command powershell.exe -ErrorAction Stop).Source
+    $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $wrapper + '"'
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $proc = [System.Diagnostics.Process]::Start($psi)
+
+    $seen = 0
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
+    while (-not $proc.WaitForExit(500)) {
+        if ($live) {
+            $lines = @(Get-Content -LiteralPath $log -ErrorAction SilentlyContinue)
+            if ($lines.Count -gt $seen) {
+                for ($i = $seen; $i -lt $lines.Count; $i++) { Write-Host ("    " + $lines[$i]) }
+                $seen = $lines.Count
+            }
+        }
+        if ([DateTime]::UtcNow -gt $deadline) {
+            try { & taskkill.exe /PID $proc.Id /T /F | Out-Null } catch { }
+            try { if (-not $proc.HasExited) { $proc.Kill() } } catch { }
+            Get-Process -Name EchoDesk -ErrorAction SilentlyContinue |
+                Stop-Process -Force -ErrorAction SilentlyContinue
+            $tail = @(Get-Content -LiteralPath $log -Tail 8 -ErrorAction SilentlyContinue |
+                      Where-Object { $_.Trim().Length -gt 0 })
+            throw ("超过 {0} 秒未结束，已强制终止（含被测程序）。最后输出：`n      {1}" -f `
+                   $TimeoutSec, (($tail | Select-Object -Last 3) -join "`n      "))
+        }
+    }
+    $code = $proc.ExitCode
+    if ($code -ne 0) {
+        $tail = @(Get-Content -LiteralPath $log -Tail 6 -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Trim().Length -gt 0 })
+        throw "退出码 $code（日志 $log）：`n      " + (($tail | Select-Object -Last 4) -join "`n      ")
+    }
+    return $log
 }
 
 <#
@@ -131,22 +242,7 @@ function Assert-Exit([string]$What) {
     失败时把日志尾部几行拼进异常消息 —— 这样"哪一项失败、失败在哪一行"一眼可见。
 #>
 function Invoke-Native([string]$Name, [string]$Exe, [string[]]$CmdArgs) {
-    $log = Join-Path $LogDir (($Name -replace '[^\w\u4e00-\u9fff\-]', '_') + ".log")
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        & $Exe @CmdArgs *> $log
-        $code = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $prev
-    }
-    if ($code -ne 0) {
-        $tail = @(Get-Content -LiteralPath $log -Tail 6 -ErrorAction SilentlyContinue |
-                  Where-Object { $_.Trim().Length -gt 0 })
-        throw "退出码 $code（日志 $log）：`n      " + (($tail | Select-Object -Last 4) -join "`n      ")
-    }
-    return $log
+    return Invoke-NativeCore $Name $Exe $CmdArgs $script:ItemTimeoutSec
 }
 
 function Invoke-Python([string]$Name, [string]$Script, [string[]]$Extra = @()) {
@@ -156,32 +252,9 @@ function Invoke-Python([string]$Name, [string]$Script, [string[]]$Extra = @()) {
 }
 
 function Invoke-NativeTimeout([string]$Name, [string]$Exe, [string[]]$CmdArgs, [int]$TimeoutSec) {
-    # [EN] Same contract as ``Invoke-Native`` plus a hard time limit. On expiry the whole child tree
-    # [EN] is killed (the probe launches the program under test as its own child) and the item is
-    # [EN] FAILED, quoting the last lines the probe printed -- so "it hung" always names where.
-    # [ZH] 与 ``Invoke-Native`` 同一契约，另加硬超时。超时后按进程树杀掉（探针会把被测程序拉成自己的
-    # [ZH] 子进程），并按探针最后打印的几行记为 failed —— "挂住了"必须说出挂在哪。
-    $log = Join-Path $LogDir (($Name -replace '[^\w\u4e00-\u9fff\-]', '_') + ".log")
-    $errLog = "$log.err"
-    $proc = Start-Process -FilePath $Exe -ArgumentList $CmdArgs -NoNewWindow -PassThru `
-                          -RedirectStandardOutput $log -RedirectStandardError $errLog
-    if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
-        try { & taskkill.exe /PID $proc.Id /T /F | Out-Null } catch { }
-        try { if (-not $proc.HasExited) { $proc.Kill() } } catch { }
-        Get-Process -Name EchoDesk -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-        $tail = @(Get-Content -LiteralPath $log -Tail 8 -ErrorAction SilentlyContinue |
-                  Where-Object { $_.Trim().Length -gt 0 })
-        throw ("超过 {0} 秒未结束，已强制终止（含被测程序）。最后输出：`n      {1}" -f `
-               $TimeoutSec, (($tail | Select-Object -Last 3) -join "`n      "))
-    }
-    $code = $proc.ExitCode
-    if ($code -ne 0) {
-        $tail = @(Get-Content -LiteralPath $log -Tail 6 -ErrorAction SilentlyContinue |
-                  Where-Object { $_.Trim().Length -gt 0 })
-        throw "退出码 $code（日志 $log）：`n      " + (($tail | Select-Object -Last 4) -join "`n      ")
-    }
-    return $log
+    # [EN] Same contract as ``Invoke-Native`` plus a tighter hard time limit than the global one.
+    # [ZH] 与 ``Invoke-Native`` 同一契约，但使用比全局上限更紧的硬超时。
+    return Invoke-NativeCore $Name $Exe $CmdArgs $TimeoutSec
 }
 
 #: [EN] Sentinel prefix thrown by a gate body to mark the item as SKIPPED: the check
@@ -210,6 +283,11 @@ function Invoke-Check {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $status = "passed"
     $detail = ""
+    # [EN] Reset the per-item log bookkeeping so a failure can quote exactly the logs that this
+    # [EN] item produced, and expose the item name to the ``-ShowOutput`` filter.
+    # [ZH] 重置"本项产生的日志"记录，使失败时只引用本项的日志；同时把项名交给 ``-ShowOutput`` 过滤。
+    $script:ItemLogs.Clear()
+    $script:CurrentItemName = $Name
     try {
         $output = & $Body
         $detail = if ($output) { ($output | Select-Object -Last 1).ToString() } else { "通过" }
@@ -229,6 +307,12 @@ function Invoke-Check {
     $mark = switch ($status) { "passed" { "[OK]  " } "skipped" { "[SKIP]" } default { "[FAIL]" } }
     $color = switch ($status) { "passed" { "Gray" } "skipped" { "Yellow" } default { "Red" } }
     Write-Host ("{0} {1,-32} {2,6:N1}s  {3}" -f $mark, $Name, $sw.Elapsed.TotalSeconds, $detail) -ForegroundColor $color
+    # [EN] A failure prints the tail of the log(s) the item produced, so nobody has to open the log
+    # [EN] by hand; the file still keeps the complete output.
+    # [ZH] 失败时自动打印本项日志的尾部，不必人工去翻文件；日志文件本身仍然保留完整输出。
+    if ($status -eq "failed") {
+        foreach ($path in @($script:ItemLogs)) { Show-FailureTail $path 20 }
+    }
     # [EN] One line per item, printed the moment the item ends, so a long silent stretch on the
     # [EN] console always maps to the item that is currently running. ``verify_release.ps1`` writes
     # [EN] each sub-process' output to its own log, so before this line a slow item looked like a
@@ -236,6 +320,7 @@ function Invoke-Check {
     # [ZH] 每项结束即打一行，主控台长时间静止时总能对应到"正在跑哪一项"。各子进程的输出本来只进
     # [ZH] 各自的 .log，没有这一行时慢项与挂死从主控台无法区分。最慢 5 项在汇总里再列一次。
     Write-Host ("[TIMING] {0} {1:N1}s" -f $Name, $sw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
+    $script:CurrentItemName = ""
     [void]$results.Add([pscustomobject]@{
         Name = $Name; Ok = ($status -eq "passed"); Status = $status
         Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); Detail = $detail
@@ -495,6 +580,22 @@ try {
         "两套前端 × 4 字段 = $wantSimple / $wantFour"
     }
 
+    # [EN] v0.2.7: the native ABI declarations under ``backend/llama_abi`` are generated from one
+    # [EN] llama.cpp revision, but the vendored DLLs are what actually execute. When master moved
+    # [EN] its libraries to 0.4.7 while the calling code still assumed the 0.3.x arity, every
+    # [EN] completion that used a repeat penalty died with ``this function takes at least 5
+    # [EN] arguments (4 given)`` -- a defect no assertion saw. This item compares, mechanically,
+    # [EN] the declared parameter count of every ABI function with the number of arguments the
+    # [EN] backend passes to it; a mismatch is FAILED, never skipped.
+    # [ZH] v0.2.7：``backend/llama_abi`` 的 ABI 声明由某个确定的 llama.cpp 修订生成，而真正执行的
+    # [ZH] 是随包 DLL。master 把库升到 0.4.7、调用点仍按 0.3.x 的参数个数写时，凡使用重复惩罚的
+    # [ZH] 补全都以 ``this function takes at least 5 arguments (4 given)`` 失败 —— 而当时没有任何
+    # [ZH] 断言看得见。本项机械比对每个 ABI 函数的声明参数个数与后端实参个数，不一致即 failed，
+    # [ZH] 绝不计入跳过。
+    Invoke-Check "原生 ABI 实参个数审计（llama_abi 声明 vs 调用点）" {
+        Invoke-Python "ABI实参审计" "tools\check_abi_arity.py"; "通过"
+    }
+
     # ---------- 1b. 安装程序交付物（Inno Setup） ----------
     # 这些只在跑过 -MakeInstaller 之后存在；没跑就明确跳过（而不是静默通过）。
     $PublishDir = Join-Path $Root "publish"
@@ -713,6 +814,23 @@ try {
     # [ZH] 一路发出去。这里用普通 Invoke-Check：非零退出计入 failed，绝不计入跳过。
     Invoke-Check "原生运行期选路（v0.2.7 原生 mtmd / 轮子已移除）" {
         Invoke-Python "视觉选路" "tools\test_vision_gate.py"; "通过"
+    }
+    # [EN] v0.2.7: a real native generation with the repeat penalty the application uses by
+    # [EN] default. The ABI-arity defect shipped because the only other real-inference check is
+    # [EN] the WPF probe, whose assertion never looked at the answer text; a targeted generation
+    # [EN] turns that class of defect red at the first gate run. Requires the development model,
+    # [EN] so a missing model is a FAILURE here, not a skip: the release gate must not silently
+    # [EN] skip the only check that proves text inference works.
+    # [ZH] v0.2.7：用应用默认的重复惩罚做一次真实原生生成。ABI 参数个数缺陷之所以能发出去，是因为
+    # [ZH] 另一条真实推理检查（WPF 探针）从不断言回答内容；这一条定向生成能在第一次门禁就把它判红。
+    # [ZH] 它需要开发机模型，因此模型缺失在这里记为 failed 而不是跳过：发布门禁不得静默跳过唯一
+    # [ZH] 能证明文本推理可用的检查。
+    Invoke-Check "原生文本生成（repeat_penalty=1.1，真实模型）" {
+        if (-not $script:GateModel) {
+            throw "backend\models 下没有 .gguf：无法执行真实生成断言（发布流程要求模型可见）"
+        }
+        Invoke-Python "原生文本生成" "tools\test_native_generate.py" @("--model", $script:GateModel)
+        "通过"
     }
     # [EN] v0.2.4 patch: update asset guard, digest/size rejection and the isolated
     # [EN] user-data backup are verified without network access.
@@ -963,15 +1081,7 @@ try {
                 的机制，跑完不会在发布目录里留下残留。
                 找不到模型时照常跑（其余检查不受影响），并明确告警说明思考区测不到。
             #>
-            $probeModel = ""
-            $devModels = Join-Path $Root "backend\models"
-            if (Test-Path $devModels) {
-                $ggufs = @(Get-ChildItem $devModels -Filter *.gguf -File -ErrorAction SilentlyContinue |
-                    Sort-Object Name)
-                $preferred = @($ggufs | Where-Object { $_.Name -eq "Qwen3-0.6B-Q6_K.gguf" })
-                if ($preferred.Count -gt 0) { $probeModel = $preferred[0].FullName }
-                elseif ($ggufs.Count -gt 0) { $probeModel = $ggufs[0].FullName }
-            }
+            $probeModel = $script:GateModel
             if ($probeModel) {
                 Write-Host "    探针模型: $probeModel" -ForegroundColor DarkGray
                 $skipReport = Join-Path $LogDir "ui-probe-skips.txt"
