@@ -200,6 +200,52 @@ BUILD_ONLY_PACKAGES = ("pyinstaller",)
 
 #: 后端代码里**不该**随包分发的东西（开发期产物与本地环境）。
 BACKEND_EXCLUDE_DIRS = {".idea", ".venv", "venv", "__pycache__", "models", ".git", "_internal"}
+
+#: [EN] Native llama.cpp runtime layout: ``backend/native/<rid>/*``. The loader resolves this
+#: [EN] directory at run time; the packager copies exactly the target RID into ``app/native``
+#: [EN] (flat) so the frozen tree keeps the same relative path.
+#: [ZH] 原生 llama.cpp 运行期布局：``backend/native/<rid>/*``。加载器在运行期解析该目录；
+#: [ZH] 打包器只把目标 RID 复制到 ``app/native``（摊平），使冻结后的目录保持同一相对路径。
+NATIVE_DIR = os.path.join(BACKEND, "native")
+
+#: [EN] Libraries without which the native runtime cannot load on that target. Versioned
+#: [EN] aliases and optional backends (mtmd / metal / blas / rpc) are copied when present.
+#: [ZH] 缺少即无法在该目标上加载原生运行期的库。带版本别名与可选后端（mtmd / metal /
+#: [ZH] blas / rpc）在存在时一并复制。
+#:
+#: [EN] 0.4.7 layout: the CPU backend ships as per-microarchitecture variants
+#: [EN] (``ggml-cpu-haswell.dll`` / ``libggml-cpu-*.so``) on Windows and Linux instead of one
+#: [EN] plain ``ggml-cpu`` module, so the variant presence is checked separately below.
+#: [ZH] 0.4.7 布局：Windows 与 Linux 上的 CPU 后端按微架构分成多个变体
+#: [ZH] （``ggml-cpu-haswell.dll`` / ``libggml-cpu-*.so``），不再是一个普通的 ``ggml-cpu``
+#: [ZH] 模块，因此变体的存在性在下面对应函数里单独校验。
+REQUIRED_NATIVE_LIBS = {
+    "win-x64": ("llama.dll", "ggml.dll", "ggml-base.dll"),
+    "linux-x64": ("libllama.so", "libggml.so", "libggml-base.so"),
+    "osx-arm64": ("libllama.dylib", "libggml.dylib", "libggml-base.dylib"),
+}
+
+#: [EN] Filename prefix of the CPU backend module(s) for each RID. At least one must exist.
+#: [ZH] 各 RID 的 CPU 后端模块文件名前缀；至少必须存在一个。
+NATIVE_CPU_PREFIX = {
+    "win-x64": "ggml-cpu",
+    "linux-x64": "libggml-cpu",
+    "osx-arm64": "libggml-cpu",
+}
+
+#: [EN] Dynamic-library filename patterns per RID. Linux needs the versioned aliases too
+#: [EN] (``libllama.so.0`` and ``libmtmd.so.SOVERSION``), because other libraries record those
+#: [EN] names as their ``DT_NEEDED``; matching on a plain ``.so`` suffix silently dropped them.
+#: [ZH] 各 RID 的动态库文件名模式。Linux 还必须收版本别名（``libllama.so.0`` 与
+#: [ZH] ``libmtmd.so.SOVERSION``），因为别的库把那些名字写进了自己的 ``DT_NEEDED``；
+#: [ZH] 只按 ``.so`` 后缀匹配会把它们静默丢掉。
+NATIVE_PATTERNS = {
+    "win-x64": re.compile(r"\.dll$", re.IGNORECASE),
+    "linux-x64": re.compile(r"\.so(\.\d+)*$|\.so\.SOVERSION$", re.IGNORECASE),
+    "osx-arm64": re.compile(r"\.dylib$", re.IGNORECASE),
+}
+
+
 BACKEND_EXCLUDE_FILES = {"EchoBackend.spec", "requirements.txt"}
 BACKEND_EXCLUDE_SUFFIX = (".pyc", ".pyo", ".log", ".spec")
 #: 运行期状态文件：它们属于"用户机器上生成的"，不能打进发布物（否则门禁与卸载清单都要打架）。
@@ -748,7 +794,74 @@ def strip_python(python_dir: str, version: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # 组装
 # ---------------------------------------------------------------------------
-def copy_backend_code(dest_dir: str) -> int:
+def native_source_dir(rid: str) -> str:
+    """[EN] Source directory of the native libraries for one target.
+    [ZH] 某个目标平台的原生库源目录。"""
+    return os.path.join(NATIVE_DIR, rid)
+
+
+def native_libraries(rid: str) -> list[tuple[str, str, int]]:
+    """[EN] ``(name, path, bytes)`` of every dynamic library for the target.
+    [ZH] 目标平台全部动态库的 ``(名称, 路径, 字节数)``。"""
+    directory = native_source_dir(rid)
+    pattern = NATIVE_PATTERNS.get(rid)
+    found: list[tuple[str, str, int]] = []
+    if not os.path.isdir(directory) or pattern is None:
+        return found
+    for name in sorted(os.listdir(directory)):
+        path = os.path.join(directory, name)
+        if not os.path.isfile(path) or not pattern.search(name):
+            continue
+        found.append((name, path, os.path.getsize(path)))
+    return found
+
+
+def verify_native_libraries(rid: str) -> list[tuple[str, str, int]]:
+    """[EN] Validate that the target's native runtime is complete before packaging.
+    [ZH] 打包前校验目标平台的原生运行期是否完整。"""
+    directory = native_source_dir(rid)
+    libraries = native_libraries(rid)
+    names = {name for name, _path, _size in libraries}
+    required = REQUIRED_NATIVE_LIBS.get(rid)
+    if required is None:
+        raise SystemExit(
+            f"[EN] No native runtime mapping for {rid}; update REQUIRED_NATIVE_LIBS.\n"
+            f"[ZH] 没有 {rid} 的原生运行期映射；请更新 REQUIRED_NATIVE_LIBS。")
+    if not os.path.isdir(directory):
+        raise SystemExit(
+            f"[EN] Native runtime directory missing for {rid}: {directory}\n"
+            f"[EN] Vendor the libraries first (see backend/native/VENDOR.md).\n"
+            f"[ZH] {rid} 的原生运行期目录缺失：{directory}\n"
+            f"[ZH] 请先补齐这些库（出处与做法见 backend/native/VENDOR.md）。")
+    missing = [name for name in required if name not in names]
+    if missing:
+        raise SystemExit(
+            f"[EN] Native runtime for {rid} is incomplete; missing: {', '.join(missing)}\n"
+            f"[ZH] {rid} 的原生运行期不完整；缺少：{', '.join(missing)}")
+    cpu_prefix = NATIVE_CPU_PREFIX.get(rid, "")
+    if cpu_prefix and not any(name.lower().startswith(cpu_prefix) for name in names):
+        raise SystemExit(
+            f"[EN] Native runtime for {rid} has no CPU backend module (prefix {cpu_prefix!r}).\n"
+            f"[ZH] {rid} 的原生运行期缺少 CPU 后端模块（前缀 {cpu_prefix!r}）。")
+    return libraries
+
+
+def copy_native_libraries(rid: str, dest_dir: str) -> dict[str, object]:
+    """[EN] Copy one target's dynamic libraries into ``app/native`` (flat).
+    [ZH] 把目标平台的动态库复制到 ``app/native``（摊平）。"""
+    libraries = verify_native_libraries(rid)
+    if os.path.isdir(dest_dir):
+        shutil.rmtree(dest_dir)
+    os.makedirs(dest_dir, exist_ok=True)
+    total = 0
+    for name, path, size in libraries:
+        shutil.copy2(path, os.path.join(dest_dir, name))
+        total += size
+    return {"rid": rid, "count": len(libraries), "bytes": total,
+            "libraries": [name for name, _path, _size in libraries]}
+
+
+def copy_backend_code(dest_dir: str, rid: str) -> int:
     """把 backend/ 的内容复制成 app/（排除开发期产物与运行期状态文件）。"""
     if os.path.isdir(dest_dir):
         shutil.rmtree(dest_dir)
@@ -758,6 +871,16 @@ def copy_backend_code(dest_dir: str) -> int:
         src = os.path.join(BACKEND, name)
         if os.path.isdir(src):
             if name in BACKEND_EXCLUDE_DIRS:
+                continue
+            if name == "native":
+                # [EN] Only the target RID's dynamic libraries belong in this package.
+                # [ZH] 本包只携带目标 RID 的动态库。
+                info = copy_native_libraries(rid, os.path.join(dest_dir, name))
+                log(f"[EN] native runtime: {info['count']} libraries, "
+                    f"{info['bytes'] / 1048576:.1f} MB → app/native/"
+                    f" / [ZH] 原生运行期：{info['count']} 个动态库，"
+                    f"{info['bytes'] / 1048576:.1f} MB → app/native/")
+                copied += 1
                 continue
             if name == "lang":
                 # 语言包要进（后端 i18n 依赖它），但排除缓存。
@@ -895,6 +1018,16 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
     log("")
     log(f"===== {rid}（{spec_target['triple']}）=====")
 
+    # [EN] Validate the native runtime before anything is downloaded or installed: a package
+    # [EN] without it starts but cannot infer, which is worse than failing the build.
+    # [ZH] 在下载与安装任何东西之前先校验原生运行期：缺少它的包能启动却无法推理，
+    # [ZH] 比构建失败更糟。
+    native_preview = verify_native_libraries(rid)
+    log(f"[EN] native runtime ready: {len(native_preview)} libraries, "
+        f"{sum(size for _n, _p, size in native_preview) / 1048576:.1f} MB"
+        f" / [ZH] 原生运行期就绪：{len(native_preview)} 个动态库，"
+        f"{sum(size for _n, _p, size in native_preview) / 1048576:.1f} MB")
+
     # ---------- 1. standalone Python ----------
     python_dir = os.path.join(tree, "python")
     if args.reuse_python and os.path.isdir(python_dir):
@@ -999,7 +1132,7 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
 
     # ---------- 3. 后端代码 ----------
     if not args.plan:
-        count = copy_backend_code(os.path.join(tree, "app"))
+        count = copy_backend_code(os.path.join(tree, "app"), rid)
         log(f"复制后端代码 {count} 个顶层条目 → app/")
 
     # ---------- 4. 启动脚本 ----------
@@ -1029,6 +1162,9 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
     py_size, py_files = dir_size(os.path.join(tree, "python"))
     deps_size, deps_files = dir_size(site_packages)
     app_size, app_files = dir_size(os.path.join(tree, "app"))
+    native_dir = os.path.join(tree, "app", "native")
+    native_files = sorted(os.listdir(native_dir)) if os.path.isdir(native_dir) else []
+    native_bytes = sum(os.path.getsize(os.path.join(native_dir, name)) for name in native_files)
     total_size, total_files = dir_size(tree)
 
     # [EN] Fixed timestamps before archiving make the tree itself independent of the moment
@@ -1063,6 +1199,8 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
         "dependencies": {"count": len(packages), "bytes": deps_size, "files": deps_files,
                          "packages": packages},
         "app": {"bytes": app_size, "files": app_files},
+        "native": {"count": len(native_files), "bytes": native_bytes,
+                   "path": "app/native", "libraries": native_files},
         "tree": {"bytes": total_size, "files": total_files,
                  "path": os.path.relpath(tree, ROOT)},
         "archive": {"path": os.path.relpath(archive, ROOT) if archive else "",
@@ -1078,6 +1216,8 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
             "前端不通过启动脚本拉起后端，而是直接调用 python/python.exe(或 python/bin/python3) + app/main.py；"
             "启动脚本是给人手动启动/调试用的。",
             "site-packages 与 python/ 并排，靠启动脚本/前端的 PYTHONPATH 注入，便于区分自带与新增依赖。",
+            "app/native/ 携带目标平台的 llama.cpp 动态库（vendored 二进制，出处见 backend/native/VENDOR.md）；"
+            "发布物不安装任何推理轮子。",
         ],
     }
     manifest_path = os.path.join(out_root, f"backend-manifest-{rid}.json")
@@ -1087,6 +1227,7 @@ def build_one(rid: str, args: argparse.Namespace, release: dict | None, version:
     log(f"{rid} 解压后共 {total_files} 个文件，{total_size / 1048576:.1f} MB")
     log(f"  其中 python/ {py_size / 1048576:.1f} MB、site-packages/ {deps_size / 1048576:.1f} MB、"
         f"app/ {app_size / 1048576:.1f} MB")
+    log(f"  app/native/：{len(native_files)} 个动态库，{native_bytes / 1048576:.1f} MB")
     result.update(manifest)
     return result
 

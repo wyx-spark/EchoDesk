@@ -20,12 +20,20 @@
 
 | wheel | 字节数 | sha256 | 说明 |
 | --- | --- | --- | --- |
-| `llama-0.4.7-linux.whl` | 206,436,541 | `f125db647857e603f15c360555105d7d717f2f6c0524a15877d5b0cdf773879c` | 取自 GitHub release asset `digest`；本机未整包落盘（仅用 HTTP Range 读取中央目录与所需成员） |
+| `llama-0.4.7-linux.whl` | 206,436,541 | `f125db647857e603f15c360555105d7d717f2f6c0524a15877d5b0cdf773879c` | **sha256 取自 GitHub release asset 的 `digest` 元数据字段，未对完整文件做过本地校验**（原因：本机 `github.com:443` 不可达，改用 HTTP Range 只读中央目录与所需成员，约 28 MB） |
 | `llama-0.4.7-macos.whl` | 18,525,463 | `d0267e6ee0ce8ad1967ea0dfaa3ff88498840ee104c993107c3e41be8f62b076` | 本机落盘文件 sha256 与 GitHub release asset `digest` 一致 |
 
 ## 3. 抽取清单
 
-只抽取 `llama_cpp/lib/` 下的 CPU/加速后端库；CUDA 专属库（`libggml-cuda.so` 等）不随本仓库分发。
+只抽取 `llama_cpp/lib/` 下的 CPU/加速后端库：
+
+- **排除** `libggml-cuda.so`（约 206 MB，CUDA 专属运行时，与 win 的 CPU 集不对应）；
+- **排除** `libllama-common.*`（CLI/示例用的公共库，不是 `libllama` / `libmtmd` 的直接依赖）；
+- linux-x64 目录里 `libggml-base.so` / `libggml.so` / `libllama.so` 各有三份同名副本，
+  上游 wheel 里它们是**符号链接**，本仓库在 Windows 上检出时软链被实体化成完整副本
+  （`core.symlinks=false`），三份内容完全相同（sha256 一致）；
+- macOS 同理：`libggml-*.dylib` / `libllama.*.dylib` 的 `.VERSION` / `.0` / 无后缀三连名，
+  上游是符号链接，此处为实体化副本，`@loader_path` 同目录加载即可。
 
 | 平台 | 文件 | 字节数 | sha256 |
 | --- | --- | --- | --- |

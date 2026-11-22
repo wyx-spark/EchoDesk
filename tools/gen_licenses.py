@@ -24,13 +24,15 @@ from typing import Dict, List, Tuple
 #   * 新增 pypdf 与文件解析相关包（python-docx / openpyxl / python-pptx / xlrd），
 #     它们此前虽被使用但漏登记在清单里。
 ROOT_PACKAGES = [
-    "llama-cpp-python",
+    # [EN] ``llama-cpp-python`` was removed in v0.2.7 / T3-3: inference now runs against the
+    # [EN] vendored binaries in ``backend/native/<rid>/`` and no wheel is installed or shipped.
+    # [ZH] v0.2.7 / T3-3 起移除 ``llama-cpp-python``：推理改走 ``backend/native/<rid>/`` 的
+    # [ZH] vendored 二进制，发布物与本环境都不再安装该轮子。
     "duckduckgo-search",
     "pydantic",
     "huggingface_hub",
     "requests",
     "pywin32",
-    "pyinstaller",
     "playwright",
     "pypdf",
     "python-docx",
@@ -46,6 +48,19 @@ OUT_PATH = os.path.join(
 REQUIREMENTS_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "backend", "requirements.txt"
 )
+
+#: [EN] Build tools declared in requirements.txt but never distributed. They are excluded from
+#: [EN] the inventory's "direct dependencies" section and from the "not installed" warning.
+#: [ZH] requirements.txt 里声明、但从不随发布物分发的构建工具。它们既不出现在清单的
+#: [ZH] "后端直接依赖"一节，也不参与"未安装"告警。
+BUILD_ONLY_PACKAGES = {"pyinstaller"}
+
+#: [EN] Interpreter bootstrap tooling that every virtual environment carries but that the
+#: [EN] standalone release does not ship (python/ is installed without pip). Listing it made the
+#: [EN] inventory depend on the build machine's pip version, which is not a release fact.
+#: [ZH] 每个虚拟环境都会带、但 standalone 发布物并不包含的解释器引导工具（python/ 里没装 pip）。
+#: [ZH] 把它们列进清单会让清单随构建机的 pip 版本漂移，而那不是发布事实。
+PACKAGING_TOOLING = {"pip", "setuptools", "wheel"}
 
 
 def _norm(name: str) -> str:
@@ -70,7 +85,11 @@ def declared_direct() -> List[str]:
     try:
         with open(REQUIREMENTS_PATH, "r", encoding="utf-8") as fh:
             for raw in fh:
-                line = raw.split("#", 1)[0].strip()
+                # [EN] Strip the UTF-8 BOM as well: a BOM left on the first declaration used to
+                # [EN] surface as a package literally named "\ufeff" in the "not installed" warning.
+                # [ZH] 同时去掉 UTF-8 BOM：此前 BOM 残留在首条声明上，会让"未安装"告警里
+                # [ZH] 出现一个名字是 "\ufeff" 的幽灵包。
+                line = raw.split("#", 1)[0].strip().lstrip("\ufeff")
                 if not line or line.startswith("-"):
                     continue
                 # [EN] Split on the PEP 508 separators **and** on the direct-URL marker
@@ -83,6 +102,12 @@ def declared_direct() -> List[str]:
                 # [ZH] 当成包名的一部分，于是发布清单出现"未安装"的假告警并把网址写进表格。
                 # [ZH] 合法的发行包名不允许包含 ``@`` 或 ``=<>![];``。
                 name = re.split(r"[<>=!\[;@]", line, maxsplit=1)[0].strip()
+                # [EN] Build-only tools are deliberately excluded: they are never shipped, so a
+                # [EN] "declared but not installed" warning for them is noise, not a finding.
+                # [ZH] 构建工具刻意排除：它们从不随发布物分发，因此对它们报"声明了但未安装"
+                # [ZH] 属于噪声而非发现。
+                if _norm(name) in BUILD_ONLY_PACKAGES:
+                    continue
                 if name and _norm(name) not in {_norm(n) for n in names}:
                     names.append(name)
     except OSError as exc:  # noqa: BLE001 - 读不到就退化为 ROOT_PACKAGES
@@ -238,7 +263,11 @@ def main() -> None:
         "",
         "## 四、随包分发的原生库",
         "",
-        "- llama.cpp（llama-cpp-python 内嵌的 llama.dll / ggml 系列）：MIT 许可。",
+        "- **llama.cpp**（vendored 原生运行时）：**MIT** 许可，上游 `https://github.com/ggml-org/llama.cpp`。",
+        "  版本 **0.4.7**，三平台各一套，随仓库分发于 `backend/native/win-x64/`、",
+        "  `backend/native/linux-x64/`、`backend/native/osx-arm64/`；二进制在**构建期**从",
+        "  `JamePeng/llama-cpp-python` 0.4.7 的 wheel 中抽取，`llama-cpp-python` 本身**不是运行期依赖**。",
+        "  出处（wheel 文件名、URL、sha256、逐文件摘要）见 `backend/native/VENDOR.md`。",
         "- Playwright 驱动：Apache-2.0；其驱动的浏览器（Microsoft Edge）由用户系统安装，",
         "  EchoDesk 不重新分发浏览器本体。",
         "",
@@ -249,6 +278,8 @@ def main() -> None:
         "| --- | --- | --- |",
     ]
     for name, version, lic, _home in rows:
+        if _norm(name) in PACKAGING_TOOLING:
+            continue
         lines.append(f"| {name} | {version} | {lic} |")
 
     lines += [

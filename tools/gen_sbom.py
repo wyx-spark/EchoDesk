@@ -100,6 +100,35 @@ NOASSERTION = "NOASSERTION"
 #: 需要人工关注的高风险许可证前缀（与 gen_licenses.py 的口径保持一致）
 RISKY_PREFIXES = ("AGPL", "GPL", "LGPL", "SSPL")
 
+#: [EN] Declared in requirements.txt but never distributed: build tools. Excluding them keeps
+#: [EN] the SBOM's release scope honest and avoids a permanent "listed in the closure but absent
+#: [EN] from the inventory" difference.
+#: [ZH] requirements.txt 里声明、但从不随发布物分发的构建工具。排除它们既让 SBOM 的发布作用域
+#: [ZH] 保持诚实，也避免"闭包里有、清单里没有"的永久差异。
+BUILD_ONLY_PACKAGES = {"pyinstaller"}
+
+#: [EN] Vendored native runtimes shipped as files, not as Python distributions. They must
+#: [EN] still appear in the SBOM: an auditor has to be able to answer "which native code is
+#: [EN] in the release and under which license".
+#: [ZH] 以文件形式随发布物分发、而非 Python 发行包的 vendored 原生运行时。它们同样必须出现在
+#: [ZH] SBOM 里：审计方需要能回答"发布物里有哪些原生代码、各是什么许可"。
+_VENDORED_NATIVE = (
+    {
+        "name": "llama.cpp",
+        "version": "0.4.7",
+        "license": "MIT",
+        "upstream": "https://github.com/ggml-org/llama.cpp",
+        "purl": "pkg:github/ggml-org/llama.cpp@0.4.7",
+        "rids": ("win-x64", "linux-x64", "osx-arm64"),
+        "note": (
+            "Vendored native runtime (llama / ggml / mtmd shared libraries). Extracted at "
+            "build time from JamePeng/llama-cpp-python 0.4.7 wheels; llama-cpp-python is not "
+            "a runtime dependency and is absent from requirements.txt / requirements.lock. "
+            "Provenance and per-file digests: backend/native/VENDOR.md."
+        ),
+    },
+)
+
 #: 打印差异时最多列出多少个包名（超过则省略，避免刷屏）
 MAX_LISTED = 40
 
@@ -471,6 +500,42 @@ def build_sbom(installed: Sequence[dict], nuget: Sequence[Tuple[str, str]], vers
             }
         )
 
+    # [EN] Vendored native runtime: shipped as binaries from backend/native/<rid>/, no Python
+    # [EN] distribution involved. Sizes are read from the checkout so the entry stays truthful.
+    # [ZH] vendored 原生运行时：以 backend/native/<rid>/ 的二进制形式分发，不涉及任何 Python
+    # [ZH] 发行包。体积从检出目录实时读取，条目内容与仓库保持一致。
+    for item in _VENDORED_NATIVE:
+        footprints = []
+        for rid in item["rids"]:
+            directory = os.path.join(REPO_ROOT, "backend", "native", rid)
+            files = []
+            if os.path.isdir(directory):
+                for entry in sorted(os.listdir(directory)):
+                    path = os.path.join(directory, entry)
+                    if os.path.isfile(path):
+                        files.append(os.path.getsize(path))
+            footprints.append(f"{rid}: {len(files)} files / {sum(files)} bytes")
+        packages.append(
+            {
+                "SPDXID": _spdx_id("native", item["name"], item["version"], used_ids),
+                "name": item["name"],
+                "versionInfo": item["version"],
+                "downloadLocation": item["upstream"],
+                "licenseConcluded": item["license"],
+                "licenseDeclared": item["license"],
+                "externalRefs": [
+                    {
+                        "referenceCategory": "PACKAGE-MANAGER",
+                        "referenceType": "purl",
+                        "referenceLocator": item["purl"],
+                    }
+                ],
+                "comment": (
+                    item["note"] + " Platform footprints: " + "; ".join(footprints) + "."
+                ),
+            }
+        )
+
     scope_note = (
         "Scope: transitive dependency closure of backend/requirements.txt plus every package "
         "listed in docs/THIRD_PARTY_LICENSES.md. Packages left over in the build machine's "
@@ -685,6 +750,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     version = app_version()
     requirements = parse_requirements(REQUIREMENTS_PATH)
+    # [EN] Build tools never reach the release, so they are not part of the release scope.
+    # [ZH] 构建工具不会进入发布物，因此不属于发布作用域。
+    requirements = [name for name in requirements if _norm(name) not in BUILD_ONLY_PACKAGES]
     nuget, framework = parse_csproj(CSPROJ_PATH)
     installed, by_name, requires = collect_installed()
     manifest = parse_license_md(LICENSE_MD_PATH)

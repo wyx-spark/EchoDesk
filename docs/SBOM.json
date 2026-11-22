@@ -5,7 +5,7 @@
   "name": "EchoDesk-v0.2.6",
   "documentNamespace": "https://github.com/Void-Entropia-Studio/EchoDesk/spdx/v0.2.6",
   "creationInfo": {
-    "created": "2026-11-14T12:33:05Z",
+    "created": "2026-11-22T07:15:52Z",
     "creators": [
       "Tool: gen_sbom.py",
       "Organization: Void Entropia Studio"
@@ -14,23 +14,6 @@
   },
   "comment": "Minimal SPDX 2.3 subset: spdxVersion, name, creationInfo, packages (name/versionInfo/licenseConcluded/downloadLocation/externalRefs). Scope: transitive dependency closure of backend/requirements.txt plus every package listed in docs/THIRD_PARTY_LICENSES.md. Packages left over in the build machine's site-packages but outside that scope are intentionally excluded. Run 'python tools/gen_sbom.py --check' to compare this inventory with docs/THIRD_PARTY_LICENSES.md.",
   "packages": [
-    {
-      "SPDXID": "SPDXRef-Package-pypi-altgraph-0.17.5",
-      "name": "altgraph",
-      "versionInfo": "0.17.5",
-      "downloadLocation": "NOASSERTION",
-      "licenseConcluded": "MIT",
-      "licenseDeclared": "MIT",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/altgraph@0.17.5"
-        }
-      ],
-      "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "https://altgraph.readthedocs.io"
-    },
     {
       "SPDXID": "SPDXRef-Package-pypi-annotated-types-0.8.0",
       "name": "annotated-types",
@@ -166,23 +149,6 @@
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://cryptography.io/en/latest/changelog/"
-    },
-    {
-      "SPDXID": "SPDXRef-Package-pypi-diskcache-5.6.3",
-      "name": "diskcache",
-      "versionInfo": "5.6.3",
-      "downloadLocation": "NOASSERTION",
-      "licenseConcluded": "Apache 2.0",
-      "licenseDeclared": "Apache 2.0",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/diskcache@5.6.3"
-        }
-      ],
-      "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "http://www.grantjenks.com/docs/diskcache/"
     },
     {
       "SPDXID": "SPDXRef-Package-pypi-duckduckgo-search-8.1.1",
@@ -372,40 +338,6 @@
       "homepage": "https://github.com/kjd/idna/blob/master/HISTORY.md"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-Jinja2-3.1.6",
-      "name": "Jinja2",
-      "versionInfo": "3.1.6",
-      "downloadLocation": "NOASSERTION",
-      "licenseConcluded": "BSD License",
-      "licenseDeclared": "BSD License",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/jinja2@3.1.6"
-        }
-      ],
-      "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "https://jinja.palletsprojects.com/changes/"
-    },
-    {
-      "SPDXID": "SPDXRef-Package-pypi-llama-cpp-python-0.4.7-cu132",
-      "name": "llama_cpp_python",
-      "versionInfo": "0.4.7+cu132",
-      "downloadLocation": "NOASSERTION",
-      "licenseConcluded": "MIT",
-      "licenseDeclared": "MIT",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/llama-cpp-python@0.4.7+cu132"
-        }
-      ],
-      "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "https://github.com/JamePeng/llama-cpp-python"
-    },
-    {
       "SPDXID": "SPDXRef-Package-pypi-lxml-6.1.3",
       "name": "lxml",
       "versionInfo": "6.1.3",
@@ -421,40 +353,6 @@
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://lxml.de/"
-    },
-    {
-      "SPDXID": "SPDXRef-Package-pypi-MarkupSafe-3.0.4",
-      "name": "MarkupSafe",
-      "versionInfo": "3.0.4",
-      "downloadLocation": "NOASSERTION",
-      "licenseConcluded": "BSD-3-Clause",
-      "licenseDeclared": "BSD-3-Clause",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/markupsafe@3.0.4"
-        }
-      ],
-      "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "https://palletsprojects.com/donate"
-    },
-    {
-      "SPDXID": "SPDXRef-Package-pypi-numpy-2.3.2",
-      "name": "numpy",
-      "versionInfo": "2.3.2",
-      "downloadLocation": "NOASSERTION",
-      "licenseConcluded": "BSD License",
-      "licenseDeclared": "BSD License",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/numpy@2.3.2"
-        }
-      ],
-      "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "https://numpy.org"
     },
     {
       "SPDXID": "SPDXRef-Package-pypi-openpyxl-3.1.5",
@@ -491,23 +389,6 @@
       "homepage": "https://packaging.pypa.io/"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-pefile-2024.8.26",
-      "name": "pefile",
-      "versionInfo": "2024.8.26",
-      "downloadLocation": "NOASSERTION",
-      "licenseConcluded": "MIT",
-      "licenseDeclared": "MIT",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/pefile@2024.8.26"
-        }
-      ],
-      "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "https://github.com/erocarrera/pefile"
-    },
-    {
       "SPDXID": "SPDXRef-Package-pypi-pillow-13.0.0",
       "name": "pillow",
       "versionInfo": "13.0.0",
@@ -523,23 +404,6 @@
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://pillow.readthedocs.io/en/stable/releasenotes/index.html"
-    },
-    {
-      "SPDXID": "SPDXRef-Package-pypi-pip-26.3",
-      "name": "pip",
-      "versionInfo": "26.3",
-      "downloadLocation": "NOASSERTION",
-      "licenseConcluded": "MIT",
-      "licenseDeclared": "MIT",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/pip@26.3"
-        }
-      ],
-      "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "https://pip.pypa.io/en/stable/news/"
     },
     {
       "SPDXID": "SPDXRef-Package-pypi-playwright-1.63.0",
@@ -644,40 +508,6 @@
       "homepage": "https://github.com/jfhbrook/pyee"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-pyinstaller-6.22.3",
-      "name": "pyinstaller",
-      "versionInfo": "6.22.3",
-      "downloadLocation": "NOASSERTION",
-      "licenseConcluded": "GNU General Public License v2 (GPLv2)",
-      "licenseDeclared": "GNU General Public License v2 (GPLv2)",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/pyinstaller@6.22.3"
-        }
-      ],
-      "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "https://pyinstaller.org"
-    },
-    {
-      "SPDXID": "SPDXRef-Package-pypi-pyinstaller-hooks-contrib-2026.9",
-      "name": "pyinstaller-hooks-contrib",
-      "versionInfo": "2026.9",
-      "downloadLocation": "NOASSERTION",
-      "licenseConcluded": "Apache Software License",
-      "licenseDeclared": "Apache Software License",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/pyinstaller-hooks-contrib@2026.9"
-        }
-      ],
-      "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "https://github.com/pyinstaller/pyinstaller-hooks-contrib"
-    },
-    {
       "SPDXID": "SPDXRef-Package-pypi-pypdf-6.21.4",
       "name": "pypdf",
       "versionInfo": "6.21.4",
@@ -746,23 +576,6 @@
       "homepage": "https://github.com/mhammond/pywin32"
     },
     {
-      "SPDXID": "SPDXRef-Package-pypi-pywin32-ctypes-0.2.3",
-      "name": "pywin32-ctypes",
-      "versionInfo": "0.2.3",
-      "downloadLocation": "NOASSERTION",
-      "licenseConcluded": "BSD-3-Clause",
-      "licenseDeclared": "BSD-3-Clause",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/pywin32-ctypes@0.2.3"
-        }
-      ],
-      "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "https://github.com/enthought/pywin32-ctypes"
-    },
-    {
       "SPDXID": "SPDXRef-Package-pypi-PyYAML-6.0.3",
       "name": "PyYAML",
       "versionInfo": "6.0.3",
@@ -795,23 +608,6 @@
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://requests.readthedocs.io"
-    },
-    {
-      "SPDXID": "SPDXRef-Package-pypi-setuptools-84.2.1",
-      "name": "setuptools",
-      "versionInfo": "84.2.1",
-      "downloadLocation": "NOASSERTION",
-      "licenseConcluded": "MIT",
-      "licenseDeclared": "MIT",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/setuptools@84.2.1"
-        }
-      ],
-      "comment": "Python distribution installed in the build environment (importlib.metadata).",
-      "homepage": "https://github.com/pypa/setuptools"
     },
     {
       "SPDXID": "SPDXRef-Package-pypi-tqdm-4.70.1",
@@ -931,6 +727,22 @@
       ],
       "comment": "Python distribution installed in the build environment (importlib.metadata).",
       "homepage": "https://github.com/jmcnamara/XlsxWriter"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-native-llama.cpp-0.4.7",
+      "name": "llama.cpp",
+      "versionInfo": "0.4.7",
+      "downloadLocation": "https://github.com/ggml-org/llama.cpp",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/ggml-org/llama.cpp@0.4.7"
+        }
+      ],
+      "comment": "Vendored native runtime (llama / ggml / mtmd shared libraries). Extracted at build time from JamePeng/llama-cpp-python 0.4.7 wheels; llama-cpp-python is not a runtime dependency and is absent from requirements.txt / requirements.lock. Provenance and per-file digests: backend/native/VENDOR.md. Platform footprints: win-x64: 19 files / 29545528 bytes; linux-x64: 26 files / 40776048 bytes; osx-arm64: 23 files / 35797432 bytes."
     }
   ]
 }

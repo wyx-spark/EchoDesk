@@ -1,7 +1,7 @@
 # EchoDesk 第三方组件与许可证清单
 
 本文件列出 EchoDesk 分发时随附的第三方组件及其许可证，用于开源合规审查。
-扫描到的 Python 发行包共 54 个（含传递依赖）。
+扫描到的 Python 发行包共 43 个（含传递依赖）。
 
 > **v0.2.1 合规变更（任务书 1.3）**：对外开源发布前，PDF 解析已从 **PyMuPDF**
 > （AGPL-3.0 或 Artifex 商业许可）换成 **pypdf**（BSD-3-Clause，纯 Python）。
@@ -17,12 +17,9 @@
 | cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause |  |
 | duckduckgo_search | 8.1.1 | MIT License |  |
 | huggingface_hub | 2.4.0 | Apache-2.0 |  |
-| llama_cpp_python | 0.4.7+cu132 | MIT |  |
-| numpy | 2.3.2 | BSD License |  |
 | openpyxl | 3.1.5 | MIT |  |
 | playwright | 1.63.0 | Apache-2.0 |  |
 | pydantic | 2.13.5 | MIT |  |
-| pyinstaller | 6.22.3 | GNU General Public License v2 (GPLv2) |  |
 | pypdf | 6.21.4 | BSD-3-Clause |  |
 | python-docx | 1.2.0 | MIT |  |
 | python-pptx | 1.0.2 | MIT |  |
@@ -34,8 +31,7 @@
 
 ## 二、高风险许可证提示
 
-- **pyinstaller 6.22.3** — GNU General Public License v2 (GPLv2)
-  - GPLv2 + 官方特别例外：明确允许用 PyInstaller 打包并分发专有程序，打包产物本身不受 GPL 约束（构建工具，不随产物以库形式使用）
+- 本次扫描未发现 AGPL/GPL/LGPL/SSPL 类许可证组件。
 
 ### 合规结论与建议
 
@@ -59,7 +55,11 @@
 
 ## 四、随包分发的原生库
 
-- llama.cpp（llama-cpp-python 内嵌的 llama.dll / ggml 系列）：MIT 许可。
+- **llama.cpp**（vendored 原生运行时）：**MIT** 许可，上游 `https://github.com/ggml-org/llama.cpp`。
+  版本 **0.4.7**，三平台各一套，随仓库分发于 `backend/native/win-x64/`、
+  `backend/native/linux-x64/`、`backend/native/osx-arm64/`；二进制在**构建期**从
+  `JamePeng/llama-cpp-python` 0.4.7 的 wheel 中抽取，`llama-cpp-python` 本身**不是运行期依赖**。
+  出处（wheel 文件名、URL、sha256、逐文件摘要）见 `backend/native/VENDOR.md`。
 - Playwright 驱动：Apache-2.0；其驱动的浏览器（Microsoft Edge）由用户系统安装，
   EchoDesk 不重新分发浏览器本体。
 
@@ -68,7 +68,6 @@
 
 | 包名 | 版本 | 许可证 |
 | --- | --- | --- |
-| altgraph | 0.17.5 | MIT |
 | annotated-types | 0.8.0 | MIT |
 | anyio | 4.16.0 | MIT |
 | certifi | 2026.10.23 | MPL-2.0 |
@@ -77,7 +76,6 @@
 | click | 8.5.0 | BSD-3-Clause |
 | colorama | 0.4.6 | BSD License |
 | cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause |
-| diskcache | 5.6.3 | Apache 2.0 |
 | duckduckgo_search | 8.1.1 | MIT License |
 | et_xmlfile | 2.0.0 | MIT |
 | filelock | 4.2.8 | MIT |
@@ -89,32 +87,22 @@
 | httpx2 | 2.16.0 | BSD-3-Clause |
 | huggingface_hub | 2.4.0 | Apache-2.0 |
 | idna | 3.20 | BSD-3-Clause |
-| Jinja2 | 3.1.6 | BSD License |
-| llama_cpp_python | 0.4.7+cu132 | MIT |
 | lxml | 6.1.3 | BSD-3-Clause |
-| MarkupSafe | 3.0.4 | BSD-3-Clause |
-| numpy | 2.3.2 | BSD License |
 | openpyxl | 3.1.5 | MIT |
 | packaging | 26.3 | Apache-2.0 OR BSD-2-Clause |
-| pefile | 2024.8.26 | MIT |
 | pillow | 13.0.0 | MIT-CMU |
-| pip | 26.3 | MIT |
 | playwright | 1.63.0 | Apache-2.0 |
 | primp | 2.0.1 | MIT License |
 | pycparser | 3.12 | BSD-3-Clause |
 | pydantic | 2.13.5 | MIT |
 | pydantic_core | 2.46.5 | MIT |
 | pyee | 13.0.1 | MIT |
-| pyinstaller | 6.22.3 | GNU General Public License v2 (GPLv2) |
-| pyinstaller-hooks-contrib | 2026.9 | Apache Software License |
 | pypdf | 6.21.4 | BSD-3-Clause |
 | python-docx | 1.2.0 | MIT |
 | python-pptx | 1.0.2 | MIT |
 | pywin32 | 312 | PSF |
-| pywin32-ctypes | 0.2.3 | BSD-3-Clause |
 | PyYAML | 6.0.3 | MIT |
 | requests | 2.34.2 | Apache-2.0 |
-| setuptools | 84.2.1 | MIT |
 | tqdm | 4.70.1 | MPL-2.0 AND MIT |
 | truststore | 0.10.5 | MIT |
 | typing-inspection | 0.4.4 | MIT |
