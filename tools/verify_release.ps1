@@ -196,6 +196,10 @@ function Skip-Gate([string]$Reason) { throw ("$script:GATE_SKIP_PREFIX$Reason") 
 
 function Add-SkippedGate([string]$Name, [string]$Reason) {
     Write-Host ("{0} {1,-32} {2,6:N1}s  {3}" -f "[SKIP]", $Name, 0.0, $Reason) -ForegroundColor Yellow
+    # [EN] A skipped item still emits a timing line (0.0 s) so the ``[TIMING]`` stream covers every
+    # [EN] item and a reader never has to wonder whether an item silently vanished.
+    # [ZH] 跳过项同样输出 0.0 s 的耗时行，使 `[TIMING]` 流覆盖每一项，读者不会怀疑某项悄悄消失。
+    Write-Host ("[TIMING] {0} {1:N1}s" -f $Name, 0.0) -ForegroundColor DarkGray
     [void]$results.Add([pscustomobject]@{
         Name = $Name; Ok = $false; Status = "skipped"; Seconds = 0.0; Detail = $Reason
     })
@@ -225,6 +229,13 @@ function Invoke-Check {
     $mark = switch ($status) { "passed" { "[OK]  " } "skipped" { "[SKIP]" } default { "[FAIL]" } }
     $color = switch ($status) { "passed" { "Gray" } "skipped" { "Yellow" } default { "Red" } }
     Write-Host ("{0} {1,-32} {2,6:N1}s  {3}" -f $mark, $Name, $sw.Elapsed.TotalSeconds, $detail) -ForegroundColor $color
+    # [EN] One line per item, printed the moment the item ends, so a long silent stretch on the
+    # [EN] console always maps to the item that is currently running. ``verify_release.ps1`` writes
+    # [EN] each sub-process' output to its own log, so before this line a slow item looked like a
+    # [EN] hang. The five slowest items are repeated in the summary.
+    # [ZH] 每项结束即打一行，主控台长时间静止时总能对应到"正在跑哪一项"。各子进程的输出本来只进
+    # [ZH] 各自的 .log，没有这一行时慢项与挂死从主控台无法区分。最慢 5 项在汇总里再列一次。
+    Write-Host ("[TIMING] {0} {1:N1}s" -f $Name, $sw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
     [void]$results.Add([pscustomobject]@{
         Name = $Name; Ok = ($status -eq "passed"); Status = $status
         Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); Detail = $detail
@@ -1033,6 +1044,19 @@ $results | ForEach-Object {
 $total = ($results | Measure-Object -Property Seconds -Sum).Sum
 Write-Host ("  共 {0} 项：通过 {1}，跳过 {2}，失败 {3}，总耗时 {4:N1}s" -f `
     $results.Count, $passed.Count, $skipped.Count, $failed.Count, $total)
+# [EN] The five slowest items, as a standing optimisation record: the pilot's "the gate feels
+# [EN] slower now" complaint must be answered with numbers per item, not with a guess and not by
+# [EN] dropping gate items.
+# [ZH] 最慢 5 项作为长期优化依据：对"门禁变慢了"的判断只能用逐项数字回答，既不靠猜，也不靠删减门禁项。
+$slowest = @($results | Sort-Object -Property Seconds -Descending | Select-Object -First 5)
+if ($slowest.Count -gt 0) {
+    Write-Host "`n[SLOWEST] 最慢 5 项：" -ForegroundColor Cyan
+    $rank = 0
+    foreach ($s in $slowest) {
+        $rank++
+        Write-Host ("  {0}) {1} {2:N1}s" -f $rank, $s.Name, $s.Seconds) -ForegroundColor DarkGray
+    }
+}
 
 if ($failed.Count -gt 0) {
     Write-Host "`n失败项：" -ForegroundColor Red
