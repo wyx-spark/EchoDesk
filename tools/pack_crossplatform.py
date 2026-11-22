@@ -40,6 +40,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 import reproducible as repro
 import prune_release as pruner
@@ -85,13 +86,14 @@ def log(message: str) -> None:
     print(f"[pack] {message}", flush=True)
 
 
-def run(cmd: list[str], cwd: str = ROOT, dry: bool = False) -> None:
+def run(cmd: list[str], cwd: str = ROOT, dry: bool = False,
+        env: dict[str, str] | None = None) -> None:
     printable = " ".join(f'"{c}"' if " " in c else c for c in cmd)
     if dry:
         log(f"（演练）{printable}")
         return
     log(printable)
-    completed = subprocess.run(cmd, cwd=cwd)
+    completed = subprocess.run(cmd, cwd=cwd, env=env)
     if completed.returncode != 0:
         raise SystemExit(f"命令失败（退出码 {completed.returncode}）：{printable}")
 
@@ -515,8 +517,26 @@ def main() -> int:
 
         # 配置示例：**生成**而不是复制（内含双语说明与三平台路径对照，见 tools/gen_config_example.py）。
         # 生成器是 Python，所以三平台构建都能用同一条路径得到同一份结果。
-        run([sys.executable, os.path.join("tools", "gen_config_example.py"),
-             "--out", os.path.join(tree, "config.example.json")], dry=args.plan)
+        # [EN] Isolation rule: a build step must not be able to leave runtime state inside the
+        # [EN] release tree. Run the generator from a temporary working directory with the state
+        # [EN] root (ECHODESK_DATA) and TEMP/TMP redirected there, so any side effect of the tool
+        # [EN] or of anything it imports lands outside the tree. The runtime-state sweep before
+        # [EN] archiving remains as the second line of defence.
+        # [ZH] 隔离规则：构建步骤不得在发布树里留下运行期状态。把生成器放到临时工作目录里运行，
+        # [ZH] 并把状态根（ECHODESK_DATA）与 TEMP/TMP 一并指向该目录，使该工具（或它导入的任何
+        # [ZH] 模块）今后产生的副作用落在树外。归档前的运行期状态清扫仍是第二道防线。
+        gen_cwd = tempfile.mkdtemp(prefix="echodesk-gen-example-")
+        try:
+            gen_env = dict(os.environ)
+            gen_env["ECHODESK_DATA"] = gen_cwd
+            gen_env["TEMP"] = gen_cwd
+            gen_env["TMP"] = gen_cwd
+            run([sys.executable, os.path.join("tools", "gen_config_example.py"),
+                 "--out", os.path.join(tree, "config.example.json")],
+                cwd=gen_cwd, env=gen_env, dry=args.plan)
+        finally:
+            if not args.plan:
+                shutil.rmtree(gen_cwd, ignore_errors=True)
 
         # 界面语言包放在 lang/ui，后端语言包在 app/backend/_internal/lang（互不覆盖）
         ui_lang = os.path.join(tree, "lang", "ui")

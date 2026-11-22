@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """standalone 后端产物的结构与可运行性检查（v0.2.1 跨平台-2 任务五）。
 
@@ -39,6 +39,11 @@ import tempfile
 import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# [EN] Runtime-state policy shared with the packager and the release gate.
+# [ZH] 与打包器、发布门禁共用的运行期状态策略。
+import runtime_state  # noqa: E402
 
 #: RID → 该平台的解释器相对路径与启动脚本名（与 tools/pack_backend.py 的 PLATFORMS 一致）。
 EXPECTED = {
@@ -310,6 +315,16 @@ def check_protocol(python: str, rid: str, tree: str) -> None:
                     proc.kill()
                 except Exception:  # noqa: BLE001
                     pass
+        # [EN] The smoke run executes the tree's backend in place; it can create runtime state
+        # [EN] (session.json, skills_dev.log, crash logs) despite the redirected ECHODESK_DATA.
+        # [EN] Remove it here so a later packaging step cannot archive it -- that is exactly how
+        # [EN] v0.2.7's Windows zip ended up carrying three runtime files.
+        # [ZH] 这次冒烟是在原地执行发布树里的后端；即使 ECHODESK_DATA 已重定向，它仍可能生成运行期
+        # [ZH] 状态（session.json、skills_dev.log、崩溃日志）。在这里清掉，后续打包就不会把它们归档 ——
+        # [ZH] v0.2.7 的 Windows zip 正是这样带进了三个运行期文件。
+        removed = runtime_state.sweep(tree)
+        if removed:
+            ok(f"{rid} 运行后清理运行期残留 {len(removed)} 个（例如 {removed[0]}）")
         shutil.rmtree(data_dir, ignore_errors=True)
 
 

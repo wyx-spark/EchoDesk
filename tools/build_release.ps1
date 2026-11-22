@@ -919,8 +919,27 @@ Write-Ok "外层合规与说明文档（LICENSE/NOTICE/SECURITY/README/CHANGELOG
 # tools\pack_crossplatform.py 都调用它，口径不会漂移）。
 $cfgSrc = Join-Path $Root "backend\config.json"
 if (Test-Path $cfgSrc) {
-    & python (Join-Path $Root "tools\gen_config_example.py") --out (Join-Path $Out "config.example.json")
-    if ($LASTEXITCODE -ne 0) { throw "生成 config.example.json 失败（退出码 $LASTEXITCODE）" }
+    # [EN] Isolation rule: a build step must not be able to leave runtime state inside the release
+    # [EN] tree. Run the generator from a temporary working directory with ECHODESK_DATA and
+    # [EN] TEMP/TMP redirected there; a side effect of the tool (or anything it later imports)
+    # [EN] then lands outside the publish tree.
+    # [ZH] 隔离规则：构建步骤不得在发布树里留下运行期状态。把生成器放到临时工作目录里运行，并把
+    # [ZH] ECHODESK_DATA 与 TEMP/TMP 指向该目录；该工具（或它今后导入的任何模块）的副作用就落在
+    # [ZH] 发布树之外。
+    $genCwd = Join-Path $env:TEMP ("echodesk-gen-example-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $genCwd -Force | Out-Null
+    $prevData = $env:ECHODESK_DATA; $prevTemp = $env:TEMP; $prevTmp = $env:TMP
+    try {
+        $env:ECHODESK_DATA = $genCwd; $env:TEMP = $genCwd; $env:TMP = $genCwd
+        Push-Location $genCwd
+        & python (Join-Path $Root "tools\gen_config_example.py") --out (Join-Path $Out "config.example.json")
+        if ($LASTEXITCODE -ne 0) { throw "生成 config.example.json 失败（退出码 $LASTEXITCODE）" }
+    }
+    finally {
+        Pop-Location
+        $env:ECHODESK_DATA = $prevData; $env:TEMP = $prevTemp; $env:TMP = $prevTmp
+        Remove-Item -LiteralPath $genCwd -Recurse -Force -ErrorAction SilentlyContinue
+    }
     Write-Ok "config.example.json（默认配置副本 + 双语说明 + 三平台路径对照）"
 }
 

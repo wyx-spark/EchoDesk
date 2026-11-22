@@ -819,20 +819,49 @@ if ($null -ne $saveButton) {
             try {
                 $expand = $langCombo.GetCurrentPattern(
                     [System.Windows.Automation.ExpandCollapsePattern]::Pattern)
-                $expand.Expand()
-                Start-Sleep -Milliseconds 600
+                if ($expand.Current.ExpandCollapseState -ne
+                    [System.Windows.Automation.ExpandCollapseState]::Expanded) {
+                    $expand.Expand()
+                }
                 $itemCond = New-Object System.Windows.Automation.PropertyCondition(
                     [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
                     [System.Windows.Automation.ControlType]::ListItem)
-                $options = $langCombo.FindAll([System.Windows.Automation.TreeScope]::Descendants, $itemCond)
-                foreach ($item in $options) {
-                    if ($item.Current.Name -like '*English*') { $enItem = $item }
-                    if ($item.Current.Name -like '*简体中文*') { $zhItem = $item }
+                # [EN] Deterministic wait instead of a "try again later" retry: the popup's items
+                # [EN] exist only after the popup is realised, and enumeration can return an empty
+                # [EN] set while the window is still settling (observed once in v0.2.7 as
+                # [EN] "no English in the language combo (actual: )"). Poll until the item set is
+                # [EN] non-empty AND contains English, up to a hard deadline; on timeout fail with
+                # [EN] the observed items, their count and the waited seconds. The assertion itself
+                # [EN] is never retried -- that would turn a race into "flaky and green forever".
+                # [ZH] 用确定性等待取代"过一会儿再试"的重试：弹出层的选项只有在弹出层真正生成后才
+                # [ZH] 存在，窗口尚未稳定时枚举可能得到空集合（v0.2.7 实测出现过一次：
+                # [ZH] 「语言下拉框里没有 English（实际：）」）。这里轮询直到选项集合非空且包含
+                # [ZH] English，并设硬截止；超时则失败，报出当时的选项、条数与已等待秒数。
+                # [ZH] 断言本身绝不重试 —— 那会把竞态变成"偶发通过，从此无人修"。
+                $deadline = [DateTime]::UtcNow.AddSeconds(20)
+                $waited = 0.0
+                $options = @()
+                while ([DateTime]::UtcNow -lt $deadline) {
+                    $options = @($langCombo.FindAll(
+                        [System.Windows.Automation.TreeScope]::Descendants, $itemCond))
+                    $enItem = $null
+                    $zhItem = $null
+                    foreach ($item in $options) {
+                        if ($item.Current.Name -like '*English*') { $enItem = $item }
+                        if ($item.Current.Name -like '*简体中文*') { $zhItem = $item }
+                    }
+                    if ($null -ne $enItem) { break }
+                    Start-Sleep -Milliseconds 300
+                    $waited += 0.3
                 }
                 if ($null -eq $enItem) {
                     $names = ($options | ForEach-Object { $_.Current.Name }) -join ', '
-                    $expand.Collapse()
-                    Fail "语言下拉框里没有 English（实际：$names）"
+                    Write-Output ("[probe] 语言下拉框等待 {0:N1}s 后仍不可用：items={1} names=[{2}] " +
+                                  "state={3} enabled={4}" -f $waited, $options.Count, $names,
+                                  $expand.Current.ExpandCollapseState, $langCombo.Current.IsEnabled)
+                    try { $expand.Collapse() } catch { }
+                    Fail ("语言下拉框里没有 English（等待 {0:N1}s，items={1}，实际：[{2}]）" -f `
+                          $waited, $options.Count, $names)
                 }
             } catch {
                 Fail "无法展开语言下拉框：$($_.Exception.Message)"
