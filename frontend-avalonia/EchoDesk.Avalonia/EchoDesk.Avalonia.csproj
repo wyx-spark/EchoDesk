@@ -39,21 +39,22 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- 版本口径：v0.2.1 = 跨平台之前（没有这个工程）；v0.2.2 = 跨平台版本；
          v0.2.3 = Avalonia 主线（WPF 同期转入 LTS）；v0.2.4 = 硬件自适应与三档推理预设；
-         v0.2.5 = 发布加固；v0.2.6 = 23 项体验大修。
+         v0.2.5 = 发布加固；v0.2.6 = 23 项体验大修；v0.2.7 = 原生 llama.cpp 运行时换血。
          权威来源是 backend/version.py 的 APP_VERSION，升版本时这四处必须同步：
          `<Version>` 可带预发布后缀，`AssemblyVersion`/`FileVersion` 只能是四段纯数字
          （口径同 app_version_4()）。Versioning: v0.2.1 = pre-cross-platform (this project
          did not exist); v0.2.2 = cross-platform release; v0.2.3 = Avalonia as the main line
          (WPF moves into LTS at the same time); v0.2.4 = hardware-adaptive tuning with three
          inference presets; v0.2.5 = release hardening; v0.2.6 = the twenty-three-item
-         experience overhaul. The authoritative source is APP_VERSION in backend/version.py, and
+         experience overhaul; v0.2.7 = the native llama.cpp runtime transplant. The authoritative
+         source is APP_VERSION in backend/version.py, and
          these four fields must be kept in sync: `<Version>` may carry a prerelease suffix,
          while `AssemblyVersion`/`FileVersion` must be four purely numeric fields (same rule
          as app_version_4()). -->
-    <Version>0.2.6</Version>
-    <FileVersion>0.2.6.0</FileVersion>
-    <AssemblyVersion>0.2.6.0</AssemblyVersion>
-    <InformationalVersion>0.2.6</InformationalVersion>
+    <Version>0.2.7</Version>
+    <FileVersion>0.2.7.0</FileVersion>
+    <AssemblyVersion>0.2.7.0</AssemblyVersion>
+    <InformationalVersion>0.2.7</InformationalVersion>
     <Product>EchoDesk</Product>
     <Company>Void-Entropia-Studio</Company>
     <Copyright>Copyright (c) Void-Entropia-Studio</Copyright>

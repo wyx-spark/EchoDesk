@@ -26,7 +26,16 @@ param(
     # 这类"默认值写死版本号"的地方，改一次版本就要全文搜一遍，所以统一改成派生。
     [string]$Version = "",
     [switch]$SkipGui,          # 跳过需要交互式桌面的两项（UI 探针 / 像素校验）
-    [switch]$SkipE2E           # 跳过需要联网或真实 Edge 的端到端项
+    [switch]$SkipE2E,          # 跳过需要联网或真实 Edge 的端到端项
+    # [EN] v0.2.7: hard time limit for the WPF UI probe. A gate that hangs is worse than one that
+    # [EN] fails -- a failure speaks, a hang only burns time. On expiry the probe and the program
+    # [EN] under test are killed and the item is recorded as FAILED with the last status line.
+    # [EN] 600 s rather than 180 s because one observed run legitimately exceeded 5 minutes
+    # [EN] (model load + every settings tab); 180 s would fail a healthy run.
+    # [ZH] v0.2.7：WPF UI 探针的硬超时。挂死的门禁比失败的门禁更糟 —— 失败会说话，挂死只烧时间。
+    # [ZH] 超时后杀掉探针与被测程序，并按最后状态行记为 failed。取 600 秒而不是 180 秒，因为实测
+    # [ZH] 有一次正常运行就超过 5 分钟（加载模型 + 逐页签检查）；180 秒会把健康运行判死。
+    [int]$ProbeTimeoutSec = 600
 )
 
 $ErrorActionPreference = 'Continue'
@@ -144,6 +153,35 @@ function Invoke-Python([string]$Name, [string]$Script, [string[]]$Extra = @()) {
     # $Extra：给脚本传的附加参数（例如 --check）。加它是为了不必为"带参数跑一个 Python 门禁"
     # 另写一段 Invoke-Native —— 那种重复写法正是先前各处参数不一致的来源。
     return Invoke-Native $Name "python" (@($Script) + $Extra)
+}
+
+function Invoke-NativeTimeout([string]$Name, [string]$Exe, [string[]]$CmdArgs, [int]$TimeoutSec) {
+    # [EN] Same contract as ``Invoke-Native`` plus a hard time limit. On expiry the whole child tree
+    # [EN] is killed (the probe launches the program under test as its own child) and the item is
+    # [EN] FAILED, quoting the last lines the probe printed -- so "it hung" always names where.
+    # [ZH] 与 ``Invoke-Native`` 同一契约，另加硬超时。超时后按进程树杀掉（探针会把被测程序拉成自己的
+    # [ZH] 子进程），并按探针最后打印的几行记为 failed —— "挂住了"必须说出挂在哪。
+    $log = Join-Path $LogDir (($Name -replace '[^\w\u4e00-\u9fff\-]', '_') + ".log")
+    $errLog = "$log.err"
+    $proc = Start-Process -FilePath $Exe -ArgumentList $CmdArgs -NoNewWindow -PassThru `
+                          -RedirectStandardOutput $log -RedirectStandardError $errLog
+    if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
+        try { & taskkill.exe /PID $proc.Id /T /F | Out-Null } catch { }
+        try { if (-not $proc.HasExited) { $proc.Kill() } } catch { }
+        Get-Process -Name EchoDesk -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+        $tail = @(Get-Content -LiteralPath $log -Tail 8 -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Trim().Length -gt 0 })
+        throw ("超过 {0} 秒未结束，已强制终止（含被测程序）。最后输出：`n      {1}" -f `
+               $TimeoutSec, (($tail | Select-Object -Last 3) -join "`n      "))
+    }
+    $code = $proc.ExitCode
+    if ($code -ne 0) {
+        $tail = @(Get-Content -LiteralPath $log -Tail 6 -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Trim().Length -gt 0 })
+        throw "退出码 $code（日志 $log）：`n      " + (($tail | Select-Object -Last 4) -join "`n      ")
+    }
+    return $log
 }
 
 #: [EN] Sentinel prefix thrown by a gate body to mark the item as SKIPPED: the check
@@ -398,6 +436,52 @@ try {
             throw "版本不符：期望 $expectedVersion，前端=$front 后端=$back"
         }
         "$front / $back"
+    }
+
+    # [EN] v0.2.7: the two C# projects are the known duplication point of the version -- each
+    # [EN] carries ``<Version>``/``<InformationalVersion>`` (x.y.z) plus ``<AssemblyVersion>``/
+    # [EN] ``<FileVersion>`` (x.y.z.0), with a comment saying they must be bumped together with
+    # [EN] ``APP_VERSION``. Two release rounds in a row missed it (v0.2.6 -> v0.2.7 shipped a UI
+    # [EN] reporting the old version), so "remember to bump it" is not a control. This gate reads
+    # [EN] both projects and compares all four fields against ``backend/version.py``; a mismatch
+    # [EN] is FAILED, never skipped.
+    # [ZH] v0.2.7：两个 C# 工程是版本号的已知重复点 —— 各自带 ``<Version>``/
+    # [ZH] ``<InformationalVersion>``（x.y.z）与 ``<AssemblyVersion>``/``<FileVersion>``
+    # [ZH] （x.y.z.0），注释里写着必须随 ``APP_VERSION`` 同步。连续两轮发版都漏了这件事
+    # [ZH] （v0.2.6 → v0.2.7 曾打出一个界面显示旧版本号的前端），因此"记得改"不能算控制手段。
+    # [ZH] 这条断言读两个工程的全部四个字段与 ``backend/version.py`` 比对，不一致即 failed，绝不跳过。
+    Invoke-Check "C# 程序集版本与 APP_VERSION 同步（两套前端）" {
+        $projects = @("frontend\EchoDesk.csproj",
+                      "frontend-avalonia\EchoDesk.Avalonia\EchoDesk.Avalonia.csproj")
+        $wantSimple = $Version
+        $wantFour = "$NumericVersion.0"
+        $problems = @()
+        foreach ($rel in $projects) {
+            $path = Join-Path $Root $rel
+            if (-not (Test-Path -LiteralPath $path)) { $problems += "缺少 $rel"; continue }
+            # 注释里也写着 <Version> 字样（说明文字），先剥掉 XML 注释再匹配。
+            $text = [regex]::Replace((Get-Content -LiteralPath $path -Raw), '(?s)<!--.*?-->', '')
+            foreach ($field in @("Version", "InformationalVersion")) {
+                $pattern = "<$field>\s*([^<]+?)\s*</$field>"
+                $m = [regex]::Match($text, $pattern)
+                if (-not $m.Success) { $problems += "$rel 缺少 <$field>"; continue }
+                if ($m.Groups[1].Value.Trim() -ne $wantSimple) {
+                    $problems += "$rel <$field>=$($m.Groups[1].Value.Trim()) 应为 $wantSimple"
+                }
+            }
+            foreach ($field in @("AssemblyVersion", "FileVersion")) {
+                $pattern = "<$field>\s*([^<]+?)\s*</$field>"
+                $m = [regex]::Match($text, $pattern)
+                if (-not $m.Success) { $problems += "$rel 缺少 <$field>"; continue }
+                if ($m.Groups[1].Value.Trim() -ne $wantFour) {
+                    $problems += "$rel <$field>=$($m.Groups[1].Value.Trim()) 应为 $wantFour"
+                }
+            }
+        }
+        if ($problems.Count -gt 0) {
+            throw ("程序集版本与 APP_VERSION 不一致：" + ($problems -join "；"))
+        }
+        "两套前端 × 4 字段 = $wantSimple / $wantFour"
     }
 
     # ---------- 1b. 安装程序交付物（Inno Setup） ----------
@@ -879,14 +963,28 @@ try {
             }
             if ($probeModel) {
                 Write-Host "    探针模型: $probeModel" -ForegroundColor DarkGray
-                Invoke-Native "ui-probe" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
-                                                        "-File", "tools\ui_probe.ps1",
-                                                        "-ThinkingModel", $probeModel)
+                $skipReport = Join-Path $LogDir "ui-probe-skips.txt"
+                if (Test-Path -LiteralPath $skipReport) { Remove-Item -LiteralPath $skipReport -Force }
+                [void](Invoke-NativeTimeout "ui-probe" "powershell" @(
+                    "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-File", "tools\ui_probe.ps1",
+                    "-ThinkingModel", $probeModel,
+                    "-SkipReport", $skipReport) $ProbeTimeoutSec)
+                # [EN] Items the probe could not execute (no live model repository) are registered
+                # [EN] as skipped gate items: they must appear in the three-part count, not vanish.
+                # [ZH] 探针无法执行的项目（没有可用的模型仓库）登记为跳过项：必须出现在三段计数里。
+                if (Test-Path -LiteralPath $skipReport) {
+                    foreach ($line in @(Get-Content -LiteralPath $skipReport -Encoding UTF8 |
+                                        Where-Object { $_.Trim().Length -gt 0 })) {
+                        Add-SkippedGate "UI 探针子项：$line" "探针报告该项未执行（见上方原因）"
+                    }
+                }
             }
             else {
                 Write-Host "    [警告] backend\models 下没有 .gguf：发布物不含模型，思考区检查将跳过" -ForegroundColor Yellow
-                Invoke-Native "ui-probe" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
-                                                        "-File", "tools\ui_probe.ps1")
+                [void](Invoke-NativeTimeout "ui-probe" "powershell" @(
+                    "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-File", "tools\ui_probe.ps1") $ProbeTimeoutSec)
             }
             "通过"
         }

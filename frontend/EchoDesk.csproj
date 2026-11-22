@@ -26,12 +26,14 @@
        Version and copyright metadata (rcedit additionally writes the Win32 version resource
        before packaging, so the two must agree).
        版本口径：v0.2.1 = 跨平台之前；v0.2.2 = 跨平台版本；v0.2.3 = Avalonia 主线，
-       v0.2.4 = 硬件自适应与三档推理预设；v0.2.5 = 发布加固；v0.2.6 = 23 项体验大修
+       v0.2.4 = 硬件自适应与三档推理预设；v0.2.5 = 发布加固；v0.2.6 = 23 项体验大修；
+       v0.2.7 = 原生 llama.cpp 运行时换血
        （WPF 自 v0.2.3 起转入 LTS，只修安全与崩溃缺陷）。
        Versioning: v0.2.1 = pre-cross-platform; v0.2.2 = cross-platform release; v0.2.3 = Avalonia
        as the main line; v0.2.4 = hardware-adaptive tuning with three inference presets;
-       v0.2.5 = release hardening; v0.2.6 = the twenty-three-item experience overhaul (WPF has
-       been in long-term support since v0.2.3 — security and crash fixes only).
+       v0.2.5 = release hardening; v0.2.6 = the twenty-three-item experience overhaul;
+       v0.2.7 = the native llama.cpp runtime transplant (WPF has been in long-term support since
+       v0.2.3 — security and crash fixes only).
        权威来源仍是 backend/version.py 的 APP_VERSION（本文件是 MSBuild 无法直接读 Python 的
        已知重复点，升版本时必须同步，口径与 app_version_4() 一致：文件版本取数字核心段）。
        The authoritative source remains APP_VERSION in backend/version.py; this file is the known
@@ -42,13 +44,13 @@
        <Version> may carry a prerelease suffix; <AssemblyVersion>/<FileVersion> must be four
        purely numeric fields. -->
   <PropertyGroup>
-    <Version>0.2.6</Version>
-    <AssemblyVersion>0.2.6.0</AssemblyVersion>
-    <FileVersion>0.2.6.0</FileVersion>
+    <Version>0.2.7</Version>
+    <AssemblyVersion>0.2.7.0</AssemblyVersion>
+    <FileVersion>0.2.7.0</FileVersion>
     <!-- 固定写全，避免 ProductVersion 带 "+commit" 后缀混进界面与版本资源
          Written out in full so ProductVersion does not pick up a "+commit" suffix that would
          leak into the interface and the version resource. -->
-    <InformationalVersion>0.2.6</InformationalVersion>
+    <InformationalVersion>0.2.7</InformationalVersion>
     <Product>EchoDesk</Product>
     <Company>Void Entropia Studio</Company>
     <Copyright>Copyright (C) Void Entropia Studio</Copyright>

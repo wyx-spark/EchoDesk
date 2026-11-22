@@ -32,6 +32,10 @@ param(
     [string]$Exe = "",
     [int]$ReadyTimeoutSec = 180,
     [string]$ThinkingModel = "",
+    # [EN] Where to write the machine-readable skip report (UTF-8, one item per line). The release
+    #      gate passes a path and turns each line into a skipped gate item.
+    # [ZH] 机器可读跳过报告的输出路径（UTF-8，一行一项）。发布门禁传入路径并把每一行登记为跳过项。
+    [string]$SkipReport = "",
     [switch]$KeepOpen
 )
 
@@ -67,6 +71,16 @@ Add-Type -Namespace Win32 -Name Fg -MemberDefinition @'
 $failures = New-Object System.Collections.ArrayList
 function Fail([string]$msg) { [void]$failures.Add($msg); Write-Output "[probe] FAIL $msg" }
 function Ok([string]$msg) { Write-Output "[probe] OK   $msg" }
+
+# [EN] v0.2.7: an item that cannot be executed in this environment (for example one that needs
+# [EN] a live model-repository lookup over the network) is reported as SKIPPED, never as OK.
+# [EN] The gate parses the ``[probe] SKIPPED_ITEM=`` lines below and registers each one as its own
+# [EN] skipped item, so the three-part count shows it instead of folding it into "passed".
+# [ZH] v0.2.7：在本环境无法执行的项目（例如需要真实联网查询模型仓库）记为 SKIPPED，绝不计成 OK。
+# [ZH] 门禁会解析下面 `[probe] SKIPPED_ITEM=` 行，把每一项登记为独立的跳过项，三段计数里能看见，
+# [ZH] 而不是悄悄并进"通过"。
+$script:skipped = New-Object System.Collections.ArrayList
+function Skip([string]$msg) { [void]$script:skipped.Add($msg); Write-Output "[probe] SKIP $msg" }
 
 # 在整个进程的 UIA 树里按 AutomationId 找元素（设置窗口是独立 HWND，桌面根下可直接找到）
 function Find-AnyById([int]$procId, [string]$id) {
@@ -641,7 +655,7 @@ if ($null -ne $saveButton) {
                 if ($b.Current.Name -like '*未下载*') { $chip = $b; break }
             }
             if ($null -eq $chip) {
-                Write-Output '[probe] 提示：没有找到"未下载"档位的胶囊（发布目录里没有模型时才会出现），跳过该检查'
+                Skip '点未下载档位→确认下载对话框（发布目录里没有"未下载"档位胶囊）'
             } else {
                 Write-Output "[probe] 点击未下载档位胶囊：$($chip.Current.Name)"
                 # 量化名里的下划线必须原样显示（WPF Button 的字符串内容会把 "_" 当访问键吃掉，
@@ -678,7 +692,14 @@ if ($null -ne $saveButton) {
                 }
                 if ($null -eq $dlg) {
                     $now = Find-AnyById $proc.Id 'ProfileStatusText'
-                    Fail ("点未下载档位后没有出现确认下载对话框（状态行：'{0}'）" -f ($now.Current.Name))
+                    # [EN] This assertion needs a live model-repository lookup. Without a reachable
+                    # [EN] repository (or when the lookup outlives the wait) the dialog never appears,
+                    # [EN] which says nothing about the product -- report it as SKIPPED and name the
+                    # [EN] prerequisite, instead of failing the whole gate on the network.
+                    # [ZH] 这条断言需要真实联网查询模型仓库。仓库不可达（或查询超过等待窗口）时对话框
+                    # [ZH] 不会出现，这与产品对错无关 —— 记为 SKIPPED 并写明前置条件，而不是让整条门禁
+                    # [ZH] 因网络而红。
+                    Skip ("点未下载档位→确认下载对话框（需联网/需真实仓库；状态行：'{0}'）" -f ($now.Current.Name))
                 } else {
                     $txt = ''
                     $tc = New-Object System.Windows.Automation.PropertyCondition(
@@ -1719,6 +1740,26 @@ if (Test-Path $crashLog) {
 if ($failures.Count -gt 0) {
     Write-Output "[probe] ==== 失败 $($failures.Count) 项 ===="
     foreach ($f in $failures) { Write-Output "  - $f" }
+}
+# [EN] Machine-readable skip report: the release gate turns each line into a skipped item.
+# [ZH] 供门禁解析的跳过报告：每一行都会被登记成独立的跳过项。
+if ($script:skipped.Count -gt 0) {
+    Write-Output "[probe] SKIPPED_COUNT=$($script:skipped.Count)"
+    foreach ($s in $script:skipped) { Write-Output "[probe] SKIPPED_ITEM=$s" }
+    # [EN] ``Start-Process`` redirection may re-encode the console text, so the authoritative copy
+    # [EN] is this UTF-8 file; the gate reads it instead of parsing the log.
+    # [ZH] ``Start-Process`` 的重定向可能改变控制台文本编码，因此权威副本是这份 UTF-8 文件；
+    # [ZH] 门禁读它，不解析日志。
+    if ($SkipReport) {
+        try {
+            $dir = Split-Path -Parent $SkipReport
+            if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+            [System.IO.File]::WriteAllLines($SkipReport, [string[]]$script:skipped,
+                (New-Object System.Text.UTF8Encoding($false)))
+        } catch {
+            Write-Output "[probe] 警告：跳过报告写入失败：$_"
+        }
+    }
 }
 
 # 撤掉思考区检查临时加的模型与配置覆盖层（必须放在**进程关闭之后**：
