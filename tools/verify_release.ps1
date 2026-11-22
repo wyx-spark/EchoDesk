@@ -529,6 +529,23 @@ try {
         Invoke-Python "校准器 v2" "tools\test_tuning_v2.py"; "通过"
     }
 
+    # [EN] Reader v0.2.7 cache-hit fix: a fully cached prompt used to skip prefill
+    # [EN] entirely, so ``llama_sampler_sample(ctx, -1)`` read the previous request's
+    # [EN] logits -- a repeated prompt returned an empty answer or continued the previous
+    # [EN] sentence. This gate repeats a greedy (temperature=0) prompt on both the
+    # [EN] streaming and the non-streaming entry point and asserts byte-identical output,
+    # [EN] that a full hit still evaluates exactly one token, and that a growing
+    # [EN] conversation still reuses its prefix. It loads a real GGUF and skips explicitly
+    # [EN] (exit 0) when the development model is absent.
+    # [ZH] Reader v0.2.7 缓存命中修复：整段命中缓存的提示词此前会完全跳过预填充，于是
+    # [ZH] ``llama_sampler_sample(ctx, -1)`` 读到上一次请求残留的 logits —— 重复的提示词会
+    # [ZH] 返回空回答或续写上一句。本门禁在流式与非流式入口上各重复一次贪心
+    # [ZH]（temperature=0）提示词，断言输出逐字节相同、完整命中时仍恰好求值 1 个 token、
+    # [ZH] 且增长会话仍复用前缀。它会加载真实 GGUF；开发模型缺失时明确跳过（退出码 0）。
+    Invoke-Check "原生缓存复用与命中刷新（v0.2.7 修复）" {
+        Invoke-Python "缓存复用" "tools\test_native_cache_reuse.py"; "通过"
+    }
+
     # [EN] Reader: the web-search stack (``backend/search_engine.py`` and its ordered
     # [EN] provider cascade) is physically removed. Both gate steps go with it; the
     # [EN] remaining guarantee is stronger than "search still works" -- the build has no
