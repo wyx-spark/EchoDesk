@@ -542,7 +542,7 @@ def main() -> int:
             gen_env["ECHODESK_DATA"] = gen_cwd
             gen_env["TEMP"] = gen_cwd
             gen_env["TMP"] = gen_cwd
-            run([sys.executable, os.path.join("tools", "gen_config_example.py"),
+            run([sys.executable, os.path.join(ROOT, "tools", "gen_config_example.py"),
                  "--out", os.path.join(tree, "config.example.json")],
                 cwd=gen_cwd, env=gen_env, dry=args.plan)
         finally:
