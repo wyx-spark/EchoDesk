@@ -1,4 +1,4 @@
-# 适用平台：WPF 窗口截图（Windows 专属）
+﻿# 适用平台：WPF 窗口截图（Windows 专属）
 # EchoDesk 界面截图取证工具（研发验证用）
 #
 # 用途：把主窗口 / 设置窗口截成 PNG，供人工（或视觉复核）逐屏检查
@@ -18,6 +18,10 @@ param(
     [int]$ReadyTimeoutSec = 180,
     [switch]$SkipLaunch
 )
+
+# [EN] Shared launcher: never Start-Process (ShellExecute) for the program under test.
+# [ZH] 共用启动器：被测程序一律不经 Start-Process（ShellExecute）启动。
+. (Join-Path $PSScriptRoot "ProcessTools.ps1")
 
 # [EN] Resolve the release directory from the single version source when no explicit path is
 #      supplied.
@@ -108,7 +112,7 @@ $proc = $null
 if (-not $SkipLaunch) {
     foreach ($p in Get-Process -Name EchoDesk -ErrorAction SilentlyContinue) { $p.Kill(); Start-Sleep -Milliseconds 300 }
     $exePath = (Resolve-Path -LiteralPath $Exe).Path
-    $proc = Start-Process -FilePath $exePath -WorkingDirectory (Split-Path -Parent (Split-Path -Parent $exePath)) -PassThru
+    $proc = Start-NativeApp -Exe $exePath -WorkingDirectory (Split-Path -Parent (Split-Path -Parent $exePath))
     Write-Output "[shot] 启动 $exePath (pid=$($proc.Id))"
 } else {
     $proc = Get-Process -Name EchoDesk -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -178,7 +182,7 @@ if (Test-Path $stateFile) {
     $state | ConvertTo-Json -Depth 5 | Set-Content $stateFile -Encoding UTF8
     Write-Output "[shot] 已把 $stateFile 的 DarkMode 设为 true，重启截图"
     $proc.Kill(); Start-Sleep -Seconds 1
-    $proc = Start-Process -FilePath $exePath -WorkingDirectory (Split-Path -Parent $appDir) -PassThru
+    $proc = Start-NativeApp -Exe $exePath -WorkingDirectory (Split-Path -Parent $appDir)
     $sw.Restart()
     $mainWin = $null
     while ($sw.Elapsed.TotalSeconds -lt $ReadyTimeoutSec) {

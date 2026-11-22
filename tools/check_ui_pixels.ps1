@@ -1,4 +1,4 @@
-# 适用平台：需要 WPF 窗口与交互式桌面（Windows 专属）
+﻿# 适用平台：需要 WPF 窗口与交互式桌面（Windows 专属）
 # EchoDesk 界面像素校验（任务书修复二 / 修复六 的"真实渲染"证据）
 #
 # tools\check_theme.py 校验的是**色板数值**（静态、可复现），但"深色模式到底有没有生效"
@@ -28,6 +28,10 @@ param(
     [double]$MinContrast = 4.5,
     [switch]$KeepShots
 )
+
+# [EN] Shared launcher: never Start-Process (ShellExecute) for the program under test.
+# [ZH] 共用启动器：被测程序一律不经 Start-Process（ShellExecute）启动。
+. (Join-Path $PSScriptRoot "ProcessTools.ps1")
 
 # [EN] Resolve the release directory from the single version source when no explicit path is
 #      supplied.
@@ -233,7 +237,7 @@ function Test-Theme([string]$theme) {
 
     Get-Process EchoDesk -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 500
-    $proc = Start-Process -FilePath $exePath -WorkingDirectory $userDataDir -PassThru
+    $proc = Start-NativeApp -Exe $exePath -WorkingDirectory $userDataDir
     try {
         $win = Wait-MainWindow $proc.Id $ReadyTimeoutSec
         if ($null -eq $win) { Fail "[$theme] 主窗口未就绪"; return }

@@ -1,4 +1,4 @@
-# 适用平台：WPF UI 自动化探针（Windows 专属）
+﻿# 适用平台：WPF UI 自动化探针（Windows 专属）
 # EchoDesk 前端 UI 探针（研发验证 / 回归测试）
 #
 # 覆盖：
@@ -38,6 +38,10 @@ param(
     [string]$SkipReport = "",
     [switch]$KeepOpen
 )
+
+# [EN] Shared launcher: never Start-Process (ShellExecute) for the program under test.
+# [ZH] 共用启动器：被测程序一律不经 Start-Process（ShellExecute）启动。
+. (Join-Path $PSScriptRoot "ProcessTools.ps1")
 
 # [EN] Resolve the release directory from the single version source when no explicit path is
 #      supplied. Passing -Exe remains supported for release-tree regression runs.
@@ -308,7 +312,7 @@ if ($ThinkingModel -ne '' -and (Test-Path -LiteralPath $ThinkingModel)) {
 
 Write-Output "[probe] exe = $exePath"
 Write-Output "[probe] 工作目录 = $userDataDir"
-$proc = Start-Process -FilePath $exePath -WorkingDirectory $userDataDir -PassThru
+$proc = Start-NativeApp -Exe $exePath -WorkingDirectory $userDataDir
 Write-Output "[probe] pid = $($proc.Id)"
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 

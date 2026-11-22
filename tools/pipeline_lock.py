@@ -33,6 +33,26 @@ class PipelineBusy(RuntimeError):
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    if os.name == "nt":
+        # [EN] ``os.kill(pid, 0)`` on Windows is not a liveness probe (it can terminate the
+        # [EN] process); use OpenProcess + GetExitCodeProcess instead.
+        # [ZH] Windows 上 ``os.kill(pid, 0)`` 不是存活探测（它可能直接结束进程）；
+        # [ZH] 改用 OpenProcess + GetExitCodeProcess。
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except OSError:

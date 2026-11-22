@@ -1,4 +1,4 @@
-# 适用平台：Windows（WPF 与 Avalonia 都在真窗口上截）
+﻿# 适用平台：Windows（WPF 与 Avalonia 都在真窗口上截）
 # EchoDesk 视觉对齐取证：把 WPF / Avalonia 两个前端按**同一套窗口、同一套路径**截图，
 # 供人工（多模态视觉）逐页比对间距 / 边距 / 字号 / 对齐 / 配色 / 圆角。
 #
@@ -21,6 +21,10 @@ param(
     [string]$Out = '',
     [int]$TimeoutSec = 180
 )
+
+# [EN] Shared launcher: never Start-Process (ShellExecute) for the program under test.
+# [ZH] 共用启动器：被测程序一律不经 Start-Process（ShellExecute）启动。
+. (Join-Path $PSScriptRoot "ProcessTools.ps1")
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
@@ -180,7 +184,7 @@ function Save-WindowShot($win, [string]$name) {
 $proc = $null
 try {
     Info "被测程序：$Exe"
-    $proc = Start-Process -FilePath $Exe -WorkingDirectory (Split-Path -Parent $Exe) -PassThru
+    $proc = Start-NativeApp -Exe $Exe -WorkingDirectory (Split-Path -Parent $Exe)
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     $mainEl = $null
     while ((Get-Date) -lt $deadline) {

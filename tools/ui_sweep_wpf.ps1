@@ -1,4 +1,4 @@
-# 英文环境 UI 扫描（WPF）—— 主窗口 + 设置窗口全部页签（v0.2.3 起为 8 个），抓全部可见控件文本查中文。
+﻿# 英文环境 UI 扫描（WPF）—— 主窗口 + 设置窗口全部页签（v0.2.3 起为 8 个），抓全部可见控件文本查中文。
 #
 # 为什么需要它（维护者要求）：静态扫描（check_lang / audit_lang_keys）只看得到源码里的字面量，
 # 抓不到"动态拼接"与"渲染期才存在"的中文。这里用 UI Automation 在**真实进程**里读控件，
@@ -17,6 +17,10 @@ param(
     # 中文模式下只列"疑似英文"清单供人工确认（技术名词会混在里面），不据此判死
     [switch]$CheckLatin
 )
+
+# [EN] Shared launcher: never Start-Process (ShellExecute) for the program under test.
+# [ZH] 共用启动器：被测程序一律不经 Start-Process（ShellExecute）启动。
+. (Join-Path $PSScriptRoot "ProcessTools.ps1")
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
@@ -189,7 +193,7 @@ $proc = $null
 $settingsWin = $null
 try {
     Info "被测程序：$Exe"
-    $proc = Start-Process -FilePath $Exe -PassThru
+    $proc = Start-NativeApp -Exe $Exe
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     $mainWin = $null
     while ((Get-Date) -lt $deadline -and -not $mainWin) {

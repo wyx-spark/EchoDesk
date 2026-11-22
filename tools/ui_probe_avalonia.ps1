@@ -1,4 +1,4 @@
-# 适用平台：Avalonia 跨平台前端（三平台通用；Windows 上本机即可跑）
+﻿# 适用平台：Avalonia 跨平台前端（三平台通用；Windows 上本机即可跑）
 # EchoDesk Avalonia 界面探针 —— 回答"窗口到底能不能打开"
 #
 # 为什么需要它：v0.2.2 记录 §7.4 明写"Avalonia 前端这套代码此前从未被真正跑起来过"：
@@ -35,6 +35,10 @@ param(
     [int]$TimeoutSec = 120
 )
 
+# [EN] Shared launcher: never Start-Process (ShellExecute) for the program under test.
+# [ZH] 共用启动器：被测程序一律不经 Start-Process（ShellExecute）启动。
+. (Join-Path $PSScriptRoot "ProcessTools.ps1")
+
 $ErrorActionPreference = 'Stop'
 $failures = New-Object System.Collections.ArrayList
 function Fail([string]$msg) { [void]$failures.Add($msg); Write-Output "[avalonia-probe] FAIL $msg" }
@@ -55,14 +59,13 @@ if (-not (Test-Path $Exe)) {
 Write-Output "[avalonia-probe] 被测程序：$Exe"
 Write-Output "[avalonia-probe] 模式：$Mode（超时 $TimeoutSec 秒）"
 
-$outFile = [System.IO.Path]::GetTempFileName()
-$errFile = [System.IO.Path]::GetTempFileName()
 $exit = $null
 $probeArgs = @('--probe', $Mode)
 if ($OutDir) { $probeArgs += @('--out', $OutDir) }
 try {
-    $proc = Start-Process -FilePath $Exe -ArgumentList $probeArgs -PassThru -NoNewWindow `
-        -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+    # [EN] Launch without ShellExecute; stdout/stderr are drained asynchronously by the helper.
+    # [ZH] 不经 ShellExecute 启动；stdout/stderr 由共用启动器异步抽干。
+    $proc = Start-NativeApp -Exe $Exe -Arguments $probeArgs -RedirectOutput
     if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
         # 探针自己也有 60 秒看门狗；走到这里说明连看门狗都没能收场（例如启动阶段就卡住）。
         try { $proc.Kill() } catch { }
@@ -72,8 +75,9 @@ try {
         $exit = $proc.ExitCode
     }
 
-    $stdout = if (Test-Path $outFile) { Get-Content $outFile -Raw } else { '' }
-    $stderr = if (Test-Path $errFile) { Get-Content $errFile -Raw } else { '' }
+    $io = Get-NativeAppOutput -Process $proc
+    $stdout = [string]$io[0]
+    $stderr = [string]$io[1]
     Write-Output $stdout.TrimEnd()
     if ($stderr -and $stderr.Trim().Length -gt 0) {
         Write-Output "[avalonia-probe] --- stderr ---"
@@ -95,8 +99,7 @@ try {
     if ($null -ne $exit -and $exit -ne 0) { Fail "退出码非 0：$exit" }
 }
 finally {
-    Start-Sleep -Milliseconds 200   # 让子进程真正释放重定向的文件句柄
-    Remove-Item $outFile, $errFile -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 200   # 让子进程真正释放管道句柄
 }
 
 Write-Output ""
