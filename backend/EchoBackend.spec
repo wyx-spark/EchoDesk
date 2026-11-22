@@ -30,10 +30,11 @@
     GATEKEEPER 签名与 .app 打包由 tools/pack_crossplatform.py 处理。
 """
 import os
+import re
 import sys
 import tempfile
 
-from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_all
 
 IS_WINDOWS = sys.platform.startswith("win")
 
@@ -68,7 +69,7 @@ COMMENTS = "Powered by Void Entropia Studio"
 # 既消除对外分发时的著佐权义务，又把该依赖的安装体积从 52.9MB 降到约 1.4MB。
 # 说明：playwright 必须整包收集——它自带 Node 驱动（driver/ 约 102MB，含 node.exe
 # 与 playwright-core），自动化功能依赖该驱动启动本机 Edge，缺文件会在运行时才报错。
-PACKAGES = ["llama_cpp", "pydantic", "huggingface_hub", "duckduckgo_search", "playwright"]
+PACKAGES = ["pydantic", "huggingface_hub", "duckduckgo_search", "playwright"]
 if IS_WINDOWS:
     # WPS/Office COM 只在 Windows 上存在（非 Windows 上装了也没有这个包）
     PACKAGES.append("win32com")
@@ -116,22 +117,79 @@ for pkg in PACKAGES:
     except Exception:
         pass
 
-# ---------- v0.2.6 第 23 项：llama.cpp 动态库显式收集 ----------
-# collect_all('llama_cpp') 通常已经按 `llama_cpp/lib` 收集了 DLL，但那是"依赖分析恰好
-# 命中"的结果：一旦某个模块改为惰性导入（本项目正是如此），PyInstaller 就可能漏掉
-# ggml-cuda.dll / llama.dll，打包后的 exe 启动才报加载失败。这里显式再收集一次，
-# 并在去重后写入 binaries，确保动态库落在 llama_cpp/lib —— backend/cuda_bootstrap.py
-# 正是按该目录注册 DLL 搜索路径并按依赖顺序预加载。
-_llama_libs = collect_dynamic_libs("llama_cpp")
-_seen_binaries = {
-    (os.path.normcase(os.path.abspath(src)), dest) for src, dest in binaries
+# ---------- v0.2.7：随包的 vendored 原生 llama.cpp 运行期 ----------
+# [EN] v0.2.7 removes the llama-cpp-python wheel; text and vision are served by the
+# [EN] vendored native llama.cpp runtime in ``backend/native/<rid>/``. PyInstaller has no
+# [EN] static hook for it -- the loader is a plain ctypes path lookup -- so the target
+# [EN] RID's dynamic libraries are collected explicitly into ``native/`` next to the
+# [EN] frozen modules. That is exactly where ``llama_ctypes._base_path()`` looks when
+# [EN] frozen (``dirname(__file__)/native``, i.e. ``_internal/native``). Missing files
+# [EN] abort the build here instead of producing a backend that cannot load a model.
+# [ZH] v0.2.7 移除 llama-cpp-python 轮子：文本与视觉改由 ``backend/native/<rid>/`` 的
+# [ZH] vendored 原生 llama.cpp 运行期承担。PyInstaller 没有对应的静态钩子 —— 加载器是
+# [ZH] ctypes 按路径查找 —— 因此这里显式把目标 RID 的动态库收进 ``native/``，与冻结模块
+# [ZH] 同级。这正是 ``llama_ctypes._base_path()`` 冻结后查找的位置
+# [ZH] （``dirname(__file__)/native``，即 ``_internal/native``）。缺文件就在构建期直接
+# [ZH] 失败，而不是产出一个加载不了模型的后端。
+_NATIVE_RID = (
+    "win-x64" if IS_WINDOWS
+    else "osx-arm64" if sys.platform == "darwin"
+    else "linux-x64" if sys.platform.startswith("linux")
+    else ""
+)
+_NATIVE_SRC = os.path.join(SPECPATH, "native", _NATIVE_RID) if _NATIVE_RID else ""
+#: 缺任何一个都无法加载运行期；与 tools/pack_backend.py 的 REQUIRED_NATIVE_LIBS 同源。
+_NATIVE_REQUIRED = {
+    "win-x64": ("llama.dll", "mtmd.dll", "ggml.dll", "ggml-base.dll"),
+    "linux-x64": ("libllama.so", "libmtmd.so", "libggml.so", "libggml-base.so"),
+    "osx-arm64": ("libllama.dylib", "libmtmd.dylib", "libggml.dylib", "libggml-base.dylib"),
 }
-for _src, _dest in _llama_libs:
-    _key = (os.path.normcase(os.path.abspath(_src)), _dest)
-    if _key in _seen_binaries:
-        continue
-    _seen_binaries.add(_key)
-    binaries.append((_src, _dest))
+_NATIVE_PATTERN = (
+    r"\.dll$" if IS_WINDOWS
+    else r"\.dylib$" if sys.platform == "darwin"
+    else r"\.so(\.\d+)*$|\.so\.SOVERSION$"
+)
+
+if not _NATIVE_RID:
+    raise SystemExit(
+        "[EN] Unsupported build platform for the native llama.cpp runtime: %s\n"
+        "[ZH] 该构建平台没有对应的原生 llama.cpp 运行期：%s"
+        % (sys.platform, sys.platform))
+if not os.path.isdir(_NATIVE_SRC):
+    raise SystemExit(
+        "[EN] Native runtime directory missing: %s\n"
+        "[EN] Vendor the libraries first (see backend/native/VENDOR.md).\n"
+        "[ZH] 原生运行期目录缺失：%s\n"
+        "[ZH] 请先补齐这些库（出处与做法见 backend/native/VENDOR.md）。"
+        % (_NATIVE_SRC, _NATIVE_SRC))
+
+_NATIVE_NAMES = sorted(
+    name for name in os.listdir(_NATIVE_SRC)
+    if os.path.isfile(os.path.join(_NATIVE_SRC, name))
+    and re.search(_NATIVE_PATTERN, name, re.IGNORECASE)
+)
+_NATIVE_MISSING = [name for name in _NATIVE_REQUIRED.get(_NATIVE_RID, ())
+                   if name not in _NATIVE_NAMES]
+if _NATIVE_MISSING:
+    raise SystemExit(
+        "[EN] Native runtime for %s is incomplete; missing: %s\n"
+        "[ZH] %s 的原生运行期不完整；缺少：%s"
+        % (_NATIVE_RID, ", ".join(_NATIVE_MISSING), _NATIVE_RID, ", ".join(_NATIVE_MISSING)))
+
+# [EN] They are shipped as ``datas`` so PyInstaller copies them verbatim into ``native/``
+# [EN] without running its own dependency analysis on the set. Note that PyInstaller
+# [EN] additionally copies the libraries it can name from code that imports ``ctypes``
+# [EN] into the bundle root; ``llama_native._backend_library_dir()`` therefore honours the
+# [EN] directory pinned by ``llama_capi`` (``LLAMA_CPP_LIB_PATH``) instead of reading it
+# [EN] back from the loaded handle, otherwise the root copy makes ggml backend
+# [EN] registration scan the wrong directory (measured: ``reg_count=0``).
+# [ZH] 这里用 ``datas``，PyInstaller 会把它们原样复制进 ``native/``，不对这一组做依赖分析。
+# [ZH] 注意 PyInstaller 还会从导入 ``ctypes`` 的代码里认出共享库名，再复制一份到包根；
+# [ZH] 因此 ``llama_native._backend_library_dir()`` 以 ``llama_capi`` 钉住的目录
+# [ZH] （``LLAMA_CPP_LIB_PATH``）为准，而不是从句柄反读 —— 否则包根那一份会让 ggml 后端
+# [ZH] 注册去扫描错的目录（实测 ``reg_count=0``）。
+for _name in _NATIVE_NAMES:
+    datas.append((os.path.join(_NATIVE_SRC, _name), "native"))
 
 # 配置文件随包内置（onedir 下即位于 exe 同级目录，用户可直接编辑）
 datas.append((os.path.join(SPECPATH, "config.json"), "."))
@@ -207,13 +265,12 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     # v0.2.5：`schedule` 已从依赖中移除（全仓库无 import，定时触发由 automation.py 自实现）。
-    # [EN] v0.2.6 item 23: the two llama.cpp extension modules are listed explicitly
-    # [EN] because they are imported lazily by the engine and the vision adapter, so
-    # [EN] static analysis can miss them; cuda_bootstrap is listed for the same reason.
-    # [ZH] v0.2.6 第 23 项：这两个 llama.cpp 扩展模块由引擎与视觉适配层惰性导入，
-    # [ZH] 静态分析可能漏掉，故显式列出；cuda_bootstrap 同理。
-    hiddenimports=hiddenimports + ["llama_cpp", "llama_cpp.llama_cpp", "llama_cpp._ggml",
-                                   "cuda_bootstrap", "playwright", "pypdf"]
+    # [EN] v0.2.7: llama_cpp is no longer a dependency, so it is no longer listed as a
+    # [EN] hidden import; the native runtime is collected as files above. cuda_bootstrap
+    # [EN] stays explicit because it is imported for its side effects at startup.
+    # [ZH] v0.2.7：llama_cpp 已不再是依赖，因此不再列为 hidden import；原生运行期改由上
+    # [ZH] 面的文件收集。cuda_bootstrap 仍显式列出，它是在启动时按副作用导入的。
+    hiddenimports=hiddenimports + ["cuda_bootstrap", "playwright", "pypdf"]
     + (["win32com"] if IS_WINDOWS else []),
     hookspath=[],
     hooksconfig={},

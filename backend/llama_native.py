@@ -201,13 +201,34 @@ def _backend_library_dir() -> Optional[str]:
     of being reconstructed from configuration, so it is always the directory the
     running binaries came from.
 
+    The explicit directory pinned by :mod:`llama_capi` (``LLAMA_CPP_LIB_PATH``)
+    takes precedence when it is a directory. Why it is needed: PyInstaller scans
+    modules that import ``ctypes`` and copies every shared library it can name
+    into the bundle root, so a frozen build ends up with ``ggml.dll`` both in
+    ``_internal/`` (the scanner's copy, which ``find_library`` happens to win)
+    and in ``_internal/native/`` (where the CPU backend plugins live). Reading the
+    directory back from the handle then points at the root, where no
+    ``ggml-cpu-*.dll`` exists, and registration reports ``reg_count=0`` -- a real
+    frozen-build failure measured in v0.2.7. The pinned directory is the one the
+    runtime was vendored into, so it is authoritative.
+
     [ZH]
     实际持有已加载 ``ggml`` 库的目录。
 
     裸调用 ``ggml_backend_load_all()`` 以进程工作目录为搜索基准，而嵌入式运行期的 DLL
     固定在 ``backend/native/<rid>``，与进程启动位置无关。因此这里从已加载的库句柄反读
     目录，而不是从配置重建，保证它与正在运行的二进制始终同源。
+
+    当 :mod:`llama_capi` 钉住的目录（``LLAMA_CPP_LIB_PATH``）存在时，以它为准。为什么需要：
+    PyInstaller 会扫描导入 ``ctypes`` 的模块，把它能叫出名字的共享库再复制一份到包根，于是
+    冻结构建里 ``ggml.dll`` 同时出现在 ``_internal/``（扫描副本，``find_library`` 恰好命中它）
+    和 ``_internal/native/``（CPU 后端插件所在处）。此时从句柄反读目录会指向包根，那里没有
+    任何 ``ggml-cpu-*.dll``，注册结果是 ``reg_count=0`` —— 这是 v0.2.7 实测到的冻结构建失败。
+    钉住的目录才是运行期 vendoring 的位置，因此以它为准。
     """
+    pinned = str(os.environ.get("LLAMA_CPP_LIB_PATH") or "").strip()
+    if pinned and os.path.isdir(pinned):
+        return pinned
     try:
         from llama_abi import _ggml  # noqa: PLC0415 - optional at import time
     except Exception:  # noqa: BLE001 - the binding may be absent, caller decides

@@ -32,7 +32,7 @@ EchoDesk 是本地优先的 AI 桌面助手，提供原生 Windows（WPF）与�
 | ![带筛选与分页的 Hugging Face GGUF 模型市场](docs/images/screenshot-model-market.zh-Hans.png) | ![已接受安全协议的浏览器自动化设置](docs/images/screenshot-automation.zh-Hans.png) |
 
 - **平台**：Windows 10 / 11（x64）提供原生 WPF 前端；Windows、Linux 与 macOS 提供 Avalonia 跨平台前端
-- **推理**：通过 llama.cpp（`llama-cpp-python`）加载本地 GGUF 模型，默认使用 CPU
+- **推理**：经随包的原生 llama.cpp 运行期加载本地 GGUF 模型（无 Python 绑定），默认使用 CPU
 - **界面**：C# WPF 桌面程序，后端为 Python 3.13 打包的可执行文件
 - **语言**：内置简体中文与英语，其他语言由社区语言包补齐
 - **许可证**：[Apache-2.0](LICENSE)
@@ -42,7 +42,7 @@ EchoDesk 是本地优先的 AI 桌面助手，提供原生 Windows（WPF）与�
 
 | | `master`（本分支） | `reader` |
 | --- | --- | --- |
-| 推理 | 经 `llama-cpp-python` 绑定调用 llama.cpp | 原生 llama.cpp C ABI，Python 绑定已移除 |
+| 推理 | 随包的原生 llama.cpp 运行期（`backend/native/<rid>`），无 Python 绑定 | 原生 llama.cpp C ABI，Python 绑定已移除 |
 | 前端 | Windows 长期支持线用 WPF，跨平台用 Avalonia | 仅 Avalonia |
 | 网络 | 可选联网功能，默认关闭 | 不存在任何联网代码路径 |
 | 适合 | 自动化、模型市场、多模态、检索 | 阅读与分析本机长篇文档 |
@@ -309,6 +309,7 @@ EchoDesk 的本地化是设计目标，并且写成了公开文档：
 | [docs/zh-Hans/FAQ.md](docs/zh-Hans/FAQ.md) | 快速上手与故障排除：启动、模型、文件、自动化、技能市场。 |
 | [docs/zh-Hans/AUTOMATION_GUIDE.md](docs/zh-Hans/AUTOMATION_GUIDE.md) | 自动化配置逐字段填写指南与「测试选择器」。 |
 | [docs/DEVELOPER.md](docs/DEVELOPER.md) | 架构、JSON 协议、模块职责、配置参考、构建与发布。 |
+| [docs/NATIVE_RUNTIME.md](docs/NATIVE_RUNTIME.md) | 随包的原生 llama.cpp 运行期：目录布局、三平台文件清单、`ECHODESK_LLAMA_RUNTIME` 三种取值的实际行为。 |
 | [docs/zh-Hans/SKILL_GUIDE.md](docs/zh-Hans/SKILL_GUIDE.md) | 如何编写、提交与发布技能。 |
 | [docs/PRIVACY.zh-Hans.md](docs/PRIVACY.zh-Hans.md) | 哪些在本机运行、哪些可能联网、日志脱敏规则。 |
 | [docs/EULA.zh-Hans.md](docs/EULA.zh-Hans.md) | 发布物的最终用户许可协议。 |

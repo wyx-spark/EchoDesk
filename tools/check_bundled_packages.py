@@ -85,7 +85,13 @@ PYINSTALLER_RUNTIME = {
 NOT_A_MODULE_SUFFIX = (".dist-info", ".data", ".libs", ".egg-info")
 DATA_DIRS = {"pywin32_system32", "certifi", "tzdata", "setuptools"}
 # 本项目自己的资源目录（随 datas 打进去的），不属第三方组件
-OWN_RESOURCE_DIRS = {"lang", "docs", "examples", "skills", "skills_dev", "models"}
+# [EN] ``native`` (v0.2.7): the vendored llama.cpp runtime, collected as plain files into
+# [EN] ``_internal/native`` by backend/EchoBackend.spec. It is a first-party resource like
+# [EN] ``lang``, not a Python distribution, so it must never be reported as undeclared.
+# [ZH] ``native``（v0.2.7）：vendored 的 llama.cpp 运行期，由 backend/EchoBackend.spec
+# [ZH] 以普通文件收进 ``_internal/native``。它和 ``lang`` 一样属自有资源，不是 Python
+# [ZH] 发行包，绝不能被报成"未声明组件"。
+OWN_RESOURCE_DIRS = {"lang", "docs", "examples", "skills", "skills_dev", "models", "native"}
 
 # 发行包名与顶层模块名不一致的少数情况（importlib.metadata 的
 # packages_distributions() 偶尔映射不到，例如 pywin32 的 win32/*）

@@ -17,24 +17,36 @@ EchoDesk 版本与署名信息。
 远小于归属错误带来的长期代价。设计规范编号只在记录正文里引用，不进文件名。
 """
 APP_NAME = "EchoDesk"
-# [EN] v0.2.6 = "Experience overhaul". Twenty-three user-reported defects in the
-# [EN] v0.2.5 line are fixed end to end: document upload robustness, UI deadlocks,
-# [EN] Agent pipe handling, context/output budgets, reasoning separation, role
-# [EN] normalization, local multimodal inference, the knowledge base, status
-# [EN] synchronisation, external provider routing, and the Windows native VLM
-# [EN] dependency chain. It also lands the asynchronous document queue, the local
-# [EN] OpenAI-compatible API and the MCP client boundaries that the overhaul relied on.
+# [EN] v0.2.7 = "Native inference backend". The Python inference binding
+# [EN] (``llama-cpp-python``) is removed from the shipped build and numpy is no longer
+# [EN] a runtime dependency; text and vision are served by the in-tree native llama.cpp
+# [EN] runtime under ``backend/native/<rid>`` on all three platforms, vendored at one
+# [EN] shared revision (0.4.7). Vision gained a native ``mtmd`` path, so visual inference
+# [EN] no longer requires an NVIDIA GPU or the CUDA runtime (CPU-only, 25-69 s per image),
+# [EN] and the Windows build no longer carries the ~190 MB CUDA runtime dependencies.
+# [EN] Text and vision hold independent engine locks, so a vision evaluation no longer
+# [EN] blocks text completion behind one shared lock (25-38 s before this release). The
+# [EN] full-cache-hit defect is fixed: the last prompt token's logits are recomputed, so
+# [EN] a cached prefix no longer yields an empty answer or a misaligned continuation. The
+# [EN] update check is decided per version line (P0, fixed 2026-11-21): ``master`` only
+# [EN] accepts purely numeric tags, so full-edition users are no longer steered to the
+# [EN] Reader slim build.
 # [EN] Every downstream consumer derives its version from ``APP_VERSION``, so there is no
 # [EN] second source of truth. Windows file-version resources can only hold four numeric
 # [EN] fields, therefore ``app_version_4()`` below is the only place allowed to derive that
 # [EN] form; do not re-implement it downstream.
-# [ZH] v0.2.6 =「体验大修」。逐条修复 v0.2.5 之后用户反馈的 23 项缺陷：文档上传健壮性、
-# [ZH] 界面死锁、Agent 管道处理、上下文与输出预算、思考内容分离、角色归一化、本地多模态
-# [ZH] 推理、知识库、状态同步、外部提供方路由，以及 Windows 原生视觉依赖链。同时落地
-# [ZH] 大修所依赖的异步文档队列、本地 OpenAI 兼容 API 与 MCP 客户端边界。
+# [ZH] v0.2.7 =「原生推理后端」。交付物移除 Python 推理绑定（``llama-cpp-python``），
+# [ZH] numpy 不再作为运行期依赖；文本与视觉在三平台统一由树内原生 llama.cpp 运行期承担
+# [ZH] （``backend/native/<rid>/``），三平台二进制统一到同一修订（0.4.7）。视觉新增原生
+# [ZH] ``mtmd`` 路径，因此视觉推理不再要求 NVIDIA 显卡与 CUDA 运行时（纯 CPU，25–69 秒/张），
+# [ZH] Windows 侧也不再随包约 190 MB 的 CUDA 运行时依赖。文本与视觉各自持有独立引擎锁，
+# [ZH] 识图期间文本补全不再被同一把锁阻塞（此前 25–38 秒）。完整缓存命中缺陷修复：命中时
+# [ZH] 重算末位 token 的 logits，前缀全部命中不再出现空回答或续写错位。更新检查改为按版本线
+# [ZH] 判定（P0，2026-11-21 修复）：``master`` 只接受纯数字 tag，不再把完整版用户引导到
+# [ZH] Reader 精简包。
 # [ZH] 下游全部按 ``APP_VERSION`` 派生，不再有第二处真相。注意：Windows 的**文件版本资源**
 # [ZH] 只能是四段纯数字，这件事只由下面的 ``app_version_4()`` 负责，不要在下游各写一份。
-APP_VERSION = "v0.2.6"
+APP_VERSION = "v0.2.7"
 
 
 def app_version_4() -> str:

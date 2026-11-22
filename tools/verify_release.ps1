@@ -254,6 +254,117 @@ try {
         "结构正确（必备文件 $($need.Count) 项）· 无预置 .lnk"
     }
 
+    # [EN] v0.2.7: the release tree must actually carry the vendored native llama.cpp
+    # [EN] runtime, and it must not carry the removed Python inference binding. Both
+    # [EN] defects shipped once already in the release pipeline: the PyInstaller build
+    # [EN] never copied ``backend/native`` (the packaged backend could not load a model at
+    # [EN] all) and the standalone trees copied the wheel's libraries instead of
+    # [EN] ``app/native``. The gate was blind to both, so it is asserted here: a missing
+    # [EN] or short native set is FAILED, never skipped.
+    # [ZH] v0.2.7：发布树必须真的带上 vendored 原生 llama.cpp 运行期，且不得带上已移除的
+    # [ZH] Python 推理绑定。这两类缺陷都在发布链里发生过一次：PyInstaller 构建从未复制
+    # [ZH] ``backend/native``（打包后的后端根本加载不了模型），standalone 树则复制的是轮子
+    # [ZH] 的库而不是 ``app/native``。门禁此前对两者都是失明的，因此在这里断言：原生库缺失
+    # [ZH] 或数量不足一律计入 failed，绝不计入跳过。
+    Invoke-Check "原生运行期随包（v0.2.7 打包树 + 三个 standalone 树）" {
+        $nativeRids = @("win-x64", "linux-x64", "osx-arm64")
+        $expected = @{}
+        foreach ($rid in $nativeRids) {
+            $repoDir = Join-Path $Root "backend\native\$rid"
+            if (-not (Test-Path -LiteralPath $repoDir)) { throw "仓库缺少原生库目录 backend\native\$rid" }
+            $expected[$rid] = @(Get-ChildItem -LiteralPath $repoDir -File |
+                                Where-Object { $_.Name -match '\.(dll|so(\.\d+)*|so\.SOVERSION|dylib)$' }).Count
+            if ($expected[$rid] -eq 0) { throw "backend\native\$rid 里没有动态库" }
+        }
+
+        # (a) PyInstaller onedir tree: _internal\native next to the packaged backend.
+        $packagedNative = Join-Path $AppOut "backend\_internal\native"
+        if (-not (Test-Path -LiteralPath $packagedNative)) {
+            throw "打包后端缺少 _internal\native（PyInstaller 构建未收集原生运行期）: $packagedNative"
+        }
+        $packagedCount = @(Get-ChildItem -LiteralPath $packagedNative -File).Count
+        if ($packagedCount -ne $expected["win-x64"]) {
+            throw ("打包后端原生库数量不符：_internal\native 有 {0} 个，仓库 backend\native\win-x64 有 {1} 个" -f `
+                   $packagedCount, $expected["win-x64"])
+        }
+        foreach ($required in @("llama.dll", "mtmd.dll", "ggml.dll", "ggml-base.dll")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $packagedNative $required))) {
+                throw "打包后端原生库缺少 $required"
+            }
+        }
+
+        # (b) the removed binding must not reappear in the packaged tree.
+        $internalDir = Join-Path $AppOut "backend\_internal"
+        foreach ($gone in @("llama_cpp", "numpy")) {
+            $hit = @(Get-ChildItem -LiteralPath $internalDir -Force -ErrorAction SilentlyContinue |
+                     Where-Object { $_.Name -eq $gone -or $_.Name -like "$gone-*.dist-info" })
+            if ($hit.Count -gt 0) { throw "打包后端仍含已移除的依赖 $gone（$($hit[0].Name)）" }
+        }
+
+        # (c) the three standalone trees carry app\native with the same per-RID content.
+        # [EN] Exact counts cannot be asserted blindly: ``pack_crossplatform.py`` runs
+        # [EN] ``prune_release.py`` afterwards, which deletes a "full version" alias
+        # [EN] (``libllama.so.0.9.0``) only when a byte-identical canonical sibling
+        # [EN] (``libllama.so.0``) exists -- by design, and nothing references the full
+        # [EN] version. So: every non-alias repo file must be present and byte-identical,
+        # [EN] no extra file may appear, and the missing ones may only be those aliases.
+        # [ZH] 不能盲目断言"数量相等"：``pack_crossplatform.py`` 之后会跑
+        # [ZH] ``prune_release.py``，它只在存在逐字节相同的正规别名（``libllama.so.0``）
+        # [ZH] 时才删除"完整版本"副本（``libllama.so.0.9.0``）—— 这是刻意设计，且没有任何
+        # [ZH] 引用指向完整版本。因此判据是：仓库里每个**非别名**文件都必须存在且逐字节一致、
+        # [ZH] 不得多出别的文件，允许缺失的只能是那些别名。
+        $aliasSo = '^(?<base>lib.+?\.so)\.(?<major>\d+)\.\d+\.\d+$'
+        $aliasDylib = '^(?<base>lib.+?)\.(?<major>\d+)\.\d+\.\d+\.dylib$'
+        $seen = @()
+        foreach ($rid in $nativeRids) {
+            $repoDir = Join-Path $Root "backend\native\$rid"
+            $standaloneNative = Join-Path $Root "publish\backend-$rid\app\native"
+            if (-not (Test-Path -LiteralPath $standaloneNative)) {
+                throw "standalone 树缺少 app\native：publish\backend-$rid\app\native"
+            }
+            $present = @{}
+            foreach ($f in Get-ChildItem -LiteralPath $standaloneNative -File) { $present[$f.Name] = $f.FullName }
+            if ($present.Count -eq 0) { throw "publish\backend-$rid\app\native 是空目录" }
+
+            $missing = @()
+            $aliases = 0
+            foreach ($f in Get-ChildItem -LiteralPath $repoDir -File) {
+                $canonical = $null
+                $m = [regex]::Match($f.Name, $aliasSo)
+                if (-not $m.Success) { $m = [regex]::Match($f.Name, $aliasDylib) }
+                if ($m.Success) {
+                    $suffix = if ($f.Name.EndsWith('.dylib')) { ".$($m.Groups['major'].Value).dylib" } else { ".$($m.Groups['major'].Value)" }
+                    $candidate = $m.Groups['base'].Value + $suffix
+                    $candidatePath = Join-Path $repoDir $candidate
+                    if ((Test-Path -LiteralPath $candidatePath) -and
+                        ((Get-FileHash -LiteralPath $candidatePath -Algorithm SHA256).Hash -eq
+                         (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash)) {
+                        $canonical = $candidate
+                    }
+                }
+                if (-not $present.ContainsKey($f.Name)) {
+                    if ($canonical) { $aliases++; continue }
+                    $missing += $f.Name
+                    continue
+                }
+                $a = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
+                $b = (Get-FileHash -LiteralPath $present[$f.Name] -Algorithm SHA256).Hash
+                if ($a -ne $b) { throw "standalone 树原生库与仓库不一致：backend-$rid\app\native\$($f.Name)" }
+            }
+            if ($missing.Count -gt 0) {
+                throw ("standalone 树缺少原生库（backend-{0}）：{1}" -f $rid, ($missing -join ', '))
+            }
+            $repoNames = @{}
+            foreach ($f in Get-ChildItem -LiteralPath $repoDir -File) { $repoNames[$f.Name] = $true }
+            $extra = @($present.Keys | Where-Object { -not $repoNames.ContainsKey($_) })
+            if ($extra.Count -gt 0) {
+                throw ("standalone 树出现仓库里没有的原生库（backend-{0}）：{1}" -f $rid, ($extra -join ', '))
+            }
+            $seen += "$rid=$($present.Count)/$($expected[$rid])"
+        }
+        "打包树 native=$packagedCount · standalone（现有/仓库）: $($seen -join ', ') · 无 llama_cpp/numpy"
+    }
+
     Invoke-Check "全英文命名 + 无过程文档 + 无运行期残留" {
         $cjk = [regex]'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]'
         $cn = @(Get-ChildItem $Out -Recurse -Force -ErrorAction SilentlyContinue |
@@ -496,6 +607,17 @@ try {
     # [ZH] v0.2.4 任务-3：显式覆盖、结构化失败与子进程「测试加载」路径用真实模型验证。
     Invoke-Check "推理覆盖与透明诊断（v0.2.4 任务-3）" {
         Invoke-Python "覆盖诊断" "tools\test_inference_override.py"; "通过"
+    }
+    # [EN] v0.2.7: runtime selection for text and vision is decided in one place
+    # [EN] (``backend/llm_backend.py``). This gate was previously absent from the release
+    # [EN] chain entirely (0 references), so a regression in the native/wheel/auto policy
+    # [EN] could ship unnoticed. It is a plain Invoke-Check: a non-zero exit is counted as
+    # [EN] FAILED, never as skipped.
+    # [ZH] v0.2.7：文本与视觉的运行期选路只在 `backend/llm_backend.py` 一处决定。这条
+    # [ZH] 断言此前**完全没接进**发布链（0 处引用），因此原生/轮子/auto 策略的回归可以
+    # [ZH] 一路发出去。这里用普通 Invoke-Check：非零退出计入 failed，绝不计入跳过。
+    Invoke-Check "原生运行期选路（v0.2.7 原生 mtmd / 轮子已移除）" {
+        Invoke-Python "视觉选路" "tools\test_vision_gate.py"; "通过"
     }
     # [EN] v0.2.4 patch: update asset guard, digest/size rejection and the isolated
     # [EN] user-data backup are verified without network access.

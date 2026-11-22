@@ -34,7 +34,7 @@ No cloud account. No API key. No telemetry.
 | ![Hugging Face GGUF model marketplace with filters and pagination](docs/images/screenshot-model-market.png) | ![Browser automation settings with the safety protocol accepted](docs/images/screenshot-automation.png) |
 
 - **Platform**: Windows 10 / 11 (x64) with the native WPF frontend; Windows, Linux and macOS with the Avalonia frontend
-- **Inference**: local GGUF models through llama.cpp (`llama-cpp-python`), CPU by default
+- **Inference**: local GGUF models through the bundled native llama.cpp runtime (no Python binding), CPU by default
 - **Interface**: C# WPF desktop app, packaged backend written in Python 3.13
 - **Languages**: Simplified Chinese and English shipped; more via community language packs
 - **License**: [Apache-2.0](LICENSE)
@@ -44,7 +44,7 @@ No cloud account. No API key. No telemetry.
 
 | | `master` (this branch) | `reader` |
 | --- | --- | --- |
-| Inference | llama.cpp through the `llama-cpp-python` binding | native llama.cpp C ABI; the Python binding is removed |
+| Inference | bundled native llama.cpp runtime (`backend/native/<rid>`), no Python binding | native llama.cpp C ABI; the Python binding is removed |
 | Front end | WPF for the Windows LTS line, Avalonia for cross-platform | Avalonia only |
 | Network | optional networked features, off by default | no network code path at all |
 | Best for | automation, model marketplace, multimodal, retrieval | reading and analysing long local documents |
@@ -341,6 +341,7 @@ EchoDesk is local by design, and the policy is written down rather than implied:
 | [docs/en/FAQ.md](docs/en/FAQ.md) | Quick answers and troubleshooting for startup, models, files, automation and the marketplace. |
 | [docs/en/AUTOMATION_GUIDE.md](docs/en/AUTOMATION_GUIDE.md) | Field-by-field automation configuration and the selector test. |
 | [docs/DEVELOPER.md](docs/DEVELOPER.md) | Architecture, JSON protocol, module responsibilities, config reference, build and release. A pointer: the full text is [`docs/en/DEVELOPER.md`](docs/en/DEVELOPER.md) (English) and [`docs/zh-Hans/DEVELOPER.md`](docs/zh-Hans/DEVELOPER.md) (Simplified Chinese). |
+| [docs/NATIVE_RUNTIME.md](docs/NATIVE_RUNTIME.md) | The bundled native llama.cpp runtime: directory layout, the per-platform file inventory, the three `ECHODESK_LLAMA_RUNTIME` values and what each one does. |
 | [docs/en/SKILL_GUIDE.md](docs/en/SKILL_GUIDE.md) | How to write, submit and publish a skill. |
 | [docs/PRIVACY.md](docs/PRIVACY.md) | What runs locally, what may go online, log redaction rules. |
 | [docs/EULA.md](docs/EULA.md) | End-user license terms for the distributed build. |

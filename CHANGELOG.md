@@ -13,6 +13,7 @@ for traceability only; this changelog is the release-facing document.
 
 | Version | Type | Release date | Summary |
 | :--- | :--- | :--- | :--- |
+| [v0.2.7](#v027) | Stable Release | 2026-11-22 | Native inference backend: the Python binding is replaced by the in-tree native llama.cpp runtime on all three platforms, the Windows build drops the bundled CUDA runtime, vision runs on CPU through native `mtmd`, text and vision hold independent locks, the full-cache-hit defect is fixed, and the update check is decided per version line |
 | [v0.2.6](#v026) | Stable Release | 2026-11-15 | Experience overhaul: twenty-three user-reported defects fixed end to end — upload robustness, UI deadlocks, Agent pipes, context and output budgets, reasoning separation, role normalization, local vision, knowledge base, state synchronisation, external providers and the Windows native VLM dependency chain |
 | [v0.2.5](#v025) | Stable Release | 2026-11-08 | Release hardening: writable state paths for read-only `.app` / AppImage layouts, smaller and faster build pipeline, repository-wide bilingual normalization, Unsloth offline model catalog |
 | [v0.2.4](#v024) | Stable Release | 2026-11-08 | Automatic hardware tuning, three inference presets, transparent override and diagnostics; release-time patch and final hotfix for streaming download progress, ignored-version memory, memory warnings, balanced title bar, Chinese installer and upgrade hygiene |
@@ -28,17 +29,77 @@ for traceability only; this changelog is the release-facing document.
 
 ### Release positioning
 
-Work in progress; entries are recorded as they land. This section is not a published release yet.
+An inference-backend transplant release. The Python inference binding (`llama-cpp-python`) is no longer
+part of the shipped build: text and vision are served by the in-tree native llama.cpp runtime under
+`backend/native/<rid>/`, vendored at one shared revision across Windows, Linux and macOS. The removal
+also takes numpy out of the runtime dependency set and drops the bundled CUDA runtime from the Windows
+build. Vision gained a native `mtmd` path, so visual inference now runs on the CPU. Text and vision hold
+independent engine locks, one correctness defect in the full-cache-hit path is fixed, and the update
+check now decides per version line. The JSON line protocol, the front ends and every offline capability
+are unchanged.
+
+### Key capabilities
+
+#### Native llama.cpp inference backend
+
+The Python inference binding is removed from the shipped product and replaced by the in-tree native
+llama.cpp runtime (`backend/native/<rid>/`, driven through `backend/llama_native.py` and its ctypes
+binding). All three standalone trees ship that runtime, and `tools/pack_backend.py` collects it into the
+packaged backend. No Python inference binding or numpy remains in the dependency lock; the SBOM lists
+`llama.cpp` (MIT) and contains no `llama-cpp-python` / `numpy` entry.
+
+#### Lighter Windows build
+
+The Windows package no longer carries the ~190 MB CUDA runtime dependencies: `libggml-cuda` and the
+cudart/cublas runtime files are excluded end to end, and the native runtime shipped for `win-x64` is the
+CPU set. The installer and the portable tree shrink accordingly.
+
+#### CPU-only vision
+
+Visual inference gained a native `mtmd` path (`backend/vision_native.py`, `backend/llama_abi/mtmd_cpp.py`)
+and no longer requires an NVIDIA GPU or the CUDA runtime. A vision request is served on the CPU at
+25–69 seconds per image. The v0.2.6 limitation "local visual inference currently requires an NVIDIA GPU
+... CPU-only VLM will be supported in future mainline EchoDesk builds" no longer applies as of this
+version.
+
+#### Independent text and vision locks
+
+Text and vision each hold their own engine lock (`acquire_inference_lock()`), and a separate lifecycle
+lock serialises ggml backend registration, model load/release and process-exit cleanup. A vision
+evaluation no longer blocks text completion behind one shared lock, which used to stall it for 25–38
+seconds; the acquisition order is fixed (lifecycle lock first, engine lock second) and re-entering the
+same lock on one thread raises immediately instead of being masked by a re-entrant lock.
+
+#### Full-cache-hit correctness fix
+
+When the prompt was fully cached, the last prompt token's logits were not recomputed, which produced an
+empty answer or a misaligned continuation. The decode path now refreshes those logits on a full cache
+hit, so a cached prefix produces the same answer as a cold run.
+
+#### Version-line-aware update check (P0, fixed 2026-11-21)
+
+The update check compares candidate tags per version line instead of by version number alone
+(`backend/update_check.py::version_line_suffix()`): `master` accepts purely numeric tags only, while
+suffixed tags belong to another line. Full-edition users are therefore no longer offered the Reader slim
+build as an update.
+
+#### One shared native revision across three platforms
+
+The vendored `win-x64` / `linux-x64` / `osx-arm64` binaries come from one llama.cpp revision (0.4.7) and
+are recorded in `backend/native/VENDOR.md`; `docs/NATIVE_RUNTIME.md` documents the directory layout, the
+per-platform file inventory and the meaning of `ECHODESK_LLAMA_RUNTIME`.
 
 ### Known limitations
 
 - **CPU-only vision is now supported**: visual inference gained a native `mtmd` path and no longer
   requires an NVIDIA GPU or the CUDA runtime. The v0.2.6 limitation "local visual inference currently
   requires an NVIDIA GPU ... CPU-only VLM will be supported in future mainline EchoDesk builds" no longer
-  applies as of this version. GPU-accelerated vision is still provided by the `llama-cpp-python` runtime,
-  which remains the preferred path by default in this release.
+  applies as of this version. This Windows release ships **no CUDA backend**: GPU-accelerated vision is
+  not available in v0.2.7, and vision runs on the CPU through native `mtmd` at 25–69 seconds per image.
 - Remaining limitation: long-context Qwen3-VL stress testing on a real NVIDIA GPU has not been executed
   (no CUDA runtime on the build host).
+- The Windows installer is not Authenticode-signed; the macOS build is neither signed nor notarized; the
+  Linux deliverable is a `.tar.gz`, not an AppImage.
 
 ## v0.2.6
 
