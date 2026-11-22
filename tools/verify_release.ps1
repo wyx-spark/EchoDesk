@@ -146,26 +146,49 @@ function Invoke-Python([string]$Name, [string]$Script, [string[]]$Extra = @()) {
     return Invoke-Native $Name "python" (@($Script) + $Extra)
 }
 
+#: [EN] Sentinel prefix thrown by a gate body to mark the item as SKIPPED: the check
+#: [EN] never ran because an environment prerequisite is missing. Skipped items are
+#: [EN] counted separately and are never folded into the pass count -- a "green" run
+#: [EN] must never hide an item that was not executed.
+#: [ZH] 门禁主体抛出该前缀表示「跳过」：环境前置缺失，该项从未执行。跳过项单独计数，
+#: [ZH] 绝不并入通过数 —— "全绿"的运行不得掩盖未执行的条目。
+$script:GATE_SKIP_PREFIX = "__GATE_SKIP__:"
+
+function Skip-Gate([string]$Reason) { throw ("$script:GATE_SKIP_PREFIX$Reason") }
+
+function Add-SkippedGate([string]$Name, [string]$Reason) {
+    Write-Host ("{0} {1,-32} {2,6:N1}s  {3}" -f "[SKIP]", $Name, 0.0, $Reason) -ForegroundColor Yellow
+    [void]$results.Add([pscustomobject]@{
+        Name = $Name; Ok = $false; Status = "skipped"; Seconds = 0.0; Detail = $Reason
+    })
+}
+
 function Invoke-Check {
     param([string]$Name, [scriptblock]$Body)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $ok = $false
+    $status = "passed"
     $detail = ""
     try {
         $output = & $Body
-        $ok = $true
         $detail = if ($output) { ($output | Select-Object -Last 1).ToString() } else { "通过" }
     }
     catch {
-        $ok = $false
-        $detail = $_.Exception.Message
+        $msg = [string]$_.Exception.Message
+        if ($msg.StartsWith($script:GATE_SKIP_PREFIX)) {
+            $status = "skipped"
+            $detail = $msg.Substring($script:GATE_SKIP_PREFIX.Length)
+        }
+        else {
+            $status = "failed"
+            $detail = $msg
+        }
     }
     $sw.Stop()
-    $mark = if ($ok) { "[OK]  " } else { "[FAIL]" }
-    $color = if ($ok) { "Gray" } else { "Red" }
+    $mark = switch ($status) { "passed" { "[OK]  " } "skipped" { "[SKIP]" } default { "[FAIL]" } }
+    $color = switch ($status) { "passed" { "Gray" } "skipped" { "Yellow" } default { "Red" } }
     Write-Host ("{0} {1,-32} {2,6:N1}s  {3}" -f $mark, $Name, $sw.Elapsed.TotalSeconds, $detail) -ForegroundColor $color
     [void]$results.Add([pscustomobject]@{
-        Name = $Name; Ok = $ok
+        Name = $Name; Ok = ($status -eq "passed"); Status = $status
         Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); Detail = $detail
     })
 }
@@ -273,7 +296,8 @@ try {
     $Sums = Join-Path $PublishDir "SHA256SUMS.txt"
 
     if (-not (Test-Path $SetupWith)) {
-        Write-Host "[SKIP] 安装程序检查（未跑 -MakeInstaller，缺 $SetupWith）" -ForegroundColor Yellow
+        Add-SkippedGate "安装程序：SHA256 与 SHA256SUMS.txt 一致" `
+            "未跑 -MakeInstaller，缺 $SetupWith"
     }
     else {
         Invoke-Check "安装程序：SHA256 与 SHA256SUMS.txt 一致" {
@@ -573,7 +597,8 @@ try {
         }
     }
     else {
-        Write-Host "  [--]  standalone 后端产物不存在或不完整，跳过（先跑 python tools\pack_backend.py）" -ForegroundColor DarkGray
+        Add-SkippedGate "standalone 后端产物（结构/启动脚本/本平台可运行）" `
+            "产物不存在或不完整，先跑 python tools\pack_backend.py"
     }
 
     # v0.2.1 跨平台-2（任务四/任务五）：**完整发布物**（前端 + 后端）的归档检查。
@@ -609,7 +634,8 @@ try {
         }
     }
     else {
-        Write-Host "  [--]  跨平台发布物不存在，跳过（先跑 python tools\pack_crossplatform.py，见 docs\CROSS_PLATFORM.md）" -ForegroundColor DarkGray
+        Add-SkippedGate "跨平台完整发布物（归档格式/可执行位/目录顺序/签名说明）" `
+            "发布物不存在，先跑 python tools\pack_crossplatform.py（见 docs\CROSS_PLATFORM.md）"
     }
 
     # ---------- 3. 静态检查 ----------
@@ -667,7 +693,8 @@ try {
     # 可重入性隔离见文件头部 `Clear-ReleaseRuntimeState` 的说明：**跑前**那一次已经在
     # 所有检查之前做了（脚本开头、无条件），这里只负责**跑后**再清一次。
     if ($SkipGui) {
-        Write-Host "[SKIP] UI 探针 / 像素校验（-SkipGui）" -ForegroundColor Yellow
+        Add-SkippedGate "WPF UI 探针（tools\ui_probe.ps1）" "-SkipGui：需要交互式桌面"
+        Add-SkippedGate "像素校验（修复二/六）" "-SkipGui：需要交互式桌面"
     }
     else {
         # Avalonia 侧的门禁（本轮加回来，且**指向开发机构建而不是发布树**）。
@@ -683,8 +710,7 @@ try {
         Invoke-Check "Avalonia 界面探针（跨平台前端：窗口 + 模型市场整条交互）" {
             $avExe = Join-Path $Root "frontend-avalonia\EchoDesk.Avalonia\bin\Debug\net10.0\EchoDesk.exe"
             if (-not (Test-Path $avExe)) {
-                Write-Host "    [跳过] 没有跨平台前端的 Debug 构建：先 dotnet build frontend-avalonia\EchoDesk.Avalonia" -ForegroundColor Yellow
-                return "跳过（未构建）"
+                Skip-Gate "没有跨平台前端的 Debug 构建：先 dotnet build frontend-avalonia\EchoDesk.Avalonia"
             }
             Invoke-Native "ui-probe-avalonia" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass",
                                                              "-File", "tools\ui_probe_avalonia.ps1",
@@ -775,21 +801,32 @@ finally {
 }
 
 # ---------- 汇总 ----------
-$failed = @($results | Where-Object { -not $_.Ok })
+$failed = @($results | Where-Object { $_.Status -eq "failed" })
+$skipped = @($results | Where-Object { $_.Status -eq "skipped" })
+$passed = @($results | Where-Object { $_.Status -eq "passed" })
 Write-Host ""
 Write-Host "===== 汇总 =====" -ForegroundColor Cyan
 $results | ForEach-Object {
-    $mark = if ($_.Ok) { "OK  " } else { "FAIL" }
+    $mark = switch ($_.Status) { "passed" { "OK  " } "skipped" { "SKIP" } default { "FAIL" } }
     Write-Host ("  {0} {1,-32} {2,6:N1}s" -f $mark, $_.Name, $_.Seconds)
 }
 $total = ($results | Measure-Object -Property Seconds -Sum).Sum
-Write-Host ("  共 {0} 项，通过 {1} 项，失败 {2} 项，总耗时 {3:N1}s" -f `
-    $results.Count, ($results.Count - $failed.Count), $failed.Count, $total)
+Write-Host ("  共 {0} 项：通过 {1}，跳过 {2}，失败 {3}，总耗时 {4:N1}s" -f `
+    $results.Count, $passed.Count, $skipped.Count, $failed.Count, $total)
 
 if ($failed.Count -gt 0) {
     Write-Host "`n失败项：" -ForegroundColor Red
     $failed | ForEach-Object { Write-Host "  - $($_.Name)：$($_.Detail)" -ForegroundColor Red }
+    if ($skipped.Count -gt 0) {
+        Write-Host "`n[WARN] 另有 $($skipped.Count) 项跳过，发布前必须补齐：" -ForegroundColor Yellow
+        $skipped | ForEach-Object { Write-Host "  - $($_.Name)：$($_.Detail)" -ForegroundColor Yellow }
+    }
     exit 1
+}
+if ($skipped.Count -gt 0) {
+    Write-Host "`n[WARN] 有 $($skipped.Count) 项跳过，发布前必须补齐：" -ForegroundColor Yellow
+    $skipped | ForEach-Object { Write-Host "  - $($_.Name)：$($_.Detail)" -ForegroundColor Yellow }
+    exit 0
 }
 Write-Host "`n✓ 发布物验证全部通过" -ForegroundColor Green
 exit 0
