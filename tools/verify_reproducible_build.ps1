@@ -232,8 +232,20 @@ for ($i = 1; $i -lt $snapshots.Count; $i++) {
     }
 }
 if ($failed) {
-    throw "[EN] reproducible-build verification failed / [ZH] 可复现构建验证失败"
+    # [EN] Set the process exit code explicitly. ``throw`` alone does not decide the exit
+    # [EN] code of ``powershell -File``: it stays at whatever the last native command
+    # [EN] returned, so a failing verification could be read as a pass (or the reverse).
+    # [EN] Origin: the v0.2.7 run reported ``[OK] all runs byte-identical`` while the
+    # [EN] process still exited 1; see records/v0.2.7-发版记录.md.
+    # [ZH] 显式设置进程退出码。单靠 ``throw`` 决定不了 ``powershell -File`` 的退出码：
+    # [ZH] 它保持为最后一条原生命令的返回值，于是失败可能被读成通过（或反之）。
+    # [ZH] 来历：v0.2.7 那次明明打印了 ``[OK] 全部构建逐字节一致``，进程却仍以 1 退出，
+    # [ZH] 见 records/v0.2.7-发版记录.md。
+    Write-Host "[EN] reproducible-build verification failed / [ZH] 可复现构建验证失败" -ForegroundColor Red
+    exit 1
 }
 Write-Host ""
 Write-Host "[OK] [EN] all runs are byte-identical / [ZH] 全部构建逐字节一致" -ForegroundColor Green
-return 0
+# [EN] Explicit success code (see the failure branch above).
+# [ZH] 显式成功退出码（原因见上面的失败分支）。
+exit 0
