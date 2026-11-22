@@ -2,12 +2,19 @@
 
 [![CI](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml) [![Latest release](https://img.shields.io/github/v/release/wyx-spark/EchoDesk?label=release)](https://github.com/wyx-spark/EchoDesk/releases/latest)
 
-> ✅ **Note / 注意**：v0.2.7 is released. It includes the twenty-three-item experience overhaul described in the [changelog](CHANGELOG.md).
-> 我们已发布 v0.2.7，其中包含 [变更日志](CHANGELOG.zh-Hans.md) 所述 23 项体验大修。如果仍然遇到 Bug，请在 Issues 中反馈。
+> ✅ **注意**：v0.2.7 已发布 —— 一次**推理后端换血**。Python 推理绑定已移除，文本与视觉改由随包的
+> 原生 llama.cpp 运行时承载（三平台统一 llama.cpp 0.4.7 修订），视觉新增纯 CPU 路径，
+> Windows 构建不再随包 CUDA 运行时。详见 [变更日志](CHANGELOG.zh-Hans.md)。
+> 如果仍然遇到 Bug，请在 Issues 中反馈。
+> v0.2.7 is an inference-backend transplant release: the Python inference binding is gone, text and
+> vision run on the vendored native llama.cpp runtime, and the Windows build no longer ships CUDA.
+>
+> **Windows 构建说明**：自 v0.2.7 起 Windows 构建**不含 CUDA 后端**，设置里的 GPU 相关探测与
+> `n_gpu_layers` 仅供诊断与预留，在本构建上不会改变实际推理设备。
 >
 > **两个版本的分工。** `master`（本分支）是完整版：本地对话、文档解析、加密文档支持、浏览器自动化、
 > 技能与模型市场。`reader` 分支是移除上述扩展栈的长篇文档阅读版，其构建在
-> [Releases 页面](https://github.com/wyx-spark/EchoDesk/releases) 上的标签是 `v0.2.6-reader`；
+> [Releases 页面](https://github.com/wyx-spark/EchoDesk/releases) 上的标签是 `v0.2.7-reader`；
 > 当前 Latest 发布属于本分支（`v0.2.7`）。需要自动化与模型市场选 `master`，需要最小化的阅读版选 Reader。
 >
 > **第一次使用？** 请按 [下载、安装与配置指南（Issue #7）](https://github.com/wyx-spark/EchoDesk/issues/7) 逐步操作：选版本、核对 SHA-256、使用离线模型包、完成首次配置。

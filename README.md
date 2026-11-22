@@ -2,13 +2,23 @@
 
 [![CI](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/wyx-spark/EchoDesk/actions/workflows/ci.yml) [![Latest release](https://img.shields.io/github/v/release/wyx-spark/EchoDesk?label=release)](https://github.com/wyx-spark/EchoDesk/releases/latest)
 
-> ✅ **Note / 注意**：v0.2.7 is released. It includes the twenty-three-item experience overhaul described in the [changelog](CHANGELOG.md). If you still encounter a bug (for example a UI freeze or a file upload error), please report it in Issues.
-> 我们已发布 v0.2.7，其中包含 [变更日志](CHANGELOG.zh-Hans.md) 所述 23 项体验大修。如果仍然遇到 Bug，请在 Issues 中反馈。
+> ✅ **Note**：v0.2.7 is released — an inference-backend transplant release. The Python inference
+> binding is gone; text and vision run on the vendored native llama.cpp runtime (revision 0.4.7 on all
+> three platforms), vision gained a CPU path, and the Windows build no longer ships the CUDA runtime.
+> See the [changelog](CHANGELOG.md). If you still encounter a bug, please report it in Issues.
+> 我们已发布 v0.2.7 —— 一次推理后端换血：Python 推理绑定已移除，文本与视觉改由随包的原生
+> llama.cpp（三平台统一 0.4.7 修订）承载，视觉新增纯 CPU 路径，Windows 构建不再随包 CUDA 运行时。
+> 详见 [变更日志](CHANGELOG.zh-Hans.md)。如果仍然遇到 Bug，请在 Issues 中反馈。
+>
+> **Windows build note / Windows 构建说明**：自 v0.2.7 起 Windows 构建**不含 CUDA 后端**，
+> 设置里的 GPU 相关探测与 `n_gpu_layers` 仅供诊断与预留，在本构建上不改变推理设备。
+> The Windows build ships no CUDA backend since v0.2.7; GPU detection and `n_gpu_layers` are
+> diagnostic only and do not change the inference device.
 >
 > **Two editions.** `master` (this branch) is the full assistant: local chat, document parsing,
 > encrypted-document support, browser automation, skills and the model marketplace. The `reader`
 > branch is a long-document reading edition with those extra stacks removed; its builds are tagged
-> `v0.2.6-reader` on the [Releases page](https://github.com/wyx-spark/EchoDesk/releases). The Latest
+> `v0.2.7-reader` on the [Releases page](https://github.com/wyx-spark/EchoDesk/releases). The Latest
 > release currently belongs to `master` (`v0.2.7`). Choose `master` for automation and the
 > marketplace, Reader for the smallest reading-focused build.
 >
