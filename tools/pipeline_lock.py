@@ -89,6 +89,14 @@ class PipelineLock:
                 fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             except FileExistsError:
                 owner = _read_owner()
+                # [EN] Nested entry: the gate (or build_release) holds the lock and invokes this
+                # [EN] script as a child. A child of the owner must be allowed to run; it does not
+                # [EN] take over ownership, so it will not delete the parent's lock either.
+                # [ZH] 嵌套入口：门禁（或 build_release）持锁并把它作为子进程调用。持有者的子进程
+                # [ZH] 必须被放行；它不接管所有权，因此也不会删掉父进程的锁。
+                if owner and int(owner.get("pid") or 0) == os.getppid():
+                    self.owned = False
+                    return
                 alive = owner and _pid_alive(int(owner.get("pid") or 0))
                 if alive:
                     raise PipelineBusy(

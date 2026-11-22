@@ -444,6 +444,11 @@ PS1_ALLOWLIST: dict[str, str] = {
     "tools/reproducible.ps1": "[EN] PowerShell entry point for the release chain; the shared "
                               "implementation is tools/reproducible.py / [ZH] 发布链的 PowerShell 入口；"
                               "共享实现位于 tools/reproducible.py，因此不需要独立的 .sh 等价物",
+    "tools/ProcessTools.ps1": "UI 探针共用的原生进程启动器（ProcessStartInfo + 顶层窗口标题检测），"
+                              "依赖 Windows 的窗口模型；非 Windows 上直接跑 `app/EchoDesk --probe`，"
+                              "因此不需要 .sh/.py 等价物",
+    "tools/pipeline_lock.ps1": "流水线互斥的 PowerShell 侧；同语义实现位于 tools/pipeline_lock.py"
+                               "（纯标准库、三平台可用），因此本文件仅服务于 Windows 发布链",
     "tools/verify_reproducible_build.ps1": "[EN] Orchestrates the Windows installer plus the three "
                                           "platform packagers; the packagers themselves are Python and "
                                           "cross-platform / [ZH] 编排 Windows 安装程序与三平台打包器；"

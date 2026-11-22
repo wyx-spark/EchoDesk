@@ -1,4 +1,4 @@
-# [EN] Exclusive lock for the release pipeline (PowerShell side). Packaging and the release gate
+﻿# [EN] Exclusive lock for the release pipeline (PowerShell side). Packaging and the release gate
 # [EN] must never run at the same time; both touch publish/ and dist/. Dot-source this file and
 # [EN] call Enter-PipelineLock -Role <name> / Exit-PipelineLock.
 # [ZH] 发布流水线的互斥锁（PowerShell 侧）。打包与发布门禁不得同时运行；两者都读写 publish/ 与 dist/。
@@ -18,6 +18,18 @@ function Enter-PipelineLock([string]$Role) {
         catch [System.IO.IOException] {
             $owner = $null
             try { $owner = Get-Content -LiteralPath $script:PipelineLockPath -Raw | ConvertFrom-Json } catch { }
+            if ($owner -and $owner.pid) {
+                # [EN] Nested entry: our parent holds the lock (gate/build_release -> child script).
+                # [ZH] 嵌套入口：父进程持锁（门禁/build_release -> 子脚本），放行且不接管所有权。
+                $parentPid = 0
+                try {
+                    $parentPid = [int](Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
+                } catch { $parentPid = 0 }
+                if ($parentPid -and [int]$owner.pid -eq $parentPid) {
+                    $script:PipelineLockOwned = $false
+                    return
+                }
+            }
             $alive = $false
             if ($owner -and $owner.pid) {
                 $proc = Get-Process -Id ([int]$owner.pid) -ErrorAction SilentlyContinue
