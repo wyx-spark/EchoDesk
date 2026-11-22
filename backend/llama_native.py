@@ -758,6 +758,24 @@ class NativeLlama:
             # [ZH] 只有真正发生预填充才切换线程池：整段命中缓存时没有预填充阶段，
             # [ZH] 既没有可上报的进度，也没有可切换的线程。
             self._run_prefill(suffix, on_prefill_progress, should_abort)
+        elif tokens and common >= 1:
+            # [EN] Full cache hit: no suffix is left, so without this branch not a single
+            # [EN] ``llama_decode`` would run for this request and the logits buffer would
+            # [EN] still describe the last token of the *previous* request -- sampling
+            # [EN] with ``-1`` reads the logits of the most recent decode, not the KV
+            # [EN] cache. A repeated prompt therefore sampled EOG immediately (empty
+            # [EN] answer) or continued the previous sentence. Re-evaluating only the last
+            # [EN] prompt token at position ``common - 1`` restores the logits for this
+            # [EN] prompt at the cost of exactly one token; the rest of the prefix stays
+            # [EN] reused, so this is not a full recompute.
+            # [ZH] 整段命中缓存：没有后缀可预填充，因此本轮一次 ``llama_decode`` 都不会发生，
+            # [ZH] logits 缓冲区仍停留在「上一次请求的最后一个 token」上 —— 以 -1 采样读的是
+            # [ZH] 最近一次 decode 的 logits，而不是 KV Cache。于是重复的提示词要么首个采样
+            # [ZH] 即 EOG（空回答），要么续写上一句。只把最后一个提示词 token 在
+            # [ZH] ``common - 1`` 位置重跑一次单 token 前向，即可把 logits 恢复成该提示词的
+            # [ZH] 末位状态，代价恰好是 1 个 token；其余前缀照旧复用，故不属于全量重算。
+            self._trim_cache(common - 1)
+            self._run_prefill(tokens[common - 1:], on_prefill_progress, should_abort)
         sampler = self._make_sampler(temperature, top_p, top_k, repeat_penalty)
         decoder = codecs.getincrementaldecoder("utf-8")("ignore")
         produced = 0
