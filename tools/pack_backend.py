@@ -248,8 +248,17 @@ NATIVE_PATTERNS = {
 
 BACKEND_EXCLUDE_FILES = {"EchoBackend.spec", "requirements.txt"}
 BACKEND_EXCLUDE_SUFFIX = (".pyc", ".pyo", ".log", ".spec")
-#: 运行期状态文件：它们属于"用户机器上生成的"，不能打进发布物（否则门禁与卸载清单都要打架）。
-BACKEND_EXCLUDE_STATE = {"session.json", "backend_crash.log", "skills_dev.log"}
+#: [EN] Runtime state files: generated on the user's machine, never shipped (otherwise the gate,
+#: [EN] the uninstall list and the double-blind build all have to argue with a file that is not a
+#: [EN] build output). ``market_cache.json`` was added in v0.2.7 after a probe run left it in
+#: [EN] ``backend/`` and three standalone trees shipped it; that is a non-deterministic input and
+#: [EN] ``tools/check_backend_state_leak.py`` now guards the whole class.
+#: [ZH] 运行期状态文件：在用户机器上生成，绝不随包分发（否则门禁、卸载清单与双盲构建都要和一个
+#: [ZH] 根本不是构建产物的文件纠缠）。``market_cache.json`` 是 v0.2.7 补进来的：一次探针运行把它留在
+#: [ZH] ``backend/`` 里，三棵 standalone 树就把它带进了发布物 —— 那是非确定性输入，现在由
+#: [ZH] ``tools/check_backend_state_leak.py`` 整类守着。
+BACKEND_EXCLUDE_STATE = {"session.json", "backend_crash.log", "skills_dev.log",
+                          "market_cache.json"}
 
 #: standalone Python 里对本项目无用的部分（清理后显著减小体积）。
 #: 只删"确认与 EchoDesk 无关"的东西：测试套件、IDLE、tkinter、演示代码、静态库与头文件。

@@ -206,33 +206,39 @@ function Invoke-NativeCore([string]$Name, [string]$Exe, [string[]]$CmdArgs, [int
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $proc = [System.Diagnostics.Process]::Start($psi)
-
-    $seen = 0
-    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
-    while (-not $proc.WaitForExit(500)) {
-        if ($live) {
-            $lines = @(Get-Content -LiteralPath $log -ErrorAction SilentlyContinue)
-            if ($lines.Count -gt $seen) {
-                for ($i = $seen; $i -lt $lines.Count; $i++) { Write-Host ("    " + $lines[$i]) }
-                $seen = $lines.Count
+    try {
+        $seen = 0
+        $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
+        while (-not $proc.WaitForExit(500)) {
+            if ($live) {
+                $lines = @(Get-Content -LiteralPath $log -ErrorAction SilentlyContinue)
+                if ($lines.Count -gt $seen) {
+                    for ($i = $seen; $i -lt $lines.Count; $i++) { Write-Host ("    " + $lines[$i]) }
+                    $seen = $lines.Count
+                }
+            }
+            if ([DateTime]::UtcNow -gt $deadline) {
+                try { & taskkill.exe /PID $proc.Id /T /F | Out-Null } catch { }
+                try { if (-not $proc.HasExited) { $proc.Kill() } } catch { }
+                Get-Process -Name EchoDesk -ErrorAction SilentlyContinue |
+                    Stop-Process -Force -ErrorAction SilentlyContinue
+                $tail = @(Get-Content -LiteralPath $log -Tail 8 -ErrorAction SilentlyContinue |
+                          Where-Object { $_.Trim().Length -gt 0 })
+                throw ("超过 {0} 秒未结束，已强制终止（含被测程序）。最后输出：`n      {1}" -f `
+                       $TimeoutSec, (($tail | Select-Object -Last 3) -join "`n      "))
             }
         }
-        if ([DateTime]::UtcNow -gt $deadline) {
-            try { & taskkill.exe /PID $proc.Id /T /F | Out-Null } catch { }
-            try { if (-not $proc.HasExited) { $proc.Kill() } } catch { }
-            Get-Process -Name EchoDesk -ErrorAction SilentlyContinue |
-                Stop-Process -Force -ErrorAction SilentlyContinue
-            $tail = @(Get-Content -LiteralPath $log -Tail 8 -ErrorAction SilentlyContinue |
+        $code = $proc.ExitCode
+        if ($code -ne 0) {
+            $tail = @(Get-Content -LiteralPath $log -Tail 6 -ErrorAction SilentlyContinue |
                       Where-Object { $_.Trim().Length -gt 0 })
-            throw ("超过 {0} 秒未结束，已强制终止（含被测程序）。最后输出：`n      {1}" -f `
-                   $TimeoutSec, (($tail | Select-Object -Last 3) -join "`n      "))
+            throw "退出码 $code（日志 $log）：`n      " + (($tail | Select-Object -Last 4) -join "`n      ")
         }
     }
-    $code = $proc.ExitCode
-    if ($code -ne 0) {
-        $tail = @(Get-Content -LiteralPath $log -Tail 6 -ErrorAction SilentlyContinue |
-                  Where-Object { $_.Trim().Length -gt 0 })
-        throw "退出码 $code（日志 $log）：`n      " + (($tail | Select-Object -Last 4) -join "`n      ")
+    finally {
+        # [EN] The wrapper is a per-run artifact; keep ``artifacts/verify-logs`` readable.
+        # [ZH] 包装脚本是一次性产物；别让 artifacts/verify-logs 里堆满它。
+        Remove-Item -LiteralPath $wrapper -Force -ErrorAction SilentlyContinue
     }
     return $log
 }
@@ -497,6 +503,25 @@ try {
             $seen += "$rid=$($present.Count)/$($expected[$rid])"
         }
         "打包树 native=$packagedCount · standalone（现有/仓库）: $($seen -join ', ') · 无 llama_cpp/numpy"
+    }
+
+    # [EN] v0.2.7: no runtime state file may ship. ``pack_backend`` copies the development
+    # [EN] ``backend/`` tree into every release tree with an exclusion list; a probe run left
+    # [EN] ``market_cache.json`` behind and the three standalone trees shipped it, and the
+    # [EN] double-blind build stayed green only because nothing ran between its two passes
+    # [EN] (the file content is a timestamp). The policy now lives in one place,
+    # [EN] ``tools/check_backend_state_leak.py``, and this item asserts it BEFORE the gate starts
+    # [EN] any program from those trees -- otherwise the gate's own runs would create
+    # [EN] ``session.json`` / crash logs and the assertion would race its own side effects.
+    # [EN] A hit is FAILED, never skipped.
+    # [ZH] v0.2.7：运行期状态文件不得随包分发。``pack_backend`` 用排除清单把开发树的 ``backend/``
+    # [ZH] 复制进每棵发布树；一次探针运行留下的 ``market_cache.json`` 就被三棵 standalone 树带走了，
+    # [ZH] 双盲之所以仍是绿的，只因两轮之间没有任何程序运行（该文件内容是时间戳）。策略现在只写在
+    # [ZH] ``tools/check_backend_state_leak.py`` 一处，本项在门禁**执行这些树里的任何程序之前**断言，
+    # [ZH] 否则门禁自己运行产生的 ``session.json`` / 崩溃日志会让断言与自身副作用打架。
+    # [ZH] 命中即 failed，绝不计入跳过。
+    Invoke-Check "发布树无运行期状态文件（session/缓存/日志/数据库）" {
+        Invoke-Python "状态文件泄漏" "tools\check_backend_state_leak.py"; "通过"
     }
 
     Invoke-Check "全英文命名 + 无过程文档 + 无运行期残留" {
