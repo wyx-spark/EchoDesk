@@ -100,7 +100,7 @@ macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属�
 
 **长度预算与依据**（由 `tools/test_capability.py` 第 9 节断言守住）：
 单个模式块 ≤ 480 字符（实测 243~335），模式块 + 共享主干 + 语言指令 ≤ 700 字符
-（实测 607~699）。默认上下文 8192 token，中文约 1 字符/token 量级，700 字符约占 8.5%，
+（实测 607~699）。默认上下文 32768 token，中文约 1 字符/token 量级，700 字符约占 2.1%，
 余量留给文件摘要与对话历史；0.8B 级模型对冗长提示词尤其敏感，所以宁可把规则共享也不铺陈。
 
 **语言分工**：提示词**正文**保持中文、不进语言包（正文译成英文会削弱针对小模型跑偏
@@ -126,7 +126,7 @@ macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属�
 
 ```json
 {"type":"ready","version":"v0.2.1","studio":"Void Entropia Studio","restored":3,
- "model_ready":true,"model_state":{"ready":true,"model":"Qwen3-0.6B-Q6_K.gguf","models_dir":"...","n_ctx":8192,"guide":""},
+ "model_ready":true,"model_state":{"ready":true,"model":"Qwen3-0.6B-Q6_K.gguf","models_dir":"...","n_ctx":32768,"guide":""},
  "model_missing":{},"history":[{"role":"user","content":"..."}]}
 ```
 
@@ -238,13 +238,13 @@ macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属�
 
 ### 3.1 上下文窗口（任务 1.1）
 
-- `context_length` 默认 **8192**（v0.1.0 为 4096），`max_context` 为硬上限（默认 32768）。
-- 实际窗口 = `min(请求值, 模型训练窗口, max_context)`，下限 512；
+- `context_length` 默认 **32768**（v0.1.0 为 4096），`max_context` 为硬上限（默认 32768）。
+- 实际窗口 = `min(请求值, 模型训练窗口, max_context)`，下限 2048（`MIN_CONTEXT`）；
   `auto_context=false` 时忽略训练窗口一项。
 - 模型训练窗口优先取 **GGUF 元数据**（`gguf_meta.py` 只解析头部 KV 区，不加载模型），
   取不到时回退 `config.model_context_windows` 注册表的关键词匹配。
 - 加载/重载时输出窗口与 KV Cache 估算日志：
-  `上下文窗口: 8192 tokens（模型训练窗口 262144 tokens，KV Cache 约 384.0 MB，线程 16，GPU 层 0）`
+  `上下文窗口: 32768 tokens（模型训练窗口 262144 tokens，KV Cache 约 384.0 MB，线程 16，GPU 层 0）`
 - KV Cache 估算公式：`n_ctx × n_layer × n_head_kv × (key_dim + value_dim) × 2 字节`（fp16）。
 
 ### 3.2 长文档分段摘要（任务 1.1）
@@ -357,7 +357,7 @@ Cookie（老用户升级后不必重新登录），每次会话结束再导出�
   "model_path": "Qwen3-0.6B-Q6_K.gguf",
   "model_repo": "unsloth/Qwen3-0.6B-GGUF",
   "hf_endpoint": "https://hf-mirror.com",   // 国内镜像；留空用官方
-  "context_length": 8192,                    // 请求的上下文窗口
+  "context_length": 32768,                    // 请求的上下文窗口
   "max_context": 32768,                      // 硬上限（校验用）
   "auto_context": true,                      // 是否按模型训练窗口收敛
   "model_context_windows": { "qwen3.5-0.8b": 32768 },  // 关键词 → 训练窗口
@@ -640,7 +640,7 @@ Tool(name="calc", description="计算算术表达式", args_hint='{"expr": "表�
 
 ### 6.3 MCP 集成（stdio-only 的取舍）
 
-- `mcp_client.StdioMcpClient`：自研约 200 行的 JSON-RPC 2.0 客户端，一行一个 JSON 走
+- `mcp_client.StdioMcpClient`：自研约 680 行的 JSON-RPC 2.0 客户端，一行一个 JSON 走
   stdin/stdout，只实现 `initialize` / `tools/list` / `tools/call`（外加
   `notifications/initialized`）。调用带超时（`mcp.timeout_seconds`，默认 20 秒），
   外部进程卡死不会拖住主程序。

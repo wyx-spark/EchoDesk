@@ -148,7 +148,7 @@ penalty and max generated tokens, plus **Save**, which writes them and reads bac
   `/status` shows the current window and the KV Cache estimate.
 - When generation drops below about 3 characters per second, a hint is appended to the end of the reply (you
   can turn it off with `speed_hint` in `config.json`).
-- You can lower `context_length` in `config.json` (default 8192), raise `n_threads`, or switch to a smaller
+- You can lower `context_length` in `config.json` (default 32768), raise `n_threads`, or switch to a smaller
   quantized model (such as Q4_K_M).
 - Reasoning models (Qwen3 thinking, DeepSeek-R1) think before they answer, and thinking takes time too: as
   long as the “🧠 Thinking” region keeps growing, the model is producing output rather than being stuck.
@@ -300,7 +300,7 @@ is sent to the model from ~50,000 to ~18,000 characters (64% less), so total sum
 
 It is lossy: extraction works on whole sentences, so documents made of many very short clauses (contract
 clauses, for example) can lose some detail. To keep everything, raise `extractive_ratio` in the `summarize`
-section of `config.json` (default 0.35; 1.0 means no extraction) or set `extractive` to `false`.
+section of `config.json` (default 0.35; the configuration cap is 0.70) or set `extractive` to `false`.
 The log states how many chunks were prefilted and how many characters were saved
 ("抽取式预筛 N/M 段生效，送模型 X → Y 字符").
 
@@ -308,7 +308,7 @@ The log states how many chunks were prefilted and how many characters were saved
 Yes. The file dialog supports Ctrl/Shift multi-select and rubber-band selection, and you can drop several
 files at once. Each file gets its **own status line** (`⏳ [3/8] contract.docx …` → `✅` or `❌`),
 **one failure does not affect the others**, and a single "loaded N files" line closes the run.
-The limit is 10 files and 60 MB per batch; anything beyond that asks first, and files over the limit are not
+The limit is 10 files and 60,000 characters per batch; anything beyond that asks first, and files over the limit are not
 processed (you are told).
 
 At question time **all files are injected** (each with a filename label), capped by `files.total_chars` in

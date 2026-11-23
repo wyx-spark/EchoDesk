@@ -340,7 +340,7 @@ With no model loaded the whole block stays hidden (no zeros, no placeholders).
 - Each file gets its **own status line**: `⏳ [3/8] contract.docx …` → `✅ [3/8] contract.docx (12345 chars)` or
   `❌ [3/8] … could not be parsed`. **One failure does not affect the others**, and a single
   "loaded N files" line closes the batch.
-- The limit is 10 files and 60 MB per batch; exceeding it asks first (continuing processes only the first 10).
+- The limit is 10 files and 60,000 characters per batch; exceeding it asks first (continuing processes only the first 10).
 - At question time **all files are injected**, each with a `【文件内容 N/M：filename】` label. When the total
   exceeds `files.total_chars` in `config.json` (default 60,000 characters) injection starts with the **most
   recently uploaded** file, and the ones that did not fit are named explicitly before the answer — nothing is
@@ -420,7 +420,7 @@ losing information because it does not fit in the context window.
 5. To keep your conclusions on record: `/save 合同审查意见`.
 
 **Reading the status line**: "context: about X/Y tokens" under `/status` shows current usage and the automatic
-summarization threshold (80% of the window).
+summarization threshold (50% of the window; `summarize.trigger_ratio`).
 
 **Summaries are cached**: uploading the same document a second time reuses the previous chunked summary
 instead of recomputing it, and the cache expires automatically once the file changes. The cache lives in

@@ -103,8 +103,8 @@ writing it 3 times both wastes context for nothing and means a few places get mi
 
 **Length budget and rationale** (guarded by the assertions in section 9 of `tools/test_capability.py`):
 a single mode block ≤ 480 characters (measured 243~335), and mode block + shared core + language instruction
-≤ 700 characters (measured 607~699). The default context is 8192 tokens, and Chinese is at the scale of about
-1 character per token, so 700 characters take roughly 8.5%, leaving the remainder for file summaries and
+≤ 700 characters (measured 607~699). The default context is 32768 tokens, and Chinese is at the scale of about
+1 character per token, so 700 characters take roughly 2.1%, leaving the remainder for file summaries and
 conversation history; models in the 0.8B class are especially sensitive to long prompts, so the rules are shared
 rather than padded out.
 
@@ -137,7 +137,7 @@ The backend prints `ready` only after **session restore + warm-up have finished*
 
 ```json
 {"type":"ready","version":"v0.2.7","studio":"Void Entropia Studio","restored":3,
- "model_ready":true,"model_state":{"ready":true,"model":"Qwen3-0.6B-Q6_K.gguf","models_dir":"...","n_ctx":8192,"guide":""},
+ "model_ready":true,"model_state":{"ready":true,"model":"Qwen3-0.6B-Q6_K.gguf","models_dir":"...","n_ctx":32768,"guide":""},
  "model_missing":{},"history":[{"role":"user","content":"..."}]}
 ```
 
@@ -258,14 +258,14 @@ heartbeats, per-segment timeouts and mid-segment interruption possible at all.
 
 ### 3.1 Context window (task 1.1)
 
-- `context_length` defaults to **8192** (4096 in v0.1.0); `max_context` is the hard ceiling (default 32768).
-- Actual window = `min(requested value, model training window, max_context)`, with a floor of 512;
+- `context_length` defaults to **32768** (4096 in v0.1.0); `max_context` is the hard ceiling (default 32768).
+- Actual window = `min(requested value, model training window, max_context)`, with a floor of 2048 (`MIN_CONTEXT`);
   when `auto_context=false` the training-window term is ignored.
 - The model training window is taken from **GGUF metadata** first (`gguf_meta.py` parses only the header KV
   section, without loading the model), and falls back to keyword matching against the
   `config.model_context_windows` registry when it cannot be obtained.
 - On load/reload it prints a window and KV Cache estimation log:
-  `上下文窗口: 8192 tokens（模型训练窗口 262144 tokens，KV Cache 约 384.0 MB，线程 16，GPU 层 0）`
+  `上下文窗口: 32768 tokens（模型训练窗口 262144 tokens，KV Cache 约 384.0 MB，线程 16，GPU 层 0）`
 - KV Cache estimation formula: `n_ctx × n_layer × n_head_kv × (key_dim + value_dim) × 2 bytes` (fp16).
 
 ### 3.2 Long-document segmented summarisation (task 1.1)
@@ -393,7 +393,7 @@ section 3.2.
   "model_path": "Qwen3-0.6B-Q6_K.gguf",
   "model_repo": "unsloth/Qwen3-0.6B-GGUF",
   "hf_endpoint": "https://hf-mirror.com",   // mainland mirror; leave empty to use the official endpoint
-  "context_length": 8192,                   // requested context window
+  "context_length": 32768,                   // requested context window
   "max_context": 32768,                     // hard ceiling (used for validation)
   "auto_context": true,                     // whether to converge to the model's training window
   "model_context_windows": { "qwen3.5-0.8b": 32768 },  // keyword → training window
@@ -689,7 +689,7 @@ Tool(name="calc", description="计算算术表达式", args_hint='{"expr": "表�
 
 ### 6.3 MCP integration (the stdio-only trade-off)
 
-- `mcp_client.StdioMcpClient`: an in-house ~200-line JSON-RPC 2.0 client speaking one JSON object per line over
+- `mcp_client.StdioMcpClient`: an in-house ~680-line JSON-RPC 2.0 client speaking one JSON object per line over
   stdin/stdout, implementing only `initialize` / `tools/list` / `tools/call` (plus
   `notifications/initialized`). Calls are bounded by a timeout (`mcp.timeout_seconds`, 20 s by default), so a
   wedged external process cannot stall the program.
