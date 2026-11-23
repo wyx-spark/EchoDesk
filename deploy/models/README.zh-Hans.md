@@ -4,7 +4,7 @@
 
 模型文件（如 `Qwen3-0.6B-Q6_K.gguf`）放置于此目录。
 
-程序启动时若检测不到本地模型，会自动从 Hugging Face 下载并加载：
+程序**不会**自行下载。没有本地模型时它照常启动并保持可用，先询问是否要下载；你确认之后才使用下面的端点：
 - 通过 `config.json` 的 `hf_endpoint` 配置镜像，默认 `https://hf-mirror.com`（国内可达）
 - `model_repo` 默认 `unsloth/Qwen3-0.6B-GGUF`
 - 下载前会先在仓库中做模糊匹配，解析出真实存在的文件名（如 `Qwen3-0.6B-Q6_K.gguf`），

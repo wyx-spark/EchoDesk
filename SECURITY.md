@@ -5,8 +5,10 @@
 > disagree, this English version prevails — please open an issue.
 
 EchoDesk is a fully local desktop application: it runs inference, file parsing and browser
-automation on the user's own machine, and it has no server component, no telemetry and no listening
-port. That shapes both the threat model and the way we want vulnerabilities reported.
+automation on the user's own machine, and it has no server component and no telemetry. It listens on no
+port by default; the one exception is the optional local OpenAI-compatible API (`local_api`), which binds
+a port only after the user enables it. That shapes both the threat model and the way we want
+vulnerabilities reported.
 
 **Please do not open a public issue for a security problem.** Report it privately so a fix can be
 prepared before the details are public.
@@ -154,8 +156,11 @@ not implemented**, so that reporters can tell which behaviour is by design.
 
 ### Process and network boundary
 
-- **No listening port**: the frontend and the backend talk over standard input/output (line-delimited
-  JSON), so there is no local HTTP service, no authentication surface and no firewall inbound prompt.
+- **No listening port by default**: the frontend and the backend talk over standard input/output
+  (line-delimited JSON), so there is no local HTTP service, no authentication surface and no firewall
+  inbound prompt. The optional local API (`local_api.enabled`, **off** by default, port 8788) is the only
+  component that can listen; when it is enabled, set `local_api.api_key` and treat that port as an attack
+  surface.
 - **No registry writes, no service**: the portable release is uninstalled by deleting its folder.
   The only registry access is a **read-only** read of `AppsUseLightTheme` under
   `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, used for "follow the system

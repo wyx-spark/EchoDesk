@@ -2,8 +2,8 @@
   EchoDesk 发布说明模板（打标签发布时由 .github/workflows/release.yml 套用为 Release 正文）。
 
   占位符（workflow 会做纯文本替换，全部必须保留）：
-    {{VERSION}}          版本号，例如 0.2.2
-    {{TAG}}              标签名，例如 v0.2.2
+    {{VERSION}}          版本号（由 workflow 替换；本文不写死具体版本）
+    {{TAG}}              标签名（由 workflow 替换，形如 v<主>.<次>.<修>）
     {{DATE}}             生成日期
     {{PACKAGE_LIST}}     本次实际构建出来的下载包清单（含体积）
     {{SHA256_LIST}}      SHA256SUMS.txt 的内容（校验哈希）
@@ -45,11 +45,10 @@ Windows 上核对：`certutil -hashfile <文件名> SHA256`。
 - **浏览器自动化只支持有头模式**：运行时浏览器窗口可见（这是刻意的安全设计），因此不适合无人值守的 Windows 服务会话下运行；定时任务需要程序本身处于运行状态。
 - **旧版二进制格式依赖本机 Office 套件**：`.doc` / `.ppt` 与加密文档通过 WPS/Office COM 读取，未安装 WPS 或 Microsoft Office 时只能处理 `.docx` / `.pptx` 等新格式。
 - **安装程序未做代码签名**：发布包默认不签名（构建脚本的 `-Sign` 需自备证书），Windows SmartScreen 可能首次提示未知发布者。
-- **安装程序界面目前只有英文**：Inno Setup 自带的语言目录里没有简体中文语言文件（官方把它列为需单独下载的第三方翻译）；把 `ChineseSimplified.isl` 放进 Inno Setup 的 `Languages\` 目录即可自动启用中文界面。
-- **模型不随包分发（不含模型的包）**：首次启动会询问是否下载模型（约 508MB），也可以自行把 `.gguf` 放到 `backend\models\`。
+- **安装程序界面内置简体中文**：简体中文语言文件（`ChineseSimplified.isl`）随仓库提供，由 `tools/installer.iss` 的 `[Languages]` 声明装入，任何构建机都能出中文界面。
+- **模型不随包分发（不含模型的包）**：首次启动会询问是否下载模型（约 472 MB），也可以自行把 `.gguf` 放到 `backend\models\`。
 - **自动化对目标站点的兼容性有限**：页面改版、验证码、二次验证需要人工介入；建议先用设置窗口里的「测试选择器」向导验证再批量运行。
 - **界面截图**：仓库自带当前发布版的真实截图（`assets/screenshots/`，README 内嵌的是 `docs/images/` 里的同一批文件），由前端的截图模式生成，含演示数据。
-- **结果目录名在本版改为 `results\`**（原 `批量处理结果\`），程序不会自动迁移旧目录 —— 见下方升级指引第 4 步。
 - **自动化登录态改为独立数据目录**：登录状态存在 `app\backend\browser_profile\`（可在「设置 → 自动化 → 登录态」里改），不再只依赖 `browser_state.json`；升级后首次运行仍会自动导入旧 Cookie，通常不用重新登录。
 
 ## 系统要求 / System requirements
@@ -59,10 +58,10 @@ Windows 上核对：`certutil -hashfile <文件名> SHA256`。
 | 操作系统 | Windows 10 x64（1809 及以上）或 Windows 11 x64；便携版无需安装 |
 | 运行时 | 无需另装 .NET：前端为 `win-x64` 自包含发布（net10.0-windows） |
 | CPU / 内存 | 4 核 CPU、8GB 内存可运行（推荐 16GB）；纯 CPU 推理，无独立显卡也可用 |
-| 磁盘 | 安装/解压后：不含模型约 500MB、含模型约 890MB；另需留出模型下载空间 |
-| 浏览器 | 使用浏览器自动化时需本机安装 Microsoft Edge（Playwright 以 `channel=msedge` 驱动） |
+| 磁盘 | 安装/解压后：不含模型约 369 MB、含模型约 841 MB（v0.2.7 实测解压树 369.0 MB + 模型 472 MiB）；另需留出模型下载空间 |
+| 浏览器 | 浏览器自动化默认驱动本机 Edge（`channel=msedge`），其次 Chrome，两者都不可用时用 Playwright 自带的 Chromium；Firefox 由 Playwright 自有引擎驱动 |
 | Office | 解析 `.doc`/`.ppt` 旧格式或加密文档时需本机安装 WPS 或 Microsoft Office |
-| 网络 | 全本地推理，可完全离线使用；仅「下载模型 / 联网搜索 / 技能市场 / 模型中心」需要联网 |
+| 网络 | 全本地推理，可完全离线使用；仅「下载模型 / 联网搜索 / 技能市场 / 模型中心 / 自动更新检查」需要联网（更新检查只读 Releases 列表，不下载、不替换文件） |
 
 ## 升级指引 / Upgrade instructions
 
@@ -77,14 +76,11 @@ Windows 上核对：`certutil -hashfile <文件名> SHA256`。
    - `app\backend\skills\` 与 `app\backend\skills_registry.json`（已安装技能）
    - 如需保留自动化登录态：`app\backend\browser_profile\`（v0.2.1 起登录态存在这里）
      与 `app\backend\browser_state.json`（旧版与备份文件，含 Cookie，请自行判断是否跨机复制）
-4. **结果目录改名**：v0.2.1 起自动化结果目录由 `批量处理结果\` 改为 `results\`，程序不会自动迁移。
-   请把旧目录**改名**为 `results\`（或把旧目录内容移入新的 `results\`），让历史结果仍在同一个地方。
-   不迁移也不会丢数据，只是新旧结果分处两个目录。
 
 **便携版 / zip 免安装解压版**
 
 1. 把 zip 解压到**新目录**（不要覆盖旧目录，便于回退）；
-2. 按上面第 3、4 步复制用户数据并改名结果目录；
+2. 按上面第 3 步复制用户数据；
 3. 运行一次新目录里的 `install-complete.bat` 创建快捷方式（zip 里没有预置快捷方式 —— 因为
    .lnk 记的是绝对路径，预置的快捷方式在别人机器上必然是死链），或直接双击 `app\EchoDesk.exe`
    （程序首次运行也会询问是否创建快捷方式）；
@@ -118,8 +114,8 @@ Windows 上核对：`certutil -hashfile <文件名> SHA256`。
   EchoDesk release notes template (applied by .github/workflows/release.yml as the Release body when a release is tagged).
 
   Placeholders (the workflow does plain-text substitution; all of them must stay):
-    {{VERSION}}           version number, for example 0.2.2
-    {{TAG}}               tag name, for example v0.2.2
+    {{VERSION}}           version number (substituted by the workflow; never hard-coded here)
+    {{TAG}}               tag name (substituted by the workflow; shaped like v<major>.<minor>.<patch>)
     {{DATE}}              generation date
     {{PACKAGE_LIST}}      the download packages actually built in this run (with sizes)
     {{SHA256_LIST}}      the contents of SHA256SUMS.txt (checksum hashes)
@@ -162,11 +158,10 @@ On Windows, check with `certutil -hashfile <file name> SHA256`.
 - **Browser automation is headed only**: the browser window stays visible while it runs (a deliberate safety design), so it is not suited to unattended Windows service sessions; scheduled tasks need the program itself to be running.
 - **Legacy binary formats need a local Office suite**: `.doc` / `.ppt` files and encrypted documents are read through WPS/Office COM, so without WPS or Microsoft Office installed only newer formats such as `.docx` / `.pptx` can be handled.
 - **The installer is not code-signed**: release packages are unsigned by default (the build script's `-Sign` needs a certificate of your own), so Windows SmartScreen may warn about an unknown publisher the first time.
-- **The installer interface is English only for now**: Inno Setup's own language directory has no Simplified Chinese language file (upstream lists it as a third-party translation to download separately); put `ChineseSimplified.isl` into Inno Setup's `Languages\` directory and the Chinese interface is enabled automatically.
-- **Models are not distributed with the packages that omit them**: the first start asks whether to download the model (about 508MB), and you can also put a `.gguf` file into `backend\models\` yourself.
+- **The installer ships a Simplified Chinese interface**: the language file (`ChineseSimplified.isl`) is kept in the repository and wired up by the `[Languages]` section of `tools/installer.iss`, so any build machine produces it.
+- **Models are not distributed with the packages that omit them**: the first start asks whether to download the model (about 472 MB), and you can also put a `.gguf` file into `backend\models\` yourself.
 - **Automation copes only so far with a target site**: page redesigns, captchas and two-factor verification need a human; verify with the "Test selectors" wizard in the Settings window before running in bulk.
 - **Interface screenshots**: the repository carries real captures of the current release (`assets/screenshots/`; the README embeds the same six files from `docs/images/`), produced by the front end's screenshot mode and containing demo data.
-- **The results folder is renamed in this version to `results\`** (it was `批量处理结果\`), and the program does not migrate the old folder automatically — see step 4 of the upgrade instructions below.
 - **Automation sign-in state moved to a data directory of its own**: the sign-in state is stored in `app\backend\browser_profile\` (change it under "Settings → Automation → Sign-in state") instead of relying on `browser_state.json` alone; after upgrading, the first run still imports the old cookies automatically, so you normally do not sign in again.
 
 ## System requirements
@@ -176,10 +171,10 @@ On Windows, check with `certutil -hashfile <file name> SHA256`.
 | Operating system | Windows 10 x64 (1809 or later) or Windows 11 x64; the portable build needs no installation |
 | Runtime | No separate .NET install: the front end is published self-contained for `win-x64` (net10.0-windows) |
 | CPU / memory | A 4-core CPU and 8GB of memory will run it (16GB recommended); inference is CPU-only, so no discrete graphics card is needed |
-| Disk | After installing or unzipping: about 500MB without models, about 890MB with models; leave room for the model download as well |
-| Browser | Browser automation needs Microsoft Edge installed on the machine (Playwright drives it with `channel=msedge`) |
+| Disk | After installing or unzipping: about 369 MB without models, about 841 MB with the default model (measured for v0.2.7: 369.0 MB tree + 472 MiB model); leave room for the model download as well |
+| Browser | Browser automation drives Edge by default (`channel=msedge`), then Chrome, and falls back to the Chromium bundled with Playwright; Firefox is driven by Playwright's own engine |
 | Office | Parsing the legacy `.doc`/`.ppt` formats or encrypted documents needs WPS or Microsoft Office installed on the machine |
-| Network | All inference is local and works fully offline; only "download models / web search / skill marketplace / model hub" need a network connection |
+| Network | All inference is local and works fully offline; only "download models / web search / skill marketplace / model hub / automatic update check" need a network connection (the update check only reads the Releases list and replaces nothing) |
 
 ## Upgrade instructions
 
@@ -198,15 +193,11 @@ On Windows, check with `certutil -hashfile <file name> SHA256`.
    - To keep the automation sign-in state: `app\backend\browser_profile\` (where the sign-in state lives
      from v0.2.1 on) and `app\backend\browser_state.json` (the older file and the backup; both contain
      cookies, so decide for yourself whether copying them to another machine is appropriate)
-4. **The results folder is renamed**: from v0.2.1 the automation results folder changed from `批量处理结果\`
-   to `results\`, and the program does not migrate it automatically. Rename the old folder to `results\`
-   (or move its contents into the new `results\`), so that past results stay in the same place.
-   Not migrating loses no data; old and new results simply sit in two different folders.
 
 **Portable / no-install zip**
 
 1. Unzip into a **new directory** (do not overwrite the old one, so you can roll back);
-2. Follow steps 3 and 4 above to copy your user data and rename the results folder;
+2. Follow step 3 above to copy your user data over;
 3. Run `install-complete.bat` in the new directory once to create shortcuts (the zip contains no
    ready-made shortcuts — a `.lnk` records an absolute path, so a shipped shortcut would always be a
    dead link on someone else's machine), or double-click `app\EchoDesk.exe` directly (the program

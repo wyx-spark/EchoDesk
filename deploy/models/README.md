@@ -4,8 +4,8 @@
 
 Model files (such as `Qwen3-0.6B-Q6_K.gguf`) go in this directory.
 
-If the program finds no local model at start-up, it downloads one from Hugging Face and loads it
-automatically:
+The program does **not** download anything by itself. With no model present it still starts, stays
+usable and asks whether you want to download one; only after you agree does it use the endpoints below:
 - The mirror is configured through `hf_endpoint` in `config.json`; the default is
   `https://hf-mirror.com` (reachable from mainland China)
 - `model_repo` defaults to `unsloth/Qwen3-0.6B-GGUF`
