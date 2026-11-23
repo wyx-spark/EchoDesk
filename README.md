@@ -130,12 +130,16 @@ The two editions share one backend protocol and one language-pack tree; only the
    > binary yourself. Current status and the intended signing scope are documented in
    > [CODE_SIGNING.md](CODE_SIGNING.md).
 
-3. Start EchoDesk: use the **Start Menu shortcut** (installer), or double-click
-   **`Start-EchoDesk-v0.2.7.lnk`** inside the folder (portable zip — run `install-complete.bat`
-   once if that shortcut is missing). Either shortcut points at *your* copy of the program.
-   Whichever route you took, that shortcut is the only entry point you need;
-   `app\EchoDesk.exe` is the UI and `app\backend\EchoDeskBackend.exe` is started automatically —
-   never launch the backend by hand.
+3. Start EchoDesk — each package has exactly one entry point:
+   - **Portable zip (recommended)** — double-click **`启动 EchoDesk.bat`** in the root of the
+     unzipped folder; it is equivalent to running `app\EchoDesk.exe` directly. The zip ships **no**
+     shortcut and needs none; create your own if you want a desktop icon.
+   - **Linux / macOS bundle** — `chmod +x start.sh app/EchoDesk`, then run `./start.sh`.
+   - **Windows installer** — the wizard creates the Start Menu shortcut (and the desktop shortcut if
+     you tick that box); start the program from that shortcut.
+
+   Whichever route you took, `app\EchoDesk.exe` is the UI and the backend it uses is started
+   automatically — never launch the backend by hand.
 4. On first launch, answer the model question described below, then start typing.
    Useful first commands: `/help`, `/file <path>`, `/model list`, `/status`.
 
@@ -208,9 +212,9 @@ EchoDesk does **not** ship model weights and never downloads anything silently:
 5. Downloading uses the configured Hugging Face endpoint — `https://hf-mirror.com` by default,
    which you can point at the official `https://huggingface.co` or an internal mirror by editing
    `hf_endpoint` / `model_repo` / `model_path` in `backend\config.json`.
-6. If no launcher shortcut exists in the folder, EchoDesk asks once whether to create one, and
-   then shows a short first-run guide. Per-machine settings can be kept out of version control by
-   putting them in `app\backend\config.user.json`, which takes precedence over `config.json`.
+6. On first launch EchoDesk shows a short first-run guide. Per-machine settings can be kept out of
+   version control by putting them in `app\backend\config.user.json`, which takes precedence over
+   `config.json`.
 
 ### Offline model bundle (`models-qwen-v1`)
 
@@ -237,16 +241,16 @@ or move lives in the outer folder, while the program itself sits in `app\`.
 
 | Path | Contents |
 | --- | --- |
-| `Start-EchoDesk-v0.2.7.lnk` | The only entry point (targets `app\EchoDesk.exe`, working directory = this folder). |
+| `启动 EchoDesk.bat` | The launcher at the root of the unzipped folder; it runs `app\EchoDesk.exe`. The zip ships no `.lnk` shortcut — create your own if you want one. |
 | `results\` | Automation output (`date\task\` folders with plain-text reports and downloaded files). |
 | `ui_state.json`, `snippets.json` | Window state, font size, theme, language and reusable snippets. |
 | `lang\` | Backend language packs (system messages, errors, command help). Drop in a new `<locale>.json` to add a language. |
 | `examples\skills\` | Example plugin sources (Hello World and an OFD reader). |
 | `docs\` | Documentation shipped with the release (`docs\zh-Hans\`, `docs\en\`), plus privacy policy, EULA and third-party licences. |
 | `LICENSE`, `NOTICE`, `SECURITY.md` | Licence, attribution and security policy. |
-| `app\EchoDesk.exe` | WPF frontend; its .NET dependencies are DLLs next to it. |
+| `app\EchoDesk.exe` | Avalonia frontend (.NET); its dependencies are DLLs next to it. |
 | `app\lang\ui\` | UI language packs (labels, buttons, dialogs). |
-| `app\backend\EchoDeskBackend.exe` | Packaged Python backend (PyInstaller onedir), dependencies in `app\backend\_internal\`. |
+| `app\backend\python\python.exe` | Bundled Python interpreter that runs the backend; the UI starts it automatically. |
 | `app\backend\config.json` | All configuration: model, context window, summarization, automation, marketplace, model hub. |
 | `app\backend\models\` | Local `.gguf` models. |
 | `app\backend\session.json` | Conversation history (auto-saved and restored). |

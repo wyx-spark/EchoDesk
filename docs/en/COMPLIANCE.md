@@ -205,12 +205,13 @@ Configuration example (`config.user.json`, used as the override layer that the p
 | System services | **Installs none** |
 | Listening ports | **None.** Frontend and backend talk over standard input/output (line-delimited JSON over stdio), so there is no inbound firewall prompt |
 | Scheduled tasks | **Creates none.** Automation's "run at these times" is scheduled by the program while it is running; closing the program stops it |
-| Start at sign-in | The `automation.start_with_windows` setting is **not implemented at present** (changing it has no effect). If you need start-at-sign-in, copy the outer shortcut into the Startup folder (`Win+R` → `shell:startup`); that is a per-user Windows startup entry and EchoDesk itself writes no registry keys |
+| Start at sign-in | The `automation.start_with_windows` setting is **not implemented at present** (changing it has no effect). If you need start-at-sign-in, create a shortcut to the release folder's launcher and put it in the Startup folder (`Win+R` → `shell:startup`); that is a per-user Windows startup entry and EchoDesk itself writes no registry keys |
 | Self-update | **Downloads nothing and replaces no files**; it checks and notifies only |
 
 Two rows above are Windows-specific in their **mechanism** only; the equivalents on the other platforms are:
 
-- **Start at sign-in**: Windows — copy the outer shortcut into the Startup folder (`Win+R` → `shell:startup`);
+- **Start at sign-in**: Windows — create a shortcut to the outer-level launcher `启动 EchoDesk.bat` and copy it
+  into the Startup folder (`Win+R` → `shell:startup`);
   macOS — System Settings → General → Login Items; Linux — an XDG autostart entry
   (`~/.config/autostart/echodesk.desktop`, based on the desktop entry the project generates into
   `deploy/linux/echodesk.desktop`, with `Exec=` pointing at your unpacked `start.sh`).
@@ -224,16 +225,15 @@ The portable release uses this three-level layout by default:
 
 ```text
 EchoDesk-v0.2.7\
-├── install-complete.bat         ← post-extraction step (creates the shortcut below)
-├── Start-EchoDesk-v0.2.7.lnk          ← launcher shortcut, created on YOUR machine by the above
-│                                  (working directory = user data directory)
+├── 启动 EchoDesk.bat            ← the only launcher (runs app\EchoDesk.exe)
+│                                  the bundle ships no .lnk; create your own if you want one
 ├── ui_state.json                ← UI state
 ├── snippets.json                ← snippets
 ├── results\                 ← automation output (batch results; user data directory)
 └── app\                         ← the program itself
     ├── EchoDesk.exe
     └── backend\
-        ├── EchoDeskBackend.exe
+        ├── python\python.exe    ← bundled interpreter that runs the backend (started by the UI)
         ├── config.json          ← main configuration (the program writes it back)
         ├── session.json         ← chat history
         ├── models\              ← local models
@@ -332,26 +332,23 @@ everywhere:
 > change). If it truly has to be read-only, run the program with `config.json` on a writable path, or accept that
 > setting changes will not be persisted.
 
-### 5.5 Rebuilding a broken portable shortcut
+### 5.5 Creating your own launcher shortcut (portable Windows build)
 
-**Windows only.** This section is about the portable Windows layout: the `.lnk` shortcut and
-`install-complete.bat` exist there and nowhere else. On Linux and macOS the bundle has no shortcut to repair —
-start it with `./start.sh`. For a desktop icon, base one on `deploy/linux/echodesk.desktop` (regenerate with
+**Windows only.** The portable Windows bundle ships exactly one launcher at its root, `启动 EchoDesk.bat`,
+and **no** `.lnk` shortcut: a shortcut records an absolute path, so one created on the maintainer's machine
+would be a dead link on yours. Linux and macOS bundles have no shortcut either — start them with
+`./start.sh`. If you want a Start Menu, desktop or Startup entry, create it yourself:
+
+1. Target: `<release folder>\app\EchoDesk.exe` — the root `启动 EchoDesk.bat` is equivalent.
+2. **"Start in" = the user data directory (the outer level)**: this is what keeps batch results at the
+   outer level.
+3. Icon: anything you like; the package ships no dedicated icon file.
+4. Moving or renaming the folder breaks the shortcut you made (it stores the old absolute path) — edit its
+   target and "Start in" to match, or simply create it again.
+
+For a Linux desktop icon, base one on `deploy/linux/echodesk.desktop` (regenerate with
 `python tools/gen_platform_icons.py`) and fix `Exec=` to the unpacked `start.sh`, or drag `app/EchoDesk` to the
 Dock on macOS.
-
-1. Launch the program by double-clicking `app\EchoDesk.exe` directly (this always works and does not depend on the
-   shortcut).
-2. At startup the program checks the outer shortcut:
-   - shortcut **missing** → it asks "create `Start-EchoDesk-v<version>.lnk`?"; answer yes to create it;
-   - shortcut **broken** (target lost or working directory wrong after the folder was moved or renamed) → it asks
-     whether to recreate it; answer yes to rebuild.
-   The rebuilt shortcut has target = the current `EchoDesk.exe` and **working directory = the user data directory**
-   (this is what keeps batch results at the outer level).
-3. If you previously answered "no" (skip creation), the program stops asking: delete `ui_state.json` in the user data
-   directory to reset that flag (the file also stores UI state, so deleting it only resets UI preferences).
-4. You can also create the shortcut by hand: target `<release folder>\app\EchoDesk.exe`,
-   **"Start in" = the user data directory (the outer level)**, icon optionally `app\EchoDesk.ico`.
 
 ## 6. Auditing and retained evidence
 

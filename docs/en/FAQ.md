@@ -37,7 +37,7 @@ installation/startup in full is in [`USER_GUIDE.md`](USER_GUIDE.md).
 
 | What I want to do | How to do it |
 | --- | --- |
-| Start the program | **Windows**: the Start Menu (or desktop) shortcut created by the installer; for the portable zip, double-click "Start-EchoDesk-v0.2.7.lnk" inside the program folder (run `install-complete.bat` once if it is missing). **macOS / Linux**: the bundle is a plain archive — `cd` into the unpacked folder and run `./start.sh` (`chmod +x start.sh app/EchoDesk` first if the executable bit was lost) |
+| Start the program | **Windows**: the Start Menu (or desktop) shortcut created by the installer; for the portable zip, double-click "启动 EchoDesk.bat" at the root of the unzipped folder (equivalent to running `app\EchoDesk.exe` directly — the zip ships no shortcut and needs none). **macOS / Linux**: the bundle is a plain archive — `cd` into the unpacked folder and run `./start.sh` (`chmod +x start.sh app/EchoDesk` first if the executable bit was lost) |
 | See every command | Type `/help` in the input box |
 | Have the AI read a document | Drag the file into the window, or use `/file <path>` — e.g. `/file "C:\My Documents\contract 2026.docx"` (Windows), `/file "/Users/<user>/Documents/contract-2026.docx"` (macOS), `/file "/home/<user>/docs/contract-2026.docx"` (Linux) |
 | Have the AI do arithmetic or look inside uploaded files | switch to agent mode: `/mode agent`, `/mode 3` or `/agent on` — the model picks the tool (see "3. Modes, agent and MCP") |
@@ -173,7 +173,9 @@ the **generation length limit** ran out — thinking used up the token budget be
 - small models (0.5B–1.5B) are not reliable reasoners anyway; a larger quantized model usually pays off more.
 
 ### How do I make EchoDesk start with Windows
-Copy "Start-EchoDesk-v0.2.7.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
+Create a shortcut pointing at "启动 EchoDesk.bat" (or at `app\EchoDesk.exe`) and put it in the system
+Startup folder (`Win+R` → `shell:startup`). The zip ships no ready-made shortcut, so you create this one
+yourself.
 The `automation.start_with_windows` setting is **not implemented yet**: the program does not read it, so
 setting it to `true` will not start EchoDesk at sign-in — use the shortcut above instead (scheduled automation
 requires the program to be running).

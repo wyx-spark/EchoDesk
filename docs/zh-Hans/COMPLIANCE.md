@@ -199,7 +199,8 @@ export NO_PROXY="localhost,127.0.0.1,.corp.example"
 
 上表中有两行只在**机制**上是 Windows 专属，其他平台的等价做法是：
 
-- **开机自启**：Windows 把外层快捷方式放进"启动"文件夹（`Win+R` → `shell:startup`）；macOS 用
+- **开机自启**：Windows 自己给外层启动脚本「启动 EchoDesk.bat」建一个快捷方式，再把它放进"启动"
+  文件夹（`Win+R` → `shell:startup`）；macOS 用
   "系统设置 → 通用 → 登录项"；Linux 用 XDG autostart 条目
   （`~/.config/autostart/echodesk.desktop`，可基于项目生成到 `deploy/linux/echodesk.desktop`
   的桌面条目，把 `Exec=` 指到你解压出来的 `start.sh`）。
@@ -213,16 +214,15 @@ export NO_PROXY="localhost,127.0.0.1,.corp.example"
 
 ```text
 EchoDesk-v0.2.7\
-├── install-complete.bat         ← 解压后的收尾脚本（负责创建下面这个快捷方式）
-├── Start-EchoDesk-v0.2.7.lnk          ← 启动快捷方式，由上面那个脚本在**你的机器上**创建
-│                                  （工作目录 = 用户数据目录）
+├── 启动 EchoDesk.bat            ← 唯一启动脚本（运行 app\EchoDesk.exe）
+│                                  包内不预置 .lnk 快捷方式，需要的话自己建一个
 ├── ui_state.json                ← 界面状态
 ├── snippets.json                ← 常用语
 ├── results\                 ← 自动化产物（用户数据目录）
 └── app\                         ← 程序本体
     ├── EchoDesk.exe
     └── backend\
-        ├── EchoDeskBackend.exe
+        ├── python\python.exe    ← 随包解释器，负责运行后端（由界面自动拉起）
         ├── config.json          ← 主配置（会被程序写回）
         ├── session.json         ← 对话历史
         ├── models\              ← 本地模型
@@ -311,23 +311,21 @@ export ECHODESK_DATA="$HOME/CorpData/EchoDesk"   # 写进 ~/.profile 或 ~/.zshr
 > `config.json` 本身仍需可写（程序在切换搜索开关、修改设置时会写回）；
 > 若确实必须只读，请把 `config.json` 放到可写位置运行，或接受"设置变更无法保存"的结果。
 
-### 5.5 便携版快捷方式失效后如何重建
+### 5.5 自己创建启动快捷方式（Windows 便携版）
 
-**仅限 Windows。** 本节说的是 Windows 便携版的布局：`.lnk` 快捷方式与 `install-complete.bat`
-只存在于那里。Linux 与 macOS 的发布包没有需要修复的快捷方式——直接用 `./start.sh` 启动即可。
-想要桌面图标就用 `deploy/linux/echodesk.desktop`（可用
+**仅限 Windows。** Windows 便携包的根目录只有一个启动脚本 `启动 EchoDesk.bat`，**没有** `.lnk` 快捷方式：
+快捷方式记的是绝对路径，在别人机器上生成的那种复制过来必然是死链。Linux 与 macOS 的发布包同样没有
+快捷方式——直接用 `./start.sh` 启动。想要开始菜单、桌面或"启动"文件夹里的入口，请自己创建一个：
+
+1. 目标：`<发布目录>\app\EchoDesk.exe`——根目录的 `启动 EchoDesk.bat` 与它等价。
+2. **"起始位置" = 用户数据目录（外层）**：这是"results"落在外层的关键。
+3. 图标自选；包内没有随附专用图标文件。
+4. 文件夹移动或改名后，你建的这个快捷方式会失效（它记的是旧绝对路径）——按新路径改目标与
+   "起始位置"，或直接重新建一个。
+
+想要 Linux 桌面图标，可用 `deploy/linux/echodesk.desktop`（可用
 `python tools/gen_platform_icons.py` 重新生成）为模板，把 `Exec=` 改成解压目录里的 `start.sh`；
 macOS 上把 `app/EchoDesk` 拖进程序坞即可。
-
-1. 直接双击 `app\EchoDesk.exe` 启动程序（这一步永远可用，不依赖快捷方式）。
-2. 程序在启动时会检测外层快捷方式：
-   - 快捷方式**不存在** → 弹出"是否创建「Start-EchoDesk-v<版本>.lnk」"，点"是"即创建；
-   - 快捷方式**已失效**（移动/改名文件夹后目标丢失或工作目录不对）→ 弹出"是否重新创建"，点"是"即重建。
-   重建后的快捷方式：目标 = 当前 `EchoDesk.exe`，**工作目录 = 用户数据目录**（这是"results"落在外层的关键）。
-3. 如果之前点过"否"（跳过创建），程序不再主动询问：删除用户数据目录下的 `ui_state.json`
-   即可重置该标记（该文件同时保存界面状态，删除只影响界面偏好）。
-4. 也可以手工新建快捷方式：目标填 `<发布目录>\app\EchoDesk.exe`，
-   **"起始位置"填用户数据目录（外层）**，图标可指向 `app\EchoDesk.ico`。
 
 ## 六、审计与留痕
 

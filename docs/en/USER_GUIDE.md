@@ -24,20 +24,18 @@ data and `results\` stay in the install folder.
 ### Portable version (plain zip)
 1. Unzip the whole `EchoDesk-v0.2.7` folder anywhere you like (desktop, D: drive or USB stick all work) —
    nothing is written outside it, and deleting the folder uninstalls it;
-2. Double-click **"Start-EchoDesk-v0.2.7.lnk"** inside that folder — this is the only entry point, so you never have
-   to work out the difference between `app\EchoDesk.exe` and `app\backend\EchoDeskBackend.exe`
-   (the latter is launched automatically by the UI; never run it on its own).
-   The zip contains no shortcut (a shortcut stores an absolute path, so one created on the maintainer's
-   machine would be dead on yours) — run `install-complete.bat` once, or launch `app\EchoDesk.exe` and
-   accept the offer to create a shortcut;
-3. The first launch handles three things in turn:
+2. Double-click **"启动 EchoDesk.bat"** at the root of the unzipped folder — this is the portable
+   build's only entry point, and it is equivalent to running `app\EchoDesk.exe` directly. The zip
+   ships **no** shortcut and needs none; if you want a desktop or Start Menu item, create one yourself
+   pointing at `启动 EchoDesk.bat` (or `app\EchoDesk.exe`). `app\backend\python\python.exe` is the
+   bundled interpreter that runs the backend; the UI starts it automatically, so never run it on its own;
+3. The first launch handles two things in turn:
    - If there is no model in `app\backend\models\` → it asks whether to download one (about 472 MB, internet required);
-   - If the folder has no shortcut → it asks whether to create one;
    - It shows the onboarding guide once.
 
-**Two layers**: the outer folder (`EchoDesk-v0.2.7\`) holds only the shortcut, your user data and the docs,
-while **the program itself lives entirely in `app\`** — no exe/dll ever shows up in the outer folder, and
-uninstalling simply means deleting the whole folder.
+**Two layers**: the outer folder (`EchoDesk-v0.2.7\`) holds only the launcher script, your user data and
+the docs, while **the program itself lives entirely in `app\`** — no exe/dll ever shows up in the outer
+folder, and uninstalling simply means deleting the whole folder.
 
 ### Directory layout and the locations you need to know
 
@@ -58,7 +56,6 @@ from there.
 | `lang\` + `app\lang\ui\` | Backend / UI language packs (add your own languages here) | Better not (deleting them falls back to the built-in text) |
 | `ui_state.json` | Window position/size, font size, theme | Yes (resets the interface state) |
 | `snippets.json` | Canned phrases | Yes |
-| `USAGE.txt` | Structural notes for users | Yes |
 
 **Backup**: if you want to keep your conversation history and settings, just copy the three files
 `app\backend\session.json`, `app\backend\config.json` and `snippets.json`.
@@ -470,7 +467,8 @@ above" (the backend enforces this). The agreement version and the time you accep
 ### 4.4 Scheduling
 Tick "Enable schedule" and enter the times of day it should run (for example `09:00, 18:30`).
 Scheduled tasks are fired by a backend thread while the program is running. If you want them to run at
-startup, copy "Start-EchoDesk-v0.2.7.lnk" into the system Startup folder (`Win+R` → `shell:startup`).
+startup, create a shortcut pointing at the release folder's `启动 EchoDesk.bat` (or at `app\EchoDesk.exe`)
+and put it in the system Startup folder (`Win+R` → `shell:startup`).
 
 ### 4.5 Login state
 The first time, you need to log in manually once in the browser; the program stores the login state in

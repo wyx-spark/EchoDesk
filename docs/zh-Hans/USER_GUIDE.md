@@ -21,17 +21,15 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 ### 便携版（zip 免安装）
 1. 把整个 `EchoDesk-v0.2.7` 文件夹解压到任意位置（桌面、D 盘、U 盘均可）——
    不会往该文件夹以外写任何东西，删除文件夹即卸载；
-2. 双击文件夹内的**「Start-EchoDesk-v0.2.7.lnk」**——这是唯一入口，
-   不需要分辨 `app\EchoDesk.exe` 与 `app\backend\EchoDeskBackend.exe` 的区别
-   （后者由界面自动拉起，请勿单独运行）。
-   zip 里没有预置快捷方式（快捷方式记的是绝对路径，在别人机器上生成的必然是死链）——请先运行一次
-   `install-complete.bat`，或直接双击 `app\EchoDesk.exe` 并接受"创建快捷方式"的询问；
-3. 首次启动会依次处理三件事：
+2. 双击解压目录根部的**「启动 EchoDesk.bat」**——这是便携版的唯一入口，等价于直接运行
+   `app\EchoDesk.exe`。包内**没有**也不需要预置快捷方式；想要桌面图标或开始菜单项，可以自己给
+   `启动 EchoDesk.bat`（或 `app\EchoDesk.exe`）建一个。`app\backend\python\python.exe` 是随包的
+   解释器，负责运行后端，由界面自动拉起，**请勿单独运行**；
+3. 首次启动会依次处理两件事：
    - 若 `app\backend\models\` 里没有模型 → 询问是否下载（约 472MB，需联网）；
-   - 若文件夹内没有快捷方式 → 询问是否创建；
    - 显示一次上手引导。
 
-**两层结构**：外层（`EchoDesk-v0.2.7\`）只放快捷方式、用户数据与文档，**程序本体全部在 `app\` 里**
+**两层结构**：外层（`EchoDesk-v0.2.7\`）只放启动脚本、用户数据与文档，**程序本体全部在 `app\` 里**
 ——外层不出现任何 exe/dll，要卸载时删掉整个文件夹即可。
 
 ### 目录结构与你需要知道的位置
@@ -52,7 +50,6 @@ English version: [`docs/en/USER_GUIDE.md`](../en/USER_GUIDE.md)。
 | `lang\` + `app\lang\ui\` | 后端 / 界面语言包（可自行新增语言） | 不建议删（删掉会退回内置文案） |
 | `ui_state.json` | 窗口位置/大小、字号、主题 | 可删（重置界面状态） |
 | `snippets.json` | 常用语 | 可删 |
-| `USAGE.txt` | 面向用户的结构说明 | 可删 |
 
 **备份**：需要保留对话记录与设置时，复制 `app\backend\session.json`、
 `app\backend\config.json`、`snippets.json` 三个文件即可。
@@ -410,7 +407,8 @@ Linux 与 macOS 的发布物是**免安装的压缩包**（自包含：连着界
 ### 4.4 定时
 勾选「启用定时」并填写每天的执行时刻（如 `09:00, 18:30`）。
 定时任务由后端线程在程序运行期间触发；若希望开机自动执行，
-请把「Start-EchoDesk-v0.2.7.lnk」复制到系统「启动」文件夹（`Win+R` → `shell:startup`）。
+请给解压目录根部的「启动 EchoDesk.bat」（或 `app\EchoDesk.exe`）建一个快捷方式，
+放进系统「启动」文件夹（`Win+R` → `shell:startup`）。包内没有预置快捷方式。
 
 ### 4.5 登录态
 第一次需要你在浏览器里手动登录一次，程序会把登录态存到

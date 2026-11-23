@@ -33,7 +33,7 @@ macOS 与 Linux 上程序本体就是解压出来的压缩包，用 `./start.sh`
 
 | 我想做的事 | 怎么做 |
 | --- | --- |
-| 启动程序 | **Windows**：安装程序装的用开始菜单（或桌面）快捷方式；zip 免安装版双击程序文件夹内的「Start-EchoDesk-v0.2.7.lnk」（没有就先运行一次 `install-complete.bat`）。**macOS / Linux**：发布物是解压即可用的压缩包，`cd` 进解压出来的目录后执行 `./start.sh`（可执行位丢了就先 `chmod +x start.sh app/EchoDesk`） |
+| 启动程序 | **Windows**：安装包用开始菜单（或桌面）快捷方式；zip 免安装版双击解压目录根部的「启动 EchoDesk.bat」（等价于直接运行 `app\EchoDesk.exe`，包内没有也不需要预置快捷方式）。**macOS / Linux**：发布物是解压即可用的压缩包，`cd` 进解压出来的目录后执行 `./start.sh`（可执行位丢了就先 `chmod +x start.sh app/EchoDesk`） |
 | 查看全部指令 | 在输入框输入 `/help` |
 | 让 AI 读一份文档 | 把文件拖进窗口，或用 `/file <路径>`，例如 `/file "C:\My Documents\采购合同 2026.docx"`（Windows）、`/file "/Users/<用户名>/Documents/采购合同-2026.docx"`（macOS）、`/file "/home/<用户名>/docs/采购合同-2026.docx"`（Linux） |
 | 让 AI 自己算数、查已上传的文件 | 切到智能体模式：`/mode agent`、`/mode 3` 或 `/agent on`，模型会自己决定调哪个工具（见「三、对话模式、Agent 与 MCP」） |
@@ -155,7 +155,8 @@ v0.2.1 起这种情况下程序**照常运行**——不退出、不阻塞、也
 - 小模型（0.5B~1.5B）的思考质量本身不稳定，换个更大的量化版本通常更划算。
 
 ### 想让 EchoDesk 开机自动启动
-把「Start-EchoDesk-v0.2.7.lnk」复制到系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）即可。
+给解压目录根部的「启动 EchoDesk.bat」（或 `app\EchoDesk.exe`）建一个快捷方式，把它复制到系统
+「启动」文件夹（`Win+R` → 输入 `shell:startup`）即可。包内没有预置快捷方式，这个快捷方式需要你自己创建。
 配置项 `automation.start_with_windows` **尚未实现**：程序目前不会读取它，写成 `true` 也不会开机自启，
 请用上面的快捷方式办法（定时自动化要求程序在运行）。
 

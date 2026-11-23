@@ -81,10 +81,10 @@ Windows 上核对：`certutil -hashfile <文件名> SHA256`。
 
 1. 把 zip 解压到**新目录**（不要覆盖旧目录，便于回退）；
 2. 按上面第 3 步复制用户数据；
-3. 运行一次新目录里的 `install-complete.bat` 创建快捷方式（zip 里没有预置快捷方式 —— 因为
-   .lnk 记的是绝对路径，预置的快捷方式在别人机器上必然是死链），或直接双击 `app\EchoDesk.exe`
-   （程序首次运行也会询问是否创建快捷方式）；
-4. 双击 `Start-EchoDesk-v{{VERSION}}.lnk` 启动；确认无误后再删除旧目录。
+3. 双击新目录根部的 `启动 EchoDesk.bat` 启动（等价于直接运行 `app\EchoDesk.exe`）。zip 里
+   **没有**也不需要预置快捷方式（.lnk 记的是绝对路径，预置的在别人机器上必然是死链）；
+   想要快捷方式请自己建一个，指向 `启动 EchoDesk.bat` 或 `app\EchoDesk.exe`；
+4. 确认无误后再删除旧目录。
 
 **回退**：直接改回旧目录启动，或将上面的用户数据复制回旧版本（配置项向后兼容，但新版本新增的字段在旧版本中会被忽略）。
 
@@ -198,12 +198,11 @@ On Windows, check with `certutil -hashfile <file name> SHA256`.
 
 1. Unzip into a **new directory** (do not overwrite the old one, so you can roll back);
 2. Follow step 3 above to copy your user data over;
-3. Run `install-complete.bat` in the new directory once to create shortcuts (the zip contains no
-   ready-made shortcuts — a `.lnk` records an absolute path, so a shipped shortcut would always be a
-   dead link on someone else's machine), or double-click `app\EchoDesk.exe` directly (the program
-   also asks whether to create shortcuts on its first run);
-4. Double-click `Start-EchoDesk-v{{VERSION}}.lnk` to start it; delete the old directory once you are
-   satisfied.
+3. Double-click `启动 EchoDesk.bat` at the root of the new directory to start it (equivalent to running
+   `app\EchoDesk.exe` directly). The zip contains **no** ready-made shortcut and needs none (a `.lnk`
+   records an absolute path, so a shipped one would be a dead link on someone else's machine); if you want
+   a shortcut, create one yourself pointing at `启动 EchoDesk.bat` or `app\EchoDesk.exe`;
+4. Delete the old directory once you are satisfied.
 
 **Rolling back**: start from the old directory again, or copy the user data above back to the old version (configuration keys are backward compatible, but fields added by the new version are ignored by the old one).
 

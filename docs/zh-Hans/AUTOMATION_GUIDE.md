@@ -131,7 +131,7 @@ English version: [`docs/en/AUTOMATION_GUIDE.md`](../en/AUTOMATION_GUIDE.md)（�
 | `browser` | 可选 | 用哪个浏览器打开页面。取值 `auto`（默认，依次尝试 Edge → Chrome → 内置 Chromium → Firefox，用第一个能起来的）、`edge`、`chrome`、`chromium`（用程序自带的那个，无需另装）、`firefox` | `auto` |
 | `browser_channel` | 可选 | **旧字段**，仅为兼容既有配置保留。当 `browser` 为 `auto` 且这里被显式设置过时，它指向的浏览器会被**提到候选最前面** | `msedge` |
 | `audit_log_file` | 可选 | 审计日志文件：每个任务一行 JSON 记录 | `automation_log.jsonl` |
-| `start_with_windows` | **尚未实现** | 该字段目前不会被程序读取，写 `true` 也不会开机自启；开机自启请把 `Start-EchoDesk-v0.2.7.lnk` 复制到系统「启动」文件夹（`Win+R` → `shell:startup`）。这条路径是 Windows 专属的；macOS 与 Linux 本版没有内置开机自启（自己用 `./start.sh` 启动，或接进桌面环境自带的「登录项」/自启动机制） | `false` |
+| `start_with_windows` | **尚未实现** | 该字段目前不会被程序读取，写 `true` 也不会开机自启；开机自启请自己给发布目录根部的「启动 EchoDesk.bat」建一个快捷方式，放进系统「启动」文件夹（`Win+R` → `shell:startup`）。这条路径是 Windows 专属的；macOS 与 Linux 本版没有内置开机自启（自己用 `./start.sh` 启动，或接进桌面环境自带的「登录项」/自启动机制） | `false` |
 | `safety_version` / `safety_accepted_at` | 只读 | 安全协议版本与你同意的时间，由程序自动记录，用于审计 | `1.0` / 空 |
 
 ### 支持哪些浏览器（以及哪些做不到）
@@ -259,7 +259,8 @@ Linux 是桌面环境自带的文件管理器）；点「浏览…」可以挑�
 
 - **通俗说明**：打开「启用定时」后，填每天什么时候自动跑一轮，多个时间用逗号隔开，例如 `09:00, 18:30`。
 - **注意**：定时任务由程序后台线程调度，**要求 EchoDesk 保持运行**；时间格式非法（如 `25:00`）会被自动剔除。
-- 想开机自动启动，只能把「Start-EchoDesk-v0.2.7.lnk」放进系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）。
+- 想开机自动启动，只能自己给发布目录根部的「启动 EchoDesk.bat」（或 `app\EchoDesk.exe`）建一个快捷方式，
+  再把它放进系统「启动」文件夹（`Win+R` → 输入 `shell:startup`）。包内没有预置快捷方式。
   **配置项 `start_with_windows` 尚未实现**：程序不会读取它，改成 `true` 也没有效果。
 - 这条快捷方式路径**从名字到机制都是 Windows 专属**（`.lnk` 文件 + `shell:startup` 文件夹）。
   macOS 与 Linux 本版没有内置开机自启：自己用 `./start.sh` 启动，或把启动命令接进桌面环境自己的机制
@@ -476,7 +477,7 @@ EchoDesk results
 | 解析 `.doc` / `.ppt` 报错或提示需要 WPS | 旧版二进制格式（及加密文档）通过 COM 读取，本机没装 WPS/Office | 安装 WPS 或 Microsoft Office；或先把文件另存为 `.docx` / `.pptx` 再上传。COM 这条路径和这条建议都是 **Windows 专属**；非 Windows 上该能力会作为"平台不提供"报出（而不是"依赖缺失"）——替代做法见本文开头的提醒 |
 | 模型太慢，或提示「模型返回为空」 | 「任务指令」太长、`llm_max_tokens` 太大，或附件内容过长触发分段摘要 | 把任务指令压到 4–6 个要点；把 `llm_max_tokens` 调到 384–512；换更小的量化模型（如 Q4_K_M） |
 | 结果目录没有生成 / 提示无法写入 | 「保存位置」填了一个不存在或没有写权限的路径（网络盘、系统受保护目录） | 把「保存位置」留空用用户数据目录（各平台位置见 3.9），或改成本机可写目录（Windows 如 `D:\合同审核结果`，macOS 如 `/Users/<用户名>/Documents/合同审核结果`，Linux 如 `/home/<用户名>/合同审核结果`）；确认磁盘未满 |
-| 到了定时时间没有自动跑 | 程序没有在运行（定时由程序后台线程调度）；或时间格式非法被剔除；或没打开「启用定时」 | 保持 EchoDesk 运行；Windows 上把「Start-EchoDesk-v0.2.7.lnk」放进 `shell:startup` 实现开机自启（macOS/Linux 需用桌面环境自带的「登录项」/自启动机制，本版没有内置）；时间写成 `09:00` 这种两位小时格式 |
+| 到了定时时间没有自动跑 | 程序没有在运行（定时由程序后台线程调度）；或时间格式非法被剔除；或没打开「启用定时」 | 保持 EchoDesk 运行；Windows 上自己给「启动 EchoDesk.bat」建一个快捷方式并放进 `shell:startup` 实现开机自启（macOS/Linux 需用桌面环境自带的「登录项」/自启动机制，本版没有内置）；时间写成 `09:00` 这种两位小时格式 |
 | 想看某个任务到底做了什么（审计追溯） | 需要事后核对谁在什么时候处理了哪些文件 | 打开审计日志 `app/backend/automation_log.jsonl`，每个任务一行 JSON 记录（见第九节） |
 | 提示「未加载本地模型，无法生成摘要与审核意见」 | 还没选好/下载好本地模型 | 先在主窗口用 `/model list` 与 `/model 文件名` 选好模型 |
 | 提示「未安装 playwright，请先执行 pip install playwright」 | 源码方式运行且缺少依赖（打包版自带） | 源码运行请执行 `pip install -r backend/requirements.txt` 后重启（macOS/Linux 上 `python`/`pip` 不在 PATH 时用 `python3 -m pip install -r backend/requirements.txt`；路径分隔符在那些平台是 `/`，Windows 是 `\`） |
