@@ -411,6 +411,32 @@ try {
 
     # [EN] v0.2.7: the release tree must actually carry the vendored native llama.cpp
     # [EN] runtime, and it must not carry the removed Python inference binding. Both
+    # [EN] The shipped docs must describe the package that actually exists. Three defects shipped
+    # [EN] past every other check because the reconciliation was "docs vs code" while users get
+    # [EN] "the package": entry-point instructions naming a .lnk the portable zip never contains,
+    # [EN] a directory tree claiming app\backend\EchoDeskBackend.exe, and a README calling the
+    # [EN] Avalonia front end "WPF". Rules live in tools/check_release_docs.py.
+    # [ZH] 随包文档必须描述"包里真实存在的东西"。此前三处缺陷都是在其它检查全绿时漏出去的：
+    # [ZH] 对账做的是"文档 vs 代码"，而用户拿到的是"包"——启动说明让双击便携包里根本没有的 .lnk、
+    # [ZH] 目录树声称有 app\backend\EchoDeskBackend.exe、README 把 Avalonia 前端写成 WPF。
+    # [ZH] 判定规则见 tools/check_release_docs.py。
+    Invoke-Check "随包文档与包内实际一致（入口 / 前端 / 清单）" {
+        $docCheck = Join-Path $Root "tools\check_release_docs.py"
+        if (-not (Test-Path -LiteralPath $docCheck)) { throw "缺少检查脚本: tools\check_release_docs.py" }
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $docOut = & python $docCheck --tree $Out 2>&1
+            $docCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $prevEap
+        }
+        if ($docCode -ne 0) {
+            throw (($docOut | Where-Object { $_ } | Select-Object -First 6) -join " / ")
+        }
+        ($docOut | Select-Object -Last 1).ToString()
+    }
     # [EN] defects shipped once already in the release pipeline: the PyInstaller build
     # [EN] never copied ``backend/native`` (the packaged backend could not load a model at
     # [EN] all) and the standalone trees copied the wheel's libraries instead of
