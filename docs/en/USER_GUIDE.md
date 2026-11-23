@@ -727,7 +727,9 @@ The `retrieval` section of `app\backend\config.json`:
 This is a deliberate trade-off:
 
 1. **Size**: a vector store (faiss / hnswlib / chromadb) plus an embedding model would add tens to hundreds of
-   megabytes to the release, which directly conflicts with the "350–400 MB installed" constraint;
+   megabytes to the release, which conflicts with keeping the download small — the v0.2.7 assets are
+   117.2 MB (Setup), 151.0 MB (win-x64 zip), 208.4 MB (linux-x64 tar.gz) and 165.6 MB (osx-arm64 tar.gz),
+   with no model bundled;
 2. **A model change would invalidate the index**: embeddings are tied to the chosen model, so switching chat
    models would throw the whole index away; a keyword index does not depend on the model at all;
 3. **Explainable and checkable**: a keyword hit can be explained as "because these words appeared", while a
@@ -800,3 +802,20 @@ to run. The "+" in the bottom-left corner moves the `/xxx` in the input box onto
 **Canned phrases**: click "📋 Open canned phrase picker" to insert a template in one click;
 add one with `/snippet add 名称 文本`, list them with `/snippet list` and delete one with
 `/snippet remove 名称`.
+
+---
+
+## 12. Features this guide does not walk through
+
+These ship and are configurable, but the sections above do not cover them step by step. Each lives in the
+`config.json` block named after it, and every switch defaults to the conservative value shown.
+
+| Area | Configuration | What it does (defaults) |
+| --- | --- | --- |
+| Image (vision) input | `media.vision_enabled`, `vision_model`, `vision_mmproj`, `vision_n_ctx` (4096), `vision_max_tokens` (512) | Reads an image with a local VLM through the native `mtmd` path — CPU only (25–69 s per image in v0.2.7). Needs both a model and its `mmproj` projector. |
+| Speech input / output | `media.stt_*` (executable, model, language), `media.tts_*` (enabled, `auto_read` off, voice, rate), `media.ptt_enabled` / `ptt_shortcut` (`RightCtrl`) | Local speech recognition and reading answers aloud; push-to-talk needs an external STT executable. One recording is capped at `max_record_seconds` (60). |
+| Folder knowledge base | `knowledge.enabled`, `data_dir`, `chunk_chars` (600), `top_k` (4), `max_files` (20000) | Indexes a local folder into SQLite on the background document worker and answers from it. |
+| Long-term memory | `memory.enabled`, `auto_extract`, `max_items` (200) | Extracts durable facts from conversations and injects them into later ones. |
+| Local OpenAI-compatible API | `local_api.enabled` (**off**), `port` (8788), `api_key`, `max_output_tokens` (1024) | When switched on it is the **only** component that listens on a port. Leave it off unless you need it, and set `api_key` if that port is reachable by others. |
+| External model providers | `providers.active`, `providers.api_consent_granted` (**false**), `timeout_seconds` (120) | Optional routing to an endpoint outside this machine. It stays disabled until you grant the informed consent, because data then leaves the machine. |
+| Update check | `update.enabled`, `check_on_startup`, `check_interval_hours` (24) | Reads the GitHub Releases list and notifies you; it downloads and replaces nothing. |

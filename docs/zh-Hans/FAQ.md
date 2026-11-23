@@ -327,10 +327,11 @@ v0.2.1 优化已知问题-2 修掉了三件事，如果仍然看不到，可以�
 > 因为只有那个平台有这套功能。
 
 ### 能用什么浏览器
-必须已安装 **Microsoft Edge**（Playwright 通过 `channel=msedge` 驱动它，有头模式运行，
-你能看到浏览器在操作）。构建脚本会检查 Edge 是否存在。
+**默认用 Microsoft Edge**（Playwright 通过 `channel=msedge` 驱动它，有头模式运行，
+你能看到浏览器在操作）；Edge 起不来时依次尝试 Chrome、Playwright 自带的 Chromium，Firefox 由 Playwright
+自己的引擎驱动。没有任何构建脚本检查 Edge —— 让无 Edge 机器也能用，靠的就是这条回退链。
 
-这里指的是**Windows 上**的 Edge：macOS 与 Linux 上没有可配置的自动化页面，这一节的内容对那两个平台不适用
+这里指的是安装在那台 **Windows** 机器上的浏览器：macOS 与 Linux 上没有可配置的自动化页面，这一节的内容对那两个平台不适用
 （见上面的提醒）。
 
 ### 开启自动化时提示需要勾选安全协议

@@ -366,10 +366,12 @@ Known-issues round 2 fixed three things here. If you still see nothing, check in
 > behaviour, since that is the only platform where it exists.
 
 ### Which browser can be used
-**Microsoft Edge** must be installed (Playwright drives it through `channel=msedge`, running in headed mode,
-so you can see the browser working). The build script checks whether Edge is present.
+**Microsoft Edge** is the default browser (Playwright drives it through `channel=msedge`, running in headed
+mode, so you can see the browser working). If Edge cannot start, Chrome is tried, then the Chromium that ships
+with Playwright, and Firefox is driven by Playwright's own engine. No build script checks for Edge — the
+fallback chain is what makes an Edge-free machine work.
 
-This is the **Windows** Edge installation: on macOS and Linux there is no automation page to configure, so
+This is a browser installed on the **Windows** machine: on macOS and Linux there is no automation page to configure, so
 nothing here applies to those platforms (see the warning above).
 
 ### Turning on automation tells me the safety agreement has to be ticked

@@ -236,6 +236,7 @@ CI 目前只有静态检查作业（第六节），**不提供**任何 Linux/mac
 | 剪贴板 | `Clipboard.SetText` | `IClipboard.SetTextAsync`（扩展方法） | 变为异步调用 |
 | 危险指令确认 | `MessageBox` 模态框 | 无内置 MessageBox | 改成"同一个输入框里再按一次 Enter"（行为等价、形式不同） |
 | 弹层 | `Popup` + `StaysOpen` | `Popup` **没有** `StaysOpen` 属性 | 改为手动开合；`ToolTip` 也必须用 `ToolTip.SetTip()` 附加属性 |
+**这份差异清单的核验状态**（按代码核对，不凭印象）：链接 ToolTip、剪贴板、拖放、危险指令确认、弹层、主题六行已确认 —— `ToolTip.SetTip` 在 Avalonia 侧出现 80 次、WPF 侧 0 次；`Clipboard.SetTextAsync` 仅 Avalonia 使用；`DataTransfer` 仅 Avalonia 使用；`MessageBox.Show` 在 WPF 有 29 处、Avalonia 0 处；`StaysOpen` 只出现在 WPF 标记里；`FluentTheme` 在 `App.axaml` 中启用。**字号缩放**与**富文本内部实现**两行属设计描述，**未**逐行核验，请当作解释而非已审的差异。
 
 ## 九、未完成项
 

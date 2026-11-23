@@ -312,6 +312,8 @@ None of these change capabilities, but all are user-visible, so they are listed 
 - **Popups and tooltips**: Avalonia's `Popup` has **no** `StaysOpen` property, and `ToolTip` is an
   attached property (`ToolTip.SetTip(control, text)`).
 
+**Verification status of this list** (checked against the code, not accepted as folklore): the link-tooltip, clipboard, drag-and-drop, destructive-command confirmation, popup and theming rows are confirmed — `ToolTip.SetTip` appears 80 times on the Avalonia side and never in WPF, `Clipboard.SetTextAsync` is used only by Avalonia, `DataTransfer` only by Avalonia, `MessageBox.Show` has 29 occurrences in WPF and none in Avalonia, `StaysOpen` exists only in the WPF markup, and `FluentTheme` is enabled in `App.axaml`. The **font-zoom** row and the **rich-text internals** are design descriptions that were **not** verified line by line; treat them as explanation, not as an audited difference.
+
 ## 10. Unfinished and planned work
 
 Listed plainly, with no implied dates:

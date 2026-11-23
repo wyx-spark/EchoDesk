@@ -643,7 +643,8 @@ EchoDesk 自身不主动外联，也不替你决定把数据发给谁——它�
 这是有意的取舍：
 
 1. **体积**：向量库（faiss / hnswlib / chromadb）加上嵌入模型，会给发布物增加几十到几百 MB，
-   与"安装后 350–400 MB"的约束直接冲突；
+   与"下载体积要小"的约束直接冲突 —— v0.2.7 的四个资产分别是 117.2 MB（Setup）、151.0 MB（win-x64 zip）、
+   208.4 MB（linux-x64 tar.gz）、165.6 MB（osx-arm64 tar.gz），且不含模型；
 2. **换模型会让索引失效**：嵌入向量与所选模型绑定，用户换对话模型时整个索引作废；
    关键词索引与模型无关，换模型不用重建；
 3. **可解释、可核对**：关键词命中能直接说清"因为出现了这几个词"，向量相似度只能给一个数字——
@@ -709,3 +710,20 @@ EchoDesk 自身不主动外联，也不替你决定把数据发给谁——它�
 
 **常用语**：点「📋 打开常用语选择框」一键插入模板；
 用 `/snippet add 名称 文本` 新增、`/snippet list` 查看、`/snippet remove 名称` 删除。
+
+---
+
+## 十二、本文未逐步覆盖的功能
+
+下面这些功能已经随版本提供、也可配置，但以上各节没有逐步说明。每一项都落在 `config.json` 里同名的
+配置段中，且开关默认值都取保守值（下表已标出）。
+
+| 领域 | 配置项 | 作用（括号内为默认值） |
+| --- | --- | --- |
+| 图像（视觉）输入 | `media.vision_enabled`、`vision_model`、`vision_mmproj`、`vision_n_ctx`（4096）、`vision_max_tokens`（512） | 用本地 VLM 经原生 `mtmd` 路径读图 —— 纯 CPU（v0.2.7 实测 25–69 秒/张）。模型与它的 `mmproj` 投影层都必须有。 |
+| 语音输入 / 输出 | `media.stt_*`（可执行文件、模型、语言）、`media.tts_*`（enabled、`auto_read` 关闭、音色、语速）、`media.ptt_enabled` / `ptt_shortcut`（`RightCtrl`） | 本地语音识别与朗读回答；按键说话需要外置 STT 可执行文件。单次录音上限 `max_record_seconds`（60 秒）。 |
+| 文件夹知识库 | `knowledge.enabled`、`data_dir`、`chunk_chars`（600）、`top_k`（4）、`max_files`（20000） | 由后台文档工作线程把本地文件夹索引进 SQLite，并从索引里回答。 |
+| 长期记忆 | `memory.enabled`、`auto_extract`、`max_items`（200） | 从对话中抽取长期事实，并在后续对话里注入。 |
+| 本地 OpenAI 兼容 API | `local_api.enabled`（**关闭**）、`port`（8788）、`api_key`、`max_output_tokens`（1024） | 打开后它是**唯一**会监听端口的组件。不需要就别开；若该端口对他人可达，请设置 `api_key`。 |
+| 外部模型 Provider | `providers.active`、`providers.api_consent_granted`（**false**）、`timeout_seconds`（120） | 可选地把请求路由到本机之外的端点。在你勾选知情同意之前它保持禁用 —— 数据会离开本机。 |
+| 更新检查 | `update.enabled`、`check_on_startup`、`check_interval_hours`（24） | 读 GitHub Releases 列表并提示；不下载、不替换任何文件。 |
