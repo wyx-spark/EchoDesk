@@ -39,7 +39,12 @@ capability matrix is in [CROSS_PLATFORM.md](CROSS_PLATFORM.md).
 │  prompts.py                    task-oriented prompt templates (role/output format/chain of thought/few-shot) and vague-question detection (fix 4)                        │
 │  emoji.py                      emoji output capability detection and ASCII fallback (fix 6)                                                                              │
 │  i18n.py                       multi-language: language pack loading, fallback chain, placeholder tolerance, external language pack priority                             │
-│  llm_engine.py                 llama.cpp wrapper: window/training window logging, KV Cache estimation, streaming generation and speed statistics                         │
+│  llm_backend.py                the single place that decides which llama.cpp runtime serves a model (auto / native / wheel)                                              │
+│  llama_native.py               native text runtime over backend/native/<rid>: model, context, KV cache, sampler chain (ctypes)                                           │
+│  llama_ctypes.py               locates the native libraries and loads them with ctypes (no DLL load at import time)                                                      │
+│  llama_capi.py / llama_abi/    vendored C ABI declarations (llama_cpp.py, mtmd_cpp.py, _ggml.py) — they follow the library revision                                      │
+│  vision_native.py              native multimodal (mtmd) vision engine: pairing checks, image token budget, CPU inference                                                 │
+│  llm_engine.py                 engine layer: per-engine inference locks + one lifecycle lock, window accounting, KV estimate                                             │
 │  gguf_meta.py                  lightweight GGUF metadata parsing (read the training window, layer count and KV head count without loading the model)                     │
 │  summarizer.py                 long-document map-reduce segmented summarisation (chunking/overlap/per-chunk summary/recursive merge/source pointers)                     │
 │  retrieval.py                  local document retrieval: BM25 + chunking, character-range traceability, incremental index (task 6)                                       │
@@ -51,7 +56,7 @@ capability matrix is in [CROSS_PLATFORM.md](CROSS_PLATFORM.md).
 │  skills_runtime.py             skill runtime loader: discovery/priority/trust/unload/panel/hooks (task 2)                                                                │
 │  mcp_client.py                 MCP stdio client and tool bridge (in-house, no new dependencies; task 3)                                                                  │
 │  download_utils.py             model repository query and download (hf-mirror mirror)                                                                                    │
-│  search_engine.py              DuckDuckGo web search                                                                                                                     │
+│  search_engine.py              web search: `duckduckgo-search` primary + a built-in Bing fallback (standard library only)                                                │
 │  automation.py                 browser automation driving Edge through Playwright (headed mode)                                                                          │
 │  marketplace.py                GitHub topic skill market: search/detail/install/uninstall (cache + offline fallback)                                                     │
 │  update_check.py               automatic update check (plan A: check and notify only, no download or replacement)                                                        │
@@ -296,9 +301,15 @@ WPS COM first (it can read encrypted Office documents), falling back to the buil
 | .docx | python-docx (paragraphs + tables) | MIT |
 | .xlsx/.xlsm | openpyxl (sheet by sheet, row by row) | MIT |
 | .pptx | python-pptx (text boxes + tables per slide) | MIT |
-| .pdf | PyMuPDF (text layer) | AGPL/commercial |
+| .pdf | pypdf (text layer) | BSD-3-Clause |
 | .xls | xlrd | BSD |
 | .txt/.md/.csv and others | built-in multi-encoding detection (utf-8-sig→utf-8→gb18030→utf-16→big5→latin-1) | — |
+
+**Why pypdf and not PyMuPDF** (v0.2.1): PyMuPDF is AGPL-3.0 (or a commercial licence), and shipping it
+in an Apache-2.0 product creates copyleft obligations for anyone who redistributes the build; `pypdf` is
+BSD-3-Clause, pure Python, and about 1.4 MB instead of 52.9 MB. The trade-off, stated plainly: `pypdf`
+does not read scanned PDFs (they need OCR, which this product does not include) and reconstructs complex
+layouts less faithfully than MuPDF. `backend/requirements.txt` documents the same decision.
 
 **Why pyxtxt is no longer used** (removed in v0.2.0):
 its `estrattori` subpackage imports every parser in the same directory automatically inside `__init__` with
@@ -428,11 +439,14 @@ GitHub Token.)
 check-out, `app/backend/config.json` in a release bundle (backslashes are only Windows path separators, so the
 `/` form is the one to write in commands and scripts). The **user data directory** — UI state, chat history,
 batch results, UI language packs — sits **next to** the program instead, in the outer folder of the release:
-the program folder itself on Windows, and `~/Library/Application Support/EchoDesk` on macOS or
-`$XDG_DATA_HOME/EchoDesk` (or `~/.local/share/EchoDesk`) on Linux when the program folder is not named `app`.
+on Windows the program folder itself, and in the portable layout on every platform the folder that holds `app/`.
+The platform fallbacks fire only when that portable rule does not apply (a macOS `.app` bundle, or a program
+folder that is not named `app`): `~/Library/Application Support/EchoDesk` on macOS,
+`$XDG_DATA_HOME/EchoDesk` (or `~/.local/share/EchoDesk`) on Linux. The backend reaches the same answer through
+`config.user_data_root()`, and for a macOS `.app` bundle it redirects explicitly to Application Support.
 `ECHODESK_DATA` overrides it on every platform. It is **not** `%APPDATA%\EchoDesk`: no code path writes there
-(the only occurrences were stale comments, corrected in v0.2.2), and the backend reaches the same answer through
-`config.user_data_root()`, which climbs out of the `app/` and `backend/` container folders.
+(the only occurrences were stale comments, corrected in v0.2.2); `config.user_data_root()` climbs out of the
+`app/` and `backend/` container folders to find the outer folder.
 Backend artifacts configured with a **relative** path (session file, models, audit log, installed skills) stay
 in the backend working directory — `app/backend/` in a release — and are not moved by `ECHODESK_DATA`; all of
 those settings accept `~` and absolute paths, so an enterprise deployment can point them at a managed drive.
@@ -701,8 +715,9 @@ Tool(name="calc", description="计算算术表达式", args_hint='{"expr": "表�
   as the argument hint. Permissions, auditing, visibility and interruption therefore reuse the agent machinery
   instead of a second set of rules.
 - **Why not the official `mcp` package**: it pulls in `anyio` / `httpx` / `sse-starlette` / `starlette` and
-  more, most of the server-side parts of which are useless for a client-only feature, while the release is
-  pinned to the 350–400 MB range.
+  more, most of the server-side parts of which are useless for a client-only feature, while the shipped release is kept small: the v0.2.7 assets are **117.2 MB** (Setup.exe),
+  **151.0 MB** (win-x64 zip), **208.4 MB** (linux-x64 tar.gz) and **165.6 MB** (osx-arm64 tar.gz),
+  with no model bundled.
 - **The cost, stated plainly**: this version supports **stdio transport only** — no HTTP/SSE, no
   resources / prompts / sampling, no roots. Should the official package be adopted later, `McpServer` and
   `register_mcp_tools` would not change: only the transport implementation would, which is exactly why

@@ -40,7 +40,12 @@ Microsoft Edge（另外两个平台不提供该功能）。
 │  prompts.py       任务型提示词模板（角色/输出格式/思维链/少样本）与模糊提问检测（修复四）        │
 │  emoji.py         emoji 输出能力检测与 ASCII 降级（修复六）                                    │
 │  i18n.py          多语言：语言包加载、回退链、占位符容错、外置语言包优先                         │
-│  llm_engine.py    llama.cpp 封装：窗口/训练窗口日志、KV Cache 估算、流式生成与速度统计         │
+│  llm_backend.py          决定模型由哪套运行期服务（auto/native/wheel）                       │
+│  llama_native.py         原生文本运行期：模型/上下文/KV/采样链（ctypes）                     │
+│  llama_ctypes.py         原生库定位与 ctypes 装载（导入时不加载 DLL）                        │
+│  llama_abi/              C ABI 声明（llama_capi.py / llama_cpp.py / mtmd_cpp.py）            │
+│  vision_native.py        原生 mtmd 视觉引擎：配对校验、图像预算、纯 CPU                      │
+│  llm_engine.py           引擎层：两把引擎锁 + 一把生命周期锁、KV 估算                        │
 │  gguf_meta.py     轻量解析 GGUF 元数据（不加载模型即可取训练窗口、层数、KV 头数）              │
 │  summarizer.py    长文档 map-reduce 分段摘要（分段/重叠/逐段摘要/递归归并/原文指针）           │
 │  retrieval.py     本地文档检索：BM25 + 分块、字符区间溯源、增量索引（任务六）                 │
@@ -52,7 +57,7 @@ Microsoft Edge（另外两个平台不提供该功能）。
 │  skills_runtime.py 技能运行期加载器：发现/优先级/信任/卸载/面板/钩子（任务二）                  │
 │  mcp_client.py    MCP stdio 客户端与工具桥接（自研零依赖；任务三）                            │
 │  download_utils.py 模型仓库查询与下载（hf-mirror 镜像）                                       │
-│  search_engine.py  DuckDuckGo 联网搜索                                                        │
+│  search_engine.py          联网搜索：`duckduckgo-search` 主源 + 自建 Bing 回退（只用标准库） │
 │  automation.py    Playwright 驱动 Edge 的浏览器自动化（有头模式）                              │
 │  marketplace.py   GitHub topic 技能市场：搜索/详情/安装/卸载（缓存 + 离线降级）                │
 │  update_check.py  自动更新检查（方案 A：只检查与提示，不下载替换）                             │
@@ -270,9 +275,14 @@ macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属�
 | .docx | python-docx（段落 + 表格） | MIT |
 | .xlsx/.xlsm | openpyxl（逐表逐行） | MIT |
 | .pptx | python-pptx（逐页文本框 + 表格） | MIT |
-| .pdf | PyMuPDF（文本层） | AGPL/商业 |
+| .pdf | pypdf（文本层） | BSD-3-Clause |
 | .xls | xlrd | BSD |
 | .txt/.md/.csv 等 | 内置多编码探测（utf-8-sig→utf-8→gb18030→utf-16→big5→latin-1） | — |
+
+**为什么用 pypdf 而不是 PyMuPDF**（v0.2.1）：PyMuPDF 是 AGPL-3.0（或 Artifex 商业许可），把它放进
+Apache-2.0 的产品里，会让任何再分发者在对外分发时承担著佐权义务；`pypdf` 是 BSD-3-Clause、纯 Python，
+安装体积约 1.4 MB 而不是 52.9 MB。代价如实写：`pypdf` 不解析扫描件（那需要 OCR，本产品不内置），
+复杂排版的阅读顺序还原也不如 MuPDF。`backend/requirements.txt` 里记着同一个决定。
 
 **为什么不再用 pyxtxt**（v0.2.0 移除）：
 其 `estrattori` 子包在 `__init__` 里用 `os.listdir` 自动导入同目录全部解析器，
@@ -390,11 +400,13 @@ Cookie（老用户升级后不必重新登录），每次会话结束再导出�
 **这个文件在哪——三平台的相对布局相同**：源码检出目录里是 `backend/config.json`，发布包里是
 `app/backend/config.json`（反斜杠只是 Windows 的路径分隔符，命令与脚本里统一写 `/`）。
 **用户数据目录**——界面状态、对话历史、批处理结果、界面语言包——则在**程序旁边**，即发布目录的外层：
-Windows 上就是程序目录本身；macOS 与 Linux 上，当程序目录不叫 `app` 时回退到
-`~/Library/Application Support/EchoDesk` 与 `$XDG_DATA_HOME/EchoDesk`（或 `~/.local/share/EchoDesk`）；
+Windows 上就是程序目录本身；便携布局下三平台都取"含 `app/` 的那一层"。
+平台回退只在便携规则不成立时才生效（macOS 的 `.app` 包，或程序目录不叫 `app`）：
+macOS 是 `~/Library/Application Support/EchoDesk`，Linux 是 `$XDG_DATA_HOME/EchoDesk`（或 `~/.local/share/EchoDesk`）；
+后端走 `config.user_data_root()` 得到同一答案，macOS `.app` 包则显式改判到 Application Support；
 三平台都可以用 `ECHODESK_DATA` 覆盖。**它不是 `%APPDATA%\EchoDesk`**：代码里没有任何路径写在那里
-（那个写法只出现在两处过时注释里，v0.2.2 已改正），后端通过 `config.user_data_root()` 逐级跳过
-`app/`、`backend/` 这些容器目录，得到的答案与前端一致。配置项里写了**相对路径**的后端产物
+（那个写法只出现在两处过时注释里，v0.2.2 已改正）；`config.user_data_root()` 会逐级跳过
+`app/`、`backend/` 这些容器目录，找到外层目录。配置项里写了**相对路径**的后端产物
 （会话文件、模型、审计日志、已安装技能）仍落在后端工作目录，即发布包里的 `app/backend/`，
 不受 `ECHODESK_DATA` 影响；这些配置项都接受 `~` 与绝对路径，因此企业部署可以把它们指到受管盘。
 三个平台的默认数据目录分别是：Windows 程序目录本身（发布物布局下即外层目录），macOS `~/Library/Application Support/EchoDesk`（仅非便携布局），
@@ -653,7 +665,8 @@ Tool(name="calc", description="计算算术表达式", args_hint='{"expr": "表�
   Agent 那一套，不存在第二套规则。
 - **为什么不用官方 `mcp` 包**：它会带进 `anyio` / `httpx` / `sse-starlette` / `starlette`
   等一串依赖，其中服务端相关的东西对一个"只需要客户端"的功能完全无用，
-  而发布物正卡在 350–400 MB 区间。
+  而发布物要控制体积 —— v0.2.7 的四个资产分别是 **117.2 MB**（Setup.exe）、**151.0 MB**
+  （win-x64 zip）、**208.4 MB**（linux-x64 tar.gz）、**165.6 MB**（osx-arm64 tar.gz），且不含模型。
 - **代价（如实记录）**：本版**只支持 stdio 传输**，不支持 HTTP/SSE，也不支持
   resources / prompts / sampling 与 roots。将来换成官方包时，`McpServer` 与
   `register_mcp_tools` 都不用改 —— 换的只是传输实现，这也是把"协议"与"传输"分开写的原因。
