@@ -186,20 +186,19 @@ The points below are conclusions from things that actually went wrong:
   demand a Linux build of `pywin32` and fail the whole dependency chain.
 * **uvbox was rejected**: its first run downloads dependencies from the network, which
   contradicts the core promise of "data never leaves the machine, works offline".
-* **`llama-cpp-python` needs a special fetch route on macOS** (measured during the
-  cross-platform-2 round — this one deserves its own entry): upstream publishes **only a source
-  distribution on PyPI**; every wheel lives in the author's own GitHub Releases index. Worse, the
-  **macOS arm64 wheels in the `cpu` index are corrupt** — the byte count and the official digest both
-  match ("fully downloaded, not tampered with"), yet `lib/*.dylib` inside the archive is damaged
-  throughout its compressed streams, so `pip install` cannot succeed. Versions measured as corrupt:
-  `cpu` index 0.3.21 / 0.3.30 / 0.3.35 / 0.3.36, `metal` index 0.3.31–0.3.36; the `metal` index
-  (the `vX.Y.Z-metal` release tags) has **0.3.30 as the last intact build**. macOS therefore
-  **pins that single wheel by direct URL** (see `backend/requirements.txt`) — a direct URL rather
-  than "index plus version" because the two indexes contain a file with the **same name but
-  different contents**, so index selection is non-deterministic. The metal build is also simply the
-  right choice on macOS: it enables the Metal (Apple GPU) backend.
-  Fetch and verify with `tools/fetch_wheel.py` (curl resume plus per-member decompression check,
-  which stops an upstream "downloads fine, cannot install" wheel before it reaches a release).
+ * **macOS ships native libraries, not a pinned wheel** (v0.2.7). The Python binding is gone from
+   the shipped build, so the v0.2.2-era workaround no longer exists: no wheel is fetched or pinned
+   anywhere (`backend/requirements.txt` and `requirements.lock` declare neither
+   `llama-cpp-python` nor numpy). What ships for `osx-arm64` is the vendored native runtime in
+   `backend/native/osx-arm64/` — `libllama.dylib`, `libmtmd.dylib`, `libggml.dylib`,
+   `libggml-base.dylib`, `libggml-cpu.dylib`, plus `libggml-metal.dylib` (5,664,616 B) and
+   `libggml-blas.dylib` (54,936 B). Accelerator use is a property of **that bundled runtime**, not
+   a user-selectable "GPU inference backend": `backend/llama_ctypes.py` preloads
+   `libggml-metal` / `libggml-blas` on POSIX as a best-effort step (a missing optional backend is
+   not an error), and the Windows build ships **no CUDA backend at all** — there, GPU detection and
+   `n_gpu_layers` are diagnostic only (`docs/NATIVE_RUNTIME.md` §2-3). Removing the CUDA dependency
+   is **not** GPU support. Why the old wheel route existed (corrupt `cpu` arm64 wheels, last intact
+   `metal` build 0.3.30) is kept in `records/v0.2.2-跨平台-2记录.md` as history.
 * **Size** (measured as disk usage, hard links de-duplicated; all three measured on a Windows
   build machine): the standalone backend is **295.9 MB unpacked on Windows, 450.9 MB on Linux,
   352.5 MB on macOS**, and **102.9 / 150.2 / 120.3 MB archived**. Those differences are real
@@ -253,16 +252,21 @@ code straight through.
 `notarytool`.** Those steps need the maintainer's Apple credentials; they are documented but **not
 automated** here, so a macOS archive is release-ready only after a human holding them has run them.
 
-**CI.** `.github/workflows/ci.yml` has two cross-platform jobs with different jobs to do:
-`cross-platform` builds, publishes and headless-self-tests the Avalonia frontend on the Windows, Ubuntu and
-macOS runners (proving the TFM is platform-neutral); `cross-platform-release` actually **produces the
-complete release artefact for all three platforms**
-(`pack_backend.py` → `check_standalone_backend.py` → `pack_crossplatform.py`), because whether the
-cross-prepared dependencies really start on the target platform can only be verified by running them there.
+**CI.** `.github/workflows/ci.yml` runs **one** job, `static-checks`, on `ubuntu-latest`:
+language-pack completeness, reverse language-key audit, repository bilingual/script audit, line
+endings, theme palette contrast and a backend `compileall` syntax check — standard library only, and
+it neither builds nor launches the product. The full gate (`tools/verify_release.ps1`) needs a
+Windows desktop, GUI probes, a local Edge and local models, so it runs only on the maintainer's
+build machine; the three-platform artefacts described above are produced there, **not in CI**.
 
 ## 7. Measured artifact sizes
 
 Avalonia frontend only, self-contained publish (`PublishSingleFile=false`); backend and models extra.
+
+> **Measurement date**: the numbers below were taken during the v0.2.2 cross-platform round and have
+> **not been re-measured since**. v0.2.7 removed the Python inference binding from the shipped build,
+> so any backend-inclusive total changed; read these frontend-only figures as that round's evidence,
+> not as the current release size.
 
 | RID | Files | Size | Notes |
 | --- | --- | --- | --- |
@@ -283,15 +287,15 @@ no WSL, no Docker, no macOS. Everything below follows from that.
 | (a) The Avalonia frontend and the real backend protocol ran for real on Windows, via headless `EchoDesk --selftest` | Platform detection, backend launch by platform rules, the `ready` handshake and the `platform` / `capability` round-trip — **run-level Windows evidence** |
 | (b) Cross-RID builds for `linux-x64` and `osx-arm64` were produced from Windows | That the frontend **compiles and publishes** for those RIDs — **build-level evidence only**, not run-level |
 | (c) `tools/check_standalone_backend.py` inspects the packaged backend | Structure, launcher syntax, and on Windows the interpreter actually runs and answers a **real action set** (`commands`, `capability`, `context`) |
-| (d) The same tool statically checks macOS native dependencies (Mach-O headers of `llama_cpp/lib/*.dylib`) | That a "downloads fine, cannot install" upstream wheel is caught on the build machine — the corrupt macOS wheels in this round were found exactly this way |
+| (d) `tools/verify_release.ps1` asserts the vendored native set ships in the packaged trees (`app/native/<rid>` byte-identical to the repository), and `check_standalone_backend.py` hashes every file under `app/native/` in its tree fingerprint | That the binaries a user receives are the ones reviewed here. The v0.2.2-era Mach-O check belonged to `tools/fetch_wheel.py` (per-member decompression of a wheel); since v0.2.7 no wheel is on the runtime path, so the native-set gate is the evidence |
 | (e) `tools/check_crossplatform_release.py` inspects the finished archives | That a user can actually unpack and start them: archive format matches the target, executable bits survive, parent directory entries precede their contents, the top-level launcher and `SIGNING.txt` are inside, and the digests agree with `SHA256SUMS.txt` and the manifest |
 | (f) `tools/test_platform.py` injects a platform via `ECHODESK_FORCE_PLATFORM` | That the non-Windows **degradation branches** are right: the Windows-only message, the alternatives, the suppressed Windows-specific hint, and the `platform` fields including `degraded` and the data root |
-| (g) The CI matrix runs the real Linux/macOS branches on real Linux/macOS runners | Run-level evidence on those platforms — obtained in CI, not in this repository's local history |
+| (g) ~~The CI matrix runs the real Linux/macOS branches~~ | **Not available**: `ci.yml` runs static checks on `ubuntu-latest` only (§6), so no CI job builds or runs the product on Linux/macOS |
 
 **No run-level Linux or macOS evidence exists in the repository itself.** The three-platform backends and
 release bundles were cross-prepared on a Windows build machine and verified structurally, statically (the
 macOS binaries) and — on Windows — at protocol level. Rows (b), (c), (d) and (e) must **not** be read as
-"it was run on Linux/macOS". CI is where the real runs are obtained.
+"it was run on Linux/macOS". Cloud CI does **not** supply them either (`ci.yml` runs static checks only, §6); a run-level claim for Linux/macOS therefore still requires a machine of that platform, which this project does not have.
 
 ## 9. Known frontend differences (WPF vs Avalonia)
 
@@ -318,12 +322,21 @@ Listed plainly, with no implied dates:
   only, and standalone brings no Windows benefit — a deliberate trade-off, not an oversight;
 - macOS code signing and notarization, and a Linux AppImage (the commands are written into
   `SIGNING.txt` and are never run by the build script);
-- **the build is not reproducible**: three timestamp sources (`USAGE.txt`, rcedit writing `.rsrc`,
-  PyInstaller writing the PE header) mean rebuilding the same commit yields a different hash;
-  `SOURCE_DATE_EPOCH` is not implemented yet;
-- `docs/SBOM.json` and the third-party licence manifest were **not regenerated for v0.2.2** (the
-  dependency closure is structurally unchanged);
-- branding and icons for non-Windows platforms;
+- ~~**the build is not reproducible**~~ — **resolved in v0.2.3, re-verified for v0.2.7**: every
+  packaging script derives one `SOURCE_DATE_EPOCH` from the `HEAD` commit and refuses to package a
+  dirty worktree (`tools/reproducible.py`; the Setup PE timestamp is normalised in place by
+  `tools/pe_timestamp.py`), the two .NET projects compile deterministically, and archive writers fix
+  entry timestamps, ownership, order and the gzip header. `tools/verify_reproducible_build.ps1`
+  clears build outputs, runs two cold builds and compares byte for byte: the v0.2.7 run compared
+  **11,326 files twice with `diff=0`** (823.4 s, exit code 0). How to repeat it is in
+  `CODE_SIGNING.md`;
+- ~~`docs/SBOM.json` and the third-party licence manifest were not regenerated~~ — **done for
+  v0.2.7**: `docs/SBOM.json` lists 43 Python distributions plus the vendored `llama.cpp` (MIT,
+  0.4.7), and both language versions of `docs/THIRD_PARTY_LICENSES.md` were regenerated with it;
+- ~~branding and icons for non-Windows platforms~~ — **done**: `python tools/gen_platform_icons.py`
+  generates the macOS `.icns` and the freedesktop `hicolor` set (`assets/icons/hicolor/`, six sizes),
+  with `--check` as the gate. What remains unverified is the **interaction** on those platforms
+  (fonts, IME, high-DPI), not the assets;
 - a real interactive Linux/macOS smoke test by a human or CI runner, not just the headless self-test.
 
 Until those land, the accurate description of Linux and macOS support is what section 1 says: a

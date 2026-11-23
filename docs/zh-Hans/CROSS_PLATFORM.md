@@ -139,17 +139,23 @@ backend-<rid>/
 * **交叉下载依赖时按目标平台评估环境标记**：pip 自己用的是**打包机**的平台，
   为 Linux 准备依赖时会去要 Linux 版的 `pywin32`，从而整条依赖链失败。
 * **不采用 uvbox**：它首次运行要联网下载依赖，与"数据不出本机、断网可用"的核心承诺冲突。
-* **`llama-cpp-python` 在 macOS 上要单独取件**（跨平台-2 轮实测，这条值得单独说）：
-  上游发布在 PyPI 上的**只有源码包**，所有轮子都托管在作者自己的 GitHub Releases 索引里；
-  而其中 **`cpu` 索引的 macOS arm64 轮子是坏的** —— 字节数与官方 digest 完全一致
-  （"下完了、也没被篡改"），但包内 `lib/*.dylib` 大面积压缩流损坏，`pip install` 必然失败。
-  实测损坏的版本：cpu 索引的 0.3.21 / 0.3.30 / 0.3.35 / 0.3.36，metal 索引的 0.3.31～0.3.36；
-  **`metal` 索引（对应 `vX.Y.Z-metal` 这些 Release tag）的 0.3.30 是最后一个完好的**。
-  因此 macOS 上按**直接 URL 钉死**这一个轮子（见 `backend/requirements.txt`）——
-  用直接 URL 而不是"索引 + 版本号"，是因为两个索引里存在**同名但内容不同**的文件，
-  按索引挑是不确定的。对 macOS 而言 metal 构建本来也更正确：它启用 Metal（Apple GPU）后端。
-  取件与校验工具：`tools/fetch_wheel.py`（curl 续传 + 逐成员解压校验，
-  能直接在打包前把"下完却不能装"的上游坏包挡住）。
+* **macOS 走随包原生库，不再钉轮子**（v0.2.7）：Python 推理绑定已从交付物移除，跨平台-2 轮那套
+  "钉一个 wheel 直接 URL"的做法随之不存在 —— `backend/requirements.txt` 与 `requirements.lock`
+  都不声明 `llama-cpp-python`，也不再取任何 wheel。`osx-arm64` 随包的是
+  `backend/native/osx-arm64/` 下的原生运行期：`libllama.dylib`、`libmtmd.dylib`、
+  `libggml.dylib`、`libggml-base.dylib`、`libggml-cpu.dylib`，以及
+  `libggml-metal.dylib`（5,664,616 B）与 `libggml-blas.dylib`（54,936 B）。
+  因此加速能力是**那份随包运行期自身的属性**，不是用户可选的"GPU 推理后端"：
+  `backend/llama_ctypes.py` 在 POSIX 上尽力预加载 `libggml-metal` / `libggml-blas`
+  （缺少可选后端不算错误），而 Windows 构建**根本不含 CUDA 后端** —— 那里的 GPU 探测与
+  `n_gpu_layers` 仅供诊断（见 `docs/NATIVE_RUNTIME.zh-Hans.md` 第 2、3 节）。
+  **移除 CUDA 依赖不等于支持 GPU。** 旧轮子路线为何存在（`cpu` 索引 arm64 轮子损坏、
+  `metal` 索引最后一个完好版本为 0.3.30），作为历史保留在 `records/v0.2.2-跨平台-2记录.md`。
+  取件与校验工具 `tools/fetch_wheel.py`（curl 续传 + 逐成员解压校验）仍在仓库里，但 v0.2.7 起
+  不再位于运行期取件路径上。
+
+> **口径与日期**：本节数字取自 v0.2.2 跨平台轮，**此后未再实测**。v0.2.7 已把 Python 推理绑定移出交付物，任何含后端的总量都已改变；下面这组数字只作为那一轮的证据读，不是当前发布物体积。
+
 * **体积**（口径：磁盘实际占用，硬链接按 inode 去重；三平台均在 Windows 打包机上实测）：
   后端 standalone 形态解压后 **Windows 295.9 MB / Linux 450.9 MB / macOS 352.5 MB**，
   归档 **102.9 / 150.2 / 120.3 MB**。
@@ -172,7 +178,7 @@ backend-<rid>/
   "原生依赖是不是合法动态库"的静态检查）。
 * **弱网或断网构建**：把依赖 wheel 预先放进一个目录，设 `PIP_FIND_LINKS=<该目录>`
   后重跑打包脚本即可 —— pip 会优先从本地取，跳过最不稳定的外部下载环节。
-  实测：`llama-cpp-python` 的 wheel 下载地址重定向到 `github.com`，弱网下会让整轮
+  实测（v0.2.2 轮，当时依赖含 `llama-cpp-python`；该依赖自 v0.2.7 起已移除，做法仍适用）：它的 wheel 下载地址重定向到 `github.com`，弱网下会让整轮
   依赖安装反复重试直至失败；把它预先下载到本地后，同一轮构建**零重试**通过。
   **不需要改脚本一行**（纯环境变量），这也是"数据不出本机、断网可用"这条产品承诺
   在构建链上的对应做法。
@@ -187,11 +193,11 @@ backend-<rid>/
   才能认出"便携布局、用户数据放外层"。代价是用户解压后看到的是一堆文档和一个 `app/` 目录，
   所以脚本会在根目录放一个 `start.sh`，只做一件事：把 `app/EchoDesk` 接管过去
   （`exec`，信号与退出码原样透传）。
-* **CI 矩阵**：`.github/workflows/ci.yml` 里有两个跨平台作业，分工不同 ——
-  `cross-platform` 在 Windows / Ubuntu / macOS 三个 runner 上各**编译 + 发布 + 跑无窗口自检**，
-  证明 Avalonia 的 TFM 是平台中立的；`cross-platform-release` 则真的**打出三个平台的完整发布物**
-  （`pack_backend.py` → `check_standalone_backend.py` → `pack_crossplatform.py`），
-  因为"交叉准备好的依赖在目标平台上到底能不能起来"，只有在目标平台上真跑一次才算验证过。
+* **CI**：`.github/workflows/ci.yml` 只有**一个**作业 `static-checks`，跑在 `ubuntu-latest` 上：
+  语言包完整性、反向语言键审计、仓库双语与脚本登记审计、换行符、主题色板对比度，以及后端
+  `compileall` 语法检查 —— 全部只用标准库，既不构建也不启动产品。完整门禁
+  （`tools/verify_release.ps1`）依赖 Windows 桌面、GUI 探针、本机 Edge 与本地模型，只能在维护者
+  构建机上跑；上面的三平台产物就在那里产出，**不在 CI 里**。
 * **macOS 签名与公证**：需要维护者的 Developer ID 证书与 Apple 账号，
   脚本**不擅自执行**，而是把命令与缺失步骤写进产物里的 `SIGNING.txt`。
   在拿到证书前，macOS 用户需要右键打开或 `xattr -dr com.apple.quarantine` 解除隔离。
@@ -207,14 +213,14 @@ backend-<rid>/
 | --- | --- | --- |
 | 真实运行 | Windows 上跑 `EchoDesk.exe --selftest`：平台探测 → 按平台规则拉起后端 → `ready` 握手 → `platform`/`capability` 往返 | Windows 上整条链路真的通 |
 | **打包后后端** | `python tools\check_standalone_backend.py`：结构 / 启动脚本语法 / 解释器真能跑 / 走一遍 JSON 行协议 / **真实动作集**（`commands`、`capability`、`context`） | 三平台产物**结构齐全**；Windows 上连"包内解释器能跑、能应答多个真实动作"都实证了 |
-| **非本机平台的静态二进制检查** | 对 `osx-arm64` 校验 `llama_cpp/lib/*.dylib` 的文件头是不是合法 Mach-O | 能在打包机上挡住"上游轮子本身是坏的"这类缺陷（本轮的坏包正是这样被发现的） |
+| **随包原生库一致性** | 门禁断言打包树里的原生库与仓库 `backend/native/<rid>/` 逐字节一致（`verify_release.ps1`），`check_standalone_backend.py` 把 `app/native/` 下每个文件计入树指纹 | 用户拿到的二进制就是这里审过的那一份。v0.2.2 轮的 Mach-O／坏轮子检查属于 `tools/fetch_wheel.py`；v0.2.7 起运行期不再取 wheel，证据改为原生库集合门禁 |
 | **完整发布物** | `python tools\check_crossplatform_release.py`：归档格式是否匹配目标平台、`tar.gz` 里关键文件有没有可执行位、目录条目顺序、顶层启动脚本与 `SIGNING.txt` 在不在、`SHA256SUMS.txt` 与清单是否一致 | 用户拿到手的东西**能被正确解开并启动**（这些恰恰是"日志全绿、用户却用不了"的类型） |
-| CI | 两个矩阵：`cross-platform`（三平台编译 + 发布 + 无窗口自检）与 `cross-platform-release`（三平台真的打出完整发布物） | 真实的 Linux/macOS 运行证据只能在这里拿到 |
+| CI | ~~两个矩阵~~ 实际只有 `static-checks` 一个作业（`ubuntu-latest`，仅静态检查，见第六节） | **拿不到** Linux/macOS 的运行证据；CI 不构建也不启动产品 |
 
 **当前缺口（诚实记录）**：仓库内**没有**来自真实 Linux/macOS 的运行证据 ——
 本轮三平台后端与发布物都是在 Windows 打包机上交叉准备并做静态/结构级校验的；
 非 Windows 上的真实交互（窗口、字体、拖拽、输入法）也还没被人工验证过。
-CI 矩阵是"已写好、待运行"。**不要把上面第 2~4 层当成"在 Linux/macOS 上跑过了"。**
+CI 目前只有静态检查作业（第六节），**不提供**任何 Linux/macOS 运行证据；这类证据只能来自对应平台的机器，本项目没有。**不要把上面第 2~4 层当成"在 Linux/macOS 上跑过了"。**
 
 ## 八、前端实现差异（WPF → Avalonia）
 
@@ -241,7 +247,13 @@ CI 矩阵是"已写好、待运行"。**不要把上面第 2~4 层当成"在 Lin
   而 standalone 在 Windows 上没有收益 —— 刻意的取舍，不是遗漏。
 * macOS 公证（`notarytool`）与 Linux AppImage 未自动化：需要 Apple 证书与 `appimagetool`，
   脚本只把命令与缺失步骤写进 `SIGNING.txt`，**不擅自执行**。
-* **构建不可复现**：三处时间戳漂移（`USAGE.txt`、rcedit 写 `.rsrc`、PyInstaller 写 PE 头）
-  会让"同一提交重建"得到不同哈希；`SOURCE_DATE_EPOCH` 尚未落地。
-* `docs/SBOM.json` 与第三方许可清单**未按 v0.2.2 重新生成**（依赖闭包结构未变）。
+* ~~**构建不可复现**~~ —— **v0.2.3 已解决，v0.2.7 再次实测**：所有打包脚本从 `HEAD` 提交时间派生同一个
+  `SOURCE_DATE_EPOCH`，工作区不干净就拒绝打包（`tools/reproducible.py`；安装包的 PE 时间戳由
+  `tools/pe_timestamp.py` 就地归一），两个 .NET 工程启用确定性编译，归档写入方固定条目时间戳、
+  属主、顺序与 gzip 头。`tools/verify_reproducible_build.ps1` 清空构建产物后连跑两次冷构建逐字节
+  比对：v0.2.7 那次两轮各 **11,326 个文件、`diff=0`**（823.4 s，退出码 0）。自己复现的步骤见
+  `CODE_SIGNING.md`。
+* ~~`docs/SBOM.json` 与第三方许可清单未按 v0.2.2 重新生成~~ —— **v0.2.7 已完成**：
+  `docs/SBOM.json` 列 43 个 Python 发行包 + 随包的 `llama.cpp`（MIT，0.4.7），
+  `docs/THIRD_PARTY_LICENSES.md` 中英两版同步重生成。
 * 非 Windows 的图标、字体回退、输入法、高 DPI 等真实交互未验证。
