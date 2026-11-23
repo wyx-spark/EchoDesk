@@ -1,6 +1,6 @@
 # EchoDesk Enterprise Deployment and Compliance Guide
 
-Version: v0.2.6
+Version: v0.2.7
 Publisher: Void Entropia Studio
 Audience: IT administrators and compliance reviewers deploying the EchoDesk desktop app
 (portable or installed) in a managed enterprise environment
@@ -223,9 +223,9 @@ Two rows above are Windows-specific in their **mechanism** only; the equivalents
 The portable release uses this three-level layout by default:
 
 ```text
-EchoDesk-v0.2.6\
+EchoDesk-v0.2.7\
 ├── install-complete.bat         ← post-extraction step (creates the shortcut below)
-├── Start-EchoDesk-v0.2.6.lnk          ← launcher shortcut, created on YOUR machine by the above
+├── Start-EchoDesk-v0.2.7.lnk          ← launcher shortcut, created on YOUR machine by the above
 │                                  (working directory = user data directory)
 ├── ui_state.json                ← UI state
 ├── snippets.json                ← snippets
@@ -266,7 +266,7 @@ EchoDesk-v0.2.6\
 **Linux and macOS bundles** use the same three-level layout with POSIX names, and create no shortcut at all:
 
 ```text
-EchoDesk-v0.2.6/
+EchoDesk-v0.2.7/
 ├── start.sh                     ← top-level launcher (hands over to app/EchoDesk)
 ├── SIGNING.txt                  ← what macOS signing/notarization still needs
 ├── docs/  README*.md  LICENSE*

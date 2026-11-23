@@ -59,7 +59,7 @@ installation/startup in full is in [`USER_GUIDE.md`](USER_GUIDE.md).
 
 **Shortcuts at a glance**: `Ctrl+Enter` send · `Enter`/`Shift+Enter` new line · `Esc` stop generation/close pop-ups ·
 `Ctrl+L` clear the conversation · `Ctrl+O` upload a file · `Ctrl+Shift+C` copy the whole conversation ·
-`Ctrl+加/减/0` adjust font size · `Ctrl+T` switch light/dark theme · `Ctrl+,` Settings · `Ctrl+M` skill marketplace.
+`Ctrl+plus/minus/0` adjust font size · `Ctrl+T` switch light/dark theme · `Ctrl+,` Settings · `Ctrl+M` skill marketplace.
 
 **A vague question gets directions first**: for a question with neither a clear object nor any file context
 (just "what about this?"), the program lists 2-3 possible meanings with one line each about what it would do,
@@ -347,7 +347,7 @@ Known-issues round 2 fixed three things here. If you still see nothing, check in
 
 1. **The search returned nothing**: you are now told explicitly (failure and "no results" are distinguished),
    instead of silently continuing as before.
-2. **The results were not injected**: if the search switch is off (the status strip shows `🔍 搜索：关`),
+2. **The results were not injected**: if the search switch is off (the status strip shows `🔍 search: off`),
    nothing is searched — turn it on with `/search on`.
 3. **The model ignored the results**: injection is now a numbered list with an instruction to cite the number,
    but a small model may still not comply fully — naming "according to result 1" in your question raises

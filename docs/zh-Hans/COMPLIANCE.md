@@ -1,6 +1,6 @@
 # EchoDesk 企业环境适配与合规说明
 
-版本：v0.2.6
+版本：v0.2.7
 出品方：熵寂工作室（Void-Entropia-Studio）
 适用对象：在受管企业环境中部署 EchoDesk 桌面版（便携版或安装版）的 IT 管理员与合规审查人员
 
@@ -212,9 +212,9 @@ export NO_PROXY="localhost,127.0.0.1,.corp.example"
 便携版默认是这样的三层结构：
 
 ```text
-EchoDesk-v0.2.6\
+EchoDesk-v0.2.7\
 ├── install-complete.bat         ← 解压后的收尾脚本（负责创建下面这个快捷方式）
-├── Start-EchoDesk-v0.2.6.lnk          ← 启动快捷方式，由上面那个脚本在**你的机器上**创建
+├── Start-EchoDesk-v0.2.7.lnk          ← 启动快捷方式，由上面那个脚本在**你的机器上**创建
 │                                  （工作目录 = 用户数据目录）
 ├── ui_state.json                ← 界面状态
 ├── snippets.json                ← 常用语
@@ -251,7 +251,7 @@ EchoDesk-v0.2.6\
 **Linux 与 macOS 的发布包**同样是三层结构，只是用 POSIX 名字，而且完全不创建快捷方式：
 
 ```text
-EchoDesk-v0.2.6/
+EchoDesk-v0.2.7/
 ├── start.sh                     ← 顶层启动脚本（接管并运行 app/EchoDesk）
 ├── SIGNING.txt                  ← macOS 签名/公证还缺什么
 ├── docs/  README*.md  LICENSE*
@@ -387,7 +387,7 @@ macOS 上把 `app/EchoDesk` 拖进程序坞即可。
 
 > **仅限 Windows。** 本节描述的路径要经本机 WPS/Office 的 COM 接口，而 macOS 与 Linux 上不存在该接口。
 > 在这两个平台上，受保护文档根本打不开：程序会把该能力报成"仅限 Windows"，而不是解析失败；
-> 老式二进制 `.doc`/`.xls` 同理。Windows 具备全部能力；macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属功能，其中加密文档读取退为"仅未加密文档"，浏览器自动化不可用；三平台默认数据目录分别为 `%APPDATA%\EchoDesk`、`~/Library/Application Support/EchoDesk`、`~/.config/EchoDesk`
+> 老式二进制 `.doc`/`.xls` 同理。Windows 具备全部能力；macOS（Apple Silicon）与 Linux（x86_64）可运行全部非 Windows 专属功能，其中加密文档读取退为"仅未加密文档"，浏览器自动化不可用；数据目录在便携布局下就是发布目录外层（不写 `%APPDATA%\`），非便携布局时 macOS 回退到 `~/Library/Application Support/EchoDesk`、Linux 回退到 `$XDG_DATA_HOME/EchoDesk`（未设置时为 `~/.local/share/EchoDesk`）。
 
 - **不接触加密驱动、不修改加密策略、不持有密钥。** EchoDesk 不安装、不注册、不补丁、不卸载
   加密客户端，也不读取属于它的密钥与授权材料。
